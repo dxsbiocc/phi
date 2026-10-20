@@ -430,11 +430,11 @@ test('preview IPC checks the trusted main renderer and exposes only the typed pr
   const preload = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8')
   assert.match(
     main,
-    /ipcMain\.handle\('web-link:preview', \(event, url: unknown\) => \{\s*requireMainWindowRenderer\(event\)\s*return webLinkPreviews\.get\(url\)/u
+    /ipcMain\.handle\(IPC\.webLink\.preview, \(event, url: unknown\) => \{\s*requireMainWindowRenderer\(event\)\s*return webLinkPreviews\.get\(url\)/u
   )
   assert.match(preload, /getWebLinkPreview: \(url: string\) => Promise<WebLinkPreview>/u)
   assert.match(
     preload,
-    /getWebLinkPreview: \(url: string\): Promise<WebLinkPreview> =>\s*ipcRenderer\.invoke\('web-link:preview', url\)/u
+    /getWebLinkPreview: \(url: string\): Promise<WebLinkPreview> =>\s*ipcRenderer\.invoke\(IPC\.webLink\.preview, url\)/u
   )
 })

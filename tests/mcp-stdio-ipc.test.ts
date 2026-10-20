@@ -15,18 +15,22 @@ import type {
   FeaturedMcpConnector,
   McpConnectorSetupProgress
 } from '../src/shared/mcpConnectorCatalog'
+import { IPC } from '../src/shared/ipcChannels'
 
 const AGENT_DIR = mkdtempSync(join(tmpdir(), 'phi-mcp-ipc-state-'))
 test.after(() => rmSync(AGENT_DIR, { recursive: true, force: true }))
 const RUNTIME_ROOT = '/verified/managed-runtime'
 const REGISTRY_DIR = '/verified/official-registry'
 const IPC_CHANNELS = [
-  'mcp:listConnectorCatalog',
-  'mcp:installConnector',
-  'mcp:uninstallConnector',
-  'mcp:buildConnectorEnvironment',
-  'mcp:featuredTools'
+  IPC.mcp.listConnectorCatalog,
+  IPC.mcp.installConnector,
+  IPC.mcp.uninstallConnector,
+  IPC.mcp.buildConnectorEnvironment,
+  IPC.mcp.featuredTools
 ]
+const IPC_CHANNEL_REFERENCES = new Map(
+  Object.entries(IPC.mcp).map(([name, channel]) => [`IPC.mcp.${name}`, channel])
+)
 type IpcHandler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 
 function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, IpcHandler> {
@@ -56,15 +60,15 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
     if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)) {
       const call = node.expression
       const channel = call.arguments[0]
+      const channelName = channel ? IPC_CHANNEL_REFERENCES.get(channel.getText(source)) : undefined
       if (
         ts.isPropertyAccessExpression(call.expression) &&
         call.expression.expression.getText(source) === 'ipcMain' &&
         call.expression.name.text === 'handle' &&
-        channel &&
-        ts.isStringLiteral(channel) &&
-        IPC_CHANNELS.includes(channel.text)
+        channelName &&
+        IPC_CHANNELS.includes(channelName)
       )
-        registrations.set(channel.text, node)
+        registrations.set(channelName, node)
     }
     ts.forEachChild(node, visit)
   }
@@ -79,7 +83,7 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
     IPC_CHANNELS.toSorted(),
     'extract every exercised IPC registration'
   )
-  const program = `const { ConnectorSetupTracker, sendToAllWindows, listConnectorCatalog, AGENT_DIR, app, getRuntimeRoot, loadPackageRegistries, connectorEnvironmentBuildAction, environmentBuilds, refreshPersistedManagedStdioServers, readMcpServerEntry, getPhiEngine, installCatalogConnector, uninstallCatalogConnector, officialContentSourceOptions, setEnabled, setMcpPackageEnabled, invalidateAgentSession } = dependencies;
+  const program = `const { IPC, ConnectorSetupTracker, sendToAllWindows, listConnectorCatalog, AGENT_DIR, app, getRuntimeRoot, loadPackageRegistries, connectorEnvironmentBuildAction, environmentBuilds, refreshPersistedManagedStdioServers, readMcpServerEntry, getPhiEngine, installCatalogConnector, uninstallCatalogConnector, officialContentSourceOptions, setEnabled, setMcpPackageEnabled, invalidateAgentSession } = dependencies;
   const join = (...parts) => parts.join('/');
   const callbacks = new Map();
   const ipcMain = { handle: (channel, callback) => callbacks.set(channel, callback) };
@@ -89,7 +93,7 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
   const compiled = ts.transpileModule(program, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
   }).outputText
-  return new Function('dependencies', compiled)(dependencies) as Map<string, IpcHandler>
+  return new Function('dependencies', compiled)({ IPC, ...dependencies }) as Map<string, IpcHandler>
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {

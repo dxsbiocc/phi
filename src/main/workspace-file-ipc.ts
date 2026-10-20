@@ -1,3 +1,4 @@
+import { IPC } from '../shared/ipcChannels'
 import type { BrowserWindow, Dialog, IpcMain, IpcMainInvokeEvent, Shell } from 'electron'
 import { basename } from 'node:path'
 import type { WorkspaceTextSaveResult } from '../shared/workspaceFileOperations'
@@ -30,8 +31,8 @@ export function registerWorkspaceFileIpc(options: {
   >
 }): void {
   for (const [channel, validate] of [
-    ['files:saveTextFile', validateWorkspaceTextSaveRequest],
-    ['files:saveMarkdownFile', validateWorkspaceMarkdownSaveRequest]
+    [IPC.files.saveTextFile, validateWorkspaceTextSaveRequest],
+    [IPC.files.saveMarkdownFile, validateWorkspaceMarkdownSaveRequest]
   ] as const) {
     options.ipcMain.handle(channel, async (event, input: unknown) => {
       options.requireRenderer(event)
@@ -48,7 +49,7 @@ export function registerWorkspaceFileIpc(options: {
         : operation()
     })
   }
-  options.ipcMain.handle('files:renameWorkspaceFile', async (event, input: unknown) => {
+  options.ipcMain.handle(IPC.files.renameWorkspaceFile, async (event, input: unknown) => {
     options.requireRenderer(event)
     const request = validateWorkspaceFileOperation(input, true)
     if (request.kind === 'local') options.requireLocalWorkspaceRoot(request.rootPath)
@@ -57,7 +58,7 @@ export function registerWorkspaceFileIpc(options: {
       ? options.observeRemote(request.projectId, operation)
       : operation()
   })
-  options.ipcMain.handle('files:deleteWorkspaceFile', async (event, input: unknown) => {
+  options.ipcMain.handle(IPC.files.deleteWorkspaceFile, async (event, input: unknown) => {
     options.requireRenderer(event)
     const request = validateWorkspaceFileOperation(input)
     if (request.kind === 'local') options.requireLocalWorkspaceRoot(request.rootPath)
@@ -67,7 +68,7 @@ export function registerWorkspaceFileIpc(options: {
       ? options.observeRemote(request.projectId, operation)
       : operation()
   })
-  options.ipcMain.handle('remoteWorkspace:download', async (event, input: unknown) => {
+  options.ipcMain.handle(IPC.remoteWorkspace.download, async (event, input: unknown) => {
     const window = options.requireRenderer(event)
     const request = validateRemoteWorkspaceDownloadRequest(input)
     const { requestId } = request
@@ -95,7 +96,7 @@ export function registerWorkspaceFileIpc(options: {
             active.phase = progress.phase
             try {
               if (event.sender.isDestroyed()) controller.abort()
-              else event.sender.send('wrapperResults:downloadProgress', progress)
+              else event.sender.send(IPC.wrapperResults.downloadProgress, progress)
             } catch {
               controller.abort()
             }

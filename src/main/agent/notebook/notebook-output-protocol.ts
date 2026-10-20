@@ -1,3 +1,4 @@
+import { IPC } from '../../../shared/ipcChannels'
 import { randomUUID } from 'node:crypto'
 import { ipcMain, protocol } from 'electron'
 import {
@@ -57,7 +58,7 @@ export function installNotebookOutputProtocol(): void {
     })
   })
 
-  ipcMain.handle('analysis:publishNotebookOutputFrame', (_event, html: unknown) => {
+  ipcMain.handle(IPC.analysis.publishNotebookOutputFrame, (_event, html: unknown) => {
     if (typeof html !== 'string' || html.length === 0 || html.length > MAX_OUTPUT_HTML_CHARS) {
       throw new Error('Notebook output frame is empty or too large.')
     }
@@ -66,7 +67,7 @@ export function installNotebookOutputProtocol(): void {
     return notebookOutputFrameUrl(id)
   })
 
-  ipcMain.handle('analysis:releaseNotebookOutputFrame', (_event, url: unknown) => {
+  ipcMain.handle(IPC.analysis.releaseNotebookOutputFrame, (_event, url: unknown) => {
     const id = typeof url === 'string' ? notebookOutputFrameId(url) : null
     if (id) frames.delete(id)
   })

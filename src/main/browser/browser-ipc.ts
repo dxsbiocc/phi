@@ -1,3 +1,4 @@
+import { IPC } from '../../shared/ipcChannels'
 import type {
   BrowserActor,
   BrowserCommand,
@@ -514,7 +515,7 @@ export class BrowserIpcCoordinator {
     try {
       const renderer = this.#getTrustedRenderer()
       if (!renderer || renderer.isDestroyed()) return false
-      renderer.send('browser:event', envelope)
+      renderer.send(IPC.browser.event, envelope)
       return true
     } catch {
       return false
@@ -590,9 +591,11 @@ export function registerBrowserRendererIpc(
   ipcMain: BrowserIpcMainLike,
   coordinator: BrowserIpcCoordinator
 ): void {
-  ipcMain.handle('browser:execute', (event, input) => coordinator.executeHuman(event.sender, input))
-  ipcMain.handle('browser:snapshot', (event) => coordinator.snapshotHuman(event.sender))
-  ipcMain.handle('browser:setViewport', (event, input) =>
+  ipcMain.handle(IPC.browser.execute, (event, input) =>
+    coordinator.executeHuman(event.sender, input)
+  )
+  ipcMain.handle(IPC.browser.snapshot, (event) => coordinator.snapshotHuman(event.sender))
+  ipcMain.handle(IPC.browser.setViewport, (event, input) =>
     coordinator.setViewportHuman(event.sender, input)
   )
 }

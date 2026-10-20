@@ -1,3 +1,4 @@
+import { IPC } from '../../shared/ipcChannels'
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow } from 'electron'
 
@@ -125,7 +126,7 @@ export function waitForAgentUserInteraction(
     )
 
     try {
-      window.webContents.send('agent:interaction-request', request)
+      window.webContents.send(IPC.agent.interactionRequested, request)
     } catch {
       settle({ requestId: request.requestId, answers: [], cancelled: true })
     }

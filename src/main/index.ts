@@ -1,3 +1,4 @@
+import { IPC } from '../shared/ipcChannels'
 import {
   registerRuntimeSessionOrigin,
   resolveRuntimeSessionOrigin
@@ -765,7 +766,7 @@ function sendMainWindowFullscreenState(window: BrowserWindow, fullscreen: boolea
   if (mainWindow !== window || window.isDestroyed() || window.webContents.isDestroyed()) {
     return
   }
-  window.webContents.send('window:fullscreen-changed', fullscreen)
+  window.webContents.send(IPC.window.fullscreenChanged, fullscreen)
 }
 const browserCheckpointStore = new FileSystemBrowserCheckpointStore({ agentDir: AGENT_DIR })
 
@@ -849,7 +850,7 @@ async function requestBrowserActionApproval(
     },
     onApprovalCancelled: (request) => {
       runnerRegistry.markApprovalCancelled(run.phiSessionId, request.requestId)
-      sendToAllWindows('tool:approval-cancelled', request.requestId)
+      sendToAllWindows(IPC.tool.approvalCancelled, request.requestId)
     }
   })
 }
@@ -1107,7 +1108,7 @@ async function refreshCachedPackageUpdates(): Promise<PackageUpdate[]> {
 async function refreshGithubSourceDependants(): Promise<void> {
   cachedPackageUpdates = []
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('packages:updatesAvailable', [])
+    mainWindow.webContents.send(IPC.packages.updatesAvailable, [])
   }
 }
 
@@ -1116,7 +1117,7 @@ function scheduleStartupPackageUpdateCheck(): void {
     try {
       const updates = await refreshCachedPackageUpdates()
       if (updates.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('packages:updatesAvailable', packageUpdateViews(updates))
+        mainWindow.webContents.send(IPC.packages.updatesAvailable, packageUpdateViews(updates))
       }
     } catch (error) {
       writeAppLog({
@@ -1736,7 +1737,7 @@ const environmentBuilds = createEnvironmentBuilds({
   build: (root, descriptor, options) =>
     buildEnvironment(root, descriptor, { ...options, fetch: officialRegistryFetch }),
   onChange: (build) => {
-    sendToAllWindows('environmentBuilds:changed', build)
+    sendToAllWindows(IPC.environmentBuilds.changed, build)
   }
 })
 const managedEnvironmentActions = createManagedEnvironmentActions({
@@ -2612,7 +2613,7 @@ const capabilityHost: ReturnType<typeof createCapabilityHost> = createCapability
       ? findActivePromptRunByRuntimeSessionId(context.originSessionId)
       : undefined
     if (run) loadedSkillNamesBySession.delete(run.phiSessionId)
-    sendToAllWindows('packages:resourcesChanged')
+    sendToAllWindows(IPC.packages.resourcesChanged)
   },
   resolveRun: (runtimeSessionId) => {
     const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
@@ -2786,10 +2787,10 @@ const remoteProjectUploads = new RemoteProjectUploadService({
   }
 })
 remoteProjectUploads.subscribe((job) => {
-  sendToAllWindows('remoteProjectUploads:changed', job)
+  sendToAllWindows(IPC.remoteProjectUploads.changed, job)
 })
 remoteJupyterStartJobs.subscribe((job) => {
-  sendToAllWindows('remoteJupyterJobs:changed', job)
+  sendToAllWindows(IPC.remoteJupyterJobs.changed, job)
 })
 const wrapperResultReadControllers = new Map<string, AbortController>()
 const wrapperResultDownloads = new Map<
@@ -2797,7 +2798,7 @@ const wrapperResultDownloads = new Map<
   { controller: AbortController; phase: 'downloading' | 'verifying' | 'saving' }
 >()
 subscribeRemoteProjectConnection((projectId, state) => {
-  sendToAllWindows('projects:remoteConnectionChanged', { projectId, state })
+  sendToAllWindows(IPC.projects.remoteConnectionChanged, { projectId, state })
 })
 function remoteRequestProjectId(params: unknown): string {
   if (typeof params !== 'object' || params === null) return ''
@@ -3105,7 +3106,7 @@ for (const [method, handler] of Object.entries(
 )) {
   getPhiEngine().host.register(method, handler)
 }
-wrapperJobs.onChange((runId) => sendToAllWindows('wrappers:runsChanged', { runId }))
+wrapperJobs.onChange((runId) => sendToAllWindows(IPC.wrappers.runsChanged, { runId }))
 
 // The agent worker knows which runtime session started a run; the timeline that must hear
 // about its end belongs to the Phi conversation that session serves. Registered when the
@@ -3401,7 +3402,7 @@ async function stopBackgroundShellJob(agentSessionId: unknown, jobId: unknown): 
 }
 
 function sendRunEventToWindow(payload: Record<string, unknown>): void {
-  sendToWindow(getActiveWindow(), 'agent:event', {
+  sendToWindow(getActiveWindow(), IPC.agent.event, {
     ...payload,
     sessionPath: phiOnlySessionPath(String(payload.phiSessionId))
   })
@@ -3794,7 +3795,7 @@ async function confirmHostToolApproval(
     runnerRegistry.markApprovalDenied(run.phiSessionId, request.requestId)
   else {
     runnerRegistry.markApprovalCancelled(run.phiSessionId, request.requestId)
-    sendToAllWindows('tool:approval-cancelled', request.requestId)
+    sendToAllWindows(IPC.tool.approvalCancelled, request.requestId)
   }
   notifySessionChanged()
   return decision === 'approved'
@@ -4189,7 +4190,7 @@ function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEv
   if (!run) return
 
   const targetWindow = getActiveWindow()
-  sendToWindow(targetWindow, 'agent:event', {
+  sendToWindow(targetWindow, IPC.agent.event, {
     source: 'phi',
     ...event,
     phiSessionId: run.phiSessionId,
@@ -6918,7 +6919,6 @@ function sendToWindow(window: BrowserWindow | null, channel: string, ...args: un
     throw error
   }
 }
-
 function sendToAllWindows(channel: string, ...args: unknown[]): void {
   for (const window of BrowserWindow.getAllWindows()) {
     sendToWindow(window, channel, ...args)
@@ -6932,11 +6932,11 @@ function getActiveWindow(): BrowserWindow | null {
 }
 
 function notifyToolApprovalsCancelled(): void {
-  sendToAllWindows('tool:approval-cancelled')
+  sendToAllWindows(IPC.tool.approvalCancelled)
 }
 
 function notifyAgentUserInteractionsCancelled(): void {
-  sendToAllWindows('agent:interaction-cancelled')
+  sendToAllWindows(IPC.agent.interactionCancelled)
 }
 
 function notifyAnalysisNotebookDraftChanged(change: {
@@ -6951,11 +6951,11 @@ function notifyAnalysisNotebookDraftChanged(change: {
   changedCellId?: string
   focusCellId?: string
 }): void {
-  sendToAllWindows('analysis:notebookDraftChanged', change)
+  sendToAllWindows(IPC.analysis.notebookDraftChanged, change)
 }
 
 function notifyAnalysisNotebookFileChanged(change: unknown): void {
-  sendToAllWindows('analysis:notebookFileChanged', change)
+  sendToAllWindows(IPC.analysis.notebookFileChanged, change)
 }
 
 type LocalPathScope = {
@@ -7859,7 +7859,7 @@ function cancelPendingToolApprovals(scope?: { sessionId: string; runId: string }
     return
   }
   for (const request of cancelled) {
-    sendToAllWindows('tool:approval-cancelled', request.requestId)
+    sendToAllWindows(IPC.tool.approvalCancelled, request.requestId)
   }
 }
 
@@ -8308,7 +8308,7 @@ async function compactCurrentSession(target: unknown): Promise<ManualCompactionO
   const sessionPath = phiOnlySessionPath(phiSessionId)
   const sessionGeneration = getLifecycleForKey(sessionKey).currentGeneration
   const broadcast = (event: StoredSessionEvent): void => {
-    sendToAllWindows('agent:event', {
+    sendToAllWindows(IPC.agent.event, {
       source: 'phi',
       ...event,
       phiSessionId,
@@ -8727,7 +8727,7 @@ function notifySessionChanged(): void {
   void browserWorkspaceRegistry?.setActiveSession(payload.phiSessionId ?? null).catch(() => {
     writeAppLog({ level: 'error', event: 'browser_presentation_transition_failed' })
   })
-  sendToAllWindows('sessions:changed', payload)
+  sendToAllWindows(IPC.sessions.changed, payload)
 }
 
 function notifyProjectParallelRun(
@@ -8737,7 +8737,7 @@ function notifyProjectParallelRun(
   activeCount: number
 ): void {
   const window = getActiveWindow()
-  sendToWindow(window, 'agent:event', {
+  sendToWindow(window, IPC.agent.event, {
     type: 'project_parallel_warning',
     sessionGeneration,
     sessionPath: sessionPath ?? null,
@@ -9130,7 +9130,7 @@ async function getAgentSession(
           updateSessionManifest(phiSessionId, { model: resolvedModel.selection })
           const targetWindow = getActiveWindow()
           const sessionPath = uiSessionPathForKey(sessionKey, creationSnapshot.path)
-          sendToWindow(targetWindow, 'agent:event', {
+          sendToWindow(targetWindow, IPC.agent.event, {
             ...stored,
             phiSessionId,
             sessionGeneration: generation,
@@ -9532,7 +9532,7 @@ async function getAgentSession(
               summary)
             : summary
         const targetWindow = getActiveWindow()
-        sendToWindow(targetWindow, 'agent:event', {
+        sendToWindow(targetWindow, IPC.agent.event, {
           ...persistedSummary,
           ...(phiSessionId ? { phiSessionId } : {}),
           sessionGeneration: generation,
@@ -9960,7 +9960,7 @@ app.whenReady().then(async () => {
   })
 
   // IPC test
-  ipcMain.on('ping', () => console.log('pong'))
+  ipcMain.on(IPC.system.ping, () => console.log('pong'))
   registerBrowserRendererIpc(ipcMain, browserIpcCoordinator)
   registerTerminalRendererIpc(ipcMain, terminalIpcCoordinator)
   registerSshBootstrapIpc(
@@ -9970,45 +9970,45 @@ app.whenReady().then(async () => {
   )
   registerRemoteMicromambaIpc(ipcMain)
   registerRemoteRipgrepIpc(ipcMain)
-  ipcMain.handle('window:close', () => {
+  ipcMain.handle(IPC.window.close, () => {
     getActiveWindow()?.close()
   })
-  ipcMain.handle('window:minimize', () => {
+  ipcMain.handle(IPC.window.minimize, () => {
     getActiveWindow()?.minimize()
   })
-  ipcMain.handle('window:toggle-fullscreen', () => {
+  ipcMain.handle(IPC.window.toggleFullscreen, () => {
     const window = getActiveWindow()
     if (!window) return
     window.setFullScreen(!window.isFullScreen())
   })
-  ipcMain.handle('window:get-fullscreen', (event) => {
+  ipcMain.handle(IPC.window.getFullscreen, (event) => {
     return requireMainWindowRenderer(event).isFullScreen()
   })
-  ipcMain.handle('window:renderer-ready', (event, background: unknown) => {
+  ipcMain.handle(IPC.window.rendererReady, (event, background: unknown) => {
     const window = requireMainWindowRenderer(event)
     mainWindowStartups.get(window)?.rendererReady(background)
   })
-  ipcMain.handle('menu-bar:consume-action', (event): MenuBarAction | null => {
+  ipcMain.handle(IPC.menuBar.consumeAction, (event): MenuBarAction | null => {
     requireMainWindowRenderer(event)
     const action = pendingMenuBarAction
     pendingMenuBarAction = null
     return action
   })
-  ipcMain.handle('files:reveal', async (_, filePath: string) => {
+  ipcMain.handle(IPC.files.reveal, async (_, filePath: string) => {
     shell.showItemInFolder(assertRevealPathAllowed(filePath))
   })
-  ipcMain.handle('files:openPath', async (_, filePath: string) => {
+  ipcMain.handle(IPC.files.openPath, async (_, filePath: string) => {
     await openLocalFilePath(filePath)
   })
-  ipcMain.handle('files:getIcon', async (_, filePath: string) => {
+  ipcMain.handle(IPC.files.getIcon, async (_, filePath: string) => {
     return getLocalFileIconDataUrl(filePath)
   })
-  ipcMain.handle('resources:readIcon', (_, key: unknown) => readResourceIcon(key))
-  ipcMain.handle('web-link:preview', (event, url: unknown) => {
+  ipcMain.handle(IPC.resources.readIcon, (_, key: unknown) => readResourceIcon(key))
+  ipcMain.handle(IPC.webLink.preview, (event, url: unknown) => {
     requireMainWindowRenderer(event)
     return webLinkPreviews.get(url)
   })
-  ipcMain.handle('files:pickInput', async () => {
+  ipcMain.handle(IPC.files.pickInput, async () => {
     if (isRemoteProjectAnchorPath(currentCwd, AGENT_DIR)) {
       throw new Error('远程项目文件选择暂不可用；不会打开本机会话目录')
     }
@@ -10025,7 +10025,7 @@ app.whenReady().then(async () => {
       : await dialog.showOpenDialog(options)
     return result.canceled ? [] : result.filePaths
   })
-  ipcMain.handle('files:pickLocalUpload', async () => {
+  ipcMain.handle(IPC.files.pickLocalUpload, async () => {
     const window = getActiveWindow()
     const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
@@ -10038,27 +10038,30 @@ app.whenReady().then(async () => {
       : await dialog.showOpenDialog(options)
     return result.canceled ? [] : result.filePaths
   })
-  ipcMain.handle('remoteProjectUploads:prepare', async (_, projectId: unknown, value: unknown) => {
-    if (typeof projectId !== 'string' || !projectId || !isRecord(value)) {
-      throw new Error('远程项目上传请求无效')
-    }
-    const sourcePaths = value.sourcePaths
-    const destinationDirectory = value.destinationDirectory
-    if (
-      Object.keys(value).some((key) => key !== 'sourcePaths' && key !== 'destinationDirectory') ||
-      !Array.isArray(sourcePaths) ||
-      sourcePaths.some((path) => typeof path !== 'string') ||
-      (destinationDirectory !== undefined && typeof destinationDirectory !== 'string')
-    ) {
-      throw new Error('远程项目上传只能包含本机来源和项目内落点')
-    }
-    return remoteProjectUploads.prepare(projectId, {
-      sourcePaths,
-      ...(typeof destinationDirectory === 'string' ? { destinationDirectory } : {})
-    })
-  })
   ipcMain.handle(
-    'remoteProjectUploads:start',
+    IPC.remoteProjectUploads.prepare,
+    async (_, projectId: unknown, value: unknown) => {
+      if (typeof projectId !== 'string' || !projectId || !isRecord(value)) {
+        throw new Error('远程项目上传请求无效')
+      }
+      const sourcePaths = value.sourcePaths
+      const destinationDirectory = value.destinationDirectory
+      if (
+        Object.keys(value).some((key) => key !== 'sourcePaths' && key !== 'destinationDirectory') ||
+        !Array.isArray(sourcePaths) ||
+        sourcePaths.some((path) => typeof path !== 'string') ||
+        (destinationDirectory !== undefined && typeof destinationDirectory !== 'string')
+      ) {
+        throw new Error('远程项目上传只能包含本机来源和项目内落点')
+      }
+      return remoteProjectUploads.prepare(projectId, {
+        sourcePaths,
+        ...(typeof destinationDirectory === 'string' ? { destinationDirectory } : {})
+      })
+    }
+  )
+  ipcMain.handle(
+    IPC.remoteProjectUploads.start,
     async (_, projectId: unknown, jobId: unknown, value: unknown) => {
       if (typeof projectId !== 'string' || !projectId || typeof jobId !== 'string' || !jobId) {
         throw new Error('远程项目上传任务无效')
@@ -10076,18 +10079,18 @@ app.whenReady().then(async () => {
       })
     }
   )
-  ipcMain.handle('remoteProjectUploads:list', () => remoteProjectUploads.list())
-  ipcMain.handle('remoteJupyterJobs:list', () => remoteJupyterStartJobs.list())
-  ipcMain.handle('remoteProjectUploads:cancel', async (_, jobId: unknown) => {
+  ipcMain.handle(IPC.remoteProjectUploads.list, () => remoteProjectUploads.list())
+  ipcMain.handle(IPC.remoteJupyterJobs.list, () => remoteJupyterStartJobs.list())
+  ipcMain.handle(IPC.remoteProjectUploads.cancel, async (_, jobId: unknown) => {
     if (typeof jobId !== 'string' || !jobId) throw new Error('远程项目上传任务无效')
     await remoteProjectUploads.cancel(jobId)
   })
-  ipcMain.handle('remoteProjectUploads:retry', async (_, jobId: unknown) => {
+  ipcMain.handle(IPC.remoteProjectUploads.retry, async (_, jobId: unknown) => {
     if (typeof jobId !== 'string' || !jobId) throw new Error('远程项目上传任务无效')
     return remoteProjectUploads.retry(jobId)
   })
   ipcMain.handle(
-    'wrappers:completeInputUpload',
+    IPC.wrappers.completeInputUpload,
     async (_, jobId: unknown, planId: unknown, inputId: unknown, expectedRevision: unknown) => {
       if (
         typeof jobId !== 'string' ||
@@ -10140,44 +10143,44 @@ app.whenReady().then(async () => {
     observeRemote: (projectId, operation) => remoteConnectionTracker.observe(projectId, operation),
     downloads: wrapperResultDownloads
   })
-  ipcMain.handle('files:preview', async (_, filePath: string) => {
+  ipcMain.handle(IPC.files.preview, async (_, filePath: string) => {
     return createFilePreview(filePath)
   })
-  ipcMain.handle('remoteWorkspace:statPaths', async (_, request: unknown) =>
+  ipcMain.handle(IPC.remoteWorkspace.statPaths, async (_, request: unknown) =>
     remoteConnectionTracker.observe(remoteRequestProjectId(request), async () =>
       (await import('./agent/workspace-host/remote-registry')).remoteWorkspaceHosts.statPaths(
         request
       )
     )
   )
-  ipcMain.handle('remoteWorkspace:preview', async (_, request: unknown) =>
+  ipcMain.handle(IPC.remoteWorkspace.preview, async (_, request: unknown) =>
     remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
       previewRemoteWorkspaceFile(request, { connectHost: connectRemoteWorkspaceHost })
     )
   )
-  ipcMain.handle('remoteWorkspace:listDirectory', async (_, request: unknown) =>
+  ipcMain.handle(IPC.remoteWorkspace.listDirectory, async (_, request: unknown) =>
     remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
       listRemoteWorkspaceDirectory(request)
     )
   )
-  ipcMain.handle('wrapperResults:listDirectory', async (_, request: unknown) =>
+  ipcMain.handle(IPC.wrapperResults.listDirectory, async (_, request: unknown) =>
     remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
       listWrapperResultDirectory(request)
     )
   )
-  ipcMain.handle('wrapperResults:preview', async (_, request: unknown) =>
+  ipcMain.handle(IPC.wrapperResults.preview, async (_, request: unknown) =>
     runWrapperResultRead(request, previewWrapperResult)
   )
-  ipcMain.handle('wrapperResults:readRange', async (_, request: unknown) =>
+  ipcMain.handle(IPC.wrapperResults.readRange, async (_, request: unknown) =>
     runWrapperResultRead(request, readWrapperResultRange)
   )
-  ipcMain.handle('wrapperResults:cancelRead', async (_, requestId: unknown) => {
+  ipcMain.handle(IPC.wrapperResults.cancelRead, async (_, requestId: unknown) => {
     if (typeof requestId !== 'string') throw new Error('Wrapper 结果读取请求 ID 无效')
     const controller = wrapperResultReadControllers.get(requestId)
     controller?.abort()
     return controller !== undefined
   })
-  ipcMain.handle('wrapperResults:download', async (event, request: unknown) => {
+  ipcMain.handle(IPC.wrapperResults.download, async (event, request: unknown) => {
     requireMainWindowRenderer(event)
     const checked = validateWrapperResultDownloadRequest(request)
     const { requestId } = checked
@@ -10211,7 +10214,7 @@ app.whenReady().then(async () => {
               active.phase = progress.phase
               try {
                 if (event.sender.isDestroyed?.()) controller.abort()
-                else event.sender.send?.('wrapperResults:downloadProgress', progress)
+                else event.sender.send?.(IPC.wrapperResults.downloadProgress, progress)
               } catch {
                 controller.abort()
               }
@@ -10226,7 +10229,7 @@ app.whenReady().then(async () => {
       wrapperResultDownloads.delete(requestId)
     }
   })
-  ipcMain.handle('wrapperResults:cancelDownload', async (event, requestId: unknown) => {
+  ipcMain.handle(IPC.wrapperResults.cancelDownload, async (event, requestId: unknown) => {
     requireMainWindowRenderer(event)
     if (typeof requestId !== 'string') throw new Error('Wrapper 下载请求 ID 无效')
     const active = wrapperResultDownloads.get(requestId)
@@ -10234,22 +10237,22 @@ app.whenReady().then(async () => {
     active.controller.abort()
     return true
   })
-  ipcMain.handle('files:hoverPreview', async (_, filePath: string) => {
+  ipcMain.handle(IPC.files.hoverPreview, async (_, filePath: string) => {
     return createFileHoverPreview(filePath)
   })
-  ipcMain.handle('files:statLocalPaths', async (_, cwd: unknown, paths: unknown) => {
+  ipcMain.handle(IPC.files.statLocalPaths, async (_, cwd: unknown, paths: unknown) => {
     return statLocalPaths(cwd, paths)
   })
-  ipcMain.handle('files:listDirectory', async (_, dirPath: string) => {
+  ipcMain.handle(IPC.files.listDirectory, async (_, dirPath: string) => {
     return createDirectoryListing(dirPath)
   })
   ipcMain.handle(
-    'molecules:renderSvg',
+    IPC.molecules.renderSvg,
     async (_, value: unknown, width: unknown, height: unknown) => {
       return renderMoleculeSvg(value, width, height)
     }
   )
-  ipcMain.handle('agent:prompt', async (_, text: string, targetInput?: unknown) => {
+  ipcMain.handle(IPC.agent.prompt, async (_, text: string, targetInput?: unknown) => {
     const normalizedText = typeof text === 'string' ? text.trim() : ''
     const images = validatePromptImages(
       targetInput && typeof targetInput === 'object'
@@ -10276,17 +10279,17 @@ app.whenReady().then(async () => {
     })
   })
 
-  ipcMain.handle('agent:readPromptImage', async (_, ref: unknown) => readPromptImage(ref))
-  ipcMain.handle('workspaceChanges:readDiff', async (_, ref: unknown) => readWorkspaceDiff(ref))
+  ipcMain.handle(IPC.agent.readPromptImage, async (_, ref: unknown) => readPromptImage(ref))
+  ipcMain.handle(IPC.workspaceChanges.readDiff, async (_, ref: unknown) => readWorkspaceDiff(ref))
 
-  ipcMain.handle('agent:stop', async () => {
+  ipcMain.handle(IPC.agent.stop, async () => {
     await stopActivePrompt()
   })
 
   // A delegation card steers or stops the run it shows. The card knows which agent session
   // owns the run; the worker answers if the run is still there.
   ipcMain.handle(
-    'agent:steerRun',
+    IPC.agent.steerRun,
     async (
       _,
       agentSessionId: unknown,
@@ -10301,32 +10304,32 @@ app.whenReady().then(async () => {
       recordAgentSteer(agentSessionId, agentRunId, toolCallId, text)
     }
   )
-  ipcMain.handle('agent:stopRun', async (_, agentSessionId: unknown, agentRunId: unknown) => {
+  ipcMain.handle(IPC.agent.stopRun, async (_, agentSessionId: unknown, agentRunId: unknown) => {
     await requestAgentRunControl('agentRun.stop', agentSessionId, agentRunId)
   })
 
-  ipcMain.handle('auth:status', async () => getAuthManager().getProviderStatuses())
-  ipcMain.handle('auth:loginApiKey', async (_, providerId: string, key: string) => {
+  ipcMain.handle(IPC.auth.status, async () => getAuthManager().getProviderStatuses())
+  ipcMain.handle(IPC.auth.loginApiKey, async (_, providerId: string, key: string) => {
     const normalizedKey = key.trim()
     const status = await getAuthManager().loginApiKey(providerId, normalizedKey)
     await invalidateAgentSession()
     return status
   })
-  ipcMain.handle('auth:loginOAuth', async (_, providerId: string) => {
+  ipcMain.handle(IPC.auth.loginOAuth, async (_, providerId: string) => {
     const status = await getAuthManager().loginOAuth(providerId)
     await invalidateAgentSession()
     return status
   })
-  ipcMain.handle('auth:logout', async (_, providerId: string) => {
+  ipcMain.handle(IPC.auth.logout, async (_, providerId: string) => {
     await getAuthManager().logout(providerId)
     await invalidateAgentSession()
   })
-  ipcMain.handle('auth:interaction-response', async (_, requestId: string, value: string) => {
+  ipcMain.handle(IPC.auth.interactionResponse, async (_, requestId: string, value: string) => {
     await getAuthManager().resolveInteraction(requestId, value)
   })
 
-  ipcMain.handle('app:checkForUpdates', async () => checkForAppUpdate(app.getVersion()))
-  ipcMain.handle('app:openReleasesPage', async (_, url: unknown) => {
+  ipcMain.handle(IPC.app.checkForUpdates, async () => checkForAppUpdate(app.getVersion()))
+  ipcMain.handle(IPC.app.openReleasesPage, async (_, url: unknown) => {
     // Only Phi's own release pages; anything else falls back to the latest release.
     const target =
       typeof url === 'string' &&
@@ -10335,36 +10338,36 @@ app.whenReady().then(async () => {
         : RELEASES_PAGE_URL
     await shell.openExternal(target)
   })
-  ipcMain.handle('settings:get', async () => readAppSettings())
-  ipcMain.handle('settings:update', async (_, patch: unknown) => {
+  ipcMain.handle(IPC.settings.get, async () => readAppSettings())
+  ipcMain.handle(IPC.settings.update, async (_, patch: unknown) => {
     const settings = updateAppSettings(patch)
     syncPreventSleepBlocker()
     return settings
   })
-  ipcMain.handle('settings:webSearch:get', async () =>
+  ipcMain.handle(IPC.settings.webSearchGet, async () =>
     getPhiEngine().settings.webSearch.get({ agentDir: AGENT_DIR })
   )
-  ipcMain.handle('settings:webSearch:update', async (_, patch: unknown) =>
+  ipcMain.handle(IPC.settings.webSearchUpdate, async (_, patch: unknown) =>
     getPhiEngine().settings.webSearch.update({ agentDir: AGENT_DIR, patch })
   )
-  ipcMain.handle('settings:webSearch:searxngEngines', async () =>
+  ipcMain.handle(IPC.settings.webSearchSearxngEngines, async () =>
     getPhiEngine().settings.webSearch.searxngEngines({ agentDir: AGENT_DIR })
   )
-  ipcMain.handle('settings:webSearch:apiKey:set', async (_, providerId: unknown, key: unknown) =>
+  ipcMain.handle(IPC.settings.webSearchApiKeySet, async (_, providerId: unknown, key: unknown) =>
     getPhiEngine().settings.webSearch.setApiKey({
       agentDir: AGENT_DIR,
       providerId,
       key
     })
   )
-  ipcMain.handle('settings:webSearch:apiKey:clear', async (_, providerId: unknown) =>
+  ipcMain.handle(IPC.settings.webSearchApiKeyClear, async (_, providerId: unknown) =>
     getPhiEngine().settings.webSearch.clearApiKey({ agentDir: AGENT_DIR, providerId })
   )
 
-  ipcMain.handle('environment:get', () => backgroundEnvironment.get())
-  ipcMain.handle('environment:redetect', () => backgroundEnvironment.redetect())
-  ipcMain.handle('environment:dismissSummary', () => backgroundEnvironment.dismissSummary())
-  ipcMain.handle('environment:setToolPath', async (_, toolId: unknown, path: unknown) => {
+  ipcMain.handle(IPC.environment.get, () => backgroundEnvironment.get())
+  ipcMain.handle(IPC.environment.redetect, () => backgroundEnvironment.redetect())
+  ipcMain.handle(IPC.environment.dismissSummary, () => backgroundEnvironment.dismissSummary())
+  ipcMain.handle(IPC.environment.setToolPath, async (_, toolId: unknown, path: unknown) => {
     if (typeof toolId !== 'string' || !toolId.trim()) {
       throw new Error('工具 id 无效')
     }
@@ -10376,7 +10379,7 @@ app.whenReady().then(async () => {
       path
     )
   })
-  ipcMain.handle('environment:pickBinary', async () => {
+  ipcMain.handle(IPC.environment.pickBinary, async () => {
     const window = getActiveWindow()
     const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
@@ -10390,7 +10393,7 @@ app.whenReady().then(async () => {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
   ipcMain.handle(
-    'managedEnvironments:list',
+    IPC.managedEnvironments.list,
     async (_, projectCwd: unknown, includeDynamic: unknown) => {
       try {
         return await managedEnvironmentActions.list(projectCwd, includeDynamic)
@@ -10400,7 +10403,7 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle(
-    'managedEnvironments:build',
+    IPC.managedEnvironments.build,
     async (_, ref: unknown, projectCwd: unknown, pluginId: unknown) => {
       try {
         return managedEnvironmentActions.build(ref, projectCwd, pluginId)
@@ -10409,29 +10412,28 @@ app.whenReady().then(async () => {
       }
     }
   )
-  ipcMain.handle('managedEnvironments:rebuild', async (_, envId: unknown) => {
+  ipcMain.handle(IPC.managedEnvironments.rebuild, async (_, envId: unknown) => {
     try {
       await managedEnvironmentActions.rebuild(envId)
     } catch (error) {
       throw new Error(`重新构建环境失败：${errorMessage(error)}`)
     }
   })
-  ipcMain.handle('managedEnvironments:remove', async (_, envId: unknown) => {
+  ipcMain.handle(IPC.managedEnvironments.remove, async (_, envId: unknown) => {
     try {
       return await managedEnvironmentActions.remove(envId)
     } catch (error) {
       throw new Error(`删除环境失败：${errorMessage(error)}`)
     }
   })
-  ipcMain.handle('managedEnvironments:clean', async () => {
+  ipcMain.handle(IPC.managedEnvironments.clean, async () => {
     try {
       return await managedEnvironmentActions.clean()
     } catch (error) {
       throw new Error(`清理环境失败：${errorMessage(error)}`)
     }
   })
-
-  ipcMain.handle('models:list', async () => {
+  ipcMain.handle(IPC.models.list, async () => {
     const runtime = await getAuthManager().getRuntime()
     return selectableRuntimeModels(runtime).map((model) => ({
       providerId: model.provider,
@@ -10441,93 +10443,100 @@ app.whenReady().then(async () => {
       thinkingLevels: getSupportedThinkingLevels(model)
     }))
   })
-  ipcMain.handle('models:select', async (_, providerId: string | null, modelId: string | null) => {
-    const target = captureCurrentSelectionTarget()
-    const request = ++modelSelectionRequest
-    const key = target.phiSessionId ?? resolveSessionKeyAlias(target.key)
-    const rememberSelection = (model: ModelSelection | null): void => {
-      if (request < lastRememberedModelSelectionRequest) return
-      writeLastSelectedModel(model)
-      selectedModel = model
-      lastRememberedModelSelectionRequest = request
-    }
-    const selection = (sessionModelSelectionQueues.get(key) ?? Promise.resolve()).then(async () => {
-      target.assertCurrent()
-      if (providerId === null && modelId === null) {
-        if (target.rpc) throw new Error('远程 RPC 对话暂不支持自动模型，请选择具体模型')
-        sessionModelSelections.set(resolveSessionKeyAlias(target.key), null)
-        if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { model: null })
-        rememberSelection(null)
-        return
+  ipcMain.handle(
+    IPC.models.select,
+    async (_, providerId: string | null, modelId: string | null) => {
+      const target = captureCurrentSelectionTarget()
+      const request = ++modelSelectionRequest
+      const key = target.phiSessionId ?? resolveSessionKeyAlias(target.key)
+      const rememberSelection = (model: ModelSelection | null): void => {
+        if (request < lastRememberedModelSelectionRequest) return
+        writeLastSelectedModel(model)
+        selectedModel = model
+        lastRememberedModelSelectionRequest = request
       }
-      if (typeof providerId !== 'string' || typeof modelId !== 'string') {
-        throw new Error('模型选择无效')
-      }
-      const runtime = await getAuthManager().getRuntime()
-      target.assertCurrent()
-      const resolved = resolveRuntimeModelSelection(runtime, { providerId, modelId })
-      if (!resolved || resolved.migratedFrom) throw new Error(`未知模型: ${providerId}/${modelId}`)
-      const model = resolved.model
-      if (target.rpc) {
-        const current = await target.resolved()
-        target.assertCurrent()
-        const snapshot = {
-          path: currentSessionPath,
-          cwd: currentCwd,
-          permissionMode: currentPermissionMode
-        }
-        const preferred = selectionThinking(
-          model,
-          resolveSessionThinkingLevel(target.key, snapshot)
-        ).phi
-        if (current) {
-          if (!ownsRemoteRuntimeSession(current.session.runtimeSessionId))
-            throw new Error('Remote selection requires an exact live attachment')
-          await current.session.setModel(model, {
-            assertCurrent: target.assertCurrent,
-            preferredThinkingLevel: preferred
-          })
+      const selection = (sessionModelSelectionQueues.get(key) ?? Promise.resolve()).then(
+        async () => {
           target.assertCurrent()
-        } else {
-          if (target.phiSessionId && findPhiSessionById(target.phiSessionId)?.runtimeRef)
-            throw new Error('Remote selection requires an exact live attachment')
-          if (target.phiSessionId)
-            updateSessionManifest(target.phiSessionId, {
-              model: { providerId, modelId },
-              thinkingLevel: preferred
-            })
+          if (providerId === null && modelId === null) {
+            if (target.rpc) throw new Error('远程 RPC 对话暂不支持自动模型，请选择具体模型')
+            sessionModelSelections.set(resolveSessionKeyAlias(target.key), null)
+            if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { model: null })
+            rememberSelection(null)
+            return
+          }
+          if (typeof providerId !== 'string' || typeof modelId !== 'string') {
+            throw new Error('模型选择无效')
+          }
+          const runtime = await getAuthManager().getRuntime()
+          target.assertCurrent()
+          const resolved = resolveRuntimeModelSelection(runtime, { providerId, modelId })
+          if (!resolved || resolved.migratedFrom)
+            throw new Error(`未知模型: ${providerId}/${modelId}`)
+          const model = resolved.model
+          if (target.rpc) {
+            const current = await target.resolved()
+            target.assertCurrent()
+            const snapshot = {
+              path: currentSessionPath,
+              cwd: currentCwd,
+              permissionMode: currentPermissionMode
+            }
+            const preferred = selectionThinking(
+              model,
+              resolveSessionThinkingLevel(target.key, snapshot)
+            ).phi
+            if (current) {
+              if (!ownsRemoteRuntimeSession(current.session.runtimeSessionId))
+                throw new Error('Remote selection requires an exact live attachment')
+              await current.session.setModel(model, {
+                assertCurrent: target.assertCurrent,
+                preferredThinkingLevel: preferred
+              })
+              target.assertCurrent()
+            } else {
+              if (target.phiSessionId && findPhiSessionById(target.phiSessionId)?.runtimeRef)
+                throw new Error('Remote selection requires an exact live attachment')
+              if (target.phiSessionId)
+                updateSessionManifest(target.phiSessionId, {
+                  model: { providerId, modelId },
+                  thinkingLevel: preferred
+                })
+            }
+            const key = resolveSessionKeyAlias(target.key)
+            sessionModelSelections.set(key, { providerId, modelId })
+            const confirmed = target.phiSessionId
+              ? findPhiSessionById(target.phiSessionId)?.thinkingLevel
+              : preferred
+            if (confirmed === undefined) sessionThinkingLevels.delete(key)
+            else sessionThinkingLevels.set(key, confirmed)
+            rememberSelection({ providerId, modelId })
+            return
+          }
+          const nextModel = { providerId, modelId }
+          if (!hasActivePromptRun(target.key)) {
+            const current = await target.resolved()
+            if (current) await current.session.setModel(model)
+            target.assertCurrent()
+          }
+          sessionModelSelections.set(resolveSessionKeyAlias(target.key), nextModel)
+          if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { model: nextModel })
+          rememberSelection(nextModel)
         }
-        const key = resolveSessionKeyAlias(target.key)
-        sessionModelSelections.set(key, { providerId, modelId })
-        const confirmed = target.phiSessionId
-          ? findPhiSessionById(target.phiSessionId)?.thinkingLevel
-          : preferred
-        if (confirmed === undefined) sessionThinkingLevels.delete(key)
-        else sessionThinkingLevels.set(key, confirmed)
-        rememberSelection({ providerId, modelId })
-        return
-      }
-      const nextModel = { providerId, modelId }
-      if (!hasActivePromptRun(target.key)) {
-        const current = await target.resolved()
-        if (current) await current.session.setModel(model)
-        target.assertCurrent()
-      }
-      sessionModelSelections.set(resolveSessionKeyAlias(target.key), nextModel)
-      if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { model: nextModel })
-      rememberSelection(nextModel)
-    })
-    const settled = selection.then(
-      () => undefined,
-      () => undefined
-    )
-    sessionModelSelectionQueues.set(key, settled)
-    void settled.then(() => {
-      if (sessionModelSelectionQueues.get(key) === settled) sessionModelSelectionQueues.delete(key)
-    })
-    return selection
-  })
-  ipcMain.handle('models:selected', async () => {
+      )
+      const settled = selection.then(
+        () => undefined,
+        () => undefined
+      )
+      sessionModelSelectionQueues.set(key, settled)
+      void settled.then(() => {
+        if (sessionModelSelectionQueues.get(key) === settled)
+          sessionModelSelectionQueues.delete(key)
+      })
+      return selection
+    }
+  )
+  ipcMain.handle(IPC.models.selected, async () => {
     const snapshot: SessionSnapshot = {
       path: currentSessionPath,
       cwd: currentCwd,
@@ -10542,7 +10551,7 @@ app.whenReady().then(async () => {
     return null
   })
 
-  ipcMain.handle('thinking:select', async (_, level: ThinkingLevel) => {
+  ipcMain.handle(IPC.thinking.select, async (_, level: ThinkingLevel) => {
     const target = captureCurrentSelectionTarget()
     if (target.rpc) {
       const current = await target.resolved()
@@ -10579,7 +10588,7 @@ app.whenReady().then(async () => {
     const current = await target.resolved()
     if (current) await current.session.setThinkingLevel(level)
   })
-  ipcMain.handle('thinking:selected', async () => {
+  ipcMain.handle(IPC.thinking.selected, async () => {
     const resolved = sessionThinkingLevels.get(resolveSessionKeyAlias(currentSessionKey))
     if (resolved) return resolved
 
@@ -10595,29 +10604,29 @@ app.whenReady().then(async () => {
     })
   })
 
-  ipcMain.handle('sessions:list', async () => listSessions(getNoProjectTaskFolder()))
-  ipcMain.handle('sessions:homeActivity', async () => getHomeActivity())
-  ipcMain.handle('sessions:current', async () => getCurrentSessionPayloadWithMessages())
-  ipcMain.handle('sessions:contextUsage', async () => getCurrentContextUsage())
-  ipcMain.handle('sessions:runtimeRecovery', async (_, target: unknown) =>
+  ipcMain.handle(IPC.sessions.list, async () => listSessions(getNoProjectTaskFolder()))
+  ipcMain.handle(IPC.sessions.homeActivity, async () => getHomeActivity())
+  ipcMain.handle(IPC.sessions.current, async () => getCurrentSessionPayloadWithMessages())
+  ipcMain.handle(IPC.sessions.contextUsage, async () => getCurrentContextUsage())
+  ipcMain.handle(IPC.sessions.runtimeRecovery, async (_, target: unknown) =>
     runtimeRecoveryController.getState(target)
   )
-  ipcMain.handle('sessions:resumeRuntime', async (_, target: unknown, replacement?: unknown) =>
+  ipcMain.handle(IPC.sessions.resumeRuntime, async (_, target: unknown, replacement?: unknown) =>
     runtimeRecoveryController.resume(target, replacement)
   )
-  ipcMain.handle('sessions:continueRuntimeSummary', async (_, target: unknown, sha256: unknown) =>
+  ipcMain.handle(IPC.sessions.continueRuntimeSummary, async (_, target: unknown, sha256: unknown) =>
     runtimeRecoveryController.continueFromSummary(target, sha256)
   )
-  ipcMain.handle('sessions:autoCompactionSettings', async (_, target: unknown) =>
+  ipcMain.handle(IPC.sessions.autoCompactionSettings, async (_, target: unknown) =>
     getCurrentAutoCompactionSettings(target)
   )
   ipcMain.handle(
-    'sessions:autoCompactionSettings:set',
+    IPC.sessions.autoCompactionSettingsSet,
     async (_, target: unknown, patch: unknown) => setCurrentAutoCompactionSettings(target, patch)
   )
-  ipcMain.handle('sessions:compact', async (_, target: unknown) => compactCurrentSession(target))
+  ipcMain.handle(IPC.sessions.compact, async (_, target: unknown) => compactCurrentSession(target))
   ipcMain.handle(
-    'sessions:updatePermissionMode',
+    IPC.sessions.updatePermissionMode,
     async (event, value: unknown, target: unknown) => {
       requireMainWindowRenderer(event)
       const permissionMode = validateSessionPermissionModeUpdate(
@@ -10639,12 +10648,12 @@ app.whenReady().then(async () => {
       return getCurrentSessionPayload()
     }
   )
-  ipcMain.handle('sessions:create', async () => {
+  ipcMain.handle(IPC.sessions.create, async () => {
     const cwd = getNoProjectTaskFolder()
     const session = createPhiManagedSession(cwd, 'auto')
     return disposeAndSwitchSession(session.path, cwd, session.permissionMode)
   })
-  ipcMain.handle('sessions:fork', async (_, sourceId: unknown, eventId: unknown) => {
+  ipcMain.handle(IPC.sessions.fork, async (_, sourceId: unknown, eventId: unknown) => {
     if (typeof sourceId !== 'string' || typeof eventId !== 'string') {
       throw new Error('无效的会话分叉请求')
     }
@@ -10680,7 +10689,7 @@ app.whenReady().then(async () => {
       throw error
     }
   })
-  ipcMain.handle('sessions:switch', async (_, path: string) => {
+  ipcMain.handle(IPC.sessions.switch, async (_, path: string) => {
     const request = ++sessionSwitchRequest
     const phiOnlySessionId = phiSessionIdFromPath(path)
     if (phiOnlySessionId) {
@@ -10781,14 +10790,14 @@ app.whenReady().then(async () => {
       ]
     }
   })
-  ipcMain.handle('sessions:acknowledge', async (_, path: string) => {
+  ipcMain.handle(IPC.sessions.acknowledge, async (_, path: string) => {
     const phiOnlySessionId = phiSessionIdFromPath(path)
     const cwd = phiOnlySessionId
       ? (findPhiSessionById(phiOnlySessionId)?.cwd ?? currentCwd)
       : (await openRuntimeSessionManager(path)).getCwd()
     return acknowledgeSession(path, cwd)
   })
-  ipcMain.handle('sessions:delete', async (_, path: string) => {
+  ipcMain.handle(IPC.sessions.delete, async (_, path: string) => {
     sessionTitleGenerator?.cancel(path)
     const deletionCwd = currentCwd
     const phiSessionId = phiSessionIdFromPath(path)
@@ -10827,7 +10836,7 @@ app.whenReady().then(async () => {
     deleteSession(path)
     if (manifest) loadedSkillNamesBySession.delete(manifest.sessionId)
   })
-  ipcMain.handle('sessions:generateTitle', async (event, path: unknown) => {
+  ipcMain.handle(IPC.sessions.generateTitle, async (event, path: unknown) => {
     requireMainWindowRenderer(event)
     if (typeof path !== 'string' || !path || path.length > 8192) {
       throw new Error('对话路径无效')
@@ -10840,7 +10849,7 @@ app.whenReady().then(async () => {
     if (!title) throw new Error('暂时无法生成标题，请稍后重试，并检查当前模型是否可用')
     return title
   })
-  ipcMain.handle('sessions:rename', async (_, path: string, name: string) => {
+  ipcMain.handle(IPC.sessions.rename, async (_, path: string, name: string) => {
     const trimmedName = name.trim()
     if (!trimmedName) return
 
@@ -10852,7 +10861,7 @@ app.whenReady().then(async () => {
       manualTitleRequests.delete(path)
     }
   })
-  ipcMain.handle('sessions:export', async (_, sessionId: unknown) => {
+  ipcMain.handle(IPC.sessions.export, async (_, sessionId: unknown) => {
     if (typeof sessionId !== 'string') throw new Error('会话编号无效')
     const manifest = findPhiSessionById(sessionId)
     if (!manifest) throw new Error('会话不存在')
@@ -10877,8 +10886,8 @@ app.whenReady().then(async () => {
     return result
   })
 
-  ipcMain.handle('projects:list', async () => listProjects())
-  ipcMain.handle('projects:pickDirectory', async () => {
+  ipcMain.handle(IPC.projects.list, async () => listProjects())
+  ipcMain.handle(IPC.projects.pickDirectory, async () => {
     const window = getActiveWindow()
     const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
@@ -10892,14 +10901,14 @@ app.whenReady().then(async () => {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
   ipcMain.handle(
-    'projects:create',
+    IPC.projects.create,
     async (_, name: string, workingDirectory: string, permissionMode: PermissionMode) =>
       createProject({ name, workingDirectory, permissionMode })
   )
-  ipcMain.handle('projects:createRemote', async (_, input: RemoteProjectCreateInput) =>
+  ipcMain.handle(IPC.projects.createRemote, async (_, input: RemoteProjectCreateInput) =>
     createCheckedRemoteProject(input)
   )
-  ipcMain.handle('projects:delete', async (_, id: string) => {
+  ipcMain.handle(IPC.projects.delete, async (_, id: string) => {
     // A broken terminal host must not make the project undeletable; its shells are already gone.
     await terminalManager?.closeWorkspace(`project:${id}`).catch(() => {
       writeAppLog({ level: 'error', event: 'terminal_project_close_failed' })
@@ -10915,7 +10924,7 @@ app.whenReady().then(async () => {
     }
     deleteProject(id)
   })
-  ipcMain.handle('projects:updatePermissionMode', async (event, id: string, value: unknown) => {
+  ipcMain.handle(IPC.projects.updatePermissionMode, async (event, id: string, value: unknown) => {
     requireMainWindowRenderer(event)
     const permissionMode = validatePermissionMode(value)
     const project = updateProjectPermissionMode(id, permissionMode)
@@ -10933,7 +10942,7 @@ app.whenReady().then(async () => {
     return project
   })
   ipcMain.handle(
-    'projects:updateDefaults',
+    IPC.projects.updateDefaults,
     async (
       _,
       id: string,
@@ -10955,7 +10964,7 @@ app.whenReady().then(async () => {
     }
   )
   // Memory settings reach the worker at session creation, so they apply to new conversations.
-  ipcMain.handle('projects:updateMemory', async (_, id: string, settings: unknown) => {
+  ipcMain.handle(IPC.projects.updateMemory, async (_, id: string, settings: unknown) => {
     if (projectMemoryPolicyUpdates.has(id)) throw new Error('项目记忆设置正在更新，请稍后重试')
     const project = requireProject(id)
     const previous = normalizeProjectMemorySettings(project.memory)
@@ -10987,8 +10996,8 @@ app.whenReady().then(async () => {
       projectMemoryPolicyUpdates.delete(id)
     }
   })
-  ipcMain.handle('memory:snapshot', async (_, id: string) => projectMemorySnapshot(id))
-  ipcMain.handle('memory:deleteLesson', async (_, id: string, index: unknown, text: unknown) => {
+  ipcMain.handle(IPC.memory.snapshot, async (_, id: string) => projectMemorySnapshot(id))
+  ipcMain.handle(IPC.memory.deleteLesson, async (_, id: string, index: unknown, text: unknown) => {
     const project = requireProject(id)
     await retireDesktopProjectMemoryAdapters(id)
     await getPhiEngine().memory.deleteLesson({
@@ -10998,18 +11007,18 @@ app.whenReady().then(async () => {
     })
     return projectMemorySnapshot(id)
   })
-  ipcMain.handle('memory:clear', async (_, id: string) => {
+  ipcMain.handle(IPC.memory.clear, async (_, id: string) => {
     const project = requireProject(id)
     await retireDesktopProjectMemoryAdapters(id)
     await getPhiEngine().memory.clear(projectMemoryTarget(project))
     return projectMemorySnapshot(id)
   })
-  ipcMain.handle('projects:listRemoteHosts', async () => listRemoteHostsWithRuntimeRoots())
-  ipcMain.handle('projects:listRemoteDirectories', async (_, input: unknown) =>
+  ipcMain.handle(IPC.projects.listRemoteHosts, async () => listRemoteHostsWithRuntimeRoots())
+  ipcMain.handle(IPC.projects.listRemoteDirectories, async (_, input: unknown) =>
     listRemoteProjectDirectories(input)
   )
-  ipcMain.handle('projects:listOpenSshHosts', async () => listOpenSshHosts())
-  ipcMain.handle('projects:saveOpenSshHost', async (_, input: OpenSshHostInput) => {
+  ipcMain.handle(IPC.projects.listOpenSshHosts, async () => listOpenSshHosts())
+  ipcMain.handle(IPC.projects.saveOpenSshHost, async (_, input: OpenSshHostInput) => {
     if (!input || typeof input !== 'object') throw new Error('SSH 服务器配置无效')
     if (input.originalAlias) {
       const id = sshConfigHostId(input.originalAlias)
@@ -11038,7 +11047,7 @@ app.whenReady().then(async () => {
     return remoteHostProfileWithRuntimeRoot(profile)
   })
   ipcMain.handle(
-    'projects:saveRemoteHost',
+    IPC.projects.saveRemoteHost,
     async (
       _,
       input: {
@@ -11070,7 +11079,7 @@ app.whenReady().then(async () => {
       return remoteHostProfileWithRuntimeRoot(saveRemoteHostProfile(input))
     }
   )
-  ipcMain.handle('projects:deleteRemoteHost', async (_, id: string) => {
+  ipcMain.handle(IPC.projects.deleteRemoteHost, async (_, id: string) => {
     if (
       listProjects().some(
         (project) =>
@@ -11085,7 +11094,7 @@ app.whenReady().then(async () => {
     clearRemoteRuntimeRootSetting(id)
     deleteRemoteHostProfile(id)
   })
-  ipcMain.handle('remote:saveEnvironment', async (_, hostProfileId: unknown, value: unknown) => {
+  ipcMain.handle(IPC.remote.saveEnvironment, async (_, hostProfileId: unknown, value: unknown) => {
     if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
       throw new Error('SSH 服务器档案 ID 无效')
     }
@@ -11123,7 +11132,7 @@ app.whenReady().then(async () => {
     } satisfies RemoteEnvironmentSettingInput)
   })
   ipcMain.handle(
-    'remote:saveRuntimeRoot',
+    IPC.remote.saveRuntimeRoot,
     async (_, hostProfileId: unknown, runtimeRoot: unknown) => {
       if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
         throw new Error('SSH 服务器档案 ID 无效')
@@ -11135,7 +11144,7 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle(
-    'remote:saveMicromambaMirror',
+    IPC.remote.saveMicromambaMirror,
     async (_, hostProfileId: unknown, downloadMirrorPrefix: unknown) => {
       if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
         throw new Error('SSH 服务器档案 ID 无效')
@@ -11151,7 +11160,7 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle(
-    'remote:doctor',
+    IPC.remote.doctor,
     async (_, hostProfileId: unknown, remotePath: unknown, options: unknown) => {
       if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
         throw new Error('SSH 服务器档案 ID 无效')
@@ -11164,19 +11173,19 @@ app.whenReady().then(async () => {
       })
     }
   )
-  ipcMain.handle('remote:installNextflow', async (_, hostProfileId: unknown) => {
+  ipcMain.handle(IPC.remote.installNextflow, async (_, hostProfileId: unknown) => {
     if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
       throw new Error('SSH 服务器档案 ID 无效')
     }
     return installRemoteNextflow(hostProfileId)
   })
   ipcMain.handle(
-    'projects:updateRemoteConnection',
+    IPC.projects.updateRemoteConnection,
     async (_, id: string, connectionId: string, patch: ProjectRemoteConnection | null) =>
       updateProjectRemoteConnectionRuntimeAware(id, connectionId, patch)
   )
   ipcMain.handle(
-    'projects:updateRemoteDefaults',
+    IPC.projects.updateRemoteDefaults,
     async (
       _,
       id: string,
@@ -11186,10 +11195,10 @@ app.whenReady().then(async () => {
       }
     ) => updateProjectRemoteDefaults(id, defaults)
   )
-  ipcMain.handle('projects:sessions', async (_, workingDirectory: string) =>
+  ipcMain.handle(IPC.projects.sessions, async (_, workingDirectory: string) =>
     listSessions(workingDirectory)
   )
-  ipcMain.handle('projects:sessionsById', async (_, projectId: string) => {
+  ipcMain.handle(IPC.projects.sessionsById, async (_, projectId: string) => {
     const project = getProject(projectId)
     if (!project) throw new Error('项目不存在')
     const cwd =
@@ -11198,13 +11207,13 @@ app.whenReady().then(async () => {
         : project.workingDirectory
     return listSessions(cwd)
   })
-  ipcMain.handle('projects:newRemoteSession', async (_, projectId: string) => {
+  ipcMain.handle(IPC.projects.newRemoteSession, async (_, projectId: string) => {
     const session = createRemoteManagedSession(projectId)
     const current = await disposeAndSwitchSession(session.path, session.cwd, session.permissionMode)
     scheduleRemoteProjectCheck(session.sessionId, projectId)
     return current
   })
-  ipcMain.handle('projects:retryRemoteConnection', async (_, request: unknown) => {
+  ipcMain.handle(IPC.projects.retryRemoteConnection, async (_, request: unknown) => {
     if (
       !request ||
       typeof request !== 'object' ||
@@ -11219,14 +11228,14 @@ app.whenReady().then(async () => {
     return remoteConnectionTracker.check(sessionId, projectId, { userInitiated: true })
   })
   ipcMain.handle(
-    'projects:newSession',
+    IPC.projects.newSession,
     async (_, workingDirectory: string, permissionMode: PermissionMode) => {
       assertProjectPathAvailable(workingDirectory)
       const session = createPhiManagedSession(workingDirectory, permissionMode)
       return disposeAndSwitchSession(session.path, workingDirectory, session.permissionMode)
     }
   )
-  ipcMain.handle('analysis:listNotebooks', async (_, cwd?: string) => {
+  ipcMain.handle(IPC.analysis.listNotebooks, async (_, cwd?: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       return emptyNotebookRegistry('选择一个项目或当前 workspace 后显示 notebooks')
@@ -11241,7 +11250,7 @@ app.whenReady().then(async () => {
       ...registry
     }
   })
-  ipcMain.handle('analysis:initializeProject', async (_, cwd: string) => {
+  ipcMain.handle(IPC.analysis.initializeProject, async (_, cwd: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
@@ -11251,7 +11260,7 @@ app.whenReady().then(async () => {
       initializeProjectAnalysis(workspace.workingDirectory)
     )
   })
-  ipcMain.handle('analysis:refreshNotebook', async (_, cwd: string, notebookPath: string) => {
+  ipcMain.handle(IPC.analysis.refreshNotebook, async (_, cwd: string, notebookPath: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
@@ -11259,7 +11268,7 @@ app.whenReady().then(async () => {
     // Revalidation reads disk without replacing the tool draft or active path.
     return analysisOpenFile(workspace, notebookPath, true)
   })
-  ipcMain.handle('analysis:openNotebook', async (_, cwd: string, notebookPath: string) => {
+  ipcMain.handle(IPC.analysis.openNotebook, async (_, cwd: string, notebookPath: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
@@ -11270,7 +11279,7 @@ app.whenReady().then(async () => {
     return file
   })
   ipcMain.handle(
-    'analysis:saveNotebook',
+    IPC.analysis.saveNotebook,
     async (_, cwd: string, input: SaveProjectNotebookInput) => {
       const workspace = resolveAnalysisWorkspaceByCwd(cwd)
       if (!workspace) {
@@ -11283,7 +11292,7 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle(
-    'analysis:syncNotebookDraft',
+    IPC.analysis.syncNotebookDraft,
     async (
       _,
       cwd: string,
@@ -11300,7 +11309,7 @@ app.whenReady().then(async () => {
       return syncAnalysisDraft(workspace, file, document, savedRevision ?? file.savedRevision)
     }
   )
-  ipcMain.handle('analysis:createNotebook', async (_, cwd: string, relativePath?: string) => {
+  ipcMain.handle(IPC.analysis.createNotebook, async (_, cwd: string, relativePath?: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
@@ -11309,7 +11318,7 @@ app.whenReady().then(async () => {
     activeNotebookPathByProjectCwd.set(workspace.workingDirectory, file.path)
     return file
   })
-  ipcMain.handle('analysis:closeNotebook', async (_, cwd: string, notebookPath: string) => {
+  ipcMain.handle(IPC.analysis.closeNotebook, async (_, cwd: string, notebookPath: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
@@ -11320,7 +11329,7 @@ app.whenReady().then(async () => {
     }
     return closed
   })
-  ipcMain.handle('analysis:deleteNotebook', async (_, cwd: string, notebookPath: string) => {
+  ipcMain.handle(IPC.analysis.deleteNotebook, async (_, cwd: string, notebookPath: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
@@ -11331,7 +11340,7 @@ app.whenReady().then(async () => {
     }
     return deleted
   })
-  ipcMain.handle('analysis:listKernels', async (_, cwd?: string) => {
+  ipcMain.handle(IPC.analysis.listKernels, async (_, cwd?: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (workspace) return analysisKernels(workspace)
     const targetCwd = cwd ?? currentCwd
@@ -11340,7 +11349,7 @@ app.whenReady().then(async () => {
     }
     return detectConfiguredAnalysisKernels()
   })
-  ipcMain.handle('analysis:jupyterStatus', async (_, cwd: string) => {
+  ipcMain.handle(IPC.analysis.jupyterStatus, async (_, cwd: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       return stoppedJupyterStatus(cwd, '请选择一个已添加的项目或当前 workspace')
@@ -11350,7 +11359,7 @@ app.whenReady().then(async () => {
       jupyterServerRegistry.status(workspace.workingDirectory)
     )
   })
-  ipcMain.handle('analysis:jupyterRuntimeStatus', async (_, cwd: string) => {
+  ipcMain.handle(IPC.analysis.jupyterRuntimeStatus, async (_, cwd: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       return emptyAnalysisRuntimeStatus(cwd, '请选择一个已添加的项目或当前 workspace')
@@ -11363,7 +11372,7 @@ app.whenReady().then(async () => {
       notebooks: sessions.projectSummary(workspace.workingDirectory)
     }
   })
-  ipcMain.handle('analysis:startJupyter', async (_, cwd: string) => {
+  ipcMain.handle(IPC.analysis.startJupyter, async (_, cwd: string) => {
     const workspace = resolveAnalysisWorkspaceByCwd(cwd)
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
@@ -11374,7 +11383,7 @@ app.whenReady().then(async () => {
     )
   })
   ipcMain.handle(
-    'analysis:stopJupyter',
+    IPC.analysis.stopJupyter,
     async (_, cwd: string, options?: { abandonUnconfirmed?: boolean }) => {
       const workspace = resolveAnalysisWorkspaceByCwd(cwd)
       if (!workspace) {
@@ -11395,7 +11404,7 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle(
-    'analysis:notebookSessionStatus',
+    IPC.analysis.notebookSessionStatus,
     async (_, cwd: string, notebookPath: string, document: NotebookDocument) => {
       const workspace = resolveAnalysisWorkspaceByCwd(cwd)
       if (!workspace) {
@@ -11411,7 +11420,7 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle(
-    'analysis:ensureNotebookSession',
+    IPC.analysis.ensureNotebookSession,
     async (_, cwd: string, notebookPath: string, document: NotebookDocument) => {
       const workspace = resolveAnalysisWorkspaceByCwd(cwd)
       if (!workspace) {
@@ -11426,16 +11435,19 @@ app.whenReady().then(async () => {
       })
     }
   )
-  ipcMain.handle('analysis:closeNotebookSession', async (_, cwd: string, notebookPath: string) => {
-    const workspace = resolveAnalysisWorkspaceByCwd(cwd)
-    if (!workspace) {
-      throw new Error('请选择一个已添加的项目或当前 workspace')
-    }
-    const file = await analysisOpenFile(workspace, notebookPath)
-    return analysisSessions(workspace).closeSession(workspace.workingDirectory, file.path)
-  })
   ipcMain.handle(
-    'analysis:interruptNotebookExecution',
+    IPC.analysis.closeNotebookSession,
+    async (_, cwd: string, notebookPath: string) => {
+      const workspace = resolveAnalysisWorkspaceByCwd(cwd)
+      if (!workspace) {
+        throw new Error('请选择一个已添加的项目或当前 workspace')
+      }
+      const file = await analysisOpenFile(workspace, notebookPath)
+      return analysisSessions(workspace).closeSession(workspace.workingDirectory, file.path)
+    }
+  )
+  ipcMain.handle(
+    IPC.analysis.interruptNotebookExecution,
     async (_, cwd: string, notebookPath: string) => {
       const workspace = resolveAnalysisWorkspaceByCwd(cwd)
       if (!workspace) {
@@ -11446,7 +11458,7 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle(
-    'analysis:completeNotebookCell',
+    IPC.analysis.completeNotebookCell,
     async (
       _,
       cwd: string,
@@ -11508,7 +11520,7 @@ app.whenReady().then(async () => {
     }
   )
   ipcMain.handle(
-    'analysis:formatNotebookCell',
+    IPC.analysis.formatNotebookCell,
     async (
       _,
       cwd: string,
@@ -11550,9 +11562,9 @@ app.whenReady().then(async () => {
       })
     }
   )
-  ipcMain.handle('analysis:listNotebookAiGenerationJobs', () => notebookAiGenerationJobs.list())
+  ipcMain.handle(IPC.analysis.listNotebookAiGenerationJobs, () => notebookAiGenerationJobs.list())
   ipcMain.handle(
-    'analysis:generateNotebookCode',
+    IPC.analysis.generateNotebookCode,
     async (
       event,
       cwd: string,
@@ -11561,11 +11573,11 @@ app.whenReady().then(async () => {
       input: AnalysisNotebookCodeGenerationInput
     ) =>
       generateAnalysisNotebookCode(cwd, notebookPath, document, input, (progress) => {
-        event.sender.send('analysis:notebookCodeGenerationProgress', progress)
+        event.sender.send(IPC.analysis.notebookCodeGenerationProgress, progress)
       })
   )
   ipcMain.handle(
-    'analysis:executeNotebookCell',
+    IPC.analysis.executeNotebookCell,
     async (_, cwd: string, notebookPath: string, document: NotebookDocument, cellId: string) => {
       const workspace = resolveAnalysisWorkspaceByCwd(cwd)
       if (!workspace) {
@@ -11644,29 +11656,29 @@ app.whenReady().then(async () => {
       }
     }
   )
-
-  ipcMain.handle('tool:approval-response', async (event, requestId: unknown, approved: unknown) => {
-    if (
-      typeof requestId !== 'string' ||
-      requestId.length === 0 ||
-      requestId.length > 256 ||
-      typeof approved !== 'boolean'
-    ) {
-      return false
-    }
-    return resolveToolApproval(requestId, approved, event.sender)
-  })
-
   ipcMain.handle(
-    'agent:interaction-response',
+    IPC.tool.approvalResponse,
+    async (event, requestId: unknown, approved: unknown) => {
+      if (
+        typeof requestId !== 'string' ||
+        requestId.length === 0 ||
+        requestId.length > 256 ||
+        typeof approved !== 'boolean'
+      ) {
+        return false
+      }
+      return resolveToolApproval(requestId, approved, event.sender)
+    }
+  )
+  ipcMain.handle(
+    IPC.agent.interactionResponse,
     async (event, requestId: string, response, cancelled?: boolean) => {
       const window = requireMainWindowRenderer(event)
       resolveAgentUserInteraction(requestId, response, cancelled === true, window.webContents.id)
     }
   )
-
-  ipcMain.handle('phiPlugins:list', async () => phiPluginListItems())
-  ipcMain.handle('phiPlugins:pickDirectory', async () => {
+  ipcMain.handle(IPC.phiPlugins.list, async () => phiPluginListItems())
+  ipcMain.handle(IPC.phiPlugins.pickDirectory, async () => {
     const window = getActiveWindow()
     const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
@@ -11679,7 +11691,7 @@ app.whenReady().then(async () => {
       : await dialog.showOpenDialog(options)
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
-  ipcMain.handle('phiPlugins:previewDirectory', async (_, path: unknown) => {
+  ipcMain.handle(IPC.phiPlugins.previewDirectory, async (_, path: unknown) => {
     if (typeof path !== 'string' || path.trim().length === 0) {
       return {
         ok: false,
@@ -11710,7 +11722,7 @@ app.whenReady().then(async () => {
       } satisfies PhiPluginInstallPreview
     }
   })
-  ipcMain.handle('phiPlugins:installFromDirectory', async (_, path: unknown) => {
+  ipcMain.handle(IPC.phiPlugins.installFromDirectory, async (_, path: unknown) => {
     if (typeof path !== 'string' || path.trim().length === 0) {
       return failedPhiPluginMutation('path', 'Select a valid Plugin directory')
     }
@@ -11759,7 +11771,7 @@ app.whenReady().then(async () => {
       )
     }
   })
-  ipcMain.handle('phiPlugins:setEnabled', async (_, id: unknown, enabled: unknown) => {
+  ipcMain.handle(IPC.phiPlugins.setEnabled, async (_, id: unknown, enabled: unknown) => {
     if (typeof id !== 'string' || id.length === 0 || typeof enabled !== 'boolean') {
       return failedPhiPluginMutation('request', 'Invalid Plugin ID or enabled state')
     }
@@ -11777,7 +11789,7 @@ app.whenReady().then(async () => {
       )
     }
   })
-  ipcMain.handle('phiPlugins:uninstall', async (_, id: unknown) => {
+  ipcMain.handle(IPC.phiPlugins.uninstall, async (_, id: unknown) => {
     if (typeof id !== 'string' || id.length === 0) {
       return failedPhiPluginMutation('id', 'Invalid Plugin ID')
     }
@@ -11796,7 +11808,7 @@ app.whenReady().then(async () => {
       )
     }
   })
-  ipcMain.handle('packages:pickRegistryDirectory', async () => {
+  ipcMain.handle(IPC.packages.pickRegistryDirectory, async () => {
     const window = getActiveWindow()
     const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
@@ -11809,7 +11821,7 @@ app.whenReady().then(async () => {
       : await dialog.showOpenDialog(options)
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
-  ipcMain.handle('packages:pickArchive', async () => {
+  ipcMain.handle(IPC.packages.pickArchive, async () => {
     const window = getActiveWindow()
     const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
     const options: Electron.OpenDialogOptions = {
@@ -11823,7 +11835,7 @@ app.whenReady().then(async () => {
       : await dialog.showOpenDialog(options)
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
-  ipcMain.handle('packages:listRegistries', async () => {
+  ipcMain.handle(IPC.packages.listRegistries, async () => {
     const result = await listKnownRegistries(knownContentSourceOptions())
     if (result.error) {
       writeAppLog({
@@ -11834,7 +11846,7 @@ app.whenReady().then(async () => {
     }
     return result.registries
   })
-  ipcMain.handle('packages:contentCatalog', async (_, forceRefresh?: unknown) => {
+  ipcMain.handle(IPC.packages.contentCatalog, async (_, forceRefresh?: unknown) => {
     if (forceRefresh !== undefined && typeof forceRefresh !== 'boolean')
       throw new Error('Invalid catalog refresh request')
     const registry = await syncPreferredOfficialRegistry({
@@ -11843,18 +11855,18 @@ app.whenReady().then(async () => {
     })
     return packageRegistryIconView(registry)
   })
-  ipcMain.handle('packages:removeRegistry', async (_, id: unknown) => {
+  ipcMain.handle(IPC.packages.removeRegistry, async (_, id: unknown) => {
     if (typeof id !== 'string') throw new Error('Invalid source ID')
     removeKnownRegistry(id, { agentDir: AGENT_DIR })
     return (await listKnownRegistries(knownContentSourceOptions())).registries
   })
-  ipcMain.handle('sources:previewGithub', async (_, url: unknown) => {
+  ipcMain.handle(IPC.sources.previewGithub, async (_, url: unknown) => {
     if (typeof url !== 'string' || url.length < 1 || url.length > 2048) {
       throw new Error('Invalid GitHub repository URL')
     }
     return previewGithubSource(url, { agentDir: AGENT_DIR, fetch: officialRegistryFetch })
   })
-  ipcMain.handle('sources:addGithub', async (_, input: unknown) => {
+  ipcMain.handle(IPC.sources.addGithub, async (_, input: unknown) => {
     if (
       !isRecord(input) ||
       Object.keys(input).some((key) => key !== 'url' && key !== 'sha') ||
@@ -11874,13 +11886,13 @@ app.whenReady().then(async () => {
     writeAppLog({ event: 'github_source_added', metadata: { repo: source.repo, sha: source.sha } })
     return source
   })
-  ipcMain.handle('sources:checkGithubUpdate', async (_, id: unknown) => {
+  ipcMain.handle(IPC.sources.checkGithubUpdate, async (_, id: unknown) => {
     if (typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id)) {
       throw new Error('Invalid GitHub source ID')
     }
     return checkGithubSourceUpdate(id, { agentDir: AGENT_DIR, fetch: officialRegistryFetch })
   })
-  ipcMain.handle('sources:applyGithubUpdate', async (_, input: unknown) => {
+  ipcMain.handle(IPC.sources.applyGithubUpdate, async (_, input: unknown) => {
     if (
       !isRecord(input) ||
       Object.keys(input).some((key) => key !== 'id' && key !== 'sha') ||
@@ -11902,7 +11914,7 @@ app.whenReady().then(async () => {
     })
     return source
   })
-  ipcMain.handle('sources:removeGithub', async (_, id: unknown) => {
+  ipcMain.handle(IPC.sources.removeGithub, async (_, id: unknown) => {
     if (typeof id !== 'string' || !/^[a-f0-9]{16}$/.test(id)) {
       throw new Error('Invalid GitHub source ID')
     }
@@ -11921,14 +11933,14 @@ app.whenReady().then(async () => {
     }
     return removed
   })
-  ipcMain.handle('sources:listGithub', async () => {
+  ipcMain.handle(IPC.sources.listGithub, async () => {
     const state = listGithubSources({ agentDir: AGENT_DIR })
     if (state.error) {
       writeAppLog({ level: 'warn', event: 'github_sources_invalid' })
     }
     return state.sources
   })
-  ipcMain.handle('packages:registry', async (_, dir: unknown) => {
+  ipcMain.handle(IPC.packages.registry, async (_, dir: unknown) => {
     if (typeof dir !== 'string' || dir.trim().length === 0) {
       throw new Error('Invalid registry directory')
     }
@@ -11940,7 +11952,7 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle(
-    'packages:plan',
+    IPC.packages.plan,
     async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
       if (
         typeof dir !== 'string' ||
@@ -11963,7 +11975,7 @@ app.whenReady().then(async () => {
       }
     }
   )
-  ipcMain.handle('packages:skillDetail', async (_, dir: unknown, id: unknown) => {
+  ipcMain.handle(IPC.packages.skillDetail, async (_, dir: unknown, id: unknown) => {
     if (typeof dir !== 'string' || typeof id !== 'string' || id.length === 0) {
       throw new Error('Invalid Skill package detail request')
     }
@@ -11974,7 +11986,7 @@ app.whenReady().then(async () => {
       throw new Error(`Could not read Skill package details: ${errorMessage(error)}`)
     }
   })
-  ipcMain.handle('packages:wrapperDetail', async (_, dir: unknown, id: unknown) => {
+  ipcMain.handle(IPC.packages.wrapperDetail, async (_, dir: unknown, id: unknown) => {
     if (typeof dir !== 'string' || typeof id !== 'string' || id.length === 0) {
       throw new Error('Invalid Wrapper package detail request')
     }
@@ -11986,7 +11998,7 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle(
-    'packages:install',
+    IPC.packages.install,
     serializedPackageMutation(
       async (_, dir: unknown, type: unknown, id: unknown, version?: unknown) => {
         if (
@@ -12046,7 +12058,7 @@ app.whenReady().then(async () => {
     )
   )
   ipcMain.handle(
-    'packages:removeWrapper',
+    IPC.packages.removeWrapper,
     serializedPackageMutation(async (_, id: unknown) => {
       if (typeof id !== 'string' || id.length === 0)
         throw new Error('Invalid Wrapper package request')
@@ -12061,7 +12073,7 @@ app.whenReady().then(async () => {
     })
   )
   ipcMain.handle(
-    'packages:uninstall',
+    IPC.packages.uninstall,
     serializedPackageMutation(async (_, type: unknown, id: unknown) => {
       if (
         (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
@@ -12084,14 +12096,14 @@ app.whenReady().then(async () => {
       }
     })
   )
-  ipcMain.handle('packages:listInstalled', async () => {
+  ipcMain.handle(IPC.packages.listInstalled, async () => {
     try {
       return listRegistryPackages({ agentDir: AGENT_DIR })
     } catch (error) {
       throw new Error(`Could not read installed packages: ${errorMessage(error)}`)
     }
   })
-  ipcMain.handle('packages:previewImport', async (_, path: unknown) => {
+  ipcMain.handle(IPC.packages.previewImport, async (_, path: unknown) => {
     if (typeof path !== 'string' || path.length === 0)
       throw new Error('Invalid offline package path')
     try {
@@ -12105,7 +12117,7 @@ app.whenReady().then(async () => {
     }
   })
   ipcMain.handle(
-    'packages:import',
+    IPC.packages.import,
     serializedPackageMutation(async (_, path: unknown) => {
       if (typeof path !== 'string' || path.length === 0)
         throw new Error('Invalid offline package path')
@@ -12153,11 +12165,11 @@ app.whenReady().then(async () => {
       }
     })
   )
-  ipcMain.handle('packages:listUpdates', async () =>
+  ipcMain.handle(IPC.packages.listUpdates, async () =>
     packageUpdateViews(await refreshCachedPackageUpdates())
   )
   ipcMain.handle(
-    'packages:applyUpdate',
+    IPC.packages.applyUpdate,
     serializedPackageMutation(async (_, type: unknown, id: unknown) => {
       if (
         (type !== 'skill' && type !== 'plugin' && type !== 'wrapper' && type !== 'mcp') ||
@@ -12193,7 +12205,7 @@ app.whenReady().then(async () => {
     })
   )
   ipcMain.handle(
-    'packages:applyAllUpdates',
+    IPC.packages.applyAllUpdates,
     serializedPackageMutation(async () => {
       const loaded = await loadPackageRegistries()
       const updates = listPackageUpdates(loaded.registries, {
@@ -12221,7 +12233,7 @@ app.whenReady().then(async () => {
       return result
     })
   )
-  ipcMain.handle('enablement:get', async (_, projectCwd?: unknown) => {
+  ipcMain.handle(IPC.enablement.get, async (_, projectCwd?: unknown) => {
     if (projectCwd !== undefined && typeof projectCwd !== 'string') {
       throw new Error('项目目录无效')
     }
@@ -12233,7 +12245,7 @@ app.whenReady().then(async () => {
       ...(typeof projectCwd === 'string' && projectCwd.length > 0 ? { projectDir: projectCwd } : {})
     })
   })
-  ipcMain.handle('enablement:set', async (_, item: unknown, value: unknown, scope: unknown) => {
+  ipcMain.handle(IPC.enablement.set, async (_, item: unknown, value: unknown, scope: unknown) => {
     if (!isEnablementItemKey(item)) throw new Error('Invalid enablement item ID')
     if (typeof value !== 'boolean' && value !== null) throw new Error('Invalid enablement value')
     const options = enablementScopeOptions(scope as EnablementScope)
@@ -12269,10 +12281,10 @@ app.whenReady().then(async () => {
     if (item.startsWith('wrapper:')) resetWrapperCompositionCatalogCache()
     return getEnablementSnapshot({ agentDir: AGENT_DIR, ...options })
   })
-  ipcMain.handle('skills:list', async (_, cwd?: string) =>
+  ipcMain.handle(IPC.skills.list, async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? listRemoteProjectSkills(cwd) : listSkills(cwd ?? currentCwd)
   )
-  ipcMain.handle('skills:read', async (_, filePath: string, cwd?: string) => {
+  ipcMain.handle(IPC.skills.read, async (_, filePath: string, cwd?: string) => {
     if (isRemoteResourceScope(cwd)) {
       const context = remoteSkillProjectContext(cwd)
       const catalog = await loadRemoteProjectSkillCatalog(context)
@@ -12284,7 +12296,7 @@ app.whenReady().then(async () => {
     return readSkillContent(filePath, cwd ?? currentCwd)
   })
   ipcMain.handle(
-    'skills:setDisabled',
+    IPC.skills.setDisabled,
     async (_, filePath: string, disabled: boolean, cwd?: string) => {
       if (isRemoteResourceScope(cwd)) {
         throw new Error('Skills are not available for this remote project')
@@ -12292,13 +12304,13 @@ app.whenReady().then(async () => {
       return setSkillDisabled(filePath, Boolean(disabled), cwd ?? currentCwd)
     }
   )
-  ipcMain.handle('skills:delete', async (_, filePath: string, cwd?: string) => {
+  ipcMain.handle(IPC.skills.delete, async (_, filePath: string, cwd?: string) => {
     if (isRemoteResourceScope(cwd)) {
       throw new Error('Skills are not available for this remote project')
     }
     return deleteSkill(filePath, cwd ?? currentCwd)
   })
-  ipcMain.handle('skills:trustRemoteProject', async (_, input: unknown) => {
+  ipcMain.handle(IPC.skills.trustRemoteProject, async (_, input: unknown) => {
     const request = checkedRemoteSkillTrustMutation(input)
     const context = remoteSkillProjectContext(request.cwd)
     await trustRemoteProjectSkill(context, {
@@ -12308,7 +12320,7 @@ app.whenReady().then(async () => {
     await invalidateAgentSession()
     return listRemoteProjectSkills(request.cwd)
   })
-  ipcMain.handle('skills:revokeRemoteProjectTrust', async (_, input: unknown) => {
+  ipcMain.handle(IPC.skills.revokeRemoteProjectTrust, async (_, input: unknown) => {
     const request = checkedRemoteSkillTrustMutation(input)
     const context = remoteSkillProjectContext(request.cwd)
     await revokeRemoteProjectSkillTrust(context, {
@@ -12318,10 +12330,10 @@ app.whenReady().then(async () => {
     await invalidateAgentSession()
     return listRemoteProjectSkills(request.cwd)
   })
-  ipcMain.handle('agents:list', async (_, cwd?: string) =>
+  ipcMain.handle(IPC.agents.list, async (_, cwd?: string) =>
     isRemoteResourceScope(cwd) ? listRemotePromptAgents(cwd) : listPromptAgents(cwd ?? currentCwd)
   )
-  ipcMain.handle('agents:trustRemoteProject', async (_, input: unknown) => {
+  ipcMain.handle(IPC.agents.trustRemoteProject, async (_, input: unknown) => {
     const request = checkedRemoteAgentTrustMutation(input)
     const context = remoteAgentProjectContext(request.cwd)
     await trustRemoteAgent(context, {
@@ -12331,7 +12343,7 @@ app.whenReady().then(async () => {
     await invalidateAgentSession()
     return (await loadRemoteAgentCatalog(context)).entries
   })
-  ipcMain.handle('agents:revokeRemoteProjectTrust', async (_, input: unknown) => {
+  ipcMain.handle(IPC.agents.revokeRemoteProjectTrust, async (_, input: unknown) => {
     const request = checkedRemoteAgentTrustMutation(input)
     const context = remoteAgentProjectContext(request.cwd)
     await revokeRemoteAgent(context, {
@@ -12342,7 +12354,7 @@ app.whenReady().then(async () => {
     return (await loadRemoteAgentCatalog(context)).entries
   })
   const connectorSetups = new ConnectorSetupTracker(
-    (progress) => sendToAllWindows('mcp:connectorSetupChanged', progress),
+    (progress) => sendToAllWindows(IPC.mcp.connectorSetupChanged, progress),
     undefined,
     { path: join(AGENT_DIR, 'state', 'connector-setup.json') }
   )
@@ -12403,11 +12415,11 @@ app.whenReady().then(async () => {
     ])
     return [...globalServers, ...projectCatalog.summaries]
   }
-  ipcMain.handle('mcp:listServers', async (_, cwd?: string) => {
+  ipcMain.handle(IPC.mcp.listServers, async (_, cwd?: string) => {
     const servers = await listedMcpServers(cwd)
     return withConnectorMetadata(servers, await connectorCatalog())
   })
-  ipcMain.handle('mcp:trustRemoteProject', async (_, input: unknown) => {
+  ipcMain.handle(IPC.mcp.trustRemoteProject, async (_, input: unknown) => {
     const request = checkedRemoteMcpTrustMutation(input)
     await trustRemoteProjectMcp(remoteMcpProjectContext(request.cwd), {
       relativePath: request.relativePath,
@@ -12417,7 +12429,7 @@ app.whenReady().then(async () => {
     await invalidateAgentSession()
     return withConnectorMetadata(await listedMcpServers(request.cwd), await connectorCatalog())
   })
-  ipcMain.handle('mcp:revokeRemoteProjectTrust', async (_, input: unknown) => {
+  ipcMain.handle(IPC.mcp.revokeRemoteProjectTrust, async (_, input: unknown) => {
     const request = checkedRemoteMcpTrustMutation(input)
     await revokeRemoteProjectMcpTrust(remoteMcpProjectContext(request.cwd), {
       relativePath: request.relativePath,
@@ -12426,9 +12438,9 @@ app.whenReady().then(async () => {
     await invalidateAgentSession()
     return withConnectorMetadata(await listedMcpServers(request.cwd), await connectorCatalog())
   })
-  ipcMain.handle('mcp:listConnectorCatalog', async () => connectorCatalog(true))
+  ipcMain.handle(IPC.mcp.listConnectorCatalog, async () => connectorCatalog(true))
   ipcMain.handle(
-    'mcp:installConnector',
+    IPC.mcp.installConnector,
     async (_, id: unknown, version?: unknown, registryDir?: unknown) => {
       if (
         typeof id !== 'string' ||
@@ -12491,7 +12503,7 @@ app.whenReady().then(async () => {
       )
     }
   )
-  ipcMain.handle('mcp:uninstallConnector', async (_, id: unknown) => {
+  ipcMain.handle(IPC.mcp.uninstallConnector, async (_, id: unknown) => {
     if (typeof id !== 'string' || id.length === 0) throw new Error('Invalid Connector ID')
     return connectorSetups.run(
       id,
@@ -12507,7 +12519,7 @@ app.whenReady().then(async () => {
       'removed'
     )
   })
-  ipcMain.handle('mcp:buildConnectorEnvironment', async (_, id: unknown) => {
+  ipcMain.handle(IPC.mcp.buildConnectorEnvironment, async (_, id: unknown) => {
     if (typeof id !== 'string' || id.length === 0) throw new Error('Invalid Connector ID')
     return connectorSetups.run(id, async (report) => {
       let environment: { envId: string }
@@ -12523,13 +12535,13 @@ app.whenReady().then(async () => {
     })
   })
   ipcMain.handle(
-    'mcp:addRemoteConnector',
+    IPC.mcp.addRemoteConnector,
     async (_, name: string, url: string, options?: RemoteMcpConnectorOptions) => {
       addRemoteMcpConnector(name, url, undefined, options)
       await syncFeaturedMcpApiKeySessions(name)
     }
   )
-  ipcMain.handle('mcp:addLocalConnector', async (_, raw: unknown) => {
+  ipcMain.handle(IPC.mcp.addLocalConnector, async (_, raw: unknown) => {
     const catalogIds = (await connectorCatalog()).map((connector) => connector.id)
     const request = validateLocalConnectorRequest(raw, { catalogIds })
     // The MCP client only loads under the omp worker's Bun runtime, so probe through the bridge
@@ -12542,30 +12554,30 @@ app.whenReady().then(async () => {
     await getPhiEngine().mcp.applyConnectorEnabled({ name: request.name })
     return result
   })
-  ipcMain.handle('mcp:startLocalConnectorAdd', async (_, raw: unknown) => {
+  ipcMain.handle(IPC.mcp.startLocalConnectorAdd, async (_, raw: unknown) => {
     const catalogIds = (await connectorCatalog()).map((connector) => connector.id)
     const request = validateLocalConnectorRequest(raw, { catalogIds })
     return localConnectorJobs.startLocalConnectorAdd(request)
   })
-  ipcMain.handle('mcp:cancelLocalConnectorAdd', async (_, name: unknown) => {
+  ipcMain.handle(IPC.mcp.cancelLocalConnectorAdd, async (_, name: unknown) => {
     if (typeof name !== 'string') throw new Error('Invalid Connector name')
     await localConnectorJobs.cancelLocalConnectorAdd(validateName(name))
   })
-  ipcMain.handle('mcp:retryLocalConnectorAdd', async (_, name: unknown) => {
+  ipcMain.handle(IPC.mcp.retryLocalConnectorAdd, async (_, name: unknown) => {
     if (typeof name !== 'string') throw new Error('Invalid Connector name')
     return localConnectorJobs.retryLocalConnectorAdd(validateName(name))
   })
-  ipcMain.handle('mcp:listLocalConnectorJobs', async () =>
+  ipcMain.handle(IPC.mcp.listLocalConnectorJobs, async () =>
     localConnectorJobs.listLocalConnectorJobs()
   )
-  ipcMain.handle('mcp:removeLocalConnector', async (_, name: unknown) => {
+  ipcMain.handle(IPC.mcp.removeLocalConnector, async (_, name: unknown) => {
     if (typeof name !== 'string') throw new Error('Invalid Connector name')
     const validatedName = validateName(name)
     await removeLocalMcpConnector(validatedName)
     await getPhiEngine().mcp.applyConnectorEnabled({ name: validatedName })
   })
-  ipcMain.handle('mcp:listLocalRuntimes', async () => listLocalMcpRuntimes())
-  ipcMain.handle('mcp:removeRemoteConnector', async (_, name: string, url: string) => {
+  ipcMain.handle(IPC.mcp.listLocalRuntimes, async () => listLocalMcpRuntimes())
+  ipcMain.handle(IPC.mcp.removeRemoteConnector, async (_, name: string, url: string) => {
     removeRemoteMcpConnector(name, url)
     if (API_KEY_CONNECTOR_IDS.some((id) => id === name && apiKeyConnector(id).url === url)) {
       clearFeaturedMcpApiKey(name)
@@ -12574,7 +12586,7 @@ app.whenReady().then(async () => {
     await syncFeaturedMcpApiKeySessions(name)
   })
   ipcMain.handle(
-    'mcp:setConnectorEnabled',
+    IPC.mcp.setConnectorEnabled,
     async (_, name: string, enabled: boolean, sourcePath?: string) => {
       if (typeof sourcePath === 'string' && sourcePath.startsWith('ssh://')) {
         throw new Error('Server project MCP enablement is managed by the server configuration file')
@@ -12596,10 +12608,10 @@ app.whenReady().then(async () => {
       }
     }
   )
-  ipcMain.handle('mcp:featuredApiKeyStatus', async (_, id: string) =>
+  ipcMain.handle(IPC.mcp.featuredApiKeyStatus, async (_, id: string) =>
     featuredMcpApiKeyVerifiedStatus(id)
   )
-  ipcMain.handle('mcp:setFeaturedApiKey', async (_, id: string, key: string) => {
+  ipcMain.handle(IPC.mcp.setFeaturedApiKey, async (_, id: string, key: string) => {
     apiKeyConnector(id)
     await validateFeaturedMcpApiKey(id, key)
     disableFeaturedApiKeyAutoDiscovery()
@@ -12610,12 +12622,12 @@ app.whenReady().then(async () => {
     })
     if (isFeaturedMcpApiKeyInstalled(id)) await syncFeaturedMcpApiKeySessions(id)
   })
-  ipcMain.handle('mcp:clearFeaturedApiKey', async (_, id: string) => {
+  ipcMain.handle(IPC.mcp.clearFeaturedApiKey, async (_, id: string) => {
     clearFeaturedMcpApiKey(id)
     verifiedMcpApiKeys.delete(id)
     await syncFeaturedMcpApiKeySessions(id)
   })
-  ipcMain.handle('mcp:featuredTools', async (_, id: string) => {
+  ipcMain.handle(IPC.mcp.featuredTools, async (_, id: string) => {
     if (typeof id !== 'string') throw new Error('Invalid Connector ID')
     const connector = (await connectorCatalog()).find((entry) => entry.id === id)
     if (!connector) throw new Error('This Connector was not found in the catalog')
@@ -12633,26 +12645,26 @@ app.whenReady().then(async () => {
       auth: connector.auth
     })
   })
-  ipcMain.handle('mcp:featuredAuthStatus', async (_, id: string) => {
+  ipcMain.handle(IPC.mcp.featuredAuthStatus, async (_, id: string) => {
     const connector = (await connectorCatalog()).find((entry) => entry.id === id)
     if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
       throw new Error('This Connector does not support sign-in status checks')
     }
     return getPhiEngine().mcp.featuredAuthStatus({ id, url: connector.url })
   })
-  ipcMain.handle('mcp:authorizeFeatured', async (_, id: string) => {
+  ipcMain.handle(IPC.mcp.authorizeFeatured, async (_, id: string) => {
     const connector = (await connectorCatalog()).find((entry) => entry.id === id)
     if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
       throw new Error('This Connector does not support OAuth authorization')
     }
     await getPhiEngine().mcp.authorizeFeatured({ id, url: connector.url })
   })
-  ipcMain.handle('mcp:cancelFeaturedAuth', async (_, id: string) => {
+  ipcMain.handle(IPC.mcp.cancelFeaturedAuth, async (_, id: string) => {
     if (typeof id !== 'string' || !id) return
     await getPhiEngine().mcp.cancelFeaturedAuth({ id })
   })
 
-  ipcMain.handle('mcp:authorizeRemoteConnector', async (_, name: string) => {
+  ipcMain.handle(IPC.mcp.authorizeRemoteConnector, async (_, name: string) => {
     const connector = readCustomRemoteMcpConnector(name, AGENT_DIR)
     if (pendingCustomMcpAuthorizations.has(connector.name))
       throw new Error('Authorization is already in progress for this Connector')
@@ -12698,7 +12710,7 @@ app.whenReady().then(async () => {
       }
     }
   })
-  ipcMain.handle('mcp:cancelRemoteAuth', async (_, name: unknown) => {
+  ipcMain.handle(IPC.mcp.cancelRemoteAuth, async (_, name: unknown) => {
     if (typeof name !== 'string') throw new Error('Invalid Connector name')
     const key = name.trim()
     const pending = pendingCustomMcpAuthorizations.get(key)
@@ -12710,8 +12722,8 @@ app.whenReady().then(async () => {
     })
   })
 
-  ipcMain.handle('wrappers:getPlan', async (_, planId: string) => readWrapperPlan(planId))
-  ipcMain.handle('wrappers:retargetPlan', async (_, request: WrapperRetargetRequest) => {
+  ipcMain.handle(IPC.wrappers.getPlan, async (_, planId: string) => readWrapperPlan(planId))
+  ipcMain.handle(IPC.wrappers.retargetPlan, async (_, request: WrapperRetargetRequest) => {
     if (
       !request ||
       typeof request !== 'object' ||
@@ -12731,7 +12743,7 @@ app.whenReady().then(async () => {
     return retargetWrapperRunPlan(request)
   })
   ipcMain.handle(
-    'wrappers:submitPlan',
+    IPC.wrappers.submitPlan,
     async (
       _,
       planId: string,
@@ -12813,7 +12825,7 @@ app.whenReady().then(async () => {
       }
     }
   )
-  ipcMain.handle('wrappers:cancelPlan', async (_, planId: string) => {
+  ipcMain.handle(IPC.wrappers.cancelPlan, async (_, planId: string) => {
     try {
       return cancelWrapperRunPlan(planId)
     } catch (error) {
@@ -12821,17 +12833,17 @@ app.whenReady().then(async () => {
       throw error
     }
   })
-  ipcMain.handle('wrappers:listCatalog', async () => listWrapperCatalog())
-  ipcMain.handle('wrappers:listCompositionCatalog', async () =>
+  ipcMain.handle(IPC.wrappers.listCatalog, async () => listWrapperCatalog())
+  ipcMain.handle(IPC.wrappers.listCompositionCatalog, async () =>
     listWrapperCompositionCatalogStatus({ agentDir: AGENT_DIR })
   )
-  ipcMain.handle('wrappers:getCompositionDag', async (_, id: string) =>
+  ipcMain.handle(IPC.wrappers.getCompositionDag, async (_, id: string) =>
     readWrapperCompositionDag(id)
   )
-  ipcMain.handle('wrappers:getCompositionModuleDetails', async (_, id: string) =>
+  ipcMain.handle(IPC.wrappers.getCompositionModuleDetails, async (_, id: string) =>
     readWrapperModuleDetails(id)
   )
-  ipcMain.handle('wrappers:addCustom', async (_, sourceDir: string) => {
+  ipcMain.handle(IPC.wrappers.addCustom, async (_, sourceDir: string) => {
     try {
       const entry = addCustomWrapper(sourceDir)
       writeAppLog({ event: 'wrapper_custom_added', metadata: { sourceDir, id: entry.manifest.id } })
@@ -12846,19 +12858,19 @@ app.whenReady().then(async () => {
       throw error
     }
   })
-  ipcMain.handle('wrappers:listRuns', async () => listWrapperRuns())
-  ipcMain.handle('environmentBuilds:list', () => environmentBuilds.list())
-  ipcMain.handle('environmentBuilds:cancel', (_event, envId: unknown) => {
+  ipcMain.handle(IPC.wrappers.listRuns, async () => listWrapperRuns())
+  ipcMain.handle(IPC.environmentBuilds.list, () => environmentBuilds.list())
+  ipcMain.handle(IPC.environmentBuilds.cancel, (_event, envId: unknown) => {
     if (typeof envId !== 'string' || envId.length === 0) throw new Error('envId is required')
     environmentBuilds.cancel(envId)
   })
-  ipcMain.handle('jobs:listAgents', listBackgroundAgentJobs)
-  ipcMain.handle('jobs:listShell', listBackgroundShellJobs)
-  ipcMain.handle('jobs:stopShell', async (_, agentSessionId: unknown, jobId: unknown) => {
+  ipcMain.handle(IPC.jobs.listAgents, listBackgroundAgentJobs)
+  ipcMain.handle(IPC.jobs.listShell, listBackgroundShellJobs)
+  ipcMain.handle(IPC.jobs.stopShell, async (_, agentSessionId: unknown, jobId: unknown) => {
     await stopBackgroundShellJob(agentSessionId, jobId)
   })
-  ipcMain.handle('wrappers:getRun', async (_, runId: string) => readWrapperRun(runId))
-  ipcMain.handle('wrappers:cancelRun', async (_, runId: string) => {
+  ipcMain.handle(IPC.wrappers.getRun, async (_, runId: string) => readWrapperRun(runId))
+  ipcMain.handle(IPC.wrappers.cancelRun, async (_, runId: string) => {
     try {
       // Agent-started (background) runs are owned by the job manager, not the plan executor.
       if (readWrapperRun(runId)?.origin === 'composition') {
@@ -12872,10 +12884,10 @@ app.whenReady().then(async () => {
       throw error
     }
   })
-  ipcMain.handle('wrappers:getPlanArtifact', async (_, planId: string, fileName: string) =>
+  ipcMain.handle(IPC.wrappers.getPlanArtifact, async (_, planId: string, fileName: string) =>
     readWrapperPlanArtifact(planId, fileName)
   )
-  ipcMain.handle('wrappers:exportReproducibility', async (_, runId: string) => {
+  ipcMain.handle(IPC.wrappers.exportReproducibility, async (_, runId: string) => {
     try {
       const bundle = buildWrapperReproducibilityBundle(runId)
       const window = getActiveWindow()
@@ -12904,10 +12916,10 @@ app.whenReady().then(async () => {
     }
   })
 
-  ipcMain.handle('persona:getAppName', async () => APP_NAME)
-  ipcMain.handle('persona:isOnboarded', async () => isOnboarded())
-  ipcMain.handle('persona:getMarkdown', async () => getPersonaMarkdown())
-  ipcMain.handle('persona:setMarkdown', async (_, markdown: string) => {
+  ipcMain.handle(IPC.persona.getAppName, async () => APP_NAME)
+  ipcMain.handle(IPC.persona.isOnboarded, async () => isOnboarded())
+  ipcMain.handle(IPC.persona.getMarkdown, async () => getPersonaMarkdown())
+  ipcMain.handle(IPC.persona.setMarkdown, async (_, markdown: string) => {
     const target = captureCurrentRpcConfigurationTarget()
     if (target) await target.resolved()
     target?.assertCurrent()
@@ -12915,10 +12927,10 @@ app.whenReady().then(async () => {
     await invalidateAgentSession()
     return getPersonaMarkdown()
   })
-  ipcMain.handle('persona:skip', async () => {
+  ipcMain.handle(IPC.persona.skip, async () => {
     skipOnboarding()
   })
-  ipcMain.handle('persona:completeOnboarding', async (_, description: string) => {
+  ipcMain.handle(IPC.persona.completeOnboarding, async (_, description: string) => {
     const trimmedDescription = description.trim()
     if (!trimmedDescription) {
       skipOnboarding()

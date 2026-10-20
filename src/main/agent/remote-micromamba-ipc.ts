@@ -1,3 +1,4 @@
+import { IPC } from '../../shared/ipcChannels'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 
 import type { RemoteRuntimeRootWarningCode } from '../../shared/remoteRuntimeRootTypes'
@@ -73,7 +74,7 @@ function sendProgress(
   >[0]
 ): void {
   if (!event.sender.isDestroyed()) {
-    event.sender.send('remote:micromambaProgress', { requestId, ...progress })
+    event.sender.send(IPC.remote.micromambaProgress, { requestId, ...progress })
   }
 }
 
@@ -81,7 +82,7 @@ export function registerRemoteMicromambaIpc(
   ipcMain: Pick<IpcMain, 'handle'>,
   install: typeof installRemoteMicromambaForHost = installRemoteMicromambaForHost
 ): void {
-  ipcMain.handle('remote:micromamba', async (event, value: unknown) => {
+  ipcMain.handle(IPC.remote.micromamba, async (event, value: unknown) => {
     const request = parseRequest(value)
     return install(request.hostProfileId, {
       runtimeRoot: request.runtimeRoot,

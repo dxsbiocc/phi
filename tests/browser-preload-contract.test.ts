@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
+import { IPC } from '../src/shared/ipcChannels'
 import type {
   BrowserRendererBridge,
   BrowserRendererEventEnvelope,
@@ -85,15 +86,18 @@ test('preload and renderer expose only one namespaced browser bridge using share
   )
   assert.match(apiType, /browser: BrowserRendererBridge/)
   assert.doesNotMatch(apiType, /browserExecute|browserSnapshot|browserSetViewport|browserOnEvent/)
-  assert.match(preload, /execute: \(command\) => ipcRenderer\.invoke\('browser:execute', command\)/)
-  assert.match(preload, /snapshot: \(\) => ipcRenderer\.invoke\('browser:snapshot'\)/)
   assert.match(
     preload,
-    /setViewport: \(input\) => ipcRenderer\.invoke\('browser:setViewport', input\)/
+    /execute: \(command\) => ipcRenderer\.invoke\(IPC\.browser\.execute, command\)/
   )
-  assert.match(preload, /ipcRenderer\.on\('browser:event', handler\)/)
-  assert.match(preload, /ipcRenderer\.removeListener\('browser:event', handler\)/)
-  assert.doesNotMatch(preload, /removeAllListeners\('browser:event'/)
+  assert.match(preload, /snapshot: \(\) => ipcRenderer\.invoke\(IPC\.browser\.snapshot\)/)
+  assert.match(
+    preload,
+    /setViewport: \(input\) => ipcRenderer\.invoke\(IPC\.browser\.setViewport, input\)/
+  )
+  assert.match(preload, /ipcRenderer\.on\(IPC\.browser\.event, handler\)/)
+  assert.match(preload, /ipcRenderer\.removeListener\(IPC\.browser\.event, handler\)/)
+  assert.doesNotMatch(preload, /removeAllListeners\(IPC\.browser\.event/)
   assert.match(preload, /browser: browserBridge/)
 
   const ambientFile = ts.createSourceFile(
@@ -248,7 +252,7 @@ test('preload browser bridge invokes exact channels and independently unsubscrib
   const exposed = new Map<string, unknown>()
   const fakeWindow = { addEventListener: (): void => undefined }
   const load = (specifier: string): unknown => {
-    // The preload's only local dependency is the pure prompt-target sanitiser.
+    if (specifier === '../shared/ipcChannels') return { IPC }
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {

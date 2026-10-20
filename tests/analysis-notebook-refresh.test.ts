@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import ts from 'typescript'
+
+import { IPC } from '../src/shared/ipcChannels'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import { analysisCopy } from '../src/renderer/src/features/analysis/lib/analysisUiCopy'
 import * as runtimeUtils from '../src/renderer/src/features/analysis/lib/analysisNotebookRuntimeUtils'
@@ -511,8 +513,7 @@ test('the read-only refresh IPC registers disk watching without changing the act
     if (
       ts.isCallExpression(node) &&
       node.expression.getText(syntax) === 'ipcMain.handle' &&
-      ts.isStringLiteral(node.arguments[0]) &&
-      node.arguments[0].text === 'analysis:refreshNotebook'
+      node.arguments[0]?.getText(syntax) === 'IPC.analysis.refreshNotebook'
     )
       registration = node
     ts.forEachChild(node, visit)
@@ -527,6 +528,7 @@ test('the read-only refresh IPC registers disk watching without changing the act
   const file = notebookFile('disk')
   const diskReads: unknown[][] = []
   runInNewContext(code, {
+    IPC,
     ipcMain: {
       handle: (_channel: string, callback: typeof handler) => {
         handler = callback

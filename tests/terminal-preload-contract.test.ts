@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 
+import { IPC } from '../src/shared/ipcChannels'
 import type {
   TerminalEvent,
   TerminalRendererBridge,
@@ -45,7 +46,7 @@ test('preload terminal bridge invokes exact channels and independently unsubscri
   const ipcRenderer = new FakeIpcRenderer()
   const exposed = new Map<string, unknown>()
   const load = (specifier: string): unknown => {
-    // The preload's only local dependency is the pure prompt-target sanitiser.
+    if (specifier === '../shared/ipcChannels') return { IPC }
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {

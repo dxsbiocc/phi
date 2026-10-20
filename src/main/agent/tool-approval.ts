@@ -1,3 +1,4 @@
+import { IPC } from '../../shared/ipcChannels'
 import { createHash, randomUUID } from 'node:crypto'
 import { BrowserWindow } from 'electron'
 import type { InlineExtension } from './runtime/runtime-adapter'
@@ -243,7 +244,7 @@ function waitForApproval(
     )
 
     try {
-      window.webContents.send('tool:approval-request', request)
+      window.webContents.send(IPC.tool.approvalRequested, request)
     } catch {
       settle({ approved: false, cancelled: true })
     }

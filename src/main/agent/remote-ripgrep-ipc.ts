@@ -1,3 +1,4 @@
+import { IPC } from '../../shared/ipcChannels'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 
 import type { RemoteRuntimeRootWarningCode } from '../../shared/remoteRuntimeRootTypes'
@@ -65,7 +66,7 @@ function sendProgress(
   progress: RemoteRipgrepProgress
 ): void {
   if (!event.sender.isDestroyed()) {
-    event.sender.send('remote:ripgrepProgress', { ...progress, requestId })
+    event.sender.send(IPC.remote.ripgrepProgress, { ...progress, requestId })
   }
 }
 
@@ -73,7 +74,7 @@ export function registerRemoteRipgrepIpc(
   ipcMain: Pick<IpcMain, 'handle'>,
   run: typeof runRemoteRipgrepForHost = runRemoteRipgrepForHost
 ): void {
-  ipcMain.handle('remote:ripgrep', async (event, value: unknown) => {
+  ipcMain.handle(IPC.remote.ripgrep, async (event, value: unknown) => {
     const request = parseRequest(value)
     return run(request.hostProfileId, {
       action: request.action,

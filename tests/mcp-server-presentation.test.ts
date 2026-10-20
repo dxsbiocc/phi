@@ -5,6 +5,7 @@ import test from 'node:test'
 import ts from 'typescript'
 
 import { withConnectorMetadata } from '../src/main/agent/mcp-server-view'
+import { IPC } from '../src/shared/ipcChannels'
 
 const syntax = ts.createSourceFile(
   'src/main/index.ts',
@@ -19,9 +20,7 @@ function serverListHandler(): string {
     if (
       ts.isCallExpression(node) &&
       node.expression.getText(syntax) === 'ipcMain.handle' &&
-      node.arguments[0] &&
-      ts.isStringLiteral(node.arguments[0]) &&
-      node.arguments[0].text === 'mcp:listServers'
+      node.arguments[0]?.getText(syntax) === 'IPC.mcp.listServers'
     ) {
       handler = node.arguments[1]
     }
@@ -50,6 +49,7 @@ test('configured legacy connectors inherit their verified catalog icons without 
     { id: 'notion', name: 'Notion', url: configured[1].url, icon: { key: 'verified-notion' } }
   ]
   const handler = runInNewContext(serverListHandler(), {
+    IPC,
     listedMcpServers: async () => configured,
     withConnectorMetadata,
     connectorCatalog: async () => catalog
@@ -68,6 +68,7 @@ test('installed connector icons take precedence over catalog previews', async ()
     { id: 'cbioportal', packageId: 'cbioportal', icon: { key: 'installed-icon' } }
   ]
   const handler = runInNewContext(serverListHandler(), {
+    IPC,
     listedMcpServers: async () => configured,
     withConnectorMetadata,
     connectorCatalog: async () => [{ id: 'cbioportal', icon: { key: 'preview-icon' } }]

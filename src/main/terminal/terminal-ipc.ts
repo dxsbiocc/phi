@@ -1,3 +1,4 @@
+import { IPC } from '../../shared/ipcChannels'
 import {
   TERMINAL_CREDIT_WINDOW_BYTES,
   TERMINAL_MAX_COLS,
@@ -307,7 +308,7 @@ export class TerminalIpcCoordinator {
     try {
       const renderer = this.getTrustedRenderer()
       if (!renderer || renderer.isDestroyed()) return false
-      renderer.send('terminal:event', event)
+      renderer.send(IPC.terminal.event, event)
       return true
     } catch {
       return false
@@ -350,38 +351,38 @@ export function registerTerminalRendererIpc(
   ipcMain: TerminalIpcMainLike,
   coordinator: TerminalIpcCoordinator
 ): void {
-  ipcMain.handle('terminal:list', (event, ...args) =>
+  ipcMain.handle(IPC.terminal.list, (event, ...args) =>
     args.length === 1 ? coordinator.list(event, args[0]) : coordinator.invalid(event)
   )
-  ipcMain.handle('terminal:create', (event, ...args) =>
+  ipcMain.handle(IPC.terminal.create, (event, ...args) =>
     args.length === 1 ? coordinator.create(event, args[0]) : coordinator.invalid(event)
   )
-  ipcMain.handle('terminal:attach', (event, ...args) =>
+  ipcMain.handle(IPC.terminal.attach, (event, ...args) =>
     args.length === 1 ? coordinator.attach(event, args[0]) : coordinator.invalid(event)
   )
-  ipcMain.handle('terminal:input', (event, ...args) =>
+  ipcMain.handle(IPC.terminal.input, (event, ...args) =>
     args.length === 2 ? coordinator.input(event, args[0], args[1]) : coordinator.invalid(event)
   )
-  ipcMain.handle('terminal:resize', (event, ...args) =>
+  ipcMain.handle(IPC.terminal.resize, (event, ...args) =>
     args.length === 3
       ? coordinator.resize(event, args[0], args[1], args[2])
       : coordinator.invalid(event)
   )
-  ipcMain.handle('terminal:ack', (event, ...args) =>
+  ipcMain.handle(IPC.terminal.ack, (event, ...args) =>
     args.length === 3
       ? coordinator.ack(event, args[0], args[1], args[2])
       : coordinator.invalid(event)
   )
-  ipcMain.handle('terminal:close', (event, ...args) =>
+  ipcMain.handle(IPC.terminal.close, (event, ...args) =>
     args.length === 1 ? coordinator.close(event, args[0]) : coordinator.invalid(event)
   )
-  ipcMain.handle('terminal:generateDraft', (event, ...args) =>
+  ipcMain.handle(IPC.terminal.generateDraft, (event, ...args) =>
     args.length === 1 ? coordinator.generateDraft(event, args[0]) : coordinator.invalid(event)
   )
-  ipcMain.handle('terminal:cancelDraft', (event, ...args) =>
+  ipcMain.handle(IPC.terminal.cancelDraft, (event, ...args) =>
     args.length === 1 ? coordinator.cancelDraft(event, args[0]) : coordinator.invalid(event)
   )
-  ipcMain.handle('terminal:submitDraft', (event, ...args) =>
+  ipcMain.handle(IPC.terminal.submitDraft, (event, ...args) =>
     args.length === 1 ? coordinator.submitDraft(event, args[0]) : coordinator.invalid(event)
   )
 }

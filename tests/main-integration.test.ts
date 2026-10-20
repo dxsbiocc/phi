@@ -7,6 +7,7 @@ import { createWebLinkPreviewService } from '../src/main/web-link-preview'
 import * as permissionModeControl from '../src/main/agent/session/permission-mode-control'
 import * as workspaceFileIpc from '../src/main/workspace-file-ipc'
 import * as nativeUiCopy from '../src/main/native-ui-copy'
+import { IPC } from '../src/shared/ipcChannels'
 import { systemUiLanguage } from '../src/shared/uiLanguage'
 import * as runtimeSelection from '../src/main/agent/engine/rpc/runtime-selection-control'
 import * as desktopWebSearch from '../src/main/agent/engine/rpc/desktop-websearch-adapter'
@@ -1531,6 +1532,7 @@ async function harness(
   const phiEngine = createInProcessEngine(fakeOmpBridge)
   if (options.childResourceOwner) phiEngine.agentRuns.resourceOwner = options.childResourceOwner
   const modules: Record<string, unknown> = {
+    '../shared/ipcChannels': { IPC },
     './window-startup': windowStartup,
     './native-ui-copy': nativeUiCopy,
     './startup-splash': {

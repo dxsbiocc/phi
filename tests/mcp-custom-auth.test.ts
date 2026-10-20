@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 import type { RemoteMcpConnectorOptions } from '../src/shared/mcpConnectorCatalog'
+import { IPC } from '../src/shared/ipcChannels'
 import {
   addRemoteMcpConnector,
   readCustomRemoteMcpConnector
@@ -229,6 +230,7 @@ test('preload preserves optional connector authentication fields across IPC', as
   const ipcRenderer = new IpcRenderer()
   new Function('require', 'exports', 'process', 'window', 'console', compiled)(
     (specifier: string) => {
+      if (specifier === '../shared/ipcChannels') return { IPC }
       assert.equal(specifier, 'electron')
       return {
         contextBridge: {

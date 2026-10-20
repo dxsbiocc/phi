@@ -5,6 +5,8 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 
+import { IPC } from '../src/shared/ipcChannels'
+
 const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
 
 test('preload exposes list, trust and revoke as the only remote agent IPC operations', async () => {
@@ -23,6 +25,7 @@ test('preload exposes list, trust and revoke as the only remote agent IPC operat
   const exposed = new Map<string, unknown>()
   const ipcRenderer = new FakeIpcRenderer()
   const load = (specifier: string): unknown => {
+    if (specifier === '../shared/ipcChannels') return { IPC }
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {

@@ -5,6 +5,8 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 
+import { IPC } from '../src/shared/ipcChannels'
+
 const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
 
 test('preload exposes the initial fullscreen state and an independently cancellable subscription', async () => {
@@ -24,7 +26,7 @@ test('preload exposes the initial fullscreen state and an independently cancella
   const ipcRenderer = new FakeIpcRenderer()
   const exposed = new Map<string, unknown>()
   const load = (specifier: string): unknown => {
-    // The preload's only local dependency is the pure prompt-target sanitiser.
+    if (specifier === '../shared/ipcChannels') return { IPC }
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {
@@ -91,10 +93,10 @@ test('fullscreen state is typed end to end and only sourced from the trusted mai
     )
   }
 
-  assert.match(main, /ipcMain\.handle\('window:get-fullscreen', \(event\) =>/)
+  assert.match(main, /ipcMain\.handle\(IPC\.window\.getFullscreen, \(event\) =>/)
   assert.match(main, /event\.sender !== window\.webContents/)
   assert.match(main, /event\.senderFrame !== event\.sender\.mainFrame/)
-  assert.match(main, /window\.webContents\.send\('window:fullscreen-changed', fullscreen\)/)
+  assert.match(main, /window\.webContents\.send\(IPC\.window\.fullscreenChanged, fullscreen\)/)
   assert.match(
     main,
     /window\.on\('enter-full-screen',[\s\S]{0,160}setWindowButtonVisibility\(true\)[\s\S]{0,120}sendMainWindowFullscreenState\(window, true\)/

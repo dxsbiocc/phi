@@ -5,14 +5,12 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 
-const CHANNELS = [
-  'sources:previewGithub',
-  'sources:addGithub',
-  'sources:checkGithubUpdate',
-  'sources:applyGithubUpdate',
-  'sources:removeGithub',
-  'sources:listGithub'
-]
+import { IPC } from '../src/shared/ipcChannels'
+
+const CHANNELS = Object.values(IPC.sources)
+const CHANNEL_REFERENCES = new Map(
+  Object.entries(IPC.sources).map(([name, channel]) => [`IPC.sources.${name}`, channel])
+)
 
 type IpcHandler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 
@@ -28,22 +26,21 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
     if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)) {
       const call = node.expression
       const channel = call.arguments[0]
+      const channelName = channel ? CHANNEL_REFERENCES.get(channel.getText(source)) : undefined
       if (
         ts.isPropertyAccessExpression(call.expression) &&
         call.expression.expression.getText(source) === 'ipcMain' &&
         call.expression.name.text === 'handle' &&
-        channel &&
-        ts.isStringLiteral(channel) &&
-        CHANNELS.includes(channel.text)
+        channelName
       ) {
-        registrations.set(channel.text, node)
+        registrations.set(channelName, node)
       }
     }
     ts.forEachChild(node, visit)
   }
   visit(source)
   assert.deepEqual([...registrations.keys()].sort(), CHANNELS.toSorted())
-  const program = `const { previewGithubSource, addGithubSource, checkGithubSourceUpdate, applyGithubSourceUpdate, removeGithubSource, listGithubSources, refreshGithubSourceDependants, writeAppLog, officialRegistryFetch, isRecord, AGENT_DIR } = dependencies;
+  const program = `const { IPC, previewGithubSource, addGithubSource, checkGithubSourceUpdate, applyGithubSourceUpdate, removeGithubSource, listGithubSources, refreshGithubSourceDependants, writeAppLog, officialRegistryFetch, isRecord, AGENT_DIR } = dependencies;
   const callbacks = new Map();
   const ipcMain = { handle: (channel, callback) => callbacks.set(channel, callback) };
   ${CHANNELS.map((channel) => registrations.get(channel)!.getText(source)).join('\n')}
@@ -51,7 +48,7 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
   const compiled = ts.transpileModule(program, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
   }).outputText
-  return new Function('dependencies', compiled)(dependencies) as Map<string, IpcHandler>
+  return new Function('dependencies', compiled)({ IPC, ...dependencies }) as Map<string, IpcHandler>
 }
 
 test('GitHub source IPC validates every input, refreshes mutations, and logs only repo plus sha', async () => {
@@ -153,6 +150,7 @@ test('preload exposes the six typed GitHub source methods with unchanged payload
   const ipcRenderer = new IpcRenderer()
   new Function('require', 'exports', 'process', 'window', 'console', compiled)(
     (specifier: string) => {
+      if (specifier === '../shared/ipcChannels') return { IPC }
       assert.equal(specifier, 'electron')
       return {
         contextBridge: {

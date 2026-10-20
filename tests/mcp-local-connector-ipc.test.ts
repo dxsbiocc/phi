@@ -7,6 +7,7 @@ import ts from 'typescript'
 
 import { createInProcessEngine } from '../src/main/agent/engine/in-process-engine'
 import type { OmpBridge } from '../src/main/agent/engine/omp-bridge'
+import { IPC } from '../src/shared/ipcChannels'
 
 type LocalRequest = {
   name: string
@@ -19,14 +20,17 @@ type LocalRequest = {
 }
 
 const LOCAL_CHANNELS = [
-  'mcp:addLocalConnector',
-  'mcp:startLocalConnectorAdd',
-  'mcp:cancelLocalConnectorAdd',
-  'mcp:retryLocalConnectorAdd',
-  'mcp:listLocalConnectorJobs',
-  'mcp:removeLocalConnector',
-  'mcp:listLocalRuntimes'
+  IPC.mcp.addLocalConnector,
+  IPC.mcp.startLocalConnectorAdd,
+  IPC.mcp.cancelLocalConnectorAdd,
+  IPC.mcp.retryLocalConnectorAdd,
+  IPC.mcp.listLocalConnectorJobs,
+  IPC.mcp.removeLocalConnector,
+  IPC.mcp.listLocalRuntimes
 ]
+const LOCAL_CHANNEL_REFERENCES = new Map(
+  Object.entries(IPC.mcp).map(([name, channel]) => [`IPC.mcp.${name}`, channel])
+)
 
 type IpcHandler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 
@@ -42,15 +46,17 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
     if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)) {
       const call = node.expression
       const channel = call.arguments[0]
+      const channelName = channel
+        ? LOCAL_CHANNEL_REFERENCES.get(channel.getText(source))
+        : undefined
       if (
         ts.isPropertyAccessExpression(call.expression) &&
         call.expression.expression.getText(source) === 'ipcMain' &&
         call.expression.name.text === 'handle' &&
-        channel &&
-        ts.isStringLiteral(channel) &&
-        LOCAL_CHANNELS.includes(channel.text)
+        channelName &&
+        LOCAL_CHANNELS.includes(channelName)
       ) {
-        registrations.set(channel.text, node)
+        registrations.set(channelName, node)
       }
     }
     ts.forEachChild(node, visit)
@@ -61,7 +67,7 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
     LOCAL_CHANNELS.toSorted(),
     'extract every local-connector IPC registration'
   )
-  const program = `const { addLocalMcpConnector, localConnectorJobs, removeLocalMcpConnector, listLocalMcpRuntimes, validateLocalConnectorRequest, validateName, connectorCatalog, getPhiEngine, AGENT_DIR, getRuntimeRoot } = dependencies;
+  const program = `const { IPC, addLocalMcpConnector, localConnectorJobs, removeLocalMcpConnector, listLocalMcpRuntimes, validateLocalConnectorRequest, validateName, connectorCatalog, getPhiEngine, AGENT_DIR, getRuntimeRoot } = dependencies;
   const callbacks = new Map();
   const ipcMain = { handle: (channel, callback) => callbacks.set(channel, callback) };
   ${LOCAL_CHANNELS.map((channel) => registrations.get(channel)!.getText(source)).join('\n')}
@@ -69,7 +75,7 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
   const compiled = ts.transpileModule(program, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
   }).outputText
-  return new Function('dependencies', compiled)(dependencies) as Map<string, IpcHandler>
+  return new Function('dependencies', compiled)({ IPC, ...dependencies }) as Map<string, IpcHandler>
 }
 
 test('local connector IPC validates requests and refreshes running sessions after mutations', async () => {
@@ -212,6 +218,7 @@ test('preload exposes typed local connector methods without changing argv shape'
   const ipcRenderer = new IpcRenderer()
   new Function('require', 'exports', 'process', 'window', 'console', compiled)(
     (specifier: string) => {
+      if (specifier === '../shared/ipcChannels') return { IPC }
       assert.equal(specifier, 'electron')
       return {
         contextBridge: {

@@ -1,3 +1,4 @@
+import { IPC } from '../../shared/ipcChannels'
 import { BrowserWindow, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 
@@ -275,7 +276,7 @@ export class AuthManager {
           )
 
           try {
-            window.webContents.send('auth:interaction', {
+            window.webContents.send(IPC.auth.interactionRequested, {
               type: 'prompt',
               requestId,
               providerId,
@@ -284,7 +285,7 @@ export class AuthManager {
 
             if (prompt.type === 'manual_code') {
               const url = `输入授权码完成 ${providerId} 登录`
-              window.webContents.send('auth:interaction', {
+              window.webContents.send(IPC.auth.interactionRequested, {
                 type: 'notify',
                 providerId,
                 event: {
@@ -308,7 +309,7 @@ export class AuthManager {
           return
         }
 
-        targetWindow.webContents.send('auth:interaction', {
+        targetWindow.webContents.send(IPC.auth.interactionRequested, {
           type: 'notify',
           providerId,
           event

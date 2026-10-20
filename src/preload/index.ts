@@ -1,3 +1,4 @@
+import { IPC } from '../shared/ipcChannels'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { BrowserRendererBridge, BrowserRendererEventEnvelope } from '../shared/browserTypes'
 import type { WebLinkPreview } from '../shared/webLinkPreviewTypes'
@@ -1212,9 +1213,9 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
 }
 
 const browserBridge: BrowserRendererBridge = {
-  execute: (command) => ipcRenderer.invoke('browser:execute', command),
-  snapshot: () => ipcRenderer.invoke('browser:snapshot'),
-  setViewport: (input) => ipcRenderer.invoke('browser:setViewport', input),
+  execute: (command) => ipcRenderer.invoke(IPC.browser.execute, command),
+  snapshot: () => ipcRenderer.invoke(IPC.browser.snapshot),
+  setViewport: (input) => ipcRenderer.invoke(IPC.browser.setViewport, input),
   onEvent: (callback) => {
     const handler = (_: unknown, envelope: BrowserRendererEventEnvelope): void => {
       try {
@@ -1224,26 +1225,27 @@ const browserBridge: BrowserRendererBridge = {
       }
     }
     let subscribed = true
-    ipcRenderer.on('browser:event', handler)
+    ipcRenderer.on(IPC.browser.event, handler)
     return () => {
       if (!subscribed) return
       subscribed = false
-      ipcRenderer.removeListener('browser:event', handler)
+      ipcRenderer.removeListener(IPC.browser.event, handler)
     }
   }
 }
 
 const terminalBridge: TerminalRendererBridge = {
-  list: (workspace) => ipcRenderer.invoke('terminal:list', workspace),
-  create: (input) => ipcRenderer.invoke('terminal:create', input),
-  attach: (terminalId) => ipcRenderer.invoke('terminal:attach', terminalId),
-  input: (terminalId, data) => ipcRenderer.invoke('terminal:input', terminalId, data),
-  resize: (terminalId, cols, rows) => ipcRenderer.invoke('terminal:resize', terminalId, cols, rows),
-  ack: (terminalId, epoch, bytes) => ipcRenderer.invoke('terminal:ack', terminalId, epoch, bytes),
-  close: (terminalId) => ipcRenderer.invoke('terminal:close', terminalId),
-  generateDraft: (input) => ipcRenderer.invoke('terminal:generateDraft', input),
-  cancelDraft: (requestId) => ipcRenderer.invoke('terminal:cancelDraft', requestId),
-  submitDraft: (input) => ipcRenderer.invoke('terminal:submitDraft', input),
+  list: (workspace) => ipcRenderer.invoke(IPC.terminal.list, workspace),
+  create: (input) => ipcRenderer.invoke(IPC.terminal.create, input),
+  attach: (terminalId) => ipcRenderer.invoke(IPC.terminal.attach, terminalId),
+  input: (terminalId, data) => ipcRenderer.invoke(IPC.terminal.input, terminalId, data),
+  resize: (terminalId, cols, rows) =>
+    ipcRenderer.invoke(IPC.terminal.resize, terminalId, cols, rows),
+  ack: (terminalId, epoch, bytes) => ipcRenderer.invoke(IPC.terminal.ack, terminalId, epoch, bytes),
+  close: (terminalId) => ipcRenderer.invoke(IPC.terminal.close, terminalId),
+  generateDraft: (input) => ipcRenderer.invoke(IPC.terminal.generateDraft, input),
+  cancelDraft: (requestId) => ipcRenderer.invoke(IPC.terminal.cancelDraft, requestId),
+  submitDraft: (input) => ipcRenderer.invoke(IPC.terminal.submitDraft, input),
   onEvent: (callback) => {
     const handler = (_: unknown, event: TerminalEvent): void => {
       try {
@@ -1253,25 +1255,25 @@ const terminalBridge: TerminalRendererBridge = {
       }
     }
     let subscribed = true
-    ipcRenderer.on('terminal:event', handler)
+    ipcRenderer.on(IPC.terminal.event, handler)
     return () => {
       if (!subscribed) return
       subscribed = false
-      ipcRenderer.removeListener('terminal:event', handler)
+      ipcRenderer.removeListener(IPC.terminal.event, handler)
     }
   }
 }
 
 const sshBootstrapBridge: SshBootstrapRendererBridge = {
-  inspectTarget: (input) => ipcRenderer.invoke('sshBootstrap:inspectTarget', input),
-  confirmHostKey: (attemptId) => ipcRenderer.invoke('sshBootstrap:confirmHostKey', attemptId),
+  inspectTarget: (input) => ipcRenderer.invoke(IPC.sshBootstrap.inspectTarget, input),
+  confirmHostKey: (attemptId) => ipcRenderer.invoke(IPC.sshBootstrap.confirmHostKey, attemptId),
   verifyPassword: (attemptId, input) =>
-    ipcRenderer.invoke('sshBootstrap:verifyPassword', attemptId, input),
+    ipcRenderer.invoke(IPC.sshBootstrap.verifyPassword, attemptId, input),
   completeWithKeyProtection: (attemptId, input) =>
-    ipcRenderer.invoke('sshBootstrap:completeWithKeyProtection', attemptId, input),
-  saveConfig: (operationId) => ipcRenderer.invoke('sshBootstrap:saveConfig', operationId),
-  declineConfig: (operationId) => ipcRenderer.invoke('sshBootstrap:declineConfig', operationId),
-  cancel: (id) => ipcRenderer.invoke('sshBootstrap:cancel', id)
+    ipcRenderer.invoke(IPC.sshBootstrap.completeWithKeyProtection, attemptId, input),
+  saveConfig: (operationId) => ipcRenderer.invoke(IPC.sshBootstrap.saveConfig, operationId),
+  declineConfig: (operationId) => ipcRenderer.invoke(IPC.sshBootstrap.declineConfig, operationId),
+  cancel: (id) => ipcRenderer.invoke(IPC.sshBootstrap.cancel, id)
 }
 
 const api: RendererAuthApi = {
@@ -1279,34 +1281,35 @@ const api: RendererAuthApi = {
   terminal: terminalBridge,
   sshBootstrap: sshBootstrapBridge,
   readyWindow: (background: string): Promise<void> =>
-    ipcRenderer.invoke('window:renderer-ready', background),
-  closeWindow: (): Promise<void> => ipcRenderer.invoke('window:close'),
-  minimizeWindow: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
-  toggleWindowFullscreen: (): Promise<void> => ipcRenderer.invoke('window:toggle-fullscreen'),
-  getWindowFullscreen: (): Promise<boolean> => ipcRenderer.invoke('window:get-fullscreen'),
+    ipcRenderer.invoke(IPC.window.rendererReady, background),
+  closeWindow: (): Promise<void> => ipcRenderer.invoke(IPC.window.close),
+  minimizeWindow: (): Promise<void> => ipcRenderer.invoke(IPC.window.minimize),
+  toggleWindowFullscreen: (): Promise<void> => ipcRenderer.invoke(IPC.window.toggleFullscreen),
+  getWindowFullscreen: (): Promise<boolean> => ipcRenderer.invoke(IPC.window.getFullscreen),
   onWindowFullscreenChanged: (cb: (fullscreen: boolean) => void): Unsubscribe => {
     const handler = (_: unknown, fullscreen: unknown): void => {
       if (typeof fullscreen === 'boolean') cb(fullscreen)
     }
     let subscribed = true
-    ipcRenderer.on('window:fullscreen-changed', handler)
+    ipcRenderer.on(IPC.window.fullscreenChanged, handler)
     return () => {
       if (!subscribed) return
       subscribed = false
-      ipcRenderer.removeListener('window:fullscreen-changed', handler)
+      ipcRenderer.removeListener(IPC.window.fullscreenChanged, handler)
     }
   },
   consumeMenuBarAction: (): Promise<MenuBarAction | null> =>
-    ipcRenderer.invoke('menu-bar:consume-action'),
-  revealPath: (path: string): Promise<void> => ipcRenderer.invoke('files:reveal', path),
-  openPath: (path: string): Promise<void> => ipcRenderer.invoke('files:openPath', path),
-  getFileIcon: (path: string): Promise<string | null> => ipcRenderer.invoke('files:getIcon', path),
+    ipcRenderer.invoke(IPC.menuBar.consumeAction),
+  revealPath: (path: string): Promise<void> => ipcRenderer.invoke(IPC.files.reveal, path),
+  openPath: (path: string): Promise<void> => ipcRenderer.invoke(IPC.files.openPath, path),
+  getFileIcon: (path: string): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.files.getIcon, path),
   readResourceIcon: (key: string): Promise<string | null> =>
-    ipcRenderer.invoke('resources:readIcon', key),
+    ipcRenderer.invoke(IPC.resources.readIcon, key),
   getWebLinkPreview: (url: string): Promise<WebLinkPreview> =>
-    ipcRenderer.invoke('web-link:preview', url),
-  pickInputFiles: (): Promise<string[]> => ipcRenderer.invoke('files:pickInput'),
-  pickLocalUploadFiles: (): Promise<string[]> => ipcRenderer.invoke('files:pickLocalUpload'),
+    ipcRenderer.invoke(IPC.webLink.preview, url),
+  pickInputFiles: (): Promise<string[]> => ipcRenderer.invoke(IPC.files.pickInput),
+  pickLocalUploadFiles: (): Promise<string[]> => ipcRenderer.invoke(IPC.files.pickLocalUpload),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   onInputFilesDropped: (
     cb: (paths: string[], target: InputFileDropTarget) => void
@@ -1317,241 +1320,246 @@ const api: RendererAuthApi = {
     }
   },
   saveTextFile: (request: WorkspaceTextSaveRequest): Promise<WorkspaceTextSaveResult> =>
-    ipcRenderer.invoke('files:saveTextFile', request),
+    ipcRenderer.invoke(IPC.files.saveTextFile, request),
   saveMarkdownFile: (request: WorkspaceMarkdownSaveRequest): Promise<WorkspaceMarkdownSaveResult> =>
-    ipcRenderer.invoke('files:saveMarkdownFile', request),
+    ipcRenderer.invoke(IPC.files.saveMarkdownFile, request),
   renameWorkspaceFile: (request: WorkspaceFileRenameRequest): Promise<{ path: string }> =>
-    ipcRenderer.invoke('files:renameWorkspaceFile', request),
+    ipcRenderer.invoke(IPC.files.renameWorkspaceFile, request),
   deleteWorkspaceFile: (request: WorkspaceFileOperationTarget): Promise<void> =>
-    ipcRenderer.invoke('files:deleteWorkspaceFile', request),
+    ipcRenderer.invoke(IPC.files.deleteWorkspaceFile, request),
   downloadRemoteWorkspaceFile: (
     request: RemoteWorkspaceFileDownloadRequest
   ): Promise<WrapperResultDownloadResult> =>
-    ipcRenderer.invoke('remoteWorkspace:download', request),
-  previewFile: (path: string): Promise<FilePreview> => ipcRenderer.invoke('files:preview', path),
+    ipcRenderer.invoke(IPC.remoteWorkspace.download, request),
+  previewFile: (path: string): Promise<FilePreview> => ipcRenderer.invoke(IPC.files.preview, path),
   previewRemoteWorkspaceFile: (request: RemoteWorkspaceFileRequest): Promise<FilePreview> =>
-    ipcRenderer.invoke('remoteWorkspace:preview', request),
+    ipcRenderer.invoke(IPC.remoteWorkspace.preview, request),
   hoverPreviewFile: (path: string): Promise<FileHoverPreview> =>
-    ipcRenderer.invoke('files:hoverPreview', path),
+    ipcRenderer.invoke(IPC.files.hoverPreview, path),
   statLocalPaths: (cwd: string, paths: string[]): Promise<LocalPathStat[]> =>
-    ipcRenderer.invoke('files:statLocalPaths', cwd, paths),
+    ipcRenderer.invoke(IPC.files.statLocalPaths, cwd, paths),
   statRemoteWorkspacePaths: (
     request: RemoteWorkspacePathProbeRequest
-  ): Promise<RemoteWorkspacePathStat[]> => ipcRenderer.invoke('remoteWorkspace:statPaths', request),
+  ): Promise<RemoteWorkspacePathStat[]> =>
+    ipcRenderer.invoke(IPC.remoteWorkspace.statPaths, request),
   listDirectory: (path: string): Promise<DirectoryListing> =>
-    ipcRenderer.invoke('files:listDirectory', path),
+    ipcRenderer.invoke(IPC.files.listDirectory, path),
   listRemoteWorkspaceDirectory: (request: RemoteWorkspaceFileRequest): Promise<DirectoryListing> =>
-    ipcRenderer.invoke('remoteWorkspace:listDirectory', request),
+    ipcRenderer.invoke(IPC.remoteWorkspace.listDirectory, request),
   listWrapperResultDirectory: (request: WrapperResultDirectoryRequest): Promise<DirectoryListing> =>
-    ipcRenderer.invoke('wrapperResults:listDirectory', request),
+    ipcRenderer.invoke(IPC.wrapperResults.listDirectory, request),
   previewWrapperResult: (request: WrapperResultReadRequest): Promise<WrapperResultPreview> =>
-    ipcRenderer.invoke('wrapperResults:preview', request),
+    ipcRenderer.invoke(IPC.wrapperResults.preview, request),
   readWrapperResultRange: (request: WrapperResultRangeRequest): Promise<WrapperResultRange> =>
-    ipcRenderer.invoke('wrapperResults:readRange', request),
+    ipcRenderer.invoke(IPC.wrapperResults.readRange, request),
   cancelWrapperResultRead: (requestId: string): Promise<boolean> =>
-    ipcRenderer.invoke('wrapperResults:cancelRead', requestId),
+    ipcRenderer.invoke(IPC.wrapperResults.cancelRead, requestId),
   downloadWrapperResult: (
     request: WrapperResultReadRequest
-  ): Promise<WrapperResultDownloadResult> => ipcRenderer.invoke('wrapperResults:download', request),
+  ): Promise<WrapperResultDownloadResult> =>
+    ipcRenderer.invoke(IPC.wrapperResults.download, request),
   cancelWrapperResultDownload: (requestId: string): Promise<boolean> =>
-    ipcRenderer.invoke('wrapperResults:cancelDownload', requestId),
+    ipcRenderer.invoke(IPC.wrapperResults.cancelDownload, requestId),
   onWrapperResultDownloadProgress: (
     cb: (progress: WrapperResultDownloadProgress) => void
   ): Unsubscribe => {
     const handler = (_: unknown, progress: WrapperResultDownloadProgress): void => cb(progress)
-    ipcRenderer.on('wrapperResults:downloadProgress', handler)
-    return () => ipcRenderer.removeListener('wrapperResults:downloadProgress', handler)
+    ipcRenderer.on(IPC.wrapperResults.downloadProgress, handler)
+    return () => ipcRenderer.removeListener(IPC.wrapperResults.downloadProgress, handler)
   },
   renderMoleculeSvg: (value: string, width: number, height: number): Promise<string> =>
-    ipcRenderer.invoke('molecules:renderSvg', value, width, height),
+    ipcRenderer.invoke(IPC.molecules.renderSvg, value, width, height),
   sendPrompt: (text: string, target?: PromptTarget): Promise<PromptResult | null> =>
-    ipcRenderer.invoke('agent:prompt', text, target),
+    ipcRenderer.invoke(IPC.agent.prompt, text, target),
   readPromptImage: (ref: StoredPromptImage): Promise<PromptImageInput> =>
-    ipcRenderer.invoke('agent:readPromptImage', ref),
+    ipcRenderer.invoke(IPC.agent.readPromptImage, ref),
   readWorkspaceDiff: (ref: WorkspaceDiffReference): Promise<string> =>
-    ipcRenderer.invoke('workspaceChanges:readDiff', ref),
+    ipcRenderer.invoke(IPC.workspaceChanges.readDiff, ref),
   onAgentEvent: (cb: (event: AgentEventSummary) => void): Unsubscribe => {
     const handler = (_: unknown, event: AgentEventSummary): void => {
       cb(event)
     }
 
-    ipcRenderer.on('agent:event', handler)
+    ipcRenderer.on(IPC.agent.event, handler)
 
     return () => {
-      ipcRenderer.removeListener('agent:event', handler)
+      ipcRenderer.removeListener(IPC.agent.event, handler)
     }
   },
-  getAuthStatus: (): Promise<AuthStatusItem[]> => ipcRenderer.invoke('auth:status'),
+  getAuthStatus: (): Promise<AuthStatusItem[]> => ipcRenderer.invoke(IPC.auth.status),
   loginApiKey: (providerId: string, key: string): Promise<AuthStatusItem[]> =>
-    ipcRenderer.invoke('auth:loginApiKey', providerId, key),
+    ipcRenderer.invoke(IPC.auth.loginApiKey, providerId, key),
   loginOAuth: (providerId: string): Promise<AuthStatusItem[]> =>
-    ipcRenderer.invoke('auth:loginOAuth', providerId),
-  logout: (providerId: string): Promise<void> => ipcRenderer.invoke('auth:logout', providerId),
+    ipcRenderer.invoke(IPC.auth.loginOAuth, providerId),
+  logout: (providerId: string): Promise<void> => ipcRenderer.invoke(IPC.auth.logout, providerId),
   submitAuthInteraction: (requestId: string, value: string): Promise<void> =>
-    ipcRenderer.invoke('auth:interaction-response', requestId, value),
+    ipcRenderer.invoke(IPC.auth.interactionResponse, requestId, value),
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void): Unsubscribe => {
     const handler = (_: unknown, event: AuthInteractionEvent): void => {
       cb(event)
     }
 
-    ipcRenderer.on('auth:interaction', handler)
+    ipcRenderer.on(IPC.auth.interactionRequested, handler)
 
     return () => {
-      ipcRenderer.removeListener('auth:interaction', handler)
+      ipcRenderer.removeListener(IPC.auth.interactionRequested, handler)
     }
   },
-  getAppSettings: (): Promise<PhiAppSettings> => ipcRenderer.invoke('settings:get'),
-  checkForAppUpdates: (): Promise<AppUpdateCheck> => ipcRenderer.invoke('app:checkForUpdates'),
+  getAppSettings: (): Promise<PhiAppSettings> => ipcRenderer.invoke(IPC.settings.get),
+  checkForAppUpdates: (): Promise<AppUpdateCheck> => ipcRenderer.invoke(IPC.app.checkForUpdates),
   openAppReleasesPage: (url?: string): Promise<void> =>
-    ipcRenderer.invoke('app:openReleasesPage', url),
+    ipcRenderer.invoke(IPC.app.openReleasesPage, url),
   updateAppSettings: (patch: PhiAppSettingsPatch): Promise<PhiAppSettings> =>
-    ipcRenderer.invoke('settings:update', patch),
+    ipcRenderer.invoke(IPC.settings.update, patch),
   getWebSearchSettings: (): Promise<WebSearchSettings> =>
-    ipcRenderer.invoke('settings:webSearch:get'),
+    ipcRenderer.invoke(IPC.settings.webSearchGet),
   updateWebSearchSettings: (patch: WebSearchSettingsPatch): Promise<WebSearchSettings> =>
-    ipcRenderer.invoke('settings:webSearch:update', patch),
+    ipcRenderer.invoke(IPC.settings.webSearchUpdate, patch),
   listSearxngEngines: (): Promise<SearxngEngineOption[]> =>
-    ipcRenderer.invoke('settings:webSearch:searxngEngines'),
+    ipcRenderer.invoke(IPC.settings.webSearchSearxngEngines),
   setWebSearchApiKey: (providerId: string, key: string): Promise<WebSearchKeyStatus> =>
-    ipcRenderer.invoke('settings:webSearch:apiKey:set', providerId, key),
+    ipcRenderer.invoke(IPC.settings.webSearchApiKeySet, providerId, key),
   clearWebSearchApiKey: (providerId: string): Promise<WebSearchKeyStatus> =>
-    ipcRenderer.invoke('settings:webSearch:apiKey:clear', providerId),
-  getEnvironment: (): Promise<EnvironmentGetResult> => ipcRenderer.invoke('environment:get'),
+    ipcRenderer.invoke(IPC.settings.webSearchApiKeyClear, providerId),
+  getEnvironment: (): Promise<EnvironmentGetResult> => ipcRenderer.invoke(IPC.environment.get),
   redetectEnvironment: (): Promise<EnvironmentSnapshot> =>
-    ipcRenderer.invoke('environment:redetect'),
+    ipcRenderer.invoke(IPC.environment.redetect),
   dismissEnvironmentSummary: (): Promise<EnvironmentSnapshot> =>
-    ipcRenderer.invoke('environment:dismissSummary'),
+    ipcRenderer.invoke(IPC.environment.dismissSummary),
   setEnvironmentToolPath: (
     toolId: EnvironmentToolId,
     path: string | null
-  ): Promise<EnvironmentSnapshot> => ipcRenderer.invoke('environment:setToolPath', toolId, path),
-  pickEnvironmentBinary: (): Promise<string | null> => ipcRenderer.invoke('environment:pickBinary'),
+  ): Promise<EnvironmentSnapshot> => ipcRenderer.invoke(IPC.environment.setToolPath, toolId, path),
+  pickEnvironmentBinary: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.environment.pickBinary),
   listManagedEnvironments: (
     projectCwd?: string,
     includeDynamic?: boolean
   ): Promise<ManagedEnvironmentEntry[]> =>
-    ipcRenderer.invoke('managedEnvironments:list', projectCwd, includeDynamic),
+    ipcRenderer.invoke(IPC.managedEnvironments.list, projectCwd, includeDynamic),
   buildManagedEnvironment: (
     ref: string,
     projectCwd?: string,
     pluginId?: string
   ): Promise<{ envId: string }> =>
-    ipcRenderer.invoke('managedEnvironments:build', ref, projectCwd, pluginId),
+    ipcRenderer.invoke(IPC.managedEnvironments.build, ref, projectCwd, pluginId),
   rebuildManagedEnvironment: (envId: string): Promise<void> =>
-    ipcRenderer.invoke('managedEnvironments:rebuild', envId),
+    ipcRenderer.invoke(IPC.managedEnvironments.rebuild, envId),
   removeManagedEnvironment: (envId: string): Promise<ManagedEnvironmentRemoveResult> =>
-    ipcRenderer.invoke('managedEnvironments:remove', envId),
+    ipcRenderer.invoke(IPC.managedEnvironments.remove, envId),
   cleanManagedEnvironments: (): Promise<ManagedEnvironmentCleanResult> =>
-    ipcRenderer.invoke('managedEnvironments:clean'),
-  listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke('models:list'),
+    ipcRenderer.invoke(IPC.managedEnvironments.clean),
+  listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke(IPC.models.list),
   selectModel: (providerId: string | null, modelId: string | null): Promise<void> =>
-    ipcRenderer.invoke('models:select', providerId, modelId),
-  getSelectedModel: (): Promise<SelectedModel> => ipcRenderer.invoke('models:selected'),
+    ipcRenderer.invoke(IPC.models.select, providerId, modelId),
+  getSelectedModel: (): Promise<SelectedModel> => ipcRenderer.invoke(IPC.models.selected),
   selectThinkingLevel: (level: ThinkingLevel): Promise<void> =>
-    ipcRenderer.invoke('thinking:select', level),
-  getThinkingLevel: (): Promise<ThinkingLevel> => ipcRenderer.invoke('thinking:selected'),
-  getAppName: (): Promise<string> => ipcRenderer.invoke('persona:getAppName'),
-  isOnboarded: (): Promise<boolean> => ipcRenderer.invoke('persona:isOnboarded'),
-  getPersonaMarkdown: (): Promise<string> => ipcRenderer.invoke('persona:getMarkdown'),
+    ipcRenderer.invoke(IPC.thinking.select, level),
+  getThinkingLevel: (): Promise<ThinkingLevel> => ipcRenderer.invoke(IPC.thinking.selected),
+  getAppName: (): Promise<string> => ipcRenderer.invoke(IPC.persona.getAppName),
+  isOnboarded: (): Promise<boolean> => ipcRenderer.invoke(IPC.persona.isOnboarded),
+  getPersonaMarkdown: (): Promise<string> => ipcRenderer.invoke(IPC.persona.getMarkdown),
   setPersonaMarkdown: (markdown: string): Promise<string> =>
-    ipcRenderer.invoke('persona:setMarkdown', markdown),
-  skipOnboarding: (): Promise<void> => ipcRenderer.invoke('persona:skip'),
+    ipcRenderer.invoke(IPC.persona.setMarkdown, markdown),
+  skipOnboarding: (): Promise<void> => ipcRenderer.invoke(IPC.persona.skip),
   completeOnboarding: (description: string): Promise<string> =>
-    ipcRenderer.invoke('persona:completeOnboarding', description),
-  listSessions: (): Promise<SessionSummary[]> => ipcRenderer.invoke('sessions:list'),
-  getHomeActivity: (): Promise<HomeActivitySummary> => ipcRenderer.invoke('sessions:homeActivity'),
-  getCurrentSession: (): Promise<CurrentSession> => ipcRenderer.invoke('sessions:current'),
+    ipcRenderer.invoke(IPC.persona.completeOnboarding, description),
+  listSessions: (): Promise<SessionSummary[]> => ipcRenderer.invoke(IPC.sessions.list),
+  getHomeActivity: (): Promise<HomeActivitySummary> =>
+    ipcRenderer.invoke(IPC.sessions.homeActivity),
+  getCurrentSession: (): Promise<CurrentSession> => ipcRenderer.invoke(IPC.sessions.current),
   getCurrentContextUsage: (): Promise<CurrentContextUsage> =>
-    ipcRenderer.invoke('sessions:contextUsage'),
+    ipcRenderer.invoke(IPC.sessions.contextUsage),
   getAutoCompactionSettings: (
     target: ManualCompactionTarget
   ): Promise<CurrentAutoCompactionSettings> =>
-    ipcRenderer.invoke('sessions:autoCompactionSettings', target),
+    ipcRenderer.invoke(IPC.sessions.autoCompactionSettings, target),
   setAutoCompactionSettings: (
     target: ManualCompactionTarget,
     patch: AutoCompactionSettingsPatch
   ): Promise<CurrentAutoCompactionSettings> =>
-    ipcRenderer.invoke('sessions:autoCompactionSettings:set', target, patch),
+    ipcRenderer.invoke(IPC.sessions.autoCompactionSettingsSet, target, patch),
   compactCurrentSession: (target: ManualCompactionTarget): Promise<ManualCompactionOutcome> =>
-    ipcRenderer.invoke('sessions:compact', target),
+    ipcRenderer.invoke(IPC.sessions.compact, target),
   updateCurrentSessionPermissionMode: (
     permissionMode: PermissionMode,
     target: ManualCompactionTarget
   ): Promise<CurrentSession> =>
-    ipcRenderer.invoke('sessions:updatePermissionMode', permissionMode, target),
-  createSession: (): Promise<CurrentSession> => ipcRenderer.invoke('sessions:create'),
-  getRuntimeRecoveryState: (target) => ipcRenderer.invoke('sessions:runtimeRecovery', target),
+    ipcRenderer.invoke(IPC.sessions.updatePermissionMode, permissionMode, target),
+  createSession: (): Promise<CurrentSession> => ipcRenderer.invoke(IPC.sessions.create),
+  getRuntimeRecoveryState: (target) => ipcRenderer.invoke(IPC.sessions.runtimeRecovery, target),
   resumeRuntimeSession: (target, replacementModel) =>
-    ipcRenderer.invoke('sessions:resumeRuntime', target, replacementModel),
+    ipcRenderer.invoke(IPC.sessions.resumeRuntime, target, replacementModel),
   continueRuntimeFromSummary: (target, sha256) =>
-    ipcRenderer.invoke('sessions:continueRuntimeSummary', target, sha256),
+    ipcRenderer.invoke(IPC.sessions.continueRuntimeSummary, target, sha256),
   forkSession: (
     sourceId: string,
     eventId: string
   ): Promise<{ path: string; phiSessionId: string }> =>
-    ipcRenderer.invoke('sessions:fork', sourceId, eventId),
+    ipcRenderer.invoke(IPC.sessions.fork, sourceId, eventId),
   switchSession: (path: string): Promise<SessionSwitchResult | null> =>
-    ipcRenderer.invoke('sessions:switch', path),
+    ipcRenderer.invoke(IPC.sessions.switch, path),
   acknowledgeSession: (path: string): Promise<SessionSummary | null> =>
-    ipcRenderer.invoke('sessions:acknowledge', path),
-  deleteSession: (path: string): Promise<void> => ipcRenderer.invoke('sessions:delete', path),
+    ipcRenderer.invoke(IPC.sessions.acknowledge, path),
+  deleteSession: (path: string): Promise<void> => ipcRenderer.invoke(IPC.sessions.delete, path),
   renameSession: (path: string, name: string): Promise<void> =>
-    ipcRenderer.invoke('sessions:rename', path, name),
+    ipcRenderer.invoke(IPC.sessions.rename, path, name),
   generateSessionTitle: (path: string): Promise<string> =>
-    ipcRenderer.invoke('sessions:generateTitle', path),
+    ipcRenderer.invoke(IPC.sessions.generateTitle, path),
   exportSession: (sessionId: string): Promise<SessionExportResult | null> =>
-    ipcRenderer.invoke('sessions:export', sessionId),
-  listProjects: (): Promise<Project[]> => ipcRenderer.invoke('projects:list'),
-  pickProjectDirectory: (): Promise<string | null> => ipcRenderer.invoke('projects:pickDirectory'),
+    ipcRenderer.invoke(IPC.sessions.export, sessionId),
+  listProjects: (): Promise<Project[]> => ipcRenderer.invoke(IPC.projects.list),
+  pickProjectDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC.projects.pickDirectory),
   createProject: (
     name: string,
     workingDirectory: string,
     permissionMode: PermissionMode
   ): Promise<Project> =>
-    ipcRenderer.invoke('projects:create', name, workingDirectory, permissionMode),
+    ipcRenderer.invoke(IPC.projects.create, name, workingDirectory, permissionMode),
   createRemoteProject: (input: RemoteProjectCreateInput): Promise<Project> =>
-    ipcRenderer.invoke('projects:createRemote', input),
+    ipcRenderer.invoke(IPC.projects.createRemote, input),
   retryRemoteProjectConnection: (
     request: RemoteProjectConnectionRetryRequest
   ): Promise<RemoteProjectConnectionState> =>
-    ipcRenderer.invoke('projects:retryRemoteConnection', request),
+    ipcRenderer.invoke(IPC.projects.retryRemoteConnection, request),
   onRemoteProjectConnectionChanged: (
     cb: (change: RemoteProjectConnectionChange) => void
   ): Unsubscribe => {
     const handler = (_: unknown, change: RemoteProjectConnectionChange): void => cb(change)
-    ipcRenderer.on('projects:remoteConnectionChanged', handler)
-    return () => ipcRenderer.removeListener('projects:remoteConnectionChanged', handler)
+    ipcRenderer.on(IPC.projects.remoteConnectionChanged, handler)
+    return () => ipcRenderer.removeListener(IPC.projects.remoteConnectionChanged, handler)
   },
-  deleteProject: (id: string): Promise<void> => ipcRenderer.invoke('projects:delete', id),
+  deleteProject: (id: string): Promise<void> => ipcRenderer.invoke(IPC.projects.delete, id),
   updateProjectPermissionMode: (id: string, permissionMode: PermissionMode): Promise<Project> =>
-    ipcRenderer.invoke('projects:updatePermissionMode', id, permissionMode),
+    ipcRenderer.invoke(IPC.projects.updatePermissionMode, id, permissionMode),
   updateProjectDefaults: (
     id: string,
     defaults: {
       defaultModel?: { providerId: string; modelId: string } | null
       defaultThinkingLevel?: ThinkingLevel | null
     }
-  ): Promise<Project> => ipcRenderer.invoke('projects:updateDefaults', id, defaults),
+  ): Promise<Project> => ipcRenderer.invoke(IPC.projects.updateDefaults, id, defaults),
   updateProjectMemory: (id: string, settings: ProjectMemorySettings): Promise<Project> =>
-    ipcRenderer.invoke('projects:updateMemory', id, settings),
+    ipcRenderer.invoke(IPC.projects.updateMemory, id, settings),
   getProjectMemory: (id: string): Promise<ProjectMemorySnapshot> =>
-    ipcRenderer.invoke('memory:snapshot', id),
+    ipcRenderer.invoke(IPC.memory.snapshot, id),
   deleteProjectMemoryLesson: (
     id: string,
     index: number,
     text: string
-  ): Promise<ProjectMemorySnapshot> => ipcRenderer.invoke('memory:deleteLesson', id, index, text),
+  ): Promise<ProjectMemorySnapshot> => ipcRenderer.invoke(IPC.memory.deleteLesson, id, index, text),
   clearProjectMemory: (id: string): Promise<ProjectMemorySnapshot> =>
-    ipcRenderer.invoke('memory:clear', id),
+    ipcRenderer.invoke(IPC.memory.clear, id),
   listRemoteHosts: (): Promise<RemoteHostProfile[]> =>
-    ipcRenderer.invoke('projects:listRemoteHosts'),
+    ipcRenderer.invoke(IPC.projects.listRemoteHosts),
   listRemoteProjectDirectories: (
     request: RemoteDirectoryListRequest
   ): Promise<RemoteDirectoryListing> =>
-    ipcRenderer.invoke('projects:listRemoteDirectories', request),
-  listOpenSshHosts: (): Promise<OpenSshHost[]> => ipcRenderer.invoke('projects:listOpenSshHosts'),
+    ipcRenderer.invoke(IPC.projects.listRemoteDirectories, request),
+  listOpenSshHosts: (): Promise<OpenSshHost[]> => ipcRenderer.invoke(IPC.projects.listOpenSshHosts),
   saveOpenSshHost: (input: OpenSshHostInput): Promise<RemoteHostProfile> =>
-    ipcRenderer.invoke('projects:saveOpenSshHost', input),
+    ipcRenderer.invoke(IPC.projects.saveOpenSshHost, input),
   saveRemoteHost: (input: {
     id?: string
     label: string
@@ -1559,164 +1567,164 @@ const api: RendererAuthApi = {
     user?: string
     port?: number
     identityFile?: string
-  }): Promise<RemoteHostProfile> => ipcRenderer.invoke('projects:saveRemoteHost', input),
+  }): Promise<RemoteHostProfile> => ipcRenderer.invoke(IPC.projects.saveRemoteHost, input),
   deleteRemoteHost: (id: string): Promise<void> =>
-    ipcRenderer.invoke('projects:deleteRemoteHost', id),
+    ipcRenderer.invoke(IPC.projects.deleteRemoteHost, id),
   saveRemoteRuntimeRoot: (
     hostProfileId: string,
     runtimeRoot?: string
   ): Promise<RemoteHostProfile> =>
-    ipcRenderer.invoke('remote:saveRuntimeRoot', hostProfileId, runtimeRoot),
+    ipcRenderer.invoke(IPC.remote.saveRuntimeRoot, hostProfileId, runtimeRoot),
   saveRemoteEnvironment: (
     hostProfileId: string,
     input: RemoteEnvironmentSettingInput
   ): Promise<RemoteHostProfile> =>
-    ipcRenderer.invoke('remote:saveEnvironment', hostProfileId, input),
+    ipcRenderer.invoke(IPC.remote.saveEnvironment, hostProfileId, input),
   saveRemoteMicromambaMirror: (
     hostProfileId: string,
     downloadMirrorPrefix?: string
   ): Promise<RemoteHostProfile> =>
-    ipcRenderer.invoke('remote:saveMicromambaMirror', hostProfileId, downloadMirrorPrefix),
+    ipcRenderer.invoke(IPC.remote.saveMicromambaMirror, hostProfileId, downloadMirrorPrefix),
   remoteMicromamba: (request: RemoteMicromambaRequest): Promise<RemoteMicromambaResult> =>
-    ipcRenderer.invoke('remote:micromamba', request),
+    ipcRenderer.invoke(IPC.remote.micromamba, request),
   onRemoteMicromambaProgress: (cb: (progress: RemoteMicromambaProgress) => void): Unsubscribe => {
     const handler = (_: unknown, progress: RemoteMicromambaProgress): void => cb(progress)
-    ipcRenderer.on('remote:micromambaProgress', handler)
-    return () => ipcRenderer.removeListener('remote:micromambaProgress', handler)
+    ipcRenderer.on(IPC.remote.micromambaProgress, handler)
+    return () => ipcRenderer.removeListener(IPC.remote.micromambaProgress, handler)
   },
   remoteRipgrep: (
     request: RemoteRipgrepRequest
   ): Promise<RemoteRipgrepStatusResult | RemoteRipgrepResult> =>
-    ipcRenderer.invoke('remote:ripgrep', request),
+    ipcRenderer.invoke(IPC.remote.ripgrep, request),
   onRemoteRipgrepProgress: (cb: (progress: RemoteRipgrepIpcProgress) => void): Unsubscribe => {
     const handler = (_: unknown, progress: RemoteRipgrepIpcProgress): void => cb(progress)
-    ipcRenderer.on('remote:ripgrepProgress', handler)
-    return () => ipcRenderer.removeListener('remote:ripgrepProgress', handler)
+    ipcRenderer.on(IPC.remote.ripgrepProgress, handler)
+    return () => ipcRenderer.removeListener(IPC.remote.ripgrepProgress, handler)
   },
   remoteDoctor: (
     hostProfileId: string,
     remotePath?: string,
     options?: RemoteDoctorOptions
   ): Promise<RemoteDoctorReport> =>
-    ipcRenderer.invoke('remote:doctor', hostProfileId, remotePath, options),
+    ipcRenderer.invoke(IPC.remote.doctor, hostProfileId, remotePath, options),
   installRemoteNextflow: (hostProfileId: string): Promise<RemoteNextflowInstallResult> =>
-    ipcRenderer.invoke('remote:installNextflow', hostProfileId),
+    ipcRenderer.invoke(IPC.remote.installNextflow, hostProfileId),
   updateProjectRemoteConnection: (
     id: string,
     connectionId: string,
     patch: ProjectRemoteConnection | null
   ): Promise<Project> =>
-    ipcRenderer.invoke('projects:updateRemoteConnection', id, connectionId, patch),
+    ipcRenderer.invoke(IPC.projects.updateRemoteConnection, id, connectionId, patch),
   updateProjectRemoteDefaults: (
     id: string,
     defaults: {
       defaultRemoteConnectionId?: string | null
       remoteWorkspaceRoot?: string | null
     }
-  ): Promise<Project> => ipcRenderer.invoke('projects:updateRemoteDefaults', id, defaults),
+  ): Promise<Project> => ipcRenderer.invoke(IPC.projects.updateRemoteDefaults, id, defaults),
   listProjectSessions: (workingDirectory: string): Promise<SessionSummary[]> =>
-    ipcRenderer.invoke('projects:sessions', workingDirectory),
+    ipcRenderer.invoke(IPC.projects.sessions, workingDirectory),
   listProjectSessionsById: (projectId: string): Promise<SessionSummary[]> =>
-    ipcRenderer.invoke('projects:sessionsById', projectId),
+    ipcRenderer.invoke(IPC.projects.sessionsById, projectId),
   createProjectSession: (
     workingDirectory: string,
     permissionMode: PermissionMode
   ): Promise<CurrentSession> =>
-    ipcRenderer.invoke('projects:newSession', workingDirectory, permissionMode),
+    ipcRenderer.invoke(IPC.projects.newSession, workingDirectory, permissionMode),
   createRemoteProjectSession: (projectId: string): Promise<CurrentSession> =>
-    ipcRenderer.invoke('projects:newRemoteSession', projectId),
+    ipcRenderer.invoke(IPC.projects.newRemoteSession, projectId),
   listAnalysisNotebooks: (cwd?: string): Promise<AnalysisNotebookRegistry> =>
-    ipcRenderer.invoke('analysis:listNotebooks', cwd),
+    ipcRenderer.invoke(IPC.analysis.listNotebooks, cwd),
   initializeProjectAnalysis: (cwd: string): Promise<AnalysisProjectInitialization> =>
-    ipcRenderer.invoke('analysis:initializeProject', cwd),
+    ipcRenderer.invoke(IPC.analysis.initializeProject, cwd),
   openAnalysisNotebook: (cwd: string, path: string): Promise<AnalysisNotebookFile> =>
-    ipcRenderer.invoke('analysis:openNotebook', cwd, path),
+    ipcRenderer.invoke(IPC.analysis.openNotebook, cwd, path),
   refreshAnalysisNotebook: (cwd: string, path: string): Promise<AnalysisNotebookFile> =>
-    ipcRenderer.invoke('analysis:refreshNotebook', cwd, path),
+    ipcRenderer.invoke(IPC.analysis.refreshNotebook, cwd, path),
   saveAnalysisNotebook: (
     cwd: string,
     input: SaveAnalysisNotebookInput
-  ): Promise<AnalysisNotebookFile> => ipcRenderer.invoke('analysis:saveNotebook', cwd, input),
+  ): Promise<AnalysisNotebookFile> => ipcRenderer.invoke(IPC.analysis.saveNotebook, cwd, input),
   syncAnalysisNotebookDraft: (
     cwd: string,
     path: string,
     document: Record<string, unknown>,
     savedRevision?: string
   ): Promise<AnalysisNotebookDraftChange> =>
-    ipcRenderer.invoke('analysis:syncNotebookDraft', cwd, path, document, savedRevision),
+    ipcRenderer.invoke(IPC.analysis.syncNotebookDraft, cwd, path, document, savedRevision),
   createAnalysisNotebook: (cwd: string, relativePath?: string): Promise<AnalysisNotebookFile> =>
-    ipcRenderer.invoke('analysis:createNotebook', cwd, relativePath),
+    ipcRenderer.invoke(IPC.analysis.createNotebook, cwd, relativePath),
   closeAnalysisNotebook: (cwd: string, path: string): Promise<{ path: string }> =>
-    ipcRenderer.invoke('analysis:closeNotebook', cwd, path),
+    ipcRenderer.invoke(IPC.analysis.closeNotebook, cwd, path),
   deleteAnalysisNotebook: (
     cwd: string,
     path: string
   ): Promise<{ path: string; relativePath: string }> =>
-    ipcRenderer.invoke('analysis:deleteNotebook', cwd, path),
+    ipcRenderer.invoke(IPC.analysis.deleteNotebook, cwd, path),
   listAnalysisKernels: (cwd?: string): Promise<AnalysisKernelDiagnostics> =>
-    ipcRenderer.invoke('analysis:listKernels', cwd),
+    ipcRenderer.invoke(IPC.analysis.listKernels, cwd),
   getAnalysisJupyterStatus: (cwd: string): Promise<JupyterServerStatus> =>
-    ipcRenderer.invoke('analysis:jupyterStatus', cwd),
+    ipcRenderer.invoke(IPC.analysis.jupyterStatus, cwd),
   getAnalysisJupyterRuntimeStatus: (cwd: string): Promise<AnalysisJupyterRuntimeStatus> =>
-    ipcRenderer.invoke('analysis:jupyterRuntimeStatus', cwd),
+    ipcRenderer.invoke(IPC.analysis.jupyterRuntimeStatus, cwd),
   publishNotebookOutputFrame: (html: string): Promise<string> =>
-    ipcRenderer.invoke('analysis:publishNotebookOutputFrame', html),
+    ipcRenderer.invoke(IPC.analysis.publishNotebookOutputFrame, html),
   releaseNotebookOutputFrame: (url: string): Promise<void> =>
-    ipcRenderer.invoke('analysis:releaseNotebookOutputFrame', url),
+    ipcRenderer.invoke(IPC.analysis.releaseNotebookOutputFrame, url),
   startAnalysisJupyter: (cwd: string): Promise<JupyterServerStatus> =>
-    ipcRenderer.invoke('analysis:startJupyter', cwd),
+    ipcRenderer.invoke(IPC.analysis.startJupyter, cwd),
   stopAnalysisJupyter: (
     cwd: string,
     options?: { abandonUnconfirmed?: boolean }
-  ): Promise<JupyterServerStatus> => ipcRenderer.invoke('analysis:stopJupyter', cwd, options),
+  ): Promise<JupyterServerStatus> => ipcRenderer.invoke(IPC.analysis.stopJupyter, cwd, options),
   getAnalysisNotebookSessionStatus: (
     cwd: string,
     path: string,
     document: Record<string, unknown>
   ): Promise<AnalysisNotebookSessionStatus> =>
-    ipcRenderer.invoke('analysis:notebookSessionStatus', cwd, path, document),
+    ipcRenderer.invoke(IPC.analysis.notebookSessionStatus, cwd, path, document),
   ensureAnalysisNotebookSession: (
     cwd: string,
     path: string,
     document: Record<string, unknown>
   ): Promise<AnalysisNotebookSessionStatus> =>
-    ipcRenderer.invoke('analysis:ensureNotebookSession', cwd, path, document),
+    ipcRenderer.invoke(IPC.analysis.ensureNotebookSession, cwd, path, document),
   closeAnalysisNotebookSession: (
     cwd: string,
     path: string
   ): Promise<AnalysisNotebookSessionStatus> =>
-    ipcRenderer.invoke('analysis:closeNotebookSession', cwd, path),
+    ipcRenderer.invoke(IPC.analysis.closeNotebookSession, cwd, path),
   interruptAnalysisNotebookExecution: (
     cwd: string,
     path: string
   ): Promise<AnalysisNotebookSessionStatus> =>
-    ipcRenderer.invoke('analysis:interruptNotebookExecution', cwd, path),
+    ipcRenderer.invoke(IPC.analysis.interruptNotebookExecution, cwd, path),
   executeAnalysisNotebookCell: (
     cwd: string,
     path: string,
     document: Record<string, unknown>,
     cellId: string
   ): Promise<AnalysisCellExecutionResult> =>
-    ipcRenderer.invoke('analysis:executeNotebookCell', cwd, path, document, cellId),
+    ipcRenderer.invoke(IPC.analysis.executeNotebookCell, cwd, path, document, cellId),
   completeAnalysisNotebookCell: (
     cwd: string,
     input: AnalysisNotebookCompletionInput
   ): Promise<AnalysisNotebookCompletionResult> =>
-    ipcRenderer.invoke('analysis:completeNotebookCell', cwd, input),
+    ipcRenderer.invoke(IPC.analysis.completeNotebookCell, cwd, input),
   formatAnalysisNotebookCell: (
     cwd: string,
     input: AnalysisNotebookFormatInput
   ): Promise<AnalysisNotebookFormatResult> =>
-    ipcRenderer.invoke('analysis:formatNotebookCell', cwd, input),
+    ipcRenderer.invoke(IPC.analysis.formatNotebookCell, cwd, input),
   listNotebookAiGenerationJobs: (): Promise<NotebookAiGenerationJob[]> =>
-    ipcRenderer.invoke('analysis:listNotebookAiGenerationJobs'),
+    ipcRenderer.invoke(IPC.analysis.listNotebookAiGenerationJobs),
   generateAnalysisNotebookCode: (
     cwd: string,
     path: string,
     document: Record<string, unknown>,
     input: AnalysisNotebookCodeGenerationInput
   ): Promise<AnalysisNotebookCodeGenerationResult> =>
-    ipcRenderer.invoke('analysis:generateNotebookCode', cwd, path, document, input),
+    ipcRenderer.invoke(IPC.analysis.generateNotebookCode, cwd, path, document, input),
   onAnalysisNotebookCodeGenerationProgress: (
     cb: (progress: AnalysisNotebookCodeGenerationProgress) => void
   ): Unsubscribe => {
@@ -1724,22 +1732,22 @@ const api: RendererAuthApi = {
       cb(progress)
     }
 
-    ipcRenderer.on('analysis:notebookCodeGenerationProgress', handler)
+    ipcRenderer.on(IPC.analysis.notebookCodeGenerationProgress, handler)
 
     return () => {
-      ipcRenderer.removeListener('analysis:notebookCodeGenerationProgress', handler)
+      ipcRenderer.removeListener(IPC.analysis.notebookCodeGenerationProgress, handler)
     }
   },
-  stopGeneration: (): Promise<void> => ipcRenderer.invoke('agent:stop'),
+  stopGeneration: (): Promise<void> => ipcRenderer.invoke(IPC.agent.stop),
   steerAgentRun: (
     agentSessionId: string,
     agentRunId: string,
     message: string,
     toolCallId?: string
   ): Promise<void> =>
-    ipcRenderer.invoke('agent:steerRun', agentSessionId, agentRunId, message, toolCallId),
+    ipcRenderer.invoke(IPC.agent.steerRun, agentSessionId, agentRunId, message, toolCallId),
   stopAgentRun: (agentSessionId: string, agentRunId: string): Promise<void> =>
-    ipcRenderer.invoke('agent:stopRun', agentSessionId, agentRunId),
+    ipcRenderer.invoke(IPC.agent.stopRun, agentSessionId, agentRunId),
   onAnalysisNotebookDraftChanged: (
     cb: (change: AnalysisNotebookDraftChange) => void
   ): Unsubscribe => {
@@ -1747,58 +1755,58 @@ const api: RendererAuthApi = {
       cb(change)
     }
 
-    ipcRenderer.on('analysis:notebookDraftChanged', handler)
+    ipcRenderer.on(IPC.analysis.notebookDraftChanged, handler)
 
     return () => {
-      ipcRenderer.removeListener('analysis:notebookDraftChanged', handler)
+      ipcRenderer.removeListener(IPC.analysis.notebookDraftChanged, handler)
     }
   },
   onWrapperRunsChanged: (cb: (change: { runId: string }) => void): Unsubscribe => {
     const handler = (_: unknown, change: { runId: string }): void => {
       cb(change)
     }
-    ipcRenderer.on('wrappers:runsChanged', handler)
+    ipcRenderer.on(IPC.wrappers.runsChanged, handler)
     return () => {
-      ipcRenderer.removeListener('wrappers:runsChanged', handler)
+      ipcRenderer.removeListener(IPC.wrappers.runsChanged, handler)
     }
   },
   listEnvironmentBuilds: (): Promise<EnvironmentBuild[]> =>
-    ipcRenderer.invoke('environmentBuilds:list'),
+    ipcRenderer.invoke(IPC.environmentBuilds.list),
   cancelEnvironmentBuild: (envId: string): Promise<void> =>
-    ipcRenderer.invoke('environmentBuilds:cancel', envId),
+    ipcRenderer.invoke(IPC.environmentBuilds.cancel, envId),
   onEnvironmentBuildsChanged: (cb: (build: EnvironmentBuild) => void): Unsubscribe => {
     const handler = (_: unknown, build: EnvironmentBuild): void => {
       cb(build)
     }
-    ipcRenderer.on('environmentBuilds:changed', handler)
+    ipcRenderer.on(IPC.environmentBuilds.changed, handler)
     return () => {
-      ipcRenderer.removeListener('environmentBuilds:changed', handler)
+      ipcRenderer.removeListener(IPC.environmentBuilds.changed, handler)
     }
   },
   prepareRemoteProjectUpload: (projectId, input): Promise<RemoteProjectUploadJob> =>
-    ipcRenderer.invoke('remoteProjectUploads:prepare', projectId, input),
+    ipcRenderer.invoke(IPC.remoteProjectUploads.prepare, projectId, input),
   startRemoteProjectUpload: (projectId, jobId, options): Promise<RemoteProjectUploadJob> =>
-    ipcRenderer.invoke('remoteProjectUploads:start', projectId, jobId, options),
+    ipcRenderer.invoke(IPC.remoteProjectUploads.start, projectId, jobId, options),
   listRemoteProjectUploads: (): Promise<RemoteProjectUploadJob[]> =>
-    ipcRenderer.invoke('remoteProjectUploads:list'),
+    ipcRenderer.invoke(IPC.remoteProjectUploads.list),
   cancelRemoteProjectUpload: (jobId): Promise<void> =>
-    ipcRenderer.invoke('remoteProjectUploads:cancel', jobId),
+    ipcRenderer.invoke(IPC.remoteProjectUploads.cancel, jobId),
   retryRemoteProjectUpload: (jobId): Promise<RemoteProjectUploadJob> =>
-    ipcRenderer.invoke('remoteProjectUploads:retry', jobId),
+    ipcRenderer.invoke(IPC.remoteProjectUploads.retry, jobId),
   onRemoteProjectUploadsChanged: (cb): Unsubscribe => {
     const handler = (_: unknown, job: RemoteProjectUploadJob): void => cb(job)
-    ipcRenderer.on('remoteProjectUploads:changed', handler)
-    return () => ipcRenderer.removeListener('remoteProjectUploads:changed', handler)
+    ipcRenderer.on(IPC.remoteProjectUploads.changed, handler)
+    return () => ipcRenderer.removeListener(IPC.remoteProjectUploads.changed, handler)
   },
   listRemoteJupyterJobs: (): Promise<RemoteJupyterStartJob[]> =>
-    ipcRenderer.invoke('remoteJupyterJobs:list'),
+    ipcRenderer.invoke(IPC.remoteJupyterJobs.list),
   onRemoteJupyterJobsChanged: (cb): Unsubscribe => {
     const handler = (_: unknown, job: RemoteJupyterStartJob): void => cb(job)
-    ipcRenderer.on('remoteJupyterJobs:changed', handler)
-    return () => ipcRenderer.removeListener('remoteJupyterJobs:changed', handler)
+    ipcRenderer.on(IPC.remoteJupyterJobs.changed, handler)
+    return () => ipcRenderer.removeListener(IPC.remoteJupyterJobs.changed, handler)
   },
   completeWrapperInputUpload: (jobId, planId, inputId, expectedRevision): Promise<WrapperRunPlan> =>
-    ipcRenderer.invoke('wrappers:completeInputUpload', jobId, planId, inputId, expectedRevision),
+    ipcRenderer.invoke(IPC.wrappers.completeInputUpload, jobId, planId, inputId, expectedRevision),
   onAnalysisNotebookFileChanged: (
     cb: (change: AnalysisNotebookFileChange) => void
   ): Unsubscribe => {
@@ -1806,10 +1814,10 @@ const api: RendererAuthApi = {
       cb(change)
     }
 
-    ipcRenderer.on('analysis:notebookFileChanged', handler)
+    ipcRenderer.on(IPC.analysis.notebookFileChanged, handler)
 
     return () => {
-      ipcRenderer.removeListener('analysis:notebookFileChanged', handler)
+      ipcRenderer.removeListener(IPC.analysis.notebookFileChanged, handler)
     }
   },
   onSessionChanged: (cb: (session: CurrentSession) => void): Unsubscribe => {
@@ -1817,10 +1825,10 @@ const api: RendererAuthApi = {
       cb(session)
     }
 
-    ipcRenderer.on('sessions:changed', handler)
+    ipcRenderer.on(IPC.sessions.changed, handler)
 
     return () => {
-      ipcRenderer.removeListener('sessions:changed', handler)
+      ipcRenderer.removeListener(IPC.sessions.changed, handler)
     }
   },
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void): Unsubscribe => {
@@ -1828,10 +1836,10 @@ const api: RendererAuthApi = {
       cb(event)
     }
 
-    ipcRenderer.on('tool:approval-request', handler)
+    ipcRenderer.on(IPC.tool.approvalRequested, handler)
 
     return () => {
-      ipcRenderer.removeListener('tool:approval-request', handler)
+      ipcRenderer.removeListener(IPC.tool.approvalRequested, handler)
     }
   },
   onToolApprovalCancelled: (cb: (requestId?: string) => void): Unsubscribe => {
@@ -1839,14 +1847,14 @@ const api: RendererAuthApi = {
       cb(requestId)
     }
 
-    ipcRenderer.on('tool:approval-cancelled', handler)
+    ipcRenderer.on(IPC.tool.approvalCancelled, handler)
 
     return () => {
-      ipcRenderer.removeListener('tool:approval-cancelled', handler)
+      ipcRenderer.removeListener(IPC.tool.approvalCancelled, handler)
     }
   },
   respondToolApproval: (requestId: string, approved: boolean): Promise<void> =>
-    ipcRenderer.invoke('tool:approval-response', requestId, approved),
+    ipcRenderer.invoke(IPC.tool.approvalResponse, requestId, approved),
   onAgentUserInteractionRequest: (
     cb: (event: AgentUserInteractionRequest) => void
   ): Unsubscribe => {
@@ -1854,10 +1862,10 @@ const api: RendererAuthApi = {
       cb(event)
     }
 
-    ipcRenderer.on('agent:interaction-request', handler)
+    ipcRenderer.on(IPC.agent.interactionRequested, handler)
 
     return () => {
-      ipcRenderer.removeListener('agent:interaction-request', handler)
+      ipcRenderer.removeListener(IPC.agent.interactionRequested, handler)
     }
   },
   onAgentUserInteractionCancelled: (cb: () => void): Unsubscribe => {
@@ -1865,10 +1873,10 @@ const api: RendererAuthApi = {
       cb()
     }
 
-    ipcRenderer.on('agent:interaction-cancelled', handler)
+    ipcRenderer.on(IPC.agent.interactionCancelled, handler)
 
     return () => {
-      ipcRenderer.removeListener('agent:interaction-cancelled', handler)
+      ipcRenderer.removeListener(IPC.agent.interactionCancelled, handler)
     }
   },
   respondAgentUserInteraction: (
@@ -1876,215 +1884,218 @@ const api: RendererAuthApi = {
     response: AgentUserInteractionResponse,
     cancelled = false
   ): Promise<void> =>
-    ipcRenderer.invoke('agent:interaction-response', requestId, response, cancelled),
-  listPhiPlugins: (): Promise<PhiPluginListItem[]> => ipcRenderer.invoke('phiPlugins:list'),
+    ipcRenderer.invoke(IPC.agent.interactionResponse, requestId, response, cancelled),
+  listPhiPlugins: (): Promise<PhiPluginListItem[]> => ipcRenderer.invoke(IPC.phiPlugins.list),
   pickPhiPluginDirectory: (): Promise<string | null> =>
-    ipcRenderer.invoke('phiPlugins:pickDirectory'),
+    ipcRenderer.invoke(IPC.phiPlugins.pickDirectory),
   previewPhiPluginDirectory: (path: string): Promise<PhiPluginInstallPreview> =>
-    ipcRenderer.invoke('phiPlugins:previewDirectory', path),
+    ipcRenderer.invoke(IPC.phiPlugins.previewDirectory, path),
   installPhiPluginFromDirectory: (path: string): Promise<PhiPluginMutationResult> =>
-    ipcRenderer.invoke('phiPlugins:installFromDirectory', path),
+    ipcRenderer.invoke(IPC.phiPlugins.installFromDirectory, path),
   setPhiPluginEnabled: (id: string, enabled: boolean): Promise<PhiPluginMutationResult> =>
-    ipcRenderer.invoke('phiPlugins:setEnabled', id, enabled),
+    ipcRenderer.invoke(IPC.phiPlugins.setEnabled, id, enabled),
   uninstallPhiPlugin: (id: string): Promise<PhiPluginMutationResult> =>
-    ipcRenderer.invoke('phiPlugins:uninstall', id),
+    ipcRenderer.invoke(IPC.phiPlugins.uninstall, id),
   pickPackageRegistryDirectory: (): Promise<string | null> =>
-    ipcRenderer.invoke('packages:pickRegistryDirectory'),
-  pickPackageArchive: (): Promise<string | null> => ipcRenderer.invoke('packages:pickArchive'),
+    ipcRenderer.invoke(IPC.packages.pickRegistryDirectory),
+  pickPackageArchive: (): Promise<string | null> => ipcRenderer.invoke(IPC.packages.pickArchive),
   readPackageRegistry: (dir: string): Promise<PackageRegistryView> =>
-    ipcRenderer.invoke('packages:registry', dir),
+    ipcRenderer.invoke(IPC.packages.registry, dir),
   readOfficialContentCatalog: (forceRefresh?: boolean): Promise<PackageRegistryView> =>
-    ipcRenderer.invoke('packages:contentCatalog', forceRefresh),
+    ipcRenderer.invoke(IPC.packages.contentCatalog, forceRefresh),
   onPackageResourcesChanged: (cb: () => void): Unsubscribe => {
     const listener = (): void => cb()
-    ipcRenderer.on('packages:resourcesChanged', listener)
-    return () => ipcRenderer.removeListener('packages:resourcesChanged', listener)
+    ipcRenderer.on(IPC.packages.resourcesChanged, listener)
+    return () => ipcRenderer.removeListener(IPC.packages.resourcesChanged, listener)
   },
   listPackageRegistries: (): Promise<KnownPackageRegistryView[]> =>
-    ipcRenderer.invoke('packages:listRegistries'),
+    ipcRenderer.invoke(IPC.packages.listRegistries),
   removePackageRegistry: (id: string): Promise<KnownPackageRegistryView[]> =>
-    ipcRenderer.invoke('packages:removeRegistry', id),
+    ipcRenderer.invoke(IPC.packages.removeRegistry, id),
   previewPackageImport: (path: string): Promise<OfflinePackageImportPreview> =>
-    ipcRenderer.invoke('packages:previewImport', path),
+    ipcRenderer.invoke(IPC.packages.previewImport, path),
   importPackage: (path: string): Promise<InstalledPackageView[]> =>
-    ipcRenderer.invoke('packages:import', path),
+    ipcRenderer.invoke(IPC.packages.import, path),
   listPackageUpdates: (): Promise<PackageUpdateView[]> =>
-    ipcRenderer.invoke('packages:listUpdates'),
+    ipcRenderer.invoke(IPC.packages.listUpdates),
   applyPackageUpdate: (type: PackageManagerType, id: string): Promise<InstalledPackageView[]> =>
-    ipcRenderer.invoke('packages:applyUpdate', type, id),
+    ipcRenderer.invoke(IPC.packages.applyUpdate, type, id),
   applyAllPackageUpdates: (): Promise<InstalledPackageView[]> =>
-    ipcRenderer.invoke('packages:applyAllUpdates'),
+    ipcRenderer.invoke(IPC.packages.applyAllUpdates),
   onPackageUpdatesAvailable: (cb: (updates: PackageUpdateView[]) => void): Unsubscribe => {
     const listener = (_event: Electron.IpcRendererEvent, updates: PackageUpdateView[]): void =>
       cb(updates)
-    ipcRenderer.on('packages:updatesAvailable', listener)
-    return () => ipcRenderer.removeListener('packages:updatesAvailable', listener)
+    ipcRenderer.on(IPC.packages.updatesAvailable, listener)
+    return () => ipcRenderer.removeListener(IPC.packages.updatesAvailable, listener)
   },
   planPackageInstall: (
     dir: string,
     type: PackageManagerType,
     id: string,
     version?: string
-  ): Promise<PackageInstallPlanView> => ipcRenderer.invoke('packages:plan', dir, type, id, version),
+  ): Promise<PackageInstallPlanView> =>
+    ipcRenderer.invoke(IPC.packages.plan, dir, type, id, version),
   readWrapperPackageDetail: (dir: string, id: string): Promise<WrapperPackageDetailView> =>
-    ipcRenderer.invoke('packages:wrapperDetail', dir, id),
+    ipcRenderer.invoke(IPC.packages.wrapperDetail, dir, id),
   readSkillPackageDetail: (dir: string, id: string): Promise<SkillPackageDetailView> =>
-    ipcRenderer.invoke('packages:skillDetail', dir, id),
+    ipcRenderer.invoke(IPC.packages.skillDetail, dir, id),
   removeWrapperPackage: (id: string): Promise<WrapperRemovalView> =>
-    ipcRenderer.invoke('packages:removeWrapper', id),
+    ipcRenderer.invoke(IPC.packages.removeWrapper, id),
   installPackage: (
     dir: string,
     type: PackageManagerType,
     id: string,
     version?: string
   ): Promise<InstalledPackageView[]> =>
-    ipcRenderer.invoke('packages:install', dir, type, id, version),
+    ipcRenderer.invoke(IPC.packages.install, dir, type, id, version),
   uninstallPackage: (type: PackageManagerType, id: string): Promise<InstalledPackageView[]> =>
-    ipcRenderer.invoke('packages:uninstall', type, id),
+    ipcRenderer.invoke(IPC.packages.uninstall, type, id),
   listInstalledPackages: (): Promise<InstalledPackageView[]> =>
-    ipcRenderer.invoke('packages:listInstalled'),
+    ipcRenderer.invoke(IPC.packages.listInstalled),
   getEnablement: (projectCwd?: string): Promise<EnablementSnapshot> =>
-    ipcRenderer.invoke('enablement:get', projectCwd),
+    ipcRenderer.invoke(IPC.enablement.get, projectCwd),
   setEnablement: (
     item: EnablementItemKey,
     value: boolean | null,
     scope: EnablementScope
-  ): Promise<EnablementSnapshot> => ipcRenderer.invoke('enablement:set', item, value, scope),
-  listSkills: (cwd?: string): Promise<SkillSummary[]> => ipcRenderer.invoke('skills:list', cwd),
+  ): Promise<EnablementSnapshot> => ipcRenderer.invoke(IPC.enablement.set, item, value, scope),
+  listSkills: (cwd?: string): Promise<SkillSummary[]> => ipcRenderer.invoke(IPC.skills.list, cwd),
   readSkillContent: (filePath: string, cwd?: string): Promise<SkillContent> =>
-    ipcRenderer.invoke('skills:read', filePath, cwd),
+    ipcRenderer.invoke(IPC.skills.read, filePath, cwd),
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string): Promise<SkillSummary[]> =>
-    ipcRenderer.invoke('skills:setDisabled', filePath, disabled, cwd),
+    ipcRenderer.invoke(IPC.skills.setDisabled, filePath, disabled, cwd),
   deleteSkill: (filePath: string, cwd?: string): Promise<SkillSummary[]> =>
-    ipcRenderer.invoke('skills:delete', filePath, cwd),
+    ipcRenderer.invoke(IPC.skills.delete, filePath, cwd),
   trustRemoteProjectSkill: (input: RemoteProjectSkillTrustRequest): Promise<SkillSummary[]> =>
-    ipcRenderer.invoke('skills:trustRemoteProject', input),
+    ipcRenderer.invoke(IPC.skills.trustRemoteProject, input),
   revokeRemoteProjectSkillTrust: (input: RemoteProjectSkillTrustRequest): Promise<SkillSummary[]> =>
-    ipcRenderer.invoke('skills:revokeRemoteProjectTrust', input),
+    ipcRenderer.invoke(IPC.skills.revokeRemoteProjectTrust, input),
   listPromptAgents: (cwd?: string): Promise<PromptAgentSummary[]> =>
-    ipcRenderer.invoke('agents:list', cwd),
+    ipcRenderer.invoke(IPC.agents.list, cwd),
   trustRemoteProjectAgent: (input: RemoteProjectAgentTrustRequest): Promise<PromptAgentSummary[]> =>
-    ipcRenderer.invoke('agents:trustRemoteProject', input),
+    ipcRenderer.invoke(IPC.agents.trustRemoteProject, input),
   revokeRemoteProjectAgentTrust: (
     input: RemoteProjectAgentTrustRequest
-  ): Promise<PromptAgentSummary[]> => ipcRenderer.invoke('agents:revokeRemoteProjectTrust', input),
+  ): Promise<PromptAgentSummary[]> =>
+    ipcRenderer.invoke(IPC.agents.revokeRemoteProjectTrust, input),
   listMcpServers: (cwd?: string): Promise<McpServerSummary[]> =>
-    ipcRenderer.invoke('mcp:listServers', cwd),
+    ipcRenderer.invoke(IPC.mcp.listServers, cwd),
   trustRemoteProjectMcp: (input: RemoteProjectMcpTrustRequest): Promise<McpServerSummary[]> =>
-    ipcRenderer.invoke('mcp:trustRemoteProject', input),
+    ipcRenderer.invoke(IPC.mcp.trustRemoteProject, input),
   revokeRemoteProjectMcpTrust: (input: RemoteProjectMcpTrustRequest): Promise<McpServerSummary[]> =>
-    ipcRenderer.invoke('mcp:revokeRemoteProjectTrust', input),
+    ipcRenderer.invoke(IPC.mcp.revokeRemoteProjectTrust, input),
   listMcpConnectorCatalog: (): Promise<FeaturedMcpConnector[]> =>
-    ipcRenderer.invoke('mcp:listConnectorCatalog'),
+    ipcRenderer.invoke(IPC.mcp.listConnectorCatalog),
   previewGithubSource: (url: string): Promise<GithubSourcePreview> =>
-    ipcRenderer.invoke('sources:previewGithub', url),
+    ipcRenderer.invoke(IPC.sources.previewGithub, url),
   addGithubSource: (input: { url: string; sha: string }): Promise<GithubSourceSummary> =>
-    ipcRenderer.invoke('sources:addGithub', input),
+    ipcRenderer.invoke(IPC.sources.addGithub, input),
   checkGithubSourceUpdate: (id: string): Promise<GithubSourceUpdateCheck> =>
-    ipcRenderer.invoke('sources:checkGithubUpdate', id),
+    ipcRenderer.invoke(IPC.sources.checkGithubUpdate, id),
   applyGithubSourceUpdate: (input: { id: string; sha: string }): Promise<GithubSourceSummary> =>
-    ipcRenderer.invoke('sources:applyGithubUpdate', input),
+    ipcRenderer.invoke(IPC.sources.applyGithubUpdate, input),
   removeGithubSource: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('sources:removeGithub', id),
-  listGithubSources: (): Promise<GithubSourceSummary[]> => ipcRenderer.invoke('sources:listGithub'),
+    ipcRenderer.invoke(IPC.sources.removeGithub, id),
+  listGithubSources: (): Promise<GithubSourceSummary[]> =>
+    ipcRenderer.invoke(IPC.sources.listGithub),
   installMcpConnector: (
     id: string,
     version?: string,
     registryDir?: string
   ): Promise<InstalledPackageView[]> =>
-    ipcRenderer.invoke('mcp:installConnector', id, version, registryDir),
+    ipcRenderer.invoke(IPC.mcp.installConnector, id, version, registryDir),
   uninstallMcpConnector: (id: string): Promise<InstalledPackageView[]> =>
-    ipcRenderer.invoke('mcp:uninstallConnector', id),
+    ipcRenderer.invoke(IPC.mcp.uninstallConnector, id),
   buildMcpConnectorEnvironment: (id: string): Promise<{ envId: string }> =>
-    ipcRenderer.invoke('mcp:buildConnectorEnvironment', id),
+    ipcRenderer.invoke(IPC.mcp.buildConnectorEnvironment, id),
   onMcpConnectorSetupChanged: (cb: (progress: McpConnectorSetupProgress) => void): Unsubscribe => {
     const handler = (
       _event: Electron.IpcRendererEvent,
       progress: McpConnectorSetupProgress
     ): void => cb(progress)
-    ipcRenderer.on('mcp:connectorSetupChanged', handler)
+    ipcRenderer.on(IPC.mcp.connectorSetupChanged, handler)
     return () => {
-      ipcRenderer.removeListener('mcp:connectorSetupChanged', handler)
+      ipcRenderer.removeListener(IPC.mcp.connectorSetupChanged, handler)
     }
   },
   addRemoteMcpConnector: (
     name: string,
     url: string,
     options?: RemoteMcpConnectorOptions
-  ): Promise<void> => ipcRenderer.invoke('mcp:addRemoteConnector', name, url, options),
+  ): Promise<void> => ipcRenderer.invoke(IPC.mcp.addRemoteConnector, name, url, options),
   addLocalMcpConnector: (request: LocalMcpConnectorRequest): Promise<{ tools: string[] }> =>
-    ipcRenderer.invoke('mcp:addLocalConnector', request),
+    ipcRenderer.invoke(IPC.mcp.addLocalConnector, request),
   startLocalConnectorAdd: (
     request: LocalMcpConnectorRequest
   ): Promise<{ started: true; name: string }> =>
-    ipcRenderer.invoke('mcp:startLocalConnectorAdd', request),
+    ipcRenderer.invoke(IPC.mcp.startLocalConnectorAdd, request),
   cancelLocalConnectorAdd: (name: string): Promise<void> =>
-    ipcRenderer.invoke('mcp:cancelLocalConnectorAdd', name),
+    ipcRenderer.invoke(IPC.mcp.cancelLocalConnectorAdd, name),
   retryLocalConnectorAdd: (name: string): Promise<{ started: true; name: string }> =>
-    ipcRenderer.invoke('mcp:retryLocalConnectorAdd', name),
+    ipcRenderer.invoke(IPC.mcp.retryLocalConnectorAdd, name),
   listLocalConnectorJobs: (): Promise<McpConnectorSetupProgress[]> =>
-    ipcRenderer.invoke('mcp:listLocalConnectorJobs'),
+    ipcRenderer.invoke(IPC.mcp.listLocalConnectorJobs),
   removeLocalMcpConnector: (name: string): Promise<void> =>
-    ipcRenderer.invoke('mcp:removeLocalConnector', name),
+    ipcRenderer.invoke(IPC.mcp.removeLocalConnector, name),
   listLocalMcpRuntimes: (): Promise<LocalMcpRuntimeOption[]> =>
-    ipcRenderer.invoke('mcp:listLocalRuntimes'),
+    ipcRenderer.invoke(IPC.mcp.listLocalRuntimes),
   authorizeRemoteMcpConnector: (name: string): Promise<void> =>
-    ipcRenderer.invoke('mcp:authorizeRemoteConnector', name),
+    ipcRenderer.invoke(IPC.mcp.authorizeRemoteConnector, name),
   cancelRemoteMcpAuth: (name: string): Promise<void> =>
-    ipcRenderer.invoke('mcp:cancelRemoteAuth', name),
+    ipcRenderer.invoke(IPC.mcp.cancelRemoteAuth, name),
   removeRemoteMcpConnector: (name: string, url: string): Promise<void> =>
-    ipcRenderer.invoke('mcp:removeRemoteConnector', name, url),
+    ipcRenderer.invoke(IPC.mcp.removeRemoteConnector, name, url),
   setMcpConnectorEnabled: (name: string, enabled: boolean, sourcePath?: string): Promise<void> =>
-    ipcRenderer.invoke('mcp:setConnectorEnabled', name, enabled, sourcePath),
+    ipcRenderer.invoke(IPC.mcp.setConnectorEnabled, name, enabled, sourcePath),
   listFeaturedMcpTools: (id: string): Promise<string[]> =>
-    ipcRenderer.invoke('mcp:featuredTools', id),
+    ipcRenderer.invoke(IPC.mcp.featuredTools, id),
   getFeaturedMcpAuthStatus: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('mcp:featuredAuthStatus', id),
+    ipcRenderer.invoke(IPC.mcp.featuredAuthStatus, id),
   authorizeFeaturedMcp: (id: string): Promise<void> =>
-    ipcRenderer.invoke('mcp:authorizeFeatured', id),
+    ipcRenderer.invoke(IPC.mcp.authorizeFeatured, id),
   cancelFeaturedMcpAuth: (id: string): Promise<void> =>
-    ipcRenderer.invoke('mcp:cancelFeaturedAuth', id),
+    ipcRenderer.invoke(IPC.mcp.cancelFeaturedAuth, id),
   getFeaturedMcpApiKeyStatus: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('mcp:featuredApiKeyStatus', id),
+    ipcRenderer.invoke(IPC.mcp.featuredApiKeyStatus, id),
   setFeaturedMcpApiKey: (id: string, key: string): Promise<void> =>
-    ipcRenderer.invoke('mcp:setFeaturedApiKey', id, key),
+    ipcRenderer.invoke(IPC.mcp.setFeaturedApiKey, id, key),
   clearFeaturedMcpApiKey: (id: string): Promise<void> =>
-    ipcRenderer.invoke('mcp:clearFeaturedApiKey', id),
+    ipcRenderer.invoke(IPC.mcp.clearFeaturedApiKey, id),
   getWrapperPlan: (planId: string): Promise<WrapperRunPlan | undefined> =>
-    ipcRenderer.invoke('wrappers:getPlan', planId),
+    ipcRenderer.invoke(IPC.wrappers.getPlan, planId),
   retargetWrapperPlan: (request: WrapperRetargetRequest): Promise<WrapperRunPlan> =>
-    ipcRenderer.invoke('wrappers:retargetPlan', request),
+    ipcRenderer.invoke(IPC.wrappers.retargetPlan, request),
   submitWrapperPlan: (
     planId: string,
     heavyWorkloadAcknowledged?: boolean,
     confirmation?: WrapperSubmitConfirmation
   ): Promise<WrapperRun> =>
-    ipcRenderer.invoke('wrappers:submitPlan', planId, heavyWorkloadAcknowledged, confirmation),
+    ipcRenderer.invoke(IPC.wrappers.submitPlan, planId, heavyWorkloadAcknowledged, confirmation),
   cancelWrapperRunPlan: (planId: string): Promise<WrapperRunPlan> =>
-    ipcRenderer.invoke('wrappers:cancelPlan', planId),
+    ipcRenderer.invoke(IPC.wrappers.cancelPlan, planId),
   listWrapperCatalog: (): Promise<WrapperCatalogEntry[]> =>
-    ipcRenderer.invoke('wrappers:listCatalog'),
+    ipcRenderer.invoke(IPC.wrappers.listCatalog),
   addCustomWrapper: (sourceDir: string): Promise<WrapperCatalogEntry> =>
-    ipcRenderer.invoke('wrappers:addCustom', sourceDir),
+    ipcRenderer.invoke(IPC.wrappers.addCustom, sourceDir),
   listWrapperCompositionCatalog: (): Promise<WrapperCompositionCatalogItem[]> =>
-    ipcRenderer.invoke('wrappers:listCompositionCatalog'),
+    ipcRenderer.invoke(IPC.wrappers.listCompositionCatalog),
   getWrapperCompositionDag: (id: string): Promise<string | undefined> =>
-    ipcRenderer.invoke('wrappers:getCompositionDag', id),
+    ipcRenderer.invoke(IPC.wrappers.getCompositionDag, id),
   getWrapperCompositionModuleDetails: (id: string): Promise<WrapperModuleDetails | undefined> =>
-    ipcRenderer.invoke('wrappers:getCompositionModuleDetails', id),
-  listWrapperRuns: (): Promise<WrapperRun[]> => ipcRenderer.invoke('wrappers:listRuns'),
-  listAgentJobs: (): Promise<BackgroundAgentJob[]> => ipcRenderer.invoke('jobs:listAgents'),
-  listShellJobs: (): Promise<BackgroundShellJob[]> => ipcRenderer.invoke('jobs:listShell'),
+    ipcRenderer.invoke(IPC.wrappers.getCompositionModuleDetails, id),
+  listWrapperRuns: (): Promise<WrapperRun[]> => ipcRenderer.invoke(IPC.wrappers.listRuns),
+  listAgentJobs: (): Promise<BackgroundAgentJob[]> => ipcRenderer.invoke(IPC.jobs.listAgents),
+  listShellJobs: (): Promise<BackgroundShellJob[]> => ipcRenderer.invoke(IPC.jobs.listShell),
   stopShellJob: (agentSessionId: string, jobId: string): Promise<void> =>
-    ipcRenderer.invoke('jobs:stopShell', agentSessionId, jobId),
+    ipcRenderer.invoke(IPC.jobs.stopShell, agentSessionId, jobId),
   getWrapperRun: (runId: string): Promise<WrapperRun | undefined> =>
-    ipcRenderer.invoke('wrappers:getRun', runId),
+    ipcRenderer.invoke(IPC.wrappers.getRun, runId),
   cancelWrapperRun: (runId: string): Promise<WrapperRun> =>
-    ipcRenderer.invoke('wrappers:cancelRun', runId),
+    ipcRenderer.invoke(IPC.wrappers.cancelRun, runId),
   getWrapperPlanArtifact: (planId: string, fileName: string): Promise<string | undefined> =>
-    ipcRenderer.invoke('wrappers:getPlanArtifact', planId, fileName),
+    ipcRenderer.invoke(IPC.wrappers.getPlanArtifact, planId, fileName),
   exportWrapperReproducibility: (runId: string): Promise<string | null> =>
-    ipcRenderer.invoke('wrappers:exportReproducibility', runId)
+    ipcRenderer.invoke(IPC.wrappers.exportReproducibility, runId)
 }
 
 function dataTransferHasFiles(dataTransfer: DataTransfer | null): boolean {

@@ -5,6 +5,24 @@ import eslintPluginReact from 'eslint-plugin-react'
 import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
 import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
+const ipcChannelLiteralMessage =
+  'Use the channel constant from src/shared/ipcChannels.ts instead of an IPC string literal.'
+const ipcCallSelectors = [
+  "CallExpression[callee.type='MemberExpression'][callee.object.name='ipcMain'][callee.property.name=/^(handle|on|once|removeHandler)$/]",
+  "CallExpression[callee.type='MemberExpression'][callee.object.type='MemberExpression'][callee.object.property.name='ipcMain'][callee.property.name=/^(handle|on|once|removeHandler)$/]",
+  "CallExpression[callee.type='MemberExpression'][callee.object.name='ipcRenderer'][callee.property.name=/^(invoke|send|on|once|removeListener|removeAllListeners)$/]",
+  "CallExpression[callee.type='MemberExpression'][callee.object.name='webContents'][callee.property.name='send']",
+  "CallExpression[callee.type='MemberExpression'][callee.object.type='MemberExpression'][callee.object.property.name=/^(webContents|sender)$/][callee.property.name='send']",
+  "CallExpression[callee.type='MemberExpression'][callee.object.name='renderer'][callee.property.name='send']"
+]
+const ipcLiteralRestrictions = ipcCallSelectors.flatMap((selector) => [
+  { selector: `${selector}[arguments.0.type='Literal']`, message: ipcChannelLiteralMessage },
+  {
+    selector: `${selector}[arguments.0.type='TemplateLiteral'][arguments.0.expressions.length=0]`,
+    message: ipcChannelLiteralMessage
+  }
+])
+
 export default defineConfig(
   { ignores: ['**/node_modules', '**/dist', '**/out', '.omx/**'] },
   tseslint.configs.recommended,
@@ -26,6 +44,12 @@ export default defineConfig(
     rules: {
       ...eslintPluginReactHooks.configs.recommended.rules,
       ...eslintPluginReactRefresh.configs.vite.rules
+    }
+  },
+  {
+    files: ['src/main/**/*.{ts,tsx}', 'src/preload/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': ['error', ...ipcLiteralRestrictions]
     }
   },
   // Complexity ratchet, part one: the ceiling is reported everywhere so a new

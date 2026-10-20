@@ -16,6 +16,7 @@ import {
   buildPhiRemoteProjectSystemPrompt
 } from '../src/main/agent/main-system-prompt'
 import type { RuntimeRecoveryApi } from '../src/shared/runtimeRecoveryTypes'
+import { IPC } from '../src/shared/ipcChannels'
 
 const base = {
   schema: 1,
@@ -109,6 +110,7 @@ test('recovery preload forwards only explicit target/model/hash operations, with
   const ipcRenderer = new Ipc()
   new Function('require', 'exports', 'process', 'window', 'console', compiled)(
     (specifier: string) => {
+      if (specifier === '../shared/ipcChannels') return { IPC }
       assert.equal(specifier, 'electron')
       return {
         ipcRenderer,

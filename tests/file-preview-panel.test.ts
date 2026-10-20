@@ -640,7 +640,7 @@ test('file preview default open action uses the system file icon without a menu'
   assert.match(panelSource, /data-phi-file-open-default-app-icon="system"/)
   assert.doesNotMatch(panelSource, /MenuItem/)
   assert.doesNotMatch(panelSource, /aria-label="打开方式"/)
-  assert.match(mainSource, /ipcMain\.handle\('files:getIcon'/)
+  assert.match(mainSource, /ipcMain\.handle\(IPC\.files\.getIcon/)
   assert.match(mainSource, /com\.apple\.launchservices\.secure\.plist/)
   assert.match(mainSource, /\/usr\/bin\/mdfind/)
   assert.match(
@@ -650,7 +650,7 @@ test('file preview default open action uses the system file icon without a menu'
   assert.match(mainSource, /getMacApplicationIconDataUrl\(bundleId\)/)
   assert.match(
     preloadSource,
-    /getFileIcon: \(path: string\): Promise<string \| null> => ipcRenderer\.invoke\('files:getIcon', path\)/
+    /getFileIcon: \(path: string\): Promise<string \| null> =>\s*ipcRenderer\.invoke\(IPC\.files\.getIcon, path\)/
   )
   assert.match(preloadTypes, /getFileIcon: \(path: string\) => Promise<string \| null>/)
   assert.match(rendererTypes, /getFileIcon: \(path: string\) => Promise<string \| null>/)

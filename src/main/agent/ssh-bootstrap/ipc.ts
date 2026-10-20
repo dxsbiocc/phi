@@ -1,3 +1,4 @@
+import { IPC } from '../../../shared/ipcChannels'
 import { sshBootstrapCopy } from './copy'
 import type { SshBootstrapTarget } from '../../../shared/sshBootstrapTypes'
 import type { SshBootstrapCoordinator } from './coordinator'
@@ -103,7 +104,7 @@ export function registerSshBootstrapIpc(
   getTrustedRenderer: () => RendererLike | null,
   coordinator: SshBootstrapCoordinator
 ): void {
-  ipcMain.handle('sshBootstrap:inspectTarget', async (event, ...args) => {
+  ipcMain.handle(IPC.sshBootstrap.inspectTarget, async (event, ...args) => {
     assertTrustedRenderer(event, getTrustedRenderer)
     try {
       const target = parsedTarget(args[0])
@@ -114,7 +115,7 @@ export function registerSshBootstrapIpc(
       return { status: 'rejected', errorCode: 'unexpected' }
     }
   })
-  ipcMain.handle('sshBootstrap:confirmHostKey', async (event, ...args) => {
+  ipcMain.handle(IPC.sshBootstrap.confirmHostKey, async (event, ...args) => {
     assertTrustedRenderer(event, getTrustedRenderer)
     try {
       return validId(args[0])
@@ -124,7 +125,7 @@ export function registerSshBootstrapIpc(
       return { status: 'rejected', errorCode: 'unexpected' }
     }
   })
-  ipcMain.handle('sshBootstrap:verifyPassword', async (event, ...args) => {
+  ipcMain.handle(IPC.sshBootstrap.verifyPassword, async (event, ...args) => {
     assertTrustedRenderer(event, getTrustedRenderer)
     const rawInput = args[1]
     const input = parsedPassword(rawInput)
@@ -140,7 +141,7 @@ export function registerSshBootstrapIpc(
       clearCredentialValue(rawInput)
     }
   })
-  ipcMain.handle('sshBootstrap:completeWithKeyProtection', async (event, ...args) => {
+  ipcMain.handle(IPC.sshBootstrap.completeWithKeyProtection, async (event, ...args) => {
     assertTrustedRenderer(event, getTrustedRenderer)
     const rawInput = args[1]
     const input = parsedKeyProtection(rawInput)
@@ -156,7 +157,7 @@ export function registerSshBootstrapIpc(
       clearCredentialValue(rawInput)
     }
   })
-  ipcMain.handle('sshBootstrap:saveConfig', async (event, ...args) => {
+  ipcMain.handle(IPC.sshBootstrap.saveConfig, async (event, ...args) => {
     assertTrustedRenderer(event, getTrustedRenderer)
     try {
       if (!validId(args[0])) throw new Error('invalid')
@@ -165,7 +166,7 @@ export function registerSshBootstrapIpc(
       throw new Error(sshBootstrapCopy.configWriteFailed)
     }
   })
-  ipcMain.handle('sshBootstrap:declineConfig', async (event, ...args) => {
+  ipcMain.handle(IPC.sshBootstrap.declineConfig, async (event, ...args) => {
     assertTrustedRenderer(event, getTrustedRenderer)
     try {
       if (!validId(args[0])) throw new Error('invalid')
@@ -174,7 +175,7 @@ export function registerSshBootstrapIpc(
       throw new Error(sshBootstrapCopy.operationFailed)
     }
   })
-  ipcMain.handle('sshBootstrap:cancel', async (event, ...args) => {
+  ipcMain.handle(IPC.sshBootstrap.cancel, async (event, ...args) => {
     assertTrustedRenderer(event, getTrustedRenderer)
     if (validId(args[0])) await coordinator.cancel(args[0]).catch(() => undefined)
   })
