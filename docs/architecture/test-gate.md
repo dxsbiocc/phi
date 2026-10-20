@@ -148,6 +148,18 @@ Linux 服务器(远端运行时的真实目标)两者都自带。
     `.bun.*.partial` 后给 `--version` 5 秒,同属首次执行扫描,但新文件由产品生成,测试无法预热)、
     `workspace-host-remote-micromamba`(慢容量探测软超时 5 秒,两次)、`remote-project-download-ownership`
     (两例 5 秒)、`remote-runtime-root-doctor`、`omp-bridge-model-gateway`(200 毫秒)。
+  - IPC-5 那轮门(并发 14)里又有 4 个套件首轮失败、串行重试通过,逐个核实后都是首次执行扫描。
+    本机除 XProtect 外还装有 Avira 的 Endpoint Security 扩展,也会在首次执行时扫描。内容相同的新副本
+    同样要排队,扫描结果不按内容缓存,所以只能预热**同一个文件**。
+    - `environment-background`:假 `which`(产品时限 3 秒)和假 `docker`(探测 8 秒,测试自己等探测 10 秒)
+      都是第一次在时限内执行。两者先预热;`docker` 加一个 `--phi-warm` 立即退出的分支,预热时不会碰探测闸门。
+    - `omp-bun-executable`、`omp-worker-proxy-env`:新写的 `noisy-sh` 第一次执行就落在产品 5 秒的登录 shell
+      时限里,超时错误被吞掉,读回来的是空值。夹具写完先用 `-c :` 预热。
+    - `envs-application-tools`:新文件由产品自己写出(`.bun/.node.<uuid>.partial`),写完立刻跑 `--version`,
+      测试没法预热。装了这类扫描软件的真实用户同样会被 5 秒卡住,所以**改了产品**(经用户确认):
+      只把这次首次执行的检查放宽到 60 秒(`FIRST_EXEC_VERSION_CHECK_TIMEOUT_MS`),已安装文件的检查仍是 5 秒。
+    - 复现:每个套件 8 份并行 + 20 个 `yes` + 12 个写新脚本的进程。修复前 4 个套件 8/8 失败
+      (`envs-application-tools` 每份 9 例卡在 5,00x 毫秒、被 SIGKILL);修复后 8/8 通过。
 - 门的默认并发从固定 4 改为 `max(4, 核数/2)`,`PHI_TEST_CONCURRENCY` 仍可覆盖;失败套件的串行重试不变。
 - 缓存异常时删除 `node_modules/.cache/phi-test-transpile/` 即可,无需其他清理。
 
