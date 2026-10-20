@@ -35,8 +35,8 @@ type IpcHandler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 
 function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, IpcHandler> {
   const source = ts.createSourceFile(
-    'main.ts',
-    readFileSync(resolve('src/main/index.ts'), 'utf8'),
+    'mcp-ipc.ts',
+    readFileSync(resolve('src/main/ipc/mcp-ipc.ts'), 'utf8'),
     ts.ScriptTarget.ES2022,
     true
   )
@@ -46,7 +46,9 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
     'connectorSetups',
     'connectorCatalog',
     'prepareStdioEnvironment',
-    'probeStdioTools'
+    'prepareStdioEnvironmentForContext',
+    'probeStdioTools',
+    'probeStdioToolsForContext'
   ]
   const visit = (node: ts.Node): void => {
     if (ts.isVariableStatement(node)) {
@@ -87,6 +89,7 @@ function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, Ip
   const join = (...parts) => parts.join('/');
   const callbacks = new Map();
   const ipcMain = { handle: (channel, callback) => callbacks.set(channel, callback) };
+  const context = { AGENT_DIR, options: { packages: { environmentBuilds } } };
   ${names.map((name) => definitions.get(name)!.getText(source)).join('\n')}
   ${IPC_CHANNELS.map((channel) => registrations.get(channel)!.getText(source)).join('\n')}
   return callbacks;`

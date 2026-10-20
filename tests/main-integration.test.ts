@@ -4363,6 +4363,8 @@ async function harness(
   const mainEntryPath = path.join(mainSourceRoot, 'index.ts')
   const sourceModuleCache = new Map<string, Record<string, unknown>>()
   const explicitlyLoadedSourceModules = new Set([
+    './agent/mcp/featured-api-key-verification',
+    './agent/mcp/remote-mcp-trust-request',
     './agent/notebook/analysis-notebook-code-generator',
     './agent/notebook/analysis-notebook-operations'
   ])

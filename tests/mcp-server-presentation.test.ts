@@ -8,8 +8,8 @@ import { withConnectorMetadata } from '../src/main/agent/mcp-server-view'
 import { IPC } from '../src/shared/ipcChannels'
 
 const syntax = ts.createSourceFile(
-  'src/main/index.ts',
-  readFileSync('src/main/index.ts', 'utf8'),
+  'src/main/ipc/mcp-ipc.ts',
+  readFileSync('src/main/ipc/mcp-ipc.ts', 'utf8'),
   ts.ScriptTarget.Latest,
   true
 )

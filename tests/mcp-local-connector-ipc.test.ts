@@ -36,8 +36,8 @@ type IpcHandler = (event: unknown, ...args: unknown[]) => Promise<unknown>
 
 function extractedMainIpc(dependencies: Record<string, unknown>): Map<string, IpcHandler> {
   const source = ts.createSourceFile(
-    'main.ts',
-    readFileSync(resolve('src/main/index.ts'), 'utf8'),
+    'mcp-ipc.ts',
+    readFileSync(resolve('src/main/ipc/mcp-ipc.ts'), 'utf8'),
     ts.ScriptTarget.ES2022,
     true
   )

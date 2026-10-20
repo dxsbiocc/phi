@@ -78,6 +78,7 @@ import {
 } from './agent/session/permission-mode-control'
 import { registerWorkspaceFileIpc } from './workspace-file-ipc'
 import { registerAnalysisIpc } from './ipc/analysis-ipc'
+import { registerMcpIpc, type PendingCustomMcpAuthorization } from './ipc/mcp-ipc'
 import { nativeUiCopy } from './native-ui-copy'
 import {
   createStartupSplashWindow,
@@ -89,7 +90,7 @@ import type { MenuBarController } from './menu-bar-controller'
 import type { MenuBarAction } from '../shared/menuBarTypes'
 import type { IpcMainInvokeEvent } from 'electron'
 import { execFile } from 'node:child_process'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import {
   closeSync,
   existsSync,
@@ -298,10 +299,7 @@ import {
 } from './agent/content/remote-project-skill-service'
 import {
   loadRemoteProjectMcpCatalog,
-  revokeRemoteProjectMcpTrust,
-  trustRemoteProjectMcp,
-  type RemoteProjectMcpCatalog,
-  type RemoteProjectMcpContext
+  type RemoteProjectMcpCatalog
 } from './agent/mcp/remote-project-mcp-service'
 import { getRuntimeRoot } from './agent/envs/runtime'
 import { collectGarbage } from './agent/envs/gc'
@@ -380,7 +378,6 @@ import type { InstallerOptions } from './agent/packages/installer-types'
 import type { PackageType } from './agent/packages/manifest'
 import { readSkillPackageDetail } from './agent/packages/skill-detail'
 import { readWrapperPackageDetail } from './agent/packages/wrapper-detail'
-import { withConnectorMetadata } from './agent/mcp-server-view'
 import { runPackageMutation } from './agent/packages/mutation-queue'
 import { removeWrapperPackage } from './agent/packages/wrapper-removal'
 import { syncPreferredOfficialRegistry } from './agent/packages/official-website-registry'
@@ -395,46 +392,23 @@ import {
   removeGithubSource
 } from './agent/packages/github-source'
 import { readResourceIcon } from './agent/resource-icons'
-import type { RemoteMcpConnectorOptions } from '../shared/mcpConnectorCatalog'
 import {
-  addRemoteMcpConnector,
-  connectorEnvironmentBuildAction,
-  disableFeaturedApiKeyAutoDiscovery,
-  installCatalogConnector,
   listConnectorCatalog,
   mcpOAuthAuthorizationOrigin,
   readCustomRemoteMcpConnector,
   refreshPersistedManagedStdioServers,
-  readMcpServerEntry,
-  removeRemoteMcpConnector,
-  setMcpConnectorEnabled,
-  setMcpPackageEnabled,
-  uninstallCatalogConnector,
-  validateName
+  setMcpPackageEnabled
 } from './agent/mcp-connectors'
 import {
-  addLocalMcpConnector,
-  listLocalMcpRuntimes,
-  removeLocalMcpConnector,
-  validateLocalConnectorRequest
-} from './agent/mcp/custom-stdio'
-import { ConnectorSetupTracker, type ConnectorSetupReporter } from './agent/mcp/connector-setup'
-import { createLocalConnectorJobs } from './agent/mcp/local-connector-jobs'
-import {
-  API_KEY_CONNECTOR_IDS,
   apiKeyConnector,
-  clearFeaturedMcpApiKey,
   isFeaturedMcpApiKeyInstalled,
-  readFeaturedMcpApiKey,
-  setFeaturedMcpApiKey
+  readFeaturedMcpApiKey
 } from './agent/mcp-key-credentials'
-import { McpApiKeyValidationError, validateFeaturedMcpApiKey } from './agent/mcp-key-validation'
 import { validateSkill } from './agent/content/skill'
 import {
   deleteSkill,
   listGlobalMcpServers,
   listGlobalSkills,
-  listMcpServers,
   listPromptAgents,
   listSkills,
   readSkillContent,
@@ -2586,14 +2560,6 @@ getPhiEngine().host.register('mcp.openAuthUrl', async (params) => {
   }
   await shell.openExternal(url.toString())
 })
-type PendingCustomMcpAuthorization = {
-  attemptId: string
-  serverUrl: string
-  configDigest: string
-  cancelled: boolean
-  authorizationOrigin?: string
-  authorizationPath?: string
-}
 const pendingCustomMcpAuthorizations = new Map<string, PendingCustomMcpAuthorization>()
 
 function customMcpAuthUrl(value: unknown): URL {
@@ -2646,49 +2612,6 @@ getPhiEngine().host.register('mcp.featuredApiKey', (params) => {
   if (!isFeaturedMcpApiKeyInstalled(id)) return undefined
   return readFeaturedMcpApiKey(id)
 })
-const VERIFIED_API_KEY_CACHE_MS = 5 * 60_000
-const verifiedMcpApiKeys = new Map<string, { digest: string; expiresAt: number }>()
-function verificationExpiresAt(id: string): number {
-  // SerpApi's account API accepts keys only in a query parameter. Check it at
-  // most once per app process for an unchanged key to avoid repeated URL exposure.
-  return id === 'serpapi' ? Number.POSITIVE_INFINITY : Date.now() + VERIFIED_API_KEY_CACHE_MS
-}
-function apiKeyDigest(key: string): string {
-  return createHash('sha256').update(key).digest('hex')
-}
-async function featuredMcpApiKeyVerifiedStatus(id: string): Promise<boolean> {
-  const key = readFeaturedMcpApiKey(id)
-  if (!key) {
-    verifiedMcpApiKeys.delete(id)
-    return false
-  }
-  const digest = apiKeyDigest(key)
-  const cached = verifiedMcpApiKeys.get(id)
-  if (cached?.digest === digest && cached.expiresAt > Date.now()) return true
-  try {
-    await validateFeaturedMcpApiKey(id, key)
-  } catch (cause) {
-    verifiedMcpApiKeys.delete(id)
-    if (cause instanceof McpApiKeyValidationError && cause.kind === 'invalid') return false
-    throw cause
-  }
-  verifiedMcpApiKeys.set(id, { digest, expiresAt: verificationExpiresAt(id) })
-  return true
-}
-async function syncFeaturedMcpApiKeySessions(id: string): Promise<void> {
-  if (!API_KEY_CONNECTOR_IDS.some((connectorId) => connectorId === id)) return
-  try {
-    await getPhiEngine().mcp.syncFeaturedApiKeys({ id })
-  } catch {
-    // The worker may still hold the previous key. Stop it so a failed sync cannot
-    // leave a revoked or rotated credential usable in an existing session.
-    writeAppLog({ event: 'mcp_api_key_session_sync_failed', metadata: { connectorId: id } })
-    await getPhiEngine().stop()
-    throw new Error(
-      'Local changes were saved, but the running chat could not be synchronized and was stopped. Reopen the chat and try again.'
-    )
-  }
-}
 const remoteConnectionTracker = new RemoteProjectConnectionTracker()
 const remoteProjectUploads = new RemoteProjectUploadService({
   connectProject: async (projectId) => {
@@ -6418,10 +6341,6 @@ function remoteSkillProjectContext(cwd?: string): RemoteProjectSkillContext {
   }
 }
 
-function remoteMcpProjectContext(cwd?: string): RemoteProjectMcpContext {
-  return remoteSkillProjectContext(cwd)
-}
-
 async function listRemoteProjectSkills(
   cwd?: string
 ): Promise<Awaited<ReturnType<typeof listSkills>>> {
@@ -6507,44 +6426,6 @@ function checkedRemoteSkillTrustMutation(value: unknown): {
     throw new Error('远程项目 Skill 信任请求无效')
   }
   return value as { cwd: string; relativePath: string; contentHash: string }
-}
-
-function checkedRemoteMcpTrustMutation(value: unknown): {
-  cwd: string
-  relativePath: string
-  contentHash: string
-  confirmedItemIds: string[]
-} {
-  if (!isRecord(value)) throw new Error('远程项目 MCP 信任请求无效')
-  if (
-    Object.keys(value).some(
-      (key) =>
-        key !== 'cwd' &&
-        key !== 'relativePath' &&
-        key !== 'contentHash' &&
-        key !== 'confirmedItemIds'
-    ) ||
-    typeof value.cwd !== 'string' ||
-    typeof value.relativePath !== 'string' ||
-    !/^(?:\.phi\/mcp\.json|\.mcp\.json|\.omp\/mcp\.json|\.pi\/mcp\.json)$/u.test(
-      value.relativePath
-    ) ||
-    typeof value.contentHash !== 'string' ||
-    !/^[a-f0-9]{64}$/u.test(value.contentHash) ||
-    !Array.isArray(value.confirmedItemIds) ||
-    value.confirmedItemIds.length > 1024 ||
-    !value.confirmedItemIds.every(
-      (item) => typeof item === 'string' && item.length > 0 && item.length <= 512
-    )
-  ) {
-    throw new Error('远程项目 MCP 信任请求无效')
-  }
-  return value as {
-    cwd: string
-    relativePath: string
-    contentHash: string
-    confirmedItemIds: string[]
-  }
 }
 
 async function listRemotePromptAgents(cwd?: string): Promise<PromptAgentSummary[]> {
@@ -11364,375 +11245,30 @@ app.whenReady().then(async () => {
     await invalidateAgentSession()
     return (await loadRemoteAgentCatalog(context)).entries
   })
-  const connectorSetups = new ConnectorSetupTracker(
-    (progress) => sendToAllWindows(IPC.mcp.connectorSetupChanged, progress),
-    undefined,
-    { path: join(AGENT_DIR, 'state', 'connector-setup.json') }
-  )
-  const connectorCatalog = async (
-    forceRefresh = false
-  ): Promise<ReturnType<typeof listConnectorCatalog>> =>
-    listConnectorCatalog({
+  registerMcpIpc({
+    ipcMain,
+    lifecycle: {
+      getAppVersion: () => app.getVersion(),
+      invalidateAgentSession,
+      sendToAllWindows
+    },
+    workspace: {
       agentDir: AGENT_DIR,
-      appVersion: app.getVersion(),
-      runtimeRoot: getRuntimeRoot(),
-      registries: (await loadPackageRegistries('mcp', forceRefresh)).registries
-    }).map((connector) => ({ ...connector, setup: connectorSetups.get(connector.id) }))
-  const localConnectorJobs = createLocalConnectorJobs({
-    tracker: connectorSetups,
-    agentDir: AGENT_DIR,
-    runtimeRoot: getRuntimeRoot(),
-    probe: (request) => getPhiEngine().mcp.configuredStdioTools(request),
-    cancelProbe: (requestKey) => getPhiEngine().mcp.cancelConfiguredStdioTools({ requestKey }),
-    applyEnabled: (name) => getPhiEngine().mcp.applyConnectorEnabled({ name }),
-    onEvent: (event, metadata) =>
-      writeAppLog({ event: `mcp_local_connector_add_${event}`, metadata })
-  })
-
-  async function prepareStdioEnvironment(
-    id: string,
-    report: ConnectorSetupReporter
-  ): Promise<{ envId: string }> {
-    report('environment')
-    const action = connectorEnvironmentBuildAction(id, { agentDir: AGENT_DIR })
-    const handle = await environmentBuilds.start(action.descriptor, action.options)
-    const refreshed = refreshPersistedManagedStdioServers({
-      agentDir: AGENT_DIR,
-      runtimeRoot: getRuntimeRoot()
-    })
-    const failure = refreshed.failures.find((entry) => entry.name === id)
-    if (failure) throw failure.error
-    return { envId: handle.envId }
-  }
-
-  async function probeStdioTools(id: string, report: ConnectorSetupReporter): Promise<string[]> {
-    const entry = readMcpServerEntry(id, AGENT_DIR)
-    if (!entry || entry.phiPackage !== id) throw new Error('Install this local Connector first')
-    report('starting')
-    const toolNames = await getPhiEngine().mcp.configuredStdioTools({
-      name: id,
-      entry,
-      environment: { agentDir: AGENT_DIR, root: getRuntimeRoot() }
-    })
-    return toolNames
-  }
-  const listedMcpServers = async (
-    cwd?: string
-  ): Promise<Awaited<ReturnType<typeof listMcpServers>>> => {
-    if (!isRemoteResourceScope(cwd)) return listMcpServers(cwd ?? currentCwd)
-    const [globalServers, projectCatalog] = await Promise.all([
-      listGlobalMcpServers(),
-      loadRemoteProjectMcpCatalog(remoteMcpProjectContext(cwd))
-    ])
-    return [...globalServers, ...projectCatalog.summaries]
-  }
-  ipcMain.handle(IPC.mcp.listServers, async (_, cwd?: string) => {
-    const servers = await listedMcpServers(cwd)
-    return withConnectorMetadata(servers, await connectorCatalog())
-  })
-  ipcMain.handle(IPC.mcp.trustRemoteProject, async (_, input: unknown) => {
-    const request = checkedRemoteMcpTrustMutation(input)
-    await trustRemoteProjectMcp(remoteMcpProjectContext(request.cwd), {
-      relativePath: request.relativePath,
-      contentHash: request.contentHash,
-      confirmedItemIds: request.confirmedItemIds
-    })
-    await invalidateAgentSession()
-    return withConnectorMetadata(await listedMcpServers(request.cwd), await connectorCatalog())
-  })
-  ipcMain.handle(IPC.mcp.revokeRemoteProjectTrust, async (_, input: unknown) => {
-    const request = checkedRemoteMcpTrustMutation(input)
-    await revokeRemoteProjectMcpTrust(remoteMcpProjectContext(request.cwd), {
-      relativePath: request.relativePath,
-      contentHash: request.contentHash
-    })
-    await invalidateAgentSession()
-    return withConnectorMetadata(await listedMcpServers(request.cwd), await connectorCatalog())
-  })
-  ipcMain.handle(IPC.mcp.listConnectorCatalog, async () => connectorCatalog(true))
-  ipcMain.handle(
-    IPC.mcp.installConnector,
-    async (_, id: unknown, version?: unknown, registryDir?: unknown) => {
-      if (
-        typeof id !== 'string' ||
-        id.length === 0 ||
-        (version !== undefined && typeof version !== 'string') ||
-        (registryDir !== undefined && typeof registryDir !== 'string')
-      ) {
-        throw new Error('Invalid Connector installation request')
-      }
-      const connector = (await connectorCatalog()).find(
-        (entry) =>
-          entry.id === id &&
-          (version === undefined || entry.version === version) &&
-          (registryDir === undefined || entry.registryDir === registryDir)
-      )
-      if (!connector?.registryDir) throw new Error(`Connector ${id} was not found in the catalog`)
-      if (connector.unavailableReason) throw new Error(connector.unavailableReason)
-      const sourceRegistryDir = connector.registryDir
-      return connectorSetups.run(
-        connector.id,
-        async (report) => {
-          const wasConfigured = readMcpServerEntry(connector.id, AGENT_DIR) !== undefined
-          let toolNames: string[] | undefined
-          const sourceOptions = officialContentSourceOptions()
-          const result = await installCatalogConnector(
-            sourceRegistryDir,
-            connector.id,
-            connector.version,
-            {
-              ...sourceOptions,
-              runtimeRoot: getRuntimeRoot(),
-              onPhase: report,
-              buildMcpEnvironment: (descriptor) => {
-                report('environment')
-                return sourceOptions.buildMcpEnvironment(descriptor)
-              },
-              verifyMcpStdio: async (request) => {
-                report('starting')
-                toolNames = await sourceOptions.verifyMcpStdio(request)
-                return toolNames
-              }
-            }
-          )
-          if (!wasConfigured) {
-            setEnabled(`mcp:${connector.id}`, true, { agentDir: AGENT_DIR })
-            setMcpPackageEnabled(connector.id, true, AGENT_DIR)
-          }
-          try {
-            if (connector.transport === 'stdio' && toolNames === undefined) {
-              await prepareStdioEnvironment(connector.id, report)
-              toolNames = await probeStdioTools(connector.id, report)
-            }
-          } finally {
-            await invalidateAgentSession()
-          }
-          if (toolNames) report('ready', { toolNames })
-          return result
-        },
-        connector.transport === 'stdio' ? 'ready' : 'installed'
-      )
-    }
-  )
-  ipcMain.handle(IPC.mcp.uninstallConnector, async (_, id: unknown) => {
-    if (typeof id !== 'string' || id.length === 0) throw new Error('Invalid Connector ID')
-    return connectorSetups.run(
-      id,
-      async () => {
-        const result = uninstallCatalogConnector(id, {
-          agentDir: AGENT_DIR,
-          runtimeRoot: getRuntimeRoot()
-        })
-        setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
-        await invalidateAgentSession()
-        return result
-      },
-      'removed'
-    )
-  })
-  ipcMain.handle(IPC.mcp.buildConnectorEnvironment, async (_, id: unknown) => {
-    if (typeof id !== 'string' || id.length === 0) throw new Error('Invalid Connector ID')
-    return connectorSetups.run(id, async (report) => {
-      let environment: { envId: string }
-      let toolNames: string[]
-      try {
-        environment = await prepareStdioEnvironment(id, report)
-        toolNames = await probeStdioTools(id, report)
-      } finally {
-        await invalidateAgentSession()
-      }
-      report('ready', { toolNames })
-      return environment
-    })
-  })
-  ipcMain.handle(
-    IPC.mcp.addRemoteConnector,
-    async (_, name: string, url: string, options?: RemoteMcpConnectorOptions) => {
-      addRemoteMcpConnector(name, url, undefined, options)
-      await syncFeaturedMcpApiKeySessions(name)
-    }
-  )
-  ipcMain.handle(IPC.mcp.addLocalConnector, async (_, raw: unknown) => {
-    const catalogIds = (await connectorCatalog()).map((connector) => connector.id)
-    const request = validateLocalConnectorRequest(raw, { catalogIds })
-    // The MCP client only loads under the omp worker's Bun runtime, so probe through the bridge
-    // exactly like the package installer does; the Electron main process cannot import it.
-    const result = await addLocalMcpConnector(request, {
-      agentDir: AGENT_DIR,
-      catalogIds,
-      probe: (probeRequest) => getPhiEngine().mcp.configuredStdioTools(probeRequest)
-    })
-    await getPhiEngine().mcp.applyConnectorEnabled({ name: request.name })
-    return result
-  })
-  ipcMain.handle(IPC.mcp.startLocalConnectorAdd, async (_, raw: unknown) => {
-    const catalogIds = (await connectorCatalog()).map((connector) => connector.id)
-    const request = validateLocalConnectorRequest(raw, { catalogIds })
-    return localConnectorJobs.startLocalConnectorAdd(request)
-  })
-  ipcMain.handle(IPC.mcp.cancelLocalConnectorAdd, async (_, name: unknown) => {
-    if (typeof name !== 'string') throw new Error('Invalid Connector name')
-    await localConnectorJobs.cancelLocalConnectorAdd(validateName(name))
-  })
-  ipcMain.handle(IPC.mcp.retryLocalConnectorAdd, async (_, name: unknown) => {
-    if (typeof name !== 'string') throw new Error('Invalid Connector name')
-    return localConnectorJobs.retryLocalConnectorAdd(validateName(name))
-  })
-  ipcMain.handle(IPC.mcp.listLocalConnectorJobs, async () =>
-    localConnectorJobs.listLocalConnectorJobs()
-  )
-  ipcMain.handle(IPC.mcp.removeLocalConnector, async (_, name: unknown) => {
-    if (typeof name !== 'string') throw new Error('Invalid Connector name')
-    const validatedName = validateName(name)
-    await removeLocalMcpConnector(validatedName)
-    await getPhiEngine().mcp.applyConnectorEnabled({ name: validatedName })
-  })
-  ipcMain.handle(IPC.mcp.listLocalRuntimes, async () => listLocalMcpRuntimes())
-  ipcMain.handle(IPC.mcp.removeRemoteConnector, async (_, name: string, url: string) => {
-    removeRemoteMcpConnector(name, url)
-    if (API_KEY_CONNECTOR_IDS.some((id) => id === name && apiKeyConnector(id).url === url)) {
-      clearFeaturedMcpApiKey(name)
-      verifiedMcpApiKeys.delete(name)
-    }
-    await syncFeaturedMcpApiKeySessions(name)
-  })
-  ipcMain.handle(
-    IPC.mcp.setConnectorEnabled,
-    async (_, name: string, enabled: boolean, sourcePath?: string) => {
-      if (typeof sourcePath === 'string' && sourcePath.startsWith('ssh://')) {
-        throw new Error('Server project MCP enablement is managed by the server configuration file')
-      }
-      setMcpConnectorEnabled(
-        name,
-        Boolean(enabled),
-        typeof sourcePath === 'string' ? sourcePath : undefined
-      )
-      try {
-        await getPhiEngine().mcp.applyConnectorEnabled({ name })
-      } catch (error) {
-        if (!API_KEY_CONNECTOR_IDS.some((id) => id === name)) throw error
-        writeAppLog({ event: 'mcp_api_key_session_sync_failed', metadata: { connectorId: name } })
-        await getPhiEngine().stop()
-        throw new Error(
-          'Local changes were saved, but the running chat could not be synchronized and was stopped. Reopen the chat and try again.'
-        )
-      }
-    }
-  )
-  ipcMain.handle(IPC.mcp.featuredApiKeyStatus, async (_, id: string) =>
-    featuredMcpApiKeyVerifiedStatus(id)
-  )
-  ipcMain.handle(IPC.mcp.setFeaturedApiKey, async (_, id: string, key: string) => {
-    apiKeyConnector(id)
-    await validateFeaturedMcpApiKey(id, key)
-    disableFeaturedApiKeyAutoDiscovery()
-    setFeaturedMcpApiKey(id, key)
-    verifiedMcpApiKeys.set(id, {
-      digest: apiKeyDigest(key.trim()),
-      expiresAt: verificationExpiresAt(id)
-    })
-    if (isFeaturedMcpApiKeyInstalled(id)) await syncFeaturedMcpApiKeySessions(id)
-  })
-  ipcMain.handle(IPC.mcp.clearFeaturedApiKey, async (_, id: string) => {
-    clearFeaturedMcpApiKey(id)
-    verifiedMcpApiKeys.delete(id)
-    await syncFeaturedMcpApiKeySessions(id)
-  })
-  ipcMain.handle(IPC.mcp.featuredTools, async (_, id: string) => {
-    if (typeof id !== 'string') throw new Error('Invalid Connector ID')
-    const connector = (await connectorCatalog()).find((entry) => entry.id === id)
-    if (!connector) throw new Error('This Connector was not found in the catalog')
-    if (connector.transport === 'stdio') {
-      return connectorSetups.run(id, async (report) => {
-        const toolNames = await probeStdioTools(id, report)
-        report('ready', { toolNames })
-        return toolNames
-      })
-    }
-    if (!connector.url) throw new Error('Invalid Connector service URL')
-    return getPhiEngine().mcp.featuredTools({
-      id,
-      url: connector.url,
-      auth: connector.auth
-    })
-  })
-  ipcMain.handle(IPC.mcp.featuredAuthStatus, async (_, id: string) => {
-    const connector = (await connectorCatalog()).find((entry) => entry.id === id)
-    if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
-      throw new Error('This Connector does not support sign-in status checks')
-    }
-    return getPhiEngine().mcp.featuredAuthStatus({ id, url: connector.url })
-  })
-  ipcMain.handle(IPC.mcp.authorizeFeatured, async (_, id: string) => {
-    const connector = (await connectorCatalog()).find((entry) => entry.id === id)
-    if (!connector?.url || !mcpOAuthAuthorizationOrigin(id, connector.url)) {
-      throw new Error('This Connector does not support OAuth authorization')
-    }
-    await getPhiEngine().mcp.authorizeFeatured({ id, url: connector.url })
-  })
-  ipcMain.handle(IPC.mcp.cancelFeaturedAuth, async (_, id: string) => {
-    if (typeof id !== 'string' || !id) return
-    await getPhiEngine().mcp.cancelFeaturedAuth({ id })
-  })
-
-  ipcMain.handle(IPC.mcp.authorizeRemoteConnector, async (_, name: string) => {
-    const connector = readCustomRemoteMcpConnector(name, AGENT_DIR)
-    if (pendingCustomMcpAuthorizations.has(connector.name))
-      throw new Error('Authorization is already in progress for this Connector')
-    const pending: PendingCustomMcpAuthorization = {
-      attemptId: randomUUID(),
-      serverUrl: connector.url,
-      configDigest: customMcpConfigDigest(connector),
-      cancelled: false
-    }
-    // Register before discovery: cancel during preflight must prevent the later browser flow.
-    pendingCustomMcpAuthorizations.set(connector.name, pending)
-    let authorizationStarted = false
-    try {
-      const prepared = await getPhiEngine().mcp.prepareRemoteAuth({
-        name: connector.name,
-        attemptId: pending.attemptId
-      })
-      if (pending.cancelled) throw new Error('Authorization cancelled')
-      const current = readCustomRemoteMcpConnector(connector.name, AGENT_DIR)
-      if (
-        !prepared ||
-        prepared.serverUrl !== pending.serverUrl ||
-        customMcpConfigDigest(current) !== pending.configDigest
-      ) {
-        throw new Error('Connector configuration changed. Authorize again.')
-      }
-      const authorizationUrl = customMcpAuthUrl(prepared.authorizationUrl)
-      pending.authorizationOrigin = authorizationUrl.origin
-      pending.authorizationPath = authorizationUrl.pathname
-      authorizationStarted = true
-      await getPhiEngine().mcp.authorizeRemote({
-        name: connector.name,
-        attemptId: pending.attemptId,
-        serverUrl: pending.serverUrl
-      })
-    } finally {
-      if (pendingCustomMcpAuthorizations.get(connector.name) === pending)
-        pendingCustomMcpAuthorizations.delete(connector.name)
-      if (!authorizationStarted) {
-        await getPhiEngine()
-          .mcp.cancelRemoteAuth({ name: connector.name, attemptId: pending.attemptId })
-          .catch(() => undefined)
-      }
+      getCurrentCwd: () => currentCwd,
+      isRemoteResourceScope,
+      resolveRemoteProjectContext: remoteSkillProjectContext
+    },
+    packages: {
+      loadPackageRegistries,
+      officialContentSourceOptions,
+      environmentBuilds
+    },
+    customAuthorization: {
+      pending: pendingCustomMcpAuthorizations,
+      parseUrl: customMcpAuthUrl,
+      configDigest: customMcpConfigDigest
     }
   })
-  ipcMain.handle(IPC.mcp.cancelRemoteAuth, async (_, name: unknown) => {
-    if (typeof name !== 'string') throw new Error('Invalid Connector name')
-    const key = name.trim()
-    const pending = pendingCustomMcpAuthorizations.get(key)
-    if (!pending) return
-    pending.cancelled = true
-    await getPhiEngine().mcp.cancelRemoteAuth({
-      name: key,
-      attemptId: pending.attemptId
-    })
-  })
-
   ipcMain.handle(IPC.wrappers.getPlan, async (_, planId: string) => readWrapperPlan(planId))
   ipcMain.handle(IPC.wrappers.retargetPlan, async (_, request: WrapperRetargetRequest) => {
     if (
