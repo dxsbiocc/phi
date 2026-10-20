@@ -1,7 +1,7 @@
 # 主进程 IPC 拆分:交接文档
 
 Date: 2026-10-20
-Status: 进行中。IPC-1~3 已完成,`src/main/index.ts` 13,014 → 10,795 行
+Status: 进行中。IPC-1~4 已完成,`src/main/index.ts` 13,014 → 10,320 行
 
 给接手这条线的新会话看。读完应能直接派发下一刀,不需要回看之前的对话。
 
@@ -46,15 +46,15 @@ Status: 进行中。IPC-1~3 已完成,`src/main/index.ts` 13,014 → 10,795 行
 
 行数为注册区内处理函数本身的行数,不含随迁的辅助函数(IPC-1 处理函数 421 行,实际降了 989 行)。
 
-| #     | 域                                                                                  | 处理函数 | 行数 | 状态   | 备注                                                     |
-| ----- | ----------------------------------------------------------------------------------- | -------- | ---- | ------ | -------------------------------------------------------- |
-| IPC-1 | `analysis`                                                                          | 23       | 421  | 已完成 | 建立 `src/main/ipc/` 与 harness 加载器                   |
-| IPC-2 | `mcp`                                                                               | 26       | 307  | 已完成 | index.ts 12,025 → 11,561;按关注点分 7 个注册函数         |
-| IPC-3 | `packages` + `sources` + `phiPlugins` + `skills` + `enablement` + `resources`       | 39       | ~650 | 已完成 | 11,561 → 10,795;一域一模块,注册调用保持交错顺序          |
-| IPC-4 | `wrappers` + `wrapperResults` + `jobs` + `environmentBuilds`                        | 26       | ~320 | 待派发 | 注意 `wrappers` 的注册分散在 10092–12918 两处,顺序要保持 |
-| IPC-5 | `projects` + `remote` + `remoteProjectUploads` + `remoteWorkspace` + `memory`       | 37       | ~420 | 待派发 | 远端项目相关,依赖 SSH/远端运行时                         |
-| IPC-6 | `sessions` + `agent` + `agents` + `tool` + `models` + `thinking`                    | 39       | ~610 | 待派发 | 风险最高(会话切换、运行控制),最后做,先补特征化测试       |
-| IPC-7 | 其余小域(`window`、`app`、`settings`、`auth`、`persona`、`files`、`environment` 等) | ~50      | ~300 | 待派发 | 收尾后 `index.ts` 只剩组装                               |
+| #     | 域                                                                                  | 处理函数 | 行数 | 状态   | 备注                                               |
+| ----- | ----------------------------------------------------------------------------------- | -------- | ---- | ------ | -------------------------------------------------- |
+| IPC-1 | `analysis`                                                                          | 23       | 421  | 已完成 | 建立 `src/main/ipc/` 与 harness 加载器             |
+| IPC-2 | `mcp`                                                                               | 26       | 307  | 已完成 | index.ts 12,025 → 11,561;按关注点分 7 个注册函数   |
+| IPC-3 | `packages` + `sources` + `phiPlugins` + `skills` + `enablement` + `resources`       | 39       | ~650 | 已完成 | 11,561 → 10,795;一域一模块,注册调用保持交错顺序    |
+| IPC-4 | `wrappers` + `wrapperResults` + `jobs` + `environmentBuilds`                        | 26       | ~320 | 已完成 | 10,795 → 10,320;wrappers 分三次注册,保持交错顺序   |
+| IPC-5 | `projects` + `remote` + `remoteProjectUploads` + `remoteWorkspace` + `memory`       | 37       | ~420 | 待派发 | 远端项目相关,依赖 SSH/远端运行时                   |
+| IPC-6 | `sessions` + `agent` + `agents` + `tool` + `models` + `thinking`                    | 39       | ~610 | 待派发 | 风险最高(会话切换、运行控制),最后做,先补特征化测试 |
+| IPC-7 | 其余小域(`window`、`app`、`settings`、`auth`、`persona`、`files`、`environment` 等) | ~50      | ~300 | 待派发 | 收尾后 `index.ts` 只剩组装                         |
 
 处理函数全搬完后 `index.ts` 预计仍有数千行辅助函数与模块级状态,接着做方案第 9 步
 (运行时上下文对象替换 24 个模块级 `let`)和第 6 步(拆 `getAgentSession` 等超长函数)。
