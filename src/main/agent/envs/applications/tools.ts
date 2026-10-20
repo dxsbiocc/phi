@@ -32,6 +32,10 @@ import type {
 } from './types'
 
 const execFileAsync = promisify(execFile)
+const VERSION_CHECK_TIMEOUT_MS = 5000
+// A just-written runtime's first exec waits for the macOS XProtect / endpoint-security scan,
+// which queues machine-wide; real users with such software would hit a 5 s limit too.
+const FIRST_EXEC_VERSION_CHECK_TIMEOUT_MS = 60_000
 type RuntimeToolName = 'bun' | 'node'
 type ArtifactReferences = ApplicationInstallationMetadata['artifacts']
 
@@ -140,7 +144,7 @@ async function declaredApplicationTools(
       try {
         writeFileSync(temporary, binary, { flag: 'wx', mode: 0o700 })
         chmodSync(temporary, 0o700)
-        await verifyToolVersion(temporary, tool, input)
+        await verifyToolVersion(temporary, tool, input, FIRST_EXEC_VERSION_CHECK_TIMEOUT_MS)
         throwIfAborted(input.signal)
         assertToolLocation(input.prefix, target, false)
         renameSync(temporary, target)
@@ -205,7 +209,8 @@ function matchesBinary(path: string, binary: Buffer): boolean {
 async function verifyToolVersion(
   path: string,
   tool: DeclaredTool,
-  input: ApplicationInstallInput
+  input: ApplicationInstallInput,
+  timeoutMs = VERSION_CHECK_TIMEOUT_MS
 ): Promise<void> {
   const owned = join(input.root, 'tools')
   privateDirectory(input.root, false)
@@ -234,7 +239,7 @@ async function verifyToolVersion(
     cwd: owned,
     env,
     signal: input.signal,
-    timeout: 5000,
+    timeout: timeoutMs,
     killSignal: 'SIGKILL',
     maxBuffer: 4096
   })
