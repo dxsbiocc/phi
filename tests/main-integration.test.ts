@@ -4435,6 +4435,11 @@ async function harness(
     './agent/session/prompt-run-execution',
     './agent/session/prompt-target-control',
     './agent/session/runtime-recovery-control',
+    './agent/session/session-creation-approvals',
+    './agent/session/session-creation-context',
+    './agent/session/session-creation-model',
+    './agent/session/session-creation-options',
+    './agent/session/session-creation-resources',
     './agent/session/session-compaction-control',
     './agent/session/session-event-persistence',
     './agent/session/session-event-payload-projection',
@@ -8174,6 +8179,58 @@ test(
     await Promise.all([first, second])
     assert.equal(((await app.invoke('sessions:current')) as { path: string }).path, 'B')
     assert.equal(app.sessions.find((session) => session.sessionFile === 'A')?.disposed, false)
+  }
+)
+
+test(
+  'main IPC: session creation made stale while cleanup is pending never reaches the SDK',
+  { timeout: 3000 },
+  async () => {
+    const app = await harness()
+    await app.invoke('sessions:switch', 'A')
+    const cleanupGate = deferred<void>()
+    app.sessions[0].abortGate = cleanupGate.promise
+
+    await app.invoke('persona:setMarkdown', 'first invalidation')
+    const switching = app.invoke('sessions:switch', 'A')
+    await tick()
+    assert.equal(app.createdAgentOptions.length, 1)
+
+    await app.invoke('persona:setMarkdown', 'second invalidation')
+    cleanupGate.resolve()
+
+    assert.equal(await switching, null)
+    assert.equal(app.createdAgentOptions.length, 1)
+    assert.deepEqual(app.sessions[0].log, ['abort', 'dispose'])
+  }
+)
+
+test(
+  'main IPC: session creation made stale inside the SDK aborts and disposes its owned result',
+  { timeout: 3000 },
+  async () => {
+    const creationGate = deferred<void>()
+    let createCalls = 0
+    let enteredCreation = false
+    const app = await harness(undefined, {
+      onCreateSession: async () => {
+        createCalls += 1
+        if (createCalls !== 2) return
+        enteredCreation = true
+        await creationGate.promise
+      }
+    })
+    await app.invoke('sessions:switch', 'A')
+    await app.invoke('persona:setMarkdown', 'first invalidation')
+
+    const switching = app.invoke('sessions:switch', 'A')
+    await waitUntil(() => enteredCreation)
+    await app.invoke('persona:setMarkdown', 'second invalidation')
+    creationGate.resolve()
+
+    assert.equal(await switching, null)
+    assert.equal(app.sessions.length, 2)
+    assert.deepEqual(app.sessions[1].log, ['abort', 'dispose'])
   }
 )
 
@@ -12543,6 +12600,30 @@ test('main IPC: saved retired Kimi Code model selection migrates before promptin
     ),
     true
   )
+  const migration = app.appendedSessionEvents.find(
+    (entry) => (entry.event as { type?: string }).type === 'model_selection_migrated'
+  )
+  assert.deepEqual(migration, {
+    sessionId: 'phi-1',
+    event: {
+      type: 'model_selection_migrated',
+      runId: 'run-2',
+      fromProviderId: 'kimi-code',
+      fromModelId: 'kimi-k2.5',
+      toProviderId: 'kimi-code',
+      toModelId: 'kimi-for-coding',
+      toModelName: 'kimi-for-coding'
+    }
+  })
+  const notice = app.events.find(
+    (entry) =>
+      entry.channel === 'agent:event' &&
+      (entry.data as { type?: string }).type === 'model_selection_migrated'
+  )
+  assert.ok(notice)
+  assert.equal((notice.data as { phiSessionId?: string }).phiSessionId, 'phi-1')
+  assert.equal((notice.data as { sessionPath?: string }).sessionPath, 'phi-session:phi-1')
+  assert.equal((notice.data as { cwd?: string }).cwd, '/projects/kimi-retired')
 })
 
 test(
