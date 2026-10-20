@@ -4406,6 +4406,10 @@ async function harness(
     './ipc/skills-ipc'
   ]
   const explicitlyLoadedSourceModules = new Set([
+    './app-state/app-caches',
+    './app-state/main-runtime-context',
+    './app-state/main-window-state',
+    './app-state/workspace-services-state',
     './agent/agents/agent-run-control-request',
     './agent/agents/remote-agent-request-context',
     './agent/agents/remote-agent-trust-request',

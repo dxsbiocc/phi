@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
+import { MainWindowState } from '../src/main/app-state/main-window-state'
 import { createMainWindowStartup } from '../src/main/window-startup'
 import { createAppTheme } from '../src/renderer/src/theme'
 import { createMinimalTheme } from '../src/renderer/src/minimalTheme'
@@ -15,9 +16,8 @@ function createMainWindowFixture(): FakeWindow {
   const end = source.indexOf('\nregisterNotebookOutputScheme()', start)
   assert.ok(start >= 0 && end > start)
   const code = ts.transpileModule(
-    `let mainWindowCleanupStarted, mainWindowCleanupPromise, mainWindow;
-     ${source.slice(start, end).replaceAll('import.meta.dirname', "'/tmp'")}
-     createWindow(); return mainWindow;`,
+    `${source.slice(start, end).replaceAll('import.meta.dirname', "'/tmp'")}
+     createWindow(); return runtime.window.mainWindow;`,
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }
   ).outputText
   const bindings = {
@@ -37,7 +37,8 @@ function createMainWindowFixture(): FakeWindow {
     process: { platform: 'linux', env: {} },
     is: { dev: false },
     join,
-    cleanupMainWindowRuntime: () => undefined
+    cleanupMainWindowRuntime: () => undefined,
+    runtime: { window: new MainWindowState() }
   }
   return new Function(...Object.keys(bindings), code)(...Object.values(bindings)) as FakeWindow
 }
@@ -259,7 +260,11 @@ test('the actual shared main-window guard rejects other windows and embedded fra
   ).outputText
   const sender = { mainFrame: {}, isDestroyed: () => false }
   const window = { isDestroyed: () => false, webContents: sender }
-  const authorize = new Function('mainWindow', code)(window) as (event: unknown) => unknown
+  const windowState = new MainWindowState()
+  windowState.setMainWindow(window as unknown as NonNullable<MainWindowState['mainWindow']>)
+  const authorize = new Function('runtime', code)({ window: windowState }) as (
+    event: unknown
+  ) => unknown
   assert.equal(authorize({ sender, senderFrame: sender.mainFrame }), window)
   for (const event of [
     { sender, senderFrame: {} },

@@ -93,13 +93,8 @@ import {
   type ProjectsIpcOptions
 } from './ipc/projects-ipc'
 import { nativeUiCopy } from './native-ui-copy'
-import {
-  createStartupSplashWindow,
-  dismissStartupSplashWindow,
-  type StartupSplashWindow
-} from './startup-splash'
+import { createStartupSplashWindow, dismissStartupSplashWindow } from './startup-splash'
 import { createMacMenuBar } from './menu-bar'
-import type { MenuBarController } from './menu-bar-controller'
 import type { MenuBarAction } from '../shared/menuBarTypes'
 import type { IpcMainInvokeEvent } from 'electron'
 import { createHash } from 'node:crypto'
@@ -410,7 +405,7 @@ import {
 } from './agent/session/workspace-changes'
 import { persistWorkspaceDiff } from './agent/session/workspace-diffs'
 import { createLocalFileAccessControl } from './local-file-access-control'
-import { createLocalFileIcons, type MacLaunchServicesHandler } from './local-file-icons'
+import { createLocalFileIcons } from './local-file-icons'
 import { createLocalFilePreviews } from './local-file-previews'
 import { SessionTitleGenerator } from './agent/session/session-title-generation'
 import { persistPromptImages } from './agent/session/prompt-images'
@@ -435,6 +430,7 @@ import type { NotebookDocument } from '../shared/notebookDocument'
 import { messageContentTitleText } from '../shared/sessionTitle'
 import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTypes'
 import { createBeforeQuitHandler } from './app-quit'
+import { createMainRuntimeContext } from './app-state/main-runtime-context'
 import icon from '../../resources/icon.png?asset'
 
 import { isRecord } from '../shared/guards'
@@ -449,10 +445,9 @@ const MIN_WINDOW_WIDTH = 860
 const MIN_WINDOW_HEIGHT = 560
 const appIcon = nativeImage.createFromPath(icon)
 
-let macLaunchServicesHandlers: Promise<MacLaunchServicesHandler[]> | null = null
+const runtime = createMainRuntimeContext()
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
-let cachedPackageUpdates: PackageUpdate[] = []
 
 app.setName(APP_NAME)
 
@@ -463,40 +458,31 @@ function applyDockIcon(): void {
 }
 
 const mainWindowStartups = new WeakMap<BrowserWindow, ReturnType<typeof createMainWindowStartup>>()
-let mainWindow: BrowserWindow | null = null
-let startupSplashWindow: StartupSplashWindow | null = null
-let menuBarController: MenuBarController | null = null
-let pendingMenuBarAction: MenuBarAction | null = null
-let mainWindowCleanupStarted = false
-type BrowserRegistryLifecycle = 'idle' | 'disposing' | 'failed'
-let browserWorkspaceRegistry: BrowserWorkspaceRegistry | null = null
-let browserWorkspaceRegistryLifecycle: BrowserRegistryLifecycle = 'idle'
-let browserWorkspaceRegistryDisposal: Promise<void> | null = null
-let terminalManager: TerminalManager | null = null
-let terminalDraftService: TerminalDraftService | null = null
-let mainWindowCleanupPromise: Promise<void> | null = null
 
 function showMainWindowFromMenuBar(): void {
+  const mainWindow = runtime.window.mainWindow
   if (!mainWindow || mainWindow.isDestroyed()) createWindow()
-  const window = mainWindow
+  const window = runtime.window.mainWindow
   if (!window || window.isDestroyed()) return
-  if (startupSplashWindow && !startupSplashWindow.isDestroyed()) return
+  const splash = runtime.window.startupSplashWindow
+  if (splash && !splash.isDestroyed()) return
   if (window.isMinimized()) window.restore()
   if (!window.isVisible()) window.show()
   window.focus()
 }
 
 function queueMenuBarAction(action: MenuBarAction): void {
-  pendingMenuBarAction = action
+  runtime.window.queueMenuBarAction(action)
   showMainWindowFromMenuBar()
 }
 
 function hideMainWindowFromMenuBar(): void {
+  const mainWindow = runtime.window.mainWindow
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) mainWindow.hide()
 }
 
 function requireMainWindowRenderer(event: IpcMainInvokeEvent): BrowserWindow {
-  const window = mainWindow
+  const window = runtime.window.mainWindow
   if (
     !window ||
     window.isDestroyed() ||
@@ -510,8 +496,7 @@ function requireMainWindowRenderer(event: IpcMainInvokeEvent): BrowserWindow {
 }
 
 function finishStartupSplash(window: BrowserWindow | null): void {
-  const splash = startupSplashWindow
-  startupSplashWindow = null
+  const splash = runtime.window.takeStartupSplashWindow()
   if (!window) {
     if (splash && !splash.isDestroyed()) splash.close()
     return
@@ -520,7 +505,11 @@ function finishStartupSplash(window: BrowserWindow | null): void {
 }
 
 function sendMainWindowFullscreenState(window: BrowserWindow, fullscreen: boolean): void {
-  if (mainWindow !== window || window.isDestroyed() || window.webContents.isDestroyed()) {
+  if (
+    runtime.window.mainWindow !== window ||
+    window.isDestroyed() ||
+    window.webContents.isDestroyed()
+  ) {
     return
   }
   window.webContents.send(IPC.window.fullscreenChanged, fullscreen)
@@ -533,16 +522,20 @@ function browserPolicyContext(): { applicationOrigins?: string[] } {
 }
 
 function getBrowserWorkspaceRegistry(): BrowserWorkspaceRegistry {
-  if (mainWindowCleanupStarted || browserWorkspaceRegistryLifecycle !== 'idle') {
+  if (
+    runtime.window.cleanupStarted ||
+    runtime.workspaceServices.browserWorkspaceRegistryLifecycle !== 'idle'
+  ) {
     throw new Error('Browser workspace is unavailable')
   }
-  if (!browserWorkspaceRegistry) {
-    browserWorkspaceRegistry = new BrowserWorkspaceRegistry({
+  let registry = runtime.workspaceServices.browserWorkspaceRegistry
+  if (!registry) {
+    registry = new BrowserWorkspaceRegistry({
       engineFactory: () =>
         new ElectronBrowserEngine({
           WebContentsView,
           getOwningWindow: () => {
-            const window = mainWindow
+            const window = runtime.window.mainWindow
             return window && !window.isDestroyed() ? window : null
           },
           policyContext: browserPolicyContext()
@@ -552,12 +545,13 @@ function getBrowserWorkspaceRegistry(): BrowserWorkspaceRegistry {
       openExternal: (url) => shell.openExternal(url),
       approveAgentAction: requestBrowserActionApproval
     })
+    runtime.workspaceServices.setBrowserWorkspaceRegistry(registry)
     const current = getCurrentSessionPayload()
-    void browserWorkspaceRegistry.setActiveSession(current.phiSessionId ?? null).catch(() => {
+    void registry.setActiveSession(current.phiSessionId ?? null).catch(() => {
       writeAppLog({ level: 'error', event: 'browser_presentation_transition_failed' })
     })
   }
-  return browserWorkspaceRegistry
+  return registry
 }
 
 async function requestBrowserActionApproval(
@@ -577,7 +571,7 @@ async function requestBrowserActionApproval(
   return requestToolApproval({
     signal,
     getWindow: () => {
-      const window = mainWindow
+      const window = runtime.window.mainWindow
       return window && !window.isDestroyed() ? window : null
     },
     context: {
@@ -613,35 +607,30 @@ async function requestBrowserActionApproval(
 }
 
 function cleanupBrowserWorkspaceRegistry(): Promise<void> {
-  const registry = browserWorkspaceRegistry
-  if (!registry) return browserWorkspaceRegistryDisposal ?? Promise.resolve()
-  if (browserWorkspaceRegistryLifecycle !== 'idle') {
-    return browserWorkspaceRegistryDisposal ?? Promise.resolve()
+  const registry = runtime.workspaceServices.browserWorkspaceRegistry
+  if (!registry) {
+    return runtime.workspaceServices.browserWorkspaceRegistryDisposal ?? Promise.resolve()
   }
-  browserWorkspaceRegistryLifecycle = 'disposing'
+  if (runtime.workspaceServices.browserWorkspaceRegistryLifecycle !== 'idle') {
+    return runtime.workspaceServices.browserWorkspaceRegistryDisposal ?? Promise.resolve()
+  }
+  runtime.workspaceServices.markBrowserWorkspaceRegistryDisposing()
   let disposal: Promise<void>
   try {
     disposal = registry.disposeAll()
   } catch {
-    browserWorkspaceRegistryLifecycle = 'failed'
+    runtime.workspaceServices.markBrowserWorkspaceRegistryDisposalFailed()
     writeAppLog({ level: 'error', event: 'browser_registry_cleanup_failed' })
     return Promise.resolve()
   }
-  browserWorkspaceRegistryDisposal = disposal
+  runtime.workspaceServices.setBrowserWorkspaceRegistryDisposal(disposal)
   void disposal.then(
     () => {
-      if (browserWorkspaceRegistry !== registry || browserWorkspaceRegistryDisposal !== disposal) {
-        return
-      }
-      browserWorkspaceRegistry = null
-      browserWorkspaceRegistryDisposal = null
-      browserWorkspaceRegistryLifecycle = 'idle'
+      runtime.workspaceServices.completeBrowserWorkspaceRegistryDisposal(registry, disposal)
     },
     () => {
-      if (browserWorkspaceRegistry !== registry || browserWorkspaceRegistryDisposal !== disposal) {
+      if (!runtime.workspaceServices.failBrowserWorkspaceRegistryDisposal(registry, disposal))
         return
-      }
-      browserWorkspaceRegistryLifecycle = 'failed'
       writeAppLog({ level: 'error', event: 'browser_registry_cleanup_failed' })
     }
   )
@@ -649,9 +638,10 @@ function cleanupBrowserWorkspaceRegistry(): Promise<void> {
 }
 
 function getTerminalManager(): TerminalManager {
-  if (mainWindowCleanupStarted) throw new Error('Terminal manager is unavailable')
-  if (!terminalManager) {
-    terminalManager = new TerminalManager({
+  if (runtime.window.cleanupStarted) throw new Error('Terminal manager is unavailable')
+  let manager = runtime.workspaceServices.terminalManager
+  if (!manager) {
+    manager = new TerminalManager({
       resolveWorkspace: (ref) =>
         resolveTerminalWorkspace(ref, {
           getProject,
@@ -683,19 +673,21 @@ function getTerminalManager(): TerminalManager {
             event.snapshot.state === 'exited' ||
             event.snapshot.state === 'failed')
         ) {
-          terminalDraftService?.terminalClosed(event.snapshot.terminalId)
+          runtime.workspaceServices.terminalDraftService?.terminalClosed(event.snapshot.terminalId)
         }
         terminalIpcCoordinator.sendEvent(event)
       }
     })
+    runtime.workspaceServices.setTerminalManager(manager)
   }
-  return terminalManager
+  return manager
 }
 
 function getTerminalDraftService(): TerminalDraftService {
-  if (mainWindowCleanupStarted) throw new Error('Terminal draft service is unavailable')
-  if (!terminalDraftService) {
-    terminalDraftService = new TerminalDraftService({
+  if (runtime.window.cleanupStarted) throw new Error('Terminal draft service is unavailable')
+  let draftService = runtime.workspaceServices.terminalDraftService
+  if (!draftService) {
+    draftService = new TerminalDraftService({
       createSession: buildTerminalDraftSessionFactory({
         createAgentSession,
         createSessionManager: createInMemoryRuntimeSessionManager,
@@ -717,15 +709,13 @@ function getTerminalDraftService(): TerminalDraftService {
       }),
       manager: getTerminalManager()
     })
+    runtime.workspaceServices.setTerminalDraftService(draftService)
   }
-  return terminalDraftService
+  return draftService
 }
 
 async function disposeTerminalManager(): Promise<void> {
-  const draftService = terminalDraftService
-  const manager = terminalManager
-  terminalDraftService = null
-  terminalManager = null
+  const { draftService, manager } = runtime.workspaceServices.takeTerminalServices()
   await Promise.all([draftService?.dispose(), manager?.dispose()])
 }
 
@@ -743,7 +733,7 @@ function browserSessionForPhiId(phiSessionId: string): BrowserIpcSession | undef
 const browserIpcCoordinator = new BrowserIpcCoordinator({
   getRegistry: getBrowserWorkspaceRegistry,
   getTrustedRenderer: () => {
-    const window = mainWindow
+    const window = runtime.window.mainWindow
     return window && !window.isDestroyed() ? window.webContents : null
   },
   resolveHumanSession: () => {
@@ -767,7 +757,7 @@ const terminalIpcCoordinator = new TerminalIpcCoordinator({
   getManager: getTerminalManager,
   getDraftService: getTerminalDraftService,
   getTrustedRenderer: () => {
-    const window = mainWindow
+    const window = runtime.window.mainWindow
     return window && !window.isDestroyed() ? window.webContents : null
   }
 })
@@ -848,17 +838,20 @@ function packageUpdateViews(updates: readonly PackageUpdate[]): PackageUpdate[] 
 
 async function refreshCachedPackageUpdates(): Promise<PackageUpdate[]> {
   const loaded = await loadPackageRegistries()
-  cachedPackageUpdates = listPackageUpdates(loaded.registries, {
-    agentDir: AGENT_DIR,
-    appVersion: app.getVersion()
-  })
-  return cachedPackageUpdates
+  runtime.caches.replaceCachedPackageUpdates(
+    listPackageUpdates(loaded.registries, {
+      agentDir: AGENT_DIR,
+      appVersion: app.getVersion()
+    })
+  )
+  return runtime.caches.cachedPackageUpdates
 }
 
 function scheduleStartupPackageUpdateCheck(): void {
   setImmediate(async () => {
     try {
       const updates = await refreshCachedPackageUpdates()
+      const mainWindow = runtime.window.mainWindow
       if (updates.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IPC.packages.updatesAvailable, packageUpdateViews(updates))
       }
@@ -1194,7 +1187,6 @@ const sessionKeyAliases = new Map<string, string>()
 const sessionModelSelections = new Map<string, ModelSelection | null>()
 const sessionThinkingLevels = new Map<string, ThinkingLevel>()
 const sessionPermissionModes = new Map<string, PermissionMode>()
-let preventSleepBlockerId: number | null = null
 const backgroundAgentApprovals = new BackgroundAgentApprovalTracker({
   readManifest: findPhiSessionById,
   appendEvent: appendSessionEvent,
@@ -1328,7 +1320,7 @@ installAppRemoteSessionRouting({
     },
     requestToolApproval: (request, signal) =>
       requestRuntimeToolApproval(request, signal, () => {
-        const window = mainWindow
+        const window = runtime.window.mainWindow
         return window && !window.isDestroyed() ? window : null
       }),
     onEvent: (event) => {
@@ -1350,15 +1342,16 @@ installAppRemoteSessionRouting({
 
 function syncPreventSleepBlocker(): void {
   const shouldBlock = readAppSettings().preventSleepDuringRuns && runnerRegistry.activeCount > 0
-  if (shouldBlock && preventSleepBlockerId === null) {
-    preventSleepBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+  const blockerId = runtime.caches.preventSleepBlockerId
+  if (shouldBlock && blockerId === null) {
+    runtime.caches.setPreventSleepBlockerId(powerSaveBlocker.start('prevent-app-suspension'))
     return
   }
-  if (!shouldBlock && preventSleepBlockerId !== null) {
-    if (powerSaveBlocker.isStarted(preventSleepBlockerId)) {
-      powerSaveBlocker.stop(preventSleepBlockerId)
+  if (!shouldBlock && blockerId !== null) {
+    if (powerSaveBlocker.isStarted(blockerId)) {
+      powerSaveBlocker.stop(blockerId)
     }
-    preventSleepBlockerId = null
+    runtime.caches.clearPreventSleepBlockerId()
   }
 }
 const backgroundEnvironment = createBackgroundEnvironment({ agentDir: AGENT_DIR })
@@ -2679,7 +2672,10 @@ function cancelBrowserRun(run: PromptRun): void {
 
 async function cleanupBrowserRunTabs(run: PromptRun): Promise<void> {
   try {
-    await browserWorkspaceRegistry?.disposeRun(run.phiSessionId, run.runId)
+    await runtime.workspaceServices.browserWorkspaceRegistry?.disposeRun(
+      run.phiSessionId,
+      run.runId
+    )
   } catch {
     writeAppLog({ level: 'error', event: 'browser_run_cleanup_failed' })
   }
@@ -5204,7 +5200,6 @@ function createRemoteManagedSession(projectId: string): {
   return { path, sessionId: session.sessionId, cwd, permissionMode: project.permissionMode }
 }
 
-let sessionTitleGenerator: SessionTitleGenerator | null = null
 const automaticTitleJobs = new Map<string, Promise<void>>()
 const titleRenameQueues = new Map<string, Promise<void>>()
 const manualTitleRequests = new Set<string>()
@@ -5244,8 +5239,10 @@ function hasSessionTitleTopic(message: string): boolean {
 }
 
 function getSessionTitleGenerator(): SessionTitleGenerator {
-  if (mainWindowCleanupStarted) throw new Error('标题生成服务已关闭')
-  sessionTitleGenerator ??= new SessionTitleGenerator({
+  if (runtime.window.cleanupStarted) throw new Error('标题生成服务已关闭')
+  const cachedGenerator = runtime.caches.sessionTitleGenerator
+  if (cachedGenerator) return cachedGenerator
+  const generator = new SessionTitleGenerator({
     request: async ({ sessionPath, prompt, signal }) => {
       const { manifest } = sessionTitleContext(sessionPath)
       const key = createPhiSessionKey(manifest.sessionId, manifest.cwd)
@@ -5327,7 +5324,8 @@ function getSessionTitleGenerator(): SessionTitleGenerator {
       }
     }
   })
-  return sessionTitleGenerator
+  runtime.caches.setSessionTitleGenerator(generator)
+  return generator
 }
 
 function enqueueSessionTitleWrite<T>(path: string, write: () => Promise<T>): Promise<T> {
@@ -5387,7 +5385,7 @@ async function renameConversation(
 }
 
 function scheduleAutomaticSessionTitle(sessionId: string): void {
-  if (mainWindowCleanupStarted || automaticTitleJobs.has(sessionId)) return
+  if (runtime.window.cleanupStarted || automaticTitleJobs.has(sessionId)) return
   const path = phiOnlySessionPath(sessionId)
   const job = (async () => {
     const context = sessionTitleContext(path)
@@ -5407,9 +5405,9 @@ function scheduleAutomaticSessionTitle(sessionId: string): void {
       false
     )
     const title = await getSessionTitleGenerator().generate({ sessionPath: path, ...context })
-    if (!title || mainWindowCleanupStarted) return
+    if (!title || runtime.window.cleanupStarted) return
     await enqueueSessionTitleWrite(path, async () => {
-      if (mainWindowCleanupStarted) return
+      if (runtime.window.cleanupStarted) return
       target.assertCurrent()
       const latest = findPhiSessionById(sessionId)
       if (
@@ -5637,7 +5635,7 @@ async function cleanupSessionRecord(
     } catch (error) {
       if (
         !isStaleSessionError(error) &&
-        !(mainWindowCleanupStarted && isExpectedShutdownCleanupError(error))
+        !(runtime.window.cleanupStarted && isExpectedShutdownCleanupError(error))
       ) {
         logUnexpectedError(error)
         console.error('Failed to clean up agent session:', error)
@@ -5824,9 +5822,11 @@ function getCurrentSessionPayload(): CurrentSessionPayload {
 
 function notifySessionChanged(): void {
   const payload = getCurrentSessionPayload()
-  void browserWorkspaceRegistry?.setActiveSession(payload.phiSessionId ?? null).catch(() => {
-    writeAppLog({ level: 'error', event: 'browser_presentation_transition_failed' })
-  })
+  void runtime.workspaceServices.browserWorkspaceRegistry
+    ?.setActiveSession(payload.phiSessionId ?? null)
+    .catch(() => {
+      writeAppLog({ level: 'error', event: 'browser_presentation_transition_failed' })
+    })
   sendToAllWindows(IPC.sessions.changed, payload)
 }
 
@@ -5953,35 +5953,34 @@ async function disposeRemoteNotebookBackend(projectId: string): Promise<void> {
 }
 
 function cleanupMainWindowRuntime(): Promise<void> {
-  if (mainWindowCleanupPromise) return mainWindowCleanupPromise
-  mainWindowCleanupStarted = true
-  sessionTitleGenerator?.dispose()
-  mainWindowCleanupPromise = Promise.resolve().then(async () => {
-    let promptShutdown = {
-      browserCleanup: Promise.resolve(),
-      runtimeAbort: Promise.resolve()
+  return runtime.window.beginCleanup(
+    () => runtime.caches.disposeSessionTitleGenerator(),
+    async () => {
+      let promptShutdown = {
+        browserCleanup: Promise.resolve(),
+        runtimeAbort: Promise.resolve()
+      }
+      try {
+        promptShutdown = stopAllPromptRuns()
+      } catch {
+        writeAppLog({ level: 'error', event: 'prompt_shutdown_failed' })
+      }
+      void promptShutdown.runtimeAbort.catch(() => {
+        writeAppLog({ level: 'error', event: 'agent_runtime_abort_failed' })
+      })
+      await Promise.allSettled([
+        promptShutdown.browserCleanup,
+        safeCleanupStep('terminal_cleanup_failed', () => disposeTerminalManager()),
+        safeCleanupStep('notebook_watcher_cleanup_failed', () => notebookFileWatcher.dispose()),
+        safeCleanupStep('jupyter_cleanup_failed', () => jupyterServerRegistry.disposeAll()),
+        safeCleanupStep('remote_jupyter_cleanup_failed', disposeRemoteNotebookBackends),
+        safeCleanupStep('remote_upload_cleanup_failed', () => remoteProjectUploads.dispose()),
+        safeCleanupStep('agent_session_cleanup_failed', () => invalidateAgentSession()),
+        safeCleanupStep('cursor_bridge_cleanup_failed', () => cursorH2Bridge.close())
+      ])
+      await Promise.allSettled([cleanupBrowserWorkspaceRegistry()])
     }
-    try {
-      promptShutdown = stopAllPromptRuns()
-    } catch {
-      writeAppLog({ level: 'error', event: 'prompt_shutdown_failed' })
-    }
-    void promptShutdown.runtimeAbort.catch(() => {
-      writeAppLog({ level: 'error', event: 'agent_runtime_abort_failed' })
-    })
-    await Promise.allSettled([
-      promptShutdown.browserCleanup,
-      safeCleanupStep('terminal_cleanup_failed', () => disposeTerminalManager()),
-      safeCleanupStep('notebook_watcher_cleanup_failed', () => notebookFileWatcher.dispose()),
-      safeCleanupStep('jupyter_cleanup_failed', () => jupyterServerRegistry.disposeAll()),
-      safeCleanupStep('remote_jupyter_cleanup_failed', disposeRemoteNotebookBackends),
-      safeCleanupStep('remote_upload_cleanup_failed', () => remoteProjectUploads.dispose()),
-      safeCleanupStep('agent_session_cleanup_failed', () => invalidateAgentSession()),
-      safeCleanupStep('cursor_bridge_cleanup_failed', () => cursorH2Bridge.close())
-    ])
-    await Promise.allSettled([cleanupBrowserWorkspaceRegistry()])
-  })
-  return mainWindowCleanupPromise
+  )
 }
 
 // A user-visible conversation switch points future getAgentSession() calls at a
@@ -6014,7 +6013,9 @@ async function disposeAndSwitchSession(
   }
   const target = getCurrentSessionPayload()
   try {
-    await browserWorkspaceRegistry?.setActiveSession(target.phiSessionId ?? null)
+    await runtime.workspaceServices.browserWorkspaceRegistry?.setActiveSession(
+      target.phiSessionId ?? null
+    )
   } catch {
     writeAppLog({ level: 'error', event: 'browser_presentation_transition_failed' })
   }
@@ -6636,8 +6637,7 @@ async function applyNextRunConfiguration(
 }
 
 function createWindow(): void {
-  mainWindowCleanupStarted = false
-  mainWindowCleanupPromise = null
+  runtime.window.resetCleanup()
 
   // Create the browser window.
   const window = new BrowserWindow({
@@ -6662,7 +6662,7 @@ function createWindow(): void {
       sandbox: false
     }
   })
-  mainWindow = window
+  runtime.window.setMainWindow(window)
 
   const startup = createMainWindowStartup(
     window,
@@ -6728,9 +6728,7 @@ function createWindow(): void {
 
   window.on('closed', () => {
     startup.dispose()
-    if (mainWindow === window) {
-      mainWindow = null
-    }
+    runtime.window.clearMainWindow(window)
   })
 
   window.webContents.setWindowOpenHandler((details) => {
@@ -6780,20 +6778,26 @@ app.whenReady().then(async () => {
   }
   installNotebookOutputProtocol()
   applyDockIcon()
-  menuBarController = createMacMenuBar({
-    getUiLanguage: () => readAppSettings().uiLanguage,
-    openWindow: showMainWindowFromMenuBar,
-    queueAction: queueMenuBarAction,
-    hideWindow: hideMainWindowFromMenuBar,
-    canHideWindow: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
-    quit: () => app.quit()
-  })
-  startupSplashWindow = await createStartupSplashWindow(
+  runtime.window.setMenuBarController(
+    createMacMenuBar({
+      getUiLanguage: () => readAppSettings().uiLanguage,
+      openWindow: showMainWindowFromMenuBar,
+      queueAction: queueMenuBarAction,
+      hideWindow: hideMainWindowFromMenuBar,
+      canHideWindow: () => {
+        const mainWindow = runtime.window.mainWindow
+        return Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible())
+      },
+      quit: () => app.quit()
+    })
+  )
+  const startupSplashWindow = await createStartupSplashWindow(
     (options) => new BrowserWindow(options),
     appIcon.isEmpty() ? '' : appIcon.toDataURL(),
     Date.now,
     readAppSettings().uiLanguage
   )
+  runtime.window.setStartupSplashWindow(startupSplashWindow)
 
   const removedLogs = cleanupOldLogs()
   try {
@@ -6940,7 +6944,7 @@ app.whenReady().then(async () => {
   registerTerminalRendererIpc(ipcMain, terminalIpcCoordinator)
   registerSshBootstrapIpc(
     ipcMain,
-    () => mainWindow?.webContents ?? null,
+    () => runtime.window.mainWindow?.webContents ?? null,
     createDefaultSshBootstrapCoordinator()
   )
   registerRemoteMicromambaIpc(ipcMain)
@@ -6954,10 +6958,7 @@ app.whenReady().then(async () => {
   registerMenuBarIpc({
     ipcMain,
     requireMainWindowRenderer,
-    getPendingAction: () => pendingMenuBarAction,
-    setPendingAction: (action) => {
-      pendingMenuBarAction = action
-    }
+    consumePendingAction: () => runtime.window.consumeMenuBarAction()
   })
   const localFileAccess = createLocalFileAccessControl({
     agentDir: AGENT_DIR,
@@ -6975,10 +6976,9 @@ app.whenReady().then(async () => {
     previews: createLocalFilePreviews(localFileAccess),
     icons: createLocalFileIcons({
       access: localFileAccess,
-      getMacLaunchServicesHandlers: () => macLaunchServicesHandlers,
-      setMacLaunchServicesHandlers: (handlers) => {
-        macLaunchServicesHandlers = handlers
-      },
+      getMacLaunchServicesHandlers: () => runtime.caches.macLaunchServicesHandlers,
+      setMacLaunchServicesHandlers: (handlers) =>
+        runtime.caches.setMacLaunchServicesHandlers(handlers),
       getFileIcon: (path) => app.getFileIcon(path, { size: 'normal' })
     })
   }
@@ -7329,11 +7329,11 @@ app.whenReady().then(async () => {
       disposeRemoteNotebookBackend
     },
     browser: {
-      getRegistry: () => browserWorkspaceRegistry
+      getRegistry: () => runtime.workspaceServices.browserWorkspaceRegistry
     },
     titles: {
       getGenerator: getSessionTitleGenerator,
-      getGeneratorIfCreated: () => sessionTitleGenerator,
+      getGeneratorIfCreated: () => runtime.caches.sessionTitleGenerator,
       context: (path) => sessionTitleContext(path),
       manualRequests: manualTitleRequests,
       enqueueWrite: enqueueSessionTitleWrite,
@@ -7344,7 +7344,10 @@ app.whenReady().then(async () => {
   const projectsIpcOptions: ProjectsIpcOptions = {
     ipcMain,
     windows: { getActiveWindow, requireMainWindowRenderer },
-    workspace: { agentDir: AGENT_DIR, getTerminalManager: () => terminalManager },
+    workspace: {
+      agentDir: AGENT_DIR,
+      getTerminalManager: () => runtime.workspaceServices.terminalManager
+    },
     projects: {
       requireProject,
       applyCurrentPermissionMode: (id, project, permissionMode) => {
@@ -7428,9 +7431,7 @@ app.whenReady().then(async () => {
     updates: {
       refreshCachedPackageUpdates,
       packageUpdateViews,
-      replaceCachedPackageUpdates: (updates) => {
-        cachedPackageUpdates = updates
-      }
+      replaceCachedPackageUpdates: (updates) => runtime.caches.replaceCachedPackageUpdates(updates)
     }
   }
   registerPackageCatalogIpc(packagesIpcOptions)
@@ -7439,10 +7440,9 @@ app.whenReady().then(async () => {
     workspace: { agentDir: AGENT_DIR },
     sources: { officialRegistryFetch },
     updates: {
-      clearCachedPackageUpdates: () => {
-        cachedPackageUpdates = []
-      },
+      clearCachedPackageUpdates: () => runtime.caches.clearCachedPackageUpdates(),
       sendNoAvailableUpdates: () => {
+        const mainWindow = runtime.window.mainWindow
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send(IPC.packages.updatesAvailable, [])
         }
@@ -7541,8 +7541,7 @@ app.on(
   createBeforeQuitHandler({
     beginShutdown: () => {
       finishStartupSplash(null)
-      menuBarController?.destroy()
-      menuBarController = null
+      runtime.window.destroyMenuBarController()
       // Stop local wrapper runs; detach remote runs so the next app launch can resume watching them.
       try {
         wrapperJobs.shutdown()
@@ -7550,9 +7549,10 @@ app.on(
         writeAppLog({ level: 'error', event: 'wrapper_shutdown_failed' })
       }
       try {
-        if (preventSleepBlockerId !== null && powerSaveBlocker.isStarted(preventSleepBlockerId)) {
-          powerSaveBlocker.stop(preventSleepBlockerId)
-          preventSleepBlockerId = null
+        const blockerId = runtime.caches.preventSleepBlockerId
+        if (blockerId !== null && powerSaveBlocker.isStarted(blockerId)) {
+          powerSaveBlocker.stop(blockerId)
+          runtime.caches.clearPreventSleepBlockerId()
         }
       } catch {
         writeAppLog({ level: 'error', event: 'power_blocker_cleanup_failed' })

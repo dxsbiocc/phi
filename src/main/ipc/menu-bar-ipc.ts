@@ -6,16 +6,13 @@ import type { MenuBarAction } from '../../shared/menuBarTypes'
 export interface MenuBarIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
   requireMainWindowRenderer: (event: IpcMainInvokeEvent) => unknown
-  getPendingAction: () => MenuBarAction | null
-  setPendingAction: (action: MenuBarAction | null) => void
+  consumePendingAction: () => MenuBarAction | null
 }
 
 export function registerMenuBarIpc(options: MenuBarIpcOptions): void {
-  const { ipcMain, requireMainWindowRenderer, getPendingAction, setPendingAction } = options
+  const { ipcMain, requireMainWindowRenderer, consumePendingAction } = options
   ipcMain.handle(IPC.menuBar.consumeAction, (event): MenuBarAction | null => {
     requireMainWindowRenderer(event)
-    const action = getPendingAction()
-    setPendingAction(null)
-    return action
+    return consumePendingAction()
   })
 }
