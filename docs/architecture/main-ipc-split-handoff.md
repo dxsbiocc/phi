@@ -80,6 +80,15 @@ Status: IPC 拆分(IPC-1~7)与第 9 步运行时上下文(RC-1、RC-2)已完成�
 - 合入后复核告警发现 RC-2 的改名让一个方法越过 80 行;已把标题模型解析提成 `resolveSessionTitleModel`
   (`c6b0cb8f`),告警 1,434 → 1,431。审查清单补充:**合入后在主仓库重新统计全仓告警**,不采信切片内的计数。
 
+### 第 6 步:超长函数(2026-10-20 开始)
+
+`index.ts` 里需要拆的四个函数(行数 / 圈复杂度):启动组装 `app.whenReady` 回调 729 行;`getAgentSession` 567 行 / 131;
+`submitPromptRun` 335 行(内含 222 行运行回调与 149 行 `execute`);`persistSessionEvent` 303 行 / 95。
+
+顺序:LF-1 `persistSessionEvent`(职责最清楚,按事件族拆分、定下模式)→ LF-2 `submitPromptRun` →
+LF-3 `getAgentSession`(风险最高)→ LF-4 启动组装拆成命名阶段。每刀先补特征化测试,再按原顺序拆成 ≤ 80 行、
+复杂度 ≤ 15 的命名函数,原语句只搬不改;同一时间只做一刀(都改 `index.ts`)。
+
 ## 4. 每刀的执行与验收(项目管理约定)
 
 - 实现交给 Codex(`gpt-5.6-sol`、`xhigh`),每刀一个 worktree:`../Phi-worktrees/ipc-<n>-<domain>`,
