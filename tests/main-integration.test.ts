@@ -4418,6 +4418,7 @@ async function harness(
     './agent/memory/project-memory-access',
     './agent/notebook/analysis-notebook-code-generator',
     './agent/notebook/analysis-notebook-operations',
+    './agent/persona-generation',
     './agent/plugins/phi-plugin-management-view',
     './agent/runtime/model-thinking-levels',
     './agent/session/active-prompt-stop',
@@ -4427,7 +4428,10 @@ async function harness(
     './agent/session/prompt-target-control',
     './agent/session/runtime-recovery-control',
     './agent/session/session-compaction-control',
-    './agent/wrappers/remote-result-read-control'
+    './agent/wrappers/remote-result-read-control',
+    './local-file-access-control',
+    './local-file-icons',
+    './local-file-previews'
   ])
   const mockProcess = {
     platform: process.platform,

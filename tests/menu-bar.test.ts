@@ -130,7 +130,7 @@ test('menu bar is macOS-only and uses template image plus an explicit renderer c
   assert.equal(created, false)
 
   const adapter = readFileSync('src/main/menu-bar.ts', 'utf8')
-  const main = readFileSync('src/main/index.ts', 'utf8')
+  const menuBarIpc = readFileSync('src/main/ipc/menu-bar-ipc.ts', 'utf8')
   const preload = readFileSync('src/preload/index.ts', 'utf8')
   const ambient = readFileSync('src/preload/index.d.ts', 'utf8')
   const renderer = readFileSync('src/renderer/src/App.tsx', 'utf8')
@@ -138,7 +138,7 @@ test('menu bar is macOS-only and uses template image plus an explicit renderer c
   const commands = readFileSync('src/renderer/src/lib/app-shell/useAppCommands.ts', 'utf8')
   assert.match(adapter, /setTemplateImage\(true\)/)
   assert.match(adapter, /addRepresentation\(\{ scaleFactor: 2/)
-  assert.match(main, /ipcMain\.handle\(IPC\.menuBar\.consumeAction/)
+  assert.match(menuBarIpc, /ipcMain\.handle\(IPC\.menuBar\.consumeAction/)
   assert.match(preload, /ipcRenderer\.invoke\(IPC\.menuBar\.consumeAction\)/)
   assert.match(ambient, /consumeMenuBarAction: \(\) => Promise<MenuBarAction \| null>/)
   assert.match(commands, /rendererApi\.consumeMenuBarAction\(\)/)

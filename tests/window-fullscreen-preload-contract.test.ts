@@ -83,6 +83,7 @@ test('fullscreen state is typed end to end and only sourced from the trusted mai
   const ambient = source('src/preload/index.d.ts')
   const renderer = source('src/renderer/src/types.ts')
   const main = source('src/main/index.ts')
+  const windowIpc = source('src/main/ipc/window-ipc.ts')
 
   for (const apiSource of [preload, ambient, renderer]) {
     assert.match(apiSource, /readyWindow: \(background: string\) => Promise<void>/)
@@ -93,7 +94,7 @@ test('fullscreen state is typed end to end and only sourced from the trusted mai
     )
   }
 
-  assert.match(main, /ipcMain\.handle\(IPC\.window\.getFullscreen, \(event\) =>/)
+  assert.match(windowIpc, /ipcMain\.handle\(IPC\.window\.getFullscreen, \(event\) =>/)
   assert.match(main, /event\.sender !== window\.webContents/)
   assert.match(main, /event\.senderFrame !== event\.sender\.mainFrame/)
   assert.match(main, /window\.webContents\.send\(IPC\.window\.fullscreenChanged, fullscreen\)/)

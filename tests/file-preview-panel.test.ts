@@ -631,7 +631,11 @@ test('file preview default open action uses the system file icon without a menu'
     resolve(process.cwd(), 'src/renderer/src/features/file-preview/FilePreviewPanel.tsx'),
     'utf8'
   )
-  const mainSource = readFileSync(resolve(process.cwd(), 'src/main/index.ts'), 'utf8')
+  const filesIpcSource = readFileSync(resolve(process.cwd(), 'src/main/ipc/files-ipc.ts'), 'utf8')
+  const localFileIconsSource = readFileSync(
+    resolve(process.cwd(), 'src/main/local-file-icons.ts'),
+    'utf8'
+  )
   const preloadSource = readFileSync(resolve(process.cwd(), 'src/preload/index.ts'), 'utf8')
   const preloadTypes = readFileSync(resolve(process.cwd(), 'src/preload/index.d.ts'), 'utf8')
   const rendererTypes = readFileSync(resolve(process.cwd(), 'src/renderer/src/types.ts'), 'utf8')
@@ -640,14 +644,14 @@ test('file preview default open action uses the system file icon without a menu'
   assert.match(panelSource, /data-phi-file-open-default-app-icon="system"/)
   assert.doesNotMatch(panelSource, /MenuItem/)
   assert.doesNotMatch(panelSource, /aria-label="打开方式"/)
-  assert.match(mainSource, /ipcMain\.handle\(IPC\.files\.getIcon/)
-  assert.match(mainSource, /com\.apple\.launchservices\.secure\.plist/)
-  assert.match(mainSource, /\/usr\/bin\/mdfind/)
+  assert.match(filesIpcSource, /ipcMain\.handle\(IPC\.files\.getIcon/)
+  assert.match(localFileIconsSource, /com\.apple\.launchservices\.secure\.plist/)
+  assert.match(localFileIconsSource, /\/usr\/bin\/mdfind/)
   assert.match(
-    mainSource,
+    localFileIconsSource,
     /macFallbackApplicationBundleIdByExtension[\s\S]*png: 'com\.apple\.preview'/
   )
-  assert.match(mainSource, /getMacApplicationIconDataUrl\(bundleId\)/)
+  assert.match(localFileIconsSource, /getMacApplicationIconDataUrl\(bundleId\)/)
   assert.match(
     preloadSource,
     /getFileIcon: \(path: string\): Promise<string \| null> =>\s*ipcRenderer\.invoke\(IPC\.files\.getIcon, path\)/

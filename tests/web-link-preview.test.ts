@@ -426,10 +426,13 @@ test('favicon destinations get the same redirect/DNS restrictions and failures r
 })
 
 test('preview IPC checks the trusted main renderer and exposes only the typed preload method', () => {
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const webLinkIpc = readFileSync(
+    new URL('../src/main/ipc/web-link-ipc.ts', import.meta.url),
+    'utf8'
+  )
   const preload = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8')
   assert.match(
-    main,
+    webLinkIpc,
     /ipcMain\.handle\(IPC\.webLink\.preview, \(event, url: unknown\) => \{\s*requireMainWindowRenderer\(event\)\s*return webLinkPreviews\.get\(url\)/u
   )
   assert.match(preload, /getWebLinkPreview: \(url: string\) => Promise<WebLinkPreview>/u)

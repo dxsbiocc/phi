@@ -357,17 +357,29 @@ test('specialist subscription adapts the production session while retaining prop
   })
 })
 
-test('no-tools event summaries preserve text and thinking streaming through the production index consumer', () => {
+test('no-tools event summaries preserve text and thinking streaming through persona generation', () => {
   // Load the actual pure function without starting Electron or reproducing its logic.
-  const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
-  const parsed = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true)
-  const declaration = parsed.statements.find(
-    (node) => ts.isFunctionDeclaration(node) && node.name?.text === 'assistantTextFromEventSummary'
+  const source = readFileSync(
+    new URL('../src/main/agent/persona-generation.ts', import.meta.url),
+    'utf8'
   )
-  assert.ok(declaration)
-  const compiled = ts.transpileModule(declaration.getText(parsed), {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext }
-  }).outputText
+  const parsed = ts.createSourceFile('persona-generation.ts', source, ts.ScriptTarget.Latest, true)
+  const declarations = parsed.statements.filter(
+    (node) =>
+      ts.isFunctionDeclaration(node) &&
+      ['assistantTextFromMessageUpdate', 'assistantTextFromEventSummary'].includes(
+        node.name?.text ?? ''
+      )
+  )
+  assert.equal(declarations.length, 2)
+  const compiled = ts.transpileModule(
+    declarations
+      .map((declaration) => declaration.getText(parsed).replace(/^export\s+/u, ''))
+      .join('\n'),
+    {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext }
+    }
+  ).outputText
   const consume = new Function(
     'isPhiEventType',
     'isPhiMessageUpdateSummary',
@@ -375,7 +387,20 @@ test('no-tools event summaries preserve text and thinking streaming through the 
     `${compiled}; return assistantTextFromEventSummary`
   )(isPhiEventType, isPhiMessageUpdateSummary, (value: unknown) =>
     typeof value === 'string' ? value : ''
-  ) as (summary: ReturnType<typeof summarizeEvent>, text: string) => string
+  ) as (
+    summary: ReturnType<typeof summarizeEvent>,
+    text: string,
+    textReaders: {
+      extractAssistantText: (value: unknown) => string
+      extractMessageText: (value: unknown) => string
+      lastAssistantMessageFrom: (value: unknown) => unknown
+    }
+  ) => string
+  const textReaders = {
+    extractAssistantText: (value: unknown): string => (typeof value === 'string' ? value : ''),
+    extractMessageText: (value: unknown): string => (typeof value === 'string' ? value : ''),
+    lastAssistantMessageFrom: (): undefined => undefined
+  }
   let text = ''
   for (const type of ['text_delta', 'thinking_delta']) {
     const event = {
@@ -387,7 +412,7 @@ test('no-tools event summaries preserve text and thinking streaming through the 
     assert.equal(Object.hasOwn(summary, 'message'), false)
     assert.equal(Object.hasOwn(summary, 'omitted'), false)
     assert.equal(isPhiMessageUpdateSummary(summary), true)
-    text = consume(summary, text)
+    text = consume(summary, text, textReaders)
   }
   assert.equal(text, 'streamstream')
 })

@@ -20,17 +20,11 @@ import { facadeBindingHash } from './agent/engine/rpc/facade-session-driver'
 import { selectionThinking } from './agent/engine/rpc/runtime-selection-control'
 import { isPhiEventType, isPhiMessageUpdateSummary } from './agent/engine/events'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
-import {
-  hoverMediaPreviewType,
-  mediaPreviewType,
-  type PreviewImageMimeType
-} from './file-preview-media'
 import { shouldBlockHtmlReportNavigation } from '../shared/htmlReportPreview'
 import {
   installNotebookOutputProtocol,
   registerNotebookOutputScheme
 } from './agent/notebook/notebook-output-protocol'
-import { isPluginSkillPreviewPath } from './agent/plugins/preview'
 import type { WrapperRun } from '../shared/wrapperTypes'
 import './agent-env'
 import { createMainWindowStartup } from './window-startup'
@@ -72,6 +66,26 @@ import { registerModelsIpc } from './ipc/models-ipc'
 import { registerThinkingIpc } from './ipc/thinking-ipc'
 import { registerToolIpc } from './ipc/tool-ipc'
 import { registerSessionsIpc } from './ipc/sessions-ipc'
+import { registerSystemIpc } from './ipc/system-ipc'
+import { registerWindowIpc } from './ipc/window-ipc'
+import { registerMenuBarIpc } from './ipc/menu-bar-ipc'
+import {
+  registerFileBrowsingIpc,
+  registerFileOpenIpc,
+  registerFilePickerIpc,
+  registerFilePreviewIpc,
+  type FilesIpcOptions
+} from './ipc/files-ipc'
+import { registerWebLinkIpc } from './ipc/web-link-ipc'
+import { registerRemoteJupyterJobsIpc } from './ipc/remote-jupyter-jobs-ipc'
+import { registerMoleculesIpc } from './ipc/molecules-ipc'
+import { registerWorkspaceChangesIpc } from './ipc/workspace-changes-ipc'
+import { registerAuthIpc } from './ipc/auth-ipc'
+import { registerAppIpc } from './ipc/app-ipc'
+import { registerSettingsIpc } from './ipc/settings-ipc'
+import { registerEnvironmentIpc } from './ipc/environment-ipc'
+import { registerManagedEnvironmentsIpc } from './ipc/managed-environments-ipc'
+import { registerPersonaIpc } from './ipc/persona-ipc'
 import {
   registerProjectsIpc,
   registerProjectsRemoteHostsIpc,
@@ -88,19 +102,8 @@ import { createMacMenuBar } from './menu-bar'
 import type { MenuBarController } from './menu-bar-controller'
 import type { MenuBarAction } from '../shared/menuBarTypes'
 import type { IpcMainInvokeEvent } from 'electron'
-import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  readSync,
-  realpathSync,
-  statSync
-} from 'node:fs'
-import { homedir } from 'node:os'
+import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs'
 import {
   app,
   shell,
@@ -122,7 +125,6 @@ import {
 import { FileSystemBrowserCheckpointStore } from './browser/browser-checkpoints'
 import { ElectronBrowserEngine } from './browser/electron-browser-engine'
 import { BrowserWorkspaceRegistry } from './browser/browser-workspace-registry'
-import { createWebLinkPreviewService } from './web-link-preview'
 import type { BrowserActionApprovalPrompt } from './browser/browser-approval'
 import { BrowserToolHostCoordinator } from './agent/browser/browser-tool-host'
 import { TerminalIpcCoordinator, registerTerminalRendererIpc } from './terminal/terminal-ipc'
@@ -130,7 +132,7 @@ import { TerminalDraftService } from './terminal/terminal-command-draft'
 import { buildTerminalDraftSessionFactory } from './terminal/terminal-draft-session'
 import { TerminalManager } from './terminal/terminal-manager'
 import { resolveTerminalWorkspace } from './terminal/terminal-workspace'
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path'
+import { basename, dirname, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createAgentSession } from './agent/session/session-manager'
 import type { ThinkingLevel } from './agent/runtime/model-thinking-levels'
@@ -155,13 +157,8 @@ import {
 } from './agent/session/session-compaction-control'
 import { promptWithAutomaticModelFallback } from './agent/session/automatic-model-fallback'
 import { getAuthManager } from './agent/auth-manager'
-import {
-  fallbackMarkdownFromDescription,
-  getPersonaMarkdown,
-  isOnboarded,
-  setPersonaMarkdown,
-  skipOnboarding
-} from './agent/persona-manager'
+import { getPersonaMarkdown } from './agent/persona-manager'
+import { generatePersonaMarkdown as generatePersonaMarkdownForIpc } from './agent/persona-generation'
 import {
   createSessionManager,
   isPhiOnlySessionPath,
@@ -173,18 +170,13 @@ import {
   assertProjectPathAvailable,
   getProject,
   getProjectByCwd,
-  listLocalProjectAllowRoots,
   listProjects,
   subscribeRemoteProjectConnection,
   type PermissionMode,
   type ModelSelection,
   type Project
 } from './agent/projects'
-import {
-  isLocalFilePathAllowedByRoots,
-  isPathInsideRoot,
-  localFileAllowRoots
-} from './agent/local-file-access'
+import { isPathInsideRoot } from './agent/local-file-access'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './agent/remote-hosts'
 import { createDefaultSshBootstrapCoordinator } from './agent/ssh-bootstrap/default-coordinator'
 import { registerSshBootstrapIpc } from './agent/ssh-bootstrap/ipc'
@@ -243,7 +235,6 @@ import {
   remoteProjectAnchorPath
 } from './agent/remote-project-anchor'
 import type { ProjectLocation } from '../shared/projectLocation'
-import { renderMoleculeSvg } from './molecule-renderer'
 import {
   bashApprovalDigest,
   editApprovalDigest,
@@ -274,8 +265,6 @@ import {
   type RemoteProjectMcpCatalog
 } from './agent/mcp/remote-project-mcp-service'
 import { getRuntimeRoot } from './agent/envs/runtime'
-import { collectGarbage } from './agent/envs/gc'
-import { cleanupInactiveMcpVersions } from './agent/packages/mcp-version-cleanup'
 import { capabilityApprovalSummary } from './agent/packages/capability-approval'
 import { createCapabilityHost } from './agent/packages/capability-host'
 import { createCapabilityService } from './agent/packages/capability-service'
@@ -375,17 +364,12 @@ import { cleanupOldLogs, writeAppLog } from './agent/app-logger'
 import {
   configureSystemUiLanguage,
   readAppSettings,
-  readLastSelectedModel,
-  updateAppSettings
+  readLastSelectedModel
 } from './agent/app-settings'
 import { isSecretMetadataKey, redactSensitiveText } from './agent/redaction'
 import { listProjectNotebooks } from './agent/notebook/analysis-notebooks'
 import { AnalysisNotebookFileWatcher } from './agent/notebook/analysis-notebook-watch'
-import {
-  createManagedEnvironmentActions,
-  getCustomToolPath,
-  listManagedEnvironments
-} from './agent/environment'
+import { getCustomToolPath } from './agent/environment'
 import { createBackgroundEnvironment } from './agent/environment/background'
 import { JupyterServerRegistry } from './agent/notebook/analysis-jupyter-server'
 import { AnalysisNotebookExecutor } from './agent/notebook/analysis-jupyter-execution'
@@ -407,7 +391,6 @@ import {
   createAppRemoteSessionManager,
   type AppRemoteSessionRoutingOptions
 } from './agent/remote-session-routing'
-import { checkForAppUpdate, RELEASES_PAGE_URL, RELEASES_REPOSITORY } from './app-update-check'
 import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jobs'
 import { normalizeProjectMemorySettings } from '../shared/projectMemoryTypes'
 import { validatePresentedFiles } from './agent/deliverables/present-files'
@@ -425,7 +408,10 @@ import {
   beginWorkspaceChangeCapture,
   finishWorkspaceChangeCapture
 } from './agent/session/workspace-changes'
-import { persistWorkspaceDiff, readWorkspaceDiff } from './agent/session/workspace-diffs'
+import { persistWorkspaceDiff } from './agent/session/workspace-diffs'
+import { createLocalFileAccessControl } from './local-file-access-control'
+import { createLocalFileIcons, type MacLaunchServicesHandler } from './local-file-icons'
+import { createLocalFilePreviews } from './local-file-previews'
 import { SessionTitleGenerator } from './agent/session/session-title-generation'
 import { persistPromptImages } from './agent/session/prompt-images'
 import type { PromptImageInput } from '../shared/promptImageTypes'
@@ -462,60 +448,8 @@ const DEFAULT_WINDOW_HEIGHT = 820
 const MIN_WINDOW_WIDTH = 860
 const MIN_WINDOW_HEIGHT = 560
 const appIcon = nativeImage.createFromPath(icon)
-const macFilenameExtensionTagClass = 'public.filename-extension'
-const macContentTypesByExtension: Record<string, string[]> = {
-  csv: ['public.comma-separated-values-text'],
-  htm: ['public.html'],
-  html: ['public.html'],
-  key: ['com.apple.keynote.key'],
-  numbers: ['com.apple.iwork.numbers.numbers'],
-  pages: ['com.apple.iwork.pages.pages'],
-  pdf: ['com.adobe.pdf', 'public.pdf'],
-  ppt: ['com.microsoft.powerpoint.ppt'],
-  pptx: ['org.openxmlformats.presentationml.presentation'],
-  tsv: ['public.tab-separated-values-text'],
-  xls: ['com.microsoft.excel.xls'],
-  xlsx: ['org.openxmlformats.spreadsheetml.sheet'],
-  doc: ['com.microsoft.word.doc'],
-  docx: ['org.openxmlformats.wordprocessingml.document']
-}
-const macFallbackApplicationBundleIdByExtension: Record<string, string> = {
-  avif: 'com.apple.preview',
-  bmp: 'com.apple.preview',
-  gif: 'com.apple.preview',
-  heic: 'com.apple.preview',
-  jpeg: 'com.apple.preview',
-  jpg: 'com.apple.preview',
-  pdf: 'com.apple.preview',
-  png: 'com.apple.preview',
-  tif: 'com.apple.preview',
-  tiff: 'com.apple.preview',
-  webp: 'com.apple.preview'
-}
-const macApplicationPathsByBundleId: Record<string, string[]> = {
-  'com.apple.preview': ['/System/Applications/Preview.app', '/Applications/Preview.app'],
-  'com.apple.textedit': ['/System/Applications/TextEdit.app', '/Applications/TextEdit.app'],
-  'com.apple.iwork.keynote': ['/Applications/Keynote.app'],
-  'com.apple.iwork.numbers': ['/Applications/Numbers.app'],
-  'com.apple.iwork.pages': ['/Applications/Pages.app'],
-  'com.google.chrome': ['/Applications/Google Chrome.app'],
-  'com.microsoft.excel': ['/Applications/Microsoft Excel.app'],
-  'com.microsoft.powerpoint': ['/Applications/Microsoft PowerPoint.app'],
-  'com.microsoft.vscode': ['/Applications/Visual Studio Code.app'],
-  'com.microsoft.word': ['/Applications/Microsoft Word.app']
-}
-
-type MacLaunchServicesHandler = {
-  LSHandlerContentTag?: string
-  LSHandlerContentTagClass?: string
-  LSHandlerContentType?: string
-  LSHandlerRoleAll?: string
-  LSHandlerRoleViewer?: string
-  LSHandlerRoleEditor?: string
-}
 
 let macLaunchServicesHandlers: Promise<MacLaunchServicesHandler[]> | null = null
-const macApplicationPathQueries = new Map<string, Promise<string[]>>()
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
 let cachedPackageUpdates: PackageUpdate[] = []
@@ -574,8 +508,6 @@ function requireMainWindowRenderer(event: IpcMainInvokeEvent): BrowserWindow {
   }
   return window
 }
-
-const webLinkPreviews = createWebLinkPreviewService()
 
 function finishStartupSplash(window: BrowserWindow | null): void {
   const splash = startupSplashWindow
@@ -941,15 +873,7 @@ function scheduleStartupPackageUpdateCheck(): void {
 }
 
 const TOOL_OUTPUT_INLINE_LIMIT = 20000
-const FILE_PREVIEW_BYTES_LIMIT = 320000
 const MAX_RUN_DIFF_BYTES = 2 * 1024 * 1024
-const FILE_MEDIA_PREVIEW_BYTES_LIMIT = 10 * 1024 * 1024
-const FILE_HTML_PREVIEW_BYTES_LIMIT = 10 * 1024 * 1024
-const FILE_HOVER_TEXT_BYTES_LIMIT = 32 * 1024
-const FILE_HOVER_IMAGE_BYTES_LIMIT = 2 * 1024 * 1024
-const FILE_HOVER_SNIFF_BYTES_LIMIT = 512
-const LOCAL_PATH_STAT_LIMIT = 128
-const DIRECTORY_ENTRY_LIMIT = 400
 const KIMI_CODE_REPLACEMENT_MODEL_IDS = [
   'kimi-for-coding',
   'k3',
@@ -1445,22 +1369,6 @@ const environmentBuilds = createEnvironmentBuilds({
   onChange: (build) => {
     sendToAllWindows(IPC.environmentBuilds.changed, build)
   }
-})
-const managedEnvironmentActions = createManagedEnvironmentActions({
-  root: getRuntimeRoot(),
-  agentDir: AGENT_DIR,
-  builds: environmentBuilds,
-  collect: (root, options) => {
-    const result = collectGarbage(root, options)
-    if (!options?.dryRun) cleanupInactiveMcpVersions(AGENT_DIR, root)
-    return result
-  },
-  catalog: (projectDir, includeDynamic) =>
-    listManagedEnvironments({
-      ...(projectDir ? { projectDir } : {}),
-      builds: environmentBuilds.list(),
-      includeDynamic
-    })
 })
 // The notebook server joins builds started elsewhere (chat prompt or the environment panel).
 const jupyterServerRegistry = new JupyterServerRegistry({
@@ -3495,54 +3403,6 @@ function extractMessageText(content: unknown): string {
     .join('')
 }
 
-function assistantTextFromEventSummary(summary: PhiAgentEventSummary, currentText: string): string {
-  const message = isPhiEventType(summary, 'message_end') ? summary.message : undefined
-  const assistantMessageEvent = isPhiMessageUpdateSummary(summary)
-    ? summary.assistantMessageEvent
-    : undefined
-
-  if (
-    summary.type === 'message_update' &&
-    assistantMessageEvent?.type === 'text_delta' &&
-    typeof assistantMessageEvent.delta === 'string'
-  ) {
-    return `${currentText}${assistantMessageEvent.delta}`
-  }
-  if (summary.type === 'message_update' && typeof assistantMessageEvent?.type === 'string') {
-    const deltaText = extractMessageText(assistantMessageEvent.delta)
-    if (deltaText && assistantMessageEvent.type.endsWith('_delta')) {
-      return `${currentText}${deltaText}`
-    }
-  }
-
-  if (summary.type === 'message_update' && assistantMessageEvent?.type === 'done') {
-    const text = extractAssistantText(assistantMessageEvent.message).trim()
-    return text || currentText
-  }
-
-  if (summary.type === 'message_update' && assistantMessageEvent?.partial) {
-    const text = extractAssistantText(assistantMessageEvent.partial).trim()
-    if (text) return text
-  }
-  if (summary.type === 'message_update' && assistantMessageEvent) {
-    const text = extractMessageText(assistantMessageEvent).trim()
-    if (text) return text
-  }
-
-  if (summary.type === 'message_end' && message?.role === 'assistant') {
-    const text = extractAssistantText(message).trim()
-    return text || currentText
-  }
-
-  const batchedText = extractAssistantText(lastAssistantMessageFrom(summary.messages)).trim()
-  if (batchedText) return batchedText
-
-  const resultText = extractAssistantText(lastAssistantMessageFrom(summary.result)).trim()
-  if (resultText) return resultText
-
-  return currentText
-}
-
 function assistantErrorMessageFromEventSummary(summary: PhiAgentEventSummary): string | null {
   const assistantMessageEvent = isPhiMessageUpdateSummary(summary)
     ? summary.assistantMessageEvent
@@ -5574,59 +5434,6 @@ function scheduleAutomaticSessionTitle(sessionId: string): void {
   automaticTitleJobs.set(sessionId, job)
 }
 
-// Turns a free-text description of the desired assistant into a persona markdown file
-// by asking the agent itself to write it, in a throwaway session (noTools + in-memory
-// history) so it doesn't touch the user's real chat or leave tool-call side effects.
-async function generatePersonaMarkdown(
-  description: string,
-  control?: { assertCurrent(): void }
-): Promise<string> {
-  control?.assertCurrent()
-  const runtime = await getAuthManager().getRuntime()
-  control?.assertCurrent()
-  const model = selectedModel
-    ? runtime.getModel(selectedModel.providerId, selectedModel.modelId)
-    : undefined
-  let eventAssistantText = ''
-  const cwd = getNoProjectTaskFolder()
-  const { session } = await createAgentSession(
-    {
-      modelRuntime: runtime,
-      cwd,
-      noTools: 'all',
-      sessionManager: createInMemoryRuntimeSessionManager(cwd),
-      ...(model ? { model } : {})
-    },
-    (summary) => {
-      eventAssistantText = assistantTextFromEventSummary(summary, eventAssistantText)
-    }
-  )
-
-  try {
-    control?.assertCurrent()
-    await session.prompt(
-      [
-        '请根据下面用户对助手的描述，生成一份 Markdown 格式的智能体人设配置。',
-        '内容应涵盖：性格特征、说话风格/语气、回答偏好（如结构、详略程度等）。',
-        '只输出 Markdown 正文本身，不要包含任何解释、前后缀说明或代码块包裹符号。',
-        '',
-        '用户描述：',
-        description
-      ].join('\n')
-    )
-
-    control?.assertCurrent()
-    const lastAssistantMessage = [...session.messages].reverse().find((message) => {
-      const record = message as { role?: string }
-      return record.role === 'assistant'
-    })
-    const generated = extractAssistantText(lastAssistantMessage).trim() || eventAssistantText.trim()
-    return generated || fallbackMarkdownFromDescription(description)
-  } finally {
-    await session.dispose()
-  }
-}
-
 function isUsableWindow(window: BrowserWindow | null): window is BrowserWindow {
   return Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed())
 }
@@ -5693,19 +5500,6 @@ function notifyAnalysisNotebookFileChanged(change: unknown): void {
   sendToAllWindows(IPC.analysis.notebookFileChanged, change)
 }
 
-type LocalPathScope = {
-  cwd: string
-  cwdRealPath?: string
-}
-
-function currentLocalPathScope(): LocalPathScope {
-  const project = getProjectByCwd(currentCwd)
-  return {
-    cwd: currentCwd,
-    ...(project?.workingDirectoryRealPath ? { cwdRealPath: project.workingDirectoryRealPath } : {})
-  }
-}
-
 function isRemoteResourceScope(cwd?: string): boolean {
   return (
     isRemoteProjectAnchorPath(currentCwd, AGENT_DIR) ||
@@ -5769,695 +5563,6 @@ function remoteRuntimeSkillDefinitions(catalog: RemoteProjectSkillCatalog): Runt
       }
     ]
   })
-}
-
-function isCoreAuthoringSkillResourcePath(target: string): boolean {
-  try {
-    return isPathInsideRoot(realpathSync(getCoreAuthoringSkillDir()), target)
-  } catch {
-    return false
-  }
-}
-
-function isLocalFilePathAllowed(
-  target: string,
-  scope: LocalPathScope = currentLocalPathScope(),
-  projectRoots: readonly string[] = []
-): boolean {
-  if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return false
-  if (isCoreAuthoringSkillResourcePath(target)) return true
-  if (isPluginSkillPreviewPath(target)) return true
-  return isLocalFilePathAllowedByRoots(
-    target,
-    localFileAllowRoots({
-      agentDir: resolve(AGENT_DIR),
-      sessionCwd: scope.cwd,
-      sessionCwdRealPath: scope.cwdRealPath,
-      projectRoots
-    })
-  )
-}
-
-function scopeForRoot(
-  root: string,
-  target: string
-): { rootPath: string; rootLabel: string; displayPath: string } | null {
-  const rootPath = resolve(root)
-  if (!isPathInsideRoot(rootPath, target)) return null
-  const relativePath = relative(rootPath, target)
-  return {
-    rootPath,
-    rootLabel: basename(rootPath) || rootPath,
-    displayPath: relativePath || basename(target)
-  }
-}
-
-function getLocalPathScope(
-  target: string,
-  projectRoots: readonly string[] = []
-): {
-  rootPath: string
-  rootLabel: string
-  displayPath: string
-} | null {
-  if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return null
-  const cwdScope = scopeForRoot(currentCwd, target)
-  if (cwdScope) return cwdScope
-
-  const projectScope = projectRoots
-    .map((root) => scopeForRoot(root, target))
-    .filter((scope): scope is NonNullable<typeof scope> => scope !== null)
-    .sort((left, right) => right.rootPath.length - left.rootPath.length)[0]
-  if (projectScope) return projectScope
-
-  const agentDir = resolve(AGENT_DIR)
-  const relativeAgentPath = relative(agentDir, target)
-  if (!relativeAgentPath.startsWith('..') && !isAbsolute(relativeAgentPath)) {
-    return {
-      rootPath: agentDir,
-      rootLabel: 'Phi',
-      displayPath: join('Phi', relativeAgentPath || basename(target))
-    }
-  }
-
-  return null
-}
-
-function assertLocalFilePathAllowed(
-  filePath: string,
-  actionLabel: string,
-  options: { resolveSymlinks?: boolean; projectRoots?: readonly string[] } = {}
-): string {
-  if (!isAbsolute(filePath)) {
-    throw new Error(`只能${actionLabel}绝对路径`)
-  }
-  const projectRoots = options.projectRoots ?? listLocalProjectAllowRoots()
-  const scope = currentLocalPathScope()
-  const target = resolve(filePath)
-  if (!isLocalFilePathAllowed(target, scope, projectRoots)) {
-    throw new Error(`只能${actionLabel} Phi 保存的文件或当前项目内的文件`)
-  }
-  const inspectedTarget = options.resolveSymlinks ? realpathSync(target) : target
-  if (
-    !isLocalFilePathAllowed(inspectedTarget, scope, projectRoots) ||
-    (existsSync(inspectedTarget) &&
-      isRemoteProjectAnchorPath(realpathSync(inspectedTarget), AGENT_DIR))
-  ) {
-    throw new Error(`只能${actionLabel} Phi 保存的文件或当前项目内的文件`)
-  }
-  return inspectedTarget
-}
-
-function assertFileHoverPreviewPathAllowed(filePath: string): string {
-  if (!readAppSettings().allowExternalFileRead) {
-    try {
-      return assertLocalFilePathAllowed(filePath, '预览', { resolveSymlinks: true })
-    } catch (error) {
-      if (
-        isAbsolute(filePath) &&
-        error instanceof Error &&
-        error.message.includes('Phi 保存的文件或当前项目内的文件')
-      ) {
-        throw new Error(
-          '此文件位于当前项目之外。请前往“设置 → 通用”，开启“允许读取项目外文件”后重试。'
-        )
-      }
-      throw error
-    }
-  }
-
-  if (!isAbsolute(filePath)) {
-    throw new Error('只能预览绝对路径')
-  }
-  const target = resolve(filePath)
-  if (isRemoteProjectAnchorPath(target, AGENT_DIR)) {
-    throw new Error('远程项目文件不支持本地悬停预览')
-  }
-  const inspectedTarget = realpathSync(target)
-  if (isRemoteProjectAnchorPath(inspectedTarget, AGENT_DIR)) {
-    throw new Error('远程项目文件不支持本地悬停预览')
-  }
-  return inspectedTarget
-}
-
-function assertRevealPathAllowed(filePath: string): string {
-  return assertLocalFilePathAllowed(filePath, '显示')
-}
-
-type LocalPathStatPayload = {
-  path: string
-  kind: 'file' | 'directory' | 'missing'
-}
-
-function localPathStatScope(cwd: unknown, allowExternalFileRead: boolean): LocalPathScope | null {
-  const rawCwd = typeof cwd === 'string' && cwd.trim() ? cwd : currentCwd
-  if (isRemoteProjectAnchorPath(rawCwd, AGENT_DIR)) return null
-  const requestedCwd = resolve(rawCwd)
-  if (requestedCwd === resolve(currentCwd)) return currentLocalPathScope()
-
-  const project = getProjectByCwd(rawCwd)
-  if (!project) {
-    return allowExternalFileRead ? { cwd: requestedCwd } : null
-  }
-
-  try {
-    assertProjectPathAvailable(project.workingDirectory)
-  } catch {
-    return null
-  }
-
-  return {
-    cwd: project.workingDirectory,
-    cwdRealPath: project.workingDirectoryRealPath
-  }
-}
-
-function missingLocalPathStats(paths: string[]): LocalPathStatPayload[] {
-  return paths.map((path) => ({ path, kind: 'missing' as const }))
-}
-
-function statLocalPath(
-  filePath: string,
-  scope: LocalPathScope,
-  allowExternalFileRead: boolean
-): LocalPathStatPayload {
-  const missing = { path: filePath, kind: 'missing' as const }
-  if (typeof filePath !== 'string' || !isAbsolute(filePath)) return missing
-
-  const target = resolve(filePath)
-  if (isRemoteProjectAnchorPath(target, AGENT_DIR)) return missing
-  if (!allowExternalFileRead && !isLocalFilePathAllowed(target, scope)) return missing
-
-  try {
-    const realTarget = realpathSync(target)
-    if (isRemoteProjectAnchorPath(realTarget, AGENT_DIR)) return missing
-    if (!allowExternalFileRead && !isLocalFilePathAllowed(realTarget, scope)) return missing
-
-    const stats = statSync(realTarget)
-    if (stats.isDirectory()) return { path: target, kind: 'directory' }
-    if (stats.isFile()) return { path: target, kind: 'file' }
-  } catch {
-    return missing
-  }
-
-  return missing
-}
-
-function statLocalPaths(cwd: unknown, paths: unknown): LocalPathStatPayload[] {
-  if (!Array.isArray(paths)) return []
-
-  const uniquePaths = [...new Set(paths.filter((path): path is string => typeof path === 'string'))]
-  const limitedPaths = uniquePaths.slice(0, LOCAL_PATH_STAT_LIMIT)
-  const allowExternalFileRead = readAppSettings().allowExternalFileRead
-  const scope = localPathStatScope(cwd, allowExternalFileRead)
-  if (!scope) return missingLocalPathStats(limitedPaths)
-
-  return limitedPaths.map((path) => statLocalPath(path, scope, allowExternalFileRead))
-}
-
-function readFilePreviewBytes(target: string, bytesToRead: number): Buffer {
-  if (bytesToRead <= 0) return Buffer.alloc(0)
-
-  const fd = openSync(target, 'r')
-  try {
-    const buffer = Buffer.alloc(bytesToRead)
-    const bytesRead = readSync(fd, buffer, 0, bytesToRead, 0)
-    return buffer.subarray(0, bytesRead)
-  } finally {
-    closeSync(fd)
-  }
-}
-
-type FilePreviewBasePayload = {
-  path: string
-  name: string
-  displayPath: string
-  rootPath: string
-  rootLabel: string
-  bytes: number
-  previewBytes: number
-  truncated: boolean
-}
-
-type FilePreviewPayload = FilePreviewBasePayload &
-  (
-    | {
-        kind: 'text'
-        mimeType: 'text/plain'
-        content: string
-      }
-    | {
-        kind: 'html'
-        mimeType: 'text/html'
-        content: string
-      }
-    | {
-        kind: 'image'
-        mimeType: PreviewImageMimeType
-        dataUrl: string
-      }
-    | {
-        kind: 'pdf'
-        mimeType: 'application/pdf'
-        dataUrl: string
-      }
-  )
-
-type FileHoverPreviewPayload = FilePreviewBasePayload &
-  (
-    | {
-        kind: 'text'
-        mimeType: 'text/plain'
-        content: string
-      }
-    | {
-        kind: 'spreadsheet'
-        mimeType: 'text/csv' | 'text/tab-separated-values'
-        format: 'csv' | 'tsv'
-        content: string
-      }
-    | {
-        kind: 'image'
-        mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
-        dataUrl: string
-      }
-    | {
-        kind: 'metadata'
-        mimeType: string
-        reason: 'binary' | 'large_file' | 'pdf' | 'unsupported_media'
-      }
-  )
-
-function filePreviewBasePayload(
-  target: string,
-  stats: { size: number },
-  previewBytes: number,
-  truncated: boolean
-): FilePreviewBasePayload {
-  const scope = getLocalPathScope(target, listLocalProjectAllowRoots())
-  return {
-    path: target,
-    name: basename(target),
-    displayPath: scope?.displayPath ?? basename(target),
-    rootPath: scope?.rootPath ?? dirname(target),
-    rootLabel: scope?.rootLabel ?? basename(dirname(target)),
-    bytes: stats.size,
-    previewBytes,
-    truncated
-  }
-}
-
-function spreadsheetHoverPreviewType(
-  path: string
-):
-  | { format: 'csv'; mimeType: 'text/csv' }
-  | { format: 'tsv'; mimeType: 'text/tab-separated-values' }
-  | null {
-  const name = basename(path).toLowerCase()
-  if (name.endsWith('.csv')) return { format: 'csv', mimeType: 'text/csv' }
-  if (name.endsWith('.tsv') || name.endsWith('.tab')) {
-    return { format: 'tsv', mimeType: 'text/tab-separated-values' }
-  }
-  return null
-}
-
-function createFilePreview(filePath: string): FilePreviewPayload {
-  const target = assertLocalFilePathAllowed(filePath, '预览', { resolveSymlinks: true })
-  const stats = statSync(target)
-  if (!stats.isFile()) {
-    throw new Error('只能预览文件内容')
-  }
-
-  const truncated = stats.size > FILE_PREVIEW_BYTES_LIMIT
-  const previewBytes = readFilePreviewBytes(target, Math.min(stats.size, FILE_PREVIEW_BYTES_LIMIT))
-  const base = filePreviewBasePayload(target, stats, previewBytes.byteLength, truncated)
-  const mediaType = mediaPreviewType(previewBytes)
-  if (mediaType) {
-    if (stats.size > FILE_MEDIA_PREVIEW_BYTES_LIMIT) {
-      throw new Error('文件过大，暂不支持直接预览')
-    }
-    const mediaBytes =
-      previewBytes.byteLength === stats.size
-        ? previewBytes
-        : readFilePreviewBytes(target, stats.size)
-    if (mediaType.kind === 'image') {
-      return {
-        ...base,
-        kind: 'image',
-        mimeType: mediaType.mimeType,
-        dataUrl: `data:${mediaType.mimeType};base64,${mediaBytes.toString('base64')}`,
-        previewBytes: mediaBytes.byteLength,
-        truncated: false
-      }
-    }
-
-    return {
-      ...base,
-      kind: 'pdf',
-      mimeType: 'application/pdf',
-      dataUrl: `data:${mediaType.mimeType};base64,${mediaBytes.toString('base64')}`,
-      previewBytes: mediaBytes.byteLength,
-      truncated: false
-    }
-  }
-
-  if (previewBytes.includes(0)) {
-    throw new Error('暂不支持预览二进制文件')
-  }
-
-  if (/\.html?$/i.test(target) && stats.size <= FILE_HTML_PREVIEW_BYTES_LIMIT) {
-    const htmlBytes =
-      previewBytes.byteLength === stats.size
-        ? previewBytes
-        : readFilePreviewBytes(target, stats.size)
-    return {
-      ...base,
-      kind: 'html',
-      mimeType: 'text/html',
-      content: htmlBytes.toString('utf8'),
-      previewBytes: htmlBytes.byteLength,
-      truncated: false
-    }
-  }
-
-  return {
-    ...base,
-    kind: 'text',
-    mimeType: 'text/plain',
-    content: previewBytes.toString('utf8'),
-    truncated
-  }
-}
-
-function createFileHoverPreview(filePath: string): FileHoverPreviewPayload {
-  const target = assertFileHoverPreviewPathAllowed(filePath)
-  const stats = statSync(target)
-  if (!stats.isFile()) {
-    throw new Error('只能预览文件内容')
-  }
-
-  const sniffBytes = readFilePreviewBytes(
-    target,
-    Math.min(stats.size, FILE_HOVER_SNIFF_BYTES_LIMIT)
-  )
-  const base = filePreviewBasePayload(
-    target,
-    stats,
-    sniffBytes.byteLength,
-    stats.size > sniffBytes.byteLength
-  )
-  const mediaType = hoverMediaPreviewType(sniffBytes)
-
-  if (mediaType?.kind === 'image') {
-    if (stats.size > FILE_HOVER_IMAGE_BYTES_LIMIT) {
-      return {
-        ...base,
-        kind: 'metadata',
-        mimeType: mediaType.mimeType,
-        reason: 'large_file',
-        truncated: true
-      }
-    }
-
-    const mediaBytes =
-      sniffBytes.byteLength === stats.size ? sniffBytes : readFilePreviewBytes(target, stats.size)
-    return {
-      ...base,
-      kind: 'image',
-      mimeType: mediaType.mimeType,
-      dataUrl: `data:${mediaType.mimeType};base64,${mediaBytes.toString('base64')}`,
-      previewBytes: mediaBytes.byteLength,
-      truncated: false
-    }
-  }
-
-  if (mediaType?.kind === 'pdf') {
-    return {
-      ...base,
-      kind: 'metadata',
-      mimeType: 'application/pdf',
-      reason: 'pdf',
-      truncated: stats.size > sniffBytes.byteLength
-    }
-  }
-
-  if (sniffBytes.includes(0)) {
-    return {
-      ...base,
-      kind: 'metadata',
-      mimeType: 'application/octet-stream',
-      reason: 'binary',
-      truncated: stats.size > sniffBytes.byteLength
-    }
-  }
-
-  const previewBytes =
-    sniffBytes.byteLength >= Math.min(stats.size, FILE_HOVER_TEXT_BYTES_LIMIT)
-      ? sniffBytes
-      : readFilePreviewBytes(target, Math.min(stats.size, FILE_HOVER_TEXT_BYTES_LIMIT))
-  const truncated = stats.size > previewBytes.byteLength
-  const spreadsheetType = spreadsheetHoverPreviewType(target)
-  if (spreadsheetType) {
-    return {
-      ...filePreviewBasePayload(target, stats, previewBytes.byteLength, truncated),
-      kind: 'spreadsheet',
-      mimeType: spreadsheetType.mimeType,
-      format: spreadsheetType.format,
-      content: previewBytes.toString('utf8')
-    }
-  }
-
-  return {
-    ...filePreviewBasePayload(target, stats, previewBytes.byteLength, truncated),
-    kind: 'text',
-    mimeType: 'text/plain',
-    content: previewBytes.toString('utf8')
-  }
-}
-
-function openLocalFilePath(filePath: string): Promise<void> {
-  const target = assertLocalFilePathAllowed(filePath, '打开', { resolveSymlinks: true })
-  return shell.openPath(target).then((errorMessage) => {
-    if (errorMessage) {
-      throw new Error(errorMessage)
-    }
-  })
-}
-
-function readMacLaunchServicesHandlers(): Promise<MacLaunchServicesHandler[]> {
-  if (macLaunchServicesHandlers) return macLaunchServicesHandlers
-
-  macLaunchServicesHandlers = new Promise((resolveHandlers) => {
-    execFile(
-      '/usr/bin/plutil',
-      [
-        '-convert',
-        'json',
-        '-o',
-        '-',
-        join(
-          homedir(),
-          'Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist'
-        )
-      ],
-      { encoding: 'utf8', maxBuffer: 1024 * 1024, timeout: 1200 },
-      (error, stdout) => {
-        if (error) {
-          resolveHandlers([])
-          return
-        }
-        try {
-          const data = JSON.parse(stdout) as { LSHandlers?: unknown }
-          resolveHandlers(
-            Array.isArray(data.LSHandlers) ? (data.LSHandlers as MacLaunchServicesHandler[]) : []
-          )
-        } catch {
-          resolveHandlers([])
-        }
-      }
-    )
-  })
-
-  return macLaunchServicesHandlers
-}
-
-function macDefaultApplicationBundleIdForExtension(
-  handlers: MacLaunchServicesHandler[],
-  extension: string
-): string | null {
-  const extensionHandler = handlers.find(
-    (handler) =>
-      handler.LSHandlerContentTagClass === macFilenameExtensionTagClass &&
-      handler.LSHandlerContentTag?.toLowerCase() === extension
-  )
-  const extensionBundleId =
-    extensionHandler?.LSHandlerRoleAll ??
-    extensionHandler?.LSHandlerRoleViewer ??
-    extensionHandler?.LSHandlerRoleEditor
-  if (extensionBundleId) return extensionBundleId.toLowerCase()
-
-  const contentTypes = macContentTypesByExtension[extension] ?? []
-  const contentTypeHandler = handlers.find(
-    (handler) =>
-      typeof handler.LSHandlerContentType === 'string' &&
-      contentTypes.includes(handler.LSHandlerContentType.toLowerCase())
-  )
-  const contentTypeBundleId =
-    contentTypeHandler?.LSHandlerRoleAll ??
-    contentTypeHandler?.LSHandlerRoleViewer ??
-    contentTypeHandler?.LSHandlerRoleEditor
-  if (contentTypeBundleId) return contentTypeBundleId.toLowerCase()
-
-  return macFallbackApplicationBundleIdByExtension[extension] ?? null
-}
-
-function macApplicationPathsForBundleId(bundleId: string): string[] {
-  return macApplicationPathsByBundleId[bundleId.toLowerCase()] ?? []
-}
-
-function quoteMacSpotlightQueryValue(value: string): string {
-  return value.replace(/["\\]/g, '\\$&')
-}
-
-function readMacApplicationPathsForBundleId(bundleId: string): Promise<string[]> {
-  const normalizedBundleId = bundleId.toLowerCase()
-  const cached = macApplicationPathQueries.get(normalizedBundleId)
-  if (cached) return cached
-
-  const query = new Promise<string[]>((resolvePaths) => {
-    execFile(
-      '/usr/bin/mdfind',
-      [`kMDItemCFBundleIdentifier == "${quoteMacSpotlightQueryValue(bundleId)}"`],
-      { encoding: 'utf8', maxBuffer: 128 * 1024, timeout: 1200 },
-      (error, stdout) => {
-        if (error) {
-          resolvePaths([])
-          return
-        }
-        resolvePaths(
-          stdout
-            .split('\n')
-            .map((line) => line.trim())
-            .filter(Boolean)
-        )
-      }
-    )
-  })
-  macApplicationPathQueries.set(normalizedBundleId, query)
-  return query
-}
-
-async function getMacApplicationIconDataUrl(bundleId: string): Promise<string | null> {
-  const applicationPaths = [
-    ...(await readMacApplicationPathsForBundleId(bundleId)),
-    ...macApplicationPathsForBundleId(bundleId)
-  ]
-  const visitedPaths = new Set<string>()
-
-  for (const applicationPath of applicationPaths) {
-    if (visitedPaths.has(applicationPath)) continue
-    visitedPaths.add(applicationPath)
-    try {
-      const icon = await getNativeIconDataUrl(applicationPath)
-      if (icon) return icon
-    } catch {
-      continue
-    }
-  }
-
-  return null
-}
-
-async function getMacDefaultApplicationIconDataUrl(filePath: string): Promise<string | null> {
-  if (process.platform !== 'darwin') return null
-
-  const extension = extname(filePath).slice(1).toLowerCase()
-  if (!extension) return null
-
-  const bundleId = macDefaultApplicationBundleIdForExtension(
-    await readMacLaunchServicesHandlers(),
-    extension
-  )
-  return bundleId ? getMacApplicationIconDataUrl(bundleId) : null
-}
-
-async function getNativeIconDataUrl(path: string): Promise<string | null> {
-  const icon = await app.getFileIcon(path, { size: 'normal' })
-  return icon.isEmpty() ? null : icon.toDataURL()
-}
-
-async function getLocalFileIconDataUrl(filePath: string): Promise<string | null> {
-  const target = assertLocalFilePathAllowed(filePath, '读取图标', { resolveSymlinks: true })
-  try {
-    const defaultApplicationIcon = await getMacDefaultApplicationIconDataUrl(target)
-    if (defaultApplicationIcon) return defaultApplicationIcon
-    return getNativeIconDataUrl(target)
-  } catch {
-    return null
-  }
-}
-
-function createDirectoryListing(dirPath: string): {
-  path: string
-  name: string
-  displayPath: string
-  rootPath: string
-  rootLabel: string
-  entries: Array<{
-    path: string
-    name: string
-    displayPath: string
-    kind: 'directory' | 'file'
-  }>
-  truncated: boolean
-} {
-  const projectRoots = listLocalProjectAllowRoots()
-  const pathScope = currentLocalPathScope()
-  const target = assertLocalFilePathAllowed(dirPath, '列出', {
-    resolveSymlinks: true,
-    projectRoots
-  })
-  const stats = statSync(target)
-  if (!stats.isDirectory()) {
-    throw new Error('只能列出文件夹内容')
-  }
-
-  const entries = readdirSync(target, { withFileTypes: true }).flatMap((entry) => {
-    const entryPath = join(target, entry.name)
-    let realEntryPath = entryPath
-    try {
-      realEntryPath = realpathSync(entryPath)
-      if (!isLocalFilePathAllowed(realEntryPath, pathScope, projectRoots)) return []
-      const entryStats = statSync(realEntryPath)
-      if (!entryStats.isDirectory() && !entryStats.isFile()) return []
-      const scope = getLocalPathScope(entryPath, projectRoots)
-      return [
-        {
-          path: entryPath,
-          name: entry.name,
-          displayPath: scope?.displayPath ?? entry.name,
-          kind: entryStats.isDirectory() ? ('directory' as const) : ('file' as const)
-        }
-      ]
-    } catch {
-      return []
-    }
-  })
-  entries.sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1
-    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
-  })
-
-  const scope = getLocalPathScope(target, projectRoots)
-  return {
-    path: target,
-    name: basename(target) || target,
-    displayPath: scope?.displayPath ?? basename(target),
-    rootPath: scope?.rootPath ?? target,
-    rootLabel: scope?.rootLabel ?? basename(target),
-    entries: entries.slice(0, DIRECTORY_ENTRY_LIMIT),
-    truncated: entries.length > DIRECTORY_ENTRY_LIMIT
-  }
 }
 
 function cancelPendingToolApprovals(scope?: { sessionId: string; runId: string }): void {
@@ -7530,20 +6635,6 @@ async function applyNextRunConfiguration(
   await session.setThinkingLevel(resolveSessionThinkingLevel(sessionKey, snapshot))
 }
 
-function captureCurrentRpcConfigurationTarget(): ReturnType<
-  typeof captureSessionControlTarget
-> | null {
-  const key = resolveSessionKeyAlias(currentSessionKey)
-  const phiSessionId = getPhiSessionIdForKey(key)
-  const manifest = phiSessionId ? findPhiSessionById(phiSessionId) : null
-  if (
-    !phiSessionId ||
-    !(manifest?.runtimeRef || (remoteOmpRpcEnabled && manifest?.projectLocation?.kind === 'ssh'))
-  )
-    return null
-  return captureSessionControlTarget(key, phiSessionId)
-}
-
 function createWindow(): void {
   mainWindowCleanupStarted = false
   mainWindowCleanupPromise = null
@@ -7844,7 +6935,7 @@ app.whenReady().then(async () => {
   })
 
   // IPC test
-  ipcMain.on(IPC.system.ping, () => console.log('pong'))
+  registerSystemIpc({ ipcMain })
   registerBrowserRendererIpc(ipcMain, browserIpcCoordinator)
   registerTerminalRendererIpc(ipcMain, terminalIpcCoordinator)
   registerSshBootstrapIpc(
@@ -7854,78 +6945,54 @@ app.whenReady().then(async () => {
   )
   registerRemoteMicromambaIpc(ipcMain)
   registerRemoteRipgrepIpc(ipcMain)
-  ipcMain.handle(IPC.window.close, () => {
-    getActiveWindow()?.close()
+  registerWindowIpc({
+    ipcMain,
+    getActiveWindow,
+    requireMainWindowRenderer,
+    getWindowStartup: (window) => mainWindowStartups.get(window)
   })
-  ipcMain.handle(IPC.window.minimize, () => {
-    getActiveWindow()?.minimize()
+  registerMenuBarIpc({
+    ipcMain,
+    requireMainWindowRenderer,
+    getPendingAction: () => pendingMenuBarAction,
+    setPendingAction: (action) => {
+      pendingMenuBarAction = action
+    }
   })
-  ipcMain.handle(IPC.window.toggleFullscreen, () => {
-    const window = getActiveWindow()
-    if (!window) return
-    window.setFullScreen(!window.isFullScreen())
+  const localFileAccess = createLocalFileAccessControl({
+    agentDir: AGENT_DIR,
+    getCurrentCwd: () => currentCwd
   })
-  ipcMain.handle(IPC.window.getFullscreen, (event) => {
-    return requireMainWindowRenderer(event).isFullScreen()
-  })
-  ipcMain.handle(IPC.window.rendererReady, (event, background: unknown) => {
-    const window = requireMainWindowRenderer(event)
-    mainWindowStartups.get(window)?.rendererReady(background)
-  })
-  ipcMain.handle(IPC.menuBar.consumeAction, (event): MenuBarAction | null => {
-    requireMainWindowRenderer(event)
-    const action = pendingMenuBarAction
-    pendingMenuBarAction = null
-    return action
-  })
-  ipcMain.handle(IPC.files.reveal, async (_, filePath: string) => {
-    shell.showItemInFolder(assertRevealPathAllowed(filePath))
-  })
-  ipcMain.handle(IPC.files.openPath, async (_, filePath: string) => {
-    await openLocalFilePath(filePath)
-  })
-  ipcMain.handle(IPC.files.getIcon, async (_, filePath: string) => {
-    return getLocalFileIconDataUrl(filePath)
-  })
+  const filesIpcOptions: FilesIpcOptions = {
+    ipcMain,
+    dialog,
+    shell,
+    agentDir: AGENT_DIR,
+    getCurrentCwd: () => currentCwd,
+    getActiveWindow,
+    getUiLanguage: () => readAppSettings().uiLanguage,
+    access: localFileAccess,
+    previews: createLocalFilePreviews(localFileAccess),
+    icons: createLocalFileIcons({
+      access: localFileAccess,
+      getMacLaunchServicesHandlers: () => macLaunchServicesHandlers,
+      setMacLaunchServicesHandlers: (handlers) => {
+        macLaunchServicesHandlers = handlers
+      },
+      getFileIcon: (path) => app.getFileIcon(path, { size: 'normal' })
+    })
+  }
+  registerFileOpenIpc(filesIpcOptions)
   registerResourceCatalogIpc(ipcMain)
-  ipcMain.handle(IPC.webLink.preview, (event, url: unknown) => {
-    requireMainWindowRenderer(event)
-    return webLinkPreviews.get(url)
+  registerWebLinkIpc({
+    ipcMain,
+    requireMainWindowRenderer
   })
-  ipcMain.handle(IPC.files.pickInput, async () => {
-    if (isRemoteProjectAnchorPath(currentCwd, AGENT_DIR)) {
-      throw new Error('远程项目文件选择暂不可用；不会打开本机会话目录')
-    }
-    const window = getActiveWindow()
-    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
-    const options: Electron.OpenDialogOptions = {
-      title: dialogCopy.selectInput,
-      buttonLabel: dialogCopy.select,
-      defaultPath: currentCwd || undefined,
-      properties: ['openFile', 'openDirectory', 'multiSelections']
-    }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    return result.canceled ? [] : result.filePaths
-  })
-  ipcMain.handle(IPC.files.pickLocalUpload, async () => {
-    const window = getActiveWindow()
-    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
-    const options: Electron.OpenDialogOptions = {
-      title: dialogCopy.selectUpload,
-      buttonLabel: dialogCopy.select,
-      properties: ['openFile', 'openDirectory', 'multiSelections']
-    }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    return result.canceled ? [] : result.filePaths
-  })
+  registerFilePickerIpc(filesIpcOptions)
   const remoteProjectUploadsIpcOptions = { ipcMain, uploads: remoteProjectUploads }
   registerRemoteProjectUploadPreparationIpc(remoteProjectUploadsIpcOptions)
   registerRemoteProjectUploadListIpc(remoteProjectUploadsIpcOptions)
-  ipcMain.handle(IPC.remoteJupyterJobs.list, () => remoteJupyterStartJobs.list())
+  registerRemoteJupyterJobsIpc({ ipcMain, jobs: remoteJupyterStartJobs })
   registerRemoteProjectUploadControlIpc(remoteProjectUploadsIpcOptions)
   const wrappersIpcOptions = {
     ipcMain,
@@ -7958,9 +7025,7 @@ app.whenReady().then(async () => {
     observeRemote: (projectId, operation) => remoteConnectionTracker.observe(projectId, operation),
     downloads: wrapperResultDownloads
   })
-  ipcMain.handle(IPC.files.preview, async (_, filePath: string) => {
-    return createFilePreview(filePath)
-  })
+  registerFilePreviewIpc(filesIpcOptions)
   registerRemoteWorkspaceIpc({
     ipcMain,
     remote: {
@@ -7979,21 +7044,8 @@ app.whenReady().then(async () => {
     reads: wrapperResultReadControl,
     downloads: wrapperResultDownloads
   })
-  ipcMain.handle(IPC.files.hoverPreview, async (_, filePath: string) => {
-    return createFileHoverPreview(filePath)
-  })
-  ipcMain.handle(IPC.files.statLocalPaths, async (_, cwd: unknown, paths: unknown) => {
-    return statLocalPaths(cwd, paths)
-  })
-  ipcMain.handle(IPC.files.listDirectory, async (_, dirPath: string) => {
-    return createDirectoryListing(dirPath)
-  })
-  ipcMain.handle(
-    IPC.molecules.renderSvg,
-    async (_, value: unknown, width: unknown, height: unknown) => {
-      return renderMoleculeSvg(value, width, height)
-    }
-  )
+  registerFileBrowsingIpc(filesIpcOptions)
+  registerMoleculesIpc({ ipcMain })
   const promptTargetControlOptions: PromptTargetControlOptions = {
     state: {
       getCurrentSessionPath: () => currentSessionPath,
@@ -8061,133 +7113,33 @@ app.whenReady().then(async () => {
     }
   }
   registerAgentPromptIpc(agentIpcOptions)
-  ipcMain.handle(IPC.workspaceChanges.readDiff, async (_, ref: unknown) => readWorkspaceDiff(ref))
+  registerWorkspaceChangesIpc({ ipcMain })
   registerAgentRunControlIpc(agentIpcOptions)
 
-  ipcMain.handle(IPC.auth.status, async () => getAuthManager().getProviderStatuses())
-  ipcMain.handle(IPC.auth.loginApiKey, async (_, providerId: string, key: string) => {
-    const normalizedKey = key.trim()
-    const status = await getAuthManager().loginApiKey(providerId, normalizedKey)
-    await invalidateAgentSession()
-    return status
+  registerAuthIpc({ ipcMain, invalidateAgentSession })
+
+  registerAppIpc({
+    ipcMain,
+    getVersion: () => app.getVersion(),
+    openExternal: (url) => shell.openExternal(url)
   })
-  ipcMain.handle(IPC.auth.loginOAuth, async (_, providerId: string) => {
-    const status = await getAuthManager().loginOAuth(providerId)
-    await invalidateAgentSession()
-    return status
-  })
-  ipcMain.handle(IPC.auth.logout, async (_, providerId: string) => {
-    await getAuthManager().logout(providerId)
-    await invalidateAgentSession()
-  })
-  ipcMain.handle(IPC.auth.interactionResponse, async (_, requestId: string, value: string) => {
-    await getAuthManager().resolveInteraction(requestId, value)
+  registerSettingsIpc({
+    ipcMain,
+    agentDir: AGENT_DIR,
+    syncPreventSleepBlocker
   })
 
-  ipcMain.handle(IPC.app.checkForUpdates, async () => checkForAppUpdate(app.getVersion()))
-  ipcMain.handle(IPC.app.openReleasesPage, async (_, url: unknown) => {
-    // Only Phi's own release pages; anything else falls back to the latest release.
-    const target =
-      typeof url === 'string' &&
-      url.startsWith(`https://github.com/${RELEASES_REPOSITORY}/releases/`)
-        ? url
-        : RELEASES_PAGE_URL
-    await shell.openExternal(target)
+  registerEnvironmentIpc({
+    ipcMain,
+    environment: backgroundEnvironment,
+    getActiveWindow,
+    dialog,
+    getUiLanguage: () => readAppSettings().uiLanguage
   })
-  ipcMain.handle(IPC.settings.get, async () => readAppSettings())
-  ipcMain.handle(IPC.settings.update, async (_, patch: unknown) => {
-    const settings = updateAppSettings(patch)
-    syncPreventSleepBlocker()
-    return settings
-  })
-  ipcMain.handle(IPC.settings.webSearchGet, async () =>
-    getPhiEngine().settings.webSearch.get({ agentDir: AGENT_DIR })
-  )
-  ipcMain.handle(IPC.settings.webSearchUpdate, async (_, patch: unknown) =>
-    getPhiEngine().settings.webSearch.update({ agentDir: AGENT_DIR, patch })
-  )
-  ipcMain.handle(IPC.settings.webSearchSearxngEngines, async () =>
-    getPhiEngine().settings.webSearch.searxngEngines({ agentDir: AGENT_DIR })
-  )
-  ipcMain.handle(IPC.settings.webSearchApiKeySet, async (_, providerId: unknown, key: unknown) =>
-    getPhiEngine().settings.webSearch.setApiKey({
-      agentDir: AGENT_DIR,
-      providerId,
-      key
-    })
-  )
-  ipcMain.handle(IPC.settings.webSearchApiKeyClear, async (_, providerId: unknown) =>
-    getPhiEngine().settings.webSearch.clearApiKey({ agentDir: AGENT_DIR, providerId })
-  )
-
-  ipcMain.handle(IPC.environment.get, () => backgroundEnvironment.get())
-  ipcMain.handle(IPC.environment.redetect, () => backgroundEnvironment.redetect())
-  ipcMain.handle(IPC.environment.dismissSummary, () => backgroundEnvironment.dismissSummary())
-  ipcMain.handle(IPC.environment.setToolPath, async (_, toolId: unknown, path: unknown) => {
-    if (typeof toolId !== 'string' || !toolId.trim()) {
-      throw new Error('工具 id 无效')
-    }
-    if (path !== null && typeof path !== 'string') {
-      throw new Error('工具路径必须是字符串或 null')
-    }
-    return backgroundEnvironment.setToolPath(
-      toolId as Parameters<typeof backgroundEnvironment.setToolPath>[0],
-      path
-    )
-  })
-  ipcMain.handle(IPC.environment.pickBinary, async () => {
-    const window = getActiveWindow()
-    const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
-    const options: Electron.OpenDialogOptions = {
-      title: dialogCopy.selectExecutable,
-      buttonLabel: dialogCopy.select,
-      properties: ['openFile']
-    }
-    const result = window
-      ? await dialog.showOpenDialog(window, options)
-      : await dialog.showOpenDialog(options)
-    return result.canceled ? null : (result.filePaths[0] ?? null)
-  })
-  ipcMain.handle(
-    IPC.managedEnvironments.list,
-    async (_, projectCwd: unknown, includeDynamic: unknown) => {
-      try {
-        return await managedEnvironmentActions.list(projectCwd, includeDynamic)
-      } catch (error) {
-        throw new Error(`读取托管环境失败：${errorMessage(error)}`)
-      }
-    }
-  )
-  ipcMain.handle(
-    IPC.managedEnvironments.build,
-    async (_, ref: unknown, projectCwd: unknown, pluginId: unknown) => {
-      try {
-        return managedEnvironmentActions.build(ref, projectCwd, pluginId)
-      } catch (error) {
-        throw new Error(`启动环境构建失败：${errorMessage(error)}`)
-      }
-    }
-  )
-  ipcMain.handle(IPC.managedEnvironments.rebuild, async (_, envId: unknown) => {
-    try {
-      await managedEnvironmentActions.rebuild(envId)
-    } catch (error) {
-      throw new Error(`重新构建环境失败：${errorMessage(error)}`)
-    }
-  })
-  ipcMain.handle(IPC.managedEnvironments.remove, async (_, envId: unknown) => {
-    try {
-      return await managedEnvironmentActions.remove(envId)
-    } catch (error) {
-      throw new Error(`删除环境失败：${errorMessage(error)}`)
-    }
-  })
-  ipcMain.handle(IPC.managedEnvironments.clean, async () => {
-    try {
-      return await managedEnvironmentActions.clean()
-    } catch (error) {
-      throw new Error(`清理环境失败：${errorMessage(error)}`)
-    }
+  registerManagedEnvironmentsIpc({
+    ipcMain,
+    agentDir: AGENT_DIR,
+    builds: environmentBuilds
   })
   const modelSelectionTarget = {
     getCurrentSessionKey: () => currentSessionKey,
@@ -8550,44 +7502,26 @@ app.whenReady().then(async () => {
   registerJobsIpc({ ipcMain, operations: backgroundJobOperations })
   registerWrapperRunIpc(wrappersIpcOptions)
 
-  ipcMain.handle(IPC.persona.getAppName, async () => APP_NAME)
-  ipcMain.handle(IPC.persona.isOnboarded, async () => isOnboarded())
-  ipcMain.handle(IPC.persona.getMarkdown, async () => getPersonaMarkdown())
-  ipcMain.handle(IPC.persona.setMarkdown, async (_, markdown: string) => {
-    const target = captureCurrentRpcConfigurationTarget()
-    if (target) await target.resolved()
-    target?.assertCurrent()
-    setPersonaMarkdown(markdown)
-    await invalidateAgentSession()
-    return getPersonaMarkdown()
-  })
-  ipcMain.handle(IPC.persona.skip, async () => {
-    skipOnboarding()
-  })
-  ipcMain.handle(IPC.persona.completeOnboarding, async (_, description: string) => {
-    const trimmedDescription = description.trim()
-    if (!trimmedDescription) {
-      skipOnboarding()
-      return ''
+  registerPersonaIpc({
+    ipcMain,
+    appName: APP_NAME,
+    lifecycle: { invalidateAgentSession, logUnexpectedError },
+    generation: {
+      generatePersonaMarkdown: (description, control) =>
+        generatePersonaMarkdownForIpc(description, control, {
+          getSelectedModel: () => selectedModel,
+          getNoProjectTaskFolder,
+          text: { extractAssistantText, extractMessageText, lastAssistantMessageFrom }
+        })
+    },
+    rpc: {
+      getCurrentSessionKey: () => currentSessionKey,
+      resolveSessionKeyAlias,
+      getPhiSessionIdForKey,
+      findPhiSessionById,
+      isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
+      captureSessionControlTarget
     }
-
-    const target = captureCurrentRpcConfigurationTarget()
-    if (target) await target.resolved()
-    target?.assertCurrent()
-    let markdown: string
-    try {
-      markdown = await generatePersonaMarkdown(trimmedDescription, target ?? undefined)
-    } catch (error) {
-      target?.assertCurrent()
-      logUnexpectedError(error)
-      console.error('生成人设配置失败，回退为原始描述:', error)
-      markdown = fallbackMarkdownFromDescription(trimmedDescription)
-    }
-
-    target?.assertCurrent()
-    setPersonaMarkdown(markdown)
-    await invalidateAgentSession()
-    return markdown
   })
 
   createWindow()
