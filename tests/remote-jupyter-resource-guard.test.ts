@@ -211,7 +211,9 @@ test('fake prlimit rejection and fake ps breach report fallback before terminati
         PHI_RESOURCE_TRACE: trace,
         PHI_STUBBORN_PID: stubbornPid
       },
-      timeout: 10_000
+      // The script first-execs five new fakes (each queued behind the macOS scan) and waits out
+      // the 1 s TERM-to-KILL grace, so its own deadline must stay generous and fail loudly.
+      timeout: 60_000
     })
     assert.match(stdout, /warning=hard_limit_unavailable/u)
     assert.match(stdout, /mode=monitor/u)

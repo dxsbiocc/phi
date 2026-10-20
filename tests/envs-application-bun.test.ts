@@ -27,6 +27,7 @@ import type {
 import { currentPlatform } from '../src/main/agent/envs/platform'
 import { findBunExecutable } from '../src/main/agent/engine/bun-executable'
 import { createDeterministicTarGz } from '../src/main/agent/packages/archive'
+import { warmExecutable } from './helpers/firstExec'
 
 const PACKAGE = 'phi-published-js-fixture'
 const VERSION = '1.0.0'
@@ -162,6 +163,7 @@ function fixture(
       `#!/bin/sh\nif [ "$1" = '--version' ]; then printf '%s\\n' ${quote(bunVersion)}; exit 0; fi\nprintf '%s\\n' "$@" > ${quote(join(prefix, 'args'))}\n/usr/bin/env > ${quote(join(prefix, 'env'))}\nprintf yes > ${quote(join(prefix, 'invoked'))}\n${create}${outcome === 'failure' ? 'printf failure >&2\nexit 17' : 'exit 0'}\n`,
       { mode: 0o755 }
     )
+    warmExecutable(join(prefix, 'bin', 'bun'), ['--version'])
   }
   function realRuntime(withNode = false): void {
     const bun = findBunExecutable()
@@ -174,9 +176,11 @@ function fixture(
     mkdirSync(join(prefix, 'bin'), { recursive: true })
     copyFileSync(bun, join(prefix, 'bin', 'bun'))
     chmodSync(join(prefix, 'bin', 'bun'), 0o755)
+    warmExecutable(join(prefix, 'bin', 'bun'), ['--version'])
     if (withNode) {
       copyFileSync(process.execPath, join(prefix, 'bin', 'node'))
       chmodSync(join(prefix, 'bin', 'node'), 0o755)
+      warmExecutable(join(prefix, 'bin', 'node'), ['--version'])
     }
   }
   return {
