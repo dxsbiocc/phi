@@ -1093,14 +1093,25 @@ const initialSelectedModel = readLastSelectedModel()
 // wants that reasoning visible in the UI out of the box rather than silently absent.
 const selectedThinkingLevel: ThinkingLevel = 'high'
 const runtime = createMainRuntimeContext({
-  session: {
+  sessions: {
+    getFreshSessionCounter: () => runtime.session.freshSessionCounter,
+    phiOnlySessionPath,
+    shareLifecycle: (aliasKey, resolvedCanonicalKey) => {
+      const lifecycle = sessionLifecycles.get(resolvedCanonicalKey)
+      if (lifecycle) {
+        sessionLifecycles.set(aliasKey, lifecycle)
+      }
+    }
+  },
+  session: (sessions) => ({
     freshSessionCounter: initialFreshSessionCounter,
     cwd: initialSessionCwd,
     selectedModel: initialSelectedModel,
-    sessionKey: createSessionKey(undefined, initialSessionCwd, initialFreshSessionCounter)
-  }
+    sessionKey: sessions.keys.createKey(undefined, initialSessionCwd, initialFreshSessionCounter)
+  })
 })
-const { session: sessionState } = runtime
+const { session: sessionState, sessions: sessionRuntime } = runtime
+const { keys: sessionKeys } = sessionRuntime
 const promptQueues = new Map<string, Promise<void>>()
 const promptGenerations = new Map<string, number>()
 const activePromptRuns = new Map<string, PromptRun>()
@@ -1219,9 +1230,7 @@ function requireRemoteEditApproval(request: RemoteEditRequest): void {
   }
 }
 
-const phiSessionIdsByKey = new Map<string, string>()
 const loadedSkillNamesBySession = new Map<string, string[]>()
-const sessionKeyAliases = new Map<string, string>()
 const sessionModelSelections = new Map<string, ModelSelection | null>()
 const sessionThinkingLevels = new Map<string, ThinkingLevel>()
 const sessionPermissionModes = new Map<string, PermissionMode>()
@@ -1669,11 +1678,11 @@ getPhiEngine().host.register('notebookTool.execute', async (params, context) => 
   const beforeDispatch = (): void => {
     rpcControl?.beforeDispatch()
     if (!identity) return
-    const origin = runtimeSessionOrigins.get(identity.runtimeSessionId)
+    const origin = sessionKeys.originFor(identity.runtimeSessionId)
     if (
       context?.originSessionId !== identity.runtimeSessionId ||
       !origin ||
-      getPhiSessionIdForKey(origin.sessionKey) !== identity.sessionId ||
+      sessionKeys.phiSessionIdFor(origin.sessionKey) !== identity.sessionId ||
       resolveRemoteWorkspaceHostBinding({
         sessionId: identity.sessionId,
         projectId: identity.projectId
@@ -1787,14 +1796,14 @@ async function resolveRemoteNotebookToolBackend(identity: {
 } | null> {
   const manifest = findPhiSessionById(identity.sessionId)
   const project = getProject(identity.projectId)
-  const origin = runtimeSessionOrigins.get(identity.runtimeSessionId)
+  const origin = sessionKeys.originFor(identity.runtimeSessionId)
   if (
     !manifest ||
     !project ||
     !origin ||
     project.location.kind !== 'ssh' ||
     manifest.projectId !== project.id ||
-    getPhiSessionIdForKey(origin.sessionKey) !== manifest.sessionId ||
+    sessionKeys.phiSessionIdFor(origin.sessionKey) !== manifest.sessionId ||
     resolve(origin.cwd) !== resolve(manifest.cwd) ||
     resolve(manifest.cwd) !== resolve(remoteProjectAnchorPath(project.id, AGENT_DIR))
   ) {
@@ -2420,20 +2429,15 @@ for (const [method, handler] of Object.entries(
 }
 wrapperJobs.onChange((runId) => sendToAllWindows(IPC.wrappers.runsChanged, { runId }))
 
-// The agent worker knows which runtime session started a run; the timeline that must hear
-// about its end belongs to the Phi conversation that session serves. Registered when the
-// session is created and kept for the app's lifetime (a few short entries).
-const runtimeSessionOrigins = new Map<string, { sessionKey: string; cwd: string }>()
-
 // Both background wrapper runs and background agent runs report their end through these:
 // which Phi conversation a runtime session belongs to, the window, and the system notification.
 function resolveOriginSession(
   originSessionId: string | undefined
 ): { phiSessionId: string; cwd: string } | undefined {
   if (!originSessionId) return undefined
-  const origin = runtimeSessionOrigins.get(originSessionId)
+  const origin = sessionKeys.originFor(originSessionId)
   const phiSessionId = origin
-    ? getPhiSessionIdForKey(origin.sessionKey)
+    ? sessionKeys.phiSessionIdFor(origin.sessionKey)
     : findActivePromptRunByRuntimeSessionId(originSessionId)?.phiSessionId
   return phiSessionId ? { phiSessionId, cwd: origin?.cwd ?? sessionState.cwd } : undefined
 }
@@ -2835,85 +2839,44 @@ function persistSessionEvent(run: PromptRun, summary: PhiAgentEvent): Record<str
   return persistSessionEventWithDeps(run, summary, sessionEventPersistenceDeps)
 }
 
-function createSessionKey(
-  path: string | undefined,
-  cwd: string,
-  freshId = sessionState.freshSessionCounter
-): string {
-  return path ? `path:${path}` : `fresh:${cwd}:${freshId}`
-}
-
-function createPhiSessionKey(sessionId: string, cwd: string): string {
-  return createSessionKey(phiOnlySessionPath(sessionId), cwd)
-}
-
-function resolveSessionKeyAlias(sessionKey: string): string {
-  let current = sessionKey
-  const seen = new Set<string>()
-  while (true) {
-    const next = sessionKeyAliases.get(current)
-    if (!next || seen.has(current)) return current
-    seen.add(current)
-    current = next
-  }
-}
-
-function aliasSessionKey(aliasKey: string, canonicalKey: string): void {
-  const resolvedCanonicalKey = resolveSessionKeyAlias(canonicalKey)
-  if (aliasKey === resolvedCanonicalKey) return
-
-  sessionKeyAliases.set(aliasKey, resolvedCanonicalKey)
-  const lifecycle = sessionLifecycles.get(resolvedCanonicalKey)
-  if (lifecycle) {
-    sessionLifecycles.set(aliasKey, lifecycle)
-  }
-}
-
 function aliasMaterializedSessionPath(sessionKey: string, path: string, cwd: string): void {
-  aliasSessionKey(createSessionKey(path, cwd), sessionKey)
+  sessionRuntime.alias(sessionKeys.createKey(path, cwd), sessionKey)
 }
 
 function linkPhiManagedSessionKey(sessionKey: string, cwd: string, phiSessionId: string): string {
   const stablePath = phiOnlySessionPath(phiSessionId)
-  const stableKey = createPhiSessionKey(phiSessionId, cwd)
-  aliasSessionKey(stableKey, sessionKey)
-  setPhiSessionIdForKey(sessionKey, phiSessionId)
-  setPhiSessionIdForKey(stableKey, phiSessionId)
-  sessionState.linkPhiManagedSessionKey(sessionKey, stablePath, stableKey, sameCanonicalSessionKey)
+  const stableKey = sessionKeys.createPhiKey(phiSessionId, cwd)
+  sessionRuntime.alias(stableKey, sessionKey)
+  sessionKeys.setPhiSessionId(sessionKey, phiSessionId)
+  sessionKeys.setPhiSessionId(stableKey, phiSessionId)
+  sessionState.linkPhiManagedSessionKey(
+    sessionKey,
+    stablePath,
+    stableKey,
+    sessionKeys.sameCanonical.bind(sessionKeys)
+  )
   return stablePath
 }
 
-function sameCanonicalSessionKey(left: string, right: string): boolean {
-  return resolveSessionKeyAlias(left) === resolveSessionKeyAlias(right)
-}
-
 function getActivePromptRun(sessionKey: string): PromptRun | undefined {
-  return activePromptRuns.get(resolveSessionKeyAlias(sessionKey))
+  return activePromptRuns.get(sessionKeys.canonicalize(sessionKey))
 }
 
 function hasActivePromptRun(sessionKey: string): boolean {
-  return activePromptRuns.has(resolveSessionKeyAlias(sessionKey))
+  return activePromptRuns.has(sessionKeys.canonicalize(sessionKey))
 }
 
 function setActivePromptRun(sessionKey: string, run: PromptRun): void {
-  activePromptRuns.set(resolveSessionKeyAlias(sessionKey), run)
+  activePromptRuns.set(sessionKeys.canonicalize(sessionKey), run)
 }
 
 function deleteActivePromptRun(sessionKey: string, run: PromptRun): void {
   cancelBrowserRun(run)
   void cleanupBrowserRunTabs(run)
-  const canonicalKey = resolveSessionKeyAlias(sessionKey)
+  const canonicalKey = sessionKeys.canonicalize(sessionKey)
   if (activePromptRuns.get(canonicalKey) === run) {
     activePromptRuns.delete(canonicalKey)
   }
-}
-
-function getPhiSessionIdForKey(sessionKey: string): string | undefined {
-  return phiSessionIdsByKey.get(resolveSessionKeyAlias(sessionKey))
-}
-
-function setPhiSessionIdForKey(sessionKey: string, sessionId: string): void {
-  phiSessionIdsByKey.set(resolveSessionKeyAlias(sessionKey), sessionId)
 }
 
 function updatePhiRuntimeSessionPath(sessionId: string, path: string): void {
@@ -2931,18 +2894,22 @@ function linkMaterializedRuntimeSessionPath(
   const path = runtimeSessionPath(sessionFile)
   if (!path) return
 
-  const materializedKey = createSessionKey(path, cwd)
+  const materializedKey = sessionKeys.createKey(path, cwd)
   aliasMaterializedSessionPath(sessionKey, path, cwd)
   if (phiSessionId) {
-    setPhiSessionIdForKey(sessionKey, phiSessionId)
-    setPhiSessionIdForKey(materializedKey, phiSessionId)
+    sessionKeys.setPhiSessionId(sessionKey, phiSessionId)
+    sessionKeys.setPhiSessionId(materializedKey, phiSessionId)
     updatePhiRuntimeSessionPath(phiSessionId, path)
   }
   if (phiSessionId) {
     linkPhiManagedSessionKey(sessionKey, cwd, phiSessionId)
     return
   }
-  sessionState.linkMaterializedSessionKey(sessionKey, materializedKey, sameCanonicalSessionKey)
+  sessionState.linkMaterializedSessionKey(
+    sessionKey,
+    materializedKey,
+    sessionKeys.sameCanonical.bind(sessionKeys)
+  )
 }
 
 function linkPromptRunRuntimeSessionPath(
@@ -2962,7 +2929,7 @@ function getCurrentLifecycle(): SessionLifecycle<AgentSessionResult> {
 }
 
 function getLifecycleForKey(sessionKey: string): SessionLifecycle<AgentSessionResult> {
-  const canonicalKey = resolveSessionKeyAlias(sessionKey)
+  const canonicalKey = sessionKeys.canonicalize(sessionKey)
   let lifecycle = sessionLifecycles.get(canonicalKey)
   if (!lifecycle) {
     lifecycle = new SessionLifecycle<AgentSessionResult>()
@@ -2975,19 +2942,19 @@ function getLifecycleForKey(sessionKey: string): SessionLifecycle<AgentSessionRe
 }
 
 function getPromptQueue(sessionKey: string): Promise<void> {
-  return promptQueues.get(resolveSessionKeyAlias(sessionKey)) ?? Promise.resolve()
+  return promptQueues.get(sessionKeys.canonicalize(sessionKey)) ?? Promise.resolve()
 }
 
 function setPromptQueue(sessionKey: string, queue: Promise<void>): void {
-  promptQueues.set(resolveSessionKeyAlias(sessionKey), queue)
+  promptQueues.set(sessionKeys.canonicalize(sessionKey), queue)
 }
 
 function getPromptGeneration(sessionKey: string): number {
-  return promptGenerations.get(resolveSessionKeyAlias(sessionKey)) ?? 0
+  return promptGenerations.get(sessionKeys.canonicalize(sessionKey)) ?? 0
 }
 
 function advancePromptGeneration(sessionKey: string): number {
-  const canonicalKey = resolveSessionKeyAlias(sessionKey)
+  const canonicalKey = sessionKeys.canonicalize(sessionKey)
   const next = getPromptGeneration(canonicalKey) + 1
   promptGenerations.set(canonicalKey, next)
   return next
@@ -3003,7 +2970,7 @@ function findPhiManifestForSession(
   cwd: string
 ): PhiSessionManifest | null {
   const phiSessionId =
-    getActivePromptRun(sessionKey)?.phiSessionId ?? getPhiSessionIdForKey(sessionKey)
+    getActivePromptRun(sessionKey)?.phiSessionId ?? sessionKeys.phiSessionIdFor(sessionKey)
   if (phiSessionId) {
     return listPhiSessions().find((manifest) => manifest.sessionId === phiSessionId) ?? null
   }
@@ -3029,7 +2996,7 @@ function runtimeSessionPathForSnapshot(
 }
 
 function uiSessionPathForKey(sessionKey: string, fallbackPath: string | undefined): string | null {
-  const phiSessionId = getPhiSessionIdForKey(sessionKey)
+  const phiSessionId = sessionKeys.phiSessionIdFor(sessionKey)
   return phiSessionId ? phiOnlySessionPath(phiSessionId) : (fallbackPath ?? null)
 }
 
@@ -3064,9 +3031,9 @@ function startAutomaticContinuation(
 ): void {
   const manifest = findPhiSessionById(phiSessionId)
   if (!manifest) return
-  const sessionKey = createPhiSessionKey(manifest.sessionId, manifest.cwd)
+  const sessionKey = sessionKeys.createPhiKey(manifest.sessionId, manifest.cwd)
   linkPhiManagedSessionKey(sessionKey, manifest.cwd, manifest.sessionId)
-  sessionPermissionModes.set(resolveSessionKeyAlias(sessionKey), manifest.permissionMode)
+  sessionPermissionModes.set(sessionKeys.canonicalize(sessionKey), manifest.permissionMode)
   automaticContinuations.set(phiSessionId, (automaticContinuations.get(phiSessionId) ?? 0) + 1)
 
   void submitPromptRun({
@@ -3139,7 +3106,7 @@ function wakeConversation(phiSessionId: string, event: ContinuationEvent): void 
   const manifest = findPhiSessionById(phiSessionId)
   if (!manifest) return
   if (
-    hasActivePromptRun(createPhiSessionKey(manifest.sessionId, manifest.cwd)) ||
+    hasActivePromptRun(sessionKeys.createPhiKey(manifest.sessionId, manifest.cwd)) ||
     manualCompactionIds.has(phiSessionId)
   ) {
     // Keep the report for the next turn after the active run or compaction finishes.
@@ -3210,7 +3177,7 @@ interface PromptRunContext extends AdmittedPromptRun {
 function resolvePromptRunTarget(input: SubmitPromptInput): ResolvedPromptRunTarget {
   const normalizedText = input.text
   const promptTarget = input.promptTarget
-  const runSessionKey = resolveSessionKeyAlias(input.sessionKey)
+  const runSessionKey = sessionKeys.canonicalize(input.sessionKey)
   const runLifecycle = getLifecycleForKey(runSessionKey)
   const runSessionGeneration = runLifecycle.currentGeneration
   const runSnapshot = input.snapshot
@@ -3344,7 +3311,7 @@ const promptRunExecutionDeps: PromptRunExecutionDeps<PromptRunContext> = {
       sessionState.recordPromptRunMaterialization(
         context.runSessionKey,
         context.stableSessionPath,
-        sameCanonicalSessionKey
+        sessionKeys.sameCanonical.bind(sessionKeys)
       )
     }
   },
@@ -3541,7 +3508,7 @@ function resolveSessionModelSelection(
   sessionKey: string,
   snapshot: SessionSnapshot
 ): ModelSelection | null {
-  const canonicalKey = resolveSessionKeyAlias(sessionKey)
+  const canonicalKey = sessionKeys.canonicalize(sessionKey)
   if (sessionModelSelections.has(canonicalKey)) {
     return sessionModelSelections.get(canonicalKey) ?? null
   }
@@ -3551,7 +3518,7 @@ function resolveSessionModelSelection(
 }
 
 function resolveSessionThinkingLevel(sessionKey: string, snapshot: SessionSnapshot): ThinkingLevel {
-  const canonicalKey = resolveSessionKeyAlias(sessionKey)
+  const canonicalKey = sessionKeys.canonicalize(sessionKey)
   if (sessionThinkingLevels.has(canonicalKey)) {
     return sessionThinkingLevels.get(canonicalKey) ?? selectedThinkingLevel
   }
@@ -3567,7 +3534,7 @@ function resolveSessionPermissionMode(
   sessionKey: string,
   snapshot: Pick<SessionSnapshot, 'path' | 'cwd'>
 ): PermissionMode {
-  const canonicalKey = resolveSessionKeyAlias(sessionKey)
+  const canonicalKey = sessionKeys.canonicalize(sessionKey)
   const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
   if (manifest) {
     sessionPermissionModes.set(canonicalKey, manifest.permissionMode)
@@ -3584,7 +3551,7 @@ function ensurePhiSessionId(
   snapshot: SessionSnapshot & { permissionMode: PermissionMode },
   title?: string
 ): string {
-  const existing = getPhiSessionIdForKey(sessionKey)
+  const existing = sessionKeys.phiSessionIdFor(sessionKey)
   if (existing) {
     linkPhiManagedSessionKey(sessionKey, snapshot.cwd, existing)
     return existing
@@ -3635,9 +3602,9 @@ function createPhiManagedSession(
     thinkingLevel: project?.defaultThinkingLevel ?? selectedThinkingLevel
   })
   const path = phiOnlySessionPath(session.sessionId)
-  const key = createPhiSessionKey(session.sessionId, cwd)
+  const key = sessionKeys.createPhiKey(session.sessionId, cwd)
   linkPhiManagedSessionKey(key, cwd, session.sessionId)
-  sessionPermissionModes.set(resolveSessionKeyAlias(key), permissionMode)
+  sessionPermissionModes.set(sessionKeys.canonicalize(key), permissionMode)
   return { path, sessionId: session.sessionId, permissionMode }
 }
 
@@ -3666,9 +3633,9 @@ function createRemoteManagedSession(projectId: string): {
     ...(project.defaultThinkingLevel ? { thinkingLevel: project.defaultThinkingLevel } : {})
   })
   const path = phiOnlySessionPath(session.sessionId)
-  const key = createPhiSessionKey(session.sessionId, cwd)
+  const key = sessionKeys.createPhiKey(session.sessionId, cwd)
   linkPhiManagedSessionKey(key, cwd, session.sessionId)
-  sessionPermissionModes.set(resolveSessionKeyAlias(key), project.permissionMode)
+  sessionPermissionModes.set(sessionKeys.canonicalize(key), project.permissionMode)
   return { path, sessionId: session.sessionId, cwd, permissionMode: project.permissionMode }
 }
 
@@ -3740,7 +3707,7 @@ function getSessionTitleGenerator(): SessionTitleGenerator {
   const generator = new SessionTitleGenerator({
     request: async ({ sessionPath, prompt, signal }) => {
       const { manifest } = sessionTitleContext(sessionPath)
-      const key = createPhiSessionKey(manifest.sessionId, manifest.cwd)
+      const key = sessionKeys.createPhiKey(manifest.sessionId, manifest.cwd)
       const selection = resolveSessionModelSelection(key, {
         path: sessionPath,
         cwd: manifest.cwd,
@@ -3847,7 +3814,7 @@ async function renameConversation(
     manifest.runtimeRef || (remoteOmpRpcEnabled && manifest.projectLocation?.kind === 'ssh')
   )
   if (rpc) {
-    const key = createSessionKey(path, manifest.cwd)
+    const key = sessionKeys.createKey(path, manifest.cwd)
     const captured = captureSessionControlTarget(key, manifest.sessionId, false, true, false)
     const ready = await captured.resolved()
     captured.assertCurrent()
@@ -3882,7 +3849,7 @@ function scheduleAutomaticSessionTitle(sessionId: string): void {
     )
       return
     const target = captureSessionControlTarget(
-      createPhiSessionKey(sessionId, manifest.cwd),
+      sessionKeys.createPhiKey(sessionId, manifest.cwd),
       sessionId,
       false,
       true,
@@ -4223,7 +4190,7 @@ function assertSelectedSessionControlTarget(
   if (!requireSelected) return
   if (
     !current ||
-    !sameCanonicalSessionKey(assertion.key, sessionState.sessionKey) ||
+    !sessionKeys.sameCanonical(assertion.key, sessionState.sessionKey) ||
     current.path !== assertion.current.path ||
     current.cwd !== assertion.current.cwd ||
     current.phiSessionId !== assertion.phiSessionId ||
@@ -4237,7 +4204,7 @@ function assertSessionControlAttachment(
   latest: PhiSessionManifest | null
 ): void {
   if (
-    getPhiSessionIdForKey(assertion.key) !== assertion.phiSessionId ||
+    sessionKeys.phiSessionIdFor(assertion.key) !== assertion.phiSessionId ||
     getLifecycleForKey(assertion.key) !== assertion.lifecycle ||
     !assertion.lifecycle.isCurrentGeneration(assertion.generation) ||
     assertion.lifecycle.currentRecord !== assertion.record ||
@@ -4277,7 +4244,7 @@ function captureSessionControlTarget(
   requireIdle = true,
   viewBound = true
 ): CapturedSessionControlTarget {
-  const key = resolveSessionKeyAlias(sessionKey)
+  const key = sessionKeys.canonicalize(sessionKey)
   const current = getCurrentSessionPayload()
   const lifecycle = getLifecycleForKey(key)
   const generation = lifecycle.currentGeneration
@@ -4350,7 +4317,7 @@ function getCurrentSessionPayload(): CurrentSessionPayload {
     sessionState.sessionPath,
     sessionState.cwd
   )
-  const phiSessionId = manifest?.sessionId ?? getPhiSessionIdForKey(sessionState.sessionKey)
+  const phiSessionId = manifest?.sessionId ?? sessionKeys.phiSessionIdFor(sessionState.sessionKey)
   const path = phiSessionId ? phiOnlySessionPath(phiSessionId) : (sessionState.sessionPath ?? null)
   const project = manifest?.projectId
     ? getProject(manifest.projectId)
@@ -4407,7 +4374,7 @@ function requireProject(id: string): Project {
 }
 
 async function invalidateAgentSession(): Promise<void> {
-  const phiSessionId = getPhiSessionIdForKey(sessionState.sessionKey)
+  const phiSessionId = sessionKeys.phiSessionIdFor(sessionState.sessionKey)
   if (phiSessionId) loadedSkillNamesBySession.delete(phiSessionId)
   const lifecycle = getCurrentLifecycle()
   const previous = lifecycle.advance()
@@ -4549,9 +4516,9 @@ async function disposeAndSwitchSession(
   permissionMode: PermissionMode
 }> {
   sessionState.switchTo(path, cwd, permissionMode, {
-    createSessionKey,
+    createSessionKey: sessionKeys.createKey.bind(sessionKeys),
     resolveSessionPermissionMode,
-    resolveSessionKeyAlias,
+    resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
     sessionPermissionModes
   })
   const target = getCurrentSessionPayload()
@@ -4629,9 +4596,9 @@ function recordSessionCreationModelMigration(
   resolvedModel: SessionCreationModelResolution['resolvedModel']
 ): void {
   if (!resolvedModel?.migratedFrom) return
-  sessionModelSelections.set(resolveSessionKeyAlias(context.sessionKey), resolvedModel.selection)
+  sessionModelSelections.set(sessionKeys.canonicalize(context.sessionKey), resolvedModel.selection)
   const run = getActivePromptRun(context.sessionKey)
-  const phiSessionId = run?.phiSessionId ?? getPhiSessionIdForKey(context.sessionKey)
+  const phiSessionId = run?.phiSessionId ?? sessionKeys.phiSessionIdFor(context.sessionKey)
   if (!phiSessionId) return
   const stored = appendSessionEvent(phiSessionId, {
     type: 'model_selection_migrated',
@@ -4858,7 +4825,7 @@ function registerCreatedSessionOrigin(
 ): void {
   context.assertCurrent(true)
   const phiSessionId =
-    context.sessionManifest?.sessionId ?? getPhiSessionIdForKey(context.sessionKey)
+    context.sessionManifest?.sessionId ?? sessionKeys.phiSessionIdFor(context.sessionKey)
   const confirmed = phiSessionId ? findPhiSessionById(phiSessionId) : null
   if (
     !confirmed ||
@@ -4892,7 +4859,7 @@ function registerCreatedSessionOrigin(
 
 function linkCreatedSession(context: SessionCreationContext, result: AgentSessionResult): void {
   if (typeof result.session.runtimeSessionId === 'string') {
-    runtimeSessionOrigins.set(result.session.runtimeSessionId, {
+    sessionKeys.recordOrigin(result.session.runtimeSessionId, {
       sessionKey: context.sessionKey,
       cwd: context.snapshot.cwd
     })
@@ -4914,7 +4881,7 @@ function linkCreatedSession(context: SessionCreationContext, result: AgentSessio
     {
       isCurrentGeneration: (candidateGeneration) =>
         context.lifecycle.isCurrentGeneration(candidateGeneration),
-      sameCanonicalSessionKey,
+      sameCanonicalSessionKey: sessionKeys.sameCanonical.bind(sessionKeys),
       uiSessionPathForKey,
       notifySessionChanged
     }
@@ -4951,7 +4918,7 @@ function handleCreatedSessionEvent(
   const summary = withEventTimestamp(rawSummary)
   const run = getActivePromptRun(context.sessionKey)
   stopCreatedSessionForPermanentProviderError(run, summary, result.session)
-  const phiSessionId = run?.phiSessionId ?? getPhiSessionIdForKey(context.sessionKey)
+  const phiSessionId = run?.phiSessionId ?? sessionKeys.phiSessionIdFor(context.sessionKey)
   const persistedSummary = run
     ? persistSessionEvent(run, summary)
     : phiSessionId
@@ -5626,11 +5593,11 @@ function registerAgentIpc(): void {
       sessionPermissionModes
     },
     identity: {
-      createPhiSessionKey,
-      createSessionKey,
+      createPhiSessionKey: sessionKeys.createPhiKey.bind(sessionKeys),
+      createSessionKey: sessionKeys.createKey.bind(sessionKeys),
       linkPhiManagedSessionKey,
-      setPhiSessionIdForKey,
-      resolveSessionKeyAlias
+      setPhiSessionIdForKey: sessionKeys.setPhiSessionId.bind(sessionKeys),
+      resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys)
     },
     lifecycle: {
       getLifecycleForKey,
@@ -5647,7 +5614,7 @@ function registerAgentIpc(): void {
       getCurrentSessionPath: () => sessionState.sessionPath,
       getCurrentCwd: () => sessionState.cwd,
       getCurrentPermissionMode: () => sessionState.permissionMode,
-      resolveSessionKeyAlias,
+      resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
       runtimeSessionPath
     },
     prompt: {
@@ -5659,7 +5626,7 @@ function registerAgentIpc(): void {
     stop: {
       advancePromptGeneration,
       getActivePromptRun,
-      getPhiSessionIdForKey,
+      getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
       getRuntimeRecoveryOperation: (sessionId) => runtimeRecoveryOperations.get(sessionId),
       getManualCompactionOperation: (sessionId) => manualCompactionOperations.get(sessionId),
       stopPromptRun: (sessionKey, run, invalidateGeneration) =>
@@ -5719,11 +5686,11 @@ function registerApplicationAndModelIpc(): void {
   const modelSelectionTarget = {
     getCurrentSessionKey: () => sessionState.sessionKey,
     getCurrentCwd: () => sessionState.cwd,
-    resolveSessionKeyAlias,
-    getPhiSessionIdForKey,
+    resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
+    getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
     findPhiSessionById,
     getCurrentLifecycle,
-    sameCanonicalSessionKey,
+    sameCanonicalSessionKey: sessionKeys.sameCanonical.bind(sessionKeys),
     isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
     hasActivePromptRun,
     getActiveSessionRun: (sessionId: string) => runnerRegistry.getActiveRun(sessionId)
@@ -5783,7 +5750,7 @@ function createCurrentSessionPayloadMessagesOptions(): CurrentSessionPayloadMess
   return {
     getCurrentPayload: getCurrentSessionPayload,
     getCurrentSessionKey: () => sessionState.sessionKey,
-    getPhiSessionIdForKey,
+    getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
     getCurrentLifecycle,
     getCurrentResolvedSession
   }
@@ -5836,8 +5803,8 @@ function createSessionRecoveryIpcOptions(): SessionsIpcOptions['recovery'] {
       sessionThinkingLevels
     },
     identity: {
-      resolveSessionKeyAlias,
-      sameCanonicalSessionKey,
+      resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
+      sameCanonicalSessionKey: sessionKeys.sameCanonical.bind(sessionKeys),
       getPromptGeneration,
       advancePromptGeneration
     },
@@ -5889,10 +5856,10 @@ function createSessionsIpcOptions(
       compact: (target) => compactCurrentSession(target, sessionCompactionControlOptions)
     },
     identity: {
-      createSessionKey,
-      resolveSessionKeyAlias,
-      setPhiSessionIdForKey,
-      getPhiSessionIdForKey,
+      createSessionKey: sessionKeys.createKey.bind(sessionKeys),
+      resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
+      setPhiSessionIdForKey: sessionKeys.setPhiSessionId.bind(sessionKeys),
+      getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
       findPhiManifestForSession,
       runtimeSessionPath
     },
@@ -5958,7 +5925,7 @@ function registerProjectAndAnalysisIpc(): void {
       applyCurrentPermissionMode: (id, project, permissionMode) =>
         sessionState.applyProjectPermissionMode(id, project, permissionMode, {
           findPhiManifestForSession,
-          resolveSessionKeyAlias,
+          resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
           sessionPermissionModes,
           notifySessionChanged
         }),
@@ -6133,8 +6100,8 @@ function registerWrapperJobsAndPersonaIpc(
     },
     rpc: {
       getCurrentSessionKey: () => sessionState.sessionKey,
-      resolveSessionKeyAlias,
-      getPhiSessionIdForKey,
+      resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
+      getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
       findPhiSessionById,
       isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
       captureSessionControlTarget
