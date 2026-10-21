@@ -76,7 +76,10 @@ SSH 检查可沿验收记录中的命令执行，路径中的 runtime root 与 s
   应用重启后重新打开仍能显示单元格与输出。
 - ✅ SSH-01/04 #2：`run.record` 600、pid = pgid = 2080448、argv0 为 OMP 18.10.3，
   `flock -n run.lock` 失败（锁被持有）。
-- ⏳ 待做：审批（当前项目为 `auto`）、断线恢复、SSH-01/04 #3/#4。
+- ✅ 审批与远程写入：项目切到 `ask` 后，bash/write/bash 三次 `approval_requested` 与
+  `approval_approved` 成对出现；远端 `.phi-validation.txt` 权限 600、内容 `ok`，
+  run `completed`。
+- ⏳ 待做：断线恢复、SSH-01/04 #3/#4。
 
 已知 UX 行为（不阻塞本清单，但值得后续改）：
 

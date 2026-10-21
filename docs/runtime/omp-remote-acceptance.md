@@ -30,7 +30,9 @@
   第 2–4 项仍按 [验证清单](remote-default-on-validation.md) 执行。
 - 2026-10-21 人工验证进展：GPU 上用 `cursor / cursor-grok-4.6-fast` 完成一次真实模型远程对话
   （会话 `63201ad3-...`，run `c43070a9-...`，10 次远程工具调用）；随后在同一远程项目执行
-  `quicksort.ipynb` 并保存，输出 `all cases passed`。审批、断线恢复与 SSH-01/04 #3/#4 仍待做。
+  `quicksort.ipynb` 并保存，输出 `all cases passed`；项目切到 `ask` 后 bash/write/bash
+  三次审批成对通过，远端 `.phi-validation.txt` 权限 600、内容 `ok`。断线恢复与
+  SSH-01/04 #3/#4 仍待做。
 
 ## Claude 记录接续与 Beta 收尾（2026-10-18–19）
 
