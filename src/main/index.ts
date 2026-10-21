@@ -1,17 +1,9 @@
 import { IPC } from '../shared/ipcChannels'
-import {
-  registerRuntimeSessionOrigin,
-  resolveRuntimeSessionOrigin
-} from './agent/session/runtime-origin-store'
+import { registerRuntimeSessionOrigin } from './agent/session/runtime-origin-store'
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
 import type { PhiAgentEvent, RuntimeSelectionControl } from './agent/engine/types'
 import type { RuntimeRecoveryModelSelection } from '../shared/runtimeRecoveryTypes'
 import { readRuntimeRecoverySummarySeed } from './agent/session/recovery-summary'
-import {
-  parseRuntimeReference,
-  assertRuntimeReferenceProject,
-  assertRuntimeScope
-} from './agent/session/runtime-reference'
 import { facadeBindingHash } from './agent/engine/rpc/facade-session-driver'
 import { selectionThinking } from './agent/engine/rpc/runtime-selection-control'
 import { isPhiEventType, isPhiMessageUpdateSummary } from './agent/engine/events'
@@ -159,7 +151,6 @@ import { getPersonaMarkdown } from './agent/persona-manager'
 import { generatePersonaMarkdown as generatePersonaMarkdownForIpc } from './agent/persona-generation'
 import {
   createSessionManager,
-  isPhiOnlySessionPath,
   phiOnlySessionPath,
   phiSessionIdFromPath,
   renameSession
@@ -457,6 +448,8 @@ import type { NotebookDocument } from '../shared/notebookDocument'
 import { messageContentTitleText } from '../shared/sessionTitle'
 import { createBeforeQuitHandler } from './app-quit'
 import { createMainRuntimeContext } from './app-state/main-runtime-context'
+import { createSessionKeyLinking } from './session-runtime/session-key-linking'
+import { createSessionOrigins } from './session-runtime/session-origins'
 import { createSessionResolution } from './session-runtime/session-resolution'
 import icon from '../../resources/icon.png?asset'
 
@@ -774,7 +767,7 @@ const browserIpcCoordinator = new BrowserIpcCoordinator({
     }
   },
   resolveAgentSession: (originSessionId) => {
-    const origin = resolveOriginSession(originSessionId)
+    const origin = sessionOrigins.resolveOriginSession(originSessionId)
     return origin ? browserSessionForPhiId(origin.phiSessionId) : undefined
   }
 })
@@ -1107,6 +1100,20 @@ const sessionResolution = createSessionResolution({
   getSelectedModel: () => sessionState.selectedModel,
   getDefaultThinkingLevel: () => selectedThinkingLevel
 })
+const sessionOrigins = createSessionOrigins({
+  sessionKeys,
+  findActivePromptRunByRuntimeSessionId,
+  getCurrentCwd: () => sessionState.cwd,
+  requireProject,
+  projectRemoteRuntimeRoot,
+  agentDir: AGENT_DIR
+})
+const sessionKeyLinking = createSessionKeyLinking({
+  sessionRuntime,
+  sessionKeys,
+  sessionState,
+  sessionResolution
+})
 const approvedRemoteBashCalls = new Map<
   string,
   { projectId: string; approvedCwd: string; approvalDigest: string; expiresAt: number }
@@ -1383,7 +1390,7 @@ const { remoteRuntimeDispatchControl, isRemoteRuntimeCancellation } =
   createRemoteRuntimeDispatchControl({
     fields: { optionalStringField },
     sessions: {
-      resolveOriginSession: (runtimeSessionId) => resolveOriginSession(runtimeSessionId),
+      resolveOriginSession: sessionOrigins.resolveOriginSession,
       getActiveRun: (sessionId) => runnerRegistry.getActiveRun(sessionId),
       ownsRemoteRuntimeSession
     },
@@ -2331,7 +2338,7 @@ const wrapperJobs = new WrapperJobManager({
     confirmBuild: (request) => confirmEnvironmentBuild(request)
   },
   resolveProjectForRun: (originSessionId) => {
-    const origin = resolveRecoverableJobOrigin(originSessionId)
+    const origin = sessionOrigins.resolveRecoverableJobOrigin(originSessionId)
     const manifest = origin ? findPhiSessionById(origin.phiSessionId) : null
     if (!manifest) return undefined
     return manifest.projectId ? getProject(manifest.projectId) : null
@@ -2339,7 +2346,7 @@ const wrapperJobs = new WrapperJobManager({
   // A remote run goes to the HPC connection saved on the project the chat belongs to; a run
   // being resumed after a restart names its project and connection itself.
   resolveRemoteTarget: ({ originSessionId, projectId, connectionId }) => {
-    const origin = resolveRecoverableJobOrigin(originSessionId)
+    const origin = sessionOrigins.resolveRecoverableJobOrigin(originSessionId)
     const manifest = origin ? findPhiSessionById(origin.phiSessionId) : null
     const project = projectId
       ? getProject(projectId)
@@ -2394,7 +2401,7 @@ for (const [method, handler] of Object.entries(
   wrapperJobHostHandlers(wrapperJobs, {
     scopeFor: (context) =>
       resolveWrapperJobHostScope(context, {
-        resolveOrigin: resolveOriginSession,
+        resolveOrigin: sessionOrigins.resolveOriginSession,
         findSession: findPhiSessionById,
         getProject,
         ownsRemoteRuntimeSession,
@@ -2407,66 +2414,6 @@ for (const [method, handler] of Object.entries(
   getPhiEngine().host.register(method, handler)
 }
 wrapperJobs.onChange((runId) => sendToAllWindows(IPC.wrappers.runsChanged, { runId }))
-
-// Both background wrapper runs and background agent runs report their end through these:
-// which Phi conversation a runtime session belongs to, the window, and the system notification.
-function resolveOriginSession(
-  originSessionId: string | undefined
-): { phiSessionId: string; cwd: string } | undefined {
-  if (!originSessionId) return undefined
-  const origin = sessionKeys.originFor(originSessionId)
-  const phiSessionId = origin
-    ? sessionKeys.phiSessionIdFor(origin.sessionKey)
-    : findActivePromptRunByRuntimeSessionId(originSessionId)?.phiSessionId
-  return phiSessionId ? { phiSessionId, cwd: origin?.cwd ?? sessionState.cwd } : undefined
-}
-
-function currentRuntimeOriginScope(
-  manifest: PhiSessionManifest
-): import('./agent/session/runtime-reference').RemoteOmpScope | undefined {
-  if (!manifest.runtimeRef || !manifest.projectId) return undefined
-  const reference = parseRuntimeReference(manifest.runtimeRef, manifest.sessionId)
-  const project = requireProject(manifest.projectId)
-  if (project.location.kind !== 'ssh') return undefined
-  const binding = resolveRemoteWorkspaceHostBinding({
-    sessionId: manifest.sessionId,
-    projectId: project.id
-  })
-  const scope = {
-    hostProfileId: project.location.hostProfileId,
-    bindingHash: facadeBindingHash(binding),
-    projectId: project.id,
-    projectRoot: binding.canonicalRoot,
-    runtimeRoot: reference.runtimeRoot
-  }
-  assertRuntimeReferenceProject(manifest, scope)
-  assertRuntimeScope(reference, scope)
-  return scope
-}
-
-/** Cold records recover job attribution only; all tool/control/wakeup authority uses the live resolver. */
-function resolveRecoverableJobOrigin(
-  originSessionId: string | undefined
-): { phiSessionId: string; cwd: string } | undefined {
-  if (!originSessionId) return undefined
-  return (
-    resolveOriginSession(originSessionId) ??
-    resolveRuntimeSessionOrigin(
-      originSessionId,
-      {
-        readManifest: findPhiSessionById,
-        resolveRemoteScope: currentRuntimeOriginScope,
-        resolveConfiguredRuntimeRoot: (manifest) => {
-          const project = manifest.projectId ? getProject(manifest.projectId) : undefined
-          return project?.location.kind === 'ssh'
-            ? projectRemoteRuntimeRoot(project).configured
-            : undefined
-        }
-      },
-      AGENT_DIR
-    )
-  )
-}
 
 const browserToolHostCoordinator = new BrowserToolHostCoordinator({
   resolveActiveRun: (originSessionId) => {
@@ -2500,7 +2447,7 @@ function browserChildDispatchControl(
   const runtimeId = isRecord(params) ? optionalStringField(params, 'originSessionId') : undefined
   if (!runtimeId || context.originSessionId !== runtimeId)
     throw new Error('专家浏览器请求缺少已验证的来源')
-  const origin = resolveOriginSession(runtimeId)
+  const origin = sessionOrigins.resolveOriginSession(runtimeId)
   const manifest = origin && findPhiSessionById(origin.phiSessionId)
   if (!ownsRemoteRuntimeSession(runtimeId)) {
     if (manifest?.projectLocation?.kind === 'ssh') throw new Error('远程专家浏览器连接不可用')
@@ -2537,11 +2484,14 @@ getPhiEngine().host.register('browser.cancel', (params, context) => {
 })
 const backgroundAgentJobListingOptions = {
   agentDir: AGENT_DIR,
-  resolveRecoverableJobOrigin,
-  currentRuntimeOriginScope,
+  resolveRecoverableJobOrigin: sessionOrigins.resolveRecoverableJobOrigin,
+  currentRuntimeOriginScope: sessionOrigins.currentRuntimeOriginScope,
   optionalStringField
 }
-const backgroundShellJobOperationsOptions = { resolveOriginSession, optionalStringField }
+const backgroundShellJobOperationsOptions = {
+  resolveOriginSession: sessionOrigins.resolveOriginSession,
+  optionalStringField
+}
 const backgroundJobOperations = {
   listAgentJobs: () => listBackgroundAgentJobs(backgroundAgentJobListingOptions),
   listShellJobs: () => listBackgroundShellJobs(backgroundShellJobOperationsOptions),
@@ -2569,12 +2519,12 @@ function showRunNotification({ title, body }: { title: string; body: string }): 
 }
 
 wrapperJobs.onFinish((run, status) => {
-  const liveOrigin = resolveOriginSession(run.originSessionId)
+  const liveOrigin = sessionOrigins.resolveOriginSession(run.originSessionId)
   if (status.state === 'lost' && run.remote?.projectId) {
     remoteConnectionTracker.noteRemoteRunLost(run.remote.projectId)
   }
   return deliverWrapperRunFinished(run, status, {
-    resolveSession: resolveRecoverableJobOrigin,
+    resolveSession: sessionOrigins.resolveRecoverableJobOrigin,
     appendToSession: (phiSessionId, event) => appendSessionEvent(phiSessionId, { ...event }),
     sendToWindow: sendRunEventToWindow,
     isAppFocused: () => BrowserWindow.getFocusedWindow() !== null,
@@ -2588,7 +2538,7 @@ wrapperJobs.onFinish((run, status) => {
 // tells us here when one ends, or when the main agent has already collected its report.
 for (const [method, handler] of Object.entries(
   agentRunHostHandlers({
-    resolveSession: resolveOriginSession,
+    resolveSession: sessionOrigins.resolveOriginSession,
     appendToSession: (phiSessionId, event) => appendSessionEvent(phiSessionId, { ...event }),
     sendToWindow: sendRunEventToWindow,
     isAppFocused: () => BrowserWindow.getFocusedWindow() !== null,
@@ -2816,35 +2766,10 @@ function persistSessionEvent(run: PromptRun, summary: PhiAgentEvent): Record<str
   return persistSessionEventWithDeps(run, summary, sessionEventPersistenceDeps)
 }
 
-function aliasMaterializedSessionPath(sessionKey: string, path: string, cwd: string): void {
-  sessionRuntime.alias(sessionKeys.createKey(path, cwd), sessionKey)
-}
-
-function linkPhiManagedSessionKey(sessionKey: string, cwd: string, phiSessionId: string): string {
-  const stablePath = phiOnlySessionPath(phiSessionId)
-  const stableKey = sessionKeys.createPhiKey(phiSessionId, cwd)
-  sessionRuntime.alias(stableKey, sessionKey)
-  sessionKeys.setPhiSessionId(sessionKey, phiSessionId)
-  sessionKeys.setPhiSessionId(stableKey, phiSessionId)
-  sessionState.linkPhiManagedSessionKey(
-    sessionKey,
-    stablePath,
-    stableKey,
-    sessionKeys.sameCanonical.bind(sessionKeys)
-  )
-  return stablePath
-}
-
 function deleteActivePromptRun(sessionKey: string, run: PromptRun): void {
   cancelBrowserRun(run)
   void cleanupBrowserRunTabs(run)
   promptRuns.deleteActiveRunIfCurrent(sessionKey, run)
-}
-
-function updatePhiRuntimeSessionPath(sessionId: string, path: string): void {
-  const manifest = findPhiSessionById(sessionId)
-  if (manifest?.runtimeSessionPath === path) return
-  updateSessionManifest(sessionId, { runtimeSessionPath: path })
 }
 
 function linkMaterializedRuntimeSessionPath(
@@ -2853,18 +2778,18 @@ function linkMaterializedRuntimeSessionPath(
   sessionFile: string | undefined,
   phiSessionId?: string
 ): void {
-  const path = runtimeSessionPath(sessionFile)
+  const path = sessionKeyLinking.runtimeSessionPath(sessionFile)
   if (!path) return
 
   const materializedKey = sessionKeys.createKey(path, cwd)
-  aliasMaterializedSessionPath(sessionKey, path, cwd)
+  sessionKeyLinking.aliasMaterializedSessionPath(sessionKey, path, cwd)
   if (phiSessionId) {
     sessionKeys.setPhiSessionId(sessionKey, phiSessionId)
     sessionKeys.setPhiSessionId(materializedKey, phiSessionId)
-    updatePhiRuntimeSessionPath(phiSessionId, path)
+    sessionKeyLinking.updatePhiRuntimeSessionPath(phiSessionId, path)
   }
   if (phiSessionId) {
-    linkPhiManagedSessionKey(sessionKey, cwd, phiSessionId)
+    sessionKeyLinking.linkPhiManagedSessionKey(sessionKey, cwd, phiSessionId)
     return
   }
   sessionState.linkMaterializedSessionKey(
@@ -2880,7 +2805,7 @@ function linkPromptRunRuntimeSessionPath(
   promptRun: PromptRun,
   session: AgentSessionInstance
 ): void {
-  const path = runtimeSessionPath(session.sessionFile)
+  const path = sessionKeyLinking.runtimeSessionPath(session.sessionFile)
   if (!path) return
   promptRun.sessionPath = phiOnlySessionPath(promptRun.phiSessionId)
   linkMaterializedRuntimeSessionPath(sessionKey, cwd, path, promptRun.phiSessionId)
@@ -2890,17 +2815,13 @@ function getSessionControllerKey(snapshot: SessionSnapshot, generation: number):
   return `${snapshot.path ?? `fresh:${snapshot.cwd}`}:${generation}`
 }
 
-function runtimeSessionPath(path: string | undefined): string | undefined {
-  return isPhiOnlySessionPath(path) ? undefined : path
-}
-
 function runtimeSessionPathForSnapshot(
   sessionKey: string,
   snapshot: SessionSnapshot
 ): string | undefined {
   return (
     sessionResolution.findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
-      ?.runtimeSessionPath ?? runtimeSessionPath(snapshot.path)
+      ?.runtimeSessionPath ?? sessionKeyLinking.runtimeSessionPath(snapshot.path)
   )
 }
 
@@ -2941,7 +2862,7 @@ function startAutomaticContinuation(
   const manifest = findPhiSessionById(phiSessionId)
   if (!manifest) return
   const sessionKey = sessionKeys.createPhiKey(manifest.sessionId, manifest.cwd)
-  linkPhiManagedSessionKey(sessionKey, manifest.cwd, manifest.sessionId)
+  sessionKeyLinking.linkPhiManagedSessionKey(sessionKey, manifest.cwd, manifest.sessionId)
   preferences.permissionModes.set(sessionKeys.canonicalize(sessionKey), manifest.permissionMode)
   automaticContinuations.set(phiSessionId, (automaticContinuations.get(phiSessionId) ?? 0) + 1)
 
@@ -3113,7 +3034,7 @@ function resolvePromptRunTarget(input: SubmitPromptInput): ResolvedPromptRunTarg
 }
 
 function admitPromptRun(target: ResolvedPromptRunTarget): AdmittedPromptRun {
-  const phiSessionId = ensurePhiSessionId(
+  const phiSessionId = sessionKeyLinking.ensurePhiSessionId(
     target.runSessionKey,
     target.runSnapshot,
     target.normalizedText || (target.input.images?.length ? '图片' : undefined)
@@ -3406,44 +3327,6 @@ function getSessionStatusPayload(
   return { status: 'idle', unreadKind: null }
 }
 
-function ensurePhiSessionId(
-  sessionKey: string,
-  snapshot: SessionSnapshot & { permissionMode: PermissionMode },
-  title?: string
-): string {
-  const existing = sessionKeys.phiSessionIdFor(sessionKey)
-  if (existing) {
-    linkPhiManagedSessionKey(sessionKey, snapshot.cwd, existing)
-    return existing
-  }
-  const manifest = sessionResolution.findPhiManifestForSession(
-    sessionKey,
-    snapshot.path,
-    snapshot.cwd
-  )
-  if (manifest) {
-    linkPhiManagedSessionKey(sessionKey, manifest.cwd, manifest.sessionId)
-    return manifest.sessionId
-  }
-
-  const project = getProjectByCwd(snapshot.cwd)
-  const model = sessionResolution.resolveSessionModelSelection(sessionKey, snapshot)
-  const sessionTitle = messageContentTitleText(title)
-  const session = createPhiSession({
-    kind: project ? 'project' : 'ordinary',
-    projectId: project?.id ?? null,
-    cwd: snapshot.cwd,
-    cwdRealPath: project?.workingDirectoryRealPath ?? snapshot.cwd,
-    ...(sessionTitle ? { title: sessionTitle } : {}),
-    ...(runtimeSessionPath(snapshot.path) ? { runtimeSessionPath: snapshot.path } : {}),
-    permissionMode: snapshot.permissionMode,
-    model,
-    thinkingLevel: sessionResolution.resolveSessionThinkingLevel(sessionKey, snapshot)
-  })
-  linkPhiManagedSessionKey(sessionKey, snapshot.cwd, session.sessionId)
-  return session.sessionId
-}
-
 function createPhiManagedSession(
   cwd: string,
   permissionMode: PermissionMode,
@@ -3467,7 +3350,7 @@ function createPhiManagedSession(
   })
   const path = phiOnlySessionPath(session.sessionId)
   const key = sessionKeys.createPhiKey(session.sessionId, cwd)
-  linkPhiManagedSessionKey(key, cwd, session.sessionId)
+  sessionKeyLinking.linkPhiManagedSessionKey(key, cwd, session.sessionId)
   preferences.permissionModes.set(sessionKeys.canonicalize(key), permissionMode)
   return { path, sessionId: session.sessionId, permissionMode }
 }
@@ -3498,7 +3381,7 @@ function createRemoteManagedSession(projectId: string): {
   })
   const path = phiOnlySessionPath(session.sessionId)
   const key = sessionKeys.createPhiKey(session.sessionId, cwd)
-  linkPhiManagedSessionKey(key, cwd, session.sessionId)
+  sessionKeyLinking.linkPhiManagedSessionKey(key, cwd, session.sessionId)
   preferences.permissionModes.set(sessionKeys.canonicalize(key), project.permissionMode)
   return { path, sessionId: session.sessionId, cwd, permissionMode: project.permissionMode }
 }
@@ -4691,7 +4574,9 @@ function registerCreatedSessionOrigin(
     return
   }
   const remoteScope =
-    confirmed.projectLocation?.kind === 'ssh' ? currentRuntimeOriginScope(confirmed) : undefined
+    confirmed.projectLocation?.kind === 'ssh'
+      ? sessionOrigins.currentRuntimeOriginScope(confirmed)
+      : undefined
   if (confirmed.projectLocation?.kind === 'ssh' && !remoteScope) {
     throw new Error('远程运行来源尚未验证')
   }
@@ -5459,7 +5344,7 @@ function registerAgentIpc(): void {
     identity: {
       createPhiSessionKey: sessionKeys.createPhiKey.bind(sessionKeys),
       createSessionKey: sessionKeys.createKey.bind(sessionKeys),
-      linkPhiManagedSessionKey,
+      linkPhiManagedSessionKey: sessionKeyLinking.linkPhiManagedSessionKey,
       setPhiSessionIdForKey: sessionKeys.setPhiSessionId.bind(sessionKeys),
       resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys)
     },
@@ -5479,7 +5364,7 @@ function registerAgentIpc(): void {
       getCurrentCwd: () => sessionState.cwd,
       getCurrentPermissionMode: () => sessionState.permissionMode,
       resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
-      runtimeSessionPath
+      runtimeSessionPath: sessionKeyLinking.runtimeSessionPath
     },
     prompt: {
       parseTarget: (input) => parsePromptTarget(input, () => sessionState.cwd),
@@ -5500,17 +5385,17 @@ function registerAgentIpc(): void {
     },
     agentRuns: {
       control: {
-        resolveRecoverableJobOrigin,
+        resolveRecoverableJobOrigin: sessionOrigins.resolveRecoverableJobOrigin,
         findPhiSessionById,
         ownsRemoteRuntimeSession,
-        resolveOriginSession,
+        resolveOriginSession: sessionOrigins.resolveOriginSession,
         hasEngineSession: (sessionId) => getPhiEngine().sessions.has(sessionId),
-        currentRuntimeOriginScope,
+        currentRuntimeOriginScope: sessionOrigins.currentRuntimeOriginScope,
         steer: (params) => getPhiEngine().agentRuns.steer(params),
         stop: (params) => getPhiEngine().agentRuns.stop(params)
       },
       persistence: {
-        resolveOriginSession,
+        resolveOriginSession: sessionOrigins.resolveOriginSession,
         appendSessionEvent: (phiSessionId, event) => appendSessionEvent(phiSessionId, event),
         redactSensitiveText,
         sendRunEventToWindow,
@@ -5637,7 +5522,7 @@ function createSessionCompactionControlOptions(): SessionCompactionControlOption
     sessions: {
       findPhiManifestForSession: sessionResolution.findPhiManifestForSession,
       runtimeSessionPathForSnapshot,
-      ensurePhiSessionId,
+      ensurePhiSessionId: sessionKeyLinking.ensurePhiSessionId,
       hasActivePromptRun: promptRuns.hasActiveRun.bind(promptRuns),
       captureSessionControlTarget,
       getSessionGeneration: (sessionKey) => lifecycles.forKey(sessionKey).currentGeneration
@@ -5727,7 +5612,7 @@ function createSessionsIpcOptions(
       setPhiSessionIdForKey: sessionKeys.setPhiSessionId.bind(sessionKeys),
       getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
       findPhiManifestForSession: sessionResolution.findPhiManifestForSession,
-      runtimeSessionPath
+      runtimeSessionPath: sessionKeyLinking.runtimeSessionPath
     },
     lifecycle: {
       createPhiManagedSession,

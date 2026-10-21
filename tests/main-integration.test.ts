@@ -4421,6 +4421,8 @@ async function harness(
     './app-state/session-runtime',
     './app-state/session-state',
     './app-state/workspace-services-state',
+    './session-runtime/session-key-linking',
+    './session-runtime/session-origins',
     './session-runtime/session-resolution',
     './agent/agents/agent-run-control-request',
     './agent/agents/remote-agent-request-context',
