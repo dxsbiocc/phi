@@ -72,6 +72,8 @@
 | 4 | 本地终端与交付包人工检查 | 中文 IME、草稿/解释、复制粘贴、拖动尺寸及 Finder 启动，沿已有清单记录 |
 | 5 | 默认切换与稳定周期 | 上述门槛满足后再讨论默认开启；稳定一个升级周期后执行 T18 |
 
+第 2–3 项的逐步操作、检查表与回执模板见 [远程默认开启验证清单](remote-default-on-validation.md)。
+
 Claude 最后记录描述了一次真实 Grok/Cursor 对话及远程 Jupyter 执行两个单元格成功；
 这发生在后续工具常驻等修改之前，且未绑定本轮候选，因此仍保留当前候选的实机门槛。
 终端清单见 [terminal-v1-manual-checklist.md](../design/terminal-v1-manual-checklist.md)。

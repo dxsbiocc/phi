@@ -632,7 +632,7 @@ T9 可以在 T8 完成前先做分发清单与上传部分（只依赖 helper）
 
 ## 6.5 远程默认切换到 RPC 的门槛（2026-10-17 用户确认）
 
-以下各项全部满足后才讨论把 `PHI_REMOTE_OMP_RPC` 改为默认开启；状态见 [验收记录](../runtime/omp-remote-acceptance.md) 顶部表格。2026-10-18 用户确认把设计缺陷审计里的远程项一并列为门槛（编号见 [design-defects-audit.md §0.1](../architecture/design-defects-audit.md)）。
+以下各项全部满足后才讨论把 `PHI_REMOTE_OMP_RPC` 改为默认开启；状态见 [验收记录](../runtime/omp-remote-acceptance.md) 顶部表格。三项未勾选实机项的逐步操作与回执模板见 [远程默认开启验证清单](../runtime/remote-default-on-validation.md)。2026-10-18 用户确认把设计缺陷审计里的远程项一并列为门槛（编号见 [design-defects-audit.md §0.1](../architecture/design-defects-audit.md)）。
 
 实机验收：
 
