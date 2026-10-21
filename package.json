@@ -38,6 +38,7 @@
     "build:mac": "bun run build && electron-builder --mac --publish never",
     "build:linux": "bun run build && electron-builder --linux --publish never",
     "test": "node --import ./scripts/test-loader.mjs --test --test-concurrency=4 --test-timeout=300000 --test-force-exit tests/*.test.ts",
+    "test:main": "node scripts/test-main.mjs",
     "test:gate": "node scripts/test-gate.mjs",
     "test:known-failures": "node scripts/test-gate.mjs --only-skipped",
     "test:packages": "node --import ./scripts/test-loader.mjs --test --test-timeout=300000 --test-force-exit tests/package-content/*.test.ts",

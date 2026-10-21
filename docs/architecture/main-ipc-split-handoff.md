@@ -42,6 +42,16 @@ Status: IPC 拆分、运行时上下文、超长函数、单一领域迁出、�
 - 契约测试已识别 `options.ipcMain.handle(IPC.x.y, ...)`,搬走的注册无需改扫描器。
 - 读 `index.ts` 源码文本的测试(`grep -rlE "src/main/index" tests`)要改成读事实所在的新文件,断言不放宽。
 
+### `main-integration` 的冻结约定(2026-10-21)
+
+`tests/main-integration.test.ts` 已冻结:不再拆分、不再加新测试。它是约 4,150 行 harness 加 334 个
+顺序相关测试的单文件,拆分成本高于收益(全量约 70s,定点子集约 4s)。日常用:
+
+- `npm run test:main -- <pattern>`:只跑匹配的测试,例如 `npm run test:main -- browser`。
+- `npm run test:main`:合并前跑全量。
+
+新增覆盖按域放到独立的 `tests/<domain>.test.ts`,不要回到这个文件。
+
 ## 3. 切片清单(按建议顺序)
 
 行数为注册区内处理函数本身的行数,不含随迁的辅助函数(IPC-1 处理函数 421 行,实际降了 989 行)。

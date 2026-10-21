@@ -1,3 +1,7 @@
+// Frozen legacy suite: do not split this file further or add new tests here.
+// New coverage belongs in a domain-specific tests/<domain>.test.ts file. Run a
+// subset with `npm run test:main -- <pattern>` and the whole suite only before
+// merging.
 import { parseModelAvailabilityChange } from '../src/main/agent/model-availability'
 import type { ModelAvailabilitySettings } from '../src/shared/modelAvailabilityTypes'
 import * as runtimeRecoveryIpc from '../src/main/agent/session/runtime-recovery-ipc'
