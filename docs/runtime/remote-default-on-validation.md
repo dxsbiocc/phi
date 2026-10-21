@@ -66,6 +66,25 @@
 SSH 检查可沿验收记录中的命令执行，路径中的 runtime root 与 session id 以实际回执为准。
 通过标准：上表全部通过并留下回执；不接受只测自动化、不测界面的结论。
 
+## 进度（2026-10-21，GPU）
+
+- ✅ 真实模型远程对话：`cursor / cursor-grok-4.6-fast`，Phi 会话
+  `63201ad3-a48b-4f1c-9ab6-3c61cf2d5b6d`，run `c43070a9-...`，10 次远程工具调用后
+  `run_completed`；远端 journal 记录同一模型，项目根 `/data2/dengxsh/phi-test`。
+- ✅ 当前代码跑通 Notebook：GPU 远程项目 `quicksort.ipynb` 执行单元格，保存后
+  `execution_count` 为 1/2、输出 `all cases passed`，文件 mtime `2026-10-21 17:44:02`；
+  应用重启后重新打开仍能显示单元格与输出。
+- ✅ SSH-01/04 #2：`run.record` 600、pid = pgid = 2080448、argv0 为 OMP 18.10.3，
+  `flock -n run.lock` 失败（锁被持有）。
+- ⏳ 待做：审批（当前项目为 `auto`）、断线恢复、SSH-01/04 #3/#4。
+
+已知 UX 行为（不阻塞本清单，但值得后续改）：
+
+- 远程 OMP 会话在应用重启后显示“远程会话尚未连接”，需要显式“恢复原会话”；这是为了避免
+  自动重放消息或任务，不是加载失败。
+- 远程 Jupyter 需要先在 Runtime 面板显式启动；未连接时 kernel 按钮因没有诊断信息而禁用，
+  点击无反应。两处都可以在后续补自动重连/更明确的提示。
+
 ## 收尾
 
 - 三项都通过后，同步勾选 [路线图 §6.5](../roadmap/omp-decoupling-upgrade-plan.md)，

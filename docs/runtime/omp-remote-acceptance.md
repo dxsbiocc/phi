@@ -28,6 +28,9 @@
   发现不到 `ssh-config:` 档案的问题；修复前所有实机 R8 都会报“SSH 服务器档案不存在”。
 - 该预检不等于解封门槛：真实模型对话、当前代码 Notebook/Wrapper、人工界面与 SSH-01/04
   第 2–4 项仍按 [验证清单](remote-default-on-validation.md) 执行。
+- 2026-10-21 人工验证进展：GPU 上用 `cursor / cursor-grok-4.6-fast` 完成一次真实模型远程对话
+  （会话 `63201ad3-...`，run `c43070a9-...`，10 次远程工具调用）；随后在同一远程项目执行
+  `quicksort.ipynb` 并保存，输出 `all cases passed`。审批、断线恢复与 SSH-01/04 #3/#4 仍待做。
 
 ## Claude 记录接续与 Beta 收尾（2026-10-18–19）
 
