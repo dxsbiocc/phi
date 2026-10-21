@@ -11,6 +11,20 @@ const options = {
   useDefaults: false,
   removeAdditional: false
 } as const
+const datePattern = /^(\d{4})-(\d{2})-(\d{2})$/
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function validDate(value: string): boolean {
+  const match = datePattern.exec(value)
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  if (month < 1 || month > 12) return false
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return day >= 1 && day <= days[month - 1]
+}
 const SERVER_TOOLS = new Set([
   'read',
   'write',
@@ -36,6 +50,11 @@ export function registeredHostTools(tools: readonly PhiTool[]): Map<string, Regi
   for (const compiler of compilers) {
     compiler.addFormat('input-path', true)
     compiler.addFormat('project-path', true)
+    compiler.addFormat('date', { type: 'string', validate: validDate })
+    compiler.addFormat('uuid', {
+      type: 'string',
+      validate: (value: string) => uuidPattern.test(value)
+    })
   }
 
   for (const tool of tools) {
