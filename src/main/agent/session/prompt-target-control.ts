@@ -3,6 +3,7 @@ import { findPhiSessionById } from './session-store'
 import { phiOnlySessionPath, phiSessionIdFromPath } from './sessions'
 import type { SessionLifecycle } from './session-lifecycle'
 import type { CreateAgentSessionResult } from '../runtime/runtime-adapter'
+import type { SessionPreferenceTable } from '../../app-state/session-preferences'
 
 export type PromptTargetInput = {
   path: string | null
@@ -18,7 +19,7 @@ export interface PromptTargetControlOptions {
   state: {
     getCurrentSessionPath: () => string | undefined
     getCurrentCwd: () => string
-    sessionPermissionModes: Pick<Map<string, PermissionMode>, 'set'>
+    sessionPermissionModes: SessionPreferenceTable<PermissionMode>
   }
   identity: {
     createPhiSessionKey: (sessionId: string, cwd: string) => string

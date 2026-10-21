@@ -12,6 +12,7 @@ import {
   type ModelSelectionTargetDependencies
 } from '../agent/session/model-selection-target'
 import { findPhiSessionById, updateSessionManifest } from '../agent/session/session-store'
+import type { SessionPreferenceTable } from '../app-state/session-preferences'
 
 type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -21,8 +22,8 @@ export interface ModelsIpcOptions {
   sessionState: {
     getCurrentSessionPath: () => string | undefined
     getCurrentPermissionMode: () => PermissionMode
-    sessionModelSelections: Map<string, ModelSelection | null>
-    sessionThinkingLevels: Map<string, ThinkingLevel>
+    sessionModelSelections: SessionPreferenceTable<ModelSelection | null>
+    sessionThinkingLevels: SessionPreferenceTable<ThinkingLevel>
   }
   requests: {
     nextModelSelectionRequest: () => number

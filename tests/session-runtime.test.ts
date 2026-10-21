@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { SessionKeyRegistry } from '../src/main/app-state/session-key-registry'
 import { SessionLifecycleRegistry } from '../src/main/app-state/session-lifecycle-registry'
+import { SessionPreferences } from '../src/main/app-state/session-preferences'
 import { SessionRuntime } from '../src/main/app-state/session-runtime'
 
 function createRegistry(getFreshSessionCounter: () => number): SessionKeyRegistry {
@@ -144,6 +145,62 @@ test('SessionLifecycleRegistry path-less waits include only registered unknown-p
 
   resolveUnknownCleanup()
   await waiting
+})
+
+test('SessionPreferences keeps its three tables independent and uses keys as given', () => {
+  const preferences = new SessionPreferences()
+  const selection = { providerId: 'provider-one', modelId: 'model-one' }
+
+  assert.deepEqual(Object.keys(preferences.modelSelections).sort(), ['delete', 'get', 'has', 'set'])
+  assert.equal(preferences.modelSelections.set('alias', selection), undefined)
+  preferences.modelSelections.set('canonical', null)
+  preferences.thinkingLevels.set('alias', 'high')
+  preferences.permissionModes.set('alias', 'ask')
+
+  assert.equal(preferences.modelSelections.get('alias'), selection)
+  assert.equal(preferences.modelSelections.get('canonical'), null)
+  assert.equal(preferences.thinkingLevels.get('alias'), 'high')
+  assert.equal(preferences.thinkingLevels.get('canonical'), undefined)
+  assert.equal(preferences.permissionModes.get('alias'), 'ask')
+  assert.equal(preferences.permissionModes.get('canonical'), undefined)
+})
+
+test('SessionPreferences tables preserve Map get, has, delete, and value identity semantics', () => {
+  const preferences = new SessionPreferences()
+  const selection = { providerId: 'provider-one', modelId: 'model-one' }
+
+  preferences.modelSelections.set('session', selection)
+  preferences.thinkingLevels.set('session', 'xhigh')
+  preferences.permissionModes.set('session', 'full')
+
+  assert.equal(preferences.modelSelections.has('session'), true)
+  assert.equal(preferences.modelSelections.get('session'), selection)
+  assert.equal(preferences.thinkingLevels.has('session'), true)
+  assert.equal(preferences.thinkingLevels.get('session'), 'xhigh')
+  assert.equal(preferences.permissionModes.has('session'), true)
+  assert.equal(preferences.permissionModes.get('session'), 'full')
+
+  assert.equal(preferences.modelSelections.delete('session'), true)
+  assert.equal(preferences.thinkingLevels.delete('session'), true)
+  assert.equal(preferences.permissionModes.delete('session'), true)
+  assert.equal(preferences.modelSelections.has('session'), false)
+  assert.equal(preferences.modelSelections.get('session'), undefined)
+  assert.equal(preferences.thinkingLevels.has('session'), false)
+  assert.equal(preferences.thinkingLevels.get('session'), undefined)
+  assert.equal(preferences.permissionModes.has('session'), false)
+  assert.equal(preferences.permissionModes.get('session'), undefined)
+  assert.equal(preferences.modelSelections.delete('session'), false)
+  assert.equal(preferences.thinkingLevels.delete('session'), false)
+  assert.equal(preferences.permissionModes.delete('session'), false)
+})
+
+test('SessionRuntime owns and exposes SessionPreferences', () => {
+  const runtime = new SessionRuntime({
+    getFreshSessionCounter: () => 0,
+    phiOnlySessionPath: (sessionId) => `phi-session:${sessionId}`
+  })
+
+  assert.equal(runtime.preferences instanceof SessionPreferences, true)
 })
 
 test(

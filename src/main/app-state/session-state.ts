@@ -1,4 +1,5 @@
 import type { ModelSelection, PermissionMode, Project } from '../agent/projects'
+import type { SessionPreferenceTable } from './session-preferences'
 
 export interface SessionStateInitialization {
   freshSessionCounter: number
@@ -14,7 +15,7 @@ interface SessionSwitchCollaborators {
     snapshot: { path: string | undefined; cwd: string }
   ) => PermissionMode
   resolveSessionKeyAlias: (sessionKey: string) => string
-  sessionPermissionModes: Pick<Map<string, PermissionMode>, 'set'>
+  sessionPermissionModes: SessionPreferenceTable<PermissionMode>
 }
 
 interface CreatedSessionPathCollaborators {
@@ -31,7 +32,7 @@ interface ProjectPermissionModeCollaborators {
     cwd: string
   ) => { projectId?: string | null } | null
   resolveSessionKeyAlias: (sessionKey: string) => string
-  sessionPermissionModes: Pick<Map<string, PermissionMode>, 'set'>
+  sessionPermissionModes: SessionPreferenceTable<PermissionMode>
   notifySessionChanged: () => void
 }
 

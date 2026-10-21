@@ -47,6 +47,7 @@ import {
   type SessionSnapshot
 } from './session-lifecycle'
 import type { CurrentSessionPayload } from './current-session-reads'
+import type { SessionPreferenceTable } from '../../app-state/session-preferences'
 
 interface RuntimeRecoveryOperation {
   controller: AbortController
@@ -64,8 +65,8 @@ export interface RuntimeRecoveryControlOptions {
     runtimeRecoveryOperations: Map<string, RuntimeRecoveryOperation>
     runtimeRecoveryFailures: Map<string, RuntimeRecoveryIssue>
     manualCompactionIds: Set<string>
-    sessionModelSelections: Map<string, ModelSelection | null>
-    sessionThinkingLevels: Map<string, ThinkingLevel>
+    sessionModelSelections: SessionPreferenceTable<ModelSelection | null>
+    sessionThinkingLevels: SessionPreferenceTable<ThinkingLevel>
   }
   identity: {
     resolveSessionKeyAlias: (sessionKey: string) => string

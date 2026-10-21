@@ -40,6 +40,7 @@ import {
   createMainRuntimeRecoveryController,
   type RuntimeRecoveryControlOptions
 } from '../agent/session/runtime-recovery-control'
+import type { SessionPreferenceTable } from '../app-state/session-preferences'
 
 interface CurrentSessionPayload {
   path: string | null
@@ -68,7 +69,7 @@ export interface SessionsIpcOptions {
     setCurrentPermissionMode: (permissionMode: PermissionMode) => void
     nextSessionSwitchRequest: () => number
     getSessionSwitchRequest: () => number
-    sessionPermissionModes: Pick<Map<string, PermissionMode>, 'set'>
+    sessionPermissionModes: SessionPreferenceTable<PermissionMode>
     loadedSkillNamesBySession: Pick<Map<string, unknown>, 'delete'>
   }
   reads: {
