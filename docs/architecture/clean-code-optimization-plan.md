@@ -1,7 +1,7 @@
 # Phi 代码整洁度优化方案
 
 Date: 2026-10-18
-Status: 执行中(2026-10-21):P0 第 1–6 步、P1 第 9 步与 `index.ts` 单一领域迁出已完成;`index.ts` 6,224 行,函数层面告警清零;App 拆分暂停在会话切换链;复核补充见第 9 节
+Status: 执行中(2026-10-21):P0 第 1–6 步、P1 第 9 步、`index.ts` 单一领域迁出与会话运行时阶段二 SO-1 至 SO-4 已完成;`index.ts` 4,388 行,函数层面告警清零;App 拆分暂停在会话切换链;复核补充见第 9 节
 依据: Robert C. Martin《代码整洁之道》(Clean Code) + 本仓既有架构契约(`AGENTS.md`、`docs/architecture/frontend-feature-boundaries.md`)
 
 本方案只处理"既有代码的可读性、可测性、可维护性",不新增产品能力,不改动内测范围。
@@ -262,10 +262,10 @@ App shell 拆分正在进行,进度、剩余切片、踩坑记录与「新会话
 
 ## 5. 度量看板(前后对照)
 
-| 指标                                  | 基线(10-18)  | 当前(10-20)  | 目标           | 采集方式                                   |
+| 指标                                  | 基线(10-18)  | 当前(10-21)  | 目标           | 采集方式                                   |
 | ------------------------------------- | ------------ | ------------ | -------------- | ------------------------------------------ |
-| `src/main/index.ts` 行数              | 12,902       | 6,224        | 分阶段         | `wc -l`                                    |
-| `App.tsx` 行数                        | 5,504        | 3,973        | ≤ 1,200        | `wc -l`                                    |
+| `src/main/index.ts` 行数              | 12,902       | 4,388        | 分阶段         | `wc -l`                                    |
+| `App.tsx` 行数                        | 5,504        | 3,991        | ≤ 1,200        | `wc -l`                                    |
 | > 1,000 行的源文件数(`src/` 全量)     | 6(含例外)    | 10           | 0(数据除外)    | `wc -l`;两个边界检查只覆盖 main / renderer |
 | `isRecord` 定义数                     | 80           | 2            | 1              | `grep -c`                                  |
 | 错误消息 idiom 数                     | 166          | 5            | ≤ 10           | `grep -c`                                  |
@@ -276,7 +276,7 @@ App shell 拆分正在进行,进度、剩余切片、踩坑记录与「新会话
 | `main-integration` 单文件 `test()` 数 | 331          | 334          | ≤ 60           | `grep -c`                                  |
 | ESLint `--max-warnings`               | 未设         | 1,396        | 逐版本下调     | `package.json`                             |
 
-`index.ts` 的目标已于 2026-10-21 改为分阶段(用户确认,见 [session-runtime-service-design.md](session-runtime-service-design.md) 第 7 节):会话运行时阶段一完成约 6,000 行、阶段二完成约 4,000 行,之后再评估 `bootstrap/` 拆分向 ≤ 800 推进。
+`index.ts` 的目标已于 2026-10-21 改为分阶段(用户确认,见 [session-runtime-service-design.md](session-runtime-service-design.md) 第 7 节):会话运行时阶段一完成约 6,000 行、阶段二目标 4,600–4,700 行(SO-1 至 SO-4 完成后实际 4,388 行),之后再评估 `bootstrap/` 拆分向 ≤ 800 推进。
 
 `index.ts` 从 13,002 升到 13,014 是 P0-2 把通道字面量换成更长的常量后 prettier 多折的 12 行,
 原因已记录在 `scripts/main-boundaries-baseline.json`;错误消息剩余 5 处是依赖空字符串的有意保留。
