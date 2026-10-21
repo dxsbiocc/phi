@@ -20,6 +20,15 @@
 清理范围、备份和同步结果见 `.phi-acceptance/cleanup-20261019/`。
 真实模型/SSH/Notebook 的当前候选人工验收、终端输入法等清单仍保留，RPC 默认开关没有改变。
 
+## 当前候选解封预检（2026-10-21）
+
+- GPU R8：`baae03c8` 上三场景通过（27.3s；prepare 10.8s / 21 条命令；回执
+  `.phi-acceptance/receipts/2026-10-21T09-17-16-926Z-GPU-r8-a78cf840-0cea-4948-8fd6-9e43ebf40441.json`）。
+  这次同时修复了 R8 私有 ssh-config 写到 `<run>/ssh-config`、导致 `getRemoteHostProfile`
+  发现不到 `ssh-config:` 档案的问题；修复前所有实机 R8 都会报“SSH 服务器档案不存在”。
+- 该预检不等于解封门槛：真实模型对话、当前代码 Notebook/Wrapper、人工界面与 SSH-01/04
+  第 2–4 项仍按 [验证清单](remote-default-on-validation.md) 执行。
+
 ## Claude 记录接续与 Beta 收尾（2026-10-18–19）
 
 本轮导入 Claude 会话 `73c5aed9-09d9-438b-ac7a-70a6d077129b` 的最后记录，
