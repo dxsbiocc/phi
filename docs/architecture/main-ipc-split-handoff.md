@@ -105,6 +105,19 @@ LF-3 `getAgentSession`(风险最高)→ LF-4 启动组装拆成命名阶段。�
 下一步候选:`index.ts` 里剩余的复杂度告警函数(`handlePlanReviewRequest`、`presentableRun`、`scopeFor` 等),
 以及把与会话执行无关、只被单一领域使用的辅助函数继续迁出,使 `index.ts` 接近「生命周期 + 组装」。
 
+### 继续瘦身:单一领域代码与剩余告警(2026-10-21 开始)
+
+`index.ts` 剩 15 条告警。按领域切四刀,每刀把该领域独占的函数迁到对应目录,并把迁出的函数拆到复杂度 ≤ 15、≤ 80 行:
+
+| 刀   | 领域             | 内容                                                                              | 告警                      |
+| ---- | ---------------- | --------------------------------------------------------------------------------- | ------------------------- |
+| SL-1 | 引擎宿主请求     | 交付文件展示、交互请求、计划审阅、各类确认;经 `getPhiEngine().host.register` 接入 | 复杂度 4 条(最高 32)      |
+| SL-2 | 应用级远端运行时 | 远端智能体环境、提示词上下文、桌面工具加载、分发控制                              | 函数长度 1 条             |
+| SL-3 | 会话控制与载荷   | `captureSessionControlTarget`、`getCurrentSessionPayload`、`scopeFor` 等          | 复杂度、长度、嵌套共 5 条 |
+| SL-4 | 消息文本与窗口   | `extractMessageText` 一族纯函数、`createWindow`                                   | 2 条                      |
+
+归属判定用 TypeScript AST:属于某领域的函数,或只被该领域函数使用的函数;被其他代码共用的留在 `index.ts` 并注入。
+
 ## 4. 每刀的执行与验收(项目管理约定)
 
 - 实现交给 Codex(`gpt-5.6-sol`、`xhigh`),每刀一个 worktree:`../Phi-worktrees/ipc-<n>-<domain>`,
