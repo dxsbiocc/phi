@@ -1,7 +1,7 @@
 # 会话运行时服务:设计
 
 Date: 2026-10-21
-Status: 草案,待用户确认(确认前不实施)
+Status: 已确认(2026-10-21,用户同意第 8 节全部 5 点);阶段一按第 4 节实施中
 
 相关文档:[main-ipc-split-handoff.md](main-ipc-split-handoff.md)(规则、审查清单、第 9 步状态类决定)、
 [clean-code-optimization-plan.md](clean-code-optimization-plan.md)(第 3.1 节「主进程可隔离测试」)。
