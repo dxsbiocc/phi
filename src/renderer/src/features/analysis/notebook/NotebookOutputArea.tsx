@@ -10,6 +10,7 @@ import NotebookPreOutput from './NotebookPreOutput'
 import { NotebookPlotlyOutput, NotebookVegaOutput } from './NotebookRichOutput'
 import NotebookHtmlTableOutput from './NotebookTableOutput'
 import { formatNotebookExecutionCompletedAt } from '../lib/notebookExecutionTime'
+import { notebookOutputSurface } from './notebookCellStyles'
 import NotebookOutputHeader from './NotebookOutputHeader'
 import { NotebookOutputWrapContext } from './notebookOutputContext'
 import {
@@ -442,7 +443,9 @@ export default function NotebookOutputArea({
           overflow: 'auto',
           borderTop: 1,
           borderColor: (theme) => alpha(theme.palette.text.primary, 0.08),
-          bgcolor: 'transparent',
+          borderBottomLeftRadius: 1.5,
+          borderBottomRightRadius: 1.5,
+          bgcolor: notebookOutputSurface,
           '&:hover .notebook-output-hover-actions, &:focus-within .notebook-output-hover-actions': {
             opacity: 1,
             pointerEvents: 'auto'

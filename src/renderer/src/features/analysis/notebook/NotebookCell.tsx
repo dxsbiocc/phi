@@ -45,7 +45,9 @@ import NotebookOutputArea from './NotebookOutputArea'
 import {
   notebookAccentColor,
   notebookAccentSelectionShadow,
-  notebookCaretColor
+  notebookCaretColor,
+  notebookLanguageBorderGradient,
+  notebookLanguageSurface
 } from './notebookCellStyles'
 
 export type CellPlacement = 'before' | 'after'
@@ -188,6 +190,21 @@ function NotebookCellImpl({
       ? formatExecutionDuration(cell.executionDurationMs)
       : null
   const showExecutionMeta = isRunning || isCellActive
+  const pythonGradient =
+    cellAccent === 'python' && !provisional && !agentHighlighted && cell.state !== 'error'
+  const languageSurface = notebookLanguageSurface(
+    cellAccent,
+    provisional || agentHighlighted || cell.state === 'error' || isRenderedMarkdown
+      ? 0
+      : isRunning
+        ? 0.03
+        : showEditor
+          ? 0.055
+          : isCellSelected
+            ? 0.065
+            : 0
+  )
+  const pythonBorderAmount = isRunning ? 0.34 : showEditor ? 0.62 : isCellSelected ? 0.72 : 0.22
   const primaryActionLabel = isRenderedMarkdown
     ? analysisCopy.editMarkdown
     : isRunning
@@ -370,8 +387,12 @@ function NotebookCellImpl({
           color: 'text.secondary'
         },
         '&:hover .cell-shell': {
-          borderColor: (theme: Theme) => alpha(notebookAccentColor(theme, cellAccent), 0.42),
-          bgcolor: (theme) => alpha(theme.palette.text.primary, 0.015)
+          borderColor: (theme: Theme) =>
+            pythonGradient ? 'transparent' : alpha(notebookAccentColor(theme, cellAccent), 0.42),
+          bgcolor: (theme) => alpha(theme.palette.text.primary, 0.015),
+          ...(pythonGradient
+            ? { '--phi-notebook-border-gradient': notebookLanguageBorderGradient(0.42) }
+            : {})
         }
       }}
     >
@@ -449,6 +470,7 @@ function NotebookCellImpl({
           border: 1,
           borderColor: (theme) => {
             const accentColor = notebookAccentColor(theme, provisional ? 'ai' : cellAccent)
+            if (pythonGradient) return 'transparent'
             if (isRenderedMarkdown && !showAccentShadow) return 'transparent'
             if (provisional) return alpha(accentColor, 0.72)
             if (agentHighlighted) return alpha(theme.palette.primary.main, 0.82)
@@ -471,6 +493,25 @@ function NotebookCellImpl({
             if (isCellSelected) return alpha(accentColor, 0.065)
             return 'transparent'
           },
+          backgroundImage: languageSurface ?? 'none',
+          ...(pythonGradient
+            ? {
+                '--phi-notebook-border-gradient':
+                  notebookLanguageBorderGradient(pythonBorderAmount),
+                '&::before': {
+                  content: '""',
+                  position: 'absolute',
+                  inset: 0,
+                  borderRadius: 'inherit',
+                  padding: '1px',
+                  background: 'var(--phi-notebook-border-gradient)',
+                  WebkitMask: 'linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)',
+                  WebkitMaskComposite: 'xor',
+                  maskComposite: 'exclude',
+                  pointerEvents: 'none'
+                }
+              }
+            : {}),
           boxShadow: (theme) =>
             showEditor
               ? notebookAccentSelectionShadow(theme, cellAccent, 0.2)

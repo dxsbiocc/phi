@@ -1057,11 +1057,9 @@ test('analysis notebook AI generation opens a positional prompt cell and calls t
     notebookViewModelSource,
     /export type NotebookCellAccent = 'markdown' \| 'python' \| 'r' \| 'code' \| 'ai'/
   )
-  assert.match(
-    notebookCellStylesSource,
-    /if \(accent === 'python'\) return theme\.palette\.warning\.main/
-  )
-  assert.match(notebookCellStylesSource, /if \(accent === 'r'\) return '#276DC3'/)
+  assert.match(notebookCellStylesSource, /if \(accent === 'python'\) return NOTEBOOK_PYTHON_BLUE/)
+  assert.match(notebookCellStylesSource, /NOTEBOOK_R_BLUE = '#276DC3'/)
+  assert.match(notebookCellStylesSource, /if \(accent === 'r'\) return NOTEBOOK_R_BLUE/)
   assert.match(notebookCellStylesSource, /if \(accent === 'markdown'\) return '#607D8B'/)
   assert.match(
     notebookCellStylesSource,

@@ -144,4 +144,5 @@ test('notebook output area uses marimo-style flow-root scrolling layout', () => 
   assert.match(source, /clear: 'both'/)
   assert.match(source, /display: 'flow-root'/)
   assert.match(source, /overflow: 'auto'/)
+  assert.match(source, /bgcolor: notebookOutputSurface/)
 })
