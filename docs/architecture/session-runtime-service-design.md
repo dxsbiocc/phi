@@ -1,7 +1,7 @@
 # 会话运行时服务:设计
 
 Date: 2026-10-21
-Status: 已确认(2026-10-21,用户同意第 8 节全部 5 点);阶段一按第 4 节实施中
+Status: 阶段一已完成(SR-1 至 SR-4,2026-10-21);阶段二计划见第 10 节,待用户确认
 
 相关文档:[main-ipc-split-handoff.md](main-ipc-split-handoff.md)(规则、审查清单、第 9 步状态类决定)、
 [clean-code-optimization-plan.md](clean-code-optimization-plan.md)(第 3.1 节「主进程可隔离测试」)。
@@ -210,3 +210,53 @@ SessionRuntime                组合以上四者;只放跨注册表的操作(建
 3. 续写计数、标题任务、已加载技能等表暂不纳入,阶段一完成后再判断。
 4. 阶段二不在本次确认范围,阶段一完成后单独出切片计划。
 5. 采纳第 7 节的分阶段目标,替换方案中的「≤ 800 行」。
+
+---
+
+## 9. 阶段一结果(2026-10-21)
+
+| 刀   | 内容                                                       | 提交       | `index.ts` 行数 |
+| ---- | ---------------------------------------------------------- | ---------- | --------------- |
+| SR-1 | `SessionKeyRegistry` 与 `SessionRuntime` 骨架              | `3b3edb97` | 6,224 → 6,191   |
+| SR-2 | `SessionLifecycleRegistry`(生命周期、中止控制器、清理屏障) | `05007b74` | 6,191 → 6,149   |
+| SR-3 | `SessionPreferences`(三张偏好表,窄接口、不做规范化)        | `35e8018f` | 6,149           |
+| SR-4 | `PromptRunRegistry`(队列、代数、活跃运行、恢复锁、压缩锁)  | `282d5b54` | 6,149 → 6,099   |
+
+每刀全量门首轮 0 失败;告警保持 1,396。`index.ts` 已没有会话运行时的模块级状态表。
+
+**耦合指标(同一脚本、同一口径)**:组装函数依赖的 `index.ts` 内部名字 102 → 86,其中被其他代码共用的
+85 → 69。第 7 节预估的「约 20」偏乐观,原因是当时假设共享名字大多是状态访问函数;实测剩下的 69 个是:
+
+| 类别                         | 约数 | 说明                                                                                                                           |
+| ---------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------ |
+| 应用级基础设施               | 12   | `runtime`、`AGENT_DIR`、`getActiveWindow`、`sendToAllWindows`、`logUnexpectedError`、`createWindow` 等;组装根本来就该有        |
+| 在 `index.ts` 构造的协作对象 | 16   | `runnerRegistry`、`environmentBuilds`、`wrapperJobs`、`jupyterServerRegistry`、`remoteConnectionTracker` 等;在这里创建并往下传 |
+| 会话编排函数                 | 20   | 切换、创建、提示词运行、清单查找、偏好解析、会话来源;阶段二目标                                                                |
+| 其他领域辅助函数             | 21   | 远端项目上下文 8、内容包 6、notebook 4、模型解析 2 等                                                                          |
+
+约 28 个(前两类)是组装根的合理下限,不追求消除。
+
+## 10. 阶段二计划:编排迁出(待确认)
+
+把依赖会话服务的编排搬到 `src/main/session-runtime/`(与 `app-state/` 的状态类分开:这里放流程,那里放状态)。
+每个模块依赖 `SessionRuntime` 的窄接口和少量协作者,不 import `index.ts`。
+
+| 刀   | 内容                                                                                                                                                                         | 估算行数 | 风险                              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------- |
+| SO-1 | 清单查找与三个偏好解析(`findPhiManifestForSession`、`resolveSession*`、`projectForSession`)                                                                                  | ~60      | 低                                |
+| SO-2 | 会话来源与链接(`linkPhiManagedSessionKey`、`runtimeSessionPath`、`resolveOriginSession`、`currentRuntimeOriginScope`、`resolveRecoverableJobOrigin` 等)                      | ~110     | 中                                |
+| SO-3 | 会话切换与创建(`disposeAndSwitchSession`、`createPhiManagedSession`、`createRemoteManagedSession`、`invalidateAgentSession`、`getAgentSession` 与 LF-3 留下的 17 个创建阶段) | ~650     | 高;可再拆成「切换」与「创建」两刀 |
+| SO-4 | 提示词运行编排(LF-2 留下的阶段、`stopPromptRun`、`stopAllPromptRuns`、`captureSessionControlTarget`)                                                                         | ~350     | 高                                |
+| DM   | 其他领域小块(远端项目上下文、内容包、notebook),沿用 SL 做法,可与 SO 交替进行                                                                                                 | ~265     | 低                                |
+
+合计约 1,450 行。考虑新增的接线代码,阶段二完成后 `index.ts` 预计 **4,600–4,700 行**(修正第 7 节的「约 4,000」)。
+共享名字预计降到 30–35 个,接近上面说的合理下限。
+
+顺序建议:SO-1 → SO-2 → DM(穿插)→ SO-3(切换)→ SO-3(创建)→ SO-4。前两刀风险低、能先定下 `session-runtime/`
+的依赖写法;高风险的切换、创建、运行放在后面,每刀先补特征化测试。规则沿用第 4 节与交接文档第 1、4 节。
+
+需要确认:
+
+1. 编排放 `src/main/session-runtime/`,与 `app-state/` 的状态类分开。
+2. 采纳上面的顺序与切片(SO-3 拆成两刀)。
+3. 修正后的阶段二目标:`index.ts` 4,600–4,700 行,共享名字 30–35 个。

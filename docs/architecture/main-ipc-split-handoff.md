@@ -1,7 +1,7 @@
 # 主进程 IPC 拆分:交接文档
 
 Date: 2026-10-20
-Status: IPC 拆分、运行时上下文、超长函数、单一领域迁出(SL-1 至 SL-4)均已完成。`src/main/index.ts` 13,014 → 6,224 行,不注册 IPC、无模块级 `let`,函数层面告警清零,只剩文件长度一条
+Status: IPC 拆分、运行时上下文、超长函数、单一领域迁出、会话运行时阶段一(SR-1 至 SR-4)均已完成。`src/main/index.ts` 13,014 → 6,099 行;阶段二计划见 [session-runtime-service-design.md](session-runtime-service-design.md) 第 10 节
 
 给接手这条线的新会话看。读完应能直接派发下一刀,不需要回看之前的对话。
 
