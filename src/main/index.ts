@@ -121,7 +121,6 @@ import type { ThinkingLevel } from './agent/runtime/model-thinking-levels'
 import {
   alignCurrentSessionToPromptTarget,
   parsePromptTarget,
-  type PromptTargetInput,
   type PromptTargetControlOptions
 } from './agent/session/prompt-target-control'
 import {
@@ -157,7 +156,6 @@ import {
   requireProject,
   getProjectByCwd,
   subscribeRemoteProjectConnection,
-  type PermissionMode,
   type ModelSelection,
   type Project
 } from './agent/projects'
@@ -370,7 +368,7 @@ import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jo
 import { normalizeProjectMemorySettings } from '../shared/projectMemoryTypes'
 import { validatePresentedFiles } from './agent/deliverables/present-files'
 import { validateRemotePresentedFiles } from './agent/deliverables/remote-present-files'
-import { type SessionLifecycle, type SessionSnapshot } from './agent/session/session-lifecycle'
+import { type SessionSnapshot } from './agent/session/session-lifecycle'
 import { SessionRunnerRegistry } from './agent/session/session-runner-registry'
 import {
   executePromptRun as executePromptRunWithDeps,
@@ -387,7 +385,6 @@ import { createLocalFileIcons } from './local-file-icons'
 import { createLocalFilePreviews } from './local-file-previews'
 import { SessionTitleGenerator } from './agent/session/session-title-generation'
 import { persistPromptImages } from './agent/session/prompt-images'
-import type { PromptImageInput } from '../shared/promptImageTypes'
 import {
   appendSessionEvent,
   createRunId,
@@ -414,6 +411,11 @@ import { createCreatedSessionEvents } from './session-runtime/created-session-ev
 import { createAgentSessionCreation } from './session-runtime/agent-session-creation'
 import { createSessionControlTarget } from './session-runtime/session-control-target'
 import { createPromptRunStop } from './session-runtime/prompt-run-stop'
+import {
+  createPromptRunAdmission,
+  type AdmittedPromptRun,
+  type SubmitPromptInput
+} from './session-runtime/prompt-run-admission'
 import icon from '../../resources/icon.png?asset'
 
 import { isRecord } from '../shared/guards'
@@ -2600,91 +2602,35 @@ function flushPendingContinuations(phiSessionId: string, runWasCancelled: boolea
   }
 }
 
-interface SubmitPromptInput {
-  sessionKey: string
-  snapshot: SessionSnapshot & { permissionMode: PermissionMode }
-  text: string
-  images?: PromptImageInput[]
-  promptTarget: PromptTargetInput | null
-  /** A prompt Phi sends on its own (e.g. a background run ended), not the user's words. */
-  automatic?: boolean
-  planMode?: boolean
-}
-
-interface ResolvedPromptRunTarget {
-  input: SubmitPromptInput
-  normalizedText: string
-  promptTarget: PromptTargetInput | null
-  runSessionKey: string
-  runLifecycle: SessionLifecycle<AgentSessionResult>
-  runSessionGeneration: number
-  runSnapshot: SessionSnapshot & { permissionMode: PermissionMode }
-  automaticModelSelection: boolean
-  project: Project | undefined
-}
-
-interface AdmittedPromptRun extends ResolvedPromptRunTarget {
-  phiSessionId: string
-  stableSessionPath: string
-  runId: string
-}
-
-interface PromptRunContext extends AdmittedPromptRun {
+interface PromptRunContext extends AdmittedPromptRun<AgentSessionResult> {
   runGeneration: number
   storedImages: ReturnType<typeof persistPromptImages>
   otherActiveProjectRuns: number
   promptRun: PromptRun
 }
 
-function resolvePromptRunTarget(input: SubmitPromptInput): ResolvedPromptRunTarget {
-  const normalizedText = input.text
-  const promptTarget = input.promptTarget
-  const runSessionKey = sessionKeys.canonicalize(input.sessionKey)
-  const runLifecycle = lifecycles.forKey(runSessionKey)
-  const runSessionGeneration = runLifecycle.currentGeneration
-  const runSnapshot = input.snapshot
-  const automaticModelSelection =
-    sessionResolution.resolveSessionModelSelection(runSessionKey, runSnapshot) === null
-  const project = sessionResolution.projectForSession(runSessionKey, runSnapshot)
-  if (
-    input.planMode &&
-    (project?.location.kind === 'ssh' || isRemoteProjectAnchorPath(runSnapshot.cwd))
-  ) {
-    throw new Error('远程项目暂不支持计划评审')
-  }
-  return {
-    input,
-    normalizedText,
-    promptTarget,
-    runSessionKey,
-    runLifecycle,
-    runSessionGeneration,
-    runSnapshot,
-    automaticModelSelection,
-    project
-  }
-}
+const { resolveTarget: resolvePromptRunTarget, admit: admitPromptRun } =
+  createPromptRunAdmission<AgentSessionResult>({
+    keys: { canonicalize: (key) => sessionKeys.canonicalize(key) },
+    lifecycles: { forKey: (key) => lifecycles.forKey(key) },
+    resolution: {
+      projectForSession: sessionResolution.projectForSession,
+      resolveSessionModelSelection: sessionResolution.resolveSessionModelSelection
+    },
+    linking: { ensurePhiSessionId: sessionKeyLinking.ensurePhiSessionId },
+    runs: {
+      hasActiveRun: (key) => promptRuns.hasActiveRun(key),
+      runtimeRecoveryOperations: promptRuns.runtimeRecoveryOperations,
+      manualCompactionIds: promptRuns.manualCompactionIds
+    },
+    paths: {
+      phiOnlySessionPath,
+      isRemoteAnchorPath: (cwd) => isRemoteProjectAnchorPath(cwd)
+    },
+    createRunId
+  })
 
-function admitPromptRun(target: ResolvedPromptRunTarget): AdmittedPromptRun {
-  const phiSessionId = sessionKeyLinking.ensurePhiSessionId(
-    target.runSessionKey,
-    target.runSnapshot,
-    target.normalizedText || (target.input.images?.length ? '图片' : undefined)
-  )
-  if (promptRuns.runtimeRecoveryOperations.has(phiSessionId))
-    throw new Error('会话正在恢复，请等待恢复操作结束')
-  if (promptRuns.manualCompactionIds.has(phiSessionId)) {
-    throw new Error('上下文压缩正在进行，请稍后发送消息')
-  }
-  const stableSessionPath = phiOnlySessionPath(phiSessionId)
-  const runId = createRunId()
-  if (promptRuns.hasActiveRun(target.runSessionKey)) {
-    throw new Error('会话正在运行')
-  }
-  return { ...target, phiSessionId, stableSessionPath, runId }
-}
-
-function allocatePromptRun(admission: AdmittedPromptRun): PromptRunContext {
+function allocatePromptRun(admission: AdmittedPromptRun<AgentSessionResult>): PromptRunContext {
   const runGeneration = promptRuns.advanceGeneration(admission.runSessionKey)
   // A real user message starts the automatic wake-up count over only after preflight succeeds.
   if (!admission.input.automatic) automaticContinuations.delete(admission.phiSessionId)

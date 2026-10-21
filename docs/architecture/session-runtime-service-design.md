@@ -1,7 +1,7 @@
 # 会话运行时服务:设计
 
 Date: 2026-10-21
-Status: 阶段一已完成(SR-1 至 SR-4);阶段二进行中:SO-1 至 SO-3、SO-4a 已完成,SO-4b 与 DM 待做
+Status: 阶段一已完成(SR-1 至 SR-4);阶段二进行中:SO-1 至 SO-3、SO-4a、SO-4b1 已完成,SO-4b2 与 DM 待做
 
 相关文档:[main-ipc-split-handoff.md](main-ipc-split-handoff.md)(规则、审查清单、第 9 步状态类决定)、
 [clean-code-optimization-plan.md](clean-code-optimization-plan.md)(第 3.1 节「主进程可隔离测试」)。
@@ -252,10 +252,12 @@ SessionRuntime                组合以上四者;只放跨注册表的操作(建
 合计约 1,450 行。考虑新增的接线代码,阶段二完成后 `index.ts` 预计 **4,600–4,700 行**(修正第 7 节的「约 4,000」)。
 共享名字预计降到 30–35 个,接近上面说的合理下限。
 
-执行状态(2026-10-21):SO-1、SO-2、SO-3 已完成。SO-4 拆成两刀:SO-4a 已迁出
+执行状态(2026-10-21):SO-1、SO-2、SO-3 已完成。SO-4 拆成三段:SO-4a 已迁出
 `captureSessionControlTarget`(`session-runtime/session-control-target.ts`)与
-`stopPromptRun`/`stopAllPromptRuns`(`session-runtime/prompt-run-stop.ts`),
-新增停止编排单测 `tests/prompt-run-stop.test.ts`;`index.ts` 4,626 行,SO-4b(LF-2 准入与执行编排)和 DM 待做。
+`stopPromptRun`/`stopAllPromptRuns`(`session-runtime/prompt-run-stop.ts`);
+SO-4b1 已迁出目标解析与准入(`session-runtime/prompt-run-admission.ts`),
+并补 `tests/prompt-run-stop.test.ts`、`tests/prompt-run-admission.test.ts`。
+`index.ts` 4,572 行;SO-4b2(队列、执行、收尾)和 DM 待做。
 
 顺序建议:SO-1 → SO-2 → DM(穿插)→ SO-3(切换)→ SO-3(创建)→ SO-4。前两刀风险低、能先定下 `session-runtime/`
 的依赖写法;高风险的切换、创建、运行放在后面,每刀先补特征化测试。规则沿用第 4 节与交接文档第 1、4 节。
