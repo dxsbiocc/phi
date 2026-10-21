@@ -16,6 +16,11 @@ import {
   buildPhiRemoteProjectSystemPrompt
 } from '../src/main/agent/main-system-prompt'
 import type { RuntimeRecoveryApi } from '../src/shared/runtimeRecoveryTypes'
+import {
+  remoteRecoveryTargetForSession,
+  sameRuntimeRecoveryTarget,
+  shouldAutoConnectRemoteSession
+} from '../src/renderer/src/features/chat/lib/runtimeRecoveryState'
 import { IPC } from '../src/shared/ipcChannels'
 
 const base = {
@@ -221,6 +226,131 @@ test('SSH fork capability is absent and a stale App callback also refuses its IP
     /onForkUserMessage=\{[\s\S]{0,250}activeProjectLocation\?\.kind === 'ssh'[\s\S]{0,100}\? undefined/
   )
   assert.match(app, /<RuntimeRecoveryBanner[\s\S]{0,400}target=\{runtimeRecoveryTarget\}/)
+})
+
+test('opening a disconnected remote chat attaches its original runtime without sending a prompt', async () => {
+  const compiled = appExpression('onOpenSessionFromSidebar')
+  const current = {
+    activeSessionPath: 'phi-session:phi',
+    activePhiSessionId: 'phi',
+    activeProjectId: 'project',
+    activeProjectLocation: { kind: 'ssh' },
+    activeSessionGeneration: 3
+  }
+  const calls: string[] = []
+  let issue = 'disconnected'
+  const module = { exports: undefined as unknown }
+  new Function(
+    'module',
+    'appCopy',
+    'autoConnectingSessionIdsRef',
+    'remoteRecoveryTargetForSession',
+    'sameRuntimeRecoveryTarget',
+    'shouldAutoConnectRemoteSession',
+    'useSessionStore',
+    'onSelectSession',
+    'navigateToView',
+    'rendererApi',
+    'onRuntimeRecovered',
+    'showSnackbarError',
+    compiled
+  )(
+    module,
+    appCopy,
+    { current: new Set<string>() },
+    remoteRecoveryTargetForSession,
+    sameRuntimeRecoveryTarget,
+    shouldAutoConnectRemoteSession,
+    { getState: () => current },
+    async () => calls.push('select'),
+    () => calls.push('navigate'),
+    {
+      getRuntimeRecoveryState: async () => {
+        calls.push('state')
+        return { phase: 'recovery-required', issue, canResume: true }
+      },
+      resumeRuntimeSession: async (target: unknown) => {
+        calls.push('resume')
+        return { phase: 'connected', target }
+      }
+    },
+    async () => calls.push('refresh'),
+    () => calls.push('error')
+  )
+  const open = module.exports as (path: string) => Promise<void>
+  await open(current.activeSessionPath)
+  assert.deepEqual(calls, ['select', 'navigate', 'state', 'resume', 'refresh'])
+
+  calls.length = 0
+  issue = 'model-unavailable'
+  await open(current.activeSessionPath)
+  assert.deepEqual(calls, ['select', 'navigate', 'state'])
+
+  calls.length = 0
+  current.activeProjectLocation.kind = 'local'
+  await open(current.activeSessionPath)
+  assert.deepEqual(calls, ['select', 'navigate'])
+})
+
+test('remote chat auto-attach ignores navigation away and duplicate clicks', async () => {
+  const compiled = appExpression('onOpenSessionFromSidebar')
+  const current = {
+    activeSessionPath: 'phi-session:phi',
+    activePhiSessionId: 'phi',
+    activeProjectId: 'project',
+    activeProjectLocation: { kind: 'ssh' },
+    activeSessionGeneration: 3
+  }
+  let resolveState!: (value: unknown) => void
+  const state = new Promise((resolve) => {
+    resolveState = resolve
+  })
+  const calls: string[] = []
+  const module = { exports: undefined as unknown }
+  new Function(
+    'module',
+    'appCopy',
+    'autoConnectingSessionIdsRef',
+    'remoteRecoveryTargetForSession',
+    'sameRuntimeRecoveryTarget',
+    'shouldAutoConnectRemoteSession',
+    'useSessionStore',
+    'onSelectSession',
+    'navigateToView',
+    'rendererApi',
+    'onRuntimeRecovered',
+    'showSnackbarError',
+    compiled
+  )(
+    module,
+    appCopy,
+    { current: new Set<string>() },
+    remoteRecoveryTargetForSession,
+    sameRuntimeRecoveryTarget,
+    shouldAutoConnectRemoteSession,
+    { getState: () => current },
+    async () => undefined,
+    () => undefined,
+    {
+      getRuntimeRecoveryState: () => {
+        calls.push('state')
+        return state
+      },
+      resumeRuntimeSession: async () => calls.push('resume')
+    },
+    async () => calls.push('refresh'),
+    () => calls.push('error')
+  )
+  const open = module.exports as (path: string) => Promise<void>
+  const first = open(current.activeSessionPath)
+  await Promise.resolve()
+  const second = open(current.activeSessionPath)
+  await Promise.resolve()
+  current.activePhiSessionId = 'peer'
+  current.activeSessionPath = 'phi-session:peer'
+  resolveState({ phase: 'recovery-required', issue: 'disconnected', canResume: true })
+  await Promise.all([first, second])
+  assert.deepEqual(calls, ['state'])
 })
 
 test('App recovery refresh never applies an old result after navigation to a peer', async () => {

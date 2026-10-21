@@ -71,6 +71,11 @@ import { HomeView } from './features/home/HomeView'
 import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import { RuntimeRecoveryBanner } from './features/chat/components/RuntimeRecoveryBanner'
+import {
+  remoteRecoveryTargetForSession,
+  sameRuntimeRecoveryTarget,
+  shouldAutoConnectRemoteSession
+} from './features/chat/lib/runtimeRecoveryState'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
 import { BackgroundJobsPanel, LATEST_JUPYTER_JOB_KEY } from './features/jobs/BackgroundJobsPanel'
 import {
@@ -2895,12 +2900,40 @@ function App(): React.JSX.Element {
     navigateToView('chat')
   }, [navigateToView, onNewChat])
 
+  const autoConnectingSessionIdsRef = useRef<Set<string>>(new Set())
   const onOpenSessionFromSidebar = useCallback(
     async (path: string): Promise<void> => {
       await onSelectSession(path)
       navigateToView('chat')
+      const target = remoteRecoveryTargetForSession(useSessionStore.getState())
+      if (!target || target.sessionPath !== path) return
+      if (autoConnectingSessionIdsRef.current.has(target.sessionId)) return
+      autoConnectingSessionIdsRef.current.add(target.sessionId)
+      try {
+        const state = await rendererApi.getRuntimeRecoveryState(target)
+        if (
+          !sameRuntimeRecoveryTarget(
+            remoteRecoveryTargetForSession(useSessionStore.getState()),
+            target
+          ) ||
+          !shouldAutoConnectRemoteSession(state)
+        )
+          return
+        const recovered = await rendererApi.resumeRuntimeSession(target)
+        await onRuntimeRecovered(recovered)
+      } catch (error) {
+        if (
+          sameRuntimeRecoveryTarget(
+            remoteRecoveryTargetForSession(useSessionStore.getState()),
+            target
+          )
+        )
+          showSnackbarError(error, appCopy.reconnectFailed)
+      } finally {
+        autoConnectingSessionIdsRef.current.delete(target.sessionId)
+      }
     },
-    [navigateToView, onSelectSession]
+    [navigateToView, onRuntimeRecovered, onSelectSession, rendererApi, showSnackbarError]
   )
 
   const onStartProjectChatFromSidebar = useCallback(
@@ -3051,19 +3084,15 @@ function App(): React.JSX.Element {
 
   const runtimeRecoveryTarget = useMemo<RuntimeRecoveryTarget | null>(
     () =>
-      activeProjectLocation?.kind === 'ssh' &&
-      activePhiSessionId &&
-      activeProjectId &&
-      activeSessionPath
-        ? {
-            sessionId: activePhiSessionId,
-            projectId: activeProjectId,
-            sessionPath: activeSessionPath,
-            sessionGeneration: activeSessionGeneration
-          }
-        : null,
+      remoteRecoveryTargetForSession({
+        activeProjectLocation,
+        activePhiSessionId,
+        activeProjectId,
+        activeSessionPath,
+        activeSessionGeneration
+      }),
     [
-      activeProjectLocation?.kind,
+      activeProjectLocation,
       activePhiSessionId,
       activeProjectId,
       activeSessionPath,

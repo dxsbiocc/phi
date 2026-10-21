@@ -388,6 +388,7 @@ async function captureRuntimeRecoveryScope(
       } finally {
         options.state.runtimeRecoveryOperations.delete(target.sessionId)
         finish()
+        options.events.notifySessionChanged()
       }
     }
   }

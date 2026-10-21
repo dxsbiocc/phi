@@ -21,6 +21,10 @@ Recommendation key: **keep** = needed and cheap; **simplify** = the goal is righ
 | A11 | Server must have `flock`; locks are released on disconnect | Concurrent deploys do not corrupt each other | A precondition only | **keep** |
 | A12 | Phi never downloads the OMP binary on the server; it is verified on the desktop and uploaded | Login nodes are often offline; the server cannot reach the network | One upload at install time | **keep** |
 
+2026-10-21 UX clarification for A10: selecting a remote conversation is an explicit user action
+that may attach to its verified original journal. It does not re-send an interrupted prompt or job.
+Background disconnects still must not trigger an automatic replay.
+
 ## B. Sub-agents (T14)
 
 | # | Constraint | Why it exists | Cost | Recommendation |
