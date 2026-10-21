@@ -1,6 +1,6 @@
 import type { CurrentContextUsage } from '../../../shared/contextUsageTypes'
 import type { ProjectLocation } from '../../../shared/projectLocation'
-import type { PermissionMode, Project } from '../projects'
+import type { PermissionMode } from '../projects'
 import type { CreateAgentSessionResult } from '../runtime/runtime-adapter'
 import type { PhiSessionManifest } from './session-store'
 import {
@@ -56,19 +56,6 @@ export interface CurrentSessionPayloadMessagesOptions {
   getPhiSessionIdForKey: (sessionKey: string) => string | undefined
   getCurrentLifecycle: () => SessionLifecycle<CreateAgentSessionResult>
   getCurrentResolvedSession: () => Promise<CreateAgentSessionResult | null>
-}
-
-export function selectCurrentSessionProjectPayloadFields(
-  manifest: Pick<PhiSessionManifest, 'projectId'> | null,
-  project: Pick<Project, 'id'> | undefined,
-  projectLocation: ProjectLocation | undefined
-): Pick<CurrentSessionPayload, 'projectId' | 'projectLocation'> {
-  return {
-    ...(manifest?.projectId || project?.id
-      ? { projectId: manifest?.projectId ?? project?.id }
-      : {}),
-    ...(projectLocation ? { projectLocation } : {})
-  }
 }
 
 async function getCurrentResolvedSessionIfReady(

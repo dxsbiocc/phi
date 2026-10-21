@@ -15,7 +15,7 @@ interface SessionSwitchCollaborators {
     snapshot: { path: string | undefined; cwd: string }
   ) => PermissionMode
   resolveSessionKeyAlias: (sessionKey: string) => string
-  sessionPermissionModes: SessionPreferenceTable<PermissionMode>
+  sessionPermissionModes: Pick<SessionPreferenceTable<PermissionMode>, 'set'>
 }
 
 interface CreatedSessionPathCollaborators {

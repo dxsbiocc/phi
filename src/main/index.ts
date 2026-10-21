@@ -128,7 +128,6 @@ import {
 import {
   getCurrentContextUsage,
   getCurrentSessionPayloadWithMessages,
-  selectCurrentSessionProjectPayloadFields,
   type CurrentContextUsageOptions,
   type CurrentSessionPayload,
   type CurrentSessionPayloadMessagesOptions
@@ -229,7 +228,6 @@ import {
   isRemoteProjectAnchorPath,
   remoteProjectAnchorPath
 } from './agent/remote-project-anchor'
-import type { ProjectLocation } from '../shared/projectLocation'
 import {
   bashApprovalDigest,
   editApprovalDigest,
@@ -434,7 +432,6 @@ import { persistPromptImages } from './agent/session/prompt-images'
 import type { PromptImageInput } from '../shared/promptImageTypes'
 import {
   appendSessionEvent,
-  createPhiSession,
   createRunId,
   findPhiSessionById,
   findPhiSessionByRuntimePath,
@@ -452,6 +449,8 @@ import { createMainRuntimeContext } from './app-state/main-runtime-context'
 import { createSessionKeyLinking } from './session-runtime/session-key-linking'
 import { createSessionOrigins } from './session-runtime/session-origins'
 import { createSessionResolution } from './session-runtime/session-resolution'
+import { createCurrentSessionPayload } from './session-runtime/current-session-payload'
+import { createSessionSwitching } from './session-runtime/session-switching'
 import icon from '../../resources/icon.png?asset'
 
 import { isRecord } from '../shared/guards'
@@ -1273,6 +1272,51 @@ const loadAppRemoteDesktopTools = createAppRemoteDesktopTools({
 })
 // Main-only internal migration gate; renderer session input cannot enable this route.
 const remoteOmpRpcEnabled = process.env.PHI_REMOTE_OMP_RPC === '1'
+const { getSessionStatusPayload, getCurrentSessionPayload } = createCurrentSessionPayload({
+  sessionState,
+  sessionKeys,
+  lifecycles,
+  promptRuns,
+  runners: runnerRegistry,
+  sessionResolution
+})
+const {
+  createPhiManagedSession,
+  createRemoteManagedSession,
+  getCurrentResolvedSession,
+  invalidateAgentSession,
+  disposeAndSwitchSession
+} = createSessionSwitching({
+  state: {
+    sessionState,
+    sessionKeys,
+    lifecycles,
+    promptRuns,
+    permissionModes: preferences.permissionModes
+  },
+  sessions: {
+    linkPhiManagedSessionKey: sessionKeyLinking.linkPhiManagedSessionKey,
+    resolveSessionPermissionMode: sessionResolution.resolveSessionPermissionMode,
+    getCurrentSessionPayload,
+    getNoProjectTaskFolder
+  },
+  creation: {
+    getSelectedThinkingLevel: () => selectedThinkingLevel,
+    isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
+    ensureRemoteProjectAnchor
+  },
+  invalidation: {
+    loadedSkillNamesBySession,
+    cancelBrowserRun,
+    cleanupBrowserRunTabs,
+    cancelPendingRunWaits,
+    cleanupSessionRecord
+  },
+  browser: {
+    getRegistry: () => runtime.workspaceServices.browserWorkspaceRegistry
+  },
+  events: { notifySessionChanged, writeAppLog }
+})
 installAppRemoteSessionRouting({
   enabled: remoteOmpRpcEnabled,
   ...(process.env.PHI_REMOTE_STARTUP_DIAGNOSTICS === '1'
@@ -3047,109 +3091,6 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<PromptRunResul
   return run
 }
 
-function getSessionStatusPayload(
-  sessionKey: string,
-  path: string | undefined,
-  cwd: string
-): Pick<
-  CurrentSessionPayload,
-  | 'status'
-  | 'unreadKind'
-  | 'lastRunOutcome'
-  | 'currentRunId'
-  | 'currentRunStartedAt'
-  | 'lastActivityAt'
-> {
-  const promptRun = promptRuns.activeRun(sessionKey)
-  const activeRun = promptRun ? runnerRegistry.getActiveRun(promptRun.phiSessionId) : null
-  if (activeRun) {
-    return {
-      status: activeRun.status,
-      unreadKind:
-        activeRun.status === 'needs_approval'
-          ? 'approval'
-          : activeRun.status === 'needs_input'
-            ? 'input'
-            : null,
-      currentRunId: activeRun.runId,
-      currentRunStartedAt: activeRun.startedAt
-    }
-  }
-
-  const manifest = sessionResolution.findPhiManifestForSession(sessionKey, path, cwd)
-  if (manifest) {
-    return {
-      status: manifest.status,
-      unreadKind: manifest.unreadKind,
-      lastRunOutcome: manifest.lastRunOutcome,
-      currentRunId: manifest.currentRunId,
-      currentRunStartedAt: manifest.currentRunStartedAt,
-      lastActivityAt: manifest.lastActivityAt
-    }
-  }
-
-  return { status: 'idle', unreadKind: null }
-}
-
-function createPhiManagedSession(
-  cwd: string,
-  permissionMode: PermissionMode,
-  title?: string
-): { path: string; sessionId: string; permissionMode: PermissionMode } {
-  const project = getProjectByCwd(cwd)
-  const model =
-    sessionState.selectedModel !== undefined
-      ? sessionState.selectedModel
-      : (project?.defaultModel ?? null)
-  const sessionTitle = messageContentTitleText(title)
-  const session = createPhiSession({
-    kind: project ? 'project' : 'ordinary',
-    projectId: project?.id ?? null,
-    cwd,
-    cwdRealPath: project?.workingDirectoryRealPath ?? cwd,
-    ...(sessionTitle ? { title: sessionTitle } : {}),
-    permissionMode,
-    model,
-    thinkingLevel: project?.defaultThinkingLevel ?? selectedThinkingLevel
-  })
-  const path = phiOnlySessionPath(session.sessionId)
-  const key = sessionKeys.createPhiKey(session.sessionId, cwd)
-  sessionKeyLinking.linkPhiManagedSessionKey(key, cwd, session.sessionId)
-  preferences.permissionModes.set(sessionKeys.canonicalize(key), permissionMode)
-  return { path, sessionId: session.sessionId, permissionMode }
-}
-
-function createRemoteManagedSession(projectId: string): {
-  path: string
-  sessionId: string
-  cwd: string
-  permissionMode: PermissionMode
-} {
-  const project = getProject(projectId)
-  if (!project || project.location.kind !== 'ssh') throw new Error('远程项目不存在')
-  const cwd = ensureRemoteProjectAnchor(project.id)
-  const model =
-    sessionState.selectedModel !== undefined &&
-    !(remoteOmpRpcEnabled && sessionState.selectedModel === null)
-      ? sessionState.selectedModel
-      : (project.defaultModel ?? null)
-  const session = createPhiSession({
-    kind: 'project',
-    projectId: project.id,
-    projectLocation: project.location,
-    cwd,
-    cwdRealPath: cwd,
-    permissionMode: project.permissionMode,
-    model,
-    ...(project.defaultThinkingLevel ? { thinkingLevel: project.defaultThinkingLevel } : {})
-  })
-  const path = phiOnlySessionPath(session.sessionId)
-  const key = sessionKeys.createPhiKey(session.sessionId, cwd)
-  sessionKeyLinking.linkPhiManagedSessionKey(key, cwd, session.sessionId)
-  preferences.permissionModes.set(sessionKeys.canonicalize(key), project.permissionMode)
-  return { path, sessionId: session.sessionId, cwd, permissionMode: project.permissionMode }
-}
-
 const automaticTitleJobs = new Map<string, Promise<void>>()
 const titleRenameQueues = new Map<string, Promise<void>>()
 const manualTitleRequests = new Set<string>()
@@ -3585,22 +3526,6 @@ async function cleanupSessionRecord(
   await barrier.promise
 }
 
-async function getCurrentResolvedSession(): Promise<AgentSessionResult | null> {
-  const lifecycle = lifecycles.forKey(sessionState.sessionKey)
-  const record = lifecycle.currentRecord
-  if (!record) return null
-
-  try {
-    const result = await record.promise
-    return lifecycle.isCurrent(record) ? result : null
-  } catch (error) {
-    if (!isStaleSessionError(error)) {
-      throw error
-    }
-    return null
-  }
-}
-
 interface CapturedSessionControlTarget {
   current: CurrentSessionPayload
   rpc: boolean
@@ -3773,31 +3698,6 @@ function captureSessionControlTarget(
   }
 }
 
-function getCurrentSessionPayload(): CurrentSessionPayload {
-  sessionState.refreshPermissionMode(sessionResolution.resolveSessionPermissionMode)
-  const manifest = sessionResolution.findPhiManifestForSession(
-    sessionState.sessionKey,
-    sessionState.sessionPath,
-    sessionState.cwd
-  )
-  const phiSessionId = manifest?.sessionId ?? sessionKeys.phiSessionIdFor(sessionState.sessionKey)
-  const path = phiSessionId ? phiOnlySessionPath(phiSessionId) : (sessionState.sessionPath ?? null)
-  const project = manifest?.projectId
-    ? getProject(manifest.projectId)
-    : getProjectByCwd(sessionState.cwd)
-  const projectLocation = manifest?.projectLocation ?? project?.location
-  return {
-    path,
-    ...(phiSessionId ? { phiSessionId } : {}),
-    cwd: sessionState.cwd,
-    displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : sessionState.cwd,
-    ...selectCurrentSessionProjectPayloadFields(manifest, project, projectLocation),
-    sessionGeneration: lifecycles.forKey(sessionState.sessionKey).currentGeneration,
-    permissionMode: sessionState.permissionMode,
-    ...getSessionStatusPayload(sessionState.sessionKey, sessionState.sessionPath, sessionState.cwd)
-  }
-}
-
 function notifySessionChanged(): void {
   const payload = getCurrentSessionPayload()
   void runtime.workspaceServices.browserWorkspaceRegistry
@@ -3828,27 +3728,6 @@ function countOtherActiveProjectRuns(projectId: string, sessionKey: string): num
   return promptRuns
     .activeRuns()
     .filter((run) => run.projectId === projectId && run.sessionKey !== sessionKey).length
-}
-
-async function invalidateAgentSession(): Promise<void> {
-  const phiSessionId = sessionKeys.phiSessionIdFor(sessionState.sessionKey)
-  if (phiSessionId) loadedSkillNamesBySession.delete(phiSessionId)
-  const lifecycle = lifecycles.forKey(sessionState.sessionKey)
-  const previous = lifecycle.advance()
-  promptRuns.advanceGeneration(sessionState.sessionKey)
-  const activePromptRun = promptRuns.activeRun(sessionState.sessionKey)
-  if (activePromptRun) {
-    activePromptRun.cancelled = true
-    cancelBrowserRun(activePromptRun)
-    void cleanupBrowserRunTabs(activePromptRun)
-  }
-  cancelPendingRunWaits(
-    activePromptRun
-      ? { sessionId: activePromptRun.phiSessionId, runId: activePromptRun.runId }
-      : undefined
-  )
-  notifySessionChanged()
-  void cleanupSessionRecord(previous)
 }
 
 async function stopPromptRun(
@@ -3945,43 +3824,6 @@ function cleanupMainWindowRuntime(): Promise<void> {
       await Promise.allSettled([cleanupBrowserWorkspaceRegistry()])
     }
   )
-}
-
-// A user-visible conversation switch points future getAgentSession() calls at a
-// different file/cwd/permission mode. It deliberately does not abort the old
-// session: switching conversations is navigation, not stop.
-async function disposeAndSwitchSession(
-  path: string | undefined,
-  cwd: string = getNoProjectTaskFolder(),
-  permissionMode: PermissionMode = 'auto',
-  options: { notify?: boolean } = {}
-): Promise<{
-  path: string | null
-  cwd: string
-  displayCwd: string
-  projectId?: string
-  projectLocation?: ProjectLocation
-  sessionGeneration: number
-  permissionMode: PermissionMode
-}> {
-  sessionState.switchTo(path, cwd, permissionMode, {
-    createSessionKey: sessionKeys.createKey.bind(sessionKeys),
-    resolveSessionPermissionMode: sessionResolution.resolveSessionPermissionMode,
-    resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
-    sessionPermissionModes: preferences.permissionModes
-  })
-  const target = getCurrentSessionPayload()
-  try {
-    await runtime.workspaceServices.browserWorkspaceRegistry?.setActiveSession(
-      target.phiSessionId ?? null
-    )
-  } catch {
-    writeAppLog({ level: 'error', event: 'browser_presentation_transition_failed' })
-  }
-  if (options.notify !== false) {
-    notifySessionChanged()
-  }
-  return target
 }
 
 const sessionCreationContextDependencies: SessionCreationContextDependencies = {
