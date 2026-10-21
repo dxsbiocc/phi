@@ -128,19 +128,16 @@ test('Connector sort labels update after import while raw filter keys stay stabl
     setUiLanguage(language)
     const markup = render(
       createElement(McpConnectorCatalogToolbar, {
-        query: 'unchanged query',
         signIn: '需要登录',
         install: 'not-added',
         sort: 'added',
-        onQueryChange: () => undefined,
         onSignInChange: () => undefined,
         onInstallChange: () => undefined,
         onSortChange: () => undefined
       })
     )
     assert.ok(markup.includes(sort))
-    assert.ok(markup.includes(placeholder))
-    assert.match(markup, /value="unchanged query"/)
+    assert.equal(connectorCopy.searchConnectors, placeholder)
   }
 })
 

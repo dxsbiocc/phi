@@ -35,6 +35,16 @@ test('catalog query, group or page changes reset the internal table scroller', (
   assert.equal(results.scrollTop, 0)
 })
 
+test('catalog tables reserve the scrollbar slot inside the right padding', () => {
+  const table = readFileSync('src/renderer/src/components/catalog/CatalogResultsTable.tsx', 'utf8')
+  const layout = readFileSync('src/renderer/src/components/catalog/CatalogBrowseLayout.tsx', 'utf8')
+  assert.match(table, /scrollbarGutter: 'stable'/)
+  assert.match(table, /width: `calc\(100% \+ \$\{CATALOG_SCROLLBAR_GUTTER\}\)`/)
+  assert.match(table, /mr: `-\$\{CATALOG_SCROLLBAR_GUTTER\}`/)
+  assert.match(layout, /scrollbarGutter: scrollContent \? 'stable' : 'auto'/)
+  assert.match(layout, /pr: scrollContent \? CATALOG_SCROLLBAR_GUTTER : 3/)
+})
+
 test('catalog reset tolerates loading and empty content without a table', () => {
   const results = { scrollTop: 0, querySelector: () => null }
   assert.doesNotThrow(() => runInNewContext(effect, { resultsRef: { current: results } }))

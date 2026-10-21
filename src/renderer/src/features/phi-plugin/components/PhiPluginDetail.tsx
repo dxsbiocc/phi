@@ -139,7 +139,14 @@ export function PhiPluginDetail({
     <Box
       component="main"
       data-phi-plugin-detail="true"
-      sx={{ flex: 1, minWidth: 0, minHeight: 0, height: '100%', overflowY: 'auto' }}
+      sx={{
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
+        height: '100%',
+        overflowY: 'auto',
+        scrollbarGutter: 'stable'
+      }}
     >
       <Box sx={{ width: '100%', maxWidth: 940, mx: 'auto', px: { xs: 2.5, md: 4 }, py: 3.5 }}>
         <Stack spacing={2.5}>

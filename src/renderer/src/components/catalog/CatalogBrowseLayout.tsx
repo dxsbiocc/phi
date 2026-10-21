@@ -12,6 +12,7 @@ import {
 } from '@mui/material'
 import { PhiIcons } from '../../icons'
 import { resourceCatalogCopy } from '../../lib/resourceUi'
+import { CATALOG_SCROLLBAR_GUTTER } from './catalogPaging'
 
 export interface CatalogBrowseGroup {
   id: string
@@ -28,6 +29,10 @@ export function CatalogBrowseLayout({
   query,
   onQueryChange,
   searchLabel,
+  hideSearch = false,
+  heading,
+  filters,
+  scrollContent = false,
   onClose,
   busy = false,
   page = 0,
@@ -44,6 +49,10 @@ export function CatalogBrowseLayout({
   query: string
   onQueryChange: (query: string) => void
   searchLabel: string
+  hideSearch?: boolean
+  heading?: React.ReactNode
+  filters?: React.ReactNode
+  scrollContent?: boolean
   onClose: () => void
   busy?: boolean
   page?: number
@@ -84,16 +93,24 @@ export function CatalogBrowseLayout({
           bgcolor: 'background.default'
         }}
       >
-        <Typography variant="h6">{title}</Typography>
+        <Typography variant="h6" sx={{ fontWeight: 700 }}>
+          {title}
+        </Typography>
       </Box>
       <Stack
         direction="row"
         spacing={1}
         sx={{ gridColumn: { xs: 1, md: 2 }, gridRow: 1, alignItems: 'center', px: 3, py: 2 }}
       >
-        <Typography variant="h5" sx={{ flex: 1, minWidth: 0 }}>
-          {selected?.label ?? title}
-        </Typography>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          {heading != null && typeof heading !== 'string' ? (
+            heading
+          ) : (
+            <Typography variant="h5" noWrap sx={{ fontWeight: 700 }}>
+              {typeof heading === 'string' ? heading : (selected?.label ?? title)}
+            </Typography>
+          )}
+        </Box>
         {actions}
         <IconButton
           aria-label={closeLabel}
@@ -129,10 +146,19 @@ export function CatalogBrowseLayout({
               onClick={() => onGroupChange(group.id)}
               sx={{ borderRadius: 1.5, mb: { xs: 0, md: 0.5 }, flexShrink: 0, gap: 1 }}
             >
-              <Typography variant="body2" noWrap sx={{ flex: 1 }} title={group.label}>
+              <Typography
+                variant="body2"
+                noWrap
+                sx={{ flex: 1, fontWeight: 500 }}
+                title={group.label}
+              >
                 {group.label}
               </Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}
+              >
                 {group.count}
               </Typography>
             </ListItemButton>
@@ -149,34 +175,42 @@ export function CatalogBrowseLayout({
           flexDirection: 'column'
         }}
       >
-        <Box sx={{ px: 3, pb: 2 }}>
-          <TextField
-            fullWidth
-            size="small"
-            value={query}
-            placeholder={searchLabel}
-            onChange={(event) => onQueryChange(event.target.value)}
-            slotProps={{
-              htmlInput: { 'aria-label': searchLabel },
-              input: {
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <PhiIcons.action.search size={16} />
-                  </InputAdornment>
-                )
-              }
-            }}
-          />
-        </Box>
+        {hideSearch ? null : (
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', px: 3, pb: 2 }}>
+            <TextField
+              fullWidth
+              size="small"
+              value={query}
+              placeholder={searchLabel}
+              onChange={(event) => onQueryChange(event.target.value)}
+              slotProps={{
+                htmlInput: { 'aria-label': searchLabel },
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <PhiIcons.action.search size={16} />
+                    </InputAdornment>
+                  )
+                }
+              }}
+            />
+            {filters}
+          </Stack>
+        )}
         <Box
           ref={resultsRef}
           sx={{
             flex: 1,
+            width: '100%',
+            minWidth: 0,
             minHeight: 0,
             display: 'flex',
             flexDirection: 'column',
-            overflow: 'hidden',
-            px: 3,
+            overflow: scrollContent ? 'auto' : 'hidden',
+            // Card catalogs scroll this box. The 12px gutter sits inside the 24px padding, so the cards' right edge matches the pager.
+            scrollbarGutter: scrollContent ? 'stable' : 'auto',
+            pl: 3,
+            pr: scrollContent ? CATALOG_SCROLLBAR_GUTTER : 3,
             pb: 2
           }}
         >

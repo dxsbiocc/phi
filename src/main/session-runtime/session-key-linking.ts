@@ -98,7 +98,7 @@ export function createSessionKeyLinking(deps: SessionKeyLinkingDeps): SessionKey
     title
   ) => {
     const existing = deps.sessionKeys.phiSessionIdFor(sessionKey)
-    if (existing) {
+    if (existing && stores.findPhiSessionById(existing)) {
       linkPhiManagedSessionKey(sessionKey, snapshot.cwd, existing)
       return existing
     }

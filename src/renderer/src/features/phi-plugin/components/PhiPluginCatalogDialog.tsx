@@ -29,6 +29,7 @@ import type { PackageTrust, PackageUpdateView } from '../../../../../shared/pack
 import { errorMessage } from '../../../../../shared/errorCodes'
 import type { PhiPluginInstallPreview } from '../../../../../shared/phiPluginTypes'
 import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
+import { CATALOG_SCROLLBAR_GUTTER } from '../../../components/catalog/catalogPaging'
 import { PhiIcons } from '../../../icons'
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
@@ -217,6 +218,7 @@ export function PhiPluginCatalogContent({
         sx={{
           minHeight: 0,
           overflowY: 'auto',
+          scrollbarGutter: 'stable',
           p: 1.5,
           borderRight: 1,
           borderColor: 'divider',
@@ -292,7 +294,17 @@ export function PhiPluginCatalogContent({
             }}
           />
         </Stack>
-        <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', px: 3, pb: 3 }}>
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            scrollbarGutter: 'stable',
+            pl: 3,
+            pr: CATALOG_SCROLLBAR_GUTTER,
+            pb: 3
+          }}
+        >
           {error ? (
             <Alert severity="error" sx={{ mb: 2 }}>
               {error}

@@ -164,6 +164,17 @@ test('ensurePhiSessionId re-links and returns an existing registry id', () => {
       resolveSessionThinkingLevel: () => {
         throw new Error('thinking lookup must not run')
       }
+    },
+    stores: {
+      findPhiSessionById: (sessionId) =>
+        sessionId === 'phi-existing' ? ({ sessionId } as never) : null,
+      updateSessionManifest: () => {
+        throw new Error('not used')
+      },
+      createPhiSession: () => {
+        throw new Error('not used')
+      },
+      getProjectByCwd: () => undefined
     }
   })
 
@@ -176,6 +187,47 @@ test('ensurePhiSessionId re-links and returns an existing registry id', () => {
     'phi-existing'
   )
   assert.deepEqual(calls, ['alias', 'id:source-key', 'id:stable-key', 'state'])
+})
+
+test('ensurePhiSessionId creates a record when the registry id has no settings file', () => {
+  const created: string[] = []
+  const linking = createSessionKeyLinking({
+    sessionRuntime: { alias: () => undefined },
+    sessionKeys: {
+      createKey: () => 'materialized-key',
+      createPhiKey: () => 'stable-key',
+      phiSessionIdFor: () => 'phi-missing',
+      setPhiSessionId: () => undefined,
+      sameCanonical: () => true
+    },
+    sessionState: { linkPhiManagedSessionKey: () => undefined },
+    sessionResolution: {
+      findPhiManifestForSession: () => null,
+      resolveSessionModelSelection: () => null,
+      resolveSessionThinkingLevel: () => 'high'
+    },
+    stores: {
+      findPhiSessionById: () => null,
+      updateSessionManifest: () => {
+        throw new Error('not used')
+      },
+      createPhiSession: () => {
+        created.push('created')
+        return { sessionId: 'phi-new' } as never
+      },
+      getProjectByCwd: () => undefined
+    }
+  })
+
+  assert.equal(
+    linking.ensurePhiSessionId('source-key', {
+      path: undefined,
+      cwd: '/workspace',
+      permissionMode: 'auto'
+    }),
+    'phi-new'
+  )
+  assert.deepEqual(created, ['created'])
 })
 
 test('ensurePhiSessionId re-links a manifest discovered by session resolution', () => {

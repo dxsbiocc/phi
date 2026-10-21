@@ -93,12 +93,12 @@ export interface SessionCompactionControlOptions {
   }
 }
 
-function currentAutoCompactionManifest(
+function currentAutoCompactionContext(
   target: unknown,
   options: SessionCompactionControlOptions
 ): {
   current: CurrentSessionPayload
-  manifest: PhiSessionManifest
+  manifest: PhiSessionManifest | null
   sessionKey: string
 } {
   const current = options.state.getCurrentPayload()
@@ -117,8 +117,22 @@ function currentAutoCompactionManifest(
     current.path ?? undefined,
     current.cwd
   )
-  if (!manifest) throw new Error('当前会话尚未建立设置记录')
   return { current, manifest, sessionKey }
+}
+
+function autoCompactionSettingsFromDefaults(
+  current: CurrentSessionPayload,
+  defaults: Awaited<ReturnType<typeof readAutoCompactionDefaults>>
+): CurrentAutoCompactionSettings {
+  return {
+    sessionPath: current.path,
+    phiSessionId: current.phiSessionId ?? null,
+    sessionGeneration: current.sessionGeneration,
+    enabled: defaults.enabled,
+    thresholdPercent: defaults.thresholdPercent,
+    defaults,
+    overrides: {}
+  }
 }
 
 function autoCompactionSettingsPatch(value: unknown): AutoCompactionSettingsPatch {
@@ -155,7 +169,13 @@ export async function getCurrentAutoCompactionSettings(
   target: unknown,
   options: SessionCompactionControlOptions
 ): Promise<CurrentAutoCompactionSettings> {
-  const { current, manifest, sessionKey } = currentAutoCompactionManifest(target, options)
+  const { current, manifest, sessionKey } = currentAutoCompactionContext(target, options)
+  if (!manifest) {
+    return autoCompactionSettingsFromDefaults(
+      current,
+      await readAutoCompactionDefaults(current.cwd, options.workspace.agentDir)
+    )
+  }
   const captured = options.sessions.captureSessionControlTarget(
     sessionKey,
     manifest.sessionId,
@@ -192,7 +212,19 @@ export async function setCurrentAutoCompactionSettings(
   value: unknown,
   options: SessionCompactionControlOptions
 ): Promise<CurrentAutoCompactionSettings> {
-  const { current, manifest, sessionKey } = currentAutoCompactionManifest(target, options)
+  const located = currentAutoCompactionContext(target, options)
+  let manifest = located.manifest
+  if (!manifest) {
+    const phiSessionId = options.sessions.ensurePhiSessionId(located.sessionKey, {
+      path: options.state.getCurrentSessionPath(),
+      cwd: options.state.getCurrentCwd(),
+      permissionMode: options.state.getCurrentPermissionMode()
+    })
+    manifest = findPhiSessionById(phiSessionId)
+  }
+  if (!manifest) throw new Error('当前会话尚未建立设置记录')
+  const current = options.state.getCurrentPayload()
+  const sessionKey = options.state.getCurrentSessionKey()
   const captured = options.sessions.captureSessionControlTarget(sessionKey, manifest.sessionId)
   const patch = autoCompactionSettingsPatch(value)
   const overrides: AutoCompactionOverrides = { ...(manifest.autoCompaction ?? {}) }

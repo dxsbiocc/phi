@@ -3,21 +3,17 @@ import { resourceUi } from '../../../lib/resourceUi'
 import { connectorCopy } from '../lib/connectorCopy'
 import { useState } from 'react'
 import {
-  Box,
   Button,
   Divider,
-  InputAdornment,
   Menu,
   MenuItem,
   Popover,
   Stack,
-  TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography
 } from '@mui/material'
 import { GoChevronDown, GoFilter } from 'react-icons/go'
-import { PhiIcons } from '../../../icons'
 import type {
   ConnectorInstallFilter,
   ConnectorSignInFilter,
@@ -37,20 +33,16 @@ const SORT_LABEL: Record<ConnectorSort, string> = {
 }
 
 export function McpConnectorCatalogToolbar({
-  query,
   signIn,
   install,
   sort,
-  onQueryChange,
   onSignInChange,
   onInstallChange,
   onSortChange
 }: {
-  query: string
   signIn: ConnectorSignInFilter
   install: ConnectorInstallFilter
   sort: ConnectorSort
-  onQueryChange: (value: string) => void
   onSignInChange: (value: ConnectorSignInFilter) => void
   onInstallChange: (value: ConnectorInstallFilter) => void
   onSortChange: (value: ConnectorSort) => void
@@ -62,24 +54,7 @@ export function McpConnectorCatalogToolbar({
   const filterActive = signIn !== 'all' || install !== 'all'
 
   return (
-    <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', mb: 2 }}>
-      <TextField
-        size="small"
-        placeholder={connectorCopy.searchConnectors}
-        value={query}
-        onChange={(event) => onQueryChange(event.target.value)}
-        slotProps={{
-          input: {
-            startAdornment: (
-              <InputAdornment position="start">
-                <PhiIcons.action.search fontSize="small" />
-              </InputAdornment>
-            )
-          }
-        }}
-        sx={{ width: { xs: 220, md: 320 } }}
-      />
-      <Box sx={{ flex: 1 }} />
+    <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', flexShrink: 0 }}>
       <Button
         color={filterActive ? 'primary' : 'inherit'}
         startIcon={<GoFilter size={16} />}

@@ -1,7 +1,13 @@
+import { getUiLocale } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
 import { connectorCopy } from './connectorCopy'
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
 import type { McpServerSummary } from '../../../types'
+import type {
+  ConnectorInstallFilter,
+  ConnectorSignInFilter,
+  ConnectorSort
+} from './featuredConnectorFilters'
 
 export const CUSTOM_CONNECTOR_GROUP = '自建' as const
 
@@ -102,4 +108,35 @@ export function customConnectorEntries(
     })
 
   return [...jobEntries, ...serverEntries]
+}
+
+export function filterCustomConnectorEntries(
+  entries: readonly CustomConnectorEntry[],
+  options: {
+    query: string
+    signIn: ConnectorSignInFilter
+    install: ConnectorInstallFilter
+    sort: ConnectorSort
+  }
+): CustomConnectorEntry[] {
+  const query = options.query.trim().toLowerCase()
+  const matched = entries.filter((entry) => {
+    if (options.signIn !== 'all' && options.signIn !== '无需登录') return false
+    const configured = entry.kind === 'server'
+    if (options.install === 'added' && !configured) return false
+    if (options.install === 'not-added' && configured) return false
+    if (!query) return true
+    return [entry.name, entry.subtitle, entry.origin, entry.status].some((value) =>
+      value.toLowerCase().includes(query)
+    )
+  })
+  if (options.sort === 'name') {
+    return [...matched].sort((left, right) => left.name.localeCompare(right.name, getUiLocale()))
+  }
+  if (options.sort === 'added') {
+    return [...matched].sort(
+      (left, right) => Number(right.kind === 'server') - Number(left.kind === 'server')
+    )
+  }
+  return matched
 }

@@ -12,6 +12,7 @@ import {
   McpCustomConnectorEmptyState
 } from '../src/renderer/src/features/mcp/components/McpCustomConnectorCard'
 import { McpCustomConnectorDetail } from '../src/renderer/src/features/mcp/components/McpCustomConnectorDetail'
+import { ConnectorCatalogCardFrame } from '../src/renderer/src/features/mcp/components/ConnectorCatalogCardFrame'
 import { McpCustomConnectorGroup } from '../src/renderer/src/features/mcp/components/McpCustomConnectorGroup'
 import type {
   CustomConnectorJobEntry,
@@ -164,7 +165,7 @@ test('job cards wire View progress to the matching setup job', () => {
     })
   )
   const action = findElement(
-    card,
+    (card.props as { trailing?: ReactNode }).trailing,
     (element) => (element.props as { children?: ReactNode }).children === 'View progress'
   )
 
@@ -194,7 +195,6 @@ test('custom group search filters by subtitle without applying catalog filters',
       entries: [serverEntry(), jobEntry()],
       query: 'mail.ts',
       busy: false,
-      onQueryChange: noop,
       onOpen: noop,
       onViewJob: noop
     })
@@ -207,7 +207,6 @@ test('custom group search filters by subtitle without applying catalog filters',
       entries: [serverEntry()],
       query: 'missing',
       busy: false,
-      onQueryChange: noop,
       onOpen: noop,
       onViewJob: noop
     })
@@ -255,7 +254,7 @@ test('remote custom detail shows its URL, disabled state, and remote removal con
 
 test('server cards are keyboard accessible and disabled servers do not show the added check', () => {
   let opened = 0
-  const card = componentTree(() =>
+  const frame = componentTree(() =>
     McpCustomConnectorCard({
       entry: serverEntry({ status: 'Disabled', enabled: false }),
       busy: false,
@@ -264,6 +263,9 @@ test('server cards are keyboard accessible and disabled servers do not show the 
       },
       onViewJob: noop
     })
+  )
+  const card = componentTree(() =>
+    (frame.type as typeof ConnectorCatalogCardFrame)(frame.props as never)
   )
   const target = {}
   let prevented = false
@@ -294,31 +296,20 @@ test('server cards are keyboard accessible and disabled servers do not show the 
   assert.doesNotMatch(markup, /data-phi-connector-state="added"/)
 })
 
-test('custom group forwards search changes and server-card opens, and renders its own empty state', () => {
-  const queries: string[] = []
+test('custom group opens a server card and renders its own empty state', () => {
   const opened: string[] = []
   const group = componentTree(() =>
     McpCustomConnectorGroup({
       entries: [serverEntry()],
       query: '',
       busy: false,
-      onQueryChange: (value) => queries.push(value),
       onOpen: (entry) => opened.push(entry.server.id),
       onViewJob: noop
     })
   )
-  const search = findElement(
-    group,
-    (element) => (element.props as { placeholder?: string }).placeholder === 'Search Connectors'
-  )
   const card = findElement(group, (element) => element.type === McpCustomConnectorCard)
-  assert.ok(search)
   assert.ok(card)
-  ;(search.props as { onChange: (event: { target: { value: string } }) => void }).onChange({
-    target: { value: 'mail' }
-  })
   ;(card.props as { onOpen: () => void }).onOpen()
-  assert.deepEqual(queries, ['mail'])
   assert.deepEqual(opened, ['literature'])
 
   assert.match(
@@ -327,7 +318,6 @@ test('custom group forwards search changes and server-card opens, and renders it
         entries: [],
         query: '',
         busy: false,
-        onQueryChange: noop,
         onOpen: noop,
         onViewJob: noop
       })

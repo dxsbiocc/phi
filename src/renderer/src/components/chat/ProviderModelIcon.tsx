@@ -18,10 +18,8 @@ import {
   SiX
 } from 'react-icons/si'
 import { TbBrandOpenai } from 'react-icons/tb'
-import { PhiIcons } from '../../icons'
+import { GoDependabot } from 'react-icons/go'
 import { COMPOSER_ICON_SIZE } from './composerControlStyles'
-
-const PsychologyIcon = PhiIcons.state.thinking
 
 /** Home mark from typesafe.ai, kept monochrome so it follows the surrounding text color. */
 function TypeSafeIcon({
@@ -43,7 +41,7 @@ type ProviderIconMeta = {
   key: string
   label: string
   color: string
-  Icon?: IconType
+  Icon: IconType
 }
 
 const PROVIDER_ICON_RULES: Array<ProviderIconMeta & { matches: string[] }> = [
@@ -184,7 +182,8 @@ function providerIconMeta(providerId?: string): ProviderIconMeta {
   return {
     key: 'generic',
     label: 'Model Provider',
-    color: 'text.secondary'
+    color: 'text.secondary',
+    Icon: GoDependabot
   }
 }
 
@@ -199,39 +198,27 @@ export function ProviderModelIcon({
 }): React.JSX.Element {
   const meta = providerIconMeta(providerId)
   const color = disabled ? 'action.disabled' : meta.color
-
-  if (meta.Icon) {
-    const BrandIcon = meta.Icon
-    return (
-      <Box
-        component="span"
-        data-phi-provider-icon={meta.key}
-        aria-label={meta.label}
-        title={meta.label}
-        sx={{
-          alignItems: 'center',
-          color,
-          display: 'inline-flex',
-          flexShrink: 0,
-          fontSize: size,
-          height: '1em',
-          justifyContent: 'center',
-          lineHeight: 0,
-          width: '1em'
-        }}
-      >
-        <BrandIcon color="currentColor" focusable="false" size="1em" />
-      </Box>
-    )
-  }
+  const BrandIcon = meta.Icon
 
   return (
-    <PsychologyIcon
+    <Box
+      component="span"
       data-phi-provider-icon={meta.key}
       aria-label={meta.label}
-      htmlColor={undefined}
-      size={size}
-      sx={{ color }}
-    />
+      title={meta.label}
+      sx={{
+        alignItems: 'center',
+        color,
+        display: 'inline-flex',
+        flexShrink: 0,
+        fontSize: size,
+        height: '1em',
+        justifyContent: 'center',
+        lineHeight: 0,
+        width: '1em'
+      }}
+    >
+      <BrandIcon color="currentColor" focusable="false" size="1em" />
+    </Box>
   )
 }

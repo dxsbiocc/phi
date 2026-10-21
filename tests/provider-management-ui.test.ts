@@ -19,6 +19,7 @@ import {
   type AvailabilityState
 } from '../src/renderer/src/features/settings/lib/modelAvailabilityController'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+import { ProviderModelIcon } from '../src/renderer/src/components/chat/ProviderModelIcon'
 import { componentTree } from './helpers/renderComponentTree'
 import type { ProviderAuthStatus } from '../src/renderer/src/types'
 import type {
@@ -243,4 +244,10 @@ test('capability labels and search recognize decision providers in both language
   assert.doesNotMatch(markup, /Phi 自动使用已启用的决策模型/)
   assert.match(markup, /启用 TypeSafe 提供商/)
   assert.doesNotMatch(markup, /用于决策的模型|使用当前对话模型<\/button>/)
+})
+
+test('providers without a brand mark use the Dependabot icon', () => {
+  const markup = render(createElement(ProviderModelIcon, { providerId: 'custom-lab' }))
+  assert.match(markup, /data-phi-provider-icon="generic"/)
+  assert.match(markup, /M8\.75 11a\.75\.75 0 0 1 \.75\.75v3\.5/)
 })

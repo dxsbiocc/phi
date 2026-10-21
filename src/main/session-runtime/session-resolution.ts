@@ -85,9 +85,10 @@ export function createSessionResolution<TPromptRun extends PhiSessionPromptRun>(
       deps.promptRuns.activeRun(sessionKey)?.phiSessionId ??
       deps.sessionKeys.phiSessionIdFor(sessionKey)
     if (phiSessionId) {
-      return (
-        stores.listPhiSessions().find((manifest) => manifest.sessionId === phiSessionId) ?? null
-      )
+      const remembered = stores
+        .listPhiSessions()
+        .find((manifest) => manifest.sessionId === phiSessionId)
+      if (remembered) return remembered
     }
     if (!path) return null
     const phiOnlySessionId = phiSessionIdFromPath(path)

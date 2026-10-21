@@ -3,7 +3,7 @@ import { resourceUi } from '../../../lib/resourceUi'
 import { resourceCategoryLabel } from '../../../lib/resourceUi'
 import { connectorCopy } from '../lib/connectorCopy'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Box, Button, Dialog, IconButton, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, Dialog, Typography } from '@mui/material'
 import {
   mcpConnectorCategories,
   type McpConnectorSetupProgress,
@@ -13,8 +13,9 @@ import {
 } from '../../../../../shared/mcpConnectorCatalog'
 import { errorMessage } from '../../../../../shared/errorCodes'
 import type { PackageUpdateView } from '../../../../../shared/packageManagerTypes'
-import { PhiIcons } from '../../../icons'
 import { loadContentCatalog } from '../../../lib/contentCatalog'
+import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
+import { catalogDialogPaperSx } from '../../../components/catalog/catalogPaging'
 import type { McpServerSummary } from '../../../types'
 import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
 import {
@@ -29,7 +30,6 @@ import {
   clearFeaturedToolNames
 } from '../lib/featuredToolCache'
 import { McpApiKeyDialog } from './McpApiKeyDialog'
-import { McpConnectorGroupNavigation } from './McpConnectorGroupNavigation'
 import { McpConnectorCatalogToolbar } from './McpConnectorCatalogToolbar'
 import { McpCatalogAddMenu } from './McpCatalogAddMenu'
 import { McpCustomConnectorDialog } from './McpCustomConnectorDialog'
@@ -178,6 +178,23 @@ export function McpConnectorCatalogDialog({
       }),
     [catalogConnectors, setupById]
   )
+  const catalogGroups = useMemo(() => {
+    void uiLanguage
+    return [
+      ...mcpConnectorCategories
+        .map((category) => ({
+          id: category,
+          label: resourceCategoryLabel(category),
+          count: connectors.filter((entry) => entry.category === category).length
+        }))
+        .filter((entry) => entry.count > 0),
+      {
+        id: CUSTOM_CONNECTOR_GROUP,
+        label: resourceCategoryLabel(CUSTOM_CONNECTOR_GROUP),
+        count: customEntries.length
+      }
+    ]
+  }, [connectors, customEntries.length, uiLanguage])
 
   useEffect(() => {
     if (!open) return
@@ -690,55 +707,45 @@ export function McpConnectorCatalogDialog({
       maxWidth={false}
       slotProps={{
         paper: {
-          sx: {
-            width: 'min(1120px, calc(100vw - 96px))',
-            height: 'min(720px, calc(100vh - 96px))',
-            maxHeight: 'calc(100vh - 96px)',
-            borderRadius: 2,
-            overflow: 'hidden',
-            WebkitAppRegion: 'no-drag'
-          }
+          sx: { ...catalogDialogPaperSx, WebkitAppRegion: 'no-drag' }
         }
       }}
     >
-      <Box
-        sx={{
-          display: 'grid',
-          gridTemplateColumns: '248px minmax(0, 1fr)',
-          gridTemplateRows: 'auto minmax(0, 1fr)',
-          height: '100%',
-          minHeight: 0,
-          bgcolor: 'background.paper'
-        }}
-      >
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            px: 3,
-            borderRight: 1,
-            borderColor: 'divider',
-            bgcolor: 'background.default'
-          }}
-        >
-          <Typography variant="h6" sx={{ fontWeight: 700 }}>
-            {resourceUi.connectors}
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', px: 3, pt: 2.5, pb: 2 }}>
-          {page === 'list' ? (
-            <Typography variant="h5" sx={{ fontWeight: 700, flex: 1 }}>
-              {normalizedQuery ? connectorCopy.searchResults : resourceCategoryLabel(group)}
-            </Typography>
-          ) : (
-            <>
-              <Button onClick={() => openGroup(group)}>
-                {connectorCopy.backToGroup(resourceCategoryLabel(group))}
-              </Button>
-              <Box sx={{ flex: 1 }} />
-            </>
-          )}
-          {page === 'list' && (
+      <CatalogBrowseLayout
+        title={resourceUi.connectors}
+        closeLabel={connectorCopy.closeCatalog}
+        groups={catalogGroups}
+        selectedGroupId={group}
+        onGroupChange={(id) => openGroup(id as CatalogGroup)}
+        query={query}
+        onQueryChange={setQuery}
+        searchLabel={connectorCopy.searchConnectors}
+        hideSearch={page === 'detail'}
+        heading={
+          page === 'detail' ? (
+            <Button onClick={() => openGroup(group)} sx={{ px: 0, minWidth: 0 }}>
+              {connectorCopy.backToGroup(resourceCategoryLabel(group))}
+            </Button>
+          ) : normalizedQuery ? (
+            connectorCopy.searchResults
+          ) : undefined
+        }
+        filters={
+          page === 'list' ? (
+            <McpConnectorCatalogToolbar
+              signIn={signInFilter}
+              install={installFilter}
+              sort={sort}
+              onSignInChange={setSignInFilter}
+              onInstallChange={setInstallFilter}
+              onSortChange={setSort}
+            />
+          ) : undefined
+        }
+        scrollContent
+        onClose={close}
+        actions={
+          page === 'list' ? (
             <McpCatalogAddMenu
               onCustom={() => {
                 savedCustomAuthRef.current = null
@@ -749,132 +756,98 @@ export function McpConnectorCatalogDialog({
               onGithub={() => setGithubImportOpen(true)}
               onManageSources={() => setSourcesOpen(true)}
             />
-          )}
-          <IconButton
-            aria-label={connectorCopy.closeCatalog}
-            onClick={close}
-            sx={{
-              width: 32,
-              height: 32,
-              p: 0,
-              flex: '0 0 32px',
-              borderRadius: '50%',
-              '&:hover': { bgcolor: 'action.hover' }
+          ) : undefined
+        }
+      >
+        {sourceError ? (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {sourceError}
+          </Alert>
+        ) : null}
+        {sourceNotice ? (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            {sourceNotice}
+          </Alert>
+        ) : null}
+        {page === 'detail' && group === CUSTOM_CONNECTOR_GROUP && selectedCustom ? (
+          <McpCustomConnectorDetail
+            entry={selectedCustom}
+            busy={busy !== null}
+            error={error}
+            confirmingRemove={removeConfirmationServerId === selectedCustom.server.id}
+            onEnabledChange={(enabled) => void setConnectorEnabled(selectedCustom.server, enabled)}
+            onRequestRemove={() => setRemoveConfirmationServerId(selectedCustom.server.id)}
+            onCancelRemove={() => setRemoveConfirmationServerId(null)}
+            onConfirmRemove={() => void removeCustomConnector(selectedCustom.server)}
+          />
+        ) : page === 'detail' && selected ? (
+          <McpFeaturedConnectorDetails
+            connector={selected}
+            server={matchingServer(selected, servers)}
+            authStatus={selectedAuthStatus}
+            busy={busy !== null || connectorSetupActive(selected.setup)}
+            authorizing={authorizingId === selected.id}
+            updateAvailable={updates.some(
+              (update) => update.type === 'mcp' && update.id === selected.id
+            )}
+            onCancelAuthorize={() => cancelOAuth(selected)}
+            toolNames={toolNames}
+            toolsLoading={toolsLoading}
+            toolsError={toolsError}
+            onAdd={() => requestConnectorAction(selected, 'install')}
+            onRemove={() => {
+              const server = matchingServer(selected, servers)
+              if (server) void remove(server)
             }}
-          >
-            <PhiIcons.action.close size={20} />
-          </IconButton>
-        </Stack>
-        <McpConnectorGroupNavigation
-          connectors={connectors}
-          customCount={customEntries.length}
-          group={group}
-          page={page}
-          onSelect={openGroup}
-        />
-        <Box sx={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          <Box sx={{ flex: 1, overflowY: 'auto', px: 3, py: 3 }}>
-            {sourceError ? (
-              <Alert severity="error" sx={{ mb: 2 }}>
-                {sourceError}
-              </Alert>
-            ) : null}
-            {sourceNotice ? (
-              <Alert severity="info" sx={{ mb: 2 }}>
-                {sourceNotice}
-              </Alert>
-            ) : null}
-            {page === 'detail' && group === CUSTOM_CONNECTOR_GROUP && selectedCustom ? (
-              <McpCustomConnectorDetail
-                entry={selectedCustom}
-                busy={busy !== null}
-                error={error}
-                confirmingRemove={removeConfirmationServerId === selectedCustom.server.id}
-                onEnabledChange={(enabled) =>
-                  void setConnectorEnabled(selectedCustom.server, enabled)
-                }
-                onRequestRemove={() => setRemoveConfirmationServerId(selectedCustom.server.id)}
-                onCancelRemove={() => setRemoveConfirmationServerId(null)}
-                onConfirmRemove={() => void removeCustomConnector(selectedCustom.server)}
-              />
-            ) : page === 'detail' && selected ? (
-              <McpFeaturedConnectorDetails
-                connector={selected}
-                server={matchingServer(selected, servers)}
-                authStatus={selectedAuthStatus}
-                busy={busy !== null || connectorSetupActive(selected.setup)}
-                authorizing={authorizingId === selected.id}
-                updateAvailable={updates.some(
-                  (update) => update.type === 'mcp' && update.id === selected.id
-                )}
-                onCancelAuthorize={() => cancelOAuth(selected)}
-                toolNames={toolNames}
-                toolsLoading={toolsLoading}
-                toolsError={toolsError}
-                onAdd={() => requestConnectorAction(selected, 'install')}
-                onRemove={() => {
-                  const server = matchingServer(selected, servers)
-                  if (server) void remove(server)
-                }}
-                onAuthorize={() => requestConnectorAction(selected, 'oauth')}
-                onApiKey={() => requestConnectorAction(selected, 'api-key')}
-                onBuildEnvironment={() => void buildEnvironment(selected)}
-                onEnabledChange={(enabled) => {
-                  const server = matchingServer(selected, servers)
-                  if (server) void setConnectorEnabled(server, enabled)
-                }}
-                onRetry={() => openDetail(selected, true)}
-              />
-            ) : group === CUSTOM_CONNECTOR_GROUP ? (
-              <McpCustomConnectorGroup
-                entries={customEntries}
-                query={query}
-                busy={busy !== null}
-                onQueryChange={setQuery}
-                onOpen={openCustomDetail}
-                onViewJob={(jobId) => onOpenConnectorJob?.(jobId)}
-              />
-            ) : (
-              <>
-                {catalogLoading && (
-                  <Typography color="text.secondary">{connectorCopy.loadingConnectors}</Typography>
-                )}
-                <McpConnectorCatalogToolbar
-                  query={query}
-                  signIn={signInFilter}
-                  install={installFilter}
-                  sort={sort}
-                  onQueryChange={setQuery}
-                  onSignInChange={setSignInFilter}
-                  onInstallChange={setInstallFilter}
-                  onSortChange={setSort}
-                />
-                <Box
-                  sx={{
-                    display: 'grid',
-                    gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
-                    gap: 1.5
-                  }}
-                >
-                  {!catalogLoading && filteredFeatured.map((connector) => connectorCard(connector))}
-                </Box>
-                {!catalogLoading && filteredFeatured.length === 0 && (
-                  <Typography color="text.secondary" sx={{ mt: 2 }}>
-                    {normalizedQuery || signInFilter !== 'all' || installFilter !== 'all'
-                      ? connectorCopy.noMatches
-                      : connectorCopy.emptyGroup}
-                  </Typography>
-                )}
-              </>
+            onAuthorize={() => requestConnectorAction(selected, 'oauth')}
+            onApiKey={() => requestConnectorAction(selected, 'api-key')}
+            onBuildEnvironment={() => void buildEnvironment(selected)}
+            onEnabledChange={(enabled) => {
+              const server = matchingServer(selected, servers)
+              if (server) void setConnectorEnabled(server, enabled)
+            }}
+            onRetry={() => openDetail(selected, true)}
+          />
+        ) : group === CUSTOM_CONNECTOR_GROUP ? (
+          <McpCustomConnectorGroup
+            entries={customEntries}
+            query={query}
+            signIn={signInFilter}
+            install={installFilter}
+            sort={sort}
+            busy={busy !== null}
+            onOpen={openCustomDetail}
+            onViewJob={(jobId) => onOpenConnectorJob?.(jobId)}
+          />
+        ) : (
+          <>
+            {catalogLoading && (
+              <Typography color="text.secondary">{connectorCopy.loadingConnectors}</Typography>
             )}
-            {error && !(page === 'detail' && group === CUSTOM_CONNECTOR_GROUP) && (
-              <Alert severity="error" sx={{ mt: 3 }} onClose={() => setError(null)}>
-                {error}
-              </Alert>
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
+                gap: 1.5
+              }}
+            >
+              {!catalogLoading && filteredFeatured.map((connector) => connectorCard(connector))}
+            </Box>
+            {!catalogLoading && filteredFeatured.length === 0 && (
+              <Typography color="text.secondary" sx={{ mt: 2 }}>
+                {normalizedQuery || signInFilter !== 'all' || installFilter !== 'all'
+                  ? connectorCopy.noMatches
+                  : connectorCopy.emptyGroup}
+              </Typography>
             )}
-          </Box>
-        </Box>
-      </Box>
+          </>
+        )}
+        {error && !(page === 'detail' && group === CUSTOM_CONNECTOR_GROUP) && (
+          <Alert severity="error" sx={{ mt: 3 }} onClose={() => setError(null)}>
+            {error}
+          </Alert>
+        )}
+      </CatalogBrowseLayout>
       {customOpen && (
         <McpCustomConnectorDialog
           open

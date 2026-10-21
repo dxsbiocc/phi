@@ -71,7 +71,10 @@ export function PhiPluginSidebar({
       summary={pluginCopy.installedCount(plugins.length)}
       action={<DiscoverButton expanded={catalogOpen} onClick={onOpenCatalog} />}
     >
-      <List disablePadding sx={{ flex: 1, minHeight: 0, overflowY: 'auto', py: 1 }}>
+      <List
+        disablePadding
+        sx={{ flex: 1, minHeight: 0, overflowY: 'auto', scrollbarGutter: 'stable', py: 1 }}
+      >
         {loading && plugins.length === 0 ? (
           <Stack spacing={1.25} sx={{ alignItems: 'center', py: 5 }}>
             <CircularProgress size={22} />

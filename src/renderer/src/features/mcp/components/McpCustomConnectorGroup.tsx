@@ -1,53 +1,44 @@
 import { useUiLanguage } from '../../../lib/i18n'
 import { connectorCopy } from '../lib/connectorCopy'
-import { Box, InputAdornment, TextField, Typography } from '@mui/material'
-import { PhiIcons } from '../../../icons'
-import type { CustomConnectorEntry, CustomConnectorServerEntry } from '../lib/customConnectorGroup'
+import { Box, Typography } from '@mui/material'
+import {
+  filterCustomConnectorEntries,
+  type CustomConnectorEntry,
+  type CustomConnectorServerEntry
+} from '../lib/customConnectorGroup'
+import type {
+  ConnectorInstallFilter,
+  ConnectorSignInFilter,
+  ConnectorSort
+} from '../lib/featuredConnectorFilters'
 import { McpCustomConnectorCard, McpCustomConnectorEmptyState } from './McpCustomConnectorCard'
 
 export function McpCustomConnectorGroup({
   entries,
   query,
+  signIn = 'all',
+  install = 'all',
+  sort = 'default',
   busy,
-  onQueryChange,
   onOpen,
   onViewJob
 }: {
   entries: readonly CustomConnectorEntry[]
   query: string
+  signIn?: ConnectorSignInFilter
+  install?: ConnectorInstallFilter
+  sort?: ConnectorSort
   busy: boolean
-  onQueryChange: (value: string) => void
   onOpen: (entry: CustomConnectorServerEntry) => void
   onViewJob: (jobId: string) => void
 }): React.JSX.Element {
   useUiLanguage()
 
-  const normalizedQuery = query.trim().toLowerCase()
-  const filtered = normalizedQuery
-    ? entries.filter((entry) =>
-        [entry.name, entry.subtitle].some((value) => value.toLowerCase().includes(normalizedQuery))
-      )
-    : entries
-  // Preserve the helper's job-first/name order; catalog sort and sign-in filters do not apply.
+  const filtered = filterCustomConnectorEntries(entries, { query, signIn, install, sort })
+  const filteredEmpty = query.trim().length > 0 || signIn !== 'all' || install !== 'all'
 
   return (
     <>
-      <TextField
-        size="small"
-        placeholder={connectorCopy.searchConnectors}
-        value={query}
-        onChange={(event) => onQueryChange(event.target.value)}
-        slotProps={{
-          input: {
-            startAdornment: (
-              <InputAdornment position="start">
-                <PhiIcons.action.search fontSize="small" />
-              </InputAdornment>
-            )
-          }
-        }}
-        sx={{ width: { xs: 220, md: 320 }, mb: 2 }}
-      />
       <Box
         sx={{
           display: 'grid',
@@ -68,7 +59,7 @@ export function McpCustomConnectorGroup({
         ))}
       </Box>
       {filtered.length === 0 ? (
-        normalizedQuery ? (
+        filteredEmpty ? (
           <Typography color="text.secondary" sx={{ mt: 2 }}>
             {connectorCopy.noMatches}
           </Typography>

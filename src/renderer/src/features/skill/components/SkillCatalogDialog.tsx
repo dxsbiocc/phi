@@ -15,7 +15,7 @@ import { CatalogAddButton } from '../../../components/catalog/CatalogAddButton'
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
 import { useBusyKeys } from '../../../components/catalog/useBusyKeys'
 import { usePackageRemoval } from '../../../components/catalog/usePackageRemoval'
-import { getCatalogPage } from '../../../components/catalog/catalogPaging'
+import { catalogDialogPaperSx, getCatalogPage } from '../../../components/catalog/catalogPaging'
 import { loadContentCatalog } from '../../../lib/contentCatalog'
 import {
   CatalogResultsTable,
@@ -307,15 +307,7 @@ export function SkillCatalogDialog({
       maxWidth={false}
       slotProps={{
         paper: {
-          sx: {
-            width: 'min(1100px, calc(100vw - 48px))',
-            height: 'min(720px, calc(100vh - 64px))',
-            maxWidth: 'calc(100vw - 48px)',
-            maxHeight: 'calc(100vh - 64px)',
-            m: 3,
-            borderRadius: 2,
-            overflow: 'hidden'
-          }
+          sx: catalogDialogPaperSx
         }
       }}
     >

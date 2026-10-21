@@ -213,6 +213,29 @@ test('findPhiManifestForSession resolves Phi-only and runtime paths and returns 
   )
 })
 
+test('findPhiManifestForSession uses a runtime path when the remembered Phi id has no record', () => {
+  const harness = createHarness()
+  const runtimeManifest = createManifest({
+    cwd: '/runtime-workspace',
+    runtimeSessionPath: '/runtime/remembered.jsonl'
+  })
+  harness.phiSessionIds.set('session', 'missing-session')
+
+  assert.equal(
+    harness.resolution.findPhiManifestForSession(
+      'session',
+      runtimeManifest.runtimeSessionPath,
+      runtimeManifest.cwd
+    )?.sessionId,
+    runtimeManifest.sessionId
+  )
+  harness.phiSessionIds.set('dangling', 'missing-session')
+  assert.equal(
+    harness.resolution.findPhiManifestForSession('dangling', undefined, '/workspace'),
+    null
+  )
+})
+
 test('projectForSession prefers a manifest project and otherwise resolves by cwd', () => {
   const manifestProject = createTestProject('manifest')
   const cwdProject = createTestProject('cwd')

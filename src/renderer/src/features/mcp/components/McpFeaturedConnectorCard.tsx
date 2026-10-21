@@ -2,8 +2,8 @@ import { useUiLanguage } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
 import { connectorCopy } from '../lib/connectorCopy'
 import { Box, Chip, CircularProgress, IconButton, Stack, Typography } from '@mui/material'
-import { alpha } from '@mui/material/styles'
-import { GoCheck, GoKey, GoLock, GoPlay, GoPlus, GoSync } from 'react-icons/go'
+import { GoKey, GoLock, GoPlay, GoPlus, GoSync } from 'react-icons/go'
+import { ConnectorAddedMark, ConnectorCatalogCardFrame } from './ConnectorCatalogCardFrame'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 import { ConnectorIcon } from './ConnectorIcon'
 import { connectorSetupActive, connectorSetupLabel } from '../lib/connectorSetupPresentation'
@@ -96,220 +96,172 @@ export function McpFeaturedConnectorCard({
                   : connectorCopy.signInNamed(connector.name)
 
   return (
-    <Box
-      role="button"
-      tabIndex={0}
-      onKeyDown={(event) => {
-        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
-          event.preventDefault()
-          onOpen()
-        }
-      }}
-      onClick={onOpen}
-      data-phi-connector-configured={installed}
-      sx={{
-        minWidth: 0,
-        minHeight: 108,
-        p: 1.75,
-        border: '1px solid',
-        borderColor: 'divider',
-        borderRadius: 2,
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 1.5,
-        cursor: 'pointer',
-        '&:hover': { bgcolor: 'action.hover' }
-      }}
+    <ConnectorCatalogCardFrame
+      icon={<ConnectorIcon icon={connector.icon} />}
+      title={connector.name}
+      description={connector.description}
+      onOpen={onOpen}
+      configured={installed}
+      trailing={
+        settingUp ? (
+          <Box
+            role="status"
+            aria-label={connectorSetupLabel(connector.setup!.phase)}
+            sx={{ width: 34, height: 34, display: 'grid', placeItems: 'center', flexShrink: 0 }}
+          >
+            <CircularProgress size={18} />
+          </Box>
+        ) : installed &&
+          authorized &&
+          enabled &&
+          !authorizing &&
+          !updateAvailable &&
+          !localUnchecked &&
+          !needsEnvironment ? (
+          <ConnectorAddedMark label={connectorCopy.addedNamed(connector.name)} />
+        ) : requiresSignIn && !supportsAuthorization && !authorizing ? (
+          <Box
+            role="img"
+            aria-label={
+              installed
+                ? connectorCopy.unverifiedNamedAuthorization(connector.name)
+                : connectorCopy.unavailableNamedAuthorization(connector.name)
+            }
+            sx={{
+              width: 34,
+              height: 34,
+              display: 'grid',
+              placeItems: 'center',
+              flexShrink: 0,
+              color: 'warning.main'
+            }}
+          >
+            <GoLock size={20} aria-hidden="true" />
+          </Box>
+        ) : (
+          <IconButton
+            aria-label={actionLabel}
+            title={actionLabel}
+            size="small"
+            disabled={
+              !authorizing &&
+              ((Boolean(connector.unavailableReason) && (!installed || updateAvailable)) || busy)
+            }
+            onClick={(event) => {
+              event.stopPropagation()
+              if (authorizing) onCancel?.()
+              else if (needsEnvironment) onBuildEnvironment?.()
+              else if (localUnchecked) onRetry?.()
+              else if (installed && authorized && !enabled && !updateAvailable) onEnable?.()
+              else if (authorized) onAdd()
+              else onAuthorize()
+            }}
+            sx={{
+              width: 34,
+              height: 34,
+              p: 0,
+              display: 'grid',
+              placeItems: 'center',
+              flexShrink: 0,
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 1.5,
+              color: authorizing
+                ? 'primary.main'
+                : installed && !authorized
+                  ? 'warning.main'
+                  : installed && authorized && !enabled
+                    ? 'primary.main'
+                    : undefined
+            }}
+          >
+            {authorizing ? (
+              <CircularProgress
+                size={18}
+                color="inherit"
+                aria-label={connectorCopy.waitingAuthorization}
+              />
+            ) : updateAvailable || localUnchecked ? (
+              <GoSync size={18} aria-hidden="true" />
+            ) : installed && authorized && !enabled ? (
+              <GoPlay size={18} aria-hidden="true" />
+            ) : installed && !authorized ? (
+              connector.apiKey ? (
+                <GoKey size={18} aria-hidden="true" />
+              ) : (
+                <GoLock size={18} aria-hidden="true" />
+              )
+            ) : (
+              <GoPlus size={18} aria-hidden="true" />
+            )}
+          </IconButton>
+        )
+      }
     >
-      <ConnectorIcon icon={connector.icon} />
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography noWrap title={connector.name} sx={{ fontWeight: 700 }}>
-          {connector.name}
-        </Typography>
+      <Stack
+        direction="row"
+        spacing={0.75}
+        sx={{
+          mt: 0.75,
+          minWidth: 0,
+          minHeight: 24,
+          alignItems: 'center',
+          '& .MuiChip-root': { minWidth: 0, flexShrink: 0 }
+        }}
+      >
         <Typography
           noWrap
-          title={connector.description}
-          variant="body2"
+          title={connector.publisher}
+          variant="caption"
           color="text.secondary"
-          sx={{ mt: 0.25 }}
+          sx={{ minWidth: 0 }}
         >
-          {connector.description}
+          {connector.publisher}
         </Typography>
-        <Stack
-          direction="row"
-          spacing={0.75}
-          sx={{
-            mt: 0.75,
-            minWidth: 0,
-            minHeight: 24,
-            alignItems: 'center',
-            '& .MuiChip-root': { minWidth: 0, flexShrink: 0 }
-          }}
-        >
-          <Typography
-            noWrap
-            title={connector.publisher}
-            variant="caption"
-            color="text.secondary"
-            sx={{ minWidth: 0 }}
-          >
-            {connector.publisher}
-          </Typography>
-          {loginLabel && (
+        {loginLabel && (
+          <Chip
+            size="small"
+            variant="outlined"
+            color={!supportsAuthorization || (installed && !authorized) ? 'warning' : 'default'}
+            label={loginLabel}
+          />
+        )}
+        {installed && authorized && !enabled && (
+          <Chip size="small" variant="outlined" label={resourceUi.disabled} />
+        )}
+        {connector.unavailableReason &&
+          (!installed || updateAvailable) &&
+          (connector.unavailableKind !== 'authorization' ||
+            loginLabel !== connectorCopy.authorizationUnavailable) && (
             <Chip
               size="small"
               variant="outlined"
-              color={!supportsAuthorization || (installed && !authorized) ? 'warning' : 'default'}
-              label={loginLabel}
+              label={
+                connector.unavailableKind === 'authorization'
+                  ? connectorCopy.authorizationUnavailable
+                  : connectorCopy.newerPhiRequired
+              }
             />
           )}
-          {installed && authorized && !enabled && (
-            <Chip size="small" variant="outlined" label={resourceUi.disabled} />
+        {connector.transport === 'stdio' &&
+          connector.setup &&
+          connector.setup.phase !== 'removed' && (
+            <Chip
+              size="small"
+              variant="outlined"
+              color={connector.setup.phase === 'failed' ? 'error' : 'default'}
+              label={connectorSetupLabel(connector.setup.phase)}
+            />
           )}
-          {connector.unavailableReason &&
-            (!installed || updateAvailable) &&
-            (connector.unavailableKind !== 'authorization' ||
-              loginLabel !== connectorCopy.authorizationUnavailable) && (
-              <Chip
-                size="small"
-                variant="outlined"
-                label={
-                  connector.unavailableKind === 'authorization'
-                    ? connectorCopy.authorizationUnavailable
-                    : connectorCopy.newerPhiRequired
-                }
-              />
-            )}
-          {connector.transport === 'stdio' &&
-            connector.setup &&
-            connector.setup.phase !== 'removed' && (
-              <Chip
-                size="small"
-                variant="outlined"
-                color={connector.setup.phase === 'failed' ? 'error' : 'default'}
-                label={connectorSetupLabel(connector.setup.phase)}
-              />
-            )}
-          {needsEnvironment && !settingUp && (
-            <Chip size="small" variant="outlined" label={connectorCopy.environmentNotBuilt} />
-          )}
-        </Stack>
-        {connector.source && (
-          <Box sx={{ mt: 0.75 }}>
-            <McpConnectorSourceBadges connector={connector} />
-          </Box>
+        {needsEnvironment && !settingUp && (
+          <Chip size="small" variant="outlined" label={connectorCopy.environmentNotBuilt} />
         )}
-      </Box>
-      {settingUp ? (
-        <Box
-          role="status"
-          aria-label={connectorSetupLabel(connector.setup!.phase)}
-          sx={{ width: 34, height: 34, display: 'grid', placeItems: 'center', flexShrink: 0 }}
-        >
-          <CircularProgress size={18} />
+      </Stack>
+      {connector.source && (
+        <Box sx={{ mt: 0.75 }}>
+          <McpConnectorSourceBadges connector={connector} />
         </Box>
-      ) : installed &&
-        authorized &&
-        enabled &&
-        !authorizing &&
-        !updateAvailable &&
-        !localUnchecked &&
-        !needsEnvironment ? (
-        <Box
-          role="img"
-          aria-label={connectorCopy.addedNamed(connector.name)}
-          data-phi-connector-state="added"
-          sx={{
-            width: 34,
-            height: 34,
-            display: 'grid',
-            placeItems: 'center',
-            flexShrink: 0,
-            borderRadius: 1.5,
-            color: 'success.dark',
-            bgcolor: (theme) =>
-              alpha(theme.palette.success.main, theme.palette.mode === 'dark' ? 0.28 : 0.16)
-          }}
-        >
-          <GoCheck size={20} aria-hidden="true" />
-        </Box>
-      ) : requiresSignIn && !supportsAuthorization && !authorizing ? (
-        <Box
-          role="img"
-          aria-label={
-            installed
-              ? connectorCopy.unverifiedNamedAuthorization(connector.name)
-              : connectorCopy.unavailableNamedAuthorization(connector.name)
-          }
-          sx={{
-            width: 34,
-            height: 34,
-            display: 'grid',
-            placeItems: 'center',
-            flexShrink: 0,
-            color: 'warning.main'
-          }}
-        >
-          <GoLock size={20} aria-hidden="true" />
-        </Box>
-      ) : (
-        <IconButton
-          aria-label={actionLabel}
-          title={actionLabel}
-          size="small"
-          disabled={
-            !authorizing &&
-            ((Boolean(connector.unavailableReason) && (!installed || updateAvailable)) || busy)
-          }
-          onClick={(event) => {
-            event.stopPropagation()
-            if (authorizing) onCancel?.()
-            else if (needsEnvironment) onBuildEnvironment?.()
-            else if (localUnchecked) onRetry?.()
-            else if (installed && authorized && !enabled && !updateAvailable) onEnable?.()
-            else if (authorized) onAdd()
-            else onAuthorize()
-          }}
-          sx={{
-            width: 34,
-            height: 34,
-            p: 0,
-            display: 'grid',
-            placeItems: 'center',
-            flexShrink: 0,
-            border: '1px solid',
-            borderColor: 'divider',
-            borderRadius: 1.5,
-            color: authorizing
-              ? 'primary.main'
-              : installed && !authorized
-                ? 'warning.main'
-                : installed && authorized && !enabled
-                  ? 'primary.main'
-                  : undefined
-          }}
-        >
-          {authorizing ? (
-            <CircularProgress
-              size={18}
-              color="inherit"
-              aria-label={connectorCopy.waitingAuthorization}
-            />
-          ) : updateAvailable || localUnchecked ? (
-            <GoSync size={18} aria-hidden="true" />
-          ) : installed && authorized && !enabled ? (
-            <GoPlay size={18} aria-hidden="true" />
-          ) : installed && !authorized ? (
-            connector.apiKey ? (
-              <GoKey size={18} aria-hidden="true" />
-            ) : (
-              <GoLock size={18} aria-hidden="true" />
-            )
-          ) : (
-            <GoPlus size={18} aria-hidden="true" />
-          )}
-        </IconButton>
       )}
-    </Box>
+    </ConnectorCatalogCardFrame>
   )
 }

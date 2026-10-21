@@ -17,6 +17,7 @@ import { CatalogResultsTable } from '../../../components/catalog/CatalogResultsT
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
 import {
   CATALOG_DEFAULT_PAGE_SIZE,
+  catalogDialogPaperSx,
   getCatalogPage
 } from '../../../components/catalog/catalogPaging'
 import {
@@ -243,12 +244,7 @@ export function WrapperCatalogDialog({
       aria-label={wrapperCopy.catalog}
       slotProps={{
         paper: {
-          sx: {
-            width: 'min(1100px, calc(100vw - 48px))',
-            height: 'min(720px, calc(100vh - 64px))',
-            borderRadius: 2,
-            overflow: 'hidden'
-          }
+          sx: catalogDialogPaperSx
         }
       }}
     >
@@ -315,36 +311,39 @@ export function WrapperCatalogDialog({
             <Box sx={{ display: 'grid', placeItems: 'center', py: 6 }}>
               <CircularProgress size={22} />
             </Box>
-          ) : filtered.length === 0 ? (
-            <Typography color="text.secondary" sx={{ py: 4 }}>
-              {query.trim() ? wrapperCopy.noMatches : wrapperCopy.emptyGroup}
-            </Typography>
           ) : (
-            <CatalogResultsTable
-              label={wrapperCopy.catalogList}
-              nameLabel={resourceUi.tools}
-              detailsLabel={wrapperCopy.categoryVersion}
-              rowAttribute="data-phi-wrapper-catalog-choice"
-              onOpen={setDetailId}
-              rows={visibleChoices.map((choice) => {
-                return {
-                  rowKey: choice.id,
-                  id: choice.id,
-                  icon: (
-                    <ResourceIcon
-                      icon={wrapperChoiceIcon(choice)}
-                      kind="wrapper"
-                      sx={{ color: 'primary.main' }}
-                    />
-                  ),
-                  title: choice.title,
-                  summary: '',
-                  metadata: resourceSourceLabel(choice.metadata),
-                  details: `${resourceCategoryLabel(choice.category)}${choice.version ? ` · v${choice.version}` : ''}`,
-                  action: renderAction(choice)
-                }
-              })}
-            />
+            <>
+              <CatalogResultsTable
+                label={wrapperCopy.catalogList}
+                nameLabel={resourceUi.tools}
+                detailsLabel={wrapperCopy.categoryVersion}
+                rowAttribute="data-phi-wrapper-catalog-choice"
+                onOpen={setDetailId}
+                rows={visibleChoices.map((choice) => {
+                  return {
+                    rowKey: choice.id,
+                    id: choice.id,
+                    icon: (
+                      <ResourceIcon
+                        icon={wrapperChoiceIcon(choice)}
+                        kind="wrapper"
+                        sx={{ color: 'primary.main' }}
+                      />
+                    ),
+                    title: choice.title,
+                    summary: '',
+                    metadata: resourceSourceLabel(choice.metadata),
+                    details: `${resourceCategoryLabel(choice.category)}${choice.version ? ` · v${choice.version}` : ''}`,
+                    action: renderAction(choice)
+                  }
+                })}
+              />
+              {filtered.length === 0 ? (
+                <Typography color="text.secondary" sx={{ py: 4 }}>
+                  {query.trim() ? wrapperCopy.noMatches : wrapperCopy.emptyGroup}
+                </Typography>
+              ) : null}
+            </>
           )}
         </CatalogBrowseLayout>
       )}
