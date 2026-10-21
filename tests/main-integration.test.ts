@@ -4415,6 +4415,7 @@ async function harness(
     './app-state/main-runtime-context',
     './app-state/main-window-state',
     './app-state/session-key-registry',
+    './app-state/session-lifecycle-registry',
     './app-state/session-runtime',
     './app-state/session-state',
     './app-state/workspace-services-state',

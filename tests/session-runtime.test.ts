@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { SessionKeyRegistry } from '../src/main/app-state/session-key-registry'
+import { SessionLifecycleRegistry } from '../src/main/app-state/session-lifecycle-registry'
 import { SessionRuntime } from '../src/main/app-state/session-runtime'
 
 function createRegistry(getFreshSessionCounter: () => number): SessionKeyRegistry {
@@ -63,47 +64,152 @@ test('SessionKeyRegistry keeps runtime origins in their uncanonicalized key spac
   assert.equal(keys.originFor('runtime-canonical'), undefined)
 })
 
+test('SessionLifecycleRegistry creates once and shares the same lifecycle with aliases', () => {
+  const aliases = new Map<string, string>([['alias', 'canonical']])
+  const lifecycles = new SessionLifecycleRegistry((key) => aliases.get(key) ?? key)
+
+  const canonical = lifecycles.forKey('canonical')
+
+  assert.equal(lifecycles.forKey('canonical'), canonical)
+  assert.equal(lifecycles.forKey('alias'), canonical)
+  aliases.delete('alias')
+  assert.equal(lifecycles.forKey('alias'), canonical)
+
+  lifecycles.shareWithAlias('second-alias', 'canonical')
+  assert.equal(lifecycles.forKey('second-alias'), canonical)
+})
+
+test('SessionLifecycleRegistry preserves abort controller identity across set, get, and delete', () => {
+  const lifecycles = new SessionLifecycleRegistry((key) => key)
+  const controller = new AbortController()
+
+  lifecycles.installAbortController('session:1', controller)
+  assert.equal(lifecycles.abortControllerFor('session:1'), controller)
+
+  lifecycles.deleteAbortController('session:1')
+  assert.equal(lifecycles.abortControllerFor('session:1'), undefined)
+})
+
+test('SessionLifecycleRegistry releases a path cleanup only for the same promise', async () => {
+  const lifecycles = new SessionLifecycleRegistry((key) => key)
+  let resolveCleanup!: () => void
+  const cleanup = new Promise<void>((resolve) => {
+    resolveCleanup = resolve
+  })
+
+  lifecycles.registerCleanupForPath('/session.jsonl', cleanup)
+  lifecycles.releaseCleanupForPath('/session.jsonl', Promise.resolve())
+  let finished = false
+  const waiting = lifecycles
+    .waitForCleanup({ path: '/session.jsonl', cwd: '/workspace', permissionMode: 'auto' })
+    .then(() => {
+      finished = true
+    })
+
+  await Promise.resolve()
+  assert.equal(finished, false)
+  resolveCleanup()
+  await waiting
+
+  lifecycles.releaseCleanupForPath('/session.jsonl', cleanup)
+  await lifecycles.waitForCleanup({
+    path: '/session.jsonl',
+    cwd: '/workspace',
+    permissionMode: 'auto'
+  })
+})
+
+test('SessionLifecycleRegistry path-less waits include only registered unknown-path cleanups', async () => {
+  const lifecycles = new SessionLifecycleRegistry((key) => key)
+  const knownCleanup = new Promise<void>(() => {})
+  const releasedUnknownCleanup = new Promise<void>(() => {})
+  let resolveUnknownCleanup!: () => void
+  const unknownCleanup = new Promise<void>((resolve) => {
+    resolveUnknownCleanup = resolve
+  })
+
+  lifecycles.registerCleanupForPath('/session.jsonl', knownCleanup)
+  lifecycles.registerUnknownPathCleanup(releasedUnknownCleanup)
+  lifecycles.releaseUnknownPathCleanup(releasedUnknownCleanup)
+  lifecycles.registerUnknownPathCleanup(unknownCleanup)
+
+  let finished = false
+  const waiting = lifecycles
+    .waitForCleanup({ path: undefined, cwd: '/workspace', permissionMode: 'auto' })
+    .then(() => {
+      finished = true
+    })
+  await Promise.resolve()
+  assert.equal(finished, false)
+
+  resolveUnknownCleanup()
+  await waiting
+})
+
+test(
+  'SessionLifecycleRegistry waits unknown barriers before reading the current path barrier',
+  { timeout: 1_000 },
+  async () => {
+    const lifecycles = new SessionLifecycleRegistry((key) => key)
+    let resolveUnknownCleanup!: () => void
+    const unknownCleanup = new Promise<void>((resolve) => {
+      resolveUnknownCleanup = resolve
+    })
+    const stalePathCleanup = new Promise<void>(() => {})
+    const currentPathCleanup = Promise.resolve()
+
+    lifecycles.registerUnknownPathCleanup(unknownCleanup)
+    lifecycles.registerCleanupForPath('/session.jsonl', stalePathCleanup)
+    const waiting = lifecycles.waitForCleanup({
+      path: '/session.jsonl',
+      cwd: '/workspace',
+      permissionMode: 'auto'
+    })
+
+    lifecycles.replaceCleanupForPathIfDifferent('/session.jsonl', stalePathCleanup)
+    lifecycles.replaceCleanupForPathIfDifferent('/session.jsonl', currentPathCleanup)
+    resolveUnknownCleanup()
+
+    await waiting
+  }
+)
+
 test('SessionRuntime aliases to the resolved target before sharing lifecycle state', () => {
   const calls: Array<[string, string, string]> = []
-  const lifecycle = { generation: 1 }
-  const lifecycles = new Map<string, typeof lifecycle>([['canonical', lifecycle]])
-  const runtimeHolder: { current?: SessionRuntime } = {}
   const runtime = new SessionRuntime({
     getFreshSessionCounter: () => 0,
-    phiOnlySessionPath: (sessionId) => `phi-session:${sessionId}`,
-    shareLifecycle: (aliasKey, canonicalKey) => {
-      const canonicalLifecycle = lifecycles.get(canonicalKey)
-      if (canonicalLifecycle) lifecycles.set(aliasKey, canonicalLifecycle)
-      calls.push([
-        aliasKey,
-        canonicalKey,
-        runtimeHolder.current?.keys.canonicalize(aliasKey) ?? 'missing'
-      ])
-    }
+    phiOnlySessionPath: (sessionId) => `phi-session:${sessionId}`
   })
-  runtimeHolder.current = runtime
   runtime.keys.setAlias('target-alias', 'canonical')
+  const lifecycle = runtime.lifecycles.forKey('canonical')
+  const shareWithAlias = runtime.lifecycles.shareWithAlias.bind(runtime.lifecycles)
+  runtime.lifecycles.shareWithAlias = (aliasKey, canonicalKey): void => {
+    calls.push([aliasKey, canonicalKey, runtime.keys.canonicalize(aliasKey)])
+    shareWithAlias(aliasKey, canonicalKey)
+  }
 
   runtime.alias('new-alias', 'target-alias')
 
   assert.equal(runtime.keys.canonicalize('new-alias'), 'canonical')
   assert.deepEqual(calls, [['new-alias', 'canonical', 'canonical']])
-  assert.equal(lifecycles.get('new-alias'), lifecycle)
+  assert.equal(runtime.lifecycles.forKey('new-alias'), lifecycle)
 })
 
 test('SessionRuntime alias is a no-op when the alias already equals the resolved target', () => {
   const calls: Array<[string, string]> = []
   const runtime = new SessionRuntime({
     getFreshSessionCounter: () => 0,
-    phiOnlySessionPath: (sessionId) => `phi-session:${sessionId}`,
-    shareLifecycle: (aliasKey, canonicalKey) => {
-      calls.push([aliasKey, canonicalKey])
-    }
+    phiOnlySessionPath: (sessionId) => `phi-session:${sessionId}`
   })
   runtime.keys.setAlias('target-alias', 'canonical')
+  const lifecycle = runtime.lifecycles.forKey('canonical')
+  runtime.lifecycles.shareWithAlias = (aliasKey, canonicalKey): void => {
+    calls.push([aliasKey, canonicalKey])
+  }
 
   runtime.alias('canonical', 'target-alias')
 
   assert.equal(runtime.keys.canonicalize('canonical'), 'canonical')
   assert.deepEqual(calls, [])
+  assert.equal(runtime.lifecycles.forKey('canonical'), lifecycle)
 })

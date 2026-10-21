@@ -418,7 +418,7 @@ import { validateRemotePresentedFiles } from './agent/deliverables/remote-presen
 import {
   isStaleSessionError,
   StaleSessionError,
-  SessionLifecycle,
+  type SessionLifecycle,
   type SessionLifecycleRecord,
   type SessionSnapshot
 } from './agent/session/session-lifecycle'
@@ -973,11 +973,6 @@ interface PromptRun {
   done?: Promise<{ path: string | null; phiSessionId?: string; sessionGeneration: number } | null>
 }
 
-const sessionLifecycles = new Map<string, SessionLifecycle<AgentSessionResult>>()
-const sessionAbortControllers = new Map<string, AbortController>()
-const cleanupBarriersByPath = new Map<string, Promise<void>>()
-const unknownPathCleanupBarriers = new Set<Promise<void>>()
-
 function getNoProjectTaskFolder(): string {
   return readAppSettings(AGENT_DIR).noProjectTaskFolder
 }
@@ -1092,16 +1087,10 @@ const initialSelectedModel = readLastSelectedModel()
 // (e.g. DeepSeek V4 Pro) only enable reasoning output at 'high'/'max', and this app
 // wants that reasoning visible in the UI out of the box rather than silently absent.
 const selectedThinkingLevel: ThinkingLevel = 'high'
-const runtime = createMainRuntimeContext({
+const runtime = createMainRuntimeContext<AgentSessionResult>({
   sessions: {
     getFreshSessionCounter: () => runtime.session.freshSessionCounter,
-    phiOnlySessionPath,
-    shareLifecycle: (aliasKey, resolvedCanonicalKey) => {
-      const lifecycle = sessionLifecycles.get(resolvedCanonicalKey)
-      if (lifecycle) {
-        sessionLifecycles.set(aliasKey, lifecycle)
-      }
-    }
+    phiOnlySessionPath
   },
   session: (sessions) => ({
     freshSessionCounter: initialFreshSessionCounter,
@@ -1111,7 +1100,7 @@ const runtime = createMainRuntimeContext({
   })
 })
 const { session: sessionState, sessions: sessionRuntime } = runtime
-const { keys: sessionKeys } = sessionRuntime
+const { keys: sessionKeys, lifecycles } = sessionRuntime
 const promptQueues = new Map<string, Promise<void>>()
 const promptGenerations = new Map<string, number>()
 const activePromptRuns = new Map<string, PromptRun>()
@@ -2924,23 +2913,6 @@ function linkPromptRunRuntimeSessionPath(
   linkMaterializedRuntimeSessionPath(sessionKey, cwd, path, promptRun.phiSessionId)
 }
 
-function getCurrentLifecycle(): SessionLifecycle<AgentSessionResult> {
-  return getLifecycleForKey(sessionState.sessionKey)
-}
-
-function getLifecycleForKey(sessionKey: string): SessionLifecycle<AgentSessionResult> {
-  const canonicalKey = sessionKeys.canonicalize(sessionKey)
-  let lifecycle = sessionLifecycles.get(canonicalKey)
-  if (!lifecycle) {
-    lifecycle = new SessionLifecycle<AgentSessionResult>()
-    sessionLifecycles.set(canonicalKey, lifecycle)
-  }
-  if (canonicalKey !== sessionKey) {
-    sessionLifecycles.set(sessionKey, lifecycle)
-  }
-  return lifecycle
-}
-
 function getPromptQueue(sessionKey: string): Promise<void> {
   return promptQueues.get(sessionKeys.canonicalize(sessionKey)) ?? Promise.resolve()
 }
@@ -3178,7 +3150,7 @@ function resolvePromptRunTarget(input: SubmitPromptInput): ResolvedPromptRunTarg
   const normalizedText = input.text
   const promptTarget = input.promptTarget
   const runSessionKey = sessionKeys.canonicalize(input.sessionKey)
-  const runLifecycle = getLifecycleForKey(runSessionKey)
+  const runLifecycle = lifecycles.forKey(runSessionKey)
   const runSessionGeneration = runLifecycle.currentGeneration
   const runSnapshot = input.snapshot
   const automaticModelSelection = resolveSessionModelSelection(runSessionKey, runSnapshot) === null
@@ -3688,7 +3660,7 @@ async function resolveSessionTitleModel(
   signal.throwIfAborted()
   let model = selection ? resolveRuntimeModelSelection(modelRuntime, selection)?.model : undefined
   if (!selection) {
-    const lifecycle = getLifecycleForKey(key)
+    const lifecycle = lifecycles.forKey(key)
     const record = lifecycle.currentRecord
     if (record) {
       const ready = await record.promise
@@ -4065,7 +4037,7 @@ async function cleanupSessionRecord(
 ): Promise<void> {
   if (!record) return
 
-  const controller = sessionAbortControllers.get(
+  const controller = lifecycles.abortControllerFor(
     getSessionControllerKey(record.snapshot, record.generation)
   )
   controller?.abort()
@@ -4076,12 +4048,8 @@ async function cleanupSessionRecord(
     try {
       const { session } = await record.promise
       resolvedPath = session.sessionFile ?? resolvedPath
-      if (
-        resolvedPath &&
-        barrier.promise &&
-        cleanupBarriersByPath.get(resolvedPath) !== barrier.promise
-      ) {
-        cleanupBarriersByPath.set(resolvedPath, barrier.promise)
+      if (resolvedPath && barrier.promise) {
+        lifecycles.replaceCleanupForPathIfDifferent(resolvedPath, barrier.promise)
       }
       await abortAndDisposeSession(session, options)
     } catch (error) {
@@ -4093,37 +4061,27 @@ async function cleanupSessionRecord(
         console.error('Failed to clean up agent session:', error)
       }
     } finally {
-      sessionAbortControllers.delete(getSessionControllerKey(record.snapshot, record.generation))
+      lifecycles.deleteAbortController(getSessionControllerKey(record.snapshot, record.generation))
       if (barrier.promise) {
-        unknownPathCleanupBarriers.delete(barrier.promise)
+        lifecycles.releaseUnknownPathCleanup(barrier.promise)
       }
-      if (resolvedPath && cleanupBarriersByPath.get(resolvedPath) === barrier.promise) {
-        cleanupBarriersByPath.delete(resolvedPath)
+      if (resolvedPath) {
+        lifecycles.releaseCleanupForPath(resolvedPath, barrier.promise)
       }
     }
   })()
 
   if (record.snapshot.path) {
-    cleanupBarriersByPath.set(record.snapshot.path, barrier.promise)
+    lifecycles.registerCleanupForPath(record.snapshot.path, barrier.promise)
   } else if (barrier.promise) {
-    unknownPathCleanupBarriers.add(barrier.promise)
+    lifecycles.registerUnknownPathCleanup(barrier.promise)
   }
 
   await barrier.promise
 }
 
-async function waitForSessionCleanup(snapshot: SessionSnapshot): Promise<void> {
-  if (snapshot.path) {
-    await Promise.all([...unknownPathCleanupBarriers])
-    await cleanupBarriersByPath.get(snapshot.path)
-    return
-  }
-
-  await Promise.all([...unknownPathCleanupBarriers])
-}
-
 async function getCurrentResolvedSession(): Promise<AgentSessionResult | null> {
-  const lifecycle = getCurrentLifecycle()
+  const lifecycle = lifecycles.forKey(sessionState.sessionKey)
   const record = lifecycle.currentRecord
   if (!record) return null
 
@@ -4194,7 +4152,7 @@ function assertSelectedSessionControlTarget(
     current.path !== assertion.current.path ||
     current.cwd !== assertion.current.cwd ||
     current.phiSessionId !== assertion.phiSessionId ||
-    getCurrentLifecycle() !== assertion.lifecycle
+    lifecycles.forKey(sessionState.sessionKey) !== assertion.lifecycle
   )
     throw new StaleSessionError()
 }
@@ -4205,7 +4163,7 @@ function assertSessionControlAttachment(
 ): void {
   if (
     sessionKeys.phiSessionIdFor(assertion.key) !== assertion.phiSessionId ||
-    getLifecycleForKey(assertion.key) !== assertion.lifecycle ||
+    lifecycles.forKey(assertion.key) !== assertion.lifecycle ||
     !assertion.lifecycle.isCurrentGeneration(assertion.generation) ||
     assertion.lifecycle.currentRecord !== assertion.record ||
     getPromptGeneration(assertion.key) !== assertion.promptGeneration ||
@@ -4246,7 +4204,7 @@ function captureSessionControlTarget(
 ): CapturedSessionControlTarget {
   const key = sessionKeys.canonicalize(sessionKey)
   const current = getCurrentSessionPayload()
-  const lifecycle = getLifecycleForKey(key)
+  const lifecycle = lifecycles.forKey(key)
   const generation = lifecycle.currentGeneration
   const promptGeneration = getPromptGeneration(key)
   let record = lifecycle.currentRecord
@@ -4329,7 +4287,7 @@ function getCurrentSessionPayload(): CurrentSessionPayload {
     cwd: sessionState.cwd,
     displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : sessionState.cwd,
     ...selectCurrentSessionProjectPayloadFields(manifest, project, projectLocation),
-    sessionGeneration: getCurrentLifecycle().currentGeneration,
+    sessionGeneration: lifecycles.forKey(sessionState.sessionKey).currentGeneration,
     permissionMode: sessionState.permissionMode,
     ...getSessionStatusPayload(sessionState.sessionKey, sessionState.sessionPath, sessionState.cwd)
   }
@@ -4376,7 +4334,7 @@ function requireProject(id: string): Project {
 async function invalidateAgentSession(): Promise<void> {
   const phiSessionId = sessionKeys.phiSessionIdFor(sessionState.sessionKey)
   if (phiSessionId) loadedSkillNamesBySession.delete(phiSessionId)
-  const lifecycle = getCurrentLifecycle()
+  const lifecycle = lifecycles.forKey(sessionState.sessionKey)
   const previous = lifecycle.advance()
   advancePromptGeneration(sessionState.sessionKey)
   const activePromptRun = getActivePromptRun(sessionState.sessionKey)
@@ -4630,7 +4588,7 @@ function prepareSessionCreationRuntime(
   const thinkingLevel =
     useRpc && model ? selectionThinking(model, desiredThinking).phi : desiredThinking
   const abortController = new AbortController()
-  sessionAbortControllers.set(
+  lifecycles.installAbortController(
     getSessionControllerKey(context.snapshot, context.generation),
     abortController
   )
@@ -4989,7 +4947,7 @@ async function coordinateAgentSessionCreation(
 ): Promise<AgentSessionResult> {
   const context = beginAgentSessionCreation(request, creationSnapshot, generation)
   context.assertCurrent()
-  await waitForSessionCleanup(context.snapshot)
+  await lifecycles.waitForCleanup(context.snapshot)
   context.assertCurrent()
   const useRpc = resolveSessionCreationRoute(context)
   const remoteContextFiles = context.remoteProject
@@ -5065,7 +5023,7 @@ async function getAgentSession(
   control?: RuntimeSelectionControl,
   remoteRecovery?: { replacementModel?: RuntimeRecoveryModelSelection }
 ): Promise<AgentSessionResult> {
-  const lifecycle = getLifecycleForKey(sessionKey)
+  const lifecycle = lifecycles.forKey(sessionKey)
   const creationRequest = { sessionKey, lifecycle, control, remoteRecovery }
   const record = lifecycle.getOrCreate(
     snapshot,
@@ -5600,8 +5558,8 @@ function registerAgentIpc(): void {
       resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys)
     },
     lifecycle: {
-      getLifecycleForKey,
-      getCurrentLifecycle,
+      getLifecycleForKey: lifecycles.forKey.bind(lifecycles),
+      getCurrentLifecycle: () => lifecycles.forKey(sessionState.sessionKey),
       disposeAndSwitchSession,
       openRuntimeSessionManager,
       resolveSessionPermissionMode
@@ -5689,7 +5647,7 @@ function registerApplicationAndModelIpc(): void {
     resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
     getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
     findPhiSessionById,
-    getCurrentLifecycle,
+    getCurrentLifecycle: () => lifecycles.forKey(sessionState.sessionKey),
     sameCanonicalSessionKey: sessionKeys.sameCanonical.bind(sessionKeys),
     isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
     hasActivePromptRun,
@@ -5741,7 +5699,7 @@ function createCurrentContextUsageOptions(): CurrentContextUsageOptions {
     getCurrentPermissionMode: () => sessionState.permissionMode,
     findPhiManifestForSession,
     runtimeSessionPathForSnapshot,
-    getCurrentLifecycle,
+    getCurrentLifecycle: () => lifecycles.forKey(sessionState.sessionKey),
     getAgentSession
   }
 }
@@ -5751,7 +5709,7 @@ function createCurrentSessionPayloadMessagesOptions(): CurrentSessionPayloadMess
     getCurrentPayload: getCurrentSessionPayload,
     getCurrentSessionKey: () => sessionState.sessionKey,
     getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
-    getCurrentLifecycle,
+    getCurrentLifecycle: () => lifecycles.forKey(sessionState.sessionKey),
     getCurrentResolvedSession
   }
 }
@@ -5774,7 +5732,7 @@ function createSessionCompactionControlOptions(): SessionCompactionControlOption
       ensurePhiSessionId,
       hasActivePromptRun,
       captureSessionControlTarget,
-      getSessionGeneration: (sessionKey) => getLifecycleForKey(sessionKey).currentGeneration
+      getSessionGeneration: (sessionKey) => lifecycles.forKey(sessionKey).currentGeneration
     },
     events: {
       sendToAllWindows,
@@ -5809,7 +5767,7 @@ function createSessionRecoveryIpcOptions(): SessionsIpcOptions['recovery'] {
       advancePromptGeneration
     },
     lifecycle: {
-      getLifecycleForKey,
+      getLifecycleForKey: lifecycles.forKey.bind(lifecycles),
       hasActivePromptRun,
       runnerGetActiveRun: (sessionId) => runnerRegistry.getActiveRun(sessionId),
       cleanupSessionRecord,
@@ -5868,9 +5826,9 @@ function createSessionsIpcOptions(
       disposeAndSwitchSession,
       openRuntimeSessionManager,
       resolveSessionPermissionMode,
-      getLifecycleForKey,
+      getLifecycleForKey: lifecycles.forKey.bind(lifecycles),
       getAgentSession,
-      waitForSessionCleanup
+      waitForSessionCleanup: lifecycles.waitForCleanup.bind(lifecycles)
     },
     status: {
       runnerGetActiveRun: (sessionId) => runnerRegistry.getActiveRun(sessionId),

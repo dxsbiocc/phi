@@ -1,16 +1,15 @@
 import { SessionKeyRegistry, type SessionKeyRegistryOptions } from './session-key-registry'
+import { SessionLifecycleRegistry } from './session-lifecycle-registry'
 
-export interface SessionRuntimeOptions extends SessionKeyRegistryOptions {
-  shareLifecycle: (aliasKey: string, canonicalKey: string) => void
-}
+export type SessionRuntimeOptions = SessionKeyRegistryOptions
 
-export class SessionRuntime {
+export class SessionRuntime<TResult = unknown> {
   readonly keys: SessionKeyRegistry
-  private readonly shareLifecycle: SessionRuntimeOptions['shareLifecycle']
+  readonly lifecycles: SessionLifecycleRegistry<TResult>
 
   constructor(options: SessionRuntimeOptions) {
     this.keys = new SessionKeyRegistry(options)
-    this.shareLifecycle = options.shareLifecycle
+    this.lifecycles = new SessionLifecycleRegistry(this.keys.canonicalize.bind(this.keys))
   }
 
   alias(aliasKey: string, canonicalKey: string): void {
@@ -18,6 +17,6 @@ export class SessionRuntime {
     if (aliasKey === resolvedCanonicalKey) return
 
     this.keys.setAlias(aliasKey, resolvedCanonicalKey)
-    this.shareLifecycle(aliasKey, resolvedCanonicalKey)
+    this.lifecycles.shareWithAlias(aliasKey, resolvedCanonicalKey)
   }
 }

@@ -4,22 +4,22 @@ import { SessionRuntime, type SessionRuntimeOptions } from './session-runtime'
 import { SessionState, type SessionStateInitialization } from './session-state'
 import { WorkspaceServicesState } from './workspace-services-state'
 
-export interface MainRuntimeContext {
+export interface MainRuntimeContext<TResult = unknown> {
   window: MainWindowState
   workspaceServices: WorkspaceServicesState
   caches: AppCaches
-  sessions: SessionRuntime
+  sessions: SessionRuntime<TResult>
   session: SessionState
 }
 
-export function createMainRuntimeContext(options: {
+export function createMainRuntimeContext<TResult = unknown>(options: {
   sessions: SessionRuntimeOptions
-  session: (sessions: SessionRuntime) => SessionStateInitialization
-}): MainRuntimeContext {
+  session: (sessions: SessionRuntime<TResult>) => SessionStateInitialization
+}): MainRuntimeContext<TResult> {
   const window = new MainWindowState()
   const workspaceServices = new WorkspaceServicesState()
   const caches = new AppCaches()
-  const sessions = new SessionRuntime(options.sessions)
+  const sessions = new SessionRuntime<TResult>(options.sessions)
   const session = new SessionState(options.session(sessions))
   return { window, workspaceServices, caches, sessions, session }
 }
