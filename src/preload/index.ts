@@ -827,6 +827,7 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   getAppSettings: () => Promise<PhiAppSettings>
   checkForAppUpdates: () => Promise<AppUpdateCheck>
   openAppReleasesPage: (url?: string) => Promise<void>
+  openWebUrl: (url: string) => Promise<void>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
   getWebSearchSettings: () => Promise<WebSearchSettings>
   updateWebSearchSettings: (patch: WebSearchSettingsPatch) => Promise<WebSearchSettings>
@@ -1409,6 +1410,7 @@ const api: RendererAuthApi = {
   checkForAppUpdates: (): Promise<AppUpdateCheck> => ipcRenderer.invoke(IPC.app.checkForUpdates),
   openAppReleasesPage: (url?: string): Promise<void> =>
     ipcRenderer.invoke(IPC.app.openReleasesPage, url),
+  openWebUrl: (url: string): Promise<void> => ipcRenderer.invoke(IPC.app.openWebUrl, url),
   updateAppSettings: (patch: PhiAppSettingsPatch): Promise<PhiAppSettings> =>
     ipcRenderer.invoke(IPC.settings.update, patch),
   getWebSearchSettings: (): Promise<WebSearchSettings> =>

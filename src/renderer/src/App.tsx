@@ -1,4 +1,5 @@
 import { appCopy } from './lib/appCopy'
+import { isHttpWebUrl } from './lib/markdownWebLinks'
 import { useWorkspaceFileActions } from './features/file-preview/hooks/useWorkspaceFileActions'
 import { useFilePathOpeners } from './features/file-preview/hooks/useFilePathOpeners'
 import { resourceActionMessages, resourceUi } from './lib/resourceUi'
@@ -81,7 +82,11 @@ import TerminalPanel from './features/terminal/TerminalPanel'
 import { useTerminalWorkspaceRestoration } from './features/terminal/hooks/useTerminalWorkspaceRestoration'
 import { useBrowserTrustedOverlayGate } from './features/browser/hooks/useBrowserTrustedOverlayGate'
 import { useBrowserPanelRequests } from './features/browser/hooks/useBrowserPanelRequests'
-import { createBrowserLinkOpeningCoordinator } from './features/browser/lib/browserLinkOpening'
+import {
+  browserLinkFailureMessage,
+  createBrowserLinkOpeningCoordinator,
+  type BrowserLinkOpenFailure
+} from './features/browser/lib/browserLinkOpening'
 import { createBrowserRequestIdFactory } from './features/browser/lib/browserPanelState'
 import type { BrowserTrustedOverlayRequest } from './features/browser/lib/browserTrustedOverlayGate'
 import { useEnvironmentBuildNotices } from './features/jobs/hooks/useEnvironmentBuildNotices'
@@ -806,9 +811,22 @@ function App(): React.JSX.Element {
     onRequest: openBrowserPanelFromRequest,
     onFailure: showBrowserAppShellFailure
   })
-  const showBrowserLinkFailure = useCallback((): void => {
-    showSnackbar(appCopy.browserOpenFailed)
-  }, [showSnackbar])
+  const showBrowserLinkFailure = useCallback(
+    (url: string, failure: BrowserLinkOpenFailure): void => {
+      const action = isHttpWebUrl(url)
+        ? {
+            label: appCopy.openInDefaultBrowser,
+            onClick: (): void => {
+              void window.api.openWebUrl(url).catch(() => {
+                showSnackbar(appCopy.defaultBrowserOpenFailed)
+              })
+            }
+          }
+        : undefined
+      showSnackbar(browserLinkFailureMessage(failure), 'error', action ? { action } : undefined)
+    },
+    [showSnackbar]
+  )
   const browserLinkOpeningCoordinator = useMemo(() => {
     const nextRequestId = createBrowserRequestIdFactory()
     return createBrowserLinkOpeningCoordinator({

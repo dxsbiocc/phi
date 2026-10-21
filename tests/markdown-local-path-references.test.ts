@@ -4,12 +4,25 @@ import {
   collectBareFileReferencePaths,
   collectRemoteProjectReferencePaths,
   inlineCodeFilePath,
+  isInlinePreviewImagePath,
   localHrefToPath,
   localPathKindForReference,
   tokenizeBareFileReferences
 } from '../src/renderer/src/lib/markdownLocalPathReferences'
 
 const cwd = '/Users/example/project'
+
+test('inline image previews cover raster formats the content area can show', () => {
+  assert.equal(isInlinePreviewImagePath('figures/plot.png'), true)
+  assert.equal(isInlinePreviewImagePath('photo.JPG'), true)
+  assert.equal(isInlinePreviewImagePath('scan.jpeg'), true)
+  assert.equal(isInlinePreviewImagePath('anim.gif'), true)
+  assert.equal(isInlinePreviewImagePath('plate.webp'), true)
+  assert.equal(isInlinePreviewImagePath('figure.png:12'), true)
+  assert.equal(isInlinePreviewImagePath('report.pdf'), false)
+  assert.equal(isInlinePreviewImagePath('notes.md'), false)
+  assert.equal(isInlinePreviewImagePath('.png'), false)
+})
 
 test('markdown local path references collect bare notebook candidates', () => {
   assert.deepEqual(collectBareFileReferencePaths('Open analysis.ipynb and README.md', cwd), [

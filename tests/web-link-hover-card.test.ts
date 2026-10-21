@@ -5,6 +5,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import type { WebLinkPreview } from '../src/shared/webLinkPreviewTypes'
 import { WebLinkPreviewCard } from '../src/renderer/src/components/markdown/WebLinkHoverCard'
+import { WebLinkSiteIcon } from '../src/renderer/src/components/markdown/WebLinkSiteIcon'
+import { webLinkIconDataUrl } from '../src/renderer/src/lib/webLinkIcon'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 
 setUiLanguage('zh-CN')
@@ -111,4 +113,36 @@ test('webpage previews include an accessible open button', () => {
   const markup = renderCard()
 
   assert.match(markup, /<button[^>]+aria-label="打开网页"/)
+})
+
+const rasterIcon =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='
+
+function renderIcon(iconDataUrl: string | null, site: 'github' | 'web' = 'web'): string {
+  return renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(WebLinkSiteIcon, { site, iconDataUrl })
+    )
+  )
+}
+
+test('web link icons use a fetched raster icon and otherwise keep the current mark', () => {
+  assert.equal(webLinkIconDataUrl(rasterIcon), rasterIcon)
+  assert.equal(webLinkIconDataUrl('https://example.com/favicon.ico'), null)
+  assert.equal(webLinkIconDataUrl('data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='), null)
+
+  const site = renderIcon(rasterIcon)
+  assert.match(site, /data-phi-web-link-icon="site"/)
+  assert.match(site, /<img[^>]+src="data:image\/png;base64,/)
+  assert.doesNotMatch(site, /data-phi-web-link-icon="fallback"/)
+
+  const missing = renderIcon(null)
+  assert.match(missing, /data-phi-web-link-icon="fallback"/)
+  assert.doesNotMatch(missing, /<img/)
+
+  const github = renderIcon(null, 'github')
+  assert.match(github, /data-phi-web-link-icon="fallback"/)
+  assert.doesNotMatch(github, /<img/)
 })

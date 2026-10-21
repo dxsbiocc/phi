@@ -26,10 +26,10 @@ test('preserves state and avoids engine calls for an invalid URL', async () => {
     type: 'navigate',
     requestId: 'navigate-invalid',
     tabId: 'phi-tab-1',
-    url: 'http://public.test/private'
+    url: 'file:///etc/passwd'
   })
   assert.equal(rejected.ok, false)
-  if (rejected.ok) assert.fail('public HTTP must be rejected')
+  if (rejected.ok) assert.fail('a blocked scheme must be rejected')
   assert.equal(rejected.error.code, 'SCHEME_BLOCKED')
   assert.deepEqual(workspace.snapshot(), before)
   assert.equal(engine.recordedActions(engineHandle).length, actionCount)

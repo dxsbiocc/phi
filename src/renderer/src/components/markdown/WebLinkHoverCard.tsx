@@ -1,11 +1,10 @@
 import { markdownCopy } from './markdownUiCopy'
 import { useUiLanguage } from '../../lib/i18n'
-import { useState } from 'react'
 import { Box, IconButton, Skeleton, Typography } from '@mui/material'
-import { FaGithub } from 'react-icons/fa'
-import { FiArrowUpRight, FiGlobe } from 'react-icons/fi'
+import { FiArrowUpRight } from 'react-icons/fi'
 import type { WebLinkPreview } from '../../../../shared/webLinkPreviewTypes'
 import { useWebLinkPreview } from './useWebLinkPreview'
+import { WebLinkSiteIcon } from './WebLinkSiteIcon'
 
 type CardProps = {
   url: string
@@ -25,16 +24,6 @@ export function WebLinkPreviewCard({
   onOpen
 }: CardProps): React.JSX.Element {
   useUiLanguage()
-  const [failedIcon, setFailedIcon] = useState<string | null>(null)
-  const candidateIcon = preview?.iconDataUrl
-  const icon =
-    candidateIcon &&
-    candidateIcon.length <= 96_000 &&
-    /^data:image\/(?:png|gif|jpeg|webp|x-icon|vnd\.microsoft\.icon);base64,[a-z0-9+/]+=*$/i.test(
-      candidateIcon
-    )
-      ? candidateIcon
-      : null
   const available = Boolean(preview?.title || preview?.description)
   const address = url.replace(/^https?:\/\//i, '').replace(/\/$/, '')
   let hostname = address
@@ -114,20 +103,7 @@ export function WebLinkPreviewCard({
         )}
       </Box>
       <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 0.75, height: 20 }}>
-        {icon && icon !== failedIcon ? (
-          <Box
-            component="img"
-            src={icon}
-            alt=""
-            aria-hidden="true"
-            onError={() => setFailedIcon(icon)}
-            sx={{ width: 16, height: 16, flexShrink: 0, objectFit: 'contain', borderRadius: '2px' }}
-          />
-        ) : site === 'github' ? (
-          <FaGithub aria-hidden size={16} style={{ flexShrink: 0 }} />
-        ) : (
-          <FiGlobe aria-hidden size={16} style={{ flexShrink: 0 }} />
-        )}
+        <WebLinkSiteIcon site={site} iconDataUrl={preview?.iconDataUrl} />
         <Typography
           data-phi-web-preview-address="true"
           component="span"

@@ -13,11 +13,26 @@ export function useWebLinkPreview(
   useEffect(() => {
     if (!active) return
     let cancelled = false
-    void webLinkPreviewCache.read(url).then((preview) => {
-      if (!cancelled) setResult({ url, value: preview })
-    })
+    let attempts = 0
+    let retryTimer = 0
+    const load = (): void => {
+      void webLinkPreviewCache.read(url).then((preview) => {
+        if (cancelled) return
+        // A full in-flight queue returns null without caching. Retry instead of
+        // treating that temporary refusal as a missing site icon.
+        const shed = preview === null && webLinkPreviewCache.peek(url) === undefined
+        if (shed && attempts < 20) {
+          attempts += 1
+          retryTimer = globalThis.setTimeout(load, 300)
+          return
+        }
+        setResult({ url, value: preview })
+      })
+    }
+    load()
     return () => {
       cancelled = true
+      globalThis.clearTimeout(retryTimer)
     }
   }, [active, url])
 

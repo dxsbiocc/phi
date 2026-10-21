@@ -123,6 +123,7 @@ class FakeWorkspace implements BrowserWorkspaceLike {
   readonly listeners = new Set<(event: BrowserWorkspaceEvent) => void>()
   subscribeCalls = 0
   executeOutcome: BrowserOutcome | null = null
+  viewportError: Error | null = null
 
   constructor(readonly sessionId: string) {}
 
@@ -141,6 +142,7 @@ class FakeWorkspace implements BrowserWorkspaceLike {
 
   async setViewport(tabId: string, viewport: BrowserViewport | null): Promise<void> {
     this.viewportCalls.push({ tabId, viewport: viewport ? { ...viewport } : null })
+    if (this.viewportError) throw this.viewportError
   }
 
   subscribe(listener: (event: BrowserWorkspaceEvent) => void): () => void {
@@ -702,6 +704,40 @@ test('viewport parsing rejects invalid bounds before workspace dispatch and copi
     )
   }
   assert.equal(value.registry.workspaces.get('phi-current')?.viewportCalls.length, 2)
+})
+
+test('closing the browser does not report a failed viewport hide', async () => {
+  const value = harness()
+  const hide = {
+    sessionId: 'phi-current',
+    sessionGeneration: 1,
+    tabId: 'closed-tab',
+    viewport: null
+  }
+  await invoke(value, 'browser:setViewport', hide)
+  const workspace = value.registry.workspaces.get('phi-current')
+  assert.ok(workspace)
+  workspace.viewportError = new Error('Browser tab is not available for presentation')
+  await assert.doesNotReject(invoke(value, 'browser:setViewport', hide))
+  value.sender.destroyed = true
+  await assert.doesNotReject(
+    invoke(value, 'browser:setViewport', {
+      sessionId: 'phi-current',
+      sessionGeneration: 1,
+      tabId: 'closed-tab',
+      viewport: { x: 0, y: 0, width: 100, height: 100 }
+    })
+  )
+  value.sender.destroyed = false
+  await assert.rejects(
+    invoke(value, 'browser:setViewport', {
+      sessionId: 'phi-current',
+      sessionGeneration: 1,
+      tabId: 'closed-tab',
+      viewport: { x: 0, y: 0, width: 100, height: 100 }
+    }),
+    /Browser request failed/
+  )
 })
 
 test('viewport IPC rejects stale session generations before same-tab routing', async () => {

@@ -47,7 +47,8 @@ export const IPC = {
   },
   app: {
     checkForUpdates: 'app:checkForUpdates',
-    openReleasesPage: 'app:openReleasesPage'
+    openReleasesPage: 'app:openReleasesPage',
+    openWebUrl: 'app:openWebUrl'
   },
   auth: {
     interactionRequested: 'auth:interaction',

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { normalizeBrowserUrl } from '../src/main/browser/browser-policy'
+import { externalBrowserUrl, normalizeBrowserUrl } from '../src/main/browser/browser-policy'
 
 test('normalizes hostnames to https', () => {
   assert.deepEqual(normalizeBrowserUrl('example.test', {}), {
@@ -26,12 +26,28 @@ test('allows loopback http', () => {
   }
 })
 
-test('rejects public http', () => {
-  const result = normalizeBrowserUrl('http://example.test', {})
+test('opens a public https page in the default browser', () => {
+  assert.equal(
+    externalBrowserUrl('https://www.oebiotech.com/index.php?c=show&id=1109'),
+    'https://www.oebiotech.com/index.php?c=show&id=1109'
+  )
+  assert.equal(externalBrowserUrl('http://example.test/docs'), 'http://example.test/docs')
+  assert.equal(externalBrowserUrl('javascript:alert(1)'), null)
+  assert.equal(externalBrowserUrl('file:///tmp/private.txt'), null)
+  assert.equal(externalBrowserUrl('https://user:password@example.test'), null)
+  assert.equal(
+    externalBrowserUrl('https://phi.internal/browser', {
+      applicationOrigins: ['https://phi.internal']
+    }),
+    null
+  )
+})
 
-  assert.equal(result.ok, false)
-  if (result.ok) assert.fail('public HTTP must be rejected')
-  assert.equal(result.error.code, 'SCHEME_BLOCKED')
+test('allows public http', () => {
+  assert.deepEqual(normalizeBrowserUrl('http://example.test/docs?q=browser#result', {}), {
+    ok: true,
+    url: 'http://example.test/docs?q=browser#result'
+  })
 })
 
 test('rejects unsafe schemes', () => {
@@ -91,7 +107,9 @@ test('rejects the Phi app origin', () => {
 
 test('does not expose sensitive URL content in policy errors', () => {
   const cases = [
-    normalizeBrowserUrl('http://example.test/private?token=secret-token#secret-fragment', {}),
+    normalizeBrowserUrl('http://phi.internal/private?token=secret-token#secret-fragment', {
+      applicationOrigins: ['http://phi.internal']
+    }),
     normalizeBrowserUrl('https://user:secret-password@example.test/private', {}),
     normalizeBrowserUrl('https://phi.internal/callback?code=secret-oauth-code', {
       applicationOrigins: ['https://phi.internal']

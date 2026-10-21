@@ -47,12 +47,11 @@ export function PresentedFilesCard({
       role="region"
       aria-label={chatCopy.deliveredFiles}
       sx={{
-        mx: 1,
         my: 1,
         minWidth: 0,
         maxWidth: '100%',
         color: 'text.primary',
-        '@container phi-chat (max-width: 560px)': { mx: 0, my: 0.5 }
+        '@container phi-chat (max-width: 560px)': { my: 0.5 }
       }}
     >
       <Box
@@ -60,9 +59,8 @@ export function PresentedFilesCard({
           display: 'flex',
           alignItems: 'baseline',
           gap: 0.75,
-          px: 0.5,
           mb: 1,
-          '@container phi-chat (max-width: 560px)': { mb: 0.5, px: 0.25 }
+          '@container phi-chat (max-width: 560px)': { mb: 0.5 }
         }}
       >
         <Typography
@@ -254,9 +252,8 @@ export function PresentedFilesCard({
         sx={{
           display: 'block',
           mt: 1,
-          px: 0.5,
           color: 'text.secondary',
-          '@container phi-chat (max-width: 560px)': { mt: 0.5, px: 0.25, fontSize: '0.67rem' }
+          '@container phi-chat (max-width: 560px)': { mt: 0.5, fontSize: '0.67rem' }
         }}
       >
         {chatCopy.thisOpensTheCurrentWorkspaceFileItsContentsMayHave}

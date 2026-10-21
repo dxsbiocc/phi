@@ -21,6 +21,16 @@ export interface RemoteProjectPathReferenceScope {
   canonicalRoot: string
 }
 
+const INLINE_PREVIEW_IMAGE_EXTENSIONS = new Set(['gif', 'jpeg', 'jpg', 'png', 'webp'])
+
+/** Raster images the local preview pipeline can show directly in message text. */
+export function isInlinePreviewImagePath(path: string): boolean {
+  const name = stripLineReference(path).split('/').pop() ?? path
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0 || dot === name.length - 1) return false
+  return INLINE_PREVIEW_IMAGE_EXTENSIONS.has(name.slice(dot + 1).toLowerCase())
+}
+
 const FILE_REFERENCE_NAME_PATTERN =
   /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\.[A-Za-z0-9][A-Za-z0-9_-]{0,15}|[A-Z][A-Za-z0-9_-]*file)$/
 const DOTFILE_REFERENCE_NAME_PATTERN = /^\.[A-Za-z0-9][A-Za-z0-9._-]*$/

@@ -74,12 +74,23 @@ export function normalizeBrowserUrl(
     if (url.protocol !== 'https:' && url.protocol !== 'http:') return blockedUrl()
     if (url.username || url.password) return invalidUrl()
     if (applicationOrigins(policyContext).has(canonicalOrigin(url))) return blockedUrl()
-    if (url.protocol === 'http:' && !isLoopbackBrowserHostname(url.hostname)) {
-      return blockedUrl()
-    }
 
     return { ok: true, url: url.href }
   } catch {
     return invalidUrl()
   }
+}
+
+const MAX_EXTERNAL_URL_CHARS = 16_384
+
+/** A web address the user may open in the system browser. */
+export function externalBrowserUrl(
+  input: unknown,
+  policyContext: BrowserPolicyContext = {}
+): string | null {
+  if (typeof input !== 'string' || input.length === 0 || input.length > MAX_EXTERNAL_URL_CHARS) {
+    return null
+  }
+  const normalized = normalizeBrowserUrl(input, policyContext)
+  return normalized.ok ? normalized.url : null
 }

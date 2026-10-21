@@ -91,7 +91,7 @@ test('an action renders as an accessible text button and closes after firing', (
   assert.deepEqual(events, ['close', 'action'])
 })
 
-test('action notices last at least eight seconds without changing existing durations', () => {
+test('warning and error notices use the requested durations', () => {
   assert.equal(
     snackbarAutoHideDuration({
       id: 1,
@@ -99,10 +99,10 @@ test('action notices last at least eight seconds without changing existing durat
       message: 'done',
       action: { label: '查看', onClick: () => undefined }
     }),
-    8000
+    2000
   )
-  assert.equal(snackbarAutoHideDuration({ id: 2, severity: 'success', message: 'done' }), 4000)
-  assert.equal(snackbarAutoHideDuration({ id: 3, severity: 'error', message: 'failed' }), 10000)
+  assert.equal(snackbarAutoHideDuration({ id: 2, severity: 'warning', message: 'check' }), 3000)
+  assert.equal(snackbarAutoHideDuration({ id: 3, severity: 'error', message: 'failed' }), 3500)
   assert.equal(
     snackbarAutoHideDuration({
       id: 4,

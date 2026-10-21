@@ -966,6 +966,7 @@ test('chat view groups separate PNG and PDF deliveries under one title and notic
   assert.match(markup, />2 个</)
   assert.match(markup, /aria-label="预览交付文件 heatmap\.png"/)
   assert.match(markup, /aria-label="预览交付文件 heatmap\.pdf"/)
+  assert.doesNotMatch(markup, /data-phi-slot="local-markdown-image"/)
 })
 
 test('chat view shows delivered files after a later tool call and closing reply', () => {

@@ -2,7 +2,6 @@ import { markdownCopy } from './markdownUiCopy'
 import { useUiLanguage } from '../../lib/i18n'
 import { Box, Link, Tooltip } from '@mui/material'
 import { useRef, type MouseEvent, type ReactNode } from 'react'
-import { FaGithub } from 'react-icons/fa'
 import { FiGlobe } from 'react-icons/fi'
 import { PhiIcons } from '../../icons'
 import { describeWebLink, openWebUrlFromClick } from '../../lib/markdownWebLinks'
@@ -10,6 +9,7 @@ import { textFromNode } from '../../lib/markdownText'
 import { InlineLinkMenu, type InlineLinkMenuAction } from './InlineLinkMenu'
 import { inlineLinkLabelSx, useInlineLinkMenu } from './useInlineLinkMenu'
 import { WebLinkHoverCard } from './WebLinkHoverCard'
+import { WebLinkFetchedIcon } from './WebLinkSiteIcon'
 
 export function MarkdownWebLink({
   href,
@@ -40,6 +40,12 @@ export function MarkdownWebLink({
             label: opensInApp ? markdownCopy.openInPhi : markdownCopy.openLink,
             icon: <FiGlobe aria-hidden size={16} />,
             onSelect: openLink
+          },
+          {
+            id: 'open-external',
+            label: markdownCopy.openInDefaultBrowser,
+            icon: <PhiIcons.action.openExternal sx={{ fontSize: 16 }} />,
+            onSelect: () => window.api.openWebUrl(href)
           },
           {
             id: 'copy-url',
@@ -125,13 +131,9 @@ export function MarkdownWebLink({
               : {})
           }}
         >
-          {presentation ? (
+          {presentation && href ? (
             <>
-              {presentation.site === 'github' ? (
-                <FaGithub aria-hidden size={16} style={{ flexShrink: 0 }} />
-              ) : (
-                <FiGlobe aria-hidden size={16} style={{ flexShrink: 0 }} />
-              )}
+              <WebLinkFetchedIcon url={href} site={presentation.site} />
               <Box component="span" sx={inlineLinkLabelSx}>
                 {presentation.label === text ? children : presentation.label}
               </Box>

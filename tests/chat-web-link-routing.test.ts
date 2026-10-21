@@ -10,7 +10,11 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
 import type { BrowserOutcome, BrowserWorkspaceSnapshot } from '../src/shared/browserTypes'
-import { createBrowserLinkOpeningCoordinator } from '../src/renderer/src/features/browser/lib/browserLinkOpening'
+import {
+  browserLinkFailureMessage,
+  createBrowserLinkOpeningCoordinator,
+  type BrowserLinkOpenFailure
+} from '../src/renderer/src/features/browser/lib/browserLinkOpening'
 
 function source(path: string): string {
   return readFileSync(resolve(process.cwd(), path), 'utf8')
@@ -115,31 +119,56 @@ test('link-opening coordinator opens the panel only after a matching-session suc
   assert.equal(failures, 0)
 })
 
-test('link-opening coordinator reports current failures without opening the panel', async () => {
-  let behavior: 'outcome' | 'throw' = 'outcome'
-  let failures = 0
+test('link failure notices name the browser error instead of hiding it', () => {
+  assert.equal(
+    browserLinkFailureMessage({ kind: 'browser', code: 'SCHEME_BLOCKED' }),
+    '这个网址无法在应用内打开。'
+  )
+  assert.equal(
+    browserLinkFailureMessage({ kind: 'browser', code: 'NAVIGATION_FAILED' }),
+    '页面加载失败，请重试。'
+  )
+  assert.equal(
+    browserLinkFailureMessage({ kind: 'no-session' }),
+    '无法打开链接，请先选择一个会话或稍后重试。'
+  )
+  assert.equal(browserLinkFailureMessage({ kind: 'unavailable' }), '浏览器暂时不可用，请稍后重试。')
+})
+
+test('link-opening coordinator reports the browser error and does not open an external browser', async () => {
+  let behavior: 'outcome' | 'throw' | 'no-session' = 'outcome'
   let opened = 0
+  const failures: Array<{ url: string; failure: BrowserLinkOpenFailure }> = []
   const coordinator = createBrowserLinkOpeningCoordinator({
     execute: async () => {
       if (behavior === 'throw') throw new Error('ipc failed')
       return failedOutcome('session-a')
     },
     nextRequestId: () => 'request-failure',
-    getActiveSessionId: () => 'session-a',
+    getActiveSessionId: () => (behavior === 'no-session' ? null : 'session-a'),
     openBrowserPanel: () => {
       opened += 1
     },
-    showFailure: () => {
-      failures += 1
+    showFailure: (url, failure) => {
+      failures.push({ url, failure })
     }
   })
 
-  await coordinator.open('https://example.com/fails')
+  await coordinator.open('https://www.oebiotech.com/index.php?c=show&id=1109')
   behavior = 'throw'
   await coordinator.open('https://example.com/throws')
+  behavior = 'no-session'
+  await coordinator.open('https://example.com/no-session')
 
-  assert.equal(opened, 0)
-  assert.equal(failures, 2)
+  assert.equal(opened, 1)
+  assert.deepEqual(failures, [
+    {
+      url: 'https://www.oebiotech.com/index.php?c=show&id=1109',
+      failure: { kind: 'browser', code: 'NAVIGATION_FAILED' }
+    },
+    { url: 'https://example.com/throws', failure: { kind: 'unavailable' } },
+    { url: 'https://example.com/no-session', failure: { kind: 'no-session' } }
+  ])
 })
 
 test('link-opening coordinator ignores stale, invalidated, and switched-session completions', async () => {

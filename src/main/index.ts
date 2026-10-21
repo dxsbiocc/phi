@@ -4275,7 +4275,8 @@ function registerApplicationAndModelIpc(): void {
   registerAppIpc({
     ipcMain,
     getVersion: () => app.getVersion(),
-    openExternal: (url) => shell.openExternal(url)
+    openExternal: (url) => shell.openExternal(url),
+    browserPolicyContext
   })
   registerSettingsIpc({
     ipcMain,

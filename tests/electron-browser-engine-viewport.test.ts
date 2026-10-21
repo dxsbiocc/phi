@@ -22,6 +22,7 @@ class FakeSession extends EventEmitter implements BrowserSessionLike {
 }
 
 class FakeContents extends EventEmitter implements BrowserWebContentsLike {
+  destroyed = false
   readonly session = new FakeSession()
   readonly navigationHistory = {
     canGoBack: (): boolean => false,
@@ -39,7 +40,7 @@ class FakeContents extends EventEmitter implements BrowserWebContentsLike {
     })
   }
   isDestroyed(): boolean {
-    return false
+    return this.destroyed
   }
   closeCalls = 0
   closeError: Error | null = null
@@ -95,6 +96,7 @@ class FakeWindow extends EventEmitter implements BrowserOwningWindowLike {
   contentBounds = { x: 500, y: 300, width: 800, height: 600 }
   minimized = false
   visible = true
+  destroyed = false
   isMinimizedError: Error | null = null
   isVisibleError: Error | null = null
   failOnEvent: string | null = null
@@ -128,6 +130,10 @@ class FakeWindow extends EventEmitter implements BrowserOwningWindowLike {
   isVisible(): boolean {
     if (this.isVisibleError) throw this.isVisibleError
     return this.visible
+  }
+
+  isDestroyed(): boolean {
+    return this.destroyed
   }
 
   override on(event: string | symbol, listener: (...args: unknown[]) => void): this {
@@ -171,6 +177,22 @@ const viewport = (value: Partial<BrowserViewport> = {}): BrowserViewport => ({
   width: 300,
   height: 200,
   ...value
+})
+
+test('a closed browser ignores trailing viewport updates', async () => {
+  const { engine, window, views } = harness()
+  const handle = await engine.createTab({ partition: 'partition-a' })
+  await engine.setViewport(handle, viewport())
+  const shown = views[0].bounds.at(-1)
+  views[0].webContents.destroyed = true
+  window.destroyed = true
+  views[0].setVisibleError = new Error('raw visible failure')
+
+  await assert.doesNotReject(engine.setViewport(handle, null))
+  await assert.doesNotReject(engine.setViewport(handle, viewport({ x: 40 })))
+
+  assert.deepEqual(views[0].bounds.at(-1), shown)
+  assert.equal(window.children.length, 1)
 })
 
 test('keeps newly created pages hidden and unattached until a viewport is assigned', async () => {

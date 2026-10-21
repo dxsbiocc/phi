@@ -147,7 +147,12 @@ test('browser panel state builds bounded single-tab UI commands', () => {
     browserOpenExternalCommand(snapshot([tab({ restorable: true })]), 'request-14'),
     null
   )
-  assert.equal(browserOpenExternalCommand(snapshot([tab({ phase: 'failed' })]), 'request-15'), null)
+  assert.deepEqual(browserOpenExternalCommand(snapshot([tab({ phase: 'failed' })]), 'request-15'), {
+    type: 'openExternal',
+    requestId: 'request-15',
+    tabId: 'tab-1',
+    expectedDocumentRevision: 2
+  })
 
   assert.equal(activeBrowserTab(snapshot())?.id, 'tab-1')
   assert.equal(canPresentNativeBrowser(tab(), true), true)

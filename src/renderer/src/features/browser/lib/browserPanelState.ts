@@ -288,14 +288,7 @@ export function browserOpenExternalCommand(
   requestId: string
 ): BrowserUiCommand | null {
   const activeTab = activeBrowserTab(snapshot)
-  if (
-    !activeTab ||
-    !activeTab.url ||
-    activeTab.url === 'about:blank' ||
-    activeTab.restorable ||
-    activeTab.phase === 'failed' ||
-    activeTab.phase === 'crashed'
-  ) {
+  if (!activeTab || !activeTab.url || activeTab.url === 'about:blank' || activeTab.restorable) {
     return null
   }
   return {

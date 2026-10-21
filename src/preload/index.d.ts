@@ -812,6 +812,7 @@ declare global {
       getAppSettings: () => Promise<PhiAppSettings>
       checkForAppUpdates: () => Promise<AppUpdateCheck>
       openAppReleasesPage: (url?: string) => Promise<void>
+      openWebUrl: (url: string) => Promise<void>
       updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
       getWebSearchSettings: () => Promise<WebSearchSettings>
       updateWebSearchSettings: (patch: WebSearchSettingsPatch) => Promise<WebSearchSettings>

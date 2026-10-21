@@ -154,6 +154,15 @@ const CAPABILITIES: BrowserCapabilities = {
   persistentProfile: false
 }
 
+function hostIsClosed(record: ElectronTabRecord): boolean {
+  return isDestroyedHost(record.view.webContents) || isDestroyedHost(record.window)
+}
+
+function isDestroyedHost(host: object): boolean {
+  const isDestroyed = (host as { isDestroyed?: unknown }).isDestroyed
+  return typeof isDestroyed === 'function' && isDestroyed.call(host) === true
+}
+
 function safePreferences(partition: string): SecureBrowserWebPreferences {
   return {
     partition,
@@ -391,6 +400,13 @@ export class ElectronBrowserEngine implements BrowserEngine {
   async setViewport(handle: EngineTabHandle, viewport: BrowserViewport | null): Promise<void> {
     const record = this.#tabs.get(handle)
     if (!record) throw new Error('Browser tab was not found')
+    // Closing the browser destroys the native view while the renderer still
+    // sends the last viewport update. That update has nothing left to move.
+    if (record.cleanupAttempted || hostIsClosed(record)) {
+      record.presented = false
+      record.latestScreenshot = undefined
+      return
+    }
     try {
       this.#viewportController.setViewport(handle, viewport)
       if (viewport !== null) {
@@ -405,6 +421,11 @@ export class ElectronBrowserEngine implements BrowserEngine {
         record.latestScreenshot = undefined
       }
     } catch {
+      if (record.cleanupAttempted || hostIsClosed(record)) {
+        record.presented = false
+        record.latestScreenshot = undefined
+        return
+      }
       for (const tab of this.#tabs.values()) {
         tab.presented = false
         tab.latestScreenshot = undefined

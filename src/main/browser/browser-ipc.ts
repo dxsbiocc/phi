@@ -595,7 +595,22 @@ export function registerBrowserRendererIpc(
     coordinator.executeHuman(event.sender, input)
   )
   ipcMain.handle(IPC.browser.snapshot, (event) => coordinator.snapshotHuman(event.sender))
-  ipcMain.handle(IPC.browser.setViewport, (event, input) =>
-    coordinator.setViewportHuman(event.sender, input)
-  )
+  ipcMain.handle(IPC.browser.setViewport, async (event, input) => {
+    try {
+      await coordinator.setViewportHuman(event.sender, input)
+    } catch (error) {
+      // Electron logs every rejected handler. A hide for a browser that is
+      // already closing is the expected last update, not a failed request.
+      if (event.sender.isDestroyed()) return
+      if (
+        error instanceof BrowserIpcError &&
+        error.message === 'Browser request failed' &&
+        isRecord(input) &&
+        input.viewport === null
+      ) {
+        return
+      }
+      throw error
+    }
+  })
 }

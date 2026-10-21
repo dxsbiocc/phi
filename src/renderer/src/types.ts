@@ -765,6 +765,7 @@ export interface RendererApi
   getAppSettings: () => Promise<PhiAppSettings>
   checkForAppUpdates: () => Promise<AppUpdateCheck>
   openAppReleasesPage: (url?: string) => Promise<void>
+  openWebUrl: (url: string) => Promise<void>
   updateAppSettings: (patch: PhiAppSettingsPatch) => Promise<PhiAppSettings>
   getEnvironment: () => Promise<EnvironmentGetResult>
   redetectEnvironment: () => Promise<EnvironmentSnapshot>
