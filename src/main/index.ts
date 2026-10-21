@@ -451,13 +451,13 @@ import {
   recoverInterruptedPhiSessions,
   updateSessionManifest,
   type PhiSessionManifest,
-  listPhiSessions,
   type StoredSessionEvent
 } from './agent/session/session-store'
 import type { NotebookDocument } from '../shared/notebookDocument'
 import { messageContentTitleText } from '../shared/sessionTitle'
 import { createBeforeQuitHandler } from './app-quit'
 import { createMainRuntimeContext } from './app-state/main-runtime-context'
+import { createSessionResolution } from './session-runtime/session-resolution'
 import icon from '../../resources/icon.png?asset'
 
 import { isRecord } from '../shared/guards'
@@ -977,7 +977,7 @@ function getNoProjectTaskFolder(): string {
 function currentRemoteAnalysisProject(
   targetCwd: string
 ): { project: Project; sessionId: string } | null {
-  const manifest = findPhiManifestForSession(
+  const manifest = sessionResolution.findPhiManifestForSession(
     sessionState.sessionKey,
     sessionState.sessionPath,
     sessionState.cwd
@@ -1098,6 +1098,15 @@ const runtime = createMainRuntimeContext<AgentSessionResult, PromptRun>({
 })
 const { session: sessionState, sessions: sessionRuntime } = runtime
 const { keys: sessionKeys, lifecycles, preferences, runs: promptRuns } = sessionRuntime
+const sessionResolution = createSessionResolution({
+  promptRuns,
+  sessionKeys,
+  modelSelections: preferences.modelSelections,
+  thinkingLevels: preferences.thinkingLevels,
+  permissionModes: preferences.permissionModes,
+  getSelectedModel: () => sessionState.selectedModel,
+  getDefaultThinkingLevel: () => selectedThinkingLevel
+})
 const approvedRemoteBashCalls = new Map<
   string,
   { projectId: string; approvedCwd: string; approvalDigest: string; expiresAt: number }
@@ -2881,23 +2890,6 @@ function getSessionControllerKey(snapshot: SessionSnapshot, generation: number):
   return `${snapshot.path ?? `fresh:${snapshot.cwd}`}:${generation}`
 }
 
-function findPhiManifestForSession(
-  sessionKey: string,
-  path: string | undefined,
-  cwd: string
-): PhiSessionManifest | null {
-  const phiSessionId =
-    promptRuns.activeRun(sessionKey)?.phiSessionId ?? sessionKeys.phiSessionIdFor(sessionKey)
-  if (phiSessionId) {
-    return listPhiSessions().find((manifest) => manifest.sessionId === phiSessionId) ?? null
-  }
-  if (!path) return null
-  const phiOnlySessionId = phiSessionIdFromPath(path)
-  return phiOnlySessionId
-    ? findPhiSessionById(phiOnlySessionId)
-    : findPhiSessionByRuntimePath(path, cwd)
-}
-
 function runtimeSessionPath(path: string | undefined): string | undefined {
   return isPhiOnlySessionPath(path) ? undefined : path
 }
@@ -2907,8 +2899,8 @@ function runtimeSessionPathForSnapshot(
   snapshot: SessionSnapshot
 ): string | undefined {
   return (
-    findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)?.runtimeSessionPath ??
-    runtimeSessionPath(snapshot.path)
+    sessionResolution.findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+      ?.runtimeSessionPath ?? runtimeSessionPath(snapshot.path)
   )
 }
 
@@ -3098,8 +3090,9 @@ function resolvePromptRunTarget(input: SubmitPromptInput): ResolvedPromptRunTarg
   const runLifecycle = lifecycles.forKey(runSessionKey)
   const runSessionGeneration = runLifecycle.currentGeneration
   const runSnapshot = input.snapshot
-  const automaticModelSelection = resolveSessionModelSelection(runSessionKey, runSnapshot) === null
-  const project = projectForSession(runSessionKey, runSnapshot)
+  const automaticModelSelection =
+    sessionResolution.resolveSessionModelSelection(runSessionKey, runSnapshot) === null
+  const project = sessionResolution.projectForSession(runSessionKey, runSnapshot)
   if (
     input.planMode &&
     (project?.location.kind === 'ssh' || isRemoteProjectAnchorPath(runSnapshot.cwd))
@@ -3398,7 +3391,7 @@ function getSessionStatusPayload(
     }
   }
 
-  const manifest = findPhiManifestForSession(sessionKey, path, cwd)
+  const manifest = sessionResolution.findPhiManifestForSession(sessionKey, path, cwd)
   if (manifest) {
     return {
       status: manifest.status,
@@ -3413,56 +3406,6 @@ function getSessionStatusPayload(
   return { status: 'idle', unreadKind: null }
 }
 
-function projectForSession(
-  sessionKey: string,
-  snapshot: Pick<SessionSnapshot, 'path' | 'cwd'>
-): Project | undefined {
-  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
-  return manifest?.projectId ? getProject(manifest.projectId) : getProjectByCwd(snapshot.cwd)
-}
-
-function resolveSessionModelSelection(
-  sessionKey: string,
-  snapshot: SessionSnapshot
-): ModelSelection | null {
-  const canonicalKey = sessionKeys.canonicalize(sessionKey)
-  if (preferences.modelSelections.has(canonicalKey)) {
-    return preferences.modelSelections.get(canonicalKey) ?? null
-  }
-  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
-  if (manifest?.model !== undefined) return manifest.model
-  return projectForSession(sessionKey, snapshot)?.defaultModel ?? sessionState.selectedModel ?? null
-}
-
-function resolveSessionThinkingLevel(sessionKey: string, snapshot: SessionSnapshot): ThinkingLevel {
-  const canonicalKey = sessionKeys.canonicalize(sessionKey)
-  if (preferences.thinkingLevels.has(canonicalKey)) {
-    return preferences.thinkingLevels.get(canonicalKey) ?? selectedThinkingLevel
-  }
-  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
-  return (
-    manifest?.thinkingLevel ??
-    projectForSession(sessionKey, snapshot)?.defaultThinkingLevel ??
-    selectedThinkingLevel
-  )
-}
-
-function resolveSessionPermissionMode(
-  sessionKey: string,
-  snapshot: Pick<SessionSnapshot, 'path' | 'cwd'>
-): PermissionMode {
-  const canonicalKey = sessionKeys.canonicalize(sessionKey)
-  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
-  if (manifest) {
-    preferences.permissionModes.set(canonicalKey, manifest.permissionMode)
-    return manifest.permissionMode
-  }
-  if (preferences.permissionModes.has(canonicalKey)) {
-    return preferences.permissionModes.get(canonicalKey) ?? 'auto'
-  }
-  return projectForSession(sessionKey, snapshot)?.permissionMode ?? 'auto'
-}
-
 function ensurePhiSessionId(
   sessionKey: string,
   snapshot: SessionSnapshot & { permissionMode: PermissionMode },
@@ -3473,14 +3416,18 @@ function ensurePhiSessionId(
     linkPhiManagedSessionKey(sessionKey, snapshot.cwd, existing)
     return existing
   }
-  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+  const manifest = sessionResolution.findPhiManifestForSession(
+    sessionKey,
+    snapshot.path,
+    snapshot.cwd
+  )
   if (manifest) {
     linkPhiManagedSessionKey(sessionKey, manifest.cwd, manifest.sessionId)
     return manifest.sessionId
   }
 
   const project = getProjectByCwd(snapshot.cwd)
-  const model = resolveSessionModelSelection(sessionKey, snapshot)
+  const model = sessionResolution.resolveSessionModelSelection(sessionKey, snapshot)
   const sessionTitle = messageContentTitleText(title)
   const session = createPhiSession({
     kind: project ? 'project' : 'ordinary',
@@ -3491,7 +3438,7 @@ function ensurePhiSessionId(
     ...(runtimeSessionPath(snapshot.path) ? { runtimeSessionPath: snapshot.path } : {}),
     permissionMode: snapshot.permissionMode,
     model,
-    thinkingLevel: resolveSessionThinkingLevel(sessionKey, snapshot)
+    thinkingLevel: sessionResolution.resolveSessionThinkingLevel(sessionKey, snapshot)
   })
   linkPhiManagedSessionKey(sessionKey, snapshot.cwd, session.sessionId)
   return session.sessionId
@@ -3625,7 +3572,7 @@ function getSessionTitleGenerator(): SessionTitleGenerator {
     request: async ({ sessionPath, prompt, signal }) => {
       const { manifest } = sessionTitleContext(sessionPath)
       const key = sessionKeys.createPhiKey(manifest.sessionId, manifest.cwd)
-      const selection = resolveSessionModelSelection(key, {
+      const selection = sessionResolution.resolveSessionModelSelection(key, {
         path: sessionPath,
         cwd: manifest.cwd,
         permissionMode: manifest.permissionMode
@@ -4214,8 +4161,8 @@ function captureSessionControlTarget(
 }
 
 function getCurrentSessionPayload(): CurrentSessionPayload {
-  sessionState.refreshPermissionMode(resolveSessionPermissionMode)
-  const manifest = findPhiManifestForSession(
+  sessionState.refreshPermissionMode(sessionResolution.resolveSessionPermissionMode)
+  const manifest = sessionResolution.findPhiManifestForSession(
     sessionState.sessionKey,
     sessionState.sessionPath,
     sessionState.cwd
@@ -4420,7 +4367,7 @@ async function disposeAndSwitchSession(
 }> {
   sessionState.switchTo(path, cwd, permissionMode, {
     createSessionKey: sessionKeys.createKey.bind(sessionKeys),
-    resolveSessionPermissionMode,
+    resolveSessionPermissionMode: sessionResolution.resolveSessionPermissionMode,
     resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
     sessionPermissionModes: preferences.permissionModes
   })
@@ -4441,7 +4388,7 @@ async function disposeAndSwitchSession(
 const sessionCreationContextDependencies: SessionCreationContextDependencies = {
   getPromptGeneration: promptRuns.generationFor.bind(promptRuns),
   getActiveRun: promptRuns.activeRun.bind(promptRuns),
-  findManifest: findPhiManifestForSession,
+  findManifest: sessionResolution.findPhiManifestForSession,
   getProject,
   getProjectByCwd,
   normalizeMemory: normalizeProjectMemorySettings,
@@ -4532,7 +4479,10 @@ function prepareSessionCreationRuntime(
   useRpc: boolean,
   model: RuntimeModel | undefined
 ): SessionCreationRuntime {
-  const desiredThinking = resolveSessionThinkingLevel(context.sessionKey, context.snapshot)
+  const desiredThinking = sessionResolution.resolveSessionThinkingLevel(
+    context.sessionKey,
+    context.snapshot
+  )
   const thinkingLevel =
     useRpc && model ? selectionThinking(model, desiredThinking).phi : desiredThinking
   const abortController = new AbortController()
@@ -4550,7 +4500,7 @@ function prepareSessionCreationModelPhase(
 ): SessionCreationModelPhase {
   const modelSelection =
     context.remoteRecovery?.replacementModel ??
-    resolveSessionModelSelection(context.sessionKey, context.snapshot)
+    sessionResolution.resolveSessionModelSelection(context.sessionKey, context.snapshot)
   const resolution = resolveSessionCreationModel(
     {
       useRpc,
@@ -4571,7 +4521,7 @@ function prepareSessionCreationModelPhase(
 const sessionCreationApprovalDependencies = createSessionCreationApprovalDependencies({
   classifyLocal: (toolName, input) => skillHost.approvalFor(toolName, input),
   classifyRemote: (toolName, input) => remoteRuntimeController.approvalFor(toolName, input),
-  permissionMode: resolveSessionPermissionMode,
+  permissionMode: sessionResolution.resolveSessionPermissionMode,
   remoteHost: getRemoteHostProfile,
   remoteScope: remoteBashApprovalScope,
   activeRun: promptRuns.activeRun.bind(promptRuns),
@@ -4990,23 +4940,29 @@ async function applyNextRunConfiguration(
   sessionKey: string,
   snapshot: SessionSnapshot
 ): Promise<void> {
-  const manifest = findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+  const manifest = sessionResolution.findPhiManifestForSession(
+    sessionKey,
+    snapshot.path,
+    snapshot.cwd
+  )
   if (session.runtimeSessionId && ownsRemoteRuntimeSession(session.runtimeSessionId)) {
     // The selected RPC generation already owns this saved policy. Unsupported changes are explicit.
-    const selection = resolveSessionModelSelection(sessionKey, snapshot)
+    const selection = sessionResolution.resolveSessionModelSelection(sessionKey, snapshot)
     if (
       !selection ||
       selection.providerId !== session.model?.provider ||
       selection.modelId !== session.model?.id ||
-      selectionThinking(session.model!, resolveSessionThinkingLevel(sessionKey, snapshot)).phi !==
-        session.thinkingLevel
+      selectionThinking(
+        session.model!,
+        sessionResolution.resolveSessionThinkingLevel(sessionKey, snapshot)
+      ).phi !== session.thinkingLevel
     )
       throw new Error('RPC model/thinking changes require a supported remote control path')
     return
   }
   await session.setAutoCompactionSettings(manifest?.autoCompaction ?? {})
   const runtime = await getAuthManager().getRuntime()
-  const modelSelection = resolveSessionModelSelection(sessionKey, snapshot)
+  const modelSelection = sessionResolution.resolveSessionModelSelection(sessionKey, snapshot)
   if (modelSelection) {
     const resolvedModel = resolveRuntimeModelSelection(runtime, modelSelection)
     if (!resolvedModel) {
@@ -5014,7 +4970,9 @@ async function applyNextRunConfiguration(
     }
     await session.setModel(resolvedModel.model)
   }
-  await session.setThinkingLevel(resolveSessionThinkingLevel(sessionKey, snapshot))
+  await session.setThinkingLevel(
+    sessionResolution.resolveSessionThinkingLevel(sessionKey, snapshot)
+  )
 }
 
 function createMainBrowserWindow(): BrowserWindow {
@@ -5442,7 +5400,7 @@ function registerRemoteFileAndWrapperIpc(
         path: sessionState.sessionPath,
         cwd: sessionState.cwd
       }),
-      findPhiManifestForSession
+      findPhiManifestForSession: sessionResolution.findPhiManifestForSession
     },
     execution: { environmentBuilds, wrapperJobs },
     uploads: remoteProjectUploads,
@@ -5510,7 +5468,7 @@ function registerAgentIpc(): void {
       getCurrentLifecycle: () => lifecycles.forKey(sessionState.sessionKey),
       disposeAndSwitchSession,
       openRuntimeSessionManager,
-      resolveSessionPermissionMode
+      resolveSessionPermissionMode: sessionResolution.resolveSessionPermissionMode
     }
   }
   const agentIpcOptions: AgentIpcOptions = {
@@ -5616,7 +5574,7 @@ function registerApplicationAndModelIpc(): void {
   }
   const modelSelectionOperations = {
     resolveRuntimeModelSelection,
-    resolveSessionThinkingLevel
+    resolveSessionThinkingLevel: sessionResolution.resolveSessionThinkingLevel
   }
   registerModelsIpc({
     ipcMain,
@@ -5626,7 +5584,7 @@ function registerApplicationAndModelIpc(): void {
     models: {
       ...modelSelectionOperations,
       selectableRuntimeModels,
-      resolveSessionModelSelection
+      resolveSessionModelSelection: sessionResolution.resolveSessionModelSelection
     }
   })
   registerThinkingIpc({
@@ -5647,7 +5605,7 @@ function createCurrentContextUsageOptions(): CurrentContextUsageOptions {
     getCurrentSessionPath: () => sessionState.sessionPath,
     getCurrentCwd: () => sessionState.cwd,
     getCurrentPermissionMode: () => sessionState.permissionMode,
-    findPhiManifestForSession,
+    findPhiManifestForSession: sessionResolution.findPhiManifestForSession,
     runtimeSessionPathForSnapshot,
     getCurrentLifecycle: () => lifecycles.forKey(sessionState.sessionKey),
     getAgentSession
@@ -5677,7 +5635,7 @@ function createSessionCompactionControlOptions(): SessionCompactionControlOption
       manualCompactionOperations: promptRuns.manualCompactionOperations
     },
     sessions: {
-      findPhiManifestForSession,
+      findPhiManifestForSession: sessionResolution.findPhiManifestForSession,
       runtimeSessionPathForSnapshot,
       ensurePhiSessionId,
       hasActivePromptRun: promptRuns.hasActiveRun.bind(promptRuns),
@@ -5768,14 +5726,14 @@ function createSessionsIpcOptions(
       resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
       setPhiSessionIdForKey: sessionKeys.setPhiSessionId.bind(sessionKeys),
       getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
-      findPhiManifestForSession,
+      findPhiManifestForSession: sessionResolution.findPhiManifestForSession,
       runtimeSessionPath
     },
     lifecycle: {
       createPhiManagedSession,
       disposeAndSwitchSession,
       openRuntimeSessionManager,
-      resolveSessionPermissionMode,
+      resolveSessionPermissionMode: sessionResolution.resolveSessionPermissionMode,
       getLifecycleForKey: lifecycles.forKey.bind(lifecycles),
       getAgentSession,
       waitForSessionCleanup: lifecycles.waitForCleanup.bind(lifecycles)
@@ -5832,7 +5790,7 @@ function registerProjectAndAnalysisIpc(): void {
       requireProject,
       applyCurrentPermissionMode: (id, project, permissionMode) =>
         sessionState.applyProjectPermissionMode(id, project, permissionMode, {
-          findPhiManifestForSession,
+          findPhiManifestForSession: sessionResolution.findPhiManifestForSession,
           resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
           sessionPermissionModes: preferences.permissionModes,
           notifySessionChanged
