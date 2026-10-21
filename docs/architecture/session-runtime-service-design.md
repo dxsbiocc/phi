@@ -1,7 +1,7 @@
 # 会话运行时服务:设计
 
 Date: 2026-10-21
-Status: 阶段一已完成(SR-1 至 SR-4,2026-10-21);阶段二计划见第 10 节,待用户确认
+Status: 阶段一已完成(SR-1 至 SR-4);阶段二已开始(2026-10-21 用户要求开始迁移,按第 10 节计划,从 SO-1 起)
 
 相关文档:[main-ipc-split-handoff.md](main-ipc-split-handoff.md)(规则、审查清单、第 9 步状态类决定)、
 [clean-code-optimization-plan.md](clean-code-optimization-plan.md)(第 3.1 节「主进程可隔离测试」)。
