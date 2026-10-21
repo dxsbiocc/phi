@@ -3075,7 +3075,8 @@ function App(): React.JSX.Element {
               hostAlias: activeRemoteFileScope?.hostAlias ?? '',
               remoteRoot: activeProjectLocation.remoteRoot,
               canonicalRoot: activeProjectLocation.canonicalRoot,
-              openPath: openRemoteWorkspacePath
+              openPath: (path, kind) =>
+                kind === 'directory' ? openRemoteWorkspacePath(path, kind) : onOpenFilePreview(path)
             }
           : null
       }
