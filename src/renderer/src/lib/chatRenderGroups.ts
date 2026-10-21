@@ -197,9 +197,13 @@ export function groupMessages(
     const runStartedAtMs = firstRunStartedAtMs(turnItems)
     const runCompletedAtMs = lastRunTerminalAtMs(turnItems)
     const runDurationMs = lastRunTerminalDurationMs(turnItems)
-    // run_failed renders as a trailing error item outside the fold, so the fold itself cannot
-    // tell a dropped run from a finished one without looking at the whole turn.
-    const runFailed = turnItems.some((item) => item.role === 'error')
+    // A run that failed or was interrupted never produced a result, so the fold must not claim
+    // completion. The terminal lifecycle item and the error card both render outside the fold.
+    const runFailed = turnItems.some(
+      (item) =>
+        item.role === 'error' ||
+        (item.role === 'run' && (item.event === 'failed' || item.event === 'interrupted'))
+    )
     const lastProcessingIndex = turnItems.findLastIndex(isProcessingArtifact)
     if (lastProcessingIndex < 0) {
       if (runStartedAtMs !== undefined) {

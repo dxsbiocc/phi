@@ -65,6 +65,45 @@ test('a finished turn reports a dropped connection as interrupted', () => {
   )
 })
 
+test('a stopped turn reports the fold as interrupted too', () => {
+  const groups = groupMessages([
+    { id: 'user-1', role: 'user', content: '跑 sleep 180' },
+    { id: 'run-1', role: 'run', event: 'started', createdAt: '2026-09-29T00:00:00.000Z' },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'bash',
+      argsPreview: '{}',
+      argsJson: '{}',
+      output: 'Tool execution was aborted',
+      status: 'error'
+    },
+    {
+      id: 'run-1-end',
+      role: 'run',
+      event: 'interrupted',
+      runId: 'run-1',
+      createdAt: '2026-09-29T00:03:11.000Z',
+      durationMs: 191_000
+    }
+  ])
+
+  const group = groups.find((candidate) => candidate.kind === 'processing-group')
+  assert.equal(group?.kind === 'processing-group' && group.failed, true)
+  assert.equal(
+    group?.kind === 'processing-group' &&
+      processingStatusText({
+        items: group.items,
+        isActive: false,
+        failed: group.failed,
+        nowMs: 0,
+        fallbackStartedAtMs: 0,
+        durationMs: group.durationMs
+      }),
+    '已中断，总共用时 3 分钟 11 秒'
+  )
+})
+
 test('chat render groups leave wrapper plans as persistent artifacts', () => {
   const messages: ChatItem[] = [
     { id: 'user-1', role: 'user', content: 'run wrapper' },
