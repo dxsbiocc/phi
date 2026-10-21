@@ -4,6 +4,7 @@ import test from 'node:test'
 import { SessionKeyRegistry } from '../src/main/app-state/session-key-registry'
 import { SessionLifecycleRegistry } from '../src/main/app-state/session-lifecycle-registry'
 import { SessionPreferences } from '../src/main/app-state/session-preferences'
+import { PromptRunRegistry } from '../src/main/app-state/prompt-run-registry'
 import { SessionRuntime } from '../src/main/app-state/session-runtime'
 
 function createRegistry(getFreshSessionCounter: () => number): SessionKeyRegistry {
@@ -194,6 +195,116 @@ test('SessionPreferences tables preserve Map get, has, delete, and value identit
   assert.equal(preferences.permissionModes.delete('session'), false)
 })
 
+test('PromptRunRegistry supplies a resolved default queue and preserves replacement identity', async () => {
+  const registry = new PromptRunRegistry((key) => (key === 'alias' ? 'canonical' : key))
+  const replacement = new Promise<void>(() => {})
+
+  await registry.queueFor('missing')
+  registry.setQueue('alias', replacement)
+
+  assert.equal(registry.queueFor('canonical'), replacement)
+})
+
+test('PromptRunRegistry generations start at zero and advance through aliases', () => {
+  const registry = new PromptRunRegistry((key) => (key === 'alias' ? 'canonical' : key))
+
+  assert.equal(registry.generationFor('alias'), 0)
+  assert.equal(registry.advanceGeneration('alias'), 1)
+  assert.equal(registry.generationFor('canonical'), 1)
+  assert.equal(registry.advanceGeneration('canonical'), 2)
+  assert.equal(registry.generationFor('alias'), 2)
+})
+
+test('PromptRunRegistry sets, checks, and gets active runs through aliases', () => {
+  const registry = new PromptRunRegistry<{ id: string }>((key) =>
+    key === 'alias' ? 'canonical' : key
+  )
+  const run = { id: 'run-one' }
+
+  registry.setActiveRun('alias', run)
+
+  assert.equal(registry.hasActiveRun('canonical'), true)
+  assert.equal(registry.activeRun('alias'), run)
+})
+
+test('PromptRunRegistry deletes an active run only when the stored object is current', () => {
+  const registry = new PromptRunRegistry<{ id: string }>((key) =>
+    key === 'alias' ? 'canonical' : key
+  )
+  const current = { id: 'current' }
+  const stale = { id: 'stale' }
+  registry.setActiveRun('canonical', current)
+
+  registry.deleteActiveRunIfCurrent('alias', stale)
+  assert.equal(registry.activeRun('canonical'), current)
+
+  registry.deleteActiveRunIfCurrent('alias', current)
+  assert.equal(registry.hasActiveRun('canonical'), false)
+})
+
+test('PromptRunRegistry active-run iteration preserves Map insertion order', () => {
+  const registry = new PromptRunRegistry<{ id: string }>((key) => key)
+  const first = { id: 'first' }
+  const second = { id: 'second' }
+  registry.setActiveRun('session-b', first)
+  registry.setActiveRun('session-a', second)
+
+  assert.deepEqual(registry.activeRuns(), [first, second])
+  assert.deepEqual(registry.activeEntries(), [
+    ['session-b', first],
+    ['session-a', second]
+  ])
+  assert.equal(
+    registry.findActiveRun(() => true),
+    first
+  )
+})
+
+test('PromptRunRegistry Phi-id tables are narrow and do not canonicalize keys', () => {
+  const registry = new PromptRunRegistry<{ id: string }>((key) =>
+    key === 'alias' ? 'canonical' : key
+  )
+  const recovery = { controller: new AbortController(), done: Promise.resolve() }
+  const failure = 'disconnected'
+  const compaction = { cancelled: false, done: Promise.resolve() }
+
+  assert.deepEqual(Object.keys(registry.runtimeRecoveryOperations).sort(), [
+    'delete',
+    'get',
+    'has',
+    'set',
+    'values'
+  ])
+  assert.deepEqual(Object.keys(registry.runtimeRecoveryFailures).sort(), [
+    'delete',
+    'get',
+    'has',
+    'set'
+  ])
+  assert.deepEqual(Object.keys(registry.manualCompactionIds).sort(), ['add', 'delete', 'has'])
+  assert.deepEqual(Object.keys(registry.manualCompactionOperations).sort(), [
+    'delete',
+    'get',
+    'has',
+    'set'
+  ])
+
+  registry.runtimeRecoveryOperations.set('alias', recovery)
+  registry.runtimeRecoveryFailures.set('alias', failure)
+  registry.manualCompactionIds.add('alias')
+  registry.manualCompactionOperations.set('alias', compaction)
+
+  assert.equal(registry.runtimeRecoveryOperations.get('alias'), recovery)
+  assert.equal(registry.runtimeRecoveryOperations.get('canonical'), undefined)
+  assert.deepEqual([...registry.runtimeRecoveryOperations.values()], [recovery])
+  assert.equal(registry.runtimeRecoveryFailures.get('alias'), failure)
+  assert.equal(registry.runtimeRecoveryFailures.get('canonical'), undefined)
+  assert.equal(registry.manualCompactionIds.has('alias'), true)
+  assert.equal(registry.manualCompactionIds.has('canonical'), false)
+  assert.equal(registry.manualCompactionOperations.get('alias'), compaction)
+  assert.equal(registry.manualCompactionOperations.get('canonical'), undefined)
+})
+
 test('SessionRuntime owns and exposes SessionPreferences', () => {
   const runtime = new SessionRuntime({
     getFreshSessionCounter: () => 0,
@@ -201,6 +312,20 @@ test('SessionRuntime owns and exposes SessionPreferences', () => {
   })
 
   assert.equal(runtime.preferences instanceof SessionPreferences, true)
+})
+
+test('SessionRuntime owns and exposes PromptRunRegistry using its key canonicalizer', () => {
+  const runtime = new SessionRuntime({
+    getFreshSessionCounter: () => 0,
+    phiOnlySessionPath: (sessionId) => `phi-session:${sessionId}`
+  })
+  const run = { id: 'run-one' }
+  runtime.alias('alias', 'canonical')
+
+  runtime.runs.setActiveRun('alias', run)
+
+  assert.equal(runtime.runs instanceof PromptRunRegistry, true)
+  assert.equal(runtime.runs.activeRun('canonical'), run)
 })
 
 test(

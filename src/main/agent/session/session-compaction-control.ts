@@ -38,6 +38,19 @@ interface ManualCompactionOperation {
   done: Promise<void>
 }
 
+interface PhiSessionTable<T> {
+  get(phiSessionId: string): T | undefined
+  set(phiSessionId: string, value: T): void
+  has(phiSessionId: string): boolean
+  delete(phiSessionId: string): boolean
+}
+
+interface PhiSessionSetTable {
+  has(phiSessionId: string): boolean
+  add(phiSessionId: string): void
+  delete(phiSessionId: string): boolean
+}
+
 export interface SessionCompactionControlOptions {
   workspace: { agentDir: string }
   state: {
@@ -46,8 +59,8 @@ export interface SessionCompactionControlOptions {
     getCurrentSessionPath: () => string | undefined
     getCurrentCwd: () => string
     getCurrentPermissionMode: () => PermissionMode
-    manualCompactionIds: Set<string>
-    manualCompactionOperations: Map<string, ManualCompactionOperation>
+    manualCompactionIds: PhiSessionSetTable
+    manualCompactionOperations: PhiSessionTable<ManualCompactionOperation>
   }
   sessions: {
     findPhiManifestForSession: (

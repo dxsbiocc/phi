@@ -54,6 +54,19 @@ interface RuntimeRecoveryOperation {
   done: Promise<void>
 }
 
+interface PhiSessionTable<T> {
+  get(phiSessionId: string): T | undefined
+  set(phiSessionId: string, value: T): void
+  has(phiSessionId: string): boolean
+  delete(phiSessionId: string): boolean
+}
+
+interface PhiSessionSetTable {
+  has(phiSessionId: string): boolean
+  add(phiSessionId: string): void
+  delete(phiSessionId: string): boolean
+}
+
 export interface RuntimeRecoveryControlOptions {
   state: {
     getCurrentPayload: () => CurrentSessionPayload
@@ -62,9 +75,9 @@ export interface RuntimeRecoveryControlOptions {
     getCurrentCwd: () => string
     getCurrentPermissionMode: () => PermissionMode
     isRemoteOmpRpcEnabled: () => boolean
-    runtimeRecoveryOperations: Map<string, RuntimeRecoveryOperation>
-    runtimeRecoveryFailures: Map<string, RuntimeRecoveryIssue>
-    manualCompactionIds: Set<string>
+    runtimeRecoveryOperations: PhiSessionTable<RuntimeRecoveryOperation>
+    runtimeRecoveryFailures: PhiSessionTable<RuntimeRecoveryIssue>
+    manualCompactionIds: PhiSessionSetTable
     sessionModelSelections: SessionPreferenceTable<ModelSelection | null>
     sessionThinkingLevels: SessionPreferenceTable<ThinkingLevel>
   }

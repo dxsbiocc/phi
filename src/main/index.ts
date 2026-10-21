@@ -5,10 +5,7 @@ import {
 } from './agent/session/runtime-origin-store'
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
 import type { PhiAgentEvent, RuntimeSelectionControl } from './agent/engine/types'
-import type {
-  RuntimeRecoveryModelSelection,
-  RuntimeRecoveryIssue
-} from '../shared/runtimeRecoveryTypes'
+import type { RuntimeRecoveryModelSelection } from '../shared/runtimeRecoveryTypes'
 import { readRuntimeRecoverySummarySeed } from './agent/session/recovery-summary'
 import {
   parseRuntimeReference,
@@ -587,7 +584,7 @@ async function requestBrowserActionApproval(
   prompt: BrowserActionApprovalPrompt,
   signal: AbortSignal
 ): Promise<'approved' | 'denied' | 'cancelled'> {
-  const run = [...activePromptRuns.values()].find(
+  const run = promptRuns.findActiveRun(
     (candidate) =>
       candidate.phiSessionId === prompt.sessionId &&
       candidate.runId === prompt.runId &&
@@ -1087,7 +1084,7 @@ const initialSelectedModel = readLastSelectedModel()
 // (e.g. DeepSeek V4 Pro) only enable reasoning output at 'high'/'max', and this app
 // wants that reasoning visible in the UI out of the box rather than silently absent.
 const selectedThinkingLevel: ThinkingLevel = 'high'
-const runtime = createMainRuntimeContext<AgentSessionResult>({
+const runtime = createMainRuntimeContext<AgentSessionResult, PromptRun>({
   sessions: {
     getFreshSessionCounter: () => runtime.session.freshSessionCounter,
     phiOnlySessionPath
@@ -1100,20 +1097,7 @@ const runtime = createMainRuntimeContext<AgentSessionResult>({
   })
 })
 const { session: sessionState, sessions: sessionRuntime } = runtime
-const { keys: sessionKeys, lifecycles, preferences } = sessionRuntime
-const promptQueues = new Map<string, Promise<void>>()
-const promptGenerations = new Map<string, number>()
-const activePromptRuns = new Map<string, PromptRun>()
-const runtimeRecoveryOperations = new Map<
-  string,
-  { controller: AbortController; done: Promise<void> }
->()
-const runtimeRecoveryFailures = new Map<string, RuntimeRecoveryIssue>()
-const manualCompactionIds = new Set<string>()
-const manualCompactionOperations = new Map<
-  string,
-  { session?: AgentSessionInstance; cancelled: boolean; done: Promise<void> }
->()
+const { keys: sessionKeys, lifecycles, preferences, runs: promptRuns } = sessionRuntime
 const approvedRemoteBashCalls = new Map<
   string,
   { projectId: string; approvedCwd: string; approvalDigest: string; expiresAt: number }
@@ -2627,9 +2611,7 @@ function optionalStringField(record: Record<string, unknown>, key: string): stri
 
 function findActivePromptRunByRuntimeSessionId(runtimeSessionId: string): PromptRun | null {
   return (
-    [...activePromptRuns.values()].find(
-      (run) => run.session?.runtimeSessionId === runtimeSessionId
-    ) ?? null
+    promptRuns.findActiveRun((run) => run.session?.runtimeSessionId === runtimeSessionId) ?? null
   )
 }
 
@@ -2703,7 +2685,7 @@ function notebookAgentRuntimePrompt(projectCwd: string): string | null {
 }
 
 function broadcastSessionTimelineEvent(sessionId: string, event: StoredSessionEvent): void {
-  const run = [...activePromptRuns.values()].find((item) => item.phiSessionId === sessionId)
+  const run = promptRuns.findActiveRun((item) => item.phiSessionId === sessionId)
   if (!run) return
 
   const targetWindow = getActiveWindow()
@@ -2844,25 +2826,10 @@ function linkPhiManagedSessionKey(sessionKey: string, cwd: string, phiSessionId:
   return stablePath
 }
 
-function getActivePromptRun(sessionKey: string): PromptRun | undefined {
-  return activePromptRuns.get(sessionKeys.canonicalize(sessionKey))
-}
-
-function hasActivePromptRun(sessionKey: string): boolean {
-  return activePromptRuns.has(sessionKeys.canonicalize(sessionKey))
-}
-
-function setActivePromptRun(sessionKey: string, run: PromptRun): void {
-  activePromptRuns.set(sessionKeys.canonicalize(sessionKey), run)
-}
-
 function deleteActivePromptRun(sessionKey: string, run: PromptRun): void {
   cancelBrowserRun(run)
   void cleanupBrowserRunTabs(run)
-  const canonicalKey = sessionKeys.canonicalize(sessionKey)
-  if (activePromptRuns.get(canonicalKey) === run) {
-    activePromptRuns.delete(canonicalKey)
-  }
+  promptRuns.deleteActiveRunIfCurrent(sessionKey, run)
 }
 
 function updatePhiRuntimeSessionPath(sessionId: string, path: string): void {
@@ -2910,25 +2877,6 @@ function linkPromptRunRuntimeSessionPath(
   linkMaterializedRuntimeSessionPath(sessionKey, cwd, path, promptRun.phiSessionId)
 }
 
-function getPromptQueue(sessionKey: string): Promise<void> {
-  return promptQueues.get(sessionKeys.canonicalize(sessionKey)) ?? Promise.resolve()
-}
-
-function setPromptQueue(sessionKey: string, queue: Promise<void>): void {
-  promptQueues.set(sessionKeys.canonicalize(sessionKey), queue)
-}
-
-function getPromptGeneration(sessionKey: string): number {
-  return promptGenerations.get(sessionKeys.canonicalize(sessionKey)) ?? 0
-}
-
-function advancePromptGeneration(sessionKey: string): number {
-  const canonicalKey = sessionKeys.canonicalize(sessionKey)
-  const next = getPromptGeneration(canonicalKey) + 1
-  promptGenerations.set(canonicalKey, next)
-  return next
-}
-
 function getSessionControllerKey(snapshot: SessionSnapshot, generation: number): string {
   return `${snapshot.path ?? `fresh:${snapshot.cwd}`}:${generation}`
 }
@@ -2939,7 +2887,7 @@ function findPhiManifestForSession(
   cwd: string
 ): PhiSessionManifest | null {
   const phiSessionId =
-    getActivePromptRun(sessionKey)?.phiSessionId ?? sessionKeys.phiSessionIdFor(sessionKey)
+    promptRuns.activeRun(sessionKey)?.phiSessionId ?? sessionKeys.phiSessionIdFor(sessionKey)
   if (phiSessionId) {
     return listPhiSessions().find((manifest) => manifest.sessionId === phiSessionId) ?? null
   }
@@ -3075,8 +3023,8 @@ function wakeConversation(phiSessionId: string, event: ContinuationEvent): void 
   const manifest = findPhiSessionById(phiSessionId)
   if (!manifest) return
   if (
-    hasActivePromptRun(sessionKeys.createPhiKey(manifest.sessionId, manifest.cwd)) ||
-    manualCompactionIds.has(phiSessionId)
+    promptRuns.hasActiveRun(sessionKeys.createPhiKey(manifest.sessionId, manifest.cwd)) ||
+    promptRuns.manualCompactionIds.has(phiSessionId)
   ) {
     // Keep the report for the next turn after the active run or compaction finishes.
     pendingContinuations.set(phiSessionId, [
@@ -3177,21 +3125,21 @@ function admitPromptRun(target: ResolvedPromptRunTarget): AdmittedPromptRun {
     target.runSnapshot,
     target.normalizedText || (target.input.images?.length ? '图片' : undefined)
   )
-  if (runtimeRecoveryOperations.has(phiSessionId))
+  if (promptRuns.runtimeRecoveryOperations.has(phiSessionId))
     throw new Error('会话正在恢复，请等待恢复操作结束')
-  if (manualCompactionIds.has(phiSessionId)) {
+  if (promptRuns.manualCompactionIds.has(phiSessionId)) {
     throw new Error('上下文压缩正在进行，请稍后发送消息')
   }
   const stableSessionPath = phiOnlySessionPath(phiSessionId)
   const runId = createRunId()
-  if (hasActivePromptRun(target.runSessionKey)) {
+  if (promptRuns.hasActiveRun(target.runSessionKey)) {
     throw new Error('会话正在运行')
   }
   return { ...target, phiSessionId, stableSessionPath, runId }
 }
 
 function allocatePromptRun(admission: AdmittedPromptRun): PromptRunContext {
-  const runGeneration = advancePromptGeneration(admission.runSessionKey)
+  const runGeneration = promptRuns.advanceGeneration(admission.runSessionKey)
   // A real user message starts the automatic wake-up count over only after preflight succeeds.
   if (!admission.input.automatic) automaticContinuations.delete(admission.phiSessionId)
   const storedImages = admission.input.images?.length
@@ -3219,7 +3167,7 @@ function allocatePromptRun(admission: AdmittedPromptRun): PromptRunContext {
     pendingProviderToolCalls: new Map(),
     sessionPath: admission.stableSessionPath
   }
-  setActivePromptRun(admission.runSessionKey, promptRun)
+  promptRuns.setActiveRun(admission.runSessionKey, promptRun)
   return { ...admission, runGeneration, storedImages, otherActiveProjectRuns, promptRun }
 }
 
@@ -3262,7 +3210,7 @@ function preparePromptRunForQueue(context: PromptRunContext): void {
 }
 
 const promptRunExecutionDeps: PromptRunExecutionDeps<PromptRunContext> = {
-  lifecycle: { getPromptGeneration },
+  lifecycle: { getPromptGeneration: promptRuns.generationFor.bind(promptRuns) },
   session: {
     getAgentSession,
     applyNextRunConfiguration,
@@ -3325,7 +3273,7 @@ async function runQueuedPrompt(context: PromptRunContext): Promise<PromptRunResu
   let promptResult: PromptRunResult = null
   if (
     context.promptRun.cancelled ||
-    context.promptRun.generation !== getPromptGeneration(context.runSessionKey) ||
+    context.promptRun.generation !== promptRuns.generationFor(context.runSessionKey) ||
     !context.runLifecycle.isCurrentGeneration(context.promptRun.sessionGeneration)
   ) {
     return null
@@ -3384,7 +3332,7 @@ async function runQueuedPrompt(context: PromptRunContext): Promise<PromptRunResu
 
 function trackPromptRunSettlement(context: PromptRunContext, run: Promise<PromptRunResult>): void {
   context.promptRun.done = run
-  setPromptQueue(
+  promptRuns.setQueue(
     context.runSessionKey,
     run.then(
       (result) => {
@@ -3416,7 +3364,7 @@ async function submitPromptRun(input: SubmitPromptInput): Promise<PromptRunResul
   preparePromptRunForQueue(context)
   // Serialize prompts per session: duplicate/overlapping IPC invokes must
   // never run session.prompt() concurrently within the same conversation.
-  const run = getPromptQueue(context.runSessionKey).then(() => runQueuedPrompt(context))
+  const run = promptRuns.queueFor(context.runSessionKey).then(() => runQueuedPrompt(context))
   trackPromptRunSettlement(context, run)
   return run
 }
@@ -3434,7 +3382,7 @@ function getSessionStatusPayload(
   | 'currentRunStartedAt'
   | 'lastActivityAt'
 > {
-  const promptRun = getActivePromptRun(sessionKey)
+  const promptRun = promptRuns.activeRun(sessionKey)
   const activeRun = promptRun ? runnerRegistry.getActiveRun(promptRun.phiSessionId) : null
   if (activeRun) {
     return {
@@ -3837,7 +3785,7 @@ function scheduleAutomaticSessionTitle(sessionId: string): void {
         latest.runtimeRecoveryError ||
         manualTitleRequests.has(path) ||
         runnerRegistry.getActiveRun(sessionId) ||
-        runtimeRecoveryOperations.has(sessionId)
+        promptRuns.runtimeRecoveryOperations.has(sessionId)
       )
         return
       await renameConversation(path, title, 'auto')
@@ -4163,7 +4111,7 @@ function assertSessionControlAttachment(
     lifecycles.forKey(assertion.key) !== assertion.lifecycle ||
     !assertion.lifecycle.isCurrentGeneration(assertion.generation) ||
     assertion.lifecycle.currentRecord !== assertion.record ||
-    getPromptGeneration(assertion.key) !== assertion.promptGeneration ||
+    promptRuns.generationFor(assertion.key) !== assertion.promptGeneration ||
     sessionControlBinding(latest) !== assertion.initialBinding ||
     (!assertion.initializing && sessionControlJournal(latest) !== assertion.expectedJournal)
   )
@@ -4173,9 +4121,9 @@ function assertSessionControlAttachment(
 function assertSessionControlIdle(assertion: SessionControlAssertion): void {
   if (
     assertion.requireIdle &&
-    (hasActivePromptRun(assertion.key) ||
+    (promptRuns.hasActiveRun(assertion.key) ||
       runnerRegistry.getActiveRun(assertion.phiSessionId) ||
-      (!assertion.manual && manualCompactionIds.has(assertion.phiSessionId)))
+      (!assertion.manual && promptRuns.manualCompactionIds.has(assertion.phiSessionId)))
   )
     throw new Error('请等待当前会话运行结束后再修改压缩设置')
 }
@@ -4203,7 +4151,7 @@ function captureSessionControlTarget(
   const current = getCurrentSessionPayload()
   const lifecycle = lifecycles.forKey(key)
   const generation = lifecycle.currentGeneration
-  const promptGeneration = getPromptGeneration(key)
+  const promptGeneration = promptRuns.generationFor(key)
   let record = lifecycle.currentRecord
   let initializing = false
   let acceptedManual = false
@@ -4317,9 +4265,9 @@ function notifyProjectParallelRun(
 }
 
 function countOtherActiveProjectRuns(projectId: string, sessionKey: string): number {
-  return [...activePromptRuns.values()].filter(
-    (run) => run.projectId === projectId && run.sessionKey !== sessionKey
-  ).length
+  return promptRuns
+    .activeRuns()
+    .filter((run) => run.projectId === projectId && run.sessionKey !== sessionKey).length
 }
 
 function requireProject(id: string): Project {
@@ -4333,8 +4281,8 @@ async function invalidateAgentSession(): Promise<void> {
   if (phiSessionId) loadedSkillNamesBySession.delete(phiSessionId)
   const lifecycle = lifecycles.forKey(sessionState.sessionKey)
   const previous = lifecycle.advance()
-  advancePromptGeneration(sessionState.sessionKey)
-  const activePromptRun = getActivePromptRun(sessionState.sessionKey)
+  promptRuns.advanceGeneration(sessionState.sessionKey)
+  const activePromptRun = promptRuns.activeRun(sessionState.sessionKey)
   if (activePromptRun) {
     activePromptRun.cancelled = true
     cancelBrowserRun(activePromptRun)
@@ -4354,7 +4302,7 @@ async function stopPromptRun(
   run: PromptRun,
   invalidateGeneration = true
 ): Promise<void> {
-  if (invalidateGeneration) advancePromptGeneration(sessionKey)
+  if (invalidateGeneration) promptRuns.advanceGeneration(sessionKey)
   run.cancelled = true
   cancelBrowserRun(run)
   const browserCleanup = cleanupBrowserRunTabs(run)
@@ -4375,11 +4323,11 @@ function stopAllPromptRuns(): {
 } {
   remoteBashManager.cancelAll()
   remoteMutationManager.cancelAll()
-  const recoveries = [...runtimeRecoveryOperations.values()]
+  const recoveries = [...promptRuns.runtimeRecoveryOperations.values()]
   for (const recovery of recoveries) recovery.controller.abort()
-  const runs = [...activePromptRuns.values()]
-  for (const [sessionKey, run] of activePromptRuns) {
-    advancePromptGeneration(sessionKey)
+  const runs = promptRuns.activeRuns()
+  for (const [sessionKey, run] of promptRuns.activeEntries()) {
+    promptRuns.advanceGeneration(sessionKey)
     run.cancelled = true
     cancelBrowserRun(run)
   }
@@ -4491,8 +4439,8 @@ async function disposeAndSwitchSession(
 }
 
 const sessionCreationContextDependencies: SessionCreationContextDependencies = {
-  getPromptGeneration,
-  getActiveRun: getActivePromptRun,
+  getPromptGeneration: promptRuns.generationFor.bind(promptRuns),
+  getActiveRun: promptRuns.activeRun.bind(promptRuns),
   findManifest: findPhiManifestForSession,
   getProject,
   getProjectByCwd,
@@ -4555,7 +4503,7 @@ function recordSessionCreationModelMigration(
     sessionKeys.canonicalize(context.sessionKey),
     resolvedModel.selection
   )
-  const run = getActivePromptRun(context.sessionKey)
+  const run = promptRuns.activeRun(context.sessionKey)
   const phiSessionId = run?.phiSessionId ?? sessionKeys.phiSessionIdFor(context.sessionKey)
   if (!phiSessionId) return
   const stored = appendSessionEvent(phiSessionId, {
@@ -4626,7 +4574,7 @@ const sessionCreationApprovalDependencies = createSessionCreationApprovalDepende
   permissionMode: resolveSessionPermissionMode,
   remoteHost: getRemoteHostProfile,
   remoteScope: remoteBashApprovalScope,
-  activeRun: getActivePromptRun,
+  activeRun: promptRuns.activeRun.bind(promptRuns),
   sessionPath: phiOnlySessionPath,
   background: {
     backgroundRequested: (request) => backgroundAgentApprovals.requested(request),
@@ -4822,7 +4770,7 @@ function linkCreatedSession(context: SessionCreationContext, result: AgentSessio
       cwd: context.snapshot.cwd
     })
   }
-  const run = getActivePromptRun(context.sessionKey)
+  const run = promptRuns.activeRun(context.sessionKey)
   if (run) {
     linkPromptRunRuntimeSessionPath(context.sessionKey, context.snapshot.cwd, run, result.session)
   } else {
@@ -4874,7 +4822,7 @@ function handleCreatedSessionEvent(
 ): void {
   if (!context.lifecycle.isCurrentGeneration(context.generation)) return
   const summary = withEventTimestamp(rawSummary)
-  const run = getActivePromptRun(context.sessionKey)
+  const run = promptRuns.activeRun(context.sessionKey)
   stopCreatedSessionForPermanentProviderError(run, summary, result.session)
   const phiSessionId = run?.phiSessionId ?? sessionKeys.phiSessionIdFor(context.sessionKey)
   const persistedSummary = run
@@ -5582,11 +5530,13 @@ function registerAgentIpc(): void {
       submit: submitPromptRun
     },
     stop: {
-      advancePromptGeneration,
-      getActivePromptRun,
+      advancePromptGeneration: promptRuns.advanceGeneration.bind(promptRuns),
+      getActivePromptRun: promptRuns.activeRun.bind(promptRuns),
       getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
-      getRuntimeRecoveryOperation: (sessionId) => runtimeRecoveryOperations.get(sessionId),
-      getManualCompactionOperation: (sessionId) => manualCompactionOperations.get(sessionId),
+      getRuntimeRecoveryOperation: (sessionId) =>
+        promptRuns.runtimeRecoveryOperations.get(sessionId),
+      getManualCompactionOperation: (sessionId) =>
+        promptRuns.manualCompactionOperations.get(sessionId),
       stopPromptRun: (sessionKey, run, invalidateGeneration) =>
         stopPromptRun(sessionKey, run as PromptRun, invalidateGeneration)
     },
@@ -5650,7 +5600,7 @@ function registerApplicationAndModelIpc(): void {
     getCurrentLifecycle: () => lifecycles.forKey(sessionState.sessionKey),
     sameCanonicalSessionKey: sessionKeys.sameCanonical.bind(sessionKeys),
     isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
-    hasActivePromptRun,
+    hasActivePromptRun: promptRuns.hasActiveRun.bind(promptRuns),
     getActiveSessionRun: (sessionId: string) => runnerRegistry.getActiveRun(sessionId)
   }
   const modelSessionState = {
@@ -5723,14 +5673,14 @@ function createSessionCompactionControlOptions(): SessionCompactionControlOption
       getCurrentSessionPath: () => sessionState.sessionPath,
       getCurrentCwd: () => sessionState.cwd,
       getCurrentPermissionMode: () => sessionState.permissionMode,
-      manualCompactionIds,
-      manualCompactionOperations
+      manualCompactionIds: promptRuns.manualCompactionIds,
+      manualCompactionOperations: promptRuns.manualCompactionOperations
     },
     sessions: {
       findPhiManifestForSession,
       runtimeSessionPathForSnapshot,
       ensurePhiSessionId,
-      hasActivePromptRun,
+      hasActivePromptRun: promptRuns.hasActiveRun.bind(promptRuns),
       captureSessionControlTarget,
       getSessionGeneration: (sessionKey) => lifecycles.forKey(sessionKey).currentGeneration
     },
@@ -5754,21 +5704,21 @@ function createSessionRecoveryIpcOptions(): SessionsIpcOptions['recovery'] {
       getCurrentCwd: () => sessionState.cwd,
       getCurrentPermissionMode: () => sessionState.permissionMode,
       isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
-      runtimeRecoveryOperations,
-      runtimeRecoveryFailures,
-      manualCompactionIds,
+      runtimeRecoveryOperations: promptRuns.runtimeRecoveryOperations,
+      runtimeRecoveryFailures: promptRuns.runtimeRecoveryFailures,
+      manualCompactionIds: promptRuns.manualCompactionIds,
       sessionModelSelections: preferences.modelSelections,
       sessionThinkingLevels: preferences.thinkingLevels
     },
     identity: {
       resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
       sameCanonicalSessionKey: sessionKeys.sameCanonical.bind(sessionKeys),
-      getPromptGeneration,
-      advancePromptGeneration
+      getPromptGeneration: promptRuns.generationFor.bind(promptRuns),
+      advancePromptGeneration: promptRuns.advanceGeneration.bind(promptRuns)
     },
     lifecycle: {
       getLifecycleForKey: lifecycles.forKey.bind(lifecycles),
-      hasActivePromptRun,
+      hasActivePromptRun: promptRuns.hasActiveRun.bind(promptRuns),
       runnerGetActiveRun: (sessionId) => runnerRegistry.getActiveRun(sessionId),
       cleanupSessionRecord,
       getAgentSession
@@ -5832,7 +5782,7 @@ function createSessionsIpcOptions(
     },
     status: {
       runnerGetActiveRun: (sessionId) => runnerRegistry.getActiveRun(sessionId),
-      activePromptEntries: () => [...activePromptRuns.entries()],
+      activePromptEntries: () => promptRuns.activeEntries(),
       stopPromptRun: (sessionKey, run) => stopPromptRun(sessionKey, run as PromptRun),
       getSessionStatusPayload,
       notifySessionChanged
