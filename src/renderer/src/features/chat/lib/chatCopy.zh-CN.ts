@@ -347,6 +347,7 @@ export const chatChinese: LocalizedCopy<typeof chatEnglish> = {
   running: '运行中',
   processingElapsedValue: (value0: string | number) => `正在处理，已耗时 ${value0}`,
   completedInValue: (value0: string | number) => `已完成，总共用时 ${value0}`,
+  failedInValue: (value0: string | number) => `已中断，总共用时 ${value0}`,
   toDo: '待办',
   abandoned: '已放弃',
   blocked: '已阻塞',

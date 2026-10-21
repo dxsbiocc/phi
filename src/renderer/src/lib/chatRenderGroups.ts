@@ -364,6 +364,7 @@ function processingElapsedMs({
 export function processingStatusText({
   items,
   isActive,
+  failed = false,
   nowMs,
   fallbackStartedAtMs,
   startedAtMs,
@@ -372,6 +373,7 @@ export function processingStatusText({
 }: {
   items: ProcessingItem[]
   isActive: boolean
+  failed?: boolean
   nowMs: number
   fallbackStartedAtMs: number
   startedAtMs?: number
@@ -390,5 +392,8 @@ export function processingStatusText({
     })
   )
 
-  return isActive ? chatCopy.processingElapsedValue(elapsed) : chatCopy.completedInValue(elapsed)
+  if (isActive) return chatCopy.processingElapsedValue(elapsed)
+  // A failed run reaches this point with a terminal error item instead of a completed one, so
+  // "Completed" would misreport a transport loss as success.
+  return failed ? chatCopy.failedInValue(elapsed) : chatCopy.completedInValue(elapsed)
 }

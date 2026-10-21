@@ -475,3 +475,29 @@ test('processing status text uses stored terminal duration before timestamps', (
     '已完成，总共用时 1 分钟 30 秒'
   )
 })
+
+test('processing status text reports an interrupted run instead of completion', () => {
+  const items: ProcessingItem[] = [
+    {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'bash',
+      argsPreview: '{}',
+      argsJson: '{}',
+      output: '',
+      status: 'error'
+    }
+  ]
+
+  assert.equal(
+    processingStatusText({
+      items,
+      isActive: false,
+      failed: true,
+      nowMs: Date.parse('2026-09-11T00:02:00.000Z'),
+      fallbackStartedAtMs: Date.parse('2026-09-11T00:00:00.000Z'),
+      durationMs: 59_000
+    }),
+    '已中断，总共用时 59 秒'
+  )
+})

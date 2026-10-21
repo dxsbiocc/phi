@@ -2226,7 +2226,12 @@ function App(): React.JSX.Element {
         applyCurrentSession(result, undefined, {
           onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
         })
-        replaceMessages(chatItemsFromSessionMessages(result.messages))
+        // A resume keeps the live timeline in memory. The persisted events for the interrupted
+        // turn stop at run_failed, so replacing the list would silently drop the assistant text
+        // and tool cards the user just watched. Only load from disk when nothing is loaded yet.
+        if (useSessionStore.getState().agentEventState.messages.length === 0) {
+          replaceMessages(chatItemsFromSessionMessages(result.messages))
+        }
         refreshContextUsage()
         void refreshCurrentModelControls(request)
         await refreshSessions()

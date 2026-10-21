@@ -120,9 +120,11 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   const groupedItems = groupProcessingItems(items)
   const status = processingGroupStatus(items, isActive)
   const isProcessingActive = status === 'running'
+  const failed = !isProcessingActive && items.some((item) => item.role === 'error')
   const summary = processingStatusText({
     items,
     isActive: isProcessingActive,
+    failed,
     nowMs,
     fallbackStartedAtMs,
     startedAtMs,

@@ -359,6 +359,7 @@ export const chatEnglish = {
   running: 'Running',
   processingElapsedValue: (value0: string | number) => `Processing, elapsed ${value0}`,
   completedInValue: (value0: string | number) => `Completed in ${value0}`,
+  failedInValue: (value0: string | number) => `Interrupted after ${value0}`,
   toDo: 'To do',
   abandoned: 'Abandoned',
   blocked: 'Blocked',
