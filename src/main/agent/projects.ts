@@ -246,6 +246,12 @@ export function getProject(id: string): Project | undefined {
   return readProjects().find((project) => project.id === id)
 }
 
+export function requireProject(id: string): Project {
+  const project = getProject(id)
+  if (!project) throw new Error('项目不存在')
+  return project
+}
+
 export function getProjectByCwd(cwd: string): Project | undefined {
   const projects = readProjects()
   const localProjects = projects.filter((project) => project.location.kind === 'local')

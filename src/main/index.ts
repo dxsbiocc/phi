@@ -115,7 +115,7 @@ import { TerminalDraftService } from './terminal/terminal-command-draft'
 import { buildTerminalDraftSessionFactory } from './terminal/terminal-draft-session'
 import { TerminalManager } from './terminal/terminal-manager'
 import { resolveTerminalWorkspace } from './terminal/terminal-workspace'
-import { basename, dirname, join, relative, resolve, sep } from 'path'
+import { dirname, join, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createAgentSession } from './agent/session/session-manager'
 import type { ThinkingLevel } from './agent/runtime/model-thinking-levels'
@@ -156,25 +156,21 @@ import {
   renameSession
 } from './agent/session/sessions'
 import {
-  assertProjectPathAvailable,
   getProject,
+  requireProject,
   getProjectByCwd,
-  listProjects,
   subscribeRemoteProjectConnection,
   type PermissionMode,
   type ModelSelection,
   type Project
 } from './agent/projects'
-import { isPathInsideRoot } from './agent/local-file-access'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './agent/remote-hosts'
 import { createDefaultSshBootstrapCoordinator } from './agent/ssh-bootstrap/default-coordinator'
 import { registerSshBootstrapIpc } from './agent/ssh-bootstrap/ipc'
 import { registerRemoteMicromambaIpc } from './agent/remote-micromamba-ipc'
 import { registerRemoteRipgrepIpc } from './agent/remote-ripgrep-ipc'
 import { remoteMicromambaManifestVersion } from './agent/remote-micromamba-artifact'
-import { readHostRuntimeRoot } from './agent/remote-runtime-root-store'
 import { readHostRemoteEnvironmentPaths } from './agent/remote-environment-store'
-import { resolveRemoteRuntimeRoot } from './agent/remote-runtime-root'
 import {
   RemoteRuntimeController,
   controlRemoteRuntimeWorkspace
@@ -184,12 +180,18 @@ import { createAppRemoteAgentEnvironment } from './agent/remote-runtime/app-remo
 import { createAppRemotePromptContext } from './agent/remote-runtime/app-remote-prompt-context'
 import { createAppRemoteDesktopTools } from './agent/remote-runtime/app-remote-desktop-tools'
 import { createRemoteRuntimeDispatchControl } from './agent/remote-runtime/remote-runtime-dispatch-control'
+import { createProjectRuntimeRootContext } from './agent/remote-runtime/project-runtime-root-context'
+import { createRemoteProjectContext } from './agent/remote-runtime/remote-project-context'
+import {
+  createRemoteProjectRequests,
+  remoteRequestProjectId
+} from './agent/remote-runtime/remote-project-requests'
+import { createRemoteProjectSkills } from './agent/remote-runtime/remote-project-skills'
 import { createDesktopWebSearchAdapter } from './agent/engine/rpc/desktop-websearch-adapter'
 import { createSkippedMcpNotifier } from './agent/mcp/skipped-notice'
 import { createDesktopMcpAdapter } from './agent/engine/rpc/desktop-mcp-adapter'
 import { RemoteLibraryService } from './agent/engine/rpc/remote-library-service'
 import { resolveRemoteBaseEnvironment } from './agent/remote-runtime/base-environment'
-import { resolveProjectRuntimeRoot } from './agent/remote-runtime/project-runtime-root'
 import {
   openRemoteRuntimeWorkspace,
   type RemoteRuntimeTarget
@@ -281,20 +283,20 @@ import {
   type ModelRuntime,
   type RuntimeModel
 } from './agent/runtime/runtime-adapter'
-import { loadedPlugins, type PluginNamespace } from './agent/plugins/loader'
+import {
+  resolveRuntimeModelSelection,
+  selectableRuntimeModels
+} from './agent/runtime/runtime-model-selection'
+import { loadedPlugins } from './agent/plugins/loader'
+import { createInstalledPluginNamespace } from './agent/plugins/installed-plugin-namespace'
 import { readPluginRegistry, writePluginRegistry } from './agent/plugins/store'
 import { getEnablementSnapshot, migrateEnablementFromHistory, setEnabled } from './agent/enablement'
+import { cleanupStalePackageStaging } from './agent/packages/installer'
 import {
-  cleanupStalePackageStaging,
-  listPackageUpdates,
-  loadKnownRegistryIndexes,
-  type PackageUpdate
-} from './agent/packages/installer'
+  createContentPackageRuntime,
+  packageUpdateViews
+} from './agent/packages/content-package-runtime'
 import { prepareContentPackageInstall } from './agent/packages/content-source'
-import type { InstallerOptions } from './agent/packages/installer-types'
-import type { PackageType } from './agent/packages/manifest'
-import { syncPreferredOfficialRegistry } from './agent/packages/official-website-registry'
-import { syncOfficialConnectorRegistry } from './agent/packages/official-connector-registry'
 import {
   listConnectorCatalog,
   mcpOAuthAuthorizationOrigin,
@@ -306,7 +308,6 @@ import {
   isFeaturedMcpApiKeyInstalled,
   readFeaturedMcpApiKey
 } from './agent/mcp-key-credentials'
-import { validateSkill } from './agent/content/skill'
 import {
   listGlobalMcpServers,
   listGlobalSkills,
@@ -324,7 +325,7 @@ import { markInterruptedCompositionRuns } from './agent/wrappers/composition/run
 import { resolveProjectRemoteTarget } from './agent/wrappers/remote-connection-resolver'
 import { reconcileRemoteWrapperRuns } from './agent/wrappers/executor-slurm-reconcile'
 import { createWrapperResultReadControl } from './agent/wrappers/remote-result-read-control'
-import { discoverPhiAgents, type PhiAgentDiscoveryResult } from './agent/agents/discovery'
+import type { PhiAgentDiscoveryResult } from './agent/agents/discovery'
 import { loadRemoteAgentCatalog } from './agent/agents/remote-agent-service'
 import { BackgroundAgentApprovalTracker } from './agent/agents/background-approval'
 import {
@@ -384,14 +385,14 @@ import { JupyterServerRegistry } from './agent/notebook/analysis-jupyter-server'
 import { AnalysisNotebookExecutor } from './agent/notebook/analysis-jupyter-execution'
 import { AnalysisNotebookSessionRegistry } from './agent/notebook/analysis-jupyter-sessions'
 import { AnalysisNotebookToolExecutor } from './agent/notebook/notebook-tool-executor'
+import { createAnalysisWorkspaceResolution } from './agent/notebook/analysis-workspace-resolution'
+import { createNotebookServerReadiness } from './agent/notebook/notebook-server-readiness'
+import { createRemoteNotebookBackendDisposal } from './agent/notebook/remote-notebook-backend-disposal'
 import {
   createRemoteAnalysisNotebookBackend,
   type RemoteAnalysisNotebookBackend
 } from './agent/notebook/remote-analysis-notebook-backend'
-import {
-  AnalysisNotebookOperations,
-  type AnalysisWorkspaceContext
-} from './agent/notebook/analysis-notebook-operations'
+import { AnalysisNotebookOperations } from './agent/notebook/analysis-notebook-operations'
 import { AnalysisNotebookCodeGenerator } from './agent/notebook/analysis-notebook-code-generator'
 import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
 import { getPhiEngine, ownsRemoteRuntimeSession } from './agent/engine/in-process-engine'
@@ -786,86 +787,6 @@ const terminalIpcCoordinator = new TerminalIpcCoordinator({
 const officialRegistryFetch: typeof fetch = (input, init) =>
   net.fetch(input instanceof URL ? input.toString() : input, init)
 
-function officialContentSourceOptions(): {
-  agentDir: string
-  appVersion: string
-  fetch: typeof fetch
-  buildMcpEnvironment: NonNullable<InstallerOptions['buildMcpEnvironment']>
-  verifyMcpStdio: NonNullable<InstallerOptions['verifyMcpStdio']>
-} {
-  return {
-    agentDir: AGENT_DIR,
-    appVersion: app.getVersion(),
-    fetch: officialRegistryFetch,
-    buildMcpEnvironment: (descriptor) =>
-      environmentBuilds.start(descriptor, {
-        ref: descriptor.ref,
-        requestedBy: { mcp: descriptor.owner ?? descriptor.spec.name }
-      }),
-    verifyMcpStdio: (request) => getPhiEngine().mcp.configuredStdioTools(request)
-  }
-}
-
-function knownContentSourceOptions(
-  type?: PackageType,
-  forceRefresh = false
-): {
-  agentDir: string
-  loadOfficialRegistry: () => ReturnType<typeof syncPreferredOfficialRegistry>
-} {
-  return {
-    agentDir: AGENT_DIR,
-    loadOfficialRegistry: () =>
-      (type === 'mcp' ? syncOfficialConnectorRegistry : syncPreferredOfficialRegistry)({
-        ...officialContentSourceOptions(),
-        forceRefresh
-      })
-  }
-}
-
-async function loadPackageRegistries(
-  type?: PackageType,
-  forceRefresh = false
-): ReturnType<typeof loadKnownRegistryIndexes> {
-  const loaded = await loadKnownRegistryIndexes(
-    knownContentSourceOptions(type ?? 'mcp', forceRefresh)
-  )
-  if (type) return loaded
-  try {
-    const website = await syncPreferredOfficialRegistry({
-      ...officialContentSourceOptions(),
-      forceRefresh
-    })
-    return {
-      ...loaded,
-      registries: [
-        ...loaded.registries,
-        { ...website, packages: website.packages.filter((entry) => entry.type !== 'mcp') }
-      ]
-    }
-  } catch (error) {
-    return {
-      ...loaded,
-      errors: [...loaded.errors, `Phi 官网其他模块：${errorMessage(error)}`]
-    }
-  }
-}
-
-function packageUpdateViews(updates: readonly PackageUpdate[]): PackageUpdate[] {
-  return [...updates]
-}
-
-async function refreshCachedPackageUpdates(): Promise<PackageUpdate[]> {
-  const loaded = await loadPackageRegistries()
-  runtime.caches.replaceCachedPackageUpdates(
-    listPackageUpdates(loaded.registries, {
-      agentDir: AGENT_DIR,
-      appVersion: app.getVersion()
-    })
-  )
-  return runtime.caches.cachedPackageUpdates
-}
-
 function scheduleStartupPackageUpdateCheck(): void {
   setImmediate(async () => {
     try {
@@ -886,52 +807,6 @@ function scheduleStartupPackageUpdateCheck(): void {
 
 const TOOL_OUTPUT_INLINE_LIMIT = 20000
 const MAX_RUN_DIFF_BYTES = 2 * 1024 * 1024
-const KIMI_CODE_REPLACEMENT_MODEL_IDS = [
-  'kimi-for-coding',
-  'k3',
-  'k3-256k',
-  'kimi-for-coding-highspeed'
-] as const
-
-function isRetiredKimiCodeModel(providerId: string, modelId: string): boolean {
-  return providerId === 'kimi-code' && /^kimi-k2(?:$|[.-])/.test(modelId)
-}
-
-function isSelectableRuntimeModel(model: { provider: string; id: string }): boolean {
-  return !isRetiredKimiCodeModel(model.provider, model.id)
-}
-
-function selectableRuntimeModels(runtime: ModelRuntime): RuntimeModel[] {
-  return runtime.getModels().filter(isSelectableRuntimeModel)
-}
-
-function resolveRuntimeModelSelection(
-  runtime: ModelRuntime,
-  selection: ModelSelection
-): { model: RuntimeModel; selection: ModelSelection; migratedFrom?: ModelSelection } | null {
-  const exact = runtime.getModel(selection.providerId, selection.modelId)
-  if (exact && isSelectableRuntimeModel(exact)) {
-    return { model: exact, selection }
-  }
-
-  if (!isRetiredKimiCodeModel(selection.providerId, selection.modelId)) {
-    return null
-  }
-
-  for (const modelId of KIMI_CODE_REPLACEMENT_MODEL_IDS) {
-    const replacement = runtime.getModel(selection.providerId, modelId)
-    if (replacement && isSelectableRuntimeModel(replacement)) {
-      return {
-        model: replacement,
-        selection: { providerId: replacement.provider, modelId: replacement.id },
-        migratedFrom: selection
-      }
-    }
-  }
-
-  return null
-}
-
 function modelSelectionLabel(selection: ModelSelection): string {
   return `${selection.providerId}/${selection.modelId}`
 }
@@ -967,25 +842,6 @@ function getNoProjectTaskFolder(): string {
   return readAppSettings(AGENT_DIR).noProjectTaskFolder
 }
 
-function currentRemoteAnalysisProject(
-  targetCwd: string
-): { project: Project; sessionId: string } | null {
-  const manifest = sessionResolution.findPhiManifestForSession(
-    sessionState.sessionKey,
-    sessionState.sessionPath,
-    sessionState.cwd
-  )
-  const project = manifest?.projectId ? getProject(manifest.projectId) : undefined
-  if (!manifest || !project || project.location.kind !== 'ssh') return null
-  const accepted = new Set([
-    manifest.cwd,
-    project.workingDirectory,
-    project.location.remoteRoot,
-    project.location.canonicalRoot
-  ])
-  return accepted.has(targetCwd) ? { project, sessionId: manifest.sessionId } : null
-}
-
 function realDirectoryPath(
   path: string,
   options: { create?: boolean; fallbackToResolved?: boolean } = {}
@@ -999,66 +855,6 @@ function realDirectoryPath(
   } catch {
     return options.fallbackToResolved ? resolve(path) : null
   }
-}
-
-function resolveAnalysisWorkspaceByCwd(cwd?: string): AnalysisWorkspaceContext | null {
-  const targetCwd = cwd ?? sessionState.cwd
-  const remote = currentRemoteAnalysisProject(targetCwd)
-  if (remote && remote.project.location.kind === 'ssh') {
-    return {
-      workingDirectory: remote.project.location.canonicalRoot,
-      name: remote.project.name,
-      project: remote.project,
-      remoteSessionId: remote.sessionId
-    }
-  }
-  if (isRemoteProjectAnchorPath(targetCwd, AGENT_DIR)) return null
-  const project = getProjectByCwd(targetCwd)
-  if (project) {
-    assertProjectPathAvailable(project.workingDirectory)
-    return {
-      workingDirectory: project.workingDirectory,
-      name: project.name,
-      project
-    }
-  }
-
-  const noProjectTaskFolder = getNoProjectTaskFolder()
-  const noProjectWorkspaceRealPath = realDirectoryPath(noProjectTaskFolder, {
-    create: true,
-    fallbackToResolved: true
-  })
-  const targetRealPath = realDirectoryPath(targetCwd, {
-    create: resolve(targetCwd) === resolve(noProjectTaskFolder),
-    fallbackToResolved: resolve(targetCwd) === resolve(noProjectTaskFolder)
-  })
-  if (!targetRealPath) return null
-
-  const currentCwdRealPath = getProjectByCwd(sessionState.cwd)
-    ? null
-    : realDirectoryPath(sessionState.cwd)
-  if (targetRealPath !== noProjectWorkspaceRealPath && targetRealPath !== currentCwdRealPath) {
-    return null
-  }
-
-  return {
-    workingDirectory: targetRealPath,
-    name: basename(targetRealPath) || 'workspace',
-    project: null
-  }
-}
-
-function isRemoteAnalysisCwd(cwd: string): boolean {
-  if (isRemoteProjectAnchorPath(cwd, AGENT_DIR)) return true
-  if (currentRemoteAnalysisProject(cwd)) return true
-  const localProject = getProjectByCwd(cwd)
-  if (localProject && localProject.location?.kind !== 'ssh') return false
-  return listProjects().some((project) => {
-    if (project.location.kind !== 'ssh') return false
-    return [project.workingDirectory, project.location.remoteRoot, project.location.canonicalRoot]
-      .filter((root): root is string => typeof root === 'string' && root.length > 0)
-      .some((root) => isPathInsideRoot(root, cwd))
-  })
 }
 
 // The session file currently active in the UI. undefined = a fresh, not-yet-persisted
@@ -1099,6 +895,21 @@ const sessionResolution = createSessionResolution({
   permissionModes: preferences.permissionModes,
   getSelectedModel: () => sessionState.selectedModel,
   getDefaultThinkingLevel: () => selectedThinkingLevel
+})
+const { projectRemoteRuntimeRoot } = createProjectRuntimeRootContext({ agentDir: AGENT_DIR })
+const { currentRemoteAnalysisProject, isRemoteResourceScope, remoteSkillProjectContext } =
+  createRemoteProjectContext({
+    sessionState,
+    sessionResolution,
+    agentDir: AGENT_DIR
+  })
+const { listRemoteProjectSkills } = createRemoteProjectSkills({ remoteSkillProjectContext })
+const { resolveAnalysisWorkspaceByCwd, isRemoteAnalysisCwd } = createAnalysisWorkspaceResolution({
+  agentDir: AGENT_DIR,
+  getCurrentSessionCwd: () => sessionState.cwd,
+  currentRemoteAnalysisProject,
+  getNoProjectTaskFolder,
+  realDirectoryPath
 })
 const sessionOrigins = createSessionOrigins({
   sessionKeys,
@@ -1583,12 +1394,34 @@ const environmentBuilds = createEnvironmentBuilds({
     sendToAllWindows(IPC.environmentBuilds.changed, build)
   }
 })
+const {
+  officialContentSourceOptions,
+  knownContentSourceOptions,
+  loadPackageRegistries,
+  refreshCachedPackageUpdates
+} = createContentPackageRuntime({
+  getAgentDir: () => AGENT_DIR,
+  getAppVersion: () => app.getVersion(),
+  registryFetch: officialRegistryFetch,
+  environmentBuilds,
+  configuredStdioTools: (request) => getPhiEngine().mcp.configuredStdioTools(request),
+  replaceCachedPackageUpdates: (updates) => runtime.caches.replaceCachedPackageUpdates(updates),
+  getCachedPackageUpdates: () => runtime.caches.cachedPackageUpdates
+})
+const { installedPluginNamespace } = createInstalledPluginNamespace({
+  getAgentDir: () => AGENT_DIR,
+  getSessionCwd: () => sessionState.cwd
+})
 // The notebook server joins builds started elsewhere (chat prompt or the environment panel).
 const jupyterServerRegistry = new JupyterServerRegistry({
   managed: {
     builds: environmentBuilds,
     hostJupyterPath: () => getCustomToolPath('jupyter', AGENT_DIR)
   }
+})
+const { ensureJupyterServerReady } = createNotebookServerReadiness({
+  jupyterServerRegistry,
+  delay
 })
 const notebookSessionRegistry = new AnalysisNotebookSessionRegistry({
   getConnection: (projectCwd) => jupyterServerRegistry.connection(projectCwd)
@@ -1636,6 +1469,10 @@ const analysisNotebookCodeGenerator = new AnalysisNotebookCodeGenerator({
 })
 const remoteNotebookBackends = new Map<string, RemoteAnalysisNotebookBackend>()
 const remoteNotebookSessionIds = new Map<string, string>()
+const { disposeRemoteNotebookBackend } = createRemoteNotebookBackendDisposal({
+  remoteNotebookBackends,
+  remoteNotebookSessionIds
+})
 const notebookToolHostRouter = new NotebookToolHostRouter({
   local: (request, control) => notebookToolExecutor.execute(request, control),
   isRemoteCwd: isRemoteAnalysisCwd,
@@ -1696,14 +1533,6 @@ const skillHost = createSkillHost({
   confirmBuild: (request) => confirmEnvironmentBuild(request),
   presentArtifacts: (request) => presentScriptArtifacts(request)
 })
-
-function projectRemoteRuntimeRoot(project: Project): ReturnType<typeof resolveRemoteRuntimeRoot> {
-  const hostOverride =
-    project.location.kind === 'ssh'
-      ? readHostRuntimeRoot(project.location.hostProfileId, AGENT_DIR)
-      : undefined
-  return resolveProjectRuntimeRoot(project, hostOverride)
-}
 
 const remoteJupyterStartJobs = new RemoteJupyterStartJobs()
 
@@ -1919,35 +1748,6 @@ getPhiEngine().host.register('library.cancel', (params, context) =>
   remoteLibraryService.cancel(params, context)
 )
 
-async function installedPluginNamespace(projectDir?: string): Promise<PluginNamespace> {
-  const resourceCwd = projectDir ?? sessionState.cwd
-  const pluginSkillRoots = loadedPlugins({
-    agentDir: AGENT_DIR,
-    ...(projectDir ? { projectDir } : {})
-  }).flatMap((plugin) => plugin.components.skills)
-  const skills = (await listSkills(resourceCwd)).filter(
-    (skill) => !pluginSkillRoots.some((root) => isPathInsideRoot(root, skill.filePath))
-  )
-  const toolPrefixes = skills.flatMap((skill) => {
-    try {
-      const result = validateSkill(dirname(skill.filePath), { expectedName: skill.name })
-      return result.skill?.phi?.toolPrefix ? [result.skill.phi.toolPrefix] : []
-    } catch {
-      return []
-    }
-  })
-  const agents = discoverPhiAgents({
-    cwd: resourceCwd,
-    agentDir: AGENT_DIR,
-    bundledDir: getBundledAgentsDir(),
-    pluginAgentDirs: []
-  }).agents
-  return {
-    agentNames: agents.map((agent) => agent.name),
-    skillNames: skills.map((skill) => skill.name),
-    toolPrefixes
-  }
-}
 getPhiEngine().host.register('skills.scriptTools', (params) =>
   remoteRuntimeController.owns(params)
     ? remoteRuntimeController.scriptTools(params)
@@ -2141,6 +1941,7 @@ getPhiEngine().host.register('mcp.featuredApiKey', (params) => {
   return readFeaturedMcpApiKey(id)
 })
 const remoteConnectionTracker = new RemoteProjectConnectionTracker()
+const { scheduleRemoteProjectCheck } = createRemoteProjectRequests({ remoteConnectionTracker })
 const remoteProjectUploads = new RemoteProjectUploadService({
   connectProject: async (projectId) => {
     const project = getProject(projectId)
@@ -2177,28 +1978,12 @@ const wrapperResultDownloads: WrapperResultDownloads = new Map()
 subscribeRemoteProjectConnection((projectId, state) => {
   sendToAllWindows(IPC.projects.remoteConnectionChanged, { projectId, state })
 })
-function remoteRequestProjectId(params: unknown): string {
-  if (typeof params !== 'object' || params === null) return ''
-  const projectId = (params as Record<string, unknown>).projectId
-  return typeof projectId === 'string' ? projectId : ''
-}
-
 function remoteSkillContextFromRequest(params: unknown): RemoteProjectSkillContext {
   if (!isRecord(params)) throw new Error('远程项目 Skill 读取请求无效')
   const sessionId = optionalStringField(params, 'sessionId')
   const projectId = optionalStringField(params, 'projectId')
   if (!sessionId || !projectId) throw new Error('远程项目 Skill 读取请求无效')
   return { sessionId, projectId, cwd: '', agentDir: AGENT_DIR }
-}
-function scheduleRemoteProjectCheck(sessionId: string, projectId: string): void {
-  void remoteConnectionTracker.check(sessionId, projectId).catch((error) => {
-    writeAppLog({
-      level: 'warn',
-      event: 'remote_project_connection_check_failed',
-      sessionId,
-      metadata: { projectId, reason: error instanceof Error ? error.message : '检查未完成' }
-    })
-  })
 }
 
 getPhiEngine().host.register('remoteWorkspace.resolvePath', (params) =>
@@ -2578,27 +2363,6 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
-}
-
-async function ensureJupyterServerReady(projectCwd: string): Promise<void> {
-  let status = jupyterServerRegistry.status(projectCwd)
-  if (status.state !== 'ready' || !status.hasEndpoint) {
-    status = jupyterServerRegistry.start(projectCwd)
-  }
-  for (
-    let attempt = 0;
-    attempt < 20 && (status.state !== 'ready' || !status.hasEndpoint);
-    attempt += 1
-  ) {
-    if (status.state === 'error' || status.state === 'exited' || status.state === 'stopped') {
-      break
-    }
-    await delay(250)
-    status = jupyterServerRegistry.status(projectCwd)
-  }
-  if (status.state !== 'ready' || !status.hasEndpoint) {
-    throw new Error(status.message ?? 'Jupyter Server 尚未就绪')
-  }
 }
 
 function notebookAgentRuntimePrompt(projectCwd: string): string | null {
@@ -3696,40 +3460,6 @@ function notifyAnalysisNotebookFileChanged(change: unknown): void {
   sendToAllWindows(IPC.analysis.notebookFileChanged, change)
 }
 
-function isRemoteResourceScope(cwd?: string): boolean {
-  return (
-    isRemoteProjectAnchorPath(sessionState.cwd, AGENT_DIR) ||
-    (typeof cwd === 'string' && isRemoteProjectAnchorPath(cwd, AGENT_DIR))
-  )
-}
-
-function remoteSkillProjectContext(cwd?: string): RemoteProjectSkillContext {
-  const target = cwd ?? sessionState.cwd
-  const remote =
-    currentRemoteAnalysisProject(target) ?? currentRemoteAnalysisProject(sessionState.cwd)
-  if (!remote) throw new Error('远程项目 Skill 请求缺少有效的当前项目会话')
-  return {
-    sessionId: remote.sessionId,
-    projectId: remote.project.id,
-    cwd: target,
-    agentDir: AGENT_DIR
-  }
-}
-
-async function listRemoteProjectSkills(
-  cwd?: string
-): Promise<Awaited<ReturnType<typeof listSkills>>> {
-  const [globalSkills, projectCatalog] = await Promise.all([
-    listGlobalSkills(),
-    loadRemoteProjectSkillCatalog(remoteSkillProjectContext(cwd))
-  ])
-  const trustedNames = new Set(projectCatalog.sources.map((skill) => skill.name))
-  return [
-    ...globalSkills.filter((skill) => !trustedNames.has(skill.name)),
-    ...projectCatalog.summaries
-  ]
-}
-
 function remoteRuntimeSkillDefinitions(catalog: RemoteProjectSkillCatalog): RuntimeSkill[] {
   return catalog.sources.flatMap((source) => {
     const entry = catalog.summaries.find(
@@ -4100,12 +3830,6 @@ function countOtherActiveProjectRuns(projectId: string, sessionKey: string): num
     .filter((run) => run.projectId === projectId && run.sessionKey !== sessionKey).length
 }
 
-function requireProject(id: string): Project {
-  const project = getProject(id)
-  if (!project) throw new Error('项目不存在')
-  return project
-}
-
 async function invalidateAgentSession(): Promise<void> {
   const phiSessionId = sessionKeys.phiSessionIdFor(sessionState.sessionKey)
   if (phiSessionId) loadedSkillNamesBySession.delete(phiSessionId)
@@ -4190,14 +3914,6 @@ async function disposeRemoteNotebookBackends(): Promise<void> {
   remoteNotebookBackends.clear()
   remoteNotebookSessionIds.clear()
   await Promise.all(backends.map((backend) => backend.dispose()))
-}
-
-async function disposeRemoteNotebookBackend(projectId: string): Promise<void> {
-  const backend = remoteNotebookBackends.get(projectId)
-  if (!backend) return
-  await backend.dispose()
-  remoteNotebookBackends.delete(projectId)
-  remoteNotebookSessionIds.delete(projectId)
 }
 
 function cleanupMainWindowRuntime(): Promise<void> {

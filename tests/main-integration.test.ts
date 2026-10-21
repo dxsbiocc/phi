@@ -4401,6 +4401,17 @@ async function harness(
     './agent/local-file-access': localFileAccess,
     '../../resources/icon.png?asset': { default: '/icon.png' }
   }
+  // index.ts imports requireProject from ./agent/projects; mirror its production body over this
+  // harness's getProject so lookups keep the same not-found error.
+  const projectsModule = modules['./agent/projects'] as {
+    getProject: (id: string) => unknown
+    requireProject?: (id: string) => unknown
+  }
+  projectsModule.requireProject = (id) => {
+    const project = projectsModule.getProject(id)
+    if (!project) throw new Error('项目不存在')
+    return project
+  }
   const mainSourceRoot = path.resolve(process.cwd(), 'src/main')
   const mainEntryPath = path.join(mainSourceRoot, 'index.ts')
   const sourceModuleCache = new Map<string, Record<string, unknown>>()
@@ -4440,14 +4451,24 @@ async function harness(
     './agent/memory/project-memory-access',
     './agent/notebook/analysis-notebook-code-generator',
     './agent/notebook/analysis-notebook-operations',
+    './agent/notebook/analysis-workspace-resolution',
+    './agent/notebook/notebook-server-readiness',
+    './agent/notebook/remote-notebook-backend-disposal',
     './agent/persona-generation',
+    './agent/packages/content-package-runtime',
+    './agent/plugins/installed-plugin-namespace',
     './agent/plugins/phi-plugin-management-view',
     './agent/remote-runtime/app-remote-agent-environment',
     './agent/remote-runtime/app-remote-agent-resources',
     './agent/remote-runtime/app-remote-desktop-tools',
     './agent/remote-runtime/app-remote-prompt-context',
+    './agent/remote-runtime/project-runtime-root-context',
+    './agent/remote-runtime/remote-project-context',
+    './agent/remote-runtime/remote-project-requests',
+    './agent/remote-runtime/remote-project-skills',
     './agent/remote-runtime/remote-runtime-dispatch-control',
     './agent/runtime/model-thinking-levels',
+    './agent/runtime/runtime-model-selection',
     './agent/session/active-prompt-stop',
     './agent/session/agent-delegation-event-persistence',
     './agent/session/assistant-message-event-persistence',
