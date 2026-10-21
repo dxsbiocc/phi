@@ -3530,6 +3530,10 @@ async function harness(
     './agent/remote-environment-store': {
       readHostRemoteEnvironmentPaths: (): Record<string, string> => ({})
     },
+    './agent/ssh-host-availability': {
+      listSshHostAvailability: (): unknown[] => [],
+      saveSshHostAvailability: (input: unknown): unknown[] => [input]
+    },
     './agent/remote-runtime-root-settings': {
       listRemoteHostsWithRuntimeRoots: (): unknown[] => [
         { id: 'ssh-config:lab-hpc', label: 'lab-hpc', hostAlias: 'lab-hpc', source: 'ssh-config' }
@@ -4510,6 +4514,7 @@ async function harness(
     './agent/notebook/analysis-workspace-resolution',
     './agent/notebook/notebook-server-readiness',
     './agent/notebook/remote-notebook-backend-disposal',
+    './agent/notebook/remote-notebook-runtime',
     './agent/persona-generation',
     './agent/packages/content-package-runtime',
     './agent/plugins/installed-plugin-namespace',

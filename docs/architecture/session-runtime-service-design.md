@@ -1,7 +1,7 @@
 # 会话运行时服务:设计
 
 Date: 2026-10-21
-Status: 阶段一已完成(SR-1 至 SR-4);阶段二进行中:SO-1 至 SO-4 已完成,DM 待做
+Status: 阶段一已完成(SR-1 至 SR-4);阶段二已完成:SO-1 至 SO-4、DM 及远端 Notebook 运行时收尾,`index.ts` 4,288 行
 
 相关文档:[main-ipc-split-handoff.md](main-ipc-split-handoff.md)(规则、审查清单、第 9 步状态类决定)、
 [clean-code-optimization-plan.md](clean-code-optimization-plan.md)(第 3.1 节「主进程可隔离测试」)。
@@ -232,7 +232,7 @@ SessionRuntime                组合以上四者;只放跨注册表的操作(建
 | 应用级基础设施               | 12   | `runtime`、`AGENT_DIR`、`getActiveWindow`、`sendToAllWindows`、`logUnexpectedError`、`createWindow` 等;组装根本来就该有        |
 | 在 `index.ts` 构造的协作对象 | 16   | `runnerRegistry`、`environmentBuilds`、`wrapperJobs`、`jupyterServerRegistry`、`remoteConnectionTracker` 等;在这里创建并往下传 |
 | 会话编排函数                 | 20   | 切换、创建、提示词运行、清单查找、偏好解析、会话来源;阶段二目标                                                                |
-| 其他领域辅助函数             | 21   | 远端项目上下文 8、内容包 6、notebook 4、模型解析 2 等                                                                          |
+| 其他领域辅助函数             | 21   | 远端项目上下文 8、内容包 6、notebook 4、模型解析 2 等;已在 `ae430ead` 迁出                                                |
 
 约 28 个(前两类)是组装根的合理下限,不追求消除。
 
@@ -250,7 +250,8 @@ SessionRuntime                组合以上四者;只放跨注册表的操作(建
 | DM   | 其他领域小块(远端项目上下文、内容包、notebook),沿用 SL 做法,可与 SO 交替进行                                                                                                 | ~265     | 低                                |
 
 合计约 1,450 行。考虑新增的接线代码,阶段二完成后 `index.ts` 预计 **4,600–4,700 行**(修正第 7 节的「约 4,000」)。
-共享名字预计降到 30–35 个,接近上面说的合理下限。
+实际低于预估:DM 先独立落地(5,942 → 5,658),SO-1 至 SO-4 完成后为 4,388 行,收尾再抽出远端 Notebook
+运行时后为 **4,288 行**。共享名字预计降到 30–35 个,接近上面说的合理下限。
 
 执行状态(2026-10-21):SO-1、SO-2、SO-3 已完成。SO-4 拆成三段并全部完成:SO-4a 迁出
 `captureSessionControlTarget`(`session-runtime/session-control-target.ts`)与
@@ -258,11 +259,25 @@ SessionRuntime                组合以上四者;只放跨注册表的操作(建
 SO-4b1 迁出目标解析与准入(`session-runtime/prompt-run-admission.ts`);
 SO-4b2 迁出运行状态/入队准备(`session-runtime/prompt-run-start.ts`)与
 队列/执行/收尾(`session-runtime/prompt-run-queue.ts`)。
-对应单测为 `tests/prompt-run-stop.test.ts`、`tests/prompt-run-admission.test.ts`、
-`tests/prompt-run-start.test.ts`;`index.ts` 4,388 行。DM(远端项目上下文、内容包、notebook)仍待做。
+
+DM 已在 `ae430ead` 落地:21 个辅助函数按领域迁入
+`agent/runtime/runtime-model-selection.ts`、`agent/packages/content-package-runtime.ts`、
+`agent/plugins/installed-plugin-namespace.ts`、`agent/remote-runtime/*` 与
+`agent/notebook/analysis-workspace-resolution.ts` 等模块,`requireProject` 归入
+`agent/projects.ts`;`index.ts` 5,942 → 5,658,并补了对应的特征化测试。
+收尾时把仍留在 `index.ts` 的远端 Notebook 后端运行时(`remoteNotebookTarget`、缓存表、
+`createRemoteNotebookBackend`/`remoteNotebookBackend`/`resolveRemoteNotebookToolBackend`、
+整体与单项目释放)迁入 `agent/notebook/remote-notebook-runtime.ts`,由
+`tests/remote-notebook-runtime.test.ts` 覆盖目标构造、缓存、身份守卫与释放。
+
+SO-4 对应单测为 `tests/prompt-run-stop.test.ts`、`tests/prompt-run-admission.test.ts`、
+`tests/prompt-run-start.test.ts`;阶段二结束时 `index.ts` 4,288 行,低于 4,600–4,700 的预估。
+共享名字未重跑测量(仓库没有留下当时的脚本),留待后续独立复核。
 
 顺序建议:SO-1 → SO-2 → DM(穿插)→ SO-3(切换)→ SO-3(创建)→ SO-4。前两刀风险低、能先定下 `session-runtime/`
 的依赖写法;高风险的切换、创建、运行放在后面,每刀先补特征化测试。规则沿用第 4 节与交接文档第 1、4 节。
+该顺序已按计划执行完毕;后续若继续压缩 `index.ts`,候选是 `App.tsx` 会话切换链、`main-integration` 测试拆分,
+以及 `index.ts` 中剩余的启动/窗口装配。
 
 需要确认:
 

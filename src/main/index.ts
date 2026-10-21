@@ -156,8 +156,7 @@ import {
   requireProject,
   getProjectByCwd,
   subscribeRemoteProjectConnection,
-  type ModelSelection,
-  type Project
+  type ModelSelection
 } from './agent/projects'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './agent/remote-hosts'
 import { createDefaultSshBootstrapCoordinator } from './agent/ssh-bootstrap/default-coordinator'
@@ -351,11 +350,7 @@ import { AnalysisNotebookSessionRegistry } from './agent/notebook/analysis-jupyt
 import { AnalysisNotebookToolExecutor } from './agent/notebook/notebook-tool-executor'
 import { createAnalysisWorkspaceResolution } from './agent/notebook/analysis-workspace-resolution'
 import { createNotebookServerReadiness } from './agent/notebook/notebook-server-readiness'
-import { createRemoteNotebookBackendDisposal } from './agent/notebook/remote-notebook-backend-disposal'
-import {
-  createRemoteAnalysisNotebookBackend,
-  type RemoteAnalysisNotebookBackend
-} from './agent/notebook/remote-analysis-notebook-backend'
+import { createRemoteNotebookRuntime } from './agent/notebook/remote-notebook-runtime'
 import { AnalysisNotebookOperations } from './agent/notebook/analysis-notebook-operations'
 import { AnalysisNotebookCodeGenerator } from './agent/notebook/analysis-notebook-code-generator'
 import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-router'
@@ -1422,6 +1417,21 @@ const notebookToolExecutor = new AnalysisNotebookToolExecutor({
   notebookExecutor,
   onDraftChanged: notifyAnalysisNotebookDraftChanged
 })
+const remoteJupyterStartJobs = new RemoteJupyterStartJobs()
+const {
+  remoteNotebookSessionIds,
+  remoteNotebookBackend,
+  resolveRemoteNotebookToolBackend,
+  disposeRemoteNotebookBackend,
+  disposeRemoteNotebookBackends
+} = createRemoteNotebookRuntime({
+  agentDir: AGENT_DIR,
+  projectRemoteRuntimeRoot,
+  sessionKeys,
+  notebookExecutor,
+  startJobs: remoteJupyterStartJobs,
+  onDraftChanged: notifyAnalysisNotebookDraftChanged
+})
 const notebookFileWatcher = new AnalysisNotebookFileWatcher({
   onChange: notifyAnalysisNotebookFileChanged
 })
@@ -1453,12 +1463,6 @@ const analysisNotebookCodeGenerator = new AnalysisNotebookCodeGenerator({
     extractAssistantText: extractAssistantMessageText,
     assistantErrorMessageFromEventSummary
   }
-})
-const remoteNotebookBackends = new Map<string, RemoteAnalysisNotebookBackend>()
-const remoteNotebookSessionIds = new Map<string, string>()
-const { disposeRemoteNotebookBackend } = createRemoteNotebookBackendDisposal({
-  remoteNotebookBackends,
-  remoteNotebookSessionIds
 })
 const notebookToolHostRouter = new NotebookToolHostRouter({
   local: (request, control) => notebookToolExecutor.execute(request, control),
@@ -1520,103 +1524,6 @@ const skillHost = createSkillHost({
   confirmBuild: (request) => confirmEnvironmentBuild(request),
   presentArtifacts: (request) => presentScriptArtifacts(request)
 })
-
-const remoteJupyterStartJobs = new RemoteJupyterStartJobs()
-
-function remoteNotebookTarget(project: Project, sessionId: string): RemoteRuntimeTarget {
-  if (project.location.kind !== 'ssh') throw new Error('远程 Notebook 项目位置无效')
-  const root = projectRemoteRuntimeRoot(project)
-  const micromambaPath = readHostRemoteEnvironmentPaths(
-    project.location.hostProfileId,
-    AGENT_DIR
-  ).micromamba
-  return {
-    runtimeSessionId: `notebook:${project.id}`,
-    sessionId,
-    projectId: project.id,
-    configuredRoot: root.configured,
-    ...(micromambaPath ? { micromambaPath } : {})
-  }
-}
-
-function createRemoteNotebookBackend(
-  project: Project,
-  sessionId: string
-): RemoteAnalysisNotebookBackend {
-  const target = remoteNotebookTarget(project, sessionId)
-  const binding = resolveRemoteWorkspaceHostBinding({ sessionId, projectId: project.id })
-  const authorized = resolveAuthorizedRemoteConnectionConfig({ sessionId, projectId: project.id })
-  return createRemoteAnalysisNotebookBackend({
-    projectCwd: binding.canonicalRoot,
-    projectName: project.name,
-    serverLabel: authorized.hostAlias,
-    runtimeSessionId: target.runtimeSessionId,
-    micromambaVersion: remoteMicromambaManifestVersion(),
-    projectHostConfig: binding.config,
-    openWorkspace: (runtimeSessionId, signal) => {
-      if (runtimeSessionId !== target.runtimeSessionId) {
-        throw new Error('远程 Notebook runtime 身份无效；没有回退到本机执行。')
-      }
-      const activeSessionId = remoteNotebookSessionIds.get(project.id)
-      if (!activeSessionId) {
-        throw new Error('远程 Notebook 会话已释放；没有回退到本机执行。')
-      }
-      return openRemoteRuntimeWorkspace(remoteNotebookTarget(project, activeSessionId), signal)
-    },
-    connection: authorized.connection,
-    projectId: project.id,
-    startJobs: remoteJupyterStartJobs,
-    // Read at each start, so a path saved in remote settings applies without reopening.
-    configuredJupyterPath: () =>
-      project.location.kind === 'ssh'
-        ? readHostRemoteEnvironmentPaths(project.location.hostProfileId, AGENT_DIR).jupyter
-        : undefined,
-    confirmEnvironment: async () => true,
-    resolveBaseEnvironment: (ref, pluginId) =>
-      resolveRemoteBaseEnvironment(ref, pluginId, AGENT_DIR),
-    notebookExecutor,
-    onDraftChanged: notifyAnalysisNotebookDraftChanged
-  })
-}
-
-function remoteNotebookBackend(project: Project, sessionId: string): RemoteAnalysisNotebookBackend {
-  remoteNotebookSessionIds.set(project.id, sessionId)
-  const existing = remoteNotebookBackends.get(project.id)
-  if (existing) return existing
-  const backend = createRemoteNotebookBackend(project, sessionId)
-  remoteNotebookBackends.set(project.id, backend)
-  return backend
-}
-
-async function resolveRemoteNotebookToolBackend(identity: {
-  runtimeSessionId: string
-  sessionId: string
-  projectId: string
-}): Promise<{
-  projectCwd: string
-  execute: RemoteAnalysisNotebookBackend['tools']['execute']
-} | null> {
-  const manifest = findPhiSessionById(identity.sessionId)
-  const project = getProject(identity.projectId)
-  const origin = sessionKeys.originFor(identity.runtimeSessionId)
-  if (
-    !manifest ||
-    !project ||
-    !origin ||
-    project.location.kind !== 'ssh' ||
-    manifest.projectId !== project.id ||
-    sessionKeys.phiSessionIdFor(origin.sessionKey) !== manifest.sessionId ||
-    resolve(origin.cwd) !== resolve(manifest.cwd) ||
-    resolve(manifest.cwd) !== resolve(remoteProjectAnchorPath(project.id, AGENT_DIR))
-  ) {
-    return null
-  }
-  const backend = remoteNotebookBackend(project, manifest.sessionId)
-  return {
-    projectCwd: backend.projectCwd,
-    execute: (request, control) => backend.tools.execute(request, control)
-  }
-}
 
 function directRemoteRuntimeTarget(params: unknown): RemoteRuntimeTarget | undefined {
   if (!isRecord(params)) return undefined
@@ -3226,13 +3133,6 @@ function safeCleanupStep(event: string, run: () => void | Promise<void>): Promis
     writeAppLog({ level: 'error', event })
     return Promise.resolve()
   }
-}
-
-async function disposeRemoteNotebookBackends(): Promise<void> {
-  const backends = [...remoteNotebookBackends.values()]
-  remoteNotebookBackends.clear()
-  remoteNotebookSessionIds.clear()
-  await Promise.all(backends.map((backend) => backend.dispose()))
 }
 
 function cleanupMainWindowRuntime(): Promise<void> {
