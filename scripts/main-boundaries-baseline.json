@@ -7,7 +7,7 @@
   "frozenAt": "2026-10-21",
   "index": {
     "path": "src/main/index.ts",
-    "lines": 6346,
+    "lines": 6224,
     "ipcHandles": 0,
     "note": "Target is the app lifecycle and assembly only; IPC registration moves to src/main/ipc/. Raised once from 13002 to 13014 on 2026-10-20: replacing channel literals with longer IPC constants made prettier wrap 12 more lines; no handler was added. Raised once from 7582 to 7591 on 2026-10-20: extracting resolveSessionTitleModel from the session title request removed three lint warnings (length and complexity) and added nine lines of signature, comment and return. Raised once from 6757 to 6859 on 2026-10-20: splitting the startup callback into named phases added assembly scaffolding that must remain in index.ts; no IPC handler or behavior was added. Raised once from 6284 to 6346 on 2026-10-21: splitting captureSessionControlTarget, getCurrentSessionPayload and renameConversation into named guards that read index.ts session state added 62 lines of function scaffolding and removed six lint warnings."
   },
@@ -17,7 +17,7 @@
       "src/main/agent/engine/rpc/facade-session-driver.ts": 1358,
       "src/main/agent/engine/rpc/remote-session-runtime.ts": 1376,
       "src/main/agent/runtime/runtime-adapter.ts": 1255,
-      "src/main/index.ts": 6346
+      "src/main/index.ts": 6224
     }
   }
 }

@@ -4,11 +4,7 @@ import {
   resolveRuntimeSessionOrigin
 } from './agent/session/runtime-origin-store'
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
-import type {
-  PhiAgentEvent,
-  PhiAgentEventSummary,
-  RuntimeSelectionControl
-} from './agent/engine/types'
+import type { PhiAgentEvent, RuntimeSelectionControl } from './agent/engine/types'
 import type {
   RuntimeRecoveryModelSelection,
   RuntimeRecoveryIssue
@@ -154,6 +150,13 @@ import {
   setCurrentAutoCompactionSettings,
   type SessionCompactionControlOptions
 } from './agent/session/session-compaction-control'
+import {
+  assistantErrorMessageFromEventSummary,
+  extractAssistantMessageText,
+  extractMessageText,
+  lastAssistantMessageFrom,
+  redactStructuredValue
+} from './agent/session/message-text'
 import { getAuthManager } from './agent/auth-manager'
 import { getPersonaMarkdown } from './agent/persona-manager'
 import { generatePersonaMarkdown as generatePersonaMarkdownForIpc } from './agent/persona-generation'
@@ -324,10 +327,8 @@ import {
 } from './agent/resources'
 import { migrateLegacyCustomWrappers } from './agent/wrappers/catalog'
 import { resetWrapperCompositionCatalogCache } from './agent/wrappers/composition/discovery'
-import {
-  wrapperJobHostHandlers,
-  createWrapperJobHostScope
-} from './agent/wrappers/composition/job-host-handlers'
+import { wrapperJobHostHandlers } from './agent/wrappers/composition/job-host-handlers'
+import { resolveWrapperJobHostScope } from './agent/wrappers/composition/job-host-scope'
 import { shouldContinueConversation } from './agent/wrappers/composition/job-continue'
 import { deliverWrapperRunFinished } from './agent/wrappers/composition/job-notify'
 import { WrapperJobManager } from './agent/wrappers/composition/job-manager'
@@ -386,7 +387,7 @@ import {
   readLastSelectedModel,
   writeLastSelectedModel
 } from './agent/app-settings'
-import { isSecretMetadataKey, redactSensitiveText } from './agent/redaction'
+import { redactSensitiveText } from './agent/redaction'
 import { listProjectNotebooks } from './agent/notebook/analysis-notebooks'
 import { AnalysisNotebookFileWatcher } from './agent/notebook/analysis-notebook-watch'
 import { getCustomToolPath } from './agent/environment'
@@ -1634,7 +1635,7 @@ const analysisNotebookCodeGenerator = new AnalysisNotebookCodeGenerator({
     label: modelSelectionLabel
   },
   messages: {
-    extractAssistantText,
+    extractAssistantText: extractAssistantMessageText,
     assistantErrorMessageFromEventSummary
   }
 })
@@ -2403,55 +2404,16 @@ const wrapperJobs = new WrapperJobManager({
 })
 for (const [method, handler] of Object.entries(
   wrapperJobHostHandlers(wrapperJobs, {
-    scopeFor: (context) => {
-      const originSessionId = context?.originSessionId
-      if (!originSessionId) {
-        if (context?.signal) throw new Error('RPC Wrapper call has no trusted origin')
-        return undefined
-      }
-      const origin = resolveOriginSession(originSessionId)
-      const manifest = origin && findPhiSessionById(origin.phiSessionId)
-      if (!origin || !manifest) throw new Error('Wrapper origin session is unavailable')
-      const project = manifest.projectId ? getProject(manifest.projectId) : undefined
-      if (project?.location.kind !== 'ssh') {
-        if (context?.signal || manifest.projectLocation?.kind === 'ssh')
-          throw new Error('RPC Wrapper project is unavailable')
-        return undefined
-      }
-      if (ownsRemoteRuntimeSession(originSessionId) && !context?.signal)
-        throw new Error('RPC Wrapper call has no owned cancellation scope')
-      const binding = resolveRemoteWorkspaceHostBinding({
-        sessionId: origin.phiSessionId,
-        projectId: project.id
-      })
-      const target = resolveProjectRemoteTarget(project, undefined)
-      if ('reason' in target) throw new Error(target.reason)
-      const targetKey = JSON.stringify(target)
-      return createWrapperJobHostScope({
-        originSessionId,
-        phiSessionId: origin.phiSessionId,
-        projectId: project.id,
-        hostProfileId: project.location.hostProfileId,
-        host: target.target.connection.host,
-        workspaceRoot: target.target.workspaceRoot,
-        signal: context?.signal,
-        readRun: (runId) => readWrapperRun(runId),
+    scopeFor: (context) =>
+      resolveWrapperJobHostScope(context, {
         resolveOrigin: resolveOriginSession,
-        assertCurrent: () => {
-          const currentProject = getProject(project.id)
-          if (
-            !currentProject ||
-            resolveOriginSession(originSessionId)?.phiSessionId !== origin.phiSessionId ||
-            resolveRemoteWorkspaceHostBinding({
-              sessionId: origin.phiSessionId,
-              projectId: project.id
-            }).cacheKey !== binding.cacheKey ||
-            JSON.stringify(resolveProjectRemoteTarget(currentProject, undefined)) !== targetKey
-          )
-            throw new Error('RPC Wrapper selected project/host binding changed')
-        }
+        findSession: findPhiSessionById,
+        getProject,
+        ownsRemoteRuntimeSession,
+        resolveBinding: resolveRemoteWorkspaceHostBinding,
+        resolveTarget: (project) => resolveProjectRemoteTarget(project, undefined),
+        readRun: (runId) => readWrapperRun(runId)
       })
-    }
   })
 )) {
   getPhiEngine().host.register(method, handler)
@@ -2774,130 +2736,6 @@ function logUnexpectedError(error: unknown): void {
   })
 }
 
-function extractAssistantText(message: unknown): string {
-  if (!message || typeof message !== 'object') return ''
-  const record = message as { role?: string; content?: unknown }
-  if (record.role !== 'assistant') return ''
-
-  return extractMessageText(record.content)
-}
-
-function redactStructuredValue(value: unknown, key = ''): unknown {
-  if (key && isSecretMetadataKey(key)) return '[redacted]'
-  if (typeof value === 'string') return redactSensitiveText(value)
-  if (Array.isArray(value)) return value.map((item) => redactStructuredValue(item))
-  if (!isRecord(value)) return value
-
-  return Object.fromEntries(
-    Object.entries(value).map(([entryKey, entryValue]) => [
-      entryKey,
-      redactStructuredValue(entryValue, entryKey)
-    ])
-  )
-}
-
-function assistantMessagesFrom(value: unknown): unknown[] {
-  if (!value) return []
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => assistantMessagesFrom(item))
-  }
-  if (!isRecord(value)) return []
-  const messages = Array.isArray(value.messages) ? assistantMessagesFrom(value.messages) : []
-  const message = isRecord(value.message) ? assistantMessagesFrom(value.message) : []
-  const self = value.role === 'assistant' ? [value] : []
-  return [...messages, ...message, ...self]
-}
-
-function lastAssistantMessageFrom(value: unknown): unknown {
-  return assistantMessagesFrom(value).at(-1)
-}
-
-function assistantErrorText(message: unknown, options: { allowContent?: boolean } = {}): string {
-  if (!isRecord(message)) return ''
-  if (typeof message.errorMessage === 'string') return message.errorMessage
-  if (typeof message.message === 'string') return message.message
-  if (message.role !== 'assistant') return ''
-  if (message.stopReason === 'error' || options.allowContent) return extractAssistantText(message)
-  return ''
-}
-
-function extractMessageText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) {
-    if (!content || typeof content !== 'object') return ''
-    const record = content as Record<string, unknown>
-    if (
-      (record.type === 'text' || record.type === 'output_text' || record.type === 'input_text') &&
-      typeof record.text === 'string'
-    ) {
-      return record.text
-    }
-    if (record.type === undefined && typeof record.text === 'string') return record.text
-    if (record.type === undefined && typeof record.output_text === 'string') {
-      return record.output_text
-    }
-    if (typeof record.content === 'string') return record.content
-    return (
-      extractMessageText(record.content) ||
-      extractMessageText(record.delta) ||
-      extractMessageText(record.data) ||
-      extractMessageText(record.value) ||
-      extractMessageText(record.result) ||
-      extractMessageText(record.output) ||
-      extractMessageText(record.outputs) ||
-      extractMessageText(record.message)
-    )
-  }
-
-  return content
-    .map((part) => {
-      if (typeof part === 'string') return part
-      if (!part || typeof part !== 'object') return ''
-      const item = part as { type?: string; text?: unknown; content?: unknown }
-      if (
-        (item.type === 'text' || item.type === 'output_text' || item.type === 'input_text') &&
-        typeof item.text === 'string'
-      ) {
-        return item.text
-      }
-      if (typeof item.text === 'string' && item.type === undefined) return item.text
-      return extractMessageText(item.content)
-    })
-    .join('')
-}
-
-function assistantErrorMessageFromEventSummary(summary: PhiAgentEventSummary): string | null {
-  const assistantMessageEvent = isPhiMessageUpdateSummary(summary)
-    ? summary.assistantMessageEvent
-    : undefined
-  if (summary.type === 'message_update' && assistantMessageEvent?.type === 'error') {
-    const error = assistantMessageEvent.error
-    const message = assistantErrorText(error, { allowContent: true })
-    return message ? redactSensitiveText(message) : '请求失败'
-  }
-
-  const message = isPhiEventType(summary, 'message_end') ? summary.message : undefined
-  if (
-    summary.type === 'message_end' &&
-    message?.role === 'assistant' &&
-    message.stopReason === 'error'
-  ) {
-    return typeof message.errorMessage === 'string'
-      ? redactSensitiveText(message.errorMessage)
-      : '请求失败'
-  }
-
-  const batchedMessage = lastAssistantMessageFrom(summary.messages)
-  const batchedError = assistantErrorText(batchedMessage)
-  if (batchedError) return redactSensitiveText(batchedError)
-
-  const resultMessage = lastAssistantMessageFrom(summary.result)
-  const resultError = assistantErrorText(resultMessage)
-  if (resultError) return redactSensitiveText(resultError)
-
-  return null
-}
-
 function isPermanentProviderRegionError(message: unknown): message is string {
   return (
     typeof message === 'string' && /(?:not supported|not available) in your region/i.test(message)
@@ -2986,7 +2824,7 @@ const sessionEventPersistenceDeps: SessionEventPersistenceDeps = {
   },
   shared: {
     createdAtFromSummary,
-    extractAssistantText,
+    extractAssistantText: extractAssistantMessageText,
     persistSdkCompactionNotice,
     persistSdkShakeEvent,
     redactStructuredValue
@@ -3933,7 +3771,7 @@ function getSessionTitleGenerator(): SessionTitleGenerator {
             ? summary.message
             : (event?.partial ?? event?.message)
           if ((message as { role?: string } | undefined)?.role === 'assistant') {
-            const body = extractAssistantText(message).trim()
+            const body = extractAssistantMessageText(message).trim()
             if (body) streamedText = body
           }
         },
@@ -3962,7 +3800,7 @@ function getSessionTitleGenerator(): SessionTitleGenerator {
           (replyFailed && final?.stopReason !== 'stop')
         )
           return ''
-        return extractAssistantText(assistant).trim() || streamedText.trim()
+        return extractAssistantMessageText(assistant).trim() || streamedText.trim()
       } finally {
         signal.removeEventListener('abort', abort)
         await session.dispose()
@@ -5306,9 +5144,7 @@ async function applyNextRunConfiguration(
   await session.setThinkingLevel(resolveSessionThinkingLevel(sessionKey, snapshot))
 }
 
-function createWindow(): void {
-  runtime.window.resetCleanup()
-
+function createMainBrowserWindow(): BrowserWindow {
   // Create the browser window.
   const window = new BrowserWindow({
     title: APP_NAME,
@@ -5333,7 +5169,12 @@ function createWindow(): void {
     }
   })
   runtime.window.setMainWindow(window)
+  return window
+}
 
+function createMainWindowStartupCoordinator(
+  window: BrowserWindow
+): ReturnType<typeof createMainWindowStartup> {
   const startup = createMainWindowStartup(
     window,
     (reason) => {
@@ -5366,12 +5207,22 @@ function createWindow(): void {
     15_000,
     () => finishStartupSplash(window)
   )
+  return startup
+}
+
+function registerMainWindowStartupHandlers(
+  window: BrowserWindow,
+  startup: ReturnType<typeof createMainWindowStartup>
+): void {
   mainWindowStartups.set(window, startup)
   window.webContents.on('did-fail-load', (_event, errorCode, _description, _url, isMainFrame) => {
     if (isMainFrame && errorCode !== -3) startup.fail('main-frame-load-failed')
   })
   window.webContents.on('render-process-gone', () => startup.fail('renderer-process-gone'))
   window.webContents.setBackgroundThrottling(false)
+}
+
+function registerMacMainWindowHandlers(window: BrowserWindow): void {
   if (process.platform === 'darwin') {
     window.setVibrancy(null)
     window.setWindowButtonVisibility(false)
@@ -5389,7 +5240,12 @@ function createWindow(): void {
       sendMainWindowFullscreenState(window, false)
     })
   }
+}
 
+function registerMainWindowLifecycleHandlers(
+  window: BrowserWindow,
+  startup: ReturnType<typeof createMainWindowStartup>
+): void {
   window.once('ready-to-show', startup.painted)
 
   window.on('close', () => {
@@ -5400,7 +5256,9 @@ function createWindow(): void {
     startup.dispose()
     runtime.window.clearMainWindow(window)
   })
+}
 
+function registerMainWindowNavigationHandlers(window: BrowserWindow): void {
   window.webContents.setWindowOpenHandler((details) => {
     return routeBrowserAppShellWindowOpen({
       details,
@@ -5421,7 +5279,12 @@ function createWindow(): void {
       event.preventDefault()
     }
   })
+}
 
+function loadMainWindow(
+  window: BrowserWindow,
+  startup: ReturnType<typeof createMainWindowStartup>
+): void {
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -5433,6 +5296,17 @@ function createWindow(): void {
       .loadFile(join(import.meta.dirname, '../renderer/index.html'))
       .catch(() => startup.fail('load-failed'))
   }
+}
+
+function createWindow(): void {
+  runtime.window.resetCleanup()
+  const window = createMainBrowserWindow()
+  const startup = createMainWindowStartupCoordinator(window)
+  registerMainWindowStartupHandlers(window, startup)
+  registerMacMainWindowHandlers(window)
+  registerMainWindowLifecycleHandlers(window, startup)
+  registerMainWindowNavigationHandlers(window)
+  loadMainWindow(window, startup)
 }
 
 registerNotebookOutputScheme()
@@ -6250,7 +6124,11 @@ function registerWrapperJobsAndPersonaIpc(
         generatePersonaMarkdownForIpc(description, control, {
           getSelectedModel: () => sessionState.selectedModel,
           getNoProjectTaskFolder,
-          text: { extractAssistantText, extractMessageText, lastAssistantMessageFrom }
+          text: {
+            extractAssistantText: extractAssistantMessageText,
+            extractMessageText,
+            lastAssistantMessageFrom
+          }
         })
     },
     rpc: {

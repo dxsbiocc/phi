@@ -12,7 +12,7 @@ import { createMinimalTheme } from '../src/renderer/src/minimalTheme'
 // Execute the actual constructor wiring, rather than duplicating its options in a fixture.
 function createMainWindowFixture(): FakeWindow {
   const source = readFileSync('src/main/index.ts', 'utf8')
-  const start = source.indexOf('function createWindow(): void {')
+  const start = source.indexOf('function createMainBrowserWindow(): BrowserWindow {')
   const end = source.indexOf('\nregisterNotebookOutputScheme()', start)
   assert.ok(start >= 0 && end > start)
   const code = ts.transpileModule(
@@ -44,9 +44,10 @@ function createMainWindowFixture(): FakeWindow {
 }
 
 class FakeWindow extends EventEmitter {
+  operations: string[] = []
   webContents = Object.assign(new EventEmitter(), {
-    setBackgroundThrottling: () => undefined,
-    setWindowOpenHandler: () => undefined
+    setBackgroundThrottling: () => this.operations.push('web:setBackgroundThrottling'),
+    setWindowOpenHandler: () => this.operations.push('web:setWindowOpenHandler')
   })
   visible: boolean
   showCount = 0
@@ -54,6 +55,12 @@ class FakeWindow extends EventEmitter {
 
   constructor(readonly options: { show?: boolean; backgroundColor?: string }) {
     super()
+    this.on('newListener', (event) => {
+      if (event !== 'newListener') this.operations.push(`window:${String(event)}`)
+    })
+    this.webContents.on('newListener', (event) => {
+      if (event !== 'newListener') this.operations.push(`web:${String(event)}`)
+    })
     this.visible = options.show !== false
     this.background = options.backgroundColor ?? ''
   }
@@ -72,9 +79,25 @@ class FakeWindow extends EventEmitter {
   }
 
   loadFile(): Promise<void> {
+    this.operations.push('window:loadFile')
     return Promise.resolve()
   }
 }
+
+test('main window assembly preserves Electron registration and initial-load order', () => {
+  const window = createMainWindowFixture()
+  assert.deepEqual(window.operations, [
+    'web:did-fail-load',
+    'web:render-process-gone',
+    'web:setBackgroundThrottling',
+    'window:ready-to-show',
+    'window:close',
+    'window:closed',
+    'web:setWindowOpenHandler',
+    'web:will-frame-navigate',
+    'window:loadFile'
+  ])
+})
 
 test('the real main window stays hidden behind the standalone splash until React is ready', () => {
   const window = createMainWindowFixture()
