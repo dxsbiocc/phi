@@ -127,7 +127,10 @@ export async function createSshApplication(
   try {
     await writePrivateConfiguration(input, agentDir, provider.url)
     await seedSyntheticAuth(bun, agentDir)
-    const sshConfig = join(input.localRoot, 'ssh-config')
+    // Host discovery and project lookup both read the child's private HOME. Keep the
+    // ssh-config profile id resolvable by writing the config where OpenSSH looks.
+    const sshConfig = join(input.localRoot, 'home/.ssh/config')
+    await mkdir(join(input.localRoot, 'home/.ssh'), { recursive: true, mode: 0o700 })
     await writeFile(sshConfig, `Host ${input.profile.hostAlias}\n`, { mode: 0o600, flag: 'wx' })
     const profile = saveRemoteHostProfile(
       {
