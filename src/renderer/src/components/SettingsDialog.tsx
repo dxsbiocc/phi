@@ -587,7 +587,9 @@ function SettingsDialog({
             px: { xs: 3, md: 4 },
             py: 3,
             pr: { xs: 8, md: 9 },
+            overflowX: 'hidden',
             overflowY: 'auto',
+            scrollbarGutter: 'stable',
             position: 'relative'
           }}
         >

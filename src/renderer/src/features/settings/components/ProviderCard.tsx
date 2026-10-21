@@ -3,11 +3,10 @@ import { Alert, Box, Button, Chip, Collapse, Paper, Stack, Switch, Typography } 
 import { GoChevronDown, GoChevronUp } from 'react-icons/go'
 import type { ModelAvailabilityChange } from '../../../../../shared/modelAvailabilityTypes'
 import type { ProviderAuthStatus } from '../../../types'
+import { ProviderModelIcon } from '../../../components/chat/ProviderModelIcon'
 import { PhiIcons } from '../../../icons'
 import { useUiLanguage } from '../../../lib/i18n'
 import { settingsUi } from '../lib/settingsUi'
-import { providerStatusText } from '../lib/providerStatusText'
-import { providerCapabilityLabel } from '../lib/providerCapabilities'
 import { providerManagementUi as copy } from '../lib/providerManagementUi'
 import { availabilityTarget, type AvailabilityState } from '../lib/modelAvailabilityController'
 import { ProviderModelList } from './ProviderModelList'
@@ -24,39 +23,32 @@ function ProviderHeader({
   const KeyIcon = PhiIcons.entity.apiKey
   const ShieldIcon = PhiIcons.settings.permissions
   const LogoutIcon = PhiIcons.action.logout
+  const decision = provider.modelKinds?.includes('decision')
   return (
     <Stack
       direction={{ xs: 'column', sm: 'row' }}
       spacing={1.25}
-      sx={{ alignItems: { xs: 'stretch', sm: 'center' } }}
+      sx={{ alignItems: { xs: 'stretch', sm: 'center' }, minWidth: 0, width: '100%' }}
     >
+      <Box aria-hidden sx={{ display: 'inline-flex', flexShrink: 0 }}>
+        <ProviderModelIcon providerId={provider.providerId} disabled={!enabled} size={32} />
+      </Box>
       <Box sx={{ minWidth: 0, flex: 1 }}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
-            {provider.name}
-          </Typography>
-          <Typography
-            variant="body2"
-            sx={{ color: 'text.secondary', fontFamily: 'var(--font-mono)', fontSize: '0.82rem' }}
-          >
-            {provider.providerId}
-          </Typography>
-        </Stack>
+        <Typography variant="subtitle1" noWrap sx={{ fontWeight: 700, lineHeight: 1.35 }}>
+          {provider.name}
+        </Typography>
         <Stack direction="row" spacing={0.75} sx={{ mt: 0.75, flexWrap: 'wrap', rowGap: 0.75 }}>
+          <Chip
+            size="small"
+            color={enabled ? 'success' : 'default'}
+            label={enabled ? settingsUi.configured : copy.disabled}
+          />
           {provider.hasApiKey && <Chip size="small" icon={<KeyIcon />} label="API Key" />}
           {provider.hasOAuth && <Chip size="small" icon={<ShieldIcon />} label="OAuth" />}
-          <Chip size="small" variant="outlined" label={providerCapabilityLabel(provider)} />
-          {provider.statusText && (
-            <Chip size="small" label={providerStatusText(provider.statusText)} variant="outlined" />
-          )}
+          {decision && <Chip size="small" variant="outlined" label={copy.decision} />}
         </Stack>
       </Box>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexShrink: 0 }}>
-        <Chip
-          size="small"
-          color={enabled ? 'success' : 'default'}
-          label={enabled ? settingsUi.configured : copy.disabled}
-        />
         <Switch
           checked={enabled}
           disabled={!state.snapshot || state.loading || state.pending.includes(target)}
@@ -93,19 +85,15 @@ export function ProviderCard(props: ProviderCardProps): React.JSX.Element {
     state.snapshot?.models.filter((model) => model.providerId === provider.providerId) ?? []
   const enabled = !state.snapshot?.disabledProviders.includes(provider.providerId)
   const error = state.errors[availabilityTarget({ providerId: provider.providerId })]
-  const decision =
-    provider.modelKinds?.includes('decision') || models.some((model) => model.kind === 'decision')
   return (
-    <Paper variant="outlined" sx={{ px: 1.5, py: 1.25, borderRadius: 1 }}>
+    <Paper
+      variant="outlined"
+      sx={{ px: 1.5, py: 1.25, borderRadius: 1, width: '100%', minWidth: 0, overflow: 'hidden' }}
+    >
       <ProviderHeader {...props} />
       {!enabled && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
           {copy.disabledHelp}
-        </Typography>
-      )}
-      {decision && (
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-          {copy.decisionHelp}
         </Typography>
       )}
       {error && (
@@ -122,7 +110,7 @@ export function ProviderCard(props: ProviderCardProps): React.JSX.Element {
       >
         {copy.models(models.length)}
       </Button>
-      <Collapse in={expanded} unmountOnExit>
+      <Collapse in={expanded} unmountOnExit sx={{ minWidth: 0, width: '100%' }}>
         <ProviderModelList
           models={models}
           state={state}

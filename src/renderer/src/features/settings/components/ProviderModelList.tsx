@@ -1,6 +1,6 @@
 import { filterProviderModels } from '../lib/providerCapabilities'
 import { useState } from 'react'
-import { Alert, Box, Button, Chip, Stack, Switch, TextField, Typography } from '@mui/material'
+import { Alert, Box, Chip, Stack, Switch, TextField, Typography } from '@mui/material'
 import type {
   ManagedProviderModel,
   ModelAvailabilityChange,
@@ -26,22 +26,25 @@ function ModelRow({
   useUiLanguage()
   const target = availabilityTarget(model)
   const checked = !snapshot.disabledModels.some((item) => availabilityTarget(item) === target)
+  const label = model.name.trim() || model.modelId
   return (
-    <Box>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 0.5 }}>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
-            {model.name}
-          </Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
-            {model.modelId}
-          </Typography>
-        </Box>
-        <Chip
-          size="small"
-          variant="outlined"
-          label={model.kind === 'decision' ? copy.decision : copy.chat}
-        />
+    <Box role="listitem">
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{ alignItems: 'center', minHeight: 32, minWidth: 0, py: 0.25, width: '100%' }}
+      >
+        <Typography
+          variant="body2"
+          noWrap
+          title={label === model.modelId ? label : model.modelId}
+          sx={{ flex: 1, minWidth: 0 }}
+        >
+          {label}
+        </Typography>
+        {model.kind === 'decision' && (
+          <Chip size="small" variant="outlined" label={copy.decision} />
+        )}
         <Switch
           size="small"
           checked={checked}
@@ -74,27 +77,38 @@ export function ProviderModelList({
 }): React.JSX.Element {
   useUiLanguage()
   const [query, setQuery] = useState('')
-  const [limit, setLimit] = useState(20)
   const filtered = filterProviderModels(models, query)
   return (
-    <Stack spacing={1} sx={{ mt: 1.5, pt: 1.5, borderTop: 1, borderColor: 'divider' }}>
+    <Stack
+      spacing={1}
+      sx={{ mt: 1.5, pt: 1.5, borderTop: 1, borderColor: 'divider', minWidth: 0, width: '100%' }}
+    >
       {!providerEnabled && (
         <Typography variant="caption" color="text.secondary">
           {copy.providerOff}
         </Typography>
       )}
       <TextField
+        fullWidth
         size="small"
         label={copy.search}
         value={query}
-        onChange={(event) => {
-          setQuery(event.target.value)
-          setLimit(20)
-        }}
+        onChange={(event) => setQuery(event.target.value)}
+        sx={{ minWidth: 0 }}
       />
-      {filtered
-        .slice(0, limit)
-        .map(
+      <Box
+        role="list"
+        aria-label={copy.models(filtered.length)}
+        sx={{
+          maxHeight: 280,
+          minWidth: 0,
+          overflowX: 'hidden',
+          overflowY: 'auto',
+          scrollbarGutter: 'stable',
+          width: '100%'
+        }}
+      >
+        {filtered.map(
           (model) =>
             state.snapshot && (
               <ModelRow
@@ -107,14 +121,12 @@ export function ProviderModelList({
               />
             )
         )}
-      {!filtered.length && (
-        <Typography variant="body2" color="text.secondary">
-          {models.length ? copy.noMatches : copy.noModels}
-        </Typography>
-      )}
-      {filtered.length > limit && (
-        <Button onClick={() => setLimit((value) => value + 20)}>{copy.more}</Button>
-      )}
+        {!filtered.length && (
+          <Typography variant="body2" color="text.secondary">
+            {models.length ? copy.noMatches : copy.noModels}
+          </Typography>
+        )}
+      </Box>
     </Stack>
   )
 }

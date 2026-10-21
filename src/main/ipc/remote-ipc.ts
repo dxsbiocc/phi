@@ -7,6 +7,8 @@ import type {
 } from '../../shared/remoteEnvironmentTypes'
 import { IPC } from '../../shared/ipcChannels'
 import { remoteDoctor } from '../agent/remote-doctor'
+import { listSshHostAvailability, saveSshHostAvailability } from '../agent/ssh-host-availability'
+import type { SshHostAvailabilityRecord } from '../../shared/sshHostAvailability'
 import { installRemoteNextflow } from '../agent/remote-nextflow-install'
 import {
   saveRemoteEnvironmentSetting,
@@ -97,11 +99,22 @@ export function registerRemoteIpc(options: RemoteIpcOptions): void {
       if (remotePath !== undefined && typeof remotePath !== 'string') {
         throw new Error('远程目录路径无效')
       }
+      const raw =
+        options && typeof options === 'object' && !Array.isArray(options)
+          ? (options as Record<string, unknown>)
+          : {}
       return remoteDoctor(hostProfileId, remotePath, options as RemoteDoctorOptions, {
-        userInitiated: true
+        userInitiated: raw.userInitiated !== false
       })
     }
   )
+  ipcMain.handle(IPC.remote.listHostAvailability, () => listSshHostAvailability())
+  ipcMain.handle(IPC.remote.saveHostAvailability, (_, value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('SSH 服务器可用状态无效')
+    }
+    return saveSshHostAvailability(value as SshHostAvailabilityRecord)
+  })
   ipcMain.handle(IPC.remote.installNextflow, async (_, hostProfileId: unknown) => {
     if (typeof hostProfileId !== 'string' || !hostProfileId.trim()) {
       throw new Error('SSH 服务器档案 ID 无效')

@@ -1,3 +1,4 @@
+import type { SshHostAvailabilityStatus } from '../../../../../shared/sshHostAvailability'
 import { remoteSetupCopy } from './remoteSetupCopy'
 import type {
   RemoteDoctorOptions,
@@ -101,6 +102,17 @@ export function withHostDoctorState(
 }
 
 export type RemoteHostCheckTone = 'idle' | 'running' | 'success' | 'warning' | 'error'
+
+export function sshHostAvailabilityFromDoctor(
+  state: RemoteDoctorUiState
+): SshHostAvailabilityStatus | null {
+  if (state.phase !== 'done' && state.phase !== 'failed') return null
+  const tone = remoteHostCheckPresentation(state, state.key).tone
+  if (tone === 'success') return 'available'
+  if (tone === 'warning') return 'attention'
+  if (tone === 'error') return 'unavailable'
+  return null
+}
 
 export function remoteHostCheckPresentation(
   state: RemoteDoctorUiState | undefined,

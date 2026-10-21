@@ -20,6 +20,7 @@ import type {
   RemoteDoctorReport,
   RemoteNextflowInstallResult
 } from '../shared/remoteDoctorTypes'
+import type { SshHostAvailabilityRecord } from '../shared/sshHostAvailability'
 import type {
   RemoteEnvironmentSettingInput,
   RemoteEnvironmentToolPaths
@@ -1010,6 +1011,10 @@ declare global {
         remotePath?: string,
         options?: RemoteDoctorOptions
       ) => Promise<RemoteDoctorReport>
+      listSshHostAvailability: () => Promise<SshHostAvailabilityRecord[]>
+      saveSshHostAvailability: (
+        record: SshHostAvailabilityRecord
+      ) => Promise<SshHostAvailabilityRecord[]>
       installRemoteNextflow: (hostProfileId: string) => Promise<RemoteNextflowInstallResult>
       updateProjectRemoteConnection: (
         id: string,

@@ -138,6 +138,28 @@ export function completionRate(period: HomeActivityPeriodSummary): number {
   return Math.round((period.completedRuns / period.totalRuns) * 100)
 }
 
+export interface HomeActivityMonthLabel {
+  weekIndex: number
+  label: string
+  span: number
+}
+
+/** A Chinese month label is wider than one week column, so a one-week span paints over the next month. */
+const MIN_MONTH_LABEL_WEEKS = 2
+
+export function homeActivityMonthLabels(
+  weeks: HomeActivityCalendarWeek[]
+): HomeActivityMonthLabel[] {
+  const starts = weeks.flatMap((week, weekIndex) =>
+    week.monthLabel ? [{ weekIndex, label: week.monthLabel }] : []
+  )
+  return starts.flatMap((start, index) => {
+    const nextWeek = starts[index + 1]?.weekIndex ?? weeks.length
+    const span = nextWeek - start.weekIndex
+    return span >= MIN_MONTH_LABEL_WEEKS ? [{ ...start, span }] : []
+  })
+}
+
 export function totalActiveDays(summary: HomeActivitySummary): number {
   return summary.dayBuckets.filter((day) => day.totalRuns > 0 || day.durationMs > 0).length
 }

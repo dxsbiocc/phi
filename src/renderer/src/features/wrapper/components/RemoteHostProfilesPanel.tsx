@@ -10,6 +10,7 @@ import {
   Divider,
   IconButton,
   ListItemButton,
+  Paper,
   Stack,
   Tooltip,
   Typography
@@ -29,7 +30,7 @@ import {
 } from 'react-icons/go'
 
 import type { OpenSshHost, RemoteHostProfile } from '../../../types'
-import { sshConfigHostId } from '../../../../../shared/remoteHostProfile'
+import type { SshHostAvailabilityStatus } from '../../../../../shared/sshHostAvailability'
 import type { RemoteEnvironmentSettingInput } from '../../../../../shared/remoteEnvironmentTypes'
 import {
   remoteDoctorTargetKey,
@@ -37,19 +38,14 @@ import {
   remoteHostCheckPresentation,
   type RemoteDoctorUiState
 } from '../lib/remoteDoctorUi'
+import { remoteHostRows, type RemoteHostRow } from '../lib/remoteHostRows'
 import { RemoteHostDialog, type RemoteHostDraft } from './RemoteHostDialog'
 import { RemoteHostEnvironmentEditor } from './RemoteHostEnvironmentEditor'
 
 export type { RemoteHostDraft } from './RemoteHostDialog'
 
-interface HostRow {
-  alias: string
-  saved: RemoteHostProfile
-  discovered?: OpenSshHost
-}
-
 interface RemoteHostDetailProps {
-  row: HostRow
+  row: RemoteHostRow
   busy: boolean
   error: string | null
   doctorState: RemoteDoctorUiState
@@ -60,36 +56,34 @@ interface RemoteHostDetailProps {
   onEnvironmentSave?: (host: RemoteHostProfile, input: RemoteEnvironmentSettingInput) => void
 }
 
-function hostRows(hosts: RemoteHostProfile[], openSshHosts: OpenSshHost[]): HostRow[] {
-  const savedByAlias = new Map(hosts.map((host) => [host.hostAlias, host]))
-  const discoveredAliases = new Set(openSshHosts.map((host) => host.alias))
-  return [
-    ...openSshHosts.map((host) => ({
-      alias: host.alias,
-      saved: savedByAlias.get(host.alias) ?? {
-        id: sshConfigHostId(host.alias),
-        label: host.alias,
-        hostAlias: host.alias,
-        source: 'ssh-config'
-      },
-      discovered: host
-    })),
-    ...hosts
-      .filter((host) => !discoveredAliases.has(host.hostAlias))
-      .map((host) => ({ alias: host.hostAlias, saved: host }))
-  ]
-}
-
-function hostSummary(row: HostRow): string {
+function hostSummary(row: RemoteHostRow): string {
   const user = row.saved.user ?? row.discovered?.user
   const address = row.discovered?.hostname ?? row.alias
   const port = row.saved.port ?? row.discovered?.port ?? 22
   return `${user ? `${user}@` : ''}${address}:${port}`
 }
 
+function savedConnectionStatus(status: SshHostAvailabilityStatus | undefined): {
+  label: string
+  color: 'default' | 'success' | 'warning' | 'error'
+  icon: React.JSX.Element
+} | null {
+  if (status === 'available') {
+    return { label: remoteSetupCopy.connected, color: 'success', icon: <GoCheckCircle /> }
+  }
+  if (status === 'attention') {
+    return { label: remoteSetupCopy.attentionRequired, color: 'warning', icon: <GoAlert /> }
+  }
+  if (status === 'unavailable') {
+    return { label: remoteSetupCopy.connectionFailed, color: 'error', icon: <GoAlertFill /> }
+  }
+  return null
+}
+
 function connectionStatus(
   check: ReturnType<typeof remoteHostCheckPresentation>,
-  checking: boolean
+  checking: boolean,
+  saved?: SshHostAvailabilityStatus
 ): {
   label: string
   color: 'default' | 'success' | 'warning' | 'error'
@@ -105,10 +99,16 @@ function connectionStatus(
   if (check.tone === 'error') {
     return { label: remoteSetupCopy.connectionFailed, color: 'error', icon: <GoAlertFill /> }
   }
-  return { label: remoteSetupCopy.notChecked, color: 'default', icon: <GoPlug /> }
+  return (
+    savedConnectionStatus(saved) ?? {
+      label: remoteSetupCopy.notChecked,
+      color: 'default',
+      icon: <GoPlug />
+    }
+  )
 }
 
-function HostIdentity({ row }: { row: HostRow }): React.JSX.Element {
+function HostIdentity({ row }: { row: RemoteHostRow }): React.JSX.Element {
   useUiLanguage()
   const host = row.saved
   return (
@@ -121,7 +121,6 @@ function HostIdentity({ row }: { row: HostRow }): React.JSX.Element {
           display: 'grid',
           placeItems: 'center',
           color: 'primary.main',
-          bgcolor: 'action.selected',
           flexShrink: 0
         }}
       >
@@ -148,43 +147,47 @@ function HostIdentity({ row }: { row: HostRow }): React.JSX.Element {
 function RemoteHostListRow({
   row,
   doctorState,
+  savedStatus,
   onOpen
 }: {
-  row: HostRow
+  row: RemoteHostRow
   doctorState: RemoteDoctorUiState
+  savedStatus?: SshHostAvailabilityStatus
   onOpen: () => void
 }): React.JSX.Element {
   useUiLanguage()
   const host = row.saved
   const key = remoteDoctorTargetKey(remoteHostDoctorTarget(host.id, host.hostAlias))
   const checking = doctorState.phase === 'running'
-  const status = connectionStatus(remoteHostCheckPresentation(doctorState, key), checking)
+  const status = connectionStatus(
+    remoteHostCheckPresentation(doctorState, key),
+    checking,
+    savedStatus
+  )
   return (
-    <ListItemButton
-      aria-label={remoteSetupCopy.configureHost(host.label)}
-      onClick={onOpen}
-      sx={{
-        px: 1,
-        py: 1.25,
-        minHeight: 72,
-        borderBottom: 1,
-        borderColor: 'divider',
-        '&:last-child': { borderBottom: 0 }
-      }}
+    <Paper
+      variant="outlined"
+      sx={{ borderRadius: 1, width: '100%', minWidth: 0, overflow: 'hidden' }}
     >
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <HostIdentity row={row} />
-      </Box>
-      <Stack direction="row" spacing={0.75} sx={{ ml: 2, alignItems: 'center', flexShrink: 0 }}>
-        <Chip
-          size="small"
-          variant="outlined"
-          label={host.source === 'ssh-config' ? 'OpenSSH' : remoteSetupCopy.legacyPhiProfile}
-        />
-        <Chip size="small" variant="soft" color={status.color} label={status.label} />
-        <GoChevronRight size={18} color="var(--mui-palette-action-active)" aria-hidden="true" />
-      </Stack>
-    </ListItemButton>
+      <ListItemButton
+        aria-label={remoteSetupCopy.configureHost(host.label)}
+        onClick={onOpen}
+        sx={{ px: 1.5, py: 1.25, minHeight: 72, alignItems: 'center' }}
+      >
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <HostIdentity row={row} />
+        </Box>
+        <Stack direction="row" spacing={0.75} sx={{ ml: 2, alignItems: 'center', flexShrink: 0 }}>
+          <Chip
+            size="small"
+            variant="outlined"
+            label={host.source === 'ssh-config' ? 'OpenSSH' : remoteSetupCopy.legacyPhiProfile}
+          />
+          <Chip size="small" variant="soft" color={status.color} label={status.label} />
+          <GoChevronRight size={18} color="var(--mui-palette-action-active)" aria-hidden="true" />
+        </Stack>
+      </ListItemButton>
+    </Paper>
   )
 }
 
@@ -193,18 +196,19 @@ function RemoteHostDetail({
   busy,
   error,
   doctorState,
+  savedStatus,
   onBack,
   onEdit,
   onDelete,
   onTest,
   onEnvironmentSave
-}: RemoteHostDetailProps): React.JSX.Element {
+}: RemoteHostDetailProps & { savedStatus?: SshHostAvailabilityStatus }): React.JSX.Element {
   useUiLanguage()
   const host = row.saved
   const key = remoteDoctorTargetKey(remoteHostDoctorTarget(host.id, host.hostAlias))
   const check = remoteHostCheckPresentation(doctorState, key)
   const checking = doctorState.phase === 'running'
-  const status = connectionStatus(check, checking)
+  const status = connectionStatus(check, checking, savedStatus)
   return (
     <Stack spacing={2.5}>
       <Box>
@@ -311,6 +315,7 @@ export function RemoteHostProfilesPanel({
   busy,
   error,
   hostDoctorStates,
+  savedAvailability = {},
   onDraftChange,
   onOpenAdd,
   onOpenEdit,
@@ -332,6 +337,7 @@ export function RemoteHostProfilesPanel({
   busy: boolean
   error: string | null
   hostDoctorStates: Record<string, RemoteDoctorUiState>
+  savedAvailability?: Record<string, SshHostAvailabilityStatus>
   onDraftChange: (draft: RemoteHostDraft) => void
   onOpenAdd: () => void
   onOpenEdit: (host: RemoteHostProfile) => void
@@ -345,7 +351,7 @@ export function RemoteHostProfilesPanel({
   initialSelectedHostAlias?: string | null
 }): React.JSX.Element {
   useUiLanguage()
-  const rows = hostRows(hosts, openSshHosts)
+  const rows = remoteHostRows(hosts, openSshHosts)
   const [selectedHostAlias, setSelectedHostAlias] = useState<string | null>(
     initialSelectedHostAlias
   )
@@ -359,6 +365,7 @@ export function RemoteHostProfilesPanel({
           busy={busy}
           error={error}
           doctorState={hostDoctorStates[selectedRow.saved.id] ?? { phase: 'idle' }}
+          savedStatus={savedAvailability[selectedRow.saved.id]}
           onBack={() => setSelectedHostAlias(null)}
           onEdit={onOpenEdit}
           onDelete={onDelete}
@@ -443,16 +450,17 @@ export function RemoteHostProfilesPanel({
             </Box>
           )}
           {rows.length > 0 && (
-            <Box sx={{ borderTop: 1, borderBottom: 1, borderColor: 'divider' }}>
+            <Stack spacing={1.5} sx={{ minWidth: 0, width: '100%' }}>
               {rows.map((row) => (
                 <RemoteHostListRow
                   key={row.alias}
                   row={row}
                   doctorState={hostDoctorStates[row.saved.id] ?? { phase: 'idle' }}
+                  savedStatus={savedAvailability[row.saved.id]}
                   onOpen={() => setSelectedHostAlias(row.alias)}
                 />
               ))}
-            </Box>
+            </Stack>
           )}
         </Stack>
       )}

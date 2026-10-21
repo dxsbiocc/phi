@@ -424,6 +424,15 @@ test('server card lists discovered aliases and keeps configuration fields in the
     })
   )
   assert.match(runningMarkup, /Checking/)
+  const savedMarkup = render(
+    createElement(RemoteHostProfilesPanel, {
+      ...props,
+      savedAvailability: { 'ssh-config:gpu': 'available', 'host-1': 'unavailable' }
+    })
+  )
+  assert.match(savedMarkup, /Connected/)
+  assert.match(savedMarkup, /Connection failed/)
+  assert.doesNotMatch(savedMarkup, /Not checked/)
   const dialogMarkup = render(
     createElement(RemoteHostDialog, {
       ...props,

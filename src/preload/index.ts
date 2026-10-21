@@ -96,6 +96,7 @@ import type {
   RemoteDoctorReport,
   RemoteNextflowInstallResult
 } from '../shared/remoteDoctorTypes'
+import type { SshHostAvailabilityRecord } from '../shared/sshHostAvailability'
 import type {
   RemoteEnvironmentSettingInput,
   RemoteEnvironmentToolPaths
@@ -968,6 +969,10 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
     remotePath?: string,
     options?: RemoteDoctorOptions
   ) => Promise<RemoteDoctorReport>
+  listSshHostAvailability: () => Promise<SshHostAvailabilityRecord[]>
+  saveSshHostAvailability: (
+    record: SshHostAvailabilityRecord
+  ) => Promise<SshHostAvailabilityRecord[]>
   installRemoteNextflow: (hostProfileId: string) => Promise<RemoteNextflowInstallResult>
   updateProjectRemoteConnection: (
     id: string,
@@ -1620,6 +1625,12 @@ const api: RendererAuthApi = {
     options?: RemoteDoctorOptions
   ): Promise<RemoteDoctorReport> =>
     ipcRenderer.invoke(IPC.remote.doctor, hostProfileId, remotePath, options),
+  listSshHostAvailability: (): Promise<SshHostAvailabilityRecord[]> =>
+    ipcRenderer.invoke(IPC.remote.listHostAvailability),
+  saveSshHostAvailability: (
+    record: SshHostAvailabilityRecord
+  ): Promise<SshHostAvailabilityRecord[]> =>
+    ipcRenderer.invoke(IPC.remote.saveHostAvailability, record),
   installRemoteNextflow: (hostProfileId: string): Promise<RemoteNextflowInstallResult> =>
     ipcRenderer.invoke(IPC.remote.installNextflow, hostProfileId),
   updateProjectRemoteConnection: (

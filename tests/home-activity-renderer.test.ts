@@ -6,7 +6,8 @@ import {
   buildHomeActivityCalendar,
   completionRate,
   formatActivityDuration,
-  formatSessionActivity
+  formatSessionActivity,
+  homeActivityMonthLabels
 } from '../src/renderer/src/features/home/lib/homeActivity'
 import type { SessionSummary } from '../src/renderer/src/types'
 
@@ -33,6 +34,24 @@ test('home activity calendar creates a GitHub-style Sunday-first grid ending tod
   assert.equal(weeks.at(-1)?.days[5]?.date, '2026-10-09')
   assert.equal(weeks.at(-1)?.days[5]?.level, 4)
   assert.equal(weeks.at(-1)?.days[6], null)
+})
+
+test('month labels skip a week that is too narrow to show the next month', () => {
+  const weeks = buildHomeActivityCalendar([], new Date(2026, 9, 21))
+  const labels = homeActivityMonthLabels(weeks)
+
+  assert.equal(weeks[0]?.monthLabel, '10月')
+  assert.equal(weeks[1]?.monthLabel, '11月')
+  assert.equal(
+    labels.some((label) => label.weekIndex === 0),
+    false
+  )
+  assert.equal(labels[0]?.label, '11月')
+  for (const label of labels) assert.ok(label.span >= 2)
+  for (let index = 1; index < labels.length; index += 1) {
+    const previous = labels[index - 1]
+    assert.ok(labels[index].weekIndex >= previous.weekIndex + previous.span)
+  }
 })
 
 test('home activity formatting keeps duration and completion labels readable', () => {

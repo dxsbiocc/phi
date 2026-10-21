@@ -78,10 +78,33 @@ test('provider cards keep credentials/logout separate and integrate automatic de
   assert.match(markup, /TypeSafe/)
   assert.match(markup, /Enable TypeSafe provider/)
   assert.match(markup, /API Key/)
+  assert.match(markup, /Configured/)
+  assert.match(markup, /data-phi-provider-icon="typesafe"/)
   assert.match(markup, /JEV/)
-  assert.match(markup, /automatically uses an enabled decision model/)
+  assert.doesNotMatch(markup, /automatically uses an enabled decision model/)
   assert.match(markup, /Models \(1\)/)
+  assert.doesNotMatch(markup, />typesafe</)
+  assert.doesNotMatch(markup, /Saved credentials/)
+  assert.doesNotMatch(markup, />Chat</)
   assert.doesNotMatch(markup, /Model for decisions|Use current conversation model|>Save</)
+  const chatMarkup = render(
+    createElement(ProviderCard, {
+      ...base,
+      provider: {
+        ...provider,
+        providerId: 'deepseek',
+        name: 'DeepSeek',
+        modelKinds: ['chat'],
+        statusText: 'stored'
+      },
+      state: { ...state, snapshot: { ...snapshot, models: [] } }
+    })
+  )
+  assert.match(chatMarkup, /data-phi-provider-icon="deepseek"/)
+  assert.match(chatMarkup, /Configured/)
+  assert.doesNotMatch(chatMarkup, /Saved credentials/)
+  assert.doesNotMatch(chatMarkup, />Chat</)
+  assert.doesNotMatch(chatMarkup, />deepseek</)
   const disabled = render(
     createElement(ProviderCard, {
       ...base,
@@ -133,6 +156,35 @@ test('provider and model switches send only reversible availability changes, lea
   assert.ok(modelToggle)
   ;(modelToggle.props.onChange as (event: unknown, checked: boolean) => void)({}, false)
   assert.deepEqual(changes[1], { providerId: 'typesafe', modelId: 'jev-test', enabled: false })
+})
+
+test('model names stay on one scrollable line and chat models are not labeled as chat', () => {
+  const models = [
+    {
+      providerId: 'cursor',
+      modelId: 'claude-4-sonnet',
+      name: 'Claude Sonnet 4',
+      kind: 'chat' as const,
+      configured: true,
+      enabled: true
+    },
+    snapshot.models[0]
+  ]
+  const markup = render(
+    createElement(ProviderModelList, {
+      models,
+      state: { ...state, snapshot: { ...snapshot, models } },
+      providerEnabled: true,
+      onChange: () => undefined
+    })
+  )
+  assert.match(markup, /role="list"/)
+  assert.match(markup, /Claude Sonnet 4/)
+  assert.match(markup, /title="claude-4-sonnet"/)
+  assert.doesNotMatch(markup, />claude-4-sonnet</)
+  assert.doesNotMatch(markup, />Chat</)
+  assert.match(markup, /Decision · JEV/)
+  assert.doesNotMatch(markup, /Show more/)
 })
 
 test('provider disable keeps each model preference checked but blocks use until reenabled', () => {
@@ -188,7 +240,7 @@ test('capability labels and search recognize decision providers in both language
   assert.equal(savedSwitchLabel('TypeSafe'), '启用 TypeSafe 提供商')
   assert.equal(filterProviderModels(snapshot.models, '决策')[0].modelId, 'jev-test')
   const markup = render(createElement(ProviderCard, base))
-  assert.match(markup, /Phi 自动使用已启用的决策模型/)
+  assert.doesNotMatch(markup, /Phi 自动使用已启用的决策模型/)
   assert.match(markup, /启用 TypeSafe 提供商/)
   assert.doesNotMatch(markup, /用于决策的模型|使用当前对话模型<\/button>/)
 })

@@ -7,6 +7,7 @@ import type { HomeActivityDay } from '../../../types'
 import {
   buildHomeActivityCalendar,
   formatActivityDuration,
+  homeActivityMonthLabels,
   totalActiveDays
 } from '../lib/homeActivity'
 import type { HomeActivitySummary } from '../../../types'
@@ -52,6 +53,7 @@ export function HomeActivityHeatmap({
 }: HomeActivityHeatmapProps): React.JSX.Element {
   useUiLanguage()
   const weeks = buildHomeActivityCalendar(activity?.dayBuckets ?? [])
+  const monthLabels = homeActivityMonthLabels(weeks)
   const activeDays = activity ? totalActiveDays(activity) : 0
 
   return (
@@ -127,23 +129,21 @@ export function HomeActivityHeatmap({
             }}
           >
             <Box />
-            {weeks.map((week, weekIndex) => (
+            {monthLabels.map((month) => (
               <Typography
-                key={week.key}
+                key={`${month.weekIndex}-${month.label}`}
                 variant="caption"
                 color="text.secondary"
                 sx={{
+                  gridColumn: `${month.weekIndex + 2} / span ${month.span}`,
                   minWidth: 0,
-                  overflow: 'visible',
+                  overflow: 'hidden',
                   whiteSpace: 'nowrap',
                   fontSize: 10,
-                  lineHeight: '14px',
-                  ...(weekIndex === weeks.length - 1
-                    ? { justifySelf: 'end', transform: 'translateX(-2px)' }
-                    : {})
+                  lineHeight: '14px'
                 }}
               >
-                {week.monthLabel ?? ''}
+                {month.label}
               </Typography>
             ))}
           </Box>

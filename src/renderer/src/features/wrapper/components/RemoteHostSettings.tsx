@@ -1,7 +1,7 @@
 import { useUiLanguage } from '../../../lib/i18n'
 import { remoteSetupCopy } from '../lib/remoteSetupCopy'
 import { Box, Stack, Typography } from '@mui/material'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { OpenSshHost, RemoteHostProfile } from '../../../types'
 import type { RemoteEnvironmentSettingInput } from '../../../../../shared/remoteEnvironmentTypes'
@@ -15,6 +15,9 @@ import {
   remoteHostDoctorTarget,
   type RemoteDoctorUiState
 } from '../lib/remoteDoctorUi'
+import type { SshHostAvailabilityStatus } from '../../../../../shared/sshHostAvailability'
+import { sshHostAvailabilityFromDoctor } from '../lib/remoteDoctorUi'
+import { remoteHostProbeTargets } from '../lib/remoteHostRows'
 import { RemoteHostProfilesPanel, type RemoteHostDraft } from './RemoteHostProfilesPanel'
 import { RemoteHostPasswordBootstrapDialog } from './RemoteHostPasswordBootstrapDialog'
 
@@ -44,6 +47,9 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
   const [bootstrapTarget, setBootstrapTarget] = useState<SshBootstrapTarget | null>(null)
   const [bootstrapResult, setBootstrapResult] = useState<SshBootstrapFinalResult | null>(null)
   const [hostDoctorStates, setHostDoctorStates] = useState<Record<string, RemoteDoctorUiState>>({})
+  const [savedAvailability, setSavedAvailability] = useState<
+    Record<string, SshHostAvailabilityStatus>
+  >({})
   const doctorController = useMemo(
     () =>
       createRemoteHostDoctorUiController(
@@ -56,19 +62,49 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
             else next[hostId] = state
             return next
           })
+          const status = sshHostAvailabilityFromDoctor(state)
+          if (!status) return
+          setSavedAvailability((previous) => ({ ...previous, [hostId]: status }))
+          void window.api
+            .saveSshHostAvailability({
+              hostId,
+              status,
+              checkedAt: new Date().toISOString()
+            })
+            .catch(() => undefined)
         }
       ),
     []
   )
   useEffect(() => (): void => doctorController.dispose(), [doctorController])
 
+  const probeHosts = useCallback(
+    (profiles: RemoteHostProfile[], discovered: OpenSshHost[]): void => {
+      for (const target of remoteHostProbeTargets(profiles, discovered)) {
+        void doctorController.check(target)
+      }
+    },
+    [doctorController]
+  )
+
   useEffect(() => {
     let cancelled = false
-    void Promise.allSettled([window.api.listRemoteHosts(), window.api.listOpenSshHosts()])
-      .then(([profiles, discovered]) => {
+    void Promise.allSettled([
+      window.api.listRemoteHosts(),
+      window.api.listOpenSshHosts(),
+      window.api.listSshHostAvailability()
+    ])
+      .then(([profiles, discovered, saved]) => {
         if (cancelled) return
-        if (profiles.status === 'fulfilled') setHosts(profiles.value)
-        if (discovered.status === 'fulfilled') setOpenSshHosts(discovered.value)
+        const nextHosts = profiles.status === 'fulfilled' ? profiles.value : []
+        const nextDiscovered = discovered.status === 'fulfilled' ? discovered.value : []
+        if (profiles.status === 'fulfilled') setHosts(nextHosts)
+        if (discovered.status === 'fulfilled') setOpenSshHosts(nextDiscovered)
+        if (saved.status === 'fulfilled') {
+          setSavedAvailability(
+            Object.fromEntries(saved.value.map((record) => [record.hostId, record.status]))
+          )
+        }
         const failure =
           profiles.status === 'rejected'
             ? profiles.reason
@@ -76,6 +112,9 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
               ? discovered.reason
               : null
         if (failure) setConfigError(errorMessage(failure))
+        if (profiles.status === 'fulfilled' || discovered.status === 'fulfilled') {
+          probeHosts(nextHosts, nextDiscovered)
+        }
       })
       .finally(() => {
         if (!cancelled) setConfigLoading(false)
@@ -83,7 +122,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
     return (): void => {
       cancelled = true
     }
-  }, [])
+  }, [probeHosts])
 
   async function reloadOpenSshHosts(clearChecks = true): Promise<void> {
     setConfigLoading(true)
@@ -106,6 +145,10 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
         doctorController.invalidate()
         setHostDoctorStates({})
       }
+      probeHosts(
+        profiles.status === 'fulfilled' ? profiles.value : hosts,
+        discovered.status === 'fulfilled' ? discovered.value : openSshHosts
+      )
     } finally {
       setConfigLoading(false)
     }
@@ -233,6 +276,7 @@ export function RemoteHostSettingsSection(): React.JSX.Element {
         busy={hostBusy}
         error={hostError}
         hostDoctorStates={hostDoctorStates}
+        savedAvailability={savedAvailability}
         onDraftChange={setHostDraft}
         onOpenAdd={() => {
           setHostDraft(EMPTY_HOST_DRAFT)

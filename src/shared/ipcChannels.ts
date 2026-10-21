@@ -218,6 +218,8 @@ export const IPC = {
   },
   remote: {
     doctor: 'remote:doctor',
+    listHostAvailability: 'remote:listHostAvailability',
+    saveHostAvailability: 'remote:saveHostAvailability',
     installNextflow: 'remote:installNextflow',
     micromamba: 'remote:micromamba',
     micromambaProgress: 'remote:micromambaProgress',

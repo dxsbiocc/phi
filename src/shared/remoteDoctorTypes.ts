@@ -6,6 +6,8 @@ import type {
 } from './remoteRuntimeRootTypes'
 
 export interface RemoteDoctorOptions {
+  /** Automatic probes stay non-interactive. A manual test omits this and may prompt. */
+  userInitiated?: boolean
   scope?: 'connection' | 'workspace' | 'full'
   scheduler?: 'local' | 'slurm'
   controller?: RemoteController

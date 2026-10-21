@@ -90,7 +90,7 @@ export function ProvidersSection({
     }
   }
   return (
-    <Stack spacing={1.5}>
+    <Stack spacing={1.5} sx={{ minWidth: 0, width: '100%' }}>
       <ProvidersToolbar onRefresh={() => void refresh()} onOpenAddProvider={onOpenAddProvider} />
       {refreshError && (
         <Alert severity="error">
