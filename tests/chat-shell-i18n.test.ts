@@ -2,8 +2,8 @@ import { createTheme, ThemeProvider } from '@mui/material/styles'
 import { ComposerReferenceChip } from '../src/renderer/src/components/chat/ComposerReferenceChip'
 import { HomeOverviewCards } from '../src/renderer/src/features/home/components/HomeOverviewCards'
 import {
-  PermissionModeControl,
-  ThinkingLevelControl
+  ModelSelectorControl,
+  PermissionModeControl
 } from '../src/renderer/src/components/chat/ChatComposerControls'
 import assert from 'node:assert/strict'
 import test, { afterEach } from 'node:test'
@@ -213,9 +213,18 @@ test('permission and thinking controls translate labels while preserving enum se
     disabled: false,
     onSelectPermissionMode: () => undefined
   }
+  const model = {
+    providerId: 'openai',
+    modelId: 'gpt',
+    name: 'GPT',
+    thinkingLevels: ['low', 'high'] as Array<'low' | 'high'>
+  }
   const thinking = {
+    models: [model],
+    selectedModel: model,
+    onSelectModel: () => undefined,
     thinkingLevel: 'high' as const,
-    supportedLevels: ['low', 'high'] as Array<'low' | 'high'>,
+    supportedThinkingLevels: ['low', 'high'] as Array<'low' | 'high'>,
     onSelectThinkingLevel: () => undefined
   }
   setUiLanguage('en')
@@ -223,13 +232,13 @@ test('permission and thinking controls translate labels while preserving enum se
     text(renderToStaticMarkup(createElement(PermissionModeControl, permission))),
     /Permissions Auto/
   )
-  assert.match(text(renderToStaticMarkup(createElement(ThinkingLevelControl, thinking))), /High/)
+  assert.match(text(renderToStaticMarkup(createElement(ModelSelectorControl, thinking))), /High/)
   setUiLanguage('zh-CN')
   assert.match(
     text(renderToStaticMarkup(createElement(PermissionModeControl, permission))),
     /权限 自动/
   )
-  assert.match(text(renderToStaticMarkup(createElement(ThinkingLevelControl, thinking))), /高/)
+  assert.match(text(renderToStaticMarkup(createElement(ModelSelectorControl, thinking))), /高/)
   assert.equal(permission.permissionMode, 'auto')
   assert.equal(thinking.thinkingLevel, 'high')
 })

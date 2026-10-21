@@ -3,6 +3,9 @@ import type { SxProps, Theme } from '@mui/material'
 export const COMPACT_COMPOSER_CONTROL_SIZE = 32
 export const REGULAR_COMPOSER_ACTION_SIZE = 40
 export const COMPOSER_ICON_SIZE = 18
+/** Solid stop mark, twice the composer icon so it stays readable beside the send control. */
+export const COMPOSER_STOP_MARK_SIZE = COMPOSER_ICON_SIZE * 2
+export const COMPOSER_STOP_CONTROL_SIZE = COMPOSER_STOP_MARK_SIZE + 12
 
 export function composerSurfaceSx({
   compact,

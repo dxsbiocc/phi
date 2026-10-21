@@ -9,7 +9,8 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type MouseEvent
+  type MouseEvent,
+  type ReactNode
 } from 'react'
 import type { PromptImageInput } from '../../../../shared/promptImageTypes'
 import { PastedImagePreview } from './components/PastedImagePreview'
@@ -27,8 +28,7 @@ import ToolApprovalDialog from '../../components/ToolApprovalDialog'
 import UserInteractionPanel from '../../components/UserInteractionPanel'
 import {
   ModelSelectorControl,
-  PermissionModeControl,
-  ThinkingLevelControl
+  PermissionModeControl
 } from '../../components/chat/ChatComposerControls'
 import { FileReferenceCards } from '../../components/chat/FileReferenceCards'
 import { InputAddControl, InputAddPanel } from '../../components/chat/InputAddMenu'
@@ -40,6 +40,8 @@ import type { ChatResourceMention } from '../../lib/chatResourceMentions'
 import type { UserMessageRetryTarget } from '../../components/chat/ChatUserMessage'
 import {
   COMPOSER_ICON_SIZE,
+  COMPOSER_STOP_CONTROL_SIZE,
+  COMPOSER_STOP_MARK_SIZE,
   COMPACT_COMPOSER_CONTROL_SIZE,
   REGULAR_COMPOSER_ACTION_SIZE,
   composerSurfaceSx
@@ -49,7 +51,7 @@ import { useInputFileReferenceMenu } from '../../components/chat/useInputFileRef
 import { useInputInvocationReferenceMenu } from '../../components/chat/useInputInvocationReferenceMenu'
 import { PhiIcons } from '../../icons'
 import { chatComposerLayoutSx, chatLayoutVariables, type ChatPlacement } from './lib/chatLayout'
-import { GoPaperAirplane, GoSquare } from 'react-icons/go'
+import { GoPaperAirplane } from 'react-icons/go'
 import {
   canNavigatePromptHistory,
   nextPromptHistoryCursor,
@@ -101,6 +103,7 @@ function isTextInputAtHistoryBoundary(
 
 type ViewProps = {
   messages: ChatItem[]
+  recoveryNotice?: ReactNode
   input: string
   images?: PromptImageInput[]
   onImagesAdded?: (images: PromptImageInput[]) => void
@@ -171,6 +174,7 @@ type ViewProps = {
 
 function ChatView({
   messages,
+  recoveryNotice,
   input,
   images = [],
   onImagesAdded,
@@ -514,23 +518,43 @@ function ChatView({
     >
       {agentDetails}
       <ResourceMentionsProvider resources={messageResources}>
-        <ChatMessageList
-          messages={messages}
-          messagesContainerRef={messagesContainerRef}
-          scrollResetKey={scrollResetKey}
-          scrollPositionStore={scrollPositionStore}
-          isGenerating={isGenerating}
-          currentRunStartedAt={currentRunStartedAt}
-          onGoSettings={onGoSettings}
-          onOpenBackgroundJobs={onOpenBackgroundJobs}
-          onOpenLocalPath={onOpenLocalPath}
-          onOpenWebUrl={onOpenWebUrl}
-          onJumpToNotebookCell={onJumpToNotebookCell}
-          onEditUserMessage={editUserMessage}
-          onRetryUserMessage={retryUserMessage}
-          onForkUserMessage={onForkUserMessage}
-          cwd={cwd}
-        />
+        <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative', display: 'flex' }}>
+          <ChatMessageList
+            messages={messages}
+            messagesContainerRef={messagesContainerRef}
+            scrollResetKey={scrollResetKey}
+            scrollPositionStore={scrollPositionStore}
+            isGenerating={isGenerating}
+            currentRunStartedAt={currentRunStartedAt}
+            onGoSettings={onGoSettings}
+            onOpenBackgroundJobs={onOpenBackgroundJobs}
+            onOpenLocalPath={onOpenLocalPath}
+            onOpenWebUrl={onOpenWebUrl}
+            onJumpToNotebookCell={onJumpToNotebookCell}
+            onEditUserMessage={editUserMessage}
+            onRetryUserMessage={retryUserMessage}
+            onForkUserMessage={onForkUserMessage}
+            cwd={cwd}
+          />
+          {recoveryNotice ? (
+            <Box
+              data-phi-recovery-notice="true"
+              sx={{
+                position: 'absolute',
+                inset: 0,
+                zIndex: 2,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                p: 2,
+                pointerEvents: 'none',
+                '& > *': { maxWidth: '100%', pointerEvents: 'auto' }
+              }}
+            >
+              {recoveryNotice}
+            </Box>
+          ) : null}
+        </Box>
       </ResourceMentionsProvider>
       <Box sx={chatComposerLayoutSx}>
         <Box
@@ -788,19 +812,15 @@ function ChatView({
                   minWidth: 0
                 }}
               >
-                <ThinkingLevelControl
-                  thinkingLevel={thinkingLevel}
-                  onSelectThinkingLevel={onSelectThinkingLevel}
-                  supportedLevels={selectedModel?.thinkingLevels ?? null}
-                  disabled={disableModelControls}
-                  compact={compactComposerControls}
-                />
                 <ModelSelectorControl
                   models={models}
                   selectedModel={selectedModel}
                   onSelectModel={onSelectModel}
                   disabled={disableModelControls}
                   compact={compactComposerControls}
+                  thinkingLevel={thinkingLevel}
+                  supportedThinkingLevels={selectedModel?.thinkingLevels ?? null}
+                  onSelectThinkingLevel={onSelectThinkingLevel}
                 />
                 {contextUsageTarget && (
                   <ContextUsageIndicator
@@ -846,13 +866,13 @@ function ChatView({
                     aria-label={chatCopy.stopGenerating}
                     title={chatCopy.runningClickToStopGenerating}
                     data-phi-composer-action="stop"
-                    data-phi-composer-size={actionControlSize}
+                    data-phi-composer-size={COMPOSER_STOP_CONTROL_SIZE}
                     sx={{
                       boxSizing: 'border-box',
-                      width: actionControlSize,
-                      height: actionControlSize,
-                      minWidth: actionControlSize,
-                      minHeight: actionControlSize,
+                      width: COMPOSER_STOP_CONTROL_SIZE,
+                      height: COMPOSER_STOP_CONTROL_SIZE,
+                      minWidth: COMPOSER_STOP_CONTROL_SIZE,
+                      minHeight: COMPOSER_STOP_CONTROL_SIZE,
                       p: 0,
                       flexShrink: 0,
                       bgcolor: 'transparent',
@@ -861,7 +881,17 @@ function ChatView({
                       '&:hover': { bgcolor: 'action.hover' }
                     }}
                   >
-                    <GoSquare size={COMPOSER_ICON_SIZE} aria-hidden="true" />
+                    <Box
+                      aria-hidden="true"
+                      data-phi-stop-mark-size={COMPOSER_STOP_MARK_SIZE}
+                      sx={{
+                        width: COMPOSER_STOP_MARK_SIZE,
+                        height: COMPOSER_STOP_MARK_SIZE,
+                        borderRadius: '4px',
+                        bgcolor: 'currentColor',
+                        flexShrink: 0
+                      }}
+                    />
                   </IconButton>
                 )}
               </Box>

@@ -87,6 +87,7 @@ export const chatChinese: LocalizedCopy<typeof chatEnglish> = {
   chooseAReplacementModel: '选择替代模型',
   chooseAnAvailableReplacementModel: '选择可用的替代模型',
   recoverOriginalConversation: '恢复原会话',
+  connectingToRemoteConversation: '正在连接远程会话…',
   reviewSummaryAndCreateNew: '查看摘要并新建',
   createAConversationFromALocalSummary: '用本地摘要另建会话',
   theOldConversationIsPreservedTheNewConversationWillNot:
@@ -186,6 +187,8 @@ export const chatChinese: LocalizedCopy<typeof chatEnglish> = {
   automatic: '自动选择',
   modelValue: (value0: string | number) => `模型：${value0}`,
   chooseModelValue: (value0: string | number) => `选择模型：${value0}`,
+  chooseModelAndThinkingValue: (model: string, thinking: string) =>
+    `选择模型：${model}，思考等级：${thinking}`,
   chooseModel: '选择模型',
   searchModels: '搜索模型',
   noModelsAvailableConfigureAProviderInSettingsFirst: '无可用模型 — 请先在设置中配置 Provider',

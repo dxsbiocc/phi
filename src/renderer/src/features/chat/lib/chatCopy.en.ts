@@ -88,6 +88,7 @@ export const chatEnglish = {
   chooseAReplacementModel: 'Choose a replacement model',
   chooseAnAvailableReplacementModel: 'Choose an available replacement model',
   recoverOriginalConversation: 'Recover original conversation',
+  connectingToRemoteConversation: 'Connecting to remote conversation…',
   reviewSummaryAndCreateNew: 'Review summary and create new',
   createAConversationFromALocalSummary: 'Create a conversation from a local summary',
   theOldConversationIsPreservedTheNewConversationWillNot:
@@ -194,6 +195,8 @@ export const chatEnglish = {
   automatic: 'Automatic',
   modelValue: (value0: string | number) => `Model: ${value0}`,
   chooseModelValue: (value0: string | number) => `Choose model: ${value0}`,
+  chooseModelAndThinkingValue: (model: string, thinking: string) =>
+    `Choose model: ${model}, thinking: ${thinking}`,
   chooseModel: 'Choose model',
   searchModels: 'Search models',
   noModelsAvailableConfigureAProviderInSettingsFirst:

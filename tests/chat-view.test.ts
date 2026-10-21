@@ -2,7 +2,7 @@ import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { createElement } from 'react'
+import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import ChatView, { ThinkingBlock } from '../src/renderer/src/features/chat/ChatView'
@@ -52,6 +52,7 @@ import type {
 function renderChat(
   messages: ChatItem[],
   options: {
+    recoveryNotice?: ReactNode
     permissionMode?: PermissionMode
     pendingApproval?: ToolApprovalRequest | null
     isGenerating?: boolean
@@ -88,6 +89,7 @@ function renderChat(
       { theme },
       createElement(ChatView, {
         messages,
+        recoveryNotice: options.recoveryNotice,
         input: options.input ?? '',
         images: options.images,
         messagesContainerRef: () => undefined,
@@ -147,6 +149,21 @@ function renderChat(
 
 // Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
 setUiLanguage('zh-CN')
+
+test('reconnect notice is a temporary overlay in the message pane, outside transcript items', () => {
+  const markup = renderChat([{ id: 'history-1', role: 'user', content: '已有历史消息' }], {
+    recoveryNotice: createElement('span', null, '正在连接远程会话…')
+  })
+
+  assert.match(markup, /data-phi-recovery-notice="true"/)
+  assert.equal((markup.match(/正在连接远程会话/g) ?? []).length, 1)
+  assert.ok(markup.indexOf('已有历史消息') < markup.indexOf('data-phi-recovery-notice'))
+  assert.ok(
+    markup.indexOf('data-phi-recovery-notice') <
+      markup.indexOf('data-phi-file-drop-target="chat-composer"')
+  )
+  assert.doesNotMatch(renderChat([]), /data-phi-recovery-notice/)
+})
 
 test('chat history receives the workspace resource catalog for user and assistant messages', () => {
   const resources: ChatResourceMention[] = [
@@ -1887,8 +1904,9 @@ test('chat view uses icon-only composer controls when file preview is open', () 
 
   assert.match(markup, /data-phi-placeholder-kind="default"/)
   assert.match(markup, /aria-label="选择权限模式：权限 自动"/)
-  assert.match(markup, /aria-label="选择思考等级：高"/)
-  assert.match(markup, /aria-label="选择模型：Kimi Coding"/)
+  assert.match(markup, /aria-label="选择模型：Kimi Coding，思考等级：高"/)
+  assert.match(markup, /data-phi-model-thinking="true"/)
+  assert.doesNotMatch(markup, /aria-label="选择思考等级：高"/)
   assert.match(markup, /data-phi-provider-icon="moonshot"/)
   assert.match(markup, /data-phi-provider-icon="moonshot"[\s\S]*<svg/)
   assert.match(markup, /data-phi-composer-action="send" data-phi-composer-size="32"/)
@@ -1917,7 +1935,8 @@ test('composer buttons stay fixed on hover and use matching action icon sizes', 
 
   const source = readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8')
   assert.match(source, /<GoPaperAirplane size=\{COMPOSER_ICON_SIZE\}/)
-  assert.match(source, /<GoSquare size=\{COMPOSER_ICON_SIZE\}/)
+  assert.match(source, /data-phi-stop-mark-size=\{COMPOSER_STOP_MARK_SIZE\}/)
+  assert.doesNotMatch(source, /GoSquare/)
   assert.match(source, /data-phi-composer-action="send"[\s\S]*?bgcolor: 'transparent'/)
   assert.doesNotMatch(source, /spinHourglass|GoHourglass/)
 
@@ -1927,6 +1946,14 @@ test('composer buttons stay fixed on hover and use matching action icon sizes', 
   ).split('export function ModelSelectorControl')[1]
   assert.equal((modelControlSource.match(/disableRipple/g) ?? []).length, 2)
   assert.match(modelControlSource, /'&:hover': \{ bgcolor: 'action.hover' \}/)
+  const modelNameAt = modelControlSource.indexOf('{label}')
+  const thinkingAt = modelControlSource.indexOf('data-phi-thinking-level')
+  const sliderAt = modelControlSource.indexOf('<ThinkingLevelSlider')
+  assert.ok(modelNameAt >= 0 && thinkingAt > modelNameAt && sliderAt > thinkingAt)
+  assert.match(
+    readFileSync('src/renderer/src/components/chat/ComposerThinkingSlider.tsx', 'utf8'),
+    /data-phi-thinking-slider="true"/
+  )
 })
 
 test('chat view keeps compact composer icon buttons at the declared outer size', () => {
@@ -1954,8 +1981,10 @@ test('chat view replaces send with one square stop control', () => {
   const compactMarkup = renderChat([], { compactComposerControls: true, isGenerating: true })
   const regularMarkup = renderChat([], { isGenerating: true })
 
-  assert.match(compactMarkup, /data-phi-composer-action="stop" data-phi-composer-size="32"/)
-  assert.match(regularMarkup, /data-phi-composer-action="stop" data-phi-composer-size="40"/)
+  assert.match(compactMarkup, /data-phi-composer-action="stop" data-phi-composer-size="48"/)
+  assert.match(compactMarkup, /data-phi-stop-mark-size="36"/)
+  assert.match(regularMarkup, /data-phi-composer-action="stop" data-phi-composer-size="48"/)
+  assert.match(regularMarkup, /data-phi-stop-mark-size="36"/)
   assert.equal((regularMarkup.match(/data-phi-composer-action=/g) ?? []).length, 1)
   assert.doesNotMatch(
     regularMarkup,

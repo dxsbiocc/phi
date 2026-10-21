@@ -12,7 +12,6 @@ import {
   ListItemIcon,
   ListItemText,
   Popover,
-  Slider,
   TextField,
   Tooltip,
   Typography
@@ -20,6 +19,8 @@ import {
 import { useId, useMemo, useState, type ReactNode } from 'react'
 import { PERMISSION_MODE_ICON_META, PhiIcons } from '../../icons'
 import type { ModelOption, PermissionMode, ThinkingLevel } from '../../types'
+import { ThinkingLevelSlider } from './ComposerThinkingSlider'
+import { resolveThinkingSelection, thinkingLevelAccent } from './composerThinkingLevel'
 import { ProviderModelIcon } from './ProviderModelIcon'
 import { COMPOSER_ICON_SIZE, compactComposerIconButtonSx } from './composerControlStyles'
 
@@ -27,135 +28,8 @@ const BoltIcon = PhiIcons.action.quick
 const CheckIcon = PhiIcons.state.check
 const ExpandIcon = PhiIcons.action.expand
 
-const THINKING_LEVEL_ORDER: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
-  get minimal() {
-    return chatCopy.thinkingMinimal
-  },
-  get low() {
-    return chatCopy.thinkingLow
-  },
-  get medium() {
-    return chatCopy.thinkingMedium
-  },
-  get high() {
-    return chatCopy.thinkingHigh
-  },
-  get xhigh() {
-    return chatCopy.thinkingXhigh
-  },
-  get max() {
-    return chatCopy.thinkingMax
-  }
-}
-
 function modelMatchesQuery(option: ModelOption, query: string): boolean {
   return `${option.name} ${option.providerId} ${option.modelId}`.toLowerCase().includes(query)
-}
-
-export function ThinkingLevelControl({
-  thinkingLevel,
-  onSelectThinkingLevel,
-  supportedLevels,
-  disabled: disabledBySession = false,
-  compact = false
-}: {
-  thinkingLevel: ThinkingLevel
-  onSelectThinkingLevel: (level: ThinkingLevel) => void
-  supportedLevels: ThinkingLevel[] | null
-  disabled?: boolean
-  compact?: boolean
-}): ReactNode {
-  useUiLanguage()
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
-  const popoverId = useId()
-
-  // supportedLevels is null when no model is explicitly selected (unknown until
-  // the SDK resolves a default) - in that case don't constrain the slider.
-  const modelDisabled = supportedLevels !== null && supportedLevels.length === 0
-  const minIndex = supportedLevels?.length ? THINKING_LEVEL_ORDER.indexOf(supportedLevels[0]) : 0
-  const maxIndex = supportedLevels?.length
-    ? THINKING_LEVEL_ORDER.indexOf(supportedLevels[supportedLevels.length - 1])
-    : THINKING_LEVEL_ORDER.length - 1
-  const currentIndex = Math.min(
-    Math.max(THINKING_LEVEL_ORDER.indexOf(thinkingLevel), minIndex),
-    maxIndex
-  )
-  const disabled = disabledBySession || modelDisabled
-  const label = modelDisabled
-    ? chatCopy.thinkingOff
-    : THINKING_LEVEL_LABELS[THINKING_LEVEL_ORDER[currentIndex]]
-
-  return (
-    <>
-      <Tooltip title={chatCopy.thinkingValue(label)} enterDelay={400}>
-        {compact ? (
-          <IconButton
-            size="small"
-            onClick={(event) => setAnchorEl(event.currentTarget)}
-            disabled={disabled}
-            aria-label={chatCopy.chooseThinkingLevelValue(label)}
-            aria-describedby={popoverId}
-            sx={{ ...compactComposerIconButtonSx, color: 'text.secondary' }}
-          >
-            <BoltIcon size={COMPOSER_ICON_SIZE} />
-          </IconButton>
-        ) : (
-          <Button
-            size="small"
-            onClick={(event) => setAnchorEl(event.currentTarget)}
-            disabled={disabled}
-            aria-describedby={popoverId}
-            startIcon={<BoltIcon size={COMPOSER_ICON_SIZE} />}
-            sx={{
-              textTransform: 'none',
-              color: 'text.secondary',
-              fontSize: '0.85rem',
-              minHeight: 32,
-              // Fixed width so the button (and therefore the popover's anchor point)
-              // never shifts as the label text changes length between levels.
-              width: 104,
-              justifyContent: 'flex-start',
-              px: 1
-            }}
-          >
-            {label}
-          </Button>
-        )}
-      </Tooltip>
-      <Popover
-        id={popoverId}
-        open={!disabled && Boolean(anchorEl)}
-        anchorEl={anchorEl}
-        onClose={() => setAnchorEl(null)}
-        anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
-        transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        slotProps={{ paper: { sx: { py: 3, px: 3.5, width: 320 } } }}
-      >
-        <Slider
-          value={currentIndex}
-          min={minIndex}
-          max={maxIndex}
-          step={1}
-          sx={{ mx: 1, width: 'calc(100% - 16px)' }}
-          marks={THINKING_LEVEL_ORDER.map((level, index) => ({
-            value: index,
-            label: (
-              <Typography variant="caption" sx={{ fontSize: '0.7rem' }}>
-                {THINKING_LEVEL_LABELS[level]}
-              </Typography>
-            )
-          }))}
-          onChange={(_, value) => {
-            const index = Array.isArray(value) ? value[0] : value
-            onSelectThinkingLevel(THINKING_LEVEL_ORDER[index])
-          }}
-          disabled={disabled}
-          aria-label="Thinking level"
-        />
-      </Popover>
-    </>
-  )
 }
 
 export function ModelSelectorControl({
@@ -163,18 +37,26 @@ export function ModelSelectorControl({
   selectedModel,
   onSelectModel,
   disabled = false,
-  compact = false
+  compact = false,
+  thinkingLevel,
+  supportedThinkingLevels,
+  onSelectThinkingLevel
 }: {
   models: ModelOption[]
   selectedModel: ModelOption | null
   onSelectModel: (model: ModelOption | null) => void
   disabled?: boolean
   compact?: boolean
+  thinkingLevel?: ThinkingLevel
+  supportedThinkingLevels?: ThinkingLevel[] | null
+  onSelectThinkingLevel?: (level: ThinkingLevel) => void
 }): ReactNode {
   useUiLanguage()
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
   const [query, setQuery] = useState('')
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
+  const [menuMaxHeight, setMenuMaxHeight] = useState<number | null>(null)
+  const [menuBottom, setMenuBottom] = useState<number | null>(null)
   const popoverId = useId()
   const defaultProviderId = models.some((option) => option.providerId === selectedModel?.providerId)
     ? (selectedModel?.providerId ?? null)
@@ -197,6 +79,9 @@ export function ModelSelectorControl({
 
   const handleOpen = (event: React.MouseEvent<HTMLElement>): void => {
     setExpandedProviderId(defaultProviderId)
+    const anchorRect = event.currentTarget.getBoundingClientRect()
+    setMenuMaxHeight(Math.max(0, Math.floor(anchorRect.top - 16)))
+    setMenuBottom(Math.max(0, Math.floor(window.innerHeight - anchorRect.top)))
     setAnchorEl(event.currentTarget)
   }
 
@@ -216,10 +101,26 @@ export function ModelSelectorControl({
     setExpandedProviderId(null)
   }
   const label = selectedModel ? selectedModel.name : chatCopy.automatic
+  const showThinking = thinkingLevel !== undefined && onSelectThinkingLevel !== undefined
+  const thinkingSelection = showThinking
+    ? resolveThinkingSelection(thinkingLevel, supportedThinkingLevels ?? null)
+    : null
+  const thinkingColor =
+    thinkingSelection && !disabled && !thinkingSelection.modelDisabled && thinkingSelection.level
+      ? thinkingLevelAccent(thinkingSelection.level).to
+      : undefined
+  const triggerLabel = thinkingSelection
+    ? chatCopy.chooseModelAndThinkingValue(label, thinkingSelection.label)
+    : compact
+      ? chatCopy.chooseModelValue(label)
+      : chatCopy.chooseModel
 
   return (
     <>
-      <Tooltip title={chatCopy.modelValue(label)} enterDelay={400}>
+      <Tooltip
+        title={thinkingSelection ? triggerLabel : chatCopy.modelValue(label)}
+        enterDelay={400}
+      >
         {compact ? (
           <IconButton
             size="small"
@@ -227,9 +128,11 @@ export function ModelSelectorControl({
             onClick={handleOpen}
             disabled={disabled}
             aria-describedby={popoverId}
-            aria-label={chatCopy.chooseModelValue(label)}
+            aria-label={triggerLabel}
+            data-phi-model-thinking={showThinking ? 'true' : undefined}
             sx={{
               ...compactComposerIconButtonSx,
+              ...(showThinking ? { width: 'auto', px: 0.75, gap: 0.25 } : {}),
               color: 'text.secondary',
               '&.Mui-focusVisible': {
                 outline: '2px solid',
@@ -239,6 +142,14 @@ export function ModelSelectorControl({
             }}
           >
             <ProviderModelIcon providerId={selectedModel?.providerId} disabled={disabled} />
+            {showThinking ? (
+              <Box
+                component="span"
+                sx={{ display: 'inline-flex', color: thinkingColor ?? 'inherit' }}
+              >
+                <BoltIcon size={COMPOSER_ICON_SIZE} />
+              </Box>
+            ) : null}
           </IconButton>
         ) : (
           <Button
@@ -247,7 +158,8 @@ export function ModelSelectorControl({
             onClick={handleOpen}
             disabled={disabled}
             aria-describedby={popoverId}
-            aria-label={chatCopy.chooseModel}
+            aria-label={triggerLabel}
+            data-phi-model-thinking={showThinking ? 'true' : undefined}
             startIcon={
               <ProviderModelIcon providerId={selectedModel?.providerId} disabled={disabled} />
             }
@@ -256,7 +168,7 @@ export function ModelSelectorControl({
               color: 'text.secondary',
               fontSize: '0.85rem',
               minHeight: 32,
-              maxWidth: 160,
+              maxWidth: showThinking ? 240 : 160,
               justifyContent: 'flex-start',
               px: 1,
               '&:hover': { bgcolor: 'action.hover' },
@@ -269,9 +181,46 @@ export function ModelSelectorControl({
           >
             <Box
               component="span"
-              sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 1,
+                minWidth: 0,
+                maxWidth: '100%'
+              }}
             >
-              {label}
+              <Box
+                component="span"
+                sx={{
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  color: 'text.secondary'
+                }}
+              >
+                {label}
+              </Box>
+              {thinkingSelection ? (
+                <Box
+                  component="span"
+                  data-phi-thinking-level={thinkingLevel}
+                  sx={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 0.25,
+                    flexShrink: 0,
+                    color: disabled
+                      ? 'inherit'
+                      : thinkingSelection.modelDisabled
+                        ? 'text.disabled'
+                        : (thinkingColor ?? 'primary.main'),
+                    fontWeight: 700
+                  }}
+                >
+                  <BoltIcon size={14} />
+                  {thinkingSelection.label}
+                </Box>
+              ) : null}
             </Box>
           </Button>
         )}
@@ -284,19 +233,31 @@ export function ModelSelectorControl({
         onClose={handleClose}
         anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
         transformOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        elevation={8}
+        marginThreshold={showThinking ? 0 : undefined}
         slotProps={{
           paper: {
-            sx: {
-              width: 280,
-              height: 'min(360px, calc(100vh - 32px))',
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden'
-            }
+            sx: showThinking
+              ? {
+                  width: 280,
+                  top: 'auto !important',
+                  bottom: menuBottom ?? 0,
+                  maxHeight: menuMaxHeight ?? undefined,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden'
+                }
+              : {
+                  width: 280,
+                  height: 'min(360px, calc(100vh - 32px))',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden'
+                }
           }
         }}
       >
-        <Box sx={{ p: 1, flexShrink: 0 }}>
+        <Box sx={{ p: 1, pb: 0.5, flexShrink: 0 }}>
           <TextField
             autoFocus
             fullWidth
@@ -309,17 +270,16 @@ export function ModelSelectorControl({
         <Box
           sx={{
             overflowY: 'auto',
-            scrollbarGutter: 'stable both-edges',
-            flex: 1,
+            flex: showThinking ? '1 1 auto' : 1,
             minHeight: 0
           }}
         >
           {models.length === 0 ? (
-            <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 1 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1 }}>
               {chatCopy.noModelsAvailableConfigureAProviderInSettingsFirst}
             </Typography>
           ) : grouped.length === 0 ? (
-            <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 1 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 1 }}>
               {chatCopy.noMatchingModels}
             </Typography>
           ) : (
@@ -341,11 +301,11 @@ export function ModelSelectorControl({
                 <AccordionSummary
                   expandIcon={<ExpandIcon fontSize="small" />}
                   sx={{
-                    minHeight: 38,
-                    px: 1.5,
-                    '&.Mui-expanded': { minHeight: 38 },
-                    '& .MuiAccordionSummary-content': { my: 0.75 },
-                    '& .MuiAccordionSummary-content.Mui-expanded': { my: 0.75 }
+                    minHeight: 36,
+                    px: 1,
+                    '&.Mui-expanded': { minHeight: 36 },
+                    '& .MuiAccordionSummary-content': { my: 0.5 },
+                    '& .MuiAccordionSummary-content.Mui-expanded': { my: 0.5 }
                   }}
                 >
                   <Typography variant="body2" sx={{ fontWeight: 600 }}>
@@ -359,7 +319,6 @@ export function ModelSelectorControl({
                     sx={{
                       maxHeight: 180,
                       overflowY: 'auto',
-                      scrollbarGutter: 'stable both-edges',
                       overscrollBehavior: 'contain'
                     }}
                   >
@@ -372,8 +331,9 @@ export function ModelSelectorControl({
                         }
                         onClick={() => {
                           onSelectModel(option)
-                          handleClose()
+                          if (!showThinking) handleClose()
                         }}
+                        sx={{ pl: 2.5, pr: 1 }}
                       >
                         <ListItemIcon sx={{ minWidth: 30 }}>
                           <ProviderModelIcon providerId={option.providerId} />
@@ -387,6 +347,14 @@ export function ModelSelectorControl({
             ))
           )}
         </Box>
+        {showThinking && onSelectThinkingLevel ? (
+          <ThinkingLevelSlider
+            thinkingLevel={thinkingLevel}
+            supportedLevels={supportedThinkingLevels ?? null}
+            disabled={disabled}
+            onSelectThinkingLevel={onSelectThinkingLevel}
+          />
+        ) : null}
       </Popover>
     </>
   )
