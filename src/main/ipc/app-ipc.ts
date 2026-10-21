@@ -2,13 +2,12 @@ import type { IpcMain } from 'electron'
 
 import { IPC } from '../../shared/ipcChannels'
 import { checkForAppUpdate, RELEASES_PAGE_URL, RELEASES_REPOSITORY } from '../app-update-check'
-import { externalBrowserUrl, type BrowserPolicyContext } from '../browser/browser-policy'
+import { browserPolicyContext, externalBrowserUrl } from '../browser/browser-policy'
 
 export interface AppIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
   getVersion: () => string
   openExternal: (url: string) => Promise<void>
-  browserPolicyContext?: () => BrowserPolicyContext
 }
 
 export function registerAppIpc(options: AppIpcOptions): void {
@@ -26,7 +25,7 @@ export function registerAppIpc(options: AppIpcOptions): void {
     await shell.openExternal(target)
   })
   ipcMain.handle(IPC.app.openWebUrl, async (_, input: unknown) => {
-    const url = externalBrowserUrl(input, options.browserPolicyContext?.() ?? {})
+    const url = externalBrowserUrl(input, browserPolicyContext())
     if (!url) throw new Error('This address cannot be opened in the default browser')
     await shell.openExternal(url)
   })

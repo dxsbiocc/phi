@@ -4,6 +4,11 @@ export interface BrowserPolicyContext {
   applicationOrigins?: readonly string[]
 }
 
+export function browserPolicyContext(): BrowserPolicyContext {
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL
+  return rendererUrl ? { applicationOrigins: [rendererUrl] } : {}
+}
+
 export type BrowserUrlPolicyResult = { ok: true; url: string } | { ok: false; error: BrowserError }
 
 const HOST_WITH_PORT_PATTERN = /^[^/?#\s:@[\]]+:\d+(?:[/?#]|$)/

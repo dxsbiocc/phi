@@ -104,6 +104,7 @@ import {
   type BrowserIpcSession
 } from './browser/browser-ipc'
 import { FileSystemBrowserCheckpointStore } from './browser/browser-checkpoints'
+import { browserPolicyContext } from './browser/browser-policy'
 import { ElectronBrowserEngine } from './browser/electron-browser-engine'
 import { BrowserWorkspaceRegistry } from './browser/browser-workspace-registry'
 import type { BrowserActionApprovalPrompt } from './browser/browser-approval'
@@ -127,7 +128,6 @@ import {
   getCurrentContextUsage,
   getCurrentSessionPayloadWithMessages,
   type CurrentContextUsageOptions,
-  type CurrentSessionPayload,
   type CurrentSessionPayloadMessagesOptions
 } from './agent/session/current-session-reads'
 import {
@@ -370,12 +370,7 @@ import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jo
 import { normalizeProjectMemorySettings } from '../shared/projectMemoryTypes'
 import { validatePresentedFiles } from './agent/deliverables/present-files'
 import { validateRemotePresentedFiles } from './agent/deliverables/remote-present-files'
-import {
-  StaleSessionError,
-  type SessionLifecycle,
-  type SessionLifecycleRecord,
-  type SessionSnapshot
-} from './agent/session/session-lifecycle'
+import { type SessionLifecycle, type SessionSnapshot } from './agent/session/session-lifecycle'
 import { SessionRunnerRegistry } from './agent/session/session-runner-registry'
 import {
   executePromptRun as executePromptRunWithDeps,
@@ -417,6 +412,8 @@ import { createSessionSwitching } from './session-runtime/session-switching'
 import { createSessionCleanup } from './session-runtime/session-cleanup'
 import { createCreatedSessionEvents } from './session-runtime/created-session-events'
 import { createAgentSessionCreation } from './session-runtime/agent-session-creation'
+import { createSessionControlTarget } from './session-runtime/session-control-target'
+import { createPromptRunStop } from './session-runtime/prompt-run-stop'
 import icon from '../../resources/icon.png?asset'
 
 import { isRecord } from '../shared/guards'
@@ -500,11 +497,6 @@ function sendMainWindowFullscreenState(window: BrowserWindow, fullscreen: boolea
   window.webContents.send(IPC.window.fullscreenChanged, fullscreen)
 }
 const browserCheckpointStore = new FileSystemBrowserCheckpointStore({ agentDir: AGENT_DIR })
-
-function browserPolicyContext(): { applicationOrigins?: string[] } {
-  const rendererUrl = process.env.ELECTRON_RENDERER_URL
-  return rendererUrl ? { applicationOrigins: [rendererUrl] } : {}
-}
 
 function getBrowserWorkspaceRegistry(): BrowserWorkspaceRegistry {
   if (
@@ -778,7 +770,6 @@ function modelSelectionLabel(selection: ModelSelection): string {
 
 type AgentSessionResult = Awaited<ReturnType<typeof createAgentSession>>
 type AgentSessionInstance = AgentSessionResult['session']
-type AgentSessionRecord = SessionLifecycleRecord<AgentSessionResult>
 interface PromptRun {
   sessionKey: string
   phiSessionId: string
@@ -3381,177 +3372,34 @@ async function abortSessionWithoutCancellingApprovals(
   await session.abort({ preserveApprovals: true })
 }
 
-interface CapturedSessionControlTarget {
-  current: CurrentSessionPayload
-  rpc: boolean
-  assertCurrent(): void
-  acceptManual(): void
-  resolved(snapshot?: SessionSnapshot): Promise<AgentSessionResult | null>
-}
-
-interface SessionControlAssertion {
-  key: string
-  phiSessionId: string
-  current: CurrentSessionPayload
-  lifecycle: SessionLifecycle<AgentSessionResult>
-  generation: number
-  promptGeneration: number
-  record: AgentSessionRecord | null
-  initialBinding: string
-  expectedJournal: string
-  initializing: boolean
-  acceptedManual: boolean
-  manual: boolean
-  requireIdle: boolean
-  viewBound: boolean
-}
-
-function sessionControlBinding(manifest: PhiSessionManifest | null): string {
-  const project = manifest?.projectId ? getProject(manifest.projectId) : undefined
-  const location = manifest?.projectLocation
-  const profile =
-    location?.kind === 'ssh' ? getRemoteHostProfile(location.hostProfileId) : undefined
-  return JSON.stringify([
-    manifest?.projectId,
-    manifest?.cwd,
-    manifest?.cwdRealPath,
-    location,
-    project?.location,
-    profile ? remoteConnectionConfigForProfile(profile) : null
-  ])
-}
-
-function sessionControlJournal(manifest: PhiSessionManifest | null): string {
-  return JSON.stringify([manifest?.runtimeRef?.ompSessionId, manifest?.runtimeRef?.journalBasename])
-}
-
-function assertSelectedSessionControlTarget(
-  assertion: SessionControlAssertion,
-  requireSelected: boolean,
-  current: CurrentSessionPayload | undefined
-): void {
-  if (!requireSelected) return
-  if (
-    !current ||
-    !sessionKeys.sameCanonical(assertion.key, sessionState.sessionKey) ||
-    current.path !== assertion.current.path ||
-    current.cwd !== assertion.current.cwd ||
-    current.phiSessionId !== assertion.phiSessionId ||
-    lifecycles.forKey(sessionState.sessionKey) !== assertion.lifecycle
-  )
-    throw new StaleSessionError()
-}
-
-function assertSessionControlAttachment(
-  assertion: SessionControlAssertion,
-  latest: PhiSessionManifest | null
-): void {
-  if (
-    sessionKeys.phiSessionIdFor(assertion.key) !== assertion.phiSessionId ||
-    lifecycles.forKey(assertion.key) !== assertion.lifecycle ||
-    !assertion.lifecycle.isCurrentGeneration(assertion.generation) ||
-    assertion.lifecycle.currentRecord !== assertion.record ||
-    promptRuns.generationFor(assertion.key) !== assertion.promptGeneration ||
-    sessionControlBinding(latest) !== assertion.initialBinding ||
-    (!assertion.initializing && sessionControlJournal(latest) !== assertion.expectedJournal)
-  )
-    throw new StaleSessionError()
-}
-
-function assertSessionControlIdle(assertion: SessionControlAssertion): void {
-  if (
-    assertion.requireIdle &&
-    (promptRuns.hasActiveRun(assertion.key) ||
-      runnerRegistry.getActiveRun(assertion.phiSessionId) ||
-      (!assertion.manual && promptRuns.manualCompactionIds.has(assertion.phiSessionId)))
-  )
-    throw new Error('请等待当前会话运行结束后再修改压缩设置')
-}
-
-function assertSessionControlTargetCurrent(assertion: SessionControlAssertion): void {
-  const latest = findPhiSessionById(assertion.phiSessionId)
-  const requireSelected = assertion.viewBound && !assertion.acceptedManual
-  const current = requireSelected ? getCurrentSessionPayload() : undefined
-  assertSelectedSessionControlTarget(assertion, requireSelected, current)
-  assertSessionControlAttachment(assertion, latest)
-  assertSessionControlIdle(assertion)
-}
-
-// Bind a control before its first await. RPC may advance its own checkpoint/runtime
-// generation; the owner, lifecycle record, journal, project and host stay bound.
-// Manual dispatch releases only the view fence so accepted work survives navigation.
-function captureSessionControlTarget(
-  sessionKey: string,
-  phiSessionId: string,
-  manual = false,
-  requireIdle = true,
-  viewBound = true
-): CapturedSessionControlTarget {
-  const key = sessionKeys.canonicalize(sessionKey)
-  const current = getCurrentSessionPayload()
-  const lifecycle = lifecycles.forKey(key)
-  const generation = lifecycle.currentGeneration
-  const promptGeneration = promptRuns.generationFor(key)
-  let record = lifecycle.currentRecord
-  let initializing = false
-  let acceptedManual = false
-  const manifest = findPhiSessionById(phiSessionId)
-  const initialBinding = sessionControlBinding(manifest)
-  let expectedJournal = sessionControlJournal(manifest)
-  const rpc = Boolean(
-    manifest?.runtimeRef || (remoteOmpRpcEnabled && manifest?.projectLocation?.kind === 'ssh')
-  )
-  const assertCurrent = (): void => {
-    assertSessionControlTargetCurrent({
-      key,
-      phiSessionId,
-      current,
-      lifecycle,
-      generation,
-      promptGeneration,
-      record,
-      initialBinding,
-      expectedJournal,
-      initializing,
-      acceptedManual,
-      manual,
-      requireIdle,
-      viewBound
-    })
-  }
-  assertCurrent()
-  return {
-    current,
-    rpc,
-    assertCurrent,
-    acceptManual: (): void => {
-      assertCurrent()
-      if (!manual) throw new Error('只有手动压缩操作可以进入后台执行')
-      acceptedManual = true
+const { capture: captureSessionControlTarget } = createSessionControlTarget<AgentSessionResult>({
+  state: {
+    currentSessionKey: () => sessionState.sessionKey,
+    currentPayload: getCurrentSessionPayload,
+    keys: {
+      canonicalize: (key) => sessionKeys.canonicalize(key),
+      sameCanonical: (left, right) => sessionKeys.sameCanonical(left, right),
+      phiSessionIdFor: (key) => sessionKeys.phiSessionIdFor(key)
     },
-    resolved: async (snapshot?: SessionSnapshot): Promise<AgentSessionResult | null> => {
-      assertCurrent()
-      let pending = record?.promise
-      if (!record && snapshot) {
-        // getOrCreate installs this exact record synchronously without advancing
-        // the Phi view generation. Only this call may adopt the initial attachment.
-        initializing = !manifest?.runtimeRef
-        pending = getAgentSession(key, snapshot, { assertCurrent })
-        record = lifecycle.currentRecord
-      }
-      const result = pending ? await pending : null
-      assertCurrent()
-      if (requireIdle && rpc && result?.session.hasActiveAgentRuns?.())
-        throw new Error('请等待专家任务运行结束后再修改会话')
-      if (initializing) {
-        expectedJournal = sessionControlJournal(findPhiSessionById(phiSessionId))
-        initializing = false
-      }
-      assertCurrent()
-      return result
-    }
-  }
-}
+    lifecycles: { forKey: (key) => lifecycles.forKey(key) },
+    runs: {
+      generationFor: (key) => promptRuns.generationFor(key),
+      hasActiveRun: (key) => promptRuns.hasActiveRun(key),
+      manualCompactionIds: promptRuns.manualCompactionIds
+    },
+    runnerActiveRun: (phiSessionId) => runnerRegistry.getActiveRun(phiSessionId)
+  },
+  sessions: {
+    findById: (phiSessionId) => findPhiSessionById(phiSessionId),
+    get: (key, snapshot, control) => getAgentSession(key, snapshot, control)
+  },
+  projects: {
+    get: (projectId) => getProject(projectId),
+    hostProfile: (profileId) => getRemoteHostProfile(profileId),
+    connectionConfig: (profile) => remoteConnectionConfigForProfile(profile)
+  },
+  runtime: { remoteOmpRpcEnabled: () => remoteOmpRpcEnabled }
+})
 
 function notifySessionChanged(): void {
   const payload = getCurrentSessionPayload()
@@ -3585,52 +3433,27 @@ function countOtherActiveProjectRuns(projectId: string, sessionKey: string): num
     .filter((run) => run.projectId === projectId && run.sessionKey !== sessionKey).length
 }
 
-async function stopPromptRun(
-  sessionKey: string,
-  run: PromptRun,
-  invalidateGeneration = true
-): Promise<void> {
-  if (invalidateGeneration) promptRuns.advanceGeneration(sessionKey)
-  run.cancelled = true
-  cancelBrowserRun(run)
-  const browserCleanup = cleanupBrowserRunTabs(run)
-  remoteBashManager.cancelSession(run.phiSessionId)
-  remoteMutationManager.cancelSession(run.phiSessionId)
-  runnerRegistry.stopRun(run.phiSessionId)
-  cancelPendingRunWaits({ sessionId: run.phiSessionId, runId: run.runId })
-  if (run.session) {
-    await Promise.all([browserCleanup, abortSessionWithoutCancellingApprovals(run.session)])
-  } else {
-    await browserCleanup
-  }
-}
-
-function stopAllPromptRuns(): {
-  browserCleanup: Promise<void>
-  runtimeAbort: Promise<void>
-} {
-  remoteBashManager.cancelAll()
-  remoteMutationManager.cancelAll()
-  const recoveries = [...promptRuns.runtimeRecoveryOperations.values()]
-  for (const recovery of recoveries) recovery.controller.abort()
-  const runs = promptRuns.activeRuns()
-  for (const [sessionKey, run] of promptRuns.activeEntries()) {
-    promptRuns.advanceGeneration(sessionKey)
-    run.cancelled = true
-    cancelBrowserRun(run)
-  }
-  const browserCleanup = Promise.all(runs.map((run) => cleanupBrowserRunTabs(run)))
-  runnerRegistry.stopAll()
-  cancelPendingRunWaits()
-  const runtimeAbort = Promise.all([
-    ...recoveries.map((recovery) => recovery.done),
-    ...runs.map(async (run) => {
-      if (!run.session) return
-      await abortSessionWithoutCancellingApprovals(run.session)
-    })
-  ]).then(() => undefined)
-  return { browserCleanup: browserCleanup.then(() => undefined), runtimeAbort }
-}
+const { stopPromptRun, stopAllPromptRuns } = createPromptRunStop<PromptRun, AgentSessionInstance>({
+  runs: {
+    advanceGeneration: (key) => promptRuns.advanceGeneration(key),
+    activeRuns: () => promptRuns.activeRuns(),
+    activeEntries: () => promptRuns.activeEntries(),
+    runtimeRecoveryOperations: promptRuns.runtimeRecoveryOperations
+  },
+  browser: { cancel: cancelBrowserRun, cleanup: cleanupBrowserRunTabs },
+  remote: {
+    cancelBash: (phiSessionId) => remoteBashManager.cancelSession(phiSessionId),
+    cancelAllBash: () => remoteBashManager.cancelAll(),
+    cancelMutation: (phiSessionId) => remoteMutationManager.cancelSession(phiSessionId),
+    cancelAllMutations: () => remoteMutationManager.cancelAll()
+  },
+  agents: {
+    stop: (phiSessionId) => runnerRegistry.stopRun(phiSessionId),
+    stopAll: () => runnerRegistry.stopAll()
+  },
+  waits: { cancel: (scope) => cancelPendingRunWaits(scope) },
+  sessions: { abort: abortSessionWithoutCancellingApprovals }
+})
 
 function safeCleanupStep(event: string, run: () => void | Promise<void>): Promise<void> {
   try {
@@ -4275,8 +4098,7 @@ function registerApplicationAndModelIpc(): void {
   registerAppIpc({
     ipcMain,
     getVersion: () => app.getVersion(),
-    openExternal: (url) => shell.openExternal(url),
-    browserPolicyContext
+    openExternal: (url) => shell.openExternal(url)
   })
   registerSettingsIpc({
     ipcMain,

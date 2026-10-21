@@ -14,7 +14,7 @@ export function useWebLinkPreview(
     if (!active) return
     let cancelled = false
     let attempts = 0
-    let retryTimer = 0
+    let retryTimer: ReturnType<typeof globalThis.setTimeout> | undefined
     const load = (): void => {
       void webLinkPreviewCache.read(url).then((preview) => {
         if (cancelled) return

@@ -1,7 +1,6 @@
 import { markdownCopy } from './markdown/markdownUiCopy'
 import { useUiLanguage } from '../lib/i18n'
-import { Box, Button, Divider, Typography } from '@mui/material'
-import { alpha } from '@mui/material/styles'
+import { Box, Divider, Typography } from '@mui/material'
 import {
   cloneElement,
   Fragment,
@@ -13,7 +12,6 @@ import {
   type ReactNode
 } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
-import { PhiIcons } from '../icons'
 import { useMarkdownPlugins } from '../lib/markdownMathPlugins'
 import {
   remotePathWithinProjectUri,
@@ -24,9 +22,6 @@ import {
   type RemoteProjectFileContextValue
 } from '../lib/remoteProjectFileContext'
 import { collectLocalPathTokenPaths, tokenizeLocalPaths } from '../lib/localPaths'
-import { highlightLine, type SyntaxLanguage } from '../lib/syntaxHighlight'
-import { syntaxLanguageForMarkdownCode } from '../lib/markdownCodeLanguage'
-import { syntaxTokenColor } from '../lib/syntaxTheme'
 import { smilesExpressionFromInlineCode } from '../lib/moleculeExpressions'
 import type { FilePreview } from '../types'
 import {
@@ -64,13 +59,13 @@ import {
   useRemotePathKinds
 } from '../lib/markdownLocalPathPreview'
 import { MarkdownWebLink } from './markdown/MarkdownWebLink'
+import { MarkdownCodeBlock } from './markdown/MarkdownCodeBlock'
 import { ResourceMention } from './ResourceMention'
 import { useChatResourceMatcher } from '../lib/chatResourceMentionContext'
 import { createResourceMentionRemarkPlugin } from '../lib/markdownResourceMentions'
 import { textFromNode } from '../lib/markdownText'
 
 export type { LocalPathKind } from '../lib/markdownLocalPathReferences'
-const ContentCopyIcon = PhiIcons.action.copy
 
 function omitHexColorNodes(node: ReactNode): ReactNode {
   if (typeof node === 'string') {
@@ -108,14 +103,6 @@ function listPaletteColors(children: ReactNode): string[] {
   return paletteColorsFromText(leftover.join('\n'))
 }
 
-function languageFromCodeChild(children: ReactNode): string | null {
-  const child = Array.isArray(children) ? children[0] : children
-  if (!isValidElement<{ className?: string }>(child)) return null
-
-  const match = /language-([^\s]+)/.exec(child.props.className ?? '')
-  return match?.[1] ?? null
-}
-
 function normalizeDirectoryPath(path: string): string {
   return path.replace(/\/+$/, '')
 }
@@ -146,143 +133,6 @@ function renderableLocalPath(
     pathKind = localPathKindForReference(text, absolutePath, cwd, false)
   }
   return { absolutePath, pathKind }
-}
-
-function HighlightedCodeContent({
-  codeText,
-  language
-}: {
-  codeText: string
-  language: SyntaxLanguage
-}): React.JSX.Element {
-  useUiLanguage()
-  const lines = useMemo(
-    () => codeText.split('\n').map((line) => highlightLine(line, language)),
-    [codeText, language]
-  )
-
-  return (
-    <Box
-      component="code"
-      data-phi-markdown-code={language === 'plain' ? 'plain' : 'highlighted'}
-      data-phi-markdown-code-language={language}
-      sx={{ color: 'text.primary' }}
-    >
-      {lines.map((tokens, lineIndex) => (
-        <Fragment key={lineIndex}>
-          {tokens.map((token, tokenIndex) => (
-            <Box
-              key={`${lineIndex}-${tokenIndex}`}
-              component="span"
-              data-phi-syntax-token={token.kind}
-              sx={{ color: (theme) => syntaxTokenColor(theme, token.kind) }}
-            >
-              {token.value}
-            </Box>
-          ))}
-          {lineIndex < lines.length - 1 ? '\n' : null}
-        </Fragment>
-      ))}
-    </Box>
-  )
-}
-
-function CodeBlock({ children }: { children?: ReactNode }): React.JSX.Element {
-  useUiLanguage()
-  const [copied, setCopied] = useState(false)
-  const language = languageFromCodeChild(children)
-  const languageLabel = language ?? markdownCopy.code
-  const syntaxLanguage = syntaxLanguageForMarkdownCode(language)
-  const codeText = textFromNode(children).replace(/\n$/, '')
-
-  const copyCode = async (): Promise<void> => {
-    await navigator.clipboard.writeText(codeText)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1200)
-  }
-
-  return (
-    <Box
-      sx={{
-        my: 1,
-        borderRadius: 2,
-        bgcolor: (theme) =>
-          theme.palette.mode === 'dark'
-            ? alpha(theme.palette.common.white, 0.04)
-            : alpha(theme.palette.primary.main, 0.035),
-        border: 1,
-        borderColor: 'divider',
-        overflow: 'hidden',
-        maxWidth: '100%',
-        color: 'text.primary'
-      }}
-    >
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 1,
-          px: 1.5,
-          py: 0.75,
-          borderBottom: 1,
-          borderColor: 'divider',
-          bgcolor: (theme) =>
-            theme.palette.mode === 'dark'
-              ? alpha(theme.palette.common.white, 0.035)
-              : alpha(theme.palette.primary.main, 0.06)
-        }}
-      >
-        <Typography
-          variant="caption"
-          sx={{
-            minWidth: 0,
-            maxWidth: 160,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            color: 'text.secondary',
-            fontFamily: 'var(--font-mono)'
-          }}
-          title={languageLabel}
-        >
-          {languageLabel}
-        </Typography>
-        <Button
-          size="small"
-          variant="text"
-          startIcon={<ContentCopyIcon sx={{ fontSize: 15 }} />}
-          onClick={() => {
-            void copyCode().catch((error) => {
-              console.error('Failed to copy code block:', error)
-            })
-          }}
-          sx={{ minHeight: 28, textTransform: 'none', color: 'text.secondary' }}
-        >
-          {copied ? markdownCopy.copied : markdownCopy.copy}
-        </Button>
-      </Box>
-      <Box
-        component="pre"
-        sx={{
-          m: 0,
-          p: 1.5,
-          overflowX: 'auto',
-          maxWidth: '100%',
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.82rem',
-          lineHeight: 1.6,
-          color: 'text.primary',
-          '& code': {
-            color: 'inherit',
-            fontWeight: 400
-          }
-        }}
-      >
-        <HighlightedCodeContent codeText={codeText} language={syntaxLanguage} />
-      </Box>
-    </Box>
-  )
 }
 
 function MarkdownImage({
@@ -878,7 +728,7 @@ function MarkdownContentImpl({
         />
       ),
       hr: () => <Divider sx={{ my: 1.5 }} />,
-      pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+      pre: ({ children }) => <MarkdownCodeBlock>{children}</MarkdownCodeBlock>,
       code: ({ className, children }) =>
         className ? (
           <Box component="code" sx={{ fontFamily: 'var(--font-mono)', fontSize: 'inherit' }}>
