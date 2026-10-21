@@ -441,6 +441,7 @@ type HarnessOptions = {
   modelRuntimeGet?: () => Promise<void>
   notebookOpenError?: Error
   remoteRpc?: boolean
+  remoteDeleteCloseFailure?: boolean
   remoteRpcResources?: boolean
   remoteNotebookBinding?: () => string
   remoteNotebookBackendCreate?: () => void
@@ -2043,6 +2044,16 @@ async function harness(
       deleteSession: (file: string): void => {
         deleted.push(file)
       }
+    },
+    './agent/session/remote-session-delete': {
+      prepareRemotePhiDeletion: async (sessionId: string) => ({
+        delete: async () => {
+          deleted.push(`phi-session:${sessionId}`)
+        },
+        close: async () => {
+          if (options.remoteDeleteCloseFailure) throw new Error('simulated SSH close failure')
+        }
+      })
     },
     './agent/session/home-activity': {
       getHomeActivity: (): HomeActivitySummary => ({
@@ -7532,6 +7543,21 @@ test(
     assert.deepEqual(await retry, { phase: 'reachable' })
   }
 )
+
+test('RPC conversation switching does not start a second SSH project probe for an adopted journal', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+    phiSessionId: string
+  }
+  assert.equal(app.remoteConnectionChecks.length, 1)
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: { runtimeRef: savedRemoteReference(current.phiSessionId) }
+  })
+  await app.invoke('sessions:switch', current.path)
+  assert.equal(app.remoteConnectionChecks.length, 1)
+})
 
 test('an older SSH session without a saved remote location cannot start local anchor tools', async () => {
   const app = await harness()
@@ -13858,6 +13884,20 @@ test(
     assert.deepEqual(app.deleted, ['A'])
   }
 )
+
+test('main IPC: remote deletion success is not masked by SSH close failure', async () => {
+  const app = await harness(undefined, { remoteRpc: true, remoteDeleteCloseFailure: true })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: { runtimeRef: savedRemoteReference(current.phiSessionId) }
+  })
+  await assert.doesNotReject(app.invoke('sessions:delete', current.path))
+  assert.deepEqual(app.deleted, [current.path])
+})
 
 test(
   'main IPC: stopping immediately also cancels a prompt still queued for creation',

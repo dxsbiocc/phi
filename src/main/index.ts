@@ -3883,7 +3883,6 @@ function createSessionCompactionControlOptions(): SessionCompactionControlOption
 }
 
 type SessionsIpcOptions = Parameters<typeof registerSessionsIpc>[0]
-
 function createSessionRecoveryIpcOptions(): SessionsIpcOptions['recovery'] {
   return {
     state: {
@@ -3918,7 +3917,6 @@ function createSessionRecoveryIpcOptions(): SessionsIpcOptions['recovery'] {
     events: { notifySessionChanged }
   }
 }
-
 function createSessionsIpcOptions(
   currentContextUsageOptions: CurrentContextUsageOptions,
   currentSessionPayloadMessagesOptions: CurrentSessionPayloadMessagesOptions,
@@ -3967,6 +3965,7 @@ function createSessionsIpcOptions(
       resolveSessionPermissionMode: sessionResolution.resolveSessionPermissionMode,
       getLifecycleForKey: lifecycles.forKey.bind(lifecycles),
       getAgentSession,
+      cleanupSessionRecord,
       waitForSessionCleanup: lifecycles.waitForCleanup.bind(lifecycles)
     },
     status: {
@@ -3978,6 +3977,8 @@ function createSessionsIpcOptions(
     },
     remote: {
       scheduleRemoteProjectCheck,
+      observeRemote: (projectId, operation) =>
+        remoteConnectionTracker.observe(projectId, operation),
       remoteNotebookSessionIds,
       disposeRemoteNotebookBackend
     },
@@ -3995,7 +3996,6 @@ function createSessionsIpcOptions(
     windows: { getActiveWindow, requireMainWindowRenderer }
   }
 }
-
 function registerSessionIpc(): void {
   const currentContextUsageOptions = createCurrentContextUsageOptions()
   const currentSessionPayloadMessagesOptions = createCurrentSessionPayloadMessagesOptions()

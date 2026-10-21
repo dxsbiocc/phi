@@ -244,6 +244,7 @@ test('opening a disconnected remote chat attaches its original runtime without s
     'module',
     'appCopy',
     'autoConnectingSessionIdsRef',
+    'setAutoConnectingSessionId',
     'remoteRecoveryTargetForSession',
     'sameRuntimeRecoveryTarget',
     'shouldAutoConnectRemoteSession',
@@ -258,6 +259,7 @@ test('opening a disconnected remote chat attaches its original runtime without s
     module,
     appCopy,
     { current: new Set<string>() },
+    (value: unknown) => calls.push(typeof value === 'string' ? 'connecting' : 'done'),
     remoteRecoveryTargetForSession,
     sameRuntimeRecoveryTarget,
     shouldAutoConnectRemoteSession,
@@ -279,7 +281,7 @@ test('opening a disconnected remote chat attaches its original runtime without s
   )
   const open = module.exports as (path: string) => Promise<void>
   await open(current.activeSessionPath)
-  assert.deepEqual(calls, ['select', 'navigate', 'state', 'resume', 'refresh'])
+  assert.deepEqual(calls, ['select', 'navigate', 'state', 'connecting', 'resume', 'refresh', 'done'])
 
   calls.length = 0
   issue = 'model-unavailable'
@@ -311,6 +313,7 @@ test('remote chat auto-attach ignores navigation away and duplicate clicks', asy
     'module',
     'appCopy',
     'autoConnectingSessionIdsRef',
+    'setAutoConnectingSessionId',
     'remoteRecoveryTargetForSession',
     'sameRuntimeRecoveryTarget',
     'shouldAutoConnectRemoteSession',
@@ -325,6 +328,7 @@ test('remote chat auto-attach ignores navigation away and duplicate clicks', asy
     module,
     appCopy,
     { current: new Set<string>() },
+    () => undefined,
     remoteRecoveryTargetForSession,
     sameRuntimeRecoveryTarget,
     shouldAutoConnectRemoteSession,
@@ -351,6 +355,36 @@ test('remote chat auto-attach ignores navigation away and duplicate clicks', asy
   resolveState({ phase: 'recovery-required', issue: 'disconnected', canResume: true })
   await Promise.all([first, second])
   assert.deepEqual(calls, ['state'])
+})
+
+test('failed conversation deletion reports the error without clearing the selected chat', async () => {
+  const compiled = appExpression('onDeleteSession')
+  const calls: string[] = []
+  const module = { exports: undefined as unknown }
+  new Function(
+    'module',
+    'sessionRequestRef',
+    'useSessionStore',
+    'rendererApi',
+    'showSnackbarError',
+    'appCopy',
+    compiled
+  )(
+    module,
+    { current: 0 },
+    { getState: () => ({ activeSessionPath: 'phi-session:phi' }) },
+    {
+      deleteSession: async () => {
+        calls.push('delete')
+        throw new Error('Remote server unavailable')
+      }
+    },
+    (_error: unknown, fallback: string) => calls.push(fallback),
+    appCopy
+  )
+  const remove = module.exports as (path: string) => Promise<void>
+  await remove('phi-session:phi')
+  assert.deepEqual(calls, ['delete', appCopy.deleteConversationFailed])
 })
 
 test('App recovery refresh never applies an old result after navigation to a peer', async () => {

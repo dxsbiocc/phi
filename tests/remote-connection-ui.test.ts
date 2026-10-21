@@ -57,7 +57,8 @@ test('remote connection notice gives recovery guidance without hiding saved work
     ),
     /在设置里点测试连接可立即重试/
   )
-  assert.match(markup('connecting'), /disabled/)
+  assert.match(markup('connecting'), /role="progressbar"/)
+  assert.doesNotMatch(markup('connecting'), /MuiAlert-root|disabled/)
   assert.equal(markup('reachable'), '')
 })
 

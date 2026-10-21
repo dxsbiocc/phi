@@ -27,7 +27,7 @@ test('recovery banner: a confirmed connection shows a failed UI refresh without 
     sessionPath: 'phi-session:A',
     sessionGeneration: 1
   }
-  const state: RuntimeRecoveryState = {
+  let state: RuntimeRecoveryState = {
     target,
     phase: 'connected',
     canResume: false,
@@ -83,4 +83,23 @@ test('recovery banner: a confirmed connection shows a failed UI refresh without 
   assert.doesNotMatch(failed, /恢复原会话|用此摘要新建会话/)
   error = null
   assert.equal(renderToStaticMarkup(createElement(Banner, { api, target })), '')
+
+  state = {
+    target,
+    phase: 'busy',
+    canResume: false,
+    message: '正在处理原会话的恢复请求。'
+  }
+  const connecting = renderToStaticMarkup(createElement(Banner, { api, target }))
+  assert.match(connecting, /data-phi-runtime-reconnecting="true"/)
+  assert.match(connecting, /正在连接远程会话/)
+  assert.match(connecting, /role="status"/)
+  assert.match(connecting, /role="progressbar"/)
+  assert.match(connecting, /MuiAlert-root/)
+  assert.doesNotMatch(connecting, /恢复原会话|查看摘要并新建|刷新状态/)
+
+  const serverConnecting = renderToStaticMarkup(
+    createElement(Banner, { api, target, serverConnecting: true })
+  )
+  assert.match(serverConnecting, /data-phi-runtime-reconnecting="true"/)
 })

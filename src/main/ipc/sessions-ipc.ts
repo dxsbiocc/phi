@@ -11,6 +11,7 @@ import { getPhiEngine } from '../agent/engine/in-process-engine'
 import type { PermissionMode } from '../agent/projects'
 import { getProject } from '../agent/projects'
 import { exportPhiSession } from '../agent/session/session-export'
+import { prepareRemotePhiDeletion } from '../agent/session/remote-session-delete'
 import { readPhiTimelineMessages } from '../agent/session/phi-timeline-messages'
 import { validateSessionPermissionModeUpdate } from '../agent/session/permission-mode-control'
 import {
@@ -29,7 +30,11 @@ import {
   phiSessionIdFromPath
 } from '../agent/session/sessions'
 import { getHomeActivity } from '../agent/session/home-activity'
-import { isStaleSessionError, type SessionLifecycle } from '../agent/session/session-lifecycle'
+import {
+  isStaleSessionError,
+  type SessionLifecycle,
+  type SessionLifecycleRecord
+} from '../agent/session/session-lifecycle'
 import {
   type SessionTitleGenerator,
   type SessionTitleInput
@@ -40,6 +45,7 @@ import {
   createMainRuntimeRecoveryController,
   type RuntimeRecoveryControlOptions
 } from '../agent/session/runtime-recovery-control'
+import { runtimeRecoveryTarget } from '../agent/session/runtime-recovery-ipc'
 import type { SessionPreferenceTable } from '../app-state/session-preferences'
 
 interface CurrentSessionPayload {
@@ -113,6 +119,10 @@ export interface SessionsIpcOptions {
       snapshot: { path: string; cwd: string }
     ) => PermissionMode
     getLifecycleForKey: (sessionKey: string) => SessionLifecycle<CreateAgentSessionResult>
+    cleanupSessionRecord: (
+      record: SessionLifecycleRecord<CreateAgentSessionResult> | null,
+      options?: { cancelApprovals: boolean }
+    ) => Promise<void>
     getAgentSession: (
       sessionKey: string,
       snapshot: { path: string; cwd: string; permissionMode: PermissionMode }
@@ -132,6 +142,7 @@ export interface SessionsIpcOptions {
   }
   remote: {
     scheduleRemoteProjectCheck: (sessionId: string, projectId: string) => void
+    observeRemote: <T>(projectId: string, operation: () => Promise<T>) => Promise<T>
     remoteNotebookSessionIds: Pick<Map<string, string>, 'get'>
     disposeRemoteNotebookBackend: (projectId: string) => Promise<void>
   }
@@ -173,9 +184,12 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
   ipcMain.handle(IPC.sessions.runtimeRecovery, async (_, target: unknown) =>
     runtimeRecoveryController.getState(target)
   )
-  ipcMain.handle(IPC.sessions.resumeRuntime, async (_, target: unknown, replacement?: unknown) =>
-    runtimeRecoveryController.resume(target, replacement)
-  )
+  ipcMain.handle(IPC.sessions.resumeRuntime, async (_, value: unknown, replacement?: unknown) => {
+    const target = runtimeRecoveryTarget(value)
+    return options.remote.observeRemote(target.projectId, () =>
+      runtimeRecoveryController.resume(target, replacement)
+    )
+  })
   ipcMain.handle(IPC.sessions.continueRuntimeSummary, async (_, target: unknown, sha256: unknown) =>
     runtimeRecoveryController.continueFromSummary(target, sha256)
   )
@@ -288,7 +302,12 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
       }
       const project = manifest.projectId ? getProject(manifest.projectId) : undefined
       const projectLocation = manifest.projectLocation ?? project?.location
-      if (shouldBecomeCurrent && projectLocation?.kind === 'ssh' && manifest.projectId) {
+      if (
+        shouldBecomeCurrent &&
+        projectLocation?.kind === 'ssh' &&
+        manifest.projectId &&
+        !(options.recovery.state.isRemoteOmpRpcEnabled() && manifest.runtimeRef)
+      ) {
         options.remote.scheduleRemoteProjectCheck(manifest.sessionId, manifest.projectId)
       }
       return {
@@ -377,43 +396,79 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
     return acknowledgeSession(path, cwd)
   })
   ipcMain.handle(IPC.sessions.delete, async (_, path: string) => {
-    options.titles.getGeneratorIfCreated()?.cancel(path)
     const deletionCwd = state.getCurrentCwd()
     const phiSessionId = phiSessionIdFromPath(path)
     const manifest = phiSessionId
       ? findPhiSessionById(phiSessionId)
       : findPhiSessionByRuntimePath(path, deletionCwd)
-    const activeEntry = status
-      .activePromptEntries()
-      .find(([, run]) => run.phiSessionId === manifest?.sessionId)
-    if (activeEntry) await status.stopPromptRun(activeEntry[0], activeEntry[1])
-    if (state.getCurrentSessionPath() === path) {
-      await lifecycle.disposeAndSwitchSession(undefined)
-    }
-    // Let an aborted run finish persisting before unlinking its history; otherwise
-    // the final SDK write can recreate a conversation the user just deleted.
-    await lifecycle.waitForSessionCleanup({
-      path: manifest?.runtimeSessionPath ?? identity.runtimeSessionPath(path),
-      cwd: manifest?.cwd ?? state.getCurrentCwd(),
-      permissionMode: state.getCurrentPermissionMode()
-    })
-    if (manifest?.sessionId && options.browser.getRegistry()) {
+    if ((manifest?.runtimeRef || manifest?.runtimeRecoveryError) && !phiSessionId)
+      throw new Error('远程会话必须使用 Phi 会话标识删除')
+    const remoteDeletion =
+      phiSessionId && (manifest?.runtimeRef || manifest?.runtimeRecoveryError)
+        ? await prepareRemotePhiDeletion(phiSessionId)
+        : undefined
+    const wasCurrent = state.getCurrentSessionPath() === path
+    try {
+      options.titles.getGeneratorIfCreated()?.cancel(path)
+      const activeEntry = status
+        .activePromptEntries()
+        .find(([, run]) => run.phiSessionId === manifest?.sessionId)
+      if (activeEntry) await status.stopPromptRun(activeEntry[0], activeEntry[1])
+      if (remoteDeletion && manifest) {
+        const key = identity.resolveSessionKeyAlias(identity.createSessionKey(path, manifest.cwd))
+        const record = lifecycle.getLifecycleForKey(key).advance()
+        await lifecycle.cleanupSessionRecord(record, { cancelApprovals: true })
+      }
+      if (state.getCurrentSessionPath() === path) {
+        await lifecycle.disposeAndSwitchSession(undefined)
+      }
+      // Let an aborted run finish persisting before unlinking its history; otherwise
+      // the final SDK write can recreate a conversation the user just deleted.
+      await lifecycle.waitForSessionCleanup({
+        path: manifest?.runtimeSessionPath ?? identity.runtimeSessionPath(path),
+        cwd: manifest?.cwd ?? state.getCurrentCwd(),
+        permissionMode: state.getCurrentPermissionMode()
+      })
+      if (manifest?.sessionId && options.browser.getRegistry()) {
+        try {
+          await options.browser.getRegistry()!.disposeSession(manifest.sessionId)
+        } catch {
+          writeAppLog({ level: 'error', event: 'browser_session_cleanup_failed' })
+        }
+      }
+      if (
+        manifest?.projectId &&
+        options.remote.remoteNotebookSessionIds.get(manifest.projectId) === manifest.sessionId
+      ) {
+        await options.remote.disposeRemoteNotebookBackend(manifest.projectId)
+      }
+      // Session-private drafts and their registries are deleted here; Save As copies are project
+      // files and intentionally remain outside this tree. Draft garbage collection is out of scope.
+      if (remoteDeletion) await remoteDeletion.delete()
+      else {
+        deleteSession(path)
+      }
+      if (manifest) state.loadedSkillNamesBySession.delete(manifest.sessionId)
+    } catch (error) {
+      if (
+        remoteDeletion &&
+        wasCurrent &&
+        manifest &&
+        !state.getCurrentSessionPath() &&
+        findPhiSessionById(manifest.sessionId)
+      ) {
+        await lifecycle
+          .disposeAndSwitchSession(path, manifest.cwd, manifest.permissionMode)
+          .catch(() => undefined)
+      }
+      throw error
+    } finally {
       try {
-        await options.browser.getRegistry()!.disposeSession(manifest.sessionId)
+        await remoteDeletion?.close()
       } catch {
-        writeAppLog({ level: 'error', event: 'browser_session_cleanup_failed' })
+        writeAppLog({ level: 'error', event: 'remote_session_delete_connection_close_failed' })
       }
     }
-    if (
-      manifest?.projectId &&
-      options.remote.remoteNotebookSessionIds.get(manifest.projectId) === manifest.sessionId
-    ) {
-      await options.remote.disposeRemoteNotebookBackend(manifest.projectId)
-    }
-    // Session-private drafts and their registries are deleted here; Save As copies are project
-    // files and intentionally remain outside this tree. Draft garbage collection is out of scope.
-    deleteSession(path)
-    if (manifest) state.loadedSkillNamesBySession.delete(manifest.sessionId)
   })
   ipcMain.handle(IPC.sessions.generateTitle, async (event, path: unknown) => {
     options.windows.requireMainWindowRenderer(event)

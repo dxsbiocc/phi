@@ -4,6 +4,44 @@ import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/ma
 
 import type { RemoteProjectConnectionState } from '../../../../../shared/projectLocation'
 
+function ConnectingNotice({
+  hostAlias,
+  message,
+  compact
+}: {
+  hostAlias?: string
+  message: string
+  compact: boolean
+}): React.JSX.Element {
+  return (
+    <Stack
+      role="status"
+      aria-live="polite"
+      direction="row"
+      spacing={1}
+      sx={{
+        alignSelf: 'flex-start',
+        alignItems: 'center',
+        maxWidth: '100%',
+        mx: compact ? 1 : 2,
+        my: compact ? 1 : 1.5,
+        px: 1.5,
+        py: 0.75,
+        borderRadius: 99,
+        bgcolor: 'background.paper',
+        boxShadow: 1,
+        color: 'text.secondary'
+      }}
+    >
+      <CircularProgress size={18} color="inherit" />
+      <Typography variant="body2">
+        {hostAlias ? `${hostAlias} · ` : ''}
+        {message}
+      </Typography>
+    </Stack>
+  )
+}
+
 export function RemoteConnectionNotice({
   hostAlias,
   connection,
@@ -34,6 +72,8 @@ export function RemoteConnectionNotice({
   const message =
     connection?.message ??
     (connecting ? projectCopy.connectingToServer : projectCopy.connectionNotChecked)
+  if (connecting)
+    return <ConnectingNotice hostAlias={hostAlias} message={message} compact={compact} />
   return (
     <Alert
       severity={blocked ? 'error' : phase === 'offline' ? 'warning' : 'info'}
@@ -41,7 +81,7 @@ export function RemoteConnectionNotice({
       sx={{ mx: compact ? 1 : 2, my: compact ? 1 : 1.5, flexShrink: 0 }}
       action={
         <Stack direction={compact ? 'column' : 'row'} spacing={0.5}>
-          <Button size="small" disabled={connecting} onClick={onRetry}>
+          <Button size="small" onClick={onRetry}>
             {projectCopy.reconnect}
           </Button>
           {settingsRelevant && onOpenRemoteSettings ? (
@@ -53,7 +93,6 @@ export function RemoteConnectionNotice({
       }
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-        {connecting ? <CircularProgress size={14} /> : null}
         <Typography variant="body2" sx={{ fontWeight: 700 }}>
           {hostAlias ? `${hostAlias} · ` : ''}
           {message}

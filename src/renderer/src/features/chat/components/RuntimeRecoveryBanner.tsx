@@ -25,7 +25,6 @@ import type {
 import { useRuntimeRecovery } from '../hooks/useRuntimeRecovery'
 import { runtimeRecoveryViewKey, selectedRecoveryModel } from '../lib/runtimeRecoveryState'
 
-// App places the banner in a floating column matching the composer; it fills that column.
 const bannerWidthSx = {
   mx: 0,
   boxShadow: 3,
@@ -35,17 +34,29 @@ const bannerWidthSx = {
   // Let the message fill the banner so its action row can sit at the bottom right.
   '& .MuiAlert-message': { flex: 1, minWidth: 0 }
 } as const
+const loadingSx = {
+  width: 'fit-content',
+  maxWidth: '100%',
+  bgcolor: 'background.paper',
+  boxShadow: 1,
+  borderRadius: 2,
+  '& .MuiAlert-message': { py: 0.25 }
+} as const
 
 export function RuntimeRecoveryBanner({
   api,
   target,
   models = [],
+  connecting = false,
+  serverConnecting = false,
   onRecovered,
   onSummaryCreated
 }: {
   api: RuntimeRecoveryApi
   target: RuntimeRecoveryTarget | null
   models?: readonly { providerId: string; modelId: string; name?: string }[]
+  connecting?: boolean
+  serverConnecting?: boolean
   onRecovered?: (state: RuntimeRecoveryState) => void | Promise<void>
   onSummaryCreated?: (result: RuntimeSummaryContinuation) => void | Promise<void>
 }): React.JSX.Element | null {
@@ -58,6 +69,25 @@ export function RuntimeRecoveryBanner({
   const updateSelection = (patch: Partial<typeof selection>): void =>
     setSelection({ viewKey, summaryOpen, replacement, ...patch })
   const state = recovery.state
+  if (
+    serverConnecting ||
+    connecting ||
+    state?.phase === 'busy' ||
+    (recovery.pending && !summaryOpen)
+  )
+    return (
+      <Alert
+        role="status"
+        aria-live="polite"
+        severity="info"
+        variant="outlined"
+        icon={<CircularProgress size={18} color="inherit" />}
+        data-phi-runtime-reconnecting="true"
+        sx={loadingSx}
+      >
+        {chatCopy.connectingToRemoteConversation}
+      </Alert>
+    )
   if (!state)
     return recovery.error ? (
       <Alert
@@ -78,7 +108,7 @@ export function RuntimeRecoveryBanner({
         <Typography variant="caption">{recovery.error}</Typography>
       </Alert>
     ) : null
-  const busy = recovery.pending || state.phase === 'busy'
+  const busy = recovery.pending
   const chosen = selectedRecoveryModel(replacement, models)
   const needsModel = state.issue === 'model-unavailable'
   return (
@@ -126,7 +156,6 @@ export function RuntimeRecoveryBanner({
             spacing={1}
             sx={{ alignItems: 'center', justifyContent: 'flex-end' }}
           >
-            {busy ? <CircularProgress size={14} /> : null}
             <Button
               size="small"
               disabled={busy || !state.canResume || (needsModel && !chosen)}

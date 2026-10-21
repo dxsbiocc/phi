@@ -63,10 +63,6 @@ import { useSessionEventBridge } from './features/chat/hooks/useSessionEventBrid
 import { usePromptSend } from './features/chat/hooks/usePromptSend'
 import { useQueuedPromptDrain } from './features/chat/hooks/useQueuedPromptDrain'
 import type { SendPromptOptions } from './features/chat/lib/promptQueue'
-import {
-  runtimeRecoveryBannerColumnSx,
-  runtimeRecoveryBannerOverlaySx
-} from './features/chat/lib/chatLayout'
 import { HomeView } from './features/home/HomeView'
 import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
@@ -1162,7 +1158,12 @@ function App(): React.JSX.Element {
     async (path: string): Promise<void> => {
       const request = sessionRequestRef.current
       const wasActive = path === useSessionStore.getState().activeSessionPath
-      await rendererApi.deleteSession(path)
+      try {
+        await rendererApi.deleteSession(path)
+      } catch (error) {
+        showSnackbarError(error, appCopy.deleteConversationFailed)
+        return
+      }
       if (wasActive && request === sessionRequestRef.current) {
         const current = await rendererApi.getCurrentSession()
         if (request === sessionRequestRef.current) {
@@ -1190,6 +1191,7 @@ function App(): React.JSX.Element {
       refreshCurrentModelControls,
       replaceMessages,
       refreshSessions,
+      showSnackbarError,
       setProjectSessionRefreshKey,
       setSessionTabWasOpened
     ]
@@ -2901,6 +2903,7 @@ function App(): React.JSX.Element {
   }, [navigateToView, onNewChat])
 
   const autoConnectingSessionIdsRef = useRef<Set<string>>(new Set())
+  const [autoConnectingSessionId, setAutoConnectingSessionId] = useState<string | null>(null)
   const onOpenSessionFromSidebar = useCallback(
     async (path: string): Promise<void> => {
       await onSelectSession(path)
@@ -2909,6 +2912,7 @@ function App(): React.JSX.Element {
       if (!target || target.sessionPath !== path) return
       if (autoConnectingSessionIdsRef.current.has(target.sessionId)) return
       autoConnectingSessionIdsRef.current.add(target.sessionId)
+      let startedConnection = false
       try {
         const state = await rendererApi.getRuntimeRecoveryState(target)
         if (
@@ -2919,6 +2923,8 @@ function App(): React.JSX.Element {
           !shouldAutoConnectRemoteSession(state)
         )
           return
+        startedConnection = true
+        setAutoConnectingSessionId(target.sessionId)
         const recovered = await rendererApi.resumeRuntimeSession(target)
         await onRuntimeRecovered(recovered)
       } catch (error) {
@@ -2931,6 +2937,8 @@ function App(): React.JSX.Element {
           showSnackbarError(error, appCopy.reconnectFailed)
       } finally {
         autoConnectingSessionIdsRef.current.delete(target.sessionId)
+        if (startedConnection)
+          setAutoConnectingSessionId((current) => (current === target.sessionId ? null : current))
       }
     },
     [navigateToView, onRuntimeRecovered, onSelectSession, rendererApi, showSnackbarError]
@@ -3124,7 +3132,9 @@ function App(): React.JSX.Element {
           position: 'relative'
         }}
       >
-        {activeProjectLocation?.kind === 'ssh' ? (
+        {activeProjectLocation?.kind === 'ssh' &&
+        activeRemoteConnection &&
+        !['unchecked', 'connecting', 'reachable'].includes(activeRemoteConnection.phase) ? (
           <RemoteConnectionNotice
             hostAlias={activeProject?.remoteHostAlias}
             connection={activeRemoteConnection}
@@ -3132,18 +3142,6 @@ function App(): React.JSX.Element {
             onOpenRemoteSettings={() => openSettings('remote')}
           />
         ) : null}
-        {/* Floats over the conversation in the composer's column instead of pushing it down. */}
-        <Box sx={runtimeRecoveryBannerOverlaySx}>
-          <Box sx={runtimeRecoveryBannerColumnSx}>
-            <RuntimeRecoveryBanner
-              api={rendererApi}
-              target={runtimeRecoveryTarget}
-              models={availableModels}
-              onRecovered={onRuntimeRecovered}
-              onSummaryCreated={onRuntimeSummaryCreated}
-            />
-          </Box>
-        </Box>
         <Suspense
           fallback={
             <Box
@@ -3159,6 +3157,17 @@ function App(): React.JSX.Element {
         >
           <ChatView
             messages={messages}
+            recoveryNotice={
+              <RuntimeRecoveryBanner
+                api={rendererApi}
+                target={runtimeRecoveryTarget}
+                connecting={autoConnectingSessionId === runtimeRecoveryTarget?.sessionId}
+                serverConnecting={activeRemoteConnection?.phase === 'connecting'}
+                models={availableModels}
+                onRecovered={onRuntimeRecovered}
+                onSummaryCreated={onRuntimeSummaryCreated}
+              />
+            }
             input={input}
             images={inputImages}
             onImagesAdded={addInputImages}
