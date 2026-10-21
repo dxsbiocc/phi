@@ -8666,6 +8666,48 @@ test('main IPC: session handlers preserve current missing-target and invalid-tar
   )
 })
 
+test('main IPC: current payload keeps its stable identity when the manifest is missing', async () => {
+  const app = await harness()
+  const created = (await app.invoke('projects:newSession', '/projects/research', 'ask')) as {
+    path: string
+    phiSessionId: string
+  }
+  app.createdPhiSessions.splice(0)
+
+  const current = (await app.invoke('sessions:current')) as {
+    path: string
+    phiSessionId: string
+    cwd: string
+    displayCwd: string
+    projectId: string
+    projectLocation?: unknown
+    permissionMode: string
+  }
+  assert.deepEqual(current, {
+    path: created.path,
+    phiSessionId: created.phiSessionId,
+    cwd: '/projects/research',
+    displayCwd: '/projects/research',
+    projectId: 'project-/projects/research',
+    sessionGeneration: 0,
+    permissionMode: 'ask',
+    status: 'idle',
+    unreadKind: null,
+    messages: []
+  })
+
+  const changedBefore = app.events.length
+  const updated = await app.invoke(
+    'sessions:updatePermissionMode',
+    'full',
+    await permissionTarget(app)
+  )
+  const changed = app.events
+    .slice(changedBefore)
+    .find((event) => event.channel === 'sessions:changed')
+  assert.deepEqual(changed?.data, updated)
+})
+
 test(
   'main IPC: current fresh prompt includes the user question before runtime materializes',
   { timeout: 3000 },
@@ -15617,11 +15659,21 @@ test('T13 main rename: idle live RPC uses one confirmed SDK rename and can targe
   await app.invoke('agent:prompt', 'materialize owner')
   routed = true
   await app.invoke('projects:newRemoteSession', 'remote-project-1')
-  const peer = await app.invoke('sessions:current')
+  const peer = (await app.invoke('sessions:current')) as Record<string, unknown>
+  const expectedChangedPayload = { ...peer }
+  delete expectedChangedPayload.messages
+  const changedBefore = app.events.filter((event) => event.channel === 'sessions:changed').length
   await app.invoke('sessions:rename', owner.path, '  Confirmed title  ')
   assert.deepEqual(app.sessions[0].sessionNameCalls, ['Confirmed title'])
   assert.deepEqual(app.renamedSessions, [])
   assert.deepEqual(await app.invoke('sessions:current'), peer)
+  const changed = app.events.filter((event) => event.channel === 'sessions:changed')
+  assert.equal(changed.length, changedBefore + 1)
+  assert.deepEqual(changed.at(-1)?.data, expectedChangedPayload)
+  assert.deepEqual(app.updatedSessionManifests.at(-1), {
+    sessionId: 'phi-1',
+    patch: { titleSource: 'user' }
+  })
 })
 
 test('T13 main rename: cold future names do not start RPC and adopted offline references require resume', async () => {
@@ -15712,6 +15764,58 @@ test('T13 main rename: busy RPC refuses writes while local Phi names preserve ex
   assert.deepEqual(local.renamedSessions, [{ path: current.path, name: 'Local title' }])
   await local.invoke('agent:stop')
   await localRun
+})
+
+test('T13 main rename: a missing Phi manifest is rejected without writing or broadcasting', async () => {
+  const app = await harness()
+  const current = (await app.invoke('sessions:create')) as { path: string }
+  app.createdPhiSessions.splice(0)
+  const changedBefore = app.events.filter((event) => event.channel === 'sessions:changed').length
+
+  await assert.rejects(app.invoke('sessions:rename', current.path, 'Missing owner'), /会话不存在/)
+  assert.deepEqual(app.renamedSessions, [])
+  assert.equal(
+    app.events.filter((event) => event.channel === 'sessions:changed').length,
+    changedBefore
+  )
+})
+
+test('T13 main rename: legacy current and background conversations keep their distinct writers', async () => {
+  const app = await harness()
+  await app.invoke('sessions:switch', 'A')
+
+  await app.invoke('sessions:rename', 'A', 'Current title')
+  assert.deepEqual(app.sessions[0].sessionNameCalls, ['Current title'])
+  assert.deepEqual(app.renamedSessions, [])
+
+  await app.invoke('sessions:switch', 'B')
+  await app.invoke('sessions:rename', 'A', 'Background title')
+  assert.deepEqual(app.sessions[0].sessionNameCalls, ['Current title'])
+  assert.deepEqual(app.renamedSessions, [{ path: 'A', name: 'Background title' }])
+})
+
+test('T13 main rename: live RPC rejects unowned and unconfirmed title writes', async () => {
+  let routed = false
+  const app = await harness(undefined, { remoteRpc: true, routedRuntime: () => routed })
+  const owner = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+  }
+  await app.invoke('agent:prompt', 'materialize owner')
+
+  await assert.rejects(
+    app.invoke('sessions:rename', owner.path, 'Unowned title'),
+    /exact live attachment/
+  )
+  assert.deepEqual(app.sessions[0].sessionNameCalls, [])
+
+  routed = true
+  app.sessions[0].sessionManager.setSessionName = async () => false
+  await assert.rejects(app.invoke('sessions:rename', owner.path, 'Unconfirmed title'), /尚未确认/)
+  assert.deepEqual(app.renamedSessions, [])
+  assert.equal(
+    app.updatedSessionManifests.some((entry) => entry.patch.titleSource === 'user'),
+    false
+  )
 })
 
 test('AI session titles: the first successful reply names its original conversation in the background', async () => {

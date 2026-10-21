@@ -143,6 +143,7 @@ import {
 import {
   getCurrentContextUsage,
   getCurrentSessionPayloadWithMessages,
+  selectCurrentSessionProjectPayloadFields,
   type CurrentContextUsageOptions,
   type CurrentSessionPayload,
   type CurrentSessionPayloadMessagesOptions
@@ -3992,40 +3993,41 @@ async function renameConversation(
   source: 'auto' | 'user'
 ): Promise<void> {
   const id = phiSessionIdFromPath(path)
-  if (id) {
-    const manifest = findPhiSessionById(id)
-    if (!manifest) throw new Error('会话不存在')
-    const rpc = Boolean(
-      manifest.runtimeRef || (remoteOmpRpcEnabled && manifest.projectLocation?.kind === 'ssh')
-    )
-    if (rpc) {
-      const key = createSessionKey(path, manifest.cwd)
-      const captured = captureSessionControlTarget(key, manifest.sessionId, false, true, false)
-      const ready = await captured.resolved()
-      captured.assertCurrent()
-      if (ready) {
-        if (!ownsRemoteRuntimeSession(ready.session.runtimeSessionId))
-          throw new Error('RPC rename requires an exact live attachment')
-        const confirmed = await ready.session.sessionManager.setSessionName(name, source, captured)
-        captured.assertCurrent()
-        if (!confirmed) throw new Error('远程会话名称尚未确认')
-      } else {
-        if (manifest.runtimeRef) throw new Error('远程会话名称需要显式恢复后修改')
-        await renameSession(path, name)
-      }
+  if (!id) {
+    const current = await getCurrentResolvedSession()
+    if (sessionState.sessionPath === path && current) {
+      await current.session.sessionManager.setSessionName(name, source)
     } else {
       await renameSession(path, name)
     }
-    updateSessionManifest(id, { titleSource: source })
-    notifySessionChanged()
     return
   }
-  const current = await getCurrentResolvedSession()
-  if (sessionState.sessionPath === path && current) {
-    await current.session.sessionManager.setSessionName(name, source)
+
+  const manifest = findPhiSessionById(id)
+  if (!manifest) throw new Error('会话不存在')
+  const rpc = Boolean(
+    manifest.runtimeRef || (remoteOmpRpcEnabled && manifest.projectLocation?.kind === 'ssh')
+  )
+  if (rpc) {
+    const key = createSessionKey(path, manifest.cwd)
+    const captured = captureSessionControlTarget(key, manifest.sessionId, false, true, false)
+    const ready = await captured.resolved()
+    captured.assertCurrent()
+    if (ready) {
+      if (!ownsRemoteRuntimeSession(ready.session.runtimeSessionId))
+        throw new Error('RPC rename requires an exact live attachment')
+      const confirmed = await ready.session.sessionManager.setSessionName(name, source, captured)
+      captured.assertCurrent()
+      if (!confirmed) throw new Error('远程会话名称尚未确认')
+    } else {
+      if (manifest.runtimeRef) throw new Error('远程会话名称需要显式恢复后修改')
+      await renameSession(path, name)
+    }
   } else {
     await renameSession(path, name)
   }
+  updateSessionManifest(id, { titleSource: source })
+  notifySessionChanged()
 }
 
 function scheduleAutomaticSessionTitle(sessionId: string): void {
@@ -4331,6 +4333,102 @@ async function getCurrentResolvedSession(): Promise<AgentSessionResult | null> {
   }
 }
 
+interface CapturedSessionControlTarget {
+  current: CurrentSessionPayload
+  rpc: boolean
+  assertCurrent(): void
+  acceptManual(): void
+  resolved(snapshot?: SessionSnapshot): Promise<AgentSessionResult | null>
+}
+
+interface SessionControlAssertion {
+  key: string
+  phiSessionId: string
+  current: CurrentSessionPayload
+  lifecycle: SessionLifecycle<AgentSessionResult>
+  generation: number
+  promptGeneration: number
+  record: AgentSessionRecord | null
+  initialBinding: string
+  expectedJournal: string
+  initializing: boolean
+  acceptedManual: boolean
+  manual: boolean
+  requireIdle: boolean
+  viewBound: boolean
+}
+
+function sessionControlBinding(manifest: PhiSessionManifest | null): string {
+  const project = manifest?.projectId ? getProject(manifest.projectId) : undefined
+  const location = manifest?.projectLocation
+  const profile =
+    location?.kind === 'ssh' ? getRemoteHostProfile(location.hostProfileId) : undefined
+  return JSON.stringify([
+    manifest?.projectId,
+    manifest?.cwd,
+    manifest?.cwdRealPath,
+    location,
+    project?.location,
+    profile ? remoteConnectionConfigForProfile(profile) : null
+  ])
+}
+
+function sessionControlJournal(manifest: PhiSessionManifest | null): string {
+  return JSON.stringify([manifest?.runtimeRef?.ompSessionId, manifest?.runtimeRef?.journalBasename])
+}
+
+function assertSelectedSessionControlTarget(
+  assertion: SessionControlAssertion,
+  requireSelected: boolean,
+  current: CurrentSessionPayload | undefined
+): void {
+  if (!requireSelected) return
+  if (
+    !current ||
+    !sameCanonicalSessionKey(assertion.key, sessionState.sessionKey) ||
+    current.path !== assertion.current.path ||
+    current.cwd !== assertion.current.cwd ||
+    current.phiSessionId !== assertion.phiSessionId ||
+    getCurrentLifecycle() !== assertion.lifecycle
+  )
+    throw new StaleSessionError()
+}
+
+function assertSessionControlAttachment(
+  assertion: SessionControlAssertion,
+  latest: PhiSessionManifest | null
+): void {
+  if (
+    getPhiSessionIdForKey(assertion.key) !== assertion.phiSessionId ||
+    getLifecycleForKey(assertion.key) !== assertion.lifecycle ||
+    !assertion.lifecycle.isCurrentGeneration(assertion.generation) ||
+    assertion.lifecycle.currentRecord !== assertion.record ||
+    getPromptGeneration(assertion.key) !== assertion.promptGeneration ||
+    sessionControlBinding(latest) !== assertion.initialBinding ||
+    (!assertion.initializing && sessionControlJournal(latest) !== assertion.expectedJournal)
+  )
+    throw new StaleSessionError()
+}
+
+function assertSessionControlIdle(assertion: SessionControlAssertion): void {
+  if (
+    assertion.requireIdle &&
+    (hasActivePromptRun(assertion.key) ||
+      runnerRegistry.getActiveRun(assertion.phiSessionId) ||
+      (!assertion.manual && manualCompactionIds.has(assertion.phiSessionId)))
+  )
+    throw new Error('请等待当前会话运行结束后再修改压缩设置')
+}
+
+function assertSessionControlTargetCurrent(assertion: SessionControlAssertion): void {
+  const latest = findPhiSessionById(assertion.phiSessionId)
+  const requireSelected = assertion.viewBound && !assertion.acceptedManual
+  const current = requireSelected ? getCurrentSessionPayload() : undefined
+  assertSelectedSessionControlTarget(assertion, requireSelected, current)
+  assertSessionControlAttachment(assertion, latest)
+  assertSessionControlIdle(assertion)
+}
+
 // Bind a control before its first await. RPC may advance its own checkpoint/runtime
 // generation; the owner, lifecycle record, journal, project and host stay bound.
 // Manual dispatch releases only the view fence so accepted work survives navigation.
@@ -4340,13 +4438,7 @@ function captureSessionControlTarget(
   manual = false,
   requireIdle = true,
   viewBound = true
-): {
-  current: CurrentSessionPayload
-  rpc: boolean
-  assertCurrent(): void
-  acceptManual(): void
-  resolved(snapshot?: SessionSnapshot): Promise<AgentSessionResult | null>
-} {
+): CapturedSessionControlTarget {
   const key = resolveSessionKeyAlias(sessionKey)
   const current = getCurrentSessionPayload()
   const lifecycle = getLifecycleForKey(key)
@@ -4356,55 +4448,28 @@ function captureSessionControlTarget(
   let initializing = false
   let acceptedManual = false
   const manifest = findPhiSessionById(phiSessionId)
-  const binding = (value: typeof manifest): string => {
-    const project = value?.projectId ? getProject(value.projectId) : undefined
-    const location = value?.projectLocation
-    const profile =
-      location?.kind === 'ssh' ? getRemoteHostProfile(location.hostProfileId) : undefined
-    return JSON.stringify([
-      value?.projectId,
-      value?.cwd,
-      value?.cwdRealPath,
-      location,
-      project?.location,
-      profile ? remoteConnectionConfigForProfile(profile) : null
-    ])
-  }
-  const journal = (value: typeof manifest): string =>
-    JSON.stringify([value?.runtimeRef?.ompSessionId, value?.runtimeRef?.journalBasename])
-  const initialBinding = binding(manifest)
-  let expectedJournal = journal(manifest)
+  const initialBinding = sessionControlBinding(manifest)
+  let expectedJournal = sessionControlJournal(manifest)
   const rpc = Boolean(
     manifest?.runtimeRef || (remoteOmpRpcEnabled && manifest?.projectLocation?.kind === 'ssh')
   )
   const assertCurrent = (): void => {
-    const latest = findPhiSessionById(phiSessionId)
-    const requireSelected = viewBound && !acceptedManual
-    const now = requireSelected ? getCurrentSessionPayload() : undefined
-    if (
-      (requireSelected &&
-        (!now ||
-          !sameCanonicalSessionKey(key, sessionState.sessionKey) ||
-          now.path !== current.path ||
-          now.cwd !== current.cwd ||
-          now.phiSessionId !== phiSessionId ||
-          getCurrentLifecycle() !== lifecycle)) ||
-      getPhiSessionIdForKey(key) !== phiSessionId ||
-      getLifecycleForKey(key) !== lifecycle ||
-      !lifecycle.isCurrentGeneration(generation) ||
-      lifecycle.currentRecord !== record ||
-      getPromptGeneration(key) !== promptGeneration ||
-      binding(latest) !== initialBinding ||
-      (!initializing && journal(latest) !== expectedJournal)
-    )
-      throw new StaleSessionError()
-    if (
-      requireIdle &&
-      (hasActivePromptRun(key) ||
-        runnerRegistry.getActiveRun(phiSessionId) ||
-        (!manual && manualCompactionIds.has(phiSessionId)))
-    )
-      throw new Error('请等待当前会话运行结束后再修改压缩设置')
+    assertSessionControlTargetCurrent({
+      key,
+      phiSessionId,
+      current,
+      lifecycle,
+      generation,
+      promptGeneration,
+      record,
+      initialBinding,
+      expectedJournal,
+      initializing,
+      acceptedManual,
+      manual,
+      requireIdle,
+      viewBound
+    })
   }
   assertCurrent()
   return {
@@ -4431,7 +4496,7 @@ function captureSessionControlTarget(
       if (requireIdle && rpc && result?.session.hasActiveAgentRuns?.())
         throw new Error('请等待专家任务运行结束后再修改会话')
       if (initializing) {
-        expectedJournal = journal(findPhiSessionById(phiSessionId))
+        expectedJournal = sessionControlJournal(findPhiSessionById(phiSessionId))
         initializing = false
       }
       assertCurrent()
@@ -4458,10 +4523,7 @@ function getCurrentSessionPayload(): CurrentSessionPayload {
     ...(phiSessionId ? { phiSessionId } : {}),
     cwd: sessionState.cwd,
     displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : sessionState.cwd,
-    ...(manifest?.projectId || project?.id
-      ? { projectId: manifest?.projectId ?? project?.id }
-      : {}),
-    ...(projectLocation ? { projectLocation } : {}),
+    ...selectCurrentSessionProjectPayloadFields(manifest, project, projectLocation),
     sessionGeneration: getCurrentLifecycle().currentGeneration,
     permissionMode: sessionState.permissionMode,
     ...getSessionStatusPayload(sessionState.sessionKey, sessionState.sessionPath, sessionState.cwd)
