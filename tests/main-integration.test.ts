@@ -4489,6 +4489,8 @@ async function harness(
     './session-runtime/session-control-target',
     './session-runtime/prompt-run-stop',
     './session-runtime/prompt-run-admission',
+    './session-runtime/prompt-run-start',
+    './session-runtime/prompt-run-queue',
     './agent/agents/agent-run-control-request',
     './agent/agents/remote-agent-request-context',
     './agent/agents/remote-agent-trust-request',

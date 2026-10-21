@@ -372,14 +372,8 @@ import { type SessionSnapshot } from './agent/session/session-lifecycle'
 import { SessionRunnerRegistry } from './agent/session/session-runner-registry'
 import {
   executePromptRun as executePromptRunWithDeps,
-  type PromptRunExecutionDeps,
-  type PromptRunResult
+  type PromptRunExecutionDeps
 } from './agent/session/prompt-run-execution'
-import {
-  beginWorkspaceChangeCapture,
-  finishWorkspaceChangeCapture
-} from './agent/session/workspace-changes'
-import { persistWorkspaceDiff } from './agent/session/workspace-diffs'
 import { createLocalFileAccessControl } from './local-file-access-control'
 import { createLocalFileIcons } from './local-file-icons'
 import { createLocalFilePreviews } from './local-file-previews'
@@ -411,11 +405,13 @@ import { createCreatedSessionEvents } from './session-runtime/created-session-ev
 import { createAgentSessionCreation } from './session-runtime/agent-session-creation'
 import { createSessionControlTarget } from './session-runtime/session-control-target'
 import { createPromptRunStop } from './session-runtime/prompt-run-stop'
+import { createPromptRunAdmission } from './session-runtime/prompt-run-admission'
 import {
-  createPromptRunAdmission,
-  type AdmittedPromptRun,
-  type SubmitPromptInput
-} from './session-runtime/prompt-run-admission'
+  createPromptRunStart,
+  type PromptRunContext,
+  type PromptRunState as PromptRun
+} from './session-runtime/prompt-run-start'
+import { createPromptRunQueue } from './session-runtime/prompt-run-queue'
 import icon from '../../resources/icon.png?asset'
 
 import { isRecord } from '../shared/guards'
@@ -765,36 +761,12 @@ function scheduleStartupPackageUpdateCheck(): void {
 }
 
 const TOOL_OUTPUT_INLINE_LIMIT = 20000
-const MAX_RUN_DIFF_BYTES = 2 * 1024 * 1024
 function modelSelectionLabel(selection: ModelSelection): string {
   return `${selection.providerId}/${selection.modelId}`
 }
 
 type AgentSessionResult = Awaited<ReturnType<typeof createAgentSession>>
 type AgentSessionInstance = AgentSessionResult['session']
-interface PromptRun {
-  sessionKey: string
-  phiSessionId: string
-  runId: string
-  cwd: string
-  projectId?: string
-  generation: number
-  sessionGeneration: number
-  cancelled: boolean
-  recordedFailureMessage?: string
-  stoppingPermanentProviderError?: boolean
-  thinkingBlocks: Map<number, string>
-  thinkingBlockStartedAtMs: Map<number, number>
-  compactionReasons: Map<string, string>
-  agentToolCallIds: Set<string>
-  sdkToolCallIds: Set<string>
-  browserSdkToolCallIds: Set<string>
-  persistedToolCallIds: Set<string>
-  pendingProviderToolCalls: Map<string, { toolName: string; args: unknown; createdAt?: string }>
-  sessionPath?: string | null
-  session?: AgentSessionInstance
-  done?: Promise<{ path: string | null; phiSessionId?: string; sessionGeneration: number } | null>
-}
 
 function getNoProjectTaskFolder(): string {
   return readAppSettings(AGENT_DIR).noProjectTaskFolder
@@ -2602,13 +2574,6 @@ function flushPendingContinuations(phiSessionId: string, runWasCancelled: boolea
   }
 }
 
-interface PromptRunContext extends AdmittedPromptRun<AgentSessionResult> {
-  runGeneration: number
-  storedImages: ReturnType<typeof persistPromptImages>
-  otherActiveProjectRuns: number
-  promptRun: PromptRun
-}
-
 const { resolveTarget: resolvePromptRunTarget, admit: admitPromptRun } =
   createPromptRunAdmission<AgentSessionResult>({
     keys: { canonicalize: (key) => sessionKeys.canonicalize(key) },
@@ -2630,76 +2595,23 @@ const { resolveTarget: resolvePromptRunTarget, admit: admitPromptRun } =
     createRunId
   })
 
-function allocatePromptRun(admission: AdmittedPromptRun<AgentSessionResult>): PromptRunContext {
-  const runGeneration = promptRuns.advanceGeneration(admission.runSessionKey)
-  // A real user message starts the automatic wake-up count over only after preflight succeeds.
-  if (!admission.input.automatic) automaticContinuations.delete(admission.phiSessionId)
-  const storedImages = admission.input.images?.length
-    ? persistPromptImages(admission.phiSessionId, admission.input.images)
-    : []
-  const otherActiveProjectRuns = admission.project
-    ? countOtherActiveProjectRuns(admission.project.id, admission.runSessionKey)
-    : 0
-  const promptRun: PromptRun = {
-    sessionKey: admission.runSessionKey,
-    phiSessionId: admission.phiSessionId,
-    runId: admission.runId,
-    cwd: admission.runSnapshot.cwd,
-    ...(admission.project ? { projectId: admission.project.id } : {}),
-    generation: runGeneration,
-    sessionGeneration: admission.runSessionGeneration,
-    cancelled: false,
-    thinkingBlocks: new Map(),
-    thinkingBlockStartedAtMs: new Map(),
-    compactionReasons: new Map(),
-    agentToolCallIds: new Set(),
-    sdkToolCallIds: new Set(),
-    browserSdkToolCallIds: new Set(),
-    persistedToolCallIds: new Set(),
-    pendingProviderToolCalls: new Map(),
-    sessionPath: admission.stableSessionPath
+const promptRunStart = createPromptRunStart({
+  runs: {
+    advanceGeneration: (key) => promptRuns.advanceGeneration(key),
+    setActiveRun: (key, run) => promptRuns.setActiveRun(key, run),
+    activeRuns: () => promptRuns.activeRuns()
+  },
+  continuations: { delete: (phiSessionId) => automaticContinuations.delete(phiSessionId) },
+  images: { persist: (phiSessionId, images) => persistPromptImages(phiSessionId, images) },
+  events: { append: (phiSessionId, event) => appendSessionEvent(phiSessionId, event) },
+  cleanup: {
+    deleteActiveRun: (sessionKey, run) => deleteActivePromptRun(sessionKey, run)
+  },
+  notify: {
+    parallelRun: (sessionGeneration, sessionPath, cwd, activeCount) =>
+      notifyProjectParallelRun(sessionGeneration, sessionPath, cwd, activeCount)
   }
-  promptRuns.setActiveRun(admission.runSessionKey, promptRun)
-  return { ...admission, runGeneration, storedImages, otherActiveProjectRuns, promptRun }
-}
-
-function preparePromptRunForQueue(context: PromptRunContext): void {
-  const { input, phiSessionId, runId, normalizedText, promptTarget, storedImages, promptRun } =
-    context
-  try {
-    if (input.automatic) {
-      // Phi's own message to the agent, not the user's words: nothing to show as a user bubble.
-    } else if (promptTarget?.suppressUserMessageEvent === true) {
-      appendSessionEvent(phiSessionId, {
-        type: 'user_message_retry',
-        runId,
-        content: normalizedText,
-        ...(storedImages.length ? { images: storedImages } : {}),
-        ...(promptTarget.retryUserMessageId
-          ? { userMessageId: promptTarget.retryUserMessageId }
-          : {})
-      })
-    } else {
-      appendSessionEvent(phiSessionId, {
-        type: 'user_message',
-        runId,
-        content: normalizedText,
-        ...(storedImages.length ? { images: storedImages } : {})
-      })
-    }
-  } catch (error) {
-    deleteActivePromptRun(context.runSessionKey, promptRun)
-    throw error
-  }
-  if (context.otherActiveProjectRuns > 0 && !input.automatic) {
-    notifyProjectParallelRun(
-      context.runSessionGeneration,
-      context.stableSessionPath,
-      context.runSnapshot.cwd,
-      context.otherActiveProjectRuns
-    )
-  }
-}
+})
 
 const sessionCreationContextDependencies = {
   getPromptGeneration: promptRuns.generationFor.bind(promptRuns),
@@ -2848,138 +2760,48 @@ const promptRunExecutionDeps: PromptRunExecutionDeps<PromptRunContext> = {
   timeline: { broadcastSessionTimelineEvent, logUnexpectedError }
 }
 
-function startPromptRegistryRun(
-  context: PromptRunContext,
-  loadedSkills: string[],
-  setPromptResult: (result: PromptRunResult) => void
-): ReturnType<typeof runnerRegistry.startRun> {
-  return runnerRegistry.startRun({
-    sessionId: context.phiSessionId,
-    runId: context.runId,
-    loadedSkills,
-    getRecordedFailure: () => context.promptRun.recordedFailureMessage,
-    execute: ({ signal }) =>
-      executePromptRunWithDeps(context, promptRunExecutionDeps, signal, setPromptResult)
-  })
-}
-
-function persistPromptRunWorkspaceChanges(
-  context: PromptRunContext,
-  changes: Awaited<ReturnType<typeof finishWorkspaceChangeCapture>>
-): void {
-  if (changes && (changes.files.length > 0 || changes.truncated)) {
-    try {
-      const stored = appendSessionEvent(context.phiSessionId, {
-        type: 'workspace_changes',
-        runId: context.runId,
-        ...changes
-      })
-      broadcastSessionTimelineEvent(context.phiSessionId, stored)
-    } catch (error) {
-      logUnexpectedError(error)
-    }
-  }
-}
-
-async function runQueuedPrompt(context: PromptRunContext): Promise<PromptRunResult> {
-  let promptResult: PromptRunResult = null
-  if (
-    context.promptRun.cancelled ||
-    context.promptRun.generation !== promptRuns.generationFor(context.runSessionKey) ||
-    !context.runLifecycle.isCurrentGeneration(context.promptRun.sessionGeneration)
-  ) {
-    return null
-  }
-
-  const changeBaseline =
-    context.project?.location?.kind === 'ssh'
-      ? null
-      : await beginWorkspaceChangeCapture(context.runSnapshot.cwd)
-
-  let loadedSkills = loadedSkillNamesBySession.get(context.phiSessionId)
-  if (!loadedSkills) {
-    try {
-      loadedSkills = (
-        isRemoteResourceScope(context.runSnapshot.cwd)
-          ? await listRemoteProjectSkills(context.runSnapshot.cwd)
-          : await listSkills(context.runSnapshot.cwd)
-      )
-        .filter((skill) => skill.enabled)
-        .map((skill) => skill.name)
-        .sort()
-    } catch (error) {
-      loadedSkills = []
+const { submitPromptRun } = createPromptRunQueue({
+  admission: { resolve: resolvePromptRunTarget, admit: admitPromptRun },
+  start: { allocate: promptRunStart.allocate, prepare: promptRunStart.prepare },
+  runs: {
+    queueFor: (sessionKey) => promptRuns.queueFor(sessionKey),
+    generationFor: (sessionKey) => promptRuns.generationFor(sessionKey),
+    setQueue: (sessionKey, queue) => promptRuns.setQueue(sessionKey, queue)
+  },
+  execution: {
+    runner: runnerRegistry,
+    execute: (context, signal, setResult) =>
+      executePromptRunWithDeps(context, promptRunExecutionDeps, signal, setResult)
+  },
+  skills: {
+    get: (phiSessionId) => loadedSkillNamesBySession.get(phiSessionId),
+    set: (phiSessionId, names) => loadedSkillNamesBySession.set(phiSessionId, names),
+    resolve: async (cwd) =>
+      isRemoteResourceScope(cwd) ? await listRemoteProjectSkills(cwd) : await listSkills(cwd)
+  },
+  timeline: {
+    append: (phiSessionId, event) => appendSessionEvent(phiSessionId, event),
+    broadcast: (phiSessionId, event) => broadcastSessionTimelineEvent(phiSessionId, event),
+    logUnexpected: (error) => logUnexpectedError(error),
+    logSkillLookupFailure: (phiSessionId, error) =>
       writeAppLog({
         event: 'session_loaded_skills_unavailable',
         level: 'warn',
-        sessionId: context.phiSessionId,
+        sessionId: phiSessionId,
         metadata: { error: errorMessage(error) }
       })
-    }
-    loadedSkillNamesBySession.set(context.phiSessionId, loadedSkills)
-  }
-
-  const registryRun = startPromptRegistryRun(context, loadedSkills, (result) => {
-    promptResult = result
-  })
-  syncPreventSleepBlocker()
-  void registryRun.done.then(syncPreventSleepBlocker, syncPreventSleepBlocker)
-  try {
-    await registryRun.done
-  } finally {
-    let savedDiffBytes = 0
-    const changes = await finishWorkspaceChangeCapture(changeBaseline, {
-      onTextDiff: async (_name, patch) => {
-        const bytes = Buffer.byteLength(patch, 'utf8')
-        if (savedDiffBytes + bytes > MAX_RUN_DIFF_BYTES) return null
-        const ref = persistWorkspaceDiff(context.phiSessionId, patch)
-        if (ref) savedDiffBytes += ref.bytes
-        return ref
-      }
-    })
-    persistPromptRunWorkspaceChanges(context, changes)
-  }
-  return context.promptRun.cancelled ? null : promptResult
-}
-
-function trackPromptRunSettlement(context: PromptRunContext, run: Promise<PromptRunResult>): void {
-  context.promptRun.done = run
-  promptRuns.setQueue(
-    context.runSessionKey,
-    run.then(
-      (result) => {
-        deleteActivePromptRun(context.runSessionKey, context.promptRun)
-        notifySessionChanged()
-        flushPendingContinuations(context.phiSessionId, context.promptRun.cancelled)
-        if (result && !context.promptRun.cancelled && !context.promptRun.recordedFailureMessage) {
-          scheduleAutomaticSessionTitle(context.phiSessionId)
-        }
-      },
-      () => {
-        deleteActivePromptRun(context.runSessionKey, context.promptRun)
-        notifySessionChanged()
-        flushPendingContinuations(context.phiSessionId, context.promptRun.cancelled)
-      }
-    )
-  )
-}
-
-/**
- * Runs one prompt in the conversation `sessionKey`. It does not depend on which
- * conversation is on screen, so it also serves prompts for a conversation in the
- * background. The `agent:prompt` handler and automatic continuation both use it.
- */
-async function submitPromptRun(input: SubmitPromptInput): Promise<PromptRunResult> {
-  const target = resolvePromptRunTarget(input)
-  const admission = admitPromptRun(target)
-  const context = allocatePromptRun(admission)
-  preparePromptRunForQueue(context)
-  // Serialize prompts per session: duplicate/overlapping IPC invokes must
-  // never run session.prompt() concurrently within the same conversation.
-  const run = promptRuns.queueFor(context.runSessionKey).then(() => runQueuedPrompt(context))
-  trackPromptRunSettlement(context, run)
-  return run
-}
+  },
+  events: {
+    notifySessionChanged: () => notifySessionChanged(),
+    flushContinuations: (phiSessionId, cancelled) =>
+      flushPendingContinuations(phiSessionId, cancelled),
+    scheduleTitle: (phiSessionId) => scheduleAutomaticSessionTitle(phiSessionId)
+  },
+  cleanup: {
+    deleteActiveRun: (sessionKey, run) => deleteActivePromptRun(sessionKey, run)
+  },
+  sleep: { sync: () => syncPreventSleepBlocker() }
+})
 
 const automaticTitleJobs = new Map<string, Promise<void>>()
 const titleRenameQueues = new Map<string, Promise<void>>()
@@ -3371,12 +3193,6 @@ function notifyProjectParallelRun(
     cwd,
     activeCount
   })
-}
-
-function countOtherActiveProjectRuns(projectId: string, sessionKey: string): number {
-  return promptRuns
-    .activeRuns()
-    .filter((run) => run.projectId === projectId && run.sessionKey !== sessionKey).length
 }
 
 const { stopPromptRun, stopAllPromptRuns } = createPromptRunStop<PromptRun, AgentSessionInstance>({
