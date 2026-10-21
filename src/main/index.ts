@@ -185,9 +185,13 @@ import { readHostRemoteEnvironmentPaths } from './agent/remote-environment-store
 import { resolveRemoteRuntimeRoot } from './agent/remote-runtime-root'
 import {
   RemoteRuntimeController,
-  controlRemoteRuntimeWorkspace,
-  type RemoteRuntimeDispatchControl
+  controlRemoteRuntimeWorkspace
 } from './agent/remote-runtime/controller'
+import { createAppRemoteAgentResources } from './agent/remote-runtime/app-remote-agent-resources'
+import { createAppRemoteAgentEnvironment } from './agent/remote-runtime/app-remote-agent-environment'
+import { createAppRemotePromptContext } from './agent/remote-runtime/app-remote-prompt-context'
+import { createAppRemoteDesktopTools } from './agent/remote-runtime/app-remote-desktop-tools'
+import { createRemoteRuntimeDispatchControl } from './agent/remote-runtime/remote-runtime-dispatch-control'
 import { createDesktopWebSearchAdapter } from './agent/engine/rpc/desktop-websearch-adapter'
 import { createSkippedMcpNotifier } from './agent/mcp/skipped-notice'
 import { createDesktopMcpAdapter } from './agent/engine/rpc/desktop-mcp-adapter'
@@ -403,8 +407,7 @@ import { NotebookToolHostRouter } from './agent/notebook/notebook-tool-host-rout
 import { getPhiEngine, ownsRemoteRuntimeSession } from './agent/engine/in-process-engine'
 import {
   installAppRemoteSessionRouting,
-  createAppRemoteSessionManager,
-  type AppRemoteSessionRoutingOptions
+  createAppRemoteSessionManager
 } from './agent/remote-session-routing'
 import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jobs'
 import { normalizeProjectMemorySettings } from '../shared/projectMemoryTypes'
@@ -1386,6 +1389,80 @@ const skippedMcpNotifier = createSkippedMcpNotifier({
   readEvents: readSessionEvents,
   broadcast: broadcastSessionTimelineEvent
 })
+const { remoteRuntimeDispatchControl, isRemoteRuntimeCancellation } =
+  createRemoteRuntimeDispatchControl({
+    fields: { optionalStringField },
+    sessions: {
+      resolveOriginSession: (runtimeSessionId) => resolveOriginSession(runtimeSessionId),
+      getActiveRun: (sessionId) => runnerRegistry.getActiveRun(sessionId),
+      ownsRemoteRuntimeSession
+    },
+    workspace: { resolveBinding: resolveRemoteWorkspaceHostBinding },
+    engine: {
+      resourceOwner: (runtimeSessionId, agentRunId) =>
+        getPhiEngine().agentRuns.resourceOwner?.(runtimeSessionId, agentRunId)
+    }
+  })
+const loadAppRemoteAgentResources = createAppRemoteAgentResources({
+  agentDir: AGENT_DIR,
+  sessions: { findById: findPhiSessionById },
+  workspace: { resolveBinding: resolveRemoteWorkspaceHostBinding },
+  catalogs: {
+    loadProjectSkills: loadRemoteProjectSkillCatalog,
+    listGlobalSkills,
+    readProjectSkill: readRemoteProjectSkillContent,
+    readGlobalSkill: readGlobalSkillContent
+  }
+})
+const resolveAppRemoteAgentEnvironment = createAppRemoteAgentEnvironment({
+  sessions: { findById: findPhiSessionById },
+  workspace: {
+    resolveBinding: resolveRemoteWorkspaceHostBinding,
+    resolveTarget: directRemoteRuntimeTarget
+  },
+  runtime: {
+    describeReadyInWorkspace: (...args) =>
+      remoteRuntimeController.environments.describeReadyInWorkspace(...args)
+  },
+  projects: { require: requireProject },
+  facade: { bindingHash: facadeBindingHash }
+})
+const loadAppRemotePromptContext = createAppRemotePromptContext({
+  agentDir: AGENT_DIR,
+  sessions: { findById: findPhiSessionById, readEvents: readSessionEvents },
+  projects: { require: requireProject, runtimeRoot: projectRemoteRuntimeRoot },
+  workspace: { resolveBinding: resolveRemoteWorkspaceHostBinding },
+  context: {
+    loadProjectInstructions: loadRemoteProjectInstructions,
+    getPersonaMarkdown,
+    resolveRuntimePrompt: resolveRemoteRuntimePromptContext,
+    readRecoverySummary: readRuntimeRecoverySummarySeed
+  }
+})
+const loadAppRemoteDesktopTools = createAppRemoteDesktopTools({
+  agentDir: AGENT_DIR,
+  sessions: { findById: findPhiSessionById },
+  projects: { getById: getProject },
+  workspace: { resolveBinding: resolveRemoteWorkspaceHostBinding },
+  catalogs: {
+    listGlobalSkills,
+    loadProjectSkills: loadRemoteProjectSkillCatalog,
+    listGlobalMcpServers,
+    loadProjectMcp: loadRemoteProjectMcpCatalog
+  },
+  runtime: {
+    scriptTools: (identity) => remoteRuntimeController.scriptTools(identity),
+    approvalFor: (name, input, control) =>
+      remoteRuntimeController.approvalFor(name, input, control),
+    dispatchControl: remoteRuntimeDispatchControl
+  },
+  adapters: {
+    createWebSearch: createDesktopWebSearchAdapter,
+    createMcp: createDesktopMcpAdapter,
+    createMemory: createDesktopProjectMemoryAdapter
+  },
+  skippedMcp: { notify: (sessionId, skipped) => skippedMcpNotifier.notify(sessionId, skipped) }
+})
 // Main-only internal migration gate; renderer session input cannot enable this route.
 const remoteOmpRpcEnabled = process.env.PHI_REMOTE_OMP_RPC === '1'
 installAppRemoteSessionRouting({
@@ -1786,364 +1863,6 @@ const remoteRuntimeController = new RemoteRuntimeController({
     ]
   }
 })
-
-async function loadAppRemoteAgentResources(
-  identity: Parameters<NonNullable<AppRemoteSessionRoutingOptions['loadAgentResources']>>[0],
-  definitions: readonly import('./agent/agents/definition').PhiAgentDefinition[],
-  signal: AbortSignal
-): ReturnType<NonNullable<AppRemoteSessionRoutingOptions['loadAgentResources']>> {
-  const boundary = { sessionId: identity.sessionId, projectId: identity.projectId }
-  const binding = resolveRemoteWorkspaceHostBinding(boundary).cacheKey
-  const assertCurrent = (): void => {
-    signal.throwIfAborted()
-    if (
-      findPhiSessionById(identity.sessionId)?.cwd !== identity.resourceCwd ||
-      resolveRemoteWorkspaceHostBinding(boundary).cacheKey !== binding
-    )
-      throw new Error('专家资源的项目或主机绑定已改变')
-  }
-  assertCurrent()
-  const context = { ...boundary, cwd: identity.resourceCwd, agentDir: AGENT_DIR }
-  const [catalog, globals] = await Promise.all([
-    loadRemoteProjectSkillCatalog(context),
-    listGlobalSkills()
-  ])
-  assertCurrent()
-  const wanted = [...new Set(definitions.flatMap((definition) => definition.skills))]
-  if (wanted.length > 1024) throw new Error('专家技能数量超过当前限制')
-  const skills: Array<{ name: string; description: string; markdown: string }> = []
-  for (const name of wanted) {
-    const projectMatches = catalog.summaries.filter(
-      (skill) => skill.name === name && catalog.sources.some((source) => source.name === name)
-    )
-    const globalMatches = globals.filter((skill) => skill.enabled && skill.name === name)
-    if (projectMatches.length > 1 || (!projectMatches.length && globalMatches.length !== 1))
-      throw new Error(`专家技能不可用：${name}`)
-    const selected = projectMatches[0] ?? globalMatches[0]
-    const content = projectMatches.length
-      ? await readRemoteProjectSkillContent(context, selected.filePath)
-      : await readGlobalSkillContent(selected.filePath)
-    assertCurrent()
-    const markdown = typeof content === 'string' ? content : content.content
-    if (typeof markdown !== 'string' || Buffer.byteLength(markdown, 'utf8') > 64 * 1024)
-      throw new Error(`专家技能正文不可用：${name}`)
-    skills.push({ name, description: selected.description, markdown })
-  }
-  return { skills }
-}
-
-async function resolveAppRemoteAgentEnvironment(
-  identity: Parameters<NonNullable<AppRemoteSessionRoutingOptions['resolveAgentEnvironment']>>[0],
-  agent: Parameters<NonNullable<AppRemoteSessionRoutingOptions['resolveAgentEnvironment']>>[1],
-  signal: AbortSignal
-): Promise<
-  Awaited<ReturnType<NonNullable<AppRemoteSessionRoutingOptions['resolveAgentEnvironment']>>>
-> {
-  if (!agent.environment) throw new Error('专家未声明环境')
-  const boundary = { sessionId: identity.sessionId, projectId: identity.projectId }
-  const binding = resolveRemoteWorkspaceHostBinding(boundary)
-  const assertCurrent = (): void => {
-    signal.throwIfAborted()
-    if (
-      findPhiSessionById(identity.sessionId)?.cwd !== identity.resourceCwd ||
-      resolveRemoteWorkspaceHostBinding(boundary).cacheKey !== binding.cacheKey
-    )
-      throw new Error('专家环境的项目或主机绑定已改变')
-  }
-  assertCurrent()
-  const target = directRemoteRuntimeTarget({
-    runtimeSessionId: identity.runtimeSessionId,
-    remoteSessionId: identity.sessionId,
-    projectId: identity.projectId
-  })
-  if (!target) throw new Error('专家环境缺少已验证的远程项目')
-  const workspace = await openRemoteRuntimeWorkspace(target, signal)
-  try {
-    assertCurrent()
-    const environment = await remoteRuntimeController.environments.describeReadyInWorkspace(
-      agent.environment,
-      controlRemoteRuntimeWorkspace(workspace, assertCurrent),
-      signal
-    )
-    assertCurrent()
-    if (!environment) throw new Error(`专家环境尚未就绪：${agent.environment}`)
-    const project = requireProject(identity.projectId)
-    if (project.location.kind !== 'ssh') throw new Error('专家环境项目不再是 SSH 项目')
-    return {
-      ...environment,
-      ...(agent.pluginId ? { pluginId: agent.pluginId } : {}),
-      binding: {
-        serverId: project.location.hostProfileId,
-        serverIdentitySha256: facadeBindingHash(binding),
-        projectId: project.id,
-        projectRoot: binding.canonicalRoot
-      }
-    }
-  } finally {
-    await workspace.close?.()
-  }
-}
-
-async function loadAppRemotePromptContext(
-  identity: Parameters<NonNullable<AppRemoteSessionRoutingOptions['loadPromptContext']>>[0],
-  signal: AbortSignal
-): ReturnType<NonNullable<AppRemoteSessionRoutingOptions['loadPromptContext']>> {
-  const boundary = { sessionId: identity.sessionId, projectId: identity.projectId }
-  const selected = resolveRemoteWorkspaceHostBinding(boundary)
-  const project = requireProject(identity.projectId)
-  if (project.location.kind !== 'ssh') throw new Error('远程主会话配置缺少 SSH 项目')
-  const assertBinding = (): void => {
-    signal.throwIfAborted()
-    if (
-      findPhiSessionById(identity.sessionId)?.cwd !== identity.resourceCwd ||
-      selected.canonicalRoot !== identity.cwd ||
-      resolveRemoteWorkspaceHostBinding(boundary).cacheKey !== selected.cacheKey
-    ) {
-      throw new Error('远程主会话配置的项目或主机绑定已改变')
-    }
-  }
-  assertBinding()
-  const contextFiles = await loadRemoteProjectInstructions(project.location)
-  assertBinding()
-  const personaMarkdown = getPersonaMarkdown()
-  const runtimeRoot = projectRemoteRuntimeRoot(project)
-  const runtime = resolveRemoteRuntimePromptContext(
-    {
-      hostProfileId: project.location.hostProfileId,
-      canonicalRoot: project.location.canonicalRoot,
-      ...(runtimeRoot.source === 'project' ? { projectOverride: runtimeRoot.configured } : {})
-    },
-    AGENT_DIR
-  )
-  assertBinding()
-  const recoverySummary = readRuntimeRecoverySummarySeed({
-    sessionId: identity.sessionId,
-    projectId: identity.projectId,
-    events: readSessionEvents(identity.sessionId)
-  })?.content
-  assertBinding()
-  return {
-    personaMarkdown,
-    ...(personaMarkdown ? { personaPath: join(AGENT_DIR, 'AGENTS.md') } : {}),
-    contextFiles,
-    runtime,
-    ...(recoverySummary ? { recoverySummary } : {})
-  }
-}
-
-async function loadAppRemoteDesktopTools(
-  identity: Parameters<NonNullable<AppRemoteSessionRoutingOptions['loadDesktopTools']>>[0],
-  signal: AbortSignal
-): ReturnType<NonNullable<AppRemoteSessionRoutingOptions['loadDesktopTools']>> {
-  const boundary = { sessionId: identity.sessionId, projectId: identity.projectId }
-  const selectedBinding = resolveRemoteWorkspaceHostBinding(boundary).cacheKey
-  const memoryPolicy = normalizeProjectMemorySettings(getProject(identity.projectId)?.memory)
-  const assertBinding = (): void => {
-    signal.throwIfAborted()
-    if (
-      findPhiSessionById(identity.sessionId)?.cwd !== identity.resourceCwd ||
-      resolveRemoteWorkspaceHostBinding(boundary).cacheKey !== selectedBinding
-    )
-      throw new Error('远程资源项目绑定已改变；请显式恢复当前项目会话。')
-  }
-  const assertMemoryBinding = (): void => {
-    assertBinding()
-    if (
-      JSON.stringify(normalizeProjectMemorySettings(getProject(identity.projectId)?.memory)) !==
-      JSON.stringify(memoryPolicy)
-    )
-      throw new Error('项目记忆策略已改变')
-  }
-  assertMemoryBinding()
-  const context = {
-    sessionId: identity.sessionId,
-    projectId: identity.projectId,
-    cwd: identity.resourceCwd,
-    agentDir: AGENT_DIR
-  }
-  const [globals, catalog, globalServers, mcpCatalog] = await Promise.all([
-    listGlobalSkills(),
-    loadRemoteProjectSkillCatalog(context),
-    listGlobalMcpServers(),
-    loadRemoteProjectMcpCatalog(context)
-  ])
-  assertMemoryBinding()
-  const projectNames = new Set(catalog.sources.map((skill) => skill.name))
-  // The same skill name can come from several global sources; tool schemas need unique names.
-  const allowedSkills = [
-    ...new Set([
-      ...catalog.sources.map((skill) => skill.name),
-      ...globals
-        .filter((skill) => skill.enabled && !projectNames.has(skill.name))
-        .map((skill) => skill.name)
-    ])
-  ]
-  const scripts = await remoteRuntimeController.scriptTools({
-    runtimeSessionId: identity.runtimeSessionId,
-    remoteSessionId: identity.sessionId,
-    projectId: identity.projectId
-  })
-  assertMemoryBinding()
-  const { resourceCwd, ...toolIdentity } = identity
-  const search = await createDesktopWebSearchAdapter({
-    identity: toolIdentity,
-    agentDir: AGENT_DIR,
-    resourceCwd,
-    signal,
-    currentModel: () => {
-      assertBinding()
-      const model = findPhiSessionById(identity.sessionId)?.model
-      return model ? { provider: model.providerId, id: model.modelId } : undefined
-    }
-  })
-  let mcp: Awaited<ReturnType<typeof createDesktopMcpAdapter>> | undefined
-  let memory: Awaited<ReturnType<typeof createDesktopProjectMemoryAdapter>> | undefined
-  try {
-    if (memoryPolicy.enabled) {
-      memory = await createDesktopProjectMemoryAdapter({
-        identity: toolIdentity,
-        agentDir: AGENT_DIR,
-        resourceCwd,
-        settings: memoryPolicy,
-        signal,
-        beforeDispatch: assertMemoryBinding
-      })
-      assertMemoryBinding()
-    }
-    const serverNames = [
-      ...new Set([
-        ...globalServers.filter((server) => server.enabled !== false).map((server) => server.name),
-        ...mcpCatalog.runtimeServers.map((server) => server.name)
-      ])
-    ]
-    if (serverNames.length)
-      mcp = await createDesktopMcpAdapter({
-        identity: toolIdentity,
-        agentDir: AGENT_DIR,
-        resourceCwd,
-        signal,
-        serverNames,
-        remoteProjectMcpServers: mcpCatalog.runtimeServers,
-        approvalFor: () => 'write',
-        beforeDispatch: assertBinding
-      })
-    assertMemoryBinding()
-    skippedMcpNotifier.notify(identity.sessionId, mcp?.skipped ?? [])
-    return {
-      tools: {
-        assertBinding,
-        allowedSkills,
-        skillCatalog: [
-          ...catalog.summaries
-            .filter((skill) => allowedSkills.includes(skill.name))
-            .map((skill) => ({ name: skill.name, description: skill.description })),
-          ...globals
-            .filter((skill) => skill.enabled && !projectNames.has(skill.name))
-            .map((skill) => ({ name: skill.name, description: skill.description }))
-        ],
-        scriptTools: scripts.tools,
-        scriptApprovalFor: (name, input, childRunId) => {
-          const control = childRunId
-            ? remoteRuntimeDispatchControl(
-                {
-                  runtimeSessionId: identity.runtimeSessionId,
-                  remoteSessionId: identity.sessionId,
-                  projectId: identity.projectId
-                },
-                { originSessionId: identity.runtimeSessionId, agentRunId: childRunId, signal }
-              )
-            : undefined
-          return remoteRuntimeController.approvalFor(name, input, control)
-        },
-        remoteLibrary: true,
-        desktopWebSearch: search,
-        desktopMcp: mcp
-      },
-      memory,
-      close: async () => {
-        search.retire()
-        mcp?.retire()
-        memory?.retire()
-        await Promise.allSettled([search.close(), mcp?.close(), memory?.close()])
-      }
-    }
-  } catch (error) {
-    search.retire(error)
-    mcp?.retire(error)
-    memory?.retire()
-    await Promise.allSettled([search.close(), mcp?.close(), memory?.close()])
-    throw error
-  }
-}
-
-function remoteRuntimeDispatchControl(
-  params: unknown,
-  context: import('./agent/engine/types').PhiHostRequestContext
-): RemoteRuntimeDispatchControl | undefined {
-  if (
-    !isRecord(params) ||
-    (!Object.hasOwn(params, 'remoteSessionId') && !Object.hasOwn(params, 'projectId'))
-  )
-    return undefined
-  const runtimeId = optionalStringField(params, 'runtimeSessionId')
-  const sessionId = optionalStringField(params, 'remoteSessionId')
-  const projectId = optionalStringField(params, 'projectId')
-  if (
-    !runtimeId ||
-    !sessionId ||
-    !projectId ||
-    context.originSessionId !== runtimeId ||
-    resolveOriginSession(runtimeId)?.phiSessionId !== sessionId
-  )
-    throw new Error('远程资源请求的来源会话无效；没有回退到本机执行。')
-  const binding = resolveRemoteWorkspaceHostBinding({ sessionId, projectId })
-  const run = runnerRegistry.getActiveRun(sessionId)
-  const childId = ownsRemoteRuntimeSession(runtimeId) ? context.agentRunId : undefined
-  const readResourceOwner = ():
-    import('./agent/remote-runtime/skill-service').RemoteSkillResourceOwner | undefined => {
-    if (!childId) return undefined
-    const owner = getPhiEngine().agentRuns.resourceOwner?.(runtimeId, childId)
-    if (!owner) throw new Error('专家资源调用缺少当前已验证的运行身份')
-    return Object.freeze({
-      toolOwner: owner.toolOwner,
-      allowedSkills: Object.freeze([...owner.allowedSkills])
-    })
-  }
-  const resourceOwner = readResourceOwner()
-  const beforeDispatch = (): void => {
-    context.signal?.throwIfAborted()
-    if (!childId) run?.signal.throwIfAborted()
-    if (childId && JSON.stringify(readResourceOwner()) !== JSON.stringify(resourceOwner))
-      throw new Error('专家资源运行身份已改变')
-    if (
-      (!childId && context.signal && (!run || runnerRegistry.getActiveRun(sessionId) !== run)) ||
-      resolveOriginSession(runtimeId)?.phiSessionId !== sessionId ||
-      resolveRemoteWorkspaceHostBinding({ sessionId, projectId }).cacheKey !== binding.cacheKey
-    )
-      throw new Error('远程资源运行或项目绑定已改变；没有回退到本机执行。')
-  }
-  beforeDispatch()
-  return { signal: context.signal, beforeDispatch, ...(resourceOwner ? { resourceOwner } : {}) }
-}
-
-function isRemoteRuntimeCancellation(
-  params: unknown,
-  context: import('./agent/engine/types').PhiHostRequestContext
-): boolean {
-  if (
-    !isRecord(params) ||
-    (!Object.hasOwn(params, 'remoteSessionId') && !Object.hasOwn(params, 'projectId'))
-  )
-    return false
-  const runtimeId = optionalStringField(params, 'runtimeSessionId')
-  if (
-    !runtimeId ||
-    context.originSessionId !== runtimeId ||
-    resolveOriginSession(runtimeId)?.phiSessionId !== params.remoteSessionId
-  )
-    throw new Error('远程资源取消请求的来源会话无效')
-  return true
-}
 
 const remoteLibraryService = new RemoteLibraryService(async (identity, signal, context) => {
   const control = remoteRuntimeDispatchControl(
