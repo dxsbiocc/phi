@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
+
+test(
+  'automatic decision routing and worker availability use actual SDK selection and transports',
+  { timeout: 90_000 },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'phi-auto-availability-'))
+    const home = join(root, 'home')
+    const agentDir = join(root, 'agent')
+    await mkdir(home)
+    await mkdir(agentDir)
+    try {
+      const { stdout } = await promisify(execFile)(
+        resolveBunExecutable(),
+        [fileURLToPath(new URL('./helpers/automaticModelAvailabilityFixture.ts', import.meta.url))],
+        {
+          cwd: root,
+          timeout: 80_000,
+          env: {
+            PATH: process.env.PATH,
+            HOME: home,
+            USERPROFILE: home,
+            TMPDIR: root,
+            XDG_CONFIG_HOME: join(home, '.config'),
+            XDG_CACHE_HOME: join(home, '.cache'),
+            XDG_DATA_HOME: join(home, '.local/share'),
+            PI_CODING_AGENT_DIR: agentDir,
+            PHI_AVAILABILITY_FIXTURE: '1',
+            OMP_AUTH_BROKER_URL: '',
+            OMP_AUTH_BROKER_TOKEN: ''
+          }
+        }
+      )
+      assert.match(stdout, /PASS 12 automatic availability checks/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)

@@ -21,6 +21,7 @@ import {
 } from '../../notebook/analysis-jupyter-execution'
 import { buildPaletteRecommendationTool } from '../../palettes/tools'
 import { buildAskUserQuestionCustomTools } from '../../user-interaction-tools'
+import { buildDecisionTool, type DecisionEvaluator } from '../../decisions/tool'
 import { buildLibraryCustomTools } from '../../library/library-tools'
 import { buildCapabilityTools, CAPABILITY_HOST_METHODS } from '../../packages/capability-tools'
 import { createHostJobClient } from '../../wrappers/composition/job-host-client'
@@ -53,6 +54,8 @@ export interface RpcDesktopToolRun {
   readonly agentRunId?: string
 }
 export interface RpcDesktopToolScopeOptions {
+  /** Main-only evaluator bound by the session driver to its actual current model. */
+  readonly decide?: DecisionEvaluator
   readonly identity: RpcDesktopToolIdentity
   /** The exact registry populated by engine.host.register in the desktop main process. */
   readonly services: HostServiceRegistry
@@ -314,6 +317,9 @@ export function createRpcDesktopToolScope(
     }
   }
   const built = [
+    ...((options.toolOwner ?? 'main') === 'main' && options.decide
+      ? [buildDecisionTool(options.decide)]
+      : []),
     buildBrowserTool(
       identity.runtimeSessionId,
       async (request) => (await browserRequest('browser.execute', request)) as BrowserOutcome,

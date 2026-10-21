@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 import type { PhiAppSettings, PhiAppSettingsPatch } from '../../shared/appSettingsTypes'
+import { readModelAvailability } from './model-availability'
 import {
   DEFAULT_UI_LANGUAGE,
   isUiLanguage,
@@ -19,16 +20,34 @@ import type { ModelSelection } from './session/session-store'
 
 import { isRecord } from '../../shared/guards'
 import { errorMessage } from '../../shared/errorCodes'
-const SETTINGS_FILE = 'settings.json'
 let defaultUiLanguage = DEFAULT_UI_LANGUAGE
+
+export function getAppSettingsPath(agentDir = getPhiAgentDir()): string {
+  return join(agentDir, 'settings.json')
+}
+
+function readRawSettings(agentDir: string, options: { strict: boolean }): Record<string, unknown> {
+  const path = getAppSettingsPath(agentDir)
+  if (!existsSync(path)) return {}
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
+    return isRecord(parsed) ? parsed : {}
+  } catch (error) {
+    if (options.strict)
+      throw new Error(`settings.json 不是合法 JSON，无法保存设置: ${errorMessage(error)}`)
+    return {}
+  }
+}
+
+function writeRawSettings(raw: Record<string, unknown>, agentDir: string): void {
+  const path = getAppSettingsPath(agentDir)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`, 'utf8')
+}
 
 /** Called once after Electron is ready, before the splash or settings are read. */
 export function configureSystemUiLanguage(preferredLanguages: readonly string[]): void {
   defaultUiLanguage = systemUiLanguage(preferredLanguages)
-}
-
-export function getAppSettingsPath(agentDir = getPhiAgentDir()): string {
-  return join(agentDir, SETTINGS_FILE)
 }
 
 function defaultNoProjectTaskFolder(agentDir: string): string {
@@ -54,20 +73,6 @@ function hasOwnSetting(raw: Record<string, unknown>, key: keyof PhiAppSettingsPa
   return Object.prototype.hasOwnProperty.call(raw, key)
 }
 
-function readRawSettings(agentDir: string, options: { strict: boolean }): Record<string, unknown> {
-  const path = getAppSettingsPath(agentDir)
-  if (!existsSync(path)) return {}
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as unknown
-    return isRecord(parsed) ? parsed : {}
-  } catch (error) {
-    if (options.strict) {
-      throw new Error(`settings.json 不是合法 JSON，无法保存设置: ${errorMessage(error)}`)
-    }
-    return {}
-  }
-}
-
 function appSettingsFromRaw(raw: Record<string, unknown>, agentDir: string): PhiAppSettings {
   return {
     uiLanguage: normalizeUiLanguage(raw.uiLanguage, defaultUiLanguage),
@@ -84,7 +89,8 @@ function appSettingsFromRaw(raw: Record<string, unknown>, agentDir: string): Phi
       raw.nextActionSuggestionsEnabled,
       DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
     ),
-    fileOpenConversationLayout: fileOpenConversationLayout(raw.fileOpenConversationLayout)
+    fileOpenConversationLayout: fileOpenConversationLayout(raw.fileOpenConversationLayout),
+    modelAvailability: readModelAvailability(agentDir)
   }
 }
 
@@ -107,12 +113,6 @@ export function readLastSelectedModel(
     return undefined
   }
   return { providerId: value.providerId, modelId: value.modelId }
-}
-
-function writeRawSettings(raw: Record<string, unknown>, agentDir: string): void {
-  const path = getAppSettingsPath(agentDir)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`, 'utf-8')
 }
 
 export function writeLastSelectedModel(
@@ -180,7 +180,7 @@ export function updateAppSettings(patch: unknown, agentDir = getPhiAgentDir()): 
     nextRaw.fileOpenConversationLayout = patch.fileOpenConversationLayout
   }
 
+  const settings = appSettingsFromRaw(nextRaw, agentDir)
   writeRawSettings(nextRaw, agentDir)
-
-  return appSettingsFromRaw(nextRaw, agentDir)
+  return settings
 }

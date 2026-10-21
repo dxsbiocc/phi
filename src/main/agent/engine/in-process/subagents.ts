@@ -45,6 +45,7 @@ import {
   SettingsManager
 } from './session-factory'
 import { sessions } from './state'
+import { createSessionModelAvailability } from './session-model-availability'
 import { phiToolFunctions } from './tool-support'
 
 /**
@@ -290,7 +291,12 @@ export async function createPhiAgentSession(
     if (ompTool) customTools.push(ompTool)
   }
   const parentSession = deps.parent()?.session
-  const parentModel = parentSession?.model || undefined
+  const modelPolicy = createSessionModelAvailability(ctx.modelRegistry, agentDir)
+  const modelContext = { ...ctx, modelRegistry: modelPolicy.registry }
+  const parentModel =
+    parentSession?.model && modelPolicy.enabled(parentSession.model)
+      ? parentSession.model
+      : undefined
   let model = parentModel
   if (runtimeDefinition.model && runtimeDefinition.model.length > 0) {
     const selection = await selectAgentModel(
@@ -300,7 +306,7 @@ export async function createPhiAgentSession(
         const slash = selector.indexOf('/')
         if (slash <= 0 || slash >= selector.length - 1) return undefined
         try {
-          return await modelBySelector(ctx, {
+          return await modelBySelector(modelContext, {
             provider: selector.slice(0, slash),
             id: selector.slice(slash + 1)
           })
@@ -315,6 +321,7 @@ export async function createPhiAgentSession(
     if (selection.warning) process.stderr.write(`${selection.warning}\n`)
     model = selection.model
   }
+  if (!model) throw new Error('No enabled model available for this specialist')
   const thinkingLevel = runtimeDefinition.thinkingLevel
     ? runtimeThinkingLevel(runtimeDefinition.thinkingLevel)
     : parentSession?.thinkingLevel

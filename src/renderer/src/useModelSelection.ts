@@ -1,3 +1,4 @@
+import { MODEL_AVAILABILITY_CHANGED } from './lib/modelAvailabilityEvents'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ModelOption, ProviderAuthStatus, ThinkingLevel } from './types'
 import { appCopy } from './lib/appCopy'
@@ -68,10 +69,12 @@ export function useModelSelection(
   const modelRequestRef = useRef(0)
   const thinkingRequestRef = useRef(0)
   const selectionReadRef = useRef(0)
+  const catalogRequestRef = useRef(0)
   const pendingSelectionsRef = useRef<PendingSelections | null>(null)
 
   useEffect(() => {
     const sessionKey = getSessionKey()
+    const catalogRequest = ++catalogRequestRef.current
     const modelRequest = modelRequestRef.current
     const thinkingRequest = thinkingRequestRef.current
     let disposed = false
@@ -84,7 +87,7 @@ export function useModelSelection(
           window.api.getThinkingLevel()
         ])
         if (disposed) return
-        setModels(available)
+        if (catalogRequest === catalogRequestRef.current) setModels(available)
         if (
           sessionKey === getSessionKey() &&
           modelRequest === modelRequestRef.current &&
@@ -103,6 +106,26 @@ export function useModelSelection(
       disposed = true
     }
   }, [getSessionKey])
+
+  useEffect(() => {
+    let active = true
+    const refresh = (): void => {
+      const request = ++catalogRequestRef.current
+      void window.api
+        .listModels()
+        .then((available) => {
+          if (active && request === catalogRequestRef.current) setModels(available)
+        })
+        .catch(() => {
+          // Preserve the current selection and last known catalog on discovery failure.
+        })
+    }
+    window.addEventListener(MODEL_AVAILABILITY_CHANGED, refresh)
+    return () => {
+      active = false
+      window.removeEventListener(MODEL_AVAILABILITY_CHANGED, refresh)
+    }
+  }, [])
 
   const availableModels = useMemo(() => {
     const configuredIds = new Set(

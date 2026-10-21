@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { isJudgmentApi } from '@oh-my-pi/pi-ai'
 import { ModelRegistry, discoverAuthStorage } from '@oh-my-pi/pi-coding-agent'
 import {
   authPolicyFor,
@@ -140,7 +141,15 @@ export async function modelRuntimeSnapshot(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const ctx = await getContext(record.agentDir)
   const models = ctx.modelRegistry.getAll().map(serializeModel)
-  const providerIds = [...new Set(models.map((model) => model.provider))].sort()
+  const decisionModels = ctx.modelRegistry
+    .getAll('judge')
+    .filter((model) => isJudgmentApi(model.api))
+  const providerIds = [
+    ...new Set([
+      ...models.map((model) => model.provider),
+      ...decisionModels.map((model) => model.provider)
+    ])
+  ].sort()
   const credentials = ctx.auth.listCredentials()
 
   return {
@@ -153,6 +162,10 @@ export async function modelRuntimeSnapshot(params: unknown): Promise<unknown> {
       return {
         id,
         name: providerName(id),
+        modelKinds: [
+          ...(models.some((model) => model.provider === id) ? ['chat' as const] : []),
+          ...(decisionModels.some((model) => model.provider === id) ? ['decision' as const] : [])
+        ],
         auth: {
           apiKey: hasApiKey(policy, id),
           oauth: hasOAuth(policy)

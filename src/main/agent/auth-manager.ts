@@ -59,6 +59,7 @@ type AuthEvent =
     }
 
 export interface AuthProviderStatusItem {
+  modelKinds?: Array<'chat' | 'decision'>
   providerId: string
   name: string
   configured: boolean
@@ -167,6 +168,7 @@ export class AuthManager {
       return {
         providerId: provider.id,
         name: provider.name || provider.id,
+        ...(provider.modelKinds ? { modelKinds: [...provider.modelKinds] } : {}),
         configured,
         source: baseStatus.source,
         label: baseStatus.label,

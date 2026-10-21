@@ -1,3 +1,4 @@
+import { MODEL_AVAILABILITY_CHANGED } from '../src/renderer/src/lib/modelAvailabilityEvents'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test, { beforeEach, afterEach } from 'node:test'
@@ -83,11 +84,13 @@ function appSessionGetter(context: Record<string, unknown>): () => string | numb
 /** Run the whole production hook, including its deferred IPC continuations. */
 async function harness(overrides: Partial<Api> = {}): Promise<{
   read: () => ModelSelectionState
+  refreshAvailability: () => void
   navigate: (model: ModelOption, level: ThinkingLevel) => void
   failNavigation: () => void
   replaceActiveSession: (model: ModelOption, level: ThinkingLevel) => void
   errors: Array<{ error: unknown; fallback: string }>
 }> {
+  const availabilityListeners = new Set<() => void>()
   const slots: Slot[] = []
   let cursor = 0
   const sessionRequestRef = { current: 0 }
@@ -180,9 +183,16 @@ async function harness(overrides: Partial<Api> = {}): Promise<{
     require(name: string): unknown {
       if (name === 'react') return react
       if (name === './lib/appCopy') return { appCopy }
+      if (name === './lib/modelAvailabilityEvents') return { MODEL_AVAILABILITY_CHANGED }
       throw new Error(`Unexpected runtime import: ${name}`)
     },
-    window: { api },
+    window: {
+      api,
+      addEventListener: (_type: string, listener: () => void) =>
+        availabilityListeners.add(listener),
+      removeEventListener: (_type: string, listener: () => void) =>
+        availabilityListeners.delete(listener)
+    },
     Promise
   })
   const hook = module.exports.useModelSelection as (
@@ -205,6 +215,9 @@ async function harness(overrides: Partial<Api> = {}): Promise<{
   await new Promise<void>((resolve) => setImmediate(resolve))
   return {
     read,
+    refreshAvailability: () => {
+      for (const listener of availabilityListeners) listener()
+    },
     navigate(model, level): void {
       sessionRequestRef.current += 1
       activeSession += 1
@@ -690,4 +703,35 @@ test('an unavailable saved model remains visible instead of displaying automatic
     f.read().availableModels.some((model) => model.providerId === 'missing'),
     false
   )
+})
+
+test('availability changes refresh picker options without changing the selected conversation model or thinking', async () => {
+  let available = models
+  const f = await harness({ listModels: async () => available })
+  const selected = f.read().selectedModel
+  available = [models[1]]
+  f.refreshAvailability()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.deepEqual(f.read().models, [models[1]])
+  assert.equal(f.read().selectedModel, selected)
+  assert.equal(f.read().thinkingLevel, 'high')
+})
+
+test('an older availability refresh cannot overwrite newer results or a manual selection', async () => {
+  const older = deferred<ModelOption[]>()
+  const newer = deferred<ModelOption[]>()
+  let reads = 0
+  const f = await harness({
+    listModels: () =>
+      ++reads === 1 ? Promise.resolve(models) : reads === 2 ? older.promise : newer.promise
+  })
+  f.refreshAvailability()
+  f.refreshAvailability()
+  await f.read().onSelectModel(models[2])
+  newer.resolve([models[2]])
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  older.resolve(models)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.deepEqual(f.read().models, [models[2]])
+  assert.equal(f.read().selectedModel, models[2])
 })

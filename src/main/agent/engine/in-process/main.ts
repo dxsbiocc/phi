@@ -45,8 +45,13 @@ import {
 } from './model-gateway'
 
 import { errorMessage } from '../../../../shared/errorCodes'
+import { closeDecisionRuntime, handleDecisionRequest } from './decision-runtime'
 async function handleRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
+    case 'decisions.models':
+    case 'decisions.evaluate':
+    case 'decisions.cancel':
+      return handleDecisionRequest(method, params)
     case 'modelGateway.create':
       return createModelGatewayLease(params as Parameters<typeof createModelGatewayLease>[0])
     case 'modelGateway.revoke':
@@ -175,6 +180,7 @@ let hostExitStarted = false
 function shutdownAfterHostExit(): void {
   if (hostExitStarted) return
   hostExitStarted = true
+  closeDecisionRuntime()
   const cleanup = Promise.allSettled([
     closeAllDesktopMcpScopes(),
     closeAllDesktopProjectMemory(),

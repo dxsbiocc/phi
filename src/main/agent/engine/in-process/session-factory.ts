@@ -8,8 +8,27 @@ import {
 } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
 import { initializeExtensions } from '@oh-my-pi/pi-coding-agent/modes/runtime-init'
 import { isRecord, stringValue } from './common'
+import {
+  bindSessionModelAvailability,
+  createSessionModelAvailability
+} from './session-model-availability'
 
 export async function createAgentSession(
+  options: Parameters<typeof createLegacyAgentSession>[0]
+): ReturnType<typeof createLegacyAgentSession> {
+  const scope = options?.modelRegistry
+    ? createSessionModelAvailability(options.modelRegistry, options.agentDir)
+    : undefined
+  if (options?.model && scope && !scope.enabled(options.model))
+    throw new Error('Model disabled in Phi')
+  const result = await createSessionWithRestorePolicy(
+    scope ? { ...options, modelRegistry: scope.registry } : options
+  )
+  if (scope) bindSessionModelAvailability(result.session, scope)
+  return result
+}
+
+async function createSessionWithRestorePolicy(
   options: Parameters<typeof createLegacyAgentSession>[0]
 ): ReturnType<typeof createLegacyAgentSession> {
   try {

@@ -1,5 +1,6 @@
 export type FileOpenConversationLayout = 'sidebar' | 'tab'
 import type { UiLanguage } from './uiLanguage'
+import type { ModelAvailabilitySettings } from './modelAvailabilityTypes'
 
 export interface PhiAppSettings {
   uiLanguage: UiLanguage
@@ -8,6 +9,7 @@ export interface PhiAppSettings {
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
   fileOpenConversationLayout: FileOpenConversationLayout
+  modelAvailability?: ModelAvailabilitySettings
 }
 
 export type PhiAppSettingsPatch = {

@@ -14,6 +14,7 @@ import {
 } from '../model-gateway-types'
 import type { RuntimeContext, RuntimeModel } from './common'
 import { getContext, modelBySelector } from './runtime-context'
+import { isModelEnabled, readModelAvailability } from '../../model-availability'
 import { GatewayInputError, readGatewayJson, validateGatewayPayload } from './model-gateway-request'
 import {
   boundedGatewayStream,
@@ -422,6 +423,10 @@ export class ModelGatewayManager {
       )
       const model = state.models.get(payload.modelId)
       if (!model || !state.active || controller.signal.aborted) return failure(400)
+      // A lease retains its credentials/catalog, but each new request honors current switches.
+      // Already admitted streams keep their captured model until their own completion/stop.
+      if (!isModelEnabled(readModelAvailability(state.context.agentDir), model.provider, model.id))
+        return failure(403)
       const scope: RequestScope = {
         model,
         controller,

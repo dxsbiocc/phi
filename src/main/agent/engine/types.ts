@@ -24,6 +24,12 @@ import type {
 } from '../../../shared/projectMemoryTypes'
 import type { RemoteProjectMcpRuntimeServer } from '../../../shared/remoteProjectMcpTypes'
 import type { PhiAgentDefinition } from '../agents/definition'
+import type {
+  DecisionModelOption,
+  DecisionModelSelection,
+  DecisionRequest,
+  DecisionResult
+} from '../../../shared/decisionTypes'
 
 export type PhiToolSite = 'host' | 'runtime'
 export type PhiToolApproval = 'read' | 'write' | 'exec'
@@ -239,6 +245,7 @@ export type RuntimeAuthSource =
 export interface RuntimeProvider {
   id: string
   name: string
+  modelKinds?: Array<'chat' | 'decision'>
   auth?: {
     apiKey?: boolean
     oauth?: boolean
@@ -392,6 +399,19 @@ export type PhiSessionCreateParams = {
 }
 
 export interface PhiEngine {
+  /** Internal desktop capability; renderer IPC may list models but never submit decisions. */
+  decisions: {
+    models(params: { agentDir: string }): Promise<DecisionModelOption[]>
+    evaluate(
+      params: {
+        agentDir: string
+        sessionId: string
+        model: DecisionModelSelection
+        request: DecisionRequest
+      },
+      signal?: AbortSignal
+    ): Promise<DecisionResult>
+  }
   sessions: {
     create(
       params: PhiSessionCreateParams,

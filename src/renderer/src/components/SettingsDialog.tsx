@@ -1,4 +1,3 @@
-import { providerStatusText } from '../features/settings/lib/providerStatusText'
 import { settingsUi } from '../features/settings/lib/settingsUi'
 import { useUiLanguage } from '../lib/i18n'
 import { useState } from 'react'
@@ -7,7 +6,6 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   Dialog,
   FormControlLabel,
   FormControl,
@@ -15,16 +13,13 @@ import {
   IconButton,
   ListItemButton,
   ListItemText,
-  Paper,
   Radio,
   RadioGroup,
   Stack,
   Switch,
   TextField,
-  Tooltip,
   Typography
 } from '@mui/material'
-import { GoPlus, GoSync } from 'react-icons/go'
 import { PhiIcons } from '../icons'
 import type { ModelOption, PhiAppSettingsPatch, ProviderAuthStatus } from '../types'
 import type { FileOpenConversationLayout } from '../../../shared/appSettingsTypes'
@@ -35,6 +30,7 @@ import type { ThemePaletteId } from '../themePalettes'
 import { RemoteHostSettingsSection } from '../features/wrapper/components/RemoteHostSettings'
 import { EnvironmentSettingsPanel } from '../features/environment/EnvironmentSettingsPanel'
 import { WebSearchSettingsPanel } from '../features/settings/WebSearchSettingsPanel'
+import { ProvidersSection } from '../features/settings/components/ProvidersSection'
 import { AppearanceSettingsSection } from '../features/settings/components/AppearanceSettingsSection'
 import { AppUpdateSection } from '../features/settings/components/AppUpdateSection'
 import { PermissionSettingsSection } from './PermissionView'
@@ -43,12 +39,7 @@ import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
 import type { ManualCompactionTarget } from '../../../shared/contextUsageTypes'
 import { AutoCompactionSettingsSection } from '../features/chat/components/AutoCompactionSettingsSection'
 
-const AddIcon = PhiIcons.action.add
 const CloseIcon = PhiIcons.action.close
-const KeyIcon = PhiIcons.entity.apiKey
-const LogoutIcon = PhiIcons.action.logout
-const RefreshIcon = GoSync
-const AddToolbarIcon = GoPlus
 const PaletteIcon = PhiIcons.settings.appearance
 const ProviderIcon = PhiIcons.settings.providers
 const SearchIcon = PhiIcons.action.search
@@ -217,167 +208,6 @@ function PersonaSection({
           {settingsUi.save}
         </Button>
       </Box>
-    </Stack>
-  )
-}
-
-function ProviderCard({
-  provider,
-  onLogout
-}: {
-  provider: ProviderAuthStatus
-  onLogout: (providerId: string) => void
-}): React.JSX.Element {
-  useUiLanguage()
-  return (
-    <Paper variant="outlined" sx={{ px: 1.5, py: 1.25, borderRadius: 1 }}>
-      <Stack
-        direction={{ xs: 'column', sm: 'row' }}
-        spacing={1.25}
-        sx={{ alignItems: { xs: 'stretch', sm: 'center' } }}
-      >
-        <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Stack
-            direction="row"
-            spacing={1}
-            sx={{ alignItems: 'baseline', minWidth: 0, flexWrap: 'wrap', rowGap: 0.25 }}
-          >
-            <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.35 }}>
-              {provider.name}
-            </Typography>
-            <Typography
-              variant="body2"
-              sx={{
-                color: 'text.secondary',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '0.82rem',
-                minWidth: 0,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap'
-              }}
-            >
-              {provider.providerId}
-            </Typography>
-          </Stack>
-
-          <Stack direction="row" spacing={0.75} sx={{ mt: 0.75, flexWrap: 'wrap', rowGap: 0.75 }}>
-            {provider.hasApiKey && <Chip size="small" icon={<KeyIcon />} label="API Key" />}
-            {provider.hasOAuth && <Chip size="small" icon={<ShieldIcon />} label="OAuth" />}
-            {provider.statusText && (
-              <Chip
-                size="small"
-                label={providerStatusText(provider.statusText)}
-                variant="outlined"
-              />
-            )}
-          </Stack>
-        </Box>
-
-        <Stack
-          direction="row"
-          spacing={1}
-          sx={{
-            alignItems: 'center',
-            justifyContent: { xs: 'space-between', sm: 'flex-end' },
-            flexShrink: 0
-          }}
-        >
-          <Chip
-            size="small"
-            color={provider.configured ? 'success' : 'default'}
-            label={provider.configured ? settingsUi.configured : settingsUi.notConfigured}
-          />
-          {provider.configured && (
-            <Button
-              variant="outlined"
-              color="error"
-              size="small"
-              onClick={() => onLogout(provider.providerId)}
-              startIcon={<LogoutIcon />}
-              sx={{ minHeight: 34, px: 1.25 }}
-            >
-              {settingsUi.logOut}
-            </Button>
-          )}
-        </Stack>
-      </Stack>
-    </Paper>
-  )
-}
-
-function ProvidersSection({
-  providers,
-  onRefresh,
-  onOpenAddProvider,
-  onLogout
-}: {
-  providers: ProviderAuthStatus[]
-  onRefresh: () => Promise<void>
-  onOpenAddProvider: () => void
-  onLogout: (providerId: string) => void
-}): React.JSX.Element {
-  useUiLanguage()
-  const configuredProviders = providers.filter((item) => item.configured)
-
-  return (
-    <Stack spacing={1.5}>
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 1
-        }}
-      >
-        <Typography variant="h5">{settingsUi.providers}</Typography>
-        <Stack direction="row" spacing={1}>
-          <Tooltip title={settingsUi.refreshStatus}>
-            <IconButton
-              aria-label={settingsUi.refreshStatus}
-              onClick={() => void onRefresh()}
-              sx={{ width: 40, height: 40, color: 'text.secondary' }}
-            >
-              <RefreshIcon size={19} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title={settingsUi.addProvider}>
-            <IconButton
-              aria-label={settingsUi.addProvider}
-              color="primary"
-              onClick={onOpenAddProvider}
-              sx={{ width: 40, height: 40 }}
-            >
-              <AddToolbarIcon size={28} />
-            </IconButton>
-          </Tooltip>
-        </Stack>
-      </Box>
-
-      {configuredProviders.length === 0 ? (
-        <Paper sx={{ p: 3, borderRadius: 1 }}>
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            <Typography variant="body1">{settingsUi.noProvidersConfigured}</Typography>
-          </Alert>
-          <Button
-            variant="contained"
-            onClick={onOpenAddProvider}
-            startIcon={<AddIcon />}
-            sx={{ minHeight: 44 }}
-          >
-            {settingsUi.addAProvider}
-          </Button>
-        </Paper>
-      ) : (
-        <Stack spacing={1}>
-          {configuredProviders.map((provider) => (
-            <Box key={provider.providerId}>
-              <ProviderCard provider={provider} onLogout={onLogout} />
-            </Box>
-          ))}
-        </Stack>
-      )}
     </Stack>
   )
 }

@@ -1,3 +1,7 @@
+import type {
+  ModelAvailabilityChange,
+  ModelAvailabilitySnapshot
+} from '../shared/modelAvailabilityTypes'
 import { IPC } from '../shared/ipcChannels'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { BrowserRendererBridge, BrowserRendererEventEnvelope } from '../shared/browserTypes'
@@ -180,6 +184,7 @@ type AuthStatusItem = {
   label?: string
   hasApiKey: boolean
   hasOAuth: boolean
+  modelKinds?: Array<'chat' | 'decision'>
   hasConfigError: boolean
   statusText: string
 }
@@ -825,6 +830,8 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => Unsubscribe
   getAppSettings: () => Promise<PhiAppSettings>
+  getModelAvailability: () => Promise<ModelAvailabilitySnapshot>
+  setModelEnabled: (change: ModelAvailabilityChange) => Promise<ModelAvailabilitySnapshot>
   checkForAppUpdates: () => Promise<AppUpdateCheck>
   openAppReleasesPage: (url?: string) => Promise<void>
   openWebUrl: (url: string) => Promise<void>
@@ -1407,6 +1414,10 @@ const api: RendererAuthApi = {
     }
   },
   getAppSettings: (): Promise<PhiAppSettings> => ipcRenderer.invoke(IPC.settings.get),
+  getModelAvailability: (): Promise<ModelAvailabilitySnapshot> =>
+    ipcRenderer.invoke(IPC.models.availability),
+  setModelEnabled: (change: ModelAvailabilityChange): Promise<ModelAvailabilitySnapshot> =>
+    ipcRenderer.invoke(IPC.models.setEnabled, change),
   checkForAppUpdates: (): Promise<AppUpdateCheck> => ipcRenderer.invoke(IPC.app.checkForUpdates),
   openAppReleasesPage: (url?: string): Promise<void> =>
     ipcRenderer.invoke(IPC.app.openReleasesPage, url),

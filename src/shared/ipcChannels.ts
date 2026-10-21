@@ -145,6 +145,8 @@ export const IPC = {
     consumeAction: 'menu-bar:consume-action'
   },
   models: {
+    availability: 'models:availability',
+    setEnabled: 'models:setEnabled',
     list: 'models:list',
     select: 'models:select',
     selected: 'models:selected'

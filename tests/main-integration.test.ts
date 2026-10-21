@@ -1,3 +1,5 @@
+import { parseModelAvailabilityChange } from '../src/main/agent/model-availability'
+import type { ModelAvailabilitySettings } from '../src/shared/modelAvailabilityTypes'
 import * as runtimeRecoveryIpc from '../src/main/agent/session/runtime-recovery-ipc'
 import * as recoverySummary from '../src/main/agent/session/recovery-summary'
 import * as recoveryFailures from '../src/main/agent/engine/rpc/session-recovery'
@@ -847,6 +849,7 @@ async function harness(
   const appNoProjectTaskFolder = '/workspace'
   let allowExternalFileRead = false
   let appUiLanguage = options.uiLanguage
+  const modelAvailability: ModelAvailabilitySettings = { disabledProviders: [], disabledModels: [] }
   let systemLanguage: 'en' | 'zh-CN' = 'en'
   let openDialogResult: { canceled: boolean; filePaths: string[] } = {
     canceled: true,
@@ -1534,6 +1537,8 @@ async function harness(
         ['mcp.prepareRemoteAuth', 'mcp.authorizeRemote', 'mcp.cancelRemoteAuth'].includes(method)
       )
         return customMcpBridgeRequest(method, params)
+      if (method === 'decisions.models')
+        return [{ providerId: 'typesafe', modelId: 'jev-test', name: 'JEV', configured: true }]
       if (method === 'agentRuns.list') return bridgeAgentJobs
       if (method === 'sessions.fork') return { path: 'forked.jsonl' }
       if (method === 'mcp.featuredTools') return ['search_articles']
@@ -4143,6 +4148,43 @@ async function harness(
         appLogs.push(entry)
       }
     },
+    './agent/model-management': {
+      getModelAvailability: async () => ({
+        ...modelAvailability,
+        models: [
+          {
+            providerId: 'typesafe',
+            modelId: 'jev-test',
+            name: 'JEV',
+            configured: true,
+            kind: 'decision',
+            enabled: !modelAvailability.disabledProviders.includes('typesafe')
+          }
+        ]
+      }),
+      setModelEnabled: async (value: unknown) => {
+        const change = parseModelAvailabilityChange(value)
+        if (
+          change.providerId !== 'typesafe' ||
+          (change.modelId !== undefined && change.modelId !== 'jev-test')
+        )
+          throw new Error('Unknown provider or model')
+        modelAvailability.disabledProviders = change.enabled ? [] : [change.providerId]
+        return {
+          ...modelAvailability,
+          models: [
+            {
+              providerId: 'typesafe',
+              modelId: 'jev-test',
+              name: 'JEV',
+              configured: true,
+              kind: 'decision',
+              enabled: change.enabled
+            }
+          ]
+        }
+      }
+    },
     './agent/app-settings': {
       configureSystemUiLanguage: (languages: readonly string[]): void => {
         systemLanguage = systemUiLanguage(languages)
@@ -4157,7 +4199,8 @@ async function harness(
         allowExternalFileRead,
         preventSleepDuringRuns: false,
         nextActionSuggestionsEnabled: true,
-        fileOpenConversationLayout: 'sidebar'
+        fileOpenConversationLayout: 'sidebar',
+        modelAvailability
       }),
       updateAppSettings: (patch: Record<string, unknown>): Record<string, unknown> => {
         if (patch.uiLanguage === 'en' || patch.uiLanguage === 'zh-CN')
@@ -4171,7 +4214,8 @@ async function harness(
           allowExternalFileRead,
           preventSleepDuringRuns: false,
           nextActionSuggestionsEnabled: true,
-          fileOpenConversationLayout: 'sidebar'
+          fileOpenConversationLayout: 'sidebar',
+          modelAvailability
         }
       }
     },
@@ -5516,7 +5560,8 @@ test('main IPC: app settings exposes general preferences', async () => {
     allowExternalFileRead: false,
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
-    fileOpenConversationLayout: 'sidebar'
+    fileOpenConversationLayout: 'sidebar',
+    modelAvailability: { disabledProviders: [], disabledModels: [] }
   })
   const requests = app.bridgeRequests.length
   const updated = (await app.invoke('settings:update', { uiLanguage: 'zh-CN' })) as {
@@ -5529,6 +5574,29 @@ test('main IPC: app settings exposes general preferences', async () => {
     requests,
     'changing display language does not restart or call the agent runtime'
   )
+})
+
+test('main IPC: provider availability is reversible and the retired manual decision route is absent', async () => {
+  const app = await harness()
+  const catalog = (await app.invoke('models:availability')) as {
+    models: Array<{ kind: string; enabled: boolean }>
+  }
+  assert.equal(catalog.models[0].kind, 'decision')
+  const disabled = (await app.invoke('models:setEnabled', {
+    providerId: 'typesafe',
+    enabled: false
+  })) as { disabledProviders: string[] }
+  assert.deepEqual(disabled.disabledProviders, ['typesafe'])
+  const enabled = (await app.invoke('models:setEnabled', {
+    providerId: 'typesafe',
+    enabled: true
+  })) as { disabledProviders: string[] }
+  assert.deepEqual(enabled.disabledProviders, [])
+  await assert.rejects(
+    app.invoke('models:setEnabled', { providerId: 'unknown', enabled: false }),
+    /Unknown/
+  )
+  assert.equal(app.registrationOrder.includes('settings:decisionModels'), false)
 })
 
 test('main IPC: initial language follows the system while saved choices take priority', async () => {
@@ -7203,6 +7271,8 @@ const expectedStartupRegistrationOrder = [
   'app:openReleasesPage',
   'app:openWebUrl',
   'settings:get',
+  'models:availability',
+  'models:setEnabled',
   'settings:update',
   'settings:webSearch:get',
   'settings:webSearch:update',

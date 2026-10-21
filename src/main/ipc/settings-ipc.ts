@@ -2,6 +2,7 @@ import type { IpcMain } from 'electron'
 
 import { IPC } from '../../shared/ipcChannels'
 import { readAppSettings, updateAppSettings } from '../agent/app-settings'
+import { getModelAvailability, setModelEnabled } from '../agent/model-management'
 import { getPhiEngine } from '../agent/engine/in-process-engine'
 
 export interface SettingsIpcOptions {
@@ -12,9 +13,13 @@ export interface SettingsIpcOptions {
 
 export function registerSettingsIpc(options: SettingsIpcOptions): void {
   const { ipcMain, agentDir: AGENT_DIR, syncPreventSleepBlocker } = options
-  ipcMain.handle(IPC.settings.get, async () => readAppSettings())
+  ipcMain.handle(IPC.settings.get, async () => readAppSettings(AGENT_DIR))
+  ipcMain.handle(IPC.models.availability, async () => getModelAvailability(AGENT_DIR))
+  ipcMain.handle(IPC.models.setEnabled, async (_, change: unknown) =>
+    setModelEnabled(change, AGENT_DIR)
+  )
   ipcMain.handle(IPC.settings.update, async (_, patch: unknown) => {
-    const settings = updateAppSettings(patch)
+    const settings = updateAppSettings(patch, AGENT_DIR)
     syncPreventSleepBlocker()
     return settings
   })

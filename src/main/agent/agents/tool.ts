@@ -2,6 +2,11 @@ import { readFileSync, statSync } from 'node:fs'
 import { extname, isAbsolute } from 'node:path'
 
 import type { PhiTool } from '../engine/types'
+import {
+  assessTaskRouting,
+  type TaskRoutingAssessor,
+  type TaskRoutingDecision
+} from '../decisions/policies'
 import type { PhiAgentDefinition } from './definition'
 import { AgentRunLimitError, AgentRunRegistry, type AgentRunSnapshot } from './registry'
 import {
@@ -30,13 +35,19 @@ export interface AgentToolOptions {
   cwd?: string
   /** Remote projects keep today's delegation tool: no local execution context and no image forwarding. */
   remote?: boolean
+  /** Advisory task matching only; the registry and runner retain execution authority. */
+  assessTask?: TaskRoutingAssessor
 }
 
-function errorResult(text: string): {
+function errorResult(
+  text: string,
+  details?: unknown
+): {
   content: Array<{ type: 'text'; text: string }>
   isError: true
+  details?: unknown
 } {
-  return { content: [{ type: 'text', text }], isError: true }
+  return { content: [{ type: 'text', text }], isError: true, ...(details ? { details } : {}) }
 }
 
 function stepUpdateText(step: AgentRunToolStep): string {
@@ -220,6 +231,51 @@ export function buildAgentTool(
       const background = record.background === true
       const delegatedTask = executionContext(task, local ? cwd : undefined, notes)
 
+      let decision: TaskRoutingDecision | undefined
+      if (options.assessTask) {
+        try {
+          decision = await assessTaskRouting(
+            {
+              agent: name,
+              description: definition.description,
+              delegation: definition.delegation,
+              task
+            },
+            options.assessTask,
+            signal
+          )
+        } catch {
+          return errorResult(
+            signal?.aborted
+              ? 'Task routing assessment was cancelled; no specialist run was started.'
+              : 'Task routing assessment failed; no specialist run was started. Review the task and retry or select another specialist.'
+          )
+        }
+        const details = { kind: 'agent_decision', agent: name, purpose: 'task_routing', decision }
+        onUpdate?.({
+          content: [
+            {
+              type: 'text',
+              text: `Task routing assessment for ${name}: ${decision.choice} (${decision.source}).`
+            }
+          ],
+          details
+        })
+        // Updates may synchronously cancel the parent. Background runs detach only after this gate.
+        if (signal?.aborted) {
+          return errorResult(
+            'Task routing assessment was cancelled; no specialist run was started.',
+            details
+          )
+        }
+        if (decision.choice === 'unsuitable') {
+          return errorResult(
+            `The ${name} specialist was assessed as unsuitable for this task. Review its capabilities and choose an appropriate route. No specialist run was started.`,
+            details
+          )
+        }
+      }
+
       let handle
       try {
         handle = registry.launch({
@@ -259,7 +315,12 @@ export function buildAgentTool(
               text: `Started the ${name} agent in the background as run ${handle.id}. It keeps working while you continue, and Phi sends you its report as a message when it finishes, so do not poll. Call agent_wait ids=["${handle.id}"] only if you cannot go on without the result; agent_status shows progress, agent_steer redirects it, agent_stop cancels it.`
             }
           ],
-          details: { kind: 'agent_started', agent: name, runId: handle.id }
+          details: {
+            kind: 'agent_started',
+            agent: name,
+            runId: handle.id,
+            ...(decision ? { decision } : {})
+          }
         }
       }
 
@@ -272,6 +333,7 @@ export function buildAgentTool(
         details: {
           kind: 'agent_result',
           agent: name,
+          ...(decision ? { decision } : {}),
           status: run.reportStatus ?? 'completed',
           missingInputs: run.missingInputs ?? [],
           ...(run.nextAgent ? { nextAgent: run.nextAgent } : {}),

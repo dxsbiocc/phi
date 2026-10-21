@@ -56,6 +56,9 @@ import {
 } from './capability-refresh'
 import { createPhiAgentSession } from './subagents'
 import { loadSkillScriptTools } from './tool-support'
+import { buildDecisionTool } from '../../decisions/tool'
+import { bindSessionDecisionEvaluator } from '../decision-evaluator'
+import { evaluateDecisionRequest } from './decision-runtime'
 
 export async function createSessionToolRegistry(deps: {
   record: UnknownRecord
@@ -194,6 +197,12 @@ export async function createSessionToolRegistry(deps: {
     ? buildRemoteWorkspaceRead(requestHost, remoteWorkspaceIdentity)
     : undefined
   if (phiAgents.length > 0) pruneAgentUsageLogs(agentDir)
+  const decide = bindSessionDecisionEvaluator({
+    agentDir,
+    sessionId,
+    currentModel: () => parentRef.current?.session.model,
+    evaluate: evaluateDecisionRequest
+  })
   const createAgentTool = (definition: PhiAgentDefinition): PhiTool =>
     buildAgentTool(
       definition,
@@ -219,6 +228,7 @@ export async function createSessionToolRegistry(deps: {
                     const registered = parentRef.current?.session.getAllToolInfos() ?? []
                     return customTools.filter(
                       (tool) =>
+                        tool.name !== 'phi_decide' &&
                         !tool.name.startsWith('mcp__') &&
                         remoteAgentToolRegistrationVerified(tool.name, registered)
                     )
@@ -238,7 +248,7 @@ export async function createSessionToolRegistry(deps: {
           })
       }),
       agentRuns,
-      { cwd, ...(remoteRoot ? { remote: true } : {}) }
+      { cwd, assessTask: decide, ...(remoteRoot ? { remote: true } : {}) }
     )
   const agentCustomTools = phiAgents.map(createAgentTool)
   const agentRunTools = phiAgents.length > 0 ? buildAgentRunTools(agentRuns) : []
@@ -298,6 +308,7 @@ export async function createSessionToolRegistry(deps: {
       })
     : []
   const customTools = [
+    buildDecisionTool(decide),
     ...remoteWorkspaceCustomTools,
     ...agentCustomTools,
     ...agentRunTools,

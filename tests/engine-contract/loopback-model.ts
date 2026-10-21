@@ -28,8 +28,22 @@ export async function startLoopbackModel(): Promise<{
       }
       let body = ''
       for await (const chunk of request) body += chunk
-      requests.push(JSON.parse(body) as ModelRequest)
-      const reply = replies.shift()
+      const parsed = JSON.parse(body) as ModelRequest
+      requests.push(parsed)
+      // A task assessment is a separate, tool-less provider call before delegation.
+      // Answer its actual SDK prompt without consuming the scripted child/main turn.
+      const taskAssessment =
+        parsed.messages.length === 2 &&
+        parsed.messages.some(
+          (message) =>
+            (message.role === 'system' || message.role === 'developer') &&
+            typeof message.content === 'string' &&
+            message.content.includes('Is this specialist suitable for the exact delegated task') &&
+            message.content.includes('`suitable`') &&
+            message.content.includes('`uncertain`')
+        ) &&
+        (!Array.isArray(parsed.tools) || parsed.tools.length === 0)
+      const reply = taskAssessment ? { text: 'suitable' } : replies.shift()
       if (!reply) {
         response.writeHead(500).end('No scripted model reply remains')
         return

@@ -44,6 +44,7 @@ export function appRpcDesktopToolNames(
     ...APP_RPC_NOTEBOOK_TOOL_NAMES,
     ...WRAPPER_COMPOSITION_TOOL_NAMES,
     'present_files',
+    'phi_decide',
     ...(resources
       ? [
           'ask_user_question',

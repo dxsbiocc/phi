@@ -30,6 +30,13 @@ type RecordedHostResponse = {
 }
 
 function requestResult(method: string, params: unknown): unknown {
+  if (method === 'decisions.evaluate')
+    return {
+      choice: 'inspect',
+      source: 'model',
+      model: { providerId: 'provider', modelId: 'model' },
+      fallbackReason: 'not_configured'
+    }
   if (method === 'session.create') {
     const sessionId = (params as { sessionId: string }).sessionId
     return { sessionId, state: { cwd: '/created' } }
@@ -119,6 +126,12 @@ type RequestCase = {
 }
 
 const requestCases: RequestCase[] = [
+  {
+    name: 'decisions.models',
+    method: 'decisions.models',
+    params: { agentDir: '/agent' },
+    invoke: (engine) => engine.decisions.models({ agentDir: '/agent' })
+  },
   {
     name: 'sessions.create',
     method: 'session.create',
@@ -570,6 +583,50 @@ test('non-request PhiEngine methods forward subscriptions, host handlers, presen
   assert.equal(recording.child.killed, true)
 })
 
+test('decision facade validates answers and cancels its private worker job without stopping the worker', async () => {
+  const recording = recordingBridge()
+  const engine = createInProcessEngine(recording.bridge)
+  const params = {
+    agentDir: '/agent',
+    sessionId: 'session',
+    model: { providerId: 'provider', modelId: 'model' },
+    request: {
+      purpose: 'recovery' as const,
+      context: 'A read was interrupted.',
+      question: 'What next?',
+      options: [
+        { id: 'inspect', description: 'Inspect before retry' },
+        { id: 'retry', description: 'Retry a safe read' }
+      ]
+    }
+  }
+  try {
+    assert.deepEqual(
+      await engine.decisions.evaluate(params),
+      requestResult('decisions.evaluate', {})
+    )
+    const firstJob = (recording.calls[0].params as { jobId: string }).jobId
+    assert.match(firstJob, /^[a-f0-9-]{36}$/)
+    const controller = new AbortController()
+    const pending = engine.decisions.evaluate(params, controller.signal)
+    const rejected = assert.rejects(pending)
+    controller.abort(new Error('Stopped this decision'))
+    await rejected
+    const dispatch = recording.calls.findLast((call) => call.method === 'decisions.evaluate')!
+    const cancelled = recording.calls.find((call) => call.method === 'decisions.cancel')!
+    assert.deepEqual(cancelled.params, { jobId: (dispatch.params as { jobId: string }).jobId })
+    assert.notEqual((dispatch.params as { jobId: string }).jobId, firstJob)
+    assert.equal(recording.child.killed, false)
+    // The already queued late worker reply cannot poison another decision.
+    assert.deepEqual(
+      await engine.decisions.evaluate(params),
+      requestResult('decisions.evaluate', {})
+    )
+  } finally {
+    await engine.stop()
+  }
+})
+
 test('worker dispatch matches the PhiEngine facade and private runtime service commands', () => {
   const workerSource = readFileSync(
     join(process.cwd(), 'src/main/agent/engine/in-process/main.ts'),
@@ -580,6 +637,8 @@ test('worker dispatch matches the PhiEngine facade and private runtime service c
   // Their real worker lifecycle is exercised by the gateway/lease contract suites.
   const engineMethods = [
     ...requestCases.map((entry) => entry.method),
+    'decisions.evaluate',
+    'decisions.cancel',
     'modelGateway.create',
     'modelGateway.revoke',
     'mcp.desktopCreate',

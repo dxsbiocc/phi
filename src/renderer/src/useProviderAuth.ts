@@ -1,3 +1,4 @@
+import { MODEL_AVAILABILITY_CHANGED } from './lib/modelAvailabilityEvents'
 import { useCallback, useEffect, useState } from 'react'
 import type { ActiveAuthPrompt, AuthInteractionEvent, ProviderAuthStatus } from './types'
 import { readableErrorMessage } from './lib/sessionNotifications'
@@ -57,6 +58,7 @@ export function useProviderAuth(
   const refreshAuthStatuses = useCallback(async (): Promise<void> => {
     const data = await window.api.getAuthStatus()
     setProviderStatuses(data)
+    window.dispatchEvent(new Event(MODEL_AVAILABILITY_CHANGED))
   }, [])
 
   useEffect(() => {
@@ -86,6 +88,7 @@ export function useProviderAuth(
       try {
         const next = await window.api.loginApiKey(providerId, key)
         setProviderStatuses(next)
+        window.dispatchEvent(new Event(MODEL_AVAILABILITY_CHANGED))
         setProviderHintEvents((prev) => ({ ...prev, [providerId]: null }))
         setIsProviderDialogOpen(false)
         notify(settingsUi.providerAuth.apiKeySaved, 'success')
@@ -109,6 +112,7 @@ export function useProviderAuth(
       try {
         const next = await window.api.loginOAuth(providerId)
         setProviderStatuses(next)
+        window.dispatchEvent(new Event(MODEL_AVAILABILITY_CHANGED))
         setProviderHintEvents((prev) => ({ ...prev, [providerId]: null }))
         setActivePrompts((prev) => prev.filter((item) => item.providerId !== providerId))
         setIsProviderDialogOpen(false)

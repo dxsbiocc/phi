@@ -38,7 +38,8 @@ test('app settings provide general preference defaults', () => {
       allowExternalFileRead: false,
       preventSleepDuringRuns: DEFAULT_PREVENT_SLEEP_DURING_RUNS,
       nextActionSuggestionsEnabled: DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
-      fileOpenConversationLayout: DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT
+      fileOpenConversationLayout: DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT,
+      modelAvailability: { disabledProviders: [], disabledModels: [] }
     })
   })
 })
@@ -67,7 +68,8 @@ test('app settings update general preferences while preserving unknown fields', 
       allowExternalFileRead: true,
       preventSleepDuringRuns: true,
       nextActionSuggestionsEnabled: false,
-      fileOpenConversationLayout: 'tab'
+      fileOpenConversationLayout: 'tab',
+      modelAvailability: { disabledProviders: [], disabledModels: [] }
     })
     assert.deepEqual(raw.custom, { keep: true })
     assert.equal(raw.noProjectTaskFolder, noProjectTaskFolder)
@@ -181,5 +183,29 @@ test('last model preference preserves general settings and ignores malformed pre
     assert.equal(readLastSelectedModel(agentDir), undefined)
     assert.throws(() => writeLastSelectedModel(null, agentDir), /不是合法 JSON/)
     assert.equal(readFileSync(path, 'utf8'), '{invalid')
+  })
+})
+
+test('legacy manual decision settings are inert and remain untouched when saving general preferences', () => {
+  withTempAgentDir((agentDir) => {
+    const path = getAppSettingsPath(agentDir)
+    const original = {
+      custom: { keep: true },
+      decisionModel: { providerId: 'typesafe', modelId: 'old-jev' }
+    }
+    writeFileSync(path, JSON.stringify(original))
+    assert.equal('decisionModel' in readAppSettings(agentDir), false)
+    assert.deepEqual(readAppSettings(agentDir).modelAvailability, {
+      disabledProviders: [],
+      disabledModels: []
+    })
+    updateAppSettings(
+      { decisionModel: { providerId: 'forged', modelId: 'ignored' }, preventSleepDuringRuns: true },
+      agentDir
+    )
+    assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), {
+      ...original,
+      preventSleepDuringRuns: true
+    })
   })
 })

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { createFacadeDesktopToolScopeFactory } from './facade-desktop-tool-scope'
 import {
   compactionPolicy,
   type RpcCompactionPolicy
@@ -42,11 +43,7 @@ import {
   type RoutedSessionDriver,
   type RoutedSessionFactory
 } from '../session-routing-engine'
-import {
-  createRpcDesktopToolScope,
-  type RpcDesktopToolScopeOptions,
-  type RpcDesktopToolRun
-} from './desktop-tool-scope'
+import type { RpcDesktopToolScope, RpcDesktopToolScopeOptions } from './desktop-tool-scope'
 import {
   RemoteSessionRuntime,
   type RemoteRuntimeSnapshot,
@@ -472,48 +469,22 @@ export function createFacadeSessionFactory(
             options.runners.stopRun(phiSessionId)
         }
         const vault = new BrowserTextVault()
-        let tools: ReturnType<typeof createRpcDesktopToolScope> | undefined
+        let tools: RpcDesktopToolScope | undefined
         let childTools: FacadeChildToolScopes | undefined
         try {
-          const createScope = (
-            currentRun: () => RpcDesktopToolRun | undefined,
-            owner = 'main',
-            skills = selected.desktopTools?.allowedSkills ?? [],
-            childId?: string
-          ): ReturnType<typeof createRpcDesktopToolScope> =>
-            createRpcDesktopToolScope({
-              identity: {
-                runtimeSessionId: params.sessionId,
-                sessionId: phiSessionId,
-                projectId,
-                cwd: binding.canonicalRoot
-              },
-              services: options.bridge.hostServices,
-              currentRun,
-              toolOwner: owner,
-              ownsSharedResources: owner === 'main',
-              assertBinding: () => {
-                selected.desktopTools?.assertBinding?.()
-                if (childId && !runtime?.childRunForHost(childId))
-                  throw new Error('Child host scope is no longer active')
-              },
-              recentUserImages: selected.recentUserImages,
-              allowBrowserTypeText: () =>
-                owner === 'main' && selected.desktopToolNames.includes('browser'),
-              browserTextVault: childId ? runtime!.childBrowserTextVault(childId) : vault,
-              agentDir: params.agentDir,
-              allowedSkills: skills,
-              skillCatalog: selected.desktopTools?.skillCatalog,
-              scriptTools: selected.desktopTools?.scriptTools ?? [],
-              scriptApprovalFor: selected.desktopTools?.scriptApprovalFor
-                ? (name, input) => selected.desktopTools!.scriptApprovalFor!(name, input, childId)
-                : undefined,
-              paletteCatalogPath: selected.desktopTools?.paletteCatalogPath,
-              remoteLibrary: selected.desktopTools?.remoteLibrary,
-              desktopWebSearch: selected.desktopTools?.desktopWebSearch,
-              desktopMcp: selected.desktopTools?.desktopMcp,
-              desktopMemory: selected.memory
-            })
+          const createScope = createFacadeDesktopToolScopeFactory({
+            identity: {
+              runtimeSessionId: params.sessionId,
+              sessionId: phiSessionId,
+              projectId,
+              cwd: binding.canonicalRoot
+            },
+            agentDir: params.agentDir,
+            bridge: options.bridge,
+            selected,
+            runtime: () => runtime,
+            vault
+          })
           tools = createScope(() => runtime?.currentRun())
           if (selected.foregroundChildren)
             childTools = new FacadeChildToolScopes({

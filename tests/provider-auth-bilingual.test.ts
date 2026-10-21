@@ -1,3 +1,4 @@
+import { MODEL_AVAILABILITY_CHANGED } from '../src/renderer/src/lib/modelAvailabilityEvents'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test, { afterEach } from 'node:test'
@@ -87,9 +88,11 @@ function harness(overrides: Partial<AuthApi> = {}): {
   runInNewContext(code, {
     module,
     exports: module.exports,
-    window: { api },
+    window: { api, dispatchEvent: () => true },
+    Event,
     require(specifier: string): unknown {
       if (specifier === 'react') return react
+      if (specifier.endsWith('/modelAvailabilityEvents')) return { MODEL_AVAILABILITY_CHANGED }
       if (specifier.endsWith('/settingsUi')) return { settingsUi }
       if (specifier.endsWith('/i18n')) return { useUiLanguage: getUiLanguage }
       if (specifier.endsWith('/sessionNotifications')) return { readableErrorMessage }

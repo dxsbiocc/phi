@@ -1,4 +1,8 @@
 import type {
+  ModelAvailabilityChange,
+  ModelAvailabilitySnapshot
+} from '../../shared/modelAvailabilityTypes'
+import type {
   NotebookGeneratedCell,
   NotebookDocument,
   NotebookOutput
@@ -289,6 +293,7 @@ export interface ProviderAuthStatus {
   label?: string
   hasApiKey: boolean
   hasOAuth: boolean
+  modelKinds?: Array<'chat' | 'decision'>
   hasConfigError: boolean
   statusText: string
 }
@@ -763,6 +768,8 @@ export interface RendererApi
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => () => void
   getAppSettings: () => Promise<PhiAppSettings>
+  getModelAvailability: () => Promise<ModelAvailabilitySnapshot>
+  setModelEnabled: (change: ModelAvailabilityChange) => Promise<ModelAvailabilitySnapshot>
   checkForAppUpdates: () => Promise<AppUpdateCheck>
   openAppReleasesPage: (url?: string) => Promise<void>
   openWebUrl: (url: string) => Promise<void>

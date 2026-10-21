@@ -1,4 +1,5 @@
 import { getOmpBridge, type OmpBridge } from './omp-bridge'
+import { createDecisionClient } from './decision-client'
 import { SessionRoutingEngine } from './session-routing-engine'
 import {
   createFacadeSessionFactory,
@@ -10,6 +11,7 @@ import type { AutoCompactionOverrides } from '../../../shared/contextUsageTypes'
 
 export function createInProcessEngine(bridge: OmpBridge): PhiEngine {
   return {
+    decisions: createDecisionClient(bridge),
     sessions: {
       create: (params) => bridge.request('session.create', params),
       prompt: (params) => bridge.request('session.prompt', params),

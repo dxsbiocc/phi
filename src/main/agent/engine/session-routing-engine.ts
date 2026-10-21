@@ -100,6 +100,7 @@ export class SessionRoutingEngine implements PhiEngine {
   private readonly eventsById = new Map<string, Set<(event: PhiAgentEvent) => void>>()
   private readonly statesById = new Map<string, Set<(state: unknown) => void>>()
   readonly models: PhiEngine['models']
+  readonly decisions: PhiEngine['decisions']
   readonly resources: PhiEngine['resources']
   readonly mcp: PhiEngine['mcp']
   readonly memory: PhiEngine['memory']
@@ -110,6 +111,7 @@ export class SessionRoutingEngine implements PhiEngine {
     private readonly factory: () => RoutedSessionFactory | undefined
   ) {
     this.models = legacy.models
+    this.decisions = legacy.decisions
     this.resources = legacy.resources
     this.mcp = legacy.mcp
     this.memory = legacy.memory

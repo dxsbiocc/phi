@@ -1,3 +1,7 @@
+import type {
+  ModelAvailabilityChange,
+  ModelAvailabilitySnapshot
+} from '../shared/modelAvailabilityTypes'
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) — see the matching comment in preload/index.ts.
 import type { WrapperCatalogEntry } from '../shared/wrapperCatalogTypes'
@@ -727,6 +731,7 @@ declare global {
           label?: string
           hasApiKey: boolean
           hasOAuth: boolean
+          modelKinds?: Array<'chat' | 'decision'>
           hasConfigError: boolean
           statusText: string
         }>
@@ -749,6 +754,7 @@ declare global {
           label?: string
           hasApiKey: boolean
           hasOAuth: boolean
+          modelKinds?: Array<'chat' | 'decision'>
           hasConfigError: boolean
           statusText: string
         }>
@@ -768,6 +774,7 @@ declare global {
           label?: string
           hasApiKey: boolean
           hasOAuth: boolean
+          modelKinds?: Array<'chat' | 'decision'>
           hasConfigError: boolean
           statusText: string
         }>
@@ -810,6 +817,8 @@ declare global {
         ) => void
       ) => () => void
       getAppSettings: () => Promise<PhiAppSettings>
+      getModelAvailability: () => Promise<ModelAvailabilitySnapshot>
+      setModelEnabled: (change: ModelAvailabilityChange) => Promise<ModelAvailabilitySnapshot>
       checkForAppUpdates: () => Promise<AppUpdateCheck>
       openAppReleasesPage: (url?: string) => Promise<void>
       openWebUrl: (url: string) => Promise<void>

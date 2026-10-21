@@ -1,3 +1,7 @@
+import {
+  filterProviders,
+  providerCapabilityLabel
+} from '../features/settings/lib/providerCapabilities'
 import { settingsUi } from '../features/settings/lib/settingsUi'
 import { useUiLanguage } from '../lib/i18n'
 import {
@@ -88,12 +92,7 @@ function AddProviderDialogContent({
   const providerListRef = useRef<HTMLUListElement>(null)
 
   const selectedProvider = providers.find((item) => item.providerId === selectedProviderId) ?? null
-  const normalizedQuery = providerQuery.trim().toLocaleLowerCase()
-  const visibleProviders = normalizedQuery
-    ? providers.filter((provider) =>
-        `${provider.name} ${provider.providerId}`.toLocaleLowerCase().includes(normalizedQuery)
-      )
-    : providers
+  const visibleProviders = filterProviders(providers, providerQuery)
 
   const focusProviderOption = (index: number): void => {
     const options = providerListRef.current?.querySelectorAll<HTMLButtonElement>('button')
@@ -249,7 +248,7 @@ function AddProviderDialogContent({
                     >
                       <ListItemText
                         primary={provider.name}
-                        secondary={provider.providerId}
+                        secondary={`${provider.providerId} · ${providerCapabilityLabel(provider)}`}
                         slotProps={{
                           primary: { sx: { fontWeight: 600, overflowWrap: 'anywhere' } },
                           secondary: {
