@@ -34,6 +34,8 @@ export type RenderGroup =
       kind: 'processing-group'
       key: string
       items: ProcessingItem[]
+      /** The turn ended in a terminal run failure rather than a result. */
+      failed?: boolean
       startedAtMs?: number
       completedAtMs?: number
       durationMs?: number
@@ -195,6 +197,9 @@ export function groupMessages(
     const runStartedAtMs = firstRunStartedAtMs(turnItems)
     const runCompletedAtMs = lastRunTerminalAtMs(turnItems)
     const runDurationMs = lastRunTerminalDurationMs(turnItems)
+    // run_failed renders as a trailing error item outside the fold, so the fold itself cannot
+    // tell a dropped run from a finished one without looking at the whole turn.
+    const runFailed = turnItems.some((item) => item.role === 'error')
     const lastProcessingIndex = turnItems.findLastIndex(isProcessingArtifact)
     if (lastProcessingIndex < 0) {
       if (runStartedAtMs !== undefined) {
@@ -204,6 +209,7 @@ export function groupMessages(
             kind: 'processing-group',
             key: processingGroupKey(turnItems, []),
             items: [],
+            ...(runFailed ? { failed: true } : {}),
             startedAtMs: runStartedAtMs,
             completedAtMs: runCompletedAtMs ?? maxTimestamp(visibleItems),
             durationMs: runDurationMs
@@ -249,6 +255,7 @@ export function groupMessages(
         kind: 'processing-group',
         key: processingGroupKey(turnItems, processingItems),
         items: processingItems,
+        ...(runFailed ? { failed: true } : {}),
         startedAtMs: runStartedAtMs ?? minTimestamp(processingItems),
         completedAtMs: runCompletedAtMs ?? maxTimestamp([...processingItems, ...trailingItems]),
         durationMs: runDurationMs

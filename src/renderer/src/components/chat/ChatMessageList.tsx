@@ -658,6 +658,7 @@ const ChatMessageList = memo(function ChatMessageList({
             onContentResize={onMessagesContentResize}
             cwd={cwd}
             isActive={isActiveProcessingGroup}
+            failed={group.failed === true}
             startedAtMs={
               isActiveProcessingGroup
                 ? (timestampMs(currentRunStartedAt) ?? group.startedAtMs)

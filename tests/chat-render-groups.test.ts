@@ -27,6 +27,44 @@ test('an error card does not make a still running turn look completed', () => {
   assert.equal(activeProcessingGroupIndex(groups, false), -1)
 })
 
+test('a finished turn reports a dropped connection as interrupted', () => {
+  const groups = groupMessages([
+    { id: 'user-1', role: 'user', content: '跑 sleep 180' },
+    { id: 'run-1', role: 'run', event: 'started', createdAt: '2026-09-29T00:00:00.000Z' },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'bash',
+      argsPreview: '{}',
+      argsJson: '{}',
+      output: '',
+      status: 'running'
+    },
+    {
+      id: 'error-1',
+      role: 'error',
+      content: 'RPC output stream ended',
+      runId: 'run-1'
+    }
+  ])
+
+  const group = groups.find((candidate) => candidate.kind === 'processing-group')
+  assert.equal(group?.kind, 'processing-group')
+  assert.equal(group?.kind === 'processing-group' && group.failed, true)
+  assert.equal(
+    group?.kind === 'processing-group' &&
+      processingStatusText({
+        items: group.items,
+        isActive: false,
+        failed: group.failed,
+        nowMs: 0,
+        fallbackStartedAtMs: 0,
+        durationMs: 59_000
+      }),
+    '已中断，总共用时 59 秒'
+  )
+})
+
 test('chat render groups leave wrapper plans as persistent artifacts', () => {
   const messages: ChatItem[] = [
     { id: 'user-1', role: 'user', content: 'run wrapper' },

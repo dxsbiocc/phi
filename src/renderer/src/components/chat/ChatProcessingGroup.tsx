@@ -53,6 +53,8 @@ export type ChatProcessingGroupProps = {
   onContentResize?: ChatContentResizeHandler
   cwd?: string
   isActive?: boolean
+  /** The turn this fold summarizes ended with a run failure instead of a result. */
+  failed?: boolean
   startedAtMs?: number
   completedAtMs?: number
   durationMs?: number
@@ -76,6 +78,7 @@ function processingGroupPropsEqual(
     prev.onOpenWebUrl === next.onOpenWebUrl &&
     prev.cwd === next.cwd &&
     prev.isActive === next.isActive &&
+    prev.failed === next.failed &&
     prev.startedAtMs === next.startedAtMs &&
     prev.completedAtMs === next.completedAtMs &&
     prev.durationMs === next.durationMs
@@ -93,6 +96,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   onContentResize,
   cwd = '',
   isActive = false,
+  failed: runFailed = false,
   startedAtMs,
   completedAtMs,
   durationMs
@@ -120,7 +124,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   const groupedItems = groupProcessingItems(items)
   const status = processingGroupStatus(items, isActive)
   const isProcessingActive = status === 'running'
-  const failed = !isProcessingActive && items.some((item) => item.role === 'error')
+  const failed = !isProcessingActive && (runFailed || items.some((item) => item.role === 'error'))
   const summary = processingStatusText({
     items,
     isActive: isProcessingActive,
