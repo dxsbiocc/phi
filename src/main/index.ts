@@ -244,11 +244,7 @@ import {
 import { createEnvironmentBuilds } from './agent/content/environment-builds'
 import { buildEnvironment } from './agent/content/environment-refs'
 import { bindAgentSession } from './agent/content/environment-gate'
-import {
-  createSkillHost,
-  type ConfirmBuildRequest,
-  type PresentArtifactsRequest
-} from './agent/content/skill-host'
+import { createSkillHost } from './agent/content/skill-host'
 import {
   loadRemoteProjectSkillCatalog,
   readRemoteProjectSkillContent,
@@ -267,22 +263,20 @@ import { createCapabilityService } from './agent/packages/capability-service'
 import { createExternalSkillService } from './agent/packages/external-skills'
 import { searchOfficialCatalog } from './agent/packages/official-catalog-api'
 import {
-  BUILD_NOW,
   confirmedEnvironmentBuild,
   environmentBuildQuestion
 } from './agent/content/environment-build-prompt'
-import {
-  ADD_PACKAGES,
-  confirmedEnvironmentRequest,
-  requestProjectEnvironment,
-  type EnvironmentRequestConfirm
-} from './agent/content/env-request'
+import { confirmedEnvironmentRequest, requestProjectEnvironment } from './agent/content/env-request'
 import {
   canRequestAgentUserInteraction,
   cancelAgentUserInteractions,
   resolveAgentUserInteraction,
   waitForAgentUserInteraction
 } from './agent/user-interaction'
+import { createAgentInteractionRequest } from './agent/host-requests/agent-interaction-request'
+import { createDeliverablesPresentation } from './agent/host-requests/deliverables-presentation'
+import { createHostConfirmations } from './agent/host-requests/host-confirmations'
+import { createPlanReviewRequest } from './agent/host-requests/plan-review-request'
 import {
   createInMemoryRuntimeSessionManager,
   getBundledAgentsDir,
@@ -416,7 +410,6 @@ import { RemoteJupyterStartJobs } from './agent/notebook/remote-jupyter-start-jo
 import { normalizeProjectMemorySettings } from '../shared/projectMemoryTypes'
 import { validatePresentedFiles } from './agent/deliverables/present-files'
 import { validateRemotePresentedFiles } from './agent/deliverables/remote-present-files'
-import { MAX_PRESENTED_FILES, type PresentedFile } from '../shared/presentedFileTypes'
 import {
   isStaleSessionError,
   StaleSessionError,
@@ -461,7 +454,6 @@ import {
 } from './agent/session/session-store'
 import type { NotebookDocument } from '../shared/notebookDocument'
 import { messageContentTitleText } from '../shared/sessionTitle'
-import type { AgentUserInteractionQuestion } from '../shared/agentInteractionTypes'
 import { createBeforeQuitHandler } from './app-quit'
 import { createMainRuntimeContext } from './app-state/main-runtime-context'
 import icon from '../../resources/icon.png?asset'
@@ -1274,6 +1266,119 @@ const runnerRegistry = new SessionRunnerRegistry({
   onRunSettled: (sessionId) => {
     backgroundAgentApprovals.afterParentRunSettled(sessionId)
     rpcChildApprovals.afterParentRunSettled(sessionId)
+  }
+})
+const handleAgentInteractionRequest = createAgentInteractionRequest({
+  fields: { optionalStringField },
+  runs: { findByRuntimeSessionId: findActivePromptRunByRuntimeSessionId },
+  projects: {
+    getById: (projectId) => getProject(projectId) ?? undefined,
+    getByCwd: (cwd) => getProjectByCwd(cwd) ?? undefined
+  },
+  renderer: {
+    getActiveWindow,
+    canRequest: canRequestAgentUserInteraction,
+    waitForResponse: waitForAgentUserInteraction
+  },
+  state: {
+    createId: createRunId,
+    sessionPath: phiOnlySessionPath,
+    markNeedsInput: (sessionId, interactionId, state) =>
+      runnerRegistry.markNeedsInput(sessionId, interactionId, state),
+    markInputCancelled: (sessionId, interactionId) =>
+      runnerRegistry.markInputCancelled(sessionId, interactionId),
+    markInputAnswered: (sessionId, interactionId) =>
+      runnerRegistry.markInputAnswered(sessionId, interactionId),
+    notifySessionChanged
+  }
+})
+const { handlePresentFilesRequest, presentScriptArtifacts } = createDeliverablesPresentation({
+  agentDir: AGENT_DIR,
+  fields: { optionalStringField },
+  runs: { findByRuntimeSessionId: findActivePromptRunByRuntimeSessionId },
+  sessions: { findById: findPhiSessionById },
+  projects: { getById: (projectId) => getProject(projectId) ?? undefined },
+  remote: {
+    isProjectAnchorPath: isRemoteProjectAnchorPath,
+    ownsRuntimeSession: ownsRemoteRuntimeSession,
+    bindingKey: (identity) => resolveRemoteWorkspaceHostBinding(identity).cacheKey
+  },
+  files: {
+    validateLocal: validatePresentedFiles,
+    validateRemote: (identity, value) =>
+      validateRemotePresentedFiles(identity, value, {
+        connectHost: (request) => connectRemoteWorkspaceHost(request)
+      }),
+    statSize: (path) => statSync(path).size
+  },
+  timeline: {
+    append: appendSessionEvent,
+    broadcast: broadcastSessionTimelineEvent
+  }
+})
+const {
+  confirmEnvironmentBuild,
+  confirmEnvironmentRequest,
+  confirmAgentModuleInstallation,
+  approveRemoteJupyterStart
+} = createHostConfirmations({
+  interactions: {
+    request: handleAgentInteractionRequest,
+    buildQuestion: environmentBuildQuestion,
+    buildConfirmed: confirmedEnvironmentBuild,
+    requestConfirmed: confirmedEnvironmentRequest
+  },
+  runs: {
+    findByRuntimeSessionId: findActivePromptRunByRuntimeSessionId,
+    sessionPath: phiOnlySessionPath
+  },
+  projects: {
+    getById: (projectId) => getProject(projectId) ?? undefined,
+    getByCwd: (cwd) => getProjectByCwd(cwd) ?? undefined
+  },
+  sessions: { findById: findPhiSessionById },
+  approvals: {
+    createId: createRunId,
+    request: requestRuntimeToolApproval,
+    getActiveWindow,
+    markNeedsApproval: (sessionId, requestId, request) =>
+      runnerRegistry.markNeedsApproval(sessionId, requestId, request),
+    markApproved: (sessionId, requestId) =>
+      runnerRegistry.markApprovalApproved(sessionId, requestId),
+    markDenied: (sessionId, requestId) => runnerRegistry.markApprovalDenied(sessionId, requestId),
+    markCancelled: (sessionId, requestId) =>
+      runnerRegistry.markApprovalCancelled(sessionId, requestId),
+    sendCancelled: (requestId) => sendToAllWindows(IPC.tool.approvalCancelled, requestId),
+    notifySessionChanged
+  },
+  capability: { assertCurrent: (context) => capabilityHost.assertCurrent(context) }
+})
+const handlePlanReviewRequest = createPlanReviewRequest({
+  fields: { optionalStringField },
+  runs: { findByRuntimeSessionId: findActivePromptRunByRuntimeSessionId },
+  projects: { getById: (projectId) => getProject(projectId) ?? undefined },
+  sessions: {
+    findById: findPhiSessionById,
+    sessionPath: phiOnlySessionPath
+  },
+  renderer: {
+    getActiveWindow,
+    canRequest: canRequestAgentUserInteraction,
+    waitForResponse: waitForAgentUserInteraction
+  },
+  timeline: {
+    append: appendSessionEvent,
+    broadcast: broadcastSessionTimelineEvent
+  },
+  state: {
+    createId: createRunId,
+    markNeedsInput: (sessionId, reviewId, state) =>
+      runnerRegistry.markNeedsInput(sessionId, reviewId, state),
+    markInputCancelled: (sessionId, reviewId) =>
+      runnerRegistry.markInputCancelled(sessionId, reviewId),
+    markInputAnswered: (sessionId, reviewId) =>
+      runnerRegistry.markInputAnswered(sessionId, reviewId),
+    notifySessionChanged
   }
 })
 const skippedMcpNotifier = createSkippedMcpNotifier({
@@ -2848,411 +2953,12 @@ function optionalStringField(record: Record<string, unknown>, key: string): stri
   return trimmed.length > 0 ? trimmed : undefined
 }
 
-function interactionOptionsField(
-  value: unknown
-): AgentUserInteractionQuestion['options'] | undefined {
-  if (!Array.isArray(value)) return undefined
-  const options = value
-    .filter(isRecord)
-    .map((item) => {
-      const label = optionalStringField(item, 'label')
-      const description = optionalStringField(item, 'description')
-      if (!label || !description) return null
-      return {
-        label,
-        description,
-        ...(optionalStringField(item, 'preview')
-          ? { preview: optionalStringField(item, 'preview') }
-          : {})
-      }
-    })
-    .filter((item): item is AgentUserInteractionQuestion['options'][number] => item !== null)
-  return options.length > 0 ? options : undefined
-}
-
-function interactionQuestionsField(value: unknown): AgentUserInteractionQuestion[] {
-  if (!Array.isArray(value)) return []
-  return value
-    .filter(isRecord)
-    .map((item) => {
-      const question = optionalStringField(item, 'question')
-      const header = optionalStringField(item, 'header')
-      const options = interactionOptionsField(item.options)
-      if (!question || !header || !options) return null
-      return {
-        question,
-        header,
-        options,
-        ...(item.multiSelect === true ? { multiSelect: true } : {})
-      }
-    })
-    .filter((item): item is AgentUserInteractionQuestion => item !== null)
-}
-
 function findActivePromptRunByRuntimeSessionId(runtimeSessionId: string): PromptRun | null {
   return (
     [...activePromptRuns.values()].find(
       (run) => run.session?.runtimeSessionId === runtimeSessionId
     ) ?? null
   )
-}
-
-function presentableRun(
-  runtimeSessionId: string | undefined,
-  toolCallId: string | undefined
-): {
-  run: PromptRun
-  toolCallId: string
-  remote?: { sessionId: string; projectId: string }
-} {
-  if (!runtimeSessionId || !toolCallId || toolCallId.length > 200) {
-    throw new Error('Invalid file delivery request')
-  }
-  const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
-  if (!run || run.cancelled) throw new Error('No active conversation for file delivery')
-  const manifest = findPhiSessionById(run.phiSessionId)
-  const project = run.projectId ? getProject(run.projectId) : undefined
-  const remoteAnchor = isRemoteProjectAnchorPath(run.cwd, AGENT_DIR)
-  if (
-    remoteAnchor ||
-    manifest?.projectLocation?.kind === 'ssh' ||
-    project?.location.kind === 'ssh'
-  ) {
-    if (
-      !run.projectId ||
-      manifest?.projectId !== run.projectId ||
-      manifest.projectLocation?.kind !== 'ssh' ||
-      project?.location.kind !== 'ssh' ||
-      manifest.projectLocation.hostProfileId !== project.location.hostProfileId ||
-      manifest.projectLocation.remoteRoot !== project.location.remoteRoot ||
-      manifest.projectLocation.canonicalRoot !== project.location.canonicalRoot
-    ) {
-      throw new Error('Remote project identity is unavailable for file delivery')
-    }
-    return {
-      run,
-      toolCallId,
-      remote: { sessionId: run.phiSessionId, projectId: run.projectId }
-    }
-  }
-  return { run, toolCallId }
-}
-
-function recordPresentedFiles(run: PromptRun, toolCallId: string, files: PresentedFile[]): void {
-  for (let index = 0; index < files.length; index += MAX_PRESENTED_FILES) {
-    const batch = files.slice(index, index + MAX_PRESENTED_FILES)
-    const stored = appendSessionEvent(run.phiSessionId, {
-      type: 'files_presented',
-      runId: run.runId,
-      toolCallId,
-      files: batch
-    })
-    broadcastSessionTimelineEvent(run.phiSessionId, stored)
-  }
-}
-
-async function handlePresentFilesRequest(
-  params: unknown,
-  context?: import('./agent/engine/types').PhiHostRequestContext
-): Promise<{ files: PresentedFile[] }> {
-  const record = isRecord(params) ? params : {}
-  const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
-  const toolCallId = optionalStringField(record, 'toolCallId')
-  const { run, toolCallId: callId, remote } = presentableRun(runtimeSessionId, toolCallId)
-  const routed = runtimeSessionId && ownsRemoteRuntimeSession(runtimeSessionId)
-  if (
-    routed &&
-    (context?.originSessionId !== runtimeSessionId ||
-      context?.toolCallId !== callId ||
-      !context.signal)
-  )
-    throw new Error('RPC deliverable origin/call binding differs')
-  context?.signal?.throwIfAborted()
-  const binding = remote ? resolveRemoteWorkspaceHostBinding(remote).cacheKey : undefined
-  const files = remote
-    ? await validateRemotePresentedFiles(remote, record.files, {
-        connectHost: connectRemoteWorkspaceHost
-      })
-    : validatePresentedFiles(run.cwd, record.files)
-  context?.signal?.throwIfAborted()
-  if (
-    presentableRun(runtimeSessionId, toolCallId).run !== run ||
-    (remote && resolveRemoteWorkspaceHostBinding(remote).cacheKey !== binding)
-  )
-    throw new Error('Deliverable run/project binding changed during inspection')
-  recordPresentedFiles(run, callId, files)
-  return { files }
-}
-
-function presentScriptArtifacts(request: PresentArtifactsRequest): void {
-  const { run, toolCallId } = presentableRun(request.runtimeSessionId, request.toolCallId)
-  const files: PresentedFile[] = request.artifacts.map((artifact) => ({
-    path: artifact.path,
-    displayPath: artifact.relativePath,
-    bytes: statSync(artifact.path).size,
-    description: artifact.descriptor.title,
-    artifact: {
-      kind: artifact.descriptor.kind,
-      title: artifact.descriptor.title,
-      envId: request.envId
-    }
-  }))
-  recordPresentedFiles(run, toolCallId, files)
-}
-
-async function confirmEnvironmentBuild(request: ConfirmBuildRequest): Promise<boolean> {
-  try {
-    const response = await handleAgentInteractionRequest({
-      runtimeSessionId: request.runtimeSessionId,
-      questions: [
-        {
-          header: '环境',
-          question: environmentBuildQuestion(request),
-          options: [
-            { label: BUILD_NOW, description: '下载并安装这个环境' },
-            { label: '暂不', description: '这次先不安装' }
-          ]
-        }
-      ]
-    })
-    return confirmedEnvironmentBuild(response)
-  } catch {
-    return false
-  }
-}
-
-async function confirmEnvironmentRequest(request: EnvironmentRequestConfirm): Promise<boolean> {
-  try {
-    const response = await handleAgentInteractionRequest({
-      runtimeSessionId: request.runtimeSessionId,
-      questions: [
-        {
-          header: '环境',
-          question: request.question,
-          options: [
-            { label: ADD_PACKAGES, description: '求解并安装这些包' },
-            { label: '取消', description: '不添加这些包' }
-          ]
-        }
-      ]
-    })
-    return confirmedEnvironmentRequest(response)
-  } catch {
-    return false
-  }
-}
-
-async function confirmAgentModuleInstallation(
-  runtimeSessionId: string,
-  summary: string,
-  context: import('./agent/engine/types').PhiHostRequestContext
-): Promise<boolean> {
-  capabilityHost.assertCurrent(context)
-  const approved = await confirmHostToolApproval(
-    runtimeSessionId,
-    'capability_install',
-    summary,
-    context
-  )
-  capabilityHost.assertCurrent(context)
-  return approved
-}
-
-/** Starting a server on the user's host: ask mode prompts once; auto mode follows the exec-class policy. */
-async function approveRemoteJupyterStart(
-  identity: { runtimeSessionId: string; sessionId: string },
-  info: { serverLabel: string; projectName: string },
-  context: import('./agent/engine/types').PhiHostRequestContext
-): Promise<boolean> {
-  const manifest = findPhiSessionById(identity.sessionId)
-  if (!manifest) throw new Error('远程 Jupyter 启动审批所属会话不可用')
-  // Starting a server process uses shared resources: ask in every permission mode.
-  const approved = await confirmHostToolApproval(
-    identity.runtimeSessionId,
-    'remote_jupyter_start',
-    `启动远程 Jupyter（会占用服务器资源）\n服务器：${info.serverLabel}\n项目：${info.projectName}`,
-    context
-  )
-  context.signal?.throwIfAborted()
-  return approved
-}
-
-async function confirmHostToolApproval(
-  runtimeSessionId: string,
-  toolName: string,
-  summary: string,
-  context: import('./agent/engine/types').PhiHostRequestContext
-): Promise<boolean> {
-  const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
-  if (!run || !context.signal || !context.toolCallId) return false
-  const project = run.projectId ? getProject(run.projectId) : getProjectByCwd(run.cwd)
-  const request = {
-    requestId: createRunId(),
-    sessionId: run.phiSessionId,
-    sessionPath: phiOnlySessionPath(run.phiSessionId),
-    sessionGeneration: run.sessionGeneration,
-    runId: run.runId,
-    cwd: run.cwd,
-    ...(project?.name ? { projectName: project.name } : {}),
-    toolCallId: context.toolCallId,
-    toolName,
-    summary
-  }
-  runnerRegistry.markNeedsApproval(run.phiSessionId, request.requestId, request)
-  const decision = await requestRuntimeToolApproval(request, context.signal, getActiveWindow)
-  if (decision === 'approved')
-    runnerRegistry.markApprovalApproved(run.phiSessionId, request.requestId)
-  else if (decision === 'denied')
-    runnerRegistry.markApprovalDenied(run.phiSessionId, request.requestId)
-  else {
-    runnerRegistry.markApprovalCancelled(run.phiSessionId, request.requestId)
-    sendToAllWindows(IPC.tool.approvalCancelled, request.requestId)
-  }
-  notifySessionChanged()
-  return decision === 'approved'
-}
-
-async function handleAgentInteractionRequest(
-  params: unknown,
-  context?: import('./agent/engine/types').PhiHostRequestContext
-): Promise<unknown> {
-  const record = isRecord(params) ? params : {}
-  const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
-  const questions = interactionQuestionsField(record.questions)
-  if (!runtimeSessionId || questions.length === 0) {
-    throw new Error('Invalid user interaction request')
-  }
-
-  const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
-  if (
-    !run ||
-    run.cancelled ||
-    (context?.originSessionId && context.originSessionId !== runtimeSessionId)
-  ) {
-    throw new Error('No active run for user interaction request')
-  }
-
-  const window = getActiveWindow()
-  if (!canRequestAgentUserInteraction(window)) {
-    throw new Error('没有可用窗口来请求用户输入')
-  }
-
-  const interactionId = createRunId()
-  const project = run.projectId ? getProject(run.projectId) : getProjectByCwd(run.cwd)
-  runnerRegistry.markNeedsInput(run.phiSessionId, interactionId, {
-    kind: 'ask_user_question',
-    message: questions[0].question
-  })
-  const response = await waitForAgentUserInteraction(
-    {
-      requestId: interactionId,
-      questions,
-      sessionId: run.phiSessionId,
-      sessionPath: phiOnlySessionPath(run.phiSessionId),
-      sessionGeneration: run.sessionGeneration,
-      runId: run.runId,
-      cwd: project?.location.kind === 'ssh' ? project.location.remoteRoot : run.cwd,
-      ...(project?.name ? { projectName: project.name } : {})
-    },
-    window,
-    [context?.signal]
-  )
-  if (
-    context?.signal?.aborted ||
-    run.cancelled ||
-    findActivePromptRunByRuntimeSessionId(runtimeSessionId) !== run
-  ) {
-    runnerRegistry.markInputCancelled(run.phiSessionId, interactionId)
-    notifySessionChanged()
-    return { requestId: interactionId, answers: [], cancelled: true }
-  }
-  if (response.cancelled) {
-    runnerRegistry.markInputCancelled(run.phiSessionId, interactionId)
-  } else {
-    runnerRegistry.markInputAnswered(run.phiSessionId, interactionId)
-  }
-  notifySessionChanged()
-  return response
-}
-
-async function handlePlanReviewRequest(
-  params: unknown
-): Promise<{ decision: 'approve' | 'revise' | 'cancel'; note?: string }> {
-  const record = isRecord(params) ? params : {}
-  const runtimeSessionId = optionalStringField(record, 'runtimeSessionId')
-  const title = optionalStringField(record, 'title')?.trim()
-  const content = optionalStringField(record, 'planContent')
-  const planFilePath = optionalStringField(record, 'planFilePath')
-  if (
-    !runtimeSessionId ||
-    !title ||
-    title.length > 120 ||
-    !content?.trim() ||
-    Buffer.byteLength(content, 'utf8') > 64 * 1024 ||
-    !planFilePath ||
-    !/^local:\/\/[A-Za-z0-9_-]+\.md$/.test(planFilePath)
-  ) {
-    throw new Error('Invalid plan review request')
-  }
-  const run = findActivePromptRunByRuntimeSessionId(runtimeSessionId)
-  if (!run || run.cancelled) throw new Error('No active conversation for plan review')
-  const project = run.projectId ? getProject(run.projectId) : undefined
-  const manifest = findPhiSessionById(run.phiSessionId)
-  if (project?.location.kind === 'ssh' || manifest?.projectLocation?.kind === 'ssh') {
-    throw new Error('远程项目暂不支持计划评审')
-  }
-  const window = getActiveWindow()
-  if (!canRequestAgentUserInteraction(window)) throw new Error('没有可用窗口来评审计划')
-
-  const reviewId = createRunId()
-  const submitted = appendSessionEvent(run.phiSessionId, {
-    type: 'plan_review_submitted',
-    runId: run.runId,
-    reviewId,
-    title,
-    content,
-    planFilePath
-  })
-  broadcastSessionTimelineEvent(run.phiSessionId, submitted)
-  runnerRegistry.markNeedsInput(run.phiSessionId, reviewId, {
-    kind: 'plan_review',
-    message: title
-  })
-  notifySessionChanged()
-  const response = await waitForAgentUserInteraction(
-    {
-      requestId: reviewId,
-      questions: [],
-      planReview: { title, content, planFilePath },
-      sessionId: run.phiSessionId,
-      sessionPath: phiOnlySessionPath(run.phiSessionId),
-      sessionGeneration: run.sessionGeneration,
-      runId: run.runId,
-      cwd: run.cwd,
-      ...(project?.name ? { projectName: project.name } : {})
-    },
-    window
-  )
-  const answer = response.answers.find((item) => item.question === 'plan_review')?.answer
-  const decision = response.cancelled
-    ? 'cancel'
-    : answer === 'approve' || answer === 'revise'
-      ? answer
-      : 'cancel'
-  const note =
-    typeof response.globalNote === 'string' ? response.globalNote.trim().slice(0, 2000) : ''
-  if (decision === 'cancel') runnerRegistry.markInputCancelled(run.phiSessionId, reviewId)
-  else runnerRegistry.markInputAnswered(run.phiSessionId, reviewId)
-  const decided = appendSessionEvent(run.phiSessionId, {
-    type: 'plan_review_decided',
-    runId: run.runId,
-    reviewId,
-    decision,
-    ...(note && decision === 'revise' ? { note } : {})
-  })
-  broadcastSessionTimelineEvent(run.phiSessionId, decided)
-  notifySessionChanged()
-  return { decision, ...(note && decision === 'revise' ? { note } : {}) }
 }
 
 function delay(ms: number): Promise<void> {
