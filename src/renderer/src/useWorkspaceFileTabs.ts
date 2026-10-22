@@ -54,19 +54,26 @@ export type WorkspaceFileTabKind = 'notebook' | 'file' | 'directory'
 export type WorkspaceFileTab = AnalysisWorkspaceFileTab & {
   kind: WorkspaceFileTabKind
   pathKind: LocalPathKind
-  /** Notebook tabs retain the conversation and host scope in which they were opened. */
+  /** Notebook tabs retain the project and conversation in which they were last opened. */
+  ownerProjectId?: string | null
   ownerSessionPath?: string | null
   ownerCwd?: string
   /** Modified notebooks stay open when the reusable preview slot changes. */
   dirty?: boolean
 }
 
-export function notebookWorkspaceTabId(
-  ownerSessionPath: string | null,
-  ownerCwd: string,
-  path: string
-): string {
-  return `notebook:${JSON.stringify([ownerSessionPath, ownerCwd, path])}`
+function normalizedNotebookTabPath(path: string): string {
+  if (!path.startsWith('/')) return path
+  const segments = path.split('/').reduce<string[]>((resolved, segment) => {
+    if (segment === '..') resolved.pop()
+    else if (segment && segment !== '.') resolved.push(segment)
+    return resolved
+  }, [])
+  return `/${segments.join('/')}`
+}
+
+export function notebookWorkspaceTabId(projectId: string | null, path: string): string {
+  return `notebook:${JSON.stringify([projectId, normalizedNotebookTabPath(path)])}`
 }
 
 export function notebookTabsAfterScopeSwitch(tabs: WorkspaceFileTab[]): WorkspaceFileTab[] {
@@ -77,6 +84,39 @@ export function upsertReusableWorkspaceFileTab(
   tabs: WorkspaceFileTab[],
   tab: WorkspaceFileTab
 ): WorkspaceFileTab[] {
+  if (tab.kind === 'notebook') {
+    const tabPath = normalizedNotebookTabPath(tab.path)
+    const matches = tabs.filter(
+      (item) =>
+        item.kind === 'notebook' &&
+        (item.id === tab.id ||
+          (normalizedNotebookTabPath(item.path) === tabPath &&
+            (item.ownerProjectId
+              ? item.ownerProjectId === tab.ownerProjectId
+              : item.ownerCwd === tab.ownerCwd)))
+    )
+    const retainedTabs =
+      matches.some((item) => item.dirty) && tab.dirty !== false
+        ? tabs
+        : tabs.filter((item) => item.kind === 'notebook' || item.dirty)
+    if (matches.length === 0) return [...retainedTabs, tab]
+    const existingDirty = matches.some((item) => item.dirty)
+      ? true
+      : matches.find((item) => item.dirty !== undefined)?.dirty
+    const dirty = tab.dirty ?? existingDirty
+    const next = {
+      ...(matches.find((item) => item.id === tab.id) ?? matches[0]),
+      ...tab,
+      ...(dirty === undefined ? {} : { dirty })
+    }
+    let inserted = false
+    return retainedTabs.flatMap((item) => {
+      if (!matches.includes(item)) return [item]
+      if (inserted) return []
+      inserted = true
+      return [next]
+    })
+  }
   const existing = tabs.find((item) => item.id === tab.id)
   if (existing?.dirty && tab.dirty !== false) {
     return tabs.map((item) => (item.id === tab.id ? { ...existing, ...tab, dirty: true } : item))

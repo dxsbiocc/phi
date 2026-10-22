@@ -77,11 +77,7 @@ const conversation: WorkspaceSessionTab = {
   sidebarMode: 'projects'
 }
 const notebookKey = workspaceFileTabKey(
-  notebookWorkspaceTabId(
-    'phi-session:current',
-    '/project',
-    '/project/notebooks/01_merge_and_qc.ipynb'
-  )
+  notebookWorkspaceTabId('project-1', '/project/notebooks/01_merge_and_qc.ipynb')
 )
 
 async function openNotebook(options: {
@@ -109,6 +105,7 @@ async function openNotebook(options: {
     useSessionStore: {
       getState: () => ({
         activeCwd: '/project',
+        activeProjectId: 'project-1',
         activeSessionPath: 'phi-session:current',
         activeProjectLocation: { kind: 'local' }
       })
@@ -212,10 +209,93 @@ test('an explicitly docked conversation stays in its expanded sidebar', async ()
   assert.deepEqual(state.keys, [notebookKey])
 })
 
+test('reopening one notebook from another session in the same project selects one tab', () => {
+  const path = '/project/notebooks/eda.ipynb'
+  const session = {
+    activeProjectId: 'project-1',
+    activeCwd: '/project',
+    activeSessionPath: 'session-a'
+  }
+  let files: WorkspaceFileTab[] = []
+  let activeKey = ''
+  const open = runInNewContext(
+    ts.transpileModule(`(${expression('onOpenNotebookWorkspaceFile')})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 }
+    }).outputText,
+    {
+      useSessionStore: { getState: () => session },
+      blockNotebookWorkspaceOpen: () => false,
+      applyFileOpenConversationLayout: () => undefined,
+      absoluteWorkspacePath,
+      notebookWorkspaceTabId,
+      fileNameFromPath,
+      workspaceFileTabKey,
+      upsertReusableWorkspaceFileTab,
+      filePreviewRequestRef: { current: 0 },
+      setFilePreview: () => undefined,
+      setActiveWorkspaceTabKey: (key: string) => {
+        activeKey = key
+      },
+      setWorkspaceFileTabs: (update: (tabs: WorkspaceFileTab[]) => WorkspaceFileTab[]) => {
+        files = update(files)
+      },
+      setActiveWorkspaceFilePath: () => undefined,
+      navigateToView: () => undefined,
+      activateCachedAnalysisNotebook: (notebookPath: string) => ({
+        path: notebookPath,
+        name: fileNameFromPath(notebookPath),
+        relativePath: notebookPath
+      })
+    }
+  ) as (notebookPath: string) => void
+
+  open(path)
+  session.activeSessionPath = 'session-b'
+  session.activeCwd = '/project/analysis'
+  open(path)
+  assert.equal(files.length, 1)
+  assert.equal(files[0].ownerSessionPath, 'session-b')
+  assert.equal(activeKey, workspaceFileTabKey(files[0].id))
+
+  open('/project/other/eda.ipynb')
+  assert.equal(files.length, 2, 'different files with the same basename need separate tabs')
+
+  session.activeProjectId = 'project-2'
+  open(path)
+  assert.equal(files.length, 3, 'the same remote path in another project needs a separate tab')
+})
+
+test('reopening a notebook removes old session-scoped duplicate tabs and keeps dirty state', () => {
+  const path = '/project/notebooks/eda.ipynb'
+  const oldTabs: WorkspaceFileTab[] = ['session-a', 'session-b'].map((sessionPath) => ({
+    id: `notebook:${JSON.stringify([sessionPath, '/project', path])}`,
+    path,
+    name: 'eda.ipynb',
+    status: path,
+    kind: 'notebook',
+    pathKind: 'file',
+    ownerSessionPath: sessionPath,
+    ownerCwd: '/project',
+    dirty: sessionPath === 'session-b'
+  }))
+  const reopened: WorkspaceFileTab = {
+    ...oldTabs[0],
+    id: notebookWorkspaceTabId('project-1', path),
+    ownerProjectId: 'project-1',
+    ownerSessionPath: 'session-c',
+    dirty: undefined
+  }
+  const tabs = upsertReusableWorkspaceFileTab(oldTabs, reopened)
+  assert.equal(tabs.length, 1)
+  assert.equal(tabs[0].id, reopened.id)
+  assert.equal(tabs[0].ownerSessionPath, 'session-c')
+  assert.equal(tabs[0].dirty, true)
+})
+
 test('selecting an inactive remote notebook tab switches to its owning session before opening it', async () => {
   const path = '/remote/notebooks/quicksort.ipynb'
   const tab: WorkspaceFileTab = {
-    id: notebookWorkspaceTabId('remote-session', '/remote/anchor', path),
+    id: notebookWorkspaceTabId('remote-project', path),
     path,
     name: 'quicksort.ipynb',
     status: path,
@@ -252,10 +332,55 @@ test('selecting an inactive remote notebook tab switches to its owning session b
   assert.deepEqual(opened, [], 'the old local workspace must not open a remote file')
 })
 
+test('selecting a notebook tab in the current project keeps this session active', () => {
+  const path = '/project/notebooks/eda.ipynb'
+  const tab: WorkspaceFileTab = {
+    id: notebookWorkspaceTabId('project-1', path),
+    path,
+    name: 'eda.ipynb',
+    status: path,
+    kind: 'notebook',
+    pathKind: 'file',
+    ownerProjectId: 'project-1',
+    ownerSessionPath: 'session-a',
+    ownerCwd: '/project'
+  }
+  let tabs = [tab]
+  let activeKey: string | null = null
+  const select = runInNewContext(
+    ts.transpileModule(`(${expression('onSelectWorkspaceFileTab')})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 }
+    }).outputText,
+    {
+      workspaceFileTabs: tabs,
+      activeProjectId: 'project-1',
+      activeCwd: '/project/analysis',
+      activeSessionPath: 'session-b',
+      setWorkspaceFileTabs: (update: (current: WorkspaceFileTab[]) => WorkspaceFileTab[]) => {
+        tabs = update(tabs)
+      },
+      setActiveWorkspaceTabKey: (key: string) => {
+        activeKey = key
+      },
+      setActiveWorkspaceFilePath: () => undefined,
+      navigateToView: () => undefined,
+      workspaceFileTabKey,
+      activateCachedAnalysisNotebook: () => true,
+      onOpenSessionFromSidebar: () => assert.fail('do not switch to the previous session'),
+      onOpenNotebookWorkspaceFile: () => assert.fail('cached notebook should remain open')
+    }
+  ) as (tab: WorkspaceFileTab) => void
+
+  select(tab)
+  assert.equal(activeKey, workspaceFileTabKey(tab.id))
+  assert.equal(tabs[0].ownerSessionPath, 'session-b')
+  assert.equal(tabs[0].ownerCwd, '/project/analysis')
+})
+
 test('a switched session restores its pending notebook tab only inside the owning workspace', async () => {
   const path = '/remote/notebooks/quicksort.ipynb'
   const pendingNotebookTab = {
-    id: notebookWorkspaceTabId('remote-session', '/remote/anchor', path),
+    id: notebookWorkspaceTabId('remote-project', path),
     path,
     ownerSessionPath: 'remote-session',
     ownerCwd: '/remote/anchor'
@@ -294,7 +419,7 @@ test('a switched session restores its pending notebook tab only inside the ownin
 test('closing an inactive notebook tab does not close another host tab with the same path', () => {
   const path = '/shared/notebooks/demo.ipynb'
   const local: WorkspaceFileTab = {
-    id: notebookWorkspaceTabId('local-session', '/local/project', path),
+    id: notebookWorkspaceTabId('local-project', path),
     path,
     name: 'demo.ipynb',
     status: path,
@@ -305,7 +430,7 @@ test('closing an inactive notebook tab does not close another host tab with the 
   }
   const remote: WorkspaceFileTab = {
     ...local,
-    id: notebookWorkspaceTabId('remote-session', '/remote/anchor', path),
+    id: notebookWorkspaceTabId('remote-project', path),
     ownerSessionPath: 'remote-session',
     ownerCwd: '/remote/anchor'
   }
@@ -334,7 +459,7 @@ test('closing an inactive notebook tab does not close another host tab with the 
 
 test('a dirty notebook tab stays open until it is saved', () => {
   const tab: WorkspaceFileTab = {
-    id: notebookWorkspaceTabId('remote-session', '/remote/anchor', '/remote/demo.ipynb'),
+    id: notebookWorkspaceTabId('remote-project', '/remote/demo.ipynb'),
     path: '/remote/demo.ipynb',
     name: 'demo.ipynb',
     status: 'demo.ipynb',

@@ -1355,6 +1355,7 @@ function App(): React.JSX.Element {
           (tab) =>
             tab.kind === 'notebook' &&
             tab.path === file.path &&
+            (!tab.ownerProjectId || tab.ownerProjectId === activeProjectId) &&
             (!tab.ownerCwd || tab.ownerCwd === activeCwd)
         )
         if (!current || Boolean(current.dirty) === dirty) return tabs
@@ -1364,7 +1365,7 @@ function App(): React.JSX.Element {
           : upsertReusableWorkspaceFileTab(tabs, updated)
       })
     },
-    [activeCwd, setWorkspaceFileTabs]
+    [activeCwd, activeProjectId, setWorkspaceFileTabs]
   )
 
   const blockNotebookWorkspaceOpen = useCallback(
@@ -1386,11 +1387,7 @@ function App(): React.JSX.Element {
       applyFileOpenConversationLayout()
       const session = useSessionStore.getState()
       const normalizedPath = absoluteWorkspacePath(session.activeCwd, path)
-      const tabId = notebookWorkspaceTabId(
-        session.activeSessionPath,
-        session.activeCwd,
-        normalizedPath
-      )
+      const tabId = notebookWorkspaceTabId(session.activeProjectId, normalizedPath)
       const title = fileNameFromPath(normalizedPath)
       filePreviewRequestRef.current += 1
       setFilePreview(null)
@@ -1404,6 +1401,7 @@ function App(): React.JSX.Element {
           absolutePath: normalizedPath,
           kind: 'notebook',
           pathKind: 'file',
+          ownerProjectId: session.activeProjectId,
           ownerSessionPath: session.activeSessionPath,
           ownerCwd: session.activeCwd
         }
@@ -2279,7 +2277,7 @@ function App(): React.JSX.Element {
           workspaceFileTabs.find(
             (tab) =>
               tab.path === activeWorkspaceFilePath &&
-              (!tab.ownerSessionPath || tab.ownerSessionPath === activeSessionPath)
+              (!tab.ownerProjectId || tab.ownerProjectId === activeProjectId)
           )?.id ?? activeWorkspaceFilePath
         )
       : activeView === 'chat' && sessionTabWasOpened
@@ -2708,7 +2706,12 @@ function App(): React.JSX.Element {
     (tabLike: AnalysisWorkspaceFileTab): void => {
       const tab = workspaceFileTabs.find((item) => item.id === tabLike.id)
       if (!tab) return
-      if (tab.kind === 'notebook' && tab.ownerCwd && tab.ownerCwd !== activeCwd) {
+      if (
+        tab.kind === 'notebook' &&
+        (tab.ownerProjectId
+          ? tab.ownerProjectId !== activeProjectId
+          : tab.ownerCwd && tab.ownerCwd !== activeCwd)
+      ) {
         if (!tab.ownerSessionPath) {
           showSnackbar(appCopy.selectNotebookProject, 'warning')
           return
@@ -2717,13 +2720,26 @@ function App(): React.JSX.Element {
           id: tab.id,
           path: tab.path,
           ownerSessionPath: tab.ownerSessionPath,
-          ownerCwd: tab.ownerCwd
+          ownerCwd: tab.ownerCwd ?? activeCwd
         })
         void onOpenSessionFromSidebar(tab.ownerSessionPath).catch((error) => {
           setPendingNotebookTab(null)
           showSnackbarError(error, appCopy.openNotebookFailed)
         })
         return
+      }
+      if (
+        tab.kind === 'notebook' &&
+        tab.ownerProjectId === activeProjectId &&
+        (tab.ownerCwd !== activeCwd || tab.ownerSessionPath !== activeSessionPath)
+      ) {
+        setWorkspaceFileTabs((tabs) =>
+          tabs.map((item) =>
+            item.id === tab.id
+              ? { ...item, ownerCwd: activeCwd, ownerSessionPath: activeSessionPath }
+              : item
+          )
+        )
       }
       setActiveWorkspaceTabKey(workspaceFileTabKey(tab.id))
       setActiveWorkspaceFilePath(tab.path)
@@ -2738,10 +2754,13 @@ function App(): React.JSX.Element {
     },
     [
       activeCwd,
+      activeProjectId,
+      activeSessionPath,
       activateCachedAnalysisNotebook,
       onOpenSessionFromSidebar,
       onOpenNotebookWorkspaceFile,
       setActiveWorkspaceFilePath,
+      setWorkspaceFileTabs,
       showSnackbar,
       showSnackbarError,
       showCachedOrLoadFilePreview,
@@ -2800,7 +2819,11 @@ function App(): React.JSX.Element {
       const remainingTabs = workspaceFileTabs.filter((tab) => tab.id !== closingTab.id)
       setWorkspaceFileTabs(remainingTabs)
       if (closingTab.kind !== 'notebook') clearCachedFilePreview(closingTab.path)
-      if (closingTab.kind === 'notebook' && closingTab.ownerCwd === activeCwd) {
+      if (
+        closingTab.kind === 'notebook' &&
+        closingTab.ownerCwd === activeCwd &&
+        (!closingTab.ownerProjectId || closingTab.ownerProjectId === activeProjectId)
+      ) {
         forgetCachedAnalysisNotebook(closingTab.path)
       }
 
@@ -2838,6 +2861,7 @@ function App(): React.JSX.Element {
     },
     [
       activeCwd,
+      activeProjectId,
       cancelActiveWrapperResultRead,
       clearCachedFilePreview,
       closeActiveNotebook,

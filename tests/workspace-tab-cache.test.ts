@@ -152,10 +152,10 @@ test('one clean file preview is reused while modified notebooks keep their tabs'
   )
 })
 
-test('notebook tabs keep their session scope across host changes and identical paths', () => {
+test('notebook tabs keep their project scope across hosts with identical paths', () => {
   const path = '/shared/notebooks/demo.ipynb'
   const local: WorkspaceFileTab = {
-    id: notebookWorkspaceTabId('local-session', '/local/project', path),
+    id: notebookWorkspaceTabId('local-project', path),
     path,
     name: 'demo.ipynb',
     status: path,
@@ -166,7 +166,7 @@ test('notebook tabs keep their session scope across host changes and identical p
   }
   const remote: WorkspaceFileTab = {
     ...local,
-    id: notebookWorkspaceTabId('remote-session', '/remote/anchor', path),
+    id: notebookWorkspaceTabId('remote-project', path),
     ownerSessionPath: 'remote-session',
     ownerCwd: '/remote/anchor'
   }
@@ -180,6 +180,13 @@ test('notebook tabs keep their session scope across host changes and identical p
   assert.notEqual(local.id, remote.id)
   assert.deepEqual(upsertReusableWorkspaceFileTab([local], remote), [local, remote])
   assert.deepEqual(notebookTabsAfterScopeSwitch([local, remote, preview]), [local, remote])
+})
+
+test('notebook tab identity normalizes dot segments within one project', () => {
+  assert.equal(
+    notebookWorkspaceTabId('project-1', '/project/analysis/../notebooks/eda.ipynb'),
+    notebookWorkspaceTabId('project-1', '/project/notebooks/eda.ipynb')
+  )
 })
 
 test('remote project switches invalidate file previews while local navigation keeps them', () => {
