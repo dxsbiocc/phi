@@ -23,6 +23,7 @@ import {
   type HomePromptRequest
 } from './components/HomePrompt'
 import { useHomeActivity } from './hooks/useHomeActivity'
+import type { HomeProjectSelection } from './hooks/useHomePrompt'
 import {
   rankHomeWrapperRuns,
   selectHomeRecentWork,
@@ -51,7 +52,7 @@ interface HomeViewProps {
     projectId: string,
     permissionMode: PermissionMode
   ) => Promise<void>
-  createdProjectId: string | null
+  projectSelection: HomeProjectSelection | null
   onNewProject: () => void
   onOpenSession: (path: string) => void
   onStartPrompt: (request: HomePromptRequest) => Promise<void>
@@ -76,7 +77,7 @@ export function HomeView({
   onSelectModel,
   onSelectThinkingLevel,
   onUpdateProjectPermissionMode,
-  createdProjectId,
+  projectSelection,
   onNewProject,
   onOpenSession,
   onStartPrompt,
@@ -242,7 +243,7 @@ export function HomeView({
             onSelectModel={onSelectModel}
             onSelectThinkingLevel={onSelectThinkingLevel}
             onUpdateProjectPermissionMode={onUpdateProjectPermissionMode}
-            createdProjectId={createdProjectId}
+            projectSelection={projectSelection}
             onNewProject={onNewProject}
             onStart={onStartPrompt}
             composerResources={composerResources}

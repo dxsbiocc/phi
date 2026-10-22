@@ -270,7 +270,8 @@ const rpcExtension: ExtensionFactory = async (pi) => {
       ? current.agent
       : undefined
   })(pi)
-  if (modelMetadata) await createRpcModelSelectionExtension(modelMetadata)(pi)
+  if (modelMetadata)
+    await createRpcModelSelectionExtension(modelMetadata, runtime?.native.cursorEndpoint)(pi)
 
   if (runtime) {
     const lifetime = new AbortController()
@@ -430,6 +431,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
       {
         generation: runtime.generation,
         endpoint: runtime.native.endpoint,
+        cursorEndpoint: runtime.native.cursorEndpoint,
         models: runtime.native.models,
         signal: lifetime.signal,
         isActive: () =>

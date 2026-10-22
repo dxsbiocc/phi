@@ -91,6 +91,44 @@ test('pi-native serialization preserves safe capabilities without model credenti
   assert.equal(resolved, false)
 })
 
+test('Cursor runs natively on the remote worker through a scoped model tunnel', () => {
+  const cursor = { ...model, provider: 'cursor', id: 'cursor-grok-4.6-fast' }
+  assert.throws(() =>
+    serializeRemoteModelProxyConfig({
+      models: [cursor],
+      remotePort: 41000,
+      gatewayBearer: bearer
+    })
+  )
+  const content = serializeRemoteModelProxyConfig({
+    models: [cursor, model],
+    remotePort: 41000,
+    gatewayBearer: bearer,
+    cursor: { remotePort: 41001, bearer: 'B'.repeat(43) }
+  })
+  const providers = JSON.parse(content).providers
+  assert.deepEqual(
+    {
+      api: providers.cursor.api,
+      baseUrl: providers.cursor.baseUrl,
+      apiKey: providers.cursor.apiKey,
+      transport: providers.cursor.transport
+    },
+    {
+      api: undefined,
+      baseUrl: 'http://127.0.0.1:41001',
+      apiKey: 'B'.repeat(43),
+      transport: undefined
+    }
+  )
+  assert.equal(providers.cursor.models, undefined)
+  assert.deepEqual(providers.cursor.modelOverrides[cursor.id], {
+    contextWindow: cursor.contextWindow,
+    maxTokens: cursor.maxTokens
+  })
+  assert.equal(providers[model.provider].transport, 'pi-native')
+})
+
 test('model publication queues two exact private files and performs no remote command', async () => {
   const fixture = publication()
   const identity = await writeRemoteModelProxyConfig(fixture.options)

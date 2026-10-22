@@ -18,6 +18,7 @@ export interface RemoteModelProxyConfigOptions {
   readonly models: readonly SafeModelDescriptor[]
   readonly remotePort: number
   readonly gatewayBearer: string
+  readonly cursor?: { readonly remotePort: number; readonly bearer: string }
   readonly sessionId: string
   readonly projectRoot: string
   readonly gatewayGeneration: number
@@ -29,25 +30,24 @@ export type ModelProxyConfigPublication = Pick<
   'nonce' | 'sessionId' | 'projectRoot' | 'gatewayGeneration'
 >
 
-type RoutingOptions = Pick<RemoteModelProxyConfigOptions, 'models' | 'remotePort' | 'gatewayBearer'>
+type RoutingOptions = Pick<
+  RemoteModelProxyConfigOptions,
+  'models' | 'remotePort' | 'gatewayBearer' | 'cursor'
+>
 
 /** SDK schema placeholders only. Exact nullable limits require the paired metadata selection. */
 export function serializeRemoteModelProxyConfig(options: RoutingOptions): string {
   assertTunnelPort(options.remotePort)
   if (!/^[A-Za-z0-9_-]{32,256}$/.test(options.gatewayBearer))
     throw new Error('Invalid model gateway bearer')
-  const providers: Record<
-    string,
-    {
-      baseUrl: string
-      transport: 'pi-native'
-      api: 'openai-completions'
-      apiKey: string
-      models: Array<Record<string, unknown>>
-    }
-  > = Object.create(null)
+  const providers: Record<string, Record<string, unknown>> = Object.create(null)
   if (!Array.isArray(options.models) || !options.models.length)
     throw new Error('Model gateway needs an approved model')
+  if (options.cursor) {
+    assertTunnelPort(options.cursor.remotePort)
+    if (!/^[A-Za-z0-9_-]{32,256}$/.test(options.cursor.bearer))
+      throw new Error('Invalid Cursor gateway bearer')
+  }
   for (const model of options.models) {
     const safe: Record<string, unknown> = {
       id: model.id,
@@ -61,14 +61,33 @@ export function serializeRemoteModelProxyConfig(options: RoutingOptions): string
       const { input, output, cacheRead, cacheWrite } = model.cost
       safe.cost = { input, output, cacheRead, cacheWrite }
     }
-    const provider = (providers[model.provider] ??= {
-      baseUrl: `http://127.0.0.1:${options.remotePort}`,
-      transport: 'pi-native',
-      api: 'openai-completions',
-      apiKey: options.gatewayBearer,
-      models: []
-    })
-    provider.models.push(safe)
+    if (model.provider === 'cursor' && !options.cursor)
+      throw new Error('Cursor model requires its scoped native tunnel')
+    if (model.provider === 'cursor') {
+      // OMP's custom-model schema does not accept the bundled cursor-agent API.
+      // Override only the bundled Cursor row so its native API and tool handlers
+      // remain intact. The selected row is checked again by the RPC extension.
+      const baseUrl = `http://127.0.0.1:${options.cursor!.remotePort}`
+      const provider = (providers.cursor ??= {
+        baseUrl,
+        apiKey: options.cursor!.bearer,
+        modelOverrides: Object.create(null)
+      })
+      const overrides = provider.modelOverrides as Record<string, unknown>
+      overrides[model.id] = {
+        ...(model.contextWindow === null ? {} : { contextWindow: model.contextWindow }),
+        ...(model.maxTokens === null ? {} : { maxTokens: model.maxTokens })
+      }
+    } else {
+      const provider = (providers[model.provider] ??= {
+        baseUrl: `http://127.0.0.1:${options.remotePort}`,
+        transport: 'pi-native',
+        api: 'openai-completions',
+        apiKey: options.gatewayBearer,
+        models: [] as Array<Record<string, unknown>>
+      })
+      ;(provider.models as Array<Record<string, unknown>>).push(safe)
+    }
   }
   const content = JSON.stringify({ providers })
   if (Buffer.byteLength(content) > RPC_MODEL_METADATA_MAX_BYTES)

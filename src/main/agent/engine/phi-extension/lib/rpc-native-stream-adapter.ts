@@ -15,6 +15,8 @@ export interface TrustedNativeStreamScope {
   readonly generation: number
   /** Exact native POST URL from the owned lease, including its base path. */
   readonly endpoint: string
+  /** Exact owned h2c origin for a native Cursor model, when provisioned. */
+  readonly cursorEndpoint?: string
   readonly models: readonly { readonly provider: string; readonly id: string }[]
   readonly signal?: AbortSignal
   /** Launcher-owned, evaluated for each exact native POST, never taken from SDK request input. */
@@ -66,6 +68,19 @@ export function validateNativeStreamScope(scope: TrustedNativeStreamScope): void
       url.href === scope.endpoint
   )
   integrity(Array.isArray(scope.models) && scope.models.length > 0 && scope.models.length <= 4096)
+  if (scope.cursorEndpoint !== undefined) {
+    const cursor = new URL(scope.cursorEndpoint)
+    integrity(
+      cursor.protocol === 'http:' &&
+        cursor.hostname === '127.0.0.1' &&
+        Boolean(cursor.port) &&
+        cursor.origin === scope.cursorEndpoint &&
+        !cursor.username &&
+        !cursor.password &&
+        !cursor.search &&
+        !cursor.hash
+    )
+  }
   const seen = new Set<string>()
   for (const model of scope.models) {
     integrity(
@@ -94,6 +109,24 @@ export function createNativeStreamIntegrityAdapter(
   })
   const approved = new Set(scope.models.map((model) => JSON.stringify([model.provider, model.id])))
   return (model, context, options) => {
+    if (model.api === 'cursor-agent' && model.provider === 'cursor' && model.transport === undefined) {
+      integrity(
+        scope.cursorEndpoint !== undefined &&
+          model.baseUrl === scope.cursorEndpoint &&
+          approved.has(JSON.stringify([model.provider, model.id])) &&
+          scope.isActive() &&
+          !scope.signal?.aborted &&
+          !options?.signal?.aborted &&
+          !options?.headers?.[RPC_CHILD_MODEL_HEADER]
+      )
+      const signals = [scope.signal, options?.signal].filter(
+        (signal): signal is AbortSignal => Boolean(signal)
+      )
+      return original(model, context, {
+        ...options,
+        ...(signals.length ? { signal: AbortSignal.any(signals) } : {})
+      })
+    }
     if (model.transport !== 'pi-native') return original(model, context, options)
     const out = new AssistantMessageEventStream()
     const controller = new AbortController()

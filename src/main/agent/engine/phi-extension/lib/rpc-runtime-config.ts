@@ -49,6 +49,8 @@ export interface RpcRuntimeConfig {
   readonly native: {
     readonly endpoint: string
     readonly models: readonly { readonly provider: string; readonly id: string }[]
+    /** A separately scoped reverse tunnel for Cursor's native HTTP/2 transport. */
+    readonly cursorEndpoint?: string
   }
 }
 function exact(value: unknown, keys: string[]): asserts value is Record<string, unknown> {
@@ -107,7 +109,13 @@ export function validateRpcRuntimeConfig(
     throw new Error('Invalid Phi prompt publication hash')
   exact(value.execution, ['capability', 'tools'])
   exact(value.result, ['capability', 'leaseId', 'directory'])
-  exact(value.native, ['endpoint', 'models'])
+  exact(value.native, [
+    'endpoint',
+    'models',
+    ...(value.native && typeof value.native === 'object' && Object.hasOwn(value.native, 'cursorEndpoint')
+      ? ['cursorEndpoint']
+      : [])
+  ])
   const generationDirectory = dirname(configPath)
   if (
     value.schema !== 1 ||
@@ -217,6 +225,20 @@ export function validateRpcRuntimeConfig(
     value.native.models.length > 4096
   )
     throw new Error('Invalid owned RPC native gateway')
+  if (value.native.cursorEndpoint !== undefined) {
+    const cursor = new URL(value.native.cursorEndpoint as string)
+    if (
+      cursor.protocol !== 'http:' ||
+      cursor.hostname !== '127.0.0.1' ||
+      !cursor.port ||
+      cursor.origin !== value.native.cursorEndpoint ||
+      cursor.username ||
+      cursor.password ||
+      cursor.search ||
+      cursor.hash
+    )
+      throw new Error('Invalid owned Cursor native gateway')
+  }
   const models = new Set<string>()
   for (const model of value.native.models) {
     exact(model, ['provider', 'id'])
@@ -263,6 +285,9 @@ export function validateRpcRuntimeConfig(
     result: Object.freeze({ ...value.result }),
     native: Object.freeze({
       endpoint: value.native.endpoint,
+      ...(value.native.cursorEndpoint === undefined
+        ? {}
+        : { cursorEndpoint: value.native.cursorEndpoint }),
       models: Object.freeze(
         (value.native.models as RpcRuntimeConfig['native']['models']).map((model) =>
           Object.freeze({ ...model })

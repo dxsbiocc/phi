@@ -10,7 +10,7 @@ import type {
   SkillSummary,
   ThinkingLevel
 } from '../../../types'
-import { useHomePrompt } from '../hooks/useHomePrompt'
+import { useHomePrompt, type HomeProjectSelection } from '../hooks/useHomePrompt'
 import { HomePromptComposer } from './HomePromptComposer'
 import { PhiMark } from './PhiMark'
 import { HOME_COLUMN_MAX_WIDTH } from '../lib/homeColumn'
@@ -44,7 +44,7 @@ type HomePromptProps = {
     projectId: string,
     permissionMode: PermissionMode
   ) => Promise<void>
-  createdProjectId: string | null
+  projectSelection: HomeProjectSelection | null
   onNewProject: () => void
   onStart: (request: HomePromptRequest) => Promise<void>
   composerResources?: HomeComposerResources
@@ -55,7 +55,7 @@ export function HomePrompt(props: HomePromptProps): React.JSX.Element {
   const prompt = useHomePrompt(
     props.projects,
     props.busy,
-    props.createdProjectId,
+    props.projectSelection,
     props.onUpdateProjectPermissionMode,
     props.onStart
   )

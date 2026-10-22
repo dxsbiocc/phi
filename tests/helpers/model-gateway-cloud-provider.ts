@@ -8,6 +8,8 @@ export type CloudCategory =
 export interface CloudReply {
   text?: string
   tool?: boolean
+  toolName?: string
+  toolPath?: string
   hold?: boolean
 }
 export interface CloudRequest {
@@ -329,16 +331,16 @@ export async function startCloudProvider(): Promise<CloudProvider> {
           request.body.requestContextBase64 = frame.toString('base64')
           if (reply?.tool) {
             const args = Buffer.concat([
-              proto(1, Buffer.from('inspect')),
+              proto(1, Buffer.from(reply.toolName ?? 'inspect')),
               proto(
                 2,
                 Buffer.concat([
                   proto(1, Buffer.from('path')),
-                  proto(2, Buffer.from(JSON.stringify('ordinary.txt')))
+                  proto(2, Buffer.from(JSON.stringify(reply.toolPath ?? 'ordinary.txt')))
                 ])
               ),
               proto(3, Buffer.from('cloud-call')),
-              proto(5, Buffer.from('inspect'))
+              proto(5, Buffer.from(reply.toolName ?? 'inspect'))
             ])
             stream.write(
               envelope(
@@ -364,6 +366,10 @@ export async function startCloudProvider(): Promise<CloudProvider> {
           }
         } else if (request && reply?.tool && !request.body.mcpResultBase64) {
           request.body.mcpResultBase64 = frame.toString('base64')
+          if (reply.text) {
+            stream.write(cursorUpdate(1, reply.text))
+            stream.write(cursorUpdate(5))
+          }
           stream.write(cursorUpdate(14))
           stream.on('wantTrailers', () => stream.sendTrailers({ 'grpc-status': '0' }))
           stream.end()

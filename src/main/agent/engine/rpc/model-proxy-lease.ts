@@ -46,6 +46,7 @@ export interface ModelProxyRpcTransportOptions extends Omit<
       readonly modelDescriptors: readonly SafeModelDescriptor[]
       readonly native: {
         readonly endpoint: string
+        readonly cursorEndpoint?: string
         readonly models: readonly ModelGatewayModelRef[]
       }
     }
@@ -65,6 +66,7 @@ interface Generation {
   gateway?: OwnedModelGatewayLease
   browserGateway?: GatewayHttpListener
   tunnel?: RemoteReverseTunnel
+  cursorTunnel?: RemoteReverseTunnel
   channel?: RemoteStdioProcess
   publication?: Pick<RpcModelMetadata, 'nonce' | 'sessionId' | 'projectRoot' | 'gatewayGeneration'>
   close(reason?: unknown): Promise<void>
@@ -143,6 +145,9 @@ export async function prepareModelProxyRpcSessionTransport(
                 ),
                 native: Object.freeze({
                   endpoint: `http://127.0.0.1:${owned.tunnel.remotePort}/v1/pi/stream`,
+                  ...(owned.cursorTunnel
+                    ? { cursorEndpoint: `http://127.0.0.1:${owned.cursorTunnel.remotePort}` }
+                    : {}),
                   models
                 })
               })
@@ -162,6 +167,12 @@ export async function prepareModelProxyRpcSessionTransport(
           models: owned.gateway.models,
           remotePort: owned.tunnel.remotePort,
           gatewayBearer: owned.gateway.bearerToken,
+          ...(owned.cursorTunnel && owned.gateway.cursor
+            ? { cursor: {
+                remotePort: owned.cursorTunnel.remotePort,
+                bearer: owned.gateway.cursor.bearerToken
+              } }
+            : {}),
           sessionId: owned.gateway.sessionId,
           projectRoot: params.cwd,
           gatewayGeneration: owned.gateway.generation,
@@ -225,7 +236,8 @@ export async function prepareModelProxyRpcSessionTransport(
             Promise.resolve().then(() => owned.gateway?.close()),
             Promise.resolve().then(() => owned.browserGateway?.close()),
             Promise.resolve().then(() => owned.channel?.close()),
-            Promise.resolve().then(() => owned.tunnel?.close())
+            Promise.resolve().then(() => owned.tunnel?.close()),
+            Promise.resolve().then(() => owned.cursorTunnel?.close())
           ]
           void Promise.allSettled(tasks).then(() => release())
           return closing
@@ -293,6 +305,26 @@ export async function prepareModelProxyRpcSessionTransport(
           () => owned.close(new Error('Model gateway forwarding closed')),
           () => owned.close(new Error('Model gateway forwarding closed'))
         )
+        if (owned.gateway.cursor) {
+          owned.cursorTunnel = await step('cursor_model_tunnel', () =>
+            acquire(
+              options.session.openReverseTunnel!({
+                localPort: owned.gateway!.cursor!.localPort,
+                signal: controller.signal,
+                onInvalidated: () => {
+                  void owned.close(new Error('Cursor model forwarding was invalidated'))
+                }
+              }),
+              controller.signal,
+              (tunnel) => tunnel.close()
+            )
+          )
+          controller.signal.throwIfAborted()
+          void owned.cursorTunnel.closed.then(
+            () => owned.close(new Error('Cursor model forwarding closed')),
+            () => owned.close(new Error('Cursor model forwarding closed'))
+          )
+        }
         return () => owned.close()
       } catch (error) {
         await owned.close(error)

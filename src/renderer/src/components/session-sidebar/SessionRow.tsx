@@ -325,6 +325,7 @@ export const SessionRow = memo(function SessionRow({
         data-phi-session-row-shell="true"
         sx={{
           position: 'relative',
+          mb: 0.5,
           '&:hover .session-actions': {
             opacity: 1,
             pointerEvents: 'auto'
@@ -411,8 +412,8 @@ export const SessionRow = memo(function SessionRow({
             sx={{
               ...plainSidebarRowSx,
               alignItems: 'center',
-              minHeight: 36,
-              py: 0.5,
+              minHeight: 32,
+              py: 0.25,
               pl: `${sessionRunningBeaconSlotWidth(indent)}px`,
               pr: 1,
               position: 'relative',

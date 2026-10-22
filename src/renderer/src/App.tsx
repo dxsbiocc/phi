@@ -68,6 +68,7 @@ import { useQueuedPromptDrain } from './features/chat/hooks/useQueuedPromptDrain
 import type { SendPromptOptions } from './features/chat/lib/promptQueue'
 import { HomeView } from './features/home/HomeView'
 import { runtimeStatusesSnapshot } from './features/runtime/lib/runtimeGroups'
+import type { HomeProjectSelection } from './features/home/hooks/useHomePrompt'
 import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import { RuntimeRecoveryBanner } from './features/chat/components/RuntimeRecoveryBanner'
@@ -317,7 +318,12 @@ function App(): React.JSX.Element {
     setIsExportingSession
   } = useAppDialogs()
   const homeCreateSelectRef = useRef(false)
-  const [homeCreatedProjectId, setHomeCreatedProjectId] = useState<string | null>(null)
+  const [homeProjectSelection, setHomeProjectSelection] = useState<HomeProjectSelection | null>(
+    null
+  )
+  const selectHomeProject = useCallback((projectId: string | null): void => {
+    setHomeProjectSelection((current) => ({ key: (current?.key ?? 0) + 1, projectId }))
+  }, [])
   useEffect(() => {
     if (!isNewProjectDialogOpen) homeCreateSelectRef.current = false
   }, [isNewProjectDialogOpen])
@@ -1531,7 +1537,7 @@ function App(): React.JSX.Element {
     await refreshProjects()
     if (homeCreateSelectRef.current) {
       homeCreateSelectRef.current = false
-      setHomeCreatedProjectId(project.id)
+      selectHomeProject(project.id)
       return
     }
     await onStartProjectChat(project)
@@ -1544,7 +1550,7 @@ function App(): React.JSX.Element {
     if (homeCreateSelectRef.current) {
       homeCreateSelectRef.current = false
       const created = projectsRef.current.find((project) => !knownIds.has(project.id))
-      if (created) setHomeCreatedProjectId(created.id)
+      if (created) selectHomeProject(created.id)
       return
     }
     setWorkspaceSidebarMode('projects')
@@ -3221,17 +3227,25 @@ function App(): React.JSX.Element {
     [activeView, onSelectWorkspaceSidebarMode, openWorkspaceSidebarPreview, workspaceSidebarMode]
   )
 
+  const openHomeForNewConversation = useCallback(
+    (projectId: string | null): void => {
+      selectHomeProject(projectId)
+      setSessionTabWasOpened(false)
+      setActiveWorkspaceTabKey(null)
+      navigateToView('chat')
+    },
+    [navigateToView, selectHomeProject, setSessionTabWasOpened]
+  )
+
   const onNewChatFromSidebar = useCallback(async (): Promise<void> => {
-    await onNewChat()
-    navigateToView('chat')
-  }, [navigateToView, onNewChat])
+    openHomeForNewConversation(null)
+  }, [openHomeForNewConversation])
 
   const onStartProjectChatFromSidebar = useCallback(
     async (project: Project): Promise<void> => {
-      await onStartProjectChat(project)
-      navigateToView('chat')
+      openHomeForNewConversation(project.id)
     },
-    [navigateToView, onStartProjectChat]
+    [openHomeForNewConversation]
   )
 
   const startPlaceholderProjectSession = (): void => {
@@ -3240,7 +3254,7 @@ function App(): React.JSX.Element {
       useSessionStore.getState().activeCwd
     )
     if (project) {
-      void onStartProjectChat(project)
+      openHomeForNewConversation(project.id)
       return
     }
     setNewProjectDialogOpenWithBrowserGate(true)
@@ -3650,7 +3664,7 @@ function App(): React.JSX.Element {
       onSelectModel={(model) => void onSelectModel(model)}
       onSelectThinkingLevel={(level) => void onSelectThinkingLevel(level)}
       onUpdateProjectPermissionMode={onUpdateProjectPermissionMode}
-      createdProjectId={homeCreatedProjectId}
+      projectSelection={homeProjectSelection}
       onNewProject={() => {
         homeCreateSelectRef.current = true
         setIsNewProjectDialogOpen(true)
@@ -3795,14 +3809,16 @@ function App(): React.JSX.Element {
       : workspaceFilePreviewContent
     : null
 
-  const standardWorkspaceTabContent =
+  const activeWorkspaceTabContent =
     activeWorkspaceTab?.kind === 'session'
       ? chatWorkspaceContent
       : isWorkspaceFileWorkspaceTab(activeWorkspaceTab)
         ? activeWorkspaceFileTabContent
-        : activeWorkspaceResourceContent
-
-  const activeWorkspaceTabContent = standardWorkspaceTabContent
+        : activeWorkspaceResourceTab
+          ? activeWorkspaceResourceContent
+          : activeView === 'chat'
+            ? emptyWorkspaceContent
+            : activeWorkspaceResourceContent
 
   const onWorkspaceSidebarPreviewNavigate = useCallback((): void => {
     const dismiss =

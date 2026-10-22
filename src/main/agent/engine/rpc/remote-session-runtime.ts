@@ -544,8 +544,14 @@ export class RemoteSessionRuntime {
     const { options } = this
     const step = <T>(name: string, operation: () => Promise<T>): Promise<T> =>
       options.transport.startupDiagnostics?.step(name, operation) ?? operation()
+    // The browser text vault protects pi-native model requests. Cursor's native
+    // H2 transport has no equivalent text projection, so do not expose browser
+    // to a generation that can select Cursor.
+    const hostTools = options.transport.models.some((model) => model.provider === 'cursor')
+      ? options.tools.filter((tool) => tool.name !== 'browser')
+      : options.tools
     this.hostPolicy = createRpcRuntimeHostPolicy({
-      tools: options.tools,
+      tools: hostTools,
       currentRun: () => this.authority?.currentRun(),
       identity: () => this.authority!.sessionIdentity(),
       signal: this.lifetime.signal,
@@ -555,7 +561,7 @@ export class RemoteSessionRuntime {
         this.deniedRun = runId
       }
     })
-    const registered = registeredHostTools(options.tools)
+    const registered = registeredHostTools(hostTools)
     const nativeTools = Object.freeze([
       ...(options.nativeTools ?? (['read', 'write', 'edit', 'bash', 'glob', 'grep'] as const)),
       ...(options.foregroundChildren ? (['task'] as const) : [])

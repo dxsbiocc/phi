@@ -8,16 +8,20 @@ type HomePromptDraft = {
   planMode: boolean
 }
 
-export function useHomePrompt(
-  projects: Project[],
-  busy: boolean,
-  createdProjectId: string | null,
-  onUpdateProjectPermissionMode: (
-    projectId: string,
-    permissionMode: PermissionMode
-  ) => Promise<void>,
-  onStart: (request: HomePromptDraft) => Promise<void>
-): {
+export type HomeProjectSelection = {
+  key: number
+  projectId: string | null
+}
+
+export function applyHomeProjectSelection(
+  state: { projectId: string | null; appliedKey: number | null },
+  selection: HomeProjectSelection | null
+): { projectId: string | null; appliedKey: number | null } {
+  if (!selection || selection.key === state.appliedKey) return state
+  return { projectId: selection.projectId, appliedKey: selection.key }
+}
+
+type HomePromptController = {
   draft: string
   setDraft: (value: string) => void
   projectId: string | null
@@ -31,14 +35,21 @@ export function useHomePrompt(
   selectPermission: (mode: PermissionMode) => void
   togglePlanReview: () => void
   submit: () => void
-} {
+}
+
+export function useHomePrompt(
+  projects: Project[],
+  busy: boolean,
+  selection: HomeProjectSelection | null,
+  onUpdateProjectPermissionMode: (
+    projectId: string,
+    permissionMode: PermissionMode
+  ) => Promise<void>,
+  onStart: (request: HomePromptDraft) => Promise<void>
+): HomePromptController {
   const [draft, setDraft] = useState('')
   const [projectId, setProjectId] = useState<string | null>(null)
-  const [seenCreatedId, setSeenCreatedId] = useState<string | null>(null)
-  if (createdProjectId && createdProjectId !== seenCreatedId) {
-    setSeenCreatedId(createdProjectId)
-    setProjectId(createdProjectId)
-  }
+  const [appliedKey, setAppliedKey] = useState<number | null>(null)
   const [ordinaryPermission, setOrdinaryPermission] = useState<PermissionMode>('auto')
   const [projectPermission, setProjectPermission] = useState<{
     id: string
@@ -46,6 +57,9 @@ export function useHomePrompt(
   } | null>(null)
   const [starting, setStarting] = useState(false)
   const [planReviewEnabled, setPlanReviewEnabled] = useState(false)
+  const nextSelection = applyHomeProjectSelection({ projectId, appliedKey }, selection)
+  if (nextSelection.projectId !== projectId) setProjectId(nextSelection.projectId)
+  if (nextSelection.appliedKey !== appliedKey) setAppliedKey(nextSelection.appliedKey)
   const selectedProject = projects.find((project) => project.id === projectId) ?? null
   const disablePlanReview = selectedProject?.location.kind === 'ssh'
   const permissionMode = selectedProject

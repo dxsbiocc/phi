@@ -35,6 +35,7 @@ export interface ModelGatewayLease {
   readonly generation: number
   readonly localPort: number
   readonly bearerToken: string
+  readonly cursor?: { readonly localPort: number; readonly bearerToken: string }
   readonly models: readonly SafeModelDescriptor[]
 }
 
@@ -137,12 +138,25 @@ export function parseModelGatewayLease(
       ...(cost ? { cost } : {})
     })
   })
+  const requiresCursor = expected.models.some((model) => model.provider === 'cursor')
+  if (requiresCursor !== (raw.cursor !== undefined))
+    throw new Error('Cursor model gateway route is missing or unexpected')
+  let cursor: ModelGatewayLease['cursor']
+  if (raw.cursor !== undefined) {
+    const route = record(raw.cursor)
+    const localPort = finiteNumber(route.localPort, 'Cursor port', true)
+    const bearerToken = boundedString(route.bearerToken, 256, 'Cursor bearer')
+    if (localPort > 65535 || !/^[A-Za-z0-9_-]{32,256}$/.test(bearerToken))
+      throw new Error('Invalid Cursor model gateway route')
+    cursor = Object.freeze({ localPort, bearerToken })
+  }
   return Object.freeze({
     leaseId: boundedString(raw.leaseId, 256, 'lease id'),
     sessionId: expected.sessionId,
     generation: expected.generation,
     localPort,
     bearerToken,
+    ...(cursor ? { cursor } : {}),
     models: Object.freeze(models)
   })
 }

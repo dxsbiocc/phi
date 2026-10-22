@@ -9,7 +9,10 @@ import {
 } from '../lib/rpc-model-metadata'
 
 /** YAML needs numeric bootstrap limits; this public runtime seam restores trusted unknown limits. */
-export function createRpcModelSelectionExtension(metadata: RpcModelMetadata): ExtensionFactory {
+export function createRpcModelSelectionExtension(
+  metadata: RpcModelMetadata,
+  cursorEndpoint?: string
+): ExtensionFactory {
   return (pi) => {
     let selecting = false
     pi.registerCommand(RPC_MODEL_SELECTION_COMMAND, {
@@ -25,8 +28,24 @@ export function createRpcModelSelectionExtension(metadata: RpcModelMetadata): Ex
         const native = ctx.modelRegistry
           .getAvailable()
           .find((model) => model.provider === request.provider && model.id === request.modelId)
-        if (!safe || !native || native.transport !== 'pi-native')
-          throw new Error('Phi RPC model selection is unavailable')
+        const ownedCursor =
+          request.provider === 'cursor' &&
+          native?.api === 'cursor-agent' &&
+          native.transport === undefined &&
+          native.baseUrl === cursorEndpoint &&
+          cursorEndpoint !== undefined
+        const approvedTransport =
+          request.provider === 'cursor' && cursorEndpoint !== undefined
+            ? ownedCursor
+            : native?.transport === 'pi-native'
+        if (!safe || !native || !approvedTransport)
+          throw new Error(
+            `Phi RPC model selection is unavailable: ${
+              !safe ? 'metadata' : !native ? 'registry' :
+              native.api !== 'cursor-agent' ? 'API' :
+              native.transport !== undefined ? 'transport' : `endpoint (${native.baseUrl} vs ${cursorEndpoint})`
+            }`
+          )
         selecting = true
         try {
           const selected = await pi.setModel({

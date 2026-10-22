@@ -67,7 +67,7 @@ function renderHomeView(): string {
         onSelectModel: () => undefined,
         onSelectThinkingLevel: () => undefined,
         onUpdateProjectPermissionMode: async () => undefined,
-        createdProjectId: null,
+        projectSelection: null,
         onNewProject: () => undefined,
         onOpenSession: () => undefined,
         onStartPrompt: async () => undefined
