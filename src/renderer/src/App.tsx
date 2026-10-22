@@ -77,6 +77,7 @@ import {
 } from './features/chat/lib/runtimeRecoveryState'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
 import { BackgroundJobsPanel, LATEST_JUPYTER_JOB_KEY } from './features/jobs/BackgroundJobsPanel'
+import { jupyterProjectJobRequestKey } from './features/jobs/lib/requestedBackgroundJob'
 import {
   useBackgroundJobRetention,
   refreshBackgroundJobs
@@ -124,6 +125,7 @@ import { useProviderAuth } from './useProviderAuth'
 import { isThinkingLevel, modelOptionFromSelection, useModelSelection } from './useModelSelection'
 import { useProjects } from './useProjects'
 import {
+  notebookWorkspaceTabId,
   upsertReusableWorkspaceFileTab,
   useWorkspaceFileTabs,
   type WorkspaceFileTab
@@ -895,10 +897,19 @@ function App(): React.JSX.Element {
   )
   useLocalConnectorNotices(showSnackbar, onOpenLocalConnectorJobs, refreshMcpServers)
   // Remote Jupyter startup is a background job; its steps and errors live in the jobs panel.
-  const onOpenJupyterStartLog = useCallback((): void => {
-    requestBackgroundJob(LATEST_JUPYTER_JOB_KEY)
-    onOpenBackgroundJobs()
-  }, [onOpenBackgroundJobs, requestBackgroundJob])
+  const onOpenJupyterStartLog = useCallback(
+    (projectCwd?: string): void => {
+      const project = projects.find(
+        (item) =>
+          item.location?.kind === 'ssh' &&
+          (item.location.canonicalRoot === projectCwd || item.workingDirectory === projectCwd)
+      )
+      if (project) requestBackgroundJob(jupyterProjectJobRequestKey(project.id))
+      else if (!projectCwd) requestBackgroundJob(LATEST_JUPYTER_JOB_KEY)
+      onOpenBackgroundJobs()
+    },
+    [onOpenBackgroundJobs, projects, requestBackgroundJob]
+  )
   const onOpenWebUrl = useCallback(
     (url: string): void => {
       void browserLinkOpeningCoordinator.open(url)
@@ -986,14 +997,19 @@ function App(): React.JSX.Element {
 
   const handleNotebookFileChangedEvent = useCallback(
     (change: AnalysisNotebookFileChange): void => {
+      if (
+        change.projectCwd !== activeCwd &&
+        change.projectCwd !== analysisNotebookRegistry?.projectCwd
+      )
+        return
       handleNotebookFileChanged(change)
       if (change.type === 'changed') {
         setWorkspaceFileTabs((tabs) =>
           tabs.map((tab) =>
-            tab.path === change.path || tab.path === change.file.path
+            (tab.ownerCwd === activeCwd || !tab.ownerCwd) &&
+            (tab.path === change.path || tab.path === change.file.path)
               ? {
                   ...tab,
-                  id: change.file.path,
                   path: change.file.path,
                   name: change.file.name,
                   status: change.file.relativePath,
@@ -1009,14 +1025,20 @@ function App(): React.JSX.Element {
       }
 
       if (change.type === 'deleted') {
-        setWorkspaceFileTabs((tabs) => tabs.filter((tab) => tab.path !== change.path))
+        setWorkspaceFileTabs((tabs) =>
+          tabs.filter(
+            (tab) => tab.path !== change.path || (tab.ownerCwd && tab.ownerCwd !== activeCwd)
+          )
+        )
         if (activeWorkspaceFilePath === change.path) {
           setActiveWorkspaceFilePath(null)
         }
       }
     },
     [
+      activeCwd,
       activeWorkspaceFilePath,
+      analysisNotebookRegistry?.projectCwd,
       handleNotebookFileChanged,
       setActiveWorkspaceFilePath,
       setWorkspaceFileTabs
@@ -1297,15 +1319,20 @@ function App(): React.JSX.Element {
   const onNotebookDirtyChange = useCallback(
     (file: { path: string }, dirty: boolean): void => {
       setWorkspaceFileTabs((tabs) => {
-        const current = tabs.find((tab) => tab.kind === 'notebook' && tab.path === file.path)
+        const current = tabs.find(
+          (tab) =>
+            tab.kind === 'notebook' &&
+            tab.path === file.path &&
+            (!tab.ownerCwd || tab.ownerCwd === activeCwd)
+        )
         if (!current || Boolean(current.dirty) === dirty) return tabs
         const updated = { ...current, dirty }
         return dirty
-          ? tabs.map((tab) => (tab.path === file.path ? updated : tab))
+          ? tabs.map((tab) => (tab.id === current.id ? updated : tab))
           : upsertReusableWorkspaceFileTab(tabs, updated)
       })
     },
-    [setWorkspaceFileTabs]
+    [activeCwd, setWorkspaceFileTabs]
   )
 
   const blockNotebookWorkspaceOpen = useCallback(
@@ -1325,20 +1352,28 @@ function App(): React.JSX.Element {
     (path: string): void => {
       if (blockNotebookWorkspaceOpen(path)) return
       applyFileOpenConversationLayout()
-      const normalizedPath = absoluteWorkspacePath(useSessionStore.getState().activeCwd, path)
+      const session = useSessionStore.getState()
+      const normalizedPath = absoluteWorkspacePath(session.activeCwd, path)
+      const tabId = notebookWorkspaceTabId(
+        session.activeSessionPath,
+        session.activeCwd,
+        normalizedPath
+      )
       const title = fileNameFromPath(normalizedPath)
       filePreviewRequestRef.current += 1
       setFilePreview(null)
-      setActiveWorkspaceTabKey(workspaceFileTabKey(normalizedPath))
+      setActiveWorkspaceTabKey(workspaceFileTabKey(tabId))
       setWorkspaceFileTabs((tabs) => {
         const nextTab: WorkspaceFileTab = {
-          id: normalizedPath,
+          id: tabId,
           path: normalizedPath,
           name: title,
           status: normalizedPath,
           absolutePath: normalizedPath,
           kind: 'notebook',
-          pathKind: 'file'
+          pathKind: 'file',
+          ownerSessionPath: session.activeSessionPath,
+          ownerCwd: session.activeCwd
         }
         return upsertReusableWorkspaceFileTab(tabs, nextTab)
       })
@@ -1348,10 +1383,9 @@ function App(): React.JSX.Element {
       if (cachedFile) {
         setWorkspaceFileTabs((tabs) =>
           tabs.map((tab) =>
-            tab.path === normalizedPath || tab.path === cachedFile.path
+            tab.id === tabId
               ? {
                   ...tab,
-                  id: cachedFile.path,
                   path: cachedFile.path,
                   name: cachedFile.name,
                   status: cachedFile.relativePath,
@@ -1370,10 +1404,9 @@ function App(): React.JSX.Element {
         if (!file) return
         setWorkspaceFileTabs((tabs) =>
           tabs.map((tab) =>
-            tab.path === normalizedPath
+            tab.id === tabId
               ? {
                   ...tab,
-                  id: file.path,
                   path: file.path,
                   name: file.name,
                   status: file.relativePath,
@@ -2123,7 +2156,7 @@ function App(): React.JSX.Element {
     let cancelled = false
     queueMicrotask(() => {
       if (cancelled) return
-      clearFileWorkspace()
+      clearFileWorkspace({ preserveNotebookTabs: true })
       setActiveWorkspaceTabKey(currentSessionTab.key)
       if (activeView === 'analysis') navigateToView('chat')
       previousRemoteFileIdentityRef.current = remoteFileIdentity
@@ -2141,7 +2174,7 @@ function App(): React.JSX.Element {
     let cancelled = false
     queueMicrotask(() => {
       if (cancelled) return
-      clearFileWorkspace()
+      clearFileWorkspace({ preserveNotebookTabs: true })
       setActiveWorkspaceTabKey(currentSessionTab.key)
       if (activeView === 'analysis') navigateToView('chat')
     })
@@ -2159,10 +2192,10 @@ function App(): React.JSX.Element {
   const workspaceFileWorkspaceTabs = useMemo<WorkspaceFileWorkspaceTab[]>(
     () =>
       workspaceFileTabs.map((tab) => ({
-        key: workspaceFileTabKey(tab.path),
+        key: workspaceFileTabKey(tab.id),
         kind: tab.kind,
         id: tab.id,
-        itemId: tab.path,
+        itemId: tab.id,
         name: tab.name,
         status: tab.status,
         title: tab.name,
@@ -2210,7 +2243,13 @@ function App(): React.JSX.Element {
   const effectiveActiveWorkspaceTabKey =
     activeWorkspaceTabKey ??
     (activeView === 'analysis' && activeWorkspaceFilePath
-      ? workspaceFileTabKey(activeWorkspaceFilePath)
+      ? workspaceFileTabKey(
+          workspaceFileTabs.find(
+            (tab) =>
+              tab.path === activeWorkspaceFilePath &&
+              (!tab.ownerSessionPath || tab.ownerSessionPath === activeSessionPath)
+          )?.id ?? activeWorkspaceFilePath
+        )
       : activeView === 'chat' && sessionTabWasOpened
         ? currentSessionTab.key
         : null)
@@ -2529,7 +2568,9 @@ function App(): React.JSX.Element {
   )
 
   const activeWorkspaceFileTab =
-    workspaceFileTabs.find((tab) => tab.path === activeWorkspaceFilePath) ?? null
+    workspaceFileTabs.find(
+      (tab) => workspaceFileTabKey(tab.id) === effectiveActiveWorkspaceTabKey
+    ) ?? null
   const cachedActiveFilePreview =
     activeWorkspaceFileTab && activeWorkspaceFileTab.kind !== 'notebook'
       ? (filePreviewCache[activeWorkspaceFileTab.path] ?? null)
@@ -2581,11 +2622,78 @@ function App(): React.JSX.Element {
     [filePreviewCache, filePreviewRequestRef, loadFilePreview, setFilePreview]
   )
 
+  const autoConnectingSessionIdsRef = useRef<Set<string>>(new Set())
+  const [autoConnectingSessionId, setAutoConnectingSessionId] = useState<string | null>(null)
+  const onOpenSessionFromSidebar = useCallback(
+    async (path: string): Promise<void> => {
+      await onSelectSession(path)
+      navigateToView('chat')
+      const target = remoteRecoveryTargetForSession(useSessionStore.getState())
+      if (!target || target.sessionPath !== path) return
+      if (autoConnectingSessionIdsRef.current.has(target.sessionId)) return
+      autoConnectingSessionIdsRef.current.add(target.sessionId)
+      let startedConnection = false
+      try {
+        const state = await rendererApi.getRuntimeRecoveryState(target)
+        if (
+          !state ||
+          !sameRuntimeRecoveryTarget(
+            remoteRecoveryTargetForSession(useSessionStore.getState()),
+            target
+          ) ||
+          !shouldAutoConnectRemoteSession(state)
+        )
+          return
+        startedConnection = true
+        setAutoConnectingSessionId(target.sessionId)
+        const recovered = await rendererApi.resumeRuntimeSession(target)
+        if (recovered) await onRuntimeRecovered(recovered)
+      } catch (error) {
+        if (
+          sameRuntimeRecoveryTarget(
+            remoteRecoveryTargetForSession(useSessionStore.getState()),
+            target
+          )
+        )
+          showSnackbarError(error, appCopy.reconnectFailed)
+      } finally {
+        autoConnectingSessionIdsRef.current.delete(target.sessionId)
+        if (startedConnection)
+          setAutoConnectingSessionId((current) => (current === target.sessionId ? null : current))
+      }
+    },
+    [navigateToView, onRuntimeRecovered, onSelectSession, rendererApi, showSnackbarError]
+  )
+
+  const [pendingNotebookTab, setPendingNotebookTab] = useState<{
+    id: string
+    path: string
+    ownerSessionPath: string
+    ownerCwd: string
+  } | null>(null)
+
   const onSelectWorkspaceFileTab = useCallback(
     (tabLike: AnalysisWorkspaceFileTab): void => {
-      const tab = workspaceFileTabs.find((item) => item.path === tabLike.path)
+      const tab = workspaceFileTabs.find((item) => item.id === tabLike.id)
       if (!tab) return
-      setActiveWorkspaceTabKey(workspaceFileTabKey(tab.path))
+      if (tab.kind === 'notebook' && tab.ownerCwd && tab.ownerCwd !== activeCwd) {
+        if (!tab.ownerSessionPath) {
+          showSnackbar(appCopy.selectNotebookProject, 'warning')
+          return
+        }
+        setPendingNotebookTab({
+          id: tab.id,
+          path: tab.path,
+          ownerSessionPath: tab.ownerSessionPath,
+          ownerCwd: tab.ownerCwd
+        })
+        void onOpenSessionFromSidebar(tab.ownerSessionPath).catch((error) => {
+          setPendingNotebookTab(null)
+          showSnackbarError(error, appCopy.openNotebookFailed)
+        })
+        return
+      }
+      setActiveWorkspaceTabKey(workspaceFileTabKey(tab.id))
       setActiveWorkspaceFilePath(tab.path)
       navigateToView('analysis')
       if (tab.kind === 'notebook') {
@@ -2597,33 +2705,79 @@ function App(): React.JSX.Element {
       showCachedOrLoadFilePreview(tab)
     },
     [
+      activeCwd,
       activateCachedAnalysisNotebook,
+      onOpenSessionFromSidebar,
       onOpenNotebookWorkspaceFile,
       setActiveWorkspaceFilePath,
+      showSnackbar,
+      showSnackbarError,
       showCachedOrLoadFilePreview,
       workspaceFileTabs,
       navigateToView
     ]
   )
 
+  useEffect(() => {
+    if (
+      !pendingNotebookTab ||
+      activeCwd !== pendingNotebookTab.ownerCwd ||
+      activeSessionPath !== pendingNotebookTab.ownerSessionPath
+    )
+      return
+    let cancelled = false
+    // Let the scope-switch layout effect clear old previews before restoring this tab.
+    void Promise.resolve().then(() => {
+      const session = useSessionStore.getState()
+      if (
+        cancelled ||
+        session.activeCwd !== pendingNotebookTab.ownerCwd ||
+        session.activeSessionPath !== pendingNotebookTab.ownerSessionPath
+      )
+        return
+      if (!workspaceFileTabs.some((tab) => tab.id === pendingNotebookTab.id)) {
+        setPendingNotebookTab(null)
+        return
+      }
+      setPendingNotebookTab(null)
+      onOpenNotebookWorkspaceFile(pendingNotebookTab.path)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeCwd,
+    activeSessionPath,
+    onOpenNotebookWorkspaceFile,
+    pendingNotebookTab,
+    workspaceFileTabs
+  ])
+
   const onCloseWorkspaceFileTab = useCallback(
     (tabLike: AnalysisWorkspaceFileTab): void => {
-      const closingTab = workspaceFileTabs.find((tab) => tab.path === tabLike.path)
+      const closingTab = workspaceFileTabs.find((tab) => tab.id === tabLike.id)
       if (!closingTab) return
-      if (textFileHasUnsavedChanges(closingTab.path)) {
+      if (
+        closingTab.dirty ||
+        (closingTab.kind !== 'notebook' && textFileHasUnsavedChanges(closingTab.path))
+      ) {
         showSnackbar(appCopy.saveFileFirst, 'warning')
         return
       }
-      useTextFileDrafts.getState().release(closingTab.path)
-      const remainingTabs = workspaceFileTabs.filter((tab) => tab.path !== closingTab.path)
+      if (closingTab.kind !== 'notebook') useTextFileDrafts.getState().release(closingTab.path)
+      const remainingTabs = workspaceFileTabs.filter((tab) => tab.id !== closingTab.id)
       setWorkspaceFileTabs(remainingTabs)
-      clearCachedFilePreview(closingTab.path)
-      if (closingTab.kind === 'notebook') {
+      if (closingTab.kind !== 'notebook') clearCachedFilePreview(closingTab.path)
+      if (closingTab.kind === 'notebook' && closingTab.ownerCwd === activeCwd) {
         forgetCachedAnalysisNotebook(closingTab.path)
       }
 
-      if (closingTab.path !== activeWorkspaceFilePath) {
-        if (filePreview && filePreviewStatePath(filePreview) === closingTab.path) {
+      if (workspaceFileTabKey(closingTab.id) !== effectiveActiveWorkspaceTabKey) {
+        if (
+          closingTab.kind !== 'notebook' &&
+          filePreview &&
+          filePreviewStatePath(filePreview) === closingTab.path
+        ) {
           cancelActiveWrapperResultRead()
           filePreviewRequestRef.current += 1
           setFilePreview(null)
@@ -2642,26 +2796,24 @@ function App(): React.JSX.Element {
         return
       }
 
-      setActiveWorkspaceFilePath(nextTab.path)
       if (nextTab.kind === 'notebook') {
-        if (!activateCachedAnalysisNotebook(nextTab.path)) {
-          onOpenNotebookWorkspaceFile(nextTab.path)
-        }
+        onSelectWorkspaceFileTab(nextTab)
       } else {
+        setActiveWorkspaceFilePath(nextTab.path)
         setActiveAnalysisNotebook(null)
         showCachedOrLoadFilePreview(nextTab)
       }
     },
     [
-      activateCachedAnalysisNotebook,
-      activeWorkspaceFilePath,
+      activeCwd,
       cancelActiveWrapperResultRead,
       clearCachedFilePreview,
       closeActiveNotebook,
       filePreview,
       filePreviewRequestRef,
       forgetCachedAnalysisNotebook,
-      onOpenNotebookWorkspaceFile,
+      effectiveActiveWorkspaceTabKey,
+      onSelectWorkspaceFileTab,
       setActiveAnalysisNotebook,
       setActiveWorkspaceFilePath,
       setFilePreview,
@@ -2677,7 +2829,9 @@ function App(): React.JSX.Element {
   const onCloseCurrentFilePreview = useCallback((): void => {
     if (!filePreview) return
     const previewPath = filePreviewStatePath(filePreview)
-    const previewTab = workspaceFileTabs.find((tab) => tab.path === previewPath)
+    const previewTab = workspaceFileTabs.find(
+      (tab) => tab.kind !== 'notebook' && tab.path === previewPath
+    )
     if (previewTab) {
       onCloseWorkspaceFileTab(previewTab)
       return
@@ -3014,49 +3168,6 @@ function App(): React.JSX.Element {
     await onNewChat()
     navigateToView('chat')
   }, [navigateToView, onNewChat])
-
-  const autoConnectingSessionIdsRef = useRef<Set<string>>(new Set())
-  const [autoConnectingSessionId, setAutoConnectingSessionId] = useState<string | null>(null)
-  const onOpenSessionFromSidebar = useCallback(
-    async (path: string): Promise<void> => {
-      await onSelectSession(path)
-      navigateToView('chat')
-      const target = remoteRecoveryTargetForSession(useSessionStore.getState())
-      if (!target || target.sessionPath !== path) return
-      if (autoConnectingSessionIdsRef.current.has(target.sessionId)) return
-      autoConnectingSessionIdsRef.current.add(target.sessionId)
-      let startedConnection = false
-      try {
-        const state = await rendererApi.getRuntimeRecoveryState(target)
-        if (
-          !state ||
-          !sameRuntimeRecoveryTarget(
-            remoteRecoveryTargetForSession(useSessionStore.getState()),
-            target
-          ) ||
-          !shouldAutoConnectRemoteSession(state)
-        )
-          return
-        startedConnection = true
-        setAutoConnectingSessionId(target.sessionId)
-        const recovered = await rendererApi.resumeRuntimeSession(target)
-        if (recovered) await onRuntimeRecovered(recovered)
-      } catch (error) {
-        if (
-          sameRuntimeRecoveryTarget(
-            remoteRecoveryTargetForSession(useSessionStore.getState()),
-            target
-          )
-        )
-          showSnackbarError(error, appCopy.reconnectFailed)
-      } finally {
-        autoConnectingSessionIdsRef.current.delete(target.sessionId)
-        if (startedConnection)
-          setAutoConnectingSessionId((current) => (current === target.sessionId ? null : current))
-      }
-    },
-    [navigateToView, onRuntimeRecovered, onSelectSession, rendererApi, showSnackbarError]
-  )
 
   const onStartProjectChatFromSidebar = useCallback(
     async (project: Project): Promise<void> => {
@@ -3643,6 +3754,13 @@ function App(): React.JSX.Element {
     setWorkspaceSidebarMode
   ])
 
+  const runtimeCanonicalCwd =
+    activeProjectLocation?.kind === 'ssh'
+      ? activeProjectLocation.canonicalRoot
+      : activeProjectLocation?.kind === 'local'
+        ? activeProjectLocation.realPath
+        : undefined
+
   const workspaceSidebarProps = useMemo<WorkspaceSidebarDataProps>(
     () => ({
       activeWorkspaceIsProject: activeWorkspaceIsProject,
@@ -3669,6 +3787,7 @@ function App(): React.JSX.Element {
       fileDownloadState: fileDownload,
       onCancelFileDownload: cancelActiveWrapperResultDownload,
       runtimeProjectCwd: activeProject?.workingDirectory ?? activeCwd,
+      runtimeCanonicalCwd,
       runtimeStatus: analysisJupyterRuntimeStatus,
       additionalRuntimeStatuses: runningJupyterRuntimes,
       isRuntimeLoading: isLoadingAnalysisJupyterRuntime || isStartingAnalysisJupyter,
@@ -3684,7 +3803,7 @@ function App(): React.JSX.Element {
           await refreshAnalysisJupyterRuntimeStatus()
           await refreshRunningJupyterRuntimes()
         })
-        if (remote) onOpenJupyterStartLog()
+        if (remote) onOpenJupyterStartLog(cwd)
       },
       onOpenRuntimeStartLog: onOpenJupyterStartLog,
       onStopRuntime: (cwd, options) => {
@@ -3752,6 +3871,7 @@ function App(): React.JSX.Element {
       activeWorkspaceScopeLabel,
       workspaceFilesRootPath,
       activeProjectLocation?.kind,
+      runtimeCanonicalCwd,
       activeProject?.remoteHostAlias,
       activeRemoteConnection,
       onRetryRemoteConnection,
@@ -3949,7 +4069,7 @@ function App(): React.JSX.Element {
           }}
           fileStrip={{
             tabs: workspaceFileTabs,
-            activePath: activeWorkspaceFilePath,
+            activeId: activeWorkspaceFileTab?.id ?? null,
             onSelect: onSelectWorkspaceFileTab,
             onClose: onCloseWorkspaceFileTab
           }}

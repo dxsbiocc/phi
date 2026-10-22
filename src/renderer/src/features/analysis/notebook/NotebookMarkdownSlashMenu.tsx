@@ -1,5 +1,6 @@
 import { analysisCopy } from '../lib/analysisUiCopy'
 import { useUiLanguage } from '../../../lib/i18n'
+import { useEffect, useRef } from 'react'
 import {
   ListItemIcon,
   ListItemText,
@@ -50,6 +51,19 @@ export function NotebookMarkdownSlashMenu({
   onInsert: (kind: MarkdownInsertKind) => void
 }): React.JSX.Element {
   useUiLanguage()
+  const paperRef = useRef<HTMLDivElement | null>(null)
+  const activeKind = kinds[activeIndex]
+
+  useEffect(() => {
+    const paper = paperRef.current
+    const option = activeKind && document.getElementById(`${menuId}-${activeKind}`)
+    if (!paper || !option) return
+    const paperRect = paper.getBoundingClientRect()
+    const optionRect = option.getBoundingClientRect()
+    if (optionRect.top < paperRect.top) paper.scrollTop -= paperRect.top - optionRect.top
+    else if (optionRect.bottom > paperRect.bottom)
+      paper.scrollTop += optionRect.bottom - paperRect.bottom
+  }, [activeKind, menuId])
 
   return (
     <Popper
@@ -60,10 +74,11 @@ export function NotebookMarkdownSlashMenu({
       sx={{ zIndex: (theme) => theme.zIndex.modal + 1 }}
     >
       <Paper
+        ref={paperRef}
         id={menuId}
         data-phi-notebook-markdown-slash-menu="true"
         elevation={5}
-        sx={{ width: 236, maxHeight: 320, overflowY: 'auto', borderRadius: 2 }}
+        sx={{ width: 236, maxHeight: 248, overflowY: 'auto', borderRadius: 2 }}
       >
         {kinds.length ? (
           <MenuList role="listbox" aria-label={analysisCopy.insertIntoMarkdown} dense>

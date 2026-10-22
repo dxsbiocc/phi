@@ -3,9 +3,10 @@ import { StateEffect, StateField, type EditorState, type Extension } from '@code
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { markdownInlineDecorations } from './markdownInlineDecorations'
 import { markdownBlockDecorations, markdownBlockTheme } from './markdownBlockDecorations'
+import { inlineMathRanges } from './markdownInlineMath'
 
-type MarkdownBlock = { from: number; to: number; name: string }
-type RegisterWidget = (dom: HTMLElement, text: string) => void
+export type MarkdownBlock = { from: number; to: number; name: string }
+type RegisterWidget = (dom: HTMLElement, text: string, block: MarkdownBlock) => void
 
 /** Use whole syntax blocks so lists, tables and fenced code retain their structure. */
 export function inlineMarkdownBlocks(state: EditorState): MarkdownBlock[] {
@@ -115,7 +116,8 @@ class MarkdownBlockWidget extends WidgetType {
     readonly references: string,
     readonly register: RegisterWidget,
     readonly unregister: (dom: HTMLElement) => void,
-    readonly inline = false
+    readonly inline = false,
+    readonly stable = false
   ) {
     super()
   }
@@ -124,8 +126,20 @@ class MarkdownBlockWidget extends WidgetType {
     return (
       this.source === other.source &&
       this.references === other.references &&
-      this.inline === other.inline
+      this.inline === other.inline &&
+      this.stable === other.stable
     )
+  }
+
+  updateDOM(dom: HTMLElement, _view: EditorView, from: this): boolean {
+    if (!this.stable || !from.stable || this.block.from !== from.block.from) return false
+    dom.dataset.sourcePreview = this.source
+    this.register(
+      dom,
+      this.references ? `${this.source}\n\n${this.references}` : this.source,
+      this.block
+    )
+    return true
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -147,7 +161,11 @@ class MarkdownBlockWidget extends WidgetType {
       view.dispatch({ selection: { anchor: position }, effects: focusEffect.of(true) })
       view.focus()
     })
-    this.register(dom, this.references ? `${this.source}\n\n${this.references}` : this.source)
+    this.register(
+      dom,
+      this.references ? `${this.source}\n\n${this.references}` : this.source,
+      this.block
+    )
     return dom
   }
 
@@ -161,7 +179,13 @@ const compositionEffect = StateEffect.define<boolean>()
 
 export function inlineMarkdownExtension(
   register: RegisterWidget,
-  unregister: (dom: HTMLElement) => void
+  unregister: (dom: HTMLElement) => void,
+  options: {
+    keepFencedCodeRendered?: boolean
+    keepDisplayMathRendered?: boolean
+    keepSyntaxHidden?: boolean
+    alwaysInlineBlocks?: boolean
+  } = {}
 ): Extension {
   const decorate = (state: EditorState, focused: boolean): DecorationSet => {
     const blocks = inlineMarkdownBlocks(state)
@@ -170,7 +194,18 @@ export function inlineMarkdownExtension(
       .map((block) => state.sliceDoc(block.from, block.to))
       .join('\n')
     const decorations = blocks.flatMap((block) => {
-      if (!markdownBlockIsSelected(block, state, focused)) {
+      const stableBlock = Boolean(
+        (options.keepFencedCodeRendered && block.name === 'FencedCode') ||
+        (options.keepDisplayMathRendered && block.name === 'Math')
+      )
+      const uneditableBlock =
+        options.alwaysInlineBlocks &&
+        /^(?:Table|CodeBlock|HTMLBlock|LinkReference)$/.test(block.name)
+      if (
+        stableBlock ||
+        uneditableBlock ||
+        (!options.alwaysInlineBlocks && !markdownBlockIsSelected(block, state, focused))
+      ) {
         return [
           Decoration.replace({
             block: true,
@@ -180,28 +215,39 @@ export function inlineMarkdownExtension(
               state.sliceDoc(block.from, block.to),
               references,
               register,
-              unregister
+              unregister,
+              false,
+              stableBlock
             )
           }).range(block.from, block.to)
         ]
       }
-      const inline = [
-        ...markdownInlineDecorations(state, block.from, block.to, focused),
-        ...markdownBlockDecorations(state, block.from, block.to, focused)
+      let inline = [
+        ...markdownInlineDecorations(
+          state,
+          block.from,
+          block.to,
+          focused,
+          options.keepSyntaxHidden
+        ),
+        ...markdownBlockDecorations(state, block.from, block.to, focused, options.keepSyntaxHidden)
       ]
+      const inlineWidgets: Array<{ from: number; to: number }> = []
       syntaxTree(state).iterate({
         from: block.from,
         to: block.to,
         enter(node) {
-          if (node.name !== 'Image') return
+          if (node.name !== 'Image' && !(options.keepSyntaxHidden && node.name === 'Link')) return
           if (node.from < block.from || node.to > block.to) return false
           if (
+            options.keepSyntaxHidden ||
             !markdownBlockIsSelected(
               { from: node.from, to: node.to, name: node.name },
               state,
               focused
             )
-          )
+          ) {
+            inlineWidgets.push({ from: node.from, to: node.to })
             inline.push(
               Decoration.replace({
                 widget: new MarkdownBlockWidget(
@@ -210,13 +256,41 @@ export function inlineMarkdownExtension(
                   references,
                   register,
                   unregister,
-                  true
+                  true,
+                  options.keepSyntaxHidden
                 )
               }).range(node.from, node.to)
             )
+          }
           return false
         }
       })
+      if (options.keepSyntaxHidden && options.alwaysInlineBlocks) {
+        for (const math of inlineMathRanges(state.sliceDoc(block.from, block.to), block.from)) {
+          if (inlineWidgets.some((widget) => math.from < widget.to && math.to > widget.from))
+            continue
+          inlineWidgets.push({ from: math.from, to: math.to })
+          inline.push(
+            Decoration.replace({
+              widget: new MarkdownBlockWidget(
+                { from: math.from, to: math.to, name: 'InlineMath' },
+                state.sliceDoc(math.from, math.to),
+                references,
+                register,
+                unregister,
+                true,
+                true
+              )
+            }).range(math.from, math.to)
+          )
+        }
+      }
+      if (inlineWidgets.length)
+        inline = inline.filter(
+          (range) =>
+            inlineWidgets.some((widget) => range.from === widget.from && range.to === widget.to) ||
+            !inlineWidgets.some((widget) => range.from < widget.to && range.to > widget.from)
+        )
       const heading = /^(?:ATX|Setext)Heading([1-6])$/.exec(block.name)
       if (!heading) return inline
       const line = state.doc.lineAt(block.from)
@@ -232,7 +306,10 @@ export function inlineMarkdownExtension(
             ? focused && range.from >= from && range.from < to
             : range.from < to && range.to > from
         )
-      if (prefix && !syntaxSelected(line.from, line.from + prefix[0].length)) {
+      if (
+        prefix &&
+        (options.keepSyntaxHidden || !syntaxSelected(line.from, line.from + prefix[0].length))
+      ) {
         headingDecorations.push(
           Decoration.replace({ inclusive: false }).range(line.from, line.from + prefix[0].length)
         )
@@ -242,7 +319,7 @@ export function inlineMarkdownExtension(
           .topNode.getChildren(block.name)
           .find((node) => node.from === block.from)
         const marker = node?.getChild('HeaderMark')
-        if (marker && !syntaxSelected(marker.from, marker.to)) {
+        if (marker && (options.keepSyntaxHidden || !syntaxSelected(marker.from, marker.to))) {
           const underline = state.doc.lineAt(marker.from)
           headingDecorations.push(
             Decoration.replace({ block: true, inclusive: true }).range(

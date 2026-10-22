@@ -34,6 +34,7 @@ const english = {
   remoteDeleteRequiresConnection:
     'Could not confirm deletion on the remote server. The local conversation was kept; reconnect, check the server, and try again.',
   wrongRemoteNotebook: 'This remote notebook does not belong to the current project',
+  selectNotebookProject: 'Switch to the original project to open this notebook.',
   openNotebookFailed: 'Could not open notebook',
   readChatFailed: 'Could not load chat history',
   imagesUnsupported: 'This model does not support images. Select a model that supports images.',
@@ -123,6 +124,7 @@ const chinese: LocalizedCopy<typeof english> = {
   remoteDeleteRequiresConnection:
     '无法确认服务器上的删除结果。本地会话已保留，请重新连接、核对服务器后重试。',
   wrongRemoteNotebook: '远程 notebook 不属于当前项目',
+  selectNotebookProject: '请先切换到此 Notebook 所属的项目再打开。',
   openNotebookFailed: '无法打开 notebook',
   readChatFailed: '读取对话记录失败',
   imagesUnsupported: '当前模型不支持图片，请切换到支持图片的模型',

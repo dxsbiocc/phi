@@ -10246,6 +10246,7 @@ test('main IPC: local and remote Jupyter servers remain listed across conversati
 
   const statuses = (await app.invoke('analysis:listJupyterRuntimeStatuses')) as Array<{
     server: { projectCwd: string; runtimeKind?: string }
+    notebooks: { activeSessionCount: number; sessions: Array<{ notebookPath: string }> }
   }>
   assert.deepEqual(
     statuses.map(({ server }) => [server.projectCwd, server.runtimeKind ?? 'local']),
@@ -10254,14 +10255,48 @@ test('main IPC: local and remote Jupyter servers remain listed across conversati
       ['/canonical/project', 'ssh']
     ]
   )
+  assert.deepEqual(
+    statuses.map(({ notebooks }) => notebooks.activeSessionCount),
+    [1, 1]
+  )
+  assert.deepEqual(
+    app.notebookSessionCalls.filter(
+      (call) => call.action === 'closeProject' || call.action === 'close'
+    ),
+    []
+  )
 
   await app.invoke('analysis:stopJupyter', '/canonical/project')
   const remaining = (await app.invoke('analysis:listJupyterRuntimeStatuses')) as Array<{
-    server: { projectCwd: string }
+    server: { projectCwd: string; state: string }
   }>
   assert.deepEqual(
-    remaining.map(({ server }) => server.projectCwd),
-    ['/projects/research']
+    remaining.map(({ server }) => [server.projectCwd, server.state]),
+    [
+      ['/projects/research', 'starting'],
+      ['/canonical/project', 'stopped']
+    ]
+  )
+})
+
+test('main IPC: an opened remote Notebook keeps its stopped Jupyter service listed after switching local', async () => {
+  const app = await harness()
+  const remote = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    cwd: string
+  }
+  await app.invoke('analysis:openNotebook', remote.cwd, 'notebooks/remote.ipynb')
+  await app.invoke('sessions:create')
+
+  const statuses = (await app.invoke('analysis:listJupyterRuntimeStatuses')) as Array<{
+    server: { projectCwd: string; runtimeKind?: string; state: string }
+  }>
+  assert.deepEqual(
+    statuses.map(({ server }) => [server.projectCwd, server.runtimeKind, server.state]),
+    [['/canonical/project', 'ssh', 'stopped']]
+  )
+  assert.deepEqual(
+    app.remoteNotebookCalls.filter((call) => call.action === 'start'),
+    []
   )
 })
 

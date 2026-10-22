@@ -53,7 +53,7 @@ test('workspace file header keeps its tab strip and trailing chrome reserve', ()
         fileTab(),
         fileTab({ id: 'file-2', path: 'src/main.ts', name: 'main.ts', dirty: true })
       ],
-      activePath: 'src/main.ts',
+      activeId: 'file-2',
       onSelect: () => undefined,
       onClose: () => undefined,
       leadingChromeInset: 50,
@@ -78,7 +78,7 @@ test('workspace file header collapses to a plain content inset without window ch
   const markup = render(
     createElement(WorkspaceFileHeader, {
       tabs: [fileTab()],
-      activePath: 'src/index.ts',
+      activeId: 'file-1',
       onSelect: () => undefined,
       onClose: () => undefined
     })
@@ -87,6 +87,22 @@ test('workspace file header collapses to a plain content inset without window ch
   assert.match(markup, /padding-left:12px/)
   assert.match(markup, /padding-right:12px/)
   assert.doesNotMatch(markup, new RegExp(`padding-right:${titlebarTrailingToggleChromeReserve}`))
+})
+
+test('workspace file header selects one scoped notebook when two hosts use the same path', () => {
+  const markup = render(
+    createElement(WorkspaceFileHeader, {
+      tabs: [
+        fileTab({ id: 'local-notebook', path: '/shared/demo.ipynb', kind: 'notebook' }),
+        fileTab({ id: 'remote-notebook', path: '/shared/demo.ipynb', kind: 'notebook' })
+      ],
+      activeId: 'remote-notebook',
+      onSelect: () => undefined,
+      onClose: () => undefined
+    })
+  )
+
+  assert.equal((markup.match(/aria-selected="true"/g) ?? []).length, 1)
 })
 
 test('workspace resource header renders resource tabs plus its trailing actions', () => {

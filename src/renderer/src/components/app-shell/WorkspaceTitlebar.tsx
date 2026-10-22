@@ -187,12 +187,12 @@ function WorkspaceFileTabItem({
 
 function WorkspaceFileTabs({
   tabs,
-  activePath,
+  activeId,
   onSelect,
   onClose
 }: {
   tabs: WorkspaceFileTab[]
-  activePath: string | null
+  activeId: string | null
   onSelect: (tab: WorkspaceFileTab) => void
   onClose: (tab: WorkspaceFileTab) => void
 }): React.JSX.Element {
@@ -220,7 +220,7 @@ function WorkspaceFileTabs({
         <WorkspaceFileTabItem
           key={tab.id}
           tab={tab}
-          selected={tab.path === activePath}
+          selected={tab.id === activeId}
           onSelect={onSelect}
           onClose={onClose}
         />
@@ -231,14 +231,14 @@ function WorkspaceFileTabs({
 
 export function WorkspaceFileHeader({
   tabs,
-  activePath,
+  activeId,
   onSelect,
   onClose,
   leadingChromeInset = 0,
   reserveTrailingChromeSpace = false
 }: {
   tabs: WorkspaceFileTab[]
-  activePath: string | null
+  activeId: string | null
   onSelect: (tab: WorkspaceFileTab) => void
   onClose: (tab: WorkspaceFileTab) => void
   leadingChromeInset?: number
@@ -252,12 +252,7 @@ export function WorkspaceFileHeader({
         ...titlebarHeaderPadding(leadingChromeInset, reserveTrailingChromeSpace)
       }}
     >
-      <WorkspaceFileTabs
-        tabs={tabs}
-        activePath={activePath}
-        onSelect={onSelect}
-        onClose={onClose}
-      />
+      <WorkspaceFileTabs tabs={tabs} activeId={activeId} onSelect={onSelect} onClose={onClose} />
     </Box>
   )
 }

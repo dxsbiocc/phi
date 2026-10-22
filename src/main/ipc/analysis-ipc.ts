@@ -222,13 +222,10 @@ function registerJupyterIpc(options: AnalysisIpcOptions): void {
       server,
       notebooks: options.jupyter.localSessions.projectSummary(server.projectCwd)
     }))
-    const remote = options.notebooks
-      .activeRemoteNotebookBackends()
-      .map((backend) => ({
-        server: backend.controller.status(),
-        notebooks: backend.sessions.projectSummary(backend.projectCwd)
-      }))
-      .filter(({ server }) => server.state !== 'stopped' && server.state !== 'exited')
+    const remote = options.notebooks.activeRemoteNotebookBackends().map((backend) => ({
+      server: backend.controller.status(),
+      notebooks: backend.sessions.projectSummary(backend.projectCwd)
+    }))
     return [...local, ...remote]
   })
   options.ipcMain.handle(IPC.analysis.listKernels, async (_, cwd?: string) => {

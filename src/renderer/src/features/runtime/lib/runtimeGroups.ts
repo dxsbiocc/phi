@@ -13,23 +13,42 @@ export interface RuntimeServerGroup {
   entries: RuntimeServerEntry[]
 }
 
+function groupIdentity(
+  entry: { kind: 'local' | 'ssh'; serverLabel?: string },
+  localLabel: string,
+  remoteFallbackLabel: string
+): Pick<RuntimeServerGroup, 'key' | 'kind' | 'label'> {
+  if (entry.kind === 'local') return { key: 'local', kind: 'local', label: localLabel }
+  const host = entry.serverLabel?.trim()
+  return {
+    key: `ssh:${host?.toLowerCase() ?? ''}`,
+    kind: 'ssh',
+    label: host || remoteFallbackLabel
+  }
+}
+
 export function groupRuntimeStatuses(input: {
   projectCwd: string
   runtimeStatus: AnalysisJupyterRuntimeStatus | null
   currentRuntimeKind?: 'local' | 'ssh'
   currentServerLabel?: string
+  currentCanonicalCwd?: string
   additionalRuntimeStatuses?: AnalysisJupyterRuntimeStatus[]
   localLabel: string
   remoteFallbackLabel: string
 }): RuntimeServerGroup[] {
-  const currentServerCwd = input.runtimeStatus?.server.projectCwd
+  const currentServerCwd = input.runtimeStatus?.server.projectCwd ?? input.currentCanonicalCwd
+  const currentStatus =
+    input.runtimeStatus ??
+    input.additionalRuntimeStatuses?.find(({ server }) => server.projectCwd === currentServerCwd) ??
+    null
   const entries = [
     {
       projectCwd: input.projectCwd,
-      runtimeStatus: input.runtimeStatus,
+      runtimeStatus: currentStatus,
       current: true,
-      kind: input.runtimeStatus?.server.runtimeKind ?? input.currentRuntimeKind ?? 'local',
-      serverLabel: input.runtimeStatus?.server.serverLabel ?? input.currentServerLabel
+      kind: currentStatus?.server.runtimeKind ?? input.currentRuntimeKind ?? 'local',
+      serverLabel: currentStatus?.server.serverLabel ?? input.currentServerLabel
     },
     ...(input.additionalRuntimeStatuses ?? [])
       .filter(
@@ -46,10 +65,7 @@ export function groupRuntimeStatuses(input: {
   ]
   const groups = new Map<string, RuntimeServerGroup>()
   for (const entry of entries) {
-    const kind = entry.kind === 'ssh' ? 'ssh' : 'local'
-    const host = entry.serverLabel?.trim()
-    const key = kind === 'local' ? 'local' : `ssh:${host?.toLowerCase() ?? ''}`
-    const label = kind === 'local' ? input.localLabel : host || input.remoteFallbackLabel
+    const { key, kind, label } = groupIdentity(entry, input.localLabel, input.remoteFallbackLabel)
     const existing = groups.get(key)
     if (existing) existing.entries.push(entry)
     else groups.set(key, { key, kind, label, entries: [entry] })

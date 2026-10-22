@@ -441,7 +441,7 @@ test('analysis view renders project notebook registry entries', () => {
   assert.doesNotMatch(markup, /data\/raw\/samples\.csv/)
 })
 
-test('Notebook Markdown links use the in-app opener without a chat conversation', () => {
+test('Notebook Markdown uses a live editor while preserving the in-app link renderer', () => {
   const document = parseNotebook({
     nbformat: 4,
     nbformat_minor: 5,
@@ -467,8 +467,16 @@ test('Notebook Markdown links use the in-app opener without a chat conversation'
     },
     onOpenWebUrl: () => undefined
   })
-  assert.match(markup, /href="https:\/\/www\.google\.com\/"/)
-  assert.match(markup, /data-phi-open-web-url="in-app"/)
+  assert.match(markup, /data-phi-notebook-markdown-editor="live"/)
+  assert.match(markup, /data-phi-notebook-markdown-live="true"/)
+  const markdownContent = readFileSync(
+    resolve(
+      process.cwd(),
+      'src/renderer/src/features/analysis/notebook/NotebookMarkdownEditor.tsx'
+    ),
+    'utf8'
+  )
+  assert.match(markdownContent, /<MarkdownContent text=\{widget\.text\} enableMath/)
 })
 
 test('analysis empty notebook canvas offers notebook recovery actions', () => {
@@ -674,14 +682,13 @@ test('analysis view renders an opened notebook document', () => {
   assert.equal(markup.match(/data-phi-notebook-scroll-marker="idle"/g)?.length, 1)
   assert.match(markup, /data-phi-notebook-outline-level="1"/)
   assert.match(markup, /data-phi-notebook-outline-level="2"/)
-  assert.match(markup, /data-phi-notebook-markdown="rendered"/)
-  assert.match(markup, /data-phi-notebook-markdown-edit-trigger="double-click"/)
-  assert.match(markup, /data-phi-notebook-markdown-select-trigger="single-click"/)
+  assert.match(markup, /data-phi-notebook-markdown-editor="live"/)
+  assert.match(markup, /data-phi-notebook-markdown-live="true"/)
   assert.match(markup, /data-phi-notebook-cell="marimo-like"/)
   assert.equal(markup.match(/data-phi-notebook-cell-number=/g)?.length, 2)
   assert.match(markup, /data-phi-notebook-cell-number="1"/)
   assert.match(markup, /data-phi-notebook-cell-number="2"/)
-  assert.match(markup, /data-phi-notebook-cell-surface="markdown-rendered"/)
+  assert.match(markup, /data-phi-notebook-cell-surface="markdown-live"/)
   assert.match(markup, /data-phi-notebook-cell-surface="framed"/)
   assert.match(markup, /data-phi-notebook-cell-spacing="roomy"/)
   assert.match(markup, /data-phi-notebook-cell-actions="marimo"/)
@@ -835,7 +842,7 @@ test('analysis notebook keeps code execution separate from Markdown editing', ()
     'utf8'
   )
 
-  assert.match(source, /data-phi-notebook-markdown-select-trigger="single-click"/)
+  assert.match(source, /isLiveMarkdown \? 'markdown-live'/)
   assert.doesNotMatch(source, /data-phi-notebook-rendered-markdown-action-icon/)
   assert.doesNotMatch(source, /edit-markdown/)
   assert.match(source, /opacity: menuAnchor \? 1 : 0/)
@@ -878,7 +885,8 @@ test('analysis notebook cells reserve shift enter for running code cells', () =>
   )
 
   assert.match(cellSource, /onAdvance=\{\(\) => onAdvanceCell\?\.\(cell\.id\)\}/)
-  assert.match(markdownEditorSource, /if \(advance\) onAdvance\?\.\(\)/)
+  assert.match(markdownEditorSource, /key: 'Shift-Enter'/)
+  assert.match(markdownEditorSource, /propsRef\.current\.onAdvance\?\.\(\)/)
   assert.match(cellSource, /const runCellFromKeyboard =/)
   assert.match(cellSource, /!event\.shiftKey && !event\.metaKey && !event\.ctrlKey/)
   assert.match(cellSource, /onKeyDown=\{runCellFromKeyboard\}/)

@@ -12,7 +12,7 @@ const needsDisplay =
   process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY
 
 test(
-  'mounted Notebook Markdown editor keeps selection actions, slash insertion and draft through appearance changes',
+  'mounted Notebook Markdown editor renders blocks live and preserves editing interactions',
   {
     skip: needsDisplay ? 'A desktop display is required for the Electron renderer test' : false,
     timeout: 40_000
@@ -44,7 +44,7 @@ test(
       assert.ok(styles.length > 0, 'The WarmTooltip stylesheet must be bundled')
       await writeFile(
         html,
-        `<!doctype html><html><head>${styles.map((name) => `<link rel="stylesheet" href="./${name}">`).join('')}</head><body><script src="./editor.js"></script></body></html>`
+        `<!doctype html><html><head><meta charset="utf-8">${styles.map((name) => `<link rel="stylesheet" href="./${name}">`).join('')}</head><body><script src="./editor.js"></script></body></html>`
       )
       const main = join(directory, 'main.cjs')
       await writeFile(
@@ -65,6 +65,7 @@ app.whenReady().then(async () => {
     app.exit(1)
   })
   await window.loadFile(${JSON.stringify(html)})
+  window.webContents.focus()
 })
 `
       )

@@ -22,6 +22,7 @@ export const runtimeUi = defineCopy(
       'Discard unconfirmed local state for remote Jupyter',
     stopKernel: 'Stop kernel',
     stopValueKernel: (value0: unknown) => `Stop ${value0} kernel`,
+    switchProjectToOpenNotebook: 'Switch to this project to open',
     noNotebookKernelsAreRunningInThisProject: 'No notebook kernels are running in this project.'
   },
   {
@@ -42,6 +43,7 @@ export const runtimeUi = defineCopy(
     discardUnconfirmedLocalStateForRemoteJupyter: '放弃未确认的远程 Jupyter 本地状态',
     stopKernel: '关闭 kernel',
     stopValueKernel: (value0: unknown) => `关闭 ${value0} kernel`,
+    switchProjectToOpenNotebook: '切换到此项目后打开',
     noNotebookKernelsAreRunningInThisProject: '当前项目还没有运行中的 notebook kernel。'
   }
 )

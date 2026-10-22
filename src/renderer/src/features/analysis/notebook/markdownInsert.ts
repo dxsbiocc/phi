@@ -179,7 +179,12 @@ function formula(range: Range, selected: string, sample: string): MarkdownInsert
 }
 
 function fenced(range: Range, body: string): MarkdownInsertResult {
-  return insertBlock(range, `\`\`\`text\n${body}\n\`\`\``, 3, 7)
+  const prefix = atLineStart(range.source, range.start) ? '' : '\n\n'
+  const following = range.source.slice(range.end)
+  const suffix = following.startsWith('\n') ? '\n' : '\n\n'
+  const text = `${prefix}\`\`\`\n${body}\n\`\`\`${suffix}`
+  const cursor = prefix.length + 4 + body.length
+  return place(range, { text, selectionStart: cursor, selectionEnd: cursor })
 }
 
 function table(range: Range, samples: MarkdownInsertSamples): MarkdownInsertResult {

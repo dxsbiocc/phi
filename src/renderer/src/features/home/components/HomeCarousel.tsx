@@ -1,6 +1,11 @@
 import { homeCopy } from '../lib/homeCopy'
+import {
+  carouselSlideMotion,
+  HOME_CAROUSEL_SLIDE_MS,
+  type SlideDirection
+} from '../lib/homeCarouselMotion'
 import { useUiLanguage } from '../../../lib/i18n'
-import { Children, useEffect, useState, type ReactNode } from 'react'
+import { Children, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Box, IconButton } from '@mui/material'
 import { PhiIcons } from '../../../icons'
 
@@ -13,7 +18,8 @@ const slideSx = {
   minWidth: 0,
   display: 'flex',
   flexDirection: 'column',
-  '& > *': { flex: 1, minHeight: 0, height: '100%' }
+  '& > *': { flex: 1, minHeight: 0, height: '100%' },
+  '@media (prefers-reduced-motion: reduce)': { transition: 'none' }
 } as const
 
 const dotsSx = {
@@ -33,6 +39,89 @@ const dotSx = {
   transition: 'width 200ms ease, background-color 200ms ease'
 } as const
 
+function normalizeIndex(index: number, count: number): number {
+  return ((index % count) + count) % count
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+function useHomeCarousel(count: number): {
+  active: number
+  incoming: number | null
+  direction: SlideDirection
+  animate: boolean
+  setPaused: (value: boolean) => void
+  show: (next: number, direction?: SlideDirection) => void
+} {
+  const [active, setActive] = useState(0)
+  const [incoming, setIncoming] = useState<number | null>(null)
+  const [direction, setDirection] = useState<SlideDirection>(1)
+  const [animate, setAnimate] = useState(false)
+  const [paused, setPaused] = useState(false)
+  const lockedRef = useRef(false)
+
+  useEffect(() => {
+    if (incoming === null) return
+    let cancelled = false
+    const frame = window.requestAnimationFrame(() => {
+      if (cancelled) return
+      lockedRef.current = true
+      setActive(incoming)
+      setIncoming(null)
+      setAnimate(true)
+    })
+    return () => {
+      cancelled = true
+      window.cancelAnimationFrame(frame)
+    }
+  }, [incoming])
+
+  useEffect(() => {
+    if (!animate) return
+    const timer = window.setTimeout(() => {
+      lockedRef.current = false
+    }, HOME_CAROUSEL_SLIDE_MS)
+    return () => window.clearTimeout(timer)
+  }, [animate, active])
+
+  const show = useCallback(
+    (next: number, nextDirection: SlideDirection = 1): void => {
+      if (count < 2) return
+      const normalized = normalizeIndex(next, count)
+      if (normalized === active || incoming !== null || lockedRef.current) return
+      if (prefersReducedMotion()) {
+        setActive(normalized)
+        setAnimate(false)
+        return
+      }
+      setDirection(nextDirection)
+      setAnimate(false)
+      setIncoming(normalized)
+    },
+    [active, count, incoming]
+  )
+
+  useEffect(() => {
+    if (paused || count < 2 || prefersReducedMotion()) return
+    const timer = window.setInterval(() => show(active + 1, 1), SLIDE_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [active, count, paused, show])
+
+  return {
+    active: count === 0 ? 0 : normalizeIndex(active, count),
+    incoming,
+    direction,
+    animate,
+    setPaused,
+    show
+  }
+}
+
 export function HomeCarousel({
   labels,
   children
@@ -42,32 +131,18 @@ export function HomeCarousel({
 }): React.JSX.Element {
   useUiLanguage()
   const slides = Children.toArray(children)
-  const count = slides.length
-  const [index, setIndex] = useState(0)
-  const [paused, setPaused] = useState(false)
-  const active = count === 0 ? 0 : index % count
-
-  useEffect(() => {
-    if (paused || count < 2 || typeof window.matchMedia !== 'function') return
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const timer = window.setInterval(() => {
-      setIndex((current) => (current + 1) % count)
-    }, SLIDE_INTERVAL_MS)
-    return () => window.clearInterval(timer)
-  }, [count, paused])
-
-  const show = (next: number): void => {
-    if (count === 0) return
-    setIndex((next + count) % count)
-  }
+  const motion = useHomeCarousel(slides.length)
 
   return (
     <HomeCarouselFrame
       labels={labels}
-      active={active}
+      active={motion.active}
+      incoming={motion.incoming}
+      direction={motion.direction}
+      animate={motion.animate}
       slides={slides}
-      onShow={show}
-      paused={setPaused}
+      onShow={motion.show}
+      paused={motion.setPaused}
     />
   )
 }
@@ -116,14 +191,20 @@ function CarouselSideButton({
 function HomeCarouselFrame({
   labels,
   active,
+  incoming,
+  direction,
+  animate,
   slides,
   onShow,
   paused
 }: {
   labels: string[]
   active: number
+  incoming: number | null
+  direction: SlideDirection
+  animate: boolean
   slides: ReactNode[]
-  onShow: (next: number) => void
+  onShow: (next: number, direction?: SlideDirection) => void
   paused: (value: boolean) => void
 }): React.JSX.Element {
   return (
@@ -142,9 +223,9 @@ function HomeCarouselFrame({
           side="left"
           flip
           label={homeCopy.previousCard}
-          onClick={() => onShow(active - 1)}
+          onClick={() => onShow(active - 1, -1)}
         />
-        <Box sx={{ display: 'grid', alignItems: 'stretch' }}>
+        <Box sx={{ display: 'grid', alignItems: 'stretch', overflow: 'hidden', borderRadius: 3 }}>
           {slides.map((slide, slideIndex) => (
             <Box
               key={labels[slideIndex] ?? slideIndex}
@@ -152,7 +233,9 @@ function HomeCarouselFrame({
               inert={slideIndex === active ? undefined : true}
               sx={{
                 ...slideSx,
-                visibility: slideIndex === active ? 'visible' : 'hidden'
+                ...carouselSlideMotion(slideIndex, active, incoming, direction, animate),
+                zIndex: slideIndex === active ? 1 : 0,
+                pointerEvents: slideIndex === active ? 'auto' : 'none'
               }}
             >
               {slide}
@@ -162,7 +245,7 @@ function HomeCarouselFrame({
         <CarouselSideButton
           side="right"
           label={homeCopy.nextCard}
-          onClick={() => onShow(active + 1)}
+          onClick={() => onShow(active + 1, 1)}
         />
       </Box>
       <Box sx={dotsSx}>
@@ -173,7 +256,7 @@ function HomeCarouselFrame({
             type="button"
             aria-label={label}
             aria-current={slideIndex === active ? 'true' : undefined}
-            onClick={() => onShow(slideIndex)}
+            onClick={() => onShow(slideIndex, slideIndex >= active ? 1 : -1)}
             sx={{
               ...dotSx,
               width: slideIndex === active ? 22 : 8,

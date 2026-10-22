@@ -68,6 +68,7 @@ export type AppWorkspaceSidebarProps = {
   onListWorkspaceDirectory: (path: string) => Promise<DirectoryListing>
 
   runtimeProjectCwd: string
+  runtimeCanonicalCwd?: string
   runtimeStatus: AnalysisJupyterRuntimeStatus | null
   additionalRuntimeStatuses: AnalysisJupyterRuntimeStatus[]
   isRuntimeLoading: boolean
@@ -75,7 +76,7 @@ export type AppWorkspaceSidebarProps = {
   onOpenRuntimeNotebook: (notebookPath: string) => void
   onRefreshRuntime: () => void
   onStartRuntime: (cwd: string) => void
-  onOpenRuntimeStartLog?: () => void
+  onOpenRuntimeStartLog?: (cwd: string) => void
   onStopRuntime: (cwd: string, options?: { abandonUnconfirmed?: boolean }) => void
   onStopRuntimeNotebookKernel: (notebookPath: string) => void
 
@@ -183,6 +184,7 @@ function AppWorkspaceSidebarImpl({
   fileDownloadState,
   onCancelFileDownload,
   runtimeProjectCwd,
+  runtimeCanonicalCwd,
   runtimeStatus,
   additionalRuntimeStatuses,
   isRuntimeLoading,
@@ -402,6 +404,7 @@ function AppWorkspaceSidebarImpl({
     ) : mode === 'runtime' ? (
       <RuntimeSidebar
         projectCwd={runtimeProjectCwd}
+        currentCanonicalCwd={runtimeCanonicalCwd}
         runtimeStatus={runtimeStatus}
         additionalRuntimeStatuses={additionalRuntimeStatuses}
         currentRuntimeKind={isRemoteProject ? 'ssh' : 'local'}

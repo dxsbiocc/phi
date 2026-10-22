@@ -35,7 +35,8 @@ export function markdownInlinePresentation(
   state: EditorState,
   from: number,
   to: number,
-  focused: boolean
+  focused: boolean,
+  alwaysRendered = false
 ): { hidden: SourceRange[]; marks: InlineMark[] } {
   const fragments: InlineFragment[] = []
   const marks: InlineMark[] = []
@@ -84,7 +85,7 @@ export function markdownInlinePresentation(
   })
 
   const active = new Set<InlineFragment>()
-  if (focused) {
+  if (focused && !alwaysRendered) {
     for (const range of state.selection.ranges) {
       if (!range.empty) continue
       let nearest: InlineFragment | undefined
@@ -105,6 +106,7 @@ export function markdownInlinePresentation(
       ? []
       : fragment.hidden.filter(
           (syntax) =>
+            alwaysRendered ||
             !state.selection.ranges.some(
               (range) => !range.empty && range.from < syntax.to && range.to > syntax.from
             )
@@ -117,9 +119,10 @@ export function markdownInlineDecorations(
   state: EditorState,
   from: number,
   to: number,
-  focused: boolean
+  focused: boolean,
+  alwaysRendered = false
 ): Range<Decoration>[] {
-  const { hidden, marks } = markdownInlinePresentation(state, from, to, focused)
+  const { hidden, marks } = markdownInlinePresentation(state, from, to, focused, alwaysRendered)
   return [
     ...hidden.map((range) => Decoration.replace({ inclusive: false }).range(range.from, range.to)),
     ...marks.map((mark) => Decoration.mark({ class: mark.className }).range(mark.from, mark.to))

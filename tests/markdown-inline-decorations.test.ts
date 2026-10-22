@@ -17,8 +17,8 @@ function stateAt(source: string, anchor: number, head = anchor): EditorState {
   })
 }
 
-function visibleSource(state: EditorState, focused = true): string {
-  const { hidden } = markdownInlinePresentation(state, 0, state.doc.length, focused)
+function visibleSource(state: EditorState, focused = true, alwaysRendered = false): string {
+  const { hidden } = markdownInlinePresentation(state, 0, state.doc.length, focused, alwaysRendered)
   let visible = ''
   let from = 0
   for (const range of hidden) {
@@ -27,6 +27,13 @@ function visibleSource(state: EditorState, focused = true): string {
   }
   return visible + state.sliceDoc(from)
 }
+
+test('Notebook presentation keeps formatting syntax hidden under the caret', () => {
+  const source = '**bold** and *italic* [label](https://example.com)'
+  const state = stateAt(source, source.indexOf('bold') + 2)
+  assert.equal(visibleSource(state, true, true), 'bold and italic label')
+  assert.equal(visibleSource(stateAt(source, 1), true, true), 'bold and italic label')
+})
 
 test('a plain caret keeps neighboring inline Markdown rendered and hides link destinations', () => {
   const source = 'Plain **bold** *italic* ~~strike~~ `code` [label](https://example.com "title")'

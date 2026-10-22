@@ -4,6 +4,11 @@ import { notebookAiBackgroundJob, type UnifiedBackgroundJob } from './background
 
 /** Asks the panel to open the newest Jupyter startup job, whichever project it belongs to. */
 export const LATEST_JUPYTER_JOB_KEY = 'jupyter:latest'
+const JUPYTER_PROJECT_REQUEST_PREFIX = 'jupyter-project:'
+
+export function jupyterProjectJobRequestKey(projectId: string): string {
+  return `${JUPYTER_PROJECT_REQUEST_PREFIX}${encodeURIComponent(projectId)}`
+}
 
 const NOTEBOOK_AI_REQUEST_PREFIX = 'notebook-ai-request:'
 
@@ -33,6 +38,11 @@ export function resolveRequestedBackgroundJobKey(
   },
   recent: readonly UnifiedBackgroundJob[]
 ): string | undefined {
+  if (requestedKey.startsWith(JUPYTER_PROJECT_REQUEST_PREFIX)) {
+    const projectId = decodeURIComponent(requestedKey.slice(JUPYTER_PROJECT_REQUEST_PREFIX.length))
+    const job = data.jupyterJobs.find((candidate) => candidate.projectId === projectId)
+    return job ? `jupyter:${job.id}` : undefined
+  }
   if (requestedKey.startsWith(NOTEBOOK_AI_REQUEST_PREFIX)) {
     const requestId = requestedKey.slice(NOTEBOOK_AI_REQUEST_PREFIX.length)
     let latest: NotebookAiGenerationJob | undefined

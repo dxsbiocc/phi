@@ -85,7 +85,8 @@ export function markdownBlockDecorations(
   state: EditorState,
   from: number,
   to: number,
-  focused: boolean
+  focused: boolean,
+  alwaysRendered = false
 ): Range<Decoration>[] {
   const decorations: Range<Decoration>[] = []
   const fences: SourceRange[] = []
@@ -110,7 +111,7 @@ export function markdownBlockDecorations(
         const indentation = state.sliceDoc(line.from, node.from)
         if (indentation && !indentation.trim()) {
           const source = { from: line.from, to: node.from }
-          if (!selected(state, source, focused))
+          if (alwaysRendered || !selected(state, source, focused))
             decorations.push(Decoration.replace({ inclusive: false }).range(source.from, source.to))
         }
       } else if (ref.name === 'TaskMarker') {
@@ -131,13 +132,13 @@ export function markdownBlockDecorations(
         for (const number of delimiterLines) {
           const fence = state.doc.line(number)
           const source = { from: fence.from, to: Math.min(state.doc.length, fence.to + 1) }
-          if (!selected(state, source, focused, fence.to)) fences.push(source)
+          if (alwaysRendered || !selected(state, source, focused, fence.to)) fences.push(source)
         }
         const last = state.doc.lineAt(node.to).number
         for (let number = line.number + 1; number <= last; number++)
           if (!delimiterLines.has(number)) code.add(state.doc.line(number).from)
       }
-      if (kind && !selected(state, ref, focused))
+      if (kind && (alwaysRendered || !selected(state, ref, focused)))
         decorations.push(
           Decoration.replace({
             widget: new MarkdownMarkerWidget(kind, label),

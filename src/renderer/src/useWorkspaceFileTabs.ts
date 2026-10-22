@@ -54,23 +54,48 @@ export type WorkspaceFileTabKind = 'notebook' | 'file' | 'directory'
 export type WorkspaceFileTab = AnalysisWorkspaceFileTab & {
   kind: WorkspaceFileTabKind
   pathKind: LocalPathKind
+  /** Notebook tabs retain the conversation and host scope in which they were opened. */
+  ownerSessionPath?: string | null
+  ownerCwd?: string
   /** Modified notebooks stay open when the reusable preview slot changes. */
   dirty?: boolean
+}
+
+export function notebookWorkspaceTabId(
+  ownerSessionPath: string | null,
+  ownerCwd: string,
+  path: string
+): string {
+  return `notebook:${JSON.stringify([ownerSessionPath, ownerCwd, path])}`
+}
+
+export function notebookTabsAfterScopeSwitch(tabs: WorkspaceFileTab[]): WorkspaceFileTab[] {
+  return tabs.filter((tab) => tab.kind === 'notebook')
 }
 
 export function upsertReusableWorkspaceFileTab(
   tabs: WorkspaceFileTab[],
   tab: WorkspaceFileTab
 ): WorkspaceFileTab[] {
-  const existing = tabs.find((item) => item.path === tab.path)
+  const existing = tabs.find((item) => item.id === tab.id)
   if (existing?.dirty && tab.dirty !== false) {
-    return tabs.map((item) =>
-      item.path === tab.path ? { ...existing, ...tab, dirty: true } : item
-    )
+    return tabs.map((item) => (item.id === tab.id ? { ...existing, ...tab, dirty: true } : item))
   }
-  const next = existing ? { ...existing, ...tab, dirty: tab.dirty ?? existing.dirty } : tab
-  const remaining = tabs.filter((item) => item.path !== tab.path && item.dirty)
-  return [...remaining, next]
+  const next = existing
+    ? {
+        ...existing,
+        ...tab,
+        ...(tab.dirty === undefined && existing.dirty !== undefined
+          ? { dirty: existing.dirty }
+          : {})
+      }
+    : tab
+  const remaining = tabs.filter(
+    (item) => item.id === tab.id || item.dirty || item.kind === 'notebook'
+  )
+  return existing
+    ? remaining.map((item) => (item.id === tab.id ? next : item))
+    : [...remaining, next]
 }
 export type WorkspaceFilePreviewCache = Record<string, FilePreviewPanelState>
 const MAX_FILE_PREVIEW_CACHE_ENTRIES = 16
@@ -122,7 +147,7 @@ export type WorkspaceFileTabsState = {
   setFilePreview: (state: FilePreviewPanelState | null) => void
   filePreviewCache: WorkspaceFilePreviewCache
   clearCachedFilePreview: (path: string) => void
-  clearFileWorkspace: () => void
+  clearFileWorkspace: (options?: { preserveNotebookTabs?: boolean }) => void
   workspaceFileTabs: WorkspaceFileTab[]
   setWorkspaceFileTabs: (
     tabs: WorkspaceFileTab[] | ((prev: WorkspaceFileTab[]) => WorkspaceFileTab[])
@@ -216,18 +241,23 @@ export function useWorkspaceFileTabs({
     setFilePreviewCache((cache) => removeWorkspaceFilePreviewState(cache, path))
   }, [])
 
-  const clearFileWorkspace = useCallback((): void => {
-    cancelActiveWrapperResultRead()
-    abandonActiveWrapperResultDownload()
-    wrapperResultScopeRef.current = null
-    setActiveWrapperResultScope(null)
-    setFileDownload(null)
-    filePreviewRequestRef.current += 1
-    setFilePreview(null)
-    setFilePreviewCache({})
-    setWorkspaceFileTabs([])
-    setActiveWorkspaceFilePath(null)
-  }, [abandonActiveWrapperResultDownload, cancelActiveWrapperResultRead])
+  const clearFileWorkspace = useCallback(
+    (options: { preserveNotebookTabs?: boolean } = {}): void => {
+      cancelActiveWrapperResultRead()
+      abandonActiveWrapperResultDownload()
+      wrapperResultScopeRef.current = null
+      setActiveWrapperResultScope(null)
+      setFileDownload(null)
+      filePreviewRequestRef.current += 1
+      setFilePreview(null)
+      setFilePreviewCache({})
+      setWorkspaceFileTabs((tabs) =>
+        options.preserveNotebookTabs ? notebookTabsAfterScopeSwitch(tabs) : []
+      )
+      setActiveWorkspaceFilePath(null)
+    },
+    [abandonActiveWrapperResultDownload, cancelActiveWrapperResultRead]
+  )
 
   const upsertWorkspaceFileTab = useCallback((tab: WorkspaceFileTab): void => {
     setWorkspaceFileTabs((tabs) => upsertReusableWorkspaceFileTab(tabs, tab))
@@ -367,7 +397,7 @@ export function useWorkspaceFileTabs({
         filePreviewRequestRef.current += 1
         setFilePreview(null)
         setFilePreviewCache({})
-        setWorkspaceFileTabs([])
+        setWorkspaceFileTabs(notebookTabsAfterScopeSwitch)
         setActiveWorkspaceFilePath(null)
       }
       wrapperResultScopeRef.current = scope

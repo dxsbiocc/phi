@@ -17,6 +17,7 @@ import {
   type WorkspaceSessionTab
 } from '../src/renderer/src/lib/workspaceResourceTabs'
 import {
+  notebookWorkspaceTabId,
   upsertReusableWorkspaceFileTab,
   type WorkspaceFileTab
 } from '../src/renderer/src/useWorkspaceFileTabs'
@@ -40,6 +41,24 @@ function expression(name: string): string {
   return (ts.isCallExpression(value) ? value.arguments[0] : value).getText(source)
 }
 
+function pendingNotebookTabEffect(): string {
+  let effect: ts.Expression | undefined
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.getText(source) === 'useEffect' &&
+      node.arguments[0]?.getText(source).includes('pendingNotebookTab.ownerCwd') &&
+      node.arguments[0]?.getText(source).includes('workspaceFileTabs.some')
+    ) {
+      effect = node.arguments[0]
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  assert.ok(effect, 'Notebook tab restoration effect must exist')
+  return effect.getText(source)
+}
+
 const script = ts.transpileModule(
   `${['applyFileOpenConversationLayout', 'onOpenNotebookWorkspaceFile']
     .map((name) => `const ${name} = ${expression(name)};`)
@@ -57,6 +76,13 @@ const conversation: WorkspaceSessionTab = {
   sessionGeneration: 4,
   sidebarMode: 'projects'
 }
+const notebookKey = workspaceFileTabKey(
+  notebookWorkspaceTabId(
+    'phi-session:current',
+    '/project',
+    '/project/notebooks/01_merge_and_qc.ipynb'
+  )
+)
 
 async function openNotebook(options: {
   cached: boolean
@@ -81,7 +107,11 @@ async function openNotebook(options: {
     projectSidebarSelectionRequestRef: { current: 0 },
     filePreviewRequestRef: { current: 0 },
     useSessionStore: {
-      getState: () => ({ activeCwd: '/project', activeProjectLocation: { kind: 'local' } })
+      getState: () => ({
+        activeCwd: '/project',
+        activeSessionPath: 'phi-session:current',
+        activeProjectLocation: { kind: 'local' }
+      })
     },
     blockNotebookWorkspaceOpen: () => false,
     openActiveWrapperResultPath: () => false,
@@ -91,6 +121,7 @@ async function openNotebook(options: {
     workspaceFileTabKey,
     isNotebookFilePath,
     upsertReusableWorkspaceFileTab,
+    notebookWorkspaceTabId,
     setFilePreview: () => undefined,
     setActiveWorkspaceFilePath: () => undefined,
     setActiveWorkspaceTabKey: (key: string) => {
@@ -140,8 +171,8 @@ async function openNotebook(options: {
   await Promise.resolve()
   const workspaceFiles: WorkspaceFileWorkspaceTab[] = files.map((tab) => ({
     ...tab,
-    key: workspaceFileTabKey(tab.path),
-    itemId: tab.path,
+    key: workspaceFileTabKey(tab.id),
+    itemId: tab.id,
     title: tab.name,
     absolutePath: tab.path
   }))
@@ -159,11 +190,8 @@ async function openNotebook(options: {
 for (const cached of [false, true]) {
   test(`a chat Notebook link keeps the conversation tab with a collapsed conversation sidebar (${cached ? 'cached' : 'first open'})`, async () => {
     const state = await openNotebook({ cached, open: false, layout: 'tab', mode: 'conversations' })
-    assert.deepEqual(state.keys, [
-      conversation.key,
-      'file:/project/notebooks/01_merge_and_qc.ipynb'
-    ])
-    assert.equal(state.activeKey, 'file:/project/notebooks/01_merge_and_qc.ipynb')
+    assert.deepEqual(state.keys, [conversation.key, notebookKey])
+    assert.equal(state.activeKey, notebookKey)
     assert.equal(state.open, false)
   })
 }
@@ -181,5 +209,153 @@ test('an explicitly docked conversation stays in its expanded sidebar', async ()
     mode: 'projects'
   })
   assert.equal(state.open, true)
-  assert.deepEqual(state.keys, ['file:/project/notebooks/01_merge_and_qc.ipynb'])
+  assert.deepEqual(state.keys, [notebookKey])
+})
+
+test('selecting an inactive remote notebook tab switches to its owning session before opening it', async () => {
+  const path = '/remote/notebooks/quicksort.ipynb'
+  const tab: WorkspaceFileTab = {
+    id: notebookWorkspaceTabId('remote-session', '/remote/anchor', path),
+    path,
+    name: 'quicksort.ipynb',
+    status: path,
+    kind: 'notebook',
+    pathKind: 'file',
+    ownerSessionPath: 'remote-session',
+    ownerCwd: '/remote/anchor'
+  }
+  const selectedSessions: string[] = []
+  const pending: unknown[] = []
+  const opened: string[] = []
+  const callback = runInNewContext(
+    ts.transpileModule(`(${expression('onSelectWorkspaceFileTab')})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 }
+    }).outputText,
+    {
+      workspaceFileTabs: [tab],
+      activeCwd: '/local/project',
+      setPendingNotebookTab: (value: unknown) => pending.push(value),
+      onOpenSessionFromSidebar: async (sessionPath: string) => {
+        selectedSessions.push(sessionPath)
+      },
+      onOpenNotebookWorkspaceFile: (notebookPath: string) => opened.push(notebookPath),
+      showSnackbarError: () => assert.fail('switch should succeed'),
+      appCopy: { openNotebookFailed: 'Could not open notebook' }
+    }
+  ) as (tab: WorkspaceFileTab) => void
+
+  callback(tab)
+  await Promise.resolve()
+  assert.deepEqual(selectedSessions, ['remote-session'])
+  assert.equal(pending.length, 1)
+  assert.equal((pending[0] as { ownerCwd: string }).ownerCwd, '/remote/anchor')
+  assert.deepEqual(opened, [], 'the old local workspace must not open a remote file')
+})
+
+test('a switched session restores its pending notebook tab only inside the owning workspace', async () => {
+  const path = '/remote/notebooks/quicksort.ipynb'
+  const pendingNotebookTab = {
+    id: notebookWorkspaceTabId('remote-session', '/remote/anchor', path),
+    path,
+    ownerSessionPath: 'remote-session',
+    ownerCwd: '/remote/anchor'
+  }
+  const opened: string[] = []
+  const cleared: unknown[] = []
+  const context = {
+    pendingNotebookTab,
+    activeCwd: '/local/project',
+    activeSessionPath: 'local-session',
+    workspaceFileTabs: [pendingNotebookTab],
+    useSessionStore: {
+      getState: () => ({ activeCwd: '/remote/anchor', activeSessionPath: 'remote-session' })
+    },
+    setPendingNotebookTab: (value: unknown) => cleared.push(value),
+    onOpenNotebookWorkspaceFile: (notebookPath: string) => opened.push(notebookPath)
+  }
+  const effect = runInNewContext(
+    ts.transpileModule(`(${pendingNotebookTabEffect()})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 }
+    }).outputText,
+    context
+  ) as () => (() => void) | undefined
+
+  effect()
+  await Promise.resolve()
+  assert.deepEqual(opened, [])
+  context.activeCwd = '/remote/anchor'
+  context.activeSessionPath = 'remote-session'
+  effect()
+  await Promise.resolve()
+  assert.deepEqual(cleared, [null])
+  assert.deepEqual(opened, [path])
+})
+
+test('closing an inactive notebook tab does not close another host tab with the same path', () => {
+  const path = '/shared/notebooks/demo.ipynb'
+  const local: WorkspaceFileTab = {
+    id: notebookWorkspaceTabId('local-session', '/local/project', path),
+    path,
+    name: 'demo.ipynb',
+    status: path,
+    kind: 'notebook',
+    pathKind: 'file',
+    ownerSessionPath: 'local-session',
+    ownerCwd: '/local/project'
+  }
+  const remote: WorkspaceFileTab = {
+    ...local,
+    id: notebookWorkspaceTabId('remote-session', '/remote/anchor', path),
+    ownerSessionPath: 'remote-session',
+    ownerCwd: '/remote/anchor'
+  }
+  let tabs = [local, remote]
+  const close = runInNewContext(
+    ts.transpileModule(`(${expression('onCloseWorkspaceFileTab')})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 }
+    }).outputText,
+    {
+      workspaceFileTabs: tabs,
+      activeCwd: '/local/project',
+      activeWorkspaceFilePath: path,
+      effectiveActiveWorkspaceTabKey: workspaceFileTabKey(local.id),
+      workspaceFileTabKey,
+      setWorkspaceFileTabs: (next: WorkspaceFileTab[]) => {
+        tabs = next
+      },
+      textFileHasUnsavedChanges: () => false,
+      filePreview: null
+    }
+  ) as (tab: WorkspaceFileTab) => void
+
+  close(remote)
+  assert.deepEqual(tabs, [local])
+})
+
+test('a dirty notebook tab stays open until it is saved', () => {
+  const tab: WorkspaceFileTab = {
+    id: notebookWorkspaceTabId('remote-session', '/remote/anchor', '/remote/demo.ipynb'),
+    path: '/remote/demo.ipynb',
+    name: 'demo.ipynb',
+    status: 'demo.ipynb',
+    kind: 'notebook',
+    pathKind: 'file',
+    dirty: true,
+    ownerSessionPath: 'remote-session',
+    ownerCwd: '/remote/anchor'
+  }
+  const warnings: string[] = []
+  const close = runInNewContext(
+    ts.transpileModule(`(${expression('onCloseWorkspaceFileTab')})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022 }
+    }).outputText,
+    {
+      workspaceFileTabs: [tab],
+      appCopy: { saveFileFirst: 'Save first' },
+      showSnackbar: (message: string) => warnings.push(message)
+    }
+  ) as (tab: WorkspaceFileTab) => void
+
+  close(tab)
+  assert.deepEqual(warnings, ['Save first'])
 })

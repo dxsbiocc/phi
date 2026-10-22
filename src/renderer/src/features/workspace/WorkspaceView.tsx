@@ -34,7 +34,7 @@ export type WorkspaceResourceStrip = {
 
 export type WorkspaceFileStrip = {
   tabs: WorkspaceFileTab[]
-  activePath: string | null
+  activeId: string | null
   onSelect: (tab: WorkspaceFileTab) => void
   onClose: (tab: WorkspaceFileTab) => void
 }
@@ -157,7 +157,7 @@ function WorkspaceColumnBody({
     <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <WorkspaceFileHeader
         tabs={fileStrip.tabs}
-        activePath={fileStrip.activePath}
+        activeId={fileStrip.activeId}
         onSelect={fileStrip.onSelect}
         onClose={fileStrip.onClose}
         leadingChromeInset={chromeLayout.mainColumnTitlebarInset}

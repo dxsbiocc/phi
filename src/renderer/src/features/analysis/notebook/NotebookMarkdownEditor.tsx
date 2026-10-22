@@ -8,9 +8,15 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { Annotation, Compartment, EditorState, Transaction } from '@codemirror/state'
 import { drawSelection, EditorView, keymap } from '@codemirror/view'
 import MarkdownContent from '../../../components/MarkdownContent'
-import { inlineMarkdownExtension, inlineMarkdownTheme } from '../../../lib/markdown/inlineMarkdown'
+import {
+  inlineMarkdownExtension,
+  inlineMarkdownTheme,
+  type MarkdownBlock
+} from '../../../lib/markdown/inlineMarkdown'
 import { analysisCopy } from '../lib/analysisUiCopy'
 import { continueMarkdownOnEnter, moveToFencedCodeBody } from './markdownEnter'
+import { fencedCodeAt, paragraphAfterFencedCode } from './markdownFencedCode'
+import { displayMathAt, paragraphAfterDisplayMath } from './markdownDisplayMath'
 import {
   insertMarkdown,
   markdownInsertLabel,
@@ -26,8 +32,13 @@ import {
 } from './markdownSlash'
 import { NotebookMarkdownSlashMenu } from './NotebookMarkdownSlashMenu'
 import { NotebookMarkdownToolbar } from './NotebookMarkdownToolbar'
+import { NotebookMarkdownCodeBlock } from './NotebookMarkdownCodeBlock'
+import { NotebookMarkdownFormulaBlock } from './NotebookMarkdownFormulaBlock'
+import { NotebookMarkdownInlineFormula } from './NotebookMarkdownInlineFormula'
+import { inlineMathAt } from '../../../lib/markdown/markdownInlineMath'
 
 type SlashState = { match: MarkdownSlashMatch; anchor: DOMRect }
+type MarkdownWidget = { text: string; block: MarkdownBlock }
 type EditorProps = {
   value: string
   onChange?: (value: string) => void
@@ -44,36 +55,56 @@ function anchorAt(view: EditorView, position: number): DOMRect {
 function applyResult(view: EditorView, result: MarkdownInsertResult): void {
   const source = view.state.doc.toString()
   view.dispatch({
-    changes: source === result.value ? undefined : { from: 0, to: source.length, insert: result.value },
+    changes:
+      source === result.value ? undefined : { from: 0, to: source.length, insert: result.value },
     selection: { anchor: result.selectionStart, head: result.selectionEnd },
     scrollIntoView: true
   })
   view.focus()
 }
 
-export function NotebookMarkdownEditor({ value, onChange, onAdvance }: EditorProps): React.JSX.Element {
-  useUiLanguage()
+export function NotebookMarkdownEditor({
+  value,
+  onChange,
+  onAdvance
+}: EditorProps): React.JSX.Element {
+  const uiLanguage = useUiLanguage()
   const theme = useTheme()
+  const editable = Boolean(onChange)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const propsRef = useRef({ value, onChange, onAdvance })
-  propsRef.current = { value, onChange, onAdvance }
   const slashRef = useRef<SlashState | null>(null)
   const activeIndexRef = useRef(0)
   const syncRef = useRef(() => {})
   const frameRef = useRef(0)
+  const pendingCodeFocusRef = useRef<{
+    position: number
+    start: number
+    end: number
+  } | null>(null)
+  const pendingFormulaFocusRef = useRef<{
+    position: number
+    start: number
+    end: number
+  } | null>(null)
   const compartments = useRef({ theme: new Compartment(), access: new Compartment() })
   const menuId = `phi-markdown-slash-${useId().replace(/:/g, '')}`
   const [selectionAnchor, setSelectionAnchor] = useState<DOMRect | null>(null)
   const [slash, setSlash] = useState<SlashState | null>(null)
   const [activeIndex, setActiveIndex] = useState(0)
-  const [widgets, setWidgets] = useState<Map<HTMLElement, string>>(() => new Map())
+  const [formulaToFocus, setFormulaToFocus] = useState<number | null>(null)
+  const [widgets, setWidgets] = useState<Map<HTMLElement, MarkdownWidget>>(() => new Map())
   const kinds = slash ? filterMarkdownInsertKinds(slash.match.query, markdownInsertLabel) : []
+  const activeKind = kinds[activeIndex]
 
-  const registerWidget = useCallback((dom: HTMLElement, text: string): void => {
-    dom.dataset.phiMarkdownWidgetId = crypto.randomUUID()
-    setWidgets((previous) => new Map(previous).set(dom, text))
-  }, [])
+  const registerWidget = useCallback(
+    (dom: HTMLElement, text: string, block: MarkdownBlock): void => {
+      dom.dataset.phiMarkdownWidgetId ||= crypto.randomUUID()
+      setWidgets((previous) => new Map(previous).set(dom, { text, block }))
+    },
+    []
+  )
   const unregisterWidget = useCallback((dom: HTMLElement): void => {
     setWidgets((previous) => {
       const next = new Map(previous)
@@ -82,7 +113,13 @@ export function NotebookMarkdownEditor({ value, onChange, onAdvance }: EditorPro
     })
   }, [])
   const inlineExtension = useMemo(
-    () => inlineMarkdownExtension(registerWidget, unregisterWidget),
+    () =>
+      inlineMarkdownExtension(registerWidget, unregisterWidget, {
+        keepFencedCodeRendered: true,
+        keepDisplayMathRendered: true,
+        keepSyntaxHidden: true,
+        alwaysInlineBlocks: true
+      }),
     [registerWidget, unregisterWidget]
   )
   const editorTheme = useMemo(
@@ -97,7 +134,11 @@ export function NotebookMarkdownEditor({ value, onChange, onAdvance }: EditorPro
           },
           '&.cm-focused': { outline: 'none' },
           '.cm-scroller': { overflow: 'visible' },
-          '.cm-content': { minHeight: 48, padding: '13px 0', caretColor: theme.palette.primary.main },
+          '.cm-content': {
+            minHeight: 48,
+            padding: '13px 0',
+            caretColor: theme.palette.primary.main
+          },
           '.cm-line': { padding: '0 18px' },
           '.phi-inline-markdown-block': { padding: '0 18px' },
           '.cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground':
@@ -114,41 +155,155 @@ export function NotebookMarkdownEditor({ value, onChange, onAdvance }: EditorPro
   )
   const initialTheme = useRef(editorTheme)
 
-  const setMenuIndex = (index: number): void => {
+  useEffect(() => {
+    propsRef.current = { value, onChange, onAdvance }
+  })
+
+  const setMenuIndex = useCallback((index: number): void => {
     activeIndexRef.current = index
     setActiveIndex(index)
-  }
+  }, [])
 
-  const clearMenus = (): void => {
+  const clearMenus = useCallback((): void => {
     slashRef.current = null
     setSlash(null)
     setSelectionAnchor(null)
-  }
+  }, [])
 
-  const insertAtSelection = (kind: MarkdownInsertKind): void => {
-    const view = viewRef.current
-    if (!view || !propsRef.current.onChange) return
-    const selection = view.state.selection.main
-    clearMenus()
-    applyResult(
-      view,
-      insertMarkdown(
+  const insertAtSelection = useCallback(
+    (kind: MarkdownInsertKind): void => {
+      const view = viewRef.current
+      if (!view || !propsRef.current.onChange) return
+      const selection = view.state.selection.main
+      clearMenus()
+      const result = insertMarkdown(
         view.state.doc.toString(),
         selection.from,
         selection.to,
         kind,
         markdownInsertSamples()
       )
-    )
-  }
+      if (kind === 'codeBlock')
+        pendingCodeFocusRef.current = { position: result.selectionStart, start: 0, end: 0 }
+      if (
+        kind === 'formula' &&
+        result.value.slice(result.selectionStart - 3, result.selectionStart) === '$$\n'
+      ) {
+        pendingFormulaFocusRef.current = { position: result.selectionStart, start: 0, end: 0 }
+        setFormulaToFocus(result.selectionStart)
+      }
+      applyResult(view, result)
+    },
+    [clearMenus]
+  )
 
-  const insertSlashChoice = (kind: MarkdownInsertKind): void => {
+  const insertSlashChoice = useCallback(
+    (kind: MarkdownInsertKind): void => {
+      const view = viewRef.current
+      if (!view || !propsRef.current.onChange) return
+      const match = activeMarkdownSlash(view.state.doc.toString(), view.state.selection.main.head)
+      if (!match) return
+      clearMenus()
+      const result = insertFromMarkdownSlash(
+        view.state.doc.toString(),
+        match,
+        kind,
+        markdownInsertSamples()
+      )
+      if (kind === 'codeBlock')
+        pendingCodeFocusRef.current = { position: result.selectionStart, start: 0, end: 0 }
+      if (
+        kind === 'formula' &&
+        result.value.slice(result.selectionStart - 3, result.selectionStart) === '$$\n'
+      ) {
+        pendingFormulaFocusRef.current = { position: result.selectionStart, start: 0, end: 0 }
+        setFormulaToFocus(result.selectionStart)
+      }
+      applyResult(view, result)
+    },
+    [clearMenus]
+  )
+
+  const updateCodeBody = (
+    start: number,
+    body: string,
+    selectionStart: number,
+    selectionEnd: number
+  ): void => {
     const view = viewRef.current
     if (!view || !propsRef.current.onChange) return
-    const match = activeMarkdownSlash(view.state.doc.toString(), view.state.selection.main.head)
-    if (!match) return
-    clearMenus()
-    applyResult(view, insertFromMarkdownSlash(view.state.doc.toString(), match, kind, markdownInsertSamples()))
+    const code = fencedCodeAt(view.state.doc.toString(), start)
+    if (!code) return
+    pendingCodeFocusRef.current = {
+      position: code.bodyStart + selectionStart,
+      start: selectionStart,
+      end: selectionEnd
+    }
+    view.dispatch({ changes: { from: code.bodyStart, to: code.bodyEnd, insert: body } })
+  }
+
+  const updateCodeLanguage = (start: number, language: string): void => {
+    const view = viewRef.current
+    if (!view || !propsRef.current.onChange) return
+    const code = fencedCodeAt(view.state.doc.toString(), start)
+    if (!code) return
+    pendingCodeFocusRef.current = {
+      position: code.bodyStart,
+      start: code.body.length,
+      end: code.body.length
+    }
+    view.dispatch({
+      changes: { from: code.languageStart, to: code.languageEnd, insert: language }
+    })
+  }
+
+  const exitCodeBelow = (start: number): void => {
+    const view = viewRef.current
+    if (!view) return
+    const result = paragraphAfterFencedCode(view.state.doc.toString(), start)
+    if (!result) return
+    applyResult(view, {
+      value: result.value,
+      selectionStart: result.cursor,
+      selectionEnd: result.cursor
+    })
+  }
+
+  const updateFormulaBody = (
+    start: number,
+    body: string,
+    selectionStart: number,
+    selectionEnd: number
+  ): void => {
+    const view = viewRef.current
+    if (!view || !propsRef.current.onChange) return
+    const math = displayMathAt(view.state.doc.toString(), start)
+    if (!math) return
+    pendingFormulaFocusRef.current = {
+      position: math.bodyStart + selectionStart,
+      start: selectionStart,
+      end: selectionEnd
+    }
+    view.dispatch({ changes: { from: math.bodyStart, to: math.bodyEnd, insert: body } })
+  }
+
+  const exitFormulaBelow = (start: number): void => {
+    const view = viewRef.current
+    if (!view) return
+    const result = paragraphAfterDisplayMath(view.state.doc.toString(), start)
+    if (!result) return
+    applyResult(view, {
+      value: result.value,
+      selectionStart: result.cursor,
+      selectionEnd: result.cursor
+    })
+  }
+
+  const updateInlineFormula = (start: number, body: string): void => {
+    const view = viewRef.current
+    if (!view || !propsRef.current.onChange) return
+    const math = inlineMathAt(view.state.doc.toString(), start)
+    if (math) view.dispatch({ changes: { from: math.bodyStart, to: math.bodyEnd, insert: body } })
   }
 
   useEffect(() => {
@@ -211,13 +366,30 @@ export function NotebookMarkdownEditor({ value, onChange, onAdvance }: EditorPro
                 return true
               }
             },
-            { key: 'Shift-Enter', run: () => (propsRef.current.onAdvance?.(), true) },
-            { key: 'Mod-Enter', run: () => true },
+            {
+              key: 'Shift-Enter',
+              run: (editor) => {
+                editor.contentDOM.blur()
+                propsRef.current.onAdvance?.()
+                return true
+              }
+            },
+            {
+              key: 'Mod-Enter',
+              run: (editor) => {
+                editor.contentDOM.blur()
+                return true
+              }
+            },
             {
               key: 'Tab',
               run: () => {
                 const open = slashRef.current
-                const choice = open && filterMarkdownInsertKinds(open.match.query, markdownInsertLabel)[activeIndexRef.current]
+                const choice =
+                  open &&
+                  filterMarkdownInsertKinds(open.match.query, markdownInsertLabel)[
+                    activeIndexRef.current
+                  ]
                 if (!choice) return false
                 insertSlashChoice(choice)
                 return true
@@ -238,7 +410,10 @@ export function NotebookMarkdownEditor({ value, onChange, onAdvance }: EditorPro
                 if (!open) return false
                 const choices = filterMarkdownInsertKinds(open.match.query, markdownInsertLabel)
                 if (choices.length)
-                  setMenuIndex((activeIndexRef.current + (key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length)
+                  setMenuIndex(
+                    (activeIndexRef.current + (key === 'ArrowDown' ? 1 : -1) + choices.length) %
+                      choices.length
+                  )
                 return true
               }
             })),
@@ -259,14 +434,21 @@ export function NotebookMarkdownEditor({ value, onChange, onAdvance }: EditorPro
             EditorView.contentAttributes.of({ 'aria-label': analysisCopy.markdownCellEditor })
           ]),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged && !update.transactions.some((tr) => tr.annotation(externalChange)))
+            if (
+              update.docChanged &&
+              !update.transactions.some((tr) => tr.annotation(externalChange))
+            )
               propsRef.current.onChange?.(update.state.doc.toString())
             if (update.docChanged || update.selectionSet || update.focusChanged)
               scheduleControls(update.view)
           }),
           EditorView.domEventHandlers({
             focus: (_event, editor) => (scheduleControls(editor), false),
-            blur: (_event, editor) => (scheduleControls(editor), false)
+            blur: (_event, editor) => (scheduleControls(editor), false),
+            compositionend: () => {
+              requestAnimationFrame(() => syncRef.current())
+              return false
+            }
           })
         ]
       })
@@ -287,7 +469,7 @@ export function NotebookMarkdownEditor({ value, onChange, onAdvance }: EditorPro
       viewRef.current = null
       view.destroy()
     }
-  }, [inlineExtension])
+  }, [inlineExtension, clearMenus, insertAtSelection, insertSlashChoice, setMenuIndex])
 
   useEffect(() => syncRef.current(), [value])
   useEffect(() => {
@@ -296,21 +478,99 @@ export function NotebookMarkdownEditor({ value, onChange, onAdvance }: EditorPro
   useEffect(() => {
     viewRef.current?.dispatch({
       effects: compartments.current.access.reconfigure([
-        EditorState.readOnly.of(!onChange),
-        EditorView.editable.of(Boolean(onChange)),
-        EditorView.contentAttributes.of({ 'aria-label': analysisCopy.markdownCellEditor })
+        EditorState.readOnly.of(!editable),
+        EditorView.editable.of(editable),
+        EditorView.contentAttributes.of({
+          'aria-label': analysisCopy.markdownCellEditor,
+          ...(slash
+            ? {
+                'aria-controls': menuId,
+                'aria-expanded': 'true',
+                ...(activeKind ? { 'aria-activedescendant': `${menuId}-${activeKind}` } : {})
+              }
+            : {})
+        })
       ])
     })
-  }, [onChange])
+  }, [editable, uiLanguage, slash, activeKind, menuId])
   useEffect(() => {
     viewRef.current?.requestMeasure()
+    const pending = pendingCodeFocusRef.current
+    if (pending) {
+      const target = Array.from(widgets).find(
+        ([dom, widget]) =>
+          dom.isConnected &&
+          widget.block.name === 'FencedCode' &&
+          widget.block.from <= pending.position &&
+          pending.position <= widget.block.to
+      )
+      const input = target?.[0].querySelector<HTMLTextAreaElement>('[data-phi-notebook-code-input]')
+      if (input) {
+        pendingCodeFocusRef.current = null
+        input.focus()
+        input.setSelectionRange(pending.start, pending.end)
+      }
+    }
+    const formulaFocus = pendingFormulaFocusRef.current
+    if (!formulaFocus) return
+    const formula = Array.from(widgets).find(
+      ([dom, widget]) =>
+        dom.isConnected &&
+        widget.block.name === 'Math' &&
+        widget.block.from <= formulaFocus.position &&
+        formulaFocus.position <= widget.block.to
+    )
+    const formulaInput = formula?.[0].querySelector<HTMLTextAreaElement>(
+      '[data-phi-notebook-formula-input]'
+    )
+    if (!formulaInput) return
+    pendingFormulaFocusRef.current = null
+    setFormulaToFocus(null)
+    formulaInput.focus()
+    formulaInput.setSelectionRange(formulaFocus.start, formulaFocus.end)
   }, [widgets])
 
   return (
     <Box data-phi-notebook-markdown-editor="live" sx={{ position: 'relative' }}>
       <Box ref={hostRef} data-phi-notebook-markdown-live="true" />
-      {Array.from(widgets, ([dom, text]) =>
-        createPortal(<MarkdownContent text={text} enableMath />, dom, dom.dataset.phiMarkdownWidgetId)
+      {Array.from(widgets, ([dom, widget]) =>
+        createPortal(
+          widget.block.name === 'FencedCode' ? (
+            <NotebookMarkdownCodeBlock
+              source={widget.text}
+              readOnly={!editable}
+              onBodyChange={(body, start, end) =>
+                updateCodeBody(widget.block.from, body, start, end)
+              }
+              onLanguageChange={(language) => updateCodeLanguage(widget.block.from, language)}
+              onExitBelow={() => exitCodeBelow(widget.block.from)}
+            />
+          ) : widget.block.name === 'Math' ? (
+            <NotebookMarkdownFormulaBlock
+              source={widget.text}
+              readOnly={!editable}
+              startEditing={Boolean(
+                formulaToFocus !== null &&
+                widget.block.from <= formulaToFocus &&
+                formulaToFocus <= widget.block.to
+              )}
+              onBodyChange={(body, start, end) =>
+                updateFormulaBody(widget.block.from, body, start, end)
+              }
+              onExitBelow={() => exitFormulaBelow(widget.block.from)}
+            />
+          ) : widget.block.name === 'InlineMath' ? (
+            <NotebookMarkdownInlineFormula
+              source={widget.text}
+              readOnly={!editable}
+              onBodyChange={(body) => updateInlineFormula(widget.block.from, body)}
+            />
+          ) : (
+            <MarkdownContent text={widget.text} enableMath />
+          ),
+          dom,
+          dom.dataset.phiMarkdownWidgetId
+        )
       )}
       <NotebookMarkdownToolbar anchor={selectionAnchor} onInsert={insertAtSelection} />
       <NotebookMarkdownSlashMenu

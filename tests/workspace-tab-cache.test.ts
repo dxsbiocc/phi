@@ -10,6 +10,8 @@ import {
 } from '../src/renderer/src/features/analysis/lib/analysisNotebookRuntimeUtils'
 import {
   cacheWorkspaceFilePreviewState,
+  notebookTabsAfterScopeSwitch,
+  notebookWorkspaceTabId,
   removeWorkspaceFilePreviewState,
   upsertReusableWorkspaceFileTab,
   workspaceFileRoute,
@@ -133,6 +135,51 @@ test('one clean file preview is reused while modified notebooks keep their tabs'
     ),
     [tab(dirtyNotebook.path, 'notebook', false)]
   )
+
+  const localNotebook = tab('/local/notebooks/a.ipynb', 'notebook')
+  const remoteNotebook = tab('/remote/notebooks/b.ipynb', 'notebook')
+  assert.deepEqual(upsertReusableWorkspaceFileTab([localNotebook], remoteNotebook), [
+    localNotebook,
+    remoteNotebook
+  ])
+  assert.deepEqual(upsertReusableWorkspaceFileTab([localNotebook, remoteNotebook], localNotebook), [
+    localNotebook,
+    remoteNotebook
+  ])
+  assert.deepEqual(
+    upsertReusableWorkspaceFileTab([localNotebook, remoteNotebook], remoteNotebook),
+    [localNotebook, remoteNotebook]
+  )
+})
+
+test('notebook tabs keep their session scope across host changes and identical paths', () => {
+  const path = '/shared/notebooks/demo.ipynb'
+  const local: WorkspaceFileTab = {
+    id: notebookWorkspaceTabId('local-session', '/local/project', path),
+    path,
+    name: 'demo.ipynb',
+    status: path,
+    kind: 'notebook',
+    pathKind: 'file',
+    ownerSessionPath: 'local-session',
+    ownerCwd: '/local/project'
+  }
+  const remote: WorkspaceFileTab = {
+    ...local,
+    id: notebookWorkspaceTabId('remote-session', '/remote/anchor', path),
+    ownerSessionPath: 'remote-session',
+    ownerCwd: '/remote/anchor'
+  }
+  const preview: WorkspaceFileTab = {
+    ...local,
+    id: '/local/project/readme.md',
+    path: '/local/project/readme.md',
+    kind: 'file'
+  }
+
+  assert.notEqual(local.id, remote.id)
+  assert.deepEqual(upsertReusableWorkspaceFileTab([local], remote), [local, remote])
+  assert.deepEqual(notebookTabsAfterScopeSwitch([local, remote, preview]), [local, remote])
 })
 
 test('remote project switches invalidate file previews while local navigation keeps them', () => {

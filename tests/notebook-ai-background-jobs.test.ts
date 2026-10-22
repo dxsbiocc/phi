@@ -23,6 +23,7 @@ import {
 import { selectBackgroundJobs } from '../src/renderer/src/features/jobs/lib/backgroundJobs'
 import {
   LATEST_JUPYTER_JOB_KEY,
+  jupyterProjectJobRequestKey,
   notebookAiJobRequestKey,
   resolveRequestedBackgroundJobKey,
   resolveSelectedBackgroundJob
@@ -368,5 +369,21 @@ test('an explicit Notebook request opens a cleared completion without restoring 
   assert.equal(
     resolveSelectedBackgroundJob(live.recent[0].key, live.recent, [completed]),
     live.recent[0]
+  )
+})
+
+test('a Jupyter log request selects the newest job from its own project', () => {
+  const jobs = [
+    { id: 'other-newer', projectId: 'other' },
+    { id: 'gpu-newer', projectId: 'gpu' },
+    { id: 'gpu-older', projectId: 'gpu' }
+  ] as import('../src/shared/remoteJupyterJobTypes').RemoteJupyterStartJob[]
+  assert.equal(
+    resolveRequestedBackgroundJobKey(
+      jupyterProjectJobRequestKey('gpu'),
+      { jupyterJobs: jobs, notebookAiJobs: [] },
+      []
+    ),
+    'jupyter:gpu-newer'
   )
 })
