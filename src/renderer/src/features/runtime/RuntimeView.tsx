@@ -1,12 +1,13 @@
 import { runtimeUi } from './lib/runtimeUi'
 import { groupRuntimeStatuses } from './lib/runtimeGroups'
+import { RuntimeServerBadge } from './components/RuntimeServerBadge'
 import { useUiLanguage } from '../../lib/i18n'
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
   Box,
-  Chip,
+  Divider,
   IconButton,
   Link,
   List,
@@ -40,6 +41,7 @@ export interface RuntimeSidebarProps {
   onStartJupyter: (cwd: string) => void
   /** Opens the newest remote Jupyter startup job in the background jobs panel. */
   onOpenStartLog?: (cwd: string) => void
+  startLogCwds?: readonly string[]
   onStopJupyter: (cwd: string, options?: { abandonUnconfirmed?: boolean }) => void
   onStopNotebookKernel: (notebookPath: string) => void
 }
@@ -136,24 +138,11 @@ function RuntimeKernelIcon({
   return <NotebookIcon sx={{ fontSize: 22 }} />
 }
 
-function serverMetaLabel(status: AnalysisJupyterRuntimeStatus['server'] | null): string {
-  if (status?.runtimeKind === 'ssh') {
-    return status.message ? runtimeUi.loginNodeValue(status.message) : runtimeUi.loginNode
-  }
-  const parts = [
-    status?.pid ? `PID ${status.pid}` : null,
-    status?.port ? runtimeUi.port(status.port) : null
-  ].filter(Boolean)
-
-  if (parts.length > 0) return parts.join(' · ')
-  if (status?.hasEndpoint) return runtimeUi.endpointReady
-  return runtimeUi.noEndpoint
-}
-
 function RuntimeSidebarSection({
   projectCwd,
   runtimeStatus,
   groupLabel,
+  groupKind,
   isCurrent = true,
   isLoading = false,
   onOpenNotebook,
@@ -161,14 +150,18 @@ function RuntimeSidebarSection({
   onRefresh,
   onStartJupyter,
   onOpenStartLog,
+  startLogCwds,
   onStopJupyter,
   onStopNotebookKernel
-}: RuntimeSidebarProps & { isCurrent?: boolean; groupLabel: string }): React.JSX.Element {
+}: RuntimeSidebarProps & {
+  isCurrent?: boolean
+  groupLabel: string
+  groupKind: 'local' | 'ssh'
+}): React.JSX.Element {
   useUiLanguage()
   const server = runtimeStatus?.server ?? null
   const notebooks = runtimeStatus?.notebooks ?? null
   const notebookSessions = (notebooks?.sessions ?? []).filter(isListedNotebookKernel)
-  const runningKernelCount = notebookSessions.length
   const actionBusy = isLoading
   const showStopServerAction = Boolean(
     server &&
@@ -187,6 +180,17 @@ function RuntimeSidebarSection({
   const showAbandonCleanupAction = Boolean(server?.state === 'error' && server.canAbandonCleanup)
   const canStart = Boolean(projectCwd) && !showStopServerAction
   const canStop = Boolean(projectCwd) && showStopServerAction
+  const showStartLog = Boolean(
+    server?.runtimeKind === 'ssh' && onOpenStartLog && startLogCwds?.includes(server.projectCwd)
+  )
+  const serverPort = groupKind === 'ssh' ? server?.remotePort : server?.port
+  const title = `${groupLabel}${
+    serverPort !== undefined
+      ? ` · ${serverPort}`
+      : groupKind === 'ssh'
+        ? ` · ${runtimeUi.portPending}`
+        : ''
+  }`
 
   return (
     <Accordion
@@ -205,11 +209,12 @@ function RuntimeSidebarSection({
         boxShadow: 'none !important',
         '&:before': { display: 'none' },
         '&.Mui-expanded': { m: '0 !important' },
-        '&:hover .runtime-sidebar-row-actions, &:focus-within .runtime-sidebar-row-actions': {
-          opacity: 1,
-          pointerEvents: 'auto',
-          visibility: 'visible'
-        }
+        '&:hover .runtime-sidebar-row-actions, &:has(:focus-visible) .runtime-sidebar-row-actions':
+          {
+            opacity: 1,
+            pointerEvents: 'auto',
+            visibility: 'visible'
+          }
       }}
     >
       <AccordionSummary
@@ -234,22 +239,7 @@ function RuntimeSidebarSection({
           '&:hover': { bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06) }
         }}
       >
-        <Box
-          sx={{
-            width: 36,
-            height: 36,
-            mr: 1.25,
-            borderRadius: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            bgcolor: 'primary.main',
-            color: 'primary.contrastText',
-            flexShrink: 0
-          }}
-        >
-          <RunIcon fontSize="small" />
-        </Box>
+        <RuntimeServerBadge kind={groupKind} label={groupLabel} />
         <ListItemText
           primary={
             <Stack
@@ -259,10 +249,11 @@ function RuntimeSidebarSection({
               sx={{ minWidth: 0, alignItems: 'center' }}
             >
               <Typography component="span" noWrap sx={{ minWidth: 0, fontWeight: 700 }}>
-                {groupLabel} · Jupyter
+                {title}
               </Typography>
               <Box
                 component="span"
+                title={server?.message}
                 sx={{
                   width: 8,
                   height: 8,
@@ -334,58 +325,41 @@ function RuntimeSidebarSection({
       </Stack>
 
       <AccordionDetails sx={{ px: 0, pt: 0, pb: 1 }}>
-        <Box sx={{ px: 1.5, pb: 0.5 }}>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            title={serverMetaLabel(server)}
-            sx={{ display: 'block', overflowWrap: 'anywhere' }}
-          >
-            {serverMetaLabel(server)}
-          </Typography>
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-            {server?.runtimeKind === 'ssh' && onOpenStartLog ? (
-              <Link
-                component="button"
-                type="button"
-                underline="hover"
-                data-phi-runtime-start-log
-                onClick={() => onOpenStartLog(server.projectCwd)}
-                sx={{ fontSize: '0.78rem' }}
-              >
-                {runtimeUi.viewStartupLog}
-              </Link>
-            ) : null}
-            <Tooltip title={runtimeUi.refreshServerStatus}>
-              <span>
-                <IconButton
-                  size="small"
-                  aria-label={runtimeUi.refreshServerStatus}
-                  disabled={!projectCwd || actionBusy}
-                  onClick={onRefresh}
+        {showStartLog || showAbandonCleanupAction ? (
+          <Box sx={{ px: 1.5, pb: 0.5 }}>
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+              {showStartLog && server && onOpenStartLog ? (
+                <Link
+                  component="button"
+                  type="button"
+                  underline="hover"
+                  data-phi-runtime-start-log
+                  onClick={() => onOpenStartLog(server.projectCwd)}
+                  sx={{ fontSize: '0.78rem' }}
                 >
-                  <RefreshIcon size={17} />
-                </IconButton>
-              </span>
-            </Tooltip>
-            {showAbandonCleanupAction ? (
-              <Link
-                component="button"
-                type="button"
-                underline="hover"
-                color="error"
-                aria-label={runtimeUi.discardUnconfirmedLocalStateForRemoteJupyter}
-                onClick={() => onStopJupyter(projectCwd, { abandonUnconfirmed: true })}
-                sx={{ fontSize: '0.78rem' }}
-              >
-                {runtimeUi.discardLocalStateServerStateIsStillUnconfirmed}
-              </Link>
-            ) : null}
-          </Stack>
-        </Box>
+                  {runtimeUi.viewStartupLog}
+                </Link>
+              ) : null}
+              {showAbandonCleanupAction ? (
+                <Link
+                  component="button"
+                  type="button"
+                  underline="hover"
+                  color="error"
+                  aria-label={runtimeUi.discardUnconfirmedLocalStateForRemoteJupyter}
+                  onClick={() => onStopJupyter(projectCwd, { abandonUnconfirmed: true })}
+                  sx={{ fontSize: '0.78rem' }}
+                >
+                  {runtimeUi.discardLocalStateServerStateIsStillUnconfirmed}
+                </Link>
+              ) : null}
+            </Stack>
+          </Box>
+        ) : null}
         <List disablePadding>
           <>
             <Box
+              data-phi-runtime-notebook-header="true"
               sx={{
                 pl: 1,
                 pr: 2,
@@ -398,16 +372,20 @@ function RuntimeSidebarSection({
               }}
             >
               <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>
-                {runtimeUi.notebookKernels}
+                {runtimeUi.notebooks}
               </Typography>
-              <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  label={`${runningKernelCount}`}
-                  data-phi-runtime-sidebar-running-kernel-count="true"
-                />
-              </Stack>
+              <Tooltip title={runtimeUi.refreshJupyterAndNotebooks}>
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label={runtimeUi.refreshJupyterAndNotebooks}
+                    disabled={!projectCwd || actionBusy}
+                    onClick={onRefresh}
+                  >
+                    <RefreshIcon size={17} />
+                  </IconButton>
+                </span>
+              </Tooltip>
             </Box>
 
             {notebookSessions.length > 0 ? (
@@ -534,9 +512,7 @@ function RuntimeSidebarSection({
                 data-phi-runtime-sidebar-empty-kernels="true"
                 sx={{ px: 2, py: 2, color: 'text.secondary' }}
               >
-                <Typography variant="body2">
-                  {runtimeUi.noNotebookKernelsAreRunningInThisProject}
-                </Typography>
+                <Typography variant="body2">{runtimeUi.noConnectedNotebooks}</Typography>
               </Box>
             )}
           </>
@@ -559,33 +535,44 @@ export function RuntimeSidebar(props: RuntimeSidebarProps): React.JSX.Element {
     remoteFallbackLabel: runtimeUi.sSHServer
   })
   return (
-    <Box
-      className="app-sidebar-surface"
-      sx={{ ...runtimeSidebarSurfaceSx, overflowY: 'auto', scrollbarGutter: 'stable' }}
-    >
-      {groups.map((group) => (
-        <Box
-          key={group.key}
-          role="group"
-          aria-label={group.label}
-          data-phi-runtime-group-kind={group.kind}
-          data-phi-runtime-group-label={group.label}
-          sx={{ flexShrink: 0 }}
-        >
-          {group.entries.map((entry) => (
-            <RuntimeSidebarSection
-              key={entry.projectCwd}
-              {...props}
-              projectCwd={entry.projectCwd}
-              runtimeStatus={entry.runtimeStatus}
-              groupLabel={group.label}
-              isLoading={entry.current ? props.isLoading : false}
-              isCurrent={entry.current}
-              onOpenStartLog={props.onOpenStartLog}
-            />
-          ))}
-        </Box>
-      ))}
+    <Box className="app-sidebar-surface" sx={runtimeSidebarSurfaceSx}>
+      <Box
+        sx={{ height: 36, mb: 1, px: 1.5, display: 'flex', alignItems: 'center', flexShrink: 0 }}
+      >
+        <Typography component="h2" variant="subtitle1" sx={{ fontWeight: 700 }}>
+          {runtimeUi.jupyter}
+        </Typography>
+      </Box>
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', scrollbarGutter: 'stable' }}>
+        {groups.map((group, groupIndex) => (
+          <Box
+            key={group.key}
+            role="group"
+            aria-label={group.label}
+            data-phi-runtime-group-kind={group.kind}
+            data-phi-runtime-group-label={group.label}
+            sx={{ flexShrink: 0 }}
+          >
+            {group.entries.map((entry, entryIndex) => (
+              <Box key={entry.projectCwd}>
+                <RuntimeSidebarSection
+                  {...props}
+                  projectCwd={entry.projectCwd}
+                  runtimeStatus={entry.runtimeStatus}
+                  groupLabel={group.label}
+                  groupKind={group.kind}
+                  isLoading={entry.current ? props.isLoading : false}
+                  isCurrent={entry.current}
+                  onOpenStartLog={props.onOpenStartLog}
+                />
+                {entryIndex < group.entries.length - 1 || groupIndex < groups.length - 1 ? (
+                  <Divider data-phi-runtime-service-divider sx={{ mx: 1.5, my: 1.25 }} />
+                ) : null}
+              </Box>
+            ))}
+          </Box>
+        ))}
+      </Box>
     </Box>
   )
 }

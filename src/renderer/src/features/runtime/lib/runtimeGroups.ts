@@ -13,6 +13,32 @@ export interface RuntimeServerGroup {
   entries: RuntimeServerEntry[]
 }
 
+/** Ignore polling timestamps while retaining changes to service state and connected notebooks. */
+export function runtimeStatusesSnapshot(statuses: readonly AnalysisJupyterRuntimeStatus[]): string {
+  return JSON.stringify(
+    statuses.map(({ server, notebooks }) => [
+      server.projectCwd,
+      server.runtimeKind,
+      server.state,
+      server.serverLabel,
+      server.pid,
+      server.port,
+      server.remotePort,
+      server.hasEndpoint,
+      server.message,
+      server.cleanupUnconfirmed,
+      server.canAbandonCleanup,
+      notebooks.sessions.map((session) => [
+        session.notebookPath,
+        session.sessionId,
+        session.state,
+        session.kernelName,
+        session.kernelDisplayName
+      ])
+    ])
+  )
+}
+
 function groupIdentity(
   entry: { kind: 'local' | 'ssh'; serverLabel?: string },
   localLabel: string,
@@ -39,9 +65,8 @@ export function groupRuntimeStatuses(input: {
 }): RuntimeServerGroup[] {
   const currentServerCwd = input.runtimeStatus?.server.projectCwd ?? input.currentCanonicalCwd
   const currentStatus =
-    input.runtimeStatus ??
     input.additionalRuntimeStatuses?.find(({ server }) => server.projectCwd === currentServerCwd) ??
-    null
+    input.runtimeStatus
   const entries = [
     {
       projectCwd: input.projectCwd,

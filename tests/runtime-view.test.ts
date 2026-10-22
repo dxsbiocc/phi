@@ -13,6 +13,7 @@ import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import { RuntimeSidebar } from '../src/renderer/src/features/runtime/RuntimeView'
+import { runtimeStatusesSnapshot } from '../src/renderer/src/features/runtime/lib/runtimeGroups'
 import type { AnalysisJupyterRuntimeStatus } from '../src/renderer/src/types'
 
 const runtimeStatus: AnalysisJupyterRuntimeStatus = {
@@ -66,6 +67,34 @@ const runtimeStatus: AnalysisJupyterRuntimeStatus = {
   }
 }
 
+test('runtime polling detects Notebook list changes without reacting to timestamps', () => {
+  const initial = runtimeStatusesSnapshot([runtimeStatus])
+  const sameSessionsWithNewTime = runtimeStatusesSnapshot([
+    {
+      ...runtimeStatus,
+      notebooks: {
+        ...runtimeStatus.notebooks,
+        sessions: runtimeStatus.notebooks.sessions.map((session) => ({
+          ...session,
+          updatedAt: '2026-09-10T02:00:00.000Z'
+        }))
+      }
+    }
+  ])
+  const disconnectedNotebook = runtimeStatusesSnapshot([
+    {
+      ...runtimeStatus,
+      notebooks: {
+        ...runtimeStatus.notebooks,
+        sessions: runtimeStatus.notebooks.sessions.slice(1)
+      }
+    }
+  ])
+
+  assert.equal(sameSessionsWithNewTime, initial)
+  assert.notEqual(disconnectedNotebook, initial)
+})
+
 function renderRuntimeSidebar(
   status: AnalysisJupyterRuntimeStatus | null = runtimeStatus,
   overrides: Partial<ComponentProps<typeof RuntimeSidebar>> = {}
@@ -92,25 +121,34 @@ function renderRuntimeSidebar(
 test('runtime sidebar shows the Jupyter Accordion before Notebook Kernels', () => {
   const markup = renderRuntimeSidebar()
 
-  const serverIndex = markup.indexOf('本地 · Jupyter')
-  const kernelsIndex = markup.indexOf('Notebook 内核')
-  assert.ok(serverIndex >= 0)
-  assert.ok(kernelsIndex > serverIndex)
+  const headingIndex = markup.indexOf('>Jupyter</h2>')
+  const serverIndex = markup.indexOf('>本地 · 31888</span>')
+  const notebooksIndex = markup.indexOf('>Notebook</span>')
+  const refreshIndex = markup.indexOf('aria-label="刷新 Jupyter 与 Notebook 状态"')
+  const firstNotebookIndex = markup.indexOf('data-phi-runtime-sidebar-kernel="true"')
+  assert.ok(headingIndex >= 0)
+  assert.ok(serverIndex > headingIndex)
+  assert.ok(notebooksIndex > serverIndex)
+  assert.ok(refreshIndex > notebooksIndex && refreshIndex < firstNotebookIndex)
+  assert.doesNotMatch(markup, /本地 · Jupyter/)
+  assert.match(markup, /data-phi-runtime-server-badge="local"/)
   assert.match(markup, /data-phi-runtime-sidebar-server="true"/)
   assert.match(markup, /data-phi-runtime-sidebar-kernel="true"/)
   assert.match(markup, /runtime-sidebar-row-actions/)
-  assert.match(markup, /aria-label="刷新 Server 状态"/)
+  assert.match(markup, /data-phi-runtime-notebook-header="true"/)
+  assert.match(markup, /aria-label="刷新 Jupyter 与 Notebook 状态"/)
   assert.match(markup, /aria-label="停止 Jupyter server"/)
   assert.doesNotMatch(markup, /aria-label="启动 Jupyter server"/)
   assert.match(markup, /aria-label="关闭 eda\.ipynb kernel"/)
   assert.match(markup, /data-phi-runtime-sidebar-kernel-close="true"/)
   assert.match(markup, /data-phi-runtime-sidebar-kernel-close-state="ready"/)
-  assert.match(markup, /data-phi-runtime-sidebar-running-kernel-count="true"/)
+  assert.doesNotMatch(markup, /data-phi-runtime-sidebar-running-kernel-count/)
   assert.doesNotMatch(markup, /2 busy/)
   assert.match(markup, /data-phi-runtime-sidebar-kernel-icon="r"/)
   assert.match(markup, /data-phi-runtime-sidebar-kernel-icon="python"/)
-  assert.match(markup, /PID 2026/)
-  assert.match(markup, /端口 31888/)
+  assert.doesNotMatch(markup, /PID 2026/)
+  assert.match(markup, /本地 · 31888/)
+  assert.doesNotMatch(markup, /端口 31888/)
   assert.match(markup, /r_analysis\.ipynb/)
   assert.match(markup, />R</)
   assert.match(markup, /eda\.ipynb/)
@@ -134,7 +172,9 @@ test('runtime sidebar keeps local and remote servers visible together', () => {
       runtimeKind: 'ssh',
       serverLabel: 'gpu-login',
       state: 'ready',
-      hasEndpoint: true
+      hasEndpoint: true,
+      port: 40888,
+      remotePort: 28888
     },
     notebooks: { activeSessionCount: 0, busySessionCount: 0, sessions: [] }
   }
@@ -142,7 +182,9 @@ test('runtime sidebar keeps local and remote servers visible together', () => {
 
   assert.equal((markup.match(/data-phi-runtime-sidebar-server="true"/g) ?? []).length, 2)
   assert.match(markup, /gpu-login/)
-  assert.match(markup, /PID 2026/)
+  assert.match(markup, /gpu-login · 28888/)
+  assert.doesNotMatch(markup, /gpu-login · 40888/)
+  assert.doesNotMatch(markup, /PID 2026/)
   assert.match(markup, /本地/)
   assert.match(markup, /data-phi-runtime-group-kind="ssh"/)
   assert.match(markup, /data-phi-runtime-sidebar-server-cwd="\/remote\/research"/)
@@ -163,7 +205,9 @@ test('stopped remote Jupyter remains visible beside a running local server', () 
   const gpuSection = markup.split('data-phi-runtime-sidebar-server-cwd="/remote/research"')[1] ?? ''
 
   assert.equal((markup.match(/data-phi-runtime-sidebar-server="true"/g) ?? []).length, 2)
-  assert.match(markup, /GPU · Jupyter/)
+  assert.ok(markup.includes('>GPU · 端口待分配</span>'))
+  assert.match(markup, /GPU · 端口待分配/)
+  assert.doesNotMatch(markup, /GPU · Jupyter/)
   assert.match(gpuSection, /aria-label="启动 Jupyter server"/)
 })
 
@@ -193,13 +237,20 @@ test('runtime sidebar groups local Jupyter and remote projects by server', () =>
     markup.indexOf('data-phi-runtime-group-kind="local"') <
       markup.indexOf('data-phi-runtime-group-label="GPU"')
   )
-  assert.ok(markup.indexOf('Notebook 内核') < markup.indexOf('data-phi-runtime-group-label="CPU"'))
+  assert.ok(
+    markup.indexOf('>Notebook</span>') < markup.indexOf('data-phi-runtime-group-label="CPU"')
+  )
   const gpuGroup =
     markup
       .split('data-phi-runtime-group-label="GPU"')[1]
       ?.split('data-phi-runtime-group-label="CPU"')[0] ?? ''
   assert.match(gpuGroup, /data-phi-runtime-sidebar-server-cwd="\/remote\/first"/)
   assert.match(gpuGroup, /data-phi-runtime-sidebar-server-cwd="\/remote\/second"/)
+  assert.equal((markup.match(/data-phi-runtime-service-divider="true"/g) ?? []).length, 3)
+  assert.match(markup, /data-phi-runtime-server-badge="local"/)
+  assert.equal((markup.match(/data-phi-runtime-server-badge="ssh"/g) ?? []).length, 3)
+  assert.match(markup, />GP<\/span>/)
+  assert.match(markup, />CP<\/span>/)
 })
 
 test('each Jupyter service expands its notebooks from an Accordion header', () => {
@@ -215,14 +266,19 @@ test('each Jupyter service expands its notebooks from an Accordion header', () =
   }
   const markup = renderRuntimeSidebar(runtimeStatus, {
     additionalRuntimeStatuses: [remote],
-    onOpenStartLog: () => undefined
+    onOpenStartLog: () => undefined,
+    startLogCwds: ['/remote/project']
   })
 
   assert.equal((markup.match(/data-phi-runtime-accordion="true"/g) ?? []).length, 2)
-  assert.match(markup, /本地 · Jupyter/)
-  assert.match(markup, /GPU · Jupyter/)
+  assert.match(markup, />Jupyter<\/h2>/)
+  assert.match(markup, />本地 · 31888<\/span>/)
+  assert.match(markup, />GPU · 端口待分配<\/span>/)
+  assert.equal((markup.match(/data-phi-runtime-service-divider="true"/g) ?? []).length, 1)
   assert.equal((markup.match(/aria-expanded="true"/g) ?? []).length, 2)
-  assert.ok(markup.indexOf('GPU · Jupyter') < markup.indexOf('data-phi-runtime-start-log'))
+  assert.ok(
+    markup.indexOf('>GPU · 端口待分配</span>') < markup.indexOf('data-phi-runtime-start-log')
+  )
 })
 
 test('Jupyter Accordion keeps a borderless fixed header in both expansion states', () => {
@@ -279,7 +335,7 @@ test('the active remote notebook kernel stays inside its server group', () => {
       markup.indexOf('data-phi-runtime-group-label="GPU"')
   )
   const gpuGroup = markup.split('data-phi-runtime-group-label="GPU"')[1] ?? ''
-  assert.match(gpuGroup, /Notebook 内核/)
+  assert.match(gpuGroup, />Notebook<\/span>/)
   assert.match(gpuGroup, /remote\.ipynb/)
 })
 
@@ -353,9 +409,23 @@ test('a remote project loading its status reuses the matching server already in 
   assert.equal((markup.match(/data-phi-runtime-sidebar-server="true"/g) ?? []).length, 1)
   assert.equal((markup.match(/data-phi-runtime-group-label="GPU"/g) ?? []).length, 1)
   assert.doesNotMatch(markup, /无服务地址/)
+
+  const stale = renderRuntimeSidebar(
+    {
+      ...remote,
+      server: { ...remote.server, state: 'preparing_environment', hasEndpoint: false }
+    },
+    {
+      projectCwd: '/local/remote-anchor',
+      currentCanonicalCwd: '/remote/project',
+      additionalRuntimeStatuses: [{ ...remote, server: { ...remote.server, remotePort: 65397 } }]
+    }
+  )
+  assert.match(stale, /GPU · 65397/)
+  assert.doesNotMatch(stale, /端口待分配/)
 })
 
-test('remote runtime shows the login server and recovery guidance without local PID or port', () => {
+test('remote runtime keeps disconnected guidance in a tooltip without expanded status text', () => {
   const markup = renderRuntimeSidebar({
     ...runtimeStatus,
     server: {
@@ -369,9 +439,9 @@ test('remote runtime shows the login server and recovery guidance without local 
   })
 
   assert.match(markup, /cluster-login/)
-  assert.match(markup, /登录节点/)
-  assert.match(markup, /连接已断开/)
-  assert.match(markup, /kernel 将重启/)
+  assert.match(markup, /cluster-login · 端口待分配/)
+  assert.match(markup, /title="连接已断开；重新连接后 kernel 将重启，内存状态会丢失。"/)
+  assert.doesNotMatch(markup, /登录节点/)
   assert.doesNotMatch(markup, /PID 2026|Port 31888/)
   assert.match(markup, /aria-label="启动 Jupyter server"/)
 })
@@ -441,6 +511,12 @@ test('runtime sidebar action styling uses GoSync and no hover button borders', (
   assert.doesNotMatch(source, /borderColor/)
   assert.doesNotMatch(source, /border:\s*1/)
   assert.match(source, /alignSelf:\s*'center'/)
+  const serverStyles =
+    source
+      .split('data-phi-runtime-sidebar-server-cwd={projectCwd}')[1]
+      ?.split('<AccordionSummary')[0] ?? ''
+  assert.match(serverStyles, /:has\(:focus-visible\)/)
+  assert.doesNotMatch(serverStyles, /:focus-within/)
   assert.match(source, /visibility:\s*'visible'/)
   assert.doesNotMatch(source, /aria-label="刷新运行时"/)
   assert.doesNotMatch(source, /正在执行/)
@@ -455,16 +531,16 @@ test('runtime sidebar disables only the kernel currently being closed', () => {
   assert.match(markup, /disabled/)
 })
 
-test('runtime sidebar renders the empty notebook kernel state inline', () => {
+test('runtime sidebar renders the empty Notebook list inline', () => {
   const markup = renderRuntimeSidebar({
     ...runtimeStatus,
     notebooks: { activeSessionCount: 0, busySessionCount: 0, sessions: [] }
   })
 
-  assert.match(markup, /本地 · Jupyter/)
-  assert.match(markup, /Notebook 内核/)
+  assert.match(markup, />本地 · 31888<\/span>/)
+  assert.match(markup, />Notebook<\/span>/)
   assert.match(markup, /data-phi-runtime-sidebar-empty-kernels="true"/)
-  assert.match(markup, /当前项目还没有运行中的 notebook kernel/)
+  assert.match(markup, /当前项目没有已连接的 Notebook/)
   assert.doesNotMatch(markup, /Nextflow/)
   assert.doesNotMatch(markup, /Slurm/)
 })
@@ -497,10 +573,14 @@ test('a remote Jupyter card links to its startup log and keeps the full message 
         createElement(RuntimeSidebar, { ...props, ...extra })
       )
     )
-  const markup = render({ onOpenStartLog: () => undefined })
+  const markup = render({
+    onOpenStartLog: () => undefined,
+    startLogCwds: ['/srv/project']
+  })
   assert.match(markup, /data-phi-runtime-start-log/)
   assert.match(markup, /查看启动日志/)
   assert.match(markup, /data-phi-runtime-group-label="GPU"/)
-  assert.match(markup, new RegExp(`title="登录节点 · ${message}"`))
+  assert.match(markup, new RegExp(`title="${message}"`))
+  assert.doesNotMatch(render({ onOpenStartLog: () => undefined }), /查看启动日志/)
   assert.doesNotMatch(render({}), /查看启动日志/)
 })

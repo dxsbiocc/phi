@@ -237,6 +237,37 @@ function jobsStore(): BackgroundJobsStore {
   return (shared ??= new BackgroundJobsStore())
 }
 
+type JupyterStartupOverview = {
+  signature: string
+  projectIds: readonly string[]
+}
+
+let jupyterStartupOverview: JupyterStartupOverview = { signature: '[]', projectIds: [] }
+
+function currentJupyterStartupOverview(): JupyterStartupOverview {
+  const jobs = jobsStore().getSnapshot().data.jupyterJobs
+  const signature = JSON.stringify(
+    jobs.map(({ id, projectId, state, phase }) => [id, projectId, state, phase])
+  )
+  if (signature !== jupyterStartupOverview.signature) {
+    jupyterStartupOverview = {
+      signature,
+      projectIds: [...new Set(jobs.map((job) => job.projectId))]
+    }
+  }
+  return jupyterStartupOverview
+}
+
+/** Changes only when a Jupyter attempt appears or changes phase, not on every log line. */
+export function useJupyterStartupOverview(): JupyterStartupOverview {
+  const store = jobsStore()
+  return useSyncExternalStore(
+    store.subscribe,
+    currentJupyterStartupOverview,
+    () => jupyterStartupOverview
+  )
+}
+
 /** Keeps terminal snapshots up to date without subscribing the application to polling renders. */
 export function useBackgroundJobRetention(): void {
   useEffect(() => jobsStore().retain(), [])

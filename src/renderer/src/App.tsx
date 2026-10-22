@@ -67,6 +67,7 @@ import { usePromptSend } from './features/chat/hooks/usePromptSend'
 import { useQueuedPromptDrain } from './features/chat/hooks/useQueuedPromptDrain'
 import type { SendPromptOptions } from './features/chat/lib/promptQueue'
 import { HomeView } from './features/home/HomeView'
+import { runtimeStatusesSnapshot } from './features/runtime/lib/runtimeGroups'
 import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import { RuntimeRecoveryBanner } from './features/chat/components/RuntimeRecoveryBanner'
@@ -80,6 +81,7 @@ import { BackgroundJobsPanel, LATEST_JUPYTER_JOB_KEY } from './features/jobs/Bac
 import { jupyterProjectJobRequestKey } from './features/jobs/lib/requestedBackgroundJob'
 import {
   useBackgroundJobRetention,
+  useJupyterStartupOverview,
   refreshBackgroundJobs
 } from './features/jobs/hooks/useBackgroundJobsData'
 import BrowserPanel from './features/browser/BrowserPanel'
@@ -224,6 +226,7 @@ const maxNavigationPaneWidth = 520
 function App(): React.JSX.Element {
   const uiLanguage = useUiLanguage()
   useBackgroundJobRetention()
+  const jupyterStartupOverview = useJupyterStartupOverview()
   const {
     mode: themeMode,
     effectiveMode,
@@ -385,24 +388,16 @@ function App(): React.JSX.Element {
   const [runningJupyterRuntimes, setRunningJupyterRuntimes] = useState<
     AnalysisJupyterRuntimeStatus[]
   >([])
+  const runningJupyterRequestRef = useRef(0)
+  const runningJupyterAppliedRequestRef = useRef(0)
   const runningJupyterSnapshotRef = useRef('[]')
   const refreshRunningJupyterRuntimes = useCallback(async (): Promise<void> => {
+    const request = ++runningJupyterRequestRef.current
     try {
       const statuses = await rendererApi.listAnalysisJupyterRuntimeStatuses()
-      const snapshot = JSON.stringify(
-        statuses.map(({ server }) => [
-          server.projectCwd,
-          server.runtimeKind,
-          server.state,
-          server.serverLabel,
-          server.pid,
-          server.port,
-          server.hasEndpoint,
-          server.message,
-          server.cleanupUnconfirmed,
-          server.canAbandonCleanup
-        ])
-      )
+      if (request < runningJupyterAppliedRequestRef.current) return
+      runningJupyterAppliedRequestRef.current = request
+      const snapshot = runtimeStatusesSnapshot(statuses)
       if (snapshot === runningJupyterSnapshotRef.current) return
       runningJupyterSnapshotRef.current = snapshot
       setRunningJupyterRuntimes(statuses)
@@ -695,6 +690,15 @@ function App(): React.JSX.Element {
     onUpdateProjectRemoteConnection,
     onUpdateProjectRemoteDefaults
   } = useProjects(showSnackbarError)
+  const runtimeStartLogCwds = useMemo(
+    () =>
+      projects.flatMap((project) =>
+        project.location?.kind === 'ssh' && jupyterStartupOverview.projectIds.includes(project.id)
+          ? [project.workingDirectory, project.location.canonicalRoot]
+          : []
+      ),
+    [jupyterStartupOverview.projectIds, projects]
+  )
   useTerminalWorkspaceRestoration(
     rendererApi.terminal,
     projects,
@@ -812,6 +816,34 @@ function App(): React.JSX.Element {
     showSnackbar,
     onNavigateToNotebookView
   })
+  useEffect(() => {
+    if (
+      !isSidebarOpen ||
+      workspaceSidebarMode !== 'runtime' ||
+      jupyterStartupOverview.signature === '[]'
+    ) {
+      return
+    }
+    let active = true
+    void Promise.resolve().then(() => {
+      if (!active) return
+      if (activeProjectId && jupyterStartupOverview.projectIds.includes(activeProjectId)) {
+        void refreshAnalysisJupyterRuntimeStatus()
+      }
+      void refreshRunningJupyterRuntimes()
+    })
+    return () => {
+      active = false
+    }
+  }, [
+    activeProjectId,
+    isSidebarOpen,
+    workspaceSidebarMode,
+    jupyterStartupOverview.signature,
+    jupyterStartupOverview.projectIds,
+    refreshAnalysisJupyterRuntimeStatus,
+    refreshRunningJupyterRuntimes
+  ])
   const {
     slots: workspaceSidePanelSlots,
     state: workspaceSidePanelState,
@@ -3806,6 +3838,7 @@ function App(): React.JSX.Element {
         if (remote) onOpenJupyterStartLog(cwd)
       },
       onOpenRuntimeStartLog: onOpenJupyterStartLog,
+      runtimeStartLogCwds,
       onStopRuntime: (cwd, options) => {
         void onStopAnalysisJupyter(cwd, options).then(async () => {
           await refreshAnalysisJupyterRuntimeStatus()
@@ -3866,6 +3899,7 @@ function App(): React.JSX.Element {
     }),
     [
       onOpenJupyterStartLog,
+      runtimeStartLogCwds,
       activeWorkspaceIsProject,
       activeWorkspaceTitle,
       activeWorkspaceScopeLabel,
