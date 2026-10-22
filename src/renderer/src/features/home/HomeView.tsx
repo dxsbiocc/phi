@@ -77,6 +77,7 @@ export function HomeView({
 }: HomeViewProps): React.JSX.Element {
   useUiLanguage()
   const muiTheme = useTheme()
+  const darkTheme = muiTheme.palette.mode === 'dark'
   const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const projectScopeKey = `${projectSessionRefreshKey}|${projects.map((project) => project.id).join('|')}`
   const [projectResult, setProjectResult] = useState<{
@@ -165,15 +166,22 @@ export function HomeView({
       {prefersReducedMotion ? null : (
         <GlowCursor
           data-phi-home-glow="true"
-          color="#5f8bff"
-          intensity={1.3}
+          color={muiTheme.palette.primary.main}
+          secondaryColor={muiTheme.palette.primary.light}
+          intensity={darkTheme ? 1.1 : 1.05}
           trailWidth={3}
           linger={1.4}
-          glow={1.2}
+          glow={darkTheme ? 1 : 0.9}
           clickBurst
-          theme="dark"
-          blendMode={muiTheme.palette.mode === 'dark' ? 'screen' : 'normal'}
-          style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }}
+          theme={muiTheme.palette.mode}
+          blendMode={darkTheme ? 'screen' : 'normal'}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 0,
+            pointerEvents: 'none',
+            opacity: darkTheme ? 0.8 : 0.68
+          }}
         />
       )}
       <Box

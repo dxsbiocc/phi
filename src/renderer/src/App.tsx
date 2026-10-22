@@ -725,6 +725,8 @@ function App(): React.JSX.Element {
     analysisKernelDiagnostics,
     isLoadingAnalysisKernels,
     analysisKernelError,
+    analysisJupyterError,
+    pendingJupyterCellStart,
     analysisJupyterRuntimeStatus,
     isLoadingAnalysisJupyterRuntime,
     isStartingAnalysisJupyter,
@@ -748,6 +750,8 @@ function App(): React.JSX.Element {
     onJumpToAnalysisNotebookCell,
     refreshAnalysisJupyterRuntimeStatus,
     onStartAnalysisJupyter,
+    onStartJupyterForPendingCell,
+    onDismissJupyterCellStart,
     onStopAnalysisJupyter,
     onStartAnalysisNotebookSession,
     onStopAnalysisNotebookSession,
@@ -3481,6 +3485,11 @@ function App(): React.JSX.Element {
         notebookSessionError={analysisNotebookSessionError}
         executingNotebookCellId={executingAnalysisCellId}
         notebookCellExecutionError={analysisCellExecutionError}
+        pendingJupyterCellStart={pendingJupyterCellStart}
+        isStartingJupyterForCell={isStartingAnalysisJupyter}
+        jupyterCellStartError={analysisJupyterError}
+        onStartJupyterForCell={() => void onStartJupyterForPendingCell()}
+        onDismissJupyterCellStart={onDismissJupyterCellStart}
         agentFocus={analysisAgentFocus}
         onRefreshNotebooks={() => {
           void refreshAnalysisNotebooks()

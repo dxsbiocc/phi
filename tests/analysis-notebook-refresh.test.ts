@@ -10,10 +10,15 @@ import { IPC } from '../src/shared/ipcChannels'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import { analysisCopy } from '../src/renderer/src/features/analysis/lib/analysisUiCopy'
 import * as runtimeUtils from '../src/renderer/src/features/analysis/lib/analysisNotebookRuntimeUtils'
+import { pollJupyterServerStartupStatus } from '../src/renderer/src/features/runtime/lib/jupyterStatusPolling'
 import * as notebookSession from '../src/renderer/src/features/analysis/lib/notebookSession'
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as executionMetadata from '../src/shared/notebookExecutionMetadata'
-import type { AnalysisNotebookFile, RendererApi } from '../src/renderer/src/types'
+import type {
+  AnalysisNotebookFile,
+  JupyterServerStatus,
+  RendererApi
+} from '../src/renderer/src/types'
 import type { AnalysisNotebookRuntimeState } from '../src/renderer/src/features/analysis/lib/analysisNotebookRuntimeTypes'
 import { AnalysisNotebookFileWatcher } from '../src/main/agent/notebook/analysis-notebook-watch'
 
@@ -25,10 +30,18 @@ type Slot = { value?: unknown; dependencies?: unknown[]; cleanup?: Cleanup }
 // Execute the real hook with a deterministic hook scheduler and renderer boundary.
 function runtimeHarness(): {
   readonly state: AnalysisNotebookRuntimeState
-  calls: { refresh: number; open: number; sync: Array<{ document: unknown; revision: string }> }
+  calls: {
+    refresh: number
+    open: number
+    startJupyter: number
+    execute: number
+    sync: Array<{ document: unknown; revision: string }>
+  }
   setDisk: (file: AnalysisNotebookFile) => void
   setSave: (callback: RendererApi['saveAnalysisNotebook']) => void
   setRefresh: (callback: () => Promise<AnalysisNotebookFile>) => void
+  setJupyterStatus: (status: JupyterServerStatus) => void
+  setExecute: (callback: RendererApi['executeAnalysisNotebookCell']) => void
   switchCwd: (value: string) => void
   activate: (file: AnalysisNotebookFile) => Promise<void>
   focus: () => Promise<void>
@@ -62,7 +75,19 @@ function runtimeHarness(): {
     },
     clearTimeout: (id: number) => timers.delete(id)
   })
-  const calls = { refresh: 0, open: 0, sync: [] as Array<{ document: unknown; revision: string }> }
+  const calls = {
+    refresh: 0,
+    open: 0,
+    startJupyter: 0,
+    execute: 0,
+    sync: [] as Array<{ document: unknown; revision: string }>
+  }
+  let jupyterStatus: JupyterServerStatus = {
+    projectCwd: cwd,
+    state: 'stopped',
+    runtimeKind: 'ssh',
+    hasEndpoint: false
+  }
   let disk = notebookFile('disk')
   let save: RendererApi['saveAnalysisNotebook'] = async (_cwd, input) => ({
     ...disk,
@@ -71,6 +96,21 @@ function runtimeHarness(): {
     contentHash: `saved:${input.document.revision}`
   })
   let refresh = async (): Promise<AnalysisNotebookFile> => disk
+  let execute: RendererApi['executeAnalysisNotebookCell'] = async (
+    projectCwd,
+    notebookPath,
+    document,
+    cellId
+  ) => ({
+    cellId,
+    executionCount: 1,
+    outputs: [],
+    state: 'idle',
+    startedAt: '2026-10-22T00:00:00Z',
+    completedAt: '2026-10-22T00:00:01Z',
+    document,
+    sessionStatus: { projectCwd, notebookPath, state: 'idle' }
+  })
   const api = {
     openAnalysisNotebook: async () => {
       calls.open += 1
@@ -92,6 +132,19 @@ function runtimeHarness(): {
       calls.sync.push({ document: nextDocument, revision })
     },
     listAnalysisNotebooks: async () => ({ projectCwd: cwd, notebooks: [] }),
+    listAnalysisKernels: async () => ({ kernels: [] }),
+    getAnalysisJupyterStatus: async () => jupyterStatus,
+    startAnalysisJupyter: async () => {
+      calls.startJupyter += 1
+      jupyterStatus = { ...jupyterStatus, state: 'ready', hasEndpoint: true }
+      return jupyterStatus
+    },
+    executeAnalysisNotebookCell: (
+      ...args: Parameters<RendererApi['executeAnalysisNotebookCell']>
+    ) => {
+      calls.execute += 1
+      return execute(...args)
+    },
     getAnalysisNotebookSessionStatus: async () => ({ state: 'idle' })
   }
   const slot = (): Slot => (slots[index++] ??= {})
@@ -105,6 +158,7 @@ function runtimeHarness(): {
   const hook = runInNewContext(`${code}\nuseAnalysisNotebookRuntime`, {
     analysisCopy,
     ...runtimeUtils,
+    pollJupyterServerStartupStatus,
     ...notebookSession,
     ...notebookDocument,
     ...executionMetadata,
@@ -184,6 +238,12 @@ function runtimeHarness(): {
     setRefresh: (callback: typeof refresh) => {
       refresh = callback
     },
+    setJupyterStatus: (status: JupyterServerStatus) => {
+      jupyterStatus = status
+    },
+    setExecute: (callback: typeof execute) => {
+      execute = callback
+    },
     switchCwd: (value: string) => {
       cwd = value
     },
@@ -242,6 +302,65 @@ function changed(
     file
   }
 }
+
+test('running a cell with stopped remote Jupyter opens a start dialog without changing the cell', async () => {
+  const runtime = runtimeHarness()
+  const file = notebookFile('print("unchanged")')
+  await runtime.activate(file)
+
+  await runtime.state.onRunAnalysisNotebookCell(file, file.document, 'cell-1')
+  await runtime.flush()
+  assert.equal(runtime.state.pendingJupyterCellStart?.cwd, '/project')
+  assert.equal(runtime.state.pendingJupyterCellStart?.notebookPath, file.path)
+  assert.equal(runtime.state.pendingJupyterCellStart?.cellId, 'cell-1')
+  assert.equal(runtime.state.pendingJupyterCellStart?.runtimeKind, 'ssh')
+  assert.equal(runtime.state.activeAnalysisNotebook, file)
+  assert.equal(runtime.state.analysisCellExecutionError, null)
+  assert.equal(runtime.calls.execute, 0)
+
+  await runtime.state.onStartJupyterForPendingCell()
+  await runtime.flush()
+  assert.equal(runtime.calls.startJupyter, 1)
+  assert.equal(runtime.state.pendingJupyterCellStart, null)
+  assert.equal(runtime.calls.execute, 0, 'starting Jupyter must not execute stale cell code')
+
+  await runtime.state.onRunAnalysisNotebookCell(file, file.document, 'cell-1')
+  await runtime.flush()
+  assert.equal(runtime.calls.execute, 1)
+  runtime.dispose()
+})
+
+test('a stopped Jupyter race after execution begins opens the dialog without writing an error output', async () => {
+  const runtime = runtimeHarness()
+  const file = notebookFile('print("retry")')
+  await runtime.activate(file)
+  runtime.setJupyterStatus({
+    projectCwd: '/project',
+    state: 'ready',
+    runtimeKind: 'ssh',
+    hasEndpoint: true
+  })
+  await runtime.state.refreshAnalysisJupyterStatus()
+  await runtime.flush()
+  runtime.setExecute(async () => {
+    runtime.setJupyterStatus({
+      projectCwd: '/project',
+      state: 'stopped',
+      runtimeKind: 'ssh',
+      hasEndpoint: false
+    })
+    throw new Error('remote server stopped')
+  })
+
+  await runtime.state.onRunAnalysisNotebookCell(file, file.document, 'cell-1')
+  await runtime.flush()
+  assert.equal(runtime.state.pendingJupyterCellStart?.cellId, 'cell-1')
+  assert.equal(runtime.state.pendingJupyterCellStart?.runtimeKind, 'ssh')
+  assert.equal(runtime.state.activeAnalysisNotebook, file)
+  assert.equal(runtime.state.analysisCellExecutionError, null)
+  assert.equal(runtime.calls.execute, 1)
+  runtime.dispose()
+})
 
 test('file events refresh a clean notebook and the cached inactive file', async () => {
   const runtime = runtimeHarness()

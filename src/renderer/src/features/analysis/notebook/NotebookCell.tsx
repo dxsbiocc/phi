@@ -3,6 +3,7 @@ import { useUiLanguage } from '../../../lib/i18n'
 import {
   memo,
   useEffect,
+  useRef,
   useState,
   type DragEvent,
   type MouseEvent,
@@ -33,6 +34,8 @@ import { notebookCommandLabel } from '../lib/notebookShortcuts'
 import type { NotebookCellType } from '../../../../../shared/notebookDocument'
 import MarkdownContent from '../../../components/MarkdownContent'
 import NotebookCodeCellSource from './NotebookCodeCellSource'
+import { NotebookMarkdownInsertButton } from './NotebookMarkdownInsertButton'
+import { insertMarkdown, markdownInsertSamples } from './markdownInsert'
 import NotebookCodeEditor, { type NotebookCompletionProvider } from './NotebookCodeEditor'
 import {
   notebookCodeGutterDividerWidth,
@@ -166,6 +169,10 @@ function NotebookCellImpl({
   const [isEditing, setIsEditing] = useState(false)
   const [initialEditorSelection, setInitialEditorSelection] = useState<number | undefined>()
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
+  const [markdownInsertOpen, setMarkdownInsertOpen] = useState(false)
+  const markdownInsertOpenRef = useRef(false)
+  const markdownInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const markdownSelectionRef = useRef<{ start: number; end: number } | null>(null)
   const [dropPlacement, setDropPlacement] = useState<CellPlacement | null>(null)
   const [runningTimer, setRunningTimer] = useState({ cellId: '', elapsedMs: 0 })
   const [isCellActive, setIsCellActive] = useState(false)
@@ -630,6 +637,7 @@ function NotebookCellImpl({
               fullWidth
               multiline
               minRows={1}
+              inputRef={markdownInputRef}
               value={cell.source}
               variant="standard"
               onChange={(event) => onSourceChange?.(cell.id, event.target.value)}
@@ -651,7 +659,10 @@ function NotebookCellImpl({
                 setIsEditing(false)
                 if (runAndAdvance) onAdvanceCell?.(cell.id)
               }}
-              onBlur={() => setIsEditing(false)}
+              onBlur={() => {
+                if (markdownInsertOpenRef.current) return
+                setIsEditing(false)
+              }}
               slotProps={{
                 input: {
                   disableUnderline: true,
@@ -761,8 +772,8 @@ function NotebookCellImpl({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 0.45,
-                opacity: menuAnchor ? 1 : 0,
-                transform: menuAnchor ? 'translateY(0)' : 'translateY(-2px)',
+                opacity: menuAnchor || markdownInsertOpen ? 1 : 0,
+                transform: menuAnchor || markdownInsertOpen ? 'translateY(0)' : 'translateY(-2px)',
                 transition: 'opacity 150ms ease, transform 150ms ease'
               }}
             >
@@ -825,6 +836,45 @@ function NotebookCellImpl({
                   </IconButton>
                 </span>
               </Tooltip>
+              {isMarkdown && editable && onSourceChange ? (
+                <NotebookMarkdownInsertButton
+                  buttonSx={actionButtonSx}
+                  onPrepare={() => {
+                    const active = document.activeElement
+                    if (
+                      active instanceof HTMLTextAreaElement &&
+                      active
+                        .closest('[data-phi-notebook-cell-id]')
+                        ?.getAttribute('data-phi-notebook-cell-id') === cell.id
+                    ) {
+                      markdownSelectionRef.current = {
+                        start: active.selectionStart,
+                        end: active.selectionEnd
+                      }
+                      return
+                    }
+                    markdownSelectionRef.current = null
+                  }}
+                  onOpenChange={(open) => {
+                    markdownInsertOpenRef.current = open
+                    setMarkdownInsertOpen(open)
+                    if (!open) markdownInputRef.current?.focus()
+                  }}
+                  onInsert={(kind) => {
+                    const range = markdownSelectionRef.current
+                    const next = insertMarkdown(
+                      cell.source,
+                      range?.start ?? cell.source.length,
+                      range?.end ?? cell.source.length,
+                      kind,
+                      markdownInsertSamples()
+                    )
+                    onSelectCell?.(cell.id)
+                    setIsEditing(true)
+                    onSourceChange(cell.id, next.value)
+                  }}
+                />
+              ) : null}
               <Tooltip title={analysisCopy.cellActions}>
                 <IconButton
                   size="small"

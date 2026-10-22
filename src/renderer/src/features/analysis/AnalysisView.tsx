@@ -5,7 +5,9 @@ import { Box } from '@mui/material'
 import { type Theme } from '@mui/material/styles'
 import { LeftRail, type LeftPanel } from './components/AnalysisLeftRail'
 import NotebookCanvas from './notebook/NotebookCanvas'
+import { NotebookJupyterStartDialog } from './notebook/NotebookJupyterStartDialog'
 import type { AnalysisNotebookAgentFocus } from './lib/notebookCanvasTypes'
+import type { PendingJupyterCellStart } from './lib/analysisNotebookRuntimeTypes'
 import type { NotebookViewStateStore } from './lib/notebookViewState'
 import { type NotebookDocument } from '../../../../shared/notebookDocument'
 import {
@@ -95,6 +97,11 @@ export type AnalysisViewProps = {
   onPickNotebookContextFiles?: () => Promise<string[]>
   executingNotebookCellId?: string | null
   notebookCellExecutionError?: string | null
+  pendingJupyterCellStart?: PendingJupyterCellStart | null
+  isStartingJupyterForCell?: boolean
+  jupyterCellStartError?: string | null
+  onStartJupyterForCell?: () => void
+  onDismissJupyterCellStart?: () => void
   agentFocus?: AnalysisNotebookAgentFocus | null
   onInitializeProjectAnalysis?: (cwd: string) => void
   onOpenNotebook?: (path: string) => void
@@ -176,6 +183,11 @@ export default function AnalysisView({
   notebookSessionError = null,
   executingNotebookCellId = null,
   notebookCellExecutionError = null,
+  pendingJupyterCellStart = null,
+  isStartingJupyterForCell = false,
+  jupyterCellStartError = null,
+  onStartJupyterForCell,
+  onDismissJupyterCellStart,
   agentFocus = null,
   onRefreshNotebooks,
   onStartNotebookSession,
@@ -393,6 +405,16 @@ export default function AnalysisView({
           onCloseNotebook={onCloseNotebookTab}
         />
       ) : null}
+      {onStartJupyterForCell && onDismissJupyterCellStart && (
+        <NotebookJupyterStartDialog
+          open={Boolean(pendingJupyterCellStart)}
+          remote={pendingJupyterCellStart?.runtimeKind === 'ssh'}
+          starting={isStartingJupyterForCell}
+          error={jupyterCellStartError}
+          onStart={onStartJupyterForCell}
+          onClose={onDismissJupyterCellStart}
+        />
+      )}
     </Box>
   )
 }

@@ -26,6 +26,13 @@ export type AnalysisNotebookRuntimeDeps = {
   onNavigateToNotebookView: () => void
 }
 
+export type PendingJupyterCellStart = {
+  cwd: string
+  notebookPath: string
+  cellId: string
+  runtimeKind?: 'local' | 'ssh'
+}
+
 export type AnalysisNotebookRuntimeState = {
   analysisNotebookRegistry: AnalysisNotebookRegistry | null
   activeAnalysisNotebook: AnalysisNotebookFile | null
@@ -43,6 +50,7 @@ export type AnalysisNotebookRuntimeState = {
   analysisJupyterRuntimeError: string | null
   isStartingAnalysisJupyter: boolean
   analysisJupyterError: string | null
+  pendingJupyterCellStart: PendingJupyterCellStart | null
   analysisNotebookSessionStatus: AnalysisNotebookSessionStatus | null
   isStartingAnalysisNotebookSession: boolean
   closingRuntimeNotebookPath: string | null
@@ -72,6 +80,8 @@ export type AnalysisNotebookRuntimeState = {
   onJumpToAnalysisNotebookCell: (target: NotebookCellJumpTarget) => void
   refreshAnalysisJupyterRuntimeStatus: () => Promise<void>
   onStartAnalysisJupyter: (cwd: string) => Promise<void>
+  onStartJupyterForPendingCell: () => Promise<void>
+  onDismissJupyterCellStart: () => void
   onStopAnalysisJupyter: (cwd: string) => Promise<void>
   onStartAnalysisNotebookSession: (
     file: AnalysisNotebookFile,
