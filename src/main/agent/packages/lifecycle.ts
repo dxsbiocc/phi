@@ -161,14 +161,15 @@ export async function upgradePackage(
 export function uninstallPackage(
   type: PackageType,
   id: string,
-  options: InstallerOptions = {}
+  options: InstallerOptions & { allowInstalledDependents?: boolean } = {}
 ): InstalledPackage[] {
   const agentDir = options.agentDir ?? getPhiAgentDir()
   const installed = listInstalledPackages({ agentDir })
   const target = installed.find((item) => item.type === type && item.id === id)
   if (!target) throw new Error(`软件包 ${type}:${id} 尚未安装`)
   const dependent = dependentOn(packagesAvailableForPlanning(agentDir), target, agentDir)
-  if (dependent) {
+  // The caller already confirmed that enabled dependents are switched off with it.
+  if (dependent && !options.allowInstalledDependents) {
     throw new Error(`无法卸载 ${type}:${id}；软件包 ${dependent.type}:${dependent.id} 仍依赖它`)
   }
   removeInstalledPackage(type, id, { ...options, agentDir })

@@ -88,10 +88,22 @@ pack, or pack-level digest anymore.
 ## 5. Discovery and enablement
 
 Wrapper tools see wrappers from installed packages that are **enabled**
-(`wrapper:<package id>`), plus user-authored wrappers. Enablement defaults: bundled
-wrapper packages are enabled (wrapper tools search on demand, so they add no prompt
-load); installed and user-authored ones are enabled. Disabling a module family that an
+(`wrapper:<package id>`), plus user-authored wrappers. Every wrapper package is
+installed from the catalog, so installed and user-authored wrappers are enabled by
+default; a package the user disabled stays out of use. Disabling a module family that an
 enabled subworkflow depends on also hides that subworkflow, and the UI says why.
+
+Removing a package previews what it affects before changing anything: it deletes every
+file and folder the package owns, and enabled packages that depend on it are named.
+Confirming disables those dependents first and then removes the package, so a dependency
+cannot silently re-enable a package that was just removed. Tool binaries, container images
+and runtime environments are not part of a wrapper package and are never deleted here.
+
+Older builds seeded a bundled wrapper pack into `~/.phi/wrappers` before any user choice.
+Those records are not catalog installs: startup replaces the ones still in use (chosen, or
+required by an installed package) with catalog copies, then deletes the rest. Dependency
+planning never treats such a legacy record as installed, so a catalog install replaces it
+instead of being skipped.
 
 ## 6. Versioning
 

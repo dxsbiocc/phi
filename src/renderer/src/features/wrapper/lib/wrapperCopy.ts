@@ -66,6 +66,17 @@ const english = {
   emptyTier: (tier: string) => `No Wrappers in ${tier}`,
   updatingWrapper: 'Updating Wrapper',
   customAlwaysAvailable: 'User-defined Wrappers are always available',
+  removePackageTitle: (name: string) => `Remove the ${name} Wrapper package?`,
+  removePackageInstalled: (name: string) =>
+    `This deletes every file and folder owned by the ${name} Wrapper package installed from the content catalog, including its Nextflow module definitions. The tool binary, container image and runtime environment cache are not part of this package and stay. This cannot be undone.`,
+  removePackageDependents: (names: readonly string[]) =>
+    `These enabled packages depend on it and will be switched off: ${names.join(', ')}.`,
+  removePackageFilesWarning:
+    'Package files and folders will be deleted from disk. Tool binaries, containers and runtime caches will not.',
+  removePackageConfirm: 'Remove',
+  removePackageRemoving: 'Removing…',
+  removePackagePreviewFailed: 'Could not prepare the removal.',
+  removedPackage: (name: string) => `Removed ${name}.`,
   searchWrappers: 'Search Wrappers',
   sidebarSummary: (count: number, enabled: number) =>
     `${count} tool${count === 1 ? '' : 's'} · ${enabled} enabled`,
@@ -224,6 +235,17 @@ const chinese: LocalizedCopy<typeof english> = {
   viewRunFiles: '查看运行文件',
   updatingWrapper: '正在更新 Wrapper',
   customAlwaysAvailable: '用户自建的 Wrapper 始终可用',
+  removePackageTitle: (name: string) => `移除 Wrapper 包「${name}」？`,
+  removePackageInstalled: (name: string) =>
+    `将删除从内容目录安装的 ${name} 包及其拥有的全部文件与文件夹（包括 Nextflow 模块定义）。工具本体、容器镜像和运行环境缓存不属于这个包，不会被删除。此操作无法撤销。`,
+  removePackageDependents: (names: readonly string[]) =>
+    `以下已启用的软件包依赖它，将被一并停用：${names.join('、')}。`,
+  removePackageFilesWarning:
+    '该软件包的文件和文件夹将从磁盘删除；工具本体、容器和运行环境缓存不受影响。',
+  removePackageConfirm: '移除',
+  removePackageRemoving: '正在移除…',
+  removePackagePreviewFailed: '无法准备移除操作。',
+  removedPackage: (name: string) => `已移除 ${name}。`,
   searchWrappers: '搜索 Wrapper',
   noWrappers: '尚未添加 Wrapper。选择“发现”浏览目录。',
   chooseOneInput: '为每个 Wrapper 输入选择或拖入一个文件或目录。',

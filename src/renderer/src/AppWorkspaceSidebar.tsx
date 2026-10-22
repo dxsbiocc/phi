@@ -11,6 +11,7 @@ import type { PhiPluginDisplayItem } from './features/phi-plugin/hooks/usePhiPlu
 import { RuntimeSidebar } from './features/runtime/RuntimeView'
 import { SkillSidebar } from './features/skill/SkillView'
 import { WrapperSidebar } from './features/wrapper/WrapperView'
+import type { SnackbarSeverity } from './components/AppSnackbarCard'
 import { WorkspaceFilesPane } from './components/WorkspaceSidePanel'
 import { RemoteConnectionNotice } from './features/project/components/RemoteConnectionNotice'
 import { RetainedCatalogSidebars } from './components/RetainedCatalogSidebars'
@@ -112,6 +113,8 @@ export type AppWorkspaceSidebarProps = {
   onRefreshWrappers: () => void | Promise<void>
   busyWrapperPackageId?: string | null
   onSetWrapperPackageEnabled: (packageId: string, enabled: boolean) => Promise<boolean>
+  /** App-level snackbar presenter for sidebar operations such as wrapper removal. */
+  onNotify?: (message: string, severity?: SnackbarSeverity) => void
 
   sessions: SessionSummary[]
   activeSessionPath: string | null
@@ -225,6 +228,7 @@ function AppWorkspaceSidebarImpl({
   onRefreshWrappers,
   busyWrapperPackageId,
   onSetWrapperPackageEnabled,
+  onNotify,
   sessions,
   activeSessionPath,
   activeCwd,
@@ -467,6 +471,7 @@ function AppWorkspaceSidebarImpl({
         onRefresh={onRefreshWrappers}
         busyPackageId={busyWrapperPackageId}
         onSetPackageEnabled={onSetWrapperPackageEnabled}
+        onNotify={onNotify}
         requestTrustedOverlay={requestTrustedOverlay}
         cancelTrustedOverlay={cancelTrustedOverlay}
         onPreviewInteractionChange={onPreviewDialogChange ?? onPreviewInteractionChange}

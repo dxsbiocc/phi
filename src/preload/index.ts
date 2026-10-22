@@ -145,6 +145,7 @@ import type {
   PackageUpdateView,
   SkillPackageDetailView,
   WrapperPackageDetailView,
+  WrapperRemovalPreview,
   WrapperRemovalView
 } from '../shared/packageManagerTypes'
 import type {
@@ -1111,7 +1112,11 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   ) => Promise<PackageInstallPlanView>
   readWrapperPackageDetail: (dir: string, id: string) => Promise<WrapperPackageDetailView>
   readSkillPackageDetail: (dir: string, id: string) => Promise<SkillPackageDetailView>
-  removeWrapperPackage: (id: string) => Promise<WrapperRemovalView>
+  previewWrapperRemoval: (id: string) => Promise<WrapperRemovalPreview>
+  removeWrapperPackage: (
+    id: string,
+    options?: { disableDependents?: boolean }
+  ) => Promise<WrapperRemovalView>
   installPackage: (
     dir: string,
     type: PackageManagerType,
@@ -1968,8 +1973,12 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke(IPC.packages.wrapperDetail, dir, id),
   readSkillPackageDetail: (dir: string, id: string): Promise<SkillPackageDetailView> =>
     ipcRenderer.invoke(IPC.packages.skillDetail, dir, id),
-  removeWrapperPackage: (id: string): Promise<WrapperRemovalView> =>
-    ipcRenderer.invoke(IPC.packages.removeWrapper, id),
+  previewWrapperRemoval: (id: string): Promise<WrapperRemovalPreview> =>
+    ipcRenderer.invoke(IPC.packages.previewWrapperRemoval, id),
+  removeWrapperPackage: (
+    id: string,
+    options?: { disableDependents?: boolean }
+  ): Promise<WrapperRemovalView> => ipcRenderer.invoke(IPC.packages.removeWrapper, id, options),
   installPackage: (
     dir: string,
     type: PackageManagerType,

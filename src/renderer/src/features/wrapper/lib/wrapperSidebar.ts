@@ -5,7 +5,7 @@ import type {
 import { resourceCategorySearchTerms } from '../../../lib/resourceUi'
 import { parseWrapperCompositionId, wrapperTierCategory } from './wrapperView'
 
-/** Cached bundled packages stay discoverable without crowding the user's chosen resources. */
+/** Installed and chosen packages make up the sidebar; the catalog stays in Discover. */
 export function selectedWrappers(
   catalog: readonly WrapperCompositionCatalogItem[]
 ): WrapperCompositionCatalogItem[] {

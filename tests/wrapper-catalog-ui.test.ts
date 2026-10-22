@@ -228,9 +228,10 @@ test('previous automatic seeds are not mistaken for user installations when the 
   )
   assert.equal(choices[0].installed, false)
   assert.equal(choices[0].selected, false)
-  assert.equal(choices[1].selected, true)
+  assert.equal(choices[1].installed, false)
+  assert.equal(choices[1].selected, false)
   assert.equal(choices[1].enabled, false)
-  assert.equal(choices[1].version, '1.0.0')
+  assert.equal(choices[1].version, '2.0.0')
   const cached = wrapperCatalogChoices(
     [wrapper('rnaseq')],
     [registry([packageEntry('rnaseq', '2.0.0')])],
@@ -241,7 +242,7 @@ test('previous automatic seeds are not mistaken for user installations when the 
   assert.equal(cached[0].version, '1.0.0')
 })
 
-test('bundled wrapper payloads at or above the catalog version are enabled without a registry install', () => {
+test('an old bundled payload is replaced by the catalog install instead of being reused', () => {
   const bundled = (id: string, version: string): InstalledPackageView => ({
     id,
     type: 'wrapper',
@@ -271,7 +272,7 @@ test('bundled wrapper payloads at or above the catalog version are enabled witho
     [bundled('fastqc', '1.0.0'), bundled('older', '1.0.0')]
   )
   const byId = new Map(choices.map((choice) => [choice.id, choice]))
-  assert.equal(wrapperChoiceNeedsRegistryInstall(byId.get('fastqc')!), false)
+  assert.equal(wrapperChoiceNeedsRegistryInstall(byId.get('fastqc')!), true)
   assert.equal(wrapperChoiceNeedsRegistryInstall(byId.get('older')!), true)
   assert.equal(wrapperChoiceNeedsRegistryInstall(byId.get('absent')!), true)
 })

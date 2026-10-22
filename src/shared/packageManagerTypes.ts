@@ -121,10 +121,24 @@ export interface WrapperPackageDetailView {
   skipped: number
 }
 
-export interface WrapperRemovalView {
-  /** `deselected` keeps the bundled files; `uninstalled` deleted the installed package. */
-  kind: 'deselected' | 'uninstalled'
+/** Another wrapper package that keeps this one enabled and would be disabled by its removal. */
+export interface WrapperRemovalDependent {
   id: string
+  name: string
+}
+
+/** What confirming a wrapper removal will do, before anything is changed. */
+export interface WrapperRemovalPreview {
+  id: string
+  name: string
+  /** Enabled packages that depend on this one; removal disables them first. */
+  dependents: WrapperRemovalDependent[]
+}
+
+export interface WrapperRemovalView {
+  id: string
+  /** Enabled dependents that were switched off so the removal could proceed. */
+  disabledDependents: WrapperRemovalDependent[]
 }
 
 /** What the catalog shows for one skill package before it is installed. */

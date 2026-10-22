@@ -259,6 +259,18 @@ export function promoteInstalledWrapperPackage(
   const registry = readWrapperTreeState(agentDir)
   const current = registry.packages[id]
   if (!current || current.version !== version || current.source.installedBy === 'user') return
+  setWrapperPackageInstalledBy(id, 'user', agentDir)
+}
+
+/** Record why a package is installed; `dependency` packages are pruned once nothing needs them. */
+export function setWrapperPackageInstalledBy(
+  id: string,
+  installedBy: 'user' | 'dependency',
+  agentDir = getPhiAgentDir()
+): void {
+  const registry = readWrapperTreeState(agentDir)
+  const current = registry.packages[id]
+  if (!current || current.source.installedBy === installedBy) return
   writeWrapperTreeRegistry(
     {
       version: TREE_REGISTRY_VERSION,
@@ -266,7 +278,7 @@ export function promoteInstalledWrapperPackage(
         ...registry.packages,
         [id]: {
           ...current,
-          source: { ...current.source, installedBy: 'user' }
+          source: { ...current.source, installedBy }
         }
       }
     },

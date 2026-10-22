@@ -31,9 +31,11 @@ import {
 } from '../lib/wrapperCatalog'
 import { installCatalogPackage, loadContentCatalog } from '../../../lib/contentCatalog'
 import { summarizeWrapperInstallPlan, type WrapperInstallSummary } from '../lib/wrapperInstallPlan'
-import { useWrapperPackageRemoval } from '../hooks/useWrapperPackageRemoval'
+import { useWrapperRemoval } from '../hooks/useWrapperRemoval'
+import type { SnackbarSeverity } from '../../../components/AppSnackbarCard'
 import { WrapperInstallConfirmDialog } from './WrapperInstallConfirmDialog'
 import { WrapperPackageDetailPage } from './WrapperPackageDetailPage'
+import { WrapperRemovalDialog } from './WrapperRemovalDialog'
 
 const DIRECTORY_KEY = '__directory__'
 
@@ -43,6 +45,7 @@ export interface WrapperCatalogDialogProps {
   onClose: () => void
   onRefresh: () => Promise<void> | void
   onSetPackageEnabled?: (id: string, enabled: boolean) => Promise<boolean | void> | void
+  onNotify?: (message: string, severity?: SnackbarSeverity) => void
 }
 
 export function WrapperCatalogDialog({
@@ -50,7 +53,8 @@ export function WrapperCatalogDialog({
   catalog,
   onClose,
   onRefresh,
-  onSetPackageEnabled
+  onSetPackageEnabled,
+  onNotify
 }: WrapperCatalogDialogProps): React.JSX.Element {
   const language = useUiLanguage()
   const [query, setQuery] = useState('')
@@ -95,7 +99,7 @@ export function WrapperCatalogDialog({
     setError(refreshed.error)
     setSourceNotice(refreshed.notice)
   }, [onRefresh, readCatalog])
-  const removal = useWrapperPackageRemoval(refreshAfterRemoval)
+  const removal = useWrapperRemoval(refreshAfterRemoval, onNotify)
   useEffect(() => {
     if (!open) return undefined
     let active = true
@@ -192,14 +196,14 @@ export function WrapperCatalogDialog({
   function renderAction(choice: WrapperCatalogChoice): React.JSX.Element {
     const { label, kind } = wrapperChoiceAction(choice)
     const removing = kind === 'remove'
-    const working = busy.has(choice.id) || removal.isRemoving(choice.id)
+    const working = busy.has(choice.id) || removal.busyId === choice.id
     return (
       <Button
         size="small"
         variant="outlined"
         color={removing ? 'error' : 'primary'}
         disabled={working}
-        onClick={() => void (removing ? removal.remove(choice.id) : add(choice))}
+        onClick={() => void (removing ? removal.request(choice.id) : add(choice))}
         aria-label={`${label} ${choice.title}`}
       >
         {working ? <CircularProgress size={16} /> : label}
@@ -297,7 +301,7 @@ export function WrapperCatalogDialog({
             ) : null
           }
         >
-          {(error ?? removal.error) ? (
+          {(error ?? (!onNotify ? removal.error : null)) ? (
             <Alert severity="error" sx={{ mb: 2 }} onClose={error ? undefined : removal.clearError}>
               {localizeWrapperMessage(error ?? removal.error ?? '')}
             </Alert>
@@ -347,6 +351,12 @@ export function WrapperCatalogDialog({
           )}
         </CatalogBrowseLayout>
       )}
+      <WrapperRemovalDialog
+        target={removal.pending}
+        removing={removal.removing}
+        onClose={removal.cancel}
+        onConfirm={removal.confirm}
+      />
       <WrapperInstallConfirmDialog
         title={pendingInstall?.choice.title ?? ''}
         summary={pendingInstall?.summary ?? null}

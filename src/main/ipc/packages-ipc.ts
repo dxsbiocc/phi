@@ -30,7 +30,7 @@ import { packageRegistryIconView } from '../agent/packages/icon-views'
 import type { InstallerOptions } from '../agent/packages/installer-types'
 import type { PackageType } from '../agent/packages/manifest'
 import { runPackageMutation } from '../agent/packages/mutation-queue'
-import { removeWrapperPackage } from '../agent/packages/wrapper-removal'
+import { previewWrapperRemoval, removeWrapperPackage } from '../agent/packages/wrapper-removal'
 import { readSkillPackageDetail } from '../agent/packages/skill-detail'
 import { syncPreferredOfficialRegistry } from '../agent/packages/official-website-registry'
 import { readWrapperPackageDetail } from '../agent/packages/wrapper-detail'
@@ -316,13 +316,29 @@ function registerPackageRemovalIpc(context: PackagesIpcContext): void {
   const ipcMain = options.ipcMain
   const invalidateAgentSession = options.lifecycle.invalidateAgentSession
   const AGENT_DIR = options.workspace.agentDir
+  ipcMain.handle(IPC.packages.previewWrapperRemoval, async (_, id: unknown) => {
+    if (typeof id !== 'string' || id.length === 0)
+      throw new Error('Invalid Wrapper package request')
+    try {
+      return previewWrapperRemoval(id, { agentDir: AGENT_DIR })
+    } catch (error) {
+      throw new Error(errorMessage(error))
+    }
+  })
   ipcMain.handle(
     IPC.packages.removeWrapper,
-    serializedPackageMutation(async (_, id: unknown) => {
+    serializedPackageMutation(async (_, id: unknown, request: unknown) => {
       if (typeof id !== 'string' || id.length === 0)
         throw new Error('Invalid Wrapper package request')
+      const disableDependents =
+        typeof request === 'object' &&
+        request !== null &&
+        (request as { disableDependents?: unknown }).disableDependents === true
       try {
-        const result = removeWrapperPackage(id, { agentDir: AGENT_DIR })
+        const result = removeWrapperPackage(id, {
+          agentDir: AGENT_DIR,
+          ...(disableDependents ? { disableDependents } : {})
+        })
         resetWrapperCompositionCatalogCache()
         await invalidateAgentSession()
         return result

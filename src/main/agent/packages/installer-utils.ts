@@ -3,17 +3,17 @@ import { isAbsolute, relative, resolve, win32 } from 'node:path'
 
 import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
+import { isLegacyPackageRegistry } from '../../../shared/packageSourceIds'
 import type { LocalRegistry, PackageSourceMetadata, RegistryTrustTier } from './installer-types'
 import type { PackageType } from './manifest'
 
 // Historical import surface for the packages module; the definitions now live in src/shared.
 export { errorMessage, isRecord }
+export { isLegacyPackageRegistry as isLegacyBuiltinRegistry }
 
 type ReadablePackageSourceMetadata = Omit<PackageSourceMetadata, 'trust'> & {
   trust?: RegistryTrustTier
 }
-
-const LEGACY_BUILTIN_REGISTRY_IDS = new Set(['builtin', 'bundled-wrappers'])
 
 export function assertSafePackagePath(path: string): void {
   const normalized = path.replaceAll('\\', '/')
@@ -90,7 +90,7 @@ export function normalizeSourceMetadata(value: unknown): PackageSourceMetadata |
 }
 
 export function legacySourceTrust(registry: string): RegistryTrustTier {
-  return LEGACY_BUILTIN_REGISTRY_IDS.has(registry) ? 'builtin' : 'imported'
+  return isLegacyPackageRegistry(registry) ? 'builtin' : 'imported'
 }
 
 export function errorCode(error: unknown): string | undefined {

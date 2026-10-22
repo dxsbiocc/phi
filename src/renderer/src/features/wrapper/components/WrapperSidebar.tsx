@@ -27,8 +27,10 @@ import {
 import { filterWrappers, selectedWrappers, visibleWrapperTier } from '../lib/wrapperSidebar'
 import { groupWrapperPackages, type WrapperPackageGroup } from '../lib/wrapperFamily'
 import { parseWrapperCompositionId, wrapperTierLabel } from '../lib/wrapperView'
-import { useWrapperPackageRemoval } from '../hooks/useWrapperPackageRemoval'
+import { useWrapperRemoval } from '../hooks/useWrapperRemoval'
+import type { SnackbarSeverity } from '../../../components/AppSnackbarCard'
 import { WrapperCatalogDialog } from './WrapperCatalogDialog'
+import { WrapperRemovalDialog } from './WrapperRemovalDialog'
 
 export interface WrapperSidebarProps {
   visible?: boolean
@@ -40,6 +42,8 @@ export interface WrapperSidebarProps {
   onSelect: (entry: WrapperCompositionCatalogItem) => void
   onRefresh: () => Promise<void> | void
   onSetPackageEnabled?: (packageId: string, enabled: boolean) => Promise<boolean | void> | void
+  /** App-level notice presenter; removal failures use it instead of an inline sidebar alert. */
+  onNotify?: (message: string, severity?: SnackbarSeverity) => void
   requestTrustedOverlay?: TrustedOverlayRequest
   cancelTrustedOverlay?: (key: string) => void
   onPreviewInteractionChange?: (active: boolean) => void
@@ -327,12 +331,13 @@ export function WrapperSidebar({
   onRefresh,
   onSetPackageEnabled,
   busyPackageId,
+  onNotify,
   requestTrustedOverlay,
   cancelTrustedOverlay,
   onPreviewInteractionChange
 }: WrapperSidebarProps): React.JSX.Element {
   useUiLanguage()
-  const removal = useWrapperPackageRemoval(onRefresh)
+  const removal = useWrapperRemoval(onRefresh, onNotify)
   const [query, setQuery] = useState('')
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [catalogPending, setCatalogPending] = useState(false)
@@ -435,7 +440,7 @@ export function WrapperSidebar({
       )}
       action={<DiscoverButton expanded={catalogOpen} onClick={openCatalog} />}
     >
-      {removal.error ? (
+      {removal.error && !onNotify ? (
         <Alert severity="error" onClose={removal.clearError} sx={{ mx: 1, mb: 1 }}>
           {removal.error}
         </Alert>
@@ -478,9 +483,9 @@ export function WrapperSidebar({
               onExpandedChange={handleExpandedChange}
               onSelect={onSelect}
               onLoadMore={handleLoadMore}
-              busyPackageId={busyPackageId}
+              busyPackageId={removal.busyId ?? busyPackageId}
               onSetPackageEnabled={onSetPackageEnabled}
-              onRemovePackage={removal.remove}
+              onRemovePackage={removal.request}
             />
           ))
         )}
@@ -491,6 +496,7 @@ export function WrapperSidebar({
           catalog={catalog}
           onRefresh={onRefresh}
           onSetPackageEnabled={onSetPackageEnabled}
+          onNotify={onNotify}
           onClose={() => {
             catalogDialogs.cancel('wrapper-sidebar-catalog')
             setCatalogPending(false)
@@ -498,6 +504,12 @@ export function WrapperSidebar({
           }}
         />
       )}
+      <WrapperRemovalDialog
+        target={visible ? removal.pending : null}
+        removing={removal.removing}
+        onClose={removal.cancel}
+        onConfirm={removal.confirm}
+      />
     </CatalogSidebar>
   )
 }

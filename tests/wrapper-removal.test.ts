@@ -6,7 +6,10 @@ import test from 'node:test'
 
 import { readEnablementState, writeEnablementState } from '../src/main/agent/enablement'
 import { readWrapperTreeState } from '../src/main/agent/packages/wrapper-tree'
-import { removeWrapperPackage } from '../src/main/agent/packages/wrapper-removal'
+import {
+  previewWrapperRemoval,
+  removeWrapperPackage
+} from '../src/main/agent/packages/wrapper-removal'
 
 const roots: string[] = []
 test.after(() => roots.forEach((root) => rmSync(root, { recursive: true, force: true })))
@@ -63,19 +66,25 @@ function makeAgentDir(fixtures: Fixture[], enablement: Record<string, boolean> =
   return agentDir
 }
 
-test('removing a bundled package only clears the choice and keeps its files', () => {
+test('removing a package deletes it even when it came from the old bundled pack', () => {
   const agentDir = makeAgentDir([{ id: 'module-nf-core-samtools', registry: 'bundled-wrappers' }], {
     'wrapper:module-nf-core-samtools': true
   })
   assert.deepEqual(removeWrapperPackage('module-nf-core-samtools', { agentDir }), {
-    kind: 'deselected',
-    id: 'module-nf-core-samtools'
+    id: 'module-nf-core-samtools',
+    disabledDependents: []
   })
   assert.equal(
     readEnablementState({ agentDir }).global['wrapper:module-nf-core-samtools'],
     undefined
   )
-  assert.ok(readWrapperTreeState(agentDir).packages['module-nf-core-samtools'])
+  assert.equal(readWrapperTreeState(agentDir).packages['module-nf-core-samtools'], undefined)
+  assert.equal(
+    existsSync(
+      join(agentDir, 'wrappers', 'tree', 'modules/nf-core/module-nf-core-samtools/main.nf')
+    ),
+    false
+  )
 })
 
 test('the choice is cleared in every project override as well', () => {
@@ -137,16 +146,121 @@ test('a disabled or unchosen dependent does not block removal', () => {
     ],
     { 'wrapper:module-nf-core-samtools': true, 'wrapper:subworkflow-nf-core-align': false }
   )
-  assert.equal(removeWrapperPackage('module-nf-core-samtools', { agentDir }).kind, 'deselected')
+  assert.ok(removeWrapperPackage('module-nf-core-samtools', { agentDir }))
+})
+
+test('previewing reports a disabled target that an enabled package still uses', () => {
+  const agentDir = makeAgentDir(
+    [
+      { id: 'module-nf-core-custom', registry: 'bundled-wrappers' },
+      {
+        id: 'module-local-differential-expression',
+        registry: 'phi-packages',
+        dependsOn: ['module-nf-core-custom']
+      }
+    ],
+    {
+      'wrapper:module-nf-core-custom': false,
+      'wrapper:module-local-differential-expression': true
+    }
+  )
+  assert.deepEqual(previewWrapperRemoval('module-nf-core-custom', { agentDir }), {
+    id: 'module-nf-core-custom',
+    name: 'custom',
+    dependents: [
+      {
+        id: 'module-local-differential-expression',
+        name: 'differential-expression'
+      }
+    ]
+  })
+})
+
+test('removal can switch dependents off first when the user confirms it', () => {
+  const agentDir = makeAgentDir(
+    [
+      { id: 'module-nf-core-custom', registry: 'bundled-wrappers' },
+      {
+        id: 'module-local-differential-expression',
+        registry: 'phi-packages',
+        dependsOn: ['module-nf-core-custom']
+      }
+    ],
+    {
+      'wrapper:module-nf-core-custom': true,
+      'wrapper:module-local-differential-expression': true
+    }
+  )
+  assert.throws(
+    () => removeWrapperPackage('module-nf-core-custom', { agentDir }),
+    /differential-expression/
+  )
+  assert.deepEqual(
+    removeWrapperPackage('module-nf-core-custom', { agentDir, disableDependents: true }),
+    {
+      id: 'module-nf-core-custom',
+      disabledDependents: [
+        {
+          id: 'module-local-differential-expression',
+          name: 'differential-expression'
+        }
+      ]
+    }
+  )
+  const state = readEnablementState({ agentDir })
+  assert.equal(state.global['wrapper:module-nf-core-custom'], undefined)
+  assert.equal(state.global['wrapper:module-local-differential-expression'], false)
+  assert.equal(readWrapperTreeState(agentDir).packages['module-nf-core-custom'], undefined)
+})
+
+test('a package enabled only by a project still blocks removal', () => {
+  const agentDir = makeAgentDir(
+    [
+      { id: 'module-nf-core-custom', registry: 'bundled-wrappers' },
+      {
+        id: 'module-local-differential-expression',
+        registry: 'phi-packages',
+        dependsOn: ['module-nf-core-custom']
+      }
+    ],
+    {
+      'wrapper:module-nf-core-custom': false,
+      'wrapper:module-local-differential-expression': true
+    }
+  )
+  writeEnablementState(
+    {
+      version: 1,
+      global: {
+        'wrapper:module-nf-core-custom': false,
+        'wrapper:module-local-differential-expression': true
+      },
+      projects: { '/work/a': { 'wrapper:module-nf-core-custom': true } }
+    },
+    { agentDir }
+  )
+  assert.throws(
+    () => removeWrapperPackage('module-nf-core-custom', { agentDir }),
+    /differential-expression/
+  )
+  removeWrapperPackage('module-nf-core-custom', { agentDir, disableDependents: true })
+  const state = readEnablementState({ agentDir })
+  assert.deepEqual(state.projects, {})
+  assert.equal(state.global['wrapper:module-local-differential-expression'], false)
 })
 
 test('a package installed from the registry is uninstalled from disk', () => {
   const agentDir = makeAgentDir([{ id: 'module-nf-core-fastqc', registry: 'phi-packages' }], {
     'wrapper:module-nf-core-fastqc': true
   })
+  assert.deepEqual(previewWrapperRemoval('module-nf-core-fastqc', { agentDir }), {
+    id: 'module-nf-core-fastqc',
+    name: 'fastqc',
+    dependents: []
+  })
   assert.deepEqual(removeWrapperPackage('module-nf-core-fastqc', { agentDir }), {
-    kind: 'uninstalled',
-    id: 'module-nf-core-fastqc'
+    id: 'module-nf-core-fastqc',
+    disabledDependents: []
   })
   assert.equal(readWrapperTreeState(agentDir).packages['module-nf-core-fastqc'], undefined)
   assert.equal(

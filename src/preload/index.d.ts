@@ -130,6 +130,7 @@ import type {
   PackageInstallPlanView,
   SkillPackageDetailView,
   WrapperPackageDetailView,
+  WrapperRemovalPreview,
   WrapperRemovalView,
   PackageManagerType,
   PackageRegistryView,
@@ -1183,7 +1184,11 @@ declare global {
       ) => Promise<PackageInstallPlanView>
       readWrapperPackageDetail: (dir: string, id: string) => Promise<WrapperPackageDetailView>
       readSkillPackageDetail: (dir: string, id: string) => Promise<SkillPackageDetailView>
-      removeWrapperPackage: (id: string) => Promise<WrapperRemovalView>
+      previewWrapperRemoval: (id: string) => Promise<WrapperRemovalPreview>
+      removeWrapperPackage: (
+        id: string,
+        options?: { disableDependents?: boolean }
+      ) => Promise<WrapperRemovalView>
       installPackage: (
         dir: string,
         type: PackageManagerType,

@@ -168,6 +168,7 @@ export const IPC = {
     pickRegistryDirectory: 'packages:pickRegistryDirectory',
     plan: 'packages:plan',
     previewImport: 'packages:previewImport',
+    previewWrapperRemoval: 'packages:previewWrapperRemoval',
     registry: 'packages:registry',
     removeRegistry: 'packages:removeRegistry',
     removeWrapper: 'packages:removeWrapper',

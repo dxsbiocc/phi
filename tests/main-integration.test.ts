@@ -3430,6 +3430,10 @@ async function harness(
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')
       }
     },
+    './agent/wrappers/legacy-bundled-cleanup': {
+      retireLegacyBundledWrappers: (): Promise<unknown> =>
+        Promise.resolve({ removed: [], replaced: [], failed: [] })
+    },
     // Scan core agents and explicitly supplied plugin directories, never the developer's home.
     './agent/agents/discovery': {
       discoverPhiAgents: (options: Parameters<typeof discoverPhiAgents>[0]) =>
@@ -3526,9 +3530,14 @@ async function harness(
       searchOfficialCatalog: async () => ({ matches: [], available: false })
     },
     './agent/packages/wrapper-removal': {
-      removeWrapperPackage: (id: string): { kind: 'uninstalled'; id: string } => ({
-        kind: 'uninstalled',
-        id
+      previewWrapperRemoval: (id: string) => ({
+        id,
+        name: id,
+        dependents: []
+      }),
+      removeWrapperPackage: (id: string) => ({
+        id,
+        disabledDependents: []
       })
     },
     './agent/agents/background-approval': { BackgroundAgentApprovalTracker },
@@ -7475,6 +7484,7 @@ const expectedStartupRegistrationOrder = [
   'packages:skillDetail',
   'packages:wrapperDetail',
   'packages:install',
+  'packages:previewWrapperRemoval',
   'packages:removeWrapper',
   'packages:uninstall',
   'packages:listInstalled',

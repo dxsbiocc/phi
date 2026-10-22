@@ -1,11 +1,10 @@
-import semver from 'semver'
-
 import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
 import type {
   InstalledPackageView,
   PackageRegistryEntryView,
   PackageRegistryView
 } from '../../../../../shared/packageManagerTypes'
+import { isLegacyPackageRegistry } from '../../../../../shared/packageSourceIds'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import { isManagedWrapper, wrapperFamilyName, wrapperPackageKey } from './wrapperFamily'
 import { parseWrapperCompositionId, wrapperTierCategory } from './wrapperView'
@@ -29,8 +28,6 @@ export interface WrapperCatalogChoice {
   cached?: WrapperCompositionCatalogItem
   registryEntry?: PackageRegistryEntryView
   registryPath?: string
-  /** Version of the payload shipped with the app; present until the user installs from a registry. */
-  bundledVersion?: string
   installed: boolean
   selected: boolean
   enabled: boolean
@@ -57,7 +54,6 @@ export function wrapperCatalogChoices(
       metadata: provider,
       category: provider === 'custom' ? '自定义' : wrapperTierCategory(tier) || '其他',
       version: installed.get(id)?.version,
-      bundledVersion: bundledVersionOf(installed.get(id)),
       cached: entry,
       installed: entry.packageSelected !== false,
       selected: entry.packageSelected !== false,
@@ -80,7 +76,7 @@ export function wrapperCatalogChoices(
       continue
     }
     const existing = installed.get(entry.id)
-    const selected = Boolean(existing && existing.registry !== 'bundled-wrappers')
+    const selected = Boolean(existing && !isLegacyPackageRegistry(existing.registry))
     choices.set(entry.id, {
       id: entry.id,
       title: wrapperFamilyName(entry.id),
@@ -92,7 +88,6 @@ export function wrapperCatalogChoices(
         : wrapperTierCategory(parseWrapperCompositionId(entry.id).tier) || '其他',
       registryEntry: entry,
       registryPath: registry.dir,
-      bundledVersion: bundledVersionOf(existing),
       installed: selected,
       selected,
       enabled: selected && existing?.enabled !== false
@@ -101,23 +96,9 @@ export function wrapperCatalogChoices(
   return [...choices.values()].sort((left, right) => left.title.localeCompare(right.title))
 }
 
-function bundledVersionOf(entry: InstalledPackageView | undefined): string | undefined {
-  return entry?.registry === 'bundled-wrappers' ? entry.version : undefined
-}
-
-/**
- * A bundled payload that is not older than the catalog entry already is that package, so
- * choosing it only needs enabling. Planning an install would reject it as a downgrade or no-op.
- */
+/** Only a catalog install puts the package on disk; a leftover legacy payload is replaced. */
 export function wrapperChoiceNeedsRegistryInstall(choice: WrapperCatalogChoice): boolean {
-  if (choice.installed) return false
-  const catalogVersion = choice.registryEntry?.version
-  if (!choice.bundledVersion || !catalogVersion) return true
-  return !(
-    semver.valid(choice.bundledVersion) &&
-    semver.valid(catalogVersion) &&
-    semver.gte(choice.bundledVersion, catalogVersion)
-  )
+  return !choice.installed
 }
 
 /** The catalog's own logo wins; the installed copy's icon (possibly a generated one) is next. */

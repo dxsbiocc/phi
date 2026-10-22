@@ -6,6 +6,7 @@ import semver from 'semver'
 import { listInstalledPlugins, type LoadedPlugin } from '../plugins/loader'
 import { getPhiAgentDir } from '../runtime-paths'
 import type { InstalledPackage, InstallerOptions, PackageSourceMetadata } from './installer-types'
+import { isLegacyPackageRegistry } from '../../../shared/packageSourceIds'
 import { errorCode, normalizeSourceMetadata } from './installer-utils'
 import { readPackageManifest, type PackageManifest, type PackageType } from './manifest'
 import { listActiveMcpPackages } from './mcp-store'
@@ -41,7 +42,11 @@ export function listInstalledPackages(
 }
 
 export function packagesAvailableForPlanning(agentDir: string): InstalledPackage[] {
-  return listInstalledPackages({ agentDir })
+  // Legacy builtin wrapper payloads are leftovers from the retired bundled pack. They are not a
+  // catalog install, so planning must replace them with the catalog copy instead of skipping it.
+  return listInstalledPackages({ agentDir }).filter(
+    (item) => !(item.type === 'wrapper' && isLegacyPackageRegistry(item.registry))
+  )
 }
 
 /** Older validated loader installations predate .source.json; present invalid metadata fails closed. */
