@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Box, IconButton, MenuItem, MenuList, Popover, TextField, Tooltip } from '@mui/material'
+import { alpha, useTheme } from '@mui/material/styles'
+import { EditorView } from '@codemirror/view'
 import { FiChevronDown } from 'react-icons/fi'
 import { PhiIcons } from '../../../icons'
 import { useUiLanguage } from '../../../lib/i18n'
 import { markdownCopy } from '../../../components/markdown/markdownUiCopy'
 import { analysisCopy } from '../lib/analysisUiCopy'
+import { syntaxLanguageForMarkdownCode } from '../../../lib/markdownCodeLanguage'
 import { fencedCodeAt } from './markdownFencedCode'
+import { NotebookMarkdownCodeInput } from './NotebookMarkdownCodeInput'
 
 const languages = [
   { id: '', label: 'Plain text' },
@@ -34,15 +38,16 @@ export function NotebookMarkdownCodeBlock({
 }: {
   source: string
   readOnly: boolean
-  onBodyChange: (body: string, selectionStart: number, selectionEnd: number) => void
+  onBodyChange: (body: string) => void
   onLanguageChange: (language: string) => void
   onExitBelow: () => void
 }): React.JSX.Element {
   useUiLanguage()
+  const theme = useTheme()
   const code = fencedCodeAt(source, 0)
   const body = code?.body ?? ''
   const language = code?.language ?? ''
-  const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const inputHostRef = useRef<HTMLDivElement | null>(null)
   const activeRef = useRef<HTMLLIElement | null>(null)
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [query, setQuery] = useState('')
@@ -58,6 +63,12 @@ export function NotebookMarkdownCodeBlock({
       : null
   const choices = customOption ? [...options, customOption] : options
   const label = languages.find((entry) => entry.id === language)?.label ?? language
+  const syntaxLanguage = syntaxLanguageForMarkdownCode(language)
+
+  const focusInput = (): void => {
+    const dom = inputHostRef.current?.querySelector<HTMLElement>('.cm-editor')
+    if (dom) EditorView.findFromDOM(dom)?.focus()
+  }
 
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: 'nearest' })
@@ -67,6 +78,7 @@ export function NotebookMarkdownCodeBlock({
     onLanguageChange(id)
     setAnchor(null)
     setQuery('')
+    requestAnimationFrame(focusInput)
   }
 
   const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
@@ -83,7 +95,7 @@ export function NotebookMarkdownCodeBlock({
     } else if (event.key === 'Escape') {
       event.preventDefault()
       setAnchor(null)
-      requestAnimationFrame(() => inputRef.current?.focus())
+      requestAnimationFrame(focusInput)
     }
     event.stopPropagation()
   }
@@ -101,11 +113,16 @@ export function NotebookMarkdownCodeBlock({
   return (
     <Box
       data-phi-notebook-code-block="editable"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) requestAnimationFrame(focusInput)
+      }}
       sx={{
         position: 'relative',
-        minHeight: 116,
         borderRadius: 2,
         bgcolor: 'action.hover',
+        '&:focus-within': {
+          bgcolor: alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.14 : 0.07)
+        },
         '& .phi-notebook-code-actions': { opacity: 0, pointerEvents: 'none' },
         '&:hover .phi-notebook-code-actions, &:focus-within .phi-notebook-code-actions': {
           opacity: 1,
@@ -132,6 +149,7 @@ export function NotebookMarkdownCodeBlock({
           type="button"
           data-phi-notebook-code-language-button="true"
           aria-label={analysisCopy.chooseMarkdownCodeLanguage}
+          disabled={readOnly}
           onClick={(event) => {
             setAnchor(event.currentTarget)
             setQuery('')
@@ -167,50 +185,15 @@ export function NotebookMarkdownCodeBlock({
           </IconButton>
         </Tooltip>
       </Box>
-      <Box
-        component="textarea"
-        ref={inputRef}
-        data-phi-notebook-code-input="true"
-        aria-label={analysisCopy.markdownCodeInput}
-        placeholder={analysisCopy.markdownCodePlaceholder}
-        value={body}
-        readOnly={readOnly}
-        rows={Math.max(3, body.split('\n').length)}
-        spellCheck={false}
-        onChange={(event) =>
-          onBodyChange(event.target.value, event.target.selectionStart, event.target.selectionEnd)
-        }
-        onKeyDown={(event) => {
-          const atEnd =
-            event.currentTarget.selectionStart === body.length &&
-            event.currentTarget.selectionEnd === body.length
-          if (
-            (event.key === 'ArrowDown' && atEnd) ||
-            (event.key === 'Enter' && (event.metaKey || event.ctrlKey))
-          ) {
-            event.preventDefault()
-            onExitBelow()
-          }
-        }}
-        sx={{
-          display: 'block',
-          boxSizing: 'border-box',
-          width: '100%',
-          minHeight: 116,
-          resize: 'none',
-          border: 0,
-          outline: 0,
-          bgcolor: 'transparent',
-          color: 'text.primary',
-          px: 1.5,
-          pt: 4.3,
-          pb: 1.5,
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.85rem',
-          lineHeight: 1.65,
-          '&::placeholder': { color: 'text.disabled' }
-        }}
-      />
+      <Box ref={inputHostRef}>
+        <NotebookMarkdownCodeInput
+          value={body}
+          language={syntaxLanguage}
+          readOnly={readOnly}
+          onChange={onBodyChange}
+          onExitBelow={onExitBelow}
+        />
+      </Box>
       <Popover
         open={Boolean(anchor)}
         anchorEl={anchor}

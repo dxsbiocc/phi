@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  expandDisplayFormulaShortcut,
   insertMarkdown,
   type MarkdownInsertSamples
 } from '../src/renderer/src/features/analysis/notebook/markdownInsert'
@@ -41,8 +42,21 @@ test('a formula in a paragraph stays inline and a formula on its own line is a b
   assert.equal(inline.value, 'energy $$E = mc^2$$')
 
   const block = insertMarkdown('note\n', 5, 5, 'formula', samples)
-  assert.equal(block.value, 'note\n$$\nE = mc^2\n$$')
+  assert.equal(block.value, 'note\n\n$$\nE = mc^2\n$$\n\n\n')
   assert.equal(block.value.slice(block.selectionStart, block.selectionEnd), 'E = mc^2')
+
+  const selectedBlock = insertMarkdown('Before x\ny After', 7, 10, 'formula', samples)
+  assert.equal(selectedBlock.value, 'Before \n\n$$\nx\ny\n$$\n\n\n After')
+})
+
+test('two dollar signs on an otherwise empty line insert one bounded formula block', () => {
+  const source = '# Title\n\n$\n\n- Item\n\nAfter'
+  const result = expandDisplayFormulaShortcut(source, 10)
+  assert.ok(result)
+  assert.equal(result.value, '# Title\n\n$$\n\n$$\n\n\n- Item\n\nAfter')
+  assert.equal(result.selectionStart, '# Title\n\n$$\n'.length)
+  assert.equal(result.selectionEnd, result.selectionStart)
+  assert.equal(expandDisplayFormulaShortcut('cost $', 6), null)
 })
 
 test('lists, quotes, code, and tables insert as blocks without sticking to the previous line', () => {
@@ -54,17 +68,17 @@ test('lists, quotes, code, and tables insert as blocks without sticking to the p
   assert.equal(quote.value, '> a\n> b')
 
   const code = insertMarkdown('', 0, 0, 'codeBlock', samples)
-  assert.equal(code.value, '```\n\n```\n\n')
+  assert.equal(code.value, '```\n\n```\n\n\n')
   assert.equal(code.selectionStart, 4)
   assert.equal(code.selectionEnd, 4)
 
   const selectedCode = insertMarkdown('print(1)', 0, 8, 'codeBlock', samples)
-  assert.equal(selectedCode.value, '```\nprint(1)\n```\n\n')
+  assert.equal(selectedCode.value, '```\nprint(1)\n```\n\n\n')
   assert.equal(selectedCode.selectionStart, 12)
 
   const before = insertMarkdown('before', 6, 6, 'codeBlock', samples)
-  assert.equal(before.value, 'before\n\n```\n\n```\n\n')
-  assert.equal(before.value.slice(before.selectionStart), '\n```\n\n')
+  assert.equal(before.value, 'before\n\n```\n\n```\n\n\n')
+  assert.equal(before.value.slice(before.selectionStart), '\n```\n\n\n')
 
   const table = insertMarkdown('', 0, 0, 'table', samples)
   assert.equal(table.value, '| A | B |\n| --- | --- |\n|  |  |')

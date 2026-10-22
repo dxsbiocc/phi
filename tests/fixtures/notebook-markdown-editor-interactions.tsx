@@ -4,12 +4,40 @@ import { createTheme, ThemeProvider } from '@mui/material'
 import { EditorView } from '@codemirror/view'
 import { WebLinkOpenContext } from '../../src/renderer/src/components/markdown/WebLinkOpenContext'
 import { NotebookMarkdownEditor } from '../../src/renderer/src/features/analysis/notebook/NotebookMarkdownEditor'
+import NotebookCell from '../../src/renderer/src/features/analysis/notebook/NotebookCell'
 import { setUiLanguage } from '../../src/renderer/src/lib/i18n'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 let draft = 'hello world'
 let advances = 0
+let cellDraft = '$$\nE=mc^2\n$$\n\nafna\n\n```\n\n```\n\nAfter'
+
+function CellHarness(): React.JSX.Element {
+  const [source, setSource] = useState(cellDraft)
+  const [selected, setSelected] = useState(false)
+  return (
+    <ThemeProvider theme={createTheme()}>
+      <NotebookCell
+        cell={{
+          id: 'markdown-cell',
+          count: null,
+          type: 'markdown',
+          state: 'idle',
+          source,
+          outputs: []
+        }}
+        editable
+        selected={selected}
+        onSelectCell={() => setSelected(true)}
+        onSourceChange={(_cellId, next) => {
+          cellDraft = next
+          setSource(next)
+        }}
+      />
+    </ThemeProvider>
+  )
+}
 
 export function Harness({ dark = false }: { dark?: boolean }): React.JSX.Element {
   const [value, setValue] = useState(draft)
@@ -83,6 +111,24 @@ async function typeCode(input: HTMLTextAreaElement, value: string): Promise<void
     input.dispatchEvent(
       new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })
     )
+  })
+  await frame()
+}
+
+function codeInputView(root: ParentNode): EditorView {
+  const dom = root.querySelector<HTMLElement>('[data-phi-notebook-code-input] .cm-editor')
+  check(dom, 'The code block must mount a visible CodeMirror editor')
+  const view = EditorView.findFromDOM(dom)
+  check(view, 'The code block editor must be discoverable')
+  return view
+}
+
+async function typeCodeView(view: EditorView, value: string): Promise<void> {
+  await act(async () => {
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: value },
+      selection: { anchor: value.length }
+    })
   })
   await frame()
 }
@@ -221,22 +267,72 @@ async function run(): Promise<object> {
       const formulaPreview = formulaBlock.querySelector<HTMLElement>('[role="button"]')
       check(formulaPreview, 'Display math must expose an edit target')
       const heightBeforeEdit = formulaBlock.getBoundingClientRect().height
+      check(heightBeforeEdit >= 160, 'A display formula must leave room for its preview and input')
+      await act(async () => formulaBlock.click())
+      check(
+        formulaBlock.querySelector('[data-phi-notebook-formula-input]'),
+        'Clicking any blank part of the formula block must open its input'
+      )
       await act(async () => formulaPreview.click())
       const formulaInput = formulaBlock.querySelector<HTMLTextAreaElement>(
         '[data-phi-notebook-formula-input]'
       )
       check(formulaInput, 'Clicking display math must open an input inside the formula component')
+      if (document.activeElement !== formulaInput)
+        regressions.push('Clicking a display formula does not focus its expression input')
       check(
         formulaBlock.getBoundingClientRect().height === heightBeforeEdit,
         'Editing a formula must not change the block height or move surrounding content'
       )
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      check(
+        getComputedStyle(formulaBlock).backgroundColor !== 'rgba(0, 0, 0, 0)',
+        'The selected formula must have a visible background'
+      )
+      for (const key of [' ', 'Enter']) {
+        const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+        await act(async () => formulaInput.dispatchEvent(event))
+        check(
+          !event.defaultPrevented,
+          `Formula input must accept ${key === ' ' ? 'spaces' : 'newlines'}`
+        )
+      }
       await typeCode(formulaInput, 'a^2 + b^2')
       check(draft.includes('$$\na^2 + b^2\n$$'), 'Display math edits must update Markdown source')
       check(
         formulaBlock.querySelector('[data-phi-notebook-formula-input]') === formulaInput,
         'Formula typing must keep the same input node'
       )
+      await typeCode(formulaInput, '')
+      await act(async () => {
+        formulaInput.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })
+        )
+      })
+      if (draft.includes('$$'))
+        regressions.push('Backspace in an empty display formula cannot delete its block')
     }
+    await setSource(view, '$$\nE = mc^2\n$$\n\nAfter')
+    const exitPreview = host.querySelector<HTMLElement>(
+      '[data-phi-notebook-formula-block] [role="button"]'
+    )
+    check(exitPreview, 'The formula preview must remain editable')
+    await act(async () => exitPreview.click())
+    const exitInput = host.querySelector<HTMLTextAreaElement>('[data-phi-notebook-formula-input]')
+    check(exitInput, 'The formula expression input must open')
+    exitInput.setSelectionRange(exitInput.value.length, exitInput.value.length)
+    await act(async () => {
+      exitInput.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
+      )
+    })
+    check(view.hasFocus, 'ArrowDown at the end of a formula must focus the paragraph below')
+    const deleteFormulaButton = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Delete formula"]'
+    )
+    check(deleteFormulaButton, 'A display formula must expose a delete action')
+    await act(async () => deleteFormulaButton.click())
+    check(draft === 'After', 'The formula delete action must remove the whole block')
     await setSource(view, '/formula')
     await select(view, view.state.doc.length)
     await press(view, 'Enter')
@@ -247,11 +343,58 @@ async function run(): Promise<object> {
       insertedFormula && document.activeElement === insertedFormula,
       'Inserting a formula must focus its expression input without exposing $$'
     )
+    check(draft.endsWith('$$\n\n\n'), 'A new formula must leave a writable line below')
+    const formulaFooter = host.querySelector<HTMLElement>('[data-phi-notebook-markdown-footer]')
+    check(formulaFooter, 'A formula at the end must offer a writable footer')
+    await act(async () => {
+      formulaFooter.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
+      )
+    })
+    check(
+      view.state.selection.main.head === view.state.doc.length,
+      'Clicking below the formula must put the caret after it'
+    )
+    await setSource(view, '# Title\n\n$\n\n- Item\n\nAfter')
+    await select(view, 10)
+    await act(async () => {
+      check(document.execCommand('insertText', false, '$'), 'A typed dollar sign must be accepted')
+    })
+    await frame()
+    check(
+      draft === '# Title\n\n$$\n\n$$\n\n\n- Item\n\nAfter',
+      'Typing a second dollar sign must insert a bounded formula without swallowing the list'
+    )
+    const shortcutFormulaInput = host.querySelector<HTMLTextAreaElement>(
+      '[data-phi-notebook-formula-input]'
+    )
+    check(
+      shortcutFormulaInput && document.activeElement === shortcutFormulaInput,
+      'The new formula must receive the caret inside its input'
+    )
+    check(
+      host.querySelector('[data-phi-notebook-formula-block]') &&
+        host.querySelector('.cm-line')?.textContent?.includes('Title') &&
+        view.state.doc.toString().includes('- Item\n\nAfter'),
+      'The heading, list and trailing paragraph must remain outside the new formula'
+    )
+    await setSource(view, 'Before\n$$\nE=mc^2\n$$\nAfter')
+    check(
+      host.querySelector('[data-phi-notebook-formula-block]') &&
+        view.contentDOM.textContent?.includes('Before') &&
+        view.contentDOM.textContent?.includes('After'),
+      'Adjacent paragraphs must render on both sides of a bounded formula'
+    )
     await setSource(view, '```r\nx <- 1\n```\n\nParagraph')
     await select(view, view.state.doc.length)
     check(
       host.querySelector('[data-phi-notebook-code-block="editable"]'),
       'Fenced code must remain an editable block while another paragraph is active'
+    )
+    await setSource(view, '```python\nimport pandas as pd\n```\n\n\n')
+    check(
+      host.querySelector('[data-phi-notebook-code-highlight] [data-phi-syntax-token="keyword"]'),
+      'Python code inside Markdown must receive language-specific keyword coloring'
     )
     await setSource(view, '[Google](https://www.google.com/)\n\nParagraph')
     await select(view, view.state.doc.length)
@@ -309,32 +452,116 @@ async function run(): Promise<object> {
 
     await setSource(view, '/code')
     await press(view, 'Enter')
-    check(draft === '```\n\n```\n\n', 'Code command must leave a paragraph after the block')
-    const codeInput = host.querySelector<HTMLTextAreaElement>('[data-phi-notebook-code-input]')
-    check(codeInput, 'Code insertion must open an editable area')
-    check(document.activeElement === codeInput, 'The new code area must receive focus')
-    const firstCodeWidget = codeInput.closest('.phi-inline-markdown-block')
-    await typeCode(codeInput, 'x')
-    const nextCodeInput = host.querySelector<HTMLTextAreaElement>('[data-phi-notebook-code-input]')
     check(
-      nextCodeInput && document.activeElement === nextCodeInput,
-      'The first code keystroke must keep focus'
+      draft === '```\n\n```\n\n\n',
+      'Code command must leave two writable lines after the block'
     )
-    if (nextCodeInput !== codeInput) regressions.push('Each code keystroke replaces its input node')
-    if (nextCodeInput?.closest('.phi-inline-markdown-block') !== firstCodeWidget)
+    const codeInput = host.querySelector<HTMLElement>('[data-phi-notebook-code-input]')
+    check(codeInput, 'Code insertion must open an editable area')
+    const insertedCodeView = codeInputView(host)
+    check(insertedCodeView.hasFocus, 'The new code area must receive focus')
+    const emptyCodeBlock = codeInput.closest<HTMLElement>('[data-phi-notebook-code-block]')
+    check(emptyCodeBlock, 'The code input must be inside its block')
+    check(
+      getComputedStyle(insertedCodeView.contentDOM).color !== 'rgba(0, 0, 0, 0)',
+      'The editable code surface must display the characters being typed'
+    )
+    const emptyCodeHeight = emptyCodeBlock.getBoundingClientRect().height
+    const codeRect = codeInput.getBoundingClientRect()
+    check(
+      codeInput.contains(document.elementFromPoint(codeRect.left + 20, codeRect.bottom - 18)),
+      'The visible code surface must receive pointer input'
+    )
+    await act(async () => {
+      insertedCodeView.focus()
+      check(document.execCommand('insertText', false, 'x'), 'Native code typing must be accepted')
+    })
+    await frame()
+    check(draft === '```\nx\n```\n\n\n', 'Native typing must update the code block source')
+    await setSource(view, '```\n\n```\n\nAfter')
+    await select(view, view.state.doc.length)
+    const clickInput = host.querySelector<HTMLElement>('[data-phi-notebook-code-input]')
+    check(clickInput, 'An existing code block must remain editable')
+    const clickRect = clickInput.getBoundingClientRect()
+    console.log(
+      'PHI_CODE_CLICK:' +
+        JSON.stringify({ x: clickRect.left + 22, y: clickRect.top + 58, key: 'y' })
+    )
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    check(codeInputView(host).hasFocus, 'Clicking an existing block must focus its input')
+    check(
+      draft === '```\ny\n```\n\nAfter',
+      'Typing after clicking an existing code block must change its body'
+    )
+    await setSource(view, '$$\nE=mc^2\n$$\n\nafna\n\n```\n\n```\n\nAfter')
+    const priorFormula = host.querySelector<HTMLElement>(
+      '[data-phi-notebook-formula-block] [role="button"]'
+    )
+    check(priorFormula, 'The formula before code must render')
+    await act(async () => priorFormula.click())
+    const mixedCodeInput = host.querySelector<HTMLElement>('[data-phi-notebook-code-input]')
+    check(mixedCodeInput, 'The code block after a formula must render')
+    mixedCodeInput.scrollIntoView()
+    const mixedRect = mixedCodeInput.getBoundingClientRect()
+    console.log(
+      'PHI_CODE_CLICK:' +
+        JSON.stringify({ x: mixedRect.left + 22, y: mixedRect.top + 58, key: 'z' })
+    )
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    check(codeInputView(host).hasFocus, 'The code input must take focus from the formula')
+    check(draft.includes('```\nz\n```'), 'Code after a selected formula must accept typing')
+    const cellHost = document.createElement('div')
+    document.body.append(cellHost)
+    const cellRoot = createRoot(cellHost)
+    await act(async () => cellRoot.render(<CellHarness />))
+    await frame()
+    const cellCodeInput = cellHost.querySelector<HTMLElement>('[data-phi-notebook-code-input]')
+    check(cellCodeInput, 'The complete notebook cell must show the Markdown code input')
+    cellCodeInput.scrollIntoView()
+    const cellCodeRect = cellCodeInput.getBoundingClientRect()
+    console.log(
+      'PHI_CODE_CLICK:' +
+        JSON.stringify({ x: cellCodeRect.left + 22, y: cellCodeRect.top + 58, key: 'q' })
+    )
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    check(codeInputView(cellHost).hasFocus, 'Notebook selection must preserve code input focus')
+    check(cellDraft.includes('```\nq\n```'), 'The actual notebook cell must save typed code')
+    await act(async () => cellRoot.unmount())
+    cellHost.remove()
+    await setSource(view, '```\n\n```\n\n\n')
+    const editCodeView = codeInputView(host)
+    editCodeView.focus()
+    const codeActions = host.querySelector<HTMLElement>('.phi-notebook-code-actions')
+    check(codeActions, 'The code block actions must be mounted')
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    check(getComputedStyle(codeActions).opacity === '1', 'Focused code actions must be visible')
+    check(emptyCodeHeight <= 84, 'An empty code block must not reserve extra input height')
+    const firstCodeInput = host.querySelector<HTMLElement>('[data-phi-notebook-code-input]')
+    check(firstCodeInput, 'The code input must remain mounted')
+    const firstCodeWidget = firstCodeInput.closest('.phi-inline-markdown-block')
+    await typeCodeView(editCodeView, 'x')
+    const nextCodeInput = host.querySelector<HTMLElement>('[data-phi-notebook-code-input]')
+    check(nextCodeInput && codeInputView(host).hasFocus, 'The first code keystroke must keep focus')
+    if (nextCodeInput !== firstCodeInput)
+      regressions.push('Each code keystroke replaces its input node')
+    if (nextCodeInput.closest('.phi-inline-markdown-block') !== firstCodeWidget)
       regressions.push('CodeMirror replaces the code widget DOM')
     if (EditorView.findFromDOM(editorDom) !== view)
       regressions.push('React replaces the whole CodeMirror editor')
-    await typeCode(nextCodeInput, 'x <- 1')
-    check(draft === '```\nx <- 1\n```\n\n', 'Typing in the block must update Markdown source')
-    const currentCodeInput = host.querySelector<HTMLTextAreaElement>(
-      '[data-phi-notebook-code-input]'
+    await typeCodeView(editCodeView, 'one\ntwo\nthree')
+    check(
+      (nextCodeInput.closest<HTMLElement>('[data-phi-notebook-code-block]')?.getBoundingClientRect()
+        .height ?? 0) > emptyCodeHeight,
+      'The code block must grow when code lines are added'
     )
+    await typeCodeView(editCodeView, 'x <- 1')
+    check(draft === '```\nx <- 1\n```\n\n\n', 'Typing in the block must update Markdown source')
+    const currentCodeInput = host.querySelector<HTMLElement>('[data-phi-notebook-code-input]')
     check(
       currentCodeInput &&
-        document.activeElement === currentCodeInput &&
-        currentCodeInput.value === 'x <- 1' &&
-        currentCodeInput === codeInput,
+        editCodeView.hasFocus &&
+        editCodeView.state.doc.toString() === 'x <- 1' &&
+        currentCodeInput === firstCodeInput,
       'Typing must keep focus and the complete code body'
     )
     const languageButton = host.querySelector<HTMLButtonElement>(
@@ -347,7 +574,7 @@ async function run(): Promise<object> {
     )
     check(rOption, 'R must be offered as a code language')
     await act(async () => rOption.click())
-    check(draft === '```r\nx <- 1\n```\n\n', 'Language selection must update the opening fence')
+    check(draft === '```r\nx <- 1\n```\n\n\n', 'Language selection must update the opening fence')
     const updatedLanguageButton = host.querySelector<HTMLButtonElement>(
       '[data-phi-notebook-code-language-button]'
     )
@@ -363,7 +590,7 @@ async function run(): Promise<object> {
     )
     check(customOption, 'An unlisted language must still be selectable')
     await act(async () => customOption.click())
-    check(draft === '```haskell\nx <- 1\n```\n\n', 'Custom language must preserve code body')
+    check(draft === '```haskell\nx <- 1\n```\n\n\n', 'Custom language must preserve code body')
     const resetButton = host.querySelector<HTMLButtonElement>(
       '[data-phi-notebook-code-language-button]'
     )
@@ -374,30 +601,37 @@ async function run(): Promise<object> {
     )
     check(resetOption, 'The language menu must still offer R')
     await act(async () => resetOption.click())
-    const afterLanguageInput = host.querySelector<HTMLTextAreaElement>(
-      '[data-phi-notebook-code-input]'
+    if (!host.querySelector('[data-phi-notebook-code-highlight] [data-phi-syntax-token]'))
+      regressions.push('The editable code block has no syntax-highlighted layer')
+    const afterLanguageInput = codeInputView(host)
+    const footer = host.querySelector<HTMLElement>('[data-phi-notebook-markdown-footer]')
+    check(footer, 'A code block at the end must offer a writable footer')
+    await act(async () => {
+      footer.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+    })
+    check(
+      view.state.selection.main.head === view.state.doc.length,
+      'Clicking the bottom area must lock the caret to the document end'
     )
-    check(afterLanguageInput, 'Language selection must keep the code input')
     await act(async () => {
       afterLanguageInput.focus()
-      afterLanguageInput.setSelectionRange(
-        afterLanguageInput.value.length,
-        afterLanguageInput.value.length
-      )
-      afterLanguageInput.dispatchEvent(
+      afterLanguageInput.dispatch({ selection: { anchor: afterLanguageInput.state.doc.length } })
+      afterLanguageInput.contentDOM.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
       )
     })
     check(view.hasFocus, 'ArrowDown at the end of code must focus the paragraph below')
     const paragraph = view.state.selection.main.head
     await act(async () => view.dispatch({ changes: { from: paragraph, insert: 'after' } }))
-    check(draft === '```r\nx <- 1\n```\n\nafter', 'Text after code must remain outside the fence')
+    check(draft === '```r\nx <- 1\n```\n\n\nafter', 'Text after code must remain outside the fence')
 
     await setSource(view, '/ta')
     await press(view, 'Enter', { shiftKey: true })
     check(advances === 1, 'Shift+Enter must retain the Notebook advance shortcut')
     check(!view.hasFocus, 'Advancing must release focus from the previous Markdown cell')
 
+    await setSource(view, '```\n\n```\n\n\n')
+    const previousCodeView = codeInputView(host)
     const previousView = view
     await act(async () => {
       setUiLanguage('zh-CN')
@@ -408,8 +642,29 @@ async function run(): Promise<object> {
       'Theme switching must retain the view'
     )
     check(view.state.doc.toString() === draft, 'Theme switching must retain the draft')
+    check(
+      codeInputView(host) === previousCodeView,
+      'Language and theme must retain the code editor'
+    )
+    check(
+      codeInputView(host).contentDOM.getAttribute('aria-label')?.includes('代码'),
+      'The code editor label must follow the selected interface language'
+    )
+    const longDocument = Array.from({ length: 80 }, (_, index) => `$$\nE_${index} = mc^2\n$$`).join(
+      '\n\n'
+    )
+    await setSource(view, longDocument)
+    const mountedFormulas = host.querySelectorAll('[data-phi-notebook-formula-block]').length
+    if (mountedFormulas > 24)
+      regressions.push(`Long Markdown eagerly mounts ${mountedFormulas} formula renderers`)
     check(regressions.length === 0, regressions.join('; '))
-    return { liveRendering: true, toolbar: true, slashMenu: true, draftRetained: true }
+    return {
+      liveRendering: true,
+      toolbar: true,
+      slashMenu: true,
+      draftRetained: true,
+      mountedFormulas
+    }
   } finally {
     await act(async () => root.unmount())
     host.remove()

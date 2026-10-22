@@ -63,6 +63,7 @@ export function paragraphAfterFencedCode(
   const block = fencedCodeAt(source, start)
   if (!block) return null
   const after = source.slice(block.closingEnd)
+  if (/^\n{2,}$/.test(after)) return { value: source, cursor: source.length }
   if (after.startsWith('\n\n')) return { value: source, cursor: block.closingEnd + 2 }
   if (after.startsWith('\n')) {
     return {

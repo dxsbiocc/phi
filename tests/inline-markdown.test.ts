@@ -39,6 +39,15 @@ test('inline Markdown uses complete top-level GFM blocks and leaves source intac
   )
 })
 
+test('moving the caret reuses parsed blocks until the document changes', () => {
+  const state = makeState('# Title\n\nParagraph')
+  const blocks = inlineMarkdownBlocks(state)
+  const moved = state.update({ selection: { anchor: 5 } }).state
+  assert.equal(inlineMarkdownBlocks(moved), blocks)
+  const edited = moved.update({ changes: { from: moved.doc.length, insert: '!' } }).state
+  assert.notEqual(inlineMarkdownBlocks(edited), blocks)
+})
+
 test('selection across blocks always reveals selected source, even after blur', () => {
   const initial = makeState()
   const blocks = inlineMarkdownBlocks(initial)
@@ -83,5 +92,33 @@ test('display math with blank lines remains one rendered source range', () => {
   assert.deepEqual(
     inlineMarkdownBlocks(code).map((block) => block.name),
     ['FencedCode']
+  )
+})
+
+test('an unfinished formula opener never absorbs the blocks after it', () => {
+  const state = makeState('# Title\n\n$$\n\n- Item\n\nAfter')
+  const blocks = inlineMarkdownBlocks(state)
+  assert.equal(
+    blocks.some((block) => block.name === 'Math'),
+    false
+  )
+  assert.equal(blocks[0].name, 'ATXHeading1')
+  assert.equal(
+    blocks.some((block) => block.name === 'BulletList'),
+    true
+  )
+  assert.equal(state.sliceDoc(blocks.at(-1)!.from, blocks.at(-1)!.to), 'After')
+})
+
+test('a closed formula does not absorb adjacent paragraphs', () => {
+  const state = makeState('Before\n$$\nE=mc^2\n$$\nAfter')
+  const blocks = inlineMarkdownBlocks(state)
+  assert.deepEqual(
+    blocks.map((block) => block.name),
+    ['Paragraph', 'Math', 'Paragraph']
+  )
+  assert.deepEqual(
+    blocks.map((block) => state.sliceDoc(block.from, block.to).trim()),
+    ['Before', '$$\nE=mc^2\n$$', 'After']
   )
 })

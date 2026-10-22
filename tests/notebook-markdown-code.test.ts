@@ -29,4 +29,8 @@ test('leaving a last code block creates a writable paragraph after it', () => {
   assert.deepEqual(existing, { value: '```r\nx <- 1\n```\n\n', cursor: 17 })
   const already = paragraphAfterFencedCode('```\n\n```\n\n', 0)
   assert.deepEqual(already, { value: '```\n\n```\n\n', cursor: 10 })
+  const inserted = paragraphAfterFencedCode('```\n\n```\n\n\n', 0)
+  assert.deepEqual(inserted, { value: '```\n\n```\n\n\n', cursor: 11 })
+  const extended = paragraphAfterFencedCode('```\n\n```\n\n\n\n', 0)
+  assert.deepEqual(extended, { value: '```\n\n```\n\n\n\n', cursor: 12 })
 })

@@ -55,6 +55,14 @@ app.setPath('userData', ${JSON.stringify(join(directory, 'profile'))})
 app.whenReady().then(async () => {
   const window = new BrowserWindow({ show: false, webPreferences: { backgroundThrottling: false } })
   window.webContents.on('console-message', (details) => {
+    if (details.message.startsWith('PHI_CODE_CLICK:')) {
+      const point = JSON.parse(details.message.slice('PHI_CODE_CLICK:'.length))
+      window.webContents.focus()
+      window.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, x: point.x, y: point.y })
+      window.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, x: point.x, y: point.y })
+      window.webContents.sendInputEvent({ type: 'char', keyCode: point.key })
+      return
+    }
     if (!details.message.startsWith('PHI_MARKDOWN_EDITOR_RESULT:')) return
     process.stdout.write(details.message + '\\n')
     window.destroy()

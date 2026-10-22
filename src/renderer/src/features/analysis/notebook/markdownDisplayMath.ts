@@ -48,6 +48,7 @@ export function paragraphAfterDisplayMath(
   const math = displayMathAt(source, start)
   if (!math) return null
   const after = source.slice(math.closingEnd)
+  if (/^\n{2,}$/.test(after)) return { value: source, cursor: source.length }
   if (after.startsWith('\n\n')) return { value: source, cursor: math.closingEnd + 2 }
   if (after.startsWith('\n')) {
     return {
@@ -58,5 +59,20 @@ export function paragraphAfterDisplayMath(
   return {
     value: source.slice(0, math.closingEnd) + '\n\n' + after,
     cursor: math.closingEnd + 2
+  }
+}
+
+export function removeDisplayMath(
+  source: string,
+  start: number
+): { value: string; cursor: number } | null {
+  const math = displayMathAt(source, start)
+  if (!math) return null
+  const after = source.slice(math.closingEnd)
+  const trailing = after.startsWith('\n\n') ? 2 : after.startsWith('\n') ? 1 : 0
+  const before = source.slice(0, math.start)
+  return {
+    value: before + source.slice(math.closingEnd + trailing),
+    cursor: before.length
   }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Box } from '@mui/material'
+import { Box, IconButton, Tooltip, alpha } from '@mui/material'
 import MarkdownContent from '../../../components/MarkdownContent'
+import { PhiIcons } from '../../../icons'
 import { useUiLanguage } from '../../../lib/i18n'
 import { analysisCopy } from '../lib/analysisUiCopy'
 import { displayMathAt } from './markdownDisplayMath'
@@ -10,12 +11,14 @@ export function NotebookMarkdownFormulaBlock({
   readOnly,
   startEditing = false,
   onBodyChange,
+  onDelete,
   onExitBelow
 }: {
   source: string
   readOnly: boolean
   startEditing?: boolean
   onBodyChange: (body: string, selectionStart: number, selectionEnd: number) => void
+  onDelete: () => void
   onExitBelow: () => void
 }): React.JSX.Element {
   useUiLanguage()
@@ -30,18 +33,45 @@ export function NotebookMarkdownFormulaBlock({
   return (
     <Box
       data-phi-notebook-formula-block="true"
+      onClick={(event) => {
+        if (!readOnly && !(event.target as Element).closest('button, textarea')) setEditing(true)
+      }}
       sx={{
         position: 'relative',
         boxSizing: 'border-box',
-        height: 112,
+        height: 168,
         overflow: 'hidden',
         borderRadius: 2,
-        bgcolor: 'transparent',
+        bgcolor: (theme) =>
+          editing
+            ? alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.14 : 0.07)
+            : 'transparent',
         px: 1.5,
-        py: 1,
-        textAlign: 'center'
+        py: 0.5,
+        textAlign: 'center',
+        cursor: readOnly ? 'default' : 'text',
+        transition: 'background-color 120ms ease',
+        '&:focus-within': {
+          bgcolor: (theme) =>
+            alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.14 : 0.07)
+        },
+        '& .phi-formula-delete': { opacity: 0 },
+        '&:hover .phi-formula-delete, &:focus-within .phi-formula-delete': { opacity: 1 }
       }}
     >
+      {!readOnly ? (
+        <Tooltip title={analysisCopy.deleteMarkdownFormula}>
+          <IconButton
+            className="phi-formula-delete"
+            size="small"
+            aria-label={analysisCopy.deleteMarkdownFormula}
+            onClick={onDelete}
+            sx={{ position: 'absolute', top: 4, right: 4, zIndex: 1, color: 'text.secondary' }}
+          >
+            <PhiIcons.action.delete sx={{ fontSize: 15 }} />
+          </IconButton>
+        </Tooltip>
+      ) : null}
       <Box
         role={readOnly ? undefined : 'button'}
         tabIndex={readOnly ? undefined : 0}
@@ -55,7 +85,15 @@ export function NotebookMarkdownFormulaBlock({
             setEditing(true)
           }
         }}
-        sx={{ height: 72, overflow: 'hidden', cursor: readOnly ? 'default' : 'text' }}
+        sx={{
+          height: 112,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+          cursor: readOnly ? 'default' : 'text',
+          '& .katex-display': { margin: 0 }
+        }}
       >
         <MarkdownContent text={source.slice(0, formula?.closingEnd)} enableMath />
       </Box>
@@ -77,7 +115,22 @@ export function NotebookMarkdownFormulaBlock({
             if (event.key === 'Escape') {
               event.preventDefault()
               setEditing(false)
+            } else if (
+              event.key === 'Backspace' &&
+              !formula?.body &&
+              event.currentTarget.selectionStart === 0 &&
+              event.currentTarget.selectionEnd === 0
+            ) {
+              event.preventDefault()
+              onDelete()
             } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault()
+              onExitBelow()
+            } else if (
+              event.key === 'ArrowDown' &&
+              event.currentTarget.selectionStart === (formula?.body ?? '').length &&
+              event.currentTarget.selectionEnd === (formula?.body ?? '').length
+            ) {
               event.preventDefault()
               onExitBelow()
             }
@@ -87,9 +140,9 @@ export function NotebookMarkdownFormulaBlock({
             position: 'absolute',
             left: 12,
             right: 12,
-            bottom: 8,
+            bottom: 10,
             width: 'calc(100% - 24px)',
-            height: 32,
+            height: 42,
             resize: 'none',
             border: 1,
             borderColor: 'divider',

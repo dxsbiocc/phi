@@ -68,6 +68,12 @@ function atLineStart(source: string, index: number): boolean {
   return index <= 0 || source[index - 1] === '\n'
 }
 
+function blankLineBefore(source: string, index: number): string {
+  const before = source.slice(0, index)
+  if (!before || before.endsWith('\n\n')) return ''
+  return before.endsWith('\n') ? '\n' : '\n\n'
+}
+
 type Range = { source: string; start: number; end: number }
 type Span = { text: string; selectionStart: number; selectionEnd: number }
 
@@ -144,6 +150,27 @@ export function insertMarkdown(
   return inserters[kind](range, selected, samples)
 }
 
+/** Complete a freshly typed $$ line without treating subsequent blocks as formula content. */
+export function expandDisplayFormulaShortcut(
+  source: string,
+  cursor: number
+): MarkdownInsertResult | null {
+  if (cursor < 1 || cursor > source.length) return null
+  const lineStart = source.lastIndexOf('\n', cursor - 1) + 1
+  if (source.slice(lineStart, cursor) !== '$') return null
+  const remaining = source.slice(cursor)
+  if (!/^[ \t]*(?:\n|$)/.test(remaining)) return null
+  const before = source.slice(0, lineStart)
+  const separator = blankLineBefore(source, lineStart)
+  const after = remaining.replace(/^[ \t]*\n*/, '')
+  const opening = `${before}${separator}$$\n`
+  return {
+    value: `${opening}\n$$\n\n\n${after}`,
+    selectionStart: opening.length,
+    selectionEnd: opening.length
+  }
+}
+
 const inserters: Record<
   MarkdownInsertKind,
   (range: Range, selected: string, samples: MarkdownInsertSamples) => MarkdownInsertResult
@@ -175,13 +202,21 @@ function formula(range: Range, selected: string, sample: string): MarkdownInsert
     return wrap(range, '$$', '$$', sample)
   }
   const body = selected || sample
-  return insertBlock(range, `$$\n${body}\n$$`, 3, 3 + body.length)
+  const prefix = blankLineBefore(range.source, range.start)
+  const following = range.source.slice(range.end)
+  const suffix = following.startsWith('\n') ? '\n\n' : '\n\n\n'
+  const text = `${prefix}$$\n${body}\n$$${suffix}`
+  return place(range, {
+    text,
+    selectionStart: prefix.length + 3,
+    selectionEnd: prefix.length + 3 + body.length
+  })
 }
 
 function fenced(range: Range, body: string): MarkdownInsertResult {
   const prefix = atLineStart(range.source, range.start) ? '' : '\n\n'
   const following = range.source.slice(range.end)
-  const suffix = following.startsWith('\n') ? '\n' : '\n\n'
+  const suffix = following.startsWith('\n') ? '\n\n' : '\n\n\n'
   const text = `${prefix}\`\`\`\n${body}\n\`\`\`${suffix}`
   const cursor = prefix.length + 4 + body.length
   return place(range, { text, selectionStart: cursor, selectionEnd: cursor })

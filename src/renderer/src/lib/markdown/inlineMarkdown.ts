@@ -7,10 +7,16 @@ import { inlineMathRanges } from './markdownInlineMath'
 
 export type MarkdownBlock = { from: number; to: number; name: string }
 type RegisterWidget = (dom: HTMLElement, text: string, block: MarkdownBlock) => void
+const blocksByDocument = new WeakMap<
+  EditorState['doc'],
+  { tree: ReturnType<typeof syntaxTree>; blocks: MarkdownBlock[] }
+>()
 
 /** Use whole syntax blocks so lists, tables and fenced code retain their structure. */
 export function inlineMarkdownBlocks(state: EditorState): MarkdownBlock[] {
   const tree = ensureSyntaxTree(state, state.doc.length, 25) ?? syntaxTree(state)
+  const cached = blocksByDocument.get(state.doc)
+  if (cached?.tree === tree) return cached.blocks
   const blocks: MarkdownBlock[] = []
   for (let node = tree.topNode.firstChild; node; node = node.nextSibling) {
     if (node.to > node.from) blocks.push({ from: node.from, to: node.to, name: node.name })
@@ -32,7 +38,7 @@ export function inlineMarkdownBlocks(state: EditorState): MarkdownBlock[] {
     )
       continue
     const closing = new RegExp(`^ {0,3}[$]{${opening[1].length},}[ \t]*$`)
-    let end = state.doc.length
+    let end: number | null = null
     while (++number <= state.doc.lines) {
       const candidate = state.doc.line(number)
       if (closing.test(candidate.text)) {
@@ -40,22 +46,32 @@ export function inlineMarkdownBlocks(state: EditorState): MarkdownBlock[] {
         break
       }
     }
-    const overlapping = blocks.filter((block) => block.from < end && block.to > line.from)
+    if (end === null) break
     const range = {
-      from: overlapping[0]?.from ?? line.from,
-      to: overlapping.at(-1)?.to ?? end,
+      from: line.from,
+      to: end,
       name: 'Math'
     }
     const previous = math.at(-1)
     if (previous && range.from <= previous.to) previous.to = Math.max(previous.to, range.to)
     else math.push(range)
   }
-  return [
-    ...blocks.filter(
-      (block) => !math.some((range) => range.from < block.to && range.to > block.from)
-    ),
-    ...math
-  ].sort((left, right) => left.from - right.from)
+  const ordinary = blocks.flatMap((block) =>
+    math.reduce<MarkdownBlock[]>(
+      (segments, range) =>
+        segments.flatMap((segment) => {
+          if (range.from >= segment.to || range.to <= segment.from) return [segment]
+          return [
+            ...(segment.from < range.from ? [{ ...segment, to: range.from }] : []),
+            ...(segment.to > range.to ? [{ ...segment, from: range.to }] : [])
+          ]
+        }),
+      [block]
+    )
+  )
+  const result = [...ordinary, ...math].sort((left, right) => left.from - right.from)
+  blocksByDocument.set(state.doc, { tree, blocks: result })
+  return result
 }
 
 export function markdownBlockIsSelected(
@@ -152,6 +168,7 @@ class MarkdownBlockWidget extends WidgetType {
         view.state.readOnly ||
         (event.target instanceof Element &&
           (event.target.closest('button,input,textarea,select,[role="button"]') ||
+            event.target.closest('[data-phi-notebook-code-input]') ||
             ((event.metaKey || event.ctrlKey) && event.target.closest('a'))))
       )
         return

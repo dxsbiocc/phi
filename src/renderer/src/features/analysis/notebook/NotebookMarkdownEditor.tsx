@@ -16,8 +16,9 @@ import {
 import { analysisCopy } from '../lib/analysisUiCopy'
 import { continueMarkdownOnEnter, moveToFencedCodeBody } from './markdownEnter'
 import { fencedCodeAt, paragraphAfterFencedCode } from './markdownFencedCode'
-import { displayMathAt, paragraphAfterDisplayMath } from './markdownDisplayMath'
+import { displayMathAt, paragraphAfterDisplayMath, removeDisplayMath } from './markdownDisplayMath'
 import {
+  expandDisplayFormulaShortcut,
   insertMarkdown,
   markdownInsertLabel,
   markdownInsertSamples,
@@ -97,6 +98,7 @@ export function NotebookMarkdownEditor({
   const [widgets, setWidgets] = useState<Map<HTMLElement, MarkdownWidget>>(() => new Map())
   const kinds = slash ? filterMarkdownInsertKinds(slash.match.query, markdownInsertLabel) : []
   const activeKind = kinds[activeIndex]
+  const blockFooter = editable && /(?:^|\n)(?:`{3,}|~{3,}|\${2,})[ \t]*\n{2,}$/.test(value)
 
   const registerWidget = useCallback(
     (dom: HTMLElement, text: string, block: MarkdownBlock): void => {
@@ -224,21 +226,11 @@ export function NotebookMarkdownEditor({
     [clearMenus]
   )
 
-  const updateCodeBody = (
-    start: number,
-    body: string,
-    selectionStart: number,
-    selectionEnd: number
-  ): void => {
+  const updateCodeBody = (start: number, body: string): void => {
     const view = viewRef.current
     if (!view || !propsRef.current.onChange) return
     const code = fencedCodeAt(view.state.doc.toString(), start)
     if (!code) return
-    pendingCodeFocusRef.current = {
-      position: code.bodyStart + selectionStart,
-      start: selectionStart,
-      end: selectionEnd
-    }
     view.dispatch({ changes: { from: code.bodyStart, to: code.bodyEnd, insert: body } })
   }
 
@@ -247,11 +239,6 @@ export function NotebookMarkdownEditor({
     if (!view || !propsRef.current.onChange) return
     const code = fencedCodeAt(view.state.doc.toString(), start)
     if (!code) return
-    pendingCodeFocusRef.current = {
-      position: code.bodyStart,
-      start: code.body.length,
-      end: code.body.length
-    }
     view.dispatch({
       changes: { from: code.languageStart, to: code.languageEnd, insert: language }
     })
@@ -299,6 +286,18 @@ export function NotebookMarkdownEditor({
     })
   }
 
+  const deleteFormula = (start: number): void => {
+    const view = viewRef.current
+    if (!view) return
+    const result = removeDisplayMath(view.state.doc.toString(), start)
+    if (result)
+      applyResult(view, {
+        value: result.value,
+        selectionStart: result.cursor,
+        selectionEnd: result.cursor
+      })
+  }
+
   const updateInlineFormula = (start: number, body: string): void => {
     const view = viewRef.current
     if (!view || !propsRef.current.onChange) return
@@ -342,6 +341,21 @@ export function NotebookMarkdownEditor({
           EditorView.lineWrapping,
           drawSelection(),
           history(),
+          EditorView.inputHandler.of((editor, from, to, text) => {
+            if (
+              !propsRef.current.onChange ||
+              editor.compositionStarted ||
+              text !== '$' ||
+              from !== to
+            )
+              return false
+            const result = expandDisplayFormulaShortcut(editor.state.doc.toString(), from)
+            if (!result) return false
+            pendingFormulaFocusRef.current = { position: result.selectionStart, start: 0, end: 0 }
+            setFormulaToFocus(result.selectionStart)
+            applyResult(editor, result)
+            return true
+          }),
           keymap.of([
             {
               key: 'Enter',
@@ -504,11 +518,14 @@ export function NotebookMarkdownEditor({
           widget.block.from <= pending.position &&
           pending.position <= widget.block.to
       )
-      const input = target?.[0].querySelector<HTMLTextAreaElement>('[data-phi-notebook-code-input]')
-      if (input) {
+      const input = target?.[0].querySelector<HTMLElement>(
+        '[data-phi-notebook-code-input] .cm-editor'
+      )
+      const inputView = input && EditorView.findFromDOM(input)
+      if (inputView) {
         pendingCodeFocusRef.current = null
-        input.focus()
-        input.setSelectionRange(pending.start, pending.end)
+        inputView.dispatch({ selection: { anchor: pending.start, head: pending.end } })
+        inputView.focus()
       }
     }
     const formulaFocus = pendingFormulaFocusRef.current
@@ -533,15 +550,26 @@ export function NotebookMarkdownEditor({
   return (
     <Box data-phi-notebook-markdown-editor="live" sx={{ position: 'relative' }}>
       <Box ref={hostRef} data-phi-notebook-markdown-live="true" />
+      {blockFooter ? (
+        <Box
+          data-phi-notebook-markdown-footer="true"
+          onPointerDown={(event) => {
+            event.preventDefault()
+            const view = viewRef.current
+            if (!view) return
+            view.focus()
+            view.dispatch({ selection: { anchor: view.state.doc.length }, scrollIntoView: true })
+          }}
+          sx={{ height: 28, cursor: 'text' }}
+        />
+      ) : null}
       {Array.from(widgets, ([dom, widget]) =>
         createPortal(
           widget.block.name === 'FencedCode' ? (
             <NotebookMarkdownCodeBlock
               source={widget.text}
               readOnly={!editable}
-              onBodyChange={(body, start, end) =>
-                updateCodeBody(widget.block.from, body, start, end)
-              }
+              onBodyChange={(body) => updateCodeBody(widget.block.from, body)}
               onLanguageChange={(language) => updateCodeLanguage(widget.block.from, language)}
               onExitBelow={() => exitCodeBelow(widget.block.from)}
             />
@@ -557,6 +585,7 @@ export function NotebookMarkdownEditor({
               onBodyChange={(body, start, end) =>
                 updateFormulaBody(widget.block.from, body, start, end)
               }
+              onDelete={() => deleteFormula(widget.block.from)}
               onExitBelow={() => exitFormulaBelow(widget.block.from)}
             />
           ) : widget.block.name === 'InlineMath' ? (
