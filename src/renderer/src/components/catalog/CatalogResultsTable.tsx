@@ -26,13 +26,16 @@ export interface CatalogResultRow {
 const catalogHeaderCellSx = {
   py: 1.25,
   px: 2,
-  bgcolor: 'action.hover',
+  // action.hover is translucent. A sticky header needs an opaque fill or scrolling rows show through.
+  bgcolor: 'background.paper',
+  backgroundImage: (theme) =>
+    `linear-gradient(${theme.palette.action.hover}, ${theme.palette.action.hover})`,
   color: 'text.secondary',
   fontWeight: 600,
   lineHeight: '24px',
   borderBottom: 'none',
   whiteSpace: 'nowrap'
-} as const
+}
 
 /** Catalog rows share one header bar so category switches do not change column chrome. */
 export function CatalogResultsTable({
@@ -73,7 +76,7 @@ export function CatalogResultsTable({
         size="small"
         stickyHeader
         aria-label={label}
-        sx={{ width: '100%', tableLayout: 'fixed' }}
+        sx={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0 }}
       >
         <TableHead>
           <TableRow>

@@ -293,6 +293,12 @@ export class JupyterServerRegistry {
     )
   }
 
+  activeStatuses(): JupyterServerPublicStatus[] {
+    return [...this.records.values()]
+      .filter((record) => record.state !== 'stopped' && record.state !== 'exited')
+      .map(publicStatus)
+  }
+
   connection(workingDirectory: string): JupyterServerConnection | null {
     const projectCwd = resolveProjectCwd(workingDirectory)
     const record = this.records.get(projectCwd)

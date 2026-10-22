@@ -3,7 +3,7 @@ import test from 'node:test'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { EditorState } from '@codemirror/state'
 import { Decoration } from '@codemirror/view'
-import { markdownBlockDecorations } from '../src/renderer/src/features/file-preview/lib/markdownBlockDecorations'
+import { markdownBlockDecorations } from '../src/renderer/src/lib/markdown/markdownBlockDecorations'
 
 function stateAt(source: string, anchor: number, head = anchor): EditorState {
   return EditorState.create({

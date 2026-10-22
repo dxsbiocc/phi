@@ -1,4 +1,5 @@
 import { runtimeUi } from './lib/runtimeUi'
+import { groupRuntimeStatuses } from './lib/runtimeGroups'
 import { useUiLanguage } from '../../lib/i18n'
 import {
   Box,
@@ -25,6 +26,9 @@ import type {
 export interface RuntimeSidebarProps {
   projectCwd: string
   runtimeStatus: AnalysisJupyterRuntimeStatus | null
+  additionalRuntimeStatuses?: AnalysisJupyterRuntimeStatus[]
+  currentRuntimeKind?: 'local' | 'ssh'
+  currentServerLabel?: string
   isLoading?: boolean
   onOpenNotebook?: (notebookPath: string) => void
   closingNotebookPath?: string | null
@@ -130,10 +134,7 @@ function RuntimeKernelIcon({
 
 function serverMetaLabel(status: AnalysisJupyterRuntimeStatus['server'] | null): string {
   if (status?.runtimeKind === 'ssh') {
-    const server = status.serverLabel || runtimeUi.sSHServer
-    return status.message
-      ? runtimeUi.valueLoginNodeValue(server, status.message)
-      : runtimeUi.valueLoginNode(server)
+    return status.message ? runtimeUi.loginNodeValue(status.message) : runtimeUi.loginNode
   }
   const parts = [
     status?.pid ? `PID ${status.pid}` : null,
@@ -145,9 +146,10 @@ function serverMetaLabel(status: AnalysisJupyterRuntimeStatus['server'] | null):
   return runtimeUi.noEndpoint
 }
 
-export function RuntimeSidebar({
+function RuntimeSidebarSection({
   projectCwd,
   runtimeStatus,
+  showKernels = true,
   isLoading = false,
   onOpenNotebook,
   closingNotebookPath = null,
@@ -156,7 +158,7 @@ export function RuntimeSidebar({
   onOpenStartLog,
   onStopJupyter,
   onStopNotebookKernel
-}: RuntimeSidebarProps): React.JSX.Element {
+}: RuntimeSidebarProps & { showKernels?: boolean }): React.JSX.Element {
   useUiLanguage()
   const server = runtimeStatus?.server ?? null
   const notebooks = runtimeStatus?.notebooks ?? null
@@ -182,13 +184,11 @@ export function RuntimeSidebar({
   const canStop = Boolean(projectCwd) && showStopServerAction
 
   return (
-    <Box className="app-sidebar-surface" sx={runtimeSidebarSurfaceSx}>
-      <List
-        disablePadding
-        sx={{ flex: 1, minHeight: 0, overflowY: 'auto', py: 1, WebkitAppRegion: 'no-drag' }}
-      >
+    <Box sx={{ flexShrink: 0 }}>
+      <List disablePadding sx={{ py: 1 }}>
         <ListItemButton
           data-phi-runtime-sidebar-server="true"
+          data-phi-runtime-sidebar-server-cwd={projectCwd}
           component="div"
           disableRipple
           sx={{
@@ -270,7 +270,7 @@ export function RuntimeSidebar({
                     overflow: 'hidden'
                   }}
                 >
-                  {serverMetaLabel(server)}
+                  {fileName(projectCwd)} · {serverMetaLabel(server)}
                 </Box>
                 {server?.runtimeKind === 'ssh' && onOpenStartLog ? (
                   <Link
@@ -375,154 +375,204 @@ export function RuntimeSidebar({
           </Stack>
         </ListItemButton>
 
-        <Box
-          sx={{
-            pl: 1,
-            pr: 2,
-            pt: 0.5,
-            pb: 0.75,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 1
-          }}
-        >
-          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>
-            {runtimeUi.notebookKernels}
-          </Typography>
-          <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
-            <Chip
-              size="small"
-              variant="outlined"
-              label={`${runningKernelCount}`}
-              data-phi-runtime-sidebar-running-kernel-count="true"
-            />
-          </Stack>
-        </Box>
-
-        {notebookSessions.length > 0 ? (
-          notebookSessions.map((session) => {
-            const notebookName = fileName(session.notebookPath)
-            const kernelIconKind = runtimeKernelIconKind(session)
-            return (
-              <ListItemButton
-                key={`${session.projectCwd}:${session.notebookPath}`}
-                data-phi-runtime-sidebar-kernel="true"
-                onClick={() => onOpenNotebook?.(session.notebookPath)}
-                sx={{
-                  alignItems: 'flex-start',
-                  mx: 0.75,
-                  pl: 0.25,
-                  pr: 1.25,
-                  py: 1,
-                  borderRadius: 1.5,
-                  backgroundColor: 'transparent !important',
-                  '&:hover': {
-                    backgroundColor: (theme) =>
-                      `${alpha(theme.palette.primary.main, 0.06)} !important`
-                  },
-                  '&.Mui-disabled': {
-                    opacity: 1
-                  },
-                  '&:hover .runtime-sidebar-row-actions, &:focus-within .runtime-sidebar-row-actions, &.Mui-focusVisible .runtime-sidebar-row-actions':
-                    {
-                      opacity: 1,
-                      pointerEvents: 'auto',
-                      visibility: 'visible'
-                    },
-                  '&:hover .runtime-sidebar-row-actions .MuiIconButton-root, &:focus-within .runtime-sidebar-row-actions .MuiIconButton-root, &.Mui-focusVisible .runtime-sidebar-row-actions .MuiIconButton-root':
-                    {
-                      bgcolor: 'transparent'
-                    },
-                  '& .runtime-sidebar-row-actions .MuiIconButton-root:hover': {
-                    bgcolor: 'action.hover'
-                  }
-                }}
-              >
-                <Box
-                  sx={{
-                    width: 34,
-                    height: 34,
-                    mr: 1.25,
-                    borderRadius: 1,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    bgcolor: (theme) =>
-                      theme.palette.mode === 'dark'
-                        ? alpha(theme.palette.common.white, 0.08)
-                        : alpha(theme.palette.primary.main, 0.06),
-                    flexShrink: 0
-                  }}
-                  data-phi-runtime-sidebar-kernel-icon={kernelIconKind}
-                >
-                  <RuntimeKernelIcon kind={kernelIconKind} />
-                </Box>
-                <ListItemText
-                  primary={notebookName}
-                  secondary={kernelLabel(session)}
-                  slotProps={{
-                    primary: {
-                      noWrap: true,
-                      sx: { fontSize: '0.9rem', fontWeight: 650 }
-                    },
-                    secondary: {
-                      sx: {
-                        fontSize: '0.8rem',
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                        overflow: 'hidden'
-                      }
-                    }
-                  }}
+        {showKernels ? (
+          <>
+            <Box
+              sx={{
+                pl: 1,
+                pr: 2,
+                pt: 0.5,
+                pb: 0.75,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 1
+              }}
+            >
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 800 }}>
+                {runtimeUi.notebookKernels}
+              </Typography>
+              <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={`${runningKernelCount}`}
+                  data-phi-runtime-sidebar-running-kernel-count="true"
                 />
-                <Stack
-                  className="runtime-sidebar-row-actions"
-                  direction="row"
-                  spacing={0.25}
-                  sx={{ ...runtimeSidebarHoverActionSx, ml: 0.75, flexShrink: 0 }}
-                >
-                  <Tooltip title={runtimeUi.stopKernel}>
-                    <span>
-                      <IconButton
-                        size="small"
-                        aria-label={runtimeUi.stopValueKernel(notebookName)}
-                        data-phi-runtime-sidebar-kernel-close="true"
-                        data-phi-runtime-sidebar-kernel-close-state={
-                          closingNotebookPath === session.notebookPath ? 'closing' : 'ready'
+              </Stack>
+            </Box>
+
+            {notebookSessions.length > 0 ? (
+              notebookSessions.map((session) => {
+                const notebookName = fileName(session.notebookPath)
+                const kernelIconKind = runtimeKernelIconKind(session)
+                return (
+                  <ListItemButton
+                    key={`${session.projectCwd}:${session.notebookPath}`}
+                    data-phi-runtime-sidebar-kernel="true"
+                    onClick={() => onOpenNotebook?.(session.notebookPath)}
+                    sx={{
+                      alignItems: 'flex-start',
+                      mx: 0.75,
+                      pl: 0.25,
+                      pr: 1.25,
+                      py: 1,
+                      borderRadius: 1.5,
+                      backgroundColor: 'transparent !important',
+                      '&:hover': {
+                        backgroundColor: (theme) =>
+                          `${alpha(theme.palette.primary.main, 0.06)} !important`
+                      },
+                      '&.Mui-disabled': {
+                        opacity: 1
+                      },
+                      '&:hover .runtime-sidebar-row-actions, &:focus-within .runtime-sidebar-row-actions, &.Mui-focusVisible .runtime-sidebar-row-actions':
+                        {
+                          opacity: 1,
+                          pointerEvents: 'auto',
+                          visibility: 'visible'
+                        },
+                      '&:hover .runtime-sidebar-row-actions .MuiIconButton-root, &:focus-within .runtime-sidebar-row-actions .MuiIconButton-root, &.Mui-focusVisible .runtime-sidebar-row-actions .MuiIconButton-root':
+                        {
+                          bgcolor: 'transparent'
+                        },
+                      '& .runtime-sidebar-row-actions .MuiIconButton-root:hover': {
+                        bgcolor: 'action.hover'
+                      }
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: 34,
+                        height: 34,
+                        mr: 1.25,
+                        borderRadius: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        bgcolor: (theme) =>
+                          theme.palette.mode === 'dark'
+                            ? alpha(theme.palette.common.white, 0.08)
+                            : alpha(theme.palette.primary.main, 0.06),
+                        flexShrink: 0
+                      }}
+                      data-phi-runtime-sidebar-kernel-icon={kernelIconKind}
+                    >
+                      <RuntimeKernelIcon kind={kernelIconKind} />
+                    </Box>
+                    <ListItemText
+                      primary={notebookName}
+                      secondary={kernelLabel(session)}
+                      slotProps={{
+                        primary: {
+                          noWrap: true,
+                          sx: { fontSize: '0.9rem', fontWeight: 650 }
+                        },
+                        secondary: {
+                          sx: {
+                            fontSize: '0.8rem',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden'
+                          }
                         }
-                        disabled={closingNotebookPath === session.notebookPath}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onStopNotebookKernel(session.notebookPath)
-                        }}
-                        sx={{
-                          color:
-                            closingNotebookPath === session.notebookPath
-                              ? 'text.disabled'
-                              : 'error.main'
-                        }}
-                      >
-                        <StopIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                </Stack>
-              </ListItemButton>
-            )
-          })
-        ) : (
-          <Box
-            data-phi-runtime-sidebar-empty-kernels="true"
-            sx={{ px: 2, py: 2, color: 'text.secondary' }}
-          >
-            <Typography variant="body2">
-              {runtimeUi.noNotebookKernelsAreRunningInThisProject}
-            </Typography>
-          </Box>
-        )}
+                      }}
+                    />
+                    <Stack
+                      className="runtime-sidebar-row-actions"
+                      direction="row"
+                      spacing={0.25}
+                      sx={{ ...runtimeSidebarHoverActionSx, ml: 0.75, flexShrink: 0 }}
+                    >
+                      <Tooltip title={runtimeUi.stopKernel}>
+                        <span>
+                          <IconButton
+                            size="small"
+                            aria-label={runtimeUi.stopValueKernel(notebookName)}
+                            data-phi-runtime-sidebar-kernel-close="true"
+                            data-phi-runtime-sidebar-kernel-close-state={
+                              closingNotebookPath === session.notebookPath ? 'closing' : 'ready'
+                            }
+                            disabled={closingNotebookPath === session.notebookPath}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onStopNotebookKernel(session.notebookPath)
+                            }}
+                            sx={{
+                              color:
+                                closingNotebookPath === session.notebookPath
+                                  ? 'text.disabled'
+                                  : 'error.main'
+                            }}
+                          >
+                            <StopIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    </Stack>
+                  </ListItemButton>
+                )
+              })
+            ) : (
+              <Box
+                data-phi-runtime-sidebar-empty-kernels="true"
+                sx={{ px: 2, py: 2, color: 'text.secondary' }}
+              >
+                <Typography variant="body2">
+                  {runtimeUi.noNotebookKernelsAreRunningInThisProject}
+                </Typography>
+              </Box>
+            )}
+          </>
+        ) : null}
       </List>
+    </Box>
+  )
+}
+
+export function RuntimeSidebar(props: RuntimeSidebarProps): React.JSX.Element {
+  useUiLanguage()
+  const groups = groupRuntimeStatuses({
+    projectCwd: props.projectCwd,
+    runtimeStatus: props.runtimeStatus,
+    currentRuntimeKind: props.currentRuntimeKind,
+    currentServerLabel: props.currentServerLabel,
+    additionalRuntimeStatuses: props.additionalRuntimeStatuses,
+    localLabel: runtimeUi.local,
+    remoteFallbackLabel: runtimeUi.sSHServer
+  })
+  return (
+    <Box className="app-sidebar-surface" sx={{ ...runtimeSidebarSurfaceSx, overflowY: 'auto' }}>
+      {groups.map((group) => (
+        <Box
+          key={group.key}
+          role="group"
+          aria-label={group.label}
+          data-phi-runtime-group-kind={group.kind}
+          data-phi-runtime-group-label={group.label}
+          sx={{ flexShrink: 0 }}
+        >
+          <Typography
+            variant="overline"
+            color="text.secondary"
+            sx={{ display: 'block', px: 2, pt: 1, fontWeight: 800, letterSpacing: '0.06em' }}
+          >
+            {group.label}
+          </Typography>
+          {group.entries.map((entry) => (
+            <RuntimeSidebarSection
+              key={entry.projectCwd}
+              {...props}
+              projectCwd={entry.projectCwd}
+              runtimeStatus={entry.runtimeStatus}
+              isLoading={entry.current ? props.isLoading : false}
+              showKernels={entry.current}
+              onOpenStartLog={entry.current ? props.onOpenStartLog : undefined}
+            />
+          ))}
+        </Box>
+      ))}
     </Box>
   )
 }

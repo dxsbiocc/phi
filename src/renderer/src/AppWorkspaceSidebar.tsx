@@ -69,13 +69,14 @@ export type AppWorkspaceSidebarProps = {
 
   runtimeProjectCwd: string
   runtimeStatus: AnalysisJupyterRuntimeStatus | null
+  additionalRuntimeStatuses: AnalysisJupyterRuntimeStatus[]
   isRuntimeLoading: boolean
   runtimeClosingNotebookPath: string | null
   onOpenRuntimeNotebook: (notebookPath: string) => void
   onRefreshRuntime: () => void
   onStartRuntime: (cwd: string) => void
   onOpenRuntimeStartLog?: () => void
-  onStopRuntime: (cwd: string) => void
+  onStopRuntime: (cwd: string, options?: { abandonUnconfirmed?: boolean }) => void
   onStopRuntimeNotebookKernel: (notebookPath: string) => void
 
   phiPlugins: PhiPluginDisplayItem[]
@@ -183,6 +184,7 @@ function AppWorkspaceSidebarImpl({
   onCancelFileDownload,
   runtimeProjectCwd,
   runtimeStatus,
+  additionalRuntimeStatuses,
   isRuntimeLoading,
   runtimeClosingNotebookPath,
   onOpenRuntimeNotebook,
@@ -401,6 +403,9 @@ function AppWorkspaceSidebarImpl({
       <RuntimeSidebar
         projectCwd={runtimeProjectCwd}
         runtimeStatus={runtimeStatus}
+        additionalRuntimeStatuses={additionalRuntimeStatuses}
+        currentRuntimeKind={isRemoteProject ? 'ssh' : 'local'}
+        currentServerLabel={remoteHostAlias}
         isLoading={isRuntimeLoading}
         onOpenNotebook={(path) => navigate(() => onOpenRuntimeNotebook(path))}
         closingNotebookPath={runtimeClosingNotebookPath}

@@ -97,6 +97,7 @@ export function useAnalysisNotebookRuntime({
   const analysisNotebookOpenRequestRef = useRef(0)
   const analysisKernelsRequestRef = useRef(0)
   const analysisJupyterRequestRef = useRef(0)
+  const jupyterCellStartInFlightRef = useRef(false)
   const analysisJupyterRuntimeRequestRef = useRef(0)
   const analysisNotebookSessionRequestRef = useRef(0)
   const analysisNotebookSessionReadRef = useRef(0)
@@ -683,19 +684,23 @@ export function useAnalysisNotebookRuntime({
         if (jupyterServerIsReady(status)) {
           setPendingJupyterCellStart(null)
           await refreshAnalysisKernels()
+        } else if (['error', 'disconnected', 'exited', 'stopped'].includes(status.state)) {
+          const message = status.message || analysisCopy.startJupyterFailed
+          setAnalysisJupyterError(message)
+          showSnackbar(message, 'error')
         }
       } catch (error) {
         if (request !== analysisJupyterRequestRef.current) return
-        setAnalysisJupyterError(
-          notebookEnvironmentErrorMessage(error, analysisCopy.startJupyterFailed)
-        )
+        const message = notebookEnvironmentErrorMessage(error, analysisCopy.startJupyterFailed)
+        setAnalysisJupyterError(message)
+        showSnackbar(message, 'error')
       } finally {
         if (request === analysisJupyterRequestRef.current) {
           setIsStartingAnalysisJupyter(false)
         }
       }
     },
-    [getActiveCwd, refreshAnalysisKernels, rendererApi]
+    [getActiveCwd, refreshAnalysisKernels, rendererApi, showSnackbar]
   )
 
   const onStopAnalysisJupyter = useCallback(
@@ -985,12 +990,19 @@ export function useAnalysisNotebookRuntime({
   )
 
   const onStartJupyterForPendingCell = useCallback(async (): Promise<void> => {
-    if (!pendingJupyterCellStart) return
+    if (!pendingJupyterCellStart || jupyterCellStartInFlightRef.current) return
+    // A start request is not another request to run the cell. Close the prompt now;
+    // a remote launch may take minutes and may briefly report a non-ready state.
+    setPendingJupyterCellStart(null)
     if (pendingJupyterCellStart.cwd !== getActiveCwd()) {
-      setPendingJupyterCellStart(null)
       return
     }
-    await onStartAnalysisJupyter(pendingJupyterCellStart.cwd)
+    jupyterCellStartInFlightRef.current = true
+    try {
+      await onStartAnalysisJupyter(pendingJupyterCellStart.cwd)
+    } finally {
+      jupyterCellStartInFlightRef.current = false
+    }
   }, [getActiveCwd, onStartAnalysisJupyter, pendingJupyterCellStart])
 
   const onDismissJupyterCellStart = useCallback((): void => {

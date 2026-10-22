@@ -7,7 +7,7 @@ import { Decoration } from '@codemirror/view'
 import {
   markdownInlineDecorations,
   markdownInlinePresentation
-} from '../src/renderer/src/features/file-preview/lib/markdownInlineDecorations'
+} from '../src/renderer/src/lib/markdown/markdownInlineDecorations'
 
 function stateAt(source: string, anchor: number, head = anchor): EditorState {
   return EditorState.create({

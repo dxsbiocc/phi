@@ -3,7 +3,6 @@ import { useUiLanguage } from '../../../lib/i18n'
 import {
   memo,
   useEffect,
-  useRef,
   useState,
   type DragEvent,
   type MouseEvent,
@@ -17,7 +16,6 @@ import {
   ListItemText,
   Menu,
   MenuItem,
-  TextField,
   Tooltip,
   Typography
 } from '@mui/material'
@@ -34,8 +32,7 @@ import { notebookCommandLabel } from '../lib/notebookShortcuts'
 import type { NotebookCellType } from '../../../../../shared/notebookDocument'
 import MarkdownContent from '../../../components/MarkdownContent'
 import NotebookCodeCellSource from './NotebookCodeCellSource'
-import { NotebookMarkdownInsertButton } from './NotebookMarkdownInsertButton'
-import { insertMarkdown, markdownInsertSamples } from './markdownInsert'
+import { NotebookMarkdownEditor } from './NotebookMarkdownEditor'
 import NotebookCodeEditor, { type NotebookCompletionProvider } from './NotebookCodeEditor'
 import {
   notebookCodeGutterDividerWidth,
@@ -48,7 +45,6 @@ import NotebookOutputArea from './NotebookOutputArea'
 import {
   notebookAccentColor,
   notebookAccentSelectionShadow,
-  notebookCaretColor,
   notebookLanguageBorderGradient,
   notebookLanguageSurface
 } from './notebookCellStyles'
@@ -58,7 +54,6 @@ export type CellPlacement = 'before' | 'after'
 const AddIcon = PhiIcons.action.add
 const CodeIcon = PhiIcons.tool.command
 const FileIcon = PhiIcons.tool.read
-const MarkdownIcon = PhiIcons.file.markdown
 const PlayIcon = PhiIcons.action.run
 const RefreshIcon = PhiIcons.action.refresh
 const StopIcon = PhiIcons.action.stop
@@ -166,13 +161,10 @@ function NotebookCellImpl({
 }: NotebookCellProps): React.JSX.Element {
   useUiLanguage()
   const isMarkdown = cell.type === 'markdown'
+  const isLiveMarkdown = isMarkdown && editable
   const [isEditing, setIsEditing] = useState(false)
   const [initialEditorSelection, setInitialEditorSelection] = useState<number | undefined>()
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
-  const [markdownInsertOpen, setMarkdownInsertOpen] = useState(false)
-  const markdownInsertOpenRef = useRef(false)
-  const markdownInputRef = useRef<HTMLTextAreaElement | null>(null)
-  const markdownSelectionRef = useRef<{ start: number; end: number } | null>(null)
   const [dropPlacement, setDropPlacement] = useState<CellPlacement | null>(null)
   const [runningTimer, setRunningTimer] = useState({ cellId: '', elapsedMs: 0 })
   const [isCellActive, setIsCellActive] = useState(false)
@@ -185,7 +177,7 @@ function NotebookCellImpl({
   const canRun = isCodeCell && Boolean(onRunCell) && canRunCells && cell.state !== 'running'
   const isRunning = cell.state === 'running'
   const canStop = isRunning && Boolean(onStopCell)
-  const isRenderedMarkdown = isMarkdown && !showEditor
+  const isRenderedMarkdown = isMarkdown && !isLiveMarkdown
   const isCodeSourceView = isCodeCell && !showEditor
   const hasOutputs = cell.outputs.length > 0
   const canMove = editable && Boolean(onMoveCell) && !provisional
@@ -201,7 +193,7 @@ function NotebookCellImpl({
     cellAccent === 'python' && !provisional && !agentHighlighted && cell.state !== 'error'
   const languageSurface = notebookLanguageSurface(
     cellAccent,
-    provisional || agentHighlighted || cell.state === 'error' || isRenderedMarkdown
+    provisional || agentHighlighted || cell.state === 'error' || isMarkdown
       ? 0
       : isRunning
         ? 0.03
@@ -212,19 +204,12 @@ function NotebookCellImpl({
             : 0
   )
   const pythonBorderAmount = isRunning ? 0.34 : showEditor ? 0.62 : isCellSelected ? 0.72 : 0.22
-  const primaryActionLabel = isRenderedMarkdown
-    ? analysisCopy.editMarkdown
-    : isRunning
-      ? analysisCopy.stopCell
-      : isCodeCell
-        ? analysisCopy.runCell
-        : analysisCopy.cellNoRun
+  const primaryActionLabel = isRunning ? analysisCopy.stopCell : analysisCopy.runCell
   const primaryActionTitle =
-    isCodeCell && !isRunning && !isRenderedMarkdown
+    isCodeCell && !isRunning
       ? `${primaryActionLabel} (${notebookCommandLabel('run-and-advance')} / ${notebookCommandLabel('run')})`
       : primaryActionLabel
-  const isPrimaryActionDisabled = isRenderedMarkdown ? !editable : isRunning ? !canStop : !canRun
-  const showPrimaryActionAccent = !isRunning && (isRenderedMarkdown || canRun)
+  const isPrimaryActionDisabled = isRunning ? !canStop : !canRun
   const runCellFromKeyboard = (event: React.KeyboardEvent<HTMLElement>): void => {
     if (
       !isCodeCell ||
@@ -469,8 +454,10 @@ function NotebookCellImpl({
         ) : null}
       </Box>
       <Box
-        className={isRenderedMarkdown ? 'cell-shell cell-shell-markdown' : 'cell-shell'}
-        data-phi-notebook-cell-surface={isRenderedMarkdown ? 'markdown-rendered' : 'framed'}
+        className={isMarkdown ? 'cell-shell cell-shell-markdown' : 'cell-shell'}
+        data-phi-notebook-cell-surface={
+          isLiveMarkdown ? 'markdown-live' : isRenderedMarkdown ? 'markdown-rendered' : 'framed'
+        }
         sx={{
           minWidth: 0,
           position: 'relative',
@@ -478,7 +465,7 @@ function NotebookCellImpl({
           borderColor: (theme) => {
             const accentColor = notebookAccentColor(theme, provisional ? 'ai' : cellAccent)
             if (pythonGradient) return 'transparent'
-            if (isRenderedMarkdown && !showAccentShadow) return 'transparent'
+            if (isMarkdown && !showAccentShadow) return 'transparent'
             if (provisional) return alpha(accentColor, 0.72)
             if (agentHighlighted) return alpha(theme.palette.primary.main, 0.82)
             if (cell.state === 'error') return theme.palette.error.main
@@ -490,7 +477,7 @@ function NotebookCellImpl({
           borderRadius: 1.75,
           bgcolor: (theme) => {
             const accentColor = notebookAccentColor(theme, provisional ? 'ai' : cellAccent)
-            if (isRenderedMarkdown && !showAccentShadow) return 'transparent'
+            if (isMarkdown && !showAccentShadow) return 'transparent'
             if (provisional) return alpha(accentColor, 0.045)
             if (agentHighlighted) return alpha(accentColor, 0.075)
             if (cell.state === 'error') return alpha(theme.palette.error.main, 0.035)
@@ -631,92 +618,20 @@ function NotebookCellImpl({
               onRun={canRun ? () => onRunCell?.(cell.id) : undefined}
               onRequestClose={() => setIsEditing(false)}
             />
-          ) : showEditor ? (
-            <TextField
-              autoFocus
-              fullWidth
-              multiline
-              minRows={1}
-              inputRef={markdownInputRef}
+          ) : isLiveMarkdown ? (
+            <NotebookMarkdownEditor
               value={cell.source}
-              variant="standard"
-              onChange={(event) => onSourceChange?.(cell.id, event.target.value)}
-              onKeyDown={(event) => {
-                if (
-                  !isMarkdown ||
-                  event.nativeEvent.isComposing ||
-                  event.key !== 'Enter' ||
-                  event.altKey
-                ) {
-                  return
-                }
-                const mod = event.metaKey || event.ctrlKey
-                const runAndAdvance = event.shiftKey && !mod
-                const runInPlace = mod && !event.shiftKey
-                if (!runAndAdvance && !runInPlace) return
-                event.preventDefault()
-                event.stopPropagation()
-                setIsEditing(false)
-                if (runAndAdvance) onAdvanceCell?.(cell.id)
-              }}
-              onBlur={() => {
-                if (markdownInsertOpenRef.current) return
-                setIsEditing(false)
-              }}
-              slotProps={{
-                input: {
-                  disableUnderline: true,
-                  sx: {
-                    p: isMarkdown ? 1.7 : 1.35,
-                    pr: 5.5,
-                    alignItems: 'flex-start',
-                    fontFamily: isMarkdown ? 'inherit' : 'var(--font-mono)',
-                    fontSize: isMarkdown ? '0.95rem' : '0.82rem',
-                    lineHeight: 1.65,
-                    caretColor: (theme: Theme) => notebookCaretColor(theme)
-                  }
-                }
-              }}
+              onChange={(source) => onSourceChange?.(cell.id, source)}
+              onAdvance={() => onAdvanceCell?.(cell.id)}
             />
           ) : isMarkdown ? (
             <Box
               data-phi-notebook-markdown="rendered"
-              data-phi-notebook-markdown-edit-trigger="double-click"
-              data-phi-notebook-markdown-select-trigger="single-click"
-              role={editable ? 'button' : undefined}
-              tabIndex={editable ? 0 : undefined}
-              onClick={(event) => {
-                if (editable) event.currentTarget.focus()
-              }}
-              onDoubleClick={() => {
-                if (editable) setIsEditing(true)
-              }}
-              onKeyDown={(event) => {
-                if (!editable || event.nativeEvent.isComposing) return
-                const mod = event.metaKey || event.ctrlKey
-                if (event.key === 'Enter' && event.shiftKey && !mod) {
-                  event.preventDefault()
-                  onAdvanceCell?.(cell.id)
-                  return
-                }
-                if (event.key === 'Enter' && mod && !event.shiftKey) {
-                  event.preventDefault()
-                  return
-                }
-                if ((event.key === 'Enter' && !event.shiftKey && !mod) || event.key === ' ') {
-                  event.preventDefault()
-                  setIsEditing(true)
-                }
-              }}
               sx={{
                 minHeight: notebookCodeMinHeight,
                 p: 1.3,
                 pr: 5.5,
-                cursor: editable ? 'text' : 'default',
-                '&:focus-visible': {
-                  outline: (theme) => `2px solid ${theme.palette.primary.main}`,
-                  outlineOffset: -2
-                }
+                cursor: 'default'
               }}
             >
               {cell.source.trim() ? (
@@ -761,9 +676,6 @@ function NotebookCellImpl({
             <Box
               className="cell-floating-actions"
               data-phi-notebook-cell-actions="marimo"
-              data-phi-notebook-rendered-markdown-actions={
-                isRenderedMarkdown ? 'solid-hover' : undefined
-              }
               sx={{
                 position: 'absolute',
                 top: -18,
@@ -772,108 +684,52 @@ function NotebookCellImpl({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 0.45,
-                opacity: menuAnchor || markdownInsertOpen ? 1 : 0,
-                transform: menuAnchor || markdownInsertOpen ? 'translateY(0)' : 'translateY(-2px)',
+                opacity: menuAnchor ? 1 : 0,
+                transform: menuAnchor ? 'translateY(0)' : 'translateY(-2px)',
                 transition: 'opacity 150ms ease, transform 150ms ease'
               }}
             >
-              <Tooltip title={primaryActionTitle}>
-                <span>
-                  <IconButton
-                    className="cell-run-button"
-                    size="small"
-                    aria-label={primaryActionLabel}
-                    data-phi-notebook-cell-action-surface="opaque"
-                    data-phi-notebook-cell-primary-action={
-                      isRenderedMarkdown ? 'edit-markdown' : isRunning ? 'stop' : 'run'
-                    }
-                    data-phi-notebook-cell-primary-action-enabled={
-                      isPrimaryActionDisabled ? 'false' : 'true'
-                    }
-                    disabled={isPrimaryActionDisabled}
-                    onClick={
-                      isRenderedMarkdown
-                        ? () => setIsEditing(true)
-                        : isRunning
-                          ? () => onStopCell?.(cell.id)
-                          : () => onRunCell?.(cell.id)
-                    }
-                    sx={{
-                      ...actionButtonSx,
-                      color: (theme: Theme) =>
-                        isRunning
-                          ? theme.palette.text.disabled
-                          : showPrimaryActionAccent
-                            ? notebookAccentColor(theme, cellAccent)
-                            : theme.palette.text.disabled,
-                      bgcolor: (theme) => theme.palette.background.paper,
-                      '&:hover': {
-                        bgcolor: (theme: Theme) => theme.palette.background.paper
-                      },
-                      '&.Mui-disabled': {
+              {isCodeCell ? (
+                <Tooltip title={primaryActionTitle}>
+                  <span>
+                    <IconButton
+                      className="cell-run-button"
+                      size="small"
+                      aria-label={primaryActionLabel}
+                      data-phi-notebook-cell-action-surface="opaque"
+                      data-phi-notebook-cell-primary-action={isRunning ? 'stop' : 'run'}
+                      data-phi-notebook-cell-primary-action-enabled={
+                        isPrimaryActionDisabled ? 'false' : 'true'
+                      }
+                      disabled={isPrimaryActionDisabled}
+                      onClick={isRunning ? () => onStopCell?.(cell.id) : () => onRunCell?.(cell.id)}
+                      sx={{
+                        ...actionButtonSx,
+                        color: (theme: Theme) =>
+                          isRunning
+                            ? theme.palette.text.disabled
+                            : canRun
+                              ? notebookAccentColor(theme, cellAccent)
+                              : theme.palette.text.disabled,
                         bgcolor: (theme) => theme.palette.background.paper,
-                        color: 'text.disabled',
-                        opacity: 1
-                      }
-                    }}
-                  >
-                    {isRenderedMarkdown ? (
-                      <MarkdownIcon
-                        data-phi-notebook-rendered-markdown-action-icon="solid"
-                        sx={{
-                          fontSize: 16,
-                          opacity: 1,
-                          '& svg, & path': {
-                            opacity: 1
-                          }
-                        }}
-                      />
-                    ) : isRunning ? (
-                      <StopIcon sx={{ fontSize: 15 }} />
-                    ) : (
-                      <PlayIcon sx={{ fontSize: 16 }} />
-                    )}
-                  </IconButton>
-                </span>
-              </Tooltip>
-              {isMarkdown && editable && onSourceChange ? (
-                <NotebookMarkdownInsertButton
-                  buttonSx={actionButtonSx}
-                  onPrepare={() => {
-                    const active = document.activeElement
-                    if (
-                      active instanceof HTMLTextAreaElement &&
-                      active
-                        .closest('[data-phi-notebook-cell-id]')
-                        ?.getAttribute('data-phi-notebook-cell-id') === cell.id
-                    ) {
-                      markdownSelectionRef.current = {
-                        start: active.selectionStart,
-                        end: active.selectionEnd
-                      }
-                      return
-                    }
-                    markdownSelectionRef.current = null
-                  }}
-                  onOpenChange={(open) => {
-                    markdownInsertOpenRef.current = open
-                    setMarkdownInsertOpen(open)
-                    if (!open) markdownInputRef.current?.focus()
-                  }}
-                  onInsert={(kind) => {
-                    const range = markdownSelectionRef.current
-                    const next = insertMarkdown(
-                      cell.source,
-                      range?.start ?? cell.source.length,
-                      range?.end ?? cell.source.length,
-                      kind,
-                      markdownInsertSamples()
-                    )
-                    onSelectCell?.(cell.id)
-                    setIsEditing(true)
-                    onSourceChange(cell.id, next.value)
-                  }}
-                />
+                        '&:hover': {
+                          bgcolor: (theme: Theme) => theme.palette.background.paper
+                        },
+                        '&.Mui-disabled': {
+                          bgcolor: (theme) => theme.palette.background.paper,
+                          color: 'text.disabled',
+                          opacity: 1
+                        }
+                      }}
+                    >
+                      {isRunning ? (
+                        <StopIcon sx={{ fontSize: 15 }} />
+                      ) : (
+                        <PlayIcon sx={{ fontSize: 16 }} />
+                      )}
+                    </IconButton>
+                  </span>
+                </Tooltip>
               ) : null}
               <Tooltip title={analysisCopy.cellActions}>
                 <IconButton

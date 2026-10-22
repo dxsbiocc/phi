@@ -187,6 +187,7 @@ import {
 import { navigationPaneWidth } from './layout'
 import type { UserMessageRetryTarget } from './components/chat/ChatUserMessage'
 import type {
+  AnalysisJupyterRuntimeStatus,
   AnalysisNotebookFileChange,
   EnvironmentSnapshot,
   EnvironmentToolId,
@@ -379,6 +380,40 @@ function App(): React.JSX.Element {
   const sendRequestRef = useRef(0)
   const projectSidebarSelectionRequestRef = useRef(0)
   const rendererApi = useMemo(() => getRendererApi(), [])
+  const [runningJupyterRuntimes, setRunningJupyterRuntimes] = useState<
+    AnalysisJupyterRuntimeStatus[]
+  >([])
+  const runningJupyterSnapshotRef = useRef('[]')
+  const refreshRunningJupyterRuntimes = useCallback(async (): Promise<void> => {
+    try {
+      const statuses = await rendererApi.listAnalysisJupyterRuntimeStatuses()
+      const snapshot = JSON.stringify(
+        statuses.map(({ server }) => [
+          server.projectCwd,
+          server.runtimeKind,
+          server.state,
+          server.serverLabel,
+          server.pid,
+          server.port,
+          server.hasEndpoint,
+          server.message,
+          server.cleanupUnconfirmed,
+          server.canAbandonCleanup
+        ])
+      )
+      if (snapshot === runningJupyterSnapshotRef.current) return
+      runningJupyterSnapshotRef.current = snapshot
+      setRunningJupyterRuntimes(statuses)
+    } catch {
+      // Keep the last known entries during a temporary IPC failure.
+    }
+  }, [rendererApi])
+  useEffect(() => {
+    if (workspaceSidebarMode !== 'runtime' || !isSidebarOpen) return
+    void Promise.resolve().then(refreshRunningJupyterRuntimes)
+    const interval = window.setInterval(() => void refreshRunningJupyterRuntimes(), 2500)
+    return () => window.clearInterval(interval)
+  }, [isSidebarOpen, refreshRunningJupyterRuntimes, workspaceSidebarMode])
   const isWindowFullscreen = useWindowFullscreen(rendererApi, isMac)
   const chromeLayout = windowChromeLayout({
     isMac,
@@ -3633,22 +3668,30 @@ function App(): React.JSX.Element {
       workspaceFileActions,
       fileDownloadState: fileDownload,
       onCancelFileDownload: cancelActiveWrapperResultDownload,
-      runtimeProjectCwd: activeProject?.workingDirectory ?? '',
+      runtimeProjectCwd: activeProject?.workingDirectory ?? activeCwd,
       runtimeStatus: analysisJupyterRuntimeStatus,
+      additionalRuntimeStatuses: runningJupyterRuntimes,
       isRuntimeLoading: isLoadingAnalysisJupyterRuntime || isStartingAnalysisJupyter,
       runtimeClosingNotebookPath: closingRuntimeNotebookPath,
       onOpenRuntimeNotebook: onOpenNotebookWorkspaceFile,
       onRefreshRuntime: () => {
         void refreshAnalysisJupyterRuntimeStatus()
+        void refreshRunningJupyterRuntimes()
       },
       onStartRuntime: (cwd) => {
         const remote = analysisJupyterRuntimeStatus?.server?.runtimeKind === 'ssh'
-        void onStartAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
+        void onStartAnalysisJupyter(cwd).then(async () => {
+          await refreshAnalysisJupyterRuntimeStatus()
+          await refreshRunningJupyterRuntimes()
+        })
         if (remote) onOpenJupyterStartLog()
       },
       onOpenRuntimeStartLog: onOpenJupyterStartLog,
-      onStopRuntime: (cwd) => {
-        void onStopAnalysisJupyter(cwd).then(() => refreshAnalysisJupyterRuntimeStatus())
+      onStopRuntime: (cwd, options) => {
+        void onStopAnalysisJupyter(cwd, options).then(async () => {
+          await refreshAnalysisJupyterRuntimeStatus()
+          await refreshRunningJupyterRuntimes()
+        })
       },
       onStopRuntimeNotebookKernel: (notebookPath) => {
         void onStopRuntimeNotebookSession(notebookPath)
@@ -3725,11 +3768,13 @@ function App(): React.JSX.Element {
       cancelActiveWrapperResultDownload,
       activeProject?.workingDirectory,
       analysisJupyterRuntimeStatus,
+      runningJupyterRuntimes,
       isLoadingAnalysisJupyterRuntime,
       isStartingAnalysisJupyter,
       closingRuntimeNotebookPath,
       onOpenNotebookWorkspaceFile,
       refreshAnalysisJupyterRuntimeStatus,
+      refreshRunningJupyterRuntimes,
       onStartAnalysisJupyter,
       onStopAnalysisJupyter,
       onStopRuntimeNotebookSession,

@@ -60,6 +60,7 @@ export interface RemoteNotebookRuntimeDeps {
 
 export interface RemoteNotebookRuntime {
   remoteNotebookSessionIds: Map<string, string>
+  activeRemoteNotebookBackends: () => RemoteAnalysisNotebookBackend[]
   remoteNotebookBackend: (project: Project, sessionId: string) => RemoteAnalysisNotebookBackend
   resolveRemoteNotebookToolBackend: (identity: {
     runtimeSessionId: string
@@ -222,6 +223,7 @@ export function createRemoteNotebookRuntime(
 
   return {
     remoteNotebookSessionIds: state.remoteNotebookSessionIds,
+    activeRemoteNotebookBackends: () => [...state.remoteNotebookBackends.values()],
     remoteNotebookBackend: backendFor,
     resolveRemoteNotebookToolBackend: (identity) =>
       resolveRemoteNotebookToolBackend(state, backendFor, identity),

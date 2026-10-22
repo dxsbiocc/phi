@@ -14,12 +14,26 @@ export const markdownInsertKinds = [
 
 export type MarkdownInsertKind = (typeof markdownInsertKinds)[number]
 
+export function markdownInsertLabel(kind: MarkdownInsertKind): string {
+  const labels = {
+    bold: analysisCopy.insertBold,
+    italic: analysisCopy.insertItalic,
+    link: analysisCopy.insertLink,
+    formula: analysisCopy.insertFormula,
+    codeBlock: analysisCopy.insertCodeBlock,
+    image: analysisCopy.insertImage,
+    list: analysisCopy.insertList,
+    quote: analysisCopy.insertQuote,
+    table: analysisCopy.insertTable
+  }
+  return labels[kind]
+}
+
 export function markdownInsertSamples(): MarkdownInsertSamples {
   return {
     text: analysisCopy.markdownSampleText,
     link: analysisCopy.markdownSampleLink,
     formula: analysisCopy.markdownSampleFormula,
-    code: analysisCopy.markdownSampleCode,
     image: analysisCopy.markdownSampleImage,
     list: analysisCopy.markdownSampleList,
     quote: analysisCopy.markdownSampleQuote,
@@ -32,7 +46,6 @@ export type MarkdownInsertSamples = {
   text: string
   link: string
   formula: string
-  code: string
   image: string
   list: string
   quote: string
@@ -142,7 +155,7 @@ const inserters: Record<
   list: (range, _selected, samples) => prefixLines(range, '- ', samples.list),
   quote: (range, _selected, samples) => prefixLines(range, '> ', samples.quote),
   formula: (range, selected, samples) => formula(range, selected, samples.formula),
-  codeBlock: (range, selected, samples) => fenced(range, selected || samples.code),
+  codeBlock: (range, selected) => fenced(range, selected),
   table: (range, _selected, samples) => table(range, samples)
 }
 
@@ -166,7 +179,7 @@ function formula(range: Range, selected: string, sample: string): MarkdownInsert
 }
 
 function fenced(range: Range, body: string): MarkdownInsertResult {
-  return insertBlock(range, `\`\`\`\n${body}\n\`\`\``, 4, 4 + body.length)
+  return insertBlock(range, `\`\`\`text\n${body}\n\`\`\``, 3, 7)
 }
 
 function table(range: Range, samples: MarkdownInsertSamples): MarkdownInsertResult {

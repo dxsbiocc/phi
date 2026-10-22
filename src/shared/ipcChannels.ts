@@ -28,6 +28,7 @@ export const IPC = {
     initializeProject: 'analysis:initializeProject',
     interruptNotebookExecution: 'analysis:interruptNotebookExecution',
     jupyterRuntimeStatus: 'analysis:jupyterRuntimeStatus',
+    listJupyterRuntimeStatuses: 'analysis:listJupyterRuntimeStatuses',
     jupyterStatus: 'analysis:jupyterStatus',
     listKernels: 'analysis:listKernels',
     listNotebookAiGenerationJobs: 'analysis:listNotebookAiGenerationJobs',

@@ -685,13 +685,14 @@ test('analysis view renders an opened notebook document', () => {
   assert.match(markup, /data-phi-notebook-cell-surface="framed"/)
   assert.match(markup, /data-phi-notebook-cell-spacing="roomy"/)
   assert.match(markup, /data-phi-notebook-cell-actions="marimo"/)
-  assert.match(markup, /data-phi-notebook-rendered-markdown-action-icon="solid"/)
-  assert.match(markup, /aria-label="编辑 Markdown"/)
+  assert.doesNotMatch(markup, /data-phi-notebook-cell-primary-action="edit-markdown"/)
+  assert.doesNotMatch(markup, /aria-label="编辑 Markdown"/)
+  assert.doesNotMatch(markup, /data-phi-notebook-markdown-insert=/)
   assert.match(markup, /aria-label="运行 cell"/)
   assert.doesNotMatch(markup, /连接 kernel 后运行/)
   assert.doesNotMatch(markup, /aria-label="停止 cell"/)
   assert.match(markup, /aria-label="Cell 操作"/)
-  assert.equal(markup.match(/data-phi-notebook-cell-action-surface="opaque"/g)?.length, 4)
+  assert.equal(markup.match(/data-phi-notebook-cell-action-surface="opaque"/g)?.length, 3)
   assert.match(markup, /aria-label="上方插入 Code cell"/)
   assert.match(markup, /aria-label="下方插入 Code cell"/)
   assert.match(markup, /aria-label="删除 cell"/)
@@ -824,7 +825,7 @@ test('analysis notebook outline popover is hover-driven, not focus-sticky', () =
   assert.doesNotMatch(source, /focus-within \.notebook-outline-popover/)
 })
 
-test('analysis notebook markdown selection and run affordances use the correct labels', () => {
+test('analysis notebook keeps code execution separate from Markdown editing', () => {
   const source = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/features/analysis/notebook/NotebookCell.tsx'),
     'utf8'
@@ -835,13 +836,14 @@ test('analysis notebook markdown selection and run affordances use the correct l
   )
 
   assert.match(source, /data-phi-notebook-markdown-select-trigger="single-click"/)
-  assert.match(source, /data-phi-notebook-rendered-markdown-action-icon="solid"/)
-  assert.match(source, /data-phi-notebook-rendered-markdown-actions=/)
-  assert.match(source, /solid-hover/)
-  assert.match(source, /opacity: menuAnchor \|\| markdownInsertOpen \? 1 : 0/)
+  assert.doesNotMatch(source, /data-phi-notebook-rendered-markdown-action-icon/)
+  assert.doesNotMatch(source, /edit-markdown/)
+  assert.match(source, /opacity: menuAnchor \? 1 : 0/)
+  assert.match(source, /NotebookMarkdownEditor/)
+  assert.doesNotMatch(source, /NotebookMarkdownInsertButton/)
   assert.doesNotMatch(source, /isRenderedMarkdown \|\| menuAnchor \? 1 : 0/)
   assert.match(source, /&:focus-within/)
-  assert.match(source, /analysisCopy\.editMarkdown/)
+  assert.match(source, /\{isCodeCell \? \(/)
   assert.match(canvasSource, /isNotebookSessionRunnable\(notebookSessionStatus\)/)
   assert.doesNotMatch(source, /连接 kernel 后运行/)
   assert.doesNotMatch(source, /cell 停止待接入 kernel interrupt/)
@@ -856,6 +858,13 @@ test('analysis notebook cells reserve shift enter for running code cells', () =>
     resolve(process.cwd(), 'src/renderer/src/features/analysis/notebook/NotebookCodeEditor.tsx'),
     'utf8'
   )
+  const markdownEditorSource = readFileSync(
+    resolve(
+      process.cwd(),
+      'src/renderer/src/features/analysis/notebook/NotebookMarkdownEditor.tsx'
+    ),
+    'utf8'
+  )
   const codeSource = readFileSync(
     resolve(
       process.cwd(),
@@ -868,7 +877,8 @@ test('analysis notebook cells reserve shift enter for running code cells', () =>
     'utf8'
   )
 
-  assert.match(cellSource, /if \(runAndAdvance\) onAdvanceCell\?\.\(cell\.id\)/)
+  assert.match(cellSource, /onAdvance=\{\(\) => onAdvanceCell\?\.\(cell\.id\)\}/)
+  assert.match(markdownEditorSource, /if \(advance\) onAdvance\?\.\(\)/)
   assert.match(cellSource, /const runCellFromKeyboard =/)
   assert.match(cellSource, /!event\.shiftKey && !event\.metaKey && !event\.ctrlKey/)
   assert.match(cellSource, /onKeyDown=\{runCellFromKeyboard\}/)

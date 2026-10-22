@@ -40,7 +40,10 @@ const loadingSx = {
   bgcolor: 'background.paper',
   boxShadow: 1,
   borderRadius: 2,
-  '& .MuiAlert-message': { py: 0.25 }
+  alignItems: 'center',
+  // Alert's icon slot has 7px of vertical padding and the message slot has 8px. Clear both so the label shares the icon's center line.
+  '& .MuiAlert-icon': { py: 0 },
+  '& .MuiAlert-message': { py: 0, display: 'flex', alignItems: 'center' }
 } as const
 
 export function RuntimeRecoveryBanner({

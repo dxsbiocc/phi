@@ -1017,6 +1017,7 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   listAnalysisKernels: (cwd?: string) => Promise<AnalysisKernelDiagnostics>
   getAnalysisJupyterStatus: (cwd: string) => Promise<JupyterServerStatus>
   getAnalysisJupyterRuntimeStatus: (cwd: string) => Promise<AnalysisJupyterRuntimeStatus>
+  listAnalysisJupyterRuntimeStatuses: () => Promise<AnalysisJupyterRuntimeStatus[]>
   publishNotebookOutputFrame: (html: string) => Promise<string>
   releaseNotebookOutputFrame: (url: string) => Promise<void>
   startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
@@ -1693,6 +1694,8 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke(IPC.analysis.jupyterStatus, cwd),
   getAnalysisJupyterRuntimeStatus: (cwd: string): Promise<AnalysisJupyterRuntimeStatus> =>
     ipcRenderer.invoke(IPC.analysis.jupyterRuntimeStatus, cwd),
+  listAnalysisJupyterRuntimeStatuses: (): Promise<AnalysisJupyterRuntimeStatus[]> =>
+    ipcRenderer.invoke(IPC.analysis.listJupyterRuntimeStatuses),
   publishNotebookOutputFrame: (html: string): Promise<string> =>
     ipcRenderer.invoke(IPC.analysis.publishNotebookOutputFrame, html),
   releaseNotebookOutputFrame: (url: string): Promise<void> =>

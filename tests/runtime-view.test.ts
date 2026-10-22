@@ -127,6 +127,106 @@ test('runtime sidebar shows global Jupyter Server before Notebook Kernels', () =
   assert.doesNotMatch(markup, />运行时</)
 })
 
+test('runtime sidebar keeps local and remote servers visible together', () => {
+  const remote: AnalysisJupyterRuntimeStatus = {
+    server: {
+      projectCwd: '/remote/research',
+      runtimeKind: 'ssh',
+      serverLabel: 'gpu-login',
+      state: 'ready',
+      hasEndpoint: true
+    },
+    notebooks: { activeSessionCount: 0, busySessionCount: 0, sessions: [] }
+  }
+  const markup = renderRuntimeSidebar(runtimeStatus, { additionalRuntimeStatuses: [remote] })
+
+  assert.equal((markup.match(/data-phi-runtime-sidebar-server="true"/g) ?? []).length, 2)
+  assert.match(markup, /gpu-login/)
+  assert.match(markup, /PID 2026/)
+  assert.match(markup, /本地/)
+  assert.match(markup, /data-phi-runtime-group-kind="ssh"/)
+  assert.match(markup, /data-phi-runtime-sidebar-server-cwd="\/remote\/research"/)
+})
+
+test('runtime sidebar groups local Jupyter and remote projects by server', () => {
+  const remote = (cwd: string, host: string): AnalysisJupyterRuntimeStatus => ({
+    server: {
+      projectCwd: cwd,
+      runtimeKind: 'ssh',
+      serverLabel: host,
+      state: 'ready',
+      hasEndpoint: true
+    },
+    notebooks: { activeSessionCount: 0, busySessionCount: 0, sessions: [] }
+  })
+  const markup = renderRuntimeSidebar(runtimeStatus, {
+    additionalRuntimeStatuses: [
+      remote('/remote/first', 'GPU'),
+      remote('/remote/second', 'GPU'),
+      remote('/remote/third', 'CPU')
+    ]
+  })
+
+  assert.equal((markup.match(/data-phi-runtime-group-kind="local"/g) ?? []).length, 1)
+  assert.equal((markup.match(/data-phi-runtime-group-label="GPU"/g) ?? []).length, 1)
+  assert.equal((markup.match(/data-phi-runtime-group-label="CPU"/g) ?? []).length, 1)
+  assert.ok(
+    markup.indexOf('data-phi-runtime-group-kind="local"') <
+      markup.indexOf('data-phi-runtime-group-label="GPU"')
+  )
+  assert.ok(markup.indexOf('Notebook 内核') < markup.indexOf('data-phi-runtime-group-label="CPU"'))
+  const gpuGroup =
+    markup
+      .split('data-phi-runtime-group-label="GPU"')[1]
+      ?.split('data-phi-runtime-group-label="CPU"')[0] ?? ''
+  assert.match(gpuGroup, /data-phi-runtime-sidebar-server-cwd="\/remote\/first"/)
+  assert.match(gpuGroup, /data-phi-runtime-sidebar-server-cwd="\/remote\/second"/)
+})
+
+test('the local runtime group follows the selected interface language', () => {
+  setUiLanguage('en')
+  const markup = renderRuntimeSidebar()
+  assert.match(markup, /data-phi-runtime-group-label="Local"/)
+})
+
+test('the active remote notebook kernel stays inside its server group', () => {
+  const remote: AnalysisJupyterRuntimeStatus = {
+    server: {
+      projectCwd: '/remote/project',
+      runtimeKind: 'ssh',
+      serverLabel: 'GPU',
+      state: 'ready',
+      hasEndpoint: true
+    },
+    notebooks: {
+      activeSessionCount: 1,
+      busySessionCount: 0,
+      sessions: [
+        {
+          projectCwd: '/remote/project',
+          notebookPath: '/remote/project/notebooks/remote.ipynb',
+          state: 'idle'
+        }
+      ]
+    }
+  }
+  const markup = renderRuntimeSidebar(remote, {
+    projectCwd: '/local/remote-anchor',
+    currentRuntimeKind: 'ssh',
+    currentServerLabel: 'GPU',
+    additionalRuntimeStatuses: [runtimeStatus, remote]
+  })
+
+  assert.equal((markup.match(/data-phi-runtime-group-label="GPU"/g) ?? []).length, 1)
+  assert.equal((markup.match(/data-phi-runtime-sidebar-server="true"/g) ?? []).length, 2)
+  assert.ok(
+    markup.indexOf('data-phi-runtime-group-kind="local"') <
+      markup.indexOf('data-phi-runtime-group-label="GPU"')
+  )
+  assert.ok(markup.indexOf('data-phi-runtime-group-label="GPU"') < markup.indexOf('Notebook 内核'))
+  assert.match(markup, /remote\.ipynb/)
+})
+
 test('remote runtime shows the login server and recovery guidance without local PID or port', () => {
   const markup = renderRuntimeSidebar({
     ...runtimeStatus,
@@ -271,6 +371,7 @@ test('a remote Jupyter card links to its startup log and keeps the full message 
   const markup = render({ onOpenStartLog: () => undefined })
   assert.match(markup, /data-phi-runtime-start-log/)
   assert.match(markup, /查看启动日志/)
-  assert.match(markup, new RegExp(`title="GPU · 登录节点 · ${message}"`))
+  assert.match(markup, /data-phi-runtime-group-label="GPU"/)
+  assert.match(markup, new RegExp(`title="登录节点 · ${message}"`))
   assert.doesNotMatch(render({}), /查看启动日志/)
 })

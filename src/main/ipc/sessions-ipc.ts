@@ -147,8 +147,6 @@ export interface SessionsIpcOptions {
   remote: {
     scheduleRemoteProjectCheck: (sessionId: string, projectId: string) => void
     observeRemote: <T>(projectId: string, operation: () => Promise<T>) => Promise<T>
-    remoteNotebookSessionIds: Pick<Map<string, string>, 'get'>
-    disposeRemoteNotebookBackend: (projectId: string) => Promise<void>
   }
   browser: {
     getRegistry: () => { disposeSession(sessionId: string): Promise<void> } | null
@@ -468,12 +466,7 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
             writeAppLog({ level: 'error', event: 'browser_session_cleanup_failed' })
           }
         }
-        if (
-          manifest?.projectId &&
-          options.remote.remoteNotebookSessionIds.get(manifest.projectId) === manifest.sessionId
-        ) {
-          await options.remote.disposeRemoteNotebookBackend(manifest.projectId)
-        }
+        // Jupyter belongs to the project and stays alive until an explicit stop or app exit.
         // Session-private drafts and their registries are deleted here; Save As copies are project
         // files and intentionally remain outside this tree. Draft garbage collection is out of scope.
         if (remoteDeletion) await remoteDeletion.delete()

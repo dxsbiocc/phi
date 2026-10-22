@@ -197,6 +197,23 @@ test('JupyterServerRegistry stops a running project server', () => {
   assert.equal(process.killed, true)
   assert.equal(status.state, 'stopped')
   assert.equal(status.exitedAt, '2026-09-09T00:02:00.000Z')
+  assert.deepEqual(registry.activeStatuses(), [])
+})
+
+test('JupyterServerRegistry lists active servers without starting or stopping them', () => {
+  const project = projectDir()
+  const registry = new JupyterServerRegistry({
+    readyProbeAttempts: 0,
+    createProcess: () => new FakeJupyterProcess(43)
+  })
+
+  assert.deepEqual(registry.activeStatuses(), [])
+  registry.start(project)
+  assert.deepEqual(
+    registry.activeStatuses().map((server) => server.projectCwd),
+    [registry.status(project).projectCwd]
+  )
+  assert.equal(registry.activeStatuses()[0]?.state, 'starting')
 })
 
 test('JupyterServerRegistry adopts an already-running Jupyter Server instead of failing when the port is taken', async () => {

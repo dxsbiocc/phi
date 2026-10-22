@@ -15,6 +15,8 @@ import {
 import type { AnalysisNotebookFileWatcher } from '../agent/notebook/analysis-notebook-watch'
 import type { JupyterServerRegistry } from '../agent/notebook/analysis-jupyter-server'
 import type { AnalysisNotebookExecutor } from '../agent/notebook/analysis-jupyter-execution'
+import type { AnalysisNotebookSessionRegistry } from '../agent/notebook/analysis-jupyter-sessions'
+import type { RemoteAnalysisNotebookBackend } from '../agent/notebook/remote-analysis-notebook-backend'
 import {
   emptyAnalysisRuntimeStatus,
   emptyNotebookCompletionResult,
@@ -38,11 +40,13 @@ export interface AnalysisIpcOptions {
     resolveWorkspaceByCwd: (cwd?: string) => AnalysisWorkspaceContext | null
     operations: AnalysisNotebookOperations
     activePathByProjectCwd: Map<string, string>
+    activeRemoteNotebookBackends: () => RemoteAnalysisNotebookBackend[]
   }
   jupyter: {
     getCurrentCwd: () => string
     isRemoteAnalysisCwd: (cwd: string) => boolean
-    serverRegistry: Pick<JupyterServerRegistry, 'status' | 'start' | 'stop'>
+    serverRegistry: Pick<JupyterServerRegistry, 'status' | 'start' | 'stop' | 'activeStatuses'>
+    localSessions: Pick<AnalysisNotebookSessionRegistry, 'projectSummary' | 'closeProject'>
     executor: Pick<AnalysisNotebookExecutor, 'completeCode' | 'executeCell'>
     fileWatcher: Pick<AnalysisNotebookFileWatcher, 'unwatchProject'>
     ensureServerReady: (projectCwd: string) => Promise<void>
@@ -213,6 +217,20 @@ function registerNotebookRemovalIpc(options: AnalysisIpcOptions): void {
 }
 
 function registerJupyterIpc(options: AnalysisIpcOptions): void {
+  options.ipcMain.handle(IPC.analysis.listJupyterRuntimeStatuses, async () => {
+    const local = options.jupyter.serverRegistry.activeStatuses().map((server) => ({
+      server,
+      notebooks: options.jupyter.localSessions.projectSummary(server.projectCwd)
+    }))
+    const remote = options.notebooks
+      .activeRemoteNotebookBackends()
+      .map((backend) => ({
+        server: backend.controller.status(),
+        notebooks: backend.sessions.projectSummary(backend.projectCwd)
+      }))
+      .filter(({ server }) => server.state !== 'stopped' && server.state !== 'exited')
+    return [...local, ...remote]
+  })
   options.ipcMain.handle(IPC.analysis.listKernels, async (_, cwd?: string) => {
     const workspace = options.notebooks.resolveWorkspaceByCwd(cwd)
     if (workspace) return options.notebooks.operations.kernels(workspace)
@@ -247,6 +265,15 @@ function registerJupyterIpc(options: AnalysisIpcOptions): void {
     }
   })
   options.ipcMain.handle(IPC.analysis.startJupyter, async (_, cwd: string) => {
+    const activeRemote = options.notebooks
+      .activeRemoteNotebookBackends()
+      .find((backend) => backend.projectCwd === cwd)
+    if (activeRemote) return activeRemote.controller.start()
+    if (
+      options.jupyter.serverRegistry.activeStatuses().some((server) => server.projectCwd === cwd)
+    ) {
+      return options.jupyter.serverRegistry.start(cwd)
+    }
     const workspace = options.notebooks.resolveWorkspaceByCwd(cwd)
     if (!workspace) {
       throw new Error('请选择一个已添加的项目或当前 workspace')
@@ -259,6 +286,22 @@ function registerJupyterIpc(options: AnalysisIpcOptions): void {
   options.ipcMain.handle(
     IPC.analysis.stopJupyter,
     async (_, cwd: string, handlerOptions?: { abandonUnconfirmed?: boolean }) => {
+      const activeRemote = options.notebooks
+        .activeRemoteNotebookBackends()
+        .find((backend) => backend.projectCwd === cwd)
+      if (activeRemote) {
+        await activeRemote.sessions.closeProject(cwd)
+        return activeRemote.controller.stop({
+          abandonUnconfirmed: handlerOptions?.abandonUnconfirmed === true
+        })
+      }
+      if (
+        options.jupyter.serverRegistry.activeStatuses().some((server) => server.projectCwd === cwd)
+      ) {
+        await options.jupyter.localSessions.closeProject(cwd)
+        options.jupyter.fileWatcher.unwatchProject(cwd)
+        return options.jupyter.serverRegistry.stop(cwd)
+      }
       const workspace = options.notebooks.resolveWorkspaceByCwd(cwd)
       if (!workspace) {
         throw new Error('请选择一个已添加的项目或当前 workspace')

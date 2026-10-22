@@ -1267,6 +1267,10 @@ async function harness(
     loadFile = this.loadURL
   }
   class TestJupyterServerRegistry {
+    private readonly active = new Map<string, Record<string, unknown>>()
+    activeStatuses(): Record<string, unknown>[] {
+      return [...this.active.values()]
+    }
     connection(workingDirectory: string): Record<string, unknown> | null {
       jupyterServerCalls.push({ action: 'connection', cwd: workingDirectory })
       return null
@@ -1281,16 +1285,19 @@ async function harness(
     }
     start(workingDirectory: string): Record<string, unknown> {
       jupyterServerCalls.push({ action: 'start', cwd: workingDirectory })
-      return {
+      const status = {
         projectCwd: workingDirectory,
         state: 'starting',
         pid: 2026,
         hasEndpoint: false,
         message: '正在启动 Jupyter Server'
       }
+      this.active.set(workingDirectory, status)
+      return status
     }
     stop(workingDirectory: string): Record<string, unknown> {
       jupyterServerCalls.push({ action: 'stop', cwd: workingDirectory })
+      this.active.delete(workingDirectory)
       return {
         projectCwd: workingDirectory,
         state: 'stopped',
@@ -1300,6 +1307,7 @@ async function harness(
     }
     disposeAll(): void {
       jupyterServerCalls.push({ action: 'disposeAll', cwd: '*' })
+      this.active.clear()
     }
   }
   class TestAnalysisNotebookSessionRegistry {
@@ -5490,6 +5498,24 @@ test('before quit waits for browser cleanup and resumes app quit exactly once', 
   assert.equal(app.appQuitCount(), 1)
 })
 
+test('before quit releases local and remote Jupyter servers', async () => {
+  const app = await harness()
+  const remote = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    cwd: string
+  }
+  await app.invoke('analysis:startJupyter', remote.cwd)
+  await app.invoke('analysis:startJupyter', '/projects/research')
+
+  app.beforeQuit()
+  for (let attempt = 0; attempt < 20 && app.appQuitCount() === 0; attempt += 1) {
+    await tick()
+  }
+
+  assert.equal(app.appQuitCount(), 1)
+  assert.ok(app.jupyterServerCalls.some((call) => call.action === 'disposeAll'))
+  assert.ok(app.remoteNotebookCalls.some((call) => call.action === 'dispose'))
+})
+
 test('before quit does not wait for a hung runtime abort after browser cleanup', async () => {
   const session = new FakeSession('hung-abort.jsonl')
   session.hold = true
@@ -7410,6 +7436,7 @@ const expectedStartupRegistrationOrder = [
   'analysis:createNotebook',
   'analysis:closeNotebook',
   'analysis:deleteNotebook',
+  'analysis:listJupyterRuntimeStatuses',
   'analysis:listKernels',
   'analysis:jupyterStatus',
   'analysis:jupyterRuntimeStatus',
@@ -10087,6 +10114,9 @@ test('main IPC: remote analysis routes files and Jupyter only through the SSH ba
   const closed = (await app.invoke('analysis:closeNotebook', current.cwd, opened.path)) as {
     path: string
   }
+  const serversAfterNotebookClose = (await app.invoke(
+    'analysis:listJupyterRuntimeStatuses'
+  )) as Array<{ server: { projectCwd: string; state: string } }>
   const stopped = (await app.invoke('analysis:stopJupyter', current.cwd)) as { state: string }
 
   assert.equal(registry.projectCwd, '/canonical/project')
@@ -10111,6 +10141,10 @@ test('main IPC: remote analysis routes files and Jupyter only through the SSH ba
   assert.equal(interrupted.state, 'idle')
   assert.equal(closedSession.state, 'disconnected')
   assert.equal(closed.path, '/canonical/project/notebooks/remote.ipynb')
+  assert.deepEqual(
+    serversAfterNotebookClose.map(({ server }) => [server.projectCwd, server.state]),
+    [['/canonical/project', 'ready']]
+  )
   assert.equal(stopped.state, 'stopped')
   assert.equal(
     app.notebookSessionCalls.filter(
@@ -10178,7 +10212,7 @@ test('main IPC: deleting a remote project disposes its Notebook backend first', 
   )
 })
 
-test('main IPC: deleting the bound remote session disposes its Notebook backend', async () => {
+test('main IPC: deleting a conversation leaves its project Jupyter server running', async () => {
   const app = await harness()
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     path: string
@@ -10190,7 +10224,44 @@ test('main IPC: deleting the bound remote session disposes its Notebook backend'
 
   assert.deepEqual(
     app.remoteNotebookCalls.filter((call) => call.action === 'dispose'),
-    [{ action: 'dispose' }]
+    []
+  )
+  const active = (await app.invoke('analysis:listJupyterRuntimeStatuses')) as Array<{
+    server: { projectCwd: string }
+  }>
+  assert.deepEqual(
+    active.map(({ server }) => server.projectCwd),
+    ['/canonical/project']
+  )
+})
+
+test('main IPC: local and remote Jupyter servers remain listed across conversation switches', async () => {
+  const app = await harness()
+  const remote = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    cwd: string
+  }
+  await app.invoke('analysis:startJupyter', remote.cwd)
+  await app.invoke('analysis:startJupyter', '/projects/research')
+  await app.invoke('sessions:create')
+
+  const statuses = (await app.invoke('analysis:listJupyterRuntimeStatuses')) as Array<{
+    server: { projectCwd: string; runtimeKind?: string }
+  }>
+  assert.deepEqual(
+    statuses.map(({ server }) => [server.projectCwd, server.runtimeKind ?? 'local']),
+    [
+      ['/projects/research', 'local'],
+      ['/canonical/project', 'ssh']
+    ]
+  )
+
+  await app.invoke('analysis:stopJupyter', '/canonical/project')
+  const remaining = (await app.invoke('analysis:listJupyterRuntimeStatuses')) as Array<{
+    server: { projectCwd: string }
+  }>
+  assert.deepEqual(
+    remaining.map(({ server }) => server.projectCwd),
+    ['/projects/research']
   )
 })
 

@@ -93,6 +93,10 @@ test('recovery banner: a confirmed connection shows a failed UI refresh without 
     message: '正在处理原会话的恢复请求。'
   }
   const connecting = renderToStaticMarkup(createElement(Banner, { api, target }))
+  assert.match(
+    readFileSync('src/renderer/src/features/chat/components/RuntimeRecoveryBanner.tsx', 'utf8'),
+    /alignItems: 'center'[\s\S]*'& \.MuiAlert-icon': \{ py: 0 \}[\s\S]*'& \.MuiAlert-message': \{ py: 0, display: 'flex', alignItems: 'center' \}/
+  )
   assert.match(connecting, /data-phi-runtime-reconnecting="true"/)
   assert.match(connecting, /正在连接远程会话/)
   assert.match(connecting, /role="status"/)

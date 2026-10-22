@@ -895,6 +895,7 @@ export interface RendererApi
   listAnalysisKernels: (cwd?: string) => Promise<AnalysisKernelDiagnostics>
   getAnalysisJupyterStatus: (cwd: string) => Promise<JupyterServerStatus>
   getAnalysisJupyterRuntimeStatus: (cwd: string) => Promise<AnalysisJupyterRuntimeStatus>
+  listAnalysisJupyterRuntimeStatuses: () => Promise<AnalysisJupyterRuntimeStatus[]>
   startAnalysisJupyter: (cwd: string) => Promise<JupyterServerStatus>
   stopAnalysisJupyter: (
     cwd: string,

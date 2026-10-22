@@ -1079,6 +1079,7 @@ declare global {
       listAnalysisKernels: (cwd?: string) => Promise<PreloadAnalysisKernelDiagnostics>
       getAnalysisJupyterStatus: (cwd: string) => Promise<PreloadJupyterServerStatus>
       getAnalysisJupyterRuntimeStatus: (cwd: string) => Promise<PreloadAnalysisJupyterRuntimeStatus>
+      listAnalysisJupyterRuntimeStatuses: () => Promise<PreloadAnalysisJupyterRuntimeStatus[]>
       publishNotebookOutputFrame: (html: string) => Promise<string>
       releaseNotebookOutputFrame: (url: string) => Promise<void>
       startAnalysisJupyter: (cwd: string) => Promise<PreloadJupyterServerStatus>

@@ -35,6 +35,7 @@ function runtimeHarness(): {
     open: number
     startJupyter: number
     execute: number
+    snackbars: string[]
     sync: Array<{ document: unknown; revision: string }>
   }
   setDisk: (file: AnalysisNotebookFile) => void
@@ -81,6 +82,7 @@ function runtimeHarness(): {
     open: 0,
     startJupyter: 0,
     execute: 0,
+    snackbars: [] as string[],
     sync: [] as Array<{ document: unknown; revision: string }>
   }
   let jupyterStatus: JupyterServerStatus = {
@@ -209,7 +211,9 @@ function runtimeHarness(): {
     rendererApi: api,
     getActiveCwd: () => cwd,
     projectsRef: { current: [] },
-    showSnackbar: () => {},
+    showSnackbar: (message: string) => {
+      calls.snackbars.push(message)
+    },
     onNavigateToNotebookView: () => {}
   }
   let state: AnalysisNotebookRuntimeState
@@ -337,7 +341,80 @@ test('running a cell with stopped remote Jupyter opens a start dialog without ch
   runtime.dispose()
 })
 
-test('a failed one-click Jupyter start keeps the cell unchanged and the dialog actionable', async () => {
+test('accepting remote Jupyter startup dismisses the cell prompt even before the server is ready', async () => {
+  const runtime = runtimeHarness()
+  const file = notebookFile('print("wait for remote Jupyter")')
+  await runtime.activate(file)
+  runtime.setStartJupyter(async () => ({
+    projectCwd: '/project',
+    runtimeKind: 'ssh',
+    state: 'disconnected',
+    hasEndpoint: false
+  }))
+
+  await runtime.state.onRunAnalysisNotebookCell(file, file.document, 'cell-1')
+  await runtime.flush()
+  assert.equal(runtime.state.pendingJupyterCellStart?.cellId, 'cell-1')
+
+  await runtime.state.onStartJupyterForPendingCell()
+  await runtime.flush()
+  assert.equal(runtime.calls.startJupyter, 1)
+  assert.equal(runtime.state.pendingJupyterCellStart, null)
+  assert.equal(runtime.calls.execute, 0)
+  runtime.dispose()
+})
+
+test('the Jupyter start prompt closes while a remote startup request is still pending', async () => {
+  const runtime = runtimeHarness()
+  const file = notebookFile('print("wait")')
+  await runtime.activate(file)
+  let resolveStart!: (status: JupyterServerStatus) => void
+  runtime.setStartJupyter(
+    () =>
+      new Promise((resolve) => {
+        resolveStart = resolve
+      })
+  )
+
+  await runtime.state.onRunAnalysisNotebookCell(file, file.document, 'cell-1')
+  await runtime.flush()
+  const start = runtime.state.onStartJupyterForPendingCell()
+  await runtime.flush()
+
+  assert.equal(runtime.state.pendingJupyterCellStart, null)
+  assert.equal(runtime.calls.startJupyter, 1)
+  resolveStart({ projectCwd: '/project', runtimeKind: 'ssh', state: 'ready', hasEndpoint: true })
+  await start
+  await runtime.flush()
+  assert.equal(runtime.state.pendingJupyterCellStart, null)
+  runtime.dispose()
+})
+
+test('two quick clicks on Start Jupyter submit only one startup request', async () => {
+  const runtime = runtimeHarness()
+  const file = notebookFile('print("once")')
+  await runtime.activate(file)
+  let resolveStart!: (status: JupyterServerStatus) => void
+  runtime.setStartJupyter(
+    () =>
+      new Promise((resolve) => {
+        resolveStart = resolve
+      })
+  )
+
+  await runtime.state.onRunAnalysisNotebookCell(file, file.document, 'cell-1')
+  await runtime.flush()
+  const first = runtime.state.onStartJupyterForPendingCell()
+  const second = runtime.state.onStartJupyterForPendingCell()
+  assert.equal(runtime.calls.startJupyter, 1)
+
+  resolveStart({ projectCwd: '/project', runtimeKind: 'ssh', state: 'ready', hasEndpoint: true })
+  await Promise.all([first, second])
+  await runtime.flush()
+  runtime.dispose()
+})
+
+test('a failed one-click Jupyter start closes the prompt and reports the error', async () => {
   const runtime = runtimeHarness()
   const file = notebookFile('print("not run")')
   await runtime.activate(file)
@@ -351,8 +428,9 @@ test('a failed one-click Jupyter start keeps the cell unchanged and the dialog a
   await runtime.flush()
   assert.equal(runtime.calls.startJupyter, 1)
   assert.equal(runtime.calls.execute, 0)
-  assert.equal(runtime.state.pendingJupyterCellStart?.cellId, 'cell-1')
+  assert.equal(runtime.state.pendingJupyterCellStart, null)
   assert.match(runtime.state.analysisJupyterError ?? '', /environment is unavailable/)
+  assert.match(runtime.calls.snackbars.at(-1) ?? '', /environment is unavailable/)
   assert.equal(runtime.state.activeAnalysisNotebook, file)
   runtime.dispose()
 })

@@ -1419,7 +1419,7 @@ const notebookToolExecutor = new AnalysisNotebookToolExecutor({
 })
 const remoteJupyterStartJobs = new RemoteJupyterStartJobs()
 const {
-  remoteNotebookSessionIds,
+  activeRemoteNotebookBackends,
   remoteNotebookBackend,
   resolveRemoteNotebookToolBackend,
   disposeRemoteNotebookBackend,
@@ -3977,10 +3977,7 @@ function createSessionsIpcOptions(
     },
     remote: {
       scheduleRemoteProjectCheck,
-      observeRemote: (projectId, operation) =>
-        remoteConnectionTracker.observe(projectId, operation),
-      remoteNotebookSessionIds,
-      disposeRemoteNotebookBackend
+      observeRemote: (projectId, operation) => remoteConnectionTracker.observe(projectId, operation)
     },
     browser: {
       getRegistry: () => runtime.workspaceServices.browserWorkspaceRegistry
@@ -4056,12 +4053,14 @@ function registerProjectAndAnalysisIpc(): void {
     notebooks: {
       resolveWorkspaceByCwd: resolveAnalysisWorkspaceByCwd,
       operations: analysisNotebookOperations,
-      activePathByProjectCwd: activeNotebookPathByProjectCwd
+      activePathByProjectCwd: activeNotebookPathByProjectCwd,
+      activeRemoteNotebookBackends
     },
     jupyter: {
       getCurrentCwd: () => sessionState.cwd,
       isRemoteAnalysisCwd,
       serverRegistry: jupyterServerRegistry,
+      localSessions: notebookSessionRegistry,
       executor: notebookExecutor,
       fileWatcher: notebookFileWatcher,
       ensureServerReady: ensureJupyterServerReady

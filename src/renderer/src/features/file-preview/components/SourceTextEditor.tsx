@@ -40,7 +40,7 @@ import { Box } from '@mui/material'
 import { alpha, useTheme } from '@mui/material/styles'
 import { languageForPath } from '../../../lib/syntaxHighlight'
 import { codeMirrorHighlightStyle } from '../../../lib/syntaxTheme'
-import { inlineMarkdownExtension, inlineMarkdownTheme } from '../lib/inlineMarkdown'
+import { inlineMarkdownExtension, inlineMarkdownTheme } from '../../../lib/markdown/inlineMarkdown'
 
 export type SourceTextEditorProps = {
   value: string

@@ -9,7 +9,6 @@ const samples: MarkdownInsertSamples = {
   text: 'text',
   link: 'link',
   formula: 'E = mc^2',
-  code: 'code',
   image: 'image',
   list: 'item',
   quote: 'quote',
@@ -55,8 +54,15 @@ test('lists, quotes, code, and tables insert as blocks without sticking to the p
   assert.equal(quote.value, '> a\n> b')
 
   const code = insertMarkdown('', 0, 0, 'codeBlock', samples)
-  assert.equal(code.value, '```\ncode\n```')
-  assert.equal(code.value.slice(code.selectionStart, code.selectionEnd), 'code')
+  assert.equal(code.value, '```text\n\n```')
+  assert.equal(code.value.slice(code.selectionStart, code.selectionEnd), 'text')
+
+  const selectedCode = insertMarkdown('print(1)', 0, 8, 'codeBlock', samples)
+  assert.equal(selectedCode.value, '```text\nprint(1)\n```')
+  assert.equal(
+    selectedCode.value.slice(selectedCode.selectionStart, selectedCode.selectionEnd),
+    'text'
+  )
 
   const table = insertMarkdown('', 0, 0, 'table', samples)
   assert.equal(table.value, '| A | B |\n| --- | --- |\n|  |  |')

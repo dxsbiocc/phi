@@ -7,7 +7,7 @@ import {
   inlineMarkdownExtension,
   markdownBlockIsSelected,
   markdownOffsetForVisibleText
-} from '../src/renderer/src/features/file-preview/lib/inlineMarkdown'
+} from '../src/renderer/src/lib/markdown/inlineMarkdown'
 
 const source =
   '# Title\n\nParagraph **bold**.\n\n- A\n- B\n\n| a | b |\n|---|---|\n| x | y |\n\n```js\nx()\n```\n\n[ref]: https://example.com\n'

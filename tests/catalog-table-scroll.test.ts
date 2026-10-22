@@ -39,6 +39,8 @@ test('catalog tables reserve the scrollbar slot inside the right padding', () =>
   const table = readFileSync('src/renderer/src/components/catalog/CatalogResultsTable.tsx', 'utf8')
   const layout = readFileSync('src/renderer/src/components/catalog/CatalogBrowseLayout.tsx', 'utf8')
   assert.match(table, /scrollbarGutter: 'stable'/)
+  assert.match(table, /bgcolor: 'background.paper'/)
+  assert.match(table, /borderCollapse: 'separate'/)
   assert.match(table, /width: `calc\(100% \+ \$\{CATALOG_SCROLLBAR_GUTTER\}\)`/)
   assert.match(table, /mr: `-\$\{CATALOG_SCROLLBAR_GUTTER\}`/)
   assert.match(layout, /scrollbarGutter: scrollContent \? 'stable' : 'auto'/)

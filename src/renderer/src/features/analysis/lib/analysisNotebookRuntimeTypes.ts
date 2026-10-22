@@ -82,7 +82,7 @@ export type AnalysisNotebookRuntimeState = {
   onStartAnalysisJupyter: (cwd: string) => Promise<void>
   onStartJupyterForPendingCell: () => Promise<void>
   onDismissJupyterCellStart: () => void
-  onStopAnalysisJupyter: (cwd: string) => Promise<void>
+  onStopAnalysisJupyter: (cwd: string, options?: { abandonUnconfirmed?: boolean }) => Promise<void>
   onStartAnalysisNotebookSession: (
     file: AnalysisNotebookFile,
     document: AnalysisNotebookFile['document']
