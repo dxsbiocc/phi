@@ -1,5 +1,4 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
-import { appendFileSync } from 'node:fs'
 import http2, {
   type ClientHttp2Session,
   type Http2Server,
@@ -9,12 +8,9 @@ import http2, {
   type ServerHttp2Stream
 } from 'node:http2'
 
-import { CURSOR_DEFAULT_BASE_URL, CURSOR_RUN_PATH } from '@oh-my-pi/pi-catalog/wire/cursor'
+import { CURSOR_DEFAULT_BASE_URL, CURSOR_RUN_PATH } from '../omp-cursor-wire'
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024
-const debug = (message: string): void => {
-  appendFileSync('/private/tmp/phi-cursor-h2-debug.log', `${Date.now()} ${message}\n`)
-}
 const MAX_REQUEST_BYTES = 128 * 1024 * 1024
 const REQUEST_HEADER_NAMES = [
   'content-type',
@@ -179,7 +175,6 @@ function checkedModel(payload: Buffer, allowed: ReadonlySet<string>): string {
   // Rich Cursor routes can use different requested and display IDs. Until the lease
   // carries exact route pairs, reject those routes instead of guessing their scope.
   if (!details || details !== requested || !allowed.has(details)) {
-    debug(`route details=${details} requested=${requested} allowed=${[...allowed].join(',')}`)
     throw new Error('model outside lease')
   }
   return details
@@ -274,8 +269,6 @@ export async function createScopedCursorH2Gateway(
               }
               request = upstream.request(requestHeaders)
               request.on('response', (incoming) => {
-                console.error('[phi-cursor-h2] response status', incoming[':status'])
-                debug(`response ${incoming[':status']}`)
                 if (stream.destroyed || stream.closed) return
                 const outgoing: OutgoingHttpHeaders = { ':status': incoming[':status'] ?? 502 }
                 for (const [name, value] of Object.entries(incoming)) {
@@ -287,8 +280,6 @@ export async function createScopedCursorH2Gateway(
               })
               let trailers: IncomingHttpHeaders = {}
               request.on('trailers', (value) => {
-                console.error('[phi-cursor-h2] grpc status', value['grpc-status'])
-                debug(`trailers ${value['grpc-status']} ${value['grpc-message']}`)
                 trailers = value
               })
               stream.on('wantTrailers', () => {
@@ -328,9 +319,7 @@ export async function createScopedCursorH2Gateway(
         }
         if (first || pending.length || !request) throw new Error('incomplete request')
         request.end()
-      } catch (error) {
-        console.error('[phi-cursor-h2] rejected', error instanceof Error ? error.message : 'unknown')
-        debug(`rejected ${error instanceof Error ? error.message : 'unknown'}`)
+      } catch {
         fail(403)
       }
     })()

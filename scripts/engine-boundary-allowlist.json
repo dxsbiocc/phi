@@ -129,6 +129,12 @@
       "plan": "keep"
     },
     {
+      "file": "src/main/agent/engine/omp-cursor-wire.ts",
+      "specifiers": ["@oh-my-pi/pi-catalog/wire/cursor"],
+      "purpose": "Cursor Connect host and Run path for the desktop scoped H2 gateway, kept out of omp-internals.ts so Node-run gateway tests do not load catalog JSON imports",
+      "plan": "keep"
+    },
+    {
       "file": "src/main/agent/engine/omp-web-search.ts",
       "specifiers": ["@oh-my-pi/pi-coding-agent/web/search/types"],
       "purpose": "Web search provider choices kept apart from omp-internals.ts so Node-run settings code does not load OMP modules that need JSON import attributes",
