@@ -193,3 +193,17 @@ export function assertSafeBrowserHistory(messages: unknown): void {
 export function assertBrowserHistoryPrivate(payload: unknown): void {
   if (record(payload) && record(payload.context)) assertSafeBrowserHistory(payload.context.messages)
 }
+
+/**
+ * The browser text vault protects pi-native model requests. Cursor's native H2
+ * transport has no equivalent text projection, so a generation that can select
+ * Cursor does not receive the browser tool.
+ */
+export function cursorSafeHostTools<T extends { readonly name: string }>(options: {
+  readonly tools: readonly T[]
+  readonly transport: { readonly models: readonly { readonly provider: string }[] }
+}): readonly T[] {
+  return options.transport.models.some((model) => model.provider === 'cursor')
+    ? options.tools.filter((tool) => tool.name !== 'browser')
+    : options.tools
+}

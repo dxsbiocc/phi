@@ -3,7 +3,8 @@ import test from 'node:test'
 import { BrowserTextVault } from '../src/main/agent/browser/browser-text-vault'
 import {
   assertBrowserHistoryPrivate,
-  browserToolStreamProjector
+  browserToolStreamProjector,
+  cursorSafeHostTools
 } from '../src/main/agent/engine/rpc/browser-tool-stream'
 
 const raw = {
@@ -15,6 +16,21 @@ const raw = {
 }
 const block = { type: 'toolCall', id: 'call', name: 'browser', arguments: raw }
 const message = { content: [block] }
+test('a cursor generation does not receive the browser host tool', () => {
+  const tools = [{ name: 'browser' }, { name: 'read' }]
+  const kept = (providers: string[]): string[] =>
+    cursorSafeHostTools({
+      tools,
+      transport: { models: providers.map((provider) => ({ provider })) }
+    }).map((tool) => tool.name)
+  assert.deepEqual(kept(['cursor']), ['read'])
+  assert.deepEqual(kept(['anthropic', 'cursor']), ['read'])
+  assert.equal(
+    cursorSafeHostTools({ tools, transport: { models: [{ provider: 'anthropic' }] } }),
+    tools
+  )
+})
+
 test('browser deltas, provider replay JSON and error snapshots never expose typed arguments', () => {
   const vault = new BrowserTextVault(),
     stop = new AbortController()

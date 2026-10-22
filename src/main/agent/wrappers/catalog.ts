@@ -320,6 +320,8 @@ function installedPayloadMatches(
   })
 }
 
+export { startLegacyBundledCleanup } from './legacy-bundled-cleanup'
+
 /** Preserve user-authored legacy wrappers without installing the bundled catalogue. */
 export function migrateLegacyCustomWrappers(agentDir: string): string[] {
   const migrated: string[] = []
