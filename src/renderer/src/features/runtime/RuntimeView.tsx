@@ -209,7 +209,7 @@ function RuntimeSidebarSection({
         boxShadow: 'none !important',
         '&:before': { display: 'none' },
         '&.Mui-expanded': { m: '0 !important' },
-        '&:hover .runtime-sidebar-row-actions, &:has(:focus-visible) .runtime-sidebar-row-actions':
+        '&:has([data-phi-runtime-summary]:hover) [data-phi-runtime-sidebar-server-actions], &:has([data-phi-runtime-summary]:focus-visible) [data-phi-runtime-sidebar-server-actions], & [data-phi-runtime-sidebar-server-actions]:hover, & [data-phi-runtime-sidebar-server-actions]:focus-within':
           {
             opacity: 1,
             pointerEvents: 'auto',
@@ -273,6 +273,7 @@ function RuntimeSidebarSection({
       </AccordionSummary>
       <Stack
         className="runtime-sidebar-row-actions"
+        data-phi-runtime-sidebar-server-actions="true"
         direction="row"
         spacing={0.25}
         sx={{

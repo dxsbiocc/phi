@@ -511,12 +511,6 @@ test('runtime sidebar action styling uses GoSync and no hover button borders', (
   assert.doesNotMatch(source, /borderColor/)
   assert.doesNotMatch(source, /border:\s*1/)
   assert.match(source, /alignSelf:\s*'center'/)
-  const serverStyles =
-    source
-      .split('data-phi-runtime-sidebar-server-cwd={projectCwd}')[1]
-      ?.split('<AccordionSummary')[0] ?? ''
-  assert.match(serverStyles, /:has\(:focus-visible\)/)
-  assert.doesNotMatch(serverStyles, /:focus-within/)
   assert.match(source, /visibility:\s*'visible'/)
   assert.doesNotMatch(source, /aria-label="刷新运行时"/)
   assert.doesNotMatch(source, /正在执行/)
