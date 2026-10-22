@@ -49,11 +49,11 @@ export interface RuntimeSummaryContinuation {
   readonly connected: false
 }
 export interface RuntimeRecoveryApi {
-  getRuntimeRecoveryState(target: RuntimeRecoveryTarget): Promise<RuntimeRecoveryState>
+  getRuntimeRecoveryState(target: RuntimeRecoveryTarget): Promise<RuntimeRecoveryState | null>
   resumeRuntimeSession(
     target: RuntimeRecoveryTarget,
     replacementModel?: RuntimeRecoveryModelSelection
-  ): Promise<RuntimeRecoveryState>
+  ): Promise<RuntimeRecoveryState | null>
   onSessionChanged?(
     callback: (session: {
       phiSessionId?: string

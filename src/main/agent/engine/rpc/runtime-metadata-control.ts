@@ -9,6 +9,14 @@ export interface RuntimeRenamePolicy {
   /** Reject replacement generations, anchors, references or newer desired titles. */
   assertCurrent(): void
 }
+
+/** Read-only metadata is temporarily unavailable while a remote turn owns the runtime. */
+export class RemoteMetadataBusyError extends Error {
+  constructor(owner: 'Phi session' | 'runtime') {
+    super(`Remote metadata requires an idle ${owner}`)
+    this.name = 'RemoteMetadataBusyError'
+  }
+}
 interface MetadataOwner {
   signal(): AbortSignal
   claim(): () => void

@@ -28,6 +28,13 @@ const DELETED = 'PHI_STORAGE_SESSION_DELETED\n'
 const ABSENT = 'PHI_STORAGE_SESSION_ABSENT\n'
 const VERIFIED = 'PHI_STORAGE_SESSION_VERIFIED\n'
 
+export class RemoteSessionDeleteUnavailableError extends Error {
+  constructor(cause?: unknown) {
+    super('无法确认服务器会话状态；本地记录已保留，请连接后核对并重试', { cause })
+    this.name = 'RemoteSessionDeleteUnavailableError'
+  }
+}
+
 /** All paths and expected bytes come from a validated durable reference, never renderer input. */
 export function buildRemoteSessionDeleteCommand(
   scope: RemoteSessionScope,
@@ -121,7 +128,7 @@ function assertRemoteResponse(
       '服务器会话身份或文件校验失败，已停止删除'
     )
   }
-  throw new Error('服务器未确认远程会话状态；本地记录已保留，请检查连接后重试')
+  throw new RemoteSessionDeleteUnavailableError()
 }
 
 async function runCommand(
@@ -129,9 +136,14 @@ async function runCommand(
   command: string,
   mode: 'verify' | 'delete'
 ): Promise<void> {
-  const result = remote.execBounded
-    ? await remote.execBounded(command, { timeoutMs: 30_000, maxOutputBytes: 4096 })
-    : await remote.exec(command)
+  let result: Awaited<ReturnType<RemoteSshSession['exec']>>
+  try {
+    result = remote.execBounded
+      ? await remote.execBounded(command, { timeoutMs: 30_000, maxOutputBytes: 4096 })
+      : await remote.exec(command)
+  } catch (cause) {
+    throw new RemoteSessionDeleteUnavailableError(cause)
+  }
   assertRemoteResponse(result, mode)
 }
 
@@ -178,7 +190,7 @@ export async function prepareRemotePhiDeletion(
       projectId: project.id
     })
   } catch (cause) {
-    throw new Error('无法连接服务器；远程会话未删除，请检查连接后重试', { cause })
+    throw new RemoteSessionDeleteUnavailableError(cause)
   }
   let closed = false
   const close = async (): Promise<void> => {

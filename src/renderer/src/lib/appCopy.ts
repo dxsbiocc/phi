@@ -29,6 +29,10 @@ const english = {
   sessionExported: (path: string) => `Chat exported to ${path}`,
   exportFailed: 'Could not export chat',
   deleteConversationFailed: 'Could not delete conversation',
+  confirmConversationDeletionFirst:
+    'Confirm deletion in the dialog before deleting this conversation.',
+  remoteDeleteRequiresConnection:
+    'Could not confirm deletion on the remote server. The local conversation was kept; reconnect, check the server, and try again.',
   wrongRemoteNotebook: 'This remote notebook does not belong to the current project',
   openNotebookFailed: 'Could not open notebook',
   readChatFailed: 'Could not load chat history',
@@ -115,6 +119,9 @@ const chinese: LocalizedCopy<typeof english> = {
   sessionExported: (path) => `会话已导出到 ${path}`,
   exportFailed: '导出会话失败',
   deleteConversationFailed: '删除会话失败',
+  confirmConversationDeletionFirst: '请先在确认弹窗中确认删除该会话。',
+  remoteDeleteRequiresConnection:
+    '无法确认服务器上的删除结果。本地会话已保留，请重新连接、核对服务器后重试。',
   wrongRemoteNotebook: '远程 notebook 不属于当前项目',
   openNotebookFailed: '无法打开 notebook',
   readChatFailed: '读取对话记录失败',

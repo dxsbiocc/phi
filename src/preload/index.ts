@@ -50,6 +50,7 @@ import type {
 } from '../shared/remoteDirectoryBrowser'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
+import type { SessionDeleteResult } from '../shared/sessionDeleteTypes'
 import type { RuntimeRecoveryApi } from '../shared/runtimeRecoveryTypes'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type {
@@ -899,7 +900,7 @@ type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
   ) => Promise<{ path: string; phiSessionId: string }>
   switchSession: (path: string) => Promise<SessionSwitchResult | null>
   acknowledgeSession: (path: string) => Promise<SessionSummary | null>
-  deleteSession: (path: string) => Promise<void>
+  deleteSession: (path: string, confirmed?: true) => Promise<SessionDeleteResult>
   renameSession: (path: string, name: string) => Promise<void>
   generateSessionTitle: (path: string) => Promise<string>
   exportSession: (sessionId: string) => Promise<SessionExportResult | null>
@@ -1519,7 +1520,8 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke(IPC.sessions.switch, path),
   acknowledgeSession: (path: string): Promise<SessionSummary | null> =>
     ipcRenderer.invoke(IPC.sessions.acknowledge, path),
-  deleteSession: (path: string): Promise<void> => ipcRenderer.invoke(IPC.sessions.delete, path),
+  deleteSession: (path: string, confirmed?: true): Promise<SessionDeleteResult> =>
+    ipcRenderer.invoke(IPC.sessions.delete, path, confirmed),
   renameSession: (path: string, name: string): Promise<void> =>
     ipcRenderer.invoke(IPC.sessions.rename, path, name),
   generateSessionTitle: (path: string): Promise<string> =>

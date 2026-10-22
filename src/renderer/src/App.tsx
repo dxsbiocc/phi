@@ -187,6 +187,7 @@ import type {
   AnalysisNotebookFileChange,
   EnvironmentSnapshot,
   EnvironmentToolId,
+  CurrentSession,
   McpServerSummary,
   ModelOption,
   PhiAppSettings,
@@ -305,6 +306,11 @@ function App(): React.JSX.Element {
     isExportingSession,
     setIsExportingSession
   } = useAppDialogs()
+  const homeCreateSelectRef = useRef(false)
+  const [homeCreatedProjectId, setHomeCreatedProjectId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!isNewProjectDialogOpen) homeCreateSelectRef.current = false
+  }, [isNewProjectDialogOpen])
   const {
     isSidebarOpen,
     setIsSidebarOpen,
@@ -1000,13 +1006,13 @@ function App(): React.JSX.Element {
   }, [])
 
   const openNewChat = useCallback(
-    async (initialInput?: string): Promise<void> => {
+    async (initialInput?: string): Promise<CurrentSession | null> => {
       projectSidebarSelectionRequestRef.current += 1
       const request = ++sessionRequestRef.current
       setIsSessionChanging(true)
       try {
         const current = await rendererApi.createSession()
-        if (request !== sessionRequestRef.current) return
+        if (request !== sessionRequestRef.current) return null
         setWorkspaceSidebarMode('conversations')
         applyCurrentSession(
           current,
@@ -1037,11 +1043,13 @@ function App(): React.JSX.Element {
         })
         setActiveWorkspaceTabKey(tabKey)
         navigateToView('chat')
+        return current
       } finally {
         if (request === sessionRequestRef.current) {
           setIsSessionChanging(false)
         }
       }
+      return null
     },
     [
       applyCurrentSession,
@@ -1059,7 +1067,9 @@ function App(): React.JSX.Element {
     ]
   )
 
-  const onNewChat = useCallback((): Promise<void> => openNewChat(), [openNewChat])
+  const onNewChat = useCallback(async (): Promise<void> => {
+    await openNewChat()
+  }, [openNewChat])
   const onOpenConnectorSetupAgent = useCallback(
     (prompt: string): void => {
       void openNewChat(prompt)
@@ -1155,11 +1165,23 @@ function App(): React.JSX.Element {
   )
 
   const onDeleteSession = useCallback(
-    async (path: string): Promise<void> => {
+    async (path: string, confirmed?: true): Promise<void> => {
+      if (confirmed !== true) {
+        showSnackbar(appCopy.confirmConversationDeletionFirst, 'warning')
+        return
+      }
       const request = sessionRequestRef.current
       const wasActive = path === useSessionStore.getState().activeSessionPath
       try {
-        await rendererApi.deleteSession(path)
+        const result = await rendererApi.deleteSession(path, confirmed)
+        if (result.status === 'connection-required') {
+          showSnackbar(appCopy.remoteDeleteRequiresConnection, 'warning')
+          return
+        }
+        if (result.status === 'confirmation-required') {
+          showSnackbar(appCopy.confirmConversationDeletionFirst, 'warning')
+          return
+        }
       } catch (error) {
         showSnackbarError(error, appCopy.deleteConversationFailed)
         return
@@ -1191,6 +1213,7 @@ function App(): React.JSX.Element {
       refreshCurrentModelControls,
       replaceMessages,
       refreshSessions,
+      showSnackbar,
       showSnackbarError,
       setProjectSessionRefreshKey,
       setSessionTabWasOpened
@@ -1342,7 +1365,7 @@ function App(): React.JSX.Element {
   )
 
   const onStartProjectChat = useCallback(
-    async (project: Project): Promise<void> => {
+    async (project: Project): Promise<CurrentSession | null> => {
       projectSidebarSelectionRequestRef.current += 1
       const request = ++sessionRequestRef.current
       setIsSessionChanging(true)
@@ -1354,7 +1377,7 @@ function App(): React.JSX.Element {
                 project.workingDirectory,
                 project.permissionMode
               )
-        if (request !== sessionRequestRef.current) return
+        if (request !== sessionRequestRef.current) return null
         setWorkspaceSidebarMode('projects')
         applyCurrentSession(
           current,
@@ -1374,11 +1397,13 @@ function App(): React.JSX.Element {
         setActiveWorkspaceTabKey(tabKey)
         navigateToView('chat')
         setProjectSessionRefreshKey((key) => key + 1)
+        return current
       } finally {
         if (request === sessionRequestRef.current) {
           setIsSessionChanging(false)
         }
       }
+      return null
     },
     [
       applyCurrentSession,
@@ -1403,12 +1428,24 @@ function App(): React.JSX.Element {
   ): Promise<void> => {
     const project = await rendererApi.createProject(name, workingDirectory, permissionMode)
     await refreshProjects()
+    if (homeCreateSelectRef.current) {
+      homeCreateSelectRef.current = false
+      setHomeCreatedProjectId(project.id)
+      return
+    }
     await onStartProjectChat(project)
   }
 
   const onCreateRemoteProject = async (input: RemoteProjectCreateInput): Promise<void> => {
+    const knownIds = new Set(projectsRef.current.map((project) => project.id))
     await rendererApi.createRemoteProject(input)
     await refreshProjects()
+    if (homeCreateSelectRef.current) {
+      homeCreateSelectRef.current = false
+      const created = projectsRef.current.find((project) => !knownIds.has(project.id))
+      if (created) setHomeCreatedProjectId(created.id)
+      return
+    }
     setWorkspaceSidebarMode('projects')
   }
 
@@ -1735,6 +1772,34 @@ function App(): React.JSX.Element {
       permissionModeUpdateRef.current = false
       setIsUpdatingPermissionMode(false)
     }
+  }
+
+  const onStartHomePrompt = async (request: {
+    text: string
+    projectId: string | null
+    permissionMode: PermissionMode
+  }): Promise<void> => {
+    const text = request.text.trim()
+    if (!text) return
+    const project = request.projectId
+      ? (projectsRef.current.find((item) => item.id === request.projectId) ?? null)
+      : null
+    if (project && project.permissionMode !== request.permissionMode) {
+      await onUpdateProjectPermissionMode(project.id, request.permissionMode)
+    }
+    const created = project
+      ? await onStartProjectChat({ ...project, permissionMode: request.permissionMode })
+      : await openNewChat()
+    if (!created) return
+    if (!project && created.permissionMode !== request.permissionMode) {
+      await onSelectPermissionMode(request.permissionMode)
+    }
+    await sendPromptText(text, {
+      path: created.path,
+      phiSessionId: created.phiSessionId,
+      cwd: created.cwd,
+      sessionGeneration: created.sessionGeneration
+    })
   }
 
   // Path routing: which surface opens a file, a directory, a notebook, or a
@@ -2219,11 +2284,17 @@ function App(): React.JSX.Element {
       const request = ++sessionRequestRef.current
       setIsSessionChanging(true)
       try {
-        const result = await rendererApi.switchSession(target.sessionPath)
+        // Recovery already keeps this conversation selected. Read its updated local payload
+        // instead of switching it a second time and replaying sidebar/browser navigation.
+        const result = await rendererApi.getCurrentSession()
         const latest = useSessionStore.getState()
         if (
           !result ||
           request !== sessionRequestRef.current ||
+          result.path !== target.sessionPath ||
+          result.phiSessionId !== target.sessionId ||
+          result.projectId !== target.projectId ||
+          result.sessionGeneration !== target.sessionGeneration ||
           latest.activePhiSessionId !== target.sessionId ||
           latest.activeProjectId !== target.projectId ||
           latest.activeSessionPath !== target.sessionPath ||
@@ -2237,11 +2308,11 @@ function App(): React.JSX.Element {
         // turn stop at run_failed, so replacing the list would silently drop the assistant text
         // and tool cards the user just watched. Only load from disk when nothing is loaded yet.
         if (useSessionStore.getState().agentEventState.messages.length === 0) {
-          replaceMessages(chatItemsFromSessionMessages(result.messages))
+          replaceMessages(chatItemsFromSessionMessages(result.messages ?? []))
         }
         refreshContextUsage()
         void refreshCurrentModelControls(request)
-        await refreshSessions()
+        void refreshSessions()
       } finally {
         if (request === sessionRequestRef.current) setIsSessionChanging(false)
       }
@@ -2916,6 +2987,7 @@ function App(): React.JSX.Element {
       try {
         const state = await rendererApi.getRuntimeRecoveryState(target)
         if (
+          !state ||
           !sameRuntimeRecoveryTarget(
             remoteRecoveryTargetForSession(useSessionStore.getState()),
             target
@@ -2926,7 +2998,7 @@ function App(): React.JSX.Element {
         startedConnection = true
         setAutoConnectingSessionId(target.sessionId)
         const recovered = await rendererApi.resumeRuntimeSession(target)
-        await onRuntimeRecovered(recovered)
+        if (recovered) await onRuntimeRecovered(recovered)
       } catch (error) {
         if (
           sameRuntimeRecoveryTarget(
@@ -3350,11 +3422,19 @@ function App(): React.JSX.Element {
       wrapperCatalog={wrapperCatalog}
       lastClosedSessionPath={activeSessionPath}
       onLoadResources={loadHomeResources}
-      onNewChat={() => void onNewChatFromSidebar()}
-      onShowProjects={() => {
-        setWorkspaceSidebarMode('projects')
-        setIsSidebarOpen(true)
+      models={models}
+      selectedModel={selectedModel}
+      thinkingLevel={thinkingLevel}
+      busy={isSessionChanging}
+      onSelectModel={(model) => void onSelectModel(model)}
+      onSelectThinkingLevel={(level) => void onSelectThinkingLevel(level)}
+      onUpdateProjectPermissionMode={onUpdateProjectPermissionMode}
+      createdProjectId={homeCreatedProjectId}
+      onNewProject={() => {
+        homeCreateSelectRef.current = true
+        setIsNewProjectDialogOpen(true)
       }}
+      onStartPrompt={(request) => onStartHomePrompt(request)}
       onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
     />
   )

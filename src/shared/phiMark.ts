@@ -1,0 +1,3 @@
+/** Watercolor phi stroke shared by the startup splash and the home mark. */
+export const PHI_MARK_PATH =
+  'M172 132 C128 164 116 222 134 270 C151 315 189 329 239 329 C302 329 354 299 376 250 C399 199 377 125 326 116 C279 108 249 142 248 205 L247 320 C247 354 245 382 226 418'

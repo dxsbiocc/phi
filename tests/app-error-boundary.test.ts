@@ -49,6 +49,34 @@ test('unrelated global errors do not replace the chat with the render error page
   }
 })
 
+test('the recovery page follows the saved theme instead of the original teal chrome', () => {
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  const stored = new Map<string, string>([
+    ['phi-theme-mode', 'dark'],
+    ['phi-theme-palette', 'minimal']
+  ])
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key: string) => stored.get(key) ?? null
+    }
+  })
+  try {
+    const boundary = new AppErrorBoundary({ children: 'chat' })
+    boundary.state = {
+      ...boundary.state,
+      ...AppErrorBoundary.getDerivedStateFromError(new Error('render failure'))
+    }
+    const markup = renderToStaticMarkup(boundary.render() as ReactElement)
+    assert.match(markup, /#0D1218/i)
+    assert.match(markup, /#00A76F/i)
+    assert.doesNotMatch(markup, /#0B262D|#123640|#2E9FB3/i)
+  } finally {
+    if (previousStorage) Object.defineProperty(globalThis, 'localStorage', previousStorage)
+    else Reflect.deleteProperty(globalThis, 'localStorage')
+  }
+})
+
 test('a React render failure still shows the recovery page', () => {
   const boundary = new AppErrorBoundary({ children: 'chat' })
   boundary.state = {

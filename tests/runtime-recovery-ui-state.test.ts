@@ -54,6 +54,19 @@ test('recovery UI: replacement values can select only returned inventory and nev
   )
 })
 
+test('recovery hook quietly ignores superseded status and resume results', async () => {
+  const app = await hookHarness({
+    getRuntimeRecoveryState: async () => null,
+    resumeRuntimeSession: async () => null
+  })
+  assert.equal(app.read().state, null)
+  assert.equal(app.read().error, null)
+  await app.read().resume()
+  assert.equal(app.read().pending, false)
+  assert.equal(app.read().error, null)
+  assert.deepEqual(app.recovered, [])
+})
+
 type HookResult = ReturnType<
   typeof import('../src/renderer/src/features/chat/hooks/useRuntimeRecovery').useRuntimeRecovery
 >

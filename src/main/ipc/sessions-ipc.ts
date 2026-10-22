@@ -5,13 +5,17 @@ import type {
   ManualCompactionOutcome
 } from '../../shared/contextUsageTypes'
 import { IPC } from '../../shared/ipcChannels'
+import type { SessionDeleteResult } from '../../shared/sessionDeleteTypes'
 import { writeAppLog } from '../agent/app-logger'
 import { readAppSettings } from '../agent/app-settings'
 import { getPhiEngine } from '../agent/engine/in-process-engine'
 import type { PermissionMode } from '../agent/projects'
 import { getProject } from '../agent/projects'
 import { exportPhiSession } from '../agent/session/session-export'
-import { prepareRemotePhiDeletion } from '../agent/session/remote-session-delete'
+import {
+  prepareRemotePhiDeletion,
+  RemoteSessionDeleteUnavailableError
+} from '../agent/session/remote-session-delete'
 import { readPhiTimelineMessages } from '../agent/session/phi-timeline-messages'
 import { validateSessionPermissionModeUpdate } from '../agent/session/permission-mode-control'
 import {
@@ -166,6 +170,15 @@ export interface SessionsIpcOptions {
   }
 }
 
+async function quietSupersededRecovery<T>(operation: () => Promise<T>): Promise<T | null> {
+  try {
+    return await operation()
+  } catch (error) {
+    if (isStaleSessionError(error)) return null
+    throw error
+  }
+}
+
 /* eslint-disable complexity, max-lines-per-function -- Preserves the contiguous session handlers verbatim. */
 export function registerSessionsIpc(options: SessionsIpcOptions): void {
   const ipcMain = options.ipcMain
@@ -182,12 +195,14 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
   ipcMain.handle(IPC.sessions.current, async () => reads.getCurrentSessionPayloadWithMessages())
   ipcMain.handle(IPC.sessions.contextUsage, async () => reads.getCurrentContextUsage())
   ipcMain.handle(IPC.sessions.runtimeRecovery, async (_, target: unknown) =>
-    runtimeRecoveryController.getState(target)
+    quietSupersededRecovery(() => runtimeRecoveryController.getState(target))
   )
   ipcMain.handle(IPC.sessions.resumeRuntime, async (_, value: unknown, replacement?: unknown) => {
     const target = runtimeRecoveryTarget(value)
-    return options.remote.observeRemote(target.projectId, () =>
-      runtimeRecoveryController.resume(target, replacement)
+    return quietSupersededRecovery(() =>
+      options.remote.observeRemote(target.projectId, () =>
+        runtimeRecoveryController.resume(target, replacement)
+      )
     )
   })
   ipcMain.handle(IPC.sessions.continueRuntimeSummary, async (_, target: unknown, sha256: unknown) =>
@@ -395,81 +410,102 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
       : (await lifecycle.openRuntimeSessionManager(path)).getCwd()
     return acknowledgeSession(path, cwd)
   })
-  ipcMain.handle(IPC.sessions.delete, async (_, path: string) => {
-    const deletionCwd = state.getCurrentCwd()
-    const phiSessionId = phiSessionIdFromPath(path)
-    const manifest = phiSessionId
-      ? findPhiSessionById(phiSessionId)
-      : findPhiSessionByRuntimePath(path, deletionCwd)
-    if ((manifest?.runtimeRef || manifest?.runtimeRecoveryError) && !phiSessionId)
-      throw new Error('远程会话必须使用 Phi 会话标识删除')
-    const remoteDeletion =
-      phiSessionId && (manifest?.runtimeRef || manifest?.runtimeRecoveryError)
-        ? await prepareRemotePhiDeletion(phiSessionId)
-        : undefined
-    const wasCurrent = state.getCurrentSessionPath() === path
-    try {
-      options.titles.getGeneratorIfCreated()?.cancel(path)
-      const activeEntry = status
-        .activePromptEntries()
-        .find(([, run]) => run.phiSessionId === manifest?.sessionId)
-      if (activeEntry) await status.stopPromptRun(activeEntry[0], activeEntry[1])
-      if (remoteDeletion && manifest) {
-        const key = identity.resolveSessionKeyAlias(identity.createSessionKey(path, manifest.cwd))
-        const record = lifecycle.getLifecycleForKey(key).advance()
-        await lifecycle.cleanupSessionRecord(record, { cancelApprovals: true })
+  ipcMain.handle(
+    IPC.sessions.delete,
+    async (_, path: string, confirmed?: true): Promise<SessionDeleteResult> => {
+      const deletionCwd = state.getCurrentCwd()
+      const phiSessionId = phiSessionIdFromPath(path)
+      const manifest = phiSessionId
+        ? findPhiSessionById(phiSessionId)
+        : findPhiSessionByRuntimePath(path, deletionCwd)
+      // Reject legacy one-argument calls from stale menus before touching remote history.
+      if (
+        (manifest?.projectLocation?.kind === 'ssh' ||
+          manifest?.runtimeRef ||
+          manifest?.runtimeRecoveryError) &&
+        confirmed !== true
+      )
+        return { status: 'confirmation-required' }
+      if ((manifest?.runtimeRef || manifest?.runtimeRecoveryError) && !phiSessionId)
+        throw new Error('远程会话必须使用 Phi 会话标识删除')
+      let remoteDeletion: Awaited<ReturnType<typeof prepareRemotePhiDeletion>> | undefined
+      try {
+        remoteDeletion =
+          phiSessionId && (manifest?.runtimeRef || manifest?.runtimeRecoveryError)
+            ? await prepareRemotePhiDeletion(phiSessionId)
+            : undefined
+      } catch (error) {
+        if (error instanceof RemoteSessionDeleteUnavailableError)
+          return { status: 'connection-required' }
+        throw error
       }
-      if (state.getCurrentSessionPath() === path) {
-        await lifecycle.disposeAndSwitchSession(undefined)
-      }
-      // Let an aborted run finish persisting before unlinking its history; otherwise
-      // the final SDK write can recreate a conversation the user just deleted.
-      await lifecycle.waitForSessionCleanup({
-        path: manifest?.runtimeSessionPath ?? identity.runtimeSessionPath(path),
-        cwd: manifest?.cwd ?? state.getCurrentCwd(),
-        permissionMode: state.getCurrentPermissionMode()
-      })
-      if (manifest?.sessionId && options.browser.getRegistry()) {
+      const wasCurrent = state.getCurrentSessionPath() === path
+      try {
+        options.titles.getGeneratorIfCreated()?.cancel(path)
+        const activeEntry = status
+          .activePromptEntries()
+          .find(([, run]) => run.phiSessionId === manifest?.sessionId)
+        if (activeEntry) await status.stopPromptRun(activeEntry[0], activeEntry[1])
+        if (remoteDeletion && manifest) {
+          const key = identity.resolveSessionKeyAlias(identity.createSessionKey(path, manifest.cwd))
+          const record = lifecycle.getLifecycleForKey(key).advance()
+          await lifecycle.cleanupSessionRecord(record, { cancelApprovals: true })
+        }
+        if (state.getCurrentSessionPath() === path) {
+          await lifecycle.disposeAndSwitchSession(undefined)
+        }
+        // Let an aborted run finish persisting before unlinking its history; otherwise
+        // the final SDK write can recreate a conversation the user just deleted.
+        await lifecycle.waitForSessionCleanup({
+          path: manifest?.runtimeSessionPath ?? identity.runtimeSessionPath(path),
+          cwd: manifest?.cwd ?? state.getCurrentCwd(),
+          permissionMode: state.getCurrentPermissionMode()
+        })
+        if (manifest?.sessionId && options.browser.getRegistry()) {
+          try {
+            await options.browser.getRegistry()!.disposeSession(manifest.sessionId)
+          } catch {
+            writeAppLog({ level: 'error', event: 'browser_session_cleanup_failed' })
+          }
+        }
+        if (
+          manifest?.projectId &&
+          options.remote.remoteNotebookSessionIds.get(manifest.projectId) === manifest.sessionId
+        ) {
+          await options.remote.disposeRemoteNotebookBackend(manifest.projectId)
+        }
+        // Session-private drafts and their registries are deleted here; Save As copies are project
+        // files and intentionally remain outside this tree. Draft garbage collection is out of scope.
+        if (remoteDeletion) await remoteDeletion.delete()
+        else {
+          deleteSession(path)
+        }
+        if (manifest) state.loadedSkillNamesBySession.delete(manifest.sessionId)
+        return { status: 'deleted' }
+      } catch (error) {
+        if (
+          remoteDeletion &&
+          wasCurrent &&
+          manifest &&
+          !state.getCurrentSessionPath() &&
+          findPhiSessionById(manifest.sessionId)
+        ) {
+          await lifecycle
+            .disposeAndSwitchSession(path, manifest.cwd, manifest.permissionMode)
+            .catch(() => undefined)
+        }
+        if (error instanceof RemoteSessionDeleteUnavailableError)
+          return { status: 'connection-required' }
+        throw error
+      } finally {
         try {
-          await options.browser.getRegistry()!.disposeSession(manifest.sessionId)
+          await remoteDeletion?.close()
         } catch {
-          writeAppLog({ level: 'error', event: 'browser_session_cleanup_failed' })
+          writeAppLog({ level: 'error', event: 'remote_session_delete_connection_close_failed' })
         }
       }
-      if (
-        manifest?.projectId &&
-        options.remote.remoteNotebookSessionIds.get(manifest.projectId) === manifest.sessionId
-      ) {
-        await options.remote.disposeRemoteNotebookBackend(manifest.projectId)
-      }
-      // Session-private drafts and their registries are deleted here; Save As copies are project
-      // files and intentionally remain outside this tree. Draft garbage collection is out of scope.
-      if (remoteDeletion) await remoteDeletion.delete()
-      else {
-        deleteSession(path)
-      }
-      if (manifest) state.loadedSkillNamesBySession.delete(manifest.sessionId)
-    } catch (error) {
-      if (
-        remoteDeletion &&
-        wasCurrent &&
-        manifest &&
-        !state.getCurrentSessionPath() &&
-        findPhiSessionById(manifest.sessionId)
-      ) {
-        await lifecycle
-          .disposeAndSwitchSession(path, manifest.cwd, manifest.permissionMode)
-          .catch(() => undefined)
-      }
-      throw error
-    } finally {
-      try {
-        await remoteDeletion?.close()
-      } catch {
-        writeAppLog({ level: 'error', event: 'remote_session_delete_connection_close_failed' })
-      }
     }
-  })
+  )
   ipcMain.handle(IPC.sessions.generateTitle, async (event, path: unknown) => {
     options.windows.requireMainWindowRenderer(event)
     if (typeof path !== 'string' || !path || path.length > 8192) {

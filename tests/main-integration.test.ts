@@ -16,6 +16,7 @@ import * as nativeUiCopy from '../src/main/native-ui-copy'
 import { IPC } from '../src/shared/ipcChannels'
 import { systemUiLanguage } from '../src/shared/uiLanguage'
 import * as runtimeSelection from '../src/main/agent/engine/rpc/runtime-selection-control'
+import { RemoteMetadataBusyError } from '../src/main/agent/engine/rpc/runtime-metadata-control'
 import * as desktopWebSearch from '../src/main/agent/engine/rpc/desktop-websearch-adapter'
 import * as skippedMcpNotice from '../src/main/agent/mcp/skipped-notice'
 import * as desktopMcp from '../src/main/agent/engine/rpc/desktop-mcp-adapter'
@@ -442,6 +443,8 @@ type HarnessOptions = {
   notebookOpenError?: Error
   remoteRpc?: boolean
   remoteDeleteCloseFailure?: boolean
+  remoteDeletePrepareFailure?: boolean
+  onRemoteDelete?: () => void
   remoteRpcResources?: boolean
   remoteNotebookBinding?: () => string
   remoteNotebookBackendCreate?: () => void
@@ -639,6 +642,8 @@ type HarnessResult = {
   beforeQuit: () => number
   appQuitCount: () => number
 }
+
+class FakeRemoteSessionDeleteUnavailableError extends Error {}
 
 async function harness(
   factory?: (cwd: string, file: string) => Promise<FakeSession>,
@@ -2046,14 +2051,20 @@ async function harness(
       }
     },
     './agent/session/remote-session-delete': {
-      prepareRemotePhiDeletion: async (sessionId: string) => ({
-        delete: async () => {
-          deleted.push(`phi-session:${sessionId}`)
-        },
-        close: async () => {
-          if (options.remoteDeleteCloseFailure) throw new Error('simulated SSH close failure')
+      RemoteSessionDeleteUnavailableError: FakeRemoteSessionDeleteUnavailableError,
+      prepareRemotePhiDeletion: async (sessionId: string) => {
+        if (options.remoteDeletePrepareFailure)
+          throw new FakeRemoteSessionDeleteUnavailableError('simulated SSH offline')
+        return {
+          delete: async () => {
+            options.onRemoteDelete?.()
+            deleted.push(`phi-session:${sessionId}`)
+          },
+          close: async () => {
+            if (options.remoteDeleteCloseFailure) throw new Error('simulated SSH close failure')
+          }
         }
-      })
+      }
     },
     './agent/session/home-activity': {
       getHomeActivity: (): HomeActivitySummary => ({
@@ -2607,6 +2618,7 @@ async function harness(
     },
     './agent/engine/events': engineEvents,
     './agent/engine/rpc/runtime-selection-control': runtimeSelection,
+    './agent/engine/rpc/runtime-metadata-control': { RemoteMetadataBusyError },
     './agent/session/runtime-recovery-ipc': runtimeRecoveryIpc,
     './agent/session/recovery-summary': recoverySummary,
     './agent/engine/rpc/session-recovery': recoveryFailures,
@@ -5395,7 +5407,7 @@ test('main browser cleanup restores idle metadata without loading pages after wi
     url: 'https://delete.example'
   })
   const deletedView = app.browserViews[0]
-  assert.equal(await app.invoke('sessions:delete', current.path), undefined)
+  assert.deepEqual(await app.invoke('sessions:delete', current.path), { status: 'deleted' })
   assert.equal(deletedView.webContents.closeCalls, 1)
   assert.deepEqual(app.deleted, [current.path])
 
@@ -7359,6 +7371,8 @@ const expectedStartupRegistrationOrder = [
   'remote:saveRuntimeRoot',
   'remote:saveMicromambaMirror',
   'remote:doctor',
+  'remote:listHostAvailability',
+  'remote:saveHostAvailability',
   'remote:installNextflow',
   'projects:updateRemoteConnection',
   'projects:updateRemoteDefaults',
@@ -8800,7 +8814,9 @@ test('main IPC: session handlers preserve current missing-target and invalid-tar
     file: 'phi-session:missing',
     cwd: '/workspace'
   })
-  assert.equal(await app.invoke('sessions:delete', 'phi-session:missing'), undefined)
+  assert.deepEqual(await app.invoke('sessions:delete', 'phi-session:missing'), {
+    status: 'deleted'
+  })
   assert.equal(app.deleted.at(-1), 'phi-session:missing')
   assert.equal(await app.invoke('sessions:rename', current.path, '   '), undefined)
   assert.deepEqual(app.renamedSessions, [])
@@ -10150,7 +10166,7 @@ test('main IPC: deleting the bound remote session disposes its Notebook backend'
   }
   await app.invoke('analysis:startJupyter', current.cwd)
 
-  await app.invoke('sessions:delete', current.path)
+  await app.invoke('sessions:delete', current.path, true)
 
   assert.deepEqual(
     app.remoteNotebookCalls.filter((call) => call.action === 'dispose'),
@@ -13895,8 +13911,94 @@ test('main IPC: remote deletion success is not masked by SSH close failure', asy
     sessionId: current.phiSessionId,
     patch: { runtimeRef: savedRemoteReference(current.phiSessionId) }
   })
-  await assert.doesNotReject(app.invoke('sessions:delete', current.path))
+  await assert.doesNotReject(app.invoke('sessions:delete', current.path, true))
   assert.deepEqual(app.deleted, [current.path])
+})
+
+test('main IPC: remote deletion without dialog confirmation preserves both histories', async () => {
+  const app = await harness(undefined, { remoteRpc: true })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+    phiSessionId: string
+  }
+  assert.deepEqual(await app.invoke('sessions:delete', current.path), {
+    status: 'confirmation-required'
+  })
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: { runtimeRef: savedRemoteReference(current.phiSessionId) }
+  })
+  assert.deepEqual(await app.invoke('sessions:delete', current.path), {
+    status: 'confirmation-required'
+  })
+  assert.deepEqual(app.deleted, [])
+  assert.equal(((await app.invoke('sessions:current')) as { path: string }).path, current.path)
+})
+
+test('main IPC: offline remote deletion leaves the selected conversation intact', async () => {
+  const app = await harness(undefined, { remoteRpc: true, remoteDeletePrepareFailure: true })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: { runtimeRef: savedRemoteReference(current.phiSessionId) }
+  })
+  assert.deepEqual(await app.invoke('sessions:delete', current.path, true), {
+    status: 'connection-required'
+  })
+  assert.equal(((await app.invoke('sessions:current')) as { path: string }).path, current.path)
+  assert.deepEqual(app.deleted, [])
+})
+
+test('main IPC: a later server deletion failure restores the selected conversation', async () => {
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    onRemoteDelete: () => {
+      throw new Error('simulated server busy')
+    }
+  })
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: { runtimeRef: savedRemoteReference(current.phiSessionId) }
+  })
+  await assert.rejects(app.invoke('sessions:delete', current.path, true), /server busy/)
+  assert.equal(((await app.invoke('sessions:current')) as { path: string }).path, current.path)
+  assert.deepEqual(app.deleted, [])
+})
+
+test('main IPC: deleting an attached remote conversation disposes only its runtime before server removal', async () => {
+  const ownerRuntime: { current?: FakeSession } = {}
+  const app = await harness(undefined, {
+    remoteRpc: true,
+    onRemoteDelete: () => assert.equal(ownerRuntime.current?.disposed, true)
+  })
+  const owner = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'materialize owner')
+  ownerRuntime.current = app.sessions.at(-1)!
+  const peer = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'materialize peer')
+  const peerRuntime = app.sessions.at(-1)!
+  app.updatedSessionManifests.push({
+    sessionId: owner.phiSessionId,
+    patch: { runtimeRef: savedRemoteReference(owner.phiSessionId) }
+  })
+  await app.invoke('sessions:delete', owner.path, true)
+  assert.deepEqual(ownerRuntime.current.log.slice(-2), ['abort', 'dispose'])
+  assert.equal(peerRuntime.disposed, false)
+  assert.deepEqual(app.deleted, [owner.path])
+  assert.equal(((await app.invoke('sessions:current')) as { path: string }).path, peer.path)
 })
 
 test(
@@ -16708,15 +16810,19 @@ test('T15 main recovery: a cold RPC state and summary preview perform no initial
     event: { type: 'user_message', content: 'Preserve the original research question.' }
   })
   const before = JSON.stringify(app.updatedSessionManifests)
+  const target = runtimeRecoveryTarget(await app.invoke('sessions:current'))
   const state = (await app.invoke(
     'sessions:runtimeRecovery',
-    runtimeRecoveryTarget(await app.invoke('sessions:current'))
+    target
   )) as import('../src/shared/runtimeRecoveryTypes').RuntimeRecoveryState
   assert.equal(state.phase, 'recovery-required')
   assert.equal(state.canResume, true)
   assert.match(state.summary!.content, /original research question/)
   assert.equal(app.createdAgentOptions.length, 0)
   assert.equal(JSON.stringify(app.updatedSessionManifests), before)
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  assert.equal(await app.invoke('sessions:runtimeRecovery', target), null)
+  assert.equal(await app.invoke('sessions:resumeRuntime', target), null)
 })
 
 test('T15 main recovery: explicit summary continuation preserves old history and seeds a distinct unconnected RPC Phi', async () => {

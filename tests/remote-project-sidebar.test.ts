@@ -37,6 +37,22 @@ const remote: Project = {
   createdAt: '2026-09-24T00:00:00.000Z'
 }
 
+test('project row does not retain an obsolete delete callback', () => {
+  const compare = (
+    ProjectRow as unknown as {
+      compare: (left: Record<string, unknown>, right: Record<string, unknown>) => boolean
+    }
+  ).compare
+  const props = {
+    project: remote,
+    expanded: true,
+    refreshKey: 0,
+    activeSessionPath: null,
+    onDeleteSession: () => undefined
+  }
+  assert.equal(compare(props, { ...props, onDeleteSession: () => undefined }), false)
+})
+
 test('unreachable SSH project is identified by host and path, not a missing local directory', () => {
   assert.equal(projectLocationSummary(remote), 'lab-hpc · /cluster/work · 服务器离线')
   assert.equal(activeCwdBelongsToProject([remote], '/cluster/work'), false)

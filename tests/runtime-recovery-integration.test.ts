@@ -239,6 +239,7 @@ test('opening a disconnected remote chat attaches its original runtime without s
   }
   const calls: string[] = []
   let issue = 'disconnected'
+  let phase = 'recovery-required'
   const module = { exports: undefined as unknown }
   new Function(
     'module',
@@ -269,7 +270,7 @@ test('opening a disconnected remote chat attaches its original runtime without s
     {
       getRuntimeRecoveryState: async () => {
         calls.push('state')
-        return { phase: 'recovery-required', issue, canResume: true }
+        return { phase, issue, canResume: true }
       },
       resumeRuntimeSession: async (target: unknown) => {
         calls.push('resume')
@@ -281,9 +282,23 @@ test('opening a disconnected remote chat attaches its original runtime without s
   )
   const open = module.exports as (path: string) => Promise<void>
   await open(current.activeSessionPath)
-  assert.deepEqual(calls, ['select', 'navigate', 'state', 'connecting', 'resume', 'refresh', 'done'])
+  assert.deepEqual(calls, [
+    'select',
+    'navigate',
+    'state',
+    'connecting',
+    'resume',
+    'refresh',
+    'done'
+  ])
 
   calls.length = 0
+  phase = 'connected'
+  await open(current.activeSessionPath)
+  assert.deepEqual(calls, ['select', 'navigate', 'state'])
+
+  calls.length = 0
+  phase = 'recovery-required'
   issue = 'model-unavailable'
   await open(current.activeSessionPath)
   assert.deepEqual(calls, ['select', 'navigate', 'state'])
@@ -360,12 +375,14 @@ test('remote chat auto-attach ignores navigation away and duplicate clicks', asy
 test('failed conversation deletion reports the error without clearing the selected chat', async () => {
   const compiled = appExpression('onDeleteSession')
   const calls: string[] = []
+  let connectionRequired = false
   const module = { exports: undefined as unknown }
   new Function(
     'module',
     'sessionRequestRef',
     'useSessionStore',
     'rendererApi',
+    'showSnackbar',
     'showSnackbarError',
     'appCopy',
     compiled
@@ -376,15 +393,24 @@ test('failed conversation deletion reports the error without clearing the select
     {
       deleteSession: async () => {
         calls.push('delete')
+        if (connectionRequired) return { status: 'connection-required' }
         throw new Error('Remote server unavailable')
       }
     },
+    (message: string, severity: string) => calls.push(`${severity}:${message}`),
     (_error: unknown, fallback: string) => calls.push(fallback),
     appCopy
   )
-  const remove = module.exports as (path: string) => Promise<void>
+  const remove = module.exports as (path: string, confirmed?: true) => Promise<void>
   await remove('phi-session:phi')
+  assert.deepEqual(calls, [`warning:${appCopy.confirmConversationDeletionFirst}`])
+  calls.length = 0
+  await remove('phi-session:phi', true)
   assert.deepEqual(calls, ['delete', appCopy.deleteConversationFailed])
+  calls.length = 0
+  connectionRequired = true
+  await remove('phi-session:phi', true)
+  assert.deepEqual(calls, ['delete', `warning:${appCopy.remoteDeleteRequiresConnection}`])
 })
 
 test('App recovery refresh never applies an old result after navigation to a peer', async () => {
@@ -421,7 +447,7 @@ test('App recovery refresh never applies an old result after navigation to a pee
     { getState: () => current },
     request,
     () => undefined,
-    { switchSession: () => switching },
+    { getCurrentSession: () => switching },
     () => calls.push('apply'),
     () => undefined,
     () => calls.push('messages'),
@@ -445,4 +471,75 @@ test('App recovery refresh never applies an old result after navigation to a pee
   resolveSwitch({ path: 'phi-session:phi', phiSessionId: 'phi', messages: [] })
   await pending
   assert.deepEqual(calls, [])
+})
+
+test('connected remote chat stops loading before the background session list refresh completes', async () => {
+  const compiled = appExpression('onRuntimeRecovered')
+  const current = {
+    activePhiSessionId: 'phi',
+    activeProjectId: 'project',
+    activeSessionPath: 'phi-session:phi',
+    activeSessionGeneration: 2,
+    agentEventState: { messages: [{ kind: 'text' }] }
+  }
+  let finishRefresh!: () => void
+  const refreshing = new Promise<void>((resolve) => {
+    finishRefresh = resolve
+  })
+  const loading: boolean[] = []
+  const module = { exports: undefined as unknown }
+  new Function(
+    'module',
+    'useSessionStore',
+    'sessionRequestRef',
+    'setIsSessionChanging',
+    'rendererApi',
+    'applyCurrentSession',
+    'resetAnalysisJupyterRuntimeForCwdChange',
+    'replaceMessages',
+    'chatItemsFromSessionMessages',
+    'refreshContextUsage',
+    'refreshCurrentModelControls',
+    'refreshSessions',
+    compiled
+  )(
+    module,
+    { getState: () => current },
+    { current: 0 },
+    (value: boolean) => loading.push(value),
+    {
+      getCurrentSession: async () => ({
+        path: current.activeSessionPath,
+        phiSessionId: 'phi',
+        projectId: 'project',
+        sessionGeneration: 2,
+        messages: []
+      })
+    },
+    () => undefined,
+    () => undefined,
+    () => undefined,
+    () => [],
+    () => undefined,
+    () => undefined,
+    () => refreshing
+  )
+  const callback = module.exports as (state: unknown) => Promise<void>
+  const pending = callback({
+    phase: 'connected',
+    target: {
+      sessionId: 'phi',
+      projectId: 'project',
+      sessionPath: 'phi-session:phi',
+      sessionGeneration: 2
+    }
+  })
+  const completedBeforeRefresh = await Promise.race([
+    pending.then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50))
+  ])
+  finishRefresh()
+  await pending
+  assert.equal(completedBeforeRefresh, true)
+  assert.deepEqual(loading, [true, false])
 })

@@ -1,6 +1,7 @@
 import type { CurrentContextUsage } from '../../../shared/contextUsageTypes'
 import type { ProjectLocation } from '../../../shared/projectLocation'
 import type { PermissionMode } from '../projects'
+import { RemoteMetadataBusyError } from '../engine/rpc/runtime-metadata-control'
 import type { CreateAgentSessionResult } from '../runtime/runtime-adapter'
 import type { PhiSessionManifest } from './session-store'
 import {
@@ -94,19 +95,33 @@ export async function getCurrentContextUsage(
     permissionMode: options.getCurrentPermissionMode()
   }
   const manifest = options.findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
+  const remote = manifest?.projectLocation?.kind === 'ssh'
   if (
     !options.runtimeSessionPathForSnapshot(sessionKey, snapshot) &&
-    !(manifest?.projectLocation?.kind === 'ssh' && manifest.runtimeRef)
+    !(remote && manifest?.runtimeRef)
   ) {
     return { ...identity, usage: null }
   }
 
-  const result =
-    manifest?.projectLocation?.kind === 'ssh'
-      ? await getCurrentResolvedSessionIfReady(options.getCurrentLifecycle)
-      : await options.getAgentSession(sessionKey, snapshot)
+  if (
+    remote &&
+    (current.status === 'running' ||
+      current.status === 'needs_approval' ||
+      current.status === 'needs_input')
+  )
+    return { ...identity, usage: null }
+
+  const result = remote
+    ? await getCurrentResolvedSessionIfReady(options.getCurrentLifecycle)
+    : await options.getAgentSession(sessionKey, snapshot)
   if (!result) return { ...identity, usage: null }
-  const usage = await result.session.getContextUsage()
+  let usage: CurrentContextUsage['usage']
+  try {
+    usage = await result.session.getContextUsage()
+  } catch (error) {
+    if (remote && error instanceof RemoteMetadataBusyError) return { ...identity, usage: null }
+    throw error
+  }
   const latest = options.getCurrentPayload()
   if (
     latest.path !== identity.sessionPath ||

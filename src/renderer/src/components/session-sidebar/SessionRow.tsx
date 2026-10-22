@@ -251,6 +251,13 @@ function sessionRowPropsMatch(left: SessionRowProps, right: SessionRowProps): bo
   }
   if (!sessionSummariesMatch(left.session, right.session)) return false
   if (!sessionRuntimeStatesMatch(left.runtimeState, right.runtimeState)) return false
+  if (
+    left.onSelect !== right.onSelect ||
+    left.onRename !== right.onRename ||
+    left.onDelete !== right.onDelete ||
+    left.onExport !== right.onExport
+  )
+    return false
 
   const leftUsesLiveElapsedTime = sessionUsesLiveElapsedTime(mergedSessionForDisplay(left))
   const rightUsesLiveElapsedTime = sessionUsesLiveElapsedTime(mergedSessionForDisplay(right))

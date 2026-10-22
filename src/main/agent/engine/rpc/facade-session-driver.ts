@@ -51,7 +51,7 @@ import {
 } from './remote-session-runtime'
 import { prepareRemoteSessionStorage } from './session-storage/writer-lease'
 import type { RemoteSessionScope } from './session-storage/types'
-import { canonicalRemoteSessionName } from './runtime-metadata-control'
+import { canonicalRemoteSessionName, RemoteMetadataBusyError } from './runtime-metadata-control'
 import { RpcFacadeEventProjector } from './facade-event-projection'
 import type { RpcPromptOptions } from './types'
 import type { RpcApprovalEvent } from './approval-bridge'
@@ -1175,7 +1175,7 @@ export function createFacadeSessionFactory(
                 runtime!.hasActiveAgentRuns() ||
                 !runtime!.isReady
               )
-                throw new Error('Remote metadata requires an idle Phi session')
+                throw new RemoteMetadataBusyError('Phi session')
               metadataPending = true
               try {
                 return await runtime!.readContextUsage()
@@ -1193,7 +1193,7 @@ export function createFacadeSessionFactory(
                 runtime!.hasActiveAgentRuns() ||
                 !runtime!.isReady
               )
-                throw new Error('Remote metadata requires an idle Phi session')
+                throw new RemoteMetadataBusyError('Phi session')
               assertAdoptionPolicy()
               const assertCurrent = (): void => {
                 control?.assertCurrent()

@@ -18,7 +18,7 @@ import { HomeResourceCategoryIcon } from './HomeResourceCategoryIcon'
 import { HomeWrapperRanking } from './HomeWrapperRanking'
 import { resourceCatalogCopy, resourceUi } from '../../../lib/resourceUi'
 
-interface HomeOverviewCardsProps {
+export interface HomeOverviewCardsProps {
   sessionsLoading?: boolean
   resourcesLoading?: boolean
   projectCount: number
@@ -196,25 +196,304 @@ function ResourcePreview({
   )
 }
 
-export function HomeOverviewCards({
+export function HomeRecentWorkCard({
   sessionsLoading = false,
-  resourcesLoading = false,
-  projectCount,
-  ordinaryConversationCount,
-  projectConversationCount,
   projectConversationsLoading,
-  projectConversationsIncomplete,
-  runningCount,
-  attentionCount,
   recentWork,
-  resources,
-  wrapperRanking,
-  wrapperRunCount,
   onOpenSession
 }: HomeOverviewCardsProps): React.JSX.Element {
   useUiLanguage()
   const conversationsLoading = sessionsLoading || projectConversationsLoading
 
+  return (
+    <Box
+      data-phi-home-primary-card="true"
+      sx={{
+        width: '100%',
+        height: '100%',
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 3,
+        bgcolor: 'background.paper',
+        p: { xs: 2, md: 2.5 }
+      }}
+    >
+      <Box
+        data-phi-home-recent-state={
+          conversationsLoading ? 'loading' : recentWork.length > 0 ? 'ready' : 'empty'
+        }
+        aria-busy={conversationsLoading}
+        sx={{
+          display: 'flex',
+          flex: 1,
+          flexDirection: 'column',
+          gap: 0.75,
+          // Keep space for the same four rows while loading or showing an empty state.
+          minHeight: HOME_RECENT_WORK_LIMIT * 62 + (HOME_RECENT_WORK_LIMIT - 1) * 6
+        }}
+      >
+        {recentWork.map(({ session, project }) => {
+          const title = sessionDisplayTitle(session)
+          const status = recentSessionStatus(session)
+          const scope = project
+            ? `${project.name} · ${project.location.kind === 'ssh' ? homeCopy.remote : homeCopy.local}`
+            : homeCopy.ordinaryConversation
+          return (
+            <Button
+              key={session.path}
+              aria-label={homeCopy.continueValueValue(title, scope)}
+              onClick={() => onOpenSession(session.path)}
+              sx={{
+                minWidth: 0,
+                minHeight: 62,
+                px: 1.25,
+                py: 0.75,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1.25,
+                border: 1,
+                borderColor: 'divider',
+                borderRadius: 2,
+                bgcolor: 'background.paper',
+                color: 'text.primary',
+                textAlign: 'left',
+                textTransform: 'none',
+                '&:hover, &.Mui-focusVisible': {
+                  borderColor: 'primary.main',
+                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06)
+                }
+              }}
+            >
+              <Box
+                sx={{
+                  width: 32,
+                  height: 32,
+                  flexShrink: 0,
+                  display: 'grid',
+                  placeItems: 'center',
+                  borderRadius: 1.5,
+                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                  color: 'primary.main'
+                }}
+              >
+                <PhiIcons.nav.chat sx={{ fontSize: 17 }} />
+              </Box>
+              <Box data-phi-home-session-content="true" sx={{ flex: 1, minWidth: 0 }}>
+                <Typography noWrap sx={{ fontWeight: 700 }}>
+                  {title}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" noWrap title={scope}>
+                  {scope} · {formatSessionActivity(session)} ·{' '}
+                  {`${session.messageCount} ${homeCopy.messages}`}
+                </Typography>
+              </Box>
+              <Chip
+                data-phi-home-session-status="true"
+                size="small"
+                color={status.color}
+                variant="soft"
+                label={status.label}
+                sx={{
+                  width: 88,
+                  flexShrink: 0,
+                  alignSelf: 'center',
+                  '& .MuiChip-label': { width: '100%', textAlign: 'center' }
+                }}
+              />
+              <PhiIcons.action.back sx={{ fontSize: 17, color: 'text.secondary' }} />
+            </Button>
+          )
+        })}
+        {conversationsLoading ? (
+          Array.from(
+            { length: Math.max(0, HOME_RECENT_WORK_LIMIT - recentWork.length) },
+            (_, index) => (
+              <Box
+                key={`loading-${index}`}
+                data-phi-home-session-skeleton="true"
+                aria-hidden="true"
+                sx={{
+                  minHeight: 62,
+                  px: 1.25,
+                  py: 0.75,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1.25,
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 2,
+                  bgcolor: 'background.paper'
+                }}
+              >
+                <Skeleton variant="rounded" width={32} height={32} sx={{ flexShrink: 0 }} />
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Skeleton width="70%" height={24} />
+                  <Skeleton width="50%" height={18} />
+                </Box>
+                <Skeleton variant="rounded" width={88} height={24} sx={{ flexShrink: 0 }} />
+                <Skeleton variant="circular" width={17} height={17} sx={{ flexShrink: 0 }} />
+              </Box>
+            )
+          )
+        ) : recentWork.length === 0 ? (
+          <Box sx={{ flex: 1, display: 'grid', placeContent: 'center', textAlign: 'center', p: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              {homeCopy.noConversationsToContinue}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+              {homeCopy.chooseAProjectOrStartANewConversation}
+            </Typography>
+          </Box>
+        ) : null}
+      </Box>
+    </Box>
+  )
+}
+
+export function HomeResourcesCard({
+  resourcesLoading = false,
+  resources,
+  wrapperRanking,
+  wrapperRunCount
+}: HomeOverviewCardsProps): React.JSX.Element {
+  useUiLanguage()
+  return (
+    <Box
+      data-phi-home-resources-card="true"
+      sx={{
+        minWidth: 0,
+        border: 1,
+        borderColor: 'divider',
+        height: '100%',
+        borderRadius: 3,
+        bgcolor: 'background.paper',
+        px: { xs: 2, md: 2.5 },
+        py: 1.5
+      }}
+    >
+      <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>
+        {resourceCatalogCopy.resourceOverview}
+      </Typography>
+      <Typography variant="caption" color="text.secondary">
+        {resourceCatalogCopy.resourceOverviewScope}
+      </Typography>
+      <Box
+        sx={{
+          mt: 0.75,
+          display: 'block'
+        }}
+      >
+        {resourceRows.map(({ key, label, activeLabel, kind }, index) => {
+          const resource = {
+            ...resources[key],
+            loading: resourcesLoading || resources[key].loading
+          }
+          return (
+            <Box
+              key={key}
+              data-phi-home-resource={key}
+              data-phi-home-resource-loading={resource.loading ? 'true' : undefined}
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1.25,
+                py: 0.5,
+                borderBottom: index < resourceRows.length - 1 ? 1 : 0,
+                borderColor: 'divider'
+              }}
+            >
+              <ResourcePreview resource={resource} kind={kind} />
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  {label}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {resource.loading ? (
+                    <Skeleton
+                      component="span"
+                      width={48}
+                      height={18}
+                      sx={{ display: 'inline-block', verticalAlign: 'top' }}
+                    />
+                  ) : (
+                    resourceCatalogCopy.total(resource.total)
+                  )}
+                </Typography>
+              </Box>
+              <Box
+                aria-label={
+                  resource.loading
+                    ? resourceCatalogCopy.resourceLoading(label)
+                    : resourceCatalogCopy.resourceCounts(
+                        label,
+                        resource.active,
+                        activeLabel,
+                        resource.total
+                      )
+                }
+                sx={{
+                  width: 144,
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr) 5em',
+                  columnGap: 0.5,
+                  alignItems: 'center',
+                  flexShrink: 0
+                }}
+              >
+                <Typography
+                  component="span"
+                  sx={{
+                    fontSize: 23,
+                    fontWeight: 750,
+                    fontVariantNumeric: 'tabular-nums',
+                    lineHeight: 1,
+                    textAlign: 'right',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  {resource.loading ? (
+                    <Skeleton
+                      component="span"
+                      width={28}
+                      height={23}
+                      sx={{ display: 'inline-block', verticalAlign: 'top', justifySelf: 'end' }}
+                    />
+                  ) : (
+                    resource.active
+                  )}
+                </Typography>
+                <Box
+                  component="span"
+                  sx={{
+                    width: '5em',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    whiteSpace: 'nowrap',
+                    fontSize: '0.75rem',
+                    lineHeight: 1.2,
+                    color: 'text.secondary'
+                  }}
+                >
+                  {Array.from(activeLabel, (character, characterIndex) => (
+                    <Box component="span" key={`${key}-${characterIndex}`}>
+                      {character}
+                    </Box>
+                  ))}
+                </Box>
+              </Box>
+            </Box>
+          )
+        })}
+      </Box>
+      <HomeWrapperRanking ranking={wrapperRanking} totalRuns={wrapperRunCount} embedded />
+    </Box>
+  )
+}
+
+export function HomeOverviewCards(props: HomeOverviewCardsProps): React.JSX.Element {
   return (
     <Box
       sx={{
@@ -225,336 +504,8 @@ export function HomeOverviewCards({
         alignItems: 'start'
       }}
     >
-      <Box
-        data-phi-home-primary-card="true"
-        sx={{
-          minWidth: 0,
-          border: 1,
-          borderColor: (theme) => alpha(theme.palette.primary.main, 0.24),
-          borderRadius: 3,
-          p: { xs: 2.25, md: 2.75 },
-          background: (theme) =>
-            `linear-gradient(135deg, ${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.11)} 0%, ${theme.palette.background.paper} 76%)`
-        }}
-      >
-        <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>
-          {homeCopy.continueRecentWork}
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-          {homeCopy.conversationsAndTheirProjectsReadyToPickUpWhereYou}
-        </Typography>
-        <Box
-          sx={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 0.75,
-            mt: 1.5,
-            minHeight: { xs: 84, sm: 24 }
-          }}
-        >
-          <Chip size="small" variant="outlined" label={homeCopy.valueProjects(projectCount)} />
-          <Chip
-            size="small"
-            variant="outlined"
-            aria-label={sessionsLoading ? homeCopy.loadingOrdinaryConversations : undefined}
-            label={homeCopy.valueOrdinaryConversations(
-              sessionsLoading ? '—' : ordinaryConversationCount
-            )}
-          />
-          <Chip
-            size="small"
-            variant="outlined"
-            aria-label={
-              projectConversationsLoading ? homeCopy.loadingProjectConversations : undefined
-            }
-            label={
-              projectConversationsLoading
-                ? homeCopy.projectConversations
-                : projectConversationsIncomplete
-                  ? projectConversationCount > 0
-                    ? homeCopy.atLeastValueProjectConversations(projectConversationCount)
-                    : homeCopy.projectConversationsUnavailable
-                  : homeCopy.valueProjectConversations(projectConversationCount)
-            }
-          />
-          {runningCount > 0 ? (
-            <Chip
-              size="small"
-              color="info"
-              variant="soft"
-              label={homeCopy.valueRunning(runningCount)}
-            />
-          ) : null}
-          {attentionCount > 0 ? (
-            <Chip
-              size="small"
-              color="warning"
-              variant="soft"
-              label={homeCopy.valueNeedAttention(attentionCount)}
-            />
-          ) : null}
-        </Box>
-
-        <Box
-          data-phi-home-recent-state={
-            conversationsLoading ? 'loading' : recentWork.length > 0 ? 'ready' : 'empty'
-          }
-          aria-busy={conversationsLoading}
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 0.75,
-            mt: 1.75,
-            // Keep space for the same four rows while loading or showing an empty state.
-            minHeight: HOME_RECENT_WORK_LIMIT * 62 + (HOME_RECENT_WORK_LIMIT - 1) * 6
-          }}
-        >
-          {recentWork.map(({ session, project }) => {
-            const title = sessionDisplayTitle(session)
-            const status = recentSessionStatus(session)
-            const scope = project
-              ? `${project.name} · ${project.location.kind === 'ssh' ? homeCopy.remote : homeCopy.local}`
-              : homeCopy.ordinaryConversation
-            return (
-              <Button
-                key={session.path}
-                aria-label={homeCopy.continueValueValue(title, scope)}
-                onClick={() => onOpenSession(session.path)}
-                sx={{
-                  minWidth: 0,
-                  minHeight: 62,
-                  px: 1.25,
-                  py: 0.75,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1.25,
-                  border: 1,
-                  borderColor: 'divider',
-                  borderRadius: 2,
-                  bgcolor: 'background.paper',
-                  color: 'text.primary',
-                  textAlign: 'left',
-                  textTransform: 'none',
-                  '&:hover, &.Mui-focusVisible': {
-                    borderColor: 'primary.main',
-                    bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06)
-                  }
-                }}
-              >
-                <Box
-                  sx={{
-                    width: 32,
-                    height: 32,
-                    flexShrink: 0,
-                    display: 'grid',
-                    placeItems: 'center',
-                    borderRadius: 1.5,
-                    bgcolor: (theme) => alpha(theme.palette.primary.main, 0.1),
-                    color: 'primary.main'
-                  }}
-                >
-                  <PhiIcons.nav.chat sx={{ fontSize: 17 }} />
-                </Box>
-                <Box data-phi-home-session-content="true" sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography noWrap sx={{ fontWeight: 700 }}>
-                    {title}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary" noWrap title={scope}>
-                    {scope} · {formatSessionActivity(session)} ·{' '}
-                    {`${session.messageCount} ${homeCopy.messages}`}
-                  </Typography>
-                </Box>
-                <Chip
-                  data-phi-home-session-status="true"
-                  size="small"
-                  color={status.color}
-                  variant="soft"
-                  label={status.label}
-                  sx={{
-                    width: 88,
-                    flexShrink: 0,
-                    alignSelf: 'center',
-                    '& .MuiChip-label': { width: '100%', textAlign: 'center' }
-                  }}
-                />
-                <PhiIcons.action.back sx={{ fontSize: 17, color: 'text.secondary' }} />
-              </Button>
-            )
-          })}
-          {conversationsLoading ? (
-            Array.from(
-              { length: Math.max(0, HOME_RECENT_WORK_LIMIT - recentWork.length) },
-              (_, index) => (
-                <Box
-                  key={`loading-${index}`}
-                  data-phi-home-session-skeleton="true"
-                  aria-hidden="true"
-                  sx={{
-                    minHeight: 62,
-                    px: 1.25,
-                    py: 0.75,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1.25,
-                    border: 1,
-                    borderColor: 'divider',
-                    borderRadius: 2,
-                    bgcolor: 'background.paper'
-                  }}
-                >
-                  <Skeleton variant="rounded" width={32} height={32} sx={{ flexShrink: 0 }} />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Skeleton width="70%" height={24} />
-                    <Skeleton width="50%" height={18} />
-                  </Box>
-                  <Skeleton variant="rounded" width={88} height={24} sx={{ flexShrink: 0 }} />
-                  <Skeleton variant="circular" width={17} height={17} sx={{ flexShrink: 0 }} />
-                </Box>
-              )
-            )
-          ) : recentWork.length === 0 ? (
-            <Box
-              sx={{ flex: 1, display: 'grid', placeContent: 'center', textAlign: 'center', p: 2 }}
-            >
-              <Typography variant="body2" color="text.secondary">
-                {homeCopy.noConversationsToContinue}
-              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
-                {homeCopy.chooseAProjectOrStartANewConversation}
-              </Typography>
-            </Box>
-          ) : null}
-        </Box>
-      </Box>
-
-      <Box
-        data-phi-home-resources-card="true"
-        sx={{
-          minWidth: 0,
-          border: 1,
-          borderColor: 'divider',
-          borderRadius: 3,
-          bgcolor: 'background.paper',
-          px: { xs: 2, md: 2.5 },
-          py: 1.5
-        }}
-      >
-        <Typography variant="subtitle1" sx={{ fontWeight: 750 }}>
-          {resourceCatalogCopy.resourceOverview}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {resourceCatalogCopy.resourceOverviewScope}
-        </Typography>
-        <Box
-          sx={{
-            mt: 0.75,
-            display: 'block'
-          }}
-        >
-          {resourceRows.map(({ key, label, activeLabel, kind }, index) => {
-            const resource = {
-              ...resources[key],
-              loading: resourcesLoading || resources[key].loading
-            }
-            return (
-              <Box
-                key={key}
-                data-phi-home-resource={key}
-                data-phi-home-resource-loading={resource.loading ? 'true' : undefined}
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1.25,
-                  py: 0.5,
-                  borderBottom: index < resourceRows.length - 1 ? 1 : 0,
-                  borderColor: 'divider'
-                }}
-              >
-                <ResourcePreview resource={resource} kind={kind} />
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                    {label}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {resource.loading ? (
-                      <Skeleton
-                        component="span"
-                        width={48}
-                        height={18}
-                        sx={{ display: 'inline-block', verticalAlign: 'top' }}
-                      />
-                    ) : (
-                      resourceCatalogCopy.total(resource.total)
-                    )}
-                  </Typography>
-                </Box>
-                <Box
-                  aria-label={
-                    resource.loading
-                      ? resourceCatalogCopy.resourceLoading(label)
-                      : resourceCatalogCopy.resourceCounts(
-                          label,
-                          resource.active,
-                          activeLabel,
-                          resource.total
-                        )
-                  }
-                  sx={{
-                    width: 144,
-                    display: 'grid',
-                    gridTemplateColumns: 'minmax(0, 1fr) 5em',
-                    columnGap: 0.5,
-                    alignItems: 'center',
-                    flexShrink: 0
-                  }}
-                >
-                  <Typography
-                    component="span"
-                    sx={{
-                      fontSize: 23,
-                      fontWeight: 750,
-                      fontVariantNumeric: 'tabular-nums',
-                      lineHeight: 1,
-                      textAlign: 'right',
-                      whiteSpace: 'nowrap'
-                    }}
-                  >
-                    {resource.loading ? (
-                      <Skeleton
-                        component="span"
-                        width={28}
-                        height={23}
-                        sx={{ display: 'inline-block', verticalAlign: 'top', justifySelf: 'end' }}
-                      />
-                    ) : (
-                      resource.active
-                    )}
-                  </Typography>
-                  <Box
-                    component="span"
-                    sx={{
-                      width: '5em',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      whiteSpace: 'nowrap',
-                      fontSize: '0.75rem',
-                      lineHeight: 1.2,
-                      color: 'text.secondary'
-                    }}
-                  >
-                    {Array.from(activeLabel, (character, characterIndex) => (
-                      <Box component="span" key={`${key}-${characterIndex}`}>
-                        {character}
-                      </Box>
-                    ))}
-                  </Box>
-                </Box>
-              </Box>
-            )
-          })}
-        </Box>
-        <HomeWrapperRanking ranking={wrapperRanking} totalRuns={wrapperRunCount} embedded />
-      </Box>
+      <HomeRecentWorkCard {...props} />
+      <HomeResourcesCard {...props} />
     </Box>
   )
 }

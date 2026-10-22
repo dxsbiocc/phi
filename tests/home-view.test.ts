@@ -60,9 +60,17 @@ function renderHomeView(): string {
         wrapperCatalog: [],
         lastClosedSessionPath: null,
         onLoadResources: async () => undefined,
-        onNewChat: () => undefined,
-        onShowProjects: () => undefined,
-        onOpenSession: () => undefined
+        models: [],
+        selectedModel: null,
+        thinkingLevel: 'high',
+        busy: false,
+        onSelectModel: () => undefined,
+        onSelectThinkingLevel: () => undefined,
+        onUpdateProjectPermissionMode: async () => undefined,
+        createdProjectId: null,
+        onNewProject: () => undefined,
+        onOpenSession: () => undefined,
+        onStartPrompt: async () => undefined
       })
     )
   )
@@ -71,10 +79,28 @@ function renderHomeView(): string {
 // Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
 setUiLanguage('zh-CN')
 
+test('home glow stays behind interactive content', () => {
+  const markup = renderHomeView()
+
+  assert.match(markup, /data-phi-home-glow="true"/)
+  assert.match(markup, /glow-cursor__canvas[^>]*aria-hidden="true"/)
+  assert.match(markup, /pointer-events:none/)
+  assert.ok(markup.indexOf('data-phi-home-glow') < markup.indexOf('data-phi-home-prompt'))
+})
+
 test('home dashboard prioritizes resumable work and groups resource-owned icons', () => {
   const markup = renderHomeView()
 
   assert.match(markup, /继续你的工作/)
+  assert.match(markup, /选择项目/)
+  assert.doesNotMatch(markup, /新建对话/)
+  assert.match(markup, /data-phi-home-prompt="true"/)
+  assert.match(markup, /data-phi-home-mark="true"/)
+  assert.match(markup, /M172 132/)
+  assert.match(markup, /描述你想要构建的内容/)
+  assert.match(markup, /data-phi-composer-editor="codemirror"/)
+  assert.ok(markup.indexOf('data-phi-home-project') < markup.indexOf('data-phi-composer-editor'))
+  assert.ok(markup.indexOf('data-phi-home-prompt') < markup.indexOf('过去一年的活跃度'))
   assert.doesNotMatch(markup, /从上次停下的地方接着做/)
   const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
   assert.match(appSource, /const showHomeWorkspace =/)
@@ -89,8 +115,9 @@ test('home dashboard prioritizes resumable work and groups resource-owned icons'
 
   assert.match(markup, /data-phi-home-primary-card="true"/)
   assert.match(markup, /继续最近的工作/)
+  assert.doesNotMatch(markup, /对话与所属项目放在一起/)
+  assert.doesNotMatch(markup, /1 条普通对话/)
   assert.match(markup, /继续 \/ordinary/)
-  assert.match(markup, /1 条普通对话/)
   assert.doesNotMatch(markup, /最近项目|项目与对话/)
   assert.match(markup, /data-phi-home-resource="skills"/)
   assert.match(markup, /data-phi-home-resource="wrappers"/)
@@ -186,7 +213,7 @@ test('failed project conversation reads retain both cards and explain the unavai
   const markup = renderOverview({ projectCount: 1, projectConversationsIncomplete: true })
 
   assert.match(markup, /data-phi-home-primary-card="true"/)
-  assert.match(markup, /项目对话暂不可用/)
+  assert.doesNotMatch(markup, /项目对话暂不可用/)
   assert.match(markup, /data-phi-home-resources-card="true"/)
   assert.doesNotMatch(markup, /data-phi-home-session-skeleton/)
 })

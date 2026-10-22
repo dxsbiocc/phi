@@ -1,6 +1,6 @@
 import { navigationCopy } from '../lib/navigationCopy'
 import { useUiLanguage } from '../lib/i18n'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Box, Button, List, Stack } from '@mui/material'
 import { PhiIcons } from '../icons'
 import { resolveProjectExpandedIds } from '../lib/projectSidebar'
@@ -45,7 +45,7 @@ type SessionSidebarProps = {
   onNewProject: () => void
   onSelectSession: (path: string) => void
   onRenameSession: (path: string, name: string) => void
-  onDeleteSession: (path: string) => void
+  onDeleteSession: (path: string, confirmed: true) => void
   onExportSession: (session: SessionSummary) => void
   onStartProjectChat: (project: Project) => void
   onDeleteProject: (project: Project) => void
@@ -147,6 +147,23 @@ function SessionSidebar({
     setProjectExpansionOverrides((prev) => ({ ...prev, [id]: !isExpanded }))
   }
 
+  const requestSessionDelete = useCallback(
+    (session: SessionSummary, projectId?: string): void => {
+      if (projectId) {
+        setProjectExpansionOverrides((previous) => ({ ...previous, [projectId]: true }))
+      }
+      trustedDialogs.request(SESSION_DELETE_OVERLAY_KEY, () => setDeleteTarget(session))
+    },
+    [trustedDialogs]
+  )
+  const selectProjectSession = useCallback(
+    (path: string, projectId: string): void => {
+      setProjectExpansionOverrides((previous) => ({ ...previous, [projectId]: true }))
+      onSelectSession(path)
+    },
+    [onSelectSession]
+  )
+
   const isProjectsMode = mode === 'projects'
   const isConversationsMode = mode === 'conversations'
 
@@ -245,9 +262,9 @@ function SessionSidebar({
               onToggleExpanded={() => toggleProjectExpanded(project.id)}
               activeSessionPath={activeSessionPath}
               onStartChat={() => onStartProjectChat(project)}
-              onSelectSession={onSelectSession}
+              onSelectSession={selectProjectSession}
               onRenameSession={onRenameSession}
-              onDeleteSession={onDeleteSession}
+              onDeleteSession={requestSessionDelete}
               onExportSession={onExportSession}
               onDeleteProject={() => {
                 trustedDialogs.request(PROJECT_DELETE_OVERLAY_KEY, () => {
@@ -273,11 +290,7 @@ function SessionSidebar({
                 onPreviewInteractionChange={onPreviewInteractionChange}
                 onSelect={() => onSelectSession(session.path)}
                 onRename={(name) => onRenameSession(session.path, name)}
-                onDelete={() => {
-                  trustedDialogs.request(SESSION_DELETE_OVERLAY_KEY, () => {
-                    setDeleteTarget(session)
-                  })
-                }}
+                onDelete={() => requestSessionDelete(session)}
                 onExport={() => onExportSession(session)}
               />
             ))}
@@ -296,7 +309,7 @@ function SessionSidebar({
           setDeleteTarget(null)
         }}
         onConfirmSessionDelete={() => {
-          if (deleteTarget) onDeleteSession(deleteTarget.path)
+          if (deleteTarget) onDeleteSession(deleteTarget.path, true)
           trustedDialogs.cancel(SESSION_DELETE_OVERLAY_KEY)
           setDeleteTarget(null)
         }}

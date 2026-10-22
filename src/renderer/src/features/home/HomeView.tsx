@@ -1,16 +1,22 @@
 import { homeCopy } from './lib/homeCopy'
 import { useUiLanguage } from '../../lib/i18n'
 import { useEffect, useState } from 'react'
-import { Box, Button, Typography } from '@mui/material'
-import { alpha } from '@mui/material/styles'
+import { Box, Typography, useMediaQuery } from '@mui/material'
+import { alpha, useTheme } from '@mui/material/styles'
 
 import type { WrapperCompositionCatalogItem } from '../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
-import { PhiIcons } from '../../icons'
-import type { Project, SessionSummary } from '../../types'
-import { HomeActivityHeatmap } from './components/HomeActivityHeatmap'
-import { HomeOverviewCards } from './components/HomeOverviewCards'
-import { HomePeriodSummary } from './components/HomePeriodSummary'
+import type {
+  ModelOption,
+  PermissionMode,
+  Project,
+  SessionSummary,
+  ThinkingLevel
+} from '../../types'
+import { HomeLowerLayout } from './components/HomeLowerLayout'
+import GlowCursor from './components/GlowCursor'
+import { HOME_COLUMN_MAX_WIDTH } from './lib/homeColumn'
+import { HomePrompt, type HomePromptRequest } from './components/HomePrompt'
 import { useHomeActivity } from './hooks/useHomeActivity'
 import {
   rankHomeWrapperRuns,
@@ -30,9 +36,20 @@ interface HomeViewProps {
   wrapperCatalog: WrapperCompositionCatalogItem[]
   lastClosedSessionPath: string | null
   onLoadResources: () => Promise<void>
-  onNewChat: () => void
-  onShowProjects: () => void
+  models: ModelOption[]
+  selectedModel: ModelOption | null
+  thinkingLevel: ThinkingLevel
+  busy: boolean
+  onSelectModel: (model: ModelOption | null) => void
+  onSelectThinkingLevel: (level: ThinkingLevel) => void
+  onUpdateProjectPermissionMode: (
+    projectId: string,
+    permissionMode: PermissionMode
+  ) => Promise<void>
+  createdProjectId: string | null
+  onNewProject: () => void
   onOpenSession: (path: string) => void
+  onStartPrompt: (request: HomePromptRequest) => Promise<void>
 }
 
 export function HomeView({
@@ -46,11 +63,21 @@ export function HomeView({
   wrapperCatalog,
   lastClosedSessionPath,
   onLoadResources,
-  onNewChat,
-  onShowProjects,
-  onOpenSession
+  models,
+  selectedModel,
+  thinkingLevel,
+  busy,
+  onSelectModel,
+  onSelectThinkingLevel,
+  onUpdateProjectPermissionMode,
+  createdProjectId,
+  onNewProject,
+  onOpenSession,
+  onStartPrompt
 }: HomeViewProps): React.JSX.Element {
   useUiLanguage()
+  const muiTheme = useTheme()
+  const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const projectScopeKey = `${projectSessionRefreshKey}|${projects.map((project) => project.id).join('|')}`
   const [projectResult, setProjectResult] = useState<{
     key: string
@@ -127,100 +154,96 @@ export function HomeView({
         flex: 1,
         minWidth: 0,
         minHeight: 0,
-        overflowY: 'auto',
-        scrollbarGutter: 'stable both-edges',
+        position: 'relative',
+        overflow: 'hidden',
         bgcolor: (theme) =>
           theme.palette.mode === 'dark'
             ? alpha(theme.palette.background.default, 0.96)
-            : alpha(theme.palette.primary.main, 0.018),
-        px: { xs: 2, sm: 3, lg: 4 },
-        py: { xs: 2.5, sm: 3.5 }
+            : alpha(theme.palette.primary.main, 0.018)
       }}
     >
-      <Box sx={{ width: '100%', maxWidth: 1180, mx: 'auto' }}>
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: { xs: 'stretch', sm: 'flex-end' },
-            justifyContent: 'space-between',
-            flexDirection: { xs: 'column', sm: 'row' },
-            gap: 2.5,
-            mb: 3
-          }}
-        >
-          <Box sx={{ minWidth: 0 }}>
-            <Typography id="home-heading" variant="h4" sx={{ letterSpacing: '-0.025em' }}>
-              {homeCopy.continueYourWork}
-            </Typography>
-          </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Button
-              variant="outlined"
-              color="inherit"
-              onClick={onShowProjects}
-              startIcon={<PhiIcons.nav.projects sx={{ fontSize: 18 }} />}
-              sx={{ minHeight: 44 }}
-            >
-              {homeCopy.chooseProject}
-            </Button>
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={onNewChat}
-              startIcon={<PhiIcons.action.addSession sx={{ fontSize: 18 }} />}
-              sx={{ minHeight: 44 }}
-            >
-              {homeCopy.newConversation}
-            </Button>
-          </Box>
-        </Box>
-
-        {activity.error ? (
-          <Box
-            role="alert"
-            sx={{
-              mb: 2,
-              px: 1.5,
-              py: 1,
-              borderRadius: 2,
-              bgcolor: (theme) => alpha(theme.palette.warning.main, 0.1),
-              color: 'warning.dark'
-            }}
-          >
-            <Typography variant="body2">
-              {homeCopy.activityDataUnavailable}
-              {activity.error}
-            </Typography>
-          </Box>
-        ) : null}
-
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1.75fr) minmax(290px, 0.85fr)' },
-            gap: 2
-          }}
-        >
-          <HomeActivityHeatmap activity={activity.data} loading={activity.loading} />
-          <HomePeriodSummary activity={activity.data} loading={activity.loading} />
-        </Box>
-
-        <HomeOverviewCards
-          projectCount={projects.length}
-          sessionsLoading={sessionsLoading}
-          ordinaryConversationCount={sessions.length}
-          projectConversationCount={projectWork.length}
-          projectConversationsLoading={projectConversationsLoading}
-          projectConversationsIncomplete={projectConversationsIncomplete}
-          runningCount={runningCount}
-          attentionCount={attentionCount}
-          recentWork={recentWork}
-          resources={resources}
-          resourcesLoading={!resourcesLoaded}
-          wrapperRanking={wrapperRanking}
-          wrapperRunCount={wrapperRuns.length}
-          onOpenSession={onOpenSession}
+      {prefersReducedMotion ? null : (
+        <GlowCursor
+          data-phi-home-glow="true"
+          color="#5f8bff"
+          intensity={1.3}
+          trailWidth={3}
+          linger={1.4}
+          glow={1.2}
+          clickBurst
+          theme="dark"
+          blendMode={muiTheme.palette.mode === 'dark' ? 'screen' : 'normal'}
+          style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }}
         />
+      )}
+      <Box
+        sx={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 1,
+          overflowY: 'auto',
+          scrollbarGutter: 'stable both-edges',
+          px: { xs: 2, sm: 3, lg: 4 },
+          overflowX: 'clip',
+          pt: { xs: 8, sm: 10, lg: 12 },
+          pb: { xs: 3, sm: 4 }
+        }}
+      >
+        <Box sx={{ width: '100%', maxWidth: HOME_COLUMN_MAX_WIDTH, mx: 'auto' }}>
+          <HomePrompt
+            projects={projects}
+            models={models}
+            selectedModel={selectedModel}
+            thinkingLevel={thinkingLevel}
+            busy={busy}
+            onSelectModel={onSelectModel}
+            onSelectThinkingLevel={onSelectThinkingLevel}
+            onUpdateProjectPermissionMode={onUpdateProjectPermissionMode}
+            createdProjectId={createdProjectId}
+            onNewProject={onNewProject}
+            onStart={onStartPrompt}
+          />
+
+          {activity.error ? (
+            <Box
+              role="alert"
+              sx={{
+                mb: 2,
+                px: 1.5,
+                py: 1,
+                borderRadius: 2,
+                bgcolor: (theme) => alpha(theme.palette.warning.main, 0.1),
+                color: 'warning.dark'
+              }}
+            >
+              <Typography variant="body2">
+                {homeCopy.activityDataUnavailable}
+                {activity.error}
+              </Typography>
+            </Box>
+          ) : null}
+
+          <HomeLowerLayout
+            activity={activity.data}
+            activityLoading={activity.loading}
+            overview={{
+              projectCount: projects.length,
+              sessionsLoading,
+              ordinaryConversationCount: sessions.length,
+              projectConversationCount: projectWork.length,
+              projectConversationsLoading,
+              projectConversationsIncomplete,
+              runningCount,
+              attentionCount,
+              recentWork,
+              resources,
+              resourcesLoading: !resourcesLoaded,
+              wrapperRanking,
+              wrapperRunCount: wrapperRuns.length,
+              onOpenSession
+            }}
+          />
+        </Box>
       </Box>
     </Box>
   )

@@ -21,7 +21,8 @@ import type { Project } from '../src/main/agent/projects'
 import type { RemoteWorkspaceHostBinding } from '../src/main/agent/remote-workspace-boundary'
 import {
   buildRemoteSessionDeleteCommand,
-  prepareRemotePhiDeletion
+  prepareRemotePhiDeletion,
+  RemoteSessionDeleteUnavailableError
 } from '../src/main/agent/session/remote-session-delete'
 import { remoteOmpDurableSessionKey } from '../src/main/agent/session/runtime-reference'
 import {
@@ -226,7 +227,14 @@ test('remote deletion keeps local history when the server is offline or rejects 
         },
         execBounded: async () => {
           calls += 1
-          return { stdout: '', stderr: 'PHI_STORAGE:IDENTITY_MISMATCH', code: 1, signal: null }
+          return {
+            stdout: '',
+            stderr: 'PHI_STORAGE:IDENTITY_MISMATCH',
+            code: 1,
+            signal: null,
+            stdoutTruncated: false,
+            stderrTruncated: false
+          }
         },
         close: async () => undefined
       }),
@@ -242,7 +250,21 @@ test('remote deletion keeps local history when the server is offline or rejects 
           throw new Error('SSH offline')
         }
       }),
-      /无法连接服务器/
+      RemoteSessionDeleteUnavailableError
+    )
+    assert.ok(findPhiSessionById(sessionId))
+    await assert.rejects(
+      prepareRemotePhiDeletion(sessionId, {
+        ...dependencies,
+        connect: async () => ({
+          exec: async () => {
+            throw new Error('unused')
+          },
+          execBounded: async () => ({ stdout: '', stderr: '', code: 1, signal: null }),
+          close: async () => undefined
+        })
+      }),
+      RemoteSessionDeleteUnavailableError
     )
     assert.ok(findPhiSessionById(sessionId))
   })
@@ -265,7 +287,9 @@ test('remote deletion removes the local index only after confirmed server deleti
             ++calls === 1 ? 'PHI_STORAGE_SESSION_VERIFIED\n' : 'PHI_STORAGE_SESSION_DELETED\n',
           stderr: '',
           code: 0,
-          signal: null
+          signal: null,
+          stdoutTruncated: false,
+          stderrTruncated: false
         }),
         close: async () => {
           closed += 1
@@ -293,12 +317,16 @@ test('a server failure after preflight leaves Phi history available for retry', 
       getProject: () => project,
       resolveBinding: () => binding,
       connect: async () => ({
-        exec: async () => { throw new Error('unused') },
+        exec: async () => {
+          throw new Error('unused')
+        },
         execBounded: async () => ({
           stdout: ++calls === 1 ? 'PHI_STORAGE_SESSION_VERIFIED\n' : '',
           stderr: calls === 1 ? '' : 'PHI_STORAGE:SESSION_BUSY',
           code: calls === 1 ? 0 : 1,
-          signal: null
+          signal: null,
+          stdoutTruncated: false,
+          stderrTruncated: false
         }),
         close: async () => undefined
       }),

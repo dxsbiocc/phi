@@ -3,7 +3,13 @@ import { defineCopy } from '../../../lib/i18n'
 export const homeCopy = defineCopy(
   {
     continueYourWork: 'Continue your work',
+    promptPlaceholder: 'Describe what to build. Enter to send, Shift+Enter for a new line',
+    sendPrompt: 'Send',
     chooseProject: 'Choose project',
+    newProject: 'New project',
+    carousel: 'Carousel',
+    previousCard: 'Previous card',
+    nextCard: 'Next card',
     newConversation: 'New conversation',
     activityDataUnavailable: 'Activity data unavailable:',
     mon: 'Mon',
@@ -75,7 +81,13 @@ export const homeCopy = defineCopy(
   },
   {
     continueYourWork: '继续你的工作',
+    promptPlaceholder: '描述你想要构建的内容。Enter 发送，Shift+Enter 换行',
+    sendPrompt: '发送',
     chooseProject: '选择项目',
+    newProject: '新建项目',
+    carousel: '轮播',
+    previousCard: '上一张',
+    nextCard: '下一张',
     newConversation: '新建对话',
     activityDataUnavailable: '活动数据暂时不可用：',
     mon: '一',

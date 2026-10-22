@@ -7,6 +7,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import SessionSidebar from '../src/renderer/src/components/SessionSidebar'
+import { SessionRow } from '../src/renderer/src/components/session-sidebar/SessionRow'
 import {
   filterSessionSummaries,
   normalizeSessionQuery
@@ -159,6 +160,51 @@ test('project sidebar keeps explicit expansion while auto-expanding the active p
   )
 
   assert.deepEqual([...expanded], ['alpha', 'beta'])
+})
+
+test('project remains expanded after its active conversation is deleted', () => {
+  const project = { id: 'remote', workingDirectory: '/remote/anchor' }
+  assert.deepEqual(
+    [...resolveProjectExpandedIds({ remote: true }, 'projects', [project], '/ordinary', null)],
+    ['remote']
+  )
+})
+
+test('session row does not retain an obsolete delete callback', () => {
+  const compare = (
+    SessionRow as unknown as {
+      compare: (left: Record<string, unknown>, right: Record<string, unknown>) => boolean
+    }
+  ).compare
+  const props = {
+    session: baseSession,
+    isActive: false,
+    nowMs: 0,
+    onSelect: () => undefined,
+    onRename: () => undefined,
+    onDelete: () => undefined
+  }
+  assert.equal(compare(props, { ...props, onDelete: () => undefined }), false)
+})
+
+test('project conversation delete uses the same confirmation gate as ordinary conversations', () => {
+  const sidebarSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/SessionSidebar.tsx'),
+    'utf8'
+  )
+  const projectRowSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/session-sidebar/ProjectRow.tsx'),
+    'utf8'
+  )
+  assert.match(projectRowSource, /onDelete=\{\(\) => onDeleteSession\(session, project\.id\)\}/)
+  assert.match(sidebarSource, /onDeleteSession=\{requestSessionDelete\}/)
+  assert.match(sidebarSource, /trustedDialogs\.request\(SESSION_DELETE_OVERLAY_KEY/)
+  assert.match(
+    sidebarSource,
+    /onConfirmSessionDelete=\{\(\) => \{\s*if \(deleteTarget\) onDeleteSession/
+  )
+  assert.match(projectRowSource, /onSelect=\{\(\) => onSelectSession\(session.path, project.id\)\}/)
+  assert.match(sidebarSource, /onSelectSession=\{selectProjectSession\}/)
 })
 
 test('session sidebar shows a contained breathing beacon before running conversation titles', () => {

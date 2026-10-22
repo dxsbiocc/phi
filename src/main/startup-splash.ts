@@ -1,12 +1,12 @@
 import type { BrowserWindowConstructorOptions } from 'electron'
+import { PHI_MARK_PATH } from '../shared/phiMark'
 import { DEFAULT_UI_LANGUAGE, normalizeUiLanguage, type UiLanguage } from '../shared/uiLanguage'
 
 const FADE_OPACITIES = [0.32, 0] as const
 const FADE_STEP_MS = 22
 export const STARTUP_SPLASH_DRAW_MS = 1_900
 export const STARTUP_SPLASH_FINISH_MS = 190
-const PHI_PATH =
-  'M172 132 C128 164 116 222 134 270 C151 315 189 329 239 329 C302 329 354 299 376 250 C399 199 377 125 326 116 C279 108 249 142 248 205 L247 320 C247 354 245 382 226 418'
+const PHI_PATH = PHI_MARK_PATH
 const splashShownAt = new WeakMap<StartupSplashWindow, number>()
 
 export interface StartupSplashWindow {

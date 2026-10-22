@@ -29,10 +29,7 @@ test('RPC host-tool date and UUID schema formats validate without warning spam',
     const validate = tools.get('filter_records')?.validate
     assert.ok(validate)
     const pageId = '63201ad3-a48b-4f1c-9ab6-3c61cf2d5b6d'
-    assert.equal(
-      validate({ start_date: '2026-10-21', page_id: pageId }),
-      true
-    )
+    assert.equal(validate({ start_date: '2026-10-21', page_id: pageId }), true)
     assert.equal(validate({ start_date: '2024-02-29', page_id: pageId }), true)
     assert.equal(validate({ start_date: '2026-02-30', page_id: pageId }), false)
     assert.equal(validate({ start_date: '2026-10-21', page_id: 'not-a-uuid' }), false)

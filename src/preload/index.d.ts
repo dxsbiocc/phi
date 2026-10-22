@@ -63,6 +63,7 @@ import type {
 } from '../shared/remoteDirectoryBrowser'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
+import type { SessionDeleteResult } from '../shared/sessionDeleteTypes'
 import type { RuntimeRecoveryApi } from '../shared/runtimeRecoveryTypes'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type {
@@ -933,7 +934,7 @@ declare global {
         messages: unknown[]
       } | null>
       acknowledgeSession: (path: string) => Promise<PreloadSessionSummary | null>
-      deleteSession: (path: string) => Promise<void>
+      deleteSession: (path: string, confirmed?: true) => Promise<SessionDeleteResult>
       renameSession: (path: string, name: string) => Promise<void>
       generateSessionTitle: (path: string) => Promise<string>
       exportSession: (sessionId: string) => Promise<SessionExportResult | null>

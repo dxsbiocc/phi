@@ -36,7 +36,20 @@ function readStoredPalette(): ThemePaletteId {
 }
 
 function readSystemPrefersDark(): boolean {
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
+export function readStoredThemeSelection(): {
+  mode: ThemeMode
+  palette: ThemePaletteId
+  effectiveMode: EffectiveMode
+} {
+  const mode = readStoredMode()
+  const palette = readStoredPalette()
+  const effectiveMode: EffectiveMode =
+    mode === 'system' ? (readSystemPrefersDark() ? 'dark' : 'light') : mode
+  return { mode, palette, effectiveMode }
 }
 
 export function useThemeMode(): {

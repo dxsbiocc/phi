@@ -42,9 +42,9 @@ type ProjectRowProps = {
   onToggleExpanded: () => void
   activeSessionPath: string | null
   onStartChat: () => void
-  onSelectSession: (path: string) => void
+  onSelectSession: (path: string, projectId: string) => void
   onRenameSession: (path: string, name: string) => void
-  onDeleteSession: (path: string) => void
+  onDeleteSession: (session: SessionSummary, projectId: string) => void
   onExportSession: (session: SessionSummary) => void
   onDeleteProject: () => void
   onFetchSessions: (workingDirectory: string, projectId?: string) => Promise<SessionSummary[]>
@@ -64,7 +64,13 @@ function projectRowPropsMatch(left: ProjectRowProps, right: ProjectRowProps): bo
     left.refreshKey === right.refreshKey &&
     left.searchSessions === right.searchSessions &&
     left.activeSessionPath === right.activeSessionPath &&
-    left.compactHoverPreview === right.compactHoverPreview
+    left.compactHoverPreview === right.compactHoverPreview &&
+    left.onDeleteSession === right.onDeleteSession &&
+    left.onSelectSession === right.onSelectSession &&
+    left.onRenameSession === right.onRenameSession &&
+    left.onExportSession === right.onExportSession &&
+    left.onFetchSessions === right.onFetchSessions &&
+    left.getSessionRuntimeState === right.getSessionRuntimeState
   )
 }
 
@@ -427,9 +433,9 @@ function ProjectRowImpl({
                 nowMs={nowMs}
                 compactHoverPreview={compactHoverPreview}
                 onPreviewInteractionChange={onPreviewInteractionChange}
-                onSelect={() => onSelectSession(session.path)}
+                onSelect={() => onSelectSession(session.path, project.id)}
                 onRename={(name) => onRenameSession(session.path, name)}
-                onDelete={() => onDeleteSession(session.path)}
+                onDelete={() => onDeleteSession(session, project.id)}
                 onExport={() => onExportSession(session)}
               />
             ))}

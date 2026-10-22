@@ -61,6 +61,7 @@ export function useRuntimeRecovery(
     const ticket = ++request.current
     try {
       const result = await api.getRuntimeRecoveryState(original)
+      if (!result) return
       if (current(ticket, original)) {
         setState(result)
         const failure = uiRefreshError.current
@@ -115,7 +116,7 @@ export function useRuntimeRecovery(
     async (
       operation: (
         original: RuntimeRecoveryTarget
-      ) => Promise<RuntimeRecoveryState | RuntimeSummaryContinuation>,
+      ) => Promise<RuntimeRecoveryState | RuntimeSummaryContinuation | null>,
       kind: 'resume' | 'summary'
     ): Promise<void> => {
       const original = targetRef.current
@@ -127,6 +128,7 @@ export function useRuntimeRecovery(
       setError({ key: runtimeRecoveryViewKey(original), message: null })
       try {
         const result = await operation(original)
+        if (!result) return
         const ownSummaryCompletion =
           kind === 'summary' &&
           'phiSessionId' in result &&
@@ -173,7 +175,7 @@ export function useRuntimeRecovery(
           })
           try {
             const latest = await api.getRuntimeRecoveryState(targetRef.current ?? original)
-            if (current(ticket, original)) setState(latest)
+            if (latest && current(ticket, original)) setState(latest)
           } catch {
             /* The original identity remains visible for an explicit retry. */
           }

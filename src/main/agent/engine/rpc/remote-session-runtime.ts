@@ -16,6 +16,7 @@ import { BrowserTextVault } from '../../browser/browser-text-vault'
 import type { ContextUsageSnapshot } from '../../../../shared/contextUsageTypes'
 import { randomBytes } from 'node:crypto'
 import { createRuntimeMetadataControl, type RuntimeRenamePolicy } from './runtime-metadata-control'
+import { RemoteMetadataBusyError } from './runtime-metadata-control'
 import type { PhiTool, PhiToolImage, PhiToolApproval, PhiToolResult } from '../types'
 import { executionRoster, type RpcExecutionTool } from '../phi-extension/lib/rpc-execution-protocol'
 import type { RpcRuntimeConfig } from '../phi-extension/lib/rpc-runtime-config'
@@ -194,7 +195,7 @@ export class RemoteSessionRuntime {
         this.authority?.currentRun() ||
         this.hasActiveAgentRuns()
       )
-        throw new Error('Remote metadata requires an idle runtime')
+        throw new RemoteMetadataBusyError('runtime')
       this.ready = false
       this.gate = true
       return () => {
@@ -533,7 +534,6 @@ export class RemoteSessionRuntime {
     if (cleanupFailed) throw cleanupError
     return result
   }
-
   private async initialize(): Promise<void> {
     await this.withCheckpoint(() => this.initializeCheckpoint())
     this.active()

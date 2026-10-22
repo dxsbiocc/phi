@@ -122,7 +122,7 @@ export type AppWorkspaceSidebarProps = {
   cancelTrustedOverlay: (key: string) => void
   onSelectSession: (path: string) => Promise<void>
   onRenameSession: (path: string, name: string) => Promise<void>
-  onDeleteSession: (path: string) => Promise<void>
+  onDeleteSession: (path: string, confirmed?: true) => Promise<void>
   onExportSession: (session: SessionSummary) => void
   onStartProjectChat: (project: Project) => Promise<void>
   onDeleteProjectEntry: (project: Project) => Promise<void>
@@ -484,8 +484,8 @@ function AppWorkspaceSidebarImpl({
         onRenameSession={(path, name) => {
           void onRenameSession(path, name)
         }}
-        onDeleteSession={(path) => {
-          void onDeleteSession(path)
+        onDeleteSession={(path, confirmed) => {
+          void onDeleteSession(path, confirmed)
         }}
         onExportSession={(session) => navigate(() => onExportSession(session))}
         onStartProjectChat={(project) => {
