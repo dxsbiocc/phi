@@ -85,6 +85,8 @@
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@fontsource-variable/dm-sans": "^5.3.0",
+    "@hugeicons/core-free-icons": "^4.3.3",
+    "@hugeicons/react": "^1.1.10",
     "@mui/material": "^9.4.0",
     "@oh-my-pi/pi-coding-agent": "18.10.3",
     "@oh-my-pi/pi-natives": "18.10.3",

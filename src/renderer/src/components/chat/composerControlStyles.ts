@@ -9,12 +9,17 @@ export const COMPOSER_STOP_CONTROL_SIZE = COMPOSER_STOP_MARK_SIZE + 12
 
 export function composerSurfaceSx({
   compact,
-  dragActive
+  dragActive,
+  highestEffort = false
 }: {
   compact: boolean
   dragActive: boolean
+  highestEffort?: boolean
 }): SxProps<Theme> {
   return {
+    position: 'relative',
+    isolation: 'isolate',
+    overflow: 'hidden',
     borderRadius: 2,
     px: compact ? 1.25 : 2,
     pt: 1.5,
@@ -32,11 +37,15 @@ export function composerSurfaceSx({
           ? 'rgba(50, 177, 194, 0.08)'
           : 'rgba(26, 153, 173, 0.06)'
         : 'background.paper',
+    backgroundImage: highestEffort
+      ? 'radial-gradient(140% 120% at 0% 100%, rgba(179, 157, 255, 0.17), transparent 62%)'
+      : 'none',
     boxShadow: (theme) =>
       dragActive
         ? `0 0 0 3px ${theme.palette.mode === 'dark' ? 'rgba(50, 177, 194, 0.12)' : 'rgba(26, 153, 173, 0.12)'}`
         : 'none',
     transition: 'border-color 200ms, background-color 200ms, box-shadow 200ms',
+    '& > :not(canvas)': { position: 'relative', zIndex: 1 },
     '&:focus-within': { borderColor: 'primary.main' },
     '& .MuiButton-root:hover, & .MuiIconButton-root:hover': { transform: 'none' }
   }

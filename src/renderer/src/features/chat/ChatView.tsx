@@ -106,7 +106,7 @@ type ViewProps = {
   promptAgents?: PromptAgentSummary[]
   onSelectModel: (model: ModelOption | null) => void
   thinkingLevel: ThinkingLevel
-  onSelectThinkingLevel: (level: ThinkingLevel) => void
+  onSelectThinkingLevel: (level: ThinkingLevel) => void | Promise<void>
   onInputChange: (value: string) => void
   onRetryUserMessage?: (message: UserMessageRetryTarget) => Promise<void> | void
   onForkUserMessage?: (messageId: string) => Promise<void> | void

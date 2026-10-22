@@ -17,10 +17,26 @@ import {
 } from '../src/main/agent/main-system-prompt'
 import type { RuntimeRecoveryApi } from '../src/shared/runtimeRecoveryTypes'
 import {
+  remoteModelControlsBlocked,
   remoteRecoveryTargetForSession,
   sameRuntimeRecoveryTarget,
   shouldAutoConnectRemoteSession
 } from '../src/renderer/src/features/chat/lib/runtimeRecoveryState'
+
+test('remote model controls wait for a live or not-started attachment', () => {
+  const target = {
+    sessionId: 'phi',
+    projectId: 'project',
+    sessionPath: 'phi-session:phi',
+    sessionGeneration: 1
+  }
+  assert.equal(remoteModelControlsBlocked(target, null), true)
+  assert.equal(remoteModelControlsBlocked(target, { target, phase: 'recovery-required' }), true)
+  assert.equal(remoteModelControlsBlocked(target, { target, phase: 'busy' }), true)
+  assert.equal(remoteModelControlsBlocked(target, { target, phase: 'connected' }), false)
+  assert.equal(remoteModelControlsBlocked(target, { target, phase: 'not-started' }), false)
+  assert.equal(remoteModelControlsBlocked(null, null), false)
+})
 import { IPC } from '../src/shared/ipcChannels'
 
 const base = {

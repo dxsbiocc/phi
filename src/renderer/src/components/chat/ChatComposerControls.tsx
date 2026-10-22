@@ -17,6 +17,8 @@ import {
   Typography
 } from '@mui/material'
 import { useId, useMemo, useState, type ReactNode } from 'react'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { SparklesIcon } from '@hugeicons/core-free-icons'
 import { PERMISSION_MODE_ICON_META, PhiIcons } from '../../icons'
 import type { ModelOption, PermissionMode, ThinkingLevel } from '../../types'
 import { ThinkingLevelSlider } from './ComposerThinkingSlider'
@@ -40,7 +42,8 @@ export function ModelSelectorControl({
   compact = false,
   thinkingLevel,
   supportedThinkingLevels,
-  onSelectThinkingLevel
+  onSelectThinkingLevel,
+  onPreviewThinkingLevel
 }: {
   models: ModelOption[]
   selectedModel: ModelOption | null
@@ -49,7 +52,8 @@ export function ModelSelectorControl({
   compact?: boolean
   thinkingLevel?: ThinkingLevel
   supportedThinkingLevels?: ThinkingLevel[] | null
-  onSelectThinkingLevel?: (level: ThinkingLevel) => void
+  onSelectThinkingLevel?: (level: ThinkingLevel) => void | Promise<void>
+  onPreviewThinkingLevel?: (level: ThinkingLevel) => void
 }): ReactNode {
   useUiLanguage()
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
@@ -147,7 +151,11 @@ export function ModelSelectorControl({
                 component="span"
                 sx={{ display: 'inline-flex', color: thinkingColor ?? 'inherit' }}
               >
-                <BoltIcon size={COMPOSER_ICON_SIZE} />
+                {thinkingSelection?.level === 'max' ? (
+                  <HugeiconsIcon icon={SparklesIcon} size={COMPOSER_ICON_SIZE} />
+                ) : (
+                  <BoltIcon size={COMPOSER_ICON_SIZE} />
+                )}
               </Box>
             ) : null}
           </IconButton>
@@ -217,7 +225,11 @@ export function ModelSelectorControl({
                     fontWeight: 700
                   }}
                 >
-                  <BoltIcon size={14} />
+                  {thinkingSelection.level === 'max' ? (
+                    <HugeiconsIcon icon={SparklesIcon} size={14} />
+                  ) : (
+                    <BoltIcon size={14} />
+                  )}
                   {thinkingSelection.label}
                 </Box>
               ) : null}
@@ -353,6 +365,7 @@ export function ModelSelectorControl({
             supportedLevels={supportedThinkingLevels ?? null}
             disabled={disabled}
             onSelectThinkingLevel={onSelectThinkingLevel}
+            onPreviewThinkingLevel={onPreviewThinkingLevel}
           />
         ) : null}
       </Popover>

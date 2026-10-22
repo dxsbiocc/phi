@@ -72,6 +72,7 @@ import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import { RuntimeRecoveryBanner } from './features/chat/components/RuntimeRecoveryBanner'
 import {
+  remoteModelControlsBlocked,
   remoteRecoveryTargetForSession,
   sameRuntimeRecoveryTarget,
   shouldAutoConnectRemoteSession
@@ -3388,6 +3389,11 @@ function App(): React.JSX.Element {
       activeSessionGeneration
     ]
   )
+  const [remoteRecoverySelectionState, setRemoteRecoverySelectionState] =
+    useState<RuntimeRecoveryState | null>(null)
+  const remoteControlsUnavailable =
+    remoteModelControlsBlocked(runtimeRecoveryTarget, remoteRecoverySelectionState) ||
+    (activeProjectLocation?.kind === 'ssh' && currentSessionIsBusy)
   const activeChatView = (
     <RemoteProjectFileContext.Provider
       value={
@@ -3446,6 +3452,12 @@ function App(): React.JSX.Element {
                 serverConnecting={activeRemoteConnection?.phase === 'connecting'}
                 models={availableModels}
                 onRecovered={onRuntimeRecovered}
+                onStateChange={setRemoteRecoverySelectionState}
+                refreshKey={JSON.stringify([
+                  currentSessionIsBusy,
+                  activeSession?.status,
+                  activeSessionRuntimeState.currentRunStartedAt
+                ])}
                 onSummaryCreated={onRuntimeSummaryCreated}
               />
             }
@@ -3479,9 +3491,7 @@ function App(): React.JSX.Element {
               void onSelectModel(model)
             }}
             thinkingLevel={thinkingLevel}
-            onSelectThinkingLevel={(level) => {
-              void onSelectThinkingLevel(level)
-            }}
+            onSelectThinkingLevel={onSelectThinkingLevel}
             onInputChange={setActiveInput}
             onRetryUserMessage={onRetryUserMessage}
             onForkUserMessage={
@@ -3513,7 +3523,9 @@ function App(): React.JSX.Element {
             disablePermissionModeSelect={
               isSessionChanging || currentSessionIsCompacting || isUpdatingPermissionMode
             }
-            disableModelControls={isSessionChanging || currentSessionIsCompacting}
+            disableModelControls={
+              isSessionChanging || currentSessionIsCompacting || remoteControlsUnavailable
+            }
             pendingApproval={pendingApproval}
             pendingUserInteraction={pendingUserInteraction}
             queuedPrompts={activeQueuedPrompts.map((item) => ({

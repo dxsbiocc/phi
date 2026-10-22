@@ -18,7 +18,8 @@ const THINKING_LEVEL_DEBOUNCE_MS = 300
 
 function usePreviewThinkingLevel(
   thinkingLevel: ThinkingLevel,
-  onSelectThinkingLevel: (level: ThinkingLevel) => void | Promise<void>
+  onSelectThinkingLevel: (level: ThinkingLevel) => void | Promise<void>,
+  onPreviewThinkingLevel?: (level: ThinkingLevel) => void
 ): {
   displayedLevel: ThinkingLevel
   preview: (index: number) => void
@@ -67,19 +68,23 @@ function usePreviewThinkingLevel(
     displayedLevel:
       previewLevel !== null && previewLevel !== thinkingLevel ? previewLevel : thinkingLevel,
     preview(index: number): void {
-      setPreviewLevel(thinkingLevelAt(index))
+      const level = thinkingLevelAt(index)
+      setPreviewLevel(level)
+      onPreviewThinkingLevel?.(level)
       clearTimer()
       pendingRef.current.pending = null
     },
     commit(index: number): void {
       const level = thinkingLevelAt(index)
       setPreviewLevel(level)
+      onPreviewThinkingLevel?.(level)
       pendingRef.current.pending = level
       clearTimer()
       pendingRef.current.timer = setTimeout(() => {
         pendingRef.current.timer = null
         pendingRef.current.pending = null
         publishLevelRef.current(level)
+        setPreviewLevel(null)
       }, THINKING_LEVEL_DEBOUNCE_MS)
     }
   }
@@ -188,17 +193,20 @@ export function ThinkingLevelSlider({
   thinkingLevel,
   supportedLevels,
   disabled = false,
-  onSelectThinkingLevel
+  onSelectThinkingLevel,
+  onPreviewThinkingLevel
 }: {
   thinkingLevel: ThinkingLevel
   supportedLevels: ThinkingLevel[] | null
   disabled?: boolean
   onSelectThinkingLevel: (level: ThinkingLevel) => void | Promise<void>
+  onPreviewThinkingLevel?: (level: ThinkingLevel) => void
 }): ReactNode {
   useUiLanguage()
   const { displayedLevel, preview, commit } = usePreviewThinkingLevel(
     thinkingLevel,
-    onSelectThinkingLevel
+    onSelectThinkingLevel,
+    onPreviewThinkingLevel
   )
   const selection = resolveThinkingSelection(displayedLevel, supportedLevels)
   const sliderDisabled = disabled || selection.modelDisabled

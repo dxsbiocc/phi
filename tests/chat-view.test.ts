@@ -42,9 +42,11 @@ import {
 import type {
   AgentUserInteractionRequest,
   ChatItem,
+  ModelOption,
   PermissionMode,
   PromptAgentSummary,
   SkillSummary,
+  ThinkingLevel,
   ToolApprovalRequest,
   ToolCallItem
 } from '../src/renderer/src/types'
@@ -58,6 +60,8 @@ function renderChat(
     isGenerating?: boolean
     currentRunStartedAt?: string
     disableModelControls?: boolean
+    thinkingLevel?: ThinkingLevel
+    selectedModel?: ModelOption
     compactComposerControls?: boolean
     input?: string
     images?: Array<{ mimeType: 'image/png'; data: string }>
@@ -105,7 +109,7 @@ function renderChat(
             thinkingLevels: ['low', 'medium', 'high']
           }
         ],
-        selectedModel: {
+        selectedModel: options.selectedModel ?? {
           providerId: 'kimi-code',
           modelId: 'kimi-for-coding',
           name: 'Kimi Coding',
@@ -118,7 +122,7 @@ function renderChat(
         resourceMentions: options.resourceMentions,
         promptAgents: options.promptAgents ?? [],
         onSelectModel: () => undefined,
-        thinkingLevel: 'high',
+        thinkingLevel: options.thinkingLevel ?? 'high',
         onSelectThinkingLevel: () => undefined,
         onInputChange: () => undefined,
         onChatSubmit: async (event) => event.preventDefault(),
@@ -1978,6 +1982,26 @@ test('composer buttons stay fixed on hover and use matching action icon sizes', 
     readFileSync('src/renderer/src/components/chat/ComposerThinkingSlider.tsx', 'utf8'),
     /data-phi-thinking-slider="true"/
   )
+})
+
+test('the rightmost supported effort lights the composer even below Max', () => {
+  const maxModel: ModelOption = {
+    providerId: 'cursor',
+    modelId: 'max-capable',
+    name: 'Max capable',
+    thinkingLevels: ['low', 'high', 'max']
+  }
+  const active = renderChat([], { selectedModel: maxModel, thinkingLevel: 'max' })
+  assert.match(active, /data-phi-highest-effort="true"/)
+  assert.match(active, /data-phi-prompt-bar-sparkles="active"/)
+
+  const rightmostBelowMax = renderChat([], { thinkingLevel: 'high' })
+  assert.match(rightmostBelowMax, /data-phi-highest-effort="true"/)
+  assert.match(rightmostBelowMax, /data-phi-prompt-bar-sparkles="active"/)
+
+  const belowRightmost = renderChat([], { selectedModel: maxModel, thinkingLevel: 'high' })
+  assert.doesNotMatch(belowRightmost, /data-phi-highest-effort=/)
+  assert.match(belowRightmost, /data-phi-prompt-bar-sparkles="inactive"/)
 })
 
 test('chat view keeps compact composer icon buttons at the declared outer size', () => {

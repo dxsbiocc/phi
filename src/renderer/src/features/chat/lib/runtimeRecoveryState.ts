@@ -41,6 +41,18 @@ export function sameRuntimeRecoveryTarget(
   )
 }
 
+export function remoteModelControlsBlocked(
+  target: RuntimeRecoveryTarget | null,
+  state: Pick<RuntimeRecoveryState, 'target' | 'phase'> | null
+): boolean {
+  if (!target) return false
+  return (
+    !state ||
+    !sameRuntimeRecoveryTarget(state.target, target) ||
+    (state.phase !== 'connected' && state.phase !== 'not-started')
+  )
+}
+
 export function shouldAutoConnectRemoteSession(state: RuntimeRecoveryState): boolean {
   return state.phase === 'recovery-required' && state.issue === 'disconnected' && state.canResume
 }

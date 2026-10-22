@@ -13,7 +13,7 @@ import {
   Stack,
   Typography
 } from '@mui/material'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import { MetaBallsLoader } from './MetaBallsLoader'
 import type {
@@ -53,7 +53,9 @@ export function RuntimeRecoveryBanner({
   connecting = false,
   serverConnecting = false,
   onRecovered,
-  onSummaryCreated
+  onSummaryCreated,
+  onStateChange,
+  refreshKey
 }: {
   api: RuntimeRecoveryApi
   target: RuntimeRecoveryTarget | null
@@ -62,9 +64,11 @@ export function RuntimeRecoveryBanner({
   serverConnecting?: boolean
   onRecovered?: (state: RuntimeRecoveryState) => void | Promise<void>
   onSummaryCreated?: (result: RuntimeSummaryContinuation) => void | Promise<void>
+  onStateChange?: (state: RuntimeRecoveryState | null) => void
+  refreshKey?: string
 }): React.JSX.Element | null {
   useUiLanguage()
-  const recovery = useRuntimeRecovery(api, target, onRecovered, onSummaryCreated)
+  const recovery = useRuntimeRecovery(api, target, onRecovered, onSummaryCreated, refreshKey)
   const viewKey = runtimeRecoveryViewKey(target)
   const [selection, setSelection] = useState({ viewKey: '', summaryOpen: false, replacement: '' })
   const summaryOpen = selection.viewKey === viewKey && selection.summaryOpen
@@ -72,6 +76,7 @@ export function RuntimeRecoveryBanner({
   const updateSelection = (patch: Partial<typeof selection>): void =>
     setSelection({ viewKey, summaryOpen, replacement, ...patch })
   const state = recovery.state
+  useEffect(() => onStateChange?.(state), [onStateChange, state])
   if (
     serverConnecting ||
     connecting ||

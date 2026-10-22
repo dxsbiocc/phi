@@ -13,7 +13,8 @@ export function useRuntimeRecovery(
   api: RuntimeRecoveryApi,
   target: RuntimeRecoveryTarget | null,
   onRecovered?: (state: RuntimeRecoveryState) => void | Promise<void>,
-  onSummaryCreated?: (result: RuntimeSummaryContinuation) => void | Promise<void>
+  onSummaryCreated?: (result: RuntimeSummaryContinuation) => void | Promise<void>,
+  refreshKey?: string
 ): {
   state: RuntimeRecoveryState | null
   pending: boolean
@@ -92,7 +93,7 @@ export function useRuntimeRecovery(
   }, [key])
   useEffect(() => {
     void refresh()
-  }, [key, target?.sessionGeneration, refresh])
+  }, [key, target?.sessionGeneration, refreshKey, refresh])
   useEffect(
     () =>
       api.onSessionChanged?.((session) => {

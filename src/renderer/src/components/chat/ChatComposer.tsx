@@ -24,7 +24,9 @@ import type {
   ThinkingLevel
 } from '../../types'
 import { ComposerTextEditor, type ComposerTextEditorHandle } from './ComposerTextEditor'
+import { PromptBarSparkles } from './PromptBarSparkles'
 import { ModelSelectorControl, PermissionModeControl } from './ChatComposerControls'
+import { resolveThinkingSelection } from './composerThinkingLevel'
 import { InputAddControl, InputAddPanel } from './InputAddMenu'
 import {
   COMPOSER_ICON_SIZE,
@@ -212,7 +214,7 @@ export type ChatComposerProps = {
   onSelectModel: (model: ModelOption | null) => void
   disableModelControls?: boolean
   thinkingLevel: ThinkingLevel
-  onSelectThinkingLevel: (level: ThinkingLevel) => void
+  onSelectThinkingLevel: (level: ThinkingLevel) => void | Promise<void>
   onChange: (value: string, cursor: number) => void
   onCursorChange?: (cursor: number) => void
   onKeyDown?: (event: KeyboardEvent, editor: ComposerTextEditorHandle) => boolean
@@ -294,6 +296,31 @@ export function ChatComposer({
 }: ChatComposerProps): React.JSX.Element {
   useUiLanguage()
   const surfaceRef = useRef<HTMLDivElement | null>(null)
+  const thinkingCommitRef = useRef(0)
+  const [previewThinkingLevel, setPreviewThinkingLevel] = useState<{
+    level: ThinkingLevel
+    baseLevel: ThinkingLevel
+    modelKey: string
+  } | null>(null)
+  const modelKey = selectedModel ? `${selectedModel.providerId}/${selectedModel.modelId}` : ''
+  const visualThinkingLevel =
+    previewThinkingLevel?.baseLevel === thinkingLevel && previewThinkingLevel.modelKey === modelKey
+      ? previewThinkingLevel.level
+      : thinkingLevel
+  const effortSelection = resolveThinkingSelection(
+    visualThinkingLevel,
+    selectedModel?.thinkingLevels ?? null
+  )
+  const highestEffort =
+    !effortSelection.modelDisabled && effortSelection.currentIndex === effortSelection.maxIndex
+  const commitThinkingLevel = async (level: ThinkingLevel): Promise<void> => {
+    const request = ++thinkingCommitRef.current
+    try {
+      await onSelectThinkingLevel(level)
+    } finally {
+      if (request === thinkingCommitRef.current) setPreviewThinkingLevel(null)
+    }
+  }
   const addMenu = useComposerAddMenu(surfaceRef, onOpenAddMenu)
   const insertReference = (reference: string): void => {
     if (onInsertReference) {
@@ -328,9 +355,11 @@ export function ChatComposer({
         onDrop={onDrop}
         onPaste={onPaste}
         aria-label={ariaLabel}
+        data-phi-highest-effort={highestEffort ? 'true' : undefined}
         data-phi-file-drop-target={fileDropTarget ? 'chat-composer' : undefined}
-        sx={composerSurfaceSx({ compact, dragActive })}
+        sx={composerSurfaceSx({ compact, dragActive, highestEffort })}
       >
+        <PromptBarSparkles active={highestEffort} value={value} />
         {aboveEditor}
         <Box sx={editorMinHeight ? { minHeight: editorMinHeight } : undefined}>
           <ComposerTextEditor
@@ -400,7 +429,10 @@ export function ChatComposer({
               compact={compact}
               thinkingLevel={thinkingLevel}
               supportedThinkingLevels={selectedModel?.thinkingLevels ?? null}
-              onSelectThinkingLevel={onSelectThinkingLevel}
+              onSelectThinkingLevel={commitThinkingLevel}
+              onPreviewThinkingLevel={(level) =>
+                setPreviewThinkingLevel({ level, baseLevel: thinkingLevel, modelKey })
+              }
             />
             {accessory}
             <ComposerSubmitButton
