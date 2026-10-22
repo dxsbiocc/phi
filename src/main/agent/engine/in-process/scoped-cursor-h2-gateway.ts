@@ -8,7 +8,7 @@ import http2, {
   type ServerHttp2Stream
 } from 'node:http2'
 
-import { CURSOR_DEFAULT_BASE_URL, CURSOR_RUN_PATH } from '@oh-my-pi/pi-catalog/wire/cursor'
+import { CURSOR_DEFAULT_BASE_URL, CURSOR_RUN_PATH } from '../omp-cursor-wire'
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024
 const MAX_REQUEST_BYTES = 128 * 1024 * 1024
