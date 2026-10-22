@@ -6,6 +6,7 @@ import { type Theme } from '@mui/material/styles'
 import { LeftRail, type LeftPanel } from './components/AnalysisLeftRail'
 import NotebookCanvas from './notebook/NotebookCanvas'
 import { NotebookJupyterStartDialog } from './notebook/NotebookJupyterStartDialog'
+import { WebLinkOpenContext } from '../../components/markdown/WebLinkOpenContext'
 import type { AnalysisNotebookAgentFocus } from './lib/notebookCanvasTypes'
 import type { PendingJupyterCellStart } from './lib/analysisNotebookRuntimeTypes'
 import type { NotebookViewStateStore } from './lib/notebookViewState'
@@ -69,6 +70,7 @@ export type AnalysisViewProps = {
     document: NotebookDocument,
     cellId: string
   ) => void
+  onOpenWebUrl?: (url: string) => void
   onStopNotebookCell?: (file: AnalysisNotebookFile, cellId: string) => void
   onCompleteNotebookCell?: (
     file: AnalysisNotebookFile,
@@ -193,6 +195,7 @@ export default function AnalysisView({
   onStartNotebookSession,
   onStopNotebookSession,
   onRunNotebookCell,
+  onOpenWebUrl,
   onStopNotebookCell,
   onCompleteNotebookCell,
   onFormatNotebookCell,
@@ -365,45 +368,47 @@ export default function AnalysisView({
         <ResizeSeparator label={analysisCopy.resizeAnalysisRail} onMouseDown={onStartLeftResize} />
       ) : null}
       {!effectiveLeftSidebarFullscreen ? (
-        <NotebookCanvas
-          activeNotebookPath={headerActivePath ?? analysisCopy.noNotebookSelected}
-          notebooks={headerTabs}
-          hideNotebookTabs={Boolean(workspaceFileTabs)}
-          availableNotebooks={notebooks}
-          projectCwd={notebookRegistry?.projectCwd ?? null}
-          notebookFile={notebookFile}
-          viewStateStore={notebookViewStateStore}
-          viewStateScope={notebookViewStateScope}
-          initialDocument={notebookFile?.document ?? null}
-          isOpening={isOpeningNotebook}
-          error={notebookContentError}
-          kernelDiagnostics={kernelDiagnostics}
-          isLoadingKernels={isLoadingKernels}
-          kernelError={kernelError}
-          notebookSessionStatus={notebookSessionStatus}
-          isStartingNotebookSession={isStartingNotebookSession}
-          notebookSessionError={notebookSessionError}
-          executingCellId={executingNotebookCellId}
-          cellExecutionError={notebookCellExecutionError}
-          agentFocus={agentFocus}
-          onSaveNotebook={onSaveNotebook}
-          onSyncNotebookDraft={onSyncNotebookDraft}
-          onNotebookDirtyChange={onNotebookDirtyChange}
-          onStartNotebookSession={onStartNotebookSession}
-          onStopNotebookSession={onStopNotebookSession}
-          onRunNotebookCell={onRunNotebookCell}
-          onStopNotebookCell={onStopNotebookCell}
-          onCompleteNotebookCell={onCompleteNotebookCell}
-          onFormatNotebookCell={onFormatNotebookCell}
-          onGenerateNotebookCode={onGenerateNotebookCode}
-          onNotebookCodeGenerationProgress={onNotebookCodeGenerationProgress}
-          aiModelOptions={notebookAiModelOptions}
-          aiDefaultModel={notebookAiDefaultModel}
-          onPickContextFiles={onPickNotebookContextFiles}
-          onSelectNotebook={onSelectNotebook}
-          onCreateNotebook={onCreateNotebook}
-          onCloseNotebook={onCloseNotebookTab}
-        />
+        <WebLinkOpenContext.Provider value={onOpenWebUrl ?? null}>
+          <NotebookCanvas
+            activeNotebookPath={headerActivePath ?? analysisCopy.noNotebookSelected}
+            notebooks={headerTabs}
+            hideNotebookTabs={Boolean(workspaceFileTabs)}
+            availableNotebooks={notebooks}
+            projectCwd={notebookRegistry?.projectCwd ?? null}
+            notebookFile={notebookFile}
+            viewStateStore={notebookViewStateStore}
+            viewStateScope={notebookViewStateScope}
+            initialDocument={notebookFile?.document ?? null}
+            isOpening={isOpeningNotebook}
+            error={notebookContentError}
+            kernelDiagnostics={kernelDiagnostics}
+            isLoadingKernels={isLoadingKernels}
+            kernelError={kernelError}
+            notebookSessionStatus={notebookSessionStatus}
+            isStartingNotebookSession={isStartingNotebookSession}
+            notebookSessionError={notebookSessionError}
+            executingCellId={executingNotebookCellId}
+            cellExecutionError={notebookCellExecutionError}
+            agentFocus={agentFocus}
+            onSaveNotebook={onSaveNotebook}
+            onSyncNotebookDraft={onSyncNotebookDraft}
+            onNotebookDirtyChange={onNotebookDirtyChange}
+            onStartNotebookSession={onStartNotebookSession}
+            onStopNotebookSession={onStopNotebookSession}
+            onRunNotebookCell={onRunNotebookCell}
+            onStopNotebookCell={onStopNotebookCell}
+            onCompleteNotebookCell={onCompleteNotebookCell}
+            onFormatNotebookCell={onFormatNotebookCell}
+            onGenerateNotebookCode={onGenerateNotebookCode}
+            onNotebookCodeGenerationProgress={onNotebookCodeGenerationProgress}
+            aiModelOptions={notebookAiModelOptions}
+            aiDefaultModel={notebookAiDefaultModel}
+            onPickContextFiles={onPickNotebookContextFiles}
+            onSelectNotebook={onSelectNotebook}
+            onCreateNotebook={onCreateNotebook}
+            onCloseNotebook={onCloseNotebookTab}
+          />
+        </WebLinkOpenContext.Provider>
       ) : null}
       {onStartJupyterForCell && onDismissJupyterCellStart && (
         <NotebookJupyterStartDialog

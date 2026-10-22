@@ -34,8 +34,7 @@ export const browserUi = defineCopy(
     uRL: 'URL',
     openInDefaultBrowser: 'Open in default browser',
     pageLoadingProgress: 'Page loading progress',
-    unableToOpenTheLinkSelectASession:
-      'Unable to open the link. Select a session or try again later.',
+    unableToOpenLinkInApp: 'Unable to open this link in Phi. Try again.',
     pageStoppedRespondingPleaseTryAgain: 'Page stopped responding. Please try again.',
     thisAddressCannotBeOpenedInTheApp: 'This address cannot be opened in the app.',
     thisPageHasBeenClosed: 'This page has been closed.',
@@ -73,7 +72,7 @@ export const browserUi = defineCopy(
     uRL: '网址',
     openInDefaultBrowser: '在默认浏览器中打开',
     pageLoadingProgress: '页面加载进度',
-    unableToOpenTheLinkSelectASession: '无法打开链接，请先选择一个会话或稍后重试。',
+    unableToOpenLinkInApp: '无法在应用内打开链接，请稍后重试。',
     pageStoppedRespondingPleaseTryAgain: '页面停止响应，请重试。',
     thisAddressCannotBeOpenedInTheApp: '这个网址无法在应用内打开。',
     thisPageHasBeenClosed: '当前页面已经关闭。',

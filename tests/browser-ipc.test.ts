@@ -272,7 +272,42 @@ test('renderer execution derives human ownership from trusted main state', async
   ])
 })
 
-test('renderer calls reject foreign destroyed or sessionless callers safely', async () => {
+test('trusted Notebook links open an isolated in-app browser without a chat session', async () => {
+  const value = harness()
+  value.setHumanSession(undefined)
+
+  const result = await invoke(value, 'browser:execute', {
+    type: 'open',
+    requestId: 'notebook-link',
+    url: 'https://www.google.com/'
+  })
+
+  assert.equal((result as BrowserOutcome).ok, true)
+  assert.deepEqual(value.registry.registrations, [
+    { sessionId: 'phi-human-browser', owner: { kind: 'ordinary' } }
+  ])
+  assert.deepEqual(value.registry.workspaces.get('phi-human-browser')?.executeCalls, [
+    {
+      actor: { kind: 'human' },
+      command: {
+        type: 'open',
+        requestId: 'notebook-link',
+        url: 'https://www.google.com/'
+      }
+    }
+  ])
+  await assert.rejects(
+    value.coordinator.executeAgent({
+      originSessionId: 'phi-human-browser',
+      runId: 'run-forged',
+      toolCallId: 'tool-forged',
+      command: { type: 'open', requestId: 'agent-link', url: 'https://www.google.com/' }
+    }),
+    /Browser session is unavailable/
+  )
+})
+
+test('renderer calls reject foreign or destroyed callers while allowing a human-only browser', async () => {
   const value = harness()
   await assert.rejects(
     invoke(value, 'browser:snapshot', {}, value.foreign),
@@ -282,8 +317,11 @@ test('renderer calls reject foreign destroyed or sessionless callers safely', as
   await assert.rejects(invoke(value, 'browser:snapshot'), /Browser renderer is not authorized/)
   value.sender.destroyed = false
   value.setHumanSession(undefined)
-  await assert.rejects(invoke(value, 'browser:snapshot'), /Browser session is unavailable/)
-  assert.equal(value.registry.registrations.length, 0)
+  const snapshot = (await invoke(value, 'browser:snapshot')) as BrowserWorkspaceSnapshot
+  assert.equal(snapshot.sessionId, 'phi-human-browser')
+  assert.deepEqual(value.registry.registrations, [
+    { sessionId: 'phi-human-browser', owner: { kind: 'ordinary' } }
+  ])
 })
 
 test('app-shell routing always denies native windows and contains synchronous external failures', async () => {
@@ -323,7 +361,7 @@ test('app-shell routing always denies native windows and contains synchronous ex
   assert.equal(value.registry.registrations.length, 0)
 })
 
-test('app-shell routing requests the matching panel and reports no-session failures without shell fallback', async () => {
+test('app-shell routing requests the matching panel even without a chat session', async () => {
   const value = harness()
   assert.deepEqual(
     routeBrowserAppShellWindowOpen({
@@ -358,8 +396,8 @@ test('app-shell routing requests the matching panel and reports no-session failu
   assert.deepEqual(value.sender.sent.at(-1), {
     channel: 'browser:event',
     payload: {
-      sessionId: null,
-      event: { type: 'appShellOpenFailed', reason: 'browserUnavailable' }
+      sessionId: 'phi-human-browser',
+      event: { type: 'panelRequested', reason: 'appShellOpen', revision: 0 }
     }
   })
 })

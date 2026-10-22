@@ -441,6 +441,36 @@ test('analysis view renders project notebook registry entries', () => {
   assert.doesNotMatch(markup, /data\/raw\/samples\.csv/)
 })
 
+test('Notebook Markdown links use the in-app opener without a chat conversation', () => {
+  const document = parseNotebook({
+    nbformat: 4,
+    nbformat_minor: 5,
+    metadata: {},
+    cells: [
+      {
+        id: 'link-cell',
+        cell_type: 'markdown',
+        source: '[Google](https://www.google.com/)',
+        metadata: {}
+      }
+    ]
+  })
+  const markup = renderAnalysisView({
+    notebookFile: {
+      path: '/project/notebooks/links.ipynb',
+      relativePath: 'notebooks/links.ipynb',
+      name: 'links.ipynb',
+      bytes: 64,
+      modifiedAt: '2026-10-22T00:00:00.000Z',
+      savedRevision: document.revision,
+      document
+    },
+    onOpenWebUrl: () => undefined
+  })
+  assert.match(markup, /href="https:\/\/www\.google\.com\/"/)
+  assert.match(markup, /data-phi-open-web-url="in-app"/)
+})
+
 test('analysis empty notebook canvas offers notebook recovery actions', () => {
   const markup = renderAnalysisView({
     hideLeftRail: true,
@@ -808,7 +838,7 @@ test('analysis notebook markdown selection and run affordances use the correct l
   assert.match(source, /data-phi-notebook-rendered-markdown-action-icon="solid"/)
   assert.match(source, /data-phi-notebook-rendered-markdown-actions=/)
   assert.match(source, /solid-hover/)
-  assert.match(source, /opacity: menuAnchor \? 1 : 0/)
+  assert.match(source, /opacity: menuAnchor \|\| markdownInsertOpen \? 1 : 0/)
   assert.doesNotMatch(source, /isRenderedMarkdown \|\| menuAnchor \? 1 : 0/)
   assert.match(source, /&:focus-within/)
   assert.match(source, /analysisCopy\.editMarkdown/)

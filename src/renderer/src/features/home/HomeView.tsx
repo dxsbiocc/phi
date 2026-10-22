@@ -13,10 +13,15 @@ import type {
   SessionSummary,
   ThinkingLevel
 } from '../../types'
-import { HomeLowerLayout } from './components/HomeLowerLayout'
+import { HomeCarouselSection, HomeCompanionRow } from './components/HomeLowerLayout'
+import type { HomeOverviewCardsProps } from './components/HomeOverviewCards'
 import GlowCursor from './components/GlowCursor'
 import { HOME_COLUMN_MAX_WIDTH } from './lib/homeColumn'
-import { HomePrompt, type HomePromptRequest } from './components/HomePrompt'
+import {
+  HomePrompt,
+  type HomeComposerResources,
+  type HomePromptRequest
+} from './components/HomePrompt'
 import { useHomeActivity } from './hooks/useHomeActivity'
 import {
   rankHomeWrapperRuns,
@@ -50,6 +55,7 @@ interface HomeViewProps {
   onNewProject: () => void
   onOpenSession: (path: string) => void
   onStartPrompt: (request: HomePromptRequest) => Promise<void>
+  composerResources?: HomeComposerResources
 }
 
 export function HomeView({
@@ -73,7 +79,8 @@ export function HomeView({
   createdProjectId,
   onNewProject,
   onOpenSession,
-  onStartPrompt
+  onStartPrompt,
+  composerResources
 }: HomeViewProps): React.JSX.Element {
   useUiLanguage()
   const muiTheme = useTheme()
@@ -146,6 +153,22 @@ export function HomeView({
       session.status === 'failed'
   ).length
   const wrapperRanking = rankHomeWrapperRuns(wrapperRuns, wrapperCatalog)
+  const homeOverview: HomeOverviewCardsProps = {
+    projectCount: projects.length,
+    sessionsLoading,
+    ordinaryConversationCount: sessions.length,
+    projectConversationCount: projectWork.length,
+    projectConversationsLoading,
+    projectConversationsIncomplete,
+    runningCount,
+    attentionCount,
+    recentWork,
+    resources,
+    resourcesLoading: !resourcesLoaded,
+    wrapperRanking,
+    wrapperRunCount: wrapperRuns.length,
+    onOpenSession
+  }
 
   return (
     <Box
@@ -193,11 +216,23 @@ export function HomeView({
           scrollbarGutter: 'stable both-edges',
           px: { xs: 2, sm: 3, lg: 4 },
           overflowX: 'clip',
-          pt: { xs: 8, sm: 10, lg: 12 },
-          pb: { xs: 3, sm: 4 }
+          containerType: 'size'
         }}
       >
-        <Box sx={{ width: '100%', maxWidth: HOME_COLUMN_MAX_WIDTH, mx: 'auto' }}>
+        <Box
+          sx={{
+            boxSizing: 'border-box',
+            minHeight: '100cqh',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'flex-end',
+            width: '100%',
+            maxWidth: HOME_COLUMN_MAX_WIDTH,
+            mx: 'auto',
+            pt: { xs: 8, sm: 10, lg: 12 },
+            pb: 1
+          }}
+        >
           <HomePrompt
             projects={projects}
             models={models}
@@ -210,6 +245,7 @@ export function HomeView({
             createdProjectId={createdProjectId}
             onNewProject={onNewProject}
             onStart={onStartPrompt}
+            composerResources={composerResources}
           />
 
           {activity.error ? (
@@ -231,25 +267,19 @@ export function HomeView({
             </Box>
           ) : null}
 
-          <HomeLowerLayout
+          <HomeCarouselSection
             activity={activity.data}
             activityLoading={activity.loading}
-            overview={{
-              projectCount: projects.length,
-              sessionsLoading,
-              ordinaryConversationCount: sessions.length,
-              projectConversationCount: projectWork.length,
-              projectConversationsLoading,
-              projectConversationsIncomplete,
-              runningCount,
-              attentionCount,
-              recentWork,
-              resources,
-              resourcesLoading: !resourcesLoaded,
-              wrapperRanking,
-              wrapperRunCount: wrapperRuns.length,
-              onOpenSession
-            }}
+            overview={homeOverview}
+          />
+        </Box>
+        <Box
+          sx={{ width: '100%', maxWidth: HOME_COLUMN_MAX_WIDTH, mx: 'auto', pb: { xs: 3, sm: 4 } }}
+        >
+          <HomeCompanionRow
+            activity={activity.data}
+            activityLoading={activity.loading}
+            overview={homeOverview}
           />
         </Box>
       </Box>

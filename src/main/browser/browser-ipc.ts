@@ -1,4 +1,8 @@
 import { IPC } from '../../shared/ipcChannels'
+import {
+  HUMAN_BROWSER_SESSION_GENERATION,
+  HUMAN_BROWSER_SESSION_ID
+} from '../../shared/browserSessionScope'
 import type {
   BrowserActor,
   BrowserCommand,
@@ -365,6 +369,16 @@ function safeSession(session: BrowserIpcSession | undefined): BrowserIpcSession 
   return session
 }
 
+function humanSession(session: BrowserIpcSession | undefined): BrowserIpcSession {
+  return safeSession(
+    session ?? {
+      sessionId: HUMAN_BROWSER_SESSION_ID,
+      sessionGeneration: HUMAN_BROWSER_SESSION_GENERATION,
+      owner: { kind: 'ordinary' }
+    }
+  )
+}
+
 export class BrowserIpcCoordinator {
   readonly #getRegistry: BrowserIpcCoordinatorOptions['getRegistry']
   readonly #getTrustedRenderer: BrowserIpcCoordinatorOptions['getTrustedRenderer']
@@ -384,7 +398,7 @@ export class BrowserIpcCoordinator {
     return this.#safe(async () => {
       this.#assertTrustedRenderer(sender)
       const command = parseBrowserCommand(input)
-      const session = safeSession(this.#resolveHumanSession())
+      const session = humanSession(this.#resolveHumanSession())
       const workspace = await this.#workspace(session)
       return workspace.execute({ kind: 'human' }, command)
     })
@@ -393,7 +407,7 @@ export class BrowserIpcCoordinator {
   async snapshotHuman(sender: BrowserRendererSenderLike): Promise<BrowserWorkspaceSnapshot> {
     return this.#safe(async () => {
       this.#assertTrustedRenderer(sender)
-      const session = safeSession(this.#resolveHumanSession())
+      const session = humanSession(this.#resolveHumanSession())
       return (await this.#workspace(session)).snapshot()
     })
   }
@@ -402,7 +416,7 @@ export class BrowserIpcCoordinator {
     return this.#safe(async () => {
       this.#assertTrustedRenderer(sender)
       const parsed = parseViewport(input)
-      const session = safeSession(this.#resolveHumanSession())
+      const session = humanSession(this.#resolveHumanSession())
       if (
         parsed.sessionId !== session.sessionId ||
         parsed.sessionGeneration !== session.sessionGeneration
@@ -449,7 +463,7 @@ export class BrowserIpcCoordinator {
   async openAppShellUrl(input: unknown): Promise<BrowserOutcome> {
     return this.#safe(async () => {
       const url = boundedString(input, MAX_URL_BYTES)
-      const session = safeSession(this.#resolveHumanSession())
+      const session = humanSession(this.#resolveHumanSession())
       const workspace = await this.#workspace(session)
       const outcome = await workspace.execute(
         { kind: 'human' },

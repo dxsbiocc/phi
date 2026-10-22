@@ -4,6 +4,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+import { analysisCopy } from '../src/renderer/src/features/analysis/lib/analysisUiCopy'
 import AnalysisView from '../src/renderer/src/features/analysis/AnalysisView'
 import FilePreviewPanel from '../src/renderer/src/features/file-preview/FilePreviewPanel'
 import MarkdownContent from '../src/renderer/src/components/MarkdownContent'
@@ -22,6 +23,15 @@ const render = (element: React.ReactElement): string =>
   renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, element))
 
 afterEach(() => setUiLanguage('en'))
+
+test('Jupyter start prompt uses the selected language and names the remote execution boundary', () => {
+  setUiLanguage('en')
+  assert.equal(analysisCopy.startJupyterForCellAction, 'Start Jupyter')
+  assert.match(analysisCopy.startJupyterForCellRemoteNote, /server.*local fallback/u)
+  setUiLanguage('zh-CN')
+  assert.equal(analysisCopy.startJupyterForCellAction, '启动 Jupyter')
+  assert.match(analysisCopy.startJupyterForCellRemoteNote, /服务器.*不会回退到本机/u)
+})
 
 test('analysis controls follow both interface languages without changing notebook identity', () => {
   for (const language of ['en', 'zh-CN'] as const) {

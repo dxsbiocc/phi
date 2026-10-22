@@ -1,4 +1,5 @@
 import { IPC } from '../shared/ipcChannels'
+import { browserPresentationSessionId } from '../shared/browserSessionScope'
 import { registerRuntimeSessionOrigin } from './agent/session/runtime-origin-store'
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
 import { readRuntimeRecoverySummarySeed } from './agent/session/recovery-summary'
@@ -517,7 +518,7 @@ function getBrowserWorkspaceRegistry(): BrowserWorkspaceRegistry {
     })
     runtime.workspaceServices.setBrowserWorkspaceRegistry(registry)
     const current = getCurrentSessionPayload()
-    void registry.setActiveSession(current.phiSessionId ?? null).catch(() => {
+    void registry.setActiveSession(browserPresentationSessionId(current.phiSessionId)).catch(() => {
       writeAppLog({ level: 'error', event: 'browser_presentation_transition_failed' })
     })
   }
@@ -722,7 +723,6 @@ const browserIpcCoordinator = new BrowserIpcCoordinator({
     return origin ? browserSessionForPhiId(origin.phiSessionId) : undefined
   }
 })
-
 const terminalIpcCoordinator = new TerminalIpcCoordinator({
   getManager: getTerminalManager,
   getDraftService: getTerminalDraftService,
@@ -3079,7 +3079,7 @@ const { capture: captureSessionControlTarget } = createSessionControlTarget<Agen
 function notifySessionChanged(): void {
   const payload = getCurrentSessionPayload()
   void runtime.workspaceServices.browserWorkspaceRegistry
-    ?.setActiveSession(payload.phiSessionId ?? null)
+    ?.setActiveSession(browserPresentationSessionId(payload.phiSessionId))
     .catch(() => {
       writeAppLog({ level: 'error', event: 'browser_presentation_transition_failed' })
     })

@@ -23,6 +23,7 @@ import {
   BrowserWorkspaceDisposalError
 } from '../src/main/browser/browser-workspace'
 import { getSessionDir } from '../src/main/agent/session/session-store'
+import { HUMAN_BROWSER_SESSION_ID } from '../src/shared/browserSessionScope'
 import { browserCapabilities, human, successful } from './helpers/browserWorkspaceHarness'
 
 function fixture(): {
@@ -67,6 +68,21 @@ test('writes and reads schema-v1 browser metadata only', () => {
     ]) {
       assert.equal(raw.includes(forbidden), false)
     }
+  } finally {
+    f.cleanup()
+  }
+})
+
+test('the human-only browser checkpoint does not create a fake Phi conversation', () => {
+  const f = fixture()
+  try {
+    const store = new FileSystemBrowserCheckpointStore({ agentDir: f.agentDir })
+    store.save(HUMAN_BROWSER_SESSION_ID, checkpoint)
+    assert.deepEqual(store.load(HUMAN_BROWSER_SESSION_ID), checkpoint)
+    assert.equal(existsSync(join(f.agentDir, 'browser', 'human.json')), true)
+    assert.equal(existsSync(getSessionDir(HUMAN_BROWSER_SESSION_ID, f.agentDir)), false)
+    store.remove(HUMAN_BROWSER_SESSION_ID)
+    assert.equal(existsSync(join(f.agentDir, 'browser', 'human.json')), false)
   } finally {
     f.cleanup()
   }

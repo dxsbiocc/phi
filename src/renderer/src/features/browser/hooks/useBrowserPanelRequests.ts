@@ -20,7 +20,7 @@ export function browserAppShellFailureMessage(
   envelope: BrowserRendererEventEnvelope
 ): string | null {
   return envelope.sessionId === null && envelope.event.type === 'appShellOpenFailed'
-    ? browserUi.unableToOpenTheLinkSelectASession
+    ? browserUi.unableToOpenLinkInApp
     : null
 }
 

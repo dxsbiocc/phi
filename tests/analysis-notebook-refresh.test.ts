@@ -41,6 +41,7 @@ function runtimeHarness(): {
   setSave: (callback: RendererApi['saveAnalysisNotebook']) => void
   setRefresh: (callback: () => Promise<AnalysisNotebookFile>) => void
   setJupyterStatus: (status: JupyterServerStatus) => void
+  setStartJupyter: (callback: RendererApi['startAnalysisJupyter']) => void
   setExecute: (callback: RendererApi['executeAnalysisNotebookCell']) => void
   switchCwd: (value: string) => void
   activate: (file: AnalysisNotebookFile) => Promise<void>
@@ -96,6 +97,10 @@ function runtimeHarness(): {
     contentHash: `saved:${input.document.revision}`
   })
   let refresh = async (): Promise<AnalysisNotebookFile> => disk
+  let startJupyter: RendererApi['startAnalysisJupyter'] = async () => {
+    jupyterStatus = { ...jupyterStatus, state: 'ready', hasEndpoint: true }
+    return jupyterStatus
+  }
   let execute: RendererApi['executeAnalysisNotebookCell'] = async (
     projectCwd,
     notebookPath,
@@ -134,10 +139,9 @@ function runtimeHarness(): {
     listAnalysisNotebooks: async () => ({ projectCwd: cwd, notebooks: [] }),
     listAnalysisKernels: async () => ({ kernels: [] }),
     getAnalysisJupyterStatus: async () => jupyterStatus,
-    startAnalysisJupyter: async () => {
+    startAnalysisJupyter: async (projectCwd: string) => {
       calls.startJupyter += 1
-      jupyterStatus = { ...jupyterStatus, state: 'ready', hasEndpoint: true }
-      return jupyterStatus
+      return startJupyter(projectCwd)
     },
     executeAnalysisNotebookCell: (
       ...args: Parameters<RendererApi['executeAnalysisNotebookCell']>
@@ -241,6 +245,9 @@ function runtimeHarness(): {
     setJupyterStatus: (status: JupyterServerStatus) => {
       jupyterStatus = status
     },
+    setStartJupyter: (callback: typeof startJupyter) => {
+      startJupyter = callback
+    },
     setExecute: (callback: typeof execute) => {
       execute = callback
     },
@@ -327,6 +334,26 @@ test('running a cell with stopped remote Jupyter opens a start dialog without ch
   await runtime.state.onRunAnalysisNotebookCell(file, file.document, 'cell-1')
   await runtime.flush()
   assert.equal(runtime.calls.execute, 1)
+  runtime.dispose()
+})
+
+test('a failed one-click Jupyter start keeps the cell unchanged and the dialog actionable', async () => {
+  const runtime = runtimeHarness()
+  const file = notebookFile('print("not run")')
+  await runtime.activate(file)
+  runtime.setStartJupyter(async () => {
+    throw new Error('Server environment is unavailable')
+  })
+
+  await runtime.state.onRunAnalysisNotebookCell(file, file.document, 'cell-1')
+  await runtime.flush()
+  await runtime.state.onStartJupyterForPendingCell()
+  await runtime.flush()
+  assert.equal(runtime.calls.startJupyter, 1)
+  assert.equal(runtime.calls.execute, 0)
+  assert.equal(runtime.state.pendingJupyterCellStart?.cellId, 'cell-1')
+  assert.match(runtime.state.analysisJupyterError ?? '', /environment is unavailable/)
+  assert.equal(runtime.state.activeAnalysisNotebook, file)
   runtime.dispose()
 })
 

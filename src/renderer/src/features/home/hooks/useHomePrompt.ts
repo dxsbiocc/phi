@@ -5,6 +5,7 @@ type HomePromptDraft = {
   text: string
   projectId: string | null
   permissionMode: PermissionMode
+  planMode: boolean
 }
 
 export function useHomePrompt(
@@ -23,9 +24,12 @@ export function useHomePrompt(
   setProjectId: (projectId: string | null) => void
   selectedProject: Project | null
   permissionMode: PermissionMode
+  planReviewEnabled: boolean
+  disablePlanReview: boolean
   disabled: boolean
   canSend: boolean
   selectPermission: (mode: PermissionMode) => void
+  togglePlanReview: () => void
   submit: () => void
 } {
   const [draft, setDraft] = useState('')
@@ -41,7 +45,9 @@ export function useHomePrompt(
     mode: PermissionMode
   } | null>(null)
   const [starting, setStarting] = useState(false)
+  const [planReviewEnabled, setPlanReviewEnabled] = useState(false)
   const selectedProject = projects.find((project) => project.id === projectId) ?? null
+  const disablePlanReview = selectedProject?.location.kind === 'ssh'
   const permissionMode = selectedProject
     ? projectPermission?.id === selectedProject.id
       ? projectPermission.mode
@@ -58,11 +64,18 @@ export function useHomePrompt(
     setOrdinaryPermission(mode)
   }
 
+  const togglePlanReview = (): void => {
+    if (disablePlanReview) return
+    setPlanReviewEnabled((enabled) => !enabled)
+  }
+
   const submit = (): void => {
     const text = draft.trim()
     if (!text || disabled) return
+    const planMode = planReviewEnabled && !disablePlanReview
     setStarting(true)
-    void onStart({ text, projectId: selectedProject?.id ?? null, permissionMode })
+    setPlanReviewEnabled(false)
+    void onStart({ text, projectId: selectedProject?.id ?? null, permissionMode, planMode })
       .then(() => setDraft(''))
       .finally(() => {
         setStarting(false)
@@ -76,9 +89,12 @@ export function useHomePrompt(
     setProjectId,
     selectedProject,
     permissionMode,
+    planReviewEnabled,
+    disablePlanReview,
     disabled,
     canSend: draft.trim().length > 0 && !disabled,
     selectPermission,
+    togglePlanReview,
     submit
   }
 }

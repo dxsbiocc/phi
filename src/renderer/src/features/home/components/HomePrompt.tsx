@@ -1,7 +1,15 @@
 import { homeCopy } from '../lib/homeCopy'
 import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Typography } from '@mui/material'
-import type { ModelOption, PermissionMode, Project, ThinkingLevel } from '../../../types'
+import type { ChatResourceMention } from '../../../lib/chatResourceMentions'
+import type {
+  ModelOption,
+  PermissionMode,
+  Project,
+  PromptAgentSummary,
+  SkillSummary,
+  ThinkingLevel
+} from '../../../types'
 import { useHomePrompt } from '../hooks/useHomePrompt'
 import { HomePromptComposer } from './HomePromptComposer'
 import { PhiMark } from './PhiMark'
@@ -11,6 +19,17 @@ export type HomePromptRequest = {
   text: string
   projectId: string | null
   permissionMode: PermissionMode
+  planMode: boolean
+}
+
+export type HomeComposerResources = {
+  skills: SkillSummary[]
+  promptAgents: PromptAgentSummary[]
+  resources: readonly ChatResourceMention[]
+  cwd: string
+  onPickFiles?: () => Promise<string[]>
+  onOpenAddMenu?: () => void
+  onRefreshPromptAgents?: () => Promise<void>
 }
 
 type HomePromptProps = {
@@ -28,6 +47,7 @@ type HomePromptProps = {
   createdProjectId: string | null
   onNewProject: () => void
   onStart: (request: HomePromptRequest) => Promise<void>
+  composerResources?: HomeComposerResources
 }
 
 export function HomePrompt(props: HomePromptProps): React.JSX.Element {
@@ -81,6 +101,10 @@ export function HomePrompt(props: HomePromptProps): React.JSX.Element {
         onSelectThinkingLevel={props.onSelectThinkingLevel}
         onNewProject={props.onNewProject}
         onSubmit={prompt.submit}
+        planReviewEnabled={prompt.planReviewEnabled}
+        disablePlanReview={prompt.disablePlanReview}
+        onTogglePlanReview={prompt.togglePlanReview}
+        composerResources={props.composerResources}
       />
     </Box>
   )

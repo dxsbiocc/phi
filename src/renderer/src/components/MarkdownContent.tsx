@@ -6,6 +6,7 @@ import {
   Fragment,
   isValidElement,
   memo,
+  useContext,
   useEffect,
   useMemo,
   useState,
@@ -53,6 +54,7 @@ import {
 } from './markdown/MarkdownColorToken'
 import { LocalPathButton } from './markdown/LocalPathButton'
 import { MarkdownSmilesTokenView } from './markdown/MarkdownSmilesToken'
+import { WebLinkOpenContext } from './markdown/WebLinkOpenContext'
 import {
   canStatLocalPaths,
   useLocalPathKinds,
@@ -553,6 +555,8 @@ function MarkdownContentImpl({
   showColorPalettes = false
 }: MarkdownContentProps): React.JSX.Element {
   useUiLanguage()
+  const inheritedOpenWebUrl = useContext(WebLinkOpenContext)
+  const webLinkOpener = onOpenWebUrl ?? inheritedOpenWebUrl ?? undefined
   const remoteProject = useRemoteProjectFileContext()
   const pathReferencePaths = useMemo(
     () =>
@@ -713,7 +717,7 @@ function MarkdownContentImpl({
         }
 
         return (
-          <MarkdownWebLink href={href} onOpenWebUrl={onOpenWebUrl}>
+          <MarkdownWebLink href={href} onOpenWebUrl={webLinkOpener}>
             {children}
           </MarkdownWebLink>
         )
@@ -801,7 +805,7 @@ function MarkdownContentImpl({
       cwd,
       localPathKinds,
       onOpenLocalPath,
-      onOpenWebUrl,
+      webLinkOpener,
       remoteProject,
       showColorPalettes,
       resourceMentions

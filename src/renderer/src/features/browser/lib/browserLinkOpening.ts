@@ -23,7 +23,7 @@ interface BrowserLinkOpeningCoordinatorOptions {
 }
 
 export function browserLinkFailureMessage(failure: BrowserLinkOpenFailure): string {
-  if (failure.kind === 'no-session') return browserUi.unableToOpenTheLinkSelectASession
+  if (failure.kind === 'no-session') return browserUi.unableToOpenLinkInApp
   if (failure.kind === 'unavailable') {
     return browserUi.browserIsTemporarilyUnavailablePleaseTryAgainLater
   }

@@ -14,6 +14,7 @@ import * as permissionModeControl from '../src/main/agent/session/permission-mod
 import * as workspaceFileIpc from '../src/main/workspace-file-ipc'
 import * as nativeUiCopy from '../src/main/native-ui-copy'
 import { IPC } from '../src/shared/ipcChannels'
+import * as browserSessionScope from '../src/shared/browserSessionScope'
 import { systemUiLanguage } from '../src/shared/uiLanguage'
 import * as runtimeSelection from '../src/main/agent/engine/rpc/runtime-selection-control'
 import { RemoteMetadataBusyError } from '../src/main/agent/engine/rpc/runtime-metadata-control'
@@ -1564,6 +1565,7 @@ async function harness(
   if (options.childResourceOwner) phiEngine.agentRuns.resourceOwner = options.childResourceOwner
   const modules: Record<string, unknown> = {
     '../shared/ipcChannels': { IPC },
+    '../shared/browserSessionScope': browserSessionScope,
     './window-startup': windowStartup,
     './native-ui-copy': nativeUiCopy,
     './startup-splash': {
@@ -4940,7 +4942,7 @@ test('app-shell window opens route safe pages in-app and modified clicks externa
   assert.equal(app.browserViews.length, 2)
 })
 
-test('app-shell window open reports failure without shell fallback when no Phi session is active', async () => {
+test('app-shell window open uses the human-only browser without a Phi session', async () => {
   const app = await harness()
   assert.deepEqual(
     app.tryWindowOpen({ url: 'https://fallback.example/path', disposition: 'default' }),
@@ -4948,19 +4950,37 @@ test('app-shell window open reports failure without shell fallback when no Phi s
   )
   await tick()
   assert.deepEqual(app.openedExternalUrls, [])
-  assert.equal(app.browserViews.length, 0)
-  assert.deepEqual(app.events.at(-1), {
-    channel: 'browser:event',
-    data: {
-      sessionId: null,
-      event: { type: 'appShellOpenFailed', reason: 'browserUnavailable' }
-    }
+  assert.equal(app.browserViews.length, 1)
+  const request = app.events.at(-1) as {
+    channel: string
+    data: { sessionId: string; event: { type: string; reason: string; revision: number } }
+  }
+  assert.equal(request.channel, 'browser:event')
+  assert.equal(request.data.sessionId, browserSessionScope.HUMAN_BROWSER_SESSION_ID)
+  assert.equal(request.data.event.type, 'panelRequested')
+  assert.equal(request.data.event.reason, 'appShellOpen')
+  assert.ok(request.data.event.revision >= 0)
+  const snapshot = (await app.invoke('browser:snapshot')) as { activeTabId: string }
+  await app.invoke('browser:setViewport', {
+    sessionId: browserSessionScope.HUMAN_BROWSER_SESSION_ID,
+    sessionGeneration: browserSessionScope.HUMAN_BROWSER_SESSION_GENERATION,
+    tabId: snapshot.activeTabId,
+    viewport: { x: 10, y: 20, width: 320, height: 240 }
   })
+  assert.equal(app.browserViews[0].visibility.at(-1), true)
+  const blocked = (await app.invoke('browser:execute', {
+    type: 'open',
+    requestId: 'blocked-local-file',
+    url: 'file:///etc/passwd'
+  })) as { ok: boolean; error: { code: string } }
+  assert.equal(blocked.ok, false)
+  assert.equal(blocked.error.code, 'SCHEME_BLOCKED')
 })
 
 test('main browser IPC derives project partitions and applies only validated viewports', async () => {
   const app = await harness()
-  await assert.rejects(app.invoke('browser:snapshot'), /Browser session is unavailable/)
+  const human = (await app.invoke('browser:snapshot')) as { sessionId: string }
+  assert.equal(human.sessionId, browserSessionScope.HUMAN_BROWSER_SESSION_ID)
 
   const ordinary = (await app.invoke('sessions:create')) as { phiSessionId: string }
   const ordinaryOpen = (await app.invoke('browser:execute', {

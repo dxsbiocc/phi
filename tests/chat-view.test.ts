@@ -1957,7 +1957,7 @@ test('composer buttons stay fixed on hover and use matching action icon sizes', 
   const surface = composerSurfaceSx({ compact: false, dragActive: false })
   assert.match(JSON.stringify(surface), /MuiButton-root:hover[^}]*transform":"none"/)
 
-  const source = readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8')
+  const source = readFileSync('src/renderer/src/components/chat/ChatComposer.tsx', 'utf8')
   assert.match(source, /<GoPaperAirplane size=\{COMPOSER_ICON_SIZE\}/)
   assert.match(source, /data-phi-stop-mark-size=\{COMPOSER_STOP_MARK_SIZE\}/)
   assert.doesNotMatch(source, /GoSquare/)
@@ -1981,7 +1981,7 @@ test('composer buttons stay fixed on hover and use matching action icon sizes', 
 })
 
 test('chat view keeps compact composer icon buttons at the declared outer size', () => {
-  const chatViewSource = readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8')
+  const chatViewSource = readFileSync('src/renderer/src/components/chat/ChatComposer.tsx', 'utf8')
   const controlStylesSource = readFileSync(
     'src/renderer/src/components/chat/composerControlStyles.ts',
     'utf8'

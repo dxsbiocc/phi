@@ -201,6 +201,13 @@ function activityButton(): (props: Record<string, unknown>) => ReactElement<{
       return jsxRuntime
     },
     useUiLanguage: getUiLanguage,
+    activityBarHoverPreviewDelayMs: 700,
+    useRef: (value: unknown) => ({ current: value }),
+    useEffect: () => undefined,
+    window: {
+      setTimeout: (callback: () => void, delay?: number) => setTimeout(callback, delay),
+      clearTimeout
+    },
     IconButton: 'button',
     Tooltip: 'tooltip',
     activityBarButtonSx: () => ({})
@@ -242,7 +249,7 @@ test('inactive navigation without a content preview still describes its action',
   assert.equal(inactive.props.disableHoverListener, false)
 })
 
-test('docked conversation content does not select or suppress the conversation-list entry', () => {
+test('docked conversation content does not select or suppress the conversation-list entry', async () => {
   const active = workspaceSidebarModeIsExpanded({
     activeView: 'analysis',
     isSidebarOpen: true,
@@ -266,12 +273,15 @@ test('docked conversation content does not select or suppress the conversation-l
     onKeyDown: (event: unknown) => void
   }>
   button.props.onMouseEnter({ currentTarget: {} })
+  assert.deepEqual(opened, [])
   button.props.onFocus({ currentTarget: {} })
   button.props.onKeyDown({
     key: 'ArrowRight',
     currentTarget: {},
     preventDefault: () => prevented++
   })
+  assert.deepEqual(opened, ['conversations', 'conversations'])
+  await new Promise((resolve) => setTimeout(resolve, 700))
   assert.deepEqual(opened, ['conversations', 'conversations', 'conversations'])
   assert.equal(focused, 1)
   assert.equal(prevented, 1)

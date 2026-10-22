@@ -1,13 +1,10 @@
 import { chatCopy } from './lib/chatCopy'
 import { useUiLanguage } from '../../lib/i18n'
-import { Box, Button, IconButton, Paper, Stack, Typography } from '@mui/material'
+import { Box, IconButton, Paper, Stack, Typography } from '@mui/material'
 import {
-  useEffect,
-  useId,
   useMemo,
   useCallback,
   useRef,
-  useState,
   type FormEvent,
   type MouseEvent,
   type ReactNode
@@ -18,40 +15,24 @@ import { ContextUsageIndicator } from './components/ContextUsageIndicator'
 import { usePastedImages } from './hooks/usePastedImages'
 import { useContextUsage, type ContextUsageTarget } from './hooks/useContextUsage'
 import { useChatResourceCatalog } from './hooks/useChatResourceCatalog'
-import {
-  ComposerTextEditor,
-  type ComposerTextEditorHandle
-} from '../../components/chat/ComposerTextEditor'
+import { ChatComposer } from '../../components/chat/ChatComposer'
+import { type ComposerTextEditorHandle } from '../../components/chat/ComposerTextEditor'
 import { inlineReferenceInsertion } from '../../lib/composerReferences'
 import { type LocalPathKind } from '../../components/MarkdownContent'
 import ToolApprovalDialog from '../../components/ToolApprovalDialog'
 import UserInteractionPanel from '../../components/UserInteractionPanel'
-import {
-  ModelSelectorControl,
-  PermissionModeControl
-} from '../../components/chat/ChatComposerControls'
 import { FileReferenceCards } from '../../components/chat/FileReferenceCards'
-import { InputAddControl, InputAddPanel } from '../../components/chat/InputAddMenu'
 import { InputFileReferenceMenu } from '../../components/chat/InputFileReferenceMenu'
 import { InputInvocationReferenceMenu } from '../../components/chat/InputInvocationReferenceMenu'
 import ChatMessageList from '../../components/chat/ChatMessageList'
 import { ResourceMentionsProvider } from '../../components/ResourceMention'
 import type { ChatResourceMention } from '../../lib/chatResourceMentions'
 import type { UserMessageRetryTarget } from '../../components/chat/ChatUserMessage'
-import {
-  COMPOSER_ICON_SIZE,
-  COMPOSER_STOP_CONTROL_SIZE,
-  COMPOSER_STOP_MARK_SIZE,
-  COMPACT_COMPOSER_CONTROL_SIZE,
-  REGULAR_COMPOSER_ACTION_SIZE,
-  composerSurfaceSx
-} from '../../components/chat/composerControlStyles'
 import { useComposerFileDrop } from '../../components/chat/useComposerFileDrop'
 import { useInputFileReferenceMenu } from '../../components/chat/useInputFileReferenceMenu'
 import { useInputInvocationReferenceMenu } from '../../components/chat/useInputInvocationReferenceMenu'
 import { PhiIcons } from '../../icons'
 import { chatComposerLayoutSx, chatLayoutVariables, type ChatPlacement } from './lib/chatLayout'
-import { GoPaperAirplane } from 'react-icons/go'
 import {
   canNavigatePromptHistory,
   nextPromptHistoryCursor,
@@ -251,13 +232,6 @@ function ChatView({
   const promptHistoryCursorRef = useRef<number | null>(null)
   const promptHistoryDraftRef = useRef('')
   const promptHistoryKeyRef = useRef(promptHistoryKey)
-  const inputAddPanelId = useId()
-  const [inputAddMenuOpen, setInputAddMenuOpen] = useState(false)
-  const inputAddPanelRef = useRef<HTMLDivElement | null>(null)
-  const inputAddButtonRef = useRef<HTMLButtonElement | null>(null)
-  const actionControlSize = compactComposerControls
-    ? COMPACT_COMPOSER_CONTROL_SIZE
-    : REGULAR_COMPOSER_ACTION_SIZE
   const suggestedNextAction = useMemo(
     () => (!isGenerating ? suggestedNextActionPlaceholderFromMessages(messages) : null),
     [isGenerating, messages]
@@ -385,34 +359,6 @@ function ChatView({
     },
     [input, onInputChange, promptHistory, syncPromptHistoryKey]
   )
-  const closeInputAddMenu = useCallback((): void => {
-    setInputAddMenuOpen(false)
-  }, [])
-  const toggleInputAddMenu = useCallback((): void => {
-    setInputAddMenuOpen((open) => {
-      const nextOpen = !open
-      if (nextOpen) {
-        onOpenInputAddMenu?.()
-      }
-      return nextOpen
-    })
-  }, [onOpenInputAddMenu])
-  useEffect(() => {
-    if (!inputAddMenuOpen) return undefined
-
-    const handleDocumentMouseDown = (event: globalThis.MouseEvent): void => {
-      const target = event.target
-      if (!(target instanceof Node)) return
-      if (inputAddPanelRef.current?.contains(target)) return
-      if (inputAddButtonRef.current?.contains(target)) return
-      closeInputAddMenu()
-    }
-
-    document.addEventListener('mousedown', handleDocumentMouseDown, true)
-    return () => {
-      document.removeEventListener('mousedown', handleDocumentMouseDown, true)
-    }
-  }, [closeInputAddMenu, inputAddMenuOpen])
   const insertInputReference = useCallback(
     (reference: string): void => {
       resetPromptHistoryNavigation()
@@ -482,13 +428,7 @@ function ChatView({
       onInputFilesDropped,
       onInsertReference: insertInputReference
     })
-  const handleChatSubmit = useCallback(
-    (event: FormEvent<HTMLFormElement>): Promise<void> => {
-      closeInputAddMenu()
-      return onChatSubmit(event)
-    },
-    [closeInputAddMenu, onChatSubmit]
-  )
+  const handleChatSubmit = onChatSubmit
 
   const {
     pasteError,
@@ -624,20 +564,6 @@ function ChatView({
               </Stack>
             </Paper>
           )}
-          {inputAddMenuOpen && (
-            <InputAddPanel
-              panelId={inputAddPanelId}
-              panelRef={inputAddPanelRef}
-              skills={skills}
-              promptAgents={promptAgents}
-              resources={messageResources}
-              cwd={cwd}
-              onPickFiles={onPickInputFiles}
-              onInsertReference={insertInputReference}
-              onTrustChanged={onRefreshPromptAgents}
-              onClose={closeInputAddMenu}
-            />
-          )}
           {fileReferenceMenu.menuState ? (
             <InputFileReferenceMenu
               state={fileReferenceMenu.menuState}
@@ -655,248 +581,150 @@ function ChatView({
               onTrustChanged={onRefreshPromptAgents}
             />
           ) : null}
-          <Paper
-            variant="outlined"
+          <ChatComposer
+            inputRef={inputRef}
+            editorKey={scrollResetKey}
+            value={composerInputText}
+            resources={messageResources}
+            placeholder={inputPlaceholder}
+            placeholderKind={suggestedNextAction ? 'suggested-next-action' : 'default'}
+            ariaLabel={chatCopy.messageInput}
+            compact={compactComposerControls}
+            dragActive={composerDragActive}
+            fileDropTarget
+            sendDisabled={
+              !canSend || (!input.trim() && images.length === 0) || isReadingPastedImage
+            }
+            showStop={isGenerating || contextCompacting}
+            onStop={() => {
+              void onStopGeneration()
+            }}
+            permissionMode={permissionMode}
+            onSelectPermissionMode={onSelectPermissionMode}
+            disablePermissionModeSelect={disablePermissionModeSelect}
+            models={models}
+            selectedModel={selectedModel}
+            onSelectModel={onSelectModel}
+            disableModelControls={disableModelControls}
+            thinkingLevel={thinkingLevel}
+            onSelectThinkingLevel={onSelectThinkingLevel}
+            onChange={(value, cursor) => {
+              resetPromptHistoryNavigation()
+              const selection = { selectionStart: cursor }
+              fileReferenceMenu.onInputChanged(selection)
+              invocationReferenceMenu.onInputChanged(selection)
+              const next = composeInputWithFileReferences(composerFileReferences, value)
+              promptHistoryDraftRef.current = next
+              onInputChange(next)
+            }}
+            onCursorChange={(cursor) => {
+              const selection = { selectionStart: cursor }
+              fileReferenceMenu.onInputCursorChanged(selection)
+              invocationReferenceMenu.onInputCursorChanged(selection)
+            }}
+            onKeyDown={(event, editor) => {
+              const menuEvent = {
+                key: event.key,
+                nativeEvent: event,
+                preventDefault: () => event.preventDefault()
+              }
+              if (fileReferenceMenu.onKeyDown(menuEvent)) {
+                return true
+              }
+              if (invocationReferenceMenu.onKeyDown(menuEvent)) {
+                return true
+              }
+
+              const acceptedSuggestion = suggestedNextActionToAccept(
+                {
+                  key: event.key,
+                  shiftKey: event.shiftKey,
+                  altKey: event.altKey,
+                  metaKey: event.metaKey,
+                  ctrlKey: event.ctrlKey,
+                  isComposing: event.isComposing
+                },
+                input,
+                suggestedNextAction
+              )
+              if (acceptedSuggestion) {
+                event.preventDefault()
+                onInputChange(acceptedSuggestion)
+                return true
+              }
+
+              const historyDirection =
+                event.key === 'ArrowUp' ? 'previous' : event.key === 'ArrowDown' ? 'next' : null
+              if (
+                historyDirection &&
+                !event.shiftKey &&
+                !event.altKey &&
+                !event.metaKey &&
+                !event.ctrlKey &&
+                !event.isComposing
+              ) {
+                const inputElement = editor
+                if (
+                  inputElement &&
+                  isTextInputAtHistoryBoundary(inputElement, historyDirection) &&
+                  navigatePromptHistory(historyDirection)
+                ) {
+                  event.preventDefault()
+                  return true
+                }
+              }
+
+              if (
+                event.key === 'Enter' &&
+                !event.shiftKey &&
+                !event.isComposing &&
+                (canSend || canQueue) &&
+                (input.trim() || images.length > 0) &&
+                !isReadingPastedImage
+              ) {
+                event.preventDefault()
+                const form = (event.target as HTMLElement).closest('form')
+                form?.requestSubmit()
+                return true
+              }
+              return false
+            }}
+            onPaste={onPaste}
             onMouseDownCapture={focusInputFromComposerSurface}
             onDragEnter={composerDragHandlers.onDragEnter}
             onDragOver={composerDragHandlers.onDragOver}
             onDragLeave={composerDragHandlers.onDragLeave}
             onDrop={composerDragHandlers.onDrop}
-            onPaste={onPaste}
-            aria-label={chatCopy.messageInput}
-            data-phi-file-drop-target="chat-composer"
-            sx={composerSurfaceSx({
-              compact: compactComposerControls,
-              dragActive: composerDragActive
-            })}
-          >
-            <FileReferenceCards
-              paths={composerFileReferences}
-              variant="composer"
-              onRemove={removeFileReference}
-            />
-            <PastedImagePreview images={images} error={pasteError} onRemove={onRemoveImage} />
-            <ComposerTextEditor
-              key={scrollResetKey}
-              inputRef={inputRef}
-              value={composerInputText}
-              resources={messageResources}
-              onOpenWebUrl={onOpenWebUrl}
-              placeholder={inputPlaceholder}
-              placeholderKind={suggestedNextAction ? 'suggested-next-action' : 'default'}
-              onChange={(value, cursor) => {
-                resetPromptHistoryNavigation()
-                const selection = { selectionStart: cursor }
-                fileReferenceMenu.onInputChanged(selection)
-                invocationReferenceMenu.onInputChanged(selection)
-                const next = composeInputWithFileReferences(composerFileReferences, value)
-                promptHistoryDraftRef.current = next
-                onInputChange(next)
-              }}
-              onCursorChange={(cursor) => {
-                const selection = { selectionStart: cursor }
-                fileReferenceMenu.onInputCursorChanged(selection)
-                invocationReferenceMenu.onInputCursorChanged(selection)
-              }}
-              onKeyDown={(event, editor) => {
-                const menuEvent = {
-                  key: event.key,
-                  nativeEvent: event,
-                  preventDefault: () => event.preventDefault()
-                }
-                if (fileReferenceMenu.onKeyDown(menuEvent)) {
-                  return true
-                }
-                if (invocationReferenceMenu.onKeyDown(menuEvent)) {
-                  return true
-                }
-
-                const acceptedSuggestion = suggestedNextActionToAccept(
-                  {
-                    key: event.key,
-                    shiftKey: event.shiftKey,
-                    altKey: event.altKey,
-                    metaKey: event.metaKey,
-                    ctrlKey: event.ctrlKey,
-                    isComposing: event.isComposing
-                  },
-                  input,
-                  suggestedNextAction
-                )
-                if (acceptedSuggestion) {
-                  event.preventDefault()
-                  onInputChange(acceptedSuggestion)
-                  return true
-                }
-
-                const historyDirection =
-                  event.key === 'ArrowUp' ? 'previous' : event.key === 'ArrowDown' ? 'next' : null
-                if (
-                  historyDirection &&
-                  !event.shiftKey &&
-                  !event.altKey &&
-                  !event.metaKey &&
-                  !event.ctrlKey &&
-                  !event.isComposing
-                ) {
-                  const inputElement = editor
-                  if (
-                    inputElement &&
-                    isTextInputAtHistoryBoundary(inputElement, historyDirection) &&
-                    navigatePromptHistory(historyDirection)
-                  ) {
-                    event.preventDefault()
-                    return true
-                  }
-                }
-
-                if (
-                  event.key === 'Enter' &&
-                  !event.shiftKey &&
-                  !event.isComposing &&
-                  (canSend || canQueue) &&
-                  (input.trim() || images.length > 0) &&
-                  !isReadingPastedImage
-                ) {
-                  event.preventDefault()
-                  const form = (event.target as HTMLElement).closest('form')
-                  form?.requestSubmit()
-                  return true
-                }
-                return false
-              }}
-            />
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 1,
-                mt: 1
-              }}
-            >
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25, minWidth: 0 }}>
-                <InputAddControl
-                  open={inputAddMenuOpen}
-                  controls={inputAddPanelId}
-                  buttonRef={inputAddButtonRef}
-                  onToggle={toggleInputAddMenu}
+            onOpenWebUrl={onOpenWebUrl}
+            aboveEditor={
+              <>
+                <FileReferenceCards
+                  paths={composerFileReferences}
+                  variant="composer"
+                  onRemove={removeFileReference}
                 />
-                <PermissionModeControl
-                  permissionMode={permissionMode}
-                  disabled={disablePermissionModeSelect}
-                  onSelectPermissionMode={onSelectPermissionMode}
-                  compact={compactComposerControls}
-                />
-                {onTogglePlanReview && (
-                  <Button
-                    type="button"
-                    size="small"
-                    variant={planReviewEnabled ? 'contained' : 'text'}
-                    aria-label={chatCopy.planFirstAndWaitForReview}
-                    aria-pressed={planReviewEnabled}
-                    title={chatCopy.exploreAndSubmitAPlanThenWaitForYourApproval}
-                    disabled={disablePlanReview}
-                    onClick={onTogglePlanReview}
-                    sx={{ minWidth: 0, px: 1, flexShrink: 0, whiteSpace: 'nowrap' }}
-                  >
-                    {chatCopy.planFirst}
-                  </Button>
-                )}
-              </Box>
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: compactComposerControls ? 0.25 : 1,
-                  minWidth: 0
-                }}
-              >
-                <ModelSelectorControl
-                  models={models}
-                  selectedModel={selectedModel}
-                  onSelectModel={onSelectModel}
-                  disabled={disableModelControls}
-                  compact={compactComposerControls}
-                  thinkingLevel={thinkingLevel}
-                  supportedThinkingLevels={selectedModel?.thinkingLevels ?? null}
-                  onSelectThinkingLevel={onSelectThinkingLevel}
-                />
-                {contextUsageTarget && (
-                  <ContextUsageIndicator
-                    usage={contextUsage.usage}
-                    loading={contextUsage.loading}
-                  />
-                )}
-                {!isGenerating && !contextCompacting ? (
-                  <IconButton
-                    type="submit"
-                    disabled={
-                      !canSend || (!input.trim() && images.length === 0) || isReadingPastedImage
-                    }
-                    aria-label={chatCopy.sendMessage}
-                    data-phi-composer-action="send"
-                    data-phi-composer-size={actionControlSize}
-                    sx={{
-                      boxSizing: 'border-box',
-                      width: actionControlSize,
-                      height: actionControlSize,
-                      minWidth: actionControlSize,
-                      minHeight: actionControlSize,
-                      p: 0,
-                      flexShrink: 0,
-                      bgcolor: 'transparent',
-                      color: 'primary.main',
-                      transition: 'background-color 200ms',
-                      '&:hover': { bgcolor: 'action.hover' },
-                      '&.Mui-disabled': {
-                        bgcolor: 'transparent',
-                        color: 'action.disabled'
-                      }
-                    }}
-                  >
-                    <GoPaperAirplane size={COMPOSER_ICON_SIZE} aria-hidden="true" />
-                  </IconButton>
-                ) : (
-                  <IconButton
-                    type="button"
-                    onClick={() => {
-                      void onStopGeneration()
-                    }}
-                    aria-label={chatCopy.stopGenerating}
-                    title={chatCopy.runningClickToStopGenerating}
-                    data-phi-composer-action="stop"
-                    data-phi-composer-size={COMPOSER_STOP_CONTROL_SIZE}
-                    sx={{
-                      boxSizing: 'border-box',
-                      width: COMPOSER_STOP_CONTROL_SIZE,
-                      height: COMPOSER_STOP_CONTROL_SIZE,
-                      minWidth: COMPOSER_STOP_CONTROL_SIZE,
-                      minHeight: COMPOSER_STOP_CONTROL_SIZE,
-                      p: 0,
-                      flexShrink: 0,
-                      bgcolor: 'transparent',
-                      color: 'primary.main',
-                      transition: 'background-color 200ms',
-                      '&:hover': { bgcolor: 'action.hover' }
-                    }}
-                  >
-                    <Box
-                      aria-hidden="true"
-                      data-phi-stop-mark-size={COMPOSER_STOP_MARK_SIZE}
-                      sx={{
-                        width: COMPOSER_STOP_MARK_SIZE,
-                        height: COMPOSER_STOP_MARK_SIZE,
-                        borderRadius: '4px',
-                        bgcolor: 'currentColor',
-                        flexShrink: 0
-                      }}
-                    />
-                  </IconButton>
-                )}
-              </Box>
-            </Box>
-          </Paper>
+                <PastedImagePreview images={images} error={pasteError} onRemove={onRemoveImage} />
+              </>
+            }
+            skills={skills}
+            promptAgents={promptAgents}
+            cwd={cwd}
+            onPickFiles={onPickInputFiles}
+            onInsertReference={insertInputReference}
+            onRefreshPromptAgents={onRefreshPromptAgents}
+            onOpenAddMenu={onOpenInputAddMenu}
+            planReviewEnabled={planReviewEnabled}
+            onTogglePlanReview={onTogglePlanReview}
+            disablePlanReview={disablePlanReview}
+            accessory={
+              contextUsageTarget ? (
+                <ContextUsageIndicator usage={contextUsage.usage} loading={contextUsage.loading} />
+              ) : null
+            }
+            sendLabel={chatCopy.sendMessage}
+            stopLabel={chatCopy.stopGenerating}
+            stopTitle={chatCopy.runningClickToStopGenerating}
+          />
         </Box>
       </Box>
     </Box>

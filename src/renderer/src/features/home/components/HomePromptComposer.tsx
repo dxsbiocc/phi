@@ -1,23 +1,12 @@
 import { homeCopy } from '../lib/homeCopy'
 import { useUiLanguage } from '../../../lib/i18n'
 import { useRef } from 'react'
-import { Box, IconButton, Paper } from '@mui/material'
-import { GoPaperAirplane } from 'react-icons/go'
-import {
-  ModelSelectorControl,
-  PermissionModeControl
-} from '../../../components/chat/ChatComposerControls'
-import {
-  ComposerTextEditor,
-  type ComposerTextEditorHandle
-} from '../../../components/chat/ComposerTextEditor'
-import {
-  COMPOSER_ICON_SIZE,
-  REGULAR_COMPOSER_ACTION_SIZE,
-  composerSurfaceSx
-} from '../../../components/chat/composerControlStyles'
+import { Box } from '@mui/material'
+import { ChatComposer } from '../../../components/chat/ChatComposer'
+import { type ComposerTextEditorHandle } from '../../../components/chat/ComposerTextEditor'
 import type { ModelOption, PermissionMode, Project, ThinkingLevel } from '../../../types'
 import { HomeProjectMenu } from './HomeProjectMenu'
+import type { HomeComposerResources } from './HomePrompt'
 
 type HomePromptComposerProps = {
   projects: Project[]
@@ -36,97 +25,36 @@ type HomePromptComposerProps = {
   onSelectThinkingLevel: (level: ThinkingLevel) => void
   onNewProject: () => void
   onSubmit: () => void
+  planReviewEnabled: boolean
+  disablePlanReview: boolean
+  onTogglePlanReview: () => void
+  composerResources?: HomeComposerResources
 }
 
-function HomePromptActions({
+export function HomePromptComposer({
+  projects,
+  selectedProject,
+  draft,
   permissionMode,
   disabled,
   canSend,
   models,
   selectedModel,
   thinkingLevel,
+  onDraftChange,
+  onSelectProject,
   onSelectPermissionMode,
   onSelectModel,
-  onSelectThinkingLevel
-}: Pick<
-  HomePromptComposerProps,
-  | 'permissionMode'
-  | 'disabled'
-  | 'canSend'
-  | 'models'
-  | 'selectedModel'
-  | 'thinkingLevel'
-  | 'onSelectPermissionMode'
-  | 'onSelectModel'
-  | 'onSelectThinkingLevel'
->): React.JSX.Element {
-  useUiLanguage()
-  return (
-    <Box
-      sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1 }}
-    >
-      <PermissionModeControl
-        permissionMode={permissionMode}
-        disabled={disabled}
-        onSelectPermissionMode={onSelectPermissionMode}
-      />
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-        <ModelSelectorControl
-          models={models}
-          selectedModel={selectedModel}
-          disabled={disabled}
-          onSelectModel={onSelectModel}
-          thinkingLevel={thinkingLevel}
-          supportedThinkingLevels={selectedModel?.thinkingLevels ?? null}
-          onSelectThinkingLevel={onSelectThinkingLevel}
-        />
-        <IconButton
-          type="submit"
-          disabled={!canSend}
-          aria-label={homeCopy.sendPrompt}
-          data-phi-home-send="true"
-          sx={{
-            boxSizing: 'border-box',
-            width: REGULAR_COMPOSER_ACTION_SIZE,
-            height: REGULAR_COMPOSER_ACTION_SIZE,
-            minWidth: REGULAR_COMPOSER_ACTION_SIZE,
-            minHeight: REGULAR_COMPOSER_ACTION_SIZE,
-            p: 0,
-            flexShrink: 0,
-            color: 'primary.main',
-            transition: 'background-color 200ms',
-            '&:hover': { bgcolor: 'action.hover' },
-            '&.Mui-disabled': { bgcolor: 'transparent', color: 'action.disabled' }
-          }}
-        >
-          <GoPaperAirplane size={COMPOSER_ICON_SIZE} aria-hidden="true" />
-        </IconButton>
-      </Box>
-    </Box>
-  )
-}
-
-export function HomePromptComposer(props: HomePromptComposerProps): React.JSX.Element {
+  onSelectThinkingLevel,
+  onNewProject,
+  onSubmit,
+  planReviewEnabled,
+  disablePlanReview,
+  onTogglePlanReview,
+  composerResources
+}: HomePromptComposerProps): React.JSX.Element {
   useUiLanguage()
   const inputRef = useRef<ComposerTextEditorHandle | null>(null)
-  const {
-    projects,
-    selectedProject,
-    draft,
-    permissionMode,
-    disabled,
-    canSend,
-    models,
-    selectedModel,
-    thinkingLevel,
-    onDraftChange,
-    onSelectProject,
-    onSelectPermissionMode,
-    onSelectModel,
-    onSelectThinkingLevel,
-    onNewProject,
-    onSubmit
-  } = props
 
   return (
     <Box>
@@ -139,45 +67,51 @@ export function HomePromptComposer(props: HomePromptComposerProps): React.JSX.El
           onNewProject={onNewProject}
         />
       </Box>
-      <Paper
+      <Box
         component="form"
-        variant="outlined"
-        aria-label={homeCopy.promptPlaceholder}
         onSubmit={(event) => {
           event.preventDefault()
           onSubmit()
         }}
-        sx={composerSurfaceSx({ compact: false, dragActive: false })}
       >
-        <Box sx={{ minHeight: 48 }}>
-          <ComposerTextEditor
-            inputRef={inputRef}
-            value={draft}
-            resources={[]}
-            disabled={disabled}
-            ariaLabel={homeCopy.promptPlaceholder}
-            placeholder={homeCopy.promptPlaceholder}
-            onChange={(value) => onDraftChange(value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return false
-              event.preventDefault()
-              if (event.target instanceof Element) event.target.closest('form')?.requestSubmit()
-              return true
-            }}
-          />
-        </Box>
-        <HomePromptActions
+        <ChatComposer
+          inputRef={inputRef}
+          value={draft}
+          placeholder={homeCopy.promptPlaceholder}
+          ariaLabel={homeCopy.promptPlaceholder}
+          editorDisabled={disabled}
+          editorMinHeight={48}
+          markHomeSend
+          sendDisabled={!canSend}
           permissionMode={permissionMode}
-          disabled={disabled}
-          canSend={canSend}
+          onSelectPermissionMode={onSelectPermissionMode}
+          disablePermissionModeSelect={disabled}
           models={models}
           selectedModel={selectedModel}
-          thinkingLevel={thinkingLevel}
-          onSelectPermissionMode={onSelectPermissionMode}
           onSelectModel={onSelectModel}
+          disableModelControls={disabled}
+          thinkingLevel={thinkingLevel}
           onSelectThinkingLevel={onSelectThinkingLevel}
+          skills={composerResources?.skills}
+          promptAgents={composerResources?.promptAgents}
+          resources={composerResources?.resources}
+          cwd={selectedProject?.workingDirectory ?? composerResources?.cwd}
+          onPickFiles={composerResources?.onPickFiles}
+          onOpenAddMenu={composerResources?.onOpenAddMenu}
+          onRefreshPromptAgents={composerResources?.onRefreshPromptAgents}
+          planReviewEnabled={planReviewEnabled}
+          onTogglePlanReview={onTogglePlanReview}
+          disablePlanReview={disablePlanReview || disabled}
+          onChange={(value) => onDraftChange(value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return false
+            event.preventDefault()
+            if (event.target instanceof Element) event.target.closest('form')?.requestSubmit()
+            return true
+          }}
+          sendLabel={homeCopy.sendPrompt}
         />
-      </Paper>
+      </Box>
     </Box>
   )
 }

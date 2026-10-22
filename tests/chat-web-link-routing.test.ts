@@ -11,6 +11,10 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import type { BrowserOutcome, BrowserWorkspaceSnapshot } from '../src/shared/browserTypes'
 import {
+  browserPresentationSessionId,
+  HUMAN_BROWSER_SESSION_ID
+} from '../src/shared/browserSessionScope'
+import {
   browserLinkFailureMessage,
   createBrowserLinkOpeningCoordinator,
   type BrowserLinkOpenFailure
@@ -119,6 +123,27 @@ test('link-opening coordinator opens the panel only after a matching-session suc
   assert.equal(failures, 0)
 })
 
+test('link opening without a chat uses the human-only in-app browser session', async () => {
+  const sessionId = browserPresentationSessionId(null)
+  const commands: string[] = []
+  let opened = 0
+  const coordinator = createBrowserLinkOpeningCoordinator({
+    execute: async (command) => {
+      commands.push(command.url)
+      return successfulOutcome(sessionId)
+    },
+    nextRequestId: () => 'notebook-link',
+    getActiveSessionId: () => sessionId,
+    openBrowserPanel: () => opened++,
+    showFailure: () => assert.fail('a valid Notebook link must stay in Phi')
+  })
+
+  await coordinator.open('https://www.google.com/')
+  assert.equal(sessionId, HUMAN_BROWSER_SESSION_ID)
+  assert.deepEqual(commands, ['https://www.google.com/'])
+  assert.equal(opened, 1)
+})
+
 test('link failure notices name the browser error instead of hiding it', () => {
   assert.equal(
     browserLinkFailureMessage({ kind: 'browser', code: 'SCHEME_BLOCKED' }),
@@ -130,7 +155,7 @@ test('link failure notices name the browser error instead of hiding it', () => {
   )
   assert.equal(
     browserLinkFailureMessage({ kind: 'no-session' }),
-    '无法打开链接，请先选择一个会话或稍后重试。'
+    '无法在应用内打开链接，请稍后重试。'
   )
   assert.equal(browserLinkFailureMessage({ kind: 'unavailable' }), '浏览器暂时不可用，请稍后重试。')
 })
@@ -246,6 +271,7 @@ test('App composes link opening and invalidates it on explicit panel actions', (
     /createBrowserLinkOpeningCoordinator\(\{[\s\S]*?execute: \(command\) => rendererApi\.browser\.execute\(command\)[\s\S]*?getActiveSessionId:[\s\S]*?openBrowserPanel: \(\) => openWorkspaceSidePanel\('browser'\)[\s\S]*?showFailure:/
   )
   assert.match(app, /onOpenWebUrl[\s\S]*?browserLinkOpeningCoordinator\.open\(url\)/)
+  assert.match(app, /getActiveSessionId: \(\) =>[\s\S]*?browserPresentationSessionId/)
   assert.ok(trustedOverlayEnqueue, 'trusted overlay enqueue must have one App-level wrapper')
   assert.ok(
     trustedOverlayEnqueue.indexOf('browserLinkOpeningCoordinator.invalidate()') <

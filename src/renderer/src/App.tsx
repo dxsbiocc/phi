@@ -1,5 +1,8 @@
 import { appCopy } from './lib/appCopy'
-import { isHttpWebUrl } from './lib/markdownWebLinks'
+import {
+  browserPresentationSessionId,
+  HUMAN_BROWSER_SESSION_GENERATION
+} from '../../shared/browserSessionScope'
 import { useWorkspaceFileActions } from './features/file-preview/hooks/useWorkspaceFileActions'
 import { useFilePathOpeners } from './features/file-preview/hooks/useFilePathOpeners'
 import { resourceActionMessages, resourceUi } from './lib/resourceUi'
@@ -809,6 +812,10 @@ function App(): React.JSX.Element {
     (workspaceSidePanelSlots.length === 1 ||
       workspaceSidePanelCanSplit ||
       workspaceSidePanelState.active === 'browser')
+  const activeBrowserSessionId = browserPresentationSessionId(activePhiSessionId)
+  const activeBrowserSessionGeneration = activePhiSessionId
+    ? activeSessionGeneration
+    : HUMAN_BROWSER_SESSION_GENERATION
   const openBrowserPanelFromRequest = useCallback((): void => {
     openWorkspaceSidePanel('browser')
   }, [openWorkspaceSidePanel])
@@ -818,23 +825,13 @@ function App(): React.JSX.Element {
   )
   useBrowserPanelRequests({
     bridge: rendererApi.browser,
-    activeSessionId: activePhiSessionId ?? null,
+    activeSessionId: activeBrowserSessionId,
     onRequest: openBrowserPanelFromRequest,
     onFailure: showBrowserAppShellFailure
   })
   const showBrowserLinkFailure = useCallback(
-    (url: string, failure: BrowserLinkOpenFailure): void => {
-      const action = isHttpWebUrl(url)
-        ? {
-            label: appCopy.openInDefaultBrowser,
-            onClick: (): void => {
-              void window.api.openWebUrl(url).catch(() => {
-                showSnackbar(appCopy.defaultBrowserOpenFailed)
-              })
-            }
-          }
-        : undefined
-      showSnackbar(browserLinkFailureMessage(failure), 'error', action ? { action } : undefined)
+    (_url: string, failure: BrowserLinkOpenFailure): void => {
+      showSnackbar(browserLinkFailureMessage(failure), 'error')
     },
     [showSnackbar]
   )
@@ -843,7 +840,8 @@ function App(): React.JSX.Element {
     return createBrowserLinkOpeningCoordinator({
       execute: (command) => rendererApi.browser.execute(command),
       nextRequestId,
-      getActiveSessionId: () => useSessionStore.getState().activePhiSessionId,
+      getActiveSessionId: () =>
+        browserPresentationSessionId(useSessionStore.getState().activePhiSessionId),
       openBrowserPanel: () => openWorkspaceSidePanel('browser'),
       showFailure: showBrowserLinkFailure
     })
@@ -888,8 +886,8 @@ function App(): React.JSX.Element {
     cancel: cancelBrowserTrustedOverlay
   } = useBrowserTrustedOverlayGate({
     bridge: rendererApi.browser,
-    activePhiSessionId: activePhiSessionId ?? null,
-    activeSessionGeneration,
+    activePhiSessionId: activeBrowserSessionId,
+    activeSessionGeneration: activeBrowserSessionGeneration,
     browserOpen: browserSlotVisible,
     closeBrowserPanel: closeBrowserPanelForTrustedOverlay,
     onFailure: handleBrowserTrustedOverlayFailure
@@ -1782,6 +1780,7 @@ function App(): React.JSX.Element {
     text: string
     projectId: string | null
     permissionMode: PermissionMode
+    planMode: boolean
   }): Promise<void> => {
     const text = request.text.trim()
     if (!text) return
@@ -1798,12 +1797,16 @@ function App(): React.JSX.Element {
     if (!project && created.permissionMode !== request.permissionMode) {
       await onSelectPermissionMode(request.permissionMode)
     }
-    await sendPromptText(text, {
-      path: created.path,
-      phiSessionId: created.phiSessionId,
-      cwd: created.cwd,
-      sessionGeneration: created.sessionGeneration
-    })
+    await sendPromptText(
+      text,
+      {
+        path: created.path,
+        phiSessionId: created.phiSessionId,
+        cwd: created.cwd,
+        sessionGeneration: created.sessionGeneration
+      },
+      { planMode: request.planMode }
+    )
   }
 
   // Path routing: which surface opens a file, a directory, a notebook, or a
@@ -3426,7 +3429,7 @@ function App(): React.JSX.Element {
       wrapperCatalog={wrapperCatalog}
       lastClosedSessionPath={activeSessionPath}
       onLoadResources={loadHomeResources}
-      models={models}
+      models={availableModels}
       selectedModel={selectedModel}
       thinkingLevel={thinkingLevel}
       busy={isSessionChanging}
@@ -3439,6 +3442,15 @@ function App(): React.JSX.Element {
         setIsNewProjectDialogOpen(true)
       }}
       onStartPrompt={(request) => onStartHomePrompt(request)}
+      composerResources={{
+        skills,
+        promptAgents,
+        resources: chatResourceMentions,
+        cwd: activeCwd,
+        onPickFiles: onPickInputFiles,
+        onOpenAddMenu: onOpenInputAddMenu,
+        onRefreshPromptAgents: refreshPromptAgents
+      }}
       onOpenSession={(path) => void onOpenSessionFromSidebar(path)}
     />
   )
@@ -3507,6 +3519,7 @@ function App(): React.JSX.Element {
         onRunNotebookCell={(file, document, cellId) => {
           void onRunAnalysisNotebookCell(file, document, cellId)
         }}
+        onOpenWebUrl={onOpenWebUrl}
         onStopNotebookCell={(file, cellId) => {
           void onStopAnalysisNotebookCell(file, cellId)
         }}
@@ -3956,8 +3969,8 @@ function App(): React.JSX.Element {
                     return (
                       <BrowserPanel
                         bridge={rendererApi.browser}
-                        activePhiSessionId={activePhiSessionId ?? null}
-                        activeSessionGeneration={activeSessionGeneration}
+                        activePhiSessionId={activeBrowserSessionId}
+                        activeSessionGeneration={activeBrowserSessionGeneration}
                         headerActions={slotContext.headerActions}
                         visible={
                           browserSlotVisible &&

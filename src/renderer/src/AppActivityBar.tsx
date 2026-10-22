@@ -35,6 +35,7 @@ import {
 } from './lib/workspaceSidebarPreviewPointer'
 
 const activityBarWidth = 48
+const activityBarHoverPreviewDelayMs = 700
 const macTitlebarHeight = 44
 const macContentTopGap = 8
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
@@ -161,6 +162,13 @@ function WorkspaceSidebarNavButton({
   onFocusPreview: () => void
 }): React.JSX.Element {
   useUiLanguage()
+  const hoverPreviewTimerRef = useRef<number | null>(null)
+  const clearHoverPreviewTimer = (): void => {
+    if (hoverPreviewTimerRef.current === null) return
+    window.clearTimeout(hoverPreviewTimerRef.current)
+    hoverPreviewTimerRef.current = null
+  }
+  useEffect(() => clearHoverPreviewTimer, [])
   const button = (
     <IconButton
       size="small"
@@ -176,9 +184,18 @@ function WorkspaceSidebarNavButton({
       color={active ? 'primary' : 'default'}
       sx={activityBarButtonSx(active)}
       onMouseEnter={(event) => {
-        if (useContentPreview) onPreviewOpen(mode, event.currentTarget)
+        if (!useContentPreview) return
+        const anchor = event.currentTarget
+        clearHoverPreviewTimer()
+        hoverPreviewTimerRef.current = window.setTimeout(() => {
+          hoverPreviewTimerRef.current = null
+          onPreviewOpen(mode, anchor)
+        }, activityBarHoverPreviewDelayMs)
       }}
-      onMouseLeave={useContentPreview ? onPreviewClose : undefined}
+      onMouseLeave={(event) => {
+        clearHoverPreviewTimer()
+        if (useContentPreview) onPreviewClose(event)
+      }}
       onFocus={(event) => {
         if (useContentPreview) onPreviewOpen(mode, event.currentTarget)
       }}
@@ -194,6 +211,7 @@ function WorkspaceSidebarNavButton({
     <Tooltip
       title={active || useContentPreview ? '' : label}
       placement="right"
+      enterDelay={activityBarHoverPreviewDelayMs}
       describeChild
       disableHoverListener={active || useContentPreview}
       disableFocusListener={active || useContentPreview}

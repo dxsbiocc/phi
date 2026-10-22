@@ -8,6 +8,7 @@ import { createPhiSession } from '../agent/session/session-store'
 import { phiOnlySessionPath } from '../agent/session/sessions'
 import type { BrowserWorkspaceRegistry } from '../browser/browser-workspace-registry'
 import { messageContentTitleText } from '../../shared/sessionTitle'
+import { browserPresentationSessionId } from '../../shared/browserSessionScope'
 import type { PromptRunRegistry } from '../app-state/prompt-run-registry'
 import type { SessionKeyRegistry } from '../app-state/session-key-registry'
 import type { SessionLifecycleRegistry } from '../app-state/session-lifecycle-registry'
@@ -234,7 +235,9 @@ export function createSessionSwitching<TSessionResult, TPromptRun extends Switch
       })
       const target = deps.sessions.getCurrentSessionPayload()
       try {
-        await deps.browser.getRegistry()?.setActiveSession(target.phiSessionId ?? null)
+        await deps.browser
+          .getRegistry()
+          ?.setActiveSession(browserPresentationSessionId(target.phiSessionId))
       } catch {
         deps.events.writeAppLog({
           level: 'error',

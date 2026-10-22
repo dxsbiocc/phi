@@ -8,8 +8,10 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { BrowserTabSnapshot } from '../../shared/browserTypes'
+import { HUMAN_BROWSER_SESSION_ID } from '../../shared/browserSessionScope'
+import { getPhiAgentDir } from '../agent/runtime-paths'
 import { getSessionDir } from '../agent/session/session-store'
 
 export interface BrowserCheckpointTab {
@@ -157,8 +159,8 @@ export class FileSystemBrowserCheckpointStore implements BrowserCheckpointStore 
     if (byteLength(serialized) > this.#maxBytes) {
       throw new Error('Browser checkpoint is too large')
     }
-    const dir = getSessionDir(sessionId, this.#agentDir)
-    const path = join(dir, CHECKPOINT_FILE)
+    const path = this.#path(sessionId)
+    const dir = dirname(path)
     const temporaryPath = `${path}.tmp-${process.pid}-${this.#randomId()}`
     mkdirSync(dir, { recursive: true })
     try {
@@ -174,6 +176,9 @@ export class FileSystemBrowserCheckpointStore implements BrowserCheckpointStore 
   }
 
   #path(sessionId: string): string {
+    if (sessionId === HUMAN_BROWSER_SESSION_ID) {
+      return join(this.#agentDir ?? getPhiAgentDir(), 'browser', 'human.json')
+    }
     return join(getSessionDir(sessionId, this.#agentDir), CHECKPOINT_FILE)
   }
 

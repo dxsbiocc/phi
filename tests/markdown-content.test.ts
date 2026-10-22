@@ -8,6 +8,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider, type Theme } from '@mui/material'
 import MarkdownContent from '../src/renderer/src/components/MarkdownContent'
+import { WebLinkOpenContext } from '../src/renderer/src/components/markdown/WebLinkOpenContext'
 import { loadRemotePathStats } from '../src/renderer/src/lib/markdownLocalPathPreview'
 import { RemoteProjectFileContext } from '../src/renderer/src/lib/remoteProjectFileContext'
 import { isHttpWebUrl, openWebUrlFromClick } from '../src/renderer/src/lib/markdownWebLinks'
@@ -35,6 +36,25 @@ test('only HTTP(S) links are eligible for in-app opening', () => {
   assert.equal(isHttpWebUrl('file:///tmp/report.html'), false)
   assert.equal(isHttpWebUrl('javascript:alert(1)'), false)
   assert.equal(isHttpWebUrl('./docs/report.html'), false)
+})
+
+test('embedded Notebook Markdown inherits the in-app web opener', () => {
+  const text = '[Google](https://www.google.com/)'
+  const withoutWorkspace = renderMarkdown(text)
+  const insideWorkspace = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(
+        WebLinkOpenContext.Provider,
+        { value: () => undefined },
+        createElement(MarkdownContent, { text })
+      )
+    )
+  )
+  assert.doesNotMatch(withoutWorkspace, /data-phi-open-web-url="in-app"/)
+  assert.match(insideWorkspace, /data-phi-open-web-url="in-app"/)
+  assert.match(insideWorkspace, /href="https:\/\/www\.google\.com\/"/)
 })
 
 test('web link handler only intercepts unmodified left clicks', () => {

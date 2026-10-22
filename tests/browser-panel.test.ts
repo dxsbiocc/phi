@@ -191,7 +191,7 @@ test('browser panel requests are session-bound and ignore ordinary workspace eve
       sessionId: null,
       event: { type: 'appShellOpenFailed', reason: 'browserUnavailable' }
     }),
-    '无法打开链接，请先选择一个会话或稍后重试。'
+    '无法在应用内打开链接，请稍后重试。'
   )
   assert.equal(browserAppShellFailureMessage(request), null)
 })
