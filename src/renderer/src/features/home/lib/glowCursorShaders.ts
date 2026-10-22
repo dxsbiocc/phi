@@ -235,8 +235,8 @@ void main() {
     vec3 tint = mix(uSecondary, uColor, fresh);
     float halo = dot(bloom, vec3(0.2126, 0.7152, 0.0722));
     float density = 1.0 - exp(-((energy * 1.1 + gas * 0.8) * uIntensity + halo * 0.25));
-    // Light surfaces need translucent pigment, not the dark ink tone from upstream.
-    vec3 ink = mix(tint, vec3(1.0), 0.12);
+    // Fresh pigment uses the theme primary; older pigment fades toward its light shade.
+    vec3 ink = tint;
     ink = mix(ink, vec3(1.0), clamp(heat * heat * 0.05 * uHotspot, 0.0, 0.45));
     density = clamp(density * grain, 0.0, 1.0) * edge;
     outColor = vec4(ink * density, density);

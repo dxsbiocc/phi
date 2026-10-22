@@ -8,6 +8,7 @@ import ToolCallCard, { StatusIndicator } from '../ToolCallCard'
 import ToolGroupCard from '../ToolGroupCard'
 import { WrapperPlanCard } from '../../features/wrapper/components/WrapperPlanCard'
 import { WorkspaceChangesCard } from '../../features/chat/components/WorkspaceChangesCard'
+import { MetaBallsLoader } from '../../features/chat/components/MetaBallsLoader'
 import { PresentedFilesCard } from '../../features/chat/components/PresentedFilesCard'
 import { UiBlocksCard } from '../../features/chat/components/UiBlocks/UiBlocksCard'
 import { PlanReviewCard } from '../../features/chat/components/PlanReviewCard'
@@ -186,7 +187,11 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
         </Typography>
         {status ? (
           <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-            <StatusIndicator status={status} />
+            {isActive && isProcessingActive ? (
+              <MetaBallsLoader size={30} />
+            ) : (
+              <StatusIndicator status={status} />
+            )}
           </Box>
         ) : null}
       </Box>

@@ -180,7 +180,7 @@ export function HomeView({
             inset: 0,
             zIndex: 0,
             pointerEvents: 'none',
-            opacity: darkTheme ? 0.8 : 0.68
+            opacity: darkTheme ? 0.8 : 1
           }}
         />
       )}

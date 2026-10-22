@@ -1272,6 +1272,30 @@ test('chat view keeps in-flight processing folded with a spinner before the assi
   assert.doesNotMatch(markup, />执行中</)
 })
 
+test('active outer processing fold uses MetaBalls while the run is in progress', () => {
+  const markup = renderChat(
+    [
+      { id: 'user-1', role: 'user', content: '查一下' },
+      {
+        id: 'tool-1',
+        role: 'tool',
+        toolName: 'shell',
+        argsPreview: 'rg provider',
+        argsJson: '{"cmd":"rg provider"}',
+        output: '',
+        status: 'running',
+        createdAt: '2026-09-07T00:00:00.000Z'
+      }
+    ],
+    { isGenerating: true }
+  )
+
+  assert.match(markup, /data-phi-meta-balls-loader="true"/)
+  assert.match(markup, /<canvas\b/)
+  assert.equal((markup.match(/data-phi-meta-balls-loader/g) ?? []).length, 1)
+  assert.match(markup, /aria-label="展开处理过程"/)
+})
+
 test('chat view keeps streaming progress text inside the active processing fold', () => {
   const markup = withMockedNow('2026-09-07T00:00:05.000Z', () =>
     renderChat(

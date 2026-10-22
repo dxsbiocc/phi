@@ -15,6 +15,7 @@ import type {
   RuntimeRecoveryTarget
 } from '../src/shared/runtimeRecoveryTypes'
 import * as confirmationDialog from '../src/renderer/src/components/ConfirmationDialog'
+import { MetaBallsLoader } from '../src/renderer/src/features/chat/components/MetaBallsLoader'
 import * as recoveryState from '../src/renderer/src/features/chat/lib/runtimeRecoveryState'
 
 setUiLanguage('zh-CN')
@@ -64,6 +65,7 @@ test('recovery banner: a confirmed connection shows a failed UI refresh without 
       if (name === '../hooks/useRuntimeRecovery') return { useRuntimeRecovery: recovery }
       if (name === '../lib/runtimeRecoveryState') return recoveryState
       if (name === '../../../components/ConfirmationDialog') return confirmationDialog
+      if (name === './MetaBallsLoader') return { MetaBallsLoader }
       return require(name)
     }
   })
@@ -94,7 +96,8 @@ test('recovery banner: a confirmed connection shows a failed UI refresh without 
   assert.match(connecting, /data-phi-runtime-reconnecting="true"/)
   assert.match(connecting, /正在连接远程会话/)
   assert.match(connecting, /role="status"/)
-  assert.match(connecting, /role="progressbar"/)
+  assert.match(connecting, /data-phi-meta-balls-loader="true"/)
+  assert.match(connecting, /<canvas\b/)
   assert.match(connecting, /MuiAlert-root/)
   assert.doesNotMatch(connecting, /恢复原会话|查看摘要并新建|刷新状态/)
 

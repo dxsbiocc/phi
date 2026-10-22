@@ -5,7 +5,6 @@ import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -16,6 +15,7 @@ import {
 } from '@mui/material'
 import { useState } from 'react'
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
+import { MetaBallsLoader } from './MetaBallsLoader'
 import type {
   RuntimeRecoveryApi,
   RuntimeRecoveryState,
@@ -81,7 +81,7 @@ export function RuntimeRecoveryBanner({
         aria-live="polite"
         severity="info"
         variant="outlined"
-        icon={<CircularProgress size={18} color="inherit" />}
+        icon={<MetaBallsLoader size={30} />}
         data-phi-runtime-reconnecting="true"
         sx={loadingSx}
       >
