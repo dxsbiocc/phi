@@ -2,7 +2,7 @@ import { indentService, indentUnit, type IndentContext } from '@codemirror/langu
 import { EditorState, type Extension } from '@codemirror/state'
 import type { SyntaxLanguage } from '../../../lib/syntaxHighlight'
 
-export const notebookCodeIndentUnit = '    '
+export const notebookCodeIndentUnit = '\t'
 
 export const notebookIndentOnInput =
   /^\s*(?:[\])}]|(?:elif|else|except|finally)\b.*:?|(?:fi|done|esac)\b.*)$/u
@@ -169,7 +169,7 @@ export function notebookIndentationColumn(
 export function notebookIndentationExtensions(language: () => SyntaxLanguage): Extension[] {
   return [
     indentUnit.of(notebookCodeIndentUnit),
-    EditorState.tabSize.of(notebookCodeIndentUnit.length),
+    EditorState.tabSize.of(4),
     indentService.of((context, pos) => notebookIndentationColumn(context, pos, language())),
     EditorState.languageData.of(() => [{ indentOnInput: notebookIndentOnInput }])
   ]

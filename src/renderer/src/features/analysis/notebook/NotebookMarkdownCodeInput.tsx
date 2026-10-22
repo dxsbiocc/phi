@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { Box } from '@mui/material'
 import { useTheme, type Theme } from '@mui/material/styles'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  insertNewlineAndIndent
+} from '@codemirror/commands'
+import { indentOnInput } from '@codemirror/language'
 import {
   Annotation,
   Compartment,
@@ -11,6 +18,7 @@ import {
 } from '@codemirror/state'
 import {
   Decoration,
+  drawSelection,
   EditorView,
   keymap,
   placeholder,
@@ -22,6 +30,7 @@ import { useUiLanguage } from '../../../lib/i18n'
 import { highlightLine, type SyntaxLanguage } from '../../../lib/syntaxHighlight'
 import { syntaxTokenColor } from '../../../lib/syntaxTheme'
 import { analysisCopy } from '../lib/analysisUiCopy'
+import { notebookIndentationExtensions } from './notebookIndentation'
 
 const externalChange = Annotation.define<boolean>()
 
@@ -82,6 +91,7 @@ export function NotebookMarkdownCodeInput({
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const callbacksRef = useRef({ onChange, onExitBelow })
+  const languageRef = useRef(language)
   const compartments = useRef({
     appearance: new Compartment(),
     access: new Compartment(),
@@ -103,11 +113,14 @@ export function NotebookMarkdownCodeInput({
             boxSizing: 'border-box',
             minHeight: 70,
             padding: '31px 12px 10px',
-            caretColor: theme.palette.text.primary
+            caretColor: 'transparent'
           },
           '.cm-line': { padding: 0, lineHeight: '1.65' },
           '.cm-placeholder': { color: theme.palette.text.disabled },
-          '.cm-cursor': { borderLeftColor: theme.palette.text.primary },
+          '.cm-cursor': {
+            borderLeftColor: `${theme.palette.primary.main} !important`,
+            borderLeftWidth: '2px'
+          },
           '.cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground':
             {
               backgroundColor: theme.palette.action.selected
@@ -126,6 +139,10 @@ export function NotebookMarkdownCodeInput({
   }, [onChange, onExitBelow])
 
   useEffect(() => {
+    languageRef.current = language
+  }, [language])
+
+  useEffect(() => {
     if (!hostRef.current) return
     const view = new EditorView({
       parent: hostRef.current,
@@ -133,6 +150,9 @@ export function NotebookMarkdownCodeInput({
         doc: initial.current.value,
         extensions: [
           history(),
+          drawSelection({ cursorBlinkRate: 0 }),
+          ...notebookIndentationExtensions(() => languageRef.current),
+          indentOnInput(),
           compartments.current.appearance.of(initial.current.appearance),
           compartments.current.access.of([
             EditorState.readOnly.of(initial.current.readOnly),
@@ -158,6 +178,7 @@ export function NotebookMarkdownCodeInput({
                 return true
               }
             },
+            { key: 'Enter', run: insertNewlineAndIndent },
             indentWithTab,
             ...defaultKeymap,
             ...historyKeymap

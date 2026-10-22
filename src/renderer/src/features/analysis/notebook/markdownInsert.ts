@@ -150,6 +150,36 @@ export function insertMarkdown(
   return inserters[kind](range, selected, samples)
 }
 
+export function insertMarkdownLink(
+  source: string,
+  rawStart: number,
+  rawEnd: number,
+  title: string,
+  url: string
+): MarkdownInsertResult {
+  const start = clamp(Math.min(rawStart, rawEnd), source.length)
+  const end = clamp(Math.max(rawStart, rawEnd), source.length)
+  const label = title.trim().replace(/\\/g, '\\\\').replaceAll('[', '\\[').replaceAll(']', '\\]')
+  const destination = url
+    .trim()
+    .replace(/\s/g, '%20')
+    .replace(/([()])/g, '\\$1')
+  const text = `[${label}](${destination})`
+  const cursor = start + text.length
+  return {
+    value: source.slice(0, start) + text + source.slice(end),
+    selectionStart: cursor,
+    selectionEnd: cursor
+  }
+}
+
+export function paragraphAfterMarkdown(source: string): MarkdownInsertResult {
+  if (!source) return { value: '', selectionStart: 0, selectionEnd: 0 }
+  const trailingNewlines = source.match(/\n*$/)?.[0].length ?? 0
+  const value = source + '\n'.repeat(Math.max(0, 2 - trailingNewlines))
+  return { value, selectionStart: value.length, selectionEnd: value.length }
+}
+
 /** Complete a freshly typed $$ line without treating subsequent blocks as formula content. */
 export function expandDisplayFormulaShortcut(
   source: string,

@@ -48,38 +48,46 @@ function applyIndentCommand(
   return nextState.doc.toString()
 }
 
-test('notebook indentation inserts four spaces after Python blocks', () => {
-  assert.equal(notebookCodeIndentUnit, '    ')
-  assert.equal(applyEnter('if value:', 'python'), 'if value:\n    ')
+test('notebook indentation inserts a Tab after Python blocks', () => {
+  assert.equal(notebookCodeIndentUnit, '\t')
+  assert.equal(
+    EditorState.create({ extensions: notebookIndentationExtensions(() => 'python') }).tabSize,
+    4
+  )
+  assert.equal(applyEnter('if value:', 'python'), 'if value:\n\t')
 })
 
 test('notebook indentation keeps current indentation without a new block', () => {
-  assert.equal(applyEnter('    value = call()', 'python'), '    value = call()\n    ')
+  assert.equal(applyEnter('\tvalue = call()', 'python'), '\tvalue = call()\n\t')
 })
 
 test('notebook indentation ignores block markers inside strings', () => {
   assert.equal(applyEnter('print("(")', 'python'), 'print("(")\n')
 })
 
-test('notebook indentation inserts four spaces after R and JavaScript blocks', () => {
-  assert.equal(applyEnter('if (ready) {', 'r'), 'if (ready) {\n    ')
-  assert.equal(applyEnter('function run() {', 'typescript'), 'function run() {\n    ')
+test('notebook indentation inserts a Tab after R and JavaScript blocks', () => {
+  assert.equal(applyEnter('if (ready) {', 'r'), 'if (ready) {\n\t')
+  assert.equal(applyEnter('function run() {', 'typescript'), 'function run() {\n\t')
 })
 
 test('notebook indentation handles shell block openers', () => {
-  assert.equal(applyEnter('if true; then', 'shell'), 'if true; then\n    ')
+  assert.equal(applyEnter('if true; then', 'shell'), 'if true; then\n\t')
 })
 
 test('notebook indentation reindents closing and dedent lines', () => {
   const state = EditorState.create({
-    doc: ['if value:', '    handle()', 'else:'].join('\n'),
+    doc: ['if value:', '\thandle()', 'else:'].join('\n'),
     extensions: notebookIndentationExtensions(() => 'python')
   })
 
   assert.equal(getIndentation(state, state.doc.line(3).from), 0)
 })
 
-test('notebook indentation uses four-space Tab and Shift-Tab units', () => {
-  assert.equal(applyIndentCommand('value = 1', indentMore), '    value = 1')
-  assert.equal(applyIndentCommand('    value = 1', indentLess), 'value = 1')
+test('notebook indentation uses literal Tab and Shift-Tab units', () => {
+  assert.equal(applyIndentCommand('value = 1', indentMore), '\tvalue = 1')
+  assert.equal(applyIndentCommand('\tvalue = 1', indentLess), 'value = 1')
+})
+
+test('notebook indentation keeps a Tab for code without a language-specific rule', () => {
+  assert.equal(applyEnter('\tvalue = 1', 'plain'), '\tvalue = 1\n\t')
 })

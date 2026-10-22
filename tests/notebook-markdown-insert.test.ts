@@ -3,6 +3,8 @@ import test from 'node:test'
 import {
   expandDisplayFormulaShortcut,
   insertMarkdown,
+  insertMarkdownLink,
+  paragraphAfterMarkdown,
   type MarkdownInsertSamples
 } from '../src/renderer/src/features/analysis/notebook/markdownInsert'
 
@@ -16,6 +18,32 @@ const samples: MarkdownInsertSamples = {
   columnA: 'A',
   columnB: 'B'
 }
+
+test('a link form inserts its title and URL without replacing surrounding text', () => {
+  const result = insertMarkdownLink(
+    'See selected now',
+    4,
+    12,
+    'Data source',
+    'https://example.com/data'
+  )
+  assert.equal(result.value, 'See [Data source](https://example.com/data) now')
+  assert.equal(result.selectionStart, 'See [Data source](https://example.com/data)'.length)
+})
+
+test('the paragraph below the final rendered block remains writable', () => {
+  assert.deepEqual(paragraphAfterMarkdown(''), {
+    value: '',
+    selectionStart: 0,
+    selectionEnd: 0
+  })
+  assert.deepEqual(paragraphAfterMarkdown('[Link](https://example.com)'), {
+    value: '[Link](https://example.com)\n\n',
+    selectionStart: '[Link](https://example.com)\n\n'.length,
+    selectionEnd: '[Link](https://example.com)\n\n'.length
+  })
+  assert.equal(paragraphAfterMarkdown('$$\nE=mc^2\n$$\n\n\n').value, '$$\nE=mc^2\n$$\n\n\n')
+})
 
 test('inline marks wrap a selection and select an empty placeholder', () => {
   const wrapped = insertMarkdown('say hi now', 4, 6, 'bold', samples)

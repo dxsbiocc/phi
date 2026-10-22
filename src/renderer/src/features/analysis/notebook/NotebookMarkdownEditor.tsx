@@ -20,8 +20,10 @@ import { displayMathAt, paragraphAfterDisplayMath, removeDisplayMath } from './m
 import {
   expandDisplayFormulaShortcut,
   insertMarkdown,
+  insertMarkdownLink,
   markdownInsertLabel,
   markdownInsertSamples,
+  paragraphAfterMarkdown,
   type MarkdownInsertKind,
   type MarkdownInsertResult
 } from './markdownInsert'
@@ -36,9 +38,11 @@ import { NotebookMarkdownToolbar } from './NotebookMarkdownToolbar'
 import { NotebookMarkdownCodeBlock } from './NotebookMarkdownCodeBlock'
 import { NotebookMarkdownFormulaBlock } from './NotebookMarkdownFormulaBlock'
 import { NotebookMarkdownInlineFormula } from './NotebookMarkdownInlineFormula'
+import { NotebookMarkdownLinkEditor } from './NotebookMarkdownLinkEditor'
 import { inlineMathAt } from '../../../lib/markdown/markdownInlineMath'
 
 type SlashState = { match: MarkdownSlashMatch; anchor: DOMRect }
+type LinkDraft = { source: string; start: number; end: number; title: string; anchor: DOMRect }
 type MarkdownWidget = { text: string; block: MarkdownBlock }
 type EditorProps = {
   value: string
@@ -95,10 +99,10 @@ export function NotebookMarkdownEditor({
   const [slash, setSlash] = useState<SlashState | null>(null)
   const [activeIndex, setActiveIndex] = useState(0)
   const [formulaToFocus, setFormulaToFocus] = useState<number | null>(null)
+  const [linkDraft, setLinkDraft] = useState<LinkDraft | null>(null)
   const [widgets, setWidgets] = useState<Map<HTMLElement, MarkdownWidget>>(() => new Map())
   const kinds = slash ? filterMarkdownInsertKinds(slash.match.query, markdownInsertLabel) : []
   const activeKind = kinds[activeIndex]
-  const blockFooter = editable && /(?:^|\n)(?:`{3,}|~{3,}|\${2,})[ \t]*\n{2,}$/.test(value)
 
   const registerWidget = useCallback(
     (dom: HTMLElement, text: string, block: MarkdownBlock): void => {
@@ -172,11 +176,34 @@ export function NotebookMarkdownEditor({
     setSelectionAnchor(null)
   }, [])
 
+  const startLinkInsert = useCallback(
+    (view: EditorView, start: number, end: number, title: string): void => {
+      clearMenus()
+      setLinkDraft({
+        source: view.state.doc.toString(),
+        start,
+        end,
+        title,
+        anchor: anchorAt(view, end)
+      })
+    },
+    [clearMenus]
+  )
+
   const insertAtSelection = useCallback(
     (kind: MarkdownInsertKind): void => {
       const view = viewRef.current
       if (!view || !propsRef.current.onChange) return
       const selection = view.state.selection.main
+      if (kind === 'link') {
+        startLinkInsert(
+          view,
+          selection.from,
+          selection.to,
+          view.state.sliceDoc(selection.from, selection.to)
+        )
+        return
+      }
       clearMenus()
       const result = insertMarkdown(
         view.state.doc.toString(),
@@ -196,7 +223,7 @@ export function NotebookMarkdownEditor({
       }
       applyResult(view, result)
     },
-    [clearMenus]
+    [clearMenus, startLinkInsert]
   )
 
   const insertSlashChoice = useCallback(
@@ -205,6 +232,14 @@ export function NotebookMarkdownEditor({
       if (!view || !propsRef.current.onChange) return
       const match = activeMarkdownSlash(view.state.doc.toString(), view.state.selection.main.head)
       if (!match) return
+      if (kind === 'link') {
+        view.dispatch({
+          changes: { from: match.start, to: match.end, insert: '' },
+          selection: { anchor: match.start }
+        })
+        startLinkInsert(view, match.start, match.start, '')
+        return
+      }
       clearMenus()
       const result = insertFromMarkdownSlash(
         view.state.doc.toString(),
@@ -223,7 +258,7 @@ export function NotebookMarkdownEditor({
       }
       applyResult(view, result)
     },
-    [clearMenus]
+    [clearMenus, startLinkInsert]
   )
 
   const updateCodeBody = (start: number, body: string): void => {
@@ -303,6 +338,11 @@ export function NotebookMarkdownEditor({
     if (!view || !propsRef.current.onChange) return
     const math = inlineMathAt(view.state.doc.toString(), start)
     if (math) view.dispatch({ changes: { from: math.bodyStart, to: math.bodyEnd, insert: body } })
+  }
+
+  const focusBelowLastBlock = (): void => {
+    const view = viewRef.current
+    if (view) applyResult(view, paragraphAfterMarkdown(view.state.doc.toString()))
   }
 
   useEffect(() => {
@@ -548,17 +588,39 @@ export function NotebookMarkdownEditor({
   }, [widgets])
 
   return (
-    <Box data-phi-notebook-markdown-editor="live" sx={{ position: 'relative' }}>
+    <Box
+      data-phi-notebook-markdown-editor="live"
+      onPointerDownCapture={(event) => {
+        const view = viewRef.current
+        if (!editable || !view) return
+        const target = event.target as Element
+        if (
+          target.closest(
+            'a, button, input, textarea, select, [role="button"], [data-phi-notebook-code-block], [data-phi-notebook-formula-block], [data-phi-notebook-markdown-footer], [data-phi-notebook-link-editor]'
+          )
+        )
+          return
+        const caret = view.coordsAtPos(view.state.doc.length)
+        const footer = event.currentTarget.querySelector<HTMLElement>(
+          '[data-phi-notebook-markdown-footer]'
+        )
+        if (!caret || !footer) return
+        const footerTop = footer.getBoundingClientRect().top
+        // A rendered block can place CodeMirror's end coordinate above its visible last line.
+        if (event.clientY <= caret.bottom + 32 || event.clientY >= footerTop) return
+        event.preventDefault()
+        event.stopPropagation()
+        focusBelowLastBlock()
+      }}
+      sx={{ position: 'relative' }}
+    >
       <Box ref={hostRef} data-phi-notebook-markdown-live="true" />
-      {blockFooter ? (
+      {editable ? (
         <Box
           data-phi-notebook-markdown-footer="true"
           onPointerDown={(event) => {
             event.preventDefault()
-            const view = viewRef.current
-            if (!view) return
-            view.focus()
-            view.dispatch({ selection: { anchor: view.state.doc.length }, scrollIntoView: true })
+            focusBelowLastBlock()
           }}
           sx={{ height: 28, cursor: 'text' }}
         />
@@ -610,6 +672,25 @@ export function NotebookMarkdownEditor({
         onActiveIndexChange={setMenuIndex}
         onInsert={insertSlashChoice}
       />
+      {linkDraft ? (
+        <NotebookMarkdownLinkEditor
+          anchor={linkDraft.anchor}
+          initialTitle={linkDraft.title}
+          onCancel={() => {
+            setLinkDraft(null)
+            viewRef.current?.focus()
+          }}
+          onInsert={(title, url) => {
+            const view = viewRef.current
+            setLinkDraft(null)
+            if (!view || view.state.doc.toString() !== linkDraft.source) return
+            applyResult(
+              view,
+              insertMarkdownLink(linkDraft.source, linkDraft.start, linkDraft.end, title, url)
+            )
+          }}
+        />
+      ) : null}
     </Box>
   )
 }

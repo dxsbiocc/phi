@@ -396,6 +396,20 @@ async function run(): Promise<object> {
       host.querySelector('[data-phi-notebook-code-highlight] [data-phi-syntax-token="keyword"]'),
       'Python code inside Markdown must receive language-specific keyword coloring'
     )
+    await setSource(view, '```python\nif ready:\n```\n\n\n')
+    const indentCodeView = codeInputView(host)
+    indentCodeView.focus()
+    indentCodeView.dispatch({ selection: { anchor: indentCodeView.state.doc.length } })
+    await press(indentCodeView, 'Enter')
+    check(
+      draft === '```python\nif ready:\n\t\n```\n\n\n',
+      'Enter in a Markdown code block must create a Tab-indented line'
+    )
+    await press(indentCodeView, 'Tab')
+    check(
+      draft === '```python\nif ready:\n\t\t\n```\n\n\n',
+      'Tab in a Markdown code block must insert a literal Tab'
+    )
     await setSource(view, '[Google](https://www.google.com/)\n\nParagraph')
     await select(view, view.state.doc.length)
     check(
@@ -446,6 +460,85 @@ async function run(): Promise<object> {
     })
     check(draft === '- item', 'Clicking a slash choice must insert the selected block')
 
+    await setSource(view, '# Title\n\n[Link](https://example.com)')
+    check(
+      host.querySelector('[data-phi-notebook-markdown-footer]'),
+      'A link at the end must leave a clickable writing area below it'
+    )
+
+    await setSource(view, '/link')
+    await press(view, 'Enter')
+    const linkEditor = document.querySelector<HTMLElement>('[data-phi-notebook-link-editor]')
+    check(linkEditor, 'The Link command must open a title and URL form')
+    check(draft === '', 'Selecting Link must remove the slash command before editing fields')
+    const linkTitle = linkEditor.querySelector<HTMLInputElement>('[data-phi-notebook-link-title]')
+    const linkUrl = linkEditor.querySelector<HTMLInputElement>('[data-phi-notebook-link-url]')
+    check(linkTitle && linkUrl, 'The link form must expose both title and URL inputs')
+    await typeLanguageSearch(linkTitle, 'Data source')
+    await typeLanguageSearch(linkUrl, 'https://example.com/data')
+    const insertLink = linkEditor.querySelector<HTMLButtonElement>(
+      '[data-phi-notebook-link-submit]'
+    )
+    check(insertLink, 'The link form must expose an insert action')
+    await act(async () => insertLink.click())
+    check(
+      draft.startsWith('[Data source](https://example.com/data)'),
+      'Link fields must become one Markdown link'
+    )
+
+    await setSource(view, 'Visit dataset')
+    await select(view, 6, 13)
+    const selectedLinkButton = document.querySelector<HTMLButtonElement>(
+      '[data-phi-notebook-markdown-toolbar] button[aria-label="Link"]'
+    )
+    check(selectedLinkButton, 'Selected text must offer the Link formatting action')
+    await act(async () => selectedLinkButton.click())
+    const selectedLinkEditor = document.querySelector<HTMLElement>(
+      '[data-phi-notebook-link-editor]'
+    )
+    const selectedTitle = selectedLinkEditor?.querySelector<HTMLInputElement>(
+      '[data-phi-notebook-link-title]'
+    )
+    const selectedUrl = selectedLinkEditor?.querySelector<HTMLInputElement>(
+      '[data-phi-notebook-link-url]'
+    )
+    check(
+      selectedTitle?.value === 'dataset' && selectedUrl,
+      'Selected text must prefill the link title'
+    )
+    await typeLanguageSearch(selectedUrl, 'https://example.com/dataset')
+    const selectedInsert = selectedLinkEditor?.querySelector<HTMLButtonElement>(
+      '[data-phi-notebook-link-submit]'
+    )
+    check(selectedInsert, 'The selected-text link form must be submittable')
+    await act(async () => selectedInsert.click())
+    check(
+      draft === 'Visit [dataset](https://example.com/dataset)',
+      'Link insertion must preserve surrounding text'
+    )
+
+    await setSource(view, '# Title\n\n[Link](https://example.com)')
+    const linkFooter = host.querySelector<HTMLElement>('[data-phi-notebook-markdown-footer]')
+    check(linkFooter, 'Every editable Markdown cell needs a clickable area below its last block')
+    await act(async () => {
+      linkFooter.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
+    })
+    check(
+      view.state.selection.main.head === view.state.doc.length,
+      'The footer must place the caret after the link'
+    )
+    await act(async () => {
+      check(
+        document.execCommand('insertText', false, 'after'),
+        'Typing after the link must be accepted'
+      )
+    })
+    await frame()
+    check(
+      draft === '# Title\n\n[Link](https://example.com)\n\nafter',
+      'Footer typing must create a paragraph outside the link'
+    )
+
     await setSource(view, '- first')
     await press(view, 'Enter')
     check(draft === '- first\n- ', 'Enter must continue the current list')
@@ -460,6 +553,16 @@ async function run(): Promise<object> {
     check(codeInput, 'Code insertion must open an editable area')
     const insertedCodeView = codeInputView(host)
     check(insertedCodeView.hasFocus, 'The new code area must receive focus')
+    const insertedCaret = codeInput.querySelector<HTMLElement>('.cm-cursor')
+    check(
+      insertedCaret && insertedCaret.getBoundingClientRect().height > 0,
+      'The focused empty code block must paint a visible insertion cursor'
+    )
+    check(
+      getComputedStyle(insertedCaret).borderLeftWidth !== '0px' &&
+        getComputedStyle(insertedCaret).borderLeftColor !== 'rgba(0, 0, 0, 0)',
+      'The code caret must use a visible theme-colored stroke'
+    )
     const emptyCodeBlock = codeInput.closest<HTMLElement>('[data-phi-notebook-code-block]')
     check(emptyCodeBlock, 'The code input must be inside its block')
     check(
@@ -525,9 +628,47 @@ async function run(): Promise<object> {
     )
     await new Promise((resolve) => setTimeout(resolve, 350))
     check(codeInputView(cellHost).hasFocus, 'Notebook selection must preserve code input focus')
+    check(
+      cellCodeInput.querySelector('.cm-cursor'),
+      'Clicking code in a notebook cell must paint its insertion cursor'
+    )
     check(cellDraft.includes('```\nq\n```'), 'The actual notebook cell must save typed code')
     await act(async () => cellRoot.unmount())
     cellHost.remove()
+    cellDraft = '# Title\n\n[Link](https://example.com)'
+    const linkCellHost = document.createElement('div')
+    document.body.append(linkCellHost)
+    const linkCellRoot = createRoot(linkCellHost)
+    await act(async () => linkCellRoot.render(<CellHarness />))
+    await frame()
+    const linkCellFooter = linkCellHost.querySelector<HTMLElement>(
+      '[data-phi-notebook-markdown-footer]'
+    )
+    check(linkCellFooter, 'A rendered Notebook cell must show a footer below the final link')
+    linkCellFooter.scrollIntoView()
+    await frame()
+    const linkFooterRect = linkCellFooter.getBoundingClientRect()
+    const visibleLink = linkCellHost.querySelector<HTMLAnchorElement>(
+      'a[href="https://example.com"]'
+    )
+    const linkBottom = visibleLink?.getBoundingClientRect().bottom ?? linkFooterRect.top
+    const blankGap = linkFooterRect.top - linkBottom
+    const clickY = blankGap > 12 ? linkBottom + blankGap / 2 : linkFooterRect.top + 14
+    console.log(
+      'PHI_CODE_CLICK:' +
+        JSON.stringify({
+          x: linkFooterRect.left + 80,
+          y: clickY,
+          key: 'z'
+        })
+    )
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    check(
+      cellDraft === '# Title\n\n[Link](https://example.com)\n\nz',
+      'Clicking below a link must write a new paragraph'
+    )
+    await act(async () => linkCellRoot.unmount())
+    linkCellHost.remove()
     await setSource(view, '```\n\n```\n\n\n')
     const editCodeView = codeInputView(host)
     editCodeView.focus()
