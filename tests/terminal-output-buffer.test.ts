@@ -254,7 +254,7 @@ test('keeps a paged replay stable while live output evicts the ring', () => {
 
   const stableRecords = [...first.records]
   let nextSeq = first.nextSeq
-  let more = first.more
+  let more: boolean = first.more
   while (more) {
     const page = harness.buffer.replay(nextSeq)
     stableRecords.push(...page.records)

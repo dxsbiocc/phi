@@ -33,7 +33,11 @@ import { parseNotebook } from '../src/shared/notebookDocument'
 function renderAnalysisView(props: AnalysisViewProps = {}): string {
   const theme = createTheme()
   return renderToStaticMarkup(
-    createElement(ThemeProvider, { theme }, createElement(AnalysisView, props))
+    createElement(
+      ThemeProvider,
+      { theme },
+      createElement(AnalysisView, { key: 'analysis', ...props })
+    )
   )
 }
 

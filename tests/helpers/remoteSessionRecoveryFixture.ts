@@ -318,7 +318,7 @@ export async function createRemoteSessionRecoveryFixture(): Promise<{
                       kind: 'remote-omp' as const,
                       version: 1 as const,
                       durableSessionKey: paths.durableSessionKey,
-                      ompVersion: '18.10.3',
+                      ompVersion: '18.10.3' as const,
                       ompSessionId: identity.ompSessionId,
                       journalBasename: basename(identity.journalPath)
                     }

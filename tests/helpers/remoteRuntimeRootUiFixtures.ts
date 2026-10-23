@@ -42,7 +42,6 @@ export function remoteProject(runtimeRoot?: string): Project {
       canonicalRoot: '/cluster/project'
     },
     workingDirectory: '/cluster/project',
-    workingDirectoryRealPath: '/cluster/project',
     permissionMode: 'auto',
     pathAvailable: true,
     createdAt: '2026-10-09T00:00:00.000Z',
@@ -76,7 +75,9 @@ export function runtimeCheck(
     diskUsePercent: 10,
     inodeUsePercent: 8,
     executable: true,
+    writeCapacity: 'ok',
     sharedFilesystem: false,
+    packageCache: { entryCount: 0, bytes: 0 },
     computeNodeVisibility: 'unknown',
     hardErrors: [],
     warnings: [],

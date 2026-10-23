@@ -22,6 +22,7 @@ import { validateWrapperParams } from '../../src/main/agent/wrappers/composition
 import { packageContentPath } from '../helpers/packageContent'
 
 const DISCOVERY = { sourceRoot: packageContentPath('wrappers') }
+const TOOL_CONTEXT = { cwd: process.cwd(), recentUserImages: () => [] }
 
 const EXPECTED_MODULE_WRAPPER_IDS = [
   'local/modules/differential-expression-deseq2',
@@ -754,9 +755,12 @@ test('readWrapperModuleDetails returns undefined for an unknown wrapper id', () 
 test('wrapper_search lists matching composition wrappers', async () => {
   resetWrapperCompositionCatalogCache()
 
-  const result = await buildWrapperCompositionSearchTool(DISCOVERY).execute('call-1', {
-    query: 'fastqc'
-  })
+  const result = await buildWrapperCompositionSearchTool(DISCOVERY).execute(
+    'call-1',
+    { query: 'fastqc' },
+    undefined,
+    TOOL_CONTEXT
+  )
 
   assert.equal(result.isError, undefined)
   const details = result.details as {
@@ -774,9 +778,12 @@ test('wrapper_search lists matching composition wrappers', async () => {
 test('wrapper_inspect returns the composition manifest plus default params', async () => {
   resetWrapperCompositionCatalogCache()
 
-  const result = await buildWrapperCompositionInspectTool(DISCOVERY).execute('call-1', {
-    id: 'nf-core/modules/fastqc'
-  })
+  const result = await buildWrapperCompositionInspectTool(DISCOVERY).execute(
+    'call-1',
+    { id: 'nf-core/modules/fastqc' },
+    undefined,
+    TOOL_CONTEXT
+  )
 
   assert.equal(result.isError, undefined)
   const details = result.details as {
@@ -845,17 +852,27 @@ test('wrapper_run rejects invalid params before launching Nextflow', async () =>
   resetWrapperCompositionCatalogCache()
   const tool = buildWrapperCompositionRunTool(new WrapperJobManager({ discovery: DISCOVERY }))
 
-  const unknown = await tool.execute('call-1', {
-    id: 'nf-core/modules/fastqc',
-    params: { read: 'x.fastq.gz' }
-  })
+  const unknown = await tool.execute(
+    'call-1',
+    {
+      id: 'nf-core/modules/fastqc',
+      params: { read: 'x.fastq.gz' }
+    },
+    undefined,
+    TOOL_CONTEXT
+  )
   assert.equal(unknown.isError, true)
   assert.match(JSON.stringify(unknown.content), /Unknown parameter: read/)
 
-  const plain = await tool.execute('call-2', {
-    id: 'nf-core/modules/gffread',
-    params: { gff: '/definitely/not/here.gff3' }
-  })
+  const plain = await tool.execute(
+    'call-2',
+    {
+      id: 'nf-core/modules/gffread',
+      params: { gff: '/definitely/not/here.gff3' }
+    },
+    undefined,
+    TOOL_CONTEXT
+  )
   assert.equal(plain.isError, true)
   assert.match(JSON.stringify(plain.content), /input path does not exist/)
 })

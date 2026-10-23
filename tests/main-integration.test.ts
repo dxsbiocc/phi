@@ -494,6 +494,10 @@ type BrowserIntegrationView = {
   bounds: Array<{ x: number; y: number; width: number; height: number }>
   visibility: boolean[]
 }
+type AppendedSessionEvent = {
+  sessionId: string
+  event: Record<string, unknown>
+}
 type HarnessResult = {
   registrationOrder: string[]
   hostHandlers: Map<string, HostHandler>
@@ -539,6 +543,7 @@ type HarnessResult = {
     plan:
       | {
           revision?: number
+          params?: Record<string, unknown>
           targetSelection?: {
             projectId: string
             target: string
@@ -568,7 +573,12 @@ type HarnessResult = {
   contentFetchRequests: string[]
   updatedProjectDefaults: Array<Record<string, unknown>>
   updatedSessionManifests: Array<{ sessionId: string; patch: Record<string, unknown> }>
-  appendedSessionEvents: Array<Record<string, unknown>>
+  appendedSessionEvents: AppendedSessionEvent[]
+  setInstalledPhiPlugins: (plugins: unknown[]) => void
+  wrapperJobFinishListeners: Array<(run: unknown, status: unknown) => void>
+  osNotifications: Array<{ title: string; body: string }>
+  reportedWrapperRuns: Set<string>
+  setAppFocused: (focused: boolean) => void
   persistedToolOutputs: Array<Record<string, unknown>>
   revealedPaths: string[]
   openedPaths: string[]
@@ -726,7 +736,7 @@ async function harness(
   const contentFetchRequests: string[] = []
   const updatedProjectDefaults: Array<Record<string, unknown>> = []
   const updatedSessionManifests: Array<{ sessionId: string; patch: Record<string, unknown> }> = []
-  const appendedSessionEvents: Array<Record<string, unknown>> = []
+  const appendedSessionEvents: AppendedSessionEvent[] = []
   const enablementGlobal: Record<string, boolean> = {}
   const enablementProjects: Record<string, Record<string, boolean>> = {}
   let installedPhiPlugins: unknown[] = []
@@ -2234,6 +2244,7 @@ async function harness(
         id: string
         name: string
         permissionMode: string
+        workingDirectory: string
         workingDirectoryRealPath: string
         defaultModel?: { providerId: string; modelId: string }
         defaultThinkingLevel?: string
@@ -2913,34 +2924,6 @@ async function harness(
     './agent/packages/icon-views': {
       packageRegistryIconView: (registry: unknown): unknown => registry
     },
-    './agent/packages/github-source': {
-      previewGithubSource: async (): Promise<unknown> => ({
-        repo: 'acme/connectors',
-        sha: 'a'.repeat(40),
-        packages: [],
-        skipped: [],
-        warnings: []
-      }),
-      addGithubSource: async (): Promise<unknown> => ({
-        id: 'a'.repeat(16),
-        repo: 'acme/connectors',
-        sha: 'a'.repeat(40),
-        registryPath: '/isolated/github/registry',
-        addedAt: '2026-10-11T00:00:00.000Z',
-        updatedAt: '2026-10-11T00:00:00.000Z'
-      }),
-      checkGithubSourceUpdate: async (): Promise<unknown> => ({ changed: false }),
-      applyGithubSourceUpdate: async (): Promise<unknown> => ({
-        id: 'a'.repeat(16),
-        repo: 'acme/connectors',
-        sha: 'a'.repeat(40),
-        registryPath: '/isolated/github/registry',
-        addedAt: '2026-10-11T00:00:00.000Z',
-        updatedAt: '2026-10-11T00:00:00.000Z'
-      }),
-      removeGithubSource: async (): Promise<boolean> => true,
-      listGithubSources: (): unknown => ({ version: 1, sources: [] })
-    },
     './agent/resource-icons': { readResourceIcon: (): null => null },
     './agent/packages/installer': {
       addKnownRegistry: noop,
@@ -3017,23 +3000,6 @@ async function harness(
     },
     './agent/content/skill': {
       validateSkill: (): unknown => ({ ok: true, errors: [], warnings: [] })
-    },
-    './agent/mcp/custom-stdio': {
-      addLocalMcpConnector: async (): Promise<{ tools: string[] }> => ({ tools: [] }),
-      listLocalMcpRuntimes: async (): Promise<unknown[]> => [],
-      removeLocalMcpConnector: noop,
-      validateLocalConnectorRequest: (value: unknown): unknown => value
-    },
-    './agent/mcp/local-connector-jobs': {
-      createLocalConnectorJobs: () => ({
-        startLocalConnectorAdd: (request: { name?: string }) => ({
-          started: true,
-          name: request.name ?? 'local'
-        }),
-        cancelLocalConnectorAdd: async (): Promise<void> => undefined,
-        retryLocalConnectorAdd: (name: string) => ({ started: true, name }),
-        listLocalConnectorJobs: (): unknown[] => []
-      })
     },
     './agent/packages/github-source': {
       previewGithubSource: async (): Promise<unknown> => ({
@@ -9602,7 +9568,10 @@ test(
 test('main IPC: analysis notebooks use the active project working directory', async () => {
   const app = await harness()
 
-  const ordinary = (await app.invoke('analysis:listNotebooks')) as { message?: string }
+  const ordinary = (await app.invoke('analysis:listNotebooks')) as {
+    projectCwd?: string
+    message?: string
+  }
   await app.invoke('projects:newSession', '/projects/research', 'ask')
   const registry = (await app.invoke('analysis:listNotebooks')) as {
     projectCwd: string

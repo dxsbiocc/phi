@@ -190,6 +190,10 @@ class FakeSlurmCluster implements RemoteSshSession {
     return this.files.has(remotePath) || this.claims.has(remotePath)
   }
 
+  async uploadFile(): Promise<void> {
+    // SbatchRunner does not upload files in these focused runner tests.
+  }
+
   async close(): Promise<void> {
     this.closed = true
   }

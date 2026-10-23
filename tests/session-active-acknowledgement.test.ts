@@ -178,6 +178,8 @@ test('current session keeps visible messages when an existing path gains a Phi i
     cwd: '/workspace',
     sessionGeneration: 3,
     permissionMode: 'auto',
+    status: 'idle',
+    unreadKind: null,
     messages: []
   })
 
@@ -228,6 +230,8 @@ test('current session keeps visible messages and scroll key when a fresh chat ma
     cwd: '/workspace',
     sessionGeneration: 4,
     permissionMode: 'auto',
+    status: 'idle',
+    unreadKind: null,
     messages: []
   })
 

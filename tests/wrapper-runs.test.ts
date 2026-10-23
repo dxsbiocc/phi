@@ -747,6 +747,10 @@ class FakeCancelSession implements RemoteSshSession {
     )
   }
 
+  async uploadFile(): Promise<void> {
+    // Cancellation only inspects and signals an existing remote run.
+  }
+
   async close(): Promise<void> {
     this.closed = true
   }

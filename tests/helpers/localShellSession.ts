@@ -106,7 +106,9 @@ export function createLocalShellSession(
         const child = spawn('bash', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] })
         let stdout = ''
         let stderr = ''
-        const stop = (): void => child.kill('SIGTERM')
+        const stop = (): void => {
+          child.kill('SIGTERM')
+        }
         const timer = options?.timeoutMs ? setTimeout(stop, options.timeoutMs) : undefined
         options?.signal?.addEventListener('abort', stop, { once: true })
         child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf-8')))

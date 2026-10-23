@@ -41,7 +41,7 @@ function fakeLinuxSession(commands: string[], home: string): LocalShellSession {
   const session = createLocalShellSession()
   const run = session.exec.bind(session)
   const runWithInput = session.execWithInput!.bind(session)
-  session.exec = (command, options) => {
+  session.exec = (command) => {
     commands.push(command)
     if (command.includes('__PHI_HELPER_HOME__')) {
       return Promise.resolve({
@@ -51,7 +51,7 @@ function fakeLinuxSession(commands: string[], home: string): LocalShellSession {
         signal: null
       })
     }
-    return run(command, options)
+    return run(command)
   }
   session.execWithInput = (command, input, options) => {
     commands.push(command)

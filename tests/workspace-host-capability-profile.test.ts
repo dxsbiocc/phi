@@ -81,7 +81,9 @@ describe('workspace host capability profile cache', () => {
       diskUsePercent: 73,
       inodeUsePercent: 12,
       executable: true,
+      writeCapacity: 'ok',
       sharedFilesystem: true,
+      packageCache: { entryCount: 0, bytes: 0 },
       computeNodeVisibility: 'unknown',
       hardErrors: [],
       warnings: [

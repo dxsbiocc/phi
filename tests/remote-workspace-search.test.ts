@@ -96,8 +96,8 @@ function fixture(noRg = false): {
         }
         const result = run(command)
         return {
-          stdout: result.stdout ?? '',
-          stderr: result.stderr ?? '',
+          stdout: result.stdout?.toString() ?? '',
+          stderr: result.stderr?.toString() ?? '',
           code: result.status,
           signal: result.signal
         }
@@ -505,7 +505,8 @@ test('same-name glob and grep tools keep OMP parameter names and remote result m
   assert.equal(glob.name, 'glob')
   assert.equal(glob.description, PHI_REMOTE_GLOB_DESCRIPTION)
   const found = await glob.execute('glob-1', { path: '**/*.ts' }, undefined, {} as never)
-  assert.equal(found.content[0]?.text, 'glob:**/*.ts')
+  const globOutput = found.content[0]
+  assert.equal(globOutput?.type === 'text' ? globOutput.text : undefined, 'glob:**/*.ts')
   assert.equal((found.details as { fileCount: number }).fileCount, 1)
 
   const grep = buildRemoteWorkspaceGrepTool(async (input) => ({
@@ -521,6 +522,7 @@ test('same-name glob and grep tools keep OMP parameter names and remote result m
   assert.equal(grep.description, PHI_REMOTE_GREP_DESCRIPTION)
   assert.deepEqual(grep.parameters.required, ['pattern'])
   const matched = await grep.execute('grep-1', { pattern: 'MAGIC' }, undefined, {} as never)
-  assert.equal(matched.content[0]?.text, 'grep:MAGIC')
+  const grepOutput = matched.content[0]
+  assert.equal(grepOutput?.type === 'text' ? grepOutput.text : undefined, 'grep:MAGIC')
   assert.equal((matched.details as { matchCount: number }).matchCount, 1)
 })

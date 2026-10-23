@@ -193,8 +193,7 @@ const create = async (
     contextFiles: [],
     skills: [],
     promptTemplates: [],
-    slashCommands: [],
-    includeWorkspaceTree: false
+    slashCommands: []
   })
   sessions.push(result.session)
   return result
@@ -284,7 +283,11 @@ try {
       .every((item) => item.id !== 'disabled')
   )
   await assert.rejects(scope.registry.getApiKey(disabled), /disabled in Phi/)
-  await assert.rejects(scope.registry.resolver(disabled, 'fixture')({}), /disabled in Phi/)
+  await assert.rejects(
+    async () =>
+      scope.registry.resolver(disabled, 'fixture')({ error: undefined, lastChance: false }),
+    /disabled in Phi/
+  )
   checked(
     'SDK selection and auth paths cannot resurrect a disabled fallback from a direct model object'
   )

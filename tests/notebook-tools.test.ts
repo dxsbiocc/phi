@@ -79,7 +79,9 @@ test('notebook tools return tool errors instead of throwing host failures', asyn
   const result = await tool.execute('call-1', {}, undefined, fakeCtx('/tmp/project') as never)
 
   assert.equal(result.isError, true)
-  assert.equal(result.content[0]?.text, 'host failed')
+  const [content] = result.content
+  assert.ok(content?.type === 'text')
+  assert.equal(content.text, 'host failed')
 })
 
 test('remote notebook tools attach trusted routing identity outside model params', async () => {

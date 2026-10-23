@@ -76,7 +76,9 @@ function checkedRoot(root: string): RemoteRuntimeRootCheckResult {
     diskUsePercent: 20,
     inodeUsePercent: 10,
     executable: true,
+    writeCapacity: 'ok',
     sharedFilesystem: false,
+    packageCache: { entryCount: 0, bytes: 0 },
     computeNodeVisibility: 'unknown',
     hardErrors: [],
     warnings: []

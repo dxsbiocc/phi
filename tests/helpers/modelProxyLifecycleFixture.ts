@@ -103,6 +103,10 @@ export async function modelProxyLifecycleFixture(): Promise<LifecycleFixture> {
                   params,
                   homePath: '/private/home',
                   agentDir: '/private/home/agent',
+                  startup: {
+                    addDirectory: () => undefined,
+                    addFile: () => undefined
+                  },
                   signal
                 })
                 if (openError) throw openError

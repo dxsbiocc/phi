@@ -23,7 +23,9 @@ test(
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString()
     })
-    const abort = (): void => child.kill()
+    const abort = (): void => {
+      child.kill()
+    }
     t.signal.addEventListener('abort', abort, { once: true })
     if (t.signal.aborted) abort()
 

@@ -331,6 +331,7 @@ test('a background-job follow-up in agent_end and snapshots does not fail the ru
     messages: [assistant(), followUp, { role: 'futureRole', x: 1 }]
   })
   assert.ok(event && event.type === 'agent_end')
+  assert.ok(Array.isArray(event.messages))
   assert.deepEqual(
     event.messages.map((message) => message.role),
     ['assistant', 'custom']

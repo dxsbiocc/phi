@@ -164,10 +164,13 @@ try {
       runtimeId = params.sessionId
       return original(params)
     })
-    const openStdio = f.hostSession.openStdio!.bind(f.hostSession)
+    const hostSession = f.hostSession as typeof f.hostSession & {
+      openStdio: NonNullable<typeof f.hostSession.openStdio>
+    }
+    const openStdio = hostSession.openStdio.bind(hostSession)
     const late =
       mode === 'late-rebind'
-        ? mock.method(f.hostSession, 'openStdio', async (command: string) => {
+        ? mock.method(hostSession, 'openStdio', async (command: string) => {
             const channel = await openStdio(command)
             // The merged startup transaction replaced the per-file startup-policy
             // publication; hold the same in-flight startup at that command.

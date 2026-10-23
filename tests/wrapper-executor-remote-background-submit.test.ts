@@ -41,7 +41,7 @@ class FakeDetachedHost implements RemoteSshSession {
   claims = new Set<string>()
   launchCommands = 0
   launchFault: 'before' | 'after' | undefined
-  private processes = new Map<number, boolean>()
+  processes = new Map<number, boolean>()
   private nextPid = 5000
   closed = false
   keepAliveUntilTerm = false
@@ -127,6 +127,10 @@ class FakeDetachedHost implements RemoteSshSession {
 
   async exists(remotePath: string): Promise<boolean> {
     return this.files.has(remotePath) || this.claims.has(remotePath)
+  }
+
+  async uploadFile(): Promise<void> {
+    // The submission harness records uploaded bundle contents through writeTextFile.
   }
 
   async close(): Promise<void> {

@@ -14,6 +14,7 @@ import { buildWrapperCompositionSearchTool } from '../src/main/agent/wrappers/co
 import { WrapperJobManager } from '../src/main/agent/wrappers/composition/job-manager'
 
 const roots: string[] = []
+const TOOL_CONTEXT = { cwd: process.cwd(), recentUserImages: () => [] }
 
 test.afterEach(() => {
   resetWrapperCompositionCatalogCache()
@@ -275,9 +276,12 @@ test('wrapper_search uses the same enablement and dependency-filtered catalog', 
   setEnabled('wrapper:module-nf-core-fastqc', false, { agentDir })
   resetWrapperCompositionCatalogCache()
 
-  const result = await buildWrapperCompositionSearchTool({ agentDir }).execute('search', {
-    query: ''
-  })
+  const result = await buildWrapperCompositionSearchTool({ agentDir }).execute(
+    'search',
+    { query: '' },
+    undefined,
+    TOOL_CONTEXT
+  )
   const details = result.details as { results: Array<{ id: string }> }
   assert.deepEqual(details.results, [])
 })

@@ -7,23 +7,22 @@ import { createTheme, ThemeProvider } from '@mui/material'
 import { CatalogSidebar } from '../src/renderer/src/components/CatalogSidebar'
 
 test('remote resource notice stays inside the catalog, below its title and search', () => {
+  const listElement = createElement('div', { 'data-testid': 'catalog-list' })
+  const sidebarProps = {
+    title: '技能',
+    resource: 'skills' as const,
+    query: '',
+    onQueryChange: () => undefined,
+    searchPlaceholder: '搜索技能',
+    summary: '9 个技能',
+    notice: '远程项目级 Skills 暂未接通；当前仅显示全局 Skills。',
+    children: listElement
+  }
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
-      createElement(
-        CatalogSidebar,
-        {
-          title: '技能',
-          resource: 'skills',
-          query: '',
-          onQueryChange: () => undefined,
-          searchPlaceholder: '搜索技能',
-          summary: '9 个技能',
-          notice: '远程项目级 Skills 暂未接通；当前仅显示全局 Skills。'
-        },
-        createElement('div', { 'data-testid': 'catalog-list' })
-      )
+      createElement(CatalogSidebar, sidebarProps, listElement)
     )
   )
 

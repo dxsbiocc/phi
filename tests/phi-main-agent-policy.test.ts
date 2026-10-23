@@ -24,6 +24,10 @@ import {
   PHI_REMOTE_GREP_DESCRIPTION
 } from '../src/main/agent/remote-workspace-search-tools'
 
+type ToolCallHandler = (event: {
+  toolName: string
+}) => Promise<ReturnType<typeof remoteProjectToolDecision>>
+
 test('Phi owns the main system identity while retaining OMP runtime instructions', () => {
   const defaults = [
     [
@@ -86,9 +90,9 @@ test('remote project guard blocks built-in and Phi custom tools before local exe
     assert.equal(decision.block, true)
     assert.match(decision.reason, /没有在本机执行/)
   }
-  let handler: ((event: { toolName: string }) => Promise<unknown>) | undefined
+  let handler: ToolCallHandler | undefined
   createRemoteProjectToolGuardExtension()({
-    on: (event: string, callback: typeof handler) => {
+    on: (event: string, callback: ToolCallHandler) => {
       if (event === 'tool_call') handler = callback
     },
     getAllTools: () => [
@@ -98,9 +102,9 @@ test('remote project guard blocks built-in and Phi custom tools before local exe
   assert.ok(handler)
   assert.deepEqual(await handler({ toolName: 'read' }), remoteProjectToolDecision('read'))
 
-  let verifiedHandler: typeof handler
+  let verifiedHandler: ToolCallHandler | undefined
   createRemoteProjectToolGuardExtension()({
-    on: (event: string, callback: typeof handler) => {
+    on: (event: string, callback: ToolCallHandler) => {
       if (event === 'tool_call') verifiedHandler = callback
     },
     getAllTools: () => [
@@ -180,9 +184,9 @@ test('remote project guard blocks built-in and Phi custom tools before local exe
     assert.equal((await verifiedHandler({ toolName: name }))?.block, true)
   }
 
-  let builtinHandler: typeof handler
+  let builtinHandler: ToolCallHandler | undefined
   createRemoteProjectToolGuardExtension()({
-    on: (event: string, callback: typeof handler) => {
+    on: (event: string, callback: ToolCallHandler) => {
       if (event === 'tool_call') builtinHandler = callback
     },
     getAllTools: () => [

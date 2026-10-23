@@ -1,8 +1,12 @@
-import type { PhiAgentEvent } from '../src/main/agent/engine/types'
+import type {
+  PhiAgentEvent,
+  PhiTool,
+  PhiToolContext,
+  PhiToolResult,
+  PhiToolUpdate
+} from '../src/main/agent/engine/types'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-
-import type { PhiTool } from '../src/main/agent/engine/types'
 
 import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import {
@@ -33,6 +37,20 @@ const WRAPPER: PhiAgentDefinition = {
   filePath: '/agents/Wrapper.md',
   visibility: 'entry',
   warnings: []
+}
+
+const TOOL_CONTEXT: PhiToolContext = {
+  cwd: process.cwd(),
+  recentUserImages: () => []
+}
+
+function executeTool<TParams, TDetails>(
+  tool: PhiTool<TParams, TDetails>,
+  toolCallId: string,
+  params: TParams,
+  onUpdate?: PhiToolUpdate<TDetails>
+): Promise<PhiToolResult<TDetails>> {
+  return tool.execute(toolCallId, params, onUpdate, TOOL_CONTEXT)
 }
 
 interface Deferred<T> {
@@ -357,7 +375,7 @@ test('a background delegation returns its run id at once and keeps running', asy
   const control = controlledRunner()
   const tool = buildAgentTool(WRAPPER, control.runner, registry)
 
-  const result = await tool.execute('call', { task: 'align reads', background: true })
+  const result = await executeTool(tool, 'call', { task: 'align reads', background: true })
   assert.equal(result.isError, undefined)
   const details = result.details as { kind: string; agent: string; runId: string }
   assert.equal(details.kind, 'agent_started')
@@ -386,12 +404,10 @@ test('a background run does not push updates through the finished tool call', as
     },
     registry
   )
-  await tool.execute(
-    'call',
-    { task: 'go', background: true },
-    (partial: { content: Array<{ text: string }> }) => updates.push(partial.content[0].text),
-    undefined as never
-  )
+  await executeTool(tool, 'call', { task: 'go', background: true }, (partial) => {
+    const first = partial.content[0]
+    updates.push(first?.type === 'text' ? first.text : '')
+  })
   await tick()
   emit?.('late progress')
   gate.resolve({ text: 'ok', toolCalls: 0 })
@@ -400,11 +416,11 @@ test('a background run does not push updates through the finished tool call', as
 
 test('a foreground delegation waits for the report, as before', async () => {
   const registry = new AgentRunRegistry()
-  const result = await buildAgentTool(
-    WRAPPER,
-    async () => ({ text: 'report', toolCalls: 2 }),
-    registry
-  ).execute('call', { task: 'go' })
+  const result = await executeTool(
+    buildAgentTool(WRAPPER, async () => ({ text: 'report', toolCalls: 2 }), registry),
+    'call',
+    { task: 'go' }
+  )
   assert.deepEqual(result.details, {
     kind: 'agent_result',
     agent: 'Wrapper',
@@ -419,7 +435,7 @@ test('parallel delegations in the same turn run together and share the concurren
   const registry = new AgentRunRegistry({ limits: { maxConcurrent: 2 } })
   const control = controlledRunner()
   const tool = buildAgentTool(WRAPPER, control.runner, registry)
-  const calls = [1, 2, 3].map((n) => tool.execute(`call-${n}`, { task: `task ${n}` }))
+  const calls = [1, 2, 3].map((n) => executeTool(tool, `call-${n}`, { task: `task ${n}` }))
   await tick()
   assert.equal(control.started.length, 2)
   control.finish(0)
@@ -434,8 +450,8 @@ test('parallel delegations in the same turn run together and share the concurren
 test('the delegation tool reports a run limit as an error instead of throwing', async () => {
   const registry = new AgentRunRegistry({ limits: { maxRuns: 1 } })
   const tool = buildAgentTool(WRAPPER, async () => ({ text: 'x', toolCalls: 0 }), registry)
-  await tool.execute('call', { task: 'one' })
-  const result = await tool.execute('call', { task: 'two' })
+  await executeTool(tool, 'call', { task: 'one' })
+  const result = await executeTool(tool, 'call', { task: 'two' })
   assert.equal(result.isError, true)
   assert.match(JSON.stringify(result.content), /limit/i)
 })
@@ -471,14 +487,18 @@ test('agent_status lists every run, or shows one run with its report', async () 
   await finished.done
   await tick()
 
-  const list = textOf(await toolByName(registry, 'agent_status').execute('c', {}))
+  const list = textOf(await executeTool(toolByName(registry, 'agent_status'), 'c', {}))
   assert.match(list, new RegExp(`${running.id}.*Wrapper.*running`))
   assert.match(list, new RegExp(`${finished.id}.*Wrapper.*done`))
 
-  const one = textOf(await toolByName(registry, 'agent_status').execute('c', { id: finished.id }))
+  const one = textOf(
+    await executeTool(toolByName(registry, 'agent_status'), 'c', { id: finished.id })
+  )
   assert.match(one, /FastQC is clean\./)
 
-  const missing = await toolByName(registry, 'agent_status').execute('c', { id: 'run_nope' })
+  const missing = await executeTool(toolByName(registry, 'agent_status'), 'c', {
+    id: 'run_nope'
+  })
   assert.equal(missing.isError, true)
 
   control.finish(0)
@@ -486,7 +506,9 @@ test('agent_status lists every run, or shows one run with its report', async () 
 })
 
 test('agent_status says so when no agent has run yet', async () => {
-  const text = textOf(await toolByName(new AgentRunRegistry(), 'agent_status').execute('c', {}))
+  const text = textOf(
+    await executeTool(toolByName(new AgentRunRegistry(), 'agent_status'), 'c', {})
+  )
   assert.match(text, /No agent runs/i)
 })
 
@@ -499,7 +521,7 @@ test('agent_wait returns finished reports and flags what is still running', asyn
   control.finish(0, 'Alpha report')
 
   const partial = textOf(
-    await toolByName(registry, 'agent_wait').execute('c', {
+    await executeTool(toolByName(registry, 'agent_wait'), 'c', {
       ids: [a.id, b.id],
       timeout_seconds: 0.01
     })
@@ -508,13 +530,15 @@ test('agent_wait returns finished reports and flags what is still running', asyn
   assert.match(partial, /still running/i)
 
   control.finish(1, 'Beta report')
-  const full = textOf(await toolByName(registry, 'agent_wait').execute('c', { ids: [a.id, b.id] }))
+  const full = textOf(
+    await executeTool(toolByName(registry, 'agent_wait'), 'c', { ids: [a.id, b.id] })
+  )
   assert.match(full, /Beta report/)
   assert.doesNotMatch(full, /still running/i)
 })
 
 test('agent_wait rejects an unknown id', async () => {
-  const result = await toolByName(new AgentRunRegistry(), 'agent_wait').execute('c', {
+  const result = await executeTool(toolByName(new AgentRunRegistry(), 'agent_wait'), 'c', {
     ids: ['run_nope']
   })
   assert.equal(result.isError, true)
@@ -527,16 +551,16 @@ test('agent_steer delivers the message to a running agent and rejects a bad requ
   await tick()
 
   const tool = toolByName(registry, 'agent_steer')
-  const ok = await tool.execute('c', { id: run.id, message: 'skip the QC step' })
+  const ok = await executeTool(tool, 'c', { id: run.id, message: 'skip the QC step' })
   assert.equal(ok.isError, undefined)
   assert.deepEqual(control.steered, ['skip the QC step'])
 
-  assert.equal((await tool.execute('c', { id: run.id, message: '   ' })).isError, true)
-  assert.equal((await tool.execute('c', { id: 'run_nope', message: 'x' })).isError, true)
+  assert.equal((await executeTool(tool, 'c', { id: run.id, message: '   ' })).isError, true)
+  assert.equal((await executeTool(tool, 'c', { id: 'run_nope', message: 'x' })).isError, true)
 
   control.finish(0)
   await run.done
-  assert.equal((await tool.execute('c', { id: run.id, message: 'late' })).isError, true)
+  assert.equal((await executeTool(tool, 'c', { id: run.id, message: 'late' })).isError, true)
 })
 
 test('agent_stop cancels a running agent', async () => {
@@ -546,11 +570,11 @@ test('agent_stop cancels a running agent', async () => {
   await tick()
 
   const tool = toolByName(registry, 'agent_stop')
-  const stopped = await tool.execute('c', { id: run.id })
+  const stopped = await executeTool(tool, 'c', { id: run.id })
   assert.equal(stopped.isError, undefined)
   assert.equal((await run.done).state, 'cancelled')
 
-  const again = await tool.execute('c', { id: run.id })
+  const again = await executeTool(tool, 'c', { id: run.id })
   assert.equal(again.isError, true)
 })
 
@@ -680,13 +704,13 @@ test('agent_wait and agent_status <id> hand a finished run’s report over; the 
   const c = launch(registry, async () => ({ text: 'C done', toolCalls: 0 }), { background: true })
   await Promise.all([a.done, b.done, c.done])
 
-  await toolByName(registry, 'agent_status').execute('x', {})
+  await executeTool(toolByName(registry, 'agent_status'), 'x', {})
   assert.equal(registry.get(a.id)?.reported, undefined)
 
-  await toolByName(registry, 'agent_status').execute('x', { id: b.id })
+  await executeTool(toolByName(registry, 'agent_status'), 'x', { id: b.id })
   assert.equal(registry.get(b.id)?.reported, true)
 
-  await toolByName(registry, 'agent_wait').execute('x', { ids: [a.id] })
+  await executeTool(toolByName(registry, 'agent_wait'), 'x', { ids: [a.id] })
   assert.equal(registry.get(a.id)?.reported, true)
   assert.equal(registry.get(c.id)?.reported, undefined)
 })
@@ -702,7 +726,7 @@ test('a background start tells the agent not to poll', async () => {
     async () => new Promise<AgentRunResult>(() => undefined),
     registry
   )
-  const result = await tool.execute('call', { task: 'go', background: true })
+  const result = await executeTool(tool, 'call', { task: 'go', background: true })
   assert.match(JSON.stringify(result.content), /do not poll/)
   registry.stopAll()
 })
@@ -762,12 +786,23 @@ test('foreground progress and step updates carry the run id and the tool call id
     },
     registry
   )
-  await tool.execute(
-    'call-7',
-    { task: 'go' },
-    (partial: { details: { kind: string; agentRunId?: string } }) => updates.push(partial),
-    undefined as never
-  )
+  await executeTool(tool, 'call-7', { task: 'go' }, (partial) => {
+    if (
+      partial.details &&
+      typeof partial.details === 'object' &&
+      'kind' in partial.details &&
+      typeof partial.details.kind === 'string'
+    ) {
+      updates.push({
+        details: {
+          kind: partial.details.kind,
+          ...('agentRunId' in partial.details && typeof partial.details.agentRunId === 'string'
+            ? { agentRunId: partial.details.agentRunId }
+            : {})
+        }
+      })
+    }
+  })
   assert.deepEqual(
     updates.map((update) => [update.details.kind, update.details.agentRunId]),
     [

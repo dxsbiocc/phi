@@ -80,6 +80,7 @@ test('SSH project sidebar row shows only its server identity above conversations
         onSelectSession: () => undefined,
         onRenameSession: () => undefined,
         onDeleteSession: () => undefined,
+        onExportSession: () => undefined,
         onDeleteProject: () => undefined,
         onFetchSessions: async () => {
           fetched = true

@@ -74,6 +74,8 @@ test('library tools report validation failures as tool errors', async () => {
     const result = await remove.execute('call-1', {}, undefined, fakeCtx(projectDir) as never)
 
     assert.equal(result.isError, true)
-    assert.equal(result.content[0]?.text, 'Missing required parameter: id')
+    const [content] = result.content
+    assert.ok(content?.type === 'text')
+    assert.equal(content.text, 'Missing required parameter: id')
   })
 })

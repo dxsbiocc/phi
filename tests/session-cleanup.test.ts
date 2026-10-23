@@ -28,7 +28,12 @@ test('session cleanup registers its barrier before settlement and releases it af
   }
   const cleanup = createSessionCleanup({
     lifecycles: {
-      abortControllerFor: () => ({ abort: () => log.push('controller.abort') }),
+      abortControllerFor: () => ({
+        signal: new AbortController().signal,
+        abort: () => {
+          log.push('controller.abort')
+        }
+      }),
       deleteAbortController: () => log.push('controller.delete'),
       registerCleanupForPath: (path) => log.push(`register:${path}`),
       registerUnknownPathCleanup: () => log.push('register:unknown'),

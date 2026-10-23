@@ -118,10 +118,11 @@ test('canonicalManifestDigest is stable across key order and whitespace but chan
   assert.match(digest, /^sha256:[0-9a-f]{64}$/)
 
   const reordered = { ...result.manifest!, name: result.manifest!.name }
+  const { version, id, ...rest } = reordered
   const swapped = {
-    version: reordered.version,
-    id: reordered.id,
-    ...reordered
+    version,
+    id,
+    ...rest
   }
   assert.equal(canonicalManifestDigest(swapped as typeof reordered), digest)
 

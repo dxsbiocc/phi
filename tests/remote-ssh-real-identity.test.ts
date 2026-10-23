@@ -65,6 +65,8 @@ test(
     skip: !available('ssh') || !sshdBinary || !available('ssh-keygen')
   },
   async () => {
+    const binary = sshdBinary
+    if (!binary) return
     const dir = mkdtempSync(join(tmpdir(), 'phi-ssh-identity-'))
     chmodSync(dir, 0o700)
     let server: ChildProcessWithoutNullStreams | undefined
@@ -97,16 +99,17 @@ test(
           ''
         ].join('\n')
       )
-      const configCheck = spawnSync(sshdBinary, ['-t', '-f', serverConfig], { encoding: 'utf-8' })
+      const configCheck = spawnSync(binary, ['-t', '-f', serverConfig], { encoding: 'utf-8' })
       assert.equal(configCheck.status, 0, configCheck.stderr)
-      server = spawn(sshdBinary, ['-D', '-e', '-f', serverConfig], {
+      const runningServer = spawn(binary, ['-D', '-e', '-f', serverConfig], {
         stdio: ['pipe', 'pipe', 'pipe']
       })
+      server = runningServer
       let serverError = ''
-      server.stderr.on('data', (chunk: Buffer) => {
+      runningServer.stderr.on('data', (chunk: Buffer) => {
         serverError += chunk.toString('utf-8')
       })
-      await waitForSshd(port, server, () => serverError)
+      await waitForSshd(port, runningServer, () => serverError)
 
       const knownHosts = join(dir, 'known_hosts')
       const clientConfig = join(dir, 'ssh_config')

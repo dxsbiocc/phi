@@ -361,12 +361,11 @@ test('desktop tools preserve memory, MCP, child approval and cleanup branches', 
     { sessionId: 'phi-1', notices: [{ name: 'unavailable', reason: 'unavailable' }] }
   ])
 
-  assert.equal(resources.tools.scriptApprovalFor('project_script', { value: 1 }), 'write')
+  const scriptApprovalFor = resources.tools.scriptApprovalFor
+  assert.ok(scriptApprovalFor)
+  assert.equal(scriptApprovalFor('project_script', { value: 1 }), 'write')
   assert.equal(dispatches.length, 0)
-  assert.equal(
-    resources.tools.scriptApprovalFor('project_script', { value: 2 }, 'child-1'),
-    'write'
-  )
+  assert.equal(scriptApprovalFor('project_script', { value: 2 }, 'child-1'), 'write')
   assert.deepEqual(dispatches, [
     {
       params: {

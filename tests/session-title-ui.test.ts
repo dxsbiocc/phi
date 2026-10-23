@@ -56,7 +56,9 @@ function panel(overrides: Partial<PanelProps> = {}): {
     onClose: () => {
       props.open = false
     },
-    onSave: () => saves++,
+    onSave: () => {
+      saves += 1
+    },
     ...overrides
   }
   const source = ts.transpileModule(

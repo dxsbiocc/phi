@@ -24,7 +24,7 @@ function deferred(): {
 function fakeRuntime(
   start: Promise<void>
 ): JupyterRuntimeBackend & { state: JupyterRuntimeStatus } {
-  const runtime = {
+  const runtime: JupyterRuntimeBackend & { state: JupyterRuntimeStatus } = {
     kind: 'ssh' as const,
     state: {
       kind: 'ssh' as const,

@@ -27,6 +27,7 @@ function fixture(options: { adapter?: DesktopMcpAdapter; vault?: BrowserTextVaul
     parentRunId: 'finished-parent',
     parentToolCallId: 'task-call',
     signal: controller.signal,
+    modelSignal: controller.signal,
     scope: {
       phiSessionId: 'phi-one',
       projectId: 'project-one',

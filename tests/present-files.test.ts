@@ -14,6 +14,9 @@ import test from 'node:test'
 
 import { validatePresentedFiles } from '../src/main/agent/deliverables/present-files'
 import { buildPresentFilesTool } from '../src/main/agent/deliverables/present-tool'
+import type { PhiToolContext } from '../src/main/agent/engine/types'
+
+const toolContext: PhiToolContext = { cwd: '/workspace', recentUserImages: () => [] }
 
 function withWorkspace(run: (root: string, outside: string) => void): void {
   const base = mkdtempSync(join(tmpdir(), 'phi-present-files-'))
@@ -87,7 +90,12 @@ test('present_files records through the host before reporting success', async ()
     requests.push(request)
     return { files }
   })
-  const result = await tool.execute('call-1', { files: [{ path: 'report.pdf' }] })
+  const result = await tool.execute(
+    'call-1',
+    { files: [{ path: 'report.pdf' }] },
+    undefined,
+    toolContext
+  )
   assert.equal(tool.name, 'present_files')
   assert.equal(tool.approval, 'read')
   assert.deepEqual(requests, [
@@ -101,7 +109,14 @@ test('present_files reports host validation failures as tool errors', async () =
   const tool = buildPresentFilesTool('runtime-1', async () => {
     throw new Error('outside the current workspace')
   })
-  const result = await tool.execute('call-1', { files: [{ path: '../private.txt' }] })
+  const result = await tool.execute(
+    'call-1',
+    { files: [{ path: '../private.txt' }] },
+    undefined,
+    toolContext
+  )
   assert.equal(result.isError, true)
-  assert.match(result.content[0].text ?? '', /outside the current workspace/)
+  const [content] = result.content
+  assert.ok(content?.type === 'text')
+  assert.match(content.text, /outside the current workspace/)
 })

@@ -50,6 +50,7 @@ for (const { manifest } of CATALOG) {
   )
 }
 const DISCOVERY = { sourceRoot }
+const TOOL_CONTEXT = { cwd: process.cwd(), recentUserImages: () => [] }
 after(() => rmSync(sourceRoot, { recursive: true, force: true }))
 
 const ids = (entries: ReadonlyArray<{ manifest: { id: string } }>): string[] =>
@@ -157,9 +158,12 @@ interface SearchContentResult {
 
 test('wrapper_search finds the RNA-seq pipeline from a natural multi-word query', async () => {
   resetWrapperCompositionCatalogCache()
-  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute('w1', {
-    query: 'rna seq alignment'
-  })) as SearchContentResult
+  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute(
+    'w1',
+    { query: 'rna seq alignment' },
+    undefined,
+    TOOL_CONTEXT
+  )) as SearchContentResult
 
   const details = result.details as { results: Array<{ id: string }> }
   assert.ok(details.results.some((item) => item.id === 'nf-core/workflows/rnaseq'))
@@ -167,9 +171,12 @@ test('wrapper_search finds the RNA-seq pipeline from a natural multi-word query'
 
 test('wrapper_search content is compact JSON and names the words that matched nothing', async () => {
   resetWrapperCompositionCatalogCache()
-  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute('w2', {
-    query: 'rna seq nonexistentword'
-  })) as SearchContentResult
+  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute(
+    'w2',
+    { query: 'rna seq nonexistentword' },
+    undefined,
+    TOOL_CONTEXT
+  )) as SearchContentResult
 
   const text = result.content[0].text ?? ''
   assert.equal(text, JSON.stringify(JSON.parse(text)), 'first content part is single-line JSON')
@@ -180,25 +187,34 @@ test('wrapper_search content is compact JSON and names the words that matched no
 
 test('wrapper_search has no partial-match note when every word matched', async () => {
   resetWrapperCompositionCatalogCache()
-  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute('w3', {
-    query: 'fastqc'
-  })) as SearchContentResult
+  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute(
+    'w3',
+    { query: 'fastqc' },
+    undefined,
+    TOOL_CONTEXT
+  )) as SearchContentResult
   assert.equal(result.content.length, 1)
 })
 
 test('wrapper_search reports an empty result in plain text', async () => {
   resetWrapperCompositionCatalogCache()
-  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute('w4', {
-    query: 'zzzz qqqq'
-  })) as SearchContentResult
+  const result = (await buildWrapperCompositionSearchTool(DISCOVERY).execute(
+    'w4',
+    { query: 'zzzz qqqq' },
+    undefined,
+    TOOL_CONTEXT
+  )) as SearchContentResult
   assert.match(result.content[0].text ?? '', /No matching wrappers/)
 })
 
 test('wrapper_inspect content is compact JSON', async () => {
   resetWrapperCompositionCatalogCache()
-  const result = (await buildWrapperCompositionInspectTool(DISCOVERY).execute('w5', {
-    id: 'nf-core/workflows/rnaseq'
-  })) as SearchContentResult
+  const result = (await buildWrapperCompositionInspectTool(DISCOVERY).execute(
+    'w5',
+    { id: 'nf-core/workflows/rnaseq' },
+    undefined,
+    TOOL_CONTEXT
+  )) as SearchContentResult
   const text = result.content[0].text ?? ''
   assert.equal(text, JSON.stringify(JSON.parse(text)))
 })

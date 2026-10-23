@@ -23,7 +23,7 @@ function readRequest(path: string): {
   path: string
   requestId: string
 } {
-  return { ...request('output', path), scope: 'output', requestId: 'result_read_001' }
+  return { ...request('output', path), scope: 'output', path, requestId: 'result_read_001' }
 }
 
 test('output scope rejects parent traversal and sibling prefixes', () => {

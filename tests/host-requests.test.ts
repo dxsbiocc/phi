@@ -354,9 +354,17 @@ test('deliverables record validated files in bounded batches and project script 
     envId: 'env-1',
     artifacts: [
       {
+        ok: true,
         path: '/workspace/chart.svg',
         relativePath: 'chart.svg',
-        descriptor: { kind: 'figure', title: 'Chart' }
+        descriptor: {
+          contractVersion: '1',
+          kind: 'figure',
+          file: 'chart.svg',
+          mediaType: 'image/svg+xml',
+          title: 'Chart',
+          provenance: { createdAt: '2026-10-23T00:00:00.000Z', tool: 'plot' }
+        }
       }
     ]
   })
@@ -498,7 +506,7 @@ test('agent interaction preserves parsed options before opening the renderer', a
         multiSelect: true
       }
     ])
-    return { answers: [] }
+    return { requestId: request.requestId, answers: [] }
   }
   await createAgentInteractionRequest(fixture.deps)(validInteractionRequest)
 })
@@ -507,11 +515,11 @@ test('agent interaction cancels every stale run condition after the renderer rou
   for (const stale of ['signal', 'cancelled', 'replaced'] as const) {
     const fixture = interactionFixture()
     const controller = new AbortController()
-    fixture.deps.renderer.waitForResponse = async () => {
+    fixture.deps.renderer.waitForResponse = async (request) => {
       if (stale === 'signal') controller.abort()
       if (stale === 'cancelled') fixture.run.cancelled = true
       if (stale === 'replaced') fixture.setRun({ ...fixture.run })
-      return { answers: [] }
+      return { requestId: request.requestId, answers: [] }
     }
     assert.deepEqual(
       await createAgentInteractionRequest(fixture.deps)(validInteractionRequest, {
@@ -573,7 +581,10 @@ function planFixture(): {
       },
       renderer: {
         getActiveWindow: () => (windowAvailable ? ({} as never) : null),
-        canRequest: () => windowAvailable,
+        canRequest: (_window): _window is NonNullable<typeof _window> => {
+          void _window
+          return windowAvailable
+        },
         waitForResponse: async () => {
           calls.push('wait')
           return response as never
@@ -742,7 +753,11 @@ function confirmationFixture(): {
     deps: {
       interactions: {
         request: async (request) => {
-          calls.push(`interaction:${request.questions[0]?.options[0]?.label}`)
+          assert.ok(request && typeof request === 'object' && 'questions' in request)
+          const questions = request.questions as Array<{
+            options: Array<{ label: string }>
+          }>
+          calls.push(`interaction:${questions[0]?.options[0]?.label}`)
           return interactionResponse
         },
         buildQuestion: () => 'Build this environment?',

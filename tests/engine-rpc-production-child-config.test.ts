@@ -431,6 +431,7 @@ test(
     await assert.rejects(
       publishProductionChildConfig({
         prepared,
+        // @ts-expect-error The rejection path intentionally omits required startup ownership.
         context: { ...context, startup: undefined },
         host: f.host
       }),

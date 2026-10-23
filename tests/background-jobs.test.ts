@@ -198,6 +198,7 @@ test('remote project uploads appear with transfer progress and remain retryable 
   const upload: RemoteProjectUploadJob = {
     id: 'upload-1',
     status: 'uploading',
+    sourcePaths: ['/tmp/sample.fastq.gz'],
     destinationDirectory: 'reads',
     totalFiles: 1,
     totalBytes: 1024,
@@ -474,7 +475,13 @@ test('remote Jupyter startups are jobs: running ones are active, finished ones a
 })
 
 test('job groups collapse and expand with their count', () => {
-  const props = { id: 'running', title: '运行中', count: 2, onToggle: () => undefined }
+  const props = {
+    id: 'running',
+    title: '运行中',
+    count: 2,
+    onToggle: () => undefined,
+    children: 'rows'
+  }
   const open = render(createElement(BackgroundJobGroup, { ...props, expanded: true }, 'rows'))
   const closed = render(createElement(BackgroundJobGroup, { ...props, expanded: false }, 'rows'))
   assert.match(open, /aria-expanded="true"/)

@@ -53,7 +53,11 @@ test('late stale session creation is rejected and cleaned up without replacing c
 
 test('session creation snapshots are copied before async work runs', async () => {
   const lifecycle = new SessionLifecycle<{ cwd: string; path: string | undefined }>()
-  const snapshot = { path: undefined, cwd: '/tmp/original', permissionMode: 'auto' }
+  const snapshot: { path: string | undefined; cwd: string; permissionMode: 'auto' } = {
+    path: undefined,
+    cwd: '/tmp/original',
+    permissionMode: 'auto'
+  }
 
   const record = lifecycle.getOrCreate(snapshot, async (captured) => ({
     cwd: captured.cwd,

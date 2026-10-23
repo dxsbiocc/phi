@@ -137,7 +137,7 @@ test('each component is a named native button with its matching icon and dialog 
 test('plugin skill details omit enablement status while retaining description and environments', () => {
   for (const enabled of [true, false, undefined]) {
     const item = plugin()
-    item.skillDetails![0].enabled = enabled
+    ;(item.skillDetails![0] as { enabled?: boolean }).enabled = enabled
     const component = phiPluginInspectableComponents(item)[1]
     const listMarkup = themed(createElement(PhiPluginComponentDetails, { plugin: item }))
     const dialogMarkup = themed(

@@ -6,13 +6,11 @@ import type { BrowserViewport } from '../src/shared/browserTypes'
 import {
   ElectronBrowserEngine,
   type BrowserOwningWindowLike,
-  type BrowserSessionLike,
-  type BrowserWebContentsLike,
-  type BrowserWebContentsViewLike,
+  type BrowserWebContentsViewConstructor,
   type BrowserWebContentsViewOptions
 } from '../src/main/browser/electron-browser-engine'
 
-class FakeSession extends EventEmitter implements BrowserSessionLike {
+class FakeSession extends EventEmitter {
   setPermissionCheckHandler(handler: unknown): void {
     void handler
   }
@@ -21,7 +19,7 @@ class FakeSession extends EventEmitter implements BrowserSessionLike {
   }
 }
 
-class FakeContents extends EventEmitter implements BrowserWebContentsLike {
+class FakeContents extends EventEmitter {
   destroyed = false
   readonly session = new FakeSession()
   readonly navigationHistory = {
@@ -65,7 +63,7 @@ class FakeContents extends EventEmitter implements BrowserWebContentsLike {
   }
 }
 
-class FakeView implements BrowserWebContentsViewLike {
+class FakeView {
   readonly webContents = new FakeContents()
   readonly bounds: Array<{ x: number; y: number; width: number; height: number }> = []
   readonly visibility: boolean[] = []
@@ -90,8 +88,8 @@ class FakeView implements BrowserWebContentsViewLike {
   }
 }
 
-class FakeWindow extends EventEmitter implements BrowserOwningWindowLike {
-  readonly children: BrowserWebContentsViewLike[] = []
+class FakeWindow extends EventEmitter {
+  readonly children: FakeView[] = []
   readonly log: string[] = []
   contentBounds = { x: 500, y: 300, width: 800, height: 600 }
   minimized = false
@@ -105,12 +103,12 @@ class FakeWindow extends EventEmitter implements BrowserOwningWindowLike {
   removeError: Error | null = null
 
   readonly contentView = {
-    addChildView: (view: BrowserWebContentsViewLike): void => {
+    addChildView: (view: FakeView): void => {
       this.log.push('add')
       if (this.addError) throw this.addError
       this.children.push(view)
     },
-    removeChildView: (view: BrowserWebContentsViewLike): void => {
+    removeChildView: (view: FakeView): void => {
       this.log.push('remove')
       if (this.removeError) throw this.removeError
       const index = this.children.indexOf(view)
@@ -164,8 +162,8 @@ function harness(): {
   }
   let id = 0
   const engine = new ElectronBrowserEngine({
-    WebContentsView: View,
-    getOwningWindow: () => window,
+    WebContentsView: View as unknown as BrowserWebContentsViewConstructor,
+    getOwningWindow: () => window as unknown as BrowserOwningWindowLike,
     idFactory: () => `tab-${++id}`
   })
   return { engine, window, views, log }

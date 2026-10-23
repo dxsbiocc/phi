@@ -65,7 +65,8 @@ function harness(
   let draftImages: Record<string, unknown> = {}
   let closedKeys = new Set(['session:phi-a:3'])
   let tabKey: string | null = null
-  let selectedModel = options.selectedModel ?? model
+  let selectedModel: ModelOption | null =
+    options.selectedModel === undefined ? model : options.selectedModel
   let settings = 0
   let pending: {
     resolve: (value: PromptResult | null) => void
@@ -132,7 +133,9 @@ function harness(
         events.push('selectedModel')
       },
       moveQueuedPromptsToSession: (key) => events.push(`move:${key}`),
-      refreshSessions: () => events.push('refreshSessions'),
+      refreshSessions: () => {
+        events.push('refreshSessions')
+      },
       showSnackbarError: () => events.push('error')
     },
     activeDraftKey: options.activeDraftKey ?? 'draft-a',
@@ -210,10 +213,9 @@ test('a dispatch records the user message optimistically and settles to idle', a
   const h = harness()
   const sending = sendPrompt(h.deps, 'hello', target)
   assert.equal(h.sent.length, 1)
-  assert.deepEqual(
-    h.messages().map((item) => item.content),
-    ['hello']
-  )
+  const [message] = h.messages()
+  assert.ok(message?.role === 'user')
+  assert.deepEqual([message.content], ['hello'])
   assert.ok(h.events.includes('sending:true'))
 
   h.applyReceipt({})

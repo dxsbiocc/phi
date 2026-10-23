@@ -168,6 +168,7 @@ test('tool detail folds long inline output behind an explicit control', () => {
     role: 'tool',
     toolName: 'shell',
     argsPreview: 'npm test',
+    argsJson: '{"command":"npm test"}',
     output: `${'a'.repeat(INLINE_OUTPUT_PREVIEW_CHARS + 50)}TAIL_SHOULD_NOT_RENDER_BY_DEFAULT`,
     outputBytes: INLINE_OUTPUT_PREVIEW_CHARS + 80,
     status: 'done'

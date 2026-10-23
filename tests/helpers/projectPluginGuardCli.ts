@@ -143,7 +143,7 @@ const host = {
   }
 } as unknown as WorkspaceHost
 
-if (command === 'project-plugin-guard')
+if (command === 'project-plugin-guard' && projectRoot)
   try {
     await assertNoProjectPluginTools({
       host,

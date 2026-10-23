@@ -111,7 +111,7 @@ test('builds official and known content source options from call-time dependenci
     kind: 'package',
     spec: { name: 'server-environment', channels: [], dependencies: [] },
     lockText: '',
-    platform: 'linux-64'
+    platform: 'linux-x64'
   }
   assert.equal(sourceOptions.agentDir, '/agent')
   assert.equal(sourceOptions.appVersion, '0.1.0')

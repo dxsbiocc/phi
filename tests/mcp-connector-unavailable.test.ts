@@ -56,6 +56,7 @@ function render(options: {
         onAdd: () => undefined,
         onRemove: () => undefined,
         onAuthorize: () => undefined,
+        onApiKey: () => undefined,
         onRetry: () => undefined,
         onEnabledChange: () => undefined
       })

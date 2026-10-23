@@ -167,15 +167,18 @@ test('preview/add/check/apply/remove stays pinned and never installs package cod
       const packet = (text: string): string =>
         `${(text.length + 4).toString(16).padStart(4, '0')}${text}`
       return new Response(
-        Buffer.from(`${packet('# service=git-upload-pack\n')}0000${packet(line)}0000`),
+        Uint8Array.from(
+          Buffer.from(`${packet('# service=git-upload-pack\n')}0000${packet(line)}0000`)
+        ),
         { status: 200 }
       )
     }
     downloads.push(url)
     const requestedSha = url.split('/').at(-1)!
-    return new Response(githubArchive(requestedSha, requestedSha === sha1 ? '1.0.0' : '2.0.0'), {
-      status: 200
-    })
+    return new Response(
+      Uint8Array.from(githubArchive(requestedSha, requestedSha === sha1 ? '1.0.0' : '2.0.0')),
+      { status: 200 }
+    )
   }
   const options = {
     agentDir,
@@ -239,7 +242,8 @@ test('add rejects a freshly fetched snapshot whose GitHub root does not match th
       { url: 'https://github.com/acme/connectors', sha: previewedSha },
       {
         agentDir,
-        fetch: async () => new Response(githubArchive(differentSha, '1.0.0'), { status: 200 })
+        fetch: async () =>
+          new Response(Uint8Array.from(githubArchive(differentSha, '1.0.0')), { status: 200 })
       }
     ),
     /预览的提交|SHA|快照/
@@ -332,7 +336,7 @@ test('a prebuilt GitHub registry is re-materialized with MCP packages only', asy
 
   const added = await addGithubSource(
     { url: 'https://github.com/acme/connectors', sha },
-    { agentDir, fetch: async () => new Response(outer, { status: 200 }) }
+    { agentDir, fetch: async () => new Response(Uint8Array.from(outer), { status: 200 }) }
   )
   assert.deepEqual(
     readRegistry(added.registryPath).packages.map((entry) => `${entry.type}:${entry.id}`),

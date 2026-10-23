@@ -21,7 +21,7 @@ const AGENT_DIR = mkdtempSync(join(tmpdir(), 'phi-mcp-ipc-state-'))
 test.after(() => rmSync(AGENT_DIR, { recursive: true, force: true }))
 const RUNTIME_ROOT = '/verified/managed-runtime'
 const REGISTRY_DIR = '/verified/official-registry'
-const IPC_CHANNELS = [
+const IPC_CHANNELS: string[] = [
   IPC.mcp.listConnectorCatalog,
   IPC.mcp.installConnector,
   IPC.mcp.uninstallConnector,

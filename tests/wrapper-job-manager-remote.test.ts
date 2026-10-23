@@ -105,7 +105,6 @@ async function startRemote(
     target: 'remote'
   })
   assert.equal(result.ok, true, JSON.stringify(result))
-  if (!result.ok) throw new Error(result.error)
   return result.status
 }
 
@@ -754,7 +753,12 @@ test('a lost remote run is rechecked after the server returns and resumes its lo
         'utf8'
       )
       assert.equal(savedLog.split('[PROCESS 87/ef5c73]').length - 1, 1)
-      assert.equal(session.commands.filter((command) => command.includes('setsid bash')).length, 1)
+      assert.equal(
+        (session as ReturnType<typeof createLocalShellSession>).commands.filter((command) =>
+          command.includes('setsid bash')
+        ).length,
+        1
+      )
     })
   })
 })

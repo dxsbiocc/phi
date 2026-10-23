@@ -1,19 +1,20 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createSkippedMcpNotifier } from '../src/main/agent/mcp/skipped-notice'
+import type { SessionEventInput } from '../src/main/agent/session/session-store'
 import {
   MAX_SKIPPED_MCP_NOTICE_NAME,
   MAX_SKIPPED_MCP_NOTICE_SERVERS,
   skippedMcpServersValue
 } from '../src/shared/mcpSkippedServers'
 
-function harness(existing: Record<string, unknown>[] = []): {
-  appended: Array<{ sessionId: string; event: Record<string, unknown> }>
+function harness(existing: SessionEventInput[] = []): {
+  appended: Array<{ sessionId: string; event: SessionEventInput }>
   broadcast: unknown[]
   notifier: ReturnType<typeof createSkippedMcpNotifier>
   restart: () => ReturnType<typeof createSkippedMcpNotifier>
 } {
-  const appended: Array<{ sessionId: string; event: Record<string, unknown> }> = []
+  const appended: Array<{ sessionId: string; event: SessionEventInput }> = []
   const broadcast: unknown[] = []
   const make = (): ReturnType<typeof createSkippedMcpNotifier> =>
     createSkippedMcpNotifier({

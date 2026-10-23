@@ -80,8 +80,8 @@ function fixture(): {
         calls.push(command)
         const result = runShell(command)
         return {
-          stdout: result.stdout ?? '',
-          stderr: result.stderr ?? '',
+          stdout: result.stdout?.toString() ?? '',
+          stderr: result.stderr?.toString() ?? '',
           code: result.status,
           signal: result.signal
         }
@@ -398,8 +398,9 @@ test('same-name Bash tool preserves command parameters and reports completed or 
   const result = await tool.execute('tool-1', { command: 'exit 7' }, undefined, {} as never)
   assert.deepEqual(calls, [{ toolCallId: 'tool-1', command: 'exit 7' }])
   assert.equal(result.isError, true)
-  assert.match(String(result.content[0]?.text), /Command exited with code 7/)
-  assert.match(String(result.content[0]?.text), /stdout truncated/)
+  const output = result.content[0]
+  assert.match(output?.type === 'text' ? output.text : '', /Command exited with code 7/)
+  assert.match(output?.type === 'text' ? output.text : '', /stdout truncated/)
   assert.equal((result.details as { exitCode: number }).exitCode, 7)
 
   const unknown = buildRemoteWorkspaceBashTool(async () => ({

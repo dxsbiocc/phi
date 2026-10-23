@@ -253,8 +253,10 @@ try {
       assert.ok(failedEvent?.type === 'run_failed')
 
       await old.dispose()
+      const errorMessage = failedEvent.errorMessage
+      assert.equal(typeof errorMessage, 'string')
       assert.match(
-        failedEvent.errorMessage,
+        typeof errorMessage === 'string' ? errorMessage : '',
         /RPC (?:output stream ended|process exited)|EPIPE|closed/,
         'the failed run must retain its original transport-loss cause'
       )

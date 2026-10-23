@@ -164,7 +164,12 @@ test('panel labels and project summaries translate without changing selected slo
   const project: Project = {
     id: 'project-a',
     name: '作者项目',
-    location: { kind: 'ssh', hostProfileId: 'cluster', remoteRoot: '/数据/project' },
+    location: {
+      kind: 'ssh',
+      hostProfileId: 'cluster',
+      remoteRoot: '/数据/project',
+      canonicalRoot: '/数据/project'
+    },
     workingDirectory: '/数据/project',
     permissionMode: 'ask',
     remoteHostAlias: '作者服务器',

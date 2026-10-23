@@ -7,9 +7,9 @@ import { RemoteProjectMcpTrustDialog } from '../src/renderer/src/features/mcp/co
 import { McpDetailPanel } from '../src/renderer/src/features/mcp/components/McpDetailPanel'
 import {
   isRemoteProjectMcpServer,
-  remoteProjectMcpTrustRequest
+  remoteProjectMcpTrustRequest,
+  type TrustedRemoteProjectMcpServer
 } from '../src/renderer/src/features/mcp/lib/remoteProjectMcpTrust'
-import type { McpServerSummary } from '../src/renderer/src/features/mcp/lib/mcpTypes'
 
 const server = {
   id: 'ssh://lab/project/.phi/mcp.json:analysis',
@@ -20,7 +20,7 @@ const server = {
   sourcePath: 'ssh://lab/project/.phi/mcp.json',
   enabled: false,
   status: 'configured',
-  trustState: 'pending',
+  trustState: 'pending' as const,
   available: false,
   diagnostics: ['来自Server project，未Trust'],
   relativePath: '.phi/mcp.json',
@@ -54,7 +54,7 @@ const server = {
       value: 'API_MODE'
     }
   ]
-} satisfies McpServerSummary & Record<string, unknown>
+} satisfies TrustedRemoteProjectMcpServer
 
 test('remote MCP trust dialog discloses every command field and requires every checkbox', () => {
   assert.equal(isRemoteProjectMcpServer(server), true)

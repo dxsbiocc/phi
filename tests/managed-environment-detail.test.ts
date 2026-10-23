@@ -19,6 +19,7 @@ import type {
 } from '../src/shared/environmentTypes'
 
 const noop = (): void => undefined
+const asyncNoop = async (): Promise<void> => undefined
 
 function render(
   environment: ManagedEnvironmentEntry,
@@ -41,7 +42,7 @@ function render(
         onBuild: noop,
         onRebuild: noop,
         onRemove: noop,
-        onSaveHostPath: noop
+        onSaveHostPath: asyncNoop
       })
     )
   )
