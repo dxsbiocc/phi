@@ -1,5 +1,34 @@
 # OMP 远程运行时验收记录
 
+## 当前远程 RPC 候选（2026-10-23）
+
+干净候选 `98a8508d` 的完整测试 **7771 项，7745 通过、0 失败、25 跳过、1 todo**；
+主代码类型检查、构建与结构检查通过。node3 和 GPU 在同一提交的 R8 三场景均通过，
+各自 3/3 反向隧道关闭，RPC、SSH 子进程与本次自有远端目录清理确认。回执：
+
+- node3：`.phi-acceptance/receipts/2026-10-23T07-18-07-411Z-yzhang-node3-r8-5c3890e1-a56c-442c-a7fc-1dc35af30367.json`
+- GPU：`.phi-acceptance/receipts/2026-10-23T07-21-01-732Z-GPU-r8-3b05dfe6-d9ab-4985-ae65-a40d828fa48e.json`
+
+同步后的源码版 Phi 在 node3 用真实 DeepSeek V4.1 Flash 重新调用 `read validation.txt`，
+run `0e9c4ab2-6349-48ef-802c-ab6acc6026b3` 得到 `ok\n`、`isError=false`；重启后
+`smoke.ipynb` 的代码及 `node3 notebook ok` 输出仍可读，并在 16:04:39 再次执行、
+16:04:53 自动保存，随后关闭 Jupyter server。首次复验曾因模型附带可选 `i`
+字段被 bootstrap 守卫拒绝，修复后 RPC bootstrap 安全套件 13/13 通过。
+
+同一源码版 Phi 的一次性 node3 会话 `8d5d3b52-...` 在删除前断开两条新 SSH master，
+界面警告且本地/远端历史保留；在线重试后只删除该会话，原有两条会话保留。回执：
+`.phi-acceptance/receipts/2026-10-23-node3-offline-delete-8d5d3b52.json`。
+
+node3 保留会话 `50758880-...` 的真实 OMP 18.10.3 存活接管已在源码版 Phi 验证：
+旧 PID 46070 持原 run 锁，恢复后退出，新 PID 74269 持锁；时间线提示持久化且界面
+切换后仍显示一次。修复了无前台 run 时已持久化提示被聊天缓存跳过的问题。回执：
+`.phi-acceptance/receipts/2026-10-23-node3-real-omp-survivor-50758880.json`。
+持锁旧进程使用隔离测试 journal，未验证运行中的长 Bash 同时保持存活。
+
+全局默认开关仍未切换：[验证清单](remote-default-on-validation.md)保留
+无缓存目标桌面预置与静态警告预算。`npm run lint` 为 0 错误、1451 警告，
+超过 1396 阈值；测试类型检查 479 错误，未修改主分支基线为 480。
+
 ## main 同步前最终检查（2026-10-19）
 
 当前代码在正常唤醒条件下完成标准全量，`attempt-3`：**7296 项，7270 通过、0 失败、
