@@ -16,16 +16,48 @@ import {
 } from '../src/main/agent/agents/remote-agent-trust-store'
 import { createRemoteRuntimeFixture } from './helpers/remoteRuntimeFixture'
 
-function agentMarkdown(name: string, tools = ['read', 'bash']): string {
+function agentMarkdown(name: string, tools = ['read', 'bash'], invocation?: 'host'): string {
   return `---
 name: ${name}
 description: ${name} server specialist.
 tools:
 ${tools.map((tool) => `  - ${tool}`).join('\n')}
----
+${invocation ? `invocation: ${invocation}\n` : ''}---
 Use only the remote project tools.
 `
 }
+
+test('host-only agents stay out of the remote runnable and visible catalogs', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  const agentDir = join(fixture.root, 'local-phi')
+  try {
+    mkdirSync(join(agentDir, 'agents'), { recursive: true })
+    mkdirSync(join(fixture.projectRoot, '.phi', 'agents'), { recursive: true })
+    writeFileSync(
+      join(agentDir, 'agents', 'LocalHost.md'),
+      agentMarkdown('LocalHost', ['read'], 'host')
+    )
+    writeFileSync(
+      join(fixture.projectRoot, '.phi', 'agents', 'ProjectHost.md'),
+      agentMarkdown('ProjectHost', ['read'], 'host')
+    )
+
+    const result = await discoverRemoteAgentCatalog({
+      host: fixture.workspace.projectHost,
+      projectRoot: fixture.projectRoot,
+      hostAlias: 'fake-lab',
+      agentDir,
+      cwd: fixture.localAnchor,
+      pluginAgentDirs: []
+    })
+
+    assert.deepEqual(result.agents, [])
+    assert.deepEqual(result.entries, [])
+  } finally {
+    await fixture.workspace.projectHost.close?.()
+    fixture.cleanup()
+  }
+})
 
 test('server project Phi and compatibility agents are listed pending without becoming runnable', async () => {
   const fixture = createRemoteRuntimeFixture()

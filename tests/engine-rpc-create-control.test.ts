@@ -106,6 +106,21 @@ test('router disposes a returned driver once when its captured creation owner be
   assert.equal(router.sessions.has(input.sessionId), false)
 })
 
+test('router rejects host-started agent runs for a remote session', async (t) => {
+  const actual = driver()
+  const router = new SessionRoutingEngine(legacy(), () => ({
+    create: async () => actual.value
+  }))
+  const input = params(t, 'remote-agent-start')
+  await router.sessions.create(input)
+
+  assert.throws(
+    () => router.agentRuns.start({ sessionId: input.sessionId, task: 'run one plan step' }),
+    /agentRuns\.start/
+  )
+  await router.sessions.dispose({ sessionId: input.sessionId })
+})
+
 test('preparation abort reaches only its owned router signal and rejects the late returned driver', async (t) => {
   const held = deferred<RoutedSessionDriver>(),
     entered = deferred<void>(),

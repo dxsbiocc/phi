@@ -555,6 +555,7 @@ export interface PhiEngine {
     }
   }
   agentRuns: {
+    start(params: { sessionId: string; agent?: string; task: string }): Promise<{ runId: string }>
     list(params: Record<string, never>): Promise<unknown>
     /** Desktop-only lookup of a currently verified child; never serialized as a capability. */
     resourceOwner?(

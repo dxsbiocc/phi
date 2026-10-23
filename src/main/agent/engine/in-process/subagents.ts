@@ -400,6 +400,7 @@ export async function listSessionAgentRuns(): Promise<unknown[]> {
         task: run.task,
         state: run.state,
         background: run.background,
+        origin: run.origin ?? 'tool',
         startedAt: run.startedAt,
         ...(run.completedAt !== undefined ? { completedAt: run.completedAt } : {}),
         ...(run.lastStep ? { lastStep: run.lastStep } : {}),

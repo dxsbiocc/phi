@@ -593,6 +593,7 @@ test('listPromptAgents reads prompt agents from the selected cwd', async () => {
   assert(projectANames.includes('Visualization'))
   assert(!projectANames.includes('Database'))
   assert(projectANames.includes('Wrapper'))
+  assert(!projectANames.includes('PlanStep'))
   assert.equal(
     projectAAgents.find((agent) => agent.name === 'project-a-agent')?.trigger,
     '/prompts:project-a-agent'

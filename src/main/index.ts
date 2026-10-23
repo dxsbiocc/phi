@@ -325,6 +325,7 @@ import {
   type ContinuationEvent
 } from './agent/agents/run-continue'
 import { agentRunHostHandlers } from './agent/agents/run-host'
+import { agentRunCompletions } from './agent/plan/execution/agent-run-completions'
 import { connectRemoteSshSession } from './agent/wrappers/remote-ssh-session'
 import { readWrapperRun } from './agent/wrappers/store'
 import { listBackgroundAgentJobs } from './agent/jobs/background-agent-job-listing'
@@ -2233,7 +2234,8 @@ for (const [method, handler] of Object.entries(
       }),
     redactValue: redactStructuredValue,
     markReported: (phiSessionId, agentRunId) => markAgentRunReported(phiSessionId, agentRunId),
-    clearReported: (phiSessionId, agentRunId) => clearAgentRunReported(phiSessionId, agentRunId)
+    clearReported: (phiSessionId, agentRunId) => clearAgentRunReported(phiSessionId, agentRunId),
+    deliverHostRun: (runtimeSessionId, run) => agentRunCompletions.deliver(runtimeSessionId, run)
   })
 )) {
   getPhiEngine().host.register(method, handler)

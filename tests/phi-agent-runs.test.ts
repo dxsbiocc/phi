@@ -12,6 +12,7 @@ import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import {
   AgentRunLimitError,
   AgentRunRegistry,
+  type AgentRunOrigin,
   type AgentRunSnapshot
 } from '../src/main/agent/agents/registry'
 import {
@@ -26,6 +27,7 @@ import { controlAgentRun } from '../src/main/agent/agents/run-control'
 import { buildAgentRunTools } from '../src/main/agent/agents/run-tools'
 import { buildAgentTool, type AgentRunner } from '../src/main/agent/agents/tool'
 import type { PhiAgentDefinition } from '../src/main/agent/agents/definition'
+import { subscribeToAgentRunNotices } from '../src/main/agent/engine/in-process/agent-run-notices'
 
 const WRAPPER: PhiAgentDefinition = {
   name: 'Wrapper',
@@ -104,13 +106,19 @@ const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve)
 function launch(
   registry: AgentRunRegistry,
   runner: AgentRunner,
-  overrides: { background?: boolean; task?: string; signal?: AbortSignal } = {}
+  overrides: {
+    background?: boolean
+    task?: string
+    signal?: AbortSignal
+    origin?: AgentRunOrigin
+  } = {}
 ): { id: string; done: Promise<AgentRunSnapshot> } {
   return registry.launch({
     agent: 'Wrapper',
     task: overrides.task ?? 'go',
     runner,
     background: overrides.background ?? false,
+    ...(overrides.origin ? { origin: overrides.origin } : {}),
     ...(overrides.signal ? { signal: overrides.signal } : {})
   })
 }
@@ -126,7 +134,39 @@ test('a launched run resolves to a done snapshot carrying the trimmed report', a
   assert.equal(snapshot.state, 'done')
   assert.equal(snapshot.report, 'all done')
   assert.equal(snapshot.toolCalls, 4)
+  assert.equal(snapshot.origin, 'tool')
   assert.ok(snapshot.completedAt !== undefined)
+})
+
+test('host origin is retained and suppresses progress/report notices but not completion', async () => {
+  const registry = new AgentRunRegistry()
+  const notices: Array<{ method: string; params: unknown }> = []
+  subscribeToAgentRunNotices({
+    registry,
+    sessionId: 'session-1',
+    requestHost: async (method, params) => {
+      notices.push({ method, params })
+    }
+  })
+  const runner: AgentRunner = async ({ onToolStep }) => {
+    onToolStep?.({ id: 'step', toolName: 'read', status: 'running', args: { path: 'a' } })
+    return { text: 'done', toolCalls: 1 }
+  }
+
+  const toolRun = launch(registry, runner, { background: true })
+  await toolRun.done
+  registry.markReported(toolRun.id)
+  const hostRun = launch(registry, runner, { background: true, origin: 'host' })
+  const hostSnapshot = await hostRun.done
+  registry.markReported(hostRun.id)
+
+  assert.equal(hostSnapshot.origin, 'host')
+  assert.deepEqual(
+    notices.map((notice) => notice.method),
+    ['agentRun.step', 'agentRun.finished', 'agentRun.reported', 'agentRun.finished']
+  )
+  const completion = notices.at(-1)?.params as { run: AgentRunSnapshot }
+  assert.equal(completion.run.origin, 'host')
 })
 
 test('runs beyond maxConcurrent queue and start as slots free up', async () => {
@@ -158,6 +198,18 @@ test('the registry refuses more runs than maxRuns', () => {
   launch(registry, control.runner)
   launch(registry, control.runner)
   assert.throws(() => launch(registry, control.runner), AgentRunLimitError)
+})
+
+test('host runs neither consume nor obey the tool run allowance', async () => {
+  const registry = new AgentRunRegistry({ limits: { maxRuns: 1 } })
+  const runner: AgentRunner = async () => ({ text: 'done', toolCalls: 0 })
+
+  await launch(registry, runner, { origin: 'host', background: true }).done
+  await launch(registry, runner).done
+  await launch(registry, runner, { origin: 'host', background: true }).done
+
+  assert.throws(() => launch(registry, runner), AgentRunLimitError)
+  assert.equal(registry.list().filter((run) => run.origin === 'host').length, 2)
 })
 
 test('failures, timeouts and empty reports become error snapshots naming the agent', async () => {

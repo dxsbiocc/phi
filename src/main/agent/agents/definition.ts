@@ -22,6 +22,7 @@ export const AGENT_CONTRACT_VERSION = '1.0.0'
 export type PhiAgentSource = 'phi' | 'compat'
 export type PhiAgentDelegationMode = 'required-first' | 'preferred' | 'optional'
 export type PhiAgentThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+export type PhiAgentInvocation = 'host'
 
 export interface PhiAgentFallback {
   /** Consecutive not-found/blocked/failed runs required before generic tools may take over. */
@@ -54,6 +55,8 @@ export interface PhiAgentDefinition {
   delegationMode?: PhiAgentDelegationMode
   /** Controlled generic-tool fallback after specialist failure. */
   fallback?: PhiAgentFallback
+  /** `host` agents can only be started by trusted host orchestration. */
+  invocation?: PhiAgentInvocation
   /** v1 agents are delegation-tool entry points. `internal` is reserved. */
   visibility: 'entry'
   /** Scan-log messages (legacy aliases, unknown keys). Never fails the agent. */
@@ -100,6 +103,7 @@ const KNOWN_KEYS = new Set([
   'thinkingLevel',
   'skills',
   'environment',
+  'invocation',
   'visibility',
   'delegationMode',
   'delegation_mode',
@@ -118,6 +122,7 @@ const TOOL_ALIASES: Record<string, string> = {
   bash: 'bash',
   glob: 'glob',
   grep: 'grep',
+  find: 'find',
   websearch: 'web_search',
   web_search: 'web_search',
   ast_grep: 'ast_grep',
@@ -394,6 +399,12 @@ function readPhiAgent(
 
   const environment = readEnvironment(fm.environment, collected)
 
+  let invocation: PhiAgentInvocation | undefined
+  if (fm.invocation !== undefined) {
+    if (fm.invocation !== 'host') fail(collected, 'invocation', "invocation must be 'host'")
+    else invocation = fm.invocation
+  }
+
   if (fm.visibility !== undefined && fm.visibility !== 'entry') {
     fail(
       collected,
@@ -440,6 +451,7 @@ function readPhiAgent(
     ...(delegation ? { delegation } : {}),
     ...(delegationMode ? { delegationMode } : {}),
     ...(fallback ? { fallback } : {}),
+    ...(invocation ? { invocation } : {}),
     visibility: 'entry',
     warnings: collected.warnings.map((item) => item.message),
     systemPrompt,
@@ -583,6 +595,7 @@ export function isPhiAgentDefinition(value: unknown): value is PhiAgentDefinitio
     strings(value.warnings) &&
     (value.delegation === undefined || typeof value.delegation === 'string') &&
     (value.delegationMode === undefined || isDelegationMode(value.delegationMode)) &&
+    (value.invocation === undefined || value.invocation === 'host') &&
     (value.environment === undefined || typeof value.environment === 'string') &&
     (value.pluginId === undefined || typeof value.pluginId === 'string') &&
     (value.model === undefined || (strings(value.model) && value.model.length > 0)) &&

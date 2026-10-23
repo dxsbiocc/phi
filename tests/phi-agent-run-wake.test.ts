@@ -121,6 +121,12 @@ interface Calls {
   continued: Array<{ phiSessionId: string; event: AgentRunFinishedEvent }>
   reported: string[]
   cleared: string[]
+  hostRuns: Array<{
+    runtimeSessionId: string
+    runId: string
+    reportStatus?: string
+    missingInputs?: string[]
+  }>
   persisted: Array<{ phiSessionId: string; toolCallId: string; stepId: string; output: string }>
 }
 
@@ -135,6 +141,7 @@ function harness(overrides: Partial<AgentRunHostDeps> = {}): {
     continued: [],
     reported: [],
     cleared: [],
+    hostRuns: [],
     persisted: []
   }
   const handlers = agentRunHostHandlers({
@@ -153,6 +160,15 @@ function harness(overrides: Partial<AgentRunHostDeps> = {}): {
       calls.reported.push(`${phiSessionId}/${agentRunId}`),
     clearReported: (phiSessionId, agentRunId) =>
       calls.cleared.push(`${phiSessionId}/${agentRunId}`),
+    deliverHostRun: (runtimeSessionId, run) => {
+      calls.hostRuns.push({
+        runtimeSessionId,
+        runId: run.id,
+        ...(run.reportStatus ? { reportStatus: run.reportStatus } : {}),
+        ...(run.missingInputs ? { missingInputs: run.missingInputs } : {})
+      })
+      return true
+    },
     persistStepOutput: (phiSessionId, toolCallId, stepId, output) => {
       calls.persisted.push({ phiSessionId, toolCallId, stepId, output })
       return output.length > 20
@@ -215,6 +231,86 @@ test('a finished run is recorded in the conversation, pushed to the window, and 
     ['phi-1/run_1'],
     'stale receipts from an older session are dropped'
   )
+})
+
+test('a host run is delivered without timeline, wake-up, or notification side effects', async () => {
+  const { calls, handlers } = harness({ isAppFocused: () => false })
+  await handlers[AGENT_RUN_HOST_METHODS.finished](
+    finishedParams({
+      id: 'host-1',
+      agent: 'PlanStep',
+      origin: 'host',
+      reportStatus: 'blocked',
+      missingInputs: ['token']
+    })
+  )
+
+  assert.deepEqual(calls.hostRuns, [
+    {
+      runtimeSessionId: 'runtime-1',
+      runId: 'host-1',
+      reportStatus: 'blocked',
+      missingInputs: ['token']
+    }
+  ])
+  assert.deepEqual(calls.appended, [])
+  assert.deepEqual(calls.sent, [])
+  assert.deepEqual(calls.continued, [])
+  assert.deepEqual(calls.notifications, [])
+  assert.deepEqual(calls.cleared, [])
+})
+
+test('a host run redacts its report and error before delivery', async () => {
+  let delivered: Parameters<AgentRunHostDeps['deliverHostRun']>[1] | undefined
+  const { handlers } = harness({
+    deliverHostRun: (_runtimeSessionId, run) => {
+      delivered = run
+      return true
+    }
+  })
+  await handlers[AGENT_RUN_HOST_METHODS.finished](
+    finishedParams({
+      origin: 'host',
+      state: 'error',
+      report: 'report contains sk-report',
+      error: 'error contains sk-error'
+    })
+  )
+
+  assert.equal(delivered?.report, 'report contains [redacted]')
+  assert.equal(delivered?.error, 'error contains [redacted]')
+})
+
+test('a malformed host completion is delivered as an error when session and run ids exist', async () => {
+  let delivered: Parameters<AgentRunHostDeps['deliverHostRun']>[1] | undefined
+  const { handlers } = harness({
+    deliverHostRun: (_runtimeSessionId, run) => {
+      delivered = run
+      return true
+    }
+  })
+
+  const result = await handlers[AGENT_RUN_HOST_METHODS.finished](
+    finishedParams({ origin: 'host', state: 'running' })
+  )
+
+  assert.deepEqual(result, { ok: true })
+  assert.deepEqual(delivered, {
+    id: 'run_1',
+    state: 'error',
+    origin: 'host',
+    error: 'Invalid completion from agent runtime'
+  })
+})
+
+test('a host completion without a session or run id is rejected', async () => {
+  const { handlers } = harness()
+  const finished = handlers[AGENT_RUN_HOST_METHODS.finished]
+  await assert.rejects(
+    finished({ run: { ...(finishedParams() as { run: object }).run, origin: 'host' } }),
+    /originSessionId/
+  )
+  await assert.rejects(finished(finishedParams({ origin: 'host', id: '' })), /run.id/)
 })
 
 test('secrets in the task, report or error are redacted before anything is stored', async () => {

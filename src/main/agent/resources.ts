@@ -600,7 +600,7 @@ export async function listPromptAgents(cwd = WORKSPACE_DIR): Promise<PromptAgent
     cwd,
     agentDir: AGENT_DIR,
     bundledDir: getBundledAgentsDir()
-  }).agents) {
+  }).agents.filter((agent) => agent.invocation !== 'host')) {
     addAgent(phiAgentToPromptAgentSummary(agent))
   }
 

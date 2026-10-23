@@ -169,31 +169,32 @@ export async function createSession(params: unknown): Promise<unknown> {
       : []),
     createCursorStreamRecoveryExtension(() => parentRef.current?.session.agent)
   ]
-  const { resources, customTools, stopAgentRunNotices } = await createSessionToolRegistry({
-    record,
-    sessionId,
-    cwd,
-    agentDir,
-    settingsCwd,
-    personaMarkdown,
-    extensionFactories,
-    remoteProjectIdentity,
-    remoteRoot,
-    remoteRecord,
-    ctx,
-    parentRef,
-    remoteContextFiles,
-    remoteMcpAccess,
-    browserTextVault,
-    memoryPolicy,
-    memoryTarget,
-    agentRuns,
-    phiAgents,
-    onAgentsChanged: () => {
-      agentPolicies.splice(0, agentPolicies.length, ...phiExtensionAgents(phiAgents))
-    },
-    remoteSkillToolNames
-  })
+  const { resources, customTools, agentRunners, stopAgentRunNotices } =
+    await createSessionToolRegistry({
+      record,
+      sessionId,
+      cwd,
+      agentDir,
+      settingsCwd,
+      personaMarkdown,
+      extensionFactories,
+      remoteProjectIdentity,
+      remoteRoot,
+      remoteRecord,
+      ctx,
+      parentRef,
+      remoteContextFiles,
+      remoteMcpAccess,
+      browserTextVault,
+      memoryPolicy,
+      memoryTarget,
+      agentRuns,
+      phiAgents,
+      onAgentsChanged: () => {
+        agentPolicies.splice(0, agentPolicies.length, ...phiExtensionAgents(phiAgents))
+      },
+      remoteSkillToolNames
+    })
 
   const selectedModel = await modelBySelector(ctx, record.model)
   const leasedMcp = !noTools
@@ -309,6 +310,7 @@ export async function createSession(params: unknown): Promise<unknown> {
       result,
       agentDir,
       agentRuns,
+      agentRunners,
       stopAgentRunNotices,
       browserTextVault,
       mcpLeases,
