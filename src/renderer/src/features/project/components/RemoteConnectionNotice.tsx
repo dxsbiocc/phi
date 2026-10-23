@@ -42,6 +42,27 @@ function ConnectingNotice({
   )
 }
 
+function connectionMessage(
+  connection: RemoteProjectConnectionState | undefined,
+  connecting: boolean
+): string {
+  const progress = connection?.startupProgress
+  if (!progress) {
+    return (
+      connection?.message ??
+      (connecting ? projectCopy.connectingToServer : projectCopy.connectionNotChecked)
+    )
+  }
+  if (!progress.totalBytes || progress.totalBytes <= 0) {
+    return projectCopy.downloadingRemoteRuntimeWithoutTotal(progress.attempt)
+  }
+  const percent = Math.min(
+    100,
+    Math.max(0, Math.floor((progress.bytesReceived / progress.totalBytes) * 100))
+  )
+  return projectCopy.downloadingRemoteRuntime(percent, progress.attempt)
+}
+
 export function RemoteConnectionNotice({
   hostAlias,
   connection,
@@ -69,9 +90,7 @@ export function RemoteConnectionNotice({
     phase === 'authentication_failed' ||
     phase === 'configuration_failed'
   const showCooldownGuidance = Boolean(connection?.suggestion?.includes('测试连接可立即重试'))
-  const message =
-    connection?.message ??
-    (connecting ? projectCopy.connectingToServer : projectCopy.connectionNotChecked)
+  const message = connectionMessage(connection, connecting)
   if (connecting)
     return <ConnectingNotice hostAlias={hostAlias} message={message} compact={compact} />
   return (

@@ -80,6 +80,8 @@ export interface AgentEventSummary {
   willRetry?: boolean
   skipped?: boolean
   errorMessage?: string
+  errorCode?: string
+  errorDetail?: unknown
   fromProviderId?: string
   fromModelId?: string
   toProviderId?: string

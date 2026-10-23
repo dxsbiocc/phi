@@ -20,7 +20,13 @@ function markup(
     | 'reachable',
   message = '连接状态消息',
   suggestion = '处理建议',
-  compact = false
+  compact = false,
+  startupProgress?: {
+    kind: 'remote-omp-download'
+    bytesReceived: number
+    totalBytes?: number
+    attempt: number
+  }
 ): string {
   return renderToStaticMarkup(
     createElement(
@@ -28,7 +34,7 @@ function markup(
       { theme: createTheme() },
       createElement(RemoteConnectionNotice, {
         hostAlias: 'cluster',
-        connection: { phase, message, suggestion },
+        connection: { phase, message, suggestion, startupProgress },
         onRetry: () => undefined,
         onOpenRemoteSettings: () => undefined,
         compact
@@ -60,6 +66,29 @@ test('remote connection notice gives recovery guidance without hiding saved work
   assert.match(markup('connecting'), /role="progressbar"/)
   assert.doesNotMatch(markup('connecting'), /MuiAlert-root|disabled/)
   assert.equal(markup('reachable'), '')
+})
+
+test('remote connection notice localizes remote runtime download progress', () => {
+  setUiLanguage('en')
+  assert.match(
+    markup('connecting', 'ignored', '', false, {
+      kind: 'remote-omp-download',
+      bytesReceived: 45,
+      totalBytes: 100,
+      attempt: 2
+    }),
+    /Downloading remote runtime 45% · attempt 2/
+  )
+  setUiLanguage('zh-CN')
+  assert.match(
+    markup('connecting', 'ignored', '', false, {
+      kind: 'remote-omp-download',
+      bytesReceived: 45,
+      totalBytes: 100,
+      attempt: 2
+    }),
+    /正在下载远程运行时 45% · 第 2 次尝试/
+  )
 })
 
 test('remote connection events update only their SSH project, then retry only reads on recovery', () => {
