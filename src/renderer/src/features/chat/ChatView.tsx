@@ -11,6 +11,7 @@ import {
 } from 'react'
 import type { PromptImageInput } from '../../../../shared/promptImageTypes'
 import { PastedImagePreview } from './components/PastedImagePreview'
+import { LegacyRemoteSessionNotice } from './components/LegacyRemoteSessionNotice'
 import { ContextUsageIndicator } from './components/ContextUsageIndicator'
 import { usePastedImages } from './hooks/usePastedImages'
 import { useContextUsage, type ContextUsageTarget } from './hooks/useContextUsage'
@@ -39,6 +40,7 @@ import {
   promptHistoryFromMessages,
   type PromptHistoryDirection
 } from '../../lib/promptHistory'
+import { isTextInputAtHistoryBoundary } from './lib/promptHistoryBoundary'
 import {
   composeInputWithFileReferences,
   findActiveInputInvocationReference,
@@ -67,24 +69,11 @@ export { ThinkingBlock } from '../../components/chat/ThinkingBlock'
 
 const CloseIcon = PhiIcons.action.close
 
-function isTextInputAtHistoryBoundary(
-  inputElement: ComposerTextEditorHandle,
-  direction: PromptHistoryDirection
-): boolean {
-  const { selectionStart, selectionEnd, value } = inputElement
-  if (selectionStart === null || selectionEnd === null) return true
-  if (selectionStart !== selectionEnd) return false
-  if (value.length === 0) return true
-
-  if (direction === 'previous') {
-    return value.lastIndexOf('\n', Math.max(0, selectionStart - 1)) === -1
-  }
-  return value.indexOf('\n', selectionEnd) === -1
-}
-
 type ViewProps = {
   messages: ChatItem[]
   recoveryNotice?: ReactNode
+  legacyRemoteSession?: boolean
+  onCreateSessionInProject?: () => void
   input: string
   images?: PromptImageInput[]
   onImagesAdded?: (images: PromptImageInput[]) => void
@@ -156,6 +145,8 @@ type ViewProps = {
 function ChatView({
   messages,
   recoveryNotice,
+  legacyRemoteSession = false,
+  onCreateSessionInProject,
   input,
   images = [],
   onImagesAdded,
@@ -497,235 +488,244 @@ function ChatView({
         </Box>
       </ResourceMentionsProvider>
       <Box sx={chatComposerLayoutSx}>
-        <Box
-          component="form"
-          onSubmit={handleChatSubmit}
-          sx={{ maxWidth: 'var(--phi-chat-content-max-width)', mx: 'auto' }}
-        >
-          <ToolApprovalDialog
-            request={pendingApproval}
-            onRespond={onRespondApproval}
-            onOpenSession={onOpenApprovalSession}
-          />
-          <UserInteractionPanel
-            request={pendingUserInteraction}
-            onRespond={onRespondUserInteraction}
-          />
-          {queuedPrompts.length > 0 && (
-            <Paper
-              variant="outlined"
-              aria-label={chatCopy.messageQueue}
-              sx={{ width: '100%', mb: 1, borderRadius: 2, p: 1.25 }}
-            >
-              <Stack spacing={0.75}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-                  {queuedPromptsPaused
-                    ? chatCopy.valuePausedResumesAfterANewMessageIsSent(queuedPrompts.length)
-                    : chatCopy.valueQueued(queuedPrompts.length)}
-                </Typography>
-                {queuedPrompts.map((item) => (
-                  <Box
-                    key={item.id}
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 1,
-                      minWidth: 0,
-                      bgcolor: 'action.hover',
-                      borderRadius: 1,
-                      px: 1,
-                      py: 0.75
-                    }}
-                  >
-                    <Typography
-                      variant="body2"
+        {legacyRemoteSession ? (
+          <Box sx={{ maxWidth: 'var(--phi-chat-content-max-width)', mx: 'auto' }}>
+            <LegacyRemoteSessionNotice onCreateSession={onCreateSessionInProject} />
+          </Box>
+        ) : (
+          <Box
+            component="form"
+            onSubmit={handleChatSubmit}
+            sx={{ maxWidth: 'var(--phi-chat-content-max-width)', mx: 'auto' }}
+          >
+            <ToolApprovalDialog
+              request={pendingApproval}
+              onRespond={onRespondApproval}
+              onOpenSession={onOpenApprovalSession}
+            />
+            <UserInteractionPanel
+              request={pendingUserInteraction}
+              onRespond={onRespondUserInteraction}
+            />
+            {queuedPrompts.length > 0 && (
+              <Paper
+                variant="outlined"
+                aria-label={chatCopy.messageQueue}
+                sx={{ width: '100%', mb: 1, borderRadius: 2, p: 1.25 }}
+              >
+                <Stack spacing={0.75}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+                    {queuedPromptsPaused
+                      ? chatCopy.valuePausedResumesAfterANewMessageIsSent(queuedPrompts.length)
+                      : chatCopy.valueQueued(queuedPrompts.length)}
+                  </Typography>
+                  {queuedPrompts.map((item) => (
+                    <Box
+                      key={item.id}
                       sx={{
-                        flex: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
                         minWidth: 0,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        px: 1,
+                        py: 0.75
                       }}
-                      title={item.text}
                     >
-                      {item.text}
-                    </Typography>
-                    {onRemoveQueuedPrompt && (
-                      <IconButton
-                        size="small"
-                        aria-label={chatCopy.removeQueuedMessage}
-                        onClick={() => onRemoveQueuedPrompt(item.id)}
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}
+                        title={item.text}
                       >
-                        <CloseIcon fontSize="small" />
-                      </IconButton>
-                    )}
-                  </Box>
-                ))}
-              </Stack>
-            </Paper>
-          )}
-          {fileReferenceMenu.menuState ? (
-            <InputFileReferenceMenu
-              state={fileReferenceMenu.menuState}
-              highlightedIndex={fileReferenceMenu.highlightedIndex}
-              onHighlight={fileReferenceMenu.onHighlight}
-              onSelect={fileReferenceMenu.onSelect}
-            />
-          ) : invocationReferenceMenu.menuState ? (
-            <InputInvocationReferenceMenu
-              state={invocationReferenceMenu.menuState}
-              cwd={cwd}
-              highlightedIndex={invocationReferenceMenu.highlightedIndex}
-              onHighlight={invocationReferenceMenu.onHighlight}
-              onSelect={invocationReferenceMenu.onSelect}
-              onTrustChanged={onRefreshPromptAgents}
-            />
-          ) : null}
-          <ChatComposer
-            inputRef={inputRef}
-            editorKey={scrollResetKey}
-            value={composerInputText}
-            resources={messageResources}
-            placeholder={inputPlaceholder}
-            placeholderKind={suggestedNextAction ? 'suggested-next-action' : 'default'}
-            ariaLabel={chatCopy.messageInput}
-            compact={compactComposerControls}
-            dragActive={composerDragActive}
-            fileDropTarget
-            sendDisabled={
-              !canSend || (!input.trim() && images.length === 0) || isReadingPastedImage
-            }
-            showStop={isGenerating || contextCompacting}
-            onStop={() => {
-              void onStopGeneration()
-            }}
-            permissionMode={permissionMode}
-            onSelectPermissionMode={onSelectPermissionMode}
-            disablePermissionModeSelect={disablePermissionModeSelect}
-            models={models}
-            selectedModel={selectedModel}
-            onSelectModel={onSelectModel}
-            disableModelControls={disableModelControls}
-            thinkingLevel={thinkingLevel}
-            onSelectThinkingLevel={onSelectThinkingLevel}
-            onChange={(value, cursor) => {
-              resetPromptHistoryNavigation()
-              const selection = { selectionStart: cursor }
-              fileReferenceMenu.onInputChanged(selection)
-              invocationReferenceMenu.onInputChanged(selection)
-              const next = composeInputWithFileReferences(composerFileReferences, value)
-              promptHistoryDraftRef.current = next
-              onInputChange(next)
-            }}
-            onCursorChange={(cursor) => {
-              const selection = { selectionStart: cursor }
-              fileReferenceMenu.onInputCursorChanged(selection)
-              invocationReferenceMenu.onInputCursorChanged(selection)
-            }}
-            onKeyDown={(event, editor) => {
-              const menuEvent = {
-                key: event.key,
-                nativeEvent: event,
-                preventDefault: () => event.preventDefault()
+                        {item.text}
+                      </Typography>
+                      {onRemoveQueuedPrompt && (
+                        <IconButton
+                          size="small"
+                          aria-label={chatCopy.removeQueuedMessage}
+                          onClick={() => onRemoveQueuedPrompt(item.id)}
+                        >
+                          <CloseIcon fontSize="small" />
+                        </IconButton>
+                      )}
+                    </Box>
+                  ))}
+                </Stack>
+              </Paper>
+            )}
+            {fileReferenceMenu.menuState ? (
+              <InputFileReferenceMenu
+                state={fileReferenceMenu.menuState}
+                highlightedIndex={fileReferenceMenu.highlightedIndex}
+                onHighlight={fileReferenceMenu.onHighlight}
+                onSelect={fileReferenceMenu.onSelect}
+              />
+            ) : invocationReferenceMenu.menuState ? (
+              <InputInvocationReferenceMenu
+                state={invocationReferenceMenu.menuState}
+                cwd={cwd}
+                highlightedIndex={invocationReferenceMenu.highlightedIndex}
+                onHighlight={invocationReferenceMenu.onHighlight}
+                onSelect={invocationReferenceMenu.onSelect}
+                onTrustChanged={onRefreshPromptAgents}
+              />
+            ) : null}
+            <ChatComposer
+              inputRef={inputRef}
+              editorKey={scrollResetKey}
+              value={composerInputText}
+              resources={messageResources}
+              placeholder={inputPlaceholder}
+              placeholderKind={suggestedNextAction ? 'suggested-next-action' : 'default'}
+              ariaLabel={chatCopy.messageInput}
+              compact={compactComposerControls}
+              dragActive={composerDragActive}
+              fileDropTarget
+              sendDisabled={
+                !canSend || (!input.trim() && images.length === 0) || isReadingPastedImage
               }
-              if (fileReferenceMenu.onKeyDown(menuEvent)) {
-                return true
-              }
-              if (invocationReferenceMenu.onKeyDown(menuEvent)) {
-                return true
-              }
-
-              const acceptedSuggestion = suggestedNextActionToAccept(
-                {
+              showStop={isGenerating || contextCompacting}
+              onStop={() => {
+                void onStopGeneration()
+              }}
+              permissionMode={permissionMode}
+              onSelectPermissionMode={onSelectPermissionMode}
+              disablePermissionModeSelect={disablePermissionModeSelect}
+              models={models}
+              selectedModel={selectedModel}
+              onSelectModel={onSelectModel}
+              disableModelControls={disableModelControls}
+              thinkingLevel={thinkingLevel}
+              onSelectThinkingLevel={onSelectThinkingLevel}
+              onChange={(value, cursor) => {
+                resetPromptHistoryNavigation()
+                const selection = { selectionStart: cursor }
+                fileReferenceMenu.onInputChanged(selection)
+                invocationReferenceMenu.onInputChanged(selection)
+                const next = composeInputWithFileReferences(composerFileReferences, value)
+                promptHistoryDraftRef.current = next
+                onInputChange(next)
+              }}
+              onCursorChange={(cursor) => {
+                const selection = { selectionStart: cursor }
+                fileReferenceMenu.onInputCursorChanged(selection)
+                invocationReferenceMenu.onInputCursorChanged(selection)
+              }}
+              onKeyDown={(event, editor) => {
+                const menuEvent = {
                   key: event.key,
-                  shiftKey: event.shiftKey,
-                  altKey: event.altKey,
-                  metaKey: event.metaKey,
-                  ctrlKey: event.ctrlKey,
-                  isComposing: event.isComposing
-                },
-                input,
-                suggestedNextAction
-              )
-              if (acceptedSuggestion) {
-                event.preventDefault()
-                onInputChange(acceptedSuggestion)
-                return true
-              }
-
-              const historyDirection =
-                event.key === 'ArrowUp' ? 'previous' : event.key === 'ArrowDown' ? 'next' : null
-              if (
-                historyDirection &&
-                !event.shiftKey &&
-                !event.altKey &&
-                !event.metaKey &&
-                !event.ctrlKey &&
-                !event.isComposing
-              ) {
-                const inputElement = editor
-                if (
-                  inputElement &&
-                  isTextInputAtHistoryBoundary(inputElement, historyDirection) &&
-                  navigatePromptHistory(historyDirection)
-                ) {
-                  event.preventDefault()
+                  nativeEvent: event,
+                  preventDefault: () => event.preventDefault()
+                }
+                if (fileReferenceMenu.onKeyDown(menuEvent)) {
                   return true
                 }
-              }
+                if (invocationReferenceMenu.onKeyDown(menuEvent)) {
+                  return true
+                }
 
-              if (
-                event.key === 'Enter' &&
-                !event.shiftKey &&
-                !event.isComposing &&
-                (canSend || canQueue) &&
-                (input.trim() || images.length > 0) &&
-                !isReadingPastedImage
-              ) {
-                event.preventDefault()
-                const form = (event.target as HTMLElement).closest('form')
-                form?.requestSubmit()
-                return true
+                const acceptedSuggestion = suggestedNextActionToAccept(
+                  {
+                    key: event.key,
+                    shiftKey: event.shiftKey,
+                    altKey: event.altKey,
+                    metaKey: event.metaKey,
+                    ctrlKey: event.ctrlKey,
+                    isComposing: event.isComposing
+                  },
+                  input,
+                  suggestedNextAction
+                )
+                if (acceptedSuggestion) {
+                  event.preventDefault()
+                  onInputChange(acceptedSuggestion)
+                  return true
+                }
+
+                const historyDirection =
+                  event.key === 'ArrowUp' ? 'previous' : event.key === 'ArrowDown' ? 'next' : null
+                if (
+                  historyDirection &&
+                  !event.shiftKey &&
+                  !event.altKey &&
+                  !event.metaKey &&
+                  !event.ctrlKey &&
+                  !event.isComposing
+                ) {
+                  const inputElement = editor
+                  if (
+                    inputElement &&
+                    isTextInputAtHistoryBoundary(inputElement, historyDirection) &&
+                    navigatePromptHistory(historyDirection)
+                  ) {
+                    event.preventDefault()
+                    return true
+                  }
+                }
+
+                if (
+                  event.key === 'Enter' &&
+                  !event.shiftKey &&
+                  !event.isComposing &&
+                  (canSend || canQueue) &&
+                  (input.trim() || images.length > 0) &&
+                  !isReadingPastedImage
+                ) {
+                  event.preventDefault()
+                  const form = (event.target as HTMLElement).closest('form')
+                  form?.requestSubmit()
+                  return true
+                }
+                return false
+              }}
+              onPaste={onPaste}
+              onMouseDownCapture={focusInputFromComposerSurface}
+              onDragEnter={composerDragHandlers.onDragEnter}
+              onDragOver={composerDragHandlers.onDragOver}
+              onDragLeave={composerDragHandlers.onDragLeave}
+              onDrop={composerDragHandlers.onDrop}
+              onOpenWebUrl={onOpenWebUrl}
+              aboveEditor={
+                <>
+                  <FileReferenceCards
+                    paths={composerFileReferences}
+                    variant="composer"
+                    onRemove={removeFileReference}
+                  />
+                  <PastedImagePreview images={images} error={pasteError} onRemove={onRemoveImage} />
+                </>
               }
-              return false
-            }}
-            onPaste={onPaste}
-            onMouseDownCapture={focusInputFromComposerSurface}
-            onDragEnter={composerDragHandlers.onDragEnter}
-            onDragOver={composerDragHandlers.onDragOver}
-            onDragLeave={composerDragHandlers.onDragLeave}
-            onDrop={composerDragHandlers.onDrop}
-            onOpenWebUrl={onOpenWebUrl}
-            aboveEditor={
-              <>
-                <FileReferenceCards
-                  paths={composerFileReferences}
-                  variant="composer"
-                  onRemove={removeFileReference}
-                />
-                <PastedImagePreview images={images} error={pasteError} onRemove={onRemoveImage} />
-              </>
-            }
-            skills={skills}
-            promptAgents={promptAgents}
-            cwd={cwd}
-            onPickFiles={onPickInputFiles}
-            onInsertReference={insertInputReference}
-            onRefreshPromptAgents={onRefreshPromptAgents}
-            onOpenAddMenu={onOpenInputAddMenu}
-            planReviewEnabled={planReviewEnabled}
-            onTogglePlanReview={onTogglePlanReview}
-            disablePlanReview={disablePlanReview}
-            accessory={
-              contextUsageTarget ? (
-                <ContextUsageIndicator usage={contextUsage.usage} loading={contextUsage.loading} />
-              ) : null
-            }
-            sendLabel={chatCopy.sendMessage}
-            stopLabel={chatCopy.stopGenerating}
-            stopTitle={chatCopy.runningClickToStopGenerating}
-          />
-        </Box>
+              skills={skills}
+              promptAgents={promptAgents}
+              cwd={cwd}
+              onPickFiles={onPickInputFiles}
+              onInsertReference={insertInputReference}
+              onRefreshPromptAgents={onRefreshPromptAgents}
+              onOpenAddMenu={onOpenInputAddMenu}
+              planReviewEnabled={planReviewEnabled}
+              onTogglePlanReview={onTogglePlanReview}
+              disablePlanReview={disablePlanReview}
+              accessory={
+                contextUsageTarget ? (
+                  <ContextUsageIndicator
+                    usage={contextUsage.usage}
+                    loading={contextUsage.loading}
+                  />
+                ) : null
+              }
+              sendLabel={chatCopy.sendMessage}
+              stopLabel={chatCopy.stopGenerating}
+              stopTitle={chatCopy.runningClickToStopGenerating}
+            />
+          </Box>
+        )}
       </Box>
     </Box>
   )

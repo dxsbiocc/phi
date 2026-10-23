@@ -128,6 +128,7 @@ type SessionStoreState = {
   activeDisplayCwd: string
   activeProjectId: string | null
   activeProjectLocation: ProjectLocation | null
+  activeLegacyRemoteSession: boolean
   activeSessionGeneration: number
   activeAgentEventStateKey: string | null
   activeChatScrollResetKey: string
@@ -195,6 +196,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
   activeDisplayCwd: '',
   activeProjectId: null,
   activeProjectLocation: null,
+  activeLegacyRemoteSession: false,
   activeSessionGeneration: 0,
   activeAgentEventStateKey: null,
   activeChatScrollResetKey: sessionStateKey({
@@ -381,6 +383,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       activeDisplayCwd: current.displayCwd ?? current.cwd,
       activeProjectId: current.projectId ?? null,
       activeProjectLocation: current.projectLocation ?? null,
+      activeLegacyRemoteSession: current.legacyRemoteSession === true,
       activeAgentEventStateKey: nextStateKey,
       activeChatScrollResetKey: shouldCarryActiveState
         ? state.activeChatScrollResetKey

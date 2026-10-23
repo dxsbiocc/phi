@@ -5,17 +5,13 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { readRemoteSkillResource } from '../src/main/agent/content/remote-skill-resource'
-import { buildRemoteWorkspaceReadTool } from '../src/main/agent/remote-workspace-read-tool'
 
 test('remote skill reader exposes only loaded skill files without leaking local paths', async () => {
   const root = mkdtempSync(join(tmpdir(), 'phi-remote-skill-'))
   const skillDir = join(root, 'agent', 'skills', 'demo')
-  const anchor = join(root, 'remote-project-anchor')
   mkdirSync(join(skillDir, 'references'), { recursive: true })
-  mkdirSync(anchor)
   writeFileSync(join(skillDir, 'SKILL.md'), '# Demo\n\nUse the safe workflow.\n')
   writeFileSync(join(skillDir, 'references', 'guide.md'), '# Guide\n')
-  writeFileSync(join(anchor, 'SKILL.md'), 'ANCHOR MUST NOT BE READ')
   const skills = [
     {
       name: 'demo',
@@ -36,22 +32,6 @@ test('remote skill reader exposes only loaded skill files without leaking local 
     const directory = readRemoteSkillResource('skill://demo/references', skills)
     assert.equal(directory.kind, 'directory')
     assert.deepEqual(directory.entries, [{ name: 'guide.md', isDirectory: false }])
-
-    let remoteProjectReads = 0
-    const tool = buildRemoteWorkspaceReadTool(
-      async () => {
-        remoteProjectReads += 1
-        throw new Error('must not route skill:// to the server project')
-      },
-      { readResource: (uri) => readRemoteSkillResource(uri, skills) }
-    )
-    const result = await tool.execute('skill-read', { path: 'skill://demo' }, undefined, {
-      cwd: anchor,
-      recentUserImages: () => []
-    } as never)
-    assert.equal(result.isError, undefined)
-    assert.equal(remoteProjectReads, 0)
-    assert.doesNotMatch(JSON.stringify(result), new RegExp(anchor.replaceAll('/', '\\/')))
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

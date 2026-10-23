@@ -77,11 +77,7 @@ class AgentSessionCreationService<
   }
 
   private readonly resolveSessionCreationRoute = (context: SessionCreationContext): boolean => {
-    const useRpc = this.deps.workspace.isRemoteOmpRpcEnabled() && context.remoteProject !== null
-    if (context.sessionManifest?.runtimeRef && !useRpc) {
-      throw new Error('此会话属于远程 RPC 运行时，请启用对应运行路径后显式恢复')
-    }
-    return useRpc
+    return context.remoteProject !== null
   }
 
   private readonly recordSessionCreationModelMigration = (
@@ -256,8 +252,7 @@ class AgentSessionCreationService<
         snapshot: context.snapshot,
         generation: context.generation,
         sessionManifestId: context.sessionManifest?.sessionId,
-        project: context.project,
-        remoteProject: context.remoteProject
+        project: context.project
       },
       this.deps.resources.approvalDependencies
     )

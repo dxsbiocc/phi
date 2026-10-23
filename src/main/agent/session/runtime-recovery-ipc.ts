@@ -79,7 +79,6 @@ export function runtimeRecoveryMessage(issue: RuntimeRecoveryIssue): string {
     'journal-invalid': '原会话历史或定位信息无法验证。旧会话会保留，请核对服务器或选择摘要新会话。',
     'asset-missing': '原会话引用的服务器文件缺失，不能安全恢复原会话。',
     'binding-changed': '原会话的项目或服务器身份已改变，不能连接到其他位置冒充原会话。',
-    'not-enabled': '当前未启用远程会话运行，旧历史仍可查看。',
     'run-held': '该会话仍被另一个进程占用；Phi 没有终止该进程。请确认没有其他 Phi 正在使用后重试。',
     unknown: '原会话当前无法恢复，旧历史仍会保留。'
   }[issue]

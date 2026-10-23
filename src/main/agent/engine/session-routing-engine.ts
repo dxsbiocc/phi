@@ -143,7 +143,9 @@ export class SessionRoutingEngine implements PhiEngine {
       manifests.some(
         (manifest) =>
           manifest &&
-          (manifest.runtimeRef || manifest.runtimeRecoveryError) &&
+          (manifest.projectLocation?.kind === 'ssh' ||
+            manifest.runtimeRef ||
+            manifest.runtimeRecoveryError) &&
           (phiId ||
             (path &&
               (excludesManifestLocalJournalPath(manifest, path) ||

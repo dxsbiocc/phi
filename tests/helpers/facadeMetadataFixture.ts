@@ -331,7 +331,6 @@ export async function facadeMetadataFixture(
   const uninstall = options.applicationRouting
     ? installAppRemoteSessionRouting(
         {
-          enabled: true,
           agentDir,
           runners,
           appPaths: () => ({

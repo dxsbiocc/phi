@@ -28,10 +28,6 @@ import {
   type RemoteEditRequest
 } from '../src/main/agent/remote-workspace-edit'
 import type { RemoteWriteRequest } from '../src/main/agent/remote-workspace-write'
-import {
-  buildRemoteWorkspaceEditTool,
-  PHI_REMOTE_EDIT_DESCRIPTION
-} from '../src/main/agent/remote-workspace-edit-tool'
 import { readRemoteWorkspacePath } from '../src/main/agent/remote-workspace-read'
 import type {
   RemoteExecResult,
@@ -395,34 +391,4 @@ test('replace mode refuses ambiguous or missing old text and supports replace_al
   assert.throws(() => applyRemoteReplace('one two one', 'one', 'x'), /出现多次/)
   assert.throws(() => applyRemoteReplace('one two', 'missing', 'x'), /不匹配/)
   assert.equal(applyRemoteReplace('one two one', 'one', 'x', true), 'x two x')
-})
-
-test('ordinary edit tool keeps OMP replace arguments and remote result shape', async () => {
-  const tool = buildRemoteWorkspaceEditTool(async () => ({
-    status: 'updated',
-    path: 'ssh://cluster-a/project/note.txt',
-    bytes: 5,
-    oldText: 'before',
-    newText: 'after',
-    diff: '-before\n+after',
-    firstChangedLine: 1
-  }))
-  assert.equal(tool.name, 'edit')
-  assert.equal(tool.description, PHI_REMOTE_EDIT_DESCRIPTION)
-  const result = await tool.execute(
-    'call',
-    { path: 'note.txt', old_string: 'before', new_string: 'after' },
-    () => undefined,
-    {} as never,
-    new AbortController().signal
-  )
-  assert.equal(result.isError, undefined)
-  assert.deepEqual(result.details, {
-    path: 'ssh://cluster-a/project/note.txt',
-    resolvedPath: 'ssh://cluster-a/project/note.txt',
-    diff: '-before\n+after',
-    firstChangedLine: 1,
-    oldText: 'before',
-    newText: 'after'
-  })
 })

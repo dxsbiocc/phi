@@ -26,6 +26,7 @@ import { messageContentTitleText } from '../../../shared/sessionTitle'
 import { remoteWorkspaceHosts } from '../workspace-host/remote-registry'
 import { excludesManifestLocalJournalPath } from './manifest-file'
 import { assertLocalRuntimeAccess, type RuntimeRecoveryDiagnostic } from './runtime-reference'
+import { isLegacyRemoteSession } from './legacy-remote-session'
 
 // Fixed cwd for ad-hoc conversations (not tied to a project) — independent of how
 // Electron happens to be launched (double-clicked vs `electron-vite dev` from some
@@ -71,6 +72,7 @@ export interface SessionSummary {
   currentRunStartedAt?: string
   lastActivityAt?: string
   runtimeRecoveryError?: RuntimeRecoveryDiagnostic
+  legacyRemoteSession?: boolean
 }
 
 function toSummary(info: SessionInfo): SessionSummary {
@@ -126,6 +128,7 @@ function phiOnlySummary(manifest: PhiSessionManifest): SessionSummary {
     currentRunId: manifest.currentRunId,
     currentRunStartedAt: manifest.currentRunStartedAt,
     lastActivityAt: manifest.lastActivityAt,
+    ...(isLegacyRemoteSession(manifest) ? { legacyRemoteSession: true } : {}),
     ...(manifest.runtimeRecoveryError
       ? { runtimeRecoveryError: manifest.runtimeRecoveryError }
       : {})
@@ -223,7 +226,8 @@ export function mergePhiSessionState(
         currentRunId: manifest.currentRunId,
         currentRunStartedAt: manifest.currentRunStartedAt,
         lastActivityAt: latestActivity,
-        modified: latestActivity > summary.modified ? latestActivity : summary.modified
+        modified: latestActivity > summary.modified ? latestActivity : summary.modified,
+        ...(isLegacyRemoteSession(manifest) ? { legacyRemoteSession: true } : {})
       }
     ]
   })
@@ -280,7 +284,8 @@ export function acknowledgeSession(path: string, cwd: string): SessionSummary | 
     lastRunOutcome: updated.lastRunOutcome,
     currentRunId: updated.currentRunId,
     currentRunStartedAt: updated.currentRunStartedAt,
-    lastActivityAt: updated.lastActivityAt
+    lastActivityAt: updated.lastActivityAt,
+    ...(isLegacyRemoteSession(updated) ? { legacyRemoteSession: true } : {})
   }
 }
 

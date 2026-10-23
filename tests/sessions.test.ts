@@ -568,6 +568,7 @@ test('legacy SSH-project desktop SDK history keeps local listing and deletion be
       '/desktop/legacy-anchor'
     )
     assert.equal(summary.phiSessionId, session.sessionId)
+    assert.equal(summary.legacyRemoteSession, true)
     deleteSession(summary.path)
     assert.equal(existsSync(localHistory), false)
     assert.equal(findPhiSessionById(session.sessionId), null)

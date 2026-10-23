@@ -16,6 +16,7 @@ import { resolveRemoteWorkspaceHostBinding } from './remote-workspace-boundary'
 import { openRemoteRuntimeWorkspace } from './remote-runtime/workspace'
 import { installRemoteSessionRouting } from './engine/in-process-engine'
 import { facadeBindingHash, type SelectedFacadeRuntime } from './engine/rpc/facade-session-driver'
+import { rpcToolNameExposesCredentialSurface } from './engine/phi-extension/lib/rpc-execution-protocol'
 import {
   createPhiExtensionBundle,
   resolvePhiExtensionSourceRoot
@@ -40,7 +41,7 @@ export interface AppRemoteDesktopResources {
 export function appRpcDesktopToolNames(
   resources?: NonNullable<SelectedFacadeRuntime['desktopTools']>
 ): readonly string[] {
-  return Object.freeze([
+  const names = [
     ...APP_RPC_NOTEBOOK_TOOL_NAMES,
     ...WRAPPER_COMPOSITION_TOOL_NAMES,
     'present_files',
@@ -65,7 +66,11 @@ export function appRpcDesktopToolNames(
           ...(resources.desktopMcp?.tools.map((tool) => tool.name) ?? [])
         ]
       : [])
-  ])
+  ]
+  if (names.some(rpcToolNameExposesCredentialSurface)) {
+    throw new Error('RPC desktop tools cannot expose credential or host-setup operations')
+  }
+  return Object.freeze(names)
 }
 
 /** Phi locators describe remote recovery; they are never opened as desktop journal files. */
@@ -83,7 +88,6 @@ export function createAppRemoteSessionManager(
 }
 
 export interface AppRemoteSessionRoutingOptions {
-  enabled: boolean
   /** Internal opt-in only; reports fixed names and numbers, never remote commands or paths. */
   startupDiagnostics?: RemoteStartupDiagnosticSink
   /** A previous remote run that outlived its SSH connection was stopped before this session launched. */
@@ -174,7 +178,7 @@ export function selectAppForegroundAgents(
   return Object.freeze(selected)
 }
 
-/** Actual main startup composition; the disabled path acquires no SSH/runtime resources. */
+/** Actual main startup composition. SSH projects always use this RPC route. */
 interface AppRemoteSessionRoutingDependencies {
   resolveBinding?: typeof resolveRemoteWorkspaceHostBinding
   openWorkspace?: typeof openRemoteRuntimeWorkspace
@@ -186,7 +190,6 @@ export function installAppRemoteSessionRouting(
   options: AppRemoteSessionRoutingOptions,
   dependencies: AppRemoteSessionRoutingDependencies = {}
 ): () => void {
-  if (!options.enabled) return () => undefined
   const names =
     options.foregroundAgentNames
       ?.split(',')

@@ -59,7 +59,6 @@ export interface SessionSwitchingDeps<TSessionResult, TPromptRun extends Switchi
   }
   creation: {
     getSelectedThinkingLevel: () => ThinkingLevel
-    isRemoteOmpRpcEnabled: () => boolean
     ensureRemoteProjectAnchor: (projectId: string) => string
   }
   invalidation: {
@@ -148,7 +147,7 @@ function createSessionCreationOperations<TSessionResult, TPromptRun extends Swit
       const cwd = deps.creation.ensureRemoteProjectAnchor(project.id)
       const model =
         deps.state.sessionState.selectedModel !== undefined &&
-        !(deps.creation.isRemoteOmpRpcEnabled() && deps.state.sessionState.selectedModel === null)
+        deps.state.sessionState.selectedModel !== null
           ? deps.state.sessionState.selectedModel
           : (project.defaultModel ?? null)
       const session = stores.createPhiSession({
@@ -157,6 +156,7 @@ function createSessionCreationOperations<TSessionResult, TPromptRun extends Swit
         projectLocation: project.location,
         cwd,
         cwdRealPath: cwd,
+        remoteRuntime: 'rpc',
         permissionMode: project.permissionMode,
         model,
         ...(project.defaultThinkingLevel ? { thinkingLevel: project.defaultThinkingLevel } : {})

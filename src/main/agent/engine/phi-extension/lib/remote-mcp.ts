@@ -1,6 +1,11 @@
 import { relative, resolve } from 'node:path'
 
-import type { PhiRemoteMcpGuardState } from '../host'
+export interface PhiRemoteMcpGuardState {
+  allowedToolNames: ReadonlySet<string>
+  blockedServerReasons: ReadonlyMap<string, string>
+  agentDir: string
+  localProjectAnchor: string
+}
 
 export const REMOTE_MCP_PROJECT_DEPENDENCY_REASON =
   '该 MCP 依赖项目文件，需要在服务器运行，暂未支持。请改用远程 read/bash/skill_run，或等待服务器端 stdio MCP 支持；该操作没有回退到本机项目锚点。'

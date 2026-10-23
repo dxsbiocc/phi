@@ -26,6 +26,7 @@ import {
   updateSessionManifest,
   type PhiSessionManifest
 } from '../agent/session/session-store'
+import { isLegacyRemoteSession } from '../agent/session/legacy-remote-session'
 import {
   acknowledgeSession,
   deleteSession,
@@ -319,7 +320,7 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
         shouldBecomeCurrent &&
         projectLocation?.kind === 'ssh' &&
         manifest.projectId &&
-        !(options.recovery.state.isRemoteOmpRpcEnabled() && manifest.runtimeRef)
+        !manifest.runtimeRef
       ) {
         options.remote.scheduleRemoteProjectCheck(manifest.sessionId, manifest.projectId)
       }
@@ -330,6 +331,7 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
         displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : target.cwd,
         ...(manifest.projectId ? { projectId: manifest.projectId } : {}),
         ...(projectLocation ? { projectLocation } : {}),
+        ...(isLegacyRemoteSession(manifest) ? { legacyRemoteSession: true } : {}),
         sessionGeneration: target.sessionGeneration,
         permissionMode: manifest.permissionMode,
         ...status.getSessionStatusPayload(targetKey, path, target.cwd),
@@ -388,6 +390,7 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
       displayCwd: projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : target.cwd,
       ...(linkedManifest?.projectId ? { projectId: linkedManifest.projectId } : {}),
       ...(projectLocation ? { projectLocation } : {}),
+      ...(isLegacyRemoteSession(linkedManifest) ? { legacyRemoteSession: true } : {}),
       sessionGeneration: target.sessionGeneration,
       permissionMode,
       ...status.getSessionStatusPayload(targetKey, sessionPath, target.cwd),

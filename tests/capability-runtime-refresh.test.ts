@@ -334,9 +334,6 @@ test('a running fallback guard observes a newly installed required-first special
       failures: 0,
       reason: 'Research must be delegated first.'
     }),
-    remoteSkillToolNames: () => new Set(),
-    remoteAgentToolDescriptions: () => new Map(),
-    remoteMcpToolState: () => undefined,
     environmentBinding: () => undefined,
     hostEnvironment: () => ({})
   })

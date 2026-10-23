@@ -2,6 +2,7 @@ import { cpSync, existsSync } from 'node:fs'
 import { SessionManager } from '@oh-my-pi/pi-coding-agent'
 import { readRuntimeSessionMessagesText } from '../../runtime/runtime-session-text'
 import { isRecord, stringValue } from './common'
+import { assertInProcessLocalProject } from './local-project-boundary'
 
 export async function listSessions(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
@@ -20,14 +21,19 @@ export async function openSession(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const path = stringValue(record.path)
   const cwd = stringValue(record.cwd, process.cwd())
+  assertInProcessLocalProject({ ...record, cwd })
   const manager = await SessionManager.open(path, undefined, undefined, { initialCwd: cwd })
-  const result = {
-    cwd: manager.getCwd(),
-    sessionFile: manager.getSessionFile(),
-    name: manager.getSessionName()
+  try {
+    const managerCwd = manager.getCwd()
+    assertInProcessLocalProject({ ...record, cwd: managerCwd })
+    return {
+      cwd: managerCwd,
+      sessionFile: manager.getSessionFile(),
+      name: manager.getSessionName()
+    }
+  } finally {
+    await manager.close()
   }
-  await manager.close()
-  return result
 }
 
 export function userMessageText(message: unknown): string | null {

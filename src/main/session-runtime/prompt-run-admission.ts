@@ -4,6 +4,8 @@ import type { SessionLifecycle, SessionSnapshot } from '../agent/session/session
 import type { PromptImageInput } from '../../shared/promptImageTypes'
 import type { SessionKeyLinking } from './session-key-linking'
 import type { SessionResolution } from './session-resolution'
+import type { PhiSessionManifest } from '../agent/session/session-store'
+import { assertLegacyRemoteSessionCanPrompt } from '../agent/session/legacy-remote-session'
 
 export interface SubmitPromptInput {
   sessionKey: string
@@ -43,6 +45,9 @@ export interface PromptRunAdmissionDeps<TResult> {
   }
   resolution: Pick<SessionResolution, 'projectForSession' | 'resolveSessionModelSelection'>
   linking: Pick<SessionKeyLinking, 'ensurePhiSessionId'>
+  sessions: {
+    findById(phiSessionId: string): PhiSessionManifest | null
+  }
   runs: {
     hasActiveRun(sessionKey: string): boolean
     runtimeRecoveryOperations: {
@@ -100,6 +105,7 @@ function admitPromptRun<TResult>(
     target.runSnapshot,
     target.normalizedText || (target.input.images?.length ? '图片' : undefined)
   )
+  assertLegacyRemoteSessionCanPrompt(deps.sessions.findById(phiSessionId))
   if (deps.runs.runtimeRecoveryOperations.has(phiSessionId))
     throw new Error('会话正在恢复，请等待恢复操作结束')
   if (deps.runs.manualCompactionIds.has(phiSessionId)) {

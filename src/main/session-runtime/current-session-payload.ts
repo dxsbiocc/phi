@@ -9,6 +9,7 @@ import type { SessionKeyRegistry } from '../app-state/session-key-registry'
 import type { SessionLifecycleRegistry } from '../app-state/session-lifecycle-registry'
 import type { SessionState } from '../app-state/session-state'
 import type { SessionResolution } from './session-resolution'
+import { isLegacyRemoteSession } from '../agent/session/legacy-remote-session'
 
 interface CurrentSessionPromptRun {
   phiSessionId: string
@@ -139,6 +140,7 @@ export function createCurrentSessionPayload<
       displayCwd:
         projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : deps.sessionState.cwd,
       ...selectCurrentSessionProjectPayloadFields(manifest, project, projectLocation),
+      ...(isLegacyRemoteSession(manifest) ? { legacyRemoteSession: true } : {}),
       sessionGeneration: deps.lifecycles.forKey(deps.sessionState.sessionKey).currentGeneration,
       permissionMode: deps.sessionState.permissionMode,
       ...getSessionStatusPayload(

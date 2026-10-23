@@ -15,6 +15,9 @@ export const chatEnglish = {
   sendMessage: 'Send message',
   stopGenerating: 'Stop generating',
   runningClickToStopGenerating: 'Running, click to stop generating',
+  thisSessionWasCreatedByTheLegacyRemoteRuntimeAndCannotContinue:
+    'This session was created by the legacy remote runtime and cannot continue.',
+  startANewSessionInThisProject: 'Start a new session in this project',
   viewDetails: 'View details',
   noFurtherDetails: 'No further details.',
   contextCompaction: 'Context compaction',

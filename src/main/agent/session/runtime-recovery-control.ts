@@ -74,7 +74,6 @@ export interface RuntimeRecoveryControlOptions {
     getCurrentSessionPath: () => string | undefined
     getCurrentCwd: () => string
     getCurrentPermissionMode: () => PermissionMode
-    isRemoteOmpRpcEnabled: () => boolean
     runtimeRecoveryOperations: PhiSessionTable<RuntimeRecoveryOperation>
     runtimeRecoveryFailures: PhiSessionTable<RuntimeRecoveryIssue>
     manualCompactionIds: PhiSessionSetTable
@@ -275,13 +274,7 @@ async function captureRuntimeRecoveryScope(
       issue = selectedBinding ? describeRemoteRecoveryFailure(error).issue : 'binding-changed'
     }
   }
-  if (!options.state.isRemoteOmpRpcEnabled()) issue = 'not-enabled'
-  if (
-    options.state.isRemoteOmpRpcEnabled() &&
-    manifest.model &&
-    !busy() &&
-    !options.state.runtimeRecoveryOperations.has(target.sessionId)
-  ) {
+  if (manifest.model && !busy() && !options.state.runtimeRecoveryOperations.has(target.sessionId)) {
     const runtime = await getAuthManager().getRuntime()
     assertCurrent()
     const saved = options.models.resolveRuntimeModelSelection(runtime, manifest.model)
@@ -298,9 +291,8 @@ async function captureRuntimeRecoveryScope(
           : 'not-started',
     issue,
     message: runtimeRecoveryMessage(issue),
-    canResume: !live && !busy() && options.state.isRemoteOmpRpcEnabled() && validReference,
+    canResume: !live && !busy() && validReference,
     canContinueFromSummary:
-      options.state.isRemoteOmpRpcEnabled() &&
       Boolean(manifest.runtimeRef || manifest.runtimeRecoveryError) &&
       currentProject?.location.kind === 'ssh',
     ...(manifest.model ? { savedModel: manifest.model } : {})

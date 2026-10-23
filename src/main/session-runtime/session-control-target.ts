@@ -75,9 +75,6 @@ export interface SessionControlTargetDeps<TResult extends ControlSessionResult> 
     hostProfile(profileId: string): RemoteHostProfile | undefined
     connectionConfig(profile: RemoteHostProfile): unknown
   }
-  runtime: {
-    remoteOmpRpcEnabled(): boolean
-  }
 }
 
 function sessionControlBinding<TResult extends ControlSessionResult>(
@@ -189,10 +186,7 @@ function captureSessionControlTarget<TResult extends ControlSessionResult>(
   const manifest = deps.sessions.findById(phiSessionId)
   const initialBinding = sessionControlBinding(deps, manifest)
   let expectedJournal = sessionControlJournal(manifest)
-  const rpc = Boolean(
-    manifest?.runtimeRef ||
-    (deps.runtime.remoteOmpRpcEnabled() && manifest?.projectLocation?.kind === 'ssh')
-  )
+  const rpc = Boolean(manifest?.runtimeRef || manifest?.projectLocation?.kind === 'ssh')
   const assertCurrent = (): void => {
     assertSessionControlTargetCurrent(deps, {
       key,

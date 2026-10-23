@@ -193,41 +193,6 @@
       "plan": "remove"
     },
     {
-      "file": "tests/helpers/remoteAgentLoopSmoke.ts",
-      "specifiers": [
-        "@oh-my-pi/pi-ai/providers/mock",
-        "@oh-my-pi/pi-coding-agent",
-        "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
-        "@oh-my-pi/pi-coding-agent/mcp/config",
-        "@oh-my-pi/pi-coding-agent/mcp/manager",
-        "@oh-my-pi/pi-coding-agent/modes/runtime-init",
-        "@oh-my-pi/pi-utils"
-      ],
-      "purpose": "Mock model, agent session, MCP, extension, and agent-directory APIs for the remote loop smoke fixture; replaced by T7 engine contract tests or R9 cleanup",
-      "plan": "remove"
-    },
-    {
-      "file": "tests/helpers/remoteOmpToolSmoke.ts",
-      "specifiers": [
-        "@oh-my-pi/pi-coding-agent",
-        "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
-        "@oh-my-pi/pi-coding-agent/modes/runtime-init"
-      ],
-      "purpose": "Agent session, resource loader, settings, and extension APIs for the remote OMP tool smoke fixture; replaced by T7 engine contract tests or R9 cleanup",
-      "plan": "remove"
-    },
-    {
-      "file": "tests/helpers/remoteParityToolSmoke.ts",
-      "specifiers": [
-        "@oh-my-pi/pi-coding-agent/tools/settings",
-        "@oh-my-pi/pi-coding-agent",
-        "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim",
-        "@oh-my-pi/pi-coding-agent/modes/runtime-init"
-      ],
-      "purpose": "Agent session, custom tool, settings, and extension APIs for the remote parity smoke fixture; replaced by T7 engine contract tests or R9 cleanup",
-      "plan": "remove"
-    },
-    {
       "file": "tests/helpers/specialistToolApprovalSmoke.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent",
@@ -351,10 +316,7 @@
     },
     {
       "file": "src/main/agent/engine/phi-extension/extensions/rpc-task-definition-verifier.ts",
-      "specifiers": [
-        "@oh-my-pi/pi-coding-agent/task",
-        "@oh-my-pi/pi-coding-agent/task/agents"
-      ],
+      "specifiers": ["@oh-my-pi/pi-coding-agent/task", "@oh-my-pi/pi-coding-agent/task/agents"],
       "purpose": "Pinned OMP 18.10.3 dispatch guard uses OMP's own public discovery selection and parser so the checked AgentDefinition is the source/content record native TaskTool will run; verified by actual compiled-CLI shadow and negative-control tests",
       "plan": "keep"
     },

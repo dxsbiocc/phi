@@ -64,12 +64,11 @@ test('application foreground selection never strips unsupported fields from a se
     )
 })
 
-test('disabled application routing acquires no resources and installs no remote factory', () => {
+test('application routing validates its trusted configuration unconditionally', () => {
   const unexpected = (): never => {
     throw new Error('disabled routing touched a resource')
   }
   const options: AppRemoteSessionRoutingOptions = {
-    enabled: false,
     agentDir: '/unused',
     runners: {} as AppRemoteSessionRoutingOptions['runners'],
     appPaths: unexpected,
@@ -78,9 +77,8 @@ test('disabled application routing acquires no resources and installs no remote 
     foregroundAgentNames: 'invalid-renderer-name',
     approval: { shouldGate: unexpected, requestToolApproval: unexpected }
   }
-  assert.doesNotThrow(installAppRemoteSessionRouting(options))
   assert.throws(
-    () => installAppRemoteSessionRouting({ ...options, enabled: true }),
+    () => installAppRemoteSessionRouting(options),
     /Invalid RPC foreground agent selection/
   )
 })

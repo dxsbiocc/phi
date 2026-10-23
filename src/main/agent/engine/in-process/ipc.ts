@@ -1,9 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import { RemoteWorkspaceReadResult } from '../../remote-workspace-read'
-import {
-  readRemoteSkillResource,
-  type RemoteReadableSkill
-} from '../../content/remote-skill-resource'
 import { HostRequestContext, HostResponse, UnknownRecord, toJsonSafe } from './common'
 import { pendingHostRequests } from './state'
 
@@ -45,25 +40,6 @@ export function requestHost(
   })
   return new Promise<unknown>((resolve, reject) => {
     pendingHostRequests.set(id, { resolve, reject })
-  })
-}
-
-export function readLoadedSkillResource(
-  path: string,
-  skills: readonly RemoteReadableSkill[],
-  remoteProject?: { sessionId: string; projectId: string }
-): RemoteWorkspaceReadResult | Promise<RemoteWorkspaceReadResult> {
-  return readRemoteSkillResource(path, skills, {
-    ...(remoteProject
-      ? {
-          readRemote: async (uri: string) =>
-            (await requestHost('remoteSkills.readResource', {
-              sessionId: remoteProject.sessionId,
-              projectId: remoteProject.projectId,
-              path: uri
-            })) as RemoteWorkspaceReadResult
-        }
-      : {})
   })
 }
 

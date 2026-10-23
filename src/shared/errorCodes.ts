@@ -4,6 +4,8 @@
  * not been migrated yet is `UNKNOWN`.
  */
 
+export const LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE = 'LEGACY_REMOTE_SESSION_READ_ONLY' as const
+
 export const ERROR_CODES = {
   /** The transport is confirmed dead: the project goes offline and hosts are released. */
   TRANSPORT_LOST: { retryable: true },
@@ -19,6 +21,8 @@ export const ERROR_CODES = {
   DOMAIN_NOT_FOUND: { retryable: false },
   DOMAIN_INVALID: { retryable: false },
   DOMAIN_CONFLICT: { retryable: false },
+  /** A pre-RPC SSH history is readable but can never accept another prompt. */
+  [LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE]: { retryable: false },
   /** Not migrated to structured codes yet. */
   UNKNOWN: { retryable: false }
 } as const satisfies Record<string, { retryable: boolean }>

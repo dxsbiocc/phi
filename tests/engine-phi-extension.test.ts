@@ -15,11 +15,9 @@ import { HOST_PROVIDED_OMP_IMPORTS } from '../src/main/agent/engine/rpc/extensio
 
 import {
   createMainSessionExtensions,
-  createRemoteProjectToolGuardExtension,
   createSpecialistExtensions,
   type PhiExtensionConfig,
-  type PhiExtensionHost,
-  type RemoteProjectToolInfo
+  type PhiExtensionHost
 } from '../src/main/agent/engine/phi-extension'
 
 const packageRoot = resolve('src/main/agent/engine/phi-extension')
@@ -28,8 +26,7 @@ type PhiExtensionFactory = ReturnType<typeof createMainSessionExtensions>[number
 type RecordedHandler = (event: Record<string, unknown>, context?: unknown) => unknown
 
 async function recordFactories(
-  factories: readonly PhiExtensionFactory[],
-  tools: readonly RemoteProjectToolInfo[] = []
+  factories: readonly PhiExtensionFactory[]
 ): Promise<{ events: string[]; handlers: RecordedHandler[] }> {
   const events: string[] = []
   const handlers: RecordedHandler[] = []
@@ -38,7 +35,7 @@ async function recordFactories(
       events.push(event)
       handlers.push(handler)
     },
-    getAllTools: () => tools
+    getAllTools: () => []
   }
   for (const factory of factories) await factory(pi as never)
   return { events, handlers }
@@ -73,12 +70,11 @@ const FIXED_TOOL_EVENTS: Record<string, unknown>[] = [
 
 async function assertBuilderParity(
   actual: readonly PhiExtensionFactory[],
-  previous: readonly PhiExtensionFactory[],
-  tools: readonly RemoteProjectToolInfo[] = []
+  previous: readonly PhiExtensionFactory[]
 ): Promise<void> {
   assert.equal(actual.length, previous.length, 'factory count differs from d422a51b')
-  const actualRecord = await recordFactories(actual, tools)
-  const previousRecord = await recordFactories(previous, tools)
+  const actualRecord = await recordFactories(actual)
+  const previousRecord = await recordFactories(previous)
   assert.deepEqual(actualRecord.events, previousRecord.events)
   assert.equal(actualRecord.handlers.length, previousRecord.handlers.length)
   for (let index = 0; index < actualRecord.handlers.length; index += 1) {
@@ -121,7 +117,6 @@ function config(overrides: Partial<PhiExtensionConfig> = {}): PhiExtensionConfig
   return {
     cwd: process.cwd(),
     projectBound: false,
-    remote: false,
     enableToolApproval: false,
     sessionId: 'session-1',
     useBrowserTextVault: false,
@@ -138,9 +133,6 @@ function host(overrides: Partial<PhiExtensionHost> = {}): PhiExtensionHost {
     browserApprovalInput: (_toolCallId, input) => input,
     markBrowserTextDenied: () => undefined,
     fallbackReadiness: () => ({ allowed: true, failures: 0 }),
-    remoteSkillToolNames: () => new Set(),
-    remoteAgentToolDescriptions: () => new Map(),
-    remoteMcpToolState: () => undefined,
     environmentBinding: () => undefined,
     hostEnvironment: () => ({}),
     ...overrides
@@ -250,37 +242,10 @@ test('self-containment checker rejects runtime OMP, every external reference for
   }
 })
 
-test('remote dynamic agent registrations require both declared names and exact descriptions as before T6', async () => {
-  const prior = previousExtensions(config(), host())
-  const tools: RemoteProjectToolInfo[] = [
-    { name: 'skill_run', description: 'sentinel', sourceInfo: { source: 'extension' } },
-    { name: 'Analyst', description: 'sentinel', sourceInfo: { source: 'extension' } }
-  ]
-  for (const toolName of ['skill_run', 'Analyst']) {
-    for (const includeNames of [false, true]) {
-      const options = {
-        ...(includeNames ? { dynamicAgentToolNames: () => new Set<string>() } : {}),
-        dynamicAgentToolDescriptions: () => new Map([[toolName, 'sentinel']])
-      }
-      const event = { toolName, input: { action: 'navigate', url: 'https://example.com' } }
-      const actual = await recordFactories([createRemoteProjectToolGuardExtension(options)], tools)
-      const previous = await recordFactories([prior.remoteGuard(options)], tools)
-      const expected = await previous.handlers[0]?.(event)
-      assert.equal((expected as { block?: boolean })?.block, true)
-      assert.deepEqual(
-        await actual.handlers[0]?.(event),
-        expected,
-        `${toolName}, explicit names: ${includeNames}`
-      )
-    }
-  }
-})
-
 test('PhiExtensionConfig survives a JSON round trip unchanged', () => {
   const original = config({
     cwd: '/work/project',
     projectBound: true,
-    remote: true,
     enableToolApproval: true,
     sessionId: 'session-json',
     agentRunId: 'run-json',
@@ -301,70 +266,49 @@ test('PhiExtensionConfig survives a JSON round trip unchanged', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(original)), original)
 })
 
-test('main and specialist builders preserve prior decisions except the OMP 18.10 environment transport', async () => {
-  const tools: RemoteProjectToolInfo[] = [
-    { name: 'plot_save', description: 'plot', sourceInfo: { source: 'extension' } },
-    { name: 'Analyst', description: 'remote analyst', sourceInfo: { source: 'extension' } },
-    { name: 'mcp__api_fetch', description: 'fetch', sourceInfo: { source: 'mcp' } }
-  ]
-  for (const remote of [false, true]) {
-    for (const active of [false, true]) {
-      for (const bound of [false, true]) {
-        const binding = bound
-          ? { ref: 'phi:python@1', variables: { PATH: '/runtime/bin' } }
-          : undefined
-        const extensionConfig = config({
-          remote,
-          projectBound: bound,
-          enableToolApproval: bound,
-          useBrowserTextVault: bound,
-          ...(binding ? { environmentBinding: binding } : {}),
-          phiAgents: bound
-            ? [
-                {
-                  name: 'Analyst',
-                  delegationMode: 'required-first',
-                  fallback: { afterFailures: 1, tools: ['bash'], match: ['nextflow'] }
-                }
-              ]
-            : []
-        })
-        const extensionHost = host({
-          nextActionSuggestionsEnabled: async () => active,
-          planModeActive: () => active,
-          environmentBinding: () => binding,
-          hostEnvironment: () => ({ PATH: '/host/bin', SECRET: 'hidden' }),
-          fallbackReadiness: () => ({ allowed: !active, failures: active ? 0 : 1 }),
-          remoteSkillToolNames: () => new Set(['plot_save']),
-          remoteAgentToolDescriptions: () => new Map(bound ? [['Analyst', 'remote analyst']] : []),
-          remoteMcpToolState: () => ({
-            allowedToolNames: new Set(['mcp__api_fetch']),
-            blockedServerReasons: new Map(),
-            agentDir: '/agent',
-            localProjectAnchor: '/anchor'
-          }),
-          requestToolApproval: async () =>
-            active ? { block: true, reason: 'approval sentinel' } : null,
-          browserApprovalInput: () => ({ action: 'typeText', text: '[vault]' })
-        })
-        const previous = previousExtensions(extensionConfig, extensionHost)
-        await assertBuilderParity(
-          createMainSessionExtensions(extensionConfig, extensionHost),
-          previous.main,
-          tools
-        )
-        // Specialists never receive the main browser vault or Phi agent registrations.
-        const specialistConfig = { ...extensionConfig, useBrowserTextVault: false, phiAgents: [] }
-        const specialistHost = {
-          ...extensionHost,
-          remoteAgentToolDescriptions: () => new Map<string, string>()
-        }
-        await assertBuilderParity(
-          createSpecialistExtensions(specialistConfig, specialistHost),
-          previousExtensions(specialistConfig, specialistHost).specialist,
-          tools
-        )
-      }
+test('local main and specialist builders preserve prior decisions except the OMP 18.10 environment transport', async () => {
+  for (const active of [false, true]) {
+    for (const bound of [false, true]) {
+      const binding = bound
+        ? { ref: 'phi:python@1', variables: { PATH: '/runtime/bin' } }
+        : undefined
+      const extensionConfig = config({
+        projectBound: bound,
+        enableToolApproval: bound,
+        useBrowserTextVault: bound,
+        ...(binding ? { environmentBinding: binding } : {}),
+        phiAgents: bound
+          ? [
+              {
+                name: 'Analyst',
+                delegationMode: 'required-first',
+                fallback: { afterFailures: 1, tools: ['bash'], match: ['nextflow'] }
+              }
+            ]
+          : []
+      })
+      const extensionHost = host({
+        nextActionSuggestionsEnabled: async () => active,
+        planModeActive: () => active,
+        environmentBinding: () => binding,
+        hostEnvironment: () => ({ PATH: '/host/bin', SECRET: 'hidden' }),
+        fallbackReadiness: () => ({ allowed: !active, failures: active ? 0 : 1 }),
+        requestToolApproval: async () =>
+          active ? { block: true, reason: 'approval sentinel' } : null,
+        browserApprovalInput: () => ({ action: 'typeText', text: '[vault]' })
+      })
+      const previous = previousExtensions(extensionConfig, extensionHost)
+      await assertBuilderParity(
+        createMainSessionExtensions(extensionConfig, extensionHost),
+        previous.main
+      )
+      // Specialists never receive the main browser vault or Phi agent registrations.
+      const specialistConfig = { ...extensionConfig, useBrowserTextVault: false, phiAgents: [] }
+      const specialistHost = { ...extensionHost }
+      await assertBuilderParity(
+        createSpecialistExtensions(specialistConfig, specialistHost),
+        previousExtensions(specialistConfig, specialistHost).specialist
+      )
     }
   }
 })
@@ -530,47 +474,6 @@ test('browser approval preserves d422a51b sanitized inputs, request metadata, an
   }
 })
 
-test('main remote builder reads live skill, agent, and MCP policy from the host', async () => {
-  const agentDescription = 'dynamic remote agent'
-  const tools: RemoteProjectToolInfo[] = [
-    { name: 'plot_save', description: 'plot', sourceInfo: { source: 'extension' } },
-    { name: 'Analyst', description: agentDescription, sourceInfo: { source: 'extension' } },
-    { name: 'mcp__api_fetch', description: 'fetch', sourceInfo: { source: 'mcp' } }
-  ]
-  const extensionHost = host({
-    remoteSkillToolNames: () => new Set(['plot_save']),
-    remoteAgentToolDescriptions: () => new Map([['Analyst', agentDescription]]),
-    remoteMcpToolState: () => ({
-      allowedToolNames: new Set(['mcp__api_fetch']),
-      blockedServerReasons: new Map(),
-      agentDir: '/agent',
-      localProjectAnchor: '/anchor'
-    })
-  })
-  const remoteConfig = config({
-    remote: true,
-    phiAgents: [{ name: 'Analyst', delegationMode: 'optional' }]
-  })
-  const remoteFactories = createMainSessionExtensions(remoteConfig, extensionHost)
-  await assertBuilderParity(
-    remoteFactories,
-    previousExtensions(remoteConfig, extensionHost).main,
-    tools
-  )
-  const recorded = await recordFactories(remoteFactories, tools)
-  assert.deepEqual(recorded.events, [
-    'before_agent_start',
-    'tool_call',
-    'tool_call',
-    'tool_call',
-    'tool_call'
-  ])
-  const remoteGuard = recorded.handlers[2]
-  assert.equal(await remoteGuard?.({ toolName: 'plot_save', input: {} }), undefined)
-  assert.equal(await remoteGuard?.({ toolName: 'Analyst', input: {} }), undefined)
-  assert.equal(await remoteGuard?.({ toolName: 'mcp__api_fetch', input: {} }), undefined)
-})
-
 test('plan guard follows live mode changes without rebuilding extensions', async () => {
   let active = false
   const recorded = await recordFactories(
@@ -586,10 +489,9 @@ test('plan guard follows live mode changes without rebuilding extensions', async
   )
 })
 
-test('specialist builder preserves remote, URL, plan, approval, and binding order', async () => {
+test('specialist builder preserves URL, plan, approval, and binding order', async () => {
   const binding = { ref: 'phi:python@1', variables: { PATH: '/runtime/bin' } }
   const specialistConfig = config({
-    remote: true,
     enableToolApproval: true,
     agentRunId: 'run-1',
     environmentBinding: binding
@@ -606,14 +508,8 @@ test('specialist builder preserves remote, URL, plan, approval, and binding orde
     previousExtensions(specialistConfig, specialistHost).specialist
   )
   const recorded = await recordFactories(specialistFactories)
-  assert.deepEqual(recorded.events, [
-    'tool_call',
-    'tool_call',
-    'tool_call',
-    'tool_call',
-    'tool_call'
-  ])
-  const rewritten = await recorded.handlers[4]?.({
+  assert.deepEqual(recorded.events, ['tool_call', 'tool_call', 'tool_call', 'tool_call'])
+  const rewritten = await recorded.handlers[3]?.({
     toolName: 'bash',
     input: { command: 'python run.py' }
   })
