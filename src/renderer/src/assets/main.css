@@ -2,8 +2,9 @@
 
 :root {
   --font-stack:
-    -apple-system, BlinkMacSystemFont, 'PingFang SC', system-ui, 'Segoe UI', 'Microsoft YaHei',
-    Roboto, 'Helvetica Neue', Arial, sans-serif;
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI',
+    'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', 'WenQuanYi Micro Hei', system-ui, Arial,
+    sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, 'Liberation Mono', monospace;
 }
 
