@@ -8,7 +8,7 @@ import http2, {
   type ServerHttp2Stream
 } from 'node:http2'
 
-import { CURSOR_ORIGIN, CURSOR_RUN_PATH } from '../../cursor-h2-bridge'
+import { CURSOR_DEFAULT_BASE_URL, CURSOR_RUN_PATH } from '../omp-cursor-wire'
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024
 const MAX_REQUEST_BYTES = 128 * 1024 * 1024
@@ -304,7 +304,7 @@ class ScopedRequestForwarder {
     ) {
       throw new Error('credential unavailable')
     }
-    const upstream = http2.connect(this.context.options.upstreamOrigin ?? CURSOR_ORIGIN)
+    const upstream = http2.connect(this.context.options.upstreamOrigin ?? CURSOR_DEFAULT_BASE_URL)
     this.upstream = upstream
     this.context.upstreamSessions.add(upstream)
     upstream.once('close', () => this.context.upstreamSessions.delete(upstream))

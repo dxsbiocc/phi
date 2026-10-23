@@ -3397,6 +3397,7 @@ async function harness(
     },
     './agent/wrappers/catalog': {
       migrateLegacyCustomWrappers: (): string[] => [],
+      startLegacyBundledCleanup: (): Promise<void> => Promise.resolve(),
       listWrapperCatalog: (): unknown[] => [],
       addCustomWrapper: (): never => {
         throw new Error('wrapper.yaml 校验失败: (mocked in main-integration.test.ts)')

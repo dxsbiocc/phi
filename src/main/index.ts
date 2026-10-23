@@ -302,8 +302,7 @@ import {
   listSkills,
   readGlobalSkillContent
 } from './agent/resources'
-import { migrateLegacyCustomWrappers } from './agent/wrappers/catalog'
-import { retireLegacyBundledWrappers } from './agent/wrappers/legacy-bundled-cleanup'
+import { migrateLegacyCustomWrappers, startLegacyBundledCleanup } from './agent/wrappers/catalog'
 import { resetWrapperCompositionCatalogCache } from './agent/wrappers/composition/discovery'
 import { wrapperJobHostHandlers } from './agent/wrappers/composition/job-host-handlers'
 import { resolveWrapperJobHostScope } from './agent/wrappers/composition/job-host-scope'
@@ -3446,38 +3445,7 @@ function recoverStartupState(): void {
       metadata: { error: errorMessage(error) }
     })
   }
-  // Fire-and-forget: older builds seeded a bundled wrapper pack into `~/.phi/wrappers`;
-  // replace what is still in use with catalog copies and delete the rest. Needs the catalog,
-  // so it must not delay the window and a failure only means "retry next start".
-  void retireLegacyBundledWrappers({ agentDir: AGENT_DIR, appVersion: app.getVersion() })
-    .then((result) => {
-      if (
-        result.removed.length === 0 &&
-        result.replaced.length === 0 &&
-        result.failed.length === 0
-      ) {
-        return
-      }
-      writeAppLog({
-        level: result.failed.length > 0 ? 'warn' : 'info',
-        event: 'wrapper_bundled_legacy_retired',
-        metadata: {
-          removed: result.removed.length,
-          replaced: result.replaced,
-          failed: result.failed
-        }
-      })
-      if (result.removed.length > 0 || result.replaced.length > 0) {
-        resetWrapperCompositionCatalogCache()
-      }
-    })
-    .catch((error: unknown) => {
-      writeAppLog({
-        level: 'warn',
-        event: 'wrapper_bundled_legacy_retire_failed',
-        metadata: { error: errorMessage(error) }
-      })
-    })
+  void startLegacyBundledCleanup({ agentDir: AGENT_DIR, appVersion: app.getVersion() })
   // Fire-and-forget: resumes remote Slurm and detached runs left mid-flight by
   // the previous app session (see executor-slurm-reconcile.ts's doc comment).
   // Must never block startup — a network hiccup here shouldn't delay the window.

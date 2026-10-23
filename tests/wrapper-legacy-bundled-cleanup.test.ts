@@ -1,15 +1,25 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 
+import { getPhiLogDir } from '../src/main/agent/app-logger'
 import { readEnablementState, writeEnablementState } from '../src/main/agent/enablement'
 import { readWrapperTreeState } from '../src/main/agent/packages/wrapper-tree'
 import { isLegacyPackageRegistry } from '../src/shared/packageSourceIds'
 import {
   legacyBundledKeepIds,
   retireLegacyBundledWrappers,
+  startLegacyBundledCleanup,
   type LegacyBundledRoot
 } from '../src/main/agent/wrappers/legacy-bundled-cleanup'
 
@@ -235,6 +245,44 @@ test('a record that cannot be replaced is kept and retried next start', async ()
   assert.ok(
     existsSync(join(agentDir, 'wrappers', 'tree', 'modules/nf-core/module-nf-core-blast/main.nf'))
   )
+})
+
+function startupLog(): string {
+  const dir = getPhiLogDir()
+  if (!existsSync(dir)) return ''
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.jsonl'))
+    .map((name) => readFileSync(join(dir, name), 'utf8'))
+    .join('')
+}
+
+test('startup cleanup logs a retirement and stays quiet when nothing changes', async () => {
+  const clean = makeAgentDir([
+    { id: 'module-local-differential-expression', registry: 'phi-packages' }
+  ])
+  let installs = 0
+  const before = startupLog()
+  await startLegacyBundledCleanup({
+    agentDir: clean,
+    installCatalog: async () => {
+      installs += 1
+    }
+  })
+  assert.equal(installs, 0)
+  assert.equal(startupLog(), before)
+  assert.equal(existsSync(join(clean, 'wrappers', 'bundled.json')), false)
+
+  const dirty = makeAgentDir([{ id: 'module-nf-core-samtools', registry: 'bundled-wrappers' }])
+  await startLegacyBundledCleanup({
+    agentDir: dirty,
+    installCatalog: async () => {
+      installs += 1
+    }
+  })
+  assert.equal(installs, 0)
+  assert.equal(existsSync(join(dirty, 'wrappers', 'bundled.json')), false)
+  assert.match(startupLog().slice(before.length), /"event":"wrapper_bundled_legacy_retired"/)
+  assert.match(startupLog().slice(before.length), /"removed":1/)
 })
 
 test('a clean tree needs no catalog call', async () => {

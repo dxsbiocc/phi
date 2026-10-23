@@ -13,6 +13,7 @@ import { join } from 'node:path'
 
 import { errorMessage } from '../../../shared/errorCodes'
 import { isLegacyPackageRegistry } from '../../../shared/packageSourceIds'
+import { writeAppLog } from '../app-logger'
 import { readEnablementState, writeEnablementState } from '../enablement'
 import { installPackages } from '../packages/lifecycle'
 import { syncOfficialRegistry, prepareOfficialPackageInstall } from '../packages/official-registry'
@@ -24,6 +25,7 @@ import {
   type WrapperTreePackageState
 } from '../packages/wrapper-tree'
 import { getPhiAgentDir } from '../runtime-paths'
+import { resetWrapperCompositionCatalogCache } from './composition/discovery'
 
 export interface LegacyBundledCleanupResult {
   /** Legacy records removed without a catalog replacement. */
@@ -151,6 +153,42 @@ export async function retireLegacyBundledWrappers(
       .map(([id, reason]) => ({ id, reason }))
       .sort((left, right) => left.id.localeCompare(right.id))
   }
+}
+
+/**
+ * Fire-and-forget startup pass. Older builds seeded a bundled wrapper pack into
+ * `~/.phi/wrappers`; replace what is still in use with catalog copies and delete
+ * the rest. Needs the catalog, so it must not delay the window, and a failure
+ * only means "retry next start".
+ */
+export function startLegacyBundledCleanup(
+  options: LegacyBundledCleanupOptions = {}
+): Promise<void> {
+  return retireLegacyBundledWrappers(options)
+    .then(recordLegacyBundledCleanup)
+    .catch((error: unknown) => {
+      writeAppLog({
+        level: 'warn',
+        event: 'wrapper_bundled_legacy_retire_failed',
+        metadata: { error: errorMessage(error) }
+      })
+    })
+}
+
+function recordLegacyBundledCleanup(result: LegacyBundledCleanupResult): void {
+  if (result.removed.length === 0 && result.replaced.length === 0 && result.failed.length === 0) {
+    return
+  }
+  writeAppLog({
+    level: result.failed.length > 0 ? 'warn' : 'info',
+    event: 'wrapper_bundled_legacy_retired',
+    metadata: {
+      removed: result.removed.length,
+      replaced: result.replaced,
+      failed: result.failed
+    }
+  })
+  if (result.removed.length > 0 || result.replaced.length > 0) resetWrapperCompositionCatalogCache()
 }
 
 function packagesAreLegacy(agentDir: string, id: string): boolean {

@@ -1,4 +1,4 @@
-import { assertSafeBrowserHistory } from './browser-tool-stream'
+import { assertSafeBrowserHistory, cursorSafeHostTools } from './browser-tool-stream'
 import { publishRpcPromptPolicy } from './prompt-policy-publication'
 import type { RpcPromptPolicy } from '../phi-extension/lib/rpc-prompt-policy'
 import {
@@ -29,7 +29,7 @@ import {
 } from './approval-bridge'
 import { RpcHostToolBridge } from './host-tool-bridge'
 import { RpcHostResultDelivery } from './host-result-delivery'
-import { hostToolsForModelRoutes, registeredHostTools } from './host-tool-validation'
+import { registeredHostTools } from './host-tool-validation'
 import { readRemoteHistory, withRemoteSignal, type RemoteHistoryCheckpoint } from './history-pager'
 import {
   prepareModelProxyRpcSessionTransport,
@@ -543,9 +543,8 @@ export class RemoteSessionRuntime {
     const { options } = this
     const step = <T>(name: string, operation: () => Promise<T>): Promise<T> =>
       options.transport.startupDiagnostics?.step(name, operation) ?? operation()
-    const hostTools = hostToolsForModelRoutes(options.tools, options.transport.models)
     this.hostPolicy = createRpcRuntimeHostPolicy({
-      tools: hostTools,
+      tools: cursorSafeHostTools(options),
       currentRun: () => this.authority?.currentRun(),
       identity: () => this.authority!.sessionIdentity(),
       signal: this.lifetime.signal,
@@ -555,7 +554,7 @@ export class RemoteSessionRuntime {
         this.deniedRun = runId
       }
     })
-    const registered = registeredHostTools(hostTools)
+    const registered = registeredHostTools(cursorSafeHostTools(options))
     const nativeTools = Object.freeze([
       ...(options.nativeTools ?? (['read', 'write', 'edit', 'bash', 'glob', 'grep'] as const)),
       ...(options.foregroundChildren ? (['task'] as const) : [])
