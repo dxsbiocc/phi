@@ -1,4 +1,5 @@
 import { chatCopy } from '../features/chat/lib/chatCopy'
+import { nestedFoldChevronRevealSx } from '../features/chat/lib/nestedFoldChevronStyles'
 import { useUiLanguage } from '../lib/i18n'
 import {
   Box,
@@ -317,8 +318,9 @@ function AgentExecutionCard({
           borderRadius: 1,
           cursor: 'pointer',
           color: 'text.secondary',
-          transition: 'background-color 150ms',
-          '&:hover': { bgcolor: 'action.hover' },
+          transition: 'color 150ms',
+          ...nestedFoldChevronRevealSx,
+          '&:hover': { color: 'text.primary' },
           '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
         }}
       >
@@ -345,16 +347,28 @@ function AgentExecutionCard({
             <AgentIcon aria-hidden sx={{ fontSize: 16, color: 'primary.main' }} />
           )}
         </Box>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography component="div" variant="body2" noWrap sx={{ color: 'text.primary' }}>
-            {chatCopy.delegatedTo} {item.agentName}
-            {item.task ? `：${item.task}` : ''}
-          </Typography>
-          <Typography component="div" variant="caption" noWrap sx={{ color: 'text.secondary' }}>
-            {agentRunStatusText(item, { lost })} {chatCopy.duration} {elapsed} {chatCopy.steps}
-            {item.steps.length > 0 ? `${stepIndex + 1}/${item.steps.length}` : '0/0'}
-            {currentStep ? chatCopy.currentValue2(currentStep.toolName) : ''}
-          </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flex: 1, minWidth: 0 }}>
+          <Box sx={{ flex: '0 1 auto', minWidth: 0 }}>
+            <Typography component="div" variant="body2" noWrap sx={{ color: 'text.primary' }}>
+              {chatCopy.delegatedTo} {item.agentName}
+              {item.task ? `：${item.task}` : ''}
+            </Typography>
+            <Typography component="div" variant="caption" noWrap sx={{ color: 'inherit' }}>
+              {agentRunStatusText(item, { lost })} {chatCopy.duration} {elapsed} {chatCopy.steps}
+              {item.steps.length > 0 ? `${stepIndex + 1}/${item.steps.length}` : '0/0'}
+              {currentStep ? chatCopy.currentValue2(currentStep.toolName) : ''}
+            </Typography>
+          </Box>
+          <ChevronRightIcon
+            className="phi-nested-fold-chevron"
+            data-phi-agent-chevron="true"
+            aria-hidden
+            sx={{
+              fontSize: 16,
+              flexShrink: 0,
+              transform: expanded ? 'rotate(90deg)' : 'none'
+            }}
+          />
         </Box>
         {item.toolCalls !== undefined ? (
           <Typography variant="caption" sx={{ flexShrink: 0, fontFamily: 'var(--font-mono)' }}>
@@ -380,15 +394,6 @@ function AgentExecutionCard({
             </span>
           </Tooltip>
         ) : null}
-        <ChevronRightIcon
-          data-phi-agent-chevron="true"
-          sx={{
-            fontSize: 16,
-            flexShrink: 0,
-            transition: 'transform 150ms',
-            transform: expanded ? 'rotate(90deg)' : 'none'
-          }}
-        />
       </Box>
       <Collapse
         in={expanded}

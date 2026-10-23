@@ -1,6 +1,7 @@
 import { Box, Collapse, Typography } from '@mui/material'
 import { useState, type ReactNode } from 'react'
 import { chatEventCopy } from '../../features/chat/lib/chatEventCopy'
+import { nestedFoldChevronRevealSx } from '../../features/chat/lib/nestedFoldChevronStyles'
 import { PhiIcons } from '../../icons'
 import { useUiLanguage } from '../../lib/i18n'
 import { TimelineRail } from './TimelineRail'
@@ -76,43 +77,46 @@ export function NoticeRow({
           borderRadius: 1,
           cursor: 'pointer',
           color: LEVEL_COLOR[level],
-          transition: 'background-color 150ms',
-          '&:hover': { bgcolor: 'action.hover' },
+          ...nestedFoldChevronRevealSx,
+          '&:hover .phi-notice-title': { color: 'text.primary' },
           '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
         }}
       >
-        <ChevronRightIcon
-          aria-hidden
-          sx={{
-            fontSize: 16,
-            flexShrink: 0,
-            transition: 'transform 150ms',
-            transform: expanded ? 'rotate(90deg)' : 'none'
-          }}
-        />
         <Icon aria-hidden sx={{ fontSize: 16, flexShrink: 0 }} />
-        <Typography
-          component="span"
-          variant="body2"
-          noWrap
-          sx={{ flex: 1, minWidth: 0, color: 'inherit' }}
-        >
-          <Box
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flex: 1, minWidth: 0 }}>
+          <Typography
             component="span"
-            sx={{
-              position: 'absolute',
-              width: 1,
-              height: 1,
-              overflow: 'hidden',
-              clip: 'rect(0 0 0 0)'
-            }}
+            variant="body2"
+            noWrap
+            className="phi-notice-title"
+            sx={{ flex: '0 1 auto', minWidth: 0, color: 'inherit', transition: 'color 150ms' }}
           >
-            {levelLabel}
-            {separator}
-          </Box>
-          {title}
-          {detail ? `${separator}${detail}` : ''}
-        </Typography>
+            <Box
+              component="span"
+              sx={{
+                position: 'absolute',
+                width: 1,
+                height: 1,
+                overflow: 'hidden',
+                clip: 'rect(0 0 0 0)'
+              }}
+            >
+              {levelLabel}
+              {separator}
+            </Box>
+            {title}
+            {detail ? `${separator}${detail}` : ''}
+          </Typography>
+          <ChevronRightIcon
+            className="phi-nested-fold-chevron"
+            aria-hidden
+            sx={{
+              fontSize: 16,
+              flexShrink: 0,
+              transform: expanded ? 'rotate(90deg)' : 'none'
+            }}
+          />
+        </Box>
         {action ? (
           <Box
             sx={{ flexShrink: 0, color: 'text.primary' }}

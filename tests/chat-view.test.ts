@@ -1655,6 +1655,31 @@ test('only the latest thinking step in an active processing group is running', (
   assert.match(markup, /正在分析。/)
 })
 
+test('outer processing chevron follows its summary while nested chevrons reveal on hover', () => {
+  const outer = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ChatProcessingGroup, {
+        items: [],
+        startedAtMs: 0,
+        completedAtMs: 1000,
+        onGoSettings: () => undefined,
+        onOpenBackgroundJobs: () => undefined
+      })
+    )
+  )
+  const nested = renderThinkingBlock('已完成的思考。', 1000)
+
+  assert.match(outer, /flex:0 1 auto/)
+  assert.ok(outer.indexOf('已完成') < outer.indexOf('data-phi-outer-fold-chevron="true"'))
+  assert.match(nested, /\.phi-nested-fold-chevron\{opacity:0/)
+  assert.match(nested, /:hover \.phi-nested-fold-chevron,/)
+  assert.match(nested, /:focus-within \.phi-nested-fold-chevron\{opacity:1/)
+  assert.match(nested, /:hover\{color:/)
+  assert.doesNotMatch(nested, /:hover\{background-color:/)
+})
+
 test('tool rows classify common actions with distinct icons', () => {
   assert.equal(toolActionKind('read', 'src/App.tsx', '{"path":"src/App.tsx"}'), 'read')
   assert.equal(toolActionKind('write', 'src/App.tsx', '{"path":"src/App.tsx"}'), 'edit')

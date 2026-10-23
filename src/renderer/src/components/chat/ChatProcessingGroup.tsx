@@ -170,8 +170,8 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
           borderRadius: 1,
           cursor: 'pointer',
           color: 'text.secondary',
-          transition: 'background-color 150ms',
-          '&:hover': { bgcolor: 'action.hover' },
+          transition: 'color 150ms',
+          '&:hover': { color: 'text.primary' },
           '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
         }}
       >
@@ -184,10 +184,11 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
             )}
           </Box>
         ) : null}
-        <Typography component="span" variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
+        <Typography component="span" variant="body2" noWrap sx={{ flex: '0 1 auto', minWidth: 0 }}>
           {summary}
         </Typography>
         <ChevronRightIcon
+          data-phi-outer-fold-chevron="true"
           sx={{
             fontSize: 16,
             flexShrink: 0,

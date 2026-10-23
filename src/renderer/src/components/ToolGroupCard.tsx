@@ -1,4 +1,5 @@
 import { chatCopy } from '../features/chat/lib/chatCopy'
+import { nestedFoldChevronRevealSx } from '../features/chat/lib/nestedFoldChevronStyles'
 import { useUiLanguage } from '../lib/i18n'
 import { Box, Collapse, Typography } from '@mui/material'
 import { memo, useMemo, useState, type ReactNode } from 'react'
@@ -209,8 +210,9 @@ function ToolGroupCard({
           borderRadius: 1,
           cursor: 'pointer',
           color: 'text.secondary',
-          transition: 'background-color 150ms',
-          '&:hover': { bgcolor: 'action.hover' },
+          transition: 'color 150ms',
+          ...nestedFoldChevronRevealSx,
+          '&:hover': { color: 'text.primary' },
           '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
         }}
       >
@@ -230,9 +232,25 @@ function ToolGroupCard({
         ) : (
           <ToolActionIcon action="generic" />
         )}
-        <Typography component="span" variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
-          {headline}
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flex: 1, minWidth: 0 }}>
+          <Typography
+            component="span"
+            variant="body2"
+            noWrap
+            sx={{ flex: '0 1 auto', minWidth: 0 }}
+          >
+            {headline}
+          </Typography>
+          <ChevronRightIcon
+            className="phi-nested-fold-chevron"
+            aria-hidden
+            sx={{
+              fontSize: 16,
+              flexShrink: 0,
+              transform: expanded ? 'rotate(90deg)' : 'none'
+            }}
+          />
+        </Box>
         {stat ? (
           <Typography
             component="span"
@@ -252,14 +270,6 @@ function ToolGroupCard({
             ) : null}
           </Typography>
         ) : null}
-        <ChevronRightIcon
-          sx={{
-            fontSize: 16,
-            flexShrink: 0,
-            transition: 'transform 150ms',
-            transform: expanded ? 'rotate(90deg)' : 'none'
-          }}
-        />
       </Box>
       <Collapse
         in={expanded}

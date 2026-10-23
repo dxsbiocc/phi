@@ -1,4 +1,5 @@
 import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { nestedFoldChevronRevealSx } from '../../features/chat/lib/nestedFoldChevronStyles'
 import { useUiLanguage } from '../../lib/i18n'
 import { Box, Collapse, Tooltip, Typography } from '@mui/material'
 import { useState, type ReactNode } from 'react'
@@ -71,21 +72,22 @@ export function ThinkingBlock({
           textAlign: 'left',
           cursor: 'pointer',
           color: isRunning ? 'primary.main' : 'text.secondary',
-          transition: 'background-color 150ms',
-          '&:hover': { bgcolor: 'action.hover' },
+          transition: 'color 150ms',
+          ...nestedFoldChevronRevealSx,
+          '&:hover': { color: 'text.primary' },
           '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
         }}
       >
         <ThinkingIcon active={isRunning} />
-        <Typography component="span" variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
+        <Typography component="span" variant="body2" noWrap sx={{ flex: '0 1 auto', minWidth: 0 }}>
           {label}
         </Typography>
         <ChevronRightIcon
+          className="phi-nested-fold-chevron"
           data-phi-thinking-chevron="true"
           sx={{
             fontSize: 16,
             flexShrink: 0,
-            transition: 'transform 150ms',
             transform: expanded ? 'rotate(90deg)' : 'none'
           }}
         />
