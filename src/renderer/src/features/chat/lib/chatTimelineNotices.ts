@@ -12,12 +12,56 @@ import {
   mcpSkipReasonCategory,
   skippedMcpNoticeFromEvent
 } from '../../../../../shared/mcpSkippedServers'
+import { isRecord } from '../../../../../shared/guards'
 
 function createdAtField(createdAt?: string): { createdAt: string } | Record<string, never> {
   return typeof createdAt === 'string' ? { createdAt } : {}
 }
 function runIdField(runId?: unknown): { runId: string } | Record<string, never> {
   return typeof runId === 'string' && runId ? { runId } : {}
+}
+
+function boundedInteger(value: unknown, minimum: number, maximum: number): number | undefined {
+  return typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= minimum &&
+    value <= maximum
+    ? value
+    : undefined
+}
+
+function remoteOmpFailureMessage(errorCode: unknown, errorDetail: unknown): string | null {
+  if (errorCode !== 'REMOTE_OMP_DOWNLOAD_FAILED' && errorCode !== 'REMOTE_OMP_HASH_MISMATCH') {
+    return null
+  }
+  if (!isRecord(errorDetail)) return chatEventCopy.remoteOmpDownloadFailed
+  if (
+    (errorCode === 'REMOTE_OMP_HASH_MISMATCH' && errorDetail.cause !== 'checksum') ||
+    (errorCode === 'REMOTE_OMP_DOWNLOAD_FAILED' && errorDetail.cause === 'checksum')
+  ) {
+    return chatEventCopy.remoteOmpDownloadFailed
+  }
+  const attempts = boundedInteger(errorDetail.attempts, 1, 100)
+  switch (errorDetail.cause) {
+    case 'http':
+      return chatEventCopy.remoteOmpDownloadHttpFailed(
+        boundedInteger(errorDetail.httpStatus, 100, 599),
+        attempts
+      )
+    case 'stall':
+      return chatEventCopy.remoteOmpDownloadStalled(
+        boundedInteger(errorDetail.stallMs, 1, 3_600_000),
+        attempts
+      )
+    case 'network':
+      return chatEventCopy.remoteOmpDownloadNetworkFailed(attempts)
+    case 'checksum':
+      return chatEventCopy.remoteOmpHashMismatch
+    case 'invalid_response':
+      return chatEventCopy.remoteOmpDownloadInvalidResponse(attempts)
+    default:
+      return chatEventCopy.remoteOmpDownloadFailed
+  }
 }
 
 export function chatItemFromPhiTimelineEvent(event: {
@@ -40,6 +84,8 @@ export function chatItemFromPhiTimelineEvent(event: {
   skippedMcpServers?: unknown
   skippedMcpOmitted?: unknown
   errorMessage?: unknown
+  errorCode?: unknown
+  errorDetail?: unknown
   createdAt?: string
   fromProviderId?: unknown
   fromModelId?: unknown
@@ -69,7 +115,10 @@ export function chatItemFromPhiTimelineEvent(event: {
       id,
       role: 'error',
       get content() {
-        return error || chatEventCopy.runFailed
+        return (
+          remoteOmpFailureMessage(event.errorCode, event.errorDetail) ??
+          (error || chatEventCopy.runFailed)
+        )
       },
       ...runIdField(event.runId),
       ...createdAtField(event.createdAt)

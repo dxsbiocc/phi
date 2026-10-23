@@ -30,6 +30,10 @@ export const projectCopy = defineCopy(
     useTheButtonOnTheRightToChooseAFolder: 'Use the button on the right to choose a folder',
     chooseFolder: 'Choose folder',
     connectingToServer: 'Connecting to server',
+    downloadingRemoteRuntime: (percent: number, attempt: number) =>
+      `Downloading remote runtime ${percent}% · attempt ${attempt}`,
+    downloadingRemoteRuntimeWithoutTotal: (attempt: number) =>
+      `Downloading remote runtime · attempt ${attempt}`,
     connectionNotChecked: 'Connection not checked',
     reconnect: 'Reconnect',
     settingsRemote: 'Settings → Remote',
@@ -75,6 +79,10 @@ export const projectCopy = defineCopy(
     useTheButtonOnTheRightToChooseAFolder: '点击右侧按钮选择文件夹',
     chooseFolder: '选择文件夹',
     connectingToServer: '正在连接服务器',
+    downloadingRemoteRuntime: (percent: number, attempt: number) =>
+      `正在下载远程运行时 ${percent}% · 第 ${attempt} 次尝试`,
+    downloadingRemoteRuntimeWithoutTotal: (attempt: number) =>
+      `正在下载远程运行时 · 第 ${attempt} 次尝试`,
     connectionNotChecked: '连接尚未检查',
     reconnect: '重新连接',
     settingsRemote: '设置 → 远程',

@@ -29,6 +29,10 @@ import { attestBootstrap } from '../src/main/agent/engine/rpc/bootstrap-attestat
 import { RpcConnection } from '../src/main/agent/engine/rpc/connection'
 import type { RpcBootstrapConfig } from '../src/main/agent/engine/phi-extension/lib/rpc-config'
 import { startLoopbackModel } from './engine-contract/loopback-model'
+import {
+  RemoteStartupDiagnostics,
+  type RemoteStartupProgressEvent
+} from '../src/main/agent/engine/rpc/remote-startup-diagnostics'
 
 function runtimePayload(body: string): string {
   return `#!/bin/sh\nif [ "$1" = --version ]; then printf 'omp/18.10.3\\n'; exit 0; fi\n${body}\n`
@@ -122,6 +126,45 @@ test('factory consumes the existing stdio channel, quotes paths and creates a pr
   assert.deepEqual(await readdir(sessionBase), [])
   assert.equal(fixture.session.closed, false)
   assert.equal((await fixture.session.exec('printf still-connected')).stdout, 'still-connected')
+})
+
+test('runtime repair forwards artifact download progress through startup diagnostics', async (t) => {
+  const fixture = await createPhiExtensionDeploymentFixture()
+  t.after(fixture.cleanup)
+  const session = createLocalShellSession(fixture.runtimeRoot)
+  t.after(() => session.close())
+  const progress: RemoteStartupProgressEvent[] = []
+  const diagnostics = new RemoteStartupDiagnostics({
+    phiSessionId: 'phi-session',
+    emitProgress: (event) => progress.push(event)
+  })
+  const factory = await prepareSshRpcSessionTransport({
+    session,
+    runtime: fixture.options,
+    bundle: fixture.bundle,
+    projectId: 'project-1',
+    startupDiagnostics: diagnostics
+  })
+
+  const channel = await factory.open(
+    { sessionId: 'session-progress', cwd: fixture.root, agentDir: 'unused' },
+    new AbortController().signal
+  )
+  await channel.close()
+
+  const download = progress.filter(
+    (event): event is Extract<RemoteStartupProgressEvent, { step: string }> => 'step' in event
+  )
+  assert.ok(download.length > 1)
+  assert.ok(download.every((event) => event.step === 'runtime_binary'))
+  assert.ok(download.every((event) => event.detail.kind === 'remote-omp-download'))
+  assert.ok(download.every((event) => event.detail.attempt === 1))
+  assert.ok(
+    download.every(
+      (event, index) =>
+        index === 0 || event.detail.bytesReceived >= download[index - 1].detail.bytesReceived
+    )
+  )
 })
 
 test('project plugin tools are refused before the OMP stdio process starts', async (t) => {

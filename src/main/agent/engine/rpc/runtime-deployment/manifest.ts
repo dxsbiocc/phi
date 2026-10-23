@@ -13,14 +13,25 @@ export const REMOTE_OMP_MANIFEST: RemoteOmpManifest = Object.freeze({
   assets: Object.freeze({
     'linux-x64': Object.freeze({
       url: `https://github.com/can1357/oh-my-pi/releases/download/v${PINNED_OMP_VERSION}/omp-linux-x64`,
-      sha256: '366ffcda80db57b825921b6ff4b0e5e623bc62cf18478f2828cd8a322fc72ff9'
+      sha256: '366ffcda80db57b825921b6ff4b0e5e623bc62cf18478f2828cd8a322fc72ff9',
+      size: 276_170_720
     }),
     'linux-arm64': Object.freeze({
       url: `https://github.com/can1357/oh-my-pi/releases/download/v${PINNED_OMP_VERSION}/omp-linux-arm64`,
-      sha256: '7f580e1fe06ebffe16ae46cc6881051aca4980db7f654702feefed5651555862'
+      sha256: '7f580e1fe06ebffe16ae46cc6881051aca4980db7f654702feefed5651555862',
+      size: 237_751_080
     })
   })
 })
+
+function validAsset(asset: RemoteOmpAsset | undefined): asset is RemoteOmpAsset {
+  return Boolean(
+    asset &&
+    /^[a-f0-9]{64}$/.test(asset.sha256) &&
+    asset.url.startsWith('https://') &&
+    (asset.size === undefined || (Number.isSafeInteger(asset.size) && asset.size > 0))
+  )
+}
 
 export function selectRemoteOmpAsset(
   manifest: RemoteOmpManifest,
@@ -46,7 +57,7 @@ export function selectRemoteOmpAsset(
   }
   const key = `linux-${arch}` as 'linux-x64' | 'linux-arm64'
   const asset = manifest.assets[key]
-  if (!asset || !/^[a-f0-9]{64}$/.test(asset.sha256) || !asset.url.startsWith('https://')) {
+  if (!validAsset(asset)) {
     throw new RemoteOmpDeploymentError('INVALID_ARGUMENT', 'Invalid remote OMP release manifest.')
   }
   return { key, asset }

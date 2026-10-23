@@ -8,9 +8,14 @@ import {
 } from './session-store'
 import { writeAppLog } from '../app-logger'
 import { redactSensitiveText } from '../redaction'
-import { errorCodeOf, isRetryable } from '../../../shared/errorCodes'
+import {
+  errorCodeOf,
+  errorMessage,
+  isRetryable,
+  type RemoteOmpFailureDetail
+} from '../../../shared/errorCodes'
+import { remoteOmpFailureDetailForPersistence } from './session-event-payload-projection'
 
-import { errorMessage } from '../../../shared/errorCodes'
 export interface SessionRunContext {
   signal: AbortSignal
 }
@@ -58,9 +63,27 @@ function redactedErrorMessage(error: unknown): string {
 }
 
 /** Additive failure classification for the persisted event; uncoded errors stay as before. */
-function failureCode(error: unknown): { errorCode?: string; retryable?: boolean } {
+function failureFields(error: unknown): {
+  errorCode?: string
+  retryable?: boolean
+  errorDetail?: RemoteOmpFailureDetail
+} {
   const errorCode = errorCodeOf(error)
-  return errorCode === 'UNKNOWN' ? {} : { errorCode, retryable: isRetryable(error) }
+  if (errorCode === 'UNKNOWN') return {}
+  const candidate =
+    errorCode === 'REMOTE_OMP_DOWNLOAD_FAILED' || errorCode === 'REMOTE_OMP_HASH_MISMATCH'
+      ? remoteOmpFailureDetailForPersistence(error)
+      : undefined
+  const errorDetail =
+    (errorCode === 'REMOTE_OMP_HASH_MISMATCH' && candidate?.cause === 'checksum') ||
+    (errorCode === 'REMOTE_OMP_DOWNLOAD_FAILED' && candidate?.cause !== 'checksum')
+      ? candidate
+      : undefined
+  return {
+    errorCode,
+    retryable: isRetryable(error),
+    ...(errorDetail ? { errorDetail } : {})
+  }
 }
 
 function createStopReason(): Error {
@@ -245,7 +268,7 @@ export class SessionRunnerRegistry {
           createdAt: completedAt,
           durationMs: runDurationMs(run, completedAt),
           errorMessage: redactedErrorMessage(error),
-          ...failureCode(error)
+          ...failureFields(error)
         })
         writeAppLog({
           level: run.outcome === 'failed' ? 'error' : 'info',

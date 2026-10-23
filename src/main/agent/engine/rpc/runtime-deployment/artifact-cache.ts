@@ -1,22 +1,24 @@
-import { createHash, randomUUID } from 'node:crypto'
-import { constants, createWriteStream, type Stats } from 'node:fs'
+import { constants, type Stats } from 'node:fs'
 import { lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
-import { Readable, Transform } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
-import { desktopFetch } from '../../../desktop-fetch'
 import { hashLocalFile } from '../../../transfer/ssh-data-plane-local'
 
+import {
+  downloadRemoteOmpArtifact,
+  DownloadResponseError,
+  REMOTE_OMP_PRESEED_GUIDANCE,
+  type ArtifactDownloadStorage,
+  type ArtifactPartialPaths,
+  type RemoteOmpDownloadOptions
+} from './artifact-download'
 import { RemoteOmpDeploymentError, type RemoteOmpAsset } from './types'
 
-interface CacheOptions {
+export type { RemoteOmpDownloadProgress } from './artifact-download'
+
+export interface RemoteOmpCacheOptions extends RemoteOmpDownloadOptions {
   cacheDir: string
   version: string
   platform: string
-  asset: RemoteOmpAsset
-  signal?: AbortSignal
-  fetchImpl?: typeof fetch
-  onProgress?: (bytes: number, total?: number) => void
 }
 
 const activeCacheWrites = new Map<string, Promise<void>>()
@@ -34,15 +36,25 @@ function assertOwnedCacheEntry(info: Stats, path: string, directory: boolean): v
   }
 }
 
-async function secureCacheEntry(path: string, directory: boolean): Promise<void> {
-  assertOwnedCacheEntry(await lstat(path), path, directory)
+async function cacheEntry(path: string): Promise<Stats | undefined> {
+  return lstat(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  })
+}
+
+async function secureCacheEntry(path: string, directory: boolean): Promise<Stats> {
+  const entry = await lstat(path)
+  assertOwnedCacheEntry(entry, path, directory)
   const handle = await open(
     path,
     constants.O_RDONLY | constants.O_NOFOLLOW | (directory ? constants.O_DIRECTORY : 0)
   )
   try {
-    assertOwnedCacheEntry(await handle.stat(), path, directory)
+    const info = await handle.stat()
+    assertOwnedCacheEntry(info, path, directory)
     await handle.chmod(directory ? 0o700 : 0o600)
+    return info
   } finally {
     await handle.close()
   }
@@ -75,32 +87,75 @@ async function waitForCacheWrite(pending: Promise<void>, signal?: AbortSignal): 
   }
 }
 
-async function* responseChunks(body: NonNullable<Response['body']>): AsyncGenerator<Uint8Array> {
-  const reader = body.getReader()
-  try {
-    while (true) {
-      const chunk = await reader.read()
-      if (chunk.done) return
-      yield chunk.value
-    }
-  } finally {
-    await reader.cancel().catch(() => undefined)
-    reader.releaseLock()
-  }
-}
-
 async function matchesHash(path: string, sha256: string, signal?: AbortSignal): Promise<boolean> {
-  const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === 'ENOENT') return undefined
-    throw error
-  })
-  if (!info) return false
+  if (!(await cacheEntry(path))) return false
   await secureCacheEntry(path, false)
   return (await hashLocalFile(path, 1024 * 1024, undefined, signal)) === sha256
 }
 
-/** Binary bytes are streamed to disk and hashed incrementally, including cache reuse. */
-export async function ensureCachedRemoteOmp(options: CacheOptions): Promise<{
+async function secureAndRemove(paths: readonly string[]): Promise<void> {
+  const existing: string[] = []
+  for (const path of paths) {
+    if (!(await cacheEntry(path))) continue
+    await secureCacheEntry(path, false)
+    existing.push(path)
+  }
+  await Promise.all(existing.map((path) => rm(path)))
+}
+
+async function discardPartial(paths: ArtifactPartialPaths): Promise<void> {
+  await secureAndRemove([paths.file, paths.metadata])
+}
+
+async function publishPartial(
+  paths: ArtifactPartialPaths,
+  localPath: string,
+  asset: RemoteOmpAsset,
+  signal?: AbortSignal
+): Promise<number> {
+  signal?.throwIfAborted()
+  const info = await secureCacheEntry(paths.file, false)
+  if (asset.size !== undefined && info.size !== asset.size) {
+    throw new DownloadResponseError(`received ${info.size} bytes but expected ${asset.size}`)
+  }
+  if ((await hashLocalFile(paths.file, 1024 * 1024, undefined, signal)) !== asset.sha256) {
+    await discardPartial(paths)
+    throw new RemoteOmpDeploymentError(
+      'HASH_MISMATCH',
+      `Downloaded OMP checksum does not match the pinned release manifest. ${REMOTE_OMP_PRESEED_GUIDANCE}`
+    )
+  }
+  await rename(paths.file, localPath)
+  await secureAndRemove([paths.metadata])
+  return info.size
+}
+
+const downloadStorage: ArtifactDownloadStorage = {
+  cacheEntry,
+  secureFile: (path) => secureCacheEntry(path, false),
+  assertFile: (info, path) => assertOwnedCacheEntry(info, path, false),
+  discard: discardPartial,
+  publish: publishPartial
+}
+
+async function populateCache(
+  options: RemoteOmpCacheOptions,
+  directory: string
+): Promise<{ localPath: string; size: number }> {
+  const localPath = join(directory, 'omp')
+  if (await matchesHash(localPath, options.asset.sha256, options.signal)) {
+    return { localPath, size: (await stat(localPath)).size }
+  }
+  const paths = {
+    file: join(directory, 'omp.partial'),
+    metadata: join(directory, 'omp.partial.json')
+  }
+  const size = await downloadRemoteOmpArtifact(options, paths, localPath, downloadStorage)
+  return { localPath, size }
+}
+
+/** Binary bytes are resumed into a private partial and verified before atomic cache publication. */
+export async function ensureCachedRemoteOmp(options: RemoteOmpCacheOptions): Promise<{
   localPath: string
   size: number
 }> {
@@ -108,19 +163,17 @@ export async function ensureCachedRemoteOmp(options: CacheOptions): Promise<{
   if (!isAbsolute(options.cacheDir)) {
     throw new RemoteOmpDeploymentError('INVALID_ARGUMENT', 'OMP cache directory must be absolute.')
   }
-  // Validate the selected Phi-owned root itself, not system ancestors such as /var.
   const selectedRoot = resolve(options.cacheDir)
   await ensurePrivateDirectory(selectedRoot, true)
   const canonicalRoot = await realpath(selectedRoot)
   const directory = join(canonicalRoot, 'omp', options.version, options.platform)
-  // Include physical identity so equivalent paths through system ancestor symlinks share a lock.
   while (activeCacheWrites.has(directory)) {
     await waitForCacheWrite(activeCacheWrites.get(directory)!, options.signal)
   }
   options.signal?.throwIfAborted()
   let release!: () => void
-  const pending = new Promise<void>((resolve) => {
-    release = resolve
+  const pending = new Promise<void>((resolvePending) => {
+    release = resolvePending
   })
   activeCacheWrites.set(directory, pending)
   try {
@@ -133,72 +186,5 @@ export async function ensureCachedRemoteOmp(options: CacheOptions): Promise<{
   } finally {
     activeCacheWrites.delete(directory)
     release()
-  }
-}
-
-async function populateCache(
-  options: CacheOptions,
-  directory: string
-): Promise<{ localPath: string; size: number }> {
-  const localPath = join(directory, 'omp')
-  if (await matchesHash(localPath, options.asset.sha256, options.signal)) {
-    return { localPath, size: (await stat(localPath)).size }
-  }
-  const staging = join(directory, `.omp-${randomUUID()}.part`)
-  try {
-    const response = await desktopFetch(options.fetchImpl)(options.asset.url, {
-      signal: options.signal,
-      redirect: 'follow',
-      credentials: 'omit'
-    })
-    if (!response.ok || !response.body) {
-      await response.body?.cancel()
-      throw new RemoteOmpDeploymentError(
-        'DOWNLOAD_FAILED',
-        `OMP download failed with HTTP ${response.status}.`
-      )
-    }
-    const contentLength = Number(response.headers.get('content-length'))
-    const total =
-      Number.isSafeInteger(contentLength) && contentLength > 0 ? contentLength : undefined
-    const hash = createHash('sha256')
-    let bytes = 0
-    const meter = new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        try {
-          hash.update(chunk)
-          bytes += chunk.length
-          options.onProgress?.(bytes, total)
-          callback(null, chunk)
-        } catch (error) {
-          callback(error as Error)
-        }
-      }
-    })
-    await pipeline(
-      Readable.from(responseChunks(response.body)),
-      meter,
-      createWriteStream(staging, { flags: 'wx', mode: 0o600 }),
-      { signal: options.signal }
-    )
-    options.signal?.throwIfAborted()
-    if (hash.digest('hex') !== options.asset.sha256) {
-      throw new RemoteOmpDeploymentError(
-        'HASH_MISMATCH',
-        'Downloaded OMP SHA256 does not match its release manifest.'
-      )
-    }
-    await rename(staging, localPath)
-    return { localPath, size: bytes }
-  } catch (error) {
-    options.signal?.throwIfAborted()
-    if (error instanceof RemoteOmpDeploymentError) throw error
-    throw new RemoteOmpDeploymentError(
-      'DOWNLOAD_FAILED',
-      'Could not stream the OMP release into the desktop cache.',
-      { cause: error }
-    )
-  } finally {
-    await rm(staging, { force: true })
   }
 }

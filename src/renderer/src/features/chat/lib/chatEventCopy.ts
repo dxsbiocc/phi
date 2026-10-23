@@ -6,6 +6,18 @@ export const chatEventCopy = defineCopy(
     interruptedByRestart: 'The previous run was interrupted when the app restarted.',
     interrupted: 'The run was interrupted.',
     runFailed: 'The run failed.',
+    remoteOmpDownloadHttpFailed: (status?: number, attempts?: number) =>
+      `Remote runtime download failed${status ? ` with HTTP ${status}` : ''}${attempts ? ` after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}` : ''}. Follow docs/runtime/remote-omp-preseed.md to preseed the pinned runtime, then retry.`,
+    remoteOmpDownloadStalled: (stallMs?: number, attempts?: number) =>
+      `Remote runtime download stalled${stallMs ? ` for ${stallMs} ms` : ''} without receiving data${attempts ? ` after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}` : ''}. Follow docs/runtime/remote-omp-preseed.md to preseed the pinned runtime, then retry.`,
+    remoteOmpDownloadNetworkFailed: (attempts?: number) =>
+      `Remote runtime download did not complete because the network connection ended${attempts ? ` after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}` : ''}. Follow docs/runtime/remote-omp-preseed.md to preseed the pinned runtime, then retry.`,
+    remoteOmpDownloadInvalidResponse: (attempts?: number) =>
+      `Remote runtime download received an invalid response${attempts ? ` after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}` : ''}. Follow docs/runtime/remote-omp-preseed.md to preseed the pinned runtime, then retry.`,
+    remoteOmpDownloadFailed:
+      'Remote runtime download did not complete. Check the network, or follow docs/runtime/remote-omp-preseed.md to preseed the pinned runtime, then retry.',
+    remoteOmpHashMismatch:
+      'The downloaded remote runtime checksum does not match the pinned release manifest. Follow docs/runtime/remote-omp-preseed.md to preseed the pinned runtime, then retry.',
     noticeTitle: {
       run_interrupted: 'Run interrupted',
       remote_run_stopped: 'Previous remote run stopped',
@@ -54,6 +66,18 @@ export const chatEventCopy = defineCopy(
     interruptedByRestart: '上次运行因应用重启而中断。',
     interrupted: '运行已中断。',
     runFailed: '运行失败。',
+    remoteOmpDownloadHttpFailed: (status?: number, attempts?: number) =>
+      `远程运行时下载失败${status ? `（HTTP ${status}）` : ''}${attempts ? `，已尝试 ${attempts} 次` : ''}。请按 docs/runtime/remote-omp-preseed.md 预置锁定版本的运行时，然后重试。`,
+    remoteOmpDownloadStalled: (stallMs?: number, attempts?: number) =>
+      `远程运行时下载停滞${stallMs ? `，连续 ${stallMs} 毫秒` : ''}未收到数据${attempts ? `，已尝试 ${attempts} 次` : ''}。请按 docs/runtime/remote-omp-preseed.md 预置锁定版本的运行时，然后重试。`,
+    remoteOmpDownloadNetworkFailed: (attempts?: number) =>
+      `远程运行时下载因网络连接中断而未完成${attempts ? `，已尝试 ${attempts} 次` : ''}。请按 docs/runtime/remote-omp-preseed.md 预置锁定版本的运行时，然后重试。`,
+    remoteOmpDownloadInvalidResponse: (attempts?: number) =>
+      `远程运行时下载收到无效响应${attempts ? `，已尝试 ${attempts} 次` : ''}。请按 docs/runtime/remote-omp-preseed.md 预置锁定版本的运行时，然后重试。`,
+    remoteOmpDownloadFailed:
+      '远程运行时下载未完成。请检查网络，或按 docs/runtime/remote-omp-preseed.md 预置锁定版本的运行时，然后重试。',
+    remoteOmpHashMismatch:
+      '下载的远程运行时校验和与锁定的发布清单不一致。请按 docs/runtime/remote-omp-preseed.md 预置锁定版本的运行时，然后重试。',
     noticeTitle: {
       run_interrupted: '运行已中断',
       remote_run_stopped: '已停止上一次远端运行',

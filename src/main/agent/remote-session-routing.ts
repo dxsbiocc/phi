@@ -2,6 +2,7 @@ import type {
   RpcAgentResourceCatalogInput,
   CompileRpcAgentDefinitionsOptions
 } from './engine/rpc/subagents/types'
+import type { RemoteProjectConnectionState } from '../../shared/projectLocation'
 import { WRAPPER_COMPOSITION_TOOL_NAMES } from './wrappers/composition/tools'
 import { join } from 'node:path'
 import { NOTEBOOK_TOOL_NAMES } from './notebook/notebook-tools'
@@ -9,7 +10,7 @@ import { LIBRARY_TOOL_NAMES } from './library/library-tools'
 import { createRuntimeSessionManager, type RuntimeSessionManager } from './runtime/runtime-adapter'
 import { phiOnlySessionPath } from './session/sessions'
 import type { PhiAgentDefinition } from './agents/definition'
-import { getProject, type Project } from './projects'
+import { getProject, setRemoteProjectConnectionState, type Project } from './projects'
 import { findPhiSessionById } from './session/session-store'
 import type { SessionRunnerRegistry } from './session/session-runner-registry'
 import { resolveRemoteWorkspaceHostBinding } from './remote-workspace-boundary'
@@ -25,7 +26,8 @@ import type { RemoteOmpDeploymentOptions } from './engine/rpc/runtime-deployment
 import { REMOTE_OMP_MANIFEST } from './engine/rpc/runtime-deployment'
 import {
   RemoteStartupDiagnostics,
-  type RemoteStartupDiagnosticSink
+  type RemoteStartupDiagnosticSink,
+  type RemoteStartupProgressEvent
 } from './engine/rpc/remote-startup-diagnostics'
 
 // The existing executor owns interruption through the captured kernel runtime and terminal ACK.
@@ -186,6 +188,29 @@ interface AppRemoteSessionRoutingDependencies {
   deployment?: Pick<RemoteOmpDeploymentOptions, 'manifest' | 'fetchImpl' | 'uploadOptions'>
 }
 
+export function remoteStartupConnectionState(
+  event: RemoteStartupProgressEvent,
+  current?: RemoteProjectConnectionState,
+  checkedAt = new Date().toISOString()
+): RemoteProjectConnectionState | undefined {
+  if ('detail' in event) {
+    return {
+      phase: 'connecting',
+      startupProgress: event.detail,
+      checkedAt
+    }
+  }
+  if (current?.startupProgress) return { phase: 'reachable', checkedAt }
+  return undefined
+}
+
+function publishRemoteStartupProgress(projectId: string, event: RemoteStartupProgressEvent): void {
+  const project = getProject(projectId)
+  if (project?.location.kind !== 'ssh') return
+  const state = remoteStartupConnectionState(event, project.remoteConnection)
+  if (state) setRemoteProjectConnectionState(projectId, state)
+}
+
 export function installAppRemoteSessionRouting(
   options: AppRemoteSessionRoutingOptions,
   dependencies: AppRemoteSessionRoutingDependencies = {}
@@ -207,9 +232,11 @@ export function installAppRemoteSessionRouting(
     runners: options.runners,
     selected: async ({ runtimeSessionId, phiSessionId, projectId }, signal) => {
       signal.throwIfAborted()
-      const startupDiagnostics = options.startupDiagnostics
-        ? new RemoteStartupDiagnostics({ phiSessionId, emit: options.startupDiagnostics })
-        : undefined
+      const startupDiagnostics = new RemoteStartupDiagnostics({
+        phiSessionId,
+        ...(options.startupDiagnostics ? { emit: options.startupDiagnostics } : {}),
+        emitProgress: (event) => publishRemoteStartupProgress(projectId, event)
+      })
       const step = async <T>(name: string, operation: () => Promise<T>): Promise<T> => {
         try {
           return await (startupDiagnostics?.step(name, operation) ?? operation())

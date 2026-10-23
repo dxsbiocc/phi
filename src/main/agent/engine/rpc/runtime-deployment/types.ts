@@ -1,10 +1,13 @@
 import type { RemoteUploadFileOptions } from '../../../transfer/remote-upload-types'
 import type { TransferEvent } from '../../../transfer/types'
 import type { HostCapabilityProfile, WorkspaceHost } from '../../../workspace-host/types'
+import type { RemoteOmpFailureDetail } from '../../../../../shared/errorCodes'
 
 export interface RemoteOmpAsset {
   readonly url: string
   readonly sha256: string
+  /** Pinned release size; older injected test manifests may omit it. */
+  readonly size?: number
 }
 
 export interface RemoteOmpManifest {
@@ -24,13 +27,23 @@ export type DeploymentErrorCode =
   | 'REMOTE_COMMAND_FAILED'
 
 export class RemoteOmpDeploymentError extends Error {
+  readonly errorCode?: 'REMOTE_OMP_DOWNLOAD_FAILED' | 'REMOTE_OMP_HASH_MISMATCH'
+  readonly errorDetail?: RemoteOmpFailureDetail
+
   constructor(
     readonly code: DeploymentErrorCode,
     message: string,
-    options?: ErrorOptions
+    options?: ErrorOptions & { errorDetail?: RemoteOmpFailureDetail }
   ) {
     super(message, options)
     this.name = 'RemoteOmpDeploymentError'
+    this.errorDetail = code === 'HASH_MISMATCH' ? { cause: 'checksum' } : options?.errorDetail
+    this.errorCode =
+      code === 'DOWNLOAD_FAILED'
+        ? 'REMOTE_OMP_DOWNLOAD_FAILED'
+        : code === 'HASH_MISMATCH'
+          ? 'REMOTE_OMP_HASH_MISMATCH'
+          : undefined
   }
 }
 
@@ -38,6 +51,7 @@ export interface RemoteOmpDeploymentProgress {
   readonly phase: 'checking' | 'downloading' | 'uploading' | 'verifying' | 'ready'
   readonly bytesTransferred?: number
   readonly totalBytes?: number
+  readonly attempt?: number
   readonly transfer?: TransferEvent
 }
 

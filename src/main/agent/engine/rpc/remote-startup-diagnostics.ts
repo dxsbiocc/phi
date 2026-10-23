@@ -29,6 +29,26 @@ export interface RemoteStartupDiagnostic {
 
 export type RemoteStartupDiagnosticSink = (diagnostic: RemoteStartupDiagnostic) => void
 
+export interface RemoteOmpDownloadStartupProgress {
+  readonly kind: 'remote-omp-download'
+  readonly bytesReceived: number
+  readonly totalBytes?: number
+  readonly attempt: number
+}
+
+export type RemoteStartupProgressEvent =
+  | {
+      readonly phiSessionId: string
+      readonly step: string
+      readonly detail: RemoteOmpDownloadStartupProgress
+    }
+  | {
+      readonly phiSessionId: string
+      readonly status: RemoteStartupDiagnostic['status']
+    }
+
+export type RemoteStartupProgressSink = (event: RemoteStartupProgressEvent) => void
+
 interface MutableStep {
   durationMs: number
   remoteCommands: number
@@ -37,7 +57,8 @@ interface MutableStep {
 
 interface RemoteStartupDiagnosticsOptions {
   readonly phiSessionId: string
-  readonly emit: RemoteStartupDiagnosticSink
+  readonly emit?: RemoteStartupDiagnosticSink
+  readonly emitProgress?: RemoteStartupProgressSink
   readonly now?: () => number
 }
 
@@ -122,6 +143,17 @@ export class RemoteStartupDiagnostics {
     return wrapped
   }
 
+  progress(step: string, detail: RemoteOmpDownloadStartupProgress): void {
+    if (this.finished || !this.options.emitProgress) return
+    try {
+      this.options.emitProgress(
+        Object.freeze({ phiSessionId: this.options.phiSessionId, step, detail })
+      )
+    } catch {
+      // Progress presentation must never alter startup or recovery behavior.
+    }
+  }
+
   finish(status: RemoteStartupDiagnostic['status']): void {
     if (this.finished) return
     this.finished = true
@@ -140,10 +172,21 @@ export class RemoteStartupDiagnostics {
         )
       )
     })
-    try {
-      this.options.emit(diagnostic)
-    } catch {
-      // Diagnostics must never alter startup or recovery behavior.
+    if (this.options.emitProgress) {
+      try {
+        this.options.emitProgress(
+          Object.freeze({ phiSessionId: this.options.phiSessionId, status })
+        )
+      } catch {
+        // Progress presentation must never alter startup or recovery behavior.
+      }
+    }
+    if (this.options.emit) {
+      try {
+        this.options.emit(diagnostic)
+      } catch {
+        // Diagnostics must never alter startup or recovery behavior.
+      }
     }
   }
 

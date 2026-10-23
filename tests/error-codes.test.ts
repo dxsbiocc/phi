@@ -10,6 +10,7 @@ import {
   isRetryable,
   toErrorPayload
 } from '../src/shared/errorCodes'
+import { RemoteOmpDeploymentError } from '../src/main/agent/engine/rpc/runtime-deployment'
 
 test('every code declares retryable and only timeouts/provider/transport are retryable', () => {
   assert.equal(ERROR_CODES.TRANSPORT_LOST.retryable, true)
@@ -32,6 +33,21 @@ test('errorCodeOf reads a known code and falls back to UNKNOWN', () => {
   assert.equal(errorCodeOf(null), 'UNKNOWN')
   assert.equal(isErrorCode('ABORTED'), true)
   assert.equal(isErrorCode('nope'), false)
+})
+
+test('errorCodeOf prefers a standardized errorCode over a domain-specific code', () => {
+  assert.equal(
+    errorCodeOf({ errorCode: 'REMOTE_OMP_HASH_MISMATCH', code: 'HASH_MISMATCH' }),
+    'REMOTE_OMP_HASH_MISMATCH'
+  )
+  assert.equal(
+    errorCodeOf(new RemoteOmpDeploymentError('DOWNLOAD_FAILED', 'download failed')),
+    'REMOTE_OMP_DOWNLOAD_FAILED'
+  )
+  assert.equal(
+    errorCodeOf(new RemoteOmpDeploymentError('HASH_MISMATCH', 'checksum failed')),
+    'REMOTE_OMP_HASH_MISMATCH'
+  )
 })
 
 test('CodedError retryable defaults to the code and can be overridden', () => {

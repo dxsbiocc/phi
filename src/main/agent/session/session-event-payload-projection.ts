@@ -1,5 +1,47 @@
 import { isRecord } from '../../../shared/guards'
+import type { RemoteOmpFailureCause, RemoteOmpFailureDetail } from '../../../shared/errorCodes'
 import type { SessionEventPersistenceRun } from './session-event-persistence'
+
+const REMOTE_OMP_FAILURE_CAUSES = new Set<RemoteOmpFailureCause>([
+  'http',
+  'stall',
+  'network',
+  'checksum',
+  'invalid_response'
+])
+
+function boundedInteger(value: unknown, minimum: number, maximum: number): number | undefined {
+  return typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= minimum &&
+    value <= maximum
+    ? value
+    : undefined
+}
+
+/** Keep only bounded numeric OMP failure context before it reaches storage and renderer IPC. */
+export function remoteOmpFailureDetailForPersistence(
+  error: unknown
+): RemoteOmpFailureDetail | undefined {
+  if (!isRecord(error) || !isRecord(error.errorDetail)) return undefined
+  const detail = error.errorDetail
+  if (
+    typeof detail.cause !== 'string' ||
+    !REMOTE_OMP_FAILURE_CAUSES.has(detail.cause as RemoteOmpFailureCause)
+  ) {
+    return undefined
+  }
+  const cause = detail.cause as RemoteOmpFailureCause
+  const attempts = boundedInteger(detail.attempts, 1, 100)
+  const httpStatus = cause === 'http' ? boundedInteger(detail.httpStatus, 100, 599) : undefined
+  const stallMs = cause === 'stall' ? boundedInteger(detail.stallMs, 1, 3_600_000) : undefined
+  return {
+    cause,
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+    ...(stallMs !== undefined ? { stallMs } : {}),
+    ...(attempts !== undefined ? { attempts } : {})
+  }
+}
 
 export function extractAssistantThinkingBlocks(message: unknown): string[] {
   if (!message || typeof message !== 'object') return []

@@ -28,7 +28,8 @@ import {
   remoteOmpReadyMarkerIdentity,
   selectRemoteOmpAsset,
   type RemoteOmpDeployment,
-  type RemoteOmpDeploymentOptions
+  type RemoteOmpDeploymentOptions,
+  type RemoteOmpDeploymentProgress
 } from './runtime-deployment'
 import { deploymentPaths, deploymentResult } from './runtime-deployment/remote-commands'
 import type { RpcSessionCreateParams, RpcSessionInitializationContext } from './rpc-session-backend'
@@ -293,6 +294,34 @@ function startupMarkers(options: SshRpcSessionTransportOptions): RpcStartupMarke
     })
   }
   return markers
+}
+
+function runtimeProgressReporter(
+  options: SshRpcSessionTransportOptions
+): (progress: RemoteOmpDeploymentProgress) => void {
+  let forwardedAttempt = 0
+  let forwardedProgressBucket = -1
+  return (progress) => {
+    options.runtime.onProgress?.(progress)
+    if (
+      progress.phase !== 'downloading' ||
+      progress.attempt === undefined ||
+      progress.bytesTransferred === undefined
+    )
+      return
+    const bucket = progress.totalBytes
+      ? Math.floor((progress.bytesTransferred / progress.totalBytes) * 100)
+      : Math.floor(progress.bytesTransferred / (1024 * 1024))
+    if (progress.attempt === forwardedAttempt && bucket === forwardedProgressBucket) return
+    forwardedAttempt = progress.attempt
+    forwardedProgressBucket = bucket
+    options.startupDiagnostics?.progress('runtime_binary', {
+      kind: 'remote-omp-download',
+      bytesReceived: progress.bytesTransferred,
+      ...(progress.totalBytes === undefined ? {} : { totalBytes: progress.totalBytes }),
+      attempt: progress.attempt
+    })
+  }
 }
 
 /** Each open owns only its channel and generation-specific private configuration. */
@@ -609,7 +638,11 @@ export async function prepareSshRpcSessionTransport(
           for (const item of first.result.markers.filter((marker) => marker.status === 'repair')) {
             if (item.item === 'omp') {
               await step('runtime_binary', () =>
-                ensureRemoteOmpDeployment({ ...options.runtime, signal })
+                ensureRemoteOmpDeployment({
+                  ...options.runtime,
+                  signal,
+                  onProgress: runtimeProgressReporter(options)
+                })
               )
             } else if (item.item === 'extension') {
               await step('extension_deployment', () =>
