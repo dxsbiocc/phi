@@ -52,6 +52,7 @@ test('createPhiSession creates a stable session directory and manifest', () => {
     assert.equal(session.manifest.status, 'idle')
     assert.equal(session.manifest.unreadKind, null)
     assert.equal(session.manifest.kind, 'project')
+    assert.equal(session.manifest.workMode, 'direct')
     assert.equal(session.manifest.projectId, 'project-1')
     assert.equal(session.manifest.cwd, '/display/project')
     assert.equal(session.manifest.cwdRealPath, '/real/project')
@@ -65,6 +66,47 @@ test('createPhiSession creates a stable session directory and manifest', () => {
       readFileSync(join(session.dir, 'manifest.json'), 'utf-8')
     ) as typeof session.manifest
     assert.equal(rawManifest.sessionId, session.sessionId)
+  })
+})
+
+test('legacy manifests infer workMode in memory and persist it only on the next write', () => {
+  withPhiDir(() => {
+    const session = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'full'
+    })
+    const path = join(session.dir, 'manifest.json')
+    const legacy = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>
+    delete legacy.workMode
+    writeFileSync(path, `${JSON.stringify(legacy, null, 2)}\n`)
+
+    const loaded = listPhiSessions().find((entry) => entry.sessionId === session.sessionId)!
+    assert.equal(loaded.workMode, 'direct')
+    assert.equal(Object.hasOwn(JSON.parse(readFileSync(path, 'utf-8')), 'workMode'), false)
+
+    updateSessionManifest(session.sessionId, { title: 'normal write' })
+    const persisted = JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>
+    assert.equal(persisted.workMode, 'direct')
+  })
+})
+
+test('new and forked sessions preserve explicit plan work modes', () => {
+  withPhiDir(() => {
+    const source = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'auto',
+      workMode: 'plan_execute'
+    })
+    assert.equal(source.manifest.workMode, 'plan_execute')
+    const turn = appendSessionEvent(source.sessionId, { type: 'user_message', content: 'hello' })
+    assert.equal(
+      forkPhiSession(source.sessionId, turn.eventId, '/runtime/fork.jsonl').manifest.workMode,
+      'plan_execute'
+    )
   })
 })
 

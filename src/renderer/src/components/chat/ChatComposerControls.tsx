@@ -19,15 +19,14 @@ import {
 import { useId, useMemo, useState, type ReactNode } from 'react'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { SparklesIcon } from '@hugeicons/core-free-icons'
-import { PERMISSION_MODE_ICON_META, PhiIcons } from '../../icons'
-import type { ModelOption, PermissionMode, ThinkingLevel } from '../../types'
+import { PhiIcons } from '../../icons'
+import type { ModelOption, ThinkingLevel } from '../../types'
 import { ThinkingLevelSlider } from './ComposerThinkingSlider'
 import { resolveThinkingSelection, thinkingLevelAccent } from './composerThinkingLevel'
 import { ProviderModelIcon } from './ProviderModelIcon'
 import { COMPOSER_ICON_SIZE, compactComposerIconButtonSx } from './composerControlStyles'
 
 const BoltIcon = PhiIcons.action.quick
-const CheckIcon = PhiIcons.state.check
 const ExpandIcon = PhiIcons.action.expand
 
 function modelMatchesQuery(option: ModelOption, query: string): boolean {
@@ -368,186 +367,6 @@ export function ModelSelectorControl({
             onPreviewThinkingLevel={onPreviewThinkingLevel}
           />
         ) : null}
-      </Popover>
-    </>
-  )
-}
-
-const PERMISSION_MODES: Array<{
-  mode: PermissionMode
-  label: string
-  compactLabel: string
-  description: string
-  danger?: boolean
-}> = [
-  {
-    mode: 'ask',
-    get label() {
-      return chatCopy.requestApproval
-    },
-    get compactLabel() {
-      return chatCopy.permissionAsk
-    },
-    get description() {
-      return chatCopy.askBeforeExecutingCommandsWritingOrEditingFiles
-    }
-  },
-  {
-    mode: 'auto',
-    get label() {
-      return chatCopy.approveForMe
-    },
-    get compactLabel() {
-      return chatCopy.permissionAuto
-    },
-    get description() {
-      return chatCopy.runAllowedToolsAutomatically
-    }
-  },
-  {
-    mode: 'full',
-    get label() {
-      return chatCopy.fullAccess
-    },
-    get compactLabel() {
-      return chatCopy.permissionFull
-    },
-    get description() {
-      return chatCopy.unrestrictedAccessToTheInternetAndAnyFileOnYour
-    },
-    danger: true
-  }
-]
-
-export function PermissionModeControl({
-  permissionMode,
-  disabled,
-  onSelectPermissionMode,
-  compact = false
-}: {
-  permissionMode: PermissionMode
-  disabled: boolean
-  onSelectPermissionMode: (mode: PermissionMode) => void
-  compact?: boolean
-}): ReactNode {
-  useUiLanguage()
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
-  const popoverId = useId()
-  const selectedMode =
-    PERMISSION_MODES.find((item) => item.mode === permissionMode) ?? PERMISSION_MODES[1]
-  const selectedIcon = PERMISSION_MODE_ICON_META[selectedMode.mode]
-  const SelectedPermissionIcon = selectedIcon.Icon
-
-  const close = (): void => setAnchorEl(null)
-
-  return (
-    <>
-      <Tooltip title={chatCopy.permissionsValue(selectedMode.compactLabel)} enterDelay={400}>
-        {compact ? (
-          <IconButton
-            size="small"
-            aria-label={chatCopy.choosePermissionModeValue(selectedMode.compactLabel)}
-            aria-describedby={popoverId}
-            disabled={disabled}
-            onClick={(event) => setAnchorEl(event.currentTarget)}
-            sx={{
-              ...compactComposerIconButtonSx,
-              color: selectedIcon.color ?? 'text.secondary'
-            }}
-          >
-            <SelectedPermissionIcon size={COMPOSER_ICON_SIZE} />
-          </IconButton>
-        ) : (
-          <Button
-            size="small"
-            aria-label={chatCopy.choosePermissionMode}
-            aria-describedby={popoverId}
-            disabled={disabled}
-            onClick={(event) => setAnchorEl(event.currentTarget)}
-            startIcon={<SelectedPermissionIcon size={COMPOSER_ICON_SIZE} />}
-            sx={{
-              textTransform: 'none',
-              color: selectedIcon.color ?? 'text.secondary',
-              fontSize: '0.85rem',
-              minHeight: 32,
-              width: 116,
-              justifyContent: 'flex-start',
-              px: 1
-            }}
-          >
-            {chatCopy.permissions} {selectedMode.compactLabel}
-          </Button>
-        )}
-      </Tooltip>
-      <Popover
-        id={popoverId}
-        open={Boolean(anchorEl)}
-        anchorEl={anchorEl}
-        onClose={close}
-        anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
-        transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        slotProps={{
-          paper: {
-            sx: {
-              width: { xs: 'calc(100vw - 32px)', sm: 390 },
-              maxWidth: 'calc(100vw - 32px)'
-            }
-          }
-        }}
-      >
-        <List dense disablePadding>
-          {PERMISSION_MODES.map((item) => {
-            const modeIcon = PERMISSION_MODE_ICON_META[item.mode]
-            const ModeIcon = modeIcon.Icon
-
-            return (
-              <ListItemButton
-                key={item.mode}
-                selected={permissionMode === item.mode}
-                onClick={() => {
-                  onSelectPermissionMode(item.mode)
-                  close()
-                }}
-                sx={{ height: 64, alignItems: 'center', px: 2 }}
-              >
-                <ListItemIcon sx={{ minWidth: 34, color: modeIcon.color }}>
-                  <ModeIcon fontSize="small" />
-                </ListItemIcon>
-                <ListItemText
-                  primary={item.label}
-                  secondary={item.description}
-                  slotProps={{
-                    primary: {
-                      noWrap: true,
-                      sx: {
-                        color: item.danger ? 'error.main' : 'text.primary',
-                        fontSize: '0.95rem',
-                        fontWeight: item.danger ? 700 : 600,
-                        lineHeight: 1.35
-                      }
-                    },
-                    secondary: {
-                      noWrap: true,
-                      sx: {
-                        color: item.danger ? 'error.main' : 'text.secondary',
-                        fontSize: '0.84rem',
-                        lineHeight: 1.4
-                      }
-                    }
-                  }}
-                  sx={{ minWidth: 0, my: 0 }}
-                />
-                {permissionMode === item.mode && (
-                  <ListItemIcon
-                    sx={{ minWidth: 28, color: item.danger ? 'error.main' : 'inherit' }}
-                  >
-                    <CheckIcon fontSize="small" />
-                  </ListItemIcon>
-                )}
-              </ListItemButton>
-            )
-          })}
-        </List>
       </Popover>
     </>
   )

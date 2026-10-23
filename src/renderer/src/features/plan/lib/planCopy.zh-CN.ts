@@ -1,10 +1,20 @@
 import type { planEnglish } from './planCopy.en'
 
 export const planChinese = {
-  modeOff: '关闭',
-  modeReview: '计划评审',
-  modeExecute: '规划并执行',
-  modeMenuLabel: '计划模式',
+  sessionModeMenuLabel: '工作模式',
+  chooseSessionMode: (label: string) => `选择工作模式：${label}`,
+  sessionModeAuto: '自动',
+  sessionModeAutoDescription: '由智能体判断直接执行，还是先规划。',
+  sessionModeAsk: '询问',
+  sessionModeAskDescription: '直接执行；运行命令或修改文件前先询问。',
+  sessionModePlan: '计划',
+  sessionModePlanDescription: '只读调研并提交计划，批准后再执行。',
+  sessionModePlanExecute: '规划并执行',
+  sessionModePlanExecuteDescription: '规划独立步骤，批准后由执行器调度。',
+  sessionModeFull: '完全访问',
+  sessionModeFullDescription: '直接执行且无需审批，请谨慎使用。',
+  agentSelectedPlan: (execute: boolean, reason: string) =>
+    `智能体选择了：${execute ? '规划并执行' : '计划'} — ${reason}`,
   goal: '目标',
   progress: (completed: number, total: number) => `${completed}/${total} 完成`,
   runStatus: (status: 'running' | 'paused' | 'completed' | 'stopped') =>

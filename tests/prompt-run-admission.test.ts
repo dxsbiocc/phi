@@ -100,40 +100,35 @@ test('resolvePromptRunTarget canonicalizes, snapshots the lifecycle, and reads t
   assert.equal(target.runSnapshot.cwd, '/work')
 })
 
-test('plan mode rejects a remote project or a remote anchor path', () => {
+test('persisted plan work modes reject a remote project or remote anchor', () => {
   const remoteProject = {
     ...project,
     location: { kind: 'ssh', hostProfileId: 'host-1', remoteRoot: '/r', canonicalRoot: '/c' }
   } satisfies Project
 
-  assert.throws(
-    () =>
-      createPromptRunAdmission(createDeps({ project: remoteProject }).deps).resolveTarget(
-        input({ planMode: true })
-      ),
-    /远程项目暂不支持计划评审/
+  for (const workMode of ['plan', 'plan_execute'] as const) {
+    const manifest = { workMode, permissionMode: 'auto' } as PhiSessionManifest
+    const remote = createPromptRunAdmission(createDeps({ project: remoteProject, manifest }).deps)
+    assert.throws(() => remote.admit(remote.resolveTarget(input())), /暂不支持计划评审/)
+    const anchored = createPromptRunAdmission(createDeps({ remoteAnchor: true, manifest }).deps)
+    assert.throws(() => anchored.admit(anchored.resolveTarget(input())), /暂不支持计划评审/)
+  }
+})
+
+test('legacy plan flags are accepted for compatibility but ignored in favor of session mode', () => {
+  const admission = createPromptRunAdmission(
+    createDeps({
+      project: {
+        ...project,
+        location: { kind: 'ssh', hostProfileId: 'host-1', remoteRoot: '/r', canonicalRoot: '/c' }
+      },
+      manifest: { workMode: 'auto', permissionMode: 'auto' } as PhiSessionManifest
+    }).deps
   )
-  assert.throws(
-    () =>
-      createPromptRunAdmission(createDeps({ remoteAnchor: true }).deps).resolveTarget(
-        input({ planMode: true })
-      ),
-    /远程项目暂不支持计划评审/
+  const admitted = admission.admit(
+    admission.resolveTarget(input({ planMode: true, planExecute: true }))
   )
-  assert.throws(
-    () =>
-      createPromptRunAdmission(createDeps({ project: remoteProject }).deps).resolveTarget(
-        input({ planMode: true, planExecute: true })
-      ),
-    /远程项目暂不支持计划评审/
-  )
-  assert.throws(
-    () =>
-      createPromptRunAdmission(createDeps({ remoteAnchor: true }).deps).resolveTarget(
-        input({ planExecute: true })
-      ),
-    /远程项目暂不支持计划评审/
-  )
+  assert.equal(admitted.workMode, 'auto')
 })
 
 test('admitPromptRun binds the Phi identity and rejects recovery, compaction, or an active run', () => {
@@ -156,6 +151,7 @@ test('admitPromptRun binds the Phi identity and rejects recovery, compaction, or
   assert.equal(admitted.phiSessionId, 'phi-1')
   assert.equal(admitted.stableSessionPath, '/phi/phi-1')
   assert.equal(admitted.runId, 'run-1')
+  assert.equal(admitted.workMode, 'direct')
 })
 
 test('admitPromptRun uses the image fallback title only when text is empty', () => {

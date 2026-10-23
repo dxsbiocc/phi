@@ -1,13 +1,11 @@
 import { useState } from 'react'
-import type { PermissionMode, Project } from '../../../types'
-import { usePlanModeToggle, type PlanMode } from '../../plan/hooks/usePlanModeToggle'
+import { modeFromFields, type SessionMode } from '../../../../../shared/sessionMode'
+import type { Project } from '../../../types'
 
 type HomePromptDraft = {
   text: string
   projectId: string | null
-  permissionMode: PermissionMode
-  planMode?: true
-  planExecute?: true
+  mode: SessionMode
 }
 
 export type HomeProjectSelection = {
@@ -29,18 +27,16 @@ type HomePromptController = {
   projectId: string | null
   setProjectId: (projectId: string | null) => void
   selectedProject: Project | null
-  permissionMode: PermissionMode
-  planMode: PlanMode
-  disablePlanReview: boolean
+  mode: SessionMode
+  remote: boolean
   disabled: boolean
   canSend: boolean
-  selectPermission: (mode: PermissionMode) => void
-  selectPlanMode: (mode: PlanMode) => void
+  selectMode: (mode: SessionMode) => void
   submit: () => void
 }
 
 type HomeSelectionState = Pick<HomePromptController, 'projectId' | 'setProjectId'>
-type HomePermissionState = Pick<HomePromptController, 'permissionMode' | 'selectPermission'>
+type HomeModeState = Pick<HomePromptController, 'mode' | 'selectMode'>
 type HomeSubmissionState = Pick<HomePromptController, 'draft' | 'setDraft' | 'disabled' | 'submit'>
 
 function useHomeProjectSelection(selection: HomeProjectSelection | null): HomeSelectionState {
@@ -52,30 +48,23 @@ function useHomeProjectSelection(selection: HomeProjectSelection | null): HomeSe
   return { projectId, setProjectId }
 }
 
-function useHomePermission(
-  selectedProject: Project | null,
-  onUpdate: (projectId: string, permissionMode: PermissionMode) => Promise<void>
-): HomePermissionState {
-  const [ordinary, setOrdinary] = useState<PermissionMode>('auto')
-  const [project, setProject] = useState<{ id: string; mode: PermissionMode } | null>(null)
-  const permissionMode = selectedProject
-    ? project?.id === selectedProject.id
-      ? project.mode
-      : selectedProject.permissionMode
-    : ordinary
-  const selectPermission = (mode: PermissionMode): void => {
-    if (!selectedProject) return setOrdinary(mode)
-    setProject({ id: selectedProject.id, mode })
-    void onUpdate(selectedProject.id, mode)
+function useHomeMode(selectedProject: Project | null): HomeModeState {
+  const [modes, setModes] = useState<Record<string, SessionMode>>({})
+  const key = selectedProject?.id ?? 'ordinary'
+  const inherited = selectedProject
+    ? modeFromFields({ permissionMode: selectedProject.permissionMode })
+    : 'auto'
+  const mode = modes[key] ?? inherited
+  const selectMode = (nextMode: SessionMode): void => {
+    setModes((current) => (current[key] === nextMode ? current : { ...current, [key]: nextMode }))
   }
-  return { permissionMode, selectPermission }
+  return { mode, selectMode }
 }
 
 function useHomeSubmission(
   busy: boolean,
   selectedProject: Project | null,
-  permissionMode: PermissionMode,
-  planToggle: ReturnType<typeof usePlanModeToggle>,
+  mode: SessionMode,
   onStart: (request: HomePromptDraft) => Promise<void>
 ): HomeSubmissionState {
   const [draft, setDraft] = useState('')
@@ -85,12 +74,10 @@ function useHomeSubmission(
     const text = draft.trim()
     if (!text || disabled) return
     setStarting(true)
-    planToggle.resetMode()
     void onStart({
       text,
       projectId: selectedProject?.id ?? null,
-      permissionMode,
-      ...planToggle.sendOptions
+      mode
     })
       .then(() => setDraft(''))
       .finally(() => setStarting(false))
@@ -102,37 +89,23 @@ export function useHomePrompt(
   projects: Project[],
   busy: boolean,
   selection: HomeProjectSelection | null,
-  onUpdateProjectPermissionMode: (
-    projectId: string,
-    permissionMode: PermissionMode
-  ) => Promise<void>,
   onStart: (request: HomePromptDraft) => Promise<void>
 ): HomePromptController {
   const { projectId, setProjectId } = useHomeProjectSelection(selection)
   const selectedProject = projects.find((project) => project.id === projectId) ?? null
-  const disablePlanReview = selectedProject?.location.kind === 'ssh'
-  const planToggle = usePlanModeToggle(
-    `home:${selectedProject?.id ?? 'ordinary'}`,
-    disablePlanReview
-  )
-  const { permissionMode, selectPermission } = useHomePermission(
-    selectedProject,
-    onUpdateProjectPermissionMode
-  )
-  const prompt = useHomeSubmission(busy, selectedProject, permissionMode, planToggle, onStart)
+  const { mode, selectMode } = useHomeMode(selectedProject)
+  const prompt = useHomeSubmission(busy, selectedProject, mode, onStart)
   return {
     draft: prompt.draft,
     setDraft: prompt.setDraft,
     projectId,
     setProjectId,
     selectedProject,
-    permissionMode,
-    planMode: planToggle.mode,
-    disablePlanReview,
+    mode,
+    remote: selectedProject?.location.kind === 'ssh',
     disabled: prompt.disabled,
     canSend: prompt.draft.trim().length > 0 && !prompt.disabled,
-    selectPermission,
-    selectPlanMode: planToggle.selectMode,
+    selectMode,
     submit: prompt.submit
   }
 }

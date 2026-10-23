@@ -1,10 +1,8 @@
 import { createTheme, ThemeProvider } from '@mui/material/styles'
 import { ComposerReferenceChip } from '../src/renderer/src/components/chat/ComposerReferenceChip'
 import { HomeOverviewCards } from '../src/renderer/src/features/home/components/HomeOverviewCards'
-import {
-  ModelSelectorControl,
-  PermissionModeControl
-} from '../src/renderer/src/components/chat/ChatComposerControls'
+import { ModelSelectorControl } from '../src/renderer/src/components/chat/ChatComposerControls'
+import { SessionModeSelector } from '../src/renderer/src/features/plan/components/SessionModeSelector'
 import assert from 'node:assert/strict'
 import test, { afterEach } from 'node:test'
 import { createElement } from 'react'
@@ -207,11 +205,10 @@ test('activity dates and elapsed durations use the selected display locale', () 
   assert.match(chinese ?? '', /10月/)
 })
 
-test('permission and thinking controls translate labels while preserving enum selections', () => {
-  const permission = {
-    permissionMode: 'auto' as const,
-    disabled: false,
-    onSelectPermissionMode: () => undefined
+test('session mode and thinking controls translate labels while preserving enum selections', () => {
+  const sessionMode = {
+    mode: 'auto' as const,
+    onSelectMode: () => undefined
   }
   const model = {
     providerId: 'openai',
@@ -228,18 +225,12 @@ test('permission and thinking controls translate labels while preserving enum se
     onSelectThinkingLevel: () => undefined
   }
   setUiLanguage('en')
-  assert.match(
-    text(renderToStaticMarkup(createElement(PermissionModeControl, permission))),
-    /Permissions Auto/
-  )
+  assert.match(text(renderToStaticMarkup(createElement(SessionModeSelector, sessionMode))), /Auto/)
   assert.match(text(renderToStaticMarkup(createElement(ModelSelectorControl, thinking))), /High/)
   setUiLanguage('zh-CN')
-  assert.match(
-    text(renderToStaticMarkup(createElement(PermissionModeControl, permission))),
-    /权限 自动/
-  )
+  assert.match(text(renderToStaticMarkup(createElement(SessionModeSelector, sessionMode))), /自动/)
   assert.match(text(renderToStaticMarkup(createElement(ModelSelectorControl, thinking))), /高/)
-  assert.equal(permission.permissionMode, 'auto')
+  assert.equal(sessionMode.mode, 'auto')
   assert.equal(thinking.thinkingLevel, 'high')
 })
 

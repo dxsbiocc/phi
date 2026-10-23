@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PhiSessionManifest } from './session-store'
+import { fieldsFromMode, modeFromFields } from '../../../shared/sessionMode'
 import {
   assertRuntimeReferenceProject,
   excludesLocalJournalPath,
@@ -21,6 +22,7 @@ export function readManifestFile(path: string, sessionId: string): PhiSessionMan
   if (manifest.schemaVersion !== 1 || manifest.sessionId !== sessionId) {
     throw new Error('Invalid session manifest identity')
   }
+  manifest.workMode ??= fieldsFromMode(modeFromFields(manifest)).workMode
   delete manifest.runtimeRecoveryError
   if (!Object.hasOwn(manifest, 'runtimeRef')) return manifest
   const raw = manifest.runtimeRef

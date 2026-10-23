@@ -10,6 +10,7 @@ import {
   type ReactNode
 } from 'react'
 import type { PromptImageInput } from '../../../../shared/promptImageTypes'
+import type { SessionMode } from '../../../../shared/sessionMode'
 import { PastedImagePreview } from './components/PastedImagePreview'
 import { LegacyRemoteSessionNotice } from './components/LegacyRemoteSessionNotice'
 import { ContextUsageIndicator } from './components/ContextUsageIndicator'
@@ -58,13 +59,11 @@ import type {
   DirectoryListing,
   ModelOption,
   NotebookCellJumpTarget,
-  PermissionMode,
   PromptAgentSummary,
   SkillSummary,
   ThinkingLevel,
   ToolApprovalRequest
 } from '../../types'
-import type { PlanMode } from '../plan/hooks/usePlanModeToggle'
 
 export { ThinkingBlock } from '../../components/chat/ThinkingBlock'
 
@@ -112,17 +111,15 @@ type ViewProps = {
   ) => () => void
   onListInputDirectory?: (path: string) => Promise<DirectoryListing>
   onChatSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>
-  planMode?: PlanMode
-  onSelectPlanMode?: (mode: PlanMode) => void
-  disablePlanReview?: boolean
   planRunPanel?: ReactNode
   onStopGeneration: () => Promise<void>
   onAcknowledgeActiveSession?: () => void
   onGoSettings: () => void
   onOpenBackgroundJobs: () => void
-  permissionMode: PermissionMode
-  onSelectPermissionMode: (mode: PermissionMode) => void
-  disablePermissionModeSelect?: boolean
+  sessionMode: SessionMode
+  onSelectSessionMode: (mode: SessionMode) => void
+  disableSessionModeSelect?: boolean
+  remoteSession?: boolean
   disableModelControls?: boolean
   compactComposerControls?: boolean
   placement?: ChatPlacement
@@ -181,17 +178,15 @@ function ChatView({
   onInputFilesDropped,
   onListInputDirectory,
   onChatSubmit,
-  planMode = 'off',
-  onSelectPlanMode,
-  disablePlanReview = false,
   planRunPanel,
   onStopGeneration,
   onAcknowledgeActiveSession,
   onGoSettings,
   onOpenBackgroundJobs,
-  permissionMode,
-  onSelectPermissionMode,
-  disablePermissionModeSelect = false,
+  sessionMode,
+  onSelectSessionMode,
+  disableSessionModeSelect = false,
+  remoteSession = false,
   disableModelControls = false,
   compactComposerControls = false,
   placement = 'tab',
@@ -603,9 +598,10 @@ function ChatView({
               onStop={() => {
                 void onStopGeneration()
               }}
-              permissionMode={permissionMode}
-              onSelectPermissionMode={onSelectPermissionMode}
-              disablePermissionModeSelect={disablePermissionModeSelect}
+              sessionMode={sessionMode}
+              onSelectSessionMode={onSelectSessionMode}
+              disableSessionModeSelect={disableSessionModeSelect}
+              remoteSession={remoteSession}
               models={models}
               selectedModel={selectedModel}
               onSelectModel={onSelectModel}
@@ -717,9 +713,6 @@ function ChatView({
               onInsertReference={insertInputReference}
               onRefreshPromptAgents={onRefreshPromptAgents}
               onOpenAddMenu={onOpenInputAddMenu}
-              planMode={planMode}
-              onSelectPlanMode={onSelectPlanMode}
-              disablePlanReview={disablePlanReview}
               accessory={
                 contextUsageTarget ? (
                   <ContextUsageIndicator

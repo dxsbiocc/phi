@@ -15,6 +15,7 @@ export interface InProcessExtensionHostOptions {
   planModeActive?: () => boolean
   planExecuteModeActive?: () => boolean
   proposePlanSteps?: (input: unknown) => Promise<PlanStepsToolResult>
+  enterAutoPlanMode?: (input: { execute: boolean; reason: string }) => Promise<void>
   browserTextVault?: BrowserTextVault
   agentRuns?: AgentRunRegistry
   environmentBinding?: () => PhiExtensionEnvironmentBinding | undefined
@@ -34,6 +35,7 @@ export function createInProcessExtensionHost(
       (async () => {
         throw new Error('Plan execution mode is not active')
       }),
+    ...(options.enterAutoPlanMode ? { enterAutoPlanMode: options.enterAutoPlanMode } : {}),
     requestToolApproval: (request) =>
       requestToolApproval(
         request.sessionId,

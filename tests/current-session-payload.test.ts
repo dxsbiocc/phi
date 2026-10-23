@@ -167,6 +167,7 @@ test('getCurrentSessionPayload preserves ordinary, local-project, and remote-pro
     displayCwd: '/ordinary',
     sessionGeneration: 4,
     permissionMode: 'auto',
+    workMode: 'auto',
     status: 'idle',
     unreadKind: null
   })
@@ -206,6 +207,7 @@ test('getCurrentSessionPayload preserves ordinary, local-project, and remote-pro
     },
     sessionGeneration: 5,
     permissionMode: 'ask',
+    workMode: 'direct',
     status: 'idle',
     unreadKind: null,
     lastRunOutcome: undefined,
@@ -244,6 +246,7 @@ test('getCurrentSessionPayload preserves ordinary, local-project, and remote-pro
     legacyRemoteSession: true,
     sessionGeneration: 6,
     permissionMode: 'full',
+    workMode: 'direct',
     status: 'completed_unread',
     unreadKind: 'completed',
     lastRunOutcome: undefined,

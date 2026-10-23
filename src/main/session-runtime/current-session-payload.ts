@@ -10,6 +10,7 @@ import type { SessionLifecycleRegistry } from '../app-state/session-lifecycle-re
 import type { SessionState } from '../app-state/session-state'
 import type { SessionResolution } from './session-resolution'
 import { isLegacyRemoteSession } from '../agent/session/legacy-remote-session'
+import { fieldsFromMode, modeFromFields } from '../../shared/sessionMode'
 
 interface CurrentSessionPromptRun {
   phiSessionId: string
@@ -143,6 +144,10 @@ export function createCurrentSessionPayload<
       ...(isLegacyRemoteSession(manifest) ? { legacyRemoteSession: true } : {}),
       sessionGeneration: deps.lifecycles.forKey(deps.sessionState.sessionKey).currentGeneration,
       permissionMode: deps.sessionState.permissionMode,
+      workMode:
+        manifest?.workMode ??
+        fieldsFromMode(modeFromFields({ permissionMode: deps.sessionState.permissionMode }))
+          .workMode,
       ...getSessionStatusPayload(
         deps.sessionState.sessionKey,
         deps.sessionState.sessionPath,

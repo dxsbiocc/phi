@@ -7,6 +7,7 @@ import { createProjectToolBoundaryExtension } from './extensions/project-boundar
 import { createRemoteUrlGuardExtension } from './extensions/remote-url-guard'
 import { createSpecialistFallbackExtension } from './extensions/specialist-fallback'
 import { createBridgeToolApprovalExtension } from './extensions/tool-approval'
+import { createAutoWorkModeExtension } from './extensions/auto-work-mode'
 import type { PhiExtensionConfig, PhiExtensionHost } from './host'
 
 export type {
@@ -15,6 +16,7 @@ export type {
   PhiExtensionEnvironmentBinding,
   PhiExtensionFallbackReadiness,
   PhiExtensionHost,
+  PhiWorkMode,
   PhiPlanStepsToolResult,
   PhiExtensionToolApprovalRequest
 } from './host'
@@ -26,6 +28,7 @@ export { createProjectToolBoundaryExtension } from './extensions/project-boundar
 export { createRemoteUrlGuardExtension } from './extensions/remote-url-guard'
 export { createSpecialistFallbackExtension } from './extensions/specialist-fallback'
 export { createBridgeToolApprovalExtension } from './extensions/tool-approval'
+export { createAutoWorkModeExtension, ENTER_PLAN_MODE_TOOL_NAME } from './extensions/auto-work-mode'
 export {
   isReservedExecutionName,
   reduceToolCallResults,
@@ -50,6 +53,7 @@ export function createMainSessionExtensions(
   host: PhiExtensionHost
 ): ExtensionFactory[] {
   return [
+    ...(config.workMode === 'auto' ? [createAutoWorkModeExtension(host)] : []),
     createNextActionInstructionExtension(host),
     createPlanReviewToolGuardExtension(host),
     createRemoteUrlGuardExtension(),

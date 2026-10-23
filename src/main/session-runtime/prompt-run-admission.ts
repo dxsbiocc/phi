@@ -6,6 +6,7 @@ import type { SessionKeyLinking } from './session-key-linking'
 import type { SessionResolution } from './session-resolution'
 import type { PhiSessionManifest } from '../agent/session/session-store'
 import { assertLegacyRemoteSessionCanPrompt } from '../agent/session/legacy-remote-session'
+import { fieldsFromMode, modeFromFields, type WorkMode } from '../../shared/sessionMode'
 
 export interface SubmitPromptInput {
   sessionKey: string
@@ -35,6 +36,7 @@ export interface AdmittedPromptRun<TResult> extends ResolvedPromptRunTarget<TRes
   phiSessionId: string
   stableSessionPath: string
   runId: string
+  workMode: WorkMode
 }
 
 export interface PromptRunAdmissionDeps<TResult> {
@@ -78,12 +80,6 @@ function resolvePromptRunTarget<TResult>(
   const automaticModelSelection =
     deps.resolution.resolveSessionModelSelection(runSessionKey, runSnapshot) === null
   const project = deps.resolution.projectForSession(runSessionKey, runSnapshot)
-  if (
-    (input.planMode || input.planExecute) &&
-    (project?.location.kind === 'ssh' || deps.paths.isRemoteAnchorPath(runSnapshot.cwd))
-  ) {
-    throw new Error('远程项目暂不支持计划评审')
-  }
   return {
     input,
     normalizedText,
@@ -106,7 +102,18 @@ function admitPromptRun<TResult>(
     target.runSnapshot,
     target.normalizedText || (target.input.images?.length ? '图片' : undefined)
   )
-  assertLegacyRemoteSessionCanPrompt(deps.sessions.findById(phiSessionId))
+  const manifest = deps.sessions.findById(phiSessionId)
+  assertLegacyRemoteSessionCanPrompt(manifest)
+  const workMode =
+    manifest?.workMode ??
+    fieldsFromMode(modeFromFields({ permissionMode: target.runSnapshot.permissionMode })).workMode
+  if (
+    (workMode === 'plan' || workMode === 'plan_execute') &&
+    (target.project?.location.kind === 'ssh' ||
+      deps.paths.isRemoteAnchorPath(target.runSnapshot.cwd))
+  ) {
+    throw new Error('远程项目暂不支持计划评审')
+  }
   if (deps.runs.runtimeRecoveryOperations.has(phiSessionId))
     throw new Error('会话正在恢复，请等待恢复操作结束')
   if (deps.runs.manualCompactionIds.has(phiSessionId)) {
@@ -117,7 +124,7 @@ function admitPromptRun<TResult>(
   if (deps.runs.hasActiveRun(target.runSessionKey)) {
     throw new Error('会话正在运行')
   }
-  return { ...target, phiSessionId, stableSessionPath, runId }
+  return { ...target, phiSessionId, stableSessionPath, runId, workMode }
 }
 
 export interface PromptRunAdmission<TResult> {

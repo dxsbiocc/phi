@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { ProjectLocation } from '../../../shared/projectLocation'
+import type { WorkMode } from '../../../shared/sessionMode'
 import {
   type AgentEventReducerState,
   createAgentEventReducerState,
@@ -134,6 +135,7 @@ type SessionStoreState = {
   activeChatScrollResetKey: string
   isSessionChanging: boolean
   currentPermissionMode: PermissionMode
+  currentWorkMode: WorkMode
   projectSessionRefreshKey: number
   agentEventState: AgentEventReducerState
   pendingApproval: ToolApprovalRequest | null
@@ -207,6 +209,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
   }),
   isSessionChanging: false,
   currentPermissionMode: 'auto',
+  currentWorkMode: 'auto',
   projectSessionRefreshKey: 0,
   agentEventState: createAgentEventReducerState(),
   pendingApproval: null,
@@ -389,6 +392,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
         ? state.activeChatScrollResetKey
         : nextStateKey,
       currentPermissionMode: current.permissionMode ?? 'auto',
+      currentWorkMode: current.workMode ?? 'auto',
       activeSessionRuntimeState: nextRuntimeState,
       pendingApproval: pendingApprovalsBySession.get(nextStateKey) ?? null,
       pendingUserInteraction: pendingUserInteractionsBySession.get(nextStateKey) ?? null,

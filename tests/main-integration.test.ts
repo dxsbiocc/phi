@@ -58,6 +58,7 @@ import * as automaticModelFallback from '../src/main/agent/session/automatic-mod
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as notebookExecutionMetadata from '../src/shared/notebookExecutionMetadata'
 import * as sessionTitle from '../src/shared/sessionTitle'
+import * as sessionMode from '../src/shared/sessionMode'
 import * as sessionTitleGeneration from '../src/main/agent/session/session-title-generation'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
 import * as phiPluginProblems from '../src/shared/phiPluginProblems'
@@ -2693,6 +2694,9 @@ async function harness(
     '../shared/notebookDocument': notebookDocument,
     '../shared/notebookExecutionMetadata': notebookExecutionMetadata,
     '../shared/sessionTitle': sessionTitle,
+    '../shared/sessionMode': sessionMode,
+    '../../shared/sessionMode': sessionMode,
+    '../../../shared/sessionMode': sessionMode,
     './agent/content/skill-host': {
       createSkillHost: (): {
         scriptTools: (params: unknown) => Promise<{ tools: unknown[]; problems: string[] }>
@@ -3530,6 +3534,7 @@ async function harness(
     './agent/plan/plan-run-service': {
       createPlanRunService: () => ({
         startFromApprovedPlan: async () => ({ id: 'plan-run-1' }),
+        hasActiveWork: () => false,
         list: async () => [],
         get: async () => null,
         pause: async () => undefined,
@@ -4339,7 +4344,11 @@ async function harness(
       },
       createPhiSession: (input: Record<string, unknown>): { sessionId: string } => {
         const sessionId = `phi-${++phiSessionCounter}`
-        createdPhiSessions.push({ sessionId, ...input })
+        createdPhiSessions.push({
+          sessionId,
+          workMode: input.permissionMode === 'auto' ? 'auto' : 'direct',
+          ...input
+        })
         return { sessionId }
       },
       forkPhiSession: (
@@ -4544,6 +4553,8 @@ async function harness(
     './agent/packages/content-package-runtime',
     './agent/plan/plan-execution-wiring',
     './agent/plan/plan-review-host-service',
+    './agent/plan/work-mode-control',
+    './agent/plan/work-mode-selection-host',
     './agent/plugins/installed-plugin-namespace',
     './agent/plugins/phi-plugin-management-view',
     './agent/remote-runtime/app-remote-agent-environment',
@@ -7384,6 +7395,7 @@ const expectedStartupRegistrationOrder = [
   'sessions:autoCompactionSettings',
   'sessions:autoCompactionSettings:set',
   'sessions:compact',
+  'sessions:updateMode',
   'sessions:updatePermissionMode',
   'sessions:create',
   'sessions:fork',
@@ -8399,6 +8411,7 @@ test('main IPC: current payload keeps its stable identity when the manifest is m
     projectId: 'project-/projects/research',
     sessionGeneration: 0,
     permissionMode: 'ask',
+    workMode: 'direct',
     status: 'idle',
     unreadKind: null,
     messages: []
@@ -11725,6 +11738,26 @@ async function updatePermissionMode(app: HarnessResult, mode: string): Promise<u
   return app.invoke('sessions:updatePermissionMode', mode, await permissionTarget(app))
 }
 
+async function updateSessionMode(app: HarnessResult, mode: string): Promise<unknown> {
+  return app.invoke('sessions:updateMode', mode, await permissionTarget(app))
+}
+
+test('main IPC: session mode persists both work and permission fields atomically', async () => {
+  const app = await harness()
+  await app.invoke('sessions:create')
+  const current = (await updateSessionMode(app, 'plan_execute')) as {
+    workMode: string
+    permissionMode: string
+  }
+  assert.equal(current.workMode, 'plan_execute')
+  assert.equal(current.permissionMode, 'auto')
+  assert.deepEqual(app.updatedSessionManifests.at(-1)?.patch, {
+    workMode: 'plan_execute',
+    permissionMode: 'auto'
+  })
+  await assert.rejects(updateSessionMode(app, 'invalid'), /会话模式无效/)
+})
+
 test('main IPC: current conversation permission mode affects the next run', async () => {
   const app = await harness()
 
@@ -13358,11 +13391,10 @@ test('main plan review pauses the run and records approval in its conversation',
   const session = new FakeSession('fresh.jsonl')
   session.hold = true
   const app = await harness(async () => session)
+  await app.invoke('sessions:create')
+  await updateSessionMode(app, 'plan')
   const current = (await app.invoke('sessions:current')) as Record<string, unknown>
-  const prompt = app.invoke('agent:prompt', 'Analyze then write a report', {
-    ...current,
-    planMode: true
-  })
+  const prompt = app.invoke('agent:prompt', 'Analyze then write a report', current)
   await tick()
   assert.equal(
     app.bridgeRequests.some((request) => request.method === 'session.plan.enter'),
@@ -13426,16 +13458,14 @@ test('main plan review pauses the run and records approval in its conversation',
   await prompt
 })
 
-test('main planExecute prompt enters executable plan mode and wins over planMode', async () => {
+test('main plan_execute session enters executable plan mode for every prompt', async () => {
   const session = new FakeSession('fresh.jsonl')
   session.hold = true
   const app = await harness(async () => session)
+  await app.invoke('sessions:create')
+  await updateSessionMode(app, 'plan_execute')
   const current = (await app.invoke('sessions:current')) as Record<string, unknown>
-  const prompt = app.invoke('agent:prompt', 'Plan and execute a report', {
-    ...current,
-    planMode: true,
-    planExecute: true
-  })
+  const prompt = app.invoke('agent:prompt', 'Plan and execute a report', current)
   await tick()
   assert.deepEqual(
     app.bridgeRequests.find((request) => request.method === 'session.plan.enter'),
@@ -13450,14 +13480,8 @@ test('main planExecute prompt enters executable plan mode and wins over planMode
 
 test('main plan review refuses remote project sessions before starting a run', async () => {
   const app = await harness()
-  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as Record<
-    string,
-    unknown
-  >
-  await assert.rejects(
-    app.invoke('agent:prompt', 'Analyze this server project', { ...current, planMode: true }),
-    /远程项目暂不支持计划评审/
-  )
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  await assert.rejects(updateSessionMode(app, 'plan'), /远程项目暂不支持计划评审/)
   assert.equal(
     app.bridgeRequests.some((request) => request.method === 'session.plan.enter'),
     false

@@ -197,18 +197,6 @@ export const chatEnglish = {
   noModelsAvailableConfigureAProviderInSettingsFirst:
     'No models available — configure a provider in Settings first',
   noMatchingModels: 'No matching models',
-  requestApproval: 'Request approval',
-  askBeforeExecutingCommandsWritingOrEditingFiles:
-    'Ask before executing commands, writing or editing files',
-  approveForMe: 'Approve for me',
-  runAllowedToolsAutomatically: 'Run allowed tools automatically',
-  fullAccess: 'Full access',
-  unrestrictedAccessToTheInternetAndAnyFileOnYour:
-    'Unrestricted access to the internet and any file on your computer',
-  permissionsValue: (value0: string | number) => `Permissions: ${value0}`,
-  choosePermissionModeValue: (value0: string | number) => `Choose permission mode: ${value0}`,
-  choosePermissionMode: 'Choose permission mode',
-  permissions: 'Permissions',
   goToLatestMessage: 'Go to latest message',
   collapseProcessingDetails: 'Collapse processing details',
   expandProcessingDetails: 'Expand processing details',
@@ -367,9 +355,6 @@ export const chatEnglish = {
   dataSource: 'Data source',
   cellOutput: 'Cell output',
   moreFiles: (shown: string, remaining: number) => `${shown}, and ${remaining} more`,
-  permissionAsk: 'Ask',
-  permissionAuto: 'Auto',
-  permissionFull: 'Full',
   thinkingMinimal: 'Minimal',
   thinkingLow: 'Low',
   thinkingMedium: 'Medium',

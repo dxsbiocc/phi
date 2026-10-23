@@ -4,16 +4,17 @@ import { useRef } from 'react'
 import { Box } from '@mui/material'
 import { ChatComposer } from '../../../components/chat/ChatComposer'
 import { type ComposerTextEditorHandle } from '../../../components/chat/ComposerTextEditor'
-import type { ModelOption, PermissionMode, Project, ThinkingLevel } from '../../../types'
+import type { SessionMode } from '../../../../../shared/sessionMode'
+import type { ModelOption, Project, ThinkingLevel } from '../../../types'
 import { HomeProjectMenu } from './HomeProjectMenu'
 import type { HomeComposerResources } from './HomePrompt'
-import type { PlanMode } from '../../plan/hooks/usePlanModeToggle'
 
 type HomePromptComposerProps = {
   projects: Project[]
   selectedProject: Project | null
   draft: string
-  permissionMode: PermissionMode
+  mode: SessionMode
+  remote: boolean
   disabled: boolean
   canSend: boolean
   models: ModelOption[]
@@ -21,14 +22,11 @@ type HomePromptComposerProps = {
   thinkingLevel: ThinkingLevel
   onDraftChange: (value: string) => void
   onSelectProject: (projectId: string | null) => void
-  onSelectPermissionMode: (mode: PermissionMode) => void
+  onSelectMode: (mode: SessionMode) => void
   onSelectModel: (model: ModelOption | null) => void
   onSelectThinkingLevel: (level: ThinkingLevel) => void
   onNewProject: () => void
   onSubmit: () => void
-  planMode: PlanMode
-  disablePlanReview: boolean
-  onSelectPlanMode: (mode: PlanMode) => void
   composerResources?: HomeComposerResources
 }
 
@@ -48,7 +46,8 @@ export function HomePromptComposer({
   projects,
   selectedProject,
   draft,
-  permissionMode,
+  mode,
+  remote,
   disabled,
   canSend,
   models,
@@ -56,14 +55,11 @@ export function HomePromptComposer({
   thinkingLevel,
   onDraftChange,
   onSelectProject,
-  onSelectPermissionMode,
+  onSelectMode,
   onSelectModel,
   onSelectThinkingLevel,
   onNewProject,
   onSubmit,
-  planMode,
-  disablePlanReview,
-  onSelectPlanMode,
   composerResources
 }: HomePromptComposerProps): React.JSX.Element {
   useUiLanguage()
@@ -90,9 +86,10 @@ export function HomePromptComposer({
           editorMinHeight={48}
           markHomeSend
           sendDisabled={!canSend}
-          permissionMode={permissionMode}
-          onSelectPermissionMode={onSelectPermissionMode}
-          disablePermissionModeSelect={disabled}
+          sessionMode={mode}
+          onSelectSessionMode={onSelectMode}
+          disableSessionModeSelect={disabled}
+          remoteSession={remote}
           models={models}
           selectedModel={selectedModel}
           onSelectModel={onSelectModel}
@@ -106,9 +103,6 @@ export function HomePromptComposer({
           onPickFiles={composerResources?.onPickFiles}
           onOpenAddMenu={composerResources?.onOpenAddMenu}
           onRefreshPromptAgents={composerResources?.onRefreshPromptAgents}
-          planMode={planMode}
-          onSelectPlanMode={onSelectPlanMode}
-          disablePlanReview={disablePlanReview || disabled}
           onChange={(value) => onDraftChange(value)}
           onKeyDown={submitPromptOnEnter}
           sendLabel={homeCopy.sendPrompt}

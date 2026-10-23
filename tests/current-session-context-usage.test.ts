@@ -22,6 +22,7 @@ const remoteSession: CurrentSessionPayload = {
   },
   sessionGeneration: 4,
   permissionMode: 'ask',
+  workMode: 'direct',
   status: 'idle',
   unreadKind: null
 }

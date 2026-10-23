@@ -281,6 +281,7 @@ export const IPC = {
     resumeRuntime: 'sessions:resumeRuntime',
     runtimeRecovery: 'sessions:runtimeRecovery',
     switch: 'sessions:switch',
+    updateMode: 'sessions:updateMode',
     updatePermissionMode: 'sessions:updatePermissionMode'
   },
   settings: {

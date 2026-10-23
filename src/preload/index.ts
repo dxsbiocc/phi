@@ -78,6 +78,7 @@ import type {
 import type { PromptAgentSummary, RemoteProjectAgentTrustRequest } from '../shared/promptAgentTypes'
 import type { RemoteProjectMcpTrustRequest } from '../shared/remoteProjectMcpTypes'
 import type { PlanRunRendererApi } from '../shared/planRunTypes'
+import type { SessionMode, WorkMode } from '../shared/sessionMode'
 import type {
   GithubSourcePreview,
   GithubSourceSummary,
@@ -288,6 +289,7 @@ type SessionSwitchResult = SessionRuntimeState & {
   legacyRemoteSession?: boolean
   sessionGeneration: number
   permissionMode: PermissionMode
+  workMode: WorkMode
   messages: unknown[]
 }
 
@@ -301,6 +303,7 @@ type CurrentSession = SessionRuntimeState & {
   legacyRemoteSession?: boolean
   sessionGeneration: number
   permissionMode: PermissionMode
+  workMode: WorkMode
   messages?: unknown[]
 }
 
@@ -314,8 +317,6 @@ type PromptTarget = {
   suppressUserMessageEvent?: boolean
   retryUserMessageId?: string
   images?: PromptImageInput[]
-  planMode?: boolean
-  planExecute?: boolean
 }
 
 type PermissionMode = 'auto' | 'ask' | 'full'
@@ -897,6 +898,10 @@ type RendererAuthApi = PreloadApiBase & {
   compactCurrentSession: (target: ManualCompactionTarget) => Promise<ManualCompactionOutcome>
   updateCurrentSessionPermissionMode: (
     permissionMode: PermissionMode,
+    target: ManualCompactionTarget
+  ) => Promise<CurrentSession>
+  updateCurrentSessionMode: (
+    mode: SessionMode,
     target: ManualCompactionTarget
   ) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
@@ -1522,6 +1527,10 @@ const api: RendererAuthApi = {
     target: ManualCompactionTarget
   ): Promise<CurrentSession> =>
     ipcRenderer.invoke(IPC.sessions.updatePermissionMode, permissionMode, target),
+  updateCurrentSessionMode: (
+    mode: SessionMode,
+    target: ManualCompactionTarget
+  ): Promise<CurrentSession> => ipcRenderer.invoke(IPC.sessions.updateMode, mode, target),
   createSession: (): Promise<CurrentSession> => ipcRenderer.invoke(IPC.sessions.create),
   getRuntimeRecoveryState: (target) => ipcRenderer.invoke(IPC.sessions.runtimeRecovery, target),
   resumeRuntimeSession: (target, replacementModel) =>

@@ -51,6 +51,40 @@ async function until(predicate: () => boolean): Promise<void> {
   assert.fail('Timed out waiting for plan execution')
 }
 
+test('active-work query catches running plans and running steps in paused plans', () => {
+  const running = runningState()
+  const pausedWithRunningStep = reducePlanRun(running, {
+    type: 'pause',
+    at: '2026-10-23T00:00:02.000Z'
+  })
+  const states = [pausedWithRunningStep]
+  const service = createPlanRunService({
+    engine: {
+      agentRuns: {
+        start: async () => ({ runId: 'unused' }),
+        stop: async () => undefined
+      }
+    },
+    resolveRuntimeSessionId: () => null,
+    store: {
+      write: () => undefined,
+      read: () => null,
+      list: () => states,
+      listUnfinished: () => states
+    },
+    timeline: { append: (_sessionId, event) => event, broadcast: () => undefined },
+    continueConversation: () => undefined,
+    logError: (error) => assert.fail(String(error))
+  })
+
+  assert.equal(service.hasActiveWork('phi-1'), true)
+  states[0] = {
+    ...pausedWithRunningStep,
+    steps: { 'step-a': { status: 'interrupted', attempts: 1 } }
+  }
+  assert.equal(service.hasActiveWork('phi-1'), false)
+})
+
 test('list recovers unfinished runs once and persists interrupted state', async () => {
   const paused = reducePlanRun(
     createPlanRunState({

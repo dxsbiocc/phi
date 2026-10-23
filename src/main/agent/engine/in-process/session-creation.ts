@@ -28,10 +28,11 @@ import { disconnectLeasedMcpManager, leasedProfileMcpManager } from './mcp-profi
 import { syncFeaturedApiKeysForSession } from './mcp-runtime'
 import { getContext, modelBySelector, runtimeThinkingLevel } from './runtime-context'
 import { createAgentSession, makeSessionManager } from './session-factory'
-import { autoCompactionOverrides } from './session-runtime'
+import { autoCompactionOverrides, enterSessionPlanMode } from './session-runtime'
 import { sessions } from './state'
 import { createSessionToolRegistry } from './tool-registry'
 import { serializeSessionState } from './tool-support'
+import { installAutoWorkModeBatchGuard } from './auto-work-mode-guard'
 
 export async function createSession(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
@@ -51,6 +52,13 @@ export async function createSession(params: unknown): Promise<unknown> {
   const noTools = record.noTools === 'all' || record.noTools === true
   if (!noTools) disableFeaturedApiKeyAutoDiscovery(agentDir)
   const personaMarkdown = stringValue(record.personaMarkdown).trim()
+  const workMode =
+    record.workMode === 'auto' ||
+    record.workMode === 'direct' ||
+    record.workMode === 'plan' ||
+    record.workMode === 'plan_execute'
+      ? record.workMode
+      : 'direct'
   const phiAgents = Array.isArray(record.phiAgents)
     ? record.phiAgents.filter(isPhiAgentDefinition)
     : []
@@ -66,6 +74,7 @@ export async function createSession(params: unknown): Promise<unknown> {
     enableToolApproval: Boolean(record.enableToolApproval),
     sessionId,
     useBrowserTextVault: true,
+    workMode,
     phiAgents: agentPolicies
   }
   const extensionHost = createInProcessExtensionHost({
@@ -78,6 +87,11 @@ export async function createSession(params: unknown): Promise<unknown> {
       const handler = sessions.get(sessionId)?.planStepsProposal
       if (!handler) throw new Error('Plan execution mode is not active')
       return handler(input)
+    },
+    enterAutoPlanMode: async (input) => {
+      if (workMode !== 'auto') throw new Error('Automatic work mode is not active')
+      await enterSessionPlanMode({ sessionId, execute: input.execute })
+      await requestHost('workMode.selected', input, { originSessionId: sessionId })
     },
     browserTextVault,
     agentRuns
@@ -135,7 +149,8 @@ export async function createSession(params: unknown): Promise<unknown> {
       thinkingLevel: runtimeThinkingLevel(record.thinkingLevel),
       systemPrompt: (defaultPrompt) =>
         buildPhiMainSystemPrompt(defaultPrompt, {
-          ...(personaMarkdown ? { personaMarkdown } : {})
+          ...(personaMarkdown ? { personaMarkdown } : {}),
+          workMode
         }),
       ...(selectedModel ? { model: selectedModel } : {}),
       ...(resources ? { resourceLoader: resources } : {}),
@@ -155,6 +170,7 @@ export async function createSession(params: unknown): Promise<unknown> {
         : {})
     })
     created = result
+    installAutoWorkModeBatchGuard(result.session.agent, workMode === 'auto')
     if (leasedMcp) {
       await result.session.refreshMCPTools(mcpTools ?? [])
       leasedMcp.manager.setOnToolsChanged((tools) => {

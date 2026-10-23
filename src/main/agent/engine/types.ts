@@ -23,6 +23,7 @@ import type {
   ProjectMemorySnapshot
 } from '../../../shared/projectMemoryTypes'
 import type { RemoteProjectMcpRuntimeServer } from '../../../shared/remoteProjectMcpTypes'
+import type { WorkMode } from '../../../shared/sessionMode'
 import type { PhiAgentDefinition } from '../agents/definition'
 import type {
   DecisionModelOption,
@@ -383,6 +384,7 @@ export type PhiSessionCreateParams = {
   enableToolApproval: boolean
   phiAgents?: PhiAgentDefinition[]
   projectBound?: boolean
+  workMode?: WorkMode
   memory?: ProjectMemorySettings
   remoteProject?: {
     phiSessionId: string

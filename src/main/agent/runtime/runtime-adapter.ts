@@ -10,6 +10,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ProjectLocation } from '../../../shared/projectLocation'
 import type { RemoteProjectMcpRuntimeServer } from '../../../shared/remoteProjectMcpTypes'
+import type { WorkMode } from '../../../shared/sessionMode'
 import type {
   AutoCompactionDefaults,
   AutoCompactionOverrides,
@@ -28,7 +29,6 @@ import type {
   RuntimeProvider,
   RuntimeProviderAuthStatus,
   RuntimeResourceBundle,
-  SessionInfo,
   Skill,
   ThinkingLevel,
   ToolApprovalRequest,
@@ -59,6 +59,7 @@ export type {
   Skill,
   ThinkingLevel
 } from '../engine/types'
+export { listRuntimeSessions } from './runtime-session-list'
 
 export type AuthPrompt =
   | {
@@ -279,6 +280,7 @@ export type CreateAgentSessionOptions = {
   phiAgents?: PhiAgentDefinition[]
   /** Restrict explicit file paths in project sessions to the selected project. */
   projectBound?: boolean
+  workMode?: WorkMode
   /** The project's memory policy; absent for sessions outside a project. */
   memory?: ProjectMemorySettings
   remoteProject?: {
@@ -1058,6 +1060,7 @@ export async function createRuntimeAgentSession(
     enableToolApproval: toolCallHandlers.length > 0,
     phiAgents: options.phiAgents,
     projectBound: options.projectBound,
+    workMode: options.workMode,
     memory: options.memory,
     remoteProject: options.remoteProject,
     remoteProjectMcpServers: options.remoteProjectMcpServers,
@@ -1142,17 +1145,4 @@ export async function openRuntimeSessionManager(
     result.cwd ?? cwd ?? process.cwd(),
     result.sessionFile ?? path
   )
-}
-
-export async function listRuntimeSessions(cwd: string): Promise<SessionInfo[]> {
-  const infos = await getPhiEngine().history.list({
-    agentDir: getPhiAgentDir(),
-    cwd
-  })
-  return infos.map((info) => ({
-    ...info,
-    created: new Date(info.created),
-    modified: new Date(info.modified),
-    name: info.name ?? info.title
-  }))
 }

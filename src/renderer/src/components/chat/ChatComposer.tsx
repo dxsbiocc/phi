@@ -14,19 +14,13 @@ import {
   type RefObject
 } from 'react'
 import { GoPaperAirplane } from 'react-icons/go'
-import { PlanModeControl } from '../../features/plan/components/PlanModeControl'
-import type { PlanMode } from '../../features/plan/hooks/usePlanModeToggle'
+import type { SessionMode } from '../../../../shared/sessionMode'
+import { SessionModeSelector } from '../../features/plan/components/SessionModeSelector'
 import type { ChatResourceMention } from '../../lib/chatResourceMentions'
-import type {
-  ModelOption,
-  PermissionMode,
-  PromptAgentSummary,
-  SkillSummary,
-  ThinkingLevel
-} from '../../types'
+import type { ModelOption, PromptAgentSummary, SkillSummary, ThinkingLevel } from '../../types'
 import { ComposerTextEditor, type ComposerTextEditorHandle } from './ComposerTextEditor'
 import { PromptBarSparkles } from './PromptBarSparkles'
-import { ModelSelectorControl, PermissionModeControl } from './ChatComposerControls'
+import { ModelSelectorControl } from './ChatComposerControls'
 import { resolveThinkingSelection } from './composerThinkingLevel'
 import { InputAddControl, InputAddPanel } from './InputAddMenu'
 import {
@@ -185,9 +179,10 @@ export type ChatComposerProps = {
   sendDisabled?: boolean
   showStop?: boolean
   onStop?: () => void
-  permissionMode: PermissionMode
-  onSelectPermissionMode: (mode: PermissionMode) => void
-  disablePermissionModeSelect?: boolean
+  sessionMode: SessionMode
+  onSelectSessionMode: (mode: SessionMode) => void
+  disableSessionModeSelect?: boolean
+  remoteSession?: boolean
   models: ModelOption[]
   selectedModel: ModelOption | null
   onSelectModel: (model: ModelOption | null) => void
@@ -213,9 +208,6 @@ export type ChatComposerProps = {
   onInsertReference?: (reference: string) => void
   onRefreshPromptAgents?: () => Promise<void>
   onOpenAddMenu?: () => void
-  planMode?: PlanMode
-  onSelectPlanMode?: (mode: PlanMode) => void
-  disablePlanReview?: boolean
   sendLabel: string
   stopLabel?: string
   stopTitle?: string
@@ -238,9 +230,10 @@ export function ChatComposer({
   sendDisabled = false,
   showStop = false,
   onStop,
-  permissionMode,
-  onSelectPermissionMode,
-  disablePermissionModeSelect = false,
+  sessionMode,
+  onSelectSessionMode,
+  disableSessionModeSelect = false,
+  remoteSession = false,
   models,
   selectedModel,
   onSelectModel,
@@ -266,9 +259,6 @@ export function ChatComposer({
   onInsertReference,
   onRefreshPromptAgents,
   onOpenAddMenu,
-  planMode = 'off',
-  onSelectPlanMode = () => undefined,
-  disablePlanReview = false,
   sendLabel,
   stopLabel = '',
   stopTitle = ''
@@ -372,17 +362,12 @@ export function ChatComposer({
               buttonRef={addMenu.buttonRef}
               onToggle={addMenu.toggle}
             />
-            <PermissionModeControl
-              permissionMode={permissionMode}
-              disabled={disablePermissionModeSelect}
-              onSelectPermissionMode={onSelectPermissionMode}
+            <SessionModeSelector
+              mode={sessionMode}
+              disabled={disableSessionModeSelect}
+              remote={remoteSession}
+              onSelectMode={onSelectSessionMode}
               compact={compact}
-            />
-            <PlanModeControl
-              mode={planMode}
-              disabled={disablePlanReview}
-              compact={compact}
-              onSelectMode={onSelectPlanMode}
             />
           </Box>
           <Box
