@@ -15,7 +15,7 @@ import {
 } from '@mui/material'
 import { useMemo, useState } from 'react'
 import { PhiIcons } from '../icons'
-import { PlanReviewPanel } from './PlanReviewPanel'
+import { PlanReviewPanel } from '../features/plan/components/PlanReviewPanel'
 import type {
   AgentUserInteractionAnswer,
   AgentUserInteractionRequest,

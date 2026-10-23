@@ -346,6 +346,7 @@ test('start fails clearly when the conversation runtime is not alive', async () 
 test('stop uses the runtime captured by the running step after disposal', async () => {
   const states = new Map<string, PlanRunState>()
   const stoppedIn: string[] = []
+  const timelineTypes: string[] = []
   let runtimeSessionId: string | null = 'runtime-1'
   const service = createPlanRunService({
     engine: {
@@ -370,7 +371,13 @@ test('stop uses the runtime captured by the running step after disposal', async 
       list: () => [...states.values()],
       listUnfinished: () => []
     },
-    timeline: { append: (_sessionId, event) => event, broadcast: () => undefined },
+    timeline: {
+      append: (_sessionId, event) => {
+        timelineTypes.push(event.type)
+        return event
+      },
+      broadcast: () => undefined
+    },
     continueConversation: () => assert.fail('stopped plans must not wake the conversation'),
     logError: (error) => assert.fail(String(error)),
     clock: () => '2026-10-23T00:00:00.000Z',
@@ -383,4 +390,6 @@ test('stop uses the runtime captured by the running step after disposal', async 
 
   assert.equal(state.status, 'stopped')
   assert.deepEqual(stoppedIn, ['runtime-1'])
+  assert.equal(timelineTypes.at(-1), 'plan_run_finished')
+  assert.equal(timelineTypes.filter((type) => type === 'plan_run_finished').length, 1)
 })

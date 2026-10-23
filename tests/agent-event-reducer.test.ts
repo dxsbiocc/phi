@@ -15,6 +15,36 @@ function agentEvent<T extends AgentEventSummary>(event: T): T {
   return event
 }
 
+test('plan run updates stay out of chat while a finished run adds one concise record', () => {
+  const snapshot = {
+    id: 'plan-1',
+    status: 'completed' as const,
+    replans: 0,
+    createdAt: '2026-10-23T00:00:00.000Z',
+    updatedAt: '2026-10-23T00:00:05.000Z',
+    goal: 'Ship the renderer loop',
+    steps: []
+  }
+  let state = reduceAgentEventState(
+    createAgentEventReducerState(),
+    agentEvent({ type: 'plan_run_updated', runId: 'plan-1', state: snapshot })
+  )
+  assert.equal(state.messages.length, 0)
+
+  state = reduceAgentEventState(
+    state,
+    agentEvent({
+      type: 'plan_run_finished',
+      eventId: 'plan-finished-1',
+      runId: 'plan-1',
+      state: snapshot
+    })
+  )
+  assert.equal(state.messages.length, 1)
+  assert.equal(state.messages[0]?.role, 'warning')
+  assert.match(state.messages[0]?.content ?? '', /计划已完成/)
+})
+
 test('provider-managed tool result appears as a completed tool card', () => {
   const state = reduceAgentEventState(createAgentEventReducerState(), {
     source: 'phi',

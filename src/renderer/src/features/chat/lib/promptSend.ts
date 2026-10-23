@@ -233,6 +233,7 @@ export async function sendPrompt(
             ...target,
             ...(images.length ? { images } : {}),
             ...(options.planMode ? { planMode: true } : {}),
+            ...(options.planExecute ? { planExecute: true } : {}),
             suppressUserMessageEvent: true,
             ...(options.retryUserMessageId
               ? { retryUserMessageId: options.retryUserMessageId }
@@ -241,7 +242,8 @@ export async function sendPrompt(
         : {
             ...target,
             ...(images.length ? { images } : {}),
-            ...(options.planMode ? { planMode: true } : {})
+            ...(options.planMode ? { planMode: true } : {}),
+            ...(options.planExecute ? { planExecute: true } : {})
           }
     )
     if (!result || !isCurrentReply(deps, receipt, result)) return true

@@ -20,6 +20,7 @@ export type SendPromptOptions = {
   suppressUserMessageEvent?: boolean
   images?: PromptImageInput[]
   planMode?: boolean
+  planExecute?: boolean
 }
 
 export type QueuedPrompt = {

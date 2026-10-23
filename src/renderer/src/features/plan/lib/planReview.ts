@@ -1,4 +1,41 @@
 import type { AgentUserInteractionResponse, ChatItem, PlanReviewItem } from '../../../types'
+import { isRecord } from '../../../../../shared/guards'
+import type { PlanSpec, PlanStep } from '../../../../../shared/planRunTypes'
+
+function planStepFromUnknown(value: unknown): PlanStep | null {
+  if (!isRecord(value)) return null
+  if (
+    typeof value.id !== 'string' ||
+    typeof value.title !== 'string' ||
+    typeof value.instructions !== 'string' ||
+    typeof value.acceptance !== 'string' ||
+    (value.access !== 'read' && value.access !== 'write') ||
+    !Array.isArray(value.dependsOn) ||
+    !value.dependsOn.every((id) => typeof id === 'string')
+  )
+    return null
+  const writes = Array.isArray(value.writes)
+    ? value.writes.filter((path): path is string => typeof path === 'string')
+    : undefined
+  return {
+    id: value.id,
+    title: value.title,
+    instructions: value.instructions,
+    acceptance: value.acceptance,
+    access: value.access,
+    dependsOn: value.dependsOn,
+    ...(writes ? { writes } : {}),
+    ...(typeof value.agent === 'string' ? { agent: value.agent } : {})
+  }
+}
+
+function planSpecFromUnknown(value: unknown): PlanSpec | undefined {
+  if (!isRecord(value) || value.version !== 1 || typeof value.goal !== 'string') return undefined
+  if (!Array.isArray(value.steps) || value.steps.length === 0) return undefined
+  const steps = value.steps.map(planStepFromUnknown)
+  if (steps.some((step) => step === null)) return undefined
+  return { version: 1, goal: value.goal, steps: steps.filter((step) => step !== null) }
+}
 
 export function planReviewResponse(
   requestId: string,
@@ -21,6 +58,7 @@ export function planReviewItemFromEvent(event: {
   title?: unknown
   content?: unknown
   planFilePath?: unknown
+  steps?: unknown
 }): PlanReviewItem | null {
   if (
     event.type !== 'plan_review_submitted' ||
@@ -30,6 +68,7 @@ export function planReviewItemFromEvent(event: {
     typeof event.planFilePath !== 'string'
   )
     return null
+  const steps = planSpecFromUnknown(event.steps)
   return {
     id: event.eventId ?? `plan-review-${event.reviewId}`,
     role: 'plan_review',
@@ -39,6 +78,7 @@ export function planReviewItemFromEvent(event: {
     title: event.title,
     content: event.content,
     planFilePath: event.planFilePath,
+    ...(steps ? { steps } : {}),
     status: 'pending'
   }
 }

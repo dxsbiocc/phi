@@ -17,7 +17,7 @@ import {
 } from './chatItems'
 import { workspaceChangesItemFromPhiTimelineEvent } from '../features/chat/lib/workspaceChanges'
 import { presentedFilesItemFromPhiTimelineEvent } from '../features/chat/lib/presentedFiles'
-import { applyPlanReviewDecision, planReviewItemFromEvent } from '../features/chat/lib/planReview'
+import { applyPlanReviewDecision, planReviewItemFromEvent } from '../features/plan/lib/planReview'
 import {
   uiBlocksItemFromToolEvent,
   unavailableUiBlocksItemFromToolEvent

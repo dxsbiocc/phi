@@ -7,7 +7,7 @@ import {
   uiBlocksItemFromToolEvent,
   unavailableUiBlocksItemFromToolEvent
 } from '../features/chat/lib/uiBlocks'
-import { applyPlanReviewDecision, planReviewItemFromEvent } from '../features/chat/lib/planReview'
+import { applyPlanReviewDecision, planReviewItemFromEvent } from '../features/plan/lib/planReview'
 import type { TodoPhaseSnapshot, TodoSnapshot, TodoTaskSnapshot } from './todoTypes'
 import {
   agentExecutionFromTimelineEvent,
@@ -457,6 +457,7 @@ type RestoredSessionMessage = {
   phiSessionId?: string
   sessionId?: string
   summary?: string
+  state?: unknown
   userMessageId?: string
   preferPhiTimeline?: boolean
   content?: unknown

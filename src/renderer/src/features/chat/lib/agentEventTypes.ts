@@ -75,6 +75,7 @@ export interface AgentEventSummary {
   }
   toolCalls?: number
   reason?: string
+  state?: unknown
   action?: string
   aborted?: boolean
   willRetry?: boolean

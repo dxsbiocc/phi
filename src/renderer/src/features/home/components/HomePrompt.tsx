@@ -12,15 +12,15 @@ import type {
   ThinkingLevel
 } from '../../../types'
 import { useHomePrompt, type HomeProjectSelection } from '../hooks/useHomePrompt'
+import type { PlanModePromptOptions } from '../../plan/hooks/usePlanModeToggle'
 import { HomePromptComposer } from './HomePromptComposer'
 import { PhiMark } from './PhiMark'
 import { HOME_COLUMN_MAX_WIDTH } from '../lib/homeColumn'
 
-export type HomePromptRequest = {
+export type HomePromptRequest = PlanModePromptOptions & {
   text: string
   projectId: string | null
   permissionMode: PermissionMode
-  planMode: boolean
 }
 
 export type HomeComposerResources = {
@@ -102,9 +102,9 @@ export function HomePrompt(props: HomePromptProps): React.JSX.Element {
         onSelectThinkingLevel={props.onSelectThinkingLevel}
         onNewProject={props.onNewProject}
         onSubmit={prompt.submit}
-        planReviewEnabled={prompt.planReviewEnabled}
+        planMode={prompt.planMode}
         disablePlanReview={prompt.disablePlanReview}
-        onTogglePlanReview={prompt.togglePlanReview}
+        onSelectPlanMode={prompt.selectPlanMode}
         composerResources={props.composerResources}
       />
     </Box>

@@ -67,6 +67,7 @@ export interface PromptTarget {
   retryUserMessageId?: string
   images?: PromptImageInput[]
   planMode?: boolean
+  planExecute?: boolean
 }
 
 export type PermissionMode = 'auto' | 'ask' | 'full'

@@ -62,6 +62,7 @@ import type {
   ThinkingLevel,
   ToolApprovalRequest
 } from '../../types'
+import type { PlanMode } from '../plan/hooks/usePlanModeToggle'
 
 export { ThinkingBlock } from '../../components/chat/ThinkingBlock'
 
@@ -122,9 +123,10 @@ type ViewProps = {
   ) => () => void
   onListInputDirectory?: (path: string) => Promise<DirectoryListing>
   onChatSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>
-  planReviewEnabled?: boolean
-  onTogglePlanReview?: () => void
+  planMode?: PlanMode
+  onSelectPlanMode?: (mode: PlanMode) => void
   disablePlanReview?: boolean
+  planRunPanel?: ReactNode
   onStopGeneration: () => Promise<void>
   onAcknowledgeActiveSession?: () => void
   onGoSettings: () => void
@@ -188,9 +190,10 @@ function ChatView({
   onInputFilesDropped,
   onListInputDirectory,
   onChatSubmit,
-  planReviewEnabled = false,
-  onTogglePlanReview,
+  planMode = 'off',
+  onSelectPlanMode,
   disablePlanReview = false,
+  planRunPanel,
   onStopGeneration,
   onAcknowledgeActiveSession,
   onGoSettings,
@@ -497,6 +500,11 @@ function ChatView({
         </Box>
       </ResourceMentionsProvider>
       <Box sx={chatComposerLayoutSx}>
+        {planRunPanel ? (
+          <Box sx={{ maxWidth: 'var(--phi-chat-content-max-width)', mx: 'auto' }}>
+            {planRunPanel}
+          </Box>
+        ) : null}
         <Box
           component="form"
           onSubmit={handleChatSubmit}
@@ -713,8 +721,8 @@ function ChatView({
             onInsertReference={insertInputReference}
             onRefreshPromptAgents={onRefreshPromptAgents}
             onOpenAddMenu={onOpenInputAddMenu}
-            planReviewEnabled={planReviewEnabled}
-            onTogglePlanReview={onTogglePlanReview}
+            planMode={planMode}
+            onSelectPlanMode={onSelectPlanMode}
             disablePlanReview={disablePlanReview}
             accessory={
               contextUsageTarget ? (

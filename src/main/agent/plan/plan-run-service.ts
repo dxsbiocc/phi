@@ -207,6 +207,11 @@ function planExecutorEvents<StoredEvent extends Record<string, unknown>>(
         fingerprints.set(event.state.id, fingerprint)
         try {
           emitTimeline(deps, 'plan_run_updated', event.state)
+          // A stopped run ends here: the executor reports run_finished only for completed
+          // runs. Record the ending, but the user stopped it, so the agent is not woken.
+          if (event.state.status === 'stopped') {
+            emitTimeline(deps, 'plan_run_finished', event.state)
+          }
         } catch (error) {
           reportServiceError(deps, event.state.id, 'timeline_update', error)
         }
