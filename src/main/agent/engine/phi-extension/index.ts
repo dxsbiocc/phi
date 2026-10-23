@@ -16,12 +16,14 @@ export type {
   PhiExtensionEnvironmentBinding,
   PhiExtensionFallbackReadiness,
   PhiExtensionHost,
+  PhiPlanStepsToolResult,
   PhiExtensionToolApprovalRequest,
   PhiRemoteMcpGuardState
 } from './host'
 export { createEnvironmentBindingExtension } from './extensions/environment-binding'
 export { createNextActionInstructionExtension } from './extensions/next-action'
 export { createPlanReviewToolGuardExtension } from './extensions/plan-review'
+export { createPlanStepsExtension } from './extensions/plan-steps'
 export { createProjectToolBoundaryExtension } from './extensions/project-boundary'
 export { createRemoteProjectToolGuardExtension } from './extensions/remote-project-guard'
 export { createRemoteUrlGuardExtension } from './extensions/remote-url-guard'

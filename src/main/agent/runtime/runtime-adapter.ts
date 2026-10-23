@@ -1,4 +1,5 @@
 import { RuntimeReferenceError } from '../session/runtime-reference'
+import { agentRunCompletions } from '../plan/execution/agent-run-completions'
 import { OmpModelRuntimeFacade } from './model-runtime-facade'
 import type { PhiAgentDefinition } from '../agents/definition'
 import type { ProjectMemorySettings } from '../../../shared/projectMemoryTypes'
@@ -7,7 +8,6 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-
 import type { ProjectLocation } from '../../../shared/projectLocation'
 import type { RemoteProjectMcpRuntimeServer } from '../../../shared/remoteProjectMcpTypes'
 import type {
@@ -912,8 +912,8 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     })
     applySessionState(this, state)
   }
-
   async dispose(): Promise<void> {
+    agentRunCompletions.abandonSession(this.runtimeSessionId, 'Runtime session disposed')
     this.approvalAbortController.abort()
     for (const cleanup of this.cleanupFns.splice(0)) {
       cleanup()

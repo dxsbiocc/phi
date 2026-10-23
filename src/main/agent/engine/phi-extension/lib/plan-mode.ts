@@ -7,7 +7,8 @@ const READ_ONLY_TOOLS = new Set([
   'todo',
   'ask_user_question',
   'capability_search',
-  'find_skills'
+  'find_skills',
+  'propose_plan_steps'
 ])
 
 export function planModeToolDecision(

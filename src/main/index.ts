@@ -265,7 +265,9 @@ import {
 import { createAgentInteractionRequest } from './agent/host-requests/agent-interaction-request'
 import { createDeliverablesPresentation } from './agent/host-requests/deliverables-presentation'
 import { createHostConfirmations } from './agent/host-requests/host-confirmations'
-import { createPlanReviewRequest } from './agent/host-requests/plan-review-request'
+import { registerPlanReviewHostService } from './agent/plan/plan-review-host-service'
+import { createPlanRunService } from './agent/plan/plan-run-service'
+import { registerPlanRunIpc } from './ipc/plan-run-ipc'
 import {
   createInMemoryRuntimeSessionManager,
   getBundledAgentsDir,
@@ -314,13 +316,17 @@ import { resolveProjectRemoteTarget } from './agent/wrappers/remote-connection-r
 import { reconcileRemoteWrapperRuns } from './agent/wrappers/executor-slurm-reconcile'
 import { createWrapperResultReadControl } from './agent/wrappers/remote-result-read-control'
 import { loadRemoteAgentCatalog } from './agent/agents/remote-agent-service'
-import { BackgroundAgentApprovalTracker } from './agent/agents/background-approval'
+import {
+  BackgroundAgentApprovalTracker,
+  createBackgroundApprovalRunOriginResolver
+} from './agent/agents/background-approval'
 import {
   createSessionCreationApprovalDependencies,
   createSessionCreationExtensionFactories
 } from './agent/session/session-creation-approvals'
 import {
   continuationPrompt,
+  createPlanRunContinuation,
   shouldContinueAfterAgentRun,
   type ContinuationEvent
 } from './agent/agents/run-continue'
@@ -956,8 +962,13 @@ function requireRemoteEditApproval(request: RemoteEditRequest): void {
 }
 
 const loadedSkillNamesBySession = new Map<string, string[]>()
+const resolveBackgroundAgentRunOrigin = createBackgroundApprovalRunOriginResolver({
+  listRuns: () => getPhiEngine().agentRuns.list({}),
+  resolveSession: sessionOrigins.resolveOriginSession
+})
 const backgroundAgentApprovals = new BackgroundAgentApprovalTracker({
   readManifest: findPhiSessionById,
+  resolveRunOrigin: resolveBackgroundAgentRunOrigin,
   appendEvent: appendSessionEvent,
   updateManifest: updateSessionManifest,
   onEvent: (sessionId, event) =>
@@ -966,6 +977,7 @@ const backgroundAgentApprovals = new BackgroundAgentApprovalTracker({
 })
 // The RPC facade owns persistence; this observer reuses its records for sidebar attention.
 const rpcChildApprovals = new BackgroundAgentApprovalTracker({
+  resolveRunOrigin: resolveBackgroundAgentRunOrigin,
   readManifest: (sessionId) => {
     const manifest = findPhiSessionById(sessionId)
     const active = runnerRegistry.getActiveRun(sessionId)
@@ -1003,6 +1015,30 @@ const runnerRegistry = new SessionRunnerRegistry({
     backgroundAgentApprovals.afterParentRunSettled(sessionId)
     rpcChildApprovals.afterParentRunSettled(sessionId)
   }
+})
+const continuePlanRunConversation = createPlanRunContinuation({
+  automaticCount: (phiSessionId) => automaticContinuations.get(phiSessionId) ?? 0,
+  wakeConversation,
+  onLimit: (phiSessionId, runId) =>
+    writeAppLog({
+      event: 'plan_run_continue_limit',
+      metadata: { phiSessionId, planRunId: runId }
+    })
+})
+const planRunService = createPlanRunService({
+  engine: getPhiEngine(),
+  completions: agentRunCompletions,
+  resolveRuntimeSessionId: (phiSessionId) =>
+    sessionKeys.runtimeSessionIdForPhiSession(phiSessionId, (runtimeSessionId) =>
+      getPhiEngine().sessions.has(runtimeSessionId)
+    ) ?? null,
+  timeline: {
+    append: appendSessionEvent,
+    broadcast: (phiSessionId, event) =>
+      sendRunEventToWindow({ source: 'phi', ...event, phiSessionId })
+  },
+  continueConversation: continuePlanRunConversation,
+  logError: logUnexpectedError
 })
 const handleAgentInteractionRequest = createAgentInteractionRequest({
   fields: { optionalStringField },
@@ -1088,34 +1124,6 @@ const {
     notifySessionChanged
   },
   capability: { assertCurrent: (context) => capabilityHost.assertCurrent(context) }
-})
-const handlePlanReviewRequest = createPlanReviewRequest({
-  fields: { optionalStringField },
-  runs: { findByRuntimeSessionId: findActivePromptRunByRuntimeSessionId },
-  projects: { getById: (projectId) => getProject(projectId) ?? undefined },
-  sessions: {
-    findById: findPhiSessionById,
-    sessionPath: phiOnlySessionPath
-  },
-  renderer: {
-    getActiveWindow,
-    canRequest: canRequestAgentUserInteraction,
-    waitForResponse: waitForAgentUserInteraction
-  },
-  timeline: {
-    append: appendSessionEvent,
-    broadcast: broadcastSessionTimelineEvent
-  },
-  state: {
-    createId: createRunId,
-    markNeedsInput: (sessionId, reviewId, state) =>
-      runnerRegistry.markNeedsInput(sessionId, reviewId, state),
-    markInputCancelled: (sessionId, reviewId) =>
-      runnerRegistry.markInputCancelled(sessionId, reviewId),
-    markInputAnswered: (sessionId, reviewId) =>
-      runnerRegistry.markInputAnswered(sessionId, reviewId),
-    notifySessionChanged
-  }
 })
 const skippedMcpNotifier = createSkippedMcpNotifier({
   append: appendSessionEvent,
@@ -1308,14 +1316,16 @@ installAppRemoteSessionRouting({
         cwd: event.request.cwd
       })
     } else {
-      rpcChildApprovals.resolved(
-        event.approvalId,
-        event.type === 'approval_approved'
-          ? 'approved'
-          : event.type === 'approval_denied'
-            ? 'denied'
-            : 'cancelled'
-      )
+      void rpcChildApprovals
+        .resolved(
+          event.approvalId,
+          event.type === 'approval_approved'
+            ? 'approved'
+            : event.type === 'approval_denied'
+              ? 'denied'
+              : 'cancelled'
+        )
+        .catch(logUnexpectedError)
     }
   },
   onMemoryError: (identity) =>
@@ -1759,7 +1769,23 @@ const cursorH2Bridge = createCursorH2Bridge()
 getPhiEngine().host.register('cursorBridge.ensure', async () => ({
   baseUrl: await cursorH2Bridge.ensure()
 }))
-getPhiEngine().host.register('planReview.request', handlePlanReviewRequest)
+registerPlanReviewHostService({
+  host: getPhiEngine().host,
+  optionalStringField,
+  findActivePromptRunByRuntimeSessionId,
+  getProject,
+  findPhiSessionById,
+  phiOnlySessionPath,
+  getActiveWindow,
+  canRequestAgentUserInteraction,
+  waitForAgentUserInteraction,
+  appendSessionEvent,
+  broadcastSessionTimelineEvent,
+  createRunId,
+  runnerRegistry,
+  notifySessionChanged,
+  planRuns: planRunService
+})
 getPhiEngine().host.register('deliverables.present', handlePresentFilesRequest)
 getPhiEngine().host.register('mcp.openAuthUrl', async (params) => {
   const request = params as { id?: unknown; url?: unknown } | null
@@ -2469,11 +2495,15 @@ function flushPendingContinuations(phiSessionId: string, runWasCancelled: boolea
   if (!queued) return
   pendingContinuations.delete(phiSessionId)
   // A run whose outcome the agent was already handed during that turn (it waited for it) needs no announcement.
-  const events = queued.filter((event) =>
-    event.type === 'agent_run_finished'
-      ? !hasAgentRunBeenReported(phiSessionId, event.agentRunId)
-      : !wrapperJobs.hasBeenReported(event.wrapperRunId)
-  )
+  const events = queued.filter((event) => {
+    if (event.type === 'agent_run_finished') {
+      return !hasAgentRunBeenReported(phiSessionId, event.agentRunId)
+    }
+    if (event.type === 'wrapper_run_finished') {
+      return !wrapperJobs.hasBeenReported(event.wrapperRunId)
+    }
+    return true
+  })
   if (runWasCancelled || events.length === 0) return
   try {
     startAutomaticContinuation(phiSessionId, events)
@@ -2541,8 +2571,9 @@ const sessionCreationApprovalDependencies = createSessionCreationApprovalDepende
   sessionPath: phiOnlySessionPath,
   background: {
     backgroundRequested: (request) => backgroundAgentApprovals.requested(request),
-    backgroundResolved: (approvalId, decision) =>
-      backgroundAgentApprovals.resolved(approvalId, decision)
+    backgroundResolved: (approvalId, decision) => {
+      void backgroundAgentApprovals.resolved(approvalId, decision).catch(logUnexpectedError)
+    }
   },
   runner: {
     requested: (sessionId, approvalId, metadata) =>
@@ -3696,6 +3727,7 @@ function registerAgentIpc(): void {
   registerAgentPromptIpc(agentIpcOptions)
   registerWorkspaceChangesIpc({ ipcMain })
   registerAgentRunControlIpc(agentIpcOptions)
+  registerPlanRunIpc({ ipcMain, planRuns: planRunService })
 }
 
 function registerApplicationAndModelIpc(): void {

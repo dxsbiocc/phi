@@ -74,10 +74,7 @@ function isUnfinished(state: PlanRunState): boolean {
   return state.status === 'running' || state.status === 'paused'
 }
 
-export function listUnfinishedPlanRuns(
-  sessionId: string,
-  agentDir = getPhiAgentDir()
-): PlanRunState[] {
+export function listPlanRuns(sessionId: string, agentDir = getPhiAgentDir()): PlanRunState[] {
   assertSafeFragment(sessionId, 'session')
   try {
     const directory = dirname(securePlanRunPath(sessionId, 'listing', agentDir, false))
@@ -88,8 +85,15 @@ export function listUnfinishedPlanRuns(
       .sort()
     return runIds
       .map((runId) => readPlanRun(sessionId, runId, agentDir))
-      .filter((state): state is PlanRunState => state !== null && isUnfinished(state))
+      .filter((state): state is PlanRunState => state !== null)
   } catch {
     return []
   }
+}
+
+export function listUnfinishedPlanRuns(
+  sessionId: string,
+  agentDir = getPhiAgentDir()
+): PlanRunState[] {
+  return listPlanRuns(sessionId, agentDir).filter(isUnfinished)
 }

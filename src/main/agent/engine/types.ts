@@ -463,7 +463,7 @@ export interface PhiEngine {
       params: { sessionId: string },
       control?: RuntimeSelectionControl
     ): Promise<RuntimeAutoCompactionReceipt>
-    enterPlanMode(params: { sessionId: string }): Promise<unknown>
+    enterPlanMode(params: { sessionId: string; execute?: boolean }): Promise<unknown>
     has(sessionId: string): boolean
     /** In-process diagnostic for a retained routed generation; never reconnects it. */
     interruption?(sessionId: string): Error | undefined

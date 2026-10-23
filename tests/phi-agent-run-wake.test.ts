@@ -9,11 +9,15 @@ import {
 import {
   agentRunContinuationPrompt,
   continuationPrompt,
+  createPlanRunContinuation,
+  planRunContinuationPrompt,
+  shouldContinueAfterPlanRun,
   shouldContinueAfterAgentRun
 } from '../src/main/agent/agents/run-continue'
 import { MAX_AUTOMATIC_CONTINUATIONS } from '../src/main/agent/wrappers/composition/job-continue'
 import { agentRunNotice, type AgentRunFinishedEvent } from '../src/shared/agentRunNotice'
 import type { WrapperRunFinishedEvent } from '../src/shared/wrapperRunNotice'
+import type { PlanRunFinishedEvent } from '../src/shared/planRunTypes'
 
 const DONE: AgentRunFinishedEvent = {
   type: 'agent_run_finished',
@@ -75,6 +79,30 @@ test('an ended run wakes the conversation, unless it was cancelled or the wake-u
   )
 })
 
+test('a completed plan uses the shared automatic continuation cap', () => {
+  assert.deepEqual(shouldContinueAfterPlanRun(0), { continue: true })
+  assert.deepEqual(shouldContinueAfterPlanRun(MAX_AUTOMATIC_CONTINUATIONS), {
+    continue: false,
+    reason: 'limit'
+  })
+})
+
+test('a completed plan run wakes at most once per conversation and run id', () => {
+  const woken: string[] = []
+  const limited: string[] = []
+  const continuePlan = createPlanRunContinuation({
+    automaticCount: () => 0,
+    wakeConversation: (sessionId, event) => woken.push(`${sessionId}/${event.runId}`),
+    onLimit: (sessionId, runId) => limited.push(`${sessionId}/${runId}`)
+  })
+  const event = { type: 'plan_run_finished', runId: 'plan-1', state: {} } as PlanRunFinishedEvent
+  continuePlan('phi-1', event)
+  continuePlan('phi-1', event)
+  continuePlan('phi-2', event)
+  assert.deepEqual(woken, ['phi-1/plan-1', 'phi-2/plan-1'])
+  assert.deepEqual(limited, [])
+})
+
 // ── prompt ───────────────────────────────────────────────────────────────
 
 test('the wake-up message tells the model it is from Phi and hands over the reports', () => {
@@ -110,6 +138,50 @@ test('one wake-up can carry both wrapper and agent runs', () => {
   assert.match(both, /<phi_agent_run_finished>/)
   assert.doesNotMatch(continuationPrompt([DONE]), /phi_wrapper_run_finished/)
   assert.doesNotMatch(continuationPrompt([wrapperEvent]), /phi_agent_run_finished/)
+})
+
+test('plan wake-up includes bounded goal, statuses, and report summaries', () => {
+  const plan: PlanRunFinishedEvent = {
+    type: 'plan_run_finished',
+    runId: 'plan-1',
+    state: {
+      id: 'plan-1',
+      sessionId: 'phi-1',
+      spec: {
+        version: 1,
+        goal: 'Prepare the report',
+        steps: [
+          {
+            id: 'report',
+            title: 'Write report',
+            instructions: 'Write it',
+            acceptance: 'Report exists',
+            dependsOn: [],
+            access: 'write'
+          }
+        ]
+      },
+      status: 'completed',
+      steps: {
+        report: {
+          status: 'done',
+          attempts: 1,
+          report: { status: 'completed', text: 'x'.repeat(30_000), missingInputs: [] }
+        }
+      },
+      replans: 0,
+      createdAt: '2026-10-23T00:00:00.000Z',
+      updatedAt: '2026-10-23T00:01:00.000Z'
+    }
+  }
+  const text = planRunContinuationPrompt([plan])
+  assert.match(text, /^<phi_plan_run_finished>/)
+  assert.match(text, /Prepare the report/)
+  assert.match(text, /report · Write report · done/)
+  assert.match(text, /Verify the reported results/)
+  assert.match(text, /truncated/)
+  assert.ok(text.length <= 20_000)
+  assert.match(continuationPrompt([plan]), /<phi_plan_run_finished>/)
 })
 
 // ── host handlers ────────────────────────────────────────────────────────

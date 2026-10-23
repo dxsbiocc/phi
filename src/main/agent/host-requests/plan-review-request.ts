@@ -2,6 +2,8 @@ import type { BrowserWindow } from 'electron'
 
 import type { AgentUserInteractionInput, waitForAgentUserInteraction } from '../user-interaction'
 import { isRecord } from '../../../shared/guards'
+import type { PlanSpec } from '../../../shared/planRunTypes'
+import { validatePlanSpec } from '../plan/model/plan-spec'
 
 export interface PlanReviewPromptRun {
   phiSessionId: string
@@ -28,6 +30,7 @@ interface PlanReviewSubmittedEvent extends Record<string, unknown> {
   title: string
   content: string
   planFilePath: string
+  steps?: PlanSpec
 }
 
 interface PlanReviewDecidedEvent extends Record<string, unknown> {
@@ -36,6 +39,7 @@ interface PlanReviewDecidedEvent extends Record<string, unknown> {
   reviewId: string
   decision: PlanReviewDecision
   note?: string
+  reason?: 'plan_start_failed'
 }
 
 type PlanReviewEvent = PlanReviewSubmittedEvent | PlanReviewDecidedEvent
@@ -79,6 +83,9 @@ export interface PlanReviewRequestDeps<StoredEvent> {
     markInputAnswered(sessionId: string, requestId: string): void
     notifySessionChanged(): void
   }
+  planRuns?: {
+    startFromApprovedPlan(sessionId: string, spec: PlanSpec): Promise<{ id: string }>
+  }
 }
 
 interface ValidPlanReviewRequest {
@@ -86,12 +93,20 @@ interface ValidPlanReviewRequest {
   title: string
   content: string
   planFilePath: string
+  steps?: PlanSpec
 }
 
 interface PlanReviewTarget {
   run: PlanReviewPromptRun
   project: PlanReviewProject | undefined
   window: BrowserWindow
+}
+
+function readPlanSteps(value: unknown): PlanSpec | undefined {
+  if (value === undefined) return undefined
+  const validated = validatePlanSpec(value)
+  if (!validated.ok) throw new Error('Invalid plan review request')
+  return validated.spec
 }
 
 function readPlanReviewRequest<StoredEvent>(
@@ -103,10 +118,11 @@ function readPlanReviewRequest<StoredEvent>(
   const title = deps.fields.optionalStringField(record, 'title')?.trim()
   const content = deps.fields.optionalStringField(record, 'planContent')
   const planFilePath = deps.fields.optionalStringField(record, 'planFilePath')
+  const steps = readPlanSteps(record.steps)
   if (
     !runtimeSessionId ||
     !title ||
-    title.length > 120 ||
+    Array.from(title).length > 120 ||
     !content?.trim() ||
     Buffer.byteLength(content, 'utf8') > 64 * 1024 ||
     !planFilePath ||
@@ -114,7 +130,13 @@ function readPlanReviewRequest<StoredEvent>(
   ) {
     throw new Error('Invalid plan review request')
   }
-  return { runtimeSessionId, title, content, planFilePath }
+  return {
+    runtimeSessionId,
+    title,
+    content,
+    planFilePath,
+    ...(steps ? { steps } : {})
+  }
 }
 
 function resolvePlanReviewTarget<StoredEvent>(
@@ -145,7 +167,8 @@ function submitPlanReview<StoredEvent>(
     reviewId,
     title: request.title,
     content: request.content,
-    planFilePath: request.planFilePath
+    planFilePath: request.planFilePath,
+    ...(request.steps ? { steps: request.steps } : {})
   })
   deps.timeline.broadcast(target.run.phiSessionId, submitted)
   deps.state.markNeedsInput(target.run.phiSessionId, reviewId, {
@@ -168,10 +191,14 @@ function planReviewNote(response: PlanReviewResponse): string {
 function recordPlanReviewDecision<StoredEvent>(
   target: PlanReviewTarget,
   reviewId: string,
-  decision: PlanReviewDecision,
-  note: string,
+  outcome: {
+    decision: PlanReviewDecision
+    note: string
+    reason?: PlanReviewDecidedEvent['reason']
+  },
   deps: PlanReviewRequestDeps<StoredEvent>
 ): void {
+  const { decision, note, reason } = outcome
   if (decision === 'cancel') {
     deps.state.markInputCancelled(target.run.phiSessionId, reviewId)
   } else {
@@ -182,7 +209,8 @@ function recordPlanReviewDecision<StoredEvent>(
     runId: target.run.runId,
     reviewId,
     decision,
-    ...(note && decision === 'revise' ? { note } : {})
+    ...(note && decision === 'revise' ? { note } : {}),
+    ...(reason ? { reason } : {})
   })
   deps.timeline.broadcast(target.run.phiSessionId, decided)
   deps.state.notifySessionChanged()
@@ -190,7 +218,9 @@ function recordPlanReviewDecision<StoredEvent>(
 
 export function createPlanReviewRequest<StoredEvent>(
   deps: PlanReviewRequestDeps<StoredEvent>
-): (params: unknown) => Promise<{ decision: PlanReviewDecision; note?: string }> {
+): (
+  params: unknown
+) => Promise<{ decision: PlanReviewDecision; note?: string; planRunId?: string }> {
   return async function handlePlanReviewRequest(params) {
     const request = readPlanReviewRequest(params, deps)
     const target = resolvePlanReviewTarget(request, deps)
@@ -203,7 +233,8 @@ export function createPlanReviewRequest<StoredEvent>(
         planReview: {
           title: request.title,
           content: request.content,
-          planFilePath: request.planFilePath
+          planFilePath: request.planFilePath,
+          ...(request.steps ? { steps: request.steps } : {})
         },
         sessionId: target.run.phiSessionId,
         sessionPath: deps.sessions.sessionPath(target.run.phiSessionId),
@@ -216,7 +247,26 @@ export function createPlanReviewRequest<StoredEvent>(
     )
     const decision = planReviewDecision(response)
     const note = planReviewNote(response)
-    recordPlanReviewDecision(target, reviewId, decision, note, deps)
-    return { decision, ...(note && decision === 'revise' ? { note } : {}) }
+    let planRun: { id: string } | undefined
+    if (decision === 'approve' && request.steps) {
+      try {
+        if (!deps.planRuns) throw new Error('Plan execution service is unavailable')
+        planRun = await deps.planRuns.startFromApprovedPlan(target.run.phiSessionId, request.steps)
+      } catch (error) {
+        recordPlanReviewDecision(
+          target,
+          reviewId,
+          { decision: 'cancel', note: '', reason: 'plan_start_failed' },
+          deps
+        )
+        throw error
+      }
+    }
+    recordPlanReviewDecision(target, reviewId, { decision, note }, deps)
+    return {
+      decision,
+      ...(note && decision === 'revise' ? { note } : {}),
+      ...(planRun ? { planRunId: planRun.id } : {})
+    }
   }
 }

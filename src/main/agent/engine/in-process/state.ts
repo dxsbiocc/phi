@@ -7,6 +7,7 @@ import { type RemoteMcpGuardState, type RemoteMcpProfilePolicy } from '../../mcp
 import type { readCustomRemoteMcpConnector } from '../../mcp-connectors'
 import type { BrowserTextVault } from '../../browser/browser-text-vault'
 import type { AgentRunFn, AgentRunRegistry } from '../../agents/registry'
+import type { PlanStepsToolResult } from '../../plan/plan-review-mode'
 import type { RuntimeContext } from './common'
 
 export type RemoteMcpAccess = {
@@ -22,6 +23,8 @@ export type SessionEntry = {
   agentRuns?: AgentRunRegistry
   /** Every configured specialist, including host-only orchestration agents. */
   agentRunners?: ReadonlyMap<string, AgentRunFn>
+  /** Present only while structured plan review is active. */
+  planStepsProposal?: (input: unknown) => Promise<PlanStepsToolResult>
   /** Stops telling the main process about those runs (used when the session goes away). */
   stopAgentRunNotices?: () => void
   browserTextVault?: BrowserTextVault

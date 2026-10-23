@@ -326,6 +326,8 @@ test('a running fallback guard observes a newly installed required-first special
   const extension = createSpecialistFallbackExtension(policies, {
     nextActionSuggestionsEnabled: async () => false,
     planModeActive: () => false,
+    planExecuteModeActive: () => false,
+    proposePlanSteps: async () => ({ content: [] }),
     requestToolApproval: async () => undefined,
     browserApprovalInput: (_id, input) => input,
     markBrowserTextDenied: () => undefined,

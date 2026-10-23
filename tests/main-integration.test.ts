@@ -31,7 +31,10 @@ import * as engineEvents from '../src/main/agent/engine/events'
 import type { OmpBridge } from '../src/main/agent/engine/omp-bridge'
 import * as windowStartup from '../src/main/window-startup'
 import { loadRemoteWrapperAgent } from '../src/main/agent/agents/remote-wrapper-agent'
-import { BackgroundAgentApprovalTracker } from '../src/main/agent/agents/background-approval'
+import {
+  BackgroundAgentApprovalTracker,
+  createBackgroundApprovalRunOriginResolver
+} from '../src/main/agent/agents/background-approval'
 import * as jobContinue from '../src/main/agent/wrappers/composition/job-continue'
 import { MAX_AUTOMATIC_CONTINUATIONS } from '../src/main/agent/wrappers/composition/job-continue'
 import { deliverWrapperRunFinished } from '../src/main/agent/wrappers/composition/job-notify'
@@ -3514,11 +3517,30 @@ async function harness(
         disabledDependents: []
       })
     },
-    './agent/agents/background-approval': { BackgroundAgentApprovalTracker },
+    './agent/agents/background-approval': {
+      BackgroundAgentApprovalTracker,
+      createBackgroundApprovalRunOriginResolver
+    },
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },
     './agent/agents/run-continue': agentRunContinue,
     './agent/agents/run-host': { agentRunHostHandlers },
     './agent/plan/execution/agent-run-completions': agentRunCompletions,
+    './agent/plan/model/plan-spec': {
+      validatePlanSpec: (value: unknown) => ({ ok: true, spec: value })
+    },
+    './agent/plan/plan-run-service': {
+      createPlanRunService: () => ({
+        startFromApprovedPlan: async () => ({ id: 'plan-run-1' }),
+        list: async () => [],
+        get: async () => null,
+        pause: async () => undefined,
+        resume: async () => undefined,
+        stop: async () => undefined,
+        retryStep: async () => undefined,
+        skipStep: async () => undefined,
+        recoverSession: async () => []
+      })
+    },
     './agent/wrappers/composition/discovery': {
       listWrapperCompositionCatalogStatus: (): unknown[] => [],
       resetWrapperCompositionCatalogCache: (): void => {}
@@ -4538,6 +4560,7 @@ async function harness(
     './agent/notebook/remote-notebook-runtime',
     './agent/persona-generation',
     './agent/packages/content-package-runtime',
+    './agent/plan/plan-review-host-service',
     './agent/plugins/installed-plugin-namespace',
     './agent/plugins/phi-plugin-management-view',
     './agent/remote-runtime/app-remote-agent-environment',
@@ -7329,6 +7352,13 @@ const expectedStartupRegistrationOrder = [
   'agent:stop',
   'agent:steerRun',
   'agent:stopRun',
+  'planRuns:list',
+  'planRuns:get',
+  'planRuns:pause',
+  'planRuns:resume',
+  'planRuns:stop',
+  'planRuns:retryStep',
+  'planRuns:skipStep',
   'auth:status',
   'auth:loginApiKey',
   'auth:loginOAuth',
@@ -13915,6 +13945,28 @@ test('main plan review pauses the run and records approval in its conversation',
   await prompt
 })
 
+test('main planExecute prompt enters executable plan mode and wins over planMode', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  const current = (await app.invoke('sessions:current')) as Record<string, unknown>
+  const prompt = app.invoke('agent:prompt', 'Plan and execute a report', {
+    ...current,
+    planMode: true,
+    planExecute: true
+  })
+  await tick()
+  assert.deepEqual(
+    app.bridgeRequests.find((request) => request.method === 'session.plan.enter'),
+    {
+      method: 'session.plan.enter',
+      params: { sessionId: session.runtimeSessionId, execute: true }
+    }
+  )
+  await app.invoke('agent:stop')
+  await prompt
+})
+
 test('main plan review refuses remote project sessions before starting a run', async () => {
   const app = await harness()
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as Record<
@@ -17430,6 +17482,7 @@ test('T14 main approvals: a finished parent child uses one durable event and onl
     { ...event, type: 'approval_denied' },
     { sessionId: original.phiSessionId, runId: 'old-parent' }
   )
+  await tick()
   assert.equal(
     app.updatedSessionManifests.filter((entry) => entry.sessionId === original.phiSessionId).at(-1)
       ?.patch.status,

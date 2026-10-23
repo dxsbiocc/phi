@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { Settings, type CreateAgentSessionResult } from '@oh-my-pi/pi-coding-agent'
 import {
   createMainSessionExtensions,
+  createPlanStepsExtension,
   remoteWorkspaceToolsVerified,
   type PhiExtensionConfig
 } from '../phi-extension'
@@ -155,6 +156,12 @@ export async function createSession(params: unknown): Promise<unknown> {
     nextActionSuggestionsEnabled: async () =>
       (await requestHost('settings.nextActionSuggestionsEnabled', {})) === true,
     planModeActive: () => parentRef.current?.session.getPlanModeState()?.enabled === true,
+    planExecuteModeActive: () => Boolean(sessions.get(sessionId)?.planStepsProposal),
+    proposePlanSteps: async (input) => {
+      const handler = sessions.get(sessionId)?.planStepsProposal
+      if (!handler) throw new Error('Plan execution mode is not active')
+      return handler(input)
+    },
     browserTextVault,
     agentRuns,
     remoteSkillToolNames: () => remoteSkillToolNames,
@@ -163,6 +170,7 @@ export async function createSession(params: unknown): Promise<unknown> {
   })
   const extensionFactories = [
     ...createMainSessionExtensions(extensionConfig, extensionHost),
+    createPlanStepsExtension(extensionHost),
     // Keep a policy guard even when a later approved plugin supplies the first specialist.
     ...(agentPolicies.length === 0
       ? [createSpecialistFallbackExtension(agentPolicies, extensionHost)]

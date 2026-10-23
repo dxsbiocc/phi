@@ -66,6 +66,7 @@ import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { SessionDeleteResult } from '../shared/sessionDeleteTypes'
 import type { RuntimeRecoveryApi } from '../shared/runtimeRecoveryTypes'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
+import type { PlanRunRendererApi } from '../shared/planRunTypes'
 import type {
   AutoCompactionSettingsPatch,
   CurrentAutoCompactionSettings,
@@ -182,6 +183,7 @@ type PreloadPromptTarget = {
   retryUserMessageId?: string
   images?: PromptImageInput[]
   planMode?: boolean
+  planExecute?: boolean
 }
 
 type PreloadPromptResult = { path: string | null; phiSessionId?: string; sessionGeneration: number }
@@ -648,10 +650,12 @@ type PreloadAnalysisNotebookFormatResult = {
   message?: string
 }
 
+type PreloadRendererApiBase = WorkspaceFileOperationsRendererApi & PlanRunRendererApi
+
 declare global {
   interface Window {
     platform: NodeJS.Platform
-    api: WorkspaceFileOperationsRendererApi & {
+    api: PreloadRendererApiBase & {
       browser: BrowserRendererBridge
       terminal: TerminalRendererBridge
       sshBootstrap: SshBootstrapRendererBridge

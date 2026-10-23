@@ -390,3 +390,15 @@ test('store write failures emit safely, keep watching done, and never reject unh
     process.off('unhandledRejection', onUnhandled)
   }
 })
+
+test('an initial persistence failure rolls back the in-memory run', async () => {
+  const executor = createPlanExecutor({
+    runner: new FakeRunner(),
+    store: { write: () => Promise.reject(new Error('initial write failed')) },
+    events: { emit: () => undefined },
+    clock: () => '2026-01-01T00:00:00.000Z',
+    ids: () => 'plan-rollback'
+  })
+  await assert.rejects(executor.start(spec([step('a')]), 'session-1'), /initial write failed/)
+  assert.equal(executor.get('plan-rollback'), undefined)
+})

@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 import { IPC } from '../src/shared/ipcChannels'
+import { createPlanRunApi } from '../src/preload/plan-run-api'
 import type {
   BrowserRendererBridge,
   BrowserRendererEventEnvelope,
@@ -255,6 +256,7 @@ test('preload browser bridge invokes exact channels and independently unsubscrib
   const fakeWindow = { addEventListener: (): void => undefined }
   const load = (specifier: string): unknown => {
     if (specifier === '../shared/ipcChannels') return { IPC }
+    if (specifier === './plan-run-api') return { createPlanRunApi }
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {

@@ -24,6 +24,7 @@ interface PromptRunInput {
   images?: PromptImageInput[]
   promptTarget: PromptTargetInput | null
   planMode?: boolean
+  planExecute?: boolean
 }
 
 export interface AgentIpcOptions {
@@ -85,7 +86,8 @@ export function registerAgentPromptIpc(options: AgentIpcOptions): void {
       text: normalizedText,
       images,
       promptTarget,
-      planMode: promptTarget?.planMode === true
+      planMode: promptTarget?.planMode === true && promptTarget.planExecute !== true,
+      planExecute: promptTarget?.planExecute === true
     })
   })
 

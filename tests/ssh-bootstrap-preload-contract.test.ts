@@ -6,6 +6,7 @@ import test from 'node:test'
 import ts from 'typescript'
 
 import { IPC } from '../src/shared/ipcChannels'
+import { createPlanRunApi } from '../src/preload/plan-run-api'
 
 const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
 
@@ -48,6 +49,7 @@ test('preload SSH bootstrap bridge invokes only the staged renderer channels', a
   const exposed = new Map<string, unknown>()
   const load = (specifier: string): unknown => {
     if (specifier === '../shared/ipcChannels') return { IPC }
+    if (specifier === './plan-run-api') return { createPlanRunApi }
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {
