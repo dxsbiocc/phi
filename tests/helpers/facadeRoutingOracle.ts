@@ -304,7 +304,7 @@ try {
         bundle,
         recovery: mode,
         recentUserImages: () => [],
-        desktopToolNames: ['notebook.save'],
+        desktopToolNames: ['notebook_save'],
         approval: {
           shouldGate: () => true,
           requestToolApproval: (request) => {
@@ -349,7 +349,7 @@ try {
   }
   await scanConfig()
   provider.enqueue(
-    { tool: { name: 'notebook.save', args: { path: 'oracle.ipynb' } } },
+    { tool: { name: 'notebook_save', args: { path: 'oracle.ipynb' } } },
     { text: 'first routed answer' }
   )
   let state: WorkerSessionState | undefined

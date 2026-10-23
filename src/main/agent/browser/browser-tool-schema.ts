@@ -10,6 +10,7 @@ export const BROWSER_TOOL_MAX_ID_BYTES = 256
 
 export function browserToolParameters(): Record<string, unknown> {
   return {
+    type: 'object',
     oneOf: [
       {
         type: 'object',

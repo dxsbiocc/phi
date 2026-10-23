@@ -68,6 +68,7 @@ import { useQueuedPromptDrain } from './features/chat/hooks/useQueuedPromptDrain
 import type { SendPromptOptions } from './features/chat/lib/promptQueue'
 import { HomeView } from './features/home/HomeView'
 import { runtimeStatusesSnapshot } from './features/runtime/lib/runtimeGroups'
+import { restoreRemoteRunStopNotices } from './features/chat/lib/restoreRemoteRunStopNotices'
 import type { HomeProjectSelection } from './features/home/hooks/useHomePrompt'
 import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
@@ -1222,10 +1223,16 @@ function App(): React.JSX.Element {
           sessionGeneration: result.sessionGeneration
         })
         const cachedState = sessionAgentEventStates.get(targetStateKey)
+        const persistedMessages = chatItemsFromSessionMessages(result.messages)
         if (cachedState && cachedState.messages.length > 0) {
-          setAgentEventState(cachedState)
+          const restoredState = {
+            ...cachedState,
+            messages: restoreRemoteRunStopNotices(cachedState.messages, persistedMessages)
+          }
+          sessionAgentEventStates.set(targetStateKey, restoredState)
+          setAgentEventState(restoredState)
         } else {
-          replaceMessages(chatItemsFromSessionMessages(result.messages))
+          replaceMessages(persistedMessages)
         }
         void refreshCurrentModelControls(request)
         void refreshSessions()
@@ -2427,6 +2434,9 @@ function App(): React.JSX.Element {
         // and tool cards the user just watched. Only load from disk when nothing is loaded yet.
         if (useSessionStore.getState().agentEventState.messages.length === 0) {
           replaceMessages(chatItemsFromSessionMessages(result.messages ?? []))
+        } else {
+          const persistedMessages = chatItemsFromSessionMessages(result.messages ?? [])
+          updateMessages((cached) => restoreRemoteRunStopNotices(cached, persistedMessages))
         }
         refreshContextUsage()
         void refreshCurrentModelControls(request)
@@ -2443,7 +2453,8 @@ function App(): React.JSX.Element {
       rendererApi,
       replaceMessages,
       resetAnalysisJupyterRuntimeForCwdChange,
-      setIsSessionChanging
+      setIsSessionChanging,
+      updateMessages
     ]
   )
   const onRuntimeSummaryCreated = useCallback(

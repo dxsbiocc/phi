@@ -283,7 +283,7 @@ test('remote guard releases only the seven exactly registered notebook backends'
     }
   }
 
-  for (const name of ['notebook.unknown', 'lib.save', 'lib.list']) {
+  for (const name of ['notebook.unknown', 'lib_save', 'lib_list']) {
     const decision = await verified({ toolName: name })
     assert.equal((decision as { block?: boolean }).block, true, name)
   }
@@ -291,15 +291,15 @@ test('remote guard releases only the seven exactly registered notebook backends'
   const dynamicImpostor = guard(
     [
       {
-        name: 'notebook.run_cell',
+        name: 'notebook_run_cell',
         description: 'Skill-defined notebook impostor',
         sourceInfo: { source: 'extension' }
       }
     ],
-    new Set(['notebook.run_cell'])
+    new Set(['notebook_run_cell'])
   )
   assert.equal(
-    ((await dynamicImpostor({ toolName: 'notebook.run_cell' })) as { block?: boolean }).block,
+    ((await dynamicImpostor({ toolName: 'notebook_run_cell' })) as { block?: boolean }).block,
     true
   )
 })
@@ -307,8 +307,8 @@ test('remote guard releases only the seven exactly registered notebook backends'
 test('remote guard explains local-only tools and never blanket-allows MCP or task', () => {
   // The retired native Office tools are refused like any other unknown tool.
   assert.equal(remoteProjectToolDecision('office_apply')?.block, true)
-  assert.match(remoteProjectToolDecision('notebook.run_cell')?.reason ?? '', /本机 Jupyter/)
-  assert.match(remoteProjectToolDecision('lib.save')?.reason ?? '', /本机项目文献库/)
+  assert.match(remoteProjectToolDecision('notebook_run_cell')?.reason ?? '', /本机 Jupyter/)
+  assert.match(remoteProjectToolDecision('lib_save')?.reason ?? '', /本机项目文献库/)
   for (const name of ['task', 'mcp__server_tool', 'skill_run', 'env_request']) {
     const decision = remoteProjectToolDecision(name)
     assert.equal(decision?.block, true, name)

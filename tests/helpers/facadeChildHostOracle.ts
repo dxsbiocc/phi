@@ -71,7 +71,7 @@ export async function runForegroundHostStop(f: FacadeMetadataFixture): Promise<v
   f.configureApproval({
     shouldGate: () => true,
     requestToolApproval: (request) => {
-      assert.equal(request.toolName, 'notebook.save')
+      assert.equal(request.toolName, 'notebook_save')
       assert.equal(request.sessionId, f.phi.sessionId)
       ready = true
       return new Promise((resolve) => {
@@ -82,7 +82,7 @@ export async function runForegroundHostStop(f: FacadeMetadataFixture): Promise<v
   try {
     await f.engine.sessions.create(f.params(id))
     f.provider.enqueue({
-      tool: { name: 'notebook.save', id: 'actual-host-save', args: { path: 'unapproved.ipynb' } }
+      tool: { name: 'notebook_save', id: 'actual-host-save', args: { path: 'unapproved.ipynb' } }
     })
     const run = f.runners.startRun({
       sessionId: f.phi.sessionId,

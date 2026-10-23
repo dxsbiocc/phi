@@ -9,13 +9,13 @@ export type NotebookToolAction =
   'list' | 'read' | 'insert_cell' | 'update_cell' | 'delete_cell' | 'run_cell' | 'save'
 
 export const NOTEBOOK_TOOL_NAMES = [
-  'notebook.list',
-  'notebook.read',
-  'notebook.insert_cell',
-  'notebook.update_cell',
-  'notebook.delete_cell',
-  'notebook.run_cell',
-  'notebook.save'
+  'notebook_list',
+  'notebook_read',
+  'notebook_insert_cell',
+  'notebook_update_cell',
+  'notebook_delete_cell',
+  'notebook_run_cell',
+  'notebook_save'
 ] as const
 
 export type NotebookToolName = (typeof NOTEBOOK_TOOL_NAMES)[number]
@@ -110,9 +110,9 @@ export function buildNotebookCustomTools(
     buildNotebookTool(
       'list',
       {
-        name: 'notebook.list',
+        name: 'notebook_list',
         label: 'List Notebooks',
-        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.list')!,
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook_list')!,
         parameters: {
           type: 'object',
           properties: {}
@@ -125,9 +125,9 @@ export function buildNotebookCustomTools(
     buildNotebookTool(
       'read',
       {
-        name: 'notebook.read',
+        name: 'notebook_read',
         label: 'Read Notebook',
-        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.read')!,
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook_read')!,
         parameters: {
           type: 'object',
           required: ['path'],
@@ -150,9 +150,9 @@ export function buildNotebookCustomTools(
     buildNotebookTool(
       'insert_cell',
       {
-        name: 'notebook.insert_cell',
+        name: 'notebook_insert_cell',
         label: 'Insert Notebook Cell',
-        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.insert_cell')!,
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook_insert_cell')!,
         parameters: {
           type: 'object',
           required: ['path', 'source'],
@@ -187,9 +187,9 @@ export function buildNotebookCustomTools(
     buildNotebookTool(
       'update_cell',
       {
-        name: 'notebook.update_cell',
+        name: 'notebook_update_cell',
         label: 'Update Notebook Cell',
-        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.update_cell')!,
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook_update_cell')!,
         parameters: {
           type: 'object',
           required: ['path', 'cellId', 'source'],
@@ -198,7 +198,7 @@ export function buildNotebookCustomTools(
             cellId: {
               type: 'string',
               description:
-                'Stable target cell id from notebook.read. Do not use the one-based Cell N label here.'
+                'Stable target cell id from notebook_read. Do not use the one-based Cell N label here.'
             },
             source: { type: 'string', description: 'Replacement cell source.' },
             cellType: {
@@ -216,9 +216,9 @@ export function buildNotebookCustomTools(
     buildNotebookTool(
       'delete_cell',
       {
-        name: 'notebook.delete_cell',
+        name: 'notebook_delete_cell',
         label: 'Delete Notebook Cell',
-        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.delete_cell')!,
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook_delete_cell')!,
         parameters: {
           type: 'object',
           required: ['path', 'cellId'],
@@ -227,7 +227,7 @@ export function buildNotebookCustomTools(
             cellId: {
               type: 'string',
               description:
-                'Stable target cell id from notebook.read. Do not use the one-based Cell N label here.'
+                'Stable target cell id from notebook_read. Do not use the one-based Cell N label here.'
             }
           }
         },
@@ -239,9 +239,9 @@ export function buildNotebookCustomTools(
     buildNotebookTool(
       'run_cell',
       {
-        name: 'notebook.run_cell',
+        name: 'notebook_run_cell',
         label: 'Run Notebook Cell',
-        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.run_cell')!,
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook_run_cell')!,
         parameters: {
           type: 'object',
           required: ['path', 'cellId'],
@@ -250,7 +250,7 @@ export function buildNotebookCustomTools(
             cellId: {
               type: 'string',
               description:
-                'Stable target code cell id from notebook.read. Do not use the one-based Cell N label here.'
+                'Stable target code cell id from notebook_read. Do not use the one-based Cell N label here.'
             }
           }
         },
@@ -262,9 +262,9 @@ export function buildNotebookCustomTools(
     buildNotebookTool(
       'save',
       {
-        name: 'notebook.save',
+        name: 'notebook_save',
         label: 'Save Notebook',
-        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook.save')!,
+        description: NOTEBOOK_TOOL_DESCRIPTIONS.get('notebook_save')!,
         parameters: {
           type: 'object',
           required: ['path'],

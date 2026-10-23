@@ -188,22 +188,22 @@ class AgentSessionCreationService<
 
     return [
       '<phi_notebook_runtime>',
-      'This Phi project can operate .ipynb notebooks through the built-in notebook.* tools.',
-      'When the user asks to read, edit, save, or run a notebook, use notebook.list/read/insert_cell/update_cell/delete_cell/run_cell/save instead of shell-editing the .ipynb JSON by default.',
+      'This Phi project can operate .ipynb notebooks through the built-in notebook_* tools.',
+      'When the user asks to read, edit, save, or run a notebook, use notebook_list, notebook_read, notebook_insert_cell, notebook_update_cell, notebook_delete_cell, notebook_run_cell, and notebook_save instead of shell-editing the .ipynb JSON by default.',
       'Notebook execution must use the Phi app-managed Jupyter Server registered for this project. Do not assume, probe, or instruct the user to restart JupyterLab on localhost:8888.',
       `Project: ${project.name ?? project.workingDirectory}`,
       `Project cwd: ${project.workingDirectory}`,
       activeNotebookPath
         ? `Active notebook: ${relative(project.workingDirectory, activeNotebookPath).split(sep).join('/')}`
         : 'Active notebook: none selected',
-      `Jupyter server: ${status.state}${status.hasEndpoint ? `, app-managed port ${status.port ?? 'unknown'}` : ', no endpoint yet; notebook.run_cell may start or attach it'}`,
+      `Jupyter server: ${status.state}${status.hasEndpoint ? `, app-managed port ${status.port ?? 'unknown'}` : ', no endpoint yet; notebook_run_cell may start or attach it'}`,
       registry.notebooks.length > 0
         ? `Project notebooks:\n${notebooks}`
         : 'Project notebooks: none found',
       registry.truncated
-        ? 'Project notebooks list is truncated; call notebook.list for the full tool view.'
+        ? 'Project notebooks list is truncated; call notebook_list for the full tool view.'
         : '',
-      'If notebook.run_cell returns an error, report that tool error directly and do not invent an external JupyterLab port workaround.',
+      'If notebook_run_cell returns an error, report that tool error directly and do not invent an external JupyterLab port workaround.',
       '</phi_notebook_runtime>'
     ]
       .filter(Boolean)

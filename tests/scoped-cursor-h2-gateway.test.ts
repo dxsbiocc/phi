@@ -2,9 +2,32 @@ import assert from 'node:assert/strict'
 import http2 from 'node:http2'
 import test from 'node:test'
 
+import { cursorWireModelIds } from '../src/main/agent/engine/in-process/cursor-wire-model-ids'
+import type { RuntimeModel } from '../src/main/agent/engine/in-process/common'
 import { createScopedCursorH2Gateway } from '../src/main/agent/engine/in-process/scoped-cursor-h2-gateway'
 
 const RUN_PATH = '/agent.v1.AgentService/Run'
+
+test('Cursor logical model lease includes its routed thinking IDs only', () => {
+  const model = {
+    id: 'cursor-grok-4.6-fast',
+    requestModelId: 'cursor-grok-4.6-medium-fast',
+    thinking: {
+      mode: 'effort',
+      effortRouting: {
+        medium: 'cursor-grok-4.6-medium-fast',
+        high: 'cursor-grok-4.6-high-fast'
+      }
+    }
+  } as RuntimeModel
+  const ids = cursorWireModelIds(model)
+  assert.ok(ids.includes('cursor-grok-4.6-high-fast'))
+  assert.ok(ids.includes('cursor-grok-4.6-medium-fast'))
+  assert.equal(
+    ids.some((id) => id.includes('claude')),
+    false
+  )
+})
 
 function field(tag: number, payload: Buffer): Buffer {
   return Buffer.concat([Buffer.from([tag, payload.length]), payload])

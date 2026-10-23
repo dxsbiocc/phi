@@ -80,6 +80,15 @@ async function select(view: EditorView, start: number, end = start): Promise<voi
   await frame()
 }
 
+async function selectedTextToolbar(): Promise<HTMLElement> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const toolbar = document.querySelector<HTMLElement>('[data-phi-notebook-markdown-toolbar]')
+    if (toolbar) return toolbar
+    await frame()
+  }
+  throw new Error('Selecting text must open the formatting toolbar')
+}
+
 async function setSource(view: EditorView, source: string): Promise<void> {
   await act(async () => {
     view.dispatch({
@@ -165,8 +174,7 @@ async function run(): Promise<object> {
     )
 
     await select(view, 6, 11)
-    const toolbar = document.querySelector<HTMLElement>('[data-phi-notebook-markdown-toolbar]')
-    check(toolbar, 'Selecting text must open the formatting toolbar')
+    const toolbar = await selectedTextToolbar()
     const bold = toolbar.querySelector<HTMLButtonElement>('button[aria-label="Bold"]')
     check(bold, 'Bold action must be available')
     const trigger = bold.closest<HTMLElement>('.warm-tooltip__trigger')
@@ -488,8 +496,8 @@ async function run(): Promise<object> {
 
     await setSource(view, 'Visit dataset')
     await select(view, 6, 13)
-    const selectedLinkButton = document.querySelector<HTMLButtonElement>(
-      '[data-phi-notebook-markdown-toolbar] button[aria-label="Link"]'
+    const selectedLinkButton = (await selectedTextToolbar()).querySelector<HTMLButtonElement>(
+      'button[aria-label="Link"]'
     )
     check(selectedLinkButton, 'Selected text must offer the Link formatting action')
     await act(async () => selectedLinkButton.click())

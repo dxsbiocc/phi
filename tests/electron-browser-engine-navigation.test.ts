@@ -353,7 +353,7 @@ test('reports main-frame failures, ignores aborted and subframe loads, and repor
 })
 
 test('revalidates page navigation and redirects without leaking blocked URLs', async () => {
-  const { engine, contents } = harness()
+  const { engine, contents } = harness({ applicationOrigins: ['http://phi.internal'] })
   const handle = await engine.createTab({ partition: 'partition-a' })
   const events: EngineEvent[] = []
   engine.subscribe((event) => events.push(event))
@@ -372,7 +372,7 @@ test('revalidates page navigation and redirects without leaking blocked URLs', a
   const afterRedirect = await engine.execute(handle, { type: 'stop' })
   assert.equal(afterRedirect.ok && afterRedirect.state.navigationRevision, 1)
 
-  const blocked = navigationDetails('http://public.test/private?token=secret-token')
+  const blocked = navigationDetails('http://phi.internal/private?token=secret-token')
   web.emit('will-navigate', blocked)
   const credentialRedirect = navigationDetails('https://user:password@example.test/')
   web.emit('will-redirect', credentialRedirect)
@@ -404,7 +404,9 @@ test('defensively copies application origins used by page navigation policy', as
 })
 
 test('denies native popups and publishes only policy-safe credential-free GET requests', async () => {
-  const { engine, contents } = harness({ applicationOrigins: ['https://phi.internal'] })
+  const { engine, contents } = harness({
+    applicationOrigins: ['https://phi.internal', 'http://phi.internal']
+  })
   const handle = await engine.createTab({ partition: 'partition-a' })
   const events: EngineEvent[] = []
   engine.subscribe((event) => events.push(event))
@@ -423,6 +425,7 @@ test('denies native popups and publishes only policy-safe credential-free GET re
     action: 'deny'
   })
   assert.deepEqual(handler?.(popupDetails('http://public.test/private')), { action: 'deny' })
+  assert.deepEqual(handler?.(popupDetails('http://phi.internal/private')), { action: 'deny' })
   assert.deepEqual(handler?.(popupDetails('https://phi.internal/private')), { action: 'deny' })
 
   assert.deepEqual(
@@ -431,7 +434,8 @@ test('denies native popups and publishes only policy-safe credential-free GET re
     ),
     [
       [handle, 'https://example.test/path', 'GET'],
-      [handle, 'http://127.0.0.1:3000/path', 'GET']
+      [handle, 'http://127.0.0.1:3000/path', 'GET'],
+      [handle, 'http://public.test/private', 'GET']
     ]
   )
   assert.equal(JSON.stringify(events).includes('password'), false)

@@ -123,6 +123,9 @@ test('remote deletion verifies exact server identity, both writer locks, and omi
     assert.match(remove, /flock -x -n 8/)
     assert.match(remove, /cmp -s -/)
     assert.match(remove, /perl -MJSON::PP/)
+    assert.match(remove, /mv --/)
+    assert.match(remove, /exec 8>&-/)
+    assert.match(remove, /exec 9>&-/)
     assert.match(remove, /rm -rf --/)
     assert.doesNotMatch(remove, /checkpoint/)
     assert.match(remove, new RegExp(reference.durableSessionKey.replace('/', '\\/')))
@@ -205,6 +208,10 @@ test('server command deletes only its exact scoped session directory', async () 
       })
     assert.equal(run('verify'), 'PHI_STORAGE_SESSION_VERIFIED\n')
     assert.ok(existsSync(paths.directory))
+    const staleTombstone = `${paths.directory}.deleting-stale`
+    mkdirSync(staleTombstone, { mode: 0o700 })
+    assert.throws(() => run('verify'), /Command failed/)
+    rmSync(staleTombstone, { recursive: true })
     writeFileSync(journal, validHeader.replace(reference.ompSessionId, 'different-session'))
     assert.throws(() => run('delete'), /Command failed/)
     assert.ok(existsSync(paths.directory), 'a changed journal cannot be removed')
@@ -260,7 +267,14 @@ test('remote deletion keeps local history when the server is offline or rejects 
           exec: async () => {
             throw new Error('unused')
           },
-          execBounded: async () => ({ stdout: '', stderr: '', code: 1, signal: null }),
+          execBounded: async () => ({
+            stdout: '',
+            stderr: '',
+            code: 1,
+            signal: null,
+            stdoutTruncated: false,
+            stderrTruncated: false
+          }),
           close: async () => undefined
         })
       }),
@@ -333,6 +347,38 @@ test('a server failure after preflight leaves Phi history available for retry', 
       releaseSession: async () => undefined
     })
     await assert.rejects(prepared.delete(), /仍在运行/)
+    await prepared.close()
+    assert.equal(calls, 2)
+    assert.ok(findPhiSessionById(sessionId))
+  })
+})
+
+test('a dropped SSH connection during deletion retains the local session', async () => {
+  await fixture(async ({ sessionId, project, binding }) => {
+    let calls = 0
+    const prepared = await prepareRemotePhiDeletion(sessionId, {
+      getProject: () => project,
+      resolveBinding: () => binding,
+      connect: async () => ({
+        exec: async () => {
+          throw new Error('unused')
+        },
+        execBounded: async () => {
+          if (++calls === 2) throw new Error('SSH connection lost before deletion was confirmed')
+          return {
+            stdout: 'PHI_STORAGE_SESSION_VERIFIED\n',
+            stderr: '',
+            code: 0,
+            signal: null,
+            stdoutTruncated: false,
+            stderrTruncated: false
+          }
+        },
+        close: async () => undefined
+      }),
+      releaseSession: async () => undefined
+    })
+    await assert.rejects(prepared.delete(), RemoteSessionDeleteUnavailableError)
     await prepared.close()
     assert.equal(calls, 2)
     assert.ok(findPhiSessionById(sessionId))

@@ -187,6 +187,25 @@ export class RemoteWorkspaceHostRegistry {
     )
   }
 
+  /** A destructive transaction must not share the session host that cleanup can close. */
+  async connectIsolated(request: RemoteWorkspaceHostIdentity): Promise<RemoteSshSession> {
+    const binding = (this.dependencies.resolveBinding ?? resolveRemoteWorkspaceHostBinding)({
+      sessionId: request.sessionId,
+      projectId: request.projectId
+    })
+    const host = this.create(binding).host
+    const session = createWorkspaceHostRemoteSession(host, binding.canonicalRoot, {
+      defaultTimeoutMs: request.execTimeoutMs
+    })
+    return {
+      ...session,
+      async close() {
+        await session.close()
+        await host.close?.()
+      }
+    }
+  }
+
   async statPaths(input: unknown): Promise<RemoteWorkspacePathStat[]> {
     const request = checkedPathProbeRequest(input)
     const binding = (this.dependencies.resolveBinding ?? resolveRemoteWorkspaceHostBinding)({

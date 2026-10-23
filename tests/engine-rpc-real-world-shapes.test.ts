@@ -110,7 +110,7 @@ test(
           args: { path: `xd://${bulk.name}`, content: '{"operation":"run"}' }
         }
       },
-      { tool: { name: 'notebook.list', args: {} } },
+      { tool: { name: 'notebook_list', args: {} } },
       { text: 'All real-world shapes handled.' }
     ]
     await f.sdk.enqueue(
@@ -162,7 +162,7 @@ test(
     assert.deepEqual(notebookCalls, ['list'])
     // The notebook tool is a direct (essential) tool; MCP devices stay behind xd://.
     const offered = requests[0].body.tools?.map((tool) => tool.function.name) ?? []
-    assert.ok(offered.includes('notebook.list'), offered.join(','))
+    assert.ok(offered.includes('notebook_list'), offered.join(','))
     assert.equal(
       offered.some((name) => name.includes('bulk_')),
       false

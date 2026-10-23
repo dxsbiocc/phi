@@ -163,7 +163,7 @@ export function engineContract(name: string, factory: EngineFactory): void {
     await f.engine.sessions.create(params(f))
     assert.equal(f.engine.sessions.has('contract'), true)
     f.provider.enqueue(
-      { text: 'Checking notebook.', tool: { name: 'notebook.read', args: { path: 'demo.ipynb' } } },
+      { text: 'Checking notebook.', tool: { name: 'notebook_read', args: { path: 'demo.ipynb' } } },
       { text: 'Notebook checked.' }
     )
     const state = await f.engine.sessions.prompt({
@@ -189,8 +189,8 @@ export function engineContract(name: string, factory: EngineFactory): void {
     assert.ok(deltas.length >= 2, 'Expected at least two text deltas before the first tool starts')
     assert.deepEqual(record(calls[0]).params, { path: 'demo.ipynb' })
     assert.equal(record(calls[0]).cwd, f.cwd)
-    assert.equal(completedTool(observed, 'notebook.read').isError, false)
-    assert.match(text(toolResult(state, 'notebook.read')), /notebook found/)
+    assert.equal(completedTool(observed, 'notebook_read').isError, false)
+    assert.match(text(toolResult(state, 'notebook_read')), /notebook found/)
     assert.equal(text(state.messages!.at(-1)), 'Notebook checked.')
     assert.equal(f.provider.requests.length, 2)
     assert.ok(
@@ -212,7 +212,7 @@ export function engineContract(name: string, factory: EngineFactory): void {
     f.provider.enqueue(
       {
         tool: {
-          name: 'notebook.read',
+          name: 'notebook_read',
           args: {
             path: 'demo.ipynb',
             includeOutputs: false,
@@ -235,17 +235,17 @@ export function engineContract(name: string, factory: EngineFactory): void {
     const observed = events(f)
     await f.engine.sessions.create(params(f))
     f.provider.enqueue(
-      { tool: { name: 'notebook.read', args: { path: 'missing.ipynb' } } },
+      { tool: { name: 'notebook_read', args: { path: 'missing.ipynb' } } },
       { text: 'Unable to read.' }
     )
     const state = await f.engine.sessions.prompt({
       sessionId: 'contract',
       text: 'Read missing notebook.'
     })
-    const completion = completedTool(observed, 'notebook.read')
+    const completion = completedTool(observed, 'notebook_read')
     assert.equal(completion.isError, true)
     assert.match(text(completion.result), /contract notebook unavailable/)
-    const result = toolResult(state, 'notebook.read')
+    const result = toolResult(state, 'notebook_read')
     assert.equal(result.isError, true)
     assert.match(text(result), /contract notebook unavailable/)
   })
@@ -295,13 +295,13 @@ export function engineContract(name: string, factory: EngineFactory): void {
         f.engine.events.onToolApproval('contract', (request) => approvals.push(record(request)))
         await f.engine.sessions.create(params(f, 'contract', { enableToolApproval: true }))
         f.provider.enqueue(
-          { tool: { name: 'notebook.save', id: 'write-call', args: { path: 'demo.ipynb' } } },
+          { tool: { name: 'notebook_save', id: 'write-call', args: { path: 'demo.ipynb' } } },
           ...(decision === 'cancel' ? [] : [{ text: 'Write handled.' }])
         )
         const prompt = f.engine.sessions.prompt({ sessionId: 'contract', text: 'Save notebook.' })
         void prompt.catch(() => undefined)
         await until(() => approvals.length > 0, 'write approval')
-        assert.equal(approvals[0].toolName, 'notebook.save')
+        assert.equal(approvals[0].toolName, 'notebook_save')
         assert.equal(approvals[0].toolCallId, 'write-call')
         assert.deepEqual(approvals[0].input, { path: 'demo.ipynb' })
         assert.equal(writes, 0)
@@ -334,9 +334,9 @@ export function engineContract(name: string, factory: EngineFactory): void {
           )
           const state = await within(prompt, 'approval result')
           assert.equal(writes, decision === 'approve' ? 1 : 0)
-          const result = toolResult(state, 'notebook.save')
+          const result = toolResult(state, 'notebook_save')
           assert.equal(result.isError, decision === 'deny')
-          assert.equal(completedTool(observed, 'notebook.save').isError, decision === 'deny')
+          assert.equal(completedTool(observed, 'notebook_save').isError, decision === 'deny')
           assert.match(text(result), decision === 'deny' ? /Contract user denied/ : /saved/)
         }
       }

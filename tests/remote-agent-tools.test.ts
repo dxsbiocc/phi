@@ -46,7 +46,7 @@ function writeAgent(root: string, path: string, name: string): void {
 
 test('remote agent tools keep verified registrations and diagnose each rejected tool', () => {
   const result = resolveRemoteAgentTools(
-    agent(['read', 'bash', 'office_read', 'lib.save', 'unknown_tool']),
+    agent(['read', 'bash', 'office_read', 'lib_save', 'unknown_tool']),
     [
       {
         name: 'read',
@@ -65,7 +65,7 @@ test('remote agent tools keep verified registrations and diagnose each rejected 
   assert.deepEqual(result.agent.tools, ['read', 'bash'])
   assert.deepEqual(result.diagnostics, [
     '该 agent 在远程项目中缺少：office_read',
-    '该 agent 在远程项目中缺少：lib.save',
+    '该 agent 在远程项目中缺少：lib_save',
     '该 agent 在远程项目中缺少：unknown_tool'
   ])
 })
@@ -190,18 +190,18 @@ test('remote agent static inventory comes from the guard policy and filters disc
   ]) {
     assert.equal(supported.has(name), true, name)
   }
-  for (const name of ['office_read', 'lib.save', 'mcp__server_tool', 'unknown_tool']) {
+  for (const name of ['office_read', 'lib_save', 'mcp__server_tool', 'unknown_tool']) {
     assert.equal(supported.has(name), false, name)
   }
 
   const result = resolveRemoteAgentTools(
-    agent(['read', 'browser', 'office_read', 'lib.save']),
+    agent(['read', 'browser', 'office_read', 'lib_save']),
     supported
   )
   assert.deepEqual(result.agent.tools, ['read', 'browser'])
   assert.deepEqual(result.diagnostics, [
     '该 agent 在远程项目中缺少：office_read',
-    '该 agent 在远程项目中缺少：lib.save'
+    '该 agent 在远程项目中缺少：lib_save'
   ])
 })
 

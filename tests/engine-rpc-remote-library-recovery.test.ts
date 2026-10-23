@@ -27,7 +27,7 @@ test(
         throw new Error('injected projection transport failure')
       return original(path, content, options)
     }
-    const attempted = await f.call('lib.save', {
+    const attempted = await f.call('lib_save', {
       title: 'Committed exactly once',
       notes: 'durable notes'
     })
@@ -39,7 +39,7 @@ test(
     assert.equal(index.papers[0].revision, 1)
     assert.equal(existsSync(join(base, '.projection-pending.json')), true)
     fail = false
-    const listed = await f.call('lib.list')
+    const listed = await f.call('lib_list')
     assert.equal(listed.isError, undefined, JSON.stringify(listed))
     assert.deepEqual(details(listed).papers, index.papers)
     assert.equal(existsSync(join(base, '.projection-pending.json')), false)
@@ -68,13 +68,13 @@ test(
       return original(path, content, options)
     }
     assert.equal(
-      (await f.call('lib.save', { title: 'Must not become a phantom committed paper' })).isError,
+      (await f.call('lib_save', { title: 'Must not become a phantom committed paper' })).isError,
       true
     )
     assert.equal(existsSync(join(f.server.projectRoot, '.phi/library/index.json')), false)
     fail = false
     assert.deepEqual((await new RemoteLibraryStorage(f.target).read()).papers, [])
-    const saved = await f.call('lib.save', { title: 'New real commit' })
+    const saved = await f.call('lib_save', { title: 'New real commit' })
     assert.equal(saved.isError, undefined, JSON.stringify(saved))
     assert.equal((details(saved).paper as SavedPaper).revision, 1)
   }
@@ -88,7 +88,7 @@ test(
     t.after(() => f.close())
     const results = await Promise.all(
       Array.from({ length: 4 }, (_, index) =>
-        f.call('lib.save', { title: `Parallel paper ${index}`, notes: `note ${index}` })
+        f.call('lib_save', { title: `Parallel paper ${index}`, notes: `note ${index}` })
       )
     )
     assert.ok(
@@ -98,7 +98,7 @@ test(
     const snapshot = await new RemoteLibraryStorage(f.target).read()
     assert.equal(snapshot.papers.length, 4)
     const merged = await Promise.all(
-      Array.from({ length: 3 }, () => f.call('lib.save', { title: 'Parallel paper 0' }))
+      Array.from({ length: 3 }, () => f.call('lib_save', { title: 'Parallel paper 0' }))
     )
     assert.ok(
       merged.every((result) => result.isError !== true),
@@ -136,16 +136,16 @@ test(
       }
       return original(path, content, options)
     }
-    const first = f.call('lib.save', { title: 'First held writer' })
+    const first = f.call('lib_save', { title: 'First held writer' })
     await blocked
     const abort = new AbortController()
-    const second = f.call('lib.save', { title: 'Cancelled queued writer' }, abort.signal)
+    const second = f.call('lib_save', { title: 'Cancelled queued writer' }, abort.signal)
     const rejected = assert.rejects(second, /cancel queued/)
     await new Promise((resolve) => setTimeout(resolve, 40))
     abort.abort(new Error('cancel queued'))
     await rejected
     let completed = false
-    const third = f.call('lib.save', { title: 'Third legitimate writer' }).then((value) => {
+    const third = f.call('lib_save', { title: 'Third legitimate writer' }).then((value) => {
       completed = true
       return value
     })

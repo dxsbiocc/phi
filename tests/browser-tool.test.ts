@@ -47,6 +47,7 @@ test('browser tool exposes one strict action-discriminated observation and input
   assert.equal(tool.strict, true)
   assert.equal(tool.loadMode, 'essential')
   assert.equal(tool.approval, 'read')
+  assert.equal(tool.parameters.type, 'object')
   assert.equal((tool as unknown as { lenientArgValidation?: boolean }).lenientArgValidation, true)
   assert.deepEqual(
     (

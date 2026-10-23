@@ -89,7 +89,7 @@ test(
       approval: {
         shouldGate: () => true,
         requestToolApproval: (request) => {
-          assert.equal(request.toolName, 'lib.save')
+          assert.equal(request.toolName, 'lib_save')
           assert.equal(request.sessionId, identity.sessionId)
           assert.equal(request.cwd, root)
           return new Promise((resolve) => {
@@ -101,7 +101,7 @@ test(
     owner.current = runtime
     const index = join(root, '.phi/library/index.json')
     await f.sdk.enqueue(
-      { tool: { name: 'lib.save', id: 'library-denied', args: { title: 'Denied paper' } } },
+      { tool: { name: 'lib_save', id: 'library-denied', args: { title: 'Denied paper' } } },
       { text: 'Denial acknowledged' }
     )
     const denied = runtime.prompt('phi-library-denied', 'Save this denied paper')
@@ -114,7 +114,7 @@ test(
     await assert.rejects(access(index))
     answer = undefined
     await f.sdk.enqueue({
-      tool: { name: 'lib.save', id: 'library-stopped', args: { title: 'Stopped paper' } }
+      tool: { name: 'lib_save', id: 'library-stopped', args: { title: 'Stopped paper' } }
     })
     const stopped = runtime.prompt('phi-library-stopped', 'Wait for library approval then stop')
     await until(() => !!answer)
@@ -127,7 +127,7 @@ test(
     await f.sdk.enqueue(
       {
         tool: {
-          name: 'lib.save',
+          name: 'lib_save',
           id: 'library-approved',
           args: { title: 'Approved selected remote paper', doi: '10.5555/REMOTE' }
         }

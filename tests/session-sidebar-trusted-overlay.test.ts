@@ -58,8 +58,9 @@ test('expanded session sidebar routes destructive confirmations through the app 
   )
   assert.match(
     sidebarSource,
-    /onDelete=\{\(\) => \{[\s\S]{0,180}trustedDialogs\.request\(SESSION_DELETE_OVERLAY_KEY/
+    /requestSessionDelete = useCallback\([\s\S]{0,260}trustedDialogs\.request\(SESSION_DELETE_OVERLAY_KEY/
   )
+  assert.match(sidebarSource, /onDelete=\{\(\) => requestSessionDelete\(session\)\}/)
   assert.match(appSidebarSource, /requestTrustedOverlay=\{requestTrustedOverlay\}/)
   assert.match(appSidebarSource, /cancelTrustedOverlay=\{cancelTrustedOverlay\}/)
 })

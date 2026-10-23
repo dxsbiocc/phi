@@ -151,8 +151,8 @@ export async function runApplicationNotebookScenario(
     shouldGate: () => true,
     requestToolApproval: async (request) => {
       assert.equal(request.sessionId, f.phi.sessionId)
-      if (request.toolName === 'notebook.update_cell') return 'approved'
-      assert.equal(request.toolName, 'notebook.save')
+      if (request.toolName === 'notebook_update_cell') return 'approved'
+      assert.equal(request.toolName, 'notebook_save')
       assert.equal(
         await readFile(path, 'utf8'),
         original,
@@ -192,7 +192,7 @@ export async function runApplicationNotebookScenario(
       f.provider.enqueue(
         {
           tool: {
-            name: 'notebook.save',
+            name: 'notebook_save',
             id: 'held-notebook-save',
             args: { path: 'notebooks/analysis.ipynb' }
           }
@@ -208,15 +208,15 @@ export async function runApplicationNotebookScenario(
       })
     } else
       f.provider.enqueue(
-        { tool: { name: 'notebook.list', args: {} } },
-        { tool: { name: 'notebook.read', args: { path: 'notebooks/analysis.ipynb' } } },
+        { tool: { name: 'notebook_list', args: {} } },
+        { tool: { name: 'notebook_read', args: { path: 'notebooks/analysis.ipynb' } } },
         {
           tool: {
-            name: 'notebook.update_cell',
+            name: 'notebook_update_cell',
             args: { path: 'notebooks/analysis.ipynb', cellId: 'cell-1', source: 'x = 2' }
           }
         },
-        { tool: { name: 'notebook.save', args: { path: 'notebooks/analysis.ipynb' } } },
+        { tool: { name: 'notebook_save', args: { path: 'notebooks/analysis.ipynb' } } },
         ...(mode === 'notebook-pending-stop' ? [] : [{ text: 'Notebook authoring complete' }])
       )
     const run = f.runners.startRun({
@@ -332,7 +332,7 @@ export async function runApplicationNotebookScenario(
     )
     for (const name of APP_RPC_NOTEBOOK_TOOL_NAMES)
       assert.ok(roster.includes(name), `application did not expose ${name}`)
-    assert.equal(roster.includes('notebook.run_cell'), true)
+    assert.equal(roster.includes('notebook_run_cell'), true)
     assert.deepEqual(
       effects,
       mode === 'notebook-approved'
@@ -383,7 +383,7 @@ export async function runApplicationNotebookScenario(
       )
       activeRuntimeId = fresh.runtimeSessionId
       f.provider.enqueue(
-        { tool: { name: 'notebook.read', args: { path: 'notebooks/analysis.ipynb' } } },
+        { tool: { name: 'notebook_read', args: { path: 'notebooks/analysis.ipynb' } } },
         { text: 'Recovered Notebook binding is unchanged' }
       )
       const resumedRun = f.runners.startRun({

@@ -273,7 +273,7 @@ export async function runApplicationWrapperScenario(
       'present_files'
     ])
       assert.ok(roster.includes(name), `Missing actual app tool ${name}`)
-    assert.equal(roster.includes('notebook.run_cell'), true)
+    assert.equal(roster.includes('notebook_run_cell'), true)
     const [stored] = listWrapperRuns(agentDir)
     assert.ok(stored?.remote)
     assert.equal(stored.remote.projectId, project.id)

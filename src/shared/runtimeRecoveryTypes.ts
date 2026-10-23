@@ -17,6 +17,7 @@ export type RuntimeRecoveryIssue =
   | 'asset-missing'
   | 'binding-changed'
   | 'not-enabled'
+  | 'run-held'
   | 'unknown'
 export interface RuntimeRecoverySummary {
   readonly content: string

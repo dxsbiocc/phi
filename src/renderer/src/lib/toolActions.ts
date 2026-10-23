@@ -34,7 +34,7 @@ export function toolActionKind(toolName: string, argsPreview = '', argsJson = ''
   const isCommandTool =
     COMMAND_TOOL_NAMES.has(name) || name.includes('shell') || name.includes('command')
 
-  if (name.startsWith('notebook.')) {
+  if (name.startsWith('notebook_') || name.startsWith('notebook.')) {
     return 'notebook'
   }
   if (PYTHON_TOOL_NAMES.has(name)) {

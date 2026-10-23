@@ -235,6 +235,9 @@ export async function executeR8(
         bounded(remote.cleanupOwnedWork(), 30_000, 'owned test tree cleanup')
       )
     }
+    result.cleanup.transportsClosed = await attempt('transports', () =>
+      bounded(remote.close(), 30_000, 'transport cleanup')
+    )
     result.cleanup.tunnelsClosed = await attempt('tunnels', async () => {
       const counts = await remote.tunnelCounts()
       result.tunnels = counts
@@ -242,9 +245,6 @@ export async function executeR8(
         assert.ok(counts.opened >= 3, 'The reverse model tunnel must be used by every startup')
       assert.equal(counts.closed, counts.opened, 'Every reverse tunnel must be closed')
     })
-    result.cleanup.transportsClosed = await attempt('transports', () =>
-      bounded(remote.close(), 30_000, 'transport cleanup')
-    )
     result.rpcGenerations = remote.generations.length
     result.remoteOperations = remote.metrics.slice()
     result.rpcStartup = remote.rpc.map(({ openedAt, attestedAt, nonce }) => ({

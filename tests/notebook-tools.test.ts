@@ -31,7 +31,7 @@ test('buildNotebookCustomTools exposes live notebook operations', () => {
 
 test('notebook insert tool exposes one-based cellNumber instead of zero-based index', () => {
   const tools = buildNotebookCustomTools(async () => ({}))
-  const tool = tools.find((candidate) => candidate.name === 'notebook.insert_cell')
+  const tool = tools.find((candidate) => candidate.name === 'notebook_insert_cell')
   assert.ok(tool)
 
   const parameters = tool.parameters as {
@@ -48,7 +48,7 @@ test('notebook tools forward the session cwd, action, and params to the host exe
     calls.push(request)
     return { summary: 'ok', kind: 'test_result', value: 42 }
   })
-  const tool = tools.find((candidate) => candidate.name === 'notebook.update_cell')
+  const tool = tools.find((candidate) => candidate.name === 'notebook_update_cell')
   assert.ok(tool)
 
   const result = await tool.execute(
@@ -97,7 +97,7 @@ test('remote notebook tools attach trusted routing identity outside model params
       }
     }
   )
-  const tool = tools.find((candidate) => candidate.name === 'notebook.read')
+  const tool = tools.find((candidate) => candidate.name === 'notebook_read')
   assert.ok(tool)
 
   await tool.execute(

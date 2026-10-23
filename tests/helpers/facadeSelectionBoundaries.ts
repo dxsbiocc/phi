@@ -290,7 +290,7 @@ export async function runSelectionBoundary(
     assert.equal(f.engine.sessions.has(peer.runtimeSessionId), true)
     assert.deepEqual(findPhiSessionById(peerPhi.sessionId)!.runtimeRef, peerReference)
     f.provider.enqueue(
-      { tool: { name: 'notebook.read', args: { path: 'notebooks/selection.ipynb' } } },
+      { tool: { name: 'notebook_read', args: { path: 'notebooks/selection.ipynb' } } },
       { text: 'Notebook remains available' }
     )
     const run = f.runners.startRun({

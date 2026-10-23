@@ -86,7 +86,7 @@ const f = await facadeMetadataFixture({
     const base = {
       ...selected,
       ...(mode === 'profile' ? { nativeTools: ['read', 'write', 'bash'] as const } : {}),
-      ...(mode === 'host-stop' ? { desktopToolNames: ['notebook.save'] } : {}),
+      ...(mode === 'host-stop' ? { desktopToolNames: ['notebook_save'] } : {}),
       foregroundChildren: {
         ...(mode === 'unnamed-fg-batch'
           ? {

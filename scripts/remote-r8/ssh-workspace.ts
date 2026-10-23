@@ -161,12 +161,15 @@ export async function openSshWorkspace(
       session.openReverseTunnel = async (options) => {
         const tunnel = await open(options)
         tunnelCounts.opened++
-        const closeTunnel = tunnel.close.bind(tunnel)
-        let pending: Promise<void> | undefined
-        tunnel.close = () =>
-          (pending ??= closeTunnel().then(() => {
+        // A killed SSH master invalidates its tunnel without a successful
+        // control-socket cancel. Count the lease's closed signal; close() below
+        // separately waits for every owned OpenSSH process to exit.
+        void tunnel.closed.then(
+          () => {
             tunnelCounts.closed++
-          }))
+          },
+          () => undefined
+        )
         return tunnel
       }
     }

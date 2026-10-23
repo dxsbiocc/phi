@@ -17,11 +17,11 @@ test(
   async (t) => {
     const f = rpcRemoteLibraryFixture()
     t.after(() => f.close())
-    const missing = await f.call('lib.list')
+    const missing = await f.call('lib_list')
     assert.equal(missing.isError, undefined, JSON.stringify(missing))
     assert.deepEqual(details(missing).papers, [])
     assert.equal(existsSync(join(f.server.projectRoot, '.phi')), false)
-    const first = await f.call('lib.save', {
+    const first = await f.call('lib_save', {
       source: 'pubmed',
       sourceId: '123',
       title: 'Alpha—Beta Response',
@@ -33,7 +33,7 @@ test(
     assert.equal(first.isError, undefined, JSON.stringify(first))
     const paper = details(first).paper as SavedPaper
     assert.equal(paper.canonicalId, 'doi:10.1000/example')
-    const merged = await f.call('lib.save', {
+    const merged = await f.call('lib_save', {
       source: 'arxiv',
       id: '777',
       title: 'Alpha-Beta  Response',
@@ -45,7 +45,7 @@ test(
     assert.equal(updated.canonicalId, paper.canonicalId)
     assert.equal(updated.revision, 2)
     assert.ok(updated.aliases.includes('doi:10.2000/alias'))
-    const patched = await f.call('lib.update', {
+    const patched = await f.call('lib_update', {
       id: '123',
       notes: 'Read deeply',
       processingStage: 'deep_read'
@@ -53,9 +53,9 @@ test(
     assert.equal(patched.isError, undefined, JSON.stringify(patched))
     const current = JSON.parse(JSON.stringify(details(patched).paper)) as SavedPaper
     assert.equal(current.revision, 3)
-    const found = await f.call('lib.find', { query: 'deeply', tags: ['methods'] })
+    const found = await f.call('lib_find', { query: 'deeply', tags: ['methods'] })
     assert.equal((details(found).papers as SavedPaper[]).length, 1)
-    const audited = await f.call('lib.audit')
+    const audited = await f.call('lib_audit')
     assert.equal((details(audited).report as { issueCount: number }).issueCount, 0)
     const path = join(f.server.projectRoot, '.phi/library/papers', paper.storageKey)
     assert.deepEqual(JSON.parse(readFileSync(join(path, 'meta.json'), 'utf8')), current)
@@ -64,7 +64,7 @@ test(
     assert.deepEqual(reopened.papers, [current])
     assert.deepEqual(listPapers(f.server.localAnchor), [])
     assert.equal(existsSync(join(f.server.localAnchor, '.phi/library')), false)
-    const removed = await f.call('lib.remove', { id: '10.2000/alias' })
+    const removed = await f.call('lib_remove', { id: '10.2000/alias' })
     assert.equal(removed.isError, undefined, JSON.stringify(removed))
     assert.equal(details(removed).removed, true)
     assert.equal(existsSync(path), false)
@@ -78,11 +78,11 @@ test(
   async (t) => {
     const f = rpcRemoteLibraryFixture()
     t.after(() => f.close())
-    assert.equal((await f.call('lib.update', { id: 'unknown', notes: 'no paper' })).isError, true)
-    const removed = await f.call('lib.remove', { id: 'unknown' })
+    assert.equal((await f.call('lib_update', { id: 'unknown', notes: 'no paper' })).isError, true)
+    const removed = await f.call('lib_remove', { id: 'unknown' })
     assert.equal(removed.isError, undefined)
     assert.equal(details(removed).removed, false)
-    assert.equal((await f.call('lib.save', { title: '' })).isError, true)
+    assert.equal((await f.call('lib_save', { title: '' })).isError, true)
     assert.equal(existsSync(join(f.server.projectRoot, '.phi')), false)
   }
 )
@@ -93,7 +93,7 @@ test(
   async (t) => {
     const f = rpcRemoteLibraryFixture()
     t.after(() => f.close())
-    const first = await f.call('lib.save', { title: 'Audited paper' })
+    const first = await f.call('lib_save', { title: 'Audited paper' })
     const paper = details(first).paper as SavedPaper
     const indexPath = join(f.server.projectRoot, '.phi/library/index.json')
     const index = JSON.parse(readFileSync(indexPath, 'utf8')) as { papers: SavedPaper[] }
@@ -107,7 +107,7 @@ test(
       indexPath,
       Buffer.from(JSON.stringify(index))
     )
-    const result = await f.call('lib.audit')
+    const result = await f.call('lib_audit')
     assert.equal(result.isError, undefined, JSON.stringify(result))
     const report = details(result).report as { issues: Array<{ code: string }> }
     assert.deepEqual(

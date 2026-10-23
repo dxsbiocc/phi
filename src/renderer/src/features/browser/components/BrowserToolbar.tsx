@@ -167,6 +167,7 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
             !props.activeTab ||
             !props.activeTab.url ||
             props.activeTab.url === 'about:blank' ||
+            props.activeTab.phase === 'failed' ||
             Boolean(props.activeTab.restorable)
           }
           onClick={props.onOpenExternal}

@@ -53,6 +53,49 @@ test('remote workspace host registry keeps one host per Phi session until releas
   assert.equal(hostsCreated, 2)
 })
 
+test('isolated remote session stays owned across regular session cleanup', async () => {
+  let created = 0
+  const closed: number[] = []
+  const registry = new RemoteWorkspaceHostRegistry({
+    resolveBinding: (request) => ({
+      sessionId: request.sessionId,
+      projectId: request.projectId,
+      hostAlias: 'cluster-a',
+      remoteRoot: '/remote/project',
+      canonicalRoot: '/remote/project',
+      cacheKey: 'cluster-a:/remote/project',
+      config: {
+        remoteRoot: '/remote/project',
+        canonicalRoot: '/remote/project',
+        connect: async () => {
+          throw new Error('not used')
+        }
+      }
+    }),
+    createHost: () => {
+      const id = ++created
+      return {
+        fs: {} as WorkspaceHost['fs'],
+        exec: {} as WorkspaceHost['exec'],
+        capabilities() {
+          throw new Error('not used')
+        },
+        async close() {
+          closed.push(id)
+        }
+      }
+    }
+  })
+  const request = { sessionId: 'session-a', projectId: 'project-a' }
+  await registry.connect(request)
+  const isolated = await registry.connectIsolated(request)
+  assert.equal(created, 2)
+  await registry.releaseSession(request.sessionId)
+  assert.deepEqual(closed, [1])
+  await isolated.close()
+  assert.deepEqual(closed, [1, 2])
+})
+
 test('remote workspace host registry releases a host after its connection fails', async () => {
   let hostsCreated = 0
   const registry = new RemoteWorkspaceHostRegistry({

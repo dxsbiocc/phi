@@ -138,7 +138,7 @@ export function remoteProjectToolDecision(
   ) {
     return undefined
   }
-  if (toolName.startsWith('notebook.')) {
+  if (toolName.startsWith('notebook_') || toolName.startsWith('notebook.')) {
     if (NOTEBOOK_TOOL_DESCRIPTIONS.has(toolName) && verifiedRemoteNotebookToolRegistered) {
       return undefined
     }
@@ -153,10 +153,10 @@ function remoteToolBlockedReason(toolName: string): string {
   if (TERMINAL_DRAFT_IPC_NAMES.has(toolName)) {
     return `${toolName}：终端命令草稿是 Phi renderer/main IPC，不是 Agent 工具；已拒绝同名或伪造的工具注册。${noFallback}`
   }
-  if (toolName.startsWith('notebook.')) {
+  if (toolName.startsWith('notebook_') || toolName.startsWith('notebook.')) {
     return `${toolName}：当前会话未注册经过验证的远程 Notebook/Jupyter 后端；不会使用本机 Jupyter。${noFallback}`
   }
-  if (toolName.startsWith('lib.')) {
+  if (toolName.startsWith('lib_') || toolName.startsWith('lib.')) {
     return `${toolName}：当前文献库绑定本机项目文献库；请先在远程项目中使用普通文件记录。${noFallback}`
   }
   if (toolName === 'skill_run' || toolName === 'env_request') {

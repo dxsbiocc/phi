@@ -10,6 +10,7 @@ export interface CloudReply {
   tool?: boolean
   toolName?: string
   toolPath?: string
+  toolArgs?: Readonly<Record<string, string>>
   hold?: boolean
 }
 export interface CloudRequest {
@@ -330,14 +331,17 @@ export async function startCloudProvider(): Promise<CloudProvider> {
         } else if (request && !request.body.requestContextBase64) {
           request.body.requestContextBase64 = frame.toString('base64')
           if (reply?.tool) {
+            const toolArgs = reply.toolArgs ?? { path: reply.toolPath ?? 'ordinary.txt' }
             const args = Buffer.concat([
               proto(1, Buffer.from(reply.toolName ?? 'inspect')),
-              proto(
-                2,
-                Buffer.concat([
-                  proto(1, Buffer.from('path')),
-                  proto(2, Buffer.from(JSON.stringify(reply.toolPath ?? 'ordinary.txt')))
-                ])
+              ...Object.entries(toolArgs).map(([name, value]) =>
+                proto(
+                  2,
+                  Buffer.concat([
+                    proto(1, Buffer.from(name)),
+                    proto(2, Buffer.from(JSON.stringify(value)))
+                  ])
+                )
               ),
               proto(3, Buffer.from('cloud-call')),
               proto(5, Buffer.from(reply.toolName ?? 'inspect'))

@@ -17,7 +17,7 @@ async function runList(
     'runtime-1',
     remote
   )
-  const list = tools.find((tool) => tool.name === 'notebook.list')!
+  const list = tools.find((tool) => tool.name === 'notebook_list')!
   await list.execute('call-1', {}, undefined, { cwd: '/project' } as never)
   return calls
 }

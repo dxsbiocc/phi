@@ -329,8 +329,8 @@ test('App composes the browser feature through the narrow side-panel seam', () =
     appSource,
     /if \(mode === 'browser'\)[\s\S]{0,500}<BrowserPanel[\s\S]{0,300}bridge=\{rendererApi\.browser\}/
   )
-  assert.match(appSource, /activePhiSessionId=\{activePhiSessionId \?\? null\}/)
-  assert.match(appSource, /activeSessionGeneration=\{activeSessionGeneration\}/)
+  assert.match(appSource, /activePhiSessionId=\{activeBrowserSessionId\}/)
+  assert.match(appSource, /activeSessionGeneration=\{activeBrowserSessionGeneration\}/)
   assert.match(
     appSource,
     /visible=\{[\s\S]{0,300}!pendingApproval[\s\S]{0,300}!pendingUserInteraction/
@@ -345,7 +345,7 @@ test('App composes the browser feature through the narrow side-panel seam', () =
   assert.match(appSource, /headerActions=\{slotContext\.headerActions\}/)
   assert.match(
     appSource,
-    /useBrowserPanelRequests\(\{[\s\S]{0,160}activeSessionId: activePhiSessionId[\s\S]{0,160}onRequest: openBrowserPanelFromRequest/
+    /useBrowserPanelRequests\(\{[\s\S]{0,160}activeSessionId: activeBrowserSessionId[\s\S]{0,160}onRequest: openBrowserPanelFromRequest/
   )
   assert.match(
     appSource,

@@ -171,7 +171,7 @@ test('workspace sessions and resources share the same tab strip', () => {
   assert.match(appSource, /visibleWorkspaceTabsForState\(\{/)
   assert.match(appSource, /sessionTabWasOpened/)
   assert.match(tabTypesSource, /export function visibleWorkspaceTabsForState/)
-  assert.match(appSource, /workspaceFileTabKey\(tab\.path\)/)
+  assert.match(appSource, /workspaceFileTabKey\(tab\.id\)/)
   assert.match(
     readFileSync(
       resolve(
@@ -214,7 +214,7 @@ test('workspace sessions and resources share the same tab strip', () => {
   assert.match(appSource, /activeWorkspaceFileTabContent/)
   assert.match(
     appSource,
-    /activeWorkspaceTab\?\.kind === 'session'[\s\S]{0,240}\? activeWorkspaceFileTabContent[\s\S]{0,140}: activeWorkspaceResourceContent/
+    /activeWorkspaceTab\?\.kind === 'session'[\s\S]{0,100}\? chatWorkspaceContent[\s\S]{0,150}\? activeWorkspaceFileTabContent[\s\S]{0,150}\? activeWorkspaceResourceContent/
   )
   assert.match(
     tabTypesSource,

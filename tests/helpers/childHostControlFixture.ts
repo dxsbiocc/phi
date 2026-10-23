@@ -40,7 +40,7 @@ export async function childHostControlFixture(
     definition: {
       ...childProfile.definition,
       resourcesDigest: 'c'.repeat(64),
-      tools: [...childProfile.definition.tools, { name: 'notebook.run', site: 'host' as const }]
+      tools: [...childProfile.definition.tools, { name: 'notebook_run', site: 'host' as const }]
     }
   }
   const executed: string[] = [],
@@ -79,13 +79,13 @@ export async function childHostControlFixture(
       operation: 'activate',
       actual: {
         ...childActual,
-        tools: ['write', 'notebook.run'],
+        tools: ['write', 'notebook_run'],
         resourcesDigest: profile.definition.resourcesDigest
       }
     }),
     signal
   )
   const call = (id = 'host-call'): RpcChildCall =>
-    createRpcChildCall(childScope, id, 'notebook.run', { code: 'bounded_test()' })
+    createRpcChildCall(childScope, id, 'notebook_run', { code: 'bounded_test()' })
   return { ...f, signal, request, call, executed, consumed }
 }

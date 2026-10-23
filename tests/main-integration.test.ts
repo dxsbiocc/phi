@@ -1575,6 +1575,12 @@ async function harness(
     '../shared/ipcChannels': { IPC },
     '../shared/browserSessionScope': browserSessionScope,
     './window-startup': windowStartup,
+    './startup-plugin-enablement': {
+      migrateStartupPluginEnablement: (agentDir: string, getRuntimeRoot: () => string): void => {
+        operationLog.push({ type: 'refreshManagedStdioServers', agentDir })
+        getRuntimeRoot()
+      }
+    },
     './native-ui-copy': nativeUiCopy,
     './startup-splash': {
       createStartupSplashWindow: async () => {
@@ -11699,7 +11705,7 @@ test('main IPC: project agent sessions receive active notebook and app Jupyter c
     notebookPrompt,
     /Do not assume, probe, or instruct the user to restart JupyterLab on localhost:8888/
   )
-  assert.match(notebookPrompt, /notebook\.run_cell/)
+  assert.match(notebookPrompt, /notebook_run_cell/)
 })
 
 test('main IPC persists and broadcasts a bounded change summary after the run', async () => {

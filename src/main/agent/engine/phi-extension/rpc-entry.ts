@@ -227,7 +227,14 @@ const rpcExtension: ExtensionFactory = async (pi) => {
     if (
       !input ||
       typeof input.path !== 'string' ||
-      Object.keys(input).some((key) => key !== 'path')
+      Object.keys(input).some((key) => key !== 'path' && key !== 'i') ||
+      (input.i !== undefined &&
+        (typeof input.i !== 'string' ||
+          input.i.length > 512 ||
+          [...input.i].some((character) => {
+            const code = character.charCodeAt(0)
+            return code < 32 || code === 127
+          })))
     )
       return deny
     const requested = input.path

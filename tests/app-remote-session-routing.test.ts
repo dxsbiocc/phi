@@ -107,13 +107,13 @@ test('application RPC Notebook roster reuses existing authoring and owned execut
       )
       .map((tool) => [tool.name, tool.approval]),
     [
-      ['notebook.list', 'read'],
-      ['notebook.read', 'read'],
-      ['notebook.insert_cell', 'write'],
-      ['notebook.update_cell', 'write'],
-      ['notebook.delete_cell', 'write'],
-      ['notebook.run_cell', 'write'],
-      ['notebook.save', 'write']
+      ['notebook_list', 'read'],
+      ['notebook_read', 'read'],
+      ['notebook_insert_cell', 'write'],
+      ['notebook_update_cell', 'write'],
+      ['notebook_delete_cell', 'write'],
+      ['notebook_run_cell', 'write'],
+      ['notebook_save', 'write']
     ]
   )
 })
@@ -140,5 +140,5 @@ test('application Wrapper roster reuses the six existing tools and their approva
     ]
   )
   assert.equal(APP_RPC_NOTEBOOK_TOOL_NAMES.length, 7)
-  assert.equal(APP_RPC_NOTEBOOK_TOOL_NAMES.includes('notebook.run_cell'), true)
+  assert.equal(APP_RPC_NOTEBOOK_TOOL_NAMES.includes('notebook_run_cell'), true)
 })

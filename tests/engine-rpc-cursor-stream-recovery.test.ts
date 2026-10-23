@@ -27,11 +27,13 @@ test(
     assert.equal(result.status, 'completed', JSON.stringify({ result, messages }))
     assert.equal(f.provider.requests.length, 2)
     assert.equal(JSON.stringify(messages).split('RPC retained partial.').length - 1, 1)
-    const requests = (await f.cli.audit()) as Array<{ messages: Array<{ role: string }> }>
-    assert.equal(
-      requests[1].messages.filter((message) => message.role === 'assistant').length,
-      1,
-      'The continuation preserves its assistant history in the actual native gateway request'
+    const resumedWire = f.provider.requests[1]?.bodyBase64
+    if (typeof resumedWire !== 'string') throw new Error('Missing native Cursor continuation')
+    assert.ok(
+      Buffer.from(resumedWire, 'base64').includes(
+        Buffer.from('The previous response was interrupted by the provider connection.')
+      ),
+      'The second native Cursor request carries the bounded continuation instruction'
     )
     assert.match(JSON.stringify(messages), /RPC remainder/)
     assert.equal(f.cli.stderr(), '')

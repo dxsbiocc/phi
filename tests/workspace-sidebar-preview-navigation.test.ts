@@ -7,13 +7,30 @@ import type { WorkspaceSidebarMode } from '../src/renderer/src/lib/workspaceSide
 
 // Exercise App's actual callback, including the folded-state restoration after navigation.
 const source = readFileSync('src/renderer/src/App.tsx', 'utf8')
-const start = source.indexOf('  const onWorkspaceSidebarPreviewNavigate = useCallback(')
-assert.ok(start >= 0)
-const end = source.indexOf('\n  const workspaceSidebarProps = useMemo', start)
-assert.ok(end > start)
-const callback = ts.transpileModule(source.slice(start, end), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022 }
-}).outputText
+function callbackSource(fileName: string, sourceText: string, name: string): string {
+  const file = ts.createSourceFile(
+    fileName,
+    sourceText,
+    ts.ScriptTarget.ES2022,
+    true,
+    ts.ScriptKind.TSX
+  )
+  let initializer: ts.Expression | undefined
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name)
+      initializer = node.initializer
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  if (!initializer) throw new Error(`Missing ${name} callback`)
+  return `const ${name} = ${initializer.getText(file)};`
+}
+const callback = ts.transpileModule(
+  callbackSource('App.tsx', source, 'onWorkspaceSidebarPreviewNavigate'),
+  {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }
+).outputText
 
 function navigate(
   mode: WorkspaceSidebarMode,
@@ -69,12 +86,12 @@ for (const mode of ['conversations', 'projects'] as const) {
 }
 
 const activitySource = readFileSync('src/renderer/src/AppActivityBar.tsx', 'utf8')
-const blurStart = activitySource.indexOf('  const handleWorkspaceSidebarPreviewBlur = useCallback(')
-const blurEnd = activitySource.indexOf('\n  const skipPreviewFocusRef =', blurStart)
-assert.ok(blurStart >= 0 && blurEnd > blurStart)
-const blurCallback = ts.transpileModule(activitySource.slice(blurStart, blurEnd), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022 }
-}).outputText
+const blurCallback = ts.transpileModule(
+  callbackSource('AppActivityBar.tsx', activitySource, 'handleWorkspaceSidebarPreviewBlur'),
+  {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 }
+  }
+).outputText
 
 function blurPreview(
   pointerInside: boolean,

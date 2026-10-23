@@ -249,6 +249,13 @@ test(
     const read = await execute('read', { path: 'allowed.txt' }, 'allowed')
     assert.equal(read.isError, false, JSON.stringify(read))
     assert.match(JSON.stringify(read.result), /PROJECT_VISIBLE_MARKER/)
+    const readWithIntent = await execute(
+      'read',
+      { path: 'allowed.txt', i: 're-read the exact project file' },
+      'allowed with intent'
+    )
+    assert.equal(readWithIntent.isError, false, JSON.stringify(readWithIntent))
+    assert.match(JSON.stringify(readWithIntent.result), /PROJECT_VISIBLE_MARKER/)
     for (const [file, marker] of [
       ['notes.ipynb', /NOTEBOOK_JSON_MARKER/],
       ['Snakefile', /SNAKEFILE_MARKER/]

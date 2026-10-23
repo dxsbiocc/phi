@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 
 import { facadeBindingHash } from '../engine/rpc/facade-session-driver'
@@ -42,6 +43,8 @@ export function buildRemoteSessionDeleteCommand(
   mode: 'verify' | 'delete' = 'delete'
 ): string {
   const paths = deriveRemoteSessionPaths(scope)
+  const tombstonePrefix = `${paths.directory}.deleting-`
+  const tombstone = `${tombstonePrefix}${randomUUID()}`
   const journal = posix.join(paths.journals, reference.journalBasename)
   const manifest = `${JSON.stringify({
     ...scope,
@@ -67,7 +70,16 @@ flock -x -n 8 || storage_fail SESSION_BUSY`
       : ''
   const finish =
     mode === 'delete'
-      ? `rm -rf -- ${q(paths.directory)} || storage_fail PERSISTENCE_FAILED
+      ? `[ ! -e ${q(tombstone)} ] && [ ! -L ${q(tombstone)} ] || storage_fail PERSISTENCE_FAILED
+mv -- ${q(paths.directory)} ${q(tombstone)} || storage_fail PERSISTENCE_FAILED
+exec 8>&-
+exec 9>&-
+for attempt in 1 2 3 4 5; do
+  rm -rf -- ${q(tombstone)} 2>/dev/null || :
+  [ ! -e ${q(tombstone)} ] && [ ! -L ${q(tombstone)} ] && break
+  sleep 1
+done
+[ ! -e ${q(tombstone)} ] && [ ! -L ${q(tombstone)} ] || storage_fail PERSISTENCE_FAILED
 [ ! -e ${q(paths.directory)} ] && [ ! -L ${q(paths.directory)} ] || storage_fail PERSISTENCE_FAILED
 printf '${DELETED.trim()}\\n'`
       : `printf '${VERIFIED.trim()}\\n'`
@@ -78,6 +90,9 @@ ${STORAGE_REMOTE_FUNCTIONS}
 [ -d ${q(scope.projectRoot)} ] && [ "$(cd -- ${q(scope.projectRoot)} && pwd -P)" = ${q(scope.projectRoot)} ] || storage_fail IDENTITY_MISMATCH
 storage_dir ${q(posix.join(scope.runtimeRoot, 'omp-sessions'))} existing
 storage_dir ${q(posix.dirname(paths.directory))} existing
+for stale in ${q(tombstonePrefix)}*; do
+  [ ! -e "$stale" ] && [ ! -L "$stale" ] || storage_fail PERSISTENCE_FAILED
+done
 if [ ! -e ${q(paths.directory)} ] && [ ! -L ${q(paths.directory)} ]; then
   printf '${ABSENT.trim()}\\n'
   exit 0
@@ -185,7 +200,9 @@ export async function prepareRemotePhiDeletion(
   assertRuntimeScope(reference, scope)
   let remote: Pick<RemoteSshSession, 'exec' | 'execBounded' | 'close'>
   try {
-    remote = await (dependencies.connect ?? ((request) => remoteWorkspaceHosts.connect(request)))({
+    remote = await (
+      dependencies.connect ?? ((request) => remoteWorkspaceHosts.connectIsolated(request))
+    )({
       sessionId,
       projectId: project.id
     })

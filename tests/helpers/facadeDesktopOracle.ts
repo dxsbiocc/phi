@@ -186,16 +186,16 @@ try {
     f.provider.enqueue(
       {
         tool: {
-          name: 'lib.save',
+          name: 'lib_save',
           args: { source: 'pubmed', sourceId: '12345', title: 'Selected remote paper' }
         }
       },
       ...(mode === 'library-flow'
         ? [
-            { tool: { name: 'lib.list', args: {} } },
-            { tool: { name: 'lib.find', args: { query: 'Selected remote paper' } } },
-            { tool: { name: 'lib.update', args: { id: '12345', notes: 'Remote annotation' } } },
-            { tool: { name: 'lib.audit', args: {} } }
+            { tool: { name: 'lib_list', args: {} } },
+            { tool: { name: 'lib_find', args: { query: 'Selected remote paper' } } },
+            { tool: { name: 'lib_update', args: { id: '12345', notes: 'Remote annotation' } } },
+            { tool: { name: 'lib_audit', args: {} } }
           ]
         : []),
       { text: 'Library operation settled' }
@@ -253,8 +253,8 @@ try {
         reference.journalBasename
       )
       f.provider.enqueue(
-        { tool: { name: 'lib.list', args: {} } },
-        { tool: { name: 'lib.remove', args: { id: '12345' } } },
+        { tool: { name: 'lib_list', args: {} } },
+        { tool: { name: 'lib_remove', args: { id: '12345' } } },
         { text: 'Removed' }
       )
       await run('List the restored library and remove the same paper')

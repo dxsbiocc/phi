@@ -1,96 +1,108 @@
-import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { resolveBunExecutable } from '../../src/main/agent/engine/bun-executable'
-import { OmpBridge, type OwnedModelGatewayLease } from '../../src/main/agent/engine/omp-bridge'
-import { createModelGatewayCliFixture } from './model-gateway-cli-fixture'
+import { randomBytes, randomUUID } from 'node:crypto'
+import type { RpcConnection } from '../../src/main/agent/engine/rpc/connection'
+import { createScopedCursorH2Gateway } from '../../src/main/agent/engine/in-process/scoped-cursor-h2-gateway'
+import type { RemoteRuntimeTurnResult } from '../../src/main/agent/engine/rpc/remote-session-runtime'
+import { runtimeCompositionFixture } from './rpcRuntimeCompositionFixture'
 import { startLoopbackCursor } from './loopbackCursor'
 
-/** Real desktop Cursor provider -> production model gateway -> official RPC CLI/rpc-entry. */
-export async function createRpcCursorFixture(): Promise<{
+/** Real scoped Cursor tunnel, private RPC runtime and official CLI over local test transports. */
+export interface RpcCursorFixture {
   provider: Awaited<ReturnType<typeof startLoopbackCursor>>
-  cli: Awaited<ReturnType<typeof createModelGatewayCliFixture>>
+  cli: {
+    connection: {
+      prompt(text: string): Promise<RemoteRuntimeTurnResult['result']>
+      request<T>(request: Parameters<RpcConnection['request']>[0]): Promise<T>
+      onEvent(
+        listener: Parameters<RpcConnection['onEvent']>[0]
+      ): ReturnType<RpcConnection['onEvent']>
+      abort(): Promise<void>
+    }
+    stderr(): string
+  }
   close(): Promise<void>
-}> {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'phi-rpc-cursor-')))
-  const agentDir = join(root, 'agent')
-  for (const name of ['agent', 'home', 'tmp']) await mkdir(join(root, name), { mode: 0o700 })
-  const provider = await startLoopbackCursor().catch(async (error) => {
-    await rm(root, { recursive: true, force: true })
-    throw error
+}
+
+export async function createRpcCursorFixture(): Promise<RpcCursorFixture> {
+  const fixture = await runtimeCompositionFixture({ auditModelGatewayWire: false })
+  const provider = await startLoopbackCursor()
+  const token = randomBytes(32).toString('base64url')
+  const scoped = await createScopedCursorH2Gateway({
+    token,
+    allowedModelIds: [
+      'cursor-grok-4.6-fast',
+      'cursor-grok-4.6-low-fast',
+      'cursor-grok-4.6-medium-fast',
+      'cursor-grok-4.6-high-fast',
+      'cursor-grok-4.6-xhigh-fast'
+    ],
+    resolveBearer: async () => 'private-cursor-access-fixture',
+    upstreamOrigin: provider.url
   })
   const ref = { provider: 'cursor', id: 'cursor-grok-4.6-fast' }
-  await writeFile(
-    join(agentDir, 'models.yml'),
-    JSON.stringify({
-      providers: {
-        cursor: {
-          apiKey: 'synthetic-cursor-test-key',
-          baseUrl: provider.url,
-          modelOverrides: {
-            [ref.id]: { baseUrl: provider.url, contextWindow: 32768, maxTokens: 256 }
-          }
-        }
-      }
-    }),
-    { mode: 0o600 }
-  )
-  const bridge = new OmpBridge(() =>
-    spawn(
-      resolveBunExecutable(),
-      [
-        '--no-env-file',
-        '--preload',
-        fileURLToPath(new URL('../engine-contract/network-guard.ts', import.meta.url)),
-        fileURLToPath(new URL('../../src/main/agent/engine/in-process/main.ts', import.meta.url))
-      ],
-      {
-        cwd: root,
-        env: {
-          PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
-          HOME: join(root, 'home'),
-          XDG_CONFIG_HOME: join(root, 'home/.config'),
-          XDG_DATA_HOME: join(root, 'home/.local/share'),
-          XDG_CACHE_HOME: join(root, 'home/.cache'),
-          PI_CODING_AGENT_DIR: agentDir,
-          TMPDIR: join(root, 'tmp'),
-          OMP_APP_NAME: 'Phi',
-          NO_PROXY: '127.0.0.1,localhost'
-        },
-        stdio: ['pipe', 'pipe', 'pipe']
-      }
-    )
-  )
-  let lease: OwnedModelGatewayLease | undefined
-  let cli: Awaited<ReturnType<typeof createModelGatewayCliFixture>> | undefined
   let closing: Promise<void> | undefined
   const close = (): Promise<void> =>
     (closing ??= (async () => {
-      try {
-        await cli?.close()
-      } finally {
-        try {
-          try {
-            await lease?.close()
-          } finally {
-            await bridge.stop()
-          }
-        } finally {
-          await provider.close()
-          await rm(root, { recursive: true, force: true })
-        }
-      }
+      await fixture.close()
+      await scoped.close()
+      await provider.close()
     })())
   try {
-    lease = await bridge.createModelGatewayLease({
-      sessionId: 'rpc-cursor-recovery',
-      generation: 1,
-      models: [ref]
+    const runtime = await fixture.create({
+      transport: {
+        ...fixture.defaults.transport,
+        models: [ref],
+        gateway: {
+          async createModelGatewayLease(params: { sessionId: string; generation: number }) {
+            let finish!: () => void
+            const closed = new Promise<void>((resolve) => {
+              finish = resolve
+            })
+            return {
+              leaseId: `lease-${params.generation}`,
+              sessionId: params.sessionId,
+              generation: params.generation,
+              localPort: scoped.port,
+              bearerToken: randomBytes(32).toString('base64url'),
+              cursor: { localPort: scoped.port, bearerToken: token },
+              models: [
+                {
+                  ...ref,
+                  name: 'Grok 4.6 Fast',
+                  reasoning: true,
+                  input: ['text' as const],
+                  contextWindow: 256000,
+                  maxTokens: 16384
+                }
+              ],
+              closed,
+              async close() {
+                finish()
+              }
+            }
+          }
+        }
+      },
+      params: {
+        ...fixture.defaults.params,
+        model: { ...ref, name: 'Grok 4.6 Fast', reasoning: true, supportsImages: false },
+        thinkingLevel: 'high'
+      },
+      action: { type: 'new', model: ref }
     })
-    cli = await createModelGatewayCliFixture(lease)
-    return { provider, cli, close }
+    const rpc = (runtime as unknown as { connection: RpcConnection }).connection
+    return {
+      provider,
+      cli: {
+        connection: {
+          prompt: async (text: string) => (await runtime.prompt(randomUUID(), text)).result,
+          request: <T>(request: Parameters<RpcConnection['request']>[0]) => rpc.request<T>(request),
+          onEvent: (listener: Parameters<RpcConnection['onEvent']>[0]) => rpc.onEvent(listener),
+          abort: () => runtime.stop()
+        },
+        stderr: () => ''
+      },
+      close
+    }
   } catch (error) {
     await close()
     throw error

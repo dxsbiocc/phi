@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
+import { randomBytes } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { facadeMetadataFixture } from './facadeMetadataFixture'
 import { startCursorChildProvider } from './rpcCursorChildProvider'
+import { getOmpBridge } from '../../src/main/agent/engine/omp-bridge'
+import { createScopedCursorH2Gateway } from '../../src/main/agent/engine/in-process/scoped-cursor-h2-gateway'
 import { cursorChildBarrierBundle, cursorChildBarrierPaths } from './rpcCursorChildBarrier'
 import type { PhiAgentDefinition } from '../../src/main/agent/agents/definition'
 import type { RpcChildRunSnapshot } from '../../src/main/agent/engine/rpc/subagents/types'
@@ -80,6 +83,56 @@ export async function rpcCursorChildFixture(
     if (barrierDirectory) await rm(barrierDirectory, { recursive: true, force: true })
     throw error
   }
+  const token = randomBytes(32).toString('base64url')
+  let scoped: Awaited<ReturnType<typeof createScopedCursorH2Gateway>>
+  try {
+    scoped = await createScopedCursorH2Gateway({
+      token,
+      allowedModelIds: [
+        'cursor-grok-4.6-fast',
+        'cursor-grok-4.6-low-fast',
+        'cursor-grok-4.6-medium-fast',
+        'cursor-grok-4.6-high-fast',
+        'cursor-grok-4.6-xhigh-fast'
+      ],
+      resolveBearer: async () => 'synthetic-cursor-child-key',
+      upstreamOrigin: cursor.url
+    })
+  } catch (error) {
+    await f.close().catch(() => undefined)
+    await cursor.close().catch(() => undefined)
+    if (barrierDirectory) await rm(barrierDirectory, { recursive: true, force: true })
+    throw error
+  }
+  const bridge = getOmpBridge()
+  const createLease = bridge.createModelGatewayLease
+  bridge.createModelGatewayLease = async (params, signal) => {
+    const cursorModels = params.models.filter((model) => model.provider === 'cursor')
+    if (!cursorModels.length) return createLease.call(bridge, params, signal)
+    const base = await createLease.call(
+      bridge,
+      { ...params, models: params.models.filter((model) => model.provider !== 'cursor') },
+      signal
+    )
+    let closing: Promise<void> | undefined
+    return {
+      ...base,
+      cursor: { localPort: scoped.port, bearerToken: token },
+      models: [
+        ...base.models,
+        ...cursorModels.map((model) => ({
+          ...model,
+          name: model.id,
+          reasoning: true,
+          input: ['text' as const, 'image' as const],
+          contextWindow: 32768,
+          maxTokens: 256
+        }))
+      ],
+      close: () =>
+        (closing ??= Promise.allSettled([base.close(), scoped.close()]).then(() => undefined))
+    }
+  }
   let closing: Promise<void> | undefined
   return {
     f,
@@ -142,10 +195,12 @@ export async function rpcCursorChildFixture(
     },
     close: () =>
       (closing ??= (async () => {
+        bridge.createModelGatewayLease = createLease
         try {
           await f.close()
         } finally {
           try {
+            await scoped.close()
             await cursor.close()
           } finally {
             if (barrierDirectory) await rm(barrierDirectory, { recursive: true, force: true })

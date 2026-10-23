@@ -15,6 +15,7 @@ import {
 import type { WrapperRun } from '../shared/wrapperTypes'
 import './agent-env'
 import { createMainWindowStartup } from './window-startup'
+import { migrateStartupPluginEnablement as migratePluginEnablement } from './startup-plugin-enablement'
 import { registerWorkspaceFileIpc } from './workspace-file-ipc'
 import { registerAnalysisIpc } from './ipc/analysis-ipc'
 import { registerGithubSourceIpc } from './ipc/github-sources-ipc'
@@ -278,8 +279,7 @@ import {
 } from './agent/runtime/runtime-model-selection'
 import { loadedPlugins } from './agent/plugins/loader'
 import { createInstalledPluginNamespace } from './agent/plugins/installed-plugin-namespace'
-import { readPluginRegistry, writePluginRegistry } from './agent/plugins/store'
-import { getEnablementSnapshot, migrateEnablementFromHistory, setEnabled } from './agent/enablement'
+import { migrateEnablementFromHistory } from './agent/enablement'
 import { cleanupStalePackageStaging } from './agent/packages/installer'
 import {
   createContentPackageRuntime,
@@ -289,8 +289,7 @@ import { prepareContentPackageInstall } from './agent/packages/content-source'
 import {
   listConnectorCatalog,
   mcpOAuthAuthorizationOrigin,
-  readCustomRemoteMcpConnector,
-  refreshPersistedManagedStdioServers
+  readCustomRemoteMcpConnector
 } from './agent/mcp-connectors'
 import {
   apiKeyConnector,
@@ -3425,65 +3424,7 @@ function runStartupMaintenance(): void {
 }
 
 function migrateStartupPluginEnablement(): void {
-  try {
-    const refreshed = refreshPersistedManagedStdioServers({
-      agentDir: AGENT_DIR,
-      runtimeRoot: getRuntimeRoot()
-    })
-    if (refreshed.failures.length > 0) {
-      writeAppLog({
-        level: 'warn',
-        event: 'mcp_managed_stdio_refresh_failed',
-        metadata: {
-          failures: refreshed.failures.map(({ name, ref, error }) => ({
-            name,
-            ref,
-            error: error.message
-          }))
-        }
-      })
-    }
-  } catch (error) {
-    writeAppLog({
-      level: 'warn',
-      event: 'mcp_managed_stdio_refresh_failed',
-      metadata: { error: errorMessage(error) }
-    })
-  }
-  try {
-    const registry = readPluginRegistry(AGENT_DIR)
-    const global = getEnablementSnapshot({ agentDir: AGENT_DIR }).global
-    const plugins = { ...registry.plugins }
-    const migratedPlugins: string[] = []
-    let hadLegacyEnablement = false
-    for (const [id, entry] of Object.entries(plugins)) {
-      if (typeof entry.enabled !== 'boolean') continue
-      hadLegacyEnablement = true
-      const key = `plugin:${id}` as const
-      if (!Object.hasOwn(global, key)) {
-        setEnabled(key, entry.enabled, { agentDir: AGENT_DIR })
-        migratedPlugins.push(id)
-      }
-      const lifecycleEntry = { ...entry }
-      delete lifecycleEntry.enabled
-      plugins[id] = lifecycleEntry
-    }
-    if (hadLegacyEnablement) {
-      writePluginRegistry({ version: 1, plugins }, AGENT_DIR)
-    }
-    if (migratedPlugins.length > 0) {
-      writeAppLog({
-        event: 'enablement_plugin_registry_migrated',
-        metadata: { plugins: migratedPlugins }
-      })
-    }
-  } catch (error) {
-    writeAppLog({
-      event: 'enablement_plugin_registry_migration_failed',
-      level: 'warn',
-      metadata: { error: errorMessage(error) }
-    })
-  }
+  migratePluginEnablement(AGENT_DIR, getRuntimeRoot)
 }
 
 function recoverStartupState(): void {
