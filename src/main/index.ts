@@ -248,8 +248,7 @@ import {
 import { createAgentInteractionRequest } from './agent/host-requests/agent-interaction-request'
 import { createDeliverablesPresentation } from './agent/host-requests/deliverables-presentation'
 import { createHostConfirmations } from './agent/host-requests/host-confirmations'
-import { registerPlanReviewHostService } from './agent/plan/plan-review-host-service'
-import { createPlanRunService } from './agent/plan/plan-run-service'
+import { wirePlanExecution } from './agent/plan/plan-execution-wiring'
 import { registerPlanRunIpc } from './ipc/plan-run-ipc'
 import {
   createInMemoryRuntimeSessionManager,
@@ -309,7 +308,6 @@ import {
 } from './agent/session/session-creation-approvals'
 import {
   continuationPrompt,
-  createPlanRunContinuation,
   shouldContinueAfterAgentRun,
   type ContinuationEvent
 } from './agent/agents/run-continue'
@@ -894,30 +892,6 @@ const runnerRegistry = new SessionRunnerRegistry({
     backgroundAgentApprovals.afterParentRunSettled(sessionId)
     rpcChildApprovals.afterParentRunSettled(sessionId)
   }
-})
-const continuePlanRunConversation = createPlanRunContinuation({
-  automaticCount: (phiSessionId) => automaticContinuations.get(phiSessionId) ?? 0,
-  wakeConversation,
-  onLimit: (phiSessionId, runId) =>
-    writeAppLog({
-      event: 'plan_run_continue_limit',
-      metadata: { phiSessionId, planRunId: runId }
-    })
-})
-const planRunService = createPlanRunService({
-  engine: getPhiEngine(),
-  completions: agentRunCompletions,
-  resolveRuntimeSessionId: (phiSessionId) =>
-    sessionKeys.runtimeSessionIdForPhiSession(phiSessionId, (runtimeSessionId) =>
-      getPhiEngine().sessions.has(runtimeSessionId)
-    ) ?? null,
-  timeline: {
-    append: appendSessionEvent,
-    broadcast: (phiSessionId, event) =>
-      sendRunEventToWindow({ source: 'phi', ...event, phiSessionId })
-  },
-  continueConversation: continuePlanRunConversation,
-  logError: logUnexpectedError
 })
 const handleAgentInteractionRequest = createAgentInteractionRequest({
   fields: { optionalStringField },
@@ -1644,8 +1618,8 @@ const cursorH2Bridge = createCursorH2Bridge()
 getPhiEngine().host.register('cursorBridge.ensure', async () => ({
   baseUrl: await cursorH2Bridge.ensure()
 }))
-registerPlanReviewHostService({
-  host: getPhiEngine().host,
+const planRunService = wirePlanExecution({
+  engine: getPhiEngine(),
   optionalStringField,
   findActivePromptRunByRuntimeSessionId,
   getProject,
@@ -1659,7 +1633,13 @@ registerPlanReviewHostService({
   createRunId,
   runnerRegistry,
   notifySessionChanged,
-  planRuns: planRunService
+  sessionKeys,
+  automaticContinuationCount: (phiSessionId) => automaticContinuations.get(phiSessionId) ?? 0,
+  wakeConversation,
+  writeAppLog,
+  broadcastRunEvent: (phiSessionId, event) =>
+    sendRunEventToWindow({ source: 'phi', ...event, phiSessionId }),
+  logError: logUnexpectedError
 })
 getPhiEngine().host.register('deliverables.present', handlePresentFilesRequest)
 getPhiEngine().host.register('mcp.openAuthUrl', async (params) => {
@@ -2259,15 +2239,11 @@ function flushPendingContinuations(phiSessionId: string, runWasCancelled: boolea
   if (!queued) return
   pendingContinuations.delete(phiSessionId)
   // A run whose outcome the agent was already handed during that turn (it waited for it) needs no announcement.
-  const events = queued.filter((event) => {
-    if (event.type === 'agent_run_finished') {
-      return !hasAgentRunBeenReported(phiSessionId, event.agentRunId)
-    }
-    if (event.type === 'wrapper_run_finished') {
-      return !wrapperJobs.hasBeenReported(event.wrapperRunId)
-    }
-    return true
-  })
+  const events = queued.filter((event) =>
+    event.type === 'agent_run_finished'
+      ? !hasAgentRunBeenReported(phiSessionId, event.agentRunId)
+      : event.type !== 'wrapper_run_finished' || !wrapperJobs.hasBeenReported(event.wrapperRunId)
+  )
   if (runWasCancelled || events.length === 0) return
   try {
     startAutomaticContinuation(phiSessionId, events)

@@ -4542,6 +4542,7 @@ async function harness(
     './agent/notebook/remote-notebook-runtime',
     './agent/persona-generation',
     './agent/packages/content-package-runtime',
+    './agent/plan/plan-execution-wiring',
     './agent/plan/plan-review-host-service',
     './agent/plugins/installed-plugin-namespace',
     './agent/plugins/phi-plugin-management-view',
