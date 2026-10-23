@@ -1,4 +1,5 @@
 import { homeCopy } from '../lib/homeCopy'
+import { BRAND_FONT_STACK } from '../../../minimalTheme/tokens'
 import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Typography } from '@mui/material'
 import type { ChatResourceMention } from '../../../lib/chatResourceMentions'
@@ -79,7 +80,7 @@ export function HomePrompt(props: HomePromptProps): React.JSX.Element {
           id="home-heading"
           component="h1"
           variant="h4"
-          sx={{ letterSpacing: '-0.025em' }}
+          sx={{ fontFamily: BRAND_FONT_STACK, letterSpacing: '-0.025em' }}
         >
           {homeCopy.continueYourWork}
         </Typography>

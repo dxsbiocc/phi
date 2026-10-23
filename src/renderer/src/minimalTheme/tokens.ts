@@ -85,4 +85,6 @@ export const SEMANTIC_SCALES = {
 export type SemanticColor = keyof typeof SEMANTIC_SCALES
 
 export const MINIMAL_FONT_STACK =
-  '"DM Sans Variable", "DM Sans", -apple-system, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+  '-apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, "Segoe UI", "Microsoft YaHei", Roboto, "Helvetica Neue", Arial, sans-serif'
+
+export const BRAND_FONT_STACK = '"DM Sans Variable", "DM Sans", ' + MINIMAL_FONT_STACK
