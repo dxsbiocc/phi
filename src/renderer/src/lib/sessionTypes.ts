@@ -24,6 +24,7 @@ export interface SessionSummary extends SessionRuntimeState {
   messageCount: number
   firstMessage: string
   phiSessionId?: string
+  legacyRemoteSession?: boolean
 }
 
 export interface SessionSwitchResult extends SessionRuntimeState {
@@ -33,6 +34,7 @@ export interface SessionSwitchResult extends SessionRuntimeState {
   displayCwd?: string
   projectId?: string
   projectLocation?: ProjectLocation
+  legacyRemoteSession?: boolean
   sessionGeneration: number
   permissionMode: PermissionMode
   messages: unknown[]
@@ -45,6 +47,7 @@ export interface CurrentSession extends SessionRuntimeState {
   displayCwd?: string
   projectId?: string
   projectLocation?: ProjectLocation
+  legacyRemoteSession?: boolean
   sessionGeneration: number
   permissionMode: PermissionMode
   messages?: unknown[]

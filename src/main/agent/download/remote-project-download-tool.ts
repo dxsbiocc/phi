@@ -1,12 +1,13 @@
 import type { PhiTool } from '../engine/types'
 import { posix } from 'node:path'
-import { PHI_REMOTE_DOWNLOAD_DESCRIPTION } from '../engine/phi-extension'
-
-export { PHI_REMOTE_DOWNLOAD_DESCRIPTION } from '../engine/phi-extension'
 
 import { suggestedFilename, validateDownloadUrl } from './project-download-tool'
 
 import { errorMessage } from '../../../shared/errorCodes'
+
+export const PHI_REMOTE_DOWNLOAD_DESCRIPTION =
+  'Download one public HTTPS file directly from the server into the current SSH project. The server performs the request and write; Phi never downloads through or writes to the local session anchor.'
+
 const DEFAULT_MAX_BYTES = 250 * 1024 * 1024
 const MAX_BYTES = 2 * 1024 * 1024 * 1024
 

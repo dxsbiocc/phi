@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { loadRemoteWrapperAgent } from '../src/main/agent/agents/remote-wrapper-agent'
-import { remoteProjectToolDecision } from '../src/main/agent/engine/phi-extension'
 
 test('only bundled Wrapper is enabled for an SSH project with a remote-safe toolbox', () => {
   const definition = loadRemoteWrapperAgent(join(process.cwd(), 'resources', 'agents'))
@@ -33,19 +32,4 @@ test('only bundled Wrapper is enabled for an SSH project with a remote-safe tool
 
 test('a missing bundled definition never enables a local or project Wrapper substitute', () => {
   assert.equal(loadRemoteWrapperAgent('/nonexistent-phi-bundled-agents'), undefined)
-})
-
-test('remote Wrapper run controls require Phi registration and never expose built-in tools', () => {
-  for (const tool of ['wrapper_run', 'wrapper_status', 'wrapper_wait', 'wrapper_cancel']) {
-    assert.match(remoteProjectToolDecision(tool)?.reason ?? '', /暂不可用/)
-    assert.equal(
-      remoteProjectToolDecision(tool, false, false, false, false, false, false, true),
-      undefined
-    )
-  }
-  assert.match(
-    remoteProjectToolDecision('powershell', false, false, false, false, false, false, true)
-      ?.reason ?? '',
-    /暂不可用/
-  )
 })

@@ -16,7 +16,6 @@ export type RuntimeRecoveryIssue =
   | 'journal-invalid'
   | 'asset-missing'
   | 'binding-changed'
-  | 'not-enabled'
   | 'run-held'
   | 'unknown'
 export interface RuntimeRecoverySummary {

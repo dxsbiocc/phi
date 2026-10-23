@@ -20,7 +20,6 @@ export interface PhiExtensionEnvironmentBinding {
 export interface PhiExtensionConfig {
   cwd: string
   projectBound: boolean
-  remote: boolean
   enableToolApproval: boolean
   sessionId: string
   agentRunId?: string
@@ -43,13 +42,6 @@ export interface PhiExtensionFallbackReadiness {
   reason?: string
 }
 
-export interface PhiRemoteMcpGuardState {
-  allowedToolNames: ReadonlySet<string>
-  blockedServerReasons: ReadonlyMap<string, string>
-  agentDir: string
-  localProjectAnchor: string
-}
-
 /** Live Phi-side state used by otherwise self-contained extension factories. */
 export interface PhiExtensionHost {
   nextActionSuggestionsEnabled(): Promise<boolean>
@@ -58,9 +50,6 @@ export interface PhiExtensionHost {
   browserApprovalInput(toolCallId: string, input: unknown): unknown
   markBrowserTextDenied(toolCallId: string): void
   fallbackReadiness(agent: string, afterFailures: number): PhiExtensionFallbackReadiness
-  remoteSkillToolNames(): ReadonlySet<string>
-  remoteAgentToolDescriptions(): ReadonlyMap<string, string>
-  remoteMcpToolState(): PhiRemoteMcpGuardState | undefined
   environmentBinding(): PhiExtensionEnvironmentBinding | undefined
   hostEnvironment(): Readonly<Record<string, string | undefined>>
 }

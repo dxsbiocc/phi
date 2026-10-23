@@ -204,35 +204,20 @@ import {
   retireDesktopProjectMemoryAdapters
 } from './agent/engine/rpc/desktop-project-memory-adapter'
 import {
-  remoteBashApprovalScope,
   resolveAuthorizedRemoteConnectionConfig,
-  resolveRemoteBashContext,
-  resolveRemoteWorkspaceHostBinding,
-  resolveRemoteWorkspacePath
+  resolveRemoteWorkspaceHostBinding
 } from './agent/remote-workspace-boundary'
-import { readRemoteWorkspacePath } from './agent/remote-workspace-read'
-import { remoteGlob, remoteGrep } from './agent/remote-workspace-search'
-import { RemoteWorkspaceBashManager, type RemoteBashRequest } from './agent/remote-workspace-bash'
 import { RemoteProjectDownloadManager } from './agent/download/remote-project-download'
-import type { RemoteWriteRequest } from './agent/remote-workspace-write'
-import {
-  RemoteWorkspaceMutationManager,
-  RemoteWorkspaceReadBasis,
-  type RemoteEditRequest
-} from './agent/remote-workspace-edit'
 import {
   ensureRemoteProjectAnchor,
   isRemoteProjectAnchorPath,
   remoteProjectAnchorPath
 } from './agent/remote-project-anchor'
 import {
-  bashApprovalDigest,
-  editApprovalDigest,
   cancelToolApprovals,
   requestToolApproval,
   requestRuntimeToolApproval,
-  resolveToolApproval,
-  writeApprovalDigest
+  resolveToolApproval
 } from './agent/tool-approval'
 import { createEnvironmentBuilds } from './agent/content/environment-builds'
 import { buildEnvironment } from './agent/content/environment-refs'
@@ -240,9 +225,7 @@ import { bindAgentSession } from './agent/content/environment-gate'
 import { createSkillHost } from './agent/content/skill-host'
 import {
   loadRemoteProjectSkillCatalog,
-  readRemoteProjectSkillContent,
-  readRemoteProjectSkillResource,
-  type RemoteProjectSkillContext
+  readRemoteProjectSkillContent
 } from './agent/content/remote-project-skill-service'
 import { loadRemoteProjectMcpCatalog } from './agent/mcp/remote-project-mcp-service'
 import { getRuntimeRoot } from './agent/envs/runtime'
@@ -849,111 +832,6 @@ const sessionKeyLinking = createSessionKeyLinking({
   sessionState,
   sessionResolution
 })
-const approvedRemoteBashCalls = new Map<
-  string,
-  { projectId: string; approvedCwd: string; approvalDigest: string; expiresAt: number }
->()
-const approvedRemoteWriteCalls = new Map<
-  string,
-  { projectId: string; approvedCwd: string; approvalDigest: string; expiresAt: number }
->()
-const approvedRemoteEditCalls = new Map<
-  string,
-  { projectId: string; approvedCwd: string; approvalDigest: string; expiresAt: number }
->()
-
-function remoteBashApprovalKey(sessionId: string, toolCallId: string): string {
-  return `${sessionId}:${toolCallId}`
-}
-
-function requireRemoteBashApproval(request: RemoteBashRequest): void {
-  const manifest = findPhiSessionById(request.sessionId)
-  if (!manifest || manifest.projectId !== request.projectId) {
-    throw new Error('远程命令会话归属无效')
-  }
-  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
-  const approved = approvedRemoteBashCalls.get(key)
-  approvedRemoteBashCalls.delete(key)
-  if (manifest.permissionMode !== 'ask') return
-  const project = getProject(request.projectId)
-  const host =
-    project?.location.kind === 'ssh'
-      ? getRemoteHostProfile(project.location.hostProfileId)
-      : undefined
-  if (!project || project.location.kind !== 'ssh' || !host) {
-    throw new Error('远程项目的 SSH 服务器档案不可用')
-  }
-  const expectedCwd = `ssh://${host.hostAlias}${project.location.canonicalRoot}`
-  if (
-    !approved ||
-    approved.projectId !== request.projectId ||
-    approved.approvedCwd !== expectedCwd ||
-    approved.approvalDigest !== bashApprovalDigest(request as unknown as Record<string, unknown>) ||
-    approved.expiresAt < Date.now()
-  ) {
-    throw new Error('远程命令尚未获得本次会话的批准')
-  }
-}
-
-function requireRemoteWriteApproval(request: RemoteWriteRequest): void {
-  const manifest = findPhiSessionById(request.sessionId)
-  if (!manifest || manifest.projectId !== request.projectId) {
-    throw new Error('远程写入会话归属无效')
-  }
-  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
-  const approved = approvedRemoteWriteCalls.get(key)
-  approvedRemoteWriteCalls.delete(key)
-  if (manifest.permissionMode !== 'ask') return
-  const project = getProject(request.projectId)
-  const host =
-    project?.location.kind === 'ssh'
-      ? getRemoteHostProfile(project.location.hostProfileId)
-      : undefined
-  if (!project || project.location.kind !== 'ssh' || !host) {
-    throw new Error('远程项目的 SSH 服务器档案不可用')
-  }
-  const expectedCwd = `ssh://${host.hostAlias}${project.location.canonicalRoot}`
-  if (
-    !approved ||
-    approved.projectId !== request.projectId ||
-    approved.approvedCwd !== expectedCwd ||
-    approved.approvalDigest !==
-      writeApprovalDigest(request as unknown as Record<string, unknown>) ||
-    approved.expiresAt < Date.now()
-  ) {
-    throw new Error('远程写入尚未获得本次会话的批准')
-  }
-}
-
-function requireRemoteEditApproval(request: RemoteEditRequest): void {
-  const manifest = findPhiSessionById(request.sessionId)
-  if (!manifest || manifest.projectId !== request.projectId) {
-    throw new Error('远程编辑会话归属无效')
-  }
-  const key = remoteBashApprovalKey(request.sessionId, request.toolCallId)
-  const approved = approvedRemoteEditCalls.get(key)
-  approvedRemoteEditCalls.delete(key)
-  if (manifest.permissionMode !== 'ask') return
-  const project = getProject(request.projectId)
-  const host =
-    project?.location.kind === 'ssh'
-      ? getRemoteHostProfile(project.location.hostProfileId)
-      : undefined
-  if (!project || project.location.kind !== 'ssh' || !host) {
-    throw new Error('远程项目的 SSH 服务器档案不可用')
-  }
-  const expectedCwd = `ssh://${host.hostAlias}${project.location.canonicalRoot}`
-  if (
-    !approved ||
-    approved.projectId !== request.projectId ||
-    approved.approvedCwd !== expectedCwd ||
-    approved.approvalDigest !== editApprovalDigest(request as unknown as Record<string, unknown>) ||
-    approved.expiresAt < Date.now()
-  ) {
-    throw new Error('远程编辑尚未获得本次会话的批准')
-  }
-}
-
 const loadedSkillNamesBySession = new Map<string, string[]>()
 const backgroundAgentApprovals = new BackgroundAgentApprovalTracker({
   readManifest: findPhiSessionById,
@@ -1195,8 +1073,6 @@ const loadAppRemoteDesktopTools = createAppRemoteDesktopTools({
   },
   skippedMcp: { notify: (sessionId, skipped) => skippedMcpNotifier.notify(sessionId, skipped) }
 })
-// Main-only internal migration gate; renderer session input cannot enable this route.
-const remoteOmpRpcEnabled = process.env.PHI_REMOTE_OMP_RPC === '1'
 const { getSessionStatusPayload, getCurrentSessionPayload } = createCurrentSessionPayload({
   sessionState,
   sessionKeys,
@@ -1239,7 +1115,6 @@ const {
   },
   creation: {
     getSelectedThinkingLevel: () => selectedThinkingLevel,
-    isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
     ensureRemoteProjectAnchor
   },
   invalidation: {
@@ -1255,7 +1130,6 @@ const {
   events: { notifySessionChanged, writeAppLog }
 })
 installAppRemoteSessionRouting({
-  enabled: remoteOmpRpcEnabled,
   ...(process.env.PHI_REMOTE_STARTUP_DIAGNOSTICS === '1'
     ? {
         startupDiagnostics: ({ phiSessionId, status, totalMs, steps }) =>
@@ -1871,114 +1745,15 @@ const wrapperResultDownloads: WrapperResultDownloads = new Map()
 subscribeRemoteProjectConnection((projectId, state) => {
   sendToAllWindows(IPC.projects.remoteConnectionChanged, { projectId, state })
 })
-function remoteSkillContextFromRequest(params: unknown): RemoteProjectSkillContext {
-  if (!isRecord(params)) throw new Error('远程项目 Skill 读取请求无效')
-  const sessionId = optionalStringField(params, 'sessionId')
-  const projectId = optionalStringField(params, 'projectId')
-  if (!sessionId || !projectId) throw new Error('远程项目 Skill 读取请求无效')
-  return { sessionId, projectId, cwd: '', agentDir: AGENT_DIR }
-}
-
-getPhiEngine().host.register('remoteWorkspace.resolvePath', (params) =>
-  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
-    resolveRemoteWorkspacePath(params)
-  )
-)
-getPhiEngine().host.register('remoteWorkspace.resolveBashContext', (params) =>
-  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
-    resolveRemoteBashContext(params)
-  )
-)
 const connectRemoteWorkspaceHost = async (request: {
   sessionId: string
   projectId: string
   execTimeoutMs: number
 }): Promise<import('./agent/wrappers/remote-ssh-session').RemoteSshSession> =>
   (await import('./agent/workspace-host/remote-registry')).remoteWorkspaceHosts.connect(request)
-const releaseRemoteWorkspaceHost = (sessionId: string): void => {
-  void import('./agent/workspace-host/remote-registry').then(({ remoteWorkspaceHosts }) =>
-    remoteWorkspaceHosts.releaseSession(sessionId)
-  )
-}
-const releaseAllRemoteWorkspaceHosts = (): void => {
-  void import('./agent/workspace-host/remote-registry').then(({ remoteWorkspaceHosts }) =>
-    remoteWorkspaceHosts.releaseAll()
-  )
-}
-const remoteReadBasis = new RemoteWorkspaceReadBasis()
-getPhiEngine().host.register('remoteWorkspace.read', (params) =>
-  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
-    readRemoteWorkspacePath(params, {
-      connectHost: connectRemoteWorkspaceHost,
-      onFileRead: (authorized, content) =>
-        remoteReadBasis.record(
-          authorized.sessionId,
-          authorized.projectId,
-          authorized.hostAlias,
-          authorized.path,
-          content
-        )
-    })
-  )
-)
-getPhiEngine().host.register('remoteSkills.readResource', (params) => {
-  if (!isRecord(params) || typeof params.path !== 'string') {
-    throw new Error('远程项目 Skill 读取请求无效')
-  }
-  const context = remoteSkillContextFromRequest(params)
-  return remoteConnectionTracker.observe(context.projectId, () =>
-    readRemoteProjectSkillResource(context, params.path as string)
-  )
-})
-getPhiEngine().host.register('remoteWorkspace.glob', (params) =>
-  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
-    remoteGlob(params, { connectHost: connectRemoteWorkspaceHost })
-  )
-)
-getPhiEngine().host.register('remoteWorkspace.grep', (params) =>
-  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
-    remoteGrep(params, { connectHost: connectRemoteWorkspaceHost })
-  )
-)
-const remoteBashManager = new RemoteWorkspaceBashManager({
-  beforeRun: requireRemoteBashApproval,
-  connectHost: connectRemoteWorkspaceHost,
-  releaseHostSession: releaseRemoteWorkspaceHost,
-  releaseAllHosts: releaseAllRemoteWorkspaceHosts
-})
-const remoteMutationManager = new RemoteWorkspaceMutationManager({
-  basis: remoteReadBasis,
-  beforeWrite: requireRemoteWriteApproval,
-  beforeEdit: requireRemoteEditApproval,
-  connectHost: connectRemoteWorkspaceHost
-})
 const remoteProjectDownloadManager = new RemoteProjectDownloadManager({
   agentDir: AGENT_DIR
 })
-getPhiEngine().host.register('remoteWorkspace.write', (params) =>
-  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
-    remoteMutationManager.write(params)
-  )
-)
-getPhiEngine().host.register('remoteWorkspace.cancelWrite', (params) =>
-  remoteMutationManager.cancel(params)
-)
-getPhiEngine().host.register('remoteWorkspace.edit', (params) =>
-  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
-    remoteMutationManager.edit(params)
-  )
-)
-getPhiEngine().host.register('remoteWorkspace.cancelEdit', (params) =>
-  remoteMutationManager.cancel(params)
-)
-getPhiEngine().host.register('remoteWorkspace.bash', (params) =>
-  remoteConnectionTracker.observe(remoteRequestProjectId(params), () =>
-    remoteBashManager.run(params)
-  )
-)
-getPhiEngine().host.register('remoteWorkspace.cancelBash', (params) =>
-  remoteBashManager.cancel(params)
-)
 getPhiEngine().host.register('remoteWorkspace.download', (params, context) => {
   const request = isRecord(params) ? params : {}
   const control = remoteRuntimeDispatchControl(
@@ -2489,6 +2264,7 @@ const { resolveTarget: resolvePromptRunTarget, admit: admitPromptRun } =
       resolveSessionModelSelection: sessionResolution.resolveSessionModelSelection
     },
     linking: { ensurePhiSessionId: sessionKeyLinking.ensurePhiSessionId },
+    sessions: { findById: findPhiSessionById },
     runs: {
       hasActiveRun: (key) => promptRuns.hasActiveRun(key),
       runtimeRecoveryOperations: promptRuns.runtimeRecoveryOperations,
@@ -2531,10 +2307,7 @@ const sessionCreationContextDependencies = {
 }
 const sessionCreationApprovalDependencies = createSessionCreationApprovalDependencies({
   classifyLocal: (toolName, input) => skillHost.approvalFor(toolName, input),
-  classifyRemote: (toolName, input) => remoteRuntimeController.approvalFor(toolName, input),
   permissionMode: sessionResolution.resolveSessionPermissionMode,
-  remoteHost: getRemoteHostProfile,
-  remoteScope: remoteBashApprovalScope,
   activeRun: promptRuns.activeRun.bind(promptRuns),
   sessionPath: phiOnlySessionPath,
   background: {
@@ -2549,11 +2322,7 @@ const sessionCreationApprovalDependencies = createSessionCreationApprovalDepende
     denied: (sessionId, approvalId) => runnerRegistry.markApprovalDenied(sessionId, approvalId),
     cancelled: (sessionId, approvalId) =>
       runnerRegistry.markApprovalCancelled(sessionId, approvalId)
-  },
-  key: remoteBashApprovalKey,
-  bash: approvedRemoteBashCalls,
-  write: approvedRemoteWriteCalls,
-  edit: approvedRemoteEditCalls
+  }
 })
 const { subscribeToCreatedSession } = createCreatedSessionEvents({
   state: { promptRuns, sessionKeys },
@@ -2579,7 +2348,6 @@ const { subscribeToCreatedSession } = createCreatedSessionEvents({
 const { getAgentSession } = createAgentSessionCreation({
   workspace: {
     agentDir: AGENT_DIR,
-    isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
     getPersonaMarkdown,
     getBundledAgentsDir
   },
@@ -2880,9 +2648,7 @@ async function renameConversation(
 
   const manifest = findPhiSessionById(id)
   if (!manifest) throw new Error('会话不存在')
-  const rpc = Boolean(
-    manifest.runtimeRef || (remoteOmpRpcEnabled && manifest.projectLocation?.kind === 'ssh')
-  )
+  const rpc = Boolean(manifest.runtimeRef || manifest.projectLocation?.kind === 'ssh')
   if (rpc) {
     const key = sessionKeys.createKey(path, manifest.cwd)
     const captured = captureSessionControlTarget(key, manifest.sessionId, false, true, false)
@@ -3071,8 +2837,7 @@ const { capture: captureSessionControlTarget } = createSessionControlTarget<Agen
     get: (projectId) => getProject(projectId),
     hostProfile: (profileId) => getRemoteHostProfile(profileId),
     connectionConfig: (profile) => remoteConnectionConfigForProfile(profile)
-  },
-  runtime: { remoteOmpRpcEnabled: () => remoteOmpRpcEnabled }
+  }
 })
 
 function notifySessionChanged(): void {
@@ -3109,12 +2874,6 @@ const { stopPromptRun, stopAllPromptRuns } = createPromptRunStop<PromptRun, Agen
     runtimeRecoveryOperations: promptRuns.runtimeRecoveryOperations
   },
   browser: { cancel: cancelBrowserRun, cleanup: cleanupBrowserRunTabs },
-  remote: {
-    cancelBash: (phiSessionId) => remoteBashManager.cancelSession(phiSessionId),
-    cancelAllBash: () => remoteBashManager.cancelAll(),
-    cancelMutation: (phiSessionId) => remoteMutationManager.cancelSession(phiSessionId),
-    cancelAllMutations: () => remoteMutationManager.cancelAll()
-  },
   agents: {
     stop: (phiSessionId) => runnerRegistry.stopRun(phiSessionId),
     stopAll: () => runnerRegistry.stopAll()
@@ -3730,7 +3489,6 @@ function registerApplicationAndModelIpc(): void {
     findPhiSessionById,
     getCurrentLifecycle: () => lifecycles.forKey(sessionState.sessionKey),
     sameCanonicalSessionKey: sessionKeys.sameCanonical.bind(sessionKeys),
-    isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
     hasActivePromptRun: promptRuns.hasActiveRun.bind(promptRuns),
     getActiveSessionRun: (sessionId: string) => runnerRegistry.getActiveRun(sessionId)
   }
@@ -3833,7 +3591,6 @@ function createSessionRecoveryIpcOptions(): SessionsIpcOptions['recovery'] {
       getCurrentSessionPath: () => sessionState.sessionPath,
       getCurrentCwd: () => sessionState.cwd,
       getCurrentPermissionMode: () => sessionState.permissionMode,
-      isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
       runtimeRecoveryOperations: promptRuns.runtimeRecoveryOperations,
       runtimeRecoveryFailures: promptRuns.runtimeRecoveryFailures,
       manualCompactionIds: promptRuns.manualCompactionIds,
@@ -4141,7 +3898,6 @@ function registerWrapperJobsAndPersonaIpc(
       resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
       getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
       findPhiSessionById,
-      isRemoteOmpRpcEnabled: () => remoteOmpRpcEnabled,
       captureSessionControlTarget
     }
   })

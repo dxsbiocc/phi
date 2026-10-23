@@ -170,7 +170,7 @@ import { sessionDisplayTitle, titleFromMessages, truncateSessionTitle } from './
 import { orderProjectsForSessionSelection } from './lib/projectSidebar'
 import { workspaceScopeLabelForCwd } from './lib/workspaceScope'
 import {
-  isWorkspaceFileTabKind,
+  isWorkspaceFileWorkspaceTab,
   isWorkspaceResourceKind,
   resolveWorkspaceResourceTabIcons,
   workspaceFileTabKey,
@@ -210,11 +210,6 @@ import type {
   SkillSummary
 } from './types'
 
-function isWorkspaceFileWorkspaceTab(
-  tab: WorkspaceTab | null | undefined
-): tab is WorkspaceFileWorkspaceTab {
-  return Boolean(tab && isWorkspaceFileTabKind(tab.kind))
-}
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
 
 export type AppView =
@@ -260,6 +255,7 @@ function App(): React.JSX.Element {
     activeDisplayCwd,
     activeProjectId,
     activeProjectLocation,
+    activeLegacyRemoteSession,
     activeSessionGeneration,
     activeChatScrollResetKey,
     projectSessionRefreshKey,
@@ -3469,6 +3465,10 @@ function App(): React.JSX.Element {
         >
           <ChatView
             messages={messages}
+            legacyRemoteSession={activeLegacyRemoteSession}
+            onCreateSessionInProject={
+              activeProject ? () => void onStartProjectChat(activeProject) : undefined
+            }
             recoveryNotice={
               <RuntimeRecoveryBanner
                 api={rendererApi}

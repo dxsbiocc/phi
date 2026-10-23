@@ -133,9 +133,9 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 
 原 T13 Phi 应用功能已全部合入 `9f723379`（完整源码 `cadb8823`）。升级须同时核对默认 Phi/persona 恰好一次、可信远程三文件与真实路径、模型/压缩轮换和恢复后的固定配置；不得全局关闭 discovery providers 来隐藏模型。记忆必须证明真实本机 SDK 总结→canonical UI root→新会话 prompt，learn/删除/清空同源，旧 child 确认结束且 peer 不受影响；canonical 角色/预算、ENV auth/proxy/CA 行为保留，环境只用于同一受信本机 tool-less SDK child。记忆设置先退役旧写入者再保存；本代 prompt 不热替换，不中断已接受的聊天。原 T13 全矩阵、700/700 和真实场景证据见 [完整验收](omp-remote-acceptance.md#t13-全部-phi-应用功能交付2026-10-15)。原 T14/T15 本轮实现和限定证据已接续下文；最终候选验收不得用 T13 旧结果代替，真实外部验收仍属 T16。
 
-实际主进程入口仍为显式 opt-in：`PHI_REMOTE_OMP_RPC=1` 才走 RPC，`PHI_REMOTE_OMP_AGENTS=Checker,...` 从 Main 可信目录选择完整具名定义。默认不开；renderer 不能提交替代定义或扩大权限。本轮 T14 已接独立模型/思考、原生 edit/搜索、可信 skills/环境/服务、Task 并行/后台四路与原 `agent_status/agent_wait/agent_steer/agent_stop`。当前整合提交 `03da779e`、合入 `a70d403b`；功能冻结候选 `d9b5d776` 标准全量 `6449 项：6424 通过、0 失败、0 取消、24 既有跳过、1 todo`、1542.28 秒，仅证明该候选，组合未重跑全库。版本与限定交叉检查见 [本轮验收](omp-remote-acceptance.md#t14t15-专家与显式恢复2026-10-15)。
+当前主进程对 SSH 项目始终选择远端 OMP RPC；`PHI_REMOTE_OMP_RPC` 已删除，没有旧实现回退。`PHI_REMOTE_OMP_AGENTS=Checker,...` 仍从 Main 可信目录选择完整具名定义，renderer 不能提交替代定义或扩大权限。无 `runtimeRef` 的旧 SSH 会话只读显示历史，并只能在同项目新建 RPC 会话；本地项目继续使用本机进程内运行时。
 
-T12 实际入口开放原生主工具、Notebook 七工具、Wrapper 六工具、Library 六动作、搜索、browser、`ask_user_question`、`render_blocks`、`palette`、`present_files`、下载、`skill_run`/可信声明脚本、`env_request` 和选定 MCP 工具，复用原服务及审批。主进程可信快照决定资源和执行位置；远程资源缺失不得回退到本机同名文件。persona/context/memory 现按主进程可信快照接入，未经授权或未知配置仍明确报错；专家资源/环境、Task 并行后台及四个控制工具按本轮 T14 的 Main 可信目录和所属子实例接入，最终证据绑定本轮固定候选。恢复沿 Phi 的远程引用读取同一 journal，不隐式重放 prompt。这是受控 opt-in 的自动化交付，真实 SSH/provider/OAuth/Finder 及默认开启仍按 T16 门槛。
+T12 实际入口开放原生主工具、Notebook 七工具、Wrapper 六工具、Library 六动作、搜索、browser、`ask_user_question`、`render_blocks`、`palette`、`present_files`、下载、`skill_run`/可信声明脚本、`env_request` 和选定 MCP 工具，复用原服务及审批。主进程可信快照决定资源和执行位置；远程资源缺失不得回退到本机同名文件。persona/context/memory 现按主进程可信快照接入，未经授权或未知配置仍明确报错；恢复沿 Phi 的远程引用读取同一 journal，不隐式重放 prompt。远程入口现在只有 RPC，真实 SSH/provider/OAuth/Finder 继续按 T16 回归清单验证。
 
 Notebook 升级回归须观察真实 draft 与磁盘：update 被批准后仅改 draft，save 被批准才落盘；拒绝 save 或待批停止不执行保存，已批准的 draft 保留。异步后端查找中停止或重绑定 SSH 项目必须在 dispatch 前拒绝；已经开始的磁盘 I/O 不承诺回滚。桌面 AbortSignal 只留在服务 context，不进入工具参数、wire 或公共事件。用新代显式恢复同 journal 后，先确认没有隐式请求/工具重放，再显式读取原 Notebook；核对另一项目的 cwd/draft/disk 独立。本次实际应用 5/5、独立关键 3/3、main/adapter 相关定向检查通过，详见 [Notebook 增量验收记录](omp-remote-acceptance.md#t12-notebook-实际应用增量2026-10-14)。
 
@@ -219,6 +219,8 @@ T10a 基础 RPC 后续记录：`053c3f88` 双路独立审查通过；协议 26 �
 以下原文保留旧批次当时的前台能力限制；本轮当前范围以上述 T14/T15 合同为准：
 
 `3423a650` 在实际主进程安装 RPC 路由。启动应用前显式设置 `PHI_REMOTE_OMP_RPC=1` 才选择新远程路径；不设置时本地和旧远程行为不变。`PHI_REMOTE_OMP_AGENTS=Checker,...` 从主进程可信目录选择具名专家，未设置时不启用前台专家；缺失、重复或不支持的完整定义明确报错，不能由 renderer 提交定义替代。只有无环境/skills/警告且工具限于 read/write/bash 的专家进入本阶段。
+
+上述开关说明仅是 `3423a650` 的历史记录；当前版本已删除该环境变量与旧远程实现。
 
 本地证据归档位于恢复工作区，属于执行记录，不是随仓库交付的产品资源：T8 副本的 `.omx/t8-upgrade-report.md`、`.omx/t8-full-test-awake.log`／`.exit`、`.omx/t8-contract-final.log`、`.omx/t8-mcp-stdio-regression.log`、`.omx/t8-cross-version-history.log`、`.omx/t8-native-terminal-smoke.log`；T9 副本的 `.omx/t9-deployment-report.md` 与缓存修复前后日志。审查或合入时应把必要结论写入可持久追踪的提交／审查说明，不能只依赖本地临时文件。
 

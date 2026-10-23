@@ -9,10 +9,6 @@ import type { Project } from '../src/main/agent/projects'
 import { ensureRemoteProjectAnchor } from '../src/main/agent/remote-project-anchor'
 import type { PhiSessionManifest } from '../src/main/agent/session/session-store'
 import { readRemoteWorkspacePath } from '../src/main/agent/remote-workspace-read'
-import {
-  buildRemoteWorkspaceReadTool,
-  PHI_REMOTE_READ_DESCRIPTION
-} from '../src/main/agent/remote-workspace-read-tool'
 import type { RemoteWorkspaceBoundaryDependencies } from '../src/main/agent/remote-workspace-boundary'
 import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
 import { createLocalShellSession } from './helpers/localShellSession'
@@ -437,36 +433,6 @@ test('missing file, malformed request, and disconnected SSH do not read the anch
   }
 })
 
-test('same-name read tool preserves the SDK path parameter and remote source metadata', async () => {
-  const calls: string[] = []
-  const tool = buildRemoteWorkspaceReadTool(async (path) => {
-    calls.push(path)
-    return {
-      kind: 'file',
-      path: 'ssh://cluster-a/project/note.txt',
-      content: 'remote text',
-      fileSize: 11,
-      contentType: 'text/plain'
-    }
-  })
-  assert.equal(tool.name, 'read')
-  assert.equal(tool.description, PHI_REMOTE_READ_DESCRIPTION)
-  assert.deepEqual(tool.parameters.required, ['path'])
-  const result = await tool.execute('call-1', { path: 'note.txt' }, undefined, {} as never)
-  assert.equal(calls[0], 'note.txt')
-  const output = result.content[0]
-  assert.equal(output?.type === 'text' ? output.text : undefined, 'remote text')
-  assert.deepEqual(result.details, {
-    resolvedPath: 'ssh://cluster-a/project/note.txt',
-    kind: 'file',
-    fileSize: 11,
-    contentType: 'text/plain'
-  })
-  const invalid = await tool.execute('call-2', {}, undefined, {} as never)
-  assert.equal(invalid.isError, true)
-  assert.equal(calls.length, 1)
-})
-
 test('remote read classifies an oversized BAM before size and suggests samtools', async () => {
   const sample = fixture()
   try {
@@ -639,26 +605,6 @@ test('remote read records edit basis only for complete unselected text', async (
   }
 })
 
-test('remote read tool returns supported images as image content', async () => {
-  const sample = fixture()
-  try {
-    const png = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-      'base64'
-    )
-    writeFileSync(join(sample.root, 'pixel.png'), png)
-    const tool = buildRemoteWorkspaceReadTool((path) =>
-      readRemoteWorkspacePath(request(path), sample.dependencies)
-    )
-    const output = await tool.execute('image', { path: 'pixel.png' }, undefined, {} as never)
-    assert.equal(output.isError, undefined)
-    const image = output.content.find((item) => item.type === 'image')
-    assert.deepEqual(image, { type: 'image', data: png.toString('base64'), mimeType: 'image/png' })
-  } finally {
-    sample.cleanup()
-  }
-})
-
 test('remote read returns metadata guidance instead of image content for an oversized image', async () => {
   const sample = fixture()
   try {
@@ -673,26 +619,6 @@ test('remote read returns metadata guidance instead of image content for an over
   } finally {
     sample.cleanup()
   }
-})
-
-test('remote read tool rejects undeclared parameters before invoking the host read', async () => {
-  let calls = 0
-  const tool = buildRemoteWorkspaceReadTool(async () => {
-    calls += 1
-    assert.fail('read callback must not run for undeclared parameters')
-  })
-  const result = await tool.execute(
-    'strict',
-    { path: 'note.txt', host: 'attacker' },
-    undefined,
-    {} as never
-  )
-  assert.equal(result.isError, true)
-  assert.equal(calls, 0)
-  assert.match(
-    result.content[0]?.type === 'text' ? result.content[0].text : '',
-    /只接受.*path|参数|只能包含/
-  )
 })
 
 test('remote read passes only declared identity fields to the host connection boundary', async () => {

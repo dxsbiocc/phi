@@ -8,12 +8,16 @@ import {
 import type { RoutedSessionFactory } from './session-routing-engine'
 import type { PhiEngine, ResolvedRuntimeCompactionPolicy } from './types'
 import type { AutoCompactionOverrides } from '../../../shared/contextUsageTypes'
+import { assertInProcessLocalProject } from './in-process/local-project-boundary'
 
 export function createInProcessEngine(bridge: OmpBridge): PhiEngine {
   return {
     decisions: createDecisionClient(bridge),
     sessions: {
-      create: (params) => bridge.request('session.create', params),
+      create: async (params) => {
+        assertInProcessLocalProject(params)
+        return bridge.request('session.create', params)
+      },
       prompt: (params) => bridge.request('session.prompt', params),
       abort: (params) => bridge.request('session.abort', params),
       dispose: (params) => bridge.request('session.dispose', params),
@@ -29,7 +33,10 @@ export function createInProcessEngine(bridge: OmpBridge): PhiEngine {
     },
     history: {
       list: (params) => bridge.request('sessions.list', params),
-      open: (params) => bridge.request('sessions.open', params),
+      open: async (params) => {
+        assertInProcessLocalProject(params)
+        return bridge.request('sessions.open', params)
+      },
       fork: (params) => bridge.request('sessions.fork', params),
       rename: (params) => bridge.request('sessions.rename', params)
     },

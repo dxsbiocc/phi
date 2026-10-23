@@ -1,9 +1,8 @@
 import type { PhiTool } from '../engine/types'
-import { PHI_LEARN_DESCRIPTION } from '../engine/phi-extension'
 
-export { PHI_LEARN_DESCRIPTION } from '../engine/phi-extension'
+export const PHI_LEARN_DESCRIPTION =
+  "Record one durable lesson in this project's memory so later sessions start with it: a non-obvious fix, a project convention, or a user preference you confirmed. Write it self-contained (what, when, why). Capture sparingly; one specific lesson beats several vague ones. Never record secrets, credentials, or personal data. The user can review and delete every lesson in Phi's settings. Lessons are stored on this computer only, never on a remote server."
 
-/** The remote guard releases `learn` only for a registration carrying this exact text. */
 const MAX_LESSON_CHARS = 2000
 const MAX_CONTEXT_CHARS = 400
 

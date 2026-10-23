@@ -37,7 +37,6 @@ async function main(): Promise<void> {
     const config: PhiExtensionConfig = {
       cwd: root,
       projectBound: false,
-      remote: false,
       enableToolApproval: true,
       sessionId: 'parent-session',
       agentRunId: 'specialist-run',

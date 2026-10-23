@@ -56,6 +56,8 @@ export interface PhiSessionManifest {
   titleSource?: 'auto' | 'user'
   forkedFrom?: { sessionId: string; eventId: string }
   runtimeSessionPath?: string
+  /** Marks a newly-created SSH session before its first concrete RPC runtimeRef is adopted. */
+  remoteRuntime?: 'rpc'
   runtimeRef?: PhiRuntimeRef
   readonly runtimeRecoveryError?: RuntimeRecoveryDiagnostic
   permissionMode: PermissionMode
@@ -83,6 +85,7 @@ export interface CreatePhiSessionInput {
   title?: string
   forkedFrom?: { sessionId: string; eventId: string }
   runtimeSessionPath?: string
+  remoteRuntime?: 'rpc'
   permissionMode: PermissionMode
   model?: ModelSelection | null
   thinkingLevel?: ThinkingLevel
@@ -190,6 +193,7 @@ function withoutUndefinedOptionalFields(manifest: PhiSessionManifest): PhiSessio
   if (next.forkedFrom === undefined) delete next.forkedFrom
   if (next.projectLocation === undefined) delete next.projectLocation
   if (next.runtimeSessionPath === undefined) delete next.runtimeSessionPath
+  if (next.remoteRuntime === undefined) delete next.remoteRuntime
   if (next.model === undefined) delete next.model
   if (next.thinkingLevel === undefined) delete next.thinkingLevel
   if (next.autoCompaction === undefined) delete next.autoCompaction
@@ -218,6 +222,7 @@ export function createPhiSession(input: CreatePhiSessionInput): PhiSessionRecord
     ...(input.title ? { title: input.title } : {}),
     ...(input.forkedFrom ? { forkedFrom: input.forkedFrom } : {}),
     ...(input.runtimeSessionPath ? { runtimeSessionPath: input.runtimeSessionPath } : {}),
+    ...(input.remoteRuntime ? { remoteRuntime: input.remoteRuntime } : {}),
     permissionMode: input.permissionMode,
     ...(input.model !== undefined ? { model: input.model } : {}),
     ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
@@ -447,6 +452,7 @@ export function forkPhiSession(
     cwdRealPath: source.cwdRealPath,
     title: source.title ? `${source.title}（分叉）` : '分叉会话',
     runtimeSessionPath,
+    remoteRuntime: source.remoteRuntime,
     permissionMode: source.permissionMode,
     model: source.model,
     thinkingLevel: source.thinkingLevel,

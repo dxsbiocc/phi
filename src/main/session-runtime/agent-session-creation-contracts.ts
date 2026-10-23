@@ -121,7 +121,6 @@ export interface AgentSessionCreationDeps<
 > {
   workspace: {
     agentDir: string
-    isRemoteOmpRpcEnabled(): boolean
     getPersonaMarkdown(): string
     getBundledAgentsDir(): string
   }

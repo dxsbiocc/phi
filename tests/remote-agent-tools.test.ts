@@ -6,19 +6,13 @@ import test from 'node:test'
 
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import {
-  resolveRemoteAgentTools,
-  shouldAttachRemoteParentTool
+  remoteAgentSupportedToolNames,
+  resolveRemoteAgentTools
 } from '../src/main/agent/agents/remote-agent-tools'
 import type { PhiAgentDefinition } from '../src/main/agent/agents/definition'
-import {
-  remoteAgentSupportedToolNames,
-  remoteWorkspaceToolsVerified
-} from '../src/main/agent/engine/phi-extension'
 import { writeEnablementState } from '../src/main/agent/enablement'
 import { NOTEBOOK_TOOL_NAMES } from '../src/main/agent/notebook/notebook-tools'
 import { installPlugin } from '../src/main/agent/plugins/loader'
-import { PHI_REMOTE_BASH_DESCRIPTION } from '../src/main/agent/remote-workspace-bash-tool'
-import { PHI_REMOTE_READ_DESCRIPTION } from '../src/main/agent/remote-workspace-read-tool'
 import { writeRuntimePluginFixture } from './helpers/runtimePluginFixture'
 
 function agent(tools: string[]): PhiAgentDefinition {
@@ -44,21 +38,10 @@ function writeAgent(root: string, path: string, name: string): void {
   )
 }
 
-test('remote agent tools keep verified registrations and diagnose each rejected tool', () => {
+test('remote agent tools use the server-native inventory and diagnose rejected tools', () => {
   const result = resolveRemoteAgentTools(
     agent(['read', 'bash', 'office_read', 'lib_save', 'unknown_tool']),
-    [
-      {
-        name: 'read',
-        description: PHI_REMOTE_READ_DESCRIPTION,
-        sourceInfo: { source: 'extension' }
-      },
-      {
-        name: 'bash',
-        description: PHI_REMOTE_BASH_DESCRIPTION,
-        sourceInfo: { source: 'extension' }
-      }
-    ]
+    remoteAgentSupportedToolNames()
   )
 
   assert.equal(result.available, true)
@@ -71,38 +54,16 @@ test('remote agent tools keep verified registrations and diagnose each rejected 
 })
 
 test('remote agent needs at least one of read or bash after intersection', () => {
-  const browserOnly = resolveRemoteAgentTools(agent(['browser']), [
-    {
-      name: 'browser',
-      description: 'Phi browser',
-      sourceInfo: { source: 'extension' }
-    }
-  ])
+  const browserOnly = resolveRemoteAgentTools(agent(['browser']), new Set(['browser']))
   assert.equal(browserOnly.available, false)
   assert.match(browserOnly.unavailableReason ?? '', /read.*bash/)
 
-  const readOnly = resolveRemoteAgentTools(agent(['read']), [
-    {
-      name: 'read',
-      description: PHI_REMOTE_READ_DESCRIPTION,
-      sourceInfo: { source: 'extension' }
-    }
-  ])
+  const readOnly = resolveRemoteAgentTools(agent(['read']), remoteAgentSupportedToolNames())
   assert.equal(readOnly.available, true)
 
-  const empty = resolveRemoteAgentTools(agent(['office_read']), [])
+  const empty = resolveRemoteAgentTools(agent(['office_read']), new Set())
   assert.equal(empty.available, false)
   assert.match(empty.unavailableReason ?? '', /没有可用工具/)
-})
-
-test('remote specialists keep scoped tools and receive only explicitly declared parent tools', () => {
-  const definition = agent(['read', 'browser', 'skill_run', 'env_request'])
-
-  assert.equal(shouldAttachRemoteParentTool(definition, 'read', false), true)
-  assert.equal(shouldAttachRemoteParentTool(definition, 'browser', true), false)
-  assert.equal(shouldAttachRemoteParentTool(definition, 'skill_run', false), false)
-  assert.equal(shouldAttachRemoteParentTool(definition, 'env_request', false), false)
-  assert.equal(shouldAttachRemoteParentTool(definition, 'agent_status', false), false)
 })
 
 test('remote specialist inventory excludes parent management and agent-specific unavailable tools', () => {
@@ -159,18 +120,7 @@ test('remote-local discovery reads only global, remote Wrapper, and plugin agent
   }
 })
 
-test('remote workspace verification checks only the tools declared by the specialist', () => {
-  const read = {
-    name: 'read',
-    description: PHI_REMOTE_READ_DESCRIPTION,
-    sourceInfo: { source: 'extension' }
-  }
-  assert.equal(remoteWorkspaceToolsVerified([read], ['read']), true)
-  assert.equal(remoteWorkspaceToolsVerified([read], ['read', 'bash']), false)
-  assert.equal(remoteWorkspaceToolsVerified([read]), false)
-})
-
-test('remote agent static inventory comes from the guard policy and filters discovery', () => {
+test('remote agent static inventory comes from the RPC server/host roster and filters discovery', () => {
   const supported = remoteAgentSupportedToolNames()
   for (const name of [
     'read',

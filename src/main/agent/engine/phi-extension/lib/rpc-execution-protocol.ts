@@ -126,6 +126,7 @@ export function executionRoster(
     .map((tool) => {
       if (
         !approvalIdentifier(tool.name) ||
+        rpcToolNameExposesCredentialSurface(tool.name) ||
         names.has(tool.name) ||
         !['native', 'host'].includes(tool.site) ||
         (tool.site === 'native' && !native.has(tool.name)) ||
@@ -161,6 +162,11 @@ export function executionRoster(
     )
   }
   return { tools: envelope.input.tools as readonly RpcExecutionTool[], hash: envelope.inputDigest }
+}
+
+/** Agent-callable RPC tools must never become a credential or host-setup surface. */
+export function rpcToolNameExposesCredentialSurface(name: string): boolean {
+  return /credential|bootstrap|password|passphrase|settings?/iu.test(name)
 }
 /** Same top-level union projection as Phi pickDeclaredToolInput; no nested-data rewriting. */
 export function executionInput(tool: RpcExecutionTool, input: unknown): Record<string, unknown> {

@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto'
 
 import type { PhiTool } from '../engine/types'
-import { PHI_ENV_REQUEST_DESCRIPTION } from '../engine/phi-extension'
-
-export { PHI_ENV_REQUEST_DESCRIPTION } from '../engine/phi-extension'
 
 import type { SkillHostRequest } from './skill-tools'
 
 import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
+
+export const PHI_ENV_REQUEST_DESCRIPTION =
+  'Ask the user to add conda packages to an environment in this project. On confirmation Phi solves a project environment, installs it, and (in a bound session) switches the session to it. Does not modify the original environment.'
 
 /** Live session binding. `env_request` replaces `ref` and `variables` after a successful rebind. */
 export interface EnvRequestBinding {

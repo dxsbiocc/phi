@@ -18,7 +18,6 @@ export interface ModelSelectionTargetDependencies {
   findPhiSessionById: (sessionId: string) => PhiSessionManifest | null
   getCurrentLifecycle: () => SessionLifecycle<CreateAgentSessionResult>
   sameCanonicalSessionKey: (left: string, right: string) => boolean
-  isRemoteOmpRpcEnabled: () => boolean
   hasActivePromptRun: (sessionKey: string) => boolean
   getActiveSessionRun: (sessionId: string) => unknown
 }
@@ -33,10 +32,7 @@ export function captureCurrentSelectionTarget(
   const lifecycle = dependencies.getCurrentLifecycle()
   const generation = lifecycle.currentGeneration
   const record = lifecycle.currentRecord
-  const rpc = Boolean(
-    manifest?.runtimeRef ||
-    (dependencies.isRemoteOmpRpcEnabled() && manifest?.projectLocation?.kind === 'ssh')
-  )
+  const rpc = Boolean(manifest?.runtimeRef || manifest?.projectLocation?.kind === 'ssh')
   const identity = (value: typeof manifest): string =>
     JSON.stringify([
       value?.projectId,

@@ -1,18 +1,17 @@
 # 远程 RPC 默认开启验证清单
 
-对应 [omp-decoupling-upgrade-plan.md §6.5](../roadmap/omp-decoupling-upgrade-plan.md) 的三个未勾选项。
-三项全部完成后才讨论把 `PHI_REMOTE_OMP_RPC` 改为默认开启；自动化门禁与历史验收见
-[omp-remote-acceptance.md](omp-remote-acceptance.md)。
+对应 [omp-decoupling-upgrade-plan.md §6.5](../roadmap/omp-decoupling-upgrade-plan.md) 的默认开启门槛。
+门槛已经完成；自动化门禁与历史验收见 [omp-remote-acceptance.md](omp-remote-acceptance.md)。
 
 ## 候选与前置
 
 - 候选提交（干净工作区）：`<HEAD>`
-- 启动方式：`PHI_REMOTE_OMP_RPC=1 npm run dev`，或同候选的构建包
+- 启动方式：`bun run dev`，或同候选的构建包
 - SSH 主机：`~/.ssh/config` 中的别名 `<host>`
 - 模型：真实 provider 账号，不是合成 loopback
 - 回执目录：`.phi-acceptance/receipts/<date>-default-on/`
 
-> 不设置 `PHI_REMOTE_OMP_RPC=1` 时仍走旧路径；以下检查都在显式启用下进行。
+> SSH 项目现在始终走远端 OMP RPC；没有旧实现或环境变量回退路径。
 > 验证必须绑定一个干净提交；未提交改动会让回执无法复现。
 
 ## 预检记录
@@ -24,7 +23,7 @@
 
 ## 1. 真实模型账号的远程对话
 
-1. 显式设置 `PHI_REMOTE_OMP_RPC=1` 启动应用。
+1. 启动应用。
 2. 新建或打开一个远程 SSH 项目，确认项目绑定 `ssh-config:<host>`，会话使用远端 anchor。
 3. 选择一个真实 provider 模型，发一条需要读文件并执行命令的请求。
 4. 完成一次编辑/命令审批，确认工具在服务器上执行，结果写入会话时间线。
@@ -168,19 +167,20 @@ SSH 检查可沿验收记录中的命令执行，路径中的 runtime root 与 s
 
 ## 当前放开决定（2026-10-23）
 
+- 产品决定：SSH 项目只使用服务器上的 OMP RPC；`PHI_REMOTE_OMP_RPC` 已删除，旧桌面端
+  read/write/edit/bash/search agent 工具及本地 worker 分支同步清理，不提供回退开关。
+- 旧版 SSH 会话（无 `runtimeRef`）保留历史、搜索、改名、删除和导出；不能发送、重试、排队
+  或自动继续消息。界面只显示“在此项目新建会话”，新会话按 RPC 创建。
 - `yzhang-node3` 与 GPU 在 RPC 基线 `98a8508d` 的 R8 通过，后续候选 `7336b393`
-  仅增加界面提示与测试修复，完整回归 7772 项零失败。可继续在显式
-  `PHI_REMOTE_OMP_RPC=1` 下进行内部验收；共享源码已同步同一修复。
-- 暂不把开关改为全局默认开启。剩余发布门槛按顺序关闭：
+  仅增加界面提示与测试修复，完整回归 7772 项零失败。剩余发布风险不构成旧实现回退入口：
   1. 在目标无缓存桌面实走 [x64 预置前置](remote-omp-preseed.md)并留 SHA-256 回执，
      或证明官方完整下载可用；当前只在全新临时缓存目录验证了生产命中。
   2. 关闭静态警告预算及测试类型检查基线债务；真实 DeepSeek `read`、Notebook 与
      在线/离线删除均已在固定候选源码版完成。
   3. 若发布标准要求“长 Bash 运行时 SSH 断开但 OMP 仍存活”，需再补该精确场景；
      现有实机已分别证明长 Bash 断线退出和真实 OMP 存活接管，未把两者混作一次验证。
-- 当前源码 `src/main/index.ts` 为 4261 行，已低于 4288 行上限；结构门禁通过。
-  `npm run lint` 有 0 错误、1451 警告，仍高于 1396 的预算；未修改主分支基线为 1542 警告。
-  测试类型检查有 479 错误，原基线为 480；这些门禁尚未通过，不通过上调阈值冒充验收完成。
+- 当前源码 `src/main/index.ts` 为 3985 行，边界基线已向下锁定；结构门禁通过。
+  `bun run lint` 有 0 错误、1370 警告，低于 1396 的预算；`bun run typecheck:tests` 为 0 错误。
 
 已知 UX 行为：
 
@@ -189,9 +189,10 @@ SSH 检查可沿验收记录中的命令执行，路径中的 runtime root 与 s
   当前源码在 node3 已验证点击连接、显式恢复和两条会话往返切换。
 - 远程 Jupyter 需要先在 Runtime 面板显式启动；未连接时 kernel 按钮因没有诊断信息而禁用，
   点击无反应。两处都可以在后续补自动重连/更明确的提示。
+- 旧版无 `runtimeRef` 的 SSH 会话只读显示原时间线；prompt bar 替换为新建同项目 RPC 会话的
+  单一动作，不会启动本地引擎或重放旧任务。
 
 ## 收尾
 
-- 三项都通过后，同步勾选 [路线图 §6.5](../roadmap/omp-decoupling-upgrade-plan.md)，
-  并把日期、提交与回执补进 [验收记录](omp-remote-acceptance.md) 顶部。
-- 默认切换仍需稳定一个升级周期，之后才是 T18；本清单不改变这一顺序。
+- [路线图 §6.5](../roadmap/omp-decoupling-upgrade-plan.md) 已同步默认开启决定；历史回执继续保留。
+- 本次产品决定同时完成 T18/R9 清理；后续升级验证只覆盖 RPC 远程路径和本地项目路径。

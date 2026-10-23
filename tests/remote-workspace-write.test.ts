@@ -24,10 +24,6 @@ import {
   type RemoteWriteDependencies,
   type RemoteWriteRequest
 } from '../src/main/agent/remote-workspace-write'
-import {
-  buildRemoteWorkspaceWriteTool,
-  PHI_REMOTE_WRITE_DESCRIPTION
-} from '../src/main/agent/remote-workspace-write-tool'
 import type {
   RemoteExecResult,
   RemoteSshSession
@@ -386,24 +382,4 @@ test('cancel closes the bound SSH session and reports an unknown outcome', async
   } finally {
     f.cleanup()
   }
-})
-
-test('write tool keeps the ordinary name and exposes unknown outcomes', async () => {
-  const tool = buildRemoteWorkspaceWriteTool(async () => ({
-    status: 'unknown',
-    reason: 'connection_lost',
-    resultUnknown: true,
-    message: 'check server'
-  }))
-  assert.equal(tool.name, 'write')
-  assert.equal(tool.description, PHI_REMOTE_WRITE_DESCRIPTION)
-  const result = await tool.execute(
-    'call',
-    { path: 'x', content: 'y' },
-    () => undefined,
-    {} as never,
-    new AbortController().signal
-  )
-  assert.equal(result.isError, true)
-  assert.deepEqual(result.details, { resultUnknown: true })
 })

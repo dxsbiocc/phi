@@ -42,12 +42,6 @@ function createDeps(calls: string[]): {
         calls.push(`browser-cleanup:${run.runId}`)
       }
     },
-    remote: {
-      cancelBash: (id) => calls.push(`bash-cancel:${id}`),
-      cancelAllBash: () => calls.push('bash-cancel-all'),
-      cancelMutation: (id) => calls.push(`mutation-cancel:${id}`),
-      cancelAllMutations: () => calls.push('mutation-cancel-all')
-    },
     agents: {
       stop: (id) => calls.push(`agent-stop:${id}`),
       stopAll: () => calls.push('agent-stop-all')
@@ -87,8 +81,6 @@ test('stopPromptRun invalidates, cancels every owner, and waits for cleanup and 
     'advance:session-key',
     'browser-cancel:run-1',
     'browser-cleanup:run-1',
-    'bash-cancel:phi-session',
-    'mutation-cancel:phi-session',
     'agent-stop:phi-session',
     'wait-cancel:run-1',
     'session-abort',
@@ -112,8 +104,6 @@ test('stopPromptRun can preserve the generation and skips abort without a sessio
   assert.deepEqual(calls, [
     'browser-cancel:run-2',
     'browser-cleanup:run-2',
-    'bash-cancel:phi-session',
-    'mutation-cancel:phi-session',
     'agent-stop:phi-session',
     'wait-cancel:run-2'
   ])
@@ -148,8 +138,6 @@ test('stopAllPromptRuns aborts recoveries, every run, and returns both cleanup b
   assert.equal(first.cancelled, true)
   assert.equal(second.cancelled, true)
   assert.deepEqual(calls, [
-    'bash-cancel-all',
-    'mutation-cancel-all',
     'advance:first-key',
     'browser-cancel:first-run',
     'advance:second-key',

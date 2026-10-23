@@ -46,6 +46,12 @@ export type WorkspaceFileWorkspaceTab = {
 
 export type WorkspaceTab = WorkspaceSessionTab | WorkspaceResourceTab | WorkspaceFileWorkspaceTab
 
+export function isWorkspaceFileWorkspaceTab(
+  tab: WorkspaceTab | null | undefined
+): tab is WorkspaceFileWorkspaceTab {
+  return Boolean(tab && isWorkspaceFileTabKind(tab.kind))
+}
+
 const resourceLabels: Record<WorkspaceResourceKind, string> = {
   get runtime() {
     return navigationCopy.runtime

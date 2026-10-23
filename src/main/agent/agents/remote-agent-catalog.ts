@@ -6,8 +6,7 @@ import {
   type PhiAgentDiagnostic,
   type PhiAgentDiscoveryOptions
 } from './discovery'
-import { resolveRemoteAgentTools } from './remote-agent-tools'
-import { remoteAgentSupportedToolNames } from '../engine/phi-extension'
+import { remoteAgentSupportedToolNames, resolveRemoteAgentTools } from './remote-agent-tools'
 import {
   discoverRemoteProjectAgents,
   type RemoteProjectAgentEntry

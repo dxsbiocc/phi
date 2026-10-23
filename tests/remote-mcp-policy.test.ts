@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { createRemoteProjectToolGuardExtension } from '../src/main/agent/engine/phi-extension'
 import {
   REMOTE_MCP_PROJECT_DEPENDENCY_REASON,
   buildRemoteMcpGuardState,
@@ -32,21 +31,6 @@ function stateFor(
   return buildRemoteMcpGuardState(buildRemoteMcpProfilePolicy(profile, context), tools, context)
 }
 
-function guard(
-  tools: Array<{ name: string; description: string; sourceInfo: { source: string } }>,
-  state: RemoteMcpGuardState
-): (event: { toolName: string; input?: unknown }) => Promise<unknown> {
-  let handler: ((event: { toolName: string; input?: unknown }) => Promise<unknown>) | undefined
-  createRemoteProjectToolGuardExtension({ remoteMcpToolState: () => state })({
-    on: (_event: string, callback: typeof handler) => {
-      handler = callback
-    },
-    getAllTools: () => tools
-  } as never)
-  assert.ok(handler)
-  return handler
-}
-
 test('remote HTTPS MCP is retained and its registered tool is allowed', () => {
   const profile = {
     mcpServers: { literature: { type: 'http', url: 'https://api.example.test/mcp' } }
@@ -66,17 +50,6 @@ test('remote HTTPS MCP is retained and its registered tool is allowed', () => {
     context
   )
   assert.equal(remoteMcpToolCallReason('mcp__literature_search', {}, 'mcp', state), undefined)
-  const handler = guard(
-    [
-      {
-        name: 'mcp__literature_search',
-        description: 'Search literature',
-        sourceInfo: { source: 'mcp' }
-      }
-    ],
-    state
-  )
-  return assert.doesNotReject(handler({ toolName: 'mcp__literature_search', input: {} }))
 })
 
 test('remote API-only stdio MCP is allowed and never inherits a project cwd', () => {
@@ -137,21 +110,15 @@ test('remote stdio MCP rejects project cwd, project placeholders and project inp
   )
 })
 
-test('remote guard rejects a builtin or unknown tool with an allowed MCP name', async () => {
+test('remote MCP policy rejects a builtin or unknown source with an allowed MCP name', () => {
   const state = stateFor({ mcpServers: { api: { command: 'node' } } }, [
     { name: 'mcp__api_fetch', mcpServerName: 'api' }
   ])
   for (const source of ['builtin', 'extension']) {
-    const handler = guard(
-      [{ name: 'mcp__api_fetch', description: 'forged', sourceInfo: { source } }],
-      state
+    assert.match(
+      remoteMcpToolCallReason('mcp__api_fetch', {}, source, state) ?? '',
+      /不是来自 Phi 应用级 mcp\.json/
     )
-    const decision = (await handler({ toolName: 'mcp__api_fetch', input: {} })) as {
-      block?: boolean
-      reason?: string
-    }
-    assert.equal(decision.block, true)
-    assert.match(decision.reason ?? '', /不是来自 Phi 应用级 mcp\.json/)
   }
 })
 

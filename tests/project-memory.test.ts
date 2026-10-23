@@ -4,11 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import {
-  remoteAgentSupportedToolNames,
-  remoteAgentToolRegistrationVerified,
-  remoteProjectToolDecision
-} from '../src/main/agent/engine/phi-extension'
+import { remoteAgentSupportedToolNames } from '../src/main/agent/agents/remote-agent-tools'
 import { buildPhiRemoteProjectSystemPrompt } from '../src/main/agent/main-system-prompt'
 import { buildProjectLearnTool, PHI_LEARN_DESCRIPTION } from '../src/main/agent/memory/learn-tool'
 import {
@@ -152,33 +148,6 @@ test('learn stores one lesson through the injected writer and reports empty less
   assert.equal(redacted.isError, true)
 })
 
-test('remote projects release learn only to the main session with the exact registration', () => {
-  const registered = (
-    description: string
-  ): Array<{ name: string; description: string; sourceInfo: { source: string } }> => [
-    { name: 'learn', description, sourceInfo: { source: 'custom' } }
-  ]
-  const decision = (verified: boolean): ReturnType<typeof remoteProjectToolDecision> =>
-    remoteProjectToolDecision(
-      'learn',
-      false,
-      false,
-      false,
-      false,
-      false,
-      false,
-      verified,
-      false,
-      false,
-      false,
-      false,
-      false
-    )
-  assert.equal(decision(true), undefined)
-  assert.match(decision(false)?.reason ?? '', /允许 agent 记录经验/)
+test('remote specialist inventory keeps project memory on the main session', () => {
   assert.equal(remoteAgentSupportedToolNames().has('learn'), false)
-  assert.equal(
-    remoteAgentToolRegistrationVerified('learn', registered(PHI_LEARN_DESCRIPTION)),
-    false
-  )
 })
