@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { PassThrough } from 'node:stream'
 import test from 'node:test'
+import { pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 
+import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 import { createInProcessEngine } from '../src/main/agent/engine/in-process-engine'
+import { assertInProcessLocalProject } from '../src/main/agent/engine/in-process/local-project-boundary'
 import { OmpBridge } from '../src/main/agent/engine/omp-bridge'
 import type {
   PhiEngine,
@@ -508,6 +512,79 @@ test('every PhiEngine worker method forwards the exact method and params', async
       if (entry.resultIsPassedThrough === false) assert.equal(result, undefined, entry.name)
       else assert.deepEqual(result, call.result, entry.name)
     }
+  } finally {
+    await engine.stop()
+  }
+})
+
+test('in-process create, open/resume, and subagent creation reject SSH anchors before execution', async () => {
+  const recording = recordingBridge()
+  const engine = createInProcessEngine(recording.bridge)
+  const remoteCwd = '/agent/remote-project-anchors/remote-project'
+  try {
+    await assert.rejects(
+      engine.sessions.create({
+        ...createParams,
+        cwd: remoteCwd,
+        sessionManager: { kind: 'persistent', cwd: remoteCwd }
+      }),
+      /SSH project sessions require the remote RPC runtime/
+    )
+    await assert.rejects(
+      engine.history.open({
+        agentDir: '/agent',
+        path: '/session.jsonl',
+        cwd: remoteCwd
+      }),
+      /SSH project sessions require the remote RPC runtime/
+    )
+    assert.throws(
+      () =>
+        assertInProcessLocalProject({
+          sessionId: 'remote-subagent',
+          cwd: remoteCwd,
+          agentDir: '/agent'
+        }),
+      /SSH project sessions require the remote RPC runtime/
+    )
+    const subagentsUrl = pathToFileURL(
+      join(process.cwd(), 'src/main/agent/engine/in-process/subagents.ts')
+    ).href
+    const { stdout } = await promisify(execFile)(
+      resolveBunExecutable(),
+      [
+        '-e',
+        `import { createPhiAgentSession } from ${JSON.stringify(subagentsUrl)}
+try {
+  await createPhiAgentSession({}, { sessionId: 'remote-subagent', cwd: ${JSON.stringify(remoteCwd)}, agentDir: '/agent' })
+  throw new Error('remote subagent unexpectedly started')
+} catch (error) {
+  if (!(error instanceof Error) || error.message !== 'SSH project sessions require the remote RPC runtime') throw error
+  console.log('remote subagent rejected')
+}`
+      ],
+      { cwd: process.cwd() }
+    )
+    assert.equal(stdout.trim(), 'remote subagent rejected')
+    assert.equal(recording.calls.length, 0)
+
+    assert.doesNotThrow(() =>
+      assertInProcessLocalProject({
+        cwd: '/workspace',
+        agentDir: '/agent',
+        sessionManager: { kind: 'persistent', cwd: '/workspace' }
+      })
+    )
+    await engine.sessions.create(createParams)
+    await engine.history.open({
+      agentDir: '/agent',
+      path: '/session.jsonl',
+      cwd: '/workspace'
+    })
+    assert.deepEqual(
+      recording.calls.map((call) => call.method),
+      ['session.create', 'sessions.open']
+    )
   } finally {
     await engine.stop()
   }

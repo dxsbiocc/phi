@@ -12,10 +12,6 @@ import {
   buildRemoteBashCommand,
   RemoteWorkspaceBashManager
 } from '../src/main/agent/remote-workspace-bash'
-import {
-  buildRemoteWorkspaceBashTool,
-  PHI_REMOTE_BASH_DESCRIPTION
-} from '../src/main/agent/remote-workspace-bash-tool'
 import type { RemoteBashManagerDependencies } from '../src/main/agent/remote-workspace-bash'
 import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
 
@@ -374,42 +370,4 @@ test('Bash shell quoting keeps the fixed root check and command intact', () => {
   assert.match(script, /bash -lc/)
   assert.match(script, /printf ok/)
   assert.match(script, /SAMPLE/)
-})
-
-test('same-name Bash tool preserves command parameters and reports completed or unknown outcomes', async () => {
-  const calls: Array<{ toolCallId: string; command: string }> = []
-  const tool = buildRemoteWorkspaceBashTool(async (toolCallId, input) => {
-    calls.push({ toolCallId, command: input.command })
-    return {
-      status: 'completed',
-      hostAlias: 'cluster-a',
-      cwd: '/data/project',
-      exitCode: 7,
-      stdout: 'partial',
-      stderr: 'failed',
-      stdoutTruncated: true,
-      stderrTruncated: false,
-      wallTimeMs: 20
-    }
-  })
-  assert.equal(tool.name, 'bash')
-  assert.equal(tool.description, PHI_REMOTE_BASH_DESCRIPTION)
-  assert.deepEqual(tool.parameters.required, ['command'])
-  const result = await tool.execute('tool-1', { command: 'exit 7' }, undefined, {} as never)
-  assert.deepEqual(calls, [{ toolCallId: 'tool-1', command: 'exit 7' }])
-  assert.equal(result.isError, true)
-  const output = result.content[0]
-  assert.match(output?.type === 'text' ? output.text : '', /Command exited with code 7/)
-  assert.match(output?.type === 'text' ? output.text : '', /stdout truncated/)
-  assert.equal((result.details as { exitCode: number }).exitCode, 7)
-
-  const unknown = buildRemoteWorkspaceBashTool(async () => ({
-    status: 'unknown',
-    reason: 'cancelled',
-    message: '远端结果未知',
-    wallTimeMs: 10
-  }))
-  const lost = await unknown.execute('tool-2', { command: 'sleep 60' }, undefined, {} as never)
-  assert.equal(lost.isError, true)
-  assert.equal((lost.details as { resultUnknown: boolean }).resultUnknown, true)
 })

@@ -4,6 +4,8 @@
  * not been migrated yet is `UNKNOWN`.
  */
 
+export const LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE = 'LEGACY_REMOTE_SESSION_READ_ONLY' as const
+
 export const ERROR_CODES = {
   /** The transport is confirmed dead: the project goes offline and hosts are released. */
   TRANSPORT_LOST: { retryable: true },
@@ -19,11 +21,26 @@ export const ERROR_CODES = {
   DOMAIN_NOT_FOUND: { retryable: false },
   DOMAIN_INVALID: { retryable: false },
   DOMAIN_CONFLICT: { retryable: false },
+  /** A pre-RPC SSH history is readable but can never accept another prompt. */
+  [LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE]: { retryable: false },
+  /** Remote OMP acquisition failed; users may retry manually or preseed the pinned runtime. */
+  REMOTE_OMP_DOWNLOAD_FAILED: { retryable: false },
+  REMOTE_OMP_HASH_MISMATCH: { retryable: false },
   /** Not migrated to structured codes yet. */
   UNKNOWN: { retryable: false }
 } as const satisfies Record<string, { retryable: boolean }>
 
 export type ErrorCode = keyof typeof ERROR_CODES
+
+export type RemoteOmpFailureCause = 'http' | 'stall' | 'network' | 'checksum' | 'invalid_response'
+
+/** Sanitized, serializable context for user-facing remote OMP acquisition failures. */
+export interface RemoteOmpFailureDetail {
+  cause: RemoteOmpFailureCause
+  httpStatus?: number
+  stallMs?: number
+  attempts?: number
+}
 
 /** The serializable shape that crosses IPC. */
 export interface ErrorPayload {
@@ -54,6 +71,8 @@ export class CodedError extends Error {
 
 export function errorCodeOf(error: unknown): ErrorCode {
   if (typeof error !== 'object' || error === null) return 'UNKNOWN'
+  const structured = (error as { errorCode?: unknown }).errorCode
+  if (isErrorCode(structured)) return structured
   const code = (error as { code?: unknown }).code
   return isErrorCode(code) ? code : 'UNKNOWN'
 }

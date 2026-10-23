@@ -18,10 +18,20 @@ import { createRemoteOmpDeploymentFixture } from './helpers/remoteOmpDeploymentF
 
 test('official release is pinned to both validated 18.10.3 assets', () => {
   assert.equal(REMOTE_OMP_MANIFEST.version, '18.10.3')
-  for (const [arch, key, sha256] of [
-    ['x86_64', 'linux-x64', '366ffcda80db57b825921b6ff4b0e5e623bc62cf18478f2828cd8a322fc72ff9'],
-    ['aarch64', 'linux-arm64', '7f580e1fe06ebffe16ae46cc6881051aca4980db7f654702feefed5651555862']
-  ]) {
+  for (const [arch, key, sha256, size] of [
+    [
+      'x86_64',
+      'linux-x64',
+      '366ffcda80db57b825921b6ff4b0e5e623bc62cf18478f2828cd8a322fc72ff9',
+      276_170_720
+    ],
+    [
+      'aarch64',
+      'linux-arm64',
+      '7f580e1fe06ebffe16ae46cc6881051aca4980db7f654702feefed5651555862',
+      237_751_080
+    ]
+  ] as const) {
     const selected = selectRemoteOmpAsset(REMOTE_OMP_MANIFEST, '18.10.3', {
       os: 'Linux',
       arch,
@@ -29,6 +39,7 @@ test('official release is pinned to both validated 18.10.3 assets', () => {
     })
     assert.equal(selected.key, key)
     assert.equal(selected.asset.sha256, sha256)
+    assert.equal(selected.asset.size, size)
     assert.equal(
       selected.asset.url,
       `https://github.com/can1357/oh-my-pi/releases/download/v18.10.3/omp-${key}`
@@ -240,7 +251,14 @@ test('server hash mismatch preserves prior executable and removes unverified sta
     await upload(...args)
     await writeFile(args[1], 'tampered on server')
   }
-  await assert.rejects(ensureRemoteOmpDeployment(fixture.options), { code: 'HASH_MISMATCH' })
+  await assert.rejects(
+    ensureRemoteOmpDeployment(fixture.options),
+    (error: Error & { code?: string; errorDetail?: unknown }) => {
+      assert.equal(error.code, 'HASH_MISMATCH')
+      assert.deepEqual(error.errorDetail, { cause: 'checksum' })
+      return true
+    }
+  )
   assert.equal(await readFile(executable, 'utf8'), 'previous executable')
   assert.deepEqual(await readdir(join(fixture.runtimeRoot, 'omp', '18.10.3')), ['omp'])
 })
@@ -284,7 +302,7 @@ test('cancel before work has no server or cache side effects', async (t) => {
   assert.equal(fixture.downloads(), 0)
 })
 
-test('cancel during streaming download cleans cache partial without uploading', async (t) => {
+test('cancel during streaming download retains resumable cache partial without uploading', async (t) => {
   const fixture = await createRemoteOmpDeploymentFixture()
   t.after(fixture.cleanup)
   const controller = new AbortController()
@@ -299,7 +317,10 @@ test('cancel during streaming download cleans cache partial without uploading', 
     { name: 'AbortError' }
   )
   assert.equal(fixture.session.uploads.length, 0)
-  assert.deepEqual(await readdir(join(fixture.options.cacheDir, 'omp', '18.10.3', 'linux-x64')), [])
+  assert.deepEqual(
+    (await readdir(join(fixture.options.cacheDir, 'omp', '18.10.3', 'linux-x64'))).sort(),
+    ['omp.partial', 'omp.partial.json']
+  )
 })
 
 test('cancel after upload removes published staging and never activates it', async (t) => {

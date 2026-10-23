@@ -93,6 +93,87 @@ test('raw service errors, maintenance details and historical user content remain
   }
 })
 
+test('remote OMP failure causes localize from structured details only', () => {
+  const causes = [
+    {
+      item: notice({
+        type: 'run_failed',
+        errorCode: 'REMOTE_OMP_DOWNLOAD_FAILED',
+        errorDetail: { cause: 'http', httpStatus: 503, attempts: 5 },
+        errorMessage: 'unrelated diagnostic without an HTTP status'
+      }),
+      en: /HTTP 503.*5 attempts/,
+      zh: /HTTP 503.*尝试 5 次/
+    },
+    {
+      item: notice({
+        type: 'run_failed',
+        errorCode: 'REMOTE_OMP_DOWNLOAD_FAILED',
+        errorDetail: { cause: 'stall', stallMs: 30000, attempts: 2 },
+        errorMessage: 'unrelated diagnostic'
+      }),
+      en: /30000 ms.*2 attempts/,
+      zh: /30000 毫秒.*尝试 2 次/
+    },
+    {
+      item: notice({
+        type: 'run_failed',
+        errorCode: 'REMOTE_OMP_DOWNLOAD_FAILED',
+        errorDetail: { cause: 'network', attempts: 3 },
+        errorMessage: 'unrelated diagnostic'
+      }),
+      en: /network connection ended.*3 attempts/,
+      zh: /网络连接中断.*尝试 3 次/
+    },
+    {
+      item: notice({
+        type: 'run_failed',
+        errorCode: 'REMOTE_OMP_HASH_MISMATCH',
+        errorDetail: { cause: 'checksum' },
+        errorMessage: 'unrelated diagnostic'
+      }),
+      en: /checksum/,
+      zh: /校验和/
+    },
+    {
+      item: notice({
+        type: 'run_failed',
+        errorCode: 'REMOTE_OMP_DOWNLOAD_FAILED',
+        errorDetail: { cause: 'invalid_response', attempts: 1 },
+        errorMessage: 'unrelated diagnostic'
+      }),
+      en: /invalid response.*1 attempt/,
+      zh: /无效响应.*尝试 1 次/
+    }
+  ]
+
+  setUiLanguage('en')
+  for (const cause of causes) {
+    assert.match(cause.item.content, cause.en)
+    assert.match(cause.item.content, /remote-omp-preseed\.md/)
+  }
+  setUiLanguage('zh-CN')
+  for (const cause of causes) {
+    assert.match(cause.item.content, cause.zh)
+    assert.match(cause.item.content, /remote-omp-preseed\.md/)
+  }
+})
+
+test('legacy remote OMP failures without details use the generic localized copy', () => {
+  const legacy = notice({
+    type: 'run_failed',
+    errorCode: 'REMOTE_OMP_DOWNLOAD_FAILED',
+    errorMessage: 'OMP download failed with HTTP 418 after 9 attempts.'
+  })
+
+  setUiLanguage('en')
+  assert.match(legacy.content, /download did not complete/)
+  assert.doesNotMatch(legacy.content, /418|9 attempts/)
+  setUiLanguage('zh-CN')
+  assert.match(legacy.content, /下载未完成/)
+  assert.doesNotMatch(legacy.content, /418|9 次/)
+})
+
 test('live reducer warnings and fallback errors follow the interface without changing run identity', () => {
   setUiLanguage('en')
   let state = reduceAgentEventState(createAgentEventReducerState(), {

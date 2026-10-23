@@ -19,6 +19,7 @@ export type CurrentSessionPayload = {
   displayCwd: string
   projectId?: string
   projectLocation?: ProjectLocation
+  legacyRemoteSession?: boolean
   sessionGeneration: number
   permissionMode: PermissionMode
   status: SessionStatus

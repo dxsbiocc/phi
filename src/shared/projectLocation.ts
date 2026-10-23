@@ -12,10 +12,18 @@ export type RemoteProjectReachability =
   | 'permission_failed'
   | 'configuration_failed'
 
+export interface RemoteProjectStartupProgress {
+  kind: 'remote-omp-download'
+  bytesReceived: number
+  totalBytes?: number
+  attempt: number
+}
+
 export interface RemoteProjectConnectionState {
   phase: RemoteProjectReachability
   message?: string
   suggestion?: string
+  startupProgress?: RemoteProjectStartupProgress
   checkedAt?: string
 }
 

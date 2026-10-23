@@ -33,7 +33,6 @@ export function previousExtensions(
 ): {
   main: Factory[]
   specialist: Factory[]
-  remoteGuard: OldFactory
 } {
   const cache = new Map<string, OldModule>()
   function load(path: string): OldModule {
@@ -124,16 +123,13 @@ export function previousExtensions(
     ...old,
     requestHost: () => host.nextActionSuggestionsEnabled(),
     parentRef: { current: parent() },
-    remoteRoot: config.remote ? '/remote/project' : undefined,
-    remoteSkillToolNames: host.remoteSkillToolNames(),
+    remoteRoot: undefined,
+    remoteSkillToolNames: new Set<string>(),
     phiAgents: config.phiAgents,
-    agentDelegationToolDescription: (agent: { name: string }) =>
-      host.remoteAgentToolDescriptions().get(agent.name),
+    agentDelegationToolDescription: () => undefined,
     cwd: config.cwd,
     remoteMcpAccess: {
-      get state() {
-        return host.remoteMcpToolState()
-      }
+      state: undefined
     },
     record: config,
     agentRuns: { fallbackReadiness: host.fallbackReadiness },
@@ -171,14 +167,13 @@ export function previousExtensions(
       {
         sessionId: config.sessionId,
         agentRunId: config.agentRunId,
-        remoteRoot: config.remote ? '/remote/project' : undefined,
+        remoteRoot: undefined,
         enableToolApproval: config.enableToolApproval,
-        skillTools: [...host.remoteSkillToolNames()].map((name) => ({ name })),
-        remoteMcpToolState: host.remoteMcpToolState,
+        skillTools: [],
+        remoteMcpToolState: () => undefined,
         parent
       },
       binding
-    ),
-    remoteGuard: old.createRemoteProjectToolGuardExtension
+    )
   }
 }

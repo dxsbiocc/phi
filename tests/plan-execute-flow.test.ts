@@ -211,9 +211,6 @@ test('planExecute validates, reviews, executes a diamond and wakes the main agen
     browserApprovalInput: (_toolCallId, input) => input,
     markBrowserTextDenied: () => undefined,
     fallbackReadiness: () => ({ allowed: true, failures: 0 }),
-    remoteSkillToolNames: () => new Set(),
-    remoteAgentToolDescriptions: () => new Map(),
-    remoteMcpToolState: () => undefined,
     environmentBinding: () => undefined,
     hostEnvironment: () => ({})
   }

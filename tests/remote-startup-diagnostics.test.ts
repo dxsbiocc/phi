@@ -109,3 +109,38 @@ test('remote startup diagnostics are idempotent and diagnostic sink failures can
   assert.doesNotThrow(() => diagnostics.finish('ready'))
   assert.equal(emits, 1)
 })
+
+test('remote startup progress is session-scoped and sink failures never alter startup', () => {
+  const progress: unknown[] = []
+  const diagnostics = new RemoteStartupDiagnostics({
+    phiSessionId: 'phi-session',
+    emitProgress: (event) => {
+      progress.push(event)
+      if (progress.length === 1) throw new Error('progress sink failed')
+    }
+  })
+
+  assert.doesNotThrow(() =>
+    diagnostics.progress('runtime_binary', {
+      kind: 'remote-omp-download',
+      bytesReceived: 50,
+      totalBytes: 100,
+      attempt: 2
+    })
+  )
+  diagnostics.finish('ready')
+
+  assert.deepEqual(progress, [
+    {
+      phiSessionId: 'phi-session',
+      step: 'runtime_binary',
+      detail: {
+        kind: 'remote-omp-download',
+        bytesReceived: 50,
+        totalBytes: 100,
+        attempt: 2
+      }
+    },
+    { phiSessionId: 'phi-session', status: 'ready' }
+  ])
+})

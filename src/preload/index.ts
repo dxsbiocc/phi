@@ -275,6 +275,7 @@ type SessionSummary = SessionRuntimeState & {
   messageCount: number
   firstMessage: string
   phiSessionId?: string
+  legacyRemoteSession?: boolean
 }
 
 type SessionSwitchResult = SessionRuntimeState & {
@@ -284,6 +285,7 @@ type SessionSwitchResult = SessionRuntimeState & {
   displayCwd?: string
   projectId?: string
   projectLocation?: ProjectLocation
+  legacyRemoteSession?: boolean
   sessionGeneration: number
   permissionMode: PermissionMode
   messages: unknown[]
@@ -296,6 +298,7 @@ type CurrentSession = SessionRuntimeState & {
   displayCwd?: string
   projectId?: string
   projectLocation?: ProjectLocation
+  legacyRemoteSession?: boolean
   sessionGeneration: number
   permissionMode: PermissionMode
   messages?: unknown[]

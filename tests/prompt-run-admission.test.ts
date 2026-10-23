@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import type { Project } from '../src/main/agent/projects'
 import { SessionLifecycle } from '../src/main/agent/session/session-lifecycle'
+import type { PhiSessionManifest } from '../src/main/agent/session/session-store'
 import {
   createPromptRunAdmission,
   type PromptRunAdmissionDeps,
@@ -31,6 +32,7 @@ function createDeps(
     recovering?: boolean
     compacting?: boolean
     ensurePhiSessionId?: PromptRunAdmissionDeps<Result>['linking']['ensurePhiSessionId']
+    manifest?: PhiSessionManifest | null
     remoteAnchor?: boolean
   } = {}
 ): {
@@ -57,6 +59,7 @@ function createDeps(
           return 'phi-1'
         })
     },
+    sessions: { findById: () => overrides.manifest ?? null },
     runs: {
       hasActiveRun: () => overrides.hasActiveRun ?? false,
       runtimeRecoveryOperations: { has: () => overrides.recovering ?? false },
@@ -165,4 +168,40 @@ test('admitPromptRun uses the image fallback title only when text is empty', () 
 
   admission.admit(admission.resolveTarget(withImage))
   assert.deepEqual(calls, ['ensure:图片'])
+})
+
+test('admitPromptRun rejects every prompt path for legacy SSH history but permits pending RPC sessions', () => {
+  const remote = {
+    projectLocation: {
+      kind: 'ssh',
+      hostProfileId: 'host-1',
+      remoteRoot: '/remote/project',
+      canonicalRoot: '/remote/project'
+    }
+  } as PhiSessionManifest
+  const legacy = createPromptRunAdmission(createDeps({ manifest: remote }).deps)
+  for (const prompt of [
+    input(),
+    input({
+      promptTarget: {
+        path: '/phi/phi-1',
+        phiSessionId: 'phi-1',
+        cwd: '/work',
+        sessionGeneration: 0,
+        suppressUserMessageEvent: true,
+        retryUserMessageId: 'user-1'
+      }
+    }),
+    input({ automatic: true })
+  ]) {
+    assert.throws(
+      () => legacy.admit(legacy.resolveTarget(prompt)),
+      /LEGACY_REMOTE_SESSION_READ_ONLY/
+    )
+  }
+
+  const pendingRpc = createPromptRunAdmission(
+    createDeps({ manifest: { ...remote, remoteRuntime: 'rpc' } }).deps
+  )
+  assert.equal(pendingRpc.admit(pendingRpc.resolveTarget(input())).phiSessionId, 'phi-1')
 })

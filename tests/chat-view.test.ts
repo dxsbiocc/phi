@@ -58,6 +58,7 @@ function renderChat(
   messages: ChatItem[],
   options: {
     recoveryNotice?: ReactNode
+    legacyRemoteSession?: boolean
     permissionMode?: PermissionMode
     pendingApproval?: ToolApprovalRequest | null
     isGenerating?: boolean
@@ -96,6 +97,8 @@ function renderChat(
       createElement(ChatView, {
         messages,
         recoveryNotice: options.recoveryNotice,
+        legacyRemoteSession: options.legacyRemoteSession,
+        onCreateSessionInProject: () => undefined,
         input: options.input ?? '',
         images: options.images,
         messagesContainerRef: () => undefined,
@@ -154,6 +157,26 @@ function renderChat(
 
 // Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
 setUiLanguage('zh-CN')
+
+test('legacy remote history replaces the prompt bar with a bilingual new-session action', () => {
+  const chinese = renderChat([{ id: 'history', role: 'user', content: '旧消息' }], {
+    legacyRemoteSession: true
+  })
+  assert.match(chinese, /data-phi-legacy-remote-session="true"/)
+  assert.match(chinese, /此会话由旧版远程运行时创建，无法继续。/)
+  assert.match(chinese, /在此项目新建会话/)
+  assert.match(chinese, /旧消息/)
+  assert.doesNotMatch(chinese, /data-phi-file-drop-target="chat-composer"/)
+
+  setUiLanguage('en')
+  const english = renderChat([], { legacyRemoteSession: true })
+  assert.match(
+    english,
+    /This session was created by the legacy remote runtime and cannot continue\./
+  )
+  assert.match(english, /Start a new session in this project/)
+  setUiLanguage('zh-CN')
+})
 
 test('reconnect notice is a temporary overlay in the message pane, outside transcript items', () => {
   const markup = renderChat([{ id: 'history-1', role: 'user', content: '已有历史消息' }], {

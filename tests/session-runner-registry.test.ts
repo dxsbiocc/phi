@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { CodedError } from '../src/shared/errorCodes'
+import { RemoteOmpDeploymentError } from '../src/main/agent/engine/rpc/runtime-deployment'
 import { SessionRunnerRegistry } from '../src/main/agent/session/session-runner-registry'
 import {
   createPhiSession,
@@ -429,5 +430,41 @@ test('a coded failure keeps its code and retryable flag on the persisted run_fai
     const legacy = readSessionEvents(plain).find((event) => event.type === 'run_failed')
     assert.equal(legacy?.errorMessage, 'boom')
     assert.equal('errorCode' in (legacy ?? {}), false)
+  })
+})
+
+test('remote OMP failure details are bounded before run_failed persistence', async () => {
+  await withPhiDir(async () => {
+    const registry = new SessionRunnerRegistry()
+    const validSessionId = createTestSession()
+    const invalidSessionId = createTestSession()
+    await registry.startRun({
+      sessionId: validSessionId,
+      runId: createRunId(),
+      execute: async () => {
+        throw new RemoteOmpDeploymentError('DOWNLOAD_FAILED', 'download failed', {
+          errorDetail: { cause: 'http', httpStatus: 503, attempts: 5 }
+        })
+      }
+    }).done
+    await registry.startRun({
+      sessionId: invalidSessionId,
+      runId: createRunId(),
+      execute: async () => {
+        throw new RemoteOmpDeploymentError('DOWNLOAD_FAILED', 'download failed', {
+          errorDetail: {
+            cause: 'stall',
+            stallMs: Number.MAX_SAFE_INTEGER,
+            attempts: 0,
+            httpStatus: 503
+          }
+        })
+      }
+    }).done
+
+    const valid = readSessionEvents(validSessionId).find((event) => event.type === 'run_failed')
+    assert.deepEqual(valid?.errorDetail, { cause: 'http', httpStatus: 503, attempts: 5 })
+    const invalid = readSessionEvents(invalidSessionId).find((event) => event.type === 'run_failed')
+    assert.deepEqual(invalid?.errorDetail, { cause: 'stall' })
   })
 })

@@ -15,3 +15,4 @@ export type {
   RemoteOmpDeploymentOptions,
   RemoteOmpDeploymentProgress
 } from './types'
+export type { RemoteOmpDownloadProgress } from './artifact-cache'

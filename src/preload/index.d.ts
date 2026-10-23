@@ -164,6 +164,7 @@ type PreloadSessionSummary = {
   messageCount: number
   firstMessage: string
   phiSessionId?: string
+  legacyRemoteSession?: boolean
   status: 'idle' | 'running' | 'needs_approval' | 'needs_input' | 'failed' | 'completed_unread'
   unreadKind: 'completed' | 'failed' | 'approval' | 'input' | null
   lastRunOutcome?: 'completed' | 'failed' | 'interrupted' | 'stopped'
@@ -884,6 +885,7 @@ declare global {
         displayCwd?: string
         projectId?: string
         projectLocation?: ProjectLocation
+        legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
         messages?: unknown[]
@@ -907,6 +909,7 @@ declare global {
         displayCwd?: string
         projectId?: string
         projectLocation?: ProjectLocation
+        legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
       }>
@@ -917,6 +920,7 @@ declare global {
         displayCwd?: string
         projectId?: string
         projectLocation?: ProjectLocation
+        legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
       }>
@@ -934,6 +938,7 @@ declare global {
         displayCwd?: string
         projectId?: string
         projectLocation?: ProjectLocation
+        legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
         messages: unknown[]
@@ -1046,6 +1051,7 @@ declare global {
         displayCwd?: string
         projectId?: string
         projectLocation?: ProjectLocation
+        legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
       }>
@@ -1056,6 +1062,7 @@ declare global {
         displayCwd?: string
         projectId?: string
         projectLocation?: ProjectLocation
+        legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
       }>

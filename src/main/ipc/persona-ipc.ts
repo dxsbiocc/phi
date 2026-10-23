@@ -35,7 +35,6 @@ export interface PersonaIpcOptions {
       runtimeRef?: unknown
       projectLocation?: { kind: string }
     } | null
-    isRemoteOmpRpcEnabled: () => boolean
     captureSessionControlTarget: (key: string, sessionId: string) => RpcConfigurationTarget
   }
 }
@@ -46,13 +45,7 @@ function resolveCurrentRpcConfigurationTarget(
   const key = options.rpc.resolveSessionKeyAlias(options.rpc.getCurrentSessionKey())
   const phiSessionId = options.rpc.getPhiSessionIdForKey(key)
   const manifest = phiSessionId ? options.rpc.findPhiSessionById(phiSessionId) : null
-  if (
-    !phiSessionId ||
-    !(
-      manifest?.runtimeRef ||
-      (options.rpc.isRemoteOmpRpcEnabled() && manifest?.projectLocation?.kind === 'ssh')
-    )
-  )
+  if (!phiSessionId || !(manifest?.runtimeRef || manifest?.projectLocation?.kind === 'ssh'))
     return null
   return options.rpc.captureSessionControlTarget(key, phiSessionId)
 }

@@ -1,9 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
 import type { PhiTool } from '../engine/types'
-import { PHI_SKILL_RUN_DESCRIPTION } from '../engine/phi-extension'
-
-export { PHI_SKILL_RUN_DESCRIPTION } from '../engine/phi-extension'
 
 import type { ScriptToolResult } from './script-tools'
 import type { SkillNotReady } from './skill-host'
@@ -12,6 +9,9 @@ import type { ScriptToolDescriptor } from './skill-tool-types'
 
 import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
+
+export const PHI_SKILL_RUN_DESCRIPTION =
+  "Run one program from an installed skill's scripts/ directory inside that skill's environment. The interpreter is chosen from the script extension. args are passed after the script path. cwd is a project-relative working directory."
 
 export type { ScriptToolDescriptor } from './skill-tool-types'
 

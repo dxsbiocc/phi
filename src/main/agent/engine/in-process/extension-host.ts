@@ -1,8 +1,6 @@
 import type { PhiAgentDefinition } from '../../agents/definition'
 import type { AgentRunRegistry } from '../../agents/registry'
-import { agentDelegationToolDescription } from '../../agents/tool'
 import type { BrowserTextVault } from '../../browser/browser-text-vault'
-import type { RemoteMcpGuardState } from '../../mcp/remote-mcp-policy'
 import type {
   PhiExtensionAgentConfig,
   PhiExtensionEnvironmentBinding,
@@ -19,9 +17,6 @@ export interface InProcessExtensionHostOptions {
   proposePlanSteps?: (input: unknown) => Promise<PlanStepsToolResult>
   browserTextVault?: BrowserTextVault
   agentRuns?: AgentRunRegistry
-  remoteSkillToolNames?: () => ReadonlySet<string>
-  remoteAgentDefinitions?: () => readonly PhiAgentDefinition[]
-  remoteMcpToolState?: () => RemoteMcpGuardState | undefined
   environmentBinding?: () => PhiExtensionEnvironmentBinding | undefined
   hostEnvironment?: () => Readonly<Record<string, string | undefined>>
 }
@@ -61,15 +56,6 @@ export function createInProcessExtensionHost(
       }
       return options.agentRuns.fallbackReadiness(agent, afterFailures)
     },
-    remoteSkillToolNames: options.remoteSkillToolNames ?? (() => new Set<string>()),
-    remoteAgentToolDescriptions: () =>
-      new Map(
-        (options.remoteAgentDefinitions?.() ?? []).map((agent) => [
-          agent.name,
-          agentDelegationToolDescription(agent, { cwd: options.cwd, remote: true })
-        ])
-      ),
-    remoteMcpToolState: options.remoteMcpToolState ?? (() => undefined),
     environmentBinding: options.environmentBinding ?? (() => undefined),
     hostEnvironment: options.hostEnvironment ?? (() => process.env)
   }

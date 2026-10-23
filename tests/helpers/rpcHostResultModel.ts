@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net'
 
 export type ModelReply = {
   text?: string
+  httpStatus?: number
   /** Optional bounded SSE deltas for large RPC framing contracts; ordinary replies keep two chunks. */
   textChunkChars?: number
   tool?: { name: string; args: Record<string, unknown>; id?: string }
@@ -38,6 +39,11 @@ export async function startHostResultModel(
       const reply = options.replyFor?.(requests.at(-1)!) ?? replies.shift()
       if (!reply) {
         response.writeHead(500).end('No scripted model reply remains')
+        return
+      }
+      if (reply.httpStatus) {
+        response.writeHead(reply.httpStatus, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ error: { message: 'Scripted provider rejection' } }))
         return
       }
       active.add(response)

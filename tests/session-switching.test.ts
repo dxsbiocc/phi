@@ -26,7 +26,6 @@ interface SwitchingHarness {
   loadedSkills: Map<string, string[]>
   setSelectedModel(value: SelectedModel): void
   setNoProjectTaskFolder(value: string): void
-  setRemoteRpc(value: boolean): void
   setProjectByCwd(value: Record<string, unknown> | undefined): void
   setProjectById(value: Record<string, unknown> | undefined): void
   setActivePromptRun(value: TestPromptRun | undefined): void
@@ -43,7 +42,6 @@ function createSwitchingHarness(): SwitchingHarness {
   let selectedModel: SelectedModel
   let currentSessionKey = 'current-key'
   let noProjectTaskFolder = '/ordinary/first'
-  let remoteRpc = false
   let projectByCwd: Record<string, unknown> | undefined
   let projectById: Record<string, unknown> | undefined
   let activePromptRun: TestPromptRun | undefined
@@ -126,7 +124,6 @@ function createSwitchingHarness(): SwitchingHarness {
     },
     creation: {
       getSelectedThinkingLevel: () => 'high',
-      isRemoteOmpRpcEnabled: () => remoteRpc,
       ensureRemoteProjectAnchor: (projectId) => `/anchors/${projectId}`
     },
     invalidation: {
@@ -169,9 +166,6 @@ function createSwitchingHarness(): SwitchingHarness {
     },
     setNoProjectTaskFolder(value: string) {
       noProjectTaskFolder = value
-    },
-    setRemoteRpc(value: boolean) {
-      remoteRpc = value
     },
     setProjectByCwd(value: Record<string, unknown> | undefined) {
       projectByCwd = value
@@ -318,7 +312,6 @@ test('createRemoteManagedSession preserves project ownership and RPC automatic-m
     defaultThinkingLevel: 'xhigh'
   })
   harness.setSelectedModel(null)
-  harness.setRemoteRpc(true)
 
   assert.deepEqual(harness.switching.createRemoteManagedSession('remote-1'), {
     path: 'phi-session:phi-1',
@@ -337,6 +330,7 @@ test('createRemoteManagedSession preserves project ownership and RPC automatic-m
     },
     cwd: '/anchors/remote-1',
     cwdRealPath: '/anchors/remote-1',
+    remoteRuntime: 'rpc',
     permissionMode: 'ask',
     model: { providerId: 'project-provider', modelId: 'project-model' },
     thinkingLevel: 'xhigh'

@@ -48,7 +48,6 @@ function creationHarness(options: { staleAfterCreate?: boolean; abortFailure?: b
   const deps = {
     workspace: {
       agentDir: '/agent',
-      isRemoteOmpRpcEnabled: () => false,
       getPersonaMarkdown: () => '',
       getBundledAgentsDir: () => '/bundled'
     },

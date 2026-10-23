@@ -2,6 +2,7 @@ import Ajv, { type ValidateFunction } from 'ajv'
 import Ajv2020 from 'ajv/dist/2020.js'
 import type { PhiTool } from '../types'
 import type { ModelGatewayModelRef } from '../model-gateway-types'
+import { rpcToolNameExposesCredentialSurface } from '../phi-extension/lib/rpc-execution-protocol'
 import { rpcRecord } from './control-frame'
 import type { RpcHostToolDefinition } from './types'
 
@@ -73,6 +74,7 @@ export function registeredHostTools(tools: readonly PhiTool[]): Map<string, Regi
       !tool ||
       tool.site !== 'host' ||
       !/^[a-zA-Z0-9_.-]{1,128}$/.test(tool.name) ||
+      rpcToolNameExposesCredentialSurface(tool.name) ||
       registered.has(tool.name) ||
       SERVER_TOOLS.has(tool.name) ||
       typeof tool.label !== 'string' ||

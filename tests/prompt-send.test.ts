@@ -3,6 +3,8 @@ import test from 'node:test'
 
 import { sendPrompt, type PromptSendDeps } from '../src/renderer/src/features/chat/lib/promptSend'
 import { sessionDraftKey } from '../src/renderer/src/lib/sessionDrafts'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+import { LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE } from '../src/shared/errorCodes'
 import type {
   ChatItem,
   ModelOption,
@@ -35,6 +37,7 @@ const target = {
 type Harness = {
   deps: PromptSendDeps
   events: string[]
+  errors: () => unknown[]
   messages: () => ChatItem[]
   drafts: () => Record<string, string>
   draftImages: () => Record<string, unknown>
@@ -59,6 +62,7 @@ function harness(
   } = {}
 ): Harness {
   const events: string[] = []
+  const errors: unknown[] = []
   const sent: Array<{ text: string; target: unknown }> = []
   let messages: ChatItem[] = []
   let drafts: Record<string, string> = {}
@@ -136,7 +140,10 @@ function harness(
       refreshSessions: () => {
         events.push('refreshSessions')
       },
-      showSnackbarError: () => events.push('error')
+      showSnackbarError: (error) => {
+        errors.push(error)
+        events.push('error')
+      }
     },
     activeDraftKey: options.activeDraftKey ?? 'draft-a',
     activeSessionPath: options.activeSessionPath ?? '/a.jsonl',
@@ -151,6 +158,7 @@ function harness(
   return {
     deps,
     events,
+    errors: () => errors,
     messages: () => messages,
     drafts: () => drafts,
     draftImages: () => draftImages,
@@ -283,6 +291,25 @@ test('a current failure reports the error and gives the draft and images back', 
   assert.equal(h.drafts()['draft-a'], 'draft text')
   assert.deepEqual(h.draftImages()['draft-a'], [{ dataUrl: 'data:', name: 'a' }])
   assert.ok(h.events.includes('sending:false'))
+})
+
+test('legacy remote prompt failures render in the live interface language', async () => {
+  for (const [language, expected] of [
+    ['en', 'This session was created by the legacy remote runtime and cannot continue.'],
+    ['zh-CN', '此会话由旧版远程运行时创建，无法继续。']
+  ] as const) {
+    setUiLanguage(language)
+    const h = harness()
+    const sending = sendPrompt(h.deps, 'late send', target)
+    h.failWith(
+      new Error(
+        `Error invoking remote method 'agent:prompt': CodedError: ${LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE}`
+      )
+    )
+    await sending
+    assert.equal((h.errors()[0] as Error).message, expected)
+  }
+  setUiLanguage('en')
 })
 
 test('a failure from a superseded request stays silent and keeps the newer send live', async () => {

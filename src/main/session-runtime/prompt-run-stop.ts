@@ -26,12 +26,6 @@ export interface PromptRunStopDeps<
     cancel(run: TRun): void
     cleanup(run: TRun): Promise<void>
   }
-  remote: {
-    cancelBash(phiSessionId: string): void
-    cancelAllBash(): void
-    cancelMutation(phiSessionId: string): void
-    cancelAllMutations(): void
-  }
   agents: {
     stop(phiSessionId: string): void
     stopAll(): void
@@ -68,8 +62,6 @@ async function stopPromptRun<
   run.cancelled = true
   deps.browser.cancel(run)
   const browserCleanup = deps.browser.cleanup(run)
-  deps.remote.cancelBash(run.phiSessionId)
-  deps.remote.cancelMutation(run.phiSessionId)
   deps.agents.stop(run.phiSessionId)
   deps.waits.cancel({ sessionId: run.phiSessionId, runId: run.runId })
   if (run.session) {
@@ -88,8 +80,6 @@ function stopAllPromptRuns<
   browserCleanup: Promise<void>
   runtimeAbort: Promise<void>
 } {
-  deps.remote.cancelAllBash()
-  deps.remote.cancelAllMutations()
   const recoveries = [...deps.runs.runtimeRecoveryOperations.values()]
   for (const recovery of recoveries) recovery.controller.abort()
   const runs = deps.runs.activeRuns()

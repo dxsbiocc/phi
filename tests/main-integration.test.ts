@@ -446,7 +446,6 @@ type HarnessOptions = {
   environmentGet?: () => Promise<unknown>
   modelRuntimeGet?: () => Promise<void>
   notebookOpenError?: Error
-  remoteRpc?: boolean
   remoteDeleteCloseFailure?: boolean
   remoteDeletePrepareFailure?: boolean
   onRemoteDelete?: () => void
@@ -728,7 +727,7 @@ async function harness(
   const remoteRoutingOptions: Array<Record<string, unknown>> = []
   const renamedSessions: Array<{ path: string; name: string }> = []
   const savedPersonas: string[] = []
-  let personaMarkdown = options.remoteRpc && !options.remoteRpcResources ? '' : 'persona'
+  let personaMarkdown = options.remoteRpcResources ? 'persona' : ''
   const resourceLoaderOptions: Array<Record<string, unknown>> = []
   const contentSourceCalls: Array<{
     phase: string
@@ -2118,7 +2117,7 @@ async function harness(
             name: 'Remote project',
             ...(options.remoteDefaultModel
               ? { defaultModel: options.remoteDefaultModel }
-              : options.remoteRpc && options.remoteDefaultModel !== null
+              : options.remoteDefaultModel !== null
                 ? { defaultModel: { providerId: 'openai', modelId: 'gpt-test' } }
                 : {}),
             location: {
@@ -2641,9 +2640,9 @@ async function harness(
         cwd,
         ...(resume ? { path: `phi-session:${phiSessionId}` } : {})
       }),
-      installAppRemoteSessionRouting: (input: { enabled: boolean }): (() => void) => {
+      installAppRemoteSessionRouting: (input: Record<string, unknown>): (() => void) => {
         remoteRoutingOptions.push(input)
-        operationLog.push({ type: 'installRemoteRouting', enabled: input.enabled })
+        operationLog.push({ type: 'installRemoteRouting', enabled: true })
         return () => undefined
       }
     },
@@ -3791,7 +3790,7 @@ async function harness(
     './agent/remote-project-instructions': {
       loadRemoteProjectInstructions: async (): Promise<unknown[]> =>
         options.remoteInstructionsRead?.() ??
-        (options.remoteRpc && !options.remoteRpcResources
+        (!options.remoteRpcResources
           ? []
           : [
               {
@@ -4023,24 +4022,6 @@ async function harness(
           requestPath: request.path
         }
       }
-    },
-    './agent/remote-workspace-search': {
-      remoteGlob: async (request: Record<string, unknown>) => ({
-        paths: ['ssh://cluster-one/canonical/project/readme.md'],
-        content: `glob:${request.path}`,
-        truncated: false,
-        engine: 'rg',
-        gitignoreApplied: true
-      }),
-      remoteGrep: async (request: Record<string, unknown>) => ({
-        matches: [],
-        content: `grep:${request.pattern}`,
-        fileCount: 0,
-        matchCount: 0,
-        truncated: false,
-        engine: 'rg',
-        gitignoreApplied: true
-      })
     },
     './agent/remote-workspace-bash': {
       RemoteWorkspaceBashManager: class {
@@ -4513,6 +4494,7 @@ async function harness(
     './ipc/skills-ipc'
   ]
   const explicitlyLoadedSourceModules = new Set([
+    './agent/mcp/custom-auth-url',
     './app-state/app-caches',
     './app-state/main-runtime-context',
     './app-state/main-window-state',
@@ -4578,6 +4560,7 @@ async function harness(
     './agent/session/agent-delegation-event-persistence',
     './agent/session/assistant-message-event-persistence',
     './agent/session/current-session-reads',
+    './agent/session/legacy-remote-session',
     './agent/session/message-text',
     './agent/session/phi-timeline-messages',
     './agent/session/model-selection-target',
@@ -4602,8 +4585,7 @@ async function harness(
     platform: process.platform,
     env: {
       PI_CODING_AGENT_DIR: '/isolated',
-      ELECTRON_RENDERER_URL: 'https://phi.internal',
-      ...(options.remoteRpc ? { PHI_REMOTE_OMP_RPC: '1' } : {})
+      ELECTRON_RENDERER_URL: 'https://phi.internal'
     },
     versions: { node: '22.0.0', electron: '39.0.0' }
   }
@@ -7621,7 +7603,7 @@ test(
 )
 
 test('RPC conversation switching does not start a second SSH project probe for an adopted journal', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     path: string
     phiSessionId: string
@@ -7772,508 +7754,6 @@ test('main IPC forwards an explicit local fallback request only with revision an
   const updated = (await app.invoke('wrappers:retargetPlan', request)) as { revision: number }
   assert.equal(updated.revision, 2)
   assert.deepEqual(app.retargetRequests, [request])
-})
-
-test('main IPC: remote conversation uses its project identity and disables anchor resources', async () => {
-  const app = await harness()
-  await app.invoke('projects:newRemoteSession', 'remote-project-1')
-  await app.invoke('agent:prompt', 'hello from the cluster project')
-  const options = app.createdAgentOptions.at(-1)
-  assert.ok(options)
-  assert.deepEqual(options.remoteProject, {
-    phiSessionId: app.createdPhiSessions[0]?.sessionId,
-    projectId: 'remote-project-1',
-    location: {
-      kind: 'ssh',
-      hostProfileId: 'host-1',
-      remoteRoot: '/cluster/project',
-      canonicalRoot: '/canonical/project'
-    },
-    contextFiles: [
-      { path: 'ssh://cluster-one/cluster/project/AGENTS.md', content: 'Remote instructions v1' }
-    ]
-  })
-  const remoteAgent = (
-    options.phiAgents as Array<{ name: string; tools: string[]; skills: string[] }>
-  )[0]
-  assert.equal(remoteAgent.name, 'Wrapper')
-  assert.deepEqual(remoteAgent.skills, [])
-  assert.deepEqual(remoteAgent.tools, [
-    'read',
-    'glob',
-    'grep',
-    'bash',
-    'write',
-    'edit',
-    'wrapper_search',
-    'wrapper_inspect',
-    'wrapper_run',
-    'wrapper_status',
-    'wrapper_wait',
-    'wrapper_cancel'
-  ])
-  const runtimeSessionId = app.sessions[0]?.runtimeSessionId
-  assert.ok(runtimeSessionId)
-  const resolveProjectForRun = app.wrapperJobOptions.resolveProjectForRun as
-    ((sessionId: string) => { id: string } | undefined) | undefined
-  const resolveRemoteTarget = app.wrapperJobOptions.resolveRemoteTarget as
-    ((request: { originSessionId: string }) => unknown) | undefined
-  assert.equal(resolveProjectForRun?.(runtimeSessionId)?.id, 'remote-project-1')
-  resolveRemoteTarget?.({ originSessionId: runtimeSessionId })
-  assert.equal(app.remoteResolverProjectIds.at(-1), 'remote-project-1')
-  const checkRemoteEnvironment = app.wrapperJobOptions.checkRemoteEnvironment as
-    | ((input: {
-        project: { id: string; location: { kind: string; hostProfileId: string } }
-        resolved: { target: { workspaceRoot: string; hpc: { scheduler: 'local' } } }
-        profile: 'singularity'
-      }) => Promise<unknown>)
-    | undefined
-  const boundProject = resolveProjectForRun?.(runtimeSessionId) as {
-    id: string
-    location: { kind: string; hostProfileId: string }
-  }
-  await checkRemoteEnvironment?.({
-    project: boundProject,
-    resolved: { target: { workspaceRoot: '/canonical/project', hpc: { scheduler: 'local' } } },
-    profile: 'singularity'
-  })
-  assert.deepEqual(app.remoteDoctorCalls.at(-1), {
-    hostProfileId: 'host-1',
-    remotePath: '/canonical/project',
-    options: { scope: 'full', scheduler: 'local', controller: 'login', runtime: 'singularity' }
-  })
-  const loader = app.resourceLoaderOptions.at(-1)
-  assert.equal(loader?.noContextFiles, true)
-  assert.equal(loader?.cwd, '/isolated')
-  assert.equal(loader?.noSkills, undefined)
-  assert.equal(loader?.noExtensions, true)
-  assert.equal(app.approvalOptions.length, 1)
-  const current = (await app.invoke('sessions:current')) as {
-    displayCwd: string
-    projectId: string
-  }
-  assert.equal(current.displayCwd, '/cluster/project')
-  assert.equal(current.projectId, 'remote-project-1')
-})
-
-test('main bridge exposes only ID-bound remote path and Bash context requests', async () => {
-  const app = await harness()
-  const pathHandler = app.hostHandlers.get('remoteWorkspace.resolvePath')
-  const bashHandler = app.hostHandlers.get('remoteWorkspace.resolveBashContext')
-  const readHandler = app.hostHandlers.get('remoteWorkspace.read')
-  const globHandler = app.hostHandlers.get('remoteWorkspace.glob')
-  const grepHandler = app.hostHandlers.get('remoteWorkspace.grep')
-  const bashRunHandler = app.hostHandlers.get('remoteWorkspace.bash')
-  const bashCancelHandler = app.hostHandlers.get('remoteWorkspace.cancelBash')
-  const writeHandler = app.hostHandlers.get('remoteWorkspace.write')
-  const writeCancelHandler = app.hostHandlers.get('remoteWorkspace.cancelWrite')
-  const editHandler = app.hostHandlers.get('remoteWorkspace.edit')
-  const editCancelHandler = app.hostHandlers.get('remoteWorkspace.cancelEdit')
-  assert.ok(pathHandler)
-  assert.ok(bashHandler)
-  assert.ok(readHandler)
-  assert.ok(globHandler)
-  assert.ok(grepHandler)
-  assert.ok(bashRunHandler)
-  assert.ok(bashCancelHandler)
-  assert.ok(writeHandler)
-  assert.ok(writeCancelHandler)
-  assert.ok(editHandler)
-  assert.ok(editCancelHandler)
-  assert.deepEqual(
-    await pathHandler({
-      sessionId: 'session-a',
-      projectId: 'remote-project-1',
-      path: 'readme.md',
-      mode: 'existing'
-    }),
-    {
-      sessionId: 'session-a',
-      projectId: 'remote-project-1',
-      path: '/canonical/project/readme.md',
-      mode: 'existing',
-      hostAlias: 'cluster-one'
-    }
-  )
-  assert.deepEqual(await bashHandler({ sessionId: 'session-a', projectId: 'remote-project-1' }), {
-    sessionId: 'session-a',
-    projectId: 'remote-project-1',
-    cwd: '/canonical/project',
-    hostAlias: 'cluster-one',
-    approvalScope: 'SSH cluster-one · cwd /canonical/project；Shell 命令可访问项目目录之外'
-  })
-  assert.deepEqual(
-    await readHandler({ sessionId: 'session-a', projectId: 'remote-project-1', path: 'readme.md' }),
-    {
-      kind: 'file',
-      path: 'ssh://cluster-one/canonical/project/readme.md',
-      content: 'remote:readme.md',
-      fileSize: 13,
-      contentType: 'text/plain'
-    }
-  )
-  assert.equal(
-    (
-      (await globHandler({
-        sessionId: 'session-a',
-        projectId: 'remote-project-1',
-        path: '*.md'
-      })) as { content: string }
-    ).content,
-    'glob:*.md'
-  )
-  assert.equal(
-    (
-      (await grepHandler({
-        sessionId: 'session-a',
-        projectId: 'remote-project-1',
-        pattern: 'marker'
-      })) as { content: string }
-    ).content,
-    'grep:marker'
-  )
-})
-
-test('remote ask-mode Bash needs a one-use approval tied to session, call and command', async () => {
-  const app = await harness(async (_cwd, file) => {
-    const session = new FakeSession(file)
-    session.hold = true
-    return session
-  })
-  await app.invoke('projects:newRemoteSession', 'remote-project-1')
-  const prompt = app.invoke('agent:prompt', 'run a command')
-  await tick()
-  assert.equal(app.approvalOptions.length, 1)
-  const options = app.approvalOptions[0] as {
-    getContext: () => { cwd: string; scopeNote: string; sessionId: string }
-    onApprovalResolved: (
-      request: {
-        sessionId: string
-        requestId: string
-        toolCallId: string
-        toolName: string
-        command: string
-        approvalDigest: string
-        cwd: string
-      },
-      approved: boolean
-    ) => void
-  }
-  const context = options.getContext()
-  assert.equal(context.cwd, 'ssh://cluster-one/canonical/project')
-  assert.match(context.scopeNote, /Shell 命令可访问项目目录之外/)
-  const run = app.hostHandlers.get('remoteWorkspace.bash')
-  assert.ok(run)
-  const request = {
-    sessionId: context.sessionId,
-    projectId: 'remote-project-1',
-    requestId: 'remote-run-1',
-    toolCallId: 'tool-1',
-    command: 'printf remote-ok'
-  }
-  await assert.rejects(run(request), /尚未获得本次会话的批准/)
-  options.onApprovalResolved(
-    {
-      sessionId: context.sessionId,
-      requestId: 'approval-1',
-      toolCallId: 'tool-1',
-      toolName: 'bash',
-      command: request.command,
-      approvalDigest: fakeBashApprovalDigest(request),
-      cwd: context.cwd
-    },
-    true
-  )
-  assert.equal(((await run(request)) as { stdout: string }).stdout, 'remote-ok')
-  await assert.rejects(run(request), /尚未获得本次会话的批准/)
-  options.onApprovalResolved(
-    {
-      sessionId: context.sessionId,
-      requestId: 'approval-2',
-      toolCallId: 'tool-2',
-      toolName: 'bash',
-      command: 'printf safe',
-      approvalDigest: fakeBashApprovalDigest({ command: 'printf safe' }),
-      cwd: context.cwd
-    },
-    true
-  )
-  await assert.rejects(
-    run({ ...request, requestId: 'remote-run-2', toolCallId: 'tool-2', command: 'printf changed' }),
-    /尚未获得本次会话的批准/
-  )
-  options.onApprovalResolved(
-    {
-      sessionId: context.sessionId,
-      requestId: 'approval-3',
-      toolCallId: 'tool-3',
-      toolName: 'bash',
-      command: request.command,
-      approvalDigest: fakeBashApprovalDigest({ command: request.command, env: { TOKEN: 'safe' } }),
-      cwd: context.cwd
-    },
-    true
-  )
-  await assert.rejects(
-    run({
-      ...request,
-      requestId: 'remote-run-3',
-      toolCallId: 'tool-3',
-      env: { TOKEN: 'changed' }
-    }),
-    /尚未获得本次会话的批准/
-  )
-  await app.invoke('agent:stop')
-  await prompt
-})
-
-test('remote ask-mode write needs a one-use approval tied to host, path and content', async () => {
-  const app = await harness(async (_cwd, file) => {
-    const session = new FakeSession(file)
-    session.hold = true
-    return session
-  })
-  await app.invoke('projects:newRemoteSession', 'remote-project-1')
-  const prompt = app.invoke('agent:prompt', 'create one file')
-  await tick()
-  const options = app.approvalOptions[0] as {
-    getContext: () => { cwd: string; writeScopeNote: string; sessionId: string }
-    onApprovalResolved: (
-      request: {
-        sessionId: string
-        requestId: string
-        toolCallId: string
-        toolName: string
-        approvalDigest: string
-        cwd: string
-      },
-      approved: boolean
-    ) => void
-  }
-  const context = options.getContext()
-  assert.equal(context.cwd, 'ssh://cluster-one/canonical/project')
-  assert.match(context.writeScopeNote, /新建文件或修改已读取且未变化的文件/)
-  const run = app.hostHandlers.get('remoteWorkspace.write')
-  assert.ok(run)
-  const request = {
-    sessionId: context.sessionId,
-    projectId: 'remote-project-1',
-    requestId: 'write-1',
-    toolCallId: 'tool-write-1',
-    path: 'new.txt',
-    content: 'ok'
-  }
-  await assert.rejects(run(request), /尚未获得本次会话的批准/)
-  options.onApprovalResolved(
-    {
-      sessionId: context.sessionId,
-      requestId: 'approval-write-1',
-      toolCallId: request.toolCallId,
-      toolName: 'write',
-      approvalDigest: fakeWriteApprovalDigest(request),
-      cwd: context.cwd
-    },
-    true
-  )
-  await assert.rejects(run({ ...request, path: 'other.txt' }), /尚未获得本次会话的批准/)
-  options.onApprovalResolved(
-    {
-      sessionId: context.sessionId,
-      requestId: 'approval-write-content',
-      toolCallId: request.toolCallId,
-      toolName: 'write',
-      approvalDigest: fakeWriteApprovalDigest(request),
-      cwd: context.cwd
-    },
-    true
-  )
-  await assert.rejects(run({ ...request, content: 'changed' }), /尚未获得本次会话的批准/)
-  options.onApprovalResolved(
-    {
-      sessionId: context.sessionId,
-      requestId: 'approval-write-2',
-      toolCallId: request.toolCallId,
-      toolName: 'write',
-      approvalDigest: fakeWriteApprovalDigest(request),
-      cwd: context.cwd
-    },
-    true
-  )
-  assert.equal(((await run(request)) as { status: string }).status, 'created')
-  await assert.rejects(run(request), /尚未获得本次会话的批准/)
-  await app.invoke('agent:stop')
-  await prompt
-})
-
-test('remote ask-mode edit binds path, replacement and one-use approval', async () => {
-  const app = await harness(async (_cwd, file) => {
-    const session = new FakeSession(file)
-    session.hold = true
-    return session
-  })
-  await app.invoke('projects:newRemoteSession', 'remote-project-1')
-  const prompt = app.invoke('agent:prompt', 'edit one file')
-  await tick()
-  const options = app.approvalOptions[0] as {
-    getContext: () => { cwd: string; writeScopeNote: string; sessionId: string }
-    onApprovalResolved: (
-      request: {
-        sessionId: string
-        requestId: string
-        toolCallId: string
-        toolName: string
-        approvalDigest: string
-        cwd: string
-      },
-      approved: boolean
-    ) => void
-  }
-  const context = options.getContext()
-  const run = app.hostHandlers.get('remoteWorkspace.edit')
-  assert.ok(run)
-  const request = {
-    sessionId: context.sessionId,
-    projectId: 'remote-project-1',
-    requestId: 'edit-1',
-    toolCallId: 'tool-edit-1',
-    path: 'existing.txt',
-    old_string: 'before',
-    new_string: 'after'
-  }
-  await assert.rejects(run(request), /尚未获得本次会话的批准/)
-  const approve = (id: string): void =>
-    options.onApprovalResolved(
-      {
-        sessionId: context.sessionId,
-        requestId: id,
-        toolCallId: request.toolCallId,
-        toolName: 'edit',
-        approvalDigest: fakeEditApprovalDigest(request),
-        cwd: context.cwd
-      },
-      true
-    )
-  approve('approval-edit-1')
-  await assert.rejects(run({ ...request, new_string: 'changed' }), /尚未获得本次会话的批准/)
-  approve('approval-edit-2')
-  assert.equal(((await run(request)) as { status: string }).status, 'updated')
-  await assert.rejects(run(request), /尚未获得本次会话的批准/)
-  await app.invoke('agent:stop')
-  await prompt
-})
-
-test('remote background Wrapper approval keeps host, project, timeline and one-use ticket after the parent turn', async () => {
-  const app = await harness()
-  await app.invoke('projects:newRemoteSession', 'remote-project-1')
-  await app.invoke('agent:prompt', 'inspect wrapper in the background')
-  const options = app.approvalOptions[0] as {
-    getContext: (event: { agentRunId?: string }) => {
-      sessionId: string
-      sessionPath: string
-      runId: string
-      cwd: string
-      projectName: string
-      writeScopeNote: string
-    }
-    onApprovalRequested: (request: Record<string, unknown>) => void
-    onApprovalResolved: (request: Record<string, unknown>, approved: boolean) => void
-  }
-  const context = options.getContext({ agentRunId: 'wrapper-run-1' })
-  assert.equal(context.sessionId, app.createdPhiSessions[0]?.sessionId)
-  assert.equal(context.runId, 'wrapper-run-1')
-  assert.equal(context.cwd, 'ssh://cluster-one/canonical/project')
-  assert.equal(context.projectName, 'Remote project')
-  assert.doesNotMatch(context.writeScopeNote, /remote-project-anchors/)
-  const run = app.hostHandlers.get('remoteWorkspace.write')
-  assert.ok(run)
-  const input = {
-    sessionId: context.sessionId,
-    projectId: 'remote-project-1',
-    requestId: 'background-write-1',
-    toolCallId: 'background-tool-1',
-    path: 'note.txt',
-    content: 'safe'
-  }
-  const approval = {
-    sessionId: context.sessionId,
-    requestId: 'approval-background-1',
-    toolCallId: input.toolCallId,
-    agentRunId: 'wrapper-run-1',
-    toolName: 'write',
-    approvalDigest: fakeWriteApprovalDigest(input),
-    cwd: context.cwd,
-    summary: `${context.writeScopeNote}\nnote.txt`
-  }
-  options.onApprovalRequested(approval)
-  assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'approval_requested')
-  assert.equal(app.appendedSessionEvents.at(-1)?.event.runId, 'wrapper-run-1')
-  assert.equal(app.updatedSessionManifests.at(-1)?.patch.status, 'needs_approval')
-  options.onApprovalResolved(approval, false)
-  assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'approval_denied')
-  await assert.rejects(run(input), /尚未获得本次会话的批准/)
-
-  const allowed = { ...approval, requestId: 'approval-background-2' }
-  options.onApprovalRequested(allowed)
-  options.onApprovalResolved(allowed, true)
-  assert.equal(((await run(input)) as { status: string }).status, 'created')
-  await assert.rejects(run(input), /尚未获得本次会话的批准/)
-  assert.equal(app.appendedSessionEvents.at(-1)?.event.type, 'approval_approved')
-})
-
-test('remote project permission switches apply to existing sessions and host tickets', async () => {
-  const app = await harness()
-  await app.invoke('projects:newRemoteSession', 'remote-project-1')
-  await app.invoke('agent:prompt', 'inspect a file')
-  const options = app.approvalOptions[0] as {
-    shouldGate: () => boolean
-    onApprovalResolved: (request: Record<string, unknown>, approved: boolean) => void
-  }
-  assert.ok(options)
-  assert.equal(options.shouldGate(), true)
-  const sessionId = String(app.createdPhiSessions[0]?.sessionId)
-  await app.invoke('projects:newRemoteSession', 'remote-project-1')
-  const secondSessionId = String(app.createdPhiSessions[1]?.sessionId)
-  const run = app.hostHandlers.get('remoteWorkspace.write')
-  assert.ok(run)
-  const input = {
-    sessionId,
-    projectId: 'remote-project-1',
-    requestId: 'mode-write-1',
-    toolCallId: 'mode-tool-1',
-    path: 'new.txt',
-    content: 'safe'
-  }
-  await app.invoke('projects:updatePermissionMode', 'remote-project-1', 'full')
-  // An existing ask-mode waiter may be explicitly approved after switching mode.
-  // Its one-use ticket must be consumed by this call even though full skips gating.
-  options.onApprovalResolved(
-    {
-      sessionId,
-      requestId: 'late-mode-approval',
-      toolCallId: input.toolCallId,
-      toolName: 'write',
-      approvalDigest: fakeWriteApprovalDigest(input),
-      cwd: 'ssh://cluster-one/canonical/project'
-    },
-    true
-  )
-  assert.equal(options.shouldGate(), false)
-  assert.equal(
-    app.updatedSessionManifests.some(
-      (entry) => entry.sessionId === secondSessionId && entry.patch.permissionMode === 'full'
-    ),
-    true
-  )
-  assert.equal(((await run(input)) as { status: string }).status, 'created')
-  await app.invoke('projects:updatePermissionMode', 'remote-project-1', 'auto')
-  assert.equal(options.shouldGate(), false)
-  assert.equal(
-    ((await run({ ...input, requestId: 'mode-write-2' })) as { status: string }).status,
-    'created'
-  )
-  await app.invoke('projects:updatePermissionMode', 'remote-project-1', 'ask')
-  assert.equal(options.shouldGate(), true)
-  await assert.rejects(run({ ...input, requestId: 'mode-write-3' }), /尚未获得本次会话的批准/)
 })
 
 test('main IPC exposes local package registry planning and lifecycle channels', async () => {
@@ -14068,7 +13548,7 @@ test(
 )
 
 test('main IPC: remote deletion success is not masked by SSH close failure', async () => {
-  const app = await harness(undefined, { remoteRpc: true, remoteDeleteCloseFailure: true })
+  const app = await harness(undefined, { remoteDeleteCloseFailure: true })
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     path: string
     phiSessionId: string
@@ -14082,7 +13562,7 @@ test('main IPC: remote deletion success is not masked by SSH close failure', asy
 })
 
 test('main IPC: remote deletion without dialog confirmation preserves both histories', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     path: string
     phiSessionId: string
@@ -14101,8 +13581,78 @@ test('main IPC: remote deletion without dialog confirmation preserves both histo
   assert.equal(((await app.invoke('sessions:current')) as { path: string }).path, current.path)
 })
 
+test('main IPC: legacy SSH history stays readable and all prompt IPC variants fail closed', async () => {
+  const app = await harness()
+  const created = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+    phiSessionId: string
+    legacyRemoteSession?: boolean
+  }
+  assert.equal(created.legacyRemoteSession, undefined)
+  delete app.createdPhiSessions[0].remoteRuntime
+  app.createdPhiSessions[0].runtimeSessionPath = '/isolated/legacy-remote.jsonl'
+  app.appendedSessionEvents.push({
+    sessionId: created.phiSessionId,
+    event: { type: 'user_message', content: 'Legacy transcript remains visible' }
+  })
+
+  const current = (await app.invoke('sessions:current')) as {
+    legacyRemoteSession?: boolean
+    messages: Array<{ content?: string }>
+    cwd: string
+    sessionGeneration: number
+  }
+  assert.equal(current.legacyRemoteSession, true)
+  assert.equal(
+    current.messages.some((message) => message.content === 'Legacy transcript remains visible'),
+    true
+  )
+
+  const userEventsBefore = app.appendedSessionEvents.filter(
+    (entry) => entry.event.type === 'user_message' || entry.event.type === 'user_message_retry'
+  ).length
+  await assert.rejects(
+    app.invoke('agent:prompt', 'must not run'),
+    /LEGACY_REMOTE_SESSION_READ_ONLY/
+  )
+  await assert.rejects(
+    app.invoke('agent:prompt', 'must not retry', {
+      path: created.path,
+      phiSessionId: created.phiSessionId,
+      cwd: current.cwd,
+      sessionGeneration: current.sessionGeneration,
+      suppressUserMessageEvent: true,
+      retryUserMessageId: 'legacy-user-message'
+    }),
+    /LEGACY_REMOTE_SESSION_READ_ONLY/
+  )
+  assert.equal(app.sessions.length, 0)
+  assert.equal(app.createdAgentOptions.length, 0)
+  assert.equal(
+    app.appendedSessionEvents.filter(
+      (entry) => entry.event.type === 'user_message' || entry.event.type === 'user_message_retry'
+    ).length,
+    userEventsBefore
+  )
+
+  await app.invoke('sessions:rename', created.path, 'Legacy archive')
+  assert.deepEqual(app.renamedSessions.at(-1), {
+    path: created.path,
+    name: 'Legacy archive'
+  })
+  app.setOpenDialogResult({ canceled: false, filePaths: ['/chosen/legacy-export'] })
+  assert.equal(
+    ((await app.invoke('sessions:export', created.phiSessionId)) as { path: string }).path,
+    `/chosen/legacy-export/phi-session-${created.phiSessionId}`
+  )
+  assert.deepEqual(await app.invoke('sessions:delete', created.path), {
+    status: 'confirmation-required'
+  })
+  assert.deepEqual(await app.invoke('sessions:delete', created.path, true), { status: 'deleted' })
+})
+
 test('main IPC: offline remote deletion leaves the selected conversation intact', async () => {
-  const app = await harness(undefined, { remoteRpc: true, remoteDeletePrepareFailure: true })
+  const app = await harness(undefined, { remoteDeletePrepareFailure: true })
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     path: string
     phiSessionId: string
@@ -14120,7 +13670,6 @@ test('main IPC: offline remote deletion leaves the selected conversation intact'
 
 test('main IPC: a later server deletion failure restores the selected conversation', async () => {
   const app = await harness(undefined, {
-    remoteRpc: true,
     onRemoteDelete: () => {
       throw new Error('simulated server busy')
     }
@@ -14141,7 +13690,6 @@ test('main IPC: a later server deletion failure restores the selected conversati
 test('main IPC: deleting an attached remote conversation disposes only its runtime before server removal', async () => {
   const ownerRuntime: { current?: FakeSession } = {}
   const app = await harness(undefined, {
-    remoteRpc: true,
     onRemoteDelete: () => assert.equal(ownerRuntime.current?.disposed, true)
   })
   const owner = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
@@ -14966,8 +14514,8 @@ test('main IPC: an event that already carries a time keeps it', async () => {
   assert.equal(started?.createdAt, '2026-09-20T01:02:03.000Z')
 })
 
-test('main IPC: opted-in empty-resource remote project reaches RPC-compatible creation', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+test('main IPC: an empty-resource remote project reaches RPC-compatible creation by default', async () => {
+  const app = await harness(undefined, {})
   await app.invoke('projects:newRemoteSession', 'remote-project-1')
   await app.invoke('agent:prompt', 'controlled RPC path')
   const created = app.createdAgentOptions.at(-1)!
@@ -14983,9 +14531,8 @@ test('main IPC: opted-in empty-resource remote project reaches RPC-compatible cr
   )
 })
 
-test('main IPC: opted-in remote persona and project instructions use existing trusted readers', async () => {
+test('main IPC: remote persona and project instructions use existing trusted readers by default', async () => {
   const app = await harness(undefined, {
-    remoteRpc: true,
     remoteRpcResources: true,
     remoteMemorySettings: { enabled: true, learn: true }
   })
@@ -15134,7 +14681,6 @@ for (const boundary of ['stop', 'rebind'] as const)
       release = resolve
     })
     const app = await harness(async () => session, {
-      remoteRpc: true,
       remoteNotebookBinding: () => binding,
       remotePresentGate: gate,
       onRemotePresentInspect: () => {
@@ -15185,7 +14731,7 @@ for (const boundary of ['stop', 'rebind'] as const)
   })
 
 test('main actual finished callback wakes the RPC-enabled owning Phi conversation exactly once', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     phiSessionId: string
   }
@@ -15214,7 +14760,7 @@ test('main actual finished callback wakes the RPC-enabled owning Phi conversatio
 test('RPC selection rejects a running Phi session before maps or manifest writes', async () => {
   const session = new FakeSession('rpc-controls-busy.jsonl')
   session.hold = true
-  const app = await harness(async () => session, { remoteRpc: true })
+  const app = await harness(async () => session, {})
   await app.invoke('projects:newRemoteSession', 'remote-project-1')
   const running = app.invoke('agent:prompt', 'hold the selected remote run')
   await tick()
@@ -15235,7 +14781,6 @@ test('RPC model lookup cannot commit into a newly selected Phi session', async (
   let held = false,
     reached = false
   const app = await harness(undefined, {
-    remoteRpc: true,
     modelRuntimeGet: async () => {
       if (held) {
         reached = true
@@ -15268,7 +14813,7 @@ test('RPC model lookup cannot commit into a newly selected Phi session', async (
 
 test('RPC thinking dispatch keeps its original view generation until confirmation', async () => {
   let routed = false
-  const app = await harness(undefined, { remoteRpc: true, routedRuntime: () => routed })
+  const app = await harness(undefined, { routedRuntime: () => routed })
   await app.invoke('projects:newRemoteSession', 'remote-project-1')
   await app.invoke('agent:prompt', 'initialize the old runtime identity')
   routed = true
@@ -15299,7 +14844,7 @@ test('RPC thinking dispatch keeps its original view generation until confirmatio
 
 test('RPC selection accepts its own confirmed policy and checkpoint before main publishes the selection', async () => {
   let routed = false
-  const app = await harness(undefined, { remoteRpc: true, routedRuntime: () => routed })
+  const app = await harness(undefined, { routedRuntime: () => routed })
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     phiSessionId: string
   }
@@ -15353,7 +14898,7 @@ test('RPC selection accepts its own confirmed policy and checkpoint before main 
 })
 
 test('RPC compaction main: saved automatic policy reaches startup without enabling other unsupported controls', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   await app.invoke('projects:newRemoteSession', 'remote-project-1')
   const target = compactionTarget(await app.invoke('sessions:current'))
   await app.invoke('sessions:autoCompactionSettings:set', target, {
@@ -15372,7 +14917,6 @@ test('RPC compaction main: confirmed live policy returns its baseline without po
   let routed = false
   let reads = 0
   const app = await harness(undefined, {
-    remoteRpc: true,
     routedRuntime: () => routed,
     compactionDefaultsRead: async () => {
       reads += 1
@@ -15407,7 +14951,6 @@ test('RPC compaction main: stale cold policy lookup cannot save into its old or 
   const gate = deferred<void>()
   let entered = false
   const app = await harness(undefined, {
-    remoteRpc: true,
     rpcCompactionPolicyRead: async () => {
       entered = true
       await gate.promise
@@ -15442,7 +14985,6 @@ test('RPC compaction main: a late live acknowledgement cannot save after host re
   const gate = deferred<void>()
   let entered = false
   const app = await harness(undefined, {
-    remoteRpc: true,
     routedRuntime: () => routed,
     remoteHostBinding: () => binding
   })
@@ -15518,7 +15060,7 @@ test('RPC compaction main: stop waits for its selected manual owner and never ab
 
 test('RPC compaction main: live getters preserve the installed baseline during a prompt', async () => {
   let routed = false
-  const app = await harness(undefined, { remoteRpc: true, routedRuntime: () => routed })
+  const app = await harness(undefined, { routedRuntime: () => routed })
   await app.invoke('projects:newRemoteSession', 'remote-project-1')
   await app.invoke('agent:prompt', 'materialize')
   routed = true
@@ -15555,7 +15097,6 @@ test('RPC compaction main: stale manual initialization stops after registry look
   let hold = false
   let reached = false
   const app = await harness(undefined, {
-    remoteRpc: true,
     modelRuntimeGet: async () => {
       if (hold) {
         reached = true
@@ -15685,7 +15226,7 @@ test('RPC compaction main: a failed local defaults read cannot produce a saved f
 })
 
 test('RPC compaction main: a persisted runtime reference supports manual compaction and usage without a legacy path', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const first = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     phiSessionId: string
   }
@@ -15717,7 +15258,7 @@ test('RPC compaction main: a persisted runtime reference supports manual compact
 })
 
 test('RPC compaction main: its own cold resume preserves the initiating view generation', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const first = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     phiSessionId: string
   }
@@ -15759,7 +15300,7 @@ for (const boundary of ['navigation', 'lifecycle'] as const)
     let routed = false
     const gate = deferred<void>()
     let entered = false
-    const app = await harness(undefined, { remoteRpc: true, routedRuntime: () => routed })
+    const app = await harness(undefined, { routedRuntime: () => routed })
     await app.invoke('projects:newRemoteSession', 'remote-project-1')
     await app.invoke('agent:prompt', 'materialize')
     routed = true
@@ -15816,7 +15357,7 @@ test('RPC compaction main: accepted manual work continues on its owner after nav
   assert.equal(owner.log.includes('dispose'), false)
 })
 
-test('RPC compaction main: an adopted RPC reference never falls back to legacy when routing is disabled', async () => {
+test('RPC compaction main: an adopted reference uses RPC without an environment flag', async () => {
   const app = await harness()
   const first = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     phiSessionId: string
@@ -15832,9 +15373,13 @@ test('RPC compaction main: an adopted RPC reference never falls back to legacy w
     }
   })
   const target = compactionTarget(await app.invoke('sessions:current'))
-  await assert.rejects(app.invoke('sessions:compact', target), /远程 RPC.*显式恢复/)
-  assert.equal(app.sessions.length, 0)
-  assert.equal(app.createdAgentOptions.length, 0)
+  await assert.doesNotReject(app.invoke('sessions:compact', target))
+  assert.equal(app.sessions.length, 1)
+  assert.equal(app.createdAgentOptions.length, 1)
+  assert.equal(
+    (app.createdAgentOptions[0].remoteProject as { projectId: string }).projectId,
+    'remote-project-1'
+  )
 })
 
 test('RPC compaction main: a cancelled async bootstrap disposes only its own result before dispatch', async () => {
@@ -15933,7 +15478,7 @@ for (const boundary of ['lifecycle', 'host', 'journal'] as const)
   test(`RPC compaction main: accepted manual work still rejects its own ${boundary} replacement`, async () => {
     const gate = deferred<void>()
     let host = 'cluster-one'
-    const app = await harness(undefined, { remoteRpc: true, remoteHostBinding: () => host })
+    const app = await harness(undefined, { remoteHostBinding: () => host })
     const first = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
       phiSessionId: string
     }
@@ -15983,7 +15528,7 @@ for (const boundary of ['lifecycle', 'host', 'journal'] as const)
   })
 
 test('T13 main configuration: selected prompt provider reuses trusted sources and owns its local persona path', async () => {
-  const app = await harness(undefined, { remoteRpc: true, remoteRpcResources: true })
+  const app = await harness(undefined, { remoteRpcResources: true })
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     phiSessionId: string
     cwd: string
@@ -16021,7 +15566,6 @@ for (const boundary of ['stop', 'rebind'] as const)
     let binding = 'original'
     let entered = false
     const app = await harness(undefined, {
-      remoteRpc: true,
       remoteNotebookBinding: () => binding,
       remoteInstructionsRead: async () => {
         entered = true
@@ -16063,7 +15607,6 @@ test('T13 main configuration: RPC initialization rejects a host rebind after tru
   let entered = false
   let binding = 'original'
   const app = await harness(undefined, {
-    remoteRpc: true,
     remoteNotebookBinding: () => binding,
     remoteInstructionsRead: async () => {
       entered = true
@@ -16083,7 +15626,7 @@ test('T13 main configuration: RPC initialization rejects a host rebind after tru
 
 test('T13 main rename: idle live RPC uses one confirmed SDK rename and can target a background owner', async () => {
   let routed = false
-  const app = await harness(undefined, { remoteRpc: true, routedRuntime: () => routed })
+  const app = await harness(undefined, { routedRuntime: () => routed })
   const owner = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     path: string
   }
@@ -16108,7 +15651,7 @@ test('T13 main rename: idle live RPC uses one confirmed SDK rename and can targe
 })
 
 test('T13 main rename: cold future names do not start RPC and adopted offline references require resume', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     path: string
     phiSessionId: string
@@ -16141,7 +15684,6 @@ for (const boundary of ['rebind', 'lifecycle'] as const)
     const gate = deferred<void>()
     let entered = false
     const app = await harness(undefined, {
-      remoteRpc: true,
       routedRuntime: () => routed,
       remoteHostBinding: () => host
     })
@@ -16173,7 +15715,7 @@ for (const boundary of ['rebind', 'lifecycle'] as const)
 test('T13 main rename: busy RPC refuses writes while local Phi names preserve existing behavior', async () => {
   const session = new FakeSession('held.jsonl')
   session.hold = true
-  const app = await harness(async () => session, { remoteRpc: true })
+  const app = await harness(async () => session, {})
   const owner = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     path: string
   }
@@ -16227,7 +15769,7 @@ test('T13 main rename: legacy current and background conversations keep their di
 
 test('T13 main rename: live RPC rejects unowned and unconfirmed title writes', async () => {
   let routed = false
-  const app = await harness(undefined, { remoteRpc: true, routedRuntime: () => routed })
+  const app = await harness(undefined, { routedRuntime: () => routed })
   const owner = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     path: string
   }
@@ -16561,7 +16103,6 @@ test('AI session titles: a remote host rebind discards the old generation result
   let host = 'original'
   const gate = deferred<string>()
   const app = await harness(undefined, {
-    remoteRpc: true,
     routedRuntime: () => routed,
     remoteHostBinding: () => host,
     titleRequest: async () => gate.promise
@@ -16581,7 +16122,6 @@ test('AI session titles: an attached RPC conversation uses confirmed rename rath
   let routed = false
   const gate = deferred<string>()
   const app = await harness(undefined, {
-    remoteRpc: true,
     routedRuntime: () => routed,
     titleRequest: async () => gate.promise
   })
@@ -16610,7 +16150,6 @@ test('T13 main memory: adapter receives only the selected project policy and loc
     }
   }
   const app = await harness(undefined, {
-    remoteRpc: true,
     remoteMemorySettings: { enabled: true, learn: true },
     remoteResourceScripts: async () => ({ tools: [], problems: [] }),
     projectMemoryAdapterCreate: async (options) => {
@@ -16780,7 +16319,6 @@ test('T13 main configuration: navigation during trusted initialization leaves th
   const gate = deferred<void>()
   let entered = false
   const app = await harness(undefined, {
-    remoteRpc: true,
     remoteInstructionsRead: async () => {
       entered = true
       await gate.promise
@@ -16813,7 +16351,7 @@ for (const channel of ['persona:setMarkdown', 'persona:completeOnboarding'] as c
   test(`T13 main persona: ${channel} refuses a busy selected RPC session before saving or generating`, async () => {
     const owner = new FakeSession('held.jsonl')
     owner.hold = true
-    const app = await harness(async () => owner, { remoteRpc: true })
+    const app = await harness(async () => owner, {})
     await app.invoke('projects:newRemoteSession', 'remote-project-1')
     const running = app.invoke('agent:prompt', 'hold original')
     await tick()
@@ -16831,7 +16369,6 @@ test('T13 main persona: a late onboarding lookup cannot save or invalidate the n
   let held = false
   let entered = false
   const app = await harness(undefined, {
-    remoteRpc: true,
     modelRuntimeGet: async () => {
       if (held) {
         entered = true
@@ -16857,7 +16394,7 @@ test('T13 main persona: a late onboarding lookup cannot save or invalidate the n
 test('T13 main persona: saving in an idle RPC view preserves an accepted background prompt persona', async () => {
   const owner = new FakeSession('held.jsonl')
   owner.hold = true
-  const app = await harness(async () => owner, { remoteRpc: true })
+  const app = await harness(async () => owner, {})
   await app.invoke('projects:newRemoteSession', 'remote-project-1')
   const running = app.invoke('agent:prompt', 'background original persona')
   await tick()
@@ -16871,7 +16408,7 @@ test('T13 main persona: saving in an idle RPC view preserves an accepted backgro
 })
 
 test('T13 main memory: ingestion diagnostics contain fixed identity fields only', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const diagnose = app.remoteRoutingOptions[0].onMemoryError as (identity: {
     sessionId: string
     projectId: string
@@ -16884,7 +16421,7 @@ test('T13 main memory: ingestion diagnostics contain fixed identity fields only'
 
 test('T13 main persona: manual compaction blocks both persona writers without cancelling the owned operation', async () => {
   const gate = deferred<void>()
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     phiSessionId: string
   }
@@ -16915,7 +16452,7 @@ test('T13 main persona: manual compaction blocks both persona writers without ca
 })
 
 test('T13 main persona: idle onboarding uses a disposable tool-less session before saving its confirmed text', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   await app.invoke('projects:newRemoteSession', 'remote-project-1')
   assert.equal(await app.invoke('persona:completeOnboarding', 'a helpful scientist'), 'done')
   assert.deepEqual(app.savedPersonas, ['done'])
@@ -16960,7 +16497,7 @@ function savedRemoteReference(phiSessionId: string): runtimeReference.RemoteOmpR
 }
 
 test('T15 main recovery: a cold RPC state and summary preview perform no initialization or policy writes', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     phiSessionId: string
   }
@@ -16992,7 +16529,7 @@ test('T15 main recovery: a cold RPC state and summary preview perform no initial
 })
 
 test('T15 main recovery: explicit summary continuation preserves old history and seeds a distinct unconnected RPC Phi', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     phiSessionId: string
   }
@@ -17057,33 +16594,8 @@ test('T15 main recovery: explicit summary continuation preserves old history and
   )
 })
 
-test('T15 main recovery: disabled routing cannot create a summary Phi that would silently lose its seed on legacy execution', async () => {
-  const app = await harness()
-  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
-    phiSessionId: string
-  }
-  app.updatedSessionManifests.push({
-    sessionId: current.phiSessionId,
-    patch: { runtimeRef: savedRemoteReference(current.phiSessionId) }
-  })
-  const target = runtimeRecoveryTarget(await app.invoke('sessions:current'))
-  const state = (await app.invoke(
-    'sessions:runtimeRecovery',
-    target
-  )) as import('../src/shared/runtimeRecoveryTypes').RuntimeRecoveryState
-  assert.equal(state.canResume, false)
-  assert.equal(state.canContinueFromSummary, false)
-  await assert.rejects(
-    app.invoke('sessions:continueRuntimeSummary', target, state.summary!.provenance.sha256),
-    /不能创建摘要会话/
-  )
-  assert.equal(app.createdPhiSessions.length, 1)
-  assert.equal(app.createdAgentOptions.length, 0)
-})
-
 test('T15 main recovery: retired model aliases require an explicit replacement before any history or policy effects', async () => {
   const app = await harness(undefined, {
-    remoteRpc: true,
     onCreateSession: async () => {
       throw new recoveryFailures.RemoteRecoveryError('FILE_INVALID', 'fixture refuses the journal')
     }
@@ -17132,7 +16644,6 @@ test('T15 main recovery: retired model aliases require an explicit replacement b
 test('T15 main recovery: stopping a pending explicit attach cancels its own preparation and sends no prompt', async () => {
   let entered = false
   const app = await harness(undefined, {
-    remoteRpc: true,
     onCreateSession: async (_options, control) => {
       entered = true
       assert.ok(control?.signal)
@@ -17166,7 +16677,6 @@ test('T15 main recovery: stopping a pending explicit attach cancels its own prep
 test('T15 main recovery: a pending explicit attach rejects a new prompt before recording it', async () => {
   let entered = false
   const app = await harness(undefined, {
-    remoteRpc: true,
     onCreateSession: async (_options, control) => {
       entered = true
       assert.ok(control?.signal)
@@ -17203,7 +16713,7 @@ test('T15 main recovery: a pending explicit attach rejects a new prompt before r
 })
 
 test('T14 main controls: a confirmed background expert blocks persona and model policy edits without stopping its parent scope', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   await app.invoke('projects:newRemoteSession', 'remote-project-1')
   await app.invoke('agent:prompt', 'materialize parent')
   app.sessions[0].hasActiveAgentRuns = () => true
@@ -17216,7 +16726,7 @@ test('T14 main controls: a confirmed background expert blocks persona and model 
 })
 
 test('T14 main resources: selected experts receive real enabled skill content and missing names do not load local fallback files', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     phiSessionId: string
     cwd: string
@@ -17250,7 +16760,6 @@ test('T14 main resources: a background child gets verified service ownership and
   let checked = 0
   const gate = deferred<void>()
   const app = await harness(undefined, {
-    remoteRpc: true,
     routedRuntime: () => routed,
     childResourceOwner: (_runtime, child) => {
       checked += 1
@@ -17301,7 +16810,6 @@ test('T15 main recovery: an accepted explicit attach stays with its original own
   let entered = false
   let sessionId = ''
   const app = await harness(undefined, {
-    remoteRpc: true,
     routedRuntime: () => true,
     runtimeSessionReady: () => true,
     onCreateSession: async (options, control) => {
@@ -17364,7 +16872,6 @@ test('T15 main recovery: an accepted explicit attach stays with its original own
 test('T15 main jobs: restart metadata is readonly, live IDs win, and listing failure never invents interrupted tasks', async () => {
   let reads = 0
   const app = await harness(undefined, {
-    remoteRpc: true,
     coldRuntimeOrigin: (id) =>
       id === 'live-runtime' ? { phiSessionId: 'phi-1', cwd: '/fixture/remote' } : undefined,
     coldChildRuns: (phiSessionId) => {
@@ -17421,7 +16928,7 @@ test('T15 main jobs: restart metadata is readonly, live IDs win, and listing fai
 })
 
 test('T14 main approvals: a finished parent child uses one durable event and only its original conversation attention', async () => {
-  const app = await harness(undefined, { remoteRpc: true })
+  const app = await harness(undefined, {})
   const original = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
     phiSessionId: string
   }
@@ -17505,7 +17012,6 @@ test('T14 main approvals: a finished parent child uses one durable event and onl
 
 test('T15 main controls: a known cold remote runtime cannot forward stop or steer to the legacy worker', async () => {
   const app = await harness(undefined, {
-    remoteRpc: true,
     coldRuntimeOrigin: (id) =>
       id === 'cold-runtime' ? { phiSessionId: 'phi-1', cwd: '/fixture/remote' } : undefined
   })
@@ -17537,7 +17043,6 @@ test('T14 main environments: selected experts use a readonly ready descriptor an
   let result: unknown = undefined
   let rebound = false
   const app = await harness(undefined, {
-    remoteRpc: true,
     remoteNotebookBinding: () => host,
     remoteRuntimeWorkspace: async () => {
       const host = { capabilities: () => ({}), fs: {}, exec: {} }
@@ -17611,7 +17116,6 @@ test('T14 main browser: a verified background child keeps its own browser actor 
   let live = true,
     checked = 0
   const app = await harness(undefined, {
-    remoteRpc: true,
     routedRuntime: () => routed,
     childResourceOwner: (_runtime, child) => {
       checked += 1
@@ -17687,7 +17191,6 @@ test('T15 main recovery: closing the window cancels accepted background preparat
   let entered = false,
     cancelled = false
   const app = await harness(undefined, {
-    remoteRpc: true,
     onCreateSession: async (_options, control) => {
       entered = true
       await new Promise<void>((_resolve, reject) => {
@@ -17751,7 +17254,7 @@ test('main model preference: new local and remote chats inherit the latest manua
   assert.deepEqual(restarted.createdPhiSessions.at(-1)?.model, preferences.lastSelectedModel)
 })
 
-test('main model preference: explicit automatic overrides project defaults and stays automatic after a run', async () => {
+test('main model preference: local automatic stays automatic while RPC sessions use project defaults', async () => {
   const preferences: HarnessOptions = {}
   const app = await harness(undefined, preferences)
   await app.invoke('projects:newSession', '/projects/defaults', 'ask')
@@ -17764,8 +17267,14 @@ test('main model preference: explicit automatic overrides project defaults and s
   assert.equal(app.createdPhiSessions.at(-1)?.model, null)
   const restarted = await harness(undefined, preferences)
   await restarted.invoke('projects:newRemoteSession', 'remote-project-1')
-  assert.equal(restarted.createdPhiSessions.at(-1)?.model, null)
-  assert.equal(await restarted.invoke('models:selected'), null)
+  assert.deepEqual(restarted.createdPhiSessions.at(-1)?.model, {
+    providerId: 'openai',
+    modelId: 'gpt-test'
+  })
+  assert.deepEqual(await restarted.invoke('models:selected'), {
+    providerId: 'openai',
+    modelId: 'gpt-test'
+  })
 })
 
 test('main model preference: rejected choices do not replace the remembered model', async () => {
@@ -17904,7 +17413,6 @@ test('main model preference: an older switch finishing after another conversatio
 
 test('main model preference: RPC automatic selection rejects before changing a fresh remote conversation', async () => {
   const preferences: HarnessOptions = {
-    remoteRpc: true,
     lastSelectedModel: { providerId: 'openai', modelId: 'gpt-test' }
   }
   const app = await harness(undefined, preferences)
@@ -17919,37 +17427,30 @@ test('main model preference: RPC automatic selection rejects before changing a f
   assert.deepEqual(preferences.lastSelectedModel, { providerId: 'openai', modelId: 'gpt-test' })
 })
 
-for (const remoteRpc of [false, true]) {
-  test(`main model preference: global automatic ${remoteRpc ? 'keeps RPC project defaults' : 'remains automatic for legacy remote sessions'}`, async () => {
-    const defaultModel = { providerId: 'openai', modelId: 'gpt-test' }
-    const preferences: HarnessOptions = {
-      remoteRpc,
-      lastSelectedModel: null,
-      remoteDefaultModel: defaultModel
-    }
-    const app = await harness(undefined, preferences)
-    await app.invoke('projects:newRemoteSession', 'remote-project-1')
-    const expected = remoteRpc ? defaultModel : null
-    assert.deepEqual(app.createdPhiSessions.at(-1)?.model, expected)
-    assert.deepEqual(await app.invoke('models:selected'), expected)
-    assert.equal(preferences.lastSelectedModel, null)
-    if (remoteRpc) {
-      await app.invoke(
-        'agent:prompt',
-        'initialize remote conversation with the supported project model'
-      )
-      assert.equal(
-        app.createdAgentOptions[0].model && (app.createdAgentOptions[0].model as { id: string }).id,
-        defaultModel.modelId
-      )
-      assert.equal(preferences.lastSelectedModel, null)
-    }
-  })
-}
+test('main model preference: global automatic keeps RPC project defaults', async () => {
+  const defaultModel = { providerId: 'openai', modelId: 'gpt-test' }
+  const preferences: HarnessOptions = {
+    lastSelectedModel: null,
+    remoteDefaultModel: defaultModel
+  }
+  const app = await harness(undefined, preferences)
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  assert.deepEqual(app.createdPhiSessions.at(-1)?.model, defaultModel)
+  assert.deepEqual(await app.invoke('models:selected'), defaultModel)
+  assert.equal(preferences.lastSelectedModel, null)
+  await app.invoke(
+    'agent:prompt',
+    'initialize remote conversation with the supported project model'
+  )
+  assert.equal(
+    app.createdAgentOptions[0].model && (app.createdAgentOptions[0].model as { id: string }).id,
+    defaultModel.modelId
+  )
+  assert.equal(preferences.lastSelectedModel, null)
+})
 
 test('main model preference: RPC conversation without a concrete model reports an actionable preflight error', async () => {
   const app = await harness(undefined, {
-    remoteRpc: true,
     lastSelectedModel: null,
     remoteDefaultModel: null
   })

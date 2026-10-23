@@ -241,6 +241,7 @@ test('getCurrentSessionPayload preserves ordinary, local-project, and remote-pro
       remoteRoot: '/cluster/project',
       canonicalRoot: '/cluster/project'
     },
+    legacyRemoteSession: true,
     sessionGeneration: 6,
     permissionMode: 'full',
     status: 'completed_unread',
@@ -250,5 +251,19 @@ test('getCurrentSessionPayload preserves ordinary, local-project, and remote-pro
     currentRunStartedAt: undefined,
     lastActivityAt: '2026-10-21T03:00:00.000Z'
   })
-  assert.deepEqual(harness.refreshes, ['current-key', 'current-key', 'current-key'])
+  harness.setManifest({
+    sessionId: 'phi-remote-new',
+    projectId: 'project-remote',
+    projectLocation: {
+      kind: 'ssh',
+      hostProfileId: 'host-1',
+      remoteRoot: '/cluster/project',
+      canonicalRoot: '/cluster/project'
+    },
+    remoteRuntime: 'rpc',
+    status: 'idle',
+    unreadKind: null
+  })
+  assert.equal(harness.payload.getCurrentSessionPayload().legacyRemoteSession, undefined)
+  assert.deepEqual(harness.refreshes, ['current-key', 'current-key', 'current-key', 'current-key'])
 })

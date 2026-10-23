@@ -13,6 +13,7 @@ import {
   APP_RPC_NOTEBOOK_TOOL_NAMES,
   createAppRemoteSessionManager,
   installAppRemoteSessionRouting,
+  remoteStartupConnectionState,
   selectAppForegroundAgents,
   type AppRemoteSessionRoutingOptions
 } from '../src/main/agent/remote-session-routing'
@@ -64,12 +65,11 @@ test('application foreground selection never strips unsupported fields from a se
     )
 })
 
-test('disabled application routing acquires no resources and installs no remote factory', () => {
+test('application routing validates its trusted configuration unconditionally', () => {
   const unexpected = (): never => {
     throw new Error('disabled routing touched a resource')
   }
   const options: AppRemoteSessionRoutingOptions = {
-    enabled: false,
     agentDir: '/unused',
     runners: {} as AppRemoteSessionRoutingOptions['runners'],
     appPaths: unexpected,
@@ -78,10 +78,53 @@ test('disabled application routing acquires no resources and installs no remote 
     foregroundAgentNames: 'invalid-renderer-name',
     approval: { shouldGate: unexpected, requestToolApproval: unexpected }
   }
-  assert.doesNotThrow(installAppRemoteSessionRouting(options))
   assert.throws(
-    () => installAppRemoteSessionRouting({ ...options, enabled: true }),
+    () => installAppRemoteSessionRouting(options),
     /Invalid RPC foreground agent selection/
+  )
+})
+
+test('remote startup download progress enters and cleanly leaves the existing connection state', () => {
+  const checkedAt = '2026-10-23T00:00:00.000Z'
+  const connecting = remoteStartupConnectionState(
+    {
+      phiSessionId: 'phi-session',
+      step: 'runtime_binary',
+      detail: {
+        kind: 'remote-omp-download',
+        bytesReceived: 45,
+        totalBytes: 100,
+        attempt: 2
+      }
+    },
+    undefined,
+    checkedAt
+  )
+  assert.deepEqual(connecting, {
+    phase: 'connecting',
+    startupProgress: {
+      kind: 'remote-omp-download',
+      bytesReceived: 45,
+      totalBytes: 100,
+      attempt: 2
+    },
+    checkedAt
+  })
+  assert.deepEqual(
+    remoteStartupConnectionState(
+      { phiSessionId: 'phi-session', status: 'ready' },
+      connecting,
+      checkedAt
+    ),
+    { phase: 'reachable', checkedAt }
+  )
+  assert.equal(
+    remoteStartupConnectionState(
+      { phiSessionId: 'phi-session', status: 'failed' },
+      { phase: 'offline' },
+      checkedAt
+    ),
+    undefined
   )
 })
 

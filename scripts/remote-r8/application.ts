@@ -175,7 +175,6 @@ export async function createSshApplication(
     }
     uninstall = installAppRemoteSessionRouting(
       {
-        enabled: true,
         agentDir,
         runners,
         startupDiagnostics: (report) => startupReports.push(report),

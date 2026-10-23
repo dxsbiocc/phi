@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process'
 import { chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { createServer, connect, type Socket, type AddressInfo } from 'node:net'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { createPersistentLauncherFixture } from './persistentLauncherFixture'
 import { createLocalShellSession } from './localShellSession'
 import { startHostResultModel } from './rpcHostResultModel'
@@ -194,15 +195,16 @@ try {
       contextFiles: []
     }
   })
-  // The default getPhiEngine remains genuinely legacy; a memory session has no model effects.
+  // The default getPhiEngine remains genuinely legacy; this unrelated local memory session has
+  // no model effects and does not impersonate the SSH project's desktop history scope.
   const legacy = await engine.sessions.create({
     sessionId: 'facade-legacy',
-    cwd: anchor,
+    cwd: tmpdir(),
     agentDir,
     model,
     enableToolApproval: false,
     noTools: 'all',
-    sessionManager: { kind: 'memory', cwd: anchor }
+    sessionManager: { kind: 'memory', cwd: tmpdir() }
   })
   assert.equal(legacy.sessionId, 'facade-legacy')
   assert.equal(ownsRemoteRuntimeSession('facade-legacy'), false)

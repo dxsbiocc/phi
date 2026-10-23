@@ -2,6 +2,7 @@ import type {
   RpcAgentResourceCatalogInput,
   CompileRpcAgentDefinitionsOptions
 } from './engine/rpc/subagents/types'
+import type { RemoteProjectConnectionState } from '../../shared/projectLocation'
 import { WRAPPER_COMPOSITION_TOOL_NAMES } from './wrappers/composition/tools'
 import { join } from 'node:path'
 import { NOTEBOOK_TOOL_NAMES } from './notebook/notebook-tools'
@@ -9,13 +10,14 @@ import { LIBRARY_TOOL_NAMES } from './library/library-tools'
 import { createRuntimeSessionManager, type RuntimeSessionManager } from './runtime/runtime-adapter'
 import { phiOnlySessionPath } from './session/sessions'
 import type { PhiAgentDefinition } from './agents/definition'
-import { getProject, type Project } from './projects'
+import { getProject, setRemoteProjectConnectionState, type Project } from './projects'
 import { findPhiSessionById } from './session/session-store'
 import type { SessionRunnerRegistry } from './session/session-runner-registry'
 import { resolveRemoteWorkspaceHostBinding } from './remote-workspace-boundary'
 import { openRemoteRuntimeWorkspace } from './remote-runtime/workspace'
 import { installRemoteSessionRouting } from './engine/in-process-engine'
 import { facadeBindingHash, type SelectedFacadeRuntime } from './engine/rpc/facade-session-driver'
+import { rpcToolNameExposesCredentialSurface } from './engine/phi-extension/lib/rpc-execution-protocol'
 import {
   createPhiExtensionBundle,
   resolvePhiExtensionSourceRoot
@@ -24,7 +26,8 @@ import type { RemoteOmpDeploymentOptions } from './engine/rpc/runtime-deployment
 import { REMOTE_OMP_MANIFEST } from './engine/rpc/runtime-deployment'
 import {
   RemoteStartupDiagnostics,
-  type RemoteStartupDiagnosticSink
+  type RemoteStartupDiagnosticSink,
+  type RemoteStartupProgressEvent
 } from './engine/rpc/remote-startup-diagnostics'
 
 // The existing executor owns interruption through the captured kernel runtime and terminal ACK.
@@ -40,7 +43,7 @@ export interface AppRemoteDesktopResources {
 export function appRpcDesktopToolNames(
   resources?: NonNullable<SelectedFacadeRuntime['desktopTools']>
 ): readonly string[] {
-  return Object.freeze([
+  const names = [
     ...APP_RPC_NOTEBOOK_TOOL_NAMES,
     ...WRAPPER_COMPOSITION_TOOL_NAMES,
     'present_files',
@@ -65,7 +68,11 @@ export function appRpcDesktopToolNames(
           ...(resources.desktopMcp?.tools.map((tool) => tool.name) ?? [])
         ]
       : [])
-  ])
+  ]
+  if (names.some(rpcToolNameExposesCredentialSurface)) {
+    throw new Error('RPC desktop tools cannot expose credential or host-setup operations')
+  }
+  return Object.freeze(names)
 }
 
 /** Phi locators describe remote recovery; they are never opened as desktop journal files. */
@@ -83,7 +90,6 @@ export function createAppRemoteSessionManager(
 }
 
 export interface AppRemoteSessionRoutingOptions {
-  enabled: boolean
   /** Internal opt-in only; reports fixed names and numbers, never remote commands or paths. */
   startupDiagnostics?: RemoteStartupDiagnosticSink
   /** A previous remote run that outlived its SSH connection was stopped before this session launched. */
@@ -174,7 +180,7 @@ export function selectAppForegroundAgents(
   return Object.freeze(selected)
 }
 
-/** Actual main startup composition; the disabled path acquires no SSH/runtime resources. */
+/** Actual main startup composition. SSH projects always use this RPC route. */
 interface AppRemoteSessionRoutingDependencies {
   resolveBinding?: typeof resolveRemoteWorkspaceHostBinding
   openWorkspace?: typeof openRemoteRuntimeWorkspace
@@ -182,11 +188,33 @@ interface AppRemoteSessionRoutingDependencies {
   deployment?: Pick<RemoteOmpDeploymentOptions, 'manifest' | 'fetchImpl' | 'uploadOptions'>
 }
 
+export function remoteStartupConnectionState(
+  event: RemoteStartupProgressEvent,
+  current?: RemoteProjectConnectionState,
+  checkedAt = new Date().toISOString()
+): RemoteProjectConnectionState | undefined {
+  if ('detail' in event) {
+    return {
+      phase: 'connecting',
+      startupProgress: event.detail,
+      checkedAt
+    }
+  }
+  if (current?.startupProgress) return { phase: 'reachable', checkedAt }
+  return undefined
+}
+
+function publishRemoteStartupProgress(projectId: string, event: RemoteStartupProgressEvent): void {
+  const project = getProject(projectId)
+  if (project?.location.kind !== 'ssh') return
+  const state = remoteStartupConnectionState(event, project.remoteConnection)
+  if (state) setRemoteProjectConnectionState(projectId, state)
+}
+
 export function installAppRemoteSessionRouting(
   options: AppRemoteSessionRoutingOptions,
   dependencies: AppRemoteSessionRoutingDependencies = {}
 ): () => void {
-  if (!options.enabled) return () => undefined
   const names =
     options.foregroundAgentNames
       ?.split(',')
@@ -204,9 +232,11 @@ export function installAppRemoteSessionRouting(
     runners: options.runners,
     selected: async ({ runtimeSessionId, phiSessionId, projectId }, signal) => {
       signal.throwIfAborted()
-      const startupDiagnostics = options.startupDiagnostics
-        ? new RemoteStartupDiagnostics({ phiSessionId, emit: options.startupDiagnostics })
-        : undefined
+      const startupDiagnostics = new RemoteStartupDiagnostics({
+        phiSessionId,
+        ...(options.startupDiagnostics ? { emit: options.startupDiagnostics } : {}),
+        emitProgress: (event) => publishRemoteStartupProgress(projectId, event)
+      })
       const step = async <T>(name: string, operation: () => Promise<T>): Promise<T> => {
         try {
           return await (startupDiagnostics?.step(name, operation) ?? operation())

@@ -95,8 +95,13 @@ async function deploy(options: RemoteOmpDeploymentOptions): Promise<RemoteOmpDep
     asset,
     fetchImpl: options.fetchImpl,
     signal,
-    onProgress: (bytesTransferred, totalBytes) =>
-      options.onProgress?.({ phase: 'downloading', bytesTransferred, totalBytes })
+    onProgress: ({ bytesReceived, totalBytes, attempt }) =>
+      options.onProgress?.({
+        phase: 'downloading',
+        bytesTransferred: bytesReceived,
+        totalBytes,
+        attempt
+      })
   })
   await run(spaceCommand(paths, cached.size))
   const hostKey = options.uploadOptions?.hostKey
