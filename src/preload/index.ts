@@ -77,11 +77,13 @@ import type {
 } from '../shared/remoteRipgrepTypes'
 import type { PromptAgentSummary, RemoteProjectAgentTrustRequest } from '../shared/promptAgentTypes'
 import type { RemoteProjectMcpTrustRequest } from '../shared/remoteProjectMcpTypes'
+import type { PlanRunRendererApi } from '../shared/planRunTypes'
 import type {
   GithubSourcePreview,
   GithubSourceSummary,
   GithubSourceUpdateCheck
 } from '../shared/githubSourceTypes'
+import { createPlanRunApi } from './plan-run-api'
 
 // Imported (unlike the other ambient types in this file, which are
 // hand-duplicated) because WrapperRunPlan/WrapperRun are large, evolving
@@ -313,6 +315,7 @@ type PromptTarget = {
   retryUserMessageId?: string
   images?: PromptImageInput[]
   planMode?: boolean
+  planExecute?: boolean
 }
 
 type PermissionMode = 'auto' | 'ask' | 'full'
@@ -779,7 +782,9 @@ type RemoteRipgrepRequest = {
 
 type RemoteRipgrepIpcProgress = RemoteRipgrepProgress & { requestId: string }
 
-type RendererAuthApi = WorkspaceFileOperationsRendererApi & {
+type PreloadApiBase = WorkspaceFileOperationsRendererApi & PlanRunRendererApi
+
+type RendererAuthApi = PreloadApiBase & {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
   sshBootstrap: SshBootstrapRendererBridge
@@ -1299,7 +1304,10 @@ const sshBootstrapBridge: SshBootstrapRendererBridge = {
   cancel: (id) => ipcRenderer.invoke(IPC.sshBootstrap.cancel, id)
 }
 
+const planRunApi = createPlanRunApi(ipcRenderer)
+
 const api: RendererAuthApi = {
+  ...planRunApi,
   browser: browserBridge,
   terminal: terminalBridge,
   sshBootstrap: sshBootstrapBridge,

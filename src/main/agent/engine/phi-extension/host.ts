@@ -42,10 +42,22 @@ export interface PhiExtensionFallbackReadiness {
   reason?: string
 }
 
+export interface PhiPlanStepsToolResult {
+  content: Array<{ type: 'text'; text: string }>
+  details?: {
+    decision?: 'approve' | 'revise' | 'cancel'
+    plan?: unknown
+    validationErrors?: string[]
+  }
+  isError?: boolean
+}
+
 /** Live Phi-side state used by otherwise self-contained extension factories. */
 export interface PhiExtensionHost {
   nextActionSuggestionsEnabled(): Promise<boolean>
   planModeActive(): boolean
+  planExecuteModeActive(): boolean
+  proposePlanSteps(input: unknown): Promise<PhiPlanStepsToolResult>
   requestToolApproval(request: PhiExtensionToolApprovalRequest): Promise<unknown>
   browserApprovalInput(toolCallId: string, input: unknown): unknown
   markBrowserTextDenied(toolCallId: string): void

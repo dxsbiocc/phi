@@ -1,3 +1,5 @@
+import type { PlanSpec } from './planRunTypes'
+
 export type AgentUserInteractionOption = {
   label: string
   description: string
@@ -14,7 +16,7 @@ export type AgentUserInteractionQuestion = {
 export type AgentUserInteractionRequest = {
   requestId: string
   questions: AgentUserInteractionQuestion[]
-  planReview?: { title: string; content: string; planFilePath: string }
+  planReview?: { title: string; content: string; planFilePath: string; steps?: PlanSpec }
   sessionId?: string
   sessionPath?: string
   sessionGeneration?: number

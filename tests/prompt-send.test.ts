@@ -346,6 +346,14 @@ test('retry and suppressed-user-message sends keep their shapes', async () => {
   await sending
 })
 
+test('plan execution mode reaches the renderer prompt target without enabling review mode', async () => {
+  const h = harness()
+  const sending = sendPrompt(h.deps, 'execute the plan', target, { planExecute: true })
+  assert.deepEqual(h.sent[0].target, { ...target, planExecute: true })
+  h.applyReceipt({})
+  await sending
+})
+
 test('a refused send leaves the in-flight flag and request token untouched', async () => {
   const h = harness({ configured: false })
   await sendPrompt(h.deps, 'hello', target)

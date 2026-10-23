@@ -7,7 +7,7 @@ import ts from 'typescript'
 import { ALL_IPC_CHANNELS, IPC, type IpcChannel } from '../src/shared/ipcChannels'
 
 const MAIN_ROOT = join(process.cwd(), 'src/main')
-const PRELOAD_PATH = join(process.cwd(), 'src/preload/index.ts')
+const PRELOAD_ROOT = join(process.cwd(), 'src/preload')
 
 // Keep this allowlist narrow. Every entry must explain why a deliberately one-sided
 // request has no peer; push events do not belong here because they are not requests.
@@ -51,21 +51,23 @@ function increment(counts: Map<string, number>, reference: string): void {
 }
 
 function preloadRequestReferences(): Map<string, number> {
-  const syntax = sourceFile(PRELOAD_PATH)
   const counts = new Map<string, number>()
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      node.expression.expression.getText(syntax) === 'ipcRenderer' &&
-      node.expression.name.text === 'invoke'
-    ) {
-      const reference = ipcReference(node.arguments[0])
-      if (reference) increment(counts, reference)
+  for (const path of sourceFiles(PRELOAD_ROOT)) {
+    const syntax = sourceFile(path)
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.expression.getText(syntax) === 'ipcRenderer' &&
+        node.expression.name.text === 'invoke'
+      ) {
+        const reference = ipcReference(node.arguments[0])
+        if (reference) increment(counts, reference)
+      }
+      ts.forEachChild(node, visit)
     }
-    ts.forEachChild(node, visit)
+    visit(syntax)
   }
-  visit(syntax)
   return counts
 }
 
@@ -140,7 +142,7 @@ function ipcReferenceValues(): Map<string, IpcChannel> {
 }
 
 function literalChannelViolations(): string[] {
-  const paths = [...sourceFiles(MAIN_ROOT), PRELOAD_PATH]
+  const paths = [...sourceFiles(MAIN_ROOT), ...sourceFiles(PRELOAD_ROOT)]
   const violations: string[] = []
   for (const path of paths) {
     const syntax = sourceFile(path)

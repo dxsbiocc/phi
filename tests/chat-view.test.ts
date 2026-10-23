@@ -78,9 +78,9 @@ function renderChat(
     onOpenLocalPath?: (path: string, kind: 'file' | 'directory') => void
     onOpenWebUrl?: (url: string) => void
     onForkUserMessage?: (messageId: string) => void
-    planReviewEnabled?: boolean
+    planMode?: 'off' | 'review' | 'execute'
     disablePlanReview?: boolean
-    onTogglePlanReview?: () => void
+    onSelectPlanMode?: (mode: 'off' | 'review' | 'execute') => void
     contextUsageTarget?: {
       sessionPath: string | null
       phiSessionId: string | null
@@ -136,9 +136,9 @@ function renderChat(
         onOpenLocalPath: options.onOpenLocalPath,
         onOpenWebUrl: options.onOpenWebUrl,
         onForkUserMessage: options.onForkUserMessage,
-        planReviewEnabled: options.planReviewEnabled,
+        planMode: options.planMode,
         disablePlanReview: options.disablePlanReview,
-        onTogglePlanReview: options.onTogglePlanReview,
+        onSelectPlanMode: options.onSelectPlanMode,
         permissionMode: options.permissionMode ?? 'auto',
         onSelectPermissionMode: () => undefined,
         disableModelControls: options.disableModelControls ?? false,
@@ -1059,12 +1059,12 @@ test('chat view shows delivered files after a later tool call and closing reply'
   assert.ok(markup.indexOf('Figure is ready') < markup.indexOf('预览交付文件 figure.png'))
 })
 
-test('chat composer offers a selected and disabled plan review mode', () => {
-  const selected = renderChat([], { planReviewEnabled: true, onTogglePlanReview: () => undefined })
-  assert.match(selected, /aria-label="先计划并等待评审"/)
-  assert.match(selected, /aria-pressed="true"/)
-  const disabled = renderChat([], { disablePlanReview: true, onTogglePlanReview: () => undefined })
-  const button = disabled.match(/<button[^>]*aria-label="先计划并等待评审"[^>]*>/)?.[0]
+test('chat composer offers a selected and disabled plan mode menu', () => {
+  const selected = renderChat([], { planMode: 'execute', onSelectPlanMode: () => undefined })
+  assert.match(selected, /aria-label="计划模式: 规划并执行"/)
+  assert.match(selected, />规划并执行</)
+  const disabled = renderChat([], { disablePlanReview: true, onSelectPlanMode: () => undefined })
+  const button = disabled.match(/<button[^>]*aria-label="计划模式: 关闭"[^>]*>/)?.[0]
   assert.ok(button)
   assert.match(button, /disabled/)
 })

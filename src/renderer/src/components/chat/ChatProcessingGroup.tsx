@@ -11,7 +11,7 @@ import { WorkspaceChangesCard } from '../../features/chat/components/WorkspaceCh
 import { MetaBallsLoader } from '../../features/chat/components/MetaBallsLoader'
 import { PresentedFilesCard } from '../../features/chat/components/PresentedFilesCard'
 import { UiBlocksCard } from '../../features/chat/components/UiBlocks/UiBlocksCard'
-import { PlanReviewCard } from '../../features/chat/components/PlanReviewCard'
+import { PlanReviewCard } from '../../features/plan/components/PlanReviewCard'
 import { PhiIcons } from '../../icons'
 import {
   groupProcessingItems,

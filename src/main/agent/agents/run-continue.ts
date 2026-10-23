@@ -1,5 +1,6 @@
 import type { AgentRunEndState, AgentRunFinishedEvent } from '../../../shared/agentRunNotice'
 import type { WrapperRunFinishedEvent } from '../../../shared/wrapperRunNotice'
+import type { PlanRunFinishedEvent, PlanRunState } from '../../../shared/planRunTypes'
 import {
   MAX_AUTOMATIC_CONTINUATIONS,
   wrapperRunContinuationPrompt
@@ -13,7 +14,8 @@ import {
  * background wrapper runs, so the two count against one wake-up cap.
  */
 
-export type ContinuationEvent = WrapperRunFinishedEvent | AgentRunFinishedEvent
+export type ContinuationEvent =
+  WrapperRunFinishedEvent | AgentRunFinishedEvent | PlanRunFinishedEvent
 
 export type AgentContinueDecision =
   { continue: true } | { continue: false; reason: 'cancelled' | 'limit' }
@@ -29,6 +31,32 @@ export function shouldContinueAfterAgentRun(input: {
     return { continue: false, reason: 'limit' }
   }
   return { continue: true }
+}
+
+export function shouldContinueAfterPlanRun(automaticCount: number): AgentContinueDecision {
+  return automaticCount >= MAX_AUTOMATIC_CONTINUATIONS
+    ? { continue: false, reason: 'limit' }
+    : { continue: true }
+}
+
+export function createPlanRunContinuation(deps: {
+  automaticCount(phiSessionId: string): number
+  wakeConversation(phiSessionId: string, event: PlanRunFinishedEvent): void
+  onLimit(phiSessionId: string, runId: string): void
+}): (phiSessionId: string, event: PlanRunFinishedEvent) => void {
+  const receipts = new Set<string>()
+  return (phiSessionId, event) => {
+    const receipt = `${phiSessionId}\0${event.runId}`
+    if (receipts.has(receipt)) return
+    receipts.add(receipt)
+    while (receipts.size > 256) receipts.delete(receipts.values().next().value as string)
+    const decision = shouldContinueAfterPlanRun(deps.automaticCount(phiSessionId))
+    if (!decision.continue) {
+      deps.onLimit(phiSessionId, event.runId)
+      return
+    }
+    deps.wakeConversation(phiSessionId, event)
+  }
 }
 
 const MAX_REPORT_LENGTH = 20000
@@ -77,6 +105,41 @@ export function agentRunContinuationPrompt(events: readonly AgentRunFinishedEven
   ].join('\n')
 }
 
+const MAX_PLAN_CONTINUATION_LENGTH = 20000
+
+function describePlanRun(state: PlanRunState): string[] {
+  return [
+    `Goal: ${state.spec.goal}`,
+    ...state.spec.steps.map((step) => {
+      const result = state.steps[step.id]
+      const summary = result?.report?.text ?? result?.error
+      return `- ${step.id} · ${step.title} · ${result?.status ?? 'unknown'}${
+        summary ? `\n  ${summary.replace(/\s+/g, ' ').trim()}` : ''
+      }`
+    })
+  ]
+}
+
+export function planRunContinuationPrompt(events: readonly PlanRunFinishedEvent[]): string {
+  const header = [
+    '<phi_plan_run_finished>',
+    'This message is from Phi, not from the user. Approved plan execution has finished:'
+  ].join('\n')
+  const details = events.flatMap((event) => describePlanRun(event.state)).join('\n')
+  const closing = [
+    'Verify the reported results and any claimed files, then summarize the outcome for the user.',
+    'Call out failed or skipped steps clearly. Do not silently rerun the plan.',
+    'Reply in the language the user has been using.',
+    '</phi_plan_run_finished>'
+  ].join('\n')
+  const text = `${header}\n${details}\n${closing}`
+  if (text.length <= MAX_PLAN_CONTINUATION_LENGTH) return text
+  const marker = '\n… (plan summary truncated)\n'
+  const detailLimit =
+    MAX_PLAN_CONTINUATION_LENGTH - header.length - closing.length - marker.length - 1
+  return `${header}\n${details.slice(0, Math.max(0, detailLimit))}${marker}${closing}`
+}
+
 /** The one message a wake-up sends, whatever mix of background runs ended. */
 export function continuationPrompt(events: readonly ContinuationEvent[]): string {
   const wrapperEvents = events.filter(
@@ -85,8 +148,12 @@ export function continuationPrompt(events: readonly ContinuationEvent[]): string
   const agentEvents = events.filter(
     (event): event is AgentRunFinishedEvent => event.type === 'agent_run_finished'
   )
+  const planEvents = events.filter(
+    (event): event is PlanRunFinishedEvent => event.type === 'plan_run_finished'
+  )
   return [
     ...(wrapperEvents.length > 0 ? [wrapperRunContinuationPrompt(wrapperEvents)] : []),
-    ...(agentEvents.length > 0 ? [agentRunContinuationPrompt(agentEvents)] : [])
+    ...(agentEvents.length > 0 ? [agentRunContinuationPrompt(agentEvents)] : []),
+    ...(planEvents.length > 0 ? [planRunContinuationPrompt(planEvents)] : [])
   ].join('\n\n')
 }

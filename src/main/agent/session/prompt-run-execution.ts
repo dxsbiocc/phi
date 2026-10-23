@@ -27,6 +27,7 @@ export interface PromptRunExecutionContext {
   input: {
     images?: Array<{ data: string; mimeType: string }>
     planMode?: boolean
+    planExecute?: boolean
   }
   normalizedText: string
   runSessionKey: string
@@ -209,9 +210,10 @@ async function configurePromptRunSession<TContext extends PromptRunExecutionCont
 ): Promise<void> {
   const { context, deps, signal, session, automaticCandidates } = execution
   await deps.session.applyNextRunConfiguration(session, context.runSessionKey, context.runSnapshot)
-  if (context.input.planMode) {
+  if (context.input.planMode || context.input.planExecute) {
     await getPhiEngine().sessions.enterPlanMode({
-      sessionId: session.runtimeSessionId
+      sessionId: session.runtimeSessionId,
+      ...(context.input.planExecute ? { execute: true } : {})
     })
   }
   if (needsAutomaticPromptImageModel(execution)) {

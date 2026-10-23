@@ -6,6 +6,7 @@ import test from 'node:test'
 import ts from 'typescript'
 
 import { IPC } from '../src/shared/ipcChannels'
+import { createPlanRunApi } from '../src/preload/plan-run-api'
 
 const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
 
@@ -26,6 +27,7 @@ test('preload exposes list, trust and revoke as the only remote agent IPC operat
   const ipcRenderer = new FakeIpcRenderer()
   const load = (specifier: string): unknown => {
     if (specifier === '../shared/ipcChannels') return { IPC }
+    if (specifier === './plan-run-api') return { createPlanRunApi }
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {

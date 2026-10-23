@@ -13,6 +13,8 @@ import {
   skippedMcpNoticeFromEvent
 } from '../../../../../shared/mcpSkippedServers'
 import { isRecord } from '../../../../../shared/guards'
+import { planCopy } from '../../plan/lib/planCopy'
+import { planRunSnapshotFromUnknown } from '../../plan/lib/planRunView'
 
 function createdAtField(createdAt?: string): { createdAt: string } | Record<string, never> {
   return typeof createdAt === 'string' ? { createdAt } : {}
@@ -92,10 +94,26 @@ export function chatItemFromPhiTimelineEvent(event: {
   toProviderId?: unknown
   toModelId?: unknown
   toModelName?: unknown
+  state?: unknown
 }): ChatItem | null {
   const approval = approvalItemFromEvent(event)
   if (approval) return approval
   const id = event.eventId ?? `${event.type ?? 'phi'}-${event.runId ?? event.approvalId ?? 'event'}`
+  if (event.type === 'plan_run_updated') return null
+  if (event.type === 'plan_run_finished') {
+    const run = planRunSnapshotFromUnknown(event.state)
+    if (!run || (run.status !== 'completed' && run.status !== 'stopped')) return null
+    return {
+      id,
+      role: 'warning',
+      get content() {
+        return run.status === 'completed'
+          ? planCopy.planRunCompleted(run.goal)
+          : planCopy.planRunStopped(run.goal)
+      },
+      ...createdAtField(event.createdAt)
+    }
+  }
   if (event.type === 'run_interrupted') {
     return {
       id,

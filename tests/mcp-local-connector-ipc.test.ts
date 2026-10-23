@@ -8,6 +8,7 @@ import ts from 'typescript'
 import { createInProcessEngine } from '../src/main/agent/engine/in-process-engine'
 import type { OmpBridge } from '../src/main/agent/engine/omp-bridge'
 import { IPC } from '../src/shared/ipcChannels'
+import { createPlanRunApi } from '../src/preload/plan-run-api'
 
 type LocalRequest = {
   name: string
@@ -219,6 +220,7 @@ test('preload exposes typed local connector methods without changing argv shape'
   new Function('require', 'exports', 'process', 'window', 'console', compiled)(
     (specifier: string) => {
       if (specifier === '../shared/ipcChannels') return { IPC }
+      if (specifier === './plan-run-api') return { createPlanRunApi }
       assert.equal(specifier, 'electron')
       return {
         contextBridge: {

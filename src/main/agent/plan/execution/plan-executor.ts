@@ -244,10 +244,17 @@ class PlanExecutorImplementation implements PlanExecutor {
     })
     this.runtime.states.set(id, state)
     this.runtime.active.set(id, new Map())
-    await this.enqueue(id, async () => {
-      await this.publish(undefined, state)
-      await this.scheduleRun(id)
-    })
+    try {
+      await this.enqueue(id, async () => {
+        await this.publish(undefined, state)
+        await this.scheduleRun(id)
+      })
+    } catch (error) {
+      this.runtime.states.delete(id)
+      this.runtime.active.delete(id)
+      this.runtime.queues.delete(id)
+      throw error
+    }
     return requireState(this.runtime, id)
   }
 

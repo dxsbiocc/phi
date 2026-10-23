@@ -100,11 +100,11 @@ test('home dashboard prioritizes resumable work and groups resource-owned icons'
   assert.match(markup, /描述你想要构建的内容/)
   assert.match(markup, /data-phi-composer-editor="codemirror"/)
   assert.match(markup, /aria-label="添加文件和资源引用"/)
-  assert.match(markup, /aria-label="先计划并等待评审"/)
+  assert.match(markup, /aria-label="计划模式: 关闭"/)
   assert.ok(
     markup.indexOf('aria-label="添加文件和资源引用"') <
       markup.indexOf('aria-label="选择权限模式') &&
-      markup.indexOf('aria-label="选择权限模式') < markup.indexOf('aria-label="先计划并等待评审"')
+      markup.indexOf('aria-label="选择权限模式') < markup.indexOf('aria-label="计划模式: 关闭"')
   )
   assert.ok(markup.indexOf('data-phi-home-project') < markup.indexOf('data-phi-composer-editor'))
   assert.ok(markup.indexOf('data-phi-home-prompt') < markup.indexOf('过去一年的活跃度'))

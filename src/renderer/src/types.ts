@@ -85,6 +85,7 @@ import type {
   ManualCompactionTarget
 } from '../../shared/contextUsageTypes'
 import type { WorkspaceFileOperationsRendererApi } from '../../shared/workspaceFileOperations'
+import type { PlanRunRendererApi } from '../../shared/planRunTypes'
 import type {
   RemoteWorkspaceFileRequest,
   RemoteWorkspacePathProbeRequest,
@@ -112,9 +113,9 @@ export type {
   OpenSshHost
 } from './features/wrapper/lib/remoteConnectionTypes'
 import type { AgentExecutionItem } from './lib/agentExecutionTypes'
-import type { PlanReviewItem, PresentedFilesItem } from './features/chat/lib/planReviewTypes'
+import type { PlanReviewItem, PresentedFilesItem } from './features/plan/lib/planReviewTypes'
 import type { UiBlocksItem } from './features/chat/lib/uiBlocks'
-export type { PlanReviewItem, PresentedFilesItem } from './features/chat/lib/planReviewTypes'
+export type { PlanReviewItem, PresentedFilesItem } from './features/plan/lib/planReviewTypes'
 export type { UiBlocksItem } from './features/chat/lib/uiBlocks'
 import type { AuthInteractionEvent } from './lib/authTypes'
 import type { Project } from './lib/projectTypes'
@@ -715,7 +716,8 @@ export interface RendererApi
     ManagedEnvironmentRendererApi,
     McpRendererApi,
     RemoteProjectUploadRendererApi,
-    WorkspaceFileOperationsRendererApi {
+    WorkspaceFileOperationsRendererApi,
+    PlanRunRendererApi {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
   readyWindow: (background: string) => Promise<void>

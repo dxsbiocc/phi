@@ -15,11 +15,13 @@ export type {
   PhiExtensionEnvironmentBinding,
   PhiExtensionFallbackReadiness,
   PhiExtensionHost,
+  PhiPlanStepsToolResult,
   PhiExtensionToolApprovalRequest
 } from './host'
 export { createEnvironmentBindingExtension } from './extensions/environment-binding'
 export { createNextActionInstructionExtension } from './extensions/next-action'
 export { createPlanReviewToolGuardExtension } from './extensions/plan-review'
+export { createPlanStepsExtension } from './extensions/plan-steps'
 export { createProjectToolBoundaryExtension } from './extensions/project-boundary'
 export { createRemoteUrlGuardExtension } from './extensions/remote-url-guard'
 export { createSpecialistFallbackExtension } from './extensions/specialist-fallback'

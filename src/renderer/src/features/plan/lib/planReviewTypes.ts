@@ -1,4 +1,5 @@
 import type { PresentedFile } from '../../../../../shared/presentedFileTypes'
+import type { PlanSpec } from '../../../../../shared/planRunTypes'
 
 export interface PresentedFilesItem {
   id: string
@@ -17,6 +18,7 @@ export interface PlanReviewItem {
   title: string
   content: string
   planFilePath: string
+  steps?: PlanSpec
   status: 'pending' | 'approved' | 'revise' | 'cancelled'
   note?: string
 }

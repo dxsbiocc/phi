@@ -6,6 +6,7 @@ import test from 'node:test'
 import ts from 'typescript'
 
 import { IPC } from '../src/shared/ipcChannels'
+import { createPlanRunApi } from '../src/preload/plan-run-api'
 
 const CHANNELS = Object.values(IPC.sources)
 const CHANNEL_REFERENCES = new Map(
@@ -152,6 +153,7 @@ test('preload exposes the six typed GitHub source methods with unchanged payload
   new Function('require', 'exports', 'process', 'window', 'console', compiled)(
     (specifier: string) => {
       if (specifier === '../shared/ipcChannels') return { IPC }
+      if (specifier === './plan-run-api') return { createPlanRunApi }
       assert.equal(specifier, 'electron')
       return {
         contextBridge: {

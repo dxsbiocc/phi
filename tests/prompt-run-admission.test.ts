@@ -120,6 +120,20 @@ test('plan mode rejects a remote project or a remote anchor path', () => {
       ),
     /远程项目暂不支持计划评审/
   )
+  assert.throws(
+    () =>
+      createPromptRunAdmission(createDeps({ project: remoteProject }).deps).resolveTarget(
+        input({ planMode: true, planExecute: true })
+      ),
+    /远程项目暂不支持计划评审/
+  )
+  assert.throws(
+    () =>
+      createPromptRunAdmission(createDeps({ remoteAnchor: true }).deps).resolveTarget(
+        input({ planExecute: true })
+      ),
+    /远程项目暂不支持计划评审/
+  )
 })
 
 test('admitPromptRun binds the Phi identity and rejects recovery, compaction, or an active run', () => {

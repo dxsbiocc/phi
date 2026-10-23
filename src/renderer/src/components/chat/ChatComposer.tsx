@@ -1,7 +1,6 @@
-import { chatCopy } from '../../features/chat/lib/chatCopy'
 import { useUiLanguage } from '../../lib/i18n'
 import { inlineReferenceInsertion } from '../../lib/composerReferences'
-import { Box, Button, IconButton, Paper } from '@mui/material'
+import { Box, IconButton, Paper } from '@mui/material'
 import {
   useCallback,
   useEffect,
@@ -15,6 +14,8 @@ import {
   type RefObject
 } from 'react'
 import { GoPaperAirplane } from 'react-icons/go'
+import { PlanModeControl } from '../../features/plan/components/PlanModeControl'
+import type { PlanMode } from '../../features/plan/hooks/usePlanModeToggle'
 import type { ChatResourceMention } from '../../lib/chatResourceMentions'
 import type {
   ModelOption,
@@ -212,8 +213,8 @@ export type ChatComposerProps = {
   onInsertReference?: (reference: string) => void
   onRefreshPromptAgents?: () => Promise<void>
   onOpenAddMenu?: () => void
-  planReviewEnabled?: boolean
-  onTogglePlanReview?: () => void
+  planMode?: PlanMode
+  onSelectPlanMode?: (mode: PlanMode) => void
   disablePlanReview?: boolean
   sendLabel: string
   stopLabel?: string
@@ -265,8 +266,8 @@ export function ChatComposer({
   onInsertReference,
   onRefreshPromptAgents,
   onOpenAddMenu,
-  planReviewEnabled = false,
-  onTogglePlanReview,
+  planMode = 'off',
+  onSelectPlanMode = () => undefined,
   disablePlanReview = false,
   sendLabel,
   stopLabel = '',
@@ -377,19 +378,12 @@ export function ChatComposer({
               onSelectPermissionMode={onSelectPermissionMode}
               compact={compact}
             />
-            <Button
-              type="button"
-              size="small"
-              variant={planReviewEnabled ? 'contained' : 'text'}
-              aria-label={chatCopy.planFirstAndWaitForReview}
-              aria-pressed={planReviewEnabled}
-              title={chatCopy.exploreAndSubmitAPlanThenWaitForYourApproval}
+            <PlanModeControl
+              mode={planMode}
               disabled={disablePlanReview}
-              onClick={onTogglePlanReview}
-              sx={{ minWidth: 0, px: 1, flexShrink: 0, whiteSpace: 'nowrap' }}
-            >
-              {chatCopy.planFirst}
-            </Button>
+              compact={compact}
+              onSelectMode={onSelectPlanMode}
+            />
           </Box>
           <Box
             sx={{

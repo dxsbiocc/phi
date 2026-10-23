@@ -6,6 +6,7 @@ import test from 'node:test'
 import ts from 'typescript'
 
 import { IPC } from '../src/shared/ipcChannels'
+import { createPlanRunApi } from '../src/preload/plan-run-api'
 
 test('preload exposes trust and revoke operations for remote project Skills', async () => {
   const compiled = ts.transpileModule(
@@ -23,6 +24,7 @@ test('preload exposes trust and revoke operations for remote project Skills', as
   const ipcRenderer = new FakeIpcRenderer()
   const load = (specifier: string): unknown => {
     if (specifier === '../shared/ipcChannels') return { IPC }
+    if (specifier === './plan-run-api') return { createPlanRunApi }
     assert.equal(specifier, 'electron')
     return {
       contextBridge: {
