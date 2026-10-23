@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
   stat,
@@ -25,9 +26,13 @@ import type {
   RemoteSshSession
 } from '../src/main/agent/wrappers/remote-ssh-session'
 
-function execWithInput(command: string, input: string): Promise<RemoteExecResult> {
+function execWithInput(
+  command: string,
+  input: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<RemoteExecResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('/bin/sh', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn('/bin/sh', ['-c', command], { env, stdio: ['pipe', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')))
@@ -39,11 +44,14 @@ function execWithInput(command: string, input: string): Promise<RemoteExecResult
   })
 }
 
-function session(onCommand: () => void): Pick<RemoteSshSession, 'execWithInput'> {
+function session(
+  onCommand: () => void,
+  env?: NodeJS.ProcessEnv
+): Pick<RemoteSshSession, 'execWithInput'> {
   return {
     execWithInput(command, input) {
       onCommand()
-      return execWithInput(command, input)
+      return execWithInput(command, input, env)
     }
   }
 }
@@ -256,6 +264,83 @@ test('unsafe marker directory component is refused before publication', async ()
     assert.deepEqual(execution.result.markers, [
       { item: 'fixture', status: 'repair', reason: 'unsafe_directory' }
     ])
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true })
+  }
+})
+
+test('startup refuses a symlinked shared native directory before publishing a generation', async () => {
+  const fixture = await markerFixture()
+  try {
+    const natives = join(fixture.root, 'omp-natives')
+    const outside = join(fixture.root, 'outside-natives')
+    await mkdir(outside, { mode: 0o700 })
+    await symlink(outside, natives)
+    const base = markerTransaction(fixture)
+
+    await assert.rejects(
+      runRpcStartupTransaction(
+        session(() => undefined),
+        {
+          ...base,
+          directories: [{ path: natives }, ...base.directories]
+        }
+      ),
+      /PHI_STARTUP:SYMBOLIC_DIRECTORY/u
+    )
+    assert.deepEqual(await readdir(outside), [])
+    await assert.rejects(stat(join(fixture.root, 'rpc-sessions', 'generation')), {
+      code: 'ENOENT'
+    })
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true })
+  }
+})
+
+test('startup refuses a shared native directory reported as owned by another user', async () => {
+  const fixture = await markerFixture()
+  try {
+    const natives = join(fixture.root, 'omp-natives')
+    await mkdir(natives, { mode: 0o700 })
+    const shimDirectory = join(fixture.root, 'stat-shim')
+    await mkdir(shimDirectory, { mode: 0o700 })
+    await writeFile(
+      join(shimDirectory, 'stat'),
+      `#!/bin/sh
+last=
+owner=
+for arg do
+  last=$arg
+  [ "$arg" != %u ] || owner=1
+done
+if [ "$owner" = 1 ] && [ "$last" = "$PHI_FOREIGN_PATH" ]; then
+  printf '4294967294\\n'
+  exit 0
+fi
+exec /usr/bin/stat "$@"
+`,
+      { mode: 0o700 }
+    )
+    const base = markerTransaction(fixture)
+    const env = {
+      ...process.env,
+      PATH: `${shimDirectory}:${process.env.PATH ?? ''}`,
+      PHI_FOREIGN_PATH: natives
+    }
+
+    await assert.rejects(
+      runRpcStartupTransaction(
+        session(() => undefined, env),
+        {
+          ...base,
+          directories: [{ path: natives }, ...base.directories]
+        }
+      ),
+      /PHI_STARTUP:DIRECTORY_OWNER/u
+    )
+    await assert.rejects(stat(join(fixture.root, 'rpc-sessions', 'generation')), {
+      code: 'ENOENT'
+    })
   } finally {
     await rm(fixture.root, { recursive: true, force: true })
   }

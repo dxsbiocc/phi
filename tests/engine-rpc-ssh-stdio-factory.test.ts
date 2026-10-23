@@ -94,6 +94,7 @@ test('factory consumes the existing stdio channel, quotes paths and creates a pr
   assert.equal(config.nonce, generation)
   assert.equal((await stat(configPath)).mode & 0o777, 0o600)
   for (const path of [
+    join(fixture.runtimeRoot, 'omp-natives'),
     sessionBase,
     privateRoot,
     join(privateRoot, 'home'),
@@ -103,6 +104,12 @@ test('factory consumes the existing stdio channel, quotes paths and creates a pr
   assert.deepEqual(await readdir(join(privateRoot, 'home/agent')), [])
   const command = fixture.session.commands.find((value) => value.includes(' env -i PATH='))!
   assert.ok(command.includes(`cd -- ${shellQuote(join(privateRoot, 'home'))}`))
+  assert.ok(command.includes(`HOME=${shellQuote(join(privateRoot, 'home'))}`))
+  assert.ok(
+    command.includes(`PI_NATIVES_DIR=${shellQuote(join(fixture.runtimeRoot, 'omp-natives'))}`)
+  )
+  assert.doesNotMatch(command, /\bXDG_(?:DATA|STATE|CACHE)_HOME=/u)
+  assert.doesNotMatch(command, /\b(?:TMPDIR|TEMP|TMP)=/u)
   assert.ok(command.includes(`'--cwd' ${shellQuote(fixture.cwd)}`))
   assert.ok(command.includes(`PHI_RPC_CONFIG=${shellQuote(configPath)}`))
   assert.ok(command.includes("'--no-extensions' '--trusted-extension'"))
@@ -268,7 +275,7 @@ test('enabled project plugin feature tools are refused after directory resolutio
   )
 })
 
-test('multiple generations have separate HOME and config and closing one preserves the other and master', async (t) => {
+test('multiple generations share native addons while closing each preserves the shared directory and master', async (t) => {
   const fixture = await fixtureWithFactory()
   t.after(fixture.cleanup)
   const first = await fixture.factory.open(fixture.params, new AbortController().signal)
@@ -277,12 +284,20 @@ test('multiple generations have separate HOME and config and closing one preserv
     new AbortController().signal
   )
   const base = join(fixture.runtimeRoot, 'rpc-sessions')
+  const natives = join(fixture.runtimeRoot, 'omp-natives')
   assert.equal((await readdir(base)).length, 2)
+  assert.equal((await stat(natives)).mode & 0o777, 0o700)
+  const launches = fixture.session.commands.filter((command) => command.includes(' env -i PATH='))
+  assert.equal(launches.length, 2)
+  for (const command of launches)
+    assert.ok(command.includes(`PI_NATIVES_DIR=${shellQuote(natives)}`))
   await first.close()
   assert.equal((await readdir(base)).length, 1)
+  assert.equal((await stat(natives)).mode & 0o777, 0o700)
   assert.equal(fixture.session.closed, false)
   await second.close()
   assert.deepEqual(await readdir(base), [])
+  assert.equal((await stat(natives)).mode & 0o777, 0o700)
 })
 
 test('foreground child opt-in writes explicit backend and per-compiled-name policy from a snapshotted preparation result', async (t) => {

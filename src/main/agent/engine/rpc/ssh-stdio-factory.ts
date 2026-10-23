@@ -388,6 +388,7 @@ export async function prepareSshRpcSessionTransport(
       const statePath = posix.join(sessionDirectory, 'state')
       const cachePath = posix.join(sessionDirectory, 'cache')
       const tempPath = posix.join(sessionDirectory, 'tmp')
+      const nativesPath = posix.join(root, 'omp-natives')
       const configPath = posix.join(sessionDirectory, 'config.json')
       const startupPolicyPath = posix.join(sessionDirectory, 'startup-policy.json')
       const prefix = privateRemotePrefix(root)
@@ -488,6 +489,7 @@ export async function prepareSshRpcSessionTransport(
         if (storage)
           for (const path of storageDirectories(storage.scope, storage.paths))
             startup.addDirectory({ path })
+        startup.addDirectory({ path: nativesPath })
         startup.addDirectory({ path: sessionBase })
         startup.addDirectory({ path: sessionDirectory, ifAbsent: true })
         startup.addDirectory({ path: homePath })
@@ -722,7 +724,7 @@ export async function prepareSshRpcSessionTransport(
             })
           : ''
         const runEnv = storage ? ` ${RUN_NONCE_ENV}=${runNonce}` : ''
-        const command = `umask 077 && cd -- ${q(homePath)} && ${runGuard || 'exec '}env -i PATH=/usr/local/bin:/usr/bin:/bin PI_REQ_DEBUG=0${runEnv} HOME=${q(homePath)} PI_CODING_AGENT_DIR=${q(agentDir)} PHI_RPC_CONFIG=${q(configPath)}${options.prepareRuntime ? ' PHI_RPC_RUNTIME=1' : ''}${persistentEnv} ${q(runtime.executablePath)} ${args.map(q).join(' ')}`
+        const command = `umask 077 && cd -- ${q(homePath)} && ${runGuard || 'exec '}env -i PATH=/usr/local/bin:/usr/bin:/bin PI_REQ_DEBUG=0${runEnv} HOME=${q(homePath)} PI_CODING_AGENT_DIR=${q(agentDir)} PI_NATIVES_DIR=${q(nativesPath)} PHI_RPC_CONFIG=${q(configPath)}${options.prepareRuntime ? ' PHI_RPC_RUNTIME=1' : ''}${persistentEnv} ${q(runtime.executablePath)} ${args.map(q).join(' ')}`
         const opening = step('rpc_stdio_open', () => options.session.openStdio!(command))
         // An acquisition API cannot be force-cancelled. Settle now and separately
         // close a channel that arrives after its generation has already been disposed.
