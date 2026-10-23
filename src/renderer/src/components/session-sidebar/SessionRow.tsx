@@ -13,6 +13,7 @@ import {
 } from '@mui/material'
 import { alpha, type Theme } from '@mui/material/styles'
 import { GoDownload, GoKebabHorizontal, GoPencil, GoTrash } from 'react-icons/go'
+import { TbSparkles } from 'react-icons/tb'
 import { SessionRenamePanel } from '../../features/session-actions/SessionRenamePanel'
 import {
   sessionBeaconKind,
@@ -187,7 +188,7 @@ type SessionRowProps = {
   indent?: boolean
   nowMs: number
   onSelect: () => void
-  onRename: (name: string) => void
+  onRename: (name: string) => void | Promise<void>
   onDelete: () => void
   onExport?: () => void
   compactHoverPreview?: boolean
@@ -285,6 +286,7 @@ export const SessionRow = memo(function SessionRow({
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
   const [hoverDetailsOpen, setHoverDetailsOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
+  const [generateTitleOnOpen, setGenerateTitleOnOpen] = useState(false)
   const [editingName, setEditingName] = useState('')
   const displaySession = mergedSessionForDisplay({ session, runtimeState })
   const fullTitle = editableSessionTitle(displaySession)
@@ -301,15 +303,16 @@ export const SessionRow = memo(function SessionRow({
     displaySession.status === 'needs_approval' ||
     displaySession.status === 'needs_input'
   const closeMenu = (): void => setMenuAnchor(null)
-  const openRename = (): void => {
+  const openRename = (generateTitle = false): void => {
     closeMenu()
     setEditingName(editableSessionTitle(session))
+    setGenerateTitleOnOpen(generateTitle)
     setRenameOpen(true)
   }
-  const commitRename = (): void => {
+  const commitRename = async (): Promise<void> => {
     const nextName = editingName.trim()
     if (!nextName) return
-    if (nextName !== editableSessionTitle(session)) onRename(nextName)
+    if (nextName !== editableSessionTitle(session)) await onRename(nextName)
     setRenameOpen(false)
   }
 
@@ -540,9 +543,22 @@ export const SessionRow = memo(function SessionRow({
           compactHoverPreview ? { zIndex: (theme: Theme) => theme.zIndex.tooltip + 1 } : undefined
         }
       >
-        <MenuItem sx={sessionMenuItemSx} onClick={openRename}>
+        <MenuItem sx={sessionMenuItemSx} onClick={() => openRename()}>
           <GoPencil aria-hidden size={18} />
           {navigationCopy.rename}
+        </MenuItem>
+        <MenuItem
+          sx={sessionMenuItemSx}
+          disabled={exportDisabled}
+          title={
+            exportDisabled
+              ? navigationCopy.generateATitleAfterTheConversationFinishesRunning
+              : undefined
+          }
+          onClick={() => openRename(true)}
+        >
+          <TbSparkles aria-hidden size={18} />
+          {navigationCopy.generateTitleWithAI}
         </MenuItem>
         {session.phiSessionId && onExport && (
           <MenuItem
@@ -584,6 +600,7 @@ export const SessionRow = memo(function SessionRow({
         onClose={() => setRenameOpen(false)}
         onSave={commitRename}
         onGenerateTitle={() => window.api.generateSessionTitle(session.path)}
+        autoGenerateOnOpen={generateTitleOnOpen}
         generateTitleDisabledReason={
           exportDisabled
             ? navigationCopy.generateATitleAfterTheConversationFinishesRunning

@@ -497,9 +497,7 @@ function AppWorkspaceSidebarImpl({
         onSelectSession={(path) => {
           navigate(() => onSelectSession(path))
         }}
-        onRenameSession={(path, name) => {
-          void onRenameSession(path, name)
-        }}
+        onRenameSession={(path, name) => onRenameSession(path, name)}
         onDeleteSession={(path, confirmed) => {
           void onDeleteSession(path, confirmed)
         }}

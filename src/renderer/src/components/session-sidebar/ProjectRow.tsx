@@ -43,7 +43,7 @@ type ProjectRowProps = {
   activeSessionPath: string | null
   onStartChat: () => void
   onSelectSession: (path: string, projectId: string) => void
-  onRenameSession: (path: string, name: string) => void
+  onRenameSession: (path: string, name: string) => void | Promise<void>
   onDeleteSession: (session: SessionSummary, projectId: string) => void
   onExportSession: (session: SessionSummary) => void
   onDeleteProject: () => void

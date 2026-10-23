@@ -1,6 +1,6 @@
 import { navigationCopy } from '../../lib/navigationCopy'
 import { useUiLanguage } from '../../lib/i18n'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Box,
   Button,
@@ -25,9 +25,10 @@ type SessionRenamePanelProps = {
   compactHoverPreview: boolean
   onTitleChange: (title: string) => void
   onClose: () => void
-  onSave: () => void
+  onSave: () => void | Promise<void>
   onGenerateTitle?: () => Promise<string>
   generateTitleDisabledReason?: string
+  autoGenerateOnOpen?: boolean
 }
 
 export function SessionRenamePanel(props: SessionRenamePanelProps): React.JSX.Element {
@@ -43,27 +44,37 @@ function SessionRenameDialog({
   onClose,
   onSave,
   onGenerateTitle,
-  generateTitleDisabledReason
+  generateTitleDisabledReason,
+  autoGenerateOnOpen = false
 }: SessionRenamePanelProps): React.JSX.Element {
   useUiLanguage()
   const [generating, setGenerating] = useState(false)
   const [generationError, setGenerationError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const generationRequestRef = useRef(0)
   const generationPendingRef = useRef(false)
+  const saveRequestRef = useRef(0)
+  const savePendingRef = useRef(false)
+  const autoGenerateRef = useRef(autoGenerateOnOpen)
 
   useEffect(() => {
     return () => {
       generationRequestRef.current += 1
       generationPendingRef.current = false
+      saveRequestRef.current += 1
+      savePendingRef.current = false
     }
   }, [])
 
   const close = (): void => {
     generationRequestRef.current += 1
     generationPendingRef.current = false
+    saveRequestRef.current += 1
+    savePendingRef.current = false
     onClose()
   }
-  const generateTitle = async (): Promise<void> => {
+  const generateTitle = useCallback(async (): Promise<void> => {
     if (!open || !onGenerateTitle || generateTitleDisabledReason || generationPendingRef.current) {
       return
     }
@@ -85,6 +96,31 @@ function SessionRenameDialog({
       if (request === generationRequestRef.current) {
         generationPendingRef.current = false
         setGenerating(false)
+      }
+    }
+  }, [open, onGenerateTitle, generateTitleDisabledReason, onTitleChange])
+
+  useEffect(() => {
+    if (!autoGenerateRef.current) return
+    autoGenerateRef.current = false
+    void generateTitle()
+  }, [generateTitle])
+
+  const save = async (): Promise<void> => {
+    if (!open || generating || saving || savePendingRef.current || !title.trim()) return
+    const request = ++saveRequestRef.current
+    savePendingRef.current = true
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await onSave()
+    } catch (error) {
+      if (request !== saveRequestRef.current) return
+      setSaveError(error instanceof Error ? error.message : navigationCopy.titleSaveFailedTryAgain)
+    } finally {
+      if (request === saveRequestRef.current) {
+        savePendingRef.current = false
+        setSaving(false)
       }
     }
   }
@@ -143,7 +179,7 @@ function SessionRenameDialog({
           label={navigationCopy.conversationTitle}
           aria-label={navigationCopy.newConversationTitle}
           value={title}
-          disabled={generating}
+          disabled={generating || saving}
           sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1.5 } }}
           onChange={(event) => onTitleChange(event.target.value)}
           onFocus={(event) => event.target.select()}
@@ -152,10 +188,11 @@ function SessionRenameDialog({
               event.key === 'Enter' &&
               !event.nativeEvent.isComposing &&
               !generating &&
+              !saving &&
               title.trim()
             ) {
               event.preventDefault()
-              onSave()
+              void save()
             }
           }}
         />
@@ -165,7 +202,7 @@ function SessionRenameDialog({
               <span>
                 <Button
                   size="small"
-                  disabled={generating || Boolean(generateTitleDisabledReason)}
+                  disabled={generating || saving || Boolean(generateTitleDisabledReason)}
                   onClick={() => void generateTitle()}
                   startIcon={
                     generating ? (
@@ -191,6 +228,11 @@ function SessionRenameDialog({
             )}
           </Box>
         )}
+        {saveError && (
+          <Typography role="alert" color="error" sx={{ mt: 0.5, fontSize: '0.8125rem' }}>
+            {saveError}
+          </Typography>
+        )}
       </DialogContent>
       <DialogActions sx={{ px: 3, pt: 1, pb: 2.5, gap: 1 }}>
         <Button variant="outlined" onClick={close} sx={{ minWidth: 76 }}>
@@ -198,8 +240,8 @@ function SessionRenameDialog({
         </Button>
         <Button
           variant="contained"
-          disabled={generating || !title.trim()}
-          onClick={onSave}
+          disabled={generating || saving || !title.trim()}
+          onClick={() => void save()}
           sx={{ minWidth: 76 }}
         >
           {navigationCopy.save}

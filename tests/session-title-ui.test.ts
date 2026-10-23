@@ -73,6 +73,7 @@ function panel(overrides: Partial<PanelProps> = {}): {
     exports: {}
   }
   const hookBindings = {
+    useCallback: (callback: unknown): unknown => callback,
     useState: (initial: unknown): [unknown, (value: unknown) => void] => {
       const index = cursor++
       if (!(index in slots)) slots[index] = initial
@@ -159,6 +160,60 @@ test('AI title suggestions populate the editable field and require an explicit s
   assert.equal(view.saved(), 1)
 })
 
+test('a direct AI title action starts generation when the editor opens', async () => {
+  const request = deferred<string>()
+  let calls = 0
+  const view = panel({
+    onGenerateTitle: () => {
+      calls++
+      return request.promise
+    },
+    autoGenerateOnOpen: true
+  } as Partial<PanelProps> & { autoGenerateOnOpen: boolean })
+  view.render()
+  assert.equal(calls, 1)
+  request.resolve('新的分析标题')
+  await request.promise
+  await Promise.resolve()
+  assert.equal(view.title(), '新的分析标题')
+  assert.equal(view.saved(), 0)
+})
+
+test('a failed rename stays editable and reports why the title was not saved', async () => {
+  const view = panel({
+    onSave: async () => {
+      throw new Error('无法保存标题')
+    }
+  })
+  view.render()
+  const save = view.find('Button', '保存').props.onClick as () => Promise<void>
+  await save()
+  assert.equal(view.find('Typography').props.children, '无法保存标题')
+  assert.equal(view.find('TextField').props.disabled, false)
+  assert.equal(view.saved(), 0)
+})
+
+test('repeated save clicks share one pending rename', async () => {
+  const request = deferred<void>()
+  let calls = 0
+  const view = panel({
+    onSave: () => {
+      calls++
+      return request.promise
+    }
+  })
+  view.render()
+  const save = view.find('Button', '保存').props.onClick as () => void
+  save()
+  save()
+  assert.equal(calls, 1)
+  assert.equal(view.find('TextField').props.disabled, true)
+  request.resolve()
+  await request.promise
+  await Promise.resolve()
+  assert.equal(view.find('TextField').props.disabled, false)
+})
+
 test('closing and reopening discards late suggestions from the previous dialog', async () => {
   const first = deferred<string>()
   const second = deferred<string>()
@@ -242,9 +297,13 @@ test('repeated clicks share the pending request and empty results preserve the t
 
 test('session rows bind suggestions to their own path while preserving manual save', () => {
   const source = readFileSync('src/renderer/src/components/session-sidebar/SessionRow.tsx', 'utf8')
+  const sidebar = readFileSync('src/renderer/src/AppWorkspaceSidebar.tsx', 'utf8')
   assert.match(source, /window\.api\.generateSessionTitle\(session\.path\)/)
   assert.match(source, /<SessionRenamePanel\s+key=\{session\.path\}/)
   assert.match(source, /onSave=\{commitRename\}/)
+  assert.match(source, /onClick=\{\(\) => openRename\(true\)\}/)
+  assert.match(source, /autoGenerateOnOpen=\{generateTitleOnOpen\}/)
+  assert.match(sidebar, /onRenameSession=\{\(path, name\) => onRenameSession\(path, name\)\}/)
   assert.match(source, /generateTitleDisabledReason=\{[\s\S]*exportDisabled/)
 })
 
