@@ -308,6 +308,7 @@ import {
   type ContinuationEvent
 } from './agent/agents/run-continue'
 import { agentRunHostHandlers } from './agent/agents/run-host'
+import { customMcpAuthUrl } from './agent/mcp/custom-auth-url'
 import { agentRunCompletions } from './agent/plan/execution/agent-run-completions'
 import { connectRemoteSshSession } from './agent/wrappers/remote-ssh-session'
 import { readWrapperRun } from './agent/wrappers/store'
@@ -1657,18 +1658,6 @@ getPhiEngine().host.register('mcp.openAuthUrl', async (params) => {
   await shell.openExternal(url.toString())
 })
 const pendingCustomMcpAuthorizations = new Map<string, PendingCustomMcpAuthorization>()
-
-function customMcpAuthUrl(value: unknown): URL {
-  try {
-    if (typeof value !== 'string') throw new Error('Invalid URL')
-    const url = new URL(value)
-    if (url.protocol !== 'https:' || url.username || url.password || url.hash)
-      throw new Error('Invalid URL')
-    return url
-  } catch {
-    throw new Error('Invalid Connector authorization URL')
-  }
-}
 
 function customMcpConfigDigest(connector: ReturnType<typeof readCustomRemoteMcpConnector>): string {
   return createHash('sha256').update(JSON.stringify(connector)).digest('hex')
