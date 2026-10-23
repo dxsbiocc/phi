@@ -6,6 +6,8 @@ import {
   type PlanReviewSession
 } from '../src/main/agent/plan/plan-review-mode'
 import { planModeToolDecision } from '../src/main/agent/engine/phi-extension'
+import { planReviewContent } from '../src/main/agent/plan/plan-review-content'
+import type { PlanSpec } from '../src/shared/planRunTypes'
 
 function fakeSession(): PlanReviewSession & {
   activeTools: string[]
@@ -133,4 +135,20 @@ test('plan tool guard blocks workspace mutations and hidden device calls', () =>
     assert.equal(planModeToolDecision(true, name, input).allowed, false)
   }
   assert.equal(planModeToolDecision(false, 'bash', { command: 'npm test' }).allowed, true)
+})
+
+test('structured review content stays within the host payload limit', () => {
+  const spec: PlanSpec = {
+    version: 1,
+    goal: '目标'.repeat(50_000),
+    steps: Array.from({ length: 20 }, (_, index) => ({
+      id: `step-${index}`,
+      title: `Step ${index}`,
+      instructions: '说明'.repeat(2_000),
+      acceptance: '完成'.repeat(500),
+      dependsOn: [],
+      access: 'read'
+    }))
+  }
+  assert.ok(Buffer.byteLength(planReviewContent(spec), 'utf8') < 64 * 1024)
 })

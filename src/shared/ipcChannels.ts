@@ -178,6 +178,15 @@ export const IPC = {
     updatesAvailable: 'packages:updatesAvailable',
     wrapperDetail: 'packages:wrapperDetail'
   },
+  planRuns: {
+    get: 'planRuns:get',
+    list: 'planRuns:list',
+    pause: 'planRuns:pause',
+    resume: 'planRuns:resume',
+    retryStep: 'planRuns:retryStep',
+    skipStep: 'planRuns:skipStep',
+    stop: 'planRuns:stop'
+  },
   persona: {
     completeOnboarding: 'persona:completeOnboarding',
     getAppName: 'persona:getAppName',

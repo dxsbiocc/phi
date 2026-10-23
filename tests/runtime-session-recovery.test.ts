@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { getOmpBridge } from '../src/main/agent/engine/omp-bridge'
+import { agentRunCompletions } from '../src/main/agent/plan/execution/agent-run-completions'
 import {
   createRuntimeAgentSession,
   createRuntimeResourceLoader,
@@ -162,6 +163,29 @@ test(
       await requestApproval()
       assert.deepEqual(approvalSignals, [false, true])
       await session.dispose()
+    })
+  }
+)
+
+test(
+  'disposing a runtime session abandons pending host-run completions',
+  { skip: !hasBun },
+  async () => {
+    await withFakeWorker(async (dir) => {
+      const { session } = await createRuntimeAgentSession({
+        cwd: dir,
+        sessionManager: createRuntimeSessionManager(dir)
+      })
+      const completion = agentRunCompletions.expect(session.runtimeSessionId, 'plan-step-run')
+
+      await session.dispose()
+
+      assert.deepEqual(await completion, {
+        id: 'plan-step-run',
+        state: 'cancelled',
+        origin: 'host',
+        error: 'Runtime session disposed'
+      })
     })
   }
 )

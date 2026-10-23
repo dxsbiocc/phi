@@ -66,6 +66,20 @@ test('SessionKeyRegistry keeps runtime origins in their uncanonicalized key spac
   assert.equal(keys.originFor('runtime-canonical'), undefined)
 })
 
+test('SessionKeyRegistry resolves the latest live runtime for a Phi session', () => {
+  const keys = createRegistry(() => 0)
+  keys.setPhiSessionId('conversation', 'phi-one')
+  keys.recordOrigin('runtime-old', { sessionKey: 'conversation', cwd: '/workspace' })
+  keys.recordOrigin('runtime-new', { sessionKey: 'conversation', cwd: '/workspace' })
+
+  assert.equal(keys.runtimeSessionIdForPhiSession('phi-one'), 'runtime-new')
+  assert.equal(
+    keys.runtimeSessionIdForPhiSession('phi-one', (runtimeId) => runtimeId === 'runtime-old'),
+    'runtime-old'
+  )
+  assert.equal(keys.runtimeSessionIdForPhiSession('phi-missing'), undefined)
+})
+
 test('SessionLifecycleRegistry creates once and shares the same lifecycle with aliases', () => {
   const aliases = new Map<string, string>([['alias', 'canonical']])
   const lifecycles = new SessionLifecycleRegistry((key) => aliases.get(key) ?? key)

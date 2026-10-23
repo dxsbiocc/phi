@@ -6,12 +6,15 @@ import type {
   PhiExtensionEnvironmentBinding,
   PhiExtensionHost
 } from '../phi-extension'
+import type { PlanStepsToolResult } from '../../plan/plan-review-mode'
 import { requestToolApproval } from './tool-support'
 
 export interface InProcessExtensionHostOptions {
   cwd: string
   nextActionSuggestionsEnabled?: () => Promise<boolean>
   planModeActive?: () => boolean
+  planExecuteModeActive?: () => boolean
+  proposePlanSteps?: (input: unknown) => Promise<PlanStepsToolResult>
   browserTextVault?: BrowserTextVault
   agentRuns?: AgentRunRegistry
   environmentBinding?: () => PhiExtensionEnvironmentBinding | undefined
@@ -25,6 +28,12 @@ export function createInProcessExtensionHost(
   return {
     nextActionSuggestionsEnabled: options.nextActionSuggestionsEnabled ?? (async () => false),
     planModeActive: options.planModeActive ?? (() => false),
+    planExecuteModeActive: options.planExecuteModeActive ?? (() => false),
+    proposePlanSteps:
+      options.proposePlanSteps ??
+      (async () => {
+        throw new Error('Plan execution mode is not active')
+      }),
     requestToolApproval: (request) =>
       requestToolApproval(
         request.sessionId,

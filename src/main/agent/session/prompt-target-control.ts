@@ -13,6 +13,7 @@ export type PromptTargetInput = {
   suppressUserMessageEvent?: boolean
   retryUserMessageId?: string
   planMode?: boolean
+  planExecute?: boolean
 }
 
 export interface PromptTargetControlOptions {
@@ -65,7 +66,8 @@ export function parsePromptTarget(
     ...(typeof record.retryUserMessageId === 'string'
       ? { retryUserMessageId: record.retryUserMessageId }
       : {}),
-    ...(record.planMode === true ? { planMode: true } : {})
+    ...(record.planMode === true ? { planMode: true } : {}),
+    ...(record.planExecute === true ? { planExecute: true } : {})
   }
 }
 

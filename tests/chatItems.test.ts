@@ -14,6 +14,25 @@ import {
 // Existing Chinese timeline assertions select their locale explicitly.
 setUiLanguage('zh-CN')
 
+test('plan run history hides updates and restores one concise finished record', () => {
+  const snapshot = {
+    id: 'plan-1',
+    status: 'stopped',
+    replans: 0,
+    createdAt: '2026-10-23T00:00:00.000Z',
+    updatedAt: '2026-10-23T00:00:05.000Z',
+    goal: 'Ship the renderer loop',
+    steps: []
+  }
+  const items = chatItemsFromSessionMessages([
+    { source: 'phi', type: 'plan_run_updated', eventId: 'update-1', state: snapshot },
+    { source: 'phi', type: 'plan_run_finished', eventId: 'finished-1', state: snapshot }
+  ])
+  assert.equal(items.length, 1)
+  assert.equal(items[0]?.role, 'warning')
+  assert.match(items[0]?.content ?? '', /计划已停止：Ship the renderer loop/)
+})
+
 test('isWrapperToolName recognizes wrapper_<id> execute tool names only', () => {
   assert.equal(isWrapperToolName('wrapper_phi_ngs_fastq_qc'), true)
   assert.equal(isWrapperToolName('bash'), false)

@@ -38,6 +38,7 @@ test('remote model controls wait for a live or not-started attachment', () => {
   assert.equal(remoteModelControlsBlocked(null, null), false)
 })
 import { IPC } from '../src/shared/ipcChannels'
+import { createPlanRunApi } from '../src/preload/plan-run-api'
 
 const base = {
   schema: 1,
@@ -132,6 +133,7 @@ test('recovery preload forwards only explicit target/model/hash operations, with
   new Function('require', 'exports', 'process', 'window', 'console', compiled)(
     (specifier: string) => {
       if (specifier === '../shared/ipcChannels') return { IPC }
+      if (specifier === './plan-run-api') return { createPlanRunApi }
       assert.equal(specifier, 'electron')
       return {
         ipcRenderer,

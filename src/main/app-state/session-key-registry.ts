@@ -63,6 +63,19 @@ export class SessionKeyRegistry {
     return this.runtimeSessionOrigins.get(runtimeSessionId)
   }
 
+  runtimeSessionIdForPhiSession(
+    phiSessionId: string,
+    isLive: (runtimeSessionId: string) => boolean = () => true
+  ): string | undefined {
+    let matching: string | undefined
+    for (const [runtimeSessionId, origin] of this.runtimeSessionOrigins) {
+      if (this.phiSessionIdFor(origin.sessionKey) === phiSessionId && isLive(runtimeSessionId)) {
+        matching = runtimeSessionId
+      }
+    }
+    return matching
+  }
+
   recordOrigin(runtimeSessionId: string, origin: SessionRuntimeOrigin): void {
     this.runtimeSessionOrigins.set(runtimeSessionId, origin)
   }

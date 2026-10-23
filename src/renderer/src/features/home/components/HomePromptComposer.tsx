@@ -7,6 +7,7 @@ import { type ComposerTextEditorHandle } from '../../../components/chat/Composer
 import type { ModelOption, PermissionMode, Project, ThinkingLevel } from '../../../types'
 import { HomeProjectMenu } from './HomeProjectMenu'
 import type { HomeComposerResources } from './HomePrompt'
+import type { PlanMode } from '../../plan/hooks/usePlanModeToggle'
 
 type HomePromptComposerProps = {
   projects: Project[]
@@ -25,9 +26,9 @@ type HomePromptComposerProps = {
   onSelectThinkingLevel: (level: ThinkingLevel) => void
   onNewProject: () => void
   onSubmit: () => void
-  planReviewEnabled: boolean
+  planMode: PlanMode
   disablePlanReview: boolean
-  onTogglePlanReview: () => void
+  onSelectPlanMode: (mode: PlanMode) => void
   composerResources?: HomeComposerResources
 }
 
@@ -60,9 +61,9 @@ export function HomePromptComposer({
   onSelectThinkingLevel,
   onNewProject,
   onSubmit,
-  planReviewEnabled,
+  planMode,
   disablePlanReview,
-  onTogglePlanReview,
+  onSelectPlanMode,
   composerResources
 }: HomePromptComposerProps): React.JSX.Element {
   useUiLanguage()
@@ -105,8 +106,8 @@ export function HomePromptComposer({
           onPickFiles={composerResources?.onPickFiles}
           onOpenAddMenu={composerResources?.onOpenAddMenu}
           onRefreshPromptAgents={composerResources?.onRefreshPromptAgents}
-          planReviewEnabled={planReviewEnabled}
-          onTogglePlanReview={onTogglePlanReview}
+          planMode={planMode}
+          onSelectPlanMode={onSelectPlanMode}
           disablePlanReview={disablePlanReview || disabled}
           onChange={(value) => onDraftChange(value)}
           onKeyDown={submitPromptOnEnter}

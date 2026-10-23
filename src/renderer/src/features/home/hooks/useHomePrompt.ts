@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import type { PermissionMode, Project } from '../../../types'
+import { usePlanModeToggle, type PlanMode } from '../../plan/hooks/usePlanModeToggle'
 
 type HomePromptDraft = {
   text: string
   projectId: string | null
   permissionMode: PermissionMode
-  planMode: boolean
+  planMode?: true
+  planExecute?: true
 }
 
 export type HomeProjectSelection = {
@@ -28,13 +30,72 @@ type HomePromptController = {
   setProjectId: (projectId: string | null) => void
   selectedProject: Project | null
   permissionMode: PermissionMode
-  planReviewEnabled: boolean
+  planMode: PlanMode
   disablePlanReview: boolean
   disabled: boolean
   canSend: boolean
   selectPermission: (mode: PermissionMode) => void
-  togglePlanReview: () => void
+  selectPlanMode: (mode: PlanMode) => void
   submit: () => void
+}
+
+type HomeSelectionState = Pick<HomePromptController, 'projectId' | 'setProjectId'>
+type HomePermissionState = Pick<HomePromptController, 'permissionMode' | 'selectPermission'>
+type HomeSubmissionState = Pick<HomePromptController, 'draft' | 'setDraft' | 'disabled' | 'submit'>
+
+function useHomeProjectSelection(selection: HomeProjectSelection | null): HomeSelectionState {
+  const [projectId, setProjectId] = useState<string | null>(null)
+  const [appliedKey, setAppliedKey] = useState<number | null>(null)
+  const next = applyHomeProjectSelection({ projectId, appliedKey }, selection)
+  if (next.projectId !== projectId) setProjectId(next.projectId)
+  if (next.appliedKey !== appliedKey) setAppliedKey(next.appliedKey)
+  return { projectId, setProjectId }
+}
+
+function useHomePermission(
+  selectedProject: Project | null,
+  onUpdate: (projectId: string, permissionMode: PermissionMode) => Promise<void>
+): HomePermissionState {
+  const [ordinary, setOrdinary] = useState<PermissionMode>('auto')
+  const [project, setProject] = useState<{ id: string; mode: PermissionMode } | null>(null)
+  const permissionMode = selectedProject
+    ? project?.id === selectedProject.id
+      ? project.mode
+      : selectedProject.permissionMode
+    : ordinary
+  const selectPermission = (mode: PermissionMode): void => {
+    if (!selectedProject) return setOrdinary(mode)
+    setProject({ id: selectedProject.id, mode })
+    void onUpdate(selectedProject.id, mode)
+  }
+  return { permissionMode, selectPermission }
+}
+
+function useHomeSubmission(
+  busy: boolean,
+  selectedProject: Project | null,
+  permissionMode: PermissionMode,
+  planToggle: ReturnType<typeof usePlanModeToggle>,
+  onStart: (request: HomePromptDraft) => Promise<void>
+): HomeSubmissionState {
+  const [draft, setDraft] = useState('')
+  const [starting, setStarting] = useState(false)
+  const disabled = busy || starting
+  const submit = (): void => {
+    const text = draft.trim()
+    if (!text || disabled) return
+    setStarting(true)
+    planToggle.resetMode()
+    void onStart({
+      text,
+      projectId: selectedProject?.id ?? null,
+      permissionMode,
+      ...planToggle.sendOptions
+    })
+      .then(() => setDraft(''))
+      .finally(() => setStarting(false))
+  }
+  return { draft, setDraft, disabled, submit }
 }
 
 export function useHomePrompt(
@@ -47,68 +108,31 @@ export function useHomePrompt(
   ) => Promise<void>,
   onStart: (request: HomePromptDraft) => Promise<void>
 ): HomePromptController {
-  const [draft, setDraft] = useState('')
-  const [projectId, setProjectId] = useState<string | null>(null)
-  const [appliedKey, setAppliedKey] = useState<number | null>(null)
-  const [ordinaryPermission, setOrdinaryPermission] = useState<PermissionMode>('auto')
-  const [projectPermission, setProjectPermission] = useState<{
-    id: string
-    mode: PermissionMode
-  } | null>(null)
-  const [starting, setStarting] = useState(false)
-  const [planReviewEnabled, setPlanReviewEnabled] = useState(false)
-  const nextSelection = applyHomeProjectSelection({ projectId, appliedKey }, selection)
-  if (nextSelection.projectId !== projectId) setProjectId(nextSelection.projectId)
-  if (nextSelection.appliedKey !== appliedKey) setAppliedKey(nextSelection.appliedKey)
+  const { projectId, setProjectId } = useHomeProjectSelection(selection)
   const selectedProject = projects.find((project) => project.id === projectId) ?? null
   const disablePlanReview = selectedProject?.location.kind === 'ssh'
-  const permissionMode = selectedProject
-    ? projectPermission?.id === selectedProject.id
-      ? projectPermission.mode
-      : selectedProject.permissionMode
-    : ordinaryPermission
-  const disabled = busy || starting
-
-  const selectPermission = (mode: PermissionMode): void => {
-    if (selectedProject) {
-      setProjectPermission({ id: selectedProject.id, mode })
-      void onUpdateProjectPermissionMode(selectedProject.id, mode)
-      return
-    }
-    setOrdinaryPermission(mode)
-  }
-
-  const togglePlanReview = (): void => {
-    if (disablePlanReview) return
-    setPlanReviewEnabled((enabled) => !enabled)
-  }
-
-  const submit = (): void => {
-    const text = draft.trim()
-    if (!text || disabled) return
-    const planMode = planReviewEnabled && !disablePlanReview
-    setStarting(true)
-    setPlanReviewEnabled(false)
-    void onStart({ text, projectId: selectedProject?.id ?? null, permissionMode, planMode })
-      .then(() => setDraft(''))
-      .finally(() => {
-        setStarting(false)
-      })
-  }
-
+  const planToggle = usePlanModeToggle(
+    `home:${selectedProject?.id ?? 'ordinary'}`,
+    disablePlanReview
+  )
+  const { permissionMode, selectPermission } = useHomePermission(
+    selectedProject,
+    onUpdateProjectPermissionMode
+  )
+  const prompt = useHomeSubmission(busy, selectedProject, permissionMode, planToggle, onStart)
   return {
-    draft,
-    setDraft,
+    draft: prompt.draft,
+    setDraft: prompt.setDraft,
     projectId,
     setProjectId,
     selectedProject,
     permissionMode,
-    planReviewEnabled,
+    planMode: planToggle.mode,
     disablePlanReview,
-    disabled,
-    canSend: draft.trim().length > 0 && !disabled,
+    disabled: prompt.disabled,
+    canSend: prompt.draft.trim().length > 0 && !prompt.disabled,
     selectPermission,
-    togglePlanReview,
-    submit
+    selectPlanMode: planToggle.selectMode,
+    submit: prompt.submit
   }
 }

@@ -66,7 +66,10 @@ import { useSessionEventBridge } from './features/chat/hooks/useSessionEventBrid
 import { usePromptSend } from './features/chat/hooks/usePromptSend'
 import { useQueuedPromptDrain } from './features/chat/hooks/useQueuedPromptDrain'
 import type { SendPromptOptions } from './features/chat/lib/promptQueue'
+import { SessionPlanRunPanel } from './features/plan/PlanRunPanel'
+import { usePlanModeToggle } from './features/plan/hooks/usePlanModeToggle'
 import { HomeView } from './features/home/HomeView'
+import type { HomePromptRequest } from './features/home/components/HomePrompt'
 import { runtimeStatusesSnapshot } from './features/runtime/lib/runtimeGroups'
 import { restoreRemoteRunStopNotices } from './features/chat/lib/restoreRemoteRunStopNotices'
 import type { HomeProjectSelection } from './features/home/hooks/useHomePrompt'
@@ -1695,14 +1698,7 @@ function App(): React.JSX.Element {
     sessionGeneration: activeSessionGeneration
   })
   const input = draftInputs[activeDraftKey] ?? ''
-  const [planReviewByDraft, setPlanReviewByDraft] = useState<Record<string, boolean>>({})
-  const planReviewEnabled = planReviewByDraft[activeDraftKey] === true
-  const togglePlanReview = useCallback((): void => {
-    setPlanReviewByDraft((previous) => ({
-      ...previous,
-      [activeDraftKey]: previous[activeDraftKey] !== true
-    }))
-  }, [activeDraftKey])
+  const planMode = usePlanModeToggle(activeDraftKey, activeProjectLocation?.kind === 'ssh')
   const [draftImagesBySession, setDraftImagesBySession] = useState<
     Record<string, PromptImageInput[]>
   >({})
@@ -1826,15 +1822,15 @@ function App(): React.JSX.Element {
       sessionGeneration: useSessionStore.getState().activeSessionGeneration
     }
     if (currentSessionIsBusy || isSendingRef.current) {
-      queuePromptText(text, target, { images, planMode: planReviewEnabled })
+      queuePromptText(text, target, { images, ...planMode.sendOptions })
       clearInputImages()
-      setPlanReviewByDraft((previous) => ({ ...previous, [activeDraftKey]: false }))
+      planMode.resetMode()
       return
     }
     setActiveInput('')
     clearInputImages()
-    setPlanReviewByDraft((previous) => ({ ...previous, [activeDraftKey]: false }))
-    await sendPromptText(text, target, { images, planMode: planReviewEnabled })
+    planMode.resetMode()
+    await sendPromptText(text, target, { images, ...planMode.sendOptions })
   }
 
   const onSavePersonaMarkdown = async (markdown: string): Promise<void> => {
@@ -1884,12 +1880,7 @@ function App(): React.JSX.Element {
     }
   }
 
-  const onStartHomePrompt = async (request: {
-    text: string
-    projectId: string | null
-    permissionMode: PermissionMode
-    planMode: boolean
-  }): Promise<void> => {
+  const onStartHomePrompt = async (request: HomePromptRequest): Promise<void> => {
     const text = request.text.trim()
     if (!text) return
     const project = request.projectId
@@ -1913,7 +1904,7 @@ function App(): React.JSX.Element {
         cwd: created.cwd,
         sessionGeneration: created.sessionGeneration
       },
-      { planMode: request.planMode }
+      { planMode: request.planMode, planExecute: request.planExecute }
     )
   }
 
@@ -3534,9 +3525,18 @@ function App(): React.JSX.Element {
             onInputFilesDropped={rendererApi.onInputFilesDropped}
             onListInputDirectory={onListInputDirectory}
             onChatSubmit={onChatSubmit}
-            planReviewEnabled={planReviewEnabled}
-            onTogglePlanReview={togglePlanReview}
+            planMode={planMode.mode}
+            onSelectPlanMode={planMode.selectMode}
             disablePlanReview={activeProjectLocation?.kind === 'ssh'}
+            planRunPanel={
+              <SessionPlanRunPanel
+                api={rendererApi}
+                sessionId={
+                  activeProjectLocation?.kind === 'ssh' ? null : (activePhiSessionId ?? null)
+                }
+                cwd={activeCwd}
+              />
+            }
             onStopGeneration={onStopGeneration}
             onAcknowledgeActiveSession={acknowledgeActiveSessionInteraction}
             onGoSettings={onGoProviderSettings}

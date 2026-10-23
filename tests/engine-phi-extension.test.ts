@@ -12,9 +12,24 @@ import { previousExtensions } from './helpers/previousPhiExtensions'
 import { isRecord as packageIsRecord } from '../src/main/agent/engine/phi-extension/lib/common'
 import { isRecord as workerIsRecord } from '../src/main/agent/engine/in-process/common'
 import { HOST_PROVIDED_OMP_IMPORTS } from '../src/main/agent/engine/rpc/extension-deployment/bundle'
+import {
+  PLAN_MAX_STEPS as EXTENSION_PLAN_MAX_STEPS,
+  PLAN_MAX_STEP_ACCEPTANCE_LENGTH as EXTENSION_PLAN_MAX_STEP_ACCEPTANCE_LENGTH,
+  PLAN_MAX_STEP_ID_LENGTH as EXTENSION_PLAN_MAX_STEP_ID_LENGTH,
+  PLAN_MAX_STEP_INSTRUCTIONS_LENGTH as EXTENSION_PLAN_MAX_STEP_INSTRUCTIONS_LENGTH,
+  PLAN_MAX_STEP_TITLE_LENGTH as EXTENSION_PLAN_MAX_STEP_TITLE_LENGTH
+} from '../src/main/agent/engine/phi-extension/extensions/plan-steps'
+import {
+  PLAN_MAX_STEPS,
+  PLAN_MAX_STEP_ACCEPTANCE_LENGTH,
+  PLAN_MAX_STEP_ID_LENGTH,
+  PLAN_MAX_STEP_INSTRUCTIONS_LENGTH,
+  PLAN_MAX_STEP_TITLE_LENGTH
+} from '../src/shared/planRunTypes'
 
 import {
   createMainSessionExtensions,
+  createPlanStepsExtension,
   createSpecialistExtensions,
   type PhiExtensionConfig,
   type PhiExtensionHost
@@ -129,6 +144,8 @@ function host(overrides: Partial<PhiExtensionHost> = {}): PhiExtensionHost {
   return {
     nextActionSuggestionsEnabled: async () => false,
     planModeActive: () => false,
+    planExecuteModeActive: () => false,
+    proposePlanSteps: async () => ({ content: [] }),
     requestToolApproval: async () => undefined,
     browserApprovalInput: (_toolCallId, input) => input,
     markBrowserTextDenied: () => undefined,
@@ -487,6 +504,41 @@ test('plan guard follows live mode changes without rebuilding extensions', async
       ?.block,
     true
   )
+})
+
+test('structured plan tool is inactive by default and returns runtime validation results', async () => {
+  let active = false
+  let registered: Record<string, unknown> | undefined
+  const expected = { content: [{ type: 'text' as const, text: 'validation error' }], isError: true }
+  const extension = createPlanStepsExtension(
+    host({
+      planExecuteModeActive: () => active,
+      proposePlanSteps: async () => expected
+    })
+  )
+  await extension({
+    registerTool: (definition: Record<string, unknown>) => {
+      registered = definition
+    }
+  } as never)
+  assert.equal(registered?.name, 'propose_plan_steps')
+  assert.equal(registered?.defaultInactive, true)
+  assert.equal(registered?.lenientArgValidation, true)
+  const execute = registered?.execute as (
+    id: string,
+    input: unknown
+  ) => Promise<Record<string, unknown>>
+  assert.equal((await execute('call-1', {})).isError, true)
+  active = true
+  assert.deepEqual(await execute('call-2', {}), expected)
+})
+
+test('structured plan schema limits stay aligned with shared plan validation', () => {
+  assert.equal(EXTENSION_PLAN_MAX_STEPS, PLAN_MAX_STEPS)
+  assert.equal(EXTENSION_PLAN_MAX_STEP_ID_LENGTH, PLAN_MAX_STEP_ID_LENGTH)
+  assert.equal(EXTENSION_PLAN_MAX_STEP_TITLE_LENGTH, PLAN_MAX_STEP_TITLE_LENGTH)
+  assert.equal(EXTENSION_PLAN_MAX_STEP_INSTRUCTIONS_LENGTH, PLAN_MAX_STEP_INSTRUCTIONS_LENGTH)
+  assert.equal(EXTENSION_PLAN_MAX_STEP_ACCEPTANCE_LENGTH, PLAN_MAX_STEP_ACCEPTANCE_LENGTH)
 })
 
 test('specialist builder preserves URL, plan, approval, and binding order', async () => {

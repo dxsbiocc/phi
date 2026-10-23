@@ -16,6 +16,7 @@ export interface SubmitPromptInput {
   /** A prompt Phi sends on its own (e.g. a background run ended), not the user's words. */
   automatic?: boolean
   planMode?: boolean
+  planExecute?: boolean
 }
 
 export interface ResolvedPromptRunTarget<TResult> {
@@ -78,7 +79,7 @@ function resolvePromptRunTarget<TResult>(
     deps.resolution.resolveSessionModelSelection(runSessionKey, runSnapshot) === null
   const project = deps.resolution.projectForSession(runSessionKey, runSnapshot)
   if (
-    input.planMode &&
+    (input.planMode || input.planExecute) &&
     (project?.location.kind === 'ssh' || deps.paths.isRemoteAnchorPath(runSnapshot.cwd))
   ) {
     throw new Error('远程项目暂不支持计划评审')

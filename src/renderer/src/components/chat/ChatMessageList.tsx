@@ -20,7 +20,7 @@ import { WrapperPlanCard } from '../../features/wrapper/components/WrapperPlanCa
 import { WorkspaceChangesCard } from '../../features/chat/components/WorkspaceChangesCard'
 import { PresentedFilesCard } from '../../features/chat/components/PresentedFilesCard'
 import { UiBlocksCard } from '../../features/chat/components/UiBlocks/UiBlocksCard'
-import { PlanReviewCard } from '../../features/chat/components/PlanReviewCard'
+import { PlanReviewCard } from '../../features/plan/components/PlanReviewCard'
 import { PhiIcons } from '../../icons'
 import { chatContentMaxWidth } from '../../layout'
 import {

@@ -83,6 +83,61 @@ export interface PlanRunState {
   updatedAt: string
 }
 
+export interface PlanRunTimelineStepSnapshot {
+  id: string
+  title: string
+  access: PlanStepAccess
+  dependsOn: string[]
+  agent?: string
+  status: PlanStepStatus
+  attempts: number
+  agentRunId?: string
+  startedAt?: string
+  finishedAt?: string
+  reportStatus?: PlanStepReportStatus
+  missingInputs: string[]
+  error?: string
+}
+
+export interface PlanRunTimelineSnapshot {
+  id: string
+  status: PlanRunStatus
+  pause?: PlanRunPause
+  replans: number
+  createdAt: string
+  updatedAt: string
+  goal: string
+  steps: PlanRunTimelineStepSnapshot[]
+}
+
+export interface PlanRunFinishedEvent {
+  type: 'plan_run_finished'
+  runId: string
+  state: PlanRunState
+}
+
+export interface PlanRunSessionInput {
+  phiSessionId: string
+}
+
+export interface PlanRunIdInput extends PlanRunSessionInput {
+  runId: string
+}
+
+export interface PlanRunStepInput extends PlanRunIdInput {
+  stepId: string
+}
+
+export interface PlanRunRendererApi {
+  listPlanRuns(phiSessionId: string): Promise<PlanRunState[]>
+  getPlanRun(phiSessionId: string, runId: string): Promise<PlanRunState | null>
+  pausePlanRun(phiSessionId: string, runId: string): Promise<PlanRunState>
+  resumePlanRun(phiSessionId: string, runId: string): Promise<PlanRunState>
+  stopPlanRun(phiSessionId: string, runId: string): Promise<PlanRunState>
+  retryPlanRunStep(phiSessionId: string, runId: string, stepId: string): Promise<PlanRunState>
+  skipPlanRunStep(phiSessionId: string, runId: string, stepId: string): Promise<PlanRunState>
+}
+
 export type PlanRunTransitionErrorCode =
   | 'RUN_FINISHED'
   | 'INVALID_RUN_STATUS'

@@ -12,6 +12,9 @@ import {
 } from './settings'
 import type { ResolvedRuntimeCompactionPolicy } from '../types'
 import { enterPlanReviewMode, type PlanReviewChoice } from '../../plan/plan-review-mode'
+import { planReviewContent } from '../../plan/plan-review-content'
+import { validatePlanSpec } from '../../plan/model/plan-spec'
+import type { PlanSpec } from '../../../../shared/planRunTypes'
 import {
   AutoCompactionDefaults,
   AutoCompactionOverrides,
@@ -203,9 +206,46 @@ export async function compactSession(params: unknown): Promise<{
   }
 }
 
+function unavailablePlanAgents(
+  spec: PlanSpec,
+  available: ReadonlyMap<string, unknown> | undefined
+): string[] {
+  const names = new Set(available?.keys() ?? [])
+  return spec.steps.flatMap((step) => {
+    const agent = step.agent ?? 'PlanStep'
+    return names.has(agent) ? [] : [`step "${step.id}".agent "${agent}" is not available.`]
+  })
+}
+
+function reviewTitle(goal: string): string {
+  return Array.from(goal).slice(0, 120).join('')
+}
+
+async function reviewStructuredPlan(
+  runtimeSessionId: string,
+  input: unknown
+): Promise<
+  { ok: false; errors: string[] } | { ok: true; spec: PlanSpec; choice: PlanReviewChoice }
+> {
+  const validated = validatePlanSpec(input)
+  if (!validated.ok) return validated
+  const entry = sessions.get(runtimeSessionId)
+  const agentErrors = unavailablePlanAgents(validated.spec, entry?.agentRunners)
+  if (agentErrors.length > 0) return { ok: false, errors: agentErrors }
+  const choice = (await requestHost('planReview.request', {
+    runtimeSessionId,
+    title: reviewTitle(validated.spec.goal),
+    planContent: planReviewContent(validated.spec),
+    planFilePath: 'local://PLAN.md',
+    steps: validated.spec
+  })) as PlanReviewChoice
+  return { ok: true, spec: validated.spec, choice }
+}
+
 export async function enterSessionPlanMode(params: unknown): Promise<{ enabled: true }> {
   const record = isRecord(params) ? params : {}
   const runtimeSessionId = stringValue(record.sessionId)
+  const entry = sessions.get(runtimeSessionId)
   const { session } = getSession(runtimeSessionId)
   const sessionManager = session.sessionManager
   const localProtocolOptions = {
@@ -234,7 +274,16 @@ export async function enterSessionPlanMode(params: unknown): Promise<{ enabled: 
         title: proposal.title,
         planContent: proposal.content,
         planFilePath: proposal.planFilePath
-      })) as PlanReviewChoice
+      })) as PlanReviewChoice,
+    {
+      execute: record.execute === true,
+      reviewSteps: (input) => reviewStructuredPlan(runtimeSessionId, input),
+      setProposalHandler: (handler) => {
+        if (!entry) return
+        if (handler) entry.planStepsProposal = handler
+        else delete entry.planStepsProposal
+      }
+    }
   )
   return { enabled: true }
 }
