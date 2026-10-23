@@ -14,7 +14,8 @@ import {
   findPhiSessionById,
   updateSessionManifest,
   createRunId,
-  createPhiSession
+  createPhiSession,
+  readSessionEvents
 } from '../../src/main/agent/session/session-store'
 import type { RemoteStdioProcess } from '../../src/main/agent/wrappers/remote-ssh-session'
 
@@ -127,7 +128,80 @@ try {
     })
   const proxy = await createProxy()
   const originalRef = findPhiSessionById(f.phi.sessionId)!.runtimeRef!
-  if (mode === 'usage') {
+  if (mode === 'context-usage-overlaps-next-run') {
+    const originalRequest = RpcConnection.prototype.request
+    let acknowledge!: () => void
+    let release!: () => void
+    const acknowledged = new Promise<void>((resolve) => {
+      acknowledge = resolve
+    })
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let intercepted = false
+    const delayed = mock.method(
+      RpcConnection.prototype,
+      'request',
+      function (this: RpcConnection, command: RpcCommand, options?: RpcRequestOptions) {
+        const response = originalRequest.call(this, command, options)
+        if (!intercepted && command.type === 'get_state') {
+          intercepted = true
+          return response.then(async (value) => {
+            acknowledge()
+            await held
+            return value
+          })
+        }
+        return response
+      }
+    )
+    try {
+      const usage = proxy.getContextUsage()
+      await acknowledged
+      f.provider.enqueue({ text: 'recovered reply' })
+      const run = f.runners.startRun({
+        sessionId: f.phi.sessionId,
+        runId: createRunId(),
+        execute: () => proxy.prompt('user message during context refresh')
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      release()
+      await usage
+      await run.done
+      const failure = readSessionEvents(f.phi.sessionId).find(
+        (event) => event.type === 'run_failed' && event.runId === run.runId
+      )
+      assert.equal(run.outcome, 'completed', String(failure?.errorMessage ?? ''))
+    } finally {
+      release()
+      delayed.mock.restore()
+    }
+  } else if (mode === 'provider-failure-followed-by-next-run') {
+    f.provider.enqueue({ httpStatus: 401 })
+    const first = f.runners.startRun({
+      sessionId: f.phi.sessionId,
+      runId: createRunId(),
+      execute: () => proxy.prompt('first message')
+    })
+    await first.done
+    assert.equal(first.outcome, 'failed')
+    const firstFailure = readSessionEvents(f.phi.sessionId).find(
+      (event) => event.type === 'run_failed' && event.runId === first.runId
+    )
+    assert.match(String(firstFailure?.errorMessage ?? ''), /HTTP 401/)
+    f.provider.enqueue({ text: 'recovered reply' })
+    const second = f.runners.startRun({
+      sessionId: f.phi.sessionId,
+      runId: createRunId(),
+      execute: () => proxy.prompt('second message')
+    })
+    await second.done
+    const secondFailure = readSessionEvents(f.phi.sessionId).find(
+      (event) => event.type === 'run_failed' && event.runId === second.runId
+    )
+    assert.equal(second.outcome, 'completed', String(secondFailure?.errorMessage ?? ''))
+    assert.equal(f.channels.length, 1, 'provider failure must preserve the existing RPC channel')
+  } else if (mode === 'usage') {
     const actual = await cliState(f.channels[0])
     assert.deepEqual(await proxy.getContextUsage(), actual.contextUsage ?? null)
     assert.equal(f.provider.requests.length, 0)

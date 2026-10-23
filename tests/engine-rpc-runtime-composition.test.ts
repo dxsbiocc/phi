@@ -92,3 +92,22 @@ test(
     assert.equal(f.f.session.closed, false)
   }
 )
+
+test(
+  'a failed provider response leaves the remote runtime able to admit the next prompt',
+  { timeout: 90_000 },
+  async (t) => {
+    const f = await runtimeCompositionFixture()
+    t.after(() => f.close())
+    const runtime = await f.create()
+    await f.sdk.enqueue({ httpStatus: 401 })
+    const first = await runtime.prompt('provider-failure-1', 'first prompt')
+    assert.equal(first.outcome, 'failed')
+    assert.equal(first.result.status, 'error')
+    assert.equal(runtime.isReady, true)
+    await f.sdk.enqueue({ text: 'recovered' })
+    const second = await runtime.prompt('provider-failure-2', 'second prompt')
+    assert.equal(second.outcome, 'completed')
+    assert.equal(second.result.status, 'completed')
+  }
+)
