@@ -27,6 +27,7 @@ export function ApprovalTimelineCard({
     >
       <ApprovalDetails
         summary={approval.summary}
+        status={approval.status}
         label={`${APPROVAL_STATUS_LABELS[approval.status]} · ${approval.toolName}`}
         onContentResize={onContentResize}
       />

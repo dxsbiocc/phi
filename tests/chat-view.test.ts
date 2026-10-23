@@ -2288,7 +2288,31 @@ test('decided approval in the timeline renders only its preview line by default'
 
   assert.match(markup, /printf preview-line/)
   assert.match(markup, /aria-expanded="false"/)
+  assert.match(markup, /data-phi-approval-icon="approved"/)
+  assert.ok(
+    markup.indexOf('data-phi-approval-icon="approved"') < markup.indexOf('已批准') &&
+      markup.indexOf('printf preview-line') < markup.indexOf('data-phi-approval-chevron="true"')
+  )
+  assert.match(markup, /\.phi-nested-fold-chevron\{opacity:0/)
+  assert.match(markup, /:hover \.phi-approval-preview\{color:/)
   assert.doesNotMatch(markup, /private-second-line\.ts/)
+})
+
+test('approval outcomes use one status icon without changing the approval preview', () => {
+  for (const status of ['pending', 'denied', 'cancelled'] as const) {
+    const markup = renderChat([
+      {
+        id: `approval-${status}`,
+        role: 'warning',
+        content: '权限审批',
+        approval: { status, toolName: 'bash', summary: 'printf approval-preview' }
+      }
+    ])
+
+    assert.match(markup, new RegExp(`data-phi-approval-icon="${status}"`))
+    assert.match(markup, /printf approval-preview/)
+    assert.equal((markup.match(/data-phi-approval-icon=/g) ?? []).length, 1)
+  }
 })
 
 test('remote specialist approval shows the real host, project and path without the local anchor', () => {

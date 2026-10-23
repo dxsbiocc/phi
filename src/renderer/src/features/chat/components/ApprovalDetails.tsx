@@ -8,22 +8,41 @@ import {
   useCollapseResizeNotifier,
   type ChatContentResizeHandler
 } from '../../../components/chat/useCollapseResizeNotifier'
-import { approvalSummaryPreview } from '../lib/approvalTimeline'
+import {
+  approvalSummaryPreview,
+  type ApprovalDetails as ApprovalRecord
+} from '../lib/approvalTimeline'
+import { nestedFoldChevronRevealSx } from '../lib/nestedFoldChevronStyles'
 
 const ChevronIcon = PhiIcons.action.back
+const APPROVAL_ICONS = {
+  pending: PhiIcons.state.pending,
+  approved: PhiIcons.state.done,
+  denied: PhiIcons.state.denied,
+  cancelled: PhiIcons.state.abandoned
+} as const satisfies Record<ApprovalRecord['status'], typeof PhiIcons.state.done>
+const APPROVAL_ICON_COLORS: Record<ApprovalRecord['status'], string> = {
+  pending: 'warning.main',
+  approved: 'text.secondary',
+  denied: 'error.main',
+  cancelled: 'text.secondary'
+}
 
 /** The full command stays available without expanding the timeline or hiding approval actions. */
 export function ApprovalDetails({
   summary,
+  status,
   label = chatCopy.viewDetails,
   onContentResize
 }: {
   summary: string
+  status: ApprovalRecord['status']
   label?: ReactNode
   onContentResize?: ChatContentResizeHandler
 }): React.JSX.Element {
   useUiLanguage()
   const [expanded, setExpanded] = useState(false)
+  const ApprovalIcon = APPROVAL_ICONS[status]
   const detailsId = useId()
   const notifyResize = useCollapseResizeNotifier(onContentResize)
   return (
@@ -52,31 +71,49 @@ export function ApprovalDetails({
           font: 'inherit',
           textAlign: 'left',
           cursor: 'pointer',
-          '&:hover': { bgcolor: 'action.hover' },
+          transition: 'color 150ms',
+          ...nestedFoldChevronRevealSx,
+          '&:hover': { color: 'text.primary' },
+          '&:hover .phi-approval-preview': { color: 'text.primary' },
           '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
         }}
       >
-        <ChevronIcon
-          aria-hidden
+        <Box
+          component="span"
+          data-phi-approval-icon={status}
           sx={{
-            fontSize: 16,
+            width: 18,
+            height: 18,
             flexShrink: 0,
-            transition: 'transform 150ms',
-            transform: expanded ? 'rotate(90deg)' : 'none'
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center'
           }}
-        />
+        >
+          <ApprovalIcon aria-hidden sx={{ fontSize: 16, color: APPROVAL_ICON_COLORS[status] }} />
+        </Box>
         <Typography component="span" variant="body2" sx={{ flexShrink: 0, fontWeight: 600 }}>
           {label}
         </Typography>
         <Typography
           component="span"
           variant="body2"
-          color="text.secondary"
+          className="phi-approval-preview"
           noWrap
-          sx={{ minWidth: 0 }}
+          sx={{ minWidth: 0, color: 'text.secondary', transition: 'color 150ms' }}
         >
           {approvalSummaryPreview(summary)}
         </Typography>
+        <ChevronIcon
+          className="phi-nested-fold-chevron"
+          data-phi-approval-chevron="true"
+          aria-hidden
+          sx={{
+            fontSize: 16,
+            flexShrink: 0,
+            transform: expanded ? 'rotate(90deg)' : 'none'
+          }}
+        />
       </Box>
       <Collapse
         in={expanded}
