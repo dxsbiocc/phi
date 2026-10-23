@@ -14,7 +14,9 @@ for (const mode of [
   'late-policy',
   'cancel',
   'disconnect',
-  'send-failure'
+  'send-failure',
+  'provider-failure-followed-by-next-run',
+  'context-usage-overlaps-next-run'
 ])
   test(`actual metadata contract: ${mode}`, { timeout: 120000 }, async (t) => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'phi-facade-regression-metadata-')))

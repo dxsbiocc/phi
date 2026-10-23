@@ -459,6 +459,7 @@ export function createFacadeSessionFactory(
         let closing: Promise<void> | undefined
         let interrupted: Error | undefined
         let metadataPending = false
+        let contextUsagePending: ReturnType<RemoteSessionRuntime['readContextUsage']> | undefined
         let selectionAbort: AbortController | undefined
         let selectionPending: Promise<WorkerSessionState> | undefined
         let compactionPending: Promise<unknown> | undefined
@@ -1019,6 +1020,10 @@ export function createFacadeSessionFactory(
               const run = options.runners.getActiveRun(phiSessionId)
               if (!run || run.sessionId !== phiSessionId || run.signal.aborted)
                 throw new Error('Remote prompt requires the actual active Phi run')
+              const pendingContextUsage = contextUsagePending
+              if (pendingContextUsage) await pendingContextUsage.catch(() => undefined)
+              if (options.runners.getActiveRun(phiSessionId) !== run || run.signal.aborted)
+                throw new Error('Remote prompt requires the actual active Phi run')
               const prompt = promptOptions(raw)
               if (submittedRun || metadataPending || closing || interrupted || !runtime!.isReady) {
                 if (interrupted) throw interrupted
@@ -1167,21 +1172,16 @@ export function createFacadeSessionFactory(
               }
             },
             async contextUsage() {
-              if (
-                closing ||
-                submittedRun ||
-                metadataPending ||
-                options.runners.getActiveRun(phiSessionId) ||
-                runtime!.hasActiveAgentRuns() ||
-                !runtime!.isReady
-              )
-                throw new RemoteMetadataBusyError('Phi session')
+              const idle = !closing && !submittedRun && !metadataPending &&
+                !options.runners.getActiveRun(phiSessionId) && !runtime!.hasActiveAgentRuns() &&
+                runtime!.isReady
+              if (!idle) throw new RemoteMetadataBusyError('Phi session')
               metadataPending = true
-              try {
-                return await runtime!.readContextUsage()
-              } finally {
+              contextUsagePending = runtime!.readContextUsage().finally(() => {
                 metadataPending = false
-              }
+                contextUsagePending = undefined
+              })
+              return contextUsagePending
             },
             async rename(rawName, control) {
               const name = canonicalRemoteSessionName(rawName)
