@@ -116,6 +116,8 @@ export const chatEnglish = {
   listTruncated: 'List truncated',
   previewChangedFileValue: (value0: string | number) => `Preview changed file ${value0}`,
   lineCountsUnavailable: 'Line counts unavailable',
+  diffLineCountsValue: (added: number, deleted: number) =>
+    `${added} lines added, ${deleted} lines deleted`,
   viewDiff: 'View diff',
   viewThisRunSDiffForValue: (value0: string | number) => `View this run’s diff for ${value0}`,
   collapse: 'Collapse',
@@ -239,6 +241,7 @@ export const chatEnglish = {
   noMatchingAgents: 'No matching agents',
   referenceASkillOrAgent: 'Reference a Skill or agent',
   thinking: 'Thinking',
+  thinkingInProgress: 'Thinking…',
   thoughtFor1S: 'Thought for 1 s',
   thoughtForValueS: (value0: string | number) => `Thought for ${value0} s`,
   thoughtForValueMValueS: (value0: string | number, value1: string | number) =>

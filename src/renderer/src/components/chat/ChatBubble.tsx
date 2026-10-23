@@ -43,6 +43,7 @@ export type ChatBubbleProps = {
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onOpenWebUrl?: (url: string) => void
   onContentResize?: ChatContentResizeHandler
+  isThinkingRunning?: boolean
   cwd?: string
 }
 
@@ -59,6 +60,7 @@ function chatBubblePropsEqual(prev: ChatBubbleProps, next: ChatBubbleProps): boo
     prev.onEditUserMessage === next.onEditUserMessage &&
     prev.onRetryUserMessage === next.onRetryUserMessage &&
     prev.onForkUserMessage === next.onForkUserMessage &&
+    prev.isThinkingRunning === next.isThinkingRunning &&
     prev.onOpenBackgroundJobs === next.onOpenBackgroundJobs &&
     prev.onOpenWebUrl === next.onOpenWebUrl
   )
@@ -75,6 +77,7 @@ export const ChatBubble = memo(function ChatBubble({
   onOpenLocalPath,
   onOpenWebUrl,
   onContentResize,
+  isThinkingRunning = false,
   cwd = ''
 }: ChatBubbleProps): ReactNode {
   useUiLanguage()
@@ -182,6 +185,7 @@ export const ChatBubble = memo(function ChatBubble({
       <ThinkingBlock
         content={message.content}
         durationMs={message.durationMs}
+        isRunning={isThinkingRunning}
         onContentResize={onContentResize}
       />
     )

@@ -123,6 +123,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
     notifyContentResize()
   }
   const groupedItems = groupProcessingItems(items)
+  const runningThinkingId = isActive && items.at(-1)?.role === 'thinking' ? items.at(-1)?.id : null
   const status = processingGroupStatus(items, isActive)
   const isProcessingActive = status === 'running'
   const failed = !isProcessingActive && (runFailed || items.some((item) => item.role === 'error'))
@@ -174,17 +175,6 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
           '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
         }}
       >
-        <ChevronRightIcon
-          sx={{
-            fontSize: 16,
-            flexShrink: 0,
-            transition: 'transform 150ms',
-            transform: expanded ? 'rotate(90deg)' : 'none'
-          }}
-        />
-        <Typography component="span" variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
-          {summary}
-        </Typography>
         {status ? (
           <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
             {isActive && isProcessingActive ? (
@@ -194,6 +184,17 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
             )}
           </Box>
         ) : null}
+        <Typography component="span" variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
+          {summary}
+        </Typography>
+        <ChevronRightIcon
+          sx={{
+            fontSize: 16,
+            flexShrink: 0,
+            transition: 'transform 150ms',
+            transform: expanded ? 'rotate(90deg)' : 'none'
+          }}
+        />
       </Box>
       <Collapse
         in={expanded}
@@ -295,6 +296,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
                 <ChatBubble
                   key={group.key}
                   message={group.item}
+                  isThinkingRunning={group.item.id === runningThinkingId}
                   onGoSettings={onGoSettings}
                   onOpenBackgroundJobs={onOpenBackgroundJobs}
                   onOpenLocalPath={onOpenLocalPath}

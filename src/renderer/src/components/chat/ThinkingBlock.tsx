@@ -29,50 +29,59 @@ function formatThinkingDuration(durationMs?: number): string {
 export function ThinkingBlock({
   content,
   durationMs,
+  isRunning = false,
   onContentResize
 }: {
   content: string
   durationMs?: number
+  isRunning?: boolean
   onContentResize?: ChatContentResizeHandler
 }): ReactNode {
   useUiLanguage()
-  const [expanded, setExpanded] = useState(false)
+  const [manualExpanded, setManualExpanded] = useState<boolean | undefined>()
+  const expanded = manualExpanded ?? (isRunning && content.trim().length > 0)
   const notifyContentResize = useCollapseResizeNotifier(onContentResize)
   const toggle = (): void => {
-    setExpanded((value) => !value)
+    setManualExpanded(!expanded)
     notifyContentResize()
   }
-  const label = formatThinkingDuration(durationMs)
+  const label = isRunning ? chatCopy.thinkingInProgress : formatThinkingDuration(durationMs)
 
   return (
     <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
       <Box
-        role="button"
-        tabIndex={0}
+        component="button"
+        type="button"
         onClick={toggle}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            toggle()
-          }
-        }}
+        aria-label={label}
         aria-expanded={expanded}
+        data-phi-thinking-status={isRunning ? 'running' : 'complete'}
         sx={{
           display: 'flex',
           alignItems: 'center',
           gap: 0.75,
+          width: '100%',
           minWidth: 0,
           py: 0.5,
           px: 0.5,
+          border: 0,
           borderRadius: 1,
+          bgcolor: 'transparent',
+          fontFamily: 'inherit',
+          textAlign: 'left',
           cursor: 'pointer',
-          color: 'text.secondary',
+          color: isRunning ? 'primary.main' : 'text.secondary',
           transition: 'background-color 150ms',
           '&:hover': { bgcolor: 'action.hover' },
           '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
         }}
       >
+        <ThinkingIcon active={isRunning} />
+        <Typography component="span" variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
+          {label}
+        </Typography>
         <ChevronRightIcon
+          data-phi-thinking-chevron="true"
           sx={{
             fontSize: 16,
             flexShrink: 0,
@@ -80,10 +89,6 @@ export function ThinkingBlock({
             transform: expanded ? 'rotate(90deg)' : 'none'
           }}
         />
-        <ThinkingIcon />
-        <Typography component="span" variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
-          {label}
-        </Typography>
       </Box>
       <Collapse
         in={expanded}
@@ -113,7 +118,13 @@ export function ThinkingBlock({
   )
 }
 
-function ThinkingIcon({ size = 16 }: { size?: number }): ReactNode {
+function ThinkingIcon({
+  size = 16,
+  active = false
+}: {
+  size?: number
+  active?: boolean
+}): ReactNode {
   useUiLanguage()
   return (
     <Tooltip title={chatCopy.thinking} enterDelay={500}>
@@ -121,6 +132,7 @@ function ThinkingIcon({ size = 16 }: { size?: number }): ReactNode {
         component="span"
         role="img"
         aria-label={chatCopy.thinking}
+        data-phi-thinking-icon="true"
         sx={{
           width: size + 2,
           height: size + 2,
@@ -128,7 +140,13 @@ function ThinkingIcon({ size = 16 }: { size?: number }): ReactNode {
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: 'text.secondary'
+          color: active ? 'primary.main' : 'text.secondary',
+          animation: active ? 'phi-thinking-pulse 1.6s ease-in-out infinite' : 'none',
+          '@keyframes phi-thinking-pulse': {
+            '0%, 100%': { opacity: 0.5 },
+            '50%': { opacity: 1 }
+          },
+          '@media (prefers-reduced-motion: reduce)': { animation: 'none' }
         }}
       >
         <PsychologyIcon sx={{ fontSize: size }} />

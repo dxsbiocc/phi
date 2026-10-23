@@ -6,6 +6,8 @@ import { createElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import ChatView, { ThinkingBlock } from '../src/renderer/src/features/chat/ChatView'
+import AgentExecutionCard from '../src/renderer/src/components/AgentExecutionCard'
+import { ChatProcessingGroup } from '../src/renderer/src/components/chat/ChatProcessingGroup'
 import { ProviderModelIcon } from '../src/renderer/src/components/chat/ProviderModelIcon'
 import { composerSurfaceSx } from '../src/renderer/src/components/chat/composerControlStyles'
 import ToolCallCard from '../src/renderer/src/components/ToolCallCard'
@@ -41,6 +43,7 @@ import {
 } from '../src/renderer/src/lib/suggestedNextAction'
 import type {
   AgentUserInteractionRequest,
+  AgentExecutionItem,
   ChatItem,
   ModelOption,
   PermissionMode,
@@ -260,7 +263,7 @@ test('collapsed hosted fetch card names its PubMed query', () => {
   assert.match(markup, /PubMed 检索：MID1IP1 OR Mig12/)
 })
 
-function renderThinkingBlock(content: string, durationMs?: number): string {
+function renderThinkingBlock(content: string, durationMs?: number, isRunning = false): string {
   const theme = createTheme()
   return renderToStaticMarkup(
     createElement(
@@ -268,7 +271,8 @@ function renderThinkingBlock(content: string, durationMs?: number): string {
       { theme },
       createElement(ThinkingBlock, {
         content,
-        durationMs
+        durationMs,
+        isRunning
       })
     )
   )
@@ -1580,10 +1584,75 @@ test('chat view hides a leading empty run lifecycle before the first user messag
 
 test('thinking block shows elapsed time when folded and hides content until expanded', () => {
   const markup = renderThinkingBlock('这是一段很长的内部思考内容。', 4000)
+  const statusIcon = markup.indexOf('data-phi-thinking-icon="true"')
+  const title = markup.lastIndexOf('思考了 4 s')
+  const chevron = markup.indexOf('data-phi-thinking-chevron="true"')
 
   assert.match(markup, /思考了 4 s/)
+  assert.ok(statusIcon >= 0 && statusIcon < title && title < chevron)
+  assert.match(markup, /data-phi-thinking-status="complete"/)
+  assert.match(markup, /aria-expanded="false"/)
   assert.match(markup, /aria-label="思考"/)
   assert.doesNotMatch(markup, /这是一段很长的内部思考内容/)
+})
+
+test('tool rows show line counts only for real diffs and explain deletions', () => {
+  const ordinaryOutput = renderToolCall({
+    id: 'tool-list',
+    role: 'tool',
+    toolName: 'bash',
+    argsPreview: 'list results',
+    argsJson: '{}',
+    output: '- First result\n- Second result',
+    status: 'done'
+  })
+  const diffOutput = renderToolCall({
+    id: 'tool-diff',
+    role: 'tool',
+    toolName: 'bash',
+    argsPreview: 'git diff',
+    argsJson: '{}',
+    output: '--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new',
+    status: 'done'
+  })
+
+  assert.doesNotMatch(ordinaryOutput, /删除 2 行/)
+  assert.match(diffOutput, /title="新增 1 行，删除 1 行"/)
+})
+
+test('thinking stays a line until text arrives, then opens while running', () => {
+  const empty = renderThinkingBlock('', 0, true)
+  const streaming = renderThinkingBlock('正在检查结果。', 2000, true)
+
+  assert.match(empty, /data-phi-thinking-status="running"/)
+  assert.match(empty, /aria-expanded="false"/)
+  assert.match(streaming, /data-phi-thinking-status="running"/)
+  assert.match(streaming, /aria-expanded="true"/)
+  assert.match(streaming, /正在思考…/)
+  assert.match(streaming, /正在检查结果。/)
+})
+
+test('only the latest thinking step in an active processing group is running', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ChatProcessingGroup, {
+        items: [
+          { id: 'thinking-earlier', role: 'thinking', content: '之前的分析。', durationMs: 1000 },
+          { id: 'thinking-current', role: 'thinking', content: '正在分析。', durationMs: 2000 }
+        ],
+        isActive: true,
+        focusRequest: { itemId: 'thinking-current', nonce: 1 },
+        onGoSettings: () => undefined,
+        onOpenBackgroundJobs: () => undefined
+      })
+    )
+  )
+
+  assert.equal((markup.match(/data-phi-thinking-status="complete"/g) ?? []).length, 1)
+  assert.equal((markup.match(/data-phi-thinking-status="running"/g) ?? []).length, 1)
+  assert.match(markup, /正在分析。/)
 })
 
 test('tool rows classify common actions with distinct icons', () => {
@@ -1765,10 +1834,37 @@ test('tool rows classify common actions with distinct icons', () => {
     }
   ])
 
-  assert.match(groupMarkup, /aria-label="读取文件"/)
-  assert.match(groupMarkup, /aria-label="编辑文件"/)
-  assert.match(groupMarkup, /aria-label="运行命令"/)
-  assert.match(groupMarkup, /aria-label="搜索"/)
+  assert.match(groupMarkup, /aria-label="完成"/)
+  assert.doesNotMatch(groupMarkup, /aria-label="读取文件"|aria-label="编辑文件"/)
+  assert.doesNotMatch(groupMarkup, /aria-label="运行命令"|aria-label="搜索"/)
+})
+
+test('tool rows use one leading icon for either action type or active status', () => {
+  const base = {
+    id: 'tool-status',
+    role: 'tool' as const,
+    toolName: 'bash',
+    argsPreview: 'sleep 1',
+    argsJson: '{"cmd":"sleep 1"}',
+    output: ''
+  }
+  const done = renderToolCall({ ...base, status: 'done' })
+  const running = renderToolCall({ ...base, status: 'running' })
+  const failed = renderToolCall({ ...base, status: 'error' })
+
+  assert.match(done, /aria-label="运行命令"/)
+  assert.doesNotMatch(done, /aria-label="完成"/)
+  assert.match(running, /aria-label="执行中"/)
+  assert.doesNotMatch(running, /aria-label="运行命令"/)
+  assert.match(failed, /aria-label="失败"/)
+  assert.doesNotMatch(failed, /aria-label="运行命令"/)
+
+  const runningGroup = renderToolGroup([
+    { ...base, id: 'tool-1', status: 'running' },
+    { ...base, id: 'tool-2', status: 'done' }
+  ])
+  assert.match(runningGroup, /aria-label="执行中"/)
+  assert.doesNotMatch(runningGroup, /aria-label="运行命令"/)
 })
 
 test('tool group keeps the aggregate row neutral when one child failed', () => {
@@ -1794,6 +1890,7 @@ test('tool group keeps the aggregate row neutral when one child failed', () => {
   ])
 
   assert.match(markup, /已执行 2 条命令/)
+  assert.match(markup, /aria-label="工具调用"/)
   assert.doesNotMatch(markup, /命令运行失败/)
   assert.doesNotMatch(markup, /aria-label="失败"/)
   assert.doesNotMatch(markup, /curl example/)
@@ -1965,7 +2062,8 @@ test('composer buttons stay fixed on hover and use matching action icon sizes', 
   assert.match(source, /<GoPaperAirplane size=\{COMPOSER_ICON_SIZE\}/)
   assert.match(source, /data-phi-stop-mark-size=\{COMPOSER_STOP_MARK_SIZE\}/)
   assert.doesNotMatch(source, /GoSquare/)
-  assert.match(source, /data-phi-composer-action="send"[\s\S]*?bgcolor: 'transparent'/)
+  assert.match(source, /data-phi-composer-action=\{showStop \? 'stop' : 'send'\}/)
+  assert.match(source, /bgcolor: 'transparent'/)
   assert.doesNotMatch(source, /spinHourglass|GoHourglass/)
 
   const modelControlSource = readFileSync(
@@ -2015,24 +2113,22 @@ test('chat view keeps compact composer icon buttons at the declared outer size',
     controlStylesSource,
     /const compactComposerIconButtonSx = \{[\s\S]*?boxSizing: 'border-box'[\s\S]*?p: 0[\s\S]*?\} as const/
   )
-  assert.match(
-    chatViewSource,
-    /data-phi-composer-action="send"[\s\S]*?boxSizing: 'border-box'[\s\S]*?p: 0/
-  )
-  assert.match(
-    chatViewSource,
-    /data-phi-composer-action="stop"[\s\S]*?boxSizing: 'border-box'[\s\S]*?p: 0/
-  )
+  assert.match(chatViewSource, /data-phi-composer-size=\{actionControlSize\}/)
+  assert.match(chatViewSource, /boxSizing: 'border-box'[\s\S]*?p: 0/)
 })
 
-test('chat view replaces send with one square stop control', () => {
+test('chat view replaces send with a stop control of the same size', () => {
+  const compactSendMarkup = renderChat([], { compactComposerControls: true })
+  const regularSendMarkup = renderChat([])
   const compactMarkup = renderChat([], { compactComposerControls: true, isGenerating: true })
   const regularMarkup = renderChat([], { isGenerating: true })
 
-  assert.match(compactMarkup, /data-phi-composer-action="stop" data-phi-composer-size="48"/)
-  assert.match(compactMarkup, /data-phi-stop-mark-size="36"/)
-  assert.match(regularMarkup, /data-phi-composer-action="stop" data-phi-composer-size="48"/)
-  assert.match(regularMarkup, /data-phi-stop-mark-size="36"/)
+  assert.match(compactSendMarkup, /data-phi-composer-action="send"[^>]*data-phi-composer-size="32"/)
+  assert.match(compactMarkup, /data-phi-composer-action="stop"[^>]*data-phi-composer-size="32"/)
+  assert.match(regularSendMarkup, /data-phi-composer-action="send"[^>]*data-phi-composer-size="40"/)
+  assert.match(regularMarkup, /data-phi-composer-action="stop"[^>]*data-phi-composer-size="40"/)
+  assert.match(compactMarkup, /data-phi-stop-mark-size="14"/)
+  assert.match(regularMarkup, /data-phi-stop-mark-size="14"/)
   assert.equal((regularMarkup.match(/data-phi-composer-action=/g) ?? []).length, 1)
   assert.doesNotMatch(
     regularMarkup,
@@ -2055,6 +2151,43 @@ test('agent execution details scroll instead of flattening every child step into
   assert.match(source, /maxHeight: AGENT_EXECUTION_DETAIL_MAX_HEIGHT/)
   assert.match(source, /overflowY: 'auto'/)
   assert.match(source, /aria-label=\{chatCopy.collapseAgentExecution\}[\s\S]*<ExpandLessIcon/)
+})
+
+test('subagent rows show one leading icon and keep the fold chevron on the right', () => {
+  const base: AgentExecutionItem = {
+    id: 'agent-1',
+    role: 'agent_execution',
+    agentName: 'Visualization',
+    task: 'Revise the boxplot',
+    argsPreview: '',
+    argsJson: '',
+    status: 'done',
+    steps: [],
+    toolCalls: 43
+  }
+  const renderAgent = (overrides: Partial<AgentExecutionItem>): string =>
+    renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(AgentExecutionCard, { item: { ...base, ...overrides } })
+      )
+    )
+
+  const done = renderAgent({ status: 'done' })
+  const running = renderAgent({ status: 'running' })
+  const failed = renderAgent({ status: 'error' })
+  const cancelled = renderAgent({ status: 'done', cancelled: true })
+
+  assert.match(done, /data-phi-agent-leading-icon="type"/)
+  assert.doesNotMatch(done, /aria-label="完成"/)
+  assert.ok(done.indexOf('委派给') < done.indexOf('data-phi-agent-chevron="true"'))
+  assert.match(running, /data-phi-agent-leading-icon="status"/)
+  assert.match(running, /aria-label="执行中"/)
+  assert.match(failed, /data-phi-agent-leading-icon="status"/)
+  assert.match(failed, /aria-label="失败"/)
+  assert.match(cancelled, /data-phi-agent-leading-icon="cancelled"/)
+  assert.doesNotMatch(cancelled, /aria-label="完成"/)
 })
 
 test('chat view keeps next-run controls enabled and shows stop while the current session is busy', () => {

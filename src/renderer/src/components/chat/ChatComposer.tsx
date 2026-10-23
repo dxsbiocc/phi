@@ -30,7 +30,6 @@ import { resolveThinkingSelection } from './composerThinkingLevel'
 import { InputAddControl, InputAddPanel } from './InputAddMenu'
 import {
   COMPOSER_ICON_SIZE,
-  COMPOSER_STOP_CONTROL_SIZE,
   COMPOSER_STOP_MARK_SIZE,
   COMPACT_COMPOSER_CONTROL_SIZE,
   REGULAR_COMPOSER_ACTION_SIZE,
@@ -121,50 +120,15 @@ function ComposerSubmitButton({
   onStop?: () => void
 }): React.JSX.Element {
   const actionControlSize = compact ? COMPACT_COMPOSER_CONTROL_SIZE : REGULAR_COMPOSER_ACTION_SIZE
-  if (showStop) {
-    return (
-      <IconButton
-        type="button"
-        onClick={onStop}
-        aria-label={stopLabel}
-        title={stopTitle}
-        data-phi-composer-action="stop"
-        data-phi-composer-size={COMPOSER_STOP_CONTROL_SIZE}
-        sx={{
-          boxSizing: 'border-box',
-          width: COMPOSER_STOP_CONTROL_SIZE,
-          height: COMPOSER_STOP_CONTROL_SIZE,
-          minWidth: COMPOSER_STOP_CONTROL_SIZE,
-          minHeight: COMPOSER_STOP_CONTROL_SIZE,
-          p: 0,
-          flexShrink: 0,
-          bgcolor: 'transparent',
-          color: 'primary.main',
-          transition: 'background-color 200ms',
-          '&:hover': { bgcolor: 'action.hover' }
-        }}
-      >
-        <Box
-          aria-hidden="true"
-          data-phi-stop-mark-size={COMPOSER_STOP_MARK_SIZE}
-          sx={{
-            width: COMPOSER_STOP_MARK_SIZE,
-            height: COMPOSER_STOP_MARK_SIZE,
-            borderRadius: '4px',
-            bgcolor: 'currentColor',
-            flexShrink: 0
-          }}
-        />
-      </IconButton>
-    )
-  }
   return (
     <IconButton
-      type="submit"
-      disabled={sendDisabled}
-      aria-label={sendLabel}
-      data-phi-composer-action="send"
-      data-phi-home-send={markHomeSend ? 'true' : undefined}
+      type={showStop ? 'button' : 'submit'}
+      onClick={showStop ? onStop : undefined}
+      disabled={!showStop && sendDisabled}
+      aria-label={showStop ? stopLabel : sendLabel}
+      title={showStop ? stopTitle : undefined}
+      data-phi-composer-action={showStop ? 'stop' : 'send'}
+      data-phi-home-send={!showStop && markHomeSend ? 'true' : undefined}
       data-phi-composer-size={actionControlSize}
       sx={{
         boxSizing: 'border-box',
@@ -184,7 +148,21 @@ function ComposerSubmitButton({
         }
       }}
     >
-      <GoPaperAirplane size={COMPOSER_ICON_SIZE} aria-hidden="true" />
+      {showStop ? (
+        <Box
+          aria-hidden="true"
+          data-phi-stop-mark-size={COMPOSER_STOP_MARK_SIZE}
+          sx={{
+            width: COMPOSER_STOP_MARK_SIZE,
+            height: COMPOSER_STOP_MARK_SIZE,
+            borderRadius: '3px',
+            bgcolor: 'currentColor',
+            flexShrink: 0
+          }}
+        />
+      ) : (
+        <GoPaperAirplane size={COMPOSER_ICON_SIZE} aria-hidden="true" />
+      )}
     </IconButton>
   )
 }

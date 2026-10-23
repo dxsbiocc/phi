@@ -6,7 +6,7 @@ import { PhiIcons } from '../icons'
 import { ToolActionIcon } from './ToolActionIcon'
 import ToolCallCard, { StatusIndicator, ToolCallDetail } from './ToolCallCard'
 import { diffStat } from '../lib/toolOutput'
-import { toolActionKind, type ToolActionKind } from '../lib/toolActions'
+import { toolActionKind } from '../lib/toolActions'
 import type { NotebookCellJumpTarget, ToolCallItem } from '../types'
 import {
   useCollapseResizeNotifier,
@@ -33,12 +33,6 @@ function joinFiles(files: string[]): string {
 
 function uniqueInOrder(values: string[]): string[] {
   return [...new Set(values)]
-}
-
-function uniqueActions(items: ToolCallItem[]): ToolActionKind[] {
-  return uniqueInOrder(
-    items.map((item) => toolActionKind(item.toolName, item.argsPreview, item.argsJson))
-  ) as ToolActionKind[]
 }
 
 function capitalize(text: string): string {
@@ -163,6 +157,7 @@ function summarizeStatus(items: ToolCallItem[]): AggregateToolStatus {
 
 function groupIndicatorStatus(items: ToolCallItem[]): ToolCallItem['status'] | null {
   if (items.some((item) => item.status === 'running')) return 'running'
+  if (items.every((item) => item.status === 'error')) return 'error'
   if (items.every((item) => item.status === 'done')) return 'done'
   return null
 }
@@ -190,7 +185,6 @@ function ToolGroupCard({
   const headline = summarize(items)
   const stat = useMemo(() => aggregateStat(items), [items])
   const indicatorStatus = useMemo(() => groupIndicatorStatus(items), [items])
-  const actions = useMemo(() => uniqueActions(items), [items])
 
   return (
     <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
@@ -220,19 +214,22 @@ function ToolGroupCard({
           '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
         }}
       >
-        <ChevronRightIcon
-          sx={{
-            fontSize: 16,
-            flexShrink: 0,
-            transition: 'transform 150ms',
-            transform: expanded ? 'rotate(90deg)' : 'none'
-          }}
-        />
-        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25, flexShrink: 0 }}>
-          {actions.map((action) => (
-            <ToolActionIcon key={action} action={action} />
-          ))}
-        </Box>
+        {indicatorStatus ? (
+          <Box
+            sx={{
+              width: 18,
+              height: 18,
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            <StatusIndicator status={indicatorStatus} />
+          </Box>
+        ) : (
+          <ToolActionIcon action="generic" />
+        )}
         <Typography component="span" variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
           {headline}
         </Typography>
@@ -240,6 +237,7 @@ function ToolGroupCard({
           <Typography
             component="span"
             variant="caption"
+            title={chatCopy.diffLineCountsValue(stat.added, stat.removed)}
             sx={{ flexShrink: 0, fontFamily: 'var(--font-mono)' }}
           >
             {stat.added ? (
@@ -254,11 +252,14 @@ function ToolGroupCard({
             ) : null}
           </Typography>
         ) : null}
-        {indicatorStatus ? (
-          <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-            <StatusIndicator status={indicatorStatus} />
-          </Box>
-        ) : null}
+        <ChevronRightIcon
+          sx={{
+            fontSize: 16,
+            flexShrink: 0,
+            transition: 'transform 150ms',
+            transform: expanded ? 'rotate(90deg)' : 'none'
+          }}
+        />
       </Box>
       <Collapse
         in={expanded}

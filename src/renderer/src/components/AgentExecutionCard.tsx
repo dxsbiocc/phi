@@ -253,6 +253,11 @@ function AgentExecutionCard({
   const [stopError, setStopError] = useState('')
   const notifyContentResize = useCollapseResizeNotifier(onContentResize)
   const isRunning = item.status === 'running' && !lost
+  const leadingIconKind = item.cancelled
+    ? 'cancelled'
+    : lost || item.status !== 'done'
+      ? 'status'
+      : 'type'
   const controlTarget = agentRunControlTarget(item, { lost })
   const stepIndex = currentStepIndex(item)
   const currentStep = stepIndex >= 0 ? item.steps[stepIndex] : null
@@ -317,15 +322,29 @@ function AgentExecutionCard({
           '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
         }}
       >
-        <ChevronRightIcon
+        <Box
+          data-phi-agent-leading-icon={leadingIconKind}
+          aria-live={isRunning ? 'polite' : undefined}
           sx={{
-            fontSize: 16,
+            width: 18,
+            height: 18,
             flexShrink: 0,
-            transition: 'transform 150ms',
-            transform: expanded ? 'rotate(90deg)' : 'none'
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
           }}
-        />
-        <AgentIcon sx={{ fontSize: 16, flexShrink: 0, color: 'primary.main' }} />
+        >
+          {leadingIconKind === 'cancelled' ? (
+            <StopIcon
+              sx={{ fontSize: 14, color: 'text.secondary' }}
+              aria-label={chatCopy.cancelled}
+            />
+          ) : leadingIconKind === 'status' ? (
+            <StatusIndicator status={lost ? 'error' : item.status} />
+          ) : (
+            <AgentIcon aria-hidden sx={{ fontSize: 16, color: 'primary.main' }} />
+          )}
+        </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography component="div" variant="body2" noWrap sx={{ color: 'text.primary' }}>
             {chatCopy.delegatedTo} {item.agentName}
@@ -361,14 +380,15 @@ function AgentExecutionCard({
             </span>
           </Tooltip>
         ) : null}
-        {item.cancelled ? (
-          <StopIcon
-            sx={{ fontSize: 14, color: 'text.secondary' }}
-            aria-label={chatCopy.cancelled}
-          />
-        ) : (
-          <StatusIndicator status={lost ? 'error' : item.status} />
-        )}
+        <ChevronRightIcon
+          data-phi-agent-chevron="true"
+          sx={{
+            fontSize: 16,
+            flexShrink: 0,
+            transition: 'transform 150ms',
+            transform: expanded ? 'rotate(90deg)' : 'none'
+          }}
+        />
       </Box>
       <Collapse
         in={expanded}

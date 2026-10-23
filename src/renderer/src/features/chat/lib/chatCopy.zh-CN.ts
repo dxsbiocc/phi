@@ -115,6 +115,7 @@ export const chatChinese: LocalizedCopy<typeof chatEnglish> = {
   listTruncated: '列表截断',
   previewChangedFileValue: (value0: string | number) => `预览改动文件 ${value0}`,
   lineCountsUnavailable: '行数不可用',
+  diffLineCountsValue: (added: number, deleted: number) => `新增 ${added} 行，删除 ${deleted} 行`,
   viewDiff: '查看差异',
   viewThisRunSDiffForValue: (value0: string | number) => `查看 ${value0} 的本轮差异`,
   collapse: '收起',
@@ -228,6 +229,7 @@ export const chatChinese: LocalizedCopy<typeof chatEnglish> = {
   noMatchingAgents: '没有匹配智能体',
   referenceASkillOrAgent: '引用 Skill 或智能体',
   thinking: '思考',
+  thinkingInProgress: '正在思考…',
   thoughtFor1S: '思考了 1 s',
   thoughtForValueS: (value0: string | number) => `思考了 ${value0} s`,
   thoughtForValueMValueS: (value0: string | number, value1: string | number) =>

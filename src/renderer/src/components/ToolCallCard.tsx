@@ -101,15 +101,23 @@ function ToolCallCard({
           '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
         }}
       >
-        <ChevronRightIcon
-          sx={{
-            fontSize: 16,
-            flexShrink: 0,
-            transition: 'transform 150ms',
-            transform: expanded ? 'rotate(90deg)' : 'none'
-          }}
-        />
-        <ToolActionIcon action={action} />
+        {item.status === 'done' ? (
+          <ToolActionIcon action={action} />
+        ) : (
+          <Box
+            aria-live={item.status === 'running' ? 'polite' : undefined}
+            sx={{
+              width: 18,
+              height: 18,
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            <StatusIndicator status={item.status} />
+          </Box>
+        )}
         {showToolName ? (
           <Typography
             component="span"
@@ -136,6 +144,7 @@ function ToolCallCard({
           <Typography
             component="span"
             variant="caption"
+            title={chatCopy.diffLineCountsValue(stat.added, stat.removed)}
             sx={{ flexShrink: 0, fontFamily: 'var(--font-mono)' }}
           >
             {stat.added ? (
@@ -172,12 +181,14 @@ function ToolCallCard({
             </IconButton>
           </Tooltip>
         ) : null}
-        <Box
-          aria-live={item.status === 'running' ? 'polite' : undefined}
-          sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}
-        >
-          <StatusIndicator status={item.status} />
-        </Box>
+        <ChevronRightIcon
+          sx={{
+            fontSize: 16,
+            flexShrink: 0,
+            transition: 'transform 150ms',
+            transform: expanded ? 'rotate(90deg)' : 'none'
+          }}
+        />
       </Box>
       <Collapse
         in={expanded}
