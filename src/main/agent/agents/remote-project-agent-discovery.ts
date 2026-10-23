@@ -3,7 +3,12 @@ import { posix } from 'node:path'
 
 import { RemoteWorkspaceTargetMissingError } from '../remote-workspace-boundary'
 import type { WorkspaceHost, WorkspaceEntry } from '../workspace-host/types'
-import { validateAgentFile, type PhiAgentDefinition, type PhiAgentSource } from './definition'
+import {
+  validateAgentFile,
+  type PhiAgentDefinition,
+  type PhiAgentInvocation,
+  type PhiAgentSource
+} from './definition'
 import type { PhiAgentDiagnostic } from './discovery'
 import { remoteAgentTrustState, type RemoteAgentTrustState } from './remote-agent-trust-store'
 
@@ -30,6 +35,7 @@ export interface RemoteProjectAgentEntry {
   trustState: RemoteProjectAgentTrustState
   available: boolean
   diagnostics: string[]
+  invocation?: PhiAgentInvocation
 }
 
 export interface RemoteProjectAgentDiscoveryResult {
@@ -168,7 +174,8 @@ function parsedEntry(
       contentHash: file.contentHash,
       trustState,
       available: trustState === 'trusted',
-      diagnostics: messages
+      diagnostics: messages,
+      ...(definition.invocation ? { invocation: definition.invocation } : {})
     },
     ...(trustState === 'trusted' ? { definition } : {})
   }

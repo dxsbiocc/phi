@@ -313,7 +313,7 @@ async function loadedConsumerDeclarations(
     cwd,
     agentDir,
     bundledDir: getBundledAgentsDir()
-  }).agents
+  }).agents.filter((agent) => agent.invocation !== 'host')
   for (const agent of agents) {
     if (agent.environment) {
       declarations.push({

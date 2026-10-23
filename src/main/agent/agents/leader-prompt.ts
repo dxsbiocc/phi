@@ -6,9 +6,10 @@ import type { PhiAgentDefinition } from './definition'
  * Only agent names appear here, never a specialist's own tool functions.
  */
 export function buildAgentLeaderPrompt(agents: readonly PhiAgentDefinition[]): string {
-  if (agents.length === 0) return ''
+  const visibleAgents = agents.filter((agent) => agent.invocation !== 'host')
+  if (visibleAgents.length === 0) return ''
 
-  const entries = agents.map((agent) => {
+  const entries = visibleAgents.map((agent) => {
     const lines = [`- ${agent.name}: ${agent.description}`]
     if (agent.delegationMode === 'required-first') {
       lines.push(

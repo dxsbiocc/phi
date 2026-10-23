@@ -1,13 +1,13 @@
 import { type CreateAgentSessionResult } from '@oh-my-pi/pi-coding-agent'
-import { discoverCustomMcpOAuthEndpoints } from '../mcp/featured-mcp-auth'
-import { MCPManager } from '../mcp/omp-mcp'
-import { OwnedStdioTransportScope } from '../mcp/owned-stdio-transports'
+import type { discoverCustomMcpOAuthEndpoints } from '../mcp/featured-mcp-auth'
+import type { MCPManager } from '../mcp/omp-mcp'
+import type { OwnedStdioTransportScope } from '../mcp/owned-stdio-transports'
 import { type EnvironmentLease } from '../../envs/leases'
 import { type RemoteMcpGuardState, type RemoteMcpProfilePolicy } from '../../mcp/remote-mcp-policy'
-import { readCustomRemoteMcpConnector } from '../../mcp-connectors'
-import { BrowserTextVault } from '../../browser/browser-text-vault'
-import { AgentRunRegistry } from '../../agents/registry'
-import { RuntimeContext } from './common'
+import type { readCustomRemoteMcpConnector } from '../../mcp-connectors'
+import type { BrowserTextVault } from '../../browser/browser-text-vault'
+import type { AgentRunFn, AgentRunRegistry } from '../../agents/registry'
+import type { RuntimeContext } from './common'
 
 export type RemoteMcpAccess = {
   localProjectAnchor: string
@@ -20,6 +20,8 @@ export type SessionEntry = {
   agentDir: string
   /** The runs of this session's specialist agents; stopped with the session. */
   agentRuns?: AgentRunRegistry
+  /** Every configured specialist, including host-only orchestration agents. */
+  agentRunners?: ReadonlyMap<string, AgentRunFn>
   /** Stops telling the main process about those runs (used when the session goes away). */
   stopAgentRunNotices?: () => void
   browserTextVault?: BrowserTextVault

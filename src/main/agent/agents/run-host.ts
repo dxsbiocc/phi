@@ -7,6 +7,8 @@ import {
 } from '../../../shared/agentRunNotice'
 
 import { isRecord } from '../../../shared/guards'
+import { isFinalAgentRunState, type AgentRunSnapshot } from './registry'
+import type { AgentReportStatus } from './report'
 
 /**
  * The main-process side of a background agent run ending. The runs live in the
@@ -24,9 +26,18 @@ export const AGENT_RUN_HOST_METHODS = {
 
 /** An event written to a conversation's timeline. */
 export type AgentRunHostEvent = { type: string; [key: string]: unknown }
+export type AgentRunHostCompletion = Pick<AgentRunSnapshot, 'id' | 'state'> &
+  Partial<Omit<AgentRunSnapshot, 'id' | 'state'>>
 
 const MAX_REPORT_LENGTH = 20000
 const MAX_TASK_LENGTH = 500
+const REPORT_STATUSES = new Set<AgentReportStatus>([
+  'completed',
+  'partial',
+  'not_found',
+  'blocked',
+  'failed'
+])
 
 export interface AgentRunHostDeps {
   /** Maps the runtime session that started the run to its Phi conversation, if it is still known. */
@@ -56,6 +67,8 @@ export interface AgentRunHostDeps {
   markReported: (phiSessionId: string, agentRunId: string) => void
   /** A new run with this id has just ended; any earlier receipt for that id is stale. */
   clearReported: (phiSessionId: string, agentRunId: string) => void
+  /** Completes a plan step without creating a chat card, timeline event, wake-up, or notification. */
+  deliverHostRun: (runtimeSessionId: string, run: AgentRunHostCompletion) => boolean
 }
 
 function requireString(
@@ -71,6 +84,80 @@ function requireString(
 function optionalString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key]
   return typeof value === 'string' && value ? value : undefined
+}
+
+function validOptionalField(
+  value: Record<string, unknown>,
+  key: string,
+  type: 'string' | 'number'
+): boolean {
+  return value[key] === undefined || typeof value[key] === type
+}
+
+function hasValidRequiredHostRunFields(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.agent === 'string' &&
+    Boolean(value.agent) &&
+    typeof value.task === 'string' &&
+    Boolean(value.task) &&
+    isFinalAgentRunState(value.state) &&
+    typeof value.background === 'boolean' &&
+    typeof value.startedAt === 'number'
+  )
+}
+
+function hasValidOptionalHostRunFields(value: Record<string, unknown>): boolean {
+  const validMissingInputs =
+    value.missingInputs === undefined ||
+    (Array.isArray(value.missingInputs) &&
+      value.missingInputs.every((item) => typeof item === 'string'))
+  return (
+    validOptionalField(value, 'completedAt', 'number') &&
+    validOptionalField(value, 'toolCalls', 'number') &&
+    validOptionalField(value, 'report', 'string') &&
+    validOptionalField(value, 'error', 'string') &&
+    (value.reportStatus === undefined ||
+      REPORT_STATUSES.has(value.reportStatus as AgentReportStatus)) &&
+    validMissingInputs
+  )
+}
+
+function hasValidHostRunFields(value: Record<string, unknown>): boolean {
+  return hasValidRequiredHostRunFields(value) && hasValidOptionalHostRunFields(value)
+}
+
+function hostRunSnapshot(
+  value: Record<string, unknown>,
+  id: string,
+  redact: (text: string) => string
+): AgentRunHostCompletion {
+  if (!hasValidHostRunFields(value)) {
+    return { id, state: 'error', origin: 'host', error: 'Invalid completion from agent runtime' }
+  }
+  const state = value.state as AgentRunSnapshot['state']
+  const report = optionalString(value, 'report')
+  const error = optionalString(value, 'error')
+  const reportStatus = REPORT_STATUSES.has(value.reportStatus as AgentReportStatus)
+    ? (value.reportStatus as AgentReportStatus)
+    : undefined
+  const missingInputs = Array.isArray(value.missingInputs)
+    ? value.missingInputs.filter((item): item is string => typeof item === 'string')
+    : undefined
+  return {
+    id,
+    agent: requireString(value, 'agent', 'run.agent'),
+    task: requireString(value, 'task', 'run.task'),
+    state,
+    background: value.background as boolean,
+    origin: 'host',
+    startedAt: value.startedAt as number,
+    ...(typeof value.completedAt === 'number' ? { completedAt: value.completedAt } : {}),
+    ...(typeof value.toolCalls === 'number' ? { toolCalls: value.toolCalls } : {}),
+    ...(report ? { report: redact(report) } : {}),
+    ...(reportStatus ? { reportStatus } : {}),
+    ...(missingInputs ? { missingInputs } : {}),
+    ...(error ? { error: redact(error) } : {})
+  }
 }
 
 function seconds(record: Record<string, unknown>): number {
@@ -178,101 +265,115 @@ function stepEvent(
   }
 }
 
+function finishSession(
+  deps: AgentRunHostDeps,
+  origin: { phiSessionId: string; cwd: string },
+  originSessionId: string,
+  event: AgentRunFinishedEvent,
+  toolCallId?: string
+): void {
+  deps.clearReported(origin.phiSessionId, event.agentRunId)
+  try {
+    if (toolCallId) {
+      sessionEvent(deps, origin.phiSessionId, origin.cwd, {
+        type: 'agent_execution_completed',
+        toolCallId,
+        agentName: event.agent,
+        agentRunId: event.agentRunId,
+        agentSessionId: originSessionId,
+        // A run somebody stopped did not fail: the card says "cancelled", not an error.
+        isError: event.state === 'error',
+        ...(event.state === 'cancelled' ? { cancelled: true } : {}),
+        ...(event.report ? { finalReport: event.report } : {}),
+        ...(event.toolCalls !== undefined ? { toolCalls: event.toolCalls } : {}),
+        ...(event.state === 'error' && event.error ? { error: event.error } : {})
+      })
+    }
+  } catch {
+    // The final event and notice remain independent fallbacks.
+  }
+  try {
+    sessionEvent(deps, origin.phiSessionId, origin.cwd, { ...event })
+  } catch {
+    // The OS notification below still tells the user.
+  }
+  try {
+    deps.continueConversation?.(origin.phiSessionId, event)
+  } catch {
+    // Waking the agent is best-effort.
+  }
+}
+
+async function handleFinished(deps: AgentRunHostDeps, params: unknown): Promise<unknown> {
+  const root = isRecord(params) ? params : undefined
+  const run = root?.run
+  if (isRecord(run) && run.origin === 'host') {
+    const originSessionId = requireString(root, 'originSessionId')
+    const id = requireString(run, 'id', 'run.id')
+    deps.deliverHostRun(originSessionId, hostRunSnapshot(run, id, deps.redact))
+    return { ok: true }
+  }
+  const { originSessionId, event, toolCallId } = parseFinished(params, deps.redact)
+  const origin = deps.resolveSession(originSessionId)
+  if (origin) finishSession(deps, origin, originSessionId, event, toolCallId)
+  if (event.state !== 'cancelled' && !deps.isAppFocused()) {
+    try {
+      deps.showOsNotification(agentRunNotice(event, deps.getUiLanguage?.()))
+    } catch {
+      // Notifications are best-effort (unsupported platform, permission denied).
+    }
+  }
+  return { ok: true }
+}
+
+async function handleStep(deps: AgentRunHostDeps, params: unknown): Promise<unknown> {
+  const root = isRecord(params) ? params : undefined
+  const originSessionId = requireString(root, 'originSessionId')
+  const run = root?.run
+  if (!isRecord(run)) throw new Error('Missing required parameter: run')
+  const agentRunId = requireString(run, 'id', 'run.id')
+  const agent = requireString(run, 'agent', 'run.agent')
+  const step = root?.step
+  if (!isRecord(step)) throw new Error('Missing required parameter: step')
+  const stepId = requireString(step, 'id', 'step.id')
+  const toolCallId = optionalString(run, 'toolCallId')
+  const origin = deps.resolveSession(originSessionId)
+  if (!origin || !toolCallId) return { ok: true }
+  try {
+    sessionEvent(
+      deps,
+      origin.phiSessionId,
+      origin.cwd,
+      stepEvent(deps, origin.phiSessionId, {
+        originSessionId,
+        toolCallId,
+        agent,
+        agentRunId,
+        step,
+        stepId
+      })
+    )
+  } catch {
+    // Progress is best-effort; the run itself is unaffected.
+  }
+  return { ok: true }
+}
+
+async function handleReported(deps: AgentRunHostDeps, params: unknown): Promise<unknown> {
+  const root = isRecord(params) ? params : undefined
+  const originSessionId = requireString(root, 'originSessionId')
+  const runId = requireString(root, 'runId')
+  const origin = deps.resolveSession(originSessionId)
+  if (origin) deps.markReported(origin.phiSessionId, runId)
+  return { ok: true }
+}
+
 export function agentRunHostHandlers(
   deps: AgentRunHostDeps
 ): Record<string, (params: unknown) => Promise<unknown>> {
   return {
-    [AGENT_RUN_HOST_METHODS.finished]: async (params) => {
-      const { originSessionId, event, toolCallId } = parseFinished(params, deps.redact)
-      const origin = deps.resolveSession(originSessionId)
-
-      if (origin) {
-        deps.clearReported(origin.phiSessionId, event.agentRunId)
-        // The card that showed this run in the chat ends with it.
-        try {
-          if (toolCallId) {
-            sessionEvent(deps, origin.phiSessionId, origin.cwd, {
-              type: 'agent_execution_completed',
-              toolCallId,
-              agentName: event.agent,
-              agentRunId: event.agentRunId,
-              agentSessionId: originSessionId,
-              // A run somebody stopped did not fail: the card says "cancelled", not an error.
-              isError: event.state === 'error',
-              ...(event.state === 'cancelled' ? { cancelled: true } : {}),
-              ...(event.report ? { finalReport: event.report } : {}),
-              ...(event.toolCalls !== undefined ? { toolCalls: event.toolCalls } : {}),
-              ...(event.state === 'error' && event.error ? { error: event.error } : {})
-            })
-          }
-        } catch {
-          // The notice below still tells the user.
-        }
-        try {
-          sessionEvent(deps, origin.phiSessionId, origin.cwd, { ...event })
-        } catch {
-          // The OS notification below still tells the user.
-        }
-        try {
-          deps.continueConversation?.(origin.phiSessionId, event)
-        } catch {
-          // Waking the agent is an extra; never let it get in the way of telling the user.
-        }
-      }
-
-      // Someone who just stopped a run knows it ended; only unexpected endings pop up.
-      if (event.state !== 'cancelled' && !deps.isAppFocused()) {
-        try {
-          deps.showOsNotification(agentRunNotice(event, deps.getUiLanguage?.()))
-        } catch {
-          // Notifications are best-effort (unsupported platform, permission denied).
-        }
-      }
-      return { ok: true }
-    },
-
-    [AGENT_RUN_HOST_METHODS.step]: async (params) => {
-      const root = isRecord(params) ? params : undefined
-      const originSessionId = requireString(root, 'originSessionId')
-      const run = root?.run
-      if (!isRecord(run)) throw new Error('Missing required parameter: run')
-      const agentRunId = requireString(run, 'id', 'run.id')
-      const agent = requireString(run, 'agent', 'run.agent')
-      const step = root?.step
-      if (!isRecord(step)) throw new Error('Missing required parameter: step')
-      const stepId = requireString(step, 'id', 'step.id')
-
-      const toolCallId = optionalString(run, 'toolCallId')
-      const origin = deps.resolveSession(originSessionId)
-      // Without a card to show it on, the step has nowhere to go.
-      if (!origin || !toolCallId) return { ok: true }
-      try {
-        sessionEvent(
-          deps,
-          origin.phiSessionId,
-          origin.cwd,
-          stepEvent(deps, origin.phiSessionId, {
-            originSessionId,
-            toolCallId,
-            agent,
-            agentRunId,
-            step,
-            stepId
-          })
-        )
-      } catch {
-        // Progress is best-effort; the run itself is unaffected.
-      }
-      return { ok: true }
-    },
-
-    [AGENT_RUN_HOST_METHODS.reported]: async (params) => {
-      const root = isRecord(params) ? params : undefined
-      const originSessionId = requireString(root, 'originSessionId')
-      const runId = requireString(root, 'runId')
-      const origin = deps.resolveSession(originSessionId)
-      if (origin) deps.markReported(origin.phiSessionId, runId)
-      return { ok: true }
-    }
+    [AGENT_RUN_HOST_METHODS.finished]: (params) => handleFinished(deps, params),
+    [AGENT_RUN_HOST_METHODS.step]: (params) => handleStep(deps, params),
+    [AGENT_RUN_HOST_METHODS.reported]: (params) => handleReported(deps, params)
   }
 }

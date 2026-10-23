@@ -17,12 +17,9 @@ import { BrowserOutcome } from '../../../../shared/browserTypes'
 import { type PhiAgentDefinition } from '../../agents/definition'
 import { discoverPhiAgents } from '../../agents/discovery'
 import { type PhiTool } from '../types'
-import { AGENT_RUN_HOST_METHODS } from '../../agents/run-host'
-import { AgentRunRegistry } from '../../agents/registry'
-import { buildAgentRunTools } from '../../agents/run-tools'
+import { AgentRunRegistry, type AgentRunFn } from '../../agents/registry'
 import { createAgentRunner } from '../../agents/runner'
 import { appendAgentUsageRecord, pruneAgentUsageLogs } from '../../agents/usage-log'
-import { buildAgentTool } from '../../agents/tool'
 import { filterPersonaContextFile } from '../../main-system-prompt'
 import { buildEnvRequestTool } from '../../content/env-request-tool'
 import { buildScriptTools, buildSkillRunTool } from '../../content/skill-tools'
@@ -48,6 +45,8 @@ import { loadSkillScriptTools } from './tool-support'
 import { buildDecisionTool } from '../../decisions/tool'
 import { bindSessionDecisionEvaluator } from '../decision-evaluator'
 import { evaluateDecisionRequest } from './decision-runtime'
+import { subscribeToAgentRunNotices } from './agent-run-notices'
+import { buildSessionAgentDelegationTools, supportsDelegationTool } from './session-agent-tools'
 
 export async function createSessionToolRegistry(deps: {
   record: UnknownRecord
@@ -68,6 +67,7 @@ export async function createSessionToolRegistry(deps: {
 }): Promise<{
   resources: DefaultResourceLoader | undefined
   customTools: PhiTool[]
+  agentRunners: ReadonlyMap<string, AgentRunFn>
   stopAgentRunNotices: () => void
 }> {
   const {
@@ -156,60 +156,45 @@ export async function createSessionToolRegistry(deps: {
     currentModel: () => parentRef.current?.session.model,
     evaluate: evaluateDecisionRequest
   })
-  const createAgentTool = (definition: PhiAgentDefinition): PhiTool =>
-    buildAgentTool(
-      definition,
-      createAgentRunner({
-        agent: definition.name,
-        // What each delegation cost, for judging prompt and tool changes; see agents/usage.ts.
-        onUsage: (record) => appendAgentUsageRecord(agentDir, { ...record, sessionId }),
-        createSession: ({ runId }) =>
-          createPhiAgentSession(definition, {
-            sessionId,
-            cwd,
-            agentDir,
-            ctx,
-            resourceOptions: sessionResourceOptions,
-            enableToolApproval: Boolean(record.enableToolApproval),
-            ...(runId ? { agentRunId: runId } : {}),
-            ...(skillTools ? { skillTools } : {}),
-            parent: () => parentRef.current
-          })
-      }),
-      agentRuns,
-      { cwd, assessTask: decide }
-    )
-  const agentCustomTools = phiAgents.map(createAgentTool)
-  const agentRunTools = phiAgents.length > 0 ? buildAgentRunTools(agentRuns) : []
+  const agentRunners = new Map<string, AgentRunFn>()
+  const runnerFor = (definition: PhiAgentDefinition): AgentRunFn => {
+    const existing = agentRunners.get(definition.name)
+    if (existing) return existing
+    const runner = createAgentRunner({
+      agent: definition.name,
+      // What each delegation cost, for judging prompt and tool changes; see agents/usage.ts.
+      onUsage: (record) => appendAgentUsageRecord(agentDir, { ...record, sessionId }),
+      createSession: ({ runId }) =>
+        createPhiAgentSession(definition, {
+          sessionId,
+          cwd,
+          agentDir,
+          ctx,
+          resourceOptions: sessionResourceOptions,
+          enableToolApproval: Boolean(record.enableToolApproval),
+          ...(runId ? { agentRunId: runId } : {}),
+          ...(skillTools ? { skillTools } : {}),
+          parent: () => parentRef.current
+        })
+    })
+    agentRunners.set(definition.name, runner)
+    return runner
+  }
+  for (const definition of phiAgents) runnerFor(definition)
+  const agentTools = buildSessionAgentDelegationTools({
+    definitions: phiAgents,
+    runnerFor,
+    registry: agentRuns,
+    toolOptions: { cwd, assessTask: decide }
+  })
   // A background run outlives the tool call that started it, so its end is reported to the
   // main process, which owns the conversation: it notes it in the timeline and can wake the
   // main agent. A run whose report the agent already collected is reported as such, so it
   // is not announced a second time. Foreground runs are never announced: the agent waited.
-  const stopAgentRunNotices = agentRuns.subscribe({
-    onFinish: (run) => {
-      if (!run.background) return
-      void requestHost(AGENT_RUN_HOST_METHODS.finished, {
-        originSessionId: sessionId,
-        run
-      }).catch(() => undefined)
-    },
-    // Its steps go to the card that shows it; a foreground run's steps already do, through
-    // the tool call that is waiting on it.
-    onStep: (run, step) => {
-      if (!run.background) return
-      void requestHost(AGENT_RUN_HOST_METHODS.step, {
-        originSessionId: sessionId,
-        run: { id: run.id, agent: run.agent, toolCallId: run.toolCallId },
-        step
-      }).catch(() => undefined)
-    },
-    onReported: (run) => {
-      if (!run.background) return
-      void requestHost(AGENT_RUN_HOST_METHODS.reported, {
-        originSessionId: sessionId,
-        runId: run.id
-      }).catch(() => undefined)
-    }
+  const stopAgentRunNotices = subscribeToAgentRunNotices({
+    registry: agentRuns,
+    sessionId,
+    requestHost
   })
   const notebookCustomTools = buildSessionNotebookTools(requestHost, sessionId)
   const libraryCustomTools = buildLibraryCustomTools()
@@ -227,8 +212,7 @@ export async function createSessionToolRegistry(deps: {
   )
   const customTools = [
     buildDecisionTool(decide),
-    ...agentCustomTools,
-    ...agentRunTools,
+    ...agentTools,
     buildPresentFilesTool(
       sessionId,
       (request) =>
@@ -290,6 +274,15 @@ export async function createSessionToolRegistry(deps: {
               }).agents.filter(
                 (agent) => !phiAgents.some((existing) => existing.name === agent.name)
               )
+              const hadDelegationTools = phiAgents.some(supportsDelegationTool)
+              for (const definition of discovered) runnerFor(definition)
+              const discoveredAgentTools = buildSessionAgentDelegationTools({
+                definitions: discovered,
+                runnerFor,
+                registry: agentRuns,
+                toolOptions: { cwd, assessTask: decide },
+                includeRunTools: !hadDelegationTools
+              })
               const tools = [
                 buildSkillRunTool(requestHost, {
                   runtimeSessionId: sessionId,
@@ -300,14 +293,17 @@ export async function createSessionToolRegistry(deps: {
                   requestHost,
                   sessionId
                 ),
-                ...discovered.map(createAgentTool),
-                ...(discovered.length > 0 && phiAgents.length === 0
-                  ? buildAgentRunTools(agentRuns)
-                  : [])
+                ...discoveredAgentTools
               ]
               const added = new Set(await capabilityRegistrar.register(tools, signal))
               customTools.push(...tools.filter((tool) => added.has(tool.name)))
-              phiAgents.push(...discovered.filter((agent) => added.has(agent.name)))
+              const accepted = discovered.filter(
+                (agent) => agent.invocation === 'host' || added.has(agent.name)
+              )
+              for (const agent of discovered) {
+                if (!accepted.includes(agent)) agentRunners.delete(agent.name)
+              }
+              phiAgents.push(...accepted)
               onAgentsChanged?.()
             },
             refreshConnector: async (name) => {
@@ -335,5 +331,5 @@ export async function createSessionToolRegistry(deps: {
     browserCustomTool
   ]
 
-  return { resources, customTools, stopAgentRunNotices }
+  return { resources, customTools, agentRunners, stopAgentRunNotices }
 }

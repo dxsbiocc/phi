@@ -35,6 +35,50 @@ function addIndexed(
   return prefix
 }
 
+function environmentAgent(name: string, invocation?: 'host'): string {
+  return `---
+name: ${name}
+description: ${name} environment consumer.
+tools: [read]
+skills: []
+environment: phi:python@1
+${invocation ? `invocation: ${invocation}\n` : ''}---
+Use the managed environment.
+`
+}
+
+test('managed environment catalog excludes host-only agent consumers', async () => {
+  const temp = mkdtempSync(join(tmpdir(), 'phi-managed-host-agent-'))
+  const root = join(temp, 'runtime')
+  const environmentsDir = join(temp, 'official')
+  const agentDir = join(temp, 'agent')
+  const projectDir = join(temp, 'project')
+  try {
+    copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
+    mkdirSync(join(agentDir, 'agents'), { recursive: true })
+    mkdirSync(projectDir, { recursive: true })
+    writeFileSync(join(agentDir, 'agents', 'Visible.md'), environmentAgent('Visible'))
+    writeFileSync(join(agentDir, 'agents', 'HostOnly.md'), environmentAgent('HostOnly', 'host'))
+
+    const catalog = await listManagedEnvironments({
+      root,
+      environmentsDir,
+      agentDir,
+      projectDir,
+      platform: 'darwin-arm64'
+    })
+    const python = catalog.find((entry) => entry.ref === 'phi:python@1')
+
+    assert.ok(python?.consumers.some((consumer) => consumer.name === 'Visible'))
+    assert.equal(
+      python?.consumers.some((consumer) => consumer.name === 'HostOnly'),
+      false
+    )
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
 test('managed catalog includes shared phi-r, project overrides, and orphaned environments', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'phi-managed-catalog-'))
   const root = join(temp, 'runtime')

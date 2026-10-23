@@ -37,6 +37,7 @@ import {
 } from './session-runtime'
 import { pendingAuthPrompts, pendingToolApprovals } from './state'
 import { controlSessionAgentRun, listSessionAgentRuns } from './subagents'
+import { startSessionAgentRun } from './agent-run-start'
 import { handleWebSearchRequest } from './web-search'
 import {
   createModelGatewayLease,
@@ -124,6 +125,8 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return controlSessionAgentRun('steer', params)
     case 'agentRun.stop':
       return controlSessionAgentRun('stop', params)
+    case 'agentRun.start':
+      return startSessionAgentRun(params)
     case 'agentRuns.list':
       return listSessionAgentRuns()
     case 'shellJobs.list':

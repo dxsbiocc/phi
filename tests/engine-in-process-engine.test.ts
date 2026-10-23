@@ -460,6 +460,13 @@ const requestCases: RequestCase[] = [
       engine.settings.webSearch.clearApiKey({ agentDir: '/agent', providerId: 'exa' })
   },
   {
+    name: 'agentRuns.start',
+    method: 'agentRun.start',
+    params: { sessionId: 'session', agent: 'PlanStep', task: 'implement step' },
+    invoke: (engine) =>
+      engine.agentRuns.start({ sessionId: 'session', agent: 'PlanStep', task: 'implement step' })
+  },
+  {
     name: 'agentRuns.list',
     method: 'agentRuns.list',
     params: {},

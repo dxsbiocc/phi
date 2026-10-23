@@ -148,11 +148,19 @@ export async function discoverRemoteAgentCatalog(
     discoverRemoteProjectAgents(options),
     Promise.resolve(discoverPhiAgents(localDiscoveryOptions(options)))
   ])
-  const summaries = project.entries.map(remoteSummary)
+  const visibleProjectEntries = project.entries.filter((entry) => entry.invocation !== 'host')
+  const visibleProjectAgents = project.agents.filter((agent) => agent.invocation !== 'host')
+  const visibleLocalAgents = local.agents.filter((agent) => agent.invocation !== 'host')
+  const summaries = visibleProjectEntries.map(remoteSummary)
   const claimed = new Set<string>()
-  const trustedEntries = project.entries.filter((entry) => entry.trustState === 'trusted')
-  const projectAgents = resolveProjectAgents(project.agents, trustedEntries, summaries, claimed)
-  const localAgents = resolveLocalAgents(local.agents, summaries, claimed)
+  const trustedEntries = visibleProjectEntries.filter((entry) => entry.trustState === 'trusted')
+  const projectAgents = resolveProjectAgents(
+    visibleProjectAgents,
+    trustedEntries,
+    summaries,
+    claimed
+  )
+  const localAgents = resolveLocalAgents(visibleLocalAgents, summaries, claimed)
   return {
     agents: [...projectAgents, ...localAgents],
     entries: summaries.sort(compareSummaries),

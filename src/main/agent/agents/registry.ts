@@ -20,6 +20,8 @@ import { parseAgentReport, type AgentReportStatus } from './report'
 import { errorMessage } from '../../../shared/errorCodes'
 
 export type AgentRunState = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+export type FinalAgentRunState = Extract<AgentRunState, 'done' | 'error' | 'cancelled'>
+export type AgentRunOrigin = 'tool' | 'host'
 
 export interface AgentRunSnapshot {
   id: string
@@ -28,6 +30,8 @@ export interface AgentRunSnapshot {
   state: AgentRunState
   /** Started with `background: true`: nobody was waiting on the tool call. */
   background: boolean
+  /** Who started the run. Absent values from older callers are treated as `tool`. */
+  origin?: AgentRunOrigin
   startedAt: number
   completedAt?: number
   toolCalls?: number
@@ -59,7 +63,7 @@ export interface AgentRunListener {
 export interface AgentRunLimits {
   /** Sessions running at once; further runs wait in a queue. */
   maxConcurrent: number
-  /** Runs one conversation may start in total. Stops a delegation loop. */
+  /** Tool-origin runs one conversation may start in total. Stops a delegation loop. */
   maxRuns: number
 }
 
@@ -82,6 +86,8 @@ export interface AgentLaunchInput {
   images?: AgentImage[]
   runner: AgentRunFn
   background: boolean
+  /** Defaults to `tool`; `host` runs have no delegation card in the chat. */
+  origin?: AgentRunOrigin
   /** Cancels a foreground run when it fires. Ignored for background runs, which outlive their tool call. */
   signal?: AbortSignal
   /** The delegation tool call that starts this run. */
@@ -119,7 +125,7 @@ interface RunRecord {
   detachSignal?: () => void
 }
 
-export function isFinalAgentRunState(state: AgentRunState): boolean {
+export function isFinalAgentRunState(state: unknown): state is FinalAgentRunState {
   return state === 'done' || state === 'error' || state === 'cancelled'
 }
 
@@ -131,6 +137,7 @@ export class AgentRunRegistry {
   private readonly listeners = new Set<AgentRunListener>()
   private active = 0
   private sequence = 0
+  private toolRuns = 0
 
   constructor(options: { limits?: Partial<AgentRunLimits>; now?: () => number } = {}) {
     this.limits = { ...DEFAULT_AGENT_RUN_LIMITS, ...options.limits }
@@ -138,7 +145,13 @@ export class AgentRunRegistry {
   }
 
   launch(input: AgentLaunchInput): AgentRunHandle {
-    if (this.runs.size >= this.limits.maxRuns) throw new AgentRunLimitError(this.limits.maxRuns)
+    const origin = input.origin ?? 'tool'
+    if (origin === 'tool' && this.toolRuns >= this.limits.maxRuns) {
+      throw new AgentRunLimitError(this.limits.maxRuns)
+    }
+    // Host runs are bounded by plan step/retry/replan limits, so only tool-driven
+    // delegation loops consume the per-conversation maxRuns allowance.
+    if (origin === 'tool') this.toolRuns += 1
 
     const id = `run_${++this.sequence}`
     let settle!: (snapshot: AgentRunSnapshot) => void
@@ -152,6 +165,7 @@ export class AgentRunRegistry {
         task: input.task,
         state: 'queued',
         background: input.background,
+        origin,
         startedAt: this.now(),
         ...(input.toolCallId ? { toolCallId: input.toolCallId } : {})
       },

@@ -39,6 +39,7 @@ import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import { isSecretMetadataKey } from '../src/main/agent/redaction'
 import * as agentRunContinue from '../src/main/agent/agents/run-continue'
 import { agentRunHostHandlers } from '../src/main/agent/agents/run-host'
+import * as agentRunCompletions from '../src/main/agent/plan/execution/agent-run-completions'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { createHash, randomUUID } from 'node:crypto'
@@ -3516,6 +3517,7 @@ async function harness(
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },
     './agent/agents/run-continue': agentRunContinue,
     './agent/agents/run-host': { agentRunHostHandlers },
+    './agent/plan/execution/agent-run-completions': agentRunCompletions,
     './agent/wrappers/composition/discovery': {
       listWrapperCompositionCatalogStatus: (): unknown[] => [],
       resetWrapperCompositionCatalogCache: (): void => {}
