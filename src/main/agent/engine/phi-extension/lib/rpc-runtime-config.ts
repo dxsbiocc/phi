@@ -112,7 +112,9 @@ export function validateRpcRuntimeConfig(
   exact(value.native, [
     'endpoint',
     'models',
-    ...(value.native && typeof value.native === 'object' && Object.hasOwn(value.native, 'cursorEndpoint')
+    ...(value.native &&
+    typeof value.native === 'object' &&
+    Object.hasOwn(value.native, 'cursorEndpoint')
       ? ['cursorEndpoint']
       : [])
   ])

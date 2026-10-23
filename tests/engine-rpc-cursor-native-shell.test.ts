@@ -129,6 +129,12 @@ test(
     })
     await runtime.prompt(randomUUID(), 'Run the requested shell command.').catch(() => undefined)
     assert.ok(approvalRequests > approvedCount)
-    assert.equal(await access(join(cwd, '.phi-denied.txt')).then(() => true, () => false), false)
+    assert.equal(
+      await access(join(cwd, '.phi-denied.txt')).then(
+        () => true,
+        () => false
+      ),
+      false
+    )
   }
 )

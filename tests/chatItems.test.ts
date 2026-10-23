@@ -239,6 +239,25 @@ test('extractNotebookToolSummary keeps notebook tool receipts compact', () => {
   )
 })
 
+test('extractNotebookToolSummary treats a top-level null count as a nested fallback', () => {
+  assert.equal(
+    extractNotebookToolSummary({
+      kind: 'notebook_cell_executed',
+      executionCount: null,
+      execution: { executionCount: 7 }
+    })?.executionCount,
+    7
+  )
+  assert.equal(
+    'executionCount' in
+      (extractNotebookToolSummary({
+        kind: 'notebook_cell_executed',
+        executionCount: null
+      }) ?? {}),
+    false
+  )
+})
+
 test('extractToolText returns strings unchanged', () => {
   assert.equal(extractToolText('plain output'), 'plain output')
 })

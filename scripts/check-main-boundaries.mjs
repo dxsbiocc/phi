@@ -68,7 +68,9 @@ if (indexLines > baseline.index.lines) {
       'Move a domain out instead of adding to it.'
   )
 } else if (indexLines < baseline.index.lines) {
-  improvements.push(`${baseline.index.path}: ${indexLines} lines, ${baseline.index.lines - indexLines} below the ceiling`)
+  improvements.push(
+    `${baseline.index.path}: ${indexLines} lines, ${baseline.index.lines - indexLines} below the ceiling`
+  )
 }
 
 if (indexHandles > baseline.index.ipcHandles) {
@@ -111,7 +113,9 @@ if (update) {
     oversized: { ...baseline.oversized, files: Object.fromEntries([...currentOversized].sort()) }
   }
   writeFileSync(baselinePath, `${JSON.stringify(next, null, 2)}\n`)
-  console.log(`Baseline lowered: index ${indexLines} lines / ${indexHandles} channels, ${currentOversized.size} oversized file(s).`)
+  console.log(
+    `Baseline lowered: index ${indexLines} lines / ${indexHandles} channels, ${currentOversized.size} oversized file(s).`
+  )
   process.exit(0)
 }
 

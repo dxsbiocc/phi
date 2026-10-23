@@ -5,6 +5,17 @@ import { Decoration, EditorView, WidgetType } from '@codemirror/view'
 type SourceRange = { from: number; to: number }
 type MarkdownNode = ReturnType<typeof syntaxTree>['topNode']
 type MarkerKind = 'list' | 'task' | 'quote'
+type Marker = { kind: MarkerKind; label: string }
+type DecorationContext = {
+  state: EditorState
+  focused: boolean
+  alwaysRendered: boolean
+  decorations: Range<Decoration>[]
+  fences: SourceRange[]
+  lists: Map<number, number>
+  quotes: Set<number>
+  code: Set<number>
+}
 
 function selected(
   state: EditorState,
@@ -80,6 +91,69 @@ class MarkdownMarkerWidget extends WidgetType {
   }
 }
 
+function addListIndentation(context: DecorationContext, node: MarkdownNode): void {
+  const { state, focused, alwaysRendered, decorations, lists } = context
+  const line = state.doc.lineAt(node.from)
+  lists.set(line.from, Math.max(lists.get(line.from) ?? 0, listDepth(node)))
+  // Only remove source indentation; prefixes such as quote markers remain independent.
+  const indentation = state.sliceDoc(line.from, node.from)
+  if (!indentation || indentation.trim()) return
+  const source = { from: line.from, to: node.from }
+  if (alwaysRendered || !selected(state, source, focused))
+    decorations.push(Decoration.replace({ inclusive: false }).range(source.from, source.to))
+}
+
+function addFencedCodeDecorations(context: DecorationContext, node: MarkdownNode): void {
+  const { state, focused, alwaysRendered, decorations, fences, code } = context
+  const delimiterLines = new Set<number>()
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    if (child.name === 'CodeMark') delimiterLines.add(state.doc.lineAt(child.from).number)
+    if (child.name === 'CodeText' && child.from < child.to)
+      decorations.push(
+        Decoration.mark({ class: 'phi-inline-fenced-text' }).range(child.from, child.to)
+      )
+  }
+  for (const number of delimiterLines) {
+    const fence = state.doc.line(number)
+    const source = { from: fence.from, to: Math.min(state.doc.length, fence.to + 1) }
+    if (alwaysRendered || !selected(state, source, focused, fence.to)) fences.push(source)
+  }
+  const first = state.doc.lineAt(node.from).number
+  const last = state.doc.lineAt(node.to).number
+  for (let number = first + 1; number <= last; number++)
+    if (!delimiterLines.has(number)) code.add(state.doc.line(number).from)
+}
+
+function markerForNode(context: DecorationContext, node: MarkdownNode): Marker | undefined {
+  const { state, quotes } = context
+  if (node.name === 'ListMark') {
+    addListIndentation(context, node)
+    return { kind: 'list', label: listLabel(node, state) }
+  }
+  if (node.name === 'TaskMarker') {
+    return { kind: 'task', label: state.sliceDoc(node.from, node.to) }
+  }
+  if (node.name === 'QuoteMark') {
+    quotes.add(state.doc.lineAt(node.from).from)
+    return { kind: 'quote', label: '' }
+  }
+  if (node.name === 'FencedCode') addFencedCodeDecorations(context, node)
+  return undefined
+}
+
+function collectBlockDecoration(context: DecorationContext, node: MarkdownNode): void {
+  const marker = markerForNode(context, node)
+  if (!marker) return
+  const { state, focused, alwaysRendered, decorations } = context
+  if (!alwaysRendered && selected(state, node, focused)) return
+  decorations.push(
+    Decoration.replace({
+      widget: new MarkdownMarkerWidget(marker.kind, marker.label),
+      inclusive: false
+    }).range(node.from, node.to)
+  )
+}
+
 /** Render structural markers without replacing their containing list, quote or code body. */
 export function markdownBlockDecorations(
   state: EditorState,
@@ -93,58 +167,23 @@ export function markdownBlockDecorations(
   const lists = new Map<number, number>()
   const quotes = new Set<number>()
   const code = new Set<number>()
+  const context: DecorationContext = {
+    state,
+    focused,
+    alwaysRendered,
+    decorations,
+    fences,
+    lists,
+    quotes,
+    code
+  }
   syntaxTree(state).iterate({
     from,
     to,
     enter(ref) {
       if (/^(?:HTMLBlock|Table|InlineCode|Image)$/.test(ref.name)) return false
       if (ref.from < from || ref.to > to) return
-      const node = ref.node
-      const line = state.doc.lineAt(ref.from)
-      let kind: MarkerKind | undefined
-      let label = ''
-      if (ref.name === 'ListMark') {
-        kind = 'list'
-        label = listLabel(node, state)
-        lists.set(line.from, Math.max(lists.get(line.from) ?? 0, listDepth(node)))
-        // Only remove source indentation; prefixes such as quote markers remain independent.
-        const indentation = state.sliceDoc(line.from, node.from)
-        if (indentation && !indentation.trim()) {
-          const source = { from: line.from, to: node.from }
-          if (alwaysRendered || !selected(state, source, focused))
-            decorations.push(Decoration.replace({ inclusive: false }).range(source.from, source.to))
-        }
-      } else if (ref.name === 'TaskMarker') {
-        kind = 'task'
-        label = state.sliceDoc(ref.from, ref.to)
-      } else if (ref.name === 'QuoteMark') {
-        kind = 'quote'
-        quotes.add(line.from)
-      } else if (ref.name === 'FencedCode') {
-        const delimiterLines = new Set<number>()
-        for (let child = node.firstChild; child; child = child.nextSibling) {
-          if (child.name === 'CodeMark') delimiterLines.add(state.doc.lineAt(child.from).number)
-          if (child.name === 'CodeText' && child.from < child.to)
-            decorations.push(
-              Decoration.mark({ class: 'phi-inline-fenced-text' }).range(child.from, child.to)
-            )
-        }
-        for (const number of delimiterLines) {
-          const fence = state.doc.line(number)
-          const source = { from: fence.from, to: Math.min(state.doc.length, fence.to + 1) }
-          if (alwaysRendered || !selected(state, source, focused, fence.to)) fences.push(source)
-        }
-        const last = state.doc.lineAt(node.to).number
-        for (let number = line.number + 1; number <= last; number++)
-          if (!delimiterLines.has(number)) code.add(state.doc.line(number).from)
-      }
-      if (kind && (alwaysRendered || !selected(state, ref, focused)))
-        decorations.push(
-          Decoration.replace({
-            widget: new MarkdownMarkerWidget(kind, label),
-            inclusive: false
-          }).range(ref.from, ref.to)
-        )
+      collectBlockDecoration(context, ref.node)
       return undefined
     }
   })

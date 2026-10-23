@@ -109,7 +109,11 @@ export function createNativeStreamIntegrityAdapter(
   })
   const approved = new Set(scope.models.map((model) => JSON.stringify([model.provider, model.id])))
   return (model, context, options) => {
-    if (model.api === 'cursor-agent' && model.provider === 'cursor' && model.transport === undefined) {
+    if (
+      model.api === 'cursor-agent' &&
+      model.provider === 'cursor' &&
+      model.transport === undefined
+    ) {
       integrity(
         scope.cursorEndpoint !== undefined &&
           model.baseUrl === scope.cursorEndpoint &&
@@ -119,8 +123,8 @@ export function createNativeStreamIntegrityAdapter(
           !options?.signal?.aborted &&
           !options?.headers?.[RPC_CHILD_MODEL_HEADER]
       )
-      const signals = [scope.signal, options?.signal].filter(
-        (signal): signal is AbortSignal => Boolean(signal)
+      const signals = [scope.signal, options?.signal].filter((signal): signal is AbortSignal =>
+        Boolean(signal)
       )
       return original(model, context, {
         ...options,

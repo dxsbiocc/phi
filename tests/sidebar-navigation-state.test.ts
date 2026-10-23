@@ -186,14 +186,22 @@ function activityButton(): (props: Record<string, unknown>) => ReactElement<{
     (node): node is ts.FunctionDeclaration =>
       ts.isFunctionDeclaration(node) && node.name?.text === 'WorkspaceSidebarNavButton'
   )
+  const hoverTimerDeclaration = syntax.statements.find(
+    (node): node is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(node) && node.name?.text === 'useHoverPreviewTimer'
+  )
   assert.ok(declaration)
-  const code = ts.transpileModule(`${declaration.getText(syntax)}\nWorkspaceSidebarNavButton`, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.CommonJS,
-      jsx: ts.JsxEmit.ReactJSX
+  assert.ok(hoverTimerDeclaration)
+  const code = ts.transpileModule(
+    `${hoverTimerDeclaration.getText(syntax)}\n${declaration.getText(syntax)}\nWorkspaceSidebarNavButton`,
+    {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.CommonJS,
+        jsx: ts.JsxEmit.ReactJSX
+      }
     }
-  }).outputText
+  ).outputText
   const render = runInNewContext(code, {
     exports: {},
     require: (module: string) => {
@@ -202,6 +210,7 @@ function activityButton(): (props: Record<string, unknown>) => ReactElement<{
     },
     useUiLanguage: getUiLanguage,
     activityBarHoverPreviewDelayMs: 700,
+    useCallback: (callback: unknown) => callback,
     useRef: (value: unknown) => ({ current: value }),
     useEffect: () => undefined,
     window: {

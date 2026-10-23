@@ -15,7 +15,7 @@ import { confirmInitialThinking, type RuntimeInitialSelection } from './runtime-
 import { BrowserTextVault } from '../../browser/browser-text-vault'
 import type { ContextUsageSnapshot } from '../../../../shared/contextUsageTypes'
 import { randomBytes } from 'node:crypto'
-import { createRuntimeMetadataControl, RemoteMetadataBusyError, type RuntimeRenamePolicy } from './runtime-metadata-control'
+import * as meta from './runtime-metadata-control'
 import type { PhiTool, PhiToolImage, PhiToolApproval, PhiToolResult } from '../types'
 import { executionRoster, type RpcExecutionTool } from '../phi-extension/lib/rpc-execution-protocol'
 import type { RpcRuntimeConfig } from '../phi-extension/lib/rpc-runtime-config'
@@ -185,7 +185,7 @@ export class RemoteSessionRuntime {
   private manualCancelled = false
   private manualAbort?: Promise<void>
   private manualFailureClosing = false
-  private readonly metadata = createRuntimeMetadataControl({
+  private readonly metadata = meta.createRuntimeMetadataControl({
     signal: () => AbortSignal.any([this.lifetime.signal, this.connection.bindControl().signal]),
     claim: () => {
       if (
@@ -194,7 +194,7 @@ export class RemoteSessionRuntime {
         this.authority?.currentRun() ||
         this.hasActiveAgentRuns()
       )
-        throw new RemoteMetadataBusyError('runtime')
+        throw new meta.RemoteMetadataBusyError('runtime')
       this.ready = false
       this.gate = true
       return () => {
@@ -358,7 +358,7 @@ export class RemoteSessionRuntime {
       throw new Error('Remote SDK returned invalid thinking levels')
     return result.levels
   }
-  rename(name: string, policy?: RuntimeRenamePolicy): Promise<RemoteRuntimeSnapshot> {
+  rename(name: string, policy?: meta.RuntimeRenamePolicy): Promise<RemoteRuntimeSnapshot> {
     return this.metadata.rename(name, policy)
   }
   private constructor(private readonly options: RemoteSessionRuntimeOptions) {
