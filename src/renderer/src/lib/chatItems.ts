@@ -1,6 +1,6 @@
 import { chatItemFromPhiTimelineEvent } from '../features/chat/lib/chatTimelineNotices'
 export { chatItemFromPhiTimelineEvent } from '../features/chat/lib/chatTimelineNotices'
-import type { ChatItem, NotebookToolSummary, RunLifecycleItem } from '../types'
+import type { ChatItem, NotebookToolSummary, RunLifecycleItem, ToolCallItem } from '../types'
 import { workspaceChangesItemFromPhiTimelineEvent } from '../features/chat/lib/workspaceChanges'
 import { presentedFilesItemFromPhiTimelineEvent } from '../features/chat/lib/presentedFiles'
 import {
@@ -22,7 +22,8 @@ import {
   appendRecoveredRuntimeToolsAfterThinking,
   appendRecoveredRuntimeToolsBeforeAnswer,
   appendRecoveredRuntimeToolsBeforeThinking,
-  recoverMissingRuntimeTools
+  recoverMissingRuntimeTools,
+  type RuntimeToolRecovery
 } from '../features/chat/lib/runtimeToolRecovery'
 import { storedPromptImages } from '../features/chat/lib/storedPromptImages'
 import { visibleRuntimeUserText } from '../features/chat/lib/runtimePromptText'
@@ -89,23 +90,41 @@ function detailsFromToolResult(result: unknown): unknown {
   return record.details ?? result
 }
 
-function stringField(record: Record<string, unknown>, key: string): string | undefined {
+function stringField(record: Record<string, unknown> | null, key: string): string | undefined {
+  if (!record) return undefined
   const value = record[key]
   return typeof value === 'string' && value ? value : undefined
 }
 
 function numberOrNullField(
-  record: Record<string, unknown>,
+  record: Record<string, unknown> | null,
   key: string
 ): number | null | undefined {
+  if (!record) return undefined
   const value = record[key]
   if (value === null) return null
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
-function numberField(record: Record<string, unknown>, key: string): number | undefined {
+function numberField(record: Record<string, unknown> | null, key: string): number | undefined {
   const value = numberOrNullField(record, key)
   return typeof value === 'number' ? value : undefined
+}
+
+function objectField(record: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const value = record[key]
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+}
+
+function firstDefined<Value>(...values: Array<Value | undefined>): Value | undefined {
+  return values.find((value): value is Value => value !== undefined)
+}
+
+function optionalField<Key extends string, Value>(
+  key: Key,
+  value: Value | undefined
+): Partial<Record<Key, Value>> {
+  return value === undefined ? {} : ({ [key]: value } as Record<Key, Value>)
 }
 
 function notebookCellNumberFrom(
@@ -133,36 +152,32 @@ export function extractNotebookToolSummary(result: unknown): NotebookToolSummary
   const kind = stringField(record, 'kind')
   if (!kind || !kind.startsWith('notebook_')) return undefined
 
-  const cell =
-    record.cell && typeof record.cell === 'object' ? (record.cell as Record<string, unknown>) : null
-  const execution =
-    record.execution && typeof record.execution === 'object'
-      ? (record.execution as Record<string, unknown>)
-      : null
+  const cell = objectField(record, 'cell')
+  const execution = objectField(record, 'execution')
   const cellNumber = notebookCellNumberFrom(record, cell)
-  const cellId = stringField(record, 'cellId') ?? (cell ? stringField(cell, 'id') : undefined)
-  const cellType =
-    stringField(record, 'cellType') ??
-    (cell ? (stringField(cell, 'cellType') ?? stringField(cell, 'cell_type')) : undefined)
-  const executionState =
-    stringField(record, 'executionState') ??
-    (execution ? stringField(execution, 'state') : undefined)
+  const cellId = firstDefined(stringField(record, 'cellId'), stringField(cell, 'id'))
+  const cellType = firstDefined(
+    stringField(record, 'cellType'),
+    stringField(cell, 'cellType'),
+    stringField(cell, 'cell_type')
+  )
+  const executionState = firstDefined(
+    stringField(record, 'executionState'),
+    stringField(execution, 'state')
+  )
   const executionCount =
-    numberOrNullField(record, 'executionCount') ??
-    (execution ? numberOrNullField(execution, 'executionCount') : undefined)
+    numberOrNullField(record, 'executionCount') ?? numberOrNullField(execution, 'executionCount')
 
   return {
     kind,
-    ...(stringField(record, 'path') ? { path: stringField(record, 'path') } : {}),
-    ...(stringField(record, 'relativePath')
-      ? { relativePath: stringField(record, 'relativePath') }
-      : {}),
-    ...(cellNumber !== undefined ? { cellNumber } : {}),
-    ...(cellId ? { cellId } : {}),
-    ...(cellType ? { cellType } : {}),
-    ...(executionState ? { executionState } : {}),
-    ...(executionCount !== undefined ? { executionCount } : {}),
-    ...(stringField(record, 'summary') ? { summary: stringField(record, 'summary') } : {})
+    ...optionalField('path', stringField(record, 'path')),
+    ...optionalField('relativePath', stringField(record, 'relativePath')),
+    ...optionalField('cellNumber', cellNumber),
+    ...optionalField('cellId', cellId),
+    ...optionalField('cellType', cellType),
+    ...optionalField('executionState', executionState),
+    ...optionalField('executionCount', executionCount),
+    ...optionalField('summary', stringField(record, 'summary'))
   }
 }
 
@@ -432,32 +447,76 @@ export function runLifecycleItemFromPhiTimelineEvent(event: {
   }
 }
 
-/**
- * Turns the raw AgentMessage[] a saved session resumes with into the same ChatItem[]
- * shape the live streaming reducer in App.tsx builds incrementally, so resuming an
- * old conversation renders identically to one that just finished streaming.
- */
-export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
-  const items: ChatItem[] = []
-  const toolCallIndexById = new Map<string, number>()
+type RestoredSessionMessage = {
+  source?: string
+  role?: string
+  type?: string
+  eventId?: string
+  runId?: string
+  approvalId?: string
+  phiSessionId?: string
+  sessionId?: string
+  summary?: string
+  userMessageId?: string
+  preferPhiTimeline?: boolean
+  content?: unknown
+  files?: unknown
+  totalChanged?: unknown
+  truncated?: unknown
+  images?: unknown
+  toolCallId?: string
+  toolName?: string
+  args?: unknown
+  output?: string
+  outputPath?: string
+  outputBytes?: number
+  outputTruncated?: boolean
+  outputArtifact?: unknown
+  details?: unknown
+  isError?: boolean
+  durationMs?: number
+  createdAt?: string
+  agentName?: string
+  task?: string
+  step?: unknown
+  finalReport?: string
+  finalReportPath?: string
+  finalReportBytes?: number
+  finalReportTruncated?: boolean
+  finalReportArtifact?: unknown
+  toolCalls?: number
+  error?: string
+  fromProviderId?: string
+  fromModelId?: string
+  toProviderId?: string
+  toModelId?: string
+  toModelName?: string
+}
+
+type RestoreState = {
+  items: ChatItem[]
+  toolCallIndexById: Map<string, number>
+  duplicateTextCounts: Map<string, number>
+  phiToolCallIds: Set<string>
+  runtimeToolRecovery: RuntimeToolRecovery
+}
+
+function restoredSessionMessageFrom(value: unknown): RestoredSessionMessage | null {
+  return value && typeof value === 'object' ? (value as RestoredSessionMessage) : null
+}
+
+function collectPhiTimelineCoverage(messages: unknown[]): {
+  duplicateTextCounts: Map<string, number>
+  phiToolCallIds: Set<string>
+  hasPreferredPhiTimeline: boolean
+} {
   const duplicateTextCounts = new Map<string, number>()
   const phiToolCallIds = new Set<string>()
   let hasPreferredPhiTimeline = false
-
   for (const raw of messages) {
-    if (!raw || typeof raw !== 'object') continue
-    const message = raw as {
-      source?: string
-      type?: string
-      content?: unknown
-      toolCallId?: string
-      preferPhiTimeline?: boolean
-    }
-    if (message.source !== 'phi') continue
-    if (message.preferPhiTimeline === true) {
-      hasPreferredPhiTimeline = true
-    }
-
+    const message = restoredSessionMessageFrom(raw)
+    if (!message || message.source !== 'phi') continue
+    if (message.preferPhiTimeline === true) hasPreferredPhiTimeline = true
     if (
       (message.type === 'user_message' || message.type === 'assistant_message_finalized') &&
       typeof message.content === 'string'
@@ -471,95 +530,363 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
       phiToolCallIds.add(message.toolCallId)
     }
   }
+  return { duplicateTextCounts, phiToolCallIds, hasPreferredPhiTimeline }
+}
 
-  const isRuntimeMessageCoveredByPhi = (raw: unknown): boolean => {
-    if (!raw || typeof raw !== 'object') return false
-    const message = raw as { source?: string; role?: string; content?: unknown }
-    if (message.source === 'phi') return false
-    if (message.role === 'user') {
-      const text = visibleRuntimeUserText(textFromContentParts(message.content))
-      return text.length > 0 && duplicateTextCounts.has(text)
-    }
-    if (message.role !== 'assistant' || !Array.isArray(message.content)) return false
-    return message.content.some((part) => {
-      if (!part || typeof part !== 'object' || (part as { type?: string }).type !== 'text') {
-        return false
-      }
-      const text = (part as { text?: string }).text ?? ''
-      return text.length > 0 && duplicateTextCounts.has(text)
-    })
+function isRuntimeMessageCoveredByPhi(
+  raw: unknown,
+  duplicateTextCounts: Map<string, number>
+): boolean {
+  const message = restoredSessionMessageFrom(raw)
+  if (!message || message.source === 'phi') return false
+  if (message.role === 'user') {
+    const text = visibleRuntimeUserText(textFromContentParts(message.content))
+    return text.length > 0 && duplicateTextCounts.has(text)
   }
-
-  const runtimeCoveredFromIndex = hasPreferredPhiTimeline
-    ? messages.findIndex(isRuntimeMessageCoveredByPhi)
-    : -1
-
-  const missingRuntimeToolsByAnswer = recoverMissingRuntimeTools(
-    messages,
-    runtimeCoveredFromIndex,
-    phiToolCallIds,
-    { textFromContentParts, toolArgsPreview, extractToolText }
-  )
-
-  const consumeDuplicateText = (text: string): boolean => {
-    const count = duplicateTextCounts.get(text) ?? 0
-    if (count <= 0) return false
-    if (count === 1) {
-      duplicateTextCounts.delete(text)
-    } else {
-      duplicateTextCounts.set(text, count - 1)
+  if (message.role !== 'assistant' || !Array.isArray(message.content)) return false
+  return message.content.some((part) => {
+    if (!part || typeof part !== 'object' || (part as { type?: string }).type !== 'text') {
+      return false
     }
+    const text = (part as { text?: string }).text ?? ''
+    return text.length > 0 && duplicateTextCounts.has(text)
+  })
+}
+
+function consumeDuplicateText(duplicateTextCounts: Map<string, number>, text: string): boolean {
+  const count = duplicateTextCounts.get(text) ?? 0
+  if (count <= 0) return false
+  if (count === 1) duplicateTextCounts.delete(text)
+  else duplicateTextCounts.set(text, count - 1)
+  return true
+}
+
+function serializedToolArgs(args: unknown): string {
+  try {
+    return JSON.stringify(args, null, 2) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function restoredStructuredToolDetails(
+  current: ToolCallItem,
+  result: unknown
+): Partial<Pick<ToolCallItem, 'notebook' | 'todo'>> {
+  const details: Partial<Pick<ToolCallItem, 'notebook' | 'todo'>> = {}
+  if (isNotebookToolName(current.toolName)) {
+    details.notebook = extractNotebookToolSummary(result) ?? current.notebook
+  }
+  if (isTodoToolName(current.toolName)) {
+    details.todo = extractTodoSnapshot(result) ?? current.todo
+  }
+  return details
+}
+
+function applyPrimaryPhiTimelineEvent(items: ChatItem[], message: RestoredSessionMessage): boolean {
+  if (applyApprovalTimelineEvent(items, message)) return true
+  const planReview = planReviewItemFromEvent(message)
+  if (planReview) {
+    items.push(planReview)
     return true
+  }
+  if (applyPlanReviewDecision(items, message)) return true
+  const presentedFiles = presentedFilesItemFromPhiTimelineEvent(message)
+  if (presentedFiles) {
+    items.push(presentedFiles)
+    return true
+  }
+  const workspaceChanges = workspaceChangesItemFromPhiTimelineEvent(message)
+  if (!workspaceChanges) return false
+  items.push(workspaceChanges)
+  return true
+}
+
+function appendPhiRunLifecycle(items: ChatItem[], message: RestoredSessionMessage): void {
+  const lifecycleItem = runLifecycleItemFromPhiTimelineEvent(message)
+  if (!lifecycleItem) return
+  finalizeRestoredRunningToolsForRun(items, message)
+  items.push(lifecycleItem)
+}
+
+function applyPhiAgentExecutionEvent(items: ChatItem[], message: RestoredSessionMessage): boolean {
+  switch (message.type) {
+    case 'agent_execution_started': {
+      const item = agentExecutionFromTimelineEvent(message)
+      if (item && agentExecutionIndex(items, item.id) < 0) items.push(item)
+      return true
+    }
+    case 'agent_execution_background':
+      applyAgentBackgroundTimelineEvent(items, message)
+      return true
+    case 'agent_execution_steered':
+      applyAgentSteeredTimelineEvent(items, message)
+      return true
+    case 'agent_execution_step':
+      applyAgentStepTimelineEvent(items, message)
+      return true
+    case 'agent_execution_completed':
+      applyAgentCompletedTimelineEvent(items, message)
+      return true
+    default:
+      return false
+  }
+}
+
+function appendPhiToolCallStarted(state: RestoreState, message: RestoredSessionMessage): boolean {
+  if (typeof message.toolCallId !== 'string') return false
+  state.toolCallIndexById.set(message.toolCallId, state.items.length)
+  state.items.push({
+    id: message.toolCallId,
+    role: 'tool',
+    ...runIdField(message.runId),
+    toolName: typeof message.toolName === 'string' ? message.toolName : 'tool',
+    argsPreview: toolArgsPreview(message.args),
+    argsJson: serializedToolArgs(message.args),
+    output: '',
+    status: 'running',
+    ...createdAtField(message.createdAt)
+  })
+  return true
+}
+
+function applyPhiToolCallCompleted(state: RestoreState, message: RestoredSessionMessage): boolean {
+  if (typeof message.toolCallId !== 'string') return false
+  const index = state.toolCallIndexById.get(message.toolCallId)
+  if (index !== undefined) {
+    const current = state.items[index]
+    if (current.role === 'tool') {
+      const outputArtifact = toolOutputArtifactFrom(message.outputArtifact)
+      const durationMs = durationBetween(current.createdAt, message.createdAt)
+      state.items[index] = {
+        ...current,
+        output: message.output ?? current.output,
+        outputPath: message.outputPath ?? outputArtifact?.path,
+        outputBytes: message.outputBytes ?? outputArtifact?.bytes,
+        outputTruncated: message.outputTruncated,
+        outputArtifact,
+        ...restoredStructuredToolDetails(current, { details: message.details }),
+        status: message.isError ? 'error' : 'done',
+        ...completedAtField(message.createdAt),
+        ...optionalField('durationMs', durationMs)
+      }
+    }
+  }
+  const uiBlocks =
+    uiBlocksItemFromToolEvent(message) ?? unavailableUiBlocksItemFromToolEvent(message)
+  if (uiBlocks && !state.items.some((item) => item.id === uiBlocks.id)) state.items.push(uiBlocks)
+  return true
+}
+
+function appendPhiUserMessage(state: RestoreState, message: RestoredSessionMessage): boolean {
+  if (typeof message.content !== 'string') return false
+  const images = storedPromptImages(message.images)
+  state.items.push({
+    id: message.eventId ?? `user-${state.items.length}`,
+    role: 'user',
+    content: message.content,
+    ...(images.length ? { images } : {}),
+    ...createdAtField(message.createdAt)
+  })
+  return true
+}
+
+function applyPhiUserRetry(state: RestoreState, message: RestoredSessionMessage): void {
+  const retryImages = storedPromptImages(message.images)
+  const nextItems = messagesForUserRetryTarget(state.items, {
+    ...(typeof message.userMessageId === 'string' ? { id: message.userMessageId } : {}),
+    ...(typeof message.content === 'string' ? { content: message.content } : {}),
+    ...(retryImages.length ? { imageIds: retryImages.map((image) => image.id) } : {})
+  })
+  if (nextItems !== state.items) state.items.splice(0, state.items.length, ...nextItems)
+}
+
+function appendPhiAssistantMessage(state: RestoreState, message: RestoredSessionMessage): boolean {
+  if (typeof message.content !== 'string') return false
+  if (!isDisplayableAssistantText(message.content)) return true
+  appendRecoveredRuntimeToolsBeforeAnswer(
+    state.items,
+    state.runtimeToolRecovery,
+    message.content,
+    message.runId,
+    message.createdAt
+  )
+  state.items.push({
+    id: message.eventId ?? `assistant-${state.items.length}`,
+    role: 'assistant',
+    content: message.content,
+    ...createdAtField(message.createdAt)
+  })
+  return true
+}
+
+function appendPhiThinkingMessage(state: RestoreState, message: RestoredSessionMessage): boolean {
+  if (typeof message.content !== 'string') return false
+  appendRecoveredRuntimeToolsBeforeThinking(
+    state.items,
+    state.runtimeToolRecovery,
+    message.runId,
+    message.createdAt
+  )
+  state.items.push({
+    id: message.eventId ?? `thinking-${state.items.length}`,
+    role: 'thinking',
+    content: message.content,
+    ...completedAtField(message.createdAt),
+    ...(typeof message.durationMs === 'number' ? { durationMs: message.durationMs } : {})
+  })
+  appendRecoveredRuntimeToolsAfterThinking(
+    state.items,
+    state.runtimeToolRecovery,
+    message.runId,
+    message.createdAt
+  )
+  return true
+}
+
+function applyTypedPhiTimelineEvent(state: RestoreState, message: RestoredSessionMessage): boolean {
+  switch (message.type) {
+    case 'tool_call_started':
+      return appendPhiToolCallStarted(state, message)
+    case 'tool_call_completed':
+      return applyPhiToolCallCompleted(state, message)
+    case 'user_message':
+      return appendPhiUserMessage(state, message)
+    case 'user_message_retry':
+      applyPhiUserRetry(state, message)
+      return true
+    case 'assistant_message_finalized':
+      return appendPhiAssistantMessage(state, message)
+    case 'assistant_thinking_completed':
+      return appendPhiThinkingMessage(state, message)
+    default:
+      return false
+  }
+}
+
+function appendGenericPhiTimelineItem(items: ChatItem[], message: RestoredSessionMessage): void {
+  const item = chatItemFromPhiTimelineEvent(message)
+  if (!item) return
+  if (
+    item.role === 'error' &&
+    hasEquivalentErrorMessage(items, item.content, { runId: item.runId })
+  ) {
+    return
+  }
+  items.push(item)
+}
+
+function appendPhiTimelineMessage(state: RestoreState, message: RestoredSessionMessage): void {
+  if (applyPrimaryPhiTimelineEvent(state.items, message)) return
+  appendPhiRunLifecycle(state.items, message)
+  if (applyPhiAgentExecutionEvent(state.items, message)) return
+  if (applyTypedPhiTimelineEvent(state, message)) return
+  appendGenericPhiTimelineItem(state.items, message)
+}
+
+function appendRuntimeUserMessage(state: RestoreState, message: RestoredSessionMessage): void {
+  const text = visibleRuntimeUserText(textFromContentParts(message.content))
+  if (consumeDuplicateText(state.duplicateTextCounts, text)) return
+  if (text) state.items.push({ id: `user-${state.items.length}`, role: 'user', content: text })
+}
+
+function appendRuntimeAssistantPart(state: RestoreState, part: unknown): void {
+  if (!part || typeof part !== 'object') return
+  const record = part as {
+    type?: string
+    text?: string
+    thinking?: string
+    id?: string
+    name?: string
+    arguments?: unknown
+  }
+  if (record.type === 'text') {
+    const text = record.text ?? ''
+    if (consumeDuplicateText(state.duplicateTextCounts, text)) return
+    if (isDisplayableAssistantText(text)) {
+      state.items.push({ id: `assistant-${state.items.length}`, role: 'assistant', content: text })
+    }
+    return
+  }
+  if (record.type === 'thinking') {
+    const text = record.thinking ?? ''
+    if (text)
+      state.items.push({ id: `thinking-${state.items.length}`, role: 'thinking', content: text })
+    return
+  }
+  if (record.type !== 'toolCall') return
+  const id = record.id ?? `tool-${state.items.length}`
+  if (state.phiToolCallIds.has(id)) return
+  state.toolCallIndexById.set(id, state.items.length)
+  state.items.push({
+    id,
+    role: 'tool',
+    toolName: record.name ?? 'tool',
+    argsPreview: toolArgsPreview(record.arguments),
+    argsJson: serializedToolArgs(record.arguments),
+    output: '',
+    status: 'done'
+  })
+}
+
+function appendRuntimeAssistantMessage(state: RestoreState, content: unknown[]): void {
+  for (const part of content) appendRuntimeAssistantPart(state, part)
+}
+
+function applyRuntimeToolResult(state: RestoreState, message: RestoredSessionMessage): void {
+  if (typeof message.toolCallId !== 'string' || state.phiToolCallIds.has(message.toolCallId)) return
+  const index = state.toolCallIndexById.get(message.toolCallId)
+  if (index === undefined) return
+  const current = state.items[index]
+  if (current.role !== 'tool') return
+  state.items[index] = {
+    ...current,
+    output: extractToolText(message.content) || current.output,
+    ...restoredStructuredToolDetails(current, message.content),
+    status: message.isError ? 'error' : 'done'
+  }
+}
+
+function appendRuntimeMessage(state: RestoreState, message: RestoredSessionMessage): void {
+  if (message.role === 'user') {
+    appendRuntimeUserMessage(state, message)
+    return
+  }
+  if (message.role === 'assistant' && Array.isArray(message.content)) {
+    appendRuntimeAssistantMessage(state, message.content)
+    return
+  }
+  if (message.role === 'toolResult') applyRuntimeToolResult(state, message)
+}
+
+/**
+ * Turns the raw AgentMessage[] a saved session resumes with into the same ChatItem[]
+ * shape the live streaming reducer in App.tsx builds incrementally, so resuming an
+ * old conversation renders identically to one that just finished streaming.
+ */
+export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
+  const coverage = collectPhiTimelineCoverage(messages)
+  const runtimeCoveredFromIndex = coverage.hasPreferredPhiTimeline
+    ? messages.findIndex((message) =>
+        isRuntimeMessageCoveredByPhi(message, coverage.duplicateTextCounts)
+      )
+    : -1
+  const state: RestoreState = {
+    items: [],
+    toolCallIndexById: new Map(),
+    duplicateTextCounts: coverage.duplicateTextCounts,
+    phiToolCallIds: coverage.phiToolCallIds,
+    runtimeToolRecovery: recoverMissingRuntimeTools(
+      messages,
+      runtimeCoveredFromIndex,
+      coverage.phiToolCallIds,
+      { textFromContentParts, toolArgsPreview, extractToolText }
+    )
   }
 
   for (const [messageIndex, raw] of messages.entries()) {
-    if (!raw || typeof raw !== 'object') continue
-    const message = raw as {
-      source?: string
-      role?: string
-      type?: string
-      eventId?: string
-      runId?: string
-      approvalId?: string
-      phiSessionId?: string
-      sessionId?: string
-      summary?: string
-      userMessageId?: string
-      preferPhiTimeline?: boolean
-      content?: unknown
-      files?: unknown
-      totalChanged?: unknown
-      truncated?: unknown
-      images?: unknown
-      toolCallId?: string
-      toolName?: string
-      args?: unknown
-      output?: string
-      outputPath?: string
-      outputBytes?: number
-      outputTruncated?: boolean
-      outputArtifact?: unknown
-      details?: unknown
-      isError?: boolean
-      durationMs?: number
-      createdAt?: string
-      agentName?: string
-      task?: string
-      step?: unknown
-      finalReport?: string
-      finalReportPath?: string
-      finalReportBytes?: number
-      finalReportTruncated?: boolean
-      finalReportArtifact?: unknown
-      toolCalls?: number
-      error?: string
-      fromProviderId?: string
-      fromModelId?: string
-      toProviderId?: string
-      toModelId?: string
-      toModelName?: string
-    }
-
+    const message = restoredSessionMessageFrom(raw)
+    if (!message) continue
     if (
       runtimeCoveredFromIndex >= 0 &&
       messageIndex >= runtimeCoveredFromIndex &&
@@ -567,266 +894,8 @@ export function chatItemsFromSessionMessages(messages: unknown[]): ChatItem[] {
     ) {
       continue
     }
-
-    if (message.source === 'phi') {
-      if (applyApprovalTimelineEvent(items, message)) continue
-      const planReview = planReviewItemFromEvent(message)
-      if (planReview) {
-        items.push(planReview)
-        continue
-      }
-      if (applyPlanReviewDecision(items, message)) continue
-      const presentedFiles = presentedFilesItemFromPhiTimelineEvent(message)
-      if (presentedFiles) {
-        items.push(presentedFiles)
-        continue
-      }
-      const workspaceChanges = workspaceChangesItemFromPhiTimelineEvent(message)
-      if (workspaceChanges) {
-        items.push(workspaceChanges)
-        continue
-      }
-      const lifecycleItem = runLifecycleItemFromPhiTimelineEvent(message)
-      if (lifecycleItem) {
-        finalizeRestoredRunningToolsForRun(items, message)
-        items.push(lifecycleItem)
-      }
-
-      if (message.type === 'agent_execution_started') {
-        const item = agentExecutionFromTimelineEvent(message)
-        if (item && agentExecutionIndex(items, item.id) < 0) {
-          items.push(item)
-        }
-        continue
-      }
-
-      if (message.type === 'agent_execution_background') {
-        applyAgentBackgroundTimelineEvent(items, message)
-        continue
-      }
-
-      if (message.type === 'agent_execution_steered') {
-        applyAgentSteeredTimelineEvent(items, message)
-        continue
-      }
-
-      if (message.type === 'agent_execution_step') {
-        applyAgentStepTimelineEvent(items, message)
-        continue
-      }
-
-      if (message.type === 'agent_execution_completed') {
-        applyAgentCompletedTimelineEvent(items, message)
-        continue
-      }
-
-      if (message.type === 'tool_call_started' && typeof message.toolCallId === 'string') {
-        let argsJson = ''
-        try {
-          argsJson = JSON.stringify(message.args, null, 2) ?? ''
-        } catch {
-          argsJson = ''
-        }
-        toolCallIndexById.set(message.toolCallId, items.length)
-        items.push({
-          id: message.toolCallId,
-          role: 'tool',
-          ...runIdField(message.runId),
-          toolName: typeof message.toolName === 'string' ? message.toolName : 'tool',
-          argsPreview: toolArgsPreview(message.args),
-          argsJson,
-          output: '',
-          status: 'running',
-          ...createdAtField(message.createdAt)
-        })
-        continue
-      }
-
-      if (message.type === 'tool_call_completed' && typeof message.toolCallId === 'string') {
-        const index = toolCallIndexById.get(message.toolCallId)
-        if (index !== undefined) {
-          const current = items[index]
-          if (current.role === 'tool') {
-            const outputArtifact = toolOutputArtifactFrom(message.outputArtifact)
-            const durationMs = durationBetween(current.createdAt, message.createdAt)
-            items[index] = {
-              ...current,
-              output: message.output ?? current.output,
-              outputPath: message.outputPath ?? outputArtifact?.path,
-              outputBytes: message.outputBytes ?? outputArtifact?.bytes,
-              outputTruncated: message.outputTruncated,
-              outputArtifact,
-              ...(isNotebookToolName(current.toolName)
-                ? {
-                    notebook:
-                      extractNotebookToolSummary({ details: message.details }) ?? current.notebook
-                  }
-                : {}),
-              ...(isTodoToolName(current.toolName)
-                ? { todo: extractTodoSnapshot({ details: message.details }) ?? current.todo }
-                : {}),
-              status: message.isError ? 'error' : 'done',
-              ...completedAtField(message.createdAt),
-              ...(durationMs !== undefined ? { durationMs } : {})
-            }
-          }
-        }
-        const uiBlocks =
-          uiBlocksItemFromToolEvent(message) ?? unavailableUiBlocksItemFromToolEvent(message)
-        if (uiBlocks && !items.some((item) => item.id === uiBlocks.id)) items.push(uiBlocks)
-        continue
-      }
-
-      if (message.type === 'user_message' && typeof message.content === 'string') {
-        const images = storedPromptImages(message.images)
-        items.push({
-          id: message.eventId ?? `user-${items.length}`,
-          role: 'user',
-          content: message.content,
-          ...(images.length ? { images } : {}),
-          ...createdAtField(message.createdAt)
-        })
-        continue
-      }
-
-      if (message.type === 'user_message_retry') {
-        const retryImages = storedPromptImages(message.images)
-        const nextItems = messagesForUserRetryTarget(items, {
-          ...(typeof message.userMessageId === 'string' ? { id: message.userMessageId } : {}),
-          ...(typeof message.content === 'string' ? { content: message.content } : {}),
-          ...(retryImages.length ? { imageIds: retryImages.map((image) => image.id) } : {})
-        })
-        if (nextItems !== items) {
-          items.splice(0, items.length, ...nextItems)
-        }
-        continue
-      }
-
-      if (message.type === 'assistant_message_finalized' && typeof message.content === 'string') {
-        if (!isDisplayableAssistantText(message.content)) continue
-        appendRecoveredRuntimeToolsBeforeAnswer(
-          items,
-          missingRuntimeToolsByAnswer,
-          message.content,
-          message.runId,
-          message.createdAt
-        )
-        items.push({
-          id: message.eventId ?? `assistant-${items.length}`,
-          role: 'assistant',
-          content: message.content,
-          ...createdAtField(message.createdAt)
-        })
-        continue
-      }
-
-      if (message.type === 'assistant_thinking_completed' && typeof message.content === 'string') {
-        appendRecoveredRuntimeToolsBeforeThinking(
-          items,
-          missingRuntimeToolsByAnswer,
-          message.runId,
-          message.createdAt
-        )
-        items.push({
-          id: message.eventId ?? `thinking-${items.length}`,
-          role: 'thinking',
-          content: message.content,
-          ...completedAtField(message.createdAt),
-          ...(typeof message.durationMs === 'number' ? { durationMs: message.durationMs } : {})
-        })
-        appendRecoveredRuntimeToolsAfterThinking(
-          items,
-          missingRuntimeToolsByAnswer,
-          message.runId,
-          message.createdAt
-        )
-        continue
-      }
-
-      const item = chatItemFromPhiTimelineEvent(message)
-      if (
-        item &&
-        !(
-          item.role === 'error' &&
-          hasEquivalentErrorMessage(items, item.content, { runId: item.runId })
-        )
-      ) {
-        items.push(item)
-      }
-      continue
-    }
-
-    if (message.role === 'user') {
-      const text = visibleRuntimeUserText(textFromContentParts(message.content))
-      if (consumeDuplicateText(text)) continue
-      if (text) {
-        items.push({ id: `user-${items.length}`, role: 'user', content: text })
-      }
-      continue
-    }
-
-    if (message.role === 'assistant' && Array.isArray(message.content)) {
-      for (const part of message.content) {
-        if (!part || typeof part !== 'object') continue
-        const type = (part as { type?: string }).type
-
-        if (type === 'text') {
-          const text = (part as { text?: string }).text ?? ''
-          if (consumeDuplicateText(text)) continue
-          if (isDisplayableAssistantText(text))
-            items.push({ id: `assistant-${items.length}`, role: 'assistant', content: text })
-        } else if (type === 'thinking') {
-          const text = (part as { thinking?: string }).thinking ?? ''
-          if (text) items.push({ id: `thinking-${items.length}`, role: 'thinking', content: text })
-        } else if (type === 'toolCall') {
-          const id = (part as { id?: string }).id ?? `tool-${items.length}`
-          if (phiToolCallIds.has(id)) continue
-          const name = (part as { name?: string }).name ?? 'tool'
-          const args = (part as { arguments?: unknown }).arguments
-          let argsJson = ''
-          try {
-            argsJson = JSON.stringify(args, null, 2) ?? ''
-          } catch {
-            argsJson = ''
-          }
-          toolCallIndexById.set(id, items.length)
-          items.push({
-            id,
-            role: 'tool',
-            toolName: name,
-            argsPreview: toolArgsPreview(args),
-            argsJson,
-            output: '',
-            status: 'done'
-          })
-        }
-      }
-      continue
-    }
-
-    if (message.role === 'toolResult' && typeof message.toolCallId === 'string') {
-      if (phiToolCallIds.has(message.toolCallId)) continue
-      const index = toolCallIndexById.get(message.toolCallId)
-      if (index !== undefined) {
-        const current = items[index]
-        if (current.role === 'tool') {
-          items[index] = {
-            ...current,
-            output: extractToolText(message.content) || current.output,
-            ...(isNotebookToolName(current.toolName)
-              ? {
-                  notebook: extractNotebookToolSummary(message.content) ?? current.notebook
-                }
-              : {}),
-            ...(isTodoToolName(current.toolName)
-              ? { todo: extractTodoSnapshot(message.content) ?? current.todo }
-              : {}),
-            status: message.isError ? 'error' : 'done'
-          }
-        }
-      }
-    }
+    if (message.source === 'phi') appendPhiTimelineMessage(state, message)
+    else appendRuntimeMessage(state, message)
   }
-
-  return items
+  return state.items
 }

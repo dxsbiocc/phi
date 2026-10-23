@@ -168,10 +168,12 @@ export async function prepareModelProxyRpcSessionTransport(
           remotePort: owned.tunnel.remotePort,
           gatewayBearer: owned.gateway.bearerToken,
           ...(owned.cursorTunnel && owned.gateway.cursor
-            ? { cursor: {
-                remotePort: owned.cursorTunnel.remotePort,
-                bearer: owned.gateway.cursor.bearerToken
-              } }
+            ? {
+                cursor: {
+                  remotePort: owned.cursorTunnel.remotePort,
+                  bearer: owned.gateway.cursor.bearerToken
+                }
+              }
             : {}),
           sessionId: owned.gateway.sessionId,
           projectRoot: params.cwd,

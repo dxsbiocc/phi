@@ -180,6 +180,184 @@ function checkedModel(payload: Buffer, allowed: ReadonlySet<string>): string {
   return details
 }
 
+interface GatewayRequestContext {
+  stream: ServerHttp2Stream
+  headers: IncomingHttpHeaders
+  options: ScopedCursorH2GatewayOptions
+  allowed: ReadonlySet<string>
+  upstreamSessions: Set<ClientHttp2Session>
+  isRetired: () => boolean
+}
+
+function isAuthorizedRequest(context: GatewayRequestContext): boolean {
+  const { headers, options } = context
+  return (
+    !context.isRetired() &&
+    headers[':method'] === 'POST' &&
+    headers[':path'] === CURSOR_RUN_PATH &&
+    headers[':scheme'] === 'http' &&
+    sameToken(options.token, headers.authorization) &&
+    headers['content-type'] === 'application/connect+proto' &&
+    headers['connect-protocol-version'] === '1' &&
+    (headers.te === undefined || headers.te === 'trailers')
+  )
+}
+
+function upstreamRequestHeaders(headers: IncomingHttpHeaders, bearer: string): OutgoingHttpHeaders {
+  const requestHeaders: OutgoingHttpHeaders = {
+    ':method': 'POST',
+    ':path': CURSOR_RUN_PATH,
+    authorization: `Bearer ${bearer}`
+  }
+  for (const name of REQUEST_HEADER_NAMES) {
+    const value = headers[name]
+    if (typeof value === 'string') requestHeaders[name] = value
+  }
+  return requestHeaders
+}
+
+function forwardedResponseHeaders(incoming: IncomingHttpHeaders): OutgoingHttpHeaders {
+  const outgoing: OutgoingHttpHeaders = { ':status': incoming[':status'] ?? 502 }
+  for (const [name, value] of Object.entries(incoming)) {
+    if (RESPONSE_HEADER_NAMES.has(name) && value !== undefined) outgoing[name] = value
+  }
+  return outgoing
+}
+
+function validateContinuationFrame(frame: Buffer): void {
+  const message = fields(frame.subarray(5))
+  if (
+    message.length !== 1 ||
+    message[0].number < 2 ||
+    message[0].number > 8 ||
+    message[0].wireType !== 2
+  ) {
+    throw new Error('unexpected run')
+  }
+}
+
+class ScopedRequestForwarder {
+  private pending = Buffer.alloc(0)
+  private total = 0
+  private first = true
+  private upstream: ClientHttp2Session | undefined
+  private request: ReturnType<ClientHttp2Session['request']> | undefined
+  private responded = false
+  private trailers: IncomingHttpHeaders = {}
+
+  constructor(private readonly context: GatewayRequestContext) {}
+
+  async run(): Promise<void> {
+    this.context.stream.once('close', () => this.closeUpstream())
+    try {
+      for await (const part of incomingParts(this.context.stream)) {
+        await this.consumePart(part)
+      }
+      if (this.first || this.pending.length || !this.request) {
+        throw new Error('incomplete request')
+      }
+      this.request.end()
+    } catch {
+      this.fail(403)
+    }
+  }
+
+  private async consumePart(part: Buffer): Promise<void> {
+    if (this.context.isRetired()) throw new Error('retired')
+    this.total += part.length
+    if (this.total > MAX_REQUEST_BYTES) throw new Error('request too large')
+    this.pending = Buffer.concat([this.pending, part])
+    while (this.pending.length >= 5) {
+      const length = this.pending.readUInt32BE(1)
+      if (this.pending[0] !== 0 || length > MAX_FRAME_BYTES) {
+        throw new Error('invalid frame')
+      }
+      if (this.pending.length < length + 5) return
+      const frame = this.pending.subarray(0, length + 5)
+      this.pending = this.pending.subarray(length + 5)
+      await this.forwardFrame(frame)
+    }
+    if (this.pending.length > MAX_FRAME_BYTES + 5) throw new Error('frame too large')
+  }
+
+  private async forwardFrame(frame: Buffer): Promise<void> {
+    if (this.first) await this.startRequest(frame)
+    else validateContinuationFrame(frame)
+    const request = this.request
+    if (!request || request.closed) throw new Error('upstream unavailable')
+    if (request.write(frame)) return
+    await new Promise<void>((resolve) => {
+      request.once('drain', resolve)
+      request.once('close', resolve)
+    })
+  }
+
+  private async startRequest(frame: Buffer): Promise<void> {
+    const model = checkedModel(frame.subarray(5), this.context.allowed)
+    this.first = false
+    const bearer = await this.context.options.resolveBearer(model)
+    if (
+      this.context.isRetired() ||
+      this.context.options.signal?.aborted ||
+      !bearer ||
+      /[\r\n]/.test(bearer)
+    ) {
+      throw new Error('credential unavailable')
+    }
+    const upstream = http2.connect(this.context.options.upstreamOrigin ?? CURSOR_ORIGIN)
+    this.upstream = upstream
+    this.context.upstreamSessions.add(upstream)
+    upstream.once('close', () => this.context.upstreamSessions.delete(upstream))
+    upstream.on('error', () => this.fail(502))
+    const request = upstream.request(upstreamRequestHeaders(this.context.headers, bearer))
+    this.request = request
+    request.on('response', (incoming) => this.forwardResponse(incoming, request))
+    request.on('trailers', (value) => {
+      this.trailers = value
+    })
+    this.context.stream.on('wantTrailers', () => this.forwardTrailers())
+    request.on('end', () => {
+      if (!this.context.stream.destroyed && !this.context.stream.closed) {
+        this.context.stream.end()
+      }
+      upstream.close()
+    })
+    request.on('error', () => this.fail(502))
+  }
+
+  private forwardResponse(
+    incoming: IncomingHttpHeaders,
+    request: ReturnType<ClientHttp2Session['request']>
+  ): void {
+    const { stream } = this.context
+    if (stream.destroyed || stream.closed) return
+    stream.respond(forwardedResponseHeaders(incoming), { waitForTrailers: true })
+    this.responded = true
+    request.pipe(stream, { end: false })
+  }
+
+  private forwardTrailers(): void {
+    const { stream } = this.context
+    if (stream.destroyed) return
+    const forwarded: OutgoingHttpHeaders = {}
+    for (const name of ['grpc-status', 'grpc-message']) {
+      if (typeof this.trailers[name] === 'string') forwarded[name] = this.trailers[name]
+    }
+    stream.sendTrailers(forwarded)
+  }
+
+  private closeUpstream(): void {
+    if (this.request && !this.request.closed) this.request.close()
+    if (this.upstream && !this.upstream.closed) this.upstream.destroy()
+  }
+
+  private fail(status: number): void {
+    this.closeUpstream()
+    if (!this.responded) reject(this.context.stream, status)
+    else if (!this.context.stream.destroyed) this.context.stream.close()
+  }
+}
+
 /** A desktop-only h2c endpoint that never exposes the real Cursor bearer to the worker. */
 export async function createScopedCursorH2Gateway(
   options: ScopedCursorH2GatewayOptions
@@ -202,127 +380,22 @@ export async function createScopedCursorH2Gateway(
   server.on('stream', (stream, headers) => {
     streams.add(stream)
     stream.once('close', () => streams.delete(stream))
-    if (
-      retired ||
-      headers[':method'] !== 'POST' ||
-      headers[':path'] !== CURSOR_RUN_PATH ||
-      headers[':scheme'] !== 'http' ||
-      !sameToken(options.token, headers.authorization) ||
-      headers['content-type'] !== 'application/connect+proto' ||
-      headers['connect-protocol-version'] !== '1' ||
-      (headers.te !== undefined && headers.te !== 'trailers')
-    ) {
+    const context: GatewayRequestContext = {
+      stream,
+      headers,
+      options,
+      allowed,
+      upstreamSessions,
+      isRetired: () => retired
+    }
+    if (!isAuthorizedRequest(context)) {
       reject(stream, 403)
       return
     }
 
     // Parse and bound every Connect frame before forwarding it. In particular,
     // a second runRequest cannot change models after the first was authorized.
-    void (async () => {
-      let pending = Buffer.alloc(0)
-      let total = 0
-      let first = true
-      let upstream: ClientHttp2Session | undefined
-      let request: ReturnType<ClientHttp2Session['request']> | undefined
-      let responded = false
-      const fail = (status: number): void => {
-        if (request && !request.closed) request.close()
-        if (upstream && !upstream.closed) upstream.destroy()
-        if (!responded) reject(stream, status)
-        else if (!stream.destroyed) stream.close()
-      }
-      stream.once('close', () => {
-        if (request && !request.closed) request.close()
-        if (upstream && !upstream.closed) upstream.destroy()
-      })
-      try {
-        for await (const part of incomingParts(stream)) {
-          if (retired) throw new Error('retired')
-          total += part.length
-          if (total > MAX_REQUEST_BYTES) throw new Error('request too large')
-          pending = Buffer.concat([pending, part])
-          while (pending.length >= 5) {
-            const length = pending.readUInt32BE(1)
-            if (pending[0] !== 0 || length > MAX_FRAME_BYTES) throw new Error('invalid frame')
-            if (pending.length < length + 5) break
-            const frame = pending.subarray(0, length + 5)
-            pending = pending.subarray(length + 5)
-            if (first) {
-              const modelId = checkedModel(frame.subarray(5), allowed)
-              first = false
-              const bearer = await options.resolveBearer(modelId)
-              if (retired || options.signal?.aborted || !bearer || /[\r\n]/.test(bearer)) {
-                throw new Error('credential unavailable')
-              }
-              upstream = http2.connect(options.upstreamOrigin ?? CURSOR_ORIGIN)
-              upstreamSessions.add(upstream)
-              upstream.once('close', () => upstreamSessions.delete(upstream!))
-              upstream.on('error', () => fail(502))
-              const requestHeaders: OutgoingHttpHeaders = {
-                ':method': 'POST',
-                ':path': CURSOR_RUN_PATH,
-                authorization: `Bearer ${bearer}`
-              }
-              for (const name of REQUEST_HEADER_NAMES) {
-                const value = headers[name]
-                if (typeof value === 'string') requestHeaders[name] = value
-              }
-              request = upstream.request(requestHeaders)
-              request.on('response', (incoming) => {
-                if (stream.destroyed || stream.closed) return
-                const outgoing: OutgoingHttpHeaders = { ':status': incoming[':status'] ?? 502 }
-                for (const [name, value] of Object.entries(incoming)) {
-                  if (RESPONSE_HEADER_NAMES.has(name) && value !== undefined) outgoing[name] = value
-                }
-                stream.respond(outgoing, { waitForTrailers: true })
-                responded = true
-                request!.pipe(stream, { end: false })
-              })
-              let trailers: IncomingHttpHeaders = {}
-              request.on('trailers', (value) => {
-                trailers = value
-              })
-              stream.on('wantTrailers', () => {
-                if (!stream.destroyed) {
-                  const forwarded: OutgoingHttpHeaders = {}
-                  for (const name of ['grpc-status', 'grpc-message']) {
-                    if (typeof trailers[name] === 'string') forwarded[name] = trailers[name]
-                  }
-                  stream.sendTrailers(forwarded)
-                }
-              })
-              request.on('end', () => {
-                if (!stream.destroyed && !stream.closed) stream.end()
-                upstream?.close()
-              })
-              request.on('error', () => fail(502))
-            } else {
-              const message = fields(frame.subarray(5))
-              if (
-                message.length !== 1 ||
-                message[0].number < 2 ||
-                message[0].number > 8 ||
-                message[0].wireType !== 2
-              ) {
-                throw new Error('unexpected run')
-              }
-            }
-            if (!request || request.closed) throw new Error('upstream unavailable')
-            if (!request.write(frame)) {
-              await new Promise<void>((resolve) => {
-                request!.once('drain', resolve)
-                request!.once('close', resolve)
-              })
-            }
-          }
-          if (pending.length > MAX_FRAME_BYTES + 5) throw new Error('frame too large')
-        }
-        if (first || pending.length || !request) throw new Error('incomplete request')
-        request.end()
-      } catch {
-        fail(403)
-      }
-    })()
+    void new ScopedRequestForwarder(context).run()
   })
 
   const close = async (): Promise<void> => {

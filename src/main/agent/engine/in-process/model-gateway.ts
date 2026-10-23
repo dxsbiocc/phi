@@ -235,6 +235,72 @@ function storageFacade(state: LeaseState): AuthStorage {
   })
 }
 
+function gatewayResponseCanStream(
+  state: LeaseState,
+  controller: AbortController,
+  response: Response
+): response is Response & { body: NonNullable<Response['body']> } {
+  return state.active && !controller.signal.aborted && response.ok && response.body !== null
+}
+
+function gatewayFailureStatus(response: Response): number {
+  return response.status >= 400 && response.status <= 599 ? response.status : 502
+}
+
+function cursorLeaseModels(models: ReadonlyMap<string, RuntimeModel>): {
+  byWireId: Map<string, RuntimeModel>
+  bearerToken: string | undefined
+} {
+  const cursorModels = [...models.values()].filter((model) => model.provider === 'cursor')
+  if (
+    cursorModels.some(
+      (model) =>
+        Object.keys(model.cursorModelRoutes ?? {}).length > 0 ||
+        (model.cursorModelParameters?.length ?? 0) > 0
+    )
+  ) {
+    throw new Error('Cursor rich model routes require a stronger scoped lease')
+  }
+  const byWireId = new Map<string, RuntimeModel>()
+  for (const model of cursorModels) {
+    for (const wireId of cursorWireModelIds(model)) {
+      const previous = byWireId.get(wireId)
+      if (previous && previous.id !== model.id) throw new Error('Ambiguous Cursor model route')
+      byWireId.set(wireId, model)
+    }
+  }
+  return {
+    byWireId,
+    bearerToken: cursorModels.length ? randomBytes(32).toString('base64url') : undefined
+  }
+}
+
+function initialLeaseState(
+  params: CreateModelGatewayLeaseParams,
+  leaseId: string,
+  context: RuntimeContext,
+  models: Map<string, RuntimeModel>,
+  cursorBearerToken: string | undefined
+): LeaseState {
+  const provisional = {
+    leaseId,
+    sessionId: params.sessionId,
+    generation: params.generation,
+    localPort: 1,
+    bearerToken: randomBytes(32).toString('base64url'),
+    ...(cursorBearerToken ? { cursor: { localPort: 1, bearerToken: cursorBearerToken } } : {}),
+    models: [...models.values()].map(safeDescriptor)
+  }
+  return {
+    result: parseModelGatewayLease(provisional, params),
+    context,
+    models,
+    requests: new Set(),
+    scope: new AsyncLocalStorage<RequestScope>(),
+    active: true
+  }
+}
+
 /** One listener/router/provider-state store for each session generation. */
 export class ModelGatewayManager {
   private closed = false
@@ -274,6 +340,66 @@ export class ModelGatewayManager {
     })
   }
 
+  private async resolveModels(
+    context: RuntimeContext,
+    refs: readonly ModelGatewayModelRef[]
+  ): Promise<Map<string, RuntimeModel>> {
+    const available = new Set(
+      context.modelRegistry
+        .getAvailable()
+        .map((model) => JSON.stringify([model.provider, model.id]))
+    )
+    const models = new Map<string, RuntimeModel>()
+    for (const ref of refs) {
+      if (!available.has(JSON.stringify([ref.provider, ref.id]))) {
+        throw new Error('Requested model is unavailable')
+      }
+      const selected = await this.dependencies.model(context, ref)
+      if (!selected || selected.provider !== ref.provider || selected.id !== ref.id) {
+        throw new Error('Requested model is unavailable')
+      }
+      if (
+        selected.provider === 'cursor' &&
+        context.modelRegistry.find('cursor', selected.id)?.baseUrl !== CURSOR_ORIGIN
+      ) {
+        throw new Error('Cursor remote gateway requires the bundled upstream')
+      }
+      // In particular, Codex env WS precedence must not mutate the global model.
+      models.set(`${ref.provider}/${ref.id}`, { ...selected, preferWebsockets: false })
+    }
+    return models
+  }
+
+  private async startCursorGateway(
+    owner: LeaseState,
+    cursor: ReturnType<typeof cursorLeaseModels>
+  ): Promise<void> {
+    if (!cursor.bearerToken) return
+    owner.cursorGateway = await createScopedCursorH2Gateway({
+      token: cursor.bearerToken,
+      allowedModelIds: [...cursor.byWireId.keys()],
+      resolveBearer: async (wireModelId) => {
+        const model = cursor.byWireId.get(wireModelId)
+        if (
+          !model ||
+          !owner.active ||
+          !isModelEnabled(readModelAvailability(owner.context.agentDir), model.provider, model.id)
+        ) {
+          throw new Error('Cursor model lease is inactive')
+        }
+        const credential = await owner.context.modelRegistry.getApiKeyWithCredentialForProvider(
+          model.provider,
+          owner.result.leaseId,
+          { baseUrl: model.baseUrl, modelId: model.id }
+        )
+        if (!owner.active || !credential?.apiKey) {
+          throw new Error('Cursor credential unavailable')
+        }
+        return credential.apiKey
+      }
+    })
+  }
+
   async create(value: unknown): Promise<ModelGatewayLease> {
     const params = validateCreate(value)
     if (this.closed) throw new Error('Model gateway manager is closed')
@@ -288,67 +414,11 @@ export class ModelGatewayManager {
       const context = await this.dependencies.context()
       if (this.closed || this.claims.get(params.sessionId) !== claim)
         throw new Error('Model gateway generation was superseded')
-      const available = new Set(
-        context.modelRegistry
-          .getAvailable()
-          .map((model) => JSON.stringify([model.provider, model.id]))
-      )
-      const models = new Map<string, RuntimeModel>()
-      for (const ref of params.models) {
-        if (!available.has(JSON.stringify([ref.provider, ref.id])))
-          throw new Error('Requested model is unavailable')
-        const selected = await this.dependencies.model(context, ref)
-        if (!selected || selected.provider !== ref.provider || selected.id !== ref.id)
-          throw new Error('Requested model is unavailable')
-        if (
-          selected.provider === 'cursor' &&
-          context.modelRegistry.find('cursor', selected.id)?.baseUrl !== CURSOR_ORIGIN
-        )
-          throw new Error('Cursor remote gateway requires the bundled upstream')
-        // In particular, Codex env WS precedence must not mutate the global model.
-        models.set(`${ref.provider}/${ref.id}`, { ...selected, preferWebsockets: false })
-      }
+      const models = await this.resolveModels(context, params.models)
       if (this.claims.get(params.sessionId) !== claim)
         throw new Error('Model gateway generation was superseded')
-      const scope = new AsyncLocalStorage<RequestScope>()
-      const cursorModels = [...models.values()].filter((model) => model.provider === 'cursor')
-      if (
-        cursorModels.some(
-          (model) =>
-            Object.keys(model.cursorModelRoutes ?? {}).length > 0 ||
-            (model.cursorModelParameters?.length ?? 0) > 0
-        )
-      )
-        throw new Error('Cursor rich model routes require a stronger scoped lease')
-      const cursorByWireId = new Map<string, RuntimeModel>()
-      for (const model of cursorModels) {
-        for (const wireId of cursorWireModelIds(model)) {
-          const previous = cursorByWireId.get(wireId)
-          if (previous && previous.id !== model.id) throw new Error('Ambiguous Cursor model route')
-          cursorByWireId.set(wireId, model)
-        }
-      }
-      const cursorBearerToken = cursorModels.length
-        ? randomBytes(32).toString('base64url')
-        : undefined
-      const provisional = {
-        leaseId: claim.leaseId,
-        sessionId: params.sessionId,
-        generation: params.generation,
-        localPort: 1,
-        bearerToken: randomBytes(32).toString('base64url'),
-        ...(cursorBearerToken ? { cursor: { localPort: 1, bearerToken: cursorBearerToken } } : {}),
-        models: [...models.values()].map(safeDescriptor)
-      }
-      const result = parseModelGatewayLease(provisional, params)
-      state = {
-        result,
-        context,
-        models,
-        requests: new Set(),
-        scope,
-        active: true
-      }
+      const cursor = cursorLeaseModels(models)
+      state = initialLeaseState(params, claim.leaseId, context, models, cursor.bearerToken)
       const owner = state
       owner.router = createAuthGatewayRouter({
         storage: storageFacade(owner),
@@ -361,41 +431,15 @@ export class ModelGatewayManager {
         (head) => this.admit(owner, head),
         (request) => this.handle(owner, request)
       )
-      if (cursorBearerToken) {
-        owner.cursorGateway = await createScopedCursorH2Gateway({
-          token: cursorBearerToken,
-          allowedModelIds: [...cursorByWireId.keys()],
-          resolveBearer: async (wireModelId) => {
-            const model = cursorByWireId.get(wireModelId)
-            if (
-              !model ||
-              !owner.active ||
-              !isModelEnabled(
-                readModelAvailability(owner.context.agentDir),
-                model.provider,
-                model.id
-              )
-            )
-              throw new Error('Cursor model lease is inactive')
-            const credential = await owner.context.modelRegistry.getApiKeyWithCredentialForProvider(
-              model.provider,
-              owner.result.leaseId,
-              { baseUrl: model.baseUrl, modelId: model.id }
-            )
-            if (!owner.active || !credential?.apiKey)
-              throw new Error('Cursor credential unavailable')
-            return credential.apiKey
-          }
-        })
-      }
+      await this.startCursorGateway(owner, cursor)
       if (this.closed || this.claims.get(params.sessionId) !== claim)
         throw new Error('Model gateway generation was superseded')
       owner.result = parseModelGatewayLease(
         {
-          ...result,
+          ...owner.result,
           localPort: owner.server.port,
           ...(owner.cursorGateway
-            ? { cursor: { localPort: owner.cursorGateway.port, bearerToken: cursorBearerToken } }
+            ? { cursor: { localPort: owner.cursorGateway.port, bearerToken: cursor.bearerToken } }
             : {})
         },
         params
@@ -514,10 +558,10 @@ export class ModelGatewayManager {
           'phi-model-gateway'
         )
       )
-      if (!state.active || controller.signal.aborted || !response.ok || !response.body) {
+      if (!gatewayResponseCanStream(state, controller, response)) {
         controller.abort()
         await response.body?.cancel().catch(() => undefined)
-        return failure(response.status >= 400 && response.status <= 599 ? response.status : 502)
+        return failure(gatewayFailureStatus(response))
       }
       const body = boundedGatewayStream(response.body, controller, model, finish, this.streamLimits)
       streamOwnsRequest = true

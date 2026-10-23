@@ -30,6 +30,34 @@ function mergedRanges(ranges: SourceRange[]): SourceRange[] {
   return merged
 }
 
+function nearestFragment(
+  fragments: InlineFragment[],
+  position: number
+): InlineFragment | undefined {
+  let nearest: InlineFragment | undefined
+  for (const fragment of fragments) {
+    if (fragment.from > position || fragment.to < position) continue
+    if (!nearest || fragment.to - fragment.from <= nearest.to - nearest.from) nearest = fragment
+  }
+  return nearest
+}
+
+function activeFragments(
+  state: EditorState,
+  fragments: InlineFragment[],
+  focused: boolean,
+  alwaysRendered: boolean
+): Set<InlineFragment> {
+  const active = new Set<InlineFragment>()
+  if (!focused || alwaysRendered) return active
+  for (const range of state.selection.ranges) {
+    if (!range.empty) continue
+    const nearest = nearestFragment(fragments, range.from)
+    if (nearest) active.add(nearest)
+  }
+  return active
+}
+
 /** Keep presentation separate from the document so selection, copying and undo retain source. */
 export function markdownInlinePresentation(
   state: EditorState,
@@ -84,23 +112,7 @@ export function markdownInlinePresentation(
     }
   })
 
-  const active = new Set<InlineFragment>()
-  if (focused && !alwaysRendered) {
-    for (const range of state.selection.ranges) {
-      if (!range.empty) continue
-      let nearest: InlineFragment | undefined
-      for (const fragment of fragments) {
-        if (
-          fragment.from <= range.from &&
-          fragment.to >= range.from &&
-          (!nearest || fragment.to - fragment.from <= nearest.to - nearest.from)
-        ) {
-          nearest = fragment
-        }
-      }
-      if (nearest) active.add(nearest)
-    }
-  }
+  const active = activeFragments(state, fragments, focused, alwaysRendered)
   const hidden = fragments.flatMap((fragment) =>
     active.has(fragment)
       ? []

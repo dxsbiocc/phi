@@ -136,6 +136,30 @@ const NavMcpIcon = createActivityBarReactIcon(GoWorkflow)
 const NavWrappersIcon = createActivityBarReactIcon(GoContainer)
 const NavSettingsIcon = createActivityBarReactIcon(GoGear)
 
+function useHoverPreviewTimer(): {
+  clear: () => void
+  schedule: (callback: () => void) => void
+} {
+  const timerRef = useRef<number | null>(null)
+  const clear = useCallback((): void => {
+    if (timerRef.current === null) return
+    window.clearTimeout(timerRef.current)
+    timerRef.current = null
+  }, [])
+  const schedule = useCallback(
+    (callback: () => void): void => {
+      clear()
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null
+        callback()
+      }, activityBarHoverPreviewDelayMs)
+    },
+    [clear]
+  )
+  useEffect(() => clear, [clear])
+  return { clear, schedule }
+}
+
 function WorkspaceSidebarNavButton({
   mode,
   label,
@@ -162,13 +186,7 @@ function WorkspaceSidebarNavButton({
   onFocusPreview: () => void
 }): React.JSX.Element {
   useUiLanguage()
-  const hoverPreviewTimerRef = useRef<number | null>(null)
-  const clearHoverPreviewTimer = (): void => {
-    if (hoverPreviewTimerRef.current === null) return
-    window.clearTimeout(hoverPreviewTimerRef.current)
-    hoverPreviewTimerRef.current = null
-  }
-  useEffect(() => clearHoverPreviewTimer, [])
+  const hoverPreviewTimer = useHoverPreviewTimer()
   const button = (
     <IconButton
       size="small"
@@ -186,14 +204,10 @@ function WorkspaceSidebarNavButton({
       onMouseEnter={(event) => {
         if (!useContentPreview) return
         const anchor = event.currentTarget
-        clearHoverPreviewTimer()
-        hoverPreviewTimerRef.current = window.setTimeout(() => {
-          hoverPreviewTimerRef.current = null
-          onPreviewOpen(mode, anchor)
-        }, activityBarHoverPreviewDelayMs)
+        hoverPreviewTimer.schedule(() => onPreviewOpen(mode, anchor))
       }}
       onMouseLeave={(event) => {
-        clearHoverPreviewTimer()
+        hoverPreviewTimer.clear()
         if (useContentPreview) onPreviewClose(event)
       }}
       onFocus={(event) => {

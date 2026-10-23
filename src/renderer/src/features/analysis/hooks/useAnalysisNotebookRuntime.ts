@@ -50,6 +50,190 @@ export function useAnalysisNotebookRuntime({
   showSnackbar,
   onNavigateToNotebookView
 }: AnalysisNotebookRuntimeDeps): AnalysisNotebookRuntimeState {
+  type JupyterRuntimeReadResult =
+    | { status: AnalysisJupyterRuntimeStatus }
+    | { error: unknown; failure: 'runtime' | 'status' }
+    | { cancelled: true }
+
+  const readAnalysisJupyterRuntimeStatus = useCallback(
+    async ({
+      cwd,
+      shouldTryFallback
+    }: {
+      cwd: string
+      shouldTryFallback: () => boolean
+    }): Promise<JupyterRuntimeReadResult> => {
+      const readLegacyStatus = async (): Promise<AnalysisJupyterRuntimeStatus> => ({
+        server: await rendererApi.getAnalysisJupyterStatus(cwd),
+        notebooks: { activeSessionCount: 0, busySessionCount: 0, sessions: [] }
+      })
+      try {
+        const getRuntimeStatus =
+          typeof rendererApi.getAnalysisJupyterRuntimeStatus === 'function'
+            ? rendererApi.getAnalysisJupyterRuntimeStatus
+            : null
+        return { status: getRuntimeStatus ? await getRuntimeStatus(cwd) : await readLegacyStatus() }
+      } catch (error) {
+        if (!missingJupyterRuntimeHandler(error)) return { error, failure: 'runtime' }
+        if (!shouldTryFallback()) return { cancelled: true }
+        try {
+          return { status: await readLegacyStatus() }
+        } catch (fallbackError) {
+          return { error: fallbackError, failure: 'status' }
+        }
+      }
+    },
+    [rendererApi]
+  )
+
+  function buildPendingJupyterCellStart({
+    cwd,
+    notebookPath,
+    cellId,
+    status
+  }: {
+    cwd: string
+    notebookPath: string
+    cellId: string
+    status: JupyterServerStatus
+  }): PendingJupyterCellStart {
+    return { cwd, notebookPath, cellId, runtimeKind: status.runtimeKind }
+  }
+
+  function buildNotebookFileWithExecutionError({
+    file,
+    document,
+    cellId,
+    startedAt,
+    message
+  }: {
+    file: AnalysisNotebookFile
+    document: AnalysisNotebookFile['document']
+    cellId: string
+    startedAt: string
+    message: string
+  }): AnalysisNotebookFile | null {
+    const cell = document.cells.find((candidate) => candidate.id === cellId)
+    if (!cell) return null
+    return {
+      ...file,
+      document: updateNotebookCell(document, cellId, {
+        metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, {
+          startedAt,
+          completedAt: new Date().toISOString()
+        }),
+        outputs: [
+          {
+            outputType: 'error',
+            data: {},
+            metadata: {},
+            ename: 'ExecutionError',
+            evalue: message,
+            traceback: [message],
+            extra: {}
+          }
+        ]
+      })
+    }
+  }
+
+  function getNotebookFileCwd(
+    file: AnalysisNotebookFile,
+    fileCwds: WeakMap<AnalysisNotebookFile, string>,
+    pathCwds: Map<string, string>,
+    getFallback: () => string
+  ): string {
+    return fileCwds.get(file) ?? pathCwds.get(file.path) ?? getFallback()
+  }
+
+  function notebookExpectedHash(file: AnalysisNotebookFile): { expectedHash?: string } {
+    return file.contentHash ? { expectedHash: file.contentHash } : {}
+  }
+
+  function notebookRegistryMissesProject(
+    registryCwd: string | null,
+    activeCwd: string,
+    projectCwd: string,
+    registryProjectCwd?: string | null
+  ): boolean {
+    return registryCwd !== activeCwd || projectCwd !== registryProjectCwd
+  }
+
+  function hasPendingNotebookDraftConflict(
+    hasPendingSync: boolean,
+    currentRevision: string,
+    savedRevision: string,
+    incomingRevision: string
+  ): boolean {
+    return (
+      hasPendingSync && currentRevision !== savedRevision && currentRevision !== incomingRevision
+    )
+  }
+
+  function notebookDocumentHasCell(
+    document: AnalysisNotebookFile['document'],
+    cellId: string | undefined
+  ): cellId is string {
+    return Boolean(cellId && document.cells.some((cell) => cell.id === cellId))
+  }
+
+  function notebookFileChangeIsActive(
+    active: AnalysisNotebookFile | null,
+    path: string,
+    relativePath: string
+  ): boolean {
+    return active?.path === path || active?.relativePath === relativePath
+  }
+
+  function notebookHasUnsavedChanges(
+    file: AnalysisNotebookFile | undefined
+  ): file is AnalysisNotebookFile {
+    return Boolean(file && file.document.revision !== file.savedRevision)
+  }
+
+  function notebookDiskConflictMessage(conflict: boolean): string | null {
+    return conflict ? analysisCopy.diskLocalConflict : null
+  }
+
+  function getRefreshableNotebook(
+    current: AnalysisNotebookFile | null,
+    cwd: string,
+    hasPendingSave: boolean,
+    canRefresh: boolean
+  ): { current: AnalysisNotebookFile; cwd: string } | null {
+    if (
+      !current ||
+      !cwd ||
+      current.document.revision !== current.savedRevision ||
+      hasPendingSave ||
+      !canRefresh
+    ) {
+      return null
+    }
+    return { current, cwd }
+  }
+
+  function notebookRefreshRequestIsCurrent(
+    request: number,
+    currentRequest: number,
+    epoch: number,
+    currentEpoch: number
+  ): boolean {
+    return request === currentRequest && epoch === currentEpoch
+  }
+
+  function notebookSnapshotMatches(
+    previous: AnalysisNotebookFile,
+    latest: AnalysisNotebookFile | null
+  ): boolean {
+    return (
+      latest?.path === previous.path &&
+      latest.document.revision === previous.document.revision &&
+      latest.savedRevision === previous.savedRevision &&
+      latest.contentHash === previous.contentHash
+    )
+  }
+
   const [analysisNotebookRegistry, setAnalysisNotebookRegistry] =
     useState<AnalysisNotebookRegistry | null>(null)
   const [activeAnalysisNotebook, setActiveAnalysisNotebookState] =
@@ -323,10 +507,12 @@ export function useAnalysisNotebookRuntime({
       file: AnalysisNotebookFile,
       document: AnalysisNotebookFile['document']
     ): Promise<AnalysisNotebookFile | false> => {
-      const cwd =
-        notebookFileCwdsRef.current.get(file) ??
-        notebookPathCwdsRef.current.get(file.path) ??
-        getActiveCwd()
+      const cwd = getNotebookFileCwd(
+        file,
+        notebookFileCwdsRef.current,
+        notebookPathCwdsRef.current,
+        getActiveCwd
+      )
       const epoch = notebookScopeEpochRef.current
       const saveKey = `${cwd}\0${file.path}`
       pendingNotebookSavesRef.current.set(saveKey, document.revision)
@@ -338,7 +524,7 @@ export function useAnalysisNotebookRuntime({
           path: file.path,
           document,
           expectedRevision: file.savedRevision,
-          ...(file.contentHash ? { expectedHash: file.contentHash } : {})
+          ...notebookExpectedHash(file)
         })
         notebookFileCwdsRef.current.set(saved, cwd)
         if (cwd !== getActiveCwd() || epoch !== notebookScopeEpochRef.current) return saved
@@ -595,60 +781,34 @@ export function useAnalysisNotebookRuntime({
     setIsLoadingAnalysisJupyterRuntime(true)
     setAnalysisJupyterRuntimeError(null)
     try {
-      const getAnalysisJupyterRuntimeStatus =
-        typeof rendererApi.getAnalysisJupyterRuntimeStatus === 'function'
-          ? rendererApi.getAnalysisJupyterRuntimeStatus
-          : null
-      const status = getAnalysisJupyterRuntimeStatus
-        ? await getAnalysisJupyterRuntimeStatus(cwd)
-        : {
-            server: await rendererApi.getAnalysisJupyterStatus(cwd),
-            notebooks: { activeSessionCount: 0, busySessionCount: 0, sessions: [] }
-          }
+      const result = await readAnalysisJupyterRuntimeStatus({
+        cwd,
+        shouldTryFallback: () => request === analysisJupyterRuntimeRequestRef.current
+      })
+      if ('cancelled' in result) return
+      if ('error' in result) {
+        if (request !== analysisJupyterRuntimeRequestRef.current) return
+        const fallback =
+          result.failure === 'status'
+            ? analysisCopy.jupyterStatusFailed
+            : analysisCopy.jupyterRuntimeFailed
+        setAnalysisJupyterRuntimeError(notebookEnvironmentErrorMessage(result.error, fallback))
+        setAnalysisJupyterRuntimeStatus(null)
+        return
+      }
       if (request !== analysisJupyterRuntimeRequestRef.current || cwd !== getActiveAnalysisCwd()) {
         return
       }
+      const { status } = result
       setAnalysisJupyterRuntimeStatus(status)
       setAnalysisJupyterStatus(status.server)
       if (jupyterServerIsReady(status.server)) setPendingJupyterCellStart(null)
-    } catch (error) {
-      if (request !== analysisJupyterRuntimeRequestRef.current) return
-      if (missingJupyterRuntimeHandler(error)) {
-        try {
-          const server = await rendererApi.getAnalysisJupyterStatus(cwd)
-          if (
-            request !== analysisJupyterRuntimeRequestRef.current ||
-            cwd !== getActiveAnalysisCwd()
-          ) {
-            return
-          }
-          setAnalysisJupyterRuntimeStatus({
-            server,
-            notebooks: { activeSessionCount: 0, busySessionCount: 0, sessions: [] }
-          })
-          setAnalysisJupyterStatus(server)
-          if (jupyterServerIsReady(server)) setPendingJupyterCellStart(null)
-          setAnalysisJupyterRuntimeError(null)
-          return
-        } catch (fallbackError) {
-          if (request !== analysisJupyterRuntimeRequestRef.current) return
-          setAnalysisJupyterRuntimeError(
-            notebookEnvironmentErrorMessage(fallbackError, analysisCopy.jupyterStatusFailed)
-          )
-          setAnalysisJupyterRuntimeStatus(null)
-          return
-        }
-      }
-      setAnalysisJupyterRuntimeError(
-        notebookEnvironmentErrorMessage(error, analysisCopy.jupyterRuntimeFailed)
-      )
-      setAnalysisJupyterRuntimeStatus(null)
     } finally {
       if (request === analysisJupyterRuntimeRequestRef.current) {
         setIsLoadingAnalysisJupyterRuntime(false)
       }
     }
-  }, [getActiveAnalysisCwd, rendererApi])
+  }, [getActiveAnalysisCwd, readAnalysisJupyterRuntimeStatus])
 
   const onStartAnalysisJupyter = useCallback(
     async (cwd: string): Promise<void> => {
@@ -880,6 +1040,94 @@ export function useAnalysisNotebookRuntime({
     [getActiveCwd, refreshAnalysisJupyterRuntimeStatus, rendererApi]
   )
 
+  const ensureJupyterReadyForCell = useCallback(
+    async ({
+      request,
+      cwd,
+      notebookPath,
+      cellId
+    }: {
+      request: number
+      cwd: string
+      notebookPath: string
+      cellId: string
+    }): Promise<boolean> => {
+      if (
+        analysisJupyterStatus?.projectCwd === cwd &&
+        jupyterServerIsReady(analysisJupyterStatus)
+      ) {
+        return true
+      }
+      try {
+        const status = await rendererApi.getAnalysisJupyterStatus(cwd)
+        if (request !== analysisCellExecutionRequestRef.current || cwd !== getActiveCwd()) {
+          return false
+        }
+        setAnalysisJupyterStatus(status)
+        if (jupyterServerIsReady(status)) return true
+        setAnalysisCellExecutionError(null)
+        setPendingJupyterCellStart(
+          buildPendingJupyterCellStart({ cwd, notebookPath, cellId, status })
+        )
+      } catch (error) {
+        if (request !== analysisCellExecutionRequestRef.current) return false
+        setAnalysisCellExecutionError(
+          notebookEnvironmentErrorMessage(error, analysisCopy.jupyterStatusFailed)
+        )
+      }
+      return false
+    },
+    [analysisJupyterStatus, getActiveCwd, rendererApi]
+  )
+
+  const handleAnalysisCellExecutionFailure = useCallback(
+    async ({
+      error,
+      request,
+      cwd,
+      file,
+      document,
+      cellId,
+      startedAt
+    }: {
+      error: unknown
+      request: number
+      cwd: string
+      file: AnalysisNotebookFile
+      document: AnalysisNotebookFile['document']
+      cellId: string
+      startedAt: string
+    }): Promise<void> => {
+      if (request !== analysisCellExecutionRequestRef.current) return
+      const status = await rendererApi.getAnalysisJupyterStatus(cwd).catch(() => null)
+      if (request !== analysisCellExecutionRequestRef.current || cwd !== getActiveCwd()) return
+      if (status && !jupyterServerIsReady(status)) {
+        setAnalysisJupyterStatus(status)
+        setAnalysisCellExecutionError(null)
+        setPendingJupyterCellStart(
+          buildPendingJupyterCellStart({ cwd, notebookPath: file.path, cellId, status })
+        )
+        return
+      }
+      const message = notebookEnvironmentErrorMessage(error, analysisCopy.executeCellFailed)
+      setAnalysisCellExecutionError(message)
+      // Preserve a visible error on the cell even when the runtime call fails.
+      try {
+        const next = buildNotebookFileWithExecutionError({
+          file,
+          document,
+          cellId,
+          startedAt,
+          message
+        })
+        if (next) setActiveAnalysisNotebook(next)
+      } catch {
+        // Cell may have been deleted/moved while executing; nothing to attach to.
+      }
+    },
+    [getActiveCwd, rendererApi, setActiveAnalysisNotebook]
+  )
+
   const onRunAnalysisNotebookCell = useCallback(
     async (
       file: AnalysisNotebookFile,
@@ -888,32 +1136,13 @@ export function useAnalysisNotebookRuntime({
     ): Promise<void> => {
       const request = ++analysisCellExecutionRequestRef.current
       const cwd = getActiveCwd()
-      if (
-        analysisJupyterStatus?.projectCwd !== cwd ||
-        !jupyterServerIsReady(analysisJupyterStatus)
-      ) {
-        try {
-          const status = await rendererApi.getAnalysisJupyterStatus(cwd)
-          if (request !== analysisCellExecutionRequestRef.current || cwd !== getActiveCwd()) return
-          setAnalysisJupyterStatus(status)
-          if (!jupyterServerIsReady(status)) {
-            setAnalysisCellExecutionError(null)
-            setPendingJupyterCellStart({
-              cwd,
-              notebookPath: file.path,
-              cellId,
-              runtimeKind: status.runtimeKind
-            })
-            return
-          }
-        } catch (error) {
-          if (request !== analysisCellExecutionRequestRef.current) return
-          setAnalysisCellExecutionError(
-            notebookEnvironmentErrorMessage(error, analysisCopy.jupyterStatusFailed)
-          )
-          return
-        }
-      }
+      const canRun = await ensureJupyterReadyForCell({
+        request,
+        cwd,
+        notebookPath: file.path,
+        cellId
+      })
+      if (!canRun) return
       const startedAt = new Date().toISOString()
       setPendingJupyterCellStart(null)
       setExecutingAnalysisCellId(cellId)
@@ -936,57 +1165,28 @@ export function useAnalysisNotebookRuntime({
         })
         setAnalysisNotebookSessionStatus(result.sessionStatus)
       } catch (error) {
-        if (request !== analysisCellExecutionRequestRef.current) return
-        const status = await rendererApi.getAnalysisJupyterStatus(cwd).catch(() => null)
-        if (request !== analysisCellExecutionRequestRef.current || cwd !== getActiveCwd()) return
-        if (status && !jupyterServerIsReady(status)) {
-          setAnalysisJupyterStatus(status)
-          setAnalysisCellExecutionError(null)
-          setPendingJupyterCellStart({
-            cwd,
-            notebookPath: file.path,
-            cellId,
-            runtimeKind: status.runtimeKind
-          })
-          return
-        }
-        const message = notebookEnvironmentErrorMessage(error, analysisCopy.executeCellFailed)
-        setAnalysisCellExecutionError(message)
-        // Without this, a failed run (timeout, lost kernel connection, stale
-        // session, ...) leaves the cell showing nothing at all once the
-        // running indicator clears — the only trace is a banner above the
-        // cell list that's easy to miss if the user scrolled down to it.
-        try {
-          const cell = executionDocument.cells.find((candidate) => candidate.id === cellId)
-          if (!cell) return
-          const nextDocument = updateNotebookCell(executionDocument, cellId, {
-            metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, {
-              startedAt,
-              completedAt: new Date().toISOString()
-            }),
-            outputs: [
-              {
-                outputType: 'error',
-                data: {},
-                metadata: {},
-                ename: 'ExecutionError',
-                evalue: message,
-                traceback: [message],
-                extra: {}
-              }
-            ]
-          })
-          setActiveAnalysisNotebook({ ...file, document: nextDocument })
-        } catch {
-          // Cell may have been deleted/moved while executing; nothing to attach to.
-        }
+        await handleAnalysisCellExecutionFailure({
+          error,
+          request,
+          cwd,
+          file,
+          document: executionDocument,
+          cellId,
+          startedAt
+        })
       } finally {
         if (request === analysisCellExecutionRequestRef.current) {
           setExecutingAnalysisCellId(null)
         }
       }
     },
-    [analysisJupyterStatus, getActiveCwd, rendererApi, setActiveAnalysisNotebook]
+    [
+      ensureJupyterReadyForCell,
+      getActiveCwd,
+      handleAnalysisCellExecutionFailure,
+      rendererApi,
+      setActiveAnalysisNotebook
+    ]
   )
 
   const onStartJupyterForPendingCell = useCallback(async (): Promise<void> => {
@@ -1134,8 +1334,12 @@ export function useAnalysisNotebookRuntime({
       if (change.source === 'renderer') return
       if (
         change.projectCwd !== getActiveCwd() &&
-        (notebookRegistryCwdRef.current !== getActiveCwd() ||
-          change.projectCwd !== analysisNotebookRegistry?.projectCwd)
+        notebookRegistryMissesProject(
+          notebookRegistryCwdRef.current,
+          getActiveCwd(),
+          change.projectCwd,
+          analysisNotebookRegistry?.projectCwd
+        )
       )
         return
       const current =
@@ -1143,9 +1347,12 @@ export function useAnalysisNotebookRuntime({
         analysisNotebookFileCacheRef.current.get(change.relativePath)
       if (!current) return
       if (
-        pendingNotebookSyncsRef.current.has(current.path) &&
-        current.document.revision !== current.savedRevision &&
-        current.document.revision !== change.document.revision
+        hasPendingNotebookDraftConflict(
+          pendingNotebookSyncsRef.current.has(current.path),
+          current.document.revision,
+          current.savedRevision,
+          change.document.revision
+        )
       ) {
         if (activeAnalysisNotebookRef.current?.path === current.path) {
           setActiveAnalysisNotebook(current)
@@ -1169,7 +1376,7 @@ export function useAnalysisNotebookRuntime({
       if (activeAnalysisNotebookRef.current?.path !== current.path) return
       setActiveAnalysisNotebook(next)
       const focusCellId = change.focusCellId ?? change.changedCellId
-      if (focusCellId && change.document.cells.some((cell) => cell.id === focusCellId)) {
+      if (notebookDocumentHasCell(change.document, focusCellId)) {
         setAnalysisAgentFocus({
           requestId: `${change.path}:${change.document.revision}:${focusCellId}:${Date.now()}`,
           path: change.path,
@@ -1194,8 +1401,12 @@ export function useAnalysisNotebookRuntime({
     (change: AnalysisNotebookFileChange): void => {
       if (
         change.projectCwd !== getActiveCwd() &&
-        (notebookRegistryCwdRef.current !== getActiveCwd() ||
-          change.projectCwd !== analysisNotebookRegistry?.projectCwd)
+        notebookRegistryMissesProject(
+          notebookRegistryCwdRef.current,
+          getActiveCwd(),
+          change.projectCwd,
+          analysisNotebookRegistry?.projectCwd
+        )
       )
         return
 
@@ -1204,7 +1415,7 @@ export function useAnalysisNotebookRuntime({
         analysisNotebookFileCacheRef.current.get(change.path) ??
         analysisNotebookFileCacheRef.current.get(change.relativePath)
       const active = activeAnalysisNotebookRef.current
-      const isActive = active?.path === change.path || active?.relativePath === change.relativePath
+      const isActive = notebookFileChangeIsActive(active, change.path, change.relativePath)
 
       if (change.type === 'changed') {
         const { file, conflict } = reconcileAnalysisNotebookDiskFile(
@@ -1218,13 +1429,13 @@ export function useAnalysisNotebookRuntime({
         )
         if (isActive) {
           setActiveAnalysisNotebook(file)
-          setAnalysisNotebookContentError(conflict ? analysisCopy.diskLocalConflict : null)
+          setAnalysisNotebookContentError(notebookDiskConflictMessage(conflict))
           if (!conflict) void refreshAnalysisNotebookSessionStatus(file)
         }
         return
       }
       if (change.type === 'deleted') {
-        if (current && current.document.revision !== current.savedRevision) {
+        if (notebookHasUnsavedChanges(current)) {
           if (isActive) {
             setActiveAnalysisNotebook(current)
             setAnalysisNotebookContentError(analysisCopy.notebookDeletedPreserved)
@@ -1261,29 +1472,30 @@ export function useAnalysisNotebookRuntime({
   )
 
   const refreshActiveNotebookFile = useCallback(async (): Promise<void> => {
-    const current = activeAnalysisNotebookRef.current
-    const cwd = getActiveCwd()
-    if (
-      !current ||
-      !cwd ||
-      current.document.revision !== current.savedRevision ||
-      pendingNotebookSavesRef.current.has(`${cwd}\0${current.path}`) ||
-      typeof rendererApi.refreshAnalysisNotebook !== 'function'
+    const active = activeAnalysisNotebookRef.current
+    const activeCwd = getActiveCwd()
+    const refreshable = getRefreshableNotebook(
+      active,
+      activeCwd,
+      active ? pendingNotebookSavesRef.current.has(`${activeCwd}\0${active.path}`) : false,
+      typeof rendererApi.refreshAnalysisNotebook === 'function'
     )
-      return
+    if (!refreshable) return
+    const { current, cwd } = refreshable
     const request = ++notebookRefreshRequestRef.current
     const epoch = notebookScopeEpochRef.current
     try {
       const file = await rendererApi.refreshAnalysisNotebook(cwd, current.path)
       const latest = activeAnalysisNotebookRef.current
       if (
-        request !== notebookRefreshRequestRef.current ||
-        epoch !== notebookScopeEpochRef.current ||
+        !notebookRefreshRequestIsCurrent(
+          request,
+          notebookRefreshRequestRef.current,
+          epoch,
+          notebookScopeEpochRef.current
+        ) ||
         cwd !== getActiveCwd() ||
-        latest?.path !== current.path ||
-        latest.document.revision !== current.document.revision ||
-        latest.savedRevision !== current.savedRevision ||
-        latest.contentHash !== current.contentHash
+        !notebookSnapshotMatches(current, latest)
       )
         return
       handleNotebookFileChanged({

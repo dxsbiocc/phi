@@ -31,6 +31,18 @@ type HomePromptComposerProps = {
   composerResources?: HomeComposerResources
 }
 
+function submitPrompt(event: React.FormEvent, onSubmit: () => void): void {
+  event.preventDefault()
+  onSubmit()
+}
+
+function submitPromptOnEnter(event: KeyboardEvent): boolean {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return false
+  event.preventDefault()
+  if (event.target instanceof Element) event.target.closest('form')?.requestSubmit()
+  return true
+}
+
 export function HomePromptComposer({
   projects,
   selectedProject,
@@ -67,13 +79,7 @@ export function HomePromptComposer({
           onNewProject={onNewProject}
         />
       </Box>
-      <Box
-        component="form"
-        onSubmit={(event) => {
-          event.preventDefault()
-          onSubmit()
-        }}
-      >
+      <Box component="form" onSubmit={(event) => submitPrompt(event, onSubmit)}>
         <ChatComposer
           inputRef={inputRef}
           value={draft}
@@ -103,12 +109,7 @@ export function HomePromptComposer({
           onTogglePlanReview={onTogglePlanReview}
           disablePlanReview={disablePlanReview || disabled}
           onChange={(value) => onDraftChange(value)}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return false
-            event.preventDefault()
-            if (event.target instanceof Element) event.target.closest('form')?.requestSubmit()
-            return true
-          }}
+          onKeyDown={submitPromptOnEnter}
           sendLabel={homeCopy.sendPrompt}
         />
       </Box>
