@@ -42,7 +42,7 @@ class FakeRunner implements StepRunner {
   readonly stopped: Array<{ sessionId: string; runId: string }> = []
   throwStarts = 0
 
-  start(input: StepRunnerStartInput): { runId: string; done: Promise<StepOutcome> } {
+  async start(input: StepRunnerStartInput): Promise<{ runId: string; done: Promise<StepOutcome> }> {
     if (this.throwStarts > 0) {
       this.throwStarts -= 1
       throw new Error('launch exploded')

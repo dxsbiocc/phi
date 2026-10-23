@@ -120,6 +120,7 @@ const REQUEST_POLICIES: ReadonlyMap<string, RequestPolicy> = new Map([
   ['modelGateway.revoke', { timeoutMs: MODEL_GATEWAY_TIMEOUT_MS, stopsWorkerOnTimeout: false }],
   ['agentRun.stop', controlPolicy],
   ['agentRun.steer', controlPolicy],
+  ['agentRun.start', controlPolicy],
   ['agentRuns.list', controlPolicy],
   ['shellJobs.list', controlPolicy],
   ['shellJobs.cancel', controlPolicy],

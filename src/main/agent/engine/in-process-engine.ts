@@ -81,6 +81,7 @@ export function createInProcessEngine(bridge: OmpBridge): PhiEngine {
       }
     },
     agentRuns: {
+      start: (params) => bridge.request('agentRun.start', params),
       list: (params) => bridge.request('agentRuns.list', params),
       steer: (params) => bridge.request('agentRun.steer', params),
       stop: (params) => bridge.request('agentRun.stop', params)

@@ -135,6 +135,7 @@ test('foreign tool names map onto Phi built-ins; unknown ones are dropped', () =
   assert.equal(normalizeToolName('MultiEdit'), 'edit')
   assert.equal(normalizeToolName('WebSearch'), 'web_search')
   assert.equal(normalizeToolName('grep'), 'grep')
+  assert.equal(normalizeToolName('find'), 'find')
   assert.equal(normalizeToolName('WebFetch'), undefined)
   assert.equal(normalizeToolName('mcp__github__list'), undefined)
 })
@@ -222,6 +223,7 @@ test('isPhiAgentDefinition guards the worker boundary', () => {
       environment: 'phi:python@1',
       model: ['openai/gpt'],
       thinkingLevel: 'low',
+      invocation: 'host',
       warnings: ['legacy alias']
     }),
     true
@@ -229,6 +231,7 @@ test('isPhiAgentDefinition guards the worker boundary', () => {
   assert.equal(isPhiAgentDefinition({ ...good, tools: 'read' }), false)
   assert.equal(isPhiAgentDefinition({ ...good, name: 'alpha' }), false)
   assert.equal(isPhiAgentDefinition({ ...good, thinkingLevel: 'max' }), false)
+  assert.equal(isPhiAgentDefinition({ ...good, invocation: 'tool' }), false)
   assert.equal(isPhiAgentDefinition({ ...good, visibility: 'internal' }), false)
   assert.equal(isPhiAgentDefinition({ ...good, model: 'openai/gpt' }), false)
   assert.equal(isPhiAgentDefinition(null), false)
@@ -258,6 +261,7 @@ model:
   - anthropic/claude
 thinkingLevel: high
 visibility: entry
+invocation: host
 delegationMode: preferred
 delegation: Hand over alpha work.
 fallback:
@@ -275,6 +279,7 @@ fallback:
   assert.deepEqual(passing.agent?.model, ['openai/gpt-4', 'anthropic/claude'])
   assert.equal(passing.agent?.thinkingLevel, 'high')
   assert.equal(passing.agent?.visibility, 'entry')
+  assert.equal(passing.agent?.invocation, 'host')
   assert.equal(passing.agent?.delegationMode, 'preferred')
   assert.equal(passing.agent?.fallback?.afterFailures, 2)
 
@@ -315,6 +320,7 @@ fallback:
 
   const omitted = parsePhiAgent('/x/Alpha.md', agentDocument(PHI_FRONTMATTER), 'phi')
   assert.equal(omitted.visibility, 'entry')
+  assert.equal(omitted.invocation, undefined)
   assert.equal(omitted.environment, undefined)
   assert.equal(omitted.model, undefined)
   assert.equal(omitted.thinkingLevel, undefined)
@@ -334,6 +340,7 @@ fallback:
     [`${PHI_FRONTMATTER}\nenvironment: ./environment.yml`, /environment/],
     [`${PHI_FRONTMATTER}\nvisibility: internal`, /reserved/],
     [`${PHI_FRONTMATTER}\nvisibility: hidden`, /entry/],
+    [`${PHI_FRONTMATTER}\ninvocation: tool`, /invocation/],
     [`${PHI_FRONTMATTER}\ndelegationMode: sometimes`, /delegationMode/],
     [`${PHI_FRONTMATTER}\ndelegation: 1`, /delegation/],
     [
@@ -463,7 +470,7 @@ test('discovery logs warnings without skipping the agent', () => {
 })
 
 test('the bundled agents validate with no errors and no warnings', () => {
-  const files = [join(REPO_AGENTS_DIR, 'Wrapper.md')]
+  const files = [join(REPO_AGENTS_DIR, 'Wrapper.md'), join(REPO_AGENTS_DIR, 'PlanStep.md')]
   for (const file of files) {
     const result = validateAgent(file)
     assert.equal(
@@ -475,7 +482,8 @@ test('the bundled agents validate with no errors and no warnings', () => {
     assert.deepEqual(result.warnings, [])
     assert.deepEqual(result.agent?.warnings, [])
     assert.equal(result.agent?.visibility, 'entry')
-    assert.equal(result.agent?.delegationMode, 'required-first')
+    if (file.endsWith('Wrapper.md')) assert.equal(result.agent?.delegationMode, 'required-first')
+    else assert.equal(result.agent?.invocation, 'host')
   }
 })
 
@@ -763,6 +771,7 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
     assert.match(prompt, /<\/phi_agents>$/)
     assert.match(prompt, /- Visualization: /)
     assert.match(prompt, /- Wrapper: /)
+    assert.doesNotMatch(prompt, /PlanStep/)
     assert.match(prompt, /public biological database.*read/i)
     assert.match(prompt, /https:\/\/rest\.uniprot\.org\/uniprotkb\/P04637\.json/)
     assert.match(prompt, /eutils\.ncbi\.nlm\.nih\.gov.*retmode=json/i)

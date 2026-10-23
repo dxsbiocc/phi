@@ -5,6 +5,7 @@ export const PLAN_MAX_STEP_TITLE_LENGTH = 80
 export const PLAN_MAX_STEP_INSTRUCTIONS_LENGTH = 4_000
 export const PLAN_MAX_STEP_ACCEPTANCE_LENGTH = 1_000
 export const PLAN_MAX_REPORT_SUMMARY_BYTES = 8 * 1_024
+export const PLAN_STEP_PROMPT_MAX_BYTES = 30 * 1_024
 export const PLAN_MAX_REPLANS = 2
 export const PLAN_DEFAULT_MAX_CONCURRENT = 3
 export const PLAN_RUN_STATUSES = ['running', 'paused', 'completed', 'stopped'] as const

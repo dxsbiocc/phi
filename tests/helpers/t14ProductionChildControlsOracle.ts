@@ -194,7 +194,8 @@ try {
     redactValue: (value) => value,
     persistStepOutput: () => null,
     markReported: () => {},
-    clearReported: () => {}
+    clearReported: () => {},
+    deliverHostRun: () => false
   })
   for (const [method, handler] of Object.entries(handlers))
     cleanup.push(f.bridge.hostServices.register(method, handler))

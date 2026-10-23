@@ -4,7 +4,13 @@ import test from 'node:test'
 import { AGENT_REPORT_PROTOCOL } from '../src/main/agent/agents/report'
 import { buildStepPrompt } from '../src/main/agent/plan/execution/step-prompt'
 import { truncateUtf8 } from '../src/main/agent/plan/model/utf8-truncate'
-import type { PlanRunState, PlanStep, PlanStepState } from '../src/shared/planRunTypes'
+import {
+  PLAN_MAX_STEP_INSTRUCTIONS_LENGTH,
+  PLAN_STEP_PROMPT_MAX_BYTES,
+  type PlanRunState,
+  type PlanStep,
+  type PlanStepState
+} from '../src/shared/planRunTypes'
 
 const NOW = '2026-10-23T00:00:00.000Z'
 
@@ -158,6 +164,63 @@ test('does not mark a report at the byte limit as truncated', () => {
 
   assert.match(prompt, /Missing inputs: token/)
   assert.doesNotMatch(prompt, /\[truncated to 4 KiB\]/)
+})
+
+test('caps a 20-step fan-in prompt by UTF-8 bytes while retaining every upstream title', () => {
+  const upstream = Array.from({ length: 19 }, (_, index) =>
+    planStep(`upstream-${index + 1}`, { title: `上游步骤 ${index + 1}` })
+  )
+  const final = planStep('final', {
+    title: '最终步骤',
+    instructions: '界'.repeat(PLAN_MAX_STEP_INSTRUCTIONS_LENGTH),
+    dependsOn: upstream.map((step) => step.id)
+  })
+  const state = runState([...upstream, final])
+  for (const step of upstream) {
+    state.steps[step.id] = {
+      status: 'done',
+      attempts: 1,
+      report: { status: 'completed', text: '汉'.repeat(8 * 1024), missingInputs: [] }
+    }
+  }
+
+  const prompt = buildStepPrompt(state, final.id)
+
+  assert.ok(Buffer.byteLength(prompt, 'utf8') <= PLAN_STEP_PROMPT_MAX_BYTES)
+  assert.doesNotMatch(prompt, /�/)
+  for (const step of upstream) assert.match(prompt, new RegExp(`### ${step.id}: ${step.title}`))
+})
+
+test('omits report bodies when the average remaining share is below 512 bytes', () => {
+  const upstream = Array.from({ length: 19 }, (_, index) => planStep(`source-${index + 1}`))
+  const final = planStep('final', { dependsOn: upstream.map((step) => step.id) })
+  const state = runState([...upstream, final])
+  // Without reserving all 19 omission markers first, the apparent share is
+  // above 512 bytes and this case incorrectly keeps the report bodies.
+  state.spec.goal = 'g'.repeat(16_500)
+  for (const step of upstream) {
+    state.steps[step.id] = {
+      status: 'done',
+      attempts: 1,
+      report: { status: 'completed', text: 'report'.repeat(1_000), missingInputs: ['token'] }
+    }
+  }
+
+  const prompt = buildStepPrompt(state, final.id)
+
+  assert.ok(Buffer.byteLength(prompt, 'utf8') <= PLAN_STEP_PROMPT_MAX_BYTES)
+  assert.match(prompt, /Missing inputs: token/)
+  assert.equal(
+    prompt.match(/\[report omitted: prompt budget exhausted\]/g)?.length,
+    upstream.length
+  )
+})
+
+test('rejects a prompt whose non-report content alone exceeds the byte budget', () => {
+  const state = runState([planStep('only')])
+  state.spec.goal = '界'.repeat(PLAN_STEP_PROMPT_MAX_BYTES)
+
+  assert.throws(() => buildStepPrompt(state, 'only'), /before upstream report bodies/)
 })
 
 test('rejects an unknown step id', () => {

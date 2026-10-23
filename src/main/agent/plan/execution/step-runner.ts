@@ -16,6 +16,6 @@ export interface StepRunnerStartInput {
 }
 
 export interface StepRunner {
-  start(input: StepRunnerStartInput): StepRunHandle
+  start(input: StepRunnerStartInput): Promise<StepRunHandle>
   stop(sessionId: string, runId: string): Promise<void> | void
 }

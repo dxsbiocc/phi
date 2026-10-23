@@ -191,7 +191,7 @@ class PlanExecutorImplementation implements PlanExecutor {
     const controller = new AbortController()
     let handle: StepRunHandle
     try {
-      handle = this.deps.runner.start({
+      handle = await this.deps.runner.start({
         sessionId: state.sessionId,
         ...(step.agent ? { agent: step.agent } : {}),
         task: buildStepPrompt(state, stepId),

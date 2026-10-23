@@ -426,6 +426,11 @@ export class SessionRoutingEngine implements PhiEngine {
     respondToolApproval: (id, result) => this.legacy.events.respondToolApproval(id, result)
   }
   readonly agentRuns: PhiEngine['agentRuns'] = {
+    start: (params) => {
+      const driver = this.agentRunDriver(params.sessionId)
+      if (driver) throw new RemoteSessionCapabilityError('agentRuns.start')
+      return this.legacy.agentRuns.start(params)
+    },
     list: async (params) => {
       const local = await this.legacy.agentRuns.list(params)
       const remote = [...this.owners.entries()].flatMap(([sessionId, owner]) =>
