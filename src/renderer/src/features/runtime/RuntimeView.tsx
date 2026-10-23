@@ -280,7 +280,7 @@ function RuntimeSidebarSection({
           ...runtimeSidebarHoverActionSx,
           position: 'absolute',
           top: 18,
-          right: 37,
+          right: 21,
           zIndex: 1
         }}
       >
