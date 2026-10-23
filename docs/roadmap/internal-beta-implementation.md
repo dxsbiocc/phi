@@ -135,6 +135,7 @@ Foundation (confirmed 2026-09-29): [phi-runtime-foundation.md](../design/phi-run
 - Step 5 — remaining consumers: Nextflow and Jupyter default to managed environments, with explicit, version-checked host versions for Nextflow and host kernels for notebooks; MCP stdio; environment panel.
 - The main agent's bash keeps using the host environment.
 - Plugins (step 6), content distribution (step 7), and remote / HPC runtime (step 8) follow after the beta, except the local skill catalog and enablement, which may land in the beta if time allows.
+- Status (2026-10-23): the remote OMP runtime is implemented behind `PHI_REMOTE_OMP_RPC`. The three manual checks in [remote-default-on-validation.md](../runtime/remote-default-on-validation.md) now have source-app evidence. Default-on still needs a verified first-use asset path for uncached desktops and a release decision on the existing static-check debt; neither changes the internal beta's local workbench scope.
 
 ## P1: In-App Terminal (local, manual)
 

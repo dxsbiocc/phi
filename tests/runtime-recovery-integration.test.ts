@@ -514,6 +514,8 @@ test('connected remote chat stops loading before the background session list ref
     'resetAnalysisJupyterRuntimeForCwdChange',
     'replaceMessages',
     'chatItemsFromSessionMessages',
+    'updateMessages',
+    'restoreRemoteRunStopNotices',
     'refreshContextUsage',
     'refreshCurrentModelControls',
     'refreshSessions',
@@ -536,6 +538,8 @@ test('connected remote chat stops loading before the background session list ref
     () => undefined,
     () => undefined,
     () => [],
+    (update: (messages: unknown[]) => unknown[]) => update(current.agentEventState.messages),
+    (cached: unknown[]) => cached,
     () => undefined,
     () => undefined,
     () => refreshing

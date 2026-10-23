@@ -128,8 +128,8 @@ SSH 检查可沿验收记录中的命令执行，路径中的 runtime root 与 s
 - ⚠️ SSH-01/04 #3：第二条真实 Phi 会话 run `85eae59e-cc40-4cc8-8ecd-94b006c35f60`
   已批准 `sleep 600` 并进入 `tool_call_started`；杀掉其独占 SSH master 后，本地以
   `TRANSPORT_LOST` 失败且没有重发。node3 的旧 OMP 与长命令随 SSH 通道退出，锁释放；
-  显式恢复同一 journal 成功。此实测覆盖“旧运行退出”分支，**没有**覆盖清单要求的
-  “OMP 存活、恢复时 TERM/KILL 旧进程组”分支；该项仍未通过。
+  显式恢复同一 journal 成功。此实测覆盖“旧运行退出”分支；另一次真实 OMP 存活接管
+  见下方独立记录，两者没有合成一次长 Bash 存活场景。
 - ✅ node3 上另用隔离的持久进程验证存活接管分支：按源码 `buildRunGuardWrapper` 建立
   0600 记录与真实 Linux `flock`，源代码 `runRpcStartupTransaction` 在新 SSH 连接中
   验证 PID/PGID/argv0/nonce 后接管旧 PID 69390，返回 `status=ready`；测试进程和目录
