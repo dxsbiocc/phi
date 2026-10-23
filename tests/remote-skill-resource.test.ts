@@ -111,5 +111,5 @@ test('remote project skill resources are resolved by the trusted server reader',
   )
 
   assert.deepEqual(requests, ['skill://server-demo/references/guide.md'])
-  assert.equal(result.content, '# Server guide\n')
+  assert.equal(result.kind === 'file' ? result.content : undefined, '# Server guide\n')
 })

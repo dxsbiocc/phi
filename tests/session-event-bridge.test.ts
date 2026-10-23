@@ -263,10 +263,11 @@ test('a tool approval publishes only once the trusted overlay releases it', () =
   handleToolApprovalRequest(h.deps, approval())
   assert.equal(h.overlays.length, 1)
   assert.equal(h.overlays[0].kind, 'approval')
-  assert.deepEqual(h.writes, [])
+  assert.equal(h.writes.length, 0)
 
   h.overlays[0].publish()
   const key = sessionStateKeyFromToolApproval(approval(), 3)
+  assert.ok(key)
   assert.equal(pendingApprovalsBySession.get(key)?.requestId, 'approval-1')
   assert.equal(h.state.pendingApproval?.requestId, 'approval-1')
   assert.equal(sessionRuntimeStates.get(key)?.status, 'needs_approval')
@@ -288,6 +289,7 @@ test('cancelling one approval removes only that request and clears the visible p
   handleToolApprovalRequest(h.deps, approval())
   h.overlays[0].publish()
   const key = sessionStateKeyFromToolApproval(approval(), 3)
+  assert.ok(key)
 
   handleToolApprovalCancelled(h.deps, 'approval-1')
   assert.equal(pendingApprovalsBySession.size, 0)

@@ -168,7 +168,7 @@ test('a local plan waits for a saved server before offering remote retarget', ()
       target: 'local',
       reason: '本地项目默认在本机运行。'
     }
-  } as WrapperRunPlan
+  } as unknown as WrapperRunPlan
   const renderActions = (remoteConfigured: boolean): string =>
     renderToStaticMarkup(
       createElement(
@@ -307,8 +307,8 @@ function planFixture(state: WrapperRunPlan['state']): Pick<WrapperRunPlan, 'plan
   return { planId: 'wplan_abc123', state }
 }
 
-function runFixture(state: WrapperRun['state']): Pick<WrapperRun, 'runId' | 'state'> {
-  return { runId: 'wrun_abc123', state }
+function runFixture(state: WrapperRun['state']): Pick<WrapperRun, 'runId' | 'state' | 'executor'> {
+  return { runId: 'wrun_abc123', state, executor: 'local' }
 }
 
 test('plan target summary and submit confirmation use the saved SSH target, not the local anchor', () => {
@@ -348,7 +348,7 @@ test('plan target summary and submit confirmation use the saved SSH target, not 
       runtime: 'singularity',
       environmentCheckPending: true
     }
-  } as WrapperRunPlan
+  } as unknown as WrapperRunPlan
   const lines = wrapperPlanTargetLines(plan).join('\n')
   assert.match(lines, /Execution location: Remote server cluster-a/)
   assert.match(lines, /Slurm controller job/)
@@ -448,7 +448,7 @@ test('local fallback control shows confirmation and sends the exact plan revisio
       reason: '已配置远程服务器',
       hostAlias: 'cluster-a'
     }
-  } as WrapperRunPlan
+  } as unknown as WrapperRunPlan
   assert.deepEqual(wrapperPlanRetargetRequest(plan, 'local'), {
     planId: 'wplan-fallback',
     target: 'local',

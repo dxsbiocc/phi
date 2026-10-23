@@ -95,6 +95,9 @@ export function wrapperResultFixture(): {
     exists: async () => {
       throw new Error('exists not used')
     },
+    uploadFile: async () => {
+      throw new Error('upload not used')
+    },
     openStdio: async (command) => {
       commands.push(command)
       const child = spawn('bash', ['-c', command], { stdio: ['pipe', 'pipe', 'pipe'] })

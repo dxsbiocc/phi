@@ -378,9 +378,10 @@ test('the real AnalysisView key isolates identical remote notebook paths across 
     ts.forEachChild(node, findViewKey)
   }
   findViewKey(source)
-  assert.ok(keyExpression, 'AnalysisView must remount its save queue at the workspace boundary')
+  const viewKeyExpression = keyExpression
+  assert.ok(viewKeyExpression, 'AnalysisView must remount its save queue at the workspace boundary')
   const key = (projectId: string | null, cwd: string, text: string): unknown =>
-    runInNewContext(`(${keyExpression.getText(source)})`, {
+    runInNewContext(`(${viewKeyExpression.getText(source)})`, {
       activeProject: projectId ? { id: projectId } : null,
       activeCwd: cwd,
       activeAnalysisNotebook: { path: '/shared/notebooks/same.ipynb', document: { source: text } }

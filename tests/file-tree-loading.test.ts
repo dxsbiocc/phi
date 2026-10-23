@@ -14,7 +14,7 @@ test('the pending directory tree shows loading on its root without adding a text
       rootPath: '/server/work',
       activePath: '',
       onOpenFile: () => undefined,
-      onListDirectory: () => new Promise(() => undefined),
+      onListDirectory: () => new Promise<never>(() => undefined),
       variant: 'standalone'
     })
   )

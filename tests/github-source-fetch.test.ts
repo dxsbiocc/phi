@@ -30,7 +30,7 @@ function sandbox(): { root: string; cacheRoot: string; stagingRoot: string } {
 
 function responseFor(bytes: Buffer): typeof fetch {
   return async () =>
-    new Response(bytes, {
+    new Response(Uint8Array.from(bytes), {
       status: 200,
       headers: { 'content-length': String(bytes.length) }
     })
@@ -130,7 +130,7 @@ test('downloads a bounded GitHub tarball and atomically exposes its stripped sou
       tmpDir: fixture.stagingRoot,
       fetch: async (input) => {
         requests.push(String(input))
-        return new Response(archive, { status: 200 })
+        return new Response(Uint8Array.from(archive), { status: 200 })
       }
     }
   )
@@ -267,7 +267,7 @@ test('previews an ordinary Node repository as a local draft but still rejects so
       return new Response(JSON.stringify({ sha }), { status: 200 })
     }
     if (url.startsWith('https://codeload.github.com/'))
-      return new Response(archive, { status: 200 })
+      return new Response(Uint8Array.from(archive), { status: 200 })
     if (url === 'https://registry.npmjs.org/qq-email-mcp') {
       return new Response(
         JSON.stringify({

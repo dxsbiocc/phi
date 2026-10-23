@@ -19,7 +19,7 @@ type LocalRequest = {
   hint?: { readmeUrl?: string; setupCommands?: string[] }
 }
 
-const LOCAL_CHANNELS = [
+const LOCAL_CHANNELS: string[] = [
   IPC.mcp.addLocalConnector,
   IPC.mcp.startLocalConnectorAdd,
   IPC.mcp.cancelLocalConnectorAdd,

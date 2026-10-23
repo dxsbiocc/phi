@@ -135,6 +135,7 @@ function createBackend(fixture: RuntimeFixture): BackendHarness {
       count += 1
       fixture.events.push('prepare')
       return {
+        source: 'managed',
         kernels: diagnostics(),
         launch: {
           command: fixture.jupyter,

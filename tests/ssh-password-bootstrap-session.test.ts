@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   createSshPasswordSessionAuthenticator,
+  type SshPasswordSessionAuthenticationResult,
   type SshPasswordSessionFileSystem
 } from '../src/main/agent/ssh-bootstrap/password-session'
 import type { SshAskpassFileSystem } from '../src/main/agent/ssh-bootstrap/askpass'
@@ -113,7 +114,7 @@ test('one bootstrap opens at most three password sessions and records every reje
     }
   })
 
-  const results = []
+  const results: SshPasswordSessionAuthenticationResult[] = []
   for (let attempt = 0; attempt < 4; attempt += 1) {
     results.push(await authenticator.authenticate(TARGET, `wrong-${attempt}`))
   }

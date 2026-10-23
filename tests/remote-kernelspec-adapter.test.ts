@@ -398,6 +398,7 @@ test('an existing server Jupyter with ipykernel is used without building an envi
 
     assert.equal(prepared.source, 'existing')
     assert.equal(prepared.launch.command, existing.jupyter)
+    assert.ok(prepared.launch.args)
     assert.equal(prepared.launch.args[0], 'server')
     assert.equal(prepared.kernels.preferredKernelName, 'server-python')
     assert.equal(prepared.kernels.jupyterServer.version, '2.14.2')

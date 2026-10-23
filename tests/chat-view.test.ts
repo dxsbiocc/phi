@@ -86,7 +86,6 @@ function renderChat(
       sessionGeneration: number
     }
     contextCompacting?: boolean
-    onCompactContext?: () => void
   } = {}
 ): string {
   const theme = createTheme()
@@ -120,7 +119,6 @@ function renderChat(
         },
         contextUsageTarget: options.contextUsageTarget,
         contextCompacting: options.contextCompacting,
-        onCompactContext: options.onCompactContext,
         skills: options.skills ?? [],
         resourceMentions: options.resourceMentions,
         promptAgents: options.promptAgents ?? [],
@@ -668,8 +666,13 @@ test('chat composer uses the inline editor for agent and skill references', () =
         filePath: '/skills/anndata/SKILL.md',
         source: 'bundled',
         scope: 'user',
-        sourceCategory: 'system',
+        sourceCategory: 'bundled',
         sourceCategoryLabel: 'System',
+        enabled: true,
+        globalEnabled: true,
+        globalOverride: null,
+        projectOverride: null,
+        core: false,
         disabled: false
       }
     ],
@@ -707,8 +710,13 @@ test('chat composer offers skill and agent shortcut reference candidates', () =>
         filePath: '/skills/anndata/SKILL.md',
         source: 'bundled',
         scope: 'user',
-        sourceCategory: 'system',
+        sourceCategory: 'bundled',
         sourceCategoryLabel: 'System',
+        enabled: true,
+        globalEnabled: true,
+        globalOverride: null,
+        projectOverride: null,
+        core: false,
         disabled: false
       },
       {
@@ -718,8 +726,13 @@ test('chat composer offers skill and agent shortcut reference candidates', () =>
         filePath: '/skills/scanpy/SKILL.md',
         source: 'bundled',
         scope: 'user',
-        sourceCategory: 'system',
+        sourceCategory: 'bundled',
         sourceCategoryLabel: 'System',
+        enabled: true,
+        globalEnabled: true,
+        globalOverride: null,
+        projectOverride: null,
+        core: false,
         disabled: false
       }
     ]

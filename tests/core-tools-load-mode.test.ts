@@ -8,7 +8,7 @@ import { registeredHostTools } from '../src/main/agent/engine/rpc/host-tool-vali
 import type { PhiTool } from '../src/main/agent/engine/types'
 import { buildNotebookCustomTools } from '../src/main/agent/notebook/notebook-tools'
 import { buildWrapperCompositionTools } from '../src/main/agent/wrappers/composition/tools'
-import type { WrapperJobClient } from '../src/main/agent/wrappers/composition/job-host-client'
+import type { WrapperJobClient } from '../src/main/agent/wrappers/composition/job-types'
 
 const noRequest = async (): Promise<unknown> => ({})
 

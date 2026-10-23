@@ -115,12 +115,13 @@ test('preload and renderer expose only one namespaced browser bridge using share
       !ts.isNamedImports(statement.importClause.namedBindings)
     )
       return []
+    const moduleSpecifier = statement.moduleSpecifier.text
     return statement.importClause.namedBindings.elements
       .filter(
         (element) => (element.propertyName?.text ?? element.name.text) === 'BrowserRendererBridge'
       )
       .map((element) => ({
-        module: statement.moduleSpecifier.text,
+        module: moduleSpecifier,
         typeOnly: statement.importClause?.isTypeOnly === true || element.isTypeOnly,
         localName: element.name.text
       }))
@@ -172,12 +173,13 @@ test('preload and renderer expose only one namespaced browser bridge using share
       !ts.isNamedImports(statement.importClause.namedBindings)
     )
       return []
+    const moduleSpecifier = statement.moduleSpecifier.text
     return statement.importClause.namedBindings.elements
       .filter(
         (element) => (element.propertyName?.text ?? element.name.text) === 'BrowserRendererBridge'
       )
       .map((element) => ({
-        module: statement.moduleSpecifier.text,
+        module: moduleSpecifier,
         typeOnly: statement.importClause?.isTypeOnly === true || element.isTypeOnly,
         localName: element.name.text
       }))

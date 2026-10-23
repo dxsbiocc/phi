@@ -209,6 +209,7 @@ test('a file tab hands off to the file workspace instead of navigating', () => {
   actions.selectTab({
     key: 'file:/p/a.ts',
     kind: 'file',
+    id: '/p/a.ts',
     itemId: '/p/a.ts',
     title: 'a.ts',
     name: 'a.ts',

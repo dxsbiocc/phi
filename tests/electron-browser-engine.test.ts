@@ -10,9 +10,8 @@ import {
 } from '../src/main/browser/browser-engine'
 import {
   ElectronBrowserEngine,
-  type BrowserSessionLike,
-  type BrowserWebContentsLike,
-  type BrowserWebContentsViewLike,
+  type BrowserOwningWindowLike,
+  type BrowserWebContentsViewConstructor,
   type BrowserWebContentsViewOptions
 } from '../src/main/browser/electron-browser-engine'
 import {
@@ -20,7 +19,7 @@ import {
   pointTargetInspectionSource
 } from '../src/main/browser/electron-browser-target'
 
-class RequiredSession extends EventEmitter implements BrowserSessionLike {
+class RequiredSession extends EventEmitter {
   setPermissionCheckHandler(handler: unknown): void {
     void handler
   }
@@ -29,7 +28,7 @@ class RequiredSession extends EventEmitter implements BrowserSessionLike {
   }
 }
 
-class RequiredWebContents extends EventEmitter implements BrowserWebContentsLike {
+class RequiredWebContents extends EventEmitter {
   readonly session = new RequiredSession()
   windowOpenHandlerSets = 0
   readonly navigationHistory = {
@@ -50,7 +49,8 @@ class RequiredWebContents extends EventEmitter implements BrowserWebContentsLike
   isDestroyed(): boolean {
     return false
   }
-  async loadURL(): Promise<void> {
+  async loadURL(_url: string): Promise<void> {
+    void _url
     return
   }
   close(): void {
@@ -65,7 +65,8 @@ class RequiredWebContents extends EventEmitter implements BrowserWebContentsLike
   focus(): void {
     return
   }
-  sendInputEvent(): void {
+  sendInputEvent(_event: Record<string, unknown>): void {
+    void _event
     return
   }
   closeDevTools(): void {
@@ -97,13 +98,8 @@ interface HarnessOptions {
   insertGate?: Promise<void>
 }
 
-function createHarness(options: HarnessOptions = {}): {
-  engine: ElectronBrowserEngine
-  views: FakeView[]
-  children: FakeView[]
-  addCalls: FakeView[]
-  removeCalls: FakeView[]
-} {
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- The local fake classes must stay inferred so tests retain their fixture-specific fields.
+function createHarness(options: HarnessOptions = {}) {
   const views: FakeView[] = []
   const children: FakeView[] = []
   const addCalls: FakeView[] = []
@@ -199,7 +195,7 @@ function createHarness(options: HarnessOptions = {}): {
     }
   }
 
-  class FakeView implements BrowserWebContentsViewLike {
+  class FakeView {
     readonly webContents = new FakeWebContents()
     readonly visibility: boolean[] = []
     bounds = { x: 0, y: 0, width: 0, height: 0 }
@@ -225,16 +221,14 @@ function createHarness(options: HarnessOptions = {}): {
   const windowEvents = new EventEmitter()
   const window = {
     contentView: {
-      addChildView(view: BrowserWebContentsViewLike): void {
-        const typed = view as FakeView
-        addCalls.push(typed)
-        children.push(typed)
+      addChildView(view: FakeView): void {
+        addCalls.push(view)
+        children.push(view)
         if (options.addError) throw options.addError
       },
-      removeChildView(view: BrowserWebContentsViewLike): void {
-        const typed = view as FakeView
-        removeCalls.push(typed)
-        const index = children.indexOf(typed)
+      removeChildView(view: FakeView): void {
+        removeCalls.push(view)
+        const index = children.indexOf(view)
         if (index >= 0) children.splice(index, 1)
         if (options.removeError) throw options.removeError
       }
@@ -249,8 +243,8 @@ function createHarness(options: HarnessOptions = {}): {
   }
   let nextHandle = 0
   const engine = new ElectronBrowserEngine({
-    WebContentsView: FakeView,
-    getOwningWindow: () => window,
+    WebContentsView: FakeView as unknown as BrowserWebContentsViewConstructor,
+    getOwningWindow: () => window as unknown as BrowserOwningWindowLike,
     idFactory: () => `phi-engine-tab-${++nextHandle}`
   })
   return { engine, views, children, addCalls, removeCalls }
@@ -862,8 +856,8 @@ test('dispose owns and closes a pending blank load before create can attach it',
 
 test('reserves candidate handles across concurrent creates without overwrite', async () => {
   const candidates = ['shared-handle', 'shared-handle', 'second-handle']
-  const views: BrowserWebContentsViewLike[] = []
-  class ReservedView implements BrowserWebContentsViewLike {
+  const views: ReservedView[] = []
+  class ReservedView {
     readonly webContents = new RequiredWebContents()
     setBounds(): void {
       return
@@ -875,25 +869,26 @@ test('reserves candidate handles across concurrent creates without overwrite', a
       views.push(this)
     }
   }
-  const children: BrowserWebContentsViewLike[] = []
+  const children: ReservedView[] = []
   const windowEvents = new EventEmitter()
   const engine = new ElectronBrowserEngine({
-    WebContentsView: ReservedView,
-    getOwningWindow: () => ({
-      contentView: {
-        addChildView: (view) => children.push(view),
-        removeChildView: (view) => {
-          const index = children.indexOf(view)
-          if (index >= 0) children.splice(index, 1)
-        }
-      },
-      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
-      isMinimized: () => false,
-      isVisible: () => true,
-      on: windowEvents.on.bind(windowEvents),
-      off: windowEvents.off.bind(windowEvents),
-      listenerCount: windowEvents.listenerCount.bind(windowEvents)
-    }),
+    WebContentsView: ReservedView as unknown as BrowserWebContentsViewConstructor,
+    getOwningWindow: () =>
+      ({
+        contentView: {
+          addChildView: (view: ReservedView) => children.push(view),
+          removeChildView: (view: ReservedView) => {
+            const index = children.indexOf(view)
+            if (index >= 0) children.splice(index, 1)
+          }
+        },
+        getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+        isMinimized: () => false,
+        isVisible: () => true,
+        on: windowEvents.on.bind(windowEvents),
+        off: windowEvents.off.bind(windowEvents),
+        listenerCount: windowEvents.listenerCount.bind(windowEvents)
+      }) as unknown as BrowserOwningWindowLike,
     idFactory: () => candidates.shift() ?? 'unexpected-handle'
   })
 
@@ -907,7 +902,7 @@ test('reserves candidate handles across concurrent creates without overwrite', a
 })
 
 test('wraps id factory failures without exposing injected error text', async () => {
-  class NeverCreatedView implements BrowserWebContentsViewLike {
+  class NeverCreatedView {
     readonly webContents = new RequiredWebContents()
     setBounds(): void {
       return
@@ -917,7 +912,7 @@ test('wraps id factory failures without exposing injected error text', async () 
     }
   }
   const engine = new ElectronBrowserEngine({
-    WebContentsView: NeverCreatedView,
+    WebContentsView: NeverCreatedView as unknown as BrowserWebContentsViewConstructor,
     getOwningWindow: () => null,
     idFactory: () => {
       throw new Error('raw id factory secret')
@@ -1151,7 +1146,11 @@ test('rejects destroyed, failed, empty, and oversized captures without raw error
 test('returns capability unavailable when the capture primitive is missing', async () => {
   const { engine, views } = createHarness()
   const handle = await engine.createTab({ partition: 'browser-project-a' })
-  views[0].webContents.capturePage = undefined
+  type CapturePage = (typeof views)[number]['webContents']['capturePage']
+  const webContents = views[0].webContents as unknown as {
+    capturePage: CapturePage | undefined
+  }
+  webContents.capturePage = undefined
 
   const captured = await engine.execute(handle, { type: 'screenshot' })
 

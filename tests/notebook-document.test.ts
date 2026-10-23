@@ -144,15 +144,17 @@ test('updateNotebookMetadata replaces metadata and refreshes the notebook revisi
     language_info: { name: 'R' }
   })
   const serialized = serializeNotebook(updated)
+  const metadata = serialized.metadata
+  assert.ok(metadata && typeof metadata === 'object' && !Array.isArray(metadata))
 
   assert.notEqual(updated.revision, document.revision)
-  assert.deepEqual(serialized.metadata.kernelspec, {
+  assert.deepEqual(metadata.kernelspec, {
     name: 'ir',
     display_name: 'R',
     language: 'R'
   })
-  assert.deepEqual(serialized.metadata.language_info, { name: 'R' })
-  assert.deepEqual(serialized.metadata.phi, { activeCellId: 'cell-code' })
+  assert.deepEqual(metadata.language_info, { name: 'R' })
+  assert.deepEqual(metadata.phi, { activeCellId: 'cell-code' })
 })
 
 test('notebook mutation helpers update cells immutably and revise the document', () => {

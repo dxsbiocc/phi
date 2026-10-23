@@ -79,16 +79,12 @@ test('remote project Skill stays view-only until its complete server snapshot is
     const trusted = await loadRemoteProjectSkillCatalog(context, dependencies)
     assert.equal(trusted.summaries[0]?.trustState, 'trusted')
     assert.equal(trusted.sources.length, 1)
-    assert.equal(
-      (
-        await readRemoteProjectSkillResource(
-          context,
-          'skill://server-demo/references/guide.md',
-          dependencies
-        )
-      ).content,
-      '# Guide v1\n'
+    const resource = await readRemoteProjectSkillResource(
+      context,
+      'skill://server-demo/references/guide.md',
+      dependencies
     )
+    assert.equal(resource.kind === 'file' ? resource.content : undefined, '# Guide v1\n')
 
     writeFileSync(join(skillDir, 'references', 'guide.md'), '# Guide v2\n')
     const changed = await loadRemoteProjectSkillCatalog(context, dependencies)

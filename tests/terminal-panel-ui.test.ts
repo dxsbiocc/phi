@@ -453,7 +453,7 @@ test('terminal panel renders the thin reference-style shell without creating dur
 
 test('terminal workspace restoration does not construct a controller without a bridge', () => {
   function RestorationHarness(): ReactElement {
-    useTerminalWorkspaceRestoration(undefined, [], null)
+    useTerminalWorkspaceRestoration(undefined, [], null, null)
     return createElement('div')
   }
 

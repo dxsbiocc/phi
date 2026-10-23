@@ -14,13 +14,11 @@ import {
   skillCatalogBrowserReducer,
   skillCatalogGroups,
   skillCatalogItems,
-  type SkillCatalogItem
+  type SkillCatalogItem,
+  type SkillCatalogPackage
 } from '../src/renderer/src/features/skill/lib/skillCatalogBrowser'
 
-function entry(
-  id: string,
-  overrides: Partial<PackageRegistryEntryView> = {}
-): PackageRegistryEntryView {
+function entry(id: string, overrides: Partial<SkillCatalogPackage> = {}): SkillCatalogPackage {
   return {
     id,
     type: 'skill',

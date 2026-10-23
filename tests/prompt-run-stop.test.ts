@@ -73,7 +73,11 @@ test('stopPromptRun invalidates, cancels every owner, and waits for cleanup and 
     phiSessionId: 'phi-session',
     runId: 'run-1',
     cancelled: false,
-    session: { abort: async () => calls.push('abort') }
+    session: {
+      abort: async () => {
+        calls.push('abort')
+      }
+    }
   }
 
   await createPromptRunStop(deps).stopPromptRun('session-key', run)
@@ -123,7 +127,11 @@ test('stopAllPromptRuns aborts recoveries, every run, and returns both cleanup b
     phiSessionId: 'first-phi',
     runId: 'first-run',
     cancelled: false,
-    session: { abort: async () => calls.push('abort:first') }
+    session: {
+      abort: async () => {
+        calls.push('abort:first')
+      }
+    }
   }
   const second: TestRun = {
     sessionKey: 'second-key',

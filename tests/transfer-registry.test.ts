@@ -188,7 +188,9 @@ test('cleanup isolates owners and storage domains and excludes queued resumption
       excludeTransferIds: new Set(['wrapper-resuming']),
       freeBytes: 1_000_000,
       now,
-      removeOwned: async (entry) => removed.push(entry.transferId)
+      removeOwned: async (entry) => {
+        removed.push(entry.transferId)
+      }
     })
 
     assert.deepEqual(removed, ['wrapper-expired'])

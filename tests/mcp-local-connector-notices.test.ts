@@ -110,7 +110,10 @@ test('local connector notices map start, ready, cancellation, and failure feedba
       failureReason: 'Configuration file not found'
     }),
     new Set(),
-    (id) => openedIds.push(id)
+    (id) => {
+      assert.ok(id)
+      openedIds.push(id)
+    }
   )
   assert.deepEqual(
     {

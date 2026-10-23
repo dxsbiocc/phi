@@ -31,7 +31,7 @@ function createPayloadHarness(): PayloadHarness {
   let sessionKey = 'current-key'
   let sessionPath: string | undefined
   let cwd = '/ordinary'
-  let permissionMode = 'auto' as const
+  let permissionMode: 'auto' | 'ask' | 'full' = 'auto'
   let manifest: Record<string, unknown> | null = null
   let cwdProject: Record<string, unknown> | undefined
   let manifestProject: Record<string, unknown> | undefined

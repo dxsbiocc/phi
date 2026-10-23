@@ -18,7 +18,7 @@ function ctx(): PhiToolContext {
 
 async function execute(
   tool: PhiTool,
-  params: unknown,
+  params: Record<string, unknown>,
   signal?: AbortSignal
 ): Promise<{
   content: Array<{ type: string; text: string }>

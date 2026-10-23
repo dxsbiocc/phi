@@ -34,7 +34,11 @@ test('a remote conversation does not hide the other conversations of its project
       local
     ])
     await assert.rejects(
-      engine.history.open({ path: `phi-session:${session.sessionId}`, cwd: '/desktop/anchor' })
+      engine.history.open({
+        agentDir: '/agent',
+        path: `phi-session:${session.sessionId}`,
+        cwd: '/desktop/anchor'
+      })
     )
   })
 })

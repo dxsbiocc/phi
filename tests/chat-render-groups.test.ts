@@ -414,7 +414,15 @@ test('changed files remain visible at the turn tail when a later tool call follo
     {
       id: 'changes-1',
       role: 'workspace_changes',
-      files: [{ path: '/project/data.tsv', displayPath: 'data.tsv', status: 'modified' }],
+      files: [
+        {
+          path: '/project/data.tsv',
+          displayPath: 'data.tsv',
+          status: 'modified',
+          added: 0,
+          deleted: 0
+        }
+      ],
       totalChanged: 1,
       truncated: false
     },

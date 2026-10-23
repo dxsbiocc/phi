@@ -454,7 +454,8 @@ test('same-name read tool preserves the SDK path parameter and remote source met
   assert.deepEqual(tool.parameters.required, ['path'])
   const result = await tool.execute('call-1', { path: 'note.txt' }, undefined, {} as never)
   assert.equal(calls[0], 'note.txt')
-  assert.equal(result.content[0]?.text, 'remote text')
+  const output = result.content[0]
+  assert.equal(output?.type === 'text' ? output.text : undefined, 'remote text')
   assert.deepEqual(result.details, {
     resolvedPath: 'ssh://cluster-a/project/note.txt',
     kind: 'file',

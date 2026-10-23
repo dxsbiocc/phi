@@ -94,6 +94,7 @@ function terminalJobs(): LiveBackgroundJob[] {
   const upload: RemoteProjectUploadJob = {
     id: 'upload-1',
     status: 'completed',
+    sourcePaths: ['PRIVATE_LOCAL_PATH'],
     destinationDirectory: 'reads',
     totalFiles: 1,
     totalBytes: 10,

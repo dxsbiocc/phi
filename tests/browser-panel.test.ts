@@ -52,6 +52,13 @@ function deferred<T>(): {
   return { promise, resolve, reject }
 }
 
+function emitBrowserEvent(
+  listener: ((envelope: BrowserRendererEventEnvelope) => void) | null,
+  envelope: BrowserRendererEventEnvelope
+): void {
+  listener?.(envelope)
+}
+
 const tab = (overrides: Partial<BrowserTabSnapshot> = {}): BrowserTabSnapshot => ({
   id: 'tab-1',
   title: 'Example',
@@ -273,7 +280,7 @@ test('browser workspace controller filters session events and contains failures 
     onState: (state) => states.push(state)
   })
   controller.start()
-  eventListener?.({
+  emitBrowserEvent(eventListener, {
     sessionId: 'phi-session',
     event: { type: 'snapshotChanged', snapshot: { ...initial, revision: 2 } }
   })
@@ -284,17 +291,17 @@ test('browser workspace controller filters session events and contains failures 
   assert.equal(states.at(-1)?.snapshot?.revision, 2)
   assert.equal(states.at(-1)?.error, null)
 
-  eventListener?.({
+  emitBrowserEvent(eventListener, {
     sessionId: 'phi-background',
     event: { type: 'snapshotChanged', snapshot: { ...initial, revision: 9 } }
   })
   assert.equal(states.at(-1)?.snapshot?.revision, 2)
-  eventListener?.({
+  emitBrowserEvent(eventListener, {
     sessionId: 'phi-session',
     event: { type: 'snapshotChanged', snapshot: { ...initial, revision: 3 } }
   })
   assert.equal(states.at(-1)?.snapshot?.revision, 3)
-  eventListener?.({
+  emitBrowserEvent(eventListener, {
     sessionId: 'phi-session',
     event: {
       type: 'error',
@@ -303,7 +310,7 @@ test('browser workspace controller filters session events and contains failures 
     }
   })
   assert.equal(states.at(-1)?.error, null)
-  eventListener?.({
+  emitBrowserEvent(eventListener, {
     sessionId: 'phi-session',
     event: {
       type: 'error',
@@ -332,7 +339,7 @@ test('browser workspace controller filters session events and contains failures 
   controller.dispose()
   assert.equal(unsubscribeCalls, 1)
   const countAfterDispose = states.length
-  eventListener?.({
+  emitBrowserEvent(eventListener, {
     sessionId: 'phi-session',
     event: { type: 'snapshotChanged', snapshot: { ...initial, revision: 10 } }
   })
@@ -378,7 +385,7 @@ test('browser workspace controller preserves newer state and tab-level recovery 
     onState: (state) => firstStates.push(state)
   })
   firstController.start()
-  firstListener?.({
+  emitBrowserEvent(firstListener, {
     sessionId: 'phi-session',
     event: { type: 'snapshotChanged', snapshot: { ...initial, revision: 2 } }
   })
@@ -435,7 +442,7 @@ test('browser workspace controller preserves newer state and tab-level recovery 
     requestId: 'old-command',
     tabId: 'tab-1'
   })
-  secondListener?.({
+  emitBrowserEvent(secondListener, {
     sessionId: 'phi-session',
     event: { type: 'snapshotChanged', snapshot: { ...initial, revision: 5 } }
   })
@@ -521,7 +528,7 @@ test('browser workspace controller orders same-revision feedback by invocation s
   await olderCommand
   assert.equal(states.at(-1)?.error, null)
 
-  eventListener?.({
+  emitBrowserEvent(eventListener, {
     sessionId: 'phi-session',
     event: {
       type: 'error',
@@ -529,18 +536,18 @@ test('browser workspace controller orders same-revision feedback by invocation s
       error: { code: 'ENGINE_UNAVAILABLE', message: 'raw newer event', retryable: true }
     }
   })
-  eventListener?.({
+  emitBrowserEvent(eventListener, {
     sessionId: 'phi-session',
     event: { type: 'snapshotChanged', snapshot: { ...current, revision: 6 } }
   })
   assert.equal(states.at(-1)?.snapshot?.revision, 5)
   assert.match(states.at(-1)?.error ?? '', /浏览器暂时不可用/)
 
-  eventListener?.({
+  emitBrowserEvent(eventListener, {
     sessionId: 'foreign-session',
     event: { type: 'snapshotChanged', snapshot: { ...current, revision: 99 } }
   })
-  eventListener?.({
+  emitBrowserEvent(eventListener, {
     sessionId: 'phi-session',
     event: { type: 'snapshotChanged', snapshot: { ...current, revision: 7 } }
   })

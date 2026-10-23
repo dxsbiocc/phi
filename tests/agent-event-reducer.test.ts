@@ -11,6 +11,10 @@ import type { AgentEventSummary } from '../src/renderer/src/types'
 // Existing Chinese timeline assertions select their locale explicitly.
 setUiLanguage('zh-CN')
 
+function agentEvent<T extends AgentEventSummary>(event: T): T {
+  return event
+}
+
 test('provider-managed tool result appears as a completed tool card', () => {
   const state = reduceAgentEventState(createAgentEventReducerState(), {
     source: 'phi',
@@ -188,22 +192,28 @@ test('live file delivery appears once when its persisted event is replayed', () 
 })
 
 test('live plan review updates its card instead of adding another message', () => {
-  const submitted = reduceAgentEventState(createAgentEventReducerState(), {
-    source: 'phi',
-    type: 'plan_review_submitted',
-    eventId: 'plan-event',
-    reviewId: 'review-1',
-    title: 'Analysis',
-    content: '# Analysis',
-    planFilePath: 'local://analysis-plan.md'
-  })
-  const decided = reduceAgentEventState(submitted, {
-    source: 'phi',
-    type: 'plan_review_decided',
-    reviewId: 'review-1',
-    decision: 'revise',
-    note: 'Add tests'
-  })
+  const submitted = reduceAgentEventState(
+    createAgentEventReducerState(),
+    agentEvent({
+      source: 'phi',
+      type: 'plan_review_submitted',
+      eventId: 'plan-event',
+      reviewId: 'review-1',
+      title: 'Analysis',
+      content: '# Analysis',
+      planFilePath: 'local://analysis-plan.md'
+    })
+  )
+  const decided = reduceAgentEventState(
+    submitted,
+    agentEvent({
+      source: 'phi',
+      type: 'plan_review_decided',
+      reviewId: 'review-1',
+      decision: 'revise',
+      note: 'Add tests'
+    })
+  )
   assert.equal(decided.messages.length, 1)
   assert.equal(decided.messages[0].role, 'plan_review')
   if (decided.messages[0].role === 'plan_review') {
@@ -216,7 +226,7 @@ test('assistant text deltas survive StrictMode-style reducer replay', () => {
   const initial = createAgentEventReducerState([
     { id: 'user-1', role: 'user', content: 'stop check' }
   ])
-  const event: AgentEventSummary = {
+  const event = agentEvent({
     type: 'message_update',
     message: { role: 'assistant' },
     assistantMessageEvent: {
@@ -224,7 +234,7 @@ test('assistant text deltas survive StrictMode-style reducer replay', () => {
       contentIndex: 0,
       delta: 'Streaming fixture stop check'
     }
-  }
+  })
 
   const first = reduceAgentEventState(initial, event)
   const replay = reduceAgentEventState(initial, event)
@@ -356,10 +366,13 @@ test('assistant message errors become visible chat content', () => {
 })
 
 test('project parallel warning becomes an informational chat item', () => {
-  const state = reduceAgentEventState(createAgentEventReducerState(), {
-    type: 'project_parallel_warning',
-    activeCount: 2
-  })
+  const state = reduceAgentEventState(
+    createAgentEventReducerState(),
+    agentEvent({
+      type: 'project_parallel_warning',
+      activeCount: 2
+    })
+  )
 
   assert.deepEqual(state.messages, [
     {
@@ -372,15 +385,18 @@ test('project parallel warning becomes an informational chat item', () => {
 })
 
 test('model selection migration becomes a visible timeline item', () => {
-  const state = reduceAgentEventState(createAgentEventReducerState(), {
-    type: 'model_selection_migrated',
-    eventId: 'event-migrated',
-    fromProviderId: 'kimi-code',
-    fromModelId: 'kimi-k2.5',
-    toProviderId: 'kimi-code',
-    toModelId: 'kimi-for-coding',
-    toModelName: 'K2.7 Coding'
-  })
+  const state = reduceAgentEventState(
+    createAgentEventReducerState(),
+    agentEvent({
+      type: 'model_selection_migrated',
+      eventId: 'event-migrated',
+      fromProviderId: 'kimi-code',
+      fromModelId: 'kimi-k2.5',
+      toProviderId: 'kimi-code',
+      toModelId: 'kimi-for-coding',
+      toModelName: 'K2.7 Coding'
+    })
+  )
 
   assert.deepEqual(state.messages, [
     {
@@ -592,7 +608,7 @@ test('auto compaction end becomes a visible timeline item', () => {
 })
 
 test('persisted compaction event shows the same details live and after replay', () => {
-  const event: AgentEventSummary = {
+  const event = agentEvent({
     source: 'phi',
     type: 'context_compacted',
     eventId: 'compact-1',
@@ -602,7 +618,7 @@ test('persisted compaction event shows the same details live and after replay', 
     tokensAfter: 5000,
     summary: 'Complete summary',
     shortSummary: 'Short summary'
-  }
+  })
   const first = reduceAgentEventState(createAgentEventReducerState(), event)
   const replay = reduceAgentEventState(first, event)
 
@@ -910,16 +926,19 @@ test('agent execution events build a structured agent card in the live timeline'
 })
 
 test('a finished background wrapper run shows up live as a visible timeline notice', () => {
-  const state = reduceAgentEventState(createAgentEventReducerState(), {
-    type: 'wrapper_run_finished',
-    eventId: 'event-wrapper-done',
-    wrapperRunId: 'wrun_abc',
-    wrapperId: 'nf-core/modules/fastqc',
-    state: 'completed',
-    exitCode: 0,
-    outDir: '/data/qc',
-    elapsedSeconds: 42
-  })
+  const state = reduceAgentEventState(
+    createAgentEventReducerState(),
+    agentEvent({
+      type: 'wrapper_run_finished',
+      eventId: 'event-wrapper-done',
+      wrapperRunId: 'wrun_abc',
+      wrapperId: 'nf-core/modules/fastqc',
+      state: 'completed',
+      exitCode: 0,
+      outDir: '/data/qc',
+      elapsedSeconds: 42
+    })
+  )
 
   assert.equal(state.messages.length, 1)
   assert.equal(state.messages[0].role, 'warning')
@@ -931,16 +950,19 @@ test('a finished background wrapper run shows up live as a visible timeline noti
 })
 
 test('a finished background agent run shows up live as a visible timeline notice', () => {
-  const state = reduceAgentEventState(createAgentEventReducerState(), {
-    type: 'agent_run_finished',
-    eventId: 'event-agent-done',
-    agentRunId: 'run_1',
-    agent: 'Wrapper',
-    state: 'done',
-    task: 'align the reads',
-    elapsedSeconds: 60,
-    report: 'Aligned.'
-  })
+  const state = reduceAgentEventState(
+    createAgentEventReducerState(),
+    agentEvent({
+      type: 'agent_run_finished',
+      eventId: 'event-agent-done',
+      agentRunId: 'run_1',
+      agent: 'Wrapper',
+      state: 'done',
+      task: 'align the reads',
+      elapsedSeconds: 60,
+      report: 'Aligned.'
+    })
+  )
 
   assert.equal(state.messages.length, 1)
   assert.equal(state.messages[0].role, 'warning')

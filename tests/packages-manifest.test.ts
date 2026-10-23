@@ -151,7 +151,9 @@ summary: Alpha.
       auth: 'oauth'
     }
   }
-  assert.deepEqual(parsePackageManifestText(stringifyYaml(http)).connector, http.connector)
+  const parsedHttp = parsePackageManifestText(stringifyYaml(http))
+  assert.ok(parsedHttp.type === 'mcp')
+  assert.deepEqual(parsedHttp.connector, http.connector)
 
   const stdio = {
     ...http,
@@ -164,7 +166,9 @@ summary: Alpha.
       args: ['--root', '${package}']
     }
   }
-  assert.deepEqual(parsePackageManifestText(stringifyYaml(stdio)).connector, stdio.connector)
+  const parsedStdio = parsePackageManifestText(stringifyYaml(stdio))
+  assert.ok(parsedStdio.type === 'mcp')
+  assert.deepEqual(parsedStdio.connector, stdio.connector)
 
   const root = mkdtempSync(join(tmpdir(), 'phi-package-mcp-'))
   try {

@@ -18,7 +18,9 @@ const SETTINGS_GUIDANCE = '请在设置 → 远程中添加或修复服务器'
 
 type Tool = ReturnType<typeof buildRemoteWorkspaceReadTool>
 
-function toolsRejecting(error: Error): Array<{ name: string; tool: Tool; params: object }> {
+function toolsRejecting(
+  error: Error
+): Array<{ name: string; tool: Tool; params: Record<string, unknown> }> {
   return [
     {
       name: 'read',
@@ -65,7 +67,7 @@ function toolsRejecting(error: Error): Array<{ name: string; tool: Tool; params:
   ]
 }
 
-async function errorText(tool: Tool, params: object): Promise<string> {
+async function errorText(tool: Tool, params: Record<string, unknown>): Promise<string> {
   const result = await tool.execute('call', params, undefined, {} as never)
   assert.equal(result.isError, true)
   const content = result.content[0]

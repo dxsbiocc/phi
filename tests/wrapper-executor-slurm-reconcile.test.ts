@@ -115,6 +115,10 @@ class FakeSlurmHost implements RemoteSshSession {
     return this.files.has(remotePath)
   }
 
+  async uploadFile(): Promise<void> {
+    // Reconciliation only reads durable remote state; it never uploads files.
+  }
+
   async close(): Promise<void> {
     // Nothing to release — no real connection was ever opened.
   }

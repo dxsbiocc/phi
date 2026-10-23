@@ -43,7 +43,7 @@ test('created-session events stop permanent provider failures, persist, then bro
             createdAt: '2026-10-21T00:00:00.000Z'
           }
         },
-        persistToolOutput: () => ({ output: '', truncated: false }),
+        persistToolOutput: () => ({ outputPreview: '', outputBytes: 0, truncated: false }),
         toolOutputInlineLimit: 20_000
       },
       extractAssistantText: () => '',
@@ -100,7 +100,7 @@ test('created-session events ignore stale generations before persistence or broa
         appendSessionEvent: () => {
           throw new Error('must not persist')
         },
-        persistToolOutput: () => ({ output: '', truncated: false }),
+        persistToolOutput: () => ({ outputPreview: '', outputBytes: 0, truncated: false }),
         toolOutputInlineLimit: 20_000
       },
       extractAssistantText: () => '',

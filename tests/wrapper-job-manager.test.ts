@@ -46,7 +46,6 @@ async function startJob(
     profile: 'docker'
   })
   assert.equal(result.ok, true, JSON.stringify(result))
-  if (!result.ok) throw new Error(result.error)
   return result.status
 }
 
@@ -302,6 +301,21 @@ function toolsFor(
   return Object.fromEntries(buildWrapperCompositionTools(m).map((tool) => [tool.name, tool]))
 }
 
+function executeTool(
+  tool: ReturnType<typeof buildWrapperCompositionTools>[number],
+  toolCallId: string,
+  params: Record<string, unknown>,
+  signal?: AbortSignal
+): ReturnType<ReturnType<typeof buildWrapperCompositionTools>[number]['execute']> {
+  return tool.execute(
+    toolCallId,
+    params,
+    undefined,
+    { cwd: process.cwd(), recentUserImages: () => [] },
+    signal
+  )
+}
+
 function text(result: { content?: unknown }): string {
   return (result.content as Array<{ text: string }>).map((part) => part.text).join('')
 }
@@ -331,7 +345,10 @@ test('wrapper_run returns immediately with a run id and leaves the run in the ba
     const tools = toolsFor(m)
 
     const result = await settlesWithin(
-      tools.wrapper_run.execute('call', { id: WRAPPER_ID, params: { outdir: sb.outdir } }),
+      executeTool(tools.wrapper_run, 'call', {
+        id: WRAPPER_ID,
+        params: { outdir: sb.outdir }
+      }),
       'wrapper_run must not wait for the pipeline'
     )
 
@@ -351,7 +368,7 @@ test('wrapper_run reports rejected parameters as an error and starts nothing', a
   await withSandbox(async (sb) => {
     sb.useFake()
     const tools = toolsFor(manager(sb))
-    const result = await tools.wrapper_run.execute('call', {
+    const result = await executeTool(tools.wrapper_run, 'call', {
       id: WRAPPER_ID,
       params: { read: 'x' }
     })
@@ -359,9 +376,9 @@ test('wrapper_run reports rejected parameters as an error and starts nothing', a
     assert.match(text(result), /Unknown parameter: read/)
     assert.deepEqual(listWrapperRuns(sb.agentDir), [])
 
-    const noId = await tools.wrapper_run.execute('call', {})
+    const noId = await executeTool(tools.wrapper_run, 'call', {})
     assert.equal(noId.isError, true)
-    const badProfile = await tools.wrapper_run.execute('call', {
+    const badProfile = await executeTool(tools.wrapper_run, 'call', {
       id: WRAPPER_ID,
       profile: 'podman'
     })
@@ -377,7 +394,7 @@ test('wrapper_status describes a run, or lists recent runs without an id', async
     const { runId } = await startJob(m, sb)
     await m.wait(runId, 20_000)
 
-    const one = await tools.wrapper_status.execute('call', { run_id: runId })
+    const one = await executeTool(tools.wrapper_status, 'call', { run_id: runId })
     assert.equal(one.isError, undefined)
     assert.match(text(one), new RegExp(runId))
     assert.match(text(one), /completed/)
@@ -385,11 +402,11 @@ test('wrapper_status describes a run, or lists recent runs without an id', async
     assert.match(text(one), /gffread/)
     assert.match(text(one), new RegExp(sb.outdir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
 
-    const list = await tools.wrapper_status.execute('call', {})
+    const list = await executeTool(tools.wrapper_status, 'call', {})
     assert.match(text(list), new RegExp(runId))
     assert.match(text(list), /nf-core\/modules\/gffread/)
 
-    const missing = await tools.wrapper_status.execute('call', { run_id: 'wrun_nope' })
+    const missing = await executeTool(tools.wrapper_status, 'call', { run_id: 'wrun_nope' })
     assert.equal(missing.isError, true)
   })
 })
@@ -402,16 +419,22 @@ test('wrapper_wait blocks until the run ends; on timeout it reports still runnin
     const tools = toolsFor(m)
     const { runId } = await startJob(m, sb)
 
-    const waiting = await tools.wrapper_wait.execute('call', { run_id: runId, timeout_seconds: 1 })
+    const waiting = await executeTool(tools.wrapper_wait, 'call', {
+      run_id: runId,
+      timeout_seconds: 1
+    })
     assert.equal(waiting.isError, undefined)
     assert.match(text(waiting), /still running/i)
 
     await m.cancel(runId)
-    const ended = await tools.wrapper_wait.execute('call', { run_id: runId, timeout_seconds: 10 })
+    const ended = await executeTool(tools.wrapper_wait, 'call', {
+      run_id: runId,
+      timeout_seconds: 10
+    })
     assert.match(text(ended), /cancelled/)
     assert.doesNotMatch(text(ended), /still running/i)
 
-    const missing = await tools.wrapper_wait.execute('call', { run_id: 'wrun_nope' })
+    const missing = await executeTool(tools.wrapper_wait, 'call', { run_id: 'wrun_nope' })
     assert.equal(missing.isError, true)
   })
 })
@@ -426,11 +449,10 @@ test('wrapper_wait stops waiting when the tool call is aborted, without touching
 
     const controller = new AbortController()
     const began = Date.now()
-    const pending = tools.wrapper_wait.execute(
+    const pending = executeTool(
+      tools.wrapper_wait,
       'call',
       { run_id: runId, timeout_seconds: 60 },
-      undefined,
-      undefined as never,
       controller.signal
     )
     setTimeout(() => controller.abort(), 100)
@@ -452,12 +474,12 @@ test('wrapper_cancel stops a run; cancelling something that is not running is an
     const tools = toolsFor(m)
     const { runId } = await startJob(m, sb)
 
-    const result = await tools.wrapper_cancel.execute('call', { run_id: runId })
+    const result = await executeTool(tools.wrapper_cancel, 'call', { run_id: runId })
     assert.equal(result.isError, undefined)
     assert.match(text(result), /cancel/i)
     assert.equal((await m.wait(runId, 10_000))?.state, 'cancelled')
 
-    const again = await tools.wrapper_cancel.execute('call', { run_id: runId })
+    const again = await executeTool(tools.wrapper_cancel, 'call', { run_id: runId })
     assert.equal(again.isError, true)
   })
 })
@@ -573,7 +595,7 @@ test('onFinish fires once when a run ends, with the run and its final status', a
     })
     assert.equal(started.ok, true)
     const runId = started.ok ? started.status.runId : ''
-    assert.deepEqual(finished, [])
+    assert.deepEqual([...finished], [])
 
     await m.wait(runId, 20_000)
     assert.equal(finished.length, 1)
@@ -695,9 +717,9 @@ test('wrapper_run passes continue_when_done to the job client; anything but fals
     }
   }
   const tool = buildWrapperCompositionTools(client as never).find((t) => t.name === 'wrapper_run')!
-  await tool.execute('c', { id: WRAPPER_ID, continue_when_done: false })
-  await tool.execute('c', { id: WRAPPER_ID })
-  await tool.execute('c', { id: WRAPPER_ID, continue_when_done: 'no' })
+  await executeTool(tool, 'c', { id: WRAPPER_ID, continue_when_done: false })
+  await executeTool(tool, 'c', { id: WRAPPER_ID })
+  await executeTool(tool, 'c', { id: WRAPPER_ID, continue_when_done: 'no' })
   assert.deepEqual(
     seen.map((s) => (s as { continueWhenDone?: boolean }).continueWhenDone),
     [false, undefined, undefined]
@@ -715,9 +737,9 @@ test('wrapper_run forwards explicit local and remote targets without silently dr
   const tool = buildWrapperCompositionTools(client as never).find(
     (entry) => entry.name === 'wrapper_run'
   )!
-  await tool.execute('local', { id: WRAPPER_ID, target: 'local' })
-  await tool.execute('remote', { id: WRAPPER_ID, target: 'remote' })
-  await tool.execute('auto', { id: WRAPPER_ID })
+  await executeTool(tool, 'local', { id: WRAPPER_ID, target: 'local' })
+  await executeTool(tool, 'remote', { id: WRAPPER_ID, target: 'remote' })
+  await executeTool(tool, 'auto', { id: WRAPPER_ID })
   assert.deepEqual(
     seen.map((input) => (input as { target?: string }).target),
     ['local', 'remote', undefined]
@@ -793,11 +815,14 @@ test('wrapper_run tells the agent whether the conversation will be woken when th
     const m = manager(sb)
     const run = buildWrapperCompositionTools(m).find((t) => t.name === 'wrapper_run')!
 
-    const woken = await run.execute('c', { id: WRAPPER_ID, params: { outdir: sb.outdir } })
+    const woken = await executeTool(run, 'c', {
+      id: WRAPPER_ID,
+      params: { outdir: sb.outdir }
+    })
     assert.match(text(woken), /wakes the main agent/i)
     assert.match(text(woken), /do not need to wait/i)
 
-    const quiet = await run.execute('c', {
+    const quiet = await executeTool(run, 'c', {
       id: WRAPPER_ID,
       params: { outdir: sb.outdir },
       continue_when_done: false
@@ -830,7 +855,7 @@ test('wrapper_run resources reach Nextflow as a run config and are kept on the r
         buildWrapperCompositionTools(client).map((tool) => [tool.name, tool])
       ).wrapper_run
 
-      const result = await run.execute('call-1', {
+      const result = await executeTool(run, 'call-1', {
         id: WRAPPER_ID,
         params: { outdir: sb.outdir },
         profile: 'docker',

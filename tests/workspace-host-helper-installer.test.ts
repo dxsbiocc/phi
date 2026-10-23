@@ -64,6 +64,7 @@ interface InstallerSessionOptions {
 }
 
 class InstallerSession implements RemoteSshSession {
+  declare remoteHelper?: RemoteSshSession['remoteHelper']
   readonly commands: string[] = []
   readonly uploads: Array<{
     localPath: string

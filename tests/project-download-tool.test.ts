@@ -43,7 +43,9 @@ test('main download tool keeps output in the project and writes a verified file'
     assert.equal(inside.isError, undefined)
     assert.equal(fetches, 2)
     assert.equal(await readFile(join(root, 'downloads/data.txt'), 'utf8'), 'project data')
-    assert.match(String(inside.content[0]?.text), /sha256:[0-9a-f]{64}/)
+    const [insideContent] = inside.content
+    assert.ok(insideContent?.type === 'text')
+    assert.match(insideContent.text, /sha256:[0-9a-f]{64}/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -70,7 +72,9 @@ test('remote project download refuses to write through the local anchor', async 
     )
 
     assert.equal(result.isError, true)
-    assert.match(String(result.content[0]?.text), /不会回退到本机项目锚点/)
+    const [content] = result.content
+    assert.ok(content?.type === 'text')
+    assert.match(content.text, /不会回退到本机项目锚点/)
     assert.equal(fetches, 0)
     await assert.rejects(readFile(join(anchor, 'downloads/data.txt')))
   } finally {

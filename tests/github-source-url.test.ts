@@ -144,7 +144,7 @@ test('resolves refs through the git advertisement without touching the rate-limi
   const requests: Array<{ url: string; init?: RequestInit }> = []
   const fetcher: typeof fetch = async (input, init) => {
     requests.push({ url: String(input), init })
-    return new Response(advertisement(), { status: 200 })
+    return new Response(Uint8Array.from(advertisement()), { status: 200 })
   }
   assert.equal(await resolveGithubRef(repository, undefined, { fetch: fetcher }), headSha)
   assert.equal(await resolveGithubRef(repository, 'feature/import', { fetch: fetcher }), featureSha)
@@ -169,7 +169,8 @@ test('falls back to the API only when the git advertisement cannot answer', asyn
   const fetcher: typeof fetch = async (input) => {
     const url = String(input)
     calls.push(url)
-    if (url.startsWith('https://github.com/')) return new Response(advertisement(), { status: 200 })
+    if (url.startsWith('https://github.com/'))
+      return new Response(Uint8Array.from(advertisement()), { status: 200 })
     return new Response(JSON.stringify({ sha }), { status: 200 })
   }
   // A ref that is not advertised (for example a short sha) still resolves through the API.
@@ -204,7 +205,7 @@ test('an exhausted API quota says when it recovers', async () => {
     resolveGithubRef(repository, 'abc1234', {
       fetch: async (input) =>
         String(input).startsWith('https://github.com/')
-          ? new Response(advertisement(), { status: 200 })
+          ? new Response(Uint8Array.from(advertisement()), { status: 200 })
           : new Response('', {
               status: 403,
               headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) }

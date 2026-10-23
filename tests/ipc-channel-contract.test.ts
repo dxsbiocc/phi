@@ -70,6 +70,7 @@ function preloadRequestReferences(): Map<string, number> {
 }
 
 function indirectRegistrationReferences(node: ts.ForOfStatement): string[] {
+  if (!ts.isVariableDeclarationList(node.initializer)) return []
   const declaration = node.initializer.declarations[0]
   const firstBinding =
     declaration && ts.isArrayBindingPattern(declaration.name)

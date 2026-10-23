@@ -36,7 +36,7 @@ test('remote project creation verifies the workspace and leaves software checks 
   const created = await createCheckedRemoteProject(input, {
     doctorImpl: async (hostProfileId, remoteRoot, options, dependencies) => {
       calls.push(
-        `doctor:${hostProfileId}:${remoteRoot}:${options?.scope}:${dependencies.userInitiated === true}`
+        `doctor:${hostProfileId}:${remoteRoot}:${options?.scope}:${dependencies?.userInitiated === true}`
       )
       return doctorReport([
         ...workspaceChecks,

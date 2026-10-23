@@ -29,23 +29,32 @@ import {
 interface Harness {
   session: ReturnType<typeof createLocalShellSession>
   target: RemoteTarget
+  maxConsecutivePollFailures?: number
   remoteRoot: string
   wrappersRoot: string
   output: string[]
   snapshots: RemoteJobSnapshot[]
 }
 
+type HarnessPatch = Partial<RemoteTarget> & { maxConsecutivePollFailures?: number }
+
 async function withHarness(
   sb: Sandbox,
   fn: (h: Harness) => Promise<void>,
-  targetPatch: Partial<RemoteTarget> | ((nextflowBin: string) => Partial<RemoteTarget>) = {}
+  targetPatch: HarnessPatch | ((nextflowBin: string) => HarnessPatch) = {}
 ): Promise<void> {
   sb.useFake()
   const restore = installSetsidShim(mkdtempSync(join(tmpdir(), 'phi-shim-')))
   const remoteRoot = mkdtempSync(join(tmpdir(), 'phi-remote-root-'))
   const session = createLocalShellSession(remoteRoot)
+  const resolvedPatch =
+    typeof targetPatch === 'function'
+      ? targetPatch(process.env.NEXTFLOW_BIN as string)
+      : targetPatch
+  const { maxConsecutivePollFailures, ...targetOverrides } = resolvedPatch
   const harness: Harness = {
     session,
+    maxConsecutivePollFailures,
     remoteRoot,
     wrappersRoot: getWrapperTreeDir(sb.agentDir),
     output: [],
@@ -58,9 +67,7 @@ async function withHarness(
       connectImpl: async () => session,
       pollIntervalMs: 30,
       skipPreflight: true,
-      ...(typeof targetPatch === 'function'
-        ? targetPatch(process.env.NEXTFLOW_BIN as string)
-        : targetPatch)
+      ...targetOverrides
     }
   }
   try {
@@ -87,6 +94,7 @@ function start(
     wrappersRoot: h.wrappersRoot,
     onOutput: (chunk) => h.output.push(chunk),
     onSnapshot: (snapshot) => h.snapshots.push(snapshot),
+    maxConsecutivePollFailures: h.maxConsecutivePollFailures,
     killGraceMs: 500
   })
 }

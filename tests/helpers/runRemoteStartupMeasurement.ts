@@ -35,6 +35,8 @@ try {
   )
   let stdout = ''
   let stderr = ''
+  assert.ok(child.stdout)
+  assert.ok(child.stderr)
   child.stdout.on('data', (chunk) => {
     stdout += chunk.toString()
   })

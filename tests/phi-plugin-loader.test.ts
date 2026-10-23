@@ -307,7 +307,14 @@ test('upgrade builds changed environments before switching and rolls back a fail
     let gcCalls = 0
     const upgraded = await upgradePlugin(
       writePlugin(root, { version: '1.1.0', lockSalt: 'upgrade-one' }),
-      { ...options, build, garbageCollect: () => void (gcCalls += 1) }
+      {
+        ...options,
+        build,
+        garbageCollect: () => {
+          gcCalls += 1
+          return { removed: [], orphans: [], skipped: [], logsRemoved: 0 }
+        }
+      }
     )
     assert.equal(upgraded.ok, true)
     assert.equal(upgraded.plugin?.version, '1.1.0')
@@ -327,7 +334,10 @@ test('upgrade builds changed environments before switching and rolls back a fail
         build: async () => {
           throw new Error('fixture build failed')
         },
-        garbageCollect: () => void (gcCalls += 1)
+        garbageCollect: () => {
+          gcCalls += 1
+          return { removed: [], orphans: [], skipped: [], logsRemoved: 0 }
+        }
       }),
       /fixture build failed/
     )
@@ -465,7 +475,7 @@ test('upgrade does not build an environment the user never built; it builds on f
         build: async () => {
           builds += 1
         },
-        garbageCollect: () => undefined
+        garbageCollect: () => ({ removed: [], orphans: [], skipped: [], logsRemoved: 0 })
       }
     )
     assert.equal(upgraded.ok, true, JSON.stringify(upgraded.errors))

@@ -43,7 +43,7 @@ test('installed helper reuse refuses a directory without its expected ready mark
       helperStarts += 1
       return {} as never
     }
-  } as RemoteSshSession
+  } as unknown as RemoteSshSession
 
   await assert.rejects(
     () =>

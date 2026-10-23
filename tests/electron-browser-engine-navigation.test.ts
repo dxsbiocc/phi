@@ -5,12 +5,12 @@ import type { HandlerDetails, WindowOpenHandlerResponse } from 'electron'
 import type { EngineEvent } from '../src/main/browser/browser-engine'
 import {
   ElectronBrowserEngine,
-  type BrowserSessionLike,
-  type BrowserWebContentsViewLike,
+  type BrowserOwningWindowLike,
+  type BrowserWebContentsViewConstructor,
   type BrowserWebContentsViewOptions
 } from '../src/main/browser/electron-browser-engine'
 
-class FakeSession extends EventEmitter implements BrowserSessionLike {
+class FakeSession extends EventEmitter {
   checkHandler: ((...args: unknown[]) => boolean) | null = null
   requestHandler: ((...args: unknown[]) => void) | null = null
   checkSets = 0
@@ -149,7 +149,7 @@ function harness(
 } {
   const session = options.session ?? new FakeSession()
   const contents: FakeWebContents[] = []
-  class FakeView implements BrowserWebContentsViewLike {
+  class FakeView {
     readonly webContents: FakeWebContents
     constructor(readonly viewOptions: BrowserWebContentsViewOptions) {
       this.webContents = new FakeWebContents(session)
@@ -167,26 +167,27 @@ function harness(
       return
     }
   }
-  const children: BrowserWebContentsViewLike[] = []
+  const children: FakeView[] = []
   const windowEvents = new EventEmitter()
   const applicationOrigins = options.applicationOrigins ?? []
   const engine = new ElectronBrowserEngine({
-    WebContentsView: FakeView,
-    getOwningWindow: () => ({
-      contentView: {
-        addChildView: (view) => children.push(view),
-        removeChildView: (view) => {
-          const index = children.indexOf(view)
-          if (index >= 0) children.splice(index, 1)
-        }
-      },
-      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
-      isMinimized: () => false,
-      isVisible: () => true,
-      on: windowEvents.on.bind(windowEvents),
-      off: windowEvents.off.bind(windowEvents),
-      listenerCount: windowEvents.listenerCount.bind(windowEvents)
-    }),
+    WebContentsView: FakeView as unknown as BrowserWebContentsViewConstructor,
+    getOwningWindow: () =>
+      ({
+        contentView: {
+          addChildView: (view: FakeView) => children.push(view),
+          removeChildView: (view: FakeView) => {
+            const index = children.indexOf(view)
+            if (index >= 0) children.splice(index, 1)
+          }
+        },
+        getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+        isMinimized: () => false,
+        isVisible: () => true,
+        on: windowEvents.on.bind(windowEvents),
+        off: windowEvents.off.bind(windowEvents),
+        listenerCount: windowEvents.listenerCount.bind(windowEvents)
+      }) as unknown as BrowserOwningWindowLike,
     policyContext: { applicationOrigins },
     now: () => 123,
     idFactory: () => `tab-${contents.length + 1}`

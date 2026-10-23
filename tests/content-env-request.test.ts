@@ -27,7 +27,11 @@ import {
 } from '../src/main/agent/content/env-request-tool'
 import { createSkillHost } from '../src/main/agent/content/skill-host'
 import { runSkillScript } from '../src/main/agent/content/skill-run'
-import { buildScriptTools, buildSkillRunTool } from '../src/main/agent/content/skill-tools'
+import {
+  buildScriptTools,
+  buildSkillRunTool,
+  type SkillHostRequest
+} from '../src/main/agent/content/skill-tools'
 import {
   currentPlatform,
   parseEnvironmentSpec,
@@ -445,13 +449,17 @@ test('a bound env_request swaps the live bash variables and skill environment', 
   assert.equal(beforeEnv?.PATH, '/old/bin')
 
   const seen: string[] = []
-  const requestHost = async (method: string, params: Record<string, unknown>): Promise<unknown> => {
+  const requestHost: SkillHostRequest = async (method, params) => {
+    assert.ok(params && typeof params === 'object' && !Array.isArray(params))
+    const requestParams = params as Record<string, unknown>
     if (method === 'skills.run' || method === 'skills.scriptTool') {
-      seen.push(String(params.sessionEnvironment))
+      seen.push(String(requestParams.sessionEnvironment))
       return { notReady: { ref: 'x', envId: 'e', message: 'not ready' } }
     }
     if (method === 'environments.request') {
-      assert.ok(params.environment === 'phi:python@1' || params.environment === 'plugin:demo')
+      assert.ok(
+        requestParams.environment === 'phi:python@1' || requestParams.environment === 'plugin:demo'
+      )
       return {
         ref: 'project:python-x1',
         envId: 'project-p0000000000-python-x1-abcdefabcdef',
@@ -460,7 +468,7 @@ test('a bound env_request swaps the live bash variables and skill environment', 
       }
     }
     if (method === 'environments.bindSession') {
-      assert.equal(params.ref, 'project:python-x1')
+      assert.equal(requestParams.ref, 'project:python-x1')
       return {
         ref: 'project:python-x1',
         envId: 'project-p0000000000-python-x1-abcdefabcdef',

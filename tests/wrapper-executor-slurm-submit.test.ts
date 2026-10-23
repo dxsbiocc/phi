@@ -139,6 +139,10 @@ class FakeSlurmHost implements RemoteSshSession {
     return this.files.has(remotePath) || this.claims.has(remotePath)
   }
 
+  async uploadFile(): Promise<void> {
+    // The submission harness records uploaded bundle contents through writeTextFile.
+  }
+
   async close(): Promise<void> {
     this.closed = true
   }

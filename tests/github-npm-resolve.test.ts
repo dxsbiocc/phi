@@ -169,12 +169,14 @@ test('invalid names and missing releases return notices without fetching or thro
     timeoutMs: 100
   })
   assert.equal(calls, 0)
+  assert.ok(invalid.notice)
   assert.match(invalid.notice, /包名无效/)
 
   const missing = await resolveNpmPackage('qq-email-mcp', repository, '1.0.0', {
     fetch: async () => new Response(null, { status: 404 }),
     timeoutMs: 100
   })
+  assert.ok(missing.notice)
   assert.match(missing.notice, /没有这个包/)
 })
 
@@ -216,6 +218,7 @@ test('network failures and timeouts return a notice instead of escaping', async 
     },
     timeoutMs: 100
   })
+  assert.ok(network.notice)
   assert.match(network.notice, /不可用/)
 
   const timeout = await resolveNpmPackage('qq-email-mcp', repository, undefined, {
@@ -227,5 +230,6 @@ test('network failures and timeouts return a notice instead of escaping', async 
       }),
     timeoutMs: 5
   })
+  assert.ok(timeout.notice)
   assert.match(timeout.notice, /不可用/)
 })

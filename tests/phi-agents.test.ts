@@ -1,4 +1,10 @@
-import type { PhiAgentEvent } from '../src/main/agent/engine/types'
+import type {
+  PhiAgentEvent,
+  PhiTool,
+  PhiToolContext,
+  PhiToolResult,
+  PhiToolUpdate
+} from '../src/main/agent/engine/types'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -35,6 +41,20 @@ import { buildAgentTool, type AgentRunner } from '../src/main/agent/agents/tool'
 import { installPlugin, type LoadedPlugin } from '../src/main/agent/plugins/loader'
 
 const REPO_AGENTS_DIR = join(import.meta.dirname, '..', 'resources', 'agents')
+
+const TOOL_CONTEXT: PhiToolContext = {
+  cwd: process.cwd(),
+  recentUserImages: () => []
+}
+
+function executeTool<TParams, TDetails>(
+  tool: PhiTool<TParams, TDetails>,
+  toolCallId: string,
+  params: TParams,
+  onUpdate?: PhiToolUpdate<TDetails>
+): Promise<PhiToolResult<TDetails>> {
+  return tool.execute(toolCallId, params, onUpdate, TOOL_CONTEXT)
+}
 
 function agentMarkdown(fields: Record<string, string>, body = 'You are a specialist.'): string {
   const lines = Object.entries(fields).map(([key, value]) => `${key}: ${value}`)
@@ -815,7 +835,9 @@ test('the tool passes the trimmed task to the runner and returns its report', as
     seen.push(request.task)
     return { text: 'Ran fastqc; outputs in /tmp/out.', toolCalls: 3 }
   }
-  const result = await buildAgentTool(WRAPPER, runner).execute('call-1', { task: '  run fastqc  ' })
+  const result = await executeTool(buildAgentTool(WRAPPER, runner), 'call-1', {
+    task: '  run fastqc  '
+  })
   assert.deepEqual(seen, ['run fastqc'])
   assert.equal(result.isError, undefined)
   assert.equal(
@@ -854,7 +876,7 @@ test('local specialists get an execution context and image forwarding', async ()
   assert.match(tool.description, /\/project\/root/)
   assert.doesNotMatch(tool.description, /workflow/)
 
-  const result = await tool.execute('call-local', { task: '  render /data/results.tsv  ' })
+  const result = await executeTool(tool, 'call-local', { task: '  render /data/results.tsv  ' })
   assert.equal(result.isError, undefined)
   assert.match(seen[0]?.task ?? '', /Phi execution context:/)
   assert.match(seen[0]?.task ?? '', /Current project working directory \(cwd\): \/project\/root/)
@@ -862,14 +884,14 @@ test('local specialists get an execution context and image forwarding', async ()
   assert.match(seen[0]?.task ?? '', /cwd-contained paths/)
   assert.match(seen[0]?.task ?? '', /Delegated task:\nrender \/data\/results\.tsv/)
 
-  const relative = await tool.execute('relative-image', {
+  const relative = await executeTool(tool, 'relative-image', {
     task: 'Use the figure.',
     image_paths: ['relative.png']
   })
   assert.equal(relative.isError, true)
   assert.match(JSON.stringify(relative.content), /image_paths must be an absolute file path/)
 
-  const missing = await tool.execute('missing-image', {
+  const missing = await executeTool(tool, 'missing-image', {
     task: 'Use the attached image.',
     include_attached_images: true
   })
@@ -920,7 +942,7 @@ test('image_paths forwards an image file and remote projects keep the plain task
       undefined,
       { cwd: '/project/root' }
     )
-    const result = await tool.execute('by-path', {
+    const result = await executeTool(tool, 'by-path', {
       task: 'Match this image.',
       image_paths: [image]
     })
@@ -941,7 +963,7 @@ test('image_paths forwards an image file and remote projects keep the plain task
     const remoteParameters = remote.parameters as { properties: Record<string, unknown> }
     assert.equal('image_paths' in remoteParameters.properties, false)
     assert.equal('workflow' in remoteParameters.properties, false)
-    await remote.execute('remote', {
+    await executeTool(remote, 'remote', {
       task: 'Run on the remote project.',
       image_paths: [image],
       include_attached_images: true
@@ -959,7 +981,7 @@ test('the tool rejects a missing, blank or oversized task without running the ag
     return { text: 'x', toolCalls: 0 }
   })
   for (const params of [undefined, {}, { task: '   ' }, { task: 7 }, { task: 'x'.repeat(20001) }]) {
-    const result = await tool.execute('call', params as never)
+    const result = await executeTool(tool, 'call', params as never)
     assert.equal(result.isError, true)
   }
   assert.equal(runs, 0)
@@ -972,12 +994,10 @@ test('the tool forwards runner progress to onUpdate as text updates', async () =
     onProgress?.('wrapper_run nf-core/modules/fastqc')
     return { text: 'done', toolCalls: 2 }
   })
-  await tool.execute(
-    'call',
-    { task: 'go' },
-    (partial: { content: Array<{ text: string }> }) => updates.push(partial.content[0].text),
-    undefined as never
-  )
+  await executeTool(tool, 'call', { task: 'go' }, (partial) => {
+    const first = partial.content[0]
+    updates.push(first?.type === 'text' ? first.text : '')
+  })
   assert.deepEqual(updates, ['wrapper_search fastqc', 'wrapper_run nf-core/modules/fastqc'])
 })
 
@@ -1001,13 +1021,13 @@ test('the delegation tool forwards structured runner steps to onUpdate details',
     return { text: 'done', toolCalls: 1 }
   })
 
-  await tool.execute(
-    'call',
-    { task: 'go' },
-    (partial: { content: Array<{ text: string }>; details?: unknown }) =>
-      updates.push({ text: partial.content[0].text, details: partial.details }),
-    undefined as never
-  )
+  await executeTool(tool, 'call', { task: 'go' }, (partial) => {
+    const first = partial.content[0]
+    updates.push({
+      text: first?.type === 'text' ? first.text : '',
+      details: partial.details
+    })
+  })
 
   assert.deepEqual(
     updates.map((update) => update.text),
@@ -1029,7 +1049,7 @@ test('the delegation tool forwards structured runner steps to onUpdate details',
 
 test('the tool turns failures, cancellation, timeouts and empty reports into errors naming the agent', async () => {
   const run = async (runner: AgentRunner): Promise<{ isError?: boolean; text: string }> => {
-    const result = await buildAgentTool(WRAPPER, runner).execute('call', { task: 'go' })
+    const result = await executeTool(buildAgentTool(WRAPPER, runner), 'call', { task: 'go' })
     return { isError: result.isError, text: JSON.stringify(result.content) }
   }
   const failed = await run(async () => {

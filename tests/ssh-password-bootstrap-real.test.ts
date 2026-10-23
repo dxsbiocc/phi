@@ -60,6 +60,8 @@ test(
   'real password-only sshd bootstraps one protected key and verifies a fresh key login',
   { skip: !sshdBinary || !available('ssh') || !available('ssh-keygen') },
   async (context) => {
+    const binary = sshdBinary
+    if (!binary) return
     let port: number
     try {
       port = await unusedLocalPort()
@@ -104,16 +106,17 @@ test(
           ''
         ].join('\n')
       )
-      const configCheck = spawnSync(sshdBinary, ['-t', '-f', serverConfig], { encoding: 'utf8' })
+      const configCheck = spawnSync(binary, ['-t', '-f', serverConfig], { encoding: 'utf8' })
       assert.equal(configCheck.status, 0, configCheck.stderr)
-      server = spawn(sshdBinary, ['-D', '-e', '-f', serverConfig], {
+      const runningServer = spawn(binary, ['-D', '-e', '-f', serverConfig], {
         stdio: ['pipe', 'pipe', 'pipe']
       })
+      server = runningServer
       let serverError = ''
-      server.stderr.on('data', (chunk: Buffer) => {
+      runningServer.stderr.on('data', (chunk: Buffer) => {
         serverError += chunk.toString('utf8')
       })
-      await waitForSshd(port, server, () => serverError)
+      await waitForSshd(port, runningServer, () => serverError)
 
       const agent = spawnSync('ssh-agent', ['-s'], { encoding: 'utf8' })
       assert.equal(agent.status, 0, agent.stderr)

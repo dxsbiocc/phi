@@ -12,6 +12,16 @@ import {
 
 const ICON_DATA_URL = 'data:image/png;base64,aWNvbg=='
 
+function requiredOptions(value: Record<string, unknown> | null): Record<string, unknown> {
+  assert.ok(value)
+  return value
+}
+
+function invokeScheduled(callback: (() => void) | null): void {
+  assert.ok(callback)
+  callback()
+}
+
 class FakeSplashWindow implements StartupSplashWindow {
   destroyed = false
   shown = 0
@@ -107,9 +117,10 @@ test('startup splash paints before startup work continues', async () => {
   assert.equal(result, splash)
   assert.equal(splash.shown, 1)
   assert.match(decodeURIComponent(splash.loadedUrl), /Starting Phi/)
-  assert.equal(options?.show, false)
-  assert.equal(options?.alwaysOnTop, true)
-  assert.equal(options?.frame, false)
+  const capturedOptions = requiredOptions(options)
+  assert.equal(capturedOptions.show, false)
+  assert.equal(capturedOptions.alwaysOnTop, true)
+  assert.equal(capturedOptions.frame, false)
 })
 
 test('startup splash closes cleanly if its local page cannot load', async () => {
@@ -157,12 +168,12 @@ test('startup splash aligns its one global wash with the end of the single slow 
   assert.deepEqual(mainEvents, [])
   assert.deepEqual(splash.scripts, [])
 
-  releaseFinishStart?.()
+  invokeScheduled(releaseFinishStart)
 
   assert.deepEqual(delays, [finishLeadDelay, STARTUP_SPLASH_FINISH_MS])
   assert.deepEqual(splash.scripts, ["document.documentElement.classList.add('is-finishing')"])
 
-  releaseFinish?.()
+  invokeScheduled(releaseFinish)
 
   assert.deepEqual(splash.opacities, [0.32, 0])
   assert.deepEqual(splash.events, ['splash.hide', 'splash.close'])

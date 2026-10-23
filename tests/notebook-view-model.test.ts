@@ -31,11 +31,12 @@ const rKernel: AnalysisKernelSummary = {
 }
 
 const diagnostics: AnalysisKernelDiagnostics = {
-  jupyterServer: { available: true },
+  jupyterServer: { available: true, command: 'jupyter' },
   kernels: [pythonKernel, rKernel],
   preferredKernelName: 'python3',
   hasPythonKernel: true,
-  hasRKernel: true
+  hasRKernel: true,
+  messages: []
 }
 
 test('notebook view model labels JavaScript output artifacts', () => {

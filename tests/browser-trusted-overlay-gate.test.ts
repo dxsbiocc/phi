@@ -110,7 +110,9 @@ test('trusted overlay gate cancellation prevents late hide completion from publi
     kind: 'approval',
     key: 'approval-1',
     publish: () => order.push('stale approval'),
-    onCancel: () => order.push('cancelled approval')
+    onCancel: () => {
+      order.push('cancelled approval')
+    }
   })
   gate.cancel('approval', 'approval-1', true)
   gate.enqueue({
@@ -187,7 +189,9 @@ test('trusted overlay gate times out retries and safely cancels persistent failu
     kind: 'interaction',
     key: 'interaction-persistent',
     publish: () => persistentOrder.push('publish'),
-    onCancel: () => persistentOrder.push('cancel')
+    onCancel: () => {
+      persistentOrder.push('cancel')
+    }
   })
   persistent.gate.enqueue({
     kind: 'approval',

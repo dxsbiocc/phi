@@ -62,7 +62,7 @@ function recordingBridge(): {
     killed: false,
     kill(): boolean {
       this.killed = true
-      queueMicrotask(() => this.emit('exit', 0, null))
+      queueMicrotask(() => emitter.emit('exit', 0, null))
       return true
     }
   }) as unknown as ChildProcessWithoutNullStreams

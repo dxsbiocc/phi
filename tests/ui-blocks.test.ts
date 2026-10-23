@@ -3,12 +3,15 @@ import test from 'node:test'
 
 import { CORE_TOOLS } from '../src/main/agent/core-tools'
 import { buildRenderBlocksTool } from '../src/main/agent/deliverables/render-blocks-tool'
+import type { PhiToolContext } from '../src/main/agent/engine/types'
 import { toolResultDetailsForSession } from '../src/main/agent/session/session-store'
 import {
   sortTableRows,
   uiBlocksItemFromToolEvent
 } from '../src/renderer/src/features/chat/lib/uiBlocks'
 import { uiBlocksSchema } from '../src/shared/uiBlockTypes'
+
+const toolContext: PhiToolContext = { cwd: '/workspace', recentUserImages: () => [] }
 
 test('ui block schema accepts a valid metrics block', () => {
   const blocks = [
@@ -114,7 +117,7 @@ test('render_blocks returns validated blocks in ui_blocks details', async () => 
     }
   ]
 
-  const result = await tool.execute('call-1', { blocks })
+  const result = await tool.execute('call-1', { blocks }, undefined, toolContext)
 
   assert.equal(tool.name, 'render_blocks')
   assert.equal(tool.approval, 'read')
@@ -125,13 +128,20 @@ test('render_blocks returns validated blocks in ui_blocks details', async () => 
 test('render_blocks returns a tool error for invalid input', async () => {
   const tool = buildRenderBlocksTool()
 
-  const result = await tool.execute('call-2', {
-    blocks: [{ type: 'metrics', items: [{ label: '样本数', value: 12, script: 'alert(1)' }] }]
-  })
+  const result = await tool.execute(
+    'call-2',
+    {
+      blocks: [{ type: 'metrics', items: [{ label: '样本数', value: 12, script: 'alert(1)' }] }]
+    },
+    undefined,
+    toolContext
+  )
 
   assert.equal(result.isError, true)
   assert.equal(result.details, undefined)
-  assert.match(result.content[0].text ?? '', /请改用 Markdown/u)
+  const [content] = result.content
+  assert.ok(content?.type === 'text')
+  assert.match(content.text, /请改用 Markdown/u)
 })
 
 test('renderer item builder returns null for invalid ui block details', () => {

@@ -1372,8 +1372,8 @@ test('session history keeps context cleanup concise and hides informational main
   ])
 
   assert.equal(items.length, 2)
-  assert.ok('role' in items[0])
-  assert.ok('role' in items[1])
+  assert.ok(items[0]?.role === 'warning')
+  assert.ok(items[1]?.role === 'error')
   assert.equal(items[0].content, '上下文已压缩')
   assert.equal(items[0].contextCompaction?.action, 'shake')
   assert.doesNotMatch(JSON.stringify(items), /elided|173,720|移除了 2 张历史图片/)
@@ -1709,13 +1709,14 @@ test('skipped MCP servers are announced with a localized warning in both languag
     setUiLanguage('zh-CN')
     const zh = chatItemsFromSessionMessages([event])
     assert.equal(zh.length, 1)
-    assert.equal(zh[0].role, 'warning')
+    assert.ok(zh[0]?.role === 'warning')
     assert.equal(
       zh[0].content,
       '本机连接器 biomcp、qq-email-mcp 在远程项目中不可用（它们只能在本机运行）。 以下连接器本次会话未启用：notion（未连接）、exa（缺少密钥）。 另有 3 个连接器未列出。'
     )
     setUiLanguage('en')
     const en = chatItemsFromSessionMessages([event])
+    assert.ok(en[0]?.role === 'warning')
     assert.match(
       en[0].content,
       /^Local connectors biomcp, qq-email-mcp are unavailable in remote projects/
