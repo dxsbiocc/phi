@@ -9,6 +9,7 @@ import {
   type PathOpenerTargets
 } from '../src/renderer/src/features/file-preview/lib/pathOpeners'
 import { absoluteWorkspacePath, fileNameFromPath } from '../src/renderer/src/lib/workspacePaths'
+import { notebookWorkspaceTabId } from '../src/renderer/src/useWorkspaceFileTabs'
 import type { WorkspaceSidebarMode } from '../src/renderer/src/lib/workspaceSidebar'
 
 /** Recording surfaces for the path router; each test overrides what it checks. */
@@ -176,7 +177,10 @@ test('opening a notebook in tab layout keeps the selected sidebar folded', () =>
         state.mode = mode
       },
       blockNotebookWorkspaceOpen: () => false,
-      useSessionStore: { getState: () => ({ activeCwd: '/project' }) },
+      useSessionStore: {
+        getState: () => ({ activeCwd: '/project', activeProjectId: 'project-1' })
+      },
+      notebookWorkspaceTabId,
       absoluteWorkspacePath,
       fileNameFromPath,
       filePreviewRequestRef: { current: 0 },

@@ -12,6 +12,7 @@ import {
 } from '../src/main/agent/engine/rpc/subagents/production-child-config'
 import type { RemoteWorkspaceHostBinding } from '../src/main/agent/remote-workspace-boundary'
 import type { RpcRuntimePreparationContext } from '../src/main/agent/engine/rpc/ssh-stdio-factory'
+import { validateRpcChildRuntimeConfig } from '../src/main/agent/engine/phi-extension/lib/rpc-child-config'
 import { RpcStartupTransactionBuilder } from '../src/main/agent/engine/rpc/startup-transaction'
 import { registerStorageHost } from '../src/main/agent/engine/rpc/session-storage/remote-preflight'
 import type { RemoteSessionStoragePreparation } from '../src/main/agent/engine/rpc/session-storage/types'
@@ -139,6 +140,68 @@ test('child model fallback and selecting a different available model both reject
     await assert.rejects(
       createProductionChildConfig({ ...good, native: { ...good.native, endpoint } })
     )
+})
+
+test('Cursor child profiles fail before a pi-native child route can be published', async () => {
+  const good = productionChildOptions()
+  const cursor = { provider: 'cursor', id: 'cursor-grok-4.6-fast' }
+  await assert.rejects(
+    createProductionChildConfig({
+      ...good,
+      parentModel: cursor,
+      modelDescriptors: [{ ...good.modelDescriptors[0], ...cursor }],
+      native: { ...good.native, models: [cursor] }
+    }),
+    /Cursor (?:parent|child) model requires a scoped native route/
+  )
+})
+
+test('Cursor child profiles bind only the owned scoped native tunnel', async () => {
+  const good = productionChildOptions()
+  const cursor = { provider: 'cursor', id: 'cursor-grok-4.6-fast' }
+  const options = {
+    ...good,
+    parentModel: cursor,
+    modelDescriptors: [{ ...good.modelDescriptors[0], ...cursor }],
+    native: {
+      ...good.native,
+      models: [cursor],
+      cursorEndpoint: 'http://127.0.0.1:34568'
+    }
+  }
+  const prepared = await createProductionChildConfig(options)
+  assert.deepEqual(prepared.config.profiles[0].route, {
+    api: 'cursor-agent',
+    baseUrl: 'http://127.0.0.1:34568',
+    transport: 'sse'
+  })
+  assert.throws(
+    () =>
+      validateRpcChildRuntimeConfig(
+        {
+          ...prepared.config,
+          profiles: [
+            {
+              ...prepared.config.profiles[0],
+              route: {
+                api: 'openai-completions',
+                baseUrl: 'http://127.0.0.1:34568',
+                transport: 'pi-native'
+              }
+            }
+          ]
+        },
+        options.identity
+      ),
+    /route differs/
+  )
+  await assert.rejects(
+    createProductionChildConfig({
+      ...options,
+      native: { ...options.native, cursorEndpoint: 'http://user@127.0.0.1:34568' }
+    }),
+    /route/
+  )
 })
 
 async function publication(

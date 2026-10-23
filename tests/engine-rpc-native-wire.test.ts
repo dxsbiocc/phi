@@ -126,6 +126,53 @@ test('nested provider metadata excludes local implementation properties without 
     assert.equal(JSON.stringify(output).includes(marker), false)
 })
 
+test('saved dotted Phi tool names use underscore names on the provider wire', () => {
+  const old = {
+    messages: [
+      { role: 'user', timestamp: 1, content: 'Inspect the notebook' },
+      {
+        role: 'assistant',
+        timestamp: 2,
+        provider: 'fixture',
+        model: 'one',
+        api: 'openai-completions',
+        content: [
+          {
+            type: 'toolCall',
+            name: 'notebook.read',
+            id: 'old-call',
+            arguments: { path: 'a.ipynb' }
+          }
+        ]
+      },
+      {
+        role: 'toolResult',
+        timestamp: 3,
+        toolCallId: 'old-call',
+        toolName: 'notebook.read',
+        isError: false,
+        content: [{ type: 'text', text: 'Saved result' }]
+      }
+    ],
+    tools: [{ ...tool, name: 'lib.audit' }]
+  }
+  const original = structuredClone(old)
+  const projected = JSON.parse(
+    projectNativeWireBody(
+      body({
+        context: old,
+        options: { toolChoice: { type: 'function', function: { name: 'lib.audit' } } }
+      }),
+      modelId
+    )
+  )
+  assert.equal(projected.context.tools[0].name, 'lib_audit')
+  assert.equal(projected.context.messages[1].content[0].name, 'notebook_read')
+  assert.equal(projected.context.messages[2].toolName, 'notebook_read')
+  assert.equal(projected.options.toolChoice.function.name, 'lib_audit')
+  assert.deepEqual(old, original)
+})
+
 test('native wire options match pinned server allowlist except its already discarded incoming headers', async () => {
   const source = await readFile(
     join(process.cwd(), 'node_modules/@oh-my-pi/pi-ai/src/providers/pi-native-server.ts'),

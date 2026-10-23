@@ -7,8 +7,8 @@ import http2, {
   type ServerHttp2Stream
 } from 'node:http2'
 
-const CURSOR_ORIGIN = 'https://api2.cursor.sh'
-const CURSOR_RUN_PATH = '/agent.v1.AgentService/Run'
+export const CURSOR_ORIGIN = 'https://api2.cursor.sh'
+export const CURSOR_RUN_PATH = '/agent.v1.AgentService/Run'
 
 export interface CursorH2Bridge {
   ensure(): Promise<string>

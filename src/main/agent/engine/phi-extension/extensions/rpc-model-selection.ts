@@ -41,9 +41,15 @@ export function createRpcModelSelectionExtension(
         if (!safe || !native || !approvedTransport)
           throw new Error(
             `Phi RPC model selection is unavailable: ${
-              !safe ? 'metadata' : !native ? 'registry' :
-              native.api !== 'cursor-agent' ? 'API' :
-              native.transport !== undefined ? 'transport' : `endpoint (${native.baseUrl} vs ${cursorEndpoint})`
+              !safe
+                ? 'metadata'
+                : !native
+                  ? 'registry'
+                  : native.api !== 'cursor-agent'
+                    ? 'API'
+                    : native.transport !== undefined
+                      ? 'transport'
+                      : 'endpoint'
             }`
           )
         selecting = true

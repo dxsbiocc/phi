@@ -62,7 +62,10 @@ export function describeRemoteRecoveryFailure(error: unknown): {
       ? error.code
       : undefined
   if (error instanceof CodedError && error.code === 'DOMAIN_CONFLICT')
-    return { issue: 'disconnected', message: error.message }
+    return {
+      issue: 'run-held',
+      message: '该会话仍被另一个进程占用；Phi 没有终止该进程。请确认没有其他 Phi 正在使用后重试。'
+    }
   if (code === 'MODEL_UNAVAILABLE')
     return {
       issue: 'model-unavailable',

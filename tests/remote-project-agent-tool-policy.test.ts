@@ -69,7 +69,7 @@ test('a trusted project agent keeps the remote-safe tool intersection and report
     mkdirSync(join(fixture.projectRoot, '.phi', 'agents'), { recursive: true })
     writeFileSync(
       join(fixture.projectRoot, relativePath),
-      agentMarkdown('Reviewer', ['read', 'office_read', 'lib.save', 'mcp__evil_run'])
+      agentMarkdown('Reviewer', ['read', 'office_read', 'lib_save', 'mcp__evil_run'])
     )
     const options = {
       host: fixture.workspace.projectHost,
@@ -97,7 +97,7 @@ test('a trusted project agent keeps the remote-safe tool intersection and report
     assert.equal(trusted.entries[0]?.available, true)
     assert.deepEqual(trusted.entries[0]?.diagnostics, [
       '该 agent 在远程项目中缺少：office_read',
-      '该 agent 在远程项目中缺少：lib.save',
+      '该 agent 在远程项目中缺少：lib_save',
       '该 agent 在远程项目中缺少：mcp__evil_run'
     ])
   } finally {

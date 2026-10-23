@@ -36,7 +36,7 @@ phi:
 ## 选择规则
 
 1. **一次性 Python/Node 脚本**：生成、修改、图表、图片、复杂格式和批量任务的默认路线。按 `xlsx`、`pptx`、`docx` 或 `pdf` 技能编写一个项目内脚本，再用 `skill_run` 通过托管环境执行。
-2. **常驻 notebook 内核**：大文档、计算中间状态需要保留、或要多轮迭代时使用。通过 `notebook.*` 在 `phi-python` 内核中持有 openpyxl workbook、python-pptx presentation 或 python-docx document 对象，分步运行，在里程碑处调用文档对象的 `save(...)`。
+2. **常驻 notebook 内核**：大文档、计算中间状态需要保留、或要多轮迭代时使用。通过 `notebook_*` 在 `phi-python` 内核中持有 openpyxl workbook、python-pptx presentation 或 python-docx document 对象，分步运行，在里程碑处调用文档对象的 `save(...)`。
 
 ## 路线 A：一次性托管脚本
 
@@ -75,14 +75,14 @@ PptxGenJS 使用 CommonJS：把以 `require('pptxgenjs')` 开头的生成脚本�
 以用户已在 Phi 中创建并选用 `phi-python` 内核的 `notebooks/office-build.ipynb` 为例。先读取 notebook，并从回执中取得代码 cell 的稳定 `id`：
 
 ```json tool-call
-{ "tool": "notebook.read", "arguments": { "path": "notebooks/office-build.ipynb" } }
+{ "tool": "notebook_read", "arguments": { "path": "notebooks/office-build.ipynb" } }
 ```
 
 将返回的 cell id 作为 `cellId`，写入第一步：
 
 ```json tool-call
 {
-  "tool": "notebook.update_cell",
+  "tool": "notebook_update_cell",
   "arguments": {
     "path": "notebooks/office-build.ipynb",
     "cellId": "cell-id-from-notebook-read",
@@ -93,7 +93,7 @@ PptxGenJS 使用 CommonJS：把以 `require('pptxgenjs')` 开头的生成脚本�
 
 ```json tool-call
 {
-  "tool": "notebook.run_cell",
+  "tool": "notebook_run_cell",
   "arguments": {
     "path": "notebooks/office-build.ipynb",
     "cellId": "cell-id-from-notebook-read"
@@ -105,7 +105,7 @@ PptxGenJS 使用 CommonJS：把以 `require('pptxgenjs')` 开头的生成脚本�
 
 ```json tool-call
 {
-  "tool": "notebook.insert_cell",
+  "tool": "notebook_insert_cell",
   "arguments": {
     "path": "notebooks/office-build.ipynb",
     "afterCellId": "cell-id-from-notebook-read",
@@ -119,7 +119,7 @@ PptxGenJS 使用 CommonJS：把以 `require('pptxgenjs')` 开头的生成脚本�
 
 ```json tool-call
 {
-  "tool": "notebook.run_cell",
+  "tool": "notebook_run_cell",
   "arguments": {
     "path": "notebooks/office-build.ipynb",
     "cellId": "cell-id-from-insert-result"
@@ -127,10 +127,10 @@ PptxGenJS 使用 CommonJS：把以 `require('pptxgenjs')` 开头的生成脚本�
 }
 ```
 
-文档对象的 `save(...)` 保存成品；`notebook.save` 则单独保存 notebook 草稿：
+文档对象的 `save(...)` 保存成品；`notebook_save` 则单独保存 notebook 草稿：
 
 ```json tool-call
-{ "tool": "notebook.save", "arguments": { "path": "notebooks/office-build.ipynb" } }
+{ "tool": "notebook_save", "arguments": { "path": "notebooks/office-build.ipynb" } }
 ```
 
 ## 检查、查看与交付

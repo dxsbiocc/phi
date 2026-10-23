@@ -524,7 +524,7 @@ test('office-workflow examples use the live tool names and parameter schemas', (
     buildSkillRunTool(async () => ({}))
   ]
   const toolsByName = new Map(tools.map((tool) => [tool.name, tool]))
-  const names = new Set(text.match(/\b(?:notebook\.[a-z_]+|present_files|skill_run)\b/gu) ?? [])
+  const names = new Set(text.match(/\b(?:notebook_[a-z_]+|present_files|skill_run)\b/gu) ?? [])
   assert(names.size > 0)
   for (const name of names) assert(toolsByName.has(name), `${name} is not a registered tool`)
 

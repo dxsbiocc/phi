@@ -29,7 +29,8 @@ import { visibleRuntimeUserText } from '../features/chat/lib/runtimePromptText'
 import { applyApprovalTimelineEvent } from '../features/chat/lib/approvalTimeline'
 
 const WRAPPER_TOOL_PREFIX = 'wrapper_'
-const NOTEBOOK_TOOL_PREFIX = 'notebook.'
+const NOTEBOOK_TOOL_PREFIX = 'notebook_'
+const LEGACY_NOTEBOOK_TOOL_PREFIX = 'notebook.'
 const TODO_TOOL_NAME = 'todo'
 
 /**
@@ -57,7 +58,9 @@ export function isWrapperToolName(toolName: string): boolean {
 }
 
 export function isNotebookToolName(toolName: string): boolean {
-  return toolName.startsWith(NOTEBOOK_TOOL_PREFIX)
+  return (
+    toolName.startsWith(NOTEBOOK_TOOL_PREFIX) || toolName.startsWith(LEGACY_NOTEBOOK_TOOL_PREFIX)
+  )
 }
 
 /** The main agent's todo-list tool (see the sticky todo panel in TodoStepPanel). */

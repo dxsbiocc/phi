@@ -230,7 +230,10 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
           projectRpcChildModel(model),
           options.config.parentModel ?? expected.model
         ) ||
-        !sameRpcChildRoute(projectRpcChildRoute(model), expected.route)
+        !sameRpcChildRoute(
+          projectRpcChildRoute(model),
+          options.config.parentRoute ?? expected.route
+        )
       )
         throw new Error('Native task parent model or route differs')
     options.assertPublication()

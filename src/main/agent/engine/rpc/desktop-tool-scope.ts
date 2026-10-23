@@ -436,7 +436,7 @@ export function createRpcDesktopToolScope(
                 controller.signal
               )
               const result =
-                tool.name === 'notebook.run_cell'
+                tool.name === 'notebook_run_cell'
                   ? await operation
                   : await untilAborted(operation, controller.signal)
               live(call)

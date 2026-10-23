@@ -1699,7 +1699,7 @@ test('tool rows classify common actions with distinct icons', () => {
     'web'
   )
   assert.equal(
-    toolActionKind('notebook.run_cell', 'eda.ipynb', '{"path":"eda.ipynb","cellId":"cell-2"}'),
+    toolActionKind('notebook_run_cell', 'eda.ipynb', '{"path":"eda.ipynb","cellId":"cell-2"}'),
     'notebook'
   )
 
@@ -1750,7 +1750,7 @@ test('tool rows classify common actions with distinct icons', () => {
   const notebookMarkup = renderToolCall({
     id: 'tool-notebook',
     role: 'tool',
-    toolName: 'notebook.run_cell',
+    toolName: 'notebook_run_cell',
     argsPreview: 'eda.ipynb',
     argsJson: '{"path":"eda.ipynb","cellId":"cell-2"}',
     output: 'Ran Cell 2',
@@ -1779,7 +1779,7 @@ test('tool rows classify common actions with distinct icons', () => {
     {
       id: 'tool-notebook',
       role: 'tool',
-      toolName: 'notebook.update_cell',
+      toolName: 'notebook_update_cell',
       argsPreview: 'eda.ipynb',
       argsJson: '{"path":"eda.ipynb","cellId":"cell-2"}',
       output: 'Updated Cell 2',
@@ -1805,7 +1805,7 @@ test('tool rows classify common actions with distinct icons', () => {
     {
       id: 'tool-notebook',
       role: 'tool',
-      toolName: 'notebook.save',
+      toolName: 'notebook_save',
       argsPreview: 'eda.ipynb',
       argsJson: '{"path":"eda.ipynb"}',
       output: 'Saved eda.ipynb',

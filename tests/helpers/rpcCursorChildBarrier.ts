@@ -74,7 +74,8 @@ export function cursorChildBarrierBundle(
     if (file.path !== 'rpc-entry.ts') return file
     const original = file.bytes.toString('utf8')
     const start = 'const rpcExtension: ExtensionFactory = async (pi) => {'
-    const end = '  if (modelMetadata) await createRpcModelSelectionExtension(modelMetadata)(pi)'
+    const end =
+      '  if (modelMetadata)\n    await createRpcModelSelectionExtension(modelMetadata, runtime?.native.cursorEndpoint)(pi)'
     assert.equal(original.split(start).length, 2)
     assert.equal(original.split(end).length, 2)
     const source =

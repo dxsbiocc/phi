@@ -194,9 +194,10 @@ test('extractWrapperPlanId ignores results that are not the wrapper_plan shape',
   assert.equal(extractWrapperPlanId({ details: { kind: 'wrapper_plan' } }), undefined)
 })
 
-test('isNotebookToolName recognizes notebook.* tools only', () => {
+test('isNotebookToolName recognizes current and saved notebook tool names', () => {
+  assert.equal(isNotebookToolName('notebook_run_cell'), true)
+  assert.equal(isNotebookToolName('notebook_save'), true)
   assert.equal(isNotebookToolName('notebook.run_cell'), true)
-  assert.equal(isNotebookToolName('notebook.save'), true)
   assert.equal(isNotebookToolName('jupyter.run_cell'), false)
   assert.equal(isNotebookToolName('bash'), false)
 })
@@ -513,7 +514,7 @@ test('chatItemsFromSessionMessages restores notebook details from Phi timeline e
       type: 'tool_call_started',
       eventId: 'event-1',
       toolCallId: 'call-1',
-      toolName: 'notebook.run_cell',
+      toolName: 'notebook_run_cell',
       args: { path: 'eda.ipynb', cellId: 'cell-2' },
       createdAt: '2026-09-10T00:00:00.000Z'
     },
@@ -522,7 +523,7 @@ test('chatItemsFromSessionMessages restores notebook details from Phi timeline e
       type: 'tool_call_completed',
       eventId: 'event-2',
       toolCallId: 'call-1',
-      toolName: 'notebook.run_cell',
+      toolName: 'notebook_run_cell',
       output: 'Ran Cell 2',
       details: {
         kind: 'notebook_cell_executed',
@@ -561,7 +562,7 @@ test('chatItemsFromSessionMessages restores notebook details from runtime tool r
         {
           type: 'toolCall',
           id: 'call-1',
-          name: 'notebook.update_cell',
+          name: 'notebook_update_cell',
           arguments: { path: 'eda.ipynb', cellId: 'cell-1', source: 'df.head()' }
         }
       ]

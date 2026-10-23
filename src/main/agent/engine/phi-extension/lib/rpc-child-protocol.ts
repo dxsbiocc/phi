@@ -44,7 +44,7 @@ export interface RpcChildModelDescriptor {
   readonly maxTokens: number
 }
 export interface RpcChildRoute {
-  readonly api: 'openai-completions'
+  readonly api: 'openai-completions' | 'cursor-agent'
   readonly baseUrl: string
   readonly transport: 'pi-native' | 'sse'
 }
@@ -242,8 +242,9 @@ export function validateRpcChildModel(value: unknown): RpcChildModelDescriptor {
 export function validateRpcChildRoute(value: unknown): RpcChildRoute {
   exact(value, ['api', 'baseUrl', 'transport'])
   if (
-    value.api !== 'openai-completions' ||
+    (value.api !== 'openai-completions' && value.api !== 'cursor-agent') ||
     (value.transport !== 'pi-native' && value.transport !== 'sse') ||
+    (value.api === 'cursor-agent' && value.transport !== 'sse') ||
     typeof value.baseUrl !== 'string'
   )
     throw new Error('RPC child route is not owned')

@@ -8,7 +8,7 @@ import type { NotebookToolRequest } from '../src/main/agent/notebook/notebook-to
 import { createInProcessFixture } from './engine-contract/in-process-factory'
 
 test(
-  'actual private OMP CLI accepts the existing dotted notebook tool names',
+  'actual private OMP CLI accepts underscore notebook tool names',
   { timeout: 30000 },
   async (t) => {
     const cli = await hostToolCli()
@@ -16,7 +16,7 @@ test(
     const f = desktopToolsFixture({ cwd: cli.cwd })
     t.after(() => f.close())
     await cli.connection.start()
-    const notebook = f.tool('notebook.list')
+    const notebook = f.tool('notebook_list')
     let selected = 0
     const router = new NotebookToolHostRouter({
       local: async () => {
@@ -45,9 +45,9 @@ test(
     const executions: Promise<void>[] = []
     const detach = channel.onFrame((frame) => {
       if (frame.type !== 'host_tool_call') return
-      assert.equal(frame.toolName, 'notebook.list')
+      assert.equal(frame.toolName, 'notebook_list')
       const execution = f
-        .call('notebook.list', frame.arguments as Record<string, unknown>, String(frame.toolCallId))
+        .call('notebook_list', frame.arguments as Record<string, unknown>, String(frame.toolCallId))
         .then((result) =>
           channel.sendControl({ type: 'host_tool_result', id: String(frame.id), result })
         )
@@ -66,9 +66,9 @@ test(
         }
       ]
     })
-    assert.deepEqual(registered, { toolNames: ['notebook.list'] })
+    assert.deepEqual(registered, { toolNames: ['notebook_list'] })
     cli.provider.enqueue(
-      { tool: { id: 'dotted-call', name: 'notebook.list', args: {} } },
+      { tool: { id: 'notebook-call', name: 'notebook_list', args: {} } },
       { text: 'Notebook result received' }
     )
     assert.equal(
@@ -79,13 +79,13 @@ test(
     await Promise.all(executions)
     assert.equal(selected, 1)
     const tools = cli.provider.requests[0].tools as Array<{ function: { name: string } }>
-    assert.ok(tools.some((tool) => tool.function.name === 'notebook.list'))
+    assert.ok(tools.some((tool) => tool.function.name === 'notebook_list'))
     assert.ok(
       cli.frames.some(
         (frame) =>
           frame.type === 'tool_execution_end' &&
-          frame.toolName === 'notebook.list' &&
-          frame.toolCallId === 'dotted-call'
+          frame.toolName === 'notebook_list' &&
+          frame.toolCallId === 'notebook-call'
       )
     )
     const messages = await cli.connection.request<{ messages: Array<Record<string, unknown>> }>({
@@ -93,7 +93,7 @@ test(
     })
     assert.deepEqual(
       messages.messages.find(
-        (message) => message.toolCallId === 'dotted-call' && message.role === 'toolResult'
+        (message) => message.toolCallId === 'notebook-call' && message.role === 'toolResult'
       )?.details,
       { summary: 'real selected router result', notebooks: ['selected.ipynb'] }
     )

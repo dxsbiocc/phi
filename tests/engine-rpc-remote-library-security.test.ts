@@ -35,7 +35,7 @@ for (const attack of [
     async (t) => {
       const f = rpcRemoteLibraryFixture()
       t.after(() => f.close())
-      const saved = await f.call('lib.save', { title: 'Selected project paper' })
+      const saved = await f.call('lib_save', { title: 'Selected project paper' })
       assert.equal(saved.isError, undefined, JSON.stringify(saved))
       const library = join(f.server.projectRoot, '.phi/library')
       const index = join(library, 'index.json')
@@ -96,7 +96,7 @@ for (const attack of [
           JSON.stringify({ schemaVersion: 1, key: '../../escape' }),
           { mode: 0o600 }
         )
-      const result = await f.call(attack === 'readonly-index' ? 'lib.save' : 'lib.list', {
+      const result = await f.call(attack === 'readonly-index' ? 'lib_save' : 'lib_list', {
         title: 'No side effect'
       })
       assert.equal(result.isError, true, JSON.stringify(result))
@@ -104,7 +104,7 @@ for (const attack of [
       assert.equal(existsSync(join(f.server.localAnchor, '.phi/library')), false)
       if (attack === 'readonly-index') {
         assert.deepEqual(readFileSync(index), before)
-        assert.equal((await f.call('lib.list')).isError, undefined)
+        assert.equal((await f.call('lib_list')).isError, undefined)
       }
     }
   )
@@ -116,14 +116,14 @@ test(
   async (t) => {
     const f = rpcRemoteLibraryFixture()
     t.after(() => f.close())
-    const saved = await f.call('lib.save', { title: 'Projection link paper' })
+    const saved = await f.call('lib_save', { title: 'Projection link paper' })
     const paper = (saved.details as { paper: { storageKey: string; canonicalId: string } }).paper
     const base = join(f.server.projectRoot, '.phi/library')
     const index = readFileSync(join(base, 'index.json'))
     const meta = join(base, 'papers', paper.storageKey, 'meta.json')
     rmSync(meta)
     symlinkSync(join(f.server.localAnchor, 'outside-meta'), meta)
-    const failed = await f.call('lib.update', {
+    const failed = await f.call('lib_update', {
       id: paper.canonicalId,
       notes: 'not admitted'
     })
@@ -156,7 +156,7 @@ test('unbound and mismatched request context is rejected before selected server 
   )
   assert.equal(existsSync(join(f.server.projectRoot, '.phi')), false)
   assert.equal(
-    (await f.call('lib.save', { title: 'a', notes: 'x'.repeat(256 * 1024) })).isError,
+    (await f.call('lib_save', { title: 'a', notes: 'x'.repeat(256 * 1024) })).isError,
     true
   )
   assert.equal(existsSync(join(f.server.projectRoot, '.phi')), false)
@@ -168,12 +168,12 @@ test('pre-aborted and disposed library calls cannot resolve a server or create p
   const controller = new AbortController()
   controller.abort(new Error('before any library intent'))
   await assert.rejects(
-    f.call('lib.save', { title: 'Must not start' }, controller.signal),
+    f.call('lib_save', { title: 'Must not start' }, controller.signal),
     /before any library intent/
   )
   assert.equal(existsSync(join(f.server.projectRoot, '.phi')), false)
   f.service.dispose()
-  const result = await f.call('lib.save', { title: 'Disposed service' })
+  const result = await f.call('lib_save', { title: 'Disposed service' })
   assert.equal(result.isError, true)
   assert.equal(existsSync(join(f.server.projectRoot, '.phi')), false)
 })

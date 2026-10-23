@@ -33,8 +33,8 @@ test('empty trusted skill catalog registers the other real schemas without expos
   t.after(() => scope.dispose())
   const roster = registeredHostTools(scope.tools)
   assert.equal(roster.has('skill_run'), false)
-  assert.equal(roster.get('lib.save')?.validate({ title: 'Selected remote paper' }), true)
-  assert.equal(roster.get('lib.save')?.validate({}), false)
+  assert.equal(roster.get('lib_save')?.validate({ title: 'Selected remote paper' }), true)
+  assert.equal(roster.get('lib_save')?.validate({}), false)
 })
 
 test('a skill enabled from several sources appears once in the skill_run schema', (t) => {
@@ -57,11 +57,11 @@ test('a skill enabled from several sources appears once in the skill_run schema'
   assert.deepEqual(skill.enum, ['remote-demo', 'grill-me'])
 })
 
-test('actual existing dotted notebook names register without widening name policy to controls or arbitrary methods', (t) => {
+test('underscore notebook names register without widening name policy to controls or arbitrary methods', (t) => {
   const f = desktopToolsFixture()
   t.after(() => f.close())
   const roster = registeredHostTools(f.scope.tools)
-  assert.equal(roster.get('notebook.list')?.definition.name, 'notebook.list')
+  assert.equal(roster.get('notebook_list')?.definition.name, 'notebook_list')
   for (const name of [
     'notebook/list',
     'notebook list',
@@ -70,12 +70,12 @@ test('actual existing dotted notebook names register without widening name polic
     'x'.repeat(129)
   ]) {
     assert.throws(
-      () => registeredHostTools([{ ...f.tool('notebook.list'), name }]),
+      () => registeredHostTools([{ ...f.tool('notebook_list'), name }]),
       /Invalid or duplicate/
     )
   }
   assert.throws(
-    () => registeredHostTools([f.tool('notebook.list'), f.tool('notebook.list')]),
+    () => registeredHostTools([f.tool('notebook_list'), f.tool('notebook_list')]),
     /Invalid or duplicate/
   )
 })
@@ -89,7 +89,7 @@ test('curated desktop scope exposes real builders and explicitly reports missing
     'ask_user_question',
     'render_blocks',
     'palette_suggest',
-    'notebook.list',
+    'notebook_list',
     'present_files',
     'download_file',
     'skill_run',
@@ -99,7 +99,7 @@ test('curated desktop scope exposes real builders and explicitly reports missing
   ])
     assert.ok(names.includes(name), name)
   assert.equal(
-    names.some((name) => name.startsWith('lib.') || name.startsWith('mcp__')),
+    names.some((name) => name.startsWith('lib_') || name.startsWith('mcp__')),
     false
   )
   assert.deepEqual(
@@ -115,7 +115,7 @@ test('curated desktop scope exposes real builders and explicitly reports missing
   assert.equal(isRpcDesktopCoordinatedTool({ ...f.tool('browser') }), false)
   assert.equal(isRpcDesktopCoordinatedTool(f.tool('skill_run')), false)
   assert.equal(Object.isFrozen(f.tool('browser')), true)
-  assert.equal(f.scope.approvalFor('notebook.run_cell', {}), 'write')
+  assert.equal(f.scope.approvalFor('notebook_run_cell', {}), 'write')
   assert.equal(f.scope.approvalFor('skill_run', {}), 'exec')
   assert.equal(f.scope.approvalFor('not-registered', {}), undefined)
   const output = await f.call('render_blocks', {
@@ -205,7 +205,7 @@ test('notebook builder uses actual remote router with verified identity and no l
   f.services.register('notebookTool.execute', (params) =>
     router.execute(params as NotebookToolRequest)
   )
-  const result = await f.call('notebook.list', { sessionId: 'forged', cwd: '/desktop/forged' })
+  const result = await f.call('notebook_list', { sessionId: 'forged', cwd: '/desktop/forged' })
   assert.equal(observed?.cwd, '/canonical/selected/server/project')
   assert.equal(text(result), 'selected remote notebooks')
   assert.deepEqual(result.details, {
@@ -224,7 +224,7 @@ test('notebook builder uses actual remote router with verified identity and no l
   f.services.register('notebookTool.execute', (params) =>
     unavailable.execute(params as NotebookToolRequest)
   )
-  const failed = await f.call('notebook.list')
+  const failed = await f.call('notebook_list')
   assert.equal(failed.isError, true)
   assert.match(text(failed), /没有回退/)
   assert.equal(local, 0)
@@ -328,7 +328,7 @@ test('retired run/disposed scope rejects pending and future services with no fal
       resolve = done
     })
   })
-  const operation = f.call('notebook.list')
+  const operation = f.call('notebook_list')
   await started
   f.setRun({ id: 'replacement', signal: new AbortController().signal })
   resolve({ summary: 'late old result' })

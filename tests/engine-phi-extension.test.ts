@@ -67,6 +67,7 @@ const FIXED_TOOL_EVENTS: Record<string, unknown>[] = [
     toolName: 'bash',
     input: { command: 'python -V', env: { PATH: '/escape', EXTRA: 'keep' } }
   },
+  // Historical fixture parity uses the old spelling; new registrations use notebook_run_cell.
   { toolCallId: 'notebook-1', toolName: 'notebook.run_cell', input: {} }
 ]
 

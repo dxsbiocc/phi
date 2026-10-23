@@ -151,7 +151,10 @@ export function agentResultDetails(value: unknown): Record<string, unknown> | nu
 }
 
 export function isNotebookToolName(toolName: unknown): boolean {
-  return typeof toolName === 'string' && toolName.startsWith('notebook.')
+  return (
+    typeof toolName === 'string' &&
+    (toolName.startsWith('notebook_') || toolName.startsWith('notebook.'))
+  )
 }
 
 export function stringField(record: Record<string, unknown>, key: string): string | undefined {

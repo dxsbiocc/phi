@@ -61,6 +61,44 @@ export const NATIVE_OPTION_WIRE_KEYS = Object.freeze([
   'anthropicCompaction'
 ] as const satisfies readonly (keyof SimpleStreamOptions)[])
 
+// Saved sessions may still contain the old names. Keep their tool history
+// callable without changing the journal or sending invalid function names.
+const LEGACY_PHI_TOOL_NAMES = new Set([
+  'lib.audit',
+  'lib.find',
+  'lib.list',
+  'lib.remove',
+  'lib.save',
+  'lib.update',
+  'notebook.delete_cell',
+  'notebook.insert_cell',
+  'notebook.list',
+  'notebook.read',
+  'notebook.run_cell',
+  'notebook.save',
+  'notebook.update_cell'
+])
+
+function currentToolName(name: string): string {
+  return LEGACY_PHI_TOOL_NAMES.has(name) ? name.replace('.', '_') : name
+}
+
+function currentMessageToolNames(message: unknown): unknown {
+  if (!object(message)) return message
+  if (message.role === 'toolResult' && typeof message.toolName === 'string') {
+    return { ...message, toolName: currentToolName(message.toolName) }
+  }
+  if (message.role !== 'assistant' || !Array.isArray(message.content)) return message
+  return {
+    ...message,
+    content: message.content.map((block) =>
+      object(block) && block.type === 'toolCall' && typeof block.name === 'string'
+        ? { ...block, name: currentToolName(block.name) }
+        : block
+    )
+  }
+}
+
 function pick(record: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
   return Object.fromEntries(
     fields.filter((key) => Object.hasOwn(record, key)).map((key) => [key, record[key]])
@@ -76,6 +114,7 @@ function tools(value: unknown): unknown[] {
         object(tool.parameters)
     )
     const result = pick(tool, NATIVE_TOOL_WIRE_KEYS)
+    result.name = currentToolName(tool.name)
     if (Object.hasOwn(tool, 'customFormat')) {
       integrity(
         object(tool.customFormat) &&
@@ -116,10 +155,22 @@ export function projectNativeWireBody(body: unknown, modelId: string): string {
       Array.isArray(value.context.messages)
   )
   const context = pick(value.context, ['systemPrompt', 'messages'])
+  context.messages = value.context.messages.map(currentMessageToolNames)
   for (const key of ['tools', 'inactiveTools'])
     if (Object.hasOwn(value.context, key)) context[key] = tools(value.context[key])
   integrity(value.options === undefined || object(value.options))
   const options = pick(value.options ?? {}, NATIVE_OPTION_WIRE_KEYS)
+  if (object(options.toolChoice)) {
+    const choice = options.toolChoice
+    if (typeof choice.name === 'string') {
+      options.toolChoice = { ...choice, name: currentToolName(choice.name) }
+    } else if (object(choice.function) && typeof choice.function.name === 'string') {
+      options.toolChoice = {
+        ...choice,
+        function: { ...choice.function, name: currentToolName(choice.function.name) }
+      }
+    }
+  }
   const projected = JSON.stringify({ modelId, context, options, stream: true })
   integrity(Buffer.byteLength(projected) <= NATIVE_EVENT_BYTES)
   return projected

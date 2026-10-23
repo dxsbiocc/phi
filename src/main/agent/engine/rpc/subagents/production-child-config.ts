@@ -89,7 +89,11 @@ export interface CreateProductionChildConfigOptions {
   readonly parentModel: ModelGatewayModelRef
   readonly parentThinkingLevel: PhiAgentThinkingLevel
   /** Supplied by the currently owned model-gateway/reverse-tunnel generation. */
-  readonly native: { readonly endpoint: string; readonly models: readonly ModelGatewayModelRef[] }
+  readonly native: {
+    readonly endpoint: string
+    readonly cursorEndpoint?: string
+    readonly models: readonly ModelGatewayModelRef[]
+  }
   readonly otherCapabilities: readonly string[]
 }
 
@@ -153,6 +157,15 @@ export async function createProductionChildConfig(
     baseUrl: endpoint.origin,
     transport: 'pi-native'
   })
+  const cursorRoute = options.native.cursorEndpoint
+    ? validateRpcChildRoute({
+        api: 'cursor-agent',
+        baseUrl: options.native.cursorEndpoint,
+        transport: 'sse'
+      })
+    : undefined
+  if (parent.provider === 'cursor' && !cursorRoute)
+    throw new Error('Cursor parent model requires a scoped native route')
   for (const definition of definitions)
     if (definition.warnings.length) throw new Error('Unsupported foreground child definition')
   const compiled = await compileRpcAgentDefinitions({
@@ -169,6 +182,8 @@ export async function createProductionChildConfig(
   const selected = compiled.manifest.entries.filter(
     (entry) => entry.blocking || allowBackground === true
   )
+  if (selected.some((entry) => entry.model.provider === 'cursor') && !cursorRoute)
+    throw new Error('Cursor child model requires a scoped native route')
   if (selected.length > 32) throw new Error('Child profiles exceed the existing count budget')
   const resources = prepareProductionChildResources(resourceSnapshot, selected)
   const profiles = selected.map((entry) => {
@@ -190,7 +205,7 @@ export async function createProductionChildConfig(
       entry,
       basePrompt,
       model,
-      route,
+      entry.model.provider === 'cursor' ? cursorRoute! : route,
       productionChildProfileResources(entry, basePrompt, resources)
     )
   })
@@ -217,6 +232,7 @@ export async function createProductionChildConfig(
       parentModel: projectRpcChildModel(
         models.find((model) => model.provider === parent.provider && model.id === parent.id)
       ),
+      parentRoute: parent.provider === 'cursor' ? cursorRoute : route,
       profiles,
       ...(resources.catalog ? { resources: resources.catalog } : {}),
       files: files.map(({ path, sha256 }) => ({ path, sha256 })),

@@ -33,31 +33,31 @@ export const PHI_LEARN_DESCRIPTION =
 
 export const NOTEBOOK_TOOL_DESCRIPTIONS: ReadonlyMap<string, string> = new Map([
   [
-    'notebook.list',
+    'notebook_list',
     'List .ipynb notebooks in the current project or ordinary workspace. Use this before opening or modifying a notebook when the path is unknown.'
   ],
   [
-    'notebook.read',
+    'notebook_read',
     'Read the current in-memory notebook draft for a workspace notebook. Opens the notebook into the live agent workspace on first use. Cell summaries use one-based cellNumber values for human-facing order; use the stable id field as cellId when editing, deleting, or running a cell.'
   ],
   [
-    'notebook.insert_cell',
-    'Insert a code, markdown, or raw cell into the live in-memory notebook draft. This does not save to disk until notebook.save is called.'
+    'notebook_insert_cell',
+    'Insert a code, markdown, or raw cell into the live in-memory notebook draft. This does not save to disk until notebook_save is called.'
   ],
   [
-    'notebook.update_cell',
-    'Replace the source and optionally type of an existing cell in the live in-memory notebook draft. This does not save to disk until notebook.save is called.'
+    'notebook_update_cell',
+    'Replace the source and optionally type of an existing cell in the live in-memory notebook draft. This does not save to disk until notebook_save is called.'
   ],
   [
-    'notebook.delete_cell',
-    'Delete a cell from the live in-memory notebook draft. This does not save to disk until notebook.save is called.'
+    'notebook_delete_cell',
+    'Delete a cell from the live in-memory notebook draft. This does not save to disk until notebook_save is called.'
   ],
   [
-    'notebook.run_cell',
+    'notebook_run_cell',
     'Run one code cell through the Phi app-managed Jupyter server for the current project or ordinary workspace and update the live in-memory notebook draft with execution count, outputs, and duration metadata. Do not assume localhost:8888 or ask the user to restart an external JupyterLab; the host app starts or attaches the correct workspace server.'
   ],
   [
-    'notebook.save',
+    'notebook_save',
     'Save the live in-memory notebook draft back to its .ipynb file. Use after notebook edits that should persist in the workspace.'
   ]
 ])

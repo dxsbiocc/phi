@@ -1,6 +1,7 @@
 import Ajv, { type ValidateFunction } from 'ajv'
 import Ajv2020 from 'ajv/dist/2020.js'
 import type { PhiTool } from '../types'
+import type { ModelGatewayModelRef } from '../model-gateway-types'
 import { rpcRecord } from './control-frame'
 import type { RpcHostToolDefinition } from './types'
 
@@ -40,6 +41,16 @@ export interface RegisteredHostTool {
   tool: PhiTool
   definition: RpcHostToolDefinition
   validate: ValidateFunction
+}
+
+/** Cursor's native H2 path has no browser text-vault projection. Keep browser off that roster. */
+export function hostToolsForModelRoutes(
+  tools: readonly PhiTool[],
+  models: readonly ModelGatewayModelRef[]
+): readonly PhiTool[] {
+  return models.some(({ provider }) => provider === 'cursor')
+    ? tools.filter(({ name }) => name !== 'browser')
+    : tools
 }
 
 /** Snapshot metadata so later caller mutations cannot change the registered schema or executor. */

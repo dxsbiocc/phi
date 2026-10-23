@@ -15,8 +15,7 @@ import { confirmInitialThinking, type RuntimeInitialSelection } from './runtime-
 import { BrowserTextVault } from '../../browser/browser-text-vault'
 import type { ContextUsageSnapshot } from '../../../../shared/contextUsageTypes'
 import { randomBytes } from 'node:crypto'
-import { createRuntimeMetadataControl, type RuntimeRenamePolicy } from './runtime-metadata-control'
-import { RemoteMetadataBusyError } from './runtime-metadata-control'
+import { createRuntimeMetadataControl, RemoteMetadataBusyError, type RuntimeRenamePolicy } from './runtime-metadata-control'
 import type { PhiTool, PhiToolImage, PhiToolApproval, PhiToolResult } from '../types'
 import { executionRoster, type RpcExecutionTool } from '../phi-extension/lib/rpc-execution-protocol'
 import type { RpcRuntimeConfig } from '../phi-extension/lib/rpc-runtime-config'
@@ -30,7 +29,7 @@ import {
 } from './approval-bridge'
 import { RpcHostToolBridge } from './host-tool-bridge'
 import { RpcHostResultDelivery } from './host-result-delivery'
-import { registeredHostTools } from './host-tool-validation'
+import { hostToolsForModelRoutes, registeredHostTools } from './host-tool-validation'
 import { readRemoteHistory, withRemoteSignal, type RemoteHistoryCheckpoint } from './history-pager'
 import {
   prepareModelProxyRpcSessionTransport,
@@ -544,12 +543,7 @@ export class RemoteSessionRuntime {
     const { options } = this
     const step = <T>(name: string, operation: () => Promise<T>): Promise<T> =>
       options.transport.startupDiagnostics?.step(name, operation) ?? operation()
-    // The browser text vault protects pi-native model requests. Cursor's native
-    // H2 transport has no equivalent text projection, so do not expose browser
-    // to a generation that can select Cursor.
-    const hostTools = options.transport.models.some((model) => model.provider === 'cursor')
-      ? options.tools.filter((tool) => tool.name !== 'browser')
-      : options.tools
+    const hostTools = hostToolsForModelRoutes(options.tools, options.transport.models)
     this.hostPolicy = createRpcRuntimeHostPolicy({
       tools: hostTools,
       currentRun: () => this.authority?.currentRun(),

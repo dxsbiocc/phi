@@ -22,7 +22,9 @@ import {
   sameRpcChildModel,
   sameRpcChildRoute,
   snapshotRpcChildProfile,
+  validateRpcChildRoute,
   validateRpcChildRoot,
+  type RpcChildRoute,
   type RpcChildRootScope,
   type RpcChildTrustedProfile,
   validateRpcChildModel,
@@ -43,6 +45,7 @@ export interface RpcChildConfigIdentity {
 export interface RpcChildRuntimeConfig extends RpcChildConfigIdentity {
   readonly resources?: RpcChildResourceCatalog
   readonly parentModel?: RpcChildModelDescriptor
+  readonly parentRoute?: RpcChildRoute
   readonly schema: 1
   readonly manifestHash: string
   readonly manifestBinding: {
@@ -183,6 +186,7 @@ export function validateRpcChildRuntimeConfig(
     'files',
     'policy',
     ...(Object.hasOwn(raw, 'parentModel') ? ['parentModel'] : []),
+    ...(Object.hasOwn(raw, 'parentRoute') ? ['parentRoute'] : []),
     ...(Object.hasOwn(raw, 'resources') ? ['resources'] : [])
   ])
   if (
@@ -227,6 +231,18 @@ export function validateRpcChildRuntimeConfig(
     raw.resources === undefined ? undefined : validateChildResourceCatalog(raw.resources)
   const parentModel =
     raw.parentModel === undefined ? undefined : validateRpcChildModel(raw.parentModel)
+  const parentRoute =
+    raw.parentRoute === undefined ? undefined : validateRpcChildRoute(raw.parentRoute)
+  if (
+    profiles.some(
+      (profile) => (profile.model.provider === 'cursor') !== (profile.route.api === 'cursor-agent')
+    ) ||
+    (parentModel &&
+      parentRoute &&
+      (parentModel.provider === 'cursor') !== (parentRoute.api === 'cursor-agent')) ||
+    (profiles.some((profile) => profile.model.provider === 'cursor') && !parentRoute)
+  )
+    throw new Error('Private child model route differs from its provider')
   const names = new Set<string>()
   for (const profile of profiles) {
     const definition = profile.definition
@@ -274,6 +290,7 @@ export function validateRpcChildRuntimeConfig(
     throw new Error('Private child manifest hash differs')
   const result: RpcChildRuntimeConfig = {
     ...(parentModel ? { parentModel } : {}),
+    ...(parentRoute ? { parentRoute } : {}),
     ...(resources ? { resources } : {}),
     schema: 1,
     nonce: identity.nonce,

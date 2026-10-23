@@ -30,7 +30,12 @@ export interface RuntimeCompositionFixture {
 
 /** Real SDK worker + production gateway, real shell launcher and a private TCP forward, no sshd. */
 export async function runtimeCompositionFixture(
-  options: { anthropic?: boolean; contextWindow?: number; realWorldShapes?: boolean } = {}
+  options: {
+    anthropic?: boolean
+    contextWindow?: number
+    realWorldShapes?: boolean
+    auditModelGatewayWire?: boolean
+  } = {}
 ): Promise<RuntimeCompositionFixture> {
   const f = await createPersistentLauncherFixture(
     true,
@@ -39,6 +44,7 @@ export async function runtimeCompositionFixture(
       : {}
   )
   const sdk = await startCompositionGateway(options.anthropic, options.contextWindow)
+  const auditModelGatewayWire = options.auditModelGatewayWire !== false
   const bundle = await createPhiExtensionBundle(
     process.cwd() + '/src/main/agent/engine/phi-extension'
   )
@@ -126,18 +132,19 @@ export async function runtimeCompositionFixture(
         const sockets = new Set<Socket>()
         const server = createServer((incoming) => {
           let audit = Buffer.alloc(0)
-          incoming.on('data', (chunk: Buffer) => {
-            audit = Buffer.concat([audit, chunk])
-            const boundary = audit.indexOf('\r\n\r\n')
-            if (boundary < 0) return
-            const length = Number(
-              /content-length:\s*(\d+)/iu.exec(audit.subarray(0, boundary).toString())?.[1]
-            )
-            if (!length || audit.length < boundary + 4 + length) return
-            const raw = JSON.parse(audit.subarray(boundary + 4, boundary + 4 + length).toString())
-            wire.push(raw)
-            audit = audit.subarray(boundary + 4 + length)
-          })
+          if (auditModelGatewayWire)
+            incoming.on('data', (chunk: Buffer) => {
+              audit = Buffer.concat([audit, chunk])
+              const boundary = audit.indexOf('\r\n\r\n')
+              if (boundary < 0) return
+              const length = Number(
+                /content-length:\s*(\d+)/iu.exec(audit.subarray(0, boundary).toString())?.[1]
+              )
+              if (!length || audit.length < boundary + 4 + length) return
+              const raw = JSON.parse(audit.subarray(boundary + 4, boundary + 4 + length).toString())
+              wire.push(raw)
+              audit = audit.subarray(boundary + 4 + length)
+            })
           const outgoing = connect(options.localPort, '127.0.0.1')
           sockets.add(incoming)
           sockets.add(outgoing)

@@ -115,8 +115,8 @@ export async function runApplicationNotebookExecutionScenario(
   f.configureApproval({
     shouldGate: () => true,
     requestToolApproval: async (request) => {
-      assert.ok(['notebook.run_cell', 'notebook.save'].includes(request.toolName))
-      if (request.toolName === 'notebook.save') assert.equal(await readFile(path, 'utf8'), original)
+      assert.ok(['notebook_run_cell', 'notebook_save'].includes(request.toolName))
+      if (request.toolName === 'notebook_save') assert.equal(await readFile(path, 'utf8'), original)
       return mode === 'notebook-execution-denied' ? 'denied' : 'approved'
     },
     onEvent: (event) => {
@@ -136,12 +136,12 @@ export async function runApplicationNotebookExecutionScenario(
     f.provider.enqueue(
       {
         tool: {
-          name: 'notebook.run_cell',
+          name: 'notebook_run_cell',
           args: { path: 'notebooks/execute.ipynb', cellId: 'cell-1' }
         }
       },
       ...(mode === 'notebook-execution-flow'
-        ? [{ tool: { name: 'notebook.save', args: { path: 'notebooks/execute.ipynb' } } }]
+        ? [{ tool: { name: 'notebook_save', args: { path: 'notebooks/execute.ipynb' } } }]
         : []),
       { text: 'Notebook execution settled' }
     )

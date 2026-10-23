@@ -23,12 +23,12 @@ test('buildLibraryCustomTools exposes stable library operations with approval ti
   assert.deepEqual(
     tools.map((tool) => [tool.name, tool.approval]),
     [
-      ['lib.save', 'write'],
-      ['lib.update', 'write'],
-      ['lib.remove', 'write'],
-      ['lib.list', 'read'],
-      ['lib.find', 'read'],
-      ['lib.audit', 'read']
+      ['lib_save', 'write'],
+      ['lib_update', 'write'],
+      ['lib_remove', 'write'],
+      ['lib_list', 'read'],
+      ['lib_find', 'read'],
+      ['lib_audit', 'read']
     ]
   )
 })
@@ -36,8 +36,8 @@ test('buildLibraryCustomTools exposes stable library operations with approval ti
 test('library tools operate against the session cwd and return structured details', async () => {
   await withProject(async (projectDir) => {
     const tools = buildLibraryCustomTools()
-    const save = tools.find((tool) => tool.name === 'lib.save')
-    const find = tools.find((tool) => tool.name === 'lib.find')
+    const save = tools.find((tool) => tool.name === 'lib_save')
+    const find = tools.find((tool) => tool.name === 'lib_find')
     assert.ok(save)
     assert.ok(find)
 
@@ -68,7 +68,7 @@ test('library tools operate against the session cwd and return structured detail
 
 test('library tools report validation failures as tool errors', async () => {
   await withProject(async (projectDir) => {
-    const remove = buildLibraryCustomTools().find((tool) => tool.name === 'lib.remove')
+    const remove = buildLibraryCustomTools().find((tool) => tool.name === 'lib_remove')
     assert.ok(remove)
 
     const result = await remove.execute('call-1', {}, undefined, fakeCtx(projectDir) as never)

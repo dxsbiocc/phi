@@ -25,13 +25,13 @@ test('core research tools are essential in the in-process and RPC host registrie
   const tools = coreTools()
   const names = tools.map((tool) => tool.name)
   for (const expected of [
-    'notebook.list',
-    'notebook.read',
-    'notebook.insert_cell',
-    'notebook.update_cell',
-    'notebook.delete_cell',
-    'notebook.run_cell',
-    'notebook.save',
+    'notebook_list',
+    'notebook_read',
+    'notebook_insert_cell',
+    'notebook_update_cell',
+    'notebook_delete_cell',
+    'notebook_run_cell',
+    'notebook_save',
     'skill_run',
     'env_request',
     'wrapper_search',

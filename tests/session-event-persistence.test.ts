@@ -429,7 +429,7 @@ test('ordinary tool ends persist notebook details and forward a bounded truncate
     phiEvent({
       type: 'tool_execution_end',
       toolCallId: 'notebook-1',
-      toolName: 'notebook.run_cell',
+      toolName: 'notebook_run_cell',
       result: {
         output: '1234567890',
         details: {

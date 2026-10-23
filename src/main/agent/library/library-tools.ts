@@ -14,12 +14,12 @@ import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
 export type LibraryToolAction = 'save' | 'update' | 'remove' | 'list' | 'find' | 'audit'
 export const LIBRARY_TOOL_NAMES = Object.freeze([
-  'lib.save',
-  'lib.update',
-  'lib.remove',
-  'lib.list',
-  'lib.find',
-  'lib.audit'
+  'lib_save',
+  'lib_update',
+  'lib_remove',
+  'lib_list',
+  'lib_find',
+  'lib_audit'
 ] as const)
 
 export interface LibraryToolStore {

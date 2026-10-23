@@ -73,7 +73,7 @@ test(
         requestToolApproval: (request) => {
           genericDialogs++
           assert.equal(request.sessionId, f.f.scope.phiSessionId)
-          assert.equal(request.toolName, 'notebook.save')
+          assert.equal(request.toolName, 'notebook_save')
           return new Promise((resolve) => {
             answer = resolve
           })
@@ -113,7 +113,7 @@ test(
     )
     assert.equal(JSON.stringify(savedImage).includes(PNG), true)
     await f.sdk.enqueue(
-      { tool: { name: 'notebook.save', args: { path: 'selected.ipynb' }, id: 'composition-save' } },
+      { tool: { name: 'notebook_save', args: { path: 'selected.ipynb' }, id: 'composition-save' } },
       { text: 'Notebook save acknowledged' }
     )
     const pending = runtime.prompt('phi-notebook-scope-write', 'Save the selected notebook')
@@ -124,7 +124,7 @@ test(
     assert.equal(notebookEffects, 1)
     answer = undefined
     await f.sdk.enqueue(
-      { tool: { name: 'notebook.save', args: { path: 'denied.ipynb' }, id: 'composition-denied' } },
+      { tool: { name: 'notebook_save', args: { path: 'denied.ipynb' }, id: 'composition-denied' } },
       { text: 'Denied notebook save acknowledged' }
     )
     const denied = runtime.prompt('phi-notebook-scope-denied', 'Save a denied notebook')

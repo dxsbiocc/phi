@@ -78,7 +78,7 @@ for (const outcome of ['confirmed', 'unconfirmed'] as const)
       executor.execute(params as Parameters<typeof executor.execute>[0], { signal: context.signal })
     )
     try {
-      const invalid = await f.call('notebook.run_cell', {
+      const invalid = await f.call('notebook_run_cell', {
         path: '../outside.ipynb',
         cellId: 'cell-1'
       })
@@ -92,7 +92,7 @@ for (const outcome of ['confirmed', 'unconfirmed'] as const)
       kernel.holdInterruptAcknowledgements()
       let settled = false
       const execution = f
-        .call('notebook.run_cell', { path: 'notebooks/selected.ipynb', cellId: 'cell-1' })
+        .call('notebook_run_cell', { path: 'notebooks/selected.ipynb', cellId: 'cell-1' })
         .finally(() => {
           settled = true
         })
@@ -115,7 +115,7 @@ for (const outcome of ['confirmed', 'unconfirmed'] as const)
         peer = await startJupyterProtocolFixture()
         connection = { ...peer.connection, runtimeId: 'scope-replacement-runtime' }
         f.setRun({ id: 'replacement-real-run', signal: new AbortController().signal })
-        const replacement = f.call('notebook.run_cell', {
+        const replacement = f.call('notebook_run_cell', {
           path: 'notebooks/selected.ipynb',
           cellId: 'cell-1'
         })

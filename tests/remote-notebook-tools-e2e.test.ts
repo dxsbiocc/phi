@@ -267,29 +267,29 @@ async function runSevenTools(
   ran: Record<string, unknown>
   saved: Record<string, unknown>
 }> {
-  const listed = await callNotebookTool(tools, 'notebook.list', cwd, {})
-  const read = await callNotebookTool(tools, 'notebook.read', cwd, {
+  const listed = await callNotebookTool(tools, 'notebook_list', cwd, {})
+  const read = await callNotebookTool(tools, 'notebook_read', cwd, {
     path: 'notebooks/analysis.ipynb'
   })
-  const inserted = await callNotebookTool(tools, 'notebook.insert_cell', cwd, {
+  const inserted = await callNotebookTool(tools, 'notebook_insert_cell', cwd, {
     path: read.path,
     source: '# remote',
     cellType: 'markdown'
   })
-  await callNotebookTool(tools, 'notebook.update_cell', cwd, {
+  await callNotebookTool(tools, 'notebook_update_cell', cwd, {
     path: read.path,
     cellId: 'cell-1',
     source: 'x = 2'
   })
-  await callNotebookTool(tools, 'notebook.delete_cell', cwd, {
+  await callNotebookTool(tools, 'notebook_delete_cell', cwd, {
     path: read.path,
     cellId: (inserted.cell as { id: string }).id
   })
-  const ran = await callNotebookTool(tools, 'notebook.run_cell', cwd, {
+  const ran = await callNotebookTool(tools, 'notebook_run_cell', cwd, {
     path: read.path,
     cellId: 'cell-1'
   })
-  const saved = await callNotebookTool(tools, 'notebook.save', cwd, { path: read.path })
+  const saved = await callNotebookTool(tools, 'notebook_save', cwd, { path: read.path })
   return { listed, read, ran, saved }
 }
 

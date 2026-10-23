@@ -34,6 +34,8 @@ import {
 } from '../src/main/agent/engine/rpc/session-recovery'
 import { RemoteSessionStorageError } from '../src/main/agent/engine/rpc/session-storage/types'
 import { SessionVerificationError } from '../src/main/agent/engine/phi-extension/lib/rpc-session-verification-protocol'
+import { CodedError } from '../src/shared/errorCodes'
+import { runtimeRecoveryMessage } from '../src/main/agent/session/runtime-recovery-ipc'
 
 const scope: RemoteOmpScope = {
   projectId: 'project',
@@ -438,6 +440,7 @@ test('recovery user diagnostics distinguish exact missing/corrupt/model/asset fa
     [new RemoteSessionStorageError('FILE_INVALID', 'private-server-content'), 'journal-invalid'],
     [new SessionVerificationError('ASSET_MISSING'), 'asset-missing'],
     [new RemoteRecoveryError('IDENTITY_MISMATCH', 'private-host'), 'binding-changed'],
+    [new CodedError('DOMAIN_CONFLICT', 'private-lock-owner'), 'run-held'],
     [Object.assign(new Error('private-authentication'), { code: 'FILE_MISSING' }), 'disconnected']
   ] as const
   for (const [error, issue] of cases) {
@@ -445,6 +448,7 @@ test('recovery user diagnostics distinguish exact missing/corrupt/model/asset fa
     assert.equal(result.issue, issue)
     assert.doesNotMatch(JSON.stringify(result), /private-/)
   }
+  assert.match(runtimeRecoveryMessage('run-held'), /另一个进程占用/)
 })
 
 test('fresh Node process restores only persisted provenance and interrupted child metadata', (t) => {
