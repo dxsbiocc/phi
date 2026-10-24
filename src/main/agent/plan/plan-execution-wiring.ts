@@ -8,6 +8,8 @@ import {
   type PlanReviewHostServiceDeps
 } from './plan-review-host-service'
 import { createPlanRunService, type PlanRunService } from './plan-run-service'
+import type { WorkModeActivity } from './work-mode-control'
+import { registerWorkModeSelectionHost } from './work-mode-selection-host'
 
 type TimelineEvent = Record<string, unknown> & { type: string }
 
@@ -36,10 +38,56 @@ export interface PlanExecutionAppDeps<StoredEvent extends Record<string, unknown
   logError(error: unknown): void
 }
 
+interface PlanExecutionSessionKeys {
+  runtimeSessionIdForPhiSession(
+    phiSessionId: string,
+    isLive: (runtimeSessionId: string) => boolean
+  ): string | undefined
+}
+
+function liveRuntimeSessionId(
+  engine: PhiEngine,
+  sessionKeys: PlanExecutionSessionKeys,
+  phiSessionId: string
+): string | undefined {
+  return sessionKeys.runtimeSessionIdForPhiSession(phiSessionId, (id) => engine.sessions.has(id))
+}
+
+function isActiveBackgroundAgentRun(value: unknown, runtimeSessionId: string): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const run = value as Record<string, unknown>
+  return (
+    run.agentSessionId === runtimeSessionId && (run.state === 'queued' || run.state === 'running')
+  )
+}
+
+export function createWorkModeActivity(deps: {
+  engine: PhiEngine
+  planRuns: Pick<PlanRunService, 'hasActiveWork'>
+  sessionKeys: PlanExecutionSessionKeys
+}): WorkModeActivity {
+  return {
+    hasActivePlanWork: (phiSessionId) => deps.planRuns.hasActiveWork(phiSessionId),
+    hasActiveAgentRuns: async (phiSessionId) => {
+      const runtimeSessionId = liveRuntimeSessionId(deps.engine, deps.sessionKeys, phiSessionId)
+      if (!runtimeSessionId) return false
+      const runs = await deps.engine.agentRuns.list({})
+      return Array.isArray(runs)
+        ? runs.some((run) => isActiveBackgroundAgentRun(run, runtimeSessionId))
+        : false
+    }
+  }
+}
+
+export interface PlanExecutionWiring {
+  planRuns: PlanRunService
+  workModeActivity: WorkModeActivity
+}
+
 /** Creates the plan run service and registers the plan review host request that starts runs. */
 export function wirePlanExecution<StoredEvent extends Record<string, unknown>>(
   deps: PlanExecutionAppDeps<StoredEvent>
-): PlanRunService {
+): PlanExecutionWiring {
   const continueConversation = createPlanRunContinuation({
     automaticCount: deps.automaticContinuationCount,
     wakeConversation: deps.wakeConversation,
@@ -54,13 +102,19 @@ export function wirePlanExecution<StoredEvent extends Record<string, unknown>>(
     completions: agentRunCompletions,
     // Only a runtime that is still running can take new plan steps.
     resolveRuntimeSessionId: (phiSessionId) =>
-      deps.sessionKeys.runtimeSessionIdForPhiSession(phiSessionId, (id) =>
-        deps.engine.sessions.has(id)
-      ) ?? null,
+      liveRuntimeSessionId(deps.engine, deps.sessionKeys, phiSessionId) ?? null,
     timeline: { append: deps.appendSessionEvent, broadcast: deps.broadcastRunEvent },
     continueConversation,
     logError: deps.logError
   })
   registerPlanReviewHostService({ ...deps, host: deps.engine.host, planRuns })
-  return planRuns
+  registerWorkModeSelectionHost({ ...deps, host: deps.engine.host })
+  return {
+    planRuns,
+    workModeActivity: createWorkModeActivity({
+      engine: deps.engine,
+      planRuns,
+      sessionKeys: deps.sessionKeys
+    })
+  }
 }

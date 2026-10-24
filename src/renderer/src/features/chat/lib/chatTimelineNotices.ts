@@ -23,6 +23,26 @@ function runIdField(runId?: unknown): { runId: string } | Record<string, never> 
   return typeof runId === 'string' && runId ? { runId } : {}
 }
 
+function workModeSelectionItem(event: {
+  type?: string
+  eventId?: string
+  execute?: unknown
+  reason?: unknown
+  createdAt?: string
+}): ChatItem | null {
+  if (event.type !== 'work_mode_selected' || typeof event.execute !== 'boolean') return null
+  const reason = typeof event.reason === 'string' ? event.reason.trim() : ''
+  if (!reason) return null
+  return {
+    id: event.eventId ?? `work-mode-${event.execute ? 'execute' : 'review'}`,
+    role: 'warning',
+    get content() {
+      return planCopy.agentSelectedPlan(event.execute === true, reason)
+    },
+    ...createdAtField(event.createdAt)
+  }
+}
+
 function boundedInteger(value: unknown, minimum: number, maximum: number): number | undefined {
   return typeof value === 'number' &&
     Number.isSafeInteger(value) &&
@@ -95,9 +115,12 @@ export function chatItemFromPhiTimelineEvent(event: {
   toModelId?: unknown
   toModelName?: unknown
   state?: unknown
+  execute?: unknown
 }): ChatItem | null {
   const approval = approvalItemFromEvent(event)
   if (approval) return approval
+  const workModeSelection = workModeSelectionItem(event)
+  if (workModeSelection) return workModeSelection
   const id = event.eventId ?? `${event.type ?? 'phi'}-${event.runId ?? event.approvalId ?? 'event'}`
   if (event.type === 'plan_run_updated') return null
   if (event.type === 'plan_run_finished') {

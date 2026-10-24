@@ -1,5 +1,6 @@
 import type { CurrentContextUsage } from '../../../shared/contextUsageTypes'
 import type { ProjectLocation } from '../../../shared/projectLocation'
+import type { WorkMode } from '../../../shared/sessionMode'
 import type { PermissionMode } from '../projects'
 import { RemoteMetadataBusyError } from '../engine/rpc/runtime-metadata-control'
 import type { CreateAgentSessionResult } from '../runtime/runtime-adapter'
@@ -22,6 +23,7 @@ export type CurrentSessionPayload = {
   legacyRemoteSession?: boolean
   sessionGeneration: number
   permissionMode: PermissionMode
+  workMode: WorkMode
   status: SessionStatus
   unreadKind: UnreadKind | null
   lastRunOutcome?: LastRunOutcome

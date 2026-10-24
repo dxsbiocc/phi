@@ -125,6 +125,7 @@ import type {
   PermissionMode,
   PromptResult,
   PromptTarget,
+  SessionModeRendererApi,
   SessionSummary,
   SessionSwitchResult,
   ToolApprovalRequest
@@ -717,7 +718,8 @@ export interface RendererApi
     McpRendererApi,
     RemoteProjectUploadRendererApi,
     WorkspaceFileOperationsRendererApi,
-    PlanRunRendererApi {
+    PlanRunRendererApi,
+    SessionModeRendererApi {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
   readyWindow: (background: string) => Promise<void>

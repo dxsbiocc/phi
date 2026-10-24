@@ -42,7 +42,7 @@ import {
 import type { WrapperCompositionCatalogItem } from '../../shared/wrapperCompositionManifestTypes'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
-import type { ManualCompactionTarget } from '../../shared/contextUsageTypes'
+import { modeFromFields } from '../../shared/sessionMode'
 import type {
   RuntimeRecoveryState,
   RuntimeRecoveryTarget,
@@ -67,7 +67,7 @@ import { usePromptSend } from './features/chat/hooks/usePromptSend'
 import { useQueuedPromptDrain } from './features/chat/hooks/useQueuedPromptDrain'
 import type { SendPromptOptions } from './features/chat/lib/promptQueue'
 import { SessionPlanRunPanel } from './features/plan/PlanRunPanel'
-import { usePlanModeToggle } from './features/plan/hooks/usePlanModeToggle'
+import { useSessionMode } from './features/plan/hooks/useSessionMode'
 import { HomeView } from './features/home/HomeView'
 import type { HomePromptRequest } from './features/home/components/HomePrompt'
 import { runtimeStatusesSnapshot } from './features/runtime/lib/runtimeGroups'
@@ -264,6 +264,7 @@ function App(): React.JSX.Element {
     projectSessionRefreshKey,
     setProjectSessionRefreshKey,
     currentPermissionMode,
+    currentWorkMode,
     isSessionChanging,
     setIsSessionChanging,
     agentEventState,
@@ -374,8 +375,6 @@ function App(): React.JSX.Element {
   const [isRedetectingEnvironment, setIsRedetectingEnvironment] = useState(false)
   const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
   const appSettingsRevisionRef = useRef(0)
-  const [isUpdatingPermissionMode, setIsUpdatingPermissionMode] = useState(false)
-  const permissionModeUpdateRef = useRef(false)
   const [snackbarNotice, setSnackbarNotice] = useState<SnackbarNotice | null>(null)
   const isSendingRef = useRef(false)
   const currentSessionIsBusyRef = useRef(false)
@@ -1698,7 +1697,26 @@ function App(): React.JSX.Element {
     sessionGeneration: activeSessionGeneration
   })
   const input = draftInputs[activeDraftKey] ?? ''
-  const planMode = usePlanModeToggle(activeDraftKey, activeProjectLocation?.kind === 'ssh')
+  const activeSessionMode = modeFromFields({
+    workMode: currentWorkMode,
+    permissionMode: currentPermissionMode
+  })
+  const sessionMode = useSessionMode({
+    api: rendererApi,
+    mode: activeSessionMode,
+    target: {
+      sessionPath: activeSessionPath,
+      phiSessionId: activePhiSessionId,
+      sessionGeneration: activeSessionGeneration
+    },
+    onUpdated: (current) => {
+      applyCurrentSession(current, undefined, {
+        onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
+      })
+      setProjectSessionRefreshKey((key) => key + 1)
+    },
+    onError: (error) => showSnackbarError(error, appCopy.permissionsFailed)
+  })
   const [draftImagesBySession, setDraftImagesBySession] = useState<
     Record<string, PromptImageInput[]>
   >({})
@@ -1822,15 +1840,13 @@ function App(): React.JSX.Element {
       sessionGeneration: useSessionStore.getState().activeSessionGeneration
     }
     if (currentSessionIsBusy || isSendingRef.current) {
-      queuePromptText(text, target, { images, ...planMode.sendOptions })
+      queuePromptText(text, target, { images })
       clearInputImages()
-      planMode.resetMode()
       return
     }
     setActiveInput('')
     clearInputImages()
-    planMode.resetMode()
-    await sendPromptText(text, target, { images, ...planMode.sendOptions })
+    await sendPromptText(text, target, { images })
   }
 
   const onSavePersonaMarkdown = async (markdown: string): Promise<void> => {
@@ -1849,63 +1865,28 @@ function App(): React.JSX.Element {
     setShowOnboarding(false)
   }
 
-  const onSelectPermissionMode = async (permissionMode: PermissionMode): Promise<void> => {
-    const state = useSessionStore.getState()
-    if (permissionMode === state.currentPermissionMode || permissionModeUpdateRef.current) return
-    const target: ManualCompactionTarget = {
-      sessionPath: state.activeSessionPath,
-      phiSessionId: state.activePhiSessionId,
-      sessionGeneration: state.activeSessionGeneration
-    }
-    permissionModeUpdateRef.current = true
-    setIsUpdatingPermissionMode(true)
-    try {
-      const current = await rendererApi.updateCurrentSessionPermissionMode(permissionMode, target)
-      const active = useSessionStore.getState()
-      if (
-        active.activeSessionPath !== target.sessionPath ||
-        active.activePhiSessionId !== target.phiSessionId ||
-        active.activeSessionGeneration !== target.sessionGeneration
-      )
-        return
-      applyCurrentSession(current, undefined, {
-        onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
-      })
-      setProjectSessionRefreshKey((key) => key + 1)
-    } catch (error) {
-      showSnackbarError(error, appCopy.permissionsFailed)
-    } finally {
-      permissionModeUpdateRef.current = false
-      setIsUpdatingPermissionMode(false)
-    }
-  }
-
   const onStartHomePrompt = async (request: HomePromptRequest): Promise<void> => {
     const text = request.text.trim()
     if (!text) return
     const project = request.projectId
       ? (projectsRef.current.find((item) => item.id === request.projectId) ?? null)
       : null
-    if (project && project.permissionMode !== request.permissionMode) {
-      await onUpdateProjectPermissionMode(project.id, request.permissionMode)
-    }
-    const created = project
-      ? await onStartProjectChat({ ...project, permissionMode: request.permissionMode })
-      : await openNewChat()
+    const created = project ? await onStartProjectChat(project) : await openNewChat()
     if (!created) return
-    if (!project && created.permissionMode !== request.permissionMode) {
-      await onSelectPermissionMode(request.permissionMode)
-    }
-    await sendPromptText(
-      text,
-      {
-        path: created.path,
-        phiSessionId: created.phiSessionId,
-        cwd: created.cwd,
-        sessionGeneration: created.sessionGeneration
-      },
-      { planMode: request.planMode, planExecute: request.planExecute }
-    )
+    const current = await rendererApi.updateCurrentSessionMode(request.mode, {
+      sessionPath: created.path,
+      phiSessionId: created.phiSessionId ?? null,
+      sessionGeneration: created.sessionGeneration
+    })
+    applyCurrentSession(current, undefined, {
+      onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
+    })
+    await sendPromptText(text, {
+      path: current.path,
+      phiSessionId: current.phiSessionId,
+      cwd: current.cwd,
+      sessionGeneration: current.sessionGeneration
+    })
   }
 
   // Path routing: which surface opens a file, a directory, a notebook, or a
@@ -2504,7 +2485,6 @@ function App(): React.JSX.Element {
   ])
   const activeWorkspaceScopeLabel =
     activeProject?.name ?? workspaceScopeLabelForCwd(activeCwd, projects)
-  const activePermissionMode = currentPermissionMode
   const showWorkspaceTabs =
     visibleWorkspaceTabs.length > 0 &&
     (activeView === 'chat' || activeView === 'analysis' || isResourceWorkspaceView)
@@ -3525,9 +3505,6 @@ function App(): React.JSX.Element {
             onInputFilesDropped={rendererApi.onInputFilesDropped}
             onListInputDirectory={onListInputDirectory}
             onChatSubmit={onChatSubmit}
-            planMode={planMode.mode}
-            onSelectPlanMode={planMode.selectMode}
-            disablePlanReview={activeProjectLocation?.kind === 'ssh'}
             planRunPanel={
               <SessionPlanRunPanel
                 api={rendererApi}
@@ -3541,13 +3518,17 @@ function App(): React.JSX.Element {
             onAcknowledgeActiveSession={acknowledgeActiveSessionInteraction}
             onGoSettings={onGoProviderSettings}
             onOpenBackgroundJobs={onOpenBackgroundJobs}
-            permissionMode={activePermissionMode}
-            onSelectPermissionMode={(mode) => {
-              void onSelectPermissionMode(mode)
+            sessionMode={sessionMode.mode}
+            onSelectSessionMode={(mode) => {
+              void sessionMode.selectMode(mode)
             }}
-            disablePermissionModeSelect={
-              isSessionChanging || currentSessionIsCompacting || isUpdatingPermissionMode
+            disableSessionModeSelect={
+              isSessionChanging ||
+              currentSessionIsBusy ||
+              currentSessionIsCompacting ||
+              sessionMode.updating
             }
+            remoteSession={activeProjectLocation?.kind === 'ssh'}
             disableModelControls={
               isSessionChanging || currentSessionIsCompacting || remoteControlsUnavailable
             }
@@ -3674,7 +3655,6 @@ function App(): React.JSX.Element {
       busy={isSessionChanging}
       onSelectModel={(model) => void onSelectModel(model)}
       onSelectThinkingLevel={(level) => void onSelectThinkingLevel(level)}
-      onUpdateProjectPermissionMode={onUpdateProjectPermissionMode}
       projectSelection={homeProjectSelection}
       onNewProject={() => {
         homeCreateSelectRef.current = true

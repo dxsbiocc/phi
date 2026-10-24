@@ -67,6 +67,18 @@ test('remote project prompt presents the server root without exposing the SDK an
   assert.match(prompt, /not automatically reconnected/u)
 })
 
+test('automatic work mode alone receives routing criteria and preserves user review', () => {
+  const automatic = buildPhiMainSystemPrompt([], { workMode: 'auto' }).join('\n')
+  assert.match(automatic, /questions and make small, clear changes directly/i)
+  assert.match(automatic, /execute=false/)
+  assert.match(automatic, /execute=true/)
+  assert.match(automatic, /explicit user review/i)
+  assert.match(automatic, /alone/)
+  for (const workMode of ['direct', 'plan', 'plan_execute'] as const) {
+    assert.doesNotMatch(buildPhiMainSystemPrompt([], { workMode }).join('\n'), /execute=false/)
+  }
+})
+
 test('the Phi-managed persona file is removed from generic context after explicit injection', () => {
   const result = filterPersonaContextFile(
     {

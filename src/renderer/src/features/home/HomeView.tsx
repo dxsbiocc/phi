@@ -6,13 +6,7 @@ import { alpha, useTheme } from '@mui/material/styles'
 
 import type { WrapperCompositionCatalogItem } from '../../../../shared/wrapperCompositionManifestTypes'
 import type { WrapperRun } from '../../../../shared/wrapperTypes'
-import type {
-  ModelOption,
-  PermissionMode,
-  Project,
-  SessionSummary,
-  ThinkingLevel
-} from '../../types'
+import type { ModelOption, Project, SessionSummary, ThinkingLevel } from '../../types'
 import { HomeCarouselSection, HomeCompanionRow } from './components/HomeLowerLayout'
 import type { HomeOverviewCardsProps } from './components/HomeOverviewCards'
 import GlowCursor from './components/GlowCursor'
@@ -48,10 +42,6 @@ interface HomeViewProps {
   busy: boolean
   onSelectModel: (model: ModelOption | null) => void
   onSelectThinkingLevel: (level: ThinkingLevel) => void
-  onUpdateProjectPermissionMode: (
-    projectId: string,
-    permissionMode: PermissionMode
-  ) => Promise<void>
   projectSelection: HomeProjectSelection | null
   onNewProject: () => void
   onOpenSession: (path: string) => void
@@ -76,7 +66,6 @@ export function HomeView({
   busy,
   onSelectModel,
   onSelectThinkingLevel,
-  onUpdateProjectPermissionMode,
   projectSelection,
   onNewProject,
   onOpenSession,
@@ -242,7 +231,6 @@ export function HomeView({
             busy={busy}
             onSelectModel={onSelectModel}
             onSelectThinkingLevel={onSelectThinkingLevel}
-            onUpdateProjectPermissionMode={onUpdateProjectPermissionMode}
             projectSelection={projectSelection}
             onNewProject={onNewProject}
             onStart={onStartPrompt}

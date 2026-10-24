@@ -1,8 +1,19 @@
 export const planEnglish = {
-  modeOff: 'Off',
-  modeReview: 'Plan review',
-  modeExecute: 'Plan and execute',
-  modeMenuLabel: 'Plan mode',
+  sessionModeMenuLabel: 'Work mode',
+  chooseSessionMode: (label: string) => `Choose work mode: ${label}`,
+  sessionModeAuto: 'Auto',
+  sessionModeAutoDescription: 'Let the agent decide whether to act directly or plan first.',
+  sessionModeAsk: 'Ask',
+  sessionModeAskDescription: 'Act directly, asking before commands or file changes.',
+  sessionModePlan: 'Plan',
+  sessionModePlanDescription: 'Research read-only and submit a plan for approval before acting.',
+  sessionModePlanExecute: 'Plan and execute',
+  sessionModePlanExecuteDescription:
+    'Plan independent steps for approval, then schedule their execution.',
+  sessionModeFull: 'Full access',
+  sessionModeFullDescription: 'Act directly without approval. Use with caution.',
+  agentSelectedPlan: (execute: boolean, reason: string) =>
+    `Agent selected: ${execute ? 'Plan and execute' : 'Plan'} — ${reason}`,
   goal: 'Goal',
   progress: (completed: number, total: number) => `${completed}/${total} completed`,
   runStatus: (status: 'running' | 'paused' | 'completed' | 'stopped') =>

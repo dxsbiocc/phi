@@ -77,6 +77,7 @@ export interface AgentEventSummary {
   reason?: string
   state?: unknown
   action?: string
+  execute?: boolean
   aborted?: boolean
   willRetry?: boolean
   skipped?: boolean

@@ -22,6 +22,7 @@ export interface SessionCreationOptionsInput {
   phiAgents: CreateAgentSessionOptions['phiAgents']
   remoteProjectMcpServers: CreateAgentSessionOptions['remoteProjectMcpServers']
   projectBound: boolean
+  workMode: NonNullable<CreateAgentSessionOptions['workMode']>
   memory: CreateAgentSessionOptions['memory']
   remoteRuntimeRoot?: unknown
   remoteProject: RemoteSessionProject | null
@@ -46,6 +47,7 @@ export function buildSessionCreationOptions(
     options.remoteProjectMcpServers = input.remoteProjectMcpServers
   }
   options.projectBound = input.projectBound
+  options.workMode = input.workMode
   if (input.memory?.enabled) options.memory = input.memory
   if (input.remoteProject) {
     if (input.remoteRuntimeRoot) options.remoteRuntimeRoot = input.remoteRuntimeRoot

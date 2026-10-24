@@ -58,6 +58,7 @@ export interface PlanRunServiceDependencies<StoredEvent extends Record<string, u
 
 export interface PlanRunService {
   startFromApprovedPlan(phiSessionId: string, spec: PlanSpec): Promise<PlanRunState>
+  hasActiveWork(phiSessionId: string): boolean
   list(phiSessionId: string): Promise<PlanRunState[]>
   get(phiSessionId: string, runId: string): Promise<PlanRunState | null>
   pause(phiSessionId: string, runId: string): Promise<PlanRunState>
@@ -264,6 +265,16 @@ class PlanRunServiceImplementation<
       throw new Error(RUNTIME_UNAVAILABLE_MESSAGE)
     }
     return this.executor.start(spec, phiSessionId)
+  }
+
+  hasActiveWork(phiSessionId: string): boolean {
+    return this.store
+      .list(phiSessionId)
+      .some(
+        (state) =>
+          state.status === 'running' ||
+          Object.values(state.steps).some((step) => step.status === 'running')
+      )
   }
 
   async list(phiSessionId: string): Promise<PlanRunState[]> {

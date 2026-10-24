@@ -41,6 +41,7 @@ import type {
   SessionCreationRuntime
 } from './agent-session-creation-contracts'
 import { createDefaultAgentSessionCreationServices } from './agent-session-creation-contracts'
+import { fieldsFromMode, modeFromFields } from '../../shared/sessionMode'
 
 export type { AgentSessionCreationDeps } from './agent-session-creation-contracts'
 
@@ -351,6 +352,17 @@ class AgentSessionCreationService<
       phiAgents: resources.agentScan.agents,
       remoteProjectMcpServers: useRpc ? undefined : resources.remoteMcpCatalog?.runtimeServers,
       projectBound: Boolean(context.project),
+      workMode:
+        context.sessionManifest?.workMode ??
+        fieldsFromMode(
+          modeFromFields({
+            permissionMode:
+              context.snapshot.permissionMode === 'ask' ||
+              context.snapshot.permissionMode === 'full'
+                ? context.snapshot.permissionMode
+                : 'auto'
+          })
+        ).workMode,
       memory: context.project?.memory,
       remoteRuntimeRoot:
         context.remoteProject && context.project

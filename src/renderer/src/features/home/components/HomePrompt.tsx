@@ -5,22 +5,21 @@ import { Box, Typography } from '@mui/material'
 import type { ChatResourceMention } from '../../../lib/chatResourceMentions'
 import type {
   ModelOption,
-  PermissionMode,
   Project,
   PromptAgentSummary,
   SkillSummary,
   ThinkingLevel
 } from '../../../types'
 import { useHomePrompt, type HomeProjectSelection } from '../hooks/useHomePrompt'
-import type { PlanModePromptOptions } from '../../plan/hooks/usePlanModeToggle'
+import type { SessionMode } from '../../../../../shared/sessionMode'
 import { HomePromptComposer } from './HomePromptComposer'
 import { PhiMark } from './PhiMark'
 import { HOME_COLUMN_MAX_WIDTH } from '../lib/homeColumn'
 
-export type HomePromptRequest = PlanModePromptOptions & {
+export type HomePromptRequest = {
   text: string
   projectId: string | null
-  permissionMode: PermissionMode
+  mode: SessionMode
 }
 
 export type HomeComposerResources = {
@@ -41,10 +40,6 @@ type HomePromptProps = {
   busy: boolean
   onSelectModel: (model: ModelOption | null) => void
   onSelectThinkingLevel: (level: ThinkingLevel) => void
-  onUpdateProjectPermissionMode: (
-    projectId: string,
-    permissionMode: PermissionMode
-  ) => Promise<void>
   projectSelection: HomeProjectSelection | null
   onNewProject: () => void
   onStart: (request: HomePromptRequest) => Promise<void>
@@ -53,13 +48,7 @@ type HomePromptProps = {
 
 export function HomePrompt(props: HomePromptProps): React.JSX.Element {
   useUiLanguage()
-  const prompt = useHomePrompt(
-    props.projects,
-    props.busy,
-    props.projectSelection,
-    props.onUpdateProjectPermissionMode,
-    props.onStart
-  )
+  const prompt = useHomePrompt(props.projects, props.busy, props.projectSelection, props.onStart)
 
   return (
     <Box
@@ -89,7 +78,8 @@ export function HomePrompt(props: HomePromptProps): React.JSX.Element {
         projects={props.projects}
         selectedProject={prompt.selectedProject}
         draft={prompt.draft}
-        permissionMode={prompt.permissionMode}
+        mode={prompt.mode}
+        remote={prompt.remote}
         disabled={prompt.disabled}
         canSend={prompt.canSend}
         models={props.models}
@@ -97,14 +87,11 @@ export function HomePrompt(props: HomePromptProps): React.JSX.Element {
         thinkingLevel={props.thinkingLevel}
         onDraftChange={prompt.setDraft}
         onSelectProject={prompt.setProjectId}
-        onSelectPermissionMode={prompt.selectPermission}
+        onSelectMode={prompt.selectMode}
         onSelectModel={props.onSelectModel}
         onSelectThinkingLevel={props.onSelectThinkingLevel}
         onNewProject={props.onNewProject}
         onSubmit={prompt.submit}
-        planMode={prompt.planMode}
-        disablePlanReview={prompt.disablePlanReview}
-        onSelectPlanMode={prompt.selectPlanMode}
         composerResources={props.composerResources}
       />
     </Box>

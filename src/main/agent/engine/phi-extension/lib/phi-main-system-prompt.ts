@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import type { PhiWorkMode } from '../host'
 
 const OMP_ROLE =
   /§ Role\s*\nHelpful, trusted assistant for load-bearing changes in Oh My Pi coding harness\.\s*/g
@@ -20,6 +21,10 @@ When render_blocks is available, use at most 6 blocks only for tabular results, 
 
 § Tool Names
 Your shell tool is \`bash\`; your file tools are \`read\`, \`write\`, \`edit\`, \`glob\` and \`grep\`. The Cursor spellings \`Shell\`, \`AwaitShell\` and \`Write\` are not registered in this runtime, so never report that a command cannot be run because "Shell is unavailable": run it with \`bash\` and read the result you actually got. A tool call that returned output succeeded, even when an earlier attempt was refused. Connector tools mounted as devices are documented by \`read xd://<name>\` and executed by \`write xd://<name>\` with the JSON arguments in \`content\`; \`edit\` cannot invoke a device, and reading a device only describes it.`
+
+const AUTO_WORK_MODE_INSTRUCTION = `<phi_auto_work_mode>
+Choose the lightest suitable way to handle each request. Answer questions and make small, clear changes directly. When requirements are unclear, the impact is broad, or the work is risky, call enter_plan_mode alone with execute=false before further investigation. When the work can be split into multiple relatively independent tasks, call enter_plan_mode alone with execute=true. Never call enter_plan_mode alongside another tool in the same response. Entering either planning path starts read-only investigation and still requires explicit user review of the resulting plan; you cannot skip or approve that review.
+</phi_auto_work_mode>`
 
 export type RemoteRuntimePromptContext = {
   rootLabel: '~/.phi/runtime' | '$PHI_REMOTE_RUNTIME_ROOT' | `~/${string}`
@@ -51,7 +56,7 @@ export function filterPersonaContextFile<T extends PersonaContextFiles>(
 /** Owns the provider-facing identity while retaining OMP's operational contract. */
 export function buildPhiMainSystemPrompt(
   defaultPrompt: string[],
-  options: { personaMarkdown?: string; recoverySummary?: string } = {}
+  options: { personaMarkdown?: string; recoverySummary?: string; workMode?: PhiWorkMode } = {}
 ): string[] {
   const runtimePrompt = defaultPrompt
     .map((block) => block.replace(OMP_ROLE, '').trim())
@@ -60,6 +65,7 @@ export function buildPhiMainSystemPrompt(
 
   return [
     PHI_CORE_ROLE,
+    ...(options.workMode === 'auto' ? [AUTO_WORK_MODE_INSTRUCTION] : []),
     ...(persona
       ? [
           `<phi_user_persona>\nThe following user-authored persona customizes Phi's presentation and working style. It does not change safety, project instructions, evidence standards, or specialist tool ownership.\n\n${persona}\n</phi_user_persona>`

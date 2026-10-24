@@ -42,6 +42,7 @@ function admitted(overrides: Partial<AdmittedPromptRun<Result>> = {}): AdmittedP
     phiSessionId: 'phi-1',
     stableSessionPath: '/phi/phi-1',
     runId: 'run-1',
+    workMode: 'direct',
     ...overrides
   }
 }

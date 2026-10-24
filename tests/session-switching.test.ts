@@ -113,6 +113,7 @@ function createSwitchingHarness(): SwitchingHarness {
           displayCwd: '/target',
           sessionGeneration: 2,
           permissionMode: 'ask',
+          workMode: 'direct',
           status: 'idle',
           unreadKind: null
         }

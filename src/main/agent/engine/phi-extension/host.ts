@@ -1,3 +1,4 @@
+export type PhiWorkMode = 'auto' | 'direct' | 'plan' | 'plan_execute'
 export interface PhiExtensionFallbackConfig {
   afterFailures: number
   tools: string[]
@@ -24,6 +25,7 @@ export interface PhiExtensionConfig {
   sessionId: string
   agentRunId?: string
   useBrowserTextVault: boolean
+  workMode?: PhiWorkMode
   environmentBinding?: PhiExtensionEnvironmentBinding
   phiAgents: PhiExtensionAgentConfig[]
 }
@@ -58,6 +60,7 @@ export interface PhiExtensionHost {
   planModeActive(): boolean
   planExecuteModeActive(): boolean
   proposePlanSteps(input: unknown): Promise<PhiPlanStepsToolResult>
+  enterAutoPlanMode?(input: { execute: boolean; reason: string }): Promise<void>
   requestToolApproval(request: PhiExtensionToolApprovalRequest): Promise<unknown>
   browserApprovalInput(toolCallId: string, input: unknown): unknown
   markBrowserTextDenied(toolCallId: string): void

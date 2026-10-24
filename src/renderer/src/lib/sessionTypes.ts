@@ -1,5 +1,7 @@
 import type { ProjectLocation } from '../../../shared/projectLocation'
+import type { ManualCompactionTarget } from '../../../shared/contextUsageTypes'
 import type { PromptImageInput } from '../../../shared/promptImageTypes'
+import type { SessionMode, WorkMode } from '../../../shared/sessionMode'
 
 export type SessionStatus =
   'idle' | 'running' | 'needs_approval' | 'needs_input' | 'failed' | 'completed_unread'
@@ -37,6 +39,7 @@ export interface SessionSwitchResult extends SessionRuntimeState {
   legacyRemoteSession?: boolean
   sessionGeneration: number
   permissionMode: PermissionMode
+  workMode?: WorkMode
   messages: unknown[]
 }
 
@@ -50,6 +53,7 @@ export interface CurrentSession extends SessionRuntimeState {
   legacyRemoteSession?: boolean
   sessionGeneration: number
   permissionMode: PermissionMode
+  workMode?: WorkMode
   messages?: unknown[]
 }
 
@@ -69,11 +73,16 @@ export interface PromptTarget {
   suppressUserMessageEvent?: boolean
   retryUserMessageId?: string
   images?: PromptImageInput[]
-  planMode?: boolean
-  planExecute?: boolean
 }
 
 export type PermissionMode = 'auto' | 'ask' | 'full'
+
+export interface SessionModeRendererApi {
+  updateCurrentSessionMode: (
+    mode: SessionMode,
+    target: ManualCompactionTarget
+  ) => Promise<CurrentSession>
+}
 
 export interface ToolApprovalRequest {
   requestId: string

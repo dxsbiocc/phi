@@ -68,6 +68,10 @@ import type { RuntimeRecoveryApi } from '../shared/runtimeRecoveryTypes'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type { PlanRunRendererApi } from '../shared/planRunTypes'
 import type {
+  SessionMode as PreloadSessionMode,
+  WorkMode as PreloadWorkMode
+} from '../shared/sessionMode'
+import type {
   AutoCompactionSettingsPatch,
   CurrentAutoCompactionSettings,
   CurrentContextUsage,
@@ -183,8 +187,6 @@ type PreloadPromptTarget = {
   suppressUserMessageEvent?: boolean
   retryUserMessageId?: string
   images?: PromptImageInput[]
-  planMode?: boolean
-  planExecute?: boolean
 }
 
 type PreloadPromptResult = { path: string | null; phiSessionId?: string; sessionGeneration: number }
@@ -888,6 +890,7 @@ declare global {
         legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
+        workMode: PreloadWorkMode
         messages?: unknown[]
       }>
       getCurrentContextUsage: () => Promise<CurrentContextUsage>
@@ -912,6 +915,22 @@ declare global {
         legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
+        workMode: PreloadWorkMode
+      }>
+      updateCurrentSessionMode: (
+        mode: PreloadSessionMode,
+        target: ManualCompactionTarget
+      ) => Promise<{
+        path: string | null
+        phiSessionId?: string
+        cwd: string
+        displayCwd?: string
+        projectId?: string
+        projectLocation?: ProjectLocation
+        legacyRemoteSession?: boolean
+        sessionGeneration: number
+        permissionMode: PreloadPermissionMode
+        workMode: PreloadWorkMode
       }>
       createSession: () => Promise<{
         path: string | null
@@ -923,6 +942,7 @@ declare global {
         legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
+        workMode: PreloadWorkMode
       }>
       forkSession: (
         sourceId: string,
@@ -941,6 +961,7 @@ declare global {
         legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
+        workMode: PreloadWorkMode
         messages: unknown[]
       } | null>
       acknowledgeSession: (path: string) => Promise<PreloadSessionSummary | null>
@@ -1054,6 +1075,7 @@ declare global {
         legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
+        workMode: PreloadWorkMode
       }>
       createRemoteProjectSession: (projectId: string) => Promise<{
         path: string | null
@@ -1065,6 +1087,7 @@ declare global {
         legacyRemoteSession?: boolean
         sessionGeneration: number
         permissionMode: PreloadPermissionMode
+        workMode: PreloadWorkMode
       }>
       listAnalysisNotebooks: (cwd?: string) => Promise<PreloadAnalysisNotebookRegistry>
       initializeProjectAnalysis: (cwd: string) => Promise<PreloadAnalysisProjectInitialization>
@@ -1163,6 +1186,7 @@ declare global {
           cwd: string
           sessionGeneration: number
           permissionMode: PreloadPermissionMode
+          workMode: PreloadWorkMode
         }) => void
       ) => () => void
       onToolApprovalRequest: (cb: (event: PreloadToolApprovalRequest) => void) => () => void

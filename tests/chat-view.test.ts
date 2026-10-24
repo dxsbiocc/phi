@@ -37,6 +37,7 @@ import {
 } from '../src/renderer/src/lib/inputReferences'
 import { toolActionKind } from '../src/renderer/src/lib/toolActions'
 import type { ChatResourceMention } from '../src/renderer/src/lib/chatResourceMentions'
+import type { SessionMode } from '../src/shared/sessionMode'
 import {
   suggestedNextActionPlaceholderFromMessages,
   suggestedNextActionToAccept
@@ -46,7 +47,6 @@ import type {
   AgentExecutionItem,
   ChatItem,
   ModelOption,
-  PermissionMode,
   PromptAgentSummary,
   SkillSummary,
   ThinkingLevel,
@@ -59,7 +59,7 @@ function renderChat(
   options: {
     recoveryNotice?: ReactNode
     legacyRemoteSession?: boolean
-    permissionMode?: PermissionMode
+    sessionMode?: SessionMode
     pendingApproval?: ToolApprovalRequest | null
     isGenerating?: boolean
     currentRunStartedAt?: string
@@ -78,9 +78,8 @@ function renderChat(
     onOpenLocalPath?: (path: string, kind: 'file' | 'directory') => void
     onOpenWebUrl?: (url: string) => void
     onForkUserMessage?: (messageId: string) => void
-    planMode?: 'off' | 'review' | 'execute'
-    disablePlanReview?: boolean
-    onSelectPlanMode?: (mode: 'off' | 'review' | 'execute') => void
+    remoteSession?: boolean
+    disableSessionModeSelect?: boolean
     contextUsageTarget?: {
       sessionPath: string | null
       phiSessionId: string | null
@@ -136,11 +135,10 @@ function renderChat(
         onOpenLocalPath: options.onOpenLocalPath,
         onOpenWebUrl: options.onOpenWebUrl,
         onForkUserMessage: options.onForkUserMessage,
-        planMode: options.planMode,
-        disablePlanReview: options.disablePlanReview,
-        onSelectPlanMode: options.onSelectPlanMode,
-        permissionMode: options.permissionMode ?? 'auto',
-        onSelectPermissionMode: () => undefined,
+        sessionMode: options.sessionMode ?? 'auto',
+        remoteSession: options.remoteSession,
+        onSelectSessionMode: () => undefined,
+        disableSessionModeSelect: options.disableSessionModeSelect,
         disableModelControls: options.disableModelControls ?? false,
         pendingApproval: options.pendingApproval ?? null,
         pendingUserInteraction: options.pendingUserInteraction ?? null,
@@ -1059,12 +1057,12 @@ test('chat view shows delivered files after a later tool call and closing reply'
   assert.ok(markup.indexOf('Figure is ready') < markup.indexOf('预览交付文件 figure.png'))
 })
 
-test('chat composer offers a selected and disabled plan mode menu', () => {
-  const selected = renderChat([], { planMode: 'execute', onSelectPlanMode: () => undefined })
-  assert.match(selected, /aria-label="计划模式: 规划并执行"/)
+test('chat composer offers the selected session mode and can disable mode switching', () => {
+  const selected = renderChat([], { sessionMode: 'plan_execute' })
+  assert.match(selected, /aria-label="选择工作模式：规划并执行"/)
   assert.match(selected, />规划并执行</)
-  const disabled = renderChat([], { disablePlanReview: true, onSelectPlanMode: () => undefined })
-  const button = disabled.match(/<button[^>]*aria-label="计划模式: 关闭"[^>]*>/)?.[0]
+  const disabled = renderChat([], { disableSessionModeSelect: true })
+  const button = disabled.match(/<button[^>]*aria-label="选择工作模式：自动"[^>]*>/)?.[0]
   assert.ok(button)
   assert.match(button, /disabled/)
 })
@@ -1958,17 +1956,17 @@ test('tool group keeps the aggregate row neutral when one child failed', () => {
   assert.doesNotMatch(markup, /curl fallback/)
 })
 
-test('chat view shows current permission mode in the composer', () => {
-  const markup = renderChat([], { permissionMode: 'ask' })
+test('chat view shows current session mode in the composer', () => {
+  const markup = renderChat([], { sessionMode: 'ask' })
 
-  assert.match(markup, /权限 询问/)
-  assert.match(markup, /aria-label="选择权限模式"/)
+  assert.match(markup, />询问</)
+  assert.match(markup, /aria-label="选择工作模式：询问"/)
 })
 
-test('chat view shows add-context control before permissions', () => {
+test('chat view shows add-context control before the session mode', () => {
   const markup = renderChat([])
 
-  assert.match(markup, /aria-label="添加文件和资源引用"[\s\S]*aria-label="选择权限模式/)
+  assert.match(markup, /aria-label="添加文件和资源引用"[\s\S]*aria-label="选择工作模式：自动/)
 })
 
 test('chat view uses the suggested next action as a passive placeholder', () => {
@@ -2078,18 +2076,18 @@ test('chat view does not reuse the previous user action when the assistant only 
   assert.doesNotMatch(markup, /data-phi-placeholder-kind="suggested-next-action"/)
 })
 
-test('chat view shows full access permission mode in the composer', () => {
-  const markup = renderChat([], { permissionMode: 'full' })
+test('chat view shows full access session mode in the composer', () => {
+  const markup = renderChat([], { sessionMode: 'full' })
 
-  assert.match(markup, /权限 完全/)
-  assert.match(markup, /aria-label="选择权限模式"/)
+  assert.match(markup, />完全访问</)
+  assert.match(markup, /aria-label="选择工作模式：完全访问"/)
 })
 
 test('chat view uses icon-only composer controls when file preview is open', () => {
   const markup = renderChat([], { compactComposerControls: true })
 
   assert.match(markup, /data-phi-placeholder-kind="default"/)
-  assert.match(markup, /aria-label="选择权限模式：权限 自动"/)
+  assert.match(markup, /aria-label="选择工作模式：自动"/)
   assert.match(markup, /aria-label="选择模型：Kimi Coding，思考等级：高"/)
   assert.match(markup, /data-phi-model-thinking="true"/)
   assert.doesNotMatch(markup, /aria-label="选择思考等级：高"/)

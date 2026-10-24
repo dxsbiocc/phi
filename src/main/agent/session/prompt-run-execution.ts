@@ -5,6 +5,8 @@ import type { ModelRuntime, RuntimeAgentSession, RuntimeModel } from '../runtime
 import { promptWithAutomaticModelFallback } from './automatic-model-fallback'
 import { isStaleSessionError, StaleSessionError, type SessionSnapshot } from './session-lifecycle'
 import { appendSessionEvent, type StoredSessionEvent } from './session-store'
+import type { WorkMode } from '../../../shared/sessionMode'
+import { planModeRequest } from '../plan/work-mode-control'
 
 export type PromptRunResult = {
   path: string | null
@@ -37,6 +39,7 @@ export interface PromptRunExecutionContext {
   phiSessionId: string
   stableSessionPath: string
   runId: string
+  workMode: WorkMode
   promptRun: PromptRunExecutionState
 }
 
@@ -210,12 +213,8 @@ async function configurePromptRunSession<TContext extends PromptRunExecutionCont
 ): Promise<void> {
   const { context, deps, signal, session, automaticCandidates } = execution
   await deps.session.applyNextRunConfiguration(session, context.runSessionKey, context.runSnapshot)
-  if (context.input.planMode || context.input.planExecute) {
-    await getPhiEngine().sessions.enterPlanMode({
-      sessionId: session.runtimeSessionId,
-      ...(context.input.planExecute ? { execute: true } : {})
-    })
-  }
+  const planMode = planModeRequest(session.runtimeSessionId, context.workMode)
+  if (planMode) await getPhiEngine().sessions.enterPlanMode(planMode)
   if (needsAutomaticPromptImageModel(execution)) {
     const compatible = (await automaticCandidates())[0]
     if (signal.aborted || context.promptRun.cancelled) return

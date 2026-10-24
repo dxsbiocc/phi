@@ -1618,7 +1618,7 @@ const cursorH2Bridge = createCursorH2Bridge()
 getPhiEngine().host.register('cursorBridge.ensure', async () => ({
   baseUrl: await cursorH2Bridge.ensure()
 }))
-const planRunService = wirePlanExecution({
+const planExecution = wirePlanExecution({
   engine: getPhiEngine(),
   optionalStringField,
   findActivePromptRunByRuntimeSessionId,
@@ -3451,7 +3451,7 @@ function registerAgentIpc(): void {
   registerAgentPromptIpc(agentIpcOptions)
   registerWorkspaceChangesIpc({ ipcMain })
   registerAgentRunControlIpc(agentIpcOptions)
-  registerPlanRunIpc({ ipcMain, planRuns: planRunService })
+  registerPlanRunIpc({ ipcMain, planRuns: planExecution.planRuns })
 }
 
 function registerApplicationAndModelIpc(): void {
@@ -3648,6 +3648,7 @@ function createSessionsIpcOptions(
         setCurrentAutoCompactionSettings(target, patch, sessionCompactionControlOptions),
       compact: (target) => compactCurrentSession(target, sessionCompactionControlOptions)
     },
+    workModeActivity: planExecution.workModeActivity,
     identity: {
       createSessionKey: sessionKeys.createKey.bind(sessionKeys),
       resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),

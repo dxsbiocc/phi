@@ -5,10 +5,13 @@ import type {
   ManualCompactionOutcome
 } from '../../shared/contextUsageTypes'
 import { IPC } from '../../shared/ipcChannels'
+import type { ProjectLocation } from '../../shared/projectLocation'
 import type { SessionDeleteResult } from '../../shared/sessionDeleteTypes'
+import { fieldsFromMode, modeFromFields, type WorkMode } from '../../shared/sessionMode'
 import { writeAppLog } from '../agent/app-logger'
 import { readAppSettings } from '../agent/app-settings'
 import { getPhiEngine } from '../agent/engine/in-process-engine'
+import { createWorkModeControl, type WorkModeActivity } from '../agent/plan/work-mode-control'
 import type { PermissionMode } from '../agent/projects'
 import { getProject } from '../agent/projects'
 import { exportPhiSession } from '../agent/session/session-export'
@@ -59,8 +62,10 @@ interface CurrentSessionPayload {
   cwd: string
   displayCwd: string
   projectId?: string
+  projectLocation?: ProjectLocation
   sessionGeneration: number
   permissionMode: PermissionMode
+  workMode: WorkMode
 }
 
 interface SwitchResult {
@@ -68,6 +73,7 @@ interface SwitchResult {
   cwd: string
   sessionGeneration: number
   permissionMode: PermissionMode
+  workMode: WorkMode
 }
 
 export interface SessionsIpcOptions {
@@ -95,6 +101,7 @@ export interface SessionsIpcOptions {
     setSettings: (target: unknown, patch: unknown) => Promise<CurrentAutoCompactionSettings>
     compact: (target: unknown) => Promise<ManualCompactionOutcome>
   }
+  workModeActivity: WorkModeActivity
   identity: {
     createSessionKey: (path: string | undefined, cwd: string) => string
     resolveSessionKeyAlias: (sessionKey: string) => string
@@ -188,6 +195,15 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
   const status = options.status
   const getActiveWindow = options.windows.getActiveWindow
   const runtimeRecoveryController = createMainRuntimeRecoveryController(options.recovery)
+  const workModeControl = createWorkModeControl({
+    state,
+    reads,
+    identity,
+    lifecycle,
+    status,
+    activity: options.workModeActivity,
+    updateManifest: updateSessionManifest
+  })
 
   ipcMain.handle(IPC.sessions.list, async () => listSessions(reads.getNoProjectTaskFolder()))
   ipcMain.handle(IPC.sessions.homeActivity, async () => getHomeActivity())
@@ -217,6 +233,10 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
   ipcMain.handle(IPC.sessions.compact, async (_, target: unknown) =>
     options.compaction.compact(target)
   )
+  ipcMain.handle(IPC.sessions.updateMode, async (event, value: unknown, target: unknown) => {
+    options.windows.requireMainWindowRenderer(event)
+    return workModeControl.update(value, target)
+  })
   ipcMain.handle(
     IPC.sessions.updatePermissionMode,
     async (event, value: unknown, target: unknown) => {
@@ -309,7 +329,10 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
             path,
             cwd: manifest.cwd,
             sessionGeneration: lifecycle.getLifecycleForKey(targetKey).currentGeneration,
-            permissionMode: manifest.permissionMode
+            permissionMode: manifest.permissionMode,
+            workMode:
+              manifest.workMode ??
+              fieldsFromMode(modeFromFields({ permissionMode: manifest.permissionMode })).workMode
           }
       if (shouldBecomeCurrent) {
         acknowledgeSession(path, manifest.cwd)
@@ -334,6 +357,9 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
         ...(isLegacyRemoteSession(manifest) ? { legacyRemoteSession: true } : {}),
         sessionGeneration: target.sessionGeneration,
         permissionMode: manifest.permissionMode,
+        workMode:
+          manifest.workMode ??
+          fieldsFromMode(modeFromFields({ permissionMode: manifest.permissionMode })).workMode,
         ...status.getSessionStatusPayload(targetKey, path, target.cwd),
         messages: readPhiTimelineMessages(null, target.cwd, phiOnlySessionId)
       }
@@ -353,7 +379,8 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
           cwd,
           sessionGeneration: lifecycle.getLifecycleForKey(identity.createSessionKey(path, cwd))
             .currentGeneration,
-          permissionMode
+          permissionMode,
+          workMode: fieldsFromMode(modeFromFields({ permissionMode })).workMode
         }
     const targetLifecycle = lifecycle.getLifecycleForKey(targetKey)
     const targetSnapshot = { path, cwd, permissionMode }
@@ -393,6 +420,8 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
       ...(isLegacyRemoteSession(linkedManifest) ? { legacyRemoteSession: true } : {}),
       sessionGeneration: target.sessionGeneration,
       permissionMode,
+      workMode:
+        linkedManifest?.workMode ?? fieldsFromMode(modeFromFields({ permissionMode })).workMode,
       ...status.getSessionStatusPayload(targetKey, sessionPath, target.cwd),
       messages: [
         ...session.messages,

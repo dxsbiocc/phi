@@ -15,6 +15,7 @@ import { isAbsolute, join, relative, sep } from 'node:path'
 
 import type { ProjectLocation } from '../../../shared/projectLocation'
 import type { AutoCompactionOverrides } from '../../../shared/contextUsageTypes'
+import { fieldsFromMode, modeFromFields, type WorkMode } from '../../../shared/sessionMode'
 import { getPhiAgentDir } from '../runtime-paths'
 import { readManifestFile, writeManifestFile } from './manifest-file'
 import {
@@ -61,6 +62,7 @@ export interface PhiSessionManifest {
   runtimeRef?: PhiRuntimeRef
   readonly runtimeRecoveryError?: RuntimeRecoveryDiagnostic
   permissionMode: PermissionMode
+  workMode?: WorkMode
   model?: ModelSelection | null
   thinkingLevel?: ThinkingLevel
   autoCompaction?: AutoCompactionOverrides
@@ -87,6 +89,7 @@ export interface CreatePhiSessionInput {
   runtimeSessionPath?: string
   remoteRuntime?: 'rpc'
   permissionMode: PermissionMode
+  workMode?: WorkMode
   model?: ModelSelection | null
   thinkingLevel?: ThinkingLevel
   autoCompaction?: AutoCompactionOverrides
@@ -224,6 +227,9 @@ export function createPhiSession(input: CreatePhiSessionInput): PhiSessionRecord
     ...(input.runtimeSessionPath ? { runtimeSessionPath: input.runtimeSessionPath } : {}),
     ...(input.remoteRuntime ? { remoteRuntime: input.remoteRuntime } : {}),
     permissionMode: input.permissionMode,
+    workMode:
+      input.workMode ??
+      fieldsFromMode(modeFromFields({ permissionMode: input.permissionMode })).workMode,
     ...(input.model !== undefined ? { model: input.model } : {}),
     ...(input.thinkingLevel ? { thinkingLevel: input.thinkingLevel } : {}),
     ...(input.autoCompaction ? { autoCompaction: input.autoCompaction } : {}),
@@ -454,6 +460,7 @@ export function forkPhiSession(
     runtimeSessionPath,
     remoteRuntime: source.remoteRuntime,
     permissionMode: source.permissionMode,
+    workMode: source.workMode,
     model: source.model,
     thinkingLevel: source.thinkingLevel,
     autoCompaction: source.autoCompaction,

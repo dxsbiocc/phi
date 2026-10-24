@@ -333,24 +333,14 @@ test('retry and suppressed-user-message sends keep their shapes', async () => {
   const suppressed = harness()
   const sending = sendPrompt(suppressed.deps, 'again', target, {
     suppressUserMessageEvent: true,
-    planMode: true,
     appendUserMessage: false
   })
   assert.deepEqual(suppressed.messages(), [])
   assert.deepEqual(suppressed.sent[0].target, {
     ...target,
-    planMode: true,
     suppressUserMessageEvent: true
   })
   suppressed.applyReceipt({})
-  await sending
-})
-
-test('plan execution mode reaches the renderer prompt target without enabling review mode', async () => {
-  const h = harness()
-  const sending = sendPrompt(h.deps, 'execute the plan', target, { planExecute: true })
-  assert.deepEqual(h.sent[0].target, { ...target, planExecute: true })
-  h.applyReceipt({})
   await sending
 })
 
