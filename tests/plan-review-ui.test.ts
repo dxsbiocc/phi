@@ -135,13 +135,20 @@ test('plan timeline keeps one durable card and updates its decision', () => {
     )
   )
   assert.match(markup, /aria-label="计划评审记录"/)
+  assert.match(markup, /计划 · Analysis plan/)
   assert.match(markup, /需要修改/)
+  assert.match(markup, /查看计划详情/)
   assert.match(markup, /Inspect data/)
+  assert.match(markup, /<details[^>]*data-phi-plan-review-details="true"[^>]*>/)
+  assert.doesNotMatch(
+    markup,
+    /<details[^>]*data-phi-plan-review-details="true"[^>]*\sopen(?:=|\s|>)/
+  )
   assert.match(markup, /Add a validation step/)
   assert.doesNotMatch(markup, /data-phi-plan-steps/)
 })
 
-test('plan timeline card restores and renders structured steps', () => {
+test('plan timeline card keeps structured steps available behind a closed detail control', () => {
   const item = planReviewItemFromEvent({
     type: 'plan_review_submitted',
     eventId: 'event-steps',
@@ -157,13 +164,52 @@ test('plan timeline card restores and renders structured steps', () => {
       createElement(PlanReviewCard, { item, cwd: '/workspace' })
     )
   )
+  assert.match(markup, /计划 · Analysis plan/)
+  assert.match(markup, /等待评审/)
+  assert.match(markup, /<details[^>]*data-phi-plan-review-details="true"[^>]*>/)
+  assert.doesNotMatch(
+    markup,
+    /<details[^>]*data-phi-plan-review-details="true"[^>]*\sopen(?:=|\s|>)/
+  )
   assert.match(markup, /data-phi-plan-steps="true"/)
-  assert.match(markup, /1\. Inspect source data/)
-  assert.match(markup, /2\. Write report/)
-  assert.match(markup, /依赖第 1 步/)
-  assert.match(markup, /智能体：explore/)
-  assert.match(markup, /data-phi-plan-step-details="inspect"/)
-  assert.doesNotMatch(markup, /<details[^>]*\sopen(?:=|\s|>)/)
+  assert.match(markup, /Inspect source data/)
+  assert.match(markup, /Write report/)
+})
+
+test('pending plan keeps its historical copy closed while the action panel shows steps', () => {
+  const item = planReviewItemFromEvent({
+    type: 'plan_review_submitted',
+    reviewId: 'review-once',
+    ...proposal,
+    steps: structuredPlan
+  })
+  assert.ok(item)
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(
+        'div',
+        null,
+        createElement(PlanReviewCard, { item, cwd: '/workspace' }),
+        createElement(UserInteractionPanel, {
+          request: {
+            requestId: 'review-once',
+            questions: [],
+            planReview: { ...proposal, steps: structuredPlan }
+          },
+          onRespond: () => undefined
+        })
+      )
+    )
+  )
+  assert.match(markup, /<details[^>]*data-phi-plan-review-details="true"[^>]*>/)
+  assert.doesNotMatch(
+    markup,
+    /<details[^>]*data-phi-plan-review-details="true"[^>]*\sopen(?:=|\s|>)/
+  )
+  assert.match(markup, /aria-label="计划等待评审"/)
+  assert.equal(markup.match(/data-phi-plan-steps="true"/g)?.length, 2)
 })
 
 test('plan review copy follows live language changes', () => {
@@ -184,7 +230,9 @@ test('plan review copy follows live language changes', () => {
   setUiLanguage('zh-CN')
   const chinese = renderToStaticMarkup(view)
   assert.match(english, /aria-label="Plan review history"/)
+  assert.match(english, /View plan details/)
   assert.match(english, /Depends on step 1/)
   assert.match(chinese, /aria-label="计划评审记录"/)
+  assert.match(chinese, /查看计划详情/)
   assert.match(chinese, /依赖第 1 步/)
 })

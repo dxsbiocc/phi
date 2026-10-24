@@ -64,6 +64,7 @@ export const planEnglish = {
   changesRequested: 'Changes requested',
   cancelled: 'Cancelled',
   planReviewHistory: 'Plan review history',
+  viewPlanDetails: 'View plan details',
   plan: 'Plan ·',
   revisionNotes: 'Revision notes:',
   planAwaitingReview: 'Plan awaiting review',

@@ -64,6 +64,7 @@ export const planChinese = {
   changesRequested: '需要修改',
   cancelled: '已取消',
   planReviewHistory: '计划评审记录',
+  viewPlanDetails: '查看计划详情',
   plan: '计划 ·',
   revisionNotes: '修改意见：',
   planAwaitingReview: '计划等待评审',

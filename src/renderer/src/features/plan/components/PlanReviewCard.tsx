@@ -33,19 +33,24 @@ export function PlanReviewCard({
       <Typography variant="caption" color="text.secondary">
         {statusLabel(item.status)}
       </Typography>
-      <Box sx={{ mt: 1, maxHeight: 320, overflowY: 'auto' }}>
-        {item.steps ? (
-          <PlanReviewSteps plan={item.steps} />
-        ) : (
-          <MarkdownContent text={item.content} cwd={cwd} />
-        )}
-      </Box>
       {item.note && (
         <Typography variant="body2" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
           {planCopy.revisionNotes}
           {item.note}
         </Typography>
       )}
+      <Box component="details" data-phi-plan-review-details sx={{ mt: 1 }}>
+        <Typography component="summary" variant="body2" sx={{ cursor: 'pointer' }}>
+          {planCopy.viewPlanDetails}
+        </Typography>
+        <Box sx={{ mt: 1, maxHeight: 320, overflowY: 'auto' }}>
+          {item.steps ? (
+            <PlanReviewSteps plan={item.steps} />
+          ) : (
+            <MarkdownContent text={item.content} cwd={cwd} />
+          )}
+        </Box>
+      </Box>
     </Paper>
   )
 }
