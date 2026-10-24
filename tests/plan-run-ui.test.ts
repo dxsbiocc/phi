@@ -75,6 +75,27 @@ test('plan run panel renders progress, pause reason and recovery actions', () =>
   assert.match(markup, /aria-label="停止"/)
 })
 
+test('pending replan keeps the timeline visible but disables old-run recovery controls', () => {
+  setUiLanguage('en')
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, {
+        controller: { ...controller(), replanPending: true, replan: async () => undefined }
+      })
+    )
+  )
+  assert.match(markup, /Ship the renderer loop/)
+  assert.match(markup, /draft revised steps for your review/)
+  assert.doesNotMatch(markup, /aria-label="Replan remaining steps"/)
+  for (const label of ['Retry', 'Skip', 'Stop']) {
+    const button = markup.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`, 'u'))?.[0]
+    assert.ok(button, `${label} action remains visible`)
+    assert.match(button, /\bdisabled\b/u)
+  }
+})
+
 test('finished plan has only its timeline record, without a second composer panel', () => {
   const completed = { ...run, status: 'completed' as const, pause: undefined }
   const markup = renderToStaticMarkup(

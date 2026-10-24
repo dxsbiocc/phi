@@ -236,6 +236,7 @@ export async function sendPrompt(
   appendOptimisticUserMessage(deps, text, images, options)
   deps.actions.setIsSendingMessage(true)
 
+  let acceptedByRuntime = false
   try {
     const result = await deps.rendererApi.sendPrompt(
       text,
@@ -253,7 +254,9 @@ export async function sendPrompt(
             ...(images.length ? { images } : {})
           }
     )
-    if (!result || !isCurrentReply(deps, receipt, result)) return true
+    if (!result) return !isCurrentRequest(deps, receipt.sendRequest)
+    acceptedByRuntime = true
+    if (!isCurrentReply(deps, receipt, result)) return true
     await applySendReceipt(deps, result, target)
     return true
   } catch (error) {
@@ -264,8 +267,9 @@ export async function sendPrompt(
       return true
     }
     deps.actions.showSnackbarError(localizePromptSendError(error), appCopy.sendMessageFailed)
+    if (acceptedByRuntime) return true
     restoreFailedDraft(deps, text, images, options)
-    return true
+    return false
   } finally {
     settleSend(deps, receipt)
   }

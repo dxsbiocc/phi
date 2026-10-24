@@ -103,6 +103,18 @@ export function wirePlanExecution<StoredEvent extends Record<string, unknown>>(
     // Only a runtime that is still running can take new plan steps.
     resolveRuntimeSessionId: (phiSessionId) =>
       liveRuntimeSessionId(deps.engine, deps.sessionKeys, phiSessionId) ?? null,
+    enterReplanMode: (runtimeSessionId, replanRequestId) => {
+      if (deps.findActivePromptRunByRuntimeSessionId(runtimeSessionId)) {
+        throw new Error('Wait for the current conversation turn to finish before replanning.')
+      }
+      return deps.engine.sessions.enterPlanMode({
+        sessionId: runtimeSessionId,
+        execute: true,
+        replanRequestId
+      })
+    },
+    exitReplanMode: (runtimeSessionId, replanRequestId) =>
+      deps.engine.sessions.cancelPlanMode({ sessionId: runtimeSessionId, replanRequestId }),
     timeline: { append: deps.appendSessionEvent, broadcast: deps.broadcastRunEvent },
     continueConversation,
     logError: deps.logError

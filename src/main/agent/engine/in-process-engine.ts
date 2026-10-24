@@ -29,6 +29,7 @@ export function createInProcessEngine(bridge: OmpBridge): PhiEngine {
       setAutoCompactionSettings: (params) =>
         bridge.request('session.setAutoCompactionSettings', params),
       enterPlanMode: (params) => bridge.request('session.plan.enter', params),
+      cancelPlanMode: (params) => bridge.request('session.plan.cancel', params),
       has: (sessionId) => bridge.hasSession(sessionId)
     },
     history: {

@@ -4,6 +4,9 @@ import { IPC } from '../../shared/ipcChannels'
 import { isRecord } from '../../shared/guards'
 import type {
   PlanRunIdInput,
+  PlanRunPendingReplan,
+  PlanRunReplanCancelInput,
+  PlanRunReplanRequest,
   PlanRunSessionInput,
   PlanRunState,
   PlanRunStepInput
@@ -14,11 +17,14 @@ type Awaitable<T> = T | Promise<T>
 export interface PlanRunIpcOperations {
   list(phiSessionId: string): Awaitable<PlanRunState[]>
   get(phiSessionId: string, runId: string): Awaitable<PlanRunState | null | undefined>
+  pendingReplanForRun(phiSessionId: string, runId: string): Awaitable<PlanRunPendingReplan | null>
   pause(phiSessionId: string, runId: string): Awaitable<PlanRunState>
   resume(phiSessionId: string, runId: string): Awaitable<PlanRunState>
   stop(phiSessionId: string, runId: string): Awaitable<PlanRunState>
   retryStep(phiSessionId: string, runId: string, stepId: string): Awaitable<PlanRunState>
   skipStep(phiSessionId: string, runId: string, stepId: string): Awaitable<PlanRunState>
+  requestReplan(phiSessionId: string, runId: string): Awaitable<PlanRunReplanRequest>
+  cancelRequestedReplan(phiSessionId: string, runId: string, requestId: string): Awaitable<void>
 }
 
 export interface PlanRunIpcOptions {
@@ -82,6 +88,15 @@ function readStepInput(args: unknown[]): PlanRunStepInput {
   }
 }
 
+function readReplanCancelInput(args: unknown[]): PlanRunReplanCancelInput {
+  const input = readInput(args, ['phiSessionId', 'runId', 'requestId'])
+  return {
+    phiSessionId: readIdentifier(input.phiSessionId),
+    runId: readIdentifier(input.runId),
+    requestId: readIdentifier(input.requestId)
+  }
+}
+
 export function registerPlanRunIpc(options: PlanRunIpcOptions): void {
   const { ipcMain, planRuns } = options
   ipcMain.handle(IPC.planRuns.list, (_event, ...args: unknown[]) => {
@@ -91,6 +106,13 @@ export function registerPlanRunIpc(options: PlanRunIpcOptions): void {
   ipcMain.handle(IPC.planRuns.get, async (_event, ...args: unknown[]) => {
     const input = readRunInput(args)
     return (await planRuns.get(input.phiSessionId, input.runId)) ?? null
+  })
+  ipcMain.handle(IPC.planRuns.getPendingReplan, async (_event, ...args: unknown[]) => {
+    const input = readRunInput(args)
+    const pending = await planRuns.pendingReplanForRun(input.phiSessionId, input.runId)
+    return pending?.runId === input.runId
+      ? { requestId: pending.requestId, runId: pending.runId }
+      : null
   })
   ipcMain.handle(IPC.planRuns.pause, (_event, ...args: unknown[]) => {
     const input = readRunInput(args)
@@ -111,5 +133,13 @@ export function registerPlanRunIpc(options: PlanRunIpcOptions): void {
   ipcMain.handle(IPC.planRuns.skipStep, (_event, ...args: unknown[]) => {
     const input = readStepInput(args)
     return planRuns.skipStep(input.phiSessionId, input.runId, input.stepId)
+  })
+  ipcMain.handle(IPC.planRuns.requestReplan, (_event, ...args: unknown[]) => {
+    const input = readRunInput(args)
+    return planRuns.requestReplan(input.phiSessionId, input.runId)
+  })
+  ipcMain.handle(IPC.planRuns.cancelReplan, (_event, ...args: unknown[]) => {
+    const input = readReplanCancelInput(args)
+    return planRuns.cancelRequestedReplan(input.phiSessionId, input.runId, input.requestId)
   })
 }

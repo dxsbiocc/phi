@@ -649,31 +649,53 @@ test('plan review rejects every malformed request before resolving a run', async
 })
 
 test('plan review rejects missing, cancelled, remote, and windowless conversations', async () => {
+  const wrongOrigin = planFixture()
+  await assert.rejects(
+    createPlanReviewRequest(wrongOrigin.deps)(validPlanRequest, { originSessionId: 'runtime-2' }),
+    /No active conversation/
+  )
+  await assert.rejects(
+    createPlanReviewRequest(wrongOrigin.deps)(validPlanRequest),
+    /No active conversation/
+  )
+  assert.deepEqual(wrongOrigin.calls, [])
+
   const missing = planFixture()
   missing.setRun(null)
-  await assert.rejects(createPlanReviewRequest(missing.deps)(validPlanRequest), /No active/)
+  await assert.rejects(
+    createPlanReviewRequest(missing.deps)(validPlanRequest, { originSessionId: 'runtime-1' }),
+    /No active/
+  )
 
   const cancelled = planFixture()
   cancelled.setRun({ ...cancelled.run, cancelled: true })
-  await assert.rejects(createPlanReviewRequest(cancelled.deps)(validPlanRequest), /No active/)
+  await assert.rejects(
+    createPlanReviewRequest(cancelled.deps)(validPlanRequest, { originSessionId: 'runtime-1' }),
+    /No active/
+  )
 
   const remoteProject = planFixture()
   remoteProject.setProjectLocation('ssh')
   await assert.rejects(
-    createPlanReviewRequest(remoteProject.deps)(validPlanRequest),
+    createPlanReviewRequest(remoteProject.deps)(validPlanRequest, { originSessionId: 'runtime-1' }),
     /远程项目暂不支持/
   )
 
   const remoteManifest = planFixture()
   remoteManifest.setManifestLocation('ssh')
   await assert.rejects(
-    createPlanReviewRequest(remoteManifest.deps)(validPlanRequest),
+    createPlanReviewRequest(remoteManifest.deps)(validPlanRequest, {
+      originSessionId: 'runtime-1'
+    }),
     /远程项目暂不支持/
   )
 
   const windowless = planFixture()
   windowless.setWindowAvailable(false)
-  await assert.rejects(createPlanReviewRequest(windowless.deps)(validPlanRequest), /没有可用窗口/)
+  await assert.rejects(
+    createPlanReviewRequest(windowless.deps)(validPlanRequest, { originSessionId: 'runtime-1' }),
+    /没有可用窗口/
+  )
 })
 
 test('plan review records approval after the submitted event and renderer round-trip', async () => {
@@ -681,9 +703,12 @@ test('plan review records approval after the submitted event and renderer round-
   fixture.setResponse({
     answers: [{ question: 'plan_review', answer: 'approve' }]
   })
-  assert.deepEqual(await createPlanReviewRequest(fixture.deps)(validPlanRequest), {
-    decision: 'approve'
-  })
+  assert.deepEqual(
+    await createPlanReviewRequest(fixture.deps)(validPlanRequest, { originSessionId: 'runtime-1' }),
+    {
+      decision: 'approve'
+    }
+  )
   assert.deepEqual(fixture.calls, [
     'append:plan_review_submitted',
     'broadcast:plan_review_submitted',
@@ -703,24 +728,34 @@ test('plan review turns renderer rejection into cancellation and keeps notes onl
     answers: [{ question: 'plan_review', answer: 'approve' }],
     cancelled: true
   })
-  assert.deepEqual(await createPlanReviewRequest(cancelled.deps)(validPlanRequest), {
-    decision: 'cancel'
-  })
+  assert.deepEqual(
+    await createPlanReviewRequest(cancelled.deps)(validPlanRequest, {
+      originSessionId: 'runtime-1'
+    }),
+    {
+      decision: 'cancel'
+    }
+  )
   assert.equal(cancelled.events[1].note, undefined)
   assert.equal(cancelled.calls.includes('cancelled'), true)
 
   const unknown = planFixture()
   unknown.setResponse({ answers: [{ question: 'plan_review', answer: 'other' }] })
-  assert.deepEqual(await createPlanReviewRequest(unknown.deps)(validPlanRequest), {
-    decision: 'cancel'
-  })
+  assert.deepEqual(
+    await createPlanReviewRequest(unknown.deps)(validPlanRequest, { originSessionId: 'runtime-1' }),
+    {
+      decision: 'cancel'
+    }
+  )
 
   const revised = planFixture()
   revised.setResponse({
     answers: [{ question: 'plan_review', answer: 'revise' }],
     globalNote: `  ${'n'.repeat(2100)}  `
   })
-  const result = await createPlanReviewRequest(revised.deps)(validPlanRequest)
+  const result = await createPlanReviewRequest(revised.deps)(validPlanRequest, {
+    originSessionId: 'runtime-1'
+  })
   assert.equal(result.decision, 'revise')
   assert.equal(result.note?.length, 2000)
   assert.equal(revised.events[1].note, result.note)

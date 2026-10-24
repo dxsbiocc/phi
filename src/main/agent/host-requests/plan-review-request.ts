@@ -1,9 +1,11 @@
 import type { BrowserWindow } from 'electron'
 
+import type { PhiHostRequestContext } from '../engine/types'
 import type { AgentUserInteractionInput, waitForAgentUserInteraction } from '../user-interaction'
 import { isRecord } from '../../../shared/guards'
 import type { PlanSpec } from '../../../shared/planRunTypes'
 import { validatePlanSpec } from '../plan/model/plan-spec'
+import type { ApprovedPlanStartGuard } from '../plan/plan-run-service'
 
 export interface PlanReviewPromptRun {
   phiSessionId: string
@@ -39,7 +41,7 @@ interface PlanReviewDecidedEvent extends Record<string, unknown> {
   reviewId: string
   decision: PlanReviewDecision
   note?: string
-  reason?: 'plan_start_failed'
+  reason?: 'plan_start_failed' | 'review_expired'
 }
 
 type PlanReviewEvent = PlanReviewSubmittedEvent | PlanReviewDecidedEvent
@@ -65,7 +67,8 @@ export interface PlanReviewRequestDeps<StoredEvent> {
     canRequest(window: BrowserWindow | null): window is BrowserWindow
     waitForResponse(
       input: AgentUserInteractionInput,
-      window: BrowserWindow
+      window: BrowserWindow,
+      signals?: ReadonlyArray<AbortSignal | undefined>
     ): Promise<PlanReviewResponse>
   }
   timeline: {
@@ -84,7 +87,27 @@ export interface PlanReviewRequestDeps<StoredEvent> {
     notifySessionChanged(): void
   }
   planRuns?: {
-    startFromApprovedPlan(sessionId: string, spec: PlanSpec): Promise<{ id: string }>
+    startFromApprovedPlan(
+      sessionId: string,
+      spec: PlanSpec,
+      guard?: ApprovedPlanStartGuard
+    ): Promise<{ id: string }>
+    pendingReplan(
+      phiSessionId: string,
+      runtimeSessionId: string
+    ): { requestId: string; runId: string } | null
+    validateReplanProposal(
+      phiSessionId: string,
+      requestId: string,
+      spec: unknown
+    ): Promise<{ ok: true; spec: PlanSpec } | { ok: false; errors: string[] }>
+    applyApprovedReplan(
+      phiSessionId: string,
+      runtimeSessionId: string,
+      requestId: string,
+      spec: PlanSpec
+    ): Promise<{ id: string }>
+    cancelReplan(phiSessionId: string, requestId: string): void
   }
 }
 
@@ -94,6 +117,7 @@ interface ValidPlanReviewRequest {
   content: string
   planFilePath: string
   steps?: PlanSpec
+  replanRequestId?: string
 }
 
 interface PlanReviewTarget {
@@ -119,6 +143,7 @@ function readPlanReviewRequest<StoredEvent>(
   const content = deps.fields.optionalStringField(record, 'planContent')
   const planFilePath = deps.fields.optionalStringField(record, 'planFilePath')
   const steps = readPlanSteps(record.steps)
+  const replanRequestId = deps.fields.optionalStringField(record, 'replanRequestId')
   if (
     !runtimeSessionId ||
     !title ||
@@ -126,7 +151,8 @@ function readPlanReviewRequest<StoredEvent>(
     !content?.trim() ||
     Buffer.byteLength(content, 'utf8') > 64 * 1024 ||
     !planFilePath ||
-    !/^local:\/\/[A-Za-z0-9_-]+\.md$/.test(planFilePath)
+    !/^local:\/\/[A-Za-z0-9_-]+\.md$/.test(planFilePath) ||
+    (replanRequestId !== undefined && (replanRequestId.length > 200 || !steps))
   ) {
     throw new Error('Invalid plan review request')
   }
@@ -135,16 +161,25 @@ function readPlanReviewRequest<StoredEvent>(
     title,
     content,
     planFilePath,
-    ...(steps ? { steps } : {})
+    ...(steps ? { steps } : {}),
+    ...(replanRequestId ? { replanRequestId } : {})
   }
 }
 
 function resolvePlanReviewTarget<StoredEvent>(
   request: ValidPlanReviewRequest,
+  context: PhiHostRequestContext | undefined,
   deps: PlanReviewRequestDeps<StoredEvent>
 ): PlanReviewTarget {
   const run = deps.runs.findByRuntimeSessionId(request.runtimeSessionId)
-  if (!run || run.cancelled) throw new Error('No active conversation for plan review')
+  if (
+    !run ||
+    run.cancelled ||
+    context?.originSessionId !== request.runtimeSessionId ||
+    context.signal?.aborted
+  ) {
+    throw new Error('No active conversation for plan review')
+  }
   const project = run.projectId ? deps.projects.getById(run.projectId) : undefined
   const manifest = deps.sessions.findById(run.phiSessionId)
   if (project?.location.kind === 'ssh' || manifest?.projectLocation?.kind === 'ssh') {
@@ -216,14 +251,54 @@ function recordPlanReviewDecision<StoredEvent>(
   deps.state.notifySessionChanged()
 }
 
+function planReviewRunIsCurrent<StoredEvent>(
+  request: ValidPlanReviewRequest,
+  target: PlanReviewTarget,
+  context: PhiHostRequestContext | undefined,
+  deps: PlanReviewRequestDeps<StoredEvent>
+): boolean {
+  const current = deps.runs.findByRuntimeSessionId(request.runtimeSessionId)
+  return Boolean(
+    !context?.signal?.aborted &&
+    current &&
+    !current.cancelled &&
+    current.phiSessionId === target.run.phiSessionId &&
+    current.runId === target.run.runId &&
+    current.sessionGeneration === target.run.sessionGeneration &&
+    current.projectId === target.run.projectId &&
+    current.cwd === target.run.cwd
+  )
+}
+
 export function createPlanReviewRequest<StoredEvent>(
   deps: PlanReviewRequestDeps<StoredEvent>
 ): (
-  params: unknown
+  params: unknown,
+  context?: PhiHostRequestContext
 ) => Promise<{ decision: PlanReviewDecision; note?: string; planRunId?: string }> {
-  return async function handlePlanReviewRequest(params) {
+  return async function handlePlanReviewRequest(params, context) {
     const request = readPlanReviewRequest(params, deps)
-    const target = resolvePlanReviewTarget(request, deps)
+    const target = resolvePlanReviewTarget(request, context, deps)
+    const pending = deps.planRuns?.pendingReplan(target.run.phiSessionId, request.runtimeSessionId)
+    if (request.replanRequestId) {
+      if (!pending || pending.requestId !== request.replanRequestId || !request.steps) {
+        throw new Error('Plan replan request is no longer active')
+      }
+      const validation = await deps.planRuns?.validateReplanProposal(
+        target.run.phiSessionId,
+        request.replanRequestId,
+        request.steps
+      )
+      if (!validation?.ok)
+        throw new Error(validation?.errors.join(' ') ?? 'Plan replan validation unavailable')
+    } else if (pending) {
+      throw new Error('A plan replan request is already in progress')
+    }
+    if (!planReviewRunIsCurrent(request, target, context, deps)) {
+      if (request.replanRequestId)
+        deps.planRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
+      return { decision: 'cancel' }
+    }
     const reviewId = deps.state.createId()
     submitPlanReview(request, target, reviewId, deps)
     const response = await deps.renderer.waitForResponse(
@@ -243,22 +318,54 @@ export function createPlanReviewRequest<StoredEvent>(
         cwd: target.run.cwd,
         ...(target.project?.name ? { projectName: target.project.name } : {})
       },
-      target.window
+      target.window,
+      [context?.signal]
     )
     const decision = planReviewDecision(response)
     const note = planReviewNote(response)
     let planRun: { id: string } | undefined
+    if (!planReviewRunIsCurrent(request, target, context, deps)) {
+      if (request.replanRequestId)
+        deps.planRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
+      recordPlanReviewDecision(
+        target,
+        reviewId,
+        { decision: 'cancel', note: '', reason: 'review_expired' },
+        deps
+      )
+      return { decision: 'cancel' }
+    }
+    if (decision === 'cancel' && request.replanRequestId) {
+      deps.planRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
+    }
     if (decision === 'approve' && request.steps) {
       try {
         if (!deps.planRuns) throw new Error('Plan execution service is unavailable')
-        planRun = await deps.planRuns.startFromApprovedPlan(target.run.phiSessionId, request.steps)
+        planRun = request.replanRequestId
+          ? await deps.planRuns.applyApprovedReplan(
+              target.run.phiSessionId,
+              request.runtimeSessionId,
+              request.replanRequestId,
+              request.steps
+            )
+          : await deps.planRuns.startFromApprovedPlan(target.run.phiSessionId, request.steps, {
+              expectedRuntimeSessionId: request.runtimeSessionId,
+              assertCurrent: () => {
+                if (!planReviewRunIsCurrent(request, target, context, deps))
+                  throw new Error('Plan approval is no longer active for this conversation')
+              },
+              ...(context?.signal ? { signal: context.signal } : {})
+            })
       } catch (error) {
+        if (request.replanRequestId)
+          deps.planRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
         recordPlanReviewDecision(
           target,
           reviewId,
           { decision: 'cancel', note: '', reason: 'plan_start_failed' },
           deps
         )
+        if (request.replanRequestId) return { decision: 'cancel' }
         throw error
       }
     }

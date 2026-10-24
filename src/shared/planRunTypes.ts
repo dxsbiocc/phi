@@ -128,14 +128,32 @@ export interface PlanRunStepInput extends PlanRunIdInput {
   stepId: string
 }
 
+export interface PlanRunReplanRequest {
+  requestId: string
+  runId: string
+  prompt: string
+}
+
+export interface PlanRunPendingReplan {
+  requestId: string
+  runId: string
+}
+
+export interface PlanRunReplanCancelInput extends PlanRunIdInput {
+  requestId: string
+}
+
 export interface PlanRunRendererApi {
   listPlanRuns(phiSessionId: string): Promise<PlanRunState[]>
   getPlanRun(phiSessionId: string, runId: string): Promise<PlanRunState | null>
+  getPendingPlanRunReplan(phiSessionId: string, runId: string): Promise<PlanRunPendingReplan | null>
   pausePlanRun(phiSessionId: string, runId: string): Promise<PlanRunState>
   resumePlanRun(phiSessionId: string, runId: string): Promise<PlanRunState>
   stopPlanRun(phiSessionId: string, runId: string): Promise<PlanRunState>
   retryPlanRunStep(phiSessionId: string, runId: string, stepId: string): Promise<PlanRunState>
   skipPlanRunStep(phiSessionId: string, runId: string, stepId: string): Promise<PlanRunState>
+  requestPlanRunReplan(phiSessionId: string, runId: string): Promise<PlanRunReplanRequest>
+  cancelPlanRunReplan(phiSessionId: string, runId: string, requestId: string): Promise<void>
 }
 
 export type PlanRunTransitionErrorCode =

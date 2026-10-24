@@ -40,7 +40,7 @@ export interface PlanExecutorDependencies {
 }
 
 export interface PlanExecutor {
-  start(spec: PlanSpec, sessionId: string): Promise<PlanRunState>
+  start(spec: PlanSpec, sessionId: string, assertCurrent?: () => void): Promise<PlanRunState>
   pause(runId: string): Promise<PlanRunState>
   resume(runId: string): Promise<PlanRunState>
   stop(runId: string): Promise<PlanRunState>
@@ -114,8 +114,12 @@ class PlanExecutorImplementation implements PlanExecutor {
     return current
   }
 
-  private async publish(previous: PlanRunState | undefined, state: PlanRunState): Promise<void> {
-    await this.deps.store.write(state)
+  private async publish(
+    previous: PlanRunState | undefined,
+    state: PlanRunState,
+    persisted = false
+  ): Promise<void> {
+    if (!persisted) await this.deps.store.write(state)
     await this.deps.events.emit({ type: 'state_changed', state })
     if (state.status === 'completed' && previous?.status !== 'completed') {
       await this.deps.events.emit({ type: 'run_finished', state })
@@ -133,9 +137,13 @@ class PlanExecutorImplementation implements PlanExecutor {
   private async apply(runId: string, event: PlanRunEvent, schedule = true): Promise<PlanRunState> {
     const previous = requireState(this.runtime, runId)
     const state = reducePlanRun(previous, event)
-    // Memory is authoritative if persistence fails; a later successful write replaces stale disk state.
+    // An approved replacement must be durable before it becomes runnable in memory.
+    // Other transitions retain their existing memory-authoritative recovery behavior.
+    const writeBeforeMemory = event.type === 'replace_remaining_steps'
+    if (writeBeforeMemory) await this.deps.store.write(state)
+    // For other transitions memory stays authoritative if persistence fails.
     this.runtime.states.set(runId, state)
-    await this.publish(previous, state)
+    await this.publish(previous, state, writeBeforeMemory)
     if (schedule) await this.scheduleRun(runId)
     return requireState(this.runtime, runId)
   }
@@ -231,7 +239,11 @@ class PlanExecutorImplementation implements PlanExecutor {
     return this.enqueue(runId, () => this.apply(runId, event))
   }
 
-  async start(spec: PlanSpec, sessionId: string): Promise<PlanRunState> {
+  async start(
+    spec: PlanSpec,
+    sessionId: string,
+    assertCurrent?: () => void
+  ): Promise<PlanRunState> {
     const validated = validatePlanSpec(spec)
     if (!validated.ok) throw new Error(`Invalid plan: ${validated.errors.join('; ')}`)
     const id = nextRunId(this.deps.ids)
@@ -246,7 +258,15 @@ class PlanExecutorImplementation implements PlanExecutor {
     this.runtime.active.set(id, new Map())
     try {
       await this.enqueue(id, async () => {
-        await this.publish(undefined, state)
+        // The first durable write commits approval. In production this write is
+        // synchronous; a later prompt cancellation cannot revoke the committed run.
+        assertCurrent?.()
+        await this.deps.store.write(state)
+        try {
+          await this.deps.events.emit({ type: 'state_changed', state })
+        } catch (error) {
+          await this.emitExecutorError(id, error)
+        }
         await this.scheduleRun(id)
       })
     } catch (error) {

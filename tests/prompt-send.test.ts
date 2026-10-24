@@ -286,11 +286,35 @@ test('a current failure reports the error and gives the draft and images back', 
     images: [{ dataUrl: 'data:', name: 'a' } as never]
   })
   h.failWith(new Error('boom'))
-  assert.equal(await sending, true)
+  assert.equal(await sending, false)
   assert.ok(h.events.includes('error'))
   assert.equal(h.drafts()['draft-a'], 'draft text')
   assert.deepEqual(h.draftImages()['draft-a'], [{ dataUrl: 'data:', name: 'a' }])
   assert.ok(h.events.includes('sending:false'))
+})
+
+test('a current null receipt reports that the prompt was not accepted', async () => {
+  const h = harness()
+  const sending = sendPrompt(h.deps, 'replan', target, {
+    appendUserMessage: false,
+    suppressUserMessageEvent: true
+  })
+  h.applyReceipt(null)
+  assert.equal(await sending, false)
+})
+
+test('a receipt-side UI failure does not roll back a prompt accepted by the runtime', async () => {
+  const h = harness()
+  h.deps.actions.refreshSessions = () => {
+    throw new Error('sidebar refresh failed')
+  }
+  const sending = sendPrompt(h.deps, 'replan', target, {
+    appendUserMessage: false,
+    suppressUserMessageEvent: true
+  })
+  h.applyReceipt({})
+  assert.equal(await sending, true)
+  assert.equal(h.errors().length, 1)
 })
 
 test('legacy remote prompt failures render in the live interface language', async () => {

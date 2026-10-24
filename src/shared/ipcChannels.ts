@@ -179,11 +179,14 @@ export const IPC = {
     wrapperDetail: 'packages:wrapperDetail'
   },
   planRuns: {
+    cancelReplan: 'planRuns:cancelReplan',
     get: 'planRuns:get',
+    getPendingReplan: 'planRuns:getPendingReplan',
     list: 'planRuns:list',
     pause: 'planRuns:pause',
     resume: 'planRuns:resume',
     retryStep: 'planRuns:retryStep',
+    requestReplan: 'planRuns:requestReplan',
     skipStep: 'planRuns:skipStep',
     stop: 'planRuns:stop'
   },

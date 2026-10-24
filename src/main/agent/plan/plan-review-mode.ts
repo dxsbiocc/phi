@@ -19,6 +19,7 @@ type PlanModeState = {
   workflow?: 'parallel' | 'iterative'
   reentry?: boolean
   execute?: boolean
+  replanRequestId?: string
 }
 
 type PlanToolResult = {
@@ -46,6 +47,7 @@ export type PlanStepsReviewResult =
 
 export interface PlanExecuteModeOptions {
   execute?: boolean
+  replanRequestId?: string
   reviewSteps?: (input: unknown) => Promise<PlanStepsReviewResult>
   setProposalHandler?: (handler: ((input: unknown) => Promise<PlanStepsToolResult>) | null) => void
 }
@@ -61,6 +63,10 @@ export type PlanReviewSession = {
 }
 
 export const PLAN_STEPS_TOOL_NAME = 'propose_plan_steps'
+const replanRestorations = new WeakMap<
+  PlanReviewSession,
+  { requestId: string; previousTools: string[]; options: PlanExecuteModeOptions }
+>()
 const PLAN_TOOLS = new Set([
   'read',
   'glob',
@@ -81,6 +87,23 @@ async function leavePlanMode(
   session.setPlanProposalHandler(null)
   options.setProposalHandler?.(null)
   session.setPlanModeState(undefined)
+  replanRestorations.delete(session)
+}
+
+/** Roll back only the replan mode opened for this exact request. */
+export async function cancelPlanReviewReplanMode(
+  session: PlanReviewSession,
+  requestId: string
+): Promise<boolean> {
+  const restoration = replanRestorations.get(session)
+  if (
+    !restoration ||
+    restoration.requestId !== requestId ||
+    session.getPlanModeState()?.replanRequestId !== requestId
+  )
+    return false
+  await leavePlanMode(session, restoration.previousTools, restoration.options)
+  return true
 }
 
 function revisionInstruction(choice: PlanReviewChoice, target: string): string {
@@ -241,7 +264,8 @@ export async function enterPlanReviewMode(
     enabled: true,
     planFilePath: 'local://PLAN.md',
     workflow: 'parallel',
-    ...(options.execute ? { execute: true } : {})
+    ...(options.execute ? { execute: true } : {}),
+    ...(options.replanRequestId ? { replanRequestId: options.replanRequestId } : {})
   })
   try {
     await session.setActiveToolsByName(planTools)
@@ -252,5 +276,12 @@ export async function enterPlanReviewMode(
 
   if (options.execute) installStructuredProposalHandler(session, previousTools, options)
   installMarkdownProposalHandler(session, previousTools, resolveProposal, requestDecision, options)
+  if (options.replanRequestId) {
+    replanRestorations.set(session, {
+      requestId: options.replanRequestId,
+      previousTools,
+      options
+    })
+  }
   return true
 }

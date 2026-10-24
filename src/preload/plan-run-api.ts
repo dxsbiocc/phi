@@ -3,6 +3,7 @@ import type { IpcRenderer } from 'electron'
 import { IPC } from '../shared/ipcChannels'
 import type {
   PlanRunIdInput,
+  PlanRunReplanCancelInput,
   PlanRunRendererApi,
   PlanRunSessionInput,
   PlanRunStepInput
@@ -19,12 +20,19 @@ export function createPlanRunApi(ipcRenderer: Pick<IpcRenderer, 'invoke'>): Plan
     runId,
     stepId
   })
+  const cancelReplanInput = (
+    phiSessionId: string,
+    runId: string,
+    requestId: string
+  ): PlanRunReplanCancelInput => ({ phiSessionId, runId, requestId })
 
   return {
     listPlanRuns: (phiSessionId) =>
       ipcRenderer.invoke(IPC.planRuns.list, sessionInput(phiSessionId)),
     getPlanRun: (phiSessionId, runId) =>
       ipcRenderer.invoke(IPC.planRuns.get, runInput(phiSessionId, runId)),
+    getPendingPlanRunReplan: (phiSessionId, runId) =>
+      ipcRenderer.invoke(IPC.planRuns.getPendingReplan, runInput(phiSessionId, runId)),
     pausePlanRun: (phiSessionId, runId) =>
       ipcRenderer.invoke(IPC.planRuns.pause, runInput(phiSessionId, runId)),
     resumePlanRun: (phiSessionId, runId) =>
@@ -34,6 +42,13 @@ export function createPlanRunApi(ipcRenderer: Pick<IpcRenderer, 'invoke'>): Plan
     retryPlanRunStep: (phiSessionId, runId, stepId) =>
       ipcRenderer.invoke(IPC.planRuns.retryStep, stepInput(phiSessionId, runId, stepId)),
     skipPlanRunStep: (phiSessionId, runId, stepId) =>
-      ipcRenderer.invoke(IPC.planRuns.skipStep, stepInput(phiSessionId, runId, stepId))
+      ipcRenderer.invoke(IPC.planRuns.skipStep, stepInput(phiSessionId, runId, stepId)),
+    requestPlanRunReplan: (phiSessionId, runId) =>
+      ipcRenderer.invoke(IPC.planRuns.requestReplan, runInput(phiSessionId, runId)),
+    cancelPlanRunReplan: (phiSessionId, runId, requestId) =>
+      ipcRenderer.invoke(
+        IPC.planRuns.cancelReplan,
+        cancelReplanInput(phiSessionId, runId, requestId)
+      )
   }
 }

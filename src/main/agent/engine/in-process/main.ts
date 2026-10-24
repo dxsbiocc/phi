@@ -24,6 +24,7 @@ import {
   abortSession,
   cancelSessionShellJob,
   compactSession,
+  cancelSessionPlanMode,
   disposeSession,
   enterSessionPlanMode,
   listSessionShellJobs,
@@ -117,6 +118,8 @@ async function handleRequest(method: string, params: unknown): Promise<unknown> 
       return compactSession(params)
     case 'session.plan.enter':
       return enterSessionPlanMode(params)
+    case 'session.plan.cancel':
+      return cancelSessionPlanMode(params)
     case 'session.abort':
       return abortSession(params)
     case 'session.dispose':

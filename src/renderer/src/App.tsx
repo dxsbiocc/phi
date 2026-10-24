@@ -1849,6 +1849,31 @@ function App(): React.JSX.Element {
     await sendPromptText(text, target, { images })
   }
 
+  const onReplanPrompt = useCallback(
+    async (phiSessionId: string, prompt: string): Promise<boolean> => {
+      const current = useSessionStore.getState()
+      if (
+        current.activePhiSessionId !== phiSessionId ||
+        current.activeProjectLocation?.kind === 'ssh' ||
+        currentSessionIsBusyRef.current ||
+        isSendingRef.current
+      ) {
+        return false
+      }
+      return sendPromptText(
+        prompt,
+        {
+          path: current.activeSessionPath,
+          phiSessionId,
+          cwd: current.activeCwd,
+          sessionGeneration: current.activeSessionGeneration
+        },
+        { appendUserMessage: false, suppressUserMessageEvent: true }
+      )
+    },
+    [sendPromptText]
+  )
+
   const onSavePersonaMarkdown = async (markdown: string): Promise<void> => {
     const next = await rendererApi.setPersonaMarkdown(markdown)
     setPersonaMarkdownState(next)
@@ -3512,6 +3537,7 @@ function App(): React.JSX.Element {
                   activeProjectLocation?.kind === 'ssh' ? null : (activePhiSessionId ?? null)
                 }
                 cwd={activeCwd}
+                onReplanPrompt={onReplanPrompt}
               />
             }
             onStopGeneration={onStopGeneration}

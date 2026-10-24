@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  cancelPlanReviewReplanMode,
   enterPlanReviewMode,
   type PlanReviewSession
 } from '../src/main/agent/plan/plan-review-mode'
@@ -108,6 +109,58 @@ test('entering plan review again does not overwrite its original tool set', asyn
     ),
     false
   )
+})
+
+test('replan request identity stays in plan-mode state until review ends', async () => {
+  const session = fakeSession()
+  let structured: ((input: unknown) => Promise<unknown>) | null = null
+  await enterPlanReviewMode(
+    session,
+    async () => ({ title: 'unused', content: 'unused', planFilePath: 'local://PLAN.md' }),
+    async () => ({ decision: 'cancel' }),
+    {
+      execute: true,
+      replanRequestId: 'replan-1',
+      reviewSteps: async () => ({
+        ok: true,
+        spec: { version: 1, goal: 'Goal', steps: [] },
+        choice: { decision: 'cancel' }
+      }),
+      setProposalHandler: (handler) => {
+        structured = handler
+      }
+    }
+  )
+  assert.equal(session.getPlanModeState()?.replanRequestId, 'replan-1')
+  assert.ok(structured)
+  await (structured as (input: unknown) => Promise<unknown>)({})
+  assert.equal(session.getPlanModeState(), undefined)
+})
+
+test('replan rollback restores tools only for the matching request', async () => {
+  const session = fakeSession()
+  const originalTools = [...session.activeTools]
+  let structured: ((input: unknown) => Promise<unknown>) | null = null
+  await enterPlanReviewMode(
+    session,
+    async () => ({ title: 'unused', content: 'unused', planFilePath: 'local://PLAN.md' }),
+    async () => ({ decision: 'cancel' }),
+    {
+      execute: true,
+      replanRequestId: 'replan-1',
+      reviewSteps: async () => ({ ok: false, errors: ['unused'] }),
+      setProposalHandler: (handler) => {
+        structured = handler
+      }
+    }
+  )
+  assert.equal(await cancelPlanReviewReplanMode(session, 'replan-2'), false)
+  assert.equal(session.getPlanModeState()?.replanRequestId, 'replan-1')
+  assert.equal(await cancelPlanReviewReplanMode(session, 'replan-1'), true)
+  assert.equal(session.getPlanModeState(), undefined)
+  assert.deepEqual(session.activeTools, originalTools)
+  assert.equal(structured, null)
+  assert.equal(await cancelPlanReviewReplanMode(session, 'replan-1'), false)
 })
 
 test('plan tool guard blocks workspace mutations and hidden device calls', () => {

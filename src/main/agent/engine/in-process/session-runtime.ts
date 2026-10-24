@@ -11,7 +11,11 @@ import {
   assertRpcCompactionPolicySupported
 } from './settings'
 import type { ResolvedRuntimeCompactionPolicy } from '../types'
-import { enterPlanReviewMode, type PlanReviewChoice } from '../../plan/plan-review-mode'
+import {
+  cancelPlanReviewReplanMode,
+  enterPlanReviewMode,
+  type PlanReviewChoice
+} from '../../plan/plan-review-mode'
 import { planReviewContent } from '../../plan/plan-review-content'
 import { validatePlanSpec } from '../../plan/model/plan-spec'
 import type { PlanSpec } from '../../../../shared/planRunTypes'
@@ -232,13 +236,21 @@ async function reviewStructuredPlan(
   const entry = sessions.get(runtimeSessionId)
   const agentErrors = unavailablePlanAgents(validated.spec, entry?.agentRunners)
   if (agentErrors.length > 0) return { ok: false, errors: agentErrors }
-  const choice = (await requestHost('planReview.request', {
-    runtimeSessionId,
-    title: reviewTitle(validated.spec.goal),
-    planContent: planReviewContent(validated.spec),
-    planFilePath: 'local://PLAN.md',
-    steps: validated.spec
-  })) as PlanReviewChoice
+  const replanRequestId = (
+    entry?.result.session.getPlanModeState() as { replanRequestId?: string } | undefined
+  )?.replanRequestId
+  const choice = (await requestHost(
+    'planReview.request',
+    {
+      runtimeSessionId,
+      title: reviewTitle(validated.spec.goal),
+      planContent: planReviewContent(validated.spec),
+      planFilePath: 'local://PLAN.md',
+      steps: validated.spec,
+      ...(replanRequestId ? { replanRequestId } : {})
+    },
+    { originSessionId: runtimeSessionId }
+  )) as PlanReviewChoice
   return { ok: true, spec: validated.spec, choice }
 }
 
@@ -246,7 +258,17 @@ export async function enterSessionPlanMode(params: unknown): Promise<{ enabled: 
   const record = isRecord(params) ? params : {}
   const runtimeSessionId = stringValue(record.sessionId)
   const entry = sessions.get(runtimeSessionId)
+  const replanRequestId =
+    typeof record.replanRequestId === 'string' ? record.replanRequestId.trim() : ''
+  if (replanRequestId && (replanRequestId.length > 200 || record.execute !== true)) {
+    throw new Error('Invalid replan mode request')
+  }
   const { session } = getSession(runtimeSessionId)
+  if (replanRequestId && (session.getPlanModeState()?.enabled || session.isStreaming)) {
+    throw new Error(
+      'Wait for the current conversation turn or plan review to finish before replanning.'
+    )
+  }
   const sessionManager = session.sessionManager
   const localProtocolOptions = {
     getArtifactsDir: () => sessionManager.getArtifactsDir(),
@@ -269,14 +291,19 @@ export async function enterSessionPlanMode(params: unknown): Promise<{ enabled: 
       }
     },
     async (proposal) =>
-      (await requestHost('planReview.request', {
-        runtimeSessionId,
-        title: proposal.title,
-        planContent: proposal.content,
-        planFilePath: proposal.planFilePath
-      })) as PlanReviewChoice,
+      (await requestHost(
+        'planReview.request',
+        {
+          runtimeSessionId,
+          title: proposal.title,
+          planContent: proposal.content,
+          planFilePath: proposal.planFilePath
+        },
+        { originSessionId: runtimeSessionId }
+      )) as PlanReviewChoice,
     {
       execute: record.execute === true,
+      replanRequestId: replanRequestId || undefined,
       reviewSteps: (input) => reviewStructuredPlan(runtimeSessionId, input),
       setProposalHandler: (handler) => {
         if (!entry) return
@@ -286,6 +313,16 @@ export async function enterSessionPlanMode(params: unknown): Promise<{ enabled: 
     }
   )
   return { enabled: true }
+}
+
+export async function cancelSessionPlanMode(params: unknown): Promise<boolean> {
+  const record = isRecord(params) ? params : {}
+  const runtimeSessionId = stringValue(record.sessionId)
+  const replanRequestId = stringValue(record.replanRequestId)
+  if (!replanRequestId) return false
+  const entry = sessions.get(runtimeSessionId)
+  if (!entry || entry.result.session.isStreaming) return false
+  return cancelPlanReviewReplanMode(entry.result.session, replanRequestId)
 }
 
 export function listSessionShellJobs(): unknown[] {

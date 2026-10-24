@@ -344,6 +344,10 @@ export class SessionRoutingEngine implements PhiEngine {
     enterPlanMode: async (params) => {
       this.unsupported(params.sessionId, 'enterPlanMode')
       return this.legacy.sessions.enterPlanMode(params)
+    },
+    cancelPlanMode: async (params) => {
+      this.unsupported(params.sessionId, 'cancelPlanMode')
+      return this.legacy.sessions.cancelPlanMode(params)
     }
   }
   readonly history: PhiEngine['history'] = {

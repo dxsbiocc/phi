@@ -2,21 +2,31 @@ import { randomUUID } from 'node:crypto'
 
 import type {
   PlanRunFinishedEvent,
+  PlanRunReplanRequest,
   PlanRunState,
   PlanRunTimelineSnapshot,
   PlanRunTimelineStepSnapshot,
   PlanSpec,
   PlanStep
 } from '../../../shared/planRunTypes'
-import { agentRunCompletions, type AgentRunCompletions } from './execution/agent-run-completions'
+import { PLAN_MAX_REPLANS } from '../../../shared/planRunTypes'
+import { agentRunCompletions } from './execution/agent-run-completions'
 import { createEngineStepRunner } from './execution/engine-step-runner'
 import {
   createPlanExecutor,
   type PlanExecutor,
-  type PlanExecutorClock,
-  type PlanExecutorEvent,
-  type PlanExecutorIds
+  type PlanExecutorEvent
 } from './execution/plan-executor'
+import { reducePlanRun } from './model/plan-run-state'
+import { validatePlanSpec, type PlanSpecValidationResult } from './model/plan-spec'
+import type {
+  ApprovedPlanStartGuard,
+  PlanRunService,
+  PlanRunServiceDependencies,
+  PlanRunServiceStore,
+  TimelineEvent
+} from './plan-run-service-contract'
+import { replanPrompt } from './replan-prompt'
 import {
   listPlanRuns,
   listUnfinishedPlanRuns,
@@ -24,49 +34,27 @@ import {
   writePlanRun
 } from './persistence/plan-run-store'
 
-type Awaitable<T> = T | Promise<T>
+export type {
+  ApprovedPlanStartGuard,
+  PlanRunService,
+  PlanRunServiceDependencies,
+  PlanRunServiceStore
+} from './plan-run-service-contract'
 
-type TimelineEvent = Record<string, unknown> & { type: string; runId: string }
-
-export interface PlanRunServiceStore {
-  write(state: PlanRunState): Awaitable<void>
-  read(sessionId: string, runId: string): PlanRunState | null
-  list(sessionId: string): PlanRunState[]
-  listUnfinished(sessionId: string): PlanRunState[]
+interface PendingReplan {
+  requestId: string
+  runId: string
+  runtimeSessionId: string
+  entered: boolean
+  applying: boolean
+  cancelling: boolean
 }
 
-export interface PlanRunServiceDependencies<StoredEvent extends Record<string, unknown>> {
-  engine: {
-    agentRuns: {
-      start(params: { sessionId: string; agent?: string; task: string }): Promise<{ runId: string }>
-      stop(params: { sessionId: string; runId: string }): Promise<unknown>
-    }
-  }
-  resolveRuntimeSessionId(phiSessionId: string): string | null
-  timeline: {
-    append(sessionId: string, event: TimelineEvent): StoredEvent
-    broadcast(sessionId: string, event: StoredEvent): void
-  }
-  continueConversation(sessionId: string, event: PlanRunFinishedEvent): void
-  logError(error: unknown, metadata: { runId: string; source: string }): void
-  completions?: AgentRunCompletions
-  store?: PlanRunServiceStore
-  clock?: PlanExecutorClock | (() => string)
-  ids?: PlanExecutorIds | (() => string)
-  maxConcurrent?: number
-}
-
-export interface PlanRunService {
-  startFromApprovedPlan(phiSessionId: string, spec: PlanSpec): Promise<PlanRunState>
-  hasActiveWork(phiSessionId: string): boolean
-  list(phiSessionId: string): Promise<PlanRunState[]>
-  get(phiSessionId: string, runId: string): Promise<PlanRunState | null>
-  pause(phiSessionId: string, runId: string): Promise<PlanRunState>
-  resume(phiSessionId: string, runId: string): Promise<PlanRunState>
-  stop(phiSessionId: string, runId: string): Promise<PlanRunState>
-  retryStep(phiSessionId: string, runId: string, stepId: string): Promise<PlanRunState>
-  skipStep(phiSessionId: string, runId: string, stepId: string): Promise<PlanRunState>
-  recoverSession(phiSessionId: string): Promise<PlanRunState[]>
+function isFullyPaused(state: PlanRunState): boolean {
+  return (
+    state.status === 'paused' &&
+    !Object.values(state.steps).some((step) => step.status === 'running')
+  )
 }
 
 const defaultStore: PlanRunServiceStore = {
@@ -242,6 +230,9 @@ class PlanRunServiceImplementation<
 > implements PlanRunService {
   private readonly recoveredSessions = new Set<string>()
   private readonly recoveries = new Map<string, Promise<PlanRunState[]>>()
+  private readonly replanRequests = new Map<string, PendingReplan>()
+  private readonly replanAdmissions = new Set<string>()
+  private readonly activeMutations = new Map<string, number>()
 
   constructor(
     private readonly executor: PlanExecutor,
@@ -259,12 +250,22 @@ class PlanRunServiceImplementation<
     throw new Error(`Plan run is already ${stored.status}: ${runId}`)
   }
 
-  async startFromApprovedPlan(phiSessionId: string, spec: PlanSpec): Promise<PlanRunState> {
+  async startFromApprovedPlan(
+    phiSessionId: string,
+    spec: PlanSpec,
+    guard?: ApprovedPlanStartGuard
+  ): Promise<PlanRunState> {
     await this.recoverSession(phiSessionId)
-    if (!this.deps.resolveRuntimeSessionId(phiSessionId)) {
-      throw new Error(RUNTIME_UNAVAILABLE_MESSAGE)
+    const assertCurrent = (): void => {
+      if (guard?.signal?.aborted) throw new Error('Plan review is no longer active.')
+      guard?.assertCurrent()
+      const runtimeSessionId = this.deps.resolveRuntimeSessionId(phiSessionId)
+      if (!runtimeSessionId || (guard && runtimeSessionId !== guard.expectedRuntimeSessionId)) {
+        throw new Error(RUNTIME_UNAVAILABLE_MESSAGE)
+      }
     }
-    return this.executor.start(spec, phiSessionId)
+    assertCurrent()
+    return this.executor.start(spec, phiSessionId, assertCurrent)
   }
 
   hasActiveWork(phiSessionId: string): boolean {
@@ -290,29 +291,278 @@ class PlanRunServiceImplementation<
     return active?.sessionId === phiSessionId ? active : this.store.read(phiSessionId, runId)
   }
 
-  async pause(phiSessionId: string, runId: string): Promise<PlanRunState> {
-    await this.requireActive(phiSessionId, runId)
-    return this.executor.pause(runId)
+  private assertNoReplanMutation(phiSessionId: string, runId: string): void {
+    if (
+      this.replanAdmissions.has(phiSessionId) ||
+      this.replanRequests.get(phiSessionId)?.runId === runId
+    ) {
+      throw new Error('A replan is in progress for this plan run.')
+    }
   }
 
-  async resume(phiSessionId: string, runId: string): Promise<PlanRunState> {
-    await this.requireActive(phiSessionId, runId)
-    return this.executor.resume(runId)
+  private async mutateRun(
+    phiSessionId: string,
+    runId: string,
+    action: () => Promise<PlanRunState>
+  ): Promise<PlanRunState> {
+    this.assertNoReplanMutation(phiSessionId, runId)
+    this.activeMutations.set(phiSessionId, (this.activeMutations.get(phiSessionId) ?? 0) + 1)
+    try {
+      await this.requireActive(phiSessionId, runId)
+      this.assertNoReplanMutation(phiSessionId, runId)
+      return await action()
+    } finally {
+      const remaining = (this.activeMutations.get(phiSessionId) ?? 1) - 1
+      if (remaining) this.activeMutations.set(phiSessionId, remaining)
+      else this.activeMutations.delete(phiSessionId)
+    }
   }
 
-  async stop(phiSessionId: string, runId: string): Promise<PlanRunState> {
-    await this.requireActive(phiSessionId, runId)
-    return this.executor.stop(runId)
+  pause(phiSessionId: string, runId: string): Promise<PlanRunState> {
+    return this.mutateRun(phiSessionId, runId, () => this.executor.pause(runId))
   }
 
-  async retryStep(phiSessionId: string, runId: string, stepId: string): Promise<PlanRunState> {
-    await this.requireActive(phiSessionId, runId)
-    return this.executor.retryStep(runId, stepId)
+  resume(phiSessionId: string, runId: string): Promise<PlanRunState> {
+    return this.mutateRun(phiSessionId, runId, () => this.executor.resume(runId))
   }
 
-  async skipStep(phiSessionId: string, runId: string, stepId: string): Promise<PlanRunState> {
-    await this.requireActive(phiSessionId, runId)
-    return this.executor.skipStep(runId, stepId)
+  stop(phiSessionId: string, runId: string): Promise<PlanRunState> {
+    return this.mutateRun(phiSessionId, runId, () => this.executor.stop(runId))
+  }
+
+  retryStep(phiSessionId: string, runId: string, stepId: string): Promise<PlanRunState> {
+    return this.mutateRun(phiSessionId, runId, () => this.executor.retryStep(runId, stepId))
+  }
+
+  skipStep(phiSessionId: string, runId: string, stepId: string): Promise<PlanRunState> {
+    return this.mutateRun(phiSessionId, runId, () => this.executor.skipStep(runId, stepId))
+  }
+
+  private async reuseOrClearReplan(
+    phiSessionId: string,
+    runtimeSessionId: string,
+    state: PlanRunState
+  ): Promise<PlanRunReplanRequest | null> {
+    const existing = this.replanRequests.get(phiSessionId)
+    if (!existing) return null
+    if (existing.applying) throw new Error('Approved plan replacement is already in progress.')
+    if (existing.runtimeSessionId !== runtimeSessionId) {
+      // The old runtime no longer owns this Phi session. Its request cannot pass
+      // the runtime identity check at approval, so an absent old worker cannot block a new one.
+      this.replanRequests.delete(phiSessionId)
+    } else if (
+      existing.runId === state.id &&
+      existing.entered &&
+      !existing.applying &&
+      !existing.cancelling
+    ) {
+      return { requestId: existing.requestId, runId: state.id, prompt: replanPrompt(state) }
+    } else {
+      throw new Error('A replan is already in progress.')
+    }
+    if (this.replanRequests.has(phiSessionId)) throw new Error('A replan is already in progress.')
+    return null
+  }
+
+  private async rollbackEnteredReplan(phiSessionId: string, request: PendingReplan): Promise<void> {
+    if (this.replanRequests.get(phiSessionId) !== request) return
+    if (!request.entered) {
+      this.replanRequests.delete(phiSessionId)
+      return
+    }
+    if (!this.deps.exitReplanMode) return
+    try {
+      if (await this.deps.exitReplanMode(request.runtimeSessionId, request.requestId)) {
+        this.replanRequests.delete(phiSessionId)
+      }
+    } catch {
+      // Keep the binding so a later request can retry exact rollback.
+    }
+  }
+
+  async requestReplan(phiSessionId: string, runId: string): Promise<PlanRunReplanRequest> {
+    if (this.replanAdmissions.has(phiSessionId) || this.activeMutations.has(phiSessionId)) {
+      throw new Error('A plan run operation is already in progress.')
+    }
+    this.replanAdmissions.add(phiSessionId)
+    try {
+      const state = await this.requireActive(phiSessionId, runId)
+      if (!isFullyPaused(state)) {
+        throw new Error('The plan must be fully paused before replanning.')
+      }
+      if (state.replans >= PLAN_MAX_REPLANS) throw new Error('Plan replan limit has been reached.')
+      const runtimeSessionId = this.deps.resolveRuntimeSessionId(phiSessionId)
+      if (!runtimeSessionId) throw new Error(RUNTIME_UNAVAILABLE_MESSAGE)
+      if (!this.deps.enterReplanMode) throw new Error('Plan replan mode is unavailable.')
+      const reused = await this.reuseOrClearReplan(phiSessionId, runtimeSessionId, state)
+      if (reused) return reused
+      const current = this.executor.get(runId)
+      if (!current || current.sessionId !== phiSessionId || !isFullyPaused(current)) {
+        throw new Error('The plan must be fully paused before replanning.')
+      }
+      const request: PendingReplan = {
+        requestId: randomUUID(),
+        runId,
+        runtimeSessionId,
+        entered: false,
+        applying: false,
+        cancelling: false
+      }
+      this.replanRequests.set(phiSessionId, request)
+      try {
+        await this.deps.enterReplanMode(runtimeSessionId, request.requestId)
+        request.entered = true
+        if (this.replanRequests.get(phiSessionId) !== request) {
+          throw new Error('Plan replan request was cancelled.')
+        }
+        if (this.deps.resolveRuntimeSessionId(phiSessionId) !== runtimeSessionId) {
+          throw new Error(RUNTIME_UNAVAILABLE_MESSAGE)
+        }
+        return { requestId: request.requestId, runId, prompt: replanPrompt(state) }
+      } catch (error) {
+        await this.rollbackEnteredReplan(phiSessionId, request)
+        throw error
+      }
+    } finally {
+      this.replanAdmissions.delete(phiSessionId)
+    }
+  }
+
+  pendingReplanForRun(
+    phiSessionId: string,
+    runId: string
+  ): { requestId: string; runId: string } | null {
+    const request = this.replanRequests.get(phiSessionId)
+    return request?.runId === runId ? { requestId: request.requestId, runId: request.runId } : null
+  }
+
+  pendingReplan(
+    phiSessionId: string,
+    runtimeSessionId: string
+  ): { requestId: string; runId: string } | null {
+    const request = this.replanRequests.get(phiSessionId)
+    return request?.runtimeSessionId === runtimeSessionId && !request.cancelling
+      ? { requestId: request.requestId, runId: request.runId }
+      : null
+  }
+
+  async cancelRequestedReplan(
+    phiSessionId: string,
+    runId: string,
+    requestId: string
+  ): Promise<void> {
+    const request = this.replanRequests.get(phiSessionId)
+    if (!request || request.runId !== runId || request.requestId !== requestId) return
+    if (request.applying) throw new Error('Approved plan replacement is already in progress.')
+    if (request.cancelling) return
+    request.cancelling = true
+    try {
+      if (this.deps.resolveRuntimeSessionId(phiSessionId) !== request.runtimeSessionId) {
+        this.replanRequests.delete(phiSessionId)
+        return
+      }
+      if (!this.deps.exitReplanMode) throw new Error('Plan replan mode cannot be cancelled.')
+      const exited = await this.deps.exitReplanMode(request.runtimeSessionId, requestId)
+      if (!exited) throw new Error('Plan replan mode is already active in a conversation.')
+      if (this.replanRequests.get(phiSessionId) === request)
+        this.replanRequests.delete(phiSessionId)
+    } finally {
+      request.cancelling = false
+    }
+  }
+
+  async validateReplanProposal(
+    phiSessionId: string,
+    requestId: string,
+    spec: unknown
+  ): Promise<PlanSpecValidationResult> {
+    const request = this.replanRequests.get(phiSessionId)
+    if (!request || request.requestId !== requestId || request.cancelling) {
+      return { ok: false, errors: ['Plan replan request is no longer active.'] }
+    }
+    const result = validatePlanSpec(spec)
+    if (!result.ok) return result
+    try {
+      const state = await this.requireActive(phiSessionId, request.runId)
+      reducePlanRun(state, {
+        type: 'replace_remaining_steps',
+        spec: result.spec,
+        at: new Date().toISOString()
+      })
+      return result
+    } catch (error) {
+      return { ok: false, errors: [error instanceof Error ? error.message : String(error)] }
+    }
+  }
+
+  private async recoverCommittedReplacement(
+    phiSessionId: string,
+    request: PendingReplan,
+    previousReplans: number,
+    error: unknown
+  ): Promise<PlanRunState> {
+    const current = this.executor.get(request.runId)
+    if (!current || current.replans === previousReplans) throw error
+    // Replacement persisted before becoming active in memory. A later event
+    // failure must keep the already approved plan and pause further scheduling.
+    this.replanRequests.delete(phiSessionId)
+    reportServiceError(this.deps, request.runId, 'replan_persist', error)
+    if (current.status !== 'running') return current
+    try {
+      return await this.executor.pause(request.runId)
+    } catch (pauseError) {
+      reportServiceError(this.deps, request.runId, 'replan_pause', pauseError)
+      return this.executor.get(request.runId) ?? current
+    }
+  }
+
+  async applyApprovedReplan(
+    phiSessionId: string,
+    runtimeSessionId: string,
+    requestId: string,
+    spec: PlanSpec
+  ): Promise<PlanRunState> {
+    const request = this.replanRequests.get(phiSessionId)
+    if (
+      !request ||
+      request.requestId !== requestId ||
+      request.runtimeSessionId !== runtimeSessionId ||
+      request.applying ||
+      request.cancelling
+    ) {
+      throw new Error('Plan replan request is no longer active for this conversation.')
+    }
+    request.applying = true
+    try {
+      await this.requireActive(phiSessionId, request.runId)
+      if (this.deps.resolveRuntimeSessionId(phiSessionId) !== runtimeSessionId) {
+        throw new Error(RUNTIME_UNAVAILABLE_MESSAGE)
+      }
+      const validation = await this.validateReplanProposal(phiSessionId, requestId, spec)
+      if (!validation.ok) throw new Error(validation.errors.join(' '))
+      if (
+        this.replanRequests.get(phiSessionId) !== request ||
+        this.deps.resolveRuntimeSessionId(phiSessionId) !== runtimeSessionId
+      ) {
+        throw new Error('Plan replan request is no longer active for this conversation.')
+      }
+      const before = this.executor.get(request.runId)!
+      try {
+        const replaced = await this.executor.replaceRemainingSteps(request.runId, validation.spec)
+        this.replanRequests.delete(phiSessionId)
+        return replaced
+      } catch (error) {
+        return this.recoverCommittedReplacement(phiSessionId, request, before.replans, error)
+      }
+    } finally {
+      request.applying = false
+    }
+  }
+
+  cancelReplan(phiSessionId: string, requestId: string): void {
+    if (this.replanRequests.get(phiSessionId)?.requestId === requestId) {
+      this.replanRequests.delete(phiSessionId)
+    }
   }
 
   async recoverSession(phiSessionId: string): Promise<PlanRunState[]> {

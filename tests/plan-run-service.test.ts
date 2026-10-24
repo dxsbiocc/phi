@@ -85,6 +85,45 @@ test('active-work query catches running plans and running steps in paused plans'
   assert.equal(service.hasActiveWork('phi-1'), false)
 })
 
+test('late review approval is rejected after recovery when its prompt was cancelled', async () => {
+  let promptActive = true
+  let starts = 0
+  const states = new Map<string, PlanRunState>()
+  const service = createPlanRunService({
+    engine: {
+      agentRuns: {
+        start: async () => {
+          starts += 1
+          return { runId: 'unexpected' }
+        },
+        stop: async () => undefined
+      }
+    },
+    resolveRuntimeSessionId: () => 'runtime-1',
+    store: {
+      write: (state) => {
+        states.set(state.id, state)
+      },
+      read: (_sessionId, runId) => states.get(runId) ?? null,
+      list: () => [...states.values()],
+      listUnfinished: () => []
+    },
+    timeline: { append: (_sessionId, event) => event, broadcast: () => undefined },
+    continueConversation: () => undefined,
+    logError: (error) => assert.fail(String(error))
+  })
+  const starting = service.startFromApprovedPlan('phi-1', spec, {
+    expectedRuntimeSessionId: 'runtime-1',
+    assertCurrent: () => {
+      if (!promptActive) throw new Error('Prompt was cancelled')
+    }
+  })
+  promptActive = false
+  await assert.rejects(starting, /Prompt was cancelled/u)
+  assert.equal(states.size, 0)
+  assert.equal(starts, 0)
+})
+
 test('list recovers unfinished runs once and persists interrupted state', async () => {
   const paused = reducePlanRun(
     createPlanRunState({

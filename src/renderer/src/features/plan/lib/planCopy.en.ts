@@ -43,10 +43,26 @@ export const planEnglish = {
   stop: 'Stop',
   retry: 'Retry',
   skip: 'Skip',
+  replanRemaining: 'Replan remaining steps',
+  replanReviewNotice:
+    'The agent will draft revised steps for your review before execution resumes.',
+  replanSendFailed: 'Could not send the replan request. Try again from this session.',
+  replanCancelFailed:
+    'The pending replan request could not be cleared. If it already appears in chat, continue there; otherwise retry cancellation before replanning.',
+  retryCancellation: 'Retry cancellation',
+  failedRecovery: 'Review the result before retrying or skipping this step.',
+  needsInputRecovery:
+    'Retry uses the same step instructions; it does not provide the missing information.',
+  interruptedRecovery:
+    'The app restarted during this step. Check any workspace changes before retrying.',
   confirmStopTitle: 'Stop this plan?',
   confirmStopBody: 'Stopping the entire plan cannot be undone.',
   confirmSkipTitle: 'Skip this step?',
-  confirmSkipBody: 'Skipping this step cannot be undone.',
+  confirmSkipBody:
+    'Skipping this step cannot be undone. Dependent steps may continue without its result.',
+  confirmRetryTitle: 'Retry this write step?',
+  confirmRetryBody:
+    'This step may have changed files already. Review the workspace before running it again.',
   confirm: 'Confirm',
   cancel: 'Cancel',
   report: 'Report',

@@ -95,11 +95,20 @@ export function planStepActions(run: PlanRunViewState, stepId: string): PlanStep
   if (
     run.status !== 'paused' ||
     run.pause?.stepId !== stepId ||
-    (run.pause.reason !== 'step_failed' && run.pause.reason !== 'needs_input')
+    !['step_failed', 'needs_input', 'interrupted'].includes(run.pause.reason) ||
+    !['failed', 'interrupted'].includes(
+      planRunSteps(run).find((step) => step.id === stepId)?.status ?? ''
+    )
   ) {
     return []
   }
   return ['retry', 'skip', 'stop']
+}
+
+export function planStepRetryNeedsConfirmation(
+  step: Pick<PlanRunTimelineStepSnapshot, 'access'>
+): boolean {
+  return step.access === 'write'
 }
 
 export function planStepDurationMs(

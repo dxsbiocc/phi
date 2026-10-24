@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction
@@ -19,6 +20,17 @@ import {
   upsertPlanRun
 } from '../lib/planRunView'
 import { createPlanRunDetailsLoader } from '../lib/planRunDetailsLoader'
+import { planCopy } from '../lib/planCopy'
+import { planReplanRecoveryStore } from '../lib/planReplanRecoveryStore'
+import {
+  deliverPlanReplanPrompt,
+  PlanReplanCancellationError,
+  retryPlanReplanCancellation,
+  type OnReplanPrompt,
+  type PendingReplanCancellation
+} from '../lib/planReplanDelivery'
+
+export type { OnReplanPrompt } from '../lib/planReplanDelivery'
 
 type PlanRunApi = Pick<
   RendererApi,
@@ -30,6 +42,9 @@ type PlanRunApi = Pick<
   | 'stopPlanRun'
   | 'retryPlanRunStep'
   | 'skipPlanRunStep'
+  | 'requestPlanRunReplan'
+  | 'cancelPlanRunReplan'
+  | 'getPendingPlanRunReplan'
 >
 
 export type PlanRunsController = {
@@ -44,6 +59,10 @@ export type PlanRunsController = {
   stop: () => Promise<void>
   retryStep: (stepId: string) => Promise<void>
   skipStep: (stepId: string) => Promise<void>
+  replan?: () => Promise<void>
+  rollbackPending?: boolean
+  replanPending?: boolean
+  retryCancellation?: () => Promise<void>
 }
 
 type PlanRunFeed = Pick<PlanRunsController, 'run' | 'details' | 'loading' | 'error'> & {
@@ -54,7 +73,8 @@ type PlanRunFeed = Pick<PlanRunsController, 'run' | 'details' | 'loading' | 'err
 type PlanRunActions = Pick<
   PlanRunsController,
   'pendingAction' | 'loadDetails' | 'pause' | 'resume' | 'stop' | 'retryStep' | 'skipStep'
->
+> &
+  Pick<PlanRunsController, 'replan' | 'rollbackPending' | 'replanPending' | 'retryCancellation'>
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -208,17 +228,213 @@ function usePlanRunDetails(
   )
 }
 
+type PendingAction = { sessionId: string; key: string } | null
+type ReplanActionContext = {
+  api: PlanRunApi
+  sessionId: string | null
+  run: PlanRunTimelineSnapshot | null
+  onReplanPrompt?: OnReplanPrompt
+  pendingAction: string | null
+  setPending: Dispatch<SetStateAction<PendingAction>>
+  setError: PlanRunFeed['setError']
+  currentSession: MutableRefObject<string | null>
+}
+
+function useRetryReplanCancellation(
+  context: ReplanActionContext,
+  rollback: PendingReplanCancellation | undefined,
+  cancellationKey: string | null
+): () => Promise<void> {
+  const { api, currentSession, pendingAction, setError, setPending } = context
+  return useCallback(async (): Promise<void> => {
+    if (!rollback || !cancellationKey || pendingAction !== null) return
+    const key = `cancel-replan:${rollback.requestId}`
+    setPending({ sessionId: rollback.phiSessionId, key })
+    try {
+      await retryPlanReplanCancellation(rollback, api.cancelPlanRunReplan)
+      planReplanRecoveryStore.delete(cancellationKey)
+      if (currentSession.current === rollback.phiSessionId) setError(null)
+    } catch {
+      if (currentSession.current === rollback.phiSessionId) setError(planCopy.replanCancelFailed)
+    } finally {
+      setPending((current) =>
+        current?.sessionId === rollback.phiSessionId && current.key === key ? null : current
+      )
+    }
+  }, [
+    api.cancelPlanRunReplan,
+    cancellationKey,
+    currentSession,
+    pendingAction,
+    rollback,
+    setError,
+    setPending
+  ])
+}
+
+function useServerPendingReplan(
+  api: PlanRunApi,
+  sessionId: string | null,
+  runId: string | undefined,
+  setError: PlanRunFeed['setError']
+): { pending: boolean; markPending: () => void } {
+  const [serverReplan, setServerReplan] = useState<{ key: string; pending: boolean } | null>(null)
+  const replanRevision = useRef(0)
+  useEffect(() => {
+    if (!sessionId || !runId) return undefined
+    const key = `${sessionId}:${runId}`
+    let active = true
+    let reading = false
+    const refresh = async (): Promise<void> => {
+      if (reading) return
+      reading = true
+      const revision = replanRevision.current
+      try {
+        const pending = await api.getPendingPlanRunReplan(sessionId, runId)
+        if (active && revision === replanRevision.current)
+          setServerReplan({ key, pending: pending !== null })
+      } catch (cause) {
+        if (active && revision === replanRevision.current) {
+          setServerReplan({ key, pending: true })
+          setError(errorText(cause))
+        }
+      } finally {
+        reading = false
+      }
+    }
+    void refresh()
+    const timer = setInterval(() => void refresh(), 1000)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [api, runId, sessionId, setError])
+  const key = sessionId && runId ? `${sessionId}:${runId}` : null
+  return {
+    pending: Boolean(key && (serverReplan?.key !== key || serverReplan.pending)),
+    markPending: () => {
+      if (!key) return
+      replanRevision.current += 1
+      setServerReplan({ key, pending: true })
+    }
+  }
+}
+
+function usePendingRollback(key: string | null): PendingReplanCancellation | undefined {
+  useSyncExternalStore(
+    planReplanRecoveryStore.subscribe,
+    planReplanRecoveryStore.snapshot,
+    planReplanRecoveryStore.snapshot
+  )
+  return key ? planReplanRecoveryStore.get(key) : undefined
+}
+
+function usePlanReplanActions(
+  context: ReplanActionContext
+): Pick<PlanRunActions, 'replan' | 'rollbackPending' | 'replanPending' | 'retryCancellation'> {
+  const {
+    api,
+    sessionId,
+    run,
+    onReplanPrompt,
+    pendingAction,
+    setPending,
+    setError,
+    currentSession
+  } = context
+  const cancellationKey = sessionId && run ? `${sessionId}:${run.id}` : null
+  const rollback = usePendingRollback(cancellationKey)
+  const serverReplan = useServerPendingReplan(
+    api,
+    sessionId,
+    run?.status === 'paused' ? run.id : undefined,
+    setError
+  )
+  const replanPending = Boolean(
+    rollback ||
+    pendingAction?.startsWith('replan:') ||
+    pendingAction?.startsWith('cancel-replan:') ||
+    serverReplan.pending
+  )
+  const replan = useCallback(async (): Promise<void> => {
+    if (!sessionId || !run || !onReplanPrompt || pendingAction !== null || replanPending) return
+    const actionSession = sessionId
+    const actionRun = run.id
+    const key = `replan:${actionRun}`
+    setPending({ sessionId: actionSession, key })
+    setError(null)
+    try {
+      const request = await api.requestPlanRunReplan(actionSession, actionRun)
+      serverReplan.markPending()
+      const accepted = await deliverPlanReplanPrompt({
+        request,
+        phiSessionId: actionSession,
+        isCurrent: () => currentSession.current === actionSession,
+        send: onReplanPrompt,
+        cancel: (requestId) => api.cancelPlanRunReplan(actionSession, actionRun, requestId)
+      })
+      if (!accepted) {
+        throw new Error(planCopy.replanSendFailed)
+      }
+    } catch (cause) {
+      if (cause instanceof PlanReplanCancellationError) {
+        const key = `${cause.pending.phiSessionId}:${cause.pending.runId}`
+        planReplanRecoveryStore.set(key, cause.pending)
+      }
+      if (currentSession.current === actionSession) {
+        setError(
+          cause instanceof PlanReplanCancellationError
+            ? planCopy.replanCancelFailed
+            : errorText(cause)
+        )
+      }
+    } finally {
+      setPending((current) =>
+        current?.sessionId === actionSession && current.key === key ? null : current
+      )
+    }
+  }, [
+    api,
+    currentSession,
+    onReplanPrompt,
+    pendingAction,
+    replanPending,
+    serverReplan,
+    run,
+    sessionId,
+    setError,
+    setPending
+  ])
+  const retryCancellation = useRetryReplanCancellation(context, rollback, cancellationKey)
+  return {
+    rollbackPending: Boolean(rollback),
+    replanPending,
+    retryCancellation,
+    ...(onReplanPrompt ? { replan } : {})
+  }
+}
+
 function usePlanRunActions(
   api: PlanRunApi,
   sessionId: string | null,
-  feed: PlanRunFeed
+  feed: PlanRunFeed,
+  onReplanPrompt?: OnReplanPrompt
 ): PlanRunActions {
-  const [pending, setPending] = useState<{ sessionId: string; key: string } | null>(null)
+  const [pending, setPending] = useState<PendingAction>(null)
   const { run, remember, setError } = feed
   const currentSession = useCurrentSession(sessionId)
   const loadDetails = usePlanRunDetails(api, sessionId, feed, currentSession)
   const pendingAction = pending?.sessionId === sessionId ? pending.key : null
-
+  const replanActions = usePlanReplanActions({
+    api,
+    sessionId,
+    run,
+    onReplanPrompt,
+    pendingAction,
+    setPending,
+    setError,
+    currentSession
+  })
   const perform = useCallback(
     async (key: string, action: (session: string, runId: string) => Promise<PlanRunState>) => {
       if (!sessionId || !run) return
@@ -247,13 +463,18 @@ function usePlanRunActions(
     retryStep: (stepId) =>
       perform(`retry:${stepId}`, (session, runId) => api.retryPlanRunStep(session, runId, stepId)),
     skipStep: (stepId) =>
-      perform(`skip:${stepId}`, (session, runId) => api.skipPlanRunStep(session, runId, stepId))
+      perform(`skip:${stepId}`, (session, runId) => api.skipPlanRunStep(session, runId, stepId)),
+    ...replanActions
   }
 }
 
-export function usePlanRuns(api: PlanRunApi, sessionId: string | null): PlanRunsController {
+export function usePlanRuns(
+  api: PlanRunApi,
+  sessionId: string | null,
+  onReplanPrompt?: OnReplanPrompt
+): PlanRunsController {
   const feed = usePlanRunFeed(api, sessionId)
-  const actions = usePlanRunActions(api, sessionId, feed)
+  const actions = usePlanRunActions(api, sessionId, feed, onReplanPrompt)
   return {
     run: feed.run,
     details: feed.details,

@@ -3542,6 +3542,16 @@ async function harness(
         stop: async () => undefined,
         retryStep: async () => undefined,
         skipStep: async () => undefined,
+        requestReplan: async () => ({ requestId: 'replan-1', runId: 'plan-run-1', prompt: '' }),
+        cancelRequestedReplan: async () => undefined,
+        pendingReplan: () => null,
+        pendingReplanForRun: () => null,
+        validateReplanProposal: async (_sessionId: string, _requestId: string, spec: unknown) => ({
+          ok: true,
+          spec
+        }),
+        applyApprovedReplan: async () => ({ id: 'plan-run-1' }),
+        cancelReplan: () => undefined,
         recoverSession: async () => []
       })
     },
@@ -7348,11 +7358,14 @@ const expectedStartupRegistrationOrder = [
   'agent:stopRun',
   'planRuns:list',
   'planRuns:get',
+  'planRuns:getPendingReplan',
   'planRuns:pause',
   'planRuns:resume',
   'planRuns:stop',
   'planRuns:retryStep',
   'planRuns:skipStep',
+  'planRuns:requestReplan',
+  'planRuns:cancelReplan',
   'auth:status',
   'auth:loginApiKey',
   'auth:loginOAuth',
@@ -13411,7 +13424,7 @@ test('main plan review pauses the run and records approval in its conversation',
     title: 'analysis-plan',
     planContent: '# Analysis plan\n\n1. Inspect data\n2. Write report',
     planFilePath: 'local://analysis-plan.md'
-  })
+  }, { originSessionId: session.runtimeSessionId })
   assert.deepEqual(result, { decision: 'approve' })
   const planEvents = app.appendedSessionEvents
     .filter((entry) => String(entry.event.type).startsWith('plan_review_'))
@@ -13510,7 +13523,7 @@ test('main plan review preserves requested revisions in the session timeline', a
       title: 'analysis-plan',
       planContent: '# Analysis plan',
       planFilePath: 'local://analysis-plan.md'
-    }),
+    }, { originSessionId: session.runtimeSessionId }),
     { decision: 'revise', note: 'Add a validation step' }
   )
   const decided = app.appendedSessionEvents.find(

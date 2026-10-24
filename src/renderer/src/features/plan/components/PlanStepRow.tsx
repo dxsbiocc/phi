@@ -29,8 +29,9 @@ type PlanStepRowProps = {
   disabled: boolean
   cwd: string
   loadDetails: (runId: string, updatedAt: string) => Promise<PlanRunState | null>
-  onRetry: () => void
+  onRetry: (step: PlanRunTimelineStepSnapshot) => void
   onSkip: () => void
+  onReplan?: () => void
   onStop: () => void
 }
 
@@ -123,16 +124,30 @@ function StepReport({
 
 function StepActions({
   visible,
+  reason,
   disabled,
   onRetry,
   onSkip,
+  onReplan,
   onStop
-}: Pick<PlanStepRowProps, 'disabled' | 'onRetry' | 'onSkip' | 'onStop'> & {
+}: Omit<
+  Pick<PlanStepRowProps, 'disabled' | 'onRetry' | 'onSkip' | 'onReplan' | 'onStop'>,
+  'onRetry'
+> & {
   visible: boolean
+  reason: NonNullable<PlanRunTimelineSnapshot['pause']>['reason']
+  onRetry: () => void
 }): React.JSX.Element | null {
   if (!visible) return null
   return (
-    <PlanFailureActions disabled={disabled} onRetry={onRetry} onSkip={onSkip} onStop={onStop} />
+    <PlanFailureActions
+      disabled={disabled}
+      reason={reason}
+      onRetry={onRetry}
+      onSkip={onSkip}
+      onReplan={onReplan}
+      onStop={onStop}
+    />
   )
 }
 
@@ -180,6 +195,7 @@ export function PlanStepRow({
   loadDetails,
   onRetry,
   onSkip,
+  onReplan,
   onStop
 }: PlanStepRowProps): React.JSX.Element {
   const rowRef = useRef<HTMLDivElement | null>(null)
@@ -209,9 +225,11 @@ export function PlanStepRow({
         </Box>
         <StepActions
           visible={actions.length > 0}
+          reason={run.pause?.reason ?? 'step_failed'}
           disabled={disabled}
-          onRetry={onRetry}
+          onRetry={() => onRetry(step)}
           onSkip={onSkip}
+          onReplan={onReplan}
           onStop={onStop}
         />
       </AccordionDetails>
