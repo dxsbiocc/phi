@@ -1,4 +1,5 @@
 import {
+  alpha,
   Button,
   IconButton,
   List,
@@ -6,7 +7,8 @@ import {
   ListItemIcon,
   ListItemText,
   Popover,
-  Tooltip
+  Tooltip,
+  useTheme
 } from '@mui/material'
 import { useId, useState } from 'react'
 
@@ -25,6 +27,7 @@ type SessionModeOption = {
   label: string
   description: string
   Icon: PhiIconComponent
+  tone: 'success' | 'warning' | 'info' | 'primary' | 'error'
   danger?: boolean
 }
 
@@ -41,31 +44,36 @@ function sessionModeOptions(remote: boolean): SessionModeOption[] {
       mode: 'auto',
       label: planCopy.sessionModeAuto,
       description: planCopy.sessionModeAutoDescription,
-      Icon: PhiIcons.state.auto
+      Icon: PhiIcons.state.auto,
+      tone: 'success'
     },
     ask: {
       mode: 'ask',
       label: planCopy.sessionModeAsk,
       description: planCopy.sessionModeAskDescription,
-      Icon: PhiIcons.state.ask
+      Icon: PhiIcons.state.ask,
+      tone: 'warning'
     },
     plan: {
       mode: 'plan',
       label: planCopy.sessionModePlan,
       description: planCopy.sessionModePlanDescription,
-      Icon: PhiIcons.entity.todo
+      Icon: PhiIcons.entity.todo,
+      tone: 'info'
     },
     plan_execute: {
       mode: 'plan_execute',
       label: planCopy.sessionModePlanExecute,
       description: planCopy.sessionModePlanExecuteDescription,
-      Icon: PhiIcons.action.run
+      Icon: PhiIcons.action.run,
+      tone: 'primary'
     },
     full: {
       mode: 'full',
       label: planCopy.sessionModeFull,
       description: planCopy.sessionModeFullDescription,
       Icon: PhiIcons.state.full,
+      tone: 'error',
       danger: true
     }
   }
@@ -143,23 +151,55 @@ function SessionModeMenu({
   mode: SessionMode
   onSelect: (mode: SessionMode) => void
 }): React.JSX.Element {
-  const CheckIcon = PhiIcons.state.check
+  const theme = useTheme()
   return (
     <List dense disablePadding aria-label={planCopy.sessionModeMenuLabel}>
       {options.map((option) => {
         const { Icon } = option
-        const color = option.danger ? 'error.main' : 'text.primary'
+        const tone = theme.palette[option.tone]
+        const isPlanningMode = option.mode === 'plan' || option.mode === 'plan_execute'
+        const color =
+          theme.palette.mode === 'dark'
+            ? tone.light
+            : isPlanningMode
+              ? tone.dark
+              : (tone.darker ?? tone.dark)
+        const iconColor = isPlanningMode && theme.palette.mode === 'light' ? tone.main : color
         return (
           <ListItemButton
             key={option.mode}
             selected={mode === option.mode}
             onClick={() => onSelect(option.mode)}
-            sx={{ minHeight: 64, alignItems: 'center', px: 2 }}
+            sx={{
+              minHeight: 52,
+              alignItems: 'center',
+              px: 1.5,
+              py: 0.5,
+              '&.Mui-selected': {
+                bgcolor: alpha(tone.main, theme.palette.mode === 'dark' ? 0.22 : 0.12)
+              },
+              '&.Mui-selected:hover': {
+                bgcolor: alpha(tone.main, theme.palette.mode === 'dark' ? 0.3 : 0.18)
+              }
+            }}
           >
-            <ListItemIcon sx={{ minWidth: 36, color }}>
-              <Icon size={COMPOSER_ICON_SIZE} />
+            <ListItemIcon
+              sx={{
+                width: 32,
+                minWidth: 32,
+                height: 32,
+                mr: 0.5,
+                borderRadius: 1,
+                bgcolor: alpha(tone.main, theme.palette.mode === 'dark' ? 0.2 : 0.12),
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: iconColor
+              }}
+            >
+              <Icon color={iconColor} size={COMPOSER_ICON_SIZE} />
             </ListItemIcon>
             <ListItemText
+              sx={{ my: 0 }}
               primary={option.label}
               secondary={option.description}
               slotProps={{
@@ -167,7 +207,6 @@ function SessionModeMenu({
                 secondary: { sx: { color: option.danger ? color : 'text.secondary' } }
               }}
             />
-            {mode === option.mode ? <CheckIcon color={color} size={COMPOSER_ICON_SIZE} /> : null}
           </ListItemButton>
         )
       })}
@@ -210,7 +249,7 @@ export function SessionModeSelector({
         onClose={close}
         anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
         transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        slotProps={{ paper: { sx: { width: 420, maxWidth: 'calc(100vw - 32px)' } } }}
+        slotProps={{ paper: { sx: { width: 264, maxWidth: 'calc(100vw - 32px)' } } }}
       >
         <SessionModeMenu
           options={options}

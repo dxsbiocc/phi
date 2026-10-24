@@ -6,7 +6,7 @@ export const planChinese = {
   sessionModeAuto: '自动',
   sessionModeAutoDescription: '由智能体判断直接执行，还是先规划。',
   sessionModeAsk: '询问',
-  sessionModeAskDescription: '直接执行；运行命令或修改文件前先询问。',
+  sessionModeAskDescription: '运行命令或修改文件前，会请你批准。',
   sessionModePlan: '计划',
   sessionModePlanDescription: '只读调研并提交计划，批准后再执行。',
   sessionModePlanExecute: '规划并执行',

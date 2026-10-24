@@ -4,7 +4,7 @@ export const planEnglish = {
   sessionModeAuto: 'Auto',
   sessionModeAutoDescription: 'Let the agent decide whether to act directly or plan first.',
   sessionModeAsk: 'Ask',
-  sessionModeAskDescription: 'Act directly, asking before commands or file changes.',
+  sessionModeAskDescription: 'Ask for your approval before running commands or changing files.',
   sessionModePlan: 'Plan',
   sessionModePlanDescription: 'Research read-only and submit a plan for approval before acting.',
   sessionModePlanExecute: 'Plan and execute',
