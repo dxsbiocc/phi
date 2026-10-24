@@ -299,6 +299,7 @@ export function ComposerTextEditor({
         'data-phi-placeholder-kind': placeholderKind ?? 'default',
         spellcheck: 'true'
       }),
+      EditorView.darkTheme.of(theme.palette.mode === 'dark'),
       EditorView.theme({
         '&': {
           color: theme.palette.text.primary,
@@ -316,7 +317,11 @@ export function ComposerTextEditor({
           overflowY: 'auto',
           overflowX: 'hidden'
         },
-        '.cm-content': { padding: '9px 9px 0 0', caretColor: theme.palette.text.primary },
+        '.cm-content': {
+          padding: '9px 9px 0 0',
+          color: theme.palette.text.primary,
+          caretColor: theme.palette.text.primary
+        },
         '.cm-line': { padding: '0' },
         '.cm-placeholder': { color: theme.palette.text.secondary },
         '.phi-composer-inline-reference': {
