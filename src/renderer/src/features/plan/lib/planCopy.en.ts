@@ -19,11 +19,22 @@ export const planEnglish = {
   runStatus: (status: 'running' | 'paused' | 'completed' | 'stopped') =>
     ({ running: 'Running', paused: 'Paused', completed: 'Completed', stopped: 'Stopped' })[status],
   stepStatus: (
-    status: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'cancelled' | 'interrupted'
+    status:
+      | 'pending'
+      | 'launching'
+      | 'running'
+      | 'unknown'
+      | 'done'
+      | 'failed'
+      | 'skipped'
+      | 'cancelled'
+      | 'interrupted'
   ) =>
     ({
       pending: 'Pending',
+      launching: 'Launching agent',
       running: 'Running',
+      unknown: 'Launch unconfirmed',
       done: 'Done',
       failed: 'Failed',
       skipped: 'Skipped',
@@ -32,6 +43,12 @@ export const planEnglish = {
     })[status],
   pauseUser: 'Paused by user',
   pauseInterrupted: 'Interrupted by app restart',
+  pauseUnknown: (step: string) =>
+    `Step ${step} may have started, but its launch could not be confirmed. Wait for the executor to verify it before taking recovery action.`,
+  unknownStepExplanation:
+    'The agent may still be running. Retry, skip, replan, and stop are unavailable until its launch is safely resolved.',
+  unknownRunHold:
+    'Another step has an unconfirmed launch. Recovery actions are unavailable until its status is verified.',
   pauseFailed: (step: string) => `Step ${step} failed`,
   pauseNeedsInput: (step: string, inputs: string) =>
     `Step ${step} needs more information: ${inputs}`,

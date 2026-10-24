@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createFacadeDesktopToolScopeFactory } from './facade-desktop-tool-scope'
+import { createFacadeSessionScopeFactory } from './facade-desktop-tool-scope'
 import {
   compactionPolicy,
   type RpcCompactionPolicy
@@ -59,9 +59,6 @@ import { createFacadeChildApprovalWriter } from './facade-child-approval'
 import type { PhiAgentDefinition, PhiAgentThinkingLevel } from '../../agents/definition'
 import { deriveProductionChildBinding } from './subagents/production-child-config'
 import type { FacadePromptContext } from '../phi-extension/lib/rpc-prompt-policy'
-import { rpcPromptPolicy } from '../phi-extension/lib/rpc-prompt-policy'
-import { join } from 'node:path'
-import { filterPersonaContextFile } from '../phi-extension/lib/phi-main-system-prompt'
 import type { DesktopProjectMemoryAdapter } from './desktop-project-memory-adapter'
 import { RemoteRecoveryError } from './session-recovery'
 import type {
@@ -70,14 +67,28 @@ import type {
   RpcChildRunSnapshot
 } from './subagents/types'
 import { resolveRpcAgentModelRefs } from './subagents/definition-compiler'
-import { FacadeChildToolScopes, childJobView } from './facade-child-tool-scopes'
-import { recordChildRunRecovery } from '../../session/child-run-recovery'
-import { AGENT_RUN_HOST_METHODS } from '../../agents/run-host'
-import { createFacadeAgentRunTools } from './facade-agent-run-tools'
+import {
+  FacadeChildToolScopes,
+  childJobView,
+  facadeChildScopesForRuntime
+} from './facade-child-tool-scopes'
+import { createFacadeChildObservers } from './facade-child-completion'
+import { createFacadeHostChildStarter } from './facade-host-child-start'
+import { stopSubmittedFacadeRun } from './facade-session-run-control'
+import { createFacadeAgentRunToolsForRuntime } from './facade-agent-run-tools'
+import { createFacadePlanReviewTools } from './facade-plan-review-tool'
+import {
+  assertFacadeAdoptionPolicy,
+  facadePromptContextMatches,
+  facadeRuntimeOwnerIsCurrent,
+  recoveredFacadeAutoPolicy,
+  recoveredFacadeModeAllowed,
+  sameFacadeSessionPolicy,
+  trustedFacadePromptPolicy
+} from './facade-session-policy'
 import type { RemoteStartupDiagnostics } from './remote-startup-diagnostics'
 import { remoteTurnFailure } from './turn-failure'
 export type { FacadePromptContext } from '../phi-extension/lib/rpc-prompt-policy'
-
 export interface SelectedFacadeRuntime {
   readonly onMemoryError?: () => void | Promise<void>
   readonly memory?: DesktopProjectMemoryAdapter
@@ -126,6 +137,9 @@ export interface SelectedFacadeRuntime {
   readonly dispose?: () => void | Promise<void>
 }
 export interface FacadeSessionFactoryOptions {
+  /** Closed until dispatch and recovery are verified. */ readonly remotePlanExecutionEnabled?: boolean
+  /** Closed until session-local draft parity is verified. */ readonly remotePlanDraftEnabled?: boolean
+  /** Closed until signed automatic phase admission is verified. */ readonly remoteAutoPlanEnabled?: boolean
   readonly compactionPolicy?: (
     agentDir: string,
     overrides: AutoCompactionOverrides
@@ -148,7 +162,6 @@ export interface FacadeSessionFactoryOptions {
 export function facadeBindingHash(binding: RemoteWorkspaceHostBinding): string {
   return createHash('sha256').update(binding.cacheKey).digest('hex')
 }
-
 function captureSelection(selected: SelectedFacadeRuntime): SelectedFacadeRuntime {
   const session = selected.session
   return Object.freeze({
@@ -182,7 +195,6 @@ function captureSelection(selected: SelectedFacadeRuntime): SelectedFacadeRuntim
       })
   })
 }
-
 function promptOptions(raw: Record<string, unknown> | undefined): RpcPromptOptions | undefined {
   if (!raw) return undefined
   // hostRunId is compatibility data only; the real registry supplies authority.
@@ -259,7 +271,6 @@ function workerState(
       : {})
   }
 }
-
 /** Real production CLI + desktop service registry + durable Phi adoption; no SDK session objects. */
 export function createFacadeSessionFactory(
   options: FacadeSessionFactoryOptions
@@ -279,6 +290,10 @@ export function createFacadeSessionFactory(
       const binding = resolveRemoteWorkspaceHostBinding({ sessionId: phiSessionId, projectId })
       const initial = findPhiSessionById(phiSessionId)
       if (!initial) throw new Error('Phi session does not exist')
+      const recoveredAuto = recoveredFacadeAutoPolicy(initial)
+      const workMode = recoveredAuto.mode
+      if (!recoveredFacadeModeAllowed(recoveredAuto, options))
+        throw new RemoteSessionCapabilityError('remote plan mode is not enabled')
       if (
         JSON.stringify(params.autoCompaction ?? {}) !== JSON.stringify(initial.autoCompaction ?? {})
       )
@@ -319,30 +334,16 @@ export function createFacadeSessionFactory(
         if (params.memory?.enabled && !selected.memory)
           throw new RemoteSessionCapabilityError('untrusted project memory')
         const promptContext = selected.promptContext ?? { contextFiles: [] }
-        if (
-          (promptContext.personaMarkdown ?? '') !== requestedPrompt.personaMarkdown ||
-          JSON.stringify(promptContext.contextFiles.map(({ path, content }) => [path, content])) !==
-            JSON.stringify(
-              requestedPrompt.contextFiles.map(({ path, content }) => [path, content])
-            ) ||
-          (promptContext.personaPath !== undefined &&
-            promptContext.personaPath !== join(params.agentDir, 'AGENTS.md'))
-        )
+        recoveredAuto.assertCurrent()
+        if (!facadePromptContextMatches(promptContext, requestedPrompt, params.agentDir))
           throw new RemoteSessionCapabilityError('untrusted persona or remote context snapshot')
-        const promptPolicy = rpcPromptPolicy({
-          ...promptContext,
-          contextFiles: filterPersonaContextFile(
-            { agentsFiles: [...promptContext.contextFiles] },
-            join(params.agentDir, 'AGENTS.md')
-          ).agentsFiles,
-          schema: 1,
-          nonce: 'preflight',
+        const promptPolicy = trustedFacadePromptPolicy({
+          promptContext,
+          agentDir: params.agentDir,
           phiSessionId,
           projectId,
-          projectRoot: binding.canonicalRoot,
-          contextRoot: binding.remoteRoot,
-          hostAlias: binding.hostAlias,
-          generation: 1
+          binding,
+          workMode
         })
         const afterSelection = findPhiSessionById(phiSessionId)
         const afterBinding = resolveRemoteWorkspaceHostBinding({
@@ -351,26 +352,7 @@ export function createFacadeSessionFactory(
         })
         if (
           !afterSelection ||
-          JSON.stringify([
-            afterSelection.cwd,
-            afterSelection.cwdRealPath,
-            afterSelection.projectLocation,
-            afterSelection.model,
-            afterSelection.thinkingLevel,
-            afterSelection.title,
-            afterSelection.runtimeRef,
-            afterSelection.runtimeRecoveryError
-          ]) !==
-            JSON.stringify([
-              initial.cwd,
-              initial.cwdRealPath,
-              initial.projectLocation,
-              initial.model,
-              initial.thinkingLevel,
-              initial.title,
-              initial.runtimeRef,
-              initial.runtimeRecoveryError
-            ]) ||
+          !sameFacadeSessionPolicy(afterSelection, initial) ||
           facadeBindingHash(afterBinding) !== facadeBindingHash(binding)
         )
           throw new RuntimeReferenceError('STALE_GENERATION', '远程选择期间会话或项目策略已改变')
@@ -464,36 +446,26 @@ export function createFacadeSessionFactory(
         let selectionPending: Promise<WorkerSessionState> | undefined
         let compactionPending: Promise<unknown> | undefined
         let submittedRun: SessionRun | undefined
-        const stopSubmittedRun = (): void => {
-          const run = submittedRun
-          if (run && options.runners.getActiveRun(phiSessionId) === run)
-            options.runners.stopRun(phiSessionId)
-        }
+        const stopSubmittedRun = (): void =>
+          stopSubmittedFacadeRun(options.runners, phiSessionId, submittedRun)
         const vault = new BrowserTextVault()
         let tools: RpcDesktopToolScope | undefined
         let childTools: FacadeChildToolScopes | undefined
         try {
-          const createScope = createFacadeDesktopToolScopeFactory({
-            identity: {
-              runtimeSessionId: params.sessionId,
-              sessionId: phiSessionId,
-              projectId,
-              cwd: binding.canonicalRoot
-            },
-            agentDir: params.agentDir,
-            bridge: options.bridge,
+          const createScope = createFacadeSessionScopeFactory(
+            params,
+            binding,
+            options.bridge,
             selected,
-            runtime: () => runtime,
+            () => runtime,
             vault
-          })
+          )
           tools = createScope(() => runtime?.currentRun())
-          if (selected.foregroundChildren)
-            childTools = new FacadeChildToolScopes({
-              definitions: selected.foregroundChildren.definitions,
-              createScope,
-              current: (id) => runtime?.childRunForHost(id),
-              name: (run) => runtime!.childResourceOwner(run.id).toolOwner
-            })
+          childTools = facadeChildScopesForRuntime(
+            selected.foregroundChildren?.definitions,
+            createScope,
+            () => runtime
+          )
           const projector = new RpcFacadeEventProjector()
           const scopeTools = tools
           const memoryNames = selected.memory?.tools.map((tool) => tool.name) ?? []
@@ -533,27 +505,22 @@ export function createFacadeSessionFactory(
           let rotating = false
           let runtimeEpoch = 0
           let selectionState: WorkerSessionState | undefined
-          const assertAdoptionPolicy = (): void => {
-            creationControl?.assertCurrent()
-            const latest = findPhiSessionById(phiSessionId)
-            if (
-              !latest ||
-              JSON.stringify(latest.model) !== JSON.stringify(expectedModel) ||
-              latest.thinkingLevel !== expectedThinking ||
-              JSON.stringify(latest.autoCompaction ?? {}) !== JSON.stringify(expectedAuto)
-            )
-              throw new RuntimeReferenceError('STALE_GENERATION', '远程证明期间模型策略已改变')
-            if (latest.title !== expectedTitle)
-              throw new RuntimeReferenceError('STALE_GENERATION', '远程会话名称策略已改变')
-            const latestBinding = resolveRemoteWorkspaceHostBinding({
-              sessionId: phiSessionId,
-              projectId
+          const assertAdoptionPolicy = (): void =>
+            assertFacadeAdoptionPolicy({
+              phiSessionId,
+              projectId,
+              initial,
+              expectedModel,
+              expectedThinking,
+              expectedAuto,
+              expectedTitle,
+              bindingHash: scope.bindingHash,
+              hashBinding: facadeBindingHash,
+              assertCurrent: () => {
+                creationControl?.assertCurrent()
+                recoveredAuto.assertCurrent()
+              }
             })
-            if (latest.cwd !== initial.cwd || latest.cwdRealPath !== initial.cwdRealPath)
-              throw new RuntimeReferenceError('STALE_GENERATION', '远程会话锚点已改变')
-            if (facadeBindingHash(latestBinding) !== scope.bindingHash)
-              throw new RuntimeReferenceError('HOST_IDENTITY_CHANGED', '远程证明期间主机绑定已改变')
-          }
           const startRuntime = async (
             bootModel: RuntimeModel,
             action: RemoteSessionRuntimeOptions['action'],
@@ -562,6 +529,18 @@ export function createFacadeSessionFactory(
           ): Promise<RemoteSessionRuntime> => {
             assertAdoptionPolicy()
             const epoch = ++runtimeEpoch
+            const generationPolicy = recoveredAuto.generation()
+            const isCurrentRuntime = (): boolean =>
+              facadeRuntimeOwnerIsCurrent({
+                owner: () => controlOwner,
+                current: () => runtime,
+                epoch,
+                currentEpoch: () => runtimeEpoch,
+                unavailable: () => !!closing || !!interrupted,
+                assertPolicy: assertAdoptionPolicy,
+                reference: () => attachedReference,
+                snapshotReference: () => verifiedReference
+              })
             const childModels = selected.foregroundChildren
               ? await resolveRpcAgentModelRefs(
                   selected.foregroundChildren.definitions,
@@ -579,30 +558,35 @@ export function createFacadeSessionFactory(
               )
               .map(({ provider, id }) => ({ provider, id }))
             const runTools = selected.foregroundChildren
-              ? createFacadeAgentRunTools({
+              ? createFacadeAgentRunToolsForRuntime({
                   runtimeSessionId: params.sessionId,
                   phiSessionId,
                   projectId,
                   host: options.bridge.hostServices,
-                  assertCurrent: () => {
-                    assertAdoptionPolicy()
-                    if (
-                      !controlOwner ||
-                      runtime !== controlOwner ||
-                      epoch !== runtimeEpoch ||
-                      closing ||
-                      interrupted
-                    )
-                      throw new RuntimeReferenceError('STALE_GENERATION', '专家控制代次已改变')
-                  },
-                  list: () => controlOwner!.listChildRuns(),
-                  wait: (options) => controlOwner!.waitForChildren(options),
-                  steer: (id, message, signal) => controlOwner!.steerChild(id, message, signal),
-                  stop: (id, signal) => controlOwner!.stopChild(id, signal),
-                  readChildReport: (run, signal) => controlOwner!.readChildReport(run, signal),
-                  waitCompletionDelivery: (id) => controlOwner!.awaitChildCompletionDelivery(id)
+                  owner: () => controlOwner,
+                  current: () => runtime,
+                  epoch,
+                  currentEpoch: () => runtimeEpoch,
+                  unavailable: () => !!closing || !!interrupted,
+                  assertPolicy: assertAdoptionPolicy
                 })
               : []
+            const planTools = createFacadePlanReviewTools(generationPolicy.mode, {
+              runtimeSessionId: params.sessionId,
+              phiSessionId,
+              host: options.bridge.hostServices,
+              runners: options.runners,
+              autoPlanEnabled: options.remoteAutoPlanEnabled && !generationPolicy.tainted,
+              planExecutionEnabled: options.remotePlanExecutionEnabled,
+              planDraftEnabled: options.remotePlanDraftEnabled,
+              suppressPlanTools: generationPolicy.tainted,
+              onAutoSelected: (run, mode) => recoveredAuto.adoptSelection(run.runId, mode),
+              submittedRun: () => submittedRun,
+              assertCurrent: () => {
+                if (!isCurrentRuntime())
+                  throw new RuntimeReferenceError('STALE_GENERATION', '远程计划工具所属代次已改变')
+              }
+            })
             const controlOwner: RemoteSessionRuntime = await RemoteSessionRuntime.create({
               transport: {
                 projectId,
@@ -642,12 +626,17 @@ export function createFacadeSessionFactory(
                 personaPath: promptPolicy.personaPath,
                 contextFiles: promptPolicy.contextFiles,
                 runtime: promptPolicy.runtime,
+                workMode: generationPolicy.mode,
                 memoryBlock: selected.memory?.memoryBlock,
                 recoverySummary: promptPolicy.recoverySummary
               },
-              tools: [...scopeTools.tools.filter((tool) => names.has(tool.name)), ...runTools],
+              tools: [
+                ...scopeTools.tools.filter((tool) => names.has(tool.name)),
+                ...runTools,
+                ...planTools
+              ],
               hostApprovalFor: (name, input) =>
-                runTools.find((tool) => tool.name === name)?.approval ??
+                [...runTools, ...planTools].find((tool) => tool.name === name)?.approval ??
                 scopeTools.approvalFor(name, input),
               nativeTools: selected.nativeTools,
               foregroundChildren: selected.foregroundChildren && {
@@ -663,44 +652,16 @@ export function createFacadeSessionFactory(
                 classifyTool: (run, call) => childTools!.classify(run, call),
                 executeHost: (run, call, signal) => childTools!.execute(run, call, signal),
                 drainHost: (id) => childTools!.drain(id),
-                onChildChange: (snapshot, parent) => {
-                  if (!attachedReference || interrupted || closing) return
-                  assertAdoptionPolicy()
-                  recordChildRunRecovery(
-                    { reference: attachedReference, snapshot },
-                    { assertCurrent: assertAdoptionPolicy }
-                  )
-                  selected.foregroundChildren?.onChildChange?.(snapshot, parent)
-                },
-                onChildFinished: async (snapshot) => {
-                  if (interrupted || closing || !runtime) return
-                  const report = await runtime.readChildReport(snapshot)
-                  if (interrupted || closing) return
-                  await options.bridge.hostServices.invoke(
-                    AGENT_RUN_HOST_METHODS.finished,
-                    {
-                      originSessionId: params.sessionId,
-                      run: {
-                        id: snapshot.id,
-                        agent: snapshot.agent,
-                        state:
-                          snapshot.status === 'completed'
-                            ? 'done'
-                            : snapshot.status === 'aborted'
-                              ? 'cancelled'
-                              : 'error',
-                        task: '',
-                        startedAt: snapshot.startedAt,
-                        completedAt: snapshot.completedAt,
-                        toolCallId: snapshot.parentToolCallId,
-                        ...(report
-                          ? { report }
-                          : { error: '专家任务未提供完整结果，请查看任务记录。' })
-                      }
-                    },
-                    { originSessionId: params.sessionId, agentRunId: snapshot.id }
-                  )
-                },
+                ...createFacadeChildObservers({
+                  reference: () => attachedReference,
+                  runtime: () => runtime,
+                  isCurrent: isCurrentRuntime,
+                  unavailable: () => !!interrupted || !!closing,
+                  assertCurrent: assertAdoptionPolicy,
+                  onChange: selected.foregroundChildren.onChildChange,
+                  originSessionId: params.sessionId,
+                  hostServices: options.bridge.hostServices
+                }),
                 parentThinkingLevel: childThinkingLevel(
                   selection
                     ? selection.thinkingLevel === 'off'
@@ -777,6 +738,7 @@ export function createFacadeSessionFactory(
                 selected.onInterrupted?.(error)
               }
             })
+            const verifiedReference = Object.freeze({ ...controlOwner.currentSnapshot().reference })
             return controlOwner
           }
           runtime = await startRuntime(
@@ -993,10 +955,38 @@ export function createFacadeSessionFactory(
             return operation
           }
           selected.startupDiagnostics?.finish('ready')
+          const startPlanChild = createFacadeHostChildStarter({
+            enabled:
+              options.remotePlanExecutionEnabled === true &&
+              selected.foregroundChildren?.allowBackground === true,
+            workMode,
+            allowedAgents:
+              selected.foregroundChildren?.definitions.map((agent) => agent.name) ?? [],
+            phiSessionId,
+            projectId,
+            cwd: binding.canonicalRoot,
+            capture: () => ({
+              runtime,
+              reference: attachedReference,
+              epoch: runtimeEpoch,
+              busy: !!(
+                closing ||
+                interrupted ||
+                metadataPending ||
+                submittedRun ||
+                options.runners.getActiveRun(phiSessionId)
+              )
+            }),
+            assertCurrent: assertAdoptionPolicy,
+            setPending: (pending) => {
+              metadataPending = pending
+            }
+          })
           return {
             interruption: () => interrupted,
             hasActiveAgentRuns: () => !closing && !interrupted && runtime!.hasActiveAgentRuns(),
             agentRuns: {
+              start: startPlanChild,
               list: () =>
                 runtime!
                   .listChildRuns()

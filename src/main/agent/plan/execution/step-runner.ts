@@ -12,6 +12,7 @@ export interface StepRunnerStartInput {
   sessionId: string
   agent?: string
   task: string
+  requestId?: string
   signal: AbortSignal
 }
 

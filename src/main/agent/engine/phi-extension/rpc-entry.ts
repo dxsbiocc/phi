@@ -10,6 +10,7 @@ import { createRpcCompactionExtension } from './extensions/rpc-compaction-contro
 import { createRpcPromptExtension } from './extensions/rpc-prompt'
 import { createRpcExecutionAuthorityExtension } from './extensions/rpc-execution-authority'
 import { createRpcToolApprovalExtension } from './extensions/rpc-tool-approval'
+import { createRpcPlanningPolicyExtension } from './extensions/rpc-plan-policy'
 import {
   createRpcHostResultExtension,
   type RpcHostResultReadiness
@@ -33,6 +34,13 @@ import {
 } from './extensions/rpc-task-admission'
 import { rpcTaskDefinitionConflictReason } from './extensions/rpc-task-definition-verifier'
 import {
+  parseRpcChildHostStartRequest,
+  RPC_CHILD_HOST_CANCEL_COMMAND,
+  RPC_CHILD_HOST_CANCEL_DESCRIPTION,
+  RPC_CHILD_HOST_START_COMMAND,
+  RPC_CHILD_HOST_START_DESCRIPTION
+} from './lib/rpc-child-host-start'
+import {
   loadRpcChildRuntimeConfig,
   childConfigDigest,
   makeRpcChildAttestation,
@@ -53,6 +61,8 @@ import {
 } from './lib/rpc-runtime-config'
 import { loadRpcModelMetadata } from './lib/rpc-model-metadata'
 import { resolveInsideProject } from './lib/project-path'
+import { rpcManualPlanDraftRead } from './lib/rpc-prompt-policy'
+import { isRpcPlanTransitionTool, type RpcPlanRunBinding } from './lib/rpc-plan-phase'
 import { classifyXdevCall } from './lib/rpc-xdev'
 import {
   loadRpcBootstrapConfig,
@@ -202,6 +212,12 @@ const rpcExtension: ExtensionFactory = async (pi) => {
   )
     throw new Error('Phi composed RPC runtime configuration is missing')
 
+  let planReadiness: () => RpcPlanRunBinding | undefined = () => undefined
+  const planning = runtime
+    ? createRpcPlanningPolicyExtension(runtime, () => planReadiness())
+    : undefined
+  if (planning) await planning.extension(pi)
+
   // Refuse unsupported native spellings before the shared guard's realpath.
   pi.on('tool_call', async (event, ctx) => {
     if (ctx.agent.kind !== 'main')
@@ -224,6 +240,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
     }
     if (event.toolName !== 'read') return deny
     const input = event.input as Record<string, unknown>
+    if (rpcManualPlanDraftRead(planning?.phase.mode(planReadiness()), input)) return undefined
     if (
       !input ||
       typeof input.path !== 'string' ||
@@ -394,6 +411,32 @@ const rpcExtension: ExtensionFactory = async (pi) => {
             throw new Error('Phi child publication changed')
         }
       })(pi)
+      const hostStarts = new Set<string>()
+      pi.registerCommand(RPC_CHILD_HOST_START_COMMAND, {
+        description: RPC_CHILD_HOST_START_DESCRIPTION,
+        handler: async (args, ctx) => {
+          const identity = root()
+          if (!identity || ctx.agent.kind !== 'main' || !ctx.isIdle())
+            throw new Error('Phi host child start requires the idle root')
+          const request = parseRpcChildHostStartRequest(args, childConfig, identity)
+          if (hostStarts.has(request.id) || hostStarts.size >= 4096)
+            throw new Error('Phi host child start replay refused')
+          hostStarts.add(request.id)
+          tasks.assertInstalled(ctx)
+          await tasks.startHostChild(request, ctx)
+        }
+      })
+      pi.registerCommand(RPC_CHILD_HOST_CANCEL_COMMAND, {
+        description: RPC_CHILD_HOST_CANCEL_DESCRIPTION,
+        handler: async (args, ctx) => {
+          const identity = root()
+          if (!identity || ctx.agent.kind !== 'main' || !ctx.isIdle())
+            throw new Error('Phi host child cancellation requires the idle root')
+          const request = parseRpcChildHostStartRequest(args, childConfig, identity)
+          tasks.assertInstalled(ctx)
+          await tasks.cancelHostChild(request, ctx)
+        }
+      })
       pi.registerCommand(CHILD_ATTEST_COMMAND, {
         description: CHILD_ATTEST_DESCRIPTION,
         handler: async (args, ctx) => {
@@ -428,6 +471,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
       admitTask: taskAdmission?.preflight,
       childPreflight
     })
+    planReadiness = execution.readiness
     const roster = executionRoster(runtime.execution.tools, {
       allowNativeTask: childConfig !== undefined
     })
@@ -519,7 +563,12 @@ const rpcExtension: ExtensionFactory = async (pi) => {
       directory: runtime.result.directory,
       capability: runtime.result.capability,
       readiness,
-      isHostTool: (name) => hostNames.has(name)
+      isHostTool: (name) => hostNames.has(name),
+      requiresSignedResult: isRpcPlanTransitionTool,
+      onConsumedResult: (ready, toolCallId, toolName, result) => {
+        if (isRpcPlanTransitionTool(toolName))
+          planning?.phase.verifiedResult(ready, toolCallId, toolName, result)
+      }
     })(pi)
     registerRpcSessionVerification(pi, {
       nonce: config.nonce,

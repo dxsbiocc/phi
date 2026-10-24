@@ -7,6 +7,49 @@ import type { PhiTool } from '../types'
 import { withRemoteSignal } from './history-pager'
 import type { RpcChildRunSnapshot } from './subagents/types'
 import type { RpcChildWaitOptions, RpcChildWaitResult } from './subagents/child-run-controls'
+import type { RemoteSessionRuntime } from './remote-session-runtime'
+import { RuntimeReferenceError } from '../../session/runtime-reference'
+
+export function createFacadeAgentRunToolsForRuntime(input: {
+  readonly runtimeSessionId: string
+  readonly phiSessionId: string
+  readonly projectId: string
+  readonly host: Pick<HostServiceRegistry, 'invoke'>
+  readonly owner: () => RemoteSessionRuntime | undefined
+  readonly current: () => RemoteSessionRuntime | undefined
+  readonly epoch: number
+  readonly currentEpoch: () => number
+  readonly unavailable: () => boolean
+  readonly assertPolicy: () => void
+}): PhiTool[] {
+  const owned = (): RemoteSessionRuntime => {
+    input.assertPolicy()
+    const owner = input.owner()
+    if (
+      !owner ||
+      owner !== input.current() ||
+      input.epoch !== input.currentEpoch() ||
+      input.unavailable()
+    )
+      throw new RuntimeReferenceError('STALE_GENERATION', '专家控制代次已改变')
+    return owner
+  }
+  return createFacadeAgentRunTools({
+    runtimeSessionId: input.runtimeSessionId,
+    phiSessionId: input.phiSessionId,
+    projectId: input.projectId,
+    host: input.host,
+    assertCurrent: () => {
+      owned()
+    },
+    list: () => owned().listChildRuns(),
+    wait: (options) => owned().waitForChildren(options),
+    steer: (id, message, signal) => owned().steerChild(id, message, signal),
+    stop: (id, signal) => owned().stopChild(id, signal),
+    readChildReport: (run, signal) => owned().readChildReport(run, signal),
+    waitCompletionDelivery: (id) => owned().awaitChildCompletionDelivery(id)
+  })
+}
 
 export interface FacadeAgentRunToolOptions {
   readonly runtimeSessionId: string

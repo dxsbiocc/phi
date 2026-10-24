@@ -93,6 +93,17 @@ test('serializes write steps when either side omits writes', () => {
   assert.deepEqual(selectLaunchableSteps(active), ['reader'])
 })
 
+test('a durable launch reserves its concurrency slot and declared write range', () => {
+  const launching = planStep('launching', { access: 'write', writes: ['src/a'] })
+  const overlap = planStep('overlap', { access: 'write', writes: ['src/a/nested'] })
+  const separate = planStep('separate', { access: 'write', writes: ['src/b'] })
+  const state = runState([launching, overlap, separate], {
+    launching: { status: 'launching', attempts: 1, requestId: 'request-1' }
+  })
+  assert.deepEqual(selectLaunchableSteps(state, { maxConcurrent: 1 }), [])
+  assert.deepEqual(selectLaunchableSteps(state, { maxConcurrent: 2 }), ['separate'])
+})
+
 test('allows disjoint declared writes but rejects path-segment prefix overlaps', () => {
   const steps = [
     planStep('base', { access: 'write', writes: ['src/a'] }),

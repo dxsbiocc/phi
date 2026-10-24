@@ -7,6 +7,7 @@ import {
   type PlanReviewHostServiceDeps
 } from '../src/main/agent/plan/plan-review-host-service'
 import type { PlanSpec } from '../src/shared/planRunTypes'
+import { createPlanReviewRequest } from '../src/main/agent/host-requests/plan-review-request'
 
 const spec: PlanSpec = {
   version: 1,
@@ -22,6 +23,144 @@ const spec: PlanSpec = {
     }
   ]
 }
+
+test('SSH plan review accepts only an authenticated call from its active run', async () => {
+  let reviews = 0
+  let started = 0
+  let generation = 1
+  let savedWorkMode = 'plan_execute'
+  let delayedRecovery = false
+  let releaseRecovery!: () => void
+  const waitForRecovery = new Promise<void>((resolve) => {
+    releaseRecovery = resolve
+  })
+  let enteredRecovery: (() => void) | undefined
+  const handler = createPlanReviewRequest({
+    fields: {
+      optionalStringField: (record, key) =>
+        typeof record[key] === 'string' ? (record[key] as string) : undefined
+    },
+    runs: {
+      findByRuntimeSessionId: (id) =>
+        id === 'runtime-1'
+          ? {
+              phiSessionId: 'phi-1',
+              runId: 'run-1',
+              cwd: '/remote',
+              projectId: 'project-1',
+              sessionGeneration: generation,
+              cancelled: false
+            }
+          : null
+    },
+    projects: { getById: () => ({ location: { kind: 'ssh' } }) },
+    sessions: {
+      findById: () => ({ projectLocation: { kind: 'ssh' }, workMode: savedWorkMode }),
+      sessionPath: () => 'phi-session:phi-1'
+    },
+    renderer: {
+      getActiveWindow: () => ({}) as never,
+      canRequest: (window): window is NonNullable<typeof window> => Boolean(window),
+      waitForResponse: async () => {
+        reviews++
+        return { answers: [{ question: 'plan_review', answer: 'approve' }] } as never
+      }
+    },
+    timeline: { append: (_id, event) => event, broadcast: () => undefined },
+    state: {
+      createId: () => 'review-1',
+      markNeedsInput: () => undefined,
+      markInputCancelled: () => undefined,
+      markInputAnswered: () => undefined,
+      notifySessionChanged: () => undefined
+    },
+    planRuns: {
+      startFromApprovedPlan: async (sessionId, approved, guard) => {
+        assert.equal(sessionId, 'phi-1')
+        assert.deepEqual(approved, spec)
+        assert.equal(guard?.expectedRuntimeSessionId, 'runtime-1')
+        enteredRecovery?.()
+        if (delayedRecovery) await waitForRecovery
+        guard?.assertCurrent()
+        started++
+        return { id: 'plan-1' }
+      },
+      pendingReplan: () => null,
+      validateReplanProposal: async () => ({ ok: true, spec }),
+      applyApprovedReplan: async () => ({ id: 'plan-1' }),
+      cancelReplan: () => undefined
+    }
+  })
+  const request = {
+    runtimeSessionId: 'runtime-1',
+    title: 'Finish E5',
+    planContent: '# Finish E5',
+    planFilePath: 'local://PLAN.md',
+    steps: spec
+  }
+  const origin = {
+    originSessionId: 'runtime-1',
+    agentRunId: 'run-1',
+    toolCallId: 'call-1',
+    remotePlanPhase: 'plan_execute' as const
+  }
+  await assert.rejects(() => handler(request, origin), /远程项目暂不支持计划评审/)
+  await assert.rejects(
+    () =>
+      handler(request, { ...origin, originSessionId: 'other', remoteOriginAuthenticated: true }),
+    /No active conversation/
+  )
+  await assert.rejects(
+    () => handler(request, { ...origin, agentRunId: 'other', remoteOriginAuthenticated: true }),
+    /远程项目暂不支持计划评审/
+  )
+  assert.deepEqual(await handler(request, { ...origin, remoteOriginAuthenticated: true }), {
+    decision: 'approve',
+    planRunId: 'plan-1'
+  })
+  assert.equal(reviews, 1)
+  assert.equal(started, 1)
+
+  savedWorkMode = 'plan'
+  assert.deepEqual(
+    await handler(
+      { ...request, steps: undefined },
+      { ...origin, remoteOriginAuthenticated: true, remotePlanPhase: 'plan' }
+    ),
+    { decision: 'approve' }
+  )
+  assert.equal(started, 1)
+  savedWorkMode = 'plan_execute'
+
+  savedWorkMode = 'auto'
+  await assert.rejects(
+    () => handler(request, { ...origin, remoteOriginAuthenticated: true, remotePlanPhase: 'plan' }),
+    /远程项目暂不支持计划评审/
+  )
+  assert.deepEqual(await handler(request, { ...origin, remoteOriginAuthenticated: true }), {
+    decision: 'approve',
+    planRunId: 'plan-1'
+  })
+  assert.equal(started, 2)
+  savedWorkMode = 'plan_execute'
+
+  delayedRecovery = true
+  const entered = new Promise<void>((resolve) => {
+    enteredRecovery = resolve
+  })
+  const controller = new AbortController()
+  const stale = handler(request, {
+    ...origin,
+    remoteOriginAuthenticated: true,
+    signal: controller.signal
+  })
+  await entered
+  generation = 2
+  controller.abort()
+  releaseRecovery()
+  await assert.rejects(stale, /Plan approval is no longer active/)
+  assert.equal(started, 2)
+})
 
 test('plan review host service owns registration and forwards approved steps to plan runs', async () => {
   const handlers = new Map<string, PhiHostRequestHandler>()

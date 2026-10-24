@@ -1587,6 +1587,15 @@ async function harness(
   if (options.childResourceOwner) phiEngine.agentRuns.resourceOwner = options.childResourceOwner
   const modules: Record<string, unknown> = {
     '../shared/ipcChannels': { IPC },
+    './agent/session/pending-remote-auto-plan': {
+      readPendingRemoteAutoPlan: () => ({ state: 'none' }),
+      writePendingRemoteAutoPlan: () => undefined,
+      clearPendingRemoteAutoPlanAfterTurn: () => false,
+      effectiveRecoveredRemoteAutoMode: ({ savedMode }: { savedMode: string }) => ({
+        mode: savedMode,
+        tainted: false
+      })
+    },
     '../shared/browserSessionScope': browserSessionScope,
     './window-startup': windowStartup,
     './startup-plugin-enablement': {

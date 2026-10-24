@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { AgentReport } from '../../agents/report'
 import type { PlanRunState, PlanSpec, PlanStepReportSummary } from '../../../../shared/planRunTypes'
 import { createPlanRunState, reducePlanRun, type PlanRunEvent } from '../model/plan-run-state'
@@ -37,6 +38,8 @@ export interface PlanExecutorDependencies {
   clock: PlanExecutorClock | (() => string)
   ids: PlanExecutorIds | (() => string)
   maxConcurrent?: number
+  /** Remote sessions require a durable request identity before dispatch. */
+  requiresDurableLaunch?(phiSessionId: string): boolean
 }
 
 export interface PlanExecutor {
@@ -139,7 +142,8 @@ class PlanExecutorImplementation implements PlanExecutor {
     const state = reducePlanRun(previous, event)
     // An approved replacement must be durable before it becomes runnable in memory.
     // Other transitions retain their existing memory-authoritative recovery behavior.
-    const writeBeforeMemory = event.type === 'replace_remaining_steps'
+    const writeBeforeMemory =
+      event.type === 'replace_remaining_steps' || event.type === 'step_launch_requested'
     if (writeBeforeMemory) await this.deps.store.write(state)
     // For other transitions memory stays authoritative if persistence fails.
     this.runtime.states.set(runId, state)
@@ -197,16 +201,44 @@ class PlanExecutorImplementation implements PlanExecutor {
     const state = requireState(this.runtime, runId)
     const step = state.spec.steps.find((candidate) => candidate.id === stepId)!
     const controller = new AbortController()
+    const requestId = this.deps.requiresDurableLaunch?.(state.sessionId) ? randomUUID() : undefined
+    if (requestId) {
+      // The request identity must reach stable storage before any remote dispatch.
+      await this.apply(
+        runId,
+        {
+          type: 'step_launch_requested',
+          stepId,
+          requestId,
+          at: clockNow(this.deps.clock)
+        },
+        false
+      )
+    }
     let handle: StepRunHandle
     try {
       handle = await this.deps.runner.start({
         sessionId: state.sessionId,
         ...(step.agent ? { agent: step.agent } : {}),
+        ...(requestId ? { requestId } : {}),
         task: buildStepPrompt(state, stepId),
         signal: controller.signal
       })
     } catch (error) {
-      await this.recordLaunchFailure(runId, stepId, error)
+      if (requestId) {
+        await this.apply(
+          runId,
+          {
+            type: 'step_launch_unknown',
+            stepId,
+            requestId,
+            at: clockNow(this.deps.clock)
+          },
+          false
+        )
+      } else {
+        await this.recordLaunchFailure(runId, stepId, error)
+      }
       return
     }
     this.runtime.active.get(runId)?.set(stepId, { agentRunId: handle.runId, controller })
@@ -246,6 +278,8 @@ class PlanExecutorImplementation implements PlanExecutor {
   ): Promise<PlanRunState> {
     const validated = validatePlanSpec(spec)
     if (!validated.ok) throw new Error(`Invalid plan: ${validated.errors.join('; ')}`)
+    // Reject an unreadable session identity before recording a runnable plan.
+    this.deps.requiresDurableLaunch?.(sessionId)
     const id = nextRunId(this.deps.ids)
     if (this.runtime.states.has(id)) throw new Error(`Plan run already exists: ${id}`)
     const state = createPlanRunState({
@@ -281,6 +315,13 @@ class PlanExecutorImplementation implements PlanExecutor {
   async stop(runId: string): Promise<PlanRunState> {
     return this.enqueue(runId, async () => {
       const state = requireState(this.runtime, runId)
+      if (
+        Object.values(state.steps).some(
+          (step) => step.status === 'unknown' || step.status === 'launching'
+        )
+      ) {
+        throw new Error('An unresolved launch cannot be stopped safely.')
+      }
       const active = [...(this.runtime.active.get(runId)?.values() ?? [])]
       await Promise.allSettled(
         active.map(async ({ agentRunId, controller }) => {

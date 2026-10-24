@@ -10,6 +10,7 @@ import { RpcConnection } from '../../src/main/agent/engine/rpc/connection'
 import type { RpcFrame } from '../../src/main/agent/engine/rpc/types'
 import { compileRpcAgentDefinitions } from '../../src/main/agent/engine/rpc/subagents/definition-compiler'
 import { rpcChildProfileFromDefinition } from '../../src/main/agent/engine/rpc/subagents/run-registry'
+import type { RpcChildRuntimeConfig } from '../../src/main/agent/engine/phi-extension/lib/rpc-child-config'
 import { compileOptions, definition } from './rpcAgentDefinitionFixture'
 
 export interface TaskAdmissionFixture {
@@ -17,6 +18,8 @@ export interface TaskAdmissionFixture {
   cwd: string
   agentDir: string
   nativeName: string
+  backgroundNativeName?: string
+  childConfig?: RpcChildRuntimeConfig
   connection: RpcConnection
   frames: RpcFrame[]
   requests: Array<{ actor: 'root' | 'child'; body: Record<string, unknown> }>
@@ -58,6 +61,8 @@ export async function taskAdmissionCli(
     ambient?: boolean
     admission?: boolean
     pythonOnlyPreflight?: boolean
+    hostStart?: boolean
+    hostStartDelayMs?: number
   } = {}
 ): Promise<TaskAdmissionFixture> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'phi-task-admission-')))
@@ -101,6 +106,7 @@ export async function taskAdmissionCli(
     })
   )
   const nativeName = compiled.manifest.entries.find((entry) => entry.blocking)!.nativeName
+  const backgroundEntry = compiled.manifest.entries.find((entry) => !entry.blocking)!
   let rootHits = 0
   const server = createServer((req, res) => {
     void (async () => {
@@ -172,35 +178,40 @@ export async function taskAdmissionCli(
     await options.prepare?.({ root, cwd, agentDir, nativeName })
     const entry = compiled.manifest.entries.find((item) => item.blocking)!
     const childConfig = join(root, 'child-runtime.json')
-    await writeFile(
-      childConfig,
-      JSON.stringify({
-        schema: 1,
-        nonce: 'r'.repeat(32),
-        phiSessionId: 'seam-session',
-        projectId: 'seam-project',
-        projectRoot: cwd,
-        generation: 1,
-        manifestHash: compiled.manifestHash,
-        manifestBinding: compiled.manifest.binding,
-        capability: 'f'.repeat(64),
-        profiles: [
-          rpcChildProfileFromDefinition(entry, ['PRIVATE_TASK_SEAM'], model, {
+    const childConfigValue: RpcChildRuntimeConfig = {
+      schema: 1,
+      nonce: 'r'.repeat(32),
+      phiSessionId: 'seam-session',
+      projectId: 'seam-project',
+      projectRoot: cwd,
+      generation: 1,
+      manifestHash: compiled.manifestHash,
+      manifestBinding: compiled.manifest.binding,
+      capability: 'f'.repeat(64),
+      profiles: [
+        ...[entry, ...(options.hostStart ? [backgroundEntry] : [])].map((candidate) =>
+          rpcChildProfileFromDefinition(candidate, ['PRIVATE_TASK_SEAM'], model, {
             api: 'openai-completions',
             baseUrl: `http://127.0.0.1:${address.port}`,
             transport: 'sse'
           })
-        ],
-        files: compiled.files
-          .filter(
-            (file) =>
-              file.path === `agents/${nativeName}.md` || file.path === 'phi-agent-definitions.json'
-          )
-          .map(({ path, sha256 }) => ({ path, sha256 })),
-        policy: { mode: 'foreground-native', taskShape: 'single' }
-      }),
-      { mode: 0o600 }
-    )
+        )
+      ],
+      files: compiled.files
+        .filter(
+          (file) =>
+            file.path === `agents/${nativeName}.md` ||
+            (options.hostStart && file.path === `agents/${backgroundEntry.nativeName}.md`) ||
+            file.path === 'phi-agent-definitions.json'
+        )
+        .map(({ path, sha256 }) => ({ path, sha256 })),
+      policy: {
+        mode: 'foreground-native',
+        taskShape: 'single',
+        ...(options.hostStart ? { allowBackground: true } : {})
+      }
+    }
+    await writeFile(childConfig, JSON.stringify(childConfigValue), { mode: 0o600 })
     const policy = join(root, 'startup-policy.json')
     await writeFile(
       policy,
@@ -221,7 +232,7 @@ export async function taskAdmissionCli(
         memory: { enabled: false },
         tools: { xdev: false },
         ...(options.pythonOnlyPreflight ? { eval: { py: true, js: false } } : {}),
-        async: { enabled: false },
+        async: { enabled: options.hostStart === true },
         task: {
           batch: false,
           structured: false,
@@ -278,7 +289,12 @@ export async function taskAdmissionCli(
           TEMP: join(root, 'tmp'),
           PI_CODING_AGENT_DIR: agentDir,
           PI_CODING_AGENT_SESSION_DIR: history,
-          ...(options.admission ? { PHI_TASK_ADMISSION_CONFIG: childConfig } : {}),
+          ...(options.admission || options.hostStart
+            ? { PHI_TASK_ADMISSION_CONFIG: childConfig }
+            : {}),
+          ...(options.hostStartDelayMs
+            ? { PHI_TASK_HOST_START_DELAY_MS: String(options.hostStartDelayMs) }
+            : {}),
           NO_PROXY: '127.0.0.1,localhost',
           DO_NOT_TRACK: '1',
           PI_REQ_DEBUG: '0'
@@ -331,6 +347,9 @@ export async function taskAdmissionCli(
       cwd,
       agentDir,
       nativeName,
+      ...(options.hostStart
+        ? { backgroundNativeName: backgroundEntry.nativeName, childConfig: childConfigValue }
+        : {}),
       connection,
       frames,
       requests,

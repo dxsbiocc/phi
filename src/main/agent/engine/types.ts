@@ -360,6 +360,10 @@ export type PhiHostRequestContext = {
   readonly originSessionId?: string
   readonly agentRunId?: string
   readonly toolCallId?: string
+  /** Main-only proof from an authenticated remote host tool; never serialized from model input. */
+  readonly remoteOriginAuthenticated?: true
+  /** Main-only in-run RPC plan phase, proven by the signed enter_plan_mode host result. */
+  readonly remotePlanPhase?: 'plan' | 'plan_execute'
 }
 
 export type PhiHostRequestHandler = (
@@ -562,7 +566,12 @@ export interface PhiEngine {
     }
   }
   agentRuns: {
-    start(params: { sessionId: string; agent?: string; task: string }): Promise<{ runId: string }>
+    start(params: {
+      sessionId: string
+      agent?: string
+      task: string
+      requestId?: string
+    }): Promise<{ runId: string }>
     list(params: Record<string, never>): Promise<unknown>
     /** Desktop-only lookup of a currently verified child; never serialized as a capability. */
     resourceOwner?(

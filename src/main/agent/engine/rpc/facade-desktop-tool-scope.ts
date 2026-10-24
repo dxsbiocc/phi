@@ -2,6 +2,8 @@ import type { BrowserTextVault } from '../../browser/browser-text-vault'
 import { createDecisionClient } from '../decision-client'
 import { bindSessionDecisionEvaluator } from '../decision-evaluator'
 import type { OmpBridge } from '../omp-bridge'
+import type { PhiSessionCreateParams } from '../types'
+import type { RemoteWorkspaceHostBinding } from '../../remote-workspace-boundary'
 import type { SelectedFacadeRuntime } from './facade-session-driver'
 import type { RemoteSessionRuntime } from './remote-session-runtime'
 import {
@@ -10,6 +12,31 @@ import {
   type RpcDesktopToolRun,
   type RpcDesktopToolScope
 } from './desktop-tool-scope'
+
+export function createFacadeSessionScopeFactory(
+  params: PhiSessionCreateParams,
+  binding: RemoteWorkspaceHostBinding,
+  bridge: OmpBridge,
+  selected: SelectedFacadeRuntime,
+  runtime: () => RemoteSessionRuntime | undefined,
+  vault: BrowserTextVault
+): ReturnType<typeof createFacadeDesktopToolScopeFactory> {
+  const remote = params.remoteProject
+  if (!remote) throw new Error('Remote desktop tool scope requires a project session')
+  return createFacadeDesktopToolScopeFactory({
+    identity: {
+      runtimeSessionId: params.sessionId,
+      sessionId: remote.phiSessionId,
+      projectId: remote.projectId,
+      cwd: binding.canonicalRoot
+    },
+    agentDir: params.agentDir,
+    bridge,
+    selected,
+    runtime,
+    vault
+  })
+}
 
 /** Both main and child scopes retain their original live runtime and resource ownership. */
 export function createFacadeDesktopToolScopeFactory(options: {

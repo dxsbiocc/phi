@@ -48,7 +48,10 @@ export function selectLaunchableSteps(
 ): string[] {
   if (state.status !== 'running') return []
   const runningIds = state.spec.steps
-    .filter((step) => state.steps[step.id]?.status === 'running')
+    .filter(
+      (step) =>
+        state.steps[step.id]?.status === 'running' || state.steps[step.id]?.status === 'launching'
+    )
     .map((step) => step.id)
   const available = concurrencyLimit(options.maxConcurrent) - runningIds.length
   if (available <= 0) return []

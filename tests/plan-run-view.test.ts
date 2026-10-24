@@ -6,6 +6,7 @@ import {
   latestPlanRun,
   planStepDurationMs,
   planStepActions,
+  planStepRetryNeedsConfirmation,
   planRunPauseReason,
   planRunProgress,
   planRunSnapshotFromUnknown,
@@ -57,6 +58,7 @@ test('planRunPauseReason names the blocked step and missing inputs', () => {
     planRunPauseReason(run, {
       user: '用户暂停',
       interrupted: '中断（应用重启）',
+      unknown: (step) => `第 ${step} 步状态未知`,
       failed: (step) => `第 ${step} 步失败`,
       needsInput: (step, inputs) => `第 ${step} 步需要补充信息：${inputs.join('、')}`
     }),
@@ -68,6 +70,7 @@ test('planRunPauseReason distinguishes user, failure and restart pauses', () => 
   const copy = {
     user: '用户暂停',
     interrupted: '中断（应用重启）',
+    unknown: (step: number) => `第 ${step} 步状态未知`,
     failed: (step: number) => `第 ${step} 步失败`,
     needsInput: (step: number, inputs: string[]) => `第 ${step} 步：${inputs.join('、')}`
   }
@@ -78,6 +81,8 @@ test('planRunPauseReason distinguishes user, failure and restart pauses', () => 
   assert.equal(planRunPauseReason(run, copy), '第 2 步失败')
   run.pause = { reason: 'interrupted' }
   assert.equal(planRunPauseReason(run, copy), '中断（应用重启）')
+  run.pause = { reason: 'unknown', stepId: 'write' }
+  assert.equal(planRunPauseReason(run, copy), '第 2 步状态未知')
 })
 
 test('planStepActions only exposes recovery actions on the paused problem step', () => {
@@ -88,6 +93,22 @@ test('planStepActions only exposes recovery actions on the paused problem step',
 
   assert.deepEqual(planStepActions(run, 'read'), [])
   assert.deepEqual(planStepActions(run, 'write'), ['retry', 'skip', 'stop'])
+  run.pause = { reason: 'interrupted', stepId: 'write' }
+  run.steps[1]!.status = 'interrupted'
+  assert.deepEqual(planStepActions(run, 'write'), ['retry', 'skip', 'stop'])
+  run.steps[1]!.status = 'pending'
+  assert.deepEqual(planStepActions(run, 'write'), [])
+  run.pause = { reason: 'user' }
+  assert.deepEqual(planStepActions(run, 'write'), [])
+  run.pause = { reason: 'step_failed', stepId: 'write' }
+  run.steps[1]!.status = 'failed'
+  run.steps[0]!.status = 'unknown'
+  assert.deepEqual(planStepActions(run, 'write'), [])
+})
+
+test('retry asks for confirmation when a step can write to the workspace', () => {
+  assert.equal(planStepRetryNeedsConfirmation({ access: 'write' }), true)
+  assert.equal(planStepRetryNeedsConfirmation({ access: 'read' }), false)
 })
 
 test('planStepDurationMs uses the finish time or the supplied current time', () => {

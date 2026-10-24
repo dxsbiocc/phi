@@ -15,6 +15,7 @@ export type PlanRunViewState = PlanRunState | PlanRunTimelineSnapshot
 export type PlanRunPauseCopy = {
   user: string
   interrupted: string
+  unknown: (step: number) => string
   failed: (step: number) => string
   needsInput: (step: number, inputs: string[]) => string
 }
@@ -87,6 +88,7 @@ export function planRunPauseReason(run: PlanRunViewState, copy: PlanRunPauseCopy
       steps.findIndex((step) => step.id === pause.stepId)
     ) + 1
   if (pause.reason === 'step_failed') return copy.failed(stepIndex)
+  if (pause.reason === 'unknown') return copy.unknown(stepIndex)
   const inputs = steps.find((step) => step.id === pause.stepId)?.missingInputs ?? []
   return copy.needsInput(stepIndex, inputs)
 }
@@ -94,6 +96,7 @@ export function planRunPauseReason(run: PlanRunViewState, copy: PlanRunPauseCopy
 export function planStepActions(run: PlanRunViewState, stepId: string): PlanStepAction[] {
   if (
     run.status !== 'paused' ||
+    planRunSteps(run).some((step) => step.status === 'unknown') ||
     run.pause?.stepId !== stepId ||
     !['step_failed', 'needs_input', 'interrupted'].includes(run.pause.reason) ||
     !['failed', 'interrupted'].includes(

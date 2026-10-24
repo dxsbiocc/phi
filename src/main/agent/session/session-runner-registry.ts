@@ -1,5 +1,7 @@
 import {
   appendSessionEvent,
+  findPhiSessionById,
+  getSessionDir,
   updateSessionManifest,
   type LastRunOutcome,
   type SessionStatus,
@@ -15,6 +17,7 @@ import {
   type RemoteOmpFailureDetail
 } from '../../../shared/errorCodes'
 import { remoteOmpFailureDetailForPersistence } from './session-event-payload-projection'
+import { clearPendingRemoteAutoPlanAfterTurn } from './pending-remote-auto-plan'
 
 export interface SessionRunContext {
   signal: AbortSignal
@@ -207,6 +210,7 @@ export class SessionRunnerRegistry {
       done: Promise.resolve()
     }
 
+    let terminalEvent: StoredSessionEvent | undefined
     run.done = Promise.resolve()
       .then(() => input.execute({ signal: controller.signal }))
       .then(() => {
@@ -214,7 +218,7 @@ export class SessionRunnerRegistry {
         if (recordedFailure) {
           const failedAt = new Date().toISOString()
           run.outcome = 'failed'
-          this.appendEvent(input.sessionId, {
+          terminalEvent = this.appendEvent(input.sessionId, {
             type: 'run_failed',
             runId: input.runId,
             createdAt: failedAt,
@@ -240,7 +244,7 @@ export class SessionRunnerRegistry {
 
         const completedAt = new Date().toISOString()
         run.outcome = controller.signal.aborted ? 'stopped' : 'completed'
-        this.appendEvent(input.sessionId, {
+        terminalEvent = this.appendEvent(input.sessionId, {
           type: run.outcome === 'stopped' ? 'run_interrupted' : 'run_completed',
           runId: input.runId,
           createdAt: completedAt,
@@ -262,7 +266,7 @@ export class SessionRunnerRegistry {
       .catch((error) => {
         const completedAt = new Date().toISOString()
         run.outcome = controller.signal.aborted ? 'stopped' : 'failed'
-        this.appendEvent(input.sessionId, {
+        terminalEvent = this.appendEvent(input.sessionId, {
           type: run.outcome === 'stopped' ? 'run_interrupted' : 'run_failed',
           runId: input.runId,
           createdAt: completedAt,
@@ -286,6 +290,24 @@ export class SessionRunnerRegistry {
         })
       })
       .finally(() => {
+        // The terminal event and settled manifest are durable before the planning taint is removed.
+        // A crash or failed cleanup leaves the marker in place and recovery read-only.
+        if (terminalEvent) {
+          try {
+            const settled = findPhiSessionById(input.sessionId)
+            if (settled && settled.lastRunOutcome === run.outcome) {
+              clearPendingRemoteAutoPlanAfterTurn({
+                directory: getSessionDir(input.sessionId),
+                phiSessionId: input.sessionId,
+                runId: input.runId,
+                settledRunId: settled.currentRunId,
+                terminalEventRunId: terminalEvent.runId ?? ''
+              })
+            }
+          } catch {
+            // A retained marker safely constrains recovery; settlement must still finish.
+          }
+        }
         if (this.activeRuns.get(input.sessionId) === run) {
           this.activeRuns.delete(input.sessionId)
         }

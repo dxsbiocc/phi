@@ -48,11 +48,13 @@ function StepStatusIcon({
   status: PlanRunTimelineStepSnapshot['status']
 }): React.JSX.Element {
   if (status === 'done') return <PhiIcons.state.done size={16} aria-hidden="true" />
-  if (status === 'running') return <PhiIcons.state.inProgress size={16} aria-hidden="true" />
+  if (status === 'running' || status === 'launching')
+    return <PhiIcons.state.inProgress size={16} aria-hidden="true" />
   if (status === 'failed') return <PhiIcons.state.blocked size={16} aria-hidden="true" />
   if (status === 'cancelled') return <PhiIcons.action.cancel size={16} aria-hidden="true" />
   if (status === 'skipped') return <PhiIcons.state.abandoned size={16} aria-hidden="true" />
-  if (status === 'interrupted') return <PhiIcons.state.warning size={16} aria-hidden="true" />
+  if (status === 'interrupted' || status === 'unknown')
+    return <PhiIcons.state.warning size={16} aria-hidden="true" />
   return <PhiIcons.state.pending size={16} aria-hidden="true" />
 }
 
@@ -107,6 +109,13 @@ function StepReport({
   const full = details?.steps[step.id]
   const report = full?.report?.text
   const error = full?.error ?? step.error
+  if (step.status === 'unknown') {
+    return (
+      <Typography variant="body2" color="warning.main">
+        {planCopy.unknownStepExplanation}
+      </Typography>
+    )
+  }
   if (loading) return <Typography variant="body2">{planCopy.loading}</Typography>
   if (report) return <MarkdownContent text={report} cwd={cwd} />
   if (error)
@@ -178,10 +187,10 @@ function usePlanStepExpansion(
     return () => cancelAnimationFrame(frame)
   }, [blocking, focusKey, rowRef])
   useEffect(() => {
-    if (expanded && (!details || details.updatedAt < run.updatedAt)) {
+    if (expanded && step.status !== 'unknown' && (!details || details.updatedAt < run.updatedAt)) {
       void loadDetails(run.id, run.updatedAt)
     }
-  }, [details, expanded, loadDetails, run.id, run.updatedAt])
+  }, [details, expanded, loadDetails, run.id, run.updatedAt, step.status])
   return { expanded, toggle: (_event, next) => setState({ key: focusKey, expanded: next }) }
 }
 

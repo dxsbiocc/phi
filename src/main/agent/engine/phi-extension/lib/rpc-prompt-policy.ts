@@ -1,8 +1,70 @@
 import { createHash } from 'node:crypto'
 import type { RemoteRuntimePromptContext } from './phi-main-system-prompt'
+import type { PhiWorkMode } from '../host'
 
 export const RPC_PROMPT_POLICY_FILE = 'prompt-policy.json'
 export const RPC_PROMPT_POLICY_MAX_BYTES = 512 * 1024
+const structuredPlanningTools = new Set([
+  'read',
+  'glob',
+  'grep',
+  'find',
+  'ls',
+  'todo',
+  'ask_user_question',
+  'capability_search',
+  'find_skills',
+  'propose_plan_steps'
+])
+const manualPlanningTools = new Set(
+  [...structuredPlanningTools].filter((name) => name !== 'propose_plan_steps')
+)
+export const RPC_MARKDOWN_PLAN_PROPOSAL_TOOL = 'propose_plan_markdown'
+
+export function rpcManualPlanDraftRead(mode: PhiWorkMode | undefined, input: unknown): boolean {
+  return (
+    mode === 'plan' &&
+    !!input &&
+    typeof input === 'object' &&
+    !Array.isArray(input) &&
+    Object.keys(input).length === 1 &&
+    (input as { path?: unknown }).path === 'local://PLAN.md'
+  )
+}
+
+function exactPlanDraftMutation(toolName: string, input: unknown): boolean {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false
+  const record = input as Record<string, unknown>
+  if (record.path !== 'local://PLAN.md') return false
+  const allowed =
+    toolName === 'write'
+      ? new Set(['path', 'content'])
+      : new Set(['path', 'old_string', 'new_string', 'replace_all'])
+  return Object.keys(record).every((key) => allowed.has(key))
+}
+
+/** Remote structured planning never admits workspace or draft writes. */
+export function rpcPlanningToolDecision(
+  mode: 'plan' | 'plan_execute',
+  toolName: string,
+  input: unknown,
+  authenticatedMarkdownProposal = false
+): { allowed: boolean; reason?: string } {
+  if (mode === 'plan') {
+    if (manualPlanningTools.has(toolName)) return { allowed: true }
+    if (toolName === RPC_MARKDOWN_PLAN_PROPOSAL_TOOL && authenticatedMarkdownProposal)
+      return { allowed: true }
+    if ((toolName === 'write' || toolName === 'edit') && exactPlanDraftMutation(toolName, input))
+      return { allowed: true }
+    return {
+      allowed: false,
+      reason: 'Plan review permits read-only investigation and the session PLAN.md draft only.'
+    }
+  }
+  return structuredPlanningTools.has(toolName)
+    ? { allowed: true }
+    : { allowed: false, reason: 'Structured plan review permits read-only investigation only.' }
+}
 export interface FacadePromptContext {
   readonly personaMarkdown?: string
   readonly personaPath?: string
@@ -19,6 +81,8 @@ export interface RpcPromptPolicy extends FacadePromptContext {
   readonly contextRoot: string
   readonly hostAlias: string
   readonly generation: number
+  /** Main-owned session mode, retained across RPC generation recovery. */
+  readonly workMode?: PhiWorkMode
   readonly memoryBlock?: string
 }
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -42,6 +106,7 @@ export function rpcPromptPolicy(value: unknown): Readonly<RpcPromptPolicy> {
           'contextRoot',
           'hostAlias',
           'generation',
+          'workMode',
           'personaMarkdown',
           'personaPath',
           'contextFiles',
@@ -60,6 +125,9 @@ export function rpcPromptPolicy(value: unknown): Readonly<RpcPromptPolicy> {
     !value.contextRoot.startsWith('/') ||
     !Number.isSafeInteger(value.generation) ||
     Number(value.generation) < 1 ||
+    (value.workMode !== undefined &&
+      (typeof value.workMode !== 'string' ||
+        !['auto', 'direct', 'plan', 'plan_execute'].includes(value.workMode))) ||
     (value.personaMarkdown !== undefined && !text(value.personaMarkdown, 64 * 1024)) ||
     (value.personaPath !== undefined &&
       (!text(value.personaPath, 4096) || !value.personaPath.startsWith('/'))) ||

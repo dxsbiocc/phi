@@ -5,6 +5,8 @@ import type {
 import type { RemoteProjectConnectionState } from '../../shared/projectLocation'
 import { WRAPPER_COMPOSITION_TOOL_NAMES } from './wrappers/composition/tools'
 import { join } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { NOTEBOOK_TOOL_NAMES } from './notebook/notebook-tools'
 import { LIBRARY_TOOL_NAMES } from './library/library-tools'
 import { createRuntimeSessionManager, type RuntimeSessionManager } from './runtime/runtime-adapter'
@@ -98,7 +100,7 @@ export interface AppRemoteSessionRoutingOptions {
   foregroundAgentNames?: string
   agentDir: string
   runners: SessionRunnerRegistry
-  appPaths(): { appPath: string; resourcesPath: string; isPackaged: boolean }
+  appPaths(): { appPath: string; resourcesPath: string; isPackaged: boolean; userDataPath?: string }
   configuredRoot(project: Project): string
   loadAgents(identity: {
     sessionId: string
@@ -151,6 +153,59 @@ export interface AppRemoteSessionRoutingOptions {
   onMemoryError?(identity: { sessionId: string; projectId: string }): void | Promise<void>
   approval: SelectedFacadeRuntime['approval']
   onChildApprovalEvent?: NonNullable<SelectedFacadeRuntime['foregroundChildren']>['onApprovalEvent']
+}
+
+export const E5_SMOKE_PROJECT_ID = 'e943f72e-80b4-460a-8848-d4d4da37f5ca'
+const E5_SMOKE_REMOTE_ROOT = '/data2/dengxsh/phi-test'
+
+/** A deliberately narrow development-only gate for the phi-test acceptance run. */
+export function e5SmokeGate(input: {
+  readonly argv: readonly string[]
+  readonly devRendererUrl?: string
+  readonly isDevelopment: boolean
+  readonly isPackaged: boolean
+  readonly agentDir: string
+  readonly homeDir?: string
+  readonly runtimeHomeDir: string
+  readonly actualUserDataPath?: string
+  readonly project: Project | undefined
+}): boolean {
+  if (
+    input.isPackaged ||
+    !input.isDevelopment ||
+    !input.devRendererUrl ||
+    !input.argv.includes('--e5-smoke')
+  )
+    return false
+  if (
+    input.project?.id !== E5_SMOKE_PROJECT_ID ||
+    input.project.name !== 'phi-test' ||
+    input.project.location.kind !== 'ssh' ||
+    input.project.location.hostProfileId !== 'ssh-config:GPU' ||
+    input.project.location.remoteRoot !== E5_SMOKE_REMOTE_ROOT ||
+    input.project.location.canonicalRoot !== E5_SMOKE_REMOTE_ROOT
+  )
+    return false
+  const userDataArg = input.argv.find((arg) => arg.startsWith('--user-data-dir='))
+  if (!userDataArg || !input.homeDir || !input.actualUserDataPath) return false
+  try {
+    const agentDir = realpathSync(input.agentDir)
+    const homeDir = realpathSync(input.homeDir)
+    const runtimeHomeDir = realpathSync(input.runtimeHomeDir)
+    const claimedUserData = realpathSync(userDataArg.slice('--user-data-dir='.length))
+    const actualUserData = realpathSync(input.actualUserDataPath)
+    const root = agentDir.replace(/\/home\/\.phi$/, '')
+    return (
+      /^\/(?:private\/)?tmp\/phi-e5-[A-Za-z0-9-]+$/.test(root) &&
+      agentDir === `${root}/home/.phi` &&
+      homeDir === `${root}/home` &&
+      runtimeHomeDir === homeDir &&
+      claimedUserData === `${root}/user-data` &&
+      actualUserData === claimedUserData
+    )
+  } catch {
+    return false
+  }
 }
 
 export function selectAppForegroundAgents(
@@ -215,6 +270,19 @@ export function installAppRemoteSessionRouting(
   options: AppRemoteSessionRoutingOptions,
   dependencies: AppRemoteSessionRoutingDependencies = {}
 ): () => void {
+  const smokeAllowed = (projectId: string): boolean =>
+    projectId === E5_SMOKE_PROJECT_ID &&
+    e5SmokeGate({
+      argv: process.argv,
+      devRendererUrl: process.env.ELECTRON_RENDERER_URL,
+      isDevelopment: process.env.NODE_ENV_ELECTRON_VITE === 'development',
+      isPackaged: options.appPaths().isPackaged,
+      agentDir: options.agentDir,
+      homeDir: process.env.HOME,
+      runtimeHomeDir: homedir(),
+      actualUserDataPath: options.appPaths().userDataPath,
+      project: getProject(projectId)
+    })
   const names =
     options.foregroundAgentNames
       ?.split(',')
@@ -229,6 +297,11 @@ export function installAppRemoteSessionRouting(
     throw new Error('Invalid RPC foreground agent selection')
   return installRemoteSessionRouting({
     enabled: true,
+    e5SmokeProjectId: E5_SMOKE_PROJECT_ID,
+    e5SmokeProjectAllowed: smokeAllowed,
+    remotePlanExecutionEnabled: true,
+    remotePlanDraftEnabled: true,
+    remoteAutoPlanEnabled: true,
     runners: options.runners,
     selected: async ({ runtimeSessionId, phiSessionId, projectId }, signal) => {
       signal.throwIfAborted()

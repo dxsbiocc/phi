@@ -53,7 +53,9 @@ interface PendingReplan {
 function isFullyPaused(state: PlanRunState): boolean {
   return (
     state.status === 'paused' &&
-    !Object.values(state.steps).some((step) => step.status === 'running')
+    !Object.values(state.steps).some((step) =>
+      ['running', 'launching', 'unknown'].includes(step.status)
+    )
   )
 }
 
@@ -274,7 +276,10 @@ class PlanRunServiceImplementation<
       .some(
         (state) =>
           state.status === 'running' ||
-          Object.values(state.steps).some((step) => step.status === 'running')
+          Object.values(state.steps).some(
+            (step) =>
+              step.status === 'running' || step.status === 'launching' || step.status === 'unknown'
+          )
       )
   }
 
@@ -616,6 +621,7 @@ export function createPlanRunService<StoredEvent extends Record<string, unknown>
     events,
     clock: deps.clock ?? (() => new Date().toISOString()),
     ids: deps.ids ?? randomUUID,
+    ...(deps.requiresDurableLaunch ? { requiresDurableLaunch: deps.requiresDurableLaunch } : {}),
     ...(deps.maxConcurrent === undefined ? {} : { maxConcurrent: deps.maxConcurrent })
   })
   return new PlanRunServiceImplementation(executor, deps, store, events.prime)

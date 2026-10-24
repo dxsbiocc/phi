@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -119,6 +120,46 @@ test('router rejects host-started agent runs for a remote session', async (t) =>
     /agentRuns\.start/
   )
   await router.sessions.dispose({ sessionId: input.sessionId })
+})
+
+test('gated router requires a durable request ID and targets only its runtime owner', async (t) => {
+  const starts: string[] = []
+  const router = new SessionRoutingEngine(
+    legacy(),
+    () => ({
+      create: async (input) => ({
+        ...driver().value,
+        agentRuns: {
+          start: async ({ requestId, task }) => {
+            starts.push(`${input.sessionId}:${requestId}:${task}`)
+            return { runId: `${input.sessionId}-child` }
+          },
+          list: () => [],
+          resourceOwner: () => ({ toolOwner: 'PlanStep', allowedSkills: [] }),
+          steer: async () => undefined,
+          stop: async () => undefined,
+          wait: async () => undefined
+        }
+      })
+    }),
+    { remotePlanExecutionEnabled: true }
+  )
+  const first = params(t, 'first-runtime')
+  const second = params(t, 'second-runtime')
+  await router.sessions.create(first)
+  await router.sessions.create(second)
+  assert.throws(
+    () => router.agentRuns.start({ sessionId: second.sessionId, task: 'step' }),
+    /persisted UUID requestId/
+  )
+  const requestId = randomUUID()
+  assert.deepEqual(
+    await router.agentRuns.start({ sessionId: second.sessionId, task: 'step', requestId }),
+    { runId: 'second-runtime-child' }
+  )
+  assert.deepEqual(starts, [`second-runtime:${requestId}:step`])
+  await router.sessions.dispose({ sessionId: first.sessionId })
+  await router.sessions.dispose({ sessionId: second.sessionId })
 })
 
 test('preparation abort reaches only its owned router signal and rejects the late returned driver', async (t) => {

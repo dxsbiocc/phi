@@ -50,6 +50,7 @@ function pauseReason(run: PlanRunTimelineSnapshot): string | null {
   return planRunPauseReason(run, {
     user: planCopy.pauseUser,
     interrupted: planCopy.pauseInterrupted,
+    unknown: (step) => planCopy.pauseUnknown(String(step)),
     failed: (step) => planCopy.pauseFailed(String(step)),
     needsInput: (step, inputs) => planCopy.pauseNeedsInput(String(step), inputs.join(', '))
   })
@@ -97,7 +98,8 @@ function PlanRunHeader({
           {planCopy.progress(progress.completed, progress.total)} · {planCopy.runStatus(run.status)}
         </Typography>
       </Box>
-      {replanPending ? null : (
+      {replanPending ||
+      run.steps.some((step) => step.status === 'unknown' || step.status === 'launching') ? null : (
         <PlanRunControls
           run={run}
           disabled={disabled}
@@ -173,11 +175,17 @@ function PlanRunBody({
   const run = controller.run
   if (!run) return null
   const reason = pauseReason(run)
+  const hasUnknown = run.steps.some((step) => step.status === 'unknown')
   return (
     <Box sx={{ mt: 1, maxHeight: 'min(42vh, 420px)', overflowY: 'auto' }}>
       {reason ? (
         <Alert severity={run.pause?.reason === 'user' ? 'info' : 'warning'} sx={{ mb: 1 }}>
           {reason}
+        </Alert>
+      ) : null}
+      {hasUnknown && run.pause?.reason !== 'unknown' ? (
+        <Alert severity="warning" sx={{ mb: 1 }}>
+          {planCopy.unknownRunHold}
         </Alert>
       ) : null}
       <Stack spacing={0.25} divider={<Box sx={{ borderTop: 1, borderColor: 'divider' }} />}>
@@ -195,7 +203,9 @@ function PlanRunBody({
             onSkip={() => onSkip(step.id)}
             onReplan={
               run.replans < PLAN_MAX_REPLANS &&
-              !run.steps.some((candidate) => candidate.status === 'running') &&
+              !run.steps.some((candidate) =>
+                ['running', 'launching', 'unknown'].includes(candidate.status)
+              ) &&
               !controller.rollbackPending &&
               !controller.replanPending &&
               controller.replan
@@ -221,7 +231,7 @@ function usePlanPanelState(
   const expanded = expansion.key === expansionKey ? expansion.expanded : defaultExpanded
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const confirm = (): void => {
-    if (controller.replanPending) {
+    if (controller.replanPending || run?.steps.some((step) => step.status === 'unknown')) {
       setConfirmation(null)
       return
     }
@@ -247,6 +257,7 @@ export function PlanRunPanel({
   const run = controller.run
   const panel = usePlanPanelState(run, controller)
   if (!run || run.status === 'completed' || run.status === 'stopped') return null
+  const hasUnknown = run.steps.some((step) => step.status === 'unknown')
   return (
     <Paper
       variant="outlined"
@@ -301,7 +312,7 @@ export function PlanRunPanel({
       </Collapse>
       <ConfirmationDialog
         confirmation={panel.confirmation}
-        disabled={Boolean(controller.replanPending)}
+        disabled={hasUnknown || Boolean(controller.replanPending)}
         onCancel={() => panel.setConfirmation(null)}
         onConfirm={panel.confirm}
       />

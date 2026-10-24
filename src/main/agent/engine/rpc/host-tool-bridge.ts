@@ -56,6 +56,11 @@ const generations = new WeakMap<RpcConnection, number>()
 const MAX_ACTIVE_CALLS = 64
 const MAX_INVOCATIONS = 10_000
 const MAX_QUEUED_BYTES = 8 * MAX_RPC_FRAME_BYTES
+const SIGNED_PHASE_RESULT_TOOLS = new Set([
+  'enter_plan_mode',
+  'propose_plan_markdown',
+  'propose_plan_steps'
+])
 const errorResult = (message: string): PhiToolResult => ({
   content: [{ type: 'text', text: message }],
   isError: true
@@ -80,6 +85,11 @@ export class RpcHostToolBridge {
   private readonly lifetime = new AbortController()
 
   private constructor(private readonly options: RpcHostToolBridgeOptions) {
+    if (
+      !options.resultDelivery &&
+      options.tools.some((tool) => SIGNED_PHASE_RESULT_TOOLS.has(tool.name))
+    )
+      throw new Error('Plan transition tools require signed private result delivery')
     this.scope = Object.freeze({
       ...options.scope,
       recentUserImages: options.scope.recentUserImages.bind(options.scope),
@@ -453,7 +463,7 @@ export class RpcHostToolBridge {
         const structuredError =
           result.isError === true &&
           (result.details !== undefined || result.content.some((part) => part.type === 'image'))
-        if (!smallFrame || structuredError) {
+        if (!smallFrame || structuredError || SIGNED_PHASE_RESULT_TOOLS.has(call.toolName)) {
           const snapshot = JSON.parse(encodeHostResult(result).toString('utf8')) as PhiToolResult
           call.finishing = true
           // Reserve the complete payload now, before waiting behind prior writes.

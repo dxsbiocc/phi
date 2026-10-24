@@ -3,7 +3,12 @@ import type { AgentRunCompletion, AgentRunCompletions } from './agent-run-comple
 import type { StepOutcome, StepRunHandle, StepRunner, StepRunnerStartInput } from './step-runner'
 
 interface EngineAgentRuns {
-  start(params: { sessionId: string; agent?: string; task: string }): Promise<{ runId: string }>
+  start(params: {
+    sessionId: string
+    agent?: string
+    task: string
+    requestId?: string
+  }): Promise<{ runId: string }>
   stop(params: { sessionId: string; runId: string }): Promise<unknown>
 }
 
@@ -58,6 +63,7 @@ class EngineStepRunner implements StepRunner {
     const { runId } = await this.deps.engine.agentRuns.start({
       sessionId: runtimeSessionId,
       ...(input.agent ? { agent: input.agent } : {}),
+      ...(input.requestId ? { requestId: input.requestId } : {}),
       task: input.task
     })
     const stop = (): void => {

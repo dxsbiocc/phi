@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { PhiEngine } from '../src/main/agent/engine/types'
-import { createWorkModeActivity } from '../src/main/agent/plan/plan-execution-wiring'
+import {
+  createWorkModeActivity,
+  requiresDurablePlanLaunch
+} from '../src/main/agent/plan/plan-execution-wiring'
 
 function activityFor(
   runs: unknown[],
@@ -50,4 +53,15 @@ test('work-mode activity ignores terminal or unrelated agent runs', async () => 
 
 test('work-mode activity delegates active plan detection to the plan service', () => {
   assert.equal(activityFor([], true).hasActivePlanWork('phi-1'), true)
+})
+
+test('plan launch rejects a missing manifest instead of taking the local path', () => {
+  assert.throws(() => requiresDurablePlanLaunch(null, 'phi-1'), /manifest is unavailable/)
+  assert.throws(() => requiresDurablePlanLaunch(undefined, 'phi-1'), /manifest is unavailable/)
+})
+
+test('plan launch uses durability only for a valid remote session', () => {
+  assert.equal(requiresDurablePlanLaunch({ projectLocation: { kind: 'ssh' } }, 'phi-1'), true)
+  assert.equal(requiresDurablePlanLaunch({ projectLocation: { kind: 'local' } }, 'phi-1'), false)
+  assert.equal(requiresDurablePlanLaunch({}, 'phi-1'), false)
 })

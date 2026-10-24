@@ -83,3 +83,112 @@ test('work mode selection host rejects stale, non-auto, remote, and invalid requ
   manifest = { workMode: 'auto', projectLocation: { kind: 'ssh' } }
   await assert.rejects(call({ execute: false, reason: 'reason' }), /not active/)
 })
+
+test('SSH automatic selection requires a trusted live run and call origin', async () => {
+  let handler: import('../src/main/agent/engine/types').PhiHostRequestHandler | undefined
+  let appended = 0
+  const persisted: unknown[] = []
+  registerWorkModeSelectionHost({
+    host: {
+      register: (_method, next) => {
+        handler = next
+        return () => undefined
+      }
+    },
+    findActivePromptRunByRuntimeSessionId: () => ({
+      phiSessionId: 'phi-1',
+      runId: 'run-1',
+      sessionGeneration: 3,
+      cancelled: false
+    }),
+    findPhiSessionById: () => ({ workMode: 'auto', projectLocation: { kind: 'ssh' } }),
+    persistPendingRemoteAutoPlan: (marker) => persisted.push(marker),
+    appendSessionEvent: (_id, event) => {
+      appended++
+      return event
+    },
+    broadcastSessionTimelineEvent: () => undefined,
+    notifySessionChanged: () => undefined
+  })
+  assert.ok(handler)
+  const request = { execute: true, reason: 'Independent steps' }
+  const origin = { originSessionId: 'runtime-1', agentRunId: 'run-1', toolCallId: 'call-1' }
+  await assert.rejects(
+    Promise.resolve().then(() => handler!(request, origin)),
+    /not active/
+  )
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      handler!(request, { ...origin, agentRunId: 'other', remoteOriginAuthenticated: true })
+    ),
+    /not active/
+  )
+  const cancelled = new AbortController()
+  cancelled.abort()
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      handler!(request, { ...origin, signal: cancelled.signal, remoteOriginAuthenticated: true })
+    ),
+    /no longer active/
+  )
+  assert.deepEqual(await handler(request, { ...origin, remoteOriginAuthenticated: true }), {
+    ok: true,
+    mode: 'plan_execute',
+    reason: 'Independent steps'
+  })
+  assert.equal(appended, 1)
+  assert.deepEqual(persisted, [
+    {
+      version: 1,
+      phiSessionId: 'phi-1',
+      runId: 'run-1',
+      sessionGeneration: 3,
+      mode: 'plan_execute'
+    }
+  ])
+})
+
+test('SSH selection fails closed if pending plan persistence fails', async () => {
+  let handler: import('../src/main/agent/engine/types').PhiHostRequestHandler | undefined
+  let appended = 0
+  registerWorkModeSelectionHost({
+    host: {
+      register: (_method, next) => {
+        handler = next
+        return () => undefined
+      }
+    },
+    findActivePromptRunByRuntimeSessionId: () => ({
+      phiSessionId: 'phi-1',
+      runId: 'run-1',
+      sessionGeneration: 3,
+      cancelled: false
+    }),
+    findPhiSessionById: () => ({ workMode: 'auto', projectLocation: { kind: 'ssh' } }),
+    persistPendingRemoteAutoPlan: () => {
+      throw new Error('disk unavailable')
+    },
+    appendSessionEvent: () => {
+      appended++
+      return {}
+    },
+    broadcastSessionTimelineEvent: () => undefined,
+    notifySessionChanged: () => undefined
+  })
+  assert.ok(handler)
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      handler!(
+        { execute: false, reason: 'Need a plan' },
+        {
+          originSessionId: 'runtime-1',
+          agentRunId: 'run-1',
+          toolCallId: 'call-1',
+          remoteOriginAuthenticated: true
+        }
+      )
+    ),
+    /disk unavailable/
+  )
+  assert.equal(appended, 0)
+})

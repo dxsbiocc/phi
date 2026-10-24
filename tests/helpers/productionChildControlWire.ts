@@ -24,6 +24,14 @@ import {
   type RpcChildScope
 } from '../../src/main/agent/engine/phi-extension/lib/rpc-child-protocol'
 import { createInitializationWire } from './rpc-initialization-wire'
+import {
+  makeRpcChildHostCancelReceipt,
+  makeRpcChildHostStartReceipt,
+  parseRpcChildHostStartRequest,
+  RPC_CHILD_HOST_CANCEL_COMMAND,
+  RPC_CHILD_HOST_START_COMMAND,
+  RPC_CHILD_HOST_START_DESCRIPTION
+} from '../../src/main/agent/engine/phi-extension/lib/rpc-child-host-start'
 import { productionChildOptions, ledgerRun } from './productionChildNodeFixture'
 
 export interface ProductionChildControlWire {
@@ -56,6 +64,11 @@ export async function productionChildControlWire(
     onCancel?: (nativeId: string) => void
     cancelGates?: ReadonlyMap<string, Promise<void>>
     terminalBeforeAck?: boolean
+    hostStart?: 'valid' | 'invalid-receipt' | 'no-receipt'
+    hostStartFlood?: boolean
+    hostDisconnect?: boolean
+    hostCancelState?: 'quiescent' | 'unknown'
+    hostCancelOmitObserved?: boolean
   } = {}
 ): Promise<ProductionChildControlWire> {
   const prepared = await createProductionChildConfig(
@@ -80,6 +93,7 @@ export async function productionChildControlWire(
     rootOmpSessionId: 'root-sdk',
     rootSessionFile: '/srv/history/root.jsonl'
   }
+  let hostToolCallId: string | undefined
   const { nonce: _nonce, ...rootIdentity } = root
   void _nonce
   const roster = [
@@ -110,7 +124,7 @@ export async function productionChildControlWire(
         nativeId === scope.nativeAgentId
           ? scope.childSessionFile
           : `/srv/history/root/${nativeId}.jsonl`,
-      parentToolCallId: 'outer-task',
+      parentToolCallId: hostToolCallId ?? 'outer-task',
       ...(options.background ? { detached: true } : {}),
       index: 0
     }
@@ -135,7 +149,20 @@ export async function productionChildControlWire(
             description: RPC_EXECUTION_DESCRIPTION,
             source: 'extension'
           },
-          { name: CHILD_ATTEST_COMMAND, description: CHILD_ATTEST_DESCRIPTION, source: 'extension' }
+          {
+            name: CHILD_ATTEST_COMMAND,
+            description: CHILD_ATTEST_DESCRIPTION,
+            source: 'extension'
+          },
+          ...(options.hostStart
+            ? [
+                {
+                  name: RPC_CHILD_HOST_START_COMMAND,
+                  description: RPC_CHILD_HOST_START_DESCRIPTION,
+                  source: 'extension'
+                }
+              ]
+            : [])
         ]
       })
       return true
@@ -197,6 +224,61 @@ export async function productionChildControlWire(
               : {}),
             ...(options.badAttestation ? { hmac: 'f'.repeat(64) } : {})
           })
+        })
+      }
+    } else if (text.startsWith(`/${RPC_CHILD_HOST_CANCEL_COMMAND} `) && options.hostStart) {
+      const request = parseRpcChildHostStartRequest(
+        text.slice(RPC_CHILD_HOST_CANCEL_COMMAND.length + 2),
+        config,
+        rootIdentity
+      )
+      if (
+        hostToolCallId === request.id &&
+        options.hostCancelState !== 'unknown' &&
+        !options.hostCancelOmitObserved
+      ) {
+        cancelled.push(scope.nativeAgentId)
+        emit(lifecycle('aborted'))
+      }
+      emit({
+        type: 'extension_ui_request',
+        method: 'notify',
+        notifyType: 'info',
+        message: JSON.stringify(
+          makeRpcChildHostCancelReceipt(
+            request,
+            config,
+            options.hostCancelState ?? 'quiescent',
+            options.hostCancelOmitObserved ? [] : [scope.nativeAgentId]
+          )
+        )
+      })
+    } else if (text.startsWith(`/${RPC_CHILD_HOST_START_COMMAND} `) && options.hostStart) {
+      const request = parseRpcChildHostStartRequest(
+        text.slice(RPC_CHILD_HOST_START_COMMAND.length + 2),
+        config,
+        rootIdentity
+      )
+      hostToolCallId = request.id
+      emit(lifecycle('started'))
+      if (options.hostDisconnect) queueMicrotask(() => wire.disconnect())
+      if (options.hostStartFlood)
+        for (let index = 0; index < 128; index++) emit(lifecycle('started'))
+      if (options.hostStart !== 'no-receipt') {
+        const receipt = makeRpcChildHostStartReceipt(request, config, {
+          nativeId: scope.nativeAgentId,
+          parentToolCallId: request.id,
+          childSessionFile: scope.childSessionFile
+        })
+        emit({
+          type: 'extension_ui_request',
+          method: 'notify',
+          notifyType: 'info',
+          message: JSON.stringify(
+            options.hostStart === 'invalid-receipt'
+              ? { ...receipt, nativeId: 'other-child' }
+              : receipt
+          )
         })
       }
     } else throw new Error('Synthetic Node test must not claim a model prompt')

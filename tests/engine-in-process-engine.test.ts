@@ -182,6 +182,13 @@ const requestCases: RequestCase[] = [
     invoke: (engine) => engine.sessions.enterPlanMode({ sessionId: 'session' })
   },
   {
+    name: 'sessions.cancelPlanMode',
+    method: 'session.plan.cancel',
+    params: { sessionId: 'session', replanRequestId: 'replan-1' },
+    invoke: (engine) =>
+      engine.sessions.cancelPlanMode({ sessionId: 'session', replanRequestId: 'replan-1' })
+  },
+  {
     name: 'sessions.abort',
     method: 'session.abort',
     params: { sessionId: 'session' },

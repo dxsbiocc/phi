@@ -6,6 +6,7 @@ import {
 } from '../lib/phi-main-system-prompt'
 import { loadRpcPromptPolicy } from '../lib/rpc-prompt-policy-reader'
 import type { RpcRuntimeConfig } from '../lib/rpc-runtime-config'
+import { rpcWorkModePrompt } from '../lib/rpc-plan-prompt'
 
 /** The one trusted main-prompt transform. Persona/context never enables a tool or child. */
 export function createRpcPromptExtension(
@@ -16,6 +17,11 @@ export function createRpcPromptExtension(
   assertInstalled(ctx: ExtensionContext): void
 } {
   const policy = loadRpcPromptPolicy(runtime)
+  const workModePrompt = rpcWorkModePrompt(
+    policy?.workMode,
+    runtime.activeTools,
+    runtime.execution.tools.filter((tool) => tool.site === 'host').map((tool) => tool.name)
+  )
   let installed = false
   let api: Parameters<ExtensionFactory>[0] | undefined
   const current = (ctx: ExtensionContext): void => {
@@ -63,17 +69,20 @@ export function createRpcPromptExtension(
         if (pi.pi.AgentRegistry.global().get(ctx.agent.id)?.session !== session)
           throw new Error('Phi prompt session changed during preparation')
         return {
-          systemPrompt: buildPhiRemoteProjectSystemPrompt(
-            built.systemPrompt,
-            runtime.projectRoot,
-            runtime.projectRoot,
-            {
-              personaMarkdown: policy.personaMarkdown,
-              runtime: policy.runtime,
-              memoryBlock: policy.memoryBlock,
-              recoverySummary: policy.recoverySummary
-            }
-          )
+          systemPrompt: [
+            ...buildPhiRemoteProjectSystemPrompt(
+              built.systemPrompt,
+              runtime.projectRoot,
+              runtime.projectRoot,
+              {
+                personaMarkdown: policy.personaMarkdown,
+                runtime: policy.runtime,
+                memoryBlock: policy.memoryBlock,
+                recoverySummary: policy.recoverySummary
+              }
+            ),
+            ...(workModePrompt ? [workModePrompt] : [])
+          ]
         }
       })
       installed = true

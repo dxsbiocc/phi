@@ -23,6 +23,7 @@ interface PlanReviewProject {
 
 interface PlanReviewSession {
   projectLocation?: { kind: string }
+  workMode?: string
 }
 
 interface PlanReviewSubmittedEvent extends Record<string, unknown> {
@@ -182,7 +183,18 @@ function resolvePlanReviewTarget<StoredEvent>(
   }
   const project = run.projectId ? deps.projects.getById(run.projectId) : undefined
   const manifest = deps.sessions.findById(run.phiSessionId)
-  if (project?.location.kind === 'ssh' || manifest?.projectLocation?.kind === 'ssh') {
+  if (
+    (project?.location.kind === 'ssh' || manifest?.projectLocation?.kind === 'ssh') &&
+    !(
+      context?.remoteOriginAuthenticated === true &&
+      context.remotePlanPhase === (request.steps ? 'plan_execute' : 'plan') &&
+      (manifest?.workMode === context.remotePlanPhase || manifest?.workMode === 'auto') &&
+      context.originSessionId === request.runtimeSessionId &&
+      context.agentRunId === run.runId &&
+      typeof context.toolCallId === 'string' &&
+      context.toolCallId.length > 0
+    )
+  ) {
     throw new Error('远程项目暂不支持计划评审')
   }
   const window = deps.renderer.getActiveWindow()
@@ -266,7 +278,12 @@ function planReviewRunIsCurrent<StoredEvent>(
     current.runId === target.run.runId &&
     current.sessionGeneration === target.run.sessionGeneration &&
     current.projectId === target.run.projectId &&
-    current.cwd === target.run.cwd
+    current.cwd === target.run.cwd &&
+    (context?.remoteOriginAuthenticated !== true ||
+      (context.originSessionId === request.runtimeSessionId &&
+        context.agentRunId === target.run.runId &&
+        typeof context.toolCallId === 'string' &&
+        context.toolCallId.length > 0))
   )
 }
 

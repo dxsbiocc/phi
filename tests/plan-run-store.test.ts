@@ -24,6 +24,7 @@ import {
   readPlanRun,
   writePlanRun
 } from '../src/main/agent/plan/persistence/plan-run-store'
+import { createPlanRunState, reducePlanRun } from '../src/main/agent/plan/model/plan-run-state'
 import type { PlanRunState, PlanRunStatus } from '../src/shared/planRunTypes'
 
 const CREATED_AT = '2026-10-23T00:00:00.000Z'
@@ -103,6 +104,31 @@ test('writePlanRun creates private storage and atomically replaces the document'
   assert.deepEqual(readdirSync(join(agentDir, 'sessions', first.sessionId, 'plan-runs')), [
     'run-1.json'
   ])
+})
+
+test('launch request survives storage and restart as an unresolved remote attempt', (t) => {
+  const agentDir = fixture(t)
+  const base = runState()
+  const launching = reducePlanRun(
+    createPlanRunState({
+      id: base.id,
+      sessionId: base.sessionId,
+      spec: base.spec,
+      now: CREATED_AT
+    }),
+    {
+      type: 'step_launch_requested',
+      stepId: 'store',
+      requestId: 'request-1',
+      at: CREATED_AT
+    }
+  )
+  writePlanRun(launching, agentDir)
+  const read = readPlanRun(base.sessionId, base.id, agentDir)
+  assert.deepEqual(read, JSON.parse(JSON.stringify(launching)))
+  const recovered = reducePlanRun(read!, { type: 'recover_after_restart', at: CREATED_AT })
+  assert.equal(recovered.steps.store.status, 'unknown')
+  assert.equal(recovered.steps.store.requestId, 'request-1')
 })
 
 test('writePlanRun enforces the 256 KB serialized byte limit', (t) => {

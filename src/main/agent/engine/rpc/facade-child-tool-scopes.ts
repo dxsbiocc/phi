@@ -5,6 +5,22 @@ import type { RpcDesktopToolRun, RpcDesktopToolScope } from './desktop-tool-scop
 import { registeredHostTools, type RegisteredHostTool } from './host-tool-validation'
 import type { RpcChildRun } from './subagents/run-registry'
 import type { RpcAgentResourceCatalogInput } from './subagents/types'
+import type { RemoteSessionRuntime } from './remote-session-runtime'
+
+export function facadeChildScopesForRuntime(
+  definitions: readonly PhiAgentDefinition[] | undefined,
+  createScope: ConstructorParameters<typeof FacadeChildToolScopes>[0]['createScope'],
+  runtime: () => RemoteSessionRuntime | undefined
+): FacadeChildToolScopes | undefined {
+  return definitions
+    ? new FacadeChildToolScopes({
+        definitions,
+        createScope,
+        current: (id) => runtime()?.childRunForHost(id),
+        name: (run) => runtime()!.childResourceOwner(run.id).toolOwner
+      })
+    : undefined
+}
 
 interface ChildScope {
   readonly run: RpcChildRun

@@ -1138,7 +1138,8 @@ installAppRemoteSessionRouting({
   appPaths: () => ({
     appPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
-    isPackaged: app.isPackaged
+    isPackaged: app.isPackaged,
+    userDataPath: app.getPath('userData')
   }),
   configuredRoot: (project) => projectRemoteRuntimeRoot(project).configured,
   loadAgents: async (identity) =>
@@ -1211,7 +1212,6 @@ installAppRemoteSessionRouting({
     }
   }
 })
-
 function syncPreventSleepBlocker(): void {
   const shouldBlock = readAppSettings().preventSleepDuringRuns && runnerRegistry.activeCount > 0
   const blockerId = runtime.caches.preventSleepBlockerId

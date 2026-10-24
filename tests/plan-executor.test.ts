@@ -402,3 +402,265 @@ test('an initial persistence failure rolls back the in-memory run', async () => 
   await assert.rejects(executor.start(spec([step('a')]), 'session-1'), /initial write failed/)
   assert.equal(executor.get('plan-rollback'), undefined)
 })
+
+test('approval commits on successful initial write even if prompt cancels during async storage', async () => {
+  const runner = new FakeRunner()
+  const writeStarted = deferred<void>()
+  const releaseWrite = deferred<void>()
+  const persisted: PlanRunState[] = []
+  let current = true
+  const executor = createPlanExecutor({
+    runner,
+    store: {
+      async write(state) {
+        if (state.status === 'running') {
+          writeStarted.resolve()
+          await releaseWrite.promise
+        }
+        persisted.push(structuredClone(state))
+      }
+    },
+    events: { emit: () => undefined },
+    clock: () => '2026-01-01T00:00:00.000Z',
+    ids: () => 'late-plan'
+  })
+  const starting = executor.start(spec([step('a')]), 'session-1', () => {
+    if (!current) throw new Error('review is stale')
+  })
+  await writeStarted.promise
+  current = false
+  releaseWrite.resolve()
+  const started = await starting
+  assert.equal(persisted[0]?.status, 'running')
+  assert.equal(
+    persisted.some((state) => state.status === 'stopped'),
+    false
+  )
+  assert.equal(started.steps.a?.status, 'running')
+  assert.equal(runner.runs.length, 1)
+})
+
+test('start rejects stale approval inside its queue before any durable write', async () => {
+  let writes = 0
+  let current = true
+  const runner = new FakeRunner()
+  const executor = createPlanExecutor({
+    runner,
+    store: {
+      write() {
+        writes += 1
+      }
+    },
+    events: { emit: () => undefined },
+    clock: () => '2026-01-01T00:00:00.000Z',
+    ids: () => 'stale-plan'
+  })
+  const starting = executor.start(spec([step('a')]), 'session-1', () => {
+    if (!current) throw new Error('review is stale')
+  })
+  current = false
+  await assert.rejects(starting, /review is stale/u)
+  assert.equal(writes, 0)
+  assert.equal(runner.runs.length, 0)
+  assert.equal(executor.get('stale-plan'), undefined)
+})
+
+test('failed in-flight initial write leaves no runnable plan after cancellation', async () => {
+  const runner = new FakeRunner()
+  const writeStarted = deferred<void>()
+  const releaseWrite = deferred<void>()
+  let current = true
+  const executor = createPlanExecutor({
+    runner,
+    store: {
+      async write() {
+        writeStarted.resolve()
+        await releaseWrite.promise
+        throw new Error('initial write failed')
+      }
+    },
+    events: { emit: () => undefined },
+    clock: () => '2026-01-01T00:00:00.000Z',
+    ids: () => 'failed-plan'
+  })
+  const starting = executor.start(spec([step('a')]), 'session-1', () => {
+    if (!current) throw new Error('review is stale')
+  })
+  await writeStarted.promise
+  current = false
+  releaseWrite.resolve()
+  await assert.rejects(starting, /initial write failed/u)
+  assert.equal(executor.get('failed-plan'), undefined)
+  assert.equal(runner.runs.length, 0)
+})
+
+test('replacement persistence failure keeps the old plan and launches no new step', async () => {
+  const runner = new FakeRunner()
+  const original = spec([step('first'), step('second', { dependsOn: ['first'] })])
+  let paused = createPlanRunState({
+    id: 'plan-1',
+    sessionId: 'session-1',
+    spec: original,
+    now: '2026-01-01T00:00:00.000Z'
+  })
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    paused = reducePlanRun(paused, {
+      type: 'step_launched',
+      stepId: 'first',
+      agentRunId: `agent-${attempt}`,
+      at: `2026-01-01T00:00:0${attempt}.000Z`
+    })
+    paused = reducePlanRun(paused, {
+      type: 'step_failed',
+      stepId: 'first',
+      error: 'failed',
+      at: `2026-01-01T00:00:0${attempt}.500Z`
+    })
+  }
+  const writes: PlanRunState[] = []
+  const events: PlanExecutorEvent[] = []
+  const executor = createPlanExecutor({
+    runner,
+    store: {
+      write(state) {
+        if (state.replans > 0) throw new Error('replacement write failed')
+        writes.push(structuredClone(state))
+      }
+    },
+    events: {
+      emit(event) {
+        events.push(event)
+      }
+    },
+    clock: () => '2026-01-01T00:00:10.000Z',
+    ids: () => 'unused'
+  })
+  const before = await executor.recover(paused)
+  const priorEvents = events.length
+  const replacement = spec([
+    original.steps[0]!,
+    step('second', {
+      title: 'Reviewed second step',
+      dependsOn: ['first']
+    })
+  ])
+  await assert.rejects(
+    executor.replaceRemainingSteps('plan-1', replacement),
+    /replacement write failed/u
+  )
+  assert.deepEqual(executor.get('plan-1'), before)
+  assert.equal(writes.at(-1)?.replans, 0)
+  assert.equal(events.length, priorEvents)
+  assert.equal(runner.runs.length, 0)
+})
+
+test('remote launch persists its request ID before dispatch and recovery blocks replay', async () => {
+  const runner = new FakeRunner()
+  const writes: PlanRunState[] = []
+  const executor = createPlanExecutor({
+    runner,
+    store: {
+      write: (state) => {
+        writes.push(structuredClone(state))
+      }
+    },
+    events: { emit: () => undefined },
+    clock: () => '2026-01-01T00:00:00.000Z',
+    ids: () => 'plan-1',
+    requiresDurableLaunch: () => true
+  })
+  const launched = await executor.start(spec([step('a')]), 'session-1')
+  const requestId = runner.runs[0]?.input.requestId
+  assert.ok(requestId)
+  assert.equal(writes[1]?.steps.a.status, 'launching')
+  assert.equal(writes[1]?.steps.a.requestId, requestId)
+  assert.equal(launched.steps.a.requestId, requestId)
+  const recoveredRunner = new FakeRunner()
+  const recovered = createPlanExecutor({
+    runner: recoveredRunner,
+    store: { write: () => undefined },
+    events: { emit: () => undefined },
+    clock: () => '2026-01-01T00:00:01.000Z',
+    ids: () => 'unused',
+    requiresDurableLaunch: () => true
+  })
+  const state = await recovered.recover(writes[1]!)
+  assert.equal(state.steps.a.status, 'unknown')
+  assert.equal(state.pause?.reason, 'unknown')
+  assert.equal(recoveredRunner.runs.length, 0)
+  await assert.rejects(recovered.retryStep('plan-1', 'a'), /unknown remote launch/)
+  await assert.rejects(recovered.skipStep('plan-1', 'a'), /unknown remote launch/)
+  await assert.rejects(recovered.stop('plan-1'), /unresolved launch/)
+  const acknowledged = createPlanExecutor({
+    runner: recoveredRunner,
+    store: { write: () => undefined },
+    events: { emit: () => undefined },
+    clock: () => '2026-01-01T00:00:02.000Z',
+    ids: () => 'unused',
+    requiresDurableLaunch: () => true
+  })
+  const acknowledgedRecovery = await acknowledged.recover(launched)
+  assert.equal(acknowledgedRecovery.steps.a.status, 'unknown')
+  assert.equal(acknowledgedRecovery.steps.a.agentRunId, launched.steps.a.agentRunId)
+  assert.equal(recoveredRunner.runs.length, 0)
+})
+
+test('remote launch persistence failure prevents dispatch', async () => {
+  const runner = new FakeRunner()
+  let writes = 0
+  const executor = createPlanExecutor({
+    runner,
+    store: {
+      write: () => {
+        if (++writes === 2) throw new Error('disk unavailable')
+      }
+    },
+    events: { emit: () => undefined },
+    clock: () => '2026-01-01T00:00:00.000Z',
+    ids: () => 'plan-1',
+    requiresDurableLaunch: () => true
+  })
+  const state = await executor.start(spec([step('a')]), 'session-1')
+  assert.equal(state.steps.a.status, 'pending')
+  assert.equal(runner.runs.length, 0)
+})
+
+test('missing session identity rejects plan creation before any dispatch', async () => {
+  const runner = new FakeRunner()
+  let writes = 0
+  const executor = createPlanExecutor({
+    runner,
+    store: {
+      write: () => {
+        writes += 1
+      }
+    },
+    events: { emit: () => undefined },
+    clock: () => '2026-01-01T00:00:00.000Z',
+    ids: () => 'plan-1',
+    requiresDurableLaunch: () => {
+      throw new Error('Session manifest unavailable')
+    }
+  })
+  await assert.rejects(executor.start(spec([step('a')]), 'session-1'), /manifest unavailable/)
+  assert.equal(writes, 0)
+  assert.equal(runner.runs.length, 0)
+})
+
+test('ambiguous remote start is UNKNOWN instead of an automatic retry', async () => {
+  const runner = new FakeRunner()
+  runner.throwStarts = 1
+  const executor = createPlanExecutor({
+    runner,
+    store: { write: () => undefined },
+    events: { emit: () => undefined },
+    clock: () => '2026-01-01T00:00:00.000Z',
+    ids: () => 'plan-1',
+    requiresDurableLaunch: () => true
+  })
+  const state = await executor.start(spec([step('a')]), 'session-1')
+  assert.equal(state.steps.a.status, 'unknown')
+  assert.equal(state.steps.a.attempts, 1)
+  assert.equal(state.pause?.reason, 'unknown')
+  assert.equal(runner.runs.length, 0)
+})

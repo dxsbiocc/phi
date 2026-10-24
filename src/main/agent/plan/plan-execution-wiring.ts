@@ -45,6 +45,16 @@ interface PlanExecutionSessionKeys {
   ): string | undefined
 }
 
+export function requiresDurablePlanLaunch(
+  manifest: { projectLocation?: { kind: string } } | null | undefined,
+  phiSessionId: string
+): boolean {
+  if (!manifest) {
+    throw new Error(`Plan run session manifest is unavailable: ${phiSessionId}`)
+  }
+  return manifest.projectLocation?.kind === 'ssh'
+}
+
 function liveRuntimeSessionId(
   engine: PhiEngine,
   sessionKeys: PlanExecutionSessionKeys,
@@ -103,6 +113,8 @@ export function wirePlanExecution<StoredEvent extends Record<string, unknown>>(
     // Only a runtime that is still running can take new plan steps.
     resolveRuntimeSessionId: (phiSessionId) =>
       liveRuntimeSessionId(deps.engine, deps.sessionKeys, phiSessionId) ?? null,
+    requiresDurableLaunch: (phiSessionId) =>
+      requiresDurablePlanLaunch(deps.findPhiSessionById(phiSessionId), phiSessionId),
     enterReplanMode: (runtimeSessionId, replanRequestId) => {
       if (deps.findActivePromptRunByRuntimeSessionId(runtimeSessionId)) {
         throw new Error('Wait for the current conversation turn to finish before replanning.')

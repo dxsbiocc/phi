@@ -24,6 +24,15 @@ export interface RpcHostResultExtensionOptions {
   readiness(): Readonly<RpcHostResultReadiness> | undefined
   /** Root's exact acknowledged host roster, never all tool names. */
   isHostTool(name: string): boolean
+  /** Transition decisions must arrive through the private signed result file. */
+  requiresSignedResult?(name: string): boolean
+  /** Called only after the final authenticated host result was consumed for the live run. */
+  onConsumedResult?(
+    ready: Readonly<RpcHostResultReadiness>,
+    toolCallId: string,
+    toolName: string,
+    result: { readonly isError?: boolean; readonly details?: unknown }
+  ): void
 }
 const failed = { content: [{ type: 'text' as const, text: HOST_RESULT_FAILURE }], isError: true }
 export function createRpcHostResultExtension(
@@ -125,7 +134,7 @@ export function createRpcHostResultExtension(
       const call = key ? calls.get(key) : undefined
       if (key) calls.delete(key)
       if (call?.failed) return failed
-      if (!placeholder) return undefined
+      if (!placeholder) return options.requiresSignedResult?.(event.toolName) ? failed : undefined
       try {
         if (
           !call ||
@@ -147,6 +156,7 @@ export function createRpcHostResultExtension(
           call.ready.signal
         )
         if (!live(call.ready, ctx)) return failed
+        options.onConsumedResult?.(call.ready, event.toolCallId, event.toolName, result)
         return {
           content: result.content,
           details: result.details,

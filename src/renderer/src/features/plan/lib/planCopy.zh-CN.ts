@@ -20,11 +20,22 @@ export const planChinese = {
   runStatus: (status: 'running' | 'paused' | 'completed' | 'stopped') =>
     ({ running: '运行中', paused: '已暂停', completed: '已完成', stopped: '已停止' })[status],
   stepStatus: (
-    status: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'cancelled' | 'interrupted'
+    status:
+      | 'pending'
+      | 'launching'
+      | 'running'
+      | 'unknown'
+      | 'done'
+      | 'failed'
+      | 'skipped'
+      | 'cancelled'
+      | 'interrupted'
   ) =>
     ({
       pending: '待执行',
+      launching: '正在启动智能体',
       running: '执行中',
+      unknown: '启动状态未确认',
       done: '已完成',
       failed: '失败',
       skipped: '已跳过',
@@ -33,6 +44,10 @@ export const planChinese = {
     })[status],
   pauseUser: '用户暂停',
   pauseInterrupted: '已中断（应用重启）',
+  pauseUnknown: (step: string) =>
+    `第 ${step} 步可能已启动，但启动结果尚未确认。请等待执行器核实后再进行恢复操作。`,
+  unknownStepExplanation: '智能体可能仍在运行。确认安全前，不能重试、跳过、重新规划或停止。',
+  unknownRunHold: '另一步的启动状态尚未确认。核实之前，暂时不能进行恢复操作。',
   pauseFailed: (step: string) => `第 ${step} 步失败`,
   pauseNeedsInput: (step: string, inputs: string) => `第 ${step} 步需要补充信息：${inputs}`,
   accessRead: '读',

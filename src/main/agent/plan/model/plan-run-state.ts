@@ -85,18 +85,22 @@ function finishIfComplete(state: PlanRunState): PlanRunState {
   return complete ? { ...state, status: 'completed', pause: undefined } : state
 }
 function settleRunStatus(state: PlanRunState): PlanRunState {
-  const blocked = state.spec.steps.find(({ id }) => {
-    const status = state.steps[id]?.status
-    return status === 'failed' || status === 'interrupted'
-  })
+  const blocked =
+    state.spec.steps.find(({ id }) => state.steps[id]?.status === 'unknown') ??
+    state.spec.steps.find(({ id }) => {
+      const status = state.steps[id]?.status
+      return status === 'failed' || status === 'interrupted'
+    })
   if (blocked) {
     const step = state.steps[blocked.id]!
     const reason =
-      step.status === 'interrupted'
-        ? 'interrupted'
-        : step.report?.missingInputs.length
-          ? 'needs_input'
-          : 'step_failed'
+      step.status === 'unknown'
+        ? 'unknown'
+        : step.status === 'interrupted'
+          ? 'interrupted'
+          : step.report?.missingInputs.length
+            ? 'needs_input'
+            : 'step_failed'
     return { ...state, status: 'paused', pause: { reason, stepId: blocked.id } }
   }
   if (state.pause?.reason === 'user') return state
@@ -118,14 +122,61 @@ function reduceStepLaunched(
   if (state.status !== 'running')
     transitionError('INVALID_RUN_STATUS', 'Steps can launch only while running.')
   const current = requireStep(state, event.stepId)
-  requireStepStatus(event.stepId, current, ['pending'])
+  requireStepStatus(event.stepId, current, ['pending', 'launching'])
   const next: PlanStepState = {
     status: 'running',
-    attempts: current.attempts + 1,
+    attempts: current.status === 'launching' ? current.attempts : current.attempts + 1,
+    ...(current.requestId ? { requestId: current.requestId } : {}),
     agentRunId: event.agentRunId,
     startedAt: event.at
   }
   return withStep(state, event.stepId, next, event.at)
+}
+function reduceLaunchRequested(
+  state: PlanRunState,
+  event: Extract<PlanRunEvent, { type: 'step_launch_requested' }>
+): PlanRunState {
+  if (state.status !== 'running')
+    transitionError('INVALID_RUN_STATUS', 'Steps can launch only while running.')
+  const current = requireStep(state, event.stepId)
+  requireStepStatus(event.stepId, current, ['pending'])
+  if (!event.requestId) transitionError('INVALID_STEP_TRANSITION', 'Launch request ID is required.')
+  return withStep(
+    state,
+    event.stepId,
+    {
+      status: 'launching',
+      attempts: current.attempts + 1,
+      requestId: event.requestId,
+      startedAt: event.at
+    },
+    event.at
+  )
+}
+function reduceLaunchUnknown(
+  state: PlanRunState,
+  event: Extract<PlanRunEvent, { type: 'step_launch_unknown' }>
+): PlanRunState {
+  const current = requireStep(state, event.stepId)
+  requireStepStatus(event.stepId, current, ['launching', 'running'])
+  if (!current.requestId || current.requestId !== event.requestId)
+    transitionError('INVALID_STEP_TRANSITION', 'Launch request ID does not match.')
+  return withStep(state, event.stepId, { ...current, status: 'unknown' }, event.at)
+}
+function reduceLaunchQuiescent(
+  state: PlanRunState,
+  event: Extract<PlanRunEvent, { type: 'step_launch_quiescent' }>
+): PlanRunState {
+  const current = requireStep(state, event.stepId)
+  requireStepStatus(event.stepId, current, ['unknown'])
+  if (!current.requestId || current.requestId !== event.requestId)
+    transitionError('INVALID_STEP_TRANSITION', 'Launch request ID does not match.')
+  return withStep(
+    state,
+    event.stepId,
+    { ...current, status: 'interrupted', finishedAt: event.at },
+    event.at
+  )
 }
 function reduceStepSucceeded(
   state: PlanRunState,
@@ -168,21 +219,38 @@ function reduceResume(state: PlanRunState, at: string): PlanRunState {
     transitionError('INVALID_RUN_STATUS', 'Only a user-paused plan can be resumed.')
   return { ...state, status: 'running', pause: undefined, updatedAt: at }
 }
+function requireNoUnknownLaunch(state: PlanRunState): void {
+  if (Object.values(state.steps).some((step) => step.status === 'unknown')) {
+    transitionError(
+      'INVALID_STEP_TRANSITION',
+      'An unknown remote launch must be reconciled before changing plan steps.'
+    )
+  }
+}
 function reduceRetry(state: PlanRunState, stepId: string, at: string): PlanRunState {
   if (state.status !== 'paused')
     transitionError('INVALID_RUN_STATUS', 'A step can retry only while paused.')
+  requireNoUnknownLaunch(state)
   const current = requireStep(state, stepId)
   requireStepStatus(stepId, current, ['failed', 'interrupted'])
   const next: PlanStepState = { status: 'pending', attempts: current.attempts }
   return withStep(state, stepId, next, at)
 }
 function reduceSkip(state: PlanRunState, stepId: string, at: string): PlanRunState {
+  requireNoUnknownLaunch(state)
   const current = requireStep(state, stepId)
   requireStepStatus(stepId, current, ['pending', 'failed', 'interrupted'])
   const next: PlanStepState = { ...current, status: 'skipped', finishedAt: at }
   return withStep(state, stepId, next, at)
 }
 function reduceStop(state: PlanRunState, at: string): PlanRunState {
+  if (
+    Object.values(state.steps).some(
+      (step) => step.status === 'unknown' || step.status === 'launching'
+    )
+  ) {
+    transitionError('INVALID_STEP_TRANSITION', 'An unresolved launch cannot be stopped safely.')
+  }
   const steps = Object.fromEntries<PlanStepState>(
     Object.entries(state.steps).map<[string, PlanStepState]>(([id, step]) => [
       id,
@@ -237,6 +305,12 @@ function reduceReplacement(state: PlanRunState, spec: PlanSpec, at: string): Pla
   if (state.replans >= PLAN_MAX_REPLANS) {
     throw new PlanRunTransitionError('REPLAN_LIMIT_REACHED', 'Plan replan limit has been reached.')
   }
+  if (Object.values(state.steps).some((step) => step.status === 'unknown')) {
+    throw new PlanRunTransitionError(
+      'INVALID_REPLACEMENT',
+      'An unknown remote launch must be reconciled before replanning.'
+    )
+  }
   const nextSpec = validateReplacement(state, spec)
   const steps = Object.fromEntries<PlanStepState>(
     nextSpec.steps.map<[string, PlanStepState]>((step) => {
@@ -261,17 +335,44 @@ function reduceReplacement(state: PlanRunState, spec: PlanSpec, at: string): Pla
   }
 }
 function reduceRecovery(state: PlanRunState, at: string): PlanRunState {
-  const runningIds = Object.keys(state.steps).filter((id) => state.steps[id]?.status === 'running')
+  const runningIds = Object.keys(state.steps).filter(
+    (id) => state.steps[id]?.status === 'running' || state.steps[id]?.status === 'launching'
+  )
   const steps = { ...state.steps }
   for (const id of runningIds) {
-    steps[id] = { ...steps[id], status: 'interrupted', finishedAt: at }
+    steps[id] = steps[id].requestId
+      ? { ...steps[id], status: 'unknown' }
+      : { ...steps[id], status: 'interrupted', finishedAt: at }
   }
   return { ...state, steps, updatedAt: at }
+}
+type LaunchEvent = Extract<
+  PlanRunEvent,
+  { type: 'step_launch_requested' | 'step_launch_unknown' | 'step_launch_quiescent' }
+>
+function isLaunchEvent(event: PlanRunEvent): event is LaunchEvent {
+  return (
+    event.type === 'step_launch_requested' ||
+    event.type === 'step_launch_unknown' ||
+    event.type === 'step_launch_quiescent'
+  )
+}
+function reduceLaunchEvent(state: PlanRunState, event: LaunchEvent): PlanRunState {
+  switch (event.type) {
+    case 'step_launch_requested':
+      return reduceLaunchRequested(state, event)
+    case 'step_launch_unknown':
+      return reduceLaunchUnknown(state, event)
+    case 'step_launch_quiescent':
+      return reduceLaunchQuiescent(state, event)
+  }
 }
 export function reducePlanRun(state: PlanRunState, event: PlanRunEvent): PlanRunState {
   if (state.status === 'completed' || state.status === 'stopped') {
     throw new PlanRunTransitionError('RUN_FINISHED', `Plan run is already ${state.status}.`)
   }
+  if (isLaunchEvent(event))
+    return finishIfComplete(settleRunStatus(reduceLaunchEvent(state, event)))
   let next: PlanRunState
   switch (event.type) {
     case 'step_launched':
@@ -319,25 +420,38 @@ function validStepFields(fields: Array<string | null | undefined>): boolean {
   if (fields.includes(null)) return false
   return fields.slice(2).every((value) => value === undefined || validTimestamp(value))
 }
-function parseStepState(value: unknown): PlanStepState | null {
-  if (!isRecord(value) || !PLAN_STEP_STATUSES.includes(value.status as PlanStepStatus)) return null
-  if (!Number.isInteger(value.attempts) || (value.attempts as number) < 0) return null
+type ParsedStepFields = Pick<
+  PlanStepState,
+  'agentRunId' | 'requestId' | 'report' | 'error' | 'startedAt' | 'finishedAt'
+>
+function parseStepFields(value: Record<string, unknown>): ParsedStepFields | null {
   const agentRunId = optionalString(value, 'agentRunId')
+  const requestId = optionalString(value, 'requestId')
   const error = optionalString(value, 'error')
   const startedAt = optionalString(value, 'startedAt')
   const finishedAt = optionalString(value, 'finishedAt')
-  if (!validStepFields([agentRunId, error, startedAt, finishedAt])) return null
+  if (!validStepFields([agentRunId, error, startedAt, finishedAt]) || requestId === null)
+    return null
   const report = 'report' in value ? validatePlanStepReport(value.report) : undefined
   if (report === null) return null
   return {
-    status: value.status as PlanStepStatus,
-    attempts: value.attempts as number,
     ...(agentRunId ? { agentRunId } : {}),
+    ...(requestId ? { requestId } : {}),
     ...(report ? { report } : {}),
     ...(error ? { error } : {}),
     ...(startedAt ? { startedAt } : {}),
     ...(finishedAt ? { finishedAt } : {})
   }
+}
+function parseStepState(value: unknown): PlanStepState | null {
+  if (!isRecord(value) || !PLAN_STEP_STATUSES.includes(value.status as PlanStepStatus)) return null
+  if (!Number.isInteger(value.attempts) || (value.attempts as number) < 0) return null
+  const fields = parseStepFields(value)
+  if (!fields) return null
+  const unresolved = value.status === 'launching' || value.status === 'unknown'
+  if (unresolved && (!fields.requestId || value.attempts === 0)) return null
+  if (value.status === 'pending' && fields.requestId) return null
+  return { status: value.status as PlanStepStatus, attempts: value.attempts as number, ...fields }
 }
 function parsePause(value: unknown): PlanRunPause | null {
   if (!isRecord(value)) return null
@@ -368,7 +482,10 @@ function parseRunSteps(value: unknown, ids: string[]): Record<string, PlanStepSt
 function validTerminalSteps(status: PlanRunStatus, steps: Record<string, PlanStepState>): boolean {
   if (status === 'completed')
     return Object.values(steps).every((step) => step.status === 'done' || step.status === 'skipped')
-  if (status === 'stopped') return Object.values(steps).every((step) => step.status !== 'running')
+  if (status === 'stopped')
+    return Object.values(steps).every(
+      (step) => !['running', 'launching', 'unknown'].includes(step.status)
+    )
   return true
 }
 export function validatePlanRunState(value: unknown): PlanRunState | null {

@@ -21,11 +21,17 @@ export interface PlanRunServiceStore {
 export interface PlanRunServiceDependencies<StoredEvent extends Record<string, unknown>> {
   engine: {
     agentRuns: {
-      start(params: { sessionId: string; agent?: string; task: string }): Promise<{ runId: string }>
+      start(params: {
+        sessionId: string
+        agent?: string
+        task: string
+        requestId?: string
+      }): Promise<{ runId: string }>
       stop(params: { sessionId: string; runId: string }): Promise<unknown>
     }
   }
   resolveRuntimeSessionId(phiSessionId: string): string | null
+  requiresDurableLaunch?(phiSessionId: string): boolean
   enterReplanMode?(runtimeSessionId: string, requestId: string): Promise<unknown>
   exitReplanMode?(runtimeSessionId: string, requestId: string): Promise<boolean>
   timeline: {

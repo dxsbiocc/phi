@@ -8,6 +8,7 @@ import {
   type RpcHostToolScope
 } from '../src/main/agent/engine/rpc/host-tool-bridge'
 import { MAX_RPC_FRAME_BYTES } from '../src/main/agent/engine/rpc/frame-codec'
+import type { RpcHostResultDelivery } from '../src/main/agent/engine/rpc/host-result-delivery'
 import { hostToolWire, hostTurns, hostUntil, type HostCommand } from './helpers/rpc-host-tool-wire'
 
 const ok = (text = 'ok'): PhiToolResult => ({ content: [{ type: 'text', text }] })
@@ -580,6 +581,78 @@ test('invalid, duplicate, runtime and oversized definitions fail before registra
     await assert.rejects(
       RpcHostToolBridge.create({ connection: wire.connection, tools: [tool()], scope: f.scope }),
       /already bound/
+    )
+  } finally {
+    await wire.connection.close()
+  }
+})
+
+test('plan transition tools always publish small success and error results with run identity', async () => {
+  for (const name of ['enter_plan_mode', 'propose_plan_markdown', 'propose_plan_steps']) {
+    for (const isError of [false, true]) {
+      const wire = await hostToolWire()
+      const f = fixtureScope()
+      f.setRun({ ...f.run, authorizeCall: () => 'main' })
+      const published: Array<{ result: PhiToolResult; call: Record<string, unknown> }> = []
+      const placeholder = { content: [{ type: 'text' as const, text: 'signed-receipt' }] }
+      const delivery = {
+        matchesScope: () => true,
+        publish: async (result: PhiToolResult, call: Record<string, unknown>) => {
+          published.push({ result, call })
+          return placeholder
+        },
+        consumed: () => undefined,
+        dispose: async () => undefined
+      } as unknown as RpcHostResultDelivery
+      try {
+        const output: PhiToolResult = { ...ok('small'), ...(isError ? { isError: true } : {}) }
+        const bridge = await RpcHostToolBridge.create({
+          connection: wire.connection,
+          tools: [tool(async () => output, { name })],
+          scope: f.scope,
+          resultDelivery: delivery
+        })
+        wire.emit({
+          type: 'host_tool_call',
+          id: 'invocation-1',
+          toolCallId: 'tool-1',
+          toolName: name,
+          arguments: { text: 'hello' }
+        })
+        const response = await final(wire)
+        assert.deepEqual(response.result, placeholder)
+        assert.equal(response.isError, false)
+        assert.equal(published.length, 1)
+        assert.deepEqual(published[0].result, output)
+        assert.deepEqual(published[0].call, {
+          runId: 'run-1',
+          invocationId: 'invocation-1',
+          toolCallId: 'tool-1',
+          toolName: name
+        })
+        bridge.dispose()
+      } finally {
+        await wire.connection.close()
+      }
+    }
+  }
+})
+
+test('plan transition tools refuse registration without signed result delivery', async () => {
+  const wire = await hostToolWire()
+  const f = fixtureScope()
+  try {
+    await assert.rejects(
+      RpcHostToolBridge.create({
+        connection: wire.connection,
+        tools: [tool(undefined, { name: 'enter_plan_mode' })],
+        scope: f.scope
+      }),
+      /signed private result delivery/
+    )
+    assert.equal(
+      wire.commands.some(({ type }) => type === 'set_host_tools'),
+      false
     )
   } finally {
     await wire.connection.close()

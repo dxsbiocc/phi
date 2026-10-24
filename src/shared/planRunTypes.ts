@@ -11,7 +11,9 @@ export const PLAN_DEFAULT_MAX_CONCURRENT = 3
 export const PLAN_RUN_STATUSES = ['running', 'paused', 'completed', 'stopped'] as const
 export const PLAN_STEP_STATUSES = [
   'pending',
+  'launching',
   'running',
+  'unknown',
   'done',
   'failed',
   'skipped',
@@ -25,7 +27,13 @@ export const PLAN_STEP_REPORT_STATUSES = [
   'blocked',
   'failed'
 ] as const
-export const PLAN_RUN_PAUSE_REASONS = ['user', 'step_failed', 'interrupted', 'needs_input'] as const
+export const PLAN_RUN_PAUSE_REASONS = [
+  'user',
+  'step_failed',
+  'interrupted',
+  'needs_input',
+  'unknown'
+] as const
 
 export type PlanStepAccess = 'read' | 'write'
 
@@ -60,6 +68,7 @@ export interface PlanStepState {
   status: PlanStepStatus
   attempts: number
   agentRunId?: string
+  requestId?: string
   report?: PlanStepReportSummary
   error?: string
   startedAt?: string
@@ -165,6 +174,9 @@ export type PlanRunTransitionErrorCode =
   | 'INVALID_REPLACEMENT'
 
 export type PlanRunEvent =
+  | { type: 'step_launch_requested'; stepId: string; requestId: string; at: string }
+  | { type: 'step_launch_unknown'; stepId: string; requestId: string; at: string }
+  | { type: 'step_launch_quiescent'; stepId: string; requestId: string; at: string }
   | { type: 'step_launched'; stepId: string; agentRunId: string; at: string }
   | { type: 'step_succeeded'; stepId: string; report: PlanStepReportSummary; at: string }
   | {

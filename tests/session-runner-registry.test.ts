@@ -8,8 +8,13 @@ import { CodedError } from '../src/shared/errorCodes'
 import { RemoteOmpDeploymentError } from '../src/main/agent/engine/rpc/runtime-deployment'
 import { SessionRunnerRegistry } from '../src/main/agent/session/session-runner-registry'
 import {
+  readPendingRemoteAutoPlan,
+  writePendingRemoteAutoPlan
+} from '../src/main/agent/session/pending-remote-auto-plan'
+import {
   createPhiSession,
   createRunId,
+  getSessionDir,
   listPhiSessions,
   readSessionEvents
 } from '../src/main/agent/session/session-store'
@@ -56,6 +61,30 @@ function createTestSession(): string {
     permissionMode: 'auto'
   }).sessionId
 }
+
+test('pending remote automatic plan remains until its prompt run settles', async () => {
+  await withPhiDir(async () => {
+    const registry = new SessionRunnerRegistry()
+    const sessionId = createTestSession()
+    const runId = createRunId()
+    const gate = deferred()
+    const run = registry.startRun({ sessionId, runId, execute: () => gate.promise })
+    const directory = getSessionDir(sessionId)
+    writePendingRemoteAutoPlan(directory, {
+      version: 1,
+      phiSessionId: sessionId,
+      runId,
+      sessionGeneration: 1,
+      mode: 'plan_execute'
+    })
+    // The review can have returned while the signed result is still in flight.
+    assert.equal(readPendingRemoteAutoPlan(directory).state, 'pending')
+    gate.resolve()
+    await run.done
+    assert.equal(readPendingRemoteAutoPlan(directory).state, 'none')
+    assert.equal(readSessionEvents(sessionId).at(-1)?.type, 'run_completed')
+  })
+})
 
 test('runner allows independent sessions and stopping one leaves the other running', async () => {
   await withPhiDir(async () => {

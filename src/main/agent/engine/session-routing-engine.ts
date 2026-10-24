@@ -28,6 +28,7 @@ export class RemoteSessionCapabilityError extends Error {
 export interface RoutedSessionDriver {
   hasActiveAgentRuns?(): boolean
   readonly agentRuns?: {
+    start?(params: { agent?: string; task: string; requestId: string }): Promise<{ runId: string }>
     list(): readonly Record<string, unknown>[]
     resourceOwner(runId: string): {
       readonly toolOwner: string
@@ -79,6 +80,7 @@ export interface RoutedSessionFactory {
 }
 interface Owner {
   readonly phiSessionId: string
+  readonly projectId: string
   readonly controller: AbortController
   driver?: RoutedSessionDriver
   pending?: Promise<RoutedSessionDriver>
@@ -108,7 +110,10 @@ export class SessionRoutingEngine implements PhiEngine {
   readonly host: PhiEngine['host']
   constructor(
     private readonly legacy: PhiEngine,
-    private readonly factory: () => RoutedSessionFactory | undefined
+    private readonly factory: () => RoutedSessionFactory | undefined,
+    private readonly options: {
+      readonly remotePlanExecutionEnabled?: boolean | ((projectId: string) => boolean)
+    } = {}
   ) {
     this.models = legacy.models
     this.decisions = legacy.decisions
@@ -210,9 +215,11 @@ export class SessionRoutingEngine implements PhiEngine {
         return this.legacy.sessions.create(params, control)
       }
       const phiSessionId = params.remoteProject.phiSessionId
+      const projectId = params.remoteProject.projectId
       params = structuredClone(params)
       const owner: Owner = {
         phiSessionId,
+        projectId,
         controller: new AbortController(),
         retired: false
       }
@@ -433,6 +440,27 @@ export class SessionRoutingEngine implements PhiEngine {
   }
   readonly agentRuns: PhiEngine['agentRuns'] = {
     start: (params) => {
+      if (this.owns(params.sessionId)) {
+        const enabled = this.options.remotePlanExecutionEnabled
+        if (
+          !(typeof enabled === 'function'
+            ? enabled(this.owned(params.sessionId)!.projectId)
+            : enabled)
+        )
+          throw new RemoteSessionCapabilityError('agentRuns.start')
+        if (
+          typeof params.requestId !== 'string' ||
+          !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(params.requestId)
+        )
+          throw new Error('Remote plan child requires a persisted UUID requestId')
+        const driver = this.driver(params.sessionId)
+        if (!driver.agentRuns?.start) throw new RemoteSessionCapabilityError('agentRuns.start')
+        return driver.agentRuns.start({
+          ...(params.agent ? { agent: params.agent } : {}),
+          task: params.task,
+          requestId: params.requestId
+        })
+      }
       const driver = this.agentRunDriver(params.sessionId)
       if (driver) throw new RemoteSessionCapabilityError('agentRuns.start')
       return this.legacy.agentRuns.start(params)

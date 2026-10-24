@@ -323,3 +323,113 @@ test('validates persisted states strictly and returns detached data', () => {
   assert.equal(validatePlanRunState({ ...input, createdAt: 'not-a-date' }), null)
   assert.equal(validatePlanRunState({ ...input, status: 'paused' }), null)
 })
+
+test('unknown remote launch remains blocked until matching request is confirmed quiescent', () => {
+  const initial = state([step('a'), step('b')])
+  const launching = reducePlanRun(initial, {
+    type: 'step_launch_requested',
+    stepId: 'a',
+    requestId: 'request-1',
+    at: at(1)
+  })
+  assert.equal(launching.steps.a.attempts, 1)
+  assert.equal(launching.steps.a.status, 'launching')
+  const recovered = reducePlanRun(launching, { type: 'recover_after_restart', at: at(2) })
+  assert.equal(recovered.steps.a.status, 'unknown')
+  assert.equal(recovered.pause?.reason, 'unknown')
+  assert.throws(
+    () => reducePlanRun(recovered, { type: 'skip_step', stepId: 'a', at: at(3) }),
+    /unknown/
+  )
+  assert.throws(
+    () =>
+      reducePlanRun(recovered, {
+        type: 'replace_remaining_steps',
+        spec: initial.spec,
+        at: at(3)
+      }),
+    /unknown remote launch/
+  )
+  assert.throws(
+    () =>
+      reducePlanRun(recovered, {
+        type: 'step_launch_quiescent',
+        stepId: 'a',
+        requestId: 'other',
+        at: at(3)
+      }),
+    /does not match/
+  )
+  const quiescent = reducePlanRun(recovered, {
+    type: 'step_launch_quiescent',
+    stepId: 'a',
+    requestId: 'request-1',
+    at: at(4)
+  })
+  assert.equal(quiescent.steps.a.status, 'interrupted')
+  const retried = reducePlanRun(quiescent, { type: 'retry_step', stepId: 'a', at: at(5) })
+  assert.equal(retried.steps.a.status, 'pending')
+})
+
+test('UNKNOWN blocks recovery actions on every other plan step', () => {
+  let current = state([step('remote'), step('failed'), step('pending')])
+  current = fail(launch(current, 'failed', 1), 'failed', 2)
+  current = launch(current, 'failed', 3)
+  current = reducePlanRun(current, {
+    type: 'step_launch_requested',
+    stepId: 'remote',
+    requestId: 'request-remote',
+    at: at(4)
+  })
+  current = fail(current, 'failed', 5)
+  const unknown = reducePlanRun(current, { type: 'recover_after_restart', at: at(6) })
+  assert.equal(unknown.steps.remote.status, 'unknown')
+  assert.equal(unknown.steps.failed.status, 'failed')
+  assert.equal(unknown.pause?.reason, 'unknown')
+  for (const event of [
+    { type: 'retry_step', stepId: 'failed', at: at(7) },
+    { type: 'skip_step', stepId: 'failed', at: at(7) },
+    { type: 'skip_step', stepId: 'pending', at: at(7) }
+  ] as const) {
+    expectCode(() => reducePlanRun(unknown, event), 'INVALID_STEP_TRANSITION')
+  }
+  const reconciled = reducePlanRun(unknown, {
+    type: 'step_launch_quiescent',
+    stepId: 'remote',
+    requestId: 'request-remote',
+    at: at(8)
+  })
+  const retried = reducePlanRun(reconciled, { type: 'retry_step', stepId: 'failed', at: at(9) })
+  assert.equal(retried.steps.failed.status, 'pending')
+})
+
+test('persisted ambiguous launch requires a request ID', () => {
+  const initial = state([step('a')])
+  const launching = reducePlanRun(initial, {
+    type: 'step_launch_requested',
+    stepId: 'a',
+    requestId: 'request-1',
+    at: at(1)
+  })
+  assert.deepEqual(validatePlanRunState(launching), JSON.parse(JSON.stringify(launching)))
+  assert.equal(
+    validatePlanRunState({
+      ...launching,
+      steps: {
+        a: { ...launching.steps.a, requestId: undefined }
+      }
+    }),
+    null
+  )
+  const unknown = reducePlanRun(launching, { type: 'recover_after_restart', at: at(2) })
+  assert.deepEqual(validatePlanRunState(unknown), JSON.parse(JSON.stringify(unknown)))
+  assert.equal(
+    validatePlanRunState({
+      ...unknown,
+      steps: {
+        a: { ...unknown.steps.a, requestId: '' }
+      }
+    }),
+    null
+  )
+})

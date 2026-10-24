@@ -29,6 +29,11 @@ test('trusted prompt policy is bounded and keeps remote paths distinct from a lo
   )
   assert.throws(() => rpcPromptPolicy({ ...base, personaMarkdown: 'x'.repeat(65537) }))
   assert.throws(() => rpcPromptPolicy({ ...base, permissionMode: 'auto' }))
+  for (const workMode of ['auto', 'direct', 'plan', 'plan_execute'] as const) {
+    assert.equal(rpcPromptPolicy({ ...base, workMode }).workMode, workMode)
+  }
+  assert.throws(() => rpcPromptPolicy({ ...base, workMode: 'full' }))
+  assert.throws(() => rpcPromptPolicy({ ...base, workMode: { value: 'plan' } }))
 })
 
 test('instruction display roots may retain the registered SSH symlink while tool cwd is canonical', () => {

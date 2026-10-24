@@ -187,13 +187,16 @@ test('planExecute validates, reviews, executes a diamond and wakes the main agen
       reviewSteps: async (input) => {
         const validated = validatePlanSpec(input)
         if (!validated.ok) return validated
-        const choice = await review({
-          runtimeSessionId: 'runtime-1',
-          title: 'Diamond plan',
-          planContent: '# Diamond plan',
-          planFilePath: 'local://PLAN.md',
-          steps: validated.spec
-        })
+        const choice = await review(
+          {
+            runtimeSessionId: 'runtime-1',
+            title: 'Diamond plan',
+            planContent: '# Diamond plan',
+            planFilePath: 'local://PLAN.md',
+            steps: validated.spec
+          },
+          { originSessionId: 'runtime-1' }
+        )
         return { ok: true, spec: validated.spec, choice }
       }
     }

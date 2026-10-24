@@ -5,7 +5,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 
 import type { PlanRunTimelineSnapshot } from '../src/shared/planRunTypes'
+import { PLAN_MAX_REPLANS } from '../src/shared/planRunTypes'
 import { PlanRunPanel } from '../src/renderer/src/features/plan/PlanRunPanel'
+import { PlanReviewCard } from '../src/renderer/src/features/plan/components/PlanReviewCard'
 import type { PlanRunsController } from '../src/renderer/src/features/plan/hooks/usePlanRuns'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 
@@ -56,6 +58,42 @@ function controller(): PlanRunsController {
   }
 }
 
+test('approved review and active run show each step only in the run panel', () => {
+  setUiLanguage('zh-CN')
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(
+        'div',
+        null,
+        createElement(PlanReviewCard, {
+          item: {
+            id: 'review-1',
+            role: 'plan_review',
+            reviewId: 'review-1',
+            title: run.goal,
+            content: '# Plan\n\n- Inspect code\n- Implement panel',
+            planFilePath: 'local://PLAN.md',
+            status: 'approved'
+          },
+          cwd: '/workspace'
+        }),
+        createElement(PlanRunPanel, { controller: controller(), cwd: '/workspace' })
+      )
+    )
+  )
+  assert.match(markup, /计划 · Ship the renderer loop/)
+  assert.match(markup, /已批准/)
+  assert.match(markup, /<details[^>]*data-phi-plan-review-details="true"[^>]*>/)
+  assert.doesNotMatch(
+    markup,
+    /<details[^>]*data-phi-plan-review-details="true"[^>]*\sopen(?:=|\s|>)/
+  )
+  assert.equal(markup.match(/>1\. Inspect code</g)?.length, 1)
+  assert.equal(markup.match(/>2\. Implement panel</g)?.length, 1)
+})
+
 test('plan run panel renders progress, pause reason and recovery actions', () => {
   setUiLanguage('zh-CN')
   const markup = renderToStaticMarkup(
@@ -73,6 +111,193 @@ test('plan run panel renders progress, pause reason and recovery actions', () =>
   assert.match(markup, /aria-label="重试"/)
   assert.match(markup, /aria-label="跳过"/)
   assert.match(markup, /aria-label="停止"/)
+})
+
+test('restart interruption shows recovery actions and workspace check', () => {
+  setUiLanguage('en')
+  const interrupted = {
+    ...run,
+    pause: { reason: 'interrupted' as const, stepId: 'write' },
+    steps: run.steps.map((step) =>
+      step.id === 'write' ? { ...step, status: 'interrupted' as const } : step
+    )
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, { controller: { ...controller(), run: interrupted } })
+    )
+  )
+  assert.match(markup, /Interrupted by app restart/)
+  assert.match(markup, /Check any workspace changes before retrying/)
+  assert.match(markup, /aria-label="Retry"/)
+  assert.match(markup, /aria-label="Skip"/)
+})
+
+test('missing inputs remain visible without promising retry supplies them', () => {
+  setUiLanguage('zh-CN')
+  const needsInput = {
+    ...run,
+    pause: { reason: 'needs_input' as const, stepId: 'write' },
+    steps: run.steps.map((step) =>
+      step.id === 'write' ? { ...step, missingInputs: ['目标受众', '输出格式'] } : step
+    )
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, { controller: { ...controller(), run: needsInput } })
+    )
+  )
+  assert.match(markup, /目标受众/)
+  assert.match(markup, /输出格式/)
+  assert.match(markup, /重试仍使用原有步骤说明，不会提交缺少的信息/)
+})
+
+test('unknown launch explains the safety hold in English and hides all recovery controls', () => {
+  setUiLanguage('en')
+  const unknown = {
+    ...run,
+    pause: { reason: 'unknown' as const, stepId: 'write' },
+    steps: run.steps.map((step) =>
+      step.id === 'write' ? { ...step, status: 'unknown' as const } : step
+    )
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, {
+        controller: { ...controller(), run: unknown, replan: async () => undefined }
+      })
+    )
+  )
+  assert.match(markup, /Launch unconfirmed/)
+  assert.match(markup, /may have started, but its launch could not be confirmed/)
+  assert.match(markup, /Retry, skip, replan, and stop are unavailable/)
+  assert.doesNotMatch(markup, /aria-label="Retry"/)
+  assert.doesNotMatch(markup, /aria-label="Skip"/)
+  assert.doesNotMatch(markup, /aria-label="Stop"/)
+  assert.doesNotMatch(markup, /aria-label="Replan remaining steps"/)
+})
+
+test('launching and unknown have distinct Chinese statuses', () => {
+  setUiLanguage('zh-CN')
+  const launching = {
+    ...run,
+    status: 'running' as const,
+    pause: undefined,
+    steps: run.steps.map((step) =>
+      step.id === 'write' ? { ...step, status: 'launching' as const } : step
+    )
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, { controller: { ...controller(), run: launching } })
+    )
+  )
+  assert.match(markup, /正在启动智能体/)
+  assert.doesNotMatch(markup, /aria-label="停止"/)
+  const unknown = {
+    ...run,
+    pause: { reason: 'unknown' as const, stepId: 'write' },
+    steps: run.steps.map((step) =>
+      step.id === 'write' ? { ...step, status: 'unknown' as const } : step
+    )
+  }
+  const unknownMarkup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, { controller: { ...controller(), run: unknown } })
+    )
+  )
+  assert.match(unknownMarkup, /启动状态未确认/)
+  assert.match(unknownMarkup, /确认安全前，不能重试、跳过、重新规划或停止/)
+})
+
+test('an unknown parallel launch holds controls even when an earlier step failed', () => {
+  setUiLanguage('en')
+  const mixed = {
+    ...run,
+    steps: [
+      ...run.steps,
+      {
+        ...run.steps[0]!,
+        id: 'parallel',
+        title: 'Parallel step',
+        status: 'unknown' as const
+      }
+    ]
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, {
+        controller: { ...controller(), run: mixed, replan: async () => undefined }
+      })
+    )
+  )
+  assert.match(markup, /Step 2 failed/)
+  assert.match(markup, /Another step has an unconfirmed launch/)
+  assert.doesNotMatch(markup, /aria-label="Retry"/)
+  assert.doesNotMatch(markup, /aria-label="Skip"/)
+  assert.doesNotMatch(markup, /aria-label="Stop"/)
+  assert.doesNotMatch(markup, /aria-label="Replan remaining steps"/)
+})
+
+test('replan is offered for a paused problem only when supported and under the limit', () => {
+  setUiLanguage('en')
+  const render = (snapshot: PlanRunTimelineSnapshot, replan?: () => Promise<void>): string =>
+    renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(PlanRunPanel, { controller: { ...controller(), run: snapshot, replan } })
+      )
+    )
+  assert.match(
+    render(run, async () => undefined),
+    /aria-label="Replan remaining steps"/
+  )
+  assert.match(
+    render(run, async () => undefined),
+    /draft revised steps for your review/
+  )
+  assert.doesNotMatch(render(run), /aria-label="Replan remaining steps"/)
+  assert.doesNotMatch(
+    render({ ...run, replans: PLAN_MAX_REPLANS }, async () => undefined),
+    /aria-label="Replan remaining steps"/
+  )
+  const concurrentlyRunning = {
+    ...run,
+    steps: [...run.steps, { ...run.steps[0]!, id: 'parallel', status: 'running' as const }]
+  }
+  assert.doesNotMatch(
+    render(concurrentlyRunning, async () => undefined),
+    /aria-label="Replan remaining steps"/
+  )
+  const cleanupPending = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, {
+        controller: {
+          ...controller(),
+          replan: async () => undefined,
+          rollbackPending: true,
+          retryCancellation: async () => undefined
+        }
+      })
+    )
+  )
+  assert.match(cleanupPending, /Retry cancellation/)
+  assert.doesNotMatch(cleanupPending, /aria-label="Replan remaining steps"/)
 })
 
 test('pending replan keeps the timeline visible but disables old-run recovery controls', () => {

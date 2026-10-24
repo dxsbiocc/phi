@@ -69,9 +69,11 @@ import {
   type PreparedProductionChildConfig
 } from './subagents/production-child-config'
 import { ProductionChildRuntime } from './subagents/production-child-runtime'
-import { completedChildReport } from './subagents/child-report'
+import { readVerifiedChildReport } from './subagents/child-report'
+import { childResourceOwner } from './subagents/child-resource-owner'
 import { verifyRpcChildModelHeader } from '../phi-extension/lib/rpc-child-model-authority'
 import { sameRpcChildScope } from '../phi-extension/lib/rpc-child-protocol'
+import type { RpcChildRootScope } from '../phi-extension/lib/rpc-child-protocol'
 
 export interface RemoteRuntimeSnapshot extends Omit<RemoteSessionRecoveryResult, 'modelPolicy'> {
   readonly modelPolicy: RemoteSessionRecoveryResult['modelPolicy'] | 'maintained'
@@ -127,7 +129,8 @@ export interface RemoteSessionRuntimeOptions {
     readonly onChildChange?: (snapshot: Readonly<RpcChildRunSnapshot>, parent: SessionRun) => void
     readonly onChildFinished?: (
       snapshot: Readonly<RpcChildRunSnapshot>,
-      parent: SessionRun
+      parent: SessionRun,
+      task?: string
     ) => void | Promise<void>
     readonly parentThinkingLevel: PhiAgentThinkingLevel
     readonly currentParentRun: () => SessionRun | undefined
@@ -448,20 +451,20 @@ export class RemoteSessionRuntime {
     readonly toolOwner: string
     readonly allowedSkills: readonly string[]
   } {
-    const run = this.childRunForHost(id)
-    const profile =
-      run &&
-      this.preparedChildren?.config.profiles.find(
-        (entry) => entry.definition.nativeName === run.scope.nativeName
-      )
-    if (!profile) throw new Error('Child resource owner is unavailable')
-    return Object.freeze({
-      toolOwner: profile.definition.phiName,
-      allowedSkills: Object.freeze([...profile.definition.skills])
-    })
+    return childResourceOwner(this.childRunForHost(id), this.preparedChildren?.config)
   }
   listChildRuns(): readonly Readonly<RpcChildRunSnapshot>[] {
     return this.children?.listRuns() ?? []
+  }
+  startHostChild(
+    agent: string,
+    task: string,
+    requestId: string,
+    expected: Pick<RpcChildRootScope, 'phiSessionId' | 'projectId' | 'cwd' | 'rootOmpSessionId'>
+  ): Promise<{ runId: string }> {
+    if (!this.children || !this.isReady)
+      return Promise.reject(new Error('Remote plan child runtime owner is unavailable'))
+    return this.children.startHostChild(agent, task, requestId, expected)
   }
   steerChild(id: string, message: string, signal?: AbortSignal): Promise<void> {
     if (!this.children) return Promise.reject(new Error('Child controls are unavailable'))
@@ -480,19 +483,13 @@ export class RemoteSessionRuntime {
     return this.children.awaitChildCompletionDelivery(id)
   }
   async readChildReport(run: Readonly<RpcChildRunSnapshot>, signal?: AbortSignal): Promise<string> {
-    const known = this.children?.status(run.id)
-    if (!known || known.nativeId !== run.nativeId || known.completedAt === undefined)
-      throw new Error('Child report is not owned by this generation')
-    if (known.status !== 'completed') return ''
-    const result = await withRemoteSignal(
-      this.connection.request<{ messages: unknown[] }>({
-        type: 'get_subagent_messages',
-        subagentId: known.nativeId
-      }),
-      AbortSignal.any([this.lifetime.signal, ...(signal ? [signal] : [])])
+    return readVerifiedChildReport(
+      this.connection,
+      (id) => this.children?.status(id),
+      run,
+      this.lifetime.signal,
+      signal
     )
-    if (!Array.isArray(result.messages)) throw new Error('Child report is unavailable')
-    return completedChildReport(result.messages)
   }
   currentSnapshot(): RemoteRuntimeSnapshot {
     if (!this.snapshot || !this.isReady) throw new Error('Remote runtime is not ready')
@@ -1022,9 +1019,9 @@ export class RemoteSessionRuntime {
             }
           }
         },
-        onChildFinished: async (snapshot, parent) => {
+        onChildFinished: async (snapshot, parent, task) => {
           try {
-            await options.foregroundChildren?.onChildFinished?.(snapshot, parent)
+            await options.foregroundChildren?.onChildFinished?.(snapshot, parent, task)
           } finally {
             this.childVaults.get(snapshot.id)?.clear()
             this.childVaults.delete(snapshot.id)
