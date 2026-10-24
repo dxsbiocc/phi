@@ -5,6 +5,7 @@ import { chatItemsFromSessionMessages } from '../chatItems'
 import { orderSessionsForDisplay } from '../sessionOrder'
 import type { CurrentSession, Project, SessionSummary } from '../../types'
 import type { RendererApi } from '../../types'
+import { useSessionStore } from '../../stores/sessionStore'
 
 /**
  * First paint: who the window is, and what was open when it closed.
@@ -71,6 +72,7 @@ export function useAppBootstrap(deps: AppBootstrapDeps): void {
   }, [rendererApi, setPersonaMarkdownState, setShowOnboarding])
 
   useEffect(() => {
+    const selectionAtStart = useSessionStore.getState()
     void (async () => {
       const [sessionList, current, projectList] = await Promise.all([
         rendererApi.listSessions(),
@@ -80,11 +82,18 @@ export function useAppBootstrap(deps: AppBootstrapDeps): void {
       setSessions(
         orderSessionsForDisplay(mergeSessionSummariesRuntimeState(sessionList, current.cwd))
       )
-      applyCurrentSession(current, undefined, {
-        onCwdChanged: resetJupyterRuntimeForCwdChange
-      })
-      if (Array.isArray(current.messages)) {
-        replaceMessages(chatItemsFromSessionMessages(current.messages))
+      const selected = useSessionStore.getState()
+      if (
+        selected.activePhiSessionId === selectionAtStart.activePhiSessionId &&
+        selected.activeSessionPath === selectionAtStart.activeSessionPath &&
+        selected.activeSessionGeneration === selectionAtStart.activeSessionGeneration
+      ) {
+        applyCurrentSession(current, undefined, {
+          onCwdChanged: resetJupyterRuntimeForCwdChange
+        })
+        if (Array.isArray(current.messages)) {
+          replaceMessages(chatItemsFromSessionMessages(current.messages))
+        }
       }
       setProjects(projectList)
       projectsRef.current = projectList

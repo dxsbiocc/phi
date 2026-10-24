@@ -171,15 +171,15 @@ export type {
   AgentExecutionSteer
 } from './lib/agentExecutionTypes'
 export type ChatNoticeKind =
+  | 'work_mode_selected'
+  | 'plan_run_finished'
   | 'run_interrupted'
   | 'remote_run_stopped'
   | 'mcp_servers_skipped'
   | 'context_maintenance'
   | 'model_fallback'
   | 'model_migrated'
-
 export type MessageRole = 'user' | 'assistant' | 'error' | 'warning' | 'thinking'
-
 export type Role = MessageRole
 
 export interface ChatMessage {

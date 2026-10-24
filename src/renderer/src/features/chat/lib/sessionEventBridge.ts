@@ -293,6 +293,15 @@ export function handleAgentUserInteractionCancelled(deps: SessionEventBridgeDeps
 
 export function handleSessionChanged(deps: SessionEventBridgeDeps, session: CurrentSession): void {
   const state = deps.store.getState()
+  // This notification also fires for background metadata updates (for example,
+  // automatic title generation). Navigation is owned by the explicit create and
+  // switch requests; a late notification must not reselect an older session.
+  const samePhiSession =
+    state.activePhiSessionId && session.phiSessionId
+      ? state.activePhiSessionId === session.phiSessionId
+      : null
+  const samePath = state.activeSessionPath === session.path
+  if (samePhiSession === false || (samePhiSession === null && !samePath)) return
   state.applyCurrentSession(session, undefined, {
     onCwdChanged: deps.resetJupyterRuntimeForCwdChange
   })

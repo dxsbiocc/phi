@@ -58,3 +58,37 @@ test('model migration is an info-level notice', () => {
   assert.ok(item && 'content' in item)
   assert.match(render(item as ChatMessage), /data-notice-level="info"/)
 })
+
+test('work mode and finished plan records show their meaningful text without opening a notice', () => {
+  setUiLanguage('zh-CN')
+  const mode = chatItemFromPhiTimelineEvent({
+    type: 'work_mode_selected',
+    execute: true,
+    reason: '任务可以并行执行'
+  })
+  assert.ok(mode && 'content' in mode)
+  const modeHtml = render(mode as ChatMessage)
+  assert.match(modeHtml, /智能体选择了：规划并执行 — 任务可以并行执行/)
+  assert.doesNotMatch(modeHtml, /role="button"/)
+
+  const finished = chatItemFromPhiTimelineEvent({
+    type: 'plan_run_finished',
+    state: {
+      id: 'plan-1',
+      status: 'completed',
+      replans: 0,
+      createdAt: '2026-10-24T00:00:00.000Z',
+      updatedAt: '2026-10-24T00:00:01.000Z',
+      goal: '完成界面修复',
+      steps: []
+    }
+  })
+  assert.ok(finished && 'content' in finished)
+  const finishedHtml = render(finished as ChatMessage)
+  assert.match(finishedHtml, /计划已完成：完成界面修复/)
+  assert.doesNotMatch(finishedHtml, /role="button"/)
+
+  setUiLanguage('en')
+  assert.match(render(mode as ChatMessage), /Agent selected: Plan and execute/)
+  assert.match(render(finished as ChatMessage), /Plan completed: 完成界面修复/)
+})

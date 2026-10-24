@@ -192,7 +192,7 @@ export function PlanRunPanel({
   useUiLanguage()
   const run = controller.run
   const panel = usePlanPanelState(run, controller)
-  if (!run) return null
+  if (!run || run.status === 'completed' || run.status === 'stopped') return null
   return (
     <Paper
       variant="outlined"

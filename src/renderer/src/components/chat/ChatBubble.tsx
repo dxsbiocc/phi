@@ -154,6 +154,26 @@ export const ChatBubble = memo(function ChatBubble({
   }
 
   if (message.role === 'warning') {
+    if (message.noticeKind === 'work_mode_selected' || message.noticeKind === 'plan_run_finished') {
+      return (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.75,
+            px: 0.5,
+            py: 0.5,
+            minWidth: 0,
+            color: 'text.secondary'
+          }}
+        >
+          <PhiIcons.state.info aria-hidden sx={{ fontSize: 16, flexShrink: 0 }} />
+          <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
+            {message.content}
+          </Typography>
+        </Box>
+      )
+    }
     if (message.backgroundJobNotice) {
       return (
         <Button

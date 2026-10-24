@@ -74,3 +74,15 @@ test('plan run panel renders progress, pause reason and recovery actions', () =>
   assert.match(markup, /aria-label="跳过"/)
   assert.match(markup, /aria-label="停止"/)
 })
+
+test('finished plan has only its timeline record, without a second composer panel', () => {
+  const completed = { ...run, status: 'completed' as const, pause: undefined }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, { controller: { ...controller(), run: completed } })
+    )
+  )
+  assert.equal(markup, '')
+})

@@ -364,3 +364,13 @@ test('a session change applies the session and refreshes projects only in projec
   handleSessionChanged(projects.deps, session)
   assert.equal(projects.refreshProjects(), 1)
 })
+
+test('a delayed session notification cannot navigate away from the selected conversation', () => {
+  const h = harness()
+  handleSessionChanged(h.deps, {
+    path: '/previous.jsonl',
+    phiSessionId: 'phi-previous'
+  } as CurrentSession)
+  assert.equal(h.appliedSession(), null)
+  assert.deepEqual(h.writes, [])
+})

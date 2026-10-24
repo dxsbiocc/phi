@@ -36,6 +36,7 @@ function workModeSelectionItem(event: {
   return {
     id: event.eventId ?? `work-mode-${event.execute ? 'execute' : 'review'}`,
     role: 'warning',
+    noticeKind: 'work_mode_selected',
     get content() {
       return planCopy.agentSelectedPlan(event.execute === true, reason)
     },
@@ -129,6 +130,7 @@ export function chatItemFromPhiTimelineEvent(event: {
     return {
       id,
       role: 'warning',
+      noticeKind: 'plan_run_finished',
       get content() {
         return run.status === 'completed'
           ? planCopy.planRunCompleted(run.goal)
