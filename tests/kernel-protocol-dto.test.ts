@@ -22,6 +22,7 @@ import {
   KERNEL_EVENT_SESSION_STATE,
   KERNEL_V1_EVENT_TYPES,
   KERNEL_V1_METHODS,
+  MAX_CLIENT_RUN_KEY_LENGTH,
   MAX_ERROR_DETAIL_BYTES,
   MAX_FRAME_BYTES,
   parseFrame,
@@ -36,10 +37,17 @@ import {
   sessionCloseResultSchema,
   sessionCreateParamsSchema,
   sessionCreateResultSchema,
+  sessionLastRunSchema,
+  sessionListEntrySchema,
+  sessionOpenParamsSchema,
+  sessionOpenResultSchema,
   sessionPromptParamsSchema,
   sessionPromptResultSchema,
+  sessionSummarySchema,
   sessionSnapshotParamsSchema,
   sessionSnapshotResultSchema,
+  sessionsListParamsSchema,
+  sessionsListResultSchema,
   type JsonValue,
   type ParsedFrame,
   type ProtocolErrorCode
@@ -68,9 +76,12 @@ const methodParams = {
     },
     noTools: 'all'
   },
+  'session.open': { sessionId: 'session-1' },
+  'sessions.list': {},
   'session.prompt': {
     text: 'Hello',
-    images: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]
+    images: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }],
+    clientRunKey: 'client-run-1'
   },
   'session.abort': {},
   'session.snapshot': {},
@@ -89,6 +100,24 @@ const methodResults = {
     lastSeq: 7
   },
   'session.create': { sessionId: 'session-1' },
+  'session.open': { sessionId: 'session-1' },
+  'sessions.list': {
+    sessions: [
+      {
+        sessionId: 'session-1',
+        cwd: '/tmp/phi-project',
+        title: 'Durable session',
+        createdAt: '2026-10-25T01:00:00.000Z',
+        updatedAt: '2026-10-25T02:00:00.000Z',
+        loaded: true,
+        lastRun: { runId: 'run-1', status: 'completed' }
+      },
+      {
+        sessionId: 'session-corrupt',
+        error: { code: 'CORRUPT_SESSION', message: 'session.json is invalid' }
+      }
+    ]
+  },
   'session.prompt': { accepted: true, runId: 'run-1' },
   'session.abort': { cancelled: true },
   'session.snapshot': {
@@ -97,7 +126,8 @@ const methodResults = {
     model: { provider: 'phi-contract', id: 'contract-model' },
     thinkingLevel: 'high',
     cwd: '/tmp/phi-project',
-    activeRunId: 'run-1'
+    activeRunId: 'run-1',
+    lastRun: { runId: 'run-0', status: 'unknown' }
   },
   'session.close': { closed: true },
   'events.subscribe': { subscribed: true, lastSeq: 7 },
@@ -232,6 +262,10 @@ describe('kernel protocol DTOs', () => {
       [kernelHelloResultSchema, methodResults['kernel.hello']],
       [sessionCreateParamsSchema, methodParams['session.create']],
       [sessionCreateResultSchema, methodResults['session.create']],
+      [sessionOpenParamsSchema, methodParams['session.open']],
+      [sessionOpenResultSchema, methodResults['session.open']],
+      [sessionsListParamsSchema, methodParams['sessions.list']],
+      [sessionsListResultSchema, methodResults['sessions.list']],
       [sessionPromptParamsSchema, methodParams['session.prompt']],
       [sessionPromptResultSchema, methodResults['session.prompt']],
       [sessionAbortParamsSchema, methodParams['session.abort']],
@@ -271,6 +305,66 @@ describe('kernel protocol DTOs', () => {
     for (const [schema, valid] of schemaCases) {
       assert.equal(schema.safeParse({ ...valid, unexpected: true }).success, false)
     }
+  })
+
+  it('supports persistent sessions and durable run identity with bounded keys', () => {
+    assert.equal(
+      sessionCreateParamsSchema.safeParse({
+        ...methodParams['session.create'],
+        sessionManager: { kind: 'persistent' }
+      }).success,
+      true
+    )
+    assert.equal(
+      sessionPromptParamsSchema.safeParse({
+        text: 'Hello',
+        clientRunKey: 'x'.repeat(MAX_CLIENT_RUN_KEY_LENGTH)
+      }).success,
+      true
+    )
+    assert.equal(
+      sessionPromptParamsSchema.safeParse({
+        text: 'Hello',
+        clientRunKey: 'x'.repeat(MAX_CLIENT_RUN_KEY_LENGTH + 1)
+      }).success,
+      false
+    )
+    assert.equal(
+      sessionPromptParamsSchema.safeParse({ text: 'Hello', clientRunKey: '' }).success,
+      false
+    )
+  })
+
+  it('represents durable session summaries, interrupted runs, and corrupt manifests', () => {
+    assert.equal(
+      sessionSummarySchema.safeParse({
+        sessionId: 'session-1',
+        cwd: '/tmp/phi-project',
+        createdAt: '2026-10-25T01:00:00.000Z',
+        updatedAt: '2026-10-25T02:00:00.000Z',
+        loaded: false,
+        lastRun: { runId: 'run-1', status: 'unknown' }
+      }).success,
+      true
+    )
+    assert.equal(
+      sessionLastRunSchema.safeParse({ runId: 'run-1', status: 'running' }).success,
+      false
+    )
+    assert.equal(
+      sessionListEntrySchema.safeParse({
+        sessionId: 'session-corrupt',
+        error: { code: 'CORRUPT_SESSION', message: 'session.json is truncated' }
+      }).success,
+      true
+    )
+    assert.equal(
+      sessionListEntrySchema.safeParse({
+        sessionId: 'session-corrupt',
+        error: { code: 'OTHER', message: 'session.json is truncated' }
+      }).success,
+      false
+    )
   })
 
   it('rejects every non-serializable input without silently dropping values', () => {
