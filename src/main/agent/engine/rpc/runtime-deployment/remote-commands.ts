@@ -48,8 +48,9 @@ export function deploymentPaths(root: string, version: string, sha256: string): 
   }
 }
 
-const SHELL_FUNCTIONS = `set -eu
-fail() { printf 'PHI_OMP:%s:%s\\n' "$1" "$2" >&2; exit 1; }
+export function deploymentShellFunctions(errorPrefix: 'PHI_OMP' | 'PHI_KERNEL'): string {
+  return `set -eu
+fail() { printf '${errorPrefix}:%s:%s\\n' "$1" "$2" >&2; exit 1; }
 safe_dir() {
   [ ! -L "$1" ] || fail PERMISSION_DENIED "Runtime path is a symbolic link: $1"
   mkdir -p -- "$1" || fail PERMISSION_DENIED "Cannot create runtime directory: $1"
@@ -61,6 +62,9 @@ hash_file() {
   else fail REMOTE_COMMAND_FAILED "Server requires sha256sum or shasum"; fi
 }
 umask 077`
+}
+
+const SHELL_FUNCTIONS = deploymentShellFunctions('PHI_OMP')
 
 function prefix(paths: DeploymentPaths): string {
   return `${SHELL_FUNCTIONS}\n[ "$(pwd -P)" = ${shellQuote(paths.root)} ] || fail INVALID_ARGUMENT "Runtime root must be canonical and match the host root"`

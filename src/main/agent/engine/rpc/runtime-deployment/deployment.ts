@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { shellQuote } from '../../../wrappers/remote-ssh-session'
 import { ensureCachedRemoteOmp } from './artifact-cache'
+import { withDeploymentLock } from './deployment-lock'
 import { REMOTE_OMP_MANIFEST, selectRemoteOmpAsset } from './manifest'
 import {
   activateCommand,
@@ -17,49 +18,11 @@ import {
   type RemoteOmpDeploymentOptions
 } from './types'
 
-// Different sessions can request the same deployment simultaneously. Serialize the complete
-// check/upload/activate transaction, not only the transfer, to protect its stable resume path.
-const activeDeployments = new Map<string, Promise<void>>()
-
-async function waitForDeployment(previous: Promise<void>, signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted()
-  if (!signal) return previous
-  let aborted!: () => void
-  try {
-    await Promise.race([
-      previous,
-      new Promise<never>((_resolve, reject) => {
-        aborted = () => reject(signal.reason)
-        signal.addEventListener('abort', aborted, { once: true })
-        if (signal.aborted) aborted()
-      })
-    ])
-  } finally {
-    signal.removeEventListener('abort', aborted)
-  }
-}
-
 export async function ensureRemoteOmpDeployment(
   options: RemoteOmpDeploymentOptions
 ): Promise<RemoteOmpDeployment> {
   const key = `${options.uploadOptions?.hostKey ?? ''}\0${options.runtimeRoot}`
-  const previous = activeDeployments.get(key) ?? Promise.resolve()
-  let release!: () => void
-  const finished = new Promise<void>((resolve) => {
-    release = resolve
-  })
-  const current = previous.then(() => finished)
-  activeDeployments.set(key, current)
-  void current.then(() => {
-    if (activeDeployments.get(key) === current) activeDeployments.delete(key)
-  })
-  try {
-    await waitForDeployment(previous, options.signal)
-    options.signal?.throwIfAborted()
-    return await deploy(options)
-  } finally {
-    release()
-  }
+  return withDeploymentLock(key, options.signal, () => deploy(options))
 }
 
 async function deploy(options: RemoteOmpDeploymentOptions): Promise<RemoteOmpDeployment> {

@@ -183,6 +183,46 @@ test(
 )
 
 test(
+  'A09 dropping the connection during a native command ends the kernel and its child',
+  { timeout: 45_000 },
+  async (t) => {
+    const f = await createKernelFixture()
+    t.after(() => f.close())
+    await f.createSession('disconnect')
+    const pidPath = join(f.cwd, 'disconnect.pid')
+    f.provider.enqueue({
+      tool: {
+        name: 'bash',
+        id: 'disconnect-bash',
+        args: {
+          command: `sh -c 'printf "%s" "$$" > "$1"; exec sleep 30' sh ${shellLiteral(pidPath)}`
+        }
+      }
+    })
+    void f.sessions
+      .prompt({ sessionId: 'disconnect', text: 'Run the long command.' })
+      .catch(() => undefined)
+    await eventually(
+      () => existsSync(pidPath) && readFileSync(pidPath, 'utf8').length > 0,
+      'native child pid'
+    )
+    const pid = Number(readFileSync(pidPath, 'utf8'))
+
+    const outcome = await f.disconnect()
+    // The kernel must leave on its own after stdin closes; a forced kill could orphan children.
+    assert.equal(outcome.action, 'stdin-eof')
+    await eventually(() => {
+      try {
+        process.kill(pid, 0)
+        return false
+      } catch {
+        return true
+      }
+    }, 'native child exit after disconnect')
+  }
+)
+
+test(
   'kernel keeps cwd, resources, environment, and native shell state isolated',
   { timeout: 45_000 },
   async (t) => {

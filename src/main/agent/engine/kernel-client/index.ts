@@ -232,3 +232,4 @@ export class KernelProtocolClient {
 }
 
 export * from './stdio'
+export * from './local'

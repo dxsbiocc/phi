@@ -8,6 +8,7 @@ const ENGINE_DIRECTORY = 'src/main/agent/engine/'
 const KERNEL_OMP_DIRECTORY = 'src/kernel/omp/'
 const KERNEL_DIRECTORY = 'src/kernel/'
 const KERNEL_ENTRY = 'src/kernel/main.ts'
+const KERNEL_CLIENT_DIRECTORY = 'src/main/agent/engine/kernel-client/'
 const SHARED_PROTOCOL_DIRECTORY = 'src/shared/kernel-protocol/'
 const OMP_SCOPE = '@oh-my-pi/'
 const SCAN_DIRECTORIES = ['src', 'tests', 'scripts']
@@ -237,12 +238,15 @@ function resolveRelativeSourceFile(repoRoot, filePath, specifier) {
   return undefined
 }
 
-function transitiveKernelFailures(repoRoot) {
-  const entryPath = path.resolve(repoRoot, ...KERNEL_ENTRY.split('/'))
-  if (!sourceFileCandidate(entryPath)) return []
-
-  const pending = [{ filePath: entryPath, chain: [KERNEL_ENTRY] }]
-  const visited = new Set([entryPath])
+function transitiveKernelFailures(repoRoot, entryFiles) {
+  const pending = entryFiles
+    .map((file) => ({
+      filePath: path.resolve(repoRoot, ...file.split('/')),
+      chain: [file],
+      clientCode: file.startsWith(KERNEL_CLIENT_DIRECTORY)
+    }))
+    .filter((entry) => sourceFileCandidate(entry.filePath))
+  const visited = new Set(pending.map((entry) => `${entry.clientCode}\0${entry.filePath}`))
   const failures = []
 
   while (pending.length > 0) {
@@ -264,19 +268,24 @@ function transitiveKernelFailures(repoRoot) {
           ...failure(
             file,
             specifier,
-            `kernel-${forbiddenArea}-import-forbidden`,
-            'Kernel code may not depend on Electron, React, renderer, preload, or main-process IPC.'
+            `${current.clientCode ? 'kernel-client' : 'kernel'}-${forbiddenArea}-import-forbidden`,
+            current.clientCode
+              ? 'Kernel client code may not depend on Electron, React, renderer, preload, or main-process IPC.'
+              : 'Kernel code may not depend on Electron, React, renderer, preload, or main-process IPC.'
           ),
           chain: [...current.chain, terminal]
         })
         continue
       }
 
-      if (!resolvedFile || visited.has(resolvedFile)) continue
-      visited.add(resolvedFile)
+      if (!resolvedFile) continue
+      const visitedKey = `${current.clientCode}\0${resolvedFile}`
+      if (visited.has(visitedKey)) continue
+      visited.add(visitedKey)
       pending.push({
         filePath: resolvedFile,
-        chain: [...current.chain, relativePath(repoRoot, resolvedFile)]
+        chain: [...current.chain, relativePath(repoRoot, resolvedFile)],
+        clientCode: current.clientCode
       })
     }
   }
@@ -480,7 +489,7 @@ export function checkEngineBoundary({ repoRoot, allowlist, stats }) {
 
 export function checkKernelBoundary({ repoRoot, stats }) {
   const absoluteRepoRoot = path.resolve(repoRoot)
-  const sourceFiles = [SHARED_PROTOCOL_DIRECTORY, KERNEL_DIRECTORY]
+  const sourceFiles = [SHARED_PROTOCOL_DIRECTORY, KERNEL_DIRECTORY, KERNEL_CLIENT_DIRECTORY]
     .flatMap((directory) => listSourceFiles(path.join(absoluteRepoRoot, directory)))
     .sort()
   const failures = []
@@ -509,17 +518,24 @@ export function checkKernelBoundary({ repoRoot, stats }) {
 
       const forbiddenArea = forbiddenKernelImport(absoluteRepoRoot, file, specifier)
       if (forbiddenArea) {
+        const clientCode = file.startsWith(KERNEL_CLIENT_DIRECTORY)
         failures.push(
           failure(
             file,
             specifier,
-            `kernel-${forbiddenArea}-import-forbidden`,
-            'Kernel code may not depend on Electron, React, renderer, preload, or main-process IPC.'
+            `${clientCode ? 'kernel-client' : 'kernel'}-${forbiddenArea}-import-forbidden`,
+            clientCode
+              ? 'Kernel client code may not depend on Electron, React, renderer, preload, or main-process IPC.'
+              : 'Kernel code may not depend on Electron, React, renderer, preload, or main-process IPC.'
           )
         )
       }
 
-      if (specifier.startsWith(OMP_SCOPE) && !file.startsWith(KERNEL_OMP_DIRECTORY)) {
+      if (
+        file.startsWith(KERNEL_DIRECTORY) &&
+        specifier.startsWith(OMP_SCOPE) &&
+        !file.startsWith(KERNEL_OMP_DIRECTORY)
+      ) {
         failures.push(
           failure(
             file,
@@ -535,7 +551,13 @@ export function checkKernelBoundary({ repoRoot, stats }) {
   const failureIndexes = new Map(
     failures.map((item, index) => [`${item.file}\0${item.specifier}\0${item.rule}`, index])
   )
-  for (const item of transitiveKernelFailures(absoluteRepoRoot)) {
+  const transitiveEntries = [
+    KERNEL_ENTRY,
+    ...sourceFiles
+      .map((filePath) => relativePath(absoluteRepoRoot, filePath))
+      .filter((file) => file.startsWith(KERNEL_CLIENT_DIRECTORY))
+  ]
+  for (const item of transitiveKernelFailures(absoluteRepoRoot, transitiveEntries)) {
     const key = `${item.file}\0${item.specifier}\0${item.rule}`
     const existingIndex = failureIndexes.get(key)
     if (existingIndex === undefined) {

@@ -1,0 +1,590 @@
+import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createInterface } from 'node:readline'
+import { PassThrough } from 'node:stream'
+import test from 'node:test'
+
+import { KernelProtocolCore, type FrameTransport } from '../src/kernel/protocol'
+import {
+  RemoteKernelError,
+  buildRemoteKernelLaunchCommand,
+  ensureRemoteKernelDeployment,
+  launchRemoteKernel,
+  remoteKernelHostFromSshSession,
+  type KernelBuildManifest,
+  type LaunchRemoteKernelOptions,
+  type RemoteKernelDeploymentHost,
+  type RemoteKernelVariant
+} from '../src/main/agent/engine/kernel-client/remote'
+import { GLIBC_MINIMUM_CHECK } from '../src/main/agent/engine/kernel-client/remote/commands'
+import { shellQuote, type RemoteStdioProcess } from '../src/main/agent/wrappers/remote-ssh-session'
+import type { CommandResult, HostCapabilityProfile } from '../src/main/agent/workspace-host/types'
+import {
+  FAST_PROBE_END_SENTINEL,
+  FAST_PROBE_START_SENTINEL
+} from '../src/main/agent/workspace-host/probe-script'
+
+const sha256 = (content: string): string => createHash('sha256').update(content).digest('hex')
+
+async function createBuildFixture(): Promise<{
+  directory: string
+  manifest: KernelBuildManifest
+  cleanup(): Promise<void>
+}> {
+  const directory = await mkdtemp(join(tmpdir(), 'phi-kernel-remote-build-'))
+  const contents = {
+    'phi-kernel': '#!/bin/sh\nprintf kernel\n',
+    'pi_natives.linux-x64-modern.node': 'modern native bytes\n',
+    'pi_natives.linux-x64-baseline.node': 'baseline native bytes\n'
+  }
+  for (const [name, content] of Object.entries(contents))
+    await writeFile(join(directory, name), content)
+  const manifest: KernelBuildManifest = {
+    phiVersion: '0.1.0',
+    ompVersion: '18.10.3',
+    nativeVersion: '18.10.3',
+    bunVersion: '1.3.3',
+    target: 'linux-x64',
+    files: [
+      {
+        name: 'phi-kernel',
+        role: 'kernel',
+        sha256: sha256(contents['phi-kernel']),
+        size: Buffer.byteLength(contents['phi-kernel'])
+      },
+      {
+        name: 'pi_natives.linux-x64-modern.node',
+        role: 'native',
+        variant: 'modern',
+        sha256: sha256(contents['pi_natives.linux-x64-modern.node']),
+        size: Buffer.byteLength(contents['pi_natives.linux-x64-modern.node'])
+      },
+      {
+        name: 'pi_natives.linux-x64-baseline.node',
+        role: 'native',
+        variant: 'baseline',
+        sha256: sha256(contents['pi_natives.linux-x64-baseline.node']),
+        size: Buffer.byteLength(contents['pi_natives.linux-x64-baseline.node'])
+      }
+    ]
+  }
+  await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
+  return { directory, manifest, cleanup: () => rm(directory, { recursive: true, force: true }) }
+}
+
+function profile(
+  overrides: Partial<HostCapabilityProfile['platform']> = {}
+): HostCapabilityProfile {
+  return {
+    platform: {
+      os: 'Linux',
+      arch: 'x86_64',
+      libc: { name: 'glibc', version: '2.17' },
+      ...overrides
+    },
+    probedAt: '2026-01-01T00:00:00.000Z',
+    fs: { state: 'available' },
+    exec: { state: 'available' },
+    background: { state: 'available' },
+    pty: { state: 'available' },
+    watch: { state: 'unavailable' },
+    forwardPort: { state: 'available' },
+    toolchain: {
+      git: { state: 'available' },
+      nextflow: { state: 'unavailable' },
+      java: { state: 'unavailable' },
+      conda: { state: 'unavailable' },
+      sbatch: { state: 'unavailable' },
+      containerRuntime: { state: 'unavailable' },
+      module: { state: 'unavailable' }
+    }
+  }
+}
+
+type Upload = {
+  localPath: string
+  remotePath: string
+  expectedSha256?: string
+}
+
+class FakeDeploymentHost implements RemoteKernelDeploymentHost {
+  readonly commands: string[] = []
+  readonly uploads: Upload[] = []
+  variant: RemoteKernelVariant = 'modern'
+  markerVariant?: RemoteKernelVariant
+  remotePlatformFailure?: string
+  activationHashMismatch = false
+  uploadHashMismatch = false
+
+  readonly exec = {
+    run: async (command: readonly string[]): Promise<CommandResult> => {
+      const script = command[2] ?? ''
+      this.commands.push(script)
+      if (script.includes('remote_os=$(uname')) {
+        if (this.remotePlatformFailure) {
+          return {
+            stdout: '',
+            stderr: `PHI_KERNEL:UNSUPPORTED_PLATFORM:${this.remotePlatformFailure}\n`,
+            code: 1,
+            signal: null,
+            truncated: false
+          }
+        }
+        const state =
+          this.markerVariant === this.variant ? 'PHI_KERNEL_REUSABLE' : 'PHI_KERNEL_DEPLOY'
+        return {
+          stdout: `PHI_KERNEL_PROFILE:linux:x64:glibc:2.17:${this.variant}\n${state}\n`,
+          stderr: '',
+          code: 0,
+          signal: null,
+          truncated: false
+        }
+      }
+      if (script.includes('actual_kernel=$(hash_file')) {
+        if (this.activationHashMismatch) {
+          this.markerVariant = undefined
+          return {
+            stdout: '',
+            stderr: 'PHI_KERNEL:HASH_MISMATCH:Uploaded kernel SHA256 does not match its manifest\n',
+            code: 1,
+            signal: null,
+            truncated: false
+          }
+        }
+        this.markerVariant = this.variant
+      } else if (script.startsWith('rm -f --')) {
+        this.markerVariant = undefined
+      }
+      return { stdout: '', stderr: '', code: 0, signal: null, truncated: false }
+    }
+  }
+
+  readonly transfer = {
+    uploadFile: async (
+      localPath: string,
+      remotePath: string,
+      options?: { expectedSha256?: string }
+    ): Promise<void> => {
+      if (this.uploadHashMismatch) {
+        throw Object.assign(new Error('Transfer rejected uploaded bytes.'), {
+          code: 'HASH_MISMATCH'
+        })
+      }
+      this.uploads.push({ localPath, remotePath, expectedSha256: options?.expectedSha256 })
+    }
+  }
+
+  constructor(private readonly capabilityProfile = profile()) {}
+
+  capabilities(): HostCapabilityProfile {
+    return this.capabilityProfile
+  }
+}
+
+test('deploys only the selected modern native, validates hashes, and publishes the marker last', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  const runtimeRoot = "/srv/phi user's runtime"
+  const result = await ensureRemoteKernelDeployment({
+    runtimeHost: host,
+    runtimeRoot,
+    buildDirectory: fixture.directory,
+    uploadOptions: { hostKey: 'modern-host' }
+  })
+
+  assert.equal(result.reused, false)
+  assert.equal(result.variant, 'modern')
+  assert.equal(result.profile.glibcVersion, '2.17')
+  assert.equal(result.remoteCommandCount, 2)
+  assert.equal(
+    result.executablePath,
+    `${runtimeRoot}/kernel/0.1.0/${fixture.manifest.files[0].sha256}/phi-kernel`
+  )
+  assert.equal(host.uploads.length, 2)
+  assert.match(host.uploads[0].remotePath, /\.phi-kernel\.[a-f0-9]{64}\.staging$/)
+  assert.match(host.uploads[1].remotePath, /modern\.node\.[a-f0-9]{64}\.staging$/)
+  assert.equal(
+    host.uploads.some((upload) => upload.remotePath.includes('baseline')),
+    false
+  )
+  for (const upload of host.uploads) assert.match(upload.expectedSha256 ?? '', /^[a-f0-9]{64}$/)
+  for (const command of host.commands) {
+    const syntax = spawnSync('/bin/sh', ['-n'], { input: command, encoding: 'utf8' })
+    assert.equal(syntax.status, 0, syntax.stderr)
+  }
+
+  assert.match(host.commands[0], /grep -Eiq .*avx2.*\/proc\/cpuinfo/)
+  assert.ok(host.commands[0].includes("[ \"$(pwd -P)\" = '/srv/phi user'\\''s runtime' ]"))
+  const activate = host.commands[1]
+  assert.ok(activate.indexOf('actual_kernel=') < activate.indexOf('mv -f --'))
+  assert.ok(activate.lastIndexOf('mv -f --') < activate.lastIndexOf('.phi-ready.json'))
+})
+
+test('prepared deployment is reused in one command without local rehash or upload', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  host.markerVariant = 'baseline'
+  host.variant = 'baseline'
+
+  const first = await ensureRemoteKernelDeployment({
+    runtimeHost: host,
+    runtimeRoot: '/srv/phi-runtime',
+    buildDirectory: fixture.directory
+  })
+  assert.equal(first.reused, true)
+  assert.equal(first.remoteCommandCount, 1)
+  assert.equal(host.uploads.length, 0)
+
+  await rm(join(fixture.directory, 'phi-kernel'))
+  const second = await ensureRemoteKernelDeployment({
+    runtimeHost: host,
+    runtimeRoot: '/srv/phi-runtime',
+    buildDirectory: fixture.directory
+  })
+  assert.equal(second.reused, true)
+  assert.equal(second.remoteCommandCount, 1)
+  assert.equal(host.commands.length, 2)
+})
+
+test('CPU variant changes invalidate the marker and redeploy only the new native', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  await ensureRemoteKernelDeployment({
+    runtimeHost: host,
+    runtimeRoot: '/srv/phi-runtime',
+    buildDirectory: fixture.directory
+  })
+  host.variant = 'baseline'
+
+  const moved = await ensureRemoteKernelDeployment({
+    runtimeHost: host,
+    runtimeRoot: '/srv/phi-runtime',
+    buildDirectory: fixture.directory
+  })
+  assert.equal(moved.reused, false)
+  assert.equal(moved.variant, 'baseline')
+  assert.match(host.uploads.at(-1)?.remotePath ?? '', /baseline/)
+  assert.equal(host.uploads.length, 4)
+})
+
+test('capability and live-probe platform failures are typed and never upload', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  for (const platform of [
+    { os: 'darwin' },
+    { arch: 'aarch64' },
+    { libc: { name: 'musl' as const } }
+  ]) {
+    const host = new FakeDeploymentHost(profile(platform))
+    await assert.rejects(
+      ensureRemoteKernelDeployment({
+        runtimeHost: host,
+        runtimeRoot: '/srv/phi-runtime',
+        buildDirectory: fixture.directory
+      }),
+      { name: 'RemoteKernelError', code: 'UNSUPPORTED_PLATFORM' }
+    )
+    assert.equal(host.commands.length, 0)
+    assert.equal(host.uploads.length, 0)
+  }
+
+  const stale = new FakeDeploymentHost()
+  stale.remotePlatformFailure = 'detected Linux/aarch64'
+  await assert.rejects(
+    ensureRemoteKernelDeployment({
+      runtimeHost: stale,
+      runtimeRoot: '/srv/phi-runtime',
+      buildDirectory: fixture.directory
+    }),
+    { name: 'RemoteKernelError', code: 'UNSUPPORTED_PLATFORM' }
+  )
+  assert.equal(stale.commands.length, 1)
+  assert.equal(stale.uploads.length, 0)
+})
+
+test('remote activation hash mismatch is typed, clears staging, and never publishes ready state', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  host.activationHashMismatch = true
+  await assert.rejects(
+    ensureRemoteKernelDeployment({
+      runtimeHost: host,
+      runtimeRoot: '/srv/phi-runtime',
+      buildDirectory: fixture.directory
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof RemoteKernelError)
+      assert.equal(error.code, 'HASH_MISMATCH')
+      return true
+    }
+  )
+  assert.equal(host.markerVariant, undefined)
+  assert.equal(host.commands.length, 3)
+  assert.match(host.commands.at(-1) ?? '', /^rm -f --/)
+  assert.equal(host.commands.at(-1)?.includes('.phi-ready.json'), true)
+})
+
+test('streaming upload hash mismatch is typed and never publishes a ready marker', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  host.uploadHashMismatch = true
+  await assert.rejects(
+    ensureRemoteKernelDeployment({
+      runtimeHost: host,
+      runtimeRoot: '/srv/phi-runtime',
+      buildDirectory: fixture.directory
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof RemoteKernelError)
+      assert.equal(error.code, 'HASH_MISMATCH')
+      return true
+    }
+  )
+  assert.equal(host.markerVariant, undefined)
+  assert.equal(host.commands.length, 2)
+  assert.match(host.commands.at(-1) ?? '', /^rm -f --/)
+  assert.equal(host.commands.at(-1)?.includes('.phi-ready.json'), true)
+})
+
+class LoopbackKernelProcess implements RemoteStdioProcess {
+  readonly stdin = new PassThrough()
+  readonly stdout = new PassThrough()
+  readonly stderr = new PassThrough()
+  readonly closed: Promise<{ code: number | null; signal: string | null }>
+  private finish!: () => void
+  private done = false
+
+  constructor() {
+    this.closed = new Promise((resolve) => {
+      this.finish = () => resolve({ code: 0, signal: null })
+    })
+    const lines = createInterface({ input: this.stdin, crlfDelay: Infinity })
+    const lineListeners = new Set<(line: string) => void>()
+    const closeListeners = new Set<() => void>()
+    const transport: FrameTransport = {
+      send: (line) => this.stdout.write(line),
+      onLine: (listener) => lineListeners.add(listener),
+      onClose: (listener) => closeListeners.add(listener)
+    }
+    lines.on('line', (line) => {
+      for (const listener of lineListeners) listener(line)
+    })
+    lines.once('close', () => {
+      for (const listener of closeListeners) listener()
+      this.complete()
+    })
+    new KernelProtocolCore({
+      kernelVersion: 'test-kernel',
+      ompVersion: '18.10.3',
+      kernelInstanceId: 'remote-test-kernel'
+    }).attachTransport(transport, { trusted: true })
+  }
+
+  async close(): Promise<void> {
+    this.stdin.end()
+    await this.closed
+  }
+
+  writeDiagnostic(text: string): void {
+    this.stderr.write(text)
+  }
+
+  private complete(): void {
+    if (this.done) return
+    this.done = true
+    this.stdout.end()
+    this.stderr.end()
+    this.finish()
+  }
+}
+
+test('remote launcher negotiates over SSH stdio with explicit isolated env and connection lifetime', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  host.markerVariant = 'modern'
+  const commands: string[] = []
+  let process: LoopbackKernelProcess | undefined
+  const session: LaunchRemoteKernelOptions['session'] = {
+    async exec() {
+      return { stdout: '', stderr: '', code: 0, signal: null }
+    },
+    async uploadFile() {
+      return undefined
+    },
+    async openStdio(command) {
+      commands.push(command)
+      process = new LoopbackKernelProcess()
+      queueMicrotask(() => process?.writeDiagnostic('kernel diagnostic\n'))
+      return process
+    }
+  }
+  const diagnostics: string[] = []
+  const launched = await launchRemoteKernel({
+    session,
+    runtimeHost: host,
+    runtimeRoot: "/srv/phi user's runtime",
+    buildDirectory: fixture.directory,
+    home: '/srv/phi test/home',
+    agentDir: '/srv/phi test/agent',
+    environment: { NO_PROXY: '127.0.0.1,localhost' },
+    onDiagnostic: (text) => diagnostics.push(text)
+  })
+
+  assert.equal(launched.client.controllerGeneration, 1)
+  assert.equal(launched.deployment.reused, true)
+  assert.equal(launched.remoteCommandCount, 2)
+  assert.equal(launched.homePath, '/srv/phi test/home')
+  assert.equal(launched.agentDir, '/srv/phi test/agent')
+  assert.equal(commands.length, 1)
+  assert.match(commands[0], /^umask 077 && cd -- '\/srv\/phi test\/home' && exec env -i /)
+  assert.ok(commands[0].includes("HOME='/srv/phi test/home'"))
+  assert.ok(commands[0].includes("PI_CODING_AGENT_DIR='/srv/phi test/agent'"))
+  assert.ok(commands[0].includes("NO_PROXY='127.0.0.1,localhost'"))
+  assert.equal(commands[0].includes('PI_NATIVES_DIR'), false)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.deepEqual(diagnostics, ['kernel diagnostic\n'])
+
+  await launched.close()
+  assert.ok(process)
+  await process.closed
+})
+
+test('session-only prepared launch probes capabilities and stays at three remote commands', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  let controlCommands = 0
+  let process: LoopbackKernelProcess | undefined
+  const session: LaunchRemoteKernelOptions['session'] = {
+    async exec() {
+      throw new Error('bounded/input transports should be used')
+    },
+    async execWithInput(command, input) {
+      controlCommands++
+      assert.equal(command, 'sh -s')
+      assert.match(input, /platform\.os/)
+      return {
+        stdout: `${FAST_PROBE_START_SENTINEL}\nplatform.os=Linux\nplatform.arch=x86_64\nlibc.name=glibc\nlibc.version=2.17\nprobe.fast_complete=1\n${FAST_PROBE_END_SENTINEL}\n`,
+        stderr: '',
+        code: 0,
+        signal: null
+      }
+    },
+    async execBounded(command) {
+      controlCommands++
+      assert.match(command, /remote_os=\$\(uname/)
+      return {
+        stdout: 'PHI_KERNEL_PROFILE:linux:x64:glibc:2.17:modern\nPHI_KERNEL_REUSABLE\n',
+        stderr: '',
+        code: 0,
+        signal: null,
+        stdoutTruncated: false,
+        stderrTruncated: false
+      }
+    },
+    async uploadFile() {
+      throw new Error('prepared host must not upload')
+    },
+    async openStdio() {
+      controlCommands++
+      process = new LoopbackKernelProcess()
+      return process
+    }
+  }
+
+  const launched = await launchRemoteKernel({
+    session,
+    runtimeRoot: '/srv/phi-runtime',
+    buildDirectory: fixture.directory
+  })
+  assert.equal(launched.deployment.reused, true)
+  assert.equal(launched.remoteCommandCount, 3)
+  assert.equal(controlCommands, 3)
+  await launched.close()
+  assert.ok(process)
+})
+
+test('SSH-session host adapter preserves cwd quoting and bounded command results', async () => {
+  const commands: string[] = []
+  const capabilityProfile = profile()
+  const session = {
+    async exec(command: string) {
+      commands.push(command)
+      return { stdout: 'fallback', stderr: '', code: 0, signal: null }
+    },
+    async execBounded(command: string) {
+      commands.push(command)
+      return {
+        stdout: 'ok',
+        stderr: '',
+        code: 0,
+        signal: null,
+        stdoutTruncated: false,
+        stderrTruncated: false
+      }
+    },
+    async uploadFile() {
+      return undefined
+    }
+  }
+  const host = remoteKernelHostFromSshSession(session, capabilityProfile)
+  const result = await host.exec.run(['sh', '-c', "printf '%s' ok"], {
+    cwd: "/srv/user's root",
+    maxOutputBytes: 100,
+    timeoutMs: 1000
+  })
+  assert.equal(result.stdout, 'ok')
+  assert.equal(commands.length, 1)
+  assert.equal(commands[0], "cd -- '/srv/user'\\''s root' && sh -c 'printf '\\''%s'\\'' ok'")
+})
+
+test('glibc gate accepts 2.17 and newer and rejects older or unreadable versions', () => {
+  const run = (version: string): { status: number | null; stderr: string } => {
+    const script = `fail() { printf '%s %s\\n' "$1" "$2" >&2; exit 3; }
+glibc_version=${shellQuote(version)}
+${GLIBC_MINIMUM_CHECK}
+printf ok`
+    const result = spawnSync('/bin/sh', ['-c', script], { encoding: 'utf8' })
+    return { status: result.status, stderr: result.stderr }
+  }
+  for (const version of ['2.17', '2.28', '2.35', '3.0'])
+    assert.equal(run(version).status, 0, version)
+  for (const version of ['2.16', '2.5', '1.99', 'unknown', '']) {
+    const result = run(version)
+    assert.equal(result.status, 3, version)
+    assert.match(result.stderr, /^UNSUPPORTED_PLATFORM /)
+  }
+})
+
+test('launch command rejects PI_NATIVES_DIR injection', async () => {
+  const deployment = {
+    phiVersion: '0.1.0',
+    kernelSha256: 'a'.repeat(64),
+    executablePath: '/srv/runtime/kernel/phi-kernel',
+    nativePath: '/srv/runtime/kernel/native.node',
+    homePath: '/srv/runtime/kernel-home',
+    agentDir: '/srv/runtime/kernel-home/agent',
+    profile: {
+      os: 'linux' as const,
+      arch: 'x64' as const,
+      libc: 'glibc' as const,
+      variant: 'baseline' as const
+    },
+    variant: 'baseline' as const,
+    reused: true,
+    remoteCommandCount: 1
+  }
+  assert.throws(
+    () => buildRemoteKernelLaunchCommand(deployment, { PI_NATIVES_DIR: '/tmp/untrusted' }),
+    { name: 'RemoteKernelError', code: 'INVALID_ARGUMENT' }
+  )
+})

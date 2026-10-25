@@ -110,6 +110,57 @@ test('kernel rejects Electron, React, renderer, preload, and main IPC dependenci
   })
 })
 
+test('kernel client rejects Electron and UI dependencies without an allowlist', () => {
+  withFixture((repoRoot) => {
+    writeFixture(
+      repoRoot,
+      'src/main/agent/engine/kernel-client/electron-bridge.ts',
+      "import { app } from 'electron'\nvoid app\n"
+    )
+
+    assert.deepEqual(failuresFor(repoRoot), [
+      {
+        file: 'src/main/agent/engine/kernel-client/electron-bridge.ts',
+        specifier: 'electron',
+        rule: 'kernel-client-electron-import-forbidden',
+        message:
+          'Kernel client code may not depend on Electron, React, renderer, preload, or main-process IPC.',
+        chain: ['src/main/agent/engine/kernel-client/electron-bridge.ts', 'electron']
+      }
+    ])
+  })
+})
+
+test('kernel client boundary follows transitive imports outside the client root', () => {
+  withFixture((repoRoot) => {
+    writeFixture(
+      repoRoot,
+      'src/main/agent/engine/kernel-client/index.ts',
+      "import '../kernel-client-helper'\n"
+    )
+    writeFixture(
+      repoRoot,
+      'src/main/agent/engine/kernel-client-helper.ts',
+      "import { app } from 'electron'\nvoid app\n"
+    )
+
+    assert.deepEqual(failuresFor(repoRoot), [
+      {
+        file: 'src/main/agent/engine/kernel-client-helper.ts',
+        specifier: 'electron',
+        rule: 'kernel-client-electron-import-forbidden',
+        message:
+          'Kernel client code may not depend on Electron, React, renderer, preload, or main-process IPC.',
+        chain: [
+          'src/main/agent/engine/kernel-client/index.ts',
+          'src/main/agent/engine/kernel-client-helper.ts',
+          'electron'
+        ]
+      }
+    ])
+  })
+})
+
 test('kernel permits transport-neutral dependencies and confines OMP imports to its adapter', () => {
   withFixture((repoRoot) => {
     writeFixture(

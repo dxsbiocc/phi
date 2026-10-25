@@ -29,3 +29,6 @@ eval-results/
 
 # Real-host acceptance receipts and run directories (scripts/remote-r8.ts).
 .phi-acceptance/
+
+# Compiled kernel packages and pinned native-package download cache.
+.phi-build/

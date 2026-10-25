@@ -17,8 +17,17 @@ export interface PhiExtensionReadyMarkerIdentity {
   readonly contentHash: string
 }
 
+export interface PhiKernelReadyMarkerIdentity {
+  readonly schema: typeof DEPLOYMENT_READY_MARKER_SCHEMA
+  readonly kind: 'phi-kernel'
+  readonly phiVersion: string
+  readonly kernelSha256: string
+  readonly nativeSha256: string
+  readonly variant: 'modern' | 'baseline'
+}
+
 export type DeploymentReadyMarkerIdentity =
-  RemoteOmpReadyMarkerIdentity | PhiExtensionReadyMarkerIdentity
+  RemoteOmpReadyMarkerIdentity | PhiExtensionReadyMarkerIdentity | PhiKernelReadyMarkerIdentity
 
 function assertSha256(value: string): void {
   if (!/^[a-f0-9]{64}$/.test(value)) throw new Error('Invalid deployment ready marker hash')
@@ -38,6 +47,32 @@ export function phiExtensionReadyMarkerIdentity(
 ): PhiExtensionReadyMarkerIdentity {
   assertSha256(contentHash)
   return { schema: DEPLOYMENT_READY_MARKER_SCHEMA, kind: 'phi-extension', contentHash }
+}
+
+export function phiKernelReadyMarkerIdentity(
+  phiVersion: string,
+  kernelSha256: string,
+  nativeSha256: string,
+  variant: 'modern' | 'baseline'
+): PhiKernelReadyMarkerIdentity {
+  if (
+    !phiVersion ||
+    phiVersion === '.' ||
+    phiVersion === '..' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(phiVersion)
+  ) {
+    throw new Error('Invalid Phi kernel marker version')
+  }
+  assertSha256(kernelSha256)
+  assertSha256(nativeSha256)
+  return {
+    schema: DEPLOYMENT_READY_MARKER_SCHEMA,
+    kind: 'phi-kernel',
+    phiVersion,
+    kernelSha256,
+    nativeSha256,
+    variant
+  }
 }
 
 export function deploymentReadyMarkerPath(directory: string): string {

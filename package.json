@@ -55,6 +55,7 @@
     "bun:fetch": "node scripts/runtime/fetch-bun.mjs",
     "helper:fetch-go": "node scripts/runtime/fetch-go.mjs",
     "build:helper": "node scripts/build-helper.mjs",
+    "build:kernel": "bun scripts/build-kernel.ts",
     "runtime:lock": "node --import ./scripts/test-loader.mjs scripts/runtime/lock-env.ts",
     "runtime:smoke": "node --import ./scripts/test-loader.mjs scripts/runtime/smoke-env.ts",
     "runtime:smoke:viz": "node --import ./scripts/test-loader.mjs scripts/runtime/smoke-viz.ts",

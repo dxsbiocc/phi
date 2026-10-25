@@ -5,6 +5,7 @@ import {
   KernelClientError,
   spawnKernelStdio,
   type KernelProtocolClient,
+  type LocalKernelCloseOutcome,
   type SpawnedKernelClient
 } from '../../src/main/agent/engine/kernel-client'
 import type {
@@ -28,6 +29,8 @@ export type KernelEngineFixture = BasicEngineFixture & {
   cwd: string
   model: RuntimeModel
   kernelSessionId(sessionId: string): string | undefined
+  /** Drops the connection the way a lost SSH channel does: no session.close is sent. */
+  disconnect(): Promise<LocalKernelCloseOutcome>
   waitForRun(runId: string): Promise<RunCompletion>
   createSession(
     sessionId: string,
@@ -258,6 +261,11 @@ export async function createKernelFixture(): Promise<KernelEngineFixture> {
           return result
         },
         has: (sessionId) => logicalToKernel.has(sessionId)
+      },
+      async disconnect() {
+        stopEvents()
+        if (!spawned) throw new Error('Kernel was not spawned')
+        return spawned.close()
       },
       close() {
         closing ??= (async () => {
