@@ -1,0 +1,407 @@
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+
+import {
+  approvalRespondParamsSchema,
+  approvalRespondResultSchema,
+  encodeFrame,
+  eventsSubscribeParamsSchema,
+  eventsSubscribeResultSchema,
+  hostRequestFrameSchema,
+  hostResponseFrameSchema,
+  kernelEventFrameSchema,
+  kernelHelloParamsSchema,
+  kernelHelloResultSchema,
+  kernelMethodParamsSchemas,
+  kernelMethodResultSchemas,
+  kernelRequestFrameSchema,
+  kernelResponseFrameSchema,
+  KERNEL_V1_METHODS,
+  MAX_ERROR_DETAIL_BYTES,
+  MAX_FRAME_BYTES,
+  parseFrame,
+  PHI_KERNEL_PROTOCOL_VERSION,
+  protocolErrorCodes,
+  protocolErrorSchema,
+  ProtocolEncodeError,
+  runCompletedPayloadSchema,
+  sessionAbortParamsSchema,
+  sessionAbortResultSchema,
+  sessionCloseParamsSchema,
+  sessionCloseResultSchema,
+  sessionCreateParamsSchema,
+  sessionCreateResultSchema,
+  sessionPromptParamsSchema,
+  sessionPromptResultSchema,
+  sessionSnapshotParamsSchema,
+  sessionSnapshotResultSchema,
+  type JsonValue,
+  type ParsedFrame,
+  type ProtocolErrorCode
+} from '../src/shared/kernel-protocol'
+
+const methodParams = {
+  'kernel.hello': {
+    protocol: PHI_KERNEL_PROTOCOL_VERSION,
+    client: { name: 'phi-tests', version: '1.2.3' },
+    takeover: true
+  },
+  'session.create': {},
+  'session.prompt': { text: 'Hello' },
+  'session.abort': {},
+  'session.snapshot': {},
+  'session.close': {},
+  'events.subscribe': { afterSeq: 4 },
+  'approval.respond': { approvalId: 'approval-1', decision: 'approved' }
+} as const
+
+const methodResults = {
+  'kernel.hello': {
+    protocol: PHI_KERNEL_PROTOCOL_VERSION,
+    kernel: { version: '0.1.0', ompVersion: '18.10.3' },
+    kernelInstanceId: 'kernel-1',
+    controllerGeneration: 2,
+    capabilities: ['session.prompt'],
+    lastSeq: 7
+  },
+  'session.create': { sessionId: 'session-1' },
+  'session.prompt': { accepted: true, runId: 'run-1' },
+  'session.abort': { cancelled: true },
+  'session.snapshot': { sessionId: 'session-1', activeRunId: 'run-1' },
+  'session.close': { closed: true },
+  'events.subscribe': { subscribed: true, lastSeq: 7 },
+  'approval.respond': { accepted: true }
+} as const
+
+function roundTrip(frame: ParsedFrame): void {
+  assert.deepEqual(parseFrame(encodeFrame(frame)), frame)
+}
+
+function assertProtocolError(value: ReturnType<typeof parseFrame>, code: ProtocolErrorCode): void {
+  assert.equal('kind' in value, false)
+  if ('kind' in value) return
+  assert.equal(value.code, code)
+}
+
+function assertEncodeError(value: unknown, code: ProtocolErrorCode = 'INVALID_FRAME'): boolean {
+  return value instanceof ProtocolEncodeError && value.code === code
+}
+
+describe('kernel protocol DTOs', () => {
+  it('round-trips every v1 method request and result', () => {
+    assert.deepEqual(Object.keys(kernelMethodParamsSchemas), KERNEL_V1_METHODS)
+    assert.deepEqual(Object.keys(kernelMethodResultSchemas), KERNEL_V1_METHODS)
+
+    for (const method of KERNEL_V1_METHODS) {
+      const params = kernelMethodParamsSchemas[method].parse(methodParams[method]) as JsonValue
+      const result = kernelMethodResultSchemas[method].parse(methodResults[method]) as JsonValue
+
+      roundTrip({
+        kind: 'request',
+        id: `request-${method}`,
+        method,
+        params,
+        generation: method === 'kernel.hello' ? 0 : 2,
+        sessionId: 'session-1',
+        runId: 'run-1',
+        conversationId: 'reserved-conversation-1',
+        taskId: 'reserved-task-1'
+      })
+      roundTrip({ kind: 'response', id: `request-${method}`, ok: true, result })
+    }
+  })
+
+  it('round-trips event and host frames, including a protocol error', () => {
+    const completed = runCompletedPayloadSchema.parse({ runId: 'run-1', status: 'completed' })
+    roundTrip({
+      kind: 'event',
+      seq: 8,
+      type: 'run.completed',
+      payload: completed,
+      sessionId: 'session-1',
+      runId: 'run-1'
+    })
+    roundTrip({
+      kind: 'host.request',
+      id: 'host-1',
+      capability: 'desktop.example',
+      params: { value: 1 }
+    })
+    roundTrip({ kind: 'host.response', id: 'host-1', ok: true, result: { value: 2 } })
+    roundTrip({
+      kind: 'host.response',
+      id: 'host-2',
+      ok: false,
+      error: { code: 'CAPABILITY_UNAVAILABLE', message: 'Capability is not registered.' }
+    })
+    roundTrip({
+      kind: 'response',
+      id: 'request-1',
+      ok: false,
+      error: {
+        code: 'VERSION_UNSUPPORTED',
+        message: 'Protocol major versions do not match.',
+        detail: { local: { major: 1, minor: 0 }, peer: { major: 2, minor: 0 } }
+      }
+    })
+  })
+
+  it('allows identity-shaped data in opaque output and host capability payloads', () => {
+    roundTrip({
+      kind: 'event',
+      seq: 1,
+      type: 'message.updated',
+      payload: {
+        message: { role: 'assistant', content: { permissions: ['read'] } },
+        executor: 'reported-tool-metadata'
+      }
+    })
+    roundTrip({
+      kind: 'response',
+      id: 'history',
+      ok: true,
+      result: {
+        messages: [{ role: 'user', content: { permissions: ['workspace'] } }]
+      }
+    })
+    roundTrip({
+      kind: 'host.response',
+      id: 'host-result',
+      ok: true,
+      result: { member: { role: 'owner' }, principal: 'desktop' }
+    })
+    roundTrip({
+      kind: 'host.request',
+      id: 'host-request',
+      capability: 'desktop.stat',
+      params: { role: 'directory', permissions: 0o755, nested: { executor: true } }
+    })
+  })
+
+  it('exports strict schemas for all public DTO shapes', () => {
+    const schemaCases = [
+      [kernelHelloParamsSchema, methodParams['kernel.hello']],
+      [kernelHelloResultSchema, methodResults['kernel.hello']],
+      [sessionCreateParamsSchema, methodParams['session.create']],
+      [sessionCreateResultSchema, methodResults['session.create']],
+      [sessionPromptParamsSchema, methodParams['session.prompt']],
+      [sessionPromptResultSchema, methodResults['session.prompt']],
+      [sessionAbortParamsSchema, methodParams['session.abort']],
+      [sessionAbortResultSchema, methodResults['session.abort']],
+      [sessionSnapshotParamsSchema, methodParams['session.snapshot']],
+      [sessionSnapshotResultSchema, methodResults['session.snapshot']],
+      [sessionCloseParamsSchema, methodParams['session.close']],
+      [sessionCloseResultSchema, methodResults['session.close']],
+      [eventsSubscribeParamsSchema, methodParams['events.subscribe']],
+      [eventsSubscribeResultSchema, methodResults['events.subscribe']],
+      [approvalRespondParamsSchema, methodParams['approval.respond']],
+      [approvalRespondResultSchema, methodResults['approval.respond']],
+      [
+        kernelRequestFrameSchema,
+        {
+          kind: 'request',
+          id: 'r',
+          method: 'session.create',
+          params: {},
+          generation: 1
+        }
+      ],
+      [kernelResponseFrameSchema, { kind: 'response', id: 'r', ok: true, result: null }],
+      [kernelEventFrameSchema, { kind: 'event', seq: 1, type: 'ready', payload: null }],
+      [
+        hostRequestFrameSchema,
+        {
+          kind: 'host.request',
+          id: 'h',
+          capability: 'desktop.example',
+          params: null
+        }
+      ],
+      [hostResponseFrameSchema, { kind: 'host.response', id: 'h', ok: true, result: null }]
+    ] as const
+
+    for (const [schema, valid] of schemaCases) {
+      assert.equal(schema.safeParse({ ...valid, unexpected: true }).success, false)
+    }
+  })
+
+  it('rejects every non-serializable input without silently dropping values', () => {
+    const frame = (result: unknown): ParsedFrame =>
+      ({ kind: 'response', id: 'request-1', ok: true, result }) as ParsedFrame
+    const cycle: Record<string, unknown> = {}
+    cycle.self = cycle
+
+    class Instance {
+      value = 1
+    }
+
+    for (const value of [
+      () => undefined,
+      Symbol('value'),
+      1n,
+      undefined,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      cycle,
+      new Instance()
+    ]) {
+      assert.throws(
+        () => encodeFrame(frame(value)),
+        (error) => assertEncodeError(error)
+      )
+    }
+
+    const symbolKey = { visible: true, [Symbol('hidden')]: true }
+    const sparse = [1, 2, 3]
+    delete sparse[1]
+    assert.throws(
+      () => encodeFrame(frame(symbolKey)),
+      (error) => assertEncodeError(error)
+    )
+    assert.throws(
+      () => encodeFrame(frame(sparse)),
+      (error) => assertEncodeError(error)
+    )
+  })
+
+  it('rejects malformed, unknown, and structurally invalid frames', () => {
+    assertProtocolError(parseFrame('{'), 'INVALID_FRAME')
+    assertProtocolError(parseFrame(JSON.stringify({ kind: 'mystery' })), 'INVALID_FRAME')
+    assertProtocolError(
+      parseFrame(
+        JSON.stringify({
+          kind: 'request',
+          id: 'request-1',
+          method: 'session.create',
+          params: {},
+          generation: 1,
+          unexpected: true
+        })
+      ),
+      'INVALID_FRAME'
+    )
+    assertProtocolError(
+      parseFrame(
+        JSON.stringify({
+          kind: 'request',
+          id: 'request-1',
+          method: 'session.prompt',
+          params: { text: 'hello', unexpected: true },
+          generation: 1
+        })
+      ),
+      'INVALID_PARAMS'
+    )
+  })
+
+  it('rejects self-reported identity and permissions at known request control boundaries', () => {
+    for (const field of ['role', 'member', 'identity', 'principal', 'executor', 'permissions']) {
+      assertProtocolError(
+        parseFrame(
+          JSON.stringify({
+            kind: 'request',
+            id: `known-${field}`,
+            method: 'session.prompt',
+            params: { text: 'hello', [field]: 'self-reported' },
+            generation: 1
+          })
+        ),
+        'INVALID_PARAMS'
+      )
+      assertProtocolError(
+        parseFrame(
+          JSON.stringify({
+            kind: 'request',
+            id: `envelope-${field}`,
+            method: 'session.prompt',
+            params: { text: 'hello' },
+            generation: 1,
+            [field]: 'self-reported'
+          })
+        ),
+        'INVALID_FRAME'
+      )
+    }
+
+    assertProtocolError(
+      parseFrame(
+        JSON.stringify({
+          kind: 'request',
+          id: 'hello-client-role',
+          method: 'kernel.hello',
+          params: {
+            protocol: PHI_KERNEL_PROTOCOL_VERSION,
+            client: { name: 'phi-tests', version: '1.0.0', role: 'controller' }
+          },
+          generation: 0
+        })
+      ),
+      'INVALID_PARAMS'
+    )
+  })
+
+  it('enforces the independent frame and error-detail byte limits', () => {
+    const prefix = '{"kind":"event","seq":1,"type":"large","payload":"'
+    const suffix = '"}'
+    const exactPayload = `${prefix}${'x'.repeat(MAX_FRAME_BYTES - 1 - prefix.length - suffix.length)}${suffix}`
+    const oversized = `${prefix}${'x'.repeat(MAX_FRAME_BYTES - prefix.length - suffix.length)}${suffix}`
+
+    assert.equal(new TextEncoder().encode(`${exactPayload}\n`).byteLength, MAX_FRAME_BYTES)
+    assert.equal('kind' in parseFrame(exactPayload), true)
+    assert.equal(
+      new TextEncoder().encode(encodeFrame(JSON.parse(exactPayload) as ParsedFrame)).byteLength,
+      MAX_FRAME_BYTES
+    )
+    assert.equal(new TextEncoder().encode(`${oversized}\n`).byteLength, MAX_FRAME_BYTES + 1)
+    assertProtocolError(parseFrame(oversized), 'FRAME_TOO_LARGE')
+    assert.throws(
+      () => encodeFrame(JSON.parse(oversized) as ParsedFrame),
+      (error) => assertEncodeError(error, 'FRAME_TOO_LARGE')
+    )
+
+    const largestDetail = 'x'.repeat(MAX_ERROR_DETAIL_BYTES - 2)
+    assert.equal(
+      protocolErrorSchema.safeParse({
+        code: 'INTERNAL',
+        message: 'Failure.',
+        detail: largestDetail
+      }).success,
+      true
+    )
+    assert.equal(
+      protocolErrorSchema.safeParse({
+        code: 'INTERNAL',
+        message: 'Failure.',
+        detail: `${largestDetail}x`
+      }).success,
+      false
+    )
+  })
+
+  it('keeps the error-code vocabulary closed', () => {
+    assert.deepEqual(protocolErrorCodes, [
+      'VERSION_UNSUPPORTED',
+      'NOT_NEGOTIATED',
+      'STALE_GENERATION',
+      'NOT_CONTROLLER',
+      'UNKNOWN_METHOD',
+      'INVALID_FRAME',
+      'INVALID_PARAMS',
+      'FRAME_TOO_LARGE',
+      'DUPLICATE_REQUEST',
+      'SESSION_NOT_FOUND',
+      'SESSION_BUSY',
+      'CAPABILITY_UNAVAILABLE',
+      'REPLAY_GAP',
+      'CANCELLED',
+      'INTERNAL'
+    ])
+    assert.equal(
+      protocolErrorSchema.safeParse({
+        code: 'MADE_UP',
+        message: 'No.'
+      }).success,
+      false
+    )
+  })
+})

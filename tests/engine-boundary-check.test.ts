@@ -164,6 +164,38 @@ test('allows package roots inside the engine and gates internal subpaths', () =>
   })
 })
 
+test('allows OMP package roots only in the kernel OMP adapter and gates internal subpaths', () => {
+  withFixture((repoRoot) => {
+    const adapterFile = 'src/kernel/omp/version.ts'
+    const kernelFile = 'src/kernel/protocol/core.ts'
+    const rootSpecifier = '@oh-my-pi/pi-coding-agent'
+    const internalSpecifier = '@oh-my-pi/pi-coding-agent/config/registry'
+    writeFixture(repoRoot, adapterFile, `import { createAgentSession } from '${rootSpecifier}'\n`)
+    writeFixture(repoRoot, kernelFile, `import { createAgentSession } from '${rootSpecifier}'\n`)
+
+    assert.deepEqual(failuresFor(repoRoot), [
+      {
+        file: kernelFile,
+        specifier: rootSpecifier,
+        rule: 'outside-engine-unallowlisted',
+        message: 'OMP module references outside src/main/agent/engine/ must be allowlisted.'
+      }
+    ])
+
+    writeFixture(repoRoot, kernelFile, 'export {}\n')
+    writeFixture(repoRoot, adapterFile, `import { registry } from '${internalSpecifier}'\n`)
+    assert.deepEqual(failuresFor(repoRoot), [
+      {
+        file: adapterFile,
+        specifier: internalSpecifier,
+        rule: 'kernel-omp-internal-subpath-unallowlisted',
+        message: 'OMP internal subpaths inside src/kernel/omp/ must be allowlisted.'
+      }
+    ])
+    assert.deepEqual(failuresFor(repoRoot, [entry(adapterFile, [internalSpecifier])]), [])
+  })
+})
+
 test('detects every supported module-reference syntax, including multiline imports', () => {
   withFixture((repoRoot) => {
     const file = 'src/references.ts'
@@ -178,14 +210,18 @@ test('detects every supported module-reference syntax, including multiline impor
         "export type { Four } from '@oh-my-pi/pkg/export-type'",
         "export * from '@oh-my-pi/pkg/export-all'",
         "const dynamic = import('@oh-my-pi/pkg/dynamic')",
+        "const dynamicWithOptions = import('@oh-my-pi/pkg/dynamic-options', {})",
         "const required = require('@oh-my-pi/pkg/require')",
+        "const resolved = require.resolve('@oh-my-pi/pkg/require-resolve')",
         "import assigned = require('@oh-my-pi/pkg/import-equals')",
+        "type Imported = import('@oh-my-pi/pkg/import-type-node').Imported",
         'const backtickDynamic = import(`@oh-my-pi/pkg/backtick-dynamic`)',
         'const backtickRequired = require(`@oh-my-pi/pkg/backtick-require`)',
         'import {',
         '  multiline',
         "} from '@oh-my-pi/pkg/multiline'",
-        'void [one, dynamic, required, assigned, multiline, backtickDynamic, backtickRequired]'
+        'void [one, dynamic, dynamicWithOptions, required, resolved, assigned, multiline, backtickDynamic, backtickRequired]',
+        'void (null as Imported | null)'
       ].join('\n')
     )
 
@@ -195,14 +231,17 @@ test('detects every supported module-reference syntax, including multiline impor
         '@oh-my-pi/pkg/backtick-dynamic',
         '@oh-my-pi/pkg/backtick-require',
         '@oh-my-pi/pkg/dynamic',
+        '@oh-my-pi/pkg/dynamic-options',
         '@oh-my-pi/pkg/export',
         '@oh-my-pi/pkg/export-all',
         '@oh-my-pi/pkg/export-type',
         '@oh-my-pi/pkg/import',
         '@oh-my-pi/pkg/import-equals',
         '@oh-my-pi/pkg/import-type',
+        '@oh-my-pi/pkg/import-type-node',
         '@oh-my-pi/pkg/multiline',
         '@oh-my-pi/pkg/require',
+        '@oh-my-pi/pkg/require-resolve',
         '@oh-my-pi/pkg/side-effect'
       ]
     )

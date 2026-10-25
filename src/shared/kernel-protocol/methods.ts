@@ -1,0 +1,129 @@
+import { z } from 'zod'
+
+import type { KernelV1Method } from './constants'
+
+export const protocolVersionSchema = z
+  .object({
+    major: z.number().int().nonnegative(),
+    minor: z.number().int().nonnegative()
+  })
+  .strict()
+
+export type ProtocolVersion = z.infer<typeof protocolVersionSchema>
+
+const nonEmptyIdSchema = z.string().min(1)
+
+export const kernelHelloParamsSchema = z
+  .object({
+    protocol: protocolVersionSchema,
+    client: z
+      .object({
+        name: z.string().min(1),
+        version: z.string().min(1)
+      })
+      .strict(),
+    takeover: z.boolean().optional()
+  })
+  .strict()
+
+export const kernelHelloResultSchema = z
+  .object({
+    protocol: protocolVersionSchema,
+    kernel: z
+      .object({
+        version: z.string().min(1),
+        ompVersion: z.string().min(1)
+      })
+      .strict(),
+    kernelInstanceId: nonEmptyIdSchema,
+    controllerGeneration: z.number().int().positive(),
+    capabilities: z.array(z.string().min(1)),
+    lastSeq: z.number().int().nonnegative()
+  })
+  .strict()
+
+/** K1-2 extends creation inputs here without copying the legacy worker's full create object. */
+export const sessionCreateParamsSchema = z.object({}).strict()
+export const sessionCreateResultSchema = z.object({ sessionId: nonEmptyIdSchema }).strict()
+
+/** K1-2 adds trusted prompt options here; identity remains outside serialized params. */
+export const sessionPromptParamsSchema = z.object({ text: z.string() }).strict()
+export const sessionPromptResultSchema = z
+  .object({ accepted: z.literal(true), runId: nonEmptyIdSchema })
+  .strict()
+
+/** Run targeting remains in the request correlation fields until K1-2 wires worker cancellation. */
+export const sessionAbortParamsSchema = z.object({}).strict()
+export const sessionAbortResultSchema = z.object({ cancelled: z.literal(true) }).strict()
+
+/** K1-2 extends snapshots with serializable session state, never live SDK objects. */
+export const sessionSnapshotParamsSchema = z.object({}).strict()
+export const sessionSnapshotResultSchema = z
+  .object({ sessionId: nonEmptyIdSchema, activeRunId: nonEmptyIdSchema.optional() })
+  .strict()
+
+export const sessionCloseParamsSchema = z.object({}).strict()
+export const sessionCloseResultSchema = z.object({ closed: z.literal(true) }).strict()
+
+export const eventsSubscribeParamsSchema = z
+  .object({ afterSeq: z.number().int().nonnegative() })
+  .strict()
+export const eventsSubscribeResultSchema = z
+  .object({ subscribed: z.literal(true), lastSeq: z.number().int().nonnegative() })
+  .strict()
+
+/** Future actor metadata belongs in trusted call context, not this approval DTO. */
+export const approvalRespondParamsSchema = z
+  .object({
+    approvalId: nonEmptyIdSchema,
+    decision: z.enum(['approved', 'denied'])
+  })
+  .strict()
+export const approvalRespondResultSchema = z.object({ accepted: z.literal(true) }).strict()
+
+export const runCompletedPayloadSchema = z
+  .object({
+    runId: nonEmptyIdSchema,
+    status: z.enum(['completed', 'failed', 'cancelled', 'unknown'])
+  })
+  .strict()
+
+export type KernelHelloParams = z.infer<typeof kernelHelloParamsSchema>
+export type KernelHelloResult = z.infer<typeof kernelHelloResultSchema>
+export type SessionCreateParams = z.infer<typeof sessionCreateParamsSchema>
+export type SessionCreateResult = z.infer<typeof sessionCreateResultSchema>
+export type SessionPromptParams = z.infer<typeof sessionPromptParamsSchema>
+export type SessionPromptResult = z.infer<typeof sessionPromptResultSchema>
+export type SessionAbortParams = z.infer<typeof sessionAbortParamsSchema>
+export type SessionAbortResult = z.infer<typeof sessionAbortResultSchema>
+export type SessionSnapshotParams = z.infer<typeof sessionSnapshotParamsSchema>
+export type SessionSnapshotResult = z.infer<typeof sessionSnapshotResultSchema>
+export type SessionCloseParams = z.infer<typeof sessionCloseParamsSchema>
+export type SessionCloseResult = z.infer<typeof sessionCloseResultSchema>
+export type EventsSubscribeParams = z.infer<typeof eventsSubscribeParamsSchema>
+export type EventsSubscribeResult = z.infer<typeof eventsSubscribeResultSchema>
+export type ApprovalRespondParams = z.infer<typeof approvalRespondParamsSchema>
+export type ApprovalRespondResult = z.infer<typeof approvalRespondResultSchema>
+export type RunCompletedPayload = z.infer<typeof runCompletedPayloadSchema>
+
+export const kernelMethodParamsSchemas = {
+  'kernel.hello': kernelHelloParamsSchema,
+  'session.create': sessionCreateParamsSchema,
+  'session.prompt': sessionPromptParamsSchema,
+  'session.abort': sessionAbortParamsSchema,
+  'session.snapshot': sessionSnapshotParamsSchema,
+  'session.close': sessionCloseParamsSchema,
+  'events.subscribe': eventsSubscribeParamsSchema,
+  'approval.respond': approvalRespondParamsSchema
+} satisfies Record<KernelV1Method, z.ZodType>
+
+export const kernelMethodResultSchemas = {
+  'kernel.hello': kernelHelloResultSchema,
+  'session.create': sessionCreateResultSchema,
+  'session.prompt': sessionPromptResultSchema,
+  'session.abort': sessionAbortResultSchema,
+  'session.snapshot': sessionSnapshotResultSchema,
+  'session.close': sessionCloseResultSchema,
+  'events.subscribe': eventsSubscribeResultSchema,
+  'approval.respond': approvalRespondResultSchema
+} satisfies Record<KernelV1Method, z.ZodType>

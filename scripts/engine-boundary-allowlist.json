@@ -34,6 +34,12 @@
       "plan": "keep"
     },
     {
+      "file": "src/kernel/omp/version.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/package.json"],
+      "purpose": "Read the installed pinned OMP version without importing the SDK runtime",
+      "plan": "keep"
+    },
+    {
       "file": "src/main/agent/engine/in-process/settings.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent/config/registry",

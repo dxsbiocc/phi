@@ -5,6 +5,9 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 
 const ENGINE_DIRECTORY = 'src/main/agent/engine/'
+const KERNEL_OMP_DIRECTORY = 'src/kernel/omp/'
+const KERNEL_DIRECTORY = 'src/kernel/'
+const SHARED_PROTOCOL_DIRECTORY = 'src/shared/kernel-protocol/'
 const OMP_SCOPE = '@oh-my-pi/'
 const SCAN_DIRECTORIES = ['src', 'tests', 'scripts']
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs'])
@@ -13,6 +16,8 @@ const OUTSIDE_ENGINE_MESSAGE =
   'OMP module references outside src/main/agent/engine/ must be allowlisted.'
 const ENGINE_INTERNAL_MESSAGE =
   'OMP internal subpaths inside src/main/agent/engine/ must be allowlisted.'
+const KERNEL_OMP_INTERNAL_MESSAGE =
+  'OMP internal subpaths inside src/kernel/omp/ must be allowlisted.'
 
 function normalizePath(filePath) {
   return filePath.split(path.sep).join('/')
@@ -61,7 +66,7 @@ function stringLiteralText(node) {
     : undefined
 }
 
-function moduleReferences(filePath) {
+function moduleReferences(filePath, options = {}) {
   const sourceFile = ts.createSourceFile(
     filePath,
     readFileSync(filePath, 'utf8'),
@@ -73,21 +78,42 @@ function moduleReferences(filePath) {
 
   function record(node) {
     const specifier = stringLiteralText(node)
-    if (ompSpecifierDetails(specifier)) references.add(specifier)
+    if (specifier) references.add(specifier)
   }
 
   function visit(node) {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
       record(node.moduleSpecifier)
+    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+      record(node.argument.literal)
     } else if (
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference)
     ) {
       record(node.moduleReference.expression)
-    } else if (ts.isCallExpression(node) && node.arguments.length === 1) {
+    } else if (ts.isCallExpression(node) && node.arguments.length >= 1) {
       const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword
-      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === 'require'
-      if (isDynamicImport || isRequire) record(node.arguments[0])
+      const isRequire =
+        node.arguments.length === 1 &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'require'
+      const isRequireResolve =
+        node.arguments.length === 1 &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === 'require' &&
+        node.expression.name.text === 'resolve'
+      const isImportMetaResolve =
+        node.arguments.length === 1 &&
+        options.includeImportMetaResolve === true &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isMetaProperty(node.expression.expression) &&
+        node.expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+        node.expression.expression.name.text === 'meta' &&
+        node.expression.name.text === 'resolve'
+      if (isDynamicImport || isRequire || isRequireResolve || isImportMetaResolve) {
+        record(node.arguments[0])
+      }
     }
 
     ts.forEachChild(node, visit)
@@ -95,6 +121,52 @@ function moduleReferences(filePath) {
 
   visit(sourceFile)
   return references
+}
+
+function isWithin(directory, target) {
+  const relative = path.relative(directory, target)
+  return (
+    relative === '' ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+  )
+}
+
+function resolvesWithinSharedProtocol(repoRoot, file, specifier) {
+  if (!specifier.startsWith('.')) return false
+  const sourceFile = path.resolve(repoRoot, ...file.split('/'))
+  const target = path.resolve(path.dirname(sourceFile), specifier)
+  const sharedDirectory = path.resolve(repoRoot, ...SHARED_PROTOCOL_DIRECTORY.split('/'))
+  return isWithin(sharedDirectory, target)
+}
+
+function packageOrSubpath(specifier, packageName) {
+  return specifier === packageName || specifier.startsWith(`${packageName}/`)
+}
+
+function resolvedRepositoryPath(repoRoot, file, specifier) {
+  if (specifier.startsWith('.')) {
+    return normalizePath(
+      path.relative(
+        repoRoot,
+        path.resolve(path.dirname(path.resolve(repoRoot, ...file.split('/'))), specifier)
+      )
+    )
+  }
+  return specifier.startsWith('src/') ? specifier : undefined
+}
+
+function forbiddenKernelImport(repoRoot, file, specifier) {
+  if (packageOrSubpath(specifier, 'electron')) return 'electron'
+  if (packageOrSubpath(specifier, 'react') || packageOrSubpath(specifier, 'react-dom')) {
+    return 'react'
+  }
+  if (specifier === '@renderer' || specifier.startsWith('@renderer/')) return 'renderer'
+
+  const target = resolvedRepositoryPath(repoRoot, file, specifier)
+  if (target === 'src/renderer' || target?.startsWith('src/renderer/')) return 'renderer'
+  if (target === 'src/preload' || target?.startsWith('src/preload/')) return 'preload'
+  if (target === 'src/main/ipc' || target?.startsWith('src/main/ipc/')) return 'main-ipc'
+  return undefined
 }
 
 function failure(file, specifier, rule, message) {
@@ -222,7 +294,7 @@ export function checkEngineBoundary({ repoRoot, allowlist, stats }) {
   const referencesByFile = new Map(
     sourceFiles.map((filePath) => [
       relativePath(absoluteRepoRoot, filePath),
-      moduleReferences(filePath)
+      new Set([...moduleReferences(filePath)].filter(ompSpecifierDetails))
     ])
   )
   const validation = validateAllowlist(allowlist)
@@ -232,11 +304,12 @@ export function checkEngineBoundary({ repoRoot, allowlist, stats }) {
   for (const [file, references] of referencesByFile) {
     const allowed = allowedByFile.get(file) ?? new Set()
     const insideEngine = file.startsWith(ENGINE_DIRECTORY)
+    const insideKernelOmp = file.startsWith(KERNEL_OMP_DIRECTORY)
     for (const specifier of [...references].sort()) {
       if (allowed.has(specifier)) continue
 
       const details = ompSpecifierDetails(specifier)
-      if (insideEngine && !details.isInternalSubpath) continue
+      if ((insideEngine || insideKernelOmp) && !details.isInternalSubpath) continue
       failures.push(
         insideEngine
           ? failure(
@@ -245,7 +318,14 @@ export function checkEngineBoundary({ repoRoot, allowlist, stats }) {
               'engine-internal-subpath-unallowlisted',
               ENGINE_INTERNAL_MESSAGE
             )
-          : failure(file, specifier, 'outside-engine-unallowlisted', OUTSIDE_ENGINE_MESSAGE)
+          : insideKernelOmp
+            ? failure(
+                file,
+                specifier,
+                'kernel-omp-internal-subpath-unallowlisted',
+                KERNEL_OMP_INTERNAL_MESSAGE
+              )
+            : failure(file, specifier, 'outside-engine-unallowlisted', OUTSIDE_ENGINE_MESSAGE)
       )
     }
   }
@@ -283,12 +363,74 @@ export function checkEngineBoundary({ repoRoot, allowlist, stats }) {
   return failures.sort(compareFailures)
 }
 
+export function checkKernelBoundary({ repoRoot, stats }) {
+  const absoluteRepoRoot = path.resolve(repoRoot)
+  const sourceFiles = [SHARED_PROTOCOL_DIRECTORY, KERNEL_DIRECTORY]
+    .flatMap((directory) => listSourceFiles(path.join(absoluteRepoRoot, directory)))
+    .sort()
+  const failures = []
+
+  for (const filePath of sourceFiles) {
+    const file = relativePath(absoluteRepoRoot, filePath)
+    const references = moduleReferences(filePath, { includeImportMetaResolve: true })
+    for (const specifier of [...references].sort()) {
+      if (file.startsWith(SHARED_PROTOCOL_DIRECTORY)) {
+        if (
+          specifier === 'zod' ||
+          resolvesWithinSharedProtocol(absoluteRepoRoot, file, specifier)
+        ) {
+          continue
+        }
+        failures.push(
+          failure(
+            file,
+            specifier,
+            'shared-protocol-import-forbidden',
+            'Kernel protocol DTOs may import only zod or files within src/shared/kernel-protocol/.'
+          )
+        )
+        continue
+      }
+
+      const forbiddenArea = forbiddenKernelImport(absoluteRepoRoot, file, specifier)
+      if (forbiddenArea) {
+        failures.push(
+          failure(
+            file,
+            specifier,
+            `kernel-${forbiddenArea}-import-forbidden`,
+            'Kernel code may not depend on Electron, React, renderer, preload, or main-process IPC.'
+          )
+        )
+      }
+
+      if (specifier.startsWith(OMP_SCOPE) && !file.startsWith(KERNEL_OMP_DIRECTORY)) {
+        failures.push(
+          failure(
+            file,
+            specifier,
+            'kernel-omp-import-outside-adapter',
+            'OMP module references under src/kernel/ are allowed only in src/kernel/omp/.'
+          )
+        )
+      }
+    }
+  }
+
+  if (stats) stats.scannedFiles = sourceFiles.length
+  return failures.sort(compareFailures)
+}
+
 function main() {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   const allowlistPath = path.join(repoRoot, 'scripts/engine-boundary-allowlist.json')
   const allowlist = JSON.parse(readFileSync(allowlistPath, 'utf8'))
   const stats = {}
-  const failures = checkEngineBoundary({ repoRoot, allowlist, stats })
+  const kernelStats = {}
+  const failures = [
+    ...checkEngineBoundary({ repoRoot, allowlist, stats }),
+    ...checkKernelBoundary({ repoRoot, stats: kernelStats })
+  ]
 
   if (failures.length > 0) {
     console.error('Engine boundary check failed:')
@@ -299,7 +441,7 @@ function main() {
   }
 
   console.log(
-    `Engine boundary check passed: ${stats.scannedFiles} files scanned, ${stats.allowlistedFiles} allowlisted files.`
+    `Engine boundary check passed: ${stats.scannedFiles} files scanned, ${stats.allowlistedFiles} allowlisted files; kernel boundary passed: ${kernelStats.scannedFiles} files scanned.`
   )
 }
 
