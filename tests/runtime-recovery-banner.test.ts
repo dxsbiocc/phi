@@ -92,7 +92,12 @@ test('recovery banner: a confirmed connection shows a failed UI refresh without 
     canResume: false,
     message: '正在处理原会话的恢复请求。'
   }
-  const connecting = renderToStaticMarkup(createElement(Banner, { api, target }))
+  assert.equal(
+    renderToStaticMarkup(createElement(Banner, { api, target })),
+    '',
+    'an active remote run is not another connection attempt'
+  )
+  const connecting = renderToStaticMarkup(createElement(Banner, { api, target, connecting: true }))
   assert.match(
     readFileSync('src/renderer/src/features/chat/components/RuntimeRecoveryBanner.tsx', 'utf8'),
     /alignItems: 'center'[\s\S]*'& \.MuiAlert-icon': \{ py: 0 \}[\s\S]*'& \.MuiAlert-message': \{ py: 0, display: 'flex', alignItems: 'center' \}/

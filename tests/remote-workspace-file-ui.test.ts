@@ -128,6 +128,28 @@ test('remote file sidebar maps T02 directory entries into SSH URIs and bounded t
   }
 })
 
+test('remote directory listing uses an existing workspace host instead of opening a fresh SSH master', async () => {
+  const f = fixture()
+  try {
+    const connect = f.dependencies.connectImpl!
+    let sharedCalls = 0
+    const listing = await listRemoteWorkspaceDirectory(request('.'), {
+      ...f.dependencies,
+      connectImpl: async () => {
+        throw new Error('unexpected direct SSH connection')
+      },
+      connectHost: async () => {
+        sharedCalls += 1
+        return connect({ host: 'cluster-a' })
+      }
+    })
+    assert.equal(listing.path, `ssh://cluster-a${realpathSync(f.root)}`)
+    assert.equal(sharedCalls, 1)
+  } finally {
+    f.cleanup()
+  }
+})
+
 test('remote UI read rejects wrong project, raw SSH URL and escape link without weakening type checks', async () => {
   const f = fixture()
   try {

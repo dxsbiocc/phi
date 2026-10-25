@@ -101,6 +101,13 @@ test('network, changed host key, authentication and project-root errors remain d
     throw new RemoteProjectRootChangedError()
   })
   assert.equal((await denied.tracker.check('session-a', 'project-a')).phase, 'permission_failed')
+  const unexpected = fixture(async () => {
+    throw new Error('RPC startup timed out')
+  })
+  const failedCheck = await unexpected.tracker.check('session-a', 'project-a')
+  assert.equal(failedCheck.phase, 'configuration_failed')
+  assert.equal(failedCheck.message, '远程项目连接检查失败')
+  assert.equal(failedCheck.suggestion, 'RPC startup timed out')
 })
 
 test('a restarted server can reconnect to the same project without replaying an operation', async () => {

@@ -272,7 +272,7 @@ export function resolveRemoteWorkspaceHostBinding(
   if (project.location.kind !== 'ssh') throw new Error('远程项目位置无效')
   const connection = {
     ...remoteConnectionConfigForProfile(profile),
-    readyTimeoutMs: 10_000,
+    readyTimeoutMs: 20_000,
     execTimeoutMs: 30_000
   }
   const connect = dependencies.connectImpl ?? connectRemoteSshSession
@@ -387,7 +387,7 @@ export async function withAuthorizedRemoteWorkspacePath<T>(
       })
     : await (dependencies.connectImpl ?? connectRemoteSshSession)({
         ...remoteConnectionConfigForProfile(profile),
-        readyTimeoutMs: 10_000,
+        readyTimeoutMs: 20_000,
         execTimeoutMs: dependencies.execTimeoutMs ?? 10_000,
         ...(dependencies.userInitiated ? { userInitiated: true } : {})
       })

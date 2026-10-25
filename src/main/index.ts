@@ -1114,16 +1114,14 @@ const {
   events: { notifySessionChanged, writeAppLog }
 })
 installAppRemoteSessionRouting({
-  ...(process.env.PHI_REMOTE_STARTUP_DIAGNOSTICS === '1'
-    ? {
-        startupDiagnostics: ({ phiSessionId, status, totalMs, steps }) =>
-          writeAppLog({
-            event: 'remote_session_startup_profile',
-            sessionId: phiSessionId,
-            metadata: { status, totalMs, steps }
-          })
-      }
-    : {}),
+  startupDiagnostics: ({ phiSessionId, status, totalMs, steps }) => {
+    if (status === 'ready' && process.env.PHI_REMOTE_STARTUP_DIAGNOSTICS !== '1') return
+    writeAppLog({
+      event: 'remote_session_startup_profile',
+      sessionId: phiSessionId,
+      metadata: { status, totalMs, steps }
+    })
+  },
   onRunTakeover: ({ sessionId, message }) => {
     const stored = appendSessionEvent(sessionId, {
       type: 'remote_run_stopped',

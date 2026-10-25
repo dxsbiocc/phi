@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { mock } from 'node:test'
 import { writeFile, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { facadeMetadataFixture } from './facadeMetadataFixture'
@@ -7,6 +8,7 @@ import { runCompactionCancellation } from './facadeCompactionCancellationOracle'
 import { runCompactionBoundary } from './facadeCompactionBoundaryOracle'
 import { runAutomaticCompaction } from './facadeCompactionAutomaticOracle'
 import { createRunId, findPhiSessionById } from '../../src/main/agent/session/session-store'
+import { RemoteSessionRuntime } from '../../src/main/agent/engine/rpc/remote-session-runtime'
 
 const mode = process.env.PHI_FACADE_COMPACTION_MODE!
 let summaryRequests = 0
@@ -101,6 +103,46 @@ try {
         : mode.startsWith('defaults-')
           ? { enabled: false, thresholdPercent: 80, thresholdTokens: 12000 }
           : { enabled: mode !== 'model-thresholds', thresholdPercent: 90, thresholdTokens: -1 }
+    if (mode === 'settings') {
+      const concurrent = await Promise.all([
+        proxy.getAutoCompactionSettings!(),
+        proxy.getAutoCompactionSettings!()
+      ])
+      for (const settings of concurrent)
+        assert.deepEqual(settings, { ...baseline, defaults: baseline })
+      const readUsage = RemoteSessionRuntime.prototype.readContextUsage
+      let entered = false
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const heldUsage = mock.method(
+        RemoteSessionRuntime.prototype,
+        'readContextUsage',
+        async function (this: RemoteSessionRuntime) {
+          entered = true
+          await gate
+          return readUsage.call(this)
+        }
+      )
+      let usage: Promise<unknown> | undefined
+      try {
+        usage = proxy.getContextUsage()
+        const startedAt = Date.now()
+        while (!entered) {
+          assert.ok(Date.now() - startedAt < 5000, 'context usage did not enter its read')
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+        assert.deepEqual(await proxy.getAutoCompactionSettings!(), {
+          ...baseline,
+          defaults: baseline
+        })
+      } finally {
+        release()
+        await usage?.catch(() => undefined)
+        heldUsage.mock.restore()
+      }
+    }
     assert.deepEqual(await proxy.getAutoCompactionSettings!(), { ...baseline, defaults: baseline })
     if (mode === 'model-thresholds') {
       const channels = f.channels.length

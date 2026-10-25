@@ -7,6 +7,7 @@ import {
 } from './remote-workspace-boundary'
 import { findPhiSessionById, type PhiSessionManifest } from './session/session-store'
 import { RemoteSshConnectionError } from './wrappers/remote-ssh-diagnostics'
+import { redactSensitiveText } from './redaction'
 import { remoteWorkspaceHosts } from './workspace-host/remote-registry'
 
 function connectionState(
@@ -137,9 +138,13 @@ export class RemoteProjectConnectionTracker {
       const failed =
         classifyRemoteProjectConnectionError(error) ??
         connectionState(
-          'permission_failed',
-          '远程项目目录不可访问',
-          '检查目录权限和保存的项目路径后重试。'
+          'configuration_failed',
+          '远程项目连接检查失败',
+          error instanceof Error
+            ? redactSensitiveText(error.message)
+                .replace(/[\r\n\0]/g, ' ')
+                .slice(0, 200)
+            : '请重试；若仍失败，请查看 Phi 日志。'
         )
       this.set(projectId, failed, revision)
       return failed

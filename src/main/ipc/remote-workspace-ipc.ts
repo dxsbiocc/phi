@@ -40,7 +40,7 @@ export function registerRemoteWorkspaceIpc(options: RemoteWorkspaceIpcOptions): 
   )
   ipcMain.handle(IPC.remoteWorkspace.listDirectory, async (_, request: unknown) =>
     remoteConnectionTracker.observe(remoteRequestProjectId(request), () =>
-      listRemoteWorkspaceDirectory(request)
+      listRemoteWorkspaceDirectory(request, { connectHost: connectRemoteWorkspaceHost })
     )
   )
 }

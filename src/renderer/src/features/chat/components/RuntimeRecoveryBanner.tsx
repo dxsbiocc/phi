@@ -77,12 +77,7 @@ export function RuntimeRecoveryBanner({
     setSelection({ viewKey, summaryOpen, replacement, ...patch })
   const state = recovery.state
   useEffect(() => onStateChange?.(state), [onStateChange, state])
-  if (
-    serverConnecting ||
-    connecting ||
-    state?.phase === 'busy' ||
-    (recovery.pending && !summaryOpen)
-  )
+  if (serverConnecting || connecting || (recovery.pending && !summaryOpen))
     return (
       <Alert
         role="status"
@@ -106,6 +101,7 @@ export function RuntimeRecoveryBanner({
         {recovery.error}
       </Alert>
     ) : null
+  if (state.phase === 'busy') return null
   if (state.phase === 'not-started') return null
   if (state.phase === 'connected')
     return recovery.error ? (

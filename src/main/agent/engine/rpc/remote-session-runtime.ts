@@ -382,6 +382,7 @@ export class RemoteSessionRuntime {
     this.connection = new RpcConnection(
       (signal, generation) => this.transport.open(this.params, signal, generation),
       {
+        startupTimeoutMs: 120_000, // A cold shared HPC cache can exceed the generic 30s handshake.
         ...options.connectionOptions,
         // SSH-12: a refused launch explains itself on stderr; keep that cause.
         describeTransportEnd:

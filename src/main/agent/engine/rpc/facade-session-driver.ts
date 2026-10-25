@@ -442,6 +442,7 @@ export function createFacadeSessionFactory(
         let interrupted: Error | undefined
         let metadataPending = false
         let contextUsagePending: ReturnType<RemoteSessionRuntime['readContextUsage']> | undefined
+        let compactionPolicyRead: Promise<RpcCompactionPolicy> | undefined
         let selectionAbort: AbortController | undefined
         let selectionPending: Promise<WorkerSessionState> | undefined
         let compactionPending: Promise<unknown> | undefined
@@ -1068,26 +1069,25 @@ export function createFacadeSessionFactory(
               signal.throwIfAborted()
               control?.assertCurrent()
               assertAdoptionPolicy()
+              const sharedRead = compactionPolicyRead
+              if (sharedRead) await sharedRead
               if (closing || interrupted || !currentCompaction || !currentCompactionDefaults)
                 throw new Error('Confirmed auto compaction settings are unavailable')
-              if (metadataPending)
-                throw new Error('Auto compaction settings require a settled control operation')
-              if (!runtime!.isReady && !submittedRun && !options.runners.getActiveRun(phiSessionId))
+              const activeRun = submittedRun || options.runners.getActiveRun(phiSessionId)
+              if (!metadataPending && !runtime!.isReady && !activeRun)
                 throw new Error('Auto compaction settings require an attached runtime')
-              if (
-                runtime!.isReady &&
-                !submittedRun &&
-                !options.runners.getActiveRun(phiSessionId)
-              ) {
+              if (!sharedRead && !metadataPending && runtime!.isReady && !activeRun) {
                 metadataPending = true
+                compactionPolicyRead = runtime!.readCompactionPolicy()
                 try {
-                  await runtime!.readCompactionPolicy()
-                  control?.assertCurrent()
-                  assertAdoptionPolicy()
+                  await compactionPolicyRead
                 } finally {
+                  compactionPolicyRead = undefined
                   metadataPending = false
                 }
               }
+              control?.assertCurrent()
+              assertAdoptionPolicy()
               return {
                 enabled: currentCompaction.enabled && currentCompaction.methodOrder.length > 0,
                 thresholdPercent: currentCompaction.thresholdPercent,
@@ -1162,8 +1162,12 @@ export function createFacadeSessionFactory(
               }
             },
             async contextUsage() {
-              const idle = !closing && !submittedRun && !metadataPending &&
-                !options.runners.getActiveRun(phiSessionId) && !runtime!.hasActiveAgentRuns() &&
+              const idle =
+                !closing &&
+                !submittedRun &&
+                !metadataPending &&
+                !options.runners.getActiveRun(phiSessionId) &&
+                !runtime!.hasActiveAgentRuns() &&
                 runtime!.isReady
               if (!idle) throw new RemoteMetadataBusyError('Phi session')
               metadataPending = true
