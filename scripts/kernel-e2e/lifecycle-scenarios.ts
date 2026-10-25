@@ -36,6 +36,7 @@ export interface LifecycleScenarioClient {
   startPrompt(sessionId: string, text: string): Promise<string>
   snapshot(sessionId: string): Promise<Record<string, unknown>>
   waitForRun(runId: string): Promise<{ status: string; detail?: string }>
+  hasCompleted(runId: string): boolean
   close(): void
 }
 
@@ -139,7 +140,8 @@ export async function runSshLifecycleScenario<T extends LifecycleScenarioClient>
         id: 'lifecycle-long-child',
         args: {
           command: `sh -c 'printf "%s" "$$" > "$1"; exec sleep ${
-            options.scenario === 'reconnect' ? '2' : '60'
+            // Long enough to outlast slow SSH pidfile reads, so the run spans the drop.
+            options.scenario === 'reconnect' ? '8' : '60'
           }' sh ${shellLiteral(options.files.paths.childPidFile)}`
         }
       }
@@ -161,6 +163,9 @@ export async function runSshLifecycleScenario<T extends LifecycleScenarioClient>
   assert.ok(Number.isSafeInteger(childPid) && childPid > 0)
   options.report.evidence.longChildPid = childPid
   const lastSeen = scenario.lastSeen
+  if (options.scenario === 'reconnect' && scenario.hasCompleted(runId)) {
+    throw new Error('The long run finished before the disconnect; reconnect was not exercised.')
+  }
   scenario.close()
   await options.step('remote helper channel dropped', () => options.launch.close())
 

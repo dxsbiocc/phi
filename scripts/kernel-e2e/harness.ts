@@ -272,6 +272,10 @@ export class ScenarioClient {
     )
   }
 
+  hasCompleted(runId: string): boolean {
+    return this.completions.has(runId)
+  }
+
   waitForRun(runId: string): Promise<{ status: string; detail?: string }> {
     const completion = this.completions.get(runId)
     if (completion) return Promise.resolve(completion)
