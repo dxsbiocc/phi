@@ -27,3 +27,19 @@ test('a reconnect cancels grace expiry and the next detach starts a fresh period
   assert.equal(expiries, 1)
   grace.close()
 })
+
+test('a controller that attaches before startup finishes is not timed out', async () => {
+  let expiries = 0
+  const grace = new KernelGracePeriod({
+    graceMs: 20,
+    async onExpire() {
+      expiries += 1
+    }
+  })
+
+  grace.controllerAttached()
+  grace.startDisconnected()
+  await delay(40)
+  assert.equal(expiries, 0)
+  grace.close()
+})

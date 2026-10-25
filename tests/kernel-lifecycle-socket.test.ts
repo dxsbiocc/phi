@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { EventEmitter } from 'node:events'
 import { createConnection, type Socket } from 'node:net'
 import test from 'node:test'
 
@@ -9,6 +10,7 @@ import {
   listenOnKernelSocket
 } from '../src/kernel/lifecycle/socket-listener'
 import { KernelProtocolCore } from '../src/kernel/protocol'
+import { UnixSocketFrameTransport } from '../src/kernel/transports/unix-socket'
 import {
   PHI_KERNEL_PROTOCOL_VERSION,
   encodeFrame,
@@ -192,4 +194,26 @@ test('the Unix socket refuses symlinked runtime directories and token files', as
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('a peer FIN closes the kernel transport even when the runtime emits no close', () => {
+  // Bun does not always follow a peer FIN with 'close'; the controller must still detach.
+  const socket = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    setEncoding: () => undefined,
+    write: () => true,
+    destroy() {
+      this.destroyed = true
+    }
+  })
+  const transport = new UnixSocketFrameTransport(socket as unknown as Socket)
+  let closes = 0
+  transport.onClose(() => {
+    closes += 1
+  })
+  socket.emit('end')
+  assert.equal(closes, 1)
+  assert.equal(socket.destroyed, true)
+  socket.emit('close')
+  assert.equal(closes, 1)
 })

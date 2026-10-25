@@ -13,6 +13,13 @@ export class UnixSocketFrameTransport implements FrameTransport {
     socket.on('data', (chunk: string) => this.receive(chunk))
     socket.once('close', () => this.notifyClosed())
     socket.once('error', () => this.notifyClosed())
+    // The protocol is not half-duplex: a peer FIN means the client is gone. Bun does
+    // not always follow a peer FIN with 'close', which would leave the controller
+    // attached and the grace period never started.
+    socket.once('end', () => {
+      this.notifyClosed()
+      socket.destroy()
+    })
   }
 
   send(line: string): void {
