@@ -17,6 +17,7 @@ import {
   kernelRequestFrameSchema,
   kernelResponseFrameSchema,
   KERNEL_EVENT_APPROVAL_REQUESTED,
+  KERNEL_EVENT_INTERACTION_CANCELLED,
   KERNEL_EVENT_RUN_COMPLETED,
   KERNEL_EVENT_SESSION_EVENT,
   KERNEL_EVENT_SESSION_STATE,
@@ -214,12 +215,14 @@ describe('kernel protocol DTOs', () => {
       KERNEL_EVENT_SESSION_EVENT,
       KERNEL_EVENT_SESSION_STATE,
       KERNEL_EVENT_APPROVAL_REQUESTED,
+      KERNEL_EVENT_INTERACTION_CANCELLED,
       KERNEL_EVENT_RUN_COMPLETED
     ])
     assert.deepEqual(KERNEL_V1_EVENT_TYPES, [
       'session.event',
       'session.state',
       'approval.requested',
+      'interaction.cancelled',
       'run.completed'
     ])
   })

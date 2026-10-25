@@ -43,6 +43,7 @@ export type KernelEngineFixture = BasicEngineFixture & {
     options?: {
       cwd?: string
       enableToolApproval?: boolean
+      workMode?: 'direct' | 'plan' | 'plan_execute' | 'auto'
       noTools?: 'all' | boolean
       persistent?: boolean
       resourceOptions?: {
@@ -58,6 +59,7 @@ export type KernelEngineFixture = BasicEngineFixture & {
 
 export type KernelFixtureOptions = {
   testPause?: 'a' | 'c' | 'd1' | 'd2'
+  hostCapabilities?: string[]
 }
 
 function record(value: JsonValue): Record<string, JsonValue> {
@@ -139,7 +141,7 @@ export async function createKernelFixture(
       onDiagnostic: (text) => diagnostics.push(text)
     })
     const client = spawned.client
-    const greeting = await client.hello()
+    const greeting = await client.hello({ hostCapabilities: options.hostCapabilities })
     await client.subscribe(0)
 
     const logicalToKernel = new Map<string, string>()
@@ -210,6 +212,7 @@ export async function createKernelFixture(
           },
           noTools: options.noTools ?? false,
           enableToolApproval: options.enableToolApproval ?? false,
+          ...(options.workMode ? { workMode: options.workMode } : {}),
           autoCompaction: { enabled: false }
         })
       )

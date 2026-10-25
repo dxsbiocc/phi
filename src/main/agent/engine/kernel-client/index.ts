@@ -1,9 +1,16 @@
 import {
+  KERNEL_EVENT_INTERACTION_CANCELLED,
+  KERNEL_HOST_CAPABILITY_REGISTRY,
   PHI_KERNEL_PROTOCOL_VERSION,
   encodeFrame,
+  interactionCancelledPayloadSchema,
+  isKernelHostCapabilityName,
   parseFrame,
   type HostRequestFrame,
   type JsonValue,
+  type KernelHostCapabilityName,
+  type KernelHostCapabilityParams,
+  type KernelHostCapabilityResult,
   type KernelEventFrame,
   type KernelHelloResult,
   type KernelRequestFrame,
@@ -24,12 +31,22 @@ export type KernelRequestContext = Pick<
   'sessionId' | 'runId' | 'conversationId' | 'taskId'
 >
 
-export type KernelHostRequestContext = Pick<HostRequestFrame, 'sessionId' | 'agentRunId'>
+export type KernelHostRequestContext = Pick<
+  HostRequestFrame,
+  'sessionId' | 'runId' | 'agentRunId'
+> & {
+  readonly signal: AbortSignal
+}
 
-export type KernelHostHandler = (
+export type KernelHostHandler<Name extends KernelHostCapabilityName = KernelHostCapabilityName> = (
+  params: KernelHostCapabilityParams<Name>,
+  context: KernelHostRequestContext
+) => KernelHostCapabilityResult<Name> | Promise<KernelHostCapabilityResult<Name>>
+
+type UntypedKernelHostHandler = (
   params: JsonValue,
   context: KernelHostRequestContext
-) => JsonValue | Promise<JsonValue>
+) => JsonValue | undefined | Promise<JsonValue | undefined>
 
 export class KernelClientError extends Error {
   readonly code: ProtocolErrorCode
@@ -69,7 +86,8 @@ function protocolError(error: unknown): ProtocolError {
 export class KernelProtocolClient {
   private readonly pending = new Map<string, PendingRequest>()
   private readonly eventListeners = new Set<(event: KernelEventFrame) => void>()
-  private readonly hostHandlers = new Map<string, KernelHostHandler>()
+  private readonly hostHandlers = new Map<KernelHostCapabilityName, UntypedKernelHostHandler>()
+  private readonly hostRequestControllers = new Map<string, AbortController>()
   private requestCounter = 0
   private generation = 0
   private closed = false
@@ -126,16 +144,35 @@ export class KernelProtocolClient {
     return () => this.eventListeners.delete(listener)
   }
 
-  registerHostHandler(capability: string, handler: KernelHostHandler): () => void {
-    this.hostHandlers.set(capability, handler)
-    return () => {
-      if (this.hostHandlers.get(capability) === handler) this.hostHandlers.delete(capability)
+  registerHostCapability<Name extends KernelHostCapabilityName>(
+    capability: Name,
+    handler: KernelHostHandler<Name>
+  ): () => void {
+    if (!isKernelHostCapabilityName(capability)) {
+      throw new TypeError(`Unknown kernel host capability: ${capability}`)
     }
+    const registered = handler as unknown as UntypedKernelHostHandler
+    this.hostHandlers.set(capability, registered)
+    return () => {
+      if (this.hostHandlers.get(capability) === registered) this.hostHandlers.delete(capability)
+    }
+  }
+
+  /** Compatibility alias for callers that have not migrated to the typed registration API yet. */
+  registerHostHandler(capability: string, handler: UntypedKernelHostHandler): () => void {
+    if (!isKernelHostCapabilityName(capability)) {
+      throw new TypeError(`Unknown kernel host capability: ${capability}`)
+    }
+    return this.registerHostCapability(
+      capability,
+      handler as unknown as KernelHostHandler<typeof capability>
+    )
   }
 
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    this.abortHostRequests('Kernel client closed.')
     await this.transport.close?.()
     this.rejectPending(internalError('Kernel client closed.'))
   }
@@ -182,6 +219,14 @@ export class KernelProtocolClient {
       return
     }
     if (frame.kind === 'event') {
+      if (frame.type === KERNEL_EVENT_INTERACTION_CANCELLED) {
+        const cancelled = interactionCancelledPayloadSchema.safeParse(frame.payload)
+        if (cancelled.success && cancelled.data.kind === 'host') {
+          this.hostRequestControllers
+            .get(cancelled.data.id)
+            ?.abort(new Error(cancelled.data.reason))
+        }
+      }
       for (const listener of this.eventListeners) listener(frame)
       return
     }
@@ -191,38 +236,92 @@ export class KernelProtocolClient {
   }
 
   private async handleHostRequest(frame: HostRequestFrame): Promise<void> {
-    const handler = this.hostHandlers.get(frame.capability)
-    if (!handler) {
-      this.transport.send(
-        encodeFrame({
-          kind: 'host.response',
-          id: frame.id,
-          ok: false,
-          error: {
-            code: 'CAPABILITY_UNAVAILABLE',
-            message: `Host capability is not registered: ${frame.capability}`
-          }
-        })
+    if (!isKernelHostCapabilityName(frame.capability)) {
+      this.sendHostError(
+        frame.id,
+        'CAPABILITY_UNAVAILABLE',
+        `Host capability is not registered: ${frame.capability}`
       )
       return
     }
-    try {
-      const result = await handler(frame.params, {
-        ...(frame.sessionId ? { sessionId: frame.sessionId } : {}),
-        ...(frame.agentRunId ? { agentRunId: frame.agentRunId } : {})
+    const handler = this.hostHandlers.get(frame.capability)
+    if (!handler) {
+      this.sendHostError(
+        frame.id,
+        'CAPABILITY_UNAVAILABLE',
+        `Host capability is not registered: ${frame.capability}`
+      )
+      return
+    }
+    const parsedParams = KERNEL_HOST_CAPABILITY_REGISTRY[frame.capability].params.safeParse(
+      frame.params
+    )
+    if (!parsedParams.success) {
+      const issue = parsedParams.error.issues[0]
+      this.sendHostError(frame.id, 'INVALID_PARAMS', 'Invalid host capability parameters.', {
+        path: issue?.path.length ? issue.path.map(String).join('.') : '$'
       })
-      this.transport.send(encodeFrame({ kind: 'host.response', id: frame.id, ok: true, result }))
+      return
+    }
+    if (this.hostRequestControllers.has(frame.id)) {
+      this.sendHostError(frame.id, 'DUPLICATE_REQUEST', 'Duplicate host request identifier.')
+      return
+    }
+    const controller = new AbortController()
+    this.hostRequestControllers.set(frame.id, controller)
+    try {
+      const result = await handler(parsedParams.data as JsonValue, {
+        ...(frame.sessionId ? { sessionId: frame.sessionId } : {}),
+        ...(frame.runId ? { runId: frame.runId } : {}),
+        ...(frame.agentRunId ? { agentRunId: frame.agentRunId } : {}),
+        signal: controller.signal
+      })
+      if (controller.signal.aborted) return
+      // Existing desktop handlers use `undefined` for void and absent optional values. The wire
+      // format is JSON, so normalize those established results to the registry's explicit null.
+      this.transport.send(
+        encodeFrame({ kind: 'host.response', id: frame.id, ok: true, result: result ?? null })
+      )
     } catch (error) {
+      if (controller.signal.aborted) return
       this.transport.send(
         encodeFrame({ kind: 'host.response', id: frame.id, ok: false, error: protocolError(error) })
       )
+    } finally {
+      if (this.hostRequestControllers.get(frame.id) === controller) {
+        this.hostRequestControllers.delete(frame.id)
+      }
     }
+  }
+
+  private sendHostError(
+    id: string,
+    code: ProtocolErrorCode,
+    message: string,
+    detail?: JsonValue
+  ): void {
+    this.transport.send(
+      encodeFrame({
+        kind: 'host.response',
+        id,
+        ok: false,
+        error: { code, message, ...(detail === undefined ? {} : { detail }) }
+      })
+    )
   }
 
   private handleClose(): void {
     if (this.closed) return
     this.closed = true
+    this.abortHostRequests('Kernel transport closed.')
     this.rejectPending(internalError('Kernel transport closed.'))
+  }
+
+  private abortHostRequests(reason: string): void {
+    for (const controller of this.hostRequestControllers.values()) {
+      controller.abort(new Error(reason))
+    }
+    this.hostRequestControllers.clear()
   }
 
   private rejectPending(error: Error): void {

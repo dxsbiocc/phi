@@ -64,6 +64,7 @@ export const sessionCreateParamsSchema = z
     cwd: z.string().min(1),
     model: modelSelectorSchema,
     thinkingLevel: thinkingLevelSchema.optional(),
+    workMode: z.enum(['direct', 'plan', 'plan_execute', 'auto']).optional(),
     sessionManager: z
       .object({
         kind: z.enum(['memory', 'persistent'])
