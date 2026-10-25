@@ -127,7 +127,6 @@ function matchesProbeIdentity(
 }
 
 function matchesRemoteSourceProof(
-  manifest: PhiSessionManifest,
   ref: RemoteOmpRuntimeRef,
   probe: RemoteHistoryProbeResult
 ): boolean {
@@ -156,7 +155,7 @@ function planRemoteHistory(
   if (!matchesProbeIdentity(manifest, ref, input.remoteProbe.identity)) {
     return readOnly(manifest, 'remote session identity is inconsistent')
   }
-  if (!matchesRemoteSourceProof(manifest, ref, input.remoteProbe)) {
+  if (!matchesRemoteSourceProof(ref, input.remoteProbe)) {
     return readOnly(manifest, 'remote journal identity is inconsistent')
   }
   if (input.remoteProbe.writer !== 'gone' || input.remoteProbe.runLock !== 'gone') {
