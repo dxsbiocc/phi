@@ -213,12 +213,22 @@ test('hello negotiates minor versions and rejects pre-negotiation or incompatibl
 
 test('takeover creates one controller generation and immediately stales the old controller', async () => {
   const calls: string[] = []
+  let promptCalls = 0
+  let abortCalls = 0
   const core = makeCore({
     'session.snapshot': (_params, context, frame) => {
       calls.push(`${context.connectionId}:${context.controllerGeneration}:${context.trusted}`)
       return snapshotResult(frame.sessionId ?? 'missing')
     },
-    'approval.respond': () => ({ accepted: true })
+    'approval.respond': () => ({ accepted: true }),
+    'session.prompt': () => {
+      promptCalls += 1
+      return { runId: 'stale-run-must-not-start', completion: Promise.resolve('completed') }
+    },
+    'session.abort': () => {
+      abortCalls += 1
+      return { cancelled: true }
+    }
   })
   const first = new MemoryTransport()
   const second = new MemoryTransport()
@@ -249,6 +259,24 @@ test('takeover creates one controller generation and immediately stales the old 
     })
   )
   assert.equal(responseError(staleApproval).code, 'STALE_GENERATION')
+  const stalePrompt = await sendRequest(
+    first,
+    request(
+      'stale-prompt',
+      'session.prompt',
+      1,
+      { text: 'must not run' },
+      { sessionId: 'session-1' }
+    )
+  )
+  assert.equal(responseError(stalePrompt).code, 'STALE_GENERATION')
+  const staleAbort = await sendRequest(
+    first,
+    request('stale-abort', 'session.abort', 1, {}, { sessionId: 'session-1' })
+  )
+  assert.equal(responseError(staleAbort).code, 'STALE_GENERATION')
+  assert.equal(promptCalls, 0)
+  assert.equal(abortCalls, 0)
 
   const active = await sendRequest(
     second,
@@ -307,7 +335,7 @@ test('bad frames and duplicate ids are isolated while unknown replies are logged
   assert.equal(usable.ok, true)
   assert.deepEqual(warnings, [
     'Ignored response with an unknown id.',
-    'Ignored host response with an unknown id.'
+    'Ignored host response with an inactive id.'
   ])
 })
 
@@ -398,15 +426,15 @@ test('a handler can await a host response delivered on the same connection', asy
   const transport = new MemoryTransport()
   const core: KernelProtocolCore = makeCore({
     'session.snapshot': async () => {
-      const result = await core.requestHost('desktop.snapshot', { sessionId: 'session-1' })
+      const result = await core.requestHost('cursorBridge.ensure', {})
       assert.equal(typeof result, 'object')
       assert.ok(result !== null && !Array.isArray(result))
-      return snapshotResult(String((result as Record<string, JsonValue>).sessionId))
+      return snapshotResult('session-from-host')
     }
   })
   core.attachTransport(transport, { trusted: true })
   const generation = generationFrom(
-    await hello(transport, { hostCapabilities: ['desktop.snapshot'] })
+    await hello(transport, { hostCapabilities: ['cursorBridge.ensure'] })
   )
 
   transport.receive(
@@ -414,14 +442,14 @@ test('a handler can await a host response delivered on the same connection', asy
   )
   const hostRequest = await waitFor(
     transport,
-    (frame) => frame.kind === 'host.request' && frame.capability === 'desktop.snapshot'
+    (frame) => frame.kind === 'host.request' && frame.capability === 'cursorBridge.ensure'
   )
   assert.equal(hostRequest.kind, 'host.request')
   transport.receive({
     kind: 'host.response',
     id: hostRequest.id,
     ok: true,
-    result: { sessionId: 'session-from-host' }
+    result: { baseUrl: 'https://127.0.0.1.invalid/' }
   })
 
   const response = await waitFor(
@@ -662,7 +690,7 @@ test('missing kernel and host capabilities fail explicitly', async () => {
   assert.equal(responseError(unknown).code, 'UNKNOWN_METHOD')
 
   await assert.rejects(core.requestHost('desktop.openPath', {}), (error: ProtocolError) => {
-    assert.equal(error.code, 'CAPABILITY_UNAVAILABLE')
+    assert.equal(error.code, 'INTERNAL')
     return true
   })
 })
@@ -671,29 +699,30 @@ test('registered host requests correlate responses without trusting unknown resp
   const transport = new MemoryTransport()
   const core = makeCore()
   core.attachTransport(transport, { trusted: true })
-  await hello(transport, { hostCapabilities: ['desktop.confirm'] })
+  await hello(transport, { hostCapabilities: ['cursorBridge.ensure'] })
 
   const after = transport.sent.length
   const resultPromise = core.requestHost(
-    'desktop.confirm',
-    { title: 'Continue?' },
-    { sessionId: 'session-1', agentRunId: 'run-1' }
+    'cursorBridge.ensure',
+    {},
+    { sessionId: 'session-1', runId: 'run-1', agentRunId: 'agent-run-1' }
   )
   const outbound = await waitFor(
     transport,
-    (frame) => frame.kind === 'host.request' && frame.capability === 'desktop.confirm',
+    (frame) => frame.kind === 'host.request' && frame.capability === 'cursorBridge.ensure',
     after
   )
   assert.equal(outbound.kind, 'host.request')
   assert.equal(outbound.sessionId, 'session-1')
-  assert.equal(outbound.agentRunId, 'run-1')
+  assert.equal(outbound.runId, 'run-1')
+  assert.equal(outbound.agentRunId, 'agent-run-1')
   transport.receive({
     kind: 'host.response',
     id: outbound.id,
     ok: true,
-    result: { confirmed: true }
+    result: { baseUrl: 'https://127.0.0.1.invalid/' }
   })
-  assert.deepEqual(await resultPromise, { confirmed: true })
+  assert.deepEqual(await resultPromise, { baseUrl: 'https://127.0.0.1.invalid/' })
 })
 
 test('takeover invalidates pending host requests from the previous controller', async () => {
@@ -706,12 +735,12 @@ test('takeover invalidates pending host requests from the previous controller', 
     connectionId: 'first-host'
   })
   core.attachTransport(second, { trusted: true, connectionId: 'second-host' })
-  await hello(first, { hostCapabilities: ['desktop.confirm'] })
+  await hello(first, { hostCapabilities: ['cursorBridge.ensure'] })
 
-  const resultPromise = core.requestHost('desktop.confirm', { title: 'Continue?' })
+  const resultPromise = core.requestHost('cursorBridge.ensure', {})
   const outbound = await waitFor(
     first,
-    (frame) => frame.kind === 'host.request' && frame.capability === 'desktop.confirm'
+    (frame) => frame.kind === 'host.request' && frame.capability === 'cursorBridge.ensure'
   )
   assert.equal(outbound.kind, 'host.request')
   const rejected = assert.rejects(resultPromise, (error: ProtocolError) => {
@@ -720,13 +749,13 @@ test('takeover invalidates pending host requests from the previous controller', 
   })
   await hello(second, { takeover: true })
   await rejected
-  await assert.rejects(core.requestHost('desktop.confirm', {}), (error: ProtocolError) => {
+  await assert.rejects(core.requestHost('cursorBridge.ensure', {}), (error: ProtocolError) => {
     assert.equal(error.code, 'CAPABILITY_UNAVAILABLE')
     return true
   })
   first.receive({ kind: 'host.response', id: outbound.id, ok: true, result: true })
   await new Promise<void>((resolve) => setImmediate(resolve))
-  assert.deepEqual(warnings, ['Ignored host response with an unknown id.'])
+  assert.deepEqual(warnings, ['Ignored host response with an inactive id.'])
 })
 
 test('same-connection re-negotiation invalidates pending host requests from its old generation', async () => {
@@ -749,16 +778,16 @@ test('same-connection re-negotiation invalidates pending host requests from its 
     generationFrom(
       await hello(transport, {
         id: 'hello-1',
-        hostCapabilities: ['desktop.confirm']
+        hostCapabilities: ['cursorBridge.ensure']
       })
     ),
     1
   )
 
-  const resultPromise = core.requestHost('desktop.confirm', { title: 'Continue?' })
+  const resultPromise = core.requestHost('cursorBridge.ensure', {})
   const outbound = await waitFor(
     transport,
-    (frame) => frame.kind === 'host.request' && frame.capability === 'desktop.confirm'
+    (frame) => frame.kind === 'host.request' && frame.capability === 'cursorBridge.ensure'
   )
   assert.equal(outbound.kind, 'host.request')
 
@@ -772,5 +801,5 @@ test('same-connection re-negotiation invalidates pending host requests from its 
   await new Promise<void>((resolve) => setImmediate(resolve))
 
   assert.deepEqual(detached, [1])
-  assert.deepEqual(warnings, ['Ignored host response with an unknown id.'])
+  assert.deepEqual(warnings, ['Ignored host response with an inactive id.'])
 })

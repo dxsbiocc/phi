@@ -23,6 +23,7 @@ export interface KernelCallContext {
 
 export interface KernelHostRequestContext {
   sessionId?: string
+  runId?: string
   agentRunId?: string
 }
 
@@ -77,6 +78,8 @@ export interface KernelProtocolOptions {
   kernelInstanceId?: string
   log?: KernelProtocolLogger
   disconnectPolicy?: 'fail-pending' | 'wait-for-reconnect'
+  /** Test-only override for registry-declared service capability timeouts. */
+  hostRequestTimeoutMs?: number
   controllerLifecycle?: KernelControllerLifecycle
 }
 

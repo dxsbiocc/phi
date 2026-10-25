@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 
+import {
+  KERNEL_EVENT_INTERACTION_CANCELLED,
+  encodeFrame,
+  parseFrame,
+  type HostResponseFrame
+} from '../src/shared/kernel-protocol'
 import { KernelProtocolCore, type FrameTransport } from '../src/kernel/protocol'
 import {
   KernelClientError,
@@ -56,8 +62,8 @@ test('kernel client negotiates, correlates requests, events, and contextual host
     handlers: {
       async 'session.snapshot'(_params, _context, request) {
         const host = await core.requestHost(
-          'desktop.snapshot',
-          { requested: true },
+          'settings.nextActionSuggestionsEnabled',
+          {},
           { sessionId: request.sessionId, agentRunId: 'run-1' }
         )
         return {
@@ -72,23 +78,175 @@ test('kernel client negotiates, correlates requests, events, and contextual host
   const client = new KernelProtocolClient(clientTransport)
   const events: string[] = []
   client.onEvent((event) => events.push(event.type))
-  client.registerHostHandler('desktop.snapshot', (params, context) => {
-    assert.deepEqual(params, { requested: true })
-    assert.deepEqual(context, { sessionId: 'session-1', agentRunId: 'run-1' })
-    return { fromHost: true }
+  client.registerHostCapability('settings.nextActionSuggestionsEnabled', (params, context) => {
+    assert.deepEqual(params, {})
+    assert.equal(context.sessionId, 'session-1')
+    assert.equal(context.agentRunId, 'run-1')
+    assert.ok(context.signal instanceof AbortSignal)
+    return false
   })
 
-  const greeting = await client.hello({ hostCapabilities: ['desktop.snapshot'] })
+  const greeting = await client.hello({
+    hostCapabilities: ['settings.nextActionSuggestionsEnabled']
+  })
   assert.equal(client.controllerGeneration, greeting.controllerGeneration)
   const snapshot = await client.request('session.snapshot', {}, { sessionId: 'session-1' })
   assert.deepEqual(snapshot, {
     sessionId: 'session-1',
-    messages: [{ fromHost: true }],
+    messages: [false],
     cwd: '/tmp/client-test'
   })
   core.emitEvent('session.event', { type: 'agent_start' }, { sessionId: 'session-1' })
   await new Promise<void>((resolve) => setImmediate(resolve))
   assert.deepEqual(events, ['session.event'])
+  await client.close()
+})
+
+test('kernel client rejects unknown host capability registration', () => {
+  const [clientTransport] = pair()
+  const client = new KernelProtocolClient(clientTransport)
+
+  assert.throws(
+    () => client.registerHostHandler('desktop.snapshot', () => null),
+    /Unknown kernel host capability: desktop\.snapshot/
+  )
+})
+
+test('kernel client rejects invalid host params before invoking the handler', async () => {
+  const [clientTransport, serverTransport] = pair()
+  const client = new KernelProtocolClient(clientTransport)
+  const responses: HostResponseFrame[] = []
+  let calls = 0
+  serverTransport.onLine((line) => {
+    const frame = parseFrame(line)
+    if ('kind' in frame && frame.kind === 'host.response') responses.push(frame)
+  })
+  client.registerHostCapability('mcp.openAuthUrl', () => {
+    calls += 1
+    return null
+  })
+
+  serverTransport.send(
+    encodeFrame({
+      kind: 'host.request',
+      id: 'host-invalid-params',
+      capability: 'mcp.openAuthUrl',
+      params: { id: 'connector-without-url' }
+    })
+  )
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(calls, 0)
+  assert.equal(responses.length, 1)
+  assert.equal(responses[0].ok, false)
+  if (!responses[0].ok) {
+    assert.equal(responses[0].error.code, 'INVALID_PARAMS')
+    assert.deepEqual(responses[0].error.detail, { path: 'url' })
+  }
+  await client.close()
+})
+
+test('kernel client compatibility handler normalizes undefined results to null', async () => {
+  const [clientTransport, serverTransport] = pair()
+  const client = new KernelProtocolClient(clientTransport)
+  const responses: HostResponseFrame[] = []
+  serverTransport.onLine((line) => {
+    const frame = parseFrame(line)
+    if ('kind' in frame && frame.kind === 'host.response') responses.push(frame)
+  })
+  client.registerHostHandler('browser.cancel', () => undefined)
+
+  serverTransport.send(
+    encodeFrame({
+      kind: 'host.request',
+      id: 'host-void-result',
+      capability: 'browser.cancel',
+      params: {
+        originSessionId: 'runtime-session-1',
+        requestId: 'browser-request-1',
+        toolCallId: 'browser-tool-1'
+      }
+    })
+  )
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.deepEqual(responses, [
+    { kind: 'host.response', id: 'host-void-result', ok: true, result: null }
+  ])
+  await client.close()
+})
+
+test('kernel client aborts the matching host handler on interaction cancellation', async () => {
+  const [clientTransport, serverTransport] = pair()
+  const client = new KernelProtocolClient(clientTransport)
+  const responses: HostResponseFrame[] = []
+  let resolveStarted!: () => void
+  const started = new Promise<void>((resolve) => {
+    resolveStarted = resolve
+  })
+  let receivedSignal: AbortSignal | undefined
+  serverTransport.onLine((line) => {
+    const frame = parseFrame(line)
+    if ('kind' in frame && frame.kind === 'host.response') responses.push(frame)
+  })
+  client.registerHostCapability('agentInteraction.request', (_params, context) => {
+    assert.equal(context.sessionId, 'session-1')
+    assert.equal(context.runId, 'run-1')
+    receivedSignal = context.signal
+    resolveStarted()
+    return new Promise((resolve) => {
+      context.signal.addEventListener(
+        'abort',
+        () => resolve({ requestId: 'interaction-1', answers: [], cancelled: true }),
+        { once: true }
+      )
+    })
+  })
+
+  serverTransport.send(
+    encodeFrame({
+      kind: 'host.request',
+      id: 'host-interaction-1',
+      capability: 'agentInteraction.request',
+      params: {
+        runtimeSessionId: 'runtime-session-1',
+        questions: [
+          {
+            question: 'Continue?',
+            header: 'Choice',
+            options: [
+              { label: 'Yes', description: 'Continue the run.' },
+              { label: 'No', description: 'Stop the run.' }
+            ]
+          }
+        ]
+      },
+      sessionId: 'session-1',
+      runId: 'run-1'
+    })
+  )
+  await started
+  serverTransport.send(
+    encodeFrame({
+      kind: 'event',
+      seq: 1,
+      type: KERNEL_EVENT_INTERACTION_CANCELLED,
+      payload: {
+        kind: 'host',
+        id: 'host-interaction-1',
+        sessionId: 'session-1',
+        runId: 'run-1',
+        reason: 'run ended'
+      },
+      sessionId: 'session-1',
+      runId: 'run-1'
+    })
+  )
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(receivedSignal?.aborted, true)
+  assert.equal((receivedSignal?.reason as Error).message, 'run ended')
+  assert.deepEqual(responses, [])
   await client.close()
 })
 

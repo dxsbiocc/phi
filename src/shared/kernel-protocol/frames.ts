@@ -53,6 +53,16 @@ export const kernelEventFrameSchema = z
   })
   .strict()
 
+export const interactionCancelledPayloadSchema = z
+  .object({
+    kind: z.enum(['approval', 'host']),
+    id: nonEmptyIdSchema,
+    sessionId: nonEmptyIdSchema,
+    runId: nonEmptyIdSchema.optional(),
+    reason: z.string().min(1)
+  })
+  .strict()
+
 export const hostRequestFrameSchema = z
   .object({
     kind: z.literal('host.request'),
@@ -60,6 +70,7 @@ export const hostRequestFrameSchema = z
     capability: z.string().min(1),
     params: jsonValueSchema,
     sessionId: nonEmptyIdSchema.optional(),
+    runId: nonEmptyIdSchema.optional(),
     agentRunId: nonEmptyIdSchema.optional()
   })
   .strict()
@@ -98,6 +109,7 @@ export const parsedFrameSchema = z.union([
 export type KernelRequestFrame = z.infer<typeof kernelRequestFrameSchema>
 export type KernelResponseFrame = z.infer<typeof kernelResponseFrameSchema>
 export type KernelEventFrame = z.infer<typeof kernelEventFrameSchema>
+export type InteractionCancelledPayload = z.infer<typeof interactionCancelledPayloadSchema>
 export type HostRequestFrame = z.infer<typeof hostRequestFrameSchema>
 export type HostResponseFrame = z.infer<typeof hostResponseFrameSchema>
 export type ParsedFrame = z.infer<typeof parsedFrameSchema>

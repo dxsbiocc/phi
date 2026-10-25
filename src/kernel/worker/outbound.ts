@@ -76,6 +76,7 @@ function emitApproval(
   runId: string | undefined,
   payload: unknown
 ): void {
+  if (!sessionId) throw new Error('toolApproval event omitted sessionId')
   if (!isRecord(payload)) throw new Error('toolApproval event payload is invalid')
   const approvalId =
     typeof payload.requestId === 'string' && payload.requestId ? payload.requestId : undefined
@@ -134,8 +135,20 @@ export function bindWorkerOutbound(options: BindWorkerOutboundOptions): () => vo
     },
     event: (name, payload, extra) => routeEvent(options, name, payload, extra),
     hostRequest(method, params, context) {
+      const record = isRecord(params) ? params : {}
+      const sessionId =
+        context?.originSessionId ??
+        (typeof record.runtimeSessionId === 'string'
+          ? record.runtimeSessionId
+          : typeof record.originSessionId === 'string'
+            ? record.originSessionId
+            : typeof record.sessionId === 'string'
+              ? record.sessionId
+              : undefined)
+      const runId = sessionId ? options.activeRunId(sessionId) : undefined
       return options.core.requestHost(method, params as JsonValue, {
-        ...(context?.originSessionId ? { sessionId: context.originSessionId } : {}),
+        ...(sessionId ? { sessionId } : {}),
+        ...(runId ? { runId } : {}),
         ...(context?.agentRunId ? { agentRunId: context.agentRunId } : {})
       })
     }

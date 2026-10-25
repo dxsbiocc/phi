@@ -17,6 +17,14 @@ function shellLiteral(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
+}
+
 test(
   'A01 kernel stdio reads a project file and emits ordered deltas and one completion',
   { timeout: 30_000 },
@@ -67,8 +75,10 @@ test(
     const f = await createKernelFixture()
     t.after(() => f.close())
     const approvals: KernelEventFrame[] = []
+    const cancellations: KernelEventFrame[] = []
     const stop = f.client.onEvent((event) => {
       if (event.type === 'approval.requested') approvals.push(event)
+      if (event.type === 'interaction.cancelled') cancellations.push(event)
     })
     t.after(stop)
 
@@ -101,7 +111,7 @@ test(
       ),
       (error: unknown) => {
         assert.ok(error instanceof KernelClientError)
-        assert.equal(error.code, 'INVALID_PARAMS')
+        assert.equal(error.code, 'DUPLICATE_REQUEST')
         return true
       }
     )
@@ -132,9 +142,32 @@ test(
     const cancelledPrompt = f.sessions.prompt({ sessionId: 'cancel', text: 'Try cancelled.txt.' })
     void cancelledPrompt.catch(() => undefined)
     await eventually(() => approvals.length === 3, 'cancelled write request')
+    const cancelledId = String(record(approvals[2].payload).approvalId)
     await f.sessions.abort({ sessionId: 'cancel' })
     await cancelledPrompt
     assert.equal(existsSync(cancelledPath), false)
+    await eventually(
+      () =>
+        cancellations.some(
+          (event) =>
+            record(event.payload).kind === 'approval' &&
+            record(event.payload).id === cancelledId &&
+            record(event.payload).reason === 'run ended'
+        ),
+      'cancelled approval event'
+    )
+    await assert.rejects(
+      f.client.request(
+        'approval.respond',
+        { approvalId: cancelledId, decision: 'approved' },
+        { sessionId: f.kernelSessionId('cancel') }
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof KernelClientError)
+        assert.equal(error.code, 'CANCELLED')
+        return true
+      }
+    )
   }
 )
 
@@ -179,6 +212,99 @@ test(
     f.provider.enqueue({ text: 'Session reused.' })
     const reused = await f.sessions.prompt({ sessionId: 'bash-abort', text: 'Continue.' })
     assert.equal(messageText(reused.messages?.at(-1)), 'Session reused.')
+  }
+)
+
+test(
+  'A07 two kernel plan reviews remain isolated when one run is cancelled',
+  {
+    timeout: 45_000,
+    // Plan steps default to the PlanStep agent, and kernel v1 sessions do not load agent
+    // runners yet, so plan validation fails before review. Re-enabled by K3-1.
+    skip: 'needs plan step agents in kernel sessions (K3-1)'
+  },
+  async (t) => {
+    const f = await createKernelFixture({
+      hostCapabilities: ['workMode.selected', 'planReview.request']
+    })
+    t.after(() => f.close())
+    const reviews: Array<{
+      runtimeSessionId: string
+      signal: AbortSignal
+      decision: ReturnType<typeof deferred<{ decision: 'approve' }>>
+    }> = []
+    f.client.registerHostCapability('workMode.selected', ({ execute, reason }) => ({
+      ok: true,
+      mode: execute ? 'plan_execute' : 'plan',
+      reason
+    }))
+    f.client.registerHostCapability('planReview.request', (params, context) => {
+      const decision = deferred<{ decision: 'approve' }>()
+      reviews.push({
+        runtimeSessionId: params.runtimeSessionId,
+        signal: context.signal,
+        decision
+      })
+      return decision.promise
+    })
+
+    await f.createSession('review-a', { workMode: 'auto' })
+    await f.createSession('review-b', { workMode: 'auto' })
+    const structuredPlan = (id: string): Record<string, unknown> => ({
+      version: 1,
+      goal: `Review ${id}`,
+      steps: [
+        {
+          id: `step-${id}`,
+          title: `Step ${id}`,
+          instructions: `Inspect ${id}`,
+          acceptance: `${id} is inspected`,
+          dependsOn: [],
+          access: 'read'
+        }
+      ]
+    })
+
+    f.provider.enqueue(
+      {
+        tool: {
+          name: 'enter_plan_mode',
+          id: 'enter-review-a',
+          args: { execute: true, reason: 'Review session A independently' }
+        }
+      },
+      { tool: { name: 'propose_plan_steps', id: 'plan-review-a', args: structuredPlan('a') } }
+    )
+    const promptA = f.sessions.prompt({ sessionId: 'review-a', text: 'Plan A.' })
+    void promptA.catch(() => undefined)
+    await eventually(() => reviews.length === 1, 'first plan review')
+
+    f.provider.enqueue(
+      {
+        tool: {
+          name: 'enter_plan_mode',
+          id: 'enter-review-b',
+          args: { execute: true, reason: 'Review session B independently' }
+        }
+      },
+      { tool: { name: 'propose_plan_steps', id: 'plan-review-b', args: structuredPlan('b') } },
+      { text: 'Session B review completed.' }
+    )
+    const promptB = f.sessions.prompt({ sessionId: 'review-b', text: 'Plan B.' })
+    void promptB.catch(() => undefined)
+    await eventually(() => reviews.length === 2, 'second plan review')
+
+    await f.sessions.abort({ sessionId: 'review-a' })
+    await eventually(() => reviews[0]?.signal.aborted === true, 'first review cancellation')
+    reviews[0].decision.resolve({ decision: 'approve' })
+    reviews[1].decision.resolve({ decision: 'approve' })
+
+    await promptA
+    const stateB = await promptB
+    assert.equal(messageText(stateB.messages?.at(-1)), 'Session B review completed.')
+    assert.equal(reviews[1].signal.aborted, false)
+    assert.equal(reviews[0].runtimeSessionId, f.kernelSessionId('review-a'))
+    assert.equal(reviews[1].runtimeSessionId, f.kernelSessionId('review-b'))
   }
 )
 

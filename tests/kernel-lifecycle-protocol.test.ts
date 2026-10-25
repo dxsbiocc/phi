@@ -163,6 +163,13 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   return { promise, resolve }
 }
 
+const planReviewParams = {
+  runtimeSessionId: 'runtime-session-1',
+  title: 'Review this plan',
+  planContent: '# Plan',
+  planFilePath: 'local://PLAN.md'
+}
+
 test('controller lifecycle observes negotiated attachment and transport detachment', async () => {
   const attached: number[] = []
   const detached: number[] = []
@@ -182,28 +189,41 @@ test('remote disconnect keeps a host request pending and re-sends its id after t
   const second = new MemoryTransport()
   const core = makeCore()
   core.attachTransport(first, { trusted: true, connectionId: 'first-host' })
-  await hello(first, { hostCapabilities: ['desktop.confirm'] })
+  await hello(first, { hostCapabilities: ['planReview.request'] })
 
-  const resultPromise = core.requestHost('desktop.confirm', { title: 'Continue?' })
+  const resultPromise = core.requestHost('planReview.request', planReviewParams, {
+    sessionId: 'session-1',
+    runId: 'run-1'
+  })
   const original = await waitFor(
     first,
-    (frame) => frame.kind === 'host.request' && frame.capability === 'desktop.confirm'
+    (frame) => frame.kind === 'host.request' && frame.capability === 'planReview.request'
   )
   assert.equal(original.kind, 'host.request')
   first.close()
 
   core.attachTransport(second, { trusted: true, connectionId: 'second-host' })
-  await hello(second, { takeover: true, hostCapabilities: ['desktop.confirm'] })
+  await hello(second, { takeover: true, hostCapabilities: ['planReview.request'] })
   const resent = await waitFor(
     second,
-    (frame) => frame.kind === 'host.request' && frame.capability === 'desktop.confirm'
+    (frame) => frame.kind === 'host.request' && frame.capability === 'planReview.request'
   )
   assert.equal(resent.kind, 'host.request')
   assert.equal(resent.id, original.id)
 
-  first.receive({ kind: 'host.response', id: original.id, ok: true, result: 'stale' })
-  second.receive({ kind: 'host.response', id: resent.id, ok: true, result: 'current' })
-  assert.equal(await resultPromise, 'current')
+  first.receive({
+    kind: 'host.response',
+    id: original.id,
+    ok: true,
+    result: { decision: 'cancel' }
+  })
+  second.receive({
+    kind: 'host.response',
+    id: resent.id,
+    ok: true,
+    result: { decision: 'approve' }
+  })
+  assert.deepEqual(await resultPromise, { decision: 'approve' })
 })
 
 test('a disconnected host request waits even when the old controller lacked its capability', async () => {
@@ -215,21 +235,27 @@ test('a disconnected host request waits even when the old controller lacked its 
   first.close()
 
   let settled = false
-  const resultPromise = core.requestHost('desktop.new', { value: 1 }).finally(() => {
-    settled = true
-  })
+  const resultPromise = core
+    .requestHost('settings.nextActionSuggestionsEnabled', {})
+    .finally(() => {
+      settled = true
+    })
   await new Promise<void>((resolve) => setImmediate(resolve))
   assert.equal(settled, false)
 
   core.attachTransport(second, { trusted: true, connectionId: 'new-capabilities' })
-  await hello(second, { takeover: true, hostCapabilities: ['desktop.new'] })
+  await hello(second, {
+    takeover: true,
+    hostCapabilities: ['settings.nextActionSuggestionsEnabled']
+  })
   const requestFrame = await waitFor(
     second,
-    (frame) => frame.kind === 'host.request' && frame.capability === 'desktop.new'
+    (frame) =>
+      frame.kind === 'host.request' && frame.capability === 'settings.nextActionSuggestionsEnabled'
   )
   assert.equal(requestFrame.kind, 'host.request')
-  second.receive({ kind: 'host.response', id: requestFrame.id, ok: true, result: 'available' })
-  assert.equal(await resultPromise, 'available')
+  second.receive({ kind: 'host.response', id: requestFrame.id, ok: true, result: true })
+  assert.equal(await resultPromise, true)
 })
 
 test('a queued disconnected host request fails only when reconnect omits its capability', async () => {
@@ -240,7 +266,7 @@ test('a queued disconnected host request fails only when reconnect omits its cap
   await hello(first)
   first.close()
 
-  const resultPromise = core.requestHost('desktop.new', { value: 1 })
+  const resultPromise = core.requestHost('settings.nextActionSuggestionsEnabled', {})
   const rejected = assert.rejects(resultPromise, (error: ProtocolError) => {
     assert.equal(error.code, 'CAPABILITY_UNAVAILABLE')
     return true
@@ -257,20 +283,33 @@ test('live takeover moves a pending host request and rejects the old controller 
   const core = makeCore({}, { warnings })
   core.attachTransport(first, { trusted: true, connectionId: 'live-old' })
   core.attachTransport(second, { trusted: true, connectionId: 'live-new' })
-  await hello(first, { hostCapabilities: ['desktop.confirm'] })
+  await hello(first, { hostCapabilities: ['planReview.request'] })
 
-  const resultPromise = core.requestHost('desktop.confirm', { title: 'Take over?' })
+  const resultPromise = core.requestHost('planReview.request', planReviewParams, {
+    sessionId: 'session-live',
+    runId: 'run-live'
+  })
   const original = await waitFor(first, (frame) => frame.kind === 'host.request')
   assert.equal(original.kind, 'host.request')
-  await hello(second, { takeover: true, hostCapabilities: ['desktop.confirm'] })
+  await hello(second, { takeover: true, hostCapabilities: ['planReview.request'] })
   const resent = await waitFor(second, (frame) => frame.kind === 'host.request')
   assert.equal(resent.kind, 'host.request')
   assert.equal(resent.id, original.id)
 
-  first.receive({ kind: 'host.response', id: original.id, ok: true, result: 'old' })
-  second.receive({ kind: 'host.response', id: resent.id, ok: true, result: 'new' })
-  assert.equal(await resultPromise, 'new')
-  assert.deepEqual(warnings, ['Ignored host response with an unknown id.'])
+  first.receive({
+    kind: 'host.response',
+    id: original.id,
+    ok: true,
+    result: { decision: 'cancel' }
+  })
+  second.receive({
+    kind: 'host.response',
+    id: resent.id,
+    ok: true,
+    result: { decision: 'approve' }
+  })
+  assert.deepEqual(await resultPromise, { decision: 'approve' })
+  assert.deepEqual(warnings, ['Ignored host response with an inactive id.'])
 })
 
 test('takeover buffers live events until replay is subscribed, then preserves event order', async () => {
@@ -490,7 +529,9 @@ test('grace expiry denies approvals, aborts runs, and fails host requests', asyn
     'events.subscribe': () => ({ subscribed: true, lastSeq: 0 })
   })
   core.attachTransport(first, { trusted: true, connectionId: 'grace-client' })
-  const generation = generationFrom(await hello(first, { hostCapabilities: ['desktop.confirm'] }))
+  const generation = generationFrom(
+    await hello(first, { hostCapabilities: ['planReview.request'] })
+  )
   const accepted = await sendRequest(
     first,
     request(
@@ -516,9 +557,12 @@ test('grace expiry denies approvals, aborts runs, and fails host requests', asyn
   )
   first.close()
 
-  const hostResult = core.requestHost('desktop.confirm', { title: 'Still there?' })
+  const hostResult = core.requestHost('planReview.request', planReviewParams, {
+    sessionId: 'session-grace',
+    runId: 'run-grace'
+  })
   const hostRejected = assert.rejects(hostResult, (error: ProtocolError) => {
-    assert.equal(error.code, 'CAPABILITY_UNAVAILABLE')
+    assert.equal(error.code, 'CANCELLED')
     return true
   })
   await core.expireDisconnectedState()
