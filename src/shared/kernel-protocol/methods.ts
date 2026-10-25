@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import type { KernelV1Method } from './constants'
+import { MAX_CLIENT_RUN_KEY_LENGTH, type KernelV1Method } from './constants'
 import { jsonValueSchema } from './json'
 
 export const protocolVersionSchema = z
@@ -14,6 +14,7 @@ export type ProtocolVersion = z.infer<typeof protocolVersionSchema>
 
 const nonEmptyIdSchema = z.string().min(1)
 const thinkingLevelSchema = z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+export const runCompletionStatusSchema = z.enum(['completed', 'failed', 'cancelled', 'unknown'])
 const modelSelectorSchema = z
   .object({
     provider: z.string().min(1),
@@ -90,10 +91,52 @@ export const sessionCreateParamsSchema = z
   .strict()
 export const sessionCreateResultSchema = z.object({ sessionId: nonEmptyIdSchema }).strict()
 
+export const sessionOpenParamsSchema = z.object({ sessionId: nonEmptyIdSchema }).strict()
+export const sessionOpenResultSchema = sessionCreateResultSchema
+
+export const sessionLastRunSchema = z
+  .object({
+    runId: nonEmptyIdSchema,
+    status: runCompletionStatusSchema
+  })
+  .strict()
+
+export const sessionSummarySchema = z
+  .object({
+    sessionId: nonEmptyIdSchema,
+    cwd: z.string().min(1),
+    title: z.string().min(1).optional(),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+    loaded: z.boolean(),
+    lastRun: sessionLastRunSchema.optional()
+  })
+  .strict()
+
+export const corruptSessionSummarySchema = z
+  .object({
+    sessionId: nonEmptyIdSchema,
+    error: z
+      .object({
+        code: z.literal('CORRUPT_SESSION'),
+        message: z.string().min(1)
+      })
+      .strict()
+  })
+  .strict()
+
+export const sessionListEntrySchema = z.union([sessionSummarySchema, corruptSessionSummarySchema])
+
+export const sessionsListParamsSchema = z.object({}).strict()
+export const sessionsListResultSchema = z
+  .object({ sessions: z.array(sessionListEntrySchema) })
+  .strict()
+
 export const sessionPromptParamsSchema = z
   .object({
     text: z.string(),
-    images: z.array(imageSchema).optional()
+    images: z.array(imageSchema).optional(),
+    clientRunKey: z.string().min(1).max(MAX_CLIENT_RUN_KEY_LENGTH).optional()
   })
   .strict()
 export const sessionPromptResultSchema = z
@@ -112,7 +155,8 @@ export const sessionSnapshotResultSchema = z
     model: modelSelectorSchema.optional(),
     thinkingLevel: thinkingLevelSchema.optional(),
     cwd: z.string().min(1),
-    activeRunId: nonEmptyIdSchema.optional()
+    activeRunId: nonEmptyIdSchema.optional(),
+    lastRun: sessionLastRunSchema.optional()
   })
   .strict()
 
@@ -138,7 +182,7 @@ export const approvalRespondResultSchema = z.object({ accepted: z.literal(true) 
 export const runCompletedPayloadSchema = z
   .object({
     runId: nonEmptyIdSchema,
-    status: z.enum(['completed', 'failed', 'cancelled', 'unknown']),
+    status: runCompletionStatusSchema,
     detail: z.string().optional()
   })
   .strict()
@@ -157,6 +201,14 @@ export type KernelHelloParams = z.infer<typeof kernelHelloParamsSchema>
 export type KernelHelloResult = z.infer<typeof kernelHelloResultSchema>
 export type SessionCreateParams = z.infer<typeof sessionCreateParamsSchema>
 export type SessionCreateResult = z.infer<typeof sessionCreateResultSchema>
+export type SessionOpenParams = z.infer<typeof sessionOpenParamsSchema>
+export type SessionOpenResult = z.infer<typeof sessionOpenResultSchema>
+export type SessionLastRun = z.infer<typeof sessionLastRunSchema>
+export type SessionSummary = z.infer<typeof sessionSummarySchema>
+export type CorruptSessionSummary = z.infer<typeof corruptSessionSummarySchema>
+export type SessionListEntry = z.infer<typeof sessionListEntrySchema>
+export type SessionsListParams = z.infer<typeof sessionsListParamsSchema>
+export type SessionsListResult = z.infer<typeof sessionsListResultSchema>
 export type SessionPromptParams = z.infer<typeof sessionPromptParamsSchema>
 export type SessionPromptResult = z.infer<typeof sessionPromptResultSchema>
 export type SessionAbortParams = z.infer<typeof sessionAbortParamsSchema>
@@ -175,6 +227,8 @@ export type ApprovalRequestedPayload = z.infer<typeof approvalRequestedPayloadSc
 export const kernelMethodParamsSchemas = {
   'kernel.hello': kernelHelloParamsSchema,
   'session.create': sessionCreateParamsSchema,
+  'session.open': sessionOpenParamsSchema,
+  'sessions.list': sessionsListParamsSchema,
   'session.prompt': sessionPromptParamsSchema,
   'session.abort': sessionAbortParamsSchema,
   'session.snapshot': sessionSnapshotParamsSchema,
@@ -186,6 +240,8 @@ export const kernelMethodParamsSchemas = {
 export const kernelMethodResultSchemas = {
   'kernel.hello': kernelHelloResultSchema,
   'session.create': sessionCreateResultSchema,
+  'session.open': sessionOpenResultSchema,
+  'sessions.list': sessionsListResultSchema,
   'session.prompt': sessionPromptResultSchema,
   'session.abort': sessionAbortResultSchema,
   'session.snapshot': sessionSnapshotResultSchema,

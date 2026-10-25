@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -15,6 +15,11 @@ const context: KernelCallContext = {
   connectionId: 'test',
   trusted: true
 }
+
+const acquireTestGuard = (): { acquired: true; release(): void } => ({
+  acquired: true,
+  release: () => undefined
+})
 
 function request(method: string, sessionId?: string): KernelRequestFrame {
   return {
@@ -83,6 +88,7 @@ test('worker adapter creates kernel-owned sessions with trusted entry values', a
 })
 
 test('worker adapter returns prompt acceptance immediately and maps abort to cancelled', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-prompt-'))
   let finishPrompt!: () => void
   const promptFinished = new Promise<void>((resolve) => {
     finishPrompt = resolve
@@ -97,28 +103,42 @@ test('worker adapter returns prompt acceptance immediately and maps abort to can
     }
   })
 
-  const started = await handler(adapter.handlers, 'session.prompt')(
-    { text: 'hello' },
-    context,
-    request('session.prompt', 'session-1')
-  )
-  assert.equal(calls[0], 'session.prompt')
-  assert.equal(typeof (started as { runId?: unknown }).runId, 'string')
+  try {
+    const created = (await handler(adapter.handlers, 'session.create')(
+      {
+        cwd,
+        model: { provider: 'provider', id: 'model' },
+        sessionManager: { kind: 'memory' }
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+    const started = await handler(adapter.handlers, 'session.prompt')(
+      { text: 'hello' },
+      context,
+      request('session.prompt', created.sessionId)
+    )
+    assert.equal(calls.at(-1), 'session.prompt')
+    assert.equal(typeof (started as { runId?: unknown }).runId, 'string')
 
-  const aborted = await handler(adapter.handlers, 'session.abort')(
-    {},
-    context,
-    request('session.abort', 'session-1')
-  )
-  assert.deepEqual(aborted, { cancelled: true })
-  finishPrompt()
-  assert.equal(
-    await (started as unknown as { completion: PromiseLike<string> }).completion,
-    'cancelled'
-  )
+    const aborted = await handler(adapter.handlers, 'session.abort')(
+      {},
+      context,
+      request('session.abort', created.sessionId)
+    )
+    assert.deepEqual(aborted, { cancelled: true })
+    finishPrompt()
+    assert.equal(
+      await (started as unknown as { completion: PromiseLike<string> }).completion,
+      'cancelled'
+    )
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
 })
 
 test('worker adapter projects snapshots and atomically rejects concurrent duplicate approvals', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-snapshot-'))
   let approvalPending = true
   let approvalCalls = 0
   let releaseCalls!: () => void
@@ -147,13 +167,22 @@ test('worker adapter projects snapshots and atomically rejects concurrent duplic
     })
   })
 
+  const created = (await handler(adapter.handlers, 'session.create')(
+    {
+      cwd,
+      model: { provider: 'provider', id: 'model' },
+      sessionManager: { kind: 'memory' }
+    },
+    context,
+    request('session.create')
+  )) as { sessionId: string }
   const snapshot = await handler(adapter.handlers, 'session.snapshot')(
     {},
     context,
-    request('session.snapshot', 'session-1')
+    request('session.snapshot', created.sessionId)
   )
   assert.deepEqual(snapshot, {
-    sessionId: 'session-1',
+    sessionId: created.sessionId,
     messages: [{ role: 'assistant', content: 'hello' }],
     model: { provider: 'provider', id: 'model' },
     thinkingLevel: 'high',
@@ -191,6 +220,192 @@ test('worker adapter projects snapshots and atomically rejects concurrent duplic
   const rejected = responses[1]
   assert.equal(rejected.status, 'rejected')
   assert.equal((rejected.reason as { code?: string }).code, 'INVALID_PARAMS')
+  rmSync(cwd, { recursive: true, force: true })
+})
+
+test('worker adapter persists receipts, rejects durable duplicate keys, and releases locks', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-durable-'))
+  const cwd = join(root, 'project')
+  const agentDir = join(root, 'agent')
+  const { mkdirSync } = await import('node:fs')
+  mkdirSync(cwd)
+  let finishPrompt!: () => void
+  const promptFinished = new Promise<void>((resolve) => {
+    finishPrompt = resolve
+  })
+  const adapter = createWorkerKernelAdapter({
+    agentDir,
+    processStartedAt: 'darwin:test-process',
+    acquireSessionLockGuard: acquireTestGuard,
+    callWorker: async (method) => {
+      if (method === 'session.prompt') await promptFinished
+      return undefined
+    }
+  })
+  try {
+    const created = (await handler(adapter.handlers, 'session.create')(
+      {
+        cwd,
+        model: { provider: 'provider', id: 'model' },
+        sessionManager: { kind: 'persistent' }
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+    const directory = join(agentDir, 'phi-kernel', 'sessions', created.sessionId)
+    const started = (await handler(adapter.handlers, 'session.prompt')(
+      { text: 'hello', clientRunKey: 'client-run-1' },
+      context,
+      request('session.prompt', created.sessionId)
+    )) as unknown as { runId: string; completion: PromiseLike<string> }
+
+    const accepted = readFileSync(join(directory, 'runs.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    assert.deepEqual(accepted, [
+      {
+        runId: started.runId,
+        clientRunKey: 'client-run-1',
+        state: 'accepted',
+        at: accepted[0].at
+      }
+    ])
+    await assert.rejects(
+      async () =>
+        handler(adapter.handlers, 'session.prompt')(
+          { text: 'duplicate', clientRunKey: 'client-run-1' },
+          context,
+          request('session.prompt', created.sessionId)
+        ),
+      (error: { code?: string; detail?: unknown }) =>
+        error.code === 'DUPLICATE_REQUEST' &&
+        (error.detail as { runId?: string; status?: string }).runId === started.runId &&
+        (error.detail as { status?: string }).status === 'running'
+    )
+
+    finishPrompt()
+    assert.equal(await started.completion, 'completed')
+    const receipts = readFileSync(join(directory, 'runs.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    assert.equal(receipts.length, 2)
+    assert.deepEqual(receipts[1], {
+      runId: started.runId,
+      state: 'terminal',
+      status: 'completed',
+      at: receipts[1].at
+    })
+    const manifest = JSON.parse(readFileSync(join(directory, 'session.json'), 'utf8'))
+    assert.deepEqual(manifest.lastRun, { runId: started.runId, status: 'completed' })
+    assert.equal(statSync(directory).mode & 0o777, 0o700)
+    assert.equal(statSync(join(directory, 'session.json')).mode & 0o777, 0o600)
+    assert.equal(statSync(join(directory, 'runs.jsonl')).mode & 0o777, 0o600)
+
+    await handler(adapter.handlers, 'session.close')(
+      {},
+      context,
+      request('session.close', created.sessionId)
+    )
+    assert.equal(existsSync(join(directory, 'writer.lock')), false)
+    assert.equal(existsSync(join(directory, 'session.json')), true)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('worker adapter recovers one UNKNOWN receipt and accepts a later run', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-recovery-'))
+  const cwd = join(root, 'project')
+  const agentDir = join(root, 'agent')
+  const { mkdirSync } = await import('node:fs')
+  mkdirSync(cwd)
+  const never = new Promise<void>(() => undefined)
+  const first = createWorkerKernelAdapter({
+    agentDir,
+    processStartedAt: 'darwin:test-process',
+    acquireSessionLockGuard: acquireTestGuard,
+    callWorker: async (method) => {
+      if (method === 'session.prompt') await never
+      return undefined
+    }
+  })
+  const unbind = first.bind({} as never)
+  try {
+    const created = (await handler(first.handlers, 'session.create')(
+      {
+        cwd,
+        model: { provider: 'provider', id: 'model' },
+        sessionManager: { kind: 'persistent' }
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+    const started = (await handler(first.handlers, 'session.prompt')(
+      { text: 'interrupted', clientRunKey: 'interrupted-key' },
+      context,
+      request('session.prompt', created.sessionId)
+    )) as unknown as { runId: string }
+    unbind()
+
+    let opens = 0
+    const second = createWorkerKernelAdapter({
+      agentDir,
+      processStartedAt: 'darwin:test-process',
+      acquireSessionLockGuard: acquireTestGuard,
+      callWorker: async (method) => {
+        if (method === 'session.create') opens += 1
+        return undefined
+      },
+      readSessionState: async () => ({ cwd, messages: [] })
+    })
+    await handler(second.handlers, 'session.open')(
+      { sessionId: created.sessionId },
+      context,
+      request('session.open')
+    )
+    await handler(second.handlers, 'session.open')(
+      { sessionId: created.sessionId },
+      context,
+      request('session.open')
+    )
+    assert.equal(opens, 1)
+    const snapshot = (await handler(second.handlers, 'session.snapshot')(
+      {},
+      context,
+      request('session.snapshot', created.sessionId)
+    )) as Record<string, unknown>
+    assert.deepEqual(snapshot.lastRun, { runId: started.runId, status: 'unknown' })
+
+    const receiptsPath = join(agentDir, 'phi-kernel', 'sessions', created.sessionId, 'runs.jsonl')
+    const receipts = readFileSync(receiptsPath, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    assert.equal(receipts.filter((receipt) => receipt.status === 'unknown').length, 1)
+    assert.equal(receipts.at(-1).reason, 'kernel exited before completion')
+
+    await assert.rejects(
+      async () =>
+        handler(second.handlers, 'session.prompt')(
+          { text: 'duplicate', clientRunKey: 'interrupted-key' },
+          context,
+          request('session.prompt', created.sessionId)
+        ),
+      (error: { code?: string; detail?: unknown }) =>
+        error.code === 'DUPLICATE_REQUEST' &&
+        (error.detail as { status?: string }).status === 'unknown'
+    )
+    const next = (await handler(second.handlers, 'session.prompt')(
+      { text: 'new run', clientRunKey: 'new-key' },
+      context,
+      request('session.prompt', created.sessionId)
+    )) as unknown as { completion: PromiseLike<string> }
+    assert.equal(await next.completion, 'completed')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('worker outbound maps legacy events and host requests onto the protocol core', async () => {

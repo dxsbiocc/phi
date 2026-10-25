@@ -9,6 +9,8 @@ import {
   type ApprovalRespondParams,
   type JsonValue,
   type SessionCreateParams,
+  type SessionLastRun,
+  type SessionOpenParams,
   type SessionPromptParams
 } from '../../shared/kernel-protocol'
 import { setWorkerOutbound, type WorkerOutbound } from '../../main/agent/engine/in-process/ipc'
@@ -19,6 +21,13 @@ import type {
   RunCompletionStatus,
   SessionPromptRun
 } from '../protocol'
+import {
+  KernelSessionRepository,
+  SessionWriterBusyError,
+  type AcquireProcessLockGuard,
+  type DuplicateRun,
+  type PersistentSession
+} from '../sessions'
 
 type WorkerCall = (method: string, params: unknown) => Promise<unknown>
 
@@ -27,6 +36,9 @@ export type WorkerKernelAdapterOptions = {
   callWorker?: WorkerCall
   readSessionState?: (sessionId: string) => unknown | Promise<unknown>
   diagnostic?: (message: string) => void
+  /** Deterministic process identity for sandboxed lock tests; production reads the OS. */
+  processStartedAt?: string
+  acquireSessionLockGuard?: AcquireProcessLockGuard
 }
 
 export type WorkerKernelAdapter = {
@@ -102,7 +114,12 @@ async function assertExistingAbsoluteDirectory(cwd: string): Promise<void> {
 
 const thinkingLevels = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 
-function projectSessionState(sessionId: string, value: unknown, activeRunId?: string): JsonValue {
+function projectSessionState(
+  sessionId: string,
+  value: unknown,
+  activeRunId?: string,
+  lastRun?: SessionLastRun
+): JsonValue {
   const state = isRecord(value) ? value : {}
   const model = isRecord(state.model) ? state.model : undefined
   const messages = Array.isArray(state.messages) ? (state.messages as JsonValue[]) : []
@@ -118,7 +135,8 @@ function projectSessionState(sessionId: string, value: unknown, activeRunId?: st
       ? { thinkingLevel: state.thinkingLevel }
       : {}),
     cwd,
-    ...(activeRunId ? { activeRunId } : {})
+    ...(activeRunId ? { activeRunId } : {}),
+    ...(lastRun ? { lastRun } : {})
   }
 }
 
@@ -138,8 +156,76 @@ export function createWorkerKernelAdapter(
     options.diagnostic ??
     ((message: string) => process.stderr.write(`[kernel-worker] ${message}\n`))
   const diagnosedEvents = new Set<string>()
+  const durableSessions = new KernelSessionRepository(
+    options.agentDir,
+    undefined,
+    options.acquireSessionLockGuard ??
+      (async (path) =>
+        (
+          await import('../../main/agent/engine/in-process/session-factory')
+        ).acquireKernelSessionLockGuard(path)),
+    options.processStartedAt
+  )
   const activeRuns = new Map<string, string>()
   const cancelledRuns = new Set<string>()
+  const sessionKinds = new Map<string, 'memory' | 'persistent'>()
+  const memoryClientRuns = new Map<string, Map<string, DuplicateRun>>()
+  const openingSessions = new Map<string, Promise<PersistentSession>>()
+
+  const sessionNotFound = (): ReturnType<typeof makeProtocolError> =>
+    makeProtocolError('SESSION_NOT_FOUND', 'The requested session is not loaded.')
+
+  const requireLoadedSession = (sessionId: string): 'memory' | 'persistent' => {
+    const kind = sessionKinds.get(sessionId)
+    if (!kind) throw sessionNotFound()
+    return kind
+  }
+
+  const openPersistentSession = async (sessionId: string): Promise<PersistentSession> => {
+    const loaded = durableSessions.get(sessionId)
+    if (loaded && sessionKinds.get(sessionId) === 'persistent') return loaded
+    const pending = openingSessions.get(sessionId)
+    if (pending) return pending
+    const opening = (async () => {
+      const session = await durableSessions.open(sessionId)
+      try {
+        await callWorker('session.create', {
+          sessionId,
+          agentDir: options.agentDir,
+          cwd: session.manifest.cwd,
+          ...(session.manifest.model ? { model: session.manifest.model } : {}),
+          ...(session.manifest.thinkingLevel
+            ? { thinkingLevel: session.manifest.thinkingLevel }
+            : {}),
+          sessionManager: {
+            kind: 'open',
+            path: session.journalPath,
+            cwd: session.manifest.cwd,
+            requireExisting: true,
+            suppressBreadcrumb: true
+          }
+        })
+        sessionKinds.set(sessionId, 'persistent')
+        return session
+      } catch (error) {
+        await durableSessions.close(sessionId)
+        throw error
+      }
+    })()
+    openingSessions.set(sessionId, opening)
+    try {
+      return await opening
+    } finally {
+      if (openingSessions.get(sessionId) === opening) openingSessions.delete(sessionId)
+    }
+  }
+
+  const duplicateRequest = (duplicate: DuplicateRun): ReturnType<typeof makeProtocolError> =>
+    makeProtocolError(
+      'DUPLICATE_REQUEST',
+      'The client run key was already accepted for this session.',
+      duplicate
+    )
 
   const diagnoseDroppedEvent = (name: string, reason: string): void => {
     if (diagnosedEvents.has(name)) return
@@ -165,32 +251,107 @@ export function createWorkerKernelAdapter(
       const create = params as SessionCreateParams
       await assertExistingAbsoluteDirectory(create.cwd)
       const sessionId = randomUUID()
-      await callWorker('session.create', {
-        ...create,
-        sessionId,
-        agentDir: options.agentDir,
-        sessionManager: { kind: create.sessionManager.kind, cwd: create.cwd }
-      })
-      return { sessionId }
+      if (create.sessionManager.kind === 'memory') {
+        await callWorker('session.create', {
+          ...create,
+          sessionId,
+          agentDir: options.agentDir,
+          sessionManager: { kind: 'memory', cwd: create.cwd }
+        })
+        sessionKinds.set(sessionId, 'memory')
+        memoryClientRuns.set(sessionId, new Map())
+        return { sessionId }
+      }
+
+      const persistent = await durableSessions.create(sessionId, create)
+      try {
+        await callWorker('session.create', {
+          ...create,
+          sessionId,
+          agentDir: options.agentDir,
+          sessionManager: {
+            kind: 'persistent',
+            path: persistent.journalPath,
+            cwd: create.cwd
+          }
+        })
+        sessionKinds.set(sessionId, 'persistent')
+        return { sessionId }
+      } catch (error) {
+        await durableSessions.abandonNew(sessionId)
+        throw error
+      }
     },
-    'session.prompt'(params, _context, request): SessionPromptRun {
+    async 'session.open'(params) {
+      const { sessionId } = params as SessionOpenParams
+      try {
+        await openPersistentSession(sessionId)
+        return { sessionId }
+      } catch (error) {
+        if (error instanceof SessionWriterBusyError) {
+          throw makeProtocolError('SESSION_BUSY', 'Another kernel owns this session.')
+        }
+        if (
+          error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          (error as { code?: unknown }).code === 'ENOENT'
+        ) {
+          throw makeProtocolError('SESSION_NOT_FOUND', 'The persistent session does not exist.')
+        }
+        throw error
+      }
+    },
+    'sessions.list'() {
+      return durableSessions.list()
+    },
+    async 'session.prompt'(params, _context, request): Promise<SessionPromptRun> {
       const sessionId = requiredSessionId(request.sessionId)
       const prompt = params as SessionPromptParams
+      const kind = requireLoadedSession(sessionId)
+      const persistent = kind === 'persistent' ? durableSessions.get(sessionId) : undefined
+      if (kind === 'persistent' && !persistent) throw sessionNotFound()
+      if (prompt.clientRunKey) {
+        const duplicate = persistent
+          ? durableSessions.findDuplicate(persistent, prompt.clientRunKey)
+          : memoryClientRuns.get(sessionId)?.get(prompt.clientRunKey)
+        if (duplicate) throw duplicateRequest(duplicate)
+      }
       const runId = randomUUID()
+      if (persistent) {
+        await durableSessions.acceptRun(persistent, runId, prompt.clientRunKey)
+      } else if (prompt.clientRunKey) {
+        memoryClientRuns.get(sessionId)?.set(prompt.clientRunKey, { runId, status: 'running' })
+      }
       activeRuns.set(sessionId, runId)
       const completion = (async (): Promise<
         RunCompletionStatus | { status: RunCompletionStatus; detail?: string }
       > => {
         try {
-          await callWorker('session.prompt', {
-            sessionId,
-            text: prompt.text,
-            ...(prompt.images ? { options: { images: prompt.images } } : {})
-          })
-          return cancelledRuns.has(runId) ? 'cancelled' : 'completed'
-        } catch (error) {
-          if (cancelledRuns.has(runId)) return 'cancelled'
-          return { status: 'failed', detail: sanitizeRunError(error) }
+          let outcome: RunCompletionStatus | { status: RunCompletionStatus; detail?: string }
+          try {
+            await callWorker('session.prompt', {
+              sessionId,
+              text: prompt.text,
+              ...(prompt.images ? { options: { images: prompt.images } } : {})
+            })
+            outcome = cancelledRuns.has(runId) ? 'cancelled' : 'completed'
+          } catch (error) {
+            outcome = cancelledRuns.has(runId)
+              ? 'cancelled'
+              : { status: 'failed', detail: sanitizeRunError(error) }
+          }
+          const status = typeof outcome === 'string' ? outcome : outcome.status
+          if (persistent) {
+            try {
+              await durableSessions.finishRun(persistent, runId, status)
+            } catch {
+              return { status: 'unknown', detail: 'Run completion could not be persisted.' }
+            }
+          } else if (prompt.clientRunKey) {
+            memoryClientRuns.get(sessionId)?.set(prompt.clientRunKey, { runId, status })
+          }
+          return outcome
         } finally {
           cancelledRuns.delete(runId)
           if (activeRuns.get(sessionId) === runId) activeRuns.delete(sessionId)
@@ -200,6 +361,7 @@ export function createWorkerKernelAdapter(
     },
     async 'session.abort'(_params, _context, request) {
       const sessionId = requiredSessionId(request.sessionId)
+      requireLoadedSession(sessionId)
       const activeRunId = activeRuns.get(sessionId)
       if (activeRunId) cancelledRuns.add(activeRunId)
       try {
@@ -212,16 +374,25 @@ export function createWorkerKernelAdapter(
     },
     async 'session.snapshot'(_params, _context, request) {
       const sessionId = requiredSessionId(request.sessionId)
+      requireLoadedSession(sessionId)
       return projectSessionState(
         sessionId,
         await readSessionState(sessionId),
-        activeRuns.get(sessionId)
+        activeRuns.get(sessionId),
+        durableSessions.get(sessionId)?.manifest.lastRun
       )
     },
     async 'session.close'(_params, _context, request) {
       const sessionId = requiredSessionId(request.sessionId)
+      requireLoadedSession(sessionId)
+      if (activeRuns.has(sessionId)) {
+        throw makeProtocolError('SESSION_BUSY', 'The session has an active run.')
+      }
       await callWorker('session.dispose', { sessionId })
+      await durableSessions.close(sessionId)
       activeRuns.delete(sessionId)
+      sessionKinds.delete(sessionId)
+      memoryClientRuns.delete(sessionId)
       return { closed: true }
     },
     'events.subscribe': () => ({ subscribed: true, lastSeq: 0 }),
@@ -266,7 +437,12 @@ export function createWorkerKernelAdapter(
             }
             core.emitEvent(
               KERNEL_EVENT_SESSION_STATE,
-              projectSessionState(sessionId, payload, runId),
+              projectSessionState(
+                sessionId,
+                payload,
+                runId,
+                durableSessions.get(sessionId)?.manifest.lastRun
+              ),
               { sessionId, runId }
             )
             return
@@ -313,7 +489,10 @@ export function createWorkerKernelAdapter(
         }
       }
       setWorkerOutbound(outbound)
-      return () => setWorkerOutbound(undefined)
+      return () => {
+        setWorkerOutbound(undefined)
+        durableSessions.releaseAllSync()
+      }
     }
   }
 }

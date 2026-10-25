@@ -1,4 +1,6 @@
 import { SessionManager, type ModelRegistry } from '@oh-my-pi/pi-coding-agent'
+import { FileLock } from '@oh-my-pi/pi-natives'
+import { dirname } from 'node:path'
 import {
   createAgentSession as createLegacyAgentSession,
   DefaultResourceLoader,
@@ -95,9 +97,27 @@ export async function makeSessionManager(
   if (kind === 'open') {
     const path = stringValue(params.path)
     if (!path) throw new Error('Missing session path')
-    return SessionManager.open(path, undefined, undefined, { initialCwd: cwd })
+    return SessionManager.open(path, undefined, undefined, {
+      initialCwd: cwd,
+      ...(params.requireExisting === true ? { throwIfMissing: true } : {}),
+      ...(params.suppressBreadcrumb === true ? { suppressBreadcrumb: true } : {})
+    })
+  }
+  const path = stringValue(params.path)
+  if (kind === 'persistent' && path) {
+    return SessionManager.open(path, dirname(path), undefined, {
+      initialCwd: cwd,
+      suppressBreadcrumb: true
+    })
   }
   return SessionManager.create(cwd, SessionManager.getDefaultSessionDir(cwd, agentDir))
+}
+
+export function acquireKernelSessionLockGuard(path: string): {
+  readonly acquired: boolean
+  release(): void
+} {
+  return FileLock.tryAcquire(path)
 }
 
 export {

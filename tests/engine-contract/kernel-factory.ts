@@ -1,4 +1,5 @@
 import { dirname, join, resolve } from 'node:path'
+import { once } from 'node:events'
 import { fileURLToPath } from 'node:url'
 
 import {
@@ -31,6 +32,10 @@ export type KernelEngineFixture = BasicEngineFixture & {
   kernelSessionId(sessionId: string): string | undefined
   /** Drops the connection the way a lost SSH channel does: no session.close is sent. */
   disconnect(): Promise<LocalKernelCloseOutcome>
+  /** Kills the kernel without cleanup for durable-session fault injection. */
+  kill(): Promise<void>
+  /** Starts another negotiated kernel against the same disposable agent directory. */
+  spawnPeer(): Promise<SpawnedKernelClient>
   waitForRun(runId: string): Promise<RunCompletion>
   createSession(
     sessionId: string,
@@ -38,6 +43,7 @@ export type KernelEngineFixture = BasicEngineFixture & {
       cwd?: string
       enableToolApproval?: boolean
       noTools?: 'all' | boolean
+      persistent?: boolean
       resourceOptions?: {
         noExtensions: boolean
         noSkills: boolean
@@ -84,25 +90,42 @@ export async function createKernelFixture(): Promise<KernelEngineFixture> {
   const diagnostics: string[] = []
   let spawned: SpawnedKernelClient | undefined
   try {
+    const kernelEnv = {
+      PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+      HOME: join(root, 'home'),
+      USERPROFILE: join(root, 'home'),
+      XDG_CONFIG_HOME: join(root, 'home', '.config'),
+      XDG_CACHE_HOME: join(root, 'home', '.cache'),
+      XDG_DATA_HOME: join(root, 'home', '.local/share'),
+      TMPDIR: join(root, 'tmp'),
+      TMP: join(root, 'tmp'),
+      TEMP: join(root, 'tmp'),
+      PI_CODING_AGENT_DIR: base.agentDir,
+      OMP_APP_NAME: 'Phi',
+      NO_PROXY: '127.0.0.1,localhost',
+      PHI_CONTRACT_HOST_SECRET: join(root, 'host-only-secret'),
+      PYTHONPATH: join(root, 'host-pythonpath')
+    }
+    const spawnPeer = async (): Promise<SpawnedKernelClient> => {
+      const peer = spawnKernelStdio({
+        cwd: resolve('.'),
+        bunArgs: ['--preload', fileURLToPath(new URL('./network-guard.ts', import.meta.url))],
+        env: kernelEnv,
+        onDiagnostic: (text) => diagnostics.push(text)
+      })
+      try {
+        await peer.client.hello()
+        await peer.client.subscribe(0)
+        return peer
+      } catch (error) {
+        await peer.close()
+        throw error
+      }
+    }
     spawned = spawnKernelStdio({
       cwd: resolve('.'),
       bunArgs: ['--preload', fileURLToPath(new URL('./network-guard.ts', import.meta.url))],
-      env: {
-        PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
-        HOME: join(root, 'home'),
-        USERPROFILE: join(root, 'home'),
-        XDG_CONFIG_HOME: join(root, 'home', '.config'),
-        XDG_CACHE_HOME: join(root, 'home', '.cache'),
-        XDG_DATA_HOME: join(root, 'home', '.local/share'),
-        TMPDIR: join(root, 'tmp'),
-        TMP: join(root, 'tmp'),
-        TEMP: join(root, 'tmp'),
-        PI_CODING_AGENT_DIR: base.agentDir,
-        OMP_APP_NAME: 'Phi',
-        NO_PROXY: '127.0.0.1,localhost',
-        PHI_CONTRACT_HOST_SECRET: join(root, 'host-only-secret'),
-        PYTHONPATH: join(root, 'host-pythonpath')
-      },
+      env: kernelEnv,
       onDiagnostic: (text) => diagnostics.push(text)
     })
     const client = spawned.client
@@ -167,7 +190,7 @@ export async function createKernelFixture(): Promise<KernelEngineFixture> {
         await client.request('session.create', {
           cwd: options.cwd ?? base.cwd,
           model: { provider: base.model.provider, id: base.model.id },
-          sessionManager: { kind: 'memory' },
+          sessionManager: { kind: options.persistent ? 'persistent' : 'memory' },
           resourceOptions: options.resourceOptions ?? {
             noExtensions: true,
             noSkills: true,
@@ -204,6 +227,7 @@ export async function createKernelFixture(): Promise<KernelEngineFixture> {
       }),
       kernelSessionId: (sessionId) => logicalToKernel.get(sessionId),
       waitForRun,
+      spawnPeer,
       createSession,
       onSessionEvent(sessionId, listener) {
         let listeners = eventListeners.get(sessionId)
@@ -266,6 +290,15 @@ export async function createKernelFixture(): Promise<KernelEngineFixture> {
         stopEvents()
         if (!spawned) throw new Error('Kernel was not spawned')
         return spawned.close()
+      },
+      async kill() {
+        stopEvents()
+        if (!spawned) throw new Error('Kernel was not spawned')
+        const child = spawned.process
+        if (child.exitCode !== null || child.signalCode !== null) return
+        const exited = once(child, 'exit')
+        child.kill('SIGKILL')
+        await exited
       },
       close() {
         closing ??= (async () => {
