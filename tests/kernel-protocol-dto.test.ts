@@ -16,6 +16,11 @@ import {
   kernelMethodResultSchemas,
   kernelRequestFrameSchema,
   kernelResponseFrameSchema,
+  KERNEL_EVENT_APPROVAL_REQUESTED,
+  KERNEL_EVENT_RUN_COMPLETED,
+  KERNEL_EVENT_SESSION_EVENT,
+  KERNEL_EVENT_SESSION_STATE,
+  KERNEL_V1_EVENT_TYPES,
   KERNEL_V1_METHODS,
   MAX_ERROR_DETAIL_BYTES,
   MAX_FRAME_BYTES,
@@ -44,10 +49,29 @@ const methodParams = {
   'kernel.hello': {
     protocol: PHI_KERNEL_PROTOCOL_VERSION,
     client: { name: 'phi-tests', version: '1.2.3' },
+    hostCapabilities: ['settings.nextActionSuggestionsEnabled'],
     takeover: true
   },
-  'session.create': {},
-  'session.prompt': { text: 'Hello' },
+  'session.create': {
+    cwd: '/tmp/phi-project',
+    model: { provider: 'phi-contract', id: 'contract-model' },
+    thinkingLevel: 'high',
+    sessionManager: { kind: 'memory' },
+    enableToolApproval: true,
+    autoCompaction: { enabled: false },
+    resourceOptions: {
+      noExtensions: true,
+      noSkills: true,
+      noContextFiles: true,
+      noPromptTemplates: true,
+      noThemes: true
+    },
+    noTools: 'all'
+  },
+  'session.prompt': {
+    text: 'Hello',
+    images: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]
+  },
   'session.abort': {},
   'session.snapshot': {},
   'session.close': {},
@@ -67,7 +91,14 @@ const methodResults = {
   'session.create': { sessionId: 'session-1' },
   'session.prompt': { accepted: true, runId: 'run-1' },
   'session.abort': { cancelled: true },
-  'session.snapshot': { sessionId: 'session-1', activeRunId: 'run-1' },
+  'session.snapshot': {
+    sessionId: 'session-1',
+    messages: [{ role: 'assistant', content: 'Hello' }],
+    model: { provider: 'phi-contract', id: 'contract-model' },
+    thinkingLevel: 'high',
+    cwd: '/tmp/phi-project',
+    activeRunId: 'run-1'
+  },
   'session.close': { closed: true },
   'events.subscribe': { subscribed: true, lastSeq: 7 },
   'approval.respond': { accepted: true }
@@ -125,7 +156,9 @@ describe('kernel protocol DTOs', () => {
       kind: 'host.request',
       id: 'host-1',
       capability: 'desktop.example',
-      params: { value: 1 }
+      params: { value: 1 },
+      sessionId: 'session-1',
+      agentRunId: 'run-1'
     })
     roundTrip({ kind: 'host.response', id: 'host-1', ok: true, result: { value: 2 } })
     roundTrip({
@@ -144,6 +177,21 @@ describe('kernel protocol DTOs', () => {
         detail: { local: { major: 1, minor: 0 }, peer: { major: 2, minor: 0 } }
       }
     })
+  })
+
+  it('exports the closed v1 event vocabulary', () => {
+    assert.deepEqual(KERNEL_V1_EVENT_TYPES, [
+      KERNEL_EVENT_SESSION_EVENT,
+      KERNEL_EVENT_SESSION_STATE,
+      KERNEL_EVENT_APPROVAL_REQUESTED,
+      KERNEL_EVENT_RUN_COMPLETED
+    ])
+    assert.deepEqual(KERNEL_V1_EVENT_TYPES, [
+      'session.event',
+      'session.state',
+      'approval.requested',
+      'run.completed'
+    ])
   })
 
   it('allows identity-shaped data in opaque output and host capability payloads', () => {

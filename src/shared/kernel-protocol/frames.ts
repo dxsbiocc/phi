@@ -58,7 +58,9 @@ export const hostRequestFrameSchema = z
     kind: z.literal('host.request'),
     id: nonEmptyIdSchema,
     capability: z.string().min(1),
-    params: jsonValueSchema
+    params: jsonValueSchema,
+    sessionId: nonEmptyIdSchema.optional(),
+    agentRunId: nonEmptyIdSchema.optional()
   })
   .strict()
 

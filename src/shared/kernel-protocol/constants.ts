@@ -15,3 +15,17 @@ export const KERNEL_V1_METHODS = [
 ] as const
 
 export type KernelV1Method = (typeof KERNEL_V1_METHODS)[number]
+
+export const KERNEL_EVENT_SESSION_EVENT = 'session.event'
+export const KERNEL_EVENT_SESSION_STATE = 'session.state'
+export const KERNEL_EVENT_APPROVAL_REQUESTED = 'approval.requested'
+export const KERNEL_EVENT_RUN_COMPLETED = 'run.completed'
+
+export const KERNEL_V1_EVENT_TYPES = [
+  KERNEL_EVENT_SESSION_EVENT,
+  KERNEL_EVENT_SESSION_STATE,
+  KERNEL_EVENT_APPROVAL_REQUESTED,
+  KERNEL_EVENT_RUN_COMPLETED
+] as const
+
+export type KernelV1EventType = (typeof KERNEL_V1_EVENT_TYPES)[number]

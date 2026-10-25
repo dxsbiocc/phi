@@ -1,7 +1,7 @@
-import { ModelRegistry } from '@oh-my-pi/pi-coding-agent'
-import { AuthStorage } from '@oh-my-pi/pi-ai'
+import type { ModelRegistry } from '@oh-my-pi/pi-coding-agent'
+import type { AuthStorage } from '@oh-my-pi/pi-ai'
 import { isRecord } from '../../../../shared/guards'
-import { PhiAuth } from '../types'
+import type { PhiAuth } from '../types'
 
 export type UnknownRecord = Record<string, unknown>
 

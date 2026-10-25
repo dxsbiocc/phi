@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
@@ -7,6 +7,7 @@ import ts from 'typescript'
 const ENGINE_DIRECTORY = 'src/main/agent/engine/'
 const KERNEL_OMP_DIRECTORY = 'src/kernel/omp/'
 const KERNEL_DIRECTORY = 'src/kernel/'
+const KERNEL_ENTRY = 'src/kernel/main.ts'
 const SHARED_PROTOCOL_DIRECTORY = 'src/shared/kernel-protocol/'
 const OMP_SCOPE = '@oh-my-pi/'
 const SCAN_DIRECTORIES = ['src', 'tests', 'scripts']
@@ -66,6 +67,32 @@ function stringLiteralText(node) {
     : undefined
 }
 
+// Type-only imports and exports are erased when compiling (verbatimModuleSyntax is
+// off), so they never load the target module at run time.
+function isTypeOnlyDeclaration(node) {
+  if (ts.isImportDeclaration(node)) {
+    const clause = node.importClause
+    if (!clause) return false
+    if (clause.isTypeOnly) return true
+    const bindings = clause.namedBindings
+    return (
+      clause.name === undefined &&
+      bindings !== undefined &&
+      ts.isNamedImports(bindings) &&
+      bindings.elements.length > 0 &&
+      bindings.elements.every((element) => element.isTypeOnly)
+    )
+  }
+  if (node.isTypeOnly) return true
+  const clause = node.exportClause
+  return (
+    clause !== undefined &&
+    ts.isNamedExports(clause) &&
+    clause.elements.length > 0 &&
+    clause.elements.every((element) => element.isTypeOnly)
+  )
+}
+
 function moduleReferences(filePath, options = {}) {
   const sourceFile = ts.createSourceFile(
     filePath,
@@ -83,12 +110,15 @@ function moduleReferences(filePath, options = {}) {
 
   function visit(node) {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      record(node.moduleSpecifier)
+      if (!(options.runtimeOnly === true && isTypeOnlyDeclaration(node))) {
+        record(node.moduleSpecifier)
+      }
     } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
-      record(node.argument.literal)
+      if (options.runtimeOnly !== true) record(node.argument.literal)
     } else if (
       ts.isImportEqualsDeclaration(node) &&
-      ts.isExternalModuleReference(node.moduleReference)
+      ts.isExternalModuleReference(node.moduleReference) &&
+      !(options.runtimeOnly === true && node.isTypeOnly)
     ) {
       record(node.moduleReference.expression)
     } else if (ts.isCallExpression(node) && node.arguments.length >= 1) {
@@ -155,7 +185,7 @@ function resolvedRepositoryPath(repoRoot, file, specifier) {
   return specifier.startsWith('src/') ? specifier : undefined
 }
 
-function forbiddenKernelImport(repoRoot, file, specifier) {
+function forbiddenKernelImport(repoRoot, file, specifier, resolvedFile) {
   if (packageOrSubpath(specifier, 'electron')) return 'electron'
   if (packageOrSubpath(specifier, 'react') || packageOrSubpath(specifier, 'react-dom')) {
     return 'react'
@@ -166,7 +196,92 @@ function forbiddenKernelImport(repoRoot, file, specifier) {
   if (target === 'src/renderer' || target?.startsWith('src/renderer/')) return 'renderer'
   if (target === 'src/preload' || target?.startsWith('src/preload/')) return 'preload'
   if (target === 'src/main/ipc' || target?.startsWith('src/main/ipc/')) return 'main-ipc'
+  const resolvedTarget = resolvedFile ? relativePath(repoRoot, resolvedFile) : target
+  if (
+    resolvedTarget === 'src/main/index.ts' ||
+    resolvedTarget?.replace(/\.(?:[cm]?[jt]sx?)$/, '') === 'src/main/index'
+  ) {
+    return 'main-index'
+  }
   return undefined
+}
+
+function sourceFileCandidate(filePath) {
+  return (
+    existsSync(filePath) &&
+    statSync(filePath).isFile() &&
+    SOURCE_EXTENSIONS.has(path.extname(filePath))
+  )
+}
+
+function resolveRelativeSourceFile(repoRoot, filePath, specifier) {
+  if (!specifier.startsWith('.')) return undefined
+
+  const basePath = path.resolve(path.dirname(filePath), specifier)
+  const extension = path.extname(basePath)
+  const candidates = [basePath]
+  if (extension.length === 0) {
+    candidates.push(`${basePath}.ts`, path.join(basePath, 'index.ts'))
+  } else if (extension === '.js' || extension === '.mjs' || extension === '.cjs') {
+    candidates.push(
+      `${basePath.slice(0, -extension.length)}${
+        extension === '.mjs' ? '.mts' : extension === '.cjs' ? '.cts' : '.ts'
+      }`
+    )
+  }
+
+  for (const candidate of candidates) {
+    if (!isWithin(repoRoot, candidate) || !sourceFileCandidate(candidate)) continue
+    return candidate
+  }
+  return undefined
+}
+
+function transitiveKernelFailures(repoRoot) {
+  const entryPath = path.resolve(repoRoot, ...KERNEL_ENTRY.split('/'))
+  if (!sourceFileCandidate(entryPath)) return []
+
+  const pending = [{ filePath: entryPath, chain: [KERNEL_ENTRY] }]
+  const visited = new Set([entryPath])
+  const failures = []
+
+  while (pending.length > 0) {
+    const current = pending.shift()
+    const file = relativePath(repoRoot, current.filePath)
+    const references = moduleReferences(current.filePath, {
+      includeImportMetaResolve: true,
+      runtimeOnly: true
+    })
+
+    for (const specifier of [...references].sort()) {
+      const resolvedFile = resolveRelativeSourceFile(repoRoot, current.filePath, specifier)
+      const forbiddenArea = forbiddenKernelImport(repoRoot, file, specifier, resolvedFile)
+      if (forbiddenArea) {
+        const terminal = resolvedFile
+          ? relativePath(repoRoot, resolvedFile)
+          : (resolvedRepositoryPath(repoRoot, file, specifier) ?? specifier)
+        failures.push({
+          ...failure(
+            file,
+            specifier,
+            `kernel-${forbiddenArea}-import-forbidden`,
+            'Kernel code may not depend on Electron, React, renderer, preload, or main-process IPC.'
+          ),
+          chain: [...current.chain, terminal]
+        })
+        continue
+      }
+
+      if (!resolvedFile || visited.has(resolvedFile)) continue
+      visited.add(resolvedFile)
+      pending.push({
+        filePath: resolvedFile,
+        chain: [...current.chain, relativePath(repoRoot, resolvedFile)]
+      })
+    }
+  }
+
+  return failures
 }
 
 function failure(file, specifier, rule, message) {
@@ -417,6 +532,20 @@ export function checkKernelBoundary({ repoRoot, stats }) {
     }
   }
 
+  const failureIndexes = new Map(
+    failures.map((item, index) => [`${item.file}\0${item.specifier}\0${item.rule}`, index])
+  )
+  for (const item of transitiveKernelFailures(absoluteRepoRoot)) {
+    const key = `${item.file}\0${item.specifier}\0${item.rule}`
+    const existingIndex = failureIndexes.get(key)
+    if (existingIndex === undefined) {
+      failureIndexes.set(key, failures.length)
+      failures.push(item)
+    } else {
+      failures[existingIndex] = { ...failures[existingIndex], chain: item.chain }
+    }
+  }
+
   if (stats) stats.scannedFiles = sourceFiles.length
   return failures.sort(compareFailures)
 }
@@ -436,6 +565,7 @@ function main() {
     console.error('Engine boundary check failed:')
     for (const item of failures) {
       console.error(`- ${item.file} | ${item.specifier} | ${item.rule}: ${item.message}`)
+      if (item.chain) console.error(`  import chain: ${item.chain.join(' -> ')}`)
     }
     process.exit(1)
   }

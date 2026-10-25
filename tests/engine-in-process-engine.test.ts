@@ -720,7 +720,7 @@ test('decision facade validates answers and cancels its private worker job witho
 
 test('worker dispatch matches the PhiEngine facade and private runtime service commands', () => {
   const workerSource = readFileSync(
-    join(process.cwd(), 'src/main/agent/engine/in-process/main.ts'),
+    join(process.cwd(), 'src/main/agent/engine/in-process/method-table.ts'),
     'utf8'
   )
   const workerMethods = [...workerSource.matchAll(/case '([^']+)'/g)].map((match) => match[1])

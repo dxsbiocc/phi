@@ -92,7 +92,14 @@ test(
     try {
       const build = spawnSync(
         'bun',
-        ['build', '--compile', 'src/kernel/main.ts', '--outfile', buildBinary],
+        [
+          'build',
+          '--compile',
+          '--external=omp-legacy-pi-modules',
+          'src/kernel/main.ts',
+          '--outfile',
+          buildBinary
+        ],
         {
           cwd: repoRoot,
           encoding: 'utf8'

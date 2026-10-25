@@ -74,6 +74,20 @@ function request(
   return { kind: 'request', id, method, generation, params, ...correlation }
 }
 
+function snapshotResult(sessionId: string): {
+  sessionId: string
+  messages: JsonValue[]
+  cwd: string
+} {
+  return { sessionId, messages: [], cwd: '/tmp/phi-kernel-test' }
+}
+
+const createParams = {
+  cwd: '/tmp/phi-kernel-test',
+  model: { provider: 'phi-contract', id: 'contract-model' },
+  sessionManager: { kind: 'memory' as const }
+}
+
 function decode(line: string): ParsedFrame {
   const parsed = parseFrame(line)
   if (!('kind' in parsed)) assert.fail(`expected frame, received ${parsed.code}`)
@@ -110,13 +124,21 @@ async function sendRequest(
 
 async function hello(
   transport: MemoryTransport,
-  options: { id?: string; takeover?: boolean; protocol?: { major: number; minor: number } } = {}
+  options: {
+    id?: string
+    takeover?: boolean
+    protocol?: { major: number; minor: number }
+    hostCapabilities?: string[]
+  } = {}
 ): Promise<KernelResponseFrame> {
   return sendRequest(
     transport,
     request(options.id ?? 'hello', 'kernel.hello', 0, {
       protocol: options.protocol ?? PHI_KERNEL_PROTOCOL_VERSION,
       client: { name: 'core-test', version: '1.0.0' },
+      ...(options.hostCapabilities === undefined
+        ? {}
+        : { hostCapabilities: options.hostCapabilities }),
       ...(options.takeover === undefined ? {} : { takeover: options.takeover })
     })
   )
@@ -158,7 +180,7 @@ function deferred<T>(): {
 test('hello negotiates minor versions and rejects pre-negotiation or incompatible requests', async () => {
   const transport = new MemoryTransport()
   const core = makeCore({
-    'session.snapshot': (_params, _context, frame) => ({ sessionId: frame.sessionId ?? 'missing' })
+    'session.snapshot': (_params, _context, frame) => snapshotResult(frame.sessionId ?? 'missing')
   })
   core.attachTransport(transport, { trusted: true, connectionId: 'first' })
 
@@ -194,7 +216,7 @@ test('takeover creates one controller generation and immediately stales the old 
   const core = makeCore({
     'session.snapshot': (_params, context, frame) => {
       calls.push(`${context.connectionId}:${context.controllerGeneration}:${context.trusted}`)
-      return { sessionId: frame.sessionId ?? 'missing' }
+      return snapshotResult(frame.sessionId ?? 'missing')
     },
     'approval.respond': () => ({ accepted: true })
   })
@@ -242,7 +264,7 @@ test('bad frames and duplicate ids are isolated while unknown replies are logged
   const core = makeCore(
     {
       'session.snapshot': (_params, _context, frame) => ({
-        sessionId: frame.sessionId ?? 'missing'
+        ...snapshotResult(frame.sessionId ?? 'missing')
       })
     },
     { warnings }
@@ -293,7 +315,7 @@ test('handler results must satisfy the strict method result DTO', async () => {
   const transport = new MemoryTransport()
   const core = makeCore({
     'session.snapshot': (_params, _context, frame) => ({
-      sessionId: frame.sessionId ?? 'missing',
+      ...snapshotResult(frame.sessionId ?? 'missing'),
       unexpected: true
     })
   })
@@ -307,19 +329,45 @@ test('handler results must satisfy the strict method result DTO', async () => {
   assert.equal(responseError(response).code, 'INTERNAL')
 })
 
+test('internal handler failures are logged with the error and invalid result paths', async () => {
+  const transport = new MemoryTransport()
+  const errors: Array<Readonly<Record<string, JsonValue>> | undefined> = []
+  const core = new KernelProtocolCore({
+    kernelVersion: '1.2.3-test',
+    ompVersion: '18.10.3-test',
+    handlers: {
+      'session.snapshot': (_params, _context, frame) => ({
+        ...snapshotResult(frame.sessionId ?? 'missing'),
+        messages: [{ role: 'assistant', errorMessage: undefined }] as unknown as JsonValue[]
+      })
+    },
+    log: { error: (_message, details) => errors.push(details) }
+  })
+  core.attachTransport(transport, { trusted: true })
+  const generation = generationFrom(await hello(transport))
+
+  const response = await sendRequest(
+    transport,
+    request('undefined-field', 'session.snapshot', generation, {}, { sessionId: 'session-1' })
+  )
+  assert.equal(responseError(response).code, 'INTERNAL')
+  assert.equal(responseError(response).message, 'Kernel method failed internally.')
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0]?.method, 'session.snapshot')
+  assert.match(String(errors[0]?.error), /invalid result at: messages\.0/)
+})
+
 test('a pending handler does not block later requests on the same connection', async () => {
   const createResult = deferred<JsonValue>()
   const transport = new MemoryTransport()
   const core = makeCore({
     'session.create': () => createResult.promise,
-    'session.snapshot': (_params, _context, frame) => ({
-      sessionId: frame.sessionId ?? 'missing'
-    })
+    'session.snapshot': (_params, _context, frame) => snapshotResult(frame.sessionId ?? 'missing')
   })
   core.attachTransport(transport, { trusted: true })
   const generation = generationFrom(await hello(transport))
 
-  transport.receive(request('slow-create', 'session.create', generation, {}))
+  transport.receive(request('slow-create', 'session.create', generation, createParams))
   transport.receive(
     request('fast-snapshot', 'session.snapshot', generation, {}, { sessionId: 'session-1' })
   )
@@ -329,7 +377,7 @@ test('a pending handler does not block later requests on the same connection', a
     (frame) => frame.kind === 'response' && frame.id === 'fast-snapshot'
   )
   assert.equal(snapshot.kind, 'response')
-  assert.deepEqual(responseResult(snapshot), { sessionId: 'session-1' })
+  assert.deepEqual(responseResult(snapshot), snapshotResult('session-1'))
   assert.equal(
     transport.sent
       .map(decode)
@@ -353,14 +401,13 @@ test('a handler can await a host response delivered on the same connection', asy
       const result = await core.requestHost('desktop.snapshot', { sessionId: 'session-1' })
       assert.equal(typeof result, 'object')
       assert.ok(result !== null && !Array.isArray(result))
-      return { sessionId: (result as Record<string, JsonValue>).sessionId }
+      return snapshotResult(String((result as Record<string, JsonValue>).sessionId))
     }
   })
-  core.attachTransport(transport, {
-    trusted: true,
-    hostCapabilities: ['desktop.snapshot']
-  })
-  const generation = generationFrom(await hello(transport))
+  core.attachTransport(transport, { trusted: true })
+  const generation = generationFrom(
+    await hello(transport, { hostCapabilities: ['desktop.snapshot'] })
+  )
 
   transport.receive(
     request('snapshot-via-host', 'session.snapshot', generation, {}, { sessionId: 'session-1' })
@@ -382,15 +429,13 @@ test('a handler can await a host response delivered on the same connection', asy
     (frame) => frame.kind === 'response' && frame.id === 'snapshot-via-host'
   )
   assert.equal(response.kind, 'response')
-  assert.deepEqual(responseResult(response), { sessionId: 'session-from-host' })
+  assert.deepEqual(responseResult(response), snapshotResult('session-from-host'))
 })
 
 test('back-to-back hello and business frames observe the negotiated generation in order', async () => {
   const transport = new MemoryTransport()
   const core = makeCore({
-    'session.snapshot': (_params, _context, frame) => ({
-      sessionId: frame.sessionId ?? 'missing'
-    })
+    'session.snapshot': (_params, _context, frame) => snapshotResult(frame.sessionId ?? 'missing')
   })
   core.attachTransport(transport, { trusted: true })
 
@@ -415,7 +460,7 @@ test('back-to-back hello and business frames observe the negotiated generation i
   assert.equal(greeting.kind, 'response')
   assert.equal(snapshot.kind, 'response')
   assert.equal(greeting.ok, true)
-  assert.deepEqual(responseResult(snapshot), { sessionId: 'session-1' })
+  assert.deepEqual(responseResult(snapshot), snapshotResult('session-1'))
 })
 
 test('event sequence and bounded replay are ordered without re-executing a handler', async () => {
@@ -581,20 +626,23 @@ test('missing kernel and host capabilities fail explicitly', async () => {
 test('registered host requests correlate responses without trusting unknown response ids', async () => {
   const transport = new MemoryTransport()
   const core = makeCore()
-  core.attachTransport(transport, {
-    trusted: true,
-    hostCapabilities: ['desktop.confirm']
-  })
-  await hello(transport)
+  core.attachTransport(transport, { trusted: true })
+  await hello(transport, { hostCapabilities: ['desktop.confirm'] })
 
   const after = transport.sent.length
-  const resultPromise = core.requestHost('desktop.confirm', { title: 'Continue?' })
+  const resultPromise = core.requestHost(
+    'desktop.confirm',
+    { title: 'Continue?' },
+    { sessionId: 'session-1', agentRunId: 'run-1' }
+  )
   const outbound = await waitFor(
     transport,
     (frame) => frame.kind === 'host.request' && frame.capability === 'desktop.confirm',
     after
   )
   assert.equal(outbound.kind, 'host.request')
+  assert.equal(outbound.sessionId, 'session-1')
+  assert.equal(outbound.agentRunId, 'run-1')
   transport.receive({
     kind: 'host.response',
     id: outbound.id,
@@ -611,11 +659,10 @@ test('takeover invalidates pending host requests from the previous controller', 
   const core = makeCore({}, { warnings })
   core.attachTransport(first, {
     trusted: true,
-    connectionId: 'first-host',
-    hostCapabilities: ['desktop.confirm']
+    connectionId: 'first-host'
   })
   core.attachTransport(second, { trusted: true, connectionId: 'second-host' })
-  await hello(first)
+  await hello(first, { hostCapabilities: ['desktop.confirm'] })
 
   const resultPromise = core.requestHost('desktop.confirm', { title: 'Continue?' })
   const outbound = await waitFor(
@@ -624,11 +671,15 @@ test('takeover invalidates pending host requests from the previous controller', 
   )
   assert.equal(outbound.kind, 'host.request')
   const rejected = assert.rejects(resultPromise, (error: ProtocolError) => {
-    assert.equal(error.code, 'CAPABILITY_UNAVAILABLE')
+    assert.equal(error.code, 'STALE_GENERATION')
     return true
   })
   await hello(second, { takeover: true })
   await rejected
+  await assert.rejects(core.requestHost('desktop.confirm', {}), (error: ProtocolError) => {
+    assert.equal(error.code, 'CAPABILITY_UNAVAILABLE')
+    return true
+  })
   first.receive({ kind: 'host.response', id: outbound.id, ok: true, result: true })
   await new Promise<void>((resolve) => setImmediate(resolve))
   assert.deepEqual(warnings, ['Ignored host response with an unknown id.'])
@@ -648,10 +699,17 @@ test('same-connection re-negotiation invalidates pending host requests from its 
   )
   core.attachTransport(transport, {
     trusted: true,
-    connectionId: 'same-connection',
-    hostCapabilities: ['desktop.confirm']
+    connectionId: 'same-connection'
   })
-  assert.equal(generationFrom(await hello(transport, { id: 'hello-1' })), 1)
+  assert.equal(
+    generationFrom(
+      await hello(transport, {
+        id: 'hello-1',
+        hostCapabilities: ['desktop.confirm']
+      })
+    ),
+    1
+  )
 
   const resultPromise = core.requestHost('desktop.confirm', { title: 'Continue?' })
   const outbound = await waitFor(
@@ -661,7 +719,7 @@ test('same-connection re-negotiation invalidates pending host requests from its 
   assert.equal(outbound.kind, 'host.request')
 
   const rejected = assert.rejects(resultPromise, (error: ProtocolError) => {
-    assert.equal(error.code, 'CAPABILITY_UNAVAILABLE')
+    assert.equal(error.code, 'STALE_GENERATION')
     return true
   })
   assert.equal(generationFrom(await hello(transport, { id: 'hello-2' })), 2)

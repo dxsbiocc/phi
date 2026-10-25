@@ -19,6 +19,7 @@ import type {
   FrameTransport,
   KernelBusinessMethod,
   KernelCallContext,
+  KernelHostRequestContext,
   KernelMethodHandler,
   KernelMethodHandlers,
   KernelProtocolLogger,
@@ -33,7 +34,7 @@ interface ConnectionState {
   readonly id: string
   readonly transport: FrameTransport
   readonly trusted: boolean
-  readonly hostCapabilities: ReadonlySet<string>
+  hostCapabilities: ReadonlySet<string>
   readonly requestIds: Set<string>
   generation?: number
   negotiated: boolean
@@ -91,7 +92,7 @@ export class KernelProtocolCore {
       id: connectionId,
       transport,
       trusted: options.trusted,
-      hostCapabilities: new Set(options.hostCapabilities ?? []),
+      hostCapabilities: new Set(),
       requestIds: new Set(),
       negotiated: false,
       closed: false
@@ -161,7 +162,11 @@ export class KernelProtocolCore {
     if (sessionId && this.activeRuns.get(sessionId) === runId) this.activeRuns.delete(sessionId)
   }
 
-  requestHost(capability: string, params: JsonValue): Promise<JsonValue> {
+  requestHost(
+    capability: string,
+    params: JsonValue,
+    context: KernelHostRequestContext = {}
+  ): Promise<JsonValue> {
     const controller = this.controller
     if (!controller || !controller.hostCapabilities.has(capability)) {
       return Promise.reject(
@@ -173,7 +178,7 @@ export class KernelProtocolCore {
     }
 
     const id = `host-${this.kernelInstanceId}-${++this.hostRequestCounter}`
-    const frame: HostRequestFrame = { kind: 'host.request', id, capability, params }
+    const frame: HostRequestFrame = { kind: 'host.request', id, capability, params, ...context }
     const generation = controller.generation
     if (generation === undefined || generation !== this.controllerGeneration) {
       return Promise.reject(
@@ -294,7 +299,12 @@ export class KernelProtocolCore {
     try {
       const result = await handler(request.params, this.contextFor(state), request)
       const parsedResult = kernelMethodResultSchemas[method].safeParse(result)
-      if (!parsedResult.success) throw new TypeError('Kernel method returned an invalid result')
+      if (!parsedResult.success) {
+        const paths = parsedResult.error.issues
+          .slice(0, 5)
+          .map((issue) => issue.path.join('.') || '<root>')
+        throw new TypeError(`Kernel method returned an invalid result at: ${paths.join(', ')}`)
+      }
       this.sendSuccess(state, request.id, parsedResult.data as JsonValue)
     } catch (error) {
       this.handleHandlerFailure(state, request, error)
@@ -304,6 +314,7 @@ export class KernelProtocolCore {
   private handleHello(state: ConnectionState, request: KernelRequestFrame): void {
     const params = request.params as {
       protocol: { major: number; minor: number }
+      hostCapabilities?: string[]
       takeover?: boolean
     }
     if (params.protocol.major !== PHI_KERNEL_PROTOCOL_VERSION.major) {
@@ -332,9 +343,10 @@ export class KernelProtocolCore {
     this.controllerGeneration += 1
     state.negotiated = true
     state.generation = this.controllerGeneration
+    state.hostCapabilities = new Set(params.hostCapabilities ?? [])
     this.controller = state
     if (previous) {
-      this.rejectPendingHostRequests(previous)
+      this.rejectPendingHostRequests(previous, 'STALE_GENERATION')
       if (previousGeneration !== undefined) {
         this.notifyControllerGenerationDetached(previousGeneration)
       }
@@ -430,7 +442,8 @@ export class KernelProtocolCore {
       void Promise.resolve(result.completion).then(
         (completion) => {
           const status = typeof completion === 'string' ? completion : completion.status
-          this.completeRun(sessionId, result.runId, status)
+          const detail = typeof completion === 'string' ? undefined : completion.detail
+          this.completeRun(sessionId, result.runId, status, detail)
         },
         () => {
           this.log.error?.('Accepted session run failed.', {
@@ -446,12 +459,21 @@ export class KernelProtocolCore {
     }
   }
 
-  private completeRun(sessionId: string, runId: string, status: RunCompletionStatus): void {
-    if (!runCompletedPayloadSchema.safeParse({ runId, status }).success) {
+  private completeRun(
+    sessionId: string,
+    runId: string,
+    status: RunCompletionStatus,
+    detail?: string
+  ): void {
+    const payload = { runId, status, ...(detail ? { detail } : {}) }
+    if (!runCompletedPayloadSchema.safeParse(payload).success) {
       this.log.error?.('Ignored invalid session run completion.', { sessionId, runId })
       status = 'unknown'
     }
-    this.emitEvent('run.completed', { runId, status }, { sessionId, runId })
+    this.emitEvent('run.completed', status === 'unknown' ? { runId, status } : payload, {
+      sessionId,
+      runId
+    })
   }
 
   private isSessionPromptRun(value: unknown): value is SessionPromptRun {
@@ -479,7 +501,8 @@ export class KernelProtocolCore {
     this.log.error?.('Kernel method handler failed.', {
       connectionId: state.id,
       method: request.method,
-      requestId: request.id
+      requestId: request.id,
+      error: (error instanceof Error ? error.message : String(error)).slice(0, 1024)
     })
     this.sendError(
       state,
@@ -529,11 +552,21 @@ export class KernelProtocolCore {
     }
   }
 
-  private rejectPendingHostRequests(state: ConnectionState): void {
+  private rejectPendingHostRequests(
+    state: ConnectionState,
+    code: 'CAPABILITY_UNAVAILABLE' | 'STALE_GENERATION' = 'CAPABILITY_UNAVAILABLE'
+  ): void {
     for (const [id, pending] of this.pendingHostRequests) {
       if (pending.connection !== state) continue
       this.pendingHostRequests.delete(id)
-      pending.reject(makeProtocolError('CAPABILITY_UNAVAILABLE', 'Host connection was detached.'))
+      pending.reject(
+        makeProtocolError(
+          code,
+          code === 'STALE_GENERATION'
+            ? 'Host request belongs to an inactive controller generation.'
+            : 'Host connection was detached.'
+        )
+      )
     }
   }
 

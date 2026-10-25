@@ -21,11 +21,16 @@ export interface KernelCallContext {
   trusted: boolean
 }
 
+export interface KernelHostRequestContext {
+  sessionId?: string
+  agentRunId?: string
+}
+
 export type RunCompletionStatus = RunCompletedPayload['status']
 
 export interface SessionPromptRun {
   runId: string
-  completion: PromiseLike<RunCompletionStatus | { status: RunCompletionStatus }>
+  completion: PromiseLike<RunCompletionStatus | { status: RunCompletionStatus; detail?: string }>
 }
 
 export type KernelMethodHandler = (
@@ -58,6 +63,4 @@ export interface KernelProtocolOptions {
 export interface AttachTransportOptions {
   trusted: boolean
   connectionId?: string
-  /** Trusted entry metadata; K1-1's stdio entry intentionally registers none. */
-  hostCapabilities?: readonly string[]
 }

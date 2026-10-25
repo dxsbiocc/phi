@@ -25,7 +25,7 @@ import { createInProcessExtensionHost, phiExtensionAgents } from './extension-ho
 import { requestHost, sendEvent } from './ipc'
 import { assertInProcessLocalProject } from './local-project-boundary'
 import { disconnectLeasedMcpManager, leasedProfileMcpManager } from './mcp-profile'
-import { syncFeaturedApiKeysForSession } from './mcp-runtime'
+import { loadWorkerMcpRuntime } from './worker-subsystems'
 import { getContext, modelBySelector, runtimeThinkingLevel } from './runtime-context'
 import { createAgentSession, makeSessionManager } from './session-factory'
 import { autoCompactionOverrides, enterSessionPlanMode } from './session-runtime'
@@ -178,7 +178,10 @@ export async function createSession(params: unknown): Promise<unknown> {
       })
     }
 
-    if (!noTools) await syncFeaturedApiKeysForSession(result, agentDir)
+    if (!noTools) {
+      const { syncFeaturedApiKeysForSession } = await loadWorkerMcpRuntime()
+      await syncFeaturedApiKeysForSession(result, agentDir)
+    }
 
     installBrowserTextPreDispatchRedaction(result.session, browserTextVault)
 

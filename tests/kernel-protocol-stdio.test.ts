@@ -113,7 +113,9 @@ test('the protocol core runs unchanged over the stdio transport adapter', async 
     kernelInstanceId: 'stdio-contract-kernel',
     handlers: {
       'session.snapshot': (_params, _context, frame) => ({
-        sessionId: frame.sessionId ?? 'missing'
+        sessionId: frame.sessionId ?? 'missing',
+        messages: [],
+        cwd: '/tmp/stdio-contract'
       })
     }
   })
@@ -127,15 +129,20 @@ test('the protocol core runs unchanged over the stdio transport adapter', async 
 
   input.write(encodeFrame(request('snapshot', 'session.snapshot', 1, {}, 'session-over-stdio')))
   const snapshot = decodedResponse(await reader.next(), 'snapshot')
-  assert.deepEqual(resultRecord(snapshot), { sessionId: 'session-over-stdio' })
+  assert.deepEqual(resultRecord(snapshot), {
+    sessionId: 'session-over-stdio',
+    messages: [],
+    cwd: '/tmp/stdio-contract'
+  })
 
   input.end()
   output.destroy()
 })
 
-test('the headless Bun entry negotiates, exposes no business capabilities, and exits on EOF', async () => {
+test('the headless Bun entry negotiates, exposes worker capabilities, and exits on EOF', async () => {
   const child = spawn('bun', ['src/kernel/main.ts'], {
     cwd: repoRoot,
+    env: { ...process.env, PI_CODING_AGENT_DIR: repoRoot },
     stdio: ['pipe', 'pipe', 'pipe']
   })
   const reader = createLineReader(child.stdout)
@@ -150,27 +157,18 @@ test('the headless Bun entry negotiates, exposes no business capabilities, and e
     const greeting = decodedResponse(await reader.next(), 'entry-hello')
     const greetingResult = resultRecord(greeting)
     assert.deepEqual(greetingResult.protocol, PHI_KERNEL_PROTOCOL_VERSION)
-    assert.deepEqual(greetingResult.capabilities, [])
+    assert.deepEqual(greetingResult.capabilities, [
+      'session.create',
+      'session.prompt',
+      'session.abort',
+      'session.snapshot',
+      'session.close',
+      'events.subscribe',
+      'approval.respond'
+    ])
     assert.equal(greetingResult.controllerGeneration, 1)
     assert.equal(greetingResult.lastSeq, 0)
     assert.deepEqual(greetingResult.kernel, { version: '0.1.0', ompVersion: '18.10.3' })
-
-    const unavailableMethods: Array<[string, JsonValue]> = [
-      ['session.create', {}],
-      ['session.prompt', { text: 'hello' }],
-      ['session.abort', {}],
-      ['session.snapshot', {}],
-      ['session.close', {}],
-      ['events.subscribe', { afterSeq: 0 }],
-      ['approval.respond', { approvalId: 'approval-1', decision: 'denied' }]
-    ]
-    for (const [index, [method, params]] of unavailableMethods.entries()) {
-      const id = `entry-unavailable-${index}`
-      child.stdin.write(encodeFrame(request(id, method, 1, params, 'session-1')))
-      const response = decodedResponse(await reader.next(), id)
-      assert.equal(response.ok, false)
-      assert.equal(response.error.code, 'CAPABILITY_UNAVAILABLE')
-    }
 
     const exitStarted = Date.now()
     child.stdin.end()

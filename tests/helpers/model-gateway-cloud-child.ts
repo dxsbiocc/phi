@@ -53,8 +53,10 @@ const { ModelRegistry } = await import('@oh-my-pi/pi-coding-agent')
 const { createPhiAuth } = await import('../../src/main/agent/engine/in-process/auth')
 const { ModelGatewayManager } = await import('../../src/main/agent/engine/in-process/model-gateway')
 const { modelBySelector } = await import('../../src/main/agent/engine/in-process/runtime-context')
-const { isHostResponse, handleHostResponse } =
+const { isHostResponse, handleHostResponse, setWorkerOutbound, createStdoutWorkerOutbound } =
   await import('../../src/main/agent/engine/in-process/ipc')
+// This child stands in for the worker entry, so it installs the same stdout outbound.
+setWorkerOutbound(createStdoutWorkerOutbound())
 const model = (
   id: string
 ): Pick<Model<Api>, 'id' | 'name' | 'reasoning' | 'input' | 'cost'> & {

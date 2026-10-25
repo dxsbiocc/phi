@@ -12,6 +12,7 @@ type BoundaryFailure = {
   specifier: string
   rule: string
   message: string
+  chain?: string[]
 }
 
 function withFixture(run: (repoRoot: string) => void): void {
@@ -170,6 +171,133 @@ test('kernel boundary checker recognizes every supported module-reference syntax
         'electron',
         'react'
       ]
+    )
+  })
+})
+
+test('kernel boundary follows transitive relative imports and reports the full chain', () => {
+  withFixture((repoRoot) => {
+    writeFixture(repoRoot, 'src/kernel/main.ts', "import './worker'\n")
+    writeFixture(repoRoot, 'src/kernel/worker.ts', "import '../main/agent/desktop-bridge'\n")
+    writeFixture(repoRoot, 'src/main/agent/desktop-bridge.ts', "import 'electron'\n")
+
+    assert.deepEqual(failuresFor(repoRoot), [
+      {
+        file: 'src/main/agent/desktop-bridge.ts',
+        specifier: 'electron',
+        rule: 'kernel-electron-import-forbidden',
+        message:
+          'Kernel code may not depend on Electron, React, renderer, preload, or main-process IPC.',
+        chain: [
+          'src/kernel/main.ts',
+          'src/kernel/worker.ts',
+          'src/main/agent/desktop-bridge.ts',
+          'electron'
+        ]
+      }
+    ])
+  })
+})
+
+test('kernel boundary resolves dynamic directory imports through index.ts', () => {
+  withFixture((repoRoot) => {
+    writeFixture(repoRoot, 'src/kernel/main.ts', "void import('./adapters')\n")
+    writeFixture(
+      repoRoot,
+      'src/kernel/adapters/index.ts',
+      "void import('../../main/react-bridge')\n"
+    )
+    writeFixture(repoRoot, 'src/main/react-bridge.ts', "import 'react/jsx-runtime'\n")
+
+    assert.deepEqual(failuresFor(repoRoot), [
+      {
+        file: 'src/main/react-bridge.ts',
+        specifier: 'react/jsx-runtime',
+        rule: 'kernel-react-import-forbidden',
+        message:
+          'Kernel code may not depend on Electron, React, renderer, preload, or main-process IPC.',
+        chain: [
+          'src/kernel/main.ts',
+          'src/kernel/adapters/index.ts',
+          'src/main/react-bridge.ts',
+          'react/jsx-runtime'
+        ]
+      }
+    ])
+  })
+})
+
+test('kernel boundary rejects a transitive dependency on the main-process entry', () => {
+  withFixture((repoRoot) => {
+    writeFixture(repoRoot, 'src/kernel/main.ts', "import './adapter.ts'\n")
+    writeFixture(repoRoot, 'src/kernel/adapter.ts', "import '../main'\n")
+    writeFixture(repoRoot, 'src/main/index.ts', 'export {}\n')
+
+    assert.deepEqual(failuresFor(repoRoot), [
+      {
+        file: 'src/kernel/adapter.ts',
+        specifier: '../main',
+        rule: 'kernel-main-index-import-forbidden',
+        message:
+          'Kernel code may not depend on Electron, React, renderer, preload, or main-process IPC.',
+        chain: ['src/kernel/main.ts', 'src/kernel/adapter.ts', 'src/main/index.ts']
+      }
+    ])
+  })
+})
+
+test('kernel boundary ignores transitive type-only edges because they are erased at run time', () => {
+  withFixture((repoRoot) => {
+    writeFixture(
+      repoRoot,
+      'src/kernel/main.ts',
+      ["import './a'", "import './b'", "import './c'", "import './d'", ''].join('\n')
+    )
+    writeFixture(repoRoot, 'src/kernel/a.ts', "import type { T } from '../main/electron-types'\n")
+    writeFixture(
+      repoRoot,
+      'src/kernel/b.ts',
+      "import { type T, type U } from '../main/electron-types'\n"
+    )
+    writeFixture(repoRoot, 'src/kernel/c.ts', "export type { T } from '../main/electron-types'\n")
+    writeFixture(
+      repoRoot,
+      'src/kernel/d.ts',
+      "export type W = import('../main/electron-types').T\n"
+    )
+    writeFixture(
+      repoRoot,
+      'src/main/electron-types.ts',
+      "import { BrowserWindow } from 'electron'\nexport type T = BrowserWindow\nexport type U = T\n"
+    )
+
+    assert.deepEqual(failuresFor(repoRoot), [])
+  })
+})
+
+test('kernel boundary follows an import that keeps any value binding', () => {
+  withFixture((repoRoot) => {
+    writeFixture(repoRoot, 'src/kernel/main.ts', "import { type T, value } from '../main/mixed'\n")
+    writeFixture(
+      repoRoot,
+      'src/main/mixed.ts',
+      "import 'electron'\nexport type T = string\nexport const value = 1\n"
+    )
+
+    assert.deepEqual(
+      failuresFor(repoRoot).map((item) => item.chain),
+      [['src/kernel/main.ts', 'src/main/mixed.ts', 'electron']]
+    )
+  })
+})
+
+test('kernel code may not import Electron even for types', () => {
+  withFixture((repoRoot) => {
+    writeFixture(repoRoot, 'src/kernel/main.ts', "import type { App } from 'electron'\n")
+
+    assert.deepEqual(
+      failuresFor(repoRoot).map((item) => [item.file, item.rule]),
+      [['src/kernel/main.ts', 'kernel-electron-import-forbidden']]
     )
   })
 })

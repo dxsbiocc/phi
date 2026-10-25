@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import type { KernelV1Method } from './constants'
+import { jsonValueSchema } from './json'
 
 export const protocolVersionSchema = z
   .object({
@@ -12,6 +13,20 @@ export const protocolVersionSchema = z
 export type ProtocolVersion = z.infer<typeof protocolVersionSchema>
 
 const nonEmptyIdSchema = z.string().min(1)
+const thinkingLevelSchema = z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+const modelSelectorSchema = z
+  .object({
+    provider: z.string().min(1),
+    id: z.string().min(1)
+  })
+  .strict()
+const imageSchema = z
+  .object({
+    type: z.literal('image'),
+    data: z.string(),
+    mimeType: z.string().min(1)
+  })
+  .strict()
 
 export const kernelHelloParamsSchema = z
   .object({
@@ -22,6 +37,7 @@ export const kernelHelloParamsSchema = z
         version: z.string().min(1)
       })
       .strict(),
+    hostCapabilities: z.array(z.string().min(1)).optional(),
     takeover: z.boolean().optional()
   })
   .strict()
@@ -42,12 +58,44 @@ export const kernelHelloResultSchema = z
   })
   .strict()
 
-/** K1-2 extends creation inputs here without copying the legacy worker's full create object. */
-export const sessionCreateParamsSchema = z.object({}).strict()
+export const sessionCreateParamsSchema = z
+  .object({
+    cwd: z.string().min(1),
+    model: modelSelectorSchema,
+    thinkingLevel: thinkingLevelSchema.optional(),
+    sessionManager: z
+      .object({
+        kind: z.enum(['memory', 'persistent'])
+      })
+      .strict(),
+    enableToolApproval: z.boolean().optional(),
+    autoCompaction: z
+      .object({
+        enabled: z.boolean()
+      })
+      .strict()
+      .optional(),
+    resourceOptions: z
+      .object({
+        noExtensions: z.boolean(),
+        noSkills: z.boolean(),
+        noContextFiles: z.boolean(),
+        noPromptTemplates: z.boolean(),
+        noThemes: z.boolean()
+      })
+      .strict()
+      .optional(),
+    noTools: z.union([z.literal('all'), z.boolean()]).optional()
+  })
+  .strict()
 export const sessionCreateResultSchema = z.object({ sessionId: nonEmptyIdSchema }).strict()
 
-/** K1-2 adds trusted prompt options here; identity remains outside serialized params. */
-export const sessionPromptParamsSchema = z.object({ text: z.string() }).strict()
+export const sessionPromptParamsSchema = z
+  .object({
+    text: z.string(),
+    images: z.array(imageSchema).optional()
+  })
+  .strict()
 export const sessionPromptResultSchema = z
   .object({ accepted: z.literal(true), runId: nonEmptyIdSchema })
   .strict()
@@ -56,10 +104,16 @@ export const sessionPromptResultSchema = z
 export const sessionAbortParamsSchema = z.object({}).strict()
 export const sessionAbortResultSchema = z.object({ cancelled: z.literal(true) }).strict()
 
-/** K1-2 extends snapshots with serializable session state, never live SDK objects. */
 export const sessionSnapshotParamsSchema = z.object({}).strict()
 export const sessionSnapshotResultSchema = z
-  .object({ sessionId: nonEmptyIdSchema, activeRunId: nonEmptyIdSchema.optional() })
+  .object({
+    sessionId: nonEmptyIdSchema,
+    messages: z.array(jsonValueSchema),
+    model: modelSelectorSchema.optional(),
+    thinkingLevel: thinkingLevelSchema.optional(),
+    cwd: z.string().min(1),
+    activeRunId: nonEmptyIdSchema.optional()
+  })
   .strict()
 
 export const sessionCloseParamsSchema = z.object({}).strict()
@@ -84,7 +138,18 @@ export const approvalRespondResultSchema = z.object({ accepted: z.literal(true) 
 export const runCompletedPayloadSchema = z
   .object({
     runId: nonEmptyIdSchema,
-    status: z.enum(['completed', 'failed', 'cancelled', 'unknown'])
+    status: z.enum(['completed', 'failed', 'cancelled', 'unknown']),
+    detail: z.string().optional()
+  })
+  .strict()
+
+export const approvalRequestedPayloadSchema = z
+  .object({
+    approvalId: nonEmptyIdSchema,
+    toolCallId: nonEmptyIdSchema,
+    toolName: z.string(),
+    input: jsonValueSchema,
+    agentRunId: nonEmptyIdSchema.optional()
   })
   .strict()
 
@@ -105,6 +170,7 @@ export type EventsSubscribeResult = z.infer<typeof eventsSubscribeResultSchema>
 export type ApprovalRespondParams = z.infer<typeof approvalRespondParamsSchema>
 export type ApprovalRespondResult = z.infer<typeof approvalRespondResultSchema>
 export type RunCompletedPayload = z.infer<typeof runCompletedPayloadSchema>
+export type ApprovalRequestedPayload = z.infer<typeof approvalRequestedPayloadSchema>
 
 export const kernelMethodParamsSchemas = {
   'kernel.hello': kernelHelloParamsSchema,

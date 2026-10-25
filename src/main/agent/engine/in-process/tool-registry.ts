@@ -4,7 +4,6 @@ import { mainSkillEnablementOptions } from '../main-skill-enablement'
 import { buildProjectDownloadTool } from '../../download/project-download-tool'
 import { buildPresentFilesTool } from '../../deliverables/present-tool'
 import { buildRenderBlocksTool } from '../../deliverables/render-blocks-tool'
-import { buildWorkerProjectLearnTool } from '../../memory/project-memory-worker'
 import { normalizeProjectMemorySettings } from '../../../../shared/projectMemoryTypes'
 import type { PresentedFile } from '../../../../shared/presentedFileTypes'
 import { buildLibraryCustomTools } from '../../library/library-tools'
@@ -32,7 +31,7 @@ import { resourceOptions } from './resources'
 import { mergeRemoteProjectSkills } from '../remote-project-skills'
 import { DefaultResourceLoader, SettingsManager } from './session-factory'
 import { sessions } from './state'
-import { applyConnectorEnabledForSession } from './mcp-runtime'
+import { loadWorkerDecisionRuntime, loadWorkerMcpRuntime } from './worker-subsystems'
 import {
   createCapabilityToolRegistrar,
   createLiveSkillSnapshot,
@@ -44,7 +43,6 @@ import { createPhiAgentSession } from './subagents'
 import { loadSkillScriptTools } from './tool-support'
 import { buildDecisionTool } from '../../decisions/tool'
 import { bindSessionDecisionEvaluator } from '../decision-evaluator'
-import { evaluateDecisionRequest } from './decision-runtime'
 import { subscribeToAgentRunNotices } from './agent-run-notices'
 import { buildSessionAgentDelegationTools, supportsDelegationTool } from './session-agent-tools'
 
@@ -154,7 +152,8 @@ export async function createSessionToolRegistry(deps: {
     agentDir,
     sessionId,
     currentModel: () => parentRef.current?.session.model,
-    evaluate: evaluateDecisionRequest
+    evaluate: async (...args) =>
+      (await loadWorkerDecisionRuntime()).evaluateDecisionRequest(...args)
   })
   const agentRunners = new Map<string, AgentRunFn>()
   const runnerFor = (definition: PhiAgentDefinition): AgentRunFn => {
@@ -210,6 +209,14 @@ export async function createSessionToolRegistry(deps: {
       allowTypeText: () => parentRef.current?.session.getPlanModeState()?.enabled !== true
     }
   )
+  const memoryTools =
+    memoryPolicy.learn && memoryTarget
+      ? [
+          (await import('../../memory/project-memory-worker')).buildWorkerProjectLearnTool(
+            memoryTarget
+          )
+        ]
+      : []
   const customTools = [
     buildDecisionTool(decide),
     ...agentTools,
@@ -219,7 +226,7 @@ export async function createSessionToolRegistry(deps: {
         requestHost('deliverables.present', request) as Promise<{ files: PresentedFile[] }>
     ),
     buildRenderBlocksTool(),
-    ...(memoryPolicy.learn && memoryTarget ? [buildWorkerProjectLearnTool(memoryTarget)] : []),
+    ...memoryTools,
     buildProjectDownloadTool(cwd, agentDir),
     ...notebookCustomTools,
     ...libraryCustomTools,
@@ -309,6 +316,7 @@ export async function createSessionToolRegistry(deps: {
             refreshConnector: async (name) => {
               const entry = sessions.get(sessionId)
               if (!entry || entry.disposing) throw new Error('当前任务已关闭，无法加载新连接器')
+              const { applyConnectorEnabledForSession } = await loadWorkerMcpRuntime()
               await applyConnectorEnabledForSession(entry, name)
             }
           },
