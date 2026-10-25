@@ -1,4 +1,5 @@
 export * from './paths'
+export * from './migration'
 export * from './persistence'
 export * from './repository'
 export * from './types'
