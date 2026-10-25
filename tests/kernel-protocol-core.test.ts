@@ -505,11 +505,17 @@ test('event sequence and bounded replay are ordered without re-executing a handl
   assert.deepEqual(responseError(gap).detail, { oldestSeq: 2 })
 })
 
-test('session.prompt acceptance precedes one terminal event and rejects concurrent prompts', async () => {
+test('session.prompt acceptance precedes one terminal event and preflights active-run duplicates', async () => {
   const completion = deferred<RunCompletionStatus>()
   let handlerCalls = 0
+  const preflightKeys: Array<string | undefined> = []
   const transport = new MemoryTransport()
   const core = makeCore({
+    promptConflict: (_sessionId, params) => {
+      const clientRunKey = (params as { clientRunKey?: string }).clientRunKey
+      preflightKeys.push(clientRunKey)
+      return clientRunKey === 'client-run-1' ? { runId: 'run-1', status: 'running' } : undefined
+    },
     'session.prompt': () => {
       handlerCalls += 1
       return { runId: 'run-1', completion: completion.promise }
@@ -520,7 +526,13 @@ test('session.prompt acceptance precedes one terminal event and rejects concurre
 
   const accepted = await sendRequest(
     transport,
-    request('prompt-1', 'session.prompt', generation, { text: 'hello' }, { sessionId: 'session-1' })
+    request(
+      'prompt-1',
+      'session.prompt',
+      generation,
+      { text: 'hello', clientRunKey: 'client-run-1' },
+      { sessionId: 'session-1' }
+    )
   )
   assert.deepEqual(responseResult(accepted), { accepted: true, runId: 'run-1' })
   assert.equal(
@@ -530,12 +542,44 @@ test('session.prompt acceptance precedes one terminal event and rejects concurre
     false
   )
 
+  const duplicate = await sendRequest(
+    transport,
+    request(
+      'prompt-duplicate',
+      'session.prompt',
+      generation,
+      { text: 'again', clientRunKey: 'client-run-1' },
+      { sessionId: 'session-1' }
+    )
+  )
+  assert.equal(responseError(duplicate).code, 'DUPLICATE_REQUEST')
+  assert.deepEqual(responseError(duplicate).detail, { runId: 'run-1', status: 'running' })
+
   const busy = await sendRequest(
     transport,
-    request('prompt-2', 'session.prompt', generation, { text: 'again' }, { sessionId: 'session-1' })
+    request(
+      'prompt-different',
+      'session.prompt',
+      generation,
+      { text: 'different', clientRunKey: 'client-run-2' },
+      { sessionId: 'session-1' }
+    )
   )
   assert.equal(responseError(busy).code, 'SESSION_BUSY')
+
+  const busyWithoutKey = await sendRequest(
+    transport,
+    request(
+      'prompt-without-key',
+      'session.prompt',
+      generation,
+      { text: 'without key' },
+      { sessionId: 'session-1' }
+    )
+  )
+  assert.equal(responseError(busyWithoutKey).code, 'SESSION_BUSY')
   assert.equal(handlerCalls, 1)
+  assert.deepEqual(preflightKeys, ['client-run-1', 'client-run-2', undefined])
 
   completion.resolve('completed')
   const terminal = await waitFor(

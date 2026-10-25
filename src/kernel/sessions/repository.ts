@@ -263,25 +263,32 @@ export class KernelSessionRepository {
     reason?: string
   ): Promise<void> {
     const state = session.runs.get(runId)
-    if (!state || state.terminal) return
-    const at = new Date().toISOString()
-    const receipt: TerminalRunReceipt = {
-      runId,
-      state: 'terminal',
-      status,
-      at,
-      ...(reason ? { reason } : {})
-    }
-    await this.queueReceipt(session, receipt)
-    state.terminal = receipt
-    session.manifest = {
-      ...session.manifest,
-      updatedAt: at,
-      lastRun: { runId, status }
-    }
-    // The fsynced receipt is authoritative. A later open repairs a manifest if
-    // the atomic summary publication is interrupted or temporarily unavailable.
-    await writeManifestAtomic(session.manifestPath, session.manifest).catch(() => undefined)
+    if (!state) return
+    const operation = session.receiptTail.then(async () => {
+      // Shutdown and ordinary prompt completion can race. Select exactly one
+      // authoritative terminal while holding the receipt tail serialization.
+      if (state.terminal) return
+      const at = new Date().toISOString()
+      const receipt: TerminalRunReceipt = {
+        runId,
+        state: 'terminal',
+        status,
+        at,
+        ...(reason ? { reason } : {})
+      }
+      await appendReceipt(session.receiptsPath, receipt)
+      state.terminal = receipt
+      session.manifest = {
+        ...session.manifest,
+        updatedAt: at,
+        lastRun: { runId, status }
+      }
+      // The fsynced receipt is authoritative. A later open repairs a manifest if
+      // the atomic summary publication is interrupted or temporarily unavailable.
+      await writeManifestAtomic(session.manifestPath, session.manifest).catch(() => undefined)
+    })
+    session.receiptTail = operation.catch(() => undefined)
+    await operation
   }
 
   private async recoverInterruptedRuns(session: PersistentSession): Promise<void> {
@@ -342,6 +349,25 @@ export class KernelSessionRepository {
     return { sessions }
   }
 
+  private async repairListManifest(
+    sessionId: string,
+    paths: ReturnType<typeof kernelSessionPaths>
+  ): Promise<SessionManifest> {
+    const receipts = await readReceipts(paths.receipts)
+    indexReceipts(receipts)
+    let manifest: SessionManifest
+    try {
+      manifest = await readManifest(paths.manifest, sessionId)
+    } catch {
+      manifest = await reconstructManifest({
+        sessionId,
+        journalPath: paths.journal,
+        receipts
+      })
+    }
+    return reconcileManifestReceipts(manifest, receipts)
+  }
+
   private async listOne(sessionId: string): Promise<SessionListEntry> {
     const loaded = this.loaded.get(sessionId)
     if (loaded) return summary(loaded, true)
@@ -362,19 +388,7 @@ export class KernelSessionRepository {
       if (needsRepair) {
         const lock = await this.acquireLock(sessionId, paths.lock)
         try {
-          const currentReceipts = await readReceipts(paths.receipts)
-          indexReceipts(currentReceipts)
-          let currentManifest: SessionManifest
-          try {
-            currentManifest = await readManifest(paths.manifest, sessionId)
-          } catch {
-            currentManifest = await reconstructManifest({
-              sessionId,
-              journalPath: paths.journal,
-              receipts: currentReceipts
-            })
-          }
-          manifest = reconcileManifestReceipts(currentManifest, currentReceipts)
+          manifest = await this.repairListManifest(sessionId, paths)
           await writeManifestAtomic(paths.manifest, manifest)
         } finally {
           await lock.release()

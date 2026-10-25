@@ -53,6 +53,12 @@ interface PendingHostRequest {
   reject(error: ProtocolError): void
 }
 
+type EventMetadata = {
+  duplicate: boolean
+  terminalRunId?: string
+  approvalId?: string
+}
+
 type ActiveRunState =
   | {
       readonly phase: 'accepting'
@@ -139,24 +145,8 @@ export class KernelProtocolCore {
     payload: JsonValue,
     routing: { sessionId?: string; runId?: string } = {}
   ): KernelEventFrame | undefined {
-    let terminalRunId: string | undefined
-    let approvalId: string | undefined
-    if (type === 'run.completed') {
-      const parsed = runCompletedPayloadSchema.safeParse(payload)
-      if (!parsed.success) {
-        throw new TypeError('run.completed payload is invalid')
-      }
-      if (this.terminalRuns.has(parsed.data.runId)) {
-        this.log.warn?.('Ignored duplicate terminal run event.', { runId: parsed.data.runId })
-        return undefined
-      }
-      terminalRunId = parsed.data.runId
-    }
-    if (type === KERNEL_EVENT_APPROVAL_REQUESTED) {
-      const approval = approvalRequestedPayloadSchema.safeParse(payload)
-      if (!approval.success) throw new TypeError('approval.requested payload is invalid')
-      approvalId = approval.data.approvalId
-    }
+    const { duplicate, terminalRunId, approvalId } = this.eventMetadata(type, payload)
+    if (duplicate) return undefined
 
     const event: KernelEventFrame = {
       kind: 'event',
@@ -178,6 +168,28 @@ export class KernelProtocolCore {
       this.sendEncoded(controller, encoded)
     }
     return event
+  }
+
+  private eventMetadata(type: string, payload: JsonValue): EventMetadata {
+    let terminalRunId: string | undefined
+    let approvalId: string | undefined
+    if (type === 'run.completed') {
+      const parsed = runCompletedPayloadSchema.safeParse(payload)
+      if (!parsed.success) {
+        throw new TypeError('run.completed payload is invalid')
+      }
+      if (this.terminalRuns.has(parsed.data.runId)) {
+        this.log.warn?.('Ignored duplicate terminal run event.', { runId: parsed.data.runId })
+        return { duplicate: true }
+      }
+      terminalRunId = parsed.data.runId
+    }
+    if (type === KERNEL_EVENT_APPROVAL_REQUESTED) {
+      const approval = approvalRequestedPayloadSchema.safeParse(payload)
+      if (!approval.success) throw new TypeError('approval.requested payload is invalid')
+      approvalId = approval.data.approvalId
+    }
+    return { duplicate: false, terminalRunId, approvalId }
   }
 
   private recordTerminalRun(runId: string, sessionId: string | undefined): void {
@@ -442,7 +454,7 @@ export class KernelProtocolCore {
 
     const previous = this.controller
     const previousGeneration = previous?.generation
-    if (previous && previous !== state && (!params.takeover || !state.trusted)) {
+    if (this.controllerReplacementDenied(previous, state, params.takeover)) {
       this.sendError(
         state,
         request.id,
@@ -497,6 +509,14 @@ export class KernelProtocolCore {
     this.notifyControllerGenerationAttached(this.controllerGeneration)
   }
 
+  private controllerReplacementDenied(
+    previous: ConnectionState | undefined,
+    next: ConnectionState,
+    takeover: boolean | undefined
+  ): boolean {
+    return previous !== undefined && previous !== next && (!takeover || !next.trusted)
+  }
+
   private handleSubscribe(state: ConnectionState, request: KernelRequestFrame): void {
     const { afterSeq } = request.params as { afterSeq: number }
     const oldestSeq = this.replay[0]?.seq ?? this.lastSeq + 1
@@ -542,14 +562,7 @@ export class KernelProtocolCore {
       )
       return
     }
-    if (this.activeRuns.has(sessionId)) {
-      this.sendError(
-        state,
-        request.id,
-        makeProtocolError('SESSION_BUSY', 'The session already has an active run.')
-      )
-      return
-    }
+    if (await this.handleActivePromptConflict(state, request, sessionId)) return
 
     let settlePendingRun!: () => void
     const settled = new Promise<void>((resolve) => {
@@ -606,6 +619,43 @@ export class KernelProtocolCore {
     } finally {
       pendingRun.settle()
     }
+  }
+
+  private async handleActivePromptConflict(
+    state: ConnectionState,
+    request: KernelRequestFrame,
+    sessionId: string
+  ): Promise<boolean> {
+    if (!this.activeRuns.has(sessionId)) return false
+    try {
+      const conflict = await this.handlers.promptConflict?.(
+        sessionId,
+        request.params,
+        this.contextFor(state),
+        request
+      )
+      if (conflict) {
+        this.sendError(
+          state,
+          request.id,
+          makeProtocolError(
+            'DUPLICATE_REQUEST',
+            'The client run key was already accepted for this session.',
+            conflict
+          )
+        )
+        return true
+      }
+    } catch (error) {
+      this.handleHandlerFailure(state, request, error)
+      return true
+    }
+    this.sendError(
+      state,
+      request.id,
+      makeProtocolError('SESSION_BUSY', 'The session already has an active run.')
+    )
+    return true
   }
 
   private completeRun(

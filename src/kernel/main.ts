@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -35,30 +36,53 @@ function writeDiagnostic(level: string, message: string, details?: unknown): voi
   process.stderr.write(`${JSON.stringify({ level, message, ...(details ? { details } : {}) })}\n`)
 }
 
+function writeErrorDiagnostic(message: string, error: unknown): void {
+  writeDiagnostic('error', message, {
+    error: error instanceof Error ? error.message : String(error)
+  })
+}
+
 export function startKernelStdio(): void {
+  const kernelInstanceId = randomUUID()
   const transport = new StdioFrameTransport(process.stdin, process.stdout)
   const worker = createWorkerKernelAdapter({
-    agentDir: process.env.PI_CODING_AGENT_DIR ?? ''
+    agentDir: process.env.PI_CODING_AGENT_DIR ?? '',
+    kernelInstanceId
   })
   const core = new KernelProtocolCore({
     kernelVersion: readKernelVersion(),
     ompVersion: readOmpVersion(),
+    kernelInstanceId,
     handlers: worker.handlers,
     log: stderrLogger
   })
   const unbindWorker = worker.bind(core)
+  let workerUnbound = false
+  const ensureWorkerUnbound = (): void => {
+    if (workerUnbound) return
+    workerUnbound = true
+    unbindWorker()
+  }
   core.attachTransport(transport, { connectionId: 'stdio', trusted: true })
 
   let shutdownStarted = false
   transport.onClose(() => {
     if (shutdownStarted) return
     shutdownStarted = true
-    unbindWorker()
-    const timeout = setTimeout(() => process.exit(0), HOST_EXIT_CLEANUP_TIMEOUT_MS)
+    const timeout = setTimeout(() => {
+      ensureWorkerUnbound()
+      process.exit(0)
+    }, HOST_EXIT_CLEANUP_TIMEOUT_MS)
     timeout.unref()
-    Promise.resolve()
-      .catch(() => undefined)
+    void worker
+      .closeAll()
+      .catch((error: unknown) => {
+        writeDiagnostic('error', 'Kernel worker cleanup failed.', {
+          error: error instanceof Error ? error.message : String(error)
+        })
+      })
       .finally(() => {
+        ensureWorkerUnbound()
         clearTimeout(timeout)
         process.exit(0)
       })
@@ -70,14 +94,17 @@ export async function startKernelSocket(
   tokenFilePath: string,
   graceMs: number
 ): Promise<void> {
+  const kernelInstanceId = randomUUID()
   const worker = createWorkerKernelAdapter({
-    agentDir: process.env.PI_CODING_AGENT_DIR ?? ''
+    agentDir: process.env.PI_CODING_AGENT_DIR ?? '',
+    kernelInstanceId
   })
   const graceRef: { value?: KernelGracePeriod } = {}
   let shutdownStarted = false
   const core = new KernelProtocolCore({
     kernelVersion: readKernelVersion(),
     ompVersion: readOmpVersion(),
+    kernelInstanceId,
     handlers: worker.handlers,
     disconnectPolicy: 'wait-for-reconnect',
     controllerLifecycle: {
@@ -94,42 +121,51 @@ export async function startKernelSocket(
   const shutdownAfterGrace = async (): Promise<void> => {
     if (shutdownStarted) return
     shutdownStarted = true
-    const timeout = setTimeout(() => process.exit(0), HOST_EXIT_CLEANUP_TIMEOUT_MS)
+    const timeout = setTimeout(() => {
+      ensureWorkerUnbound()
+      process.exit(0)
+    }, HOST_EXIT_CLEANUP_TIMEOUT_MS)
     timeout.unref()
     try {
       try {
         await listener?.close({ removeToken: true })
       } catch (error) {
-        writeDiagnostic('error', 'Kernel socket cleanup failed.', {
-          error: error instanceof Error ? error.message : String(error)
-        })
+        writeErrorDiagnostic('Kernel socket cleanup failed.', error)
       }
       await core.expireDisconnectedState()
     } finally {
-      unbindWorker()
-      clearTimeout(timeout)
-      process.exit(0)
+      try {
+        await worker.closeAll()
+      } finally {
+        ensureWorkerUnbound()
+        clearTimeout(timeout)
+        process.exit(0)
+      }
     }
   }
   const grace = new KernelGracePeriod({
     graceMs,
     onExpire: shutdownAfterGrace,
     onError(error) {
-      writeDiagnostic('error', 'Kernel grace expiry failed.', {
-        error: error instanceof Error ? error.message : String(error)
-      })
+      writeErrorDiagnostic('Kernel grace expiry failed.', error)
       process.exit(1)
     }
   })
   graceRef.value = grace
 
   const unbindWorker = worker.bind(core)
+  let workerUnbound = false
+  const ensureWorkerUnbound = (): void => {
+    if (workerUnbound) return
+    workerUnbound = true
+    unbindWorker()
+  }
   const listener: KernelSocketListener = await listenOnKernelSocket({
     socketPath,
     tokenFilePath,
     onTransport: (transport) => core.attachTransport(transport, { trusted: true })
   }).catch((error: unknown) => {
-    unbindWorker()
+    ensureWorkerUnbound()
     throw error
   })
   grace.startDisconnected()

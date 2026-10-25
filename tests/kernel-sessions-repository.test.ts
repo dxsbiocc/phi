@@ -19,14 +19,27 @@ import type { SessionCreateParams } from '../src/shared/kernel-protocol'
 const {
   KernelSessionRepository,
   SessionWriterBusyError,
-  currentProcessStartedAt,
   kernelSessionPaths,
   readManifest,
   readReceipts,
   writeManifestAtomic
 } = await import('../src/kernel/sessions')
 
-const TEST_PROCESS_STARTED_AT = await currentProcessStartedAt()
+const heldGuardPaths = new Set<string>()
+
+function acquireTestGuard(path: string): { acquired: boolean; release(): void } {
+  const acquired = !heldGuardPaths.has(path)
+  if (acquired) heldGuardPaths.add(path)
+  let released = false
+  return {
+    acquired,
+    release() {
+      if (released) return
+      released = true
+      if (acquired) heldGuardPaths.delete(path)
+    }
+  }
+}
 
 type Fixture = {
   root: string
@@ -46,7 +59,7 @@ function makeRepository(
   agentDir: string,
   kernelInstanceId: string
 ): InstanceType<typeof KernelSessionRepository> {
-  return new KernelSessionRepository(agentDir, kernelInstanceId, undefined, TEST_PROCESS_STARTED_AT)
+  return new KernelSessionRepository(agentDir, kernelInstanceId, acquireTestGuard, 'test-process')
 }
 
 function persistentParams(cwd: string): SessionCreateParams {
@@ -150,6 +163,36 @@ test('terminal receipt and manifest are fsync-visible when finishRun resolves', 
     })
   } finally {
     await repository.close('terminal-session')
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('racing run finalizers append exactly one authoritative terminal receipt', async () => {
+  const { root, cwd, agentDir } = fixture()
+  const repository = makeRepository(agentDir, 'kernel-terminal-race')
+  try {
+    const session = await repository.create('terminal-race-session', persistentParams(cwd))
+    await repository.acceptRun(session, 'run-terminal-race', 'terminal-race-key')
+
+    await Promise.all([
+      repository.finishRun(session, 'run-terminal-race', 'completed'),
+      repository.finishRun(session, 'run-terminal-race', 'cancelled')
+    ])
+
+    const receipts = await readReceipts(session.receiptsPath)
+    assert.equal(receipts.length, 2)
+    assert.equal(
+      receipts.filter(
+        (receipt) => receipt.state === 'terminal' && receipt.runId === 'run-terminal-race'
+      ).length,
+      1
+    )
+    assert.deepEqual((await readManifest(session.manifestPath, 'terminal-race-session')).lastRun, {
+      runId: 'run-terminal-race',
+      status: receipts[1].state === 'terminal' ? receipts[1].status : undefined
+    })
+  } finally {
+    await repository.close('terminal-race-session')
     rmSync(root, { recursive: true, force: true })
   }
 })

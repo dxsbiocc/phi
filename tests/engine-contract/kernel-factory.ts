@@ -26,6 +26,7 @@ type RunCompletion = {
 
 export type KernelEngineFixture = BasicEngineFixture & {
   client: KernelProtocolClient
+  kernelInstanceId: string
   agentDir: string
   cwd: string
   model: RuntimeModel
@@ -53,6 +54,10 @@ export type KernelEngineFixture = BasicEngineFixture & {
       }
     }
   ): Promise<WorkerCreateSessionResult>
+}
+
+export type KernelFixtureOptions = {
+  testPause?: 'a' | 'c' | 'd1' | 'd2'
 }
 
 function record(value: JsonValue): Record<string, JsonValue> {
@@ -84,7 +89,9 @@ function stateFrom(value: JsonValue, fallbackModel: RuntimeModel | undefined): W
   }
 }
 
-export async function createKernelFixture(): Promise<KernelEngineFixture> {
+export async function createKernelFixture(
+  options: KernelFixtureOptions = {}
+): Promise<KernelEngineFixture> {
   const base = await createInProcessFixture()
   const root = dirname(base.agentDir)
   const diagnostics: string[] = []
@@ -104,13 +111,16 @@ export async function createKernelFixture(): Promise<KernelEngineFixture> {
       OMP_APP_NAME: 'Phi',
       NO_PROXY: '127.0.0.1,localhost',
       PHI_CONTRACT_HOST_SECRET: join(root, 'host-only-secret'),
-      PYTHONPATH: join(root, 'host-pythonpath')
+      PYTHONPATH: join(root, 'host-pythonpath'),
+      ...(options.testPause ? { PHI_KERNEL_TEST_PAUSE: options.testPause } : {})
     }
+    const peerEnv = { ...kernelEnv }
+    delete peerEnv.PHI_KERNEL_TEST_PAUSE
     const spawnPeer = async (): Promise<SpawnedKernelClient> => {
       const peer = spawnKernelStdio({
         cwd: resolve('.'),
         bunArgs: ['--preload', fileURLToPath(new URL('./network-guard.ts', import.meta.url))],
-        env: kernelEnv,
+        env: peerEnv,
         onDiagnostic: (text) => diagnostics.push(text)
       })
       try {
@@ -129,7 +139,7 @@ export async function createKernelFixture(): Promise<KernelEngineFixture> {
       onDiagnostic: (text) => diagnostics.push(text)
     })
     const client = spawned.client
-    await client.hello()
+    const greeting = await client.hello()
     await client.subscribe(0)
 
     const logicalToKernel = new Map<string, string>()
@@ -215,6 +225,7 @@ export async function createKernelFixture(): Promise<KernelEngineFixture> {
     let closing: Promise<void> | undefined
     return {
       client,
+      kernelInstanceId: greeting.kernelInstanceId,
       provider: base.provider,
       agentDir: base.agentDir,
       cwd: base.cwd,

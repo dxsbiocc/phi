@@ -235,6 +235,7 @@ test('worker adapter persists receipts, rejects durable duplicate keys, and rele
   })
   const adapter = createWorkerKernelAdapter({
     agentDir,
+    kernelInstanceId: 'kernel-instance-test',
     processStartedAt: 'darwin:test-process',
     acquireSessionLockGuard: acquireTestGuard,
     callWorker: async (method) => {
@@ -253,6 +254,10 @@ test('worker adapter persists receipts, rejects durable duplicate keys, and rele
       request('session.create')
     )) as { sessionId: string }
     const directory = join(agentDir, 'phi-kernel', 'sessions', created.sessionId)
+    assert.equal(
+      JSON.parse(readFileSync(join(directory, 'writer.lock'), 'utf8')).kernelInstanceId,
+      'kernel-instance-test'
+    )
     const started = (await handler(adapter.handlers, 'session.prompt')(
       { text: 'hello', clientRunKey: 'client-run-1' },
       context,
@@ -271,6 +276,25 @@ test('worker adapter persists receipts, rejects durable duplicate keys, and rele
         at: accepted[0].at
       }
     ])
+    assert.equal(typeof adapter.handlers.promptConflict, 'function')
+    assert.deepEqual(
+      await adapter.handlers.promptConflict?.(
+        created.sessionId,
+        { text: 'duplicate', clientRunKey: 'client-run-1' },
+        context,
+        request('session.prompt', created.sessionId)
+      ),
+      { runId: started.runId, status: 'running' }
+    )
+    assert.equal(
+      await adapter.handlers.promptConflict?.(
+        created.sessionId,
+        { text: 'different', clientRunKey: 'client-run-2' },
+        context,
+        request('session.prompt', created.sessionId)
+      ),
+      undefined
+    )
     await assert.rejects(
       async () =>
         handler(adapter.handlers, 'session.prompt')(
@@ -313,6 +337,49 @@ test('worker adapter persists receipts, rejects durable duplicate keys, and rele
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('worker adapter preserves lifecycle denial reasons without changing user denial wording', async () => {
+  const calls: Array<{ method: string; params: unknown }> = []
+  const adapter = createWorkerKernelAdapter({
+    agentDir: '/trusted/agent',
+    callWorker: async (method, params) => {
+      calls.push({ method, params })
+      return true
+    }
+  })
+
+  await handler(adapter.handlers, 'approval.respond')(
+    {
+      approvalId: 'approval-lifecycle',
+      decision: 'denied',
+      reason: 'client did not return'
+    },
+    context,
+    request('approval.respond')
+  )
+  await handler(adapter.handlers, 'approval.respond')(
+    { approvalId: 'approval-user', decision: 'denied' },
+    context,
+    request('approval.respond')
+  )
+
+  assert.deepEqual(calls, [
+    {
+      method: 'toolApproval.result',
+      params: {
+        requestId: 'approval-lifecycle',
+        result: { block: true, reason: 'client did not return' }
+      }
+    },
+    {
+      method: 'toolApproval.result',
+      params: {
+        requestId: 'approval-user',
+        result: { block: true, reason: 'User denied tool execution' }
+      }
+    }
+  ])
 })
 
 test('worker adapter recovers one UNKNOWN receipt and accepts a later run', async () => {

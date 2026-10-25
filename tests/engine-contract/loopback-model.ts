@@ -6,6 +6,8 @@ export type ModelReply = {
   /** Optional bounded SSE deltas for large RPC framing contracts; ordinary replies keep two chunks. */
   textChunkChars?: number
   tool?: { name: string; args: Record<string, unknown>; id?: string }
+  /** Test-only deterministic gate before the terminal SSE chunk. */
+  waitFor?: Promise<void>
   hold?: boolean
 }
 export type ModelRequest = { messages: Array<Record<string, unknown>>; [key: string]: unknown }
@@ -92,6 +94,7 @@ export async function startLoopbackModel(): Promise<{
           tool_calls: [{ index: 0, function: { arguments: JSON.stringify(reply.tool.args) } }]
         })
       }
+      await reply.waitFor
       if (reply.hold) return
       chunk({}, reply.tool ? 'tool_calls' : 'stop')
       response.write('data: [DONE]\n\n')

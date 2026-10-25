@@ -492,7 +492,12 @@ test('remote launcher negotiates over SSH stdio with explicit isolated env and c
   assert.equal(commands.length, 1)
   assert.match(commands[0], /^umask 077 && cd -- '\/srv\/phi test\/home' && exec env -i /)
   assert.ok(commands[0].includes("'/srv/phi-helper/0.4.0/phi-helper' attach"))
-  assert.ok(commands[0].includes("--kernel-version '0.1.0'"))
+  assert.ok(
+    commands[0].includes(
+      `--kernel-version '0.1.0+${launched.deployment.kernelSha256.slice(0, 12)}'`
+    ),
+    'socket identity includes the build hash so a redeploy never reuses an old kernel'
+  )
   assert.ok(commands[0].includes("--env 'HOME=/srv/phi test/home'"))
   assert.ok(commands[0].includes("--env 'PI_CODING_AGENT_DIR=/srv/phi test/agent'"))
   assert.ok(commands[0].includes("--env 'NO_PROXY=127.0.0.1,localhost'"))

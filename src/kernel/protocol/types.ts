@@ -39,9 +39,22 @@ export type KernelMethodHandler = (
   request: KernelRequestFrame
 ) => JsonValue | SessionPromptRun | Promise<JsonValue | SessionPromptRun>
 
+export type SessionPromptConflict = {
+  runId: string
+  status: 'running'
+}
+
+export type SessionPromptConflictHandler = (
+  sessionId: string,
+  params: JsonValue,
+  context: KernelCallContext,
+  request: KernelRequestFrame
+) => SessionPromptConflict | undefined | Promise<SessionPromptConflict | undefined>
+
 export type KernelBusinessMethod = Exclude<KernelV1Method, 'kernel.hello'>
 
 export type KernelMethodHandlers = Partial<Record<KernelBusinessMethod, KernelMethodHandler>> & {
+  promptConflict?: SessionPromptConflictHandler
   onControllerDetached?: (generation: number) => void | Promise<void>
 }
 

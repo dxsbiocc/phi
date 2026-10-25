@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test, { type TestContext } from 'node:test'
 
@@ -11,19 +11,146 @@ import {
 import type { JsonValue, KernelEventFrame } from '../src/shared/kernel-protocol'
 import { createKernelFixture, type KernelEngineFixture } from './engine-contract/kernel-factory'
 
+type A05PausePoint = 'a' | 'c' | 'd1' | 'd2'
+type DurableReceipt = {
+  runId: string
+  clientRunKey?: string
+  state: 'accepted' | 'terminal'
+  status?: 'completed' | 'failed' | 'cancelled' | 'unknown'
+}
+
 function record(value: JsonValue): Record<string, JsonValue> {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value))
   return value as Record<string, JsonValue>
 }
 
-async function fixtureOrSkip(t: TestContext): Promise<KernelEngineFixture | undefined> {
+async function fixtureOrSkip(
+  t: TestContext,
+  testPause?: A05PausePoint
+): Promise<KernelEngineFixture | undefined> {
   try {
-    return await createKernelFixture()
+    return await createKernelFixture(testPause ? { testPause } : {})
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EPERM' || String(error).includes('EPERM')) {
       t.skip('sandbox forbids listening on 127.0.0.1')
       return undefined
     }
+    throw error
+  }
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  description: string,
+  timeoutMs = 10_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${description}`)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+function sessionDirectory(fixture: KernelEngineFixture, sessionId: string): string {
+  return join(fixture.agentDir, 'phi-kernel', 'sessions', sessionId)
+}
+
+function pauseMarker(fixture: KernelEngineFixture, point: A05PausePoint): string {
+  return join(fixture.agentDir, 'phi-kernel', `test-pause-${point}.marker`)
+}
+
+function readReceipts(fixture: KernelEngineFixture, sessionId: string): DurableReceipt[] {
+  return readFileSync(join(sessionDirectory(fixture, sessionId), 'runs.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as DurableReceipt)
+}
+
+function acceptedReceipt(
+  fixture: KernelEngineFixture,
+  sessionId: string,
+  clientRunKey: string
+): DurableReceipt {
+  const receipt = readReceipts(fixture, sessionId).find(
+    (candidate) => candidate.state === 'accepted' && candidate.clientRunKey === clientRunKey
+  )
+  assert.ok(receipt, `accepted receipt for ${clientRunKey} must be durable`)
+  return receipt
+}
+
+async function assertRecoveredA05Run(options: {
+  fixture: KernelEngineFixture
+  sessionId: string
+  clientRunKey: string
+  runId: string
+  point: A05PausePoint
+  expectedStatus: 'completed' | 'unknown'
+  committedEvidence?: string
+}): Promise<SpawnedKernelClient> {
+  const { fixture, sessionId, clientRunKey, runId, point, expectedStatus, committedEvidence } =
+    options
+  const peer = await fixture.spawnPeer()
+  try {
+    assert.deepEqual(await peer.client.request('session.open', { sessionId }), { sessionId })
+    assert.deepEqual(await peer.client.request('session.open', { sessionId }), { sessionId })
+
+    const snapshot = record(await peer.client.request('session.snapshot', {}, { sessionId }))
+    assert.deepEqual(snapshot.lastRun, { runId, status: expectedStatus })
+
+    const journal = readFileSync(
+      join(sessionDirectory(fixture, sessionId), 'journal.jsonl'),
+      'utf8'
+    )
+    assert.ok(journal.trim(), `A05(${point}) must retain committed journal history`)
+    if (committedEvidence) {
+      assert.ok(
+        journal.includes(committedEvidence),
+        `A05(${point}) journal must retain ${committedEvidence}`
+      )
+    }
+
+    const receipts = readReceipts(fixture, sessionId)
+    const terminals = receipts.filter(
+      (receipt) => receipt.state === 'terminal' && receipt.runId === runId
+    )
+    assert.equal(
+      terminals.length,
+      1,
+      `A05(${point}) must retain exactly one terminal receipt after repeated open`
+    )
+    assert.equal(terminals[0]?.status, expectedStatus)
+
+    await assert.rejects(
+      peer.client.request(
+        'session.prompt',
+        { text: 'must not replay', clientRunKey },
+        { sessionId }
+      ),
+      (error: unknown) =>
+        error instanceof KernelClientError &&
+        error.code === 'DUPLICATE_REQUEST' &&
+        record(error.detail ?? null).runId === runId &&
+        record(error.detail ?? null).status === expectedStatus
+    )
+
+    fixture.provider.enqueue({ text: `recovered after ${point}` })
+    const runs = trackCompletedRuns(peer.client)
+    const next = record(
+      await peer.client.request(
+        'session.prompt',
+        { text: 'continue safely', clientRunKey: `new-key-${point}` },
+        { sessionId }
+      )
+    )
+    assert.deepEqual(await runs.wait(String(next.runId)), {
+      runId: next.runId,
+      status: 'completed'
+    })
+    runs.close()
+    return peer
+  } catch (error) {
+    await peer.close()
     throw error
   }
 }
@@ -62,6 +189,165 @@ function trackCompletedRuns(client: KernelProtocolClient): {
 }
 
 test(
+  'A05(a) kill after accepted receipt but before prompt response recovers UNKNOWN once',
+  { timeout: 30_000 },
+  async (t) => {
+    const fixture = await fixtureOrSkip(t, 'a')
+    if (!fixture) return
+    let peer: SpawnedKernelClient | undefined
+    try {
+      await fixture.createSession('a05-a', { persistent: true, noTools: 'all' })
+      const sessionId = fixture.kernelSessionId('a05-a')
+      assert.ok(sessionId)
+      const clientRunKey = 'a05-a-key'
+      const prompt = fixture.client.request(
+        'session.prompt',
+        { text: 'pause before the response', clientRunKey },
+        { sessionId }
+      )
+      void prompt.catch(() => undefined)
+
+      await waitFor(() => existsSync(pauseMarker(fixture, 'a')), 'A05(a) pause marker')
+      const accepted = acceptedReceipt(fixture, sessionId, clientRunKey)
+      await fixture.kill()
+      await assert.rejects(prompt)
+
+      peer = await assertRecoveredA05Run({
+        fixture,
+        sessionId,
+        clientRunKey,
+        runId: accepted.runId,
+        point: 'a',
+        expectedStatus: 'unknown'
+      })
+    } finally {
+      await peer?.close()
+      await fixture.close()
+    }
+  }
+)
+
+test(
+  'A05(c) kill after a committed write result preserves one side effect and recovers UNKNOWN once',
+  { timeout: 30_000 },
+  async (t) => {
+    const fixture = await fixtureOrSkip(t, 'c')
+    if (!fixture) return
+    let peer: SpawnedKernelClient | undefined
+    try {
+      await fixture.createSession('a05-c', { persistent: true })
+      const sessionId = fixture.kernelSessionId('a05-c')
+      assert.ok(sessionId)
+      const clientRunKey = 'a05-c-key'
+      const target = join(fixture.cwd, 'a05-c-side-effect.txt')
+      const sideEffectMarker = 'A05-C-WRITE'
+      const requestCount = fixture.provider.requests.length
+      fixture.provider.enqueue(
+        {
+          tool: {
+            name: 'write',
+            id: 'a05-c-write-call',
+            args: { path: target, content: `${sideEffectMarker}\n` }
+          }
+        },
+        { text: 'held after the committed tool result', hold: true }
+      )
+      const accepted = record(
+        await fixture.client.request(
+          'session.prompt',
+          { text: 'write exactly one marker', clientRunKey },
+          { sessionId }
+        )
+      )
+      assert.equal(typeof accepted.runId, 'string')
+
+      await waitFor(
+        () =>
+          existsSync(pauseMarker(fixture, 'c')) &&
+          fixture.provider.requests.length >= requestCount + 2,
+        'A05(c) committed write marker and held follow-up model request'
+      )
+      assert.equal(
+        readFileSync(target, 'utf8').split(sideEffectMarker).length - 1,
+        1,
+        'the write tool side effect must happen at most once before recovery'
+      )
+      await fixture.kill()
+
+      peer = await assertRecoveredA05Run({
+        fixture,
+        sessionId,
+        clientRunKey,
+        runId: String(accepted.runId),
+        point: 'c',
+        expectedStatus: 'unknown',
+        committedEvidence: 'a05-c-write-call'
+      })
+      assert.equal(readFileSync(target, 'utf8'), `${sideEffectMarker}\n`)
+    } finally {
+      await peer?.close()
+      await fixture.close()
+    }
+  }
+)
+
+for (const scenario of [
+  { point: 'd1', expectedStatus: 'unknown' },
+  { point: 'd2', expectedStatus: 'completed' }
+] as const) {
+  test(
+    `A05(${scenario.point}) kill around terminal receipt recovers ${scenario.expectedStatus.toUpperCase()} once`,
+    { timeout: 30_000 },
+    async (t) => {
+      const fixture = await fixtureOrSkip(t, scenario.point)
+      if (!fixture) return
+      let peer: SpawnedKernelClient | undefined
+      try {
+        await fixture.createSession(`a05-${scenario.point}`, {
+          persistent: true,
+          noTools: 'all'
+        })
+        const sessionId = fixture.kernelSessionId(`a05-${scenario.point}`)
+        assert.ok(sessionId)
+        const clientRunKey = `a05-${scenario.point}-key`
+        const finalMessage = `A05 ${scenario.point} committed final message`
+        const requestCount = fixture.provider.requests.length
+        fixture.provider.enqueue({ text: finalMessage })
+        const accepted = record(
+          await fixture.client.request(
+            'session.prompt',
+            { text: 'finish at the deterministic boundary', clientRunKey },
+            { sessionId }
+          )
+        )
+        assert.equal(typeof accepted.runId, 'string')
+
+        await waitFor(
+          () =>
+            existsSync(pauseMarker(fixture, scenario.point)) &&
+            fixture.provider.requests.length >= requestCount + 1,
+          `A05(${scenario.point}) pause marker after the final provider response`
+        )
+        await fixture.kill()
+
+        peer = await assertRecoveredA05Run({
+          fixture,
+          sessionId,
+          clientRunKey,
+          runId: String(accepted.runId),
+          point: scenario.point,
+          expectedStatus: scenario.expectedStatus,
+          committedEvidence: finalMessage
+        })
+      } finally {
+        await peer?.close()
+        await fixture.close()
+      }
+    }
+  )
+}
+
+test(
   'SIGKILL after acceptance recovers UNKNOWN once, rejects replay, and accepts a new run',
   { timeout: 30_000 },
   async (t) => {
@@ -72,6 +358,12 @@ test(
       await fixture.createSession('durable', { persistent: true, noTools: 'all' })
       const sessionId = fixture.kernelSessionId('durable')
       assert.ok(sessionId)
+      assert.equal(
+        JSON.parse(readFileSync(join(sessionDirectory(fixture, sessionId), 'writer.lock'), 'utf8'))
+          .kernelInstanceId,
+        fixture.kernelInstanceId,
+        'stdio hello and writer lock must expose one kernel instance identity'
+      )
       fixture.provider.enqueue({ hold: true })
       const accepted = record(
         await fixture.client.request(
@@ -88,6 +380,26 @@ test(
         if (Date.now() > deadline) throw new Error('The held model request never arrived')
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
+      await assert.rejects(
+        fixture.client.request(
+          'session.prompt',
+          { text: 'same durable request', clientRunKey: 'crash-key' },
+          { sessionId }
+        ),
+        (error: unknown) =>
+          error instanceof KernelClientError &&
+          error.code === 'DUPLICATE_REQUEST' &&
+          record(error.detail ?? null).runId === accepted.runId &&
+          record(error.detail ?? null).status === 'running'
+      )
+      await assert.rejects(
+        fixture.client.request(
+          'session.prompt',
+          { text: 'different durable request', clientRunKey: 'other-live-key' },
+          { sessionId }
+        ),
+        (error: unknown) => error instanceof KernelClientError && error.code === 'SESSION_BUSY'
+      )
       await fixture.kill()
 
       peer = await fixture.spawnPeer()

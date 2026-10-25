@@ -126,6 +126,17 @@ function explicitEnvironment(
   }
 }
 
+/**
+ * The socket is shared per runtime root and kernel identity. Including the build
+ * hash keeps a redeployed build of the same Phi version from attaching to the
+ * previous build's still-running kernel.
+ */
+export function kernelSocketIdentity(deployment: {
+  readonly phiVersion: string
+  readonly kernelSha256: string
+}): string {
+  return `${deployment.phiVersion}+${deployment.kernelSha256.slice(0, 12)}`
+}
 export function buildRemoteKernelLaunchCommand(
   deployment: RemoteKernelDeployment,
   helper: RemoteHelperInstallation,
@@ -162,7 +173,7 @@ export function buildRemoteKernelLaunchCommand(
     '--runtime-root',
     shellQuote(deployment.runtimeRoot),
     '--kernel-version',
-    shellQuote(deployment.phiVersion),
+    shellQuote(kernelSocketIdentity(deployment)),
     ...(graceMs === undefined ? [] : ['--grace-ms', String(graceMs)]),
     ...Object.entries(explicit).flatMap(([name, value]) => [
       '--env',

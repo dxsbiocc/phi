@@ -28,7 +28,11 @@ test('same-host lock with a dead pid is taken over without stale debris', async 
       hostname: hostname()
     })
 
-    const lock = await acquireSessionWriterLock({ path, kernelInstanceId: 'replacement-kernel' })
+    const lock = await acquireSessionWriterLock({
+      path,
+      kernelInstanceId: 'replacement-kernel',
+      startedAt: 'test-process'
+    })
     assert.equal(lock.body.kernelInstanceId, 'replacement-kernel')
     assert.deepEqual(readdirSync(join(root, 'session')), ['writer.lock'])
     await lock.release()
@@ -44,6 +48,7 @@ test('lock held by the current live process is rejected', async () => {
     writeSessionWriterLockSync(path, {
       pid: process.pid,
       kernelInstanceId: 'live-kernel',
+      // The real start token: a live holder must be recognised as live by the OS check.
       startedAt: await currentProcessStartedAt(),
       hostname: hostname()
     })
@@ -68,7 +73,11 @@ test('lock from a foreign host is never stolen even when its pid is absent local
     })
 
     await assert.rejects(
-      acquireSessionWriterLock({ path, kernelInstanceId: 'local-contender' }),
+      acquireSessionWriterLock({
+        path,
+        kernelInstanceId: 'local-contender',
+        startedAt: 'test-process'
+      }),
       SessionWriterBusyError
     )
   } finally {

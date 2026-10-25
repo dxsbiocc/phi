@@ -159,6 +159,8 @@ test('the headless Bun entry negotiates, exposes worker capabilities, and exits 
     assert.deepEqual(greetingResult.protocol, PHI_KERNEL_PROTOCOL_VERSION)
     assert.deepEqual(greetingResult.capabilities, [
       'session.create',
+      'session.open',
+      'sessions.list',
       'session.prompt',
       'session.abort',
       'session.snapshot',

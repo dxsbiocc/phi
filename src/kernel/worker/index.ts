@@ -3,9 +3,6 @@ import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 
 import {
-  KERNEL_EVENT_APPROVAL_REQUESTED,
-  KERNEL_EVENT_SESSION_EVENT,
-  KERNEL_EVENT_SESSION_STATE,
   type ApprovalRespondParams,
   type JsonValue,
   type SessionCreateParams,
@@ -13,7 +10,6 @@ import {
   type SessionOpenParams,
   type SessionPromptParams
 } from '../../shared/kernel-protocol'
-import { setWorkerOutbound, type WorkerOutbound } from '../../main/agent/engine/in-process/ipc'
 import { makeProtocolError } from '../protocol/errors'
 import type {
   KernelMethodHandlers,
@@ -28,11 +24,14 @@ import {
   type DuplicateRun,
   type PersistentSession
 } from '../sessions'
+import { pauseKernelTestPoint } from '../test-pause'
+import { bindWorkerOutbound } from './outbound'
 
 type WorkerCall = (method: string, params: unknown) => Promise<unknown>
 
 export type WorkerKernelAdapterOptions = {
   agentDir: string
+  kernelInstanceId?: string
   callWorker?: WorkerCall
   readSessionState?: (sessionId: string) => unknown | Promise<unknown>
   diagnostic?: (message: string) => void
@@ -44,6 +43,7 @@ export type WorkerKernelAdapterOptions = {
 export type WorkerKernelAdapter = {
   handlers: KernelMethodHandlers
   bind(core: KernelProtocolCore): () => void
+  closeAll(): Promise<void>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -158,7 +158,7 @@ export function createWorkerKernelAdapter(
   const diagnosedEvents = new Set<string>()
   const durableSessions = new KernelSessionRepository(
     options.agentDir,
-    undefined,
+    options.kernelInstanceId,
     options.acquireSessionLockGuard ??
       (async (path) =>
         (
@@ -171,6 +171,24 @@ export function createWorkerKernelAdapter(
   const sessionKinds = new Map<string, 'memory' | 'persistent'>()
   const memoryClientRuns = new Map<string, Map<string, DuplicateRun>>()
   const openingSessions = new Map<string, Promise<PersistentSession>>()
+  const admissions = new Set<Promise<void>>()
+  let closing = false
+  let closeAllPromise: Promise<void> | undefined
+
+  const withAdmission = async <T>(operation: () => Promise<T>): Promise<T> => {
+    if (closing) throw makeProtocolError('INTERNAL', 'The kernel is shutting down.')
+    let finish!: () => void
+    const admitted = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    admissions.add(admitted)
+    try {
+      return await operation()
+    } finally {
+      admissions.delete(admitted)
+      finish()
+    }
+  }
 
   const sessionNotFound = (): ReturnType<typeof makeProtocolError> =>
     makeProtocolError('SESSION_NOT_FOUND', 'The requested session is not loaded.')
@@ -227,6 +245,23 @@ export function createWorkerKernelAdapter(
       duplicate
     )
 
+  const finishActiveRun = async (
+    sessionId: string,
+    runId: string,
+    status: RunCompletionStatus
+  ): Promise<void> => {
+    const persistent = durableSessions.get(sessionId)
+    if (persistent) {
+      await durableSessions.finishRun(persistent, runId, status)
+      return
+    }
+    const clientRuns = memoryClientRuns.get(sessionId)
+    if (!clientRuns) return
+    for (const [clientRunKey, run] of clientRuns) {
+      if (run.runId === runId) clientRuns.set(clientRunKey, { runId, status })
+    }
+  }
+
   const diagnoseDroppedEvent = (name: string, reason: string): void => {
     if (diagnosedEvents.has(name)) return
     diagnosedEvents.add(name)
@@ -247,128 +282,158 @@ export function createWorkerKernelAdapter(
   }
 
   const handlers: KernelMethodHandlers = {
-    async 'session.create'(params) {
-      const create = params as SessionCreateParams
-      await assertExistingAbsoluteDirectory(create.cwd)
-      const sessionId = randomUUID()
-      if (create.sessionManager.kind === 'memory') {
-        await callWorker('session.create', {
-          ...create,
-          sessionId,
-          agentDir: options.agentDir,
-          sessionManager: { kind: 'memory', cwd: create.cwd }
-        })
-        sessionKinds.set(sessionId, 'memory')
-        memoryClientRuns.set(sessionId, new Map())
-        return { sessionId }
-      }
+    'session.create'(params) {
+      return withAdmission(async () => {
+        const create = params as SessionCreateParams
+        await assertExistingAbsoluteDirectory(create.cwd)
+        const sessionId = randomUUID()
+        if (create.sessionManager.kind === 'memory') {
+          await callWorker('session.create', {
+            ...create,
+            sessionId,
+            agentDir: options.agentDir,
+            sessionManager: { kind: 'memory', cwd: create.cwd }
+          })
+          sessionKinds.set(sessionId, 'memory')
+          memoryClientRuns.set(sessionId, new Map())
+          return { sessionId }
+        }
 
-      const persistent = await durableSessions.create(sessionId, create)
-      try {
-        await callWorker('session.create', {
-          ...create,
-          sessionId,
-          agentDir: options.agentDir,
-          sessionManager: {
-            kind: 'persistent',
-            path: persistent.journalPath,
-            cwd: create.cwd
-          }
-        })
-        sessionKinds.set(sessionId, 'persistent')
-        return { sessionId }
-      } catch (error) {
-        await durableSessions.abandonNew(sessionId)
-        throw error
-      }
+        const persistent = await durableSessions.create(sessionId, create)
+        try {
+          await callWorker('session.create', {
+            ...create,
+            sessionId,
+            agentDir: options.agentDir,
+            sessionManager: {
+              kind: 'persistent',
+              path: persistent.journalPath,
+              cwd: create.cwd
+            }
+          })
+          sessionKinds.set(sessionId, 'persistent')
+          return { sessionId }
+        } catch (error) {
+          await durableSessions.abandonNew(sessionId)
+          throw error
+        }
+      })
     },
-    async 'session.open'(params) {
-      const { sessionId } = params as SessionOpenParams
-      try {
-        await openPersistentSession(sessionId)
-        return { sessionId }
-      } catch (error) {
-        if (error instanceof SessionWriterBusyError) {
-          throw makeProtocolError('SESSION_BUSY', 'Another kernel owns this session.')
+    'session.open'(params) {
+      return withAdmission(async () => {
+        const { sessionId } = params as SessionOpenParams
+        try {
+          await openPersistentSession(sessionId)
+          return { sessionId }
+        } catch (error) {
+          if (error instanceof SessionWriterBusyError) {
+            throw makeProtocolError('SESSION_BUSY', 'Another kernel owns this session.')
+          }
+          if (
+            error &&
+            typeof error === 'object' &&
+            'code' in error &&
+            (error as { code?: unknown }).code === 'ENOENT'
+          ) {
+            throw makeProtocolError('SESSION_NOT_FOUND', 'The persistent session does not exist.')
+          }
+          throw error
         }
-        if (
-          error &&
-          typeof error === 'object' &&
-          'code' in error &&
-          (error as { code?: unknown }).code === 'ENOENT'
-        ) {
-          throw makeProtocolError('SESSION_NOT_FOUND', 'The persistent session does not exist.')
-        }
-        throw error
-      }
+      })
     },
     'sessions.list'() {
       return durableSessions.list()
     },
-    async 'session.prompt'(params, _context, request): Promise<SessionPromptRun> {
-      const sessionId = requiredSessionId(request.sessionId)
-      const prompt = params as SessionPromptParams
-      const kind = requireLoadedSession(sessionId)
-      const persistent = kind === 'persistent' ? durableSessions.get(sessionId) : undefined
-      if (kind === 'persistent' && !persistent) throw sessionNotFound()
-      if (prompt.clientRunKey) {
-        const duplicate = persistent
-          ? durableSessions.findDuplicate(persistent, prompt.clientRunKey)
-          : memoryClientRuns.get(sessionId)?.get(prompt.clientRunKey)
-        if (duplicate) throw duplicateRequest(duplicate)
-      }
-      const runId = randomUUID()
-      if (persistent) {
-        await durableSessions.acceptRun(persistent, runId, prompt.clientRunKey)
-      } else if (prompt.clientRunKey) {
-        memoryClientRuns.get(sessionId)?.set(prompt.clientRunKey, { runId, status: 'running' })
-      }
-      activeRuns.set(sessionId, runId)
-      const completion = (async (): Promise<
-        RunCompletionStatus | { status: RunCompletionStatus; detail?: string }
-      > => {
-        try {
-          let outcome: RunCompletionStatus | { status: RunCompletionStatus; detail?: string }
-          try {
-            await callWorker('session.prompt', {
-              sessionId,
-              text: prompt.text,
-              ...(prompt.images ? { options: { images: prompt.images } } : {})
-            })
-            outcome = cancelledRuns.has(runId) ? 'cancelled' : 'completed'
-          } catch (error) {
-            outcome = cancelledRuns.has(runId)
-              ? 'cancelled'
-              : { status: 'failed', detail: sanitizeRunError(error) }
-          }
-          const status = typeof outcome === 'string' ? outcome : outcome.status
-          if (persistent) {
-            try {
-              await durableSessions.finishRun(persistent, runId, status)
-            } catch {
-              return { status: 'unknown', detail: 'Run completion could not be persisted.' }
-            }
-          } else if (prompt.clientRunKey) {
-            memoryClientRuns.get(sessionId)?.set(prompt.clientRunKey, { runId, status })
-          }
-          return outcome
-        } finally {
-          cancelledRuns.delete(runId)
-          if (activeRuns.get(sessionId) === runId) activeRuns.delete(sessionId)
-        }
-      })()
-      return { runId, completion }
+    promptConflict(sessionId, params) {
+      const clientRunKey = (params as SessionPromptParams).clientRunKey
+      const activeRunId = activeRuns.get(sessionId)
+      if (!clientRunKey || !activeRunId) return undefined
+      const persistent = durableSessions.get(sessionId)
+      const duplicate = persistent
+        ? durableSessions.findDuplicate(persistent, clientRunKey)
+        : memoryClientRuns.get(sessionId)?.get(clientRunKey)
+      return duplicate?.runId === activeRunId && duplicate.status === 'running'
+        ? { runId: activeRunId, status: 'running' }
+        : undefined
     },
-    async 'session.abort'(_params, _context, request) {
+    'session.prompt'(params, _context, request): Promise<SessionPromptRun> {
+      return withAdmission(async () => {
+        const sessionId = requiredSessionId(request.sessionId)
+        const prompt = params as SessionPromptParams
+        const kind = requireLoadedSession(sessionId)
+        const persistent = kind === 'persistent' ? durableSessions.get(sessionId) : undefined
+        if (kind === 'persistent' && !persistent) throw sessionNotFound()
+        if (prompt.clientRunKey) {
+          const duplicate = persistent
+            ? durableSessions.findDuplicate(persistent, prompt.clientRunKey)
+            : memoryClientRuns.get(sessionId)?.get(prompt.clientRunKey)
+          if (duplicate) throw duplicateRequest(duplicate)
+        }
+        const runId = randomUUID()
+        if (persistent) {
+          await durableSessions.acceptRun(persistent, runId, prompt.clientRunKey)
+          pauseKernelTestPoint('a', options.agentDir)
+        } else if (prompt.clientRunKey) {
+          memoryClientRuns.get(sessionId)?.set(prompt.clientRunKey, { runId, status: 'running' })
+        }
+        activeRuns.set(sessionId, runId)
+        const completion = (async (): Promise<
+          RunCompletionStatus | { status: RunCompletionStatus; detail?: string }
+        > => {
+          try {
+            let outcome: RunCompletionStatus | { status: RunCompletionStatus; detail?: string }
+            try {
+              await callWorker('session.prompt', {
+                sessionId,
+                text: prompt.text,
+                ...(prompt.images ? { options: { images: prompt.images } } : {})
+              })
+              if (persistent) pauseKernelTestPoint('d1', options.agentDir)
+              outcome = cancelledRuns.has(runId) ? 'cancelled' : 'completed'
+            } catch (error) {
+              outcome = cancelledRuns.has(runId)
+                ? 'cancelled'
+                : { status: 'failed', detail: sanitizeRunError(error) }
+            }
+            const status = typeof outcome === 'string' ? outcome : outcome.status
+            if (persistent) {
+              try {
+                await durableSessions.finishRun(persistent, runId, status)
+                pauseKernelTestPoint('d2', options.agentDir)
+              } catch {
+                return { status: 'unknown', detail: 'Run completion could not be persisted.' }
+              }
+            } else if (prompt.clientRunKey) {
+              memoryClientRuns.get(sessionId)?.set(prompt.clientRunKey, { runId, status })
+            }
+            return outcome
+          } finally {
+            cancelledRuns.delete(runId)
+            if (activeRuns.get(sessionId) === runId) activeRuns.delete(sessionId)
+          }
+        })()
+        return { runId, completion }
+      })
+    },
+    async 'session.abort'(_params, callContext, request) {
       const sessionId = requiredSessionId(request.sessionId)
       requireLoadedSession(sessionId)
-      const activeRunId = activeRuns.get(sessionId)
+      const activeRunId =
+        callContext.connectionId === 'kernel-lifecycle' && request.runId
+          ? request.runId
+          : activeRuns.get(sessionId)
       if (activeRunId) cancelledRuns.add(activeRunId)
       try {
         await callWorker('session.abort', { sessionId })
       } catch (error) {
         if (activeRunId) cancelledRuns.delete(activeRunId)
+        if (activeRunId && callContext.connectionId === 'kernel-lifecycle') {
+          await finishActiveRun(sessionId, activeRunId, 'unknown')
+        }
         throw error
+      }
+      if (activeRunId && callContext.connectionId === 'kernel-lifecycle') {
+        await finishActiveRun(sessionId, activeRunId, 'cancelled')
       }
       return { cancelled: true }
     },
@@ -382,26 +447,37 @@ export function createWorkerKernelAdapter(
         durableSessions.get(sessionId)?.manifest.lastRun
       )
     },
-    async 'session.close'(_params, _context, request) {
-      const sessionId = requiredSessionId(request.sessionId)
-      requireLoadedSession(sessionId)
-      if (activeRuns.has(sessionId)) {
-        throw makeProtocolError('SESSION_BUSY', 'The session has an active run.')
-      }
-      await callWorker('session.dispose', { sessionId })
-      await durableSessions.close(sessionId)
-      activeRuns.delete(sessionId)
-      sessionKinds.delete(sessionId)
-      memoryClientRuns.delete(sessionId)
-      return { closed: true }
+    'session.close'(_params, _context, request) {
+      return withAdmission(async () => {
+        const sessionId = requiredSessionId(request.sessionId)
+        requireLoadedSession(sessionId)
+        if (activeRuns.has(sessionId)) {
+          throw makeProtocolError('SESSION_BUSY', 'The session has an active run.')
+        }
+        await callWorker('session.dispose', { sessionId })
+        await durableSessions.close(sessionId)
+        activeRuns.delete(sessionId)
+        sessionKinds.delete(sessionId)
+        memoryClientRuns.delete(sessionId)
+        return { closed: true }
+      })
     },
     'events.subscribe': () => ({ subscribed: true, lastSeq: 0 }),
-    async 'approval.respond'(params) {
-      const response = params as ApprovalRespondParams
+    async 'approval.respond'(params, callContext, request) {
+      const response = params as ApprovalRespondParams & { reason?: unknown }
+      if (callContext.connectionId === 'kernel-lifecycle' && request.runId) {
+        cancelledRuns.add(request.runId)
+      }
       const result =
         response.decision === 'approved'
           ? null
-          : { block: true, reason: 'User denied tool execution' }
+          : {
+              block: true,
+              reason:
+                typeof response.reason === 'string' && response.reason
+                  ? response.reason
+                  : 'User denied tool execution'
+            }
       const accepted = await callWorker('toolApproval.result', {
         requestId: response.approvalId,
         result
@@ -418,79 +494,58 @@ export function createWorkerKernelAdapter(
 
   return {
     handlers,
-    bind(core) {
-      const outbound: WorkerOutbound = {
-        send() {
-          throw new Error('Raw legacy worker frames are unavailable on the kernel protocol')
-        },
-        event(name, payload, extra) {
-          const sessionId = typeof extra.sessionId === 'string' ? extra.sessionId : undefined
-          const runId = sessionId ? activeRuns.get(sessionId) : undefined
-          if (name === 'sessionEvent') {
-            core.emitEvent(KERNEL_EVENT_SESSION_EVENT, payload as JsonValue, { sessionId, runId })
-            return
-          }
-          if (name === 'sessionState') {
-            if (!sessionId) {
-              diagnoseDroppedEvent(name, 'missing sessionId')
-              return
+    closeAll() {
+      closeAllPromise ??= (async () => {
+        closing = true
+        await Promise.allSettled([...admissions, ...openingSessions.values()])
+        const failures: unknown[] = []
+        await Promise.all(
+          [...sessionKinds].map(async ([sessionId, kind]) => {
+            const activeRunId = activeRuns.get(sessionId)
+            if (activeRunId) {
+              cancelledRuns.add(activeRunId)
+              try {
+                await callWorker('session.abort', { sessionId })
+                await finishActiveRun(sessionId, activeRunId, 'cancelled')
+              } catch (error) {
+                failures.push(error)
+                await finishActiveRun(sessionId, activeRunId, 'unknown').catch((finishError) => {
+                  failures.push(finishError)
+                })
+              }
             }
-            core.emitEvent(
-              KERNEL_EVENT_SESSION_STATE,
-              projectSessionState(
-                sessionId,
-                payload,
-                runId,
-                durableSessions.get(sessionId)?.manifest.lastRun
-              ),
-              { sessionId, runId }
-            )
-            return
-          }
-          if (name === 'toolApproval') {
-            if (!isRecord(payload)) throw new Error('toolApproval event payload is invalid')
-            const approvalId =
-              typeof payload.requestId === 'string' && payload.requestId
-                ? payload.requestId
-                : undefined
-            if (!approvalId) throw new Error('toolApproval event omitted requestId')
-            const toolCallId =
-              typeof payload.toolCallId === 'string' && payload.toolCallId
-                ? payload.toolCallId
-                : approvalId
-            core.emitEvent(
-              KERNEL_EVENT_APPROVAL_REQUESTED,
-              {
-                approvalId,
-                toolCallId,
-                toolName: typeof payload.toolName === 'string' ? payload.toolName : '',
-                input: (isRecord(payload.input) ? payload.input : {}) as JsonValue,
-                ...(typeof payload.agentRunId === 'string' && payload.agentRunId
-                  ? { agentRunId: payload.agentRunId }
-                  : {})
-              },
-              { sessionId, runId }
-            )
-            return
-          }
-          if (name === 'authPrompt') {
-            const requestId = typeof extra.requestId === 'string' ? extra.requestId : undefined
-            if (requestId) rejectAuthPrompt(requestId)
-            diagnoseDroppedEvent(name, 'authentication prompt unavailable in kernel v1')
-            return
-          }
-          diagnoseDroppedEvent(name, 'notification is not exposed by kernel v1')
-        },
-        hostRequest(method, params, context) {
-          return core.requestHost(method, params as JsonValue, {
-            ...(context?.originSessionId ? { sessionId: context.originSessionId } : {}),
-            ...(context?.agentRunId ? { agentRunId: context.agentRunId } : {})
+            try {
+              await callWorker('session.dispose', { sessionId })
+            } catch (error) {
+              failures.push(error)
+            } finally {
+              if (kind === 'persistent') {
+                await durableSessions.close(sessionId).catch((error: unknown) => {
+                  failures.push(error)
+                })
+              }
+              activeRuns.delete(sessionId)
+              sessionKinds.delete(sessionId)
+              memoryClientRuns.delete(sessionId)
+            }
           })
-        }
-      }
-      setWorkerOutbound(outbound)
+        )
+        if (failures.length > 0) throw failures[0]
+      })()
+      return closeAllPromise
+    },
+    bind(core) {
+      const unbindOutbound = bindWorkerOutbound({
+        agentDir: options.agentDir,
+        core,
+        activeRunId: (sessionId) => activeRuns.get(sessionId),
+        persistentSession: (sessionId) => durableSessions.get(sessionId),
+        projectSessionState,
+        diagnoseDroppedEvent,
+        rejectAuthPrompt
+      })
       return () => {
-        setWorkerOutbound(undefined)
+        unbindOutbound()
         durableSessions.releaseAllSync()
       }
     }
