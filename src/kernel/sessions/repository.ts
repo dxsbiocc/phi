@@ -7,7 +7,23 @@ import type {
   SessionCreateParams,
   SessionListEntry
 } from '../../shared/kernel-protocol'
-import { kernelSessionPaths, kernelSessionsRoot, isKernelSessionId } from './paths'
+import type { SessionAdoptParams, SessionAdoptResult } from '../../shared/kernel-protocol/history'
+import {
+  adoptedSessionId,
+  continueMigration,
+  createMigrationRecord,
+  inspectAdoptionSource,
+  readMigration,
+  startMigration,
+  type ContinueMigrationOptions
+} from './migration'
+import { discardIncompleteMigrationLocked } from './migration-cleanup'
+import {
+  kernelSessionMigrationPaths,
+  kernelSessionPaths,
+  kernelSessionsRoot,
+  isKernelSessionId
+} from './paths'
 import {
   appendReceipt,
   ensurePrivateDirectory,
@@ -27,6 +43,7 @@ import {
   type RunReceipt,
   type RunReceiptState,
   type SessionManifest,
+  type SessionMigrationRecord,
   type SessionWriterLock,
   type TerminalRunReceipt
 } from './types'
@@ -94,14 +111,26 @@ export class KernelSessionRepository {
   private readonly root: string
   private readonly loaded = new Map<string, PersistentSession>()
   private readonly opening = new Map<string, Promise<PersistentSession>>()
+  private migrationJournalValidator: ContinueMigrationOptions['validateJournal']
 
   constructor(
     private readonly agentDir: string,
     private readonly kernelInstanceId: string = randomUUID(),
     private readonly acquireGuard?: AcquireProcessLockGuard,
-    private readonly processStartedAt?: string
+    private readonly processStartedAt?: string,
+    validateMigrationJournal?: ContinueMigrationOptions['validateJournal']
   ) {
     this.root = kernelSessionsRoot(agentDir)
+    this.migrationJournalValidator = validateMigrationJournal
+  }
+
+  configureMigrationJournalValidator(
+    validateJournal: NonNullable<ContinueMigrationOptions['validateJournal']>
+  ): void {
+    if (this.migrationJournalValidator && this.migrationJournalValidator !== validateJournal) {
+      throw new Error('migration journal validator is already configured')
+    }
+    this.migrationJournalValidator = validateJournal
   }
 
   get(sessionId: string): PersistentSession | undefined {
@@ -170,6 +199,124 @@ export class KernelSessionRepository {
     }
   }
 
+  async adopt(
+    params: SessionAdoptParams,
+    options: ContinueMigrationOptions & { allowedSourceRoots: readonly string[] }
+  ): Promise<SessionAdoptResult> {
+    const migrationOptions: ContinueMigrationOptions = {
+      ...options,
+      validateJournal: options.validateJournal ?? this.migrationJournalValidator
+    }
+    const source = await inspectAdoptionSource(params, options.allowedSourceRoots)
+    const sessionId = adoptedSessionId(params.source.phiSessionId, source.sha256)
+    await this.rollbackSupersededStartedMigrations(
+      params.source.phiSessionId,
+      source.path,
+      source.sha256,
+      sessionId
+    )
+    const paths = kernelSessionMigrationPaths(this.agentDir, sessionId)
+    const loaded = this.loaded.get(sessionId)
+    if (loaded) {
+      const migration = await readMigration(paths.migration)
+      this.assertSameMigration(migration, params.source.phiSessionId, source.sha256, true)
+      return { sessionId, migration: { state: 'complete', sourceSha256: source.sha256 } }
+    }
+
+    await ensurePrivateDirectory(join(this.agentDir, 'phi-kernel'), true)
+    await ensurePrivateDirectory(this.root, true)
+    // Deterministic adoption ids intentionally revisit an interrupted or already
+    // completed target. The writer lock below decides which caller may resume it.
+    await ensurePrivateDirectory(paths.directory, true)
+    const lock = await this.acquireLock(sessionId, paths.lock)
+    try {
+      let migration = await readMigration(paths.migration)
+      if (migration) {
+        this.assertSameMigration(migration, params.source.phiSessionId, source.sha256)
+        migration = await continueMigration(sessionId, paths, migration, migrationOptions)
+      } else {
+        migration = await startMigration(
+          paths,
+          createMigrationRecord(params, source),
+          migrationOptions
+        )
+      }
+      const session = await this.hydrateLocked(sessionId, paths, lock)
+      this.loaded.set(sessionId, session)
+      const result: SessionAdoptResult = {
+        sessionId,
+        migration: { state: migration.state, sourceSha256: migration.source.sha256 }
+      }
+      // Adoption is a migration transaction, not an implicit session.open.
+      // Release the writer so an explicit open can hydrate the worker runtime.
+      await this.close(sessionId)
+      return result
+    } catch (error) {
+      await lock.release()
+      throw error
+    }
+  }
+
+  private async rollbackSupersededStartedMigrations(
+    phiSessionId: string,
+    sourcePath: string,
+    sourceSha256: string,
+    targetSessionId: string
+  ): Promise<void> {
+    const entries = await readdir(this.root, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (
+        !entry.isDirectory() ||
+        !isKernelSessionId(entry.name) ||
+        entry.name === targetSessionId
+      ) {
+        continue
+      }
+      const paths = kernelSessionMigrationPaths(this.agentDir, entry.name)
+      const candidate = await readMigration(paths.migration).catch(() => undefined)
+      if (
+        candidate?.state !== 'started' ||
+        candidate.source.phiSessionId !== phiSessionId ||
+        candidate.source.path !== sourcePath ||
+        candidate.source.sha256 === sourceSha256
+      ) {
+        continue
+      }
+      const lock = await this.acquireLock(entry.name, paths.lock)
+      try {
+        const current = await readMigration(paths.migration)
+        if (
+          current?.state === 'started' &&
+          current.source.phiSessionId === phiSessionId &&
+          current.source.path === sourcePath &&
+          current.source.sha256 !== sourceSha256
+        ) {
+          await discardIncompleteMigrationLocked(paths, lock)
+        }
+      } finally {
+        await lock.release()
+      }
+    }
+  }
+
+  private assertSameMigration(
+    migration: SessionMigrationRecord | undefined,
+    phiSessionId: string,
+    sourceSha256: string,
+    requireComplete = false
+  ): asserts migration is SessionMigrationRecord {
+    if (
+      !migration ||
+      migration.source.phiSessionId !== phiSessionId ||
+      migration.source.sha256 !== sourceSha256
+    ) {
+      throw new Error('adopted session identity does not match its migration record')
+    }
+    if (requireComplete && migration.state !== 'complete') {
+      throw new Error(`session migration is incomplete at state ${migration.state}`)
+    }
+  }
+
   async open(sessionId: string): Promise<PersistentSession> {
     if (!isKernelSessionId(sessionId)) throw new TypeError('Invalid kernel session id')
     const loaded = this.loaded.get(sessionId)
@@ -185,46 +332,77 @@ export class KernelSessionRepository {
     }
   }
 
+  private async recoverMigrationOnOpen(
+    sessionId: string,
+    paths: ReturnType<typeof kernelSessionMigrationPaths>,
+    lock: SessionWriterLock
+  ): Promise<void> {
+    const migration = await readMigration(paths.migration)
+    if (!migration || migration.state === 'complete') return
+    try {
+      await continueMigration(sessionId, paths, migration, {
+        validateJournal: this.migrationJournalValidator
+      })
+    } catch (error) {
+      const current = await readMigration(paths.migration).catch(() => undefined)
+      if (current?.state !== 'started') throw error
+      await discardIncompleteMigrationLocked(paths, lock)
+      throw Object.assign(new Error('The incomplete session migration was rolled back.'), {
+        code: 'ENOENT'
+      })
+    }
+  }
+
   private async openLocked(sessionId: string): Promise<PersistentSession> {
-    const paths = kernelSessionPaths(this.agentDir, sessionId)
+    const paths = kernelSessionMigrationPaths(this.agentDir, sessionId)
     const lock = await this.acquireLock(sessionId, paths.lock)
     try {
-      await repairReceiptTail(paths.receipts)
-      const receipts = await readReceipts(paths.receipts)
-      let manifest: SessionManifest
-      try {
-        manifest = await readManifest(paths.manifest, sessionId)
-      } catch {
-        manifest = await reconstructManifest({
-          sessionId,
-          journalPath: paths.journal,
-          receipts
-        })
-        await writeManifestAtomic(paths.manifest, manifest)
-      }
-      const reconciled = reconcileManifestReceipts(manifest, receipts)
-      if (!sameLastRun(manifest, reconciled)) {
-        manifest = reconciled
-        await writeManifestAtomic(paths.manifest, manifest)
-      }
-      const indexed = indexReceipts(receipts)
-      const session: PersistentSession = {
-        directory: paths.directory,
-        journalPath: paths.journal,
-        receiptsPath: paths.receipts,
-        manifestPath: paths.manifest,
-        lock,
-        manifest,
-        ...indexed,
-        receiptTail: Promise.resolve()
-      }
-      await this.recoverInterruptedRuns(session)
+      await this.recoverMigrationOnOpen(sessionId, paths, lock)
+      const session = await this.hydrateLocked(sessionId, paths, lock)
       this.loaded.set(sessionId, session)
       return session
     } catch (error) {
       await lock.release()
       throw error
     }
+  }
+
+  private async hydrateLocked(
+    sessionId: string,
+    paths: ReturnType<typeof kernelSessionPaths>,
+    lock: SessionWriterLock
+  ): Promise<PersistentSession> {
+    await repairReceiptTail(paths.receipts)
+    const receipts = await readReceipts(paths.receipts)
+    let manifest: SessionManifest
+    try {
+      manifest = await readManifest(paths.manifest, sessionId)
+    } catch {
+      manifest = await reconstructManifest({
+        sessionId,
+        journalPath: paths.journal,
+        receipts
+      })
+      await writeManifestAtomic(paths.manifest, manifest)
+    }
+    const reconciled = reconcileManifestReceipts(manifest, receipts)
+    if (!sameLastRun(manifest, reconciled)) {
+      manifest = reconciled
+      await writeManifestAtomic(paths.manifest, manifest)
+    }
+    const indexed = indexReceipts(receipts)
+    const session: PersistentSession = {
+      directory: paths.directory,
+      journalPath: paths.journal,
+      receiptsPath: paths.receipts,
+      manifestPath: paths.manifest,
+      lock,
+      manifest,
+      ...indexed,
+      receiptTail: Promise.resolve()
+    }
+    await this.recoverInterruptedRuns(session)
+    return session
   }
 
   findDuplicate(session: PersistentSession, clientRunKey: string): DuplicateRun | undefined {
@@ -371,8 +549,12 @@ export class KernelSessionRepository {
   private async listOne(sessionId: string): Promise<SessionListEntry> {
     const loaded = this.loaded.get(sessionId)
     if (loaded) return summary(loaded, true)
-    const paths = kernelSessionPaths(this.agentDir, sessionId)
+    const paths = kernelSessionMigrationPaths(this.agentDir, sessionId)
     try {
+      const migration = await readMigration(paths.migration)
+      if (migration && migration.state !== 'complete') {
+        return corrupt(sessionId, `session migration is incomplete at state ${migration.state}`)
+      }
       const receipts = await readReceipts(paths.receipts)
       indexReceipts(receipts)
       let manifest: SessionManifest

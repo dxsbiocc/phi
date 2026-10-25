@@ -3,6 +3,10 @@ import type {
   SessionLastRun,
   SessionListEntry
 } from '../../shared/kernel-protocol'
+import type {
+  HistoryMigrationState,
+  SessionAdoptParams
+} from '../../shared/kernel-protocol/history'
 
 export const SESSION_MANIFEST_SCHEMA_VERSION = 1 as const
 
@@ -22,6 +26,35 @@ export type SessionManifest = {
   title?: string
   journal: 'journal.jsonl'
   lastRun?: SessionLastRun
+}
+
+export type SessionMigrationRecord = {
+  schemaVersion: 1
+  migrationVersion: 1
+  source: {
+    kind: 'omp-journal'
+    path: string
+    cwd: string
+    size: number
+    mtime: string
+    sha256: string
+    origin: SessionAdoptParams['source']['origin']
+    phiSessionId: string
+    ompSessionId: string
+    headerVersion: number
+    headerTimestamp: string
+  }
+  target: {
+    title?: string
+    model?: SessionModel
+    thinkingLevel?: string
+  }
+  backup: 'source-backup.jsonl'
+  state: HistoryMigrationState
+  startedAt: string
+  copiedAt?: string
+  verifiedAt?: string
+  completedAt?: string
 }
 
 export type AcceptedRunReceipt = {

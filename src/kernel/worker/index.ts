@@ -26,6 +26,7 @@ import {
   type DuplicateRun,
   type PersistentSession
 } from '../sessions'
+import { createHistoryHandlers } from './history-handlers'
 import { pauseKernelTestPoint } from '../test-pause'
 import { bindWorkerOutbound } from './outbound'
 import {
@@ -47,6 +48,8 @@ export type WorkerKernelAdapterOptions = {
   processStartedAt?: string
   acquireSessionLockGuard?: AcquireProcessLockGuard
   modelAccess?: KernelModelAccess
+  /** Trusted roots `session.adopt` may copy journals from; empty refuses every adoption. */
+  allowedSourceRoots?: readonly string[]
 }
 
 export type WorkerKernelAdapter = {
@@ -161,6 +164,13 @@ export function createWorkerKernelAdapter(
         ).acquireKernelSessionLockGuard(path)),
     options.processStartedAt
   )
+  // Without trusted staging roots the method is not offered at all, so clients see it is
+  // unavailable from the advertised capabilities instead of a failing call.
+  const adoptRoots = options.allowedSourceRoots ?? []
+  const historyHandlers =
+    adoptRoots.length > 0
+      ? createHistoryHandlers({ repository: durableSessions, allowedSourceRoots: adoptRoots })
+      : {}
   const activeRuns = new Map<string, string>()
   const cancelledRuns = new Set<string>()
   const sessionKinds = new Map<string, 'memory' | 'persistent'>()
@@ -295,6 +305,7 @@ export function createWorkerKernelAdapter(
 
   const handlers: KernelMethodHandlers = {
     ...modelAccessHandlers,
+    ...historyHandlers,
     'session.create'(params) {
       return withAdmission(async () => {
         const create = params as SessionCreateParams

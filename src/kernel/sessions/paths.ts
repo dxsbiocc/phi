@@ -30,3 +30,15 @@ export function kernelSessionPaths(
     lock: join(directory, 'writer.lock')
   }
 }
+
+export function kernelSessionMigrationPaths(
+  agentDir: string,
+  sessionId: string
+): ReturnType<typeof kernelSessionPaths> & { sourceBackup: string; migration: string } {
+  const paths = kernelSessionPaths(agentDir, sessionId)
+  return {
+    ...paths,
+    sourceBackup: join(paths.directory, 'source-backup.jsonl'),
+    migration: join(paths.directory, 'migration.json')
+  }
+}

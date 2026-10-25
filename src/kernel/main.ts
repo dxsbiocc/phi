@@ -68,6 +68,22 @@ function remoteControllerLifecycle(
   }
 }
 
+/**
+ * The trusted launcher names the private staging roots `session.adopt` may copy from;
+ * a client request can never widen them. Unset means adoption is refused.
+ */
+function readAdoptSourceRoots(): string[] {
+  const raw = process.env.PHI_KERNEL_ADOPT_ROOTS
+  if (!raw) return []
+  return raw
+    .split(path.delimiter)
+    .filter((root) => root.length > 0)
+    .map((root) => {
+      if (!path.isAbsolute(root)) throw new Error('PHI_KERNEL_ADOPT_ROOTS entries must be absolute')
+      return root
+    })
+}
+
 export async function startKernelStdio(): Promise<void> {
   const kernelInstanceId = randomUUID()
   const transport = new StdioFrameTransport(process.stdin, process.stdout)
@@ -95,7 +111,8 @@ export async function startKernelStdio(): Promise<void> {
   const worker = createWorkerKernelAdapter({
     agentDir,
     kernelInstanceId,
-    modelAccess
+    modelAccess,
+    allowedSourceRoots: readAdoptSourceRoots()
   })
   const core = new KernelProtocolCore({
     kernelVersion: readKernelVersion(),
@@ -153,7 +170,8 @@ export async function startKernelSocket(
   const worker = createWorkerKernelAdapter({
     agentDir: process.env.PI_CODING_AGENT_DIR ?? '',
     kernelInstanceId,
-    modelAccess
+    modelAccess,
+    allowedSourceRoots: readAdoptSourceRoots()
   })
   const graceRef: { value?: KernelGracePeriod } = {}
   let shutdownStarted = false
