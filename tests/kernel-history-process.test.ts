@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,7 +7,6 @@ import { join, resolve } from 'node:path'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 
-import { makeSessionManager } from '../src/main/agent/engine/in-process/session-factory'
 import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 import {
   KernelSessionRepository,
@@ -20,6 +19,42 @@ const sessionsUrl = pathToFileURL(resolve('src/kernel/sessions/index.ts')).href
 const sessionFactoryUrl = pathToFileURL(
   resolve('src/main/agent/engine/in-process/session-factory.ts')
 ).href
+
+function runManagerProbe(
+  operation: 'create' | 'open',
+  path: string,
+  cwd: string,
+  agentDir: string,
+  message = ''
+): void {
+  const script = `
+    import { makeSessionManager } from ${JSON.stringify(sessionFactoryUrl)}
+    const { PROBE_OPERATION: operation, PROBE_PATH: path, PROBE_CWD: cwd, PROBE_AGENT_DIR: agentDir, PROBE_MESSAGE: message } = process.env
+    const manager = await makeSessionManager(
+      operation === 'create'
+        ? { kind: 'persistent', path }
+        : { kind: 'open', path, requireExisting: true, suppressBreadcrumb: true },
+      cwd,
+      agentDir
+    )
+    if (operation === 'create') {
+      manager.appendMessage({ role: 'user', content: message, timestamp: Date.now() })
+    }
+    await manager.close()
+  `
+  execFileSync(resolveBunExecutable(), ['--eval', script], {
+    cwd: resolve('.'),
+    env: {
+      ...process.env,
+      PROBE_OPERATION: operation,
+      PROBE_PATH: path,
+      PROBE_CWD: cwd,
+      PROBE_AGENT_DIR: agentDir,
+      PROBE_MESSAGE: message
+    },
+    stdio: ['ignore', 'ignore', 'inherit']
+  })
+}
 
 async function waitFor(
   predicate: () => boolean,
@@ -47,9 +82,7 @@ for (const state of ['started', 'copied', 'verified', 'complete'] as const) {
       const agentDir = join(root, 'agent')
       mkdirSync(cwd)
       mkdirSync(sourceRoot)
-      const manager = await makeSessionManager({ kind: 'persistent', path: source }, cwd, agentDir)
-      manager.appendMessage({ role: 'user', content: `before ${state}`, timestamp: Date.now() })
-      await manager.close()
+      runManagerProbe('create', source, cwd, agentDir, `before ${state}`)
       const original = readFileSync(source)
       const originalMtime = statSync(source).mtimeMs
       const sourceSha256 = createHash('sha256').update(original).digest('hex')
@@ -58,7 +91,7 @@ for (const state of ['started', 'copied', 'verified', 'complete'] as const) {
       const childScript = `
         import { KernelSessionRepository } from ${JSON.stringify(sessionsUrl)}
         import { makeSessionManager } from ${JSON.stringify(sessionFactoryUrl)}
-        const [agentDir, sourceRoot, source, cwd] = process.argv.slice(1)
+        const { PROBE_AGENT_DIR: agentDir, PROBE_SOURCE_ROOT: sourceRoot, PROBE_SOURCE: source, PROBE_CWD: cwd } = process.env
         const repository = new KernelSessionRepository(
           agentDir,
           'crashing-adopter',
@@ -80,15 +113,18 @@ for (const state of ['started', 'copied', 'verified', 'complete'] as const) {
           }
         }, { allowedSourceRoots: [sourceRoot] })
       `
-      const child = spawn(
-        resolveBunExecutable(),
-        ['--eval', childScript, agentDir, sourceRoot, source, cwd],
-        {
-          cwd: resolve('.'),
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, PHI_KERNEL_HISTORY_TEST_PAUSE: state }
+      const child = spawn(resolveBunExecutable(), ['--eval', childScript], {
+        cwd: resolve('.'),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          PHI_KERNEL_HISTORY_TEST_PAUSE: state,
+          PROBE_AGENT_DIR: agentDir,
+          PROBE_SOURCE_ROOT: sourceRoot,
+          PROBE_SOURCE: source,
+          PROBE_CWD: cwd
         }
-      )
+      })
       let stderr = ''
       child.stderr.setEncoding('utf8')
       child.stderr.on('data', (chunk: string) => {
@@ -103,12 +139,7 @@ for (const state of ['started', 'copied', 'verified', 'complete'] as const) {
         undefined,
         'parent-process',
         async (path, initialCwd) => {
-          const reopened = await makeSessionManager(
-            { kind: 'open', path, requireExisting: true, suppressBreadcrumb: true },
-            initialCwd,
-            agentDir
-          )
-          await reopened.close()
+          runManagerProbe('open', path, initialCwd, agentDir)
         }
       )
       try {

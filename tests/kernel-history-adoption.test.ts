@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   appendFileSync,
@@ -13,10 +14,10 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 
-import { makeSessionManager } from '../src/main/agent/engine/in-process/session-factory'
+import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 import type { SessionAdoptParams } from '../src/shared/kernel-protocol/history'
 
 const {
@@ -35,6 +36,42 @@ type Fixture = {
   agentDir: string
 }
 
+type ManagerProbeResult = {
+  cwd: string
+  messageCount: number
+  sessionId: string
+}
+
+function runManagerProbe(
+  operation: 'create' | 'open',
+  path: string,
+  cwd: string,
+  agentDir: string
+): ManagerProbeResult {
+  const script = [
+    "import { makeSessionManager } from './src/main/agent/engine/in-process/session-factory'",
+    'const { PROBE_OPERATION: operation, PROBE_PATH: path, PROBE_CWD: cwd, PROBE_AGENT_DIR: agentDir } = process.env',
+    "const manager = await makeSessionManager(operation === 'create' ? { kind: 'persistent', path } : { kind: 'open', path, requireExisting: true, suppressBreadcrumb: true }, cwd, agentDir)",
+    "if (operation === 'create') manager.appendMessage({ role: 'user', content: 'historic prompt', timestamp: Date.now() })",
+    'const result = { cwd: manager.getCwd(), messageCount: manager.buildSessionContext().messages.length, sessionId: manager.getSessionId() }',
+    'await manager.close()',
+    'console.log(JSON.stringify(result))'
+  ].join('\n')
+  const stdout = execFileSync(resolveBunExecutable(), ['-e', script], {
+    cwd: resolve('.'),
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PROBE_OPERATION: operation,
+      PROBE_PATH: path,
+      PROBE_CWD: cwd,
+      PROBE_AGENT_DIR: agentDir
+    },
+    stdio: ['ignore', 'pipe', 'inherit']
+  })
+  return JSON.parse(stdout.trim()) as ManagerProbeResult
+}
+
 async function fixture(name: string): Promise<Fixture> {
   const root = mkdtempSync(join(tmpdir(), `phi-history-${name}-`))
   const cwd = join(root, 'project')
@@ -44,9 +81,7 @@ async function fixture(name: string): Promise<Fixture> {
   mkdirSync(cwd)
   mkdirSync(sourceRoot)
   mkdirSync(dirname(source), { recursive: true })
-  const manager = await makeSessionManager({ kind: 'persistent', path: source }, cwd, agentDir)
-  manager.appendMessage({ role: 'user', content: 'historic prompt', timestamp: Date.now() })
-  await manager.close()
+  runManagerProbe('create', source, cwd, agentDir)
   return { root, cwd, sourceRoot, source, agentDir }
 }
 
@@ -79,12 +114,7 @@ function repository(
     undefined,
     'test-process',
     async (path, cwd) => {
-      const manager = await makeSessionManager(
-        { kind: 'open', path, requireExisting: true, suppressBreadcrumb: true },
-        cwd,
-        agentDir
-      )
-      await manager.close()
+      runManagerProbe('open', path, cwd, agentDir)
     }
   )
 }
@@ -115,21 +145,8 @@ test('adoption preserves the source, records the migration, and is idempotent', 
       backup: 'source-backup.jsonl'
     })
 
-    const reopenedManager = await makeSessionManager(
-      {
-        kind: 'open',
-        path: paths.journal,
-        requireExisting: true,
-        suppressBreadcrumb: true
-      },
-      value.cwd,
-      value.agentDir
-    )
-    try {
-      assert.equal(reopenedManager.buildSessionContext().messages.length, 1)
-    } finally {
-      await reopenedManager.close()
-    }
+    const reopened = runManagerProbe('open', paths.journal, value.cwd, value.agentDir)
+    assert.equal(reopened.messageCount, 1)
 
     const second = await repo.adopt(params(value), { allowedSourceRoots: [value.sourceRoot] })
     assert.equal(second.sessionId, first.sessionId)

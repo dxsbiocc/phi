@@ -34,6 +34,8 @@ import {
   runCompletedPayloadSchema,
   sessionAbortParamsSchema,
   sessionAbortResultSchema,
+  sessionAdoptParamsSchema,
+  sessionAdoptResultSchema,
   sessionCloseParamsSchema,
   sessionCloseResultSchema,
   sessionCreateParamsSchema,
@@ -77,6 +79,19 @@ const methodParams = {
     },
     noTools: 'all'
   },
+  'session.adopt': {
+    source: {
+      kind: 'omp-journal',
+      path: '/tmp/phi-session.jsonl',
+      cwd: '/tmp/phi-project',
+      origin: 'desktop-local',
+      phiSessionId: 'phi-session-1',
+      expected: { sha256: 'a'.repeat(64), size: 1024 }
+    },
+    title: 'Adopted session',
+    model: { provider: 'phi-contract', id: 'contract-model' },
+    thinkingLevel: 'high'
+  },
   'session.open': { sessionId: 'session-1' },
   'sessions.list': {},
   'session.prompt': {
@@ -101,6 +116,10 @@ const methodResults = {
     lastSeq: 7
   },
   'session.create': { sessionId: 'session-1' },
+  'session.adopt': {
+    sessionId: 'session-adopted',
+    migration: { state: 'complete', sourceSha256: 'a'.repeat(64) }
+  },
   'session.open': { sessionId: 'session-1' },
   'sessions.list': {
     sessions: [
@@ -265,6 +284,8 @@ describe('kernel protocol DTOs', () => {
       [kernelHelloResultSchema, methodResults['kernel.hello']],
       [sessionCreateParamsSchema, methodParams['session.create']],
       [sessionCreateResultSchema, methodResults['session.create']],
+      [sessionAdoptParamsSchema, methodParams['session.adopt']],
+      [sessionAdoptResultSchema, methodResults['session.adopt']],
       [sessionOpenParamsSchema, methodParams['session.open']],
       [sessionOpenResultSchema, methodResults['session.open']],
       [sessionsListParamsSchema, methodParams['sessions.list']],
@@ -308,6 +329,29 @@ describe('kernel protocol DTOs', () => {
     for (const [schema, valid] of schemaCases) {
       assert.equal(schema.safeParse({ ...valid, unexpected: true }).success, false)
     }
+  })
+
+  it('rejects malformed adoption integrity metadata', () => {
+    assert.equal(
+      sessionAdoptParamsSchema.safeParse({
+        ...methodParams['session.adopt'],
+        source: {
+          ...methodParams['session.adopt'].source,
+          expected: { sha256: 'not-a-sha256', size: 1024 }
+        }
+      }).success,
+      false
+    )
+    assert.equal(
+      sessionAdoptResultSchema.safeParse({
+        ...methodResults['session.adopt'],
+        migration: {
+          ...methodResults['session.adopt'].migration,
+          sourceSha256: 'not-a-sha256'
+        }
+      }).success,
+      false
+    )
   })
 
   it('supports persistent sessions and durable run identity with bounded keys', () => {

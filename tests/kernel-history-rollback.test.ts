@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   existsSync,
@@ -11,7 +12,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -20,7 +21,7 @@ import {
   writeKernelOwner,
   type RollbackPauseStep
 } from '../src/main/agent/engine/kernel-history'
-import { makeSessionManager } from '../src/main/agent/engine/in-process/session-factory'
+import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 import { readManifestFile, writeManifestFile } from '../src/main/agent/session/manifest-file'
 import type { PhiSessionManifest } from '../src/main/agent/session/session-store'
 
@@ -40,6 +41,29 @@ interface Fixture {
   kernelJournal: string
   originalBytes: Buffer
   originalManifestBytes: Buffer
+}
+
+function inspectJournal(path: string, cwd: string, agentDir: string): { sessionId: string } {
+  const script = [
+    "import { makeSessionManager } from './src/main/agent/engine/in-process/session-factory'",
+    'const { PROBE_PATH: path, PROBE_CWD: cwd, PROBE_AGENT_DIR: agentDir } = process.env',
+    "const manager = await makeSessionManager({ kind: 'open', path, requireExisting: true, suppressBreadcrumb: true }, cwd, agentDir)",
+    'const result = { sessionId: manager.getSessionId() }',
+    'await manager.close()',
+    'console.log(JSON.stringify(result))'
+  ].join('\n')
+  const stdout = execFileSync(resolveBunExecutable(), ['-e', script], {
+    cwd: resolve('.'),
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PROBE_PATH: path,
+      PROBE_CWD: cwd,
+      PROBE_AGENT_DIR: agentDir
+    },
+    stdio: ['ignore', 'pipe', 'inherit']
+  })
+  return JSON.parse(stdout.trim()) as { sessionId: string }
 }
 
 function journal(cwd: string, id: string, message: string): string {
@@ -164,18 +188,12 @@ test('compatible rollback exports current history, backs up and atomically repoi
       'untouched'
     )
 
-    const manager = await makeSessionManager(
-      {
-        kind: 'open',
-        path: result.exportPath,
-        requireExisting: true,
-        suppressBreadcrumb: true
-      },
+    const reopened = inspectJournal(
+      result.exportPath,
       fixture.cwd,
       join(fixture.root, 'old-app-agent')
     )
-    assert.equal(manager.getSessionId(), 'old-session')
-    await manager.close()
+    assert.equal(reopened.sessionId, 'old-session')
   } finally {
     rmSync(fixture.root, { recursive: true, force: true })
   }

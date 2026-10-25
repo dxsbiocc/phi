@@ -1,16 +1,48 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
 
-import { makeSessionManager } from '../src/main/agent/engine/in-process/session-factory'
+import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 import { KernelSessionRepository } from '../src/kernel/sessions'
-import {
-  createHistoryHandlers,
-  validateHistoryJournal
-} from '../src/kernel/worker/history-handlers'
+import { createHistoryHandlers } from '../src/kernel/worker/history-handlers'
 import type { KernelMethodHandler } from '../src/kernel/protocol'
+
+function runManagerProbe(
+  operation: 'create' | 'open',
+  path: string,
+  cwd: string,
+  agentDir: string,
+  message = ''
+): void {
+  const script = [
+    "import { makeSessionManager } from './src/main/agent/engine/in-process/session-factory'",
+    'const { PROBE_OPERATION: operation, PROBE_PATH: path, PROBE_CWD: cwd, PROBE_AGENT_DIR: agentDir, PROBE_MESSAGE: message } = process.env',
+    "const manager = await makeSessionManager(operation === 'create' ? { kind: 'persistent', path } : { kind: 'open', path, requireExisting: true, suppressBreadcrumb: true }, cwd, agentDir)",
+    "if (operation === 'create') manager.appendMessage({ role: 'user', content: message, timestamp: Date.now() })",
+    'await manager.close()'
+  ].join('\n')
+  execFileSync(resolveBunExecutable(), ['-e', script], {
+    cwd: resolve('.'),
+    env: {
+      ...process.env,
+      PROBE_OPERATION: operation,
+      PROBE_PATH: path,
+      PROBE_CWD: cwd,
+      PROBE_AGENT_DIR: agentDir,
+      PROBE_MESSAGE: message
+    },
+    stdio: ['ignore', 'ignore', 'inherit']
+  })
+}
+
+function bunJournalValidator(agentDir: string): (path: string, cwd: string) => Promise<void> {
+  return async (path, cwd) => {
+    runManagerProbe('open', path, cwd, agentDir)
+  }
+}
 
 async function invoke(handler: KernelMethodHandler, params: unknown): Promise<unknown> {
   return handler(
@@ -28,9 +60,7 @@ test('history handler validates params and adopts through trusted source roots',
   const agentDir = join(root, 'agent')
   mkdirSync(cwd)
   mkdirSync(sourceRoot)
-  const manager = await makeSessionManager({ kind: 'persistent', path: source }, cwd, agentDir)
-  manager.appendMessage({ role: 'user', content: 'adopt me', timestamp: Date.now() })
-  await manager.close()
+  runManagerProbe('create', source, cwd, agentDir, 'adopt me')
   const repository = new KernelSessionRepository(
     agentDir,
     'history-handler',
@@ -39,7 +69,8 @@ test('history handler validates params and adopts through trusted source roots',
   )
   const handler = createHistoryHandlers({
     repository,
-    allowedSourceRoots: [sourceRoot]
+    allowedSourceRoots: [sourceRoot],
+    migrationTestHooks: { validateJournal: bunJournalValidator(agentDir) }
   })['session.adopt']
   try {
     await assert.rejects(invoke(handler, { source: {} }), (error: unknown) => {
@@ -75,11 +106,10 @@ test('history handler maps a held target writer to SESSION_BUSY', async () => {
   const agentDir = join(root, 'agent')
   mkdirSync(cwd)
   mkdirSync(sourceRoot)
-  const manager = await makeSessionManager({ kind: 'persistent', path: source }, cwd, agentDir)
-  manager.appendMessage({ role: 'user', content: 'busy', timestamp: Date.now() })
-  await manager.close()
-  const left = new KernelSessionRepository(agentDir, 'left', undefined, 'test-process')
-  const right = new KernelSessionRepository(agentDir, 'right', undefined, 'test-process')
+  runManagerProbe('create', source, cwd, agentDir, 'busy')
+  // Real process start tokens: a fake token makes the live holder look like a reused PID.
+  const left = new KernelSessionRepository(agentDir, 'left')
+  const right = new KernelSessionRepository(agentDir, 'right')
   const input = {
     source: {
       kind: 'omp-journal' as const,
@@ -92,12 +122,13 @@ test('history handler maps a held target writer to SESSION_BUSY', async () => {
   try {
     const held = await left.adopt(input, {
       allowedSourceRoots: [sourceRoot],
-      validateJournal: validateHistoryJournal
+      validateJournal: bunJournalValidator(agentDir)
     })
     await left.open(held.sessionId)
     const handler = createHistoryHandlers({
       repository: right,
-      allowedSourceRoots: [sourceRoot]
+      allowedSourceRoots: [sourceRoot],
+      migrationTestHooks: { validateJournal: bunJournalValidator(agentDir) }
     })['session.adopt']
     await assert.rejects(invoke(handler, input), (error: unknown) => {
       assert.deepEqual(error, {
