@@ -11,6 +11,12 @@ import {
   type WrapperJobStatus
 } from '../src/main/agent/wrappers/composition/job-types'
 import { buildWrapperCompositionTools } from '../src/main/agent/wrappers/composition/tools'
+import { selectBackgroundJobs } from '../src/renderer/src/features/jobs/lib/backgroundJobs'
+import { groupBackgroundJobs } from '../src/renderer/src/features/jobs/lib/backgroundJobGroups'
+import {
+  newlyObservedJobs,
+  workflowPhase
+} from '../src/renderer/src/features/jobs/hooks/useBackgroundJobArrivals'
 import {
   getWrapperRunsDir,
   listWrapperRuns,
@@ -884,6 +890,49 @@ test('wrapper_run resources reach Nextflow as a run config and are kept on the r
     } finally {
       delete process.env.FAKE_NF_RECORD
     }
+  })
+})
+
+test('two Wrapper tool calls retain one workflow card and one arrival identity through completion', async () => {
+  await withSandbox(async (sb) => {
+    sb.useFake(FAKE_NEXTFLOW)
+    const m = manager(sb)
+    const handlers = wrapperJobHostHandlers(m)
+    const client = createHostJobClient((method, params) => handlers[method](params), {
+      originSessionId: 'runtime-rna'
+    })
+    const tool = buildWrapperCompositionTools(client).find((item) => item.name === 'wrapper_run')!
+    const workflowId = 'rnaseq_20261023_a8f2'
+    const submit = async (step: string, outdir: string): Promise<string> => {
+      const result = await executeTool(tool, step, {
+        id: WRAPPER_ID,
+        params: { outdir },
+        profile: 'docker',
+        workflow: { id: workflowId, name: 'RNA-seq', step, totalSteps: 2 }
+      })
+      assert.equal((result as { isError?: boolean }).isError, undefined, text(result))
+      return (result as { details: { runId: string } }).details.runId
+    }
+
+    const firstId = await submit('QC', join(sb.root, 'qc'))
+    const display = (): ReturnType<typeof groupBackgroundJobs> => {
+      const current = selectBackgroundJobs([], listWrapperRuns(sb.agentDir))
+      return groupBackgroundJobs([...current.active, ...current.recent])
+    }
+    const known = new Set(display().map((item) => item.key))
+    const secondId = await submit('Alignment', join(sb.root, 'alignment'))
+    assert.notEqual(firstId, secondId)
+    assert.deepEqual(newlyObservedJobs(display(), known), [])
+    assert.deepEqual(
+      [firstId, secondId].map((id) => readWrapperRun(id, sb.agentDir)?.workflow?.id),
+      [workflowId, workflowId]
+    )
+
+    await Promise.all([m.wait(firstId, 20_000), m.wait(secondId, 20_000)])
+    const restored = display()
+    assert.equal(restored.length, 1)
+    assert.equal(restored[0].kind, 'workflow')
+    assert.equal(workflowPhase(restored[0]), 'completed')
   })
 })
 

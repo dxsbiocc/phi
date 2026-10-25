@@ -5,6 +5,7 @@ import {
   type WrapperJobClient,
   type WrapperJobControl
 } from './job-types'
+import { parseWrapperWorkflow } from './workflow-identity'
 
 import { isRecord } from '../../../../shared/guards'
 export interface WrapperJobHostScope extends WrapperJobControl {
@@ -86,6 +87,10 @@ export function wrapperJobHostHandlers(
       const overrides = isRecord(params) && isRecord(params.overrides) ? params.overrides : {}
       const origin =
         scope?.originSessionId ?? (isRecord(params) ? params.originSessionId : undefined)
+      const workflowInput = isRecord(params) ? params.workflow : undefined
+      const workflow = workflowInput === undefined ? undefined : parseWrapperWorkflow(workflowInput)
+      if (workflowInput !== undefined && !workflow)
+        throw new Error('Invalid Wrapper workflow identity')
       return jobs.start(
         {
           id: requireString(params, 'id'),
@@ -100,7 +105,8 @@ export function wrapperJobHostHandlers(
             : {}),
           ...(isRecord(params) && params.resources !== undefined
             ? { resources: params.resources }
-            : {})
+            : {}),
+          ...(workflow ? { workflow } : {})
         },
         scope
       )

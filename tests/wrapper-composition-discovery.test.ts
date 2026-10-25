@@ -126,3 +126,29 @@ test('composition tools retain the generic workflow and reject invalid inputs be
     assert.deepEqual(await jobs.list(), [])
   })
 })
+
+test('wrapper_run forwards explicit workflow metadata with each submitted step', async () => {
+  let received: unknown
+  const jobs = {
+    start: async (input: unknown) => {
+      received = input
+      return { ok: false as const, error: 'test stopped before execution' }
+    }
+  } as unknown as Parameters<typeof buildWrapperCompositionRunTool>[0]
+  const tool = buildWrapperCompositionRunTool(jobs)
+  await tool.execute(
+    'workflow-step',
+    {
+      id: 'nf-core/modules/fastp',
+      workflow: { id: 'rnaseq_20261023_a8f2', name: 'RNA-seq', step: 'Trimming', totalSteps: 4 }
+    },
+    undefined,
+    undefined as never
+  )
+  assert.deepEqual((received as { workflow: unknown }).workflow, {
+    id: 'rnaseq_20261023_a8f2',
+    name: 'RNA-seq',
+    step: 'Trimming',
+    totalSteps: 4
+  })
+})

@@ -12,7 +12,7 @@ import {
 
 export const BACKGROUND_JOB_HISTORY_KEY = 'phi.background-jobs-history.v1'
 export const MAX_RETAINED_BACKGROUND_JOBS = 50
-const MAX_STORAGE_CHARS = 128 * 1024
+const MAX_STORAGE_BYTES = 128 * 1024
 const KINDS = new Set([
   'agent',
   'shell',
@@ -38,6 +38,7 @@ const DETAIL_LABELS = new Set([
   '目标目录',
   '项目',
   '服务器',
+  '调度器',
   'Notebook',
   '模型',
   '生成单元',
@@ -54,6 +55,7 @@ const DETAIL_LABELS = new Set([
   'Destination directory',
   'Project',
   'Server',
+  'Scheduler',
   'Model',
   'Generated cells'
 ])
@@ -220,7 +222,7 @@ function newestFirst(left: { timestamp: string }, right: { timestamp: string }):
 function readState(storage: StorageLike | undefined): HistoryState {
   try {
     const raw = storage?.getItem(BACKGROUND_JOB_HISTORY_KEY)
-    if (!raw || raw.length > MAX_STORAGE_CHARS) return emptyState()
+    if (!raw || raw.length > MAX_STORAGE_BYTES) return emptyState()
     const value: unknown = JSON.parse(raw)
     if (!record(value) || value.schema !== 1 || !Array.isArray(value.records)) return emptyState()
     const records = new Map<string, JobHistorySnapshot>()
@@ -259,6 +261,39 @@ export class BackgroundJobHistory {
     this.saved = JSON.stringify(this.state)
   }
 
+  serialize(): string {
+    return JSON.stringify(this.state)
+  }
+
+  mergeSerialized(serialized: string): void {
+    const incoming = readState({ getItem: () => serialized, setItem: () => undefined })
+    const records = new Map<string, JobHistorySnapshot>()
+    for (const item of [...this.state.records, ...incoming.records]) {
+      const previous = records.get(item.key)
+      if (!previous || previous.timestamp < item.timestamp) records.set(item.key, item)
+    }
+    const dismissed = { ...this.state.dismissed }
+    for (const [key, at] of Object.entries(incoming.dismissed)) {
+      if (!dismissed[key] || dismissed[key] < at) dismissed[key] = at
+    }
+    this.state = {
+      schema: 1,
+      records: [...records.values()].sort(newestFirst).slice(0, MAX_RETAINED_BACKGROUND_JOBS),
+      clearedBefore:
+        [this.state.clearedBefore, incoming.clearedBefore]
+          .filter((at): at is string => !!at)
+          .sort()
+          .at(-1) ?? null,
+      dismissed: Object.fromEntries(
+        Object.entries(dismissed)
+          .sort((left, right) => right[1].localeCompare(left[1]))
+          .slice(0, MAX_RETAINED_BACKGROUND_JOBS)
+      )
+    }
+    this.state.records = this.state.records.filter((item) => this.visible(item))
+    this.save()
+  }
+
   observe(items: readonly LiveBackgroundJob[]): void {
     const records = new Map(this.state.records.map((item) => [item.key, item]))
     for (const item of items) {
@@ -280,6 +315,28 @@ export class BackgroundJobHistory {
     active: UnifiedBackgroundJob[]
     recent: UnifiedBackgroundJob[]
   } {
+    const workflows = new Map<
+      string,
+      { active: boolean; failed: boolean; count: number; expected: number }
+    >()
+    for (const item of [...live.active, ...live.recent]) {
+      if (item.kind !== 'wrapper' || !item.run.workflow) continue
+      const { id, totalSteps } = item.run.workflow
+      const current = workflows.get(id) ?? { active: false, failed: false, count: 0, expected: 0 }
+      current.active ||= item.active
+      current.failed ||= ['failed', 'lost', 'cancelled'].includes(item.run.state)
+      current.count += 1
+      current.expected = Math.max(current.expected, totalSteps ?? 0)
+      workflows.set(id, current)
+    }
+    const unfinishedWorkflows = new Set(
+      [...workflows.entries()]
+        .filter(
+          ([, workflow]) =>
+            workflow.active || (workflow.count < workflow.expected && !workflow.failed)
+        )
+        .map(([id]) => id)
+    )
     const liveKeys = new Set([...live.active, ...live.recent].map((item) => item.key))
     const restored: RetainedBackgroundJob[] = this.state.records
       .filter((item) => !liveKeys.has(item.key) && this.visible(item))
@@ -292,7 +349,16 @@ export class BackgroundJobHistory {
       }))
     return {
       active: [...live.active],
-      recent: [...live.recent.filter((item) => this.visible(item)), ...restored]
+      recent: [
+        ...live.recent.filter(
+          (item) =>
+            this.visible(item) ||
+            (item.kind === 'wrapper' &&
+              item.run.workflow &&
+              unfinishedWorkflows.has(item.run.workflow.id))
+        ),
+        ...restored
+      ]
         .sort(newestFirst)
         .slice(0, MAX_RETAINED_BACKGROUND_JOBS)
     }
@@ -328,11 +394,18 @@ export class BackgroundJobHistory {
 
   private save(): void {
     let serialized = JSON.stringify(this.state)
-    while (serialized.length > MAX_STORAGE_CHARS && this.state.records.length > 0) {
+    while (
+      new TextEncoder().encode(serialized).byteLength > MAX_STORAGE_BYTES &&
+      this.state.records.length > 0
+    ) {
       this.state.records.pop()
       serialized = JSON.stringify(this.state)
     }
-    if (serialized === this.saved || serialized.length > MAX_STORAGE_CHARS) return
+    if (
+      serialized === this.saved ||
+      new TextEncoder().encode(serialized).byteLength > MAX_STORAGE_BYTES
+    )
+      return
     try {
       this.storage?.setItem(BACKGROUND_JOB_HISTORY_KEY, serialized)
       this.saved = serialized

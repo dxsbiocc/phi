@@ -97,6 +97,8 @@ export const IPC = {
     statLocalPaths: 'files:statLocalPaths'
   },
   jobs: {
+    readHistory: 'jobs:readHistory',
+    writeHistory: 'jobs:writeHistory',
     listAgents: 'jobs:listAgents',
     listShell: 'jobs:listShell',
     stopShell: 'jobs:stopShell'

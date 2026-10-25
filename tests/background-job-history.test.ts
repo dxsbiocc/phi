@@ -193,6 +193,66 @@ test('terminal metadata from all seven sources survives a real storage round-tri
   assert.equal(jobTitle(restored.recent.find((item) => item.key.startsWith('shell:'))!), '后台命令')
 })
 
+test('a new renderer origin merges durable task history with its own local records', () => {
+  const firstStorage = new MemoryStorage()
+  const first = new BackgroundJobHistory(firstStorage)
+  first.observe(terminalJobs().filter((job) => job.kind === 'jupyter'))
+
+  const secondStorage = new MemoryStorage()
+  const second = new BackgroundJobHistory(secondStorage)
+  second.observe(terminalJobs().filter((job) => job.kind === 'wrapper'))
+  second.mergeSerialized(firstStorage.value!)
+
+  const restored = new BackgroundJobHistory(secondStorage).select(empty()).recent
+  assert.deepEqual(
+    new Set(restored.map((job) => job.kind === 'history' && job.snapshot.sourceKind)),
+    new Set(['jupyter', 'wrapper'])
+  )
+})
+
+test('a cleared list stays cleared when an older renderer profile is merged', () => {
+  const olderStorage = new MemoryStorage()
+  const older = new BackgroundJobHistory(olderStorage)
+  older.observe(terminalJobs().filter((job) => job.kind === 'jupyter'))
+
+  const currentStorage = new MemoryStorage()
+  const current = new BackgroundJobHistory(currentStorage)
+  current.clearCompleted([], '2026-10-15T10:02:00.000Z')
+  current.mergeSerialized(olderStorage.value!)
+
+  assert.deepEqual(new BackgroundJobHistory(currentStorage).select(empty()).recent, [])
+})
+
+test('clearing finished jobs preserves completed steps in an unfinished workflow', () => {
+  const source = terminalJobs().find((job) => job.kind === 'wrapper')
+  assert.ok(source && source.kind === 'wrapper')
+  const workflow = { id: 'rna-1', name: 'RNA-seq', totalSteps: 4 }
+  const completed = {
+    ...source.run,
+    runId: 'wrun-qc',
+    workflow: { ...workflow, step: 'QC' }
+  }
+  const running = {
+    ...source.run,
+    runId: 'wrun-align',
+    state: 'running' as const,
+    completedAt: undefined,
+    workflow: { ...workflow, step: 'Alignment' }
+  }
+  const live = selectBackgroundJobs([], [completed, running])
+  const history = new BackgroundJobHistory(new MemoryStorage())
+  history.clearCompleted(live.recent, '2026-10-15T10:02:00.000Z')
+  const visible = history.select(live)
+  assert.deepEqual(
+    visible.active.map((item) => item.key),
+    ['wrapper:wrun-align']
+  )
+  assert.deepEqual(
+    visible.recent.map((item) => item.key),
+    ['wrapper:wrun-qc']
+  )
+})
+
 test('live source jobs replace retained snapshots and running attempts are never restored', () => {
   const storage = new MemoryStorage()
   const history = new BackgroundJobHistory(storage)

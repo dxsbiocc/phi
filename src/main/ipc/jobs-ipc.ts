@@ -2,6 +2,10 @@ import type { IpcMain } from 'electron'
 
 import type { BackgroundAgentJob, BackgroundShellJob } from '../../shared/backgroundJobTypes'
 import { IPC } from '../../shared/ipcChannels'
+import {
+  readBackgroundJobHistory,
+  writeBackgroundJobHistory
+} from '../agent/jobs/background-job-history-store'
 export interface JobsIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
   operations: {
@@ -18,6 +22,8 @@ export function registerJobsIpc(options: JobsIpcOptions): void {
   const stopBackgroundShellJob = options.operations.stopShellJob
 
   ipcMain.handle(IPC.jobs.listAgents, listBackgroundAgentJobs)
+  ipcMain.handle(IPC.jobs.readHistory, () => readBackgroundJobHistory())
+  ipcMain.handle(IPC.jobs.writeHistory, (_, value: unknown) => writeBackgroundJobHistory(value))
   ipcMain.handle(IPC.jobs.listShell, listBackgroundShellJobs)
   ipcMain.handle(IPC.jobs.stopShell, async (_, agentSessionId: unknown, jobId: unknown) => {
     await stopBackgroundShellJob(agentSessionId, jobId)

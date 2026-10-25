@@ -6,6 +6,7 @@ import type { WorkspaceSidePanelMode } from '../../lib/workspaceSidePanelMode'
 import MacWindowControls from '../MacWindowControls'
 import WindowNavigationControls from '../WindowNavigationControls'
 import { TopRightControls, titlebarChromeIconButtonSize } from './TopRightControls'
+import { BackgroundJobArrivalNotice } from '../../features/jobs/components/BackgroundJobArrivalNotice'
 
 /**
  * The two absolute-positioned chrome clusters of the app window: the macOS
@@ -71,7 +72,8 @@ export function AppWindowChrome({
   sidePanelWidth,
   sidePanelOverlay,
   onRefreshSidePanel,
-  onTogglePanel
+  onTogglePanel,
+  onOpenBackgroundJob
 }: {
   isMac: boolean
   chromeLayout: WindowChromeLayout
@@ -88,6 +90,7 @@ export function AppWindowChrome({
   sidePanelOverlay: boolean
   onRefreshSidePanel: () => void
   onTogglePanel: (mode: WorkspaceSidePanelMode) => void
+  onOpenBackgroundJob: (key: string) => void
 }): React.JSX.Element {
   const sidePanelOpen = activePanels.length > 0
   return (
@@ -123,6 +126,9 @@ export function AppWindowChrome({
           onTogglePanel={onTogglePanel}
         />
       </Box>
+      {!activePanels.includes('jobs') && (
+        <BackgroundJobArrivalNotice onOpen={(item) => onOpenBackgroundJob(item.key)} />
+      )}
     </>
   )
 }

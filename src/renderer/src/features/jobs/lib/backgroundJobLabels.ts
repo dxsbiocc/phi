@@ -176,7 +176,12 @@ export function jobTitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'notebook-ai') return jobsCopy.aIGenerationValue(item.job.notebookName)
   if (item.kind === 'agent') return item.run.agentName
   if (item.kind === 'shell') return item.run.command
-  return item.run.runName || item.run.wrapper.shortId || item.run.wrapper.canonicalId
+  return (
+    item.run.workflow?.step ||
+    item.run.runName ||
+    item.run.wrapper.shortId ||
+    item.run.wrapper.canonicalId
+  )
 }
 
 export function jobSource(item: UnifiedBackgroundJob): string {
@@ -422,6 +427,10 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
           { label: 'Wrapper', value: item.run.wrapper.canonicalId },
           { label: jobsCopy.runID, value: item.run.runId, mono: true },
           { label: jobsCopy.status, value: status },
+          item.run.remote ? { label: jobsCopy.server, value: item.run.remote.host } : undefined,
+          ['slurm', 'slurm-controller'].includes(item.run.executor)
+            ? { label: jobsCopy.scheduler, value: 'Slurm' }
+            : undefined,
           runProgressLabel(item.run)
             ? { label: jobsCopy.progress, value: runProgressLabel(item.run) ?? '' }
             : undefined,

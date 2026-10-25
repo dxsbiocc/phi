@@ -1585,6 +1585,7 @@ async function harness(
   } as unknown as OmpBridge
   const phiEngine = createInProcessEngine(fakeOmpBridge)
   if (options.childResourceOwner) phiEngine.agentRuns.resourceOwner = options.childResourceOwner
+  let backgroundJobHistory: string | null = null
   const modules: Record<string, unknown> = {
     '../shared/ipcChannels': { IPC },
     './agent/session/pending-remote-auto-plan': {
@@ -1595,6 +1596,12 @@ async function harness(
         mode: savedMode,
         tainted: false
       })
+    },
+    './agent/jobs/background-job-history-store': {
+      readBackgroundJobHistory: () => backgroundJobHistory,
+      writeBackgroundJobHistory: (value: string) => {
+        backgroundJobHistory = value
+      }
     },
     '../shared/browserSessionScope': browserSessionScope,
     './window-startup': windowStartup,
@@ -7565,6 +7572,8 @@ const expectedStartupRegistrationOrder = [
   'environmentBuilds:list',
   'environmentBuilds:cancel',
   'jobs:listAgents',
+  'jobs:readHistory',
+  'jobs:writeHistory',
   'jobs:listShell',
   'jobs:stopShell',
   'wrappers:getRun',
@@ -7582,6 +7591,14 @@ const expectedStartupRegistrationOrder = [
 test('main startup registers IPC handlers in a stable order', async () => {
   const app = await harness()
   assert.deepEqual(app.registrationOrder, expectedStartupRegistrationOrder)
+})
+
+test('main IPC passes background job history through the jobs handlers', async () => {
+  const app = await harness()
+  const value = JSON.stringify({ schema: 1, records: [], clearedBefore: null, dismissed: {} })
+  assert.equal(await app.invoke('jobs:readHistory'), null)
+  await app.invoke('jobs:writeHistory', value)
+  assert.equal(await app.invoke('jobs:readHistory'), value)
 })
 
 test(
@@ -13428,12 +13445,15 @@ test('main plan review pauses the run and records approval in its conversation',
   })
   const review = app.hostHandlers.get('planReview.request')
   assert.ok(review)
-  const result = await review({
-    runtimeSessionId: session.runtimeSessionId,
-    title: 'analysis-plan',
-    planContent: '# Analysis plan\n\n1. Inspect data\n2. Write report',
-    planFilePath: 'local://analysis-plan.md'
-  }, { originSessionId: session.runtimeSessionId })
+  const result = await review(
+    {
+      runtimeSessionId: session.runtimeSessionId,
+      title: 'analysis-plan',
+      planContent: '# Analysis plan\n\n1. Inspect data\n2. Write report',
+      planFilePath: 'local://analysis-plan.md'
+    },
+    { originSessionId: session.runtimeSessionId }
+  )
   assert.deepEqual(result, { decision: 'approve' })
   const planEvents = app.appendedSessionEvents
     .filter((entry) => String(entry.event.type).startsWith('plan_review_'))
@@ -13527,12 +13547,15 @@ test('main plan review preserves requested revisions in the session timeline', a
   const review = app.hostHandlers.get('planReview.request')
   assert.ok(review)
   assert.deepEqual(
-    await review({
-      runtimeSessionId: session.runtimeSessionId,
-      title: 'analysis-plan',
-      planContent: '# Analysis plan',
-      planFilePath: 'local://analysis-plan.md'
-    }, { originSessionId: session.runtimeSessionId }),
+    await review(
+      {
+        runtimeSessionId: session.runtimeSessionId,
+        title: 'analysis-plan',
+        planContent: '# Analysis plan',
+        planFilePath: 'local://analysis-plan.md'
+      },
+      { originSessionId: session.runtimeSessionId }
+    ),
     { decision: 'revise', note: 'Add a validation step' }
   )
   const decided = app.appendedSessionEvents.find(

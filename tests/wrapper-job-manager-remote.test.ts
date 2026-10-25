@@ -15,6 +15,9 @@ import test from 'node:test'
 
 import { WrapperJobManager } from '../src/main/agent/wrappers/composition/job-manager'
 import { formatJobStatus } from '../src/main/agent/wrappers/composition/job-format'
+import { selectBackgroundJobs } from '../src/renderer/src/features/jobs/lib/backgroundJobs'
+import { groupBackgroundJobs } from '../src/renderer/src/features/jobs/lib/backgroundJobGroups'
+import { workflowPhase } from '../src/renderer/src/features/jobs/hooks/useBackgroundJobArrivals'
 import type { Project } from '../src/main/agent/projects'
 import type { WrapperTargetDoctorSnapshot } from '../src/main/agent/wrappers/target-policy'
 import type { WrapperJobStatus } from '../src/main/agent/wrappers/composition/job-types'
@@ -191,6 +194,49 @@ test('SSH project starts the same wrapper on its server without a target argumen
         /remote project uses its bound server and project directory/
       )
     })
+  })
+})
+
+test('parallel simulated Slurm Wrapper runs form one persisted workflow with child statuses', async () => {
+  await withSandbox(async (sb) => {
+    await withFakeSlurmAvailable(sb, () =>
+      withRemote(sb, async (env) => {
+        const m = manager(sb, env)
+        const workflowId = 'rnaseq_parallel_a8f2'
+        const start = (step: string): ReturnType<WrapperJobManager['start']> =>
+          m.start({
+            id: WRAPPER_ID,
+            overrides: { gff: 'tests/data/genome.gff3' },
+            target: 'remote',
+            originSessionId: 'runtime-rna',
+            workflow: { id: workflowId, name: 'RNA-seq', step, totalSteps: 2 }
+          })
+        const [qc, alignment] = await Promise.all([start('QC'), start('Alignment')])
+        assert.equal(qc.ok, true, JSON.stringify(qc))
+        assert.equal(alignment.ok, true, JSON.stringify(alignment))
+        if (!qc.ok || !alignment.ok) return
+        const runs = listWrapperRuns(sb.agentDir)
+        assert.equal(runs.length, 2)
+        assert.ok(runs.every((run) => run.executor === 'slurm'))
+        assert.ok(runs.every((run) => run.remote?.host === 'login.hpc.test'))
+        const selected = selectBackgroundJobs([], runs)
+        const display = groupBackgroundJobs([...selected.active, ...selected.recent])
+        assert.equal(display.length, 1)
+        assert.equal(display[0].kind, 'workflow')
+        if (display[0].kind === 'workflow') assert.equal(display[0].jobs.length, 2)
+
+        const states = await Promise.all([
+          m.wait(qc.status.runId, 60_000),
+          m.wait(alignment.status.runId, 60_000)
+        ])
+        assert.deepEqual(
+          states.map((status) => status?.state),
+          ['completed', 'completed']
+        )
+        const finished = selectBackgroundJobs([], listWrapperRuns(sb.agentDir))
+        assert.equal(workflowPhase(groupBackgroundJobs(finished.recent)[0]), 'completed')
+      })
+    )
   })
 })
 

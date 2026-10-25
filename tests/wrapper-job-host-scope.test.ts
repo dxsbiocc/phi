@@ -15,6 +15,7 @@ function fixture(): {
   calls: string[]
   controller: AbortController
   origin: () => string | undefined
+  workflow: () => WrapperRun['workflow']
 } {
   const origins = new Map([
     ['old-runtime', { phiSessionId: 'owner-phi' }],
@@ -40,10 +41,12 @@ function fixture(): {
   ])
   const calls: string[] = []
   let startedOrigin: string | undefined
+  let startedWorkflow: WrapperRun['workflow']
   const client: WrapperJobClient = {
     start: async (input) => {
       calls.push('start')
       startedOrigin = input.originSessionId
+      startedWorkflow = input.workflow
       return { ok: false, error: 'bounded fixture' }
     },
     status: async (runId) => {
@@ -81,7 +84,13 @@ function fixture(): {
       })
     }
   })
-  return { handlers, calls, controller, origin: () => startedOrigin }
+  return {
+    handlers,
+    calls,
+    controller,
+    origin: () => startedOrigin,
+    workflow: () => startedWorkflow
+  }
 }
 
 test('scoped Wrapper status/wait/cancel reject peer and unprovable old jobs before touching the manager', async () => {
@@ -131,6 +140,25 @@ test('scoped Wrapper start trusts the actual origin and never accepts explicit l
         { originSessionId: 'fresh-runtime' }
       ),
     /calling run stopped/
+  )
+  assert.deepEqual(f.calls, ['start'])
+})
+
+test('scoped Wrapper start forwards a validated workflow identity', async () => {
+  const f = fixture()
+  const workflow = { id: 'rnaseq_20261023_a8f2', name: 'RNA-seq', step: 'QC', totalSteps: 4 }
+  await f.handlers[WRAPPER_JOB_HOST_METHODS.start](
+    { id: 'wrapper', workflow },
+    { originSessionId: 'fresh-runtime' }
+  )
+  assert.deepEqual(f.workflow(), workflow)
+  await assert.rejects(
+    async () =>
+      f.handlers[WRAPPER_JOB_HOST_METHODS.start](
+        { id: 'wrapper', workflow: { id: '../bad', name: 'RNA-seq' } },
+        { originSessionId: 'fresh-runtime' }
+      ),
+    /Invalid Wrapper workflow/
   )
   assert.deepEqual(f.calls, ['start'])
 })

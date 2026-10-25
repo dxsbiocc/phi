@@ -3,9 +3,13 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
+import {
+  AnimatedList,
+  AnimatedListItem
+} from '../src/renderer/src/features/jobs/components/AnimatedList'
 
 import type { BackgroundAgentJob, BackgroundShellJob } from '../src/shared/backgroundJobTypes'
 import type { EnvironmentBuild } from '../src/shared/environmentBuildTypes'
@@ -13,8 +17,14 @@ import type { RemoteProjectUploadJob } from '../src/shared/remoteProjectUploadTy
 import type { WrapperRun } from '../src/shared/wrapperTypes'
 import { BackgroundJobsPanel } from '../src/renderer/src/features/jobs/BackgroundJobsPanel'
 import { BackgroundJobDetail } from '../src/renderer/src/features/jobs/components/BackgroundJobDetail'
+import { scrollJupyterLogToEnd } from '../src/renderer/src/features/jobs/lib/jupyterLogScroll'
 import { BackgroundJobGroup } from '../src/renderer/src/features/jobs/components/BackgroundJobGroup'
 import { BackgroundJobRow } from '../src/renderer/src/features/jobs/components/BackgroundJobRow'
+import { BackgroundWorkflowRow } from '../src/renderer/src/features/jobs/components/BackgroundWorkflowRow'
+import { BackgroundJobIcon } from '../src/renderer/src/features/jobs/components/BackgroundJobIcon'
+import { BackgroundJobArrivalNotice } from '../src/renderer/src/features/jobs/components/BackgroundJobArrivalNotice'
+import { newlyObservedJobs } from '../src/renderer/src/features/jobs/hooks/useBackgroundJobArrivals'
+import { groupBackgroundJobs } from '../src/renderer/src/features/jobs/lib/backgroundJobGroups'
 import type { RemoteJupyterStartJob } from '../src/shared/remoteJupyterJobTypes'
 import {
   canStopUnifiedWrapperRun,
@@ -67,6 +77,22 @@ function wrapper(overrides: Partial<WrapperRun> = {}): WrapperRun {
 
 // Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
 setUiLanguage('zh-CN')
+
+test('arrival detection reports a task only once across status refreshes', () => {
+  const first = selectBackgroundJobs([agent], []).active
+  const known = new Set(first.map((item) => item.key))
+  assert.deepEqual(newlyObservedJobs(first, known), [])
+
+  const next = selectBackgroundJobs(
+    [agent, { ...agent, agentRunId: 'agent-2', agentName: 'Researcher' }],
+    []
+  ).active
+  assert.deepEqual(
+    newlyObservedJobs(next, known).map((item) => item.key),
+    ['agent:runtime-1:agent-2']
+  )
+  assert.deepEqual(newlyObservedJobs(next, known), [])
+})
 
 test('job overview combines live Agent and Wrapper runs and caps recent results', () => {
   const result = selectBackgroundJobs(
@@ -503,9 +529,99 @@ test('a job row opens its detail as a whole and no longer jumps to the conversat
     })
   )
   assert.match(markup, /role="button"/)
+  assert.match(markup, /data-phi-background-job-icon="agent"/)
   assert.match(markup, /aria-label="查看 Wrapper 详情"/)
   assert.doesNotMatch(markup, /打开对话/)
   assert.match(markup, /aria-label="停止 Wrapper"/)
+  assert.match(markup, /height:68px/)
+})
+
+test('active and finished task cards retain the same fixed height', () => {
+  const [active] = selectBackgroundJobs([agent], []).active
+  const [finished] = selectBackgroundJobs(
+    [{ ...agent, state: 'done', completedAt: '2026-09-27T10:01:00.000Z' }],
+    []
+  ).recent
+  assert.ok(active && finished)
+  for (const item of [active, finished]) {
+    const markup = render(
+      createElement(BackgroundJobRow, {
+        item,
+        nowMs: Date.parse('2026-09-27T10:02:00.000Z'),
+        busy: false,
+        onOpen: () => undefined,
+        onStop: () => undefined
+      })
+    )
+    assert.match(markup, /height:68px/)
+  }
+})
+
+test('Jupyter job cards use the current Phi material icon', () => {
+  const markup = render(createElement(BackgroundJobIcon, { kind: 'jupyter' }))
+  assert.match(markup, /data-phi-material-icon="jupyter"/)
+})
+
+test('a grouped RNA-seq run uses one compact parent card with Slurm context', () => {
+  const live = selectBackgroundJobs(
+    [],
+    [
+      wrapper({
+        origin: 'composition',
+        executor: 'slurm',
+        workflow: { id: 'rna-1', name: 'RNA-seq', step: 'QC', totalSteps: 4 }
+      })
+    ]
+  )
+  const workflow = groupBackgroundJobs(live.active)[0]
+  assert.equal(workflow.kind, 'workflow')
+  if (workflow.kind !== 'workflow') return
+  const markup = render(
+    createElement(BackgroundWorkflowRow, {
+      workflow,
+      expanded: false,
+      onToggle: () => undefined,
+      renderChild: () => null
+    })
+  )
+  assert.match(markup, /data-phi-background-workflow="workflow:rna-1"/)
+  assert.match(markup, /RNA-seq/)
+  assert.match(markup, /0\/4 步完成/)
+  assert.match(markup, /Slurm/)
+  assert.match(markup, /min-height:68px/)
+})
+
+test('animated list starts new cards at the reference zero scale', () => {
+  const markup = render(
+    createElement(
+      AnimatedList,
+      { animateInitial: true } as ComponentProps<typeof AnimatedList>,
+      createElement(
+        AnimatedListItem,
+        { enterDelayMs: 65 } as ComponentProps<typeof AnimatedListItem>,
+        'Task'
+      )
+    )
+  )
+  assert.match(markup, /opacity:0;transform:scale\(0\)/)
+})
+
+test('arrival animation host stays mounted before the first new task', () => {
+  const markup = render(
+    createElement(BackgroundJobArrivalNotice, {
+      onOpen: () => undefined
+    })
+  )
+  assert.match(markup, /data-phi-background-job-arrivals="floating"/)
+})
+
+test('starting remote Jupyter does not open the jobs panel automatically', () => {
+  const appSource = readFileSync(resolve('src/renderer/src/App.tsx'), 'utf8')
+  const startRuntime = appSource
+    .split('onStartRuntime: (cwd) => {')[1]
+    ?.split('onOpenRuntimeStartLog:')[0]
+  assert.ok(startRuntime)
+  assert.doesNotMatch(startRuntime, /onOpenJupyterStartLog|onOpenBackgroundJobs/)
 })
 
 test('a failed Jupyter startup shows its error and full startup log inside the panel', () => {
@@ -522,12 +638,27 @@ test('a failed Jupyter startup shows its error and full startup log inside the p
     })
   )
   assert.match(markup, /aria-label="返回任务列表"/)
+  assert.match(markup, /aria-label="复制详情"/)
+  assert.match(markup, /padding-left:0/)
   assert.match(markup, /启动 Jupyter Server · GPU/)
   assert.match(markup, /启动失败/)
   assert.match(markup, /3 次尝试后仍未就绪：远程 Jupyter 进程提前退出/)
   assert.match(markup, /data-phi-jupyter-start-log/)
+  assert.match(markup, /max-height:480px/)
   assert.match(markup, /No module named jupyter_server/)
   assert.match(markup, /gpu-login/)
+})
+
+test('Jupyter log following scrolls its viewport without invoking ancestor scrolling', () => {
+  const viewport = {
+    scrollTop: 0,
+    scrollHeight: 840,
+    scrollIntoView: (): never => {
+      throw new Error('scrollIntoView would move the outer pane')
+    }
+  }
+  scrollJupyterLogToEnd(viewport)
+  assert.equal(viewport.scrollTop, 840)
 })
 
 test('agent job details keep an explicit button to open the conversation', () => {

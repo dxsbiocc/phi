@@ -3,11 +3,10 @@ import { useUiLanguage } from '../../../lib/i18n'
 import { Box, Button, IconButton, LinearProgress, Stack, Tooltip, Typography } from '@mui/material'
 
 import { PhiIcons } from '../../../icons'
-import { workspacePanelText } from '../../../layout'
 import type { UnifiedBackgroundJob } from '../lib/backgroundJobs'
+import { BackgroundJobIcon } from './BackgroundJobIcon'
 import {
   canStopJob,
-  jobDetail,
   jobPercent,
   jobSource,
   jobStatus,
@@ -20,19 +19,9 @@ import {
 
 const StopIcon = PhiIcons.action.stop
 
-const clampTwoLines = {
-  minWidth: 0,
-  overflow: 'hidden',
-  overflowWrap: 'anywhere',
-  display: '-webkit-box',
-  WebkitBoxOrient: 'vertical',
-  WebkitLineClamp: 2
-} as const
-
 /** One job in the list. The whole row opens its detail inside the panel. */
 export function BackgroundJobRow({
   item,
-  nowMs,
   busy,
   onOpen,
   onStop,
@@ -48,10 +37,10 @@ export function BackgroundJobRow({
   useUiLanguage()
   const title = jobTitle(item)
   const status = jobStatus(item)
-  const detail = jobDetail(item, nowMs)
   const percent = jobPercent(item)
   const canStop = canStopJob(item)
-  const warning = item.kind === 'connector' && item.setup.failureKind === 'needs-setup'
+  const canRetryJob = Boolean(onRetry && item.kind !== 'history')
+  const kind = item.kind === 'history' ? item.snapshot.sourceKind : item.kind
   return (
     <Box
       role="button"
@@ -69,60 +58,62 @@ export function BackgroundJobRow({
       sx={{
         border: 1,
         borderColor: 'divider',
-        borderRadius: 1.5,
+        borderRadius: 2,
         p: 1,
-        mb: 1,
+        mb: 0.9,
+        height: 68,
+        boxSizing: 'border-box',
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+        overflow: 'hidden',
         minWidth: 0,
         cursor: 'pointer',
-        '&:hover': { bgcolor: 'action.hover' },
+        bgcolor: 'background.paper',
+        boxShadow: '0 2px 5px rgba(18, 35, 43, 0.05), 0 8px 20px rgba(18, 35, 43, 0.04)',
+        transition: 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 200ms ease',
+        '&:hover': {
+          transform: 'translateY(-1px)',
+          boxShadow: '0 4px 10px rgba(18, 35, 43, 0.09), 0 12px 25px rgba(18, 35, 43, 0.06)'
+        },
+        '@media (prefers-reduced-motion: reduce)': {
+          transition: 'none',
+          '&:hover': { transform: 'none' }
+        },
         '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main', outlineOffset: 1 }
       }}
     >
-      <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', minWidth: 0 }}>
-        <Box
-          aria-hidden
-          sx={{
-            width: 7,
-            height: 7,
-            borderRadius: '50%',
-            flexShrink: 0,
-            bgcolor: JOB_TONE_COLOR[status.tone]
-          }}
-        />
-        <Typography
-          variant="body2"
-          noWrap
-          sx={{ ...workspacePanelText.itemTitle, flex: 1 }}
-          title={title}
-        >
-          {title}
-        </Typography>
-        <Typography
-          variant="caption"
-          sx={{ ...workspacePanelText.body, flexShrink: 0, color: JOB_TONE_COLOR[status.tone] }}
-        >
-          {status.label}
-        </Typography>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', minWidth: 0, width: '100%' }}>
+        <BackgroundJobIcon kind={kind} />
+        <Box sx={{ minWidth: 0, flex: 1, pr: canStop || canRetryJob ? 3.5 : 0 }}>
+          <Stack direction="row" spacing={0.75} sx={{ alignItems: 'baseline', minWidth: 0 }}>
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{ minWidth: 0, flex: 1, fontWeight: 700, fontSize: '0.92rem' }}
+              title={title}
+            >
+              {title}
+            </Typography>
+            <Typography
+              variant="caption"
+              noWrap
+              sx={{ flexShrink: 0, color: JOB_TONE_COLOR[status.tone] }}
+            >
+              {status.label}
+            </Typography>
+          </Stack>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            component="div"
+            title={`${jobSource(item)} · ${jobSubtitle(item)}`}
+            noWrap
+          >
+            {jobSource(item)} · {jobSubtitle(item)}
+          </Typography>
+        </Box>
       </Stack>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        component="div"
-        title={`${jobSource(item)} · ${jobSubtitle(item)}`}
-        noWrap
-        sx={workspacePanelText.body}
-      >
-        {jobSource(item)} · {jobSubtitle(item)}
-      </Typography>
-      <Typography
-        variant="caption"
-        color={warning ? 'warning.main' : status.tone === 'error' ? 'error.main' : 'text.secondary'}
-        component="div"
-        title={detail}
-        sx={{ ...workspacePanelText.body, ...clampTwoLines }}
-      >
-        {detail}
-      </Typography>
       {(item.kind === 'environment' || item.kind === 'upload') && item.active && (
         <LinearProgress
           variant={percent === undefined ? 'indeterminate' : 'determinate'}
@@ -130,11 +121,11 @@ export function BackgroundJobRow({
           aria-label={
             item.kind === 'upload' ? jobsCopy.fileUploadProgress : jobsCopy.environmentBuildProgress
           }
-          sx={{ mt: 0.75, height: 2, borderRadius: 1 }}
+          sx={{ position: 'absolute', bottom: 0, left: 0, width: '100%', height: 2 }}
         />
       )}
-      {(canStop || (onRetry && item.kind !== 'history')) && (
-        <Stack direction="row" spacing={1} sx={{ mt: 0.5, justifyContent: 'flex-end' }}>
+      {(canStop || canRetryJob) && (
+        <Stack direction="row" spacing={0.25} sx={{ position: 'absolute', bottom: 2, right: 5 }}>
           {onRetry && item.kind !== 'history' && (
             <Button
               size="small"

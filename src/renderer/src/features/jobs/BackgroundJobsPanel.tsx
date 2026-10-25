@@ -1,15 +1,18 @@
 import { jobsCopy } from './lib/jobsCopy'
 import { useUiLanguage } from '../../lib/i18n'
+import { AnimatedList, AnimatedListItem } from './components/AnimatedList'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { PhiIcons } from '../../icons'
 import { workspacePanelText } from '../../layout'
 import { BackgroundJobDetail } from './components/BackgroundJobDetail'
 import { BackgroundJobGroup } from './components/BackgroundJobGroup'
 import { BackgroundJobRow } from './components/BackgroundJobRow'
+import { BackgroundWorkflowRow } from './components/BackgroundWorkflowRow'
 import { useBackgroundJobsData } from './hooks/useBackgroundJobsData'
 import type { UnifiedBackgroundJob } from './lib/backgroundJobs'
+import { groupBackgroundJobs, type BackgroundJobDisplayItem } from './lib/backgroundJobGroups'
 import {
   resolveRequestedBackgroundJobKey,
   resolveSelectedBackgroundJob
@@ -53,7 +56,14 @@ export function BackgroundJobsPanel({
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [runningExpanded, setRunningExpanded] = useState(true)
   const [finishedExpanded, setFinishedExpanded] = useState(false)
+  const [expandedWorkflows, setExpandedWorkflows] = useState<Set<string>>(() => new Set())
   const all = [...jobs.active, ...jobs.recent]
+  const display = useMemo(
+    () => groupBackgroundJobs([...jobs.active, ...jobs.recent]),
+    [jobs.active, jobs.recent]
+  )
+  const activeDisplay = display.filter((item) => item.active)
+  const recentDisplay = display.filter((item) => !item.active)
   const selected = resolveSelectedBackgroundJob(selectedKey, all, data.notebookAiJobs)
 
   useEffect(() => {
@@ -70,6 +80,18 @@ export function BackgroundJobsPanel({
 
   useEffect(() => {
     if (!requestedJobKey || !loaded) return
+    if (requestedJobKey.startsWith('workflow:')) {
+      const workflow = display.find((item) => item.key === requestedJobKey)
+      if (!workflow) return
+      const timer = window.setTimeout(() => {
+        setSelectedKey(null)
+        setExpandedWorkflows((current) => new Set(current).add(requestedJobKey))
+        if (workflow.active) setRunningExpanded(true)
+        else setFinishedExpanded(true)
+        onRequestedJobHandled?.(requestedJobKey)
+      }, 0)
+      return () => window.clearTimeout(timer)
+    }
     const key = resolveRequestedBackgroundJobKey(requestedJobKey, data, jobs.recent)
     if (!key) return
     const timer = window.setTimeout(() => {
@@ -77,7 +99,7 @@ export function BackgroundJobsPanel({
       onRequestedJobHandled?.(requestedJobKey)
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [data, jobs.recent, loaded, onRequestedJobHandled, requestedJobKey])
+  }, [data, display, jobs.recent, loaded, onRequestedJobHandled, requestedJobKey])
 
   const run = async (
     item: UnifiedBackgroundJob,
@@ -133,17 +155,47 @@ export function BackgroundJobsPanel({
     }
   }
 
-  const renderRow = (item: UnifiedBackgroundJob): React.JSX.Element => (
-    <BackgroundJobRow
-      key={item.key}
-      item={item}
-      nowMs={nowMs}
-      busy={busyKey === item.key}
-      onOpen={(job) => setSelectedKey(job.key)}
-      onStop={stopJob}
-      {...(canRetry(item) ? { onRetry: retryJob } : {})}
-    />
+  const renderRow = (item: UnifiedBackgroundJob, index: number): React.JSX.Element => (
+    <AnimatedListItem key={item.key} enterDelayMs={Math.min(index, 4) * 65}>
+      <BackgroundJobRow
+        item={item}
+        nowMs={nowMs}
+        busy={busyKey === item.key}
+        onOpen={(job) => setSelectedKey(job.key)}
+        onStop={stopJob}
+        {...(canRetry(item) ? { onRetry: retryJob } : {})}
+      />
+    </AnimatedListItem>
   )
+
+  const renderDisplayRow = (entry: BackgroundJobDisplayItem, index: number): React.JSX.Element =>
+    entry.kind === 'job' ? (
+      renderRow(entry.job, index)
+    ) : (
+      <AnimatedListItem key={entry.key} enterDelayMs={Math.min(index, 4) * 65}>
+        <BackgroundWorkflowRow
+          workflow={entry}
+          expanded={expandedWorkflows.has(entry.key)}
+          onToggle={() =>
+            setExpandedWorkflows((current) => {
+              const next = new Set(current)
+              if (next.has(entry.key)) next.delete(entry.key)
+              else next.add(entry.key)
+              return next
+            })
+          }
+          renderChild={(job) => (
+            <BackgroundJobRow
+              item={job}
+              nowMs={nowMs}
+              busy={busyKey === job.key}
+              onOpen={(selectedJob) => setSelectedKey(selectedJob.key)}
+              onStop={stopJob}
+            />
+          )}
+        />
+      </AnimatedListItem>
+    )
 
   return (
     <Box
@@ -216,11 +268,11 @@ export function BackgroundJobsPanel({
               <BackgroundJobGroup
                 id="running"
                 title={jobsCopy.running}
-                count={jobs.active.length}
+                count={activeDisplay.length}
                 expanded={runningExpanded}
                 onToggle={() => setRunningExpanded((value) => !value)}
               >
-                {jobs.active.length === 0 ? (
+                {activeDisplay.length === 0 ? (
                   <Typography
                     variant="caption"
                     color="text.secondary"
@@ -229,17 +281,17 @@ export function BackgroundJobsPanel({
                     {jobsCopy.noRunningJobs}
                   </Typography>
                 ) : (
-                  jobs.active.map(renderRow)
+                  <AnimatedList animateInitial>{activeDisplay.map(renderDisplayRow)}</AnimatedList>
                 )}
               </BackgroundJobGroup>
               <BackgroundJobGroup
                 id="finished"
                 title={jobsCopy.completed}
-                count={jobs.recent.length}
+                count={recentDisplay.length}
                 expanded={finishedExpanded}
                 onToggle={() => setFinishedExpanded((value) => !value)}
                 action={
-                  jobs.recent.length > 0 ? (
+                  recentDisplay.length > 0 ? (
                     <Tooltip title={jobsCopy.clearCompletedHistoryRunningJobsAreUnaffected}>
                       <IconButton
                         size="small"
@@ -252,7 +304,7 @@ export function BackgroundJobsPanel({
                   ) : undefined
                 }
               >
-                {jobs.recent.length === 0 ? (
+                {recentDisplay.length === 0 ? (
                   <Typography
                     variant="caption"
                     color="text.secondary"
@@ -261,7 +313,7 @@ export function BackgroundJobsPanel({
                     {jobsCopy.noFinishedJobsYet}
                   </Typography>
                 ) : (
-                  jobs.recent.map(renderRow)
+                  <AnimatedList animateInitial>{recentDisplay.map(renderDisplayRow)}</AnimatedList>
                 )}
               </BackgroundJobGroup>
             </>

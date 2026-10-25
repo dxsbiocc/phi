@@ -62,6 +62,7 @@ import {
   type CompositionRunOutcome
 } from './run-record'
 import { findMissingPrimaryOutputs, validateWrapperParams } from './validate'
+import { parseWrapperWorkflow } from './workflow-identity'
 
 import { errorMessage } from '../../../../shared/errorCodes'
 /**
@@ -269,6 +270,7 @@ export class WrapperJobManager implements WrapperJobClient {
       profile?: string
       target?: 'local' | 'remote'
       originSessionId?: string
+      workflow?: WrapperRun['workflow']
       continueWhenDone?: boolean
       resources?: unknown
     },
@@ -277,6 +279,11 @@ export class WrapperJobManager implements WrapperJobClient {
     control?.signal?.throwIfAborted()
     control?.assertCurrent?.()
     const { id, overrides } = input
+    const requestedWorkflow =
+      input.workflow === undefined ? undefined : parseWrapperWorkflow(input.workflow)
+    if (input.workflow !== undefined && !requestedWorkflow)
+      return { ok: false, error: 'Invalid Wrapper workflow identity' }
+    const workflow = requestedWorkflow
     const parsedResources = parseWrapperRunResources(input.resources)
     if (!parsedResources.ok) return { ok: false, error: parsedResources.error }
     const resources = parsedResources.resources
@@ -462,6 +469,7 @@ export class WrapperJobManager implements WrapperJobClient {
         profile,
         targetReason,
         originSessionId: input.originSessionId,
+        ...(workflow ? { workflow } : {}),
         continueWhenDone: input.continueWhenDone,
         ...(resources ? { resources } : {}),
         ...(launch ? { nextflow: nextflowLaunchRecord(launch) } : {}),

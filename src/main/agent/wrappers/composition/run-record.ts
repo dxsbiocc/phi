@@ -90,6 +90,7 @@ export function startCompositionRun(input: {
   environmentWarnings?: string[]
   profile: string
   originSessionId?: string
+  workflow?: WrapperRun['workflow']
   targetReason?: string
   continueWhenDone?: boolean
   /** Resources the run asked for, already validated. */
@@ -166,6 +167,7 @@ export function startCompositionRun(input: {
         }
       : {}),
     ...(input.originSessionId ? { originSessionId: input.originSessionId } : {}),
+    ...(input.workflow ? { workflow: input.workflow } : {}),
     ...(input.continueWhenDone === false ? { continueWhenDone: false } : {}),
     createdAt: now,
     updatedAt: now,

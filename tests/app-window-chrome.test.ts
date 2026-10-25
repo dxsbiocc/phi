@@ -54,7 +54,8 @@ function renderChrome(
         sidePanelWidth: options.sidePanelWidth ?? 340,
         sidePanelOverlay: options.sidePanelOverlay ?? false,
         onRefreshSidePanel: () => undefined,
-        onTogglePanel: () => undefined
+        onTogglePanel: () => undefined,
+        onOpenBackgroundJob: () => undefined
       })
     )
   )

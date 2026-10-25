@@ -3899,12 +3899,10 @@ function App(): React.JSX.Element {
         void refreshRunningJupyterRuntimes()
       },
       onStartRuntime: (cwd) => {
-        const remote = analysisJupyterRuntimeStatus?.server?.runtimeKind === 'ssh'
         void onStartAnalysisJupyter(cwd).then(async () => {
           await refreshAnalysisJupyterRuntimeStatus()
           await refreshRunningJupyterRuntimes()
         })
-        if (remote) onOpenJupyterStartLog(cwd)
       },
       onOpenRuntimeStartLog: onOpenJupyterStartLog,
       runtimeStartLogCwds,
@@ -4287,6 +4285,10 @@ function App(): React.JSX.Element {
           sidePanelOverlay={workspaceSidePanelOverlay}
           onRefreshSidePanel={onRefreshWorkspaceSidePanel}
           onTogglePanel={onToggleWorkspaceSidePanel}
+          onOpenBackgroundJob={(key) => {
+            requestBackgroundJob(key)
+            onOpenBackgroundJobs()
+          }}
         />
 
         {isSessionSearchOpen && (

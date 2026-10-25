@@ -10,6 +10,7 @@ import { WRAPPER_EXECUTION_PROFILES } from './executor'
 import { formatJobList, formatJobStatus } from './job-format'
 import type { WrapperJobClient } from './job-types'
 import { rankWrapperEntries } from './search'
+import { parseWrapperWorkflow } from './workflow-identity'
 
 import { isRecord } from '../../../../shared/guards'
 export const WRAPPER_COMPOSITION_TOOL_NAMES = [
@@ -151,7 +152,7 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): PhiTool 
     loadMode: 'essential',
     label: 'Run Wrapper',
     description:
-      'Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. In an SSH project the target defaults to that project server and explicit "local" is rejected; in a local project the target defaults to local, and "remote" uses its saved server. For a remote run every kind:input path MUST be a path on the server (Phi checks it exists there; local paths do not work), outputs stay on the server, and it survives Phi being closed. Choose `profile` based on what the user has available or prefers: docker (default locally) or singularity (default on the server) for container runtimes, conda to build/reuse a conda environment from the module\'s environment.yml instead.',
+      'Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. When several wrappers form one user workflow, pass the same workflow.id and workflow.name on each call, with a distinct workflow.step; reuse the id across follow-up turns for this execution and choose a new id for another execution. In an SSH project the target defaults to that project server and explicit "local" is rejected; in a local project the target defaults to local, and "remote" uses its saved server. For a remote run every kind:input path MUST be a path on the server (Phi checks it exists there; local paths do not work), outputs stay on the server, and it survives Phi being closed. Choose `profile` based on what the user has available or prefers: docker (default locally) or singularity (default on the server) for container runtimes, conda to build/reuse a conda environment from the module\'s environment.yml instead.',
     site: 'host',
     parameters: {
       type: 'object',
@@ -179,6 +180,27 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): PhiTool 
           type: 'boolean',
           description:
             'Default true: when the run ends, Phi wakes the main agent with the outcome so it can continue with the results. Set false only when the task says nothing should happen afterwards.'
+        },
+        workflow: {
+          type: 'object',
+          description:
+            'Optional shared identity for several Wrapper runs in one pipeline, e.g. RNA-seq. Use the same short id and name for every step in this execution; do not reuse the id for a later rerun.',
+          required: ['id', 'name'],
+          properties: {
+            id: {
+              type: 'string',
+              description: 'App-wide unique execution id, e.g. rnaseq_20261023_a8f2.'
+            },
+            name: { type: 'string', description: 'Pipeline title, e.g. RNA-seq.' },
+            step: { type: 'string', description: 'This run’s step, e.g. alignment.' },
+            totalSteps: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 100,
+              description:
+                'Planned Wrapper run count; enables one completion notice for the workflow.'
+            }
+          }
         },
         resources: {
           type: 'object',
@@ -210,13 +232,18 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): PhiTool 
       const continueWhenDone =
         isRecord(params) && params.continue_when_done === false ? false : undefined
       const resources = isRecord(params) ? params.resources : undefined
+      const workflow = isRecord(params) ? params.workflow : undefined
+      const parsedWorkflow = workflow === undefined ? undefined : parseWrapperWorkflow(workflow)
+      if (workflow !== undefined && !parsedWorkflow)
+        return errorResult('Invalid workflow identity: provide a short id and name')
       const started = await jobs.start({
         id,
         overrides,
         ...(profile ? { profile } : {}),
         ...(target ? { target } : {}),
         ...(continueWhenDone === false ? { continueWhenDone } : {}),
-        ...(resources !== undefined ? { resources } : {})
+        ...(resources !== undefined ? { resources } : {}),
+        ...(parsedWorkflow ? { workflow: parsedWorkflow } : {})
       })
       if (!started.ok) return errorResult(started.error)
       const { runId, outDir, remote } = started.status

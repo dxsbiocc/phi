@@ -258,9 +258,18 @@ export interface WrapperRunResources {
   time?: string
 }
 
+/** Explicit identity for several independently submitted Wrappers in one user workflow. */
+export interface WrapperWorkflow {
+  id: string
+  name: string
+  step?: string
+  totalSteps?: number
+}
+
 export interface WrapperRun {
   runId: string
   runName?: string
+  workflow?: WrapperWorkflow
   planId: string
   revision: number
   state: WrapperRunState

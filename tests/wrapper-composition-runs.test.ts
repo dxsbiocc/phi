@@ -113,6 +113,25 @@ test('starting a run records a running, agent-initiated composition run under th
   })
 })
 
+test('a composition run keeps its workflow membership after the run is reloaded', async () => {
+  await withSandbox(async (sb) => {
+    const workflow = {
+      id: 'session-1:rnaseq-1',
+      name: 'RNA-seq',
+      step: 'Quality control',
+      totalSteps: 4
+    }
+    const run = startCompositionRun({
+      entry: entry(),
+      params: { gff: 'tests/data/genome.gff3', outdir: sb.outdir },
+      profile: 'docker',
+      workflow,
+      agentDir: sb.agentDir
+    })
+    assert.deepEqual(readWrapperRun(run.runId, sb.agentDir)?.workflow, workflow)
+  })
+})
+
 test('a relative outdir is recorded as an absolute path under the component directory', async () => {
   await withSandbox(async (sb) => {
     const run = startCompositionRun({

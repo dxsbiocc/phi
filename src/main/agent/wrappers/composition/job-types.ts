@@ -1,4 +1,4 @@
-import type { WrapperOutputRecord, WrapperRunState } from '../types'
+import type { WrapperOutputRecord, WrapperRunState, WrapperWorkflow } from '../types'
 import type { RunProgress } from './progress'
 
 /**
@@ -58,6 +58,7 @@ export interface WrapperJobClient {
       target?: 'local' | 'remote'
       /** The runtime session whose agent started this run; used to tell that conversation when it ends. */
       originSessionId?: string
+      workflow?: WrapperWorkflow
       /** `false` opts out of waking that conversation when the run ends. Anything else means yes. */
       continueWhenDone?: boolean
       /** cpus/memory/time for every process, over the wrapper's defaults. Validated by the manager. */

@@ -1237,6 +1237,8 @@ type RendererAuthApi = PreloadApiBase & {
     expectedRevision: number
   ) => Promise<WrapperRunPlan>
   listAgentJobs: () => Promise<BackgroundAgentJob[]>
+  readBackgroundJobHistory: () => Promise<string | null>
+  writeBackgroundJobHistory: (serialized: string) => Promise<void>
   listShellJobs: () => Promise<BackgroundShellJob[]>
   stopShellJob: (agentSessionId: string, jobId: string) => Promise<void>
   getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
@@ -2142,6 +2144,9 @@ const api: RendererAuthApi = {
   getWrapperCompositionModuleDetails: (id: string): Promise<WrapperModuleDetails | undefined> =>
     ipcRenderer.invoke(IPC.wrappers.getCompositionModuleDetails, id),
   listWrapperRuns: (): Promise<WrapperRun[]> => ipcRenderer.invoke(IPC.wrappers.listRuns),
+  readBackgroundJobHistory: (): Promise<string | null> => ipcRenderer.invoke(IPC.jobs.readHistory),
+  writeBackgroundJobHistory: (serialized: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.jobs.writeHistory, serialized),
   listAgentJobs: (): Promise<BackgroundAgentJob[]> => ipcRenderer.invoke(IPC.jobs.listAgents),
   listShellJobs: (): Promise<BackgroundShellJob[]> => ipcRenderer.invoke(IPC.jobs.listShell),
   stopShellJob: (agentSessionId: string, jobId: string): Promise<void> =>

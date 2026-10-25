@@ -1,9 +1,10 @@
 import { jobsCopy } from '../lib/jobsCopy'
 import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
-import { Box, Button, Stack, Typography } from '@mui/material'
+import { Box, Button, IconButton, Stack, Tooltip, Typography } from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
 
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
+import { PhiIcons } from '../../../icons'
 import { workspacePanelText } from '../../../layout'
 import type { UnifiedBackgroundJob } from '../lib/backgroundJobs'
 import {
@@ -19,6 +20,7 @@ import { ConnectorJobDetailBody } from './ConnectorJobDetailDialog'
 import { JobDetailField } from './JobDetailField'
 import { NotebookJobPreview } from './NotebookJobPreview'
 import { NotebookJobActivity } from './NotebookJobActivity'
+import { scrollJupyterLogToEnd } from '../lib/jupyterLogScroll'
 
 function entryTime(at: string): string {
   const date = new Date(at)
@@ -27,12 +29,12 @@ function entryTime(at: string): string {
 
 function JupyterStartLog({ job }: { job: RemoteJupyterStartJob }): React.JSX.Element {
   useUiLanguage()
-  const endRef = useRef<HTMLDivElement | null>(null)
+  const viewportRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
-    endRef.current?.scrollIntoView?.({ block: 'nearest' })
+    scrollJupyterLogToEnd(viewportRef.current)
   }, [job.entries.length])
   return (
-    <Box sx={{ minWidth: 0 }}>
+    <Box sx={{ minWidth: 0, minHeight: 180, flex: 1, display: 'flex', flexDirection: 'column' }}>
       <Typography
         variant="caption"
         color="text.secondary"
@@ -41,9 +43,12 @@ function JupyterStartLog({ job }: { job: RemoteJupyterStartJob }): React.JSX.Ele
         {jobsCopy.startupLog}
       </Typography>
       <Box
+        ref={viewportRef}
         data-phi-jupyter-start-log
         sx={{
-          maxHeight: 320,
+          maxHeight: 480,
+          minHeight: 0,
+          flex: 1,
           overflowY: 'auto',
           p: 1,
           borderRadius: 1,
@@ -82,7 +87,6 @@ function JupyterStartLog({ job }: { job: RemoteJupyterStartJob }): React.JSX.Ele
             </Box>
           ))
         )}
-        <div ref={endRef} />
       </Box>
     </Box>
   )
@@ -141,6 +145,7 @@ export function BackgroundJobDetail({
   useUiLanguage()
   const [copied, setCopied] = useState(false)
   const status = jobStatus(item)
+  const canStop = canStopJob(item)
   const title = jobTitle(item)
   const sessionPath =
     item.kind === 'agent' || item.kind === 'shell'
@@ -154,6 +159,12 @@ export function BackgroundJobDetail({
       : item.kind === 'history'
         ? item.snapshot.wrapperId
         : undefined
+  const showFooter = Boolean(
+    sessionPath ||
+    (wrapperId && onOpenWrapper) ||
+    (onRetry && item.kind !== 'connector' && item.kind !== 'history') ||
+    canStop
+  )
 
   const copy = async (): Promise<void> => {
     await navigator.clipboard.writeText(detailText(item, nowMs))
@@ -171,7 +182,7 @@ export function BackgroundJobDetail({
           size="small"
           onClick={onBack}
           aria-label={jobsCopy.backToJobList}
-          sx={{ flexShrink: 0 }}
+          sx={{ flexShrink: 0, minWidth: 0, pl: 0, pr: 1, justifyContent: 'flex-start' }}
         >
           {jobsCopy.back}
         </Button>
@@ -186,6 +197,15 @@ export function BackgroundJobDetail({
         >
           {status.label}
         </Typography>
+        <Tooltip title={copied ? jobsCopy.copied : jobsCopy.copyDetails}>
+          <IconButton
+            size="small"
+            aria-label={copied ? jobsCopy.copied : jobsCopy.copyDetails}
+            onClick={() => void copy().catch(() => undefined)}
+          >
+            <PhiIcons.action.copy size={16} />
+          </IconButton>
+        </Tooltip>
       </Stack>
       <Typography
         variant="subtitle2"
@@ -207,7 +227,10 @@ export function BackgroundJobDetail({
             onOpenSetupTerminal={onOpenSetupTerminal}
           />
         ) : (
-          <Stack spacing={1.25}>
+          <Stack
+            spacing={1.25}
+            sx={item.kind === 'jupyter' ? { height: '100%', minHeight: 0 } : undefined}
+          >
             {item.kind === 'notebook-ai' && (
               <NotebookJobActivity key={item.job.id} job={item.job} />
             )}
@@ -222,36 +245,35 @@ export function BackgroundJobDetail({
           </Stack>
         )}
       </Box>
-      <Stack
-        direction="row"
-        spacing={1}
-        useFlexGap
-        sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider', flexWrap: 'wrap' }}
-      >
-        <Button size="small" onClick={() => void copy().catch(() => undefined)}>
-          {copied ? jobsCopy.copied : jobsCopy.copyDetails}
-        </Button>
-        {sessionPath && (
-          <Button size="small" onClick={() => onOpenSession(sessionPath)}>
-            {jobsCopy.openConversation}
-          </Button>
-        )}
-        {wrapperId && onOpenWrapper && (
-          <Button size="small" onClick={() => onOpenWrapper(wrapperId)}>
-            {jobsCopy.openWrapper}
-          </Button>
-        )}
-        {onRetry && item.kind !== 'connector' && item.kind !== 'history' && (
-          <Button size="small" disabled={busy} onClick={() => onRetry(item)}>
-            {jobsCopy.retry}
-          </Button>
-        )}
-        {canStopJob(item) && (
-          <Button size="small" color="error" disabled={busy} onClick={() => onStop(item)}>
-            {stopTooltip(item)}
-          </Button>
-        )}
-      </Stack>
+      {showFooter && (
+        <Stack
+          direction="row"
+          spacing={1}
+          useFlexGap
+          sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider', flexWrap: 'wrap' }}
+        >
+          {sessionPath && (
+            <Button size="small" onClick={() => onOpenSession(sessionPath)}>
+              {jobsCopy.openConversation}
+            </Button>
+          )}
+          {wrapperId && onOpenWrapper && (
+            <Button size="small" onClick={() => onOpenWrapper(wrapperId)}>
+              {jobsCopy.openWrapper}
+            </Button>
+          )}
+          {onRetry && item.kind !== 'connector' && item.kind !== 'history' && (
+            <Button size="small" disabled={busy} onClick={() => onRetry(item)}>
+              {jobsCopy.retry}
+            </Button>
+          )}
+          {canStop && (
+            <Button size="small" color="error" disabled={busy} onClick={() => onStop(item)}>
+              {stopTooltip(item)}
+            </Button>
+          )}
+        </Stack>
+      )}
     </Box>
   )
 }

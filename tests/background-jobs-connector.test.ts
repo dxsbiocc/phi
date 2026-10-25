@@ -119,7 +119,9 @@ test('background jobs panel wires connector polling, events, cancel, retry, and 
   assert.match(row, /event\.currentTarget !== event\.target/)
   assert.match(row, /aria-label=\{jobsCopy.viewDetailsForValue\(title\)\}/)
   assert.match(row, /event\.stopPropagation\(\)/)
-  assert.match(row, /overflowWrap: 'anywhere'/)
-  assert.match(row, /WebkitLineClamp: 2/)
-  assert.match(row, /failureKind === 'needs-setup'[\s\S]*?warning\.main/)
+  // Rows stay one fixed-height line; long titles truncate and keep the full text as a tooltip.
+  assert.match(row, /height: 68/)
+  assert.match(row, /noWrap[\s\S]*?title=\{title\}/)
+  // A connector that needs setup says so in its status; the setup guide lives in the detail.
+  assert.match(labels, /failureKind === 'needs-setup'[\s\S]*?connectorJobCopy\.needsSetup/)
 })

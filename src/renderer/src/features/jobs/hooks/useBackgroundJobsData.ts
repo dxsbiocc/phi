@@ -13,6 +13,7 @@ import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProject
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
 import { BackgroundJobHistory, backgroundJobHistoryStorage } from '../lib/backgroundJobHistory'
 import { selectBackgroundJobs, type UnifiedBackgroundJob } from '../lib/backgroundJobs'
+import { groupBackgroundJobs } from '../lib/backgroundJobGroups'
 
 const REFRESH_MS = 2000
 
@@ -76,6 +77,11 @@ function liveJobs(data: BackgroundJobsData): ReturnType<typeof selectBackgroundJ
 /** One source poller per renderer, retained by the app even when the panel is closed. */
 class BackgroundJobsStore {
   private readonly history = new BackgroundJobHistory(backgroundJobHistoryStorage())
+  private historyHydration: Promise<void> | undefined
+  private historyReady = false
+  private historyWriteQueue: Promise<void> = Promise.resolve()
+  private persistedHistory: string | null = null
+  private pendingHistory: string | null = null
   private state: Snapshot = {
     data: EMPTY,
     jobs: this.history.select({ active: [], recent: [] }),
@@ -137,6 +143,7 @@ class BackgroundJobsStore {
     this.refreshing = true
     const generation = this.generation
     try {
+      await this.hydrateHistory()
       const api = window.api
       if (typeof api?.listAgentJobs !== 'function') {
         this.state = { ...this.state, error: jobsCopy.restartPhiToViewBackgroundJobs, loaded: true }
@@ -184,8 +191,48 @@ class BackgroundJobsStore {
   private publish(data: BackgroundJobsData): void {
     const live = liveJobs(data)
     this.history.observe([...live.active, ...live.recent])
+    this.persistHistory()
     this.state = { ...this.state, data, jobs: this.history.select(live), nowMs: Date.now() }
     this.emit()
+  }
+
+  private hydrateHistory(): Promise<void> {
+    this.historyHydration ??= (async () => {
+      try {
+        const serialized = await window.api.readBackgroundJobHistory()
+        if (serialized) this.history.mergeSerialized(serialized)
+        this.persistedHistory = serialized
+      } catch {
+        // Retry on the next refresh without overwriting a history we could not read.
+        this.historyHydration = undefined
+        return
+      }
+      this.historyReady = true
+      this.state = {
+        ...this.state,
+        jobs: this.history.select(liveJobs(this.state.data))
+      }
+      this.emit()
+      this.persistHistory()
+    })()
+    return this.historyHydration
+  }
+
+  private persistHistory(): void {
+    if (!this.historyReady || typeof window.api.writeBackgroundJobHistory !== 'function') return
+    const serialized = this.history.serialize()
+    if (serialized === this.persistedHistory || serialized === this.pendingHistory) return
+    this.pendingHistory = serialized
+    this.historyWriteQueue = this.historyWriteQueue
+      .catch(() => undefined)
+      .then(() => window.api.writeBackgroundJobHistory(serialized))
+      .then(() => {
+        this.persistedHistory = serialized
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.pendingHistory === serialized) this.pendingHistory = null
+      })
   }
 
   private emit(): void {
@@ -283,7 +330,10 @@ export function useActiveBackgroundJobCount(): number {
   const store = jobsStore()
   return useSyncExternalStore(
     store.subscribe,
-    () => store.getSnapshot().jobs.active.length,
+    () => {
+      const { active, recent } = store.getSnapshot().jobs
+      return groupBackgroundJobs([...active, ...recent]).filter((item) => item.active).length
+    },
     () => 0
   )
 }
