@@ -139,7 +139,7 @@ import {
   FiXCircle,
   FiZap
 } from 'react-icons/fi'
-import { GoSync, GoVerified } from 'react-icons/go'
+import { GoOrganization, GoSync, GoVerified } from 'react-icons/go'
 import type { IconType } from 'react-icons'
 import {
   TbBrain,
@@ -747,7 +747,7 @@ export const PhiIcons = {
     mcp: createPhiIcon('Mcp', TbNetwork),
     plugin: createPhiIcon('Plugin', TbPuzzle),
     project: createPhiIcon('Project', TbFolderOpen),
-    provider: createPhiIcon('Provider', TbNetwork),
+    provider: createPhiIcon('Provider', GoOrganization, { defaultStrokeWidth: null }),
     skill: createPhiIcon('Skill', TbSchool),
     todo: createPhiIcon('Todo', FiCheckSquare),
     wrapper: createPhiIcon('Wrapper', TbRoute)
@@ -769,7 +769,7 @@ export const PhiIcons = {
     memory: createPhiIcon('Memory', TbHistory),
     permissions: createPhiIcon('Permissions', FiShield),
     persona: createPhiIcon('Persona', TbBrain),
-    providers: createPhiIcon('Providers', TbNetwork),
+    providers: createPhiIcon('Providers', GoOrganization, { defaultStrokeWidth: null }),
     remoteExecution: createPhiIcon('RemoteExecution', TbServer)
   },
   file: {

@@ -5,7 +5,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { IconType } from 'react-icons'
 import { FiExternalLink } from 'react-icons/fi'
-import { GoSync } from 'react-icons/go'
+import { GoOrganization, GoSync } from 'react-icons/go'
 import { SiJupyter } from 'react-icons/si'
 import { TbFolderOpen, TbListTree } from 'react-icons/tb'
 import {
@@ -321,4 +321,12 @@ test('the left activity bar "运行时" nav icon reads as Jupyter, not a generic
   // generic TbNotebook glyph that could be any notebook app.
   const markup = renderToStaticMarkup(createElement(PhiIcons.nav.runtime, { fontSize: 'small' }))
   assertUsesReactIcon(markup, SiJupyter)
+})
+
+test('provider icons use the organization glyph in settings and shared metadata', () => {
+  assertUsesReactIcon(
+    renderToStaticMarkup(createElement(PhiIcons.settings.providers)),
+    GoOrganization
+  )
+  assertUsesReactIcon(renderToStaticMarkup(createElement(PhiIcons.entity.provider)), GoOrganization)
 })
