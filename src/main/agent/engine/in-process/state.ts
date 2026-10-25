@@ -19,6 +19,7 @@ export type RemoteMcpAccess = {
 export type SessionEntry = {
   result: CreateAgentSessionResult
   agentDir: string
+  context?: RuntimeContext
   /** The runs of this session's specialist agents; stopped with the session. */
   agentRuns?: AgentRunRegistry
   /** Every configured specialist, including host-only orchestration agents. */

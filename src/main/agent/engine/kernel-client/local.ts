@@ -3,6 +3,11 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { KernelHelloResult } from '../../../../shared/kernel-protocol'
 import { KernelProtocolClient } from '.'
 import {
+  MODEL_ACCESS_BROKER_CAPABILITIES,
+  registerModelAccessBroker,
+  type ModelAccessBroker
+} from '../kernel-host/model-access-broker'
+import {
   spawnKernelStdio,
   type LocalKernelCloseOutcome,
   type SpawnKernelStdioOptions
@@ -15,6 +20,10 @@ type LaunchLocalKernelCommonOptions = {
   cwd?: string
   onDiagnostic?: (text: string) => void
   hello?: Parameters<KernelProtocolClient['hello']>[0]
+  /** Register trusted desktop host services before hello advertises them. */
+  configureClient?: (client: KernelProtocolClient) => void
+  /** Desktop-owned credential service for the local kernel. */
+  modelAccessBroker?: ModelAccessBroker
   helloTimeoutMs?: number
 }
 
@@ -70,8 +79,22 @@ export async function launchLocalKernel(
       }
   const spawned = spawnKernelStdio(mode)
   try {
+    if (options.modelAccessBroker)
+      registerModelAccessBroker(spawned.client, options.modelAccessBroker)
+    options.configureClient?.(spawned.client)
+    const hello = options.modelAccessBroker
+      ? {
+          ...options.hello,
+          hostCapabilities: [
+            ...new Set([
+              ...(options.hello?.hostCapabilities ?? []),
+              ...MODEL_ACCESS_BROKER_CAPABILITIES
+            ])
+          ]
+        }
+      : options.hello
     const greeting = await Promise.race([
-      spawned.client.hello(options.hello),
+      spawned.client.hello(hello),
       new Promise<never>((_resolve, reject) => {
         const timeout = setTimeout(
           () => reject(new Error(`Kernel hello timed out after ${helloTimeoutMs} ms.`)),

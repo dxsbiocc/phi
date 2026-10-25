@@ -164,7 +164,14 @@ test('the headless Bun entry negotiates, exposes worker capabilities, and exits 
       'session.prompt',
       'session.abort',
       'session.snapshot',
+      'session.setModel',
+      'session.setThinkingLevel',
+      'session.contextUsage',
+      'session.compact',
+      'session.getAutoCompaction',
+      'session.setAutoCompaction',
       'session.close',
+      'models.catalog',
       'events.subscribe',
       'approval.respond'
     ])

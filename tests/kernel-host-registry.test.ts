@@ -27,6 +27,8 @@ const EXPECTED_CAPABILITIES = [
   'mcp.featuredApiKey',
   'mcp.openAuthUrl',
   'mcp.openCustomAuthUrl',
+  'modelAccess.credentials',
+  'modelAccess.refresh',
   'cursorBridge.ensure',
   'capabilities.search',
   'capabilities.install',
@@ -90,6 +92,24 @@ test('host capability schemas reject undeclared fields and protect credential re
   assert.equal(credential.result.safeParse('secret').success, true)
   assert.equal(credential.result.safeParse(null).success, true)
   assert.equal(credential.result.safeParse({ key: 'secret' }).success, false)
+
+  const modelCredentials = KERNEL_HOST_CAPABILITY_REGISTRY['modelAccess.credentials']
+  const modelRefresh = KERNEL_HOST_CAPABILITY_REGISTRY['modelAccess.refresh']
+  assert.equal(modelCredentials.sensitiveResult, true)
+  assert.equal(modelRefresh.sensitiveResult, true)
+  const oauth = {
+    id: 7,
+    provider: 'fake-oauth',
+    credential: {
+      type: 'oauth' as const,
+      access: 'fake-access-token',
+      refresh: '__remote__',
+      expires: Date.now() + 60_000
+    },
+    identityKey: null
+  }
+  assert.equal(modelCredentials.result.safeParse({ credentials: [oauth] }).success, true)
+  assert.equal(modelRefresh.result.safeParse(oauth).success, true)
 })
 
 test('plan review and interaction cancellation schemas retain run identity', () => {

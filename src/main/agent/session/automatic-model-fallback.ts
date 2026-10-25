@@ -1,14 +1,18 @@
-import type {
-  RuntimeAgentSession,
-  RuntimeModel,
-  RuntimePromptOptions
-} from '../runtime/runtime-adapter'
+import type { RuntimePromptOptions } from '../runtime/runtime-adapter'
 
 import { errorMessage as sharedErrorMessage } from '../../../shared/errorCodes'
 const CONTINUE_PROMPT =
   '请继续完成用户上一条请求，沿用当前对话和已有工具结果，从中断处继续。不要重复执行已经成功完成的操作。'
 
-function modelKey(model: Pick<RuntimeModel, 'provider' | 'id'>): string {
+type FallbackModel = { provider: string; id: string; name: string }
+type FallbackSession<Model, Options> = {
+  readonly model?: Model
+  readonly messages: readonly unknown[]
+  prompt(text: string, options: Options): Promise<unknown>
+  setModel(model: Model): Promise<unknown>
+}
+
+function modelKey(model: Pick<FallbackModel, 'provider' | 'id'>): string {
   return `${model.provider}/${model.id}`
 }
 
@@ -26,24 +30,53 @@ function isModelRequestError(error: unknown): boolean {
   )
 }
 
+async function selectFallbackModel<Model extends FallbackModel, Options>(
+  session: FallbackSession<Model, Options>,
+  candidate: Model,
+  isCurrent: () => boolean
+): Promise<'selected' | 'unavailable' | 'cancelled'> {
+  if (!isCurrent()) return 'cancelled'
+  try {
+    await session.setModel(candidate)
+  } catch (error) {
+    if (!isCurrent()) return 'cancelled'
+    if (!isModelRequestError(error)) throw error
+    return 'unavailable'
+  }
+  return isCurrent() ? 'selected' : 'cancelled'
+}
+
+function continuationOptions<Options extends RuntimePromptOptions>(options: Options): Options {
+  return {
+    ...options,
+    images: undefined,
+    synthetic: true,
+    userInitiated: false,
+    expandPromptTemplates: false
+  }
+}
+
 /**
  * Keep the same run and history while trying each configured model at most once.
  * The caller owns automatic selection intent; fallback never saves a manual preference.
  */
-export async function promptWithAutomaticModelFallback(input: {
-  session: Pick<RuntimeAgentSession, 'model' | 'messages' | 'prompt' | 'setModel'>
+export async function promptWithAutomaticModelFallback<
+  Model extends FallbackModel,
+  Options extends RuntimePromptOptions = RuntimePromptOptions
+>(input: {
+  session: FallbackSession<Model, Options>
   text: string
-  options: RuntimePromptOptions
+  options: Options
   automatic: boolean
   isCurrent(): boolean
   recordedFailure(): string | undefined
   clearFailure(): void
-  candidates(): Promise<RuntimeModel[]>
-  onSwitch(from: RuntimeModel, to: RuntimeModel, error: string): void
+  candidates(): Promise<Model[]>
+  onSwitch(from: Model, to: Model, error: string): void
 }): Promise<void> {
   const { session } = input
   const attempted = new Set<string>()
-  let candidates: RuntimeModel[] | undefined
+  let candidates: Model[] | undefined
   let options = input.options
   let text = input.text
 
@@ -80,28 +113,16 @@ export async function promptWithAutomaticModelFallback(input: {
       const key = modelKey(candidate)
       if (attempted.has(key)) continue
       attempted.add(key)
-      if (!input.isCurrent()) return
-      try {
-        await session.setModel(candidate)
-      } catch (error) {
-        if (!input.isCurrent()) return
-        if (!isModelRequestError(error)) throw error
-        continue
-      }
-      if (!input.isCurrent()) return
+      const selection = await selectFallbackModel(session, candidate, input.isCurrent)
+      if (selection === 'cancelled') return
+      if (selection === 'unavailable') continue
       input.onSwitch(current, candidate, errorMessage)
       input.clearFailure()
       // Before admission there is no user message to continue. Otherwise a hidden
       // developer continuation preserves the original user message and tool results.
       if (admitted) {
         text = CONTINUE_PROMPT
-        options = {
-          ...input.options,
-          images: undefined,
-          synthetic: true,
-          userInitiated: false,
-          expandPromptTemplates: false
-        }
+        options = continuationOptions(input.options)
       }
       switched = true
       break

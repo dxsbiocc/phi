@@ -644,13 +644,27 @@ test('reattach takes over, replays available events, and reports replay gaps', a
   t.after(fixture.cleanup)
   const host = new FakeDeploymentHost()
   host.markerVariant = 'modern'
+  const configurations: unknown[] = []
+  const model = {
+    provider: 'fixture',
+    id: 'fixture-model',
+    name: 'Fixture model',
+    reasoning: false,
+    input: ['text'] as Array<'text' | 'image'>,
+    contextWindow: 32_000,
+    maxTokens: 4_000
+  }
   const core = new KernelProtocolCore({
     kernelVersion: 'test-kernel',
     ompVersion: '18.10.3',
     kernelInstanceId: 'stable-remote-kernel',
     replayCapacity: 1,
     handlers: {
-      'events.subscribe': () => ({ subscribed: true, lastSeq: 0 })
+      'events.subscribe': () => ({ subscribed: true, lastSeq: 0 }),
+      'modelAccess.configure': (params) => {
+        configurations.push(params)
+        return { configured: true }
+      }
     }
   })
   let opens = 0
@@ -680,7 +694,12 @@ test('reattach takes over, replays available events, and reports replay gaps', a
     session: session(),
     runtimeHost: host,
     runtimeRoot: '/srv/phi-runtime',
-    buildDirectory: fixture.directory
+    buildDirectory: fixture.directory,
+    modelAccess: {
+      endpoint: 'http://127.0.0.1:43123/v1/pi/stream',
+      bearerToken: 'a'.repeat(43),
+      models: [model]
+    }
   })
   core.emitEvent('test.event', { index: 1 })
   core.emitEvent('test.event', { index: 2 })
@@ -688,7 +707,12 @@ test('reattach takes over, replays available events, and reports replay gaps', a
   const reattached = await reattachRemoteKernel({
     session: session(),
     previous: launched,
-    lastSeen: 0
+    lastSeen: 0,
+    modelAccess: () => ({
+      endpoint: 'http://127.0.0.1:43124/v1/pi/stream',
+      bearerToken: 'b'.repeat(43),
+      models: [model]
+    })
   })
 
   assert.equal(reattached.greeting.kernelInstanceId, launched.greeting.kernelInstanceId)
@@ -697,6 +721,10 @@ test('reattach takes over, replays available events, and reports replay gaps', a
   assert.equal(reattached.snapshotRequired, true)
   assert.equal(reattached.remoteCommandCount, 1)
   assert.equal(opens, 2)
+  assert.deepEqual(
+    configurations.map((value) => (value as { endpoint: string }).endpoint),
+    ['http://127.0.0.1:43123/v1/pi/stream', 'http://127.0.0.1:43124/v1/pi/stream']
+  )
   core.emitEvent('test.event', { index: 3 })
   const replayed: number[] = []
   const replayAttach = await reattachRemoteKernel({

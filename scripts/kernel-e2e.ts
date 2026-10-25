@@ -27,6 +27,10 @@ import {
 } from './kernel-e2e/options'
 import { prepareKernelE2eRemoteHelper } from './kernel-e2e/prepare-remote-helper'
 import {
+  configureInitialModelProxy,
+  runSshModelProxyReconnectScenario
+} from './kernel-e2e/model-proxy-scenario'
+import {
   eventually,
   extractKernelPid,
   KERNEL_E2E_HOST_CAPABILITIES,
@@ -90,6 +94,10 @@ interface E2eReport {
     kernelPidB?: number
     longChildPid?: number
     reconnectedKernelPid?: number
+    initialModelProxyPort?: number
+    reconnectedModelProxyPort?: number
+    modelProxyRequestAttempts?: number
+    modelProxyCompletedRequests?: number
     approvalCount: number
     approvalObservedBeforeWrite: boolean
     bearerToken: 'random-test-only-not-recorded'
@@ -387,15 +395,51 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
       kernel: launch.greeting.kernel.version,
       omp: launch.greeting.kernel.ompVersion
     }
-    const providerUrl =
-      options.target === 'ssh' ? `http://127.0.0.1:${tunnel!.remotePort}/v1` : provider.url
-    await step('agent model configuration written', () =>
-      files!.writeAgentConfig(providerUrl, token)
-    )
+    if (options.scenario === 'model-proxy-reconnect') {
+      await configureInitialModelProxy({
+        client: launch.client,
+        tunnel: tunnel!,
+        bearerToken: token,
+        report,
+        step
+      })
+    } else {
+      const providerUrl =
+        options.target === 'ssh' ? `http://127.0.0.1:${tunnel!.remotePort}/v1` : provider.url
+      await step('agent model configuration written', () =>
+        files!.writeAgentConfig(providerUrl, token)
+      )
+    }
     scenario = new ScenarioClient(launch.client)
     await bounded(launch.client.subscribe(0), 'event subscription')
     launch.client.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
     launch.client.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
+
+    if (options.scenario === 'model-proxy-reconnect') {
+      const reconnected = await runSshModelProxyReconnectScenario({
+        session: ssh!,
+        launch: remoteLaunch!,
+        initialTunnel: tunnel!,
+        client: scenario,
+        createClient(client) {
+          const created = new ScenarioClient(client)
+          client.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
+          client.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
+          return created
+        },
+        provider,
+        files,
+        bearerToken: token,
+        report,
+        step,
+        onDiagnostic: (text) => process.stderr.write(`[remote-kernel] ${text}`)
+      })
+      remoteLaunch = reconnected.remoteLaunch
+      scenario = reconnected.scenario
+      tunnel = reconnected.tunnel
+      report.ok = report.steps.every((item) => item.passed)
+      return report
+    }
 
     if (options.scenario !== 'baseline') {
       const lifecycle = await runSshLifecycleScenario({

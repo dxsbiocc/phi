@@ -803,3 +803,56 @@ test('same-connection re-negotiation invalidates pending host requests from its 
   assert.deepEqual(detached, [1])
   assert.deepEqual(warnings, ['Ignored host response with an inactive id.'])
 })
+
+test('untrusted transports cannot supply host-internal model prompt fields or proxy routes', async () => {
+  const transport = new MemoryTransport()
+  let calls = 0
+  const core = makeCore({
+    'session.prompt': () => {
+      calls += 1
+      return { runId: 'run-internal', completion: Promise.resolve('completed') }
+    },
+    'modelAccess.configure': () => {
+      calls += 1
+      return { configured: true }
+    }
+  })
+  core.attachTransport(transport, { trusted: false, connectionId: 'untrusted' })
+  const greeting = await hello(transport)
+  const generation = generationFrom(greeting)
+
+  const prompt = await sendRequest(
+    transport,
+    request(
+      'internal-prompt',
+      'session.prompt',
+      generation,
+      { text: 'retry', modelSelection: 'automatic', synthetic: true, userInitiated: false },
+      { sessionId: 'session-1' }
+    )
+  )
+  assert.equal(prompt.ok, false)
+  if (!prompt.ok) assert.equal(prompt.error.code, 'INVALID_PARAMS')
+
+  const configured = await sendRequest(
+    transport,
+    request('configure-proxy', 'modelAccess.configure', generation, {
+      endpoint: 'http://127.0.0.1:43123/v1/pi/stream',
+      bearerToken: 'abcdefghijklmnopqrstuvwxyzABCDEFGH0123456789_-',
+      models: [
+        {
+          provider: 'provider',
+          id: 'model',
+          name: 'Model',
+          reasoning: false,
+          input: ['text'],
+          contextWindow: 32_000,
+          maxTokens: 4_000
+        }
+      ]
+    })
+  )
+  assert.equal(configured.ok, false)
+  if (!configured.ok) assert.equal(configured.error.code, 'INVALID_PARAMS')
+  assert.equal(calls, 0)
+})

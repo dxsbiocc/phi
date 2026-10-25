@@ -261,6 +261,44 @@ const capabilityIdentitySchema = z
 const wrapperRunIdSchema = nonEmptyStringSchema.max(256).regex(/^[A-Za-z0-9_-]+$/)
 const wrapperStatusSchema = jsonObjectSchema
 
+const modelAccessOAuthCredentialSchema = z
+  .object({
+    type: z.literal('oauth'),
+    refresh: z.literal('__remote__'),
+    access: z.string(),
+    expires: z.number(),
+    enterpriseUrl: z.string().optional(),
+    projectId: z.string().optional(),
+    email: z.string().optional(),
+    accountId: z.string().optional(),
+    apiEndpoint: z.string().optional(),
+    orgId: z.string().optional(),
+    orgName: z.string().optional(),
+    region: z.string().optional(),
+    inferenceRegion: z.enum(['global', 'eu', 'us']).optional(),
+    activeOrganizationId: z.string().optional(),
+    authorizedAt: z.number().optional()
+  })
+  .strict()
+
+const modelAccessCredentialEntrySchema = z
+  .object({
+    id: z.number().int().positive(),
+    provider: nonEmptyStringSchema,
+    credential: z.union([
+      z
+        .object({
+          type: z.literal('api_key'),
+          key: nonEmptyStringSchema,
+          source: z.literal('login').optional()
+        })
+        .strict(),
+      modelAccessOAuthCredentialSchema
+    ]),
+    identityKey: z.string().nullable()
+  })
+  .strict()
+
 export const KERNEL_HOST_CAPABILITIES = [
   'agentInteraction.request',
   'planReview.request',
@@ -280,6 +318,8 @@ export const KERNEL_HOST_CAPABILITIES = [
   'mcp.featuredApiKey',
   'mcp.openAuthUrl',
   'mcp.openCustomAuthUrl',
+  'modelAccess.credentials',
+  'modelAccess.refresh',
   'cursorBridge.ensure',
   'capabilities.search',
   'capabilities.install',
@@ -494,6 +534,23 @@ export const KERNEL_HOST_CAPABILITY_REGISTRY = {
       .strict(),
     result: nullResultSchema,
     ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
+  },
+  'modelAccess.credentials': {
+    params: z.object({ provider: nonEmptyStringSchema.optional() }).strict(),
+    result: z.object({ credentials: z.array(modelAccessCredentialEntrySchema).max(1024) }).strict(),
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false),
+    sensitiveResult: true
+  },
+  'modelAccess.refresh': {
+    params: z
+      .object({
+        credentialId: z.number().int().positive(),
+        reason: z.literal('auth-recovery').optional()
+      })
+      .strict(),
+    result: modelAccessCredentialEntrySchema,
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false),
+    sensitiveResult: true
   },
   'cursorBridge.ensure': {
     params: emptyObjectSchema,

@@ -1,7 +1,7 @@
 import { isAbsolute, join, posix, resolve } from 'node:path'
 
 export type KernelE2eTarget = 'local' | 'ssh'
-export type KernelE2eScenario = 'baseline' | 'reconnect' | 'grace-expiry'
+export type KernelE2eScenario = 'baseline' | 'reconnect' | 'grace-expiry' | 'model-proxy-reconnect'
 
 export interface KernelE2eCliOptions {
   target: KernelE2eTarget
@@ -17,7 +17,8 @@ export function kernelE2eUsage(): string {
   return [
     'Usage: bun scripts/kernel-e2e.ts --target local|ssh --runtime-root <absolute-path>',
     '       [--host <ssh-alias>] [--build-dir <target-build-directory>]',
-    '       [--scenario baseline|reconnect|grace-expiry] [--helper-path <local-phi-helper>]',
+    '       [--scenario baseline|reconnect|grace-expiry|model-proxy-reconnect]',
+    '       [--helper-path <local-phi-helper>]',
     '       [--out <report.json>]',
     '',
     'SSH mode requires --host. The provider bearer token is random and valid only for this run.'
@@ -63,7 +64,12 @@ export function parseKernelE2eArgs(argv: string[], packageVersion: string): Kern
   const host = values.get('--host')
   if (target === 'ssh' && !host) throw new Error(`SSH mode requires --host\n${kernelE2eUsage()}`)
   const scenario = values.get('--scenario') ?? 'baseline'
-  if (scenario !== 'baseline' && scenario !== 'reconnect' && scenario !== 'grace-expiry') {
+  if (
+    scenario !== 'baseline' &&
+    scenario !== 'reconnect' &&
+    scenario !== 'grace-expiry' &&
+    scenario !== 'model-proxy-reconnect'
+  ) {
     throw new Error(`Invalid --scenario: ${scenario}\n${kernelE2eUsage()}`)
   }
   if (scenario !== 'baseline' && target !== 'ssh') {

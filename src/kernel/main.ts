@@ -9,8 +9,15 @@ import { KernelGracePeriod } from './lifecycle/grace-period'
 import { listenOnKernelSocket, type KernelSocketListener } from './lifecycle/socket-listener'
 import { readOmpVersion } from './omp/version'
 import { KernelProtocolCore, type KernelProtocolLogger } from './protocol'
+import {
+  type ClientProxyModelAccess,
+  createClientProxyModelAccess,
+  createDesktopBrokerModelAccess,
+  ModelAccessWaitCancelledError
+} from './model-access'
 import { StdioFrameTransport } from './transports/stdio'
 import { createWorkerKernelAdapter } from './worker'
+import type { KernelHostCapabilityResult } from '../shared/kernel-protocol'
 
 const HOST_EXIT_CLEANUP_TIMEOUT_MS = 1_000
 
@@ -42,20 +49,67 @@ function writeErrorDiagnostic(message: string, error: unknown): void {
   })
 }
 
-export function startKernelStdio(): void {
+function remoteControllerLifecycle(
+  modelAccess: ClientProxyModelAccess,
+  graceRef: { value?: KernelGracePeriod }
+): {
+  onControllerAttached(): void
+  onControllerDetached(): void
+} {
+  return {
+    onControllerAttached() {
+      modelAccess.controllerAttached()
+      graceRef.value?.controllerAttached()
+    },
+    onControllerDetached() {
+      modelAccess.controllerDetached()
+      graceRef.value?.controllerDetached()
+    }
+  }
+}
+
+export async function startKernelStdio(): Promise<void> {
   const kernelInstanceId = randomUUID()
   const transport = new StdioFrameTransport(process.stdin, process.stdout)
+  const agentDir = process.env.PI_CODING_AGENT_DIR ?? ''
+  const coreRef: { value?: KernelProtocolCore } = {}
+  const modelAccess = await createDesktopBrokerModelAccess({
+    hydrate: false,
+    modelsPath: path.join(agentDir, 'models.yml'),
+    cacheDbPath: ':memory:',
+    async requestCredentials(params) {
+      if (!coreRef.value) throw new Error('Kernel host controller is not ready.')
+      return (await coreRef.value.requestHost(
+        'modelAccess.credentials',
+        params
+      )) as KernelHostCapabilityResult<'modelAccess.credentials'>
+    },
+    async requestRefresh(params) {
+      if (!coreRef.value) throw new Error('Kernel host controller is not ready.')
+      return (await coreRef.value.requestHost(
+        'modelAccess.refresh',
+        params
+      )) as KernelHostCapabilityResult<'modelAccess.refresh'>
+    }
+  })
   const worker = createWorkerKernelAdapter({
-    agentDir: process.env.PI_CODING_AGENT_DIR ?? '',
-    kernelInstanceId
+    agentDir,
+    kernelInstanceId,
+    modelAccess
   })
   const core = new KernelProtocolCore({
     kernelVersion: readKernelVersion(),
     ompVersion: readOmpVersion(),
     kernelInstanceId,
     handlers: worker.handlers,
+    controllerLifecycle: {
+      onControllerAttached() {
+        modelAccess.controllerAttached?.()
+      }
+    },
     log: stderrLogger
   })
+  coreRef.value = core
   const unbindWorker = worker.bind(core)
   let workerUnbound = false
   const ensureWorkerUnbound = (): void => {
@@ -95,9 +149,11 @@ export async function startKernelSocket(
   graceMs: number
 ): Promise<void> {
   const kernelInstanceId = randomUUID()
+  const modelAccess = createClientProxyModelAccess()
   const worker = createWorkerKernelAdapter({
     agentDir: process.env.PI_CODING_AGENT_DIR ?? '',
-    kernelInstanceId
+    kernelInstanceId,
+    modelAccess
   })
   const graceRef: { value?: KernelGracePeriod } = {}
   let shutdownStarted = false
@@ -107,14 +163,7 @@ export async function startKernelSocket(
     kernelInstanceId,
     handlers: worker.handlers,
     disconnectPolicy: 'wait-for-reconnect',
-    controllerLifecycle: {
-      onControllerAttached() {
-        graceRef.value?.controllerAttached()
-      },
-      onControllerDetached() {
-        graceRef.value?.controllerDetached()
-      }
-    },
+    controllerLifecycle: remoteControllerLifecycle(modelAccess, graceRef),
     log: stderrLogger
   })
 
@@ -133,6 +182,7 @@ export async function startKernelSocket(
         writeErrorDiagnostic('Kernel socket cleanup failed.', error)
       }
       await core.expireDisconnectedState()
+      modelAccess.cancelWaiting(new ModelAccessWaitCancelledError('Model access grace expired.'))
     } finally {
       try {
         await worker.closeAll()
@@ -176,7 +226,10 @@ if (entry && fileURLToPath(import.meta.url) === path.resolve(entry)) {
   try {
     const command = parseKernelCommandLine(process.argv.slice(2))
     if (command.mode === 'stdio') {
-      startKernelStdio()
+      void startKernelStdio().catch((error: unknown) => {
+        writeErrorDiagnostic('Kernel stdio startup failed.', error)
+        process.exit(1)
+      })
     } else {
       void startKernelSocket(command.socketPath, command.tokenFilePath, command.graceMs).catch(
         (error: unknown) => {

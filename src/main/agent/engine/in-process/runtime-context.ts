@@ -27,6 +27,25 @@ import { RuntimeThinkingLevel, contexts, pendingAuthPrompts } from './state'
 
 export const THINKING_LEVELS: ThinkingLevel[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
+const injectedContexts = new WeakMap<ModelRegistry, RuntimeContext>()
+
+export function contextForModelAccess(
+  agentDirParam: unknown,
+  access: Pick<RuntimeContext, 'authStorage' | 'modelRegistry'>
+): RuntimeContext {
+  const existing = injectedContexts.get(access.modelRegistry)
+  if (existing) return existing
+  const agentDir = stringValue(agentDirParam, process.env.PI_CODING_AGENT_DIR)
+  const context = {
+    agentDir,
+    auth: createPhiAuth(access.authStorage),
+    authStorage: access.authStorage,
+    modelRegistry: access.modelRegistry
+  }
+  injectedContexts.set(access.modelRegistry, context)
+  return context
+}
+
 export async function getContext(agentDirParam?: unknown): Promise<RuntimeContext> {
   const agentDir = stringValue(agentDirParam, process.env.PI_CODING_AGENT_DIR)
   const key = agentDir || '__default__'

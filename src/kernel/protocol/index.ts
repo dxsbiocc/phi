@@ -23,6 +23,7 @@ import {
 } from '../host/approval-tracker'
 import { KernelHostRequestManager } from '../host/host-request-manager'
 import { makeProtocolError, normalizeHandlerError } from './errors'
+import { rejectsHostInternalFields } from './trusted-fields'
 import type {
   AttachTransportOptions,
   FrameTransport,
@@ -353,6 +354,14 @@ export class KernelProtocolCore {
     const route = this.routeBusinessMethod(state, request)
     if (!route) return
     const { method, handler } = route
+    if (rejectsHostInternalFields(state.trusted, request, method)) {
+      this.sendError(
+        state,
+        request.id,
+        makeProtocolError('INVALID_PARAMS', 'Host-internal request fields require a trusted entry.')
+      )
+      return
+    }
     if (method === 'events.subscribe') {
       this.handleSubscribe(state, request)
       return

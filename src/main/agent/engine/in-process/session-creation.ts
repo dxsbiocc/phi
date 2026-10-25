@@ -26,7 +26,13 @@ import { requestHost, sendEvent } from './ipc'
 import { assertInProcessLocalProject } from './local-project-boundary'
 import { disconnectLeasedMcpManager, leasedProfileMcpManager } from './mcp-profile'
 import { loadWorkerMcpRuntime } from './worker-subsystems'
-import { getContext, modelBySelector, runtimeThinkingLevel } from './runtime-context'
+import {
+  contextForModelAccess,
+  getContext,
+  modelBySelector,
+  runtimeThinkingLevel
+} from './runtime-context'
+import type { RuntimeContext } from './common'
 import { createAgentSession, makeSessionManager } from './session-factory'
 import { autoCompactionOverrides, enterSessionPlanMode } from './session-runtime'
 import { sessions } from './state'
@@ -34,13 +40,22 @@ import { createSessionToolRegistry } from './tool-registry'
 import { serializeSessionState } from './tool-support'
 import { installAutoWorkModeBatchGuard } from './auto-work-mode-guard'
 
-export async function createSession(params: unknown): Promise<unknown> {
+export async function createSession(
+  params: unknown,
+  dependencies: {
+    modelAccess?: Pick<RuntimeContext, 'authStorage' | 'modelRegistry'> & {
+      requestFetch?: typeof globalThis.fetch
+    }
+  } = {}
+): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const sessionId = stringValue(record.sessionId, randomUUID())
   const cwd = stringValue(record.cwd, process.cwd())
   const agentDir = stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
   assertInProcessLocalProject({ ...record, cwd, agentDir })
-  const ctx = await getContext(agentDir)
+  const ctx = dependencies.modelAccess
+    ? contextForModelAccess(agentDir, dependencies.modelAccess)
+    : await getContext(agentDir)
   const settingsCwd = cwd
   const baseSettings = await Settings.init({ cwd: settingsCwd, agentDir })
   const settings = await baseSettings.cloneForCwd(settingsCwd)
@@ -170,6 +185,12 @@ export async function createSession(params: unknown): Promise<unknown> {
         : {})
     })
     created = result
+    if (dependencies.modelAccess?.requestFetch) {
+      const upstream = result.session.agent.streamFn
+      const requestFetch = dependencies.modelAccess.requestFetch
+      result.session.agent.streamFn = (model, context, options) =>
+        upstream(model, context, { ...options, fetch: requestFetch })
+    }
     installAutoWorkModeBatchGuard(result.session.agent, workMode === 'auto')
     if (leasedMcp) {
       await result.session.refreshMCPTools(mcpTools ?? [])
@@ -194,6 +215,7 @@ export async function createSession(params: unknown): Promise<unknown> {
     sessions.set(sessionId, {
       result,
       agentDir,
+      context: ctx,
       agentRuns,
       agentRunners,
       stopAgentRunNotices,
