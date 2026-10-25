@@ -1,13 +1,17 @@
 import { shellQuote, type RemoteSshSession } from '../../../wrappers/remote-ssh-session'
 import type { HostCapabilityProfile } from '../../../workspace-host/types'
-import type { KernelHelloResult } from '../../../../../shared/kernel-protocol'
-import { KernelProtocolClient } from '..'
+import {
+  remoteHelperReadyMarkerSha256,
+  type RemoteHelperInstallation
+} from '../../../remote-helper-marker'
+import type { KernelEventFrame, KernelHelloResult } from '../../../../../shared/kernel-protocol'
+import { KernelClientError, KernelProtocolClient } from '..'
 import {
   ensureRemoteKernelDeployment,
   probeRemoteKernelHostProfile,
   remoteKernelHostFromSshSession
 } from './deployment'
-import { RemoteKernelTransport } from './transport'
+import { RemoteKernelTransport, type RemoteKernelAttachStatus } from './transport'
 import {
   RemoteKernelError,
   type RemoteKernelDeployment,
@@ -17,11 +21,12 @@ import {
 } from './types'
 
 const RESERVED_ENV = new Set(['HOME', 'PI_CODING_AGENT_DIR', 'PI_NATIVES_DIR', 'PATH'])
+const REQUIRED_ATTACH_HELPER_VERSION = '0.4.0'
 
 export interface LaunchRemoteKernelOptions {
   readonly session: Pick<
     RemoteSshSession,
-    'openStdio' | 'exec' | 'execWithInput' | 'execBounded' | 'uploadFile'
+    'openStdio' | 'exec' | 'execWithInput' | 'execBounded' | 'uploadFile' | 'remoteHelper'
   >
   readonly runtimeRoot: string
   readonly buildDirectory: string
@@ -37,6 +42,7 @@ export interface LaunchRemoteKernelOptions {
   readonly onDiagnostic?: (text: string) => void
   readonly hello?: Parameters<KernelProtocolClient['hello']>[0]
   readonly helloTimeoutMs?: number
+  readonly graceMs?: number
 }
 
 export interface LaunchedRemoteKernel {
@@ -48,12 +54,52 @@ export interface LaunchedRemoteKernel {
   readonly agentDir: string
   /** Connection-scoped stdio open through completed kernel.hello. */
   readonly readyMs: number
+  /** Whether this attach reused the live kernel or won the spawn lock. */
+  readonly attach: RemoteKernelAttachStatus
+  readonly helper: RemoteHelperInstallation
   /** Deployment exec commands plus the connection-scoped stdio channel. */
   readonly remoteCommandCount: number
   close(): Promise<void>
 }
 
 export type RemoteKernelLauncher = LaunchedRemoteKernel
+
+export interface ReattachRemoteKernelOptions {
+  readonly session: Pick<RemoteSshSession, 'openStdio'>
+  readonly previous: LaunchedRemoteKernel
+  readonly lastSeen: number
+  readonly signal?: AbortSignal
+  readonly environment?: Readonly<Record<string, string>>
+  readonly onDiagnostic?: (text: string) => void
+  /** Installed before takeover hello so reconnect-time events cannot race listener setup. */
+  readonly onEvent?: (event: KernelEventFrame) => void
+  /** Register host handlers here before takeover advertises their hello capabilities. */
+  readonly configureClient?: (client: KernelProtocolClient) => void
+  readonly hello?: Omit<Parameters<KernelProtocolClient['hello']>[0], 'takeover'>
+  readonly helloTimeoutMs?: number
+}
+
+export interface ReattachedRemoteKernel extends LaunchedRemoteKernel {
+  readonly snapshotRequired: boolean
+}
+
+interface OpenRemoteKernelClientOptions {
+  readonly session: Pick<RemoteSshSession, 'openStdio'>
+  readonly command: string
+  readonly hello: Parameters<KernelProtocolClient['hello']>[0]
+  readonly helloTimeoutMs: number
+  readonly onDiagnostic?: (text: string) => void
+  readonly configureClient?: (client: KernelProtocolClient) => void
+  readonly openFailureMessage: string
+  readonly helloFailureMessage: string
+}
+
+interface OpenedRemoteKernelClient {
+  readonly client: KernelProtocolClient
+  readonly greeting: KernelHelloResult
+  readonly attach: RemoteKernelAttachStatus
+  readonly readyMs: number
+}
 
 function explicitEnvironment(
   deployment: RemoteKernelDeployment,
@@ -82,9 +128,17 @@ function explicitEnvironment(
 
 export function buildRemoteKernelLaunchCommand(
   deployment: RemoteKernelDeployment,
+  helper: RemoteHelperInstallation,
   environment?: Readonly<Record<string, string>>,
-  paths?: { readonly home?: string; readonly agentDir?: string }
+  paths?: { readonly home?: string; readonly agentDir?: string },
+  graceMs?: number
 ): string {
+  if (!validAttachHelper(helper)) {
+    throw new RemoteKernelError(
+      'HELPER_UNAVAILABLE',
+      `Remote kernel requires marker-backed phi-helper ${REQUIRED_ATTACH_HELPER_VERSION}.`
+    )
+  }
   for (const [label, value] of [
     ['home', paths?.home],
     ['agentDir', paths?.agentDir]
@@ -97,13 +151,128 @@ export function buildRemoteKernelLaunchCommand(
     }
   }
   const explicit = explicitEnvironment(deployment, environment, paths)
-  const assignments = Object.entries(explicit).map(
-    ([name, value]) => `${name}=${shellQuote(value)}`
+  if (graceMs !== undefined && (!Number.isSafeInteger(graceMs) || graceMs <= 0)) {
+    throw new RemoteKernelError('INVALID_ARGUMENT', 'Kernel grace period must be positive.')
+  }
+  const helperArguments = [
+    shellQuote(helper.remotePath),
+    'attach',
+    '--kernel',
+    shellQuote(deployment.executablePath),
+    '--runtime-root',
+    shellQuote(deployment.runtimeRoot),
+    '--kernel-version',
+    shellQuote(deployment.phiVersion),
+    ...(graceMs === undefined ? [] : ['--grace-ms', String(graceMs)]),
+    ...Object.entries(explicit).flatMap(([name, value]) => [
+      '--env',
+      shellQuote(`${name}=${value}`)
+    ])
+  ]
+  // The helper receives only a minimal PATH. The detached kernel receives only the
+  // explicit --env entries; PI_NATIVES_DIR therefore cannot redirect its verified addon.
+  return `umask 077 && cd -- ${shellQuote(explicit.HOME)} && exec env -i PATH='/usr/local/bin:/usr/bin:/bin' ${helperArguments.join(' ')}`
+}
+
+function validAttachHelper(
+  helper: RemoteHelperInstallation | undefined
+): helper is RemoteHelperInstallation {
+  return Boolean(
+    helper &&
+    helper.markerIdentity.kind === 'remote-helper' &&
+    helper.markerIdentity.version === REQUIRED_ATTACH_HELPER_VERSION &&
+    helper.remotePath.startsWith('/') &&
+    helper.remoteDirectory.startsWith('/') &&
+    helper.remotePath === `${helper.remoteDirectory}/phi-helper` &&
+    helper.readyMarkerPath === `${helper.remoteDirectory}/.phi-ready.json` &&
+    /^[a-f0-9]{64}$/.test(helper.markerIdentity.sha256) &&
+    helper.readyMarkerSha256 === remoteHelperReadyMarkerSha256(helper.markerIdentity)
   )
-  // env -i is also the explicit guarantee that PI_NATIVES_DIR is unset. The addon
-  // loader therefore resolves only the verified sibling file beside process.execPath.
-  // Same as the remote OMP launch: files the kernel creates stay private to this OS user.
-  return `umask 077 && cd -- ${shellQuote(explicit.HOME)} && exec env -i ${assignments.join(' ')} ${shellQuote(deployment.executablePath)}`
+}
+
+async function resolveAttachHelper(
+  options: LaunchRemoteKernelOptions,
+  runtimeHost: RemoteKernelDeploymentHost
+): Promise<RemoteHelperInstallation> {
+  let helper = runtimeHost.managedRemoteHelper?.() ?? options.session.remoteHelper
+  if (runtimeHost.ensureManagedRemoteHelper) {
+    helper = await runtimeHost.ensureManagedRemoteHelper()
+    if (!validAttachHelper(helper)) {
+      helper = await runtimeHost.ensureManagedRemoteHelper({ force: true })
+    }
+  }
+  if (!validAttachHelper(helper)) {
+    const reason = runtimeHost.managedRemoteHelperFailure?.()
+    throw new RemoteKernelError(
+      'HELPER_UNAVAILABLE',
+      `Remote kernel requires marker-backed phi-helper ${REQUIRED_ATTACH_HELPER_VERSION}${reason ? `: ${reason}` : '.'}`
+    )
+  }
+  return helper
+}
+
+function assertHelloTimeout(helloTimeoutMs: number): void {
+  if (!Number.isFinite(helloTimeoutMs) || helloTimeoutMs <= 0) {
+    throw new RemoteKernelError('INVALID_ARGUMENT', 'Kernel hello timeout must be positive.')
+  }
+}
+
+async function openRemoteKernelClient(
+  options: OpenRemoteKernelClientOptions
+): Promise<OpenedRemoteKernelClient> {
+  if (!options.session.openStdio) {
+    throw new RemoteKernelError(
+      'STDIO_UNAVAILABLE',
+      'Connected SSH session has no persistent stdio capability.'
+    )
+  }
+  const readyStarted = performance.now()
+  let channel
+  try {
+    channel = await options.session.openStdio(options.command)
+  } catch (error) {
+    throw new RemoteKernelError('LAUNCH_FAILED', options.openFailureMessage, { cause: error })
+  }
+  const transport = new RemoteKernelTransport(channel, options.onDiagnostic)
+  const client = new KernelProtocolClient(transport)
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    options.configureClient?.(client)
+    const opened = await Promise.race([
+      Promise.all([client.hello(options.hello), transport.attachStatus]),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`Kernel hello timed out after ${options.helloTimeoutMs} ms.`)),
+          options.helloTimeoutMs
+        )
+        timeout.unref()
+      })
+    ])
+    return {
+      client,
+      greeting: opened[0],
+      attach: opened[1],
+      readyMs: performance.now() - readyStarted
+    }
+  } catch (error) {
+    await client.close().catch(() => undefined)
+    throw new RemoteKernelError('LAUNCH_FAILED', options.helloFailureMessage, { cause: error })
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+async function subscribeAfterReconnect(
+  client: KernelProtocolClient,
+  lastSeen: number
+): Promise<boolean> {
+  try {
+    await client.subscribe(lastSeen)
+    return false
+  } catch (error) {
+    if (error instanceof KernelClientError && error.code === 'REPLAY_GAP') return true
+    throw error
+  }
 }
 
 export async function launchRemoteKernel(
@@ -111,15 +280,7 @@ export async function launchRemoteKernel(
 ): Promise<LaunchedRemoteKernel> {
   options.signal?.throwIfAborted()
   const helloTimeoutMs = options.helloTimeoutMs ?? 10_000
-  if (!Number.isFinite(helloTimeoutMs) || helloTimeoutMs <= 0) {
-    throw new RemoteKernelError('INVALID_ARGUMENT', 'Kernel hello timeout must be positive.')
-  }
-  if (!options.session.openStdio) {
-    throw new RemoteKernelError(
-      'STDIO_UNAVAILABLE',
-      'Connected SSH session has no persistent stdio capability.'
-    )
-  }
+  assertHelloTimeout(helloTimeoutMs)
   let platformProbeCommandCount = 0
   let profile = options.profile ?? options.runtimeHost?.capabilities()
   if (!profile) {
@@ -136,46 +297,89 @@ export async function launchRemoteKernel(
     uploadOptions: options.uploadOptions
   })
   options.signal?.throwIfAborted()
-  const command = buildRemoteKernelLaunchCommand(deployment, options.environment, {
-    home: options.home,
-    agentDir: options.agentDir
+  const helper = await resolveAttachHelper(options, runtimeHost)
+  const command = buildRemoteKernelLaunchCommand(
+    deployment,
+    helper,
+    options.environment,
+    { home: options.home, agentDir: options.agentDir },
+    options.graceMs
+  )
+  const opened = await openRemoteKernelClient({
+    session: options.session,
+    command,
+    hello: options.hello ?? {},
+    helloTimeoutMs,
+    onDiagnostic: options.onDiagnostic,
+    openFailureMessage: 'Failed to open remote kernel stdio.',
+    helloFailureMessage: 'Remote kernel hello failed.'
   })
-  const readyStarted = performance.now()
-  let channel
-  try {
-    channel = await options.session.openStdio(command)
-  } catch (error) {
-    throw new RemoteKernelError('LAUNCH_FAILED', 'Failed to open remote kernel stdio.', {
-      cause: error
-    })
-  }
-  const transport = new RemoteKernelTransport(channel, options.onDiagnostic)
-  const client = new KernelProtocolClient(transport)
-  let greeting: KernelHelloResult
-  try {
-    greeting = await Promise.race([
-      client.hello(options.hello),
-      new Promise<never>((_resolve, reject) => {
-        const timeout = setTimeout(
-          () => reject(new Error(`Kernel hello timed out after ${helloTimeoutMs} ms.`)),
-          helloTimeoutMs
-        )
-        timeout.unref()
-      })
-    ])
-  } catch (error) {
-    await client.close().catch(() => undefined)
-    throw new RemoteKernelError('LAUNCH_FAILED', 'Remote kernel hello failed.', { cause: error })
-  }
   return {
-    client,
-    greeting,
+    client: opened.client,
+    greeting: opened.greeting,
+    attach: opened.attach,
+    helper,
     deployment,
     profile: deployment.profile,
     homePath: options.home ?? deployment.homePath,
     agentDir: options.agentDir ?? deployment.agentDir,
-    readyMs: performance.now() - readyStarted,
+    readyMs: opened.readyMs,
     remoteCommandCount: platformProbeCommandCount + deployment.remoteCommandCount + 1,
-    close: () => client.close()
+    close: () => opened.client.close()
+  }
+}
+
+export async function reattachRemoteKernel(
+  options: ReattachRemoteKernelOptions
+): Promise<ReattachedRemoteKernel> {
+  options.signal?.throwIfAborted()
+  if (!Number.isSafeInteger(options.lastSeen) || options.lastSeen < 0) {
+    throw new RemoteKernelError('INVALID_ARGUMENT', 'Last seen kernel event sequence is invalid.')
+  }
+  const helloTimeoutMs = options.helloTimeoutMs ?? 10_000
+  assertHelloTimeout(helloTimeoutMs)
+  const command = buildRemoteKernelLaunchCommand(
+    options.previous.deployment,
+    options.previous.helper,
+    options.environment,
+    { home: options.previous.homePath, agentDir: options.previous.agentDir }
+  )
+  const opened = await openRemoteKernelClient({
+    session: options.session,
+    command,
+    hello: { ...options.hello, takeover: true },
+    helloTimeoutMs,
+    onDiagnostic: options.onDiagnostic,
+    configureClient(client) {
+      options.configureClient?.(client)
+      if (options.onEvent) client.onEvent(options.onEvent)
+    },
+    openFailureMessage: 'Failed to re-open remote kernel stdio.',
+    helloFailureMessage: 'Remote kernel reattach failed.'
+  })
+  try {
+    let snapshotRequired =
+      opened.attach.state === 'spawned' ||
+      opened.greeting.kernelInstanceId !== options.previous.greeting.kernelInstanceId
+    if (!snapshotRequired) {
+      snapshotRequired = await subscribeAfterReconnect(opened.client, options.lastSeen)
+    }
+    return {
+      client: opened.client,
+      greeting: opened.greeting,
+      deployment: options.previous.deployment,
+      profile: options.previous.profile,
+      homePath: options.previous.homePath,
+      agentDir: options.previous.agentDir,
+      helper: options.previous.helper,
+      attach: opened.attach,
+      snapshotRequired,
+      readyMs: opened.readyMs,
+      remoteCommandCount: 1,
+      close: () => opened.client.close()
+    }
+  } catch (error) {
+    await opened.client.close().catch(() => undefined)
+    throw new RemoteKernelError('LAUNCH_FAILED', 'Remote kernel reattach failed.', { cause: error })
   }
 }

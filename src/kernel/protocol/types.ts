@@ -51,6 +51,11 @@ export interface KernelProtocolLogger {
   error?(message: string, details?: Readonly<Record<string, JsonValue>>): void
 }
 
+export interface KernelControllerLifecycle {
+  onControllerAttached?(generation: number): void
+  onControllerDetached?(generation: number): void
+}
+
 export interface KernelProtocolOptions {
   kernelVersion: string
   ompVersion: string
@@ -58,6 +63,8 @@ export interface KernelProtocolOptions {
   replayCapacity?: number
   kernelInstanceId?: string
   log?: KernelProtocolLogger
+  disconnectPolicy?: 'fail-pending' | 'wait-for-reconnect'
+  controllerLifecycle?: KernelControllerLifecycle
 }
 
 export interface AttachTransportOptions {

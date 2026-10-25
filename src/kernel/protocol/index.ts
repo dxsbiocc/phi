@@ -1,6 +1,8 @@
 import {
+  KERNEL_EVENT_APPROVAL_REQUESTED,
   KERNEL_V1_METHODS,
   PHI_KERNEL_PROTOCOL_VERSION,
+  approvalRequestedPayloadSchema,
   encodeFrame,
   kernelMethodResultSchemas,
   parseFrame,
@@ -38,15 +40,27 @@ interface ConnectionState {
   readonly requestIds: Set<string>
   generation?: number
   negotiated: boolean
+  liveEventsEnabled: boolean
+  approvalIdsToReannounce: Set<string>
   closed: boolean
 }
 
 interface PendingHostRequest {
-  readonly connection: ConnectionState
-  readonly generation: number
+  readonly frame: HostRequestFrame
+  connection?: ConnectionState
+  generation?: number
   resolve(value: JsonValue): void
   reject(error: ProtocolError): void
 }
+
+type ActiveRunState =
+  | {
+      readonly phase: 'accepting'
+      readonly token: number
+      readonly settled: Promise<void>
+      settle(): void
+    }
+  | { readonly phase: 'running'; readonly runId: string }
 
 const businessMethods = new Set<string>(
   KERNEL_V1_METHODS.filter((method) => method !== 'kernel.hello')
@@ -61,14 +75,19 @@ export class KernelProtocolCore {
   private readonly replayCapacity: number
   private readonly kernelInstanceId: string
   private readonly log: KernelProtocolLogger
+  private readonly disconnectPolicy: 'fail-pending' | 'wait-for-reconnect'
   private readonly connections = new Map<string, ConnectionState>()
   private readonly replay: KernelEventFrame[] = []
-  private readonly activeRuns = new Map<string, string>()
+  private readonly activeRuns = new Map<string, ActiveRunState>()
   private readonly terminalRuns = new Set<string>()
   private readonly pendingHostRequests = new Map<string, PendingHostRequest>()
+  private readonly pendingApprovals = new Map<string, KernelEventFrame>()
+  private readonly expiredPendingPrompts = new Set<number>()
+  private readonly expiringRunIds = new Set<string>()
   private controller?: ConnectionState
   private connectionCounter = 0
   private hostRequestCounter = 0
+  private promptCounter = 0
   private controllerGeneration = 0
   private lastSeq = 0
 
@@ -80,6 +99,7 @@ export class KernelProtocolCore {
     }
     this.kernelInstanceId = options.kernelInstanceId ?? createKernelInstanceId()
     this.log = options.log ?? {}
+    this.disconnectPolicy = options.disconnectPolicy ?? 'fail-pending'
   }
 
   attachTransport(transport: FrameTransport, options: AttachTransportOptions): void {
@@ -95,6 +115,8 @@ export class KernelProtocolCore {
       hostCapabilities: new Set(),
       requestIds: new Set(),
       negotiated: false,
+      liveEventsEnabled: false,
+      approvalIdsToReannounce: new Set(),
       closed: false
     }
     this.connections.set(connectionId, state)
@@ -118,6 +140,7 @@ export class KernelProtocolCore {
     routing: { sessionId?: string; runId?: string } = {}
   ): KernelEventFrame | undefined {
     let terminalRunId: string | undefined
+    let approvalId: string | undefined
     if (type === 'run.completed') {
       const parsed = runCompletedPayloadSchema.safeParse(payload)
       if (!parsed.success) {
@@ -128,6 +151,11 @@ export class KernelProtocolCore {
         return undefined
       }
       terminalRunId = parsed.data.runId
+    }
+    if (type === KERNEL_EVENT_APPROVAL_REQUESTED) {
+      const approval = approvalRequestedPayloadSchema.safeParse(payload)
+      if (!approval.success) throw new TypeError('approval.requested payload is invalid')
+      approvalId = approval.data.approvalId
     }
 
     const event: KernelEventFrame = {
@@ -143,9 +171,10 @@ export class KernelProtocolCore {
     this.lastSeq = event.seq
     this.replay.push(event)
     if (this.replay.length > this.replayCapacity) this.replay.shift()
+    if (approvalId) this.pendingApprovals.set(approvalId, event)
 
     const controller = this.controller
-    if (controller && this.isCurrentController(controller)) {
+    if (controller && controller.liveEventsEnabled && this.isCurrentController(controller)) {
       this.sendEncoded(controller, encoded)
     }
     return event
@@ -159,7 +188,13 @@ export class KernelProtocolCore {
     }
     // Kernel-generated run ids are unique, so retaining the recent replay-sized window is
     // sufficient to suppress duplicate completion paths without keeping every historical id.
-    if (sessionId && this.activeRuns.get(sessionId) === runId) this.activeRuns.delete(sessionId)
+    const activeRun = sessionId ? this.activeRuns.get(sessionId) : undefined
+    if (sessionId && activeRun?.phase === 'running' && activeRun.runId === runId) {
+      this.activeRuns.delete(sessionId)
+    }
+    for (const [approvalId, event] of this.pendingApprovals) {
+      if (event.runId === runId) this.pendingApprovals.delete(approvalId)
+    }
   }
 
   requestHost(
@@ -168,7 +203,10 @@ export class KernelProtocolCore {
     context: KernelHostRequestContext = {}
   ): Promise<JsonValue> {
     const controller = this.controller
-    if (!controller || !controller.hostCapabilities.has(capability)) {
+    if (
+      (controller && !controller.hostCapabilities.has(capability)) ||
+      (!controller && this.disconnectPolicy === 'fail-pending')
+    ) {
       return Promise.reject(
         makeProtocolError(
           'CAPABILITY_UNAVAILABLE',
@@ -179,14 +217,20 @@ export class KernelProtocolCore {
 
     const id = `host-${this.kernelInstanceId}-${++this.hostRequestCounter}`
     const frame: HostRequestFrame = { kind: 'host.request', id, capability, params, ...context }
-    const generation = controller.generation
-    if (generation === undefined || generation !== this.controllerGeneration) {
+    const generation = controller?.generation
+    if (controller && (generation === undefined || generation !== this.controllerGeneration)) {
       return Promise.reject(
         makeProtocolError('STALE_GENERATION', 'The host controller generation is inactive.')
       )
     }
     return new Promise<JsonValue>((resolve, reject) => {
-      this.pendingHostRequests.set(id, { connection: controller, generation, resolve, reject })
+      const pending: PendingHostRequest = { frame, resolve, reject }
+      if (controller && generation !== undefined) {
+        pending.connection = controller
+        pending.generation = generation
+      }
+      this.pendingHostRequests.set(id, pending)
+      if (!controller) return
       try {
         if (this.sendEncoded(controller, encodeFrame(frame))) return
         this.pendingHostRequests.delete(id)
@@ -196,6 +240,69 @@ export class KernelProtocolCore {
         reject(makeProtocolError('INTERNAL', 'Host request could not be encoded.'))
       }
     })
+  }
+
+  async expireDisconnectedState(): Promise<boolean> {
+    const controller = this.controller
+    if (controller && this.isCurrentController(controller)) return false
+
+    const activeRuns = [...this.activeRuns]
+    for (const [, activeRun] of activeRuns) {
+      if (activeRun.phase === 'accepting') this.expiredPendingPrompts.add(activeRun.token)
+      else this.expiringRunIds.add(activeRun.runId)
+    }
+
+    const context: KernelCallContext = {
+      controllerGeneration: this.controllerGeneration,
+      connectionId: 'kernel-lifecycle',
+      trusted: true
+    }
+    const approvals = [...this.pendingApprovals]
+    const respondToApproval = this.handlers['approval.respond']
+    await Promise.all(
+      approvals.map(async ([approvalId, event]) => {
+        if (!respondToApproval) return
+        const params = {
+          approvalId,
+          decision: 'denied',
+          reason: 'client did not return'
+        }
+        const request: KernelRequestFrame = {
+          kind: 'request',
+          id: `lifecycle-deny-${approvalId}`,
+          method: 'approval.respond',
+          params,
+          generation: this.controllerGeneration,
+          ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+          ...(event.runId ? { runId: event.runId } : {})
+        }
+        try {
+          const result = await respondToApproval(params, context, request)
+          if (!kernelMethodResultSchemas['approval.respond'].safeParse(result).success) {
+            throw new TypeError('Grace expiry approval handler returned an invalid result')
+          }
+          this.pendingApprovals.delete(approvalId)
+        } catch {
+          this.log.error?.('Grace expiry could not deliver an approval denial.', {
+            approvalId
+          })
+        }
+      })
+    )
+
+    await Promise.all(
+      activeRuns.map(async ([sessionId, activeRun]) => {
+        if (activeRun.phase === 'accepting') {
+          await this.abortRunForGrace(sessionId, undefined, context)
+          await activeRun.settled
+          return
+        }
+        const status = await this.abortRunForGrace(sessionId, activeRun.runId, context)
+        this.completeRunAfterExpiry(sessionId, activeRun.runId, status)
+      })
+    )
+    this.rejectAllPendingHostRequests()
+    return true
   }
 
   private processLine(state: ConnectionState, line: string): void {
@@ -305,6 +412,10 @@ export class KernelProtocolCore {
           .map((issue) => issue.path.join('.') || '<root>')
         throw new TypeError(`Kernel method returned an invalid result at: ${paths.join(', ')}`)
       }
+      if (method === 'approval.respond') {
+        const approvalId = (request.params as { approvalId: string }).approvalId
+        this.pendingApprovals.delete(approvalId)
+      }
       this.sendSuccess(state, request.id, parsedResult.data as JsonValue)
     } catch (error) {
       this.handleHandlerFailure(state, request, error)
@@ -341,12 +452,25 @@ export class KernelProtocolCore {
     }
 
     this.controllerGeneration += 1
+    const awaitingReplay = state.negotiated && !state.liveEventsEnabled
     state.negotiated = true
     state.generation = this.controllerGeneration
     state.hostCapabilities = new Set(params.hostCapabilities ?? [])
+    state.liveEventsEnabled =
+      this.disconnectPolicy === 'fail-pending' || (!awaitingReplay && params.takeover !== true)
+    if (!awaitingReplay) {
+      state.approvalIdsToReannounce =
+        this.disconnectPolicy === 'wait-for-reconnect'
+          ? new Set(this.pendingApprovals.keys())
+          : new Set()
+    }
     this.controller = state
     if (previous) {
-      this.rejectPendingHostRequests(previous, 'STALE_GENERATION')
+      if (this.disconnectPolicy === 'fail-pending') {
+        this.rejectPendingHostRequests(previous, 'STALE_GENERATION')
+      } else {
+        this.detachPendingHostRequests(previous)
+      }
       if (previousGeneration !== undefined) {
         this.notifyControllerGenerationDetached(previousGeneration)
       }
@@ -367,6 +491,10 @@ export class KernelProtocolCore {
       capabilities,
       lastSeq: this.lastSeq
     })
+    if (this.disconnectPolicy === 'wait-for-reconnect') {
+      this.resumePendingHostRequests(state)
+    }
+    this.notifyControllerGenerationAttached(this.controllerGeneration)
   }
 
   private handleSubscribe(state: ConnectionState, request: KernelRequestFrame): void {
@@ -378,6 +506,7 @@ export class KernelProtocolCore {
         request.id,
         makeProtocolError('REPLAY_GAP', 'Requested events are no longer available.', { oldestSeq })
       )
+      this.enableLiveEventsAfterReplay(state)
       return
     }
     if (afterSeq > this.lastSeq) {
@@ -396,6 +525,7 @@ export class KernelProtocolCore {
         this.sendEncoded(state, encodeFrame(event))
       }
     }
+    this.enableLiveEventsAfterReplay(state)
   }
 
   private async handlePrompt(
@@ -421,23 +551,39 @@ export class KernelProtocolCore {
       return
     }
 
-    const pendingMarker = `pending:${state.id}:${request.id}`
-    this.activeRuns.set(sessionId, pendingMarker)
+    let settlePendingRun!: () => void
+    const settled = new Promise<void>((resolve) => {
+      settlePendingRun = resolve
+    })
+    const pendingRun: ActiveRunState = {
+      phase: 'accepting',
+      token: ++this.promptCounter,
+      settled,
+      settle: settlePendingRun
+    }
+    this.activeRuns.set(sessionId, pendingRun)
     try {
       const result = await handler(request.params, this.contextFor(state), request)
       if (!this.isSessionPromptRun(result)) {
         throw makeProtocolError('INTERNAL', 'session.prompt handler returned an invalid run.')
       }
+      if (this.expiredPendingPrompts.delete(pendingRun.token)) {
+        if (this.activeRuns.get(sessionId) === pendingRun) this.activeRuns.delete(sessionId)
+        void Promise.resolve(result.completion).catch(() => undefined)
+        const status = await this.abortRunForGrace(sessionId, result.runId)
+        this.completeRun(sessionId, result.runId, status)
+        return
+      }
       if (
         this.terminalRuns.has(result.runId) ||
         [...this.activeRuns.values()].some(
-          (activeRunId) => activeRunId !== pendingMarker && activeRunId === result.runId
+          (activeRun) => activeRun.phase === 'running' && activeRun.runId === result.runId
         )
       ) {
         throw makeProtocolError('INTERNAL', 'session.prompt returned a completed run id.')
       }
 
-      this.activeRuns.set(sessionId, result.runId)
+      this.activeRuns.set(sessionId, { phase: 'running', runId: result.runId })
       this.sendSuccess(state, request.id, { accepted: true, runId: result.runId })
       void Promise.resolve(result.completion).then(
         (completion) => {
@@ -454,8 +600,11 @@ export class KernelProtocolCore {
         }
       )
     } catch (error) {
-      if (this.activeRuns.get(sessionId) === pendingMarker) this.activeRuns.delete(sessionId)
+      this.expiredPendingPrompts.delete(pendingRun.token)
+      if (this.activeRuns.get(sessionId) === pendingRun) this.activeRuns.delete(sessionId)
       this.handleHandlerFailure(state, request, error)
+    } finally {
+      pendingRun.settle()
     }
   }
 
@@ -465,6 +614,7 @@ export class KernelProtocolCore {
     status: RunCompletionStatus,
     detail?: string
   ): void {
+    if (this.expiringRunIds.has(runId)) return
     const payload = { runId, status, ...(detail ? { detail } : {}) }
     if (!runCompletedPayloadSchema.safeParse(payload).success) {
       this.log.error?.('Ignored invalid session run completion.', { sessionId, runId })
@@ -474,6 +624,15 @@ export class KernelProtocolCore {
       sessionId,
       runId
     })
+  }
+
+  private completeRunAfterExpiry(
+    sessionId: string,
+    runId: string,
+    status: RunCompletionStatus
+  ): void {
+    this.expiringRunIds.delete(runId)
+    this.completeRun(sessionId, runId, status)
   }
 
   private isSessionPromptRun(value: unknown): value is SessionPromptRun {
@@ -533,7 +692,8 @@ export class KernelProtocolCore {
     if (state.closed) return
     state.closed = true
     this.connections.delete(state.id)
-    this.rejectPendingHostRequests(state)
+    if (this.disconnectPolicy === 'fail-pending') this.rejectPendingHostRequests(state)
+    else this.detachPendingHostRequests(state)
     if (this.controller === state) {
       this.controller = undefined
       if (state.generation !== undefined) {
@@ -544,11 +704,24 @@ export class KernelProtocolCore {
 
   private notifyControllerGenerationDetached(generation: number): void {
     try {
+      this.options.controllerLifecycle?.onControllerDetached?.(generation)
+    } catch {
+      this.log.error?.('Controller lifecycle detach observer failed.', { generation })
+    }
+    try {
       void Promise.resolve(this.handlers.onControllerDetached?.(generation)).catch(() => {
         this.log.error?.('Controller detach handler failed.', { generation })
       })
     } catch {
       this.log.error?.('Controller detach handler failed.', { generation })
+    }
+  }
+
+  private notifyControllerGenerationAttached(generation: number): void {
+    try {
+      this.options.controllerLifecycle?.onControllerAttached?.(generation)
+    } catch {
+      this.log.error?.('Controller lifecycle attach observer failed.', { generation })
     }
   }
 
@@ -567,6 +740,102 @@ export class KernelProtocolCore {
             : 'Host connection was detached.'
         )
       )
+    }
+  }
+
+  private rejectAllPendingHostRequests(): void {
+    for (const [id, pending] of this.pendingHostRequests) {
+      this.pendingHostRequests.delete(id)
+      pending.reject(
+        makeProtocolError('CAPABILITY_UNAVAILABLE', 'Host grace period expired without a client.')
+      )
+    }
+  }
+
+  private detachPendingHostRequests(state: ConnectionState): void {
+    for (const pending of this.pendingHostRequests.values()) {
+      if (pending.connection !== state) continue
+      pending.connection = undefined
+      pending.generation = undefined
+    }
+  }
+
+  private resumePendingHostRequests(state: ConnectionState): void {
+    const generation = state.generation
+    if (generation === undefined) return
+    for (const [id, pending] of this.pendingHostRequests) {
+      if (pending.connection) continue
+      if (!state.hostCapabilities.has(pending.frame.capability)) {
+        this.pendingHostRequests.delete(id)
+        pending.reject(
+          makeProtocolError(
+            'CAPABILITY_UNAVAILABLE',
+            'The reconnected host did not register the requested capability.'
+          )
+        )
+        continue
+      }
+      pending.connection = state
+      pending.generation = generation
+      if (!this.sendEncoded(state, encodeFrame(pending.frame))) {
+        pending.connection = undefined
+        pending.generation = undefined
+      }
+    }
+  }
+
+  private enableLiveEventsAfterReplay(state: ConnectionState): void {
+    state.liveEventsEnabled = true
+    if (state.approvalIdsToReannounce.size === 0) return
+    const approvalIds = state.approvalIdsToReannounce
+    state.approvalIdsToReannounce = new Set()
+    this.reannouncePendingApprovals(approvalIds)
+  }
+
+  private async abortRunForGrace(
+    sessionId: string,
+    runId?: string,
+    context: KernelCallContext = {
+      controllerGeneration: this.controllerGeneration,
+      connectionId: 'kernel-lifecycle',
+      trusted: true
+    }
+  ): Promise<RunCompletionStatus> {
+    const abort = this.handlers['session.abort']
+    if (!abort) return 'unknown'
+    const params = {}
+    const request: KernelRequestFrame = {
+      kind: 'request',
+      id: `lifecycle-abort-${runId ?? sessionId}`,
+      method: 'session.abort',
+      params,
+      generation: this.controllerGeneration,
+      sessionId,
+      ...(runId ? { runId } : {})
+    }
+    try {
+      const result = await abort(params, context, request)
+      if (!kernelMethodResultSchemas['session.abort'].safeParse(result).success) {
+        throw new TypeError('Grace expiry abort handler returned an invalid result')
+      }
+      return 'cancelled'
+    } catch {
+      this.log.error?.('Grace expiry could not prove an active run stopped.', {
+        sessionId,
+        ...(runId ? { runId } : {})
+      })
+      return 'unknown'
+    }
+  }
+
+  private reannouncePendingApprovals(approvalIds: ReadonlySet<string>): void {
+    for (const approvalId of approvalIds) {
+      const event = this.pendingApprovals.get(approvalId)
+      if (!event) continue
+      this.emitEvent(event.type, event.payload, {
+        ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+        ...(event.runId ? { runId: event.runId } : {})
+      })
     }
   }
 

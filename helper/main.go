@@ -3,6 +3,7 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -18,8 +19,16 @@ var helperVersion = strings.TrimSpace(embeddedVersion)
 func main() {
 	if err := runCLI(os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		os.Exit(cliExitCode(err))
 	}
+}
+
+func cliExitCode(err error) int {
+	var attachErr *attachError
+	if errors.As(err, &attachErr) {
+		return attachErr.exitCode
+	}
+	return 1
 }
 
 func runCLI(args []string, input io.Reader, output, errorOutput io.Writer) error {
@@ -46,7 +55,16 @@ func runCLI(args []string, input io.Reader, output, errorOutput io.Writer) error
 	if len(args) > 0 && args[0] == "remote-session-preflight" {
 		return remoteSessionPreflightCLI(args[1:], output, errorOutput)
 	}
-	return fmt.Errorf("usage: phi-helper [--version|--selftest|project-plugin-guard --root <path>|remote-session-preflight ...|serve --root <path>]")
+	if len(args) > 0 && args[0] == "attach" {
+		return attachCLI(args[1:], input, output, errorOutput)
+	}
+	if len(args) > 0 && args[0] == "internal-log-sink" {
+		return logSinkCLI(args[1:], input, errorOutput)
+	}
+	if len(args) > 0 && args[0] == "internal-exec-kernel" {
+		return internalKernelExecCLI(args[1:])
+	}
+	return fmt.Errorf("usage: phi-helper [--version|--selftest|attach ...|project-plugin-guard --root <path>|remote-session-preflight ...|serve --root <path>]")
 }
 
 func serveCLI(args []string, input io.Reader, output, errorOutput io.Writer) error {

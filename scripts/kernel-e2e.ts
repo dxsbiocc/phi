@@ -5,17 +5,12 @@ import { spawnSync } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { createServer, type ServerResponse } from 'node:http'
-import type { AddressInfo } from 'node:net'
-import { dirname, isAbsolute, join, posix, resolve } from 'node:path'
+import { dirname, join, posix, resolve } from 'node:path'
 
-import {
-  launchLocalKernel,
-  type KernelProtocolClient,
-  type LocalKernelLauncher
-} from '../src/main/agent/engine/kernel-client'
+import { launchLocalKernel, type LocalKernelLauncher } from '../src/main/agent/engine/kernel-client'
 import {
   launchRemoteKernel,
+  probeRemoteKernelHostProfile,
   type LaunchedRemoteKernel
 } from '../src/main/agent/engine/kernel-client/remote'
 import {
@@ -24,27 +19,29 @@ import {
   type RemoteReverseTunnel,
   type RemoteSshSession
 } from '../src/main/agent/wrappers/remote-ssh-session'
-import type { JsonValue, KernelEventFrame } from '../src/shared/kernel-protocol'
-
-type Target = 'local' | 'ssh'
-
-interface CliOptions {
-  target: Target
-  runtimeRoot: string
-  host?: string
-  buildDirectory: string
-  output?: string
-}
-
-interface ModelReply {
-  text?: string
-  tool?: { name: string; id: string; args: Record<string, unknown> }
-}
-
-interface ModelRequest {
-  messages: Array<Record<string, unknown>>
-  tools?: unknown[]
-}
+import {
+  parseKernelE2eArgs,
+  type KernelE2eCliOptions,
+  type KernelE2eScenario,
+  type KernelE2eTarget
+} from './kernel-e2e/options'
+import { prepareKernelE2eRemoteHelper } from './kernel-e2e/prepare-remote-helper'
+import {
+  eventually,
+  extractKernelPid,
+  KERNEL_E2E_HOST_CAPABILITIES,
+  runSshLifecycleScenario,
+  shellLiteral,
+  toolEvidence
+} from './kernel-e2e/lifecycle-scenarios'
+import {
+  agentConfig,
+  bounded,
+  errorMessage,
+  record,
+  ScenarioClient,
+  startLoopbackProvider
+} from './kernel-e2e/harness'
 
 interface StepResult {
   name: string
@@ -56,7 +53,8 @@ interface StepResult {
 interface E2eReport {
   schemaVersion: 1
   ok: boolean
-  target: Target
+  target: KernelE2eTarget
+  scenario: KernelE2eScenario
   host?: string
   hostProfile: {
     os: string
@@ -73,6 +71,7 @@ interface E2eReport {
   deploy: {
     outcome: 'local' | 'fresh' | 'reused'
     remoteCommandCount: number
+    reattachRemoteCommandCount?: number
     executablePath: string
     nativePath?: string
   }
@@ -90,6 +89,7 @@ interface E2eReport {
     kernelPidA?: number
     kernelPidB?: number
     longChildPid?: number
+    reconnectedKernelPid?: number
     approvalCount: number
     approvalObservedBeforeWrite: boolean
     bearerToken: 'random-test-only-not-recorded'
@@ -123,248 +123,14 @@ interface TargetFiles {
   cleanup(): Promise<void>
 }
 
-const PROVIDER_ID = 'phi-kernel-e2e'
-const MODEL_ID = 'scripted-g1'
 const packageVersion = (
   JSON.parse(readFileSync(resolve('package.json'), 'utf8')) as {
     version: string
   }
 ).version
 
-function usage(): string {
-  return [
-    'Usage: bun scripts/kernel-e2e.ts --target local|ssh --runtime-root <absolute-path>',
-    '       [--host <ssh-alias>] [--build-dir <target-build-directory>] [--out <report.json>]',
-    '',
-    'SSH mode requires --host. The provider bearer token is random and valid only for this run.'
-  ].join('\n')
-}
-
-function parseArgs(argv: string[]): CliOptions {
-  if (argv.includes('--help') || argv.includes('-h')) {
-    process.stdout.write(`${usage()}\n`)
-    process.exit(0)
-  }
-  const values = new Map<string, string>()
-  for (let index = 0; index < argv.length; index++) {
-    const key = argv[index]
-    if (!['--target', '--host', '--runtime-root', '--build-dir', '--out'].includes(key)) {
-      throw new Error(`Unknown argument: ${key}\n${usage()}`)
-    }
-    const value = argv[++index]
-    if (!value || value.startsWith('--')) throw new Error(`Missing value for ${key}\n${usage()}`)
-    values.set(key, value)
-  }
-  const target = values.get('--target')
-  if (target !== 'local' && target !== 'ssh') throw new Error(`--target is required\n${usage()}`)
-  const runtimeRoot = values.get('--runtime-root')
-  if (!runtimeRoot || !isAbsolute(runtimeRoot) || /[\0\r\n]/.test(runtimeRoot)) {
-    throw new Error('--runtime-root must be an absolute path without control characters')
-  }
-  const host = values.get('--host')
-  if (target === 'ssh' && !host) throw new Error(`SSH mode requires --host\n${usage()}`)
-  const defaultTarget = target === 'ssh' ? 'linux-x64' : 'darwin-arm64'
-  return {
-    target,
-    runtimeRoot: target === 'ssh' ? posix.normalize(runtimeRoot) : resolve(runtimeRoot),
-    ...(host ? { host } : {}),
-    buildDirectory: resolve(
-      values.get('--build-dir') ?? join('.phi-build', 'kernel', packageVersion, defaultTarget)
-    ),
-    ...(values.has('--out') ? { output: resolve(values.get('--out')!) } : {})
-  }
-}
-
-function record(value: JsonValue | unknown): Record<string, unknown> {
-  assert.ok(value && typeof value === 'object' && !Array.isArray(value))
-  return value as Record<string, unknown>
-}
-
-function contentText(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (Array.isArray(value)) return value.map(contentText).join('')
-  if (!value || typeof value !== 'object') return ''
-  const item = value as Record<string, unknown>
-  return typeof item.text === 'string' ? item.text : contentText(item.content)
-}
-
 function elapsedMs(start: bigint): number {
   return Number(process.hrtime.bigint() - start) / 1_000_000
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function bounded<T>(operation: Promise<T>, label: string, timeoutMs = 60_000): Promise<T> {
-  return new Promise<T>((resolveOperation, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error(`Timed out waiting for ${label} after ${timeoutMs} ms.`)),
-      timeoutMs
-    )
-    operation.then(
-      (value) => {
-        clearTimeout(timeout)
-        resolveOperation(value)
-      },
-      (error: unknown) => {
-        clearTimeout(timeout)
-        reject(error)
-      }
-    )
-  })
-}
-
-async function eventually(check: () => boolean | Promise<boolean>, label: string): Promise<void> {
-  const deadline = Date.now() + 10_000
-  while (!(await check())) {
-    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${label}`)
-    await Bun.sleep(20)
-  }
-}
-
-function shellLiteral(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`
-}
-
-async function startLoopbackProvider(token: string): Promise<{
-  url: string
-  port: number
-  requests: ModelRequest[]
-  enqueue(...replies: ModelReply[]): void
-  close(): Promise<void>
-}> {
-  const requests: ModelRequest[] = []
-  const replies: ModelReply[] = []
-  const active = new Set<ServerResponse>()
-  const server = createServer(async (request, response) => {
-    try {
-      if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
-        response.writeHead(404).end('Unexpected test endpoint')
-        return
-      }
-      if (request.headers.authorization !== `Bearer ${token}`) {
-        response.writeHead(401).end('Invalid test bearer token')
-        return
-      }
-      let body = ''
-      for await (const chunk of request) body += chunk
-      const parsed = JSON.parse(body) as ModelRequest
-      requests.push(parsed)
-      const taskAssessment =
-        parsed.messages.length === 2 &&
-        parsed.messages.some(
-          (message) =>
-            (message.role === 'system' || message.role === 'developer') &&
-            typeof message.content === 'string' &&
-            message.content.includes('Is this specialist suitable for the exact delegated task')
-        ) &&
-        (!Array.isArray(parsed.tools) || parsed.tools.length === 0)
-      const reply = taskAssessment ? { text: 'suitable' } : replies.shift()
-      if (!reply) {
-        response.writeHead(500).end('No scripted reply remains')
-        return
-      }
-      active.add(response)
-      response.on('close', () => active.delete(response))
-      response.writeHead(200, { 'content-type': 'text/event-stream' })
-      const chunk = (delta: unknown, finishReason: string | null = null): void => {
-        response.write(
-          `data: ${JSON.stringify({
-            id: `g1-${requests.length}`,
-            object: 'chat.completion.chunk',
-            created: 0,
-            model: MODEL_ID,
-            choices: [{ index: 0, delta, finish_reason: finishReason }]
-          })}\n\n`
-        )
-      }
-      chunk({ role: 'assistant', content: '' })
-      if (reply.text) {
-        const split = Math.max(1, Math.floor(reply.text.length / 2))
-        chunk({ content: reply.text.slice(0, split) })
-        chunk({ content: reply.text.slice(split) })
-      }
-      if (reply.tool) {
-        chunk({
-          tool_calls: [
-            {
-              index: 0,
-              id: reply.tool.id,
-              type: 'function',
-              function: { name: reply.tool.name, arguments: '' }
-            }
-          ]
-        })
-        chunk({
-          tool_calls: [{ index: 0, function: { arguments: JSON.stringify(reply.tool.args) } }]
-        })
-      }
-      chunk({}, reply.tool ? 'tool_calls' : 'stop')
-      response.write('data: [DONE]\n\n')
-      response.end()
-    } catch (error) {
-      if (!response.headersSent) response.writeHead(500)
-      response.end(errorMessage(error))
-    }
-  })
-  await new Promise<void>((complete, reject) => {
-    const timeout = setTimeout(() => {
-      server.close()
-      reject(new Error('Timed out starting the loopback provider.'))
-    }, 5_000)
-    const finish = (action: () => void): void => {
-      clearTimeout(timeout)
-      server.off('error', onError)
-      action()
-    }
-    const onError = (error: Error): void => finish(() => reject(error))
-    server.once('error', onError)
-    server.listen(0, '127.0.0.1', () => finish(complete))
-  })
-  const port = (server.address() as AddressInfo).port
-  return {
-    url: `http://127.0.0.1:${port}/v1`,
-    port,
-    requests,
-    enqueue: (...items) => replies.push(...items),
-    async close() {
-      for (const response of active) response.destroy()
-      server.closeAllConnections()
-      await new Promise<void>((complete) => server.close(() => complete()))
-    }
-  }
-}
-
-function agentConfig(baseUrl: string, token: string): { models: string; config: string } {
-  return {
-    models: JSON.stringify({
-      providers: {
-        [PROVIDER_ID]: {
-          baseUrl,
-          apiKey: token,
-          api: 'openai-completions',
-          models: [
-            {
-              id: MODEL_ID,
-              name: 'G1 scripted loopback',
-              reasoning: false,
-              input: ['text'],
-              contextWindow: 32768,
-              maxTokens: 256,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-            }
-          ]
-        }
-      }
-    }),
-    config: JSON.stringify({
-      compaction: { enabled: false, thresholdPercent: 80, thresholdTokens: -1 },
-      mcp: { enableProjectConfig: false },
-      defaultProvider: PROVIDER_ID,
-      defaultModel: MODEL_ID
-    })
-  }
 }
 
 function scenarioPaths(root: string, remote = false): ScenarioPaths {
@@ -481,133 +247,12 @@ function remoteFiles(session: RemoteSshSession, runtimeRoot: string): TargetFile
   }
 }
 
-class ScenarioClient {
-  private readonly completions = new Map<string, { status: string; detail?: string }>()
-  private readonly waiters = new Map<
-    string,
-    {
-      complete(completion: { status: string; detail?: string }): void
-      reject(error: Error): void
-      timeout: NodeJS.Timeout
-    }
-  >()
-  readonly events: KernelEventFrame[] = []
-  private readonly stopEvents: () => void
-
-  constructor(readonly client: KernelProtocolClient) {
-    this.stopEvents = client.onEvent((event) => {
-      this.events.push(event)
-      if (event.type !== 'run.completed') return
-      const payload = record(event.payload)
-      if (typeof payload.runId !== 'string' || typeof payload.status !== 'string') return
-      const completion = {
-        status: payload.status,
-        ...(typeof payload.detail === 'string' ? { detail: payload.detail } : {})
-      }
-      this.completions.set(payload.runId, completion)
-      const waiter = this.waiters.get(payload.runId)
-      if (waiter) {
-        clearTimeout(waiter.timeout)
-        waiter.complete(completion)
-      }
-      this.waiters.delete(payload.runId)
-    })
-  }
-
-  async create(cwd: string, approval: boolean): Promise<string> {
-    const result = record(
-      await bounded(
-        this.client.request('session.create', {
-          cwd,
-          model: { provider: PROVIDER_ID, id: MODEL_ID },
-          sessionManager: { kind: 'memory' },
-          enableToolApproval: approval,
-          autoCompaction: { enabled: false },
-          resourceOptions: {
-            noExtensions: true,
-            noSkills: true,
-            noContextFiles: true,
-            noPromptTemplates: true,
-            noThemes: true
-          }
-        }),
-        'session.create'
-      )
-    )
-    const sessionId = result.sessionId
-    if (typeof sessionId !== 'string') throw new TypeError('Kernel create result omitted sessionId')
-    return sessionId
-  }
-
-  async prompt(sessionId: string, text: string): Promise<{ runId: string; status: string }> {
-    const result = record(
-      await bounded(
-        this.client.request('session.prompt', { text }, { sessionId }),
-        'session.prompt acceptance'
-      )
-    )
-    const runId = result.runId
-    if (typeof runId !== 'string') throw new TypeError('Kernel prompt result omitted runId')
-    const completion = await this.waitForRun(runId)
-    return { runId, status: completion.status }
-  }
-
-  async snapshot(sessionId: string): Promise<Record<string, unknown>> {
-    return record(
-      await bounded(this.client.request('session.snapshot', {}, { sessionId }), 'session.snapshot')
-    )
-  }
-
-  waitForRun(runId: string): Promise<{ status: string; detail?: string }> {
-    const completion = this.completions.get(runId)
-    if (completion) return Promise.resolve(completion)
-    return new Promise((complete, reject) => {
-      const timeout = setTimeout(() => {
-        this.waiters.delete(runId)
-        reject(new Error(`Timed out waiting for kernel run ${runId}.`))
-      }, 60_000)
-      this.waiters.set(runId, { complete, reject, timeout })
-    })
-  }
-
-  close(): void {
-    this.stopEvents()
-    for (const [runId, waiter] of this.waiters) {
-      clearTimeout(waiter.timeout)
-      waiter.reject(new Error(`Kernel scenario closed while waiting for run ${runId}.`))
-    }
-    this.waiters.clear()
-  }
-}
-
-function toolEvidence(snapshot: Record<string, unknown>, toolName: string): string {
-  const messages = Array.isArray(snapshot.messages) ? snapshot.messages : []
-  return messages
-    .filter((message): message is Record<string, unknown> =>
-      Boolean(
-        message &&
-        typeof message === 'object' &&
-        !Array.isArray(message) &&
-        (message as Record<string, unknown>).role === 'toolResult' &&
-        (message as Record<string, unknown>).toolName === toolName
-      )
-    )
-    .map((message) => contentText(message.content))
-    .join('\n')
-}
-
-function extractKernelPid(text: string): number {
-  const match = text.match(/KERNEL_PID=(\d+)/)
-  const pid = Number(match?.[1])
-  assert.ok(Number.isSafeInteger(pid) && pid > 0, `Missing kernel PID evidence: ${text}`)
-  return pid
-}
-
-async function runScenario(options: CliOptions): Promise<E2eReport> {
+async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
   const report: E2eReport = {
     schemaVersion: 1,
     ok: false,
     target: options.target,
+    scenario: options.scenario,
     ...(options.host ? { host: options.host } : {}),
     hostProfile: { os: process.platform, arch: process.arch },
     versions: { phi: packageVersion, kernel: 'unknown', omp: 'unknown' },
@@ -651,6 +296,7 @@ async function runScenario(options: CliOptions): Promise<E2eReport> {
   let localLaunch: LocalKernelLauncher | undefined
   let remoteLaunch: LaunchedRemoteKernel | undefined
   let scenario: ScenarioClient | undefined
+  let remoteProfile: Awaited<ReturnType<typeof probeRemoteKernelHostProfile>> | undefined
 
   try {
     provider = await step('loopback provider started with a random test-only bearer token', () =>
@@ -659,6 +305,19 @@ async function runScenario(options: CliOptions): Promise<E2eReport> {
     if (options.target === 'ssh') {
       ssh = await step('SSH master connected', () =>
         connectRemoteSshSession({ host: options.host!, userInitiated: true })
+      )
+      remoteProfile = await step('remote host profile probed', () =>
+        probeRemoteKernelHostProfile(ssh!, AbortSignal.timeout(30_000))
+      )
+      await step('marker-backed remote helper prepared', () =>
+        prepareKernelE2eRemoteHelper({
+          session: ssh!,
+          profile: remoteProfile!,
+          hostAlias: options.host!,
+          runtimeRoot: options.runtimeRoot,
+          helperPath: options.helperPath,
+          signal: AbortSignal.timeout(180_000)
+        })
       )
       tunnel = await step('reverse tunnel allocated on remote loopback', () =>
         ssh!.openReverseTunnel!({ localPort: provider!.port })
@@ -677,8 +336,11 @@ async function runScenario(options: CliOptions): Promise<E2eReport> {
           session: ssh!,
           runtimeRoot: options.runtimeRoot,
           buildDirectory: options.buildDirectory,
+          profile: remoteProfile,
           agentDir: files!.paths.agentDir,
           home: files!.paths.home,
+          ...(options.scenario === 'grace-expiry' ? { graceMs: 500 } : {}),
+          hello: { hostCapabilities: [...KERNEL_E2E_HOST_CAPABILITIES] },
           signal: AbortSignal.timeout(300_000),
           onDiagnostic: (text) => process.stderr.write(`[remote-kernel] ${text}`)
         })
@@ -734,6 +396,30 @@ async function runScenario(options: CliOptions): Promise<E2eReport> {
     await bounded(launch.client.subscribe(0), 'event subscription')
     launch.client.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
     launch.client.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
+
+    if (options.scenario !== 'baseline') {
+      const lifecycle = await runSshLifecycleScenario({
+        scenario: options.scenario,
+        session: ssh!,
+        launch: remoteLaunch!,
+        client: scenario,
+        createClient(client) {
+          const created = new ScenarioClient(client)
+          client.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
+          client.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
+          return created
+        },
+        provider,
+        files,
+        report,
+        step,
+        onDiagnostic: (text) => process.stderr.write(`[remote-kernel] ${text}`)
+      })
+      remoteLaunch = lifecycle.remoteLaunch
+      scenario = lifecycle.scenario
+      report.ok = report.steps.every((item) => item.passed)
+      return report
+    }
 
     let approvalFailure: Error | undefined
     const stopApprovals = launch.client.onEvent((event) => {
@@ -951,9 +637,9 @@ async function runScenario(options: CliOptions): Promise<E2eReport> {
 }
 
 async function main(): Promise<void> {
-  let options: CliOptions
+  let options: KernelE2eCliOptions
   try {
-    options = parseArgs(Bun.argv.slice(2))
+    options = parseKernelE2eArgs(Bun.argv.slice(2), packageVersion)
   } catch (error) {
     process.stderr.write(`${errorMessage(error)}\n`)
     process.exit(2)

@@ -3,9 +3,26 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
+
+func TestAttachFailuresUseDistinctProcessExitCodes(t *testing.T) {
+	for _, test := range []struct {
+		err  error
+		code int
+	}{
+		{newAttachError(exitKernelStartFailure, "start", nil), 70},
+		{newAttachError(exitUnsafeKernelPath, "unsafe", nil), 71},
+		{newAttachError(exitTokenMismatch, "token", nil), 72},
+		{errors.New("ordinary failure"), 1},
+	} {
+		if got := cliExitCode(test.err); got != test.code {
+			t.Fatalf("cliExitCode(%v) = %d, want %d", test.err, got, test.code)
+		}
+	}
+}
 
 func TestVersionComesFromEmbeddedVersionFile(t *testing.T) {
 	var output bytes.Buffer

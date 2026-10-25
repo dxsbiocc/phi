@@ -23,6 +23,11 @@ export const HELPER_TARGETS = Object.freeze([
   Object.freeze({ id: 'linux-arm64', goos: 'linux', goarch: 'arm64' })
 ])
 
+export const DEV_HELPER_TARGETS = Object.freeze([
+  Object.freeze({ id: 'darwin-amd64', goos: 'darwin', goarch: 'amd64' }),
+  Object.freeze({ id: 'darwin-arm64', goos: 'darwin', goarch: 'arm64' })
+])
+
 export { verifyFileSha256 }
 
 const BUILD_FLAGS = Object.freeze(['build', '-trimpath', '-ldflags', '-s -w'])
@@ -144,13 +149,25 @@ function selectTargets(targetId) {
   return [target]
 }
 
+function selectDevelopmentTarget(targetId) {
+  const target = DEV_HELPER_TARGETS.find(({ id }) => id === targetId)
+  if (!target) throw new Error(`build-helper: unsupported development target ${String(targetId)}`)
+  return target
+}
+
 export function parseHelperBuildArgs(args) {
   if (args.length === 0) return {}
-  if (args.length !== 2 || args[0] !== '--target') {
-    throw new Error('build-helper: expected --target linux-amd64 or --target linux-arm64')
+  if (args.length === 2 && args[0] === '--target') {
+    selectTargets(args[1])
+    return { target: args[1] }
   }
-  selectTargets(args[1])
-  return { target: args[1] }
+  if (args.length === 2 && args[0] === '--dev-target') {
+    selectDevelopmentTarget(args[1])
+    return { devTarget: args[1] }
+  }
+  throw new Error(
+    'build-helper: expected --target linux-amd64|linux-arm64 or --dev-target darwin-amd64|darwin-arm64'
+  )
 }
 
 function buildTarget(version, target, fingerprint, root, goRunner) {
@@ -240,10 +257,38 @@ export function buildHelper({
   return manifest
 }
 
+export function buildDevelopmentHelper({
+  root = repoRoot,
+  goRunner = runGo,
+  target: targetId
+} = {}) {
+  const target = selectDevelopmentTarget(targetId)
+  const version = readHelperVersion(root)
+  const directory = path.join(root, '.phi-build', 'helper', version, target.id)
+  const output = path.join(directory, 'phi-helper')
+  const partial = `${output}.${process.pid}.partial`
+  mkdirSync(directory, { recursive: true })
+  rmSync(partial, { force: true })
+  try {
+    goRunner([...BUILD_FLAGS, '-o', partial, '.'], {
+      cwd: path.join(root, 'helper'),
+      env: helperTargetEnvironment(target)
+    })
+    chmodSync(partial, 0o755)
+    renameSync(partial, output)
+  } finally {
+    rmSync(partial, { force: true })
+  }
+  console.log(`build-helper: built development ${target.id} (phi-helper ${version}) at ${output}`)
+  return output
+}
+
 const entry = process.argv[1]
 if (entry && path.resolve(entry) === fileURLToPath(import.meta.url)) {
   try {
-    buildHelper(parseHelperBuildArgs(process.argv.slice(2)))
+    const options = parseHelperBuildArgs(process.argv.slice(2))
+    if (options.devTarget) buildDevelopmentHelper({ target: options.devTarget })
+    else buildHelper(options)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.error(message)

@@ -1,0 +1,17 @@
+[
+  {
+    "runtimeRoot": "/opt/phi/runtime",
+    "kernelVersion": "kernel-0.1.0",
+    "stem": "17e0bc04250ece77"
+  },
+  {
+    "runtimeRoot": "/Users/example/Library/Application Support/Phi/runtime",
+    "kernelVersion": "2026.10.25+abc",
+    "stem": "caee5552aac44c2e"
+  },
+  {
+    "runtimeRoot": "/tmp/含空格/runtime",
+    "kernelVersion": "v2",
+    "stem": "da336c5c95ed96c6"
+  }
+]

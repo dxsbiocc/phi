@@ -4,6 +4,7 @@ import { posix } from 'node:path'
 import type { RemoteSshSession } from '../../../wrappers/remote-ssh-session'
 import { shellQuote } from '../../../wrappers/remote-ssh-session'
 import type { HostCapabilityProfile } from '../../../workspace-host/types'
+import type { ProbedHostCapabilityProfile } from '../../../workspace-host/probe-parse'
 import {
   HOST_CAPABILITY_FAST_PROBE_SCRIPT,
   parseHostCapabilityProbe
@@ -122,6 +123,7 @@ function deploymentResult(
   return {
     phiVersion: build.manifest.phiVersion,
     kernelSha256: build.kernel.sha256,
+    runtimeRoot: paths.root,
     executablePath: paths.executable,
     nativePath: paths.nativeByVariant[profile.variant],
     homePath: paths.home,
@@ -303,7 +305,7 @@ export function remoteKernelHostFromSshSession(
 export async function probeRemoteKernelHostProfile(
   session: Pick<RemoteSshSession, 'exec' | 'execWithInput'>,
   signal?: AbortSignal
-): Promise<HostCapabilityProfile> {
+): Promise<ProbedHostCapabilityProfile> {
   signal?.throwIfAborted()
   const result = session.execWithInput
     ? await session.execWithInput('sh -s', HOST_CAPABILITY_FAST_PROBE_SCRIPT, {

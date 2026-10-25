@@ -1,4 +1,5 @@
 import type { RemoteUploadFileOptions } from '../../../transfer/remote-upload-types'
+import type { RemoteHelperInstallation } from '../../../remote-helper-marker'
 import type {
   CommandResult,
   HostCapabilityProfile,
@@ -29,6 +30,13 @@ export interface RemoteKernelDeploymentHost {
     ): Promise<void>
   }
   capabilities(): HostCapabilityProfile
+  /** Existing marker-backed helper installation, if one is already known. */
+  managedRemoteHelper?(): RemoteHelperInstallation | undefined
+  /** Reuse the WorkspaceHost helper installer; never create a second deployment path here. */
+  ensureManagedRemoteHelper?(options?: {
+    force?: boolean
+  }): Promise<RemoteHelperInstallation | undefined>
+  managedRemoteHelperFailure?(): string | undefined
 }
 
 export type RemoteKernelErrorCode =
@@ -40,6 +48,7 @@ export type RemoteKernelErrorCode =
   | 'INSUFFICIENT_SPACE'
   | 'REMOTE_COMMAND_FAILED'
   | 'STDIO_UNAVAILABLE'
+  | 'HELPER_UNAVAILABLE'
   | 'LAUNCH_FAILED'
 
 export class RemoteKernelError extends Error {
@@ -91,6 +100,7 @@ export interface RemoteKernelDeploymentOptions {
 export interface RemoteKernelDeployment {
   readonly phiVersion: string
   readonly kernelSha256: string
+  readonly runtimeRoot: string
   readonly executablePath: string
   readonly nativePath: string
   readonly homePath: string

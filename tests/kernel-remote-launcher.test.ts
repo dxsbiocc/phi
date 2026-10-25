@@ -14,6 +14,7 @@ import {
   buildRemoteKernelLaunchCommand,
   ensureRemoteKernelDeployment,
   launchRemoteKernel,
+  reattachRemoteKernel,
   remoteKernelHostFromSshSession,
   type KernelBuildManifest,
   type LaunchRemoteKernelOptions,
@@ -22,6 +23,10 @@ import {
 } from '../src/main/agent/engine/kernel-client/remote'
 import { GLIBC_MINIMUM_CHECK } from '../src/main/agent/engine/kernel-client/remote/commands'
 import { shellQuote, type RemoteStdioProcess } from '../src/main/agent/wrappers/remote-ssh-session'
+import {
+  remoteHelperReadyMarkerSha256,
+  type RemoteHelperInstallation
+} from '../src/main/agent/remote-helper-marker'
 import type { CommandResult, HostCapabilityProfile } from '../src/main/agent/workspace-host/types'
 import {
   FAST_PROBE_END_SENTINEL,
@@ -29,6 +34,22 @@ import {
 } from '../src/main/agent/workspace-host/probe-script'
 
 const sha256 = (content: string): string => createHash('sha256').update(content).digest('hex')
+
+const helperMarker = {
+  schema: 1,
+  kind: 'remote-helper',
+  version: '0.4.0',
+  sha256: 'b'.repeat(64)
+} as const
+
+const helperInstallation: RemoteHelperInstallation = {
+  managedRoot: '/srv/phi-helper',
+  remotePath: '/srv/phi-helper/0.4.0/phi-helper',
+  remoteDirectory: '/srv/phi-helper/0.4.0',
+  readyMarkerPath: '/srv/phi-helper/0.4.0/.phi-ready.json',
+  markerIdentity: helperMarker,
+  readyMarkerSha256: remoteHelperReadyMarkerSha256(helperMarker)
+}
 
 async function createBuildFixture(): Promise<{
   directory: string
@@ -119,6 +140,9 @@ class FakeDeploymentHost implements RemoteKernelDeploymentHost {
   remotePlatformFailure?: string
   activationHashMismatch = false
   uploadHashMismatch = false
+  helper: RemoteHelperInstallation | undefined = helperInstallation
+  repairedHelper: RemoteHelperInstallation | undefined = helperInstallation
+  readonly helperEnsureCalls: Array<{ force?: boolean } | undefined> = []
 
   readonly exec = {
     run: async (command: readonly string[]): Promise<CommandResult> => {
@@ -182,6 +206,18 @@ class FakeDeploymentHost implements RemoteKernelDeploymentHost {
 
   capabilities(): HostCapabilityProfile {
     return this.capabilityProfile
+  }
+
+  managedRemoteHelper(): RemoteHelperInstallation | undefined {
+    return this.helper
+  }
+
+  async ensureManagedRemoteHelper(options?: {
+    force?: boolean
+  }): Promise<RemoteHelperInstallation | undefined> {
+    this.helperEnsureCalls.push(options)
+    if (options?.force) this.helper = this.repairedHelper
+    return this.helper
   }
 }
 
@@ -363,7 +399,13 @@ class LoopbackKernelProcess implements RemoteStdioProcess {
   private finish!: () => void
   private done = false
 
-  constructor() {
+  constructor(
+    core = new KernelProtocolCore({
+      kernelVersion: 'test-kernel',
+      ompVersion: '18.10.3',
+      kernelInstanceId: 'remote-test-kernel'
+    })
+  ) {
     this.closed = new Promise((resolve) => {
       this.finish = () => resolve({ code: 0, signal: null })
     })
@@ -382,11 +424,7 @@ class LoopbackKernelProcess implements RemoteStdioProcess {
       for (const listener of closeListeners) listener()
       this.complete()
     })
-    new KernelProtocolCore({
-      kernelVersion: 'test-kernel',
-      ompVersion: '18.10.3',
-      kernelInstanceId: 'remote-test-kernel'
-    }).attachTransport(transport, { trusted: true })
+    core.attachTransport(transport, { trusted: true })
   }
 
   async close(): Promise<void> {
@@ -415,6 +453,7 @@ test('remote launcher negotiates over SSH stdio with explicit isolated env and c
   const commands: string[] = []
   let process: LoopbackKernelProcess | undefined
   const session: LaunchRemoteKernelOptions['session'] = {
+    remoteHelper: helperInstallation,
     async exec() {
       return { stdout: '', stderr: '', code: 0, signal: null }
     },
@@ -424,7 +463,11 @@ test('remote launcher negotiates over SSH stdio with explicit isolated env and c
     async openStdio(command) {
       commands.push(command)
       process = new LoopbackKernelProcess()
-      queueMicrotask(() => process?.writeDiagnostic('kernel diagnostic\n'))
+      queueMicrotask(() =>
+        process?.writeDiagnostic(
+          'PHI_HELPER_ATTACH_STATUS={"state":"spawned","pid":123}\nkernel diagnostic\n'
+        )
+      )
       return process
     }
   }
@@ -441,15 +484,18 @@ test('remote launcher negotiates over SSH stdio with explicit isolated env and c
   })
 
   assert.equal(launched.client.controllerGeneration, 1)
+  assert.deepEqual(launched.attach, { state: 'spawned', pid: 123 })
   assert.equal(launched.deployment.reused, true)
   assert.equal(launched.remoteCommandCount, 2)
   assert.equal(launched.homePath, '/srv/phi test/home')
   assert.equal(launched.agentDir, '/srv/phi test/agent')
   assert.equal(commands.length, 1)
   assert.match(commands[0], /^umask 077 && cd -- '\/srv\/phi test\/home' && exec env -i /)
-  assert.ok(commands[0].includes("HOME='/srv/phi test/home'"))
-  assert.ok(commands[0].includes("PI_CODING_AGENT_DIR='/srv/phi test/agent'"))
-  assert.ok(commands[0].includes("NO_PROXY='127.0.0.1,localhost'"))
+  assert.ok(commands[0].includes("'/srv/phi-helper/0.4.0/phi-helper' attach"))
+  assert.ok(commands[0].includes("--kernel-version '0.1.0'"))
+  assert.ok(commands[0].includes("--env 'HOME=/srv/phi test/home'"))
+  assert.ok(commands[0].includes("--env 'PI_CODING_AGENT_DIR=/srv/phi test/agent'"))
+  assert.ok(commands[0].includes("--env 'NO_PROXY=127.0.0.1,localhost'"))
   assert.equal(commands[0].includes('PI_NATIVES_DIR'), false)
   await new Promise<void>((resolve) => setImmediate(resolve))
   assert.deepEqual(diagnostics, ['kernel diagnostic\n'])
@@ -459,12 +505,84 @@ test('remote launcher negotiates over SSH stdio with explicit isolated env and c
   await process.closed
 })
 
+test('remote launcher repairs a stale marker-backed helper through the existing installer surface', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  host.markerVariant = 'modern'
+  host.helper = {
+    ...helperInstallation,
+    remotePath: '/srv/phi-helper/0.3.0/phi-helper',
+    remoteDirectory: '/srv/phi-helper/0.3.0',
+    readyMarkerPath: '/srv/phi-helper/0.3.0/.phi-ready.json',
+    markerIdentity: { ...helperInstallation.markerIdentity, version: '0.3.0' }
+  }
+  let process: LoopbackKernelProcess | undefined
+  const launched = await launchRemoteKernel({
+    session: {
+      async exec() {
+        return { stdout: '', stderr: '', code: 0, signal: null }
+      },
+      async uploadFile() {
+        return undefined
+      },
+      async openStdio() {
+        process = new LoopbackKernelProcess()
+        queueMicrotask(() =>
+          process?.writeDiagnostic('PHI_HELPER_ATTACH_STATUS={"state":"spawned","pid":987}\n')
+        )
+        return process
+      }
+    },
+    runtimeHost: host,
+    runtimeRoot: '/srv/phi-runtime',
+    buildDirectory: fixture.directory
+  })
+
+  assert.deepEqual(host.helperEnsureCalls, [undefined, { force: true }])
+  assert.equal(launched.helper.markerIdentity.version, '0.4.0')
+  await launched.close()
+})
+
+test('remote launcher never falls back to executing the kernel without a helper marker', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  host.markerVariant = 'modern'
+  host.helper = undefined
+  host.repairedHelper = undefined
+  let opens = 0
+
+  await assert.rejects(
+    launchRemoteKernel({
+      session: {
+        async exec() {
+          return { stdout: '', stderr: '', code: 0, signal: null }
+        },
+        async uploadFile() {
+          return undefined
+        },
+        async openStdio() {
+          opens++
+          return new LoopbackKernelProcess()
+        }
+      },
+      runtimeHost: host,
+      runtimeRoot: '/srv/phi-runtime',
+      buildDirectory: fixture.directory
+    }),
+    { name: 'RemoteKernelError', code: 'HELPER_UNAVAILABLE' }
+  )
+  assert.equal(opens, 0)
+})
+
 test('session-only prepared launch probes capabilities and stays at three remote commands', async (t) => {
   const fixture = await createBuildFixture()
   t.after(fixture.cleanup)
   let controlCommands = 0
   let process: LoopbackKernelProcess | undefined
   const session: LaunchRemoteKernelOptions['session'] = {
+    remoteHelper: helperInstallation,
     async exec() {
       throw new Error('bounded/input transports should be used')
     },
@@ -497,6 +615,9 @@ test('session-only prepared launch probes capabilities and stays at three remote
     async openStdio() {
       controlCommands++
       process = new LoopbackKernelProcess()
+      queueMicrotask(() =>
+        process?.writeDiagnostic('PHI_HELPER_ATTACH_STATUS={"state":"attached"}\n')
+      )
       return process
     }
   }
@@ -511,6 +632,106 @@ test('session-only prepared launch probes capabilities and stays at three remote
   assert.equal(controlCommands, 3)
   await launched.close()
   assert.ok(process)
+})
+
+test('reattach takes over, replays available events, and reports replay gaps', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  host.markerVariant = 'modern'
+  const core = new KernelProtocolCore({
+    kernelVersion: 'test-kernel',
+    ompVersion: '18.10.3',
+    kernelInstanceId: 'stable-remote-kernel',
+    replayCapacity: 1,
+    handlers: {
+      'events.subscribe': () => ({ subscribed: true, lastSeq: 0 })
+    }
+  })
+  let opens = 0
+  const session = (): LaunchRemoteKernelOptions['session'] => ({
+    remoteHelper: helperInstallation,
+    async exec() {
+      return { stdout: '', stderr: '', code: 0, signal: null }
+    },
+    async uploadFile() {
+      return undefined
+    },
+    async openStdio() {
+      opens++
+      const process = new LoopbackKernelProcess(core)
+      queueMicrotask(() =>
+        process.writeDiagnostic(
+          `PHI_HELPER_ATTACH_STATUS={"state":"${opens === 1 ? 'spawned' : 'attached'}"${
+            opens === 1 ? ',"pid":321' : ''
+          }}\n`
+        )
+      )
+      return process
+    }
+  })
+
+  const launched = await launchRemoteKernel({
+    session: session(),
+    runtimeHost: host,
+    runtimeRoot: '/srv/phi-runtime',
+    buildDirectory: fixture.directory
+  })
+  core.emitEvent('test.event', { index: 1 })
+  core.emitEvent('test.event', { index: 2 })
+
+  const reattached = await reattachRemoteKernel({
+    session: session(),
+    previous: launched,
+    lastSeen: 0
+  })
+
+  assert.equal(reattached.greeting.kernelInstanceId, launched.greeting.kernelInstanceId)
+  assert.equal(reattached.client.controllerGeneration, 2)
+  assert.deepEqual(reattached.attach, { state: 'attached' })
+  assert.equal(reattached.snapshotRequired, true)
+  assert.equal(reattached.remoteCommandCount, 1)
+  assert.equal(opens, 2)
+  core.emitEvent('test.event', { index: 3 })
+  const replayed: number[] = []
+  const replayAttach = await reattachRemoteKernel({
+    session: session(),
+    previous: reattached,
+    lastSeen: 2,
+    onEvent: (event) => replayed.push(event.seq)
+  })
+  assert.equal(replayAttach.snapshotRequired, false)
+  assert.deepEqual(replayed, [3])
+  assert.equal(replayAttach.remoteCommandCount, 1)
+  assert.equal(opens, 3)
+  const replacementCore = new KernelProtocolCore({
+    kernelVersion: 'test-kernel',
+    ompVersion: '18.10.3',
+    kernelInstanceId: 'replacement-remote-kernel',
+    handlers: {
+      'events.subscribe': () => ({ subscribed: true, lastSeq: 0 })
+    }
+  })
+  const replacement = await reattachRemoteKernel({
+    session: {
+      async openStdio() {
+        const process = new LoopbackKernelProcess(replacementCore)
+        queueMicrotask(() =>
+          process.writeDiagnostic('PHI_HELPER_ATTACH_STATUS={"state":"spawned","pid":654}\n')
+        )
+        return process
+      }
+    },
+    previous: replayAttach,
+    lastSeen: 3
+  })
+  assert.equal(replacement.greeting.kernelInstanceId, 'replacement-remote-kernel')
+  assert.deepEqual(replacement.attach, { state: 'spawned', pid: 654 })
+  assert.equal(replacement.snapshotRequired, true)
+  await replacement.close()
+  await replayAttach.close()
+  await reattached.close()
+  await launched.close()
 })
 
 test('SSH-session host adapter preserves cwd quoting and bounded command results', async () => {
@@ -569,6 +790,7 @@ test('launch command rejects PI_NATIVES_DIR injection', async () => {
   const deployment = {
     phiVersion: '0.1.0',
     kernelSha256: 'a'.repeat(64),
+    runtimeRoot: '/srv/runtime',
     executablePath: '/srv/runtime/kernel/phi-kernel',
     nativePath: '/srv/runtime/kernel/native.node',
     homePath: '/srv/runtime/kernel-home',
@@ -584,7 +806,10 @@ test('launch command rejects PI_NATIVES_DIR injection', async () => {
     remoteCommandCount: 1
   }
   assert.throws(
-    () => buildRemoteKernelLaunchCommand(deployment, { PI_NATIVES_DIR: '/tmp/untrusted' }),
+    () =>
+      buildRemoteKernelLaunchCommand(deployment, helperInstallation, {
+        PI_NATIVES_DIR: '/tmp/untrusted'
+      }),
     { name: 'RemoteKernelError', code: 'INVALID_ARGUMENT' }
   )
 })
