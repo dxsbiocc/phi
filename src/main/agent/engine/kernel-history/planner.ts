@@ -136,7 +136,9 @@ function matchesRemoteSourceProof(
     probe.sourceSize >= 0 &&
     /^[a-f0-9]{64}$/u.test(probe.sourceSha256) &&
     probe.sourceOmpSessionId === ref.ompSessionId &&
-    probe.sourceCwd === manifest.cwd
+    // An RPC journal records the server project root; manifest.cwd is the desktop's
+    // local anchor for that remote project and never appears on the server.
+    probe.sourceCwd === ref.projectRoot
   )
 }
 
@@ -168,7 +170,7 @@ function planRemoteHistory(
     source: {
       kind: 'omp-journal',
       path: input.remoteProbe.sourcePath,
-      cwd: manifest.cwd,
+      cwd: ref.projectRoot,
       origin: 'rpc-remote',
       phiSessionId: manifest.sessionId,
       expected: {
