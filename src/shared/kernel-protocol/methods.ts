@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { MAX_CLIENT_RUN_KEY_LENGTH, type KernelV1Method } from './constants'
+import { sessionAdoptParamsSchema, sessionAdoptResultSchema } from './history'
 import { jsonValueSchema } from './json'
 
 export const protocolVersionSchema = z
@@ -229,6 +230,7 @@ export const kernelMethodParamsSchemas = {
   'kernel.hello': kernelHelloParamsSchema,
   'session.create': sessionCreateParamsSchema,
   'session.open': sessionOpenParamsSchema,
+  'session.adopt': sessionAdoptParamsSchema,
   'sessions.list': sessionsListParamsSchema,
   'session.prompt': sessionPromptParamsSchema,
   'session.abort': sessionAbortParamsSchema,
@@ -242,6 +244,7 @@ export const kernelMethodResultSchemas = {
   'kernel.hello': kernelHelloResultSchema,
   'session.create': sessionCreateResultSchema,
   'session.open': sessionOpenResultSchema,
+  'session.adopt': sessionAdoptResultSchema,
   'sessions.list': sessionsListResultSchema,
   'session.prompt': sessionPromptResultSchema,
   'session.abort': sessionAbortResultSchema,

@@ -8,6 +8,7 @@ export const KERNEL_V1_METHODS = [
   'kernel.hello',
   'session.create',
   'session.open',
+  'session.adopt',
   'sessions.list',
   'session.prompt',
   'session.abort',
