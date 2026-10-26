@@ -18,6 +18,7 @@ import {
   type KernelMethodHandlers,
   type RunCompletionStatus
 } from '../src/kernel/protocol'
+import { normalizeHandlerError } from '../src/kernel/protocol/errors'
 
 class MemoryTransport implements FrameTransport {
   readonly sent: string[] = []
@@ -45,6 +46,39 @@ class MemoryTransport implements FrameTransport {
     for (const listener of this.closeListeners) listener()
   }
 }
+
+test('protocol normalization only exposes the allowlisted broker disconnect reason', () => {
+  assert.deepEqual(
+    normalizeHandlerError({
+      code: 'MODEL_UNAUTHENTICATED',
+      message: 'internal message',
+      detail: { reason: 'desktop_credential_broker_not_connected' }
+    }),
+    {
+      code: 'MODEL_UNAUTHENTICATED',
+      message: 'The desktop credential broker is not connected.',
+      detail: { reason: 'desktop_credential_broker_not_connected' }
+    }
+  )
+  assert.deepEqual(
+    normalizeHandlerError({
+      code: 'MODEL_UNAUTHENTICATED',
+      message: 'internal message',
+      detail: {
+        reason: 'desktop_credential_broker_not_connected',
+        unexpected: true
+      }
+    }),
+    {
+      code: 'MODEL_UNAUTHENTICATED',
+      message: 'The requested model provider is not authenticated.',
+      detail: {
+        reason: 'desktop_credential_broker_not_connected',
+        unexpected: true
+      }
+    }
+  )
+})
 
 function makeCore(
   handlers: KernelMethodHandlers = {},

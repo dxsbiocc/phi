@@ -52,7 +52,8 @@ export async function requireAvailableModel(
     .catalog()
     .some((model) => model.provider === requested.provider && model.id === requested.id)
   if (!present) throw makeProtocolError('MODEL_UNAVAILABLE', 'The requested model is unavailable.')
-  const status = modelAccess.status().find((entry) => entry.provider === requested.provider)?.status
+  const providerStatus = modelAccess.status().find((entry) => entry.provider === requested.provider)
+  const status = providerStatus?.status
   if (status === 'available') return
   const code =
     status === 'unreachable'
@@ -60,7 +61,13 @@ export async function requireAvailableModel(
       : status === 'unauthenticated'
         ? 'MODEL_UNAUTHENTICATED'
         : 'MODEL_UNAVAILABLE'
-  throw makeProtocolError(code, 'The requested model is unavailable.')
+  throw makeProtocolError(
+    code,
+    providerStatus?.reason === 'desktop_credential_broker_not_connected'
+      ? 'The desktop credential broker is not connected.'
+      : 'The requested model is unavailable.',
+    providerStatus?.reason ? { reason: providerStatus.reason } : undefined
+  )
 }
 
 export function createModelAccessWorkerHandlers(options: {

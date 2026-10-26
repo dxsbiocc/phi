@@ -11,6 +11,7 @@ export type ModelAccessConfigureParams = ProtocolModelAccessConfigureParams
 export type ModelAccessProviderStatus = Readonly<{
   provider: string
   status: ModelAccessStatus
+  reason?: 'desktop_credential_broker_not_connected'
 }>
 
 export type ModelAccessChangeListener = () => void

@@ -12,9 +12,27 @@ import type { MemoryAuthCredentialStore } from './memory-credential-store'
 type ReadOnlyAuthOptions = {
   sourceLabel: string
   reloadBeforeCredentialRead?: (provider?: string) => Promise<void>
+  brokerBackedProviders?: ReadonlySet<string>
 }
 
 type StoredRow = ReturnType<AuthStorage['credentials']['list']>[number]
+type ConcreteStoredAuthSource =
+  | { kind: 'oauth'; concrete: true }
+  | {
+      kind: 'api_key'
+      concrete: true
+    }
+type StoredAuthSource = ConcreteStoredAuthSource | undefined
+
+function brokerCredentialSource(storage: AuthStorage, provider: string): StoredAuthSource {
+  const rows = storage.credentials.list(provider)
+  if (rows.some((row) => row.credential.type === 'oauth')) {
+    return { kind: 'oauth', concrete: true }
+  }
+  return rows.some((row) => row.credential.type === 'api_key')
+    ? { kind: 'api_key', concrete: true }
+    : undefined
+}
 
 function apiKeyResolution(rows: StoredRow[]): ResolvedApiKey | undefined {
   const row =
@@ -81,6 +99,13 @@ function storedKeyOverrides(
   storage: AuthStorage,
   options: ReadOnlyAuthOptions
 ): Readonly<Record<PropertyKey, unknown>> {
+  const brokerBacked = (provider: string): boolean =>
+    options.brokerBackedProviders?.has(provider) === true
+  const configuredSource = (provider: string): boolean => {
+    if (brokerBacked(provider)) return false
+    const kind = storage.keys.source(provider, { env: 'none' })?.kind
+    return kind === 'config' || kind === 'runtime'
+  }
   const refresh = async (provider: string): Promise<void> => {
     await options.reloadBeforeCredentialRead?.(provider)
   }
@@ -89,6 +114,9 @@ function storedKeyOverrides(
     sessionId?: string,
     keyOptions?: AuthApiKeyOptions
   ): Promise<ResolvedApiKey | undefined> => {
+    if (configuredSource(provider)) {
+      return storage.keys.getWithCredential(provider, sessionId, keyOptions)
+    }
     await refresh(provider)
     const rows = storage.credentials.list(provider)
     return rows.some((row) => row.credential.type === 'oauth')
@@ -97,6 +125,7 @@ function storedKeyOverrides(
       : apiKeyResolution(rows)
   }
   const peek = async (provider: string): Promise<string | undefined> => {
+    if (configuredSource(provider)) return storage.keys.peek(provider)
     await refresh(provider)
     const rows = storage.credentials.list(provider)
     const oauth = rows.find(
@@ -113,17 +142,16 @@ function storedKeyOverrides(
       (await resolve(provider, sessionId, keyOptions))?.apiKey,
     getWithCredential: resolve,
     peek,
-    source: (provider: string) => {
-      const rows = storage.credentials.list(provider)
-      if (rows.some((row) => row.credential.type === 'oauth')) {
-        return { kind: 'oauth' as const, concrete: true }
-      }
-      return rows.some((row) => row.credential.type === 'api_key')
-        ? { kind: 'api_key' as const, concrete: true }
-        : undefined
-    },
+    source: (provider: string) =>
+      brokerBacked(provider)
+        ? brokerCredentialSource(storage, provider)
+        : storage.keys.source(provider, { env: 'none' }),
     describe: (provider: string) =>
-      storage.credentials.has(provider) ? options.sourceLabel : undefined,
+      configuredSource(provider)
+        ? storage.keys.describe(provider)
+        : brokerCredentialSource(storage, provider)
+          ? options.sourceLabel
+          : undefined,
     resolver:
       (
         provider: string,

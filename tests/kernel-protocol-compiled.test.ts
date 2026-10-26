@@ -254,22 +254,6 @@ function launchCompiled(layout: RuntimeLayout): CompiledKernel {
   const client = new KernelProtocolClient(transport)
   client.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
   client.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
-  client.registerHostCapability('modelAccess.credentials', ({ provider }) => ({
-    credentials:
-      provider === undefined || provider === 'phi-contract'
-        ? [
-            {
-              id: 1,
-              provider: 'phi-contract',
-              credential: { type: 'api_key', key: 'fake-compiled-kernel-key' },
-              identityKey: null
-            }
-          ]
-        : []
-  }))
-  client.registerHostCapability('modelAccess.refresh', async () => {
-    throw new Error('The compiled fixture does not use OAuth refresh.')
-  })
   return {
     client,
     process: child,
@@ -378,12 +362,7 @@ export default function legacyRootProbe() {}
     try {
       const greeting = await withTimeout(
         kernel.client.hello({
-          hostCapabilities: [
-            'settings.nextActionSuggestionsEnabled',
-            'skills.scriptTools',
-            'modelAccess.credentials',
-            'modelAccess.refresh'
-          ]
+          hostCapabilities: ['settings.nextActionSuggestionsEnabled', 'skills.scriptTools']
         }),
         'compiled hello timed out'
       )
@@ -449,12 +428,7 @@ test(
     try {
       await withTimeout(
         kernel.client.hello({
-          hostCapabilities: [
-            'settings.nextActionSuggestionsEnabled',
-            'skills.scriptTools',
-            'modelAccess.credentials',
-            'modelAccess.refresh'
-          ]
+          hostCapabilities: ['settings.nextActionSuggestionsEnabled', 'skills.scriptTools']
         }),
         'compiled hello timed out'
       )

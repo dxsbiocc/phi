@@ -7,6 +7,10 @@ import test from 'node:test'
 import type { JsonValue, KernelRequestFrame } from '../src/shared/kernel-protocol'
 import type { KernelCallContext, KernelMethodHandler } from '../src/kernel/protocol'
 import { createWorkerKernelAdapter } from '../src/kernel/worker'
+import {
+  readModelAccessCatalog,
+  requireAvailableModel
+} from '../src/kernel/worker/model-access-handlers'
 import type { KernelModelAccess } from '../src/kernel/model-access'
 import { requestHost, sendEvent, setWorkerOutbound } from '../src/main/agent/engine/in-process/ipc'
 import { pendingAuthPrompts, pendingToolApprovals } from '../src/main/agent/engine/in-process/state'
@@ -253,6 +257,43 @@ test('worker adapter owns model, thinking, context and compaction controls durin
     releasePrompt()
     rmSync(cwd, { recursive: true, force: true })
   }
+})
+
+test('model access keeps broker disconnect reason internal except on auth errors', async () => {
+  const models = [
+    {
+      provider: 'fixture',
+      id: 'model-a',
+      name: 'Model A',
+      reasoning: true,
+      input: ['text'] as Array<'text' | 'image'>,
+      contextWindow: 32_000,
+      maxTokens: 4_000
+    }
+  ]
+  const modelAccess = {
+    authStorage: { credentials: { revalidate: async () => undefined } },
+    modelRegistry: {},
+    catalog: () => models,
+    status: () => [
+      {
+        provider: 'fixture',
+        status: 'unauthenticated' as const,
+        reason: 'desktop_credential_broker_not_connected' as const
+      }
+    ],
+    onChange: () => () => undefined,
+    close: () => undefined
+  } as unknown as KernelModelAccess
+
+  assert.deepEqual(readModelAccessCatalog(modelAccess).providers, [
+    { provider: 'fixture', status: 'unauthenticated' }
+  ])
+  await assert.rejects(requireAvailableModel(modelAccess, { provider: 'fixture', id: 'model-a' }), {
+    code: 'MODEL_UNAUTHENTICATED',
+    message: 'The desktop credential broker is not connected.',
+    detail: { reason: 'desktop_credential_broker_not_connected' }
+  })
 })
 
 test('worker adapter returns prompt acceptance immediately and maps abort to cancelled', async () => {

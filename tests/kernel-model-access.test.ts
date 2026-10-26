@@ -1,19 +1,51 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import test from 'node:test'
+import { join, resolve } from 'node:path'
+import test, { type TestContext } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
-import {
+import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
+import type { DesktopBrokerCredentialEntry } from '../src/kernel/model-access'
+import type { ModelAccessConfigureParams } from '../src/shared/kernel-protocol'
+
+const BUN_CHILD_TEST_ENV = 'PHI_KERNEL_MODEL_ACCESS_BUN_TEST'
+const bunRuntime = 'Bun' in globalThis
+const selectedBunTest = bunRuntime ? process.env[BUN_CHILD_TEST_ENV] : undefined
+
+function it(name: string, body: (context: TestContext) => void | Promise<void>): void {
+  if (bunRuntime) {
+    if (!selectedBunTest || selectedBunTest === name) test(name, body)
+    return
+  }
+  test(name, () => {
+    execFileSync(
+      resolveBunExecutable(),
+      ['test', fileURLToPath(import.meta.url), '--test-name-pattern', name],
+      {
+        cwd: resolve('.'),
+        env: { ...process.env, [BUN_CHILD_TEST_ENV]: name },
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
+  })
+}
+
+const modelAccessModule = bunRuntime ? await import('../src/kernel/model-access') : undefined
+const fallbackModule = bunRuntime
+  ? await import('../src/main/agent/session/automatic-model-fallback')
+  : undefined
+const {
   createClientProxyModelAccess,
   createDesktopBrokerModelAccess,
+  DesktopCredentialBrokerDisconnectedError,
   ModelAccessReadOnlyError,
   ModelAccessWaitCancelledError,
-  ModelConnectionLostError,
-  type DesktopBrokerCredentialEntry
-} from '../src/kernel/model-access'
-import { promptWithAutomaticModelFallback } from '../src/main/agent/session/automatic-model-fallback'
-import type { ModelAccessConfigureParams } from '../src/shared/kernel-protocol'
+  ModelConnectionLostError
+} = modelAccessModule ?? ({} as typeof import('../src/kernel/model-access'))
+const { promptWithAutomaticModelFallback } =
+  fallbackModule ?? ({} as typeof import('../src/main/agent/session/automatic-model-fallback'))
 
 const provider = 'phi-kernel-model-access-fixture'
 const desktopProvider = 'anthropic'
@@ -37,7 +69,7 @@ function configuration(port: number, bearerToken: string): ModelAccessConfigureP
   }
 }
 
-test('desktop broker is memory-only, read-only, observes logout and single-flights refresh', async (t) => {
+it('desktop broker is memory-only, read-only, observes logout and single-flights refresh', async (t) => {
   let rows: DesktopBrokerCredentialEntry[] = [
     {
       id: 41,
@@ -114,7 +146,7 @@ test('desktop broker is memory-only, read-only, observes logout and single-fligh
   )
 })
 
-test('desktop broker never falls back to ambient provider credentials', async (t) => {
+it('desktop broker never falls back to ambient provider credentials', async (t) => {
   const agentDir = await mkdtemp(join(tmpdir(), 'phi-kernel-model-access-agent-'))
   process.env.ANTHROPIC_API_KEY = 'fake-ambient-key-that-must-not-be-used'
   process.env.PI_CODING_AGENT_DIR = agentDir
@@ -139,7 +171,126 @@ test('desktop broker never falls back to ambient provider credentials', async (t
   assert.deepEqual(await readdir(agentDir), [])
 })
 
-test('client proxy reconfigures stable session models and bearer credentials in place', async (t) => {
+it('desktop broker keeps inline and no-auth providers available without host capabilities', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'phi-kernel-model-access-config-'))
+  const modelsPath = join(root, 'models.yml')
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const model = {
+    id: 'fixture-model',
+    name: 'Fixture Model',
+    reasoning: false,
+    input: ['text'],
+    contextWindow: 32_000,
+    maxTokens: 4_096,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  }
+  await writeFile(
+    modelsPath,
+    JSON.stringify({
+      providers: {
+        'inline-fixture': {
+          baseUrl: 'http://127.0.0.1:1/v1',
+          api: 'openai-completions',
+          apiKey: 'fake-inline-key',
+          models: [model]
+        },
+        'no-auth-fixture': {
+          baseUrl: 'http://127.0.0.1:1/v1',
+          api: 'openai-completions',
+          auth: 'none',
+          models: [model]
+        }
+      }
+    }),
+    { mode: 0o600 }
+  )
+  let credentialRequests = 0
+  const access = await createDesktopBrokerModelAccess({
+    hydrate: false,
+    modelsPath,
+    cacheDbPath: ':memory:',
+    requestCredentials: async () => {
+      credentialRequests += 1
+      throw { code: 'CAPABILITY_UNAVAILABLE', message: 'Capability is not registered.' }
+    },
+    requestRefresh: async () => {
+      throw new Error('refresh is not expected')
+    }
+  })
+  t.after(() => access.close())
+
+  const inline = access.modelRegistry.find('inline-fixture', model.id)
+  const noAuth = access.modelRegistry.find('no-auth-fixture', model.id)
+  assert.ok(inline)
+  assert.ok(noAuth)
+  assert.equal(await access.modelRegistry.getApiKey(inline), 'fake-inline-key')
+  assert.notEqual(await access.modelRegistry.getApiKey(noAuth), undefined)
+  assert.equal(credentialRequests, 0)
+  assert.deepEqual(
+    access.status().filter(({ provider }) => provider.endsWith('-fixture')),
+    [
+      { provider: 'inline-fixture', status: 'available' },
+      { provider: 'no-auth-fixture', status: 'available' }
+    ]
+  )
+
+  await assert.rejects(
+    access.authStorage.credentials.revalidate(),
+    DesktopCredentialBrokerDisconnectedError
+  )
+  assert.equal(await access.modelRegistry.getApiKey(inline), 'fake-inline-key')
+  assert.notEqual(await access.modelRegistry.getApiKey(noAuth), undefined)
+  assert.equal(credentialRequests, 1)
+  assert.deepEqual(
+    access.status().filter(({ provider }) => provider.endsWith('-fixture')),
+    [
+      { provider: 'inline-fixture', status: 'available' },
+      { provider: 'no-auth-fixture', status: 'available' }
+    ]
+  )
+})
+
+it('desktop broker classifies a missing host broker as unauthenticated', async (t) => {
+  let brokerConnected = false
+  const access = await createDesktopBrokerModelAccess({
+    hydrate: false,
+    requestCredentials: async () => {
+      if (brokerConnected) return { credentials: [] }
+      throw { code: 'CAPABILITY_UNAVAILABLE', message: 'Capability is not registered.' }
+    },
+    requestRefresh: async () => {
+      throw new Error('refresh is not expected')
+    }
+  })
+  t.after(() => access.close())
+
+  await assert.rejects(access.authStorage.keys.get(desktopProvider), (error) => {
+    assert.ok(error instanceof DesktopCredentialBrokerDisconnectedError)
+    assert.equal(error.message, 'The desktop credential broker is not connected.')
+    return true
+  })
+  assert.deepEqual(
+    access.status().find(({ provider }) => provider === desktopProvider),
+    {
+      provider: desktopProvider,
+      status: 'unauthenticated',
+      reason: 'desktop_credential_broker_not_connected'
+    }
+  )
+  assert.equal(
+    access.status().some(({ status }) => status === 'unreachable'),
+    false
+  )
+
+  brokerConnected = true
+  await access.authStorage.credentials.revalidate()
+  assert.deepEqual(
+    access.status().find(({ provider }) => provider === desktopProvider),
+    { provider: desktopProvider, status: 'unauthenticated' }
+  )
+})
+
+it('client proxy reconfigures stable session models and bearer credentials in place', async (t) => {
   const firstBearer = 'a'.repeat(43)
   const secondBearer = 'b'.repeat(43)
   const access = createClientProxyModelAccess()
@@ -176,7 +327,7 @@ test('client proxy reconfigures stable session models and bearer credentials in 
   )
 })
 
-test('client proxy retries one pre-byte refused request after attach and fresh configure', async (t) => {
+it('client proxy retries one pre-byte refused request after attach and fresh configure', async (t) => {
   const calls: Array<{ url: string; authorization: string | null }> = []
   const access = createClientProxyModelAccess({
     fetch: async (input, init) => {
@@ -220,7 +371,7 @@ test('client proxy retries one pre-byte refused request after attach and fresh c
   ])
 })
 
-test('client proxy surfaces post-byte loss and cancellation while waiting', async (t) => {
+it('client proxy surfaces post-byte loss and cancellation while waiting', async (t) => {
   let pulls = 0
   const access = createClientProxyModelAccess({
     fetch: async () =>
@@ -261,7 +412,7 @@ test('client proxy surfaces post-byte loss and cancellation while waiting', asyn
   )
 })
 
-test('client proxy automatic fallback keeps one history and never saves a manual preference', async (t) => {
+it('client proxy automatic fallback keeps one history and never saves a manual preference', async (t) => {
   const attempts: string[] = []
   const access = createClientProxyModelAccess({
     fetch: async (_input, init) => {

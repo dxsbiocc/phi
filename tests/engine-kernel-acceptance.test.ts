@@ -26,10 +26,10 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
 }
 
 test(
-  'A01 kernel stdio reads a project file and emits ordered deltas and one completion',
+  'A01 kernel stdio uses a desktop-stored credential and emits one ordered completion',
   { timeout: 30_000 },
   async (t) => {
-    const f = await createKernelFixture()
+    const f = await createKernelFixture({ modelAccess: 'desktop-stored' })
     t.after(() => f.close())
     writeFileSync(join(f.cwd, 'notes.txt'), 'kernel A01 evidence')
     const frames: KernelEventFrame[] = []

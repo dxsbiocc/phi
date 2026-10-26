@@ -6,6 +6,8 @@ import {
 } from '../../shared/kernel-protocol'
 
 const protocolErrorCodeSet = new Set<string>(protocolErrorCodes)
+const DESKTOP_CREDENTIAL_BROKER_REASON = 'desktop_credential_broker_not_connected'
+const DESKTOP_CREDENTIAL_BROKER_MESSAGE = 'The desktop credential broker is not connected.'
 
 const safeHandlerErrorMessages: Record<ProtocolErrorCode, string> = {
   VERSION_UNSUPPORTED: 'The requested protocol version is unsupported.',
@@ -49,5 +51,18 @@ export function normalizeHandlerError(value: unknown): ProtocolError | undefined
     return undefined
   }
   const error = candidate as ProtocolError
-  return { ...error, message: safeHandlerErrorMessages[error.code] }
+  const detail = error.detail
+  const brokerDisconnected =
+    error.code === 'MODEL_UNAUTHENTICATED' &&
+    detail !== null &&
+    typeof detail === 'object' &&
+    !Array.isArray(detail) &&
+    Object.keys(detail).length === 1 &&
+    detail.reason === DESKTOP_CREDENTIAL_BROKER_REASON
+  return {
+    ...error,
+    message: brokerDisconnected
+      ? DESKTOP_CREDENTIAL_BROKER_MESSAGE
+      : safeHandlerErrorMessages[error.code]
+  }
 }

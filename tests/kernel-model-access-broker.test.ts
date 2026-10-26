@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import test, { type TestContext } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
+import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 import {
   createModelAccessBroker,
   ModelAccessBrokerError,
@@ -14,9 +17,30 @@ import {
 
 const PI_AI_PACKAGE = ['@oh-my-pi', 'pi-ai'].join('/')
 const REMOTE_REFRESH_SENTINEL = '__remote__' as const
-const bunAuthStorage = {
-  skip: !('Bun' in globalThis) ? 'requires Bun-backed AuthStorage' : false
-} as const
+const BUN_CHILD_TEST_ENV = 'PHI_KERNEL_MODEL_ACCESS_BROKER_BUN_TEST'
+const bunRuntime = 'Bun' in globalThis
+const selectedBunTest = bunRuntime ? process.env[BUN_CHILD_TEST_ENV] : undefined
+
+function testWithBunAuthStorage(
+  name: string,
+  body: (context: TestContext) => void | Promise<void>
+): void {
+  if (bunRuntime) {
+    if (!selectedBunTest || selectedBunTest === name) test(name, body)
+    return
+  }
+  test(name, () => {
+    execFileSync(
+      resolveBunExecutable(),
+      ['test', fileURLToPath(import.meta.url), '--test-name-pattern', name],
+      {
+        cwd: resolve('.'),
+        env: { ...process.env, [BUN_CHILD_TEST_ENV]: name },
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
+  })
+}
 
 type SnapshotEntry = Awaited<ReturnType<ModelAccessBroker['refresh']>>
 type SnapshotCredential = SnapshotEntry['credential']
@@ -67,9 +91,8 @@ async function createStorage(
   return storage
 }
 
-test(
+testWithBunAuthStorage(
   'modelAccess.credentials returns only the requested provider with OAuth refresh tokens redacted',
-  bunAuthStorage,
   async (t) => {
     const storage = await createStorage(t)
     await storage.credentials.set('provider-a', [
@@ -104,9 +127,8 @@ test(
   }
 )
 
-test(
+testWithBunAuthStorage(
   'modelAccess.credentials observes desktop logout on the next read',
-  bunAuthStorage,
   async (t) => {
     const storage = await createStorage(t)
     await storage.credentials.set('provider-a', { type: 'api_key', key: 'fake-key-a' })
@@ -156,9 +178,8 @@ test('modelAccess.refresh collapses concurrent refreshes of one credential into 
   assert.equal(refreshCalls, 1)
 })
 
-test(
+testWithBunAuthStorage(
   'modelAccess.refresh uses AuthStorage as the writer and returns a redacted persisted row',
-  bunAuthStorage,
   async (t) => {
     let observedReason: string | undefined
     const storage = await createStorage(t, {

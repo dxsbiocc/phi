@@ -27,6 +27,15 @@ export class ModelAccessWaitCancelledError extends Error {
   }
 }
 
+export class DesktopCredentialBrokerDisconnectedError extends Error {
+  readonly code = 'DESKTOP_CREDENTIAL_BROKER_DISCONNECTED'
+
+  constructor() {
+    super('The desktop credential broker is not connected.')
+    this.name = 'DesktopCredentialBrokerDisconnectedError'
+  }
+}
+
 export class ModelConnectionLostError extends Error {
   readonly code = 'MODEL_CONNECTION_LOST'
 

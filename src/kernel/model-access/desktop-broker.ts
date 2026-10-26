@@ -10,6 +10,11 @@ import {
 } from '../omp/model-access'
 
 import { createReadOnlyAuthStorage } from './auth-storage'
+import {
+  projectDesktopBrokerModelsConfig,
+  type DesktopBrokerModelsConfigProjection
+} from './desktop-model-config'
+import { DesktopCredentialBrokerDisconnectedError } from './errors'
 import { MemoryAuthCredentialStore } from './memory-credential-store'
 import type {
   KernelModelAccess,
@@ -37,16 +42,110 @@ export interface DesktopBrokerModelAccessOptions {
   hydrate?: boolean
 }
 
+function isCapabilityUnavailable(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    error.code === 'CAPABILITY_UNAVAILABLE'
+  )
+}
+
+function desktopBrokerError(error: unknown): unknown {
+  return isCapabilityUnavailable(error) ? new DesktopCredentialBrokerDisconnectedError() : error
+}
+
+function createBrokerAwareModelRegistry(
+  registry: ModelRegistry,
+  authStorage: AuthStorage,
+  credentialProviders: ReadonlySet<string>,
+  authHeaderProviders: ReadonlySet<string>,
+  syncConfig: () => void
+): ModelRegistry {
+  if (credentialProviders.size === 0) return registry
+  const decorated = new WeakSet<Model<Api>>()
+  const decorate = (model: Model<Api>): Model<Api> => {
+    if (!authHeaderProviders.has(model.provider) || decorated.has(model)) return model
+    decorated.add(model)
+    const configuredHeaders = model.resolveHeaders
+    model.resolveHeaders = async (signal) => {
+      const [headers, apiKey] = await Promise.all([
+        configuredHeaders?.(signal),
+        authStorage.keys.get(model.provider, undefined, {
+          baseUrl: model.baseUrl,
+          modelId: model.id,
+          signal
+        })
+      ])
+      return headers || apiKey
+        ? { ...(headers ?? {}), ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) }
+        : undefined
+    }
+    return model
+  }
+  const decorateResult = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map((model) => decorate(model as Model<Api>))
+      : value && typeof value === 'object' && 'provider' in value
+        ? decorate(value as Model<Api>)
+        : value
+  const reloadMethods = new Set([
+    'refresh',
+    'refreshProvider',
+    'reapplyModelPolicies',
+    'refreshInBackground',
+    'clearSourceRegistrations',
+    'unregisterProvider'
+  ])
+  const methods = new Map<PropertyKey, unknown>()
+  return new Proxy(registry, {
+    get(target, property) {
+      if (methods.has(property)) return methods.get(property)
+      let method: unknown
+      if (property === 'hasConfiguredAuth') {
+        method = (model: Model<Api>) =>
+          credentialProviders.has(model.provider)
+            ? authStorage.keys.source(model.provider, { env: 'none' }) !== undefined ||
+              authStorage.keys.keyless(model.provider)
+            : target.hasConfiguredAuth(model)
+      } else if (property === 'hasConcreteAuth') {
+        method = (provider: string) =>
+          credentialProviders.has(provider)
+            ? authStorage.keys.source(provider, { env: 'none' })?.concrete === true ||
+              authStorage.keys.keyless(provider)
+            : target.hasConcreteAuth(provider)
+      } else {
+        const value = Reflect.get(target, property, target)
+        if (typeof value !== 'function') return value
+        method = (...args: unknown[]) => {
+          if (reloadMethods.has(String(property))) syncConfig()
+          const result = Reflect.apply(value, target, args)
+          return result instanceof Promise
+            ? result.then((resolved) => decorateResult(resolved))
+            : decorateResult(result)
+        }
+      }
+      methods.set(property, method)
+      return method
+    }
+  })
+}
+
 class DesktopBrokerModelAccess implements KernelModelAccess {
   readonly authStorage: AuthStorage
   readonly modelRegistry: ModelRegistry
   private readonly storage: AuthStorage
   private readonly store: MemoryAuthCredentialStore
+  private readonly configProjection: DesktopBrokerModelsConfigProjection | undefined
   private readonly listeners = new Set<ModelAccessChangeListener>()
-  private reachable = true
+  private brokerDisconnected = false
   private closed = false
 
   private constructor(private readonly options: DesktopBrokerModelAccessOptions) {
+    const config = options.createModelRegistry
+      ? undefined
+      : projectDesktopBrokerModelsConfig(options.modelsPath)
+    this.configProjection = config
     this.store = new MemoryAuthCredentialStore({
       refreshSnapshot: () => this.loadCredentials(),
       refreshCredential: (
@@ -60,6 +159,7 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
     })
     const auth = createReadOnlyAuthStorage(this.store, {
       sourceLabel: 'desktop model-access broker',
+      brokerBackedProviders: config?.credentialProviders,
       reloadBeforeCredentialRead: async (provider) => {
         const entries = await this.loadCredentials(provider)
         if (provider) this.store.replaceProviderSnapshot(provider, entries)
@@ -69,12 +169,24 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
     })
     this.authStorage = auth.authStorage
     this.storage = auth.storage
-    this.modelRegistry =
-      options.createModelRegistry?.(this.authStorage) ??
-      new ModelRegistry(this.authStorage, options.modelsPath, {
-        ignoreLocalModelConfig: options.modelsPath === undefined,
-        cacheDbPath: options.cacheDbPath
-      })
+    try {
+      const registry =
+        options.createModelRegistry?.(this.authStorage) ??
+        new ModelRegistry(this.authStorage, config?.modelsPath ?? options.modelsPath, {
+          ignoreLocalModelConfig: options.modelsPath === undefined,
+          cacheDbPath: options.cacheDbPath
+        })
+      this.modelRegistry = createBrokerAwareModelRegistry(
+        registry,
+        this.authStorage,
+        config?.credentialProviders ?? new Set(),
+        config?.authHeaderProviders ?? new Set(),
+        () => config?.sync()
+      )
+    } catch (error) {
+      config?.dispose()
+      throw error
+    }
   }
 
   static async create(options: DesktopBrokerModelAccessOptions): Promise<DesktopBrokerModelAccess> {
@@ -83,7 +195,7 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
     try {
       await access.storage.credentials.revalidate()
     } catch {
-      access.reachable = false
+      // Initial broker absence is reflected by `status()`; construction remains usable.
     }
     return access
   }
@@ -93,19 +205,26 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
   }
 
   status(): readonly ModelAccessProviderStatus[] {
-    const providers = new Set(this.catalog().map((model) => model.provider))
+    const modelsByProvider = new Map<string, Model<Api>[]>()
+    for (const model of this.catalog()) {
+      const models = modelsByProvider.get(model.provider) ?? []
+      models.push(model)
+      modelsByProvider.set(model.provider, models)
+    }
     return Object.freeze(
-      [...providers].sort().map((provider) =>
-        Object.freeze({
-          provider,
-          status: !this.reachable
-            ? ('unreachable' as const)
-            : this.authStorage.keys.source(provider) !== undefined ||
-                this.authStorage.keys.keyless(provider)
-              ? ('available' as const)
-              : ('unauthenticated' as const)
-        })
-      )
+      [...modelsByProvider]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([provider, models]) =>
+          models.some((model) => this.modelRegistry.hasConfiguredAuth(model))
+            ? Object.freeze({ provider, status: 'available' as const })
+            : Object.freeze({
+                provider,
+                status: 'unauthenticated' as const,
+                ...(this.brokerDisconnected
+                  ? { reason: 'desktop_credential_broker_not_connected' as const }
+                  : {})
+              })
+        )
     )
   }
 
@@ -122,7 +241,7 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
     try {
       await this.storage.credentials.revalidate()
     } catch {
-      // `loadCredentials` already changed provider status to unreachable.
+      // `loadCredentials` already removed credentials the desktop cannot currently serve.
     }
   }
 
@@ -131,6 +250,7 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
     this.closed = true
     this.listeners.clear()
     this.storage.close()
+    this.configProjection?.dispose()
   }
 
   private async loadCredentials(
@@ -138,15 +258,13 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
   ): Promise<readonly AuthCredentialSnapshotEntry[]> {
     try {
       const result = await this.options.requestCredentials(provider ? { provider } : {})
-      const changed = !this.reachable
-      this.reachable = true
-      if (changed) this.emitChange()
+      this.setBrokerDisconnected(false)
       return result.credentials
     } catch (error) {
-      const changed = this.reachable
-      this.reachable = false
-      if (changed) this.emitChange()
-      throw error
+      if (provider) this.store.replaceProviderSnapshot(provider, [])
+      else this.store.replaceSnapshot([])
+      if (isCapabilityUnavailable(error)) this.setBrokerDisconnected(true)
+      throw desktopBrokerError(error)
     }
   }
 
@@ -164,16 +282,19 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
       if (entry.provider !== provider) {
         throw new Error('Desktop credential refresh returned the wrong provider.')
       }
-      const changed = !this.reachable
-      this.reachable = true
-      if (changed) this.emitChange()
+      this.setBrokerDisconnected(false)
       return entry
     } catch (error) {
-      const changed = this.reachable
-      this.reachable = false
-      if (changed) this.emitChange()
-      throw error
+      this.store.replaceProviderSnapshot(provider, [])
+      if (isCapabilityUnavailable(error)) this.setBrokerDisconnected(true)
+      throw desktopBrokerError(error)
     }
+  }
+
+  private setBrokerDisconnected(disconnected: boolean): void {
+    if (this.brokerDisconnected === disconnected) return
+    this.brokerDisconnected = disconnected
+    this.emitChange()
   }
 
   private emitChange(): void {

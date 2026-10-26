@@ -17,6 +17,7 @@ export type EngineFixture = {
   model: RuntimeModel
   replacementModel: RuntimeModel
   provider: Awaited<ReturnType<typeof startLoopbackModel>>
+  createModelGatewayLease: OmpBridge['createModelGatewayLease']
   removeModel(): void
   seedOAuth(): Promise<void>
   close(): Promise<void>
@@ -169,6 +170,7 @@ export async function createInProcessFixture(
       provider,
       model,
       replacementModel,
+      createModelGatewayLease: (params, signal) => bridge.createModelGatewayLease(params, signal),
       removeModel: () =>
         writeFileSync(
           configPath,
