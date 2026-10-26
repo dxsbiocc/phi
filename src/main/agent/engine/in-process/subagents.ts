@@ -181,18 +181,17 @@ export async function createPhiAgentSession(
     ? selectDeclaredSpecialistSkills(loader.getSkills().skills, runtimeDefinition.skills)
     : undefined
 
-  const availableTools = phiToolFunctions(
-    sessionId,
-    agentDir,
-    sessionCwd,
-    runtimeDefinition.name,
-    deps.skillTools
-      ? buildSkillRunTool(requestHost, {
-          ...(typeof skillHost === 'string' ? { runtimeSessionId: skillHost } : skillHost),
-          allowedSkills: runtimeDefinition.skills
-        })
-      : undefined
-  )
+  const availableTools = phiToolFunctions(sessionId, agentDir, sessionCwd, runtimeDefinition.name, {
+    ...(deps.skillTools
+      ? {
+          skillRun: buildSkillRunTool(requestHost, {
+            ...(typeof skillHost === 'string' ? { runtimeSessionId: skillHost } : skillHost),
+            allowedSkills: runtimeDefinition.skills
+          })
+        }
+      : {}),
+    ...(deps.agentRunId ? { agentRunId: deps.agentRunId } : {})
+  })
   const attachedScriptTools = buildScriptTools(
     (deps.skillTools ?? []).filter(
       (tool) =>

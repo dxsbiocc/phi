@@ -34,6 +34,13 @@ export interface DesktopMcpHostTools {
   close(): Promise<void>
 }
 
+interface DesktopMcpHostToolOptions {
+  sessionId: string
+  cwd: string
+  bindingId: string
+  registeredToolNames: readonly string[]
+}
+
 function metadata(value: unknown): DesktopMcpMetadata[] {
   if (!Array.isArray(value)) throw new Error('Desktop MCP catalog omitted tools')
   return value.map((item) => {
@@ -62,12 +69,9 @@ function result(value: unknown): PhiToolResult {
   return value
 }
 
-export async function loadDesktopMcpHostTools(options: {
-  sessionId: string
-  cwd: string
-  bindingId: string
-  registeredToolNames: readonly string[]
-}): Promise<DesktopMcpHostTools> {
+export async function loadDesktopMcpHostTools(
+  options: DesktopMcpHostToolOptions
+): Promise<DesktopMcpHostTools> {
   const registeredToolNames = [...new Set([...BUILTIN_TOOL_NAMES, ...options.registeredToolNames])]
   const listed = await requestHost(
     'mcp.desktop.list',
@@ -83,7 +87,6 @@ export async function loadDesktopMcpHostTools(options: {
   const reserved = new Set(registeredToolNames)
   const conflict = catalog.find((tool) => reserved.has(tool.name))
   if (conflict) throw new Error(`Desktop MCP tool conflicts with ${conflict.name}`)
-
   const tools = catalog.map((source): PhiTool => ({
     name: source.name,
     label: source.label,
@@ -93,7 +96,7 @@ export async function loadDesktopMcpHostTools(options: {
     strict: false,
     loadMode: 'discoverable',
     approval: 'write',
-    async execute(toolCallId, input, onUpdate, _context, signal) {
+    async execute(toolCallId, input, onUpdate, context, signal) {
       const onAbort = (): void => {
         void requestHost(
           'mcp.desktop.cancel',
@@ -110,7 +113,8 @@ export async function loadDesktopMcpHostTools(options: {
             toolCallId,
             name: source.name,
             signature: source.signature,
-            input
+            input,
+            recentUserImages: context.recentUserImages().slice(0, 5)
           },
           { originSessionId: options.sessionId },
           (progress) => {

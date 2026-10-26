@@ -42,6 +42,13 @@ export type LibraryToolStoreFactory = (
   context: PhiToolContext,
   signal?: AbortSignal
 ) => LibraryToolStore
+export type LibraryToolExecutionResult = { summary: string; details: Record<string, unknown> }
+export type LibraryToolExecutor = (
+  action: LibraryToolAction,
+  params: Record<string, unknown>,
+  context: PhiToolContext,
+  signal?: AbortSignal
+) => Promise<LibraryToolExecutionResult>
 
 function recordValue(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {}
@@ -90,11 +97,11 @@ function toolResult(
   }
 }
 
-async function executeLibraryAction(
+export async function executeLibraryAction(
   action: LibraryToolAction,
   store: LibraryToolStore,
   params: Record<string, unknown>
-): Promise<{ summary: string; details: Record<string, unknown> }> {
+): Promise<LibraryToolExecutionResult> {
   switch (action) {
     case 'save': {
       const result = await store.save(params as SavePaperInput)
@@ -155,18 +162,14 @@ async function executeLibraryAction(
 function buildLibraryTool(
   action: LibraryToolAction,
   definition: Omit<PhiTool, 'execute' | 'site'>,
-  storeFactory: LibraryToolStoreFactory
+  executeAction: LibraryToolExecutor
 ): PhiTool {
   return {
     ...definition,
     site: 'host',
     async execute(_toolCallId, params, _onUpdate, ctx: PhiToolContext, signal) {
       try {
-        const result = await executeLibraryAction(
-          action,
-          storeFactory(ctx, signal),
-          recordValue(params)
-        )
+        const result = await executeAction(action, recordValue(params), ctx, signal)
         return toolResult(result.summary, result.details)
       } catch (error) {
         return toolResult(errorMessage(error), {}, true)
@@ -178,10 +181,36 @@ function buildLibraryTool(
 export function buildLibraryCustomTools(
   storeFactory: LibraryToolStoreFactory = localLibraryStore
 ): PhiTool[] {
+  return buildLibraryTools((action, params, context, signal) =>
+    executeLibraryAction(action, storeFactory(context, signal), params)
+  )
+}
+
+export function buildHostLibraryCustomTools(
+  runtimeSessionId: string,
+  request: (method: string, params: unknown) => Promise<unknown>
+): PhiTool[] {
+  return buildLibraryTools(async (action, params, context, signal) => {
+    signal?.throwIfAborted()
+    const result = await request('libraryTool.execute', {
+      runtimeSessionId,
+      cwd: context.cwd,
+      action,
+      params
+    })
+    signal?.throwIfAborted()
+    if (!isRecord(result) || typeof result.summary !== 'string' || !isRecord(result.details)) {
+      throw new Error('Library host returned an invalid result')
+    }
+    return { summary: result.summary, details: result.details }
+  })
+}
+
+function buildLibraryTools(executeAction: LibraryToolExecutor): PhiTool[] {
   const tool = (
     action: LibraryToolAction,
     definition: Omit<PhiTool, 'execute' | 'site'>
-  ): PhiTool => buildLibraryTool(action, definition, storeFactory)
+  ): PhiTool => buildLibraryTool(action, definition, executeAction)
   const paperProperties = {
     source: { type: 'string', description: 'Literature source, e.g. pubmed, europepmc, arxiv.' },
     sourceId: { type: 'string', description: 'Source-specific paper id.' },
@@ -303,7 +332,7 @@ function assertNever(value: never): never {
   throw new Error(`Unexpected library tool action: ${value}`)
 }
 
-function localLibraryStore(context: PhiToolContext): LibraryToolStore {
+export function localLibraryStore(context: Pick<PhiToolContext, 'cwd'>): LibraryToolStore {
   const cwd = context.cwd
   return {
     save: (input) => savePaper(cwd, input),

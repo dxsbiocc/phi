@@ -164,7 +164,8 @@ export class KernelHostRequestManager<Connection> {
     ) {
       return makeProtocolError(
         'CAPABILITY_UNAVAILABLE',
-        'The requested host capability is not registered.'
+        'The requested host capability is not registered.',
+        { reason: 'host_capability_not_declared', capability }
       )
     }
     if (controller && !this.options.isCurrent(controller.connection, controller.generation)) {

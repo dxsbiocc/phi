@@ -744,10 +744,19 @@ export class KernelProtocolCore {
       this.log.error?.('Ignored invalid session run completion.', { sessionId, runId })
       status = 'unknown'
     }
-    this.emitEvent('run.completed', status === 'unknown' ? { runId, status } : payload, {
-      sessionId,
-      runId
-    })
+    const emitted = this.emitEvent(
+      'run.completed',
+      status === 'unknown' ? { runId, status } : payload,
+      {
+        sessionId,
+        runId
+      }
+    )
+    if (emitted) {
+      void Promise.resolve(this.handlers.onRunCompleted?.(sessionId, runId, status)).catch(() => {
+        this.log.error?.('Run completion host side effect failed.', { sessionId, runId })
+      })
+    }
   }
 
   private completeRunAfterExpiry(
@@ -953,7 +962,8 @@ export class KernelProtocolCore {
     return {
       controllerGeneration: this.controllerGeneration,
       connectionId: state.id,
-      trusted: state.trusted
+      trusted: state.trusted,
+      hostCapabilities: state.hostCapabilities
     }
   }
 

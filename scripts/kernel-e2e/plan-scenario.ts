@@ -138,7 +138,7 @@ async function runPlanFlow(
   reviewCount: () => number
 ): Promise<void> {
   const sessionId = await options.step('plan scenario session created with bundled agents', () =>
-    options.client.create(options.projectRoot, true, 'auto')
+    options.client.create(options.projectRoot, true, { workMode: 'auto' })
   )
 
   options.provider.enqueue({ text: 'Host-started sub-task complete.' })

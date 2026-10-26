@@ -48,6 +48,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function hostRequestError(error: unknown): Error {
+  if (!isRecord(error) || typeof error.message !== 'string') {
+    return error instanceof Error ? error : new Error(String(error))
+  }
+  return Object.assign(new Error(error.message), {
+    ...(typeof error.code === 'string' ? { code: error.code } : {}),
+    ...(error.detail === undefined ? {} : { detail: error.detail })
+  })
+}
+
 function emitSessionState(
   options: BindWorkerOutboundOptions,
   sessionId: string | undefined,
@@ -146,16 +156,18 @@ export function bindWorkerOutbound(options: BindWorkerOutboundOptions): () => vo
               ? record.sessionId
               : undefined)
       const runId = sessionId ? options.activeRunId(sessionId) : undefined
-      return options.core.requestHost(
-        method,
-        params as JsonValue,
-        {
-          ...(sessionId ? { sessionId } : {}),
-          ...(runId ? { runId } : {}),
-          ...(context?.agentRunId ? { agentRunId: context.agentRunId } : {})
-        },
-        onProgress as ((progress: JsonValue) => void) | undefined
-      )
+      return options.core
+        .requestHost(
+          method,
+          params as JsonValue,
+          {
+            ...(sessionId ? { sessionId } : {}),
+            ...(runId ? { runId } : {}),
+            ...(context?.agentRunId ? { agentRunId: context.agentRunId } : {})
+          },
+          onProgress as ((progress: JsonValue) => void) | undefined
+        )
+        .catch((error: unknown) => Promise.reject(hostRequestError(error)))
     }
   }
   setWorkerOutbound(outbound)

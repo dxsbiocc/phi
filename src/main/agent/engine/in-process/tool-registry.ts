@@ -6,8 +6,10 @@ import { buildPresentFilesTool } from '../../deliverables/present-tool'
 import { buildRenderBlocksTool } from '../../deliverables/render-blocks-tool'
 import { normalizeProjectMemorySettings } from '../../../../shared/projectMemoryTypes'
 import type { PresentedFile } from '../../../../shared/presentedFileTypes'
-import { buildLibraryCustomTools } from '../../library/library-tools'
+import type { DecisionResult } from '../../../../shared/decisionTypes'
+import { buildHostLibraryCustomTools, buildLibraryCustomTools } from '../../library/library-tools'
 import { buildPaletteRecommendationTool } from '../../palettes/tools'
+import { buildProjectLearnTool } from '../../memory/learn-tool'
 import { buildSessionNotebookTools } from './session-notebook-tools'
 import { buildAskUserQuestionCustomTools } from '../../user-interaction-tools'
 import { buildBrowserTool } from '../../browser/browser-tool'
@@ -44,7 +46,11 @@ import { loadSkillScriptTools } from './tool-support'
 import { buildDecisionTool } from '../../decisions/tool'
 import { bindSessionDecisionEvaluator } from '../decision-evaluator'
 import { subscribeToAgentRunNotices } from './agent-run-notices'
-import { buildSessionAgentDelegationTools, supportsDelegationTool } from './session-agent-tools'
+import {
+  buildSessionAgentDelegationTools,
+  sessionAgentAssessment,
+  supportsDelegationTool
+} from './session-agent-tools'
 import type { PhiExtensionEnvironmentBinding } from '../phi-extension'
 import type { SessionResourceSnapshot } from './session-resource-input'
 
@@ -227,12 +233,34 @@ export async function createSessionToolRegistry(deps: {
     ? filterMainScriptTools(skillTools, liveSkills.allowedSkills)
     : undefined
   if (phiAgents.length > 0) pruneAgentUsageLogs(agentDir)
+  const desktopServices = record.desktopServices === true
   const decide = bindSessionDecisionEvaluator({
     agentDir,
     sessionId,
     currentModel: () => parentRef.current?.session.model,
-    evaluate: async (...args) =>
-      (await loadWorkerDecisionRuntime()).evaluateDecisionRequest(...args)
+    evaluate: desktopServices
+      ? async (params, signal) => {
+          signal?.throwIfAborted()
+          const result = await requestHost(
+            'decisions.evaluate',
+            {
+              runtimeSessionId: sessionId,
+              model: params.model,
+              request: params.request
+            },
+            { originSessionId: sessionId }
+          )
+          signal?.throwIfAborted()
+          return result as DecisionResult
+        }
+      : async (...args) => (await loadWorkerDecisionRuntime()).evaluateDecisionRequest(...args)
+  })
+  const assessTask = sessionAgentAssessment({
+    desktopServices,
+    hostCapabilities: Array.isArray(record.desktopHostCapabilities)
+      ? record.desktopHostCapabilities.filter((item): item is string => typeof item === 'string')
+      : [],
+    assessTask: decide
   })
   const agentRunners = new Map<string, AgentRunFn>()
   const inactiveAgents = new Set<string>()
@@ -273,7 +301,7 @@ export async function createSessionToolRegistry(deps: {
     definitions: phiAgents,
     runnerFor,
     registry: agentRuns,
-    toolOptions: { cwd, assessTask: decide }
+    toolOptions: { cwd, ...(assessTask ? { assessTask } : {}) }
   })
   // A background run outlives the tool call that started it, so its end is reported to the
   // main process, which owns the conversation: it notes it in the timeline and can wake the
@@ -285,7 +313,11 @@ export async function createSessionToolRegistry(deps: {
     requestHost
   })
   const notebookCustomTools = buildSessionNotebookTools(requestHost, sessionId)
-  const libraryCustomTools = buildLibraryCustomTools()
+  const libraryCustomTools = desktopServices
+    ? buildHostLibraryCustomTools(sessionId, (method, params) =>
+        requestHost(method, params, { originSessionId: sessionId })
+      )
+    : buildLibraryCustomTools()
   const userInteractionCustomTools = buildAskUserQuestionCustomTools(sessionId, async (request) =>
     requestHost('agentInteraction.request', request)
   )
@@ -298,14 +330,31 @@ export async function createSessionToolRegistry(deps: {
       allowTypeText: () => parentRef.current?.session.getPlanModeState()?.enabled !== true
     }
   )
-  const memoryTools =
-    memoryPolicy.learn && memoryTarget
+  const memoryTools = memoryPolicy.learn
+    ? desktopServices
       ? [
-          (await import('../../memory/project-memory-worker')).buildWorkerProjectLearnTool(
-            memoryTarget
-          )
+          buildProjectLearnTool(async (input, signal) => {
+            signal?.throwIfAborted()
+            const result = await requestHost(
+              'memory.learn',
+              { runtimeSessionId: sessionId, cwd, input },
+              { originSessionId: sessionId }
+            )
+            signal?.throwIfAborted()
+            if (!isRecord(result) || typeof result.stored !== 'number') {
+              throw new Error('Project memory host returned an invalid result')
+            }
+            return { stored: result.stored }
+          })
         ]
-      : []
+      : memoryTarget
+        ? [
+            (await import('../../memory/project-memory-worker')).buildWorkerProjectLearnTool(
+              memoryTarget
+            )
+          ]
+        : []
+    : []
   const customTools = [
     buildDecisionTool(decide),
     ...agentTools,
@@ -319,7 +368,17 @@ export async function createSessionToolRegistry(deps: {
     buildProjectDownloadTool(cwd, agentDir),
     ...notebookCustomTools,
     ...libraryCustomTools,
-    buildPaletteRecommendationTool(),
+    buildPaletteRecommendationTool(
+      undefined,
+      desktopServices
+        ? async (request) =>
+            (await requestHost(
+              'palette.suggest',
+              { runtimeSessionId: sessionId, ...request },
+              { originSessionId: sessionId }
+            )) as { palettes: import('../../palettes/tools').Palette[] }
+        : undefined
+    ),
     ...userInteractionCustomTools,
     buildEnvRequestTool(
       requestHost,
@@ -378,7 +437,7 @@ export async function createSessionToolRegistry(deps: {
                 definitions: discovered,
                 runnerFor,
                 registry: agentRuns,
-                toolOptions: { cwd, assessTask: decide },
+                toolOptions: { cwd, ...(assessTask ? { assessTask } : {}) },
                 includeRunTools: !hadDelegationTools
               })
               const tools = [
@@ -486,7 +545,7 @@ export async function createSessionToolRegistry(deps: {
       definitions: additions,
       runnerFor,
       registry: agentRuns,
-      toolOptions: { cwd, assessTask: decide },
+      toolOptions: { cwd, ...(assessTask ? { assessTask } : {}) },
       includeRunTools: !phiAgents.some(supportsDelegationTool)
     })
     const registered = new Set(await capabilityRegistrar.register(addedTools))

@@ -381,7 +381,10 @@ export class ScenarioClient {
   async create(
     cwd: string,
     approval: boolean,
-    workMode: 'direct' | 'plan' | 'plan_execute' | 'auto' = 'direct'
+    options: {
+      workMode?: 'direct' | 'plan' | 'plan_execute' | 'auto'
+      phiAgents?: JsonValue[]
+    } = {}
   ): Promise<string> {
     const result = record(
       await bounded(
@@ -390,7 +393,7 @@ export class ScenarioClient {
           model: { provider: PROVIDER_ID, id: MODEL_ID },
           sessionManager: { kind: 'memory' },
           enableToolApproval: approval,
-          workMode,
+          workMode: options.workMode ?? 'direct',
           phiAgents: [PLAN_STEP_AGENT],
           autoCompaction: { enabled: false },
           resourceOptions: {
@@ -399,7 +402,8 @@ export class ScenarioClient {
             noContextFiles: true,
             noPromptTemplates: true,
             noThemes: true
-          }
+          },
+          ...(options.phiAgents ? { phiAgents: options.phiAgents } : {})
         }),
         'session.create'
       )

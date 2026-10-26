@@ -54,6 +54,7 @@ function fakeAdapter(input: {
   value: string
   closed: string[]
   cancelled: string[]
+  imageCounts: number[]
 }): DesktopMcpAdapter {
   const signature = input.value
     .repeat(64)
@@ -66,7 +67,8 @@ function fakeAdapter(input: {
     description: `Desktop tool for ${input.value}`,
     parameters: { type: 'object' },
     site: 'host',
-    async execute(toolCallId, params, onUpdate, _context, signal) {
+    async execute(toolCallId, params, onUpdate, context, signal) {
+      input.imageCounts.push(context.recentUserImages().length)
       onUpdate?.({ content: [{ type: 'text', text: `${input.value}:progress` }] })
       if ((params as { hold?: unknown }).hold === true) {
         return new Promise((_resolve, reject) => {
@@ -115,6 +117,7 @@ async function fixture(): Promise<{
   broker: ReturnType<typeof registerDesktopMcpHostBroker>
   closed: string[]
   cancelled: string[]
+  imageCounts: number[]
 }> {
   const [clientTransport, serverTransport] = pair()
   const core = new KernelProtocolCore({ kernelVersion: 'test', ompVersion: 'test' })
@@ -122,6 +125,7 @@ async function fixture(): Promise<{
   const client = new KernelProtocolClient(clientTransport)
   const closed: string[] = []
   const cancelled: string[] = []
+  const imageCounts: number[] = []
   const broker = registerDesktopMcpHostBroker(client, {
     async resolve({ bindingId, kernelSessionId, cwd }) {
       return {
@@ -144,11 +148,12 @@ async function fixture(): Promise<{
         cwd: options.identity.cwd,
         value: options.serverNames[0],
         closed,
-        cancelled
+        cancelled,
+        imageCounts
       })
   })
   await client.hello({ hostCapabilities: [...DESKTOP_MCP_HOST_CAPABILITIES] })
-  return { core, client, broker, closed, cancelled }
+  return { core, client, broker, closed, cancelled, imageCounts }
 }
 
 test('desktop MCP bridge keeps session adapters disjoint and streams progress', async () => {
@@ -174,13 +179,15 @@ test('desktop MCP bridge keeps session adapters disjoint and streams progress', 
         toolCallId: 'call-a',
         name: firstTool.name,
         signature: firstTool.signature,
-        input: {}
+        input: {},
+        recentUserImages: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }]
       },
       { sessionId: 'kernel-a', runId: 'run-a' },
       (value) => progress.push(value)
     )
     assert.deepEqual(called, { content: [{ type: 'text', text: 'alpha' }] })
     assert.deepEqual(progress, [{ content: [{ type: 'text', text: 'alpha:progress' }] }])
+    assert.deepEqual(f.imageCounts, [1])
 
     await f.core.requestHost('mcp.desktop.close', { bindingId: 'alpha' }, { sessionId: 'kernel-a' })
     assert.deepEqual(f.closed, ['kernel-a'])
