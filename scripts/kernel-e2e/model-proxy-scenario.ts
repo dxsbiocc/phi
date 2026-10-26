@@ -98,18 +98,22 @@ export async function runSshModelProxyReconnectScenario<T extends ScenarioClient
   )
   assert.equal(options.provider.requests.length, 0)
 
-  const replacementTunnel = await options.step(
-    'replacement model proxy tunnel allocated on a different remote port',
-    async () => {
-      if (!options.session.openReverseTunnel) {
-        throw new Error('Connected SSH session cannot forward the replacement model proxy')
-      }
-      const tunnel = await options.session.openReverseTunnel({ localPort: options.provider.port })
-      assert.notEqual(tunnel.remotePort, options.initialTunnel.remotePort)
-      return tunnel
+  // The SSH master allows one reverse tunnel per local gateway, so the replacement is
+  // opened only after the initial tunnel is dropped, as after a real reconnect.
+  const openReplacementTunnel = async (): Promise<RemoteReverseTunnel> => {
+    if (!options.session.openReverseTunnel) {
+      throw new Error('Connected SSH session cannot forward the replacement model proxy')
     }
-  )
-  options.report.evidence.reconnectedModelProxyPort = replacementTunnel.remotePort
+    let tunnel = await options.session.openReverseTunnel({ localPort: options.provider.port })
+    if (tunnel.remotePort === options.initialTunnel.remotePort) {
+      // A reused port would not prove the endpoint switch; ask for another one once.
+      await tunnel.close()
+      tunnel = await options.session.openReverseTunnel({ localPort: options.provider.port })
+    }
+    assert.notEqual(tunnel.remotePort, options.initialTunnel.remotePort)
+    return tunnel
+  }
+  let replacementTunnel: RemoteReverseTunnel | undefined
   let reattached: ReattachedRemoteKernel | undefined
   let resumedScenario: T | undefined
 
@@ -133,6 +137,12 @@ export async function runSshModelProxyReconnectScenario<T extends ScenarioClient
         options.provider.dropActiveConnections()
       }
     )
+    const tunnel = await options.step(
+      'replacement model proxy tunnel allocated on a different remote port',
+      openReplacementTunnel
+    )
+    replacementTunnel = tunnel
+    options.report.evidence.reconnectedModelProxyPort = tunnel.remotePort
 
     reattached = await options.step('remote kernel reattached with takeover and replay', () =>
       reattachRemoteKernel({
@@ -156,7 +166,7 @@ export async function runSshModelProxyReconnectScenario<T extends ScenarioClient
     const activeLaunch = reattached
 
     await options.step('replacement model proxy configured after kernel reattach', () =>
-      configureModelProxy(activeLaunch.client, replacementTunnel, options.bearerToken)
+      configureModelProxy(activeLaunch.client, tunnel, options.bearerToken)
     )
     await options.step(
       'same model-dependent run completed through the replacement tunnel',
@@ -171,11 +181,11 @@ export async function runSshModelProxyReconnectScenario<T extends ScenarioClient
           options.provider.completedRequestCount()
       }
     )
-    return { remoteLaunch: activeLaunch, scenario, tunnel: replacementTunnel }
+    return { remoteLaunch: activeLaunch, scenario, tunnel }
   } catch (error) {
     resumedScenario?.close()
     await reattached?.close().catch(() => undefined)
-    await replacementTunnel.close().catch(() => undefined)
+    await replacementTunnel?.close().catch(() => undefined)
     throw error
   }
 }
