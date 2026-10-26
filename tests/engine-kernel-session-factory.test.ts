@@ -94,6 +94,41 @@ test('SessionRoutingEngine sends local sessions to one shared kernel and never p
   assert.equal(client.requests.filter((request) => request.method === 'session.prompt').length, 0)
 })
 
+test('SessionRoutingEngine closes every routed session before stopping its kernel host', async () => {
+  const client = new FakeKernelClient()
+  let hostClosed = false
+  const factory = new KernelSessionFactory({
+    mode: 'local',
+    launchLocal: async () => ({
+      client,
+      greeting: {
+        protocol: { major: 1, minor: 0 },
+        kernel: { version: 'test', ompVersion: 'test' },
+        kernelInstanceId: 'kernel-instance',
+        controllerGeneration: 1,
+        capabilities: [],
+        lastSeq: 0,
+        runtime: { home: '/home/test', agentDir: '/agent' }
+      },
+      close: async () => {
+        assert.deepEqual(
+          client.requests
+            .filter((request) => request.method === 'session.close')
+            .map((request) => request.context.sessionId),
+          ['kernel-1', 'kernel-2']
+        )
+        hostClosed = true
+      }
+    })
+  })
+  const engine = new SessionRoutingEngine(legacyEngine(), () => factory)
+  await engine.sessions.create(params('stop-order-one'))
+  await engine.sessions.create(params('stop-order-two'))
+
+  await assert.doesNotReject(engine.stop())
+  assert.equal(hostClosed, true)
+})
+
 test('approval emitted immediately after create is delivered and uses trusted session identity', async () => {
   const client = new FakeKernelClient()
   const factory = new KernelSessionFactory({

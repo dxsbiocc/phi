@@ -84,6 +84,10 @@ function readAdoptSourceRoots(): string[] {
     })
 }
 
+function runtimeIdentity(agentDir: string): { home: string; agentDir: string; pid: number } {
+  return { home: process.env.HOME ?? process.env.USERPROFILE ?? '', agentDir, pid: process.pid }
+}
+
 export async function startKernelStdio(): Promise<void> {
   const kernelInstanceId = randomUUID()
   const transport = new StdioFrameTransport(process.stdin, process.stdout)
@@ -118,10 +122,7 @@ export async function startKernelStdio(): Promise<void> {
     kernelVersion: readKernelVersion(),
     ompVersion: readOmpVersion(),
     kernelInstanceId,
-    runtimeIdentity: {
-      home: process.env.HOME ?? process.env.USERPROFILE ?? '',
-      agentDir
-    },
+    runtimeIdentity: runtimeIdentity(agentDir),
     handlers: worker.handlers,
     controllerLifecycle: {
       onControllerAttached() {
@@ -183,10 +184,7 @@ export async function startKernelSocket(
     kernelVersion: readKernelVersion(),
     ompVersion: readOmpVersion(),
     kernelInstanceId,
-    runtimeIdentity: {
-      home: process.env.HOME ?? process.env.USERPROFILE ?? '',
-      agentDir: process.env.PI_CODING_AGENT_DIR ?? ''
-    },
+    runtimeIdentity: runtimeIdentity(process.env.PI_CODING_AGENT_DIR ?? ''),
     handlers: worker.handlers,
     disconnectPolicy: 'wait-for-reconnect',
     controllerLifecycle: remoteControllerLifecycle(modelAccess, graceRef),

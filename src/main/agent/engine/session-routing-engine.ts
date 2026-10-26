@@ -636,12 +636,15 @@ export class SessionRoutingEngine implements PhiEngine {
   }
   async stop(): Promise<void> {
     const factory = this.factory()
-    const results = await Promise.allSettled(
-      [...this.owners.keys()]
-        .map((sessionId) => this.sessions.dispose({ sessionId }))
-        .concat(this.legacy.stop(), factory?.stop?.() ?? Promise.resolve())
+    // Close routed sessions before their kernel hosts, or the close requests race a closed client.
+    const disposed = await Promise.allSettled(
+      [...this.owners.keys()].map((sessionId) => this.sessions.dispose({ sessionId }))
     )
-    const failed = results.find((result) => result.status === 'rejected')
+    const stopped = await Promise.allSettled([
+      this.legacy.stop(),
+      factory?.stop?.() ?? Promise.resolve()
+    ])
+    const failed = [...disposed, ...stopped].find((result) => result.status === 'rejected')
     if (failed?.status === 'rejected') throw failed.reason
   }
 }

@@ -219,7 +219,7 @@ const methodResults = {
     controllerGeneration: 2,
     capabilities: ['session.prompt'],
     lastSeq: 7,
-    runtime: { home: '/tmp/home', agentDir: '/tmp/agent' }
+    runtime: { home: '/tmp/home', agentDir: '/tmp/agent', pid: 4242 }
   },
   'session.create': {
     sessionId: 'session-1',

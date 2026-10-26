@@ -7,6 +7,15 @@ export interface ProcessSample {
   readonly command: string
 }
 
+export function selectRemoteKernelPid(input: {
+  readonly runtimePid?: number
+  readonly helperPid?: number
+}): number {
+  if (Number.isSafeInteger(input.runtimePid) && input.runtimePid! > 0) return input.runtimePid!
+  if (Number.isSafeInteger(input.helperPid) && input.helperPid! > 0) return input.helperPid!
+  throw new Error('Remote kernel did not report a usable runtime or helper PID.')
+}
+
 function parseProcesses(output: string): ProcessSample[] {
   return output
     .split('\n')
@@ -50,7 +59,8 @@ export async function remoteProcessTree(
   rootPid: number,
   run: (command: string) => Promise<{ stdout: string; stderr: string; code: number | null }>
 ): Promise<ProcessSample[]> {
-  const result = await run("ps -A -o 'pid=,ppid=,rss=,command='")
+  // Separate -o columns: older procps (CentOS 7) reads `pid=,ppid=,...` as one PID column.
+  const result = await run('ps -u "$(id -u)" -o pid= -o ppid= -o rss= -o args=')
   if (result.code !== 0) throw new Error(result.stderr || 'remote ps failed')
   const all = parseProcesses(result.stdout)
   return [...all.filter((process) => process.pid === rootPid), ...descendants(all, rootPid)].filter(
@@ -70,6 +80,7 @@ export class PeakTreeSampler {
   private active = false
   private running?: Promise<void>
   peakMb = 0
+  peakTree: ProcessSample[] = []
   latest: ProcessSample[] = []
 
   constructor(
@@ -102,7 +113,10 @@ export class PeakTreeSampler {
       root ? processes.filter((process) => process.pid !== root.pid) : processes,
       root
     )
-    this.peakMb = Math.max(this.peakMb, rss)
+    if (rss > this.peakMb || (rss === this.peakMb && processes.length > this.peakTree.length)) {
+      this.peakMb = rss
+      this.peakTree = [...processes]
+    }
     return rss
   }
 

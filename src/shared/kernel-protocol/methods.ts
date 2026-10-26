@@ -145,7 +145,9 @@ export const kernelHelloResultSchema = z
     runtime: z
       .object({
         home: z.string(),
-        agentDir: z.string()
+        agentDir: z.string(),
+        /** Process identity is optional for compatibility with older test and attach fixtures. */
+        pid: z.number().int().positive().optional()
       })
       .strict()
   })

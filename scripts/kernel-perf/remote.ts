@@ -23,9 +23,20 @@ import {
 import { prepareKernelE2eRemoteHelper } from '../kernel-e2e/prepare-remote-helper'
 import { shutdownSshScenarioKernel } from '../kernel-e2e/ssh-kernel-cleanup'
 import type { CandidateContext } from '../kernel-candidate'
-import { evaluateKernelPerfBudget, percentileSummary, type KernelPerfReport } from '../kernel-perf'
+import {
+  evaluateKernelPerfBudget,
+  fourSessionWorkload,
+  K0_LEGACY_WORKLOAD,
+  percentileSummary,
+  type KernelPerfReport
+} from '../kernel-perf'
 import type { PerfCliOptions } from './runner'
-import { PeakTreeSampler, remoteProcessTree } from './process-tree'
+import {
+  PeakTreeSampler,
+  remoteProcessTree,
+  selectRemoteKernelPid,
+  type ProcessSample
+} from './process-tree'
 
 function unusedLegacyEngine(): PhiEngine {
   const unsupported = async (): Promise<never> => {
@@ -62,6 +73,7 @@ function k0Baseline(path: string): number | null {
 
 function remoteMcpScript(): string {
   return `#!/bin/sh
+printf '%s\n' "$$" > "$1"
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p')
   [ -n "$id" ] || continue
@@ -92,6 +104,7 @@ function remoteParams(input: {
   desktopAgentDir: string
   host: string
   mcpScript?: string
+  mcpPidPath?: string
 }): PhiSessionCreateParams {
   return {
     sessionId: input.id,
@@ -116,7 +129,7 @@ function remoteParams(input: {
               config: {
                 type: 'stdio',
                 command: '/bin/sh',
-                args: [input.mcpScript],
+                args: [input.mcpScript, input.mcpPidPath!],
                 cwd: input.project
               }
             }
@@ -135,6 +148,27 @@ function remoteParams(input: {
       contextFiles: []
     }
   }
+}
+
+async function verifiedRemoteMcpPids(
+  paths: readonly string[],
+  processTree: readonly ProcessSample[],
+  run: (command: string) => Promise<{ stdout: string; stderr: string; code: number | null }>
+): Promise<number> {
+  const result = await run(`cat -- ${paths.map(shellQuote).join(' ')}`)
+  if (result.code !== 0) throw new Error(result.stderr || 'remote MCP PID files were unavailable')
+  const pids = result.stdout.split(/\s+/u).filter(Boolean).map(Number)
+  if (pids.length !== paths.length || pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0)) {
+    throw new Error(`Remote MCP PID evidence was invalid: ${JSON.stringify(result.stdout)}.`)
+  }
+  const descendants = new Set(processTree.map((process) => process.pid))
+  const missing = pids.filter((pid) => !descendants.has(pid))
+  if (missing.length > 0) {
+    throw new Error(
+      `Remote stdio MCP PIDs were absent from the kernel process tree: ${missing.join(', ')}.`
+    )
+  }
+  return pids.length
 }
 
 function configureFactory(factory: KernelSessionFactory): void {
@@ -259,9 +293,13 @@ export async function runRemoteKernelPerformance(input: {
       } finally {
         await engine.stop().catch(() => undefined)
         if (launched) {
-          if (launched.attach.state === 'spawned') remaining.add(launched.attach.pid)
+          const pid = selectRemoteKernelPid({
+            runtimePid: launched.greeting.runtime.pid,
+            ...(launched.attach.state === 'spawned' ? { helperPid: launched.attach.pid } : {})
+          })
+          remaining.add(pid)
           await shutdownSshScenarioKernel({ session: ssh, launch: launched }).catch(() => undefined)
-          if (launched.attach.state === 'spawned') remaining.delete(launched.attach.pid)
+          remaining.delete(pid)
         }
       }
     }
@@ -272,40 +310,48 @@ export async function runRemoteKernelPerformance(input: {
     for (const count of [1, 4] as const) {
       let launched: Awaited<ReturnType<typeof launchRemoteKernel>> | undefined
       let sampler: PeakTreeSampler | undefined
+      let kernelPid: number | undefined
       const factory = launchFactory((value) => {
         launched = value
-        if (value.attach.state !== 'spawned') {
-          throw new Error('Remote A20 requires a fresh kernel PID for process-tree measurement.')
-        }
-        remaining.add(value.attach.pid)
-        sampler = new PeakTreeSampler(
-          () => remoteProcessTree(value.attach.state === 'spawned' ? value.attach.pid : 0, run),
-          value.attach.pid,
-          100
-        )
+        kernelPid = selectRemoteKernelPid({
+          runtimePid: value.greeting.runtime.pid,
+          ...(value.attach.state === 'spawned' ? { helperPid: value.attach.pid } : {})
+        })
+        remaining.add(kernelPid)
+        sampler = new PeakTreeSampler(() => remoteProcessTree(kernelPid!, run), kernelPid, 100)
         sampler.start()
       })
       const engine = new SessionRoutingEngine(unusedLegacyEngine(), () => factory)
       const modelTimes: number[] = []
+      let activeProcessTree: readonly ProcessSample[] = []
+      let mcpSessionsVerified = 0
       try {
         for (let round = 0; round < cli.rounds; round += 1) {
           const ids = Array.from(
             { length: count },
             (_, index) => `remote-load-${count}-${round}-${index}`
           )
+          const mcpPidPaths = ids.map((id) => posix.join(runRoot, `${id}.mcp.pid`))
           await Promise.all(
-            ids.map((id) =>
+            ids.map((id, index) =>
               engine.sessions.create(
                 remoteParams({
                   id,
                   project,
                   desktopAgentDir: resolve('.phi-acceptance/perf-desktop-agent'),
                   host,
-                  mcpScript
+                  mcpScript,
+                  mcpPidPath: mcpPidPaths[index]
                 })
               )
             )
           )
+          await sampler!.once()
+          const roundProcessTree = [...sampler!.latest]
+          mcpSessionsVerified += await verifiedRemoteMcpPids(mcpPidPaths, roundProcessTree, run)
+          if (roundProcessTree.length > activeProcessTree.length) {
+            activeProcessTree = roundProcessTree
+          }
           provider.enqueue(...ids.map((id) => ({ text: `remote A20 ${id}` })))
           await Promise.all(
             ids.map(async (id) => {
@@ -319,6 +365,7 @@ export async function runRemoteKernelPerformance(input: {
         }
         await new Promise((resolveWait) => setTimeout(resolveWait, 1_000))
         const idle = await sampler!.once()
+        const idleProcessTree = [...sampler!.latest]
         await sampler!.stop()
         workloads.push({
           sessions: count,
@@ -326,14 +373,17 @@ export async function runRemoteKernelPerformance(input: {
           peakRssMb: Math.round(sampler!.peakMb * 10) / 10,
           idleReleasedRssMb: idle,
           modelNetworkMs: percentileSummary(modelTimes),
-          processTree: sampler!.latest
+          processTree: sampler!.peakTree,
+          activeProcessTree,
+          idleProcessTree,
+          mcpSessionsVerified
         })
       } finally {
         await sampler?.stop().catch(() => undefined)
         await engine.stop().catch(() => undefined)
         if (launched) {
           await shutdownSshScenarioKernel({ session: ssh, launch: launched }).catch(() => undefined)
-          if (launched.attach.state === 'spawned') remaining.delete(launched.attach.pid)
+          if (kernelPid !== undefined) remaining.delete(kernelPid)
         }
       }
     }
@@ -367,7 +417,16 @@ export async function runRemoteKernelPerformance(input: {
       project: { files: cli.projectFiles, skills: true, stdioMcpPerSession: true },
       ready,
       workloads,
-      legacy: { k0BaselineMb: baseline, sameRunFourSessionMb: null },
+      legacy: {
+        k0BaselineMb: baseline,
+        k0Workload: K0_LEGACY_WORKLOAD,
+        sameRunFourSessionMb: null,
+        sameRunWorkload: fourSessionWorkload(cli.projectFiles, cli.rounds),
+        sameRunFailure:
+          'Not run for an SSH target because the legacy route executes on the desktop host.',
+        sameRunProcessTree: [],
+        sameRunMcpSessionsVerified: 0
+      },
       budgets: evaluateKernelPerfBudget({
         ...(fourSessionPeak === undefined ? {} : { fourSessionPeakMb: fourSessionPeak }),
         ...(baseline === null ? {} : { legacyBaselineMb: baseline })

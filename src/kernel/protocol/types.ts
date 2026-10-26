@@ -95,7 +95,7 @@ export interface KernelProtocolOptions {
   hostRequestTimeoutMs?: number
   controllerLifecycle?: KernelControllerLifecycle
   /** Trusted process identity used by attach clients to reject stale runtime roots. */
-  runtimeIdentity?: { readonly home: string; readonly agentDir: string }
+  runtimeIdentity?: { readonly home: string; readonly agentDir: string; readonly pid?: number }
 }
 
 export interface AttachTransportOptions {

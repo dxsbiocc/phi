@@ -16,6 +16,13 @@ export interface PercentileSummary {
   readonly max: number
 }
 
+export const K0_LEGACY_WORKLOAD =
+  'one small notes.txt; skills disabled; no MCP; 4 sessions created sequentially in one worker, each performing a read turn; peak from 3 runs'
+
+export function fourSessionWorkload(files: number, rounds: number): string {
+  return `${files} files; skills enabled; one stdio MCP per session; ${rounds} rounds of 4 concurrent sessions and loopback turns`
+}
+
 export interface KernelPerfReport {
   readonly schemaVersion: 1
   readonly candidateId: string
@@ -46,16 +53,40 @@ export interface KernelPerfReport {
     readonly peakRssMb: number | null
     readonly idleReleasedRssMb: number | null
     readonly modelNetworkMs: PercentileSummary | null
+    /** Peak-RSS process tree, including the kernel root. */
     readonly processTree: ReadonlyArray<{
       pid: number
       ppid: number
       rssMb: number
       command: string
     }>
+    readonly activeProcessTree: ReadonlyArray<{
+      pid: number
+      ppid: number
+      rssMb: number
+      command: string
+    }>
+    readonly idleProcessTree: ReadonlyArray<{
+      pid: number
+      ppid: number
+      rssMb: number
+      command: string
+    }>
+    readonly mcpSessionsVerified: number
   }>
   readonly legacy: {
     readonly k0BaselineMb: number | null
+    readonly k0Workload: string
     readonly sameRunFourSessionMb: number | null
+    readonly sameRunWorkload: string
+    readonly sameRunFailure: string | null
+    readonly sameRunProcessTree: ReadonlyArray<{
+      pid: number
+      ppid: number
+      rssMb: number
+      command: string
+    }>
+    readonly sameRunMcpSessionsVerified: number
   }
   readonly budgets: readonly PerfBudgetLine[]
   readonly cleanup: { readonly complete: boolean; readonly remainingProcesses: readonly number[] }
@@ -172,16 +203,43 @@ function summary(value: PercentileSummary | null, unit: string): string {
     : 'not measured'
 }
 
+function markdownTableCell(value: string): string {
+  return value.replaceAll('|', '\\|').replaceAll(/\r?\n/gu, '<br>')
+}
+
 export function renderKernelPerfMarkdown(report: KernelPerfReport): string {
   const workloadRows =
     report.workloads.length > 0
       ? report.workloads
           .map(
             (workload) =>
-              `| ${workload.sessions} | ${workload.rounds} | ${workload.peakRssMb ?? 'not measured'} | ${workload.idleReleasedRssMb ?? 'not measured'} | ${summary(workload.modelNetworkMs, 'ms')} | ${workload.processTree.length} |`
+              `| ${workload.sessions} | ${workload.rounds} | ${workload.peakRssMb ?? 'not measured'} | ${workload.idleReleasedRssMb ?? 'not measured'} | ${summary(workload.modelNetworkMs, 'ms')} | ${workload.processTree.length} | ${workload.idleProcessTree.length} | ${workload.mcpSessionsVerified} |`
           )
           .join('\n')
-      : '| not measured | not measured | not measured | not measured | not measured | not measured |'
+      : '| not measured | not measured | not measured | not measured | not measured | not measured | not measured | not measured |'
+  const fourSession = report.workloads.find((workload) => workload.sessions === 4)
+  const sameRunLegacy =
+    report.legacy.sameRunFourSessionMb === null
+      ? `not measured — ${markdownTableCell(report.legacy.sameRunFailure ?? 'reason unavailable')}`
+      : `${report.legacy.sameRunFourSessionMb} MiB`
+  const processRows = [
+    ...report.workloads.flatMap((workload) =>
+      [
+        ['peak', workload.processTree] as const,
+        ['active MCP verification', workload.activeProcessTree] as const,
+        ['idle release', workload.idleProcessTree] as const
+      ].flatMap(([phase, processes]) =>
+        processes.map(
+          (process) =>
+            `| ${workload.sessions} | ${phase} | ${process.pid} | ${process.ppid} | ${process.rssMb} | \`${markdownTableCell(process.command.replaceAll('`', "'"))}\` |`
+        )
+      )
+    ),
+    ...report.legacy.sameRunProcessTree.map(
+      (process) =>
+        `| legacy 4 | peak | ${process.pid} | ${process.ppid} | ${process.rssMb} | \`${markdownTableCell(process.command.replaceAll('`', "'"))}\` |`
+    )
+  ].join('\n')
   return `# Phi kernel candidate performance
 
 - Candidate: \`${report.candidateId}\`
@@ -194,17 +252,29 @@ export function renderKernelPerfMarkdown(report: KernelPerfReport): string {
 - Warm first-session ready: ${summary(report.ready?.firstSession ?? null, 'ms')}
 - Model network/download time is reported separately below and is excluded from ready timing.
 
-| Sessions | Rounds | Peak RSS MiB | RSS after idle release MiB | Loopback model time | Process count |
-| ---: | ---: | ---: | ---: | --- | ---: |
+| Sessions | Rounds | Peak RSS MiB | RSS after idle release MiB | Loopback model time | Peak processes | Idle processes | MCP sessions verified |
+| ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |
 ${workloadRows}
+
+| Comparison | Workload | Peak RSS |
+| --- | --- | ---: |
+| K0-2 recorded legacy baseline | ${report.legacy.k0Workload} | ${report.legacy.k0BaselineMb ?? 'not measured'} MiB |
+| Current kernel | ${report.project.files} files; skills enabled; one stdio MCP per session; ${fourSession?.rounds ?? 'not measured'} rounds of 4 concurrent sessions | ${fourSession?.peakRssMb ?? 'not measured'} MiB |
+| Same-run legacy route | ${report.legacy.sameRunWorkload} | ${sameRunLegacy} |
+
+- Same-run legacy MCP sessions verified: ${report.legacy.sameRunMcpSessionsVerified}
 
 | Budget line | Result | Measured | Limit |
 | --- | --- | --- | --- |
 ${report.budgets.map((line) => `| ${line.line} | ${line.status} | ${line.measured} | ${line.limit} |`).join('\n')}
 
-- K0-2 legacy four-session baseline: ${report.legacy.k0BaselineMb ?? 'not measured'} MiB
-- Same-machine legacy-route four-session peak: ${report.legacy.sameRunFourSessionMb ?? 'not measured'} MiB
-- Memory tool: \`ps -A -o pid=,ppid=,rss=,command=\` over the kernel and all descendants; RSS is reported, not claimed as physical incremental memory.
+## Recorded process trees
+
+| Sessions | Phase | PID | PPID | RSS MiB | Command |
+| ---: | --- | ---: | ---: | ---: | --- |
+${processRows || '| not measured | not measured | not measured | not measured | not measured | not measured |'}
+
+- Memory tool: local \`ps -A -o pid=,ppid=,rss=,command=\`; remote same-user \`ps -u "$(id -u)" -o pid= -o ppid= -o rss= -o args=\`; both retain only the kernel root and descendants. RSS is reported, not claimed as physical incremental memory.
 - Cleanup: ${report.cleanup.complete ? 'complete' : `incomplete (${report.cleanup.remainingProcesses.join(', ') || 'unknown'})`}
 ${report.failure ? `- Failure: ${report.failure}\n` : ''}`
 }

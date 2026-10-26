@@ -15,12 +15,14 @@ import { agentConfig, MODEL_ID, PROVIDER_ID, startLoopbackProvider } from '../ke
 import { candidateContext, reserveEvidencePath, type CandidateContext } from '../kernel-candidate'
 import {
   evaluateKernelPerfBudget,
+  fourSessionWorkload,
+  K0_LEGACY_WORKLOAD,
   percentileSummary,
   renderKernelPerfMarkdown,
   type KernelPerfReport
 } from '../kernel-perf'
 import { measureSameRunLegacyFourSession } from './legacy'
-import { localProcessTree, PeakTreeSampler } from './process-tree'
+import { localProcessTree, PeakTreeSampler, type ProcessSample } from './process-tree'
 
 interface PerfCliOptions {
   readonly target: 'local' | 'ssh'
@@ -222,6 +224,35 @@ function createParams(input: {
   }
 }
 
+interface McpSnapshot {
+  readonly pid: number
+  readonly methods: readonly string[]
+}
+
+function verifyLocalMcpProcesses(
+  snapshotPaths: readonly string[],
+  processTree: readonly ProcessSample[]
+): number {
+  const snapshots = snapshotPaths.map(
+    (path) => JSON.parse(readFileSync(path, 'utf8')) as McpSnapshot
+  )
+  const incomplete = snapshots.filter(
+    (snapshot) =>
+      !snapshot.methods.includes('initialize') || !snapshot.methods.includes('tools/list')
+  )
+  if (incomplete.length > 0) {
+    throw new Error(`${incomplete.length} stdio MCP servers did not finish discovery.`)
+  }
+  const descendants = new Set(processTree.map((process) => process.pid))
+  const missing = snapshots.map((snapshot) => snapshot.pid).filter((pid) => !descendants.has(pid))
+  if (missing.length > 0) {
+    throw new Error(
+      `Stdio MCP PIDs were absent from the kernel process tree: ${missing.join(', ')}.`
+    )
+  }
+  return snapshots.length
+}
+
 function configureFactory(factory: KernelSessionFactory): void {
   factory.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
   factory.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
@@ -359,6 +390,8 @@ async function measureWorkload(input: {
   const engine = new SessionRoutingEngine(unusedLegacyEngine(), () => factory)
   const modelNetworkMs: number[] = []
   let idleReleasedRssMb: number | null = null
+  let activeProcessTree: readonly ProcessSample[] = []
+  let mcpSessionsVerified = 0
   try {
     for (let round = 0; round < input.rounds; round += 1) {
       const ids = Array.from(
@@ -378,6 +411,13 @@ async function measureWorkload(input: {
           )
         )
       )
+      await sampler!.once()
+      const roundProcessTree = [...sampler!.latest]
+      const snapshotPaths = ids.map((sessionId) =>
+        join(input.runtime.temporary, `${sessionId}-mcp.json`)
+      )
+      mcpSessionsVerified += verifyLocalMcpProcesses(snapshotPaths, roundProcessTree)
+      if (roundProcessTree.length > activeProcessTree.length) activeProcessTree = roundProcessTree
       input.provider.enqueue(...ids.map((sessionId) => ({ text: `A20 ${sessionId} complete` })))
       await Promise.all(
         ids.map(async (sessionId) => {
@@ -391,6 +431,7 @@ async function measureWorkload(input: {
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 1_000))
     idleReleasedRssMb = await sampler!.once()
+    const idleProcessTree = [...sampler!.latest]
     await sampler!.stop()
     return {
       sessions: input.sessions,
@@ -398,7 +439,10 @@ async function measureWorkload(input: {
       peakRssMb: Math.round(sampler!.peakMb * 10) / 10,
       idleReleasedRssMb,
       modelNetworkMs: percentileSummary(modelNetworkMs),
-      processTree: sampler!.latest
+      processTree: sampler!.peakTree,
+      activeProcessTree,
+      idleProcessTree,
+      mcpSessionsVerified
     }
   } finally {
     await sampler?.stop().catch(() => undefined)
@@ -439,7 +483,7 @@ async function localReport(
       cli.baseline ??
         resolve(repoRoot, '..', '..', 'Phi', '.phi-acceptance/k0-2/perf/result-659fcf9d.json')
     )
-    const sameRunLegacy = await measureSameRunLegacyFourSession(cli.projectFiles)
+    const sameRunLegacy = await measureSameRunLegacyFourSession(cli.projectFiles, cli.rounds)
     const ready = await measureReady({
       samples: cli.readySamples,
       buildDirectory,
@@ -486,12 +530,22 @@ async function localReport(
       project: { files: cli.projectFiles, skills: true, stdioMcpPerSession: true },
       ready,
       workloads,
-      legacy: { k0BaselineMb: legacyBaseline, sameRunFourSessionMb: sameRunLegacy },
+      legacy: {
+        k0BaselineMb: legacyBaseline,
+        k0Workload: K0_LEGACY_WORKLOAD,
+        sameRunFourSessionMb: sameRunLegacy.peakRssMb,
+        sameRunWorkload: fourSessionWorkload(cli.projectFiles, cli.rounds),
+        sameRunFailure: sameRunLegacy.failure,
+        sameRunProcessTree: sameRunLegacy.processTree,
+        sameRunMcpSessionsVerified: sameRunLegacy.mcpSessionsVerified
+      },
       budgets: evaluateKernelPerfBudget({
         localReadyP95Ms: ready.kernel.p95,
         ...(fourSessionPeak === undefined ? {} : { fourSessionPeakMb: fourSessionPeak }),
         ...(legacyBaseline === null ? {} : { legacyBaselineMb: legacyBaseline }),
-        ...(sameRunLegacy === null ? {} : { sameRunLegacyFourSessionMb: sameRunLegacy })
+        ...(sameRunLegacy.peakRssMb === null
+          ? {}
+          : { sameRunLegacyFourSessionMb: sameRunLegacy.peakRssMb })
       }),
       cleanup: { complete: true, remainingProcesses: [] }
     }
@@ -524,7 +578,15 @@ function failureReport(
     project: { files: cli.projectFiles, skills: true, stdioMcpPerSession: true },
     ready: null,
     workloads: [],
-    legacy: { k0BaselineMb: baseline, sameRunFourSessionMb: null },
+    legacy: {
+      k0BaselineMb: baseline,
+      k0Workload: K0_LEGACY_WORKLOAD,
+      sameRunFourSessionMb: null,
+      sameRunWorkload: fourSessionWorkload(cli.projectFiles, cli.rounds),
+      sameRunFailure: `Benchmark aborted before comparison: ${error instanceof Error ? error.message : String(error)}`,
+      sameRunProcessTree: [],
+      sameRunMcpSessionsVerified: 0
+    },
     budgets: evaluateKernelPerfBudget({
       ...(baseline === null ? {} : { legacyBaselineMb: baseline })
     }),
