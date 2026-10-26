@@ -344,6 +344,22 @@ export const shellJobsCancelResultSchema = z.object({ ok: z.boolean() }).strict(
 export const sessionAbortParamsSchema = z.object({}).strict()
 export const sessionAbortResultSchema = z.object({ cancelled: z.literal(true) }).strict()
 
+export const projectMemorySnapshotSchema = z
+  .object({
+    summary: z.string(),
+    summaryUpdatedAt: z.string().nullable(),
+    lessons: z.array(z.object({ index: z.number().int().nonnegative(), text: z.string() }).strict())
+  })
+  .strict()
+export const memoryReadParamsSchema = z.object({}).strict()
+export const memoryReadResultSchema = projectMemorySnapshotSchema
+export const memoryDeleteLessonParamsSchema = z
+  .object({ index: z.number().int().nonnegative(), text: z.string().max(2000) })
+  .strict()
+export const memoryDeleteLessonResultSchema = projectMemorySnapshotSchema
+export const memoryClearParamsSchema = z.object({}).strict()
+export const memoryClearResultSchema = z.object({ cleared: z.literal(true) }).strict()
+
 export const sessionSnapshotParamsSchema = z.object({}).strict()
 export const sessionSnapshotResultSchema = z
   .object({
@@ -532,6 +548,12 @@ export type ShellJobsCancelParams = z.infer<typeof shellJobsCancelParamsSchema>
 export type ShellJobsCancelResult = z.infer<typeof shellJobsCancelResultSchema>
 export type SessionAbortParams = z.infer<typeof sessionAbortParamsSchema>
 export type SessionAbortResult = z.infer<typeof sessionAbortResultSchema>
+export type MemoryReadParams = z.infer<typeof memoryReadParamsSchema>
+export type MemoryReadResult = z.infer<typeof memoryReadResultSchema>
+export type MemoryDeleteLessonParams = z.infer<typeof memoryDeleteLessonParamsSchema>
+export type MemoryDeleteLessonResult = z.infer<typeof memoryDeleteLessonResultSchema>
+export type MemoryClearParams = z.infer<typeof memoryClearParamsSchema>
+export type MemoryClearResult = z.infer<typeof memoryClearResultSchema>
 export type SessionSnapshotParams = z.infer<typeof sessionSnapshotParamsSchema>
 export type SessionSnapshotResult = z.infer<typeof sessionSnapshotResultSchema>
 export type KernelModelDescriptor = z.infer<typeof kernelModelDescriptorSchema>
@@ -576,6 +598,9 @@ export const kernelMethodParamsSchemas = {
   'session.compact': sessionCompactParamsSchema,
   'session.getAutoCompaction': sessionGetAutoCompactionParamsSchema,
   'session.setAutoCompaction': sessionSetAutoCompactionParamsSchema,
+  'memory.read': memoryReadParamsSchema,
+  'memory.deleteLesson': memoryDeleteLessonParamsSchema,
+  'memory.clear': memoryClearParamsSchema,
   'session.close': sessionCloseParamsSchema,
   'models.catalog': modelsCatalogParamsSchema,
   'modelAccess.configure': modelAccessConfigureParamsSchema,
@@ -602,6 +627,9 @@ export const kernelMethodResultSchemas = {
   'session.compact': sessionCompactResultSchema,
   'session.getAutoCompaction': sessionGetAutoCompactionResultSchema,
   'session.setAutoCompaction': sessionSetAutoCompactionResultSchema,
+  'memory.read': memoryReadResultSchema,
+  'memory.deleteLesson': memoryDeleteLessonResultSchema,
+  'memory.clear': memoryClearResultSchema,
   'session.close': sessionCloseResultSchema,
   'models.catalog': modelsCatalogResultSchema,
   'modelAccess.configure': modelAccessConfigureResultSchema,

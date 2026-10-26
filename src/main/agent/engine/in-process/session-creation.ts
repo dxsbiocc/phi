@@ -94,7 +94,20 @@ export async function createSession(
   applyAutoCompactionOverrides(settings, autoCompactionOverrides(record.autoCompaction))
   const memoryPolicy = normalizeProjectMemorySettings(record.memory)
   const memoryTarget = memoryPolicy.enabled ? { agentDir, cwd } : undefined
-  if (memoryTarget) createPhiSettings(settings).memory.useLocalBackend()
+  const desktopServices = record.desktopServices === true
+  if (memoryTarget && !desktopServices) createPhiSettings(settings).memory.useLocalBackend()
+  const desktopMemory =
+    memoryTarget && desktopServices
+      ? await requestHost(
+          'memory.read',
+          { runtimeSessionId: sessionId, cwd },
+          { originSessionId: sessionId }
+        )
+      : undefined
+  const memoryBlock =
+    isRecord(desktopMemory) && typeof desktopMemory.memoryBlock === 'string'
+      ? desktopMemory.memoryBlock
+      : undefined
   const noTools = record.noTools === 'all' || record.noTools === true
   if (!noTools) disableFeaturedApiKeyAutoDiscovery(agentDir)
   const resourceSnapshot = {
@@ -253,7 +266,10 @@ export async function createSession(
       sessionManager,
       ...(leasedMcp ? { mcpManager: leasedMcp.manager } : {}),
       thinkingLevel: runtimeThinkingLevel(record.thinkingLevel),
-      systemPrompt: (defaultPrompt) => buildPhiMainSystemPrompt(defaultPrompt, { workMode }),
+      systemPrompt: (defaultPrompt) => [
+        ...buildPhiMainSystemPrompt(defaultPrompt, { workMode }),
+        ...(memoryBlock ? [memoryBlock] : [])
+      ],
       ...(selectedModel ? { model: selectedModel } : {}),
       ...(resources ? { resourceLoader: resources } : {}),
       // Snapshot-owned skills/context are injected by the live resource extension so a

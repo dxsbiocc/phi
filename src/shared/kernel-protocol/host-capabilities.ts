@@ -59,6 +59,24 @@ const desktopMcpToolMetadataSchema = z
   })
   .strict()
 
+const recentUserImagesSchema = z
+  .array(
+    z
+      .object({
+        type: z.literal('image'),
+        data: nonEmptyStringSchema,
+        mimeType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+      })
+      .strict()
+  )
+  .max(5)
+  .refine(
+    (images) =>
+      images.reduce((bytes, image) => bytes + new TextEncoder().encode(image.data).byteLength, 0) <=
+      768 * 1024,
+    'Recent user images exceed the bounded host-call payload'
+  )
+
 const service = (
   timeoutMs: number,
   runScoped: boolean | 'optional'
@@ -311,6 +329,56 @@ const capabilityIdentitySchema = z
 
 const wrapperRunIdSchema = nonEmptyStringSchema.max(256).regex(/^[A-Za-z0-9_-]+$/)
 const wrapperStatusSchema = jsonObjectSchema
+const desktopServiceSessionSchema = z
+  .object({
+    runtimeSessionId: boundedIdSchema,
+    cwd: nonEmptyStringSchema.max(8192)
+  })
+  .strict()
+const decisionModelSchema = z
+  .object({ providerId: nonEmptyStringSchema, modelId: nonEmptyStringSchema })
+  .strict()
+const decisionRequestSchema = z
+  .object({
+    purpose: z.enum(['task_routing', 'evidence_review', 'recovery']),
+    context: z.string().max(32 * 1024),
+    question: nonEmptyStringSchema.max(4096),
+    options: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
+            description: nonEmptyStringSchema.max(2048)
+          })
+          .strict()
+      )
+      .min(2)
+      .max(12)
+  })
+  .strict()
+const decisionResultSchema = z
+  .object({
+    choice: nonEmptyStringSchema,
+    source: z.enum(['native', 'model']),
+    model: decisionModelSchema,
+    confidence: z.number().min(0).max(1).optional(),
+    fallbackReason: z.enum(['not_configured', 'unavailable']).optional()
+  })
+  .strict()
+const memoryRunSourceSchema = z
+  .object({
+    kind: z.enum(['journal', 'session']),
+    sessionId: boundedIdSchema,
+    journalPath: z.string().max(8192).optional()
+  })
+  .strict()
+const projectMemorySnapshotSchema = z
+  .object({
+    summary: z.string(),
+    summaryUpdatedAt: z.string().nullable(),
+    lessons: z.array(z.object({ index: z.number().int().nonnegative(), text: z.string() }).strict())
+  })
+  .strict()
 
 const modelAccessOAuthCredentialSchema = z
   .object({
@@ -357,6 +425,14 @@ export const KERNEL_HOST_CAPABILITIES = [
   'browser.cancel',
   'deliverables.present',
   'notebookTool.execute',
+  'decisions.evaluate',
+  'libraryTool.execute',
+  'palette.suggest',
+  'memory.read',
+  'memory.learn',
+  'memory.ingest',
+  'memory.deleteLesson',
+  'memory.clear',
   'environments.bindSession',
   'environments.request',
   'environments.cancel',
@@ -465,6 +541,91 @@ export const KERNEL_HOST_CAPABILITY_REGISTRY = {
       .strict(),
     result: jsonValueSchema,
     ...user()
+  },
+  'decisions.evaluate': {
+    params: z
+      .object({
+        runtimeSessionId: boundedIdSchema,
+        model: decisionModelSchema,
+        request: decisionRequestSchema
+      })
+      .strict(),
+    result: decisionResultSchema,
+    ...service(NETWORK_SERVICE_TIMEOUT_MS, true)
+  },
+  'libraryTool.execute': {
+    params: desktopServiceSessionSchema
+      .extend({
+        action: z.enum(['save', 'update', 'remove', 'list', 'find', 'audit']),
+        params: jsonObjectSchema
+      })
+      .strict(),
+    result: z.object({ summary: z.string(), details: jsonObjectSchema }).strict(),
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, true)
+  },
+  'palette.suggest': {
+    params: z
+      .object({
+        runtimeSessionId: boundedIdSchema,
+        use: z
+          .enum(['categorical', 'heatmap', 'diverging', 'sequential_warm', 'product'])
+          .optional(),
+        id: nonEmptyStringSchema.max(256).optional(),
+        limit: z.number().int().min(1).max(4).optional()
+      })
+      .strict(),
+    result: z.object({ palettes: z.array(jsonObjectSchema).max(4) }).strict(),
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, true)
+  },
+  'memory.read': {
+    params: desktopServiceSessionSchema,
+    result: z
+      .object({
+        memoryBlock: z
+          .string()
+          .max(64 * 1024)
+          .optional(),
+        snapshot: projectMemorySnapshotSchema.optional()
+      })
+      .strict(),
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
+  },
+  'memory.learn': {
+    params: desktopServiceSessionSchema
+      .extend({
+        input: z
+          .object({
+            content: nonEmptyStringSchema.max(2000),
+            context: z.string().max(400).optional()
+          })
+          .strict()
+      })
+      .strict(),
+    result: z.object({ stored: z.number().int().nonnegative() }).strict(),
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, true)
+  },
+  'memory.ingest': {
+    params: desktopServiceSessionSchema
+      .extend({
+        runId: boundedIdSchema,
+        status: z.literal('completed'),
+        source: memoryRunSourceSchema
+      })
+      .strict(),
+    result: z.object({ accepted: z.boolean(), duplicate: z.boolean().optional() }).strict(),
+    ...service(2 * NETWORK_SERVICE_TIMEOUT_MS, false)
+  },
+  'memory.deleteLesson': {
+    params: desktopServiceSessionSchema
+      .extend({ index: z.number().int().nonnegative(), text: z.string().max(2000) })
+      .strict(),
+    result: z.object({ snapshot: projectMemorySnapshotSchema }).strict(),
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
+  },
+  'memory.clear': {
+    params: desktopServiceSessionSchema,
+    result: nullResultSchema,
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
   },
   'environments.bindSession': {
     params: environmentBindingParamsSchema,
@@ -623,7 +784,8 @@ export const KERNEL_HOST_CAPABILITY_REGISTRY = {
         toolCallId: boundedIdSchema,
         name: nonEmptyStringSchema.max(512),
         signature: z.string().regex(/^[a-f0-9]{64}$/),
-        input: jsonObjectSchema
+        input: jsonObjectSchema,
+        recentUserImages: recentUserImagesSchema.optional()
       })
       .strict(),
     result: desktopMcpToolResultSchema,

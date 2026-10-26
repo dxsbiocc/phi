@@ -113,18 +113,21 @@ export function phiToolFunctions(
   agentDir: string,
   cwd: string,
   agentName: string,
-  skillRun?: PhiTool
+  options: { skillRun?: PhiTool; agentRunId?: string } = {}
 ): Map<string, PhiTool> {
   let wrapperTools: PhiTool[] = []
   if (agentName === 'Wrapper') {
     // Wrapper runs are background jobs owned by the main process; these tools only talk to it.
     // Each run is stamped with the session that started it, so its end can be reported there.
-    const jobs = createHostJobClient(requestHost, { originSessionId })
+    const jobs = createHostJobClient(requestHost, {
+      originSessionId,
+      ...(options.agentRunId ? { agentRunId: options.agentRunId } : {})
+    })
     wrapperTools = [...buildWrapperCompositionTools(jobs, { agentDir, projectDir: cwd })]
   }
   const tools = buildScopedPhiToolMap(agentName, {
     wrapper: wrapperTools
   })
-  if (skillRun) tools.set(skillRun.name, skillRun)
+  if (options.skillRun) tools.set(options.skillRun.name, options.skillRun)
   return tools
 }

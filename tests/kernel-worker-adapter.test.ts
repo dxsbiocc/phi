@@ -14,6 +14,7 @@ import {
 import type { KernelModelAccess } from '../src/kernel/model-access'
 import { requestHost, sendEvent, setWorkerOutbound } from '../src/main/agent/engine/in-process/ipc'
 import { pendingAuthPrompts, pendingToolApprovals } from '../src/main/agent/engine/in-process/state'
+import { createHostJobClient } from '../src/main/agent/wrappers/composition/job-host-client'
 
 const context: KernelCallContext = {
   controllerGeneration: 1,
@@ -67,6 +68,10 @@ test('worker adapter creates kernel-owned sessions with trusted entry values', a
       desktopMcp: { bindingId: 'desktop-binding-1' },
       environment: { ref: 'phi:python@1' }
     }
+    const trustedContext = {
+      ...context,
+      hostCapabilities: new Set(['decisions.evaluate'])
+    }
     const result = await handler(adapter.handlers, 'session.create')(
       {
         cwd,
@@ -74,7 +79,7 @@ test('worker adapter creates kernel-owned sessions with trusted entry values', a
         sessionManager: { kind: 'memory' },
         ...resources
       },
-      context,
+      trustedContext,
       request('session.create')
     )
     assert.equal(typeof (result as { sessionId?: unknown }).sessionId, 'string')
@@ -84,6 +89,7 @@ test('worker adapter creates kernel-owned sessions with trusted entry values', a
     assert.equal(params.cwd, cwd)
     assert.equal(params.sessionId, (result as { sessionId: string }).sessionId)
     assert.deepEqual(params.sessionManager, { kind: 'memory', cwd })
+    assert.deepEqual(params.desktopHostCapabilities, ['decisions.evaluate'])
     for (const [key, value] of Object.entries(resources)) assert.deepEqual(params[key], value)
 
     await assert.rejects(
@@ -1101,6 +1107,43 @@ test('worker outbound maps legacy events and host requests onto the protocol cor
         capability: 'desktop.example',
         params: { value: 1 },
         context: { sessionId: 'session-1', agentRunId: 'run-1' }
+      }
+    ])
+  } finally {
+    unbind()
+  }
+})
+
+test('Wrapper non-run-scoped host calls retain session and child identity', async () => {
+  const host: Array<{ capability: string; context: unknown }> = []
+  const adapter = createWorkerKernelAdapter({
+    agentDir: '/trusted/agent',
+    callWorker: async () => undefined
+  })
+  const unbind = adapter.bind({
+    emitEvent() {
+      return undefined
+    },
+    async requestHost(capability: string, _params: JsonValue, context: unknown) {
+      host.push({ capability, context })
+      return null
+    }
+  } as never)
+  try {
+    const jobs = createHostJobClient(requestHost, {
+      originSessionId: 'session-1',
+      agentRunId: 'child-1'
+    })
+    await jobs.status('wrapper-run-1')
+    await jobs.cancel('wrapper-run-1')
+    assert.deepEqual(host, [
+      {
+        capability: 'wrapperJob.status',
+        context: { sessionId: 'session-1', agentRunId: 'child-1' }
+      },
+      {
+        capability: 'wrapperJob.cancel',
+        context: { sessionId: 'session-1', agentRunId: 'child-1' }
       }
     ])
   } finally {

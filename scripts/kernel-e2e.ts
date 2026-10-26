@@ -43,6 +43,12 @@ import {
   toolEvidence
 } from './kernel-e2e/lifecycle-scenarios'
 import { runToolsScenario, type ToolsReadEvidence } from './kernel-e2e/tools-scenario'
+import {
+  configureDesktopServicesE2eClient,
+  createDesktopServicesE2eState,
+  DESKTOP_SERVICES_E2E_HOST_CAPABILITIES,
+  runDesktopServicesScenario
+} from './kernel-e2e/desktop-services-scenario'
 import { shutdownSshScenarioKernel } from './kernel-e2e/ssh-kernel-cleanup'
 import {
   agentConfig,
@@ -113,6 +119,11 @@ interface E2eReport {
     modelProxyCompletedRequests?: number
     approvalCount: number
     approvalObservedBeforeWrite: boolean
+    desktopServices?: {
+      presented: number
+      wrapperCalls: string[]
+      wrapperState: string
+    }
     bearerToken: 'random-test-only-not-recorded'
   }
   steps: StepResult[]
@@ -336,7 +347,7 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
     if (name === 'remote kernel deployed and launched')
       return deployBudget?.deployTimeoutMs ?? 12 * 60_000
     if (name === 'marker-backed remote helper prepared') return 5 * 60_000
-    return 2 * 60_000
+    return 5 * 60_000
   }
   const step = async <T>(name: string, action: () => Promise<T>): Promise<T> => {
     const started = process.hrtime.bigint()
@@ -370,6 +381,7 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
   let scenario: ScenarioClient | undefined
   let remoteProfile: Awaited<ReturnType<typeof probeRemoteKernelHostProfile>> | undefined
   const transferTimings: RemoteUploadPhaseTiming[] = []
+  const desktopServicesState = createDesktopServicesE2eState()
 
   try {
     provider = await step('loopback provider started with a random test-only bearer token', () =>
@@ -414,10 +426,21 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
           home: files!.paths.home,
           ...(options.scenario === 'grace-expiry' ||
           options.scenario === 'baseline' ||
-          options.scenario === 'tools'
+          options.scenario === 'tools' ||
+          options.scenario === 'desktop-services'
             ? { graceMs: 500 }
             : {}),
-          hello: { hostCapabilities: [...KERNEL_E2E_HOST_CAPABILITIES] },
+          configureClient:
+            options.scenario === 'desktop-services'
+              ? (client) =>
+                  configureDesktopServicesE2eClient(client, desktopServicesState, options.host!)
+              : undefined,
+          hello: {
+            hostCapabilities:
+              options.scenario === 'desktop-services'
+                ? [...DESKTOP_SERVICES_E2E_HOST_CAPABILITIES]
+                : [...KERNEL_E2E_HOST_CAPABILITIES]
+          },
           signal: AbortSignal.timeout(deployBudget!.deployTimeoutMs),
           uploadOptions: {
             onPhaseTiming: (timing) => transferTimings.push(timing)
@@ -502,6 +525,24 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
         report,
         step
       })
+      report.ok = report.steps.every((item) => item.passed)
+      return report
+    }
+
+    if (options.scenario === 'desktop-services') {
+      await runDesktopServicesScenario({
+        host: options.host!,
+        client: scenario,
+        provider,
+        files,
+        state: desktopServicesState,
+        step
+      })
+      report.evidence.desktopServices = {
+        presented: desktopServicesState.presented.length,
+        wrapperCalls: [...desktopServicesState.wrapperCalls],
+        wrapperState: desktopServicesState.wrapperState
+      }
       report.ok = report.steps.every((item) => item.passed)
       return report
     }

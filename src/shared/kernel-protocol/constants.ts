@@ -25,6 +25,10 @@ export const KERNEL_V1_METHODS = [
   'session.compact',
   'session.getAutoCompaction',
   'session.setAutoCompaction',
+  // K3-3 desktop-owned project memory, always bound to the request session.
+  'memory.read',
+  'memory.deleteLesson',
+  'memory.clear',
   'session.close',
   'models.catalog',
   'modelAccess.configure',

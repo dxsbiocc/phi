@@ -245,6 +245,26 @@ test('hello negotiates minor versions and rejects pre-negotiation or incompatibl
   })
 })
 
+test('business handlers receive only the controller-negotiated host capabilities', async () => {
+  const transport = new MemoryTransport()
+  let observed: string[] = []
+  const core = makeCore({
+    'session.snapshot': (_params, context, frame) => {
+      observed = [...(context.hostCapabilities ?? [])]
+      return snapshotResult(frame.sessionId ?? 'missing')
+    }
+  })
+  core.attachTransport(transport, { trusted: true, connectionId: 'desktop' })
+  const negotiated = await hello(transport, { hostCapabilities: ['decisions.evaluate'] })
+  const generation = generationFrom(negotiated)
+  const response = await sendRequest(
+    transport,
+    request('snapshot-with-host', 'session.snapshot', generation, {}, { sessionId: 'session-1' })
+  )
+  assert.equal(response.ok, true)
+  assert.deepEqual(observed, ['decisions.evaluate'])
+})
+
 test('takeover creates one controller generation and immediately stales the old controller', async () => {
   const calls: string[] = []
   let promptCalls = 0
@@ -794,6 +814,28 @@ test('registered host requests correlate responses without trusting unknown resp
     result: { baseUrl: 'https://127.0.0.1.invalid/' }
   })
   assert.deepEqual(await resultPromise, { baseUrl: 'https://127.0.0.1.invalid/' })
+})
+
+test('non-run-scoped host frames retain session and child identity without a run id', async () => {
+  const transport = new MemoryTransport()
+  const core = makeCore()
+  core.attachTransport(transport, { trusted: true })
+  await hello(transport, { hostCapabilities: ['wrapperJob.status'] })
+  const pending = core.requestHost(
+    'wrapperJob.status',
+    { runId: 'wrapper-run-1' },
+    { sessionId: 'session-1', agentRunId: 'child-1' }
+  )
+  const outbound = await waitFor(
+    transport,
+    (frame) => frame.kind === 'host.request' && frame.capability === 'wrapperJob.status'
+  )
+  assert.equal(outbound.kind, 'host.request')
+  assert.equal(outbound.sessionId, 'session-1')
+  assert.equal(outbound.runId, undefined)
+  assert.equal(outbound.agentRunId, 'child-1')
+  transport.receive({ kind: 'host.response', id: outbound.id, ok: true, result: null })
+  assert.equal(await pending, null)
 })
 
 test('takeover invalidates pending host requests from the previous controller', async () => {

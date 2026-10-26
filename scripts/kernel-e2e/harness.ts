@@ -97,6 +97,9 @@ export function record(value: JsonValue | unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
+/** One model turn over a slow VPN link (~6-8 s per round trip) with several tool calls. */
+export const RUN_WAIT_MS = 4 * 60_000
+
 export function bounded<T>(operation: Promise<T>, label: string, timeoutMs = 60_000): Promise<T> {
   return new Promise<T>((resolveOperation, reject) => {
     const timeout = setTimeout(
@@ -362,7 +365,11 @@ export class ScenarioClient {
     return this.events.at(-1)?.seq ?? 0
   }
 
-  async create(cwd: string, approval: boolean): Promise<string> {
+  async create(
+    cwd: string,
+    approval: boolean,
+    options: { phiAgents?: JsonValue[] } = {}
+  ): Promise<string> {
     const result = record(
       await bounded(
         this.client.request('session.create', {
@@ -377,7 +384,8 @@ export class ScenarioClient {
             noContextFiles: true,
             noPromptTemplates: true,
             noThemes: true
-          }
+          },
+          ...(options.phiAgents ? { phiAgents: options.phiAgents } : {})
         }),
         'session.create'
       )
@@ -425,7 +433,7 @@ export class ScenarioClient {
       const timeout = setTimeout(() => {
         this.waiters.delete(runId)
         reject(new Error(`Timed out waiting for kernel run ${runId}.`))
-      }, 60_000)
+      }, RUN_WAIT_MS)
       this.waiters.set(runId, { complete, reject, timeout })
     })
   }

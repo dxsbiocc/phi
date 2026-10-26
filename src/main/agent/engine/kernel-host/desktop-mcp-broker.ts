@@ -1,4 +1,8 @@
-import type { JsonValue, KernelHostCapabilityResult } from '../../../../shared/kernel-protocol'
+import type {
+  JsonValue,
+  KernelHostCapabilityParams,
+  KernelHostCapabilityResult
+} from '../../../../shared/kernel-protocol'
 import type { PhiToolResult } from '../types'
 import { createDesktopMcpAdapter } from '../rpc/desktop-mcp-adapter'
 import type { DesktopMcpAdapter, DesktopMcpOptions } from '../rpc/desktop-mcp-types'
@@ -69,6 +73,12 @@ function listResult(adapter: DesktopMcpAdapter): KernelHostCapabilityResult<'mcp
     })),
     skipped: adapter.skipped.map((server) => ({ ...server }))
   }
+}
+
+function recentImages(
+  params: KernelHostCapabilityParams<'mcp.desktop.call'>
+): NonNullable<KernelHostCapabilityParams<'mcp.desktop.call'>['recentUserImages']> {
+  return (params.recentUserImages ?? []).map((image) => ({ ...image }))
 }
 
 export function registerDesktopMcpHostBroker(
@@ -159,7 +169,7 @@ export function registerDesktopMcpHostBroker(
             context.progress
               ? (progress) => context.progress?.(jsonToolResult(progress))
               : undefined,
-            { cwd: current.adapter.identity.cwd, recentUserImages: () => [] },
+            { cwd: current.adapter.identity.cwd, recentUserImages: () => recentImages(params) },
             signal
           )
           return jsonToolResult(result)

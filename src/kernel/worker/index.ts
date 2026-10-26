@@ -5,9 +5,7 @@ import { isAbsolute } from 'node:path'
 import {
   KERNEL_EVENT_MODELS_CHANGED,
   type ApprovalRespondParams,
-  type JsonValue,
   type SessionCreateParams,
-  type SessionLastRun,
   type SessionOpenParams,
   type SessionPolicyParams
 } from '../../shared/kernel-protocol'
@@ -32,6 +30,8 @@ import {
   requireAvailableModel
 } from './model-access-handlers'
 import { callKernelRuntime } from './runtime-calls'
+import { createDesktopMemoryHandlers } from './desktop-memory-handlers'
+import { projectSessionState } from './session-state'
 
 type WorkerCall = (method: string, params: unknown) => Promise<unknown>
 
@@ -53,10 +53,6 @@ export type WorkerKernelAdapter = {
   handlers: KernelMethodHandlers
   bind(core: KernelProtocolCore): () => void
   closeAll(): Promise<void>
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function requiredSessionId(sessionId: string | undefined): string {
@@ -101,34 +97,6 @@ async function assertExistingAbsoluteDirectory(cwd: string): Promise<void> {
   throw makeProtocolError('INVALID_PARAMS', 'Session cwd must be an existing absolute directory.')
 }
 
-const thinkingLevels = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
-
-function projectSessionState(
-  sessionId: string,
-  value: unknown,
-  activeRunId?: string,
-  lastRun?: SessionLastRun
-): JsonValue {
-  const state = isRecord(value) ? value : {}
-  const model = isRecord(state.model) ? state.model : undefined
-  const messages = Array.isArray(state.messages) ? (state.messages as JsonValue[]) : []
-  const cwd = typeof state.cwd === 'string' && state.cwd ? state.cwd : undefined
-  if (!cwd) throw new TypeError('Worker session state omitted cwd')
-  return {
-    sessionId,
-    messages,
-    ...(model && typeof model.provider === 'string' && typeof model.id === 'string'
-      ? { model: { provider: model.provider, id: model.id } }
-      : {}),
-    ...(typeof state.thinkingLevel === 'string' && thinkingLevels.has(state.thinkingLevel)
-      ? { thinkingLevel: state.thinkingLevel }
-      : {}),
-    cwd,
-    ...(activeRunId ? { activeRunId } : {}),
-    ...(lastRun ? { lastRun } : {})
-  }
-}
-
 export function createWorkerKernelAdapter(
   options: WorkerKernelAdapterOptions
 ): WorkerKernelAdapter {
@@ -168,6 +136,7 @@ export function createWorkerKernelAdapter(
   const memoryClientRuns = new Map<string, Map<string, DuplicateRun>>()
   const openingSessions = new Map<string, Promise<PersistentSession>>()
   const admissions = new Set<Promise<void>>()
+  let boundCore: KernelProtocolCore | undefined
   let closing = false
   let closeAllPromise: Promise<void> | undefined
 
@@ -200,7 +169,8 @@ export function createWorkerKernelAdapter(
 
   const openPersistentSession = async (
     sessionId: string,
-    resources?: SessionPolicyParams
+    resources?: SessionPolicyParams,
+    hostCapabilities: ReadonlySet<string> = new Set()
   ): Promise<PersistentSession> => {
     const loaded = durableSessions.get(sessionId)
     if (loaded && sessionKinds.get(sessionId) === 'persistent') return loaded
@@ -237,6 +207,8 @@ export function createWorkerKernelAdapter(
         }
         await callWorker('session.create', {
           ...createInput,
+          desktopServices: true,
+          desktopHostCapabilities: [...hostCapabilities],
           sessionId,
           agentDir: options.agentDir,
           sessionManager: {
@@ -248,7 +220,11 @@ export function createWorkerKernelAdapter(
           }
         })
         sessionKinds.set(sessionId, 'persistent')
-        sessionCreateInputs.set(sessionId, createInput)
+        sessionCreateInputs.set(sessionId, {
+          ...createInput,
+          desktopServices: true,
+          desktopHostCapabilities: [...hostCapabilities]
+        })
         return session
       } catch (error) {
         await durableSessions.close(sessionId)
@@ -301,6 +277,12 @@ export function createWorkerKernelAdapter(
     sessionNotFound,
     duplicateRequest,
     withAdmission
+  })
+  const desktopMemoryHandlers = createDesktopMemoryHandlers({
+    core: () => boundCore,
+    sessionCreateInputs,
+    persistentSession: (sessionId) => durableSessions.get(sessionId),
+    requireLoadedSession
   })
 
   const finishActiveRun = async (
@@ -359,6 +341,7 @@ export function createWorkerKernelAdapter(
     ...resourceHandlers,
     ...sessionForkHandlers,
     ...promptHandlers,
+    ...desktopMemoryHandlers,
     'session.create'(params, callContext) {
       return withAdmission(async () => {
         const create = params as SessionCreateParams
@@ -372,15 +355,22 @@ export function createWorkerKernelAdapter(
         await assertExistingAbsoluteDirectory(create.cwd)
         await requireAvailableModel(options.modelAccess, create.model)
         const sessionId = randomUUID()
+        const desktopHostCapabilities = [...(callContext.hostCapabilities ?? [])]
         if (create.sessionManager.kind === 'memory') {
           await callWorker('session.create', {
             ...create,
+            desktopServices: true,
+            desktopHostCapabilities,
             sessionId,
             agentDir: options.agentDir,
             sessionManager: { kind: 'memory', cwd: create.cwd }
           })
           sessionKinds.set(sessionId, 'memory')
-          sessionCreateInputs.set(sessionId, create as unknown as Record<string, unknown>)
+          sessionCreateInputs.set(sessionId, {
+            ...(create as unknown as Record<string, unknown>),
+            desktopServices: true,
+            desktopHostCapabilities
+          })
           memoryClientRuns.set(sessionId, new Map())
           return { sessionId }
         }
@@ -389,6 +379,8 @@ export function createWorkerKernelAdapter(
         try {
           await callWorker('session.create', {
             ...create,
+            desktopServices: true,
+            desktopHostCapabilities,
             sessionId,
             agentDir: options.agentDir,
             sessionManager: {
@@ -398,7 +390,11 @@ export function createWorkerKernelAdapter(
             }
           })
           sessionKinds.set(sessionId, 'persistent')
-          sessionCreateInputs.set(sessionId, create as unknown as Record<string, unknown>)
+          sessionCreateInputs.set(sessionId, {
+            ...(create as unknown as Record<string, unknown>),
+            desktopServices: true,
+            desktopHostCapabilities
+          })
           return { sessionId }
         } catch (error) {
           await durableSessions.abandonNew(sessionId)
@@ -417,7 +413,7 @@ export function createWorkerKernelAdapter(
           )
         }
         try {
-          await openPersistentSession(sessionId, resources)
+          await openPersistentSession(sessionId, resources, callContext.hostCapabilities)
           return { sessionId }
         } catch (error) {
           if (error instanceof SessionWriterBusyError) {
@@ -572,6 +568,7 @@ export function createWorkerKernelAdapter(
       return closeAllPromise
     },
     bind(core) {
+      boundCore = core
       const unbindOutbound = bindWorkerOutbound({
         agentDir: options.agentDir,
         core,
@@ -589,6 +586,7 @@ export function createWorkerKernelAdapter(
         }
       })
       return () => {
+        if (boundCore === core) boundCore = undefined
         unbindModelAccess?.()
         unbindOutbound()
         durableSessions.releaseAllSync()

@@ -129,6 +129,9 @@ const methodParams = {
   'session.compact': {},
   'session.getAutoCompaction': {},
   'session.setAutoCompaction': { enabled: true, thresholdPercent: 80 },
+  'memory.read': {},
+  'memory.deleteLesson': { index: 0, text: 'A durable lesson.' },
+  'memory.clear': {},
   'session.close': {},
   'models.catalog': {},
   'modelAccess.configure': {
@@ -255,6 +258,17 @@ const methodResults = {
     thresholdPercent: 80,
     thresholdTokens: 25_600
   },
+  'memory.read': {
+    summary: 'Project summary',
+    summaryUpdatedAt: null,
+    lessons: [{ index: 0, text: 'A durable lesson.' }]
+  },
+  'memory.deleteLesson': {
+    summary: 'Project summary',
+    summaryUpdatedAt: null,
+    lessons: []
+  },
+  'memory.clear': { cleared: true },
   'session.close': { closed: true },
   'models.catalog': {
     models: [

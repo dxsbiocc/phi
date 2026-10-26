@@ -19,6 +19,8 @@ export interface KernelCallContext {
   controllerGeneration: number
   connectionId: string
   trusted: boolean
+  /** Negotiated desktop services from the active trusted controller; never request payload data. */
+  hostCapabilities?: ReadonlySet<string>
 }
 
 export interface KernelHostRequestContext {
@@ -59,6 +61,11 @@ export type KernelBusinessMethod = Exclude<KernelV1Method, 'kernel.hello'>
 export type KernelMethodHandlers = Partial<Record<KernelBusinessMethod, KernelMethodHandler>> & {
   promptConflict?: SessionPromptConflictHandler
   onControllerDetached?: (generation: number) => void | Promise<void>
+  onRunCompleted?: (
+    sessionId: string,
+    runId: string,
+    status: RunCompletionStatus
+  ) => void | Promise<void>
 }
 
 export interface KernelProtocolLogger {

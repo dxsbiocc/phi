@@ -9,7 +9,7 @@ import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
 export type PaletteUse = 'categorical' | 'heatmap' | 'diverging' | 'sequential_warm' | 'product'
 
-type Palette = {
+export type Palette = {
   id: string
   title: string
   kind: 'categorical' | 'sequential' | 'diverging'
@@ -17,7 +17,7 @@ type Palette = {
   colors: string[]
 }
 
-type PaletteCatalog = {
+export type PaletteCatalog = {
   defaults: Record<PaletteUse, string>
   recommended: Palette[]
 }
@@ -38,7 +38,7 @@ const USE_KINDS: Record<PaletteUse, Palette['kind']> = {
   product: 'categorical'
 }
 
-function readCatalog(path: string): PaletteCatalog {
+export function readPaletteCatalog(path: string): PaletteCatalog {
   const raw: unknown = parseYaml(readFileSync(path, 'utf8'))
   if (!isRecord(raw) || !isRecord(raw.defaults) || !Array.isArray(raw.recommended)) {
     throw new Error('Phi 内置配色表格式无效。')
@@ -109,7 +109,12 @@ export function suggestPalettes(
 }
 
 export function buildPaletteRecommendationTool(
-  catalogPath = join(getBundledPalettesDir(), 'palettes.yaml')
+  catalogPath = join(getBundledPalettesDir(), 'palettes.yaml'),
+  requestHost?: (request: {
+    use?: PaletteUse
+    id?: string
+    limit?: number
+  }) => Promise<{ palettes: Palette[] }>
 ): PhiTool {
   return {
     name: 'palette_suggest',
@@ -149,12 +154,15 @@ export function buildPaletteRecommendationTool(
         ) {
           throw new Error('limit 必须为 1 到 4 的整数。')
         }
-        const catalog = readCatalog(catalogPath)
-        const palettes = suggestPalettes(catalog, {
+        const request = {
           ...(use ? { use: use as PaletteUse } : {}),
           ...(typeof input.id === 'string' ? { id: input.id.trim() } : {}),
           ...(typeof input.limit === 'number' ? { limit: input.limit } : {})
-        })
+        }
+        const palettes = requestHost
+          ? (await requestHost(request)).palettes
+          : suggestPalettes(readPaletteCatalog(catalogPath), request)
+        if (!Array.isArray(palettes)) throw new Error('配色服务返回了无效结果。')
         const details = {
           kind: 'palette_suggestions',
           source: 'resources/palettes/palettes.yaml',
