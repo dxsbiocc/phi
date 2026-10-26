@@ -180,22 +180,26 @@ export class SessionRoutingEngine implements PhiEngine {
   private historyGuard(path?: string, cwd?: string): void {
     const phiId = path ? phiSessionIdFromPath(path) : null
     const manifests = phiId ? [findPhiSessionById(phiId)] : listPhiSessions()
-    if (
-      manifests.some(
-        (manifest) =>
-          manifest &&
-          (manifest.projectLocation?.kind === 'ssh' ||
-            manifest.runtimeRef ||
-            manifest.kernelRuntimeRef ||
-            manifest.runtimeRecoveryError) &&
-          (phiId ||
-            (path &&
-              (excludesManifestLocalJournalPath(manifest, path) ||
-                (manifest.runtimeRecoveryError && manifest.runtimeSessionPath === path))) ||
-            (cwd && manifest.cwd === cwd))
-      )
+    const guarded = manifests.find(
+      (manifest) =>
+        manifest &&
+        (manifest.projectLocation?.kind === 'ssh' ||
+          manifest.runtimeRef ||
+          manifest.kernelRuntimeRef ||
+          manifest.runtimeRecoveryError) &&
+        (phiId ||
+          (path &&
+            (excludesManifestLocalJournalPath(manifest, path) ||
+              (manifest.runtimeRecoveryError && manifest.runtimeSessionPath === path))) ||
+          (cwd && manifest.cwd === cwd))
     )
-      throw new RemoteSessionCapabilityError('history')
+    if (guarded?.kernelRuntimeRef) {
+      throw new RuntimeReferenceError(
+        'REMOTE_OPERATION_REQUIRED',
+        'This chat belongs to the Phi kernel. Re-enable the kernel route to continue, or roll back to a verified legacy package before opening it there.'
+      )
+    }
+    if (guarded) throw new RemoteSessionCapabilityError('history')
   }
   private createLegacySession(
     params: PhiSessionCreateParams,

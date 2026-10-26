@@ -213,27 +213,17 @@ async function launchAppRemoteKernel(input: {
   }
 }
 
-export function createAppKernelSessionLaunchers(
+function createAppLocalKernelLauncher(
   options: AppRemoteSessionRoutingOptions,
-  dependencies: AppRemoteSessionRoutingDependencies
-): {
-  launchLocal: KernelSessionLauncher
-  launchRemote: KernelSessionLauncher
-  hostCapabilities: readonly string[]
-  configureClient: NonNullable<
-    import('./engine/kernel-session-factory').KernelSessionFactoryOptions['configureClient']
-  >
-  close(): Promise<void>
-} {
-  let modelAccessOwner: DesktopModelAccessOwner | undefined
-  const active = new Set<() => Promise<void>>()
-  const desktopServices = new AppKernelDesktopServices(options, getPhiEngineBridge())
-  const launchLocal: KernelSessionLauncher = async (params, context, signal) => {
+  active: Set<() => Promise<void>>,
+  modelAccess: { owner?: DesktopModelAccessOwner }
+): KernelSessionLauncher {
+  return async (params, context, signal) => {
     signal.throwIfAborted()
     // Loaded on first launch: the SDK credential store cannot load in node-run shared modules.
     const { createDesktopModelAccessOwner } =
       await import('./engine/kernel-host/desktop-model-access')
-    modelAccessOwner ??= await createDesktopModelAccessOwner(params.agentDir)
+    modelAccess.owner ??= await createDesktopModelAccessOwner(params.agentDir)
     const paths = options.appPaths()
     const target = localKernelTarget()
     const buildDirectory = kernelBuildDirectory(paths, target)
@@ -252,7 +242,7 @@ export function createAppKernelSessionLaunchers(
         PHI_KERNEL_ADOPT_ROOTS: [...new Set(adoptRoots)].join(delimiter)
       },
       configureClient: context.configureClient,
-      modelAccessBroker: modelAccessOwner.broker,
+      modelAccessBroker: modelAccess.owner.broker,
       hello: {
         client: { name: 'phi-desktop', version: paths.version ?? '0.0.0' },
         hostCapabilities: Array.from(context.hostCapabilities)
@@ -261,7 +251,11 @@ export function createAppKernelSessionLaunchers(
     const launched = paths.isPackaged
       ? await launchLocalKernel({
           ...common,
-          executable: join(buildDirectory, 'phi-kernel')
+          package: {
+            directory: buildDirectory,
+            target,
+            phiVersion: paths.version ?? '0.0.0'
+          }
         })
       : await launchLocalKernel({
           ...common,
@@ -280,6 +274,24 @@ export function createAppKernelSessionLaunchers(
       close
     }
   }
+}
+
+export function createAppKernelSessionLaunchers(
+  options: AppRemoteSessionRoutingOptions,
+  dependencies: AppRemoteSessionRoutingDependencies
+): {
+  launchLocal: KernelSessionLauncher
+  launchRemote: KernelSessionLauncher
+  hostCapabilities: readonly string[]
+  configureClient: NonNullable<
+    import('./engine/kernel-session-factory').KernelSessionFactoryOptions['configureClient']
+  >
+  close(): Promise<void>
+} {
+  const modelAccess: { owner?: DesktopModelAccessOwner } = {}
+  const active = new Set<() => Promise<void>>()
+  const desktopServices = new AppKernelDesktopServices(options, getPhiEngineBridge())
+  const launchLocal = createAppLocalKernelLauncher(options, active, modelAccess)
 
   const launchRemote: KernelSessionLauncher = (params, context, signal) =>
     launchAppRemoteKernel({ options, dependencies, active, params, context, signal })
@@ -292,7 +304,7 @@ export function createAppKernelSessionLaunchers(
     async close() {
       await Promise.allSettled([...active].map((close) => close()))
       await desktopServices.close()
-      modelAccessOwner?.close()
+      modelAccess.owner?.close()
     }
   }
 }

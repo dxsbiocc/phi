@@ -25,6 +25,11 @@ import { KernelRoutedSessionDriver } from './kernel-routed-session-driver'
 import { KernelExecutionHost } from './kernel-execution-host'
 import { projectKernelEvent } from './kernel-event-projection'
 import {
+  kernelHistoryAdoptionRequest,
+  publishKernelHistoryAdoption,
+  verifiedKernelAdoption
+} from './kernel-session-history'
+import {
   KernelEngineError,
   engineError,
   kernelEngineHandles,
@@ -376,7 +381,7 @@ export class KernelSessionFactory implements RoutedSessionFactory {
     const plan = params.remoteProject
       ? await host.currentConnection()?.planHistory?.(params)
       : await readAndPlanKernelHistory({
-          phiSessionDirectory: getSessionDir(params.phiSessionId, params.agentDir),
+          phiSessionDirectory: getSessionDir(params.phiSessionId),
           phiSessionId: params.phiSessionId
         })
     if (!plan) {
@@ -392,19 +397,20 @@ export class KernelSessionFactory implements RoutedSessionFactory {
         action: 'reopen'
       })
     }
-    const adopted = record(
-      await client.request('session.adopt', {
-        source: plan.source,
-        ...(manifest.title ? { title: manifest.title } : {}),
-        ...(manifest.model
-          ? { model: { provider: manifest.model.providerId, id: manifest.model.modelId } }
-          : {}),
-        ...(manifest.thinkingLevel ? { thinkingLevel: manifest.thinkingLevel } : {})
-      })
+    const { adoptedId, sourceSha256 } = verifiedKernelAdoption(
+      await client.request('session.adopt', kernelHistoryAdoptionRequest(params, manifest, plan))
     )
-    const adoptedId = stringValue(adopted?.sessionId)
-    if (!adoptedId) throw new TypeError('Kernel adoption omitted sessionId.')
     await this.openKernelSession(client, adoptedId, resources)
+    const connection = host.currentConnection()
+    const runtimeAgentDir = connection?.greeting.runtime.agentDir
+    if (!runtimeAgentDir) throw new Error('Kernel adoption runtime identity is incomplete.')
+    await publishKernelHistoryAdoption({
+      params,
+      plan,
+      adoptedId,
+      runtimeAgentDir,
+      sourceSha256
+    })
     return adoptedId
   }
 

@@ -163,6 +163,13 @@ mac:
         - manifest.json
         - phi-kernel
         - '*.node'
+    # macOS is also the release host for the prebuilt Linux x64 remote kernel.
+    - from: .phi-build/kernel/${version}/linux-x64
+      to: kernel/${version}/linux-x64
+      filter:
+        - manifest.json
+        - phi-kernel
+        - '*.node'
     - from: resources/runtime/micromamba/darwin-${arch}
       to: runtime/micromamba/darwin-${arch}
     - from: resources/runtime/bun/darwin-${arch}

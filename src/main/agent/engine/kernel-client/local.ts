@@ -12,6 +12,7 @@ import {
   type LocalKernelCloseOutcome,
   type SpawnKernelStdioOptions
 } from './stdio'
+import { verifyLocalKernelPackage, type LocalKernelPackageTarget } from './local-package'
 
 type LaunchLocalKernelCommonOptions = {
   agentDir: string
@@ -37,8 +38,13 @@ export type LaunchLocalKernelOptions = LaunchLocalKernelCommonOptions &
         entry?: string
       }
     | {
-        executable: string
+        package: {
+          directory: string
+          target: LocalKernelPackageTarget
+          phiVersion: string
+        }
         sourceMode?: false
+        executable?: never
         bunExecutable?: never
         bunArgs?: never
         entry?: never
@@ -66,8 +72,10 @@ export async function launchLocalKernel(
     ...(options.home ? { HOME: options.home, USERPROFILE: options.home } : {}),
     PI_CODING_AGENT_DIR: options.agentDir
   }
-  const mode: SpawnKernelStdioOptions = options.executable
-    ? { executable: options.executable, cwd: options.cwd, env, onDiagnostic: options.onDiagnostic }
+  const verified =
+    'package' in options ? await verifyLocalKernelPackage(options.package) : undefined
+  const mode: SpawnKernelStdioOptions = verified
+    ? { executable: verified.executable, cwd: options.cwd, env, onDiagnostic: options.onDiagnostic }
     : {
         sourceMode: true,
         cwd: options.cwd,
@@ -109,3 +117,5 @@ export async function launchLocalKernel(
     throw error
   }
 }
+
+export * from './local-package'

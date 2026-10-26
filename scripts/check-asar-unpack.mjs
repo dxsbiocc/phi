@@ -17,6 +17,16 @@ const REQUIRED_EXTRA_RESOURCE_MAPPINGS = [
   { section: 'extraResources', from: 'resources/remote-helper', to: 'remote-helper' },
   {
     section: 'mac.extraResources',
+    from: '.phi-build/kernel/${version}/darwin-${arch}',
+    to: 'kernel/${version}/darwin-${arch}'
+  },
+  {
+    section: 'mac.extraResources',
+    from: '.phi-build/kernel/${version}/linux-x64',
+    to: 'kernel/${version}/linux-x64'
+  },
+  {
+    section: 'mac.extraResources',
     from: 'resources/runtime/bun/darwin-${arch}',
     to: 'runtime/bun/darwin-${arch}'
   },

@@ -471,7 +471,11 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
       const executable = join(options.buildDirectory, 'phi-kernel')
       localLaunch = await step('local compiled kernel launched', () =>
         launchLocalKernel({
-          executable,
+          package: {
+            directory: options.buildDirectory,
+            target: 'darwin-arm64',
+            phiVersion: packageVersion
+          },
           hello: { hostCapabilities: [...KERNEL_E2E_HOST_CAPABILITIES] },
           agentDir: files!.paths.agentDir,
           home: files!.paths.home,

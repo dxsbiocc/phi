@@ -38,7 +38,7 @@ test('electron-builder distributes the remote helper outside the asar', () => {
   assert.deepEqual(missingExtraResourceMappings(repoRoot), [])
 })
 
-test('asar check reports a missing arch-specific Bun resource mapping', () => {
+test('asar check reports missing kernel and arch-specific Bun resource mappings', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'phi-bun-mapping-'))
   try {
     writeFileSync(
@@ -53,6 +53,8 @@ test('asar check reports a missing arch-specific Bun resource mapping', () => {
       ].join('\n')
     )
     assert.deepEqual(missingExtraResourceMappings(root), [
+      'mac.extraResources: .phi-build/kernel/${version}/darwin-${arch} -> kernel/${version}/darwin-${arch}',
+      'mac.extraResources: .phi-build/kernel/${version}/linux-x64 -> kernel/${version}/linux-x64',
       'mac.extraResources: resources/runtime/bun/darwin-${arch} -> runtime/bun/darwin-${arch}',
       'linux.extraResources: resources/runtime/bun/linux-${arch} -> runtime/bun/linux-${arch}'
     ])

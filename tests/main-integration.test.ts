@@ -4560,6 +4560,8 @@ async function harness(
     './agent/agents/remote-agent-trust-request',
     './agent/content/remote-skill-trust-request',
     './agent/engine/kernel-engine-switch',
+    './agent/engine/kernel-client/local-package',
+    './agent/engine/kernel-session-history',
     './agent/enablement-request',
     './agent/host-requests/agent-interaction-request',
     './agent/host-requests/deliverables-presentation',

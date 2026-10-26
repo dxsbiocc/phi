@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -357,16 +358,14 @@ test(
   { timeout: 10_000 },
   async (t) => {
     const root = mkdtempSync(join(tmpdir(), 'phi-local-kernel-compiled-'))
-    const executable = join(root, 'fake-compiled-kernel')
+    const executable = join(root, 'phi-kernel')
     const previousSecret = process.env.PHI_LOCAL_LAUNCH_SECRET
     process.env.PHI_LOCAL_LAUNCH_SECRET = 'must-not-reach-explicit-env'
     t.after(() => {
       if (previousSecret === undefined) delete process.env.PHI_LOCAL_LAUNCH_SECRET
       else process.env.PHI_LOCAL_LAUNCH_SECRET = previousSecret
     })
-    writeFileSync(
-      executable,
-      `#!/usr/bin/env bun
+    const executableContent = `#!/usr/bin/env bun
 import { createInterface } from 'node:readline'
 
 process.stderr.write('compiled kernel diagnostic\\n')
@@ -389,8 +388,33 @@ lines.once('line', (line) => {
   process.on('SIGTERM', () => undefined)
   setInterval(() => undefined, 60_000)
 })
-`,
-      { mode: 0o700 }
+`
+    const nativeContent = 'compiled fixture native\n'
+    writeFileSync(executable, executableContent, { mode: 0o700 })
+    writeFileSync(join(root, 'pi_natives.darwin-arm64.node'), nativeContent)
+    writeFileSync(
+      join(root, 'manifest.json'),
+      JSON.stringify({
+        phiVersion: 'compiled-test',
+        ompVersion: 'compiled-test',
+        nativeVersion: 'compiled-test',
+        bunVersion: 'compiled-test',
+        target: 'darwin-arm64',
+        files: [
+          {
+            name: 'phi-kernel',
+            role: 'kernel',
+            sha256: createHash('sha256').update(executableContent).digest('hex'),
+            size: Buffer.byteLength(executableContent)
+          },
+          {
+            name: 'pi_natives.darwin-arm64.node',
+            role: 'native',
+            sha256: createHash('sha256').update(nativeContent).digest('hex'),
+            size: Buffer.byteLength(nativeContent)
+          }
+        ]
+      })
     )
     const diagnostics: string[] = []
     let confirmDiagnostic!: () => void
@@ -398,7 +422,7 @@ lines.once('line', (line) => {
       confirmDiagnostic = resolveDiagnostic
     })
     const kernel = await launchLocalKernel({
-      executable,
+      package: { directory: root, target: 'darwin-arm64', phiVersion: 'compiled-test' },
       agentDir: root,
       env: { PATH: process.env.PATH },
       onDiagnostic: (text) => {
