@@ -261,18 +261,17 @@ test(
       )
       assert.equal(typeof accepted.runId, 'string')
 
-      await waitFor(
-        () =>
-          existsSync(pauseMarker(fixture, 'c')) &&
-          fixture.provider.requests.length >= requestCount + 2,
-        'A05(c) committed write marker and held follow-up model request'
-      )
+      // The pause suspends the kernel synchronously once the write result is in the journal;
+      // it may come before the follow-up model request, which then never arrives.
+      await waitFor(() => existsSync(pauseMarker(fixture, 'c')), 'A05(c) committed write marker')
       assert.equal(
         readFileSync(target, 'utf8').split(sideEffectMarker).length - 1,
         1,
         'the write tool side effect must happen at most once before recovery'
       )
       await fixture.kill()
+      // An unconsumed held reply would stall the post-recovery prompt.
+      if (fixture.provider.requests.length < requestCount + 2) fixture.provider.discardQueued?.()
 
       peer = await assertRecoveredA05Run({
         fixture,
