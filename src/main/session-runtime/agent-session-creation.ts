@@ -42,6 +42,8 @@ import type {
 } from './agent-session-creation-contracts'
 import { createDefaultAgentSessionCreationServices } from './agent-session-creation-contracts'
 import { fieldsFromMode, modeFromFields } from '../../shared/sessionMode'
+import { kernelEngineHandles, PHI_KERNEL_ENGINE_MODE } from '../agent/engine/kernel-engine-switch'
+import { RuntimeReferenceError } from '../agent/session/runtime-reference'
 
 export type { AgentSessionCreationDeps } from './agent-session-creation-contracts'
 
@@ -78,7 +80,17 @@ class AgentSessionCreationService<
   }
 
   private readonly resolveSessionCreationRoute = (context: SessionCreationContext): boolean => {
-    return context.remoteProject !== null
+    const remote = context.remoteProject !== null
+    if (
+      context.sessionManifest?.kernelRuntimeRef &&
+      !kernelEngineHandles(PHI_KERNEL_ENGINE_MODE, remote)
+    ) {
+      throw new RuntimeReferenceError(
+        'REMOTE_OPERATION_REQUIRED',
+        '此会话由统一内核管理；请重新启用对应内核端或先执行回退。'
+      )
+    }
+    return remote && !kernelEngineHandles(PHI_KERNEL_ENGINE_MODE, true)
   }
 
   private readonly recordSessionCreationModelMigration = (
@@ -152,7 +164,9 @@ class AgentSessionCreationService<
       {
         useRpc,
         remoteRecovery: Boolean(context.remoteRecovery),
-        hasRuntimeRef: Boolean(context.sessionManifest?.runtimeRef),
+        hasRuntimeRef: Boolean(
+          context.sessionManifest?.runtimeRef ?? context.sessionManifest?.kernelRuntimeRef
+        ),
         modelRuntime,
         modelSelection
       },
@@ -314,19 +328,26 @@ class AgentSessionCreationService<
   }
 
   private readonly sessionCreationManager = (
-    context: SessionCreationContext,
-    useRpc: boolean
+    context: SessionCreationContext
   ): RuntimeSessionManager =>
-    useRpc
+    context.remoteProject
       ? this.deps.runtime.createRemoteSessionManager(
           context.snapshot.cwd,
           context.sessionManifest!.sessionId,
-          Boolean(context.sessionManifest?.runtimeRef)
+          Boolean(context.sessionManifest?.runtimeRef ?? context.sessionManifest?.kernelRuntimeRef)
         )
       : this.deps.runtime.createSessionManager(
           context.snapshot.cwd,
           this.deps.sessions.runtimeSessionPathForSnapshot(context.sessionKey, context.snapshot)
         )
+
+  private readonly desktopMcpBinding = (
+    context: SessionCreationContext,
+    useRpc: boolean
+  ): SessionCreationOptionsInput['desktopMcp'] =>
+    context.remoteProject && !useRpc && context.sessionManifest
+      ? { bindingId: context.sessionManifest.sessionId }
+      : undefined
 
   private readonly prepareSessionCreationOptions = (
     context: SessionCreationContext,
@@ -347,10 +368,11 @@ class AgentSessionCreationService<
       thinkingLevel: modelPhase.runtime.thinkingLevel,
       autoCompaction: context.sessionManifest?.autoCompaction,
       cwd: context.snapshot.cwd,
-      sessionManager: this.sessionCreationManager(context, useRpc),
+      sessionManager: this.sessionCreationManager(context),
       resourceLoader: resources.resourceLoader,
       phiAgents: resources.agentScan.agents,
       remoteProjectMcpServers: useRpc ? undefined : resources.remoteMcpCatalog?.runtimeServers,
+      desktopMcp: this.desktopMcpBinding(context, useRpc),
       projectBound: Boolean(context.project),
       workMode:
         context.sessionManifest?.workMode ??

@@ -38,7 +38,13 @@ function optionalString(value: unknown): value is string | undefined {
 }
 
 function validPersistedSessionPolicy(policy: Record<string, unknown>): boolean {
-  const allowed = new Set(['noTools', 'workMode', 'enableToolApproval', 'autoCompaction'])
+  const allowed = new Set([
+    'noTools',
+    'workMode',
+    'enableToolApproval',
+    'resourceVersion',
+    'autoCompaction'
+  ])
   return (
     !Object.keys(policy).some((key) => !allowed.has(key)) &&
     Object.hasOwn(policy, 'noTools') &&
@@ -47,7 +53,10 @@ function validPersistedSessionPolicy(policy: Record<string, unknown>): boolean {
     (policy.noTools === 'all' || typeof policy.noTools === 'boolean') &&
     typeof policy.workMode === 'string' &&
     workModes.has(policy.workMode) &&
-    typeof policy.enableToolApproval === 'boolean'
+    typeof policy.enableToolApproval === 'boolean' &&
+    (policy.resourceVersion === undefined ||
+      (typeof policy.resourceVersion === 'string' &&
+        /^[a-f0-9]{64}$/u.test(policy.resourceVersion)))
   )
 }
 
@@ -76,6 +85,9 @@ function persistedSessionPolicy(
     noTools: policy.noTools as 'all' | boolean,
     workMode: policy.workMode as 'direct' | 'plan' | 'plan_execute' | 'auto',
     enableToolApproval: policy.enableToolApproval as boolean,
+    ...(typeof policy.resourceVersion === 'string'
+      ? { resourceVersion: policy.resourceVersion }
+      : {}),
     ...(autoCompaction ? { autoCompaction } : {})
   }
 }

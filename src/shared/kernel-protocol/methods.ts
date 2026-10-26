@@ -141,12 +141,22 @@ export const kernelHelloResultSchema = z
     kernelInstanceId: nonEmptyIdSchema,
     controllerGeneration: z.number().int().positive(),
     capabilities: z.array(z.string().min(1)),
-    lastSeq: z.number().int().nonnegative()
+    lastSeq: z.number().int().nonnegative(),
+    runtime: z
+      .object({
+        home: z.string(),
+        agentDir: z.string()
+      })
+      .strict()
   })
   .strict()
 
 export const sessionPolicyParamsSchema = z
   .object({
+    resourceVersion: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     workMode: z.enum(['direct', 'plan', 'plan_execute', 'auto']).optional(),
     enableToolApproval: z.boolean().optional(),
     autoCompaction: z
@@ -202,7 +212,9 @@ export const sessionCreateParamsSchema = z
     ...sessionPolicyParamsSchema.shape
   })
   .strict()
-export const sessionCreateResultSchema = z.object({ sessionId: nonEmptyIdSchema }).strict()
+export const sessionCreateResultSchema = z
+  .object({ sessionId: nonEmptyIdSchema, sessionFile: z.string().min(1).optional() })
+  .strict()
 
 export const sessionOpenParamsSchema = z
   .object({
@@ -629,7 +641,7 @@ const autoCompactionResultSchema = z
   .object({
     enabled: z.boolean(),
     thresholdPercent: z.number().min(0).max(100),
-    thresholdTokens: z.number().nonnegative()
+    thresholdTokens: z.number().int().min(-1)
   })
   .strict()
 
@@ -680,7 +692,8 @@ export const eventsSubscribeResultSchema = z
 export const approvalRespondParamsSchema = z
   .object({
     approvalId: nonEmptyIdSchema,
-    decision: z.enum(['approved', 'denied'])
+    decision: z.enum(['approved', 'denied']),
+    reason: z.string().min(1).optional()
   })
   .strict()
 export const approvalRespondResultSchema = z.object({ accepted: z.literal(true) }).strict()
@@ -689,7 +702,12 @@ export const runCompletedPayloadSchema = z
   .object({
     runId: nonEmptyIdSchema,
     status: runCompletionStatusSchema,
-    detail: z.string().optional()
+    detail: z.string().optional(),
+    model: modelSelectorSchema.optional(),
+    resourceVersion: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional()
   })
   .strict()
 

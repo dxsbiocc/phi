@@ -135,6 +135,10 @@ class ClientProxyModelAccessImpl implements ClientProxyModelAccess {
     return this.configuredModels
   }
 
+  refreshCatalog(): Promise<void> {
+    return this.configureQueue
+  }
+
   status(): readonly ModelAccessProviderStatus[] {
     const status = this.reconnect.ready ? ('available' as const) : ('unreachable' as const)
     return Object.freeze(

@@ -373,6 +373,8 @@ export type PhiHostRequestHandler = (
 
 export type PhiSessionCreateParams = {
   sessionId: string
+  /** Trusted stable UI/session identity. Present only while the kernel switch owns this end. */
+  phiSessionId?: string
   cwd: string
   agentDir: string
   model?: RuntimeModel

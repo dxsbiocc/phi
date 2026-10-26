@@ -21,6 +21,7 @@ export interface SessionCreationOptionsInput {
   resourceLoader: CreateAgentSessionOptions['resourceLoader']
   phiAgents: CreateAgentSessionOptions['phiAgents']
   remoteProjectMcpServers: CreateAgentSessionOptions['remoteProjectMcpServers']
+  desktopMcp?: CreateAgentSessionOptions['desktopMcp']
   projectBound: boolean
   workMode: NonNullable<CreateAgentSessionOptions['workMode']>
   memory: CreateAgentSessionOptions['memory']
@@ -35,6 +36,7 @@ export function buildSessionCreationOptions(
   input: SessionCreationOptionsInput
 ): SessionCreationOptions {
   const options: SessionCreationOptions = {}
+  if (input.phiSessionId) options.phiSessionId = input.phiSessionId
   if (input.remoteRecovery) options.remoteRecovery = input.remoteRecovery
   options.modelRuntime = input.modelRuntime
   options.thinkingLevel = input.thinkingLevel
@@ -46,6 +48,7 @@ export function buildSessionCreationOptions(
   if (input.remoteProjectMcpServers?.length) {
     options.remoteProjectMcpServers = input.remoteProjectMcpServers
   }
+  if (input.desktopMcp) options.desktopMcp = input.desktopMcp
   options.projectBound = input.projectBound
   options.workMode = input.workMode
   if (input.memory?.enabled) options.memory = input.memory

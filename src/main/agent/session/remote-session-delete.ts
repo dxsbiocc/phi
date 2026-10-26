@@ -17,12 +17,14 @@ import {
 import { remoteWorkspaceHosts } from '../workspace-host/remote-registry'
 import { shellQuote as q, type RemoteSshSession } from '../wrappers/remote-ssh-session'
 import {
+  assertKernelRuntimeReferenceProject,
   assertRuntimeReferenceProject,
   assertRuntimeScope,
   parseRuntimeReference,
   RuntimeReferenceError,
   type RemoteOmpRuntimeRef
 } from './runtime-reference'
+import type { KernelRemoteRuntimeRef } from './runtime-reference'
 import { deletePhiSession, findPhiSessionById } from './session-store'
 
 const DELETED = 'PHI_STORAGE_SESSION_DELETED\n'
@@ -108,6 +110,31 @@ printf '%s' ${q(manifest)} | cmp -s - ${q(paths.manifest)} || storage_fail IDENT
 ${finish}`
 }
 
+export function buildRemoteKernelSessionDeleteCommand(
+  reference: KernelRemoteRuntimeRef,
+  mode: 'verify' | 'delete' = 'delete'
+): string {
+  const root = reference.host.runtimeRoot
+  const sessionsRoot = posix.join(root, 'phi-kernel', 'sessions')
+  const target = posix.join(sessionsRoot, reference.kernelSessionId)
+  const tombstone = `${target}.deleting-${randomUUID()}`
+  return `${privateRemotePrefix(root)}
+target=${q(target)}
+if [ ! -e "$target" ]; then printf '${ABSENT.trim()}\\n'; exit 0; fi
+[ -d "$target" ] && [ ! -L "$target" ] || { printf 'PHI_STORAGE:PATH_INVALID\\n' >&2; exit 1; }
+[ "$(cd -- "$target" && pwd -P)" = "$target" ] || { printf 'PHI_STORAGE:PATH_INVALID\\n' >&2; exit 1; }
+[ "$(stat -c %u -- "$target")" = "$(id -u)" ] || { printf 'PHI_STORAGE:PERMISSION_DENIED\\n' >&2; exit 1; }
+if [ ${q(mode)} = verify ]; then printf '${VERIFIED.trim()}\\n'; exit 0; fi
+lock="$target/writer.lock"
+if [ -e "$lock" ]; then
+  command -v flock >/dev/null 2>&1 || { printf 'PHI_STORAGE:LOCK_UNPROVABLE\\n' >&2; exit 1; }
+  ( exec 9<>"$lock"; flock -n 9 ) || { printf 'PHI_STORAGE:LOCK_HELD\\n' >&2; exit 1; }
+fi
+mv -- "$target" ${q(tombstone)}
+rm -rf -- ${q(tombstone)}
+printf '${DELETED.trim()}\\n'`
+}
+
 type ConnectRemoteSession = (request: {
   sessionId: string
   projectId: string
@@ -167,8 +194,60 @@ export interface PreparedRemotePhiDeletion {
   close(): Promise<void>
 }
 
+async function prepareRemoteKernelPhiDeletion(
+  sessionId: string,
+  reference: KernelRemoteRuntimeRef,
+  dependencies: RemoteDeletionDependencies
+): Promise<PreparedRemotePhiDeletion> {
+  const manifest = findPhiSessionById(sessionId)
+  const project = manifest?.projectId
+    ? (dependencies.getProject ?? getProject)(manifest.projectId)
+    : undefined
+  if (!manifest || !project || project.location.kind !== 'ssh') {
+    throw new RuntimeReferenceError('PROJECT_MISMATCH', '远程项目绑定已改变，不能删除服务器历史')
+  }
+  assertKernelRuntimeReferenceProject(manifest, reference)
+  let remote: Pick<RemoteSshSession, 'exec' | 'execBounded' | 'close'>
+  try {
+    remote = await (
+      dependencies.connect ?? ((request) => remoteWorkspaceHosts.connectIsolated(request))
+    )({ sessionId, projectId: project.id })
+  } catch (cause) {
+    throw new RemoteSessionDeleteUnavailableError(cause)
+  }
+  let closed = false
+  const close = async (): Promise<void> => {
+    if (closed) return
+    closed = true
+    await remote.close()
+  }
+  try {
+    await runCommand(remote, buildRemoteKernelSessionDeleteCommand(reference, 'verify'), 'verify')
+  } catch (error) {
+    await close().catch(() => undefined)
+    throw error
+  }
+  return {
+    async delete() {
+      const latest = findPhiSessionById(sessionId)
+      if (
+        !latest?.kernelRuntimeRef ||
+        JSON.stringify(latest.kernelRuntimeRef) !== JSON.stringify(reference)
+      ) {
+        throw new RuntimeReferenceError('STALE_GENERATION', '会话身份在删除期间改变，请刷新后重试')
+      }
+      await runCommand(remote, buildRemoteKernelSessionDeleteCommand(reference), 'delete')
+      deletePhiSession(sessionId)
+      await (dependencies.releaseSession ?? ((id) => remoteWorkspaceHosts.releaseSession(id)))(
+        sessionId
+      ).catch(() => undefined)
+    },
+    close
+  }
+}
+
 /** Read-only server verification runs before the caller stops or switches the conversation. */
-export async function prepareRemotePhiDeletion(
+async function prepareRpcRemotePhiDeletion(
   sessionId: string,
   dependencies: RemoteDeletionDependencies = {}
 ): Promise<PreparedRemotePhiDeletion> {
@@ -245,4 +324,19 @@ export async function prepareRemotePhiDeletion(
     },
     close
   }
+}
+
+/** Read-only server verification runs before the caller stops or switches the conversation. */
+export async function prepareRemotePhiDeletion(
+  sessionId: string,
+  dependencies: RemoteDeletionDependencies = {}
+): Promise<PreparedRemotePhiDeletion> {
+  const kernelReference = findPhiSessionById(sessionId)?.kernelRuntimeRef
+  return kernelReference?.host.kind === 'ssh'
+    ? prepareRemoteKernelPhiDeletion(
+        sessionId,
+        kernelReference as KernelRemoteRuntimeRef,
+        dependencies
+      )
+    : prepareRpcRemotePhiDeletion(sessionId, dependencies)
 }

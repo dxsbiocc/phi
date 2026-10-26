@@ -88,6 +88,7 @@ function protocolError(error: unknown): ProtocolError {
 export class KernelProtocolClient {
   private readonly pending = new Map<string, PendingRequest>()
   private readonly eventListeners = new Set<(event: KernelEventFrame) => void>()
+  private readonly closeListeners = new Set<() => void>()
   private readonly hostHandlers = new Map<KernelHostCapabilityName, UntypedKernelHostHandler>()
   private readonly hostRequestControllers = new Map<string, AbortController>()
   private requestCounter = 0
@@ -144,6 +145,12 @@ export class KernelProtocolClient {
   onEvent(listener: (event: KernelEventFrame) => void): () => void {
     this.eventListeners.add(listener)
     return () => this.eventListeners.delete(listener)
+  }
+
+  onClose(listener: () => void): () => void {
+    if (this.closed) queueMicrotask(listener)
+    else this.closeListeners.add(listener)
+    return () => this.closeListeners.delete(listener)
   }
 
   registerHostCapability<Name extends KernelHostCapabilityName>(
@@ -337,6 +344,8 @@ export class KernelProtocolClient {
     this.closed = true
     this.abortHostRequests('Kernel transport closed.')
     this.rejectPending(internalError('Kernel transport closed.'))
+    for (const listener of this.closeListeners) listener()
+    this.closeListeners.clear()
   }
 
   private abortHostRequests(reason: string): void {

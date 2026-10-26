@@ -5,7 +5,9 @@ import type { PhiSessionManifest } from './session-store'
 import { fieldsFromMode, modeFromFields } from '../../../shared/sessionMode'
 import {
   assertRuntimeReferenceProject,
+  assertKernelRuntimeReferenceProject,
   excludesLocalJournalPath,
+  parseKernelRuntimeReference,
   parseRuntimeReference,
   RuntimeReferenceError
 } from './runtime-reference'
@@ -17,6 +19,30 @@ type ReadManifest = Omit<PhiSessionManifest, 'runtimeRecoveryError'> & {
   [invalidReference]?: unknown
 }
 
+function readKernelReferenceFromRuntimeField(manifest: ReadManifest, raw: unknown): boolean {
+  if (
+    !raw ||
+    typeof raw !== 'object' ||
+    Array.isArray(raw) ||
+    (raw as { kind?: unknown }).kind !== 'phi-kernel'
+  ) {
+    return false
+  }
+  try {
+    manifest.kernelRuntimeRef = parseKernelRuntimeReference(raw)
+    delete manifest.runtimeRef
+    assertKernelRuntimeReferenceProject(manifest, manifest.kernelRuntimeRef)
+  } catch (error) {
+    manifest[invalidReference] = raw
+    delete manifest.runtimeRef
+    manifest.runtimeRecoveryError = {
+      code: error instanceof RuntimeReferenceError ? error.code : 'INVALID_RUNTIME_REFERENCE',
+      message: '内核会话定位信息无法验证；本地时间线仍可查看，需要显式恢复'
+    }
+  }
+  return true
+}
+
 export function readManifestFile(path: string, sessionId: string): PhiSessionManifest {
   const manifest = JSON.parse(readFileSync(path, 'utf8')) as ReadManifest
   if (manifest.schemaVersion !== 1 || manifest.sessionId !== sessionId) {
@@ -24,17 +50,32 @@ export function readManifestFile(path: string, sessionId: string): PhiSessionMan
   }
   manifest.workMode ??= fieldsFromMode(modeFromFields(manifest)).workMode
   delete manifest.runtimeRecoveryError
-  if (!Object.hasOwn(manifest, 'runtimeRef')) return manifest
-  const raw = manifest.runtimeRef
-  try {
-    manifest.runtimeRef = parseRuntimeReference(raw, sessionId)
-    assertRuntimeReferenceProject(manifest, manifest.runtimeRef)
-  } catch (error) {
-    manifest[invalidReference] = raw
-    delete manifest.runtimeRef
-    manifest.runtimeRecoveryError = {
-      code: error instanceof RuntimeReferenceError ? error.code : 'INVALID_RUNTIME_REFERENCE',
-      message: '远程会话定位信息无法验证；本地时间线仍可查看，需要显式恢复'
+  if (Object.hasOwn(manifest, 'runtimeRef')) {
+    const raw = manifest.runtimeRef
+    if (!readKernelReferenceFromRuntimeField(manifest, raw)) {
+      try {
+        manifest.runtimeRef = parseRuntimeReference(raw, sessionId)
+        assertRuntimeReferenceProject(manifest, manifest.runtimeRef)
+      } catch (error) {
+        manifest[invalidReference] = raw
+        delete manifest.runtimeRef
+        manifest.runtimeRecoveryError = {
+          code: error instanceof RuntimeReferenceError ? error.code : 'INVALID_RUNTIME_REFERENCE',
+          message: '远程会话定位信息无法验证；本地时间线仍可查看，需要显式恢复'
+        }
+      }
+    }
+  }
+  if (Object.hasOwn(manifest, 'kernelRuntimeRef')) {
+    try {
+      manifest.kernelRuntimeRef = parseKernelRuntimeReference(manifest.kernelRuntimeRef)
+      assertKernelRuntimeReferenceProject(manifest, manifest.kernelRuntimeRef)
+    } catch (error) {
+      delete manifest.kernelRuntimeRef
+      manifest.runtimeRecoveryError = {
+        code: error instanceof RuntimeReferenceError ? error.code : 'INVALID_RUNTIME_REFERENCE',
+        message: '内核会话定位信息无法验证；本地时间线仍可查看，需要显式恢复'
+      }
     }
   }
   return manifest
@@ -45,8 +86,16 @@ export function writeManifestFile(directory: string, manifest: PhiSessionManifes
     const ref = parseRuntimeReference(manifest.runtimeRef, manifest.sessionId)
     assertRuntimeReferenceProject(manifest, ref)
   }
+  if (manifest.kernelRuntimeRef) {
+    const ref = parseKernelRuntimeReference(manifest.kernelRuntimeRef)
+    assertKernelRuntimeReferenceProject(manifest, ref)
+  }
   const document: Record<string | symbol, unknown> = { ...manifest }
   delete document.runtimeRecoveryError
+  if (manifest.kernelRuntimeRef?.host.kind === 'ssh') {
+    document.runtimeRef = manifest.kernelRuntimeRef
+    delete document.kernelRuntimeRef
+  }
   if (Object.hasOwn(document, invalidReference)) document.runtimeRef = document[invalidReference]
   const temporary = join(directory, `.manifest.${process.pid}.${randomUUID()}.tmp`)
   try {

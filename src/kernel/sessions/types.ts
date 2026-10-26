@@ -14,6 +14,7 @@ export type PersistedSessionPolicy = {
   noTools: 'all' | boolean
   workMode: 'direct' | 'plan' | 'plan_execute' | 'auto'
   enableToolApproval: boolean
+  resourceVersion?: string
   autoCompaction?: {
     enabled: boolean
   }

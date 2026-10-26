@@ -7,6 +7,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
+import type { JsonValue } from '../src/shared/kernel-protocol'
 import {
   DESKTOP_BROKER_API_KEY_CONFIG,
   projectDesktopBrokerModelsConfig
@@ -179,5 +180,121 @@ if (!bunRuntime) {
       access.status().find(({ provider }) => provider === 'desktop-stored'),
       { provider: 'desktop-stored', status: 'unauthenticated' }
     )
+
+    const disconnected = await brokerModule!.createDesktopBrokerModelAccess({
+      hydrate: false,
+      modelsPath,
+      cacheDbPath: ':memory:',
+      requestCredentials: async () => {
+        throw Object.assign(new Error('desktop broker absent'), {
+          code: 'CAPABILITY_UNAVAILABLE'
+        })
+      },
+      requestRefresh: async () => {
+        throw new Error('Disconnected fixture cannot refresh credentials')
+      }
+    })
+    t.after(() => disconnected.close())
+    writeFileSync(modelsPath, JSON.stringify(config('offline-replacement')), { mode: 0o600 })
+    await disconnected.refreshCatalog().catch((error: unknown) => {
+      throw new Error('Offline catalog refresh required the desktop broker', { cause: error })
+    })
+    assert.ok(
+      disconnected
+        .catalog()
+        .some((model) => model.provider === 'desktop-stored' && model.id === 'offline-replacement')
+    )
+    assert.equal(
+      disconnected
+        .catalog()
+        .some((model) => model.provider === 'desktop-stored' && model.id === 'replacement-model'),
+      false
+    )
+    await assert.rejects(disconnected.authStorage.keys.get('desktop-stored'), (error) => {
+      return (
+        error !== null &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'DESKTOP_CREDENTIAL_BROKER_DISCONNECTED'
+      )
+    })
+
+    const reopenRoot = mkdtempSync(join(tmpdir(), 'phi-kernel-brokerless-reopen-'))
+    const reopenAgentDir = join(reopenRoot, 'agent')
+    const reopenCwd = join(reopenRoot, 'project')
+    const reopenModelsPath = join(reopenAgentDir, 'models.yml')
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(reopenAgentDir, { recursive: true })
+    mkdirSync(reopenCwd, { recursive: true })
+    const reopenConfig = (id: string): Record<string, unknown> => {
+      const value = config(id) as {
+        providers: Record<string, Record<string, unknown>>
+      }
+      value.providers['desktop-stored'].apiKey = 'fixture-inline-key'
+      return value
+    }
+    writeFileSync(reopenModelsPath, JSON.stringify(reopenConfig('saved-model')), { mode: 0o600 })
+    const reopenAccess = await brokerModule!.createDesktopBrokerModelAccess({
+      hydrate: false,
+      modelsPath: reopenModelsPath,
+      cacheDbPath: ':memory:',
+      requestCredentials: async () => {
+        throw Object.assign(new Error('desktop broker absent'), {
+          code: 'CAPABILITY_UNAVAILABLE'
+        })
+      },
+      requestRefresh: async () => {
+        throw new Error('Disconnected fixture cannot refresh credentials')
+      }
+    })
+    const { createWorkerKernelAdapter } = await import('../src/kernel/worker')
+    const adapter = createWorkerKernelAdapter({
+      agentDir: reopenAgentDir,
+      modelAccess: reopenAccess,
+      processStartedAt: 'darwin:test-process',
+      acquireSessionLockGuard: () => ({ acquired: true, release: () => undefined })
+    })
+    t.after(async () => {
+      await adapter.closeAll().catch(() => undefined)
+      reopenAccess.close()
+      rmSync(reopenRoot, { recursive: true, force: true })
+    })
+    const call = async (
+      method: 'session.create' | 'session.close' | 'session.open' | 'session.snapshot',
+      params: JsonValue,
+      sessionId?: string
+    ): Promise<unknown> => {
+      const selected = adapter.handlers[method]
+      assert.ok(selected)
+      return selected(
+        params,
+        { controllerGeneration: 1, connectionId: 'test', trusted: true },
+        {
+          kind: 'request',
+          id: `${method}-request`,
+          method,
+          params,
+          generation: 1,
+          ...(sessionId ? { sessionId } : {})
+        }
+      )
+    }
+    const created = (await call('session.create', {
+      cwd: reopenCwd,
+      model: { provider: 'desktop-stored', id: 'saved-model' },
+      sessionManager: { kind: 'persistent' },
+      noTools: 'all'
+    })) as { sessionId: string }
+    await call('session.close', {}, created.sessionId)
+    writeFileSync(reopenModelsPath, JSON.stringify(reopenConfig('replacement-model')), {
+      mode: 0o600
+    })
+    await call('session.open', { sessionId: created.sessionId })
+    const reopened = (await call('session.snapshot', {}, created.sessionId)) as {
+      model?: unknown
+      messages?: unknown[]
+    }
+    assert.equal(reopened.model, undefined)
+    assert.ok(Array.isArray(reopened.messages))
   })
 }

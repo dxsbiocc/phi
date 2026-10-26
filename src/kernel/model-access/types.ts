@@ -20,6 +20,8 @@ export type ModelAccessChangeListener = () => void
 export interface KernelModelAccess {
   readonly authStorage: AuthStorage
   readonly modelRegistry: ModelRegistry
+  /** Refreshes the authoritative catalog without introducing network discovery. */
+  refreshCatalog(): Promise<void>
   catalog(): readonly KernelModelDescriptor[]
   status(): readonly ModelAccessProviderStatus[]
   onChange(listener: ModelAccessChangeListener): () => void

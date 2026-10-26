@@ -66,6 +66,10 @@ export type KernelMethodHandlers = Partial<Record<KernelBusinessMethod, KernelMe
     runId: string,
     status: RunCompletionStatus
   ) => void | Promise<void>
+  runCompletionMetadata?: (sessionId: string) => {
+    readonly model?: { readonly provider: string; readonly id: string }
+    readonly resourceVersion?: string
+  }
 }
 
 export interface KernelProtocolLogger {
@@ -90,6 +94,8 @@ export interface KernelProtocolOptions {
   /** Test-only override for registry-declared service capability timeouts. */
   hostRequestTimeoutMs?: number
   controllerLifecycle?: KernelControllerLifecycle
+  /** Trusted process identity used by attach clients to reject stale runtime roots. */
+  runtimeIdentity?: { readonly home: string; readonly agentDir: string }
 }
 
 export interface AttachTransportOptions {

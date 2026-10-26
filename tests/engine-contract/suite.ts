@@ -411,6 +411,8 @@ export function engineContract(name: string, factory: EngineFactory): void {
         bindings.push(ref)
         return {
           ref,
+          // The real binder always returns the environment id; the kernel protocol requires it.
+          envId: `fixture-${ref}`,
           variables: {
             PATH: `${join(f.cwd, name, 'bin')}:/usr/bin:/bin`,
             HOME: f.cwd,
@@ -513,6 +515,7 @@ export function engineContract(name: string, factory: EngineFactory): void {
   contract('keeps native shell state isolated between two parent sessions', async (f) => {
     f.engine.host.register('environments.bindSession', (request) => ({
       ref: String(record(request).ref),
+      envId: 'fixture-bound-check',
       variables: { PATH: '/usr/bin:/bin', HOME: f.cwd }
     }))
     for (const sessionId of ['parent-one', 'parent-two']) {
@@ -542,6 +545,7 @@ export function engineContract(name: string, factory: EngineFactory): void {
     async (f) => {
       f.engine.host.register('environments.bindSession', () => ({
         ref: 'BoundExit',
+        envId: 'fixture-bound-exit',
         variables: { PATH: '/usr/bin:/bin', HOME: f.cwd }
       }))
       const observed = events(f)
@@ -584,6 +588,7 @@ export function engineContract(name: string, factory: EngineFactory): void {
   contract('cancels active native bound bash without delayed side effects', async (f) => {
     f.engine.host.register('environments.bindSession', () => ({
       ref: 'BoundCancel',
+      envId: 'fixture-bound-cancel',
       variables: { PATH: '/usr/bin:/bin', HOME: f.cwd }
     }))
     const approvals = approveTools(f)

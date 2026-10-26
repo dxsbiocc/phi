@@ -1,7 +1,8 @@
 import { getPhiEngine } from '../engine/in-process-engine'
 import { hasRoutedPhiOwner } from '../engine/session-routing-engine'
 import { getPhiAgentDir } from '../runtime-paths'
-import { existsSync, mkdirSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, unlinkSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   createRuntimeSessionManager,
   listRuntimeSessions,
@@ -335,6 +336,21 @@ export function deleteSession(path: string): void {
     if (manifest) assertLocalRuntimeAccess(manifest)
     if (manifest?.runtimeSessionPath && existsSync(manifest.runtimeSessionPath)) {
       unlinkSync(manifest.runtimeSessionPath)
+    }
+    // Only this app's agent directory holds kernel sessions it may delete.
+    if (
+      manifest?.kernelRuntimeRef?.host.kind === 'local' &&
+      manifest.kernelRuntimeRef.host.agentDir === getPhiAgentDir()
+    ) {
+      rmSync(
+        join(
+          manifest.kernelRuntimeRef.host.agentDir,
+          'phi-kernel',
+          'sessions',
+          manifest.kernelRuntimeRef.kernelSessionId
+        ),
+        { recursive: true, force: true }
+      )
     }
     remoteWorkspaceHosts.releaseSession(phiSessionId)
     deletePhiSession(phiSessionId)

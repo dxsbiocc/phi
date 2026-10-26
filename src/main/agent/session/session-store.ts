@@ -25,6 +25,9 @@ import {
 } from './runtime-reference-adoption'
 import {
   assertLocalRuntimeAccess,
+  assertKernelRuntimeReferenceProject,
+  parseKernelRuntimeReference,
+  type KernelRuntimeRef,
   type PhiRuntimeRef,
   type RemoteOmpScope,
   type RuntimeRecoveryDiagnostic
@@ -60,6 +63,8 @@ export interface PhiSessionManifest {
   /** Marks a newly-created SSH session before its first concrete RPC runtimeRef is adopted. */
   remoteRuntime?: 'rpc'
   runtimeRef?: PhiRuntimeRef
+  /** K4 kernel identity; unlike the RPC-era runtimeRef this applies to local and SSH sessions. */
+  kernelRuntimeRef?: KernelRuntimeRef
   readonly runtimeRecoveryError?: RuntimeRecoveryDiagnostic
   permissionMode: PermissionMode
   workMode?: WorkMode
@@ -190,20 +195,10 @@ function writeManifest(manifest: PhiSessionManifest): void {
 }
 
 function withoutUndefinedOptionalFields(manifest: PhiSessionManifest): PhiSessionManifest {
-  const next = { ...manifest }
-  if (next.title === undefined) delete next.title
-  if (next.titleSource === undefined) delete next.titleSource
-  if (next.forkedFrom === undefined) delete next.forkedFrom
-  if (next.projectLocation === undefined) delete next.projectLocation
-  if (next.runtimeSessionPath === undefined) delete next.runtimeSessionPath
-  if (next.remoteRuntime === undefined) delete next.remoteRuntime
-  if (next.model === undefined) delete next.model
-  if (next.thinkingLevel === undefined) delete next.thinkingLevel
-  if (next.autoCompaction === undefined) delete next.autoCompaction
-  if (next.currentRunId === undefined) delete next.currentRunId
-  if (next.currentRunStartedAt === undefined) delete next.currentRunStartedAt
-  if (next.lastRunOutcome === undefined) delete next.lastRunOutcome
-  if (next.lastEventType === undefined) delete next.lastEventType
+  const next = { ...manifest } as PhiSessionManifest & Record<string, unknown>
+  for (const key of Object.keys(next)) {
+    if (next[key] === undefined) delete next[key]
+  }
   return next
 }
 
@@ -304,11 +299,20 @@ export function updateSessionManifest(
   patch: Partial<
     Omit<
       PhiSessionManifest,
-      'schemaVersion' | 'sessionId' | 'createdAt' | 'runtimeRef' | 'runtimeRecoveryError'
+      | 'schemaVersion'
+      | 'sessionId'
+      | 'createdAt'
+      | 'runtimeRef'
+      | 'kernelRuntimeRef'
+      | 'runtimeRecoveryError'
     >
   >
 ): PhiSessionManifest {
-  if (Object.hasOwn(patch, 'runtimeRef') || Object.hasOwn(patch, 'runtimeRecoveryError')) {
+  if (
+    Object.hasOwn(patch, 'runtimeRef') ||
+    Object.hasOwn(patch, 'kernelRuntimeRef') ||
+    Object.hasOwn(patch, 'runtimeRecoveryError')
+  ) {
     throw new Error('Runtime reference requires verified adoption')
   }
   const manifest = readManifest(sessionId)
@@ -323,6 +327,25 @@ export function updateSessionManifest(
   const normalized = withoutUndefinedOptionalFields(updated)
   writeManifest(normalized)
   return normalized
+}
+
+export function recordKernelRuntimeReference(
+  sessionId: string,
+  value: KernelRuntimeRef
+): PhiSessionManifest {
+  const manifest = readManifest(sessionId)
+  const kernelRuntimeRef = parseKernelRuntimeReference(value)
+  const candidate: PhiSessionManifest = withoutUndefinedOptionalFields({
+    ...manifest,
+    runtimeSessionPath: undefined,
+    remoteRuntime: undefined,
+    runtimeRef: undefined,
+    kernelRuntimeRef,
+    updatedAt: nowIso()
+  })
+  assertKernelRuntimeReferenceProject(candidate, kernelRuntimeRef)
+  writeManifest(candidate)
+  return candidate
 }
 
 /** Server publication and desktop adoption are separate commits, not a distributed transaction. */

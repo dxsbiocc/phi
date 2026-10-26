@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { shellQuote, type RemoteSshSession } from '../../../wrappers/remote-ssh-session'
 import type { HostCapabilityProfile } from '../../../workspace-host/types'
 import {
@@ -166,11 +167,37 @@ function explicitEnvironment(
  * hash keeps a redeployed build of the same Phi version from attaching to the
  * previous build's still-running kernel.
  */
-export function kernelSocketIdentity(deployment: {
-  readonly phiVersion: string
-  readonly kernelSha256: string
-}): string {
-  return `${deployment.phiVersion}+${deployment.kernelSha256.slice(0, 12)}`
+export function kernelSocketIdentity(
+  deployment: {
+    readonly phiVersion: string
+    readonly kernelSha256: string
+  },
+  runtime?: { readonly home: string; readonly agentDir: string }
+): string {
+  const runtimeSuffix = runtime
+    ? `+${createHash('sha256')
+        .update(runtime.home)
+        .update('\0')
+        .update(runtime.agentDir)
+        .digest('hex')
+        .slice(0, 12)}`
+    : ''
+  return `${deployment.phiVersion}+${deployment.kernelSha256.slice(0, 12)}${runtimeSuffix}`
+}
+
+export function assertRemoteKernelRuntimeIdentity(
+  greeting: KernelHelloResult,
+  expected: { readonly home: string; readonly agentDir: string }
+): void {
+  // Empty values exist only in older in-memory protocol fixtures. Every real K4 kernel reports
+  // both fields from its trusted process environment.
+  if (!greeting.runtime.home && !greeting.runtime.agentDir) return
+  if (greeting.runtime.home !== expected.home || greeting.runtime.agentDir !== expected.agentDir) {
+    throw new RemoteKernelError(
+      'LAUNCH_FAILED',
+      'Attached kernel HOME or agent directory does not match the selected host profile.'
+    )
+  }
 }
 export function buildRemoteKernelLaunchCommand(
   deployment: RemoteKernelDeployment,
@@ -208,7 +235,12 @@ export function buildRemoteKernelLaunchCommand(
     '--runtime-root',
     shellQuote(deployment.runtimeRoot),
     '--kernel-version',
-    shellQuote(kernelSocketIdentity(deployment)),
+    shellQuote(
+      kernelSocketIdentity(deployment, {
+        home: explicit.HOME,
+        agentDir: explicit.PI_CODING_AGENT_DIR
+      })
+    ),
     ...(graceMs === undefined ? [] : ['--grace-ms', String(graceMs)]),
     ...Object.entries(explicit).flatMap(([name, value]) => [
       '--env',
@@ -369,6 +401,14 @@ export async function launchRemoteKernel(
     openFailureMessage: 'Failed to open remote kernel stdio.',
     helloFailureMessage: 'Remote kernel hello failed.'
   })
+  const homePath = options.home ?? deployment.homePath
+  const agentDir = options.agentDir ?? deployment.agentDir
+  try {
+    assertRemoteKernelRuntimeIdentity(opened.greeting, { home: homePath, agentDir })
+  } catch (error) {
+    await opened.client.close().catch(() => undefined)
+    throw error
+  }
   return {
     client: opened.client,
     greeting: opened.greeting,
@@ -376,8 +416,8 @@ export async function launchRemoteKernel(
     helper,
     deployment,
     profile: deployment.profile,
-    homePath: options.home ?? deployment.homePath,
-    agentDir: options.agentDir ?? deployment.agentDir,
+    homePath,
+    agentDir,
     readyMs: opened.readyMs,
     remoteCommandCount: platformProbeCommandCount + deployment.remoteCommandCount + 1,
     close: () => opened.client.close()
@@ -414,6 +454,10 @@ export async function reattachRemoteKernel(
     helloFailureMessage: 'Remote kernel reattach failed.'
   })
   try {
+    assertRemoteKernelRuntimeIdentity(opened.greeting, {
+      home: options.previous.homePath,
+      agentDir: options.previous.agentDir
+    })
     let snapshotRequired =
       opened.attach.state === 'spawned' ||
       opened.greeting.kernelInstanceId !== options.previous.greeting.kernelInstanceId

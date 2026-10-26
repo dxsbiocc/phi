@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import {
   KERNEL_EVENT_MODELS_CHANGED,
   type ApprovalRespondParams,
+  type JsonValue,
   type SessionCreateParams,
   type SessionOpenParams,
   type SessionPolicyParams
@@ -25,6 +26,7 @@ import { bindWorkerOutbound } from './outbound'
 import {
   createModelAccessWorkerHandlers,
   readModelAccessCatalog,
+  refreshModelAccessCatalog,
   requireAvailableModel
 } from './model-access-handlers'
 import { callKernelRuntime } from './runtime-calls'
@@ -38,6 +40,13 @@ import { KernelAgentRunCoordinator } from '../agent-runs/coordinator'
 import { KernelPlanCoordinator } from '../plans/coordinator'
 import type { KernelRuntimeServices } from '../../main/agent/engine/in-process/kernel-services'
 import { createDesktopMemoryHandlers } from './desktop-memory-handlers'
+import { updatePersistentSessionSelection } from '../sessions/selection'
+import {
+  kernelRunCompletionMetadata,
+  kernelSessionSelectionFromState,
+  updateKernelSessionSelection
+} from './completion-metadata'
+import { rejectKernelAuthPrompt } from './auth-prompt'
 
 type WorkerCall = (method: string, params: unknown) => Promise<unknown>
 
@@ -167,7 +176,6 @@ export function createWorkerKernelAdapter(
       const persistedPolicy = session.manifest.policy?.sessionPolicy
       const createInput = {
         cwd: session.manifest.cwd,
-        ...(session.manifest.model ? { model: session.manifest.model } : {}),
         ...(session.manifest.thinkingLevel
           ? { thinkingLevel: session.manifest.thinkingLevel }
           : {}),
@@ -191,8 +199,9 @@ export function createWorkerKernelAdapter(
             { reason: 'resource_snapshot_required' }
           )
         }
+        await refreshModelAccessCatalog(options.modelAccess)
         await agentRuns.openSession(sessionId, session.directory)
-        await callWorker('session.create', {
+        const created = await callWorker('session.create', {
           ...createInput,
           desktopServices: true,
           desktopHostCapabilities: [...hostCapabilities],
@@ -206,9 +215,11 @@ export function createWorkerKernelAdapter(
             suppressBreadcrumb: true
           }
         })
+        const restoredSelection = kernelSessionSelectionFromState(created)
         sessionKinds.set(sessionId, 'persistent')
         sessionCreateInputs.set(sessionId, {
           ...createInput,
+          ...restoredSelection,
           desktopServices: true,
           desktopHostCapabilities: [...hostCapabilities]
         })
@@ -304,24 +315,15 @@ export function createWorkerKernelAdapter(
     diagnostic(`Dropped legacy worker event ${name}: ${reason}`)
   }
 
-  const rejectAuthPrompt = (requestId: string): void => {
-    void import('../../main/agent/engine/in-process/state')
-      .then(({ pendingAuthPrompts }) => {
-        const pending = pendingAuthPrompts.get(requestId)
-        if (!pending) return
-        pendingAuthPrompts.delete(requestId)
-        pending.reject(new Error('authentication prompt unavailable in kernel v1'))
-      })
-      .catch((error: unknown) => {
-        diagnostic(`Failed to reject kernel authentication prompt: ${String(error)}`)
-      })
-  }
-
   const modelAccessHandlers = createModelAccessWorkerHandlers({
     agentDir: options.agentDir,
     modelAccess: options.modelAccess,
     callWorker,
     requireLoadedSession,
+    async updateSelection(sessionId, patch) {
+      updateKernelSessionSelection(sessionCreateInputs, sessionId, patch)
+      await updatePersistentSessionSelection(durableSessions.get(sessionId), patch)
+    },
     snapshot: async (sessionId) =>
       projectSessionState(
         sessionId,
@@ -372,7 +374,7 @@ export function createWorkerKernelAdapter(
             })
             memoryClientRuns.set(sessionId, new Map())
             await plans.openSession(sessionId)
-            return { sessionId }
+            return { sessionId } as JsonValue
           } catch (error) {
             plans.closeSession(sessionId)
             await agentRuns.closeSession(sessionId).catch(() => undefined)
@@ -402,7 +404,7 @@ export function createWorkerKernelAdapter(
             desktopHostCapabilities
           })
           await plans.openSession(sessionId)
-          return { sessionId }
+          return { sessionId, sessionFile: persistent.journalPath } as JsonValue
         } catch (error) {
           plans.closeSession(sessionId)
           await agentRuns.closeSession(sessionId).catch(() => undefined)
@@ -533,6 +535,8 @@ export function createWorkerKernelAdapter(
       }
       return { accepted: true }
     },
+    runCompletionMetadata: (sessionId) =>
+      kernelRunCompletionMetadata(sessionCreateInputs, sessionId),
     onControllerDetached() {
       // A controller detaching is not an approval decision or a cancellation request.
       options.modelAccess?.controllerDetached?.()
@@ -604,7 +608,7 @@ export function createWorkerKernelAdapter(
         persistentSession: (sessionId) => durableSessions.get(sessionId),
         projectSessionState,
         diagnoseDroppedEvent,
-        rejectAuthPrompt
+        rejectAuthPrompt: (requestId) => rejectKernelAuthPrompt(requestId, diagnostic)
       })
       const unbindModelAccess = options.modelAccess?.onChange(() => {
         try {

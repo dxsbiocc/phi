@@ -59,6 +59,11 @@ test(
         record(event.payload).status === 'completed'
     )
     assert.equal(completions.length, 1)
+    assert.deepEqual(record(completions[0].payload).model, {
+      provider: f.model.provider,
+      id: f.model.id
+    })
+    assert.equal(record(completions[0].payload).resourceVersion, 'a'.repeat(64))
     const snapshot = record(
       await f.client.request('session.snapshot', {}, { sessionId: kernelSessionId })
     )

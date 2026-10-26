@@ -42,24 +42,29 @@ export function readModelAccessCatalog(modelAccess?: KernelModelAccess): {
   return { models, providers }
 }
 
+/** Refresh the file-backed registry at idle selection/session boundaries. */
+export async function refreshModelAccessCatalog(
+  modelAccess: KernelModelAccess | undefined
+): Promise<void> {
+  if (!modelAccess) return
+  try {
+    await modelAccess.refreshCatalog()
+  } catch {
+    // Callers apply their normal unavailable/error policy to the retained catalog.
+  }
+}
+
 export async function requireAvailableModel(
   modelAccess: KernelModelAccess | undefined,
   requested: { provider: string; id: string }
 ): Promise<void> {
   if (!modelAccess) return
   await modelAccess.authStorage.credentials.revalidate().catch(() => undefined)
+  await refreshModelAccessCatalog(modelAccess)
   const inCatalog = (): boolean =>
     modelAccess
       .catalog()
       .some((model) => model.provider === requested.provider && model.id === requested.id)
-  // The kernel outlives configuration edits: re-read models.yml once (no network) before failing.
-  if (!inCatalog()) {
-    try {
-      await modelAccess.modelRegistry.refresh('offline')
-    } catch {
-      // A failed reload leaves the current catalog; the miss below is reported as unavailable.
-    }
-  }
   const present = inCatalog()
   if (!present) throw makeProtocolError('MODEL_UNAVAILABLE', 'The requested model is unavailable.')
   if (!modelAccess.modelRegistry.find(requested.provider, requested.id)) {
@@ -89,16 +94,15 @@ export function createModelAccessWorkerHandlers(options: {
   callWorker: WorkerCall
   requireLoadedSession(sessionId: string): unknown
   snapshot(sessionId: string): Promise<JsonValue>
+  updateSelection?(
+    sessionId: string,
+    patch: { model?: { provider: string; id: string }; thinkingLevel?: string }
+  ): void | Promise<void>
 }): KernelMethodHandlers {
   const configure = options.modelAccess?.configure?.bind(options.modelAccess)
-  const sessionId = (value: string | undefined): string => {
-    const id = requiredSessionId(value)
-    options.requireLoadedSession(id)
-    return id
-  }
   return {
     async 'session.setModel'(params, _context, request) {
-      const id = sessionId(request.sessionId)
+      const id = loadedSessionId(options, request.sessionId)
       const requested = (params as { model: { provider: string; id: string } }).model
       await requireAvailableModel(options.modelAccess, requested)
       await options.callWorker('session.setModel', {
@@ -106,24 +110,26 @@ export function createModelAccessWorkerHandlers(options: {
         model: requested,
         agentDir: options.agentDir
       })
+      await options.updateSelection?.(id, { model: requested })
       return options.snapshot(id)
     },
     async 'session.setThinkingLevel'(params, _context, request) {
-      const id = sessionId(request.sessionId)
+      const id = loadedSessionId(options, request.sessionId)
       const selection = params as { level: string }
       await options.callWorker('session.setThinkingLevel', {
         sessionId: id,
         level: selection.level
       })
+      await options.updateSelection?.(id, { thinkingLevel: selection.level })
       return options.snapshot(id)
     },
     async 'session.contextUsage'(_params, _context, request) {
       return (await options.callWorker('session.contextUsage', {
-        sessionId: sessionId(request.sessionId)
+        sessionId: loadedSessionId(options, request.sessionId)
       })) as JsonValue
     },
     async 'session.compact'(_params, _context, request) {
-      const id = sessionId(request.sessionId)
+      const id = loadedSessionId(options, request.sessionId)
       const compacted = (await options.callWorker('session.compact', { sessionId: id })) as {
         summary: JsonValue
       }
@@ -131,18 +137,19 @@ export function createModelAccessWorkerHandlers(options: {
     },
     async 'session.getAutoCompaction'(_params, _context, request) {
       return (await options.callWorker('session.getAutoCompaction', {
-        sessionId: sessionId(request.sessionId),
+        sessionId: loadedSessionId(options, request.sessionId),
         overrides: {}
       })) as JsonValue
     },
     async 'session.setAutoCompaction'(params, _context, request) {
       return (await options.callWorker('session.setAutoCompaction', {
-        sessionId: sessionId(request.sessionId),
+        sessionId: loadedSessionId(options, request.sessionId),
         overrides: params
       })) as JsonValue
     },
     async 'models.catalog'() {
       await options.modelAccess?.authStorage.credentials.revalidate().catch(() => undefined)
+      await refreshModelAccessCatalog(options.modelAccess)
       return readModelAccessCatalog(options.modelAccess)
     },
     ...(configure
@@ -160,4 +167,13 @@ export function createModelAccessWorkerHandlers(options: {
         }
       : {})
   }
+}
+
+function loadedSessionId(
+  options: Pick<Parameters<typeof createModelAccessWorkerHandlers>[0], 'requireLoadedSession'>,
+  value: string | undefined
+): string {
+  const id = requiredSessionId(value)
+  options.requireLoadedSession(id)
+  return id
 }

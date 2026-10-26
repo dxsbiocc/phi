@@ -309,6 +309,12 @@ it('client proxy reconfigures stable session models and bearer credentials in pl
   assert.equal(selected.transport, 'pi-native')
   assert.equal(await access.authStorage.keys.get(provider), firstBearer)
   assert.deepEqual(access.status(), [{ provider, status: 'available' }])
+  await access.refreshCatalog()
+  assert.strictEqual(
+    access.catalog()[0],
+    selected,
+    'an idle catalog refresh must retain controller-configured proxy models'
+  )
 
   access.modelRegistry.syncExtensionSources([])
   assert.strictEqual(

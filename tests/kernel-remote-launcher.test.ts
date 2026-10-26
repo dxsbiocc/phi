@@ -11,6 +11,7 @@ import test from 'node:test'
 import { KernelProtocolCore, type FrameTransport } from '../src/kernel/protocol'
 import {
   RemoteKernelError,
+  assertRemoteKernelRuntimeIdentity,
   buildRemoteKernelLaunchCommand,
   ensureRemoteKernelDeployment,
   launchRemoteKernel,
@@ -23,6 +24,29 @@ import {
 } from '../src/main/agent/engine/kernel-client/remote'
 import { GLIBC_MINIMUM_CHECK } from '../src/main/agent/engine/kernel-client/remote/commands'
 import { shellQuote, type RemoteStdioProcess } from '../src/main/agent/wrappers/remote-ssh-session'
+
+test('attached kernel identity rejects a stale HOME or agentDir', () => {
+  const greeting = {
+    protocol: { major: 1, minor: 0 },
+    kernel: { version: '0.1.0', ompVersion: '18.10.3' },
+    kernelInstanceId: 'stale-kernel',
+    controllerGeneration: 1,
+    capabilities: [],
+    lastSeq: 0,
+    runtime: { home: '/old/home', agentDir: '/old/agent' }
+  }
+  assert.throws(
+    () =>
+      assertRemoteKernelRuntimeIdentity(greeting, {
+        home: '/expected/home',
+        agentDir: '/expected/agent'
+      }),
+    (error: unknown) =>
+      error instanceof RemoteKernelError &&
+      error.code === 'LAUNCH_FAILED' &&
+      /HOME or agent directory/u.test(error.message)
+  )
+})
 import {
   remoteHelperReadyMarkerSha256,
   type RemoteHelperInstallation
@@ -528,9 +552,16 @@ test('remote launcher negotiates over SSH stdio with explicit isolated env and c
   assert.ok(commands[0].includes("'/srv/phi-helper/0.4.0/phi-helper' attach"))
   assert.ok(
     commands[0].includes(
-      `--kernel-version '0.1.0+${launched.deployment.kernelSha256.slice(0, 12)}'`
+      `--kernel-version '0.1.0+${launched.deployment.kernelSha256.slice(0, 12)}+${createHash(
+        'sha256'
+      )
+        .update('/srv/phi test/home')
+        .update('\0')
+        .update('/srv/phi test/agent')
+        .digest('hex')
+        .slice(0, 12)}'`
     ),
-    'socket identity includes the build hash so a redeploy never reuses an old kernel'
+    'socket identity binds both the build and requested HOME/agentDir'
   )
   assert.ok(commands[0].includes("--env 'HOME=/srv/phi test/home'"))
   assert.ok(commands[0].includes("--env 'PI_CODING_AGENT_DIR=/srv/phi test/agent'"))

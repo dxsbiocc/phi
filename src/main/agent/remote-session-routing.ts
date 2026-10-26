@@ -17,7 +17,12 @@ import { findPhiSessionById } from './session/session-store'
 import type { SessionRunnerRegistry } from './session/session-runner-registry'
 import { resolveRemoteWorkspaceHostBinding } from './remote-workspace-boundary'
 import { openRemoteRuntimeWorkspace } from './remote-runtime/workspace'
-import { installRemoteSessionRouting } from './engine/in-process-engine'
+import {
+  installKernelSessionRouting,
+  installRemoteSessionRouting
+} from './engine/in-process-engine'
+import { PHI_KERNEL_ENGINE_MODE } from './engine/kernel-engine-switch'
+import { createAppKernelSessionLaunchers } from './app-kernel-session-launchers'
 import { facadeBindingHash, type SelectedFacadeRuntime } from './engine/rpc/facade-session-driver'
 import { rpcToolNameExposesCredentialSurface } from './engine/phi-extension/lib/rpc-execution-protocol'
 import {
@@ -100,7 +105,13 @@ export interface AppRemoteSessionRoutingOptions {
   foregroundAgentNames?: string
   agentDir: string
   runners: SessionRunnerRegistry
-  appPaths(): { appPath: string; resourcesPath: string; isPackaged: boolean; userDataPath?: string }
+  appPaths(): {
+    appPath: string
+    resourcesPath: string
+    isPackaged: boolean
+    version?: string
+    userDataPath?: string
+  }
   configuredRoot(project: Project): string
   loadAgents(identity: {
     sessionId: string
@@ -115,6 +126,7 @@ export interface AppRemoteSessionRoutingOptions {
       projectId: string
       cwd: string
       resourceCwd: string
+      excludedMcpServerNames?: readonly string[]
     },
     signal: AbortSignal
   ): Promise<AppRemoteDesktopResources>
@@ -236,7 +248,7 @@ export function selectAppForegroundAgents(
 }
 
 /** Actual main startup composition. SSH projects always use this RPC route. */
-interface AppRemoteSessionRoutingDependencies {
+export interface AppRemoteSessionRoutingDependencies {
   resolveBinding?: typeof resolveRemoteWorkspaceHostBinding
   openWorkspace?: typeof openRemoteRuntimeWorkspace
   /** Loopback tests retain the real deployment/CLI with an offline asset, never a fake session driver. */
@@ -295,7 +307,7 @@ export function installAppRemoteSessionRouting(
     names.some((name) => !/^[A-Z][A-Za-z0-9]*$/.test(name))
   )
     throw new Error('Invalid RPC foreground agent selection')
-  return installRemoteSessionRouting({
+  const removeLegacyRemote = installRemoteSessionRouting({
     enabled: true,
     e5SmokeProjectId: E5_SMOKE_PROJECT_ID,
     e5SmokeProjectAllowed: smokeAllowed,
@@ -531,4 +543,35 @@ export function installAppRemoteSessionRouting(
       }
     }
   })
+
+  if (PHI_KERNEL_ENGINE_MODE === 'off') return removeLegacyRemote
+
+  const kernelInstall = createAppKernelSessionLaunchers(options, dependencies)
+  const removeKernel = installKernelSessionRouting({
+    mode: PHI_KERNEL_ENGINE_MODE,
+    launchLocal: kernelInstall.launchLocal,
+    launchRemote: kernelInstall.launchRemote,
+    hostCapabilities: kernelInstall.hostCapabilities,
+    configureClient: kernelInstall.configureClient,
+    onDiagnostic: (error) =>
+      options.startupDiagnostics?.({
+        phiSessionId: 'kernel-host',
+        status: 'failed',
+        totalMs: 0,
+        steps: [
+          {
+            step: `kernel_host:${error.name}`,
+            durationMs: 0,
+            remoteCommands: 0,
+            channels: {}
+          }
+        ]
+      })
+  })
+  if (PHI_KERNEL_ENGINE_MODE !== 'local') removeLegacyRemote()
+  return () => {
+    if (PHI_KERNEL_ENGINE_MODE === 'local') removeLegacyRemote()
+    removeKernel()
+    void kernelInstall.close()
+  }
 }

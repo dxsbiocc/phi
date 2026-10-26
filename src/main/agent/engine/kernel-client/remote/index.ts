@@ -4,6 +4,7 @@ export {
   remoteKernelHostFromSshSession
 } from './deployment'
 export {
+  assertRemoteKernelRuntimeIdentity,
   buildRemoteKernelLaunchCommand,
   launchRemoteKernel,
   reattachRemoteKernel

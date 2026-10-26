@@ -137,7 +137,9 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
   private readonly storage: AuthStorage
   private readonly store: MemoryAuthCredentialStore
   private readonly configProjection: DesktopBrokerModelsConfigProjection | undefined
+  private readonly sourceRegistry: ModelRegistry
   private readonly listeners = new Set<ModelAccessChangeListener>()
+  private offlineCatalogRefreshes = 0
   private brokerDisconnected = false
   private closed = false
 
@@ -147,7 +149,10 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
       : projectDesktopBrokerModelsConfig(options.modelsPath)
     this.configProjection = config
     this.store = new MemoryAuthCredentialStore({
-      refreshSnapshot: () => this.loadCredentials(),
+      refreshSnapshot: () =>
+        this.offlineCatalogRefreshes > 0
+          ? Promise.resolve(this.store.credentialSnapshot())
+          : this.loadCredentials(),
       refreshCredential: (
         provider: Provider,
         credentialId: number,
@@ -161,10 +166,14 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
       sourceLabel: 'desktop model-access broker',
       brokerBackedProviders: config?.credentialProviders,
       reloadBeforeCredentialRead: async (provider) => {
-        const entries = await this.loadCredentials(provider)
-        if (provider) this.store.replaceProviderSnapshot(provider, entries)
-        else this.store.replaceSnapshot(entries)
-        await this.storage.credentials.reload()
+        try {
+          const entries = await this.loadCredentials(provider)
+          if (provider) this.store.replaceProviderSnapshot(provider, entries)
+          else this.store.replaceSnapshot(entries)
+          await this.storage.credentials.reload()
+        } catch (error) {
+          if (this.offlineCatalogRefreshes === 0) throw error
+        }
       }
     })
     this.authStorage = auth.authStorage
@@ -176,6 +185,7 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
           ignoreLocalModelConfig: options.modelsPath === undefined,
           cacheDbPath: options.cacheDbPath
         })
+      this.sourceRegistry = registry
       this.modelRegistry = createBrokerAwareModelRegistry(
         registry,
         this.authStorage,
@@ -202,6 +212,17 @@ class DesktopBrokerModelAccess implements KernelModelAccess {
 
   catalog(): readonly Model<Api>[] {
     return this.modelRegistry.getAll()
+  }
+
+  async refreshCatalog(): Promise<void> {
+    this.configProjection?.sync()
+    this.offlineCatalogRefreshes += 1
+    try {
+      await this.storage.credentials.revalidate()
+      await this.sourceRegistry.reapplyModelPolicies()
+    } finally {
+      this.offlineCatalogRefreshes -= 1
+    }
   }
 
   status(): readonly ModelAccessProviderStatus[] {

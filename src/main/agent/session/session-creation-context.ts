@@ -146,7 +146,8 @@ export class SessionCreationContext {
     this.initialOwnerBinding = this.ownerBinding()
     this.initialJournal = JSON.stringify([
       input.sessionManifest?.runtimeRef?.ompSessionId,
-      input.sessionManifest?.runtimeRef?.journalBasename
+      input.sessionManifest?.runtimeRef?.journalBasename,
+      input.sessionManifest?.kernelRuntimeRef
     ])
     this.remoteBinding = input.remoteProject
       ? input.dependencies.remoteBinding({
@@ -190,8 +191,11 @@ export class SessionCreationContext {
   ): boolean {
     return Boolean(
       (!allowInitialAdoption || this.sessionManifest?.runtimeRef) &&
-      JSON.stringify([latest?.runtimeRef?.ompSessionId, latest?.runtimeRef?.journalBasename]) !==
-        this.initialJournal
+      JSON.stringify([
+        latest?.runtimeRef?.ompSessionId,
+        latest?.runtimeRef?.journalBasename,
+        latest?.kernelRuntimeRef
+      ]) !== this.initialJournal
     )
   }
 

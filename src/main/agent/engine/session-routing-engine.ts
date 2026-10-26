@@ -14,10 +14,15 @@ import type {
   ThinkingLevel
 } from './types'
 import type { RuntimeAutoCompactionReceipt } from './types'
-import { findPhiSessionById, listPhiSessions } from '../session/session-store'
+import {
+  findPhiSessionById,
+  listPhiSessions,
+  updateSessionManifest
+} from '../session/session-store'
 import { phiSessionIdFromPath } from '../session/sessions'
 import { excludesManifestLocalJournalPath } from '../session/manifest-file'
 import { RuntimeReferenceError } from '../session/runtime-reference'
+import { createRoutedSink, RoutedHostRegistry } from './routed-host-registry'
 
 export class RemoteSessionCapabilityError extends Error {
   constructor(readonly operation: string) {
@@ -29,7 +34,7 @@ export interface RoutedSessionDriver {
   hasActiveAgentRuns?(): boolean
   readonly agentRuns?: {
     start?(params: { agent?: string; task: string; requestId: string }): Promise<{ runId: string }>
-    list(): readonly Record<string, unknown>[]
+    list(): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>
     resourceOwner(runId: string): {
       readonly toolOwner: string
       readonly allowedSkills: readonly string[]
@@ -42,6 +47,10 @@ export interface RoutedSessionDriver {
       timeoutMs?: number
       signal?: AbortSignal
     }): Promise<unknown>
+  }
+  readonly shellJobs?: {
+    list(): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>
+    cancel(jobId: string): Promise<{ ok?: boolean }>
   }
   autoCompactionSettings?(control?: RuntimeSelectionControl): Promise<RuntimeAutoCompactionReceipt>
   compact?(
@@ -62,15 +71,27 @@ export interface RoutedSessionDriver {
     level: ThinkingLevel | undefined,
     control?: RuntimeSelectionControl
   ): Promise<WorkerSessionState>
+  enterPlanMode?(execute?: boolean): Promise<unknown>
+  cancelPlanMode?(replanRequestId?: string): Promise<boolean>
+  respondToolApproval?(requestId: string, result: unknown): Promise<void>
   abort(): Promise<WorkerSessionState>
   dispose(): Promise<void>
 }
 export interface RoutedSessionSink {
   event(event: PhiAgentEvent): void
   state(state: WorkerSessionState): void
+  approval?(request: unknown): void
 }
 /** Privileged main-process factory. Renderer create parameters do not select execution authority. */
 export interface RoutedSessionFactory {
+  handles?(params: PhiSessionCreateParams): boolean
+  registerHostHandler?(method: string, handler: import('./types').PhiHostRequestHandler): () => void
+  stop?(): Promise<void>
+  historyOpen?(params: {
+    agentDir: string
+    path: string
+    cwd?: string
+  }): Promise<{ cwd?: string; sessionFile?: string } | undefined>
   create(
     params: PhiSessionCreateParams,
     signal: AbortSignal,
@@ -81,26 +102,20 @@ export interface RoutedSessionFactory {
 interface Owner {
   readonly phiSessionId: string
   readonly projectId: string
+  readonly params: PhiSessionCreateParams
   readonly controller: AbortController
   driver?: RoutedSessionDriver
   pending?: Promise<RoutedSessionDriver>
   retired: boolean
 }
-function observe<T>(listeners: Set<(value: T) => void> | undefined, value: T): void {
-  for (const listener of listeners ?? []) {
-    try {
-      listener(value)
-    } catch {
-      /* One UI observer cannot change session authority. */
-    }
-  }
-}
-
 /** Routes owned sessions; every global delegate remains the genuine legacy implementation. */
 export class SessionRoutingEngine implements PhiEngine {
   private readonly owners = new Map<string, Owner>()
   private readonly eventsById = new Map<string, Set<(event: PhiAgentEvent) => void>>()
   private readonly statesById = new Map<string, Set<(state: unknown) => void>>()
+  private readonly approvalsById = new Map<string, Set<(request: unknown) => void>>()
+  private readonly approvalOwners = new Map<string, string>()
+  private readonly hostRegistry: RoutedHostRegistry
   readonly models: PhiEngine['models']
   readonly decisions: PhiEngine['decisions']
   readonly resources: PhiEngine['resources']
@@ -121,7 +136,31 @@ export class SessionRoutingEngine implements PhiEngine {
     this.mcp = legacy.mcp
     this.memory = legacy.memory
     this.settings = legacy.settings
-    this.host = legacy.host
+    this.hostRegistry = new RoutedHostRegistry(legacy.host, this.factory)
+    this.host = this.hostRegistry.host
+    this.hostRegistry.registerRouted('decisions.evaluate', (params, context) => {
+      const input = params as {
+        runtimeSessionId?: unknown
+        model?: unknown
+        request?: unknown
+      }
+      const sessionId =
+        context.originSessionId ??
+        (typeof input.runtimeSessionId === 'string' ? input.runtimeSessionId : undefined)
+      const owner = sessionId ? this.owned(sessionId) : undefined
+      if (!sessionId || !owner || !input.model || !input.request) {
+        throw new Error('Routed decision session is unavailable')
+      }
+      return this.legacy.decisions.evaluate(
+        {
+          agentDir: owner.params.agentDir,
+          sessionId,
+          model: input.model as Parameters<PhiEngine['decisions']['evaluate']>[0]['model'],
+          request: input.request as Parameters<PhiEngine['decisions']['evaluate']>[0]['request']
+        },
+        context.signal
+      )
+    })
   }
   ownsPhi(phiSessionId: string): boolean {
     return [...this.owners.values()].some((owner) => owner.phiSessionId === phiSessionId)
@@ -138,9 +177,6 @@ export class SessionRoutingEngine implements PhiEngine {
       throw new RuntimeReferenceError('REMOTE_OPERATION_REQUIRED', '远程会话已中断，需要显式恢复')
     return owner.driver
   }
-  private unsupported(sessionId: string, operation: string): void {
-    if (this.owns(sessionId)) throw new RemoteSessionCapabilityError(operation)
-  }
   private historyGuard(path?: string, cwd?: string): void {
     const phiId = path ? phiSessionIdFromPath(path) : null
     const manifests = phiId ? [findPhiSessionById(phiId)] : listPhiSessions()
@@ -150,6 +186,7 @@ export class SessionRoutingEngine implements PhiEngine {
           manifest &&
           (manifest.projectLocation?.kind === 'ssh' ||
             manifest.runtimeRef ||
+            manifest.kernelRuntimeRef ||
             manifest.runtimeRecoveryError) &&
           (phiId ||
             (path &&
@@ -160,13 +197,84 @@ export class SessionRoutingEngine implements PhiEngine {
     )
       throw new RemoteSessionCapabilityError('history')
   }
-  private sessionScopeGuard(sessionId: string, operation: string): void {
-    if (
-      this.owns(sessionId) ||
-      [...this.owners.values()].some((owner) => owner.phiSessionId === sessionId)
-    )
-      throw new RemoteSessionCapabilityError(operation)
+  private createLegacySession(
+    params: PhiSessionCreateParams,
+    control: RuntimeSelectionControl | undefined,
+    manifest: ReturnType<typeof findPhiSessionById> | undefined
+  ): ReturnType<PhiEngine['sessions']['create']> {
+    if (manifest?.runtimeRecoveryError) {
+      throw new RuntimeReferenceError(
+        manifest.runtimeRecoveryError.code,
+        manifest.runtimeRecoveryError.message
+      )
+    }
+    if (manifest?.runtimeRef) {
+      throw new RuntimeReferenceError(
+        'REMOTE_OPERATION_REQUIRED',
+        '远程会话需要显式启用已验证的远程恢复'
+      )
+    }
+    this.historyGuard(params.sessionManager.path, params.cwd)
+    return this.legacy.sessions.create(params, control)
   }
+
+  private async createRoutedSession(
+    input: PhiSessionCreateParams,
+    control: RuntimeSelectionControl | undefined,
+    factory: RoutedSessionFactory
+  ): Promise<import('./types').WorkerCreateSessionResult> {
+    this.hostRegistry.sync(factory)
+    const params = structuredClone(input)
+    const owner: Owner = {
+      phiSessionId: params.remoteProject?.phiSessionId ?? params.phiSessionId ?? params.sessionId,
+      projectId: params.remoteProject?.projectId ?? '',
+      params,
+      controller: new AbortController(),
+      retired: false
+    }
+    this.owners.set(params.sessionId, owner)
+    const abortPreparation = (): void => owner.controller.abort(control?.signal?.reason)
+    control?.signal?.addEventListener('abort', abortPreparation, { once: true })
+    if (control?.signal?.aborted) abortPreparation()
+    const live = (): boolean =>
+      this.owners.get(params.sessionId) === owner &&
+      !owner.retired &&
+      !owner.controller.signal.aborted
+    const sink = createRoutedSink({
+      params,
+      live,
+      events: this.eventsById,
+      states: this.statesById,
+      approvals: this.approvalsById,
+      approvalOwners: this.approvalOwners
+    })
+    try {
+      owner.pending = Promise.resolve().then(() => {
+        owner.controller.signal.throwIfAborted()
+        control?.assertCurrent()
+        return factory.create(params, owner.controller.signal, sink, control)
+      })
+      const driver = await owner.pending
+      if (!live()) {
+        await driver.dispose()
+        throw new RuntimeReferenceError('CANCELLED', '远程会话创建已取消')
+      }
+      owner.driver = driver
+      control?.assertCurrent()
+      const state = driver.state()
+      sink.state(state)
+      return { sessionId: params.sessionId, state }
+    } catch (error) {
+      owner.retired = true
+      owner.controller.abort(error)
+      await owner.driver?.dispose().catch(() => undefined)
+      throw error
+    } finally {
+      control?.signal?.removeEventListener('abort', abortPreparation)
+      owner.pending = undefined
+    }
+  }
+
   readonly sessions: PhiEngine['sessions'] = {
     autoCompactionSettings: async (params, control) => {
       const owner = this.owned(params.sessionId)
@@ -197,73 +305,9 @@ export class SessionRoutingEngine implements PhiEngine {
         ? findPhiSessionById(params.remoteProject.phiSessionId)
         : undefined
       const factory = this.factory()
-      if (!params.remoteProject || !factory) {
-        if (manifest) {
-          if (manifest.runtimeRecoveryError)
-            throw new RuntimeReferenceError(
-              manifest.runtimeRecoveryError.code,
-              manifest.runtimeRecoveryError.message
-            )
-          if (manifest.runtimeRef)
-            throw new RuntimeReferenceError(
-              'REMOTE_OPERATION_REQUIRED',
-              '远程会话需要显式启用已验证的远程恢复'
-            )
-        }
-        // A public Phi locator never becomes a desktop SessionManager path.
-        this.historyGuard(params.sessionManager.path, params.cwd)
-        return this.legacy.sessions.create(params, control)
-      }
-      const phiSessionId = params.remoteProject.phiSessionId
-      const projectId = params.remoteProject.projectId
-      params = structuredClone(params)
-      const owner: Owner = {
-        phiSessionId,
-        projectId,
-        controller: new AbortController(),
-        retired: false
-      }
-      this.owners.set(params.sessionId, owner)
-      const abortPreparation = (): void => owner.controller.abort(control?.signal?.reason)
-      control?.signal?.addEventListener('abort', abortPreparation, { once: true })
-      if (control?.signal?.aborted) abortPreparation()
-      const live = (): boolean =>
-        this.owners.get(params.sessionId) === owner &&
-        !owner.retired &&
-        !owner.controller.signal.aborted
-      const sink: RoutedSessionSink = {
-        event: (event) => {
-          if (live()) observe(this.eventsById.get(params.sessionId), event)
-        },
-        state: (state) => {
-          if (live()) observe(this.statesById.get(params.sessionId), state)
-        }
-      }
-      try {
-        owner.pending = Promise.resolve().then(() => {
-          owner.controller.signal.throwIfAborted()
-          control?.assertCurrent()
-          return factory.create(params, owner.controller.signal, sink, control)
-        })
-        const driver = await owner.pending
-        if (!live()) {
-          await driver.dispose()
-          throw new RuntimeReferenceError('CANCELLED', '远程会话创建已取消')
-        }
-        owner.driver = driver
-        control?.assertCurrent()
-        const state = driver.state()
-        sink.state(state)
-        return { sessionId: params.sessionId, state }
-      } catch (error) {
-        owner.retired = true
-        owner.controller.abort(error)
-        await owner.driver?.dispose().catch(() => undefined)
-        throw error
-      } finally {
-        control?.signal?.removeEventListener('abort', abortPreparation)
-        owner.pending = undefined
-      }
+      const routed = Boolean(factory && (factory.handles?.(params) ?? params.remoteProject))
+      if (!routed || !factory) return this.createLegacySession(params, control, manifest)
+      return this.createRoutedSession(params, control, factory)
     },
     prompt: async (params) =>
       this.owns(params.sessionId)
@@ -323,8 +367,14 @@ export class SessionRoutingEngine implements PhiEngine {
       return this.legacy.sessions.setThinkingLevel(params)
     },
     rename: async (params, control) => {
-      if (this.owns(params.sessionId))
-        return this.driver(params.sessionId).rename(params.name, control)
+      if (this.owns(params.sessionId)) {
+        const owner = this.owned(params.sessionId)!
+        const state = await this.driver(params.sessionId).rename(params.name, control)
+        if (findPhiSessionById(owner.phiSessionId)) {
+          updateSessionManifest(owner.phiSessionId, { title: params.name, titleSource: 'user' })
+        }
+        return state
+      }
       return this.legacy.sessions.rename(params, control)
     },
     contextUsage: async (params) => {
@@ -349,11 +399,19 @@ export class SessionRoutingEngine implements PhiEngine {
       return this.legacy.sessions.setAutoCompactionSettings(params)
     },
     enterPlanMode: async (params) => {
-      this.unsupported(params.sessionId, 'enterPlanMode')
+      if (this.owns(params.sessionId)) {
+        const driver = this.driver(params.sessionId)
+        if (!driver.enterPlanMode) throw new RemoteSessionCapabilityError('enterPlanMode')
+        return driver.enterPlanMode(params.execute)
+      }
       return this.legacy.sessions.enterPlanMode(params)
     },
     cancelPlanMode: async (params) => {
-      this.unsupported(params.sessionId, 'cancelPlanMode')
+      if (this.owns(params.sessionId)) {
+        const driver = this.driver(params.sessionId)
+        if (!driver.cancelPlanMode) throw new RemoteSessionCapabilityError('cancelPlanMode')
+        return driver.cancelPlanMode(params.replanRequestId)
+      }
       return this.legacy.sessions.cancelPlanMode(params)
     }
   }
@@ -375,6 +433,8 @@ export class SessionRoutingEngine implements PhiEngine {
       )
     },
     open: async (params) => {
+      const routed = await this.factory()?.historyOpen?.(params)
+      if (routed) return routed
       this.historyGuard(params.path, params.cwd)
       return this.legacy.history.open(params)
     },
@@ -388,11 +448,15 @@ export class SessionRoutingEngine implements PhiEngine {
         phiId &&
         (this.ownsPhi(phiId) ||
           findPhiSessionById(phiId)?.runtimeRef ||
+          findPhiSessionById(phiId)?.kernelRuntimeRef ||
           findPhiSessionById(phiId)?.runtimeRecoveryError)
       ) {
         const current = [...this.owners.values()].filter(
           (owner) => owner.phiSessionId === phiId && !owner.retired && owner.driver?.isLive
         )
+        if (current.length === 0 && findPhiSessionById(phiId)?.kernelRuntimeRef) {
+          return updateSessionManifest(phiId, { title: params.name, titleSource: 'user' })
+        }
         if (current.length !== 1)
           throw new RuntimeReferenceError(
             'REMOTE_OPERATION_REQUIRED',
@@ -431,12 +495,27 @@ export class SessionRoutingEngine implements PhiEngine {
         detach()
       }
     },
-    onToolApproval: (id, listener) =>
-      this.legacy.events.onToolApproval(id, (request) => {
+    onToolApproval: (id, listener) => {
+      const entries = this.approvalsById.get(id) ?? new Set()
+      this.approvalsById.set(id, entries)
+      entries.add(listener)
+      const detach = this.legacy.events.onToolApproval(id, (request) => {
         if (!this.owns(id)) listener(request)
-      }),
-    // Remote approval is awaited by the trusted existing UI callback, not a second dialog.
-    respondToolApproval: (id, result) => this.legacy.events.respondToolApproval(id, result)
+      })
+      return () => {
+        entries.delete(listener)
+        if (!entries.size) this.approvalsById.delete(id)
+        detach()
+      }
+    },
+    respondToolApproval: async (requestId, result) => {
+      const sessionId = this.approvalOwners.get(requestId)
+      if (!sessionId) return this.legacy.events.respondToolApproval(requestId, result)
+      this.approvalOwners.delete(requestId)
+      const driver = this.driver(sessionId)
+      if (!driver.respondToolApproval) throw new RemoteSessionCapabilityError('respondToolApproval')
+      return driver.respondToolApproval(requestId, result)
+    }
   }
   readonly agentRuns: PhiEngine['agentRuns'] = {
     start: (params) => {
@@ -467,14 +546,18 @@ export class SessionRoutingEngine implements PhiEngine {
     },
     list: async (params) => {
       const local = await this.legacy.agentRuns.list(params)
-      const remote = [...this.owners.entries()].flatMap(([sessionId, owner]) =>
-        owner.retired
-          ? []
-          : (owner.driver?.agentRuns?.list() ?? []).map((run) => ({
-              ...run,
-              agentSessionId: sessionId
-            }))
-      )
+      const remote = (
+        await Promise.all(
+          [...this.owners.entries()].map(async ([sessionId, owner]) =>
+            owner.retired
+              ? []
+              : ((await owner.driver?.agentRuns?.list())?.map((run) => ({
+                  ...run,
+                  agentSessionId: sessionId
+                })) ?? [])
+          )
+        )
+      ).flat()
       return [...(Array.isArray(local) ? local : []), ...remote]
     },
     resourceOwner: (sessionId, runId) => {
@@ -525,17 +608,34 @@ export class SessionRoutingEngine implements PhiEngine {
     return this.driver(current[0][0])
   }
   readonly shellJobs: PhiEngine['shellJobs'] = {
-    list: async (params) => this.legacy.shellJobs.list(params),
+    list: async (params) => {
+      const local = await this.legacy.shellJobs.list(params)
+      const routed = (
+        await Promise.all(
+          [...this.owners.values()].map((owner) =>
+            owner.retired
+              ? Promise.resolve([])
+              : Promise.resolve(owner.driver?.shellJobs?.list() ?? [])
+          )
+        )
+      ).flat()
+      return [...(Array.isArray(local) ? local : []), ...routed]
+    },
     cancel: async (params) => {
-      this.sessionScopeGuard(params.sessionId, 'shellJobs.cancel')
+      if (this.owns(params.sessionId)) {
+        const jobs = this.driver(params.sessionId).shellJobs
+        if (!jobs) throw new RemoteSessionCapabilityError('shellJobs.cancel')
+        return jobs.cancel(params.jobId)
+      }
       return this.legacy.shellJobs.cancel(params)
     }
   }
   async stop(): Promise<void> {
+    const factory = this.factory()
     const results = await Promise.allSettled(
       [...this.owners.keys()]
         .map((sessionId) => this.sessions.dispose({ sessionId }))
-        .concat(this.legacy.stop())
+        .concat(this.legacy.stop(), factory?.stop?.() ?? Promise.resolve())
     )
     const failed = results.find((result) => result.status === 'rejected')
     if (failed?.status === 'rejected') throw failed.reason

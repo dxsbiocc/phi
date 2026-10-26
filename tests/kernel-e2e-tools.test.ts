@@ -208,7 +208,26 @@ test('kernel E2E CLI accepts tools on either execution host without changing lif
     '0.1.0'
   )
   assert.equal(desktopServices.scenario, 'desktop-services')
-  assert.match(kernelE2eUsage(), /baseline\|tools\|plan\|desktop-services\|reconnect\|grace-expiry/)
+  assert.equal(
+    parseKernelE2eArgs(
+      [
+        '--target',
+        'ssh',
+        '--host',
+        'node3',
+        '--runtime-root',
+        '/tmp/kernel-e2e',
+        '--scenario',
+        'desktop-engine'
+      ],
+      '0.1.0'
+    ).scenario,
+    'desktop-engine'
+  )
+  assert.match(
+    kernelE2eUsage(),
+    /baseline\|tools\|plan\|desktop-services\|desktop-engine\|reconnect\|grace-expiry/
+  )
   assert.match(kernelE2eUsage(), /--deadline-min/)
 })
 

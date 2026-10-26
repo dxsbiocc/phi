@@ -18,6 +18,7 @@ import { appCopy } from '../../../lib/appCopy'
 import { readableErrorMessage } from '../../../lib/sessionNotifications'
 import { LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE } from '../../../../../shared/errorCodes'
 import { chatCopy } from './chatCopy'
+import { localizeKernelError } from './kernelErrorCopy'
 
 /**
  * The prompt send pipeline.
@@ -75,10 +76,12 @@ export type PromptSendDeps = {
 
 export function localizePromptSendError(error: unknown): unknown {
   const message = readableErrorMessage(error, '')
-  return message === LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE ||
+  const legacy =
+    message === LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE ||
     message.endsWith(`: ${LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE}`)
-    ? new Error(chatCopy.thisSessionWasCreatedByTheLegacyRemoteRuntimeAndCannotContinue)
-    : error
+      ? new Error(chatCopy.thisSessionWasCreatedByTheLegacyRemoteRuntimeAndCannotContinue)
+      : error
+  return localizeKernelError(legacy)
 }
 
 type SendReceipt = { submitGeneration: number; sendRequest: number }

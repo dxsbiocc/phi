@@ -157,6 +157,12 @@ mac:
   # Only the target's micromamba ships (runtime foundation §2.1). ${arch} is the target arch;
   # ${platform} would be the build host, so the OS part is spelled out per target.
   extraResources:
+    - from: .phi-build/kernel/${version}/darwin-${arch}
+      to: kernel/${version}/darwin-${arch}
+      filter:
+        - manifest.json
+        - phi-kernel
+        - '*.node'
     - from: resources/runtime/micromamba/darwin-${arch}
       to: runtime/micromamba/darwin-${arch}
     - from: resources/runtime/bun/darwin-${arch}

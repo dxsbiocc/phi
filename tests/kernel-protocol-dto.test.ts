@@ -204,7 +204,11 @@ const methodParams = {
     ]
   },
   'events.subscribe': { afterSeq: 4 },
-  'approval.respond': { approvalId: 'approval-1', decision: 'approved' }
+  'approval.respond': {
+    approvalId: 'approval-1',
+    decision: 'denied',
+    reason: 'Contract user denied'
+  }
 } as const
 
 const methodResults = {
@@ -214,9 +218,13 @@ const methodResults = {
     kernelInstanceId: 'kernel-1',
     controllerGeneration: 2,
     capabilities: ['session.prompt'],
-    lastSeq: 7
+    lastSeq: 7,
+    runtime: { home: '/tmp/home', agentDir: '/tmp/agent' }
   },
-  'session.create': { sessionId: 'session-1' },
+  'session.create': {
+    sessionId: 'session-1',
+    sessionFile: '/tmp/agent/phi-kernel/sessions/session-1/journal.jsonl'
+  },
   'session.adopt': {
     sessionId: 'session-adopted',
     migration: { state: 'complete', sourceSha256: 'a'.repeat(64) }
@@ -323,7 +331,7 @@ const methodResults = {
   'session.setAutoCompaction': {
     enabled: true,
     thresholdPercent: 80,
-    thresholdTokens: 25_600
+    thresholdTokens: -1
   },
   'memory.read': {
     summary: 'Project summary',

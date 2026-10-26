@@ -4559,6 +4559,7 @@ async function harness(
     './agent/agents/remote-agent-request-context',
     './agent/agents/remote-agent-trust-request',
     './agent/content/remote-skill-trust-request',
+    './agent/engine/kernel-engine-switch',
     './agent/enablement-request',
     './agent/host-requests/agent-interaction-request',
     './agent/host-requests/deliverables-presentation',

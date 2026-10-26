@@ -118,6 +118,10 @@ export async function startKernelStdio(): Promise<void> {
     kernelVersion: readKernelVersion(),
     ompVersion: readOmpVersion(),
     kernelInstanceId,
+    runtimeIdentity: {
+      home: process.env.HOME ?? process.env.USERPROFILE ?? '',
+      agentDir
+    },
     handlers: worker.handlers,
     controllerLifecycle: {
       onControllerAttached() {
@@ -179,6 +183,10 @@ export async function startKernelSocket(
     kernelVersion: readKernelVersion(),
     ompVersion: readOmpVersion(),
     kernelInstanceId,
+    runtimeIdentity: {
+      home: process.env.HOME ?? process.env.USERPROFILE ?? '',
+      agentDir: process.env.PI_CODING_AGENT_DIR ?? ''
+    },
     handlers: worker.handlers,
     disconnectPolicy: 'wait-for-reconnect',
     controllerLifecycle: remoteControllerLifecycle(modelAccess, graceRef),

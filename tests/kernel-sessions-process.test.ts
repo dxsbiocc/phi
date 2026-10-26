@@ -145,7 +145,9 @@ async function assertRecoveredA05Run(options: {
     )
     assert.deepEqual(await runs.wait(String(next.runId)), {
       runId: next.runId,
-      status: 'completed'
+      status: 'completed',
+      model: { provider: 'phi-contract', id: 'contract-model' },
+      resourceVersion: 'a'.repeat(64)
     })
     runs.close()
     return peer
@@ -439,7 +441,9 @@ test(
       )
       assert.deepEqual(await runs.wait(String(next.runId)), {
         runId: next.runId,
-        status: 'completed'
+        status: 'completed',
+        model: { provider: 'phi-contract', id: 'contract-model' },
+        resourceVersion: 'a'.repeat(64)
       })
       runs.close()
     } finally {

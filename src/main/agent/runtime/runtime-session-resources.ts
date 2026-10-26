@@ -1,4 +1,17 @@
 import type { CreateAgentSessionOptions, RuntimeResourceLoader } from './runtime-adapter'
+import { kernelEngineHandles, PHI_KERNEL_ENGINE_MODE } from '../engine/kernel-engine-switch'
+
+export function trustedKernelSessionIdentity(options: CreateAgentSessionOptions): {
+  phiSessionId?: string
+} {
+  if (
+    !options.phiSessionId ||
+    !kernelEngineHandles(PHI_KERNEL_ENGINE_MODE, Boolean(options.remoteProject))
+  ) {
+    return {}
+  }
+  return { phiSessionId: options.phiSessionId }
+}
 
 function contextFile(value: unknown): { path: string; content: string } | undefined {
   if (!value || typeof value !== 'object') return undefined

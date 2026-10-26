@@ -844,6 +844,136 @@ test('persistent reopen restores plain creation policy without a resource snapsh
   }
 })
 
+test('persistent reopen drops a removed saved model and accepts an available replacement', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-model-refresh-'))
+  const cwd = join(root, 'project')
+  const agentDir = join(root, 'agent')
+  const { mkdirSync } = await import('node:fs')
+  mkdirSync(cwd)
+  const saved = { provider: 'fixture', id: 'saved[model]*' }
+  const replacement = { provider: 'fixture', id: 'replacement-model' }
+  let source = [saved]
+  let catalog = [...source]
+  let liveModel: typeof saved | undefined
+  const events: string[] = []
+  const modelAccess = {
+    authStorage: { credentials: { revalidate: async () => undefined } },
+    refreshCatalog: async () => {
+      events.push('refresh')
+      catalog = [...source]
+    },
+    modelRegistry: {
+      refresh: async (strategy: unknown) => {
+        assert.equal(strategy, 'offline')
+        throw new Error('Worker boundaries must use refreshCatalog')
+      },
+      find: (provider: string, id: string) =>
+        catalog.find((model) => model.provider === provider && model.id === id)
+    },
+    catalog: () => catalog,
+    status: () => [{ provider: 'fixture', status: 'available' as const }],
+    onChange: () => () => undefined,
+    close: () => undefined
+  } as unknown as KernelModelAccess
+  const adapter = createWorkerKernelAdapter({
+    agentDir,
+    modelAccess,
+    processStartedAt: 'darwin:test-process',
+    acquireSessionLockGuard: acquireTestGuard,
+    callWorker: async (method, params) => {
+      events.push(method)
+      const input = params as { model?: typeof saved }
+      if (method === 'session.create') {
+        if (source[0] === replacement) {
+          assert.equal(
+            input.model,
+            undefined,
+            'persistent open must let the journal restore its saved selector'
+          )
+        }
+        liveModel = input.model
+          ? (modelAccess.modelRegistry.find(input.model.provider, input.model.id) as
+              typeof saved | undefined)
+          : undefined
+      }
+      if (method === 'session.prompt' && !liveModel) throw new Error('model unavailable')
+      if (method === 'session.setModel') liveModel = input.model
+      return undefined
+    },
+    readSessionState: async () => ({
+      cwd,
+      messages: [{ role: 'assistant', content: 'Saved evidence.' }],
+      ...(liveModel ? { model: liveModel } : {})
+    })
+  })
+  try {
+    const created = (await handler(adapter.handlers, 'session.create')(
+      {
+        cwd,
+        model: saved,
+        sessionManager: { kind: 'persistent' },
+        noTools: 'all'
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+    await handler(adapter.handlers, 'session.close')(
+      {},
+      context,
+      request('session.close', created.sessionId)
+    )
+
+    source = [replacement]
+    events.length = 0
+    await handler(adapter.handlers, 'session.open')(
+      { sessionId: created.sessionId },
+      context,
+      request('session.open')
+    )
+    assert.deepEqual(events.slice(0, 2), ['refresh', 'session.create'])
+    const restored = (await handler(adapter.handlers, 'session.snapshot')(
+      {},
+      context,
+      request('session.snapshot', created.sessionId)
+    )) as Record<string, unknown>
+    assert.equal(restored.model, undefined)
+    assert.ok(JSON.stringify(restored.messages).includes('Saved evidence.'))
+
+    const rejected = (await handler(adapter.handlers, 'session.prompt')(
+      { text: 'Cannot send.', clientRunKey: 'unavailable-model-run' },
+      context,
+      request('session.prompt', created.sessionId)
+    )) as unknown as { completion: Promise<{ status: string; detail?: string }> }
+    assert.deepEqual(await rejected.completion, {
+      status: 'failed',
+      detail: 'model unavailable'
+    })
+
+    const selected = (await handler(adapter.handlers, 'session.setModel')(
+      { model: replacement },
+      context,
+      request('session.setModel', created.sessionId)
+    )) as Record<string, unknown>
+    assert.deepEqual(selected.model, replacement)
+    const resumed = (await handler(adapter.handlers, 'session.prompt')(
+      { text: 'Resume with valid model.', clientRunKey: 'replacement-model-run' },
+      context,
+      request('session.prompt', created.sessionId)
+    )) as unknown as { completion: Promise<string> }
+    assert.equal(await resumed.completion, 'completed')
+    const resumedState = (await handler(adapter.handlers, 'session.snapshot')(
+      {},
+      context,
+      request('session.snapshot', created.sessionId)
+    )) as Record<string, unknown>
+    assert.deepEqual(resumedState.model, replacement)
+    assert.ok(JSON.stringify(resumedState.messages).includes('Saved evidence.'))
+  } finally {
+    await adapter.closeAll().catch(() => undefined)
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('persistent reopen fails closed until a trusted host rehydrates session resources', async () => {
   const root = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-rehydrate-'))
   const cwd = join(root, 'project')

@@ -187,6 +187,18 @@ export class MemoryAuthCredentialStore implements AuthCredentialStore {
       .map(cloneStored)
   }
 
+  credentialSnapshot(): AuthCredentialSnapshotEntry[] {
+    return this.listAuthCredentials().map((row) => ({
+      id: row.id,
+      provider: row.provider,
+      credential:
+        row.credential.type === 'oauth'
+          ? { ...row.credential, refresh: REMOTE_REFRESH_SENTINEL }
+          : cloneCredential(row.credential),
+      identityKey: null
+    }))
+  }
+
   async refreshSnapshot(): Promise<void> {
     if (!this.options.refreshSnapshot) return
     this.replaceSnapshot(await this.options.refreshSnapshot())

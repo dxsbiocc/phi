@@ -29,6 +29,9 @@ export interface DesktopMcpBrokerResolveInput {
 export interface DesktopMcpHostBrokerOptions {
   resolve(input: DesktopMcpBrokerResolveInput): Promise<DesktopMcpOptions | undefined>
   createAdapter?: typeof createDesktopMcpAdapter
+  state?: DesktopMcpHostBrokerState
+  /** Reattach unbinds one client without retiring desktop MCP processes. */
+  retainStateOnClose?: boolean
 }
 
 export interface DesktopMcpHostBroker {
@@ -40,6 +43,29 @@ interface OwnedDesktopMcp {
   readonly bindingId: string
   readonly adapter: DesktopMcpAdapter
   readonly calls: Map<string, AbortController>
+}
+
+export interface DesktopMcpHostBrokerState {
+  readonly owned: Map<string, OwnedDesktopMcp>
+}
+
+export function createDesktopMcpHostBrokerState(): DesktopMcpHostBrokerState {
+  return { owned: new Map() }
+}
+
+export async function closeDesktopMcpHostBrokerState(
+  state: DesktopMcpHostBrokerState
+): Promise<void> {
+  const sessions = [...state.owned]
+  state.owned.clear()
+  await Promise.allSettled(
+    sessions.map(async ([, current]) => {
+      for (const controller of current.calls.values()) controller.abort(new Error('MCP closed'))
+      current.calls.clear()
+      current.adapter.retire(new Error('Kernel session closed'))
+      await current.adapter.close()
+    })
+  )
 }
 
 function unavailable(reason: string, message: string): KernelClientError {
@@ -86,7 +112,7 @@ export function registerDesktopMcpHostBroker(
   options: DesktopMcpHostBrokerOptions
 ): DesktopMcpHostBroker {
   const createAdapter = options.createAdapter ?? createDesktopMcpAdapter
-  const owned = new Map<string, OwnedDesktopMcp>()
+  const owned = options.state?.owned ?? new Map<string, OwnedDesktopMcp>()
 
   const closeSession = async (kernelSessionId: string): Promise<void> => {
     const current = owned.get(kernelSessionId)
@@ -211,7 +237,7 @@ export function registerDesktopMcpHostBroker(
     closeSession,
     async close() {
       for (const remove of unregister.reverse()) remove()
-      await Promise.allSettled([...owned.keys()].map(closeSession))
+      if (!options.retainStateOnClose) await Promise.allSettled([...owned.keys()].map(closeSession))
     }
   }
 }

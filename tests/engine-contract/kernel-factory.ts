@@ -25,7 +25,7 @@ import {
 } from '../../src/main/agent/engine/kernel-host/model-access-broker'
 import type { KernelEventFrame, JsonValue } from '../../src/shared/kernel-protocol'
 import type { BasicEngineFixture } from './basic-suite'
-import { createInProcessFixture } from './in-process-factory'
+import { createInProcessFixture, type EngineFixture } from './in-process-factory'
 import { discoverPhiAgents } from '../../src/main/agent/agents/discovery'
 
 type RunCompletion = {
@@ -34,6 +34,7 @@ type RunCompletion = {
 }
 
 export type KernelEngineFixture = BasicEngineFixture & {
+  legacy: EngineFixture
   client: KernelProtocolClient
   kernelInstanceId: string
   agentDir: string
@@ -72,6 +73,8 @@ export type KernelFixtureOptions = {
   testPause?: 'a' | 'c' | 'd1' | 'd2' | 'agent-accepted' | 'agent-started'
   hostCapabilities?: string[]
   modelAccess?: 'desktop-stored'
+  /** Literal model id the fixture's model catalog serves, as in the in-process contract fixture. */
+  modelId?: string
 }
 
 function storedCredentialBroker(provider: string): ModelAccessBroker {
@@ -125,7 +128,7 @@ function stateFrom(value: JsonValue, fallbackModel: RuntimeModel | undefined): W
 export async function createKernelFixture(
   options: KernelFixtureOptions = {}
 ): Promise<KernelEngineFixture> {
-  const base = await createInProcessFixture()
+  const base = await createInProcessFixture(options.modelId)
   const root = dirname(base.agentDir)
   const diagnostics: string[] = []
   let spawned: SpawnedKernelClient | undefined
@@ -261,6 +264,7 @@ export async function createKernelFixture(
         await client.request('session.create', {
           cwd: options.cwd ?? base.cwd,
           model: { provider: base.model.provider, id: base.model.id },
+          resourceVersion: 'a'.repeat(64),
           sessionManager: { kind: options.persistent ? 'persistent' : 'memory' },
           ...(options.resourceOptions ? { resourceOptions: options.resourceOptions } : {}),
           noTools: options.noTools ?? false,
@@ -282,6 +286,7 @@ export async function createKernelFixture(
     let closing: Promise<void> | undefined
     return {
       client,
+      legacy: base,
       kernelInstanceId: greeting.kernelInstanceId,
       provider: base.provider,
       agentDir: base.agentDir,
@@ -365,7 +370,8 @@ export async function createKernelFixture(
         const child = spawned.process
         if (child.exitCode !== null || child.signalCode !== null) return
         const exited = once(child, 'exit')
-        child.kill('SIGKILL')
+        if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL')
+        else child.kill('SIGKILL')
         await exited
       },
       close() {

@@ -14,6 +14,7 @@ import {
   probeRemoteKernelHostProfile,
   type LaunchedRemoteKernel
 } from '../src/main/agent/engine/kernel-client/remote'
+import { KernelSessionFactory } from '../src/main/agent/engine/kernel-session-factory'
 import {
   connectRemoteSshSession,
   shellQuote,
@@ -51,6 +52,7 @@ import {
   runDesktopServicesScenario
 } from './kernel-e2e/desktop-services-scenario'
 import { shutdownSshScenarioKernel } from './kernel-e2e/ssh-kernel-cleanup'
+import { runDesktopEngineScenario } from './kernel-e2e/desktop-engine-scenario'
 import {
   agentConfig,
   bounded,
@@ -125,6 +127,7 @@ interface E2eReport {
       wrapperCalls: string[]
       wrapperState: string
     }
+    desktopEngine?: { approvals: number; reattached: true }
     bearerToken: 'random-test-only-not-recorded'
     planRunId?: string
     planReviewCount?: number
@@ -518,6 +521,76 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
     )
     launch.client.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
     launch.client.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
+
+    if (options.scenario === 'desktop-engine') {
+      let launchCount = 0
+      const factory = new KernelSessionFactory({
+        mode: 'remote',
+        launchRemote: async (_params, context, signal) => {
+          signal.throwIfAborted()
+          if (launchCount++ === 0) {
+            context.configureClient(remoteLaunch!.client)
+            const owned = remoteLaunch!
+            return {
+              client: owned.client,
+              greeting: owned.greeting,
+              runtimeRoot: owned.deployment.runtimeRoot,
+              configuredBeforeHello: true,
+              close: () => owned.close()
+            }
+          }
+          const replacement = await launchRemoteKernel({
+            session: ssh!,
+            runtimeRoot: options.runtimeRoot,
+            buildDirectory: options.buildDirectory,
+            profile: remoteProfile,
+            agentDir: files!.paths.agentDir,
+            home: files!.paths.home,
+            configureClient: context.configureClient,
+            hello: {
+              takeover: true,
+              hostCapabilities: [...context.hostCapabilities]
+            },
+            signal,
+            onDiagnostic: (text) => process.stderr.write(`[remote-kernel] ${text}`)
+          })
+          await configureModelProxy(replacement.client, tunnel!, token)
+          remoteLaunch = replacement
+          const owned = replacement
+          return {
+            client: owned.client,
+            greeting: owned.greeting,
+            runtimeRoot: owned.deployment.runtimeRoot,
+            configuredBeforeHello: true,
+            close: () => owned.close()
+          }
+        }
+      })
+      factory.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
+      factory.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
+      try {
+        const evidence = await step('desktop PhiEngine create/approval/reattach/finish', () =>
+          runDesktopEngineScenario({
+            factory,
+            provider: provider!,
+            projectRoot: files!.paths.projectA,
+            writtenFile: files!.paths.writtenFile,
+            exists: (path) => files!.exists(path),
+            read: (path) => files!.read(path),
+            // Drop only this run's helper channel, as a lost SSH link would; the kernel stays in grace.
+            disconnect: async () => {
+              const pattern = `attach --kernel ${remoteLaunch!.deployment.executablePath}`
+              await ssh!.exec(`pkill -TERM -u "$(id -u)" -f -- ${shellQuote(pattern)}`)
+            }
+          })
+        )
+        report.evidence.desktopEngine = evidence
+      } finally {
+        await factory.stop()
+      }
+      report.ok = report.steps.every((item) => item.passed)
+      return report
+    }
 
     if (options.scenario === 'plan') {
       await runPlanScenario({

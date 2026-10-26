@@ -145,14 +145,24 @@ function selectDesktopSkills(
 
 function selectedMcpServerNames(
   globalServers: readonly McpServerSummary[],
-  mcpCatalog: RemoteProjectMcpCatalog
+  mcpCatalog: RemoteProjectMcpCatalog,
+  excluded: readonly string[] = []
 ): string[] {
+  const blocked = new Set(excluded)
   return [
     ...new Set([
       ...globalServers.filter((server) => server.enabled !== false).map((server) => server.name),
       ...mcpCatalog.runtimeServers.map((server) => server.name)
     ])
-  ]
+  ].filter((name) => !blocked.has(name))
+}
+
+function selectedDesktopMcpServerNames(
+  identity: DesktopIdentity,
+  globals: readonly McpServerSummary[],
+  project: RemoteProjectMcpCatalog
+): string[] {
+  return selectedMcpServerNames(globals, project, identity.excludedMcpServerNames)
 }
 
 interface DesktopResourcesInput {
@@ -276,7 +286,7 @@ async function loadAppRemoteDesktopTools(
       })
       guards.assertMemoryBinding()
     }
-    const serverNames = selectedMcpServerNames(globalServers, mcpCatalog)
+    const serverNames = selectedDesktopMcpServerNames(identity, globalServers, mcpCatalog)
     if (serverNames.length)
       mcp = await deps.adapters.createMcp({
         identity: toolIdentity,

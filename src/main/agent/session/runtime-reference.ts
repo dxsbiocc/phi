@@ -28,6 +28,32 @@ export interface RemoteOmpRuntimeRef extends RemoteOmpScope {
   }
 }
 
+export interface KernelLocalRuntimeRef {
+  readonly kind: 'phi-kernel'
+  readonly version: 1
+  readonly kernelSessionId: string
+  readonly host: {
+    readonly kind: 'local'
+    readonly agentDir: string
+  }
+}
+
+export interface KernelRemoteRuntimeRef {
+  readonly kind: 'phi-kernel'
+  readonly version: 1
+  readonly kernelSessionId: string
+  readonly host: {
+    readonly kind: 'ssh'
+    readonly hostProfileId: string
+    readonly projectId: string
+    readonly projectRoot: string
+    readonly runtimeRoot: string
+    readonly home: string
+    readonly agentDir: string
+  }
+}
+
+export type KernelRuntimeRef = KernelLocalRuntimeRef | KernelRemoteRuntimeRef
 export type PhiRuntimeRef = RemoteOmpRuntimeRef
 export type RuntimeRecoveryErrorCode =
   | 'INVALID_RUNTIME_REFERENCE'
@@ -72,6 +98,8 @@ const referenceKeys = [
   'journalBasename',
   'ompVersion'
 ]
+
+const kernelReferenceKeys = ['kind', 'version', 'kernelSessionId', 'host'] as const
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -181,6 +209,79 @@ export function parseRuntimeReference(value: unknown, sessionId: string): Remote
   })
 }
 
+function invalidKernelReference(): never {
+  throw new RuntimeReferenceError('INVALID_RUNTIME_REFERENCE', '内核会话定位信息损坏，需要显式恢复')
+}
+
+function parseLocalKernelHost(
+  kernelSessionId: string,
+  host: Record<string, unknown>
+): KernelLocalRuntimeRef {
+  if (
+    Object.keys(host).sort().join(',') !== 'agentDir,kind' ||
+    !canonicalPath(host.agentDir, false)
+  ) {
+    return invalidKernelReference()
+  }
+  return Object.freeze({
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId,
+    host: Object.freeze({ kind: 'local', agentDir: host.agentDir })
+  })
+}
+
+function parseRemoteKernelHost(
+  kernelSessionId: string,
+  host: Record<string, unknown>
+): KernelRemoteRuntimeRef {
+  if (
+    Object.keys(host).sort().join(',') !==
+      'agentDir,home,hostProfileId,kind,projectId,projectRoot,runtimeRoot' ||
+    typeof host.hostProfileId !== 'string' ||
+    !hostProfileId.test(host.hostProfileId) ||
+    typeof host.projectId !== 'string' ||
+    !identifier.test(host.projectId) ||
+    !canonicalPath(host.projectRoot, true) ||
+    !canonicalPath(host.runtimeRoot, false) ||
+    !canonicalPath(host.home, false) ||
+    !canonicalPath(host.agentDir, false)
+  ) {
+    return invalidKernelReference()
+  }
+  return Object.freeze({
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId,
+    host: Object.freeze({
+      kind: 'ssh',
+      hostProfileId: host.hostProfileId,
+      projectId: host.projectId,
+      projectRoot: host.projectRoot,
+      runtimeRoot: host.runtimeRoot,
+      home: host.home,
+      agentDir: host.agentDir
+    })
+  })
+}
+
+export function parseKernelRuntimeReference(value: unknown): KernelRuntimeRef {
+  if (
+    !record(value) ||
+    Object.keys(value).some((key) => !(kernelReferenceKeys as readonly string[]).includes(key)) ||
+    value.kind !== 'phi-kernel' ||
+    value.version !== 1 ||
+    typeof value.kernelSessionId !== 'string' ||
+    !identifier.test(value.kernelSessionId) ||
+    !record(value.host)
+  ) {
+    return invalidKernelReference()
+  }
+  if (value.host.kind === 'local') return parseLocalKernelHost(value.kernelSessionId, value.host)
+  if (value.host.kind === 'ssh') return parseRemoteKernelHost(value.kernelSessionId, value.host)
+  return invalidKernelReference()
+}
+
 export function assertRuntimeScope(ref: RemoteOmpRuntimeRef, scope: RemoteOmpScope): void {
   for (const key of scopeKeys) {
     if (ref[key] === scope[key]) continue
@@ -195,6 +296,7 @@ export function assertRuntimeScope(ref: RemoteOmpRuntimeRef, scope: RemoteOmpSco
 
 export function assertLocalRuntimeAccess(manifest: {
   runtimeRef?: PhiRuntimeRef
+  kernelRuntimeRef?: KernelRuntimeRef
   runtimeRecoveryError?: RuntimeRecoveryDiagnostic
 }): void {
   if (manifest.runtimeRecoveryError)
@@ -202,7 +304,7 @@ export function assertLocalRuntimeAccess(manifest: {
       manifest.runtimeRecoveryError.code,
       manifest.runtimeRecoveryError.message
     )
-  if (manifest.runtimeRef)
+  if (manifest.runtimeRef || manifest.kernelRuntimeRef)
     throw new RuntimeReferenceError(
       'REMOTE_OPERATION_REQUIRED',
       '远程会话需要通过已验证的服务器操作，不能使用本地底层会话'
@@ -245,6 +347,35 @@ export function assertRuntimeReferenceProject(
       'HOST_IDENTITY_CHANGED',
       '远程会话的主机绑定已改变，需要显式恢复'
     )
+  }
+}
+
+export function assertKernelRuntimeReferenceProject(
+  manifest: {
+    kind: string
+    projectId: string | null
+    projectLocation?: ProjectLocation
+    runtimeSessionPath?: string
+  },
+  ref: KernelRuntimeRef
+): void {
+  if (ref.host.kind === 'local') {
+    if (manifest.projectLocation?.kind === 'ssh' || manifest.runtimeSessionPath) {
+      throw new RuntimeReferenceError('PROJECT_MISMATCH', '本地内核会话与项目绑定不一致')
+    }
+    return
+  }
+  if (
+    manifest.runtimeSessionPath ||
+    manifest.kind !== 'project' ||
+    manifest.projectId !== ref.host.projectId ||
+    manifest.projectLocation?.kind !== 'ssh' ||
+    manifest.projectLocation.canonicalRoot !== ref.host.projectRoot
+  ) {
+    throw new RuntimeReferenceError('PROJECT_MISMATCH', '远程内核会话与项目绑定不一致')
+  }
+  if (manifest.projectLocation.hostProfileId !== ref.host.hostProfileId) {
+    throw new RuntimeReferenceError('HOST_IDENTITY_CHANGED', '远程内核主机绑定已改变')
   }
 }
 

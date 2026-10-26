@@ -6,6 +6,7 @@ export type KernelE2eScenario =
   | 'tools'
   | 'plan'
   | 'desktop-services'
+  | 'desktop-engine'
   | 'reconnect'
   | 'grace-expiry'
   | 'model-proxy-reconnect'
@@ -25,7 +26,7 @@ export function kernelE2eUsage(): string {
   return [
     'Usage: bun scripts/kernel-e2e.ts --target local|ssh --runtime-root <absolute-path>',
     '       [--host <ssh-alias>] [--build-dir <target-build-directory>]',
-    '       [--scenario baseline|tools|plan|desktop-services|reconnect|grace-expiry|model-proxy-reconnect]',
+    '       [--scenario baseline|tools|plan|desktop-services|desktop-engine|reconnect|grace-expiry|model-proxy-reconnect]',
     '       [--helper-path <local-phi-helper>]',
     '       [--deadline-min <minutes, default 30>]',
     '       [--out <report.json>]',
@@ -79,6 +80,7 @@ export function parseKernelE2eArgs(argv: string[], packageVersion: string): Kern
     scenario !== 'tools' &&
     scenario !== 'plan' &&
     scenario !== 'desktop-services' &&
+    scenario !== 'desktop-engine' &&
     scenario !== 'reconnect' &&
     scenario !== 'grace-expiry' &&
     scenario !== 'model-proxy-reconnect'

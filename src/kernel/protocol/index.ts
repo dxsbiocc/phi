@@ -571,7 +571,8 @@ export class KernelProtocolCore {
       kernelInstanceId: this.kernelInstanceId,
       controllerGeneration: this.controllerGeneration,
       capabilities,
-      lastSeq: this.lastSeq
+      lastSeq: this.lastSeq,
+      runtime: this.options.runtimeIdentity ?? { home: '', agentDir: '' }
     })
     if (this.disconnectPolicy === 'wait-for-reconnect') {
       this.hostRequests.resume({
@@ -739,14 +740,15 @@ export class KernelProtocolCore {
     detail?: string
   ): void {
     if (this.expiringRunIds.has(runId)) return
-    const payload = { runId, status, ...(detail ? { detail } : {}) }
+    const metadata = this.handlers.runCompletionMetadata?.(sessionId) ?? {}
+    const payload = { runId, status, ...(detail ? { detail } : {}), ...metadata }
     if (!runCompletedPayloadSchema.safeParse(payload).success) {
       this.log.error?.('Ignored invalid session run completion.', { sessionId, runId })
       status = 'unknown'
     }
     const emitted = this.emitEvent(
       'run.completed',
-      status === 'unknown' ? { runId, status } : payload,
+      status === 'unknown' ? { runId, status, ...metadata } : payload,
       {
         sessionId,
         runId

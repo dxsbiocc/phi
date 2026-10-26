@@ -5,7 +5,7 @@ export { LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE }
 
 type LegacyRemoteSessionManifest = Pick<
   PhiSessionManifest,
-  'projectLocation' | 'remoteRuntime' | 'runtimeRef' | 'runtimeRecoveryError'
+  'projectLocation' | 'remoteRuntime' | 'runtimeRef' | 'kernelRuntimeRef' | 'runtimeRecoveryError'
 >
 
 /**
@@ -17,6 +17,7 @@ export function isLegacyRemoteSession(manifest: LegacyRemoteSessionManifest | nu
   return Boolean(
     manifest?.projectLocation?.kind === 'ssh' &&
     !manifest.runtimeRef &&
+    !manifest.kernelRuntimeRef &&
     !manifest.runtimeRecoveryError &&
     manifest.remoteRuntime !== 'rpc'
   )

@@ -164,6 +164,7 @@ import {
 import type { RemoteProjectReachability } from '../../shared/projectLocation'
 import { chatItemsFromSessionMessages } from './lib/chatItems'
 import { readableErrorMessage } from './lib/sessionNotifications'
+import { localizeKernelError } from './features/chat/lib/kernelErrorCopy'
 import { sessionDraftKey, updateSessionDraft } from './lib/sessionDrafts'
 import {
   isPointerWithinWorkspaceSidebarPreview,
@@ -495,7 +496,7 @@ function App(): React.JSX.Element {
 
   const showSnackbarError = useCallback(
     (error: unknown, fallback: string): void => {
-      showSnackbar(readableErrorMessage(error, fallback), 'error')
+      showSnackbar(readableErrorMessage(localizeKernelError(error), fallback), 'error')
     },
     [showSnackbar]
   )

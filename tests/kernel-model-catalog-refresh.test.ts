@@ -11,6 +11,7 @@ function access(options: {
 }): KernelModelAccess {
   return {
     authStorage: { credentials: { revalidate: async () => undefined } },
+    refreshCatalog: options.refresh,
     modelRegistry: {
       refresh: options.refresh,
       find: (provider: string, id: string) =>
@@ -25,20 +26,38 @@ function access(options: {
   } as unknown as KernelModelAccess
 }
 
-test('a model added to models.yml after kernel start is found after one offline reload', async () => {
+test('model validation reloads the offline catalog at every selection boundary', async () => {
   const catalog: Array<{ provider: string; id: string }> = []
-  const strategies: unknown[] = []
+  let refreshes = 0
   const modelAccess = access({
     catalog,
-    refresh: async (...args: unknown[]) => {
-      strategies.push(args[0])
-      catalog.push({ provider: 'fixture', id: 'late-model' })
+    refresh: async () => {
+      refreshes += 1
+      if (catalog.length === 0) catalog.push({ provider: 'fixture', id: 'late-model' })
     }
   } as never)
   await requireAvailableModel(modelAccess, { provider: 'fixture', id: 'late-model' })
-  assert.deepEqual(strategies, ['offline'])
+  assert.equal(refreshes, 1)
   await requireAvailableModel(modelAccess, { provider: 'fixture', id: 'late-model' })
-  assert.deepEqual(strategies, ['offline'], 'a catalog hit does not reload again')
+  assert.equal(refreshes, 2)
+})
+
+test('a removed cached model is unavailable after the offline catalog reload', async () => {
+  const catalog = [{ provider: 'fixture', id: 'retired-model' }]
+  const modelAccess = access({
+    catalog,
+    refresh: async () => {
+      catalog.splice(0, catalog.length, { provider: 'fixture', id: 'replacement-model' })
+    }
+  })
+  await assert.rejects(
+    requireAvailableModel(modelAccess, { provider: 'fixture', id: 'retired-model' }),
+    (error: { code?: string }) => error.code === 'MODEL_UNAVAILABLE'
+  )
+  await requireAvailableModel(modelAccess, {
+    provider: 'fixture',
+    id: 'replacement-model'
+  })
 })
 
 test('a model still missing after reload, or a failed reload, stays MODEL_UNAVAILABLE', async () => {

@@ -1137,6 +1137,7 @@ installAppRemoteSessionRouting({
     appPath: app.getAppPath(),
     resourcesPath: process.resourcesPath,
     isPackaged: app.isPackaged,
+    version: app.getVersion(),
     userDataPath: app.getPath('userData')
   }),
   configuredRoot: (project) => projectRemoteRuntimeRoot(project).configured,

@@ -81,11 +81,11 @@ class ChildProcessKernelTransport implements KernelClientTransport {
     const graceful = await this.waitForExit(LOCAL_KERNEL_CLOSE_PHASE_MS)
     if (graceful) return { action: 'stdin-eof', ...graceful }
 
-    this.child.kill('SIGTERM')
+    this.signalProcessTree('SIGTERM')
     const terminated = await this.waitForExit(LOCAL_KERNEL_CLOSE_PHASE_MS)
     if (terminated) return { action: 'sigterm', ...terminated }
 
-    this.child.kill('SIGKILL')
+    this.signalProcessTree('SIGKILL')
     const killed = await this.waitForExit(LOCAL_KERNEL_KILL_CONFIRM_MS)
     return {
       action: 'sigkill',
@@ -110,6 +110,18 @@ class ChildProcessKernelTransport implements KernelClientTransport {
       timer.unref()
       void this.exited.then(finish)
     })
+  }
+
+  private signalProcessTree(signal: NodeJS.Signals): void {
+    if (process.platform !== 'win32' && this.child.pid) {
+      try {
+        process.kill(-this.child.pid, signal)
+        return
+      } catch {
+        // The child may have left its process group while exiting; fall back to its PID.
+      }
+    }
+    this.child.kill(signal)
   }
 }
 
@@ -152,7 +164,8 @@ export function spawnKernelStdio(options: SpawnKernelStdioOptions = {}): Spawned
   const child = spawn(executable, args, {
     cwd: options.cwd ?? process.cwd(),
     env: options.env ?? process.env,
-    stdio: ['pipe', 'pipe', 'pipe']
+    stdio: ['pipe', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32'
   })
   child.stderr.setEncoding('utf8')
   child.stderr.on('data', (chunk: string) => options.onDiagnostic?.(chunk))

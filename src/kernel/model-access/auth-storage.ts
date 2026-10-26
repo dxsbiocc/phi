@@ -126,7 +126,8 @@ function storedKeyOverrides(
   }
   const peek = async (provider: string): Promise<string | undefined> => {
     if (configuredSource(provider)) return storage.keys.peek(provider)
-    await refresh(provider)
+    // Discovery probes are advisory and must never turn an absent desktop broker into a
+    // session-creation failure. Request paths use resolve(), which still refreshes/fails closed.
     const rows = storage.credentials.list(provider)
     const oauth = rows.find(
       (row) => row.credential.type === 'oauth' && row.credential.expires > Date.now()

@@ -46,10 +46,12 @@ import {
   resourceToolCallHandlers,
   selectedResourceLoader,
   trustedContextFiles,
+  trustedKernelSessionIdentity,
   trustedMcpServers
 } from './runtime-session-resources'
 
 import { errorMessage } from '../../../shared/errorCodes'
+import { pickSessionManager } from './runtime-session-manager-selection'
 export const AGENT_RUNTIME_ID = 'omp-sdk'
 export const AGENT_RUNTIME_PACKAGE = '@oh-my-pi/pi-coding-agent'
 const nodeRequire = createRequire(import.meta.url)
@@ -273,6 +275,7 @@ export interface CreateAgentSessionResult {
 }
 
 export type CreateAgentSessionOptions = {
+  phiSessionId?: string
   cwd?: string
   agentDir?: string
   modelRuntime?: ModelRuntime
@@ -1027,13 +1030,6 @@ export function readAutoCompactionDefaults(
   return getPhiEngine().settings.autoCompactionDefaults({ cwd, agentDir })
 }
 
-function selectedSessionManager(
-  manager: RuntimeSessionManager | undefined,
-  cwd: string
-): RuntimeSessionManager {
-  return manager ?? createRuntimeSessionManager(cwd)
-}
-
 export async function createRuntimeAgentSession(
   options: CreateAgentSessionOptions = {},
   control?: RuntimeSelectionControl
@@ -1045,10 +1041,11 @@ export async function createRuntimeAgentSession(
   const engine = getPhiEngine()
   const resourceLoader = selectedResourceLoader(options.resourceLoader)
   const toolCallHandlers = await resourceToolCallHandlers(resourceLoader)
-  const sessionManager = selectedSessionManager(options.sessionManager, cwd)
-  const sessionId = randomUUID()
+  const fallbackManager = createRuntimeSessionManager(cwd)
+  const sessionManager = pickSessionManager(options.sessionManager, fallbackManager)
   const createParams = {
-    sessionId,
+    sessionId: randomUUID(),
+    ...trustedKernelSessionIdentity(options),
     cwd,
     agentDir,
     model: options.model,

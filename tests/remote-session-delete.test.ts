@@ -20,11 +20,15 @@ import { serializeRemoteSessionManifest } from '../src/main/agent/engine/rpc/ses
 import type { Project } from '../src/main/agent/projects'
 import type { RemoteWorkspaceHostBinding } from '../src/main/agent/remote-workspace-boundary'
 import {
+  buildRemoteKernelSessionDeleteCommand,
   buildRemoteSessionDeleteCommand,
   prepareRemotePhiDeletion,
   RemoteSessionDeleteUnavailableError
 } from '../src/main/agent/session/remote-session-delete'
-import { remoteOmpDurableSessionKey } from '../src/main/agent/session/runtime-reference'
+import {
+  remoteOmpDurableSessionKey,
+  type KernelRemoteRuntimeRef
+} from '../src/main/agent/session/runtime-reference'
 import {
   beginRuntimeReferenceAdoption,
   createPhiSession,
@@ -131,6 +135,32 @@ test('remote deletion verifies exact server identity, both writer locks, and omi
     assert.match(remove, new RegExp(reference.durableSessionKey.replace('/', '\\/')))
     assert.equal(project.id, binding.projectId)
   })
+})
+
+test('kernel deletion verifies first and removes only its validated persistent session directory', () => {
+  const reference: KernelRemoteRuntimeRef = {
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId: 'kernel-session-1',
+    host: {
+      kind: 'ssh',
+      hostProfileId: 'ssh-config:test',
+      projectId: 'project-1',
+      projectRoot: '/srv/project',
+      runtimeRoot: '/srv/runtime',
+      home: '/srv/runtime/kernel-home',
+      agentDir: '/srv/runtime/kernel-home/agent'
+    }
+  }
+  const verify = buildRemoteKernelSessionDeleteCommand(reference, 'verify')
+  const remove = buildRemoteKernelSessionDeleteCommand(reference)
+  assert.match(verify, /PHI_STORAGE_SESSION_VERIFIED/u)
+  assert.ok(verify.indexOf("if [ 'verify' = verify ]") < verify.lastIndexOf('mv -- "$target"'))
+  assert.match(remove, /\/srv\/runtime\/phi-kernel\/sessions\/kernel-session-1/u)
+  assert.match(remove, /flock -n 9/u)
+  assert.match(remove, /mv --/u)
+  assert.match(remove, /rm -rf --/u)
+  assert.doesNotMatch(remove, /\bkill\b/u)
 })
 
 test('server command deletes only its exact scoped session directory', async () => {

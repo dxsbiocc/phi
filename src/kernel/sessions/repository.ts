@@ -126,6 +126,7 @@ function persistedSessionPolicy(
       noTools: params.noTools ?? false,
       workMode: params.workMode ?? 'direct',
       enableToolApproval: params.enableToolApproval === true,
+      ...(params.resourceVersion ? { resourceVersion: params.resourceVersion } : {}),
       ...(params.autoCompaction
         ? { autoCompaction: { enabled: params.autoCompaction.enabled } }
         : {})
