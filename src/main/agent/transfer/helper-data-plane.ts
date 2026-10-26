@@ -28,6 +28,7 @@ export type HelperTransferDataPlaneOptions = Readonly<{
   id?: string
   maxReconnects?: number
   controlTimeoutMs?: number
+  onConnectTiming?: (elapsedMs: number) => void
   onStatus?: (status: HelperTransferDataPlaneStatus) => void
 }>
 
@@ -48,6 +49,17 @@ type NegotiationResult = Readonly<{
 }>
 
 class HelperConnectionUnavailableError extends Error {}
+
+function reportConnectTiming(
+  callback: HelperTransferDataPlaneOptions['onConnectTiming'],
+  started: number
+): void {
+  try {
+    callback?.(performance.now() - started)
+  } catch {
+    // Timing is diagnostic and cannot affect transfer correctness.
+  }
+}
 
 function supportsDataPlane(result: NegotiationResult): boolean {
   const capability = result.capabilities?.transferDataPlane
@@ -122,6 +134,12 @@ export class HelperTransferDataPlane implements TransferDataPlane {
           'Remote helper lacks transfer data-plane protocol v1; using pure SSH fallback'
         )
       }
+      if (error instanceof HelperProtocolError && /timed out/i.test(error.message)) {
+        throw new TransferError(
+          'TRANSFER_STALLED',
+          'Remote helper stopped acknowledging transfer requests'
+        )
+      }
       throw error
     }
     await connection.client.close()
@@ -151,10 +169,12 @@ export class HelperTransferDataPlane implements TransferDataPlane {
   private async openNegotiatedConnection(
     onOpened?: (client: HelperDataPlaneProtocolClient) => void
   ): Promise<NegotiatedHelperConnection> {
+    const started = performance.now()
     let process: RemoteStdioProcess
     try {
       process = await this.options.connect()
     } catch {
+      reportConnectTiming(this.options.onConnectTiming, started)
       throw new HelperConnectionUnavailableError()
     }
     const client = new HelperDataPlaneProtocolClient(process, {
@@ -169,11 +189,13 @@ export class HelperTransferDataPlane implements TransferDataPlane {
       if (!supportsDataPlane(negotiated)) {
         throw new HelperProtocolError('Remote helper lacks transfer data-plane protocol v1', -32601)
       }
+      reportConnectTiming(this.options.onConnectTiming, started)
       return {
         client,
         maxWindow: negotiated.capabilities.transferDataPlane!.maxWindow
       }
     } catch (error) {
+      reportConnectTiming(this.options.onConnectTiming, started)
       if (onOpened) await client.drain().catch(() => undefined)
       else await client.close().catch(() => undefined)
       throw error

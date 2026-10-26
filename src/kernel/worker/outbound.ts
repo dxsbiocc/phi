@@ -134,7 +134,7 @@ export function bindWorkerOutbound(options: BindWorkerOutboundOptions): () => vo
       throw new Error('Raw legacy worker frames are unavailable on the kernel protocol')
     },
     event: (name, payload, extra) => routeEvent(options, name, payload, extra),
-    hostRequest(method, params, context) {
+    hostRequest(method, params, context, onProgress) {
       const record = isRecord(params) ? params : {}
       const sessionId =
         context?.originSessionId ??
@@ -146,11 +146,16 @@ export function bindWorkerOutbound(options: BindWorkerOutboundOptions): () => vo
               ? record.sessionId
               : undefined)
       const runId = sessionId ? options.activeRunId(sessionId) : undefined
-      return options.core.requestHost(method, params as JsonValue, {
-        ...(sessionId ? { sessionId } : {}),
-        ...(runId ? { runId } : {}),
-        ...(context?.agentRunId ? { agentRunId: context.agentRunId } : {})
-      })
+      return options.core.requestHost(
+        method,
+        params as JsonValue,
+        {
+          ...(sessionId ? { sessionId } : {}),
+          ...(runId ? { runId } : {}),
+          ...(context?.agentRunId ? { agentRunId: context.agentRunId } : {})
+        },
+        onProgress as ((progress: JsonValue) => void) | undefined
+      )
     }
   }
   setWorkerOutbound(outbound)

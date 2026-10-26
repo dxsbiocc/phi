@@ -401,6 +401,8 @@ export type PhiSessionCreateParams = {
   contextFiles?: Array<{ path: string; content: string }>
   /** Exact execution-domain MCP set for this session. */
   mcpServers?: Array<{ name: string; config: Record<string, unknown> }>
+  /** Opaque trusted desktop binding; desktop MCP configuration and credentials stay host-side. */
+  desktopMcp?: { bindingId: string }
   /** Optional managed environment bound to the main session. */
   environment?: { ref: string; pluginId?: string }
   personaMarkdown?: string

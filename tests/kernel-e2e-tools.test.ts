@@ -7,6 +7,7 @@ import {
   type ToolsReadEvidence
 } from '../scripts/kernel-e2e/tools-scenario'
 import { kernelE2eUsage, parseKernelE2eArgs } from '../scripts/kernel-e2e/options'
+import { boundedByDeadline } from '../scripts/kernel-e2e/harness'
 
 function fixture(extension: string): Buffer {
   const entry = createToolsReadFixtures().find((candidate) => candidate.path.endsWith(extension))
@@ -138,29 +139,29 @@ test('tools scenario reports a missing execution-host converter explicitly', asy
 })
 
 test('kernel E2E CLI accepts tools on either execution host without changing lifecycle gates', () => {
-  assert.equal(
-    parseKernelE2eArgs(
-      ['--target', 'local', '--runtime-root', '/tmp/kernel-e2e', '--scenario', 'tools'],
-      '0.1.0'
-    ).scenario,
-    'tools'
+  const local = parseKernelE2eArgs(
+    ['--target', 'local', '--runtime-root', '/tmp/kernel-e2e', '--scenario', 'tools'],
+    '0.1.0'
   )
-  assert.equal(
-    parseKernelE2eArgs(
-      [
-        '--target',
-        'ssh',
-        '--host',
-        'node3',
-        '--runtime-root',
-        '/tmp/kernel-e2e',
-        '--scenario',
-        'tools'
-      ],
-      '0.1.0'
-    ).scenario,
-    'tools'
+  assert.equal(local.scenario, 'tools')
+  assert.equal(local.deadlineMinutes, 30)
+  const remote = parseKernelE2eArgs(
+    [
+      '--target',
+      'ssh',
+      '--host',
+      'node3',
+      '--runtime-root',
+      '/tmp/kernel-e2e',
+      '--scenario',
+      'tools',
+      '--deadline-min',
+      '45'
+    ],
+    '0.1.0'
   )
+  assert.equal(remote.scenario, 'tools')
+  assert.equal(remote.deadlineMinutes, 45)
   assert.throws(
     () =>
       parseKernelE2eArgs(
@@ -169,7 +170,49 @@ test('kernel E2E CLI accepts tools on either execution host without changing lif
       ),
     /--scenario reconnect requires --target ssh/
   )
+  assert.throws(
+    () =>
+      parseKernelE2eArgs(
+        [
+          '--target',
+          'ssh',
+          '--host',
+          'node3',
+          '--runtime-root',
+          '/tmp/kernel-e2e',
+          '--deadline-min',
+          '0'
+        ],
+        '0.1.0'
+      ),
+    /--deadline-min must be a positive number/
+  )
   assert.match(kernelE2eUsage(), /baseline\|tools\|reconnect\|grace-expiry/)
+  assert.match(kernelE2eUsage(), /--deadline-min/)
+})
+
+test('kernel E2E deadlines identify the step that exceeded its own timeout', async () => {
+  await assert.rejects(
+    boundedByDeadline(
+      new Promise<never>(() => undefined),
+      'hung unit step',
+      10,
+      Date.now() + 1_000
+    ),
+    /Step "hung unit step" timed out after 10 ms/
+  )
+})
+
+test('kernel E2E overall deadline identifies the active step', async () => {
+  await assert.rejects(
+    boundedByDeadline(
+      new Promise<never>(() => undefined),
+      'active deadline step',
+      1_000,
+      Date.now() + 10
+    ),
+    /Overall kernel E2E deadline expired during "active deadline step"/
+  )
 })
 
 function result(toolCallId: string, text: string): Record<string, unknown> {

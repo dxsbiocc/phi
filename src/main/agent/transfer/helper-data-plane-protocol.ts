@@ -1,6 +1,7 @@
 import type { Writable } from 'node:stream'
 
 import type { RemoteStdioProcess } from '../wrappers/remote-ssh-session'
+import { DEFAULT_TRANSFER_IDLE_TIMEOUT_MS } from './types'
 
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
 const BINARY_MAGIC = Buffer.from('PHDP')
@@ -269,7 +270,7 @@ export class HelperDataPlaneProtocolClient {
       this.fail(error)
     }
     const promise = new Promise<T>((resolve, reject) => {
-      const timeoutMs = this.options.requestTimeoutMs ?? 30 * 60 * 1000
+      const timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_TRANSFER_IDLE_TIMEOUT_MS
       const timeout = setTimeout(() => {
         this.fail(new HelperProtocolError(`remote helper request timed out after ${timeoutMs}ms`))
       }, timeoutMs)
@@ -309,7 +310,7 @@ export class HelperDataPlaneProtocolClient {
       )
     }
     const response = new Promise<HelperBinaryFrame>((resolve, reject) => {
-      const timeoutMs = this.options.requestTimeoutMs ?? 30 * 60 * 1000
+      const timeoutMs = this.options.requestTimeoutMs ?? DEFAULT_TRANSFER_IDLE_TIMEOUT_MS
       const timeout = setTimeout(() => {
         this.fail(
           new HelperProtocolError(`remote helper binary frame timed out after ${timeoutMs}ms`)

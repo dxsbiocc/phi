@@ -417,52 +417,72 @@ export class FileTransferManager {
 
       let lastCheckpointAt = this.now()
       let durableOffset = manifest.durableOffset
-      await session.copy({
-        offset: manifest.durableOffset,
-        chunkSize: this.policy.chunkSizeBytes,
-        signal: job.controller.signal,
-        onChunk: async (progress) => {
-          const now = this.now()
-          const elapsed = Math.max(1, now - job.lastChunkAt)
-          job.instantaneousSpeed = ((progress.offset - job.lastChunkBytes) * 1000) / elapsed
-          job.smoothedSpeed =
-            job.smoothedSpeed === 0
-              ? job.instantaneousSpeed
-              : job.smoothedSpeed * 0.75 + job.instantaneousSpeed * 0.25
-          job.lastChunkAt = now
-          job.lastChunkBytes = progress.offset
-          job.bytes = progress.offset
-          if (
-            now - job.lastProgressAt >= this.policy.progressIntervalMs &&
-            progress.offset - job.lastProgressBytes >= this.policy.progressBytes
-          ) {
-            job.lastProgressAt = now
-            job.lastProgressBytes = progress.offset
-            this.emit(job)
-          }
-          return (
-            progress.offset - durableOffset >= this.policy.checkpointBytes ||
-            now - lastCheckpointAt >= this.policy.checkpointIntervalMs
+      let idleTimer: NodeJS.Timeout | undefined
+      const armIdleWatchdog = (): void => {
+        if (idleTimer) clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => {
+          if (job.controller.signal.aborted) return
+          job.controller.abort(
+            new TransferError(
+              'TRANSFER_STALLED',
+              `Transfer made no acknowledged byte progress for ${this.policy.idleTimeoutMs} ms`
+            )
           )
-        },
-        onCheckpoint: async (progress) => {
-          const now = this.now()
-          manifest = {
-            ...manifest,
-            durableOffset: progress.offset,
-            lastChunk: {
-              offset: progress.chunkOffset,
-              size: progress.chunkSize,
-              sha256: progress.chunkSha256
-            },
-            updatedAt: now
+        }, this.policy.idleTimeoutMs)
+        idleTimer.unref?.()
+      }
+      armIdleWatchdog()
+      try {
+        await session.copy({
+          offset: manifest.durableOffset,
+          chunkSize: this.policy.chunkSizeBytes,
+          signal: job.controller.signal,
+          onChunk: async (progress) => {
+            armIdleWatchdog()
+            const now = this.now()
+            const elapsed = Math.max(1, now - job.lastChunkAt)
+            job.instantaneousSpeed = ((progress.offset - job.lastChunkBytes) * 1000) / elapsed
+            job.smoothedSpeed =
+              job.smoothedSpeed === 0
+                ? job.instantaneousSpeed
+                : job.smoothedSpeed * 0.75 + job.instantaneousSpeed * 0.25
+            job.lastChunkAt = now
+            job.lastChunkBytes = progress.offset
+            job.bytes = progress.offset
+            if (
+              now - job.lastProgressAt >= this.policy.progressIntervalMs &&
+              progress.offset - job.lastProgressBytes >= this.policy.progressBytes
+            ) {
+              job.lastProgressAt = now
+              job.lastProgressBytes = progress.offset
+              this.emit(job)
+            }
+            return (
+              progress.offset - durableOffset >= this.policy.checkpointBytes ||
+              now - lastCheckpointAt >= this.policy.checkpointIntervalMs
+            )
+          },
+          onCheckpoint: async (progress) => {
+            const now = this.now()
+            manifest = {
+              ...manifest,
+              durableOffset: progress.offset,
+              lastChunk: {
+                offset: progress.chunkOffset,
+                size: progress.chunkSize,
+                sha256: progress.chunkSha256
+              },
+              updatedAt: now
+            }
+            await session!.writeManifest(manifest)
+            durableOffset = progress.offset
+            lastCheckpointAt = now
+            await this.record(job, session!, 'active', createdAt)
           }
-          await session!.writeManifest(manifest)
-          durableOffset = progress.offset
-          lastCheckpointAt = now
-          await this.record(job, session!, 'active', createdAt)
-        }
-      })
+        })
+      } finally {
+        if (idleTimer) clearTimeout(idleTimer)
+      }
       if (preflight.expectedSize === 0 && manifest.durableOffset !== 0) {
         throw new TransferError('INVALID_PARTIAL', 'Empty transfer has a non-empty checkpoint')
       }
@@ -517,7 +537,10 @@ export class FileTransferManager {
         }
       }
     } catch (unknownError) {
-      let error = asTransferError(unknownError)
+      let error =
+        job.controller.signal.reason instanceof TransferError
+          ? job.controller.signal.reason
+          : asTransferError(unknownError)
       if (job.pauseRequested && !job.cancelRequested) {
         try {
           if (session !== null && job.retentionEstablished) {

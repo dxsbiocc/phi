@@ -299,13 +299,12 @@ export type CreateAgentSessionOptions = {
   remoteProjectMcpServers?: RemoteProjectMcpRuntimeServer[]
   contextFiles?: Array<{ path: string; content: string }>
   mcpServers?: Array<{ name: string; config: Record<string, unknown> }>
+  desktopMcp?: { bindingId: string }
   /** Optional managed environment bound to the main session. */
   environment?: { ref: string; pluginId?: string }
   /** Phi-managed user persona, injected explicitly into the main system prompt. */
   personaMarkdown?: string
-  remoteRecovery?: {
-    replacementModel?: { providerId: string; modelId: string }
-  }
+  remoteRecovery?: { replacementModel?: { providerId: string; modelId: string } }
 }
 
 function dedupePaths(paths: string[]): string[] {
@@ -1073,6 +1072,7 @@ export async function createRuntimeAgentSession(
     remoteProjectMcpServers: options.remoteProjectMcpServers,
     contextFiles: trustedContextFiles(options, resourceLoader),
     mcpServers: trustedMcpServers(options),
+    desktopMcp: options.desktopMcp,
     environment: options.environment,
     personaMarkdown: options.personaMarkdown,
     remoteRecovery: options.remoteRecovery

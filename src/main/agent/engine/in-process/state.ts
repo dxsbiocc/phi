@@ -11,6 +11,7 @@ import type { PlanStepsToolResult } from '../../plan/plan-review-mode'
 import type { RuntimeContext } from './common'
 import type { DefaultResourceLoader } from './session-factory'
 import type { SessionResourceSnapshot } from './session-resource-input'
+import type { PhiAgentDefinition } from '../../agents/definition'
 
 export type RemoteMcpAccess = {
   localProjectAnchor: string
@@ -21,6 +22,7 @@ export type RemoteMcpAccess = {
 export type SessionEntry = {
   result: CreateAgentSessionResult
   agentDir: string
+  context?: RuntimeContext
   /** The runs of this session's specialist agents; stopped with the session. */
   agentRuns?: AgentRunRegistry
   /** Every configured specialist, including host-only orchestration agents. */
@@ -34,8 +36,16 @@ export type SessionEntry = {
   mcpLeases?: Map<string, EnvironmentLease>
   ownedMcpManager?: MCPManager
   ownedStdioTransports?: Map<string, OwnedStdioTransportScope>
+  closeDesktopMcp?: () => Promise<void>
   resourceLoader?: DefaultResourceLoader
   resourceSnapshot?: SessionResourceSnapshot
+  applyResourceReload?: (params: unknown) => void
+  reloadAgents?: (
+    definitions: PhiAgentDefinition[]
+  ) => Promise<
+    | { applied: true; added: string[] }
+    | { applied: false; reason: 'requires_session_refresh'; changed: string[] }
+  >
   remoteMcpAccess?: RemoteMcpAccess
   disposing?: boolean
 }

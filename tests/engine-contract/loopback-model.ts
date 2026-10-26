@@ -17,6 +17,8 @@ export async function startLoopbackModel(): Promise<{
   url: string
   requests: ModelRequest[]
   enqueue(...replies: ModelReply[]): void
+  /** Drops replies no request consumed, e.g. after killing a kernel mid-run. */
+  discardQueued?(): void
   close(): Promise<void>
 }> {
   const requests: ModelRequest[] = []
@@ -111,6 +113,9 @@ export async function startLoopbackModel(): Promise<{
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`,
     requests,
     enqueue: (...items) => replies.push(...items),
+    discardQueued: () => {
+      replies.length = 0
+    },
     async close(): Promise<void> {
       for (const response of active) response.destroy()
       server.closeAllConnections()

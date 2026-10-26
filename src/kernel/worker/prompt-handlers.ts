@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { SessionPromptParams } from '../../shared/kernel-protocol'
-import { makeProtocolError } from '../protocol/errors'
+import { makeProtocolError, sanitizedRunFailureDetail } from '../protocol/errors'
 import type { KernelMethodHandlers, RunCompletionStatus, SessionPromptRun } from '../protocol'
 import type { DuplicateRun, KernelSessionRepository, PersistentSession } from '../sessions'
 import { pauseKernelTestPoint } from '../test-pause'
@@ -32,7 +32,6 @@ function requiredSessionId(sessionId: string | undefined): string {
 
 function workerOptions(prompt: SessionPromptParams): Record<string, unknown> | undefined {
   const publicOptions = prompt.options
-  const trustedOptions = prompt.trustedOptions
   const images = publicOptions?.images ?? prompt.images
   const options = {
     ...(images ? { images } : {}),
@@ -42,17 +41,11 @@ function workerOptions(prompt: SessionPromptParams): Record<string, unknown> | u
     ...(publicOptions?.skipCompactionCheck !== undefined
       ? { skipCompactionCheck: publicOptions.skipCompactionCheck }
       : {}),
-    ...(trustedOptions?.synthetic !== undefined ? { synthetic: trustedOptions.synthetic } : {}),
-    ...(trustedOptions?.userInitiated !== undefined
-      ? { userInitiated: trustedOptions.userInitiated }
-      : {})
+    ...(prompt.modelSelection !== undefined ? { modelSelection: prompt.modelSelection } : {}),
+    ...(prompt.synthetic !== undefined ? { synthetic: prompt.synthetic } : {}),
+    ...(prompt.userInitiated !== undefined ? { userInitiated: prompt.userInitiated } : {})
   }
   return Object.keys(options).length > 0 ? options : undefined
-}
-
-function sanitizedRunError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.replace(/(?:[A-Za-z]:[\\/]|\/)(?:[^\s:]+[\\/])*[^\s:]*/g, '<path>').slice(0, 1024)
 }
 
 async function finishPrompt(
@@ -78,7 +71,7 @@ async function finishPrompt(
   } catch (error) {
     outcome = options.cancelledRuns.has(runId)
       ? 'cancelled'
-      : { status: 'failed', detail: sanitizedRunError(error) }
+      : { status: 'failed', detail: sanitizedRunFailureDetail(error) }
   }
   const status = typeof outcome === 'string' ? outcome : outcome.status
   if (persistent) {
@@ -108,17 +101,10 @@ export function createPromptHandlers(options: PromptHandlerOptions): KernelMetho
         ? { runId: activeRunId, status: 'running' }
         : undefined
     },
-    'session.prompt'(params, callContext, request): Promise<SessionPromptRun> {
+    'session.prompt'(params, _callContext, request): Promise<SessionPromptRun> {
       return options.withAdmission(async () => {
         const sessionId = requiredSessionId(request.sessionId)
         const prompt = params as SessionPromptParams
-        if (prompt.trustedOptions && !callContext.trusted) {
-          throw makeProtocolError(
-            'CAPABILITY_UNAVAILABLE',
-            'Internal prompt options require a trusted host connection.',
-            { reason: 'trusted_host_required' }
-          )
-        }
         const kind = options.requireLoadedSession(sessionId)
         if (options.admittingRuns.has(sessionId) || options.forkingSessions.has(sessionId)) {
           throw makeProtocolError('SESSION_BUSY', 'The session has an active operation.')

@@ -8,7 +8,16 @@ import type {
   SessionAdoptParams
 } from '../../shared/kernel-protocol/history'
 
-export const SESSION_MANIFEST_SCHEMA_VERSION = 1 as const
+export const SESSION_MANIFEST_SCHEMA_VERSION = 2 as const
+
+export type PersistedSessionPolicy = {
+  noTools: 'all' | boolean
+  workMode: 'direct' | 'plan' | 'plan_execute' | 'auto'
+  enableToolApproval: boolean
+  autoCompaction?: {
+    enabled: boolean
+  }
+}
 
 export type SessionModel = {
   provider: string
@@ -27,6 +36,8 @@ export type SessionManifest = {
   policy?: {
     projectBound: boolean
     requiresTrustedResources: boolean
+    /** Present on v2 manifests; absent on normalized legacy v1 manifests and repairs. */
+    sessionPolicy?: PersistedSessionPolicy
   }
   journal: 'journal.jsonl'
   lastRun?: SessionLastRun

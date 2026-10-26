@@ -31,11 +31,21 @@ export function parseAllocatedTunnelPort(stdout: string): number {
   return port
 }
 
-export const INSPECT_REVERSE_TUNNEL_COMMAND = `set -eu
+/**
+ * Only the header and rows for `port` cross the wire: a busy cluster node's full socket table
+ * (~150 KB) took about 5 s over a slow link and timed the inspection out. Every row on the port
+ * is still returned, so the loopback-only proof below is unchanged.
+ */
+export function inspectReverseTunnelCommand(port: number): string {
+  assertTunnelPort(port)
+  const suffix = `:${port.toString(16).toUpperCase().padStart(4, '0')}`
+  const filter = `awk -v p='${suffix}' 'NR == 1 || substr($2, length($2) - 4) == p'`
+  return `set -eu
 printf 'PHI_TCP4\\n'
-cat /proc/net/tcp
+${filter} /proc/net/tcp
 printf 'PHI_TCP6\\n'
-cat /proc/net/tcp6`
+${filter} /proc/net/tcp6`
+}
 
 /** Linux exposes words in host byte order; supported release architectures are little endian. */
 export function assertLoopbackTunnelBinding(output: string, port: number): void {
@@ -81,7 +91,7 @@ export async function openReverseTunnelLease(
     readonly connectionSignal: AbortSignal
     forward(signal: AbortSignal): Promise<RemoteExecResult>
     cancel(): Promise<RemoteExecResult>
-    inspect(signal: AbortSignal): Promise<RemoteExecResult>
+    inspect(signal: AbortSignal, remotePort: number): Promise<RemoteExecResult>
     onCleanupComplete?(): void
   }
 ): Promise<RemoteReverseTunnel> {
@@ -147,7 +157,7 @@ export async function openReverseTunnelLease(
     signal.throwIfAborted()
     if (result.code !== 0 || result.signal) throw new Error('SSH reverse tunnel allocation failed')
     const remotePort = parseAllocatedTunnelPort(result.stdout)
-    const inspected = await untilCancelled(options.inspect(signal), signal)
+    const inspected = await untilCancelled(options.inspect(signal, remotePort), signal)
     signal.throwIfAborted()
     if (inspected.code !== 0 || inspected.signal)
       throw new Error('Cannot inspect SSH reverse tunnel loopback binding')

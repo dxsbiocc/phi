@@ -1,7 +1,8 @@
 import { isAbsolute, join, posix, resolve } from 'node:path'
 
 export type KernelE2eTarget = 'local' | 'ssh'
-export type KernelE2eScenario = 'baseline' | 'tools' | 'reconnect' | 'grace-expiry'
+export type KernelE2eScenario =
+  'baseline' | 'tools' | 'reconnect' | 'grace-expiry' | 'model-proxy-reconnect'
 
 export interface KernelE2eCliOptions {
   target: KernelE2eTarget
@@ -11,13 +12,16 @@ export interface KernelE2eCliOptions {
   output?: string
   scenario: KernelE2eScenario
   helperPath?: string
+  deadlineMinutes: number
 }
 
 export function kernelE2eUsage(): string {
   return [
     'Usage: bun scripts/kernel-e2e.ts --target local|ssh --runtime-root <absolute-path>',
     '       [--host <ssh-alias>] [--build-dir <target-build-directory>]',
-    '       [--scenario baseline|tools|reconnect|grace-expiry] [--helper-path <local-phi-helper>]',
+    '       [--scenario baseline|tools|reconnect|grace-expiry|model-proxy-reconnect]',
+    '       [--helper-path <local-phi-helper>]',
+    '       [--deadline-min <minutes, default 30>]',
     '       [--out <report.json>]',
     '',
     'SSH mode requires --host. The provider bearer token is random and valid only for this run.'
@@ -40,6 +44,7 @@ export function parseKernelE2eArgs(argv: string[], packageVersion: string): Kern
         '--build-dir',
         '--scenario',
         '--helper-path',
+        '--deadline-min',
         '--out'
       ].includes(key)
     ) {
@@ -67,16 +72,21 @@ export function parseKernelE2eArgs(argv: string[], packageVersion: string): Kern
     scenario !== 'baseline' &&
     scenario !== 'tools' &&
     scenario !== 'reconnect' &&
-    scenario !== 'grace-expiry'
+    scenario !== 'grace-expiry' &&
+    scenario !== 'model-proxy-reconnect'
   ) {
     throw new Error(`Invalid --scenario: ${scenario}\n${kernelE2eUsage()}`)
   }
-  if ((scenario === 'reconnect' || scenario === 'grace-expiry') && target !== 'ssh') {
+  if (scenario !== 'baseline' && scenario !== 'tools' && target !== 'ssh') {
     throw new Error(`--scenario ${scenario} requires --target ssh`)
   }
   const helperPath = values.get('--helper-path')
   if (helperPath && (!isAbsolute(helperPath) || /[\0\r\n]/.test(helperPath))) {
     throw new Error('--helper-path must be an absolute path without control characters')
+  }
+  const deadlineMinutes = Number(values.get('--deadline-min') ?? '30')
+  if (!Number.isFinite(deadlineMinutes) || deadlineMinutes <= 0) {
+    throw new Error('--deadline-min must be a positive number')
   }
   const defaultTarget = target === 'ssh' ? 'linux-x64' : 'darwin-arm64'
   return {
@@ -87,6 +97,7 @@ export function parseKernelE2eArgs(argv: string[], packageVersion: string): Kern
     buildDirectory: resolve(
       values.get('--build-dir') ?? join('.phi-build', 'kernel', packageVersion, defaultTarget)
     ),
+    deadlineMinutes,
     ...(values.has('--out') ? { output: resolve(values.get('--out')!) } : {}),
     ...(helperPath ? { helperPath: resolve(helperPath) } : {})
   }

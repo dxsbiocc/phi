@@ -22,6 +22,7 @@ const {
   kernelSessionPaths,
   readManifest,
   readReceipts,
+  validateSessionManifest,
   writeManifestAtomic
 } = await import('../src/kernel/sessions')
 
@@ -124,13 +125,23 @@ test('persistent manifests retain fail-closed policy across forks without storin
     const source = await repository.create('policy-source', {
       ...persistentParams(cwd),
       projectBound: true,
+      noTools: 'all',
+      workMode: 'plan',
+      enableToolApproval: true,
+      autoCompaction: { enabled: false },
       personaMarkdown: 'private persona',
       mcpServers: [{ name: 'fixture', config: { command: 'fixture-server' } }]
     })
     const fork = await repository.createFork('policy-fork', source)
     assert.deepEqual(source.manifest.policy, {
       projectBound: true,
-      requiresTrustedResources: true
+      requiresTrustedResources: true,
+      sessionPolicy: {
+        noTools: 'all',
+        workMode: 'plan',
+        enableToolApproval: true,
+        autoCompaction: { enabled: false }
+      }
     })
     assert.deepEqual(fork.manifest.policy, source.manifest.policy)
     assert.doesNotMatch(readFileSync(source.manifestPath, 'utf8'), /private persona|fixture-server/)
@@ -139,6 +150,48 @@ test('persistent manifests retain fail-closed policy across forks without storin
     await repository.close('policy-fork')
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('manifest validation upgrades strict legacy v1 policy and rejects unknown v2 policy keys', () => {
+  const cwd = '/tmp/phi-kernel-legacy-project'
+  const legacy = {
+    schemaVersion: 1,
+    sessionId: 'legacy-session',
+    cwd,
+    createdAt: '2026-10-25T01:02:03.000Z',
+    updatedAt: '2026-10-25T01:02:04.000Z',
+    policy: { projectBound: true, requiresTrustedResources: true },
+    journal: 'journal.jsonl'
+  }
+  assert.deepEqual(validateSessionManifest(legacy, 'legacy-session'), {
+    ...legacy,
+    schemaVersion: 2
+  })
+  assert.throws(
+    () =>
+      validateSessionManifest(
+        {
+          ...legacy,
+          schemaVersion: 2,
+          policy: {
+            ...legacy.policy,
+            sessionPolicy: {
+              noTools: 'all',
+              workMode: 'direct',
+              enableToolApproval: true,
+              unexpected: false
+            }
+          }
+        },
+        'legacy-session'
+      ),
+    /persisted policy is invalid/
+  )
+  assert.throws(
+    () =>
+      validateSessionManifest({ ...legacy, schemaVersion: 2, unexpected: false }, 'legacy-session'),
+    /unknown fields/
+  )
 })
 
 test('accepted receipt is fsync-visible when acceptRun resolves and identifies a running duplicate', async () => {

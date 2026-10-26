@@ -1,5 +1,6 @@
 export const MIB = 1024 * 1024
 export const GIB = 1024 * MIB
+export const DEFAULT_TRANSFER_IDLE_TIMEOUT_MS = 60_000
 
 export interface TransferPolicyShape {
   globalConcurrency: number
@@ -10,6 +11,7 @@ export interface TransferPolicyShape {
   checkpointIntervalMs: number
   progressIntervalMs: number
   progressBytes: number
+  idleTimeoutMs: number
   retainedPartialTtlMs: number
   retainedPartialHostMaxBytes: number
   retainedPartialFreeSpaceFraction: number
@@ -24,6 +26,7 @@ export const DEFAULT_TRANSFER_POLICY: Readonly<TransferPolicyShape> = Object.fre
   checkpointIntervalMs: 5_000,
   progressIntervalMs: 250,
   progressBytes: MIB,
+  idleTimeoutMs: DEFAULT_TRANSFER_IDLE_TIMEOUT_MS,
   retainedPartialTtlMs: 7 * 24 * 60 * 60 * 1000,
   retainedPartialHostMaxBytes: 20 * GIB,
   retainedPartialFreeSpaceFraction: 0.1

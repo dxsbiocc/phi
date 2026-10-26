@@ -22,7 +22,8 @@ import {
   type PendingApproval
 } from '../host/approval-tracker'
 import { KernelHostRequestManager } from '../host/host-request-manager'
-import { makeProtocolError, normalizeHandlerError } from './errors'
+import { makeProtocolError, normalizeHandlerError, sanitizedRunFailureDetail } from './errors'
+import { rejectsHostInternalFields } from './trusted-fields'
 import type {
   AttachTransportOptions,
   FrameTransport,
@@ -250,22 +251,22 @@ export class KernelProtocolCore {
   requestHost(
     capability: string,
     params: JsonValue,
-    context: KernelHostRequestContext = {}
+    context: KernelHostRequestContext = {},
+    onProgress?: (progress: JsonValue) => void
   ): Promise<JsonValue> {
     const controller = this.controller
-    return this.hostRequests.request(
-      capability,
-      params,
-      context,
-      this.controllerGeneration,
-      controller?.generation === undefined
-        ? undefined
+    return this.hostRequests.request(capability, params, context, this.controllerGeneration, {
+      ...(controller?.generation === undefined
+        ? {}
         : {
-            connection: controller,
-            generation: controller.generation,
-            capabilities: controller.hostCapabilities
-          }
-    )
+            controller: {
+              connection: controller,
+              generation: controller.generation,
+              capabilities: controller.hostCapabilities
+            }
+          }),
+      ...(onProgress ? { onProgress } : {})
+    })
   }
 
   async expireDisconnectedState(): Promise<boolean> {
@@ -320,6 +321,9 @@ export class KernelProtocolCore {
       case 'host.response':
         this.handleHostResponse(state, parsed)
         return
+      case 'host.progress':
+        this.hostRequests.handleProgress(state, parsed, this.controllerGeneration)
+        return
       case 'response':
         this.log.warn?.('Ignored response with an unknown id.', {
           connectionId: state.id
@@ -353,6 +357,14 @@ export class KernelProtocolCore {
     const route = this.routeBusinessMethod(state, request)
     if (!route) return
     const { method, handler } = route
+    if (rejectsHostInternalFields(state.trusted, request, method)) {
+      this.sendError(
+        state,
+        request.id,
+        makeProtocolError('INVALID_PARAMS', 'Host-internal request fields require a trusted entry.')
+      )
+      return
+    }
     if (method === 'events.subscribe') {
       this.handleSubscribe(state, request)
       return
@@ -660,12 +672,12 @@ export class KernelProtocolCore {
           const detail = typeof completion === 'string' ? undefined : completion.detail
           this.completeRun(sessionId, result.runId, status, detail)
         },
-        () => {
+        (error) => {
           this.log.error?.('Accepted session run failed.', {
             sessionId,
             runId: result.runId
           })
-          this.completeRun(sessionId, result.runId, 'failed')
+          this.completeRun(sessionId, result.runId, 'failed', sanitizedRunFailureDetail(error))
         }
       )
     } catch (error) {

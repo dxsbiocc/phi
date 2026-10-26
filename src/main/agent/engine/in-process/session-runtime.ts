@@ -29,11 +29,12 @@ import { contextUsageSnapshot, partitionMcpTools } from '../context-usage-snapsh
 import { withBrowserTextVaultCleanup } from '../../browser/browser-text-vault'
 import { compactedTokensAfter } from '../events'
 import { WorkerPromptOptions, isRecord, stringValue } from './common'
-import { requestHost } from './ipc'
+import { requestHost, sendEvent } from './ipc'
 import { disconnectLeasedMcpManager } from './mcp-profile'
 import { getContext, modelBySelector, runtimeThinkingLevel } from './runtime-context'
 import { WorkerAgentSession, mcpUsageCache, sessions } from './state'
 import { serializeSessionState } from './tool-support'
+import { promptWithAutomaticModelFallback } from '../../session/automatic-model-fallback'
 
 export function getSession(sessionId: unknown): CreateAgentSessionResult {
   const id = stringValue(sessionId)
@@ -71,13 +72,62 @@ export async function promptSession(params: unknown): Promise<unknown> {
   const rawHostRunId = isRecord(record.options) ? stringValue(record.options.hostRunId) : ''
   const hostRunId = rawHostRunId && rawHostRunId.length <= 200 ? rawHostRunId : undefined
   entry.activeHostRunId = hostRunId
+  const automatic = isRecord(record.options) && record.options.modelSelection === 'automatic'
+  const options = promptOptions(record.options)
+  let fallbackFailureBoundary = entry.result.session.messages.length
+  const recordedFallbackFailure = (): string | undefined => {
+    const messages = entry.result.session.messages.slice(fallbackFailureBoundary)
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index]
+      if (
+        isRecord(message) &&
+        message.role === 'assistant' &&
+        message.stopReason === 'error' &&
+        typeof message.errorMessage === 'string'
+      ) {
+        return message.errorMessage
+      }
+    }
+    return undefined
+  }
+  const prompt = async (): Promise<void> => {
+    if (automatic) {
+      await promptWithAutomaticModelFallback({
+        session: entry.result.session,
+        text: stringValue(record.text),
+        options: options ?? {},
+        automatic: true,
+        isCurrent: () => sessions.get(sessionId) === entry && !entry.disposing,
+        recordedFailure: recordedFallbackFailure,
+        clearFailure: () => {
+          fallbackFailureBoundary = entry.result.session.messages.length
+        },
+        candidates: async () => entry.context?.modelRegistry.getAvailable() ?? [],
+        onSwitch: (from, to) => {
+          sendEvent(
+            'sessionEvent',
+            {
+              type: 'model_fallback',
+              fromProviderId: from.provider,
+              fromModelId: from.id,
+              toProviderId: to.provider,
+              toModelId: to.id,
+              toModelName: to.name,
+              errorMessage: 'Model request failed; automatic fallback selected another model.'
+            },
+            { sessionId }
+          )
+        }
+      })
+      return
+    }
+    await entry.result.session.prompt(stringValue(record.text), options)
+  }
   try {
     if (entry.browserTextVault) {
-      await withBrowserTextVaultCleanup(entry.browserTextVault, () =>
-        entry.result.session.prompt(stringValue(record.text), promptOptions(record.options))
-      )
+      await withBrowserTextVaultCleanup(entry.browserTextVault, prompt)
     } else {
-      await entry.result.session.prompt(stringValue(record.text), promptOptions(record.options))
+      await prompt()
     }
   } finally {
     if (entry.activeHostRunId === hostRunId) entry.activeHostRunId = undefined
@@ -383,6 +433,7 @@ export async function disposeSession(params: unknown): Promise<void> {
   try {
     await result.session.dispose()
   } finally {
+    await entry?.closeDesktopMcp?.().catch(() => undefined)
     await disconnectLeasedMcpManager(entry?.ownedMcpManager, entry?.ownedStdioTransports)
     for (const lease of entry?.mcpLeases?.values() ?? []) lease.release()
     entry?.mcpLeases?.clear()

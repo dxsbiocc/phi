@@ -44,6 +44,7 @@ export type RemoteKernelErrorCode =
   | 'INVALID_MANIFEST'
   | 'UNSUPPORTED_PLATFORM'
   | 'HASH_MISMATCH'
+  | 'TRANSFER_STALLED'
   | 'PERMISSION_DENIED'
   | 'INSUFFICIENT_SPACE'
   | 'REMOTE_COMMAND_FAILED'
@@ -93,7 +94,13 @@ export interface RemoteKernelDeploymentOptions {
   readonly onProgress?: (progress: RemoteKernelDeploymentProgress) => void
   readonly uploadOptions?: Pick<
     RemoteUploadFileOptions,
-    'hostKey' | 'workspaceId' | 'coordinator' | 'agentDir' | 'helperConnect' | 'timeoutMs'
+    | 'hostKey'
+    | 'workspaceId'
+    | 'coordinator'
+    | 'agentDir'
+    | 'helperConnect'
+    | 'timeoutMs'
+    | 'onPhaseTiming'
   >
 }
 

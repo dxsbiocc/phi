@@ -8,6 +8,7 @@ import {
   eventsSubscribeParamsSchema,
   eventsSubscribeResultSchema,
   hostRequestFrameSchema,
+  hostProgressFrameSchema,
   hostResponseFrameSchema,
   kernelEventFrameSchema,
   kernelHelloParamsSchema,
@@ -18,6 +19,7 @@ import {
   kernelResponseFrameSchema,
   KERNEL_EVENT_APPROVAL_REQUESTED,
   KERNEL_EVENT_INTERACTION_CANCELLED,
+  KERNEL_EVENT_MODELS_CHANGED,
   KERNEL_EVENT_RUN_COMPLETED,
   KERNEL_EVENT_SESSION_EVENT,
   KERNEL_EVENT_SESSION_STATE,
@@ -49,7 +51,6 @@ import {
   sessionForkParamsSchema,
   sessionForkResultSchema,
   sessionPromptOptionsV1Schema,
-  sessionPromptTrustedOptionsV1Schema,
   sessionPromptParamsSchema,
   sessionPromptResultSchema,
   sessionSummarySchema,
@@ -107,7 +108,10 @@ const methodParams = {
   'session.prompt': {
     text: 'Hello',
     images: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }],
-    clientRunKey: 'client-run-1'
+    clientRunKey: 'client-run-1',
+    modelSelection: 'automatic',
+    synthetic: false,
+    userInitiated: true
   },
   'session.fork': {},
   'resources.reload': {
@@ -119,7 +123,29 @@ const methodParams = {
   'shellJobs.cancel': { jobId: 'job-1' },
   'session.abort': {},
   'session.snapshot': {},
+  'session.setModel': { model: { provider: 'phi-contract', id: 'contract-model' } },
+  'session.setThinkingLevel': { level: 'max' },
+  'session.contextUsage': {},
+  'session.compact': {},
+  'session.getAutoCompaction': {},
+  'session.setAutoCompaction': { enabled: true, thresholdPercent: 80 },
   'session.close': {},
+  'models.catalog': {},
+  'modelAccess.configure': {
+    endpoint: 'http://127.0.0.1:43123/v1/pi/stream',
+    bearerToken: 'abcdefghijklmnopqrstuvwxyzABCDEFGH0123456789_-',
+    models: [
+      {
+        provider: 'phi-contract',
+        id: 'contract-model',
+        name: 'Contract model',
+        reasoning: true,
+        input: ['text'],
+        contextWindow: 32_000,
+        maxTokens: 4_000
+      }
+    ]
+  },
   'events.subscribe': { afterSeq: 4 },
   'approval.respond': { approvalId: 'approval-1', decision: 'approved' }
 } as const
@@ -165,7 +191,8 @@ const methodResults = {
     themes: [],
     agentsFiles: [],
     systemPrompt: 'System prompt',
-    appendSystemPrompt: ['Project context']
+    appendSystemPrompt: ['Project context'],
+    agents: { applied: true, added: ['Added'] }
   },
   'shellJobs.list': [
     {
@@ -188,7 +215,62 @@ const methodResults = {
     activeRunId: 'run-1',
     lastRun: { runId: 'run-0', status: 'unknown' }
   },
+  'session.setModel': {
+    sessionId: 'session-1',
+    messages: [],
+    model: { provider: 'phi-contract', id: 'contract-model' },
+    thinkingLevel: 'high',
+    cwd: '/tmp/phi-project'
+  },
+  'session.setThinkingLevel': {
+    sessionId: 'session-1',
+    messages: [],
+    model: { provider: 'phi-contract', id: 'contract-model' },
+    thinkingLevel: 'max',
+    cwd: '/tmp/phi-project'
+  },
+  'session.contextUsage': {
+    tokens: 128,
+    contextWindow: 32_000,
+    percent: 0.4,
+    categories: [{ id: 'conversation', tokens: 128 }]
+  },
+  'session.compact': {
+    summary: { summary: 'Earlier context', tokensBefore: 20_000, tokensAfter: 2_000 },
+    state: {
+      sessionId: 'session-1',
+      messages: [],
+      model: { provider: 'phi-contract', id: 'contract-model' },
+      thinkingLevel: 'high',
+      cwd: '/tmp/phi-project'
+    }
+  },
+  'session.getAutoCompaction': {
+    enabled: true,
+    thresholdPercent: 80,
+    thresholdTokens: 25_600
+  },
+  'session.setAutoCompaction': {
+    enabled: true,
+    thresholdPercent: 80,
+    thresholdTokens: 25_600
+  },
   'session.close': { closed: true },
+  'models.catalog': {
+    models: [
+      {
+        provider: 'phi-contract',
+        id: 'contract-model',
+        name: 'Contract model',
+        reasoning: true,
+        input: ['text'],
+        contextWindow: 32_000,
+        maxTokens: 4_000
+      }
+    ],
+    providers: [{ provider: 'phi-contract', status: 'available' }]
+  },
+  'modelAccess.configure': { configured: true },
   'events.subscribe': { subscribed: true, lastSeq: 7 },
   'approval.respond': { accepted: true }
 } as const
@@ -250,6 +332,7 @@ describe('kernel protocol DTOs', () => {
       agentRunId: 'run-1'
     })
     roundTrip({ kind: 'host.response', id: 'host-1', ok: true, result: { value: 2 } })
+    roundTrip({ kind: 'host.progress', id: 'host-1', progress: { content: [] } })
     roundTrip({
       kind: 'host.response',
       id: 'host-2',
@@ -274,14 +357,16 @@ describe('kernel protocol DTOs', () => {
       KERNEL_EVENT_SESSION_STATE,
       KERNEL_EVENT_APPROVAL_REQUESTED,
       KERNEL_EVENT_INTERACTION_CANCELLED,
-      KERNEL_EVENT_RUN_COMPLETED
+      KERNEL_EVENT_RUN_COMPLETED,
+      KERNEL_EVENT_MODELS_CHANGED
     ])
     assert.deepEqual(KERNEL_V1_EVENT_TYPES, [
       'session.event',
       'session.state',
       'approval.requested',
       'interaction.cancelled',
-      'run.completed'
+      'run.completed',
+      'models.changed'
     ])
   })
 
@@ -370,7 +455,8 @@ describe('kernel protocol DTOs', () => {
           params: null
         }
       ],
-      [hostResponseFrameSchema, { kind: 'host.response', id: 'h', ok: true, result: null }]
+      [hostResponseFrameSchema, { kind: 'host.response', id: 'h', ok: true, result: null }],
+      [hostProgressFrameSchema, { kind: 'host.progress', id: 'h', progress: { content: [] } }]
     ] as const
 
     for (const [schema, valid] of schemaCases) {
@@ -429,7 +515,7 @@ describe('kernel protocol DTOs', () => {
     )
   })
 
-  it('accepts only versioned public prompt options', () => {
+  it('keeps public prompt options versioned and trusted fields top-level', () => {
     const options = {
       version: 1,
       images: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }],
@@ -449,20 +535,19 @@ describe('kernel protocol DTOs', () => {
     )
     assert.equal(
       sessionPromptParamsSchema.safeParse({ text: 'Hello', synthetic: true }).success,
-      false
+      true
     )
     assert.equal(
       sessionPromptParamsSchema.safeParse({ text: 'Hello', userInitiated: true }).success,
-      false
+      true
     )
     assert.equal(sessionPromptOptionsV1Schema.safeParse({ images: options.images }).success, false)
     assert.equal(
-      sessionPromptTrustedOptionsV1Schema.safeParse({
-        version: 1,
-        synthetic: true,
-        userInitiated: false
+      sessionPromptParamsSchema.safeParse({
+        text: 'Hello',
+        trustedOptions: { version: 1, synthetic: true }
       }).success,
-      true
+      false
     )
   })
 
@@ -502,6 +587,7 @@ describe('kernel protocol DTOs', () => {
           config: { type: 'stdio' as const, command: 'fixture-server', args: ['--stdio'] }
         }
       ],
+      desktopMcp: { bindingId: 'desktop-binding-1' },
       environment: { ref: 'phi:python@1' }
     }
 
@@ -514,6 +600,7 @@ describe('kernel protocol DTOs', () => {
           personaMarkdown: resources.personaMarkdown,
           contextFiles: resources.contextFiles,
           mcpServers: resources.mcpServers,
+          desktopMcp: resources.desktopMcp,
           environment: resources.environment
         }
       }).success,
@@ -535,6 +622,16 @@ describe('kernel protocol DTOs', () => {
       }).success,
       false
     )
+    assert.equal(
+      sessionCreateParamsSchema.safeParse({
+        ...resources,
+        desktopMcp: {
+          bindingId: 'desktop-binding-1',
+          credentials: { token: 'must-stay-on-desktop' }
+        }
+      }).success,
+      false
+    )
   })
 
   it('types resource reload and shell job methods without client-controlled host paths', () => {
@@ -548,6 +645,17 @@ describe('kernel protocol DTOs', () => {
         agentDir: '/untrusted/agent'
       }).success,
       false
+    )
+    assert.equal(
+      resourcesReloadResultSchema.safeParse({
+        ...methodResults['resources.reload'],
+        agents: {
+          applied: false,
+          reason: 'requires_session_refresh',
+          changed: ['Added']
+        }
+      }).success,
+      true
     )
     assert.equal(shellJobsListResultSchema.safeParse(methodResults['shellJobs.list']).success, true)
     assert.equal(
@@ -756,6 +864,10 @@ describe('kernel protocol DTOs', () => {
       'DUPLICATE_REQUEST',
       'SESSION_NOT_FOUND',
       'SESSION_BUSY',
+      'MODEL_UNAVAILABLE',
+      'MODEL_UNREACHABLE',
+      'MODEL_UNAUTHENTICATED',
+      'MODEL_CONNECTION_LOST',
       'CAPABILITY_UNAVAILABLE',
       'REPLAY_GAP',
       'CANCELLED',

@@ -153,6 +153,7 @@ function deploymentFailure(error: unknown): RemoteKernelError {
     typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : undefined
   let code: RemoteKernelErrorCode = 'REMOTE_COMMAND_FAILED'
   if (reportedCode === 'HASH_MISMATCH' || /hash|checksum/i.test(message)) code = 'HASH_MISMATCH'
+  else if (reportedCode === 'TRANSFER_STALLED') code = 'TRANSFER_STALLED'
   else if (/no space left|disk quota/i.test(message)) code = 'INSUFFICIENT_SPACE'
   else if (/permission denied|read-only file system/i.test(message)) code = 'PERMISSION_DENIED'
   return new RemoteKernelError(code, message, {
@@ -205,7 +206,9 @@ async function uploadAndActivate(
         expectedSha256: upload.sha256,
         remoteRoot: options.runtimeRoot,
         signal,
-        reuseVerifiedDestination: true
+        reuseVerifiedDestination: true,
+        maxAttempts: 3,
+        retryBackoffMs: 1_000
       })
     }
     options.onProgress?.({ phase: 'verifying', variant: profile.variant })

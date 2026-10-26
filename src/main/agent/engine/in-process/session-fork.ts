@@ -63,7 +63,7 @@ export async function forkWorkerSession(params: unknown): Promise<unknown> {
         agentDir,
         sessionManager: managerInput
       },
-      fork
+      { preparedSessionManager: fork }
     )
   } catch (error) {
     await fork.close().catch(() => undefined)

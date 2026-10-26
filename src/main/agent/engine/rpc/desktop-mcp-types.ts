@@ -26,6 +26,8 @@ export interface DesktopMcpOptions {
 export interface DesktopMcpAdapter {
   readonly identity: Readonly<RpcDesktopToolIdentity>
   readonly tools: readonly PhiTool[]
+  /** Validated discovery metadata, including the signature bound to each tool call. */
+  readonly catalog: readonly DesktopMcpToolMetadata[]
   /** Selected servers left out of this conversation (names and reason codes only). */
   readonly skipped: readonly SkippedMcpServerNotice[]
   approvalFor(name: string, input: Readonly<Record<string, unknown>>): PhiToolApproval | undefined

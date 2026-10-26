@@ -5,7 +5,12 @@ import { pendingHostRequests } from './state'
 export type WorkerOutbound = {
   send(value: unknown): void
   event(name: string, payload: unknown, extra: UnknownRecord): void
-  hostRequest(method: string, params: unknown, context?: HostRequestContext): Promise<unknown>
+  hostRequest(
+    method: string,
+    params: unknown,
+    context?: HostRequestContext,
+    onProgress?: (progress: unknown) => void
+  ): Promise<unknown>
 }
 
 let workerOutbound: WorkerOutbound | undefined
@@ -76,13 +81,14 @@ export function isHostResponse(value: unknown): value is HostResponse {
 export function requestHost(
   method: string,
   params: unknown,
-  context?: HostRequestContext
+  context?: HostRequestContext,
+  onProgress?: (progress: unknown) => void
 ): Promise<unknown> {
   const safe = workerToJsonSafe({ params, ...(context ? { context } : {}) }) as {
     params: unknown
     context?: HostRequestContext
   }
-  return configuredOutbound().hostRequest(method, safe.params, safe.context)
+  return configuredOutbound().hostRequest(method, safe.params, safe.context, onProgress)
 }
 
 export function handleHostResponse(response: HostResponse): void {

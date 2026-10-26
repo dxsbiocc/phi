@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { posix } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import type { RemoteSshSession } from '../wrappers/remote-ssh-session'
 import type { WorkspaceHost } from '../workspace-host/types'
@@ -16,8 +17,12 @@ import { TransferError } from './errors'
 import { SshTransferDataPlane } from './ssh-data-plane'
 import { hashLocalFile, localSourceIdentity } from './ssh-data-plane-local'
 import { buildReuseUploadDestinationScript, shellScriptCommand } from './ssh-data-plane-scripts'
-import type { TransferEvent, TransferResult } from './types'
-import type { TransferStdioProcess } from './remote-upload-types'
+import { DEFAULT_TRANSFER_IDLE_TIMEOUT_MS, type TransferEvent, type TransferResult } from './types'
+import type {
+  RemoteUploadPhase,
+  RemoteUploadPhaseTiming,
+  TransferStdioProcess
+} from './remote-upload-types'
 
 export interface RemoteFileUploadOptions {
   session: RemoteSshSession
@@ -31,12 +36,49 @@ export interface RemoteFileUploadOptions {
   expectedSha256?: string
   signal?: AbortSignal
   onEvent?: (event: TransferEvent) => void
+  onPhaseTiming?: (timing: RemoteUploadPhaseTiming) => void
   coordinator?: FileTransferCoordinator
   agentDir?: string
   helperConnect?: () => Promise<TransferStdioProcess>
   forceSsh?: boolean
   reuseVerifiedDestination?: boolean
+  retryOnce?: boolean
+  maxAttempts?: number
+  retryBackoffMs?: number
   controlTimeoutMs?: number
+}
+
+function emitPhaseTiming(
+  options: RemoteFileUploadOptions,
+  attempt: number,
+  phase: RemoteUploadPhase,
+  started: number
+): void {
+  try {
+    options.onPhaseTiming?.({
+      transferId: options.transferId,
+      attempt,
+      phase,
+      elapsedMs: Math.max(0, performance.now() - started)
+    })
+  } catch {
+    // Timing is diagnostic and cannot affect transfer correctness.
+  }
+}
+
+function phaseForState(state: TransferEvent['state']): RemoteUploadPhase | undefined {
+  switch (state) {
+    case 'preparing':
+      return 'manifest'
+    case 'transferring':
+      return 'chunk'
+    case 'verifying':
+      return 'verify'
+    case 'publishing':
+      return 'publish'
+    default:
+      return undefined
+  }
 }
 
 export function remoteTransferHostKey(hostAlias: string): string {
@@ -116,7 +158,7 @@ export async function reuseVerifiedRemoteUploadDestination(
         expectedHash: expectedSha256
       })
     ),
-    { timeoutMs: 30 * 60 * 1000, maxOutputBytes: 16 * 1024, signal }
+    { timeoutMs: DEFAULT_TRANSFER_IDLE_TIMEOUT_MS, maxOutputBytes: 16 * 1024, signal }
   )
   if (result.code !== 0 || result.stdoutTruncated || result.stderrTruncated) {
     const code = /^PHI_ERROR=([^\r\n]+)$/m.exec(result.stdout)?.[1]
@@ -228,7 +270,7 @@ function commandHost(session: RemoteSshSession): WorkspaceHost {
         if (!session.execBounded) throw new Error('SSH connection lacks bounded upload control')
         options.signal?.throwIfAborted()
         const result = await session.execBounded(command[2], {
-          timeoutMs: options.timeoutMs ?? 30 * 60 * 1000,
+          timeoutMs: options.timeoutMs ?? DEFAULT_TRANSFER_IDLE_TIMEOUT_MS,
           maxOutputBytes: options.maxOutputBytes ?? 160 * 1024,
           signal: options.signal
         })
@@ -245,83 +287,16 @@ function commandHost(session: RemoteSshSession): WorkspaceHost {
   } as unknown as WorkspaceHost
 }
 
-export async function uploadRemoteFile(options: RemoteFileUploadOptions): Promise<TransferResult> {
-  if (!options.session.execBounded || !options.session.openStdio) {
-    throw new Error('SSH connection lacks the streaming upload transport')
-  }
+async function uploadRemoteFileAttempt(
+  options: RemoteFileUploadOptions,
+  attempt: number
+): Promise<TransferResult> {
   const relativePath = remoteRelativePath(options.remoteRoot, options.remotePath)
-  if (options.reuseVerifiedDestination && options.expectedSha256) {
-    const source = await localSourceIdentity(options.localPath)
-    const localSha256 = await hashLocalFile(
-      options.localPath,
-      8 * 1024 * 1024,
-      undefined,
-      options.signal
-    )
-    if (localSha256 !== options.expectedSha256) {
-      throw new TransferError(
-        'HASH_MISMATCH',
-        'Local transfer source does not match expected SHA-256'
-      )
-    }
-    if (!sameSourceIdentity(source, await localSourceIdentity(options.localPath))) {
-      throw new TransferError('SOURCE_CHANGED', 'Local transfer source changed during hashing')
-    }
-    const reusable = await reuseVerifiedRemoteUploadDestination(
-      options.session,
-      options.remotePath,
-      options.canonicalRoot,
-      options.expectedSha256,
-      options.signal
-    )
-    if (reusable) {
-      if (!sameSourceIdentity(source, await localSourceIdentity(options.localPath))) {
-        throw new TransferError(
-          'SOURCE_CHANGED',
-          'Local transfer source changed during verification'
-        )
-      }
-      const event: TransferEvent = {
-        transferId: options.transferId,
-        direction: 'upload',
-        state: 'saved',
-        bytesTransferred: source.size,
-        totalBytes: source.size,
-        resumedFrom: source.size,
-        instantaneousBytesPerSecond: 0,
-        smoothedBytesPerSecond: 0
-      }
-      options.onEvent?.(event)
-      return {
-        transferId: options.transferId,
-        state: 'saved',
-        bytes: source.size,
-        resumedFrom: source.size,
-        sha256: options.expectedSha256
-      }
-    }
-  }
-  const sshPlane = new SshTransferDataPlane({
-    host: commandHost(options.session),
-    hostId: options.hostKey,
-    workspaceId: options.workspaceId,
-    remoteRoot: options.remoteRoot,
-    canonicalRoot: options.canonicalRoot,
-    openStream: (command) => options.session.openStdio!(command),
-    controlTimeoutMs: options.controlTimeoutMs
-  })
-  const plane =
-    !options.forceSsh && options.helperConnect
-      ? new HelperTransferDataPlane({
-          hostId: options.hostKey,
-          workspaceId: options.workspaceId,
-          remoteRoot: options.remoteRoot,
-          canonicalRoot: options.canonicalRoot,
-          connect: options.helperConnect,
-          fallback: sshPlane
-        })
-      : sshPlane
+  const reused = await reuseRemoteUploadIfValid(options, attempt)
+  if (reused) return reused
+  const plane = remoteUploadPlane(options, attempt)
   const coordinator = options.coordinator ?? getFileTransferCoordinator(options.agentDir)
+  const observeEvent = phaseObserver(options, attempt)
   const handle = coordinator.enqueue(
     {
       transferId: options.transferId,
@@ -337,7 +312,7 @@ export async function uploadRemoteFile(options: RemoteFileUploadOptions): Promis
       expectedSha256: options.expectedSha256
     },
     plane,
-    options.onEvent
+    observeEvent
   )
   const cancel = (): void => handle.cancel()
   options.signal?.addEventListener('abort', cancel, { once: true })
@@ -347,4 +322,159 @@ export async function uploadRemoteFile(options: RemoteFileUploadOptions): Promis
   } finally {
     options.signal?.removeEventListener('abort', cancel)
   }
+}
+
+async function reuseRemoteUploadIfValid(
+  options: RemoteFileUploadOptions,
+  attempt: number
+): Promise<TransferResult | null> {
+  if (!options.reuseVerifiedDestination || !options.expectedSha256) return null
+  const reuseStarted = performance.now()
+  const source = await localSourceIdentity(options.localPath)
+  const localSha256 = await hashLocalFile(
+    options.localPath,
+    8 * 1024 * 1024,
+    undefined,
+    options.signal
+  )
+  if (localSha256 !== options.expectedSha256) {
+    throw new TransferError(
+      'HASH_MISMATCH',
+      'Local transfer source does not match expected SHA-256'
+    )
+  }
+  if (!sameSourceIdentity(source, await localSourceIdentity(options.localPath))) {
+    throw new TransferError('SOURCE_CHANGED', 'Local transfer source changed during hashing')
+  }
+  const reusable = await reuseVerifiedRemoteUploadDestination(
+    options.session,
+    options.remotePath,
+    options.canonicalRoot,
+    options.expectedSha256,
+    options.signal
+  )
+  emitPhaseTiming(options, attempt, 'reuse-check', reuseStarted)
+  if (!reusable) return null
+  if (!sameSourceIdentity(source, await localSourceIdentity(options.localPath))) {
+    throw new TransferError('SOURCE_CHANGED', 'Local transfer source changed during verification')
+  }
+  options.onEvent?.({
+    transferId: options.transferId,
+    direction: 'upload',
+    state: 'saved',
+    bytesTransferred: source.size,
+    totalBytes: source.size,
+    resumedFrom: source.size,
+    instantaneousBytesPerSecond: 0,
+    smoothedBytesPerSecond: 0
+  })
+  return {
+    transferId: options.transferId,
+    state: 'saved',
+    bytes: source.size,
+    resumedFrom: source.size,
+    sha256: options.expectedSha256
+  }
+}
+
+function remoteUploadPlane(
+  options: RemoteFileUploadOptions,
+  attempt: number
+): SshTransferDataPlane | HelperTransferDataPlane {
+  const sshPlane = new SshTransferDataPlane({
+    host: commandHost(options.session),
+    hostId: options.hostKey,
+    workspaceId: options.workspaceId,
+    remoteRoot: options.remoteRoot,
+    canonicalRoot: options.canonicalRoot,
+    openStream: (command) => options.session.openStdio!(command),
+    controlTimeoutMs: options.controlTimeoutMs
+  })
+  return !options.forceSsh && options.helperConnect
+    ? new HelperTransferDataPlane({
+        hostId: options.hostKey,
+        workspaceId: options.workspaceId,
+        remoteRoot: options.remoteRoot,
+        canonicalRoot: options.canonicalRoot,
+        connect: options.helperConnect,
+        fallback: sshPlane,
+        controlTimeoutMs: options.controlTimeoutMs ?? DEFAULT_TRANSFER_IDLE_TIMEOUT_MS,
+        onConnectTiming: (elapsedMs) => {
+          try {
+            options.onPhaseTiming?.({
+              transferId: options.transferId,
+              attempt,
+              phase: 'helper-connect',
+              elapsedMs
+            })
+          } catch {
+            // Timing is diagnostic and cannot affect transfer correctness.
+          }
+        }
+      })
+    : sshPlane
+}
+
+function phaseObserver(
+  options: RemoteFileUploadOptions,
+  attempt: number
+): (event: TransferEvent) => void {
+  let activePhase: RemoteUploadPhase | undefined
+  let phaseStarted = performance.now()
+  return (event) => {
+    const nextPhase = phaseForState(event.state)
+    if (nextPhase !== activePhase) {
+      if (activePhase) emitPhaseTiming(options, attempt, activePhase, phaseStarted)
+      activePhase = nextPhase
+      phaseStarted = performance.now()
+    }
+    options.onEvent?.(event)
+  }
+}
+
+function canRetryRemoteUpload(error: unknown, signal: AbortSignal | undefined): boolean {
+  return (
+    !signal?.aborted &&
+    error instanceof TransferError &&
+    (error.code === 'TRANSFER_FAILED' || error.code === 'TRANSFER_STALLED')
+  )
+}
+
+function retryPolicy(options: RemoteFileUploadOptions): {
+  attempts: number
+  backoffMs: number
+} {
+  const attempts = options.maxAttempts ?? (options.retryOnce ? 2 : 1)
+  const backoffMs = options.retryBackoffMs ?? 1_000
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > 5) {
+    throw new TransferError('INVALID_REQUEST', 'Remote upload attempt count is invalid')
+  }
+  if (!Number.isFinite(backoffMs) || backoffMs < 0 || backoffMs > 60_000) {
+    throw new TransferError('INVALID_REQUEST', 'Remote upload retry backoff is invalid')
+  }
+  return { attempts, backoffMs }
+}
+
+export async function uploadRemoteFile(options: RemoteFileUploadOptions): Promise<TransferResult> {
+  if (!options.session.execBounded || !options.session.openStdio) {
+    throw new Error('SSH connection lacks the streaming upload transport')
+  }
+  const { attempts, backoffMs } = retryPolicy(options)
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await uploadRemoteFileAttempt(options, attempt + 1)
+    } catch (error) {
+      if (attempt + 1 >= attempts || !canRetryRemoteUpload(error, options.signal)) throw error
+      if (backoffMs > 0) {
+        const backoffStarted = performance.now()
+        try {
+          await delay(backoffMs * 2 ** attempt, undefined, { signal: options.signal })
+          emitPhaseTiming(options, attempt + 1, 'retry-backoff', backoffStarted)
+        } catch {
+          throw new TransferError('ABORTED', 'Transfer cancelled during retry backoff')
+        }
+      }
+    }
+  }
+  throw new TransferError('TRANSFER_FAILED', 'Remote upload retry exhausted')
 }

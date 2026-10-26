@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 
 import {
+  KERNEL_EVENT_MODELS_CHANGED,
   type ApprovalRespondParams,
   type JsonValue,
   type SessionCreateParams,
@@ -11,6 +12,7 @@ import {
   type SessionPolicyParams
 } from '../../shared/kernel-protocol'
 import { makeProtocolError } from '../protocol/errors'
+import type { KernelModelAccess } from '../model-access'
 import type { KernelMethodHandlers, KernelProtocolCore, RunCompletionStatus } from '../protocol'
 import {
   KernelSessionRepository,
@@ -24,6 +26,12 @@ import { createResourceHandlers } from './resource-handlers'
 import { createSessionForkHandlers } from './session-fork-handlers'
 import { createPromptHandlers } from './prompt-handlers'
 import { bindWorkerOutbound } from './outbound'
+import {
+  createModelAccessWorkerHandlers,
+  readModelAccessCatalog,
+  requireAvailableModel
+} from './model-access-handlers'
+import { callKernelRuntime } from './runtime-calls'
 
 type WorkerCall = (method: string, params: unknown) => Promise<unknown>
 
@@ -36,6 +44,7 @@ export type WorkerKernelAdapterOptions = {
   /** Deterministic process identity for sandboxed lock tests; production reads the OS. */
   processStartedAt?: string
   acquireSessionLockGuard?: AcquireProcessLockGuard
+  modelAccess?: KernelModelAccess
   /** Trusted roots `session.adopt` may copy journals from; empty refuses every adoption. */
   allowedSourceRoots?: readonly string[]
 }
@@ -66,59 +75,10 @@ function hasTrustedSessionResources(params: Partial<SessionCreateParams>): boole
     params.memory !== undefined ||
     params.contextFiles !== undefined ||
     params.mcpServers !== undefined ||
+    params.desktopMcp !== undefined ||
     params.environment !== undefined
   )
 }
-
-async function defaultWorkerCall(method: string, params: unknown): Promise<unknown> {
-  const runtime = async (): Promise<
-    typeof import('../../main/agent/engine/in-process/session-runtime')
-  > => import('../../main/agent/engine/in-process/session-runtime')
-  switch (method) {
-    case 'session.create': {
-      const { createSession } = await import('../../main/agent/engine/in-process/session-creation')
-      return createSession(params)
-    }
-    case 'session.prompt':
-      return (await runtime()).promptSession(params)
-    case 'session.fork': {
-      const { forkWorkerSession } = await import('../../main/agent/engine/in-process/session-fork')
-      return forkWorkerSession(params)
-    }
-    // K3-2 resource and OMP async shell-job calls stay on the existing worker runtime.
-    case 'resources.reload': {
-      const [{ reloadResources }, { toJsonSafe }] = await Promise.all([
-        import('../../main/agent/engine/in-process/resources'),
-        import('../../main/agent/engine/in-process/common')
-      ])
-      return toJsonSafe(await reloadResources(params))
-    }
-    case 'shellJobs.list':
-      return (await runtime()).listSessionShellJobs()
-    case 'shellJobs.cancel':
-      return (await runtime()).cancelSessionShellJob(params)
-    case 'session.abort':
-      return (await runtime()).abortSession(params)
-    case 'session.dispose':
-      return (await runtime()).disposeSession(params)
-    case 'toolApproval.result': {
-      const [{ pendingToolApprovals }, { isRecord, stringValue }] = await Promise.all([
-        import('../../main/agent/engine/in-process/state'),
-        import('../../main/agent/engine/in-process/common')
-      ])
-      const record = isRecord(params) ? params : {}
-      const requestId = stringValue(record.requestId)
-      const resolve = pendingToolApprovals.get(requestId)
-      if (!resolve) return false
-      pendingToolApprovals.delete(requestId)
-      resolve(record.result ?? null)
-      return true
-    }
-    default:
-      throw new Error(`Unsupported kernel worker method: ${method}`)
-  }
-}
-
 async function defaultReadSessionState(sessionId: string): Promise<unknown> {
   const [{ getSession }, { serializeSessionState }, { toJsonSafe }] = await Promise.all([
     import('../../main/agent/engine/in-process/session-runtime'),
@@ -174,7 +134,9 @@ export function createWorkerKernelAdapter(
 ): WorkerKernelAdapter {
   if (!options.agentDir) throw new Error('PI_CODING_AGENT_DIR is required by the kernel entry')
 
-  const callWorker = options.callWorker ?? defaultWorkerCall
+  const callWorker =
+    options.callWorker ??
+    ((method, params) => callKernelRuntime(method, params, options.modelAccess))
   const readSessionState = options.readSessionState ?? defaultReadSessionState
   const diagnostic =
     options.diagnostic ??
@@ -208,6 +170,9 @@ export function createWorkerKernelAdapter(
   const admissions = new Set<Promise<void>>()
   let closing = false
   let closeAllPromise: Promise<void> | undefined
+
+  const modelCatalog = (): ReturnType<typeof readModelAccessCatalog> =>
+    readModelAccessCatalog(options.modelAccess)
 
   const withAdmission = async <T>(operation: () => Promise<T>): Promise<T> => {
     if (closing) throw makeProtocolError('INTERNAL', 'The kernel is shutting down.')
@@ -243,6 +208,7 @@ export function createWorkerKernelAdapter(
     if (pending) return pending
     const opening = (async () => {
       const session = await durableSessions.open(sessionId)
+      const persistedPolicy = session.manifest.policy?.sessionPolicy
       const createInput = {
         cwd: session.manifest.cwd,
         ...(session.manifest.model ? { model: session.manifest.model } : {}),
@@ -251,6 +217,14 @@ export function createWorkerKernelAdapter(
           : {}),
         sessionManager: { kind: 'persistent' as const },
         ...(resources ?? {}),
+        ...(persistedPolicy
+          ? {
+              ...persistedPolicy,
+              ...(persistedPolicy.autoCompaction
+                ? { autoCompaction: { ...persistedPolicy.autoCompaction } }
+                : {})
+            }
+          : {}),
         ...(session.manifest.policy?.projectBound ? { projectBound: true } : {})
       }
       try {
@@ -365,7 +339,22 @@ export function createWorkerKernelAdapter(
       })
   }
 
+  const modelAccessHandlers = createModelAccessWorkerHandlers({
+    agentDir: options.agentDir,
+    modelAccess: options.modelAccess,
+    callWorker,
+    requireLoadedSession,
+    snapshot: async (sessionId) =>
+      projectSessionState(
+        sessionId,
+        await readSessionState(sessionId),
+        activeRuns.get(sessionId),
+        durableSessions.get(sessionId)?.manifest.lastRun
+      )
+  })
+
   const handlers: KernelMethodHandlers = {
+    ...modelAccessHandlers,
     ...historyHandlers,
     ...resourceHandlers,
     ...sessionForkHandlers,
@@ -381,6 +370,7 @@ export function createWorkerKernelAdapter(
           )
         }
         await assertExistingAbsoluteDirectory(create.cwd)
+        await requireAvailableModel(options.modelAccess, create.model)
         const sessionId = randomUUID()
         if (create.sessionManager.kind === 'memory') {
           await callWorker('session.create', {
@@ -533,6 +523,7 @@ export function createWorkerKernelAdapter(
     },
     onControllerDetached() {
       // A controller detaching is not an approval decision or a cancellation request.
+      options.modelAccess?.controllerDetached?.()
     }
   }
 
@@ -576,6 +567,7 @@ export function createWorkerKernelAdapter(
           })
         )
         if (failures.length > 0) throw failures[0]
+        await options.modelAccess?.close?.()
       })()
       return closeAllPromise
     },
@@ -589,7 +581,15 @@ export function createWorkerKernelAdapter(
         diagnoseDroppedEvent,
         rejectAuthPrompt
       })
+      const unbindModelAccess = options.modelAccess?.onChange(() => {
+        try {
+          core.emitEvent(KERNEL_EVENT_MODELS_CHANGED, modelCatalog())
+        } catch {
+          // A transient broker read failure is already represented by provider status.
+        }
+      })
       return () => {
+        unbindModelAccess?.()
         unbindOutbound()
         durableSessions.releaseAllSync()
       }

@@ -1,5 +1,6 @@
 import {
   KERNEL_HOST_CAPABILITY_REGISTRY,
+  type HostProgressFrame,
   type HostRequestFrame,
   type HostResponseFrame,
   type InteractionCancelledPayload,
@@ -9,6 +10,7 @@ import {
 } from '../../shared/kernel-protocol'
 import { makeProtocolError } from '../protocol/errors'
 import type { KernelHostRequestContext, KernelProtocolLogger } from '../protocol/types'
+import type { KernelHostProgressHandler } from '../protocol/types'
 
 type Timer = ReturnType<typeof setTimeout>
 
@@ -26,6 +28,7 @@ interface PendingHostRequest<Connection> {
   connection?: Connection
   generation: number
   timer?: Timer
+  onProgress?: KernelHostProgressHandler
   resolve(value: JsonValue): void
   reject(error: ProtocolError): void
 }
@@ -35,6 +38,11 @@ type PreparedHostRequest = {
   readonly params: JsonValue
   readonly interaction: 'user' | 'service'
   readonly timeoutMs?: number
+}
+
+type HostRequestDelivery<Connection> = {
+  readonly controller?: HostController<Connection>
+  readonly onProgress?: KernelHostProgressHandler
 }
 
 type HostRequestManagerOptions<Connection> = {
@@ -75,12 +83,14 @@ export class KernelHostRequestManager<Connection> {
   private readonly cancelledIds: BoundedIds
   private readonly answeredIds: BoundedIds
   private readonly diagnosedResponseIds: BoundedIds
+  private readonly diagnosedProgressIds: BoundedIds
   private requestCounter = 0
 
   constructor(private readonly options: HostRequestManagerOptions<Connection>) {
     this.cancelledIds = new BoundedIds(options.replayCapacity)
     this.answeredIds = new BoundedIds(options.replayCapacity)
     this.diagnosedResponseIds = new BoundedIds(options.replayCapacity)
+    this.diagnosedProgressIds = new BoundedIds(options.replayCapacity)
   }
 
   request(
@@ -88,13 +98,19 @@ export class KernelHostRequestManager<Connection> {
     params: JsonValue,
     context: KernelHostRequestContext,
     controllerGeneration: number,
-    controller?: HostController<Connection>
+    delivery: HostRequestDelivery<Connection> = {}
   ): Promise<JsonValue> {
     const prepared = this.prepareRequest(capability, params, context)
     if ('code' in prepared) return Promise.reject(prepared)
-    const controllerError = this.controllerError(capability, controller)
+    const controllerError = this.controllerError(capability, delivery.controller)
     if (controllerError) return Promise.reject(controllerError)
-    return this.enqueue(prepared, context, controllerGeneration, controller)
+    return this.enqueue(
+      prepared,
+      context,
+      controllerGeneration,
+      delivery.controller,
+      delivery.onProgress
+    )
   }
 
   private prepareRequest(
@@ -160,7 +176,8 @@ export class KernelHostRequestManager<Connection> {
     prepared: PreparedHostRequest,
     context: KernelHostRequestContext,
     controllerGeneration: number,
-    controller: HostController<Connection> | undefined
+    controller: HostController<Connection> | undefined,
+    onProgress: KernelHostProgressHandler | undefined
   ): Promise<JsonValue> {
     const id = `host-${this.options.kernelInstanceId}-${++this.requestCounter}`
     const frame: HostRequestFrame = {
@@ -179,6 +196,7 @@ export class KernelHostRequestManager<Connection> {
         ...(context.sessionId ? { sessionId: context.sessionId } : {}),
         ...(context.runId ? { runId: context.runId } : {}),
         generation: controller?.generation ?? controllerGeneration,
+        ...(onProgress ? { onProgress } : {}),
         resolve,
         reject
       }
@@ -239,6 +257,36 @@ export class KernelHostRequestManager<Connection> {
       return
     }
     pending.resolve(parsedResult.data as JsonValue)
+  }
+
+  handleProgress(
+    connection: Connection,
+    frame: HostProgressFrame,
+    currentGeneration: number
+  ): void {
+    const pending = this.pending.get(frame.id)
+    if (!pending) {
+      this.diagnoseIgnoredProgress(frame.id, 'inactive')
+      return
+    }
+    const definition = KERNEL_HOST_CAPABILITY_REGISTRY[pending.capability]
+    if (!('progress' in definition) || definition.progress !== true) {
+      this.diagnoseIgnoredProgress(frame.id, 'capability_not_progressive')
+      return
+    }
+    if (
+      pending.connection !== connection ||
+      pending.generation !== currentGeneration ||
+      !this.options.isCurrent(connection, currentGeneration)
+    ) {
+      this.diagnoseIgnoredProgress(frame.id, 'inactive_controller')
+      return
+    }
+    try {
+      pending.onProgress?.(frame.progress)
+    } catch {
+      this.diagnoseIgnoredProgress(frame.id, 'observer_failed')
+    }
   }
 
   rejectForConnection(
@@ -341,5 +389,11 @@ export class KernelHostRequestManager<Connection> {
         ? 'answered'
         : 'unknown'
     this.options.log.warn?.('Ignored host response with an inactive id.', { state })
+  }
+
+  private diagnoseIgnoredProgress(id: string, reason: string): void {
+    if (this.diagnosedProgressIds.has(id)) return
+    this.diagnosedProgressIds.add(id)
+    this.options.log.warn?.('Ignored host progress frame.', { reason })
   }
 }

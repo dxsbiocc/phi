@@ -2,9 +2,10 @@ import assert from 'node:assert/strict'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { once } from 'node:events'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer, type ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { createConnection, type Socket } from 'node:net'
+import { createConnection, type AddressInfo, type Socket } from 'node:net'
 import test, { type TestContext } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -15,13 +16,29 @@ import {
   type SpawnedKernelClient
 } from '../src/main/agent/engine/kernel-client'
 import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
-import type { JsonValue } from '../src/shared/kernel-protocol'
+import type { JsonValue, KernelEventFrame } from '../src/shared/kernel-protocol'
 import { createInProcessFixture } from './engine-contract/in-process-factory'
 
 const TOKEN = '7b'.repeat(32)
+const MODEL_GATEWAY_BEARER = '8c'.repeat(32)
+
+type NativeGatewayReply = {
+  text?: string
+  tool?: { name: string; id: string; args: Record<string, unknown> }
+  waitFor?: Promise<void>
+  hold?: boolean
+}
+
+type NativeGatewayFixture = {
+  endpoint: string
+  requests: Array<Record<string, unknown>>
+  enqueue(reply: NativeGatewayReply): void
+  close(): Promise<void>
+}
 
 type SocketKernelFixture = {
   base: Awaited<ReturnType<typeof createInProcessFixture>>
+  modelGateway: NativeGatewayFixture
   child: ChildProcessWithoutNullStreams
   exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>
   initialClient: KernelProtocolClient
@@ -32,6 +49,113 @@ type SocketKernelFixture = {
   connect(takeover?: boolean): Promise<KernelProtocolClient>
   spawnPeer(): Promise<SpawnedKernelClient>
   close(): Promise<void>
+}
+
+async function startLoopbackNativeGateway(model: {
+  provider: string
+  id: string
+}): Promise<NativeGatewayFixture> {
+  const requests: Array<Record<string, unknown>> = []
+  const replies: NativeGatewayReply[] = []
+  const active = new Set<ServerResponse>()
+  const server = createServer(async (request, response) => {
+    active.add(response)
+    response.once('close', () => active.delete(response))
+    try {
+      if (
+        request.method !== 'POST' ||
+        request.url !== '/v1/pi/stream' ||
+        request.headers.authorization !== `Bearer ${MODEL_GATEWAY_BEARER}`
+      ) {
+        response.writeHead(401).end('Unexpected model gateway request')
+        return
+      }
+      let body = ''
+      for await (const chunk of request) body += chunk
+      const parsed = JSON.parse(body) as Record<string, unknown>
+      if (parsed.modelId !== `${model.provider}/${model.id}`) {
+        response.writeHead(400).end('Unexpected model gateway model')
+        return
+      }
+      requests.push(parsed)
+      const reply = replies.shift()
+      if (!reply) {
+        response.writeHead(500).end('No scripted model gateway reply remains')
+        return
+      }
+      const stopReason = reply.tool ? 'toolUse' : 'stop'
+      const content = reply.tool
+        ? [
+            {
+              type: 'toolCall',
+              id: reply.tool.id,
+              name: reply.tool.name,
+              arguments: reply.tool.args
+            }
+          ]
+        : [{ type: 'text', text: reply.text ?? '' }]
+      const message = {
+        role: 'assistant',
+        api: 'openai-completions',
+        provider: model.provider,
+        model: model.id,
+        content,
+        stopReason,
+        timestamp: Date.now(),
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+        }
+      }
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      const event = (value: unknown): void => {
+        response.write(`data: ${JSON.stringify(value)}\n\n`)
+      }
+      event({ type: 'start', partial: { ...message, content: [] } })
+      if (reply.tool) {
+        const toolCall = content[0]
+        event({ type: 'toolcall_start', contentIndex: 0, partial: message })
+        event({
+          type: 'toolcall_delta',
+          contentIndex: 0,
+          delta: JSON.stringify(reply.tool.args),
+          partial: message
+        })
+        event({ type: 'toolcall_end', contentIndex: 0, toolCall, partial: message })
+      } else {
+        const text = reply.text ?? ''
+        event({ type: 'text_start', contentIndex: 0, partial: message })
+        event({ type: 'text_delta', contentIndex: 0, delta: text, partial: message })
+        event({ type: 'text_end', contentIndex: 0, content: text, partial: message })
+      }
+      await reply.waitFor
+      if (reply.hold) return
+      event({ type: 'done', reason: stopReason, message })
+      response.end('data: [DONE]\n\n')
+    } catch (error) {
+      if (!response.headersSent) response.writeHead(500).end(String(error))
+      else response.destroy()
+    }
+  })
+  await new Promise<void>((resolveListen, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolveListen)
+  })
+  const address = server.address() as AddressInfo
+  return {
+    endpoint: `http://127.0.0.1:${address.port}/v1/pi/stream`,
+    requests,
+    enqueue: (reply) => replies.push(reply),
+    async close() {
+      for (const response of active) response.destroy()
+      server.closeAllConnections()
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
+    }
+  }
 }
 
 type RunReceipt = {
@@ -165,6 +289,7 @@ async function startSocketKernel(
   }
 
   const root = dirname(base.agentDir)
+  const modelGateway = await startLoopbackNativeGateway(base.model)
   const runtimeDirectory = mkdtempSync(join(tmpdir(), 'phi-k-persist-'))
   chmodSync(runtimeDirectory, 0o700)
   const socketPath = join(runtimeDirectory, 'kernel.sock')
@@ -233,6 +358,22 @@ async function startSocketKernel(
     const greeting = await client.hello({ takeover })
     kernelInstanceId ||= greeting.kernelInstanceId
     assert.equal(greeting.kernelInstanceId, kernelInstanceId)
+    await client.request('modelAccess.configure', {
+      endpoint: modelGateway.endpoint,
+      bearerToken: MODEL_GATEWAY_BEARER,
+      models: [
+        {
+          provider: base.model.provider,
+          id: base.model.id,
+          name: base.model.name,
+          reasoning: base.model.reasoning,
+          input: ['text'],
+          contextWindow: 32_768,
+          maxTokens: 256,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+        }
+      ]
+    })
     await client.subscribe(0)
     return client
   }
@@ -266,7 +407,11 @@ async function startSocketKernel(
         child.kill('SIGKILL')
         await exited
       }
-      await base.close()
+      try {
+        await modelGateway.close()
+      } finally {
+        await base.close()
+      }
       rmSync(runtimeDirectory, { recursive: true, force: true })
     })()
     return closing
@@ -274,6 +419,7 @@ async function startSocketKernel(
 
   const fixtureWithoutClient = {
     base,
+    modelGateway,
     child,
     exited,
     socketPath,
@@ -306,13 +452,6 @@ async function createPersistentSession(
       cwd: fixture.base.cwd,
       model: { provider: fixture.base.model.provider, id: fixture.base.model.id },
       sessionManager: { kind: 'persistent' },
-      resourceOptions: {
-        noExtensions: true,
-        noSkills: true,
-        noContextFiles: true,
-        noPromptTemplates: true,
-        noThemes: true
-      },
       noTools: 'all',
       enableToolApproval: false,
       autoCompaction: { enabled: false }
@@ -344,6 +483,111 @@ function receipts(fixture: SocketKernelFixture, sessionId: string): RunReceipt[]
 }
 
 test(
+  'client-proxy models survive creating session B while session A waits in a native tool call',
+  { timeout: 30_000 },
+  async (t) => {
+    const fixture = await startSocketKernel(t, 5_000)
+    if (!fixture) return
+    const client = fixture.initialClient
+    const events: KernelEventFrame[] = []
+    const stopEvents = client.onEvent((event) => events.push(event))
+    try {
+      const createdA = record(
+        await client.request('session.create', {
+          cwd: fixture.base.cwd,
+          model: { provider: fixture.base.model.provider, id: fixture.base.model.id },
+          sessionManager: { kind: 'memory' },
+          enableToolApproval: true,
+          autoCompaction: { enabled: false }
+        })
+      )
+      const sessionA = String(createdA.sessionId)
+      fixture.modelGateway.enqueue({
+        tool: {
+          name: 'write',
+          id: 'held-write-a',
+          args: { path: join(fixture.base.cwd, 'must-not-write.txt'), content: 'blocked' }
+        }
+      })
+      const acceptedA = record(
+        await client.request(
+          'session.prompt',
+          { text: 'request a held write' },
+          { sessionId: sessionA }
+        )
+      )
+      await waitFor(
+        () =>
+          events.some(
+            (event) =>
+              event.type === 'approval.requested' &&
+              event.sessionId === sessionA &&
+              record(event.payload).toolCallId === 'held-write-a'
+          ),
+        'session A native tool approval'
+      )
+
+      const createdB = record(
+        await client.request('session.create', {
+          cwd: fixture.base.cwd,
+          model: { provider: fixture.base.model.provider, id: fixture.base.model.id },
+          sessionManager: { kind: 'memory' },
+          noTools: 'all',
+          enableToolApproval: false,
+          autoCompaction: { enabled: false }
+        })
+      )
+      const sessionB = String(createdB.sessionId)
+      const snapshotB = record(
+        await client.request('session.snapshot', {}, { sessionId: sessionB })
+      )
+      assert.deepEqual(snapshotB.model, {
+        provider: fixture.base.model.provider,
+        id: fixture.base.model.id
+      })
+
+      fixture.modelGateway.enqueue({ text: 'session B kept its client-proxy model' })
+      const acceptedB = record(
+        await client.request('session.prompt', { text: 'run session B' }, { sessionId: sessionB })
+      )
+      await waitFor(
+        () =>
+          events.some(
+            (event) =>
+              event.type === 'run.completed' &&
+              event.sessionId === sessionB &&
+              record(event.payload).runId === acceptedB.runId &&
+              record(event.payload).status === 'completed'
+          ),
+        'session B completion'
+      )
+      const completedB = record(
+        await client.request('session.snapshot', {}, { sessionId: sessionB })
+      )
+      assert.ok(
+        JSON.stringify(completedB.messages).includes('session B kept its client-proxy model')
+      )
+
+      await client.request('session.abort', {}, { sessionId: sessionA })
+      await waitFor(
+        () =>
+          events.some(
+            (event) =>
+              event.type === 'run.completed' &&
+              event.sessionId === sessionA &&
+              record(event.payload).runId === acceptedA.runId
+          ),
+        'session A cancellation'
+      )
+    } finally {
+      stopEvents()
+      await client.close()
+      await fixture.close()
+    }
+  }
+)
+
+test(
   'a persistent run completes during socket grace and is visible after reconnect',
   { timeout: 30_000 },
   async (t) => {
@@ -354,8 +598,8 @@ test(
       client = fixture.initialClient
       const sessionId = await createPersistentSession(fixture, client)
       const releaseFinal = deferred()
-      const requestCount = fixture.base.provider.requests.length
-      fixture.base.provider.enqueue({
+      const requestCount = fixture.modelGateway.requests.length
+      fixture.modelGateway.enqueue({
         text: 'completed while the controller was disconnected',
         waitFor: releaseFinal.promise
       })
@@ -368,7 +612,7 @@ test(
       )
       assert.equal(typeof accepted.runId, 'string')
       await waitFor(
-        () => fixture.base.provider.requests.length >= requestCount + 1,
+        () => fixture.modelGateway.requests.length >= requestCount + 1,
         'held provider request'
       )
 
@@ -387,6 +631,10 @@ test(
       )
 
       client = await fixture.connect(true)
+      const catalog = record(await client.request('models.catalog', {}))
+      assert.deepEqual(catalog.providers, [
+        { provider: fixture.base.model.provider, status: 'available' }
+      ])
       const snapshot = record(await client.request('session.snapshot', {}, { sessionId }))
       assert.deepEqual(snapshot.lastRun, { runId: accepted.runId, status: 'completed' })
       assert.ok(
@@ -412,8 +660,8 @@ test(
     try {
       client = fixture.initialClient
       const sessionId = await createPersistentSession(fixture, client)
-      const requestCount = fixture.base.provider.requests.length
-      fixture.base.provider.enqueue({ text: 'held until grace expiry', hold: true })
+      const requestCount = fixture.modelGateway.requests.length
+      fixture.modelGateway.enqueue({ text: 'held until grace expiry', hold: true })
       const accepted = record(
         await client.request(
           'session.prompt',
@@ -423,7 +671,7 @@ test(
       )
       assert.equal(typeof accepted.runId, 'string')
       await waitFor(
-        () => fixture.base.provider.requests.length >= requestCount + 1,
+        () => fixture.modelGateway.requests.length >= requestCount + 1,
         'held provider request before disconnect'
       )
 

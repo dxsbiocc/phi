@@ -109,23 +109,28 @@ function corrupt(sessionId: string, message: string): SessionListEntry {
 
 function persistedSessionPolicy(
   params: SessionCreateParams
-): SessionManifest['policy'] | undefined {
+): NonNullable<SessionManifest['policy']> {
   const requiresTrustedResources =
-    params.workMode !== undefined ||
-    params.enableToolApproval !== undefined ||
-    params.autoCompaction !== undefined ||
     params.resourceOptions !== undefined ||
     params.phiAgents !== undefined ||
     params.personaMarkdown !== undefined ||
-    params.projectBound !== undefined ||
     params.memory !== undefined ||
     params.contextFiles !== undefined ||
     params.mcpServers !== undefined ||
-    params.environment !== undefined ||
-    params.noTools !== undefined
-  return requiresTrustedResources
-    ? { projectBound: params.projectBound === true, requiresTrustedResources: true }
-    : undefined
+    params.desktopMcp !== undefined ||
+    params.environment !== undefined
+  return {
+    projectBound: params.projectBound === true,
+    requiresTrustedResources,
+    sessionPolicy: {
+      noTools: params.noTools ?? false,
+      workMode: params.workMode ?? 'direct',
+      enableToolApproval: params.enableToolApproval === true,
+      ...(params.autoCompaction
+        ? { autoCompaction: { enabled: params.autoCompaction.enabled } }
+        : {})
+    }
+  }
 }
 
 export class KernelSessionRepository {
@@ -180,7 +185,7 @@ export class KernelSessionRepository {
       cwd: params.cwd,
       model: { ...params.model },
       ...(params.thinkingLevel ? { thinkingLevel: params.thinkingLevel } : {}),
-      ...(policy ? { policy } : {})
+      policy
     })
   }
 
@@ -190,7 +195,7 @@ export class KernelSessionRepository {
       ...(source.manifest.model ? { model: { ...source.manifest.model } } : {}),
       ...(source.manifest.thinkingLevel ? { thinkingLevel: source.manifest.thinkingLevel } : {}),
       ...(source.manifest.title ? { title: source.manifest.title } : {}),
-      ...(source.manifest.policy ? { policy: { ...source.manifest.policy } } : {})
+      ...(source.manifest.policy ? { policy: structuredClone(source.manifest.policy) } : {})
     })
   }
 

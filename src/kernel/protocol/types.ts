@@ -27,6 +27,8 @@ export interface KernelHostRequestContext {
   agentRunId?: string
 }
 
+export type KernelHostProgressHandler = (progress: JsonValue) => void
+
 export type RunCompletionStatus = RunCompletedPayload['status']
 
 export interface SessionPromptRun {

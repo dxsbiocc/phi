@@ -24,7 +24,7 @@ import {
   uploadRemoteFile
 } from '../transfer/remote-upload'
 import {
-  INSPECT_REVERSE_TUNNEL_COMMAND,
+  inspectReverseTunnelCommand,
   openReverseTunnelLease,
   reverseTunnelSpecification,
   type RemoteReverseTunnel,
@@ -710,6 +710,7 @@ export async function connectRemoteSshSession(
     }
 
     authGate.clearSshBlock(hostKey)
+    const canonicalUploadRoots = new Map<string, string>()
     const connectedSession: RemoteSshSession = {
       exec: call,
       async isAlive() {
@@ -790,11 +791,6 @@ export async function connectRemoteSshSession(
             (candidate): candidate is AbortSignal => candidate !== undefined
           )
         )
-        const canonicalRoot = await resolveRemoteUploadCanonicalRoot(
-          connectedSession,
-          remoteRoot,
-          signal
-        )
         const stableHostKey = options?.hostKey ?? remoteTransferHostKey(host)
         const workspaceId =
           options?.workspaceId ?? createHash('sha256').update(remoteRoot).digest('hex')
@@ -808,6 +804,23 @@ export async function connectRemoteSshSession(
             .update(options?.expectedSha256 ?? '')
             .digest('hex')
             .slice(0, 40)}`
+        const canonicalRootStarted = performance.now()
+        const cachedCanonicalRoot = canonicalUploadRoots.get(remoteRoot)
+        const canonicalRoot =
+          cachedCanonicalRoot ??
+          (await resolveRemoteUploadCanonicalRoot(connectedSession, remoteRoot, signal))
+        if (!cachedCanonicalRoot) canonicalUploadRoots.set(remoteRoot, canonicalRoot)
+        try {
+          options?.onPhaseTiming?.({
+            transferId,
+            attempt: 1,
+            phase: 'canonical-root',
+            elapsedMs: performance.now() - canonicalRootStarted,
+            cached: cachedCanonicalRoot !== undefined
+          })
+        } catch {
+          // Timing is diagnostic and cannot affect transfer correctness.
+        }
         const helperConnect =
           options?.helperConnect ??
           (options?.helperIdentity
@@ -829,11 +842,15 @@ export async function connectRemoteSshSession(
           ...(options?.expectedSha256 ? { expectedSha256: options.expectedSha256 } : {}),
           signal,
           ...(options?.onEvent ? { onEvent: options.onEvent } : {}),
+          ...(options?.onPhaseTiming ? { onPhaseTiming: options.onPhaseTiming } : {}),
           ...(options?.coordinator ? { coordinator: options.coordinator } : {}),
           ...(options?.agentDir ? { agentDir: options.agentDir } : {}),
           ...(helperConnect ? { helperConnect } : {}),
           ...(options?.forceSsh ? { forceSsh: true } : {}),
           ...(options?.reuseVerifiedDestination ? { reuseVerifiedDestination: true } : {}),
+          retryOnce: options?.retryOnce,
+          maxAttempts: options?.maxAttempts,
+          retryBackoffMs: options?.retryBackoffMs,
           ...(options?.timeoutMs ? { controlTimeoutMs: options.timeoutMs } : {})
         })
       },
@@ -878,12 +895,15 @@ export async function connectRemoteSshSession(
           connectionSignal: operations.signal,
           forward: (signal) => control('forward', signal),
           cancel: () => control('cancel', operations.signal),
-          inspect: async (signal) => {
-            const result = await connectedSession.execBounded!(INSPECT_REVERSE_TUNNEL_COMMAND, {
-              timeoutMs: 5000,
-              maxOutputBytes: 512 * 1024,
-              signal
-            })
+          inspect: async (signal, remotePort) => {
+            const result = await connectedSession.execBounded!(
+              inspectReverseTunnelCommand(remotePort),
+              {
+                timeoutMs: 5000,
+                maxOutputBytes: 512 * 1024,
+                signal
+              }
+            )
             if (result.stdoutTruncated || result.stderrTruncated)
               throw new Error('SSH reverse tunnel socket inspection was truncated')
             return result

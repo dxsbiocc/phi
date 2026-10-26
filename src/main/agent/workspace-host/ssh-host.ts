@@ -442,11 +442,15 @@ export class SshHost implements WorkspaceHost {
         ...(options.expectedSha256 ? { expectedSha256: options.expectedSha256 } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.onEvent ? { onEvent: options.onEvent } : {}),
+        ...(options.onPhaseTiming ? { onPhaseTiming: options.onPhaseTiming } : {}),
         ...(options.coordinator ? { coordinator: options.coordinator } : {}),
         ...(options.agentDir ? { agentDir: options.agentDir } : {}),
         ...(helperConnect ? { helperConnect } : {}),
         ...(options.forceSsh ? { forceSsh: true } : {}),
         ...(options.reuseVerifiedDestination ? { reuseVerifiedDestination: true } : {}),
+        retryOnce: options.retryOnce,
+        maxAttempts: options.maxAttempts,
+        retryBackoffMs: options.retryBackoffMs,
         ...(options.timeoutMs ? { controlTimeoutMs: options.timeoutMs } : {})
       })
     })

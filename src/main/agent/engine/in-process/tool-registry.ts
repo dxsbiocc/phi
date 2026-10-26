@@ -70,6 +70,13 @@ export async function createSessionToolRegistry(deps: {
   customTools: PhiTool[]
   agentRunners: ReadonlyMap<string, AgentRunFn>
   stopAgentRunNotices: () => void
+  applyResourceReload(params: unknown): void
+  reloadAgents(
+    definitions: PhiAgentDefinition[]
+  ): Promise<
+    | { applied: true; added: string[] }
+    | { applied: false; reason: 'requires_session_refresh'; changed: string[] }
+  >
 }> {
   const {
     record,
@@ -96,11 +103,67 @@ export async function createSessionToolRegistry(deps: {
   const capabilityRegistrar = createCapabilityToolRegistrar(() => parentRef.current?.session)
   const sessionExtensionFactories = [...extensionFactories, capabilityRegistrar.extension]
   let sessionResourceOptions = record.resourceOptions
-  const contentResourceOptions = resourceOptions({
+  const initialResourceOptions = resourceOptions({
     ...(isRecord(record.resourceOptions) ? record.resourceOptions : {}),
     cwd: settingsCwd,
     agentDir
   })
+  const contentResourceOptions = {
+    ...initialResourceOptions,
+    additionalExtensionPaths: [...(initialResourceOptions.additionalExtensionPaths ?? [])],
+    additionalSkillPaths: [...(initialResourceOptions.additionalSkillPaths ?? [])],
+    additionalPromptTemplatePaths: [
+      ...(initialResourceOptions.additionalPromptTemplatePaths ?? [])
+    ],
+    additionalThemePaths: [...(initialResourceOptions.additionalThemePaths ?? [])]
+  }
+  const applyResourceReload = (params: unknown): void => {
+    const record = isRecord(params) ? params : {}
+    const next = resourceOptions({ ...record, cwd: settingsCwd, agentDir })
+    contentResourceOptions.additionalExtensionPaths.splice(
+      0,
+      contentResourceOptions.additionalExtensionPaths.length,
+      ...(next.additionalExtensionPaths ?? [])
+    )
+    contentResourceOptions.additionalSkillPaths.splice(
+      0,
+      contentResourceOptions.additionalSkillPaths.length,
+      ...(next.additionalSkillPaths ?? [])
+    )
+    contentResourceOptions.additionalPromptTemplatePaths.splice(
+      0,
+      contentResourceOptions.additionalPromptTemplatePaths.length,
+      ...(next.additionalPromptTemplatePaths ?? [])
+    )
+    contentResourceOptions.additionalThemePaths.splice(
+      0,
+      contentResourceOptions.additionalThemePaths.length,
+      ...(next.additionalThemePaths ?? [])
+    )
+    for (const key of [
+      'noSkills',
+      'noPromptTemplates',
+      'noThemes',
+      'noContextFiles',
+      'systemPrompt',
+      'appendSystemPrompt',
+      'skillsOverride'
+    ] as const) {
+      if (
+        (key === 'skillsOverride' &&
+          (Object.hasOwn(record, 'additionalSkillFiles') || Object.hasOwn(record, 'noSkills'))) ||
+        (key !== 'skillsOverride' && Object.hasOwn(record, key))
+      ) {
+        contentResourceOptions[key] = next[key] as never
+      }
+    }
+    sessionResourceOptions = {
+      ...(isRecord(sessionResourceOptions) ? sessionResourceOptions : {}),
+      ...record,
+      cwd: settingsCwd,
+      agentDir
+    }
+  }
   const resources =
     isRecord(record.resourceOptions) || sessionExtensionFactories.length > 0
       ? new DefaultResourceLoader({
@@ -172,10 +235,11 @@ export async function createSessionToolRegistry(deps: {
       (await loadWorkerDecisionRuntime()).evaluateDecisionRequest(...args)
   })
   const agentRunners = new Map<string, AgentRunFn>()
+  const inactiveAgents = new Set<string>()
   const runnerFor = (definition: PhiAgentDefinition): AgentRunFn => {
     const existing = agentRunners.get(definition.name)
     if (existing) return existing
-    const runner = createAgentRunner({
+    const implementation = createAgentRunner({
       agent: definition.name,
       // What each delegation cost, for judging prompt and tool changes; see agents/usage.ts.
       onUsage: (record) => appendAgentUsageRecord(agentDir, { ...record, sessionId }),
@@ -192,6 +256,14 @@ export async function createSessionToolRegistry(deps: {
           parent: () => parentRef.current
         })
     })
+    const runner: AgentRunFn = (request) => {
+      if (inactiveAgents.has(definition.name)) {
+        return Promise.reject(
+          new Error(`Agent ${definition.name} changed and requires a session refresh.`)
+        )
+      }
+      return implementation(request)
+    }
     agentRunners.set(definition.name, runner)
     return runner
   }
@@ -357,5 +429,93 @@ export async function createSessionToolRegistry(deps: {
     browserCustomTool
   ]
 
-  return { resources, customTools, agentRunners, stopAgentRunNotices }
+  const reloadAgents = async (
+    definitions: PhiAgentDefinition[]
+  ): Promise<
+    | { applied: true; added: string[] }
+    | { applied: false; reason: 'requires_session_refresh'; changed: string[] }
+  > => {
+    if (inactiveAgents.size > 0) {
+      return {
+        applied: false,
+        reason: 'requires_session_refresh',
+        changed: [...inactiveAgents].sort()
+      }
+    }
+    const current = new Map(phiAgents.map((definition) => [definition.name, definition]))
+    const next = new Map(definitions.map((definition) => [definition.name, definition]))
+    const changed = [
+      ...phiAgents.flatMap((definition) => {
+        const candidate = next.get(definition.name)
+        return !candidate || JSON.stringify(candidate) !== JSON.stringify(definition)
+          ? [definition.name]
+          : []
+      })
+    ]
+    if (changed.length > 0) {
+      for (const name of changed) {
+        inactiveAgents.add(name)
+        agentRunners.delete(name)
+      }
+      return {
+        applied: false,
+        reason: 'requires_session_refresh',
+        changed: [...new Set(changed)].sort()
+      }
+    }
+
+    const additions = definitions.filter((definition) => !current.has(definition.name))
+    if (additions.length === 0) return { applied: true, added: [] }
+    const session = parentRef.current?.session
+    const existing = new Set(session?.getAllToolInfos().map((tool) => tool.name) ?? [])
+    const conflicts = additions
+      .filter(supportsDelegationTool)
+      .map((definition) => definition.name)
+      .filter((name) => existing.has(name))
+    if (conflicts.length > 0) {
+      return {
+        applied: false,
+        reason: 'requires_session_refresh',
+        changed: [...new Set(conflicts)].sort()
+      }
+    }
+
+    for (const definition of additions) runnerFor(definition)
+    const addedTools = buildSessionAgentDelegationTools({
+      definitions: additions,
+      runnerFor,
+      registry: agentRuns,
+      toolOptions: { cwd, assessTask: decide },
+      includeRunTools: !phiAgents.some(supportsDelegationTool)
+    })
+    const registered = new Set(await capabilityRegistrar.register(addedTools))
+    const accepted = additions.filter(
+      (definition) => definition.invocation === 'host' || registered.has(definition.name)
+    )
+    const rejected = additions.filter((definition) => !accepted.includes(definition))
+    if (rejected.length > 0) {
+      for (const definition of additions) {
+        inactiveAgents.add(definition.name)
+        agentRunners.delete(definition.name)
+      }
+      return {
+        applied: false,
+        reason: 'requires_session_refresh',
+        changed: rejected.map((definition) => definition.name).sort()
+      }
+    }
+    customTools.push(...addedTools)
+    phiAgents.push(...accepted)
+    onAgentsChanged?.()
+    return { applied: true, added: accepted.map((definition) => definition.name).sort() }
+  }
+
+  return {
+    resources,
+    customTools,
+    agentRunners,
+    stopAgentRunNotices,
+    reloadAgents,
+    applyResourceReload
+  }
 }

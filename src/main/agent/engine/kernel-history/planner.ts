@@ -127,7 +127,6 @@ function matchesProbeIdentity(
 }
 
 function matchesRemoteSourceProof(
-  manifest: PhiSessionManifest,
   ref: RemoteOmpRuntimeRef,
   probe: RemoteHistoryProbeResult
 ): boolean {
@@ -136,7 +135,9 @@ function matchesRemoteSourceProof(
     probe.sourceSize >= 0 &&
     /^[a-f0-9]{64}$/u.test(probe.sourceSha256) &&
     probe.sourceOmpSessionId === ref.ompSessionId &&
-    probe.sourceCwd === manifest.cwd
+    // An RPC journal records the server project root; manifest.cwd is the desktop's
+    // local anchor for that remote project and never appears on the server.
+    probe.sourceCwd === ref.projectRoot
   )
 }
 
@@ -154,7 +155,7 @@ function planRemoteHistory(
   if (!matchesProbeIdentity(manifest, ref, input.remoteProbe.identity)) {
     return readOnly(manifest, 'remote session identity is inconsistent')
   }
-  if (!matchesRemoteSourceProof(manifest, ref, input.remoteProbe)) {
+  if (!matchesRemoteSourceProof(ref, input.remoteProbe)) {
     return readOnly(manifest, 'remote journal identity is inconsistent')
   }
   if (input.remoteProbe.writer !== 'gone' || input.remoteProbe.runLock !== 'gone') {
@@ -168,7 +169,7 @@ function planRemoteHistory(
     source: {
       kind: 'omp-journal',
       path: input.remoteProbe.sourcePath,
-      cwd: manifest.cwd,
+      cwd: ref.projectRoot,
       origin: 'rpc-remote',
       phiSessionId: manifest.sessionId,
       expected: {

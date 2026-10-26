@@ -19,7 +19,15 @@ export const KERNEL_V1_METHODS = [
   'session.fork',
   'session.abort',
   'session.snapshot',
+  'session.setModel',
+  'session.setThinkingLevel',
+  'session.contextUsage',
+  'session.compact',
+  'session.getAutoCompaction',
+  'session.setAutoCompaction',
   'session.close',
+  'models.catalog',
+  'modelAccess.configure',
   'events.subscribe',
   'approval.respond'
 ] as const
@@ -31,13 +39,15 @@ export const KERNEL_EVENT_SESSION_STATE = 'session.state'
 export const KERNEL_EVENT_APPROVAL_REQUESTED = 'approval.requested'
 export const KERNEL_EVENT_INTERACTION_CANCELLED = 'interaction.cancelled'
 export const KERNEL_EVENT_RUN_COMPLETED = 'run.completed'
+export const KERNEL_EVENT_MODELS_CHANGED = 'models.changed'
 
 export const KERNEL_V1_EVENT_TYPES = [
   KERNEL_EVENT_SESSION_EVENT,
   KERNEL_EVENT_SESSION_STATE,
   KERNEL_EVENT_APPROVAL_REQUESTED,
   KERNEL_EVENT_INTERACTION_CANCELLED,
-  KERNEL_EVENT_RUN_COMPLETED
+  KERNEL_EVENT_RUN_COMPLETED,
+  KERNEL_EVENT_MODELS_CHANGED
 ] as const
 
 export type KernelV1EventType = (typeof KERNEL_V1_EVENT_TYPES)[number]

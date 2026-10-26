@@ -30,7 +30,13 @@ import { requestHost, sendEvent } from './ipc'
 import { assertInProcessLocalProject } from './local-project-boundary'
 import { disconnectLeasedMcpManager, leasedProfileMcpManager } from './mcp-profile'
 import { loadWorkerMcpRuntime } from './worker-subsystems'
-import { getContext, modelBySelector, runtimeThinkingLevel } from './runtime-context'
+import {
+  contextForModelAccess,
+  getContext,
+  modelBySelector,
+  runtimeThinkingLevel
+} from './runtime-context'
+import type { RuntimeContext } from './common'
 import {
   createAgentSession,
   makeSessionManager,
@@ -47,17 +53,41 @@ import {
   sessionContextFiles,
   sessionMcpServers
 } from './session-resource-input'
+import { loadDesktopMcpHostTools } from './desktop-mcp-host-tools'
+
+type McpRefreshSession = Pick<
+  CreateAgentSessionResult['session'],
+  'refreshMCPTools' | 'setPendingMCPDiscovery'
+>
+
+/** Make a live MCP schema refresh part of next-turn prompt admission. */
+export function scheduleMcpToolRefresh(
+  session: McpRefreshSession,
+  tools: Parameters<McpRefreshSession['refreshMCPTools']>[0]
+): ReturnType<McpRefreshSession['refreshMCPTools']> {
+  const refresh = session.refreshMCPTools(tools)
+  session.setPendingMCPDiscovery(refresh)
+  return refresh
+}
 
 export async function createSession(
   params: unknown,
-  preparedSessionManager?: SessionManager
+  dependencies: {
+    preparedSessionManager?: SessionManager
+    modelAccess?: Pick<RuntimeContext, 'authStorage' | 'modelRegistry'> & {
+      requestFetch?: typeof globalThis.fetch
+    }
+  } = {}
 ): Promise<unknown> {
+  const preparedSessionManager = dependencies.preparedSessionManager
   const record = isRecord(params) ? params : {}
   const sessionId = stringValue(record.sessionId, randomUUID())
   const cwd = stringValue(record.cwd, process.cwd())
   const agentDir = stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
   assertInProcessLocalProject({ ...record, cwd, agentDir })
-  const ctx = await getContext(agentDir)
+  const ctx = dependencies.modelAccess
+    ? contextForModelAccess(agentDir, dependencies.modelAccess)
+    : await getContext(agentDir)
   const settingsCwd = cwd
   const baseSettings = await Settings.init({ cwd: settingsCwd, agentDir })
   const settings = await baseSettings.cloneForCwd(settingsCwd)
@@ -72,6 +102,9 @@ export async function createSession(
     contextFiles: sessionContextFiles(record.contextFiles)
   }
   const mcpServers = sessionMcpServers(record.mcpServers)
+  const desktopMcpBinding = isRecord(record.desktopMcp)
+    ? stringValue(record.desktopMcp.bindingId)
+    : ''
   const environmentBinding = await bindSessionEnvironment(record.environment, {
     sessionId,
     cwd,
@@ -129,7 +162,8 @@ export async function createSession(
   const extensionFactories = [
     createLiveResourcePromptExtension({
       snapshot: resourceSnapshot,
-      loader: () => sessionResourceLoader.current
+      loader: () => sessionResourceLoader.current,
+      includeSkills: !noTools
     }),
     ...createMainSessionExtensions(extensionConfig, extensionHost),
     createPlanStepsExtension(extensionHost),
@@ -160,7 +194,14 @@ export async function createSession(
     }
   })
   sessionResourceLoader.current = registry.resources
-  const { resources, customTools, agentRunners, stopAgentRunNotices } = registry
+  const {
+    resources,
+    customTools,
+    agentRunners,
+    stopAgentRunNotices,
+    reloadAgents,
+    applyResourceReload
+  } = registry
 
   const selectedModel = await modelBySelector(ctx, record.model)
   const leasedMcp = !noTools
@@ -184,8 +225,21 @@ export async function createSession(
     : undefined
   const mcpLeases = leasedMcp?.leases ?? new Map<string, EnvironmentLease>()
   let created: CreateAgentSessionResult | undefined
+  let desktopMcp: Awaited<ReturnType<typeof loadDesktopMcpHostTools>> | undefined
   try {
     const mcpTools = leasedMcp ? (await leasedMcp.manager.discoverAndConnect()).tools : undefined
+    if (!noTools && desktopMcpBinding) {
+      desktopMcp = await loadDesktopMcpHostTools({
+        sessionId,
+        cwd,
+        bindingId: desktopMcpBinding,
+        registeredToolNames: [
+          ...customTools.map((tool) => tool.name),
+          ...(mcpTools ?? []).map((tool) => tool.name)
+        ]
+      })
+      customTools.push(...desktopMcp.tools)
+    }
     const result = await createAgentSession({
       agentId: `phi-main-${sessionId}`,
       agentDisplayName: 'Main',
@@ -221,11 +275,20 @@ export async function createSession(
         : {})
     })
     created = result
+    if (dependencies.modelAccess?.requestFetch) {
+      const upstream = result.session.agent.streamFn
+      const requestFetch = dependencies.modelAccess.requestFetch
+      result.session.agent.streamFn = (model, context, options) =>
+        upstream(model, context, { ...options, fetch: requestFetch })
+    }
     installAutoWorkModeBatchGuard(result.session.agent, workMode === 'auto')
     if (leasedMcp) {
-      await result.session.refreshMCPTools(mcpTools ?? [])
+      const desktopToolNames = new Set(desktopMcp?.tools.map((tool) => tool.name) ?? [])
+      const withoutDesktopConflicts = <T extends { name: string }>(tools: readonly T[]): T[] =>
+        tools.filter((tool) => !desktopToolNames.has(tool.name))
+      await result.session.refreshMCPTools(withoutDesktopConflicts(mcpTools ?? []))
       leasedMcp.manager.setOnToolsChanged((tools) => {
-        return result.session.refreshMCPTools(tools)
+        return scheduleMcpToolRefresh(result.session, withoutDesktopConflicts(tools))
       })
     }
 
@@ -245,11 +308,15 @@ export async function createSession(
     sessions.set(sessionId, {
       result,
       agentDir,
+      context: ctx,
       agentRuns,
       agentRunners,
+      reloadAgents,
+      applyResourceReload,
       stopAgentRunNotices,
       browserTextVault,
       mcpLeases,
+      ...(desktopMcp ? { closeDesktopMcp: () => desktopMcp!.close() } : {}),
       ...(resources ? { resourceLoader: resources } : {}),
       resourceSnapshot,
       ...(leasedMcp
@@ -266,6 +333,7 @@ export async function createSession(
     } catch {
       /* Preserve the original creation error while completing owned cleanup. */
     } finally {
+      await desktopMcp?.close().catch(() => undefined)
       await disconnectLeasedMcpManager(leasedMcp?.manager, leasedMcp?.transports)
       for (const lease of mcpLeases.values()) lease.release()
       if (!created && preparedSessionManager) {

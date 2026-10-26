@@ -87,6 +87,12 @@ function checkedHash(value: unknown): string {
 }
 
 function mappedHelperError(error: unknown): unknown {
+  if (error instanceof HelperProtocolError && /timed out/i.test(error.message)) {
+    return new TransferError(
+      'TRANSFER_STALLED',
+      'Remote helper stopped acknowledging transfer data'
+    )
+  }
   if (!(error instanceof HelperProtocolError) || !error.domainCode) return error
   switch (error.domainCode) {
     case 'HASH_MISMATCH':

@@ -103,6 +103,8 @@ export async function runSshLifecycleScenario<T extends LifecycleScenarioClient>
   launch: LaunchedRemoteKernel
   client: T
   createClient(client: KernelProtocolClient): T
+  /** Re-sends desktop-owned configuration after each hello, as the desktop does. */
+  afterReattach?(client: KernelProtocolClient): Promise<void>
   provider: { enqueue(...replies: ScriptedReply[]): void }
   files: LifecycleFiles
   report: LifecycleReportProjection
@@ -201,6 +203,7 @@ export async function runSshLifecycleScenario<T extends LifecycleScenarioClient>
   options.report.deploy.reattachRemoteCommandCount = reattached.remoteCommandCount
   if (!resumedScenario) throw new Error('Reconnect did not configure the scenario client')
   scenario = resumedScenario
+  await options.afterReattach?.(reattached.client)
 
   await options.step('run completion replayed after reconnect', async () => {
     const completion = await scenario.waitForRun(runId)

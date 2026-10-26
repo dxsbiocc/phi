@@ -7,6 +7,11 @@ import test from 'node:test'
 import type { JsonValue, KernelRequestFrame } from '../src/shared/kernel-protocol'
 import type { KernelCallContext, KernelMethodHandler } from '../src/kernel/protocol'
 import { createWorkerKernelAdapter } from '../src/kernel/worker'
+import {
+  readModelAccessCatalog,
+  requireAvailableModel
+} from '../src/kernel/worker/model-access-handlers'
+import type { KernelModelAccess } from '../src/kernel/model-access'
 import { requestHost, sendEvent, setWorkerOutbound } from '../src/main/agent/engine/in-process/ipc'
 import { pendingAuthPrompts, pendingToolApprovals } from '../src/main/agent/engine/in-process/state'
 
@@ -59,6 +64,7 @@ test('worker adapter creates kernel-owned sessions with trusted entry values', a
       memory: { enabled: true, learn: false },
       contextFiles: [{ path: `${cwd}/AGENTS.md`, content: 'Project rules' }],
       mcpServers: [{ name: 'fixture', config: { command: 'fixture-server' } }],
+      desktopMcp: { bindingId: 'desktop-binding-1' },
       environment: { ref: 'phi:python@1' }
     }
     const result = await handler(adapter.handlers, 'session.create')(
@@ -115,6 +121,216 @@ test('worker adapter creates kernel-owned sessions with trusted entry values', a
   }
 })
 
+test('worker adapter owns model, thinking, context and compaction controls during a run', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-model-controls-'))
+  const calls: Array<{ method: string; params: unknown }> = []
+  let releasePrompt!: () => void
+  const promptBlocked = new Promise<void>((resolve) => {
+    releasePrompt = resolve
+  })
+  let state = {
+    messages: [] as JsonValue[],
+    model: { provider: 'fixture', id: 'model-a' },
+    thinkingLevel: 'medium',
+    cwd
+  }
+  const models = [
+    {
+      provider: 'fixture',
+      id: 'model-a',
+      name: 'Model A',
+      reasoning: true,
+      input: ['text'] as Array<'text' | 'image'>,
+      contextWindow: 32_000,
+      maxTokens: 4_000
+    },
+    {
+      provider: 'fixture',
+      id: 'model-b',
+      name: 'Model B',
+      reasoning: true,
+      input: ['text'] as Array<'text' | 'image'>,
+      contextWindow: 32_000,
+      maxTokens: 4_000
+    }
+  ]
+  const adapter = createWorkerKernelAdapter({
+    agentDir: '/trusted/agent',
+    modelAccess: {
+      authStorage: { credentials: { revalidate: async () => undefined } },
+      modelRegistry: {
+        find: (provider: string, id: string) =>
+          models.find((model) => model.provider === provider && model.id === id)
+      },
+      catalog: () => models,
+      status: () => [{ provider: 'fixture', status: 'available' as const }],
+      onChange: () => () => undefined,
+      configure: () => undefined,
+      close: () => undefined
+    } as unknown as KernelModelAccess,
+    callWorker: async (method, params) => {
+      calls.push({ method, params })
+      if (method === 'session.prompt') await promptBlocked
+      if (method === 'session.setModel') {
+        state = { ...state, model: (params as { model: typeof state.model }).model }
+      }
+      if (method === 'session.setThinkingLevel') {
+        state = {
+          ...state,
+          thinkingLevel: (params as { level: string }).level
+        }
+      }
+      if (method === 'session.contextUsage') {
+        return { tokens: 100, contextWindow: 1_000, percent: 10 }
+      }
+      if (method === 'session.compact') {
+        return { summary: { summary: 'compact', tokensBefore: 100, tokensAfter: 10 } }
+      }
+      if (method === 'session.getAutoCompaction') {
+        return { enabled: true, thresholdPercent: 80, thresholdTokens: 800 }
+      }
+      if (method === 'session.setAutoCompaction') {
+        return { enabled: false, thresholdPercent: 90, thresholdTokens: 900 }
+      }
+      return undefined
+    },
+    readSessionState: () => state
+  })
+
+  try {
+    const created = (await handler(adapter.handlers, 'session.create')(
+      {
+        cwd,
+        model: { provider: 'fixture', id: 'model-a' },
+        sessionManager: { kind: 'memory' }
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+    const sessionId = created.sessionId
+    const run = (await handler(adapter.handlers, 'session.prompt')(
+      { text: 'hold', modelSelection: 'automatic', synthetic: false, userInitiated: true },
+      context,
+      request('session.prompt', sessionId)
+    )) as unknown as { completion: PromiseLike<string> }
+    assert.deepEqual((calls.at(-1)?.params as { options?: unknown }).options, {
+      modelSelection: 'automatic',
+      synthetic: false,
+      userInitiated: true
+    })
+
+    const selected = await handler(adapter.handlers, 'session.setModel')(
+      { model: { provider: 'fixture', id: 'model-b' } },
+      context,
+      request('session.setModel', sessionId)
+    )
+    assert.deepEqual((selected as { model: unknown }).model, {
+      provider: 'fixture',
+      id: 'model-b'
+    })
+    const thinking = await handler(adapter.handlers, 'session.setThinkingLevel')(
+      { level: 'max' },
+      context,
+      request('session.setThinkingLevel', sessionId)
+    )
+    assert.equal((thinking as { thinkingLevel: string }).thinkingLevel, 'max')
+    await assert.rejects(
+      async () =>
+        handler(adapter.handlers, 'session.setModel')(
+          { model: { provider: 'fixture', id: 'missing' } },
+          context,
+          request('session.setModel', sessionId)
+        ),
+      (error: { code?: string }) => error.code === 'MODEL_UNAVAILABLE'
+    )
+    assert.deepEqual(state.model, { provider: 'fixture', id: 'model-b' })
+    assert.deepEqual(
+      await handler(adapter.handlers, 'session.contextUsage')(
+        {},
+        context,
+        request('session.contextUsage', sessionId)
+      ),
+      { tokens: 100, contextWindow: 1_000, percent: 10 }
+    )
+    const compacted = await handler(adapter.handlers, 'session.compact')(
+      {},
+      context,
+      request('session.compact', sessionId)
+    )
+    assert.deepEqual((compacted as { summary: unknown }).summary, {
+      summary: 'compact',
+      tokensBefore: 100,
+      tokensAfter: 10
+    })
+    assert.deepEqual(
+      await handler(adapter.handlers, 'session.getAutoCompaction')(
+        {},
+        context,
+        request('session.getAutoCompaction', sessionId)
+      ),
+      { enabled: true, thresholdPercent: 80, thresholdTokens: 800 }
+    )
+    assert.deepEqual(
+      await handler(adapter.handlers, 'session.setAutoCompaction')(
+        { enabled: false, thresholdPercent: 90 },
+        context,
+        request('session.setAutoCompaction', sessionId)
+      ),
+      { enabled: false, thresholdPercent: 90, thresholdTokens: 900 }
+    )
+    releasePrompt()
+    assert.equal(await run.completion, 'completed')
+    assert.equal(
+      calls.some((call) => call.method === 'session.setModel'),
+      true,
+      'model changes remain accepted while the active OMP turn continues'
+    )
+  } finally {
+    releasePrompt()
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('model access keeps broker disconnect reason internal except on auth errors', async () => {
+  const models = [
+    {
+      provider: 'fixture',
+      id: 'model-a',
+      name: 'Model A',
+      reasoning: true,
+      input: ['text'] as Array<'text' | 'image'>,
+      contextWindow: 32_000,
+      maxTokens: 4_000
+    }
+  ]
+  const modelAccess = {
+    authStorage: { credentials: { revalidate: async () => undefined } },
+    modelRegistry: {
+      find: (provider: string, id: string) =>
+        models.find((model) => model.provider === provider && model.id === id)
+    },
+    catalog: () => models,
+    status: () => [
+      {
+        provider: 'fixture',
+        status: 'unauthenticated' as const,
+        reason: 'desktop_credential_broker_not_connected' as const
+      }
+    ],
+    onChange: () => () => undefined,
+    close: () => undefined
+  } as unknown as KernelModelAccess
+
+  assert.deepEqual(readModelAccessCatalog(modelAccess).providers, [
+    { provider: 'fixture', status: 'unauthenticated' }
+  ])
+  await assert.rejects(requireAvailableModel(modelAccess, { provider: 'fixture', id: 'model-a' }), {
+    code: 'MODEL_UNAUTHENTICATED',
+    message: 'The desktop credential broker is not connected.',
+    detail: { reason: 'desktop_credential_broker_not_connected' }
+  })
+})
+
 test('worker adapter returns prompt acceptance immediately and maps abort to cancelled', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-prompt-'))
   let finishPrompt!: () => void
@@ -165,6 +381,45 @@ test('worker adapter returns prompt acceptance immediately and maps abort to can
   }
 })
 
+test('worker adapter preserves a sanitized pre-loop prompt failure detail', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-preloop-failure-'))
+  const adapter = createWorkerKernelAdapter({
+    agentDir: '/trusted/agent',
+    callWorker: async (method) => {
+      if (method === 'session.prompt') {
+        throw new Error('No model selected from /private/secret/models.yml')
+      }
+      return undefined
+    }
+  })
+
+  try {
+    const created = (await handler(adapter.handlers, 'session.create')(
+      {
+        cwd,
+        model: { provider: 'provider', id: 'model' },
+        sessionManager: { kind: 'memory' }
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+    const started = (await handler(adapter.handlers, 'session.prompt')(
+      { text: 'hello' },
+      context,
+      request('session.prompt', created.sessionId)
+    )) as unknown as {
+      completion: PromiseLike<{ status: string; detail: string }>
+    }
+
+    assert.deepEqual(await started.completion, {
+      status: 'failed',
+      detail: 'No model selected from <path>'
+    })
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
 test('worker adapter forwards public prompt options without host-internal flags', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-prompt-options-'))
   const calls: Array<{ method: string; params: unknown }> = []
@@ -195,7 +450,8 @@ test('worker adapter forwards public prompt options without host-internal flags'
           expandPromptTemplates: false,
           skipCompactionCheck: true
         },
-        trustedOptions: { version: 1, synthetic: true, userInitiated: false }
+        synthetic: true,
+        userInitiated: false
       },
       context,
       request('session.prompt', created.sessionId)
@@ -216,18 +472,6 @@ test('worker adapter forwards public prompt options without host-internal flags'
         }
       }
     })
-
-    await assert.rejects(
-      async () =>
-        handler(adapter.handlers, 'session.prompt')(
-          { text: 'forged', trustedOptions: { version: 1, synthetic: true } },
-          { ...context, trusted: false },
-          request('session.prompt', created.sessionId)
-        ),
-      (error: { code?: string; detail?: unknown }) =>
-        error.code === 'CAPABILITY_UNAVAILABLE' &&
-        (error.detail as { reason?: string })?.reason === 'trusted_host_required'
-    )
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
@@ -524,6 +768,72 @@ test('worker adapter persists receipts, rejects durable duplicate keys, and rele
     assert.equal(existsSync(join(directory, 'writer.lock')), false)
     assert.equal(existsSync(join(directory, 'session.json')), true)
   } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('persistent reopen restores plain creation policy without a resource snapshot', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-plain-policy-'))
+  const cwd = join(root, 'project')
+  const agentDir = join(root, 'agent')
+  const { mkdirSync } = await import('node:fs')
+  mkdirSync(cwd)
+  const calls: Array<{ method: string; params: unknown }> = []
+  const adapter = createWorkerKernelAdapter({
+    agentDir,
+    processStartedAt: 'darwin:test-process',
+    acquireSessionLockGuard: acquireTestGuard,
+    callWorker: async (method, params) => {
+      calls.push({ method, params })
+      return undefined
+    }
+  })
+  try {
+    const created = (await handler(adapter.handlers, 'session.create')(
+      {
+        cwd,
+        model: { provider: 'provider', id: 'model' },
+        sessionManager: { kind: 'persistent' },
+        projectBound: true,
+        noTools: 'all',
+        workMode: 'plan',
+        enableToolApproval: true,
+        autoCompaction: { enabled: false }
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+    await handler(adapter.handlers, 'session.close')(
+      {},
+      context,
+      request('session.close', created.sessionId)
+    )
+
+    assert.deepEqual(
+      await handler(adapter.handlers, 'session.open')(
+        {
+          sessionId: created.sessionId,
+          resources: {
+            projectBound: false,
+            noTools: false,
+            workMode: 'direct',
+            enableToolApproval: false,
+            autoCompaction: { enabled: true }
+          }
+        },
+        context,
+        request('session.open')
+      ),
+      { sessionId: created.sessionId }
+    )
+    const reopened = calls.at(-1)?.params as Record<string, unknown>
+    assert.equal(reopened.projectBound, true)
+    assert.equal(reopened.noTools, 'all')
+    assert.equal(reopened.workMode, 'plan')
+    assert.equal(reopened.enableToolApproval, true)
+    assert.deepEqual(reopened.autoCompaction, { enabled: false })
+  } finally {
+    await adapter.closeAll().catch(() => undefined)
     rmSync(root, { recursive: true, force: true })
   }
 })

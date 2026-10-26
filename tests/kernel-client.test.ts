@@ -8,7 +8,8 @@ import {
   KERNEL_EVENT_INTERACTION_CANCELLED,
   encodeFrame,
   parseFrame,
-  type HostResponseFrame
+  type HostResponseFrame,
+  type JsonValue
 } from '../src/shared/kernel-protocol'
 import { KernelProtocolCore, type FrameTransport } from '../src/kernel/protocol'
 import {
@@ -110,6 +111,40 @@ test('kernel client rejects unknown host capability registration', () => {
     () => client.registerHostHandler('desktop.snapshot', () => null),
     /Unknown kernel host capability: desktop\.snapshot/
   )
+})
+
+test('kernel client emits bounded progress frames only for progressive capabilities', async () => {
+  const [clientTransport, serverTransport] = pair()
+  const client = new KernelProtocolClient(clientTransport)
+  const progress: JsonValue[] = []
+  serverTransport.onLine((line) => {
+    const frame = parseFrame(line)
+    if ('kind' in frame && frame.kind === 'host.progress') progress.push(frame.progress)
+  })
+  client.registerHostCapability('mcp.desktop.call', async (_params, context) => {
+    assert.equal(typeof context.progress, 'function')
+    context.progress?.({ content: [{ type: 'text', text: 'working' }] })
+    return { content: [{ type: 'text', text: 'done' }] }
+  })
+  serverTransport.send(
+    encodeFrame({
+      kind: 'host.request',
+      id: 'host-progress-1',
+      capability: 'mcp.desktop.call',
+      params: {
+        bindingId: 'binding-1',
+        toolCallId: 'tool-call-1',
+        name: 'mcp__fake__work',
+        signature: 'a'.repeat(64),
+        input: {}
+      },
+      sessionId: 'session-1',
+      runId: 'run-1'
+    })
+  )
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.deepEqual(progress, [{ content: [{ type: 'text', text: 'working' }] }])
+  await client.close()
 })
 
 test('kernel client rejects invalid host params before invoking the handler', async () => {

@@ -4,6 +4,24 @@ import type { RemoteHelperReadyMarkerIdentity } from '../remote-helper-marker'
 import type { FileTransferCoordinator } from './coordinator'
 import type { TransferEvent } from './types'
 
+export type RemoteUploadPhase =
+  | 'canonical-root'
+  | 'reuse-check'
+  | 'helper-connect'
+  | 'manifest'
+  | 'chunk'
+  | 'verify'
+  | 'publish'
+  | 'retry-backoff'
+
+export interface RemoteUploadPhaseTiming {
+  transferId: string
+  attempt: number
+  phase: RemoteUploadPhase
+  elapsedMs: number
+  cached?: boolean
+}
+
 export interface TransferStdioProcess {
   stdin: Writable
   stdout: Readable
@@ -22,10 +40,17 @@ export interface RemoteUploadFileOptions {
   workspaceId?: string
   signal?: AbortSignal
   onEvent?: (event: TransferEvent) => void
+  onPhaseTiming?: (timing: RemoteUploadPhaseTiming) => void
   coordinator?: FileTransferCoordinator
   agentDir?: string
   helperConnect?: () => Promise<TransferStdioProcess>
   helperIdentity?: RemoteHelperReadyMarkerIdentity
   reuseVerifiedDestination?: boolean
   forceSsh?: boolean
+  /** Retry one transient transport failure with the same resumable transfer identity. */
+  retryOnce?: boolean
+  /** Total bounded attempts. Prefer this over retryOnce for new callers. */
+  maxAttempts?: number
+  /** Initial retry delay; later retries use exponential backoff. */
+  retryBackoffMs?: number
 }

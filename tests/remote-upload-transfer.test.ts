@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { PassThrough, Writable } from 'node:stream'
+import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 
 import {
@@ -12,7 +14,112 @@ import {
   uploadRemoteFile
 } from '../src/main/agent/transfer'
 import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
+import type { TransferStdioProcess } from '../src/main/agent/transfer/remote-upload-types'
 import { createLocalShellSession } from './helpers/localShellSession'
+
+function closingUploadProcess(): TransferStdioProcess {
+  const stdout = new PassThrough()
+  const stderr = new PassThrough()
+  let settled = false
+  let resolveClosed!: (result: { code: number | null; signal: string | null }) => void
+  const closed = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
+    resolveClosed = resolve
+  })
+  const settle = (): void => {
+    if (settled) return
+    settled = true
+    stdout.end()
+    stderr.end('mux_client_request_session: read from master failed: Message too long\n')
+    resolveClosed({ code: 255, signal: null })
+  }
+  const stdin = new Writable({
+    highWaterMark: 1024 * 1024,
+    write(_chunk, _encoding, callback) {
+      callback()
+      queueMicrotask(() => {
+        stdin.destroy()
+        settle()
+      })
+    }
+  })
+  return {
+    stdin,
+    stdout,
+    stderr,
+    closed,
+    async close() {
+      stdin.destroy()
+      settle()
+      await closed
+    }
+  }
+}
+
+function stallingUploadProcess(process: TransferStdioProcess): {
+  process: TransferStdioProcess
+  release(): void
+} {
+  let writes = 0
+  let releaseWrite: (() => void) | undefined
+  const stdin = new Writable({
+    highWaterMark: 1,
+    write(chunk: Buffer, _encoding, callback) {
+      writes += 1
+      if (writes === 1) {
+        process.stdin.write(chunk, callback)
+        return
+      }
+      releaseWrite = callback
+    },
+    final(callback) {
+      process.stdin.end(callback)
+    }
+  })
+  const release = (): void => {
+    releaseWrite?.()
+    releaseWrite = undefined
+  }
+  return {
+    process: {
+      stdin,
+      stdout: process.stdout,
+      stderr: process.stderr,
+      closed: process.closed,
+      async close() {
+        stdin.destroy()
+        await process.close()
+      }
+    },
+    release
+  }
+}
+
+function slowUploadProcess(
+  process: TransferStdioProcess,
+  writeDelayMs: number
+): TransferStdioProcess {
+  const stdin = new Writable({
+    highWaterMark: 1,
+    write(chunk: Buffer, _encoding, callback) {
+      process.stdin.write(chunk, (error) => {
+        setTimeout(() => callback(error), writeDelayMs)
+      })
+    },
+    final(callback) {
+      process.stdin.end(callback)
+    }
+  })
+  return {
+    stdin,
+    stdout: process.stdout,
+    stderr: process.stderr,
+    closed: process.closed,
+    async close() {
+      stdin.destroy()
+      await process.close()
+    }
+  }
+}
 
 test('installed helper reuse refuses a directory without its expected ready marker', async () => {
   const commands: string[] = []
@@ -108,6 +215,197 @@ test('remote upload adapter streams through pure SSH and reports transfer progre
     assert.ok(events.includes('publishing'))
   } finally {
     await session.close()
+    rmSync(localRoot, { recursive: true, force: true })
+    rmSync(remoteRoot, { recursive: true, force: true })
+  }
+})
+
+test('remote upload retries once when the SSH stream closes mid-write', async () => {
+  const localRoot = mkdtempSync(join(tmpdir(), 'phi-upload-retry-local-'))
+  const remoteRoot = mkdtempSync(join(tmpdir(), 'phi-upload-retry-remote-'))
+  const source = join(localRoot, 'source.bin')
+  const destination = join(remoteRoot, 'destination.bin')
+  const content = Buffer.alloc(512 * 1024 + 19, 0x2a)
+  const digest = createHash('sha256').update(content).digest('hex')
+  writeFileSync(source, content)
+  const actualSession = createLocalShellSession(remoteRoot)
+  const actualOpenStdio = actualSession.openStdio!.bind(actualSession)
+  let streamsOpened = 0
+  const session = {
+    ...actualSession,
+    async openStdio(command: string) {
+      streamsOpened += 1
+      if (streamsOpened === 1) return closingUploadProcess()
+      assert.equal(existsSync(destination), false, 'a failed attempt must not publish its partial')
+      return actualOpenStdio(command)
+    }
+  } as RemoteSshSession
+  const coordinator = new FileTransferCoordinator({
+    registry: new FileTransferRegistry(join(localRoot, 'registry.json')),
+    policy: {
+      chunkSizeBytes: 256 * 1024,
+      checkpointBytes: 256 * 1024,
+      progressBytes: 1,
+      progressIntervalMs: 0
+    }
+  })
+  try {
+    const result = await uploadRemoteFile({
+      session,
+      localPath: source,
+      remotePath: destination,
+      remoteRoot,
+      canonicalRoot: realpathSync(remoteRoot),
+      hostKey: 'retry-host',
+      workspaceId: 'retry-workspace',
+      transferId: 'consumer-retry',
+      expectedSha256: digest,
+      coordinator,
+      forceSsh: true,
+      reuseVerifiedDestination: true,
+      retryOnce: true
+    })
+
+    assert.equal(streamsOpened, 2)
+    assert.equal(result.sha256, digest)
+    assert.deepEqual(readFileSync(destination), content)
+  } finally {
+    await actualSession.close()
+    rmSync(localRoot, { recursive: true, force: true })
+    rmSync(remoteRoot, { recursive: true, force: true })
+  }
+})
+
+test('remote upload aborts a stalled SSH write and resumes from its verified checkpoint', async () => {
+  const localRoot = mkdtempSync(join(tmpdir(), 'phi-upload-stall-local-'))
+  const remoteRoot = mkdtempSync(join(tmpdir(), 'phi-upload-stall-remote-'))
+  const source = join(localRoot, 'source.bin')
+  const destination = join(remoteRoot, 'destination.bin')
+  const content = Buffer.alloc(768 * 1024 + 19, 0x4b)
+  const digest = createHash('sha256').update(content).digest('hex')
+  writeFileSync(source, content)
+  const actualSession = createLocalShellSession(remoteRoot)
+  const actualOpenStdio = actualSession.openStdio!.bind(actualSession)
+  let streamsOpened = 0
+  let releaseStall = (): void => undefined
+  const session = {
+    ...actualSession,
+    async openStdio(command: string) {
+      streamsOpened += 1
+      const process = await actualOpenStdio(command)
+      if (streamsOpened !== 1) return process
+      const stalled = stallingUploadProcess(process)
+      releaseStall = stalled.release
+      return stalled.process
+    }
+  } as RemoteSshSession
+  const controller = new AbortController()
+  const coordinator = new FileTransferCoordinator({
+    registry: new FileTransferRegistry(join(localRoot, 'registry.json')),
+    policy: {
+      chunkSizeBytes: 256 * 1024,
+      checkpointBytes: 256 * 1024,
+      progressBytes: 1,
+      progressIntervalMs: 0,
+      idleTimeoutMs: 200
+    }
+  })
+  const failureCodes: string[] = []
+  const started = Date.now()
+  const upload = uploadRemoteFile({
+    session,
+    localPath: source,
+    remotePath: destination,
+    remoteRoot,
+    canonicalRoot: realpathSync(remoteRoot),
+    hostKey: 'stall-host',
+    workspaceId: 'stall-workspace',
+    transferId: 'consumer-stall',
+    expectedSha256: digest,
+    coordinator,
+    forceSsh: true,
+    signal: controller.signal,
+    maxAttempts: 2,
+    retryBackoffMs: 1,
+    onEvent: (event) => {
+      if (event.state === 'failed' && event.error) failureCodes.push(event.error.code)
+    }
+  })
+  try {
+    const result = await Promise.race([
+      upload,
+      delay(2_000).then(() => {
+        throw new Error('stalled transfer did not settle within its watchdog')
+      })
+    ])
+
+    assert.ok(Date.now() - started < 2_000)
+    assert.equal(streamsOpened, 2)
+    assert.deepEqual(failureCodes, ['TRANSFER_STALLED'])
+    assert.ok(result.resumedFrom >= 256 * 1024)
+    assert.equal(result.sha256, digest)
+    assert.deepEqual(readFileSync(destination), content)
+  } finally {
+    releaseStall()
+    controller.abort()
+    await upload.catch(() => undefined)
+    await actualSession.close()
+    rmSync(localRoot, { recursive: true, force: true })
+    rmSync(remoteRoot, { recursive: true, force: true })
+  }
+})
+
+test('remote upload watchdog permits a slow stream that keeps acknowledging bytes', async () => {
+  const localRoot = mkdtempSync(join(tmpdir(), 'phi-upload-slow-local-'))
+  const remoteRoot = mkdtempSync(join(tmpdir(), 'phi-upload-slow-remote-'))
+  const source = join(localRoot, 'source.bin')
+  const destination = join(remoteRoot, 'destination.bin')
+  const content = Buffer.alloc(768 * 1024 + 19, 0x71)
+  const digest = createHash('sha256').update(content).digest('hex')
+  writeFileSync(source, content)
+  const actualSession = createLocalShellSession(remoteRoot)
+  const actualOpenStdio = actualSession.openStdio!.bind(actualSession)
+  const session = {
+    ...actualSession,
+    async openStdio(command: string) {
+      return slowUploadProcess(await actualOpenStdio(command), 100)
+    }
+  } as RemoteSshSession
+  const coordinator = new FileTransferCoordinator({
+    registry: new FileTransferRegistry(join(localRoot, 'registry.json')),
+    policy: {
+      chunkSizeBytes: 256 * 1024,
+      checkpointBytes: 256 * 1024,
+      progressBytes: 1,
+      progressIntervalMs: 0,
+      idleTimeoutMs: 500
+    }
+  })
+  const phases: string[] = []
+  try {
+    const result = await uploadRemoteFile({
+      session,
+      localPath: source,
+      remotePath: destination,
+      remoteRoot,
+      canonicalRoot: realpathSync(remoteRoot),
+      hostKey: 'slow-host',
+      workspaceId: 'slow-workspace',
+      transferId: 'consumer-slow',
+      expectedSha256: digest,
+      coordinator,
+      forceSsh: true,
+      onPhaseTiming: (timing) => {
+        assert.ok(timing.elapsedMs >= 0)
+        phases.push(timing.phase)
+      }
+    })
+
+    assert.equal(result.sha256, digest)
+    assert.deepEqual(readFileSync(destination), content)
+    assert.deepEqual(phases, ['manifest', 'chunk', 'verify', 'publish'])
+  } finally {
+    await actualSession.close()
     rmSync(localRoot, { recursive: true, force: true })
     rmSync(remoteRoot, { recursive: true, force: true })
   }

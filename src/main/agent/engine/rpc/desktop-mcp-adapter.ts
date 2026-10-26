@@ -44,6 +44,7 @@ export async function createDesktopMcpAdapter(
     const empty: DesktopMcpAdapter = Object.freeze({
       identity,
       tools: Object.freeze([]),
+      catalog: Object.freeze([]),
       skipped: Object.freeze([]),
       approvalFor: () => undefined,
       retire: () => {},
@@ -207,6 +208,7 @@ export async function createDesktopMcpAdapter(
     const adapter: DesktopMcpAdapter = {
       identity,
       tools,
+      catalog: Object.freeze(metadata.map((tool) => Object.freeze(structuredClone(tool)))),
       skipped: Object.freeze(skipped.map((server) => Object.freeze(server))),
       approvalFor(name, input) {
         if (lifetime.aborted || !tools.some((tool) => tool.name === name)) return undefined

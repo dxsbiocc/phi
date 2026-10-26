@@ -98,11 +98,20 @@ export const hostResponseFrameSchema = z.discriminatedUnion('ok', [
   hostErrorResponseFrameSchema
 ])
 
+export const hostProgressFrameSchema = z
+  .object({
+    kind: z.literal('host.progress'),
+    id: nonEmptyIdSchema,
+    progress: jsonValueSchema
+  })
+  .strict()
+
 export const parsedFrameSchema = z.union([
   kernelRequestFrameSchema,
   kernelResponseFrameSchema,
   kernelEventFrameSchema,
   hostRequestFrameSchema,
+  hostProgressFrameSchema,
   hostResponseFrameSchema
 ])
 
@@ -111,6 +120,7 @@ export type KernelResponseFrame = z.infer<typeof kernelResponseFrameSchema>
 export type KernelEventFrame = z.infer<typeof kernelEventFrameSchema>
 export type InteractionCancelledPayload = z.infer<typeof interactionCancelledPayloadSchema>
 export type HostRequestFrame = z.infer<typeof hostRequestFrameSchema>
+export type HostProgressFrame = z.infer<typeof hostProgressFrameSchema>
 export type HostResponseFrame = z.infer<typeof hostResponseFrameSchema>
 export type ParsedFrame = z.infer<typeof parsedFrameSchema>
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test, { type TestContext } from 'node:test'
@@ -57,6 +57,33 @@ test('session.adopt is offered only with trusted roots and adopts over stdio', a
   ]) {
     mkdirSync(dir, { recursive: true })
   }
+  writeFileSync(
+    join(agentDir, 'models.yml'),
+    JSON.stringify({
+      providers: {
+        'phi-history': {
+          baseUrl: 'http://127.0.0.1:9/v1',
+          apiKey: 'fake-history-inline-key',
+          api: 'openai-completions',
+          models: [
+            {
+              id: 'history-model',
+              name: 'History Fixture Model',
+              reasoning: false,
+              input: ['text'],
+              contextWindow: 32_768,
+              maxTokens: 256,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+            }
+          ]
+        }
+      }
+    })
+  )
+  writeFileSync(
+    join(agentDir, 'config.yml'),
+    JSON.stringify({ defaultProvider: 'phi-history', defaultModel: 'history-model' })
+  )
   // OMP's SessionManager needs Bun built-ins, so the fixture journal is written by a Bun child.
   const writeJournal = async (path: string): Promise<void> => {
     const script = [

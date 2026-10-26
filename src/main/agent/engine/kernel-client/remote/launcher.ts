@@ -4,7 +4,12 @@ import {
   remoteHelperReadyMarkerSha256,
   type RemoteHelperInstallation
 } from '../../../remote-helper-marker'
-import type { KernelEventFrame, KernelHelloResult } from '../../../../../shared/kernel-protocol'
+import type {
+  KernelEventFrame,
+  KernelHelloResult,
+  JsonValue,
+  ModelAccessConfigureParams
+} from '../../../../../shared/kernel-protocol'
 import { KernelClientError, KernelProtocolClient } from '..'
 import {
   ensureRemoteKernelDeployment,
@@ -40,7 +45,13 @@ export interface LaunchRemoteKernelOptions {
   readonly uploadOptions?: RemoteKernelDeploymentOptions['uploadOptions']
   readonly environment?: Readonly<Record<string, string>>
   readonly onDiagnostic?: (text: string) => void
+  /** Register desktop host capabilities before hello advertises them. */
+  readonly configureClient?: (client: KernelProtocolClient) => void
   readonly hello?: Parameters<KernelProtocolClient['hello']>[0]
+  /** Fresh reverse-tunnel route installed immediately after hello. */
+  readonly modelAccess?:
+    | ModelAccessConfigureParams
+    | (() => ModelAccessConfigureParams | Promise<ModelAccessConfigureParams>)
   readonly helloTimeoutMs?: number
   readonly graceMs?: number
 }
@@ -76,6 +87,10 @@ export interface ReattachRemoteKernelOptions {
   /** Register host handlers here before takeover advertises their hello capabilities. */
   readonly configureClient?: (client: KernelProtocolClient) => void
   readonly hello?: Omit<Parameters<KernelProtocolClient['hello']>[0], 'takeover'>
+  /** A reattach normally has a new tunnel port, so resolve this after its hello. */
+  readonly modelAccess?:
+    | ModelAccessConfigureParams
+    | (() => ModelAccessConfigureParams | Promise<ModelAccessConfigureParams>)
   readonly helloTimeoutMs?: number
 }
 
@@ -90,6 +105,9 @@ interface OpenRemoteKernelClientOptions {
   readonly helloTimeoutMs: number
   readonly onDiagnostic?: (text: string) => void
   readonly configureClient?: (client: KernelProtocolClient) => void
+  readonly modelAccess?:
+    | ModelAccessConfigureParams
+    | (() => ModelAccessConfigureParams | Promise<ModelAccessConfigureParams>)
   readonly openFailureMessage: string
   readonly helloFailureMessage: string
 }
@@ -99,6 +117,23 @@ interface OpenedRemoteKernelClient {
   readonly greeting: KernelHelloResult
   readonly attach: RemoteKernelAttachStatus
   readonly readyMs: number
+}
+
+function modelAccessWireParams(configuration: ModelAccessConfigureParams): JsonValue {
+  return {
+    endpoint: configuration.endpoint,
+    bearerToken: configuration.bearerToken,
+    models: configuration.models.map((model) => ({
+      provider: model.provider,
+      id: model.id,
+      name: model.name,
+      reasoning: model.reasoning,
+      input: [...model.input],
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+      ...(model.cost ? { cost: { ...model.cost } } : {})
+    }))
+  }
 }
 
 function explicitEnvironment(
@@ -259,6 +294,13 @@ async function openRemoteKernelClient(
         timeout.unref()
       })
     ])
+    if (options.modelAccess) {
+      const configuration =
+        typeof options.modelAccess === 'function'
+          ? await options.modelAccess()
+          : options.modelAccess
+      await client.request('modelAccess.configure', modelAccessWireParams(configuration))
+    }
     return {
       client,
       greeting: opened[0],
@@ -322,6 +364,8 @@ export async function launchRemoteKernel(
     hello: options.hello ?? {},
     helloTimeoutMs,
     onDiagnostic: options.onDiagnostic,
+    configureClient: options.configureClient,
+    modelAccess: options.modelAccess,
     openFailureMessage: 'Failed to open remote kernel stdio.',
     helloFailureMessage: 'Remote kernel hello failed.'
   })
@@ -365,6 +409,7 @@ export async function reattachRemoteKernel(
       options.configureClient?.(client)
       if (options.onEvent) client.onEvent(options.onEvent)
     },
+    modelAccess: options.modelAccess,
     openFailureMessage: 'Failed to re-open remote kernel stdio.',
     helloFailureMessage: 'Remote kernel reattach failed.'
   })

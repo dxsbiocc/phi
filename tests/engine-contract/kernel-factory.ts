@@ -1,5 +1,6 @@
 import { dirname, join, resolve } from 'node:path'
 import { once } from 'node:events'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 import {
@@ -15,6 +16,13 @@ import type {
   WorkerCreateSessionResult,
   WorkerSessionState
 } from '../../src/main/agent/engine/types'
+import {
+  createModelAccessBroker,
+  MODEL_ACCESS_BROKER_CAPABILITIES,
+  registerModelAccessBroker,
+  type ModelAccessAuthStorage,
+  type ModelAccessBroker
+} from '../../src/main/agent/engine/kernel-host/model-access-broker'
 import type { KernelEventFrame, JsonValue } from '../../src/shared/kernel-protocol'
 import type { BasicEngineFixture } from './basic-suite'
 import { createInProcessFixture } from './in-process-factory'
@@ -60,6 +68,26 @@ export type KernelEngineFixture = BasicEngineFixture & {
 export type KernelFixtureOptions = {
   testPause?: 'a' | 'c' | 'd1' | 'd2'
   hostCapabilities?: string[]
+  modelAccess?: 'desktop-stored'
+}
+
+function storedCredentialBroker(provider: string): ModelAccessBroker {
+  const credential = {
+    id: 1,
+    provider,
+    credential: { type: 'api_key' as const, key: 'fake-desktop-stored-key' },
+    identityKey: null
+  }
+  return createModelAccessBroker({
+    credentials: {
+      snapshot: () => ({ generation: 1, generatedAt: Date.now(), credentials: [credential] })
+    },
+    oauth: {
+      refresh: async () => {
+        throw new Error('The stored-key fixture does not use OAuth refresh.')
+      }
+    }
+  } satisfies ModelAccessAuthStorage)
 }
 
 function record(value: JsonValue): Record<string, JsonValue> {
@@ -99,6 +127,25 @@ export async function createKernelFixture(
   const diagnostics: string[] = []
   let spawned: SpawnedKernelClient | undefined
   try {
+    const modelAccessBroker =
+      options.modelAccess === 'desktop-stored'
+        ? storedCredentialBroker(base.model.provider)
+        : undefined
+    if (modelAccessBroker) {
+      const modelsPath = join(base.agentDir, 'models.yml')
+      const config = JSON.parse(readFileSync(modelsPath, 'utf8')) as {
+        providers: Record<string, { apiKey?: string }>
+      }
+      // The disposable kernel must authenticate only through the same broker surface as desktop.
+      delete config.providers[base.model.provider]?.apiKey
+      writeFileSync(modelsPath, JSON.stringify(config))
+    }
+    const hostCapabilities = modelAccessBroker
+      ? [...new Set([...(options.hostCapabilities ?? []), ...MODEL_ACCESS_BROKER_CAPABILITIES])]
+      : options.hostCapabilities
+    const registerBroker = (client: KernelProtocolClient): void => {
+      if (modelAccessBroker) registerModelAccessBroker(client, modelAccessBroker)
+    }
     const kernelEnv = {
       PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
       HOME: join(root, 'home'),
@@ -126,7 +173,8 @@ export async function createKernelFixture(
         onDiagnostic: (text) => diagnostics.push(text)
       })
       try {
-        await peer.client.hello()
+        registerBroker(peer.client)
+        await peer.client.hello({ hostCapabilities })
         await peer.client.subscribe(0)
         return peer
       } catch (error) {
@@ -141,7 +189,8 @@ export async function createKernelFixture(
       onDiagnostic: (text) => diagnostics.push(text)
     })
     const client = spawned.client
-    const greeting = await client.hello({ hostCapabilities: options.hostCapabilities })
+    registerBroker(client)
+    const greeting = await client.hello({ hostCapabilities })
     await client.subscribe(0)
 
     const logicalToKernel = new Map<string, string>()
@@ -203,13 +252,7 @@ export async function createKernelFixture(
           cwd: options.cwd ?? base.cwd,
           model: { provider: base.model.provider, id: base.model.id },
           sessionManager: { kind: options.persistent ? 'persistent' : 'memory' },
-          resourceOptions: options.resourceOptions ?? {
-            noExtensions: true,
-            noSkills: true,
-            noContextFiles: true,
-            noPromptTemplates: true,
-            noThemes: true
-          },
+          ...(options.resourceOptions ? { resourceOptions: options.resourceOptions } : {}),
           noTools: options.noTools ?? false,
           enableToolApproval: options.enableToolApproval ?? false,
           ...(options.workMode ? { workMode: options.workMode } : {}),

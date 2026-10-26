@@ -16,6 +16,7 @@ import {
   type ResourceDiagnostic
 } from './session-factory'
 import { sessions } from './state'
+import { isPhiAgentDefinition } from '../../agents/definition'
 import { sessionContextFiles } from './session-resource-input'
 
 export const PHI_PROJECT_CONFIG_DIR_NAME = '.phi'
@@ -190,9 +191,21 @@ export async function reloadResources(params: unknown): Promise<unknown> {
         entry.resourceSnapshot.contextFiles = sessionContextFiles(record.contextFiles)
       }
     }
+    const agentResult = Object.hasOwn(record, 'phiAgents')
+      ? await entry.reloadAgents?.(
+          Array.isArray(record.phiAgents) ? record.phiAgents.filter(isPhiAgentDefinition) : []
+        )
+      : undefined
+    entry.applyResourceReload?.(record)
     await entry.resourceLoader.reload()
     await entry.result.session.refreshSkills()
-    return serializeResources(entry.resourceLoader, entry.result.session.sessionManager.getCwd())
+    return {
+      ...(serializeResources(
+        entry.resourceLoader,
+        entry.result.session.sessionManager.getCwd()
+      ) as Record<string, unknown>),
+      ...(agentResult ? { agents: agentResult } : {})
+    }
   }
   const options = resourceOptions(params)
   const loader = new DefaultResourceLoader({

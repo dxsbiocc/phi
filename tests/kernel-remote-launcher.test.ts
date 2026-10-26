@@ -130,6 +130,8 @@ type Upload = {
   localPath: string
   remotePath: string
   expectedSha256?: string
+  maxAttempts?: number
+  retryBackoffMs?: number
 }
 
 class FakeDeploymentHost implements RemoteKernelDeploymentHost {
@@ -140,6 +142,7 @@ class FakeDeploymentHost implements RemoteKernelDeploymentHost {
   remotePlatformFailure?: string
   activationHashMismatch = false
   uploadHashMismatch = false
+  uploadFailureCode?: string
   helper: RemoteHelperInstallation | undefined = helperInstallation
   repairedHelper: RemoteHelperInstallation | undefined = helperInstallation
   readonly helperEnsureCalls: Array<{ force?: boolean } | undefined> = []
@@ -191,14 +194,20 @@ class FakeDeploymentHost implements RemoteKernelDeploymentHost {
     uploadFile: async (
       localPath: string,
       remotePath: string,
-      options?: { expectedSha256?: string }
+      options?: { expectedSha256?: string; maxAttempts?: number; retryBackoffMs?: number }
     ): Promise<void> => {
-      if (this.uploadHashMismatch) {
+      if (this.uploadHashMismatch || this.uploadFailureCode) {
         throw Object.assign(new Error('Transfer rejected uploaded bytes.'), {
-          code: 'HASH_MISMATCH'
+          code: this.uploadFailureCode ?? 'HASH_MISMATCH'
         })
       }
-      this.uploads.push({ localPath, remotePath, expectedSha256: options?.expectedSha256 })
+      this.uploads.push({
+        localPath,
+        remotePath,
+        expectedSha256: options?.expectedSha256,
+        maxAttempts: options?.maxAttempts,
+        retryBackoffMs: options?.retryBackoffMs
+      })
     }
   }
 
@@ -249,6 +258,10 @@ test('deploys only the selected modern native, validates hashes, and publishes t
     false
   )
   for (const upload of host.uploads) assert.match(upload.expectedSha256 ?? '', /^[a-f0-9]{64}$/)
+  for (const upload of host.uploads) {
+    assert.equal(upload.maxAttempts, 3)
+    assert.equal(upload.retryBackoffMs, 1_000)
+  }
   for (const command of host.commands) {
     const syntax = spawnSync('/bin/sh', ['-n'], { input: command, encoding: 'utf8' })
     assert.equal(syntax.status, 0, syntax.stderr)
@@ -389,6 +402,27 @@ test('streaming upload hash mismatch is typed and never publishes a ready marker
   assert.equal(host.commands.length, 2)
   assert.match(host.commands.at(-1) ?? '', /^rm -f --/)
   assert.equal(host.commands.at(-1)?.includes('.phi-ready.json'), true)
+})
+
+test('exhausted upload stalls stay machine-readable and never publish a ready marker', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  host.uploadFailureCode = 'TRANSFER_STALLED'
+  await assert.rejects(
+    ensureRemoteKernelDeployment({
+      runtimeHost: host,
+      runtimeRoot: '/srv/phi-runtime',
+      buildDirectory: fixture.directory
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof RemoteKernelError)
+      assert.equal(error.code, 'TRANSFER_STALLED')
+      return true
+    }
+  )
+  assert.equal(host.markerVariant, undefined)
+  assert.match(host.commands.at(-1) ?? '', /^rm -f --/)
 })
 
 class LoopbackKernelProcess implements RemoteStdioProcess {
@@ -644,13 +678,27 @@ test('reattach takes over, replays available events, and reports replay gaps', a
   t.after(fixture.cleanup)
   const host = new FakeDeploymentHost()
   host.markerVariant = 'modern'
+  const configurations: unknown[] = []
+  const model = {
+    provider: 'fixture',
+    id: 'fixture-model',
+    name: 'Fixture model',
+    reasoning: false,
+    input: ['text'] as Array<'text' | 'image'>,
+    contextWindow: 32_000,
+    maxTokens: 4_000
+  }
   const core = new KernelProtocolCore({
     kernelVersion: 'test-kernel',
     ompVersion: '18.10.3',
     kernelInstanceId: 'stable-remote-kernel',
     replayCapacity: 1,
     handlers: {
-      'events.subscribe': () => ({ subscribed: true, lastSeq: 0 })
+      'events.subscribe': () => ({ subscribed: true, lastSeq: 0 }),
+      'modelAccess.configure': (params) => {
+        configurations.push(params)
+        return { configured: true }
+      }
     }
   })
   let opens = 0
@@ -680,7 +728,12 @@ test('reattach takes over, replays available events, and reports replay gaps', a
     session: session(),
     runtimeHost: host,
     runtimeRoot: '/srv/phi-runtime',
-    buildDirectory: fixture.directory
+    buildDirectory: fixture.directory,
+    modelAccess: {
+      endpoint: 'http://127.0.0.1:43123/v1/pi/stream',
+      bearerToken: 'a'.repeat(43),
+      models: [model]
+    }
   })
   core.emitEvent('test.event', { index: 1 })
   core.emitEvent('test.event', { index: 2 })
@@ -688,7 +741,12 @@ test('reattach takes over, replays available events, and reports replay gaps', a
   const reattached = await reattachRemoteKernel({
     session: session(),
     previous: launched,
-    lastSeen: 0
+    lastSeen: 0,
+    modelAccess: () => ({
+      endpoint: 'http://127.0.0.1:43124/v1/pi/stream',
+      bearerToken: 'b'.repeat(43),
+      models: [model]
+    })
   })
 
   assert.equal(reattached.greeting.kernelInstanceId, launched.greeting.kernelInstanceId)
@@ -697,6 +755,10 @@ test('reattach takes over, replays available events, and reports replay gaps', a
   assert.equal(reattached.snapshotRequired, true)
   assert.equal(reattached.remoteCommandCount, 1)
   assert.equal(opens, 2)
+  assert.deepEqual(
+    configurations.map((value) => (value as { endpoint: string }).endpoint),
+    ['http://127.0.0.1:43123/v1/pi/stream', 'http://127.0.0.1:43124/v1/pi/stream']
+  )
   core.emitEvent('test.event', { index: 3 })
   const replayed: number[] = []
   const replayAttach = await reattachRemoteKernel({

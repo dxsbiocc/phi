@@ -45,6 +45,7 @@ function liveResourceBlock(
 export function createLiveResourcePromptExtension(options: {
   snapshot: SessionResourceSnapshot
   loader(): DefaultResourceLoader | undefined
+  includeSkills: boolean
 }): ExtensionFactory {
   return (pi) => {
     pi.on('before_agent_start', (event) => {
@@ -53,7 +54,7 @@ export function createLiveResourcePromptExtension(options: {
       return {
         systemPrompt: [
           ...event.systemPrompt.filter((block) => !block.startsWith(LIVE_RESOURCE_PREFIX)),
-          liveResourceBlock(loader, options.snapshot, pi.getActiveTools().includes('read'))
+          liveResourceBlock(loader, options.snapshot, options.includeSkills)
         ]
       }
     })

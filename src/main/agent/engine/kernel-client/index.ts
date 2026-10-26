@@ -7,6 +7,7 @@ import {
   isKernelHostCapabilityName,
   parseFrame,
   type HostRequestFrame,
+  type HostProgressFrame,
   type JsonValue,
   type KernelHostCapabilityName,
   type KernelHostCapabilityParams,
@@ -36,6 +37,7 @@ export type KernelHostRequestContext = Pick<
   'sessionId' | 'runId' | 'agentRunId'
 > & {
   readonly signal: AbortSignal
+  readonly progress?: (progress: JsonValue) => void
 }
 
 export type KernelHostHandler<Name extends KernelHostCapabilityName = KernelHostCapabilityName> = (
@@ -274,7 +276,8 @@ export class KernelProtocolClient {
         ...(frame.sessionId ? { sessionId: frame.sessionId } : {}),
         ...(frame.runId ? { runId: frame.runId } : {}),
         ...(frame.agentRunId ? { agentRunId: frame.agentRunId } : {}),
-        signal: controller.signal
+        signal: controller.signal,
+        ...this.hostProgressContext(frame, controller)
       })
       if (controller.signal.aborted) return
       // Existing desktop handlers use `undefined` for void and absent optional values. The wire
@@ -290,6 +293,25 @@ export class KernelProtocolClient {
     } finally {
       if (this.hostRequestControllers.get(frame.id) === controller) {
         this.hostRequestControllers.delete(frame.id)
+      }
+    }
+  }
+
+  private hostProgressContext(
+    frame: HostRequestFrame,
+    controller: AbortController
+  ): Pick<KernelHostRequestContext, 'progress'> {
+    const definition = KERNEL_HOST_CAPABILITY_REGISTRY[frame.capability]
+    if (!('progress' in definition) || definition.progress !== true) return {}
+    return {
+      progress: (progress: JsonValue) => {
+        if (controller.signal.aborted) return
+        const progressFrame: HostProgressFrame = {
+          kind: 'host.progress',
+          id: frame.id,
+          progress
+        }
+        this.transport.send(encodeFrame(progressFrame))
       }
     }
   }

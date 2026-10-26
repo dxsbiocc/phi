@@ -15,6 +15,7 @@ const terminalStatuses = new Set<RunCompletedPayload['status']>([
   'unknown'
 ])
 const thinkingLevels = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+const workModes = new Set(['direct', 'plan', 'plan_execute', 'auto'])
 
 function fsCode(error: unknown): string | undefined {
   return error && typeof error === 'object' && 'code' in error
@@ -36,20 +37,81 @@ function optionalString(value: unknown): value is string | undefined {
   return value === undefined || (typeof value === 'string' && value.length > 0)
 }
 
-function sessionPolicy(value: unknown): SessionManifest['policy'] | undefined {
+function validPersistedSessionPolicy(policy: Record<string, unknown>): boolean {
+  const allowed = new Set(['noTools', 'workMode', 'enableToolApproval', 'autoCompaction'])
+  return (
+    !Object.keys(policy).some((key) => !allowed.has(key)) &&
+    Object.hasOwn(policy, 'noTools') &&
+    Object.hasOwn(policy, 'workMode') &&
+    Object.hasOwn(policy, 'enableToolApproval') &&
+    (policy.noTools === 'all' || typeof policy.noTools === 'boolean') &&
+    typeof policy.workMode === 'string' &&
+    workModes.has(policy.workMode) &&
+    typeof policy.enableToolApproval === 'boolean'
+  )
+}
+
+function persistedAutoCompaction(value: unknown): { enabled: boolean } | undefined {
   if (value === undefined) return undefined
   const policy = record(value)
   if (
     !policy ||
-    Object.keys(policy).sort().join(',') !== 'projectBound,requiresTrustedResources' ||
+    Object.keys(policy).join(',') !== 'enabled' ||
+    typeof policy.enabled !== 'boolean'
+  ) {
+    throw new Error('session manifest persisted auto-compaction policy is invalid')
+  }
+  return { enabled: policy.enabled }
+}
+
+function persistedSessionPolicy(
+  value: unknown
+): NonNullable<SessionManifest['policy']>['sessionPolicy'] {
+  const policy = record(value)
+  if (!policy || !validPersistedSessionPolicy(policy)) {
+    throw new Error('session manifest persisted policy is invalid')
+  }
+  const autoCompaction = persistedAutoCompaction(policy.autoCompaction)
+  return {
+    noTools: policy.noTools as 'all' | boolean,
+    workMode: policy.workMode as 'direct' | 'plan' | 'plan_execute' | 'auto',
+    enableToolApproval: policy.enableToolApproval as boolean,
+    ...(autoCompaction ? { autoCompaction } : {})
+  }
+}
+
+function sessionPolicy(
+  value: unknown,
+  schemaVersion: 1 | typeof SESSION_MANIFEST_SCHEMA_VERSION
+): SessionManifest['policy'] | undefined {
+  if (value === undefined) return undefined
+  const policy = record(value)
+  const keys = Object.keys(policy ?? {})
+    .sort()
+    .join(',')
+  const expectedKeys =
+    schemaVersion === 1
+      ? 'projectBound,requiresTrustedResources'
+      : keys === 'projectBound,requiresTrustedResources'
+        ? keys
+        : 'projectBound,requiresTrustedResources,sessionPolicy'
+  if (
+    !policy ||
+    keys !== expectedKeys ||
     typeof policy.projectBound !== 'boolean' ||
-    typeof policy.requiresTrustedResources !== 'boolean'
+    typeof policy.requiresTrustedResources !== 'boolean' ||
+    (schemaVersion === 1 && policy.sessionPolicy !== undefined)
   ) {
     throw new Error('session manifest policy is invalid')
   }
+  const plain =
+    schemaVersion === SESSION_MANIFEST_SCHEMA_VERSION && policy.sessionPolicy !== undefined
+      ? persistedSessionPolicy(policy.sessionPolicy)
+      : undefined
   return {
     projectBound: policy.projectBound,
-    requiresTrustedResources: policy.requiresTrustedResources
+    requiresTrustedResources: policy.requiresTrustedResources,
+    ...(plain ? { sessionPolicy: plain } : {})
   }
 }
 
@@ -77,6 +139,10 @@ export function validateSessionManifest(
 ): SessionManifest {
   const value = record(candidate)
   if (!value) throw new Error('session manifest is not an object')
+  const schemaVersion = value.schemaVersion
+  if (schemaVersion !== 1 && schemaVersion !== SESSION_MANIFEST_SCHEMA_VERSION) {
+    throw new Error('session manifest fields are invalid')
+  }
   const allowed = new Set([
     'schemaVersion',
     'sessionId',
@@ -94,7 +160,6 @@ export function validateSessionManifest(
     throw new Error('session manifest has unknown fields')
   }
   if (
-    value.schemaVersion !== SESSION_MANIFEST_SCHEMA_VERSION ||
     value.sessionId !== expectedSessionId ||
     typeof value.cwd !== 'string' ||
     !isAbsolute(value.cwd) ||
@@ -119,7 +184,7 @@ export function validateSessionManifest(
     throw new Error('session manifest model is invalid')
   }
   const lastRun = sessionLastRun(value.lastRun)
-  const policy = sessionPolicy(value.policy)
+  const policy = sessionPolicy(value.policy, schemaVersion)
   return {
     schemaVersion: SESSION_MANIFEST_SCHEMA_VERSION,
     sessionId: expectedSessionId,
@@ -129,14 +194,7 @@ export function validateSessionManifest(
     ...(model ? { model: { provider: model.provider as string, id: model.id as string } } : {}),
     ...(typeof value.thinkingLevel === 'string' ? { thinkingLevel: value.thinkingLevel } : {}),
     ...(typeof value.title === 'string' ? { title: value.title } : {}),
-    ...(policy
-      ? {
-          policy: {
-            projectBound: policy.projectBound,
-            requiresTrustedResources: policy.requiresTrustedResources
-          }
-        }
-      : {}),
+    ...(policy ? { policy: structuredClone(policy) } : {}),
     journal: 'journal.jsonl',
     ...(lastRun ? { lastRun } : {})
   }

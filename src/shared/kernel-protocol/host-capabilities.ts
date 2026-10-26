@@ -9,11 +9,60 @@ const jsonObjectSchema: z.ZodType<{ [key: string]: JsonValue }> = z
   .refine((value) => Object.keys(value).length <= 256, 'JSON object has too many fields')
 const emptyObjectSchema = z.object({}).strict()
 const nullResultSchema = z.null()
+const desktopMcpSkipReasonSchema = z.enum([
+  'unavailable',
+  'stdio_not_allowed',
+  'env_not_ready',
+  'profile_changed',
+  'api_key_missing',
+  'api_key_unavailable',
+  'prepare_failed',
+  'connect_failed',
+  'startup_failed',
+  'startup_pending',
+  'not_connected',
+  'backoff'
+])
+
+const desktopMcpToolResultSchema = z
+  .object({
+    content: z
+      .array(
+        z.union([
+          z.object({ type: z.literal('text'), text: z.string() }).strict(),
+          z
+            .object({
+              type: z.literal('image'),
+              data: z.string(),
+              mimeType: z.string().min(1)
+            })
+            .strict()
+        ])
+      )
+      .max(4096),
+    details: jsonValueSchema.optional(),
+    isError: z.boolean().optional()
+  })
+  .strict()
+
+const desktopMcpToolMetadataSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(512)
+      .regex(/^mcp__/),
+    label: z.string(),
+    description: z.string(),
+    parameters: jsonObjectSchema,
+    signature: z.string().regex(/^[a-f0-9]{64}$/)
+  })
+  .strict()
 
 const service = (
   timeoutMs: number,
-  runScoped: boolean
-): { interaction: 'service'; timeoutMs: number; runScoped: boolean } => ({
+  runScoped: boolean | 'optional'
+): { interaction: 'service'; timeoutMs: number; runScoped: boolean | 'optional' } => ({
   interaction: 'service' as const,
   timeoutMs,
   runScoped
@@ -263,6 +312,44 @@ const capabilityIdentitySchema = z
 const wrapperRunIdSchema = nonEmptyStringSchema.max(256).regex(/^[A-Za-z0-9_-]+$/)
 const wrapperStatusSchema = jsonObjectSchema
 
+const modelAccessOAuthCredentialSchema = z
+  .object({
+    type: z.literal('oauth'),
+    refresh: z.literal('__remote__'),
+    access: z.string(),
+    expires: z.number(),
+    enterpriseUrl: z.string().optional(),
+    projectId: z.string().optional(),
+    email: z.string().optional(),
+    accountId: z.string().optional(),
+    apiEndpoint: z.string().optional(),
+    orgId: z.string().optional(),
+    orgName: z.string().optional(),
+    region: z.string().optional(),
+    inferenceRegion: z.enum(['global', 'eu', 'us']).optional(),
+    activeOrganizationId: z.string().optional(),
+    authorizedAt: z.number().optional()
+  })
+  .strict()
+
+const modelAccessCredentialEntrySchema = z
+  .object({
+    id: z.number().int().positive(),
+    provider: nonEmptyStringSchema,
+    credential: z.union([
+      z
+        .object({
+          type: z.literal('api_key'),
+          key: nonEmptyStringSchema,
+          source: z.literal('login').optional()
+        })
+        .strict(),
+      modelAccessOAuthCredentialSchema
+    ]),
+    identityKey: z.string().nullable()
+  })
+  .strict()
+
 export const KERNEL_HOST_CAPABILITIES = [
   'agentInteraction.request',
   'planReview.request',
@@ -282,6 +369,12 @@ export const KERNEL_HOST_CAPABILITIES = [
   'mcp.featuredApiKey',
   'mcp.openAuthUrl',
   'mcp.openCustomAuthUrl',
+  'mcp.desktop.list',
+  'mcp.desktop.call',
+  'mcp.desktop.cancel',
+  'mcp.desktop.close',
+  'modelAccess.credentials',
+  'modelAccess.refresh',
   'cursorBridge.ensure',
   'capabilities.search',
   'capabilities.install',
@@ -306,6 +399,7 @@ type KernelHostCapabilityDefinition = {
   readonly timeoutMs?: number
   readonly runScoped: boolean | 'optional'
   readonly sensitiveResult?: boolean
+  readonly progress?: boolean
 }
 
 export const KERNEL_HOST_CAPABILITY_REGISTRY = {
@@ -496,6 +590,72 @@ export const KERNEL_HOST_CAPABILITY_REGISTRY = {
       .strict(),
     result: nullResultSchema,
     ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
+  },
+  'mcp.desktop.list': {
+    params: z
+      .object({
+        bindingId: boundedIdSchema,
+        cwd: nonEmptyStringSchema,
+        registeredToolNames: z.array(nonEmptyStringSchema.max(512)).max(8192)
+      })
+      .strict(),
+    result: z
+      .object({
+        tools: z.array(desktopMcpToolMetadataSchema).max(4096),
+        skipped: z
+          .array(
+            z
+              .object({
+                name: nonEmptyStringSchema.max(512),
+                reason: desktopMcpSkipReasonSchema
+              })
+              .strict()
+          )
+          .max(256)
+      })
+      .strict(),
+    ...service(NETWORK_SERVICE_TIMEOUT_MS, 'optional')
+  },
+  'mcp.desktop.call': {
+    params: z
+      .object({
+        bindingId: boundedIdSchema,
+        toolCallId: boundedIdSchema,
+        name: nonEmptyStringSchema.max(512),
+        signature: z.string().regex(/^[a-f0-9]{64}$/),
+        input: jsonObjectSchema
+      })
+      .strict(),
+    result: desktopMcpToolResultSchema,
+    ...service(2 * NETWORK_SERVICE_TIMEOUT_MS, true),
+    progress: true
+  },
+  'mcp.desktop.cancel': {
+    params: z.object({ bindingId: boundedIdSchema, toolCallId: boundedIdSchema }).strict(),
+    result: nullResultSchema,
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, 'optional')
+  },
+  'mcp.desktop.close': {
+    params: z.object({ bindingId: boundedIdSchema }).strict(),
+    result: nullResultSchema,
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, 'optional')
+  },
+  'modelAccess.credentials': {
+    params: z.object({ provider: nonEmptyStringSchema.optional() }).strict(),
+    result: z.object({ credentials: z.array(modelAccessCredentialEntrySchema).max(1024) }).strict(),
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false),
+    sensitiveResult: true
+  },
+  'modelAccess.refresh': {
+    params: z
+      .object({
+        credentialId: z.number().int().positive(),
+        reason: z.literal('auth-recovery').optional()
+      })
+      .strict(),
+    result: modelAccessCredentialEntrySchema,
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false),
+    sensitiveResult: true
   },
   'cursorBridge.ensure': {
     params: emptyObjectSchema,

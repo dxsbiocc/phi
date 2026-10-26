@@ -18,6 +18,7 @@ import {
   type KernelMethodHandlers,
   type RunCompletionStatus
 } from '../src/kernel/protocol'
+import { normalizeHandlerError } from '../src/kernel/protocol/errors'
 
 class MemoryTransport implements FrameTransport {
   readonly sent: string[] = []
@@ -45,6 +46,39 @@ class MemoryTransport implements FrameTransport {
     for (const listener of this.closeListeners) listener()
   }
 }
+
+test('protocol normalization only exposes the allowlisted broker disconnect reason', () => {
+  assert.deepEqual(
+    normalizeHandlerError({
+      code: 'MODEL_UNAUTHENTICATED',
+      message: 'internal message',
+      detail: { reason: 'desktop_credential_broker_not_connected' }
+    }),
+    {
+      code: 'MODEL_UNAUTHENTICATED',
+      message: 'The desktop credential broker is not connected.',
+      detail: { reason: 'desktop_credential_broker_not_connected' }
+    }
+  )
+  assert.deepEqual(
+    normalizeHandlerError({
+      code: 'MODEL_UNAUTHENTICATED',
+      message: 'internal message',
+      detail: {
+        reason: 'desktop_credential_broker_not_connected',
+        unexpected: true
+      }
+    }),
+    {
+      code: 'MODEL_UNAUTHENTICATED',
+      message: 'The requested model provider is not authenticated.',
+      detail: {
+        reason: 'desktop_credential_broker_not_connected',
+        unexpected: true
+      }
+    }
+  )
+})
 
 function makeCore(
   handlers: KernelMethodHandlers = {},
@@ -631,6 +665,43 @@ test('session.prompt acceptance precedes one terminal event and preflights activ
   assert.equal(transport.sent.length, beforeDuplicate)
 })
 
+test('a run rejected before the agent loop reports a sanitized completion detail', async () => {
+  const transport = new MemoryTransport()
+  const core = makeCore({
+    'session.prompt': () => ({
+      runId: 'run-preloop-failure',
+      completion: Promise.reject(new Error('Unable to initialize /private/secret/models.yml'))
+    })
+  })
+  core.attachTransport(transport, { trusted: true })
+  const generation = generationFrom(await hello(transport))
+
+  const accepted = await sendRequest(
+    transport,
+    request(
+      'prompt-preloop-failure',
+      'session.prompt',
+      generation,
+      { text: 'start' },
+      { sessionId: 'session-preloop-failure' }
+    )
+  )
+  assert.deepEqual(responseResult(accepted), {
+    accepted: true,
+    runId: 'run-preloop-failure'
+  })
+  const terminal = await waitFor(
+    transport,
+    (frame) => frame.kind === 'event' && frame.type === 'run.completed'
+  )
+  assert.equal(terminal.kind, 'event')
+  assert.deepEqual(terminal.payload, {
+    runId: 'run-preloop-failure',
+    status: 'failed',
+    detail: 'Unable to initialize <path>'
+  })
+})
+
 test('terminal run deduplication stays bounded and retains recent run ids', () => {
   const warnings: string[] = []
   const core = makeCore({}, { replayCapacity: 2, warnings })
@@ -802,4 +873,111 @@ test('same-connection re-negotiation invalidates pending host requests from its 
 
   assert.deepEqual(detached, [1])
   assert.deepEqual(warnings, ['Ignored host response with an inactive id.'])
+})
+
+test('untrusted transports cannot supply host-internal model prompt fields or proxy routes', async () => {
+  const transport = new MemoryTransport()
+  let calls = 0
+  const core = makeCore({
+    'session.prompt': () => {
+      calls += 1
+      return { runId: 'run-internal', completion: Promise.resolve('completed') }
+    },
+    'modelAccess.configure': () => {
+      calls += 1
+      return { configured: true }
+    }
+  })
+  core.attachTransport(transport, { trusted: false, connectionId: 'untrusted' })
+  const greeting = await hello(transport)
+  const generation = generationFrom(greeting)
+
+  const prompt = await sendRequest(
+    transport,
+    request(
+      'internal-prompt',
+      'session.prompt',
+      generation,
+      { text: 'retry', modelSelection: 'automatic', synthetic: true, userInitiated: false },
+      { sessionId: 'session-1' }
+    )
+  )
+  assert.equal(prompt.ok, false)
+  if (!prompt.ok) assert.equal(prompt.error.code, 'INVALID_PARAMS')
+
+  const configured = await sendRequest(
+    transport,
+    request('configure-proxy', 'modelAccess.configure', generation, {
+      endpoint: 'http://127.0.0.1:43123/v1/pi/stream',
+      bearerToken: 'abcdefghijklmnopqrstuvwxyzABCDEFGH0123456789_-',
+      models: [
+        {
+          provider: 'provider',
+          id: 'model',
+          name: 'Model',
+          reasoning: false,
+          input: ['text'],
+          contextWindow: 32_000,
+          maxTokens: 4_000
+        }
+      ]
+    })
+  )
+  assert.equal(configured.ok, false)
+  if (!configured.ok) assert.equal(configured.error.code, 'INVALID_PARAMS')
+  assert.equal(calls, 0)
+})
+
+test('host progress is accepted only for a pending progressive request from the controller', async () => {
+  const warnings: string[] = []
+  const transport = new MemoryTransport()
+  const core = makeCore({}, { warnings })
+  core.attachTransport(transport, { trusted: true, connectionId: 'progress-controller' })
+  const greeting = await hello(transport, {
+    hostCapabilities: ['mcp.desktop.call', 'settings.nextActionSuggestionsEnabled']
+  })
+  const generation = generationFrom(greeting)
+  const seen: JsonValue[] = []
+  const call = core.requestHost(
+    'mcp.desktop.call',
+    {
+      bindingId: 'binding-1',
+      toolCallId: 'tool-call-1',
+      name: 'mcp__fake__work',
+      signature: 'a'.repeat(64),
+      input: {}
+    },
+    { sessionId: 'session-1', runId: 'run-1' },
+    (progress) => seen.push(progress)
+  )
+  const callFrame = await waitFor(
+    transport,
+    (frame) => frame.kind === 'host.request' && frame.capability === 'mcp.desktop.call'
+  )
+  assert.equal(callFrame.kind, 'host.request')
+  transport.receive({ kind: 'host.progress', id: callFrame.id, progress: { content: [] } })
+  transport.receive({ kind: 'host.progress', id: 'unknown-progress', progress: null })
+  transport.receive({ kind: 'host.progress', id: 'unknown-progress', progress: null })
+  transport.receive({
+    kind: 'host.response',
+    id: callFrame.id,
+    ok: true,
+    result: { content: [{ type: 'text', text: 'done' }] }
+  })
+  assert.deepEqual(await call, { content: [{ type: 'text', text: 'done' }] })
+  assert.deepEqual(seen, [{ content: [] }])
+
+  const ordinary = core.requestHost('settings.nextActionSuggestionsEnabled', {})
+  const ordinaryFrame = await waitFor(
+    transport,
+    (frame) =>
+      frame.kind === 'host.request' && frame.capability === 'settings.nextActionSuggestionsEnabled'
+  )
+  assert.equal(ordinaryFrame.kind, 'host.request')
+  transport.receive({ kind: 'host.progress', id: ordinaryFrame.id, progress: true })
+  transport.receive({ kind: 'host.progress', id: ordinaryFrame.id, progress: false })
+  transport.receive({ kind: 'host.response', id: ordinaryFrame.id, ok: true, result: true })
+  assert.equal(await ordinary, true)
+  assert.equal(generation, 1)
+  assert.deepEqual(warnings, ['Ignored host progress frame.', 'Ignored host progress frame.'])
 })

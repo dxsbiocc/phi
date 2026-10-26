@@ -20,6 +20,7 @@ import {
   type RemoteReverseTunnel,
   type RemoteSshSession
 } from '../src/main/agent/wrappers/remote-ssh-session'
+import type { RemoteUploadPhaseTiming } from '../src/main/agent/transfer/remote-upload-types'
 import {
   parseKernelE2eArgs,
   type KernelE2eCliOptions,
@@ -27,6 +28,12 @@ import {
   type KernelE2eTarget
 } from './kernel-e2e/options'
 import { prepareKernelE2eRemoteHelper } from './kernel-e2e/prepare-remote-helper'
+import {
+  configureInitialModelProxy,
+  configureModelProxy,
+  runSshModelProxyReconnectScenario
+} from './kernel-e2e/model-proxy-scenario'
+import { effectiveDeadlineMinutes, readDeployBudget } from './kernel-e2e/deploy-budget'
 import {
   eventually,
   extractKernelPid,
@@ -36,9 +43,11 @@ import {
   toolEvidence
 } from './kernel-e2e/lifecycle-scenarios'
 import { runToolsScenario, type ToolsReadEvidence } from './kernel-e2e/tools-scenario'
+import { shutdownSshScenarioKernel } from './kernel-e2e/ssh-kernel-cleanup'
 import {
   agentConfig,
   bounded,
+  boundedByDeadline,
   errorMessage,
   record,
   ScenarioClient,
@@ -76,6 +85,12 @@ interface E2eReport {
     reattachRemoteCommandCount?: number
     executablePath: string
     nativePath?: string
+    transferTimings: RemoteUploadPhaseTiming[]
+  }
+  limits: {
+    deadlineMinutes: number
+    deployTimeoutMs?: number
+    deployUploadBytes?: number
   }
   timingsMs: {
     ready: number
@@ -92,6 +107,10 @@ interface E2eReport {
     kernelPidB?: number
     longChildPid?: number
     reconnectedKernelPid?: number
+    initialModelProxyPort?: number
+    reconnectedModelProxyPort?: number
+    modelProxyRequestAttempts?: number
+    modelProxyCompletedRequests?: number
     approvalCount: number
     approvalObservedBeforeWrite: boolean
     bearerToken: 'random-test-only-not-recorded'
@@ -248,7 +267,7 @@ function remoteFiles(session: RemoteSshSession, runtimeRoot: string): TargetFile
       stagingRoot ??= mkdtempSync(join(tmpdir(), 'phi-kernel-e2e-tools-'))
       const staged = join(stagingRoot, randomUUID())
       writeFileSync(staged, content)
-      await session.uploadFile(staged, path, { remoteRoot: paths.projectA })
+      await session.uploadFile(staged, path, { remoteRoot: paths.root })
     },
     read: (path) => session.readTextFile(path),
     async exists(path) {
@@ -273,6 +292,12 @@ function remoteFiles(session: RemoteSshSession, runtimeRoot: string): TargetFile
 }
 
 async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
+  // A fresh SSH deployment uploads ~260 MB; size its budget for a 0.2 MB/s link.
+  const deployBudget =
+    options.target === 'ssh' ? readDeployBudget(options.buildDirectory) : undefined
+  const deadlineMinutes = deployBudget
+    ? effectiveDeadlineMinutes(options.deadlineMinutes, deployBudget.deployTimeoutMs)
+    : options.deadlineMinutes
   const report: E2eReport = {
     schemaVersion: 1,
     ok: false,
@@ -284,7 +309,17 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
     deploy: {
       outcome: options.target === 'local' ? 'local' : 'fresh',
       remoteCommandCount: 0,
-      executablePath: ''
+      executablePath: '',
+      transferTimings: []
+    },
+    limits: {
+      deadlineMinutes,
+      ...(deployBudget
+        ? {
+            deployTimeoutMs: deployBudget.deployTimeoutMs,
+            deployUploadBytes: deployBudget.uploadBytes
+          }
+        : {})
     },
     timingsMs: { ready: 0, firstSessionCreate: 0, turns: {} },
     memoryKb: { afterOneSession: null, afterTwoSessions: null },
@@ -296,10 +331,22 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
     steps: [],
     cleanup: { temporaryProjectsRemoved: false }
   }
+  const overallDeadlineAt = Date.now() + deadlineMinutes * 60_000
+  const stepTimeoutMs = (name: string): number => {
+    if (name === 'remote kernel deployed and launched')
+      return deployBudget?.deployTimeoutMs ?? 12 * 60_000
+    if (name === 'marker-backed remote helper prepared') return 5 * 60_000
+    return 2 * 60_000
+  }
   const step = async <T>(name: string, action: () => Promise<T>): Promise<T> => {
     const started = process.hrtime.bigint()
     try {
-      const value = await action()
+      const value = await boundedByDeadline(
+        Promise.resolve().then(action),
+        name,
+        stepTimeoutMs(name),
+        overallDeadlineAt
+      )
       report.steps.push({ name, passed: true, elapsedMs: elapsedMs(started) })
       return value
     } catch (error) {
@@ -322,6 +369,7 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
   let remoteLaunch: LaunchedRemoteKernel | undefined
   let scenario: ScenarioClient | undefined
   let remoteProfile: Awaited<ReturnType<typeof probeRemoteKernelHostProfile>> | undefined
+  const transferTimings: RemoteUploadPhaseTiming[] = []
 
   try {
     provider = await step('loopback provider started with a random test-only bearer token', () =>
@@ -364,9 +412,16 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
           profile: remoteProfile,
           agentDir: files!.paths.agentDir,
           home: files!.paths.home,
-          ...(options.scenario === 'grace-expiry' ? { graceMs: 500 } : {}),
+          ...(options.scenario === 'grace-expiry' ||
+          options.scenario === 'baseline' ||
+          options.scenario === 'tools'
+            ? { graceMs: 500 }
+            : {}),
           hello: { hostCapabilities: [...KERNEL_E2E_HOST_CAPABILITIES] },
-          signal: AbortSignal.timeout(300_000),
+          signal: AbortSignal.timeout(deployBudget!.deployTimeoutMs),
+          uploadOptions: {
+            onPhaseTiming: (timing) => transferTimings.push(timing)
+          },
           onDiagnostic: (text) => process.stderr.write(`[remote-kernel] ${text}`)
         })
       )
@@ -375,7 +430,8 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
         outcome: remoteLaunch.deployment.reused ? 'reused' : 'fresh',
         remoteCommandCount: remoteLaunch.remoteCommandCount,
         executablePath: remoteLaunch.deployment.executablePath,
-        nativePath: remoteLaunch.deployment.nativePath
+        nativePath: remoteLaunch.deployment.nativePath,
+        transferTimings
       }
       report.timingsMs.ready = remoteLaunch.readyMs
       report.cleanup.deployedKernelRemovalCommand = `rm -rf -- ${shellQuote(posix.dirname(remoteLaunch.deployment.executablePath))}`
@@ -412,13 +468,24 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
       kernel: launch.greeting.kernel.version,
       omp: launch.greeting.kernel.ompVersion
     }
-    const providerUrl =
-      options.target === 'ssh' ? `http://127.0.0.1:${tunnel!.remotePort}/v1` : provider.url
-    await step('agent model configuration written', () =>
-      files!.writeAgentConfig(providerUrl, token)
-    )
+    // A remote kernel takes its model catalog only from the desktop (K2-3 client proxy).
+    if (options.target === 'ssh') {
+      await configureInitialModelProxy({
+        client: launch.client,
+        tunnel: tunnel!,
+        bearerToken: token,
+        report,
+        step
+      })
+    } else {
+      await step('agent model configuration written', () =>
+        files!.writeAgentConfig(provider!.url, token)
+      )
+    }
     scenario = new ScenarioClient(launch.client)
-    await bounded(launch.client.subscribe(0), 'event subscription')
+    await step('event subscription established', () =>
+      bounded(launch.client.subscribe(0), 'event subscription')
+    )
     launch.client.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
     launch.client.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
 
@@ -439,6 +506,32 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
       return report
     }
 
+    if (options.scenario === 'model-proxy-reconnect') {
+      const reconnected = await runSshModelProxyReconnectScenario({
+        session: ssh!,
+        launch: remoteLaunch!,
+        initialTunnel: tunnel!,
+        client: scenario,
+        createClient(client) {
+          const created = new ScenarioClient(client)
+          client.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
+          client.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
+          return created
+        },
+        provider,
+        files,
+        bearerToken: token,
+        report,
+        step,
+        onDiagnostic: (text) => process.stderr.write(`[remote-kernel] ${text}`)
+      })
+      remoteLaunch = reconnected.remoteLaunch
+      scenario = reconnected.scenario
+      tunnel = reconnected.tunnel
+      report.ok = report.steps.every((item) => item.passed)
+      return report
+    }
+
     if (options.scenario !== 'baseline') {
       const lifecycle = await runSshLifecycleScenario({
         scenario: options.scenario,
@@ -451,6 +544,7 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
           client.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
           return created
         },
+        afterReattach: (client) => configureModelProxy(client, tunnel!, token),
         provider,
         files,
         report,
@@ -604,7 +698,7 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
       const bStarted = process.hrtime.bigint()
       await step('session B completed concurrently and stayed isolated', async () => {
         const completion = await scenario!.prompt(sessionB, 'Inspect only session B state.')
-        assert.equal(completion.status, 'completed')
+        assert.equal(completion.status, 'completed', completion.detail)
       })
       report.timingsMs.turns.sessionBConcurrent = elapsedMs(bStarted)
       const snapshotB = await scenario.snapshot(sessionB)
@@ -656,24 +750,53 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
     return report
   } finally {
     scenario?.close()
-    await remoteLaunch?.close().catch(() => undefined)
-    await localLaunch?.close().catch(() => undefined)
-    await files
-      ?.cleanup()
-      .then(() => {
-        report.cleanup.temporaryProjectsRemoved = true
-      })
-      .catch((error) => {
-        report.steps.push({
-          name: 'temporary project cleanup',
-          passed: false,
-          reason: errorMessage(error),
-          elapsedMs: 0
+    if (remoteLaunch && ssh) {
+      const cleanupStarted = process.hrtime.bigint()
+      await bounded(
+        shutdownSshScenarioKernel({ session: ssh, launch: remoteLaunch }),
+        'remote kernel shutdown cleanup',
+        90_000
+      )
+        .then(() => {
+          report.steps.push({
+            name: 'remote kernel shut down and socket files removed',
+            passed: true,
+            elapsedMs: elapsedMs(cleanupStarted)
+          })
         })
-      })
-    await tunnel?.close().catch(() => undefined)
-    await ssh?.close().catch(() => undefined)
-    await provider?.close().catch(() => undefined)
+        .catch((error) => {
+          const reason = errorMessage(error)
+          report.failure ??= reason
+          report.steps.push({
+            name: 'remote kernel shut down and socket files removed',
+            passed: false,
+            reason,
+            elapsedMs: elapsedMs(cleanupStarted)
+          })
+        })
+    }
+    if (localLaunch) {
+      await bounded(localLaunch.close(), 'local kernel cleanup', 15_000).catch(() => undefined)
+    }
+    if (files) {
+      await bounded(files.cleanup(), 'temporary project cleanup', 90_000)
+        .then(() => {
+          report.cleanup.temporaryProjectsRemoved = true
+        })
+        .catch((error) => {
+          report.steps.push({
+            name: 'temporary project cleanup',
+            passed: false,
+            reason: errorMessage(error),
+            elapsedMs: 0
+          })
+        })
+    }
+    if (tunnel) {
+      await bounded(tunnel.close(), 'reverse tunnel cleanup', 15_000).catch(() => undefined)
+    }
+    if (ssh) await bounded(ssh.close(), 'SSH cleanup', 30_000).catch(() => undefined)
+    if (provider) await bounded(provider.close(), 'provider cleanup', 15_000).catch(() => undefined)
     report.ok = report.failure === undefined && report.steps.every((item) => item.passed)
   }
 }

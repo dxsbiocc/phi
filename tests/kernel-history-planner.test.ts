@@ -75,7 +75,8 @@ function remoteFixture(root: string): {
     ompVersion: REMOTE_OMP_VERSION
   }
   const manifest: PhiSessionManifest = {
-    ...baseManifest(sessionId, '/srv/project'),
+    // As in real RPC-era manifests: cwd is the desktop's local anchor, not the server path.
+    ...baseManifest(sessionId, '/Users/test/.phi/remote-project-anchors/project-1'),
     kind: 'project',
     projectId: 'project-1',
     projectLocation: {
@@ -99,7 +100,7 @@ function remoteFixture(root: string): {
     sourceSize: 4096,
     sourceSha256: 'b'.repeat(64),
     sourceOmpSessionId: ref.ompSessionId,
-    sourceCwd: manifest.cwd,
+    sourceCwd: scope.projectRoot,
     writer: 'gone',
     runLock: 'gone',
     diagnostics: { executionLease: 'expired', extensionHash: 'hash-only' }
@@ -206,6 +207,7 @@ test('RPC planner requires matching identities and proof that both old holders a
     assert.equal(verifiedPlan.action, 'adopt-remote')
     if (verifiedPlan.action === 'adopt-remote') {
       assert.equal(verifiedPlan.source.path, fixture.probe.sourcePath)
+      assert.equal(verifiedPlan.source.cwd, fixture.scope.projectRoot)
       assert.deepEqual(verifiedPlan.source.expected, {
         sha256: fixture.probe.sourceSha256,
         size: fixture.probe.sourceSize

@@ -19,6 +19,7 @@ test('transfer defaults and state transitions follow the R7 contract', () => {
     checkpointIntervalMs: 5_000,
     progressIntervalMs: 250,
     progressBytes: 1024 * 1024,
+    idleTimeoutMs: 60_000,
     retainedPartialTtlMs: 7 * 24 * 60 * 60 * 1000,
     retainedPartialHostMaxBytes: 20 * 1024 * 1024 * 1024,
     retainedPartialFreeSpaceFraction: 0.1

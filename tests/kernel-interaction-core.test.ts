@@ -431,6 +431,54 @@ test('a featured MCP API key resolves without entering replay events or diagnost
   assert.doesNotMatch(JSON.stringify(diagnostics), new RegExp(secret))
 })
 
+test('model credential rows resolve without entering replay events or diagnostics', async () => {
+  const diagnostics: Diagnostic[] = []
+  const core = makeCore(
+    { 'events.subscribe': () => ({ subscribed: true, lastSeq: 0 }) },
+    { diagnostics }
+  )
+  const transport = new MemoryTransport()
+  core.attachTransport(transport, { trusted: true })
+  const generation = generationFrom(
+    await hello(transport, { hostCapabilities: ['modelAccess.credentials'] })
+  )
+  const secret = 'fake-model-key-must-not-be-replayed'
+  const result = core.requestHost('modelAccess.credentials', { provider: 'fixture' })
+  const outbound = await waitFor(
+    transport,
+    (frame): frame is HostRequestFrame => frame.kind === 'host.request'
+  )
+  transport.receive({
+    kind: 'host.response',
+    id: outbound.id,
+    ok: true,
+    result: {
+      credentials: [
+        {
+          id: 1,
+          provider: 'fixture',
+          credential: { type: 'api_key', key: secret },
+          identityKey: null
+        }
+      ]
+    }
+  })
+
+  assert.equal(
+    ((await result) as { credentials: Array<{ credential: { key: string } }> }).credentials[0]
+      ?.credential.key,
+    secret
+  )
+  core.emitEvent('test.replay-marker', { safe: true })
+  const beforeReplay = transport.sent.length
+  await sendRequest(
+    transport,
+    request('replay-after-model-secret', 'events.subscribe', generation, { afterSeq: 0 })
+  )
+  assert.doesNotMatch(JSON.stringify(transport.sent.slice(beforeReplay)), new RegExp(secret))
+  assert.doesNotMatch(JSON.stringify(diagnostics), new RegExp(secret))
+})
+
 test('a service host capability timeout rejects with CANCELLED', async () => {
   const core = makeCore({}, { hostRequestTimeoutMs: 10 })
   const transport = new MemoryTransport()

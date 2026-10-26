@@ -4,6 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { buildReverseTunnelArgs } from '../src/main/agent/wrappers/remote-ssh-session'
 import {
   assertLoopbackTunnelBinding,
+  inspectReverseTunnelCommand,
   openReverseTunnelLease,
   parseAllocatedTunnelPort,
   reverseTunnelSpecification
@@ -250,4 +251,42 @@ test('gateway invalidation precedes a delayed cancellation confirmation and asyn
   assert.equal(invalidated, true)
   release()
   await closing
+})
+
+test('socket inspection sends only the header and rows for the tunnel port, keeping the wildcard proof', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = mkdtempSync(join(tmpdir(), 'phi-tunnel-inspect-'))
+  try {
+    const header =
+      '  sl  local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode'
+    const row = (index: number, address: string, port: number): string =>
+      ` ${index}: ${address}:${port.toString(16).toUpperCase().padStart(4, '0')} 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 1`
+    const others = Array.from({ length: 500 }, (_, index) =>
+      row(index + 3, '0100007F', 20000 + index)
+    )
+    const run = (tcp4: string[]): string => {
+      writeFileSync(join(dir, 'tcp'), [header, ...tcp4].join('\n') + '\n')
+      writeFileSync(join(dir, 'tcp6'), header + '\n')
+      const command = inspectReverseTunnelCommand(41000).replaceAll('/proc/net/', `${dir}/`)
+      return execFileSync('/bin/sh', ['-c', command], { encoding: 'utf8' })
+    }
+    const loopbackOnly = run([...others, row(1, '0100007F', 41000)])
+    assert.equal(
+      loopbackOnly.trim().split('\n').length,
+      5,
+      'two markers, two headers, one matching row'
+    )
+    assertLoopbackTunnelBinding(loopbackOnly, 41000)
+    const withWildcard = run([...others, row(1, '0100007F', 41000), row(2, '00000000', 41000)])
+    assert.throws(
+      () => assertLoopbackTunnelBinding(withWildcard, 41000),
+      /not bound exclusively to loopback/
+    )
+    assert.throws(() => assertLoopbackTunnelBinding(run(others), 41000), /No listening/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

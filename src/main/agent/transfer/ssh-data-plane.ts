@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { isAbsolute, posix, resolve } from 'node:path'
-import { once } from 'node:events'
 import type { Readable, Writable } from 'node:stream'
 
 import type { WorkspaceHost } from '../workspace-host/types'
@@ -33,12 +32,16 @@ import {
   shellScriptCommand,
   type RemoteHashTool
 } from './ssh-data-plane-scripts'
-import type { TransferRequest, TransferSourceIdentity } from './types'
+import {
+  DEFAULT_TRANSFER_IDLE_TIMEOUT_MS,
+  type TransferRequest,
+  type TransferSourceIdentity
+} from './types'
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const MAX_CONTROL_OUTPUT_BYTES = 160 * 1024
-const DEFAULT_CONTROL_TIMEOUT_MS = 30 * 60 * 1000
+const DEFAULT_CONTROL_TIMEOUT_MS = DEFAULT_TRANSFER_IDLE_TIMEOUT_MS
 
 export interface SshTransferDataPlaneOptions {
   host: WorkspaceHost
@@ -157,9 +160,43 @@ function decodeManifest(hex: string): TransferManifest | null {
   return manifest
 }
 
-async function writeBuffer(stream: Writable, buffer: Buffer): Promise<void> {
+function waitForDrain(stream: Writable, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  if (stream.destroyed) return Promise.reject(new Error('SSH transfer stream closed before drain'))
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      stream.removeListener('drain', drained)
+      stream.removeListener('error', failed)
+      stream.removeListener('close', closed)
+      signal.removeEventListener('abort', aborted)
+    }
+    const drained = (): void => {
+      cleanup()
+      resolve()
+    }
+    const failed = (error: Error): void => {
+      cleanup()
+      reject(error)
+    }
+    const closed = (): void => {
+      cleanup()
+      reject(new Error('SSH transfer stream closed before drain'))
+    }
+    const aborted = (): void => {
+      cleanup()
+      reject(signal.reason)
+    }
+    stream.once('drain', drained)
+    stream.once('error', failed)
+    stream.once('close', closed)
+    signal.addEventListener('abort', aborted, { once: true })
+    if (signal.aborted) aborted()
+  })
+}
+
+async function writeBuffer(stream: Writable, buffer: Buffer, signal: AbortSignal): Promise<void> {
   if (stream.destroyed) throw new Error('SSH transfer stream closed while writing')
-  if (!stream.write(buffer)) await once(stream, 'drain')
+  if (!stream.write(buffer)) await waitForDrain(stream, signal)
 }
 
 function captureText(stream: Readable, limit = 64 * 1024): Promise<string> {
@@ -360,7 +397,7 @@ class SshUploadSession implements TransferDataPlaneSession {
         const { bytesRead } = await source.read(buffer, 0, buffer.byteLength, position)
         if (bytesRead === 0) break
         const chunk = buffer.subarray(0, bytesRead)
-        await writeBuffer(channel.stdin, chunk)
+        await writeBuffer(channel.stdin, chunk, copyOptions.signal)
         const progress = {
           offset: position + bytesRead,
           chunkOffset: position,

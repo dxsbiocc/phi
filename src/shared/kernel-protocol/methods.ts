@@ -14,9 +14,9 @@ export const protocolVersionSchema = z
 export type ProtocolVersion = z.infer<typeof protocolVersionSchema>
 
 const nonEmptyIdSchema = z.string().min(1)
-const thinkingLevelSchema = z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+export const thinkingLevelSchema = z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 export const runCompletionStatusSchema = z.enum(['completed', 'failed', 'cancelled', 'unknown'])
-const modelSelectorSchema = z
+export const modelSelectorSchema = z
   .object({
     provider: z.string().min(1),
     id: z.string().min(1)
@@ -66,6 +66,15 @@ const phiAgentDefinitionSchema = z
   })
   .strict()
 
+const phiAgentSnapshotSchema = z
+  .array(phiAgentDefinitionSchema)
+  .max(64)
+  .refine(
+    (definitions) =>
+      new Set(definitions.map((definition) => definition.name)).size === definitions.length,
+    'Agent names must be unique'
+  )
+
 const mcpCommonSchema = {
   enabled: z.boolean().optional(),
   timeout: z.number().finite().nonnegative().optional(),
@@ -96,22 +105,13 @@ const mcpServerConfigSchema = z.union([
     .strict()
 ])
 
-/** Public prompt controls. Host-internal synthetic/userInitiated flags never cross this boundary. */
+/** Public prompt controls. Trusted host-internal fields remain top-level protocol fields. */
 export const sessionPromptOptionsV1Schema = z
   .object({
     version: z.literal(1),
     images: z.array(imageSchema).optional(),
     expandPromptTemplates: z.boolean().optional(),
     skipCompactionCheck: z.boolean().optional()
-  })
-  .strict()
-
-// TODO(K2-3 merge): replace transport trust with the shared trusted-field mechanism.
-export const sessionPromptTrustedOptionsV1Schema = z
-  .object({
-    version: z.literal(1),
-    synthetic: z.boolean().optional(),
-    userInitiated: z.boolean().optional()
   })
   .strict()
 
@@ -165,7 +165,7 @@ export const sessionPolicyParamsSchema = z
       })
       .strict()
       .optional(),
-    phiAgents: z.array(phiAgentDefinitionSchema).max(64).optional(),
+    phiAgents: phiAgentSnapshotSchema.optional(),
     personaMarkdown: z
       .string()
       .max(64 * 1024)
@@ -176,6 +176,10 @@ export const sessionPolicyParamsSchema = z
     mcpServers: z
       .array(z.object({ name: z.string().min(1).max(128), config: mcpServerConfigSchema }).strict())
       .max(256)
+      .optional(),
+    desktopMcp: z
+      .object({ bindingId: z.string().min(1).max(512) })
+      .strict()
       .optional(),
     environment: z
       .object({ ref: z.string().min(1), pluginId: z.string().min(1).optional() })
@@ -250,10 +254,12 @@ export const sessionPromptParamsSchema = z
   .object({
     text: z.string(),
     options: sessionPromptOptionsV1Schema.optional(),
-    trustedOptions: sessionPromptTrustedOptionsV1Schema.optional(),
     /** Kept for additive compatibility with the initial v1 prompt shape. */
     images: z.array(imageSchema).optional(),
-    clientRunKey: z.string().min(1).max(MAX_CLIENT_RUN_KEY_LENGTH).optional()
+    clientRunKey: z.string().min(1).max(MAX_CLIENT_RUN_KEY_LENGTH).optional(),
+    modelSelection: z.literal('automatic').optional(),
+    synthetic: z.boolean().optional(),
+    userInitiated: z.boolean().optional()
   })
   .strict()
 export const sessionPromptResultSchema = z
@@ -283,6 +289,7 @@ export const resourcesReloadParamsSchema = z
       .max(64 * 1024)
       .optional(),
     contextFiles: z.array(contextFileSchema).max(64).optional(),
+    phiAgents: phiAgentSnapshotSchema.optional(),
     systemPrompt: z.string().optional(),
     appendSystemPrompt: z.union([z.string(), z.array(z.string())]).optional()
   })
@@ -301,7 +308,19 @@ export const resourcesReloadResultSchema = z
     themes: jsonValueSchema.optional(),
     agentsFiles: jsonValueSchema.optional(),
     systemPrompt: z.string().optional(),
-    appendSystemPrompt: z.array(z.string()).optional()
+    appendSystemPrompt: z.array(z.string()).optional(),
+    agents: z
+      .union([
+        z.object({ applied: z.literal(true), added: z.array(z.string()) }).strict(),
+        z
+          .object({
+            applied: z.literal(false),
+            reason: z.literal('requires_session_refresh'),
+            changed: z.array(z.string())
+          })
+          .strict()
+      ])
+      .optional()
   })
   .strict()
 
@@ -337,6 +356,117 @@ export const sessionSnapshotResultSchema = z
     lastRun: sessionLastRunSchema.optional()
   })
   .strict()
+
+export const kernelModelDescriptorSchema = modelSelectorSchema.extend({
+  name: z.string().min(1),
+  reasoning: z.boolean(),
+  input: z
+    .array(z.enum(['text', 'image']))
+    .min(1)
+    .max(2),
+  contextWindow: z.number().int().positive().nullable(),
+  maxTokens: z.number().int().positive().nullable(),
+  cost: z
+    .object({
+      input: z.number().nonnegative(),
+      output: z.number().nonnegative(),
+      cacheRead: z.number().nonnegative(),
+      cacheWrite: z.number().nonnegative()
+    })
+    .strict()
+    .optional()
+})
+
+export const modelAccessStatusSchema = z.enum(['available', 'unreachable', 'unauthenticated'])
+
+export const sessionSetModelParamsSchema = z.object({ model: modelSelectorSchema }).strict()
+export const sessionSetModelResultSchema = sessionSnapshotResultSchema
+
+export const sessionSetThinkingLevelParamsSchema = z.object({ level: thinkingLevelSchema }).strict()
+export const sessionSetThinkingLevelResultSchema = sessionSnapshotResultSchema
+
+const contextUsageCategorySchema = z
+  .object({
+    id: z.enum([
+      'systemPrompt',
+      'toolDefinitions',
+      'systemTools',
+      'mcpTools',
+      'systemContext',
+      'skills',
+      'conversation'
+    ]),
+    tokens: z.number().nonnegative()
+  })
+  .strict()
+
+export const sessionContextUsageParamsSchema = z.object({}).strict()
+export const sessionContextUsageResultSchema = z
+  .object({
+    tokens: z.number().nonnegative(),
+    contextWindow: z.number().nonnegative(),
+    percent: z.number().nonnegative(),
+    categories: z.array(contextUsageCategorySchema).optional(),
+    deferredMcpTokens: z.number().nonnegative().optional()
+  })
+  .strict()
+  .nullable()
+
+export const sessionCompactParamsSchema = z.object({}).strict()
+export const sessionCompactResultSchema = z
+  .object({
+    summary: z
+      .object({
+        summary: z.string(),
+        shortSummary: z.string().optional(),
+        tokensBefore: z.number().nonnegative(),
+        tokensAfter: z.number().nonnegative().optional()
+      })
+      .strict(),
+    state: sessionSnapshotResultSchema
+  })
+  .strict()
+
+const autoCompactionResultSchema = z
+  .object({
+    enabled: z.boolean(),
+    thresholdPercent: z.number().min(0).max(100),
+    thresholdTokens: z.number().nonnegative()
+  })
+  .strict()
+
+export const sessionGetAutoCompactionParamsSchema = z.object({}).strict()
+export const sessionGetAutoCompactionResultSchema = autoCompactionResultSchema
+export const sessionSetAutoCompactionParamsSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    thresholdPercent: z.union([z.literal(70), z.literal(80), z.literal(90)]).optional()
+  })
+  .strict()
+export const sessionSetAutoCompactionResultSchema = autoCompactionResultSchema
+
+export const modelsCatalogParamsSchema = z.object({}).strict()
+export const modelsCatalogResultSchema = z
+  .object({
+    models: z.array(kernelModelDescriptorSchema),
+    providers: z.array(
+      z.object({ provider: z.string().min(1), status: modelAccessStatusSchema }).strict()
+    )
+  })
+  .strict()
+
+export const modelAccessConfigureParamsSchema = z
+  .object({
+    endpoint: z.string().url(),
+    bearerToken: z
+      .string()
+      .min(32)
+      .max(256)
+      .regex(/^[A-Za-z0-9_-]+$/),
+    models: z.array(kernelModelDescriptorSchema).min(1).max(256)
+  })
+  .strict()
+export const modelAccessConfigureResultSchema = z.object({ configured: z.literal(true) }).strict()
 
 export const sessionCloseParamsSchema = z.object({}).strict()
 export const sessionCloseResultSchema = z.object({ closed: z.literal(true) }).strict()
@@ -390,7 +520,6 @@ export type SessionsListParams = z.infer<typeof sessionsListParamsSchema>
 export type SessionsListResult = z.infer<typeof sessionsListResultSchema>
 export type SessionPromptParams = z.infer<typeof sessionPromptParamsSchema>
 export type SessionPromptOptionsV1 = z.infer<typeof sessionPromptOptionsV1Schema>
-export type SessionPromptTrustedOptionsV1 = z.infer<typeof sessionPromptTrustedOptionsV1Schema>
 export type SessionPromptResult = z.infer<typeof sessionPromptResultSchema>
 export type SessionForkParams = z.infer<typeof sessionForkParamsSchema>
 export type SessionForkResult = z.infer<typeof sessionForkResultSchema>
@@ -405,6 +534,20 @@ export type SessionAbortParams = z.infer<typeof sessionAbortParamsSchema>
 export type SessionAbortResult = z.infer<typeof sessionAbortResultSchema>
 export type SessionSnapshotParams = z.infer<typeof sessionSnapshotParamsSchema>
 export type SessionSnapshotResult = z.infer<typeof sessionSnapshotResultSchema>
+export type KernelModelDescriptor = z.infer<typeof kernelModelDescriptorSchema>
+export type ModelAccessStatus = z.infer<typeof modelAccessStatusSchema>
+export type SessionSetModelParams = z.infer<typeof sessionSetModelParamsSchema>
+export type SessionSetThinkingLevelParams = z.infer<typeof sessionSetThinkingLevelParamsSchema>
+export type ModelAccessConfigureParams = Readonly<{
+  endpoint: string
+  bearerToken: string
+  models: readonly Readonly<
+    Omit<KernelModelDescriptor, 'input' | 'cost'> & {
+      input: readonly ('text' | 'image')[]
+      cost?: Readonly<NonNullable<KernelModelDescriptor['cost']>>
+    }
+  >[]
+}>
 export type SessionCloseParams = z.infer<typeof sessionCloseParamsSchema>
 export type SessionCloseResult = z.infer<typeof sessionCloseResultSchema>
 export type EventsSubscribeParams = z.infer<typeof eventsSubscribeParamsSchema>
@@ -427,7 +570,15 @@ export const kernelMethodParamsSchemas = {
   'session.fork': sessionForkParamsSchema,
   'session.abort': sessionAbortParamsSchema,
   'session.snapshot': sessionSnapshotParamsSchema,
+  'session.setModel': sessionSetModelParamsSchema,
+  'session.setThinkingLevel': sessionSetThinkingLevelParamsSchema,
+  'session.contextUsage': sessionContextUsageParamsSchema,
+  'session.compact': sessionCompactParamsSchema,
+  'session.getAutoCompaction': sessionGetAutoCompactionParamsSchema,
+  'session.setAutoCompaction': sessionSetAutoCompactionParamsSchema,
   'session.close': sessionCloseParamsSchema,
+  'models.catalog': modelsCatalogParamsSchema,
+  'modelAccess.configure': modelAccessConfigureParamsSchema,
   'events.subscribe': eventsSubscribeParamsSchema,
   'approval.respond': approvalRespondParamsSchema
 } satisfies Record<KernelV1Method, z.ZodType>
@@ -445,7 +596,15 @@ export const kernelMethodResultSchemas = {
   'session.fork': sessionForkResultSchema,
   'session.abort': sessionAbortResultSchema,
   'session.snapshot': sessionSnapshotResultSchema,
+  'session.setModel': sessionSetModelResultSchema,
+  'session.setThinkingLevel': sessionSetThinkingLevelResultSchema,
+  'session.contextUsage': sessionContextUsageResultSchema,
+  'session.compact': sessionCompactResultSchema,
+  'session.getAutoCompaction': sessionGetAutoCompactionResultSchema,
+  'session.setAutoCompaction': sessionSetAutoCompactionResultSchema,
   'session.close': sessionCloseResultSchema,
+  'models.catalog': modelsCatalogResultSchema,
+  'modelAccess.configure': modelAccessConfigureResultSchema,
   'events.subscribe': eventsSubscribeResultSchema,
   'approval.respond': approvalRespondResultSchema
 } satisfies Record<KernelV1Method, z.ZodType>

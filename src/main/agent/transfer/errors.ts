@@ -11,6 +11,7 @@ export type TransferErrorCode =
   | 'INVALID_PARTIAL'
   | 'INVALID_REQUEST'
   | 'SOURCE_CHANGED'
+  | 'TRANSFER_STALLED'
   | 'TRANSFER_FAILED'
 
 export const MAX_TRANSFER_ERROR_BYTES = 1024

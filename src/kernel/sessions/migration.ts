@@ -9,7 +9,11 @@ import type {
 } from '../../shared/kernel-protocol/history'
 import { writeManifestAtomic } from './persistence'
 import { readAndHashJournal, type AdoptionSourceInspection } from './source-journal'
-import type { SessionManifest, SessionMigrationRecord } from './types'
+import {
+  SESSION_MANIFEST_SCHEMA_VERSION,
+  type SessionManifest,
+  type SessionMigrationRecord
+} from './types'
 
 export * from './source-journal'
 
@@ -468,7 +472,7 @@ export async function continueMigration(
     await ensureEmptyReceipts(paths.receipts)
     const journalInfo = await stat(paths.journal)
     const manifest: SessionManifest = {
-      schemaVersion: 1,
+      schemaVersion: SESSION_MANIFEST_SCHEMA_VERSION,
       sessionId,
       cwd: migration.source.cwd,
       createdAt: migration.source.headerTimestamp,

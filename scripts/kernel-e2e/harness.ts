@@ -3,10 +3,21 @@ import { createServer, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import type { KernelProtocolClient } from '../../src/main/agent/engine/kernel-client'
+import type { SafeModelDescriptor } from '../../src/main/agent/engine/model-gateway-types'
 import type { JsonValue, KernelEventFrame } from '../../src/shared/kernel-protocol'
 
 export const PROVIDER_ID = 'phi-kernel-e2e'
 export const MODEL_ID = 'scripted-g1'
+export const MODEL_DESCRIPTOR: SafeModelDescriptor = Object.freeze({
+  provider: PROVIDER_ID,
+  id: MODEL_ID,
+  name: 'G1 scripted loopback',
+  reasoning: false,
+  input: Object.freeze(['text'] as const),
+  contextWindow: 32768,
+  maxTokens: 256,
+  cost: Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+})
 
 export interface ModelReply {
   text?: string
@@ -14,8 +25,67 @@ export interface ModelReply {
 }
 
 interface ModelRequest {
-  messages: Array<Record<string, unknown>>
+  messages?: Array<Record<string, unknown>>
+  context?: { messages?: Array<Record<string, unknown>> }
+  modelId?: string
   tools?: unknown[]
+}
+
+/** The full pi-native event sequence the desktop gateway streams (start, block events, done). */
+function nativeReply(reply: ModelReply): string {
+  const stopReason = reply.tool ? 'toolUse' : 'stop'
+  const content = reply.tool
+    ? [
+        {
+          type: 'toolCall',
+          id: reply.tool.id,
+          name: reply.tool.name,
+          arguments: reply.tool.args
+        }
+      ]
+    : [{ type: 'text', text: reply.text ?? '' }]
+  const message = {
+    role: 'assistant',
+    api: 'openai-completions',
+    provider: PROVIDER_ID,
+    model: MODEL_ID,
+    content,
+    stopReason,
+    timestamp: Date.now(),
+    usage: {
+      input: 1,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 2,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+    }
+  }
+  const events: unknown[] = [{ type: 'start', partial: { ...message, content: [] } }]
+  if (reply.tool) {
+    const toolCall = content[0]
+    events.push(
+      { type: 'toolcall_start', contentIndex: 0, partial: message },
+      {
+        type: 'toolcall_delta',
+        contentIndex: 0,
+        delta: JSON.stringify(reply.tool.args),
+        partial: message
+      },
+      { type: 'toolcall_end', contentIndex: 0, toolCall, partial: message }
+    )
+  } else {
+    const text = reply.text ?? ''
+    events.push(
+      { type: 'text_start', contentIndex: 0, partial: message },
+      { type: 'text_delta', contentIndex: 0, delta: text, partial: message },
+      { type: 'text_end', contentIndex: 0, content: text, partial: message }
+    )
+  }
+  events.push({ type: 'done', reason: stopReason, message })
+  return [...events.map((event) => `data: ${JSON.stringify(event)}\n\n`), 'data: [DONE]\n\n'].join(
+    ''
+  )
 }
 
 export function errorMessage(error: unknown): string {
@@ -46,19 +116,58 @@ export function bounded<T>(operation: Promise<T>, label: string, timeoutMs = 60_
   })
 }
 
+export function boundedByDeadline<T>(
+  operation: Promise<T>,
+  label: string,
+  timeoutMs: number,
+  overallDeadlineAt: number
+): Promise<T> {
+  const remainingMs = Math.max(0, overallDeadlineAt - Date.now())
+  const overallExpiresFirst = remainingMs <= timeoutMs
+  const effectiveTimeoutMs = Math.max(0, Math.min(timeoutMs, remainingMs))
+  return new Promise<T>((resolveOperation, reject) => {
+    const timeout = setTimeout(() => {
+      reject(
+        new Error(
+          overallExpiresFirst
+            ? `Overall kernel E2E deadline expired during "${label}".`
+            : `Step "${label}" timed out after ${timeoutMs} ms.`
+        )
+      )
+    }, effectiveTimeoutMs)
+    operation.then(
+      (value) => {
+        clearTimeout(timeout)
+        resolveOperation(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timeout)
+        reject(error)
+      }
+    )
+  })
+}
+
 export async function startLoopbackProvider(token: string): Promise<{
   url: string
   port: number
   requests: ModelRequest[]
   enqueue(...replies: ModelReply[]): void
+  holdNextRequestBeforeResponse(): Promise<void>
+  dropActiveConnections(): void
+  completedRequestCount(): number
   close(): Promise<void>
 }> {
   const requests: ModelRequest[] = []
   const replies: ModelReply[] = []
   const active = new Set<ServerResponse>()
+  let completedRequests = 0
+  let holdNextRequest = false
+  let heldRequestReached: (() => void) | undefined
   const server = createServer(async (request, response) => {
     try {
-      if (request.method !== 'POST' || request.url !== '/v1/chat/completions') {
+      const native = request.url === '/v1/pi/stream'
+      if (request.method !== 'POST' || (!native && request.url !== '/v1/chat/completions')) {
         response.writeHead(404).end('Unexpected test endpoint')
         return
       }
@@ -70,9 +179,20 @@ export async function startLoopbackProvider(token: string): Promise<{
       for await (const chunk of request) body += chunk
       const parsed = JSON.parse(body) as ModelRequest
       requests.push(parsed)
+      const messages = parsed.messages ?? parsed.context?.messages ?? []
+      if (native && holdNextRequest) {
+        holdNextRequest = false
+        active.add(response)
+        const closed = new Promise<void>((complete) => response.once('close', complete))
+        response.on('close', () => active.delete(response))
+        heldRequestReached?.()
+        heldRequestReached = undefined
+        await closed
+        return
+      }
       const taskAssessment =
-        parsed.messages.length === 2 &&
-        parsed.messages.some(
+        messages.length === 2 &&
+        messages.some(
           (message) =>
             (message.role === 'system' || message.role === 'developer') &&
             typeof message.content === 'string' &&
@@ -87,6 +207,11 @@ export async function startLoopbackProvider(token: string): Promise<{
       active.add(response)
       response.on('close', () => active.delete(response))
       response.writeHead(200, { 'content-type': 'text/event-stream' })
+      if (native) {
+        completedRequests++
+        response.end(nativeReply(reply))
+        return
+      }
       const chunk = (delta: unknown, finishReason: string | null = null): void => {
         response.write(
           `data: ${JSON.stringify({
@@ -121,6 +246,7 @@ export async function startLoopbackProvider(token: string): Promise<{
       }
       chunk({}, reply.tool ? 'tool_calls' : 'stop')
       response.write('data: [DONE]\n\n')
+      completedRequests++
       response.end()
     } catch (error) {
       if (!response.headersSent) response.writeHead(500)
@@ -147,6 +273,19 @@ export async function startLoopbackProvider(token: string): Promise<{
     port,
     requests,
     enqueue: (...items) => replies.push(...items),
+    holdNextRequestBeforeResponse() {
+      if (holdNextRequest || heldRequestReached) {
+        throw new Error('A loopback provider request is already held')
+      }
+      holdNextRequest = true
+      return new Promise<void>((complete) => {
+        heldRequestReached = complete
+      })
+    },
+    dropActiveConnections() {
+      for (const response of active) response.destroy()
+    },
+    completedRequestCount: () => completedRequests,
     async close() {
       for (const response of active) response.destroy()
       server.closeAllConnections()
@@ -165,13 +304,13 @@ export function agentConfig(baseUrl: string, token: string): { models: string; c
           api: 'openai-completions',
           models: [
             {
-              id: MODEL_ID,
-              name: 'G1 scripted loopback',
-              reasoning: false,
-              input: ['text'],
-              contextWindow: 32768,
-              maxTokens: 256,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+              id: MODEL_DESCRIPTOR.id,
+              name: MODEL_DESCRIPTOR.name,
+              reasoning: MODEL_DESCRIPTOR.reasoning,
+              input: [...MODEL_DESCRIPTOR.input],
+              contextWindow: MODEL_DESCRIPTOR.contextWindow,
+              maxTokens: MODEL_DESCRIPTOR.maxTokens,
+              cost: MODEL_DESCRIPTOR.cost
             }
           ]
         }
@@ -248,10 +387,13 @@ export class ScenarioClient {
     return sessionId
   }
 
-  async prompt(sessionId: string, text: string): Promise<{ runId: string; status: string }> {
+  async prompt(
+    sessionId: string,
+    text: string
+  ): Promise<{ runId: string; status: string; detail?: string }> {
     const runId = await this.startPrompt(sessionId, text)
     const completion = await this.waitForRun(runId)
-    return { runId, status: completion.status }
+    return { runId, ...completion }
   }
 
   async startPrompt(sessionId: string, text: string): Promise<string> {
