@@ -351,6 +351,54 @@ test('an invalid host result rejects with INVALID_PARAMS and diagnoses paths wit
   assert.doesNotMatch(JSON.stringify(diagnostics), /secret-invalid-value/)
 })
 
+test('environment binding allows create-time use and remains cancellable when run-bound', async () => {
+  const core = makeCore()
+  const transport = new MemoryTransport()
+  core.attachTransport(transport, { trusted: true })
+  await hello(transport, { hostCapabilities: ['environments.bindSession'] })
+  const params = {
+    runtimeSessionId: 'runtime-session-1',
+    ref: 'phi:python@1',
+    agent: 'Main',
+    cwd: '/project'
+  }
+
+  const creating = core.requestHost('environments.bindSession', params, {
+    sessionId: 'session-1'
+  })
+  const createRequest = await waitFor(
+    transport,
+    (frame): frame is HostRequestFrame => frame.kind === 'host.request'
+  )
+  transport.receive({
+    kind: 'host.response',
+    id: createRequest.id,
+    ok: true,
+    result: { ref: 'phi:python@1', envId: 'environment-1', variables: { PATH: '/env/bin' } }
+  })
+  assert.deepEqual(await creating, {
+    ref: 'phi:python@1',
+    envId: 'environment-1',
+    variables: { PATH: '/env/bin' }
+  })
+
+  const running = core.requestHost('environments.bindSession', params, {
+    sessionId: 'session-1',
+    runId: 'run-1'
+  })
+  await waitFor(
+    transport,
+    (frame): frame is HostRequestFrame =>
+      frame.kind === 'host.request' && frame.id !== createRequest.id
+  )
+  core.emitEvent(
+    'run.completed',
+    { runId: 'run-1', status: 'cancelled' },
+    { sessionId: 'session-1', runId: 'run-1' }
+  )
+  await rejectsWithCode(running, 'CANCELLED')
+})
+
 test('a featured MCP API key resolves without entering replay events or diagnostics', async () => {
   const diagnostics: Diagnostic[] = []
   const core = makeCore(

@@ -32,6 +32,8 @@ import {
   protocolErrorSchema,
   ProtocolEncodeError,
   runCompletedPayloadSchema,
+  resourcesReloadParamsSchema,
+  resourcesReloadResultSchema,
   sessionAbortParamsSchema,
   sessionAbortResultSchema,
   sessionAdoptParamsSchema,
@@ -44,9 +46,17 @@ import {
   sessionListEntrySchema,
   sessionOpenParamsSchema,
   sessionOpenResultSchema,
+  sessionForkParamsSchema,
+  sessionForkResultSchema,
+  sessionPromptOptionsV1Schema,
+  sessionPromptTrustedOptionsV1Schema,
   sessionPromptParamsSchema,
   sessionPromptResultSchema,
   sessionSummarySchema,
+  shellJobsCancelParamsSchema,
+  shellJobsCancelResultSchema,
+  shellJobsListParamsSchema,
+  shellJobsListResultSchema,
   sessionSnapshotParamsSchema,
   sessionSnapshotResultSchema,
   sessionsListParamsSchema,
@@ -99,6 +109,14 @@ const methodParams = {
     images: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }],
     clientRunKey: 'client-run-1'
   },
+  'session.fork': {},
+  'resources.reload': {
+    cwd: '/tmp/phi-project',
+    additionalSkillPaths: ['/tmp/phi-skills'],
+    noThemes: true
+  },
+  'shellJobs.list': {},
+  'shellJobs.cancel': { jobId: 'job-1' },
   'session.abort': {},
   'session.snapshot': {},
   'session.close': {},
@@ -139,6 +157,27 @@ const methodResults = {
     ]
   },
   'session.prompt': { accepted: true, runId: 'run-1' },
+  'session.fork': { sessionId: 'session-fork-1' },
+  'resources.reload': {
+    extensions: [],
+    skills: { skills: [], diagnostics: [] },
+    prompts: [],
+    themes: [],
+    agentsFiles: [],
+    systemPrompt: 'System prompt',
+    appendSystemPrompt: ['Project context']
+  },
+  'shellJobs.list': [
+    {
+      agentSessionId: 'session-1',
+      jobId: 'job-1',
+      state: 'running',
+      command: 'sleep 30',
+      startedAt: 1_798_000_000_000,
+      output: 'started'
+    }
+  ],
+  'shellJobs.cancel': { ok: true },
   'session.abort': { cancelled: true },
   'session.snapshot': {
     sessionId: 'session-1',
@@ -292,6 +331,14 @@ describe('kernel protocol DTOs', () => {
       [sessionsListResultSchema, methodResults['sessions.list']],
       [sessionPromptParamsSchema, methodParams['session.prompt']],
       [sessionPromptResultSchema, methodResults['session.prompt']],
+      [sessionForkParamsSchema, methodParams['session.fork']],
+      [sessionForkResultSchema, methodResults['session.fork']],
+      [resourcesReloadParamsSchema, methodParams['resources.reload']],
+      [resourcesReloadResultSchema, methodResults['resources.reload']],
+      [shellJobsListParamsSchema, methodParams['shellJobs.list']],
+      [shellJobsListResultSchema, methodResults['shellJobs.list']],
+      [shellJobsCancelParamsSchema, methodParams['shellJobs.cancel']],
+      [shellJobsCancelResultSchema, methodResults['shellJobs.cancel']],
       [sessionAbortParamsSchema, methodParams['session.abort']],
       [sessionAbortResultSchema, methodResults['session.abort']],
       [sessionSnapshotParamsSchema, methodParams['session.snapshot']],
@@ -378,6 +425,135 @@ describe('kernel protocol DTOs', () => {
     )
     assert.equal(
       sessionPromptParamsSchema.safeParse({ text: 'Hello', clientRunKey: '' }).success,
+      false
+    )
+  })
+
+  it('accepts only versioned public prompt options', () => {
+    const options = {
+      version: 1,
+      images: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }],
+      expandPromptTemplates: false,
+      skipCompactionCheck: true
+    } as const
+
+    assert.deepEqual(sessionPromptOptionsV1Schema.parse(options), options)
+    assert.equal(sessionPromptParamsSchema.safeParse({ text: 'Hello', options }).success, true)
+    assert.equal(
+      sessionPromptOptionsV1Schema.safeParse({ ...options, synthetic: true }).success,
+      false
+    )
+    assert.equal(
+      sessionPromptOptionsV1Schema.safeParse({ ...options, userInitiated: true }).success,
+      false
+    )
+    assert.equal(
+      sessionPromptParamsSchema.safeParse({ text: 'Hello', synthetic: true }).success,
+      false
+    )
+    assert.equal(
+      sessionPromptParamsSchema.safeParse({ text: 'Hello', userInitiated: true }).success,
+      false
+    )
+    assert.equal(sessionPromptOptionsV1Schema.safeParse({ images: options.images }).success, false)
+    assert.equal(
+      sessionPromptTrustedOptionsV1Schema.safeParse({
+        version: 1,
+        synthetic: true,
+        userInitiated: false
+      }).success,
+      true
+    )
+  })
+
+  it('keys session forks from request context rather than client-supplied identity', () => {
+    assert.deepEqual(sessionForkParamsSchema.parse({}), {})
+    assert.equal(sessionForkParamsSchema.safeParse({ sessionId: 'forged-source' }).success, false)
+    assert.deepEqual(sessionForkResultSchema.parse({ sessionId: 'forked-session' }), {
+      sessionId: 'forked-session'
+    })
+  })
+
+  it('accepts trusted session resource snapshots and rejects credential-bearing MCP config', () => {
+    const resources = {
+      cwd: '/tmp/phi-project',
+      model: { provider: 'provider', id: 'model' },
+      sessionManager: { kind: 'memory' as const },
+      phiAgents: [
+        {
+          name: 'Wrapper',
+          description: 'Runs workflows.',
+          tools: ['bash'],
+          skills: ['nextflow'],
+          visibility: 'entry' as const,
+          warnings: [],
+          systemPrompt: 'Run the workflow.',
+          source: 'phi' as const,
+          filePath: '/trusted/Wrapper.md'
+        }
+      ],
+      personaMarkdown: '# Persona',
+      projectBound: true,
+      memory: { enabled: true, learn: false },
+      contextFiles: [{ path: '/tmp/phi-project/AGENTS.md', content: 'Project rules' }],
+      mcpServers: [
+        {
+          name: 'fixture',
+          config: { type: 'stdio' as const, command: 'fixture-server', args: ['--stdio'] }
+        }
+      ],
+      environment: { ref: 'phi:python@1' }
+    }
+
+    assert.equal(sessionCreateParamsSchema.safeParse(resources).success, true)
+    assert.equal(
+      sessionOpenParamsSchema.safeParse({
+        sessionId: 'persistent-session',
+        resources: {
+          projectBound: resources.projectBound,
+          personaMarkdown: resources.personaMarkdown,
+          contextFiles: resources.contextFiles,
+          mcpServers: resources.mcpServers,
+          environment: resources.environment
+        }
+      }).success,
+      true
+    )
+    assert.equal(
+      sessionCreateParamsSchema.safeParse({
+        ...resources,
+        mcpServers: [
+          {
+            name: 'fixture',
+            config: {
+              type: 'http',
+              url: 'https://example.test/mcp',
+              auth: { token: 'must-stay-with-host-broker' }
+            }
+          }
+        ]
+      }).success,
+      false
+    )
+  })
+
+  it('types resource reload and shell job methods without client-controlled host paths', () => {
+    assert.equal(
+      resourcesReloadParamsSchema.safeParse(methodParams['resources.reload']).success,
+      true
+    )
+    assert.equal(
+      resourcesReloadParamsSchema.safeParse({
+        ...methodParams['resources.reload'],
+        agentDir: '/untrusted/agent'
+      }).success,
+      false
+    )
+    assert.equal(shellJobsListResultSchema.safeParse(methodResults['shellJobs.list']).success, true)
+    assert.equal(
+      shellJobsListResultSchema.safeParse([
+        { ...methodResults['shellJobs.list'][0], state: 'unknown' }
+      ]).success,
       false
     )
   })

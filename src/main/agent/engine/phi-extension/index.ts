@@ -61,7 +61,8 @@ export function createMainSessionExtensions(
     ...(config.phiAgents.length > 0
       ? [createSpecialistFallbackExtension(config.phiAgents, host)]
       : []),
-    ...(config.enableToolApproval ? [createBridgeToolApprovalExtension(config, host)] : [])
+    ...(config.enableToolApproval ? [createBridgeToolApprovalExtension(config, host)] : []),
+    ...(config.environmentBinding ? [createEnvironmentBindingExtension(host)] : [])
   ]
 }
 

@@ -117,6 +117,30 @@ test('persistent create uses the exact private repository layout', async () => {
   }
 })
 
+test('persistent manifests retain fail-closed policy across forks without storing snapshots', async () => {
+  const { root, cwd, agentDir } = fixture()
+  const repository = makeRepository(agentDir, 'kernel-policy')
+  try {
+    const source = await repository.create('policy-source', {
+      ...persistentParams(cwd),
+      projectBound: true,
+      personaMarkdown: 'private persona',
+      mcpServers: [{ name: 'fixture', config: { command: 'fixture-server' } }]
+    })
+    const fork = await repository.createFork('policy-fork', source)
+    assert.deepEqual(source.manifest.policy, {
+      projectBound: true,
+      requiresTrustedResources: true
+    })
+    assert.deepEqual(fork.manifest.policy, source.manifest.policy)
+    assert.doesNotMatch(readFileSync(source.manifestPath, 'utf8'), /private persona|fixture-server/)
+  } finally {
+    await repository.close('policy-source')
+    await repository.close('policy-fork')
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('accepted receipt is fsync-visible when acceptRun resolves and identifies a running duplicate', async () => {
   const { root, cwd, agentDir } = fixture()
   const repository = makeRepository(agentDir, 'kernel-accepted')
@@ -362,7 +386,12 @@ test('sessions list repairs a truncated manifest from a minimal valid OMP journa
         }
       ]
     })
-    assert.equal((await readManifest(session.manifestPath, 'repair-session')).cwd, cwd)
+    const repaired = await readManifest(session.manifestPath, 'repair-session')
+    assert.equal(repaired.cwd, cwd)
+    assert.deepEqual(repaired.policy, {
+      projectBound: true,
+      requiresTrustedResources: true
+    })
     assert.equal(existsSync(`${session.manifestPath}.tmp.interrupted`), true)
   } finally {
     await repository.close('repair-session')

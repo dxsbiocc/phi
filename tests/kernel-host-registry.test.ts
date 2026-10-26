@@ -74,8 +74,12 @@ test('host capability interaction metadata has bounded service timeouts', () => 
     } else {
       assert.equal('timeoutMs' in definition, false)
     }
-    assert.equal(typeof definition.runScoped, 'boolean')
+    assert.ok(
+      typeof definition.runScoped === 'boolean' || definition.runScoped === 'optional',
+      name
+    )
   }
+  assert.equal(KERNEL_HOST_CAPABILITY_REGISTRY['environments.bindSession'].runScoped, 'optional')
 })
 
 test('host capability schemas reject undeclared fields and protect credential results', () => {

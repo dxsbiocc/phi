@@ -42,6 +42,12 @@ import {
   getPhiAgentDir,
   type ProjectResourceName
 } from '../runtime-paths'
+import {
+  resourceToolCallHandlers,
+  selectedResourceLoader,
+  trustedContextFiles,
+  trustedMcpServers
+} from './runtime-session-resources'
 
 import { errorMessage } from '../../../shared/errorCodes'
 export const AGENT_RUNTIME_ID = 'omp-sdk'
@@ -291,6 +297,10 @@ export type CreateAgentSessionOptions = {
   }
   /** Main-process verified, trusted server-project MCP snapshot. */
   remoteProjectMcpServers?: RemoteProjectMcpRuntimeServer[]
+  contextFiles?: Array<{ path: string; content: string }>
+  mcpServers?: Array<{ name: string; config: Record<string, unknown> }>
+  /** Optional managed environment bound to the main session. */
+  environment?: { ref: string; pluginId?: string }
   /** Phi-managed user persona, injected explicitly into the main system prompt. */
   personaMarkdown?: string
   remoteRecovery?: {
@@ -580,14 +590,6 @@ function serializableResourceOptions(options: ResourceLoaderOptions): Record<str
     systemPrompt: options.systemPrompt,
     appendSystemPrompt: options.appendSystemPrompt
   }
-}
-
-function isRuntimeResourceLoader(value: unknown): value is RuntimeResourceLoader {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    (value as { __phiResourceLoader?: unknown }).__phiResourceLoader === true
-  )
 }
 
 function applySessionState(session: RuntimeAgentSessionProxy, state: WorkerSessionState): void {
@@ -1026,6 +1028,13 @@ export function readAutoCompactionDefaults(
   return getPhiEngine().settings.autoCompactionDefaults({ cwd, agentDir })
 }
 
+function selectedSessionManager(
+  manager: RuntimeSessionManager | undefined,
+  cwd: string
+): RuntimeSessionManager {
+  return manager ?? createRuntimeSessionManager(cwd)
+}
+
 export async function createRuntimeAgentSession(
   options: CreateAgentSessionOptions = {},
   control?: RuntimeSelectionControl
@@ -1035,11 +1044,9 @@ export async function createRuntimeAgentSession(
   const cwd = options.cwd ?? process.cwd()
   const agentDir = options.agentDir ?? getPhiAgentDir()
   const engine = getPhiEngine()
-  const resourceLoader = isRuntimeResourceLoader(options.resourceLoader)
-    ? options.resourceLoader
-    : undefined
-  const toolCallHandlers = resourceLoader ? await resourceLoader.getToolCallHandlers() : []
-  const sessionManager = options.sessionManager ?? createRuntimeSessionManager(cwd)
+  const resourceLoader = selectedResourceLoader(options.resourceLoader)
+  const toolCallHandlers = await resourceToolCallHandlers(resourceLoader)
+  const sessionManager = selectedSessionManager(options.sessionManager, cwd)
   const sessionId = randomUUID()
   const createParams = {
     sessionId,
@@ -1064,6 +1071,9 @@ export async function createRuntimeAgentSession(
     memory: options.memory,
     remoteProject: options.remoteProject,
     remoteProjectMcpServers: options.remoteProjectMcpServers,
+    contextFiles: trustedContextFiles(options, resourceLoader),
+    mcpServers: trustedMcpServers(options),
+    environment: options.environment,
     personaMarkdown: options.personaMarkdown,
     remoteRecovery: options.remoteRecovery
   }

@@ -52,11 +52,21 @@ test('worker adapter creates kernel-owned sessions with trusted entry values', a
     }
   })
   try {
+    const resources = {
+      phiAgents: [{ name: 'Wrapper' }],
+      personaMarkdown: '# Persona',
+      projectBound: true,
+      memory: { enabled: true, learn: false },
+      contextFiles: [{ path: `${cwd}/AGENTS.md`, content: 'Project rules' }],
+      mcpServers: [{ name: 'fixture', config: { command: 'fixture-server' } }],
+      environment: { ref: 'phi:python@1' }
+    }
     const result = await handler(adapter.handlers, 'session.create')(
       {
         cwd,
         model: { provider: 'provider', id: 'model' },
-        sessionManager: { kind: 'memory' }
+        sessionManager: { kind: 'memory' },
+        ...resources
       },
       context,
       request('session.create')
@@ -68,6 +78,24 @@ test('worker adapter creates kernel-owned sessions with trusted entry values', a
     assert.equal(params.cwd, cwd)
     assert.equal(params.sessionId, (result as { sessionId: string }).sessionId)
     assert.deepEqual(params.sessionManager, { kind: 'memory', cwd })
+    for (const [key, value] of Object.entries(resources)) assert.deepEqual(params[key], value)
+
+    await assert.rejects(
+      async () =>
+        handler(adapter.handlers, 'session.create')(
+          {
+            cwd,
+            model: { provider: 'provider', id: 'model' },
+            sessionManager: { kind: 'memory' },
+            mcpServers: [{ name: 'forged', config: { command: 'must-not-run' } }]
+          },
+          { ...context, trusted: false },
+          request('session.create')
+        ),
+      (error: { code?: string; detail?: unknown }) =>
+        error.code === 'CAPABILITY_UNAVAILABLE' &&
+        (error.detail as { reason?: string })?.reason === 'trusted_host_required'
+    )
 
     await assert.rejects(
       async () =>
@@ -132,6 +160,167 @@ test('worker adapter returns prompt acceptance immediately and maps abort to can
       await (started as unknown as { completion: PromiseLike<string> }).completion,
       'cancelled'
     )
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('worker adapter forwards public prompt options without host-internal flags', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-prompt-options-'))
+  const calls: Array<{ method: string; params: unknown }> = []
+  const adapter = createWorkerKernelAdapter({
+    agentDir: '/trusted/agent',
+    callWorker: async (method, params) => {
+      calls.push({ method, params })
+      return undefined
+    }
+  })
+
+  try {
+    const created = (await handler(adapter.handlers, 'session.create')(
+      {
+        cwd,
+        model: { provider: 'provider', id: 'model' },
+        sessionManager: { kind: 'memory' }
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+    const started = (await handler(adapter.handlers, 'session.prompt')(
+      {
+        text: 'hello',
+        options: {
+          version: 1,
+          images: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }],
+          expandPromptTemplates: false,
+          skipCompactionCheck: true
+        },
+        trustedOptions: { version: 1, synthetic: true, userInitiated: false }
+      },
+      context,
+      request('session.prompt', created.sessionId)
+    )) as unknown as { completion: PromiseLike<string> }
+
+    assert.equal(await started.completion, 'completed')
+    assert.deepEqual(calls.at(-1), {
+      method: 'session.prompt',
+      params: {
+        sessionId: created.sessionId,
+        text: 'hello',
+        options: {
+          images: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }],
+          expandPromptTemplates: false,
+          skipCompactionCheck: true,
+          synthetic: true,
+          userInitiated: false
+        }
+      }
+    })
+
+    await assert.rejects(
+      async () =>
+        handler(adapter.handlers, 'session.prompt')(
+          { text: 'forged', trustedOptions: { version: 1, synthetic: true } },
+          { ...context, trusted: false },
+          request('session.prompt', created.sessionId)
+        ),
+      (error: { code?: string; detail?: unknown }) =>
+        error.code === 'CAPABILITY_UNAVAILABLE' &&
+        (error.detail as { reason?: string })?.reason === 'trusted_host_required'
+    )
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+})
+
+test('resource handlers inject trusted paths and forward OMP shell jobs', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-resources-'))
+  const calls: Array<{ method: string; params: unknown }> = []
+  const shellJobs = [
+    {
+      agentSessionId: 'worker-session',
+      jobId: 'job-1',
+      state: 'running',
+      command: 'sleep 30',
+      startedAt: 1_798_000_000_000
+    }
+  ]
+  const resources = {
+    extensions: [],
+    skills: { skills: [], diagnostics: [] },
+    prompts: [],
+    themes: [],
+    agentsFiles: []
+  }
+  const adapter = createWorkerKernelAdapter({
+    agentDir: '/trusted/agent',
+    callWorker: async (method, params) => {
+      calls.push({ method, params })
+      if (method === 'resources.reload') return resources
+      if (method === 'shellJobs.list') return shellJobs
+      if (method === 'shellJobs.cancel') return { ok: true }
+      return undefined
+    }
+  })
+
+  try {
+    const created = (await handler(adapter.handlers, 'session.create')(
+      {
+        cwd,
+        model: { provider: 'provider', id: 'model' },
+        sessionManager: { kind: 'memory' }
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+
+    assert.deepEqual(
+      await handler(adapter.handlers, 'resources.reload')(
+        { cwd, noThemes: true },
+        context,
+        request('resources.reload', created.sessionId)
+      ),
+      resources
+    )
+    await assert.rejects(
+      async () =>
+        handler(adapter.handlers, 'resources.reload')(
+          { cwd, personaMarkdown: 'forged' },
+          { ...context, trusted: false },
+          request('resources.reload', created.sessionId)
+        ),
+      (error: { code?: string; detail?: unknown }) =>
+        error.code === 'CAPABILITY_UNAVAILABLE' &&
+        (error.detail as { reason?: string })?.reason === 'trusted_host_required'
+    )
+    assert.deepEqual(
+      await handler(adapter.handlers, 'shellJobs.list')({}, context, request('shellJobs.list')),
+      shellJobs
+    )
+    assert.deepEqual(
+      await handler(adapter.handlers, 'shellJobs.cancel')(
+        { jobId: 'job-1' },
+        context,
+        request('shellJobs.cancel', created.sessionId)
+      ),
+      { ok: true }
+    )
+    assert.deepEqual(calls.slice(-3), [
+      {
+        method: 'resources.reload',
+        params: {
+          cwd,
+          noThemes: true,
+          agentDir: '/trusted/agent',
+          sessionId: created.sessionId
+        }
+      },
+      { method: 'shellJobs.list', params: {} },
+      {
+        method: 'shellJobs.cancel',
+        params: { sessionId: created.sessionId, jobId: 'job-1' }
+      }
+    ])
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
@@ -335,6 +524,86 @@ test('worker adapter persists receipts, rejects durable duplicate keys, and rele
     assert.equal(existsSync(join(directory, 'writer.lock')), false)
     assert.equal(existsSync(join(directory, 'session.json')), true)
   } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('persistent reopen fails closed until a trusted host rehydrates session resources', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-rehydrate-'))
+  const cwd = join(root, 'project')
+  const agentDir = join(root, 'agent')
+  const { mkdirSync } = await import('node:fs')
+  mkdirSync(cwd)
+  const calls: Array<{ method: string; params: unknown }> = []
+  const adapter = createWorkerKernelAdapter({
+    agentDir,
+    processStartedAt: 'darwin:test-process',
+    acquireSessionLockGuard: acquireTestGuard,
+    callWorker: async (method, params) => {
+      calls.push({ method, params })
+      return undefined
+    }
+  })
+  try {
+    const created = (await handler(adapter.handlers, 'session.create')(
+      {
+        cwd,
+        model: { provider: 'provider', id: 'model' },
+        sessionManager: { kind: 'persistent' },
+        projectBound: true,
+        personaMarkdown: 'trusted persona'
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+    await handler(adapter.handlers, 'session.close')(
+      {},
+      context,
+      request('session.close', created.sessionId)
+    )
+
+    await assert.rejects(
+      async () =>
+        handler(adapter.handlers, 'session.open')(
+          { sessionId: created.sessionId },
+          context,
+          request('session.open')
+        ),
+      (error: { code?: string; detail?: unknown }) =>
+        error.code === 'CAPABILITY_UNAVAILABLE' &&
+        (error.detail as { reason?: string })?.reason === 'resource_snapshot_required'
+    )
+    await assert.rejects(
+      async () =>
+        handler(adapter.handlers, 'session.open')(
+          {
+            sessionId: created.sessionId,
+            resources: { projectBound: true, personaMarkdown: 'trusted persona' }
+          },
+          { ...context, trusted: false },
+          request('session.open')
+        ),
+      (error: { code?: string; detail?: unknown }) =>
+        error.code === 'CAPABILITY_UNAVAILABLE' &&
+        (error.detail as { reason?: string })?.reason === 'trusted_host_required'
+    )
+
+    assert.deepEqual(
+      await handler(adapter.handlers, 'session.open')(
+        {
+          sessionId: created.sessionId,
+          resources: { projectBound: true, personaMarkdown: 'trusted persona' }
+        },
+        context,
+        request('session.open')
+      ),
+      { sessionId: created.sessionId }
+    )
+    const reopened = calls.at(-1)?.params as Record<string, unknown>
+    assert.equal(reopened.projectBound, true)
+    assert.equal(reopened.personaMarkdown, 'trusted persona')
+  } finally {
+    await adapter.closeAll().catch(() => undefined)
     rmSync(root, { recursive: true, force: true })
   }
 })

@@ -24,6 +24,10 @@ export type SessionManifest = {
   model?: SessionModel
   thinkingLevel?: string
   title?: string
+  policy?: {
+    projectBound: boolean
+    requiresTrustedResources: boolean
+  }
   journal: 'journal.jsonl'
   lastRun?: SessionLastRun
 }

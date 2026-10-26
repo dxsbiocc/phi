@@ -36,6 +36,41 @@ function optionalString(value: unknown): value is string | undefined {
   return value === undefined || (typeof value === 'string' && value.length > 0)
 }
 
+function sessionPolicy(value: unknown): SessionManifest['policy'] | undefined {
+  if (value === undefined) return undefined
+  const policy = record(value)
+  if (
+    !policy ||
+    Object.keys(policy).sort().join(',') !== 'projectBound,requiresTrustedResources' ||
+    typeof policy.projectBound !== 'boolean' ||
+    typeof policy.requiresTrustedResources !== 'boolean'
+  ) {
+    throw new Error('session manifest policy is invalid')
+  }
+  return {
+    projectBound: policy.projectBound,
+    requiresTrustedResources: policy.requiresTrustedResources
+  }
+}
+
+function sessionLastRun(value: unknown): SessionManifest['lastRun'] | undefined {
+  if (value === undefined) return undefined
+  const lastRun = record(value)
+  if (
+    !lastRun ||
+    Object.keys(lastRun).sort().join(',') !== 'runId,status' ||
+    typeof lastRun.runId !== 'string' ||
+    !lastRun.runId ||
+    !terminalStatuses.has(lastRun.status as RunCompletedPayload['status'])
+  ) {
+    throw new Error('session manifest lastRun is invalid')
+  }
+  return {
+    runId: lastRun.runId,
+    status: lastRun.status as RunCompletedPayload['status']
+  }
+}
+
 export function validateSessionManifest(
   candidate: unknown,
   expectedSessionId: string
@@ -51,6 +86,7 @@ export function validateSessionManifest(
     'model',
     'thinkingLevel',
     'title',
+    'policy',
     'journal',
     'lastRun'
   ])
@@ -82,16 +118,8 @@ export function validateSessionManifest(
   ) {
     throw new Error('session manifest model is invalid')
   }
-  const lastRun = value.lastRun === undefined ? undefined : record(value.lastRun)
-  if (
-    lastRun &&
-    (Object.keys(lastRun).sort().join(',') !== 'runId,status' ||
-      typeof lastRun.runId !== 'string' ||
-      !lastRun.runId ||
-      !terminalStatuses.has(lastRun.status as RunCompletedPayload['status']))
-  ) {
-    throw new Error('session manifest lastRun is invalid')
-  }
+  const lastRun = sessionLastRun(value.lastRun)
+  const policy = sessionPolicy(value.policy)
   return {
     schemaVersion: SESSION_MANIFEST_SCHEMA_VERSION,
     sessionId: expectedSessionId,
@@ -101,15 +129,16 @@ export function validateSessionManifest(
     ...(model ? { model: { provider: model.provider as string, id: model.id as string } } : {}),
     ...(typeof value.thinkingLevel === 'string' ? { thinkingLevel: value.thinkingLevel } : {}),
     ...(typeof value.title === 'string' ? { title: value.title } : {}),
-    journal: 'journal.jsonl',
-    ...(lastRun
+    ...(policy
       ? {
-          lastRun: {
-            runId: lastRun.runId as string,
-            status: lastRun.status as RunCompletedPayload['status']
+          policy: {
+            projectBound: policy.projectBound,
+            requiresTrustedResources: policy.requiresTrustedResources
           }
         }
-      : {})
+      : {}),
+    journal: 'journal.jsonl',
+    ...(lastRun ? { lastRun } : {})
   }
 }
 
@@ -343,6 +372,9 @@ export async function reconstructManifest(options: {
     createdAt,
     updatedAt: laterIso(createdAt, journalStat.mtime.toISOString()),
     ...(title ? { title } : {}),
+    // The OMP journal cannot prove the former project/resource policy. Repair must
+    // fail closed so manifest corruption never removes project path guards.
+    policy: { projectBound: true, requiresTrustedResources: true },
     journal: 'journal.jsonl'
   }
   return reconcileManifestReceipts(manifest, options.receipts)

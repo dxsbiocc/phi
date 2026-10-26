@@ -8,15 +8,10 @@ import {
   type SessionCreateParams,
   type SessionLastRun,
   type SessionOpenParams,
-  type SessionPromptParams
+  type SessionPolicyParams
 } from '../../shared/kernel-protocol'
 import { makeProtocolError } from '../protocol/errors'
-import type {
-  KernelMethodHandlers,
-  KernelProtocolCore,
-  RunCompletionStatus,
-  SessionPromptRun
-} from '../protocol'
+import type { KernelMethodHandlers, KernelProtocolCore, RunCompletionStatus } from '../protocol'
 import {
   KernelSessionRepository,
   SessionWriterBusyError,
@@ -25,7 +20,9 @@ import {
   type PersistentSession
 } from '../sessions'
 import { createHistoryHandlers } from './history-handlers'
-import { pauseKernelTestPoint } from '../test-pause'
+import { createResourceHandlers } from './resource-handlers'
+import { createSessionForkHandlers } from './session-fork-handlers'
+import { createPromptHandlers } from './prompt-handlers'
 import { bindWorkerOutbound } from './outbound'
 
 type WorkerCall = (method: string, params: unknown) => Promise<unknown>
@@ -60,6 +57,19 @@ function requiredSessionId(sessionId: string | undefined): string {
   return sessionId
 }
 
+function hasTrustedSessionResources(params: Partial<SessionCreateParams>): boolean {
+  return (
+    params.resourceOptions !== undefined ||
+    params.phiAgents !== undefined ||
+    params.personaMarkdown !== undefined ||
+    params.projectBound !== undefined ||
+    params.memory !== undefined ||
+    params.contextFiles !== undefined ||
+    params.mcpServers !== undefined ||
+    params.environment !== undefined
+  )
+}
+
 async function defaultWorkerCall(method: string, params: unknown): Promise<unknown> {
   const runtime = async (): Promise<
     typeof import('../../main/agent/engine/in-process/session-runtime')
@@ -71,6 +81,22 @@ async function defaultWorkerCall(method: string, params: unknown): Promise<unkno
     }
     case 'session.prompt':
       return (await runtime()).promptSession(params)
+    case 'session.fork': {
+      const { forkWorkerSession } = await import('../../main/agent/engine/in-process/session-fork')
+      return forkWorkerSession(params)
+    }
+    // K3-2 resource and OMP async shell-job calls stay on the existing worker runtime.
+    case 'resources.reload': {
+      const [{ reloadResources }, { toJsonSafe }] = await Promise.all([
+        import('../../main/agent/engine/in-process/resources'),
+        import('../../main/agent/engine/in-process/common')
+      ])
+      return toJsonSafe(await reloadResources(params))
+    }
+    case 'shellJobs.list':
+      return (await runtime()).listSessionShellJobs()
+    case 'shellJobs.cancel':
+      return (await runtime()).cancelSessionShellJob(params)
     case 'session.abort':
       return (await runtime()).abortSession(params)
     case 'session.dispose':
@@ -143,11 +169,6 @@ function projectSessionState(
   }
 }
 
-function sanitizeRunError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.replace(/(?:[A-Za-z]:[\\/]|\/)(?:[^\s:]+[\\/])*[^\s:]*/g, '<path>').slice(0, 1024)
-}
-
 export function createWorkerKernelAdapter(
   options: WorkerKernelAdapterOptions
 ): WorkerKernelAdapter {
@@ -177,8 +198,11 @@ export function createWorkerKernelAdapter(
       ? createHistoryHandlers({ repository: durableSessions, allowedSourceRoots: adoptRoots })
       : {}
   const activeRuns = new Map<string, string>()
+  const admittingRuns = new Set<string>()
   const cancelledRuns = new Set<string>()
+  const forkingSessions = new Set<string>()
   const sessionKinds = new Map<string, 'memory' | 'persistent'>()
+  const sessionCreateInputs = new Map<string, Record<string, unknown>>()
   const memoryClientRuns = new Map<string, Map<string, DuplicateRun>>()
   const openingSessions = new Map<string, Promise<PersistentSession>>()
   const admissions = new Set<Promise<void>>()
@@ -209,22 +233,38 @@ export function createWorkerKernelAdapter(
     return kind
   }
 
-  const openPersistentSession = async (sessionId: string): Promise<PersistentSession> => {
+  const openPersistentSession = async (
+    sessionId: string,
+    resources?: SessionPolicyParams
+  ): Promise<PersistentSession> => {
     const loaded = durableSessions.get(sessionId)
     if (loaded && sessionKinds.get(sessionId) === 'persistent') return loaded
     const pending = openingSessions.get(sessionId)
     if (pending) return pending
     const opening = (async () => {
       const session = await durableSessions.open(sessionId)
+      const createInput = {
+        cwd: session.manifest.cwd,
+        ...(session.manifest.model ? { model: session.manifest.model } : {}),
+        ...(session.manifest.thinkingLevel
+          ? { thinkingLevel: session.manifest.thinkingLevel }
+          : {}),
+        sessionManager: { kind: 'persistent' as const },
+        ...(resources ?? {}),
+        ...(session.manifest.policy?.projectBound ? { projectBound: true } : {})
+      }
       try {
+        if (session.manifest.policy?.requiresTrustedResources && !resources) {
+          throw makeProtocolError(
+            'CAPABILITY_UNAVAILABLE',
+            'The persistent session requires a trusted resource snapshot.',
+            { reason: 'resource_snapshot_required' }
+          )
+        }
         await callWorker('session.create', {
+          ...createInput,
           sessionId,
           agentDir: options.agentDir,
-          cwd: session.manifest.cwd,
-          ...(session.manifest.model ? { model: session.manifest.model } : {}),
-          ...(session.manifest.thinkingLevel
-            ? { thinkingLevel: session.manifest.thinkingLevel }
-            : {}),
           sessionManager: {
             kind: 'open',
             path: session.journalPath,
@@ -234,6 +274,7 @@ export function createWorkerKernelAdapter(
           }
         })
         sessionKinds.set(sessionId, 'persistent')
+        sessionCreateInputs.set(sessionId, createInput)
         return session
       } catch (error) {
         await durableSessions.close(sessionId)
@@ -254,6 +295,39 @@ export function createWorkerKernelAdapter(
       'The client run key was already accepted for this session.',
       duplicate
     )
+
+  const resourceHandlers = createResourceHandlers({
+    agentDir: options.agentDir,
+    callWorker,
+    requireLoadedSession
+  })
+  const sessionForkHandlers = createSessionForkHandlers({
+    agentDir: options.agentDir,
+    callWorker,
+    repository: durableSessions,
+    activeRuns,
+    admittingRuns,
+    forkingSessions,
+    sessionKinds,
+    sessionCreateInputs,
+    initializeMemorySession: (sessionId) => memoryClientRuns.set(sessionId, new Map()),
+    withAdmission,
+    requireLoadedSession
+  })
+  const promptHandlers = createPromptHandlers({
+    agentDir: options.agentDir,
+    callWorker,
+    repository: durableSessions,
+    activeRuns,
+    admittingRuns,
+    cancelledRuns,
+    forkingSessions,
+    memoryClientRuns,
+    requireLoadedSession,
+    sessionNotFound,
+    duplicateRequest,
+    withAdmission
+  })
 
   const finishActiveRun = async (
     sessionId: string,
@@ -293,9 +367,19 @@ export function createWorkerKernelAdapter(
 
   const handlers: KernelMethodHandlers = {
     ...historyHandlers,
-    'session.create'(params) {
+    ...resourceHandlers,
+    ...sessionForkHandlers,
+    ...promptHandlers,
+    'session.create'(params, callContext) {
       return withAdmission(async () => {
         const create = params as SessionCreateParams
+        if (!callContext.trusted && hasTrustedSessionResources(create)) {
+          throw makeProtocolError(
+            'CAPABILITY_UNAVAILABLE',
+            'Session resources require a trusted host connection.',
+            { reason: 'trusted_host_required' }
+          )
+        }
         await assertExistingAbsoluteDirectory(create.cwd)
         const sessionId = randomUUID()
         if (create.sessionManager.kind === 'memory') {
@@ -306,6 +390,7 @@ export function createWorkerKernelAdapter(
             sessionManager: { kind: 'memory', cwd: create.cwd }
           })
           sessionKinds.set(sessionId, 'memory')
+          sessionCreateInputs.set(sessionId, create as unknown as Record<string, unknown>)
           memoryClientRuns.set(sessionId, new Map())
           return { sessionId }
         }
@@ -323,6 +408,7 @@ export function createWorkerKernelAdapter(
             }
           })
           sessionKinds.set(sessionId, 'persistent')
+          sessionCreateInputs.set(sessionId, create as unknown as Record<string, unknown>)
           return { sessionId }
         } catch (error) {
           await durableSessions.abandonNew(sessionId)
@@ -330,11 +416,18 @@ export function createWorkerKernelAdapter(
         }
       })
     },
-    'session.open'(params) {
+    'session.open'(params, callContext) {
       return withAdmission(async () => {
-        const { sessionId } = params as SessionOpenParams
+        const { sessionId, resources } = params as SessionOpenParams
+        if (resources && !callContext.trusted) {
+          throw makeProtocolError(
+            'CAPABILITY_UNAVAILABLE',
+            'Session resources require a trusted host connection.',
+            { reason: 'trusted_host_required' }
+          )
+        }
         try {
-          await openPersistentSession(sessionId)
+          await openPersistentSession(sessionId, resources)
           return { sessionId }
         } catch (error) {
           if (error instanceof SessionWriterBusyError) {
@@ -355,80 +448,12 @@ export function createWorkerKernelAdapter(
     'sessions.list'() {
       return durableSessions.list()
     },
-    promptConflict(sessionId, params) {
-      const clientRunKey = (params as SessionPromptParams).clientRunKey
-      const activeRunId = activeRuns.get(sessionId)
-      if (!clientRunKey || !activeRunId) return undefined
-      const persistent = durableSessions.get(sessionId)
-      const duplicate = persistent
-        ? durableSessions.findDuplicate(persistent, clientRunKey)
-        : memoryClientRuns.get(sessionId)?.get(clientRunKey)
-      return duplicate?.runId === activeRunId && duplicate.status === 'running'
-        ? { runId: activeRunId, status: 'running' }
-        : undefined
-    },
-    'session.prompt'(params, _context, request): Promise<SessionPromptRun> {
-      return withAdmission(async () => {
-        const sessionId = requiredSessionId(request.sessionId)
-        const prompt = params as SessionPromptParams
-        const kind = requireLoadedSession(sessionId)
-        const persistent = kind === 'persistent' ? durableSessions.get(sessionId) : undefined
-        if (kind === 'persistent' && !persistent) throw sessionNotFound()
-        if (prompt.clientRunKey) {
-          const duplicate = persistent
-            ? durableSessions.findDuplicate(persistent, prompt.clientRunKey)
-            : memoryClientRuns.get(sessionId)?.get(prompt.clientRunKey)
-          if (duplicate) throw duplicateRequest(duplicate)
-        }
-        const runId = randomUUID()
-        if (persistent) {
-          await durableSessions.acceptRun(persistent, runId, prompt.clientRunKey)
-          pauseKernelTestPoint('a', options.agentDir)
-        } else if (prompt.clientRunKey) {
-          memoryClientRuns.get(sessionId)?.set(prompt.clientRunKey, { runId, status: 'running' })
-        }
-        activeRuns.set(sessionId, runId)
-        const completion = (async (): Promise<
-          RunCompletionStatus | { status: RunCompletionStatus; detail?: string }
-        > => {
-          try {
-            let outcome: RunCompletionStatus | { status: RunCompletionStatus; detail?: string }
-            try {
-              await callWorker('session.prompt', {
-                sessionId,
-                text: prompt.text,
-                ...(prompt.images ? { options: { images: prompt.images } } : {})
-              })
-              if (persistent) pauseKernelTestPoint('d1', options.agentDir)
-              outcome = cancelledRuns.has(runId) ? 'cancelled' : 'completed'
-            } catch (error) {
-              outcome = cancelledRuns.has(runId)
-                ? 'cancelled'
-                : { status: 'failed', detail: sanitizeRunError(error) }
-            }
-            const status = typeof outcome === 'string' ? outcome : outcome.status
-            if (persistent) {
-              try {
-                await durableSessions.finishRun(persistent, runId, status)
-                pauseKernelTestPoint('d2', options.agentDir)
-              } catch {
-                return { status: 'unknown', detail: 'Run completion could not be persisted.' }
-              }
-            } else if (prompt.clientRunKey) {
-              memoryClientRuns.get(sessionId)?.set(prompt.clientRunKey, { runId, status })
-            }
-            return outcome
-          } finally {
-            cancelledRuns.delete(runId)
-            if (activeRuns.get(sessionId) === runId) activeRuns.delete(sessionId)
-          }
-        })()
-        return { runId, completion }
-      })
-    },
     async 'session.abort'(_params, callContext, request) {
       const sessionId = requiredSessionId(request.sessionId)
       requireLoadedSession(sessionId)
+      if (admittingRuns.has(sessionId)) {
+        throw makeProtocolError('SESSION_BUSY', 'The session is admitting a run.')
+      }
       const activeRunId =
         callContext.connectionId === 'kernel-lifecycle' && request.runId
           ? request.runId
@@ -451,6 +476,9 @@ export function createWorkerKernelAdapter(
     async 'session.snapshot'(_params, _context, request) {
       const sessionId = requiredSessionId(request.sessionId)
       requireLoadedSession(sessionId)
+      if (admittingRuns.has(sessionId)) {
+        throw makeProtocolError('SESSION_BUSY', 'The session is admitting a run.')
+      }
       return projectSessionState(
         sessionId,
         await readSessionState(sessionId),
@@ -462,13 +490,18 @@ export function createWorkerKernelAdapter(
       return withAdmission(async () => {
         const sessionId = requiredSessionId(request.sessionId)
         requireLoadedSession(sessionId)
-        if (activeRuns.has(sessionId)) {
-          throw makeProtocolError('SESSION_BUSY', 'The session has an active run.')
+        if (
+          activeRuns.has(sessionId) ||
+          admittingRuns.has(sessionId) ||
+          forkingSessions.has(sessionId)
+        ) {
+          throw makeProtocolError('SESSION_BUSY', 'The session has an active operation.')
         }
         await callWorker('session.dispose', { sessionId })
         await durableSessions.close(sessionId)
         activeRuns.delete(sessionId)
         sessionKinds.delete(sessionId)
+        sessionCreateInputs.delete(sessionId)
         memoryClientRuns.delete(sessionId)
         return { closed: true }
       })
@@ -537,6 +570,7 @@ export function createWorkerKernelAdapter(
               }
               activeRuns.delete(sessionId)
               sessionKinds.delete(sessionId)
+              sessionCreateInputs.delete(sessionId)
               memoryClientRuns.delete(sessionId)
             }
           })

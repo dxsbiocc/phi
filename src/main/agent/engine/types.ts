@@ -397,6 +397,12 @@ export type PhiSessionCreateParams = {
     contextFiles: Array<{ path: string; content: string }>
   }
   remoteProjectMcpServers?: RemoteProjectMcpRuntimeServer[]
+  /** Trusted host snapshot used by the kernel on either execution host. */
+  contextFiles?: Array<{ path: string; content: string }>
+  /** Exact execution-domain MCP set for this session. */
+  mcpServers?: Array<{ name: string; config: Record<string, unknown> }>
+  /** Optional managed environment bound to the main session. */
+  environment?: { ref: string; pluginId?: string }
   personaMarkdown?: string
   /** Explicit main-owned restore intent; never inferred from a replacement model. */
   remoteRecovery?: {

@@ -45,6 +45,8 @@ import { buildDecisionTool } from '../../decisions/tool'
 import { bindSessionDecisionEvaluator } from '../decision-evaluator'
 import { subscribeToAgentRunNotices } from './agent-run-notices'
 import { buildSessionAgentDelegationTools, supportsDelegationTool } from './session-agent-tools'
+import type { PhiExtensionEnvironmentBinding } from '../phi-extension'
+import type { SessionResourceSnapshot } from './session-resource-input'
 
 export async function createSessionToolRegistry(deps: {
   record: UnknownRecord
@@ -52,7 +54,8 @@ export async function createSessionToolRegistry(deps: {
   cwd: string
   agentDir: string
   settingsCwd: string
-  personaMarkdown: string
+  resourceSnapshot: SessionResourceSnapshot
+  environmentBinding?: PhiExtensionEnvironmentBinding
   extensionFactories: ExtensionFactory[]
   ctx: RuntimeContext
   parentRef: { current?: CreateAgentSessionResult }
@@ -74,7 +77,8 @@ export async function createSessionToolRegistry(deps: {
     cwd,
     agentDir,
     settingsCwd,
-    personaMarkdown,
+    resourceSnapshot,
+    environmentBinding,
     extensionFactories,
     ctx,
     parentRef,
@@ -88,6 +92,7 @@ export async function createSessionToolRegistry(deps: {
   const liveSkills = createLiveSkillSnapshot<
     ReturnType<DefaultResourceLoader['getSkills']>['skills'][number]
   >((skills) => filterEnabledMainSkills(skills, mainSkillEnablementOptions(cwd, agentDir)))
+  const runtimeSkills: ReturnType<DefaultResourceLoader['getSkills']>['skills'] = []
   const capabilityRegistrar = createCapabilityToolRegistrar(() => parentRef.current?.session)
   const sessionExtensionFactories = [...extensionFactories, capabilityRegistrar.extension]
   let sessionResourceOptions = record.resourceOptions
@@ -115,17 +120,28 @@ export async function createSessionToolRegistry(deps: {
               installed,
               resolved.skills.filter((skill) => skill.source === 'server-project')
             )
+            const selected = liveSkills.sync(merged)
+            resourceSnapshot.skills = [...selected]
+            runtimeSkills.splice(
+              0,
+              runtimeSkills.length,
+              ...selected.map((skill) => ({ ...skill, hide: true }))
+            )
             return {
               ...resolved,
-              skills: liveSkills.sync(merged)
+              // Keep the same mutable array in OMP so skill:// resolves after reload;
+              // hide only suppresses its stale startup rendering.
+              skills: runtimeSkills
             }
           },
-          ...(personaMarkdown
-            ? {
-                agentsFilesOverride: (base) =>
-                  filterPersonaContextFile(base, join(agentDir, 'AGENTS.md'))
-              }
-            : {}),
+          agentsFilesOverride: (base) => {
+            const snapshot = resourceSnapshot.contextFiles
+              ? { agentsFiles: resourceSnapshot.contextFiles.map((file) => ({ ...file })) }
+              : base
+            return resourceSnapshot.personaMarkdown
+              ? filterPersonaContextFile(snapshot, join(agentDir, 'AGENTS.md'))
+              : snapshot
+          },
           extensionFactories: sessionExtensionFactories
         })
       : undefined
@@ -232,10 +248,12 @@ export async function createSessionToolRegistry(deps: {
     ...libraryCustomTools,
     buildPaletteRecommendationTool(),
     ...userInteractionCustomTools,
-    buildEnvRequestTool(requestHost, {
-      runtimeSessionId: sessionId,
-      requireEnvironment: true
-    }),
+    buildEnvRequestTool(
+      requestHost,
+      environmentBinding
+        ? { runtimeSessionId: sessionId, binding: environmentBinding, agent: 'Main' }
+        : { runtimeSessionId: sessionId, requireEnvironment: true }
+    ),
     ...buildCapabilityTools(requestHost, {
       runtimeSessionId: sessionId,
       onInstalled: (result, signal) =>

@@ -107,6 +107,27 @@ function corrupt(sessionId: string, message: string): SessionListEntry {
   return { sessionId, error: { code: 'CORRUPT_SESSION', message } }
 }
 
+function persistedSessionPolicy(
+  params: SessionCreateParams
+): SessionManifest['policy'] | undefined {
+  const requiresTrustedResources =
+    params.workMode !== undefined ||
+    params.enableToolApproval !== undefined ||
+    params.autoCompaction !== undefined ||
+    params.resourceOptions !== undefined ||
+    params.phiAgents !== undefined ||
+    params.personaMarkdown !== undefined ||
+    params.projectBound !== undefined ||
+    params.memory !== undefined ||
+    params.contextFiles !== undefined ||
+    params.mcpServers !== undefined ||
+    params.environment !== undefined ||
+    params.noTools !== undefined
+  return requiresTrustedResources
+    ? { projectBound: params.projectBound === true, requiresTrustedResources: true }
+    : undefined
+}
+
 export class KernelSessionRepository {
   private readonly root: string
   private readonly loaded = new Map<string, PersistentSession>()
@@ -154,6 +175,29 @@ export class KernelSessionRepository {
   }
 
   async create(sessionId: string, params: SessionCreateParams): Promise<PersistentSession> {
+    const policy = persistedSessionPolicy(params)
+    return this.createWithManifest(sessionId, {
+      cwd: params.cwd,
+      model: { ...params.model },
+      ...(params.thinkingLevel ? { thinkingLevel: params.thinkingLevel } : {}),
+      ...(policy ? { policy } : {})
+    })
+  }
+
+  async createFork(sessionId: string, source: PersistentSession): Promise<PersistentSession> {
+    return this.createWithManifest(sessionId, {
+      cwd: source.manifest.cwd,
+      ...(source.manifest.model ? { model: { ...source.manifest.model } } : {}),
+      ...(source.manifest.thinkingLevel ? { thinkingLevel: source.manifest.thinkingLevel } : {}),
+      ...(source.manifest.title ? { title: source.manifest.title } : {}),
+      ...(source.manifest.policy ? { policy: { ...source.manifest.policy } } : {})
+    })
+  }
+
+  private async createWithManifest(
+    sessionId: string,
+    fields: Pick<SessionManifest, 'cwd' | 'model' | 'thinkingLevel' | 'title' | 'policy'>
+  ): Promise<PersistentSession> {
     if (!isKernelSessionId(sessionId)) throw new TypeError('Invalid kernel session id')
     await ensurePrivateDirectory(join(this.agentDir, 'phi-kernel'), true)
     await ensurePrivateDirectory(this.root, true)
@@ -167,11 +211,13 @@ export class KernelSessionRepository {
     const manifest: SessionManifest = {
       schemaVersion: SESSION_MANIFEST_SCHEMA_VERSION,
       sessionId,
-      cwd: params.cwd,
+      cwd: fields.cwd,
       createdAt: now,
       updatedAt: now,
-      model: { ...params.model },
-      ...(params.thinkingLevel ? { thinkingLevel: params.thinkingLevel } : {}),
+      ...(fields.model ? { model: fields.model } : {}),
+      ...(fields.thinkingLevel ? { thinkingLevel: fields.thinkingLevel } : {}),
+      ...(fields.title ? { title: fields.title } : {}),
+      ...(fields.policy ? { policy: fields.policy } : {}),
       journal: 'journal.jsonl'
     }
     try {

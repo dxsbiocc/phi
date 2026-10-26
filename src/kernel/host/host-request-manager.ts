@@ -118,7 +118,7 @@ export class KernelHostRequestManager<Connection> {
       })
       return makeProtocolError('INVALID_PARAMS', 'Host request parameters are invalid.')
     }
-    if (definition.runScoped && (!context.sessionId || !context.runId)) {
+    if (definition.runScoped === true && (!context.sessionId || !context.runId)) {
       const missing = [
         ...(context.sessionId ? [] : ['sessionId']),
         ...(context.runId ? [] : ['runId'])
@@ -291,7 +291,7 @@ export class KernelHostRequestManager<Connection> {
     for (const [id, pending] of [...this.pending]) {
       if (pending.sessionId !== sessionId || pending.runId !== runId) continue
       const definition = KERNEL_HOST_CAPABILITY_REGISTRY[pending.capability]
-      if (!definition.runScoped) continue
+      if (definition.runScoped === false) continue
       this.cancel(id, pending, reason)
     }
   }
@@ -300,7 +300,7 @@ export class KernelHostRequestManager<Connection> {
     for (const [id, pending] of [...this.pending]) {
       if (pending.sessionId !== sessionId) continue
       const definition = KERNEL_HOST_CAPABILITY_REGISTRY[pending.capability]
-      if (!definition.runScoped) continue
+      if (definition.runScoped === false) continue
       this.cancel(id, pending, reason)
     }
   }

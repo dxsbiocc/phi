@@ -15,6 +15,8 @@ import {
   type DefaultResourceLoaderOptions,
   type ResourceDiagnostic
 } from './session-factory'
+import { sessions } from './state'
+import { sessionContextFiles } from './session-resource-input'
 
 export const PHI_PROJECT_CONFIG_DIR_NAME = '.phi'
 
@@ -161,7 +163,37 @@ export function markProjectSkills(
   }
 }
 
+function serializeResources(loader: DefaultResourceLoader, cwd: string): unknown {
+  return {
+    extensions: loader.getExtensions(),
+    skills: markProjectSkills(cwd, loader.getSkills()),
+    prompts: loader.getPrompts(),
+    themes: loader.getThemes(),
+    agentsFiles: loader.getAgentsFiles(),
+    systemPrompt: loader.getSystemPrompt(),
+    appendSystemPrompt: loader.getAppendSystemPrompt()
+  }
+}
+
 export async function reloadResources(params: unknown): Promise<unknown> {
+  const record = isRecord(params) ? params : {}
+  const sessionId = stringValue(record.sessionId)
+  if (sessionId) {
+    const entry = sessions.get(sessionId)
+    if (!entry) throw new Error(`Unknown session: ${sessionId}`)
+    if (!entry.resourceLoader) throw new Error('Session resources are unavailable')
+    if (entry.resourceSnapshot) {
+      if (typeof record.personaMarkdown === 'string') {
+        entry.resourceSnapshot.personaMarkdown = record.personaMarkdown.trim()
+      }
+      if (Object.hasOwn(record, 'contextFiles')) {
+        entry.resourceSnapshot.contextFiles = sessionContextFiles(record.contextFiles)
+      }
+    }
+    await entry.resourceLoader.reload()
+    await entry.result.session.refreshSkills()
+    return serializeResources(entry.resourceLoader, entry.result.session.sessionManager.getCwd())
+  }
   const options = resourceOptions(params)
   const loader = new DefaultResourceLoader({
     ...options,
@@ -169,13 +201,5 @@ export async function reloadResources(params: unknown): Promise<unknown> {
   })
   await loader.reload()
 
-  return {
-    extensions: loader.getExtensions(),
-    skills: markProjectSkills(options.cwd ?? process.cwd(), loader.getSkills()),
-    prompts: loader.getPrompts(),
-    themes: loader.getThemes(),
-    agentsFiles: loader.getAgentsFiles(),
-    systemPrompt: loader.getSystemPrompt(),
-    appendSystemPrompt: loader.getAppendSystemPrompt()
-  }
+  return serializeResources(loader, options.cwd ?? process.cwd())
 }

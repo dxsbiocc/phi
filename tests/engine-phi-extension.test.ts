@@ -283,7 +283,7 @@ test('PhiExtensionConfig survives a JSON round trip unchanged', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(original)), original)
 })
 
-test('local main and specialist builders preserve prior decisions except the OMP 18.10 environment transport', async () => {
+test('local main and specialist builders preserve prior decisions and bind main bash when requested', async () => {
   for (const active of [false, true]) {
     for (const bound of [false, true]) {
       const binding = bound
@@ -315,10 +315,18 @@ test('local main and specialist builders preserve prior decisions except the OMP
         browserApprovalInput: () => ({ action: 'typeText', text: '[vault]' })
       })
       const previous = previousExtensions(extensionConfig, extensionHost)
-      await assertBuilderParity(
-        createMainSessionExtensions(extensionConfig, extensionHost),
-        previous.main
-      )
+      const mainFactories = createMainSessionExtensions(extensionConfig, extensionHost)
+      await assertBuilderParity(binding ? mainFactories.slice(0, -1) : mainFactories, previous.main)
+      if (binding) {
+        const recorded = await recordFactories(mainFactories)
+        const rewritten = await recorded.handlers.at(-1)?.({
+          toolName: 'bash',
+          input: { command: 'python -V' }
+        })
+        assert.deepEqual((rewritten as { input?: { env?: unknown } })?.input?.env, {
+          PATH: '/runtime/bin'
+        })
+      }
       // Specialists never receive the main browser vault or Phi agent registrations.
       const specialistConfig = { ...extensionConfig, useBrowserTextVault: false, phiAgents: [] }
       const specialistHost = { ...extensionHost }

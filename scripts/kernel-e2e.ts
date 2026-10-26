@@ -3,8 +3,9 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname, join, posix, resolve } from 'node:path'
 
 import { launchLocalKernel, type LocalKernelLauncher } from '../src/main/agent/engine/kernel-client'
@@ -34,6 +35,7 @@ import {
   shellLiteral,
   toolEvidence
 } from './kernel-e2e/lifecycle-scenarios'
+import { runToolsScenario, type ToolsReadEvidence } from './kernel-e2e/tools-scenario'
 import {
   agentConfig,
   bounded,
@@ -85,7 +87,7 @@ interface E2eReport {
     afterOneSession: number | null
     afterTwoSessions: number | null
   }
-  evidence: {
+  evidence: ToolsReadEvidence & {
     kernelPidA?: number
     kernelPidB?: number
     longChildPid?: number
@@ -114,8 +116,11 @@ interface ScenarioPaths {
 
 interface TargetFiles {
   readonly paths: ScenarioPaths
+  projectPath(relativePath: string): string
+  homePath(relativePath: string): string
   prepare(): Promise<void>
   writeAgentConfig(baseUrl: string, token: string): Promise<void>
+  write(path: string, content: Uint8Array | string): Promise<void>
   read(path: string): Promise<string>
   exists(path: string): Promise<boolean>
   processAlive(pid: number): Promise<boolean>
@@ -151,6 +156,8 @@ function localFiles(runtimeRoot: string): TargetFiles {
   const paths = scenarioPaths(join(runtimeRoot, 'kernel-e2e', randomUUID()))
   return {
     paths,
+    projectPath: (relativePath) => join(paths.projectA, relativePath),
+    homePath: (relativePath) => join(paths.home, relativePath),
     async prepare() {
       for (const directory of [
         paths.agentDir,
@@ -171,6 +178,10 @@ function localFiles(runtimeRoot: string): TargetFiles {
       const config = agentConfig(baseUrl, token)
       writeFileSync(join(paths.agentDir, 'models.yml'), config.models)
       writeFileSync(join(paths.agentDir, 'config.yml'), config.config)
+    },
+    async write(path, content) {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+      writeFileSync(path, content)
     },
     async read(path) {
       return readFileSync(path, 'utf8')
@@ -199,6 +210,7 @@ function localFiles(runtimeRoot: string): TargetFiles {
 
 function remoteFiles(session: RemoteSshSession, runtimeRoot: string): TargetFiles {
   const paths = scenarioPaths(posix.join(runtimeRoot, 'kernel-e2e', randomUUID()), true)
+  let stagingRoot: string | undefined
   const run = async (command: string): Promise<string> => {
     const result = await session.exec(command)
     if (result.code !== 0 || result.signal)
@@ -207,6 +219,8 @@ function remoteFiles(session: RemoteSshSession, runtimeRoot: string): TargetFile
   }
   return {
     paths,
+    projectPath: (relativePath) => posix.join(paths.projectA, relativePath),
+    homePath: (relativePath) => posix.join(paths.home, relativePath),
     async prepare() {
       await run(
         `umask 077; mkdir -p -- ${[paths.agentDir, paths.home, paths.projectA, paths.projectB]
@@ -229,6 +243,13 @@ function remoteFiles(session: RemoteSshSession, runtimeRoot: string): TargetFile
       await session.writeTextFile(posix.join(paths.agentDir, 'models.yml'), config.models)
       await session.writeTextFile(posix.join(paths.agentDir, 'config.yml'), config.config)
     },
+    async write(path, content) {
+      await session.mkdirp(posix.dirname(path))
+      stagingRoot ??= mkdtempSync(join(tmpdir(), 'phi-kernel-e2e-tools-'))
+      const staged = join(stagingRoot, randomUUID())
+      writeFileSync(staged, content)
+      await session.uploadFile(staged, path, { remoteRoot: paths.projectA })
+    },
     read: (path) => session.readTextFile(path),
     async exists(path) {
       return (await session.exec(`test -e ${shellQuote(path)}`)).code === 0
@@ -242,7 +263,11 @@ function remoteFiles(session: RemoteSshSession, runtimeRoot: string): TargetFile
       return Number.isFinite(rss) && rss > 0 ? rss : null
     },
     async cleanup() {
-      await run(`rm -rf -- ${shellQuote(paths.root)}`)
+      try {
+        await run(`rm -rf -- ${shellQuote(paths.root)}`)
+      } finally {
+        if (stagingRoot) rmSync(stagingRoot, { recursive: true, force: true })
+      }
     }
   }
 }
@@ -396,6 +421,23 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
     await bounded(launch.client.subscribe(0), 'event subscription')
     launch.client.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
     launch.client.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
+
+    if (options.scenario === 'tools') {
+      await runToolsScenario({
+        provider,
+        client: scenario,
+        files: {
+          projectRoot: files.paths.projectA,
+          projectPath: (relativePath) => files!.projectPath(relativePath),
+          homePath: (relativePath) => files!.homePath(relativePath),
+          write: (path, content) => files!.write(path, content)
+        },
+        report,
+        step
+      })
+      report.ok = report.steps.every((item) => item.passed)
+      return report
+    }
 
     if (options.scenario !== 'baseline') {
       const lifecycle = await runSshLifecycleScenario({

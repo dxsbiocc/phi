@@ -11,6 +11,12 @@ export const KERNEL_V1_METHODS = [
   'session.adopt',
   'sessions.list',
   'session.prompt',
+  // K3-2 resource and OMP async shell-job capabilities.
+  'resources.reload',
+  'shellJobs.list',
+  'shellJobs.cancel',
+  // K3-2 kernel-owned full-history fork.
+  'session.fork',
   'session.abort',
   'session.snapshot',
   'session.close',

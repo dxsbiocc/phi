@@ -9,6 +9,8 @@ import type { BrowserTextVault } from '../../browser/browser-text-vault'
 import type { AgentRunFn, AgentRunRegistry } from '../../agents/registry'
 import type { PlanStepsToolResult } from '../../plan/plan-review-mode'
 import type { RuntimeContext } from './common'
+import type { DefaultResourceLoader } from './session-factory'
+import type { SessionResourceSnapshot } from './session-resource-input'
 
 export type RemoteMcpAccess = {
   localProjectAnchor: string
@@ -32,6 +34,8 @@ export type SessionEntry = {
   mcpLeases?: Map<string, EnvironmentLease>
   ownedMcpManager?: MCPManager
   ownedStdioTransports?: Map<string, OwnedStdioTransportScope>
+  resourceLoader?: DefaultResourceLoader
+  resourceSnapshot?: SessionResourceSnapshot
   remoteMcpAccess?: RemoteMcpAccess
   disposing?: boolean
 }

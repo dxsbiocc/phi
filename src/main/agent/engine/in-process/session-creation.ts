@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { Settings, type CreateAgentSessionResult } from '@oh-my-pi/pi-coding-agent'
+import {
+  Settings,
+  type CreateAgentSessionResult,
+  type SessionManager
+} from '@oh-my-pi/pi-coding-agent'
 import {
   createMainSessionExtensions,
   createPlanStepsExtension,
@@ -27,14 +31,27 @@ import { assertInProcessLocalProject } from './local-project-boundary'
 import { disconnectLeasedMcpManager, leasedProfileMcpManager } from './mcp-profile'
 import { loadWorkerMcpRuntime } from './worker-subsystems'
 import { getContext, modelBySelector, runtimeThinkingLevel } from './runtime-context'
-import { createAgentSession, makeSessionManager } from './session-factory'
+import {
+  createAgentSession,
+  makeSessionManager,
+  type DefaultResourceLoader
+} from './session-factory'
 import { autoCompactionOverrides, enterSessionPlanMode } from './session-runtime'
 import { sessions } from './state'
 import { createSessionToolRegistry } from './tool-registry'
 import { serializeSessionState } from './tool-support'
 import { installAutoWorkModeBatchGuard } from './auto-work-mode-guard'
+import { createLiveResourcePromptExtension } from './live-resource-prompt'
+import {
+  bindSessionEnvironment,
+  sessionContextFiles,
+  sessionMcpServers
+} from './session-resource-input'
 
-export async function createSession(params: unknown): Promise<unknown> {
+export async function createSession(
+  params: unknown,
+  preparedSessionManager?: SessionManager
+): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const sessionId = stringValue(record.sessionId, randomUUID())
   const cwd = stringValue(record.cwd, process.cwd())
@@ -48,10 +65,20 @@ export async function createSession(params: unknown): Promise<unknown> {
   const memoryPolicy = normalizeProjectMemorySettings(record.memory)
   const memoryTarget = memoryPolicy.enabled ? { agentDir, cwd } : undefined
   if (memoryTarget) createPhiSettings(settings).memory.useLocalBackend()
-  const sessionManager = await makeSessionManager(record.sessionManager, cwd, agentDir)
   const noTools = record.noTools === 'all' || record.noTools === true
   if (!noTools) disableFeaturedApiKeyAutoDiscovery(agentDir)
-  const personaMarkdown = stringValue(record.personaMarkdown).trim()
+  const resourceSnapshot = {
+    personaMarkdown: stringValue(record.personaMarkdown).trim(),
+    contextFiles: sessionContextFiles(record.contextFiles)
+  }
+  const mcpServers = sessionMcpServers(record.mcpServers)
+  const environmentBinding = await bindSessionEnvironment(record.environment, {
+    sessionId,
+    cwd,
+    request: requestHost
+  })
+  const sessionManager =
+    preparedSessionManager ?? (await makeSessionManager(record.sessionManager, cwd, agentDir))
   const workMode =
     record.workMode === 'auto' ||
     record.workMode === 'direct' ||
@@ -67,6 +94,7 @@ export async function createSession(params: unknown): Promise<unknown> {
   const agentRuns = new AgentRunRegistry()
   const parentRef: { current?: CreateAgentSessionResult } = {}
   const browserTextVault = new BrowserTextVault()
+  const sessionResourceLoader: { current?: DefaultResourceLoader } = {}
   const agentPolicies = phiExtensionAgents(phiAgents)
   const extensionConfig: PhiExtensionConfig = {
     cwd,
@@ -75,6 +103,7 @@ export async function createSession(params: unknown): Promise<unknown> {
     sessionId,
     useBrowserTextVault: true,
     workMode,
+    ...(environmentBinding ? { environmentBinding } : {}),
     phiAgents: agentPolicies
   }
   const extensionHost = createInProcessExtensionHost({
@@ -94,9 +123,14 @@ export async function createSession(params: unknown): Promise<unknown> {
       await requestHost('workMode.selected', input, { originSessionId: sessionId })
     },
     browserTextVault,
-    agentRuns
+    agentRuns,
+    environmentBinding: () => environmentBinding
   })
   const extensionFactories = [
+    createLiveResourcePromptExtension({
+      snapshot: resourceSnapshot,
+      loader: () => sessionResourceLoader.current
+    }),
     ...createMainSessionExtensions(extensionConfig, extensionHost),
     createPlanStepsExtension(extensionHost),
     // Keep a policy guard even when a later approved plugin supplies the first specialist.
@@ -105,30 +139,48 @@ export async function createSession(params: unknown): Promise<unknown> {
       : []),
     createCursorStreamRecoveryExtension(() => parentRef.current?.session.agent)
   ]
-  const { resources, customTools, agentRunners, stopAgentRunNotices } =
-    await createSessionToolRegistry({
-      record,
-      sessionId,
-      cwd,
-      agentDir,
-      settingsCwd,
-      personaMarkdown,
-      extensionFactories,
-      ctx,
-      parentRef,
-      browserTextVault,
-      memoryPolicy,
-      memoryTarget,
-      agentRuns,
-      phiAgents,
-      onAgentsChanged: () => {
-        agentPolicies.splice(0, agentPolicies.length, ...phiExtensionAgents(phiAgents))
-      }
-    })
+  const registry = await createSessionToolRegistry({
+    record,
+    sessionId,
+    cwd,
+    agentDir,
+    settingsCwd,
+    resourceSnapshot,
+    environmentBinding,
+    extensionFactories,
+    ctx,
+    parentRef,
+    browserTextVault,
+    memoryPolicy,
+    memoryTarget,
+    agentRuns,
+    phiAgents,
+    onAgentsChanged: () => {
+      agentPolicies.splice(0, agentPolicies.length, ...phiExtensionAgents(phiAgents))
+    }
+  })
+  sessionResourceLoader.current = registry.resources
+  const { resources, customTools, agentRunners, stopAgentRunNotices } = registry
 
   const selectedModel = await modelBySelector(ctx, record.model)
   const leasedMcp = !noTools
-    ? await leasedProfileMcpManager(agentDir, cwd, settings, ctx.authStorage)
+    ? await leasedProfileMcpManager(
+        agentDir,
+        cwd,
+        settings,
+        ctx.authStorage,
+        undefined,
+        [],
+        mcpServers
+          ? {
+              serverNames: new Set(mcpServers.map((server) => server.name)),
+              allowStdio: true,
+              overrides: Object.fromEntries(
+                mcpServers.map((server) => [server.name, server.config])
+              )
+            }
+          : undefined
+      )
     : undefined
   const mcpLeases = leasedMcp?.leases ?? new Map<string, EnvironmentLease>()
   let created: CreateAgentSessionResult | undefined
@@ -147,13 +199,12 @@ export async function createSession(params: unknown): Promise<unknown> {
       sessionManager,
       ...(leasedMcp ? { mcpManager: leasedMcp.manager } : {}),
       thinkingLevel: runtimeThinkingLevel(record.thinkingLevel),
-      systemPrompt: (defaultPrompt) =>
-        buildPhiMainSystemPrompt(defaultPrompt, {
-          ...(personaMarkdown ? { personaMarkdown } : {}),
-          workMode
-        }),
+      systemPrompt: (defaultPrompt) => buildPhiMainSystemPrompt(defaultPrompt, { workMode }),
       ...(selectedModel ? { model: selectedModel } : {}),
       ...(resources ? { resourceLoader: resources } : {}),
+      // Snapshot-owned skills/context are injected by the live resource extension so a
+      // reload can replace them without leaving revoked instructions in the base prompt.
+      contextFiles: [],
       ...(customTools.length > 0 ? { customTools: customTools.map(toOmpCustomTool) } : {}),
       ...(noTools
         ? {
@@ -199,6 +250,8 @@ export async function createSession(params: unknown): Promise<unknown> {
       stopAgentRunNotices,
       browserTextVault,
       mcpLeases,
+      ...(resources ? { resourceLoader: resources } : {}),
+      resourceSnapshot,
       ...(leasedMcp
         ? { ownedMcpManager: leasedMcp.manager, ownedStdioTransports: leasedMcp.transports }
         : {})
@@ -215,6 +268,9 @@ export async function createSession(params: unknown): Promise<unknown> {
     } finally {
       await disconnectLeasedMcpManager(leasedMcp?.manager, leasedMcp?.transports)
       for (const lease of mcpLeases.values()) lease.release()
+      if (!created && preparedSessionManager) {
+        await preparedSessionManager.close().catch(() => undefined)
+      }
     }
     throw error
   }

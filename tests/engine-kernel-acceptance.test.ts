@@ -69,6 +69,68 @@ test(
 )
 
 test(
+  'A12 kernel executes the complete native core-tool roster on real files',
+  { timeout: 30_000 },
+  async (t) => {
+    const f = await createKernelFixture()
+    t.after(() => f.close())
+    await f.createSession('a12-core-tools')
+    const target = join(f.cwd, 'core-tools.txt')
+    f.provider.enqueue(
+      {
+        tool: {
+          name: 'write',
+          id: 'a12-write',
+          args: { path: target, content: 'alpha marker\n' }
+        }
+      },
+      { tool: { name: 'read', id: 'a12-read', args: { path: target } } },
+      {
+        tool: {
+          name: 'edit',
+          id: 'a12-edit',
+          args: { path: target, old_string: 'alpha marker', new_string: 'beta marker' }
+        }
+      },
+      {
+        tool: {
+          name: 'grep',
+          id: 'a12-grep',
+          args: { pattern: 'beta marker', path: f.cwd }
+        }
+      },
+      {
+        tool: {
+          name: 'glob',
+          id: 'a12-glob',
+          args: { pattern: '**/core-tools.txt', path: f.cwd }
+        }
+      },
+      {
+        tool: {
+          name: 'bash',
+          id: 'a12-bash',
+          args: { command: 'printf CORE_BASH_OK' }
+        }
+      },
+      { text: 'A12 core tools complete.' }
+    )
+
+    const state = await f.sessions.prompt({
+      sessionId: 'a12-core-tools',
+      text: 'Exercise each native core tool in order.'
+    })
+    const transcript = JSON.stringify(state.messages)
+    assert.equal(readFileSync(target, 'utf8'), 'beta marker\n')
+    assert.match(transcript, /alpha marker/)
+    assert.match(transcript, /beta marker/)
+    assert.match(transcript, /core-tools\.txt/)
+    assert.match(transcript, /CORE_BASH_OK/)
+    assert.equal(messageText(state.messages?.at(-1)), 'A12 core tools complete.')
+  }
+)
+
+test(
   'A03 kernel approvals approve once, deny, reject duplicates, and cancel safely',
   { timeout: 45_000 },
   async (t) => {
@@ -212,6 +274,54 @@ test(
     f.provider.enqueue({ text: 'Session reused.' })
     const reused = await f.sessions.prompt({ sessionId: 'bash-abort', text: 'Continue.' })
     assert.equal(messageText(reused.messages?.at(-1)), 'Session reused.')
+  }
+)
+
+test(
+  'A12 kernel lists and cancels OMP async shell jobs without a second registry',
+  { timeout: 45_000 },
+  async (t) => {
+    const f = await createKernelFixture()
+    t.after(() => f.close())
+    await f.createSession('a12-shell-jobs')
+    const kernelSessionId = f.kernelSessionId('a12-shell-jobs')
+    assert.ok(kernelSessionId)
+    f.provider.enqueue(
+      {
+        tool: {
+          name: 'bash',
+          id: 'a12-async-bash',
+          args: { command: 'sleep 30', async: true }
+        }
+      },
+      { text: 'Background shell started.' }
+    )
+    await f.sessions.prompt({
+      sessionId: 'a12-shell-jobs',
+      text: 'Start the background shell.'
+    })
+
+    const listed = (await f.client.request('shellJobs.list', {})) as unknown as Array<{
+      agentSessionId: string
+      jobId: string
+      state: string
+    }>
+    const job = listed.find((candidate) => candidate.agentSessionId === kernelSessionId)
+    assert.ok(job)
+    assert.equal(job.state, 'running')
+    assert.deepEqual(
+      await f.client.request(
+        'shellJobs.cancel',
+        { jobId: job.jobId },
+        { sessionId: kernelSessionId }
+      ),
+      { ok: true }
+    )
+    const afterCancel = (await f.client.request('shellJobs.list', {})) as unknown as Array<{
+      jobId: string
+      state: string
+    }>
+    assert.equal(afterCancel.find((candidate) => candidate.jobId === job.jobId)?.state, 'cancelled')
   }
 )
 

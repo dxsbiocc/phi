@@ -19,7 +19,9 @@ const service = (
   runScoped
 })
 
-const user = (runScoped = true): { interaction: 'user'; runScoped: boolean } => ({
+const user = (
+  runScoped: boolean | 'optional' = true
+): { interaction: 'user'; runScoped: boolean | 'optional' } => ({
   interaction: 'user' as const,
   runScoped
 })
@@ -302,7 +304,7 @@ type KernelHostCapabilityDefinition = {
   readonly result: z.ZodType
   readonly interaction: 'user' | 'service'
   readonly timeoutMs?: number
-  readonly runScoped: boolean
+  readonly runScoped: boolean | 'optional'
   readonly sensitiveResult?: boolean
 }
 
@@ -373,7 +375,7 @@ export const KERNEL_HOST_CAPABILITY_REGISTRY = {
   'environments.bindSession': {
     params: environmentBindingParamsSchema,
     result: environmentBindingResultSchema,
-    ...user()
+    ...user('optional')
   },
   'environments.request': {
     params: z
