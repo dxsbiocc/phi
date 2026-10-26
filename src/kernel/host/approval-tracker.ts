@@ -45,6 +45,19 @@ export class KernelApprovalTracker {
     )
   }
 
+  cancelAgentRun(sessionId: string, agentRunId: string): Array<[string, PendingApproval]> {
+    return this.cancelMatching(({ event }) => {
+      if (event.sessionId !== sessionId || event.type !== 'approval.requested') return false
+      const payload = event.payload
+      return (
+        payload !== null &&
+        typeof payload === 'object' &&
+        !Array.isArray(payload) &&
+        payload.agentRunId === agentRunId
+      )
+    })
+  }
+
   cancelSession(sessionId: string): Array<[string, PendingApproval]> {
     return this.cancelMatching(({ event }) => event.sessionId === sessionId)
   }

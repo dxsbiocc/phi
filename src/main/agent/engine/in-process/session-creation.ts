@@ -54,6 +54,7 @@ import {
   sessionMcpServers
 } from './session-resource-input'
 import { loadDesktopMcpHostTools } from './desktop-mcp-host-tools'
+import type { KernelRuntimeServices } from './kernel-services'
 
 type McpRefreshSession = Pick<
   CreateAgentSessionResult['session'],
@@ -77,6 +78,7 @@ export async function createSession(
     modelAccess?: Pick<RuntimeContext, 'authStorage' | 'modelRegistry'> & {
       requestFetch?: typeof globalThis.fetch
     }
+    kernelServices?: KernelRuntimeServices
   } = {}
 ): Promise<unknown> {
   const preparedSessionManager = dependencies.preparedSessionManager
@@ -124,7 +126,14 @@ export async function createSession(
     : []
   // One registry per conversation: parallel and background delegations share its limits,
   // and the run tools and controlled-fallback policy below act on it.
-  const agentRuns = new AgentRunRegistry()
+  const agentRuns = new AgentRunRegistry({
+    ...(dependencies.kernelServices?.agentRuns
+      ? { admission: dependencies.kernelServices.agentRuns.admission(sessionId) }
+      : {})
+  })
+  const stopKernelAgentRunNotices = dependencies.kernelServices?.agentRuns
+    ? agentRuns.subscribe(dependencies.kernelServices.agentRuns.listener(sessionId))
+    : undefined
   const parentRef: { current?: CreateAgentSessionResult } = {}
   const browserTextVault = new BrowserTextVault()
   const sessionResourceLoader: { current?: DefaultResourceLoader } = {}
@@ -314,6 +323,10 @@ export async function createSession(
       reloadAgents,
       applyResourceReload,
       stopAgentRunNotices,
+      ...(stopKernelAgentRunNotices ? { stopKernelAgentRunNotices } : {}),
+      ...(dependencies.kernelServices?.plans
+        ? { kernelPlanRuntime: dependencies.kernelServices.plans }
+        : {}),
       browserTextVault,
       mcpLeases,
       ...(desktopMcp ? { closeDesktopMcp: () => desktopMcp!.close() } : {}),
@@ -328,6 +341,7 @@ export async function createSession(
       state: serializeSessionState(result)
     }
   } catch (error) {
+    stopKernelAgentRunNotices?.()
     try {
       await created?.session.dispose()
     } catch {

@@ -67,6 +67,43 @@ import {
   type ProtocolErrorCode
 } from '../src/shared/kernel-protocol'
 
+const planState = {
+  id: 'plan-1',
+  sessionId: 'session-1',
+  spec: {
+    version: 1,
+    goal: 'Inspect then write',
+    steps: [
+      {
+        id: 'read',
+        title: 'Read',
+        instructions: 'Read the input.',
+        acceptance: 'Input inspected.',
+        dependsOn: [],
+        access: 'read'
+      }
+    ]
+  },
+  status: 'paused',
+  steps: { read: { status: 'failed', attempts: 1, error: 'injected failure' } },
+  pause: { reason: 'step_failed', stepId: 'read' },
+  replans: 0,
+  createdAt: '2026-10-26T01:00:00.000Z',
+  updatedAt: '2026-10-26T01:01:00.000Z'
+} as const
+
+const agentRun = {
+  requestId: 'agent-request-1',
+  runId: 'run_1',
+  agent: 'PlanStep',
+  task: 'Read the input.',
+  state: 'running',
+  origin: 'host',
+  background: true,
+  acceptedAt: '2026-10-26T01:00:00.000Z',
+  startedAt: 1_798_000_000_000
+} as const
+
 const methodParams = {
   'kernel.hello': {
     protocol: PHI_KERNEL_PROTOCOL_VERSION,
@@ -113,6 +150,23 @@ const methodParams = {
     synthetic: false,
     userInitiated: true
   },
+  'session.plan.enter': { execute: true },
+  'session.plan.cancel': { replanRequestId: 'replan-1' },
+  'planRuns.list': {},
+  'planRuns.get': { runId: 'plan-1' },
+  'planRuns.retryStep': { runId: 'plan-1', stepId: 'read' },
+  'planRuns.skipStep': { runId: 'plan-1', stepId: 'read' },
+  'planRuns.replan': { runId: 'plan-1' },
+  'planRuns.stop': { runId: 'plan-1' },
+  'agentRuns.start': {
+    requestId: 'agent-request-1',
+    agent: 'PlanStep',
+    task: 'Read the input.'
+  },
+  'agentRuns.list': {},
+  'agentRuns.wait': { runId: 'run_1', timeoutMs: 1_000 },
+  'agentRuns.steer': { runId: 'run_1', message: 'Check the second file too.' },
+  'agentRuns.stop': { runId: 'run_1' },
   'session.fork': {},
   'resources.reload': {
     cwd: '/tmp/phi-project',
@@ -183,6 +237,19 @@ const methodResults = {
     ]
   },
   'session.prompt': { accepted: true, runId: 'run-1' },
+  'session.plan.enter': { enabled: true },
+  'session.plan.cancel': { cancelled: true },
+  'planRuns.list': [planState],
+  'planRuns.get': planState,
+  'planRuns.retryStep': planState,
+  'planRuns.skipStep': planState,
+  'planRuns.replan': { requestId: 'replan-1', runId: 'plan-1', prompt: 'Replan.' },
+  'planRuns.stop': planState,
+  'agentRuns.start': agentRun,
+  'agentRuns.list': [agentRun],
+  'agentRuns.wait': { run: agentRun, timedOut: false },
+  'agentRuns.steer': { ok: true },
+  'agentRuns.stop': { ok: true },
   'session.fork': { sessionId: 'session-fork-1' },
   'resources.reload': {
     extensions: [],
@@ -358,7 +425,12 @@ describe('kernel protocol DTOs', () => {
       KERNEL_EVENT_APPROVAL_REQUESTED,
       KERNEL_EVENT_INTERACTION_CANCELLED,
       KERNEL_EVENT_RUN_COMPLETED,
-      KERNEL_EVENT_MODELS_CHANGED
+      KERNEL_EVENT_MODELS_CHANGED,
+      'planRun.updated',
+      'agentRun.started',
+      'agentRun.step',
+      'agentRun.finished',
+      'agentRun.reported'
     ])
     assert.deepEqual(KERNEL_V1_EVENT_TYPES, [
       'session.event',
@@ -366,7 +438,12 @@ describe('kernel protocol DTOs', () => {
       'approval.requested',
       'interaction.cancelled',
       'run.completed',
-      'models.changed'
+      'models.changed',
+      'planRun.updated',
+      'agentRun.started',
+      'agentRun.step',
+      'agentRun.finished',
+      'agentRun.reported'
     ])
   })
 

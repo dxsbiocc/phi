@@ -2,7 +2,7 @@ import { closeSync, fsyncSync, openSync, writeSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-export type KernelTestPausePoint = 'a' | 'c' | 'd1' | 'd2'
+export type KernelTestPausePoint = 'a' | 'c' | 'd1' | 'd2' | 'agent-accepted' | 'agent-started'
 
 const scheduledPoints = new Set<KernelTestPausePoint>()
 

@@ -162,6 +162,13 @@ test('kernel E2E CLI accepts tools on either execution host without changing lif
   )
   assert.equal(remote.scenario, 'tools')
   assert.equal(remote.deadlineMinutes, 45)
+  assert.equal(
+    parseKernelE2eArgs(
+      ['--target', 'local', '--runtime-root', '/tmp/kernel-e2e', '--scenario', 'plan'],
+      '0.1.0'
+    ).scenario,
+    'plan'
+  )
   assert.throws(
     () =>
       parseKernelE2eArgs(
@@ -187,7 +194,7 @@ test('kernel E2E CLI accepts tools on either execution host without changing lif
       ),
     /--deadline-min must be a positive number/
   )
-  assert.match(kernelE2eUsage(), /baseline\|tools\|reconnect\|grace-expiry/)
+  assert.match(kernelE2eUsage(), /baseline\|tools\|plan\|reconnect\|grace-expiry/)
   assert.match(kernelE2eUsage(), /--deadline-min/)
 })
 

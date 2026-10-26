@@ -12,6 +12,7 @@ import type { RuntimeContext } from './common'
 import type { DefaultResourceLoader } from './session-factory'
 import type { SessionResourceSnapshot } from './session-resource-input'
 import type { PhiAgentDefinition } from '../../agents/definition'
+import type { KernelPlanRuntime } from './kernel-services'
 
 export type RemoteMcpAccess = {
   localProjectAnchor: string
@@ -31,6 +32,10 @@ export type SessionEntry = {
   planStepsProposal?: (input: unknown) => Promise<PlanStepsToolResult>
   /** Stops telling the main process about those runs (used when the session goes away). */
   stopAgentRunNotices?: () => void
+  /** Kernel fact publisher; the legacy desktop worker does not install it. */
+  stopKernelAgentRunNotices?: () => void
+  /** Kernel-owned plan service used after the host supplies only the review decision. */
+  kernelPlanRuntime?: KernelPlanRuntime
   browserTextVault?: BrowserTextVault
   activeHostRunId?: string
   mcpLeases?: Map<string, EnvironmentLease>

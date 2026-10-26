@@ -326,13 +326,201 @@ test(
 )
 
 test(
+  'A08 model delegation starts a kernel-owned sub-task with replayable facts',
+  { timeout: 45_000 },
+  async (t) => {
+    const f = await createKernelFixture()
+    t.after(() => f.close())
+    const events: KernelEventFrame[] = []
+    const stop = f.client.onEvent((event) => {
+      if (event.type.startsWith('agentRun.')) events.push(event)
+    })
+    t.after(stop)
+    await f.createSession('a08-model-tool', { phiAgents: true })
+    f.provider.enqueue(
+      {
+        tool: {
+          name: 'Wrapper',
+          id: 'a08-wrapper',
+          args: { task: 'Inspect the task and report without running a wrapper.', background: true }
+        }
+      },
+      { text: 'Background specialist completed.' },
+      { text: 'Delegation accepted.' }
+    )
+    await f.sessions.prompt({ sessionId: 'a08-model-tool', text: 'Delegate this inspection.' })
+
+    const sessionId = f.kernelSessionId('a08-model-tool')!
+    let runs: Array<Record<string, JsonValue>> = []
+    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+      runs = (await f.client.request('agentRuns.list', {}, { sessionId })) as unknown as Array<
+        Record<string, JsonValue>
+      >
+      if (runs[0]?.state === 'done') break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    assert.equal(runs.length, 1)
+    assert.equal(runs[0].origin, 'tool')
+    assert.equal(runs[0].state, 'done')
+    assert.equal(typeof runs[0].requestId, 'string')
+    assert.deepEqual(
+      events.map((event) => event.type).filter((type) => type !== 'agentRun.reported'),
+      ['agentRun.started', 'agentRun.finished']
+    )
+  }
+)
+
+test(
+  'A06 kernel approves dependency plan, gates its write, and summarizes in the main session',
+  { timeout: 60_000 },
+  async (t) => {
+    const f = await createKernelFixture({
+      hostCapabilities: ['workMode.selected', 'planReview.request']
+    })
+    t.after(() => f.close())
+    const target = join(f.cwd, 'planned-output.txt')
+    let approvals = 0
+    let writeWasAbsentAtApproval = false
+    const planEvents: KernelEventFrame[] = []
+    f.client.registerHostCapability('workMode.selected', ({ execute, reason }) => ({
+      ok: true,
+      mode: execute ? 'plan_execute' : 'plan',
+      reason
+    }))
+    f.client.registerHostCapability('planReview.request', () => ({ decision: 'approve' }))
+    const stop = f.client.onEvent((event) => {
+      if (event.type === 'planRun.updated') planEvents.push(event)
+      if (event.type !== 'approval.requested' || !event.sessionId) return
+      const payload = record(event.payload)
+      if (payload.toolName === 'write') {
+        approvals += 1
+        writeWasAbsentAtApproval = !existsSync(target)
+      }
+      void f.client.request(
+        'approval.respond',
+        { approvalId: String(payload.approvalId), decision: 'approved' },
+        { sessionId: event.sessionId }
+      )
+    })
+    t.after(stop)
+
+    await f.createSession('a06-plan', {
+      workMode: 'auto',
+      enableToolApproval: true,
+      phiAgents: true
+    })
+    const spec = {
+      version: 1,
+      goal: 'Inspect two inputs and write one result',
+      steps: [
+        {
+          id: 'read-a',
+          title: 'Read A',
+          instructions: 'Inspect A.',
+          acceptance: 'A inspected.',
+          dependsOn: [],
+          access: 'read'
+        },
+        {
+          id: 'read-b',
+          title: 'Read B',
+          instructions: 'Inspect B.',
+          acceptance: 'B inspected.',
+          dependsOn: [],
+          access: 'read'
+        },
+        {
+          id: 'write-c',
+          title: 'Write C',
+          instructions: 'Write the combined result.',
+          acceptance: 'C exists.',
+          dependsOn: ['read-a', 'read-b'],
+          access: 'write',
+          // Plan write scopes are project-relative; the validator rejects absolute paths.
+          writes: ['planned-output.txt']
+        }
+      ]
+    }
+    f.provider.enqueue(
+      {
+        match: 'Plan this work and execute it.',
+        tool: {
+          name: 'enter_plan_mode',
+          id: 'a06-enter',
+          args: { execute: true, reason: 'Execute the approved dependency plan' }
+        }
+      },
+      {
+        match: 'Plan this work and execute it.',
+        tool: { name: 'propose_plan_steps', id: 'a06-propose', args: spec }
+      },
+      { match: '## Current step: read-a: Read A', text: 'Completed approved plan work.' },
+      { match: '## Current step: read-b: Read B', text: 'Completed approved plan work.' },
+      { match: 'Plan this work and execute it.', text: 'Plan execution was handed off.' },
+      {
+        match: '## Current step: write-c: Write C',
+        tool: {
+          name: 'write',
+          id: 'a06-write',
+          args: { path: target, content: 'planned result' }
+        }
+      },
+      { match: '## Current step: write-c: Write C', text: 'Write step completed.' },
+      {
+        match: 'The approved plan has finished.',
+        text: 'The approved plan completed successfully.'
+      }
+    )
+    await f.sessions.prompt({ sessionId: 'a06-plan', text: 'Plan this work and execute it.' })
+
+    const kernelSessionId = f.kernelSessionId('a06-plan')!
+    let runs: Array<Record<string, JsonValue>> = []
+    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+      runs = (await f.client.request(
+        'planRuns.list',
+        {},
+        { sessionId: kernelSessionId }
+      )) as unknown as Array<Record<string, JsonValue>>
+      if (runs[0]?.status === 'completed') break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    assert.equal(runs[0]?.status, 'completed')
+    assert.equal(readFileSync(target, 'utf8'), 'planned result')
+    assert.equal(approvals, 1)
+    assert.equal(writeWasAbsentAtApproval, true)
+    let summarySnapshot: JsonValue = null
+    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+      summarySnapshot = await f.client.request(
+        'session.snapshot',
+        {},
+        { sessionId: kernelSessionId }
+      )
+      if (JSON.stringify(summarySnapshot).includes('approved plan completed successfully')) break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    assert.match(JSON.stringify(summarySnapshot), /approved plan completed successfully/i)
+    assert.ok(planEvents.length >= 2)
+    const states = planEvents.map((event) => record(event.payload).state).map(record)
+    // Plan state keeps the desktop plan service's shape: `steps` is an ordered array.
+    const stepStatus = (state: Record<string, JsonValue>, id: string): JsonValue | undefined => {
+      const steps = Array.isArray(state.steps) ? state.steps : []
+      return steps.map(record).find((step) => step.id === id)?.status
+    }
+    const firstWithWrite = states.findIndex((state) => stepStatus(state, 'write-c') === 'running')
+    assert.ok(firstWithWrite >= 0)
+    const beforeWrite = states.slice(0, firstWithWrite)
+    assert.ok(
+      beforeWrite.some(
+        (state) =>
+          stepStatus(state, 'read-a') === 'running' && stepStatus(state, 'read-b') === 'running'
+      )
+    )
+  }
+)
+
+test(
   'A07 two kernel plan reviews remain isolated when one run is cancelled',
-  {
-    timeout: 45_000,
-    // Plan steps default to the PlanStep agent, and kernel v1 sessions do not load agent
-    // runners yet, so plan validation fails before review. Re-enabled by K3-1.
-    skip: 'needs plan step agents in kernel sessions (K3-1)'
-  },
+  { timeout: 45_000 },
   async (t) => {
     const f = await createKernelFixture({
       hostCapabilities: ['workMode.selected', 'planReview.request']
@@ -358,8 +546,8 @@ test(
       return decision.promise
     })
 
-    await f.createSession('review-a', { workMode: 'auto' })
-    await f.createSession('review-b', { workMode: 'auto' })
+    await f.createSession('review-a', { workMode: 'auto', phiAgents: true })
+    await f.createSession('review-b', { workMode: 'auto', phiAgents: true })
     const structuredPlan = (id: string): Record<string, unknown> => ({
       version: 1,
       goal: `Review ${id}`,

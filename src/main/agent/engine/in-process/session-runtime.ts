@@ -12,6 +12,7 @@ import {
 } from './settings'
 import type { ResolvedRuntimeCompactionPolicy } from '../types'
 import {
+  cancelPlanReviewMode,
   cancelPlanReviewReplanMode,
   enterPlanReviewMode,
   type PlanReviewChoice
@@ -32,7 +33,7 @@ import { WorkerPromptOptions, isRecord, stringValue } from './common'
 import { requestHost, sendEvent } from './ipc'
 import { disconnectLeasedMcpManager } from './mcp-profile'
 import { getContext, modelBySelector, runtimeThinkingLevel } from './runtime-context'
-import { WorkerAgentSession, mcpUsageCache, sessions } from './state'
+import { WorkerAgentSession, mcpUsageCache, sessions, type SessionEntry } from './state'
 import { serializeSessionState } from './tool-support'
 import { promptWithAutomaticModelFallback } from '../../session/automatic-model-fallback'
 
@@ -301,6 +302,11 @@ async function reviewStructuredPlan(
     },
     { originSessionId: runtimeSessionId }
   )) as PlanReviewChoice
+  if (choice.decision === 'approve') {
+    await entry?.kernelPlanRuntime?.approved(runtimeSessionId, validated.spec, replanRequestId)
+  } else if (choice.decision === 'cancel') {
+    entry?.kernelPlanRuntime?.cancelled(runtimeSessionId, replanRequestId)
+  }
   return { ok: true, spec: validated.spec, choice }
 }
 
@@ -369,10 +375,11 @@ export async function cancelSessionPlanMode(params: unknown): Promise<boolean> {
   const record = isRecord(params) ? params : {}
   const runtimeSessionId = stringValue(record.sessionId)
   const replanRequestId = stringValue(record.replanRequestId)
-  if (!replanRequestId) return false
   const entry = sessions.get(runtimeSessionId)
   if (!entry || entry.result.session.isStreaming) return false
-  return cancelPlanReviewReplanMode(entry.result.session, replanRequestId)
+  return replanRequestId
+    ? cancelPlanReviewReplanMode(entry.result.session, replanRequestId)
+    : cancelPlanReviewMode(entry.result.session)
 }
 
 export function listSessionShellJobs(): unknown[] {
@@ -418,6 +425,23 @@ export async function abortSession(params: unknown): Promise<unknown> {
   }
 }
 
+function stopSessionOwnedWork(entry: SessionEntry | undefined): void {
+  if (!entry) return
+  entry.disposing = true
+  entry.stopAgentRunNotices?.()
+  entry.stopKernelAgentRunNotices?.()
+  entry.agentRuns?.stopAll()
+  entry.browserTextVault?.clear()
+}
+
+async function releaseSessionResources(entry: SessionEntry | undefined): Promise<void> {
+  if (!entry) return
+  await entry.closeDesktopMcp?.().catch(() => undefined)
+  await disconnectLeasedMcpManager(entry.ownedMcpManager, entry.ownedStdioTransports)
+  for (const lease of entry.mcpLeases?.values() ?? []) lease.release()
+  entry.mcpLeases?.clear()
+}
+
 export async function disposeSession(params: unknown): Promise<void> {
   const record = isRecord(params) ? params : {}
   const sessionId = stringValue(record.sessionId)
@@ -425,18 +449,12 @@ export async function disposeSession(params: unknown): Promise<void> {
   // Background runs outlive their tool call, not their conversation. Stopping them is the
   // session going away, not news, so it is not announced.
   const entry = sessions.get(sessionId)
-  if (entry) entry.disposing = true
-  entry?.stopAgentRunNotices?.()
-  entry?.agentRuns?.stopAll()
-  entry?.browserTextVault?.clear()
+  stopSessionOwnedWork(entry)
   sessions.delete(sessionId)
   try {
     await result.session.dispose()
   } finally {
-    await entry?.closeDesktopMcp?.().catch(() => undefined)
-    await disconnectLeasedMcpManager(entry?.ownedMcpManager, entry?.ownedStdioTransports)
-    for (const lease of entry?.mcpLeases?.values() ?? []) lease.release()
-    entry?.mcpLeases?.clear()
+    await releaseSessionResources(entry)
   }
 }
 

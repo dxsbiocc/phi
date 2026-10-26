@@ -19,6 +19,19 @@ export const MODEL_DESCRIPTOR: SafeModelDescriptor = Object.freeze({
   cost: Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
 })
 
+const PLAN_STEP_AGENT = {
+  name: 'PlanStep',
+  description: 'Executes one approved plan step.',
+  tools: ['read', 'write', 'edit', 'grep', 'glob', 'bash'],
+  skills: [],
+  invocation: 'host' as const,
+  visibility: 'entry' as const,
+  warnings: [],
+  systemPrompt: 'Execute exactly the assigned plan step and return a concise report.',
+  source: 'phi' as const,
+  filePath: '/phi/bundled/agents/PlanStep.md'
+}
+
 export interface ModelReply {
   text?: string
   tool?: { name: string; id: string; args: Record<string, unknown> }
@@ -96,6 +109,9 @@ export function record(value: JsonValue | unknown): Record<string, unknown> {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value))
   return value as Record<string, unknown>
 }
+
+/** One model turn over a slow VPN link (~6-8 s per round trip) with several tool calls. */
+export const RUN_WAIT_MS = 4 * 60_000
 
 export function bounded<T>(operation: Promise<T>, label: string, timeoutMs = 60_000): Promise<T> {
   return new Promise<T>((resolveOperation, reject) => {
@@ -362,7 +378,11 @@ export class ScenarioClient {
     return this.events.at(-1)?.seq ?? 0
   }
 
-  async create(cwd: string, approval: boolean): Promise<string> {
+  async create(
+    cwd: string,
+    approval: boolean,
+    workMode: 'direct' | 'plan' | 'plan_execute' | 'auto' = 'direct'
+  ): Promise<string> {
     const result = record(
       await bounded(
         this.client.request('session.create', {
@@ -370,6 +390,8 @@ export class ScenarioClient {
           model: { provider: PROVIDER_ID, id: MODEL_ID },
           sessionManager: { kind: 'memory' },
           enableToolApproval: approval,
+          workMode,
+          phiAgents: [PLAN_STEP_AGENT],
           autoCompaction: { enabled: false },
           resourceOptions: {
             noExtensions: true,
@@ -425,7 +447,7 @@ export class ScenarioClient {
       const timeout = setTimeout(() => {
         this.waiters.delete(runId)
         reject(new Error(`Timed out waiting for kernel run ${runId}.`))
-      }, 60_000)
+      }, RUN_WAIT_MS)
       this.waiters.set(runId, { complete, reject, timeout })
     })
   }

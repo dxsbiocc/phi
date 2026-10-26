@@ -88,12 +88,23 @@ export interface AgentLaunchInput {
   background: boolean
   /** Defaults to `tool`; `host` runs have no delegation card in the chat. */
   origin?: AgentRunOrigin
+  /** Durable caller identity. Kernel sessions assign one for model-origin starts. */
+  requestId?: string
   /** Cancels a foreground run when it fires. Ignored for background runs, which outlive their tool call. */
   signal?: AbortSignal
   /** The delegation tool call that starts this run. */
   toolCallId?: string
   onProgress?: (line: string, runId: string) => void
   onToolStep?: (step: AgentRunToolStep, runId: string) => void
+}
+
+export interface AgentRunAdmission {
+  /** Must durably accept the request before the child can become visible or execute. */
+  accept(runId: string, input: AgentLaunchInput): Promise<void>
+  /** Must durably bind the accepted request to its child id before execution begins. */
+  started(runId: string, snapshot: AgentRunSnapshot): Promise<void>
+  /** Records an accepted request whose child registration could not be proven. */
+  unknown(runId: string, error: unknown): Promise<void>
 }
 
 export interface AgentRunHandle {
@@ -138,13 +149,51 @@ export class AgentRunRegistry {
   private active = 0
   private sequence = 0
   private toolRuns = 0
+  private readonly admission?: AgentRunAdmission
 
-  constructor(options: { limits?: Partial<AgentRunLimits>; now?: () => number } = {}) {
+  constructor(
+    options: {
+      limits?: Partial<AgentRunLimits>
+      now?: () => number
+      admission?: AgentRunAdmission
+    } = {}
+  ) {
     this.limits = { ...DEFAULT_AGENT_RUN_LIMITS, ...options.limits }
     this.now = options.now ?? Date.now
+    this.admission = options.admission
   }
 
   launch(input: AgentLaunchInput): AgentRunHandle {
+    if (this.admission) {
+      throw new Error('Durable agent runs must be started through AgentRunRegistry.start().')
+    }
+    return this.prepare(input, true)
+  }
+
+  async start(input: AgentLaunchInput): Promise<AgentRunHandle> {
+    if (!this.admission) return this.launch(input)
+    const handle = this.prepare(input, false)
+    try {
+      await this.admission.accept(handle.id, input)
+      const snapshot = this.get(handle.id)
+      if (!snapshot) throw new Error(`Agent run disappeared during admission: ${handle.id}`)
+      await this.admission.started(handle.id, snapshot)
+      this.pump()
+      return handle
+    } catch (error) {
+      const record = this.runs.get(handle.id)
+      if (record && record.snapshot.state === 'queued') {
+        const index = this.queue.indexOf(record)
+        if (index >= 0) this.queue.splice(index, 1)
+        this.runs.delete(handle.id)
+        if ((input.origin ?? 'tool') === 'tool') this.toolRuns -= 1
+      }
+      await this.admission.unknown(handle.id, error).catch(() => undefined)
+      throw error
+    }
+  }
+
+  private prepare(input: AgentLaunchInput, pump: boolean): AgentRunHandle {
     const origin = input.origin ?? 'tool'
     if (origin === 'tool' && this.toolRuns >= this.limits.maxRuns) {
       throw new AgentRunLimitError(this.limits.maxRuns)
@@ -190,7 +239,7 @@ export class AgentRunRegistry {
       }
     }
 
-    this.pump()
+    if (pump) this.pump()
     return { id, done }
   }
 

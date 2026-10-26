@@ -297,6 +297,54 @@ test('a registered but undeclared host capability rejects with CAPABILITY_UNAVAI
   )
 })
 
+test('child completion cancels approvals and host interactions bound to that child only', async () => {
+  const decisions: ApprovalDecision[] = []
+  const core = makeCore({
+    'approval.respond': (params) => {
+      decisions.push(params as ApprovalDecision)
+      return { accepted: true }
+    }
+  })
+  const transport = new MemoryTransport()
+  core.attachTransport(transport, { trusted: true })
+  await hello(transport, { hostCapabilities: ['planReview.request'] })
+  core.emitEvent(
+    'approval.requested',
+    {
+      approvalId: 'child-approval',
+      toolCallId: 'child-tool',
+      toolName: 'write',
+      input: { path: '/tmp/child-output' },
+      agentRunId: 'child-1'
+    },
+    { sessionId: 'session-1' }
+  )
+  const hostResult = core.requestHost('planReview.request', planReviewParams, {
+    sessionId: 'session-1',
+    runId: 'main-run-1',
+    agentRunId: 'child-1'
+  })
+  await waitFor(
+    transport,
+    (frame): frame is HostRequestFrame =>
+      frame.kind === 'host.request' && frame.agentRunId === 'child-1'
+  )
+
+  core.cancelAgentRunInteractions('session-1', 'child-1', 'agent run ended')
+
+  await rejectsWithCode(hostResult, 'CANCELLED')
+  await waitUntil(() => decisions.length === 1)
+  assert.deepEqual(decisions, [
+    { approvalId: 'child-approval', decision: 'denied', reason: 'agent run ended' }
+  ])
+  assert.deepEqual(
+    cancellationPayloads(transport)
+      .map((payload) => payload.kind)
+      .sort(),
+    ['approval', 'host']
+  )
+})
+
 test('invalid host capability parameters reject with INVALID_PARAMS before sending', async () => {
   const core = makeCore()
   const transport = new MemoryTransport()

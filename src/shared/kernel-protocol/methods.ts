@@ -266,6 +266,188 @@ export const sessionPromptResultSchema = z
   .object({ accepted: z.literal(true), runId: nonEmptyIdSchema })
   .strict()
 
+const planStepSchema = z
+  .object({
+    id: z.string().min(1).max(40),
+    title: z.string().min(1).max(80),
+    instructions: z.string().min(1).max(4_000),
+    acceptance: z.string().min(1).max(1_000),
+    dependsOn: z.array(z.string().min(1).max(40)).max(20),
+    access: z.enum(['read', 'write']),
+    writes: z.array(z.string().min(1)).optional(),
+    agent: z.string().min(1).optional()
+  })
+  .strict()
+
+const planSpecSchema = z
+  .object({
+    version: z.literal(1),
+    goal: z.string().min(1).max(4_000),
+    steps: z.array(planStepSchema).min(1).max(20)
+  })
+  .strict()
+
+const planStepReportSchema = z
+  .object({
+    status: z.enum(['completed', 'partial', 'not_found', 'blocked', 'failed']),
+    text: z.string(),
+    missingInputs: z.array(z.string())
+  })
+  .strict()
+
+const planStepStateSchema = z
+  .object({
+    status: z.enum([
+      'pending',
+      'launching',
+      'running',
+      'unknown',
+      'done',
+      'failed',
+      'skipped',
+      'cancelled',
+      'interrupted'
+    ]),
+    attempts: z.number().int().nonnegative(),
+    agentRunId: nonEmptyIdSchema.optional(),
+    requestId: nonEmptyIdSchema.optional(),
+    report: planStepReportSchema.optional(),
+    error: z.string().optional(),
+    startedAt: z.string().min(1).optional(),
+    finishedAt: z.string().min(1).optional()
+  })
+  .strict()
+
+export const planRunStateSchema = z
+  .object({
+    id: nonEmptyIdSchema,
+    sessionId: nonEmptyIdSchema,
+    spec: planSpecSchema,
+    status: z.enum(['running', 'paused', 'completed', 'stopped']),
+    steps: z.record(z.string(), planStepStateSchema),
+    pause: z
+      .object({
+        reason: z.enum(['user', 'step_failed', 'interrupted', 'needs_input', 'unknown']),
+        stepId: nonEmptyIdSchema.optional()
+      })
+      .strict()
+      .optional(),
+    replans: z.number().int().nonnegative(),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1)
+  })
+  .strict()
+
+export const sessionPlanEnterParamsSchema = z.object({ execute: z.boolean().optional() }).strict()
+export const sessionPlanEnterResultSchema = z.object({ enabled: z.literal(true) }).strict()
+export const sessionPlanCancelParamsSchema = z
+  .object({ replanRequestId: nonEmptyIdSchema.max(200).optional() })
+  .strict()
+export const sessionPlanCancelResultSchema = z.object({ cancelled: z.boolean() }).strict()
+
+export const planRunsListParamsSchema = z.object({}).strict()
+export const planRunsListResultSchema = z.array(planRunStateSchema)
+export const planRunsGetParamsSchema = z.object({ runId: nonEmptyIdSchema }).strict()
+export const planRunsGetResultSchema = planRunStateSchema.nullable()
+const planRunStepMutationParamsSchema = z
+  .object({ runId: nonEmptyIdSchema, stepId: nonEmptyIdSchema })
+  .strict()
+export const planRunsRetryStepParamsSchema = planRunStepMutationParamsSchema
+export const planRunsRetryStepResultSchema = planRunStateSchema
+export const planRunsSkipStepParamsSchema = planRunStepMutationParamsSchema
+export const planRunsSkipStepResultSchema = planRunStateSchema
+export const planRunsReplanParamsSchema = z.object({ runId: nonEmptyIdSchema }).strict()
+export const planRunsReplanResultSchema = z
+  .object({ requestId: nonEmptyIdSchema, runId: nonEmptyIdSchema, prompt: z.string().min(1) })
+  .strict()
+export const planRunsStopParamsSchema = z.object({ runId: nonEmptyIdSchema }).strict()
+export const planRunsStopResultSchema = planRunStateSchema
+
+export const agentRunStateSchema = z.enum([
+  'accepted',
+  'started',
+  'queued',
+  'running',
+  'done',
+  'error',
+  'cancelled',
+  'unknown'
+])
+export const agentRunSnapshotSchema = z
+  .object({
+    requestId: nonEmptyIdSchema,
+    runId: nonEmptyIdSchema.optional(),
+    agent: z.string().min(1),
+    task: z.string(),
+    state: agentRunStateSchema,
+    origin: z.enum(['tool', 'host']),
+    background: z.boolean(),
+    acceptedAt: z.string().min(1),
+    startedAt: z.number().finite().nonnegative().optional(),
+    completedAt: z.number().finite().nonnegative().optional(),
+    toolCalls: z.number().int().nonnegative().optional(),
+    report: z.string().optional(),
+    reportStatus: z.enum(['completed', 'partial', 'not_found', 'blocked', 'failed']).optional(),
+    missingInputs: z.array(z.string()).optional(),
+    error: z.string().optional(),
+    lastStep: z.string().optional(),
+    reported: z.boolean().optional(),
+    toolCallId: nonEmptyIdSchema.optional()
+  })
+  .strict()
+
+export const agentRunsStartParamsSchema = z
+  .object({
+    requestId: nonEmptyIdSchema.max(MAX_CLIENT_RUN_KEY_LENGTH),
+    agent: z.string().min(1).max(128).optional(),
+    task: z
+      .string()
+      .min(1)
+      .max(32 * 1024)
+  })
+  .strict()
+export const agentRunsStartResultSchema = agentRunSnapshotSchema
+export const agentRunsListParamsSchema = z.object({}).strict()
+export const agentRunsListResultSchema = z.array(agentRunSnapshotSchema)
+export const agentRunsWaitParamsSchema = z
+  .object({
+    runId: nonEmptyIdSchema,
+    timeoutMs: z
+      .number()
+      .int()
+      .min(0)
+      .max(10 * 60_000)
+      .optional()
+  })
+  .strict()
+export const agentRunsWaitResultSchema = z
+  .object({ run: agentRunSnapshotSchema, timedOut: z.boolean() })
+  .strict()
+export const agentRunsSteerParamsSchema = z
+  .object({
+    runId: nonEmptyIdSchema,
+    message: z
+      .string()
+      .min(1)
+      .max(32 * 1024)
+  })
+  .strict()
+export const agentRunsSteerResultSchema = z.object({ ok: z.literal(true) }).strict()
+export const agentRunsStopParamsSchema = z.object({ runId: nonEmptyIdSchema }).strict()
+export const agentRunsStopResultSchema = z.object({ ok: z.boolean() }).strict()
+
+export const planRunUpdatedPayloadSchema = z
+  .object({ event: z.enum(['plan_run_updated', 'plan_run_finished']), state: planRunStateSchema })
+  .strict()
+export const agentRunStartedPayloadSchema = agentRunSnapshotSchema
+export const agentRunStepPayloadSchema = z
+  .object({ run: agentRunSnapshotSchema, step: jsonValueSchema })
+  .strict()
+export const agentRunFinishedPayloadSchema = agentRunSnapshotSchema
+export const agentRunReportedPayloadSchema = z
+  .object({ requestId: nonEmptyIdSchema, runId: nonEmptyIdSchema })
+  .strict()
+
 // K3-2 fork source identity is carried by the trusted request context.
 export const sessionForkParamsSchema = z.object({}).strict()
 export const sessionForkResultSchema = sessionCreateResultSchema
@@ -521,6 +703,8 @@ export type SessionsListResult = z.infer<typeof sessionsListResultSchema>
 export type SessionPromptParams = z.infer<typeof sessionPromptParamsSchema>
 export type SessionPromptOptionsV1 = z.infer<typeof sessionPromptOptionsV1Schema>
 export type SessionPromptResult = z.infer<typeof sessionPromptResultSchema>
+export type PlanRunStateDto = z.infer<typeof planRunStateSchema>
+export type AgentRunSnapshotDto = z.infer<typeof agentRunSnapshotSchema>
 export type SessionForkParams = z.infer<typeof sessionForkParamsSchema>
 export type SessionForkResult = z.infer<typeof sessionForkResultSchema>
 export type ResourcesReloadParams = z.infer<typeof resourcesReloadParamsSchema>
@@ -564,6 +748,19 @@ export const kernelMethodParamsSchemas = {
   'session.adopt': sessionAdoptParamsSchema,
   'sessions.list': sessionsListParamsSchema,
   'session.prompt': sessionPromptParamsSchema,
+  'session.plan.enter': sessionPlanEnterParamsSchema,
+  'session.plan.cancel': sessionPlanCancelParamsSchema,
+  'planRuns.list': planRunsListParamsSchema,
+  'planRuns.get': planRunsGetParamsSchema,
+  'planRuns.retryStep': planRunsRetryStepParamsSchema,
+  'planRuns.skipStep': planRunsSkipStepParamsSchema,
+  'planRuns.replan': planRunsReplanParamsSchema,
+  'planRuns.stop': planRunsStopParamsSchema,
+  'agentRuns.start': agentRunsStartParamsSchema,
+  'agentRuns.list': agentRunsListParamsSchema,
+  'agentRuns.wait': agentRunsWaitParamsSchema,
+  'agentRuns.steer': agentRunsSteerParamsSchema,
+  'agentRuns.stop': agentRunsStopParamsSchema,
   'resources.reload': resourcesReloadParamsSchema,
   'shellJobs.list': shellJobsListParamsSchema,
   'shellJobs.cancel': shellJobsCancelParamsSchema,
@@ -590,6 +787,19 @@ export const kernelMethodResultSchemas = {
   'session.adopt': sessionAdoptResultSchema,
   'sessions.list': sessionsListResultSchema,
   'session.prompt': sessionPromptResultSchema,
+  'session.plan.enter': sessionPlanEnterResultSchema,
+  'session.plan.cancel': sessionPlanCancelResultSchema,
+  'planRuns.list': planRunsListResultSchema,
+  'planRuns.get': planRunsGetResultSchema,
+  'planRuns.retryStep': planRunsRetryStepResultSchema,
+  'planRuns.skipStep': planRunsSkipStepResultSchema,
+  'planRuns.replan': planRunsReplanResultSchema,
+  'planRuns.stop': planRunsStopResultSchema,
+  'agentRuns.start': agentRunsStartResultSchema,
+  'agentRuns.list': agentRunsListResultSchema,
+  'agentRuns.wait': agentRunsWaitResultSchema,
+  'agentRuns.steer': agentRunsSteerResultSchema,
+  'agentRuns.stop': agentRunsStopResultSchema,
   'resources.reload': resourcesReloadResultSchema,
   'shellJobs.list': shellJobsListResultSchema,
   'shellJobs.cancel': shellJobsCancelResultSchema,

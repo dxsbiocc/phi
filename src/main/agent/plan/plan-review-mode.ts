@@ -63,9 +63,9 @@ export type PlanReviewSession = {
 }
 
 export const PLAN_STEPS_TOOL_NAME = 'propose_plan_steps'
-const replanRestorations = new WeakMap<
+const planModeRestorations = new WeakMap<
   PlanReviewSession,
-  { requestId: string; previousTools: string[]; options: PlanExecuteModeOptions }
+  { requestId?: string; previousTools: string[]; options: PlanExecuteModeOptions }
 >()
 const PLAN_TOOLS = new Set([
   'read',
@@ -87,7 +87,7 @@ async function leavePlanMode(
   session.setPlanProposalHandler(null)
   options.setProposalHandler?.(null)
   session.setPlanModeState(undefined)
-  replanRestorations.delete(session)
+  planModeRestorations.delete(session)
 }
 
 /** Roll back only the replan mode opened for this exact request. */
@@ -95,13 +95,21 @@ export async function cancelPlanReviewReplanMode(
   session: PlanReviewSession,
   requestId: string
 ): Promise<boolean> {
-  const restoration = replanRestorations.get(session)
+  const restoration = planModeRestorations.get(session)
   if (
     !restoration ||
     restoration.requestId !== requestId ||
     session.getPlanModeState()?.replanRequestId !== requestId
   )
     return false
+  await leavePlanMode(session, restoration.previousTools, restoration.options)
+  return true
+}
+
+/** Cancel the currently open ordinary or execute-plan review. */
+export async function cancelPlanReviewMode(session: PlanReviewSession): Promise<boolean> {
+  const restoration = planModeRestorations.get(session)
+  if (!restoration || !session.getPlanModeState()?.enabled) return false
   await leavePlanMode(session, restoration.previousTools, restoration.options)
   return true
 }
@@ -276,12 +284,10 @@ export async function enterPlanReviewMode(
 
   if (options.execute) installStructuredProposalHandler(session, previousTools, options)
   installMarkdownProposalHandler(session, previousTools, resolveProposal, requestDecision, options)
-  if (options.replanRequestId) {
-    replanRestorations.set(session, {
-      requestId: options.replanRequestId,
-      previousTools,
-      options
-    })
-  }
+  planModeRestorations.set(session, {
+    ...(options.replanRequestId ? { requestId: options.replanRequestId } : {}),
+    previousTools,
+    options
+  })
   return true
 }

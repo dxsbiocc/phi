@@ -5,7 +5,12 @@ import { sessions } from './state'
 export const MAX_HOST_AGENT_TASK_BYTES = 32 * 1024
 export const DEFAULT_HOST_AGENT = 'PlanStep'
 
-function startInput(params: unknown): { sessionId: string; agent: string; task: string } {
+function startInput(params: unknown): {
+  sessionId: string
+  agent: string
+  task: string
+  requestId?: string
+} {
   const record = isRecord(params) ? params : {}
   const sessionId = typeof record.sessionId === 'string' ? record.sessionId.trim() : ''
   if (!sessionId) throw new Error('agentRun.start requires a non-empty sessionId')
@@ -18,10 +23,11 @@ function startInput(params: unknown): { sessionId: string; agent: string; task: 
   if (Buffer.byteLength(task, 'utf8') > MAX_HOST_AGENT_TASK_BYTES) {
     throw new Error(`agentRun.start task exceeds the ${MAX_HOST_AGENT_TASK_BYTES}-byte limit`)
   }
-  return { sessionId, agent: agent.trim(), task }
+  const requestId = typeof record.requestId === 'string' ? record.requestId.trim() : ''
+  return { sessionId, agent: agent.trim(), task, ...(requestId ? { requestId } : {}) }
 }
 
-export function startSessionAgentRun(params: unknown): { runId: string } {
+export async function startSessionAgentRun(params: unknown): Promise<{ runId: string }> {
   const input = startInput(params)
   const session = sessions.get(input.sessionId)
   if (!session) throw new Error(`Unknown session: ${input.sessionId}`)
@@ -30,9 +36,10 @@ export function startSessionAgentRun(params: unknown): { runId: string } {
     throw new Error(`Agent ${input.agent} is not available in session ${input.sessionId}`)
   }
   try {
-    const handle = session.agentRuns.launch({
+    const handle = await session.agentRuns.start({
       agent: input.agent,
       task: input.task,
+      ...(input.requestId ? { requestId: input.requestId } : {}),
       runner,
       background: true,
       origin: 'host'

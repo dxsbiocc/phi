@@ -26,6 +26,7 @@ import {
 import type { KernelEventFrame, JsonValue } from '../../src/shared/kernel-protocol'
 import type { BasicEngineFixture } from './basic-suite'
 import { createInProcessFixture } from './in-process-factory'
+import { discoverPhiAgents } from '../../src/main/agent/agents/discovery'
 
 type RunCompletion = {
   status: 'completed' | 'failed' | 'cancelled' | 'unknown'
@@ -54,6 +55,8 @@ export type KernelEngineFixture = BasicEngineFixture & {
       workMode?: 'direct' | 'plan' | 'plan_execute' | 'auto'
       noTools?: 'all' | boolean
       persistent?: boolean
+      /** Opt into the trusted bundled-agent snapshot for plan/sub-task scenarios. */
+      phiAgents?: boolean
       resourceOptions?: {
         noExtensions: boolean
         noSkills: boolean
@@ -66,7 +69,7 @@ export type KernelEngineFixture = BasicEngineFixture & {
 }
 
 export type KernelFixtureOptions = {
-  testPause?: 'a' | 'c' | 'd1' | 'd2'
+  testPause?: 'a' | 'c' | 'd1' | 'd2' | 'agent-accepted' | 'agent-started'
   hostCapabilities?: string[]
   modelAccess?: 'desktop-stored'
 }
@@ -192,6 +195,13 @@ export async function createKernelFixture(
     registerBroker(client)
     const greeting = await client.hello({ hostCapabilities })
     await client.subscribe(0)
+    const phiAgents = discoverPhiAgents({
+      cwd: base.cwd,
+      agentDir: base.agentDir,
+      bundledDir: resolve('resources/agents'),
+      pluginAgentDirs: [],
+      homeDir: join(root, 'home')
+    }).agents
 
     const logicalToKernel = new Map<string, string>()
     const kernelToLogical = new Map<string, string>()
@@ -256,7 +266,8 @@ export async function createKernelFixture(
           noTools: options.noTools ?? false,
           enableToolApproval: options.enableToolApproval ?? false,
           ...(options.workMode ? { workMode: options.workMode } : {}),
-          autoCompaction: { enabled: false }
+          autoCompaction: { enabled: false },
+          ...(options.phiAgents ? { phiAgents: phiAgents as unknown as JsonValue } : {})
         })
       )
       if (typeof result.sessionId !== 'string') {

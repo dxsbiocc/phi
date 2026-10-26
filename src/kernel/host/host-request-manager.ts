@@ -25,6 +25,7 @@ interface PendingHostRequest<Connection> {
   readonly capability: keyof typeof KERNEL_HOST_CAPABILITY_REGISTRY
   readonly sessionId?: string
   readonly runId?: string
+  readonly agentRunId?: string
   connection?: Connection
   generation: number
   timer?: Timer
@@ -195,6 +196,7 @@ export class KernelHostRequestManager<Connection> {
         capability: prepared.capability,
         ...(context.sessionId ? { sessionId: context.sessionId } : {}),
         ...(context.runId ? { runId: context.runId } : {}),
+        ...(context.agentRunId ? { agentRunId: context.agentRunId } : {}),
         generation: controller?.generation ?? controllerGeneration,
         ...(onProgress ? { onProgress } : {}),
         resolve,
@@ -338,6 +340,15 @@ export class KernelHostRequestManager<Connection> {
   cancelRun(sessionId: string, runId: string, reason: string): void {
     for (const [id, pending] of [...this.pending]) {
       if (pending.sessionId !== sessionId || pending.runId !== runId) continue
+      const definition = KERNEL_HOST_CAPABILITY_REGISTRY[pending.capability]
+      if (definition.runScoped === false) continue
+      this.cancel(id, pending, reason)
+    }
+  }
+
+  cancelAgentRun(sessionId: string, agentRunId: string, reason: string): void {
+    for (const [id, pending] of [...this.pending]) {
+      if (pending.sessionId !== sessionId || pending.agentRunId !== agentRunId) continue
       const definition = KERNEL_HOST_CAPABILITY_REGISTRY[pending.capability]
       if (definition.runScoped === false) continue
       this.cancel(id, pending, reason)

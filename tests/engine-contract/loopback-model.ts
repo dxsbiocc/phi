@@ -3,6 +3,8 @@ import type { AddressInfo } from 'node:net'
 
 export type ModelReply = {
   text?: string
+  /** Route concurrent parent/child calls by a stable substring in their message transcript. */
+  match?: string
   /** Optional bounded SSE deltas for large RPC framing contracts; ordinary replies keep two chunks. */
   textChunkChars?: number
   tool?: { name: string; args: Record<string, unknown>; id?: string }
@@ -11,6 +13,20 @@ export type ModelReply = {
   hold?: boolean
 }
 export type ModelRequest = { messages: Array<Record<string, unknown>>; [key: string]: unknown }
+
+/** Select one scripted reply without depending on HTTP scheduling. */
+export function selectLoopbackReplyIndex(
+  replies: readonly ModelReply[],
+  messages: readonly Record<string, unknown>[]
+): number {
+  if (replies[0]?.match === undefined) return replies.length > 0 ? 0 : -1
+  const transcript = JSON.stringify(messages)
+  const matchedReply = replies.findIndex(
+    (candidate) => candidate.match !== undefined && transcript.includes(candidate.match)
+  )
+  if (matchedReply >= 0) return matchedReply
+  return replies.findIndex((candidate) => candidate.match === undefined)
+}
 
 /** A provider, not an engine stub: the real SDK parses these streaming chunks. */
 export async function startLoopbackModel(): Promise<{
@@ -47,7 +63,12 @@ export async function startLoopbackModel(): Promise<{
             message.content.includes('`uncertain`')
         ) &&
         (!Array.isArray(parsed.tools) || parsed.tools.length === 0)
-      const reply = taskAssessment ? { text: 'suitable' } : replies.shift()
+      const replyIndex = selectLoopbackReplyIndex(replies, parsed.messages)
+      const reply = taskAssessment
+        ? { text: 'suitable' }
+        : replyIndex >= 0
+          ? replies.splice(replyIndex, 1)[0]
+          : undefined
       if (!reply) {
         response.writeHead(500).end('No scripted model reply remains')
         return

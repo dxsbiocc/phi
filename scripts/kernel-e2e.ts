@@ -43,6 +43,7 @@ import {
   toolEvidence
 } from './kernel-e2e/lifecycle-scenarios'
 import { runToolsScenario, type ToolsReadEvidence } from './kernel-e2e/tools-scenario'
+import { runPlanScenario } from './kernel-e2e/plan-scenario'
 import { shutdownSshScenarioKernel } from './kernel-e2e/ssh-kernel-cleanup'
 import {
   agentConfig,
@@ -114,6 +115,10 @@ interface E2eReport {
     approvalCount: number
     approvalObservedBeforeWrite: boolean
     bearerToken: 'random-test-only-not-recorded'
+    planRunId?: string
+    planReviewCount?: number
+    agentRunState?: string
+    planApprovalTools?: string[]
   }
   steps: StepResult[]
   cleanup: {
@@ -336,7 +341,7 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
     if (name === 'remote kernel deployed and launched')
       return deployBudget?.deployTimeoutMs ?? 12 * 60_000
     if (name === 'marker-backed remote helper prepared') return 5 * 60_000
-    return 2 * 60_000
+    return 5 * 60_000
   }
   const step = async <T>(name: string, action: () => Promise<T>): Promise<T> => {
     const started = process.hrtime.bigint()
@@ -414,7 +419,8 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
           home: files!.paths.home,
           ...(options.scenario === 'grace-expiry' ||
           options.scenario === 'baseline' ||
-          options.scenario === 'tools'
+          options.scenario === 'tools' ||
+          options.scenario === 'plan'
             ? { graceMs: 500 }
             : {}),
           hello: { hostCapabilities: [...KERNEL_E2E_HOST_CAPABILITIES] },
@@ -440,6 +446,7 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
       localLaunch = await step('local compiled kernel launched', () =>
         launchLocalKernel({
           executable,
+          hello: { hostCapabilities: [...KERNEL_E2E_HOST_CAPABILITIES] },
           agentDir: files!.paths.agentDir,
           home: files!.paths.home,
           cwd: files!.paths.home,
@@ -488,6 +495,18 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
     )
     launch.client.registerHostHandler('settings.nextActionSuggestionsEnabled', () => false)
     launch.client.registerHostHandler('skills.scriptTools', () => ({ tools: [] }))
+
+    if (options.scenario === 'plan') {
+      await runPlanScenario({
+        provider,
+        client: scenario,
+        projectRoot: files.paths.projectA,
+        report,
+        step
+      })
+      report.ok = report.steps.every((item) => item.passed)
+      return report
+    }
 
     if (options.scenario === 'tools') {
       await runToolsScenario({

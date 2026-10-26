@@ -9,7 +9,9 @@ import type { RemoteSshSession } from '../../src/main/agent/wrappers/remote-ssh-
 
 export const KERNEL_E2E_HOST_CAPABILITIES = [
   'settings.nextActionSuggestionsEnabled',
-  'skills.scriptTools'
+  'skills.scriptTools',
+  'workMode.selected',
+  'planReview.request'
 ] as const
 
 type LifecycleScenario = 'reconnect' | 'grace-expiry'

@@ -5,6 +5,7 @@ import { FileSessionStorage, MemorySessionStorage, SessionManager } from '@oh-my
 import { isRecord, stringValue } from './common'
 import { createSession } from './session-creation'
 import { getSession } from './session-runtime'
+import type { KernelRuntimeServices } from './kernel-services'
 
 export type SessionForkTarget = { kind: 'memory' } | { kind: 'persistent'; path: string }
 
@@ -34,7 +35,10 @@ export async function cloneSessionManagerForFork(
 }
 
 /** Internal worker operation. Public callers can only select the source in request context. */
-export async function forkWorkerSession(params: unknown): Promise<unknown> {
+export async function forkWorkerSession(
+  params: unknown,
+  kernelServices?: KernelRuntimeServices
+): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const sourceSessionId = stringValue(record.sourceSessionId)
   const targetSessionId = stringValue(record.targetSessionId)
@@ -63,7 +67,7 @@ export async function forkWorkerSession(params: unknown): Promise<unknown> {
         agentDir,
         sessionManager: managerInput
       },
-      { preparedSessionManager: fork }
+      { preparedSessionManager: fork, ...(kernelServices ? { kernelServices } : {}) }
     )
   } catch (error) {
     await fork.close().catch(() => undefined)

@@ -1,12 +1,17 @@
 import { cfgBashAutoBackgroundEnabled } from '@oh-my-pi/pi-coding-agent/exec/settings'
 import { randomUUID } from 'node:crypto'
 import { SessionManager, Settings, type CreateAgentSessionResult } from '@oh-my-pi/pi-coding-agent'
-import { createSpecialistExtensions, type PhiExtensionConfig } from '../phi-extension'
+import {
+  createSpecialistExtensions,
+  type PhiExtensionConfig,
+  type PhiExtensionEnvironmentBinding
+} from '../phi-extension'
 import { toOmpCustomTool } from '../tool-adapter'
 import { adaptOmpSessionEvents } from '../events'
 import { type PhiAgentDefinition } from '../../agents/definition'
 import { selectAgentModel } from '../../agents/model-selection'
 import { controlAgentRun } from '../../agents/run-control'
+import type { AgentRunSnapshot } from '../../agents/registry'
 import { type AgentSessionLike } from '../../agents/runner'
 import { resolveAgentTools } from '../../agents/tool-resolution'
 import { installSpecialistToolCallExtensions } from './specialist-tool-call-extensions'
@@ -23,6 +28,7 @@ import { resourceOptions } from './resources'
 import { modelBySelector, runtimeThinkingLevel } from './runtime-context'
 import { createAgentSession, DefaultResourceLoader, SettingsManager } from './session-factory'
 import { sessions } from './state'
+import type { RuntimeThinkingLevel } from './state'
 import { createSessionModelAvailability } from './session-model-availability'
 import { phiToolFunctions } from './tool-support'
 
@@ -73,6 +79,21 @@ export async function bindSpecialistEnvironment(
   }
 }
 
+export async function resolveSpecialistEnvironmentBinding(
+  definition: PhiAgentDefinition,
+  deps: { sessionId: string; cwd: string },
+  parent?: PhiExtensionEnvironmentBinding
+): Promise<PhiExtensionEnvironmentBinding | undefined> {
+  return definition.environment ? bindSpecialistEnvironment(definition, deps) : parent
+}
+
+export function specialistThinkingLevel(
+  definition: PhiAgentDefinition,
+  parent?: RuntimeThinkingLevel
+): RuntimeThinkingLevel | undefined {
+  return definition.thinkingLevel ? runtimeThinkingLevel(definition.thinkingLevel) : parent
+}
+
 export function stringRecord(value: unknown): Record<string, string> | undefined {
   if (!isRecord(value)) return undefined
   const record: Record<string, string> = {}
@@ -93,6 +114,7 @@ export async function createPhiAgentSession(
     resourceOptions: unknown
     enableToolApproval: boolean
     agentRunId?: string
+    parentEnvironmentBinding?: PhiExtensionEnvironmentBinding
     skillTools?: ScriptToolDescriptor[]
     parent: () => CreateAgentSessionResult | undefined
   }
@@ -101,7 +123,11 @@ export async function createPhiAgentSession(
   assertInProcessLocalProject(deps)
   const runtimeDefinition = definition
   const sessionCwd = cwd
-  const binding = await bindSpecialistEnvironment(runtimeDefinition, deps)
+  const binding = await resolveSpecialistEnvironmentBinding(
+    runtimeDefinition,
+    deps,
+    deps.parentEnvironmentBinding
+  )
   const holder = binding
     ? {
         ref: binding.ref,
@@ -227,9 +253,7 @@ export async function createPhiAgentSession(
     model = selection.model
   }
   if (!model) throw new Error('No enabled model available for this specialist')
-  const thinkingLevel = runtimeDefinition.thinkingLevel
-    ? runtimeThinkingLevel(runtimeDefinition.thinkingLevel)
-    : parentSession?.thinkingLevel
+  const thinkingLevel = specialistThinkingLevel(runtimeDefinition, parentSession?.thinkingLevel)
   const result = await createAgentSession({
     agentId: `phi-agent-${sessionId}-${randomUUID()}`,
     agentDisplayName: runtimeDefinition.name,
@@ -267,7 +291,12 @@ export async function controlSessionAgentRun(
   return controlAgentRun(sessions.get(stringValue(record.sessionId))?.agentRuns, action, record)
 }
 
-export async function listSessionAgentRuns(): Promise<unknown[]> {
+export async function listSessionAgentRuns(params?: unknown): Promise<unknown[]> {
+  const record = isRecord(params) ? params : {}
+  const requestedSessionId = stringValue(record.sessionId)
+  if (requestedSessionId) {
+    return sessions.get(requestedSessionId)?.agentRuns?.list() ?? []
+  }
   return [...sessions.entries()].flatMap(([agentSessionId, entry]) =>
     (entry.agentRuns?.list() ?? [])
       .filter((run) => run.background)
@@ -286,4 +315,23 @@ export async function listSessionAgentRuns(): Promise<unknown[]> {
         ...(run.toolCallId ? { toolCallId: run.toolCallId } : {})
       }))
   )
+}
+
+export async function waitSessionAgentRun(params: unknown): Promise<{
+  run: AgentRunSnapshot
+  timedOut: boolean
+}> {
+  const record = isRecord(params) ? params : {}
+  const sessionId = stringValue(record.sessionId)
+  const runId = stringValue(record.runId)
+  const entry = sessions.get(sessionId)
+  if (!entry?.agentRuns) throw new Error(`Unknown session: ${sessionId}`)
+  const timeoutMs =
+    typeof record.timeoutMs === 'number' && Number.isFinite(record.timeoutMs)
+      ? Math.max(0, Math.min(record.timeoutMs, 10 * 60_000))
+      : 120_000
+  const result = await entry.agentRuns.wait([runId], { timeoutMs })
+  const run = result.runs[0] ?? entry.agentRuns.get(runId)
+  if (!run) throw new Error(`Unknown run: ${runId}`)
+  return { run, timedOut: result.timedOut }
 }

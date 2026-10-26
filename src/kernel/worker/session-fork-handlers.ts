@@ -18,6 +18,9 @@ export type SessionForkHandlerOptions = {
   sessionKinds: Map<string, SessionKind>
   sessionCreateInputs: Map<string, Record<string, unknown>>
   initializeMemorySession(sessionId: string): void
+  prepareTarget(sessionId: string, directory?: string): Promise<void>
+  activateTarget(sessionId: string): Promise<void>
+  cleanupTarget(sessionId: string): Promise<void>
   withAdmission<T>(operation: () => Promise<T>): Promise<T>
   requireLoadedSession(sessionId: string): SessionKind
 }
@@ -91,6 +94,7 @@ export function createSessionForkHandlers(
                 cwd: persistentTarget.manifest.cwd
               }
             : { kind: 'memory' as const, cwd: String(create.cwd ?? '') }
+          await options.prepareTarget(targetSessionId, persistentTarget?.directory)
           await options.callWorker('session.fork', {
             sourceSessionId,
             targetSessionId,
@@ -104,8 +108,10 @@ export function createSessionForkHandlers(
             ...create,
             sessionManager: { kind }
           })
+          await options.activateTarget(targetSessionId)
           return { sessionId: targetSessionId } as JsonValue
         } catch (error) {
+          await options.cleanupTarget(targetSessionId).catch(() => undefined)
           if (persistentTarget) await options.repository.abandonNew(targetSessionId)
           throw error
         } finally {

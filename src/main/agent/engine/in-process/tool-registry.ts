@@ -252,6 +252,7 @@ export async function createSessionToolRegistry(deps: {
           resourceOptions: sessionResourceOptions,
           enableToolApproval: Boolean(record.enableToolApproval),
           ...(runId ? { agentRunId: runId } : {}),
+          ...(environmentBinding ? { parentEnvironmentBinding: environmentBinding } : {}),
           ...(skillTools ? { skillTools } : {}),
           parent: () => parentRef.current
         })

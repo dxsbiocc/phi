@@ -205,6 +205,12 @@ export class KernelProtocolCore {
     return event
   }
 
+  /** Child completion owns cancellation of interactions bound to that child id. */
+  cancelAgentRunInteractions(sessionId: string, agentRunId: string, reason: string): void {
+    this.hostRequests.cancelAgentRun(sessionId, agentRunId, reason)
+    this.cancelApprovals(this.approvals.cancelAgentRun(sessionId, agentRunId), reason)
+  }
+
   private eventMetadata(type: string, payload: JsonValue): EventMetadata {
     let terminalRunId: string | undefined
     let approvalId: string | undefined

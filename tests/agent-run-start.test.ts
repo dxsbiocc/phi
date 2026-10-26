@@ -40,7 +40,7 @@ function definition(name: string, invocation?: 'host'): PhiAgentDefinition {
 
 test('agentRun.start defaults to PlanStep and launches a host background run', async (t) => {
   const registry = installSession(t, 'start-default')
-  const result = startSessionAgentRun({ sessionId: 'start-default', task: '  do the step  ' })
+  const result = await startSessionAgentRun({ sessionId: 'start-default', task: '  do the step  ' })
   const snapshot = registry.get(result.runId)
 
   assert.equal(snapshot?.agent, 'PlanStep')
@@ -50,29 +50,28 @@ test('agentRun.start defaults to PlanStep and launches a host background run', a
   assert.equal((await registry.wait([result.runId], { timeoutMs: 1000 })).timedOut, false)
 })
 
-test('agentRun.start validates session, agent and bounded non-empty task', (t) => {
+test('agentRun.start validates session, agent and bounded non-empty task', async (t) => {
   installSession(t, 'start-validation')
 
-  assert.throws(() => startSessionAgentRun({ task: 'x' }), /sessionId/)
-  assert.throws(() => startSessionAgentRun({ sessionId: 'missing', task: 'x' }), /Unknown session/)
-  assert.throws(
-    () => startSessionAgentRun({ sessionId: 'start-validation', agent: '', task: 'x' }),
+  await assert.rejects(startSessionAgentRun({ task: 'x' }), /sessionId/)
+  await assert.rejects(startSessionAgentRun({ sessionId: 'missing', task: 'x' }), /Unknown session/)
+  await assert.rejects(
+    startSessionAgentRun({ sessionId: 'start-validation', agent: '', task: 'x' }),
     /agent/
   )
-  assert.throws(
-    () => startSessionAgentRun({ sessionId: 'start-validation', agent: 'Other', task: 'x' }),
+  await assert.rejects(
+    startSessionAgentRun({ sessionId: 'start-validation', agent: 'Other', task: 'x' }),
     /not available/
   )
-  assert.throws(
-    () => startSessionAgentRun({ sessionId: 'start-validation', task: '   ' }),
+  await assert.rejects(
+    startSessionAgentRun({ sessionId: 'start-validation', task: '   ' }),
     /non-empty task/
   )
-  assert.throws(
-    () =>
-      startSessionAgentRun({
-        sessionId: 'start-validation',
-        task: '界'.repeat(Math.floor(MAX_HOST_AGENT_TASK_BYTES / 3) + 1)
-      }),
+  await assert.rejects(
+    startSessionAgentRun({
+      sessionId: 'start-validation',
+      task: '界'.repeat(Math.floor(MAX_HOST_AGENT_TASK_BYTES / 3) + 1)
+    }),
     /byte limit/
   )
 })
@@ -91,7 +90,7 @@ test('agentRun.start remains available after the tool run allowance is exhausted
   })
   await tool.done
 
-  const host = startSessionAgentRun({ sessionId: 'start-limit', task: 'plan step' })
+  const host = await startSessionAgentRun({ sessionId: 'start-limit', task: 'plan step' })
   assert.equal((await registry.wait([host.runId], { timeoutMs: 1000 })).timedOut, false)
 })
 

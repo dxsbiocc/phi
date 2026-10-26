@@ -1,13 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { stat } from 'node:fs/promises'
-import { isAbsolute } from 'node:path'
 
 import {
   KERNEL_EVENT_MODELS_CHANGED,
   type ApprovalRespondParams,
-  type JsonValue,
   type SessionCreateParams,
-  type SessionLastRun,
   type SessionOpenParams,
   type SessionPolicyParams
 } from '../../shared/kernel-protocol'
@@ -32,6 +28,15 @@ import {
   requireAvailableModel
 } from './model-access-handlers'
 import { callKernelRuntime } from './runtime-calls'
+import { createPlanAgentHandlers } from './plan-agent-handlers'
+import {
+  assertExistingAbsoluteDirectory,
+  hasTrustedSessionResources,
+  projectSessionState
+} from './session-state'
+import { KernelAgentRunCoordinator } from '../agent-runs/coordinator'
+import { KernelPlanCoordinator } from '../plans/coordinator'
+import type { KernelRuntimeServices } from '../../main/agent/engine/in-process/kernel-services'
 
 type WorkerCall = (method: string, params: unknown) => Promise<unknown>
 
@@ -55,10 +60,6 @@ export type WorkerKernelAdapter = {
   closeAll(): Promise<void>
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 function requiredSessionId(sessionId: string | undefined): string {
   if (!sessionId) {
     throw makeProtocolError('INVALID_PARAMS', 'The request requires a sessionId.')
@@ -66,19 +67,6 @@ function requiredSessionId(sessionId: string | undefined): string {
   return sessionId
 }
 
-function hasTrustedSessionResources(params: Partial<SessionCreateParams>): boolean {
-  return (
-    params.resourceOptions !== undefined ||
-    params.phiAgents !== undefined ||
-    params.personaMarkdown !== undefined ||
-    params.projectBound !== undefined ||
-    params.memory !== undefined ||
-    params.contextFiles !== undefined ||
-    params.mcpServers !== undefined ||
-    params.desktopMcp !== undefined ||
-    params.environment !== undefined
-  )
-}
 async function defaultReadSessionState(sessionId: string): Promise<unknown> {
   const [{ getSession }, { serializeSessionState }, { toJsonSafe }] = await Promise.all([
     import('../../main/agent/engine/in-process/session-runtime'),
@@ -89,58 +77,23 @@ async function defaultReadSessionState(sessionId: string): Promise<unknown> {
   return toJsonSafe(serializeSessionState(getSession(sessionId)))
 }
 
-async function assertExistingAbsoluteDirectory(cwd: string): Promise<void> {
-  if (!isAbsolute(cwd)) {
-    throw makeProtocolError('INVALID_PARAMS', 'Session cwd must be an existing absolute directory.')
-  }
-  try {
-    if ((await stat(cwd)).isDirectory()) return
-  } catch {
-    // The protocol exposes one stable validation result for missing and non-directory paths.
-  }
-  throw makeProtocolError('INVALID_PARAMS', 'Session cwd must be an existing absolute directory.')
-}
-
-const thinkingLevels = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
-
-function projectSessionState(
-  sessionId: string,
-  value: unknown,
-  activeRunId?: string,
-  lastRun?: SessionLastRun
-): JsonValue {
-  const state = isRecord(value) ? value : {}
-  const model = isRecord(state.model) ? state.model : undefined
-  const messages = Array.isArray(state.messages) ? (state.messages as JsonValue[]) : []
-  const cwd = typeof state.cwd === 'string' && state.cwd ? state.cwd : undefined
-  if (!cwd) throw new TypeError('Worker session state omitted cwd')
-  return {
-    sessionId,
-    messages,
-    ...(model && typeof model.provider === 'string' && typeof model.id === 'string'
-      ? { model: { provider: model.provider, id: model.id } }
-      : {}),
-    ...(typeof state.thinkingLevel === 'string' && thinkingLevels.has(state.thinkingLevel)
-      ? { thinkingLevel: state.thinkingLevel }
-      : {}),
-    cwd,
-    ...(activeRunId ? { activeRunId } : {}),
-    ...(lastRun ? { lastRun } : {})
-  }
-}
-
 export function createWorkerKernelAdapter(
   options: WorkerKernelAdapterOptions
 ): WorkerKernelAdapter {
   if (!options.agentDir) throw new Error('PI_CODING_AGENT_DIR is required by the kernel entry')
 
-  const callWorker =
-    options.callWorker ??
-    ((method, params) => callKernelRuntime(method, params, options.modelAccess))
   const readSessionState = options.readSessionState ?? defaultReadSessionState
   const diagnostic =
     options.diagnostic ??
     ((message: string) => process.stderr.write(`[kernel-worker] ${message}\n`))
+  const kernelServices: KernelRuntimeServices = {}
+  const callWorker =
+    options.callWorker ??
+    ((method, params) => callKernelRuntime(method, params, options.modelAccess, kernelServices))
+  const agentRuns = new KernelAgentRunCoordinator(options.agentDir, callWorker, diagnostic)
+  const plans = new KernelPlanCoordinator(options.agentDir, callWorker, diagnostic)
+  kernelServices.agentRuns = agentRuns
+  kernelServices.plans = plans
   const diagnosedEvents = new Set<string>()
   const durableSessions = new KernelSessionRepository(
     options.agentDir,
@@ -235,6 +188,7 @@ export function createWorkerKernelAdapter(
             { reason: 'resource_snapshot_required' }
           )
         }
+        await agentRuns.openSession(sessionId, session.directory)
         await callWorker('session.create', {
           ...createInput,
           sessionId,
@@ -249,8 +203,11 @@ export function createWorkerKernelAdapter(
         })
         sessionKinds.set(sessionId, 'persistent')
         sessionCreateInputs.set(sessionId, createInput)
+        await plans.openSession(sessionId)
         return session
       } catch (error) {
+        plans.closeSession(sessionId)
+        await agentRuns.closeSession(sessionId).catch(() => undefined)
         await durableSessions.close(sessionId)
         throw error
       }
@@ -285,6 +242,12 @@ export function createWorkerKernelAdapter(
     sessionKinds,
     sessionCreateInputs,
     initializeMemorySession: (sessionId) => memoryClientRuns.set(sessionId, new Map()),
+    prepareTarget: (sessionId, directory) => agentRuns.openSession(sessionId, directory),
+    activateTarget: (sessionId) => plans.openSession(sessionId),
+    cleanupTarget: async (sessionId) => {
+      plans.closeSession(sessionId)
+      await agentRuns.closeSession(sessionId)
+    },
     withAdmission,
     requireLoadedSession
   })
@@ -359,6 +322,7 @@ export function createWorkerKernelAdapter(
     ...resourceHandlers,
     ...sessionForkHandlers,
     ...promptHandlers,
+    ...createPlanAgentHandlers({ callWorker, plans, agentRuns, requireLoadedSession }),
     'session.create'(params, callContext) {
       return withAdmission(async () => {
         const create = params as SessionCreateParams
@@ -373,20 +337,29 @@ export function createWorkerKernelAdapter(
         await requireAvailableModel(options.modelAccess, create.model)
         const sessionId = randomUUID()
         if (create.sessionManager.kind === 'memory') {
-          await callWorker('session.create', {
-            ...create,
-            sessionId,
-            agentDir: options.agentDir,
-            sessionManager: { kind: 'memory', cwd: create.cwd }
-          })
-          sessionKinds.set(sessionId, 'memory')
-          sessionCreateInputs.set(sessionId, create as unknown as Record<string, unknown>)
-          memoryClientRuns.set(sessionId, new Map())
-          return { sessionId }
+          await agentRuns.openSession(sessionId)
+          try {
+            await callWorker('session.create', {
+              ...create,
+              sessionId,
+              agentDir: options.agentDir,
+              sessionManager: { kind: 'memory', cwd: create.cwd }
+            })
+            sessionKinds.set(sessionId, 'memory')
+            sessionCreateInputs.set(sessionId, create as unknown as Record<string, unknown>)
+            memoryClientRuns.set(sessionId, new Map())
+            await plans.openSession(sessionId)
+            return { sessionId }
+          } catch (error) {
+            plans.closeSession(sessionId)
+            await agentRuns.closeSession(sessionId).catch(() => undefined)
+            throw error
+          }
         }
 
         const persistent = await durableSessions.create(sessionId, create)
         try {
+          await agentRuns.openSession(sessionId, persistent.directory)
           await callWorker('session.create', {
             ...create,
             sessionId,
@@ -399,8 +372,11 @@ export function createWorkerKernelAdapter(
           })
           sessionKinds.set(sessionId, 'persistent')
           sessionCreateInputs.set(sessionId, create as unknown as Record<string, unknown>)
+          await plans.openSession(sessionId)
           return { sessionId }
         } catch (error) {
+          plans.closeSession(sessionId)
+          await agentRuns.closeSession(sessionId).catch(() => undefined)
           await durableSessions.abandonNew(sessionId)
           throw error
         }
@@ -449,18 +425,21 @@ export function createWorkerKernelAdapter(
           ? request.runId
           : activeRuns.get(sessionId)
       if (activeRunId) cancelledRuns.add(activeRunId)
-      try {
-        await callWorker('session.abort', { sessionId })
-      } catch (error) {
+      const [childAbort, mainAbort] = await Promise.allSettled([
+        agentRuns.stopAll(sessionId),
+        callWorker('session.abort', { sessionId })
+      ])
+      if (mainAbort.status === 'rejected') {
         if (activeRunId) cancelledRuns.delete(activeRunId)
         if (activeRunId && callContext.connectionId === 'kernel-lifecycle') {
           await finishActiveRun(sessionId, activeRunId, 'unknown')
         }
-        throw error
+        throw mainAbort.reason
       }
       if (activeRunId && callContext.connectionId === 'kernel-lifecycle') {
         await finishActiveRun(sessionId, activeRunId, 'cancelled')
       }
+      if (childAbort.status === 'rejected') throw childAbort.reason
       return { cancelled: true }
     },
     async 'session.snapshot'(_params, _context, request) {
@@ -483,11 +462,15 @@ export function createWorkerKernelAdapter(
         if (
           activeRuns.has(sessionId) ||
           admittingRuns.has(sessionId) ||
-          forkingSessions.has(sessionId)
+          forkingSessions.has(sessionId) ||
+          plans.hasActiveWork(sessionId) ||
+          (await agentRuns.hasActive(sessionId))
         ) {
           throw makeProtocolError('SESSION_BUSY', 'The session has an active operation.')
         }
         await callWorker('session.dispose', { sessionId })
+        plans.closeSession(sessionId)
+        await agentRuns.closeSession(sessionId)
         await durableSessions.close(sessionId)
         activeRuns.delete(sessionId)
         sessionKinds.delete(sessionId)
@@ -550,10 +533,19 @@ export function createWorkerKernelAdapter(
               }
             }
             try {
+              await agentRuns.stopAll(sessionId)
+            } catch (error) {
+              failures.push(error)
+            }
+            try {
               await callWorker('session.dispose', { sessionId })
             } catch (error) {
               failures.push(error)
             } finally {
+              plans.closeSession(sessionId)
+              await agentRuns.closeSession(sessionId).catch((error: unknown) => {
+                failures.push(error)
+              })
               if (kind === 'persistent') {
                 await durableSessions.close(sessionId).catch((error: unknown) => {
                   failures.push(error)
@@ -566,12 +558,15 @@ export function createWorkerKernelAdapter(
             }
           })
         )
+        await agentRuns.flush().catch((error: unknown) => failures.push(error))
         if (failures.length > 0) throw failures[0]
         await options.modelAccess?.close?.()
       })()
       return closeAllPromise
     },
     bind(core) {
+      agentRuns.bind(core)
+      plans.bind(core)
       const unbindOutbound = bindWorkerOutbound({
         agentDir: options.agentDir,
         core,

@@ -278,7 +278,7 @@ export function buildAgentTool(
 
       let handle
       try {
-        handle = registry.launch({
+        handle = await registry.start({
           agent: name,
           task: delegatedTask,
           ...(images.length > 0 ? { images } : {}),
