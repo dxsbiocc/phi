@@ -13,7 +13,10 @@ import type {
 import type { PhiSessionCreateParams } from './engine/types'
 import { launchLocalKernel } from './engine/kernel-client'
 import { launchRemoteKernel } from './engine/kernel-client/remote'
-import type { DesktopModelAccessOwner } from './engine/kernel-host/desktop-model-access'
+import {
+  createDesktopModelAccessOwner,
+  type DesktopModelAccessOwner
+} from './engine/kernel-host/desktop-model-access'
 import type { RemoteReverseTunnel } from './wrappers/remote-ssh-session'
 import { facadeBindingHash } from './engine/rpc/facade-session-driver'
 import { probeRemoteKernelHistory, readAndPlanKernelHistory } from './engine/kernel-history'
@@ -220,10 +223,7 @@ function createAppLocalKernelLauncher(
 ): KernelSessionLauncher {
   return async (params, context, signal) => {
     signal.throwIfAborted()
-    // Loaded on first launch: the SDK credential store cannot load in node-run shared modules.
-    const { createDesktopModelAccessOwner } =
-      await import('./engine/kernel-host/desktop-model-access')
-    modelAccess.owner ??= await createDesktopModelAccessOwner(params.agentDir)
+    modelAccess.owner ??= createDesktopModelAccessOwner(params.agentDir, getPhiEngineBridge())
     const paths = options.appPaths()
     const target = localKernelTarget()
     const buildDirectory = kernelBuildDirectory(paths, target)

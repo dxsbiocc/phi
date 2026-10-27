@@ -192,12 +192,8 @@ async function addLocalMcpConnectorUnlocked(
     }
     throw error
   }
-  const probe =
-    deps.probe ??
-    (async (probeRequest) => {
-      const { listConfiguredStdioMcpTools } = await import('../engine/mcp/configured-stdio-tools')
-      return listConfiguredStdioMcpTools(probeRequest, { clock: deps.clock })
-    })
+  const probe = deps.probe
+  if (!probe) throw new Error('The Bun MCP discovery broker is not connected')
   const tools = await probe({ name: request.name, entry, environment })
   const fileSystem = deps.fileSystem ?? localConnectorFileSystem
   const config = fileSystem.readConfig(agentDir)

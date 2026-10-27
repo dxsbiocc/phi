@@ -4,9 +4,17 @@ import {
   memoryRuntime,
   modelGatewayRuntime
 } from './worker-subsystems'
+import { DESKTOP_MODEL_ACCESS_WORKER_METHODS } from '../kernel-host/model-access-broker'
 
 export async function handleWorkerRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
+    case DESKTOP_MODEL_ACCESS_WORKER_METHODS.credentials:
+    case DESKTOP_MODEL_ACCESS_WORKER_METHODS.refresh: {
+      const modelAccess = await import('./desktop-model-access')
+      return method === DESKTOP_MODEL_ACCESS_WORKER_METHODS.credentials
+        ? modelAccess.desktopModelAccessCredentials(params)
+        : modelAccess.desktopModelAccessRefresh(params)
+    }
     case 'decisions.models':
     case 'decisions.evaluate':
     case 'decisions.cancel': {

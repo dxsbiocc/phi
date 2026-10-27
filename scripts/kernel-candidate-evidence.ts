@@ -73,6 +73,12 @@ export function candidateEvidenceSteps(input: {
       command: ['bun', 'scripts/build-kernel.ts', '--target', 'linux-x64'],
       deadlineMs: 30 * 60_000
     },
+    { name: 'build-app', command: ['bun', 'run', 'build'], deadlineMs: 30 * 60_000 },
+    {
+      name: 'main-bundle-runtime',
+      command: ['bun', 'run', 'check:main-bundle-runtime'],
+      deadlineMs: 5 * 60_000
+    },
     {
       name: 'a19-rollback-a17-tests',
       command: [

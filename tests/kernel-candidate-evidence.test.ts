@@ -21,6 +21,8 @@ test('candidate evidence plan preserves the required gate, build, focused-test, 
       'test-gate',
       'build-kernel-darwin-arm64',
       'build-kernel-linux-x64',
+      'build-app',
+      'main-bundle-runtime',
       'a19-rollback-a17-tests',
       'package-check',
       'kernel-perf-local'
@@ -28,7 +30,9 @@ test('candidate evidence plan preserves the required gate, build, focused-test, 
   )
   assert.deepEqual(steps[6].command, ['node', 'scripts/test-gate.mjs'])
   assert.deepEqual(steps[7].command, ['bun', 'scripts/build-kernel.ts', '--target', 'darwin-arm64'])
-  assert.match(steps[9].command.join(' '), /kernel-candidate-history\.test\.ts/u)
-  assert.match(steps[9].command.join(' '), /kernel-local-package\.test\.ts/u)
-  assert.match(steps[11].command.join(' '), /--candidate abc1234/u)
+  assert.deepEqual(steps[9].command, ['bun', 'run', 'build'])
+  assert.deepEqual(steps[10].command, ['bun', 'run', 'check:main-bundle-runtime'])
+  assert.match(steps[11].command.join(' '), /kernel-candidate-history\.test\.ts/u)
+  assert.match(steps[11].command.join(' '), /kernel-local-package\.test\.ts/u)
+  assert.match(steps[13].command.join(' '), /--candidate abc1234/u)
 })

@@ -10,6 +10,11 @@ export const MODEL_ACCESS_BROKER_CAPABILITIES = [
   'modelAccess.refresh'
 ] as const
 
+export const DESKTOP_MODEL_ACCESS_WORKER_METHODS = {
+  credentials: 'desktopModelAccess.credentials',
+  refresh: 'desktopModelAccess.refresh'
+} as const
+
 export type ModelAccessCredentialsParams = KernelHostCapabilityParams<'modelAccess.credentials'>
 
 export type ModelAccessCredentialsResult = KernelHostCapabilityResult<'modelAccess.credentials'>
@@ -78,14 +83,22 @@ function waitForRefresh(
 }
 
 export interface ModelAccessBroker {
-  credentials(params: ModelAccessCredentialsParams): ModelAccessCredentialsResult
+  credentials(
+    params: ModelAccessCredentialsParams
+  ): ModelAccessCredentialsResult | Promise<ModelAccessCredentialsResult>
   refresh(
     params: ModelAccessRefreshParams,
     context?: ModelAccessBrokerContext
   ): Promise<AuthCredentialSnapshotEntry>
 }
 
-export function createModelAccessBroker(authStorage: ModelAccessAuthStorage): ModelAccessBroker {
+export interface SynchronousModelAccessBroker extends ModelAccessBroker {
+  credentials(params: ModelAccessCredentialsParams): ModelAccessCredentialsResult
+}
+
+export function createModelAccessBroker(
+  authStorage: ModelAccessAuthStorage
+): SynchronousModelAccessBroker {
   const refreshes = new Map<number, ModelAccessRefreshFlight>()
 
   return {
