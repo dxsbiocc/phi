@@ -17,6 +17,7 @@ import {
 import { sessionDraftKey } from '../lib/sessionDrafts'
 import { orderSessionsForDisplay } from '../lib/sessionOrder'
 import { getRendererApi } from '../lib/rendererApi'
+import { messageContentTitleText } from '../../../shared/sessionTitle'
 import type {
   AgentEventSummary,
   AgentUserInteractionRequest,
@@ -125,6 +126,8 @@ type SessionStoreState = {
   sessions: SessionSummary[]
   activeSessionPath: string | null
   activePhiSessionId: string | null
+  /** Title from the live session payload. Project chats are absent from `sessions`. */
+  activeSessionName: string | null
   activeCwd: string
   activeDisplayCwd: string
   activeProjectId: string | null
@@ -194,6 +197,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
   sessions: [],
   activeSessionPath: null,
   activePhiSessionId: null,
+  activeSessionName: null,
   activeCwd: '',
   activeDisplayCwd: '',
   activeProjectId: null,
@@ -369,6 +373,15 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       { preserveBusy: false }
     )
     get().storeSessionRuntimeState(nextStateKey, nextRuntimeState)
+    const nextSessionName = messageContentTitleText(current.name) || null
+    const sessions = nextSessionName
+      ? state.sessions.map((session) =>
+          (currentPhiSessionId !== null && session.phiSessionId === currentPhiSessionId) ||
+          (current.path !== null && session.path === current.path)
+            ? { ...session, name: nextSessionName }
+            : session
+        )
+      : state.sessions
 
     let nextAgentEventState = state.agentEventState
     if (generationChanged || targetChanged || stateKeyChanged) {
@@ -382,6 +395,8 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       activeSessionGeneration: current.sessionGeneration,
       activeSessionPath: current.path,
       activePhiSessionId: currentPhiSessionId,
+      activeSessionName: nextSessionName,
+      sessions,
       activeCwd: current.cwd,
       activeDisplayCwd: current.displayCwd ?? current.cwd,
       activeProjectId: current.projectId ?? null,

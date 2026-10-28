@@ -16,6 +16,8 @@ import { readPhiTimelineMessages } from './phi-timeline-messages'
 export type CurrentSessionPayload = {
   path: string | null
   phiSessionId?: string
+  /** Saved conversation title. Absent until a title is stored on the session. */
+  name?: string
   cwd: string
   displayCwd: string
   projectId?: string

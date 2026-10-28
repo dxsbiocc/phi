@@ -270,3 +270,22 @@ test('getCurrentSessionPayload preserves ordinary, local-project, and remote-pro
   assert.equal(harness.payload.getCurrentSessionPayload().legacyRemoteSession, undefined)
   assert.deepEqual(harness.refreshes, ['current-key', 'current-key', 'current-key', 'current-key'])
 })
+
+test('getCurrentSessionPayload carries the saved conversation title', () => {
+  const harness = createPayloadHarness()
+  harness.setManifest({
+    sessionId: 'phi-titled',
+    title: '读README列src目录写总结',
+    status: 'idle',
+    unreadKind: null
+  })
+  assert.equal(harness.payload.getCurrentSessionPayload().name, '读README列src目录写总结')
+
+  harness.setManifest({
+    sessionId: 'phi-untitled',
+    title: '   ',
+    status: 'idle',
+    unreadKind: null
+  })
+  assert.equal(harness.payload.getCurrentSessionPayload().name, undefined)
+})

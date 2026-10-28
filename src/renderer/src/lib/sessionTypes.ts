@@ -46,6 +46,7 @@ export interface SessionSwitchResult extends SessionRuntimeState {
 export interface CurrentSession extends SessionRuntimeState {
   path: string | null
   phiSessionId?: string
+  name?: string
   cwd: string
   displayCwd?: string
   projectId?: string

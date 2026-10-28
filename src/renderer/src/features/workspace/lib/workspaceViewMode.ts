@@ -1,4 +1,10 @@
+import type { WorkspaceSidebarMode } from '../../../lib/workspaceSidebar'
 import type { WorkspaceViewMode } from '../WorkspaceView'
+
+/** The last open file is gone. Home is the chat surface; the project list stays on Projects. */
+export function viewAfterLastFileTab(sidebarMode: WorkspaceSidebarMode): 'chat' | 'projects' {
+  return sidebarMode === 'projects' ? 'projects' : 'chat'
+}
 
 /**
  * Picks the content slot for the workspace column.

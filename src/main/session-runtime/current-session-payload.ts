@@ -11,6 +11,7 @@ import type { SessionState } from '../app-state/session-state'
 import type { SessionResolution } from './session-resolution'
 import { isLegacyRemoteSession } from '../agent/session/legacy-remote-session'
 import { fieldsFromMode, modeFromFields } from '../../shared/sessionMode'
+import { messageContentTitleText } from '../../shared/sessionTitle'
 
 interface CurrentSessionPromptRun {
   phiSessionId: string
@@ -134,9 +135,11 @@ export function createCurrentSessionPayload<
       ? stores.getProject(manifest.projectId)
       : stores.getProjectByCwd(deps.sessionState.cwd)
     const projectLocation = manifest?.projectLocation ?? project?.location
+    const name = messageContentTitleText(manifest?.title)
     return {
       path,
       ...(phiSessionId ? { phiSessionId } : {}),
+      ...(name ? { name } : {}),
       cwd: deps.sessionState.cwd,
       displayCwd:
         projectLocation?.kind === 'ssh' ? projectLocation.remoteRoot : deps.sessionState.cwd,

@@ -40,6 +40,7 @@ function resetSessionStore(): void {
     sessions: [],
     activeSessionPath: null,
     activePhiSessionId: null,
+    activeSessionName: null,
     activeCwd: '',
     activeSessionGeneration: 0,
     activeAgentEventStateKey: null,
@@ -246,6 +247,37 @@ test('current session keeps visible messages and scroll key when a fresh chat ma
     sessionAgentEventStates.get(materializedStateKey)?.messages.map((message) => message.id),
     ['user-local']
   )
+})
+
+test('applying the current session keeps a generated title for the open tab', () => {
+  useSessionStore.setState({
+    sessions: [{ ...baseSession, phiSessionId: 'phi-session-1', name: '分三步：读 README' }]
+  })
+
+  useSessionStore.getState().applyCurrentSession({
+    path: 'phi-session:phi-session-1',
+    phiSessionId: 'phi-session-1',
+    name: '读README列src目录写总结',
+    cwd: '/workspace',
+    sessionGeneration: 3,
+    permissionMode: 'auto',
+    status: 'idle',
+    unreadKind: null
+  })
+
+  const nextState = useSessionStore.getState()
+  assert.equal(nextState.activeSessionName, '读README列src目录写总结')
+  assert.equal(nextState.sessions[0]?.name, '读README列src目录写总结')
+
+  useSessionStore.getState().applyCurrentSession({
+    path: null,
+    cwd: '/workspace',
+    sessionGeneration: 4,
+    permissionMode: 'auto',
+    status: 'idle',
+    unreadKind: null
+  })
+  assert.equal(useSessionStore.getState().activeSessionName, null)
 })
 
 test('chat interactions are wired to acknowledge the active session marker', () => {

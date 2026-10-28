@@ -54,7 +54,10 @@ import { titlebarTrailingToggleChromeReserve } from './components/app-shell/Work
 import { AppResizeSeparator } from './components/app-shell/AppResizeSeparator'
 import { AppWindowChrome } from './components/app-shell/AppWindowChrome'
 import { WorkspaceView } from './features/workspace/WorkspaceView'
-import { workspaceViewModeFor } from './features/workspace/lib/workspaceViewMode'
+import {
+  viewAfterLastFileTab,
+  workspaceViewModeFor
+} from './features/workspace/lib/workspaceViewMode'
 import { useWorkspaceTabNavigation } from './features/workspace/hooks/useWorkspaceTabNavigation'
 import { useAppDialogs } from './lib/app-shell/useAppDialogs'
 import { usePanelRequests } from './lib/app-shell/usePanelRequests'
@@ -170,7 +173,7 @@ import {
   isPointerWithinWorkspaceSidebarPreview,
   isWorkspaceSidebarPreviewDialogActive
 } from './lib/workspaceSidebarPreviewPointer'
-import { sessionDisplayTitle, titleFromMessages, truncateSessionTitle } from './lib/sessionTitles'
+import { workspaceConversationTitle } from './lib/sessionTitles'
 import { orderProjectsForSessionSelection } from './lib/projectSidebar'
 import { workspaceScopeLabelForCwd } from './lib/workspaceScope'
 import {
@@ -253,6 +256,7 @@ function App(): React.JSX.Element {
     setSessions,
     activeSessionPath,
     setActiveSessionPath,
+    activeSessionName,
     activePhiSessionId,
     setActivePhiSessionId,
     activeCwd,
@@ -2115,6 +2119,7 @@ function App(): React.JSX.Element {
     [activeProjectId, activeRemoteFileScope, rendererApi, showSnackbar, showSnackbarError]
   )
 
+  const onDeletedActiveFileRef = useRef<(remainingTabs: typeof workspaceFileTabs) => void>(() => {})
   const workspaceFileActions = useWorkspaceFileActions({
     rootPath: workspaceFilesRootPath,
     rendererApi,
@@ -2137,7 +2142,8 @@ function App(): React.JSX.Element {
     onOpenDirectory: previewDirectoryPathInWorkspaceTab,
     onDownloadFile: downloadWrapperResultFile,
     onRevealFile: onRevealPreviewPath,
-    onNotice: (message) => showSnackbar(message, 'warning')
+    onNotice: (message) => showSnackbar(message, 'warning'),
+    onDeletedActiveFile: (remainingTabs) => onDeletedActiveFileRef.current(remainingTabs)
   })
 
   useEffect(() => {
@@ -2161,15 +2167,22 @@ function App(): React.JSX.Element {
       ? `${activeProjectId ?? ''}:${activeRemoteFileScope?.hostAlias ?? ''}:${activeProjectLocation.canonicalRoot}`
       : null
   const previousRemoteFileIdentityRef = useRef<string | null>(null)
+  const conversationTitle = useMemo(() => {
+    void uiLanguage // Localized fallback titles are read through the shared copy proxy.
+    return workspaceConversationTitle({
+      session: activeSession,
+      sessionName: activeSessionName,
+      messages,
+      fallback: appCopy.newChat
+    })
+  }, [activeSession, activeSessionName, messages, uiLanguage])
   const currentSessionTab = useMemo<WorkspaceSessionTab>(() => {
     void uiLanguage // Default titles and scope labels follow the selected interface language.
     return {
       key: workspaceSessionTabKey(activeSessionPath, activeSessionGeneration),
       kind: 'session',
       itemId: activeSessionPath ?? `fresh:${activeSessionGeneration}`,
-      title: activeSession
-        ? sessionDisplayTitle(activeSession)
-        : (titleFromMessages(messages) ?? truncateSessionTitle(appCopy.newChat)),
+      title: conversationTitle,
       subtitle: activeProject?.name ?? workspaceScopeLabelForCwd(activeCwd, projects),
       sessionPath: activeSessionPath,
       sessionGeneration: activeSessionGeneration,
@@ -2178,10 +2191,9 @@ function App(): React.JSX.Element {
   }, [
     activeCwd,
     activeProject,
-    activeSession,
     activeSessionGeneration,
     activeSessionPath,
-    messages,
+    conversationTitle,
     projects,
     uiLanguage
   ])
@@ -2496,15 +2508,13 @@ function App(): React.JSX.Element {
       )
     }
     if (!isChatWorkspaceView) return activeView
-    if (activeSession) return sessionDisplayTitle(activeSession)
-    return titleFromMessages(messages) ?? truncateSessionTitle(appCopy.newChat)
+    return conversationTitle
   }, [
-    activeSession,
     activeView,
     activeWorkspaceResourceTab,
+    conversationTitle,
     isChatWorkspaceView,
     isResourceWorkspaceView,
-    messages,
     showProjectSessionPlaceholder,
     visibleWorkspaceTabs.length,
     uiLanguage
@@ -2815,6 +2825,44 @@ function App(): React.JSX.Element {
     workspaceFileTabs
   ])
 
+  const continueAfterRemovedFileTabs = useCallback(
+    (remainingTabs: typeof workspaceFileTabs): void => {
+      const nextTab = remainingTabs.at(-1) ?? null
+      cancelActiveWrapperResultRead()
+      if (!nextTab) {
+        filePreviewRequestRef.current += 1
+        setFilePreview(null)
+        setActiveWorkspaceFilePath(null)
+        setActiveWorkspaceTabKey(null)
+        closeActiveNotebook()
+        navigateToView(viewAfterLastFileTab(workspaceSidebarMode))
+        return
+      }
+      if (nextTab.kind === 'notebook') {
+        onSelectWorkspaceFileTab(nextTab)
+        return
+      }
+      setActiveWorkspaceTabKey(workspaceFileTabKey(nextTab.id))
+      setActiveWorkspaceFilePath(nextTab.path)
+      setActiveAnalysisNotebook(null)
+      showCachedOrLoadFilePreview(nextTab)
+    },
+    [
+      cancelActiveWrapperResultRead,
+      closeActiveNotebook,
+      filePreviewRequestRef,
+      navigateToView,
+      onSelectWorkspaceFileTab,
+      setActiveAnalysisNotebook,
+      setActiveWorkspaceFilePath,
+      showCachedOrLoadFilePreview,
+      workspaceSidebarMode
+    ]
+  )
+  useLayoutEffect(() => {
+    onDeletedActiveFileRef.current = continueAfterRemovedFileTabs
+  }, [continueAfterRemovedFileTabs])
+
   const onCloseWorkspaceFileTab = useCallback(
     (tabLike: AnalysisWorkspaceFileTab): void => {
       const closingTab = workspaceFileTabs.find((tab) => tab.id === tabLike.id)
@@ -2851,45 +2899,22 @@ function App(): React.JSX.Element {
         return
       }
 
-      const nextTab = remainingTabs.at(-1) ?? null
-      cancelActiveWrapperResultRead()
-      if (!nextTab) {
-        filePreviewRequestRef.current += 1
-        setFilePreview(null)
-        setActiveWorkspaceFilePath(null)
-        closeActiveNotebook()
-        navigateToView(workspaceSidebarMode === 'projects' ? 'projects' : 'chat')
-        return
-      }
-
-      if (nextTab.kind === 'notebook') {
-        onSelectWorkspaceFileTab(nextTab)
-      } else {
-        setActiveWorkspaceFilePath(nextTab.path)
-        setActiveAnalysisNotebook(null)
-        showCachedOrLoadFilePreview(nextTab)
-      }
+      continueAfterRemovedFileTabs(remainingTabs)
     },
     [
       activeCwd,
       activeProjectId,
       cancelActiveWrapperResultRead,
       clearCachedFilePreview,
-      closeActiveNotebook,
+      continueAfterRemovedFileTabs,
+      effectiveActiveWorkspaceTabKey,
       filePreview,
       filePreviewRequestRef,
       forgetCachedAnalysisNotebook,
-      effectiveActiveWorkspaceTabKey,
-      onSelectWorkspaceFileTab,
-      setActiveAnalysisNotebook,
-      setActiveWorkspaceFilePath,
       setFilePreview,
       setWorkspaceFileTabs,
-      showCachedOrLoadFilePreview,
       showSnackbar,
-      workspaceFileTabs,
-      workspaceSidebarMode,
-      navigateToView
+      workspaceFileTabs
     ]
   )
 

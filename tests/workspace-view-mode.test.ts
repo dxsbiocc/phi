@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { workspaceViewModeFor } from '../src/renderer/src/features/workspace/lib/workspaceViewMode'
+import {
+  viewAfterLastFileTab,
+  workspaceViewModeFor
+} from '../src/renderer/src/features/workspace/lib/workspaceViewMode'
 
 const base = {
   showWorkspaceTabs: false,
@@ -41,6 +44,12 @@ test('the analysis view falls back to the canvas without a file preview', () => 
     workspaceViewModeFor({ ...base, isAnalysisWorkspaceView: true, chatSelected: false }),
     'analysis'
   )
+})
+
+test('deleting the last file leaves Analysis for Home, and the project list stays on Projects', () => {
+  assert.equal(viewAfterLastFileTab('files'), 'chat')
+  assert.equal(viewAfterLastFileTab('conversations'), 'chat')
+  assert.equal(viewAfterLastFileTab('projects'), 'projects')
 })
 
 test('an empty chat view shows the placement screen', () => {

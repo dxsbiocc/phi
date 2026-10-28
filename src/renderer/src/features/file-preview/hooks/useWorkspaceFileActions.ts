@@ -4,6 +4,7 @@ import type { WorkspaceFileOperationTarget } from '../../../../../shared/workspa
 import {
   remoteFileRequestForUri,
   type RemoteWorkspaceFileScope,
+  type WorkspaceFileTab,
   type WorkspaceFileTabsState
 } from '../../../useWorkspaceFileTabs'
 import type { RendererApi } from '../../../types'
@@ -38,7 +39,8 @@ export function useWorkspaceFileActions({
   onOpenDirectory,
   onDownloadFile,
   onRevealFile,
-  onNotice
+  onNotice,
+  onDeletedActiveFile
 }: {
   rootPath: string
   rendererApi: RendererApi
@@ -52,6 +54,8 @@ export function useWorkspaceFileActions({
   onDownloadFile: (path: string) => void
   onRevealFile: (path: string) => void
   onNotice?: (message: string) => void
+  /** The active file tab was removed. Remaining tabs still need a selection; none means leave Analysis. */
+  onDeletedActiveFile?: (remainingTabs: WorkspaceFileTab[]) => void
 }): FileTreeActions {
   const latest = useRef(workspace)
   const currentRoot = useRef(rootPath)
@@ -115,9 +119,10 @@ export function useWorkspaceFileActions({
           state.clearCachedFilePreview(cachedPath)
         }
       }
-      state.setWorkspaceFileTabs((tabs) =>
-        tabs.filter((tab) => tab.dirty || !fileTreePathInSubtree(tab.path, path))
+      const remainingTabs = state.workspaceFileTabs.filter(
+        (tab) => tab.dirty || !fileTreePathInSubtree(tab.path, path)
       )
+      state.setWorkspaceFileTabs(remainingTabs)
       if (
         state.filePreview &&
         fileTreePathInSubtree(filePreviewStatePath(state.filePreview), path)
@@ -131,6 +136,8 @@ export function useWorkspaceFileActions({
           const nextPath = renamedWorkspacePath(affectedActive.path, path, destination)
           if (affectedActive.pathKind === 'directory') onOpenDirectory(nextPath)
           else onOpenFile(nextPath)
+        } else {
+          onDeletedActiveFile?.(remainingTabs)
         }
       }
       onChanged()
@@ -139,6 +146,7 @@ export function useWorkspaceFileActions({
       getActiveCwd,
       getActiveRemoteProject,
       onChanged,
+      onDeletedActiveFile,
       onOpenDirectory,
       onOpenFile,
       onNotice,

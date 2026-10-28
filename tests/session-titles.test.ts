@@ -4,7 +4,8 @@ import test from 'node:test'
 import {
   sessionDisplayTitle,
   titleFromMessages,
-  truncateSessionTitle
+  truncateSessionTitle,
+  workspaceConversationTitle
 } from '../src/renderer/src/lib/sessionTitles'
 import { editableSessionTitle, sessionTitle } from '../src/renderer/src/lib/sessionSidebarShared'
 import { messageContentTitleText } from '../src/shared/sessionTitle'
@@ -26,6 +27,29 @@ setUiLanguage('zh-CN')
 
 test('session title prefers explicit session name over first message', () => {
   assert.equal(sessionDisplayTitle({ ...baseSession, name: '手动标题' }), '手动标题')
+})
+
+test('workspace tab uses the saved title when the session is not in the open list', () => {
+  const messages: ChatItem[] = [{ id: 'user-1', role: 'user', content: '分三步：读 README' }]
+
+  assert.equal(
+    workspaceConversationTitle({
+      session: null,
+      sessionName: '读README列src目录写总结',
+      messages,
+      fallback: '新对话'
+    }),
+    '读README列src目录写总结'
+  )
+  assert.equal(
+    workspaceConversationTitle({
+      session: null,
+      sessionName: null,
+      messages,
+      fallback: '新对话'
+    }),
+    '分三步：读 README'
+  )
 })
 
 test('session title falls back to the first user message', () => {
