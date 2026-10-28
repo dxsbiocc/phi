@@ -1,7 +1,8 @@
 import type { AuthCredentialSnapshotEntry, AuthStorage } from '@oh-my-pi/pi-ai'
-import type {
-  KernelHostCapabilityParams,
-  KernelHostCapabilityResult
+import {
+  modelAccessCredentialEntrySchema,
+  type KernelHostCapabilityParams,
+  type KernelHostCapabilityResult
 } from '../../../../shared/kernel-protocol'
 import type { KernelProtocolClient } from '../kernel-client'
 
@@ -105,12 +106,16 @@ export function createModelAccessBroker(
     credentials({ provider }) {
       const entries = authStorage.credentials.snapshot().credentials
       return {
+        // The result schema is strict, so one foreign entry (e.g. an MCP connector's
+        // OAuth login with tokenUrl/clientId) would reject the whole response and
+        // leave every model provider unauthenticated. Forward only model credentials.
         credentials: entries
           .filter((entry) => provider === undefined || entry.provider === provider)
           .map((entry) => ({
             ...entry,
             credential: { ...entry.credential }
           }))
+          .filter((entry) => modelAccessCredentialEntrySchema.safeParse(entry).success)
       }
     },
 

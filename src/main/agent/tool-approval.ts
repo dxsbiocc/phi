@@ -28,6 +28,8 @@ export interface ToolApprovalRequest {
 
 const RISKY_TOOLS = new Set([
   'bash',
+  // Runs arbitrary Python/JS, so it can mutate the project just like bash.
+  'eval',
   'powershell',
   'edit',
   'write',
@@ -82,6 +84,10 @@ interface ApprovalDecision {
 
 const pendingApprovals = new Map<string, PendingApproval>()
 
+// Without the instruction models retry the denied action or route around it.
+export const TOOL_DENIED_REASON =
+  '用户拒绝了该操作。不要重试，也不要改用其他工具或方式完成同一操作；请停下来询问用户希望如何继续。'
+
 function summarizeSkillRun(input: Record<string, unknown>): string {
   const skill = typeof input.skill === 'string' ? input.skill : ''
   const script = typeof input.script === 'string' ? input.script : ''
@@ -110,6 +116,9 @@ function summarizeToolCall(toolName: string, input: Record<string, unknown>): st
   }
   if (toolName === 'write' || toolName === 'edit') {
     return typeof input.path === 'string' ? input.path : JSON.stringify(input)
+  }
+  if (toolName === 'eval' && typeof input.code === 'string') {
+    return typeof input.language === 'string' ? `${input.language}\n${input.code}` : input.code
   }
   return JSON.stringify(input)
 }
@@ -170,7 +179,7 @@ function isUsableWindow(window: ApprovalWindow | null): window is ApprovalWindow
 }
 
 function createAbortErrorMessage(signal: AbortSignal | undefined): string {
-  return signal?.aborted ? '操作已取消' : '用户拒绝了该操作'
+  return signal?.aborted ? '操作已取消' : TOOL_DENIED_REASON
 }
 
 export function resolveToolApproval(

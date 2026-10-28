@@ -67,8 +67,11 @@ async function processStartedAt(pid: number): Promise<string | undefined> {
       }
     }
     try {
+      // lstart follows the caller's locale (e.g. "二 10月/27 ..." under zh_CN),
+      // which Date.parse cannot read; pin it to C.
       const { stdout } = await execFileAsync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
-        timeout: 2_000
+        timeout: 2_000,
+        env: { ...process.env, LC_ALL: 'C', LANG: 'C' }
       })
       const startedAt = stdout.trim()
       const epochSeconds = Date.parse(startedAt) / 1_000

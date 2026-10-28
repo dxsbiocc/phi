@@ -1,6 +1,7 @@
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
 
+import { writeAppLog } from './app-logger'
 import { getProject } from './projects'
 import { resolveRemoteWorkspaceHostBinding } from './remote-workspace-boundary'
 import { openRemoteRuntimeWorkspace } from './remote-runtime/workspace'
@@ -42,6 +43,22 @@ function kernelBuildDirectory(
   return paths.isPackaged
     ? join(paths.resourcesPath, 'kernel', paths.version ?? '0.0.0', target)
     : join(paths.appPath, '.phi-build', 'kernel', paths.version ?? '0.0.0', target)
+}
+
+// Kernel stderr carries the real cause behind INTERNAL protocol errors.
+function logKernelDiagnostic(target: 'local' | 'remote', text: string): void {
+  const message = text.trim()
+  if (message)
+    writeAppLog({ level: 'warn', event: 'kernel_diagnostic', metadata: { target, message } })
+}
+
+// A packaged appPath is the app.asar archive (a file), so spawning there fails
+// with ENOTDIR; the kernel package directory is a real directory beside it.
+export function kernelLaunchCwd(
+  paths: ReturnType<AppRemoteSessionRoutingOptions['appPaths']>,
+  buildDirectory: string
+): string {
+  return paths.isPackaged ? buildDirectory : paths.appPath
 }
 
 let kernelModelGatewayGeneration = 0
@@ -174,6 +191,7 @@ async function launchAppRemoteKernel(input: {
       signal: input.signal,
       environment: { PHI_KERNEL_ADOPT_ROOTS: target.workspace.runtimeRoot },
       configureClient: input.context.configureClient,
+      onDiagnostic: (text: string) => logKernelDiagnostic('remote', text),
       hello: {
         client: { name: 'phi-desktop', version: paths.version ?? '0.0.0' },
         hostCapabilities: [...input.context.hostCapabilities],
@@ -236,7 +254,8 @@ function createAppLocalKernelLauncher(
     const common = {
       agentDir: params.agentDir,
       home: homedir(),
-      cwd: paths.appPath,
+      cwd: kernelLaunchCwd(paths, buildDirectory),
+      onDiagnostic: (text: string) => logKernelDiagnostic('local', text),
       env: {
         ...process.env,
         PHI_KERNEL_ADOPT_ROOTS: [...new Set(adoptRoots)].join(delimiter)

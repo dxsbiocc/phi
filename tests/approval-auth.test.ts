@@ -155,7 +155,8 @@ const {
   createApprovalExtension,
   requestToolApproval,
   requestRuntimeToolApproval,
-  resolveToolApproval
+  resolveToolApproval,
+  TOOL_DENIED_REASON
 } = await import('../src/main/agent/tool-approval')
 
 async function registerApprovalHandler(signal?: AbortSignal): Promise<ToolHandler> {
@@ -332,7 +333,27 @@ test('Composio execution needs approval while discovery remains read-only', asyn
   const request = window.webContents.sent[0].payload as { requestId: string; toolName: string }
   assert.equal(request.toolName, 'mcp__composio_multi_execute_tool')
   resolveToolApproval(request.requestId, false, window.webContents)
-  assert.deepEqual(await pending, { block: true, reason: '用户拒绝了该操作' })
+  assert.deepEqual(await pending, { block: true, reason: TOOL_DENIED_REASON })
+})
+
+test('eval runs code, so it needs approval like bash and shows the code', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  const handler = await registerApprovalHandler()
+
+  const pending = handler(
+    { toolName: 'eval', input: { language: 'py', code: "open('a.txt', 'w').write('hi')" } },
+    {}
+  )
+  const request = window.webContents.sent[0].payload as {
+    requestId: string
+    toolName: string
+    summary: string
+  }
+  assert.equal(request.toolName, 'eval')
+  assert.equal(request.summary, "py\nopen('a.txt', 'w').write('hi')")
+  resolveToolApproval(request.requestId, false, window.webContents)
+  assert.deepEqual(await pending, { block: true, reason: TOOL_DENIED_REASON })
 })
 
 test('plan drafts and proposal writes use the session sandbox without a second approval', async () => {
@@ -551,7 +572,7 @@ test('a remote approval hook follows the current ask/auto/full policy without se
   assert.equal(window.webContents.sent.length, 1)
   const request = window.webContents.sent[0].payload as { requestId: string }
   resolveToolApproval(request.requestId, false, window.webContents)
-  assert.deepEqual(await pending, { block: true, reason: '用户拒绝了该操作' })
+  assert.deepEqual(await pending, { block: true, reason: TOOL_DENIED_REASON })
 })
 
 test('tool approval cancellation denies pending requests and ignores late responses', async () => {
@@ -563,7 +584,7 @@ test('tool approval cancellation denies pending requests and ignores late respon
   const request = window.webContents.sent[0].payload as { requestId: string }
 
   cancelToolApprovals()
-  assert.deepEqual(await pending, { block: true, reason: '用户拒绝了该操作' })
+  assert.deepEqual(await pending, { block: true, reason: TOOL_DENIED_REASON })
   assert.equal(window.listenerCount('closed'), 0)
 
   resolveToolApproval(request.requestId, true, window.webContents)
@@ -612,7 +633,7 @@ test('tool approval denies safely when the renderer disappears or delivery fails
   assert.equal(window.webContents.listenerCount('did-start-navigation'), 1)
   window.webContents.navigate(false, true)
 
-  assert.deepEqual(await pending, { block: true, reason: '用户拒绝了该操作' })
+  assert.deepEqual(await pending, { block: true, reason: TOOL_DENIED_REASON })
   assert.equal(window.listenerCount('closed'), 0)
   assert.equal(window.webContents.listenerCount('did-start-navigation'), 0)
 
@@ -621,7 +642,7 @@ test('tool approval denies safely when the renderer disappears or delivery fails
   __electronMock.setFocusedWindow(brokenWindow)
 
   const failedDelivery = await handler({ toolName: 'bash', input: { command: 'date' } }, {})
-  assert.deepEqual(failedDelivery, { block: true, reason: '用户拒绝了该操作' })
+  assert.deepEqual(failedDelivery, { block: true, reason: TOOL_DENIED_REASON })
   assert.equal(brokenWindow.listenerCount('closed'), 0)
 })
 
@@ -745,7 +766,7 @@ test('classifyTool gates exec and write skill tools and leaves read alone', asyn
   }
   assert.equal(writeRequest.summary, JSON.stringify({ dest: 'out.txt' }))
   resolveToolApproval(writeRequest.requestId, false, window.webContents)
-  assert.deepEqual(await writePending, { block: true, reason: '用户拒绝了该操作' })
+  assert.deepEqual(await writePending, { block: true, reason: TOOL_DENIED_REASON })
 
   const bashPending = handler({ toolName: 'bash', input: { command: 'date' } }, {})
   const bashRequest = window.webContents.sent.at(-1)?.payload as {

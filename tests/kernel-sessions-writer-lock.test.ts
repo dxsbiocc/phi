@@ -84,3 +84,21 @@ test('lock from a foreign host is never stolen even when its pid is absent local
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test(
+  'process start time is readable under a non-English system locale',
+  { skip: process.platform !== 'darwin' && 'ps lstart is only used on macOS' },
+  async () => {
+    const saved = { LC_ALL: process.env.LC_ALL, LANG: process.env.LANG }
+    process.env.LC_ALL = 'zh_CN.UTF-8'
+    process.env.LANG = 'zh_CN.UTF-8'
+    try {
+      assert.match(await currentProcessStartedAt(), /^darwin:\d+$/)
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+  }
+)

@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -24,6 +32,7 @@ import {
   findPhiSessionById,
   createPhiSession,
   listPhiSessions,
+  recordKernelRuntimeReference,
   updateSessionManifest,
   type PhiSessionManifest
 } from '../src/main/agent/session/session-store'
@@ -540,6 +549,34 @@ test('malformed remote reference exposes recovery error offline and never unlink
     assert.equal(findPhiSessionById(session.sessionId)?.title, session.manifest.title)
     assert.throws(() => deleteSession(summary.path), /需要显式恢复/)
     assert.equal(readFileSync(unrelated, 'utf8'), 'must survive')
+  })
+})
+
+test('a session on the local kernel is deleted locally, kernel history included', () => {
+  withPhiDir(() => {
+    // The kernel records the canonical agent directory.
+    const agentDir = realpathSync(process.env.PI_CODING_AGENT_DIR!)
+    process.env.PI_CODING_AGENT_DIR = agentDir
+    const session = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'ask'
+    })
+    recordKernelRuntimeReference(session.sessionId, {
+      kind: 'phi-kernel',
+      version: 1,
+      kernelSessionId: 'kernel-session-1',
+      host: { kind: 'local', agentDir }
+    })
+    const kernelHistory = join(agentDir, 'phi-kernel', 'sessions', 'kernel-session-1')
+    mkdirSync(kernelHistory, { recursive: true })
+    writeFileSync(join(kernelHistory, 'journal.jsonl'), '{}\n')
+
+    deleteSession(phiOnlySessionPath(session.sessionId))
+
+    assert.equal(findPhiSessionById(session.sessionId), null)
+    assert.equal(existsSync(kernelHistory), false)
   })
 })
 

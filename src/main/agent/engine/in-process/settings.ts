@@ -4,7 +4,10 @@ import {
   resolveConfiguredModelPatterns,
   rolePriorityDefaults
 } from '@oh-my-pi/pi-coding-agent/config/model-resolver'
-import { cfgExtensions } from '@oh-my-pi/pi-coding-agent/extensibility/settings'
+import {
+  cfgExtensionHandlersToolCallTimeoutMs,
+  cfgExtensions
+} from '@oh-my-pi/pi-coding-agent/extensibility/settings'
 import {
   cfgMcpEnableProjectConfig,
   cfgMcpNotifications
@@ -202,6 +205,18 @@ export function createPhiSettings(settings: Settings): PhiSettings {
     memory: { useLocalBackend: () => cfgMemoryBackend.override(settings, 'local') },
     flush: () => settings.flush()
   }
+}
+
+// Largest delay setTimeout accepts; anything above it fires immediately.
+const APPROVAL_WAIT_HANDLER_TIMEOUT_MS = 2_147_483_647
+
+/**
+ * Phi's approval gate waits for the user inside a tool_call handler. OMP's
+ * 30s handler budget would block the call as an extension timeout while the
+ * approval card stays open, and the model then retries the same action.
+ */
+export function allowApprovalWaits(settings: Settings): void {
+  cfgExtensionHandlersToolCallTimeoutMs.override(settings, APPROVAL_WAIT_HANDLER_TIMEOUT_MS)
 }
 
 export function applyAutoCompactionOverrides(

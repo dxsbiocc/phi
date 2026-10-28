@@ -5,7 +5,10 @@ import { join, resolve } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { createAppKernelSessionLaunchers } from '../src/main/agent/app-kernel-session-launchers'
+import {
+  createAppKernelSessionLaunchers,
+  kernelLaunchCwd
+} from '../src/main/agent/app-kernel-session-launchers'
 import { KernelSessionFactory } from '../src/main/agent/engine/kernel-session-factory'
 import type { PhiSessionCreateParams } from '../src/main/agent/engine/types'
 import type {
@@ -148,4 +151,19 @@ test('Node main launches a kernel-routed faux-provider run without loading the S
     }
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('packaged kernel launches from a real directory, never the app.asar file', () => {
+  const packaged = {
+    appPath: '/Applications/Phi.app/Contents/Resources/app.asar',
+    resourcesPath: '/Applications/Phi.app/Contents/Resources',
+    isPackaged: true,
+    version: '0.1.0'
+  } as ReturnType<AppRemoteSessionRoutingOptions['appPaths']>
+  const buildDirectory = '/Applications/Phi.app/Contents/Resources/kernel/0.1.0/darwin-arm64'
+  assert.equal(kernelLaunchCwd(packaged, buildDirectory), buildDirectory)
+  assert.equal(
+    kernelLaunchCwd({ ...packaged, appPath: '/repo', isPackaged: false }, buildDirectory),
+    '/repo'
+  )
 })

@@ -4,7 +4,11 @@ import { AuthStorage } from '@oh-my-pi/pi-ai'
 import { createPhiSettings } from './settings'
 import { loadAllMCPConfigs, MCPManager } from '../mcp/omp-mcp'
 import { OwnedStdioTransportScope } from '../mcp/owned-stdio-transports'
-import { acquireEnvironmentLease, type EnvironmentLease } from '../../envs/leases'
+import {
+  acquireEnvironmentLease,
+  EnvironmentNotReadyError,
+  type EnvironmentLease
+} from '../../envs/leases'
 import { getRuntimeRoot } from '../../envs/runtime'
 import { readMcpConfig } from '../../mcp/package-config'
 import { readManagedMarker } from '../../mcp/stdio-environment'
@@ -179,10 +183,19 @@ export async function leasedProfileMcpManager(
         )
         continue
       }
-      leases.set(
-        name,
-        await acquireEnvironmentLease({ root: getRuntimeRoot(agentDir), envId: marker.envId })
-      )
+      // An environment that was never built here disables only this server; failing
+      // would block every session until the user built an unrelated MCP env. Unsafe
+      // lease requests (e.g. a tampered envId) still fail session creation.
+      try {
+        leases.set(
+          name,
+          await acquireEnvironmentLease({ root: getRuntimeRoot(agentDir), envId: marker.envId })
+        )
+      } catch (error) {
+        if (!(error instanceof EnvironmentNotReadyError)) throw error
+        skipped.push({ name, reason: 'env_not_ready' })
+        delete snapshot.configs[name]
+      }
     }
     const manager = new MCPManager(plan.cwd, null, async () => snapshot)
     const transports = trackOwnedStdioTransports(manager)

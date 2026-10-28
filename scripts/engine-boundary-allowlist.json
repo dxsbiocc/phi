@@ -375,6 +375,21 @@
       "specifiers": ["@oh-my-pi/pi-coding-agent/registry/agent-lifecycle"],
       "purpose": "Erased public lifecycle type for the pinned owned queued-cancellation adapter; runtime mutation remains behind the canonical release plus real session.abort and exact reference checks.",
       "plan": "keep"
+    },
+    {
+      "file": "tests/approval-wait-handler-timeout.test.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-coding-agent",
+        "@oh-my-pi/pi-coding-agent/extensibility/extensions"
+      ],
+      "purpose": "Bun-only regression oracle: drives the real ExtensionRunner tool_call budget to prove Phi approval waits are not cut off; no production SDK import outside the engine",
+      "plan": "keep"
+    },
+    {
+      "file": "tests/mcp-profile-missing-env.test.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent"],
+      "purpose": "Bun-only regression oracle: real Settings and AuthStorage for leasedProfileMcpManager with a managed MCP whose environment was never built; no production SDK import outside the engine",
+      "plan": "keep"
     }
   ]
 }

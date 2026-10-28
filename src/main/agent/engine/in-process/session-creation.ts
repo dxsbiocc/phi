@@ -10,7 +10,7 @@ import {
   type PhiExtensionConfig
 } from '../phi-extension'
 import { toOmpCustomTool } from '../tool-adapter'
-import { applyAutoCompactionOverrides, createPhiSettings } from './settings'
+import { allowApprovalWaits, applyAutoCompactionOverrides, createPhiSettings } from './settings'
 import { normalizeProjectMemorySettings } from '../../../../shared/projectMemoryTypes'
 import { type EnvironmentLease } from '../../envs/leases'
 import { disableFeaturedApiKeyAutoDiscovery } from '../../mcp-connectors'
@@ -94,6 +94,7 @@ export async function createSession(
   const baseSettings = await Settings.init({ cwd: settingsCwd, agentDir })
   const settings = await baseSettings.cloneForCwd(settingsCwd)
   applyAutoCompactionOverrides(settings, autoCompactionOverrides(record.autoCompaction))
+  allowApprovalWaits(settings)
   const memoryPolicy = normalizeProjectMemorySettings(record.memory)
   const memoryTarget = memoryPolicy.enabled ? { agentDir, cwd } : undefined
   const desktopServices = record.desktopServices === true

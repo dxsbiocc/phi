@@ -62,6 +62,7 @@ export type RuntimeRecoveryErrorCode =
   | 'STALE_GENERATION'
   | 'CANCELLED'
   | 'REMOTE_OPERATION_REQUIRED'
+  | 'KERNEL_OPERATION_REQUIRED'
 
 export interface RuntimeRecoveryDiagnostic {
   readonly code: RuntimeRecoveryErrorCode
@@ -294,20 +295,34 @@ export function assertRuntimeScope(ref: RemoteOmpRuntimeRef, scope: RemoteOmpSco
   }
 }
 
-export function assertLocalRuntimeAccess(manifest: {
-  runtimeRef?: PhiRuntimeRef
-  kernelRuntimeRef?: KernelRuntimeRef
-  runtimeRecoveryError?: RuntimeRecoveryDiagnostic
-}): void {
+/**
+ * Guards desktop-side access to a session's history. A kernel on this machine
+ * keeps its history locally but in its own store, so only callers that handle
+ * that store (deletion) pass `allowLocalKernel`.
+ */
+export function assertLocalRuntimeAccess(
+  manifest: {
+    runtimeRef?: PhiRuntimeRef
+    kernelRuntimeRef?: KernelRuntimeRef
+    runtimeRecoveryError?: RuntimeRecoveryDiagnostic
+  },
+  options: { allowLocalKernel?: boolean } = {}
+): void {
   if (manifest.runtimeRecoveryError)
     throw new RuntimeReferenceError(
       manifest.runtimeRecoveryError.code,
       manifest.runtimeRecoveryError.message
     )
-  if (manifest.runtimeRef || manifest.kernelRuntimeRef)
+  const localKernel = manifest.kernelRuntimeRef?.host.kind === 'local'
+  if (manifest.runtimeRef || (manifest.kernelRuntimeRef && !localKernel))
     throw new RuntimeReferenceError(
       'REMOTE_OPERATION_REQUIRED',
       '远程会话需要通过已验证的服务器操作，不能使用本地底层会话'
+    )
+  if (localKernel && !options.allowLocalKernel)
+    throw new RuntimeReferenceError(
+      'KERNEL_OPERATION_REQUIRED',
+      '该会话由本地内核管理，暂不支持这个操作'
     )
 }
 

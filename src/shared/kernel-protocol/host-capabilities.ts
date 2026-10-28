@@ -400,7 +400,7 @@ const modelAccessOAuthCredentialSchema = z
   })
   .strict()
 
-const modelAccessCredentialEntrySchema = z
+export const modelAccessCredentialEntrySchema = z
   .object({
     id: z.number().int().positive(),
     provider: nonEmptyStringSchema,

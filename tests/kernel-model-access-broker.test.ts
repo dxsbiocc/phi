@@ -14,6 +14,7 @@ import {
   type ModelAccessBroker,
   type ModelAccessRefreshReason
 } from '../src/main/agent/engine/kernel-host/model-access-broker'
+import { KERNEL_HOST_CAPABILITY_REGISTRY } from '../src/shared/kernel-protocol'
 
 const PI_AI_PACKAGE = ['@oh-my-pi', 'pi-ai'].join('/')
 const REMOTE_REFRESH_SENTINEL = '__remote__' as const
@@ -123,6 +124,36 @@ testWithBunAuthStorage(
     assert.deepEqual(
       new Set(all.credentials.map((entry) => entry.provider)),
       new Set(['provider-a', 'provider-b'])
+    )
+  }
+)
+
+testWithBunAuthStorage(
+  'modelAccess.credentials drops non-model entries so one foreign OAuth login cannot void the response',
+  async (t) => {
+    const storage = await createStorage(t)
+    await storage.credentials.set('provider-a', { type: 'api_key', key: 'fake-key-a' })
+    // Shape of a real MCP connector login: OAuth plus fields the model schema rejects.
+    await storage.credentials.set('mcp_oauth:profile:default:https://mcp.example.test/mcp', {
+      type: 'oauth',
+      refresh: 'fake-refresh-mcp',
+      access: 'fake-access-mcp',
+      expires: Date.now() + 60_000,
+      tokenUrl: 'https://mcp.example.test/token',
+      clientId: 'client',
+      resource: 'https://mcp.example.test/mcp',
+      authorizationUrl: 'https://mcp.example.test/authorize'
+    } as StoredOAuthCredential)
+
+    const result = createModelAccessBroker(storage).credentials({})
+
+    assert.deepEqual(
+      result.credentials.map((entry) => entry.provider),
+      ['provider-a']
+    )
+    assert.equal(
+      KERNEL_HOST_CAPABILITY_REGISTRY['modelAccess.credentials'].result.safeParse(result).success,
+      true
     )
   }
 )

@@ -25,6 +25,7 @@ import { createInProcessExtensionHost } from './extension-host'
 import { requestHost } from './ipc'
 import { assertInProcessLocalProject } from './local-project-boundary'
 import { resourceOptions } from './resources'
+import { allowApprovalWaits } from './settings'
 import { modelBySelector, runtimeThinkingLevel } from './runtime-context'
 import { createAgentSession, DefaultResourceLoader, SettingsManager } from './session-factory'
 import { sessions } from './state'
@@ -165,6 +166,7 @@ export async function createPhiAgentSession(
   // would turn ordinary calls into disposable job shells, losing the persistent
   // shell exports Phi specialists had on 18.1. Explicit async remains available.
   cfgBashAutoBackgroundEnabled.override(settings, false)
+  allowApprovalWaits(settings)
   const loader = isRecord(deps.resourceOptions)
     ? new DefaultResourceLoader({
         ...resourceOptions({

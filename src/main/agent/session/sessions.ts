@@ -290,11 +290,14 @@ export function acknowledgeSession(path: string, cwd: string): SessionSummary | 
   }
 }
 
-function assertLocalSessionOperation(path: string): void {
+function assertLocalSessionOperation(
+  path: string,
+  options: { allowLocalKernel?: boolean } = {}
+): void {
   const phiId = phiSessionIdFromPath(path)
   if (phiId) {
     const manifest = findPhiSessionById(phiId)
-    if (manifest) assertLocalRuntimeAccess(manifest)
+    if (manifest) assertLocalRuntimeAccess(manifest, options)
     return
   }
   // Legacy callers accept raw local journal paths. A known remote locator must never take that route.
@@ -329,11 +332,12 @@ export function createSessionManager(cwd: string, path?: string): RuntimeSession
 }
 
 export function deleteSession(path: string): void {
-  assertLocalSessionOperation(path)
+  // Deletion removes the local kernel's own history below.
+  assertLocalSessionOperation(path, { allowLocalKernel: true })
   const phiSessionId = phiSessionIdFromPath(path)
   if (phiSessionId) {
     const manifest = findPhiSessionById(phiSessionId)
-    if (manifest) assertLocalRuntimeAccess(manifest)
+    if (manifest) assertLocalRuntimeAccess(manifest, { allowLocalKernel: true })
     if (manifest?.runtimeSessionPath && existsSync(manifest.runtimeSessionPath)) {
       unlinkSync(manifest.runtimeSessionPath)
     }

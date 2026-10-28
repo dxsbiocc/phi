@@ -45,6 +45,11 @@ export interface EnvironmentLeaseOptions {
   pruneStale?: boolean
 }
 
+/** The environment has not been built here; distinct from a tampered or unsafe lease request. */
+export class EnvironmentNotReadyError extends Error {
+  override readonly name = 'EnvironmentNotReadyError'
+}
+
 function code(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error ? String(error.code) : undefined
 }
@@ -52,7 +57,14 @@ function code(error: unknown): string | undefined {
 function runtimeRoot(root: string): string {
   if (typeof root !== 'string' || !isAbsolute(root))
     throw new Error('environment lease requires an absolute runtime root')
-  const actual = realpathSync(root)
+  let actual: string
+  try {
+    actual = realpathSync(root)
+  } catch (error) {
+    if (code(error) === 'ENOENT')
+      throw new EnvironmentNotReadyError('environment lease runtime root does not exist')
+    throw error
+  }
   if (!lstatSync(actual).isDirectory())
     throw new Error('environment lease runtime root is not a directory')
   return actual
@@ -170,9 +182,11 @@ export function hasLiveEnvironmentLeases(
 
 function validateReadyEnvironment(root: string, envId: string): void {
   const prefix = directory(root, ['envs', envId], false)
-  if (!prefix) throw new Error(`environment ${envId} is not ready: managed prefix is missing`)
+  if (!prefix)
+    throw new EnvironmentNotReadyError(`environment ${envId} is not ready: managed prefix is missing`)
   const metadataDirectory = directory(prefix, ['.phi'], false)
-  if (!metadataDirectory) throw new Error(`environment ${envId} is not ready: metadata is missing`)
+  if (!metadataDirectory)
+    throw new EnvironmentNotReadyError(`environment ${envId} is not ready: metadata is missing`)
   const metadata = lstatSync(join(metadataDirectory, 'env.json'))
   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 1024 * 1024)
     throw new Error('environment lease requires bounded regular managed metadata')
