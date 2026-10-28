@@ -266,6 +266,112 @@ test('plan review host service owns registration and forwards approved steps to 
   assert.equal(handlers.has('planReview.request'), false)
 })
 
+test('kernel-owned plan approval records the decision without starting a desktop plan run', async () => {
+  const events: Array<Record<string, unknown>> = []
+  let desktopStarts = 0
+  let desktopReplans = 0
+  let replanPending = false
+  const handler = createPlanReviewRequest({
+    fields: {
+      optionalStringField: (record, key) =>
+        typeof record[key] === 'string' ? (record[key] as string) : undefined
+    },
+    runs: {
+      findByRuntimeSessionId: () => ({
+        phiSessionId: 'phi-1',
+        runId: 'run-1',
+        cwd: '/workspace',
+        sessionGeneration: 1,
+        cancelled: false
+      })
+    },
+    projects: { getById: () => undefined },
+    sessions: {
+      findById: () => ({
+        projectLocation: { kind: 'local' },
+        kernelRuntimeRef: {
+          kind: 'phi-kernel',
+          version: 1,
+          kernelSessionId: 'kernel-1',
+          host: { kind: 'local', agentDir: '/agent' }
+        }
+      }),
+      sessionPath: () => 'phi-session:phi-1'
+    },
+    renderer: {
+      getActiveWindow: () => ({}) as never,
+      canRequest: (window): window is NonNullable<typeof window> => Boolean(window),
+      waitForResponse: async () =>
+        ({ answers: [{ question: 'plan_review', answer: 'approve' }] }) as never
+    },
+    timeline: {
+      append: (_sessionId, event) => {
+        const stored = { ...event }
+        events.push(stored)
+        return stored
+      },
+      broadcast: () => undefined
+    },
+    state: {
+      createId: () => 'review-1',
+      markNeedsInput: () => undefined,
+      markInputCancelled: () => undefined,
+      markInputAnswered: () => undefined,
+      notifySessionChanged: () => undefined
+    },
+    planRuns: {
+      startFromApprovedPlan: async () => {
+        desktopStarts += 1
+        return { id: 'desktop-plan-1' }
+      },
+      pendingReplan: () =>
+        replanPending ? { requestId: 'kernel-replan-1', runId: 'kernel-plan-1' } : null,
+      validateReplanProposal: async () => ({ ok: true, spec }),
+      applyApprovedReplan: async () => {
+        desktopReplans += 1
+        return { id: 'desktop-plan-1' }
+      },
+      cancelReplan: () => undefined
+    }
+  })
+
+  assert.deepEqual(
+    await handler(
+      {
+        runtimeSessionId: 'runtime-1',
+        title: 'Kernel plan',
+        planContent: '# Plan',
+        planFilePath: 'local://kernel-plan.md',
+        steps: spec
+      },
+      { originSessionId: 'runtime-1' }
+    ),
+    { decision: 'approve' }
+  )
+  assert.equal(desktopStarts, 0)
+
+  replanPending = true
+  assert.deepEqual(
+    await handler(
+      {
+        runtimeSessionId: 'runtime-1',
+        title: 'Kernel replan',
+        planContent: '# Replan',
+        planFilePath: 'local://kernel-replan.md',
+        steps: spec,
+        replanRequestId: 'kernel-replan-1'
+      },
+      { originSessionId: 'runtime-1' }
+    ),
+    { decision: 'approve' }
+  )
+  assert.equal(desktopReplans, 0)
+  assert.equal(
+    events.some((event) => event.type === 'plan_review_decided' && event.decision === 'approve'),
+    true
+  )
+})
+
 test('reviewed replan applies only to its bound session and keeps revisions pending', async () => {
   const handlers = new Map<string, PhiHostRequestHandler>()
   const calls: string[] = []

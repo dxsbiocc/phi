@@ -4,7 +4,11 @@ import { resolve } from 'node:path'
 import test from 'node:test'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 
-import { registerPlanRunIpc, type PlanRunIpcOperations } from '../src/main/ipc/plan-run-ipc'
+import {
+  registerPlanRunIpc,
+  type KernelPlanRunIpcOperations,
+  type PlanRunIpcOperations
+} from '../src/main/ipc/plan-run-ipc'
 import { createPlanRunApi } from '../src/preload/plan-run-api'
 import { IPC } from '../src/shared/ipcChannels'
 import type { PlanRunState } from '../src/shared/planRunTypes'
@@ -24,9 +28,11 @@ const planRun: PlanRunState = {
 
 function createHarness(): {
   calls: string[]
+  kernelCalls: string[]
   handlers: Map<string, RegisteredHandler>
 } {
   const calls: string[] = []
+  const kernelCalls: string[] = []
   const operations: PlanRunIpcOperations = {
     list: (sessionId) => {
       calls.push(`list:${sessionId}`)
@@ -62,8 +68,49 @@ function createHarness(): {
       handlers.set(channel, listener)
     }
   }
-  registerPlanRunIpc({ ipcMain, planRuns: operations })
-  return { calls, handlers }
+  const kernelPlanRuns: KernelPlanRunIpcOperations = {
+    list: async () => {
+      kernelCalls.push('list')
+      return [{ ...planRun, sessionId: 'kernel-session' }]
+    },
+    get: async (runId) => {
+      kernelCalls.push(`get:${runId}`)
+      return runId === planRun.id ? { ...planRun, sessionId: 'kernel-session' } : null
+    },
+    stop: async (runId) => {
+      kernelCalls.push(`stop:${runId}`)
+      return { ...planRun, sessionId: 'kernel-session', status: 'stopped' as const }
+    },
+    retryStep: async (runId, stepId) => {
+      kernelCalls.push(`retry:${runId}:${stepId}`)
+      return { ...planRun, sessionId: 'kernel-session' }
+    },
+    skipStep: async (runId, stepId) => {
+      kernelCalls.push(`skip:${runId}:${stepId}`)
+      return { ...planRun, sessionId: 'kernel-session' }
+    },
+    requestReplan: async (runId) => {
+      kernelCalls.push(`replan:${runId}`)
+      return { requestId: 'kernel-request-1', runId, prompt: 'Replan in the kernel' }
+    }
+  }
+  registerPlanRunIpc({
+    ipcMain,
+    planRuns: operations,
+    findSessionById: (sessionId) =>
+      sessionId === 'kernel-session' || sessionId === 'unloaded-kernel'
+        ? {
+            kernelRuntimeRef: {
+              kind: 'phi-kernel',
+              version: 1,
+              kernelSessionId: `runtime-${sessionId}`,
+              host: { kind: 'local', agentDir: '/agent' }
+            }
+          }
+        : {},
+    kernelPlanRuns: (sessionId) => (sessionId === 'kernel-session' ? kernelPlanRuns : undefined)
+  })
+  return { calls, kernelCalls, handlers }
 }
 
 function recordRunCall(calls: string[], operation: string): PlanRunIpcOperations['pause'] {
@@ -201,6 +248,100 @@ test('plan run IPC rejects malformed, oversized, and extra arguments', async () 
     await assert.rejects(invoke(handlers, channel, ...args), /计划运行请求无效/u, channel)
   }
   assert.deepEqual(calls, [])
+})
+
+test('plan run IPC routes kernel sessions only to the routed driver plan coordinator', async () => {
+  const { calls, kernelCalls, handlers } = createHarness()
+
+  assert.deepEqual(await invoke(handlers, IPC.planRuns.list, { phiSessionId: 'kernel-session' }), [
+    { ...planRun, sessionId: 'kernel-session' }
+  ])
+  assert.deepEqual(
+    await invoke(handlers, IPC.planRuns.get, {
+      phiSessionId: 'kernel-session',
+      runId: 'run-1'
+    }),
+    { ...planRun, sessionId: 'kernel-session' }
+  )
+  assert.equal(
+    await invoke(handlers, IPC.planRuns.getPendingReplan, {
+      phiSessionId: 'kernel-session',
+      runId: 'run-1'
+    }),
+    null
+  )
+  await assert.rejects(
+    invoke(handlers, IPC.planRuns.pause, {
+      phiSessionId: 'kernel-session',
+      runId: 'run-1'
+    }),
+    /内核计划运行暂不支持暂停/u
+  )
+  await assert.rejects(
+    invoke(handlers, IPC.planRuns.resume, {
+      phiSessionId: 'kernel-session',
+      runId: 'run-1'
+    }),
+    /内核计划运行暂不支持恢复/u
+  )
+  await invoke(handlers, IPC.planRuns.stop, {
+    phiSessionId: 'kernel-session',
+    runId: 'run-1'
+  })
+  await invoke(handlers, IPC.planRuns.retryStep, {
+    phiSessionId: 'kernel-session',
+    runId: 'run-1',
+    stepId: 'step-a'
+  })
+  await invoke(handlers, IPC.planRuns.skipStep, {
+    phiSessionId: 'kernel-session',
+    runId: 'run-1',
+    stepId: 'step-a'
+  })
+  assert.deepEqual(
+    await invoke(handlers, IPC.planRuns.requestReplan, {
+      phiSessionId: 'kernel-session',
+      runId: 'run-1'
+    }),
+    { requestId: 'kernel-request-1', runId: 'run-1', prompt: 'Replan in the kernel' }
+  )
+  await assert.rejects(
+    invoke(handlers, IPC.planRuns.cancelReplan, {
+      phiSessionId: 'kernel-session',
+      runId: 'run-1',
+      requestId: 'kernel-request-1'
+    }),
+    /内核计划运行暂不支持取消重新规划/u
+  )
+
+  assert.deepEqual(
+    await invoke(handlers, IPC.planRuns.list, { phiSessionId: 'unloaded-kernel' }),
+    []
+  )
+  assert.equal(
+    await invoke(handlers, IPC.planRuns.get, {
+      phiSessionId: 'unloaded-kernel',
+      runId: 'run-1'
+    }),
+    null
+  )
+  await assert.rejects(
+    invoke(handlers, IPC.planRuns.stop, {
+      phiSessionId: 'unloaded-kernel',
+      runId: 'run-1'
+    }),
+    /内核计划会话当前未加载/u
+  )
+
+  assert.deepEqual(calls, [])
+  assert.deepEqual(kernelCalls, [
+    'list',
+    'get:run-1',
+    'stop:run-1',
+    'retry:run-1:step-a',
+    'skip:run-1:step-a',
+    'replan:run-1'
+  ])
 })
 
 test('plan run preload API uses structured payloads and is spread into the global API', async () => {

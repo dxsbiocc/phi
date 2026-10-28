@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 
 import type { JsonValue } from '../../../shared/kernel-protocol'
-import type { RoutedSessionDriver } from './session-routing-engine'
+import type { PlanRunReplanRequest, PlanRunState } from '../../../shared/planRunTypes'
+import type { RoutedPlanRunOperations, RoutedSessionDriver } from './session-routing-engine'
 import type {
   RuntimeModel,
   RuntimeSelectionControl,
@@ -230,6 +231,21 @@ export class KernelRoutedSessionDriver implements RoutedSessionDriver {
         })
       return options.mode === 'any' ? Promise.race(ids.map(wait)) : Promise.all(ids.map(wait))
     }
+  }
+
+  readonly planRuns: RoutedPlanRunOperations = {
+    list: async (): Promise<PlanRunState[]> =>
+      (await this.request('planRuns.list', {})) as unknown as PlanRunState[],
+    get: async (runId: string): Promise<PlanRunState | null> =>
+      (await this.request('planRuns.get', { runId })) as unknown as PlanRunState | null,
+    stop: async (runId: string): Promise<PlanRunState> =>
+      (await this.request('planRuns.stop', { runId })) as unknown as PlanRunState,
+    retryStep: async (runId: string, stepId: string): Promise<PlanRunState> =>
+      (await this.request('planRuns.retryStep', { runId, stepId })) as unknown as PlanRunState,
+    skipStep: async (runId: string, stepId: string): Promise<PlanRunState> =>
+      (await this.request('planRuns.skipStep', { runId, stepId })) as unknown as PlanRunState,
+    requestReplan: async (runId: string): Promise<PlanRunReplanRequest> =>
+      (await this.request('planRuns.replan', { runId })) as unknown as PlanRunReplanRequest
   }
 
   readonly shellJobs = {

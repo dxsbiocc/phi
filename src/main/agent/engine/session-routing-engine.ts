@@ -1,4 +1,5 @@
 import type { ContextUsageSnapshot } from '../../../shared/contextUsageTypes'
+import type { PlanRunReplanRequest, PlanRunState } from '../../../shared/planRunTypes'
 import type {
   AutoCompactionDefaults,
   AutoCompactionOverrides,
@@ -30,6 +31,16 @@ export class RemoteSessionCapabilityError extends Error {
     this.name = 'RemoteSessionCapabilityError'
   }
 }
+
+export interface RoutedPlanRunOperations {
+  list(): Promise<PlanRunState[]>
+  get(runId: string): Promise<PlanRunState | null>
+  stop(runId: string): Promise<PlanRunState>
+  retryStep(runId: string, stepId: string): Promise<PlanRunState>
+  skipStep(runId: string, stepId: string): Promise<PlanRunState>
+  requestReplan(runId: string): Promise<PlanRunReplanRequest>
+}
+
 export interface RoutedSessionDriver {
   hasActiveAgentRuns?(): boolean
   readonly agentRuns?: {
@@ -52,6 +63,7 @@ export interface RoutedSessionDriver {
     list(): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>
     cancel(jobId: string): Promise<{ ok?: boolean }>
   }
+  readonly planRuns?: RoutedPlanRunOperations
   autoCompactionSettings?(control?: RuntimeSelectionControl): Promise<RuntimeAutoCompactionReceipt>
   compact?(
     control?: RuntimeSelectionControl
@@ -611,6 +623,17 @@ export class SessionRoutingEngine implements PhiEngine {
       throw new RuntimeReferenceError('STALE_GENERATION', '子任务代次已改变')
     return this.driver(current[0][0])
   }
+  planRunsForPhiSession(phiSessionId: string): RoutedPlanRunOperations | undefined {
+    const current = [...this.owners.entries()].filter(
+      ([, owner]) => owner.phiSessionId === phiSessionId && !owner.retired && owner.driver
+    )
+    if (current.length === 0) return undefined
+    if (current.length !== 1)
+      throw new RuntimeReferenceError('STALE_GENERATION', '计划运行会话代次已改变')
+    const planRuns = this.driver(current[0][0]).planRuns
+    if (!planRuns) throw new RemoteSessionCapabilityError('planRuns')
+    return planRuns
+  }
   readonly shellJobs: PhiEngine['shellJobs'] = {
     list: async (params) => {
       const local = await this.legacy.shellJobs.list(params)
@@ -651,4 +674,13 @@ export class SessionRoutingEngine implements PhiEngine {
 
 export function hasRoutedPhiOwner(engine: PhiEngine, phiSessionId: string): boolean {
   return engine instanceof SessionRoutingEngine && engine.ownsPhi(phiSessionId)
+}
+
+export function routedPlanRunsForPhiSession(
+  engine: PhiEngine,
+  phiSessionId: string
+): RoutedPlanRunOperations | undefined {
+  return engine instanceof SessionRoutingEngine
+    ? engine.planRunsForPhiSession(phiSessionId)
+    : undefined
 }

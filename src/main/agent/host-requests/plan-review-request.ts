@@ -5,7 +5,9 @@ import type { AgentUserInteractionInput, waitForAgentUserInteraction } from '../
 import { isRecord } from '../../../shared/guards'
 import type { PlanSpec } from '../../../shared/planRunTypes'
 import { validatePlanSpec } from '../plan/model/plan-spec'
+import { planExecutionOwner, type PlanExecutionOwner } from '../plan/plan-ownership'
 import type { ApprovedPlanStartGuard } from '../plan/plan-run-service'
+import type { KernelRuntimeRef } from '../session/runtime-reference'
 
 export interface PlanReviewPromptRun {
   phiSessionId: string
@@ -24,6 +26,7 @@ interface PlanReviewProject {
 interface PlanReviewSession {
   projectLocation?: { kind: string }
   workMode?: string
+  kernelRuntimeRef?: KernelRuntimeRef
 }
 
 interface PlanReviewSubmittedEvent extends Record<string, unknown> {
@@ -124,6 +127,7 @@ interface ValidPlanReviewRequest {
 interface PlanReviewTarget {
   run: PlanReviewPromptRun
   project: PlanReviewProject | undefined
+  planOwner: PlanExecutionOwner
   window: BrowserWindow
 }
 
@@ -199,7 +203,7 @@ function resolvePlanReviewTarget<StoredEvent>(
   }
   const window = deps.renderer.getActiveWindow()
   if (!deps.renderer.canRequest(window)) throw new Error('没有可用窗口来评审计划')
-  return { run, project, window }
+  return { run, project, planOwner: planExecutionOwner(manifest), window }
 }
 
 function submitPlanReview<StoredEvent>(
@@ -296,24 +300,32 @@ export function createPlanReviewRequest<StoredEvent>(
   return async function handlePlanReviewRequest(params, context) {
     const request = readPlanReviewRequest(params, deps)
     const target = resolvePlanReviewTarget(request, context, deps)
-    const pending = deps.planRuns?.pendingReplan(target.run.phiSessionId, request.runtimeSessionId)
+    const desktopPlanRuns = target.planOwner === 'desktop' ? deps.planRuns : undefined
+    const pending = desktopPlanRuns?.pendingReplan(
+      target.run.phiSessionId,
+      request.runtimeSessionId
+    )
     if (request.replanRequestId) {
-      if (!pending || pending.requestId !== request.replanRequestId || !request.steps) {
+      if (
+        target.planOwner === 'desktop' &&
+        (!pending || pending.requestId !== request.replanRequestId || !request.steps)
+      ) {
         throw new Error('Plan replan request is no longer active')
       }
-      const validation = await deps.planRuns?.validateReplanProposal(
-        target.run.phiSessionId,
-        request.replanRequestId,
-        request.steps
-      )
-      if (!validation?.ok)
-        throw new Error(validation?.errors.join(' ') ?? 'Plan replan validation unavailable')
+      if (desktopPlanRuns && request.steps) {
+        const validation = await desktopPlanRuns.validateReplanProposal(
+          target.run.phiSessionId,
+          request.replanRequestId,
+          request.steps
+        )
+        if (!validation.ok) throw new Error(validation.errors.join(' '))
+      }
     } else if (pending) {
       throw new Error('A plan replan request is already in progress')
     }
     if (!planReviewRunIsCurrent(request, target, context, deps)) {
       if (request.replanRequestId)
-        deps.planRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
+        desktopPlanRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
       return { decision: 'cancel' }
     }
     const reviewId = deps.state.createId()
@@ -343,7 +355,7 @@ export function createPlanReviewRequest<StoredEvent>(
     let planRun: { id: string } | undefined
     if (!planReviewRunIsCurrent(request, target, context, deps)) {
       if (request.replanRequestId)
-        deps.planRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
+        desktopPlanRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
       recordPlanReviewDecision(
         target,
         reviewId,
@@ -353,19 +365,19 @@ export function createPlanReviewRequest<StoredEvent>(
       return { decision: 'cancel' }
     }
     if (decision === 'cancel' && request.replanRequestId) {
-      deps.planRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
+      desktopPlanRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
     }
-    if (decision === 'approve' && request.steps) {
+    if (decision === 'approve' && request.steps && target.planOwner === 'desktop') {
       try {
-        if (!deps.planRuns) throw new Error('Plan execution service is unavailable')
+        if (!desktopPlanRuns) throw new Error('Plan execution service is unavailable')
         planRun = request.replanRequestId
-          ? await deps.planRuns.applyApprovedReplan(
+          ? await desktopPlanRuns.applyApprovedReplan(
               target.run.phiSessionId,
               request.runtimeSessionId,
               request.replanRequestId,
               request.steps
             )
-          : await deps.planRuns.startFromApprovedPlan(target.run.phiSessionId, request.steps, {
+          : await desktopPlanRuns.startFromApprovedPlan(target.run.phiSessionId, request.steps, {
               expectedRuntimeSessionId: request.runtimeSessionId,
               assertCurrent: () => {
                 if (!planReviewRunIsCurrent(request, target, context, deps))
@@ -375,7 +387,7 @@ export function createPlanReviewRequest<StoredEvent>(
             })
       } catch (error) {
         if (request.replanRequestId)
-          deps.planRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
+          desktopPlanRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
         recordPlanReviewDecision(
           target,
           reviewId,

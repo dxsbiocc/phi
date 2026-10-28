@@ -3547,6 +3547,10 @@ async function harness(
     './agent/plan/model/plan-spec': {
       validatePlanSpec: (value: unknown) => ({ ok: true, spec: value })
     },
+    './agent/engine/session-routing-engine': {
+      // The integration engine is not a routing engine, so no session is kernel-routed.
+      routedPlanRunsForPhiSession: () => undefined
+    },
     './agent/plan/plan-run-service': {
       createPlanRunService: () => ({
         startFromApprovedPlan: async () => ({ id: 'plan-run-1' }),
@@ -4581,6 +4585,7 @@ async function harness(
     './agent/persona-generation',
     './agent/packages/content-package-runtime',
     './agent/plan/plan-execution-wiring',
+    './agent/plan/plan-ownership',
     './agent/plan/plan-review-host-service',
     './agent/plan/work-mode-control',
     './agent/plan/work-mode-selection-host',

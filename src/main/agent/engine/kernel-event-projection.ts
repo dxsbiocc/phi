@@ -32,8 +32,15 @@ export function projectKernelEvent(
   if (event.type === 'agentRun.finished') {
     binding.activeAgentRuns = Math.max(0, binding.activeAgentRuns - 1)
   }
+  if (event.type === 'planRun.updated' && payload) {
+    const { event: planEvent, ...rendererPayload } = payload
+    binding.sink.event({
+      type: stringValue(planEvent) ?? 'plan_run_updated',
+      ...rendererPayload
+    } as PhiAgentEvent)
+    return
+  }
   const mapped: Record<string, string> = {
-    'planRun.updated': stringValue(payload?.event) ?? 'plan_run_updated',
     'agentRun.started': 'agent_run_started',
     'agentRun.step': 'agent_run_step',
     'agentRun.finished': 'agent_run_finished',
