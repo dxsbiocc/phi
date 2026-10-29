@@ -129,13 +129,9 @@ export function chatItemFromPhiTimelineEvent(event: {
     if (!run || (run.status !== 'completed' && run.status !== 'stopped')) return null
     return {
       id,
-      role: 'warning',
-      noticeKind: 'plan_run_finished',
-      get content() {
-        return run.status === 'completed'
-          ? planCopy.planRunCompleted(run.goal)
-          : planCopy.planRunStopped(run.goal)
-      },
+      role: 'plan_run',
+      runId: run.id,
+      run,
       ...createdAtField(event.createdAt)
     }
   }

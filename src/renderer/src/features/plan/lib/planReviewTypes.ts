@@ -1,5 +1,5 @@
 import type { PresentedFile } from '../../../../../shared/presentedFileTypes'
-import type { PlanSpec } from '../../../../../shared/planRunTypes'
+import type { PlanRunTimelineSnapshot, PlanSpec } from '../../../../../shared/planRunTypes'
 
 export interface PresentedFilesItem {
   id: string
@@ -21,4 +21,13 @@ export interface PlanReviewItem {
   steps?: PlanSpec
   status: 'pending' | 'approved' | 'revise' | 'cancelled'
   note?: string
+}
+
+/** Frozen execution timeline written into the conversation after a plan run ends. */
+export interface PlanRunRecordItem {
+  id: string
+  role: 'plan_run'
+  runId?: string
+  createdAt?: string
+  run: PlanRunTimelineSnapshot
 }

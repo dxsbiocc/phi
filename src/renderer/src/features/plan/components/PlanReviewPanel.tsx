@@ -7,6 +7,7 @@ import MarkdownContent from '../../../components/MarkdownContent'
 import { planCopy } from '../lib/planCopy'
 import { planReviewResponse } from '../lib/planReview'
 import { PlanReviewSteps } from './PlanReviewSteps'
+import { PlanTimelineIcon } from './PlanTimeline'
 
 type ReviewPlan = NonNullable<AgentUserInteractionRequest['planReview']>
 type PlanReviewPanelProps = {
@@ -20,29 +21,23 @@ type PlanReviewPanelProps = {
 
 function ReviewHeading({ title }: { title: string }): React.JSX.Element {
   return (
-    <Box>
-      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-        {planCopy.planAwaitingReviewTitle} {title}
-      </Typography>
-      <Typography variant="caption" color="text.secondary">
-        {planCopy.approvalBoundary}
-      </Typography>
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+      <PlanTimelineIcon tone="active" spinning />
+      <Box sx={{ minWidth: 0 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+          {planCopy.planAwaitingReviewTitle} {title}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {planCopy.approvalBoundary}
+        </Typography>
+      </Box>
     </Box>
   )
 }
 
 function ReviewContent({ plan, cwd }: { plan: ReviewPlan; cwd: string }): React.JSX.Element {
   return (
-    <Box
-      sx={{
-        maxHeight: 320,
-        overflowY: 'auto',
-        border: 1,
-        borderColor: 'divider',
-        borderRadius: 1,
-        p: 1
-      }}
-    >
+    <Box sx={{ maxHeight: 360, overflowY: 'auto' }}>
       {plan.steps ? (
         <PlanReviewSteps plan={plan.steps} />
       ) : (
@@ -112,7 +107,7 @@ export function PlanReviewPanel({
       variant="outlined"
       role="alert"
       aria-label={planCopy.planAwaitingReview}
-      sx={{ width: '100%', mb: 1, p: 1.5, borderRadius: 2, minWidth: 0 }}
+      sx={{ width: '100%', mb: 1, px: 1.75, py: 1.5, borderRadius: 2, minWidth: 0 }}
     >
       <Stack spacing={1.25}>
         <ReviewHeading title={plan.title} />

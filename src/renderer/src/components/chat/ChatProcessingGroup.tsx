@@ -12,6 +12,7 @@ import { MetaBallsLoader } from '../../features/chat/components/MetaBallsLoader'
 import { PresentedFilesCard } from '../../features/chat/components/PresentedFilesCard'
 import { UiBlocksCard } from '../../features/chat/components/UiBlocks/UiBlocksCard'
 import { PlanReviewCard } from '../../features/plan/components/PlanReviewCard'
+import { PlanRunRecord } from '../../features/plan/PlanRunPanel'
 import { PhiIcons } from '../../icons'
 import {
   groupProcessingItems,
@@ -292,6 +293,9 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
               }
               if (group.item.role === 'plan_review') {
                 return <PlanReviewCard key={group.key} item={group.item} cwd={cwd} />
+              }
+              if (group.item.role === 'plan_run') {
+                return <PlanRunRecord key={group.key} run={group.item.run} cwd={cwd} />
               }
               return (
                 <ChatBubble

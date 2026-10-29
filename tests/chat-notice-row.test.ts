@@ -3,9 +3,11 @@ import test, { afterEach } from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ChatBubble } from '../src/renderer/src/components/chat/ChatBubble'
+import { PlanRunRecord } from '../src/renderer/src/features/plan/PlanRunPanel'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import { chatItemFromPhiTimelineEvent } from '../src/renderer/src/lib/chatItems'
 import type { ChatMessage } from '../src/renderer/src/types'
+import { createTheme, ThemeProvider } from '@mui/material'
 
 afterEach(() => setUiLanguage('en'))
 
@@ -83,12 +85,27 @@ test('work mode and finished plan records show their meaningful text without ope
       steps: []
     }
   })
-  assert.ok(finished && 'content' in finished)
-  const finishedHtml = render(finished as ChatMessage)
-  assert.match(finishedHtml, /计划已完成：完成界面修复/)
-  assert.doesNotMatch(finishedHtml, /role="button"/)
+  assert.ok(finished && finished.role === 'plan_run')
+  if (!finished || finished.role !== 'plan_run') return
+  const finishedHtml = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunRecord, { run: finished.run })
+    )
+  )
+  assert.match(finishedHtml, /完成界面修复/)
+  assert.match(finishedHtml, /已完成/)
 
   setUiLanguage('en')
   assert.match(render(mode as ChatMessage), /Agent selected: Plan and execute/)
-  assert.match(render(finished as ChatMessage), /Plan completed: 完成界面修复/)
+  const englishRecord = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunRecord, { run: finished.run })
+    )
+  )
+  assert.match(englishRecord, /完成界面修复/)
+  assert.match(englishRecord, /Completed/)
 })

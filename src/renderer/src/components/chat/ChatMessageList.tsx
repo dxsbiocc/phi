@@ -21,6 +21,8 @@ import { WorkspaceChangesCard } from '../../features/chat/components/WorkspaceCh
 import { PresentedFilesCard } from '../../features/chat/components/PresentedFilesCard'
 import { UiBlocksCard } from '../../features/chat/components/UiBlocks/UiBlocksCard'
 import { PlanReviewCard } from '../../features/plan/components/PlanReviewCard'
+import { PlanRunRecord } from '../../features/plan/PlanRunPanel'
+import { planReviewShownInTranscript } from '../../features/plan/lib/planReview'
 import { PhiIcons } from '../../icons'
 import { chatContentMaxWidth } from '../../layout'
 import {
@@ -215,6 +217,8 @@ export type ChatMessageListProps = {
   onOpenWebUrl?: (url: string) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
   cwd?: string
+  /** Review id of the confirmation currently open above the composer. */
+  openPlanReviewId?: string | null
 }
 
 const ChatMessageList = memo(function ChatMessageList({
@@ -232,7 +236,8 @@ const ChatMessageList = memo(function ChatMessageList({
   onOpenLocalPath,
   onOpenWebUrl,
   onJumpToNotebookCell,
-  cwd = ''
+  cwd = '',
+  openPlanReviewId = null
 }: ChatMessageListProps): React.JSX.Element {
   useUiLanguage()
   const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null)
@@ -277,14 +282,24 @@ const ChatMessageList = memo(function ChatMessageList({
   }, [scrollResetKey])
   const virtualizationEnabledRef = useRef(false)
   const visibleRowKeysRef = useRef<ReadonlySet<string>>(new Set())
-  const currentMessageMarker = useMemo(() => messageScrollMarker(messages), [messages])
+  const transcriptMessages = useMemo(
+    () =>
+      messages.filter(
+        (item) => item.role !== 'plan_review' || planReviewShownInTranscript(item, openPlanReviewId)
+      ),
+    [messages, openPlanReviewId]
+  )
+  const currentMessageMarker = useMemo(
+    () => messageScrollMarker(transcriptMessages),
+    [transcriptMessages]
+  )
   const currentMessageMarkerRef = useRef(currentMessageMarker)
   useLayoutEffect(() => {
     currentMessageMarkerRef.current = currentMessageMarker
   }, [currentMessageMarker])
   const renderGroups = useMemo(
-    () => groupMessages(messages, { activeRun: isGenerating }),
-    [isGenerating, messages]
+    () => groupMessages(transcriptMessages, { activeRun: isGenerating }),
+    [isGenerating, transcriptMessages]
   )
   const activeProcessingIndex = useMemo(
     () => activeProcessingGroupIndex(renderGroups, isGenerating),
@@ -713,6 +728,9 @@ const ChatMessageList = memo(function ChatMessageList({
       }
       if (group.item.role === 'plan_review') {
         return <PlanReviewCard item={group.item} cwd={cwd} />
+      }
+      if (group.item.role === 'plan_run') {
+        return <PlanRunRecord run={group.item.run} cwd={cwd} />
       }
       return (
         <ChatBubble

@@ -6,7 +6,7 @@ import { createTheme, ThemeProvider } from '@mui/material'
 
 import type { PlanRunTimelineSnapshot } from '../src/shared/planRunTypes'
 import { PLAN_MAX_REPLANS } from '../src/shared/planRunTypes'
-import { PlanRunPanel } from '../src/renderer/src/features/plan/PlanRunPanel'
+import { PlanRunPanel, PlanRunRecord } from '../src/renderer/src/features/plan/PlanRunPanel'
 import { PlanReviewCard } from '../src/renderer/src/features/plan/components/PlanReviewCard'
 import type { PlanRunsController } from '../src/renderer/src/features/plan/hooks/usePlanRuns'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
@@ -322,13 +322,30 @@ test('pending replan keeps the timeline visible but disables old-run recovery co
 })
 
 test('finished plan has only its timeline record, without a second composer panel', () => {
-  const completed = { ...run, status: 'completed' as const, pause: undefined }
-  const markup = renderToStaticMarkup(
+  setUiLanguage('zh-CN')
+  const completed = {
+    ...run,
+    status: 'completed' as const,
+    pause: undefined,
+    steps: run.steps.map((step) => ({ ...step, status: 'done' as const }))
+  }
+  const live = renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
       createElement(PlanRunPanel, { controller: { ...controller(), run: completed } })
     )
   )
-  assert.equal(markup, '')
+  assert.equal(live, '')
+  const record = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunRecord, { run: completed })
+    )
+  )
+  assert.match(record, /Ship the renderer loop/)
+  assert.match(record, /2\/2 完成/)
+  assert.match(record, />1\. Inspect code</)
+  assert.match(record, />2\. Implement panel</)
 })

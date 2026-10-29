@@ -14,7 +14,7 @@ import {
 // Existing Chinese timeline assertions select their locale explicitly.
 setUiLanguage('zh-CN')
 
-test('plan run history hides updates and restores one concise finished record', () => {
+test('plan run history hides updates and restores one finished execution record', () => {
   const snapshot = {
     id: 'plan-1',
     status: 'stopped',
@@ -29,8 +29,10 @@ test('plan run history hides updates and restores one concise finished record', 
     { source: 'phi', type: 'plan_run_finished', eventId: 'finished-1', state: snapshot }
   ])
   assert.equal(items.length, 1)
-  assert.equal(items[0]?.role, 'warning')
-  assert.match(items[0]?.content ?? '', /计划已停止：Ship the renderer loop/)
+  assert.equal(items[0]?.role, 'plan_run')
+  if (items[0]?.role !== 'plan_run') return
+  assert.equal(items[0].run.goal, 'Ship the renderer loop')
+  assert.equal(items[0].run.status, 'stopped')
 })
 
 test('isWrapperToolName recognizes wrapper_<id> execute tool names only', () => {

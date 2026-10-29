@@ -464,6 +464,9 @@ function ChatView({
             onRetryUserMessage={retryUserMessage}
             onForkUserMessage={onForkUserMessage}
             cwd={cwd}
+            openPlanReviewId={
+              pendingUserInteraction?.planReview ? pendingUserInteraction.requestId : null
+            }
           />
           {recoveryNotice ? (
             <Box

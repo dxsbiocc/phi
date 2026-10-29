@@ -1,25 +1,18 @@
-import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
-  Box,
-  Chip,
-  Stack,
-  Typography
-} from '@mui/material'
+import { Box, Chip, Stack, Typography } from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
 
 import type {
   PlanRunState,
   PlanRunTimelineSnapshot,
-  PlanRunTimelineStepSnapshot
+  PlanRunTimelineStepSnapshot,
+  PlanStepStatus
 } from '../../../../../shared/planRunTypes'
 import MarkdownContent from '../../../components/MarkdownContent'
-import { PhiIcons } from '../../../icons'
 import { formatAgentDuration } from '../../../lib/agentRunsOverview'
 import { planCopy } from '../lib/planCopy'
 import { planStepActions, planStepDurationMs } from '../lib/planRunView'
 import { PlanFailureActions } from './PlanFailureActions'
+import { PlanTimelineStep, type PlanTimelineTone } from './PlanTimeline'
 
 type PlanStepRowProps = {
   run: PlanRunTimelineSnapshot
@@ -33,50 +26,26 @@ type PlanStepRowProps = {
   onSkip: () => void
   onReplan?: () => void
   onStop: () => void
+  isLast?: boolean
 }
 
-const PLAN_STEP_ACCORDION_SX = {
-  '&:before': { display: 'none' },
-  '@media (prefers-reduced-motion: reduce)': {
-    '& .MuiCollapse-root': { transitionDuration: '0ms !important' }
-  }
-} as const
-
-function StepStatusIcon({
-  status
-}: {
-  status: PlanRunTimelineStepSnapshot['status']
-}): React.JSX.Element {
-  if (status === 'done') return <PhiIcons.state.done size={16} aria-hidden="true" />
-  if (status === 'running' || status === 'launching')
-    return <PhiIcons.state.inProgress size={16} aria-hidden="true" />
-  if (status === 'failed') return <PhiIcons.state.blocked size={16} aria-hidden="true" />
-  if (status === 'cancelled') return <PhiIcons.action.cancel size={16} aria-hidden="true" />
-  if (status === 'skipped') return <PhiIcons.state.abandoned size={16} aria-hidden="true" />
-  if (status === 'interrupted' || status === 'unknown')
-    return <PhiIcons.state.warning size={16} aria-hidden="true" />
-  return <PhiIcons.state.pending size={16} aria-hidden="true" />
+function stepTone(status: PlanStepStatus): PlanTimelineTone {
+  if (status === 'done') return 'success'
+  if (status === 'running' || status === 'launching') return 'active'
+  if (status === 'failed' || status === 'unknown' || status === 'interrupted') return 'error'
+  if (status === 'cancelled' || status === 'skipped') return 'neutral'
+  return 'pending'
 }
 
-function StepHeader({
-  step,
-  index
-}: {
-  step: PlanRunTimelineStepSnapshot
-  index: number
-}): React.JSX.Element {
+function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.Element {
   const duration = planStepDurationMs(step)
   return (
     <Stack
       direction="row"
       spacing={0.75}
       useFlexGap
-      sx={{ alignItems: 'center', flexWrap: 'wrap', width: '100%' }}
+      sx={{ alignItems: 'center', flexWrap: 'wrap' }}
     >
-      <StepStatusIcon status={step.status} />
-      <Typography variant="body2" sx={{ minWidth: 0, flex: 1, fontWeight: 600 }}>
-        {index + 1}. {step.title}
-      </Typography>
       <Typography variant="caption" color="text.secondary">
         {planCopy.stepStatus(step.status)}
       </Typography>
@@ -89,7 +58,9 @@ function StepHeader({
         <Typography variant="caption">{planCopy.attempts(step.attempts)}</Typography>
       ) : null}
       {duration !== null ? (
-        <Typography variant="caption">{formatAgentDuration(duration)}</Typography>
+        <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+          {formatAgentDuration(duration)}
+        </Typography>
       ) : null}
     </Stack>
   )
@@ -205,33 +176,30 @@ export function PlanStepRow({
   onRetry,
   onSkip,
   onReplan,
-  onStop
+  onStop,
+  isLast = false
 }: PlanStepRowProps): React.JSX.Element {
   const rowRef = useRef<HTMLDivElement | null>(null)
   const expansion = usePlanStepExpansion(run, step, details, loadDetails, rowRef)
   const actions = planStepActions(run, step.id)
   const loading = expansion.expanded && (!details || details.updatedAt < run.updatedAt)
+  const tone = stepTone(step.status)
   return (
-    <Accordion
-      ref={rowRef}
-      disableGutters
-      elevation={0}
-      expanded={expansion.expanded}
-      onChange={expansion.toggle}
-      sx={PLAN_STEP_ACCORDION_SX}
-    >
-      <AccordionSummary
-        aria-label={
+    <Box ref={rowRef}>
+      <PlanTimelineStep
+        isLast={isLast}
+        tone={tone}
+        index={index}
+        dimmed={tone === 'pending'}
+        title={`${index + 1}. ${step.title}`}
+        meta={<StepHeader step={step} />}
+        expanded={expansion.expanded}
+        toggleLabel={
           expansion.expanded ? planCopy.collapseStep(step.title) : planCopy.expandStep(step.title)
         }
-        sx={{ px: 1, minHeight: 42 }}
+        onToggle={() => expansion.toggle({} as React.SyntheticEvent, !expansion.expanded)}
       >
-        <StepHeader step={step} index={index} />
-      </AccordionSummary>
-      <AccordionDetails sx={{ px: 1, pt: 0, pb: 1 }}>
-        <Box sx={{ pl: 3 }}>
-          <StepReport step={step} details={details} loading={loading} cwd={cwd} />
-        </Box>
+        <StepReport step={step} details={details} loading={loading} cwd={cwd} />
         <StepActions
           visible={actions.length > 0}
           reason={run.pause?.reason ?? 'step_failed'}
@@ -241,7 +209,7 @@ export function PlanStepRow({
           onReplan={onReplan}
           onStop={onStop}
         />
-      </AccordionDetails>
-    </Accordion>
+      </PlanTimelineStep>
+    </Box>
   )
 }

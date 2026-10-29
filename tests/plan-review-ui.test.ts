@@ -11,7 +11,8 @@ import { PlanReviewCard } from '../src/renderer/src/features/plan/components/Pla
 import {
   applyPlanReviewDecision,
   planReviewItemFromEvent,
-  planReviewResponse
+  planReviewResponse,
+  planReviewShownInTranscript
 } from '../src/renderer/src/features/plan/lib/planReview'
 
 const proposal = {
@@ -176,7 +177,7 @@ test('plan timeline card keeps structured steps available behind a closed detail
   assert.match(markup, /Write report/)
 })
 
-test('pending plan keeps its historical copy closed while the action panel shows steps', () => {
+test('an open confirmation is the only plan surface until the user decides', () => {
   const item = planReviewItemFromEvent({
     type: 'plan_review_submitted',
     reviewId: 'review-once',
@@ -184,32 +185,44 @@ test('pending plan keeps its historical copy closed while the action panel shows
     steps: structuredPlan
   })
   assert.ok(item)
+  assert.equal(planReviewShownInTranscript(item, 'review-once'), false)
+  assert.equal(planReviewShownInTranscript(item, null), true)
+  const items = [item]
+  applyPlanReviewDecision(items, {
+    type: 'plan_review_decided',
+    reviewId: 'review-once',
+    decision: 'approve'
+  })
+  assert.equal(
+    items[0]?.role === 'plan_review' && planReviewShownInTranscript(items[0], null),
+    false
+  )
+  applyPlanReviewDecision(items, {
+    type: 'plan_review_decided',
+    reviewId: 'review-once',
+    decision: 'revise',
+    note: 'Add a check'
+  })
+  assert.equal(
+    items[0]?.role === 'plan_review' && planReviewShownInTranscript(items[0], null),
+    true
+  )
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
-      createElement(
-        'div',
-        null,
-        createElement(PlanReviewCard, { item, cwd: '/workspace' }),
-        createElement(UserInteractionPanel, {
-          request: {
-            requestId: 'review-once',
-            questions: [],
-            planReview: { ...proposal, steps: structuredPlan }
-          },
-          onRespond: () => undefined
-        })
-      )
+      createElement(UserInteractionPanel, {
+        request: {
+          requestId: 'review-once',
+          questions: [],
+          planReview: { ...proposal, steps: structuredPlan }
+        },
+        onRespond: () => undefined
+      })
     )
   )
-  assert.match(markup, /<details[^>]*data-phi-plan-review-details="true"[^>]*>/)
-  assert.doesNotMatch(
-    markup,
-    /<details[^>]*data-phi-plan-review-details="true"[^>]*\sopen(?:=|\s|>)/
-  )
   assert.match(markup, /aria-label="计划等待评审"/)
-  assert.equal(markup.match(/data-phi-plan-steps="true"/g)?.length, 2)
+  assert.equal(markup.match(/data-phi-plan-steps="true"/g)?.length, 1)
 })
 
 test('plan review copy follows live language changes', () => {

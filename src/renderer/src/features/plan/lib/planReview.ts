@@ -111,3 +111,17 @@ export function applyPlanReviewDecision(
   }
   return true
 }
+
+/**
+ * The confirmation panel is the plan surface until the user decides.
+ * An approved plan stays out of the transcript; the finished run record replaces it.
+ * A pending plan with no open confirmation (for example after a reload) stays visible.
+ */
+export function planReviewShownInTranscript(
+  item: PlanReviewItem,
+  openReviewId: string | null
+): boolean {
+  if (item.status === 'pending') return item.reviewId !== openReviewId
+  if (item.status === 'approved') return false
+  return true
+}

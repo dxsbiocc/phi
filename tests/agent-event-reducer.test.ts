@@ -41,8 +41,10 @@ test('plan run updates stay out of chat while a finished run adds one concise re
     })
   )
   assert.equal(state.messages.length, 1)
-  assert.equal(state.messages[0]?.role, 'warning')
-  assert.match(state.messages[0]?.content ?? '', /计划已完成/)
+  assert.equal(state.messages[0]?.role, 'plan_run')
+  if (state.messages[0]?.role !== 'plan_run') return
+  assert.equal(state.messages[0].run.status, 'completed')
+  assert.equal(state.messages[0].run.goal, 'Ship the renderer loop')
 })
 
 test('provider-managed tool result appears as a completed tool card', () => {

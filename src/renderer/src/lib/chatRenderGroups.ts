@@ -7,6 +7,7 @@ import type {
   ToolCallItem,
   PresentedFilesItem,
   PlanReviewItem,
+  PlanRunRecordItem,
   UiBlocksItem,
   WorkspaceChangeSummaryItem,
   WrapperPlanItem
@@ -22,6 +23,7 @@ export type VisibleChatItem =
   | PresentedFilesItem
   | UiBlocksItem
   | PlanReviewItem
+  | PlanRunRecordItem
 
 export type ProcessingItem =
   | ToolCallItem
@@ -89,7 +91,8 @@ function isProcessingItem(message: ChatItem): message is ProcessingItem {
     message.role !== 'workspace_changes' &&
     message.role !== 'presented_files' &&
     message.role !== 'ui_blocks' &&
-    message.role !== 'plan_review'
+    message.role !== 'plan_review' &&
+    message.role !== 'plan_run'
   )
 }
 

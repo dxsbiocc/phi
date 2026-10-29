@@ -1,15 +1,12 @@
 import {
-  Alert,
   Box,
   Collapse,
+  Paper,
+  Alert,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  IconButton,
-  Paper,
-  Stack,
-  Typography,
   Button,
   useMediaQuery
 } from '@mui/material'
@@ -20,7 +17,6 @@ import {
   type PlanRunTimelineSnapshot,
   type PlanRunTimelineStepSnapshot
 } from '../../../../shared/planRunTypes'
-import { PhiIcons } from '../../icons'
 import { useUiLanguage } from '../../lib/i18n'
 import type { RendererApi } from '../../types'
 import { usePlanRuns, type OnReplanPrompt, type PlanRunsController } from './hooks/usePlanRuns'
@@ -32,10 +28,11 @@ import {
 } from './lib/planRunView'
 import { PlanRunControls } from './components/PlanRunControls'
 import { PlanStepRow } from './components/PlanStepRow'
+import { PlanTimelineHeader, type PlanTimelineTone } from './components/PlanTimeline'
 
 type Confirmation =
   { kind: 'stop' } | { kind: 'skip'; stepId: string } | { kind: 'retry'; stepId: string }
-type PlanRunPanelProps = { controller: PlanRunsController; cwd?: string }
+type PlanRunPanelProps = { controller: PlanRunsController; cwd?: string; archived?: boolean }
 type PlanPanelState = {
   reduceMotion: boolean
   expanded: boolean
@@ -54,6 +51,15 @@ function pauseReason(run: PlanRunTimelineSnapshot): string | null {
     failed: (step) => planCopy.pauseFailed(String(step)),
     needsInput: (step, inputs) => planCopy.pauseNeedsInput(String(step), inputs.join(', '))
   })
+}
+
+function runTone(run: PlanRunTimelineSnapshot): PlanTimelineTone {
+  if (run.status === 'completed') return 'success'
+  if (run.steps.some((step) => step.status === 'running' || step.status === 'launching')) {
+    return 'active'
+  }
+  if (run.pause && run.pause.reason !== 'user') return 'error'
+  return 'neutral'
 }
 
 function PlanRunHeader({
@@ -76,39 +82,29 @@ function PlanRunHeader({
   onStop: () => void
 }): React.JSX.Element {
   const progress = planRunProgress(run)
+  const controlsHidden =
+    replanPending ||
+    run.steps.some((step) => step.status === 'unknown' || step.status === 'launching')
   return (
-    <Stack
-      direction="row"
-      spacing={1}
-      useFlexGap
-      sx={{ alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}
-    >
-      <IconButton
-        size="small"
-        onClick={onToggle}
-        aria-label={expanded ? planCopy.collapseSummary : planCopy.expandSummary}
-      >
-        {expanded ? <PhiIcons.action.collapse size={18} /> : <PhiIcons.action.expand size={18} />}
-      </IconButton>
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography variant="subtitle2" noWrap title={run.goal}>
-          {run.goal}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {planCopy.progress(progress.completed, progress.total)} · {planCopy.runStatus(run.status)}
-        </Typography>
-      </Box>
-      {replanPending ||
-      run.steps.some((step) => step.status === 'unknown' || step.status === 'launching') ? null : (
-        <PlanRunControls
-          run={run}
-          disabled={disabled}
-          onPause={onPause}
-          onResume={onResume}
-          onStop={onStop}
-        />
-      )}
-    </Stack>
+    <PlanTimelineHeader
+      tone={runTone(run)}
+      title={run.goal}
+      subtitle={`${planCopy.progress(progress.completed, progress.total)} · ${planCopy.runStatus(run.status)}`}
+      expanded={expanded}
+      expandLabel={expanded ? planCopy.collapseSummary : planCopy.expandSummary}
+      onToggle={onToggle}
+      trailing={
+        controlsHidden ? null : (
+          <PlanRunControls
+            run={run}
+            disabled={disabled}
+            onPause={onPause}
+            onResume={onResume}
+            onStop={onStop}
+          />
+        )
+      }
+    />
   )
 }
 
@@ -177,7 +173,7 @@ function PlanRunBody({
   const reason = pauseReason(run)
   const hasUnknown = run.steps.some((step) => step.status === 'unknown')
   return (
-    <Box sx={{ mt: 1, maxHeight: 'min(42vh, 420px)', overflowY: 'auto' }}>
+    <Box sx={{ maxHeight: 'min(42vh, 420px)', overflowY: 'auto', px: 2, py: 1.75 }}>
       {reason ? (
         <Alert severity={run.pause?.reason === 'user' ? 'info' : 'warning'} sx={{ mb: 1 }}>
           {reason}
@@ -188,13 +184,14 @@ function PlanRunBody({
           {planCopy.unknownRunHold}
         </Alert>
       ) : null}
-      <Stack spacing={0.25} divider={<Box sx={{ borderTop: 1, borderColor: 'divider' }} />}>
+      <Box>
         {run.steps.map((step, index) => (
           <PlanStepRow
             key={step.id}
             run={run}
             step={step}
             index={index}
+            isLast={index === run.steps.length - 1}
             details={controller.details}
             disabled={controller.pendingAction !== null || Boolean(controller.replanPending)}
             cwd={cwd}
@@ -215,18 +212,20 @@ function PlanRunBody({
             onStop={onStop}
           />
         ))}
-      </Stack>
+      </Box>
     </Box>
   )
 }
 
 function usePlanPanelState(
   run: PlanRunTimelineSnapshot | null,
-  controller: PlanRunsController
+  controller: PlanRunsController,
+  archived: boolean
 ): PlanPanelState {
   const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const expansionKey = run ? `${run.id}:${run.status}` : 'none'
-  const defaultExpanded = run?.status === 'running' || run?.status === 'paused'
+  const defaultExpanded =
+    archived || run?.status === 'running' || run?.status === 'paused' || run?.status === 'completed'
   const [expansion, setExpansion] = useState({ key: expansionKey, expanded: defaultExpanded })
   const expanded = expansion.key === expansionKey ? expansion.expanded : defaultExpanded
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
@@ -251,18 +250,19 @@ function usePlanPanelState(
 
 export function PlanRunPanel({
   controller,
-  cwd = ''
+  cwd = '',
+  archived = false
 }: PlanRunPanelProps): React.JSX.Element | null {
   useUiLanguage()
   const run = controller.run
-  const panel = usePlanPanelState(run, controller)
-  if (!run || run.status === 'completed' || run.status === 'stopped') return null
+  const panel = usePlanPanelState(run, controller, archived)
+  if (!run || (!archived && (run.status === 'completed' || run.status === 'stopped'))) return null
   const hasUnknown = run.steps.some((step) => step.status === 'unknown')
   return (
     <Paper
       variant="outlined"
       aria-label={run.goal}
-      sx={{ width: '100%', mb: 1, p: 1.25, borderRadius: 2, minWidth: 0 }}
+      sx={{ width: '100%', mb: 1, borderRadius: 2, minWidth: 0, overflow: 'hidden' }}
     >
       <PlanRunHeader
         run={run}
@@ -277,7 +277,7 @@ export function PlanRunPanel({
       {controller.rollbackPending ? (
         <Alert
           severity="error"
-          sx={{ mt: 1 }}
+          sx={{ mx: 2, mt: 1 }}
           action={
             <Button
               size="small"
@@ -292,7 +292,7 @@ export function PlanRunPanel({
         </Alert>
       ) : null}
       {controller.replanPending && !controller.rollbackPending ? (
-        <Alert severity="info" sx={{ mt: 1 }}>
+        <Alert severity="info" sx={{ mx: 2, mt: 1 }}>
           {planCopy.replanReviewNotice}
         </Alert>
       ) : null}
@@ -305,7 +305,7 @@ export function PlanRunPanel({
           onSkip={(stepId) => panel.setConfirmation({ kind: 'skip', stepId })}
         />
         {controller.error && !controller.rollbackPending ? (
-          <Alert severity="error" sx={{ mt: 1 }}>
+          <Alert severity="error" sx={{ mx: 2, mb: 1 }}>
             {controller.error}
           </Alert>
         ) : null}
@@ -335,4 +335,31 @@ export function SessionPlanRunPanel({
   return (
     <PlanRunPanel key={controller.run?.id ?? 'no-plan-run'} controller={controller} cwd={cwd} />
   )
+}
+
+function archivedController(run: PlanRunTimelineSnapshot): PlanRunsController {
+  return {
+    run,
+    details: null,
+    loading: false,
+    pendingAction: null,
+    error: null,
+    loadDetails: async () => null,
+    pause: async () => undefined,
+    resume: async () => undefined,
+    stop: async () => undefined,
+    retryStep: async () => undefined,
+    skipStep: async () => undefined
+  }
+}
+
+/** The execution timeline kept in the conversation after the live panel closes. */
+export function PlanRunRecord({
+  run,
+  cwd = ''
+}: {
+  run: PlanRunTimelineSnapshot
+  cwd?: string
+}): React.JSX.Element {
+  return <PlanRunPanel controller={archivedController(run)} cwd={cwd} archived />
 }
