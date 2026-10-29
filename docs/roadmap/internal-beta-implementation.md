@@ -2,6 +2,7 @@
 
 Date: 2026-09-05
 Updated: 2026-09-29 — content distribution (see [content-distribution decisions](../decisions/content-distribution.md)).
+Updated: 2026-10-23 — remote runtime status; post-beta order for group chat and the mobile companion.
 
 This roadmap turns the internal beta decisions into implementation phases. The beta success criterion is a reliable local desktop workbench for heavy Pi/OMX users: project-bound sessions, multiple concurrent runs, understandable approvals, visible resources, and recoverable local history.
 
@@ -191,6 +192,18 @@ ignored rather than deleted.
 See [data-access-implementation.md](data-access-implementation.md) for the binding
 decision and the future MCP-connector direction. Historical design appendices and
 decision records remain as rationale, not as current product behavior.
+
+## After Internal Beta: Group Chat And Mobile Companion
+
+2026-10-24 scope clarification: the current [kernel plan](phi-kernel-implementation.md) delivers one execution mode for local and remote sessions with UI decoupling. [Personal/laboratory editions, membership, shared resources and communication](phi-personal-lab-roadmap.md) belong to the **next major version**. Current work only preserves [compatible design boundaries](phi-kernel-implementation.md#collaboration-compatibility); it does not implement personal identity storage or a multi-user foundation. Laboratory collaboration precedes personal friend networking within that future version. This note does not authorize coding or expand current-beta scope.
+
+Decided 2026-10-23. Design: [phi-mobile-companion-design.md](../design/phi-mobile-companion-design.md) (中文). None of this enters the beta.
+
+1. Close out the beta first: P2 polish and the remote default-on checks.
+2. G1a — desktop group chat: one user with several Phi specialist agents in one conversation; members run in parallel as child runs, with per-member output directories (design §16).
+3. C0–C6 — mobile companion V1 for iPhone (Android in a later upgrade): PWA through a self-hosted TLS-passthrough relay (Tailscale Serve optional), local projects only; the contract reserves remote-project fields.
+4. G1b — group chat on the phone, after C5 and G1a.
+5. V1.1 — remote (SSH / HPC) projects and remote group chat on the phone, only after the remote runtime is on by default.
 
 ## Deferred Until After Internal Beta
 
