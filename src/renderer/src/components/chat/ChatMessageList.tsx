@@ -221,6 +221,27 @@ export type ChatMessageListProps = {
   openPlanReviewId?: string | null
 }
 
+type PlanTranscriptItem = Extract<ChatItem, { role: 'plan_review' | 'plan_run' }>
+
+function isPlanTranscriptItem(item: ChatItem): item is PlanTranscriptItem {
+  return item.role === 'plan_review' || item.role === 'plan_run'
+}
+
+/** Plan review and finished plan-run records render as their own cards in the transcript. */
+function PlanTranscriptCard({
+  item,
+  cwd
+}: {
+  item: PlanTranscriptItem
+  cwd: string
+}): React.JSX.Element {
+  return item.role === 'plan_review' ? (
+    <PlanReviewCard item={item} cwd={cwd} />
+  ) : (
+    <PlanRunRecord run={item.run} cwd={cwd} />
+  )
+}
+
 const ChatMessageList = memo(function ChatMessageList({
   messages,
   messagesContainerRef,
@@ -726,12 +747,8 @@ const ChatMessageList = memo(function ChatMessageList({
       if (group.item.role === 'ui_blocks') {
         return <UiBlocksCard item={group.item} />
       }
-      if (group.item.role === 'plan_review') {
-        return <PlanReviewCard item={group.item} cwd={cwd} />
-      }
-      if (group.item.role === 'plan_run') {
-        return <PlanRunRecord run={group.item.run} cwd={cwd} />
-      }
+      if (isPlanTranscriptItem(group.item))
+        return <PlanTranscriptCard item={group.item} cwd={cwd} />
       return (
         <ChatBubble
           message={group.item}

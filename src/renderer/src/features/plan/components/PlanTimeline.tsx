@@ -88,6 +88,77 @@ export function PlanTimelineIcon({
   )
 }
 
+function PlanTimelineConnector(): React.JSX.Element {
+  return (
+    <Box
+      aria-hidden
+      sx={{
+        position: 'absolute',
+        left: '11px',
+        top: 28,
+        bottom: -6,
+        width: '2px',
+        bgcolor: 'divider',
+        zIndex: 0
+      }}
+    />
+  )
+}
+
+function PlanTimelineStepTitle({
+  title,
+  meta,
+  interactive,
+  expanded,
+  onToggle,
+  toggleLabel
+}: {
+  title: string
+  meta?: ReactNode
+  interactive: boolean
+  expanded?: boolean
+  onToggle?: () => void
+  toggleLabel?: string
+}): React.JSX.Element {
+  const ToggleIcon = expanded ? PhiIcons.action.collapse : PhiIcons.action.expand
+  return (
+    <Box
+      role={interactive ? 'button' : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-expanded={interactive ? expanded : undefined}
+      aria-label={toggleLabel}
+      onClick={interactive ? onToggle : undefined}
+      onKeyDown={
+        interactive
+          ? (event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              onToggle?.()
+            }
+          : undefined
+      }
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        minWidth: 0,
+        mx: -0.5,
+        px: 0.5,
+        py: 0.25,
+        borderRadius: 1,
+        cursor: interactive ? 'pointer' : 'default',
+        '&:hover': interactive ? { bgcolor: 'action.hover' } : undefined
+      }}
+    >
+      <Typography variant="body2" sx={{ minWidth: 0, flex: 1, fontWeight: 650 }}>
+        {title}
+      </Typography>
+      {meta}
+      {interactive ? <ToggleIcon size={16} aria-hidden /> : null}
+    </Box>
+  )
+}
+
 export function PlanTimelineStep({
   isLast,
   tone,
@@ -131,62 +202,17 @@ export function PlanTimelineStep({
           '@media (prefers-reduced-motion: reduce)': { animation: 'none' }
         }}
       >
-        {isLast ? null : (
-          <Box
-            aria-hidden
-            sx={{
-              position: 'absolute',
-              left: '11px',
-              top: 28,
-              bottom: -6,
-              width: '2px',
-              bgcolor: 'divider',
-              zIndex: 0
-            }}
-          />
-        )}
+        {isLast ? null : <PlanTimelineConnector />}
         <PlanTimelineIcon tone={tone} spinning={tone === 'active' && !icon} icon={icon} />
         <Box sx={{ flex: 1, minWidth: 0, pb: isLast ? 0 : 2 }}>
-          <Box
-            role={interactive ? 'button' : undefined}
-            tabIndex={interactive ? 0 : undefined}
-            aria-expanded={interactive ? expanded : undefined}
-            aria-label={toggleLabel}
-            onClick={interactive ? onToggle : undefined}
-            onKeyDown={
-              interactive
-                ? (event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return
-                    event.preventDefault()
-                    onToggle?.()
-                  }
-                : undefined
-            }
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 1,
-              minWidth: 0,
-              mx: -0.5,
-              px: 0.5,
-              py: 0.25,
-              borderRadius: 1,
-              cursor: interactive ? 'pointer' : 'default',
-              '&:hover': interactive ? { bgcolor: 'action.hover' } : undefined
-            }}
-          >
-            <Typography variant="body2" sx={{ minWidth: 0, flex: 1, fontWeight: 650 }}>
-              {title}
-            </Typography>
-            {meta}
-            {interactive ? (
-              expanded ? (
-                <PhiIcons.action.collapse size={16} aria-hidden />
-              ) : (
-                <PhiIcons.action.expand size={16} aria-hidden />
-              )
-            ) : null}
-          </Box>
+          <PlanTimelineStepTitle
+            title={title}
+            meta={meta}
+            interactive={interactive}
+            expanded={expanded}
+            onToggle={onToggle}
+            toggleLabel={toggleLabel}
+          />
           {children && onToggle ? (
             <Collapse in={expanded} timeout={reduceMotion ? 0 : 280} unmountOnExit={false}>
               <Box sx={{ pt: 0.75 }}>{children}</Box>
