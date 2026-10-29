@@ -1616,6 +1616,10 @@ async function harness(
     },
     '../shared/browserSessionScope': browserSessionScope,
     './window-startup': windowStartup,
+    './dev-renderer': {
+      loadFreshDevRenderer: (window: { loadURL: (url: string) => Promise<void> }, url: string) =>
+        window.loadURL(url)
+    },
     './startup-plugin-enablement': {
       migrateStartupPluginEnablement: (agentDir: string, getRuntimeRoot: () => string): void => {
         operationLog.push({ type: 'refreshManagedStdioServers', agentDir })

@@ -1,6 +1,7 @@
 import { IPC } from '../shared/ipcChannels'
 import { browserPresentationSessionId } from '../shared/browserSessionScope'
 import { registerRuntimeSessionOrigin } from './agent/session/runtime-origin-store'
+import { loadFreshDevRenderer } from './dev-renderer'
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
 import { readRuntimeRecoverySummarySeed } from './agent/session/recovery-summary'
 import { facadeBindingHash } from './agent/engine/rpc/facade-session-driver'
@@ -3103,12 +3104,11 @@ function loadMainWindow(
   window: BrowserWindow,
   startup: ReturnType<typeof createMainWindowStartup>
 ): void {
-  // HMR for renderer base on electron-vite cli.
-  // Load the remote URL for development or the local html file for production.
+  // Dev loads the electron-vite server (HMR) with a fresh cache; production loads the bundled html.
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    void window
-      .loadURL(process.env['ELECTRON_RENDERER_URL'])
-      .catch(() => startup.fail('load-failed'))
+    void loadFreshDevRenderer(window, process.env['ELECTRON_RENDERER_URL']).catch(() =>
+      startup.fail('load-failed')
+    )
   } else {
     void window
       .loadFile(join(import.meta.dirname, '../renderer/index.html'))
