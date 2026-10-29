@@ -72,6 +72,13 @@ export class FakeKernelClient implements KernelSessionClient {
         sessionId: 'kernel-adopted',
         migration: { state: 'complete', sourceSha256: 'c'.repeat(64) }
       })
+    if (method === 'session.fork') {
+      const sessionId = `kernel-${++this.nextSession}`
+      return Promise.resolve({
+        sessionId,
+        sessionFile: `/agent/phi-kernel/sessions/${sessionId}/journal.jsonl`
+      })
+    }
     if (method === 'session.snapshot') {
       return Promise.resolve({
         sessionId: context.sessionId!,

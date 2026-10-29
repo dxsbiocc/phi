@@ -459,11 +459,13 @@ function referencedForkFiles(events: StoredSessionEvent[], sourceId: string): st
 export function forkPhiSession(
   sourceId: string,
   eventId: string,
-  runtimeSessionPath: string
+  runtime: string | { path: string; kernelRuntimeRef?: KernelRuntimeRef }
 ): PhiSessionRecord {
   const source = findPhiSessionById(sourceId)
   if (!source) throw new Error('来源会话不存在')
-  assertLocalRuntimeAccess(source)
+  const runtimeSessionPath = typeof runtime === 'string' ? runtime : runtime.path
+  const kernelRuntimeRef = typeof runtime === 'string' ? undefined : runtime.kernelRuntimeRef
+  assertLocalRuntimeAccess(source, { allowLocalKernel: kernelRuntimeRef?.host.kind === 'local' })
   const events = readSessionEvents(sourceId)
   const selected = events.findIndex(
     (event) => event.eventId === eventId && event.type === 'user_message'
@@ -480,7 +482,7 @@ export function forkPhiSession(
     cwd: source.cwd,
     cwdRealPath: source.cwdRealPath,
     title: source.title ? `${source.title}（分叉）` : '分叉会话',
-    runtimeSessionPath,
+    ...(kernelRuntimeRef ? {} : { runtimeSessionPath }),
     remoteRuntime: source.remoteRuntime,
     permissionMode: source.permissionMode,
     workMode: source.workMode,
@@ -520,10 +522,13 @@ export function forkPhiSession(
       }
       appendFileSync(getMessagesPath(fork.sessionId), `${JSON.stringify(stored)}\n`, 'utf-8')
     }
-    const manifest = updateSessionManifest(fork.sessionId, {
+    let manifest = updateSessionManifest(fork.sessionId, {
       messageCount: included.length,
       lastEventType: included.at(-1)?.type
     })
+    if (kernelRuntimeRef) {
+      manifest = recordKernelRuntimeReference(fork.sessionId, kernelRuntimeRef)
+    }
     return { ...fork, manifest }
   } catch (error) {
     deletePhiSession(fork.sessionId)

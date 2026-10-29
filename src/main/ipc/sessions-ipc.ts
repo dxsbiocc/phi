@@ -286,13 +286,12 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
     ) {
       throw new Error('请等待来源会话运行结束后再分叉')
     }
-    if (!source.runtimeSessionPath) throw new Error('来源会话尚无可分叉的历史')
     const events = readSessionEvents(sourceId)
     const userMessages = events.filter((event) => event.type === 'user_message')
     const selectedIndex = userMessages.findIndex((event) => event.eventId === eventId)
     if (selectedIndex < 0) throw new Error('分叉消息不存在')
     const result = await getPhiEngine().history.fork({
-      path: source.runtimeSessionPath,
+      path: source.runtimeSessionPath ?? phiOnlySessionPath(sourceId),
       cwd: source.cwd,
       userMessages: userMessages
         .slice(0, selectedIndex + 2)
@@ -300,10 +299,13 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
       selectedIndex
     })
     try {
-      const fork = forkPhiSession(sourceId, eventId, result.path)
+      const fork = forkPhiSession(sourceId, eventId, result)
       status.notifySessionChanged()
       return { path: phiOnlySessionPath(fork.sessionId), phiSessionId: fork.sessionId }
     } catch (error) {
+      await getPhiEngine()
+        .history.discardFork?.(result)
+        .catch(() => undefined)
       deleteSession(result.path)
       throw error
     }

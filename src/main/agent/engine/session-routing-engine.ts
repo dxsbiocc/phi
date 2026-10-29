@@ -8,6 +8,8 @@ import type {
 import type { PhiAgentEvent } from './event-types'
 import type {
   PhiEngine,
+  PhiHistoryForkParams,
+  PhiHistoryForkResult,
   PhiSessionCreateParams,
   WorkerSessionState,
   RuntimeModel,
@@ -104,6 +106,8 @@ export interface RoutedSessionFactory {
     path: string
     cwd?: string
   }): Promise<{ cwd?: string; sessionFile?: string } | undefined>
+  historyFork?(params: PhiHistoryForkParams): Promise<PhiHistoryForkResult | undefined>
+  discardHistoryFork?(result: PhiHistoryForkResult): Promise<boolean>
   create(
     params: PhiSessionCreateParams,
     signal: AbortSignal,
@@ -455,8 +459,16 @@ export class SessionRoutingEngine implements PhiEngine {
       return this.legacy.history.open(params)
     },
     fork: async (params) => {
+      const routed = await this.factory()?.historyFork?.(params)
+      if (routed) return routed
+      if (phiSessionIdFromPath(params.path)) {
+        throw new Error('来源会话尚无可分叉的历史')
+      }
       this.historyGuard(params.path, params.cwd)
       return this.legacy.history.fork(params)
+    },
+    discardFork: async (result) => {
+      await this.factory()?.discardHistoryFork?.(result)
     },
     rename: async (params) => {
       const phiId = phiSessionIdFromPath(params.path)
@@ -683,4 +695,20 @@ export function routedPlanRunsForPhiSession(
   return engine instanceof SessionRoutingEngine
     ? engine.planRunsForPhiSession(phiSessionId)
     : undefined
+}
+
+/** Plan-run IPC options: desktop runs from `planRuns`, kernel-owned sessions' runs from the kernel. */
+export function kernelPlanRunRouting<PlanRuns>(
+  planRuns: PlanRuns,
+  engine: () => PhiEngine
+): {
+  planRuns: PlanRuns
+  findSessionById: typeof findPhiSessionById
+  kernelPlanRuns(phiSessionId: string): RoutedPlanRunOperations | undefined
+} {
+  return {
+    planRuns,
+    findSessionById: findPhiSessionById,
+    kernelPlanRuns: (phiSessionId) => routedPlanRunsForPhiSession(engine(), phiSessionId)
+  }
 }

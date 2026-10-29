@@ -241,7 +241,7 @@ test('hello negotiates minor versions and rejects pre-negotiation or incompatibl
   assert.equal(negotiated.ok, true)
   assert.deepEqual((responseResult(negotiated) as { protocol: JsonValue }).protocol, {
     major: 1,
-    minor: 0
+    minor: 1
   })
 })
 

@@ -11,6 +11,14 @@ import {
 import { SessionRoutingEngine } from '../src/main/agent/engine/session-routing-engine'
 import { sessionCreateParamsSchema } from '../src/shared/kernel-protocol'
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
+import {
+  appendSessionEvent,
+  createPhiSession,
+  deletePhiSession,
+  findPhiSessionById,
+  forkPhiSession,
+  recordKernelRuntimeReference
+} from '../src/main/agent/session/session-store'
 
 import { FakeKernelClient, legacyEngine, params } from './helpers/kernelSessionFactoryFake'
 
@@ -344,6 +352,158 @@ test('persistent kernel history returns its journal path and reopens without mod
   const opened = client.requests.findLast((request) => request.method === 'session.open')
   assert.equal((opened?.params as { sessionId?: unknown }).sessionId, 'kernel-1')
   assert.deepEqual(opened?.context, {})
+})
+
+test('SessionRoutingEngine routes selected-turn fork to the local kernel and returns its new identity', async (t) => {
+  const phi = createPhiSession({
+    kind: 'ordinary',
+    cwd: '/project',
+    cwdRealPath: '/project',
+    permissionMode: 'auto',
+    model: { providerId: 'test', modelId: 'model' }
+  })
+  t.after(() => deletePhiSession(phi.sessionId))
+  const client = new FakeKernelClient()
+  const factory = new KernelSessionFactory({
+    mode: 'local',
+    launchLocal: async () => ({
+      client,
+      greeting: {
+        protocol: { major: 1, minor: 1 },
+        kernel: { version: 'test', ompVersion: 'test' },
+        kernelInstanceId: 'kernel-instance',
+        controllerGeneration: 1,
+        capabilities: [],
+        lastSeq: 0,
+        runtime: { home: '/home/test', agentDir: '/agent' }
+      },
+      close: async () => undefined
+    })
+  })
+  const engine = new SessionRoutingEngine(legacyEngine(), () => factory)
+  await engine.sessions.create({ ...params('fork-source'), phiSessionId: phi.sessionId })
+
+  const result = await engine.history.fork({
+    path: `phi-session:${phi.sessionId}`,
+    cwd: '/project',
+    userMessages: ['first', 'second'],
+    selectedIndex: 0
+  })
+
+  assert.deepEqual(result, {
+    path: '/agent/phi-kernel/sessions/kernel-2/journal.jsonl',
+    kernelRuntimeRef: {
+      kind: 'phi-kernel',
+      version: 1,
+      kernelSessionId: 'kernel-2',
+      host: { kind: 'local', agentDir: '/agent' }
+    }
+  })
+  assert.deepEqual(findPhiSessionById(phi.sessionId)?.kernelRuntimeRef, {
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId: 'kernel-1',
+    host: { kind: 'local', agentDir: '/agent' }
+  })
+  assert.deepEqual(
+    client.requests.filter((request) => request.method === 'session.fork'),
+    [
+      {
+        method: 'session.fork',
+        params: { cut: { userMessages: ['first', 'second'], selectedIndex: 0 } },
+        context: { sessionId: 'kernel-1' }
+      }
+    ]
+  )
+
+  const selected = appendSessionEvent(phi.sessionId, {
+    type: 'user_message',
+    content: 'first'
+  })
+  const phiFork = forkPhiSession(phi.sessionId, selected.eventId, result)
+  t.after(() => deletePhiSession(phiFork.sessionId))
+  await engine.sessions.dispose({ sessionId: 'fork-source' })
+  await engine.sessions.create({
+    ...params('fork-continuation'),
+    phiSessionId: phiFork.sessionId,
+    sessionManager: {
+      kind: 'open',
+      cwd: '/project',
+      path: `phi-session:${phiFork.sessionId}`
+    }
+  })
+  await engine.sessions.prompt({ sessionId: 'fork-continuation', text: 'continue' })
+  assert.equal(
+    client.requests.findLast((request) => request.method === 'session.prompt')?.context.sessionId,
+    'kernel-2'
+  )
+
+  const orphan = await engine.history.fork({
+    path: `phi-session:${phi.sessionId}`,
+    cwd: '/project',
+    userMessages: ['first'],
+    selectedIndex: 0
+  })
+  await engine.history.discardFork?.(orphan)
+  assert.deepEqual(
+    client.requests.findLast((request) => request.method === 'session.close'),
+    {
+      method: 'session.close',
+      params: {},
+      context: { sessionId: 'kernel-3' }
+    }
+  )
+})
+
+test('SessionRoutingEngine refuses remote kernel fork with an accurate capability message', async (t) => {
+  const location = {
+    kind: 'ssh' as const,
+    hostProfileId: 'ssh-config:fork',
+    remoteRoot: '/srv/project',
+    canonicalRoot: '/srv/project'
+  }
+  const phi = createPhiSession({
+    kind: 'project',
+    projectId: 'remote-project',
+    projectLocation: location,
+    cwd: '/local/anchor',
+    cwdRealPath: '/local/anchor',
+    permissionMode: 'ask',
+    model: { providerId: 'test', modelId: 'model' }
+  })
+  t.after(() => deletePhiSession(phi.sessionId))
+  recordKernelRuntimeReference(phi.sessionId, {
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId: 'remote-kernel-source',
+    host: {
+      kind: 'ssh',
+      hostProfileId: location.hostProfileId,
+      projectId: 'remote-project',
+      projectRoot: location.canonicalRoot,
+      runtimeRoot: '/srv/runtime',
+      home: '/srv/home',
+      agentDir: '/srv/home/agent'
+    }
+  })
+  const engine = new SessionRoutingEngine(
+    legacyEngine(),
+    () => new KernelSessionFactory({ mode: 'both' })
+  )
+
+  await assert.rejects(
+    engine.history.fork({
+      path: `phi-session:${phi.sessionId}`,
+      cwd: phi.manifest.cwd,
+      userMessages: ['selected'],
+      selectedIndex: 0
+    }),
+    (error: unknown) => {
+      assert.match((error as Error).message, /远程内核会话暂不支持从消息分叉/)
+      assert.doesNotMatch((error as Error).message, /尚无可分叉的历史/)
+      return true
+    }
+  )
 })
 
 test('factory stop rebinds host capabilities before same-client persistent reopen', async () => {

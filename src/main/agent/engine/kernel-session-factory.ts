@@ -1,10 +1,16 @@
+import { rmSync } from 'node:fs'
+import { join } from 'node:path'
+
 import {
   isKernelHostCapabilityName,
+  SESSION_FORK_CUT_PROTOCOL_MINOR,
   type JsonValue,
   type KernelEventFrame
 } from '../../../shared/kernel-protocol'
 import type {
   PhiHostRequestHandler,
+  PhiHistoryForkParams,
+  PhiHistoryForkResult,
   PhiSessionCreateParams,
   RuntimeSelectionControl
 } from './types'
@@ -61,6 +67,39 @@ export type {
   KernelSessionLauncher
 } from './kernel-session-support'
 
+type LocalKernelRuntimeRef = Omit<KernelRuntimeRef, 'host'> & {
+  host: { kind: 'local'; agentDir: string }
+}
+
+function kernelForkSourceParams(
+  phiSessionId: string,
+  path: string,
+  manifest: PhiSessionManifest,
+  reference: LocalKernelRuntimeRef
+): PhiSessionCreateParams {
+  return {
+    sessionId: phiSessionId,
+    phiSessionId,
+    cwd: manifest.cwd,
+    agentDir: reference.host.agentDir,
+    ...(manifest.model
+      ? {
+          model: {
+            provider: manifest.model.providerId,
+            id: manifest.model.modelId,
+            name: manifest.model.modelId,
+            reasoning: false
+          }
+        }
+      : {}),
+    ...(manifest.thinkingLevel ? { thinkingLevel: manifest.thinkingLevel } : {}),
+    ...(manifest.autoCompaction ? { autoCompaction: manifest.autoCompaction } : {}),
+    sessionManager: { kind: 'open', cwd: manifest.cwd, path },
+    enableToolApproval: manifest.permissionMode === 'ask',
+    ...(manifest.workMode ? { workMode: manifest.workMode } : {})
+  }
+}
+
 export class KernelSessionFactory implements RoutedSessionFactory {
   private readonly hosts = new Map<string, KernelExecutionHost>()
   private readonly bindingsByLogical = new Map<string, SessionBinding>()
@@ -113,6 +152,101 @@ export class KernelSessionFactory implements RoutedSessionFactory {
       )
     }
     return { cwd: manifest.cwd, sessionFile: params.path }
+  }
+
+  async historyFork(params: PhiHistoryForkParams): Promise<PhiHistoryForkResult | undefined> {
+    const source = this.localHistoryForkSource(params.path)
+    if (!source) return undefined
+    const { phiSessionId, manifest, reference } = source
+    const binding = this.bindingsByLogical.get(phiSessionId)
+    const sourceParams =
+      binding?.params ?? kernelForkSourceParams(phiSessionId, params.path, manifest, reference)
+    const host = this.hostFor(sourceParams)
+    const client = await host.client(sourceParams, new AbortController().signal)
+    if (
+      (host.currentConnection()?.greeting.protocol.minor ?? 0) < SESSION_FORK_CUT_PROTOCOL_MINOR
+    ) {
+      throw new KernelEngineError(
+        'CAPABILITY_UNAVAILABLE',
+        '本地内核版本过旧，无法从所选消息分叉；请重新打开会话后重试。',
+        { reason: 'kernel_fork_cut_protocol_upgrade_required', action: 'reopen' }
+      )
+    }
+    await this.openKernelSession(client, reference.kernelSessionId, {})
+    const result = record(
+      await client.request(
+        'session.fork',
+        { cut: { userMessages: params.userMessages, selectedIndex: params.selectedIndex } },
+        { sessionId: reference.kernelSessionId }
+      )
+    )
+    const forkedSessionId = stringValue(result?.sessionId)
+    const forkedPath = stringValue(result?.sessionFile)
+    if (
+      !forkedSessionId ||
+      !forkedPath ||
+      kernelSessionIdFromJournalPath(forkedPath, reference.host.agentDir) !== forkedSessionId
+    ) {
+      if (forkedSessionId) {
+        await client
+          .request('session.close', {}, { sessionId: forkedSessionId })
+          .catch(() => undefined)
+        this.removeLocalKernelFork(reference.host.agentDir, forkedSessionId)
+      }
+      throw new TypeError('Kernel fork result omitted a valid persistent session identity.')
+    }
+    return {
+      path: forkedPath,
+      kernelRuntimeRef: { ...reference, kernelSessionId: forkedSessionId }
+    }
+  }
+
+  private localHistoryForkSource(path: string):
+    | {
+        phiSessionId: string
+        manifest: PhiSessionManifest
+        reference: LocalKernelRuntimeRef
+      }
+    | undefined {
+    const prefix = 'phi-session:'
+    if (!path.startsWith(prefix)) return undefined
+    const phiSessionId = path.slice(prefix.length)
+    const manifest = findPhiSessionById(phiSessionId)
+    const reference = manifest?.kernelRuntimeRef
+    if (!manifest || !reference) return undefined
+    if (!kernelEngineHandles(this.options.mode, reference.host.kind === 'ssh')) return undefined
+    if (reference.host.kind === 'ssh') {
+      throw new KernelEngineError('CAPABILITY_UNAVAILABLE', '远程内核会话暂不支持从消息分叉。', {
+        reason: 'remote_kernel_fork_unavailable',
+        action: 'reopen'
+      })
+    }
+    return { phiSessionId, manifest, reference: { ...reference, host: reference.host } }
+  }
+
+  async discardHistoryFork(result: PhiHistoryForkResult): Promise<boolean> {
+    const reference = result.kernelRuntimeRef
+    if (!reference || reference.host.kind !== 'local') return false
+    if (
+      kernelSessionIdFromJournalPath(result.path, reference.host.agentDir) !==
+      reference.kernelSessionId
+    ) {
+      return false
+    }
+    const host = this.hosts.get(`local:${reference.host.agentDir}`)
+    await host
+      ?.currentConnection()
+      ?.client.request('session.close', {}, { sessionId: reference.kernelSessionId })
+      .catch(() => undefined)
+    return true
+  }
+
+  private removeLocalKernelFork(agentDir: string, sessionId: string): void {
+    if (!sessionId || sessionId === '.' || sessionId === '..' || /[/\\]/.test(sessionId)) return
+    rmSync(join(agentDir, 'phi-kernel', 'sessions', sessionId), {
+      recursive: true,
+      force: true
+    })
   }
 
   registerHostHandler(method: string, handler: PhiHostRequestHandler): () => void {

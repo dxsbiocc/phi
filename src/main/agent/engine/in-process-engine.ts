@@ -152,6 +152,12 @@ const routedFactory: RoutedSessionFactory = {
   historyOpen(params) {
     return kernelFactory?.historyOpen?.(params) ?? Promise.resolve(undefined)
   },
+  historyFork(params) {
+    return kernelFactory?.historyFork?.(params) ?? Promise.resolve(undefined)
+  },
+  discardHistoryFork(result) {
+    return kernelFactory?.discardHistoryFork?.(result) ?? Promise.resolve(false)
+  },
   async stop() {
     await kernelFactory?.stop()
   }

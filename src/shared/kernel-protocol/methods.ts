@@ -462,8 +462,19 @@ export const agentRunReportedPayloadSchema = z
   .object({ requestId: nonEmptyIdSchema, runId: nonEmptyIdSchema })
   .strict()
 
-// K3-2 fork source identity is carried by the trusted request context.
-export const sessionForkParamsSchema = z.object({}).strict()
+// Fork source identity stays in trusted request context. `cut` is optional so
+// v1 clients that send `{}` retain the K3-2 full-history behavior.
+export const sessionForkCutSchema = z
+  .object({
+    userMessages: z.array(z.string()).min(1),
+    selectedIndex: z.number().int().nonnegative()
+  })
+  .strict()
+  .refine((cut) => cut.selectedIndex < cut.userMessages.length, {
+    message: 'selectedIndex must identify a user message',
+    path: ['selectedIndex']
+  })
+export const sessionForkParamsSchema = z.object({ cut: sessionForkCutSchema.optional() }).strict()
 export const sessionForkResultSchema = sessionCreateResultSchema
 
 // K3-2 resources and OMP async shell jobs. `agentDir` remains adapter-owned.
@@ -741,6 +752,7 @@ export type SessionPromptOptionsV1 = z.infer<typeof sessionPromptOptionsV1Schema
 export type SessionPromptResult = z.infer<typeof sessionPromptResultSchema>
 export type PlanRunStateDto = z.infer<typeof planRunStateSchema>
 export type AgentRunSnapshotDto = z.infer<typeof agentRunSnapshotSchema>
+export type SessionForkCut = z.infer<typeof sessionForkCutSchema>
 export type SessionForkParams = z.infer<typeof sessionForkParamsSchema>
 export type SessionForkResult = z.infer<typeof sessionForkResultSchema>
 export type ResourcesReloadParams = z.infer<typeof resourcesReloadParamsSchema>

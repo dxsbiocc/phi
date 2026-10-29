@@ -1,4 +1,5 @@
-export const PHI_KERNEL_PROTOCOL_VERSION = { major: 1, minor: 0 } as const
+export const PHI_KERNEL_PROTOCOL_VERSION = { major: 1, minor: 1 } as const
+export const SESSION_FORK_CUT_PROTOCOL_MINOR = 1
 
 export const MAX_FRAME_BYTES = 1024 * 1024
 export const MAX_ERROR_DETAIL_BYTES = 4 * 1024

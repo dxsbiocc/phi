@@ -2,7 +2,7 @@ import { getPhiEngine } from '../engine/in-process-engine'
 import { hasRoutedPhiOwner } from '../engine/session-routing-engine'
 import { getPhiAgentDir } from '../runtime-paths'
 import { existsSync, mkdirSync, rmSync, unlinkSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import {
   createRuntimeSessionManager,
   listRuntimeSessions,
@@ -310,6 +310,23 @@ function assertLocalSessionOperation(
   }
 }
 
+function deleteUncommittedKernelFork(path: string): boolean {
+  const kernelSessionsRoot = join(getPhiAgentDir(), 'phi-kernel', 'sessions')
+  const kernelPart = relative(kernelSessionsRoot, path)
+  const kernelParts = kernelPart.split(sep)
+  if (
+    kernelParts.length !== 2 ||
+    !kernelParts[0] ||
+    kernelParts[1] !== 'journal.jsonl' ||
+    kernelPart.startsWith('..') ||
+    isAbsolute(kernelPart)
+  ) {
+    return false
+  }
+  rmSync(join(kernelSessionsRoot, kernelParts[0]), { recursive: true, force: true })
+  return true
+}
+
 export function createSessionManager(cwd: string, path?: string): RuntimeSessionManager {
   if (path) assertLocalSessionOperation(path)
   ensureDirExists(cwd)
@@ -360,6 +377,7 @@ export function deleteSession(path: string): void {
     deletePhiSession(phiSessionId)
     return
   }
+  if (deleteUncommittedKernelFork(path)) return
   if (existsSync(path)) {
     unlinkSync(path)
   }

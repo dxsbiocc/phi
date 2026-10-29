@@ -250,7 +250,7 @@ import { createDeliverablesPresentation } from './agent/host-requests/deliverabl
 import { createHostConfirmations } from './agent/host-requests/host-confirmations'
 import { wirePlanExecution } from './agent/plan/plan-execution-wiring'
 import { registerPlanRunIpc } from './ipc/plan-run-ipc'
-import { routedPlanRunsForPhiSession } from './agent/engine/session-routing-engine'
+import { kernelPlanRunRouting } from './agent/engine/session-routing-engine'
 import {
   createInMemoryRuntimeSessionManager,
   getBundledAgentsDir,
@@ -3451,12 +3451,7 @@ function registerAgentIpc(): void {
   registerAgentPromptIpc(agentIpcOptions)
   registerWorkspaceChangesIpc({ ipcMain })
   registerAgentRunControlIpc(agentIpcOptions)
-  registerPlanRunIpc({
-    ipcMain,
-    planRuns: planExecution.planRuns,
-    findSessionById: findPhiSessionById,
-    kernelPlanRuns: (phiSessionId) => routedPlanRunsForPhiSession(getPhiEngine(), phiSessionId)
-  })
+  registerPlanRunIpc({ ipcMain, ...kernelPlanRunRouting(planExecution.planRuns, getPhiEngine) })
 }
 
 function registerApplicationAndModelIpc(): void {

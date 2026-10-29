@@ -155,6 +155,24 @@ test('mergePhiSessionState overlays Phi status without auto-sorting by activity'
   assert.equal(sessions[2].unreadKind, null)
 })
 
+test('deleteSession removes an uncommitted local kernel fork directory by its journal path', () => {
+  withPhiDir(() => {
+    const directory = join(
+      process.env.PI_CODING_AGENT_DIR!,
+      'phi-kernel',
+      'sessions',
+      'kernel-orphan'
+    )
+    const journal = join(directory, 'journal.jsonl')
+    mkdirSync(directory, { recursive: true })
+    writeFileSync(journal, 'forked history')
+
+    deleteSession(journal)
+
+    assert.equal(existsSync(directory), false)
+  })
+})
+
 test('mergePhiSessionState keeps Phi created time stable when runtime metadata changes', () => {
   const sessions = mergePhiSessionState(
     [

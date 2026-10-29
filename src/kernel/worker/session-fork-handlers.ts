@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { JsonValue } from '../../shared/kernel-protocol'
+import type { JsonValue, SessionForkParams } from '../../shared/kernel-protocol'
 import { makeProtocolError } from '../protocol/errors'
 import type { KernelMethodHandlers } from '../protocol'
 import type { KernelSessionRepository, PersistentSession } from '../sessions'
@@ -49,13 +49,22 @@ function sessionBusy(options: SessionForkHandlerOptions, sessionId: string): boo
   )
 }
 
-/** K3-2 full-history fork keyed only by the source identity in request context. */
+function optionalCut(params: SessionForkParams): Partial<Pick<SessionForkParams, 'cut'>> {
+  return params.cut ? { cut: params.cut } : {}
+}
+
+function forkResult(sessionId: string, persistent?: PersistentSession): JsonValue {
+  return persistent ? { sessionId, sessionFile: persistent.journalPath } : { sessionId }
+}
+
+/** Fork keyed only by source request identity; an absent cut retains K3-2 whole history. */
 export function createSessionForkHandlers(
   options: SessionForkHandlerOptions
 ): KernelMethodHandlers {
   return {
-    'session.fork'(_params, _context, request) {
+    'session.fork'(params, _context, request) {
       return options.withAdmission(async () => {
+        const fork = params as SessionForkParams
         const sourceSessionId = requiredSessionId(request.sessionId)
         const kind = options.requireLoadedSession(sourceSessionId)
         if (sessionBusy(options, sourceSessionId)) {
@@ -100,7 +109,8 @@ export function createSessionForkHandlers(
             targetSessionId,
             agentDir: options.agentDir,
             create,
-            sessionManager
+            sessionManager,
+            ...optionalCut(fork)
           })
           options.sessionKinds.set(targetSessionId, kind)
           if (kind === 'memory') options.initializeMemorySession(targetSessionId)
@@ -109,7 +119,7 @@ export function createSessionForkHandlers(
             sessionManager: { kind }
           })
           await options.activateTarget(targetSessionId)
-          return { sessionId: targetSessionId } as JsonValue
+          return forkResult(targetSessionId, persistentTarget)
         } catch (error) {
           await options.cleanupTarget(targetSessionId).catch(() => undefined)
           if (persistentTarget) await options.repository.abandonNew(targetSessionId)

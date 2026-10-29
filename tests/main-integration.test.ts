@@ -487,6 +487,16 @@ type HarnessOptions = {
     options: Record<string, unknown>,
     control?: { signal?: AbortSignal; assertCurrent(): void }
   ) => Promise<void>
+  historyFork?: (params: {
+    path: string
+    cwd: string
+    userMessages: string[]
+    selectedIndex: number
+  }) => Promise<{
+    path: string
+    kernelRuntimeRef?: Record<string, unknown>
+  }>
+  forkPhiSessionFailure?: Error
 }
 type BrowserIntegrationView = {
   options: { webPreferences: { partition: string; [key: string]: unknown } }
@@ -1584,6 +1594,7 @@ async function harness(
     }
   } as unknown as OmpBridge
   const phiEngine = createInProcessEngine(fakeOmpBridge)
+  if (options.historyFork) phiEngine.history.fork = options.historyFork
   if (options.childResourceOwner) phiEngine.agentRuns.resourceOwner = options.childResourceOwner
   let backgroundJobHistory: string | null = null
   const modules: Record<string, unknown> = {
@@ -3549,7 +3560,11 @@ async function harness(
     },
     './agent/engine/session-routing-engine': {
       // The integration engine is not a routing engine, so no session is kernel-routed.
-      routedPlanRunsForPhiSession: () => undefined
+      kernelPlanRunRouting: (planRuns: unknown) => ({
+        planRuns,
+        findSessionById: () => undefined,
+        kernelPlanRuns: () => undefined
+      })
     },
     './agent/plan/plan-run-service': {
       createPlanRunService: () => ({
@@ -4384,15 +4399,19 @@ async function harness(
       forkPhiSession: (
         sourceId: string,
         eventId: string,
-        runtimeSessionPath: string
+        runtime: string | { path: string; kernelRuntimeRef?: Record<string, unknown> }
       ): { sessionId: string } => {
         const source = createdPhiSessions.find((entry) => entry.sessionId === sourceId)
         if (!source) throw new Error('来源会话不存在')
+        if (options.forkPhiSessionFailure) throw options.forkPhiSessionFailure
         const sessionId = `phi-${++phiSessionCounter}`
+        const runtimeSessionPath = typeof runtime === 'string' ? runtime : runtime.path
         createdPhiSessions.push({
           ...source,
           sessionId,
-          runtimeSessionPath,
+          ...(typeof runtime === 'object' && runtime.kernelRuntimeRef
+            ? { runtimeSessionPath: undefined, kernelRuntimeRef: runtime.kernelRuntimeRef }
+            : { runtimeSessionPath }),
           forkedFrom: { sessionId: sourceId, eventId }
         })
         return { sessionId }
@@ -8404,6 +8423,139 @@ test('main IPC: forking validates the selected user turn and returns the new Phi
     app.events.filter((event) => event.channel === 'sessions:changed').length,
     changedBeforeFork + 1
   )
+})
+
+test('main IPC: forking a local kernel session routes by Phi identity and creates a kernel manifest', async () => {
+  let routedParams: Record<string, unknown> | undefined
+  const forkedKernelRef = {
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId: 'kernel-fork',
+    host: { kind: 'local', agentDir: '/agent' }
+  }
+  const app = await harness(undefined, {
+    historyFork: async (params) => {
+      routedParams = params
+      return {
+        path: '/agent/phi-kernel/sessions/kernel-fork/journal.jsonl',
+        kernelRuntimeRef: forkedKernelRef
+      }
+    }
+  })
+  const source = (await app.invoke('sessions:create')) as {
+    path: string
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'branch this kernel turn')
+  const sourceManifest = app.createdPhiSessions[0]
+  delete sourceManifest.runtimeSessionPath
+  sourceManifest.kernelRuntimeRef = {
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId: 'kernel-source',
+    host: { kind: 'local', agentDir: '/agent' }
+  }
+  app.updatedSessionManifests.push({
+    sessionId: source.phiSessionId,
+    patch: {
+      runtimeSessionPath: undefined,
+      kernelRuntimeRef: sourceManifest.kernelRuntimeRef
+    }
+  })
+
+  const fork = await app.invoke('sessions:fork', source.phiSessionId, 'event-1')
+
+  assert.deepEqual(routedParams, {
+    path: source.path,
+    cwd: '/workspace',
+    userMessages: ['branch this kernel turn'],
+    selectedIndex: 0
+  })
+  assert.deepEqual(fork, { path: 'phi-session:phi-2', phiSessionId: 'phi-2' })
+  assert.equal(app.createdPhiSessions.at(-1)?.runtimeSessionPath, undefined)
+  assert.deepEqual(app.createdPhiSessions.at(-1)?.kernelRuntimeRef, forkedKernelRef)
+})
+
+test('main IPC: a failed kernel manifest fork deletes the newly-created kernel history', async () => {
+  const forkedPath = '/agent/phi-kernel/sessions/kernel-orphan/journal.jsonl'
+  const app = await harness(undefined, {
+    historyFork: async () => ({
+      path: forkedPath,
+      kernelRuntimeRef: {
+        kind: 'phi-kernel',
+        version: 1,
+        kernelSessionId: 'kernel-orphan',
+        host: { kind: 'local', agentDir: '/agent' }
+      }
+    }),
+    forkPhiSessionFailure: new Error('manifest copy failed')
+  })
+  const source = (await app.invoke('sessions:create')) as { phiSessionId: string }
+  await app.invoke('agent:prompt', 'fork cleanup')
+  app.updatedSessionManifests.push({
+    sessionId: source.phiSessionId,
+    patch: {
+      runtimeSessionPath: undefined,
+      kernelRuntimeRef: {
+        kind: 'phi-kernel',
+        version: 1,
+        kernelSessionId: 'kernel-source',
+        host: { kind: 'local', agentDir: '/agent' }
+      }
+    }
+  })
+
+  await assert.rejects(
+    app.invoke('sessions:fork', source.phiSessionId, 'event-1'),
+    /manifest copy failed/
+  )
+  assert.equal(app.deleted.at(-1), forkedPath)
+  assert.equal(app.createdPhiSessions.length, 1)
+})
+
+test('main IPC: a remote kernel fork is routed and reports capability unavailability', async () => {
+  let routedPath: string | undefined
+  const app = await harness(undefined, {
+    historyFork: async (params) => {
+      routedPath = params.path
+      throw new Error('远程内核会话暂不支持从消息分叉。')
+    }
+  })
+  const source = (await app.invoke('sessions:create')) as {
+    path: string
+    phiSessionId: string
+  }
+  await app.invoke('agent:prompt', 'remote kernel fork')
+  app.updatedSessionManifests.push({
+    sessionId: source.phiSessionId,
+    patch: {
+      runtimeSessionPath: undefined,
+      kernelRuntimeRef: {
+        kind: 'phi-kernel',
+        version: 1,
+        kernelSessionId: 'remote-kernel-source',
+        host: {
+          kind: 'ssh',
+          hostProfileId: 'ssh-config:remote',
+          projectId: 'remote-project',
+          projectRoot: '/srv/project',
+          runtimeRoot: '/srv/runtime',
+          home: '/srv/home',
+          agentDir: '/srv/home/agent'
+        }
+      }
+    }
+  })
+
+  await assert.rejects(
+    app.invoke('sessions:fork', source.phiSessionId, 'event-1'),
+    (error: unknown) => {
+      assert.match((error as Error).message, /远程内核会话暂不支持从消息分叉/)
+      assert.doesNotMatch((error as Error).message, /尚无可分叉的历史/)
+      return true
+    }
+  )
+  assert.equal(routedPath, source.path)
 })
 
 test('main IPC: session handlers preserve current missing-target and invalid-target behavior', async () => {

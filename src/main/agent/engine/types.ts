@@ -25,6 +25,7 @@ import type {
 import type { RemoteProjectMcpRuntimeServer } from '../../../shared/remoteProjectMcpTypes'
 import type { WorkMode } from '../../../shared/sessionMode'
 import type { PhiAgentDefinition } from '../agents/definition'
+import type { KernelRuntimeRef } from '../session/runtime-reference'
 import type {
   DecisionModelOption,
   DecisionModelSelection,
@@ -414,6 +415,18 @@ export type PhiSessionCreateParams = {
   }
 }
 
+export type PhiHistoryForkParams = {
+  path: string
+  cwd: string
+  userMessages: string[]
+  selectedIndex: number
+}
+
+export type PhiHistoryForkResult = {
+  path: string
+  kernelRuntimeRef?: KernelRuntimeRef
+}
+
 export interface PhiEngine {
   /** Internal desktop capability; renderer IPC may list models but never submit decisions. */
   decisions: {
@@ -496,12 +509,8 @@ export interface PhiEngine {
       path: string
       cwd?: string
     }): Promise<{ cwd?: string; sessionFile?: string }>
-    fork(params: {
-      path: string
-      cwd: string
-      userMessages: string[]
-      selectedIndex: number
-    }): Promise<{ path: string }>
+    fork(params: PhiHistoryForkParams): Promise<PhiHistoryForkResult>
+    discardFork?(result: PhiHistoryForkResult): Promise<void>
     rename(params: { agentDir: string; path: string; name: string }): Promise<unknown>
   }
   events: {

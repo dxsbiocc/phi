@@ -14,6 +14,7 @@ import {
   listPhiSessions,
   persistToolOutput,
   readSessionEvents,
+  recordKernelRuntimeReference,
   recoverInterruptedPhiSessions,
   updateSessionManifest
 } from '../src/main/agent/session/session-store'
@@ -247,6 +248,55 @@ test('forkPhiSession copies history through the selected turn and owns its attac
     const latestFork = forkPhiSession(source.sessionId, second.eventId, '/runtime/latest.jsonl')
     assert.equal(readSessionEvents(latestFork.sessionId).length, 3)
     assert.equal(latestFork.manifest.forkedFrom?.eventId, second.eventId)
+  })
+})
+
+test('forkPhiSession publishes a new local kernel identity without a legacy runtime path', () => {
+  withPhiDir((agentDir) => {
+    const source = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'auto'
+    })
+    recordKernelRuntimeReference(source.sessionId, {
+      kind: 'phi-kernel',
+      version: 1,
+      kernelSessionId: 'kernel-source',
+      host: { kind: 'local', agentDir }
+    })
+    const selected = appendSessionEvent(source.sessionId, {
+      type: 'user_message',
+      content: 'selected'
+    })
+    appendSessionEvent(source.sessionId, {
+      type: 'assistant_message_finalized',
+      content: 'selected answer'
+    })
+    appendSessionEvent(source.sessionId, { type: 'user_message', content: 'later' })
+
+    const fork = forkPhiSession(source.sessionId, selected.eventId, {
+      path: join(agentDir, 'phi-kernel', 'sessions', 'kernel-fork', 'journal.jsonl'),
+      kernelRuntimeRef: {
+        kind: 'phi-kernel',
+        version: 1,
+        kernelSessionId: 'kernel-fork',
+        host: { kind: 'local', agentDir }
+      }
+    })
+
+    assert.equal(fork.manifest.runtimeSessionPath, undefined)
+    assert.deepEqual(fork.manifest.kernelRuntimeRef, {
+      kind: 'phi-kernel',
+      version: 1,
+      kernelSessionId: 'kernel-fork',
+      host: { kind: 'local', agentDir }
+    })
+    assert.deepEqual(
+      readSessionEvents(fork.sessionId).map((event) => event.type),
+      ['user_message', 'assistant_message_finalized']
+    )
+    assert.equal(readSessionEvents(source.sessionId).length, 3)
   })
 })
 

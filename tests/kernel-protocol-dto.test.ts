@@ -167,7 +167,9 @@ const methodParams = {
   'agentRuns.wait': { runId: 'run_1', timeoutMs: 1_000 },
   'agentRuns.steer': { runId: 'run_1', message: 'Check the second file too.' },
   'agentRuns.stop': { runId: 'run_1' },
-  'session.fork': {},
+  'session.fork': {
+    cut: { userMessages: ['first question', 'second question'], selectedIndex: 0 }
+  },
   'resources.reload': {
     cwd: '/tmp/phi-project',
     additionalSkillPaths: ['/tmp/phi-skills'],
@@ -652,6 +654,38 @@ describe('kernel protocol DTOs', () => {
 
   it('keys session forks from request context rather than client-supplied identity', () => {
     assert.deepEqual(sessionForkParamsSchema.parse({}), {})
+    assert.deepEqual(
+      sessionForkParamsSchema.parse({
+        cut: { userMessages: ['first question', 'second question'], selectedIndex: 0 }
+      }),
+      { cut: { userMessages: ['first question', 'second question'], selectedIndex: 0 } }
+    )
+    assert.equal(
+      sessionForkParamsSchema.safeParse({
+        cut: { userMessages: ['first question'], selectedIndex: 1 }
+      }).success,
+      false
+    )
+    assert.equal(
+      sessionForkParamsSchema.safeParse({ cut: { userMessages: [], selectedIndex: 0 } }).success,
+      false
+    )
+    assert.equal(
+      sessionForkParamsSchema.safeParse({ cut: { userMessages: ['first question'] } }).success,
+      false
+    )
+    assertProtocolError(
+      parseFrame(
+        JSON.stringify({
+          kind: 'request',
+          id: 'invalid-fork-cut',
+          method: 'session.fork',
+          params: { cut: { userMessages: ['first question'], selectedIndex: 1 } },
+          generation: 1
+        })
+      ),
+      'INVALID_PARAMS'
+    )
     assert.equal(sessionForkParamsSchema.safeParse({ sessionId: 'forged-source' }).success, false)
     assert.deepEqual(sessionForkResultSchema.parse({ sessionId: 'forked-session' }), {
       sessionId: 'forked-session'
