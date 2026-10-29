@@ -161,11 +161,9 @@ export async function leasedProfileMcpManager(
         continue
       }
       const marker = readManagedMarker(entry)
-      if (!marker) {
-        if (entry.phiManaged !== undefined)
-          reject('profile_changed', `MCP managed environment metadata for ${name} is invalid`)
-        continue
-      }
+      if (!marker && entry.phiManaged !== undefined)
+        reject('profile_changed', `MCP managed environment metadata for ${name} is invalid`)
+      if (!marker) continue
       if (marker.pending) {
         reject('env_not_ready', `MCP environment for ${name} is not ready`)
         continue
@@ -183,16 +181,10 @@ export async function leasedProfileMcpManager(
         )
         continue
       }
-      // An environment that was never built here disables only this server; failing
-      // would block every session until the user built an unrelated MCP env. Unsafe
-      // lease requests (e.g. a tampered envId) still fail session creation.
-      try {
-        leases.set(
-          name,
-          await acquireEnvironmentLease({ root: getRuntimeRoot(agentDir), envId: marker.envId })
-        )
-      } catch (error) {
-        if (!(error instanceof EnvironmentNotReadyError)) throw error
+      const lease = await acquireLeaseIfBuilt(agentDir, marker.envId)
+      if (lease) {
+        leases.set(name, lease)
+      } else {
         skipped.push({ name, reason: 'env_not_ready' })
         delete snapshot.configs[name]
       }
@@ -213,6 +205,23 @@ export async function leasedProfileMcpManager(
     }
   } catch (error) {
     for (const lease of leases.values()) lease.release()
+    throw error
+  }
+}
+
+/**
+ * An environment that was never built here disables only its server; failing would block
+ * every session until the user built an unrelated MCP env. Unsafe lease requests (e.g. a
+ * tampered envId) still throw and fail session creation.
+ */
+async function acquireLeaseIfBuilt(
+  agentDir: string,
+  envId: string
+): Promise<EnvironmentLease | undefined> {
+  try {
+    return await acquireEnvironmentLease({ root: getRuntimeRoot(agentDir), envId })
+  } catch (error) {
+    if (error instanceof EnvironmentNotReadyError) return undefined
     throw error
   }
 }

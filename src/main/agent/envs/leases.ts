@@ -183,7 +183,9 @@ export function hasLiveEnvironmentLeases(
 function validateReadyEnvironment(root: string, envId: string): void {
   const prefix = directory(root, ['envs', envId], false)
   if (!prefix)
-    throw new EnvironmentNotReadyError(`environment ${envId} is not ready: managed prefix is missing`)
+    throw new EnvironmentNotReadyError(
+      `environment ${envId} is not ready: managed prefix is missing`
+    )
   const metadataDirectory = directory(prefix, ['.phi'], false)
   if (!metadataDirectory)
     throw new EnvironmentNotReadyError(`environment ${envId} is not ready: metadata is missing`)

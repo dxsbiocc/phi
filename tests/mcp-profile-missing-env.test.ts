@@ -16,9 +16,8 @@ if ('Bun' in globalThis) {
     // MCP discovery reads the user profile from the SDK agent dir.
     process.env.PI_CODING_AGENT_DIR = agentDir
     const { AuthStorage, Settings } = await import('@oh-my-pi/pi-coding-agent')
-    const { leasedProfileMcpManager } = await import(
-      '../src/main/agent/engine/in-process/mcp-profile'
-    )
+    const { leasedProfileMcpManager } =
+      await import('../src/main/agent/engine/in-process/mcp-profile')
     const cwd = mkdtempSync(join(tmpdir(), 'phi-mcp-missing-env-project-'))
     try {
       // No <agentDir>/runtime at all: the environment the marker names cannot exist.
@@ -44,12 +43,7 @@ if ('Bun' in globalThis) {
         })
       )
       const authStorage = await AuthStorage.create(join(agentDir, 'agent.db'))
-      const leased = await leasedProfileMcpManager(
-        agentDir,
-        cwd,
-        Settings.isolated(),
-        authStorage
-      )
+      const leased = await leasedProfileMcpManager(agentDir, cwd, Settings.isolated(), authStorage)
       assert.deepEqual(leased.skipped, [{ name: 'biomcp', reason: 'env_not_ready' }])
       assert.equal(leased.leases.size, 0)
       assert.equal(leased.snapshot.configs.biomcp, undefined)
