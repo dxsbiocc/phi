@@ -253,14 +253,15 @@ test('session.fork rejects a busy source without creating a target', async () =>
       { text: 'hold this run open' },
       context,
       request('session.prompt', source.sessionId)
-    )) as { completion: Promise<unknown> }
+    )) as unknown as { completion: Promise<unknown> }
 
     await assert.rejects(
-      handler(fixture.adapter.handlers, 'session.fork')(
-        {},
-        context,
-        request('session.fork', source.sessionId)
-      ),
+      async () =>
+        handler(fixture.adapter.handlers, 'session.fork')(
+          {},
+          context,
+          request('session.fork', source.sessionId)
+        ),
       (error: unknown) =>
         typeof error === 'object' &&
         error !== null &&

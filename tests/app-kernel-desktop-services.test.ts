@@ -170,6 +170,7 @@ test(
       cwd: desktop.resourceCwd,
       model: fixture.model,
       sessionManager: { kind: 'persistent', cwd: desktop.resourceCwd },
+      enableToolApproval: false,
       desktopMcp: { bindingId },
       remoteProject: {
         phiSessionId,
@@ -177,8 +178,10 @@ test(
         location: {
           kind: 'ssh',
           hostProfileId: 'local-kernel-fixture',
+          remoteRoot: desktop.resourceCwd,
           canonicalRoot: desktop.resourceCwd
-        }
+        },
+        contextFiles: []
       }
     }
     let kernelSessionId: string | undefined

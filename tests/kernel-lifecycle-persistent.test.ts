@@ -516,7 +516,7 @@ test(
       assert.ok(captured)
       assert.equal(captured.modelId, `${fixture.base.model.provider}/${fixture.base.model.id}`)
       assert.equal(
-        record(captured.options).credentialId,
+        record(captured.options as JsonValue).credentialId,
         undefined,
         'the wire projection must keep the remote-local credential row off the desktop request'
       )

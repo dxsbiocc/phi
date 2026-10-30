@@ -1594,7 +1594,8 @@ async function harness(
     }
   } as unknown as OmpBridge
   const phiEngine = createInProcessEngine(fakeOmpBridge)
-  if (options.historyFork) phiEngine.history.fork = options.historyFork
+  if (options.historyFork)
+    phiEngine.history.fork = options.historyFork as typeof phiEngine.history.fork
   if (options.childResourceOwner) phiEngine.agentRuns.resourceOwner = options.childResourceOwner
   let backgroundJobHistory: string | null = null
   const modules: Record<string, unknown> = {
