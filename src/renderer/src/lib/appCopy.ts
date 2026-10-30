@@ -17,6 +17,8 @@ const english = {
   saveSettingsFailed: 'Could not save general settings',
   switchModelFailed: 'Could not change model',
   switchThinkingFailed: 'Could not change thinking level',
+  remoteSelectionRequiresIdleSession:
+    'Wait for this remote chat to finish before changing its model or thinking level.',
   updateProjectModelFailed: 'Could not update the project default model',
   updateRemoteConnectionFailed: 'Could not update the remote connection',
   updateRemoteDefaultsFailed: 'Could not update the remote execution defaults',
@@ -108,6 +110,7 @@ const chinese: LocalizedCopy<typeof english> = {
   saveSettingsFailed: '保存通用设置失败',
   switchModelFailed: '切换模型失败',
   switchThinkingFailed: '切换思考等级失败',
+  remoteSelectionRequiresIdleSession: '请等待此远程会话运行结束后再修改模型或思考等级。',
   updateProjectModelFailed: '更新项目默认模型失败',
   updateRemoteConnectionFailed: '更新远程连接失败',
   updateRemoteDefaultsFailed: '更新远程执行默认设置失败',

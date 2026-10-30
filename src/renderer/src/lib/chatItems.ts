@@ -28,6 +28,10 @@ import {
 import { storedPromptImages } from '../features/chat/lib/storedPromptImages'
 import { visibleRuntimeUserText } from '../features/chat/lib/runtimePromptText'
 import { applyApprovalTimelineEvent } from '../features/chat/lib/approvalTimeline'
+import {
+  applyRemoteKernelDeploymentProgress,
+  clearRemoteKernelDeploymentProgress
+} from '../features/chat/lib/remoteKernelDeploymentProgress'
 
 const WRAPPER_TOOL_PREFIX = 'wrapper_'
 const NOTEBOOK_TOOL_PREFIX = 'notebook_'
@@ -492,6 +496,10 @@ type RestoredSessionMessage = {
   toProviderId?: string
   toModelId?: string
   toModelName?: string
+  phase?: string
+  file?: string
+  bytesTransferred?: number
+  totalBytes?: number
 }
 
 type RestoreState = {
@@ -606,6 +614,9 @@ function applyPrimaryPhiTimelineEvent(items: ChatItem[], message: RestoredSessio
 function appendPhiRunLifecycle(items: ChatItem[], message: RestoredSessionMessage): void {
   const lifecycleItem = runLifecycleItemFromPhiTimelineEvent(message)
   if (!lifecycleItem) return
+  if (lifecycleItem.event !== 'started') {
+    clearRemoteKernelDeploymentProgress(items, lifecycleItem.runId)
+  }
   finalizeRestoredRunningToolsForRun(items, message)
   items.push(lifecycleItem)
 }
@@ -778,6 +789,7 @@ function appendGenericPhiTimelineItem(items: ChatItem[], message: RestoredSessio
 }
 
 function appendPhiTimelineMessage(state: RestoreState, message: RestoredSessionMessage): void {
+  if (applyRemoteKernelDeploymentProgress(state.items, message)) return
   if (applyPrimaryPhiTimelineEvent(state.items, message)) return
   appendPhiRunLifecycle(state.items, message)
   if (applyPhiAgentExecutionEvent(state.items, message)) return

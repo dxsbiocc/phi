@@ -866,12 +866,21 @@ declare global {
           thinkingLevels: Array<'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'>
         }>
       >
-      selectModel: (providerId: string | null, modelId: string | null) => Promise<void>
-      getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>
-      selectThinkingLevel: (
-        level: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+      selectModel: (
+        providerId: string | null,
+        modelId: string | null,
+        scope?: 'session' | 'new-session'
       ) => Promise<void>
-      getThinkingLevel: () => Promise<'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'>
+      getSelectedModel: (
+        scope?: 'session' | 'new-session'
+      ) => Promise<{ providerId: string; modelId: string } | null>
+      selectThinkingLevel: (
+        level: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max',
+        scope?: 'session' | 'new-session'
+      ) => Promise<void>
+      getThinkingLevel: (
+        scope?: 'session' | 'new-session'
+      ) => Promise<'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'>
       getAppName: () => Promise<string>
       isOnboarded: () => Promise<boolean>
       getPersonaMarkdown: () => Promise<string>

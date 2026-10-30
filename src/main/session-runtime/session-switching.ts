@@ -159,7 +159,7 @@ function createSessionCreationOperations<TSessionResult, TPromptRun extends Swit
         remoteRuntime: 'rpc',
         permissionMode: project.permissionMode,
         model,
-        ...(project.defaultThinkingLevel ? { thinkingLevel: project.defaultThinkingLevel } : {})
+        thinkingLevel: project.defaultThinkingLevel ?? deps.creation.getSelectedThinkingLevel()
       })
       const path = phiOnlySessionPath(session.sessionId)
       const key = deps.state.sessionKeys.createPhiKey(session.sessionId, cwd)

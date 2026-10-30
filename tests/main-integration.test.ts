@@ -1600,6 +1600,18 @@ async function harness(
   let backgroundJobHistory: string | null = null
   const modules: Record<string, unknown> = {
     '../shared/ipcChannels': { IPC },
+    '../shared/modelSelectionScope': {
+      REMOTE_SELECTION_BUSY_CODE: '[PHI_MODEL_SELECTION:SESSION_BUSY]',
+      isNewSessionModelSelection: (scope: unknown) => scope === 'new-session'
+    },
+    '../../shared/modelSelectionScope': {
+      REMOTE_SELECTION_BUSY_CODE: '[PHI_MODEL_SELECTION:SESSION_BUSY]',
+      isNewSessionModelSelection: (scope: unknown) => scope === 'new-session'
+    },
+    '../../../shared/modelSelectionScope': {
+      REMOTE_SELECTION_BUSY_CODE: '[PHI_MODEL_SELECTION:SESSION_BUSY]',
+      isNewSessionModelSelection: (scope: unknown) => scope === 'new-session'
+    },
     './agent/session/pending-remote-auto-plan': {
       readPendingRemoteAutoPlan: () => ({ state: 'none' }),
       writePendingRemoteAutoPlan: () => undefined,
@@ -7699,6 +7711,30 @@ test('RPC conversation switching does not start a second SSH project probe for a
   })
   await app.invoke('sessions:switch', current.path)
   assert.equal(app.remoteConnectionChecks.length, 1)
+})
+
+test('returning to an active RPC conversation does not start another SSH project probe', async () => {
+  const creationGate = deferred<void>()
+  let enteredCreation = false
+  const app = await harness(undefined, {
+    onCreateSession: async () => {
+      enteredCreation = true
+      await creationGate.promise
+    }
+  })
+  const remote = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    path: string
+  }
+  const running = app.invoke('agent:prompt', 'keep the remote run active while navigating')
+  await waitUntil(() => enteredCreation)
+  await app.invoke('sessions:create')
+  const checksBeforeReturn = app.remoteConnectionChecks.length
+
+  await app.invoke('sessions:switch', remote.path)
+
+  assert.equal(app.remoteConnectionChecks.length, checksBeforeReturn)
+  creationGate.resolve()
+  await running
 })
 
 test('an older SSH session without a saved remote location cannot start local anchor tools', async () => {
@@ -15052,12 +15088,47 @@ test('RPC selection rejects a running Phi session before maps or manifest writes
   const before = JSON.stringify(app.updatedSessionManifests)
   const selected = await app.invoke('models:selected')
   const thinking = await app.invoke('thinking:selected')
-  await assert.rejects(app.invoke('models:select', 'openai', 'gpt-vision-test'), /idle Phi session/)
-  await assert.rejects(app.invoke('thinking:select', 'medium'), /idle Phi session/)
+  await assert.rejects(
+    app.invoke('models:select', 'openai', 'gpt-vision-test'),
+    /PHI_MODEL_SELECTION:SESSION_BUSY/
+  )
+  await assert.rejects(app.invoke('thinking:select', 'medium'), /PHI_MODEL_SELECTION:SESSION_BUSY/)
   assert.equal(JSON.stringify(app.updatedSessionManifests), before)
   assert.deepEqual(await app.invoke('models:selected'), selected)
   assert.equal(await app.invoke('thinking:selected'), thinking)
   await app.invoke('agent:stop')
+  await running
+})
+
+test('new-session model and thinking selection stays independent of a running RPC session', async () => {
+  const session = new FakeSession('rpc-draft-controls.jsonl')
+  session.hold = true
+  const app = await harness(async () => session, {})
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  const running = app.invoke('agent:prompt', 'hold the existing remote run')
+  await waitUntil(() => session.started)
+  const runningModel = session.model?.id
+  const runningThinking = session.thinkingLevel
+
+  await app.invoke('models:select', 'openai', 'gpt-vision-test', 'new-session')
+  await app.invoke('thinking:select', 'medium', 'new-session')
+
+  assert.equal(session.model?.id, runningModel)
+  assert.equal(session.thinkingLevel, runningThinking)
+  assert.deepEqual(await app.invoke('models:selected', 'new-session'), {
+    providerId: 'openai',
+    modelId: 'gpt-vision-test'
+  })
+  assert.equal(await app.invoke('thinking:selected', 'new-session'), 'medium')
+
+  await app.invoke('projects:newRemoteSession', 'remote-project-1')
+  assert.deepEqual(app.createdPhiSessions.at(-1)?.model, {
+    providerId: 'openai',
+    modelId: 'gpt-vision-test'
+  })
+  assert.equal(app.createdPhiSessions.at(-1)?.thinkingLevel, 'medium')
+
+  session.finish.resolve()
   await running
 })
 
@@ -17210,6 +17281,36 @@ test('T15 main jobs: restart metadata is readonly, live IDs win, and listing fai
   await assert.rejects(app.invoke('jobs:listAgents'), /live listing unavailable/)
   assert.equal(reads, before)
   assert.equal(app.createdAgentOptions.length, 0)
+})
+
+test('T15 main jobs: unavailable legacy child metadata warns once without changing the listing', async () => {
+  const app = await harness(undefined, {})
+  const current = (await app.invoke('projects:newRemoteSession', 'remote-project-1')) as {
+    phiSessionId: string
+  }
+  app.updatedSessionManifests.push({
+    sessionId: current.phiSessionId,
+    patch: {
+      runtimeRef: {
+        ...savedRemoteReference(current.phiSessionId),
+        ompVersion: 'legacy-omp-version'
+      }
+    }
+  })
+
+  assert.deepEqual(await app.invoke('jobs:listAgents'), [])
+  assert.deepEqual(await app.invoke('jobs:listAgents'), [])
+
+  assert.deepEqual(
+    app.appLogs.filter((entry) => entry.event === 'child_recovery_metadata_unavailable'),
+    [
+      {
+        level: 'warn',
+        event: 'child_recovery_metadata_unavailable',
+        sessionId: current.phiSessionId
+      }
+    ]
+  )
 })
 
 test('T14 main approvals: a finished parent child uses one durable event and only its original conversation attention', async () => {

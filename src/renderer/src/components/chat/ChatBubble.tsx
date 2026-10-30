@@ -154,7 +154,11 @@ export const ChatBubble = memo(function ChatBubble({
   }
 
   if (message.role === 'warning') {
-    if (message.noticeKind === 'work_mode_selected' || message.noticeKind === 'plan_run_finished') {
+    if (
+      message.noticeKind === 'work_mode_selected' ||
+      message.noticeKind === 'plan_run_finished' ||
+      message.noticeKind === 'remote_kernel_deployment'
+    ) {
       return (
         <Box
           sx={{

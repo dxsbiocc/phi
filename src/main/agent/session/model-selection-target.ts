@@ -1,4 +1,5 @@
 import type { CreateAgentSessionResult } from '../runtime/runtime-adapter'
+import { REMOTE_SELECTION_BUSY_CODE } from '../../../shared/modelSelectionScope'
 import type { PhiSessionManifest } from './session-store'
 import { SessionLifecycle, StaleSessionError } from './session-lifecycle'
 
@@ -60,7 +61,7 @@ export function captureCurrentSelectionTarget(
       (dependencies.hasActivePromptRun(key) ||
         (phiSessionId && dependencies.getActiveSessionRun(phiSessionId)))
     )
-      throw new Error('Remote selection requires an idle Phi session')
+      throw new Error(REMOTE_SELECTION_BUSY_CODE)
   }
   assertCurrent()
   return {

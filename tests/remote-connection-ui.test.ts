@@ -70,6 +70,8 @@ test('remote connection notice gives recovery guidance without hiding saved work
 
 test('remote connection notice localizes remote runtime download progress', () => {
   setUiLanguage('en')
+  assert.match(markup('connecting', '正在连接服务器'), /Connecting to server/)
+  assert.doesNotMatch(markup('connecting', '正在连接服务器'), /正在连接服务器/)
   assert.match(
     markup('connecting', 'ignored', '', false, {
       kind: 'remote-omp-download',

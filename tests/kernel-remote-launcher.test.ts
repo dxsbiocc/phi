@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -20,8 +20,10 @@ import {
   type KernelBuildManifest,
   type LaunchRemoteKernelOptions,
   type RemoteKernelDeploymentHost,
+  type RemoteKernelDeploymentProgress,
   type RemoteKernelVariant
 } from '../src/main/agent/engine/kernel-client/remote'
+import type { TransferEvent } from '../src/main/agent/transfer'
 import { GLIBC_MINIMUM_CHECK } from '../src/main/agent/engine/kernel-client/remote/commands'
 import { shellQuote, type RemoteStdioProcess } from '../src/main/agent/wrappers/remote-ssh-session'
 
@@ -156,6 +158,7 @@ type Upload = {
   expectedSha256?: string
   maxAttempts?: number
   retryBackoffMs?: number
+  transferId?: string
 }
 
 class FakeDeploymentHost implements RemoteKernelDeploymentHost {
@@ -218,7 +221,13 @@ class FakeDeploymentHost implements RemoteKernelDeploymentHost {
     uploadFile: async (
       localPath: string,
       remotePath: string,
-      options?: { expectedSha256?: string; maxAttempts?: number; retryBackoffMs?: number }
+      options?: {
+        expectedSha256?: string
+        maxAttempts?: number
+        retryBackoffMs?: number
+        transferId?: string
+        onEvent?: (event: TransferEvent) => void
+      }
     ): Promise<void> => {
       if (this.uploadHashMismatch || this.uploadFailureCode) {
         throw Object.assign(new Error('Transfer rejected uploaded bytes.'), {
@@ -230,8 +239,22 @@ class FakeDeploymentHost implements RemoteKernelDeploymentHost {
         remotePath,
         expectedSha256: options?.expectedSha256,
         maxAttempts: options?.maxAttempts,
-        retryBackoffMs: options?.retryBackoffMs
+        retryBackoffMs: options?.retryBackoffMs,
+        transferId: options?.transferId
       })
+      const size = (await stat(localPath)).size
+      for (const bytesTransferred of [Math.floor(size / 2), size]) {
+        options?.onEvent?.({
+          transferId: options.transferId ?? 'kernel-test-transfer',
+          direction: 'upload',
+          state: bytesTransferred === size ? 'saved' : 'transferring',
+          bytesTransferred,
+          totalBytes: size,
+          resumedFrom: 0,
+          instantaneousBytesPerSecond: 1,
+          smoothedBytesPerSecond: 1
+        })
+      }
     }
   }
 
@@ -296,6 +319,28 @@ test('deploys only the selected modern native, validates hashes, and publishes t
   const activate = host.commands[1]
   assert.ok(activate.indexOf('actual_kernel=') < activate.indexOf('mv -f --'))
   assert.ok(activate.lastIndexOf('mv -f --') < activate.lastIndexOf('.phi-ready.json'))
+})
+
+test('kernel deployment reports aggregate acknowledged bytes across both uploaded files', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  const progress: RemoteKernelDeploymentProgress[] = []
+
+  await ensureRemoteKernelDeployment({
+    runtimeHost: host,
+    runtimeRoot: '/srv/phi-runtime',
+    buildDirectory: fixture.directory,
+    uploadOptions: { hostKey: 'progress-host' },
+    onProgress: (event) => progress.push(event)
+  })
+
+  const totalBytes = fixture.manifest.files[0].size + fixture.manifest.files[1].size
+  const uploading = progress.filter((event) => event.phase === 'uploading')
+  assert.ok(uploading.length >= 4)
+  assert.ok(uploading.some((event) => event.bytesTransferred === fixture.manifest.files[0].size))
+  assert.ok(uploading.some((event) => event.bytesTransferred === totalBytes))
+  assert.ok(uploading.every((event) => event.totalBytes === totalBytes))
 })
 
 test('prepared deployment is reused in one command without local rehash or upload', async (t) => {
@@ -433,20 +478,24 @@ test('exhausted upload stalls stay machine-readable and never publish a ready ma
   t.after(fixture.cleanup)
   const host = new FakeDeploymentHost()
   host.uploadFailureCode = 'TRANSFER_STALLED'
+  const progress: RemoteKernelDeploymentProgress[] = []
   await assert.rejects(
     ensureRemoteKernelDeployment({
       runtimeHost: host,
       runtimeRoot: '/srv/phi-runtime',
-      buildDirectory: fixture.directory
+      buildDirectory: fixture.directory,
+      onProgress: (event) => progress.push(event)
     }),
     (error: unknown) => {
       assert.ok(error instanceof RemoteKernelError)
       assert.equal(error.code, 'TRANSFER_STALLED')
+      assert.equal(error.errorCode, 'REMOTE_KERNEL_UPLOAD_FAILED')
       return true
     }
   )
   assert.equal(host.markerVariant, undefined)
   assert.match(host.commands.at(-1) ?? '', /^rm -f --/)
+  assert.equal(progress.at(-1)?.phase, 'failed')
 })
 
 class LoopbackKernelProcess implements RemoteStdioProcess {
@@ -530,6 +579,7 @@ test('remote launcher negotiates over SSH stdio with explicit isolated env and c
     }
   }
   const diagnostics: string[] = []
+  const progress: RemoteKernelDeploymentProgress[] = []
   const launched = await launchRemoteKernel({
     session,
     runtimeHost: host,
@@ -538,7 +588,8 @@ test('remote launcher negotiates over SSH stdio with explicit isolated env and c
     home: '/srv/phi test/home',
     agentDir: '/srv/phi test/agent',
     environment: { NO_PROXY: '127.0.0.1,localhost' },
-    onDiagnostic: (text) => diagnostics.push(text)
+    onDiagnostic: (text) => diagnostics.push(text),
+    onProgress: (event) => progress.push(event)
   })
 
   assert.equal(launched.client.controllerGeneration, 1)
@@ -548,6 +599,10 @@ test('remote launcher negotiates over SSH stdio with explicit isolated env and c
   assert.equal(launched.homePath, '/srv/phi test/home')
   assert.equal(launched.agentDir, '/srv/phi test/agent')
   assert.equal(commands.length, 1)
+  assert.deepEqual(
+    progress.map((event) => event.phase),
+    ['checking', 'ready']
+  )
   assert.match(commands[0], /^umask 077 && cd -- '\/srv\/phi test\/home' && exec env -i /)
   assert.ok(commands[0].includes("'/srv/phi-helper/0.4.0/phi-helper' attach"))
   assert.ok(

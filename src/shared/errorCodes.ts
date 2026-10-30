@@ -26,6 +26,8 @@ export const ERROR_CODES = {
   /** Remote OMP acquisition failed; users may retry manually or preseed the pinned runtime. */
   REMOTE_OMP_DOWNLOAD_FAILED: { retryable: false },
   REMOTE_OMP_HASH_MISMATCH: { retryable: false },
+  /** Kernel artifact upload stopped before deployment; retained checkpoints make a manual retry safe. */
+  REMOTE_KERNEL_UPLOAD_FAILED: { retryable: true },
   /** Not migrated to structured codes yet. */
   UNKNOWN: { retryable: false }
 } as const satisfies Record<string, { retryable: boolean }>

@@ -1,5 +1,7 @@
 import type { RemoteUploadFileOptions } from '../../../transfer/remote-upload-types'
 import type { RemoteHelperInstallation } from '../../../remote-helper-marker'
+import type { ErrorCode } from '../../../../../shared/errorCodes'
+import type { TransferEvent } from '../../../transfer/types'
 import type {
   CommandResult,
   HostCapabilityProfile,
@@ -44,6 +46,7 @@ export type RemoteKernelErrorCode =
   | 'INVALID_MANIFEST'
   | 'UNSUPPORTED_PLATFORM'
   | 'HASH_MISMATCH'
+  | 'TRANSFER_FAILED'
   | 'TRANSFER_STALLED'
   | 'PERMISSION_DENIED'
   | 'INSUFFICIENT_SPACE'
@@ -53,13 +56,16 @@ export type RemoteKernelErrorCode =
   | 'LAUNCH_FAILED'
 
 export class RemoteKernelError extends Error {
+  readonly errorCode?: ErrorCode
+
   constructor(
     readonly code: RemoteKernelErrorCode,
     message: string,
-    options?: ErrorOptions
+    options?: ErrorOptions & { errorCode?: ErrorCode }
   ) {
     super(message, options)
     this.name = 'RemoteKernelError'
+    this.errorCode = options?.errorCode
   }
 }
 
@@ -81,9 +87,13 @@ export interface KernelBuildManifest {
 }
 
 export interface RemoteKernelDeploymentProgress {
-  readonly phase: 'checking' | 'uploading' | 'verifying' | 'ready'
+  readonly phase: 'checking' | 'uploading' | 'verifying' | 'ready' | 'failed'
   readonly file?: 'kernel' | 'native'
   readonly variant?: RemoteKernelVariant
+  /** Aggregate acknowledged bytes across the selected kernel and native artifacts. */
+  readonly bytesTransferred?: number
+  readonly totalBytes?: number
+  readonly transfer?: TransferEvent
 }
 
 export interface RemoteKernelDeploymentOptions {

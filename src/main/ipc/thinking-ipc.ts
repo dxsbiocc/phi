@@ -1,6 +1,10 @@
 import type { IpcMain } from 'electron'
 
 import { IPC } from '../../shared/ipcChannels'
+import {
+  isNewSessionModelSelection,
+  type ModelSelectionScope
+} from '../../shared/modelSelectionScope'
 import { getAuthManager } from '../agent/auth-manager'
 import { ownsRemoteRuntimeSession } from '../agent/engine/in-process-engine'
 import { selectionThinking } from '../agent/engine/rpc/runtime-selection-control'
@@ -21,6 +25,8 @@ export interface ThinkingIpcOptions {
   sessionState: {
     getCurrentSessionPath: () => string | undefined
     getCurrentPermissionMode: () => PermissionMode
+    getDefaultThinkingLevel: () => ThinkingLevel
+    setDefaultThinkingLevel: (level: ThinkingLevel) => void
     sessionThinkingLevels: SessionPreferenceTable<ThinkingLevel>
     getCurrentResolvedSession: () => Promise<{
       session: {
@@ -47,48 +53,56 @@ export function registerThinkingIpc(options: ThinkingIpcOptions): void {
   const selectionTarget = options.selectionTarget
   const sessionState = options.sessionState
 
-  ipcMain.handle(IPC.thinking.select, async (_, level: ThinkingLevel) => {
-    const target = captureCurrentSelectionTarget(selectionTarget)
-    if (target.rpc) {
-      const current = await target.resolved()
-      target.assertCurrent()
-      if (current) {
-        if (!ownsRemoteRuntimeSession(current.session.runtimeSessionId))
-          throw new Error('Remote selection requires an exact live attachment')
-        await current.session.setThinkingLevel(level, target)
-        target.assertCurrent()
-      } else {
-        if (target.phiSessionId && findPhiSessionById(target.phiSessionId)?.runtimeRef)
-          throw new Error('Remote selection requires an exact live attachment')
-        const runtime = await getAuthManager().getRuntime()
-        target.assertCurrent()
-        const manifest = target.phiSessionId ? findPhiSessionById(target.phiSessionId) : null
-        const selected =
-          manifest?.model &&
-          options.models.resolveRuntimeModelSelection(runtime, manifest.model)?.model
-        if (!selected) throw new Error('Remote thinking selection requires a trusted model')
-        const normalized = selectionThinking(selected, level, true).phi
-        if (target.phiSessionId)
-          updateSessionManifest(target.phiSessionId, { thinkingLevel: normalized })
+  ipcMain.handle(
+    IPC.thinking.select,
+    async (_, level: ThinkingLevel, scope: ModelSelectionScope = 'session') => {
+      if (isNewSessionModelSelection(scope)) {
+        sessionState.setDefaultThinkingLevel(level)
+        return
       }
-      const key = selectionTarget.resolveSessionKeyAlias(target.key)
-      const confirmed = target.phiSessionId
-        ? findPhiSessionById(target.phiSessionId)?.thinkingLevel
-        : level
-      if (confirmed === undefined) sessionState.sessionThinkingLevels.delete(key)
-      else sessionState.sessionThinkingLevels.set(key, confirmed)
-      return
+      const target = captureCurrentSelectionTarget(selectionTarget)
+      if (target.rpc) {
+        const current = await target.resolved()
+        target.assertCurrent()
+        if (current) {
+          if (!ownsRemoteRuntimeSession(current.session.runtimeSessionId))
+            throw new Error('Remote selection requires an exact live attachment')
+          await current.session.setThinkingLevel(level, target)
+          target.assertCurrent()
+        } else {
+          if (target.phiSessionId && findPhiSessionById(target.phiSessionId)?.runtimeRef)
+            throw new Error('Remote selection requires an exact live attachment')
+          const runtime = await getAuthManager().getRuntime()
+          target.assertCurrent()
+          const manifest = target.phiSessionId ? findPhiSessionById(target.phiSessionId) : null
+          const selected =
+            manifest?.model &&
+            options.models.resolveRuntimeModelSelection(runtime, manifest.model)?.model
+          if (!selected) throw new Error('Remote thinking selection requires a trusted model')
+          const normalized = selectionThinking(selected, level, true).phi
+          if (target.phiSessionId)
+            updateSessionManifest(target.phiSessionId, { thinkingLevel: normalized })
+        }
+        const key = selectionTarget.resolveSessionKeyAlias(target.key)
+        const confirmed = target.phiSessionId
+          ? findPhiSessionById(target.phiSessionId)?.thinkingLevel
+          : level
+        if (confirmed === undefined) sessionState.sessionThinkingLevels.delete(key)
+        else sessionState.sessionThinkingLevels.set(key, confirmed)
+        return
+      }
+      sessionState.sessionThinkingLevels.set(
+        selectionTarget.resolveSessionKeyAlias(target.key),
+        level
+      )
+      if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { thinkingLevel: level })
+      if (selectionTarget.hasActivePromptRun(target.key)) return
+      const current = await target.resolved()
+      if (current) await current.session.setThinkingLevel(level)
     }
-    sessionState.sessionThinkingLevels.set(
-      selectionTarget.resolveSessionKeyAlias(target.key),
-      level
-    )
-    if (target.phiSessionId) updateSessionManifest(target.phiSessionId, { thinkingLevel: level })
-    if (selectionTarget.hasActivePromptRun(target.key)) return
-    const current = await target.resolved()
-    if (current) await current.session.setThinkingLevel(level)
-  })
-  ipcMain.handle(IPC.thinking.selected, async () => {
+  )
+  ipcMain.handle(IPC.thinking.selected, async (_, scope: ModelSelectionScope = 'session') => {
+    if (isNewSessionModelSelection(scope)) return sessionState.getDefaultThinkingLevel()
     const resolved = sessionState.sessionThinkingLevels.get(
       selectionTarget.resolveSessionKeyAlias(selectionTarget.getCurrentSessionKey())
     )

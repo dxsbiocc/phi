@@ -157,6 +157,9 @@ export function chatItemFromPhiTimelineEvent(event: {
       get content() {
         return (
           remoteOmpFailureMessage(event.errorCode, event.errorDetail) ??
+          (event.errorCode === 'REMOTE_KERNEL_UPLOAD_FAILED'
+            ? chatEventCopy.remoteKernelUploadFailed
+            : undefined) ??
           kernelErrorPresentationFromCode(event.errorCode)?.message ??
           (error || chatEventCopy.runFailed)
         )

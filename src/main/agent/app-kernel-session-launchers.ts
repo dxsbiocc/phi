@@ -275,6 +275,12 @@ async function launchAppRemoteKernel(input: {
       environment: { PHI_KERNEL_ADOPT_ROOTS: target.workspace.runtimeRoot },
       configureClient: input.context.configureClient,
       onDiagnostic: (text: string) => logKernelDiagnostic('remote', text),
+      onProgress: (progress) => {
+        const phiSessionId = input.params.phiSessionId ?? input.params.remoteProject?.phiSessionId
+        if (phiSessionId) {
+          input.options.runners.reportRemoteKernelDeployment(phiSessionId, progress)
+        }
+      },
       hello: {
         client: { name: 'phi-desktop', version: paths.version ?? '0.0.0' },
         hostCapabilities: [...input.context.hostCapabilities],

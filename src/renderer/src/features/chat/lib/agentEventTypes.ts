@@ -84,6 +84,10 @@ export interface AgentEventSummary {
   errorMessage?: string
   errorCode?: string
   errorDetail?: unknown
+  phase?: string
+  file?: string
+  bytesTransferred?: number
+  totalBytes?: number
   fromProviderId?: string
   fromModelId?: string
   toProviderId?: string

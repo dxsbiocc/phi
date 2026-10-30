@@ -341,11 +341,15 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
       }
       const project = manifest.projectId ? getProject(manifest.projectId) : undefined
       const projectLocation = manifest.projectLocation ?? project?.location
+      const hasActivePromptRun = status
+        .activePromptEntries()
+        .some(([, run]) => run.phiSessionId === manifest.sessionId)
       if (
         shouldBecomeCurrent &&
         projectLocation?.kind === 'ssh' &&
         manifest.projectId &&
-        !manifest.runtimeRef
+        !manifest.runtimeRef &&
+        !hasActivePromptRun
       ) {
         options.remote.scheduleRemoteProjectCheck(manifest.sessionId, manifest.projectId)
       }

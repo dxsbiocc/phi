@@ -2,6 +2,7 @@ import type {
   ModelAvailabilityChange,
   ModelAvailabilitySnapshot
 } from '../shared/modelAvailabilityTypes'
+import type { ModelSelectionScope } from '../shared/modelSelectionScope'
 import { IPC } from '../shared/ipcChannels'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { BrowserRendererBridge, BrowserRendererEventEnvelope } from '../shared/browserTypes'
@@ -875,10 +876,14 @@ type RendererAuthApi = PreloadApiBase & {
   removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
   cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
   listModels: () => Promise<ModelOption[]>
-  selectModel: (providerId: string | null, modelId: string | null) => Promise<void>
-  getSelectedModel: () => Promise<SelectedModel>
-  selectThinkingLevel: (level: ThinkingLevel) => Promise<void>
-  getThinkingLevel: () => Promise<ThinkingLevel>
+  selectModel: (
+    providerId: string | null,
+    modelId: string | null,
+    scope?: ModelSelectionScope
+  ) => Promise<void>
+  getSelectedModel: (scope?: ModelSelectionScope) => Promise<SelectedModel>
+  selectThinkingLevel: (level: ThinkingLevel, scope?: ModelSelectionScope) => Promise<void>
+  getThinkingLevel: (scope?: ModelSelectionScope) => Promise<ThinkingLevel>
   getAppName: () => Promise<string>
   isOnboarded: () => Promise<boolean>
   getPersonaMarkdown: () => Promise<string>
@@ -1494,12 +1499,17 @@ const api: RendererAuthApi = {
   cleanManagedEnvironments: (): Promise<ManagedEnvironmentCleanResult> =>
     ipcRenderer.invoke(IPC.managedEnvironments.clean),
   listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke(IPC.models.list),
-  selectModel: (providerId: string | null, modelId: string | null): Promise<void> =>
-    ipcRenderer.invoke(IPC.models.select, providerId, modelId),
-  getSelectedModel: (): Promise<SelectedModel> => ipcRenderer.invoke(IPC.models.selected),
-  selectThinkingLevel: (level: ThinkingLevel): Promise<void> =>
-    ipcRenderer.invoke(IPC.thinking.select, level),
-  getThinkingLevel: (): Promise<ThinkingLevel> => ipcRenderer.invoke(IPC.thinking.selected),
+  selectModel: (
+    providerId: string | null,
+    modelId: string | null,
+    scope?: ModelSelectionScope
+  ): Promise<void> => ipcRenderer.invoke(IPC.models.select, providerId, modelId, scope),
+  getSelectedModel: (scope?: ModelSelectionScope): Promise<SelectedModel> =>
+    ipcRenderer.invoke(IPC.models.selected, scope),
+  selectThinkingLevel: (level: ThinkingLevel, scope?: ModelSelectionScope): Promise<void> =>
+    ipcRenderer.invoke(IPC.thinking.select, level, scope),
+  getThinkingLevel: (scope?: ModelSelectionScope): Promise<ThinkingLevel> =>
+    ipcRenderer.invoke(IPC.thinking.selected, scope),
   getAppName: (): Promise<string> => ipcRenderer.invoke(IPC.persona.getAppName),
   isOnboarded: (): Promise<boolean> => ipcRenderer.invoke(IPC.persona.isOnboarded),
   getPersonaMarkdown: (): Promise<string> => ipcRenderer.invoke(IPC.persona.getMarkdown),

@@ -1,6 +1,10 @@
 import type { IpcMain } from 'electron'
 
 import { IPC } from '../../shared/ipcChannels'
+import {
+  isNewSessionModelSelection,
+  type ModelSelectionScope
+} from '../../shared/modelSelectionScope'
 import { getAuthManager } from '../agent/auth-manager'
 import { ownsRemoteRuntimeSession } from '../agent/engine/in-process-engine'
 import { selectionThinking } from '../agent/engine/rpc/runtime-selection-control'
@@ -22,6 +26,7 @@ export interface ModelsIpcOptions {
   sessionState: {
     getCurrentSessionPath: () => string | undefined
     getCurrentPermissionMode: () => PermissionMode
+    getSelectedModel: () => ModelSelection | null | undefined
     sessionModelSelections: SessionPreferenceTable<ModelSelection | null>
     sessionThinkingLevels: SessionPreferenceTable<ThinkingLevel>
   }
@@ -67,18 +72,30 @@ export function registerModelsIpc(options: ModelsIpcOptions): void {
   })
   ipcMain.handle(
     IPC.models.select,
-    async (_, providerId: string | null, modelId: string | null) => {
-      const target = captureCurrentSelectionTarget(selectionTarget)
+    async (
+      _,
+      providerId: string | null,
+      modelId: string | null,
+      scope: ModelSelectionScope = 'session'
+    ) => {
+      const newSession = isNewSessionModelSelection(scope)
+      const target = newSession ? null : captureCurrentSelectionTarget(selectionTarget)
       const request = requests.nextModelSelectionRequest()
-      const key = target.phiSessionId ?? selectionTarget.resolveSessionKeyAlias(target.key)
+      const key = target
+        ? (target.phiSessionId ?? selectionTarget.resolveSessionKeyAlias(target.key))
+        : 'new-session'
       const rememberSelection = (model: ModelSelection | null): void => {
         requests.rememberModelSelection(request, model)
       }
       const selection = (sessionModelSelectionQueues.get(key) ?? Promise.resolve()).then(
         async () => {
-          target.assertCurrent()
+          target?.assertCurrent()
           if (providerId === null && modelId === null) {
-            if (target.rpc) throw new Error('远程 RPC 对话暂不支持自动模型，请选择具体模型')
+            if (target?.rpc) throw new Error('远程 RPC 对话暂不支持自动模型，请选择具体模型')
+            if (!target) {
+              rememberSelection(null)
+              return
+            }
             sessionState.sessionModelSelections.set(
               selectionTarget.resolveSessionKeyAlias(target.key),
               null
@@ -91,13 +108,17 @@ export function registerModelsIpc(options: ModelsIpcOptions): void {
             throw new Error('模型选择无效')
           }
           const runtime = await getAuthManager().getRuntime()
-          target.assertCurrent()
+          target?.assertCurrent()
           const resolved = options.models.resolveRuntimeModelSelection(runtime, {
             providerId,
             modelId
           })
           if (!resolved || resolved.migratedFrom)
             throw new Error(`未知模型: ${providerId}/${modelId}`)
+          if (!target) {
+            rememberSelection({ providerId, modelId })
+            return
+          }
           const model = resolved.model
           if (target.rpc) {
             const current = await target.resolved()
@@ -164,7 +185,8 @@ export function registerModelsIpc(options: ModelsIpcOptions): void {
       return selection
     }
   )
-  ipcMain.handle(IPC.models.selected, async () => {
+  ipcMain.handle(IPC.models.selected, async (_, scope: ModelSelectionScope = 'session') => {
+    if (isNewSessionModelSelection(scope)) return sessionState.getSelectedModel() ?? null
     const snapshot = {
       path: sessionState.getCurrentSessionPath(),
       cwd: selectionTarget.getCurrentCwd(),

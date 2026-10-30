@@ -1,17 +1,30 @@
 import { MODEL_AVAILABILITY_CHANGED } from './lib/modelAvailabilityEvents'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  REMOTE_SELECTION_BUSY_CODE,
+  type ModelSelectionScope
+} from '../../shared/modelSelectionScope'
 import type { ModelOption, ProviderAuthStatus, ThinkingLevel } from './types'
 import { appCopy } from './lib/appCopy'
 
 const defaultSessionKey = (): string => ''
+const defaultSelectionScope = (): ModelSelectionScope => 'session'
 
 type PendingSelections = {
   sessionKey: string
+  scope: ModelSelectionScope
   confirmedModel: ModelOption | null
   confirmedThinking: ThinkingLevel
   confirmedModelRequest: number
   confirmedThinkingRequest: number
   pending: number
+}
+
+export function localizeModelSelectionError(error: unknown): unknown {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  return message.includes(REMOTE_SELECTION_BUSY_CODE)
+    ? new Error(appCopy.remoteSelectionRequiresIdleSession)
+    : error
 }
 
 export function isThinkingLevel(value: unknown): value is ThinkingLevel {
@@ -60,7 +73,8 @@ export type ModelSelectionState = {
 export function useModelSelection(
   providerStatuses: ProviderAuthStatus[],
   showSnackbarError: (error: unknown, fallback: string) => void,
-  getSessionKey: () => string = defaultSessionKey
+  getSessionKey: () => string = defaultSessionKey,
+  getSelectionScope: () => ModelSelectionScope = defaultSelectionScope
 ): ModelSelectionState {
   const [models, setModels] = useState<ModelOption[]>([])
   const [isModelStateReady, setIsModelStateReady] = useState(false)
@@ -74,6 +88,7 @@ export function useModelSelection(
 
   useEffect(() => {
     const sessionKey = getSessionKey()
+    const scope = getSelectionScope()
     const catalogRequest = ++catalogRequestRef.current
     const modelRequest = modelRequestRef.current
     const thinkingRequest = thinkingRequestRef.current
@@ -83,8 +98,8 @@ export function useModelSelection(
       try {
         const [available, selected, level] = await Promise.all([
           window.api.listModels(),
-          window.api.getSelectedModel(),
-          window.api.getThinkingLevel()
+          window.api.getSelectedModel(scope),
+          window.api.getThinkingLevel(scope)
         ])
         if (disposed) return
         if (catalogRequest === catalogRequestRef.current) setModels(available)
@@ -105,7 +120,7 @@ export function useModelSelection(
     return () => {
       disposed = true
     }
-  }, [getSessionKey])
+  }, [getSelectionScope, getSessionKey])
 
   useEffect(() => {
     let active = true
@@ -137,13 +152,15 @@ export function useModelSelection(
   }, [models, providerStatuses])
 
   const beginSelection = useCallback(
-    (sessionKey: string): PendingSelections => {
+    (sessionKey: string, scope: ModelSelectionScope): PendingSelections => {
       const pending =
         pendingSelectionsRef.current?.sessionKey === sessionKey &&
+        pendingSelectionsRef.current.scope === scope &&
         pendingSelectionsRef.current.pending > 0
           ? pendingSelectionsRef.current
           : {
               sessionKey,
+              scope,
               confirmedModel: selectedModel,
               confirmedThinking: thinkingLevel,
               confirmedModelRequest: 0,
@@ -165,8 +182,8 @@ export function useModelSelection(
       const modelRequest = modelRequestRef.current
       const thinkingRequest = thinkingRequestRef.current
       const [selected, level] = await Promise.allSettled([
-        Promise.resolve().then(() => window.api.getSelectedModel()),
-        Promise.resolve().then(() => window.api.getThinkingLevel())
+        Promise.resolve().then(() => window.api.getSelectedModel(pending.scope)),
+        Promise.resolve().then(() => window.api.getThinkingLevel(pending.scope))
       ])
       if (
         pending.sessionKey !== getSessionKey() ||
@@ -195,13 +212,14 @@ export function useModelSelection(
   const onSelectModel = useCallback(
     async (model: ModelOption | null): Promise<void> => {
       const sessionKey = getSessionKey()
+      const scope = getSelectionScope()
       const request = ++modelRequestRef.current
       const isCurrent = (): boolean =>
         sessionKey === getSessionKey() && request === modelRequestRef.current
-      const pending = beginSelection(sessionKey)
+      const pending = beginSelection(sessionKey, scope)
       setSelectedModel(model)
       try {
-        await window.api.selectModel(model?.providerId ?? null, model?.modelId ?? null)
+        await window.api.selectModel(model?.providerId ?? null, model?.modelId ?? null, scope)
         if (request > pending.confirmedModelRequest) {
           pending.confirmedModel = model
           pending.confirmedModelRequest = request
@@ -209,25 +227,26 @@ export function useModelSelection(
       } catch (error) {
         if (!isCurrent()) return
         setSelectedModel(pending.confirmedModel)
-        showSnackbarError(error, appCopy.switchModelFailed)
+        showSnackbarError(localizeModelSelectionError(error), appCopy.switchModelFailed)
       } finally {
         // A refresh failure does not turn an accepted switch into a failure.
         await finishSelection(pending)
       }
     },
-    [beginSelection, finishSelection, getSessionKey, showSnackbarError]
+    [beginSelection, finishSelection, getSelectionScope, getSessionKey, showSnackbarError]
   )
 
   const onSelectThinkingLevel = useCallback(
     async (level: ThinkingLevel): Promise<void> => {
       const sessionKey = getSessionKey()
+      const scope = getSelectionScope()
       const request = ++thinkingRequestRef.current
       const isCurrent = (): boolean =>
         sessionKey === getSessionKey() && request === thinkingRequestRef.current
-      const pending = beginSelection(sessionKey)
+      const pending = beginSelection(sessionKey, scope)
       setThinkingLevel(level)
       try {
-        await window.api.selectThinkingLevel(level)
+        await window.api.selectThinkingLevel(level, scope)
         if (request > pending.confirmedThinkingRequest) {
           pending.confirmedThinking = level
           pending.confirmedThinkingRequest = request
@@ -235,12 +254,12 @@ export function useModelSelection(
       } catch (error) {
         if (!isCurrent()) return
         setThinkingLevel(pending.confirmedThinking)
-        showSnackbarError(error, appCopy.switchThinkingFailed)
+        showSnackbarError(localizeModelSelectionError(error), appCopy.switchThinkingFailed)
       } finally {
         await finishSelection(pending)
       }
     },
-    [beginSelection, finishSelection, getSessionKey, showSnackbarError]
+    [beginSelection, finishSelection, getSelectionScope, getSessionKey, showSnackbarError]
   )
 
   return {

@@ -153,12 +153,73 @@ function deploymentFailure(error: unknown): RemoteKernelError {
     typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : undefined
   let code: RemoteKernelErrorCode = 'REMOTE_COMMAND_FAILED'
   if (reportedCode === 'HASH_MISMATCH' || /hash|checksum/i.test(message)) code = 'HASH_MISMATCH'
+  else if (reportedCode === 'TRANSFER_FAILED') code = 'TRANSFER_FAILED'
   else if (reportedCode === 'TRANSFER_STALLED') code = 'TRANSFER_STALLED'
   else if (/no space left|disk quota/i.test(message)) code = 'INSUFFICIENT_SPACE'
   else if (/permission denied|read-only file system/i.test(message)) code = 'PERMISSION_DENIED'
   return new RemoteKernelError(code, message, {
-    cause: error instanceof Error ? error : undefined
+    cause: error instanceof Error ? error : undefined,
+    ...(['TRANSFER_FAILED', 'TRANSFER_STALLED'].includes(code)
+      ? { errorCode: 'REMOTE_KERNEL_UPLOAD_FAILED' as const }
+      : {})
   })
+}
+
+type KernelUpload = Readonly<{
+  role: 'kernel' | 'native'
+  local: string
+  remote: string
+  sha256: string
+  size: number
+}>
+
+async function uploadKernelFiles(
+  options: RemoteKernelDeploymentOptions,
+  profile: RemoteKernelProfile,
+  uploads: readonly KernelUpload[],
+  transfer: NonNullable<RemoteKernelDeploymentHost['transfer']>
+): Promise<number> {
+  const totalBytes = uploads.reduce((total, upload) => total + upload.size, 0)
+  // Each report is a durable timeline event, so one upload writes about a hundred at most.
+  const reportStepBytes = Math.ceil(totalBytes / 100)
+  let completedBytes = 0
+  let lastReportedBytes = 0
+  for (const upload of uploads) {
+    options.signal?.throwIfAborted()
+    options.onProgress?.({
+      phase: 'uploading',
+      file: upload.role,
+      variant: profile.variant,
+      bytesTransferred: completedBytes,
+      totalBytes
+    })
+    await transfer.uploadFile(upload.local, upload.remote, {
+      ...options.uploadOptions,
+      transferId: transferId(options.uploadOptions?.hostKey, upload.remote, upload.sha256),
+      expectedSha256: upload.sha256,
+      remoteRoot: options.runtimeRoot,
+      signal: options.signal,
+      reuseVerifiedDestination: true,
+      maxAttempts: 3,
+      retryBackoffMs: 1_000,
+      onEvent: (event) => {
+        const bytesTransferred =
+          completedBytes + Math.min(upload.size, Math.max(0, event.bytesTransferred))
+        if (Math.abs(bytesTransferred - lastReportedBytes) < reportStepBytes) return
+        lastReportedBytes = bytesTransferred
+        options.onProgress?.({
+          phase: 'uploading',
+          file: upload.role,
+          variant: profile.variant,
+          bytesTransferred,
+          totalBytes,
+          transfer: event
+        })
+      }
+    })
+    completedBytes += upload.size
+  }
+  return totalBytes
 }
 
 async function uploadAndActivate(
@@ -183,35 +244,25 @@ async function uploadAndActivate(
       role: 'kernel' as const,
       local: kernelLocal,
       remote: paths.stagingKernel,
-      sha256: build.kernel.sha256
+      sha256: build.kernel.sha256,
+      size: build.kernel.size
     },
     {
       role: 'native' as const,
       local: nativeLocal,
       remote: paths.stagingNativeByVariant[profile.variant],
-      sha256: selectedNative.sha256
+      sha256: selectedNative.sha256,
+      size: selectedNative.size
     }
   ]
   try {
-    for (const upload of uploads) {
-      signal?.throwIfAborted()
-      options.onProgress?.({
-        phase: 'uploading',
-        file: upload.role,
-        variant: profile.variant
-      })
-      await host.transfer.uploadFile(upload.local, upload.remote, {
-        ...options.uploadOptions,
-        transferId: transferId(options.uploadOptions?.hostKey, upload.remote, upload.sha256),
-        expectedSha256: upload.sha256,
-        remoteRoot: options.runtimeRoot,
-        signal,
-        reuseVerifiedDestination: true,
-        maxAttempts: 3,
-        retryBackoffMs: 1_000
-      })
-    }
-    options.onProgress?.({ phase: 'verifying', variant: profile.variant })
+    const totalBytes = await uploadKernelFiles(options, profile, uploads, host.transfer)
+    options.onProgress?.({
+      phase: 'verifying',
+      variant: profile.variant,
+      bytesTransferred: totalBytes,
+      totalBytes
+    })
     await runRemoteCommand(
       host,
       paths,
@@ -226,6 +277,7 @@ async function uploadAndActivate(
       count
     )
   } catch (error) {
+    options.onProgress?.({ phase: 'failed' })
     await runRemoteCommand(
       host,
       paths,

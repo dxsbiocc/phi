@@ -112,6 +112,68 @@ test('coded kernel run failures localize while retaining the raw event diagnosti
   assert.deepEqual(event.errorDetail, { capability: 'desktop_services' })
 })
 
+test('remote kernel upload failures never expose raw transport text', () => {
+  const failed = notice({
+    type: 'run_failed',
+    errorCode: 'REMOTE_KERNEL_UPLOAD_FAILED',
+    errorMessage: 'SSH transfer stream closed while writing'
+  })
+
+  setUiLanguage('en')
+  assert.match(failed.content, /kept the confirmed bytes/i)
+  assert.doesNotMatch(failed.content, /SSH transfer stream closed/i)
+  setUiLanguage('zh-CN')
+  assert.match(failed.content, /已保留.*确认/i)
+  assert.doesNotMatch(failed.content, /SSH transfer stream closed/i)
+})
+
+test('remote kernel upload progress is session-restorable, live-updatable, and terminal', () => {
+  const runId = 'run-kernel-upload'
+  const first = {
+    source: 'phi',
+    type: 'remote_kernel_deployment_progress',
+    eventId: 'progress-1',
+    runId,
+    phase: 'uploading',
+    file: 'kernel',
+    bytesTransferred: 120 * 1024 * 1024,
+    totalBytes: 256 * 1024 * 1024
+  }
+  const second = {
+    ...first,
+    eventId: 'progress-2',
+    file: 'native',
+    bytesTransferred: 200 * 1024 * 1024
+  }
+
+  setUiLanguage('en')
+  const restored = chatItemsFromSessionMessages([first, second])
+  assert.equal(restored.length, 1)
+  assert.ok('content' in restored[0])
+  assert.match(restored[0].content, /Uploading remote runtime components: 200 \/ 256 MB/)
+  setUiLanguage('zh-CN')
+  assert.match(restored[0].content, /正在上传远程运行组件：200 \/ 256 MB/)
+
+  let live = reduceAgentEventState(createAgentEventReducerState(), first)
+  live = reduceAgentEventState(live, second)
+  assert.equal(live.messages.length, 1)
+  assert.ok('content' in live.messages[0])
+  assert.match(live.messages[0].content, /200 \/ 256 MB/)
+  live = reduceAgentEventState(live, {
+    ...second,
+    eventId: 'progress-ready',
+    phase: 'ready'
+  })
+  assert.equal(live.messages.length, 0)
+
+  const completed = chatItemsFromSessionMessages([
+    first,
+    second,
+    { ...second, eventId: 'progress-failed', phase: 'failed' }
+  ])
+  assert.equal(completed.length, 0)
+})
+
 test('remote OMP failure causes localize from structured details only', () => {
   const causes = [
     {

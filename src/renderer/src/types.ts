@@ -3,6 +3,7 @@ import type {
   ModelAvailabilityChange,
   ModelAvailabilitySnapshot
 } from '../../shared/modelAvailabilityTypes'
+import type { ModelSelectionScope } from '../../shared/modelSelectionScope'
 import type {
   AnalysisNotebookRegistry,
   AnalysisProjectInitialization,
@@ -197,6 +198,7 @@ export type {
 } from './lib/agentExecutionTypes'
 export type ChatNoticeKind =
   | 'work_mode_selected'
+  | 'remote_kernel_deployment'
   | 'plan_run_finished'
   | 'run_interrupted'
   | 'remote_run_stopped'
@@ -563,10 +565,16 @@ export interface RendererApi
   ) => Promise<EnvironmentSnapshot>
   pickEnvironmentBinary: () => Promise<string | null>
   listModels: () => Promise<ModelOption[]>
-  selectModel: (providerId: string, modelId: string) => Promise<void>
-  getSelectedModel: () => Promise<{ providerId: string; modelId: string } | null>
-  selectThinkingLevel: (level: ThinkingLevel) => Promise<void>
-  getThinkingLevel: () => Promise<ThinkingLevel>
+  selectModel: (
+    providerId: string | null,
+    modelId: string | null,
+    scope?: ModelSelectionScope
+  ) => Promise<void>
+  getSelectedModel: (
+    scope?: ModelSelectionScope
+  ) => Promise<{ providerId: string; modelId: string } | null>
+  selectThinkingLevel: (level: ThinkingLevel, scope?: ModelSelectionScope) => Promise<void>
+  getThinkingLevel: (scope?: ModelSelectionScope) => Promise<ThinkingLevel>
   getAppName: () => Promise<string>
   isOnboarded: () => Promise<boolean>
   getPersonaMarkdown: () => Promise<string>

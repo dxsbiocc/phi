@@ -6,6 +6,7 @@ import test from 'node:test'
 
 import { CodedError } from '../src/shared/errorCodes'
 import { RemoteOmpDeploymentError } from '../src/main/agent/engine/rpc/runtime-deployment'
+import { RemoteKernelError } from '../src/main/agent/engine/kernel-client/remote'
 import { SessionRunnerRegistry } from '../src/main/agent/session/session-runner-registry'
 import {
   readPendingRemoteAutoPlan,
@@ -271,6 +272,43 @@ test('runner emits persisted lifecycle events for live renderer updates', async 
   })
 })
 
+test('remote kernel deployment progress is persisted and broadcast for the waiting run', async () => {
+  await withPhiDir(async () => {
+    const emitted: Array<Record<string, unknown>> = []
+    const registry = new SessionRunnerRegistry({
+      onSessionEvent: (_sessionId, event) => emitted.push(event)
+    })
+    const sessionId = createTestSession()
+    const gate = deferred()
+    const run = registry.startRun({
+      sessionId,
+      runId: createRunId(),
+      execute: () => gate.promise
+    })
+
+    registry.reportRemoteKernelDeployment(sessionId, {
+      phase: 'uploading',
+      file: 'kernel',
+      bytesTransferred: 120 * 1024 * 1024,
+      totalBytes: 256 * 1024 * 1024
+    })
+
+    const progress = emitted.find((event) => event.type === 'remote_kernel_deployment_progress')
+    assert.equal(progress?.runId, run.runId)
+    assert.equal(progress?.bytesTransferred, 120 * 1024 * 1024)
+    assert.equal(progress?.totalBytes, 256 * 1024 * 1024)
+    assert.equal(
+      readSessionEvents(sessionId).find(
+        (event) => event.type === 'remote_kernel_deployment_progress'
+      )?.runId,
+      run.runId
+    )
+
+    gate.resolve()
+    await run.done
+  })
+})
+
 test('runner notifies background approval state after the parent run settles', async () => {
   await withPhiDir(async () => {
     const settled: string[] = []
@@ -459,6 +497,28 @@ test('a coded failure keeps its code and retryable flag on the persisted run_fai
     const legacy = readSessionEvents(plain).find((event) => event.type === 'run_failed')
     assert.equal(legacy?.errorMessage, 'boom')
     assert.equal('errorCode' in (legacy ?? {}), false)
+  })
+})
+
+test('an exhausted remote kernel transfer persists a localized structured failure code', async () => {
+  await withPhiDir(async () => {
+    const registry = new SessionRunnerRegistry()
+    const sessionId = createTestSession()
+    await registry.startRun({
+      sessionId,
+      runId: createRunId(),
+      execute: async () => {
+        throw new RemoteKernelError(
+          'TRANSFER_STALLED',
+          'SSH transfer stream closed while writing',
+          { errorCode: 'REMOTE_KERNEL_UPLOAD_FAILED' }
+        )
+      }
+    }).done
+
+    const failed = readSessionEvents(sessionId).find((event) => event.type === 'run_failed')
+    assert.equal(failed?.errorCode, 'REMOTE_KERNEL_UPLOAD_FAILED')
+    assert.equal(failed?.retryable, true)
   })
 })
 

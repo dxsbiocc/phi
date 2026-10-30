@@ -18,6 +18,8 @@ export const chatEventCopy = defineCopy(
       'Remote runtime download did not complete. Check the network, or follow docs/runtime/remote-omp-preseed.md to preseed the pinned runtime, then retry.',
     remoteOmpHashMismatch:
       'The downloaded remote runtime checksum does not match the pinned release manifest. Follow docs/runtime/remote-omp-preseed.md to preseed the pinned runtime, then retry.',
+    remoteKernelUploadFailed:
+      'The remote runtime component upload was interrupted. Phi kept the confirmed bytes; retry the prompt to resume the upload.',
     noticeTitle: {
       run_interrupted: 'Run interrupted',
       remote_run_stopped: 'Previous remote run stopped',
@@ -78,6 +80,8 @@ export const chatEventCopy = defineCopy(
       '远程运行时下载未完成。请检查网络，或按 docs/runtime/remote-omp-preseed.md 预置锁定版本的运行时，然后重试。',
     remoteOmpHashMismatch:
       '下载的远程运行时校验和与锁定的发布清单不一致。请按 docs/runtime/remote-omp-preseed.md 预置锁定版本的运行时，然后重试。',
+    remoteKernelUploadFailed:
+      '远程运行组件上传已中断。Phi 已保留确认写入的字节；请重试这条提示以继续上传。',
     noticeTitle: {
       run_interrupted: '运行已中断',
       remote_run_stopped: '已停止上一次远端运行',

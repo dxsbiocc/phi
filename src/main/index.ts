@@ -787,7 +787,7 @@ const initialSelectedModel = readLastSelectedModel()
 // Default is deliberately 'high', not the SDK's own default of 'off': many models
 // (e.g. DeepSeek V4 Pro) only enable reasoning output at 'high'/'max', and this app
 // wants that reasoning visible in the UI out of the box rather than silently absent.
-const selectedThinkingLevel: ThinkingLevel = 'high'
+let selectedThinkingLevel: ThinkingLevel = 'high'
 const runtime = createMainRuntimeContext<AgentSessionResult, PromptRun>({
   sessions: {
     getFreshSessionCounter: () => runtime.session.freshSessionCounter,
@@ -3493,6 +3493,11 @@ function registerApplicationAndModelIpc(): void {
   const modelSessionState = {
     getCurrentSessionPath: () => sessionState.sessionPath,
     getCurrentPermissionMode: () => sessionState.permissionMode,
+    getSelectedModel: () => sessionState.selectedModel,
+    getDefaultThinkingLevel: () => selectedThinkingLevel,
+    setDefaultThinkingLevel: (level: ThinkingLevel) => {
+      selectedThinkingLevel = level
+    },
     sessionModelSelections: preferences.modelSelections,
     sessionThinkingLevels: preferences.thinkingLevels
   }
@@ -3975,10 +3980,5 @@ app.on(
 // for applications and their menu bar to stay active until the user quits
 // with Cmd + Q.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  if (process.platform !== 'darwin') app.quit()
 })
-
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and require them here.

@@ -44,6 +44,7 @@ export interface LaunchRemoteKernelOptions {
   readonly agentDir?: string
   readonly signal?: AbortSignal
   readonly uploadOptions?: RemoteKernelDeploymentOptions['uploadOptions']
+  readonly onProgress?: RemoteKernelDeploymentOptions['onProgress']
   readonly environment?: Readonly<Record<string, string>>
   readonly onDiagnostic?: (text: string) => void
   /** Register desktop host capabilities before hello advertises them. */
@@ -379,6 +380,7 @@ export async function launchRemoteKernel(
     runtimeRoot: options.runtimeRoot,
     buildDirectory: options.buildDirectory,
     signal: options.signal,
+    onProgress: options.onProgress,
     uploadOptions: options.uploadOptions
   })
   options.signal?.throwIfAborted()

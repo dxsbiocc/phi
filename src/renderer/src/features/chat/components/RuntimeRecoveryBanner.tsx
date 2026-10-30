@@ -51,7 +51,6 @@ export function RuntimeRecoveryBanner({
   target,
   models = [],
   connecting = false,
-  serverConnecting = false,
   onRecovered,
   onSummaryCreated,
   onStateChange,
@@ -61,7 +60,6 @@ export function RuntimeRecoveryBanner({
   target: RuntimeRecoveryTarget | null
   models?: readonly { providerId: string; modelId: string; name?: string }[]
   connecting?: boolean
-  serverConnecting?: boolean
   onRecovered?: (state: RuntimeRecoveryState) => void | Promise<void>
   onSummaryCreated?: (result: RuntimeSummaryContinuation) => void | Promise<void>
   onStateChange?: (state: RuntimeRecoveryState | null) => void
@@ -77,7 +75,7 @@ export function RuntimeRecoveryBanner({
     setSelection({ viewKey, summaryOpen, replacement, ...patch })
   const state = recovery.state
   useEffect(() => onStateChange?.(state), [onStateChange, state])
-  if (serverConnecting || connecting || (recovery.pending && !summaryOpen))
+  if (connecting || (recovery.pending && !summaryOpen))
     return (
       <Alert
         role="status"

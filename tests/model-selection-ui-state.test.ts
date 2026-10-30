@@ -5,7 +5,14 @@ import test, { beforeEach, afterEach } from 'node:test'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import type { ModelOption, ThinkingLevel } from '../src/renderer/src/types'
-import type { ModelSelectionState } from '../src/renderer/src/useModelSelection'
+import {
+  localizeModelSelectionError,
+  type ModelSelectionState
+} from '../src/renderer/src/useModelSelection'
+import {
+  REMOTE_SELECTION_BUSY_CODE,
+  type ModelSelectionScope
+} from '../src/shared/modelSelectionScope'
 import { sessionStateKey } from '../src/renderer/src/stores/sessionStore'
 import { appCopy } from '../src/renderer/src/lib/appCopy'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
@@ -37,7 +44,9 @@ const models: ModelOption[] = ['first', 'second', 'third'].map((modelId) => ({
 type Api = Pick<
   Window['api'],
   'listModels' | 'getSelectedModel' | 'selectModel' | 'selectThinkingLevel'
-> & { getThinkingLevel: () => Promise<ThinkingLevel | undefined> }
+> & {
+  getThinkingLevel: (scope?: ModelSelectionScope) => Promise<ThinkingLevel | undefined>
+}
 type Slot =
   | { kind: 'state'; value: unknown; set: (value: unknown) => void }
   | { kind: 'ref'; value: { current: unknown } }
@@ -82,7 +91,10 @@ function appSessionGetter(context: Record<string, unknown>): () => string | numb
 }
 
 /** Run the whole production hook, including its deferred IPC continuations. */
-async function harness(overrides: Partial<Api> = {}): Promise<{
+async function harness(
+  overrides: Partial<Api> = {},
+  selectionScope: ModelSelectionScope = 'session'
+): Promise<{
   read: () => ModelSelectionState
   refreshAvailability: () => void
   navigate: (model: ModelOption, level: ThinkingLevel) => void
@@ -164,12 +176,12 @@ async function harness(overrides: Partial<Api> = {}): Promise<{
     getSelectedModel: overrides.getSelectedModel ?? (async () => selected),
     getThinkingLevel: overrides.getThinkingLevel ?? (async () => thinkingLevel),
     ...overrides,
-    selectModel: async (providerId, modelId) => {
-      await overrides.selectModel?.(providerId, modelId)
+    selectModel: async (providerId, modelId, scope) => {
+      await overrides.selectModel?.(providerId, modelId, scope)
       selected = providerId !== null && modelId !== null ? { providerId, modelId } : null
     },
-    selectThinkingLevel: async (level) => {
-      await overrides.selectThinkingLevel?.(level)
+    selectThinkingLevel: async (level, scope) => {
+      await overrides.selectThinkingLevel?.(level, scope)
       thinkingLevel = level
     }
   }
@@ -184,6 +196,7 @@ async function harness(overrides: Partial<Api> = {}): Promise<{
       if (name === 'react') return react
       if (name === './lib/appCopy') return { appCopy }
       if (name === './lib/modelAvailabilityEvents') return { MODEL_AVAILABILITY_CHANGED }
+      if (name === '../../shared/modelSelectionScope') return { REMOTE_SELECTION_BUSY_CODE }
       throw new Error(`Unexpected runtime import: ${name}`)
     },
     window: {
@@ -198,16 +211,23 @@ async function harness(overrides: Partial<Api> = {}): Promise<{
   const hook = module.exports.useModelSelection as (
     providers: unknown[],
     onError: (error: unknown, fallback: string) => void,
-    getSessionKey: () => string | number
+    getSessionKey: () => string | number,
+    getSelectionScope: () => ModelSelectionScope
   ) => ModelSelectionState
   const providers = [{ providerId: 'fixture', configured: true }]
   const onError = (error: unknown, fallback: string): void => {
     errors.push({ error, fallback })
   }
-  const getSessionKey = appSessionGetter({ sessionRequestRef, useSessionStore: { getState } })
+  const getSessionKey = appSessionGetter({
+    sessionRequestRef,
+    sessionTabWasOpened: true,
+    homeProjectSelection: null,
+    useSessionStore: { getState }
+  })
+  const getSelectionScope = (): ModelSelectionScope => selectionScope
   const read = (): ModelSelectionState => {
     cursor = 0
-    const state = hook(providers, onError, getSessionKey)
+    const state = hook(providers, onError, getSessionKey, getSelectionScope)
     for (const effect of effects.splice(0)) effect()
     return state
   }
@@ -661,9 +681,56 @@ test('selecting automatic persists null through the model IPC and reconciliation
     }
   })
   await f.read().onSelectModel(null)
-  assert.deepEqual(calls, [[null, null]])
+  assert.deepEqual(calls, [[null, null, 'session']])
   assert.equal(f.read().selectedModel, null)
   assert.equal(f.errors.length, 0)
+})
+
+test('new-session model and thinking controls keep their draft scope through IPC reconciliation', async () => {
+  const calls: Array<[string, ModelSelectionScope | undefined]> = []
+  const f = await harness(
+    {
+      getSelectedModel: async (scope) => {
+        calls.push(['get-model', scope])
+        return { providerId: 'fixture', modelId: 'first' }
+      },
+      getThinkingLevel: async (scope) => {
+        calls.push(['get-thinking', scope])
+        return 'high'
+      },
+      selectModel: async (_providerId, _modelId, scope) => {
+        calls.push(['set-model', scope])
+      },
+      selectThinkingLevel: async (_level, scope) => {
+        calls.push(['set-thinking', scope])
+      }
+    },
+    'new-session'
+  )
+
+  await f.read().onSelectModel(models[1])
+  await f.read().onSelectThinkingLevel('medium')
+
+  assert.ok(calls.some(([operation]) => operation === 'set-model'))
+  assert.ok(calls.some(([operation]) => operation === 'set-thinking'))
+  assert.equal(
+    calls.every(([, scope]) => scope === 'new-session'),
+    true
+  )
+  assert.equal(f.errors.length, 0)
+})
+
+test('running remote selection rejection is localized in both interface languages', () => {
+  setUiLanguage('en')
+  assert.equal(
+    (localizeModelSelectionError(new Error(REMOTE_SELECTION_BUSY_CODE)) as Error).message,
+    'Wait for this remote chat to finish before changing its model or thinking level.'
+  )
+  setUiLanguage('zh-CN')
+  assert.equal(
+    (localizeModelSelectionError(new Error(REMOTE_SELECTION_BUSY_CODE)) as Error).message,
+    '请等待此远程会话运行结束后再修改模型或思考等级。'
+  )
 })
 
 test('a rejected automatic selection restores the confirmed fixed model', async () => {

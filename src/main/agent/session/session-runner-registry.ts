@@ -18,6 +18,7 @@ import {
 } from '../../../shared/errorCodes'
 import { remoteOmpFailureDetailForPersistence } from './session-event-payload-projection'
 import { clearPendingRemoteAutoPlanAfterTurn } from './pending-remote-auto-plan'
+import type { RemoteKernelDeploymentProgress } from '../engine/kernel-client/remote'
 
 export interface SessionRunContext {
   signal: AbortSignal
@@ -129,6 +130,23 @@ export class SessionRunnerRegistry {
 
   getActiveRuns(): SessionRun[] {
     return [...this.activeRuns.values()]
+  }
+
+  /** Persist pre-session kernel deployment progress against the Phi run that is waiting for it. */
+  reportRemoteKernelDeployment(sessionId: string, progress: RemoteKernelDeploymentProgress): void {
+    const run = this.activeRuns.get(sessionId)
+    if (!run || run.signal.aborted) return
+    this.appendEvent(sessionId, {
+      type: 'remote_kernel_deployment_progress',
+      runId: run.runId,
+      phase: progress.phase,
+      ...(progress.file ? { file: progress.file } : {}),
+      ...(progress.variant ? { variant: progress.variant } : {}),
+      ...(progress.bytesTransferred !== undefined
+        ? { bytesTransferred: progress.bytesTransferred }
+        : {}),
+      ...(progress.totalBytes !== undefined ? { totalBytes: progress.totalBytes } : {})
+    })
   }
 
   /** State only: the foreground facade owns the single durable child approval record. */

@@ -385,6 +385,7 @@ function App(): React.JSX.Element {
   const currentSessionIsBusyRef = useRef(false)
   const sessionRequestRef = useRef(0)
   const getModelSelectionSessionKey = useCallback(() => {
+    if (!sessionTabWasOpened) return `new-session:${homeProjectSelection?.key ?? 0}`
     const state = useSessionStore.getState()
     return sessionStateKey({
       phiSessionId: state.activePhiSessionId,
@@ -392,7 +393,11 @@ function App(): React.JSX.Element {
       cwd: state.activeCwd,
       sessionGeneration: state.activeSessionGeneration
     })
-  }, [])
+  }, [homeProjectSelection?.key, sessionTabWasOpened])
+  const getModelSelectionScope = useCallback(
+    () => (sessionTabWasOpened ? 'session' : 'new-session'),
+    [sessionTabWasOpened]
+  )
   const sendRequestRef = useRef(0)
   const projectSidebarSelectionRequestRef = useRef(0)
   const rendererApi = useMemo(() => getRendererApi(), [])
@@ -687,7 +692,12 @@ function App(): React.JSX.Element {
     setThinkingLevel,
     onSelectModel,
     onSelectThinkingLevel
-  } = useModelSelection(providerStatuses, showSnackbarError, getModelSelectionSessionKey)
+  } = useModelSelection(
+    providerStatuses,
+    showSnackbarError,
+    getModelSelectionSessionKey,
+    getModelSelectionScope
+  )
   const {
     projects,
     setProjects,
@@ -3464,7 +3474,7 @@ function App(): React.JSX.Element {
       >
         {activeProjectLocation?.kind === 'ssh' &&
         activeRemoteConnection &&
-        !['unchecked', 'connecting', 'reachable'].includes(activeRemoteConnection.phase) ? (
+        !['unchecked', 'reachable'].includes(activeRemoteConnection.phase) ? (
           <RemoteConnectionNotice
             hostAlias={activeProject?.remoteHostAlias}
             connection={activeRemoteConnection}
@@ -3496,7 +3506,6 @@ function App(): React.JSX.Element {
                 api={rendererApi}
                 target={runtimeRecoveryTarget}
                 connecting={autoConnectingSessionId === runtimeRecoveryTarget?.sessionId}
-                serverConnecting={activeRemoteConnection?.phase === 'connecting'}
                 models={availableModels}
                 onRecovered={onRuntimeRecovered}
                 onStateChange={setRemoteRecoverySelectionState}

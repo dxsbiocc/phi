@@ -24,6 +24,10 @@ import {
 } from '../features/chat/lib/uiBlocks'
 import { outputPreviewText } from './toolOutputPresentation'
 import { applyApprovalTimelineEvent } from '../features/chat/lib/approvalTimeline'
+import {
+  applyRemoteKernelDeploymentProgress,
+  clearRemoteKernelDeploymentProgress
+} from '../features/chat/lib/remoteKernelDeploymentProgress'
 
 import { isRecord } from '../../../shared/guards'
 export interface AgentEventReducerState {
@@ -523,8 +527,15 @@ export function reduceAgentEventState(
     return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
   }
 
+  if (applyRemoteKernelDeploymentProgress(next, event)) {
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
   const lifecycleItem = runLifecycleItemFromPhiTimelineEvent(event)
   if (lifecycleItem) {
+    if (lifecycleItem.event !== 'started') {
+      clearRemoteKernelDeploymentProgress(next, lifecycleItem.runId)
+    }
     finalizeRunningItemsForRun(next, event)
   }
   if (lifecycleItem && !next.some((item) => item.id === lifecycleItem.id)) {

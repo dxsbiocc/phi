@@ -110,8 +110,16 @@ test('recovery banner: a confirmed connection shows a failed UI refresh without 
   assert.match(connecting, /MuiAlert-root/)
   assert.doesNotMatch(connecting, /恢复原会话|查看摘要并新建|刷新状态/)
 
-  const serverConnecting = renderToStaticMarkup(
-    createElement(Banner, { api, target, serverConnecting: true })
+  assert.doesNotMatch(
+    readFileSync('src/renderer/src/features/chat/components/RuntimeRecoveryBanner.tsx', 'utf8'),
+    /serverConnecting/,
+    'a project-level server probe is not a conversation attachment signal'
   )
-  assert.match(serverConnecting, /data-phi-runtime-reconnecting="true"/)
+  const appSource = readFileSync('src/renderer/src/App.tsx', 'utf8')
+  assert.doesNotMatch(appSource, /serverConnecting=/)
+  assert.match(
+    appSource,
+    /!\['unchecked', 'reachable'\]\.includes\(activeRemoteConnection\.phase\)/,
+    'real project connection work remains visible through the server notice'
+  )
 })

@@ -48,10 +48,9 @@ function connectionMessage(
 ): string {
   const progress = connection?.startupProgress
   if (!progress) {
-    return (
-      connection?.message ??
-      (connecting ? projectCopy.connectingToServer : projectCopy.connectionNotChecked)
-    )
+    return connecting
+      ? projectCopy.connectingToServer
+      : (connection?.message ?? projectCopy.connectionNotChecked)
   }
   if (!progress.totalBytes || progress.totalBytes <= 0) {
     return projectCopy.downloadingRemoteRuntimeWithoutTotal(progress.attempt)

@@ -24,6 +24,8 @@ export interface BackgroundAgentJobListingOptions {
   optionalStringField: (record: Record<string, unknown>, key: string) => string | undefined
 }
 
+const loggedUnavailableChildRecoveryMetadata = new Set<string>()
+
 // eslint-disable-next-line complexity -- Preserves the existing strict worker-record validation.
 function liveBackgroundAgentJob(
   value: unknown,
@@ -123,11 +125,14 @@ function coldBackgroundAgentJobsForManifest(
       ]
     })
   } catch {
-    writeAppLog({
-      level: 'error',
-      event: 'child_recovery_metadata_unavailable',
-      sessionId: manifest.sessionId
-    })
+    if (!loggedUnavailableChildRecoveryMetadata.has(manifest.sessionId)) {
+      loggedUnavailableChildRecoveryMetadata.add(manifest.sessionId)
+      writeAppLog({
+        level: 'warn',
+        event: 'child_recovery_metadata_unavailable',
+        sessionId: manifest.sessionId
+      })
+    }
     return []
   }
 }
