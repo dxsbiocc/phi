@@ -111,6 +111,7 @@ test('plan run panel renders progress, pause reason and recovery actions', () =>
   assert.match(markup, /aria-label="重试"/)
   assert.match(markup, /aria-label="跳过"/)
   assert.match(markup, /aria-label="停止"/)
+  assert.doesNotMatch(markup, />已完成</)
 })
 
 test('restart interruption shows recovery actions and workspace check', () => {
@@ -348,4 +349,84 @@ test('finished plan has only its timeline record, without a second composer pane
   assert.match(record, /2\/2 完成/)
   assert.match(record, />1\. Inspect code</)
   assert.match(record, />2\. Implement panel</)
+})
+
+test('a finished record shows each step report when the run details are loaded', () => {
+  setUiLanguage('zh-CN')
+  const completed = {
+    ...run,
+    status: 'completed' as const,
+    pause: undefined,
+    steps: run.steps.map((step) => ({
+      ...step,
+      status: 'done' as const,
+      startedAt: '2026-10-23T00:00:00.000Z',
+      finishedAt: '2026-10-23T00:00:05.000Z'
+    }))
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, {
+        archived: true,
+        cwd: '/workspace',
+        controller: {
+          ...controller(),
+          run: completed,
+          details: {
+            id: completed.id,
+            sessionId: 'session-1',
+            spec: {
+              version: 1,
+              goal: completed.goal,
+              steps: [
+                {
+                  id: 'read',
+                  title: 'Inspect code',
+                  instructions: 'Look around.',
+                  acceptance: 'The path is known.',
+                  access: 'read',
+                  dependsOn: []
+                },
+                {
+                  id: 'write',
+                  title: 'Implement panel',
+                  instructions: 'List names.',
+                  acceptance: 'Ten names are listed.',
+                  access: 'write',
+                  dependsOn: ['read']
+                }
+              ]
+            },
+            status: 'completed',
+            pause: undefined,
+            replans: 0,
+            createdAt: completed.createdAt,
+            updatedAt: completed.updatedAt,
+            steps: {
+              read: {
+                status: 'done',
+                attempts: 1,
+                report: {
+                  status: 'completed',
+                  text: 'Found the boundary',
+                  missingInputs: []
+                }
+              },
+              write: {
+                status: 'done',
+                attempts: 1,
+                report: { status: 'completed', text: 'Listed ten names', missingInputs: [] }
+              }
+            }
+          }
+        }
+      })
+    )
+  )
+  assert.match(markup, /Found the boundary/)
+  assert.match(markup, /Listed ten names/)
+  assert.doesNotMatch(markup, /正在加载/)
+  assert.doesNotMatch(markup, />已完成</)
 })

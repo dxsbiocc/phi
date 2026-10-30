@@ -11,6 +11,7 @@ import { WorkspaceChangesCard } from '../../features/chat/components/WorkspaceCh
 import { MetaBallsLoader } from '../../features/chat/components/MetaBallsLoader'
 import { PresentedFilesCard } from '../../features/chat/components/PresentedFilesCard'
 import { UiBlocksCard } from '../../features/chat/components/UiBlocks/UiBlocksCard'
+import type { PlanRunState } from '../../../../shared/planRunTypes'
 import { PlanReviewCard } from '../../features/plan/components/PlanReviewCard'
 import { PlanRunRecord } from '../../features/plan/PlanRunPanel'
 import { PhiIcons } from '../../icons'
@@ -60,6 +61,7 @@ export type ChatProcessingGroupProps = {
   startedAtMs?: number
   completedAtMs?: number
   durationMs?: number
+  loadPlanRun?: (runId: string) => Promise<PlanRunState | null>
 }
 
 // groupMessages/groupProcessingItems rebuild group wrapper objects (and their
@@ -83,7 +85,8 @@ function processingGroupPropsEqual(
     prev.failed === next.failed &&
     prev.startedAtMs === next.startedAtMs &&
     prev.completedAtMs === next.completedAtMs &&
-    prev.durationMs === next.durationMs
+    prev.durationMs === next.durationMs &&
+    prev.loadPlanRun === next.loadPlanRun
   )
 }
 
@@ -101,7 +104,8 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   failed: runFailed = false,
   startedAtMs,
   completedAtMs,
-  durationMs
+  durationMs,
+  loadPlanRun
 }: ChatProcessingGroupProps): ReactNode {
   useUiLanguage()
   const [expanded, setExpanded] = useState(false)
@@ -234,6 +238,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
                     onJumpToNotebookCell={onJumpToNotebookCell}
                     onContentResize={onContentResize}
                     cwd={cwd}
+                    loadPlanRun={loadPlanRun}
                     isActive={false}
                     startedAtMs={group.startedAtMs}
                     completedAtMs={group.completedAtMs}
@@ -295,7 +300,14 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
                 return <PlanReviewCard key={group.key} item={group.item} cwd={cwd} />
               }
               if (group.item.role === 'plan_run') {
-                return <PlanRunRecord key={group.key} run={group.item.run} cwd={cwd} />
+                return (
+                  <PlanRunRecord
+                    key={group.key}
+                    run={group.item.run}
+                    cwd={cwd}
+                    loadRun={loadPlanRun}
+                  />
+                )
               }
               return (
                 <ChatBubble

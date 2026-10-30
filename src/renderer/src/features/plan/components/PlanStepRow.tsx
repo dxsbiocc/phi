@@ -39,29 +39,56 @@ function stepTone(status: PlanStepStatus): PlanTimelineTone {
 
 function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.Element {
   const duration = planStepDurationMs(step)
+  const durationLabel = duration !== null ? formatAgentDuration(duration) : ''
+  const statusLabel = step.status === 'done' ? '' : planCopy.stepStatus(step.status)
+  const attemptsLabel = step.attempts > 1 ? planCopy.attempts(step.attempts) : ''
   return (
     <Stack
       direction="row"
-      spacing={0.75}
-      useFlexGap
-      sx={{ alignItems: 'center', flexWrap: 'wrap' }}
+      sx={{ alignItems: 'center', flex: 'none', gap: 1, position: 'relative' }}
     >
-      <Typography variant="caption" color="text.secondary">
-        {planCopy.stepStatus(step.status)}
+      {statusLabel || attemptsLabel ? (
+        <Stack
+          direction="row"
+          spacing={0.75}
+          sx={{
+            position: 'absolute',
+            right: '100%',
+            mr: 1,
+            whiteSpace: 'nowrap',
+            alignItems: 'center'
+          }}
+        >
+          {statusLabel ? (
+            <Typography variant="caption" color="text.secondary">
+              {statusLabel}
+            </Typography>
+          ) : null}
+          {attemptsLabel ? <Typography variant="caption">{attemptsLabel}</Typography> : null}
+        </Stack>
+      ) : null}
+      <Typography
+        variant="caption"
+        component="span"
+        title={durationLabel || undefined}
+        sx={{
+          display: 'block',
+          width: '4.75em',
+          flex: 'none',
+          textAlign: 'right',
+          whiteSpace: 'nowrap',
+          fontVariantNumeric: 'tabular-nums',
+          color: 'text.secondary'
+        }}
+      >
+        {durationLabel}
       </Typography>
       <Chip
         size="small"
         variant="outlined"
         label={step.access === 'read' ? planCopy.accessRead : planCopy.accessWrite}
+        sx={{ width: 64, flex: 'none', justifyContent: 'center' }}
       />
-      {step.attempts > 1 ? (
-        <Typography variant="caption">{planCopy.attempts(step.attempts)}</Typography>
-      ) : null}
-      {duration !== null ? (
-        <Typography variant="caption" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-          {formatAgentDuration(duration)}
-        </Typography>
-      ) : null}
     </Stack>
   )
 }
@@ -142,13 +169,20 @@ function usePlanStepExpansion(
   details: PlanRunState | null,
   loadDetails: PlanStepRowProps['loadDetails'],
   rowRef: React.RefObject<HTMLDivElement | null>
-): { expanded: boolean; toggle: (_event: React.SyntheticEvent, next: boolean) => void } {
+): {
+  expanded: boolean
+  loading: boolean
+  toggle: (_event: React.SyntheticEvent, next: boolean) => void
+} {
   // The step that stopped the run opens on its own, so its error and actions are in view;
   // each new problem (another attempt) opens it again even if the user had closed it.
   const blocking = blocksRun(run, step.id)
   const focusKey = blocking ? `${run.pause?.reason}:${step.attempts}` : 'idle'
   const [state, setState] = useState({ key: focusKey, expanded: blocking })
   const expanded = state.key === focusKey ? state.expanded : blocking
+  const requestKey = `${run.id}:${run.updatedAt}`
+  const [settledKey, setSettledKey] = useState<string | null>(null)
+  const hasCurrentDetails = details !== null && details.updatedAt >= run.updatedAt
   useEffect(() => {
     if (!blocking) return undefined
     // Wait for the opened details to take their height, or the actions stay below the fold.
@@ -158,11 +192,21 @@ function usePlanStepExpansion(
     return () => cancelAnimationFrame(frame)
   }, [blocking, focusKey, rowRef])
   useEffect(() => {
-    if (expanded && step.status !== 'unknown' && (!details || details.updatedAt < run.updatedAt)) {
-      void loadDetails(run.id, run.updatedAt)
+    if (!expanded || step.status === 'unknown' || hasCurrentDetails) return undefined
+    let active = true
+    void loadDetails(run.id, run.updatedAt).finally(() => {
+      if (active) setSettledKey(requestKey)
+    })
+    return () => {
+      active = false
     }
-  }, [details, expanded, loadDetails, run.id, run.updatedAt, step.status])
-  return { expanded, toggle: (_event, next) => setState({ key: focusKey, expanded: next }) }
+  }, [expanded, hasCurrentDetails, loadDetails, requestKey, run.id, run.updatedAt, step.status])
+  const loading = expanded && !hasCurrentDetails && settledKey !== requestKey
+  return {
+    expanded,
+    loading,
+    toggle: (_event, next) => setState({ key: focusKey, expanded: next })
+  }
 }
 
 export function PlanStepRow({
@@ -182,7 +226,6 @@ export function PlanStepRow({
   const rowRef = useRef<HTMLDivElement | null>(null)
   const expansion = usePlanStepExpansion(run, step, details, loadDetails, rowRef)
   const actions = planStepActions(run, step.id)
-  const loading = expansion.expanded && (!details || details.updatedAt < run.updatedAt)
   const tone = stepTone(step.status)
   return (
     <Box ref={rowRef}>
@@ -199,7 +242,17 @@ export function PlanStepRow({
         }
         onToggle={() => expansion.toggle({} as React.SyntheticEvent, !expansion.expanded)}
       >
-        <StepReport step={step} details={details} loading={loading} cwd={cwd} />
+        <Box
+          sx={{
+            minWidth: 0,
+            maxWidth: '100%',
+            maxHeight: 'min(36vh, 320px)',
+            overflow: 'auto',
+            overscrollBehavior: 'contain'
+          }}
+        >
+          <StepReport step={step} details={details} loading={expansion.loading} cwd={cwd} />
+        </Box>
         <StepActions
           visible={actions.length > 0}
           reason={run.pause?.reason ?? 'step_failed'}

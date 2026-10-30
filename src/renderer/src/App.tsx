@@ -3605,6 +3605,11 @@ function App(): React.JSX.Element {
                 : 'tab'
             }
             cwd={activeDisplayCwd}
+            loadPlanRun={
+              activePhiSessionId
+                ? (runId) => rendererApi.getPlanRun(activePhiSessionId, runId)
+                : undefined
+            }
           />
         </Suspense>
       </Box>

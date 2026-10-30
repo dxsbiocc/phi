@@ -10,6 +10,7 @@ import {
   type ReactNode
 } from 'react'
 import type { PromptImageInput } from '../../../../shared/promptImageTypes'
+import type { PlanRunState } from '../../../../shared/planRunTypes'
 import type { SessionMode } from '../../../../shared/sessionMode'
 import { PastedImagePreview } from './components/PastedImagePreview'
 import { LegacyRemoteSessionNotice } from './components/LegacyRemoteSessionNotice'
@@ -139,6 +140,7 @@ type ViewProps = {
   onOpenWebUrl?: (url: string) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
   cwd?: string
+  loadPlanRun?: (runId: string) => Promise<PlanRunState | null>
 }
 
 function ChatView({
@@ -201,9 +203,16 @@ function ChatView({
   onOpenLocalPath,
   onOpenWebUrl,
   onJumpToNotebookCell,
-  cwd = ''
+  cwd = '',
+  loadPlanRun
 }: ViewProps): React.JSX.Element {
   useUiLanguage()
+  const loadPlanRunRef = useRef(loadPlanRun)
+  loadPlanRunRef.current = loadPlanRun
+  const stableLoadPlanRun = useCallback(
+    (runId: string) => loadPlanRunRef.current?.(runId) ?? Promise.resolve(null),
+    []
+  )
   const { resources: messageResources, details: agentDetails } = useChatResourceCatalog({
     resources: resourceMentions,
     skills,
@@ -467,6 +476,7 @@ function ChatView({
             openPlanReviewId={
               pendingUserInteraction?.planReview ? pendingUserInteraction.requestId : null
             }
+            loadPlanRun={stableLoadPlanRun}
           />
           {recoveryNotice ? (
             <Box

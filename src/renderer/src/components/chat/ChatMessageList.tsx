@@ -20,6 +20,7 @@ import { WrapperPlanCard } from '../../features/wrapper/components/WrapperPlanCa
 import { WorkspaceChangesCard } from '../../features/chat/components/WorkspaceChangesCard'
 import { PresentedFilesCard } from '../../features/chat/components/PresentedFilesCard'
 import { UiBlocksCard } from '../../features/chat/components/UiBlocks/UiBlocksCard'
+import type { PlanRunState } from '../../../../shared/planRunTypes'
 import { PlanReviewCard } from '../../features/plan/components/PlanReviewCard'
 import { PlanRunRecord } from '../../features/plan/PlanRunPanel'
 import { planReviewShownInTranscript } from '../../features/plan/lib/planReview'
@@ -219,6 +220,7 @@ export type ChatMessageListProps = {
   cwd?: string
   /** Review id of the confirmation currently open above the composer. */
   openPlanReviewId?: string | null
+  loadPlanRun?: (runId: string) => Promise<PlanRunState | null>
 }
 
 type PlanTranscriptItem = Extract<ChatItem, { role: 'plan_review' | 'plan_run' }>
@@ -230,15 +232,17 @@ function isPlanTranscriptItem(item: ChatItem): item is PlanTranscriptItem {
 /** Plan review and finished plan-run records render as their own cards in the transcript. */
 function PlanTranscriptCard({
   item,
-  cwd
+  cwd,
+  loadPlanRun
 }: {
   item: PlanTranscriptItem
   cwd: string
+  loadPlanRun?: (runId: string) => Promise<PlanRunState | null>
 }): React.JSX.Element {
   return item.role === 'plan_review' ? (
     <PlanReviewCard item={item} cwd={cwd} />
   ) : (
-    <PlanRunRecord run={item.run} cwd={cwd} />
+    <PlanRunRecord run={item.run} cwd={cwd} loadRun={loadPlanRun} />
   )
 }
 
@@ -258,7 +262,8 @@ const ChatMessageList = memo(function ChatMessageList({
   onOpenWebUrl,
   onJumpToNotebookCell,
   cwd = '',
-  openPlanReviewId = null
+  openPlanReviewId = null,
+  loadPlanRun
 }: ChatMessageListProps): React.JSX.Element {
   useUiLanguage()
   const [scrollContainer, setScrollContainer] = useState<HTMLDivElement | null>(null)
@@ -693,6 +698,7 @@ const ChatMessageList = memo(function ChatMessageList({
             onJumpToNotebookCell={onJumpToNotebookCell}
             onContentResize={onMessagesContentResize}
             cwd={cwd}
+            loadPlanRun={loadPlanRun}
             isActive={isActiveProcessingGroup}
             failed={group.failed === true}
             startedAtMs={
@@ -748,7 +754,7 @@ const ChatMessageList = memo(function ChatMessageList({
         return <UiBlocksCard item={group.item} />
       }
       if (isPlanTranscriptItem(group.item))
-        return <PlanTranscriptCard item={group.item} cwd={cwd} />
+        return <PlanTranscriptCard item={group.item} cwd={cwd} loadPlanRun={loadPlanRun} />
       return (
         <ChatBubble
           message={group.item}

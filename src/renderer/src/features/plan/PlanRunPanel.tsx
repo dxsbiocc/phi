@@ -10,10 +10,11 @@ import {
   Button,
   useMediaQuery
 } from '@mui/material'
-import { useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 
 import {
   PLAN_MAX_REPLANS,
+  type PlanRunState,
   type PlanRunTimelineSnapshot,
   type PlanRunTimelineStepSnapshot
 } from '../../../../shared/planRunTypes'
@@ -158,12 +159,14 @@ function ConfirmationDialog({
 function PlanRunBody({
   controller,
   cwd,
+  contained,
   onStop,
   onRetry,
   onSkip
 }: {
   controller: PlanRunsController
   cwd: string
+  contained: boolean
   onStop: () => void
   onRetry: (step: PlanRunTimelineStepSnapshot) => void
   onSkip: (stepId: string) => void
@@ -173,7 +176,23 @@ function PlanRunBody({
   const reason = pauseReason(run)
   const hasUnknown = run.steps.some((step) => step.status === 'unknown')
   return (
-    <Box sx={{ maxHeight: 'min(42vh, 420px)', overflowY: 'auto', px: 2, py: 1.75 }}>
+    <Box
+      sx={{
+        minWidth: 0,
+        px: 2,
+        py: 1.75,
+        // Live panel above the composer stays bounded. A finished record in the
+        // transcript does not: each expanded step scrolls inside itself.
+        ...(contained
+          ? {
+              maxHeight: 'min(42vh, 420px)',
+              overflowY: 'auto',
+              scrollbarGutter: 'stable',
+              overscrollBehavior: 'contain'
+            }
+          : null)
+      }}
+    >
       {reason ? (
         <Alert severity={run.pause?.reason === 'user' ? 'info' : 'warning'} sx={{ mb: 1 }}>
           {reason}
@@ -300,6 +319,7 @@ export function PlanRunPanel({
         <PlanRunBody
           controller={controller}
           cwd={cwd}
+          contained={!archived}
           onStop={() => panel.setConfirmation({ kind: 'stop' })}
           onRetry={panel.retry}
           onSkip={(stepId) => panel.setConfirmation({ kind: 'skip', stepId })}
@@ -356,10 +376,27 @@ function archivedController(run: PlanRunTimelineSnapshot): PlanRunsController {
 /** The execution timeline kept in the conversation after the live panel closes. */
 export function PlanRunRecord({
   run,
-  cwd = ''
+  cwd = '',
+  loadRun
 }: {
   run: PlanRunTimelineSnapshot
   cwd?: string
+  loadRun?: (runId: string) => Promise<PlanRunState | null>
 }): React.JSX.Element {
-  return <PlanRunPanel controller={archivedController(run)} cwd={cwd} archived />
+  const loadRunRef = useRef(loadRun)
+  loadRunRef.current = loadRun
+  const [details, setDetails] = useState<PlanRunState | null>(null)
+  const loadDetails = useCallback(async (runId: string, updatedAt: string) => {
+    const load = loadRunRef.current
+    if (!load) return null
+    const state = await load(runId)
+    if (!state || state.id !== runId || state.updatedAt < updatedAt) return null
+    setDetails(state)
+    return state
+  }, [])
+  const controller = useMemo(() => {
+    const archived = archivedController(run)
+    return { ...archived, details, loadDetails }
+  }, [details, loadDetails, run])
+  return <PlanRunPanel controller={controller} cwd={cwd} archived />
 }

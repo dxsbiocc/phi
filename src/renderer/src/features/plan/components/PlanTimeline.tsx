@@ -150,10 +150,10 @@ function PlanTimelineStepTitle({
         '&:hover': interactive ? { bgcolor: 'action.hover' } : undefined
       }}
     >
-      <Typography variant="body2" sx={{ minWidth: 0, flex: 1, fontWeight: 650 }}>
+      <Typography variant="body2" noWrap sx={{ minWidth: 0, flex: 1, fontWeight: 650 }}>
         {title}
       </Typography>
-      {meta}
+      <Box sx={{ flex: 'none', display: 'flex', alignItems: 'center' }}>{meta}</Box>
       {interactive ? <ToggleIcon size={16} aria-hidden /> : null}
     </Box>
   )
@@ -214,8 +214,18 @@ export function PlanTimelineStep({
             toggleLabel={toggleLabel}
           />
           {children && onToggle ? (
-            <Collapse in={expanded} timeout={reduceMotion ? 0 : 280} unmountOnExit={false}>
-              <Box sx={{ pt: 0.75 }}>{children}</Box>
+            <Collapse
+              in={expanded}
+              timeout={reduceMotion ? 0 : 280}
+              unmountOnExit={false}
+              sx={{
+                minWidth: 0,
+                // The wrapper is a flex row. Without a zero minimum, a wide report
+                // (image, table) becomes the row's min-content and the card grows.
+                '& .MuiCollapse-wrapper, & .MuiCollapse-wrapperInner': { minWidth: 0 }
+              }}
+            >
+              <Box sx={{ pt: 0.75, minWidth: 0, maxWidth: '100%' }}>{children}</Box>
             </Collapse>
           ) : (
             children
