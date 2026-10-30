@@ -5,6 +5,9 @@ import { homedir, tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// The old route stays under test until K5-2 removes it; kernel tests choose the kernel themselves.
+process.env.PHI_KERNEL_ENGINE ??= 'off'
+
 // --- Test data isolation -------------------------------------------------------------
 // Tests must never write into the developer's real ~/.phi (logs, sessions, caches, MCP
 // credentials). Point the app's data dir at a per-process temp dir unless a test or the

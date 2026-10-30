@@ -23,8 +23,10 @@ import {
 import { FakeKernelClient, legacyEngine, params } from './helpers/kernelSessionFactoryFake'
 
 test('kernel engine switch is captured from only the trusted documented values', () => {
-  assert.equal(parseKernelEngineSwitch(undefined), 'off')
+  assert.equal(parseKernelEngineSwitch(undefined), 'both')
+  assert.equal(parseKernelEngineSwitch(''), 'both')
   assert.equal(parseKernelEngineSwitch('0'), 'off')
+  assert.equal(parseKernelEngineSwitch('off'), 'off')
   assert.equal(parseKernelEngineSwitch('1'), 'both')
   assert.equal(parseKernelEngineSwitch('local'), 'local')
   assert.equal(parseKernelEngineSwitch('remote'), 'remote')
