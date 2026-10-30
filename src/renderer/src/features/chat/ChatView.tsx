@@ -4,6 +4,7 @@ import { Box, IconButton, Paper, Stack, Typography } from '@mui/material'
 import {
   useMemo,
   useCallback,
+  useLayoutEffect,
   useRef,
   type FormEvent,
   type MouseEvent,
@@ -208,7 +209,9 @@ function ChatView({
 }: ViewProps): React.JSX.Element {
   useUiLanguage()
   const loadPlanRunRef = useRef(loadPlanRun)
-  loadPlanRunRef.current = loadPlanRun
+  useLayoutEffect(() => {
+    loadPlanRunRef.current = loadPlanRun
+  }, [loadPlanRun])
   const stableLoadPlanRun = useCallback(
     (runId: string) => loadPlanRunRef.current?.(runId) ?? Promise.resolve(null),
     []

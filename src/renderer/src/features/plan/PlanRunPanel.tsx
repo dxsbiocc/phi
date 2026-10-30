@@ -10,7 +10,7 @@ import {
   Button,
   useMediaQuery
 } from '@mui/material'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import {
   PLAN_MAX_REPLANS,
@@ -384,7 +384,9 @@ export function PlanRunRecord({
   loadRun?: (runId: string) => Promise<PlanRunState | null>
 }): React.JSX.Element {
   const loadRunRef = useRef(loadRun)
-  loadRunRef.current = loadRun
+  useLayoutEffect(() => {
+    loadRunRef.current = loadRun
+  }, [loadRun])
   const [details, setDetails] = useState<PlanRunState | null>(null)
   const loadDetails = useCallback(async (runId: string, updatedAt: string) => {
     const load = loadRunRef.current

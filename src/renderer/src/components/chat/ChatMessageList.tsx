@@ -775,6 +775,7 @@ const ChatMessageList = memo(function ChatMessageList({
     },
     [
       cwd,
+      loadPlanRun,
       currentRunStartedAt,
       focusRequest,
       activeProcessingIndex,
