@@ -15,6 +15,8 @@ import { messageContentTitleText } from '../../shared/sessionTitle'
 
 interface CurrentSessionPromptRun {
   phiSessionId: string
+  runId: string
+  cancelled: boolean
 }
 
 export interface CurrentSessionPayloadStores {
@@ -65,6 +67,50 @@ export interface CurrentSessionPayloadOperations {
   getCurrentSessionPayload: () => CurrentSessionPayload
 }
 
+function sessionStatusPayload<TSessionResult, TPromptRun extends CurrentSessionPromptRun>(
+  deps: Pick<
+    CurrentSessionPayloadDeps<TSessionResult, TPromptRun>,
+    'promptRuns' | 'runners' | 'sessionResolution'
+  >,
+  sessionKey: string,
+  path: string | undefined,
+  cwd: string
+): SessionStatusPayload {
+  const promptRun = deps.promptRuns.activeRun(sessionKey)
+  const activeRun = promptRun ? deps.runners.getActiveRun(promptRun.phiSessionId) : null
+  if (activeRun) {
+    return {
+      status: activeRun.status,
+      unreadKind:
+        activeRun.status === 'needs_approval'
+          ? 'approval'
+          : activeRun.status === 'needs_input'
+            ? 'input'
+            : null,
+      currentRunId: activeRun.runId,
+      currentRunStartedAt: activeRun.startedAt
+    }
+  }
+  const manifest = deps.sessionResolution.findPhiManifestForSession(sessionKey, path, cwd)
+  // Remote setup can still be connecting or resolving uploaded resources after prompt
+  // admission but before the session runner exists. The prompt registry is authoritative
+  // for that gap; local snapshots retain their existing manifest-driven behaviour.
+  if (promptRun && !promptRun.cancelled && manifest?.projectLocation?.kind === 'ssh') {
+    return { status: 'running', unreadKind: null, currentRunId: promptRun.runId }
+  }
+  if (manifest) {
+    return {
+      status: manifest.status,
+      unreadKind: manifest.unreadKind,
+      lastRunOutcome: manifest.lastRunOutcome,
+      currentRunId: manifest.currentRunId,
+      currentRunStartedAt: manifest.currentRunStartedAt,
+      lastActivityAt: manifest.lastActivityAt
+    }
+  }
+  return { status: 'idle', unreadKind: null }
+}
+
 function selectCurrentSessionProjectPayloadFields(
   manifest: Pick<PhiSessionManifest, 'projectId'> | null,
   project: Pick<Project, 'id'> | undefined,
@@ -87,37 +133,7 @@ export function createCurrentSessionPayload<
     sessionKey,
     path,
     cwd
-  ) => {
-    const promptRun = deps.promptRuns.activeRun(sessionKey)
-    const activeRun = promptRun ? deps.runners.getActiveRun(promptRun.phiSessionId) : null
-    if (activeRun) {
-      return {
-        status: activeRun.status,
-        unreadKind:
-          activeRun.status === 'needs_approval'
-            ? 'approval'
-            : activeRun.status === 'needs_input'
-              ? 'input'
-              : null,
-        currentRunId: activeRun.runId,
-        currentRunStartedAt: activeRun.startedAt
-      }
-    }
-
-    const manifest = deps.sessionResolution.findPhiManifestForSession(sessionKey, path, cwd)
-    if (manifest) {
-      return {
-        status: manifest.status,
-        unreadKind: manifest.unreadKind,
-        lastRunOutcome: manifest.lastRunOutcome,
-        currentRunId: manifest.currentRunId,
-        currentRunStartedAt: manifest.currentRunStartedAt,
-        lastActivityAt: manifest.lastActivityAt
-      }
-    }
-
-    return { status: 'idle', unreadKind: null }
-  }
+  ) => sessionStatusPayload(deps, sessionKey, path, cwd)
 
   const getCurrentSessionPayload = (): CurrentSessionPayload => {
     deps.sessionState.refreshPermissionMode(deps.sessionResolution.resolveSessionPermissionMode)

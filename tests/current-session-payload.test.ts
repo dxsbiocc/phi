@@ -22,7 +22,7 @@ interface PayloadHarness {
     manifestProject?: Record<string, unknown>
   }): void
   setRuns(next: {
-    promptRun?: { phiSessionId: string }
+    promptRun?: { phiSessionId: string; runId: string; cancelled: boolean }
     activeRun?: Record<string, unknown> | null
   }): void
 }
@@ -35,7 +35,7 @@ function createPayloadHarness(): PayloadHarness {
   let manifest: Record<string, unknown> | null = null
   let cwdProject: Record<string, unknown> | undefined
   let manifestProject: Record<string, unknown> | undefined
-  let promptRun: { phiSessionId: string } | undefined
+  let promptRun: { phiSessionId: string; runId: string; cancelled: boolean } | undefined
   let activeRun: Record<string, unknown> | null = null
   let generation = 4
   const refreshes: string[] = []
@@ -107,7 +107,7 @@ function createPayloadHarness(): PayloadHarness {
       manifestProject = next.manifestProject
     },
     setRuns(next: {
-      promptRun?: { phiSessionId: string }
+      promptRun?: { phiSessionId: string; runId: string; cancelled: boolean }
       activeRun?: Record<string, unknown> | null
     }) {
       promptRun = next.promptRun
@@ -116,10 +116,10 @@ function createPayloadHarness(): PayloadHarness {
   }
 }
 
-test('getSessionStatusPayload preserves active-run, manifest, and idle status fields', () => {
+test('status snapshots distinguish remote setup, active runtime, cancellation, completion, and local setup', () => {
   const harness = createPayloadHarness()
   harness.setRuns({
-    promptRun: { phiSessionId: 'phi-running' },
+    promptRun: { phiSessionId: 'phi-running', runId: 'run-1', cancelled: false },
     activeRun: {
       status: 'needs_approval',
       runId: 'run-1',
@@ -133,19 +133,71 @@ test('getSessionStatusPayload preserves active-run, manifest, and idle status fi
     currentRunStartedAt: '2026-10-21T01:00:00.000Z'
   })
 
+  harness.setRuns({
+    promptRun: { phiSessionId: 'phi-connecting', runId: 'run-connecting', cancelled: false }
+  })
+  harness.setManifest({
+    projectLocation: {
+      kind: 'ssh',
+      hostProfileId: 'host-1',
+      remoteRoot: '/cluster/project',
+      canonicalRoot: '/cluster/project'
+    },
+    status: 'idle',
+    unreadKind: null
+  })
+  assert.deepEqual(harness.payload.getSessionStatusPayload('key', '/runtime.jsonl', '/workspace'), {
+    status: 'running',
+    unreadKind: null,
+    currentRunId: 'run-connecting'
+  })
+
+  harness.setRuns({
+    promptRun: { phiSessionId: 'phi-stopped', runId: 'run-stopped', cancelled: true }
+  })
+  assert.deepEqual(harness.payload.getSessionStatusPayload('key', '/runtime.jsonl', '/workspace'), {
+    status: 'idle',
+    unreadKind: null,
+    lastRunOutcome: undefined,
+    currentRunId: undefined,
+    currentRunStartedAt: undefined,
+    lastActivityAt: undefined
+  })
+
+  harness.setRuns({
+    promptRun: { phiSessionId: 'phi-local', runId: 'run-local', cancelled: false }
+  })
+  harness.setManifest({
+    projectLocation: {
+      kind: 'local',
+      path: '/workspace',
+      realPath: '/workspace'
+    },
+    status: 'idle',
+    unreadKind: null
+  })
+  assert.deepEqual(harness.payload.getSessionStatusPayload('key', '/runtime.jsonl', '/workspace'), {
+    status: 'idle',
+    unreadKind: null,
+    lastRunOutcome: undefined,
+    currentRunId: undefined,
+    currentRunStartedAt: undefined,
+    lastActivityAt: undefined
+  })
+
   harness.setRuns({})
   harness.setManifest({
-    status: 'failed',
-    unreadKind: 'failed',
-    lastRunOutcome: 'failed',
+    status: 'completed_unread',
+    unreadKind: 'completed',
+    lastRunOutcome: 'completed',
     currentRunId: undefined,
     currentRunStartedAt: undefined,
     lastActivityAt: '2026-10-21T02:00:00.000Z'
   })
   assert.deepEqual(harness.payload.getSessionStatusPayload('key', '/runtime.jsonl', '/workspace'), {
-    status: 'failed',
-    unreadKind: 'failed',
-    lastRunOutcome: 'failed',
+    status: 'completed_unread',
+    unreadKind: 'completed',
+    lastRunOutcome: 'completed',
     currentRunId: undefined,
     currentRunStartedAt: undefined,
     lastActivityAt: '2026-10-21T02:00:00.000Z'
