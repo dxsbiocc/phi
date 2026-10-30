@@ -36,6 +36,7 @@ export interface PromptRunContext extends AdmittedPromptRun<CreateAgentSessionRe
   storedImages: StoredPromptImage[]
   otherActiveProjectRuns: number
   promptRun: PromptRunState
+  userMessageEventId?: string
 }
 
 export interface PromptRunStartDeps {
@@ -51,7 +52,7 @@ export interface PromptRunStartDeps {
     persist(phiSessionId: string, images: readonly PromptImageInput[]): StoredPromptImage[]
   }
   events: {
-    append(phiSessionId: string, event: SessionEventInput): unknown
+    append(phiSessionId: string, event: SessionEventInput): { eventId: string }
   }
   cleanup: {
     deleteActiveRun(sessionKey: string, run: PromptRunState): void
@@ -123,12 +124,13 @@ function preparePromptRunForQueue(deps: PromptRunStartDeps, context: PromptRunCo
           : {})
       })
     } else {
-      deps.events.append(phiSessionId, {
+      const stored = deps.events.append(phiSessionId, {
         type: 'user_message',
         runId,
         content: normalizedText,
         ...(storedImages.length ? { images: storedImages } : {})
       })
+      context.userMessageEventId = stored.eventId
     }
   } catch (error) {
     deps.cleanup.deleteActiveRun(context.runSessionKey, promptRun)

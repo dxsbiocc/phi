@@ -168,7 +168,22 @@ export function spawnKernelStdio(options: SpawnKernelStdioOptions = {}): Spawned
     detached: process.platform !== 'win32'
   })
   child.stderr.setEncoding('utf8')
-  child.stderr.on('data', (chunk: string) => options.onDiagnostic?.(chunk))
+  if (options.onDiagnostic) {
+    let diagnosticRemainder = ''
+    child.stderr.on('data', (chunk: string) => {
+      diagnosticRemainder += chunk
+      for (;;) {
+        const newline = diagnosticRemainder.indexOf('\n')
+        if (newline < 0) break
+        options.onDiagnostic?.(diagnosticRemainder.slice(0, newline + 1))
+        diagnosticRemainder = diagnosticRemainder.slice(newline + 1)
+      }
+    })
+    child.stderr.once('end', () => {
+      if (diagnosticRemainder) options.onDiagnostic?.(diagnosticRemainder)
+      diagnosticRemainder = ''
+    })
+  }
   const transport = new ChildProcessKernelTransport(child)
   const client = new KernelProtocolClient(transport)
   return {

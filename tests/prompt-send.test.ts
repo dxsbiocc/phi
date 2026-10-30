@@ -224,13 +224,50 @@ test('a dispatch records the user message optimistically and settles to idle', a
   const [message] = h.messages()
   assert.ok(message?.role === 'user')
   assert.deepEqual([message.content], ['hello'])
+  const optimisticId = message.id
   assert.ok(h.events.includes('sending:true'))
 
-  h.applyReceipt({})
+  h.applyReceipt({ userMessageEventId: 'event-user-1' })
   assert.equal(await sending, true)
+  assert.notEqual(optimisticId, 'event-user-1')
+  assert.equal(h.messages()[0]?.id, 'event-user-1')
   assert.ok(h.events.includes('sending:false'))
   assert.equal(h.deps.isSendingRef.current, false)
   assert.ok(h.events.includes('refreshSessions'))
+})
+
+test('a durable user event received before the send receipt replaces its optimistic duplicate', async () => {
+  const h = harness()
+  const sending = sendPrompt(h.deps, 'hello', target)
+  h.deps.actions.updateMessages((previous) => [
+    ...previous,
+    { id: 'event-user-1', role: 'user', content: 'hello' }
+  ])
+
+  h.applyReceipt({ userMessageEventId: 'event-user-1' })
+  assert.equal(await sending, true)
+  assert.deepEqual(
+    h.messages().map((message) => message.id),
+    ['event-user-1']
+  )
+})
+
+test('a durable user event received before a failed send removes its optimistic duplicate', async () => {
+  const h = harness()
+  const sending = sendPrompt(h.deps, 'hello', target)
+  const optimisticId = h.messages()[0]?.id
+  h.deps.actions.updateMessages((previous) => [
+    ...previous,
+    { id: 'event-user-1', role: 'user', content: 'hello' }
+  ])
+
+  h.failWith(new Error('run failed before receipt'))
+  assert.equal(await sending, false)
+  assert.ok(optimisticId)
+  assert.deepEqual(
+    h.messages().map((message) => message.id),
+    ['event-user-1']
+  )
 })
 
 test('a fresh session receipt moves the queue and selects the materialized tab', async () => {

@@ -129,6 +129,7 @@
         "@oh-my-pi/pi-coding-agent/plan-mode/approved-plan",
         "@oh-my-pi/pi-coding-agent/plan-mode/plan-files",
         "@oh-my-pi/pi-coding-agent/session/compaction-methods",
+        "@oh-my-pi/pi-coding-agent/task/settings",
         "@oh-my-pi/pi-utils"
       ],
       "purpose": "Long-term non-MCP boundary for OMP internal functions and compatibility checks",

@@ -30,6 +30,7 @@ import {
   DEFAULT_COMPACTION_METHOD_ORDER as OMP_DEFAULT_COMPACTION_METHOD_ORDER,
   resolveCompactionMethodOrder as ompResolveCompactionMethodOrder
 } from '@oh-my-pi/pi-coding-agent/session/compaction-methods'
+import { cfgTaskStructured as ompTaskStructured } from '@oh-my-pi/pi-coding-agent/task/settings'
 import { getAgentDbPath as ompGetAgentDbPath, logger as ompLogger } from '@oh-my-pi/pi-utils'
 
 import type { PhiCompactionMethod } from './types'
@@ -170,6 +171,10 @@ export const DEFAULT_COMPACTION_METHOD_ORDER: readonly PhiCompactionMethod[] =
 
 export function resolveCompactionMethodOrder(value: unknown): PhiCompactionMethod[] {
   return ompResolveCompactionMethodOrder(value)
+}
+
+export function enforceStructuredNativeTaskResults(settings: OmpSettings): void {
+  ompTaskStructured.override(settings, true)
 }
 
 export interface PhiModel {

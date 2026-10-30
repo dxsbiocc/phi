@@ -62,6 +62,7 @@ export interface PromptSuccessResult {
   path: string | null
   phiSessionId?: string
   sessionGeneration: number
+  userMessageEventId?: string
 }
 
 export type PromptResult = PromptSuccessResult

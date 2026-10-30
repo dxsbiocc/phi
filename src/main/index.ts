@@ -383,7 +383,7 @@ import { createBeforeQuitHandler } from './app-quit'
 import { createMainRuntimeContext } from './app-state/main-runtime-context'
 import { createSessionKeyLinking } from './session-runtime/session-key-linking'
 import { createSessionOrigins } from './session-runtime/session-origins'
-import { createSessionResolution } from './session-runtime/session-resolution'
+import { createSessionResolution, rejectsRoutedChange } from './session-runtime/session-resolution'
 import { createCurrentSessionPayload } from './session-runtime/current-session-payload'
 import { createSessionSwitching } from './session-runtime/session-switching'
 import { createSessionCleanup } from './session-runtime/session-cleanup'
@@ -2933,8 +2933,7 @@ async function applyNextRunConfiguration(
     snapshot.path,
     snapshot.cwd
   )
-  if (session.runtimeSessionId && ownsRemoteRuntimeSession(session.runtimeSessionId)) {
-    // The selected RPC generation already owns this saved policy. Unsupported changes are explicit.
+  if (rejectsRoutedChange(session.runtimeSessionId, manifest, ownsRemoteRuntimeSession)) {
     const selection = sessionResolution.resolveSessionModelSelection(sessionKey, snapshot)
     if (
       !selection ||

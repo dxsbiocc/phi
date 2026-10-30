@@ -15,6 +15,7 @@ import { isAbsolute, join, relative, sep } from 'node:path'
 
 import type { ProjectLocation } from '../../../shared/projectLocation'
 import type { AutoCompactionOverrides } from '../../../shared/contextUsageTypes'
+import { messageContentTitleText } from '../../../shared/sessionTitle'
 import { fieldsFromMode, modeFromFields, type WorkMode } from '../../../shared/sessionMode'
 import { getPhiAgentDir } from '../runtime-paths'
 import { readManifestFile, writeManifestFile } from './manifest-file'
@@ -404,6 +405,17 @@ export function readSessionEvents(sessionId: string): StoredSessionEvent[] {
     .map((line) => JSON.parse(line) as StoredSessionEvent)
 }
 
+export function sessionDisplayTitleFromManifest(manifest: PhiSessionManifest): string {
+  const title = messageContentTitleText(manifest.title)
+  if (title) return title
+  const firstUserMessage = readSessionEvents(manifest.sessionId).find(
+    (event) => event.type === 'user_message' && typeof event.content === 'string'
+  )
+  return typeof firstUserMessage?.content === 'string'
+    ? messageContentTitleText(firstUserMessage.content)
+    : ''
+}
+
 function replaceForkReferences(value: unknown, sourceId: string, forkId: string): unknown {
   if (Array.isArray(value))
     return value.map((item) => replaceForkReferences(item, sourceId, forkId))
@@ -475,13 +487,14 @@ export function forkPhiSession(
     (event, index) => index > selected && event.type === 'user_message'
   )
   const included = events.slice(0, nextUser < 0 ? undefined : nextUser)
+  const sourceDisplayTitle = sessionDisplayTitleFromManifest(source)
   const fork = createPhiSession({
     kind: source.kind,
     projectId: source.projectId,
     projectLocation: source.projectLocation,
     cwd: source.cwd,
     cwdRealPath: source.cwdRealPath,
-    title: source.title ? `${source.title}（分叉）` : '分叉会话',
+    title: sourceDisplayTitle ? `${sourceDisplayTitle}（分叉）` : '分叉会话',
     ...(kernelRuntimeRef ? {} : { runtimeSessionPath }),
     remoteRuntime: source.remoteRuntime,
     permissionMode: source.permissionMode,

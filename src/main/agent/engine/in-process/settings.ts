@@ -30,7 +30,11 @@ import {
   cfgSearxngEngines,
   cfgSearxngToken
 } from '@oh-my-pi/pi-coding-agent/web/settings'
-import { DEFAULT_COMPACTION_METHOD_ORDER, resolveCompactionMethodOrder } from '../omp-internals'
+import {
+  DEFAULT_COMPACTION_METHOD_ORDER,
+  enforceStructuredNativeTaskResults,
+  resolveCompactionMethodOrder
+} from '../omp-internals'
 import { SEARCH_PROVIDER_CHOICES } from '../omp-web-search'
 
 import type { PhiCompactionSettings, PhiSettings, PhiWebSearchProvider } from '../types'
@@ -217,6 +221,16 @@ const APPROVAL_WAIT_HANDLER_TIMEOUT_MS = 2_147_483_647
  */
 export function allowApprovalWaits(settings: Settings): void {
   cfgExtensionHandlersToolCallTimeoutMs.override(settings, APPROVAL_WAIT_HANDLER_TIMEOUT_MS)
+}
+
+/**
+ * OMP's unstructured native task contract accepts only a non-empty final prose turn. A child
+ * that completes through tools and then clean-stops without prose loses its useful result and
+ * becomes SUBAGENT_WARNING_EMPTY_MESSAGE. Phi keeps the native task tool, but requires its
+ * yield contract so completion is explicit and retryable on both desktop execution routes.
+ */
+export function ensureStructuredNativeTaskResults(settings: Settings): void {
+  enforceStructuredNativeTaskResults(settings)
 }
 
 export function applyAutoCompactionOverrides(

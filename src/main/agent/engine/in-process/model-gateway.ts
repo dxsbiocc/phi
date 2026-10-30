@@ -4,6 +4,7 @@ import type { AuthStorage, FetchImpl } from '@oh-my-pi/pi-ai'
 import { createAuthGatewayRouter } from '@oh-my-pi/pi-ai/auth-gateway/server'
 import { transportFetch } from '@oh-my-pi/pi-ai/utils/transport-fetch'
 import { logger } from '@oh-my-pi/pi-utils'
+import { writeAppLog, type AppLogEntry } from '../../app-logger'
 import {
   parseModelGatewayLease,
   type CreateModelGatewayLeaseParams,
@@ -54,6 +55,7 @@ interface LeaseState {
 }
 interface GatewayDependencies {
   readonly streamLimits?: GatewayStreamLimits
+  readonly log?: (entry: AppLogEntry) => void
   context(): Promise<RuntimeContext>
   model(context: RuntimeContext, ref: ModelGatewayModelRef): Promise<RuntimeModel | undefined>
 }
@@ -307,12 +309,14 @@ export class ModelGatewayManager {
   private readonly leases = new Map<string, LeaseState>()
   private readonly claims = new Map<string, { generation: number; leaseId: string }>()
   private readonly streamLimits: GatewayStreamLimits
+  private readonly log: (entry: AppLogEntry) => void
   constructor(
     private readonly dependencies: GatewayDependencies = {
       context: getContext,
       model: modelBySelector
     }
   ) {
+    this.log = dependencies.log ?? writeAppLog
     const limits = dependencies.streamLimits ?? GATEWAY_STREAM_LIMITS
     if (
       Object.keys(GATEWAY_STREAM_LIMITS).some((key) => {
@@ -340,22 +344,36 @@ export class ModelGatewayManager {
     })
   }
 
+  private logInputRejection(state: LeaseState, error: GatewayInputError): void {
+    try {
+      this.log({
+        level: 'warn',
+        event: 'model_gateway_request_rejected',
+        sessionId: state.result.sessionId,
+        metadata: {
+          status: error.status,
+          reason: error.reason,
+          ...(error.field ? { field: error.field } : {})
+        }
+      })
+    } catch {
+      // Diagnostic logging must never change the fixed gateway response.
+    }
+  }
+
   private async resolveModels(
     context: RuntimeContext,
     refs: readonly ModelGatewayModelRef[]
   ): Promise<Map<string, RuntimeModel>> {
-    const available = new Set(
-      context.modelRegistry
-        .getAvailable()
-        .map((model) => JSON.stringify([model.provider, model.id]))
-    )
     const models = new Map<string, RuntimeModel>()
     for (const ref of refs) {
-      if (!available.has(JSON.stringify([ref.provider, ref.id]))) {
-        throw new Error('Requested model is unavailable')
-      }
       const selected = await this.dependencies.model(context, ref)
-      if (!selected || selected.provider !== ref.provider || selected.id !== ref.id) {
+      if (
+        !selected ||
+        selected.provider !== ref.provider ||
+        selected.id !== ref.id ||
+        !context.modelRegistry.hasConfiguredAuth(selected)
+      ) {
         throw new Error('Requested model is unavailable')
       }
       if (
@@ -574,6 +592,7 @@ export class ModelGatewayManager {
       })
     } catch (error) {
       controller.abort()
+      if (error instanceof GatewayInputError) this.logInputRejection(state, error)
       return failure(error instanceof GatewayInputError ? error.status : 502)
     } finally {
       if (!streamOwnsRequest) finish()

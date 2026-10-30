@@ -8339,7 +8339,8 @@ test(
     assert.deepEqual(await prompt, {
       path: 'phi-session:phi-1',
       phiSessionId: 'phi-1',
-      sessionGeneration: 0
+      sessionGeneration: 0,
+      userMessageEventId: 'event-1'
     })
     assert.equal(((await app.invoke('sessions:current')) as { path: string }).path, 'B')
     await tick()
@@ -13149,6 +13150,55 @@ test(
 
     assert.equal(session.model?.id, 'gpt-test')
     assert.equal(session.thinkingLevel, 'medium')
+  }
+)
+
+test(
+  'main IPC: model and thinking selection during a local kernel run apply to the next prompt',
+  {
+    timeout: 3000
+  },
+  async () => {
+    const session = new FakeSession('fresh.jsonl')
+    session.model = { provider: 'anthropic', id: 'claude-test' }
+    session.thinkingLevel = 'high'
+    session.hold = true
+    let routed = false
+    const app = await harness(async () => session, { routedRuntime: () => routed })
+    const current = (await app.invoke('sessions:create')) as { phiSessionId: string }
+    const prompt = app.invoke('agent:prompt', 'first')
+    await waitUntil(() => session.promptTexts.includes('first'))
+    const kernelRuntimeRef = {
+      kind: 'phi-kernel',
+      version: 1,
+      kernelSessionId: 'local-kernel-session',
+      host: { kind: 'local', agentDir: '/agent' }
+    }
+    delete app.createdPhiSessions[0].runtimeSessionPath
+    app.createdPhiSessions[0].kernelRuntimeRef = kernelRuntimeRef
+    app.updatedSessionManifests.push({
+      sessionId: current.phiSessionId,
+      patch: {
+        runtimeSessionPath: undefined,
+        kernelRuntimeRef
+      }
+    })
+    routed = true
+
+    await app.invoke('models:select', 'openai', 'gpt-test')
+    await app.invoke('thinking:select', 'medium')
+
+    assert.equal(session.model.id, 'claude-test')
+    assert.equal(session.thinkingLevel, 'high')
+
+    session.finish.resolve()
+    await prompt
+    session.hold = false
+    await app.invoke('agent:prompt', 'second')
+
+    assert.equal(session.model.id, 'gpt-test')
+    assert.equal(session.thinkingLevel, 'medium')
+    assert.deepEqual(session.promptTexts, ['first', 'second'])
   }
 )
 

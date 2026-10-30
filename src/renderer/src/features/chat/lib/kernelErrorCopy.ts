@@ -94,10 +94,19 @@ export const kernelRecoveryActions: Readonly<Record<ProtocolErrorCode, KernelRec
 }
 
 const prefix = /\[PHI_KERNEL:([A-Z_]+)\]/u
+const remoteModelUnavailableDetail = 'Selected remote kernel model is unavailable.'
+const remoteModelUnavailableCopy = defineCopy(
+  {
+    message: `${remoteModelUnavailableDetail} Choose another model for this remote project.`
+  },
+  {
+    message: `所选模型不适用于远程项目，请选择其他模型。详细信息：${remoteModelUnavailableDetail}`
+  }
+)
 
-export function kernelErrorPresentation(error: unknown): KernelErrorPresentation | undefined {
-  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
-  const code = message.match(prefix)?.[1]
+export function kernelErrorPresentationFromCode(
+  code: unknown
+): KernelErrorPresentation | undefined {
   if (!code || !protocolErrorCodes.includes(code as ProtocolErrorCode)) return undefined
   const typed = code as ProtocolErrorCode
   const action = kernelRecoveryActions[typed]
@@ -109,7 +118,16 @@ export function kernelErrorPresentation(error: unknown): KernelErrorPresentation
   }
 }
 
+export function kernelErrorPresentation(error: unknown): KernelErrorPresentation | undefined {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  return kernelErrorPresentationFromCode(message.match(prefix)?.[1])
+}
+
 export function localizeKernelError(error: unknown): unknown {
   const presentation = kernelErrorPresentation(error)
-  return presentation ? new Error(`${presentation.message} ${presentation.actionLabel}`) : error
+  if (presentation) return new Error(`${presentation.message} ${presentation.actionLabel}`)
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  return message.endsWith(remoteModelUnavailableDetail)
+    ? new Error(remoteModelUnavailableCopy.message)
+    : error
 }

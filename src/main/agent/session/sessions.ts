@@ -16,7 +16,7 @@ import {
   findPhiSessionById,
   findPhiSessionByRuntimePath,
   listPhiSessions,
-  readSessionEvents,
+  sessionDisplayTitleFromManifest,
   updateSessionManifest,
   type LastRunOutcome,
   type PhiSessionManifest,
@@ -100,16 +100,7 @@ function titleFromManifest(manifest: PhiSessionManifest): string | undefined {
 }
 
 function firstUserMessageFromManifest(manifest: PhiSessionManifest): string {
-  const title = titleFromManifest(manifest)
-  if (title) return title
-  return firstUserMessageContentFromManifest(manifest)
-}
-
-function firstUserMessageContentFromManifest(manifest: PhiSessionManifest): string {
-  const userEvent = readSessionEvents(manifest.sessionId).find(
-    (event) => event.type === 'user_message' && typeof event.content === 'string'
-  )
-  return typeof userEvent?.content === 'string' ? messageContentTitleText(userEvent.content) : ''
+  return sessionDisplayTitleFromManifest(manifest)
 }
 
 function phiOnlySummary(manifest: PhiSessionManifest): SessionSummary {

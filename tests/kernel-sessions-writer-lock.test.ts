@@ -62,6 +62,42 @@ test('lock held by the current live process is rejected', async () => {
   }
 })
 
+test('an unverified self token is never treated as proof of live PID reuse', async () => {
+  const { root, path } = lockFixture()
+  try {
+    writeSessionWriterLockSync(path, {
+      pid: process.pid,
+      kernelInstanceId: 'unverified-live-kernel',
+      startedAt: `darwin:unverified-self:${process.pid}:fixture`,
+      hostname: hostname()
+    })
+
+    await assert.rejects(
+      acquireSessionWriterLock({
+        path,
+        kernelInstanceId: 'contender-kernel',
+        startedAt: 'verified-contender-token'
+      }),
+      SessionWriterBusyError
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test(
+  'a Darwin ps permission failure produces a fail-closed self token',
+  { skip: process.platform !== 'darwin' && 'the packaged regression is macOS-specific' },
+  async () => {
+    const denied = Object.assign(new Error('operation not permitted'), { code: 'EPERM' })
+    const startedAt = await currentProcessStartedAt({
+      darwinProbe: async () => Promise.reject(denied)
+    })
+
+    assert.match(startedAt, new RegExp(`^darwin:unverified-self:${process.pid}:[0-9a-f-]+$`))
+  }
+)
+
 test('lock from a foreign host is never stolen even when its pid is absent locally', async () => {
   const { root, path } = lockFixture()
   try {
@@ -93,7 +129,10 @@ test(
     process.env.LC_ALL = 'zh_CN.UTF-8'
     process.env.LANG = 'zh_CN.UTF-8'
     try {
-      assert.match(await currentProcessStartedAt(), /^darwin:\d+$/)
+      assert.match(
+        await currentProcessStartedAt(),
+        /^darwin:(?:\d+|unverified-self:\d+:[0-9a-f-]+)$/
+      )
     } finally {
       for (const [key, value] of Object.entries(saved)) {
         if (value === undefined) delete process.env[key]

@@ -77,6 +77,35 @@ const recentUserImagesSchema = z
     'Recent user images exceed the bounded host-call payload'
   )
 
+const nativeTaskNoticeParamsSchema = z
+  .object({
+    originSessionId: boundedIdSchema,
+    nativeTaskId: boundedIdSchema,
+    agent: nonEmptyStringSchema.max(512),
+    createdAt: z.string().max(64).optional()
+  })
+  .strict()
+
+const nativeTaskStepSchema = z
+  .object({
+    id: boundedIdSchema,
+    toolName: nonEmptyStringSchema.max(512),
+    status: z.enum(['running', 'done', 'error']),
+    args: jsonValueSchema.optional(),
+    output: z
+      .string()
+      .max(512 * 1024)
+      .optional(),
+    error: z
+      .string()
+      .max(64 * 1024)
+      .optional(),
+    createdAt: z.string().max(64).optional(),
+    completedAt: z.string().max(64).optional(),
+    durationMs: z.number().finite().nonnegative().optional()
+  })
+  .strict()
+
 const service = (
   timeoutMs: number,
   runScoped: boolean | 'optional'
@@ -463,7 +492,11 @@ export const KERNEL_HOST_CAPABILITIES = [
   'wrapperJob.wait',
   'agentRun.finished',
   'agentRun.step',
-  'agentRun.reported'
+  'agentRun.reported',
+  'agentRun.nativeTaskStarted',
+  'agentRun.nativeTaskBackground',
+  'agentRun.nativeTaskStep',
+  'agentRun.nativeTaskFinished'
 ] as const
 
 export type KernelHostCapabilityName = (typeof KERNEL_HOST_CAPABILITIES)[number]
@@ -935,6 +968,45 @@ export const KERNEL_HOST_CAPABILITY_REGISTRY = {
   },
   'agentRun.reported': {
     params: z.object({ originSessionId: boundedIdSchema, runId: boundedIdSchema }).strict(),
+    result: z.object({ ok: z.literal(true) }).strict(),
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
+  },
+  'agentRun.nativeTaskStarted': {
+    params: nativeTaskNoticeParamsSchema
+      .extend({
+        task: nonEmptyStringSchema.max(64 * 1024),
+        parentToolCallId: boundedIdSchema
+      })
+      .strict(),
+    result: z.object({ ok: z.literal(true) }).strict(),
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
+  },
+  'agentRun.nativeTaskBackground': {
+    params: nativeTaskNoticeParamsSchema,
+    result: z.object({ ok: z.literal(true) }).strict(),
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
+  },
+  'agentRun.nativeTaskStep': {
+    params: nativeTaskNoticeParamsSchema.extend({ step: nativeTaskStepSchema }).strict(),
+    result: z.object({ ok: z.literal(true) }).strict(),
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
+  },
+  'agentRun.nativeTaskFinished': {
+    params: nativeTaskNoticeParamsSchema
+      .extend({
+        state: z.enum(['done', 'error', 'cancelled']),
+        report: z
+          .string()
+          .max(256 * 1024)
+          .optional(),
+        error: z
+          .string()
+          .max(64 * 1024)
+          .optional(),
+        durationMs: z.number().finite().nonnegative().optional(),
+        toolCalls: z.number().int().nonnegative().optional()
+      })
+      .strict(),
     result: z.object({ ok: z.literal(true) }).strict(),
     ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
   }

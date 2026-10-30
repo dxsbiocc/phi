@@ -293,6 +293,7 @@ export async function compactCurrentSession(
   )
   if (
     !options.sessions.runtimeSessionPathForSnapshot(sessionKey, snapshot) &&
+    !manifest?.kernelRuntimeRef &&
     !(manifest?.projectLocation?.kind === 'ssh' && manifest.runtimeRef)
   ) {
     throw new Error('当前会话暂无可压缩的历史')

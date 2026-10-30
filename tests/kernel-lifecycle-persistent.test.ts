@@ -483,6 +483,69 @@ function receipts(fixture: SocketKernelFixture, sessionId: string): RunReceipt[]
 }
 
 test(
+  'remote socket kernel request is accepted by the desktop model gateway validator',
+  { timeout: 30_000 },
+  async (t) => {
+    const fixture = await startSocketKernel(t, 5_000)
+    if (!fixture) return
+    const client = fixture.initialClient
+    try {
+      const created = record(
+        await client.request('session.create', {
+          cwd: fixture.base.cwd,
+          model: { provider: fixture.base.model.provider, id: fixture.base.model.id },
+          sessionManager: { kind: 'memory' },
+          noTools: 'all',
+          enableToolApproval: false,
+          autoCompaction: { enabled: false }
+        })
+      )
+      const requestCount = fixture.modelGateway.requests.length
+      fixture.modelGateway.enqueue({ text: 'desktop gateway accepted remote kernel request' })
+      await client.request(
+        'session.prompt',
+        { text: 'send the remote provider request' },
+        { sessionId: String(created.sessionId) }
+      )
+      await waitFor(
+        () => fixture.modelGateway.requests.length === requestCount + 1,
+        'remote kernel model request'
+      )
+
+      const captured = fixture.modelGateway.requests.at(-1)
+      assert.ok(captured)
+      assert.equal(captured.modelId, `${fixture.base.model.provider}/${fixture.base.model.id}`)
+      assert.equal(
+        typeof record(captured.options).credentialId,
+        'number',
+        'the remote broker credential row must reach the exact native request shape'
+      )
+
+      const desktopLease = await fixture.base.createModelGatewayLease({
+        sessionId: 'remote-shape-validation',
+        generation: 1,
+        models: [{ provider: fixture.base.model.provider, id: fixture.base.model.id }]
+      })
+      fixture.base.provider.enqueue({ text: 'real desktop gateway accepted remote shape' })
+      const response = await fetch(`http://127.0.0.1:${desktopLease.localPort}/v1/pi/stream`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${desktopLease.bearerToken}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(captured)
+      })
+      const responseBody = await response.text()
+      assert.equal(response.status, 200, responseBody)
+      assert.match(responseBody, /real desktop gateway accepted remote shape/u)
+    } finally {
+      await client.close()
+      await fixture.close()
+    }
+  }
+)
+
+test(
   'client-proxy models survive creating session B while session A waits in a native tool call',
   { timeout: 30_000 },
   async (t) => {

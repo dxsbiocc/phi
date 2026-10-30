@@ -225,6 +225,7 @@ test('forkPhiSession copies history through the selected turn and owns its attac
 
     const fork = forkPhiSession(source.sessionId, first.eventId, '/runtime/fork.jsonl')
     const forkEvents = readSessionEvents(fork.sessionId)
+    assert.equal(fork.manifest.title, 'first（分叉）')
     assert.deepEqual(
       forkEvents.map((event) => event.type),
       ['user_message', 'assistant_message_finalized']

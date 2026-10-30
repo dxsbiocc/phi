@@ -26,13 +26,19 @@ export interface TaskAdmissionFixture {
   errors: Error[]
   close(): Promise<void>
 }
-function emit(res: ServerResponse, call?: Record<string, unknown>): void {
+function emit(
+  res: ServerResponse,
+  call?: Record<string, unknown>,
+  finalText: string | null = 'TASK_ADMISSION_COMPLETE'
+): void {
   res.writeHead(200, { 'content-type': 'text/event-stream' })
   for (const [delta, finish] of [
     [
       call
         ? { role: 'assistant', tool_calls: [call] }
-        : { role: 'assistant', content: 'TASK_ADMISSION_COMPLETE' },
+        : finalText === null
+          ? { role: 'assistant' }
+          : { role: 'assistant', content: finalText },
       null
     ],
     [{}, call ? 'tool_calls' : 'stop']
@@ -63,6 +69,8 @@ export async function taskAdmissionCli(
     pythonOnlyPreflight?: boolean
     hostStart?: boolean
     hostStartDelayMs?: number
+    structured?: boolean
+    emptyChildFinal?: boolean
   } = {}
 ): Promise<TaskAdmissionFixture> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'phi-task-admission-')))
@@ -123,7 +131,8 @@ export async function taskAdmissionCli(
       const tools = body.tools as Array<{ function: { name: string } }>
       const actor = tools.some((tool) => tool.function.name === 'task') ? 'root' : 'child'
       requests.push({ actor, body })
-      if (requests.length > 8) throw new Error('Unexpected task seam continuation')
+      if (requests.length > (options.emptyChildFinal ? 24 : 8))
+        throw new Error('Unexpected task seam continuation')
       if (actor === 'root' && ++rootHits === 1)
         emit(res, {
           index: 0,
@@ -141,6 +150,17 @@ export async function taskAdmissionCli(
             })
           }
         })
+      else if (actor === 'child' && options.structured) {
+        emit(res, {
+          index: 0,
+          id: 'real-child-yield',
+          type: 'function',
+          function: {
+            name: 'yield',
+            arguments: JSON.stringify({ data: 'README first\nREADME second\nREADME third' })
+          }
+        })
+      } else if (actor === 'child' && options.emptyChildFinal) emit(res, undefined, null)
       else emit(res)
     })().catch((error) => {
       errors.push(error instanceof Error ? error : new Error(String(error)))
@@ -235,7 +255,7 @@ export async function taskAdmissionCli(
         async: { enabled: options.hostStart === true },
         task: {
           batch: false,
-          structured: false,
+          structured: options.structured === true,
           isolation: { enabled: false },
           enableEffort: false,
           speculativeLaunch: false

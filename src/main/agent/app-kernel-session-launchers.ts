@@ -1,7 +1,7 @@
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
 
-import { writeAppLog } from './app-logger'
+import { writeAppLog, type AppLogEntry } from './app-logger'
 import { getProject } from './projects'
 import { resolveRemoteWorkspaceHostBinding } from './remote-workspace-boundary'
 import { openRemoteRuntimeWorkspace } from './remote-runtime/workspace'
@@ -23,6 +23,11 @@ import { facadeBindingHash } from './engine/rpc/facade-session-driver'
 import { probeRemoteKernelHistory, readAndPlanKernelHistory } from './engine/kernel-history'
 import { getSessionDir } from './session/session-store'
 import { AppKernelDesktopServices } from './app-kernel-desktop-services'
+import { isModelEnabled, readModelAvailability } from './model-availability'
+import type { ModelAvailabilitySettings } from '../../shared/modelAvailabilityTypes'
+import type { ModelGatewayModelRef } from './engine/model-gateway-types'
+import type { RuntimeModel, RuntimeSnapshot } from './engine/types'
+import { isSelectableRuntimeModel } from './runtime/runtime-model-selection'
 import type {
   AppRemoteSessionRoutingDependencies,
   AppRemoteSessionRoutingOptions
@@ -46,10 +51,35 @@ function kernelBuildDirectory(
 }
 
 // Kernel stderr carries the real cause behind INTERNAL protocol errors.
+export function kernelDiagnosticLogEntry(
+  target: 'local' | 'remote',
+  text: string
+): AppLogEntry | undefined {
+  const raw = text.trim()
+  if (!raw) return undefined
+  try {
+    const diagnostic = JSON.parse(raw) as Record<string, unknown>
+    const message =
+      typeof diagnostic.message === 'string' && diagnostic.message ? diagnostic.message : raw
+    return {
+      level: diagnostic.level === 'error' ? 'error' : 'warn',
+      event: 'kernel_diagnostic',
+      metadata: {
+        target,
+        message,
+        ...(diagnostic.details && typeof diagnostic.details === 'object'
+          ? { details: diagnostic.details }
+          : {})
+      }
+    }
+  } catch {
+    return { level: 'warn', event: 'kernel_diagnostic', metadata: { target, message: raw } }
+  }
+}
+
 function logKernelDiagnostic(target: 'local' | 'remote', text: string): void {
-  const message = text.trim()
-  if (message)
-    writeAppLog({ level: 'warn', event: 'kernel_diagnostic', metadata: { target, message } })
+  const entry = kernelDiagnosticLogEntry(target, text)
+  if (entry) writeAppLog(entry)
 }
 
 // A packaged appPath is the app.asar archive (a file), so spawning there fails
@@ -62,8 +92,57 @@ export function kernelLaunchCwd(
 }
 
 let kernelModelGatewayGeneration = 0
+const MODEL_GATEWAY_MODEL_LIMIT = 256
 
 type OwnedModelGatewayLease = Awaited<ReturnType<PhiEngineBridge['createModelGatewayLease']>>
+
+/**
+ * A desktop snapshot contains every built-in provider model (currently thousands), while a
+ * gateway lease is deliberately bounded. Keep the selected model first, then publish only
+ * configured, enabled models that a live remote kernel can actually use.
+ */
+export function selectRemoteKernelGatewayModels(
+  snapshot: RuntimeSnapshot,
+  selected: RuntimeModel,
+  availability: ModelAvailabilitySettings
+): readonly ModelGatewayModelRef[] {
+  const configured = new Set(
+    snapshot.providers
+      .filter((provider) => provider.status?.configured === true)
+      .map((provider) => provider.id)
+  )
+  for (const credential of snapshot.credentials) configured.add(credential.providerId)
+  const selectedAvailable = snapshot.models.some(
+    (model) => model.provider === selected.provider && model.id === selected.id
+  )
+  if (
+    !selectedAvailable ||
+    selected.provider === 'cursor' ||
+    !isSelectableRuntimeModel(selected) ||
+    !isModelEnabled(availability, selected.provider, selected.id)
+  ) {
+    throw new Error('Selected remote kernel model is unavailable.')
+  }
+  const refs: ModelGatewayModelRef[] = []
+  const seen = new Set<string>()
+  for (const model of [selected, ...snapshot.models]) {
+    const selectedModel = model.provider === selected.provider && model.id === selected.id
+    if (
+      model.provider === 'cursor' ||
+      !isSelectableRuntimeModel(model) ||
+      (!selectedModel && !configured.has(model.provider)) ||
+      !isModelEnabled(availability, model.provider, model.id)
+    ) {
+      continue
+    }
+    const key = JSON.stringify([model.provider, model.id])
+    if (seen.has(key)) continue
+    seen.add(key)
+    refs.push(Object.freeze({ provider: model.provider, id: model.id }))
+    if (refs.length === MODEL_GATEWAY_MODEL_LIMIT) break
+  }
+  return Object.freeze(refs)
+}
 
 type RemoteTarget = {
   remote: NonNullable<PhiSessionCreateParams['remoteProject']>
@@ -117,10 +196,14 @@ async function openRemoteModelProxy(
   target: RemoteTarget,
   signal: AbortSignal
 ): Promise<{ gateway: OwnedModelGatewayLease; tunnel: RemoteReverseTunnel }> {
-  const catalog = (await getPhiEngine().models.snapshot({ agentDir: params.agentDir })).models
-    .filter((model) => model.provider !== 'cursor')
-    .map((model) => ({ provider: model.provider, id: model.id }))
-  if (!catalog.length) throw new Error('Remote kernel needs at least one proxy model.')
+  const selected = params.model
+  if (!selected) throw new Error('Remote kernel launch requires a selected model.')
+  const snapshot = await getPhiEngine().models.snapshot({ agentDir: params.agentDir })
+  const catalog = selectRemoteKernelGatewayModels(
+    snapshot,
+    selected,
+    readModelAvailability(params.agentDir)
+  )
   const gateway = await getPhiEngineBridge().createModelGatewayLease(
     {
       sessionId: `kernel-${target.remote.location.hostProfileId}`,

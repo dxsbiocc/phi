@@ -72,6 +72,18 @@ export interface SessionResolution {
 
 type ProjectForSession = SessionResolution['projectForSession']
 
+export function rejectsRoutedChange(
+  runtimeSessionId: string | undefined,
+  manifest: PhiSessionManifest | null,
+  ownsRuntimeSession: (sessionId: string) => boolean
+): boolean {
+  return Boolean(
+    runtimeSessionId &&
+    ownsRuntimeSession(runtimeSessionId) &&
+    manifest?.kernelRuntimeRef?.host.kind !== 'local'
+  )
+}
+
 export function createSessionResolution<TPromptRun extends PhiSessionPromptRun>(
   deps: SessionResolutionDeps<TPromptRun>
 ): SessionResolution {

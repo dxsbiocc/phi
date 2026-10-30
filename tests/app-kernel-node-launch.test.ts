@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   createAppKernelSessionLaunchers,
+  kernelDiagnosticLogEntry,
   kernelLaunchCwd
 } from '../src/main/agent/app-kernel-session-launchers'
 import { KernelSessionFactory } from '../src/main/agent/engine/kernel-session-factory'
@@ -26,6 +27,34 @@ const ENVIRONMENT_KEYS = [
   'TMPDIR',
   'USERPROFILE'
 ] as const
+
+test('kernel diagnostics retain the underlying INTERNAL handler cause', () => {
+  assert.deepEqual(
+    kernelDiagnosticLogEntry(
+      'local',
+      JSON.stringify({
+        level: 'error',
+        message: 'Kernel method handler failed.',
+        details: {
+          method: 'session.create',
+          error: "EPERM: operation not permitted, posix_spawn '/bin/ps'"
+        }
+      })
+    ),
+    {
+      level: 'error',
+      event: 'kernel_diagnostic',
+      metadata: {
+        target: 'local',
+        message: 'Kernel method handler failed.',
+        details: {
+          method: 'session.create',
+          error: "EPERM: operation not permitted, posix_spawn '/bin/ps'"
+        }
+      }
+    }
+  )
+})
 
 test('Node main launches a kernel-routed faux-provider run without loading the SDK', async () => {
   assert.equal(process.versions.bun, undefined, 'the host side of this test must run under Node')

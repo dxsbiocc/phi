@@ -2,23 +2,61 @@ import type { Context, SimpleStreamOptions } from '@oh-my-pi/pi-ai'
 
 export const MAX_GATEWAY_BODY_BYTES = 64 * 1024 * 1024
 
+export type GatewayInputRejectionReason =
+  | 'body_aborted'
+  | 'body_content_length_invalid'
+  | 'body_invalid_json'
+  | 'body_missing'
+  | 'body_too_complex'
+  | 'body_too_large'
+  | 'context_invalid_shape'
+  | 'options_invalid_shape'
+  | 'options_invalid_value'
+  | 'options_unknown_field'
+  | 'payload_invalid_shape'
+  | 'payload_unknown_field'
+
+function safeFieldName(value: string | undefined): string | undefined {
+  return value && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/u.test(value) ? value : undefined
+}
+
 export class GatewayInputError extends Error {
-  constructor(readonly status: number = 400) {
+  readonly field: string | undefined
+
+  constructor(
+    readonly status: number = 400,
+    readonly reason: GatewayInputRejectionReason = status === 413
+      ? 'body_too_large'
+      : 'payload_invalid_shape',
+    field?: string
+  ) {
     super(status === 413 ? 'Model request exceeds its input limit' : 'Invalid model request')
+    this.field = safeFieldName(field)
   }
 }
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
-function reject(): never {
-  throw new GatewayInputError()
+function reject(
+  reason: GatewayInputRejectionReason = 'payload_invalid_shape',
+  field?: string
+): never {
+  throw new GatewayInputError(400, reason, field)
 }
 function text(value: unknown, limit = MAX_GATEWAY_BODY_BYTES): value is string {
   return typeof value === 'string' && value.length <= limit
 }
-function keys(value: Record<string, unknown>, allowed: readonly string[]): void {
-  if (Object.keys(value).some((key) => !allowed.includes(key))) reject()
+function keys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  reason: Extract<
+    GatewayInputRejectionReason,
+    'options_unknown_field' | 'payload_unknown_field'
+  > = 'options_unknown_field'
+): void {
+  const unknown = Object.keys(value).find((key) => !allowed.includes(key))
+  if (unknown) reject(reason, unknown)
 }
 function number(value: unknown, min: number, max: number, integer = false): boolean {
   return (
@@ -30,12 +68,25 @@ function number(value: unknown, min: number, max: number, integer = false): bool
   )
 }
 
+/** Names the exceeded limit and request section for diagnostics; never includes request values. */
+function complexityField(limit: 'depth' | 'nodes', path: readonly string[], body: unknown): string {
+  const [section, group, index] = path
+  if (section !== 'context') return [limit, section ?? 'body'].join('.')
+  if (group !== 'tools') return [limit, section, group ?? 'root'].join('.')
+  const tools = record(body) && record(body.context) ? body.context.tools : undefined
+  const tool = Array.isArray(tools) ? (tools[Number(index)] as unknown) : undefined
+  const name = record(tool) && typeof tool.name === 'string' ? tool.name : index
+  return [limit, section, group, name ?? 'root'].join('.').slice(0, 64)
+}
+
 /** Bound the actual read too: Content-Length is advisory and may be absent. */
 export async function readGatewayJson(request: Request, signal: AbortSignal): Promise<unknown> {
   const length = request.headers.get('content-length')
-  if (length && (!/^\d+$/u.test(length) || Number(length) > MAX_GATEWAY_BODY_BYTES))
-    throw new GatewayInputError(413)
-  if (!request.body) reject()
+  if (length && !/^\d+$/u.test(length))
+    throw new GatewayInputError(400, 'body_content_length_invalid')
+  if (length && Number(length) > MAX_GATEWAY_BODY_BYTES)
+    throw new GatewayInputError(413, 'body_too_large')
+  if (!request.body) reject('body_missing')
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []
   let size = 0
@@ -44,13 +95,13 @@ export async function readGatewayJson(request: Request, signal: AbortSignal): Pr
   }
   signal.addEventListener('abort', abort, { once: true })
   try {
-    if (signal.aborted) reject()
+    if (signal.aborted) reject('body_aborted')
     while (true) {
       const next = await reader.read()
-      if (signal.aborted) reject()
+      if (signal.aborted) reject('body_aborted')
       if (next.done) break
       size += next.value.byteLength
-      if (size > MAX_GATEWAY_BODY_BYTES) throw new GatewayInputError(413)
+      if (size > MAX_GATEWAY_BODY_BYTES) throw new GatewayInputError(413, 'body_too_large')
       chunks.push(next.value)
     }
     const bytes = new Uint8Array(size)
@@ -61,21 +112,24 @@ export async function readGatewayJson(request: Request, signal: AbortSignal): Pr
     }
     const parsed: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
     let nodes = 0
-    const visit = (value: unknown, depth: number): void => {
-      if (++nodes > 100_000 || depth > 64) reject()
-      if (Array.isArray(value)) value.forEach((item) => visit(item, depth + 1))
-      else if (record(value)) {
-        for (const item of Object.values(value)) {
-          visit(item, depth + 1)
+    const visit = (value: unknown, depth: number, path: readonly string[]): void => {
+      if (++nodes > 100_000) reject('body_too_complex', complexityField('nodes', path, parsed))
+      if (depth > 64) reject('body_too_complex', complexityField('depth', path, parsed))
+      const next = (key: string): readonly string[] => (path.length < 3 ? [...path, key] : path)
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => visit(item, depth + 1, next(String(index))))
+      } else if (record(value)) {
+        for (const [key, item] of Object.entries(value)) {
+          visit(item, depth + 1, next(key))
         }
       }
     }
-    visit(parsed, 0)
+    visit(parsed, 0, [])
     return parsed
   } catch (error) {
     await reader.cancel().catch(() => undefined)
     if (error instanceof GatewayInputError) throw error
-    throw new GatewayInputError()
+    throw new GatewayInputError(400, signal.aborted ? 'body_aborted' : 'body_invalid_json')
   } finally {
     signal.removeEventListener('abort', abort)
     reader.releaseLock()
@@ -134,9 +188,13 @@ function validateTools(value: unknown): void {
   }
 }
 function validateContext(value: unknown): Context {
-  if (!record(value)) reject()
-  keys(value, ['systemPrompt', 'messages', 'tools', 'inactiveTools'])
-  if (!Array.isArray(value.messages) || value.messages.length > 4096) reject()
+  if (!record(value)) reject('context_invalid_shape', 'context')
+  const unknown = Object.keys(value).find(
+    (key) => !['systemPrompt', 'messages', 'tools', 'inactiveTools'].includes(key)
+  )
+  if (unknown) reject('context_invalid_shape', unknown)
+  if (!Array.isArray(value.messages) || value.messages.length > 4096)
+    reject('context_invalid_shape', 'messages')
   if (
     value.systemPrompt !== undefined &&
     (!Array.isArray(value.systemPrompt) ||
@@ -236,12 +294,15 @@ const localAgentOptions = new Set([
   // The official gateway drops these; the desktop SDK owns its own defaults.
   'antigravityEndpointMode',
   'maxInFlightRequests',
-  'codexCompaction'
+  'codexCompaction',
+  // The remote credential row belongs to its broker snapshot. The desktop
+  // gateway resolves its own credential and must not honor that row id.
+  'credentialId'
 ])
 
 function validateOptions(value: unknown, sessionKey: string): SimpleStreamOptions {
   if (value === undefined) value = {}
-  if (!record(value)) reject()
+  if (!record(value)) reject('options_invalid_shape', 'options')
   const result: Record<string, unknown> = {}
   for (const [key, item] of Object.entries(value)) {
     if (localAgentOptions.has(key) || key === 'headers') continue
@@ -314,7 +375,7 @@ function validateOptions(value: unknown, sessionKey: string): SimpleStreamOption
           !number(item.filesDueBefore, 0, Number.MAX_SAFE_INTEGER))
       )
         reject()
-    } else reject() // Includes API keys, endpoints, fetch and provider transport hooks.
+    } else reject('options_unknown_field', key) // Includes API keys, endpoints, fetch and provider transport hooks.
     result[key] = item
   }
   return {
@@ -329,8 +390,8 @@ export function validateGatewayPayload(
   value: unknown,
   sessionKey: string
 ): { modelId: string; context: Context; options: SimpleStreamOptions; stream: true } {
-  if (!record(value)) reject()
-  keys(value, ['modelId', 'context', 'options', 'stream'])
+  if (!record(value)) reject('payload_invalid_shape', 'payload')
+  keys(value, ['modelId', 'context', 'options', 'stream'], 'payload_unknown_field')
   if (
     !text(value.modelId, 513) ||
     !value.modelId ||

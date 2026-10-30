@@ -32,6 +32,8 @@ export type SessionEntry = {
   planStepsProposal?: (input: unknown) => Promise<PlanStepsToolResult>
   /** Stops telling the main process about those runs (used when the session goes away). */
   stopAgentRunNotices?: () => void
+  /** Stops projecting OMP-native task children into durable read-only cards. */
+  stopNativeTaskRunNotices?: () => void
   /** Kernel fact publisher; the legacy desktop worker does not install it. */
   stopKernelAgentRunNotices?: () => void
   /** Kernel-owned plan service used after the host supplies only the review decision. */

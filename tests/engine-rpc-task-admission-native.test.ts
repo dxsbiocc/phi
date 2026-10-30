@@ -17,6 +17,41 @@ function refusalNamesPath(fixture: TaskAdmissionFixture, path: string): boolean 
   return evidence.includes('/.omp/agents/') && evidence.includes(basename(path))
 }
 
+test('structured native task policy replaces the empty-final failure with an explicit yield', async () => {
+  const warning = 'SYSTEM WARNING: Subagent ended without a final message.'
+  const unstructured = await taskAdmissionCli({
+    admission: true,
+    structured: false,
+    emptyChildFinal: true
+  })
+  try {
+    await unstructured.connection.prompt('Reproduce an empty native task final message')
+    assert.match(JSON.stringify(unstructured.frames), new RegExp(warning.replaceAll('.', '\\.')))
+  } finally {
+    await unstructured.close()
+  }
+
+  const structured = await taskAdmissionCli({
+    admission: true,
+    structured: true,
+    emptyChildFinal: true
+  })
+  try {
+    await structured.connection.prompt('Require the native task yield contract')
+    const evidence = JSON.stringify(structured.frames)
+    assert.doesNotMatch(evidence, new RegExp(warning.replaceAll('.', '\\.')))
+    assert.match(evidence, /README first/)
+    const child = structured.requests.find((request) => request.actor === 'child')
+    assert.ok(
+      (child?.body.tools as Array<{ function: { name: string } }>).some(
+        (tool) => tool.function.name === 'yield'
+      )
+    )
+  } finally {
+    await structured.close()
+  }
+})
+
 test('real public beforeToolCall retains original unknown task args separately from normalized execution args', async (t) => {
   const fixture = await taskAdmissionCli({
     extra: { model: 'unauthorized/model', unknownCapability: 'private-marker' }

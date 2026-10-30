@@ -368,7 +368,8 @@ test(
     const executableContent = `#!/usr/bin/env bun
 import { createInterface } from 'node:readline'
 
-process.stderr.write('compiled kernel diagnostic\\n')
+process.stderr.write('compiled kernel ')
+setTimeout(() => process.stderr.write('diagnostic\\n'), 10)
 const lines = createInterface({ input: process.stdin })
 lines.once('line', (line) => {
   const request = JSON.parse(line)
@@ -435,7 +436,7 @@ lines.once('line', (line) => {
       await diagnosticReceived
       assert.equal(kernel.greeting.kernel.version, 'compiled-test')
       assert.equal(kernel.client.controllerGeneration, 1)
-      assert.equal(diagnostics.join(''), 'compiled kernel diagnostic\n')
+      assert.deepEqual(diagnostics, ['compiled kernel diagnostic\n'])
 
       const startedAt = Date.now()
       const outcome = await kernel.close()

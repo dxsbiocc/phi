@@ -22,6 +22,9 @@ import type {
 
 const execFileAsync = promisify(execFile)
 const MAX_LOCK_BYTES = 4 * 1024
+const DARWIN_UNVERIFIED_SELF_PREFIX = 'darwin:unverified-self:'
+
+type DarwinProcessStartProbe = (pid: number) => Promise<string>
 
 export class SessionWriterBusyError extends Error {
   constructor(message = 'Another kernel owns this session.') {
@@ -47,7 +50,31 @@ function linuxStartTime(stat: string): string | undefined {
   return ticks && /^\d+$/.test(ticks) ? `linux:${ticks}` : undefined
 }
 
-async function processStartedAt(pid: number): Promise<string | undefined> {
+function unverifiedDarwinSelfToken(pid: number): string {
+  return `${DARWIN_UNVERIFIED_SELF_PREFIX}${pid}:${randomUUID()}`
+}
+
+function unverifiedProcessIsProvablyDead(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (error) {
+    return fsCode(error) === 'ESRCH'
+  }
+}
+
+async function defaultDarwinProcessStartProbe(pid: number): Promise<string> {
+  const { stdout } = await execFileAsync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
+    timeout: 2_000,
+    env: { ...process.env, LC_ALL: 'C', LANG: 'C' }
+  })
+  return stdout
+}
+
+async function processStartedAt(
+  pid: number,
+  darwinProbe: DarwinProcessStartProbe = defaultDarwinProcessStartProbe
+): Promise<string | undefined> {
   if (process.platform === 'linux') {
     try {
       return linuxStartTime(await readFile(`/proc/${pid}/stat`, 'utf8'))
@@ -69,16 +96,18 @@ async function processStartedAt(pid: number): Promise<string | undefined> {
     try {
       // lstart follows the caller's locale (e.g. "二 10月/27 ..." under zh_CN),
       // which Date.parse cannot read; pin it to C.
-      const { stdout } = await execFileAsync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
-        timeout: 2_000,
-        env: { ...process.env, LC_ALL: 'C', LANG: 'C' }
-      })
+      const stdout = await darwinProbe(pid)
       const startedAt = stdout.trim()
       const epochSeconds = Date.parse(startedAt) / 1_000
-      return startedAt && Number.isFinite(epochSeconds)
-        ? `darwin:${Math.floor(epochSeconds)}`
-        : undefined
+      if (startedAt && Number.isFinite(epochSeconds)) {
+        return `darwin:${Math.floor(epochSeconds)}`
+      }
+      return pid === process.pid ? unverifiedDarwinSelfToken(pid) : undefined
     } catch (error) {
+      // Some packaged/sandboxed hosts permit the kernel subprocess but deny spawning ps.
+      // A fresh self-only token is sufficient to own and release the new lock. It is
+      // deliberately never comparable with a later verified process-start timestamp.
+      if (pid === process.pid) return unverifiedDarwinSelfToken(pid)
       const code = (error as { code?: unknown }).code
       if (typeof code === 'number' && code !== 0) return undefined
       throw error
@@ -93,8 +122,12 @@ async function processStartedAt(pid: number): Promise<string | undefined> {
   }
 }
 
-export async function currentProcessStartedAt(): Promise<string> {
-  const startedAt = await processStartedAt(process.pid)
+export async function currentProcessStartedAt(
+  options: {
+    darwinProbe?: DarwinProcessStartProbe
+  } = {}
+): Promise<string> {
+  const startedAt = await processStartedAt(process.pid, options.darwinProbe)
   if (!startedAt) throw new Error('Could not identify the kernel process start time')
   return startedAt
 }
@@ -132,6 +165,11 @@ async function readLockBody(path: string): Promise<SessionWriterLockBody | undef
 
 async function holderIsProvablyDead(body: SessionWriterLockBody): Promise<boolean> {
   if (body.hostname !== hostname()) return false
+  if (body.startedAt.startsWith(DARWIN_UNVERIFIED_SELF_PREFIX)) {
+    // Without a verified start timestamp, a different token cannot prove PID reuse. Only
+    // an OS-level absent PID is strong enough evidence to take over this fail-closed lock.
+    return unverifiedProcessIsProvablyDead(body.pid)
+  }
   let actual: string | undefined
   try {
     actual = await processStartedAt(body.pid)

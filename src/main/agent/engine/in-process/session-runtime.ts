@@ -429,6 +429,7 @@ function stopSessionOwnedWork(entry: SessionEntry | undefined): void {
   if (!entry) return
   entry.disposing = true
   entry.stopAgentRunNotices?.()
+  entry.stopNativeTaskRunNotices?.()
   entry.stopKernelAgentRunNotices?.()
   entry.agentRuns?.stopAll()
   entry.browserTextVault?.clear()

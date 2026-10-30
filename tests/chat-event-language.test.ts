@@ -93,6 +93,25 @@ test('raw service errors, maintenance details and historical user content remain
   }
 })
 
+test('coded kernel run failures localize while retaining the raw event diagnostics', () => {
+  const event = {
+    type: 'run_failed',
+    errorCode: 'CAPABILITY_UNAVAILABLE',
+    errorMessage: 'The requested capability is unavailable.',
+    errorDetail: { capability: 'desktop_services' }
+  }
+  const original = JSON.stringify(event)
+  const failed = notice(event)
+
+  setUiLanguage('en')
+  assert.equal(failed.content, 'This kernel capability is unavailable for the chat.')
+  setUiLanguage('zh-CN')
+  assert.equal(failed.content, '此会话当前无法使用该内核能力。')
+  assert.equal(JSON.stringify(event), original)
+  assert.equal(event.errorMessage, 'The requested capability is unavailable.')
+  assert.deepEqual(event.errorDetail, { capability: 'desktop_services' })
+})
+
 test('remote OMP failure causes localize from structured details only', () => {
   const causes = [
     {

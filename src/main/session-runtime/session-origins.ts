@@ -3,8 +3,10 @@ import { facadeBindingHash } from '../agent/engine/rpc/facade-session-driver'
 import { resolveRemoteWorkspaceHostBinding } from '../agent/remote-workspace-boundary'
 import { resolveRuntimeSessionOrigin } from '../agent/session/runtime-origin-store'
 import {
+  assertKernelRuntimeReferenceProject,
   assertRuntimeReferenceProject,
   assertRuntimeScope,
+  parseKernelRuntimeReference,
   parseRuntimeReference,
   type RemoteOmpScope
 } from '../agent/session/runtime-reference'
@@ -65,8 +67,14 @@ export function createSessionOrigins<TPromptRun extends OriginPromptRun>(
   }
 
   const currentRuntimeOriginScope: SessionOrigins['currentRuntimeOriginScope'] = (manifest) => {
-    if (!manifest.runtimeRef || !manifest.projectId) return undefined
-    const reference = parseRuntimeReference(manifest.runtimeRef, manifest.sessionId)
+    if (!manifest.projectId) return undefined
+    const legacyReference = manifest.runtimeRef
+      ? parseRuntimeReference(manifest.runtimeRef, manifest.sessionId)
+      : undefined
+    const kernelReference = manifest.kernelRuntimeRef
+      ? parseKernelRuntimeReference(manifest.kernelRuntimeRef)
+      : undefined
+    if (!legacyReference && kernelReference?.host.kind !== 'ssh') return undefined
     const project = deps.requireProject(manifest.projectId)
     if (project.location.kind !== 'ssh') return undefined
     const binding = services.resolveRemoteWorkspaceHostBinding({
@@ -78,10 +86,18 @@ export function createSessionOrigins<TPromptRun extends OriginPromptRun>(
       bindingHash: services.facadeBindingHash(binding),
       projectId: project.id,
       projectRoot: binding.canonicalRoot,
-      runtimeRoot: reference.runtimeRoot
+      runtimeRoot:
+        legacyReference?.runtimeRoot ??
+        (kernelReference?.host.kind === 'ssh' ? kernelReference.host.runtimeRoot : '')
     }
-    assertRuntimeReferenceProject(manifest, scope)
-    assertRuntimeScope(reference, scope)
+    if (legacyReference) {
+      assertRuntimeReferenceProject(manifest, scope)
+      assertRuntimeScope(legacyReference, scope)
+    } else if (kernelReference?.host.kind === 'ssh') {
+      assertKernelRuntimeReferenceProject(manifest, kernelReference)
+    } else {
+      return undefined
+    }
     return scope
   }
 

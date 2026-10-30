@@ -21,7 +21,11 @@ import type { AgentReportStatus } from './report'
 export const AGENT_RUN_HOST_METHODS = {
   finished: 'agentRun.finished',
   reported: 'agentRun.reported',
-  step: 'agentRun.step'
+  step: 'agentRun.step',
+  nativeTaskStarted: 'agentRun.nativeTaskStarted',
+  nativeTaskBackground: 'agentRun.nativeTaskBackground',
+  nativeTaskStep: 'agentRun.nativeTaskStep',
+  nativeTaskFinished: 'agentRun.nativeTaskFinished'
 } as const
 
 /** An event written to a conversation's timeline. */
@@ -215,6 +219,202 @@ function sessionEvent(
   deps.sendToWindow({ source: 'phi', ...stored, phiSessionId, cwd })
 }
 
+function nativeTaskCardId(nativeTaskId: string): string {
+  return `native-task:${nativeTaskId}`
+}
+
+function nativeTaskOrigin(
+  deps: AgentRunHostDeps,
+  params: unknown
+): {
+  root: Record<string, unknown>
+  origin: { phiSessionId: string; cwd: string } | undefined
+  originSessionId: string
+  nativeTaskId: string
+  agent: string
+  toolCallId: string
+} {
+  const root = isRecord(params) ? params : undefined
+  const originSessionId = requireString(root, 'originSessionId')
+  const nativeTaskId = requireString(root, 'nativeTaskId')
+  const agent = requireString(root, 'agent')
+  return {
+    root: root!,
+    origin: deps.resolveSession(originSessionId),
+    originSessionId,
+    nativeTaskId,
+    agent,
+    toolCallId: nativeTaskCardId(nativeTaskId)
+  }
+}
+
+function validTimestamp(value: unknown): string | undefined {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : undefined
+}
+
+function nonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+}
+
+function nonNegativeInteger(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : undefined
+}
+
+async function handleNativeTaskStarted(deps: AgentRunHostDeps, params: unknown): Promise<unknown> {
+  const parsed = nativeTaskOrigin(deps, params)
+  if (!parsed.origin) return { ok: true }
+  const task = requireString(parsed.root, 'task')
+  const parentToolCallId = requireString(parsed.root, 'parentToolCallId')
+  sessionEvent(deps, parsed.origin.phiSessionId, parsed.origin.cwd, {
+    type: 'agent_execution_started',
+    toolCallId: parsed.toolCallId,
+    agentName: parsed.agent,
+    task: deps.redact(task.slice(0, MAX_TASK_LENGTH)),
+    args: deps.redactValue({ task, parentToolCallId }),
+    ...(validTimestamp(parsed.root.createdAt) ? { createdAt: parsed.root.createdAt } : {})
+  })
+  return { ok: true }
+}
+
+async function handleNativeTaskBackground(
+  deps: AgentRunHostDeps,
+  params: unknown
+): Promise<unknown> {
+  const parsed = nativeTaskOrigin(deps, params)
+  if (!parsed.origin) return { ok: true }
+  sessionEvent(deps, parsed.origin.phiSessionId, parsed.origin.cwd, {
+    type: 'agent_execution_background',
+    toolCallId: parsed.toolCallId,
+    agentName: parsed.agent,
+    ...(validTimestamp(parsed.root.createdAt) ? { createdAt: parsed.root.createdAt } : {})
+  })
+  return { ok: true }
+}
+
+function nativeTaskPersistedStepFields(
+  persisted: PersistedToolOutput | null
+): Record<string, unknown> {
+  if (!persisted) return {}
+  return {
+    output: persisted.outputPreview,
+    outputBytes: persisted.outputBytes,
+    ...(persisted.outputPath ? { outputPath: persisted.outputPath } : {}),
+    ...(persisted.truncated ? { outputTruncated: true } : {}),
+    ...(persisted.outputArtifact ? { outputArtifact: persisted.outputArtifact } : {})
+  }
+}
+
+function nativeTaskStepTimingFields(step: Record<string, unknown>): Record<string, unknown> {
+  const durationMs = nonNegativeNumber(step.durationMs)
+  return {
+    ...(validTimestamp(step.createdAt) ? { createdAt: step.createdAt } : {}),
+    ...(validTimestamp(step.completedAt) ? { completedAt: step.completedAt } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {})
+  }
+}
+
+function nativeTaskStepEvent(
+  deps: AgentRunHostDeps,
+  parsed: ReturnType<typeof nativeTaskOrigin>,
+  step: Record<string, unknown>,
+  persisted: PersistedToolOutput | null
+): AgentRunHostEvent {
+  const stepId = requireString(step, 'id', 'step.id')
+  const status =
+    step.status === 'done' || step.status === 'error' || step.status === 'running'
+      ? step.status
+      : 'running'
+  return {
+    type: 'agent_execution_step',
+    toolCallId: parsed.toolCallId,
+    agentName: parsed.agent,
+    step: {
+      id: stepId,
+      toolName: requireString(step, 'toolName', 'step.toolName'),
+      status,
+      ...(step.args !== undefined ? { args: deps.redactValue(step.args) } : {}),
+      ...nativeTaskPersistedStepFields(persisted),
+      ...(typeof step.error === 'string' && step.error ? { error: deps.redact(step.error) } : {}),
+      ...nativeTaskStepTimingFields(step)
+    }
+  }
+}
+
+async function handleNativeTaskStep(deps: AgentRunHostDeps, params: unknown): Promise<unknown> {
+  const parsed = nativeTaskOrigin(deps, params)
+  if (!parsed.origin || !isRecord(parsed.root.step)) return { ok: true }
+  const step = parsed.root.step
+  const stepId = requireString(step, 'id', 'step.id')
+  const output = typeof step.output === 'string' ? deps.redact(step.output) : ''
+  const persisted = output
+    ? deps.persistStepOutput(
+        parsed.origin.phiSessionId,
+        parsed.toolCallId,
+        `${parsed.nativeTaskId}-${stepId}`,
+        output
+      )
+    : null
+  sessionEvent(
+    deps,
+    parsed.origin.phiSessionId,
+    parsed.origin.cwd,
+    nativeTaskStepEvent(deps, parsed, step, persisted)
+  )
+  return { ok: true }
+}
+
+function nativeTaskFinishedEvent(
+  deps: AgentRunHostDeps,
+  parsed: ReturnType<typeof nativeTaskOrigin>,
+  state: AgentRunFinishedEvent['state'],
+  persisted: PersistedToolOutput | null,
+  error: string | undefined
+): AgentRunHostEvent {
+  const durationMs = nonNegativeNumber(parsed.root.durationMs)
+  const toolCalls = nonNegativeInteger(parsed.root.toolCalls)
+  return {
+    type: 'agent_execution_completed',
+    toolCallId: parsed.toolCallId,
+    agentName: parsed.agent,
+    isError: state === 'error',
+    ...(state === 'cancelled' ? { cancelled: true } : {}),
+    ...(persisted
+      ? { finalReport: persisted.outputPreview, finalReportBytes: persisted.outputBytes }
+      : {}),
+    ...(persisted?.outputPath ? { finalReportPath: persisted.outputPath } : {}),
+    ...(persisted?.truncated ? { finalReportTruncated: true } : {}),
+    ...(persisted?.outputArtifact ? { finalReportArtifact: persisted.outputArtifact } : {}),
+    ...(state === 'error' && error ? { error: deps.redact(error) } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(toolCalls !== undefined ? { toolCalls } : {}),
+    ...(validTimestamp(parsed.root.createdAt) ? { createdAt: parsed.root.createdAt } : {})
+  }
+}
+
+async function handleNativeTaskFinished(deps: AgentRunHostDeps, params: unknown): Promise<unknown> {
+  const parsed = nativeTaskOrigin(deps, params)
+  if (!parsed.origin) return { ok: true }
+  const state = parsed.root.state
+  if (!isAgentRunEndState(state)) throw new Error(`Invalid native task state: ${String(state)}`)
+  const report = optionalString(parsed.root, 'report')
+  const error = optionalString(parsed.root, 'error')
+  const persisted = report
+    ? deps.persistStepOutput(
+        parsed.origin.phiSessionId,
+        parsed.toolCallId,
+        `${parsed.nativeTaskId}-final`,
+        deps.redact(capReport(report))
+      )
+    : null
+  sessionEvent(
+    deps,
+    parsed.origin.phiSessionId,
+    parsed.origin.cwd,
+    nativeTaskFinishedEvent(deps, parsed, state, persisted, error)
+  )
+  return { ok: true }
+}
+
 function stepEvent(
   deps: AgentRunHostDeps,
   phiSessionId: string,
@@ -374,6 +574,11 @@ export function agentRunHostHandlers(
   return {
     [AGENT_RUN_HOST_METHODS.finished]: (params) => handleFinished(deps, params),
     [AGENT_RUN_HOST_METHODS.step]: (params) => handleStep(deps, params),
-    [AGENT_RUN_HOST_METHODS.reported]: (params) => handleReported(deps, params)
+    [AGENT_RUN_HOST_METHODS.reported]: (params) => handleReported(deps, params),
+    [AGENT_RUN_HOST_METHODS.nativeTaskStarted]: (params) => handleNativeTaskStarted(deps, params),
+    [AGENT_RUN_HOST_METHODS.nativeTaskBackground]: (params) =>
+      handleNativeTaskBackground(deps, params),
+    [AGENT_RUN_HOST_METHODS.nativeTaskStep]: (params) => handleNativeTaskStep(deps, params),
+    [AGENT_RUN_HOST_METHODS.nativeTaskFinished]: (params) => handleNativeTaskFinished(deps, params)
   }
 }

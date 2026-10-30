@@ -117,14 +117,14 @@ function appendOptimisticUserMessage(
   text: string,
   images: PromptImageInput[],
   options: SendPromptOptions
-): void {
+): string | undefined {
   if (options.retryUserMessageId) {
     deps.actions.updateMessages((prev) =>
       messagesForUserRetry(prev, options.retryUserMessageId as string)
     )
-    return
+    return undefined
   }
-  if (options.appendUserMessage === false) return
+  if (options.appendUserMessage === false) return undefined
   const optimisticUserMessageId = `user-${Date.now()}`
   deps.actions.updateMessages((prev) => [
     ...prev,
@@ -135,13 +135,44 @@ function appendOptimisticUserMessage(
       ...(images.length ? { images } : {})
     }
   ])
+  return optimisticUserMessageId
+}
+
+function removeMaterializedDuplicateOfOptimisticMessage(
+  deps: PromptSendDeps,
+  optimisticUserMessageId?: string
+): void {
+  if (!optimisticUserMessageId) return
+  deps.actions.updateMessages((previous) => {
+    const optimisticIndex = previous.findIndex((message) => message.id === optimisticUserMessageId)
+    const optimistic = previous[optimisticIndex]
+    if (!optimistic || optimistic.role !== 'user') return previous
+    const hasMaterializedDuplicate = previous
+      .slice(optimisticIndex + 1)
+      .some((message) => message.role === 'user' && message.content === optimistic.content)
+    return hasMaterializedDuplicate
+      ? previous.filter((message) => message.id !== optimisticUserMessageId)
+      : previous
+  })
 }
 
 async function applySendReceipt(
   deps: PromptSendDeps,
   result: PromptResult,
-  target: PromptTarget
+  target: PromptTarget,
+  optimisticUserMessageId?: string
 ): Promise<void> {
+  const userMessageEventId = result.userMessageEventId
+  if (optimisticUserMessageId && userMessageEventId) {
+    deps.actions.updateMessages((previous) => {
+      if (previous.some((message) => message.id === userMessageEventId)) {
+        return previous.filter((message) => message.id !== optimisticUserMessageId)
+      }
+      return previous.map((message) =>
+        message.id === optimisticUserMessageId ? { ...message, id: userMessageEventId } : message
+      )
+    })
+  }
   if (result.path) {
     const materializedQueueKey = sessionDraftKey({
       phiSessionId: result.phiSessionId ?? null,
@@ -236,7 +267,7 @@ export async function sendPrompt(
     submitGeneration: target.sessionGeneration,
     sendRequest: ++deps.sendRequestRef.current
   }
-  appendOptimisticUserMessage(deps, text, images, options)
+  const optimisticUserMessageId = appendOptimisticUserMessage(deps, text, images, options)
   deps.actions.setIsSendingMessage(true)
 
   let acceptedByRuntime = false
@@ -260,7 +291,7 @@ export async function sendPrompt(
     if (!result) return !isCurrentRequest(deps, receipt.sendRequest)
     acceptedByRuntime = true
     if (!isCurrentReply(deps, receipt, result)) return true
-    await applySendReceipt(deps, result, target)
+    await applySendReceipt(deps, result, target, optimisticUserMessageId)
     return true
   } catch (error) {
     if (
@@ -269,6 +300,7 @@ export async function sendPrompt(
     ) {
       return true
     }
+    removeMaterializedDuplicateOfOptimisticMessage(deps, optimisticUserMessageId)
     deps.actions.showSnackbarError(localizePromptSendError(error), appCopy.sendMessageFailed)
     if (acceptedByRuntime) return true
     restoreFailedDraft(deps, text, images, options)

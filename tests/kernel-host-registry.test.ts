@@ -53,7 +53,11 @@ const EXPECTED_CAPABILITIES = [
   'wrapperJob.wait',
   'agentRun.finished',
   'agentRun.step',
-  'agentRun.reported'
+  'agentRun.reported',
+  'agentRun.nativeTaskStarted',
+  'agentRun.nativeTaskBackground',
+  'agentRun.nativeTaskStep',
+  'agentRun.nativeTaskFinished'
 ] as const
 
 const EXPECTED_USER_CAPABILITIES = new Set([
@@ -127,6 +131,59 @@ test('host capability schemas reject undeclared fields and protect credential re
   }
   assert.equal(modelCredentials.result.safeParse({ credentials: [oauth] }).success, true)
   assert.equal(modelRefresh.result.safeParse(oauth).success, true)
+})
+
+test('native task notice schemas keep card identity and bounded lifecycle payloads', () => {
+  const common = {
+    originSessionId: 'kernel-session-1',
+    nativeTaskId: 'native-child-1',
+    agent: 'task'
+  }
+  assert.equal(
+    KERNEL_HOST_CAPABILITY_REGISTRY['agentRun.nativeTaskStarted'].params.safeParse({
+      ...common,
+      task: 'Read README.md',
+      parentToolCallId: 'outer-task'
+    }).success,
+    true
+  )
+  assert.equal(
+    KERNEL_HOST_CAPABILITY_REGISTRY['agentRun.nativeTaskStep'].params.safeParse({
+      ...common,
+      step: { id: 'read-1', toolName: 'read', status: 'done' }
+    }).success,
+    true
+  )
+  const stepSchema = KERNEL_HOST_CAPABILITY_REGISTRY['agentRun.nativeTaskStep'].params
+  for (const step of [
+    {},
+    { id: 'read-1', toolName: 'read', status: 'done', undeclared: true },
+    { id: 'x'.repeat(513), toolName: 'read', status: 'done' },
+    { id: 'read-1', toolName: '', status: 'done' },
+    { id: 'read-1', toolName: 'read', status: 'completed' },
+    { id: 'read-1', toolName: 'read', status: 'done', output: 'x'.repeat(512 * 1024 + 1) },
+    { id: 'read-1', toolName: 'read', status: 'done', createdAt: 'x'.repeat(65) },
+    { id: 'read-1', toolName: 'read', status: 'done', durationMs: -1 }
+  ]) {
+    assert.equal(stepSchema.safeParse({ ...common, step }).success, false)
+  }
+  assert.equal(
+    KERNEL_HOST_CAPABILITY_REGISTRY['agentRun.nativeTaskFinished'].params.safeParse({
+      ...common,
+      state: 'done',
+      report: '# Phi',
+      durationMs: 1250,
+      toolCalls: 2
+    }).success,
+    true
+  )
+  assert.equal(
+    KERNEL_HOST_CAPABILITY_REGISTRY['agentRun.nativeTaskFinished'].params.safeParse({
+      ...common,
+      state: 'completed'
+    }).success,
+    false
+  )
 })
 
 test('plan review and interaction cancellation schemas retain run identity', () => {

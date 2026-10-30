@@ -404,6 +404,17 @@ describe('kernel protocol DTOs', () => {
     }
   })
 
+  it('accepts the OMP default reserve-based compaction threshold sentinel', () => {
+    const inherited = { enabled: true, thresholdPercent: -1, thresholdTokens: -1 }
+    for (const method of ['session.getAutoCompaction', 'session.setAutoCompaction'] as const) {
+      assert.deepEqual(kernelMethodResultSchemas[method].parse(inherited), inherited)
+      assert.equal(
+        kernelMethodResultSchemas[method].safeParse({ ...inherited, thresholdPercent: -2 }).success,
+        false
+      )
+    }
+  })
+
   it('round-trips event and host frames, including a protocol error', () => {
     const completed = runCompletedPayloadSchema.parse({ runId: 'run-1', status: 'completed' })
     roundTrip({

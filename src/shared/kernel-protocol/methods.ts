@@ -653,7 +653,8 @@ export const sessionCompactResultSchema = z
 const autoCompactionResultSchema = z
   .object({
     enabled: z.boolean(),
-    thresholdPercent: z.number().min(0).max(100),
+    // -1 is OMP's default: inherit the reserve-based threshold instead of a percentage.
+    thresholdPercent: z.number().min(-1).max(100),
     thresholdTokens: z.number().int().min(-1)
   })
   .strict()

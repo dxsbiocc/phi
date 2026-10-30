@@ -12,6 +12,7 @@ export type PromptRunResult = {
   path: string | null
   phiSessionId?: string
   sessionGeneration: number
+  userMessageEventId?: string
 } | null
 
 export interface PromptRunExecutionState {
@@ -39,6 +40,7 @@ export interface PromptRunExecutionContext {
   phiSessionId: string
   stableSessionPath: string
   runId: string
+  userMessageEventId?: string
   workMode: WorkMode
   promptRun: PromptRunExecutionState
 }
@@ -155,7 +157,8 @@ function recordPromptRunMaterialization<TContext extends PromptRunExecutionConte
   setPromptResult({
     path: context.stableSessionPath,
     phiSessionId: context.phiSessionId,
-    sessionGeneration: context.promptRun.sessionGeneration
+    sessionGeneration: context.promptRun.sessionGeneration,
+    ...(context.userMessageEventId ? { userMessageEventId: context.userMessageEventId } : {})
   })
 }
 

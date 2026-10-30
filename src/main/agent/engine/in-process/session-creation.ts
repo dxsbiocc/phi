@@ -10,7 +10,13 @@ import {
   type PhiExtensionConfig
 } from '../phi-extension'
 import { toOmpCustomTool } from '../tool-adapter'
-import { allowApprovalWaits, applyAutoCompactionOverrides, createPhiSettings } from './settings'
+import { withNativeWireProjection } from './native-wire-stream'
+import {
+  allowApprovalWaits,
+  applyAutoCompactionOverrides,
+  createPhiSettings,
+  ensureStructuredNativeTaskResults
+} from './settings'
 import { normalizeProjectMemorySettings } from '../../../../shared/projectMemoryTypes'
 import { type EnvironmentLease } from '../../envs/leases'
 import { disableFeaturedApiKeyAutoDiscovery } from '../../mcp-connectors'
@@ -55,6 +61,7 @@ import {
 } from './session-resource-input'
 import { loadDesktopMcpHostTools } from './desktop-mcp-host-tools'
 import type { KernelRuntimeServices } from './kernel-services'
+import { subscribeToNativeTaskRunNotices } from './agent-run-notices'
 
 type McpRefreshSession = Pick<
   CreateAgentSessionResult['session'],
@@ -95,6 +102,7 @@ export async function createSession(
   const settings = await baseSettings.cloneForCwd(settingsCwd)
   applyAutoCompactionOverrides(settings, autoCompactionOverrides(record.autoCompaction))
   allowApprovalWaits(settings)
+  ensureStructuredNativeTaskResults(settings)
   const memoryPolicy = normalizeProjectMemorySettings(record.memory)
   const memoryTarget = memoryPolicy.enabled ? { agentDir, cwd } : undefined
   const desktopServices = record.desktopServices === true
@@ -248,6 +256,7 @@ export async function createSession(
     : undefined
   const mcpLeases = leasedMcp?.leases ?? new Map<string, EnvironmentLease>()
   let created: CreateAgentSessionResult | undefined
+  let stopNativeTaskRunNotices: (() => void) | undefined
   let desktopMcp: Awaited<ReturnType<typeof loadDesktopMcpHostTools>> | undefined
   try {
     const mcpTools = leasedMcp ? (await leasedMcp.manager.discoverAndConnect()).tools : undefined
@@ -305,7 +314,10 @@ export async function createSession(
       const upstream = result.session.agent.streamFn
       const requestFetch = dependencies.modelAccess.requestFetch
       result.session.agent.streamFn = (model, context, options) =>
-        upstream(model, context, { ...options, fetch: requestFetch })
+        upstream(model, context, {
+          ...options,
+          fetch: withNativeWireProjection(requestFetch, model)
+        })
     }
     installAutoWorkModeBatchGuard(result.session.agent, workMode === 'auto')
     if (leasedMcp) {
@@ -327,6 +339,12 @@ export async function createSession(
 
     parentRef.current = result
 
+    stopNativeTaskRunNotices = subscribeToNativeTaskRunNotices({
+      eventBus: result.subagentEventBus ?? result.eventBus,
+      sessionId,
+      requestHost
+    })
+
     result.session.subscribe((event) => {
       sendEvent('sessionEvent', translateOmpEvent(event, result.session), { sessionId })
       sendEvent('sessionState', serializeSessionState(result), { sessionId })
@@ -340,6 +358,7 @@ export async function createSession(
       reloadAgents,
       applyResourceReload,
       stopAgentRunNotices,
+      stopNativeTaskRunNotices,
       ...(stopKernelAgentRunNotices ? { stopKernelAgentRunNotices } : {}),
       ...(dependencies.kernelServices?.plans
         ? { kernelPlanRuntime: dependencies.kernelServices.plans }
@@ -358,6 +377,7 @@ export async function createSession(
       state: serializeSessionState(result)
     }
   } catch (error) {
+    stopNativeTaskRunNotices?.()
     stopKernelAgentRunNotices?.()
     try {
       await created?.session.dispose()

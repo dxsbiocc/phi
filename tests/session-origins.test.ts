@@ -240,6 +240,72 @@ test('currentRuntimeOriginScope validates and returns the current SSH scope', ()
   assert.deepEqual(origins.currentRuntimeOriginScope(remoteManifest()), remoteScope)
 })
 
+test('currentRuntimeOriginScope validates and returns a remote kernel scope', () => {
+  const origins = createSessionOrigins({
+    sessionKeys: { originFor: () => undefined, phiSessionIdFor: () => undefined },
+    findActivePromptRunByRuntimeSessionId: () => null,
+    getCurrentCwd: () => '/current',
+    requireProject: () => sshProject(),
+    projectRemoteRuntimeRoot: () => ({ configured: '~/.phi/runtime' }),
+    agentDir: '/agent',
+    services: originServices
+  })
+  const manifest = remoteManifest({
+    runtimeRef: undefined,
+    kernelRuntimeRef: {
+      kind: 'phi-kernel',
+      version: 1,
+      kernelSessionId: 'kernel-session-1',
+      host: {
+        kind: 'ssh',
+        hostProfileId: remoteScope.hostProfileId,
+        projectId: remoteScope.projectId,
+        projectRoot: remoteScope.projectRoot,
+        runtimeRoot: remoteScope.runtimeRoot,
+        home: '/remote/home',
+        agentDir: '/remote/home/.omp/agent'
+      }
+    }
+  })
+
+  assert.deepEqual(origins.currentRuntimeOriginScope(manifest), remoteScope)
+})
+
+test('currentRuntimeOriginScope rejects a remote kernel host mismatch', () => {
+  const origins = createSessionOrigins({
+    sessionKeys: { originFor: () => undefined, phiSessionIdFor: () => undefined },
+    findActivePromptRunByRuntimeSessionId: () => null,
+    getCurrentCwd: () => '/current',
+    requireProject: () => sshProject(),
+    projectRemoteRuntimeRoot: () => ({ configured: '~/.phi/runtime' }),
+    agentDir: '/agent',
+    services: originServices
+  })
+  const manifest = remoteManifest({
+    runtimeRef: undefined,
+    kernelRuntimeRef: {
+      kind: 'phi-kernel',
+      version: 1,
+      kernelSessionId: 'kernel-session-1',
+      host: {
+        kind: 'ssh',
+        hostProfileId: 'ssh-config:other-host',
+        projectId: remoteScope.projectId,
+        projectRoot: remoteScope.projectRoot,
+        runtimeRoot: remoteScope.runtimeRoot,
+        home: '/remote/home',
+        agentDir: '/remote/home/.omp/agent'
+      }
+    }
+  })
+
+  assert.throws(
+    () => origins.currentRuntimeOriginScope(manifest),
+    (error: unknown) =>
+      error instanceof Error && 'code' in error && error.code === 'HOST_IDENTITY_CHANGED'
+  )
+})
+
 test('currentRuntimeOriginScope runs the project assertion before the scope assertion', () => {
   const origins = createSessionOrigins({
     sessionKeys: { originFor: () => undefined, phiSessionIdFor: () => undefined },

@@ -15,6 +15,7 @@ import {
 import { isRecord } from '../../../../../shared/guards'
 import { planCopy } from '../../plan/lib/planCopy'
 import { planRunSnapshotFromUnknown } from '../../plan/lib/planRunView'
+import { kernelErrorPresentationFromCode } from './kernelErrorCopy'
 
 function createdAtField(createdAt?: string): { createdAt: string } | Record<string, never> {
   return typeof createdAt === 'string' ? { createdAt } : {}
@@ -156,6 +157,7 @@ export function chatItemFromPhiTimelineEvent(event: {
       get content() {
         return (
           remoteOmpFailureMessage(event.errorCode, event.errorDetail) ??
+          kernelErrorPresentationFromCode(event.errorCode)?.message ??
           (error || chatEventCopy.runFailed)
         )
       },

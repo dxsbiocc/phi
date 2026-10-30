@@ -287,3 +287,44 @@ test('maintenance local Codex context is discarded without accepting unrelated n
     GatewayInputError
   )
 })
+
+function complexRequest(body: unknown): Request {
+  return new Request('http://127.0.0.1/v1/pi/stream', {
+    method: 'POST',
+    body: JSON.stringify(body)
+  })
+}
+
+test('a too-deep tool schema is rejected with a field naming the limit and the tool', async () => {
+  let schema: Record<string, unknown> = { type: 'string' }
+  for (let level = 0; level < 40; level += 1) schema = { properties: { child: schema } }
+  await assert.rejects(
+    readGatewayJson(
+      complexRequest({
+        context: { tools: [{ name: 'deep_tool', description: 'secret-text', parameters: schema }] }
+      }),
+      new AbortController().signal
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof GatewayInputError)
+      assert.equal(error.reason, 'body_too_complex')
+      assert.equal(error.field, 'depth.context.tools.deep_tool')
+      return true
+    }
+  )
+})
+
+test('an oversized message history is rejected with a field naming the node limit', async () => {
+  await assert.rejects(
+    readGatewayJson(
+      complexRequest({ context: { messages: Array.from({ length: 100_001 }, () => 1) } }),
+      new AbortController().signal
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof GatewayInputError)
+      assert.equal(error.reason, 'body_too_complex')
+      assert.equal(error.field, 'nodes.context.messages')
+      return true
+    }
+  )
+})

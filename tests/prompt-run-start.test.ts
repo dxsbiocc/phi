@@ -196,6 +196,16 @@ test('preparePromptRunForQueue records user and retry messages and reports paral
   assert.ok(calls.includes('parallel:3:/phi/phi-1:/work:1'))
 })
 
+test('preparePromptRunForQueue captures the durable user message id for the renderer', () => {
+  const { deps } = createDeps()
+  const start = createPromptRunStart(deps)
+  const context = start.allocate(admitted())
+
+  start.prepare(context)
+
+  assert.equal(context.userMessageEventId, 'event-1')
+})
+
 test('a failed user-message append removes the active run and rethrows', () => {
   const { deps, calls } = createDeps()
   deps.events.append = () => {
