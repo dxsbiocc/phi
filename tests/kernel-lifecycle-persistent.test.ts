@@ -516,9 +516,9 @@ test(
       assert.ok(captured)
       assert.equal(captured.modelId, `${fixture.base.model.provider}/${fixture.base.model.id}`)
       assert.equal(
-        typeof record(captured.options).credentialId,
-        'number',
-        'the remote broker credential row must reach the exact native request shape'
+        record(captured.options).credentialId,
+        undefined,
+        'the wire projection must keep the remote-local credential row off the desktop request'
       )
 
       const desktopLease = await fixture.base.createModelGatewayLease({
