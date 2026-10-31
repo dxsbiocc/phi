@@ -62,6 +62,23 @@ export class KernelClientError extends Error {
   }
 }
 
+/**
+ * True when the kernel no longer holds the requested events. It still enables live events in that
+ * case, so the caller only has to rebuild its state from a snapshot.
+ */
+export async function subscribeReportingReplayGap(
+  client: { subscribe(afterSeq?: number): Promise<unknown> },
+  afterSeq: number
+): Promise<boolean> {
+  try {
+    await client.subscribe(afterSeq)
+    return false
+  } catch (error) {
+    if (error instanceof KernelClientError && error.code === 'REPLAY_GAP') return true
+    throw error
+  }
+}
+
 type PendingRequest = {
   resolve(value: JsonValue): void
   reject(error: Error): void

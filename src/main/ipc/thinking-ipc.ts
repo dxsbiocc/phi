@@ -14,6 +14,7 @@ import {
   captureCurrentSelectionTarget,
   type ModelSelectionTargetDependencies
 } from '../agent/session/model-selection-target'
+import { readCurrentThinkingLevel } from '../agent/session/current-session-reads'
 import { findPhiSessionById, updateSessionManifest } from '../agent/session/session-store'
 import type { SessionPreferenceTable } from '../app-state/session-preferences'
 
@@ -28,12 +29,6 @@ export interface ThinkingIpcOptions {
     getDefaultThinkingLevel: () => ThinkingLevel
     setDefaultThinkingLevel: (level: ThinkingLevel) => void
     sessionThinkingLevels: SessionPreferenceTable<ThinkingLevel>
-    getCurrentResolvedSession: () => Promise<{
-      session: {
-        thinkingLevel?: ThinkingLevel
-        setThinkingLevel(level: ThinkingLevel): Promise<void>
-      }
-    } | null>
   }
   models: {
     resolveRuntimeModelSelection: (
@@ -108,16 +103,13 @@ export function registerThinkingIpc(options: ThinkingIpcOptions): void {
     )
     if (resolved) return resolved
 
-    const current = await sessionState.getCurrentResolvedSession()
-    if (current) {
-      const { session } = current
-      return session.thinkingLevel
-    }
-    return options.models.resolveSessionThinkingLevel(selectionTarget.getCurrentSessionKey(), {
-      path: sessionState.getCurrentSessionPath(),
-      cwd: selectionTarget.getCurrentCwd(),
-      permissionMode: sessionState.getCurrentPermissionMode()
-    })
+    return readCurrentThinkingLevel(selectionTarget.getCurrentLifecycle, () =>
+      options.models.resolveSessionThinkingLevel(selectionTarget.getCurrentSessionKey(), {
+        path: sessionState.getCurrentSessionPath(),
+        cwd: selectionTarget.getCurrentCwd(),
+        permissionMode: sessionState.getCurrentPermissionMode()
+      })
+    )
   })
 }
 /* eslint-enable complexity */

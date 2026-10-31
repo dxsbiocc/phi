@@ -84,6 +84,15 @@ async function getCurrentResolvedSessionIfReady(
   }
 }
 
+/** Never waits for a session still being created: a remote one can take minutes to connect. */
+export async function readCurrentThinkingLevel<TLevel>(
+  getCurrentLifecycle: () => SessionLifecycle<CreateAgentSessionResult>,
+  readStoredLevel: () => TLevel
+): Promise<TLevel> {
+  const current = await getCurrentResolvedSessionIfReady(getCurrentLifecycle)
+  return current ? (current.session.thinkingLevel as TLevel) : readStoredLevel()
+}
+
 export async function getCurrentContextUsage(
   options: CurrentContextUsageOptions
 ): Promise<CurrentContextUsage> {

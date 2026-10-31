@@ -1,5 +1,6 @@
 import type { KernelEventFrame } from '../../../shared/kernel-protocol'
 import type { PhiHostRequestHandler, PhiSessionCreateParams } from './types'
+import { subscribeReportingReplayGap } from './kernel-client'
 import type { KernelSessionFactory } from './kernel-session-factory'
 import {
   engineError,
@@ -114,7 +115,8 @@ export class KernelExecutionHost {
           this.kernelInstanceId === connection.greeting.kernelInstanceId ? this.lastSeq : 0
         if (replayFrom === 0) this.lastSeq = 0
         this.kernelInstanceId = connection.greeting.kernelInstanceId
-        await connection.client.subscribe(replayFrom)
+        // reopenHostSessions below rebuilds every session from a snapshot, which covers a gap.
+        await subscribeReportingReplayGap(connection.client, replayFrom)
         await this.factory.reopenHostSessions(this, connection.client)
         return connection
       })

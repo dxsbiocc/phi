@@ -6,7 +6,8 @@ export interface GatewayStreamLimits {
 export const GATEWAY_STREAM_LIMITS: GatewayStreamLimits = Object.freeze({
   maxEventBytes: 64 * 1024 * 1024,
   maxQueuedBytes: 64 * 1024 * 1024,
-  maxQueuedEvents: 256
+  // Memory is bounded by bytes. A reply can outrun an SSH tunnel by thousands of small events.
+  maxQueuedEvents: 65_536
 })
 const encoder = new TextEncoder()
 const eventTypes = new Set([

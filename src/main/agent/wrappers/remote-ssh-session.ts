@@ -121,6 +121,8 @@ export interface OpenSshRuntime {
   ) => Promise<readonly string[]>
 }
 
+const MUX_FD_WINDOW_START = 7936
+const MUX_FD_WINDOW_END = 8256
 const DEFAULT_READY_TIMEOUT_MS = 15_000
 const DEFAULT_EXEC_TIMEOUT_MS = 30_000
 const MAX_EXEC_OUTPUT_BYTES = 8 * 1024 * 1024
@@ -246,6 +248,19 @@ export function buildMasterArgs(
   ]
 }
 
+/**
+ * A mux client writes the command to the control socket, then passes its stdio descriptors over the
+ * same socket. On macOS (8 KiB `net.local.stream.sendspace`) a command of about 8100 bytes fits but
+ * leaves no room for a descriptor, so every such session fails with "mm_send_fd: Message too long".
+ * Longer commands are unaffected because the write waits for the master to read them.
+ */
+function padCommandPastMuxBuffer(command: string): string {
+  const bytes = Buffer.byteLength(command)
+  return bytes >= MUX_FD_WINDOW_START && bytes < MUX_FD_WINDOW_END
+    ? command + ' '.repeat(MUX_FD_WINDOW_END - bytes)
+    : command
+}
+
 export function buildExecArgs(
   host: string,
   controlPath: string,
@@ -259,7 +274,7 @@ export function buildExecArgs(
     ...connectionArgs(config, 'ssh'),
     ...SSH_OPTIONS,
     validateHostAlias(host),
-    command
+    padCommandPastMuxBuffer(command)
   ]
 }
 
@@ -538,6 +553,8 @@ function remoteStdioProcess(
   child: ChildProcessWithoutNullStreams,
   signal: AbortSignal
 ): RemoteStdioProcess {
+  // Writers learn of a dead channel from the write callback, a destroyed stream or `closed`.
+  child.stdin.on('error', () => undefined)
   let finished = false
   const closed = new Promise<{ code: number | null; signal: string | null }>((resolve, reject) => {
     child.once('error', reject)

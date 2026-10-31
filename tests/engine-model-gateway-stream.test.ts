@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { setImmediate as nextTurn } from 'node:timers/promises'
-import { boundedGatewayStream } from '../src/main/agent/engine/in-process/model-gateway-stream'
+import {
+  boundedGatewayStream,
+  GATEWAY_STREAM_LIMITS,
+  type GatewayStreamLimits
+} from '../src/main/agent/engine/in-process/model-gateway-stream'
 
 const encoder = new TextEncoder()
 const identity = { provider: 'fixture', id: 'model', api: 'openai-completions' }
@@ -266,4 +270,29 @@ test('half-streams and malformed terminal sequencing fail instead of reporting c
     )
     assert.equal(controller.signal.aborted, true)
   }
+})
+
+async function abortedByBurst(limits?: GatewayStreamLimits): Promise<boolean> {
+  const input = new ReadableStream<Uint8Array>({
+    start(upstream) {
+      // The model is still streaming, so the source stays open.
+      for (let index = 0; index < 3000; index++)
+        upstream.enqueue(frame({ type: 'text_delta', delta: 'x', contentIndex: index }))
+    }
+  })
+  const controller = new AbortController()
+  const output = boundedGatewayStream(input, controller, identity, () => undefined, limits)
+  // The tunnel reads nothing while the model bursts out far more than a few hundred events.
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  const aborted = controller.signal.aborted
+  if (!aborted) await output.cancel()
+  return aborted
+}
+
+test('a long reply outrunning a slow tunnel stays in the byte-bounded queue', async () => {
+  assert.equal(await abortedByBurst(), false)
+})
+
+test('the former 256 event limit is what cut such a reply off', async () => {
+  assert.equal(await abortedByBurst({ ...GATEWAY_STREAM_LIMITS, maxQueuedEvents: 256 }), true)
 })

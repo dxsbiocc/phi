@@ -3524,10 +3524,7 @@ function registerApplicationAndModelIpc(): void {
   registerThinkingIpc({
     ipcMain,
     selectionTarget: modelSelectionTarget,
-    sessionState: {
-      ...modelSessionState,
-      getCurrentResolvedSession
-    },
+    sessionState: modelSessionState,
     models: modelSelectionOperations
   })
 }

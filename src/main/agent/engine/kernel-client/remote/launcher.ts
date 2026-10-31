@@ -11,7 +11,7 @@ import type {
   JsonValue,
   ModelAccessConfigureParams
 } from '../../../../../shared/kernel-protocol'
-import { KernelClientError, KernelProtocolClient } from '..'
+import { KernelProtocolClient, subscribeReportingReplayGap } from '..'
 import {
   ensureRemoteKernelDeployment,
   probeRemoteKernelHostProfile,
@@ -348,19 +348,6 @@ async function openRemoteKernelClient(
   }
 }
 
-async function subscribeAfterReconnect(
-  client: KernelProtocolClient,
-  lastSeen: number
-): Promise<boolean> {
-  try {
-    await client.subscribe(lastSeen)
-    return false
-  } catch (error) {
-    if (error instanceof KernelClientError && error.code === 'REPLAY_GAP') return true
-    throw error
-  }
-}
-
 export async function launchRemoteKernel(
   options: LaunchRemoteKernelOptions
 ): Promise<LaunchedRemoteKernel> {
@@ -464,7 +451,7 @@ export async function reattachRemoteKernel(
       opened.attach.state === 'spawned' ||
       opened.greeting.kernelInstanceId !== options.previous.greeting.kernelInstanceId
     if (!snapshotRequired) {
-      snapshotRequired = await subscribeAfterReconnect(opened.client, options.lastSeen)
+      snapshotRequired = await subscribeReportingReplayGap(opened.client, options.lastSeen)
     }
     return {
       client: opened.client,

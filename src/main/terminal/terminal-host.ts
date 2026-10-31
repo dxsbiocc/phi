@@ -331,6 +331,8 @@ export class TerminalHost {
     kind: 'worker' | 'supervisor',
     child: ChildProcessWithoutNullStreams
   ): ChildChannel {
+    // A dead child fails pending requests through the write callback and its exit handling.
+    child.stdin.on('error', () => undefined)
     const startedAt = Date.now()
     const channel: ChildChannel = {
       kind,

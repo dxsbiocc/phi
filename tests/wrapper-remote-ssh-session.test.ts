@@ -588,3 +588,30 @@ test('closing an in-flight SSH command is a TRANSPORT_LOST error', async () => {
   await session.close()
   await rejection
 })
+
+test('a write to an SSH channel whose peer closed stdin is not an uncaught exception', async () => {
+  const fixture = fakeOpenSsh()
+  const session = await connectRemoteSshSession({ host: 'lab' }, fixture.runtime)
+  const uncaught: Error[] = []
+  const onUncaught = (error: Error): void => void uncaught.push(error)
+  process.on('uncaughtException', onUncaught)
+  try {
+    // The process stays alive, so Node has not destroyed stdin and the write really hits EPIPE.
+    const channel = await session.openStdio!('exec 0<&-; echo closed; exec sleep 5')
+    await new Promise((resolve) => channel.stdout.once('data', resolve))
+    const writeError = await new Promise<Error | null | undefined>((resolve) => {
+      channel.stdin.write(Buffer.alloc(1024), resolve)
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.match(String(writeError), /EPIPE/)
+    assert.deepEqual(
+      uncaught.map((error) => error.message),
+      []
+    )
+    assert.equal(channel.stdin.destroyed, true, 'the upload loop can still see the channel is gone')
+    await channel.close()
+  } finally {
+    process.removeListener('uncaughtException', onUncaught)
+    await session.close()
+  }
+})
