@@ -134,7 +134,8 @@ function modelAccessWireParams(configuration: ModelAccessConfigureParams): JsonV
       contextWindow: model.contextWindow,
       maxTokens: model.maxTokens,
       ...(model.cost ? { cost: { ...model.cost } } : {})
-    }))
+    })),
+    ...(configuration.cursor ? { cursor: { ...configuration.cursor } } : {})
   }
 }
 

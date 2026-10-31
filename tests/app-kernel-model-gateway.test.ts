@@ -263,3 +263,41 @@ test('remote kernel bounds the raw desktop catalog before requesting a model gat
   assert.deepEqual(refs[0], { provider: selected.provider, id: selected.id })
   assert.deepEqual(refs.at(-1), { provider: 'configured', id: 'configured-254' })
 })
+
+test('remote kernel leases Cursor models after other providers and skips rich routes', () => {
+  const cursor = (
+    id: string,
+    extra: Partial<RuntimeSnapshot['models'][number]> = {}
+  ): RuntimeSnapshot['models'][number] => ({
+    provider: 'cursor',
+    id,
+    name: id,
+    reasoning: false,
+    ...extra
+  })
+  const grok = cursor('grok')
+  const rich = cursor('rich', { cursorRichRoutes: true })
+  const other = { provider: 'configured', id: 'other', name: 'Other', reasoning: false }
+  const snapshot: RuntimeSnapshot = {
+    providers: [
+      { id: 'configured', name: 'Configured', status: { configured: true } },
+      { id: 'cursor', name: 'Cursor', status: { configured: true } }
+    ],
+    credentials: [],
+    models: [grok, rich, other]
+  }
+  const availability = { disabledProviders: [], disabledModels: [] }
+
+  assert.deepEqual(
+    selectRemoteKernelGatewayModels(snapshot, grok, availability).map((model) => model.id),
+    ['grok', 'other']
+  )
+  assert.deepEqual(
+    selectRemoteKernelGatewayModels(snapshot, other, availability).map((model) => model.id),
+    ['other', 'grok']
+  )
+  assert.throws(
+    () => selectRemoteKernelGatewayModels(snapshot, rich, availability),
+    /Selected remote kernel model is unavailable/
+  )
+})

@@ -687,7 +687,18 @@ export const modelAccessConfigureParamsSchema = z
       .min(32)
       .max(256)
       .regex(/^[A-Za-z0-9_-]+$/),
-    models: z.array(kernelModelDescriptorSchema).min(1).max(256)
+    models: z.array(kernelModelDescriptorSchema).min(1).max(256),
+    cursor: z
+      .object({
+        baseUrl: z.string().url(),
+        bearerToken: z
+          .string()
+          .min(32)
+          .max(256)
+          .regex(/^[A-Za-z0-9_-]+$/)
+      })
+      .strict()
+      .optional()
   })
   .strict()
 export const modelAccessConfigureResultSchema = z.object({ configured: z.literal(true) }).strict()
@@ -786,6 +797,8 @@ export type ModelAccessConfigureParams = Readonly<{
       cost?: Readonly<NonNullable<KernelModelDescriptor['cost']>>
     }
   >[]
+  /** Cursor stays on its native protocol, so it reaches the desktop through its own tunnel. */
+  cursor?: Readonly<{ baseUrl: string; bearerToken: string }>
 }>
 export type SessionCloseParams = z.infer<typeof sessionCloseParamsSchema>
 export type SessionCloseResult = z.infer<typeof sessionCloseResultSchema>

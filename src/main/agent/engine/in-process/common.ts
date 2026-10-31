@@ -60,6 +60,7 @@ export type RuntimeModelSummary = {
   reasoning: boolean
   supportsImages: boolean
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>
+  cursorRichRoutes?: true
 }
 
 export { isRecord }

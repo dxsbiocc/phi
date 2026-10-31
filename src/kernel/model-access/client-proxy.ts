@@ -19,6 +19,7 @@ import type {
 
 const DEFAULT_CONTEXT_WINDOW = 128_000
 const DEFAULT_MAX_TOKENS = 8_192
+const CURSOR_PROVIDER = 'cursor'
 
 export interface ClientProxyModelAccess extends KernelModelAccess {
   readonly requestFetch: typeof globalThis.fetch
@@ -40,6 +41,7 @@ function validateConfiguration(params: ModelAccessConfigureParams): {
   baseUrl: string
   bearerToken: string
   models: readonly SafeModelDescriptor[]
+  cursor: ModelAccessConfigureParams['cursor']
 } {
   let endpoint: URL
   try {
@@ -83,6 +85,10 @@ function validateConfiguration(params: ModelAccessConfigureParams): {
       ...(model.cost ? { cost: Object.freeze({ ...model.cost }) } : {})
     })
   })
+  if (params.cursor) validateCursorRoute(params.cursor)
+  else if (models.some((model) => model.provider === CURSOR_PROVIDER)) {
+    throw new ModelAccessConfigurationError('Cursor models need their own model proxy route.')
+  }
   const suffix = '/v1/pi/stream'
   const pathname = endpoint.pathname.slice(0, -suffix.length).replace(/\/+$/, '')
   endpoint.pathname = pathname || '/'
@@ -92,7 +98,23 @@ function validateConfiguration(params: ModelAccessConfigureParams): {
     endpoint: streamEndpoint,
     baseUrl,
     bearerToken: params.bearerToken,
-    models: Object.freeze(models)
+    models: Object.freeze(models),
+    cursor: params.cursor
+  }
+}
+
+function validateCursorRoute(route: NonNullable<ModelAccessConfigureParams['cursor']>): void {
+  let url: URL
+  try {
+    url = new URL(route.baseUrl)
+  } catch {
+    throw new ModelAccessConfigurationError('Cursor model proxy route is invalid.')
+  }
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.origin !== route.baseUrl) {
+    throw new ModelAccessConfigurationError('Cursor model proxy route must be a loopback origin.')
+  }
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(route.bearerToken)) {
+    throw new ModelAccessConfigurationError('Cursor model proxy bearer is invalid.')
   }
 }
 
@@ -105,6 +127,7 @@ class ClientProxyModelAccessImpl implements ClientProxyModelAccess {
   private readonly reconnect: ModelProxyReconnectController
   private readonly listeners = new Set<ModelAccessChangeListener>()
   private readonly publishedModels = new Set<Model<Api>>()
+  private readonly publishedCursorModels = new Set<Model<Api>>()
   private configuredModels: readonly Model<Api>[] = Object.freeze([])
   private descriptors: readonly SafeModelDescriptor[] = Object.freeze([])
   private configureQueue = Promise.resolve()
@@ -198,7 +221,13 @@ class ClientProxyModelAccessImpl implements ClientProxyModelAccess {
     const credentials: AuthCredentialSnapshotEntry[] = [...providers.keys()].map((provider) => ({
       id: credentialId++,
       provider,
-      credential: { type: 'api_key', key: configured.bearerToken },
+      credential: {
+        type: 'api_key',
+        key:
+          provider === CURSOR_PROVIDER && configured.cursor
+            ? configured.cursor.bearerToken
+            : configured.bearerToken
+      },
       identityKey: null
     }))
     this.store.replaceSnapshot(credentials)
@@ -208,9 +237,47 @@ class ClientProxyModelAccessImpl implements ClientProxyModelAccess {
       model.baseUrl = configured.baseUrl
       model.transport = 'pi-native'
     }
+    for (const model of this.publishedCursorModels) {
+      if (configured.cursor) model.baseUrl = configured.cursor.baseUrl
+    }
+    this.registerProxyProviders(providers, configured.baseUrl)
+    const nextModels: Model<Api>[] = []
+    const descriptors: SafeModelDescriptor[] = []
+    for (const descriptor of configured.models) {
+      if (descriptor.provider === CURSOR_PROVIDER) {
+        const model = this.publishCursorModel(descriptor, configured.cursor)
+        if (model) {
+          nextModels.push(model)
+          descriptors.push(descriptor)
+        }
+        continue
+      }
+      const model = this.modelRegistry.find(descriptor.provider, descriptor.id)
+      if (!model) {
+        throw new ModelAccessConfigurationError(
+          `Model proxy failed to register ${descriptor.provider}/${descriptor.id}.`
+        )
+      }
+      model.baseUrl = configured.baseUrl
+      model.transport = 'pi-native'
+      this.publishedModels.add(model)
+      nextModels.push(model)
+      descriptors.push(descriptor)
+    }
+    this.descriptors = descriptors
+    this.configuredModels = Object.freeze(nextModels)
+    this.reconnect.configured(configured.endpoint, configured.bearerToken)
+    this.emitChange()
+  }
+
+  private registerProxyProviders(
+    providers: ReadonlyMap<string, readonly SafeModelDescriptor[]>,
+    baseUrl: string
+  ): void {
     for (const [provider, models] of providers) {
+      if (provider === CURSOR_PROVIDER) continue
       this.modelRegistry.registerProvider(provider, {
-        baseUrl: configured.baseUrl,
+        baseUrl,
         api: 'openai-completions',
         transport: 'pi-native',
         oauth: {
@@ -232,22 +299,23 @@ class ClientProxyModelAccessImpl implements ClientProxyModelAccess {
         }))
       })
     }
-    const nextModels = configured.models.map((descriptor) => {
-      const model = this.modelRegistry.find(descriptor.provider, descriptor.id)
-      if (!model) {
-        throw new ModelAccessConfigurationError(
-          `Model proxy failed to register ${descriptor.provider}/${descriptor.id}.`
-        )
-      }
-      model.baseUrl = configured.baseUrl
-      model.transport = 'pi-native'
-      this.publishedModels.add(model)
-      return model
-    })
-    this.descriptors = configured.models
-    this.configuredModels = Object.freeze(nextModels)
-    this.reconnect.configured(configured.endpoint, configured.bearerToken)
-    this.emitChange()
+  }
+
+  /**
+   * Cursor runs its agent protocol and tool handlers here, so only the bundled row's endpoint
+   * changes. A model the desktop discovered but this build does not bundle cannot run here.
+   */
+  private publishCursorModel(
+    descriptor: SafeModelDescriptor,
+    route: ModelAccessConfigureParams['cursor']
+  ): Model<Api> | undefined {
+    const model = this.modelRegistry.find(descriptor.provider, descriptor.id)
+    if (!model || !route || model.api !== 'cursor-agent') return undefined
+    model.baseUrl = route.baseUrl
+    model.contextWindow = descriptor.contextWindow ?? model.contextWindow
+    model.maxTokens = descriptor.maxTokens ?? model.maxTokens
+    this.publishedCursorModels.add(model)
+    return model
   }
 
   private emitChange(): void {

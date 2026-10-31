@@ -25,6 +25,7 @@ import { getSessionDir } from './session/session-store'
 import { AppKernelDesktopServices } from './app-kernel-desktop-services'
 import { isModelEnabled, readModelAvailability } from './model-availability'
 import type { ModelAvailabilitySettings } from '../../shared/modelAvailabilityTypes'
+import type { ModelAccessConfigureParams } from '../../shared/kernel-protocol'
 import type { ModelGatewayModelRef } from './engine/model-gateway-types'
 import type { RuntimeModel, RuntimeSnapshot } from './engine/types'
 import { isSelectableRuntimeModel } from './runtime/runtime-model-selection'
@@ -117,7 +118,7 @@ export function selectRemoteKernelGatewayModels(
   )
   if (
     !selectedAvailable ||
-    selected.provider === 'cursor' ||
+    selected.cursorRichRoutes === true ||
     !isSelectableRuntimeModel(selected) ||
     !isModelEnabled(availability, selected.provider, selected.id)
   ) {
@@ -125,10 +126,16 @@ export function selectRemoteKernelGatewayModels(
   }
   const refs: ModelGatewayModelRef[] = []
   const seen = new Set<string>()
-  for (const model of [selected, ...snapshot.models]) {
+  // Cursor's catalog is large; it must not crowd other configured providers out of the lease.
+  const candidates = [
+    selected,
+    ...snapshot.models.filter((model) => model.provider !== 'cursor'),
+    ...snapshot.models.filter((model) => model.provider === 'cursor')
+  ]
+  for (const model of candidates) {
     const selectedModel = model.provider === selected.provider && model.id === selected.id
     if (
-      model.provider === 'cursor' ||
+      model.cursorRichRoutes === true ||
       !isSelectableRuntimeModel(model) ||
       (!selectedModel && !configured.has(model.provider)) ||
       !isModelEnabled(availability, model.provider, model.id)
@@ -191,11 +198,45 @@ async function openRemoteTarget(
   }
 }
 
+/** Cursor rows the scoped lease refuses must not take other providers' remote sessions down. */
+async function createRemoteGatewayLease(
+  sessionId: string,
+  catalog: readonly ModelGatewayModelRef[],
+  selected: RuntimeModel,
+  signal: AbortSignal
+): Promise<OwnedModelGatewayLease> {
+  const create = (models: readonly ModelGatewayModelRef[]): Promise<OwnedModelGatewayLease> =>
+    getPhiEngineBridge().createModelGatewayLease(
+      { sessionId, generation: ++kernelModelGatewayGeneration, models },
+      signal
+    )
+  try {
+    return await create(catalog)
+  } catch (error) {
+    const withoutCursor = catalog.filter((model) => model.provider !== 'cursor')
+    if (
+      signal.aborted ||
+      selected.provider === 'cursor' ||
+      withoutCursor.length === catalog.length
+    ) {
+      throw error
+    }
+    writeAppLog({ level: 'warn', event: 'remote_kernel_cursor_lease_skipped' })
+    return create(withoutCursor)
+  }
+}
+
+type RemoteModelProxy = {
+  gateway: OwnedModelGatewayLease
+  tunnel: RemoteReverseTunnel
+  cursorTunnel: RemoteReverseTunnel | undefined
+}
+
 async function openRemoteModelProxy(
   params: PhiSessionCreateParams,
   target: RemoteTarget,
   signal: AbortSignal
-): Promise<{ gateway: OwnedModelGatewayLease; tunnel: RemoteReverseTunnel }> {
+): Promise<RemoteModelProxy> {
   const selected = params.model
   if (!selected) throw new Error('Remote kernel launch requires a selected model.')
   const snapshot = await getPhiEngine().models.snapshot({ agentDir: params.agentDir })
@@ -204,23 +245,41 @@ async function openRemoteModelProxy(
     selected,
     readModelAvailability(params.agentDir)
   )
-  const gateway = await getPhiEngineBridge().createModelGatewayLease(
-    {
-      sessionId: `kernel-${target.remote.location.hostProfileId}`,
-      generation: ++kernelModelGatewayGeneration,
-      models: catalog
-    },
+  const gateway = await createRemoteGatewayLease(
+    `kernel-${target.remote.location.hostProfileId}`,
+    catalog,
+    selected,
     signal
   )
+  let tunnel: RemoteReverseTunnel | undefined
   try {
-    const tunnel = await target.session.openReverseTunnel!({
+    tunnel = await target.session.openReverseTunnel!({
       localPort: gateway.localPort,
       signal
     })
-    return { gateway, tunnel }
+    const cursorTunnel = gateway.cursor
+      ? await target.session.openReverseTunnel!({ localPort: gateway.cursor.localPort, signal })
+      : undefined
+    return { gateway, tunnel, cursorTunnel }
   } catch (error) {
-    await gateway.close()
+    await Promise.allSettled([tunnel?.close(), gateway.close()])
     throw error
+  }
+}
+
+function remoteModelAccess(proxy: RemoteModelProxy): ModelAccessConfigureParams {
+  return {
+    endpoint: `http://127.0.0.1:${proxy.tunnel.remotePort}/v1/pi/stream`,
+    bearerToken: proxy.gateway.bearerToken,
+    models: proxy.gateway.models,
+    ...(proxy.cursorTunnel && proxy.gateway.cursor
+      ? {
+          cursor: {
+            baseUrl: `http://127.0.0.1:${proxy.cursorTunnel.remotePort}`,
+            bearerToken: proxy.gateway.cursor.bearerToken
+          }
+        }
+      : {})
   }
 }
 
@@ -261,7 +320,7 @@ async function launchAppRemoteKernel(input: {
     input.params,
     input.signal
   )
-  let proxy: Awaited<ReturnType<typeof openRemoteModelProxy>> | undefined
+  let proxy: RemoteModelProxy | undefined
   let launched: Awaited<ReturnType<typeof launchRemoteKernel>> | undefined
   try {
     proxy = await openRemoteModelProxy(input.params, target, input.signal)
@@ -286,17 +345,14 @@ async function launchAppRemoteKernel(input: {
         hostCapabilities: [...input.context.hostCapabilities],
         ...(input.context.afterSeq > 0 ? { takeover: true } : {})
       },
-      modelAccess: {
-        endpoint: `http://127.0.0.1:${proxy.tunnel.remotePort}/v1/pi/stream`,
-        bearerToken: proxy.gateway.bearerToken,
-        models: proxy.gateway.models
-      }
+      modelAccess: remoteModelAccess(proxy)
     })
     const close = async (): Promise<void> => {
       input.active.delete(close)
       await Promise.allSettled([
         launched!.close(),
         proxy!.tunnel.close(),
+        proxy!.cursorTunnel?.close(),
         proxy!.gateway.close(),
         target.session.close(),
         target.workspace.close?.()
@@ -315,6 +371,7 @@ async function launchAppRemoteKernel(input: {
     await Promise.allSettled([
       launched?.close(),
       proxy?.tunnel.close(),
+      proxy?.cursorTunnel?.close(),
       proxy?.gateway.close(),
       target.session.close(),
       target.workspace.close?.()

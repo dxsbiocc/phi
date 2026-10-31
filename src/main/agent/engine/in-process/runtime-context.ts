@@ -115,6 +115,12 @@ export function serializeThinkingMap(
   ) as Partial<Record<ThinkingLevel, string | null>>
 }
 
+function hasCursorRichRoutes(model: PhiModel): boolean {
+  const { cursorModelRoutes, cursorModelParameters } = model as PhiModel &
+    Partial<Pick<RuntimeModel, 'cursorModelRoutes' | 'cursorModelParameters'>>
+  return Object.keys(cursorModelRoutes ?? {}).length > 0 || (cursorModelParameters?.length ?? 0) > 0
+}
+
 export function serializeModel(model: PhiModel): RuntimeModelSummary {
   return {
     provider: model.provider,
@@ -122,6 +128,7 @@ export function serializeModel(model: PhiModel): RuntimeModelSummary {
     name: model.name || model.id,
     reasoning: Boolean(model.reasoning),
     supportsImages: model.input.includes('image'),
+    ...(hasCursorRichRoutes(model) ? { cursorRichRoutes: true as const } : {}),
     ...(serializeThinkingMap(model) ? { thinkingLevelMap: serializeThinkingMap(model) } : {})
   }
 }

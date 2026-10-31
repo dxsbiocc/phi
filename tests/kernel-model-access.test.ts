@@ -340,6 +340,66 @@ it('client proxy reconfigures stable session models and bearer credentials in pl
   )
 })
 
+it('client proxy keeps Cursor native and routes it through its own tunnel', async (t) => {
+  const access = createClientProxyModelAccess()
+  t.after(() => access.close())
+  const cursorDescriptor = {
+    provider: 'cursor',
+    id: 'cursor-grok-4.6-fast',
+    name: 'Grok 4.6 Fast',
+    reasoning: true,
+    input: ['text', 'image'] as const,
+    contextWindow: 256_000,
+    maxTokens: 64_000
+  }
+  const cursorBearer = 'c'.repeat(43)
+  const params = (port: number): ModelAccessConfigureParams => {
+    const base = configuration(port, 'a'.repeat(43))
+    return {
+      ...base,
+      models: [
+        ...base.models,
+        cursorDescriptor,
+        { ...cursorDescriptor, id: 'discovered-by-the-desktop-only' }
+      ],
+      cursor: { baseUrl: `http://127.0.0.1:${port + 1}`, bearerToken: cursorBearer }
+    }
+  }
+
+  access.controllerAttached()
+  await access.configure(params(41011))
+  const grok = access.modelRegistry.find('cursor', cursorDescriptor.id)
+  assert.ok(grok)
+  assert.equal(grok.api, 'cursor-agent')
+  assert.equal(grok.transport, undefined)
+  assert.equal(grok.baseUrl, 'http://127.0.0.1:41012')
+  assert.equal(await access.authStorage.keys.get('cursor'), cursorBearer)
+  assert.equal(await access.authStorage.keys.get(provider), 'a'.repeat(43))
+  assert.ok(access.catalog().includes(grok))
+  assert.equal(
+    access.catalog().some((model) => model.id === 'discovered-by-the-desktop-only'),
+    false
+  )
+
+  await access.configure(params(41021))
+  assert.strictEqual(access.modelRegistry.find('cursor', cursorDescriptor.id), grok)
+  assert.equal(grok.baseUrl, 'http://127.0.0.1:41022')
+  assert.equal(grok.transport, undefined)
+
+  const withoutRoute = params(41031)
+  await assert.rejects(
+    async () => access.configure({ ...withoutRoute, cursor: undefined }),
+    /Cursor models need their own model proxy route/
+  )
+  for (const baseUrl of ['https://api2.cursor.sh', 'http://127.0.0.1:41032/path']) {
+    await assert.rejects(
+      async () =>
+        access.configure({ ...withoutRoute, cursor: { baseUrl, bearerToken: cursorBearer } }),
+      /loopback origin/
+    )
+  }
+})
+
 it('client proxy retries one pre-byte refused request after attach and fresh configure', async (t) => {
   const calls: Array<{ url: string; authorization: string | null }> = []
   const access = createClientProxyModelAccess({

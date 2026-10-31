@@ -274,6 +274,8 @@ export interface RuntimeModel {
   reasoning: boolean
   supportsImages?: boolean
   thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>
+  /** A discovered Cursor route the scoped remote gateway cannot authorize yet. */
+  cursorRichRoutes?: true
 }
 
 export type ResourceDiagnostic = {
