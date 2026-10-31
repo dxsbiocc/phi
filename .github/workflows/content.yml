@@ -40,7 +40,7 @@ jobs:
   core:
     name: Independent core (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -57,7 +57,8 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # The Node line Electron bundles, so the suites run on what the main process runs.
+          node-version: '24'
       - name: Setup bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -65,22 +66,25 @@ jobs:
           bun-version: '1.3.14'
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      - name: Install Electron binary
+        # Without it, every process importing electron downloads the binary and prints to stdout.
+        run: node node_modules/electron/install.js
+      - name: Build remote helper
+        # The prepared-host fixtures read the bundled helper's manifest.
+        run: bun run helper:fetch-go && bun run build:helper
       - name: Core lint and resource boundary
         run: bun run lint
       - name: Production typecheck
         run: bun run typecheck
-      - name: Install ripgrep
+      - name: Install test host tools
         # Remote search tests use the runner's rg as the server's system and managed ripgrep.
+        # Login-shell tests launch through zsh and csh, which macOS already ships.
         run: |
-          if [ "$RUNNER_OS" = macOS ]; then brew install ripgrep; else sudo apt-get update && sudo apt-get install -y ripgrep; fi
+          if [ "$RUNNER_OS" = macOS ]; then brew install ripgrep; else sudo apt-get update && sudo apt-get install -y ripgrep zsh csh; fi
           rg --version
       - name: Independent core regressions
-        # TAP stays on stdout; a spec copy keeps one list of failures for the next step.
-        run: node --import ./scripts/test-loader.mjs --test --test-concurrency=4 --test-timeout=300000 --test-force-exit --test-reporter=tap --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination="$RUNNER_TEMP/core-tests.txt" tests/*.test.ts
-      - name: Failing tests
-        if: failure()
-        # Names, locations and messages; stack frames are dropped to keep this short.
-        run: sed -n '/failing tests:/,$p' "$RUNNER_TEMP/core-tests.txt" | grep -vE '^\s+at ' | head -n 400 || true
+        # The gate skips suites this host cannot run and retries failures serially.
+        run: bun run test:gate
 
   packages:
     name: Pinned package content

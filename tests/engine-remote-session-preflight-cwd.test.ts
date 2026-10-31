@@ -21,6 +21,8 @@ const hasCode =
   (error: unknown): boolean =>
     error instanceof Error && 'code' in error && error.code === expected
 const macOnly = { skip: process.platform !== 'darwin' }
+// These fixtures prove the macOS /tmp -> /private/tmp alias, whatever TMPDIR the host sets.
+if (process.platform === 'darwin') process.env.TMPDIR = '/tmp'
 
 async function actualNativeFixture(
   t: TestContext,
