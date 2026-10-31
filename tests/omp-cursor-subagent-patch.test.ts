@@ -26,6 +26,7 @@ it('keeps the OMP patch that runs Cursor Task through the task tool', () => {
   assert.match(provider, /execHandlers\?\.subagentAwait && requestContextTools\.some/)
   const bridge = source(AGENT)
   assert.match(bridge, /executeTool\(this\.options, "task", call\.toolCallId, call\.args\)/)
+  assert.match(bridge, /CURSOR_TASK_WAIT_ATTEMPTS/)
   assert.match(bridge, /executeTool\(this\.options, "wait", call\.toolCallId, call\.args\)/)
   assert.match(source(OUTPUT), /AgentRegistry\.global\(\)\.get/)
 })

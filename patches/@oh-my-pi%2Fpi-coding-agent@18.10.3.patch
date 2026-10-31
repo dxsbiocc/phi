@@ -1,3 +1,6 @@
+diff --git a/node_modules/@oh-my-pi/pi-coding-agent/.bun-tag-389f89cc4096418e b/.bun-tag-389f89cc4096418e
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/node_modules/@oh-my-pi/pi-coding-agent/.bun-tag-4f9cbf09af54ae54 b/.bun-tag-4f9cbf09af54ae54
 new file mode 100644
 index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
@@ -14,16 +17,44 @@ index 5e29c9c399a7ee34333bc3b0a59f681e3b648427..b6b2dbb5ef01ad8cb09dc658c1b53f24
  		out.push({
  			id: ref.id,
 diff --git a/src/cursor.ts b/src/cursor.ts
-index 638a74daa7612cab4705d2ee8d395f1f6102572b..cd451afbaa742169124cbc9a0f11a761d47564e5 100644
+index 638a74daa7612cab4705d2ee8d395f1f6102572b..9ffdbe5ebfcc0b8414f71183b46ca93c103f66c3 100644
 --- a/src/cursor.ts
 +++ b/src/cursor.ts
-@@ -708,6 +708,15 @@ export class CursorExecHandlers implements ICursorExecHandlers {
+@@ -514,6 +514,9 @@ function buildTodoSyncResult(
+ 	};
+ }
+ 
++/** Phi: each `wait` is capped by its own safety timeout. */
++const CURSOR_TASK_WAIT_ATTEMPTS = 60;
++
+ export class CursorExecHandlers implements ICursorExecHandlers {
+ 	constructor(private options: CursorExecBridgeOptions) {}
+ 
+@@ -708,6 +711,33 @@ export class CursorExecHandlers implements ICursorExecHandlers {
  		return bridgeContext.attach(createToolResultMessage(toolCallId, toolName, result, isError));
  	}
  
 +	/** Phi: Cursor's built-in Task goes through the same tool a model-issued `task` call uses. */
 +	async subagent(call: Parameters<NonNullable<ICursorExecHandlers["subagent"]>>[0]) {
-+		return await executeTool(this.options, "task", call.toolCallId, call.args);
++		const spawned = await executeTool(this.options, "task", call.toolCallId, call.args);
++		const text = spawned.content.map(block => (block.type === "text" ? block.text : "")).join("");
++		const job = /^Spawned agent `([^`]+)`/.exec(text)?.[1];
++		if (spawned.isError || !job) return spawned;
++		// Cursor's Task is synchronous: the model ends its turn if it gets back a
++		// job id, so answer with the settled result. `wait` also returns for other
++		// jobs and for messages, so keep going until this job is in the output.
++		const settled: string[] = [];
++		for (let attempt = 0; attempt < CURSOR_TASK_WAIT_ATTEMPTS; attempt++) {
++			const waited = await executeTool(this.options, "wait", `${call.toolCallId}-wait-${attempt}`, {
++				i: "Waiting for the delegated subagent",
++			});
++			const output = waited.content.map(block => (block.type === "text" ? block.text : "")).join("");
++			settled.push(output);
++			if (waited.isError || output.includes(`### ${job} `)) {
++				return { ...spawned, content: [{ type: "text" as const, text: settled.join("\n\n") }], isError: waited.isError };
++			}
++		}
++		return spawned;
 +	}
 +
 +	async subagentAwait(call: Parameters<NonNullable<ICursorExecHandlers["subagentAwait"]>>[0]) {
