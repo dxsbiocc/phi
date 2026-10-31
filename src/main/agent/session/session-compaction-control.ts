@@ -5,7 +5,11 @@ import type {
   ManualCompactionOutcome,
   ManualCompactionTarget
 } from '../../../shared/contextUsageTypes'
-import { errorMessage } from '../../../shared/errorCodes'
+import {
+  COMPACTION_NOT_NEEDED_MESSAGE,
+  errorMessage,
+  isCompactionNoOpError
+} from '../../../shared/errorCodes'
 import { IPC } from '../../../shared/ipcChannels'
 import type { PermissionMode } from '../projects'
 import { readRpcCompactionPolicy } from '../engine/in-process-engine'
@@ -344,6 +348,7 @@ export async function compactCurrentSession(
       control.assertCurrent()
     } catch (error) {
       const failureMessage = errorMessage(error)
+      if (isCompactionNoOpError(error)) throw new Error(COMPACTION_NOT_NEEDED_MESSAGE)
       try {
         broadcast(
           appendSessionEvent(phiSessionId, {

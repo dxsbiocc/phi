@@ -59,6 +59,10 @@ test('packages macOS arm64 and Linux x64, smoke-testing the bundled worker on bo
     ]
   )
   const steps = pkg?.steps ?? []
+  // The kernel is the default route: a package without it cannot run a single session.
+  const buildKernel = steps.findIndex((step) => step.run?.includes('build-kernel.ts'))
+  const builderStep = steps.findIndex((step) => step.run?.includes('electron-builder'))
+  assert.ok(buildKernel >= 0 && buildKernel < builderStep)
   const smoke = steps.find((step) => step.run?.includes('smoke-packaged-worker.mjs'))
   assert.ok(smoke, 'packaged worker smoke test runs')
   assert.match(smoke?.run ?? '', /dist\/mac-arm64\/Phi\.app\/Contents\/Resources/)

@@ -44,7 +44,8 @@ test('Linux packaging workflow is manual, least-privilege, and uploads checked x
       'bun install --frozen-lockfile',
       'bun run typecheck',
       'bun run build:linux',
-      'node scripts/smoke-packaged-worker.mjs --resources dist/linux-unpacked/resources',
+      'node scripts/smoke-packaged-worker.mjs --resources dist/linux-unpacked/resources\n' +
+        `test -x "$(find dist/linux-unpacked/resources/kernel -path '*linux-x64/phi-kernel' -print -quit)"\n`,
       steps[7]?.run
     ]
   )

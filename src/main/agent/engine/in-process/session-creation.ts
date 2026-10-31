@@ -28,6 +28,7 @@ import { isPhiAgentDefinition } from '../../agents/definition'
 import { AgentRunRegistry } from '../../agents/registry'
 import { buildPhiMainSystemPrompt } from '../../main-system-prompt'
 import { translateOmpEvent } from '../events'
+import { createCursorDelegationExtension } from '../phi-extension/extensions/cursor-delegation'
 import { createCursorStreamRecoveryExtension } from '../phi-extension/extensions/cursor-stream-recovery'
 import { createSpecialistFallbackExtension } from '../phi-extension/extensions/specialist-fallback'
 import { isRecord, stringValue } from './common'
@@ -202,7 +203,8 @@ export async function createSession(
     ...(agentPolicies.length === 0
       ? [createSpecialistFallbackExtension(agentPolicies, extensionHost)]
       : []),
-    createCursorStreamRecoveryExtension(() => parentRef.current?.session.agent)
+    createCursorStreamRecoveryExtension(() => parentRef.current?.session.agent),
+    createCursorDelegationExtension()
   ]
   const registry = await createSessionToolRegistry({
     record,

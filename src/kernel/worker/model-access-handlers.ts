@@ -5,6 +5,7 @@ import type {
   ModelAccessStatus
 } from '../../shared/kernel-protocol'
 import type { KernelMethodHandlers } from '../protocol'
+import { isSdkCompactionNoOp, KERNEL_COMPACTION_NO_OP_REASON } from '../../shared/errorCodes'
 import { makeProtocolError } from '../protocol/errors'
 import type { KernelModelAccess } from '../model-access'
 
@@ -130,9 +131,9 @@ export function createModelAccessWorkerHandlers(options: {
     },
     async 'session.compact'(_params, _context, request) {
       const id = loadedSessionId(options, request.sessionId)
-      const compacted = (await options.callWorker('session.compact', { sessionId: id })) as {
-        summary: JsonValue
-      }
+      const compacted = (await options
+        .callWorker('session.compact', { sessionId: id })
+        .catch(rethrowCompactionNoOp)) as { summary: JsonValue }
       return { summary: compacted.summary, state: await options.snapshot(id) }
     },
     async 'session.getAutoCompaction'(_params, _context, request) {
@@ -167,6 +168,17 @@ export function createModelAccessWorkerHandlers(options: {
         }
       : {})
   }
+}
+
+/** A short session is a normal answer, not the internal failure an unmapped throw becomes. */
+function rethrowCompactionNoOp(error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error)
+  if (isSdkCompactionNoOp(message)) {
+    throw makeProtocolError('CAPABILITY_UNAVAILABLE', message.slice(0, 200), {
+      reason: KERNEL_COMPACTION_NO_OP_REASON
+    })
+  }
+  throw error
 }
 
 function loadedSessionId(

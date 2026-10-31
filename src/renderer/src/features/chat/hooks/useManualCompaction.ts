@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 
+import { COMPACTION_NOT_NEEDED_MESSAGE } from '../../../../../shared/errorCodes'
 import type { ManualCompactionTarget } from '../../../../../shared/contextUsageTypes'
 import { appCopy } from '../../../lib/appCopy'
 import type { getRendererApi } from '../../../lib/rendererApi'
@@ -70,7 +71,10 @@ export function useManualCompaction(deps: ManualCompactionDeps): ManualCompactio
         showSnackbar(appCopy.contextCompacted, 'success')
         refreshContextUsage()
       } catch (error) {
-        if (isCurrentTarget()) showSnackbarError(error, appCopy.compactFailed)
+        if (!isCurrentTarget()) return
+        if (String(error).includes(COMPACTION_NOT_NEEDED_MESSAGE))
+          showSnackbar(appCopy.compactNotNeeded, 'info')
+        else showSnackbarError(error, appCopy.compactFailed)
       } finally {
         compactingSessionKeysRef.current.delete(key)
         setCompactingSessions((previous) => {

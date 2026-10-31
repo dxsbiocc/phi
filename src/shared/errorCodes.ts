@@ -106,3 +106,21 @@ export function toErrorPayload(error: unknown): ErrorPayload {
     message: errorMessage(error)
   }
 }
+
+/** Stable text the renderer recognises; IPC only carries the message of a thrown error. */
+export const COMPACTION_NOT_NEEDED_MESSAGE = 'PHI_COMPACTION_NOT_NEEDED'
+
+const SDK_NO_OP_MESSAGE = /\b(?:Nothing to compact|Already compacted)\b/
+
+export function isSdkCompactionNoOp(message: string): boolean {
+  return SDK_NO_OP_MESSAGE.test(message)
+}
+
+/** The kernel protocol replaces error messages with safe text, so its no-op travels in `detail`. */
+export const KERNEL_COMPACTION_NO_OP_REASON = 'compaction_not_needed'
+
+export function isCompactionNoOpError(error: unknown): boolean {
+  if (isSdkCompactionNoOp(errorMessage(error))) return true
+  const detail = (error as { detail?: { reason?: unknown } } | null)?.detail
+  return detail?.reason === KERNEL_COMPACTION_NO_OP_REASON
+}

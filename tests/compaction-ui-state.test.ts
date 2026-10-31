@@ -427,6 +427,7 @@ function appCallback<T>(path: string, name: string, context: Record<string, unkn
     Set,
     JSON,
     appCopy,
+    COMPACTION_NOT_NEEDED_MESSAGE: 'PHI_COMPACTION_NOT_NEEDED',
     ...context
   }) as T
 }

@@ -127,7 +127,6 @@ class ClientProxyModelAccessImpl implements ClientProxyModelAccess {
   private readonly reconnect: ModelProxyReconnectController
   private readonly listeners = new Set<ModelAccessChangeListener>()
   private readonly publishedModels = new Set<Model<Api>>()
-  private readonly publishedCursorModels = new Set<Model<Api>>()
   private configuredModels: readonly Model<Api>[] = Object.freeze([])
   private descriptors: readonly SafeModelDescriptor[] = Object.freeze([])
   private configureQueue = Promise.resolve()
@@ -237,15 +236,16 @@ class ClientProxyModelAccessImpl implements ClientProxyModelAccess {
       model.baseUrl = configured.baseUrl
       model.transport = 'pi-native'
     }
-    for (const model of this.publishedCursorModels) {
-      if (configured.cursor) model.baseUrl = configured.cursor.baseUrl
-    }
     this.registerProxyProviders(providers, configured.baseUrl)
+    // Provider override, not a row edit: the SDK rebuilds rows and a child session resolves its model again.
+    if (configured.cursor) {
+      this.modelRegistry.registerProvider(CURSOR_PROVIDER, { baseUrl: configured.cursor.baseUrl })
+    }
     const nextModels: Model<Api>[] = []
     const descriptors: SafeModelDescriptor[] = []
     for (const descriptor of configured.models) {
       if (descriptor.provider === CURSOR_PROVIDER) {
-        const model = this.publishCursorModel(descriptor, configured.cursor)
+        const model = this.publishCursorModel(descriptor)
         if (model) {
           nextModels.push(model)
           descriptors.push(descriptor)
@@ -305,16 +305,11 @@ class ClientProxyModelAccessImpl implements ClientProxyModelAccess {
    * Cursor runs its agent protocol and tool handlers here, so only the bundled row's endpoint
    * changes. A model the desktop discovered but this build does not bundle cannot run here.
    */
-  private publishCursorModel(
-    descriptor: SafeModelDescriptor,
-    route: ModelAccessConfigureParams['cursor']
-  ): Model<Api> | undefined {
+  private publishCursorModel(descriptor: SafeModelDescriptor): Model<Api> | undefined {
     const model = this.modelRegistry.find(descriptor.provider, descriptor.id)
-    if (!model || !route || model.api !== 'cursor-agent') return undefined
-    model.baseUrl = route.baseUrl
+    if (!model || model.api !== 'cursor-agent') return undefined
     model.contextWindow = descriptor.contextWindow ?? model.contextWindow
     model.maxTokens = descriptor.maxTokens ?? model.maxTokens
-    this.publishedCursorModels.add(model)
     return model
   }
 

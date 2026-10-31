@@ -24,6 +24,7 @@ import {
 } from './extensions/rpc-child-control'
 import { createRpcChildSteerPermits } from './extensions/rpc-child-steer-permit'
 import { createRpcChildModelHeader, RPC_CHILD_MODEL_HEADER } from './lib/rpc-child-model-authority'
+import { createCursorDelegationExtension } from './extensions/cursor-delegation'
 import {
   createCursorStreamRecoveryExtension,
   hasOwnedCursorContinuation
@@ -294,6 +295,7 @@ const rpcExtension: ExtensionFactory = async (pi) => {
       ? current.agent
       : undefined
   })(pi)
+  await createCursorDelegationExtension()(pi)
   if (modelMetadata)
     await createRpcModelSelectionExtension(modelMetadata, runtime?.native.cursorEndpoint)(pi)
 

@@ -189,6 +189,12 @@ linux:
   executableName: phi
   icon: build/icon.png
   extraResources:
+    - from: .phi-build/kernel/${version}/linux-${arch}
+      to: kernel/${version}/linux-${arch}
+      filter:
+        - manifest.json
+        - phi-kernel
+        - '*.node'
     - from: resources/runtime/micromamba/linux-${arch}
       to: runtime/micromamba/linux-${arch}
     - from: resources/runtime/bun/linux-${arch}

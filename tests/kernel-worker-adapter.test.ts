@@ -128,6 +128,7 @@ test('worker adapter creates kernel-owned sessions with trusted entry values', a
 })
 
 test('worker adapter owns model, thinking, context and compaction controls during a run', async () => {
+  let compactionNoOp = false
   const cwd = mkdtempSync(join(tmpdir(), 'phi-kernel-worker-model-controls-'))
   const calls: Array<{ method: string; params: unknown }> = []
   let releasePrompt!: () => void
@@ -190,6 +191,7 @@ test('worker adapter owns model, thinking, context and compaction controls durin
         return { tokens: 100, contextWindow: 1_000, percent: 10 }
       }
       if (method === 'session.compact') {
+        if (compactionNoOp) throw new Error('Nothing to compact (session too small)')
         return { summary: { summary: 'compact', tokensBefore: 100, tokensAfter: 10 } }
       }
       if (method === 'session.getAutoCompaction') {
@@ -268,6 +270,21 @@ test('worker adapter owns model, thinking, context and compaction controls durin
       tokensBefore: 100,
       tokensAfter: 10
     })
+    compactionNoOp = true
+    await assert.rejects(
+      async () =>
+        handler(adapter.handlers, 'session.compact')(
+          {},
+          context,
+          request('session.compact', sessionId)
+        ),
+      {
+        code: 'CAPABILITY_UNAVAILABLE',
+        message: 'Nothing to compact (session too small)',
+        detail: { reason: 'compaction_not_needed' }
+      }
+    )
+    compactionNoOp = false
     assert.deepEqual(
       await handler(adapter.handlers, 'session.getAutoCompaction')(
         {},

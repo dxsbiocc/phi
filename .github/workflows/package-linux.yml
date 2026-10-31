@@ -37,7 +37,9 @@ jobs:
         run: bun run build:linux
 
       - name: Smoke-test the packaged worker without system bun
-        run: node scripts/smoke-packaged-worker.mjs --resources dist/linux-unpacked/resources
+        run: |
+          node scripts/smoke-packaged-worker.mjs --resources dist/linux-unpacked/resources
+          test -x "$(find dist/linux-unpacked/resources/kernel -path '*linux-x64/phi-kernel' -print -quit)"
 
       - name: Check package artifacts
         shell: bash

@@ -382,9 +382,20 @@ it('client proxy keeps Cursor native and routes it through its own tunnel', asyn
   )
 
   await access.configure(params(41021))
-  assert.strictEqual(access.modelRegistry.find('cursor', cursorDescriptor.id), grok)
-  assert.equal(grok.baseUrl, 'http://127.0.0.1:41022')
-  assert.equal(grok.transport, undefined)
+  const reconfigured = access.modelRegistry.find('cursor', cursorDescriptor.id)
+  assert.equal(reconfigured?.baseUrl, 'http://127.0.0.1:41022')
+  assert.equal(reconfigured?.transport, undefined)
+
+  // A child session resolves its model again after the SDK rebuilt the catalog. Falling back to
+  // the bundled endpoint would send the tunnel token straight to Cursor from the server.
+  await access.modelRegistry.refresh('offline')
+  assert.equal(
+    access.modelRegistry.find('cursor', cursorDescriptor.id)?.baseUrl,
+    'http://127.0.0.1:41022'
+  )
+  const unlisted = access.modelRegistry.find('cursor', 'gemini-3.8-flash')
+  assert.equal(unlisted?.baseUrl, 'http://127.0.0.1:41022')
+  assert.equal(unlisted?.api, 'cursor-agent')
 
   const withoutRoute = params(41031)
   await assert.rejects(
