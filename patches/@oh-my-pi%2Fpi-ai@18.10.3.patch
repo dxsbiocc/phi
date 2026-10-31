@@ -1,0 +1,153 @@
+diff --git a/src/providers/cursor.ts b/src/providers/cursor.ts
+index bcae6f36c9b109dd322ebc5ea88e98853a393b1e..fa96936babfa5998ca2f60721ceebb86f1a6d7b5 100644
+--- a/src/providers/cursor.ts
++++ b/src/providers/cursor.ts
+@@ -145,10 +145,15 @@ import {
+ 	ShellSuccessSchema,
+ 	SmartModeClassifierErrorSchema,
+ 	SmartModeClassifierResultSchema,
++	SubagentAwaitCompleteSchema,
++	SubagentAwaitErrorSchema,
+ 	SubagentAwaitNotFoundSchema,
+ 	SubagentAwaitResultSchema,
+ 	SubagentErrorSchema,
++	type SubagentAwaitResult,
++	type SubagentResult,
+ 	SubagentResultSchema,
++	SubagentSuccessSchema,
+ 	ThinkingMessageSchema,
+ 	ToolCallSchema,
+ 	type TurnEndedUpdate,
+@@ -337,6 +342,45 @@ const CURSOR_PROXY_TUNNEL_TIMEOUT_MS = 30_000;
+  * model reads it and should route around the capability, not retry the call.
+  */
+ const NOT_IMPLEMENTED_SUFFIX = "not implemented by this client";
++
++/** Phi: the arguments the local `task` tool needs for a Cursor built-in Task call. */
++export function cursorSubagentTaskArgs(subagentType: string, prompt: string): Record<string, unknown> {
++	return {
++		agent: subagentType === "explore" ? "scout" : "task",
++		task: prompt,
++		solutionSpace: "Open: decide the approach from the assignment.",
++	};
++}
++
++function toolResultText(toolResult: ToolResultMessage): string {
++	return toolResult.content.map(block => (block.type === "text" ? block.text : "")).join("");
++}
++
++function buildSubagentError(error: string): SubagentResult {
++	return create(SubagentResultSchema, { result: { case: "error", value: create(SubagentErrorSchema, { error }) } });
++}
++
++function buildSubagentResultFromToolResult(agentId: string, toolResult: ToolResultMessage): SubagentResult {
++	const text = toolResultText(toolResult);
++	if (toolResult.isError) return buildSubagentError(text);
++	return create(SubagentResultSchema, {
++		result: { case: "success", value: create(SubagentSuccessSchema, { agentId, finalMessage: text }) },
++	});
++}
++
++function buildSubagentAwaitError(agentId: string, error: string): SubagentAwaitResult {
++	return create(SubagentAwaitResultSchema, {
++		result: { case: "error", value: create(SubagentAwaitErrorSchema, { agentId, error }) },
++	});
++}
++
++function buildSubagentAwaitResultFromToolResult(agentId: string, toolResult: ToolResultMessage): SubagentAwaitResult {
++	const text = toolResultText(toolResult);
++	if (toolResult.isError) return buildSubagentAwaitError(agentId, text);
++	return create(SubagentAwaitResultSchema, {
++		result: { case: "complete", value: create(SubagentAwaitCompleteSchema, { agentId, finalMessage: text }) },
++	});
++}
+ /** Bare gRPC `resource_exhausted` end-streams (also inside a Connect error message). */
+ const RESOURCE_EXHAUSTED_PATTERN = /resource.?exhausted/i;
+ /** Model-resolution failures that can safely retry the exact discovery id before any server output. */
+@@ -3222,6 +3266,24 @@ async function handleExecServerMessage(
+ 		}
+ 		case "subagentArgs": {
+ 			const args = execMsg.message.value;
++			// Phi: Cursor's built-in Task runs as the local `task` tool, but only on a
++			// turn that advertised it, so a restricted tool set stays restricted.
++			if (execHandlers?.subagent && requestContextTools.some(tool => tool.toolName === "task")) {
++				const toolCallId = args.toolCallId || crypto.randomUUID();
++				const taskArgs = cursorSubagentTaskArgs(args.subagentType, args.prompt);
++				synthesizeCursorExecToolCall(output, stream, state, toolCallId, "task", taskArgs);
++				const { execResult } = await resolveExecHandler(
++					{ toolCallId, args: taskArgs },
++					execHandlers.subagent.bind(execHandlers),
++					onToolResult,
++					toolResult => buildSubagentResultFromToolResult(toolCallId, toolResult),
++					buildSubagentError,
++					buildSubagentError,
++					{ toolCallId, toolName: "task" },
++				);
++				sendExecClientMessage(runTransport, execMsg, "subagentResult", execResult);
++				return;
++			}
+ 			const execResult = create(SubagentResultSchema, {
+ 				result: {
+ 					case: "error",
+@@ -3233,8 +3295,25 @@ async function handleExecServerMessage(
+ 			return;
+ 		}
+ 		case "subagentAwaitArgs": {
+-			// No subagent was ever spawned, so every awaited id is genuinely unknown.
+ 			const args = execMsg.message.value;
++			// Phi: a bridged background task settles through the local `wait` tool.
++			if (execHandlers?.subagentAwait && requestContextTools.some(tool => tool.toolName === "wait")) {
++				const toolCallId = crypto.randomUUID();
++				const waitArgs = { i: "Waiting for the delegated subagent" };
++				synthesizeCursorExecToolCall(output, stream, state, toolCallId, "wait", waitArgs);
++				const { execResult } = await resolveExecHandler(
++					{ toolCallId, args: waitArgs },
++					execHandlers.subagentAwait.bind(execHandlers),
++					onToolResult,
++					toolResult => buildSubagentAwaitResultFromToolResult(args.agentId, toolResult),
++					error => buildSubagentAwaitError(args.agentId, error),
++					error => buildSubagentAwaitError(args.agentId, error),
++					{ toolCallId, toolName: "wait" },
++				);
++				sendExecClientMessage(runTransport, execMsg, "subagentAwaitResult", execResult);
++				return;
++			}
++			// No subagent was ever spawned, so every awaited id is genuinely unknown.
+ 			const execResult = create(SubagentAwaitResultSchema, {
+ 				result: {
+ 					case: "notFound",
+diff --git a/src/types.ts b/src/types.ts
+index d1d6f0f5c103c480d29494bcda6b3a0cc73ba5c2..00395d41497cd15990c16657be2b8d750ab966e7 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -29,6 +29,8 @@ import type {
+ 	PiWriteExecResult,
+ 	ReadArgs,
+ 	ReadResult,
++	SubagentAwaitResult,
++	SubagentResult,
+ 	ShellArgs,
+ 	ShellResult,
+ 	WriteArgs,
+@@ -1495,6 +1497,11 @@ export interface CursorMcpResourceContent {
+ 	downloadPath?: string;
+ }
+ 
++export interface CursorBridgedToolCall {
++	toolCallId: string;
++	args: Record<string, unknown>;
++}
++
+ export interface CursorExecHandlers {
+ 	read?: (args: ReadArgs) => Promise<CursorExecHandlerResult<ReadResult>>;
+ 	ls?: (args: LsArgs) => Promise<CursorExecHandlerResult<LsResult>>;
+@@ -1508,6 +1515,9 @@ export interface CursorExecHandlers {
+ 	) => Promise<CursorExecHandlerResult<ShellResult>>;
+ 	diagnostics?: (args: DiagnosticsArgs) => Promise<CursorExecHandlerResult<DiagnosticsResult>>;
+ 	mcp?: (call: CursorMcpCall) => Promise<CursorExecHandlerResult<McpResult>>;
++	/** Phi: Cursor's built-in Task and its await, carried out by the local `task` and `wait` tools. */
++	subagent?: (call: CursorBridgedToolCall) => Promise<CursorExecHandlerResult<SubagentResult>>;
++	subagentAwait?: (call: CursorBridgedToolCall) => Promise<CursorExecHandlerResult<SubagentAwaitResult>>;
+ 	/**
+ 	 * Answers "would this MCP call be permitted", without running it.
+ 	 *

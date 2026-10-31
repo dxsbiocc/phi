@@ -1,0 +1,190 @@
+diff --git a/node_modules/@oh-my-pi/pi-coding-agent/.bun-tag-4f9cbf09af54ae54 b/.bun-tag-4f9cbf09af54ae54
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/src/async/job-control.ts b/src/async/job-control.ts
+index 5e29c9c399a7ee34333bc3b0a59f681e3b648427..b6b2dbb5ef01ad8cb09dc658c1b53f240812a03c 100644
+--- a/src/async/job-control.ts
++++ b/src/async/job-control.ts
+@@ -97,6 +97,7 @@ export function runningAgentsOutsideJobs(session: ToolSession): AgentActivitySna
+ 	for (const ref of registry.list()) {
+ 		if (ref.kind !== "sub" || ref.status !== "running") continue;
+ 		if (ref.id === selfId || covered.has(ref.id)) continue;
++		if (selfId && !registry.inSameSession(selfId, ref.id)) continue;
+ 		const acceptedAt = staleAccepted.has(ref.id) ? ref.lifecycle?.acceptedAt : undefined;
+ 		out.push({
+ 			id: ref.id,
+diff --git a/src/cursor.ts b/src/cursor.ts
+index 638a74daa7612cab4705d2ee8d395f1f6102572b..cd451afbaa742169124cbc9a0f11a761d47564e5 100644
+--- a/src/cursor.ts
++++ b/src/cursor.ts
+@@ -708,6 +708,15 @@ export class CursorExecHandlers implements ICursorExecHandlers {
+ 		return bridgeContext.attach(createToolResultMessage(toolCallId, toolName, result, isError));
+ 	}
+ 
++	/** Phi: Cursor's built-in Task goes through the same tool a model-issued `task` call uses. */
++	async subagent(call: Parameters<NonNullable<ICursorExecHandlers["subagent"]>>[0]) {
++		return await executeTool(this.options, "task", call.toolCallId, call.args);
++	}
++
++	async subagentAwait(call: Parameters<NonNullable<ICursorExecHandlers["subagentAwait"]>>[0]) {
++		return await executeTool(this.options, "wait", call.toolCallId, call.args);
++	}
++
+ 	async diagnostics(args: Parameters<NonNullable<ICursorExecHandlers["diagnostics"]>>[0]) {
+ 		const toolCallId = decodeToolCallId(args.toolCallId);
+ 		const toolResultMessage = await executeTool(this.options, "lsp", toolCallId, {
+diff --git a/src/internal-urls/agent-protocol.ts b/src/internal-urls/agent-protocol.ts
+index 91765189f88f00a247712141dc095ed9911a91e5..8322097ea1bc7f2a5a7728eb8de70e6a3797e29a 100644
+--- a/src/internal-urls/agent-protocol.ts
++++ b/src/internal-urls/agent-protocol.ts
+@@ -24,7 +24,7 @@ import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
+ import { fuzzyFilter } from "@oh-my-pi/pi-tui/fuzzy";
+ import { formatDuration, isEnoent, prompt } from "@oh-my-pi/pi-utils";
+ import { type AgentRef, AgentRegistry } from "../registry/agent-registry";
+-import { ensurePersistedRoster } from "../registry/persisted-agents";
++import { ensurePersistedRoster, sessionFileBelongsToRoot } from "../registry/persisted-agents";
+ import { executeSend, isIrcEnabled } from "../irc/messaging";
+ import agentPromptDoc from "../prompts/internal-urls/agent.md" with { type: "text" };
+ import agentProgressTemplate from "../prompts/tools/agent-url-progress.md" with { type: "text" };
+@@ -221,14 +221,18 @@ export class AgentProtocolHandler implements ProtocolHandler {
+ 			// non-terminal yield, or parked before publishing) is the same
+ 			// registry `write agent://<id>` delivers to: answer with its progress.
+ 			const ref = registry.get(outputId);
+-			if (ref && ref.kind !== "advisor") return this.#resolveProgress(url, ref, extraction);
++			// Phi: progress of an agent in another session in this process is not readable here.
++			const foreign =
++				ref?.sessionFile && context?.sessionFile
++					? !sessionFileBelongsToRoot(
++							ref.sessionFile,
++							(await ensurePersistedRoster(registry, context.sessionFile)) ?? context.sessionFile,
++						)
++					: false;
++			if (ref && !foreign && ref.kind !== "advisor") return this.#resolveProgress(url, ref, extraction);
+ 			if (!scan) throw new Error("No session - agent outputs unavailable");
+ 			if (!scan.anyDirExists) throw new Error("No artifacts directory found");
+-			const registered = registry
+-				.list()
+-				.filter(candidate => candidate.kind !== "advisor")
+-				.map(candidate => candidate.id);
+-			throw notFoundError(outputId, [...scan.availableIds, ...registered]);
++			throw notFoundError(outputId, scan.availableIds);
+ 		}
+ 
+ 		const pathSegments = extraction ? url.pathname.split("/").filter(Boolean) : [];
+diff --git a/src/internal-urls/history-protocol.ts b/src/internal-urls/history-protocol.ts
+index 7fb2e7e90f92143bf6e42f96a822ee66baf2eb83..d611b4cfb8315aa3f20e54b1e23be382634a4f3e 100644
+--- a/src/internal-urls/history-protocol.ts
++++ b/src/internal-urls/history-protocol.ts
+@@ -22,7 +22,7 @@ import type { AssistantMessage } from "@oh-my-pi/pi-ai";
+ import { LRUCache } from "@oh-my-pi/pi-utils/lru";
+ import type { AgentRef } from "../registry/agent-registry";
+ import { AgentRegistry } from "../registry/agent-registry";
+-import { ensurePersistedRoster } from "../registry/persisted-agents";
++import { ensurePersistedRoster, sessionFileBelongsToRoot } from "../registry/persisted-agents";
+ import { formatSessionHistoryMarkdown } from "../session/session-history-format";
+ import {
+ 	bashExecutionToText,
+@@ -348,7 +348,14 @@ export class HistoryProtocolHandler implements ProtocolHandler {
+ 		const preferredArtifactDir = rootSessionFile?.slice(0, -".jsonl".length);
+ 		// Advisor transcripts are observability-only — surfaced in the Agent Hub, never
+ 		// in the agent-facing roster. Hide them from the index, lookup, and completions.
+-		const visible = registry.list().filter(ref => ref.kind !== "advisor");
++		// Phi: transcripts of other sessions in this process are not readable here.
++		const visible = registry
++			.list()
++			.filter(
++				ref =>
++					ref.kind !== "advisor" &&
++					(!rootSessionFile || (ref.sessionFile && sessionFileBelongsToRoot(ref.sessionFile, rootSessionFile))),
++			);
+ 		return { visible, preferredArtifactDir };
+ 	}
+ 
+@@ -359,7 +366,7 @@ export class HistoryProtocolHandler implements ProtocolHandler {
+ 	async #lookup(agentId: string, context: ResolveContext | undefined): Promise<RefLookup> {
+ 		const { visible, preferredArtifactDir } = await this.#roster(context);
+ 		let ref = AgentRegistry.global().get(agentId);
+-		if (ref?.kind === "advisor") ref = undefined;
++		if (ref?.kind === "advisor" || (ref && !visible.includes(ref))) ref = undefined;
+ 		if (!ref) {
+ 			// Case-insensitive fallback: agent ids are human-typed (e.g. AuthLoader).
+ 			const lower = agentId.toLowerCase();
+diff --git a/src/irc/messaging.ts b/src/irc/messaging.ts
+index 6146ae11cec288382a10abc88e90a87964f88205..97abcd906df39cebd2942755e29b5e5dd37fae3c 100644
+--- a/src/irc/messaging.ts
++++ b/src/irc/messaging.ts
+@@ -55,6 +55,10 @@ export async function executeSend(
+ 	if (to === senderId)
+ 		return coordinationErrorResult("Cannot send a message to yourself.", { op: "send", from: senderId, to });
+ 	const isBroadcast = to === "all";
++	// Phi: other sessions in this process are not peers.
++	if (!isBroadcast && registry.get(to) && registry.get(senderId) && !registry.inSameSession(senderId, to)) {
++		return coordinationErrorResult(`Unknown agent "${to}".`, { op: "send", from: senderId, to });
++	}
+ 	// Restore parked recipients only when needed; never delay delivery to a live peer.
+ 	if (!isBroadcast && sessionFileHint) {
+ 		const recipient = registry.get(to);
+diff --git a/src/registry/agent-registry.ts b/src/registry/agent-registry.ts
+index 56ffc2b6b224e379b6f6a73c7f4d17a2a2215559..4e7a13dc614d0e7d30639fce42596e29c1d216fb 100644
+--- a/src/registry/agent-registry.ts
++++ b/src/registry/agent-registry.ts
+@@ -329,10 +329,33 @@ export class AgentRegistry {
+ 	 */
+ 	listVisibleTo(id: string): AgentRef[] {
+ 		return this.list().filter(
+-			ref => ref.id !== id && ref.kind !== "advisor" && (ref.status === "running" || ref.status === "idle"),
++			ref =>
++				ref.id !== id &&
++				ref.kind !== "advisor" &&
++				(ref.status === "running" || ref.status === "idle") &&
++				this.inSameSession(id, ref.id),
+ 		);
+ 	}
+ 
++	/**
++	 * Phi: one kernel process hosts many sessions, so a flat namespace would let
++	 * them reach each other. A main agent and the children stored under its
++	 * session file form one session; an agent that belongs to no main agent stands alone.
++	 */
++	inSameSession(firstId: string, secondId: string): boolean {
++		return this.#sessionOwner(firstId) === this.#sessionOwner(secondId);
++	}
++
++	#sessionOwner(id: string): string {
++		const file = this.#refs.get(id)?.sessionFile;
++		if (!file) return id;
++		for (const ref of this.#refs.values()) {
++			if (ref.kind !== "main" || !ref.sessionFile) continue;
++			if (file === ref.sessionFile || file.startsWith(ref.sessionFile.replace(/\.jsonl$/, "/"))) return ref.id;
++		}
++		return id;
++	}
++
+ 	/** Whether a ref's claimed running state is corroborated by its attached live session. */
+ 	isRunning(ref: AgentRef): boolean {
+ 		if (ref.status !== "running") return false;
+diff --git a/src/task/output-manager.ts b/src/task/output-manager.ts
+index 43b3bcd1620afdb93e07c9cbacdadf57d85f3d65..cb0b02d955a8b611954fe383907396ea39dbebdd 100644
+--- a/src/task/output-manager.ts
++++ b/src/task/output-manager.ts
+@@ -12,6 +12,7 @@
+  */
+ import * as fs from "node:fs/promises";
+ import { ADVISOR_TRANSCRIPT_STEM } from "../advisor/transcript-recorder";
++import { AgentRegistry } from "../registry/agent-registry";
+ import { PINNED_HUD_TOGGLE_ID } from "@oh-my-pi/pi-tui/prompt/composer";
+ 
+ /**
+@@ -83,7 +84,11 @@ export class AgentOutputManager {
+ 	/** Pick the first free name (base, then `base-2`, `base-3`, …) and reserve it. */
+ 	#allocateUnique(id: string): string {
+ 		let candidate = id;
+-		for (let n = 2; this.#taken.has(candidate); n++) {
++		// Phi: the agent registry is per process, and one process hosts many sessions.
++		const inUse = (name: string): boolean =>
++			this.#taken.has(name) ||
++			AgentRegistry.global().get(this.#parentPrefix ? `${this.#parentPrefix}.${name}` : name) !== undefined;
++		for (let n = 2; inUse(candidate); n++) {
+ 			candidate = `${id}-${n}`;
+ 		}
+ 		this.#taken.add(candidate);

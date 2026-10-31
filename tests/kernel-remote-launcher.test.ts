@@ -252,7 +252,8 @@ class FakeDeploymentHost implements RemoteKernelDeploymentHost {
         transferId: options?.transferId
       })
       const size = (await stat(localPath)).size
-      for (const bytesTransferred of [Math.floor(size / 2), size]) {
+      // The 1 is a retried transfer restarting its counter.
+      for (const bytesTransferred of [Math.floor(size / 2), 1, size]) {
         options?.onEvent?.({
           transferId: options.transferId ?? 'kernel-test-transfer',
           direction: 'upload',
@@ -414,6 +415,11 @@ test('kernel deployment reports aggregate acknowledged bytes across both uploade
   assert.ok(uploading.length >= 4)
   assert.ok(uploading.some((event) => event.bytesTransferred === fixture.manifest.files[0].size))
   assert.ok(uploading.some((event) => event.bytesTransferred === totalBytes))
+  const shown = uploading.map((event) => event.bytesTransferred ?? 0)
+  assert.deepEqual(
+    shown,
+    [...shown].sort((left, right) => left - right)
+  )
   assert.ok(uploading.every((event) => event.totalBytes === totalBytes))
 })
 

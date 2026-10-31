@@ -142,5 +142,9 @@
   "trustedDependencies": [
     "protobufjs",
     "electron"
-  ]
+  ],
+  "patchedDependencies": {
+    "@oh-my-pi/pi-ai@18.10.3": "patches/@oh-my-pi%2Fpi-ai@18.10.3.patch",
+    "@oh-my-pi/pi-coding-agent@18.10.3": "patches/@oh-my-pi%2Fpi-coding-agent@18.10.3.patch"
+  }
 }

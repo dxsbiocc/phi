@@ -11,6 +11,10 @@ import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
 
 /** Public control surface shared by the synchronous local registry and the owned RPC adapter. */
+/** These tools track agent_run ids. Jobs started by `task` have their own tools. */
+const NATIVE_TASK_HINT =
+  'Jobs started by the task tool are not agent runs: their results arrive on their own; use wait to block on them or read proc://<id> to inspect one.'
+
 export interface AgentRunToolRegistry {
   get(id: string): AgentRunSnapshot | undefined | Promise<AgentRunSnapshot | undefined>
   list(): readonly AgentRunSnapshot[] | Promise<readonly AgentRunSnapshot[]>
@@ -135,12 +139,13 @@ export function buildAgentRunTools(registry: AgentRunToolRegistry): PhiTool[] {
       const id = stringParam(params, 'id')
       if (id) {
         const run = await registry.get(id)
-        if (!run) return errorResult(`Unknown run: ${id}`)
+        if (!run) return errorResult(`Unknown run: ${id}. ${NATIVE_TASK_HINT}`)
         await registry.markReported(id)
         return text(withReport(run, now))
       }
       const runs = await registry.list()
-      if (runs.length === 0) return text('No agent runs in this conversation yet.')
+      if (runs.length === 0)
+        return text(`No agent runs in this conversation yet. ${NATIVE_TASK_HINT}`)
       return text(runs.map((run) => describeRun(run, now)).join('\n'))
     }
   )
@@ -228,7 +233,7 @@ export function buildAgentRunTools(registry: AgentRunToolRegistry): PhiTool[] {
       const id = stringParam(params, 'id')
       if (!id) return errorResult('Missing required parameter: id')
       const run = await registry.get(id)
-      if (!run) return errorResult(`Unknown run: ${id}`)
+      if (!run) return errorResult(`Unknown run: ${id}. ${NATIVE_TASK_HINT}`)
       if (!(await registry.stop(id)))
         return errorResult(`Run ${id} has already finished (${run.state}).`)
       return text(`Stopping ${id} (${run.agent}).`)

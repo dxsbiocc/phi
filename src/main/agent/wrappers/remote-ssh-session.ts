@@ -704,6 +704,8 @@ export async function connectRemoteSshSession(
   try {
     const deadline = Date.now() + (config.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS)
     let ready = false
+    // Each check spawns an ssh process, and a slow login can take many seconds.
+    let checkDelayMs = 100
     while (Date.now() < deadline && !masterClosed) {
       const check = await runProcess(
         spawnImpl,
@@ -716,7 +718,8 @@ export async function connectRemoteSshSession(
         ready = true
         break
       }
-      await delay(100)
+      await delay(checkDelayMs)
+      checkDelayMs = Math.min(checkDelayMs * 2, 500)
     }
     if (!ready) {
       const diagnosis = diagnoseSshConnectionFailure(

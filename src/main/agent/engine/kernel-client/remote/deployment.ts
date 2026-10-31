@@ -191,7 +191,7 @@ async function uploadKernelFiles(
       phase: 'uploading',
       file: upload.role,
       variant: profile.variant,
-      bytesTransferred: completedBytes,
+      bytesTransferred: Math.max(completedBytes, lastReportedBytes),
       totalBytes
     })
     await transfer.uploadFile(upload.local, upload.remote, {
@@ -206,7 +206,8 @@ async function uploadKernelFiles(
       onEvent: (event) => {
         const bytesTransferred =
           completedBytes + Math.min(upload.size, Math.max(0, event.bytesTransferred))
-        if (Math.abs(bytesTransferred - lastReportedBytes) < reportStepBytes) return
+        // A retried transfer restarts its counter; the shown progress never goes back.
+        if (bytesTransferred - lastReportedBytes < reportStepBytes) return
         lastReportedBytes = bytesTransferred
         options.onProgress?.({
           phase: 'uploading',
