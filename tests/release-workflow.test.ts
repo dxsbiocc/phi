@@ -54,7 +54,7 @@ test('packages macOS arm64 and Linux x64, smoke-testing the bundled worker on bo
   assert.deepEqual(
     pkg?.strategy?.matrix?.include?.map((entry) => [entry.os, entry.builder]),
     [
-      ['macos-14', '--mac dmg zip --arm64'],
+      ['macos-15', '--mac dmg zip --arm64'],
       ['ubuntu-22.04', '--linux AppImage deb --x64']
     ]
   )

@@ -63,7 +63,7 @@ jobs:
       matrix:
         include:
           - name: macOS arm64
-            os: macos-14
+            os: macos-15
             builder: --mac dmg zip --arm64
             kernel_target: all
             artifact: Phi-macos-arm64

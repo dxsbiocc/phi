@@ -45,8 +45,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-14 is arm64; ubuntu-latest is x64.
-        os: [macos-14, ubuntu-latest]
+        # macos-15 is arm64; ubuntu-latest is x64.
+        os: [macos-15, ubuntu-latest]
     steps:
       # The runner context is not available in job-level env, so set it here.
       - name: Runtime root
