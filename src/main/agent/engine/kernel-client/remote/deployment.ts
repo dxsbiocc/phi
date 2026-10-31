@@ -14,6 +14,7 @@ import { readKernelBuild, verifyKernelBuildFile, type ResolvedKernelBuild } from
 import {
   activateKernelCommand,
   cleanupKernelStagingCommand,
+  linkPreviousNativeCommand,
   parseKernelProbeOutput,
   probePrepareReuseCommand,
   remoteKernelPaths,
@@ -256,6 +257,14 @@ async function uploadAndActivate(
     }
   ]
   try {
+    // Only saves bytes: without a link the addon is uploaded like any other file.
+    await runRemoteCommand(
+      host,
+      paths,
+      linkPreviousNativeCommand(paths, selectedNative, profile.variant),
+      signal,
+      count
+    ).catch(() => signal?.throwIfAborted())
     const totalBytes = await uploadKernelFiles(options, profile, uploads, host.transfer)
     options.onProgress?.({
       phase: 'verifying',

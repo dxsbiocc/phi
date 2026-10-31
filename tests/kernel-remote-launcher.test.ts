@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -24,7 +25,11 @@ import {
   type RemoteKernelVariant
 } from '../src/main/agent/engine/kernel-client/remote'
 import type { TransferEvent } from '../src/main/agent/transfer'
-import { GLIBC_MINIMUM_CHECK } from '../src/main/agent/engine/kernel-client/remote/commands'
+import {
+  GLIBC_MINIMUM_CHECK,
+  linkPreviousNativeCommand,
+  remoteKernelPaths
+} from '../src/main/agent/engine/kernel-client/remote/commands'
 import { shellQuote, type RemoteStdioProcess } from '../src/main/agent/wrappers/remote-ssh-session'
 
 test('attached kernel identity rejects a stale HOME or agentDir', () => {
@@ -170,6 +175,7 @@ class FakeDeploymentHost implements RemoteKernelDeploymentHost {
   activationHashMismatch = false
   uploadHashMismatch = false
   uploadFailureCode?: string
+  nativeLinkFails = false
   helper: RemoteHelperInstallation | undefined = helperInstallation
   repairedHelper: RemoteHelperInstallation | undefined = helperInstallation
   readonly helperEnsureCalls: Array<{ force?: boolean } | undefined> = []
@@ -178,6 +184,9 @@ class FakeDeploymentHost implements RemoteKernelDeploymentHost {
     run: async (command: readonly string[]): Promise<CommandResult> => {
       const script = command[2] ?? ''
       this.commands.push(script)
+      if (script.includes('for candidate in') && this.nativeLinkFails) {
+        return { stdout: '', stderr: 'denied', code: 1, signal: null, truncated: false }
+      }
       if (script.includes('remote_os=$(uname')) {
         if (this.remotePlatformFailure) {
           return {
@@ -292,7 +301,7 @@ test('deploys only the selected modern native, validates hashes, and publishes t
   assert.equal(result.reused, false)
   assert.equal(result.variant, 'modern')
   assert.equal(result.profile.glibcVersion, '2.17')
-  assert.equal(result.remoteCommandCount, 2)
+  assert.equal(result.remoteCommandCount, 3)
   assert.equal(
     result.executablePath,
     `${runtimeRoot}/kernel/0.1.0/${fixture.manifest.files[0].sha256}/phi-kernel`
@@ -316,9 +325,74 @@ test('deploys only the selected modern native, validates hashes, and publishes t
 
   assert.match(host.commands[0], /grep -Eiq .*avx2.*\/proc\/cpuinfo/)
   assert.ok(host.commands[0].includes("[ \"$(pwd -P)\" = '/srv/phi user'\\''s runtime' ]"))
-  const activate = host.commands[1]
+  const activate = host.commands[2]
   assert.ok(activate.indexOf('actual_kernel=') < activate.indexOf('mv -f --'))
   assert.ok(activate.lastIndexOf('mv -f --') < activate.lastIndexOf('.phi-ready.json'))
+})
+
+test('a failed native link still uploads the addon', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  host.nativeLinkFails = true
+
+  const result = await ensureRemoteKernelDeployment({
+    runtimeHost: host,
+    runtimeRoot: '/srv/phi-runtime',
+    buildDirectory: fixture.directory
+  })
+
+  assert.equal(result.reused, false)
+  assert.equal(host.uploads.length, 2)
+  assert.ok(host.commands[1].includes('for candidate in'))
+})
+
+test('a new kernel build links an unchanged native from an earlier build', async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'phi kernel-link-')))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const content = Buffer.from('native addon bytes')
+  const native = {
+    name: 'pi_natives.linux-x64-modern.node',
+    role: 'native' as const,
+    variant: 'modern' as const,
+    sha256: createHash('sha256').update(content).digest('hex'),
+    size: content.length
+  }
+  const kernel = { name: 'phi-kernel', role: 'kernel' as const, sha256: 'b'.repeat(64), size: 1 }
+  const paths = remoteKernelPaths(root, '0.1.0', kernel, {
+    modern: native,
+    baseline: { ...native, name: 'baseline.node', variant: 'baseline' }
+  })
+  const staging = paths.stagingNativeByVariant.modern
+  const run = (): void => {
+    const done = spawnSync('/bin/sh', ['-c', linkPreviousNativeCommand(paths, native, 'modern')], {
+      cwd: root,
+      encoding: 'utf8'
+    })
+    assert.equal(done.status, 0, done.stderr)
+  }
+  const earlier = (build: string): string => join(root, 'kernel', '0.1.0', build, native.name)
+  await mkdir(paths.directory, { recursive: true })
+
+  run()
+  assert.equal(existsSync(staging), false, 'no earlier build: nothing to link')
+
+  for (const build of ['same-size-other-bytes', 'other-size', 'symlink', 'match']) {
+    await mkdir(join(root, 'kernel', '0.1.0', build), { recursive: true })
+  }
+  await writeFile(earlier('same-size-other-bytes'), Buffer.alloc(content.length, 1))
+  await writeFile(earlier('other-size'), 'short')
+  await writeFile(join(root, 'target'), content)
+  await symlink(join(root, 'target'), earlier('symlink'))
+  run()
+  assert.equal(existsSync(staging), false, 'only a regular file with the same bytes qualifies')
+
+  await writeFile(earlier('match'), content)
+  run()
+  assert.equal((await stat(staging)).ino, (await stat(earlier('match'))).ino)
+
+  run()
+  assert.equal((await stat(staging)).ino, (await stat(earlier('match'))).ino)
 })
 
 test('kernel deployment reports aggregate acknowledged bytes across both uploaded files', async (t) => {
@@ -445,7 +519,7 @@ test('remote activation hash mismatch is typed, clears staging, and never publis
     }
   )
   assert.equal(host.markerVariant, undefined)
-  assert.equal(host.commands.length, 3)
+  assert.equal(host.commands.length, 4)
   assert.match(host.commands.at(-1) ?? '', /^rm -f --/)
   assert.equal(host.commands.at(-1)?.includes('.phi-ready.json'), true)
 })
@@ -468,7 +542,7 @@ test('streaming upload hash mismatch is typed and never publishes a ready marker
     }
   )
   assert.equal(host.markerVariant, undefined)
-  assert.equal(host.commands.length, 2)
+  assert.equal(host.commands.length, 3)
   assert.match(host.commands.at(-1) ?? '', /^rm -f --/)
   assert.equal(host.commands.at(-1)?.includes('.phi-ready.json'), true)
 })

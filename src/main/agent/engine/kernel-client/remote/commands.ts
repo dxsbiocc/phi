@@ -168,6 +168,27 @@ ${writeDeploymentReadyMarkerCommand(
 )}`
 }
 
+/**
+ * A kernel build changes far more often than its native addon, so an unchanged addon from an
+ * earlier build is hard-linked into staging, where the upload's verified reuse finds it.
+ */
+export function linkPreviousNativeCommand(
+  paths: RemoteKernelPaths,
+  selectedNative: KernelBuildManifestFile,
+  variant: RemoteKernelVariant
+): string {
+  const staging = shellQuote(paths.stagingNativeByVariant[variant])
+  return `${prefix(paths)}
+[ ! -e ${staging} ] || exit 0
+for candidate in ${shellQuote(paths.kernelRoot)}/*/*/${shellQuote(selectedNative.name)}; do
+  [ "$(dirname -- "$candidate")" != ${shellQuote(paths.directory)} ] || continue
+  [ -f "$candidate" ] && [ ! -L "$candidate" ] || continue
+  [ "$(wc -c < "$candidate" | tr -d ' ')" = ${selectedNative.size} ] || continue
+  [ "$(hash_file "$candidate" | awk '{print $1}')" = ${shellQuote(selectedNative.sha256)} ] || continue
+  ln -- "$candidate" ${staging} && exit 0
+done`
+}
+
 export function cleanupKernelStagingCommand(
   paths: RemoteKernelPaths,
   variant: RemoteKernelVariant
