@@ -119,6 +119,20 @@ function lineValue(output: string, key: string): string | null {
   return line?.slice(prefix.length) ?? null
 }
 
+/**
+ * A script that refuses the stream exits first, so writing fails with a bare broken pipe while the
+ * real reason is waiting on its stdout.
+ */
+async function remoteRefusalOr(error: unknown, stdout: Promise<string>): Promise<unknown> {
+  const refusal = await Promise.race([
+    stdout.catch(() => ''),
+    delay(REFUSAL_READ_MS).then(() => '')
+  ])
+  return lineValue(refusal, 'PHI_ERROR')
+    ? mappedRemoteError(refusal, 'Remote transfer stream failed')
+    : error
+}
+
 function mappedRemoteError(output: string, fallback: string): TransferError {
   switch (lineValue(output, 'PHI_ERROR')) {
     case 'DESTINATION_EXISTS':
@@ -446,16 +460,7 @@ class SshUploadSession implements TransferDataPlaneSession {
     } catch (error) {
       await channel.close().catch(() => undefined)
       if (copyOptions.signal.aborted) throw transferAbortError()
-      // A script that refuses the stream exits first, so writing fails with a bare broken pipe
-      // while the real reason is waiting on its stdout.
-      const refusal = await Promise.race([
-        stdout.catch(() => ''),
-        delay(REFUSAL_READ_MS).then(() => '')
-      ])
-      if (lineValue(refusal, 'PHI_ERROR')) {
-        throw mappedRemoteError(refusal, 'Remote transfer stream failed')
-      }
-      throw error
+      throw await remoteRefusalOr(error, stdout)
     } finally {
       copyOptions.signal.removeEventListener('abort', closeOnAbort)
       await source.close()
