@@ -55,6 +55,10 @@ function closingUploadProcess(): TransferStdioProcess {
   }
 }
 
+/** Long enough that the healthy retry is not mistaken for a stall when the host is loaded. */
+const STALL_LIMIT_MS = 2_000
+const STALL_DEADLINE_MS = 30_000
+
 function stallingUploadProcess(process: TransferStdioProcess): {
   process: TransferStdioProcess
   release(): void
@@ -307,7 +311,7 @@ test('remote upload aborts a stalled SSH write and resumes from its verified che
       checkpointBytes: 256 * 1024,
       progressBytes: 1,
       progressIntervalMs: 0,
-      idleTimeoutMs: 200
+      idleTimeoutMs: STALL_LIMIT_MS
     }
   })
   const failureCodes: string[] = []
@@ -334,12 +338,12 @@ test('remote upload aborts a stalled SSH write and resumes from its verified che
   try {
     const result = await Promise.race([
       upload,
-      delay(2_000).then(() => {
+      delay(STALL_DEADLINE_MS).then(() => {
         throw new Error('stalled transfer did not settle within its watchdog')
       })
     ])
 
-    assert.ok(Date.now() - started < 2_000)
+    assert.ok(Date.now() - started < STALL_DEADLINE_MS)
     assert.equal(streamsOpened, 2)
     assert.deepEqual(failureCodes, ['TRANSFER_STALLED'])
     assert.ok(result.resumedFrom >= 256 * 1024)
@@ -455,13 +459,64 @@ test('remote upload cancellation retains one stable partial and a new coordinato
       (error: unknown) => (error as { code?: unknown }).code === 'ABORTED'
     )
     assert.equal(existsSync(destination), false)
+    // A cancel can land before any checkpoint, so 0 is a valid durable offset to resume from.
+    const { durableOffset } = JSON.parse(
+      readFileSync(
+        join(remoteRoot, '.destination.bin.phi-transfer-consumer-resume.part.json'),
+        'utf8'
+      )
+    ) as { durableOffset: number }
 
     const resumed = await uploadRemoteFile({ ...request, coordinator: coordinator() })
 
-    assert.ok(resumed.resumedFrom > 0)
+    assert.equal(resumed.resumedFrom, durableOffset)
     assert.deepEqual(readFileSync(destination), content)
   } finally {
     await session.close()
+    rmSync(localRoot, { recursive: true, force: true })
+    rmSync(remoteRoot, { recursive: true, force: true })
+  }
+})
+
+test('a remote script that refuses the stream reports its own reason, not the broken pipe', async () => {
+  const localRoot = mkdtempSync(join(tmpdir(), 'phi-upload-refused-local-'))
+  const remoteRoot = mkdtempSync(join(tmpdir(), 'phi-upload-refused-remote-'))
+  const source = join(localRoot, 'source.bin')
+  const destination = join(remoteRoot, 'destination.bin')
+  const content = Buffer.alloc(8 * 1024 * 1024 + 19, 0x52)
+  writeFileSync(source, content)
+  const actualSession = createLocalShellSession(remoteRoot)
+  const session = {
+    ...actualSession,
+    async openStdio(command: string) {
+      // The stream script checks its partial first, so it exits before reading any byte.
+      const partial = join(remoteRoot, '.destination.bin.phi-transfer-consumer-refused.part')
+      rmSync(partial, { force: true })
+      return actualSession.openStdio!(command)
+    }
+  } as RemoteSshSession
+  try {
+    await assert.rejects(
+      uploadRemoteFile({
+        session,
+        localPath: source,
+        remotePath: destination,
+        remoteRoot,
+        canonicalRoot: realpathSync(remoteRoot),
+        hostKey: 'refused-host',
+        workspaceId: 'refused-workspace',
+        transferId: 'consumer-refused',
+        expectedSha256: createHash('sha256').update(content).digest('hex'),
+        coordinator: new FileTransferCoordinator({
+          registry: new FileTransferRegistry(join(localRoot, 'registry.json')),
+          policy: { chunkSizeBytes: 256 * 1024, checkpointBytes: 256 * 1024 }
+        }),
+        forceSsh: true
+      }),
+      (error: unknown) => (error as { code?: unknown }).code === 'INVALID_PARTIAL'
+    )
+  } finally {
+    await actualSession.close()
     rmSync(localRoot, { recursive: true, force: true })
     rmSync(remoteRoot, { recursive: true, force: true })
   }

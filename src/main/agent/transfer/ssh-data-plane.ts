@@ -3,6 +3,7 @@ import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { isAbsolute, posix, resolve } from 'node:path'
 import type { Readable, Writable } from 'node:stream'
+import { setTimeout as delay } from 'node:timers/promises'
 
 import type { WorkspaceHost } from '../workspace-host/types'
 import type { RemoteStdioProcess } from '../wrappers/remote-ssh-session'
@@ -42,6 +43,8 @@ const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const MAX_CONTROL_OUTPUT_BYTES = 160 * 1024
 const DEFAULT_CONTROL_TIMEOUT_MS = DEFAULT_TRANSFER_IDLE_TIMEOUT_MS
+/** How long a failed stream may take to hand over the reason its script printed. */
+const REFUSAL_READ_MS = 1_000
 
 export interface SshTransferDataPlaneOptions {
   host: WorkspaceHost
@@ -443,6 +446,15 @@ class SshUploadSession implements TransferDataPlaneSession {
     } catch (error) {
       await channel.close().catch(() => undefined)
       if (copyOptions.signal.aborted) throw transferAbortError()
+      // A script that refuses the stream exits first, so writing fails with a bare broken pipe
+      // while the real reason is waiting on its stdout.
+      const refusal = await Promise.race([
+        stdout.catch(() => ''),
+        delay(REFUSAL_READ_MS).then(() => '')
+      ])
+      if (lineValue(refusal, 'PHI_ERROR')) {
+        throw mappedRemoteError(refusal, 'Remote transfer stream failed')
+      }
       throw error
     } finally {
       copyOptions.signal.removeEventListener('abort', closeOnAbort)

@@ -171,7 +171,7 @@ current_size=$(file_size ${shellQuote(paths.partial)}) || fail INVALID_PARTIAL
 if [ "$current_size" -ne ${shellQuote(String(paths.offset))} ]; then
   umask 077
   truncate_temporary=${shellQuote(paths.truncateTemporary)}.$$
-  ( set -C; head -c ${shellQuote(String(paths.offset))} ${shellQuote(paths.partial)} > "$truncate_temporary" ) 2>/dev/null || fail INVALID_PARTIAL
+  ( set -C; ${paths.offset === 0 ? ':' : `head -c ${shellQuote(String(paths.offset))} ${shellQuote(paths.partial)}`} > "$truncate_temporary" ) 2>/dev/null || fail INVALID_PARTIAL
   chmod 600 "$truncate_temporary"
   mv -f "$truncate_temporary" ${shellQuote(paths.partial)}
 fi
