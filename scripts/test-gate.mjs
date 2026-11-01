@@ -225,7 +225,7 @@ function runTests(files, testConcurrency) {
     child.stdout.on('data', (chunk) => absorb(chunk, process.stdout))
     child.stderr.on('data', (chunk) => absorb(chunk, process.stderr))
     child.once('error', () => resolve({ code: 1, tail }))
-    child.once('exit', (code) => resolve({ code: code ?? 1, tail }))
+    child.once('exit', (code, signal) => resolve({ code: code ?? 1, signal, tail }))
   })
 }
 
@@ -288,6 +288,17 @@ const first = await runTests(selected, concurrency)
 if (first.code === 0) process.exit(0)
 
 if (!retry) process.exit(first.code)
+
+// A finished run always prints its totals. Without them the runner itself died, and every suite
+// it had not reported is unproven, so the whole selection runs once more.
+if (!/^ℹ tests \d+/m.test(first.tail)) {
+  console.error(
+    `\nThe test runner died without a summary (code ${first.code}, signal ${first.signal ?? 'none'}); ` +
+      'running the selection once more. Report it, do not ignore it.'
+  )
+  const rerun = await runTests(selected, concurrency)
+  process.exit(rerun.code)
+}
 
 const retryFiles = failedFiles(first.tail)
 if (retryFiles.length === 0) {
