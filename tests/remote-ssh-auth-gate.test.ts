@@ -16,6 +16,9 @@ import { RemoteSshConnectionError } from '../src/main/agent/wrappers/remote-ssh-
 
 type SpawnRecord = { binary: string; args: string[] }
 
+/** The fake ssh is a node process: on a loaded runner it can take longer to fail than a short timeout. */
+const FAILING_SSH_READY_TIMEOUT_MS = 10_000
+
 function fakeOpenSsh(settings: { startupError?: string } = {}): {
   runtime: OpenSshRuntime
   calls: SpawnRecord[]
@@ -60,7 +63,10 @@ test('authentication failure blocks the same SSH target without spawning again',
   const runtime = { ...fixture.runtime, authGate }
 
   await assert.rejects(
-    connectRemoteSshSession({ host: 'lab-hpc', readyTimeoutMs: 100 }, runtime),
+    connectRemoteSshSession(
+      { host: 'lab-hpc', readyTimeoutMs: FAILING_SSH_READY_TIMEOUT_MS },
+      runtime
+    ),
     (error: unknown) =>
       error instanceof RemoteSshConnectionError && error.code === 'authentication_failed'
   )
@@ -84,7 +90,7 @@ test('the SSH target can connect again after the cooldown expires', async () => 
 
   await assert.rejects(
     connectRemoteSshSession(
-      { host: 'lab-hpc', readyTimeoutMs: 100 },
+      { host: 'lab-hpc', readyTimeoutMs: FAILING_SSH_READY_TIMEOUT_MS },
       { ...failed.runtime, authGate }
     )
   )
@@ -112,7 +118,7 @@ test('a successful connection clears an existing block', async () => {
   const failed = fakeOpenSsh({ startupError: 'Permission denied (publickey).' })
   await assert.rejects(
     connectRemoteSshSession(
-      { host: 'lab-hpc', readyTimeoutMs: 100 },
+      { host: 'lab-hpc', readyTimeoutMs: FAILING_SSH_READY_TIMEOUT_MS },
       { ...failed.runtime, authGate }
     )
   )
@@ -141,7 +147,7 @@ test('a user-driven remote doctor probe bypasses and clears the block', async ()
     const failed = fakeOpenSsh({ startupError: 'Permission denied (publickey).' })
     await assert.rejects(
       connectRemoteSshSession(
-        { host: 'lab-hpc', readyTimeoutMs: 100 },
+        { host: 'lab-hpc', readyTimeoutMs: FAILING_SSH_READY_TIMEOUT_MS },
         { ...failed.runtime, authGate }
       )
     )
@@ -182,7 +188,7 @@ test('different hosts and effective connection overrides have independent blocks
     user: 'scientist',
     port: 22,
     identityFile: '/tmp/key-a',
-    readyTimeoutMs: 100
+    readyTimeoutMs: FAILING_SSH_READY_TIMEOUT_MS
   }
   const failed = fakeOpenSsh({ startupError: 'Permission denied (publickey).' })
   await assert.rejects(connectRemoteSshSession(blockedConfig, { ...failed.runtime, authGate }))
@@ -221,7 +227,10 @@ test('all authentication and host-trust blocks reject with zero spawn and saniti
     const host = `lab-${code.replaceAll('_', '-')}`
     const failed = fakeOpenSsh({ startupError })
     await assert.rejects(
-      connectRemoteSshSession({ host, readyTimeoutMs: 100 }, { ...failed.runtime, authGate }),
+      connectRemoteSshSession(
+        { host, readyTimeoutMs: FAILING_SSH_READY_TIMEOUT_MS },
+        { ...failed.runtime, authGate }
+      ),
       (error: unknown) => error instanceof RemoteSshConnectionError && error.code === code
     )
 

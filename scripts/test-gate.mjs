@@ -15,7 +15,7 @@
  *   node scripts/test-gate.mjs --changed=<ref> same, diffing against <ref> (default: main)
  *   node scripts/test-gate.mjs --shard=1/4     run one of four equal parts of the selection
  */
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
 import path from 'node:path'
@@ -29,6 +29,7 @@ import {
   splitSerialSuites,
   suitesForFailures
 } from './test-affected.mjs'
+import { runWithReportFile } from './test-run-report.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const testsDir = path.join(repoRoot, 'tests')
@@ -208,50 +209,27 @@ if (plan.stale.length > 0) {
 const concurrency =
   process.env.PHI_TEST_CONCURRENCY ?? String(Math.max(4, Math.floor(availableParallelism() / 2)))
 const retry = !args.includes('--no-retry')
-/** Keep the tail only: enough to find failing files, not the whole suite log. */
-const OUTPUT_TAIL_BYTES = 4 * 1024 * 1024
-/** A process left holding the runner's output must not hang the gate once the runner has exited. */
-const OUTPUT_DRAIN_MS = 10_000
 
 function runTests(files, testConcurrency) {
-  return new Promise((resolve) => {
-    const child = spawn(
-      process.execPath,
-      [
-        '--import',
-        loaderPath,
-        '--import',
-        blockingStdioPath,
-        '--test',
-        `--test-concurrency=${testConcurrency}`,
-        '--test-timeout=300000',
-        '--test-force-exit',
-        ...files
-      ],
-      { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'] }
-    )
-    let tail = ''
-    const absorb = (chunk, sink) => {
-      sink.write(chunk)
-      tail = `${tail}${chunk.toString()}`.slice(-OUTPUT_TAIL_BYTES)
-    }
-    child.stdout.on('data', (chunk) => absorb(chunk, process.stdout))
-    child.stderr.on('data', (chunk) => absorb(chunk, process.stderr))
-    child.once('error', () => resolve({ code: 1, tail }))
-    // 'exit' can arrive before the last output does, and the summary check needs all of it.
-    child.once('exit', (code, signal) => {
-      const finish = () => resolve({ code: code ?? 1, signal, tail })
-      const drain = setTimeout(finish, OUTPUT_DRAIN_MS)
-      child.once('close', () => {
-        clearTimeout(drain)
-        finish()
-      })
-    })
-  })
+  return runWithReportFile(
+    [
+      '--import',
+      loaderPath,
+      '--import',
+      blockingStdioPath,
+      '--test',
+      `--test-concurrency=${testConcurrency}`,
+      '--test-timeout=300000',
+      '--test-force-exit',
+      ...files
+    ],
+    { cwd: repoRoot, onOutput: (chunk) => process.stdout.write(chunk) }
+  )
 }
 
 /** Re-runs what one failed lane left unproven and returns the exit code that decides the gate. */
-async function recover(failed) {
+async function recover(failedLane) {
+  let failed = failedLane
   // A finished run always prints its totals. Without them the runner itself died, and every suite
   // it had not reported is unproven, so the whole lane runs once more.
   if (!hasTestSummary(failed.tail)) {
@@ -260,7 +238,9 @@ async function recover(failed) {
         'running the lane once more. Report it, do not ignore it.'
     )
     const rerun = await runTests(failed.files, failed.concurrency)
-    return rerun.code || (hasTestSummary(rerun.tail) ? 0 : 1)
+    if (!hasTestSummary(rerun.tail)) return rerun.code || 1
+    if (rerun.code === 0) return 0
+    failed = { ...failed, ...rerun }
   }
 
   const { suites: retryFiles, unowned } = suitesForFailures(
@@ -306,11 +286,12 @@ for (const lane of lanes) {
   const run = await runTests(lane.files, lane.concurrency)
   if (run.code !== 0 || !hasTestSummary(run.tail)) failedLanes.push({ ...lane, ...run })
 }
-if (failedLanes.length > 0 && !retry) process.exit(failedLanes[0].code || 1)
-
-let exitCode = 0
-for (const failed of failedLanes) {
-  const code = await recover(failed)
-  if (exitCode === 0) exitCode = code
+if (failedLanes.length > 0 && !retry) {
+  process.exitCode = failedLanes[0].code || 1
+} else {
+  // Not process.exit(): that would cut this gate's own report short in the same way.
+  for (const failed of failedLanes) {
+    const code = await recover(failed)
+    if (!process.exitCode) process.exitCode = code
+  }
 }
-process.exit(exitCode)

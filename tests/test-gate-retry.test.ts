@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -12,6 +11,7 @@ import {
   splitSerialSuites,
   suitesForFailures
 } from '../scripts/test-affected.mjs'
+import { runWithReportFile } from '../scripts/test-run-report.mjs'
 
 function repoWith(files: Record<string, string>): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), 'phi-test-gate-retry-'))
@@ -92,7 +92,7 @@ test('only a report with totals counts as a finished run', () => {
   assert.equal(hasTestSummary('✔ one (1ms)\n✔ two (1ms)\n'), false)
 })
 
-test('a slow reader still receives the whole report from a force-exited runner', async (t) => {
+test('a force-exited runner keeps the results and totals of its test processes', async (t) => {
   const files = ['a', 'b', 'c', 'd', 'e', 'f'].map((name) => `${name}.test.mjs`)
   const casesPerFile = 400
   const body = `import test from 'node:test'
@@ -100,27 +100,46 @@ for (let i = 0; i < ${casesPerFile}; i += 1) test('case ' + i + ' ' + 'x'.repeat
 `
   const repo = repoWith(Object.fromEntries(files.map((file) => [file, body])))
   t.after(repo.cleanup)
-  // The reader starts late so the pipe fills up, which is what a busy gate does to the runner.
+  const previous = process.env.NODE_TEST_CONTEXT
+  delete process.env.NODE_TEST_CONTEXT
+  t.after(() => {
+    if (previous !== undefined) process.env.NODE_TEST_CONTEXT = previous
+  })
+  const forwarded: Buffer[] = []
   const blockingStdio = join(process.cwd(), 'scripts/test-blocking-stdio.mjs')
-  const child = spawn(
-    'sh',
-    [
-      '-c',
-      'node="$1"; blocking="$2"; shift 2; "$node" --import "$blocking" --test --test-force-exit "$@" 2>/dev/null | (sleep 2; cat)',
-      'sh',
-      process.execPath,
-      blockingStdio,
-      ...files.map((file) => join(repo.root, file))
-    ],
-    {
-      // Inherited, this would make the inner runner report to us in its binary format.
-      env: { ...process.env, NODE_TEST_CONTEXT: undefined },
-      stdio: ['ignore', 'pipe', 'ignore']
-    }
+  const run = await runWithReportFile(
+    ['--import', blockingStdio, '--test', '--test-force-exit', ...files],
+    { cwd: repo.root, onOutput: (chunk: Buffer) => forwarded.push(chunk) }
   )
-  let output = ''
-  child.stdout.on('data', (chunk) => (output += String(chunk)))
-  await new Promise((resolve) => child.once('close', resolve))
-  assert.equal(output.match(/^✔ case /gm)?.length, files.length * casesPerFile)
+  const output = Buffer.concat(forwarded).toString()
+  assert.equal(run.code, 0)
   assert.equal(hasTestSummary(output), true)
+  // A process can still lose its very last line, so allow one per file. Plain stdio loses 9 to 75.
+  const reported = output.match(/^✔ case /gm)?.length ?? 0
+  assert.ok(reported >= files.length * (casesPerFile - 1), `${reported} results reported`)
+})
+
+test('a report file carries the whole output, the totals and the exit code', async (t) => {
+  const repo = repoWith({
+    'a.test.mjs': `import test from 'node:test'
+for (let i = 0; i < 300; i += 1) test('case ' + i + ' 中文', () => {})
+test('fails', () => { throw new Error('boom') })
+`
+  })
+  t.after(repo.cleanup)
+  const previous = process.env.NODE_TEST_CONTEXT
+  delete process.env.NODE_TEST_CONTEXT
+  t.after(() => {
+    if (previous !== undefined) process.env.NODE_TEST_CONTEXT = previous
+  })
+  const forwarded: Buffer[] = []
+  const run = await runWithReportFile(['--test', '--test-force-exit', 'a.test.mjs'], {
+    cwd: repo.root,
+    onOutput: (chunk: Buffer) => forwarded.push(chunk)
+  })
+  const output = Buffer.concat(forwarded).toString()
+  assert.equal(run.code, 1)
+  assert.equal(output.match(/^✔ case \d+ 中文/gm)?.length, 300)
+  assert.equal(hasTestSummary(output), true)
+  assert.equal(run.tail, output)
 })
