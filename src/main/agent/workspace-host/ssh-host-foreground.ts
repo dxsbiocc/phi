@@ -54,7 +54,9 @@ export function foregroundScript(
     'watcher=$!',
     'wait "$pid"',
     'code=$?',
-    'kill "$watcher" 2>/dev/null',
+    // The command is over and bash reports a job killed by a signal on its stderr: keep it out.
+    'exec 2>/dev/null',
+    'kill "$watcher"',
     'exit $code'
   ].join('\n')
 }
