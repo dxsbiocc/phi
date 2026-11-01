@@ -24,9 +24,13 @@ const {
   KernelSessionRepository,
   SessionWriterBusyError,
   adoptedSessionId,
+  currentProcessStartedAt,
   kernelSessionMigrationPaths,
   readMigration
 } = await import('../src/kernel/sessions')
+// A made-up start time reads as a dead holder, so racing repositories would take over each
+// other's lock and the writer exclusion under test would not be exercised at all.
+const PROCESS_STARTED_AT = await currentProcessStartedAt()
 
 type Fixture = {
   root: string
@@ -112,7 +116,7 @@ function repository(
     agentDir,
     instance,
     undefined,
-    'test-process',
+    PROCESS_STARTED_AT,
     async (path, cwd) => {
       runManagerProbe('open', path, cwd, agentDir)
     }
