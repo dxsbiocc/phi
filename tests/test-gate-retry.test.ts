@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -6,6 +7,7 @@ import test from 'node:test'
 
 import {
   failureLocations,
+  hasTestSummary,
   SERIAL_SUITES,
   splitSerialSuites,
   suitesForFailures
@@ -83,4 +85,42 @@ test('every serial suite exists, and each suite runs in exactly one lane', () =>
     parallel: ['tests/light.test.ts'],
     serial: [serial]
   })
+})
+
+test('only a report with totals counts as a finished run', () => {
+  assert.equal(hasTestSummary('✔ one (1ms)\nℹ tests 1\nℹ pass 1\n'), true)
+  assert.equal(hasTestSummary('✔ one (1ms)\n✔ two (1ms)\n'), false)
+})
+
+test('a slow reader still receives the whole report from a force-exited runner', async (t) => {
+  const files = ['a', 'b', 'c', 'd', 'e', 'f'].map((name) => `${name}.test.mjs`)
+  const casesPerFile = 400
+  const body = `import test from 'node:test'
+for (let i = 0; i < ${casesPerFile}; i += 1) test('case ' + i + ' ' + 'x'.repeat(200), () => {})
+`
+  const repo = repoWith(Object.fromEntries(files.map((file) => [file, body])))
+  t.after(repo.cleanup)
+  // The reader starts late so the pipe fills up, which is what a busy gate does to the runner.
+  const blockingStdio = join(process.cwd(), 'scripts/test-blocking-stdio.mjs')
+  const child = spawn(
+    'sh',
+    [
+      '-c',
+      'node="$1"; blocking="$2"; shift 2; "$node" --import "$blocking" --test --test-force-exit "$@" 2>/dev/null | (sleep 2; cat)',
+      'sh',
+      process.execPath,
+      blockingStdio,
+      ...files.map((file) => join(repo.root, file))
+    ],
+    {
+      // Inherited, this would make the inner runner report to us in its binary format.
+      env: { ...process.env, NODE_TEST_CONTEXT: undefined },
+      stdio: ['ignore', 'pipe', 'ignore']
+    }
+  )
+  let output = ''
+  child.stdout.on('data', (chunk) => (output += String(chunk)))
+  await new Promise((resolve) => child.once('close', resolve))
+  assert.equal(output.match(/^✔ case /gm)?.length, files.length * casesPerFile)
+  assert.equal(hasTestSummary(output), true)
 })

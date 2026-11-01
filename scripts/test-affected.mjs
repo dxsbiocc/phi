@@ -131,6 +131,11 @@ export function splitSerialSuites(files) {
   }
 }
 
+/** A finished run always prints its totals, so without them its result is unproven. */
+export function hasTestSummary(output) {
+  return /^ℹ tests \d+/m.test(output)
+}
+
 /** The file of every failure in a test report: node prints `test at <file>:<line>:<column>`. */
 export function failureLocations(output) {
   const files = new Set()

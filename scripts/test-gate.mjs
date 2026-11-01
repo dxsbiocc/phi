@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url'
 import {
   changedFiles,
   failureLocations,
+  hasTestSummary,
   selectAffected,
   selectShard,
   splitSerialSuites,
@@ -33,6 +34,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const testsDir = path.join(repoRoot, 'tests')
 const knownFailuresPath = path.join(repoRoot, 'scripts/test-known-failures.json')
 const loaderPath = path.join(repoRoot, 'scripts/test-loader.mjs')
+const blockingStdioPath = path.join(repoRoot, 'scripts/test-blocking-stdio.mjs')
 
 const args = process.argv.slice(2)
 const listOnly = args.includes('--list')
@@ -208,6 +210,8 @@ const concurrency =
 const retry = !args.includes('--no-retry')
 /** Keep the tail only: enough to find failing files, not the whole suite log. */
 const OUTPUT_TAIL_BYTES = 4 * 1024 * 1024
+/** A process left holding the runner's output must not hang the gate once the runner has exited. */
+const OUTPUT_DRAIN_MS = 10_000
 
 function runTests(files, testConcurrency) {
   return new Promise((resolve) => {
@@ -216,6 +220,8 @@ function runTests(files, testConcurrency) {
       [
         '--import',
         loaderPath,
+        '--import',
+        blockingStdioPath,
         '--test',
         `--test-concurrency=${testConcurrency}`,
         '--test-timeout=300000',
@@ -232,7 +238,15 @@ function runTests(files, testConcurrency) {
     child.stdout.on('data', (chunk) => absorb(chunk, process.stdout))
     child.stderr.on('data', (chunk) => absorb(chunk, process.stderr))
     child.once('error', () => resolve({ code: 1, tail }))
-    child.once('exit', (code, signal) => resolve({ code: code ?? 1, signal, tail }))
+    // 'exit' can arrive before the last output does, and the summary check needs all of it.
+    child.once('exit', (code, signal) => {
+      const finish = () => resolve({ code: code ?? 1, signal, tail })
+      const drain = setTimeout(finish, OUTPUT_DRAIN_MS)
+      child.once('close', () => {
+        clearTimeout(drain)
+        finish()
+      })
+    })
   })
 }
 
@@ -240,12 +254,13 @@ function runTests(files, testConcurrency) {
 async function recover(failed) {
   // A finished run always prints its totals. Without them the runner itself died, and every suite
   // it had not reported is unproven, so the whole lane runs once more.
-  if (!/^ℹ tests \d+/m.test(failed.tail)) {
+  if (!hasTestSummary(failed.tail)) {
     console.error(
       `\nThe test runner died without a summary (code ${failed.code}, signal ${failed.signal ?? 'none'}); ` +
         'running the lane once more. Report it, do not ignore it.'
     )
-    return (await runTests(failed.files, failed.concurrency)).code
+    const rerun = await runTests(failed.files, failed.concurrency)
+    return rerun.code || (hasTestSummary(rerun.tail) ? 0 : 1)
   }
 
   const { suites: retryFiles, unowned } = suitesForFailures(
@@ -289,9 +304,9 @@ const lanes = [
 const failedLanes = []
 for (const lane of lanes) {
   const run = await runTests(lane.files, lane.concurrency)
-  if (run.code !== 0) failedLanes.push({ ...lane, ...run })
+  if (run.code !== 0 || !hasTestSummary(run.tail)) failedLanes.push({ ...lane, ...run })
 }
-if (failedLanes.length > 0 && !retry) process.exit(failedLanes[0].code)
+if (failedLanes.length > 0 && !retry) process.exit(failedLanes[0].code || 1)
 
 let exitCode = 0
 for (const failed of failedLanes) {
