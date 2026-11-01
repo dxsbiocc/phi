@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { access, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import test from 'node:test'
+import { promisify } from 'node:util'
+import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 import { desktopMcpFixture, MCP_FIXTURE_SECRET } from './helpers/desktopMcpFixture'
+
+const execFileAsync = promisify(execFile)
 
 async function logEvents(agentDir: string): Promise<Array<Record<string, unknown>>> {
   const dir = join(agentDir, 'logs')
@@ -13,6 +18,33 @@ async function logEvents(agentDir: string): Promise<Array<Record<string, unknown
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+/** The SDK reports only "connect_failed"; this shows why, for failures seen only on a CI runner. */
+async function tlsDiagnosis(root: string, url: string): Promise<string> {
+  const cert = join(root, 'cert.pem')
+  // Asynchronous, because the fixture's HTTPS server shares this process's event loop.
+  const run = async (command: string, args: string[], env = process.env): Promise<string> => {
+    try {
+      const { stdout, stderr } = await execFileAsync(command, args, { env, timeout: 15000 })
+      return `${stdout}${stderr}`.trim()
+    } catch (error) {
+      return String(error)
+    }
+  }
+  const probe = `await fetch(${JSON.stringify(url)}, { method: 'DELETE' }).then(
+    (r) => console.log('status', r.status),
+    (e) => console.log('error', e.code, e.message)
+  )`
+  const lines = [
+    `openssl: ${await run('sh', ['-c', 'command -v openssl; openssl version'])}`,
+    await run('openssl', ['x509', '-in', cert, '-noout', '-dates', '-issuer']),
+    `bun fetch: ${await run(resolveBunExecutable(), ['-e', probe], {
+      ...process.env,
+      NODE_EXTRA_CA_CERTS: cert
+    })}`
+  ]
+  return lines.join('\n')
 }
 
 test(
@@ -42,7 +74,9 @@ test(
     assert.deepEqual(
       adapter.tools.map((tool) => tool.name),
       ['mcp__fixture_inspect'],
-      `skipped servers: ${JSON.stringify(adapter.skipped)}`
+      adapter.tools.length === 0
+        ? `skipped servers: ${JSON.stringify(adapter.skipped)}\n${await tlsDiagnosis(f.root, f.url)}`
+        : undefined
     )
     await assert.rejects(access(sentinel), { code: 'ENOENT' })
     const byName = new Map(adapter.skipped.map((server) => [server.name, server.reason]))
