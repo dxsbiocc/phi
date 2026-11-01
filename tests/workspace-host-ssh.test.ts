@@ -77,6 +77,31 @@ async function createPureSshHost(root: string): Promise<SshHost> {
 
 runWorkspaceHostContract(createPureSshHost)
 
+test('a writer waiting on the CAS lock survives the holder releasing it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'phi-workspace-host-lock-race-'))
+  const hosts = await Promise.all(Array.from({ length: 8 }, () => createPureSshHost(root)))
+  try {
+    let expectedHash = (await hosts[0]!.fs.writeAtomic('result.txt', 'first')).hash
+    for (let round = 0; round < 25; round += 1) {
+      const outcomes = await Promise.allSettled(
+        hosts.map((host, index) =>
+          host.fs.writeAtomic('result.txt', `${round}-${index}`, { expectedHash })
+        )
+      )
+      const refusals = outcomes.flatMap((outcome) =>
+        outcome.status === 'rejected' ? [String(outcome.reason.code ?? outcome.reason.message)] : []
+      )
+      assert.deepEqual(new Set(refusals), new Set(['HASH_MISMATCH']))
+      const winner = outcomes.find((outcome) => outcome.status === 'fulfilled')
+      assert.ok(winner?.status === 'fulfilled')
+      expectedHash = winner.value.hash
+    }
+  } finally {
+    await Promise.all(hosts.map((host) => host.close?.()))
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('pure SSH keeps the legacy 1 MiB text limit', async () => {
   const root = await mkdtemp(join(tmpdir(), 'phi-workspace-host-ssh-text-limit-'))
   const host = await createPureSshHost(root)
