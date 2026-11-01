@@ -33,7 +33,7 @@ function testWithBunAuthStorage(
   test(name, () => {
     execFileSync(
       resolveBunExecutable(),
-      ['test', fileURLToPath(import.meta.url), '--test-name-pattern', name],
+      ['test', '--timeout', '60000', fileURLToPath(import.meta.url), '--test-name-pattern', name],
       {
         cwd: resolve('.'),
         env: { ...process.env, [BUN_CHILD_TEST_ENV]: name },

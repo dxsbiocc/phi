@@ -107,6 +107,29 @@ export function selectShard(files, spec) {
   return files.filter((_, position) => position % count === index - 1)
 }
 
+/**
+ * Suites that start real runtimes or bundle and drive Electron. Beside other suites on a small
+ * runner they take minutes and push their neighbours past their limits, so they run alone.
+ */
+export const SERIAL_SUITES = [
+  'tests/engine-kernel-routing-contract.test.ts',
+  'tests/engine-rpc-compaction-contract.test.ts',
+  'tests/engine-rpc-contract.test.ts',
+  'tests/engine-rpc-cursor-stream-recovery.test.ts',
+  'tests/engine-rpc-desktop-websearch-privacy.test.ts',
+  'tests/engine-rpc-model-proxy-shell.test.ts',
+  'tests/engine-rpc-runtime-composition-security.test.ts',
+  'tests/engine-rpc-ssh-stdio-factory.test.ts',
+  'tests/notebook-markdown-editor-interactions.test.ts'
+]
+
+export function splitSerialSuites(files) {
+  return {
+    parallel: files.filter((file) => !SERIAL_SUITES.includes(file)),
+    serial: files.filter((file) => SERIAL_SUITES.includes(file))
+  }
+}
+
 /** The file of every failure in a test report: node prints `test at <file>:<line>:<column>`. */
 export function failureLocations(output) {
   const files = new Set()

@@ -25,6 +25,7 @@ import {
   failureLocations,
   selectAffected,
   selectShard,
+  splitSerialSuites,
   suitesForFailures
 } from './test-affected.mjs'
 
@@ -235,50 +236,66 @@ function runTests(files, testConcurrency) {
   })
 }
 
-const first = await runTests(selected, concurrency)
-if (first.code === 0) process.exit(0)
+/** Re-runs what one failed lane left unproven and returns the exit code that decides the gate. */
+async function recover(failed) {
+  // A finished run always prints its totals. Without them the runner itself died, and every suite
+  // it had not reported is unproven, so the whole lane runs once more.
+  if (!/^ℹ tests \d+/m.test(failed.tail)) {
+    console.error(
+      `\nThe test runner died without a summary (code ${failed.code}, signal ${failed.signal ?? 'none'}); ` +
+        'running the lane once more. Report it, do not ignore it.'
+    )
+    return (await runTests(failed.files, failed.concurrency)).code
+  }
 
-if (!retry) process.exit(first.code)
-
-// A finished run always prints its totals. Without them the runner itself died, and every suite
-// it had not reported is unproven, so the whole selection runs once more.
-if (!/^ℹ tests \d+/m.test(first.tail)) {
-  console.error(
-    `\nThe test runner died without a summary (code ${first.code}, signal ${first.signal ?? 'none'}); ` +
-      'running the selection once more. Report it, do not ignore it.'
+  const { suites: retryFiles, unowned } = suitesForFailures(
+    repoRoot,
+    failureLocations(failed.tail),
+    selected
   )
-  const rerun = await runTests(selected, concurrency)
-  process.exit(rerun.code)
-}
+  if (unowned.length > 0) {
+    console.error(
+      `\nNo selected suite re-runs these failures, so they cannot be retried:\n  ${unowned.join('\n  ')}`
+    )
+    return failed.code
+  }
+  if (retryFiles.length === 0) {
+    console.error(
+      '\nGate failed and no failing suite could be identified; re-run the selection above by hand.'
+    )
+    return failed.code
+  }
 
-const { suites: retryFiles, unowned } = suitesForFailures(
-  repoRoot,
-  failureLocations(first.tail),
-  selected
-)
-if (unowned.length > 0) {
-  console.error(
-    `\nNo selected suite re-runs these failures, so they cannot be retried:\n  ${unowned.join('\n  ')}`
-  )
-  process.exit(first.code)
-}
-if (retryFiles.length === 0) {
-  console.error(
-    '\nGate failed and no failing suite could be identified; re-run the selection above by hand.'
-  )
-  process.exit(first.code)
-}
-
-console.log(
-  `\nGate failed in ${retryFiles.length} suite(s); retrying them serially to tell flakes from real failures:` +
-    retryFiles.map((file) => `\n  ${file}`).join('')
-)
-const second = await runTests(retryFiles, '1')
-if (second.code === 0) {
   console.log(
-    'Retry passed: the failure is load-sensitive, not a regression. Report it, do not ignore it.'
+    `\nGate failed in ${retryFiles.length} suite(s); retrying them serially to tell flakes from real failures:` +
+      retryFiles.map((file) => `\n  ${file}`).join('')
   )
-  process.exit(0)
+  const second = await runTests(retryFiles, '1')
+  if (second.code === 0) {
+    console.log(
+      'Retry passed: the failure is load-sensitive, not a regression. Report it, do not ignore it.'
+    )
+    return 0
+  }
+  console.error('Retry failed too: this is a real failure.')
+  return second.code
 }
-console.error('Retry failed too: this is a real failure.')
-process.exit(second.code)
+
+const { parallel, serial } = splitSerialSuites(selected)
+const lanes = [
+  { files: parallel, concurrency },
+  { files: serial, concurrency: '1' }
+].filter((lane) => lane.files.length > 0)
+const failedLanes = []
+for (const lane of lanes) {
+  const run = await runTests(lane.files, lane.concurrency)
+  if (run.code !== 0) failedLanes.push({ ...lane, ...run })
+}
+if (failedLanes.length > 0 && !retry) process.exit(failedLanes[0].code)
+
+let exitCode = 0
+for (const failed of failedLanes) {
+  const code = await recover(failed)
+  if (exitCode === 0) exitCode = code
+}
+process.exit(exitCode)

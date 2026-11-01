@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 
-import { failureLocations, suitesForFailures } from '../scripts/test-affected.mjs'
+import {
+  failureLocations,
+  SERIAL_SUITES,
+  splitSerialSuites,
+  suitesForFailures
+} from '../scripts/test-affected.mjs'
 
 function repoWith(files: Record<string, string>): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), 'phi-test-gate-retry-'))
@@ -69,4 +74,13 @@ test('a failure no selected suite reaches is reported, so it cannot pass on the 
     suitesForFailures(repo.root, ['tests/a.test.ts', 'tests/stray.ts'], ['tests/a.test.ts']),
     { suites: ['tests/a.test.ts'], unowned: ['tests/stray.ts'] }
   )
+})
+
+test('every serial suite exists, and each suite runs in exactly one lane', () => {
+  for (const suite of SERIAL_SUITES) assert.ok(existsSync(suite), suite)
+  const [serial] = SERIAL_SUITES
+  assert.deepEqual(splitSerialSuites(['tests/light.test.ts', serial]), {
+    parallel: ['tests/light.test.ts'],
+    serial: [serial]
+  })
 })

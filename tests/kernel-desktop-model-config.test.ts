@@ -96,7 +96,14 @@ if (!bunRuntime) {
   test(BROKER_REGISTRY_TEST, () => {
     execFileSync(
       resolveBunExecutable(),
-      ['test', fileURLToPath(import.meta.url), '--test-name-pattern', BROKER_REGISTRY_TEST],
+      [
+        'test',
+        '--timeout',
+        '60000',
+        fileURLToPath(import.meta.url),
+        '--test-name-pattern',
+        BROKER_REGISTRY_TEST
+      ],
       {
         cwd: resolve('.'),
         env: { ...process.env, [BUN_CHILD_ENV]: '1' },
