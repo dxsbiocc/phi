@@ -34,13 +34,12 @@ A Wrapper is one fixed, versioned Nextflow tool or pipeline, with its inputs, pa
 This changes what the agent is responsible for. It no longer has to assemble an environment, recall a tool's flags, or guess where the results went. It has to choose the right tool and supply the right inputs:
 
 ```mermaid
-flowchart LR
-    A["You: run QC on these reads"] --> B["Wrapper specialist"]
-    B --> C["Find the wrapper<br/>and read its contract"]
-    C --> D["Fill in your inputs,<br/>keep the defaults"]
-    D --> E["Run in the background<br/>on the chosen target"]
-    E --> F["Run record, logs,<br/>and outputs"]
-    F --> G["Agent is woken with the<br/>outcome and continues"]
+flowchart TD
+    A["You: run QC on these reads"] --> B["Wrapper specialist finds the wrapper and reads its contract"]
+    B --> C["Fills in your inputs and keeps the defaults"]
+    C --> D["Runs in the background on the chosen target"]
+    D --> E["Run record, logs, and outputs"]
+    E --> F["Agent is woken with the outcome and continues"]
 ```
 
 |                  | Notebook                          | Wrapper                                           |
