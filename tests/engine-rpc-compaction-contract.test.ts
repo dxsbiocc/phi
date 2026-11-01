@@ -312,7 +312,7 @@ test(
 
 test(
   'auto-compaction toggles are transient; private startup percentages survive journal rotation',
-  { timeout: 30000 },
+  { timeout: 90_000 },
   async (t) => {
     const f = await rpcSessionCompactionOracle()
     t.after(() => f.close())

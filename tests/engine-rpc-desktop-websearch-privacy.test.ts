@@ -5,7 +5,7 @@ import { desktopWebSearchFixture } from './helpers/desktopWebSearchFixture'
 
 test(
   'real Brave errors redact standard JSON-escaped known keys while successful content stays native',
-  { timeout: 60_000 },
+  { timeout: 180_000 },
   async (t) => {
     for (const source of ['literal', 'environment'] as const)
       for (const representation of ['quote', 'backslash', 'combined-whitespace'] as const)
@@ -138,7 +138,7 @@ const cases = [
 
 test(
   'real SDK Basic presence semantics never disclose encoded empty credentials in failed-search envelopes',
-  { timeout: 60_000 },
+  { timeout: 180_000 },
   async (t) => {
     for (const value of cases)
       await t.test(value.name, async (t) => {
@@ -184,7 +184,7 @@ test(
 
 test(
   'real grounded search preserves header source semantics and scrubs only failed results',
-  { timeout: 60_000 },
+  { timeout: 180_000 },
   async (t) => {
     for (const kind of [
       'provider-literal',

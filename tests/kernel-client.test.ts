@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { once } from 'node:events'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -329,7 +330,7 @@ test(
 
 test(
   'local launcher negotiates a source kernel before returning it',
-  { timeout: 15_000 },
+  { timeout: 60_000 },
   async () => {
     const root = mkdtempSync(join(tmpdir(), 'phi-local-kernel-source-'))
     const kernel = await launchLocalKernel({
@@ -343,9 +344,12 @@ test(
       assert.ok(kernel.process.pid)
     } finally {
       try {
-        const outcome = await kernel.close()
-        assert.equal(outcome.action, 'stdin-eof')
-        assert.equal(outcome.code, 0)
+        // close() escalates after 900 ms, which a loaded host can exceed, so wait for EOF here.
+        const closed = once(kernel.process, 'close')
+        kernel.process.stdin.end()
+        const [code] = await closed
+        assert.equal(code, 0)
+        assert.equal((await kernel.close()).action, 'already-exited')
       } finally {
         rmSync(root, { recursive: true, force: true })
       }

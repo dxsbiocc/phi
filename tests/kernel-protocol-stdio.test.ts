@@ -42,6 +42,9 @@ function helloRequest(id = 'hello'): KernelRequestFrame {
   })
 }
 
+/** Bun transpiles the whole kernel on a cold start, which a loaded runner takes seconds to do. */
+const BUN_STARTUP_MS = 30_000
+
 function createLineReader(input: Readable): {
   next(): Promise<string>
   received: string[]
@@ -75,7 +78,7 @@ function createLineReader(input: Readable): {
       return new Promise<string>((resolve, reject) => {
         const timeout = setTimeout(
           () => reject(new Error('Timed out waiting for JSONL frame')),
-          2_000
+          BUN_STARTUP_MS
         )
         pending.push((line) => {
           clearTimeout(timeout)
@@ -205,7 +208,7 @@ test('the headless Bun entry negotiates, exposes worker capabilities, and exits 
       (resolve, reject) => {
         const timeout = setTimeout(
           () => reject(new Error('Kernel did not exit after stdin closed')),
-          2_000
+          BUN_STARTUP_MS
         )
         child.once('exit', (exitCode, exitSignal) => {
           clearTimeout(timeout)

@@ -4,13 +4,16 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { EditorState } from '@codemirror/state'
 import { Decoration } from '@codemirror/view'
 import { markdownBlockDecorations } from '../src/renderer/src/lib/markdown/markdownBlockDecorations'
+import { fullyParsed } from './helpers/fullyParsedState'
 
 function stateAt(source: string, anchor: number, head = anchor): EditorState {
-  return EditorState.create({
-    doc: source,
-    selection: { anchor, head },
-    extensions: [markdown({ base: markdownLanguage })]
-  })
+  return fullyParsed(
+    EditorState.create({
+      doc: source,
+      selection: { anchor, head },
+      extensions: [markdown({ base: markdownLanguage })]
+    })
+  )
 }
 
 function decorations(

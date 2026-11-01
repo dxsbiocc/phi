@@ -642,7 +642,8 @@ test('slow shared deployment precedes the short connection deadline; actual CLI 
   fixture.host.transfer.uploadFile = async (...args) => {
     if (!delayed) {
       delayed = true
-      await delay(5250, undefined, { signal: args[2]?.signal })
+      // Longer than the deadline below, which the real CLI has to meet after this delay.
+      await delay(15_250, undefined, { signal: args[2]?.signal })
     }
     await upload(...args)
   }
@@ -712,7 +713,7 @@ test('slow shared deployment precedes the short connection deadline; actual CLI 
   }
   const backend = new RpcSessionBackend(factory.open, {
     initialize: factory.initialize,
-    startupTimeoutMs: 5000
+    startupTimeoutMs: 15_000
   })
   t.after(() => backend.dispose({ sessionId: fixture.params.sessionId }))
   const phases: string[] = []
@@ -909,7 +910,7 @@ test('neutral private startup prevents SDK dotenv injection even with runtime in
   })
   const params = Object.freeze({ ...fixture.params })
   const owned = await factory.open(params, new AbortController().signal)
-  const connection = new RpcConnection(() => owned, { startupTimeoutMs: 5000 })
+  const connection = new RpcConnection(() => owned, { startupTimeoutMs: 30_000 })
   t.after(() => connection.close())
   await connection.start()
   await factory.initialize({ connection, params, signal: new AbortController().signal })
@@ -937,7 +938,7 @@ test('neutral private startup prevents SDK dotenv injection even with runtime in
   )
   assert.notEqual(direct, launch)
   const positiveChannel = await fixture.session.openStdio!(direct)
-  const positive = new RpcConnection(() => positiveChannel, { startupTimeoutMs: 5000 })
+  const positive = new RpcConnection(() => positiveChannel, { startupTimeoutMs: 30_000 })
   t.after(() => positive.close())
   await positive.start()
   const config = JSON.parse(

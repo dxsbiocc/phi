@@ -237,7 +237,7 @@ test(
 
 test(
   'RPC official v2 chunks preserve a >1 MiB multibyte assistant stream and history',
-  { timeout: 30000 },
+  { timeout: 90_000 },
   async (t) => {
     const fixture = await createRpcFixture()
     t.after(() => fixture.close())

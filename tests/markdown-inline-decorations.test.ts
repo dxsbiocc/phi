@@ -8,13 +8,16 @@ import {
   markdownInlineDecorations,
   markdownInlinePresentation
 } from '../src/renderer/src/lib/markdown/markdownInlineDecorations'
+import { fullyParsed } from './helpers/fullyParsedState'
 
 function stateAt(source: string, anchor: number, head = anchor): EditorState {
-  return EditorState.create({
-    doc: source,
-    selection: EditorSelection.single(anchor, head),
-    extensions: [markdown({ base: markdownLanguage })]
-  })
+  return fullyParsed(
+    EditorState.create({
+      doc: source,
+      selection: EditorSelection.single(anchor, head),
+      extensions: [markdown({ base: markdownLanguage })]
+    })
+  )
 }
 
 function visibleSource(state: EditorState, focused = true, alwaysRendered = false): string {

@@ -16,8 +16,23 @@ type RemoteOmpFailure = Error & {
 
 const payload = Buffer.from('resumable-omp-fixture\n'.repeat(512))
 const sha256 = createHash('sha256').update(payload).digest('hex')
-/** Long enough for a loaded runner to read the first bytes, shorter than the 100 ms stall limit. */
-const DROP_AFTER_MS = 50
+
+/**
+ * Drops a response once the client has stored bytes from it, so there is always a partial to
+ * resume. A timed drop could beat the client on a loaded runner and cost an extra attempt.
+ */
+function dropOnceStored(): { arm(response: ServerResponse): void; stored(): void } {
+  let armed: ServerResponse | undefined
+  return {
+    arm: (response) => {
+      armed = response
+    },
+    stored: () => {
+      armed?.destroy()
+      armed = undefined
+    }
+  }
+}
 
 async function listen(
   handler: (request: IncomingMessage, response: ServerResponse) => void
@@ -43,6 +58,7 @@ test('a dropped response keeps its verified partial and resumes with Range', asy
   t.after(() => rm(root, { recursive: true, force: true }))
   let requests = 0
   const ranges: Array<string | undefined> = []
+  const drop = dropOnceStored()
   const server = await listen((request, response) => {
     requests++
     ranges.push(request.headers.range)
@@ -59,7 +75,7 @@ test('a dropped response keeps its verified partial and resumes with Range', asy
     }
     response.writeHead(200, { 'content-length': payload.length })
     response.write(payload.subarray(0, 2048))
-    setTimeout(() => response.destroy(), DROP_AFTER_MS)
+    drop.arm(response)
   })
   t.after(server.close)
 
@@ -71,8 +87,11 @@ test('a dropped response keeps its verified partial and resumes with Range', asy
     asset: { url: server.url, sha256, size: payload.length },
     maxAttempts: 3,
     retryDelayMs: 1,
-    inactivityTimeoutMs: 100,
-    onProgress: (event) => progress.push(event)
+    inactivityTimeoutMs: 5_000,
+    onProgress: (event) => {
+      progress.push(event)
+      drop.stored()
+    }
   })
 
   assert.deepEqual(await readFile(cached.localPath), payload)
@@ -123,6 +142,7 @@ test('a server that ignores Range restarts the partial without regressing progre
   t.after(() => rm(root, { recursive: true, force: true }))
   let requests = 0
   const ranges: Array<string | undefined> = []
+  const drop = dropOnceStored()
   const server = await listen((request, response) => {
     requests++
     ranges.push(request.headers.range)
@@ -130,7 +150,7 @@ test('a server that ignores Range restarts the partial without regressing progre
     response.writeHead(200, { 'content-length': payload.length })
     if (requests === 1) {
       response.write(payload.subarray(0, 1536))
-      setTimeout(() => response.destroy(), DROP_AFTER_MS)
+      drop.arm(response)
       return
     }
     response.end(payload)
@@ -145,8 +165,11 @@ test('a server that ignores Range restarts the partial without regressing progre
     asset: { url: server.url, sha256, size: payload.length },
     maxAttempts: 2,
     retryDelayMs: 1,
-    inactivityTimeoutMs: 100,
-    onProgress: (event) => progress.push(event)
+    inactivityTimeoutMs: 5_000,
+    onProgress: (event) => {
+      progress.push(event)
+      drop.stored()
+    }
   })
 
   assert.deepEqual(await readFile(cached.localPath), payload)
@@ -162,12 +185,13 @@ test('HTTP 416 discards stale partial state and restarts from byte zero', async 
   const root = await mkdtemp(join(tmpdir(), 'phi-omp-cache-416-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const ranges: Array<string | undefined> = []
+  const drop = dropOnceStored()
   const server = await listen((request, response) => {
     ranges.push(request.headers.range)
     if (ranges.length === 1) {
       response.writeHead(200, { 'content-length': payload.length, etag: '"fixture-v1"' })
       response.write(payload.subarray(0, 1024))
-      setTimeout(() => response.destroy(), DROP_AFTER_MS)
+      drop.arm(response)
       return
     }
     if (ranges.length === 2) {
@@ -187,7 +211,8 @@ test('HTTP 416 discards stale partial state and restarts from byte zero', async 
     asset: { url: server.url, sha256, size: payload.length },
     maxAttempts: 2,
     retryDelayMs: 1,
-    inactivityTimeoutMs: 100
+    inactivityTimeoutMs: 5_000,
+    onProgress: drop.stored
   })
 
   assert.deepEqual(await readFile(cached.localPath), payload)
@@ -201,6 +226,7 @@ test('an ETag change rejects resumed bytes and restarts with the new representat
   t.after(() => rm(root, { recursive: true, force: true }))
   const ranges: Array<string | undefined> = []
   const ifRanges: Array<string | undefined> = []
+  const drop = dropOnceStored()
   const server = await listen((request, response) => {
     ranges.push(request.headers.range)
     const ifRange = request.headers['if-range']
@@ -208,7 +234,7 @@ test('an ETag change rejects resumed bytes and restarts with the new representat
     if (ranges.length === 1) {
       response.writeHead(200, { 'content-length': payload.length, etag: '"fixture-v1"' })
       response.write(payload.subarray(0, 1024))
-      setTimeout(() => response.destroy(), DROP_AFTER_MS)
+      drop.arm(response)
       return
     }
     if (ranges.length === 2) {
@@ -233,7 +259,8 @@ test('an ETag change rejects resumed bytes and restarts with the new representat
     asset: { url: server.url, sha256, size: payload.length },
     maxAttempts: 2,
     retryDelayMs: 1,
-    inactivityTimeoutMs: 100
+    inactivityTimeoutMs: 5_000,
+    onProgress: drop.stored
   })
 
   assert.deepEqual(await readFile(cached.localPath), payload)

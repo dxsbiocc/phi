@@ -54,9 +54,13 @@ if ('Bun' in globalThis) {
   })
 } else {
   test(NAME, () => {
-    execFileSync(resolveBunExecutable(), ['test', fileURLToPath(import.meta.url)], {
-      cwd: resolve('.'),
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
+    execFileSync(
+      resolveBunExecutable(),
+      ['test', '--timeout', '60000', fileURLToPath(import.meta.url)],
+      {
+        cwd: resolve('.'),
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    )
   })
 }

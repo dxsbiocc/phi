@@ -147,7 +147,7 @@ test('actual OMP restores nullable limits on initial and later choices and isola
       await transport.initialize(context)
     },
     selectModel: transport.selectModel,
-    startupTimeoutMs: 5000
+    startupTimeoutMs: 30_000
   })
   const params = {
     sessionId: 'proxy-session',

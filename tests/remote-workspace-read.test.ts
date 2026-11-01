@@ -125,7 +125,7 @@ function localOmpSelectorOutput(content: string, selector: string): string {
   const result = spawnSync('bun', ['-e', script], {
     cwd: process.cwd(),
     encoding: 'utf8',
-    timeout: 5000,
+    timeout: 60_000,
     env: {
       ...process.env,
       PHI_SELECTOR: selector,

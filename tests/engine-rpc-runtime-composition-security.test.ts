@@ -5,6 +5,17 @@ import { dirname, join } from 'node:path'
 import { runtimeCompositionFixture } from './helpers/rpcRuntimeCompositionFixture'
 import { deferred } from './helpers/rpc-initialization-wire'
 
+/** A CLI that exits on its own fails the start first; removal of its directory follows. */
+async function sessionDirectoriesRemoved(directory: string, name: string): Promise<void> {
+  const deadline = Date.now() + 15_000
+  let left = await readdir(directory)
+  while (left.length > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    left = await readdir(directory)
+  }
+  assert.deepEqual(left, [], name)
+}
+
 test(
   'missing, corrupt, nonprivate or rebound launch configuration never adopts, starts a provider or survives cleanup',
   { timeout: 180_000 },
@@ -63,7 +74,7 @@ test(
       await assert.rejects(f.create(), name)
       assert.equal((await f.sdk.snapshot()).providerRequests.length, 0, name)
       assert.equal(f.adopted.length, 0, name)
-      assert.deepEqual(await readdir(join(f.f.runtimeRoot, 'rpc-sessions')), [], name)
+      await sessionDirectoriesRemoved(join(f.f.runtimeRoot, 'rpc-sessions'), name)
       assert.equal(f.f.session.closed, false, name)
     }
     await access(join(f.f.root, 'outside-runtime-hardlink.json'))
