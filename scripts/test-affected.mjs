@@ -112,6 +112,7 @@ export function selectShard(files, spec) {
  * runner they take minutes and push their neighbours past their limits, so they run alone.
  */
 export const SERIAL_SUITES = [
+  'tests/engine-kernel-acceptance.test.ts',
   'tests/engine-kernel-routing-contract.test.ts',
   'tests/engine-rpc-compaction-contract.test.ts',
   'tests/engine-rpc-contract.test.ts',

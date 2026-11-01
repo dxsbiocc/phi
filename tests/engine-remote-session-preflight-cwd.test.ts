@@ -76,6 +76,9 @@ test(
       const result = await run(command, options)
       commands.push(command[2] ?? '')
       outputs.push(result.stdout)
+      // The storage error withholds the server's output, which is all a rare failure leaves.
+      const { stdout, ...outcome } = result
+      t.diagnostic(JSON.stringify({ ...outcome, stdoutBytes: stdout.length }))
       return result
     }
     const proof = await preflightRemoteJournal(f.preparation, f.reference)
