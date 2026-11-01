@@ -45,8 +45,11 @@ async function fixture(): Promise<Fixture> {
   await chmod(join(root, 'omp-sessions'), 0o700)
   await chmod(directory, 0o700)
   const fakeOmp = join(root, 'fake-omp')
-  // A symlink keeps argv0 equal to this path while avoiding re-signing a platform binary.
-  await symlink(process.platform === 'darwin' ? '/bin/sleep' : '/usr/bin/sleep', fakeOmp)
+  // A symlink keeps argv0 equal to this path while avoiding re-signing a platform binary. It points
+  // at bash because a multi-call coreutils `sleep` (Ubuntu 26.04) rejects an unknown argv0; bash
+  // runs its first argument, the script `300` below, from the launch directory.
+  await symlink('/bin/bash', fakeOmp)
+  await writeFile(join(root, '300'), 'sleep 300\n')
   const runLock = join(directory, 'run.lock')
   await writeFile(runLock, '', { mode: 0o600 })
   return {

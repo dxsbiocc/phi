@@ -41,7 +41,8 @@ test(
     const adapter = await f.adapter({ serverNames: ['fixture', 'dead', 'stdio', 'missing'] })
     assert.deepEqual(
       adapter.tools.map((tool) => tool.name),
-      ['mcp__fixture_inspect']
+      ['mcp__fixture_inspect'],
+      `skipped servers: ${JSON.stringify(adapter.skipped)}`
     )
     await assert.rejects(access(sentinel), { code: 'ENOENT' })
     const byName = new Map(adapter.skipped.map((server) => [server.name, server.reason]))

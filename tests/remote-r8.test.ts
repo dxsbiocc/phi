@@ -309,7 +309,9 @@ test('the server scripts create, verify and clean exactly the run tree', () => {
   try {
     const home = join(base, 'home')
     mkdirSync(home)
-    const env = { PATH: `${gnuShims(base)}:${process.env.PATH}`, HOME: home }
+    const path =
+      process.platform === 'darwin' ? `${gnuShims(base)}:${process.env.PATH}` : process.env.PATH
+    const env = { PATH: path, HOME: home }
     const sh = (script: string): ReturnType<typeof spawnSync> =>
       spawnSync('bash', ['-c', script], { env, encoding: 'utf8' })
     // Default root: created below HOME, listed as created, verified and reused on the next run.

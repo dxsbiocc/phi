@@ -343,9 +343,14 @@ test('notebook workspace watch close waits for in-flight reads and suppresses la
 test('notebook workspace propagates host listing and stat failures', async () => {
   await fixture(BACKENDS[0], async ({ root, host, workspace }) => {
     const connectionError = new Error('host connection lost')
+    // A host with GNU `find -printf` would answer through the fast path and never reach fs.
+    const noFastList: WorkspaceHost['exec'] = {
+      ...host.exec,
+      run: async () => Promise.reject(new Error('find is unavailable'))
+    }
     const failingListHost: WorkspaceHost = {
       fs: { ...host.fs, list: async () => Promise.reject(connectionError) },
-      exec: host.exec,
+      exec: noFastList,
       capabilities: () => host.capabilities()
     }
     await assert.rejects(
@@ -363,7 +368,7 @@ test('notebook workspace propagates host listing and stat failures', async () =>
           return host.fs.stat(path, options)
         }
       },
-      exec: host.exec,
+      exec: noFastList,
       capabilities: () => host.capabilities()
     }
     await assert.rejects(
