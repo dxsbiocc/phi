@@ -94,6 +94,20 @@ export function changedFiles(repoRoot, base) {
 }
 
 /**
+ * One part of a partition, `spec` being `<index>/<count>` from 1. Suites of a family sit next to
+ * each other once sorted, so taking every count-th one spreads the slow families across shards.
+ */
+export function selectShard(files, spec) {
+  const match = /^(\d+)\/(\d+)$/.exec(spec)
+  const index = match ? Number(match[1]) : 0
+  const count = match ? Number(match[2]) : 0
+  if (index < 1 || index > count) {
+    throw new Error(`--shard needs <index>/<count> with 1 <= index <= count, got "${spec}"`)
+  }
+  return files.filter((_, position) => position % count === index - 1)
+}
+
+/**
  * @returns {{ all: boolean, reason?: string, files: string[] }} `all` means the change is
  * outside what the graph can trace and the caller should run its whole selection.
  */

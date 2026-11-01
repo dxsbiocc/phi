@@ -13,13 +13,14 @@
  *   node scripts/test-gate.mjs --only-skipped  run only the skipped suites
  *   node scripts/test-gate.mjs --changed       run only suites the current change can affect
  *   node scripts/test-gate.mjs --changed=<ref> same, diffing against <ref> (default: main)
+ *   node scripts/test-gate.mjs --shard=1/4     run one of four equal parts of the selection
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { changedFiles, selectAffected } from './test-affected.mjs'
+import { changedFiles, selectAffected, selectShard } from './test-affected.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const testsDir = path.join(repoRoot, 'tests')
@@ -31,6 +32,7 @@ const listOnly = args.includes('--list')
 const onlySkipped = args.includes('--only-skipped')
 const changedArg = args.find((arg) => arg === '--changed' || arg.startsWith('--changed='))
 const changedBase = changedArg?.includes('=') ? changedArg.slice('--changed='.length) : 'main'
+const shardArg = args.find((arg) => arg.startsWith('--shard='))?.slice('--shard='.length)
 
 /** Host capabilities a suite may need. A missing key means "not granted here". */
 const PROBES = {
@@ -173,11 +175,15 @@ function selectSuites() {
   return affected.files
 }
 
-const selected = selectSuites()
+const selection = selectSuites()
+const selected = shardArg === undefined ? selection : selectShard(selection, shardArg)
+if (shardArg !== undefined) {
+  console.log(`--shard=${shardArg}: ${selected.length} of ${selection.length} suite(s).`)
+}
 
 if (selected.length === 0) {
   console.log('Nothing to run for this selection.')
-  process.exit(changedArg ? 0 : 1)
+  process.exit(changedArg || shardArg !== undefined ? 0 : 1)
 }
 
 printPlan(plan)
