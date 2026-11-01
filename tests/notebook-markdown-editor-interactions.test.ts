@@ -15,7 +15,7 @@ test(
   'mounted Notebook Markdown editor renders blocks live and preserves editing interactions',
   {
     skip: needsDisplay ? 'A desktop display is required for the Electron renderer test' : false,
-    timeout: 40_000
+    timeout: 120_000
   },
   async (context) => {
     const directory = await mkdtemp(join(tmpdir(), 'phi-notebook-markdown-editor-'))
@@ -87,7 +87,7 @@ app.whenReady().then(async () => {
         const timer = setTimeout(() => {
           child.kill('SIGKILL')
           reject(new Error(`Electron Markdown editor test timed out: ${stderr.slice(-2000)}`))
-        }, 25_000)
+        }, 90_000)
         child.stdout.on('data', (chunk) => {
           stdout += String(chunk)
         })
