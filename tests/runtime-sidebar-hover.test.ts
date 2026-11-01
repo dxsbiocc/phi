@@ -105,8 +105,13 @@ app.whenReady().then(async () => {
   const result = {}
   for (const row of ['server', 'kernel']) {
     window.webContents.sendInputEvent({ type: 'mouseMove', ...rects[row] })
-    await new Promise((resolve) => setTimeout(resolve, 250))
-    result[row] = await sample()
+    // The opacity animates and a loaded host delivers the hover late, so wait for the end state.
+    const other = row === 'server' ? 'kernel' : 'server'
+    const deadline = Date.now() + 5000
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      result[row] = await sample()
+    } while ((result[row][row] !== '1' || result[row][other] !== '0') && Date.now() < deadline)
   }
   process.stdout.write('PHI_RUNTIME_HOVER_RESULT:' + JSON.stringify(result) + '\\n')
   window.destroy()
