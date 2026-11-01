@@ -107,6 +107,33 @@ export function selectShard(files, spec) {
   return files.filter((_, position) => position % count === index - 1)
 }
 
+/** The file of every failure in a test report: node prints `test at <file>:<line>:<column>`. */
+export function failureLocations(output) {
+  const files = new Set()
+  for (const match of output.matchAll(/^\s*test at (\S+?):\d+:\d+\s*$/gm)) {
+    files.add(match[1].replace(/^file:\/\//, '').replace(/^.*?(?=tests\/)/, ''))
+  }
+  return [...files]
+}
+
+/**
+ * The selected suites that run each failed file. A failure can be reported against a shared body
+ * or helper, so anything that is not a suite itself maps through the import graph. `unowned` lists
+ * what no selected suite reaches: nothing can re-run those, so the caller must not pass them.
+ */
+export function suitesForFailures(repoRoot, failed, selected) {
+  const direct = failed.filter((file) => selected.includes(file))
+  const indirect = failed.filter((file) => !selected.includes(file))
+  const reach = indirect.length > 0 ? reachableByTest(repoRoot, selected) : new Map()
+  const runnersOf = (file) => selected.filter((suite) => reach.get(suite).has(file))
+  return {
+    suites: selected.filter(
+      (suite) => direct.includes(suite) || indirect.some((file) => reach.get(suite).has(file))
+    ),
+    unowned: indirect.filter((file) => runnersOf(file).length === 0)
+  }
+}
+
 /**
  * @returns {{ all: boolean, reason?: string, files: string[] }} `all` means the change is
  * outside what the graph can trace and the caller should run its whole selection.

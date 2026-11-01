@@ -20,7 +20,13 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { changedFiles, selectAffected, selectShard } from './test-affected.mjs'
+import {
+  changedFiles,
+  failureLocations,
+  selectAffected,
+  selectShard,
+  suitesForFailures
+} from './test-affected.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const testsDir = path.join(repoRoot, 'tests')
@@ -229,61 +235,6 @@ function runTests(files, testConcurrency) {
   })
 }
 
-/**
- * Some suites are shared bodies under tests/ (for example workspace-host-contract.ts)
- * that several runners import. A failure is reported against the shared file, so map
- * it back to the runners that actually need to re-run.
- */
-function runnerMap(files) {
-  const byHelper = new Map()
-  for (const file of files) {
-    let source = ''
-    try {
-      source = readFileSync(path.join(repoRoot, file), 'utf8')
-    } catch {
-      continue
-    }
-    for (const match of source.matchAll(/from\s+['"](\.{1,2}\/[^'"]+)['"]/g)) {
-      const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(file), match[1]))
-      // Node reports `tests/x.ts`; relative imports usually omit the extension.
-      // Helpers need not be runners themselves: tests/workspace-host-contract.ts is
-      // imported by several *.test.ts files and failures are reported against it.
-      const candidates = resolved.endsWith('.ts') ? [resolved] : [resolved, `${resolved}.ts`]
-      for (const candidate of candidates) {
-        if (!byHelper.has(candidate)) byHelper.set(candidate, new Set())
-        byHelper.get(candidate).add(file)
-      }
-    }
-  }
-  return byHelper
-}
-
-const runnersByHelper = runnerMap(selected)
-
-/** Files named in the failure section; node prints `test at <file>:<line>`. */
-function failedFiles(output) {
-  const named = new Set()
-  for (const match of output.matchAll(
-    /test at ((?:file:\/\/)?[^\s:(]*tests\/[^\s:()]+\.ts):\d+/g
-  )) {
-    named.add(match[1].replace(/^file:\/\//, '').replace(/^.*?(?=tests\/)/, ''))
-  }
-  for (const match of output.matchAll(
-    /\(((?:file:\/\/)?[^\s:()]*tests\/[^\s:()]+\.ts):\d+:\d+\)/g
-  )) {
-    named.add(match[1].replace(/^file:\/\//, '').replace(/^.*?(?=tests\/)/, ''))
-  }
-  const runners = new Set()
-  for (const file of named) {
-    if (selected.includes(file)) {
-      runners.add(file)
-      continue
-    }
-    for (const runner of runnersByHelper.get(file) ?? []) runners.add(runner)
-  }
-  return [...runners]
-}
-
 const first = await runTests(selected, concurrency)
 if (first.code === 0) process.exit(0)
 
@@ -300,7 +251,17 @@ if (!/^ℹ tests \d+/m.test(first.tail)) {
   process.exit(rerun.code)
 }
 
-const retryFiles = failedFiles(first.tail)
+const { suites: retryFiles, unowned } = suitesForFailures(
+  repoRoot,
+  failureLocations(first.tail),
+  selected
+)
+if (unowned.length > 0) {
+  console.error(
+    `\nNo selected suite re-runs these failures, so they cannot be retried:\n  ${unowned.join('\n  ')}`
+  )
+  process.exit(first.code)
+}
 if (retryFiles.length === 0) {
   console.error(
     '\nGate failed and no failing suite could be identified; re-run the selection above by hand.'
