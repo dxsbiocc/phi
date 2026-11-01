@@ -1,5 +1,4 @@
-import { execFile, spawn } from 'node:child_process'
-import { promisify } from 'node:util'
+import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:https'
 import type { ServerResponse } from 'node:http'
@@ -12,6 +11,7 @@ import { resolveBunExecutable } from '../../src/main/agent/engine/bun-executable
 import { OmpBridge } from '../../src/main/agent/engine/omp-bridge'
 import { createDesktopMcpAdapter } from '../../src/main/agent/engine/rpc/desktop-mcp-adapter'
 import { realisticMcpTools } from './mcpRealisticCatalog'
+import { writeSelfSignedCertificate } from './selfSignedCertificate'
 import type { DesktopMcpOptions } from '../../src/main/agent/engine/rpc/desktop-mcp-types'
 
 export const MCP_FIXTURE_SCHEMA = {
@@ -51,29 +51,7 @@ export async function desktopMcpFixture(options: { realisticCatalog?: boolean } 
     await mkdir(path)
   const cert = join(root, 'cert.pem'),
     key = join(root, 'key.pem')
-  await promisify(execFile)(
-    'openssl',
-    [
-      'req',
-      '-x509',
-      '-newkey',
-      'rsa:2048',
-      '-nodes',
-      '-keyout',
-      key,
-      '-out',
-      cert,
-      '-days',
-      '1',
-      '-subj',
-      '/CN=127.0.0.1',
-      '-addext',
-      'subjectAltName=IP:127.0.0.1',
-      '-addext',
-      'basicConstraints=critical,CA:TRUE'
-    ],
-    { maxBuffer: 8192 }
-  )
+  await writeSelfSignedCertificate('127.0.0.1', cert, key)
   const requests: Array<{
     method: string
     body: Record<string, unknown>

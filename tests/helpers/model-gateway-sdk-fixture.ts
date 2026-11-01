@@ -1,11 +1,11 @@
-import { execFile, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
 import { startGatewayFixtureProvider } from './model-gateway-sdk-provider'
+import { writeSelfSignedCertificate } from './selfSignedCertificate'
 import { resolveBunExecutable } from '../../src/main/agent/engine/bun-executable'
 import type {
   CreateModelGatewayLeaseParams,
@@ -101,28 +101,10 @@ export async function startModelGatewaySdkFixture(
   const certificate = join(root, 'fixture-cert.pem')
   if (options.https) {
     try {
-      await promisify(execFile)(
-        'openssl',
-        [
-          'req',
-          '-x509',
-          '-newkey',
-          'rsa:2048',
-          '-nodes',
-          '-keyout',
-          join(root, 'fixture-key.pem'),
-          '-out',
-          certificate,
-          '-days',
-          '1',
-          '-subj',
-          '/CN=PhiPrivateFixture',
-          '-addext',
-          'subjectAltName=IP:127.0.0.1',
-          '-addext',
-          'basicConstraints=critical,CA:TRUE'
-        ],
-        { cwd: root, maxBuffer: 8192 }
+      await writeSelfSignedCertificate(
+        'PhiPrivateFixture',
+        certificate,
+        join(root, 'fixture-key.pem')
       )
       await chmod(certificate, 0o600)
       await chmod(join(root, 'fixture-key.pem'), 0o600)

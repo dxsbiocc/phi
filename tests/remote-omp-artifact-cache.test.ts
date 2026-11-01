@@ -16,6 +16,8 @@ type RemoteOmpFailure = Error & {
 
 const payload = Buffer.from('resumable-omp-fixture\n'.repeat(512))
 const sha256 = createHash('sha256').update(payload).digest('hex')
+/** Long enough for a loaded runner to read the first bytes, shorter than the 100 ms stall limit. */
+const DROP_AFTER_MS = 50
 
 async function listen(
   handler: (request: IncomingMessage, response: ServerResponse) => void
@@ -57,7 +59,7 @@ test('a dropped response keeps its verified partial and resumes with Range', asy
     }
     response.writeHead(200, { 'content-length': payload.length })
     response.write(payload.subarray(0, 2048))
-    setTimeout(() => response.destroy(), 10)
+    setTimeout(() => response.destroy(), DROP_AFTER_MS)
   })
   t.after(server.close)
 
@@ -128,7 +130,7 @@ test('a server that ignores Range restarts the partial without regressing progre
     response.writeHead(200, { 'content-length': payload.length })
     if (requests === 1) {
       response.write(payload.subarray(0, 1536))
-      setTimeout(() => response.destroy(), 10)
+      setTimeout(() => response.destroy(), DROP_AFTER_MS)
       return
     }
     response.end(payload)
@@ -165,7 +167,7 @@ test('HTTP 416 discards stale partial state and restarts from byte zero', async 
     if (ranges.length === 1) {
       response.writeHead(200, { 'content-length': payload.length, etag: '"fixture-v1"' })
       response.write(payload.subarray(0, 1024))
-      setTimeout(() => response.destroy(), 10)
+      setTimeout(() => response.destroy(), DROP_AFTER_MS)
       return
     }
     if (ranges.length === 2) {
@@ -206,7 +208,7 @@ test('an ETag change rejects resumed bytes and restarts with the new representat
     if (ranges.length === 1) {
       response.writeHead(200, { 'content-length': payload.length, etag: '"fixture-v1"' })
       response.write(payload.subarray(0, 1024))
-      setTimeout(() => response.destroy(), 10)
+      setTimeout(() => response.destroy(), DROP_AFTER_MS)
       return
     }
     if (ranges.length === 2) {
