@@ -1,15 +1,12 @@
 <div align="center">
   <img src="build/icon.png" alt="Phi app icon" width="104" />
   <h1>Phi</h1>
-  <p><strong>A local-first AI workbench for scientific work.</strong></p>
-  <p>Move from a research question to code, a notebook, a reproducible run, and an inspectable result—without losing the project that connects them.</p>
-  <p>Managed environments · AI with Jupyter kernels · Specialist plugins · Reproducible pipelines</p>
+  <p><strong>A desktop AI workbench for scientific research.</strong></p>
   <p><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
   <p>
     <a href="https://phi.omicsagent.cn/">Website</a> ·
     <a href="https://phi.omicsagent.cn/docs">Documentation</a> ·
-    <a href="https://phi.omicsagent.cn/docs/quickstart">Quick start</a> ·
-    <a href="https://github.com/dxsbiocc/phi/releases">Releases</a> ·
+    <a href="https://github.com/dxsbiocc/phi-packages">Packages</a> ·
     <a href="https://github.com/dxsbiocc/phi/issues">Issues</a>
   </p>
   <p>
@@ -18,94 +15,82 @@
   </p>
 </div>
 
-Phi is for researchers whose work does not end with an answer in a chat window. A useful result may need project files, a Python or R notebook, a specialist tool, an external data source, or a Nextflow run on a server. Phi keeps those pieces in one desktop workspace, with visible permissions and durable local history.
+Phi connects an AI agent to the tools research work runs on: project files, Jupyter notebooks, managed Python and R environments, command-line pipelines, and remote servers. You ask for an analysis; the agent writes and runs it in your project, and the code and results stay there as ordinary files.
+
+## See it work
+
+The agent was asked to run a PCA on the Wisconsin Diagnostic Breast Cancer dataset bundled with scikit-learn. It wrote the notebook cells, ran them on Phi's managed Python kernel, and saved the notebook with its outputs.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/notebook-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="assets/readme/notebook-light.png">
-  <img alt="Phi notebook workspace showing a research analysis in progress" src="assets/readme/notebook-light.png" width="100%">
+  <img alt="A Phi notebook showing an executed PCA cell with its scatter plot of benign and malignant samples" src="assets/readme/notebook-light.png" width="100%">
 </picture>
 
-<sub>Notebook workspace in the Phi desktop beta, shown in your GitHub theme with demonstration data.</sub>
+The conversation then lists what it produced, and each file opens in place. The Chinese line and tab title below are as the app produced them in this run.
 
-## What makes Phi different
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/delivery-en-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/readme/delivery-en-light.png">
+  <img alt="A Phi conversation ending with the PCA plot and cards for the delivered notebook and image" src="assets/readme/delivery-en-light.png" width="100%">
+</picture>
 
-### Environments follow the task
+<sub>Captures from the Phi 0.1.0 desktop app, resized but otherwise unedited, with the model set to DeepSeek V4 Flash.</sub>
 
-Phi prepares versioned, managed Python, R, Jupyter, and Nextflow environments when work needs them. Executable Skills, specialist agents, notebook kernels, and Wrappers use declared runtimes instead of depending on an accidental collection of host packages. A ready environment can be reused; the Runtime panel shows its state and offers repair and cleanup. The first build may download dependencies, and host services such as Slurm remain separately managed.
+## What Phi does
 
-### The agent can work with a Jupyter kernel
+- **Notebooks the agent can operate.** The agent reads a `.ipynb`, inserts and edits cells, runs them through Jupyter, checks the outputs, and saves. You see the same cells in the editor. Python and R kernels are managed by Phi; a host kernel must be selected explicitly.
+- **Managed environments.** Versioned Python, R, Jupyter, and Nextflow environments are built on demand, so work does not depend on what the host has installed. Settings can rebuild, remove, or clean them. The first build downloads packages.
+- **Conversations with explicit control.** Each conversation can be bound to a project and uses a mode: Auto, Ask, Plan, Plan and execute, or Full access. Plan modes wait for your approval before acting. Conversations keep running in the background when you switch away, and can be forked from an earlier message.
+- **Plugins, Skills, connectors, and Wrappers.** A plugin bundles a specialist agent with its Skills and environment. Skills give task guidance, MCP connectors reach external services, and Wrappers describe reproducible command-line tools and pipelines. The official [Phi Packages](https://github.com/dxsbiocc/phi-packages) catalog supplies installable content.
+- **Remote projects over SSH.** Files and commands in a remote project run on the host you selected and never fall back to the desktop. Wrappers can submit to Slurm. Check each host before relying on it.
+- **A workbench around the conversation.** A terminal, in-app browser, file previews, and a background-jobs panel sit beside the conversation.
 
-The agent can read a `.ipynb` notebook, insert or revise a code or Markdown cell, run a code cell through Jupyter, inspect its execution status and output summary, and save the notebook. You see the same cells and results in the editor, with write and run actions subject to Phi's approval controls. Phi offers managed Python and R kernels; Python is the default, while a host kernel requires explicit selection.
+### Figures you can keep editing
 
-### Plugins bring a specialist and its tools together
+The Visualization plugin picks a template from the catalog, writes an editable `plot.R` into your project, and renders it in the managed R environment. This heatmap came from that flow.
 
-A Phi plugin can bundle a focused agent, its Skills, callable script tools, and an environment binding. This makes the specialist's actual capabilities visible in the app and keeps its work connected to the main conversation. The official package catalog supplies installable plugins and other research resources.
+<p align="center"><img src="assets/readme/visualization-heatmap.png" alt="Clustered heatmap of ten mean nuclear features across twenty samples, annotated by diagnosis" width="72%"></p>
 
-### Scientific figures, with editable sources
+<sub>Twenty samples (ten benign, ten malignant) from the same scikit-learn dataset, chosen to demonstrate the plot rather than to support a finding. The legend title was shortened by hand in `plot.R` and the figure re-rendered.</sub>
 
-The **Visualization** plugin is a concrete example. Its specialist uses the `omics-visualization` Skill to shortlist real templates against a result table, show previews before a choice, prepare an editable project-local `plot.R`, and render PNG, PDF, or SVG with the shared managed R environment. It can revise an existing figure and is instructed to inspect the result for clipped labels, missing legends, and misleading encodings. [Explore the plugin](https://phi.omicsagent.cn/plugins).
+## Your data
 
-<p align="center"><img src="assets/readme/visualization-template.png" alt="Clustered heatmap template supplied with the Visualization plugin" width="72%"></p>
+Settings, conversations, approvals, logs, and package state live in `~/.phi`. Project files stay in the folder you chose, and Phi does not store its application data there.
 
-<sub>An actual bundled heatmap template preview, not a plot of user data. As a scientific figure, its white canvas is intentional in both GitHub themes.</sub>
+Phi is not offline. Model requests go to the provider you configure, and an enabled connector may contact its service. Exported sessions can contain tool output and sensitive conversation content, so handle them as private data.
 
-## From question to result
+## Availability
 
-1. **Choose the workspace.** Start an ordinary conversation or bind a conversation to a local or SSH project. Project files remain where they belong.
-2. **Work with an agent.** Select a model, add relevant Skills or agents, and review tool actions under the project's permission mode. A plan can be reviewed before execution.
-3. **Use the right surface.** Explore in a notebook, inspect files and results, or choose a packaged Wrapper when the task calls for a repeatable pipeline.
-4. **Pick up where you left off.** Conversations, run history, approvals, and background tasks stay connected even as you move between projects and panels.
+Phi is an **internal beta**. macOS on Apple Silicon is the primary target. Linux x64 packaging is configured but has not passed clean-machine acceptance, and Windows is not validated. Updates are manual: Settings → General → Check for updates tells you when a newer release exists.
 
-### Reproducible workflows instead of one-off commands
+Builds are not yet signed or notarized. Preview builds, when published, appear on the [Releases](https://github.com/dxsbiocc/phi/releases) page; none is available yet, so for now build from source. Upgrades keep your data in `~/.phi`.
 
-Wrappers package known tools and workflows behind discoverable inputs and run plans. Phi can prepare a run, show its status and logs, and help inspect resulting files. Remote execution includes configured SSH and Slurm paths, with host-specific validation still required before relying on a particular cluster.
+- **macOS** (`.dmg`, `.zip`): drag Phi to Applications. macOS blocks the first launch with "Apple could not verify Phi". Open **System Settings → Privacy & Security** and click **Open Anyway**; you do this once per installed version.
+- **Linux** (`.AppImage`, `.deb`): run `sudo apt install ./phi_*.deb`, or `chmod +x Phi-*.AppImage` and run the AppImage.
 
-The [interface gallery](https://phi.omicsagent.cn/#ui-shots) shows the Wrapper catalog and other desktop views.
+## Build from source
 
-### Connected research resources
-
-Skills provide task guidance, MCP connectors reach external services, and Wrappers define reproducible command-line work. The official [Phi Packages](https://github.com/dxsbiocc/phi-packages) catalog supplies installable domain content. Phi shows resource scope and availability so you can see what is configured before asking the agent to use it.
-
-See [plugin and connector previews](https://phi.omicsagent.cn/#ui-shots) on the product site.
-
-The surrounding workbench includes a terminal, an in-app browser, file previews, and a background-task panel. You can keep a conversation open while inspecting a result or following a longer run.
-
-## Local-first, with explicit boundaries
-
-Phi stores its settings, conversations, approvals, logs, and package state under `~/.phi`. It does not turn a selected project into an application data directory. Local project files stay in the selected folder; remote project file and command operations target the selected SSH host rather than silently falling back to the desktop.
-
-Local-first does not mean offline inference: model requests go to the provider you configure, and an enabled connector may contact its service. Project actions remain subject to the permission controls shown in Phi. Exported sessions can include tool output and sensitive conversation content, so handle them as private data.
-
-## Get started
-
-For a desktop build, use the official [installation guide](https://phi.omicsagent.cn/docs/install) and [quick-start guide](https://phi.omicsagent.cn/docs/quickstart). The [product documentation](https://phi.omicsagent.cn/docs) also covers Skills, MCP connectors, Wrappers, and common questions.
-
-To run this repository from source, use **Bun 1.3.14+**. The test runner needs **Node.js 22.15+ or 24+**. The first launch may fetch pinned runtime assets.
+You need [Bun](https://bun.sh) 1.3.14 or later. The first launch fetches pinned runtime assets.
 
 ```bash
 bun install
 bun run dev
 ```
 
-After launch, configure a model provider in Settings and choose a project. To verify a source checkout before packaging:
+Configure a model provider in Settings, then choose a project.
+
+To check a source checkout the way CI does, also install Node.js 24:
 
 ```bash
-bun run test
+bun run helper:fetch-go && bun run build:helper
 bun run lint
 bun run typecheck
-bun run build
+bun run test:gate
 ```
 
-## Availability
+`bun run build:mac` and `bun run build:linux` produce packages. Maintainers publish releases from a `v*` tag; see [release-signing-update.md](docs/roadmap/release-signing-update.md).
 
-Phi is an **internal beta**. It is not yet a signed, notarized public desktop release. macOS is the primary development target; Linux x64 packaging is configured but still needs clean-machine acceptance, and Windows distribution is not yet validated. Remote SSH, Jupyter, and Slurm workflows need real-host validation for each environment. Updates are manual during the beta.
+## License
 
-Preview builds, when published, are on the [latest release](https://github.com/dxsbiocc/phi/releases/latest) page: macOS Apple Silicon (`.dmg`, `.zip`) and Linux x64 (`.AppImage`, `.deb`). Settings and conversations in `~/.phi` are kept when you install a newer version, and Settings → General → 检查更新 tells you when a newer release exists.
-
-- **macOS**: open the `.dmg` and drag Phi to Applications. Preview builds are not yet notarized, so macOS blocks the first launch with "Apple could not verify Phi". Open **System Settings → Privacy & Security**, click **Open Anyway** next to the Phi message, and confirm; you do this once per installed version. Alternatively run `xattr -dr com.apple.quarantine /Applications/Phi.app`.
-- **Linux**: install the `.deb` with `sudo apt install ./phi_*.deb`, or make the AppImage executable (`chmod +x Phi-*.AppImage`) and run it.
-
-Maintainers build releases from a `v*` tag; packaging and signing are described in [release-signing-update.md](docs/roadmap/release-signing-update.md).
-
-The source is licensed under [MIT](LICENSE). Third-party attributions are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Feature requests and bug reports belong in [GitHub Issues](https://github.com/dxsbiocc/phi/issues).
+The source is licensed under [MIT](LICENSE). Third-party attributions are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Report bugs and request features in [GitHub Issues](https://github.com/dxsbiocc/phi/issues).
