@@ -137,6 +137,7 @@ jobs:
           fi
           node scripts/smoke-packaged-worker.mjs --resources "$resources"
           test -x "$(find "$resources/kernel" -path '*linux-x64/phi-kernel' -print -quit)"
+          bun scripts/check-release-kernel.ts --resources "$resources"
       - name: Check macOS signature
         if: runner.os == 'macOS'
         shell: bash
