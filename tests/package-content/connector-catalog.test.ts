@@ -40,7 +40,21 @@ test('curated connector directory has distinct HTTPS services in every group', (
         .filter((connector) => connector.signIn === '无需登录')
         .map((connector) => connector.id)
         .sort(),
-      ['biorxiv', 'clinical-trials', 'open-targets', 'pubmed']
+      [
+        'biorxiv',
+        'cancer-omics',
+        'clinical-trials',
+        'epigenomics',
+        'excalidraw',
+        'metabolomics',
+        'ols4',
+        'open-targets',
+        'proteomics',
+        'pubmed',
+        'rcsb-mcp',
+        'string-db',
+        'transcriptomics-single-cell'
+      ]
     )
     assert.equal(
       connectors.find((connector) => connector.id === 'open-targets')?.url,

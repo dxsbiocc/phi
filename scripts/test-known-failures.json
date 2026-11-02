@@ -12,10 +12,7 @@
   "profiles": {
     "rpc-launch": {
       "kind": "environment",
-      "probes": [
-        "ps",
-        "flock"
-      ],
+      "probes": ["ps", "flock"],
       "owner": "engine / RPC",
       "reviewBy": "2026-11-18",
       "reason": "These suites execute the real RPC launch wrapper, which takes the run lock with flock and proves the launch process is its own group leader with 'ps -o pgid='. A host without the flock binary (stock macOS) or without permission to call ps cannot run them. Verified on 2026-10-19: with flock/ps shims on PATH these suites pass, and the only one that still needs a real flock is engine-rpc-run-guard.test.ts, because it tests lock contention and TERM/KILL takeover."
@@ -40,13 +37,6 @@
       "reviewBy": "2026-11-18",
       "alwaysSkip": true,
       "reason": "The suite allocates a real PTY through the terminal worker. Restricted runners reject it with 'failed to openpty: Operation not permitted' (EPERM) before the ssh argv and resize assertions run."
-    },
-    "concurrency-sensitive": {
-      "kind": "environment",
-      "owner": "wrappers / jobs",
-      "reviewBy": "2026-11-01",
-      "alwaysSkip": true,
-      "reason": "Passes 26/26 when run alone (checked twice on 2026-10-19) but fails inside the full run at --test-concurrency=4 after ~19s, so the suite is not isolated from other suites' load. Re-run it alone before trusting a green gate; the real fix is test isolation, not a skip."
     }
   },
   "entries": [
@@ -211,20 +201,8 @@
       "profile": "real-ssh-server"
     },
     {
-      "file": "tests/package-content/connector-catalog.test.ts",
-      "kind": "fixture",
-      "scope": "packages",
-      "owner": "content / connectors",
-      "reviewBy": "2026-11-01",
-      "reason": "The curated connector directory now lists 13 services while the test still asserts the original 4. This is a real red test, not an environment problem: update the expectation or the fixture."
-    },
-    {
       "file": "tests/remote-terminal-pty.test.ts",
       "profile": "pty"
-    },
-    {
-      "file": "tests/wrapper-job-manager-remote.test.ts",
-      "profile": "concurrency-sensitive"
     }
   ]
 }
