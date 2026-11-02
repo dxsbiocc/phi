@@ -389,6 +389,63 @@ export default function legacyRootProbe() {}
 )
 
 test(
+  'compiled kernel hosts the brokers and workers OMP starts by re-entering it',
+  {
+    timeout: 90_000,
+    skip: process.platform !== 'darwin' || process.arch !== 'arm64'
+  },
+  async () => {
+    const provider = await startLoopbackModel()
+    const layout = prepareRuntime('workers', provider.url)
+    provider.enqueue(
+      { tool: { name: 'write', id: 'broker', args: { path: 'proc://missing-job', content: '' } } },
+      {
+        tool: {
+          name: 'eval',
+          id: 'js-worker',
+          args: { language: 'js', title: 'Worker', code: 'console.log("COMPILED_JS_" + 6 * 7)' }
+        }
+      },
+      { text: 'COMPILED_WORKERS_COMPLETE' }
+    )
+    const kernel = launchCompiled(layout)
+    const completed = Promise.withResolvers<Record<string, JsonValue>>()
+    const stopEvents = kernel.client.onEvent((event: KernelEventFrame) => {
+      if (event.type === 'run.completed') completed.resolve(record(event.payload))
+    })
+    try {
+      await withTimeout(
+        kernel.client.hello({
+          hostCapabilities: ['settings.nextActionSuggestionsEnabled', 'skills.scriptTools']
+        }),
+        'compiled hello timed out'
+      )
+      await kernel.client.subscribe(0)
+      const sessionId = await withTimeout(
+        createSession(kernel.client, layout, true),
+        'compiled worker session creation timed out',
+        20_000
+      )
+      await kernel.client.request('session.prompt', { text: 'Run the tools.' }, { sessionId })
+      const completion = await withTimeout(completed.promise, 'compiled turn timed out', 60_000)
+      assert.equal(completion.status, 'completed')
+      const transcript = JSON.stringify(
+        await kernel.client.request('session.snapshot', {}, { sessionId })
+      )
+      assert.doesNotMatch(transcript, /Failed to start daemon broker/)
+      assert.match(transcript, /missing-job/)
+      assert.match(transcript, /COMPILED_JS_42/)
+      await kernel.client.request('session.close', {}, { sessionId })
+    } finally {
+      stopEvents()
+      await kernel.close()
+      await provider.close()
+    }
+    assert.equal(kernel.process.exitCode, 0)
+  }
+)
+
+test(
   'relocated darwin kernel runs a scripted native grep turn without extracting an addon',
   {
     timeout: 60_000,

@@ -34,6 +34,12 @@
       "plan": "keep"
     },
     {
+      "file": "src/kernel/omp/compiled-entry.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/cli", "@oh-my-pi/pi-utils/worker-host"],
+      "purpose": "Dispatch the brokers and workers OMP starts by re-entering the compiled kernel",
+      "plan": "keep"
+    },
+    {
       "file": "src/kernel/omp/version.ts",
       "specifiers": ["@oh-my-pi/pi-coding-agent/package.json"],
       "purpose": "Read the installed pinned OMP version without importing the SDK runtime",

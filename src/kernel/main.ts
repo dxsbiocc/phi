@@ -245,8 +245,7 @@ export async function startKernelSocket(
   grace.startDisconnected()
 }
 
-const entry = process.argv[1]
-if (entry && fileURLToPath(import.meta.url) === path.resolve(entry)) {
+export function runKernelCommandLine(): void {
   try {
     const command = parseKernelCommandLine(process.argv.slice(2))
     if (command.mode === 'stdio') {
@@ -270,4 +269,15 @@ if (entry && fileURLToPath(import.meta.url) === path.resolve(entry)) {
     })
     process.exit(1)
   }
+}
+
+// A compiled build starts in omp/compiled-entry.ts. Every module there shares the bundle's
+// import.meta.url, so this check would pass as well and start a second kernel on the same stdin.
+const entry = process.argv[1]
+if (
+  process.env.PI_COMPILED !== 'true' &&
+  entry &&
+  fileURLToPath(import.meta.url) === path.resolve(entry)
+) {
+  runKernelCommandLine()
 }

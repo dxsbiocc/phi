@@ -208,7 +208,7 @@ async function nativePackageDirectory(
 
 async function compileKernel(outfile: string, target: TargetDefinition): Promise<void> {
   const result = await Bun.build({
-    entrypoints: [join(repoRoot, 'src', 'kernel', 'main.ts')],
+    entrypoints: [join(repoRoot, 'src', 'kernel', 'omp', 'compiled-entry.ts')],
     root: repoRoot,
     target: 'bun',
     external: [
