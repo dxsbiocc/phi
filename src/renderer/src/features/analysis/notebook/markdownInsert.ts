@@ -74,6 +74,12 @@ function blankLineBefore(source: string, index: number): string {
   return before.endsWith('\n') ? '\n' : '\n\n'
 }
 
+/** One blank line before following text, and none when the block ends the cell. */
+function blockSuffix(following: string): string {
+  if (!following || following.startsWith('\n\n')) return ''
+  return following.startsWith('\n') ? '\n' : '\n\n'
+}
+
 type Range = { source: string; start: number; end: number }
 type Span = { text: string; selectionStart: number; selectionEnd: number }
 
@@ -194,8 +200,9 @@ export function expandDisplayFormulaShortcut(
   const separator = blankLineBefore(source, lineStart)
   const after = remaining.replace(/^[ \t]*\n*/, '')
   const opening = `${before}${separator}$$\n`
+  const closing = `${opening}\n$$`
   return {
-    value: `${opening}\n$$\n\n\n${after}`,
+    value: after ? `${closing}\n\n${after}` : closing,
     selectionStart: opening.length,
     selectionEnd: opening.length
   }
@@ -234,8 +241,7 @@ function formula(range: Range, selected: string, sample: string): MarkdownInsert
   const body = selected || sample
   const prefix = blankLineBefore(range.source, range.start)
   const following = range.source.slice(range.end)
-  const suffix = following.startsWith('\n') ? '\n\n' : '\n\n\n'
-  const text = `${prefix}$$\n${body}\n$$${suffix}`
+  const text = `${prefix}$$\n${body}\n$$${blockSuffix(following)}`
   return place(range, {
     text,
     selectionStart: prefix.length + 3,
@@ -246,8 +252,7 @@ function formula(range: Range, selected: string, sample: string): MarkdownInsert
 function fenced(range: Range, body: string): MarkdownInsertResult {
   const prefix = atLineStart(range.source, range.start) ? '' : '\n\n'
   const following = range.source.slice(range.end)
-  const suffix = following.startsWith('\n') ? '\n\n' : '\n\n\n'
-  const text = `${prefix}\`\`\`\n${body}\n\`\`\`${suffix}`
+  const text = `${prefix}\`\`\`\n${body}\n\`\`\`${blockSuffix(following)}`
   const cursor = prefix.length + 4 + body.length
   return place(range, { text, selectionStart: cursor, selectionEnd: cursor })
 }

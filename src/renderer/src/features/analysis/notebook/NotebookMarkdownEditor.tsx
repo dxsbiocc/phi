@@ -23,7 +23,6 @@ import {
   insertMarkdownLink,
   markdownInsertLabel,
   markdownInsertSamples,
-  paragraphAfterMarkdown,
   type MarkdownInsertKind,
   type MarkdownInsertResult
 } from './markdownInsert'
@@ -140,9 +139,9 @@ export function NotebookMarkdownEditor({
           },
           '&.cm-focused': { outline: 'none' },
           '.cm-scroller': { overflow: 'visible' },
-          '.cm-content': {
+          '&.cm-editor .cm-content': {
             minHeight: 48,
-            padding: '13px 0',
+            padding: '12px 0',
             caretColor: theme.palette.primary.main
           },
           '.cm-line': { padding: '0 18px' },
@@ -338,11 +337,6 @@ export function NotebookMarkdownEditor({
     if (!view || !propsRef.current.onChange) return
     const math = inlineMathAt(view.state.doc.toString(), start)
     if (math) view.dispatch({ changes: { from: math.bodyStart, to: math.bodyEnd, insert: body } })
-  }
-
-  const focusBelowLastBlock = (): void => {
-    const view = viewRef.current
-    if (view) applyResult(view, paragraphAfterMarkdown(view.state.doc.toString()))
   }
 
   useEffect(() => {
@@ -588,43 +582,8 @@ export function NotebookMarkdownEditor({
   }, [widgets])
 
   return (
-    <Box
-      data-phi-notebook-markdown-editor="live"
-      onPointerDownCapture={(event) => {
-        const view = viewRef.current
-        if (!editable || !view) return
-        const target = event.target as Element
-        if (
-          target.closest(
-            'a, button, input, textarea, select, [role="button"], [data-phi-notebook-code-block], [data-phi-notebook-formula-block], [data-phi-notebook-markdown-footer], [data-phi-notebook-link-editor]'
-          )
-        )
-          return
-        const caret = view.coordsAtPos(view.state.doc.length)
-        const footer = event.currentTarget.querySelector<HTMLElement>(
-          '[data-phi-notebook-markdown-footer]'
-        )
-        if (!caret || !footer) return
-        const footerTop = footer.getBoundingClientRect().top
-        // A rendered block can place CodeMirror's end coordinate above its visible last line.
-        if (event.clientY <= caret.bottom + 32 || event.clientY >= footerTop) return
-        event.preventDefault()
-        event.stopPropagation()
-        focusBelowLastBlock()
-      }}
-      sx={{ position: 'relative' }}
-    >
+    <Box data-phi-notebook-markdown-editor="live" sx={{ position: 'relative' }}>
       <Box ref={hostRef} data-phi-notebook-markdown-live="true" />
-      {editable ? (
-        <Box
-          data-phi-notebook-markdown-footer="true"
-          onPointerDown={(event) => {
-            event.preventDefault()
-            focusBelowLastBlock()
-          }}
-          sx={{ height: 28, cursor: 'text' }}
-        />
-      ) : null}
       {Array.from(widgets, ([dom, widget]) =>
         createPortal(
           widget.block.name === 'FencedCode' ? (

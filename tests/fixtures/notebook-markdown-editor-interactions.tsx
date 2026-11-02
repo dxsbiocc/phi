@@ -351,18 +351,23 @@ async function run(): Promise<object> {
       insertedFormula && document.activeElement === insertedFormula,
       'Inserting a formula must focus its expression input without exposing $$'
     )
-    check(draft.endsWith('$$\n\n\n'), 'A new formula must leave a writable line below')
-    const formulaFooter = host.querySelector<HTMLElement>('[data-phi-notebook-markdown-footer]')
-    check(formulaFooter, 'A formula at the end must offer a writable footer')
-    await act(async () => {
-      formulaFooter.dispatchEvent(
-        new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
-      )
-    })
+    check(draft.endsWith('$$'), 'A new formula must not reserve blank lines below it')
     check(
-      view.state.selection.main.head === view.state.doc.length,
-      'Clicking below the formula must put the caret after it'
+      !host.querySelector('[data-phi-notebook-markdown-footer]'),
+      'A formula must not leave a clickable blank footer'
     )
+    const formulaSource = draft
+    const formulaContent = host.querySelector<HTMLElement>('.cm-content')
+    check(formulaContent, 'The formula editor must expose its content')
+    const formulaRect = formulaContent.getBoundingClientRect()
+    formulaContent.dispatchEvent(
+      new MouseEvent('mousedown', {
+        bubbles: true,
+        clientX: formulaRect.left + 24,
+        clientY: formulaRect.bottom - 4
+      })
+    )
+    check(draft === formulaSource, 'Clicking below a formula must not insert a line')
     await setSource(view, '# Title\n\n$\n\n- Item\n\nAfter')
     await select(view, 10)
     await act(async () => {
@@ -370,7 +375,7 @@ async function run(): Promise<object> {
     })
     await frame()
     check(
-      draft === '# Title\n\n$$\n\n$$\n\n\n- Item\n\nAfter',
+      draft === '# Title\n\n$$\n\n$$\n\n- Item\n\nAfter',
       'Typing a second dollar sign must insert a bounded formula without swallowing the list'
     )
     const shortcutFormulaInput = host.querySelector<HTMLTextAreaElement>(
@@ -470,8 +475,8 @@ async function run(): Promise<object> {
 
     await setSource(view, '# Title\n\n[Link](https://example.com)')
     check(
-      host.querySelector('[data-phi-notebook-markdown-footer]'),
-      'A link at the end must leave a clickable writing area below it'
+      !host.querySelector('[data-phi-notebook-markdown-footer]'),
+      'A link at the end must not reserve a blank footer'
     )
 
     await setSource(view, '/link')
@@ -526,15 +531,11 @@ async function run(): Promise<object> {
     )
 
     await setSource(view, '# Title\n\n[Link](https://example.com)')
-    const linkFooter = host.querySelector<HTMLElement>('[data-phi-notebook-markdown-footer]')
-    check(linkFooter, 'Every editable Markdown cell needs a clickable area below its last block')
-    await act(async () => {
-      linkFooter.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
-    })
     check(
-      view.state.selection.main.head === view.state.doc.length,
-      'The footer must place the caret after the link'
+      !host.querySelector('[data-phi-notebook-markdown-footer]'),
+      'An editable Markdown cell must not keep a blank footer below its last block'
     )
+    await select(view, view.state.doc.length)
     await act(async () => {
       check(
         document.execCommand('insertText', false, 'after'),
@@ -543,8 +544,8 @@ async function run(): Promise<object> {
     })
     await frame()
     check(
-      draft === '# Title\n\n[Link](https://example.com)\n\nafter',
-      'Footer typing must create a paragraph outside the link'
+      draft === '# Title\n\n[Link](https://example.com)after',
+      'Typing at the end must continue the paragraph instead of inserting a blank line'
     )
 
     await setSource(view, '- first')
@@ -553,10 +554,7 @@ async function run(): Promise<object> {
 
     await setSource(view, '/code')
     await press(view, 'Enter')
-    check(
-      draft === '```\n\n```\n\n\n',
-      'Code command must leave two writable lines after the block'
-    )
+    check(draft === '```\n\n```', 'Code command must not reserve blank lines below the block')
     const codeInput = host.querySelector<HTMLElement>('[data-phi-notebook-code-input]')
     check(codeInput, 'Code insertion must open an editable area')
     const insertedCodeView = codeInputView(host)
@@ -588,7 +586,7 @@ async function run(): Promise<object> {
       check(document.execCommand('insertText', false, 'x'), 'Native code typing must be accepted')
     })
     await frame()
-    check(draft === '```\nx\n```\n\n\n', 'Native typing must update the code block source')
+    check(draft === '```\nx\n```', 'Native typing must update the code block source')
     await setSource(view, '```\n\n```\n\nAfter')
     await select(view, view.state.doc.length)
     const clickInput = host.querySelector<HTMLElement>('[data-phi-notebook-code-input]')
@@ -649,31 +647,27 @@ async function run(): Promise<object> {
     const linkCellRoot = createRoot(linkCellHost)
     await act(async () => linkCellRoot.render(<CellHarness />))
     await frame()
-    const linkCellFooter = linkCellHost.querySelector<HTMLElement>(
-      '[data-phi-notebook-markdown-footer]'
+    check(
+      !linkCellHost.querySelector('[data-phi-notebook-markdown-footer]'),
+      'A rendered Notebook cell must not keep a blank footer below the final link'
     )
-    check(linkCellFooter, 'A rendered Notebook cell must show a footer below the final link')
-    linkCellFooter.scrollIntoView()
+    const linkContent = linkCellHost.querySelector<HTMLElement>('.cm-content')
+    check(linkContent, 'The link cell must expose its editor content')
+    linkContent.scrollIntoView()
     await frame()
-    const linkFooterRect = linkCellFooter.getBoundingClientRect()
-    const visibleLink = linkCellHost.querySelector<HTMLAnchorElement>(
-      'a[href="https://example.com"]'
-    )
-    const linkBottom = visibleLink?.getBoundingClientRect().bottom ?? linkFooterRect.top
-    const blankGap = linkFooterRect.top - linkBottom
-    const clickY = blankGap > 12 ? linkBottom + blankGap / 2 : linkFooterRect.top + 14
+    const linkContentRect = linkContent.getBoundingClientRect()
     console.log(
       'PHI_CODE_CLICK:' +
         JSON.stringify({
-          x: linkFooterRect.left + 80,
-          y: clickY,
+          x: linkContentRect.left + 80,
+          y: linkContentRect.bottom - 4,
           key: 'z'
         })
     )
     await new Promise((resolve) => setTimeout(resolve, 350))
     check(
-      cellDraft === '# Title\n\n[Link](https://example.com)\n\nz',
-      'Clicking below a link must write a new paragraph'
+      cellDraft === '# Title\n\n[Link](https://example.com)z',
+      'Clicking below a link must not insert a blank paragraph'
     )
     await act(async () => linkCellRoot.unmount())
     linkCellHost.remove()
@@ -753,15 +747,22 @@ async function run(): Promise<object> {
     if (!host.querySelector('[data-phi-notebook-code-highlight] [data-phi-syntax-token]'))
       regressions.push('The editable code block has no syntax-highlighted layer')
     const afterLanguageInput = codeInputView(host)
-    const footer = host.querySelector<HTMLElement>('[data-phi-notebook-markdown-footer]')
-    check(footer, 'A code block at the end must offer a writable footer')
-    await act(async () => {
-      footer.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
-    })
     check(
-      view.state.selection.main.head === view.state.doc.length,
-      'Clicking the bottom area must lock the caret to the document end'
+      !host.querySelector('[data-phi-notebook-markdown-footer]'),
+      'A code block must not leave a clickable blank footer'
     )
+    const codeSource = draft
+    const codeContent = host.querySelector<HTMLElement>('.cm-content')
+    check(codeContent, 'The code block editor must expose its content')
+    const codeContentRect = codeContent.getBoundingClientRect()
+    codeContent.dispatchEvent(
+      new MouseEvent('mousedown', {
+        bubbles: true,
+        clientX: codeContentRect.left + 40,
+        clientY: codeContentRect.bottom - 4
+      })
+    )
+    check(draft === codeSource, 'Clicking below a code block must not insert a line')
     await act(async () => {
       afterLanguageInput.focus()
       afterLanguageInput.dispatch({ selection: { anchor: afterLanguageInput.state.doc.length } })
