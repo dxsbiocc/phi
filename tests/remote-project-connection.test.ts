@@ -44,7 +44,10 @@ function fixture(resolvePath?: () => Promise<unknown>): {
   const tracker = new RemoteProjectConnectionTracker({
     getProject: (id) => (id === project.id ? project : undefined),
     getManifest: (id) => (id === manifest.sessionId ? manifest : null),
-    setState: (_id, state) => updates.push(state),
+    setState: (_id, state) => {
+      updates.push(state)
+      project.remoteConnection = state
+    },
     releaseProjectHosts: (id) => releasedProjects.push(id),
     resolvePath: async (input, dependencies) => {
       requests.push(input as Record<string, unknown>)
@@ -168,6 +171,39 @@ test('a stale connection check cannot overwrite a newer successful operation', a
   rejectOld(new RemoteSshConnectionError(sshConnectionDiagnosis('network_unreachable')))
   assert.equal((await old).phase, 'offline')
   assert.equal(f.updates.at(-1)?.phase, 'reachable')
+})
+
+test('a check outdated by an operation that reports nothing still ends connecting', async () => {
+  let finish!: () => void
+  const f = fixture(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      })
+  )
+  const checking = f.tracker.check('session-a', 'project-a')
+  await new Promise((resolve) => setImmediate(resolve))
+  await assert.rejects(
+    f.tracker.observe('project-a', async () => {
+      throw new Error('missing file')
+    }),
+    /missing file/
+  )
+  assert.equal(f.updates.at(-1)?.phase, 'connecting')
+  finish()
+  await checking
+  assert.equal(f.updates.at(-1)?.phase, 'reachable')
+})
+
+test('switching to a session on a working connection shows no connecting state', async () => {
+  const f = fixture()
+  await f.tracker.check('session-a', 'project-a')
+  const before = f.updates.length
+  await f.tracker.check('session-a', 'project-a')
+  assert.deepEqual(
+    f.updates.slice(before).map((state) => state.phase),
+    ['reachable']
+  )
 })
 
 test('only recognized SSH transport failures change the shared connection phase', () => {

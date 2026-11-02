@@ -1,3 +1,4 @@
+import { connectSharedSshSession } from './wrappers/shared-ssh-connection'
 import { posix, resolve } from 'node:path'
 
 import { CodedError } from '../../shared/errorCodes'
@@ -13,7 +14,6 @@ import { getPhiAgentDir } from './runtime-paths'
 import { isRemotePathInside } from './remote-path-containment'
 import { findPhiSessionById, type PhiSessionManifest } from './session/session-store'
 import {
-  connectRemoteSshSession,
   shellQuote,
   type RemoteConnectionConfig,
   type RemoteSshSession
@@ -275,7 +275,7 @@ export function resolveRemoteWorkspaceHostBinding(
     readyTimeoutMs: 20_000,
     execTimeoutMs: 30_000
   }
-  const connect = dependencies.connectImpl ?? connectRemoteSshSession
+  const connect = dependencies.connectImpl ?? connectSharedSshSession
   return {
     sessionId: request.sessionId,
     projectId: request.projectId,
@@ -385,7 +385,7 @@ export async function withAuthorizedRemoteWorkspacePath<T>(
         projectId: request.projectId,
         execTimeoutMs: dependencies.execTimeoutMs ?? 10_000
       })
-    : await (dependencies.connectImpl ?? connectRemoteSshSession)({
+    : await (dependencies.connectImpl ?? connectSharedSshSession)({
         ...remoteConnectionConfigForProfile(profile),
         readyTimeoutMs: 20_000,
         execTimeoutMs: dependencies.execTimeoutMs ?? 10_000,

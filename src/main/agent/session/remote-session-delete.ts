@@ -25,7 +25,7 @@ import {
   type RemoteOmpRuntimeRef
 } from './runtime-reference'
 import type { KernelRemoteRuntimeRef } from './runtime-reference'
-import { deletePhiSession, findPhiSessionById } from './session-store'
+import { deletePhiSession, findPhiSessionById, type PhiSessionManifest } from './session-store'
 
 const DELETED = 'PHI_STORAGE_SESSION_DELETED\n'
 const ABSENT = 'PHI_STORAGE_SESSION_ABSENT\n'
@@ -115,10 +115,12 @@ export function buildRemoteKernelSessionDeleteCommand(
   mode: 'verify' | 'delete' = 'delete'
 ): string {
   const root = reference.host.runtimeRoot
-  const sessionsRoot = posix.join(root, 'phi-kernel', 'sessions')
+  // The kernel keeps sessions under its agent directory, not the runtime root.
+  const sessionsRoot = posix.join(reference.host.agentDir, 'phi-kernel', 'sessions')
   const target = posix.join(sessionsRoot, reference.kernelSessionId)
   const tombstone = `${target}.deleting-${randomUUID()}`
-  return `${privateRemotePrefix(root)}
+  return `cd -- ${q(root)} || exit 1
+${privateRemotePrefix(root)}
 target=${q(target)}
 if [ ! -e "$target" ]; then printf '${ABSENT.trim()}\\n'; exit 0; fi
 [ -d "$target" ] && [ ! -L "$target" ] || { printf 'PHI_STORAGE:PATH_INVALID\\n' >&2; exit 1; }
@@ -163,7 +165,8 @@ function assertRemoteResponse(
   )
     return
   const code = result.stderr.match(/PHI_STORAGE:([A-Z_]+)/)?.[1]
-  if (code === 'SESSION_BUSY') throw new Error('远程会话仍在运行，请等待结束后重试删除')
+  if (code === 'SESSION_BUSY' || code === 'LOCK_HELD')
+    throw new Error('远程会话仍在运行，请等待结束后重试删除')
   if (code === 'IDENTITY_MISMATCH' || code === 'FILE_INVALID' || code === 'PATH_INVALID') {
     throw new RuntimeReferenceError(
       'INVALID_RUNTIME_REFERENCE',
@@ -327,6 +330,17 @@ async function prepareRpcRemotePhiDeletion(
 }
 
 /** Read-only server verification runs before the caller stops or switches the conversation. */
+/** Whether deleting this session has to go through the server that holds its history. */
+export function deletesOnServer(
+  manifest: Pick<PhiSessionManifest, 'runtimeRef' | 'kernelRuntimeRef' | 'runtimeRecoveryError'>
+): boolean {
+  return Boolean(
+    manifest.runtimeRef ||
+    manifest.runtimeRecoveryError ||
+    manifest.kernelRuntimeRef?.host.kind === 'ssh'
+  )
+}
+
 export async function prepareRemotePhiDeletion(
   sessionId: string,
   dependencies: RemoteDeletionDependencies = {}

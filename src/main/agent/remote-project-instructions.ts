@@ -1,10 +1,10 @@
+import { connectSharedSshSession } from './wrappers/shared-ssh-connection'
 import { posix } from 'node:path'
 
 import type { ProjectLocation } from '../../shared/projectLocation'
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote-hosts'
 import { getPhiAgentDir } from './runtime-paths'
 import {
-  connectRemoteSshSession,
   shellQuote,
   type RemoteConnectionConfig,
   type RemoteSshSession
@@ -65,7 +65,7 @@ export async function loadRemoteProjectInstructions(
     dependencies.agentDir ?? getPhiAgentDir()
   )
   if (!profile) throw new Error('远程项目的 SSH 服务器档案不可用')
-  const connect = dependencies.connectImpl ?? connectRemoteSshSession
+  const connect = dependencies.connectImpl ?? connectSharedSshSession
   const session = await connect({
     ...remoteConnectionConfigForProfile(profile),
     readyTimeoutMs: 10_000,

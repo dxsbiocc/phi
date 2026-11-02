@@ -20,6 +20,7 @@ import { serializeRemoteSessionManifest } from '../src/main/agent/engine/rpc/ses
 import type { Project } from '../src/main/agent/projects'
 import type { RemoteWorkspaceHostBinding } from '../src/main/agent/remote-workspace-boundary'
 import {
+  deletesOnServer,
   buildRemoteKernelSessionDeleteCommand,
   buildRemoteSessionDeleteCommand,
   prepareRemotePhiDeletion,
@@ -156,7 +157,10 @@ test('kernel deletion verifies first and removes only its validated persistent s
   const remove = buildRemoteKernelSessionDeleteCommand(reference)
   assert.match(verify, /PHI_STORAGE_SESSION_VERIFIED/u)
   assert.ok(verify.indexOf("if [ 'verify' = verify ]") < verify.lastIndexOf('mv -- "$target"'))
-  assert.match(remove, /\/srv\/runtime\/phi-kernel\/sessions\/kernel-session-1/u)
+  assert.match(
+    remove,
+    /\/srv\/runtime\/kernel-home\/agent\/phi-kernel\/sessions\/kernel-session-1/u
+  )
   assert.match(remove, /flock -n 9/u)
   assert.match(remove, /mv --/u)
   assert.match(remove, /rm -rf --/u)
@@ -417,4 +421,64 @@ test('a dropped SSH connection during deletion retains the local session', async
     assert.equal(calls, 2)
     assert.ok(findPhiSessionById(sessionId))
   })
+})
+
+test('every session whose history is on a server deletes there, whichever route created it', () => {
+  const host = (kind: 'ssh' | 'local'): { host: { kind: 'ssh' | 'local' } } => ({ host: { kind } })
+  const check = (manifest: object): boolean => deletesOnServer(manifest as never)
+  assert.equal(check({ kernelRuntimeRef: host('ssh') }), true)
+  assert.equal(check({ runtimeRef: {} }), true)
+  assert.equal(check({ runtimeRecoveryError: {} }), true)
+  assert.equal(check({ kernelRuntimeRef: host('local') }), false)
+  assert.equal(check({}), false)
+})
+
+test('kernel deletion runs from any directory and removes the session the kernel stored', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'phi-kernel-delete-')))
+  try {
+    const runtimeRoot = join(root, 'runtime')
+    const agentDir = join(runtimeRoot, 'kernel-home', 'agent')
+    const sessions = join(agentDir, 'phi-kernel', 'sessions')
+    const target = join(sessions, 'kernel-session-1')
+    const sibling = join(sessions, 'kernel-session-2')
+    mkdirSync(target, { recursive: true, mode: 0o700 })
+    mkdirSync(sibling, { recursive: true, mode: 0o700 })
+    chmodSync(root, 0o700)
+    chmodSync(runtimeRoot, 0o700)
+    writeFileSync(join(target, 'journal.jsonl'), '{}\n')
+    // These stand in for Linux coreutils, which the server has and a Mac test host doesn't.
+    const bin = join(root, 'bin')
+    mkdirSync(bin, { mode: 0o700 })
+    writeFileSync(join(bin, 'stat'), '#!/bin/sh\ncase "$2" in %u) id -u ;; *) echo 700 ;; esac\n', {
+      mode: 0o700
+    })
+    const reference: KernelRemoteRuntimeRef = {
+      kind: 'phi-kernel',
+      version: 1,
+      kernelSessionId: 'kernel-session-1',
+      host: {
+        kind: 'ssh',
+        hostProfileId: 'ssh-config:test',
+        projectId: 'project-1',
+        projectRoot: join(root, 'project'),
+        runtimeRoot,
+        home: join(runtimeRoot, 'kernel-home'),
+        agentDir
+      }
+    }
+    const run = (mode: 'verify' | 'delete'): string =>
+      execFileSync('/bin/sh', ['-c', buildRemoteKernelSessionDeleteCommand(reference, mode)], {
+        cwd: root,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` }
+      })
+    assert.equal(run('verify'), 'PHI_STORAGE_SESSION_VERIFIED\n')
+    assert.ok(existsSync(target), 'verifying leaves the session in place')
+    assert.equal(run('delete'), 'PHI_STORAGE_SESSION_DELETED\n')
+    assert.equal(existsSync(target), false)
+    assert.ok(existsSync(sibling))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

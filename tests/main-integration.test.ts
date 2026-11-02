@@ -2126,6 +2126,16 @@ async function harness(
     },
     './agent/session/remote-session-delete': {
       RemoteSessionDeleteUnavailableError: FakeRemoteSessionDeleteUnavailableError,
+      deletesOnServer: (manifest: {
+        runtimeRef?: unknown
+        runtimeRecoveryError?: unknown
+        kernelRuntimeRef?: { host: { kind: string } }
+      }): boolean =>
+        Boolean(
+          manifest.runtimeRef ||
+          manifest.runtimeRecoveryError ||
+          manifest.kernelRuntimeRef?.host.kind === 'ssh'
+        ),
       prepareRemotePhiDeletion: async (sessionId: string) => {
         if (options.remoteDeletePrepareFailure)
           throw new FakeRemoteSessionDeleteUnavailableError('simulated SSH offline')

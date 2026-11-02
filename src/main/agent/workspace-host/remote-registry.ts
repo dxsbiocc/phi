@@ -164,6 +164,8 @@ function checkedProbePaths(paths: string[], canonicalRoot: string): string[] {
 
 export class RemoteWorkspaceHostRegistry {
   private readonly entries = new Map<string, HostEntry>()
+  /** A project's sessions share one host, so opening another session doesn't start over. */
+  private readonly hostsByProject = new Map<string, HostEntry>()
   private readonly pathStats = new Map<
     string,
     { expiresAt: number; stat: RemoteWorkspacePathStat }
@@ -181,7 +183,7 @@ export class RemoteWorkspaceHostRegistry {
       this.reacquiring(binding, entry.host),
       entry.canonicalRoot,
       {
-        onFailure: () => void this.releaseSession(binding.sessionId),
+        onFailure: () => void this.retireHost(binding.cacheKey),
         defaultTimeoutMs: request.execTimeoutMs
       }
     )
@@ -267,6 +269,9 @@ export class RemoteWorkspaceHostRegistry {
       } catch (error) {
         if (!(error instanceof SshHostClosedError)) throw error
       }
+      if (this.hostsByProject.get(binding.cacheKey)?.host === current) {
+        this.hostsByProject.delete(binding.cacheKey)
+      }
       if (this.entries.get(binding.sessionId)?.host === current) {
         this.entries.delete(binding.sessionId)
       }
@@ -305,24 +310,44 @@ export class RemoteWorkspaceHostRegistry {
   async releaseSession(sessionId: string): Promise<void> {
     const entry = this.entries.get(sessionId)
     this.entries.delete(sessionId)
-    await entry?.host.close?.()
+    if (!entry || [...this.entries.values()].includes(entry)) return
+    if (this.hostsByProject.get(entry.cacheKey) === entry)
+      this.hostsByProject.delete(entry.cacheKey)
+    await entry.host.close?.()
+  }
+
+  /** A failed host fails for every session on it, so all of them move to a fresh one. */
+  private async retireHost(cacheKey: string): Promise<void> {
+    const entry = this.hostsByProject.get(cacheKey)
+    if (!entry) return
+    this.hostsByProject.delete(cacheKey)
+    for (const [sessionId, current] of this.entries) {
+      if (current === entry) this.entries.delete(sessionId)
+    }
+    await entry.host.close?.()
   }
 
   async releaseProject(projectId: string): Promise<void> {
-    const closing: Promise<void>[] = []
+    const closing = new Set<HostEntry>()
     for (const [sessionId, entry] of this.entries) {
       if (entry.projectId !== projectId) continue
       this.entries.delete(sessionId)
-      if (entry.host.close) closing.push(entry.host.close())
+      closing.add(entry)
     }
-    await Promise.all(closing)
+    for (const entry of closing) {
+      if (this.hostsByProject.get(entry.cacheKey) === entry) {
+        this.hostsByProject.delete(entry.cacheKey)
+      }
+    }
+    await Promise.all([...closing].map((entry) => entry.host.close?.()))
   }
 
   async releaseAll(): Promise<void> {
-    const closing = [...this.entries.values()].flatMap((entry) =>
+    const closing = [...new Set(this.entries.values())].flatMap((entry) =>
       entry.host.close ? [entry.host.close()] : []
     )
     this.entries.clear()
+    this.hostsByProject.clear()
     await Promise.all(closing)
     this.pathStats.clear()
   }
@@ -332,8 +357,9 @@ export class RemoteWorkspaceHostRegistry {
     const entry =
       current?.projectId === binding.projectId && current.cacheKey === binding.cacheKey
         ? current
-        : this.create(binding)
+        : (this.hostsByProject.get(binding.cacheKey) ?? this.create(binding))
     this.entries.set(binding.sessionId, entry)
+    this.hostsByProject.set(binding.cacheKey, entry)
     return entry
   }
 

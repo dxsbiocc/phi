@@ -102,11 +102,17 @@ export class RemoteProjectConnectionTracker {
     setState(projectId, state)
   }
 
-  async check(
-    sessionId: string,
-    projectId: string,
-    options: RemoteProjectConnectionCheckOptions = {}
-  ): Promise<RemoteProjectConnectionState> {
+  /**
+   * A newer operation outdates an older result, except that nothing else will end "connecting":
+   * an operation that fails with its own error, such as a missing file, reports no state at all.
+   */
+  private settle(projectId: string, state: RemoteProjectConnectionState, revision: number): void {
+    const project = (this.dependencies.getProject ?? getProject)(projectId)
+    const connecting = project?.remoteConnection?.phase === 'connecting'
+    this.set(projectId, state, connecting ? this.revisions.get(projectId)! : revision)
+  }
+
+  private ownedRemoteProject(sessionId: string, projectId: string): Project {
     const manifest = (this.dependencies.getManifest ?? findPhiSessionById)(sessionId)
     const project = (this.dependencies.getProject ?? getProject)(projectId)
     if (
@@ -118,8 +124,20 @@ export class RemoteProjectConnectionTracker {
     ) {
       throw new Error('远程项目会话归属无效')
     }
+    return project
+  }
+
+  async check(
+    sessionId: string,
+    projectId: string,
+    options: RemoteProjectConnectionCheckOptions = {}
+  ): Promise<RemoteProjectConnectionState> {
+    const project = this.ownedRemoteProject(sessionId, projectId)
     const revision = this.nextRevision(projectId)
-    this.set(projectId, connectionState('connecting', '正在连接服务器'), revision)
+    // A connection already known to work is verified quietly; a failure below still reports.
+    if (project.remoteConnection?.phase !== 'reachable') {
+      this.set(projectId, connectionState('connecting', '正在连接服务器'), revision)
+    }
     try {
       await (this.dependencies.resolvePath ?? resolveRemoteWorkspacePath)(
         {
@@ -131,7 +149,7 @@ export class RemoteProjectConnectionTracker {
         options.userInitiated ? { userInitiated: true } : {}
       )
       const ready = connectionState('reachable')
-      this.set(projectId, ready, revision)
+      this.settle(projectId, ready, revision)
       return ready
     } catch (error) {
       if (releasesHosts(error)) this.releaseHosts(projectId)
@@ -175,7 +193,7 @@ export class RemoteProjectConnectionTracker {
           )
         }
       } else {
-        this.set(projectId, connectionState('reachable'), revision)
+        this.settle(projectId, connectionState('reachable'), revision)
       }
       return result
     } catch (error) {

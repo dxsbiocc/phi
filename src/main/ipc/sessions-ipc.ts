@@ -16,6 +16,7 @@ import type { PermissionMode } from '../agent/projects'
 import { getProject } from '../agent/projects'
 import { exportPhiSession } from '../agent/session/session-export'
 import {
+  deletesOnServer,
   prepareRemotePhiDeletion,
   RemoteSessionDeleteUnavailableError
 } from '../agent/session/remote-session-delete'
@@ -456,18 +457,16 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
         : findPhiSessionByRuntimePath(path, deletionCwd)
       // Reject legacy one-argument calls from stale menus before touching remote history.
       if (
-        (manifest?.projectLocation?.kind === 'ssh' ||
-          manifest?.runtimeRef ||
-          manifest?.runtimeRecoveryError) &&
+        (manifest?.projectLocation?.kind === 'ssh' || (manifest && deletesOnServer(manifest))) &&
         confirmed !== true
       )
         return { status: 'confirmation-required' }
-      if ((manifest?.runtimeRef || manifest?.runtimeRecoveryError) && !phiSessionId)
+      if (manifest && deletesOnServer(manifest) && !phiSessionId)
         throw new Error('远程会话必须使用 Phi 会话标识删除')
       let remoteDeletion: Awaited<ReturnType<typeof prepareRemotePhiDeletion>> | undefined
       try {
         remoteDeletion =
-          phiSessionId && (manifest?.runtimeRef || manifest?.runtimeRecoveryError)
+          phiSessionId && manifest && deletesOnServer(manifest)
             ? await prepareRemotePhiDeletion(phiSessionId)
             : undefined
       } catch (error) {

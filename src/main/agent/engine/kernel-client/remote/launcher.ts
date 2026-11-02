@@ -291,6 +291,9 @@ async function resolveAttachHelper(
   return helper
 }
 
+// A first start reads the kernel and its addon from a shared disk, on servers already under load.
+const REMOTE_HELLO_TIMEOUT_MS = 60_000
+
 function assertHelloTimeout(helloTimeoutMs: number): void {
   if (!Number.isFinite(helloTimeoutMs) || helloTimeoutMs <= 0) {
     throw new RemoteKernelError('INVALID_ARGUMENT', 'Kernel hello timeout must be positive.')
@@ -343,7 +346,10 @@ async function openRemoteKernelClient(
     }
   } catch (error) {
     await client.close().catch(() => undefined)
-    throw new RemoteKernelError('LAUNCH_FAILED', options.helloFailureMessage, { cause: error })
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new RemoteKernelError('LAUNCH_FAILED', `${options.helloFailureMessage} ${reason}`, {
+      cause: error
+    })
   } finally {
     if (timeout) clearTimeout(timeout)
   }
@@ -353,7 +359,7 @@ export async function launchRemoteKernel(
   options: LaunchRemoteKernelOptions
 ): Promise<LaunchedRemoteKernel> {
   options.signal?.throwIfAborted()
-  const helloTimeoutMs = options.helloTimeoutMs ?? 10_000
+  const helloTimeoutMs = options.helloTimeoutMs ?? REMOTE_HELLO_TIMEOUT_MS
   assertHelloTimeout(helloTimeoutMs)
   let platformProbeCommandCount = 0
   let profile = options.profile ?? options.runtimeHost?.capabilities()
@@ -421,7 +427,7 @@ export async function reattachRemoteKernel(
   if (!Number.isSafeInteger(options.lastSeen) || options.lastSeen < 0) {
     throw new RemoteKernelError('INVALID_ARGUMENT', 'Last seen kernel event sequence is invalid.')
   }
-  const helloTimeoutMs = options.helloTimeoutMs ?? 10_000
+  const helloTimeoutMs = options.helloTimeoutMs ?? REMOTE_HELLO_TIMEOUT_MS
   assertHelloTimeout(helloTimeoutMs)
   const command = buildRemoteKernelLaunchCommand(
     options.previous.deployment,
