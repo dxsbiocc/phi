@@ -48,7 +48,9 @@ test('automatic Nextflow install stays unavailable until Java is ready', () => {
       check.id === 'java' ? { ...check, status: 'error', message: 'Java not found' } : check
     )
   })
-  const button = markup.match(/<button[^>]*>Install Phi-managed Nextflow environment<\/button>/)?.[0]
+  const button = markup.match(
+    /<button[^>]*>Install Phi-managed Nextflow environment<\/button>/
+  )?.[0]
   assert.ok(button)
   assert.match(button, /disabled/)
   assert.match(markup, /Java 17\+/)
