@@ -83,6 +83,7 @@ test('approved auto-start uses the controller start path once and resolves when 
   })
   await tick()
   assert.equal(fake.starts, 1)
+  assert.equal(controller.status().messageCode, 'preparing_environment')
   fake.finish()
   await ready
   assert.deepEqual(infos, [{ serverLabel: 'node3', projectName: '/proj' }])
@@ -107,14 +108,17 @@ test('denied approval fails clearly without starting', async () => {
   const controller = controllerFor(fake.runtime)
   await assert.rejects(
     controller.ensureReady({ approveRemoteJupyterStart: async () => false }),
-    /用户拒绝启动远程 Jupyter.*没有回退到本机/
+    /user declined to start remote Jupyter.*did not fall back to local Jupyter/i
   )
   assert.equal(fake.starts, 0)
 })
 
 test('without an approval channel it never starts and never falls back locally', async () => {
   const fake = fakeRuntime()
-  await assert.rejects(controllerFor(fake.runtime).ensureReady({}), /没有回退到本机 Jupyter/)
+  await assert.rejects(
+    controllerFor(fake.runtime).ensureReady({}),
+    /cannot ask for user approval.*did not fall back to local Jupyter/i
+  )
   assert.equal(fake.starts, 0)
 })
 
@@ -162,7 +166,7 @@ test('start failure is returned to the caller', async () => {
   const waiting = controller.ensureReady({ approveRemoteJupyterStart: async () => true })
   await tick()
   fake.fail(new Error('probe timeout'))
-  await assert.rejects(waiting, /远程 Jupyter 启动失败：probe timeout/)
+  await assert.rejects(waiting, /Remote Jupyter failed to start: probe timeout/)
 })
 
 test('timeout leaves the start running and says so', async () => {
@@ -170,7 +174,7 @@ test('timeout leaves the start running and says so', async () => {
   const controller = controllerFor(fake.runtime)
   await assert.rejects(
     controller.ensureReady({ approveRemoteJupyterStart: async () => true }, { timeoutMs: 30 }),
-    /超时；启动仍在后台进行/
+    /Timed out waiting.*still running in the background/
   )
   assert.equal(fake.stops, 0)
 })

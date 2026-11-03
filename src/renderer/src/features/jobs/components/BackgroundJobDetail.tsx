@@ -12,6 +12,7 @@ import {
   jobDetailFields,
   jobStatus,
   jobTitle,
+  remoteJupyterEntryLabel,
   stopTooltip,
   JOB_TONE_COLOR
 } from '../lib/backgroundJobLabels'
@@ -83,7 +84,7 @@ function JupyterStartLog({ job }: { job: RemoteJupyterStartJob }): React.JSX.Ele
                 {entryTime(entry.at)}
               </Box>
               {entry.kind === 'output' ? '  ' : ''}
-              {entry.text}
+              {remoteJupyterEntryLabel(entry)}
             </Box>
           ))
         )}
@@ -102,7 +103,9 @@ function detailText(item: UnifiedBackgroundJob, nowMs: number): string {
     lines.push(
       '',
       jobsCopy.startupLog2,
-      ...item.job.entries.map((entry) => `${entry.at} [${entry.kind}] ${entry.text}`)
+      ...item.job.entries.map(
+        (entry) => `${entry.at} [${entry.kind}] ${remoteJupyterEntryLabel(entry)}`
+      )
     )
   }
   if (item.kind === 'notebook-ai' && item.job.entries?.length) {

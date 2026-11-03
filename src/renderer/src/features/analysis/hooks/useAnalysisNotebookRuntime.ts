@@ -1,4 +1,4 @@
-import { analysisCopy } from '../lib/analysisUiCopy'
+import { analysisCopy, jupyterServerMessage } from '../lib/analysisUiCopy'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   AnalysisJupyterRuntimeStatus,
@@ -16,6 +16,7 @@ import type {
   NotebookCellJumpTarget
 } from '../../../types'
 import { readableErrorMessage } from '../../../lib/sessionNotifications'
+import { useUiLanguage } from '../../../lib/i18n'
 import { pollJupyterServerStartupStatus } from '../../runtime/lib/jupyterStatusPolling'
 import { clearNotebookCellOutput, updateNotebookCell } from '../../../../../shared/notebookDocument'
 import { notebookCellMetadataWithExecutionDuration } from '../../../../../shared/notebookExecutionMetadata'
@@ -55,6 +56,7 @@ export function useAnalysisNotebookRuntime({
   showSnackbar,
   onNavigateToNotebookView
 }: AnalysisNotebookRuntimeDeps): AnalysisNotebookRuntimeState {
+  useUiLanguage()
   type JupyterRuntimeReadResult =
     | { status: AnalysisJupyterRuntimeStatus }
     | { error: unknown; failure: 'runtime' | 'status' }
@@ -264,6 +266,8 @@ export function useAnalysisNotebookRuntime({
   )
   const [isStartingAnalysisJupyter, setIsStartingAnalysisJupyter] = useState(false)
   const [analysisJupyterError, setAnalysisJupyterError] = useState<string | null>(null)
+  const [analysisJupyterErrorStatus, setAnalysisJupyterErrorStatus] =
+    useState<JupyterServerStatus | null>(null)
   const [pendingJupyterCellStart, setPendingJupyterCellStart] =
     useState<PendingJupyterCellStart | null>(null)
   const [analysisNotebookSessionStatus, setAnalysisNotebookSessionStatus] =
@@ -754,10 +758,12 @@ export function useAnalysisNotebookRuntime({
     if (!cwd) {
       setAnalysisJupyterStatus(null)
       setAnalysisJupyterError(null)
+      setAnalysisJupyterErrorStatus(null)
       return
     }
 
     setAnalysisJupyterError(null)
+    setAnalysisJupyterErrorStatus(null)
     try {
       const getAnalysisJupyterStatus = requireRendererApiMethod(
         rendererApi,
@@ -771,6 +777,7 @@ export function useAnalysisNotebookRuntime({
     } catch (error) {
       if (request !== analysisJupyterRequestRef.current) return
       setAnalysisJupyterError(readableErrorMessage(error, analysisCopy.jupyterStatusFailed))
+      setAnalysisJupyterErrorStatus(null)
       setAnalysisJupyterStatus(null)
     }
   }, [getActiveCwd, rendererApi])
@@ -858,6 +865,7 @@ export function useAnalysisNotebookRuntime({
       const request = ++analysisJupyterRequestRef.current
       setIsStartingAnalysisJupyter(true)
       setAnalysisJupyterError(null)
+      setAnalysisJupyterErrorStatus(null)
       try {
         let status = await rendererApi.startAnalysisJupyter(cwd)
         if (request !== analysisJupyterRequestRef.current || cwd !== getActiveCwd()) return
@@ -888,14 +896,16 @@ export function useAnalysisNotebookRuntime({
           setPendingJupyterCellStart(null)
           await refreshAnalysisKernels()
         } else if (['error', 'disconnected', 'exited', 'stopped'].includes(status.state)) {
-          const message = status.message || analysisCopy.startJupyterFailed
+          const message = jupyterServerMessage(status) || analysisCopy.startJupyterFailed
           setAnalysisJupyterError(message)
+          setAnalysisJupyterErrorStatus(status)
           showSnackbar(message, 'error')
         }
       } catch (error) {
         if (request !== analysisJupyterRequestRef.current) return
         const message = notebookEnvironmentErrorMessage(error, analysisCopy.startJupyterFailed)
         setAnalysisJupyterError(message)
+        setAnalysisJupyterErrorStatus(null)
         showSnackbar(message, 'error')
       } finally {
         if (request === analysisJupyterRequestRef.current) {
@@ -911,6 +921,7 @@ export function useAnalysisNotebookRuntime({
       const request = ++analysisJupyterRequestRef.current
       setIsStartingAnalysisJupyter(true)
       setAnalysisJupyterError(null)
+      setAnalysisJupyterErrorStatus(null)
       try {
         const status = await rendererApi.stopAnalysisJupyter(cwd, options)
         if (request !== analysisJupyterRequestRef.current || cwd !== getActiveCwd()) return
@@ -928,6 +939,7 @@ export function useAnalysisNotebookRuntime({
       } catch (error) {
         if (request !== analysisJupyterRequestRef.current) return
         setAnalysisJupyterError(readableErrorMessage(error, analysisCopy.stopJupyterFailed))
+        setAnalysisJupyterErrorStatus(null)
       } finally {
         if (request === analysisJupyterRequestRef.current) {
           setIsStartingAnalysisJupyter(false)
@@ -970,6 +982,7 @@ export function useAnalysisNotebookRuntime({
           }
           setIsStartingAnalysisJupyter(true)
           setAnalysisJupyterError(null)
+          setAnalysisJupyterErrorStatus(null)
           jupyterStatus = await rendererApi.startAnalysisJupyter(cwd)
           if (request !== analysisNotebookSessionRequestRef.current || cwd !== getActiveCwd()) {
             return
@@ -1365,6 +1378,8 @@ export function useAnalysisNotebookRuntime({
     setAnalysisNotebookRegistry(null)
     setAnalysisKernelDiagnostics(null)
     setAnalysisJupyterStatus(null)
+    setAnalysisJupyterError(null)
+    setAnalysisJupyterErrorStatus(null)
     setPendingJupyterCellStart(null)
     setAnalysisJupyterRuntimeStatus(null)
     setAnalysisJupyterRuntimeError(null)
@@ -1618,7 +1633,7 @@ export function useAnalysisNotebookRuntime({
     isLoadingAnalysisJupyterRuntime,
     analysisJupyterRuntimeError,
     isStartingAnalysisJupyter,
-    analysisJupyterError,
+    analysisJupyterError: jupyterServerMessage(analysisJupyterErrorStatus) ?? analysisJupyterError,
     pendingJupyterCellStart,
     analysisNotebookSessionStatus,
     isStartingAnalysisNotebookSession,

@@ -25,6 +25,10 @@ import { BackgroundJobIcon } from '../src/renderer/src/features/jobs/components/
 import { BackgroundJobArrivalNotice } from '../src/renderer/src/features/jobs/components/BackgroundJobArrivalNotice'
 import { newlyObservedJobs } from '../src/renderer/src/features/jobs/hooks/useBackgroundJobArrivals'
 import { groupBackgroundJobs } from '../src/renderer/src/features/jobs/lib/backgroundJobGroups'
+import {
+  remoteJupyterEntryLabel,
+  remoteJupyterPhaseLabel
+} from '../src/renderer/src/features/jobs/lib/backgroundJobLabels'
 import type { RemoteJupyterStartJob } from '../src/shared/remoteJupyterJobTypes'
 import {
   canStopUnifiedWrapperRun,
@@ -459,20 +463,205 @@ const jupyterJob: RemoteJupyterStartJob = {
   projectName: 'GPU',
   serverLabel: 'gpu-login',
   state: 'failed',
-  phase: '启动失败',
+  phase: 'Startup failed',
+  phaseCode: 'failed',
   startedAt: '2026-09-27T10:00:00.000Z',
   finishedAt: '2026-09-27T10:01:00.000Z',
-  error: '远程 Jupyter 在 3 次尝试后仍未就绪：远程 Jupyter 进程提前退出',
+  error: 'Remote Jupyter was not ready after 3 attempts: the process exited early',
   entries: [
-    { at: '2026-09-27T10:00:01.000Z', kind: 'step', text: '正在检测服务器上已有的 Jupyter' },
+    {
+      at: '2026-09-27T10:00:01.000Z',
+      kind: 'step',
+      text: 'Connecting to gpu-login to prepare remote Jupyter',
+      code: 'connecting',
+      params: { serverLabel: 'gpu-login' }
+    },
     {
       at: '2026-09-27T10:00:30.000Z',
       kind: 'output',
       text: 'ModuleNotFoundError: No module named jupyter_server'
     },
-    { at: '2026-09-27T10:01:00.000Z', kind: 'error', text: '远程 Jupyter 进程提前退出' }
+    { at: '2026-09-27T10:01:00.000Z', kind: 'error', text: 'The process exited early' }
   ]
 }
+
+test('remote Jupyter phase and step codes switch languages and preserve fallback text', () => {
+  const adapterProgressCases = [
+    [
+      'checking_configured_jupyter',
+      { configuredPath: '/opt/jupyter/bin/jupyter' },
+      "Checking Jupyter path /opt/jupyter/bin/jupyter and the server login shell's PATH…",
+      '正在检查 Jupyter 路径 /opt/jupyter/bin/jupyter，以及服务器登录 shell 的 PATH…'
+    ],
+    [
+      'checking_server_path_jupyter',
+      undefined,
+      "Checking the server login shell's PATH for an existing Jupyter…",
+      '正在检测服务器登录 shell 的 PATH 中已有的 Jupyter…'
+    ],
+    [
+      'missing_jupyter_using_managed',
+      { environmentRef: 'phi:jupyter@1' },
+      'No usable Jupyter Server was found on the server (jupyter server and ipykernel are required). Using Phi managed environment phi:jupyter@1; first-time setup may take a few minutes.',
+      '服务器上没有可用的 Jupyter Server（需要 jupyter server 与 ipykernel）；改用 Phi 受管环境 phi:jupyter@1，首次创建可能需要几分钟。'
+    ],
+    [
+      'using_existing_jupyter',
+      {
+        jupyterPath: '/opt/jupyter/bin/jupyter',
+        version: '2.14.2',
+        pythonPath: '/opt/jupyter/bin/python'
+      },
+      'Using existing server Jupyter: /opt/jupyter/bin/jupyter (jupyter_server 2.14.2); kernel Python: /opt/jupyter/bin/python',
+      '使用服务器已有的 Jupyter：/opt/jupyter/bin/jupyter（jupyter_server 2.14.2），kernel Python：/opt/jupyter/bin/python'
+    ],
+    [
+      'using_managed_jupyter',
+      { jupyterPath: '/runtime/envs/jupyter/bin/jupyter' },
+      'Using Jupyter from the managed environment: /runtime/envs/jupyter/bin/jupyter',
+      '使用受管环境中的 Jupyter：/runtime/envs/jupyter/bin/jupyter'
+    ]
+  ] as const
+  const phaseCases = [
+    ['preparing', undefined, 'Preparing to start', '准备启动'],
+    [
+      'connecting',
+      { serverLabel: 'gpu-login' },
+      'Connecting to gpu-login to prepare remote Jupyter',
+      '连接 gpu-login，准备启动远程 Jupyter'
+    ],
+    ...adapterProgressCases,
+    ['allocating_ports', undefined, 'Allocating remote ports', '分配远端端口'],
+    [
+      'starting_lease',
+      undefined,
+      'Starting Jupyter Server over SSH',
+      '通过 SSH 启动 Jupyter Server'
+    ],
+    [
+      'probing_through_tunnel',
+      undefined,
+      'Waiting for Jupyter over the SSH tunnel',
+      '经 SSH 隧道等待 Jupyter 就绪'
+    ],
+    ['ready', undefined, 'Jupyter Server is ready', 'Jupyter Server 已就绪'],
+    [
+      'cleaning',
+      undefined,
+      'Cleaning up remote processes from this startup',
+      '清理本次启动留下的远端进程'
+    ],
+    [
+      'reconciling',
+      undefined,
+      'Checking whether the previous Jupyter process has exited',
+      '确认旧 Jupyter 是否已退出'
+    ],
+    ['disconnected', undefined, 'SSH connection disconnected', 'SSH 连接已断开'],
+    ['failed', undefined, 'Startup failed', '启动失败'],
+    ['cancelled', undefined, 'Stopped', '已停止']
+  ] as const
+  const entryCases = [
+    [
+      'connecting',
+      { serverLabel: 'gpu-login' },
+      'Connecting to gpu-login to prepare remote Jupyter',
+      '连接 gpu-login，准备启动远程 Jupyter'
+    ],
+    ...adapterProgressCases,
+    ['allocating_ports', undefined, 'Allocating remote ports', '分配远端端口'],
+    [
+      'starting_lease',
+      undefined,
+      'Starting Jupyter Server over SSH',
+      '通过 SSH 启动 Jupyter Server'
+    ],
+    [
+      'probing_through_tunnel',
+      undefined,
+      'Waiting for Jupyter over the SSH tunnel',
+      '经 SSH 隧道等待 Jupyter 就绪'
+    ],
+    ['ready', undefined, 'Jupyter Server is ready', 'Jupyter Server 已就绪'],
+    [
+      'cleaning',
+      undefined,
+      'Cleaning up remote processes from this startup',
+      '清理本次启动留下的远端进程'
+    ],
+    [
+      'reconciling',
+      undefined,
+      'Checking whether the previous Jupyter process has exited',
+      '确认旧 Jupyter 是否已退出'
+    ],
+    ['disconnected', undefined, 'SSH connection disconnected', 'SSH 连接已断开'],
+    ['startup_cancelled', undefined, 'Startup stopped', '已停止启动']
+  ] as const
+
+  try {
+    for (const language of ['en', 'zh-CN'] as const) {
+      setUiLanguage(language)
+      for (const [phaseCode, phaseParams, english, chinese] of phaseCases) {
+        assert.equal(
+          remoteJupyterPhaseLabel({ phase: 'PHASE_FALLBACK', phaseCode, phaseParams }),
+          language === 'en' ? english : chinese
+        )
+      }
+      for (const [code, params, english, chinese] of entryCases) {
+        assert.equal(
+          remoteJupyterEntryLabel({
+            at: '2026-09-27T10:00:00.000Z',
+            kind: 'step',
+            text: 'ENTRY_FALLBACK',
+            code,
+            params
+          }),
+          language === 'en' ? english : chinese
+        )
+      }
+    }
+
+    assert.equal(
+      remoteJupyterPhaseLabel({ phase: 'missing code fallback' }),
+      'missing code fallback'
+    )
+    assert.equal(
+      remoteJupyterPhaseLabel({ phase: 'unknown code fallback', phaseCode: 'future_code' }),
+      'unknown code fallback'
+    )
+    assert.equal(
+      remoteJupyterEntryLabel({
+        at: '2026-09-27T10:00:00.000Z',
+        kind: 'step',
+        text: 'unknown entry fallback',
+        code: 'future_code'
+      }),
+      'unknown entry fallback'
+    )
+    assert.equal(
+      remoteJupyterEntryLabel({
+        at: '2026-09-27T10:00:00.000Z',
+        kind: 'step',
+        text: 'fallback with detail',
+        code: 'starting_lease',
+        params: { detail: 'server detail' }
+      }),
+      '通过 SSH 启动 Jupyter Server: server detail'
+    )
+    assert.equal(
+      remoteJupyterEntryLabel({
+        at: '2026-09-27T10:00:00.000Z',
+        kind: 'output',
+        text: 'RAW_SERVER_OUTPUT',
+        code: 'ready'
+      }),
+      'RAW_SERVER_OUTPUT'
+    )
+  } finally {
+    setUiLanguage('zh-CN')
+  }
+})
 
 function render(element: React.ReactElement): string {
   return renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, element))
@@ -685,7 +874,7 @@ test('a failed Jupyter startup shows its error and full startup log inside the p
   assert.match(markup, /padding-left:0/)
   assert.match(markup, /启动 Jupyter Server · GPU/)
   assert.match(markup, /启动失败/)
-  assert.match(markup, /3 次尝试后仍未就绪：远程 Jupyter 进程提前退出/)
+  assert.match(markup, /Remote Jupyter was not ready after 3 attempts: the process exited early/)
   assert.match(markup, /data-phi-jupyter-start-log/)
   assert.match(markup, /max-height:480px/)
   assert.match(markup, /No module named jupyter_server/)

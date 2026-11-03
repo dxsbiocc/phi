@@ -616,6 +616,23 @@ type AnalysisKernelDiagnostics = {
   messages: string[]
 }
 
+type JupyterServerMessageCode =
+  | 'starting'
+  | 'stopped'
+  | 'ready'
+  | 'exited'
+  | 'port_in_use'
+  | 'abnormal_exit'
+  | 'preparing_environment'
+  | 'reconciling'
+  | 'disconnected'
+
+type JupyterServerMessageParams = {
+  port?: number
+  exitCode?: number
+  signal?: string
+}
+
 type JupyterServerStatus = {
   projectCwd: string
   state:
@@ -641,6 +658,8 @@ type JupyterServerStatus = {
   remotePort?: number
   hasEndpoint: boolean
   message?: string
+  messageCode?: JupyterServerMessageCode
+  messageParams?: JupyterServerMessageParams
   cleanupUnconfirmed?: boolean
   canAbandonCleanup?: boolean
   resources?: Record<string, unknown>

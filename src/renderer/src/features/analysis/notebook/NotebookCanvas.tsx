@@ -50,6 +50,7 @@ import {
   contextReferenceForFilePath,
   kernelAvailabilityColor,
   kernelAvailabilityLabel,
+  localizedKernelDisplayName,
   kernelOptionLabel,
   compactPath,
   notebookKernelName,
@@ -685,9 +686,13 @@ export default function NotebookCanvas({
     notebookSessionStatus,
     notebookSessionError
   })
+  const sessionKernelDisplayName = localizedKernelDisplayName(
+    notebookSessionStatus?.kernelName,
+    notebookSessionStatus?.kernelDisplayName
+  )
   const kernelLabel = draftDocument
     ? isNotebookSessionRunnable(notebookSessionStatus)
-      ? (notebookSessionStatus?.kernelDisplayName ??
+      ? (sessionKernelDisplayName ??
         notebookSessionStatus?.kernelName ??
         notebookLanguage(draftDocument))
       : `${notebookLanguage(draftDocument)} notebook`

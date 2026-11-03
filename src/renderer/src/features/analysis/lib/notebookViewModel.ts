@@ -23,6 +23,8 @@ import type {
 
 export type CellState = 'idle' | 'running' | 'error' | 'stale'
 
+const SERVER_EXISTING_KERNEL_ID = 'server-python'
+
 export type CanvasCell = {
   id: string
   count: number | null
@@ -609,10 +611,17 @@ export function notebookOutputDataBytes(value: unknown): number {
   }
 }
 
+export function localizedKernelDisplayName(
+  kernelName: string | undefined,
+  displayName: string | undefined
+): string | undefined {
+  return kernelName === SERVER_EXISTING_KERNEL_ID ? analysisCopy.serverExistingKernel : displayName
+}
+
 export function kernelOptionLabel(kernel: AnalysisKernelSummary): string {
-  return kernel.name === kernel.displayName
-    ? kernel.displayName
-    : `${kernel.displayName} (${kernel.name})`
+  const displayName =
+    localizedKernelDisplayName(kernel.name, kernel.displayName) ?? kernel.displayName
+  return kernel.name === displayName ? displayName : `${displayName} (${kernel.name})`
 }
 
 export function notebookArtifacts(

@@ -17,7 +17,8 @@ import { AnalysisNotebookSessionRegistry } from './analysis-jupyter-sessions'
 import {
   RemoteJupyterRuntimeBackend,
   type JupyterRuntimeBackend,
-  type JupyterRuntimeState
+  type JupyterRuntimeState,
+  type JupyterRuntimeStatus
 } from './jupyter-runtime-backend'
 import {
   RemoteKernelspecAdapter,
@@ -39,6 +40,9 @@ import {
   type NotebookWorkspaceWatchSubscription
 } from './notebook-workspace'
 
+export type RemoteNotebookServerMessageCode =
+  'preparing_environment' | 'reconciling' | 'disconnected'
+
 export type RemoteNotebookServerStatus = {
   projectCwd: string
   runtimeKind: 'ssh'
@@ -48,6 +52,8 @@ export type RemoteNotebookServerStatus = {
   port?: number
   remotePort?: number
   message?: string
+  messageCode?: JupyterRuntimeStatus['messageCode'] | RemoteNotebookServerMessageCode
+  messageParams?: JupyterRuntimeStatus['messageParams']
   cleanupUnconfirmed?: boolean
   canAbandonCleanup?: boolean
   resources?: ReturnType<JupyterRuntimeBackend['status']>['resources']
@@ -77,9 +83,8 @@ export class RemoteNotebookRuntimeController {
 
   status(): RemoteNotebookServerStatus {
     const current = this.options.runtime.status(this.options.projectCwd)
-    const failed = Boolean(this.lastError)
-    const state = failed ? 'error' : current.state
-    const message = failed ? this.lastError : (current.message ?? this.defaultMessage(state))
+    const state = this.lastError ? 'error' : current.state
+    const { message, messageCode } = this.statusMessage(current, state)
     return {
       projectCwd: this.options.projectCwd,
       runtimeKind: 'ssh',
@@ -89,9 +94,23 @@ export class RemoteNotebookRuntimeController {
       ...(current.localPort === undefined ? {} : { port: current.localPort }),
       ...(current.remotePort === undefined ? {} : { remotePort: current.remotePort }),
       ...(message ? { message } : {}),
+      ...(messageCode ? { messageCode } : {}),
+      ...(current.messageParams ? { messageParams: current.messageParams } : {}),
       ...(current.cleanupUnconfirmed ? { cleanupUnconfirmed: true } : {}),
       ...(current.canAbandonCleanup ? { canAbandonCleanup: true } : {}),
       ...(current.resources ? { resources: current.resources } : {})
+    }
+  }
+
+  private statusMessage(
+    current: ReturnType<JupyterRuntimeBackend['status']>,
+    state: RemoteNotebookServerStatus['state']
+  ): Pick<RemoteNotebookServerStatus, 'message' | 'messageCode'> {
+    if (this.lastError) return { message: this.lastError }
+    const fallback = current.message ? undefined : this.defaultMessage(state)
+    return {
+      message: current.message ?? fallback?.message,
+      messageCode: current.messageCode ?? fallback?.messageCode
     }
   }
 
@@ -100,7 +119,10 @@ export class RemoteNotebookRuntimeController {
       this.lastError = undefined
       const job = this.options.beginJob?.()
       this.job = job
-      job?.step(`连接 ${this.options.serverLabel}，准备启动远程 Jupyter`)
+      job?.step(`Connecting to ${this.options.serverLabel}; preparing to start remote Jupyter`, {
+        code: 'connecting',
+        params: { serverLabel: this.options.serverLabel }
+      })
       const pending = this.options.runtime
         .start(this.options.projectCwd, undefined, promptRuntimeSessionId)
         .then(
@@ -147,7 +169,7 @@ export class RemoteNotebookRuntimeController {
     const state = this.status().state
     if (state === 'reconciling' || this.status().cleanupUnconfirmed) {
       throw new Error(
-        '远程 Jupyter 正在确认旧进程是否退出；请在 Runtime 面板查看状态并处理后再重试。没有回退到本机 Jupyter。'
+        'Remote Jupyter is checking whether the old process has exited. Check the Runtime panel, resolve the status, and try again. Phi did not fall back to local Jupyter.'
       )
     }
     let initiated = false
@@ -155,7 +177,7 @@ export class RemoteNotebookRuntimeController {
       const approve = control.approveRemoteJupyterStart
       if (!approve) {
         throw new Error(
-          '远程 Jupyter 尚未就绪，且当前调用无法征求用户同意；请先在 Runtime 面板显式启动。没有回退到本机 Jupyter。'
+          'Remote Jupyter is not ready, and this call cannot ask for user approval. Start it explicitly in the Runtime panel first. Phi did not fall back to local Jupyter.'
         )
       }
       this.approval ??= approve({
@@ -168,7 +190,7 @@ export class RemoteNotebookRuntimeController {
       signal?.throwIfAborted()
       if (!approved) {
         throw new Error(
-          '用户拒绝启动远程 Jupyter；没有启动，也没有回退到本机 Jupyter。需要时请在 Runtime 面板手动启动。'
+          'The user declined to start remote Jupyter. It was not started, and Phi did not fall back to local Jupyter. Start it manually in the Runtime panel if needed.'
         )
       }
       if (!this.starting && !this.status().hasEndpoint) {
@@ -197,13 +219,13 @@ export class RemoteNotebookRuntimeController {
       if (!this.starting) {
         throw new Error(
           this.lastError
-            ? `远程 Jupyter 启动失败：${this.lastError}`
-            : '远程 Jupyter 未能启动；没有回退到本机 Jupyter。'
+            ? `Remote Jupyter failed to start: ${this.lastError}`
+            : 'Remote Jupyter did not start. Phi did not fall back to local Jupyter.'
         )
       }
       if (Date.now() >= deadline) {
         throw new Error(
-          '等待远程 Jupyter 启动超时；启动仍在后台进行，可在 Runtime 面板查看进度，就绪后重试。'
+          'Timed out waiting for remote Jupyter to start. Startup is still running in the background; check progress in the Runtime panel and try again when it is ready.'
         )
       }
       await sleep(READY_POLL_MS, signal)
@@ -213,17 +235,32 @@ export class RemoteNotebookRuntimeController {
   requireReady(): void {
     if (this.status().hasEndpoint) return
     throw new Error(
-      '远程 Jupyter 尚未就绪；请先在 Runtime 面板显式启动并等待环境准备完成。没有回退到本机 Jupyter。'
+      'Remote Jupyter is not ready. Start it explicitly in the Runtime panel and wait for environment preparation to finish. Phi did not fall back to local Jupyter.'
     )
   }
 
-  private defaultMessage(state: JupyterRuntimeState): string | undefined {
+  private defaultMessage(
+    state: JupyterRuntimeState
+  ): { message: string; messageCode: RemoteNotebookServerMessageCode } | undefined {
     if (state === 'preparing_environment') {
-      return '正在登录节点准备远程 Notebook 环境；首次创建可能较慢，可停止以取消。'
+      return {
+        message:
+          'Preparing the remote Notebook environment on the login node. Initial setup may take a while; stop to cancel.',
+        messageCode: 'preparing_environment'
+      }
     }
-    if (state === 'reconciling') return '正在通过新的 SSH 连接确认旧 Jupyter 是否已退出。'
+    if (state === 'reconciling') {
+      return {
+        message: 'Checking whether the old Jupyter has exited through a new SSH connection.',
+        messageCode: 'reconciling'
+      }
+    }
     if (state === 'disconnected' || state === 'stopped') {
-      return '远程 Jupyter 未连接；重新连接后 kernel 将重启，内存状态会丢失。'
+      return {
+        message:
+          'Remote Jupyter is disconnected. The kernel will restart after reconnection, and in-memory state will be lost.',
+        messageCode: 'disconnected'
+      }
     }
     return undefined
   }
@@ -300,7 +337,7 @@ export class RemoteAnalysisNotebookBackend {
     this.runtime = new RemoteJupyterRuntimeBackend({
       kernelspecs,
       runtimeSessionId: options.runtimeSessionId,
-      onProgress: (text) => this.currentJob?.step(text),
+      onProgress: (text, metadata) => this.currentJob?.step(text, metadata),
       createSupervisor: (launch) =>
         new RemoteJupyterServerSupervisor({
           connection: options.connection,
@@ -442,7 +479,8 @@ export class RemoteAnalysisNotebookBackend {
 }
 
 function unavailableRemoteKernels(): AnalysisKernelDiagnostics {
-  const message = '请先在 Runtime 面板显式启动远程 Jupyter；打开项目不会自动创建环境。'
+  const message =
+    'Start remote Jupyter explicitly in the Runtime panel first. Opening a project does not create the environment automatically.'
   return {
     jupyterServer: { available: false, command: 'jupyter', error: message },
     kernels: [],

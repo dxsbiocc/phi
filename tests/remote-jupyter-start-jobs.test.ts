@@ -28,14 +28,16 @@ test('a startup job records steps, server output and the failure with its causes
 
   const [recorded] = jobs.list()
   assert.equal(recorded?.state, 'failed')
-  assert.equal(recorded?.error, '远程 Jupyter 在 3 次尝试后仍未就绪：进程提前退出')
+  assert.equal(recorded?.error, '远程 Jupyter 在 3 次尝试后仍未就绪: 进程提前退出')
+  assert.equal(recorded?.phase, 'Startup failed')
+  assert.equal(recorded?.phaseCode, 'failed')
   assert.deepEqual(
-    recorded?.entries.map((entry) => [entry.kind, entry.text]),
+    recorded?.entries.map((entry) => [entry.kind, entry.text, entry.code, entry.params]),
     [
-      ['step', '正在检测服务器上已有的 Jupyter'],
-      ['step', '通过 SSH 启动 Jupyter Server'],
-      ['output', 'ModuleNotFoundError: jupyter_server'],
-      ['error', '远程 Jupyter 在 3 次尝试后仍未就绪：进程提前退出']
+      ['step', '正在检测服务器上已有的 Jupyter', undefined, undefined],
+      ['step', 'Starting Jupyter Server over SSH', 'starting_lease', undefined],
+      ['output', 'ModuleNotFoundError: jupyter_server', undefined, undefined],
+      ['error', '远程 Jupyter 在 3 次尝试后仍未就绪: 进程提前退出', undefined, undefined]
     ]
   )
   assert.ok(recorded?.finishedAt)
@@ -61,9 +63,38 @@ test('error descriptions follow the cause chain without repeating messages', () 
     describeRemoteJupyterError(
       new Error('start failed', { cause: new Error('retry', { cause: inner }) })
     ),
-    'start failed：retry：probe timed out'
+    'start failed: retry: probe timed out'
   )
   assert.equal(describeRemoteJupyterError(new Error('same', { cause: new Error('same') })), 'same')
+  assert.equal(describeRemoteJupyterError(new Error('')), 'Unknown error')
+})
+
+test('coded job text keeps formatter parameters beside its English fallback', () => {
+  const jobs = new RemoteJupyterStartJobs()
+  const job = jobs.begin(project)
+  assert.equal(jobs.list()[0]?.phaseCode, 'preparing')
+
+  job.step('Connecting to gpu-login; preparing to start remote Jupyter', {
+    code: 'connecting',
+    params: { serverLabel: 'gpu-login' }
+  })
+  job.state('reconciling', '服务器返回的原始状态')
+
+  const [recorded] = jobs.list()
+  assert.equal(recorded?.phaseCode, 'reconciling')
+  assert.deepEqual(recorded?.entries[0], {
+    at: recorded?.entries[0]?.at,
+    kind: 'step',
+    text: 'Connecting to gpu-login; preparing to start remote Jupyter',
+    code: 'connecting',
+    params: { serverLabel: 'gpu-login' }
+  })
+  assert.equal(
+    recorded?.entries[1]?.text,
+    'Checking whether the old Jupyter has exited: 服务器返回的原始状态'
+  )
+  assert.equal(recorded?.entries[1]?.code, 'reconciling')
+  assert.deepEqual(recorded?.entries[1]?.params, { detail: '服务器返回的原始状态' })
 })
 
 function failingRuntime(error: Error): JupyterRuntimeBackend {
@@ -97,8 +128,10 @@ test('a failed start keeps the cause in the runtime status and finishes its job'
   controller.start()
   await controller.waitForStart()
   assert.equal(controller.status().state, 'error')
-  assert.equal(controller.status().message, '远程 Jupyter 在 3 次尝试后仍未就绪：进程提前退出')
+  assert.equal(controller.status().message, '远程 Jupyter 在 3 次尝试后仍未就绪: 进程提前退出')
   const [job] = jobs.list()
   assert.equal(job?.state, 'failed')
-  assert.match(job?.entries[0]?.text ?? '', /连接 gpu-login/)
+  assert.equal(job?.entries[0]?.text, 'Connecting to gpu-login; preparing to start remote Jupyter')
+  assert.equal(job?.entries[0]?.code, 'connecting')
+  assert.deepEqual(job?.entries[0]?.params, { serverLabel: 'gpu-login' })
 })

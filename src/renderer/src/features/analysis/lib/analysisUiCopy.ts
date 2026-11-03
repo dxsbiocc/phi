@@ -1,4 +1,5 @@
 import { defineCopy } from '../../../lib/i18n'
+import type { JupyterServerStatus } from './analysisNotebookTypes'
 
 /** Application-owned interface copy. Never translate notebook cells or file contents. */
 export const analysisCopy = defineCopy(
@@ -77,6 +78,7 @@ export const analysisCopy = defineCopy(
     close: 'Close',
     closeAi: 'Close AI generation',
     kernelCodeHint: 'Generate code for the notebook kernel',
+    serverExistingKernel: 'Python (server environment)',
     markdownGenerationHint: 'Generate explanatory text without code',
     mentionContext: '@ Mention context',
     attachFiles: 'Attach files',
@@ -205,6 +207,20 @@ export const analysisCopy = defineCopy(
     jupyterError: 'Jupyter server error',
     jupyterExited: 'Jupyter server exited',
     jupyterStopped: 'Jupyter server stopped',
+    localJupyterStartingMessage: 'Starting Jupyter Server',
+    localJupyterStoppedMessage: 'Jupyter Server stopped',
+    localJupyterReadyMessage: 'Jupyter Server is ready',
+    localJupyterExitedMessage: 'Jupyter Server exited',
+    localJupyterPortInUseMessage: (port: number) =>
+      `Port ${port} is in use by another process, which is not a usable Jupyter Server`,
+    localJupyterAbnormalExitMessage: (exitCode?: number, signal?: string) =>
+      `Jupyter Server exited unexpectedly${exitCode === undefined ? '' : ` (${exitCode})`}${signal ? ` ${signal}` : ''}`,
+    remoteJupyterPreparingEnvironmentMessage:
+      'Preparing the remote Notebook environment on the login node. First-time setup may take a while; stop to cancel.',
+    remoteJupyterReconcilingMessage:
+      'Checking whether the previous Jupyter process has exited using a new SSH connection.',
+    remoteJupyterDisconnectedMessage:
+      'Remote Jupyter is disconnected. Reconnecting will restart the kernel and lose its in-memory state.',
     kernelDisconnected: 'Kernel disconnected',
     kernelIdle: 'Kernel idle',
     kernelBusy: 'Kernel busy',
@@ -322,6 +338,7 @@ User request: ${request}`,
     close: '关闭',
     closeAi: '关闭 AI 生成',
     kernelCodeHint: '按 notebook kernel 生成代码',
+    serverExistingKernel: 'Python (服务器现有环境)',
     markdownGenerationHint: '生成说明文字，不生成代码',
     mentionContext: '@ 引用上下文',
     attachFiles: '附加文件',
@@ -447,6 +464,19 @@ User request: ${request}`,
     jupyterError: 'Jupyter 服务错误',
     jupyterExited: 'Jupyter 服务已退出',
     jupyterStopped: 'Jupyter 服务已停止',
+    localJupyterStartingMessage: '正在启动 Jupyter Server',
+    localJupyterStoppedMessage: 'Jupyter Server 已停止',
+    localJupyterReadyMessage: 'Jupyter Server 已就绪',
+    localJupyterExitedMessage: 'Jupyter Server 已退出',
+    localJupyterPortInUseMessage: (port: number) =>
+      `端口 ${port} 已被其他进程占用，且该进程不是可用的 Jupyter Server`,
+    localJupyterAbnormalExitMessage: (exitCode?: number, signal?: string) =>
+      `Jupyter Server 异常退出${exitCode === undefined ? '' : ` (${exitCode})`}${signal ? ` ${signal}` : ''}`,
+    remoteJupyterPreparingEnvironmentMessage:
+      '正在登录节点准备远程 Notebook 环境；首次创建可能较慢，可停止以取消。',
+    remoteJupyterReconcilingMessage: '正在通过新的 SSH 连接确认旧 Jupyter 是否已退出。',
+    remoteJupyterDisconnectedMessage:
+      '远程 Jupyter 未连接；重新连接后 kernel 将重启，内存状态会丢失。',
     kernelDisconnected: 'Kernel 已断开',
     kernelIdle: 'Kernel 空闲',
     kernelBusy: 'Kernel 忙碌',
@@ -495,3 +525,42 @@ User request: ${request}`,
     controlCharacter: '控制字符'
   }
 )
+
+type JupyterStatusMessage = {
+  message?: string
+  messageCode?: string
+  messageParams?: { port?: number; exitCode?: number; signal?: string }
+}
+
+type JupyterMessageBuilder = (status: JupyterStatusMessage) => string | undefined
+type KnownJupyterMessageCode = NonNullable<JupyterServerStatus['messageCode']>
+
+const JUPYTER_MESSAGE_BUILDERS = {
+  starting: () => analysisCopy.localJupyterStartingMessage,
+  stopped: () => analysisCopy.localJupyterStoppedMessage,
+  ready: () => analysisCopy.localJupyterReadyMessage,
+  exited: () => analysisCopy.localJupyterExitedMessage,
+  port_in_use: (status) =>
+    status.messageParams?.port === undefined
+      ? undefined
+      : analysisCopy.localJupyterPortInUseMessage(status.messageParams.port),
+  abnormal_exit: (status) =>
+    analysisCopy.localJupyterAbnormalExitMessage(
+      status.messageParams?.exitCode,
+      status.messageParams?.signal
+    ),
+  preparing_environment: () => analysisCopy.remoteJupyterPreparingEnvironmentMessage,
+  reconciling: () => analysisCopy.remoteJupyterReconcilingMessage,
+  disconnected: () => analysisCopy.remoteJupyterDisconnectedMessage
+} satisfies Record<KnownJupyterMessageCode, JupyterMessageBuilder>
+
+/** Resolve app-owned status codes at display time; raw/legacy messages remain the fallback. */
+export function jupyterServerMessage(
+  status: JupyterStatusMessage | null | undefined
+): string | undefined {
+  if (!status?.messageCode) return status?.message
+  const builder = Object.hasOwn(JUPYTER_MESSAGE_BUILDERS, status.messageCode)
+    ? JUPYTER_MESSAGE_BUILDERS[status.messageCode as KnownJupyterMessageCode]
+    : undefined
+  return builder?.(status) ?? status.message
+}

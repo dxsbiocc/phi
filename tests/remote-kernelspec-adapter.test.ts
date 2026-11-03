@@ -11,6 +11,7 @@ import {
 } from '../src/main/agent/notebook/remote-kernelspec-adapter'
 import { resolveRemoteBaseEnvironment } from '../src/main/agent/remote-runtime/base-environment'
 import { RemoteEnvironmentService } from '../src/main/agent/remote-runtime/environment-service'
+import type { RemoteJupyterStartJobStepMetadata } from '../src/shared/remoteJupyterJobTypes'
 import { warmExecutable } from './helpers/firstExec'
 import {
   createRemoteRuntimeFixture,
@@ -34,6 +35,7 @@ function createAdapter(
   options: {
     allowUserPrefixes?: boolean
     configuredJupyterPath?: () => string | undefined
+    onConfirmReason?: (reason: string) => void
     resolveMissingJupyter?: ResolveMissingRemoteJupyter
     writeProbeFailure?: 'quota-exceeded' | 'no-space' | 'read-only'
   } = {}
@@ -41,7 +43,10 @@ function createAdapter(
   const service = new RemoteEnvironmentService({
     micromambaVersion: 'test',
     openWorkspace: async () => fixture.workspace,
-    confirm: async () => true,
+    confirm: async (request) => {
+      options.onConfirmReason?.(request.reason)
+      return true
+    },
     ...(options.writeProbeFailure ? { writeProbeFailure: options.writeProbeFailure } : {}),
     resolveBaseEnvironment: (ref, pluginId) =>
       resolveRemoteBaseEnvironment(ref, pluginId, '/unused-agent')
@@ -94,6 +99,23 @@ test('remote Jupyter environment is created once and reused by content hash', as
     assert.notEqual(invocation?.env.XDG_CACHE_HOME, join(fixture.remoteHome, '.cache'))
     assert.match(calls[0] ?? '', /jupyter_client=8\.10\.0/u)
     assert.match(calls[0] ?? '', /ipykernel=7\.4\.0/u)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('remote Jupyter environment approval uses an English reason', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    let reason = ''
+    await createAdapter(fixture, {
+      onConfirmReason: (value) => {
+        reason = value
+      }
+    }).prepare({ runtimeSessionId: 'runtime-1' })
+
+    assert.equal(reason, 'Prepare a remote Notebook environment with Jupyter Server and ipykernel')
   } finally {
     fixture.cleanup()
   }
@@ -220,7 +242,7 @@ test('remote Jupyter preparation keeps the env_request missing-micromamba guidan
 
     await assert.rejects(
       adapter.prepare({ runtimeSessionId: 'runtime-1' }),
-      /无法安装含 Jupyter \+ ipykernel.+Settings.+micromamba path.+did not fall back.+locally/u
+      /Unable to install the remote Notebook environment with Jupyter \+ ipykernel.+Settings.+micromamba path.+did not fall back.+locally/u
     )
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
   } finally {
@@ -254,7 +276,7 @@ test('remote Jupyter preparation forwards cancellation to the environment servic
 
   controller.abort()
 
-  await assert.rejects(preparing, /环境准备已取消/u)
+  await assert.rejects(preparing, /environment preparation was cancelled/iu)
   assert.match(requestId, /^notebook-/u)
 })
 
@@ -266,7 +288,7 @@ test('remote Jupyter preparation keeps the env_request offline-source guidance',
 
     await assert.rejects(
       adapter.prepare({ runtimeSessionId: 'runtime-1' }),
-      /无法安装含 Jupyter \+ ipykernel.+cannot reach the conda.+mirror.+machine with network access.+did not fall back/u
+      /Unable to install the remote Notebook environment with Jupyter \+ ipykernel.+cannot reach the conda.+mirror.+machine with network access.+did not fall back/u
     )
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
   } finally {
@@ -300,7 +322,7 @@ test('remote Jupyter preparation surfaces a silent runtime-root quota failure', 
 
     await assert.rejects(
       adapter.prepare({ runtimeSessionId: 'runtime-1' }),
-      /无法安装含 Jupyter \+ ipykernel.+Disk space or the file count quota is exhausted.+Settings → Remote Hosts/u
+      /Unable to install the remote Notebook environment with Jupyter \+ ipykernel.+Disk space or the file count quota is exhausted.+Settings → Remote Hosts/u
     )
   } finally {
     fixture.cleanup()
@@ -317,7 +339,7 @@ test('remote Jupyter preparation keeps the env_request environment-creation erro
 
     await assert.rejects(
       adapter.prepare({ runtimeSessionId: 'runtime-1' }),
-      /无法安装含 Jupyter \+ ipykernel.+micromamba environment creation failed on the server: solver failed/u
+      /Unable to install the remote Notebook environment with Jupyter \+ ipykernel.+micromamba environment creation failed on the server: solver failed/u
     )
     assert.equal(existsSync(join(fixture.localAnchor, '.phi')), false)
   } finally {
@@ -334,15 +356,15 @@ test('remote kernel selection defaults to the managed phi-python kernel', async 
 
     assert.equal(adapter.select(listed).name, 'phi-python')
     assert.equal(adapter.select(listed, 'phi-python').source, 'managed')
-    assert.throws(() => adapter.select(listed, 'python3'), /不可用/u)
+    assert.throws(() => adapter.select(listed, 'python3'), /is unavailable/u)
     const unmanaged = { ...listed.kernels[0]!, name: 'host-research', source: 'host' as const }
     const unsafeDefault = {
       ...listed,
       kernels: [...listed.kernels, unmanaged],
       preferredKernelName: unmanaged.name
     }
-    assert.throws(() => adapter.select(unsafeDefault), /不可用/u)
-    assert.throws(() => adapter.select(unsafeDefault, unmanaged.name), /不可用/u)
+    assert.throws(() => adapter.select(unsafeDefault), /is unavailable/u)
+    assert.throws(() => adapter.select(unsafeDefault, unmanaged.name), /is unavailable/u)
   } finally {
     fixture.cleanup()
   }
@@ -365,7 +387,7 @@ test('remote user prefixes are rejected while the explicit opt-in switch is off'
         name: 'research',
         prefix: '/srv/users/private-name/conda/envs/research'
       }),
-      /用户 prefix.+默认关闭/u
+      /user prefixes are disabled/u
     )
     assert.equal(
       existsSync(join(fixture.runtimeRoot, 'jupyter', 'kernels', 'host-research')),
@@ -419,7 +441,7 @@ test('an opted-in user prefix without ipykernel is not registered or exposed in 
       }),
       (error: unknown) =>
         error instanceof Error &&
-        /缺少可用的 ipykernel/u.test(error.message) &&
+        /does not have a usable ipykernel/u.test(error.message) &&
         !error.message.includes(prefix)
     )
     assert.equal(
@@ -455,12 +477,12 @@ test('a resolver-selected server Jupyter with ipykernel is used without building
   try {
     installFakeMicromamba(fixture)
     const existing = installFakeServerJupyter(join(fixture.remoteHome, 'miniconda3'))
-    const progress: string[] = []
+    const progress: Array<{ text: string; metadata?: RemoteJupyterStartJobStepMetadata }> = []
     const prepared = await createAdapter(fixture, {
       resolveMissingJupyter: async () => ({ choice: 'path', path: existing.jupyter })
     }).prepareRuntime({
       runtimeSessionId: 'runtime-1',
-      onProgress: (text) => progress.push(text)
+      onProgress: (text, metadata) => progress.push({ text, metadata })
     })
 
     assert.equal(prepared.source, 'existing')
@@ -469,6 +491,7 @@ test('a resolver-selected server Jupyter with ipykernel is used without building
     assert.equal(prepared.launch.args[0], 'server')
     assert.equal(prepared.kernels.preferredKernelName, 'server-python')
     assert.equal(prepared.kernels.jupyterServer.version, '2.14.2')
+    assert.equal(prepared.kernels.kernels[0]?.displayName, 'Python (服务器现有环境)')
     assert.equal(createAdapter(fixture).select(prepared.kernels).name, 'server-python')
     const spec = JSON.parse(
       readFileSync(
@@ -478,8 +501,29 @@ test('a resolver-selected server Jupyter with ipykernel is used without building
     ) as { argv: string[] }
     assert.equal(spec.argv[0], existing.python)
     assert.equal(existsSync(join(fixture.runtimeRoot, 'micromamba-calls.log')), false)
-    assert.ok(
-      progress.some((line) => line.includes(`使用服务器已有的 Jupyter：${existing.jupyter}`))
+    assert.deepEqual(
+      progress.find((event) => event.metadata?.code === 'checking_configured_jupyter'),
+      {
+        text: `Checking Jupyter path ${existing.jupyter} and the server login shell's PATH…`,
+        metadata: {
+          code: 'checking_configured_jupyter',
+          params: { configuredPath: existing.jupyter }
+        }
+      }
+    )
+    assert.deepEqual(
+      progress.find((event) => event.metadata?.code === 'using_existing_jupyter'),
+      {
+        text: `Using existing server Jupyter: ${existing.jupyter} (jupyter_server 2.14.2); kernel Python: ${existing.python}`,
+        metadata: {
+          code: 'using_existing_jupyter',
+          params: {
+            jupyterPath: existing.jupyter,
+            pythonPath: existing.python,
+            version: '2.14.2'
+          }
+        }
+      }
     )
   } finally {
     fixture.cleanup()
@@ -546,16 +590,23 @@ test('a server Jupyter whose Python lacks ipykernel installs only after an expli
   try {
     installFakeMicromamba(fixture)
     installFakeServerJupyter(join(fixture.remoteHome, 'miniconda3'), { ipykernel: false })
-    const progress: string[] = []
+    const progress: Array<{ text: string; metadata?: RemoteJupyterStartJobStepMetadata }> = []
     const prepared = await createAdapter(fixture, {
       resolveMissingJupyter: async () => ({ choice: 'install' })
     }).prepareRuntime({
       runtimeSessionId: 'runtime-1',
-      onProgress: (text) => progress.push(text)
+      onProgress: (text, metadata) => progress.push({ text, metadata })
     })
     assert.equal(prepared.source, 'managed')
     assert.equal(prepared.kernels.preferredKernelName, 'phi-python')
-    assert.ok(progress.some((line) => line.includes('改用 Phi 受管环境')))
+    assert.deepEqual(
+      progress.filter((event) => event.metadata).map((event) => event.metadata?.code),
+      ['checking_server_path_jupyter', 'missing_jupyter_using_managed', 'using_managed_jupyter']
+    )
+    assert.match(
+      progress.find((event) => event.metadata?.code === 'using_managed_jupyter')?.text ?? '',
+      /^Using Jupyter from the managed environment: \/.*\/bin\/jupyter$/u
+    )
   } finally {
     fixture.cleanup()
   }

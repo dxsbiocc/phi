@@ -170,6 +170,23 @@ export type JupyterServerState =
   | 'cleaning'
   | 'reconciling'
 
+export type JupyterServerMessageCode =
+  | 'starting'
+  | 'stopped'
+  | 'ready'
+  | 'exited'
+  | 'port_in_use'
+  | 'abnormal_exit'
+  | 'preparing_environment'
+  | 'reconciling'
+  | 'disconnected'
+
+export interface JupyterServerMessageParams {
+  port?: number
+  exitCode?: number
+  signal?: string
+}
+
 export interface JupyterServerStatus {
   projectCwd: string
   state: JupyterServerState
@@ -182,6 +199,8 @@ export interface JupyterServerStatus {
   remotePort?: number
   hasEndpoint: boolean
   message?: string
+  messageCode?: JupyterServerMessageCode
+  messageParams?: JupyterServerMessageParams
   cleanupUnconfirmed?: boolean
   canAbandonCleanup?: boolean
   resources?: Record<string, unknown>

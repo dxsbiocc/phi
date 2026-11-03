@@ -558,6 +558,23 @@ type PreloadAnalysisKernelDiagnostics = {
   messages: string[]
 }
 
+type PreloadJupyterServerMessageCode =
+  | 'starting'
+  | 'stopped'
+  | 'ready'
+  | 'exited'
+  | 'port_in_use'
+  | 'abnormal_exit'
+  | 'preparing_environment'
+  | 'reconciling'
+  | 'disconnected'
+
+type PreloadJupyterServerMessageParams = {
+  port?: number
+  exitCode?: number
+  signal?: string
+}
+
 type PreloadJupyterServerStatus = {
   projectCwd: string
   state:
@@ -583,6 +600,8 @@ type PreloadJupyterServerStatus = {
   remotePort?: number
   hasEndpoint: boolean
   message?: string
+  messageCode?: PreloadJupyterServerMessageCode
+  messageParams?: PreloadJupyterServerMessageParams
   cleanupUnconfirmed?: boolean
   canAbandonCleanup?: boolean
   resources?: Record<string, unknown>

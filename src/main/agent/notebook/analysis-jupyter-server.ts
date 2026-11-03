@@ -8,6 +8,15 @@ import { resolveManagedJupyterLaunch, type ManagedJupyterOptions } from './manag
 import { errorMessage } from '../../../shared/errorCodes'
 export type JupyterServerState = 'stopped' | 'starting' | 'ready' | 'error' | 'exited'
 
+export type JupyterServerMessageCode =
+  'starting' | 'stopped' | 'ready' | 'exited' | 'port_in_use' | 'abnormal_exit'
+
+export interface JupyterServerMessageParams {
+  port?: number
+  exitCode?: number
+  signal?: string
+}
+
 export interface JupyterServerPublicStatus {
   projectCwd: string
   state: JupyterServerState
@@ -17,6 +26,8 @@ export interface JupyterServerPublicStatus {
   port?: number
   hasEndpoint: boolean
   message?: string
+  messageCode?: JupyterServerMessageCode
+  messageParams?: JupyterServerMessageParams
 }
 
 type JupyterEndpoint = {
@@ -86,6 +97,8 @@ type JupyterServerRecord = {
   port: number
   endpoint?: JupyterEndpoint
   message?: string
+  messageCode?: JupyterServerMessageCode
+  messageParams?: JupyterServerMessageParams
   logs: string[]
   pendingOutput: string
   runtimeId: string
@@ -146,7 +159,7 @@ export function managedLaunchResolver(options: ManagedJupyterOptions = {}): Jupy
 function resolveProjectCwd(workingDirectory: string): string {
   const projectCwd = realpathSync(workingDirectory)
   if (!statSync(projectCwd).isDirectory()) {
-    throw new Error('项目路径不是目录')
+    throw new Error('Project path is not a directory')
   }
   return projectCwd
 }
@@ -245,8 +258,23 @@ function publicStatus(record: JupyterServerRecord): JupyterServerPublicStatus {
     pid: record.pid,
     port: record.endpoint?.port ?? record.port,
     hasEndpoint: Boolean(record.endpoint),
-    message: record.message
+    message: record.message,
+    ...(record.messageCode ? { messageCode: record.messageCode } : {}),
+    ...(record.messageParams ? { messageParams: record.messageParams } : {})
   }
+}
+
+function setRecordMessage(
+  record: JupyterServerRecord,
+  message: string,
+  code?: JupyterServerMessageCode,
+  params?: JupyterServerMessageParams
+): void {
+  record.message = message
+  if (code) record.messageCode = code
+  else delete record.messageCode
+  if (params) record.messageParams = params
+  else delete record.messageParams
 }
 
 export class JupyterServerRegistry {
@@ -331,7 +359,8 @@ export class JupyterServerRegistry {
       port: this.port ?? jupyterPortForProject(projectCwd),
       state: 'starting',
       startedAt: this.now().toISOString(),
-      message: '正在启动 Jupyter Server',
+      message: 'Starting Jupyter Server',
+      messageCode: 'starting',
       logs: [],
       pendingOutput: '',
       runtimeId: randomUUID()
@@ -360,7 +389,7 @@ export class JupyterServerRegistry {
     }
     record.state = 'stopped'
     record.exitedAt = this.now().toISOString()
-    record.message = 'Jupyter Server 已停止'
+    setRecordMessage(record, 'Jupyter Server stopped', 'stopped')
     return publicStatus(record)
   }
 
@@ -371,7 +400,7 @@ export class JupyterServerRegistry {
       }
       record.state = 'stopped'
       record.exitedAt = this.now().toISOString()
-      record.message = 'Jupyter Server 已停止'
+      setRecordMessage(record, 'Jupyter Server stopped', 'stopped')
     }
   }
 
@@ -429,7 +458,8 @@ export class JupyterServerRegistry {
     if (lines.length > 0) {
       record.logs.push(...lines)
       record.logs.splice(0, Math.max(0, record.logs.length - MAX_LOG_LINES))
-      record.message = lines.at(-1) ?? record.message
+      const latest = lines.at(-1)
+      if (latest) setRecordMessage(record, latest)
     }
 
     // markReady (which sets a clean, sanitized status message) must run last
@@ -447,7 +477,7 @@ export class JupyterServerRegistry {
     }
     record.port = endpoint.port ?? record.port
     record.state = 'ready'
-    record.message = 'Jupyter Server 已就绪'
+    setRecordMessage(record, 'Jupyter Server is ready', 'ready')
   }
 
   private scheduleReadyProbe(record: JupyterServerRecord): void {
@@ -473,7 +503,7 @@ export class JupyterServerRegistry {
 
   private markError(record: JupyterServerRecord, error: unknown): void {
     record.state = 'error'
-    record.message = sanitizeMessage(errorMessage(error))
+    setRecordMessage(record, sanitizeMessage(errorMessage(error)))
     record.exitedAt = this.now().toISOString()
   }
 
@@ -495,7 +525,7 @@ export class JupyterServerRegistry {
     }
     record.state = 'exited'
     record.exitedAt = this.now().toISOString()
-    record.message = 'Jupyter Server 已退出'
+    setRecordMessage(record, 'Jupyter Server exited', 'exited')
   }
 
   private async tryAdoptRunningServer(
@@ -515,8 +545,23 @@ export class JupyterServerRegistry {
     const portConflict = record.logs.some((line) =>
       /port .*(already in use|not available)/i.test(line)
     )
-    record.message = portConflict
-      ? `端口 ${record.port} 已被其他进程占用，且该进程不是可用的 Jupyter Server`
-      : `Jupyter Server 异常退出${code === null ? '' : ` (${code})`}${signal ? ` ${signal}` : ''}`
+    if (portConflict) {
+      setRecordMessage(
+        record,
+        `Port ${record.port} is occupied by another process that is not a usable Jupyter Server`,
+        'port_in_use',
+        { port: record.port }
+      )
+      return
+    }
+    setRecordMessage(
+      record,
+      `Jupyter Server exited abnormally${code === null ? '' : ` (${code})`}${signal ? ` ${signal}` : ''}`,
+      'abnormal_exit',
+      {
+        ...(code === null ? {} : { exitCode: code }),
+        ...(signal ? { signal } : {})
+      }
+    )
   }
 }

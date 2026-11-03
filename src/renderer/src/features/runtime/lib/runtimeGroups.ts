@@ -26,6 +26,8 @@ export function runtimeStatusesSnapshot(statuses: readonly AnalysisJupyterRuntim
       server.remotePort,
       server.hasEndpoint,
       server.message,
+      server.messageCode,
+      server.messageParams,
       server.cleanupUnconfirmed,
       server.canAbandonCleanup,
       notebooks.sessions.map((session) => [

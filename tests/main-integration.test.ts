@@ -1314,7 +1314,8 @@ async function harness(
         state: 'starting',
         pid: 2026,
         hasEndpoint: false,
-        message: '正在启动 Jupyter Server'
+        message: 'Starting Jupyter Server',
+        messageCode: 'starting'
       }
       this.active.set(workingDirectory, status)
       return status
@@ -1326,7 +1327,8 @@ async function harness(
         projectCwd: workingDirectory,
         state: 'stopped',
         hasEndpoint: false,
-        message: 'Jupyter Server 已停止'
+        message: 'Jupyter Server stopped',
+        messageCode: 'stopped'
       }
     }
     disposeAll(): void {
@@ -2565,6 +2567,7 @@ async function harness(
           state: string
           hasEndpoint: boolean
           message: string | undefined
+          messageCode?: 'disconnected'
         } => ({
           projectCwd: '/canonical/project',
           runtimeKind: 'ssh',
@@ -2573,8 +2576,9 @@ async function harness(
           hasEndpoint: state === 'ready',
           message:
             state === 'stopped'
-              ? '远程 Jupyter 未连接；重新连接后 kernel 将重启，内存状态会丢失。'
-              : undefined
+              ? 'Remote Jupyter is disconnected. The kernel will restart after reconnection, and in-memory state will be lost.'
+              : undefined,
+          ...(state === 'stopped' ? { messageCode: 'disconnected' as const } : {})
         })
         const workspace = {
           list: async () => {
@@ -4675,6 +4679,7 @@ async function harness(
     './agent/session/prompt-run-execution',
     './agent/session/prompt-target-control',
     './agent/session/runtime-recovery-control',
+    './agent/session/approval-display-cwd',
     './agent/session/session-creation-approvals',
     './agent/session/session-creation-context',
     './agent/session/session-creation-model',
@@ -9493,9 +9498,13 @@ test('main IPC: analysis Jupyter server lifecycle uses the selected project', as
     state: string
     pid: number
     hasEndpoint: boolean
+    message: string
+    messageCode: string
   }
   const stopped = (await app.invoke('analysis:stopJupyter', '/projects/research')) as {
     state: string
+    message: string
+    messageCode: string
   }
 
   assert.equal(initial.projectCwd, '/projects/research')
@@ -9503,7 +9512,11 @@ test('main IPC: analysis Jupyter server lifecycle uses the selected project', as
   assert.equal(started.state, 'starting')
   assert.equal(started.pid, 2026)
   assert.equal(started.hasEndpoint, false)
+  assert.equal(started.message, 'Starting Jupyter Server')
+  assert.equal(started.messageCode, 'starting')
   assert.equal(stopped.state, 'stopped')
+  assert.equal(stopped.message, 'Jupyter Server stopped')
+  assert.equal(stopped.messageCode, 'stopped')
   assert.deepEqual(app.jupyterServerCalls, [
     { action: 'status', cwd: '/projects/research' },
     { action: 'start', cwd: '/projects/research' },

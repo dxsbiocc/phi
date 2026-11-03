@@ -20,6 +20,7 @@ import {
 import { alpha, type Theme } from '@mui/material/styles'
 import { GoSync } from 'react-icons/go'
 import { PhiIcons } from '../../icons'
+import { jupyterServerMessage } from '../analysis/lib/analysisUiCopy'
 import { isListedNotebookKernel } from '../analysis/lib/notebookSession'
 import type {
   AnalysisJupyterRuntimeStatus,
@@ -253,7 +254,7 @@ function RuntimeSidebarSection({
               </Typography>
               <Box
                 component="span"
-                title={server?.message}
+                title={jupyterServerMessage(server)}
                 sx={{
                   width: 8,
                   height: 8,

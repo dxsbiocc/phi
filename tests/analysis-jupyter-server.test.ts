@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -15,6 +15,7 @@ import {
   type JupyterServerLaunch,
   type ManagedJupyterProcess
 } from '../src/main/agent/notebook/analysis-jupyter-server'
+import { LocalJupyterRuntimeBackend } from '../src/main/agent/notebook/jupyter-runtime-backend'
 
 class FakeJupyterProcess extends EventEmitter implements ManagedJupyterProcess {
   readonly stdout = new PassThrough()
@@ -67,6 +68,14 @@ test('JupyterServerRegistry uses one fixed Phi port for every project', () => {
   assert.equal(status.state, 'stopped')
 })
 
+test('JupyterServerRegistry reports a non-directory project path in English', () => {
+  const path = join(projectDir(), 'not-a-directory')
+  writeFileSync(path, '')
+  const registry = new JupyterServerRegistry()
+
+  assert.throws(() => registry.status(path), /Project path is not a directory/)
+})
+
 test('jupyterServerArgs pins localhost, project port, and disables port retries', () => {
   assert.deepEqual(jupyterServerArgs({ port: 31888 }), [
     'server',
@@ -105,7 +114,24 @@ test('JupyterServerRegistry starts only one server for the same project', () => 
   assert.equal(first.pid, 1234)
   assert.equal(first.hasEndpoint, false)
   assert.equal(first.port, PHI_JUPYTER_PORT)
+  assert.equal(first.message, 'Starting Jupyter Server')
+  assert.equal(first.messageCode, 'starting')
   assert.deepEqual(launches, [{ port: PHI_JUPYTER_PORT }])
+})
+
+test('LocalJupyterRuntimeBackend preserves stable message metadata', async () => {
+  const project = projectDir()
+  const registry = new JupyterServerRegistry({
+    readyProbeAttempts: 0,
+    createProcess: () => new FakeJupyterProcess(1235)
+  })
+  const backend = new LocalJupyterRuntimeBackend(registry)
+
+  await backend.start(project)
+  const status = backend.status(project)
+
+  assert.equal(status.message, 'Starting Jupyter Server')
+  assert.equal(status.messageCode, 'starting')
 })
 
 test('JupyterServerRegistry marks server ready from localhost health probe', async () => {
@@ -128,6 +154,8 @@ test('JupyterServerRegistry marks server ready from localhost health probe', asy
   assert.equal(status.state, 'ready')
   assert.equal(status.hasEndpoint, true)
   assert.equal(status.port, PHI_JUPYTER_PORT)
+  assert.equal(status.message, 'Jupyter Server is ready')
+  assert.equal(status.messageCode, 'ready')
   assert.deepEqual(probedUrls, [`http://127.0.0.1:${PHI_JUPYTER_PORT}/`])
 })
 
@@ -197,6 +225,8 @@ test('JupyterServerRegistry stops a running project server', () => {
   assert.equal(process.killed, true)
   assert.equal(status.state, 'stopped')
   assert.equal(status.exitedAt, '2026-09-09T00:02:00.000Z')
+  assert.equal(status.message, 'Jupyter Server stopped')
+  assert.equal(status.messageCode, 'stopped')
   assert.deepEqual(registry.activeStatuses(), [])
 })
 
@@ -242,6 +272,7 @@ test('JupyterServerRegistry adopts an already-running Jupyter Server instead of 
 
   assert.equal(status.state, 'ready')
   assert.equal(status.hasEndpoint, true)
+  assert.equal(status.messageCode, 'ready')
   assert.deepEqual(identityProbeUrls, [`http://127.0.0.1:${PHI_JUPYTER_PORT}/`])
 })
 
@@ -266,6 +297,55 @@ test('JupyterServerRegistry still reports an error when the taken port is not a 
   assert.equal(status.state, 'error')
   assert.equal(status.hasEndpoint, false)
   assert.equal(status.exitedAt, '2026-09-09T00:04:00.000Z')
+  assert.equal(status.message, 'Jupyter Server exited abnormally (1)')
+  assert.equal(status.messageCode, 'abnormal_exit')
+  assert.deepEqual(status.messageParams, { exitCode: 1 })
+})
+
+test('JupyterServerRegistry identifies a non-Jupyter port conflict with stable parameters', async () => {
+  let process!: FakeJupyterProcess
+  const project = projectDir()
+  const registry = new JupyterServerRegistry({
+    readyProbeAttempts: 0,
+    identityProbe: async () => false,
+    createProcess: () => {
+      process = new FakeJupyterProcess(101)
+      return process
+    }
+  })
+
+  registry.start(project)
+  process.stderr.write(`Port ${PHI_JUPYTER_PORT} already in use\n`)
+  process.emit('exit', 1, null)
+  await tick()
+  const status = registry.status(project)
+
+  assert.equal(status.messageCode, 'port_in_use')
+  assert.deepEqual(status.messageParams, { port: PHI_JUPYTER_PORT })
+  assert.equal(
+    status.message,
+    `Port ${PHI_JUPYTER_PORT} is occupied by another process that is not a usable Jupyter Server`
+  )
+})
+
+test('JupyterServerRegistry marks a clean process exit with a stable code', () => {
+  let process!: FakeJupyterProcess
+  const project = projectDir()
+  const registry = new JupyterServerRegistry({
+    readyProbeAttempts: 0,
+    createProcess: () => {
+      process = new FakeJupyterProcess(102)
+      return process
+    }
+  })
+
+  registry.start(project)
+  process.emit('exit', 0, null)
+  const status = registry.status(project)
+
+  assert.equal(status.state, 'exited')
+  assert.equal(status.message, 'Jupyter Server exited')
+  assert.equal(status.messageCode, 'exited')
 })
 
 test('JupyterServerRegistry records process errors as public diagnostics', () => {
@@ -286,5 +366,6 @@ test('JupyterServerRegistry records process errors as public diagnostics', () =>
 
   assert.equal(status.state, 'error')
   assert.equal(status.message, 'ENOENT jupyter')
+  assert.equal(status.messageCode, undefined)
   assert.equal(status.exitedAt, '2026-09-09T00:03:00.000Z')
 })

@@ -3,25 +3,40 @@ import { randomUUID } from 'node:crypto'
 import {
   REMOTE_JUPYTER_JOB_MAX_ENTRIES,
   type RemoteJupyterStartJob,
-  type RemoteJupyterStartJobEntry
+  type RemoteJupyterStartJobEntry,
+  type RemoteJupyterStartJobEntryCode,
+  type RemoteJupyterStartJobPhaseCode,
+  type RemoteJupyterStartJobStepMetadata,
+  type RemoteJupyterStartJobStepCode,
+  type RemoteJupyterStartJobTextParams
 } from '../../../shared/remoteJupyterJobTypes'
 import type { JupyterRuntimeState } from './jupyter-runtime-backend'
 
 const MAX_FINISHED_JOBS = 20
 
-const STATE_STEPS: Partial<Record<JupyterRuntimeState, string>> = {
-  allocating_ports: '分配远端端口',
-  starting_lease: '通过 SSH 启动 Jupyter Server',
-  probing_through_tunnel: '经 SSH 隧道等待 Jupyter 就绪',
-  ready: 'Jupyter Server 已就绪',
-  cleaning: '清理本次启动留下的远端进程',
-  reconciling: '确认旧 Jupyter 是否已退出',
-  disconnected: 'SSH 连接已断开'
+type StepMetadata = {
+  code: RemoteJupyterStartJobEntryCode
+  params?: RemoteJupyterStartJobTextParams
+}
+
+const STATE_STEPS: Partial<
+  Record<JupyterRuntimeState, { text: string; code: RemoteJupyterStartJobStepCode }>
+> = {
+  allocating_ports: { text: 'Allocating remote port', code: 'allocating_ports' },
+  starting_lease: { text: 'Starting Jupyter Server over SSH', code: 'starting_lease' },
+  probing_through_tunnel: {
+    text: 'Waiting for Jupyter through the SSH tunnel',
+    code: 'probing_through_tunnel'
+  },
+  ready: { text: 'Jupyter Server is ready', code: 'ready' },
+  cleaning: { text: 'Cleaning up remote processes from this startup', code: 'cleaning' },
+  reconciling: { text: 'Checking whether the old Jupyter has exited', code: 'reconciling' },
+  disconnected: { text: 'SSH connection disconnected', code: 'disconnected' }
 }
 
 export interface RemoteJupyterStartJobHandle {
   readonly id: string
-  step(text: string): void
+  step(text: string, metadata?: RemoteJupyterStartJobStepMetadata): void
   output(line: string): void
   state(state: JupyterRuntimeState, message?: string): void
   succeed(): void
@@ -54,20 +69,13 @@ export class RemoteJupyterStartJobs {
       id: randomUUID(),
       ...input,
       state: 'running',
-      phase: '准备启动',
+      phase: 'Preparing to start',
+      phaseCode: 'preparing',
       startedAt: this.now().toISOString(),
       entries: []
     }
     this.jobs.unshift(job)
     this.prune()
-    const append = (kind: RemoteJupyterStartJobEntry['kind'], text: string): void => {
-      const trimmed = text.trimEnd()
-      if (!trimmed) return
-      job.entries.push({ at: this.now().toISOString(), kind, text: trimmed })
-      if (job.entries.length > REMOTE_JUPYTER_JOB_MAX_ENTRIES) {
-        job.entries.splice(0, job.entries.length - REMOTE_JUPYTER_JOB_MAX_ENTRIES)
-      }
-    }
     const finish = (state: RemoteJupyterStartJob['state']): void => {
       job.state = state
       job.finishedAt = this.now().toISOString()
@@ -76,28 +84,31 @@ export class RemoteJupyterStartJobs {
     const running = (): boolean => job.state === 'running'
     return {
       id: job.id,
-      step: (text) => {
+      step: (text, metadata) => {
         if (!running()) return
-        job.phase = text
-        append('step', text)
+        this.setPhase(job, text, metadata?.code, metadata?.params)
+        this.append(job, 'step', text, metadata)
         this.emit(job)
       },
       output: (line) => {
         if (!running()) return
-        append('output', line)
+        this.append(job, 'output', line)
         this.emit(job)
       },
       state: (state, message) => {
         if (!running()) return
         const step = STATE_STEPS[state]
         if (!step) return
-        job.phase = step
-        append('step', message ? `${step}：${message}` : step)
+        this.setPhase(job, step.text, step.code)
+        this.append(job, 'step', message ? `${step.text}: ${message}` : step.text, {
+          code: step.code,
+          ...(message ? { params: { detail: message } } : {})
+        })
         this.emit(job)
       },
       succeed: () => {
         if (!running()) return
-        job.phase = 'Jupyter Server 已就绪'
+        this.setPhase(job, 'Jupyter Server is ready', 'ready')
         finish('ready')
         this.emit(job)
       },
@@ -105,19 +116,46 @@ export class RemoteJupyterStartJobs {
         if (!running()) return
         const text = describeRemoteJupyterError(error)
         job.error = text
-        job.phase = '启动失败'
-        append('error', text)
+        this.setPhase(job, 'Startup failed', 'failed')
+        this.append(job, 'error', text)
         finish('failed')
         this.emit(job)
       },
       cancel: () => {
         if (!running()) return
-        job.phase = '已停止'
-        append('step', '已停止启动')
+        this.setPhase(job, 'Stopped', 'cancelled')
+        this.append(job, 'step', 'Startup stopped', { code: 'startup_cancelled' })
         finish('cancelled')
         this.emit(job)
       }
     }
+  }
+
+  private append(
+    job: RemoteJupyterStartJob,
+    kind: RemoteJupyterStartJobEntry['kind'],
+    text: string,
+    metadata?: StepMetadata
+  ): void {
+    const trimmed = text.trimEnd()
+    if (!trimmed) return
+    job.entries.push({ at: this.now().toISOString(), kind, text: trimmed, ...metadata })
+    if (job.entries.length > REMOTE_JUPYTER_JOB_MAX_ENTRIES) {
+      job.entries.splice(0, job.entries.length - REMOTE_JUPYTER_JOB_MAX_ENTRIES)
+    }
+  }
+
+  private setPhase(
+    job: RemoteJupyterStartJob,
+    text: string,
+    code?: RemoteJupyterStartJobPhaseCode,
+    params?: RemoteJupyterStartJobTextParams
+  ): void {
+    job.phase = text
+    if (code) job.phaseCode = code
+    else delete job.phaseCode
+    if (params) job.phaseParams = params
+    else delete job.phaseParams
   }
 
   private prune(): void {
@@ -154,5 +192,5 @@ export function describeRemoteJupyterError(error: unknown): string {
     if (message && !parts.includes(message)) parts.push(message)
     current = current instanceof Error ? current.cause : undefined
   }
-  return parts.join('：') || '未知错误'
+  return parts.join(': ') || 'Unknown error'
 }

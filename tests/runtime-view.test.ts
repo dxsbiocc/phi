@@ -93,6 +93,37 @@ test('runtime polling detects Notebook list changes without reacting to timestam
 
   assert.equal(sameSessionsWithNewTime, initial)
   assert.notEqual(disconnectedNotebook, initial)
+  assert.notEqual(
+    runtimeStatusesSnapshot([
+      {
+        ...runtimeStatus,
+        server: { ...runtimeStatus.server, messageCode: 'ready' }
+      }
+    ]),
+    initial
+  )
+})
+
+test('runtime status tooltip resolves stable message codes in the active interface language', () => {
+  const codedStatus = {
+    ...runtimeStatus,
+    server: {
+      ...runtimeStatus.server,
+      message: 'legacy fallback',
+      messageCode: 'ready'
+    }
+  } as AnalysisJupyterRuntimeStatus
+
+  setUiLanguage('en')
+  assert.match(renderRuntimeSidebar(codedStatus), /title="Jupyter Server is ready"/)
+  setUiLanguage('zh-CN')
+  assert.match(renderRuntimeSidebar(codedStatus), /title="Jupyter Server 已就绪"/)
+
+  const legacyStatus = {
+    ...codedStatus,
+    server: { ...codedStatus.server, message: 'legacy fallback', messageCode: 'future_code' }
+  } as unknown as AnalysisJupyterRuntimeStatus
+  assert.match(renderRuntimeSidebar(legacyStatus), /title="legacy fallback"/)
 })
 
 function renderRuntimeSidebar(

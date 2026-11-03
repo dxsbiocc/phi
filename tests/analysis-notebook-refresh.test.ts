@@ -8,7 +8,10 @@ import ts from 'typescript'
 
 import { IPC } from '../src/shared/ipcChannels'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
-import { analysisCopy } from '../src/renderer/src/features/analysis/lib/analysisUiCopy'
+import {
+  analysisCopy,
+  jupyterServerMessage
+} from '../src/renderer/src/features/analysis/lib/analysisUiCopy'
 import * as runtimeUtils from '../src/renderer/src/features/analysis/lib/analysisNotebookRuntimeUtils'
 import { pollJupyterServerStartupStatus } from '../src/renderer/src/features/runtime/lib/jupyterStatusPolling'
 import * as notebookSession from '../src/renderer/src/features/analysis/lib/notebookSession'
@@ -164,6 +167,8 @@ function runtimeHarness(): {
     )
   const hook = runInNewContext(`${code}\nuseAnalysisNotebookRuntime`, {
     analysisCopy,
+    jupyterServerMessage,
+    useUiLanguage: () => 'en',
     ...runtimeUtils,
     pollJupyterServerStartupStatus,
     ...notebookSession,

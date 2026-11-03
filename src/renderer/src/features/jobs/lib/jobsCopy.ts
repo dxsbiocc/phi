@@ -83,6 +83,37 @@ export const jobsCopy = defineCopy(
     environment: 'Environment',
     upload: 'Upload',
     remoteJupyter: 'Remote Jupyter',
+    remoteJupyterPreparing: 'Preparing to start',
+    remoteJupyterConnecting: (serverLabel?: string) =>
+      serverLabel
+        ? `Connecting to ${serverLabel} to prepare remote Jupyter`
+        : 'Connecting to the remote server to prepare remote Jupyter',
+    remoteJupyterCheckingConfiguredPath: (configuredPath?: string) =>
+      configuredPath
+        ? `Checking Jupyter path ${configuredPath} and the server login shell's PATH…`
+        : "Checking the configured Jupyter path and the server login shell's PATH…",
+    remoteJupyterCheckingServerPath:
+      "Checking the server login shell's PATH for an existing Jupyter…",
+    remoteJupyterMissingUsingManaged: (environmentRef?: string) =>
+      `No usable Jupyter Server was found on the server (jupyter server and ipykernel are required). Using Phi managed environment ${environmentRef ?? 'phi:jupyter@1'}; first-time setup may take a few minutes.`,
+    remoteJupyterUsingManaged: (jupyterPath?: string) =>
+      jupyterPath
+        ? `Using Jupyter from the managed environment: ${jupyterPath}`
+        : 'Using Jupyter from the managed environment',
+    remoteJupyterUsingExisting: (jupyterPath?: string, version?: string, pythonPath?: string) =>
+      jupyterPath && pythonPath
+        ? `Using existing server Jupyter: ${jupyterPath}${version ? ` (jupyter_server ${version})` : ''}; kernel Python: ${pythonPath}`
+        : 'Using an existing Jupyter installation on the server',
+    remoteJupyterAllocatingPorts: 'Allocating remote ports',
+    remoteJupyterStartingLease: 'Starting Jupyter Server over SSH',
+    remoteJupyterProbingThroughTunnel: 'Waiting for Jupyter over the SSH tunnel',
+    remoteJupyterReady: 'Jupyter Server is ready',
+    remoteJupyterCleaning: 'Cleaning up remote processes from this startup',
+    remoteJupyterReconciling: 'Checking whether the previous Jupyter process has exited',
+    remoteJupyterDisconnected: 'SSH connection disconnected',
+    remoteJupyterFailed: 'Startup failed',
+    remoteJupyterCancelled: 'Stopped',
+    remoteJupyterStartupCancelled: 'Startup stopped',
     history: 'History',
     projectRoot: 'Project root',
     valueCells: (value0: string | number) => `${value0} cells`,
@@ -219,6 +250,34 @@ export const jobsCopy = defineCopy(
     environment: '环境',
     upload: '上传',
     remoteJupyter: '远程 Jupyter',
+    remoteJupyterPreparing: '准备启动',
+    remoteJupyterConnecting: (serverLabel?: string) =>
+      serverLabel
+        ? `连接 ${serverLabel}，准备启动远程 Jupyter`
+        : '连接远程服务器，准备启动远程 Jupyter',
+    remoteJupyterCheckingConfiguredPath: (configuredPath?: string) =>
+      configuredPath
+        ? `正在检查 Jupyter 路径 ${configuredPath}，以及服务器登录 shell 的 PATH…`
+        : '正在检查设置中的 Jupyter 路径，以及服务器登录 shell 的 PATH…',
+    remoteJupyterCheckingServerPath: '正在检测服务器登录 shell 的 PATH 中已有的 Jupyter…',
+    remoteJupyterMissingUsingManaged: (environmentRef?: string) =>
+      `服务器上没有可用的 Jupyter Server（需要 jupyter server 与 ipykernel）；改用 Phi 受管环境 ${environmentRef ?? 'phi:jupyter@1'}，首次创建可能需要几分钟。`,
+    remoteJupyterUsingManaged: (jupyterPath?: string) =>
+      jupyterPath ? `使用受管环境中的 Jupyter：${jupyterPath}` : '使用受管环境中的 Jupyter',
+    remoteJupyterUsingExisting: (jupyterPath?: string, version?: string, pythonPath?: string) =>
+      jupyterPath && pythonPath
+        ? `使用服务器已有的 Jupyter：${jupyterPath}${version ? `（jupyter_server ${version}）` : ''}，kernel Python：${pythonPath}`
+        : '使用服务器已有的 Jupyter',
+    remoteJupyterAllocatingPorts: '分配远端端口',
+    remoteJupyterStartingLease: '通过 SSH 启动 Jupyter Server',
+    remoteJupyterProbingThroughTunnel: '经 SSH 隧道等待 Jupyter 就绪',
+    remoteJupyterReady: 'Jupyter Server 已就绪',
+    remoteJupyterCleaning: '清理本次启动留下的远端进程',
+    remoteJupyterReconciling: '确认旧 Jupyter 是否已退出',
+    remoteJupyterDisconnected: 'SSH 连接已断开',
+    remoteJupyterFailed: '启动失败',
+    remoteJupyterCancelled: '已停止',
+    remoteJupyterStartupCancelled: '已停止启动',
     history: '历史记录',
     projectRoot: '项目根目录',
     valueCells: (value0: string | number) => `${value0} 个单元`,

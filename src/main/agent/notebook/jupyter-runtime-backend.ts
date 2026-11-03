@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
 
+import type { RemoteJupyterStartJobStepMetadata } from '../../../shared/remoteJupyterJobTypes'
 import type { AnalysisKernelDiagnostics, AnalysisKernelSummary } from './analysis-kernels'
 import {
   JupyterServerRegistry,
   type JupyterServerConnection,
+  type JupyterServerMessageCode,
+  type JupyterServerMessageParams,
   type JupyterServerPublicStatus
 } from './analysis-jupyter-server'
 import type {
@@ -29,6 +32,8 @@ export interface JupyterRuntimeStatus {
   state: JupyterRuntimeState
   hasConnection: boolean
   message?: string
+  messageCode?: JupyterServerMessageCode
+  messageParams?: JupyterServerMessageParams
   cleanupUnconfirmed?: boolean
   canAbandonCleanup?: boolean
   localPort?: number
@@ -97,6 +102,8 @@ export class LocalJupyterRuntimeBackend implements JupyterRuntimeBackend {
       state: status.state,
       hasConnection: status.hasEndpoint && status.state === 'ready',
       ...(status.message ? { message: status.message } : {}),
+      ...(status.messageCode ? { messageCode: status.messageCode } : {}),
+      ...(status.messageParams ? { messageParams: status.messageParams } : {}),
       ...(status.port === undefined ? {} : { localPort: status.port })
     }
   }
@@ -136,7 +143,7 @@ export interface RemoteJupyterRuntimeBackendOptions {
   runtimeSessionId: string
   createSupervisor: (launch: RemoteJupyterLaunchCommand) => RemoteSupervisor
   /** Human-readable preparation steps, for the startup log. */
-  onProgress?: (text: string) => void
+  onProgress?: (text: string, metadata?: RemoteJupyterStartJobStepMetadata) => void
 }
 
 export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {

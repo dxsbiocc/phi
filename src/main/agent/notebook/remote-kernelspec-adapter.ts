@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join, posix } from 'node:path'
 
+import type { RemoteJupyterStartJobStepMetadata } from '../../../shared/remoteJupyterJobTypes'
 import { bundledEnvironmentsDir } from '../content/environment-refs'
 import { parseEnvironmentSpec } from '../envs'
 import type { RemoteEnvironmentService } from '../remote-runtime/environment-service'
@@ -19,6 +20,7 @@ const REMOTE_JUPYTER_SPEC = 'remote-environment.yml'
 const MANAGED_KERNEL_NAME = 'phi-python'
 const MANAGED_KERNEL_DISPLAY_NAME = 'Python 3.12 (phi-python)'
 const SERVER_KERNEL_NAME = 'server-python'
+// This value is persisted in kernelspec/notebook data; the renderer localizes SERVER_KERNEL_NAME.
 const SERVER_KERNEL_LABEL = '服务器现有环境'
 const DETECT_TIMEOUT_MS = 45_000
 
@@ -62,7 +64,7 @@ export interface PrepareRemoteJupyterInput {
   requestId?: string
   signal?: AbortSignal
   /** Human-readable steps for the startup log. */
-  onProgress?: (text: string) => void
+  onProgress?: (text: string, metadata?: RemoteJupyterStartJobStepMetadata) => void
 }
 
 export interface ListRemoteKernelsInput {
@@ -81,6 +83,34 @@ export interface RegisterRemoteUserPrefixInput {
   runtimeSessionId: string
   name: string
   prefix: string
+}
+
+function reportExistingJupyterCheck(input: PrepareRemoteJupyterInput, configured?: string): void {
+  input.onProgress?.(
+    configured
+      ? `Checking Jupyter path ${configured} and the server login shell's PATH…`
+      : "Checking the server login shell's PATH for an existing Jupyter…",
+    configured
+      ? { code: 'checking_configured_jupyter', params: { configuredPath: configured } }
+      : { code: 'checking_server_path_jupyter' }
+  )
+}
+
+function reportExistingJupyter(
+  input: PrepareRemoteJupyterInput,
+  existing: { jupyter: string; python: string; version?: string }
+): void {
+  input.onProgress?.(
+    `Using existing server Jupyter: ${existing.jupyter}${existing.version ? ` (jupyter_server ${existing.version})` : ''}; kernel Python: ${existing.python}`,
+    {
+      code: 'using_existing_jupyter',
+      params: {
+        jupyterPath: existing.jupyter,
+        pythonPath: existing.python,
+        ...(existing.version ? { version: existing.version } : {})
+      }
+    }
+  )
 }
 
 export class RemoteKernelspecAdapter {
@@ -113,7 +143,11 @@ export class RemoteKernelspecAdapter {
       return prepared
     }
     input.onProgress?.(
-      '服务器上没有可用的 Jupyter Server（需要 jupyter server 与 ipykernel）；改用 Phi 受管环境 phi:jupyter@1，首次创建可能需要几分钟。'
+      'No usable Jupyter Server was found on the server (jupyter server and ipykernel are required). Using Phi managed environment phi:jupyter@1; first-time setup may take a few minutes.',
+      {
+        code: 'missing_jupyter_using_managed',
+        params: { environmentRef: REMOTE_JUPYTER_REF }
+      }
     )
     await this.requestEnvironment(input)
     input.signal?.throwIfAborted()
@@ -130,10 +164,14 @@ export class RemoteKernelspecAdapter {
     try {
       assertManagedPrefix(workspace, handle)
       await prepareJupyterDirectories(workspace)
-      input.onProgress?.(`使用受管环境中的 Jupyter：${posix.join(handle.prefix, 'bin', 'jupyter')}`)
+      const jupyterPath = posix.join(handle.prefix, 'bin', 'jupyter')
+      input.onProgress?.(`Using Jupyter from the managed environment: ${jupyterPath}`, {
+        code: 'using_managed_jupyter',
+        params: { jupyterPath }
+      })
       return {
         kernels,
-        launch: remoteJupyterLaunch(workspace, posix.join(handle.prefix, 'bin', 'jupyter')),
+        launch: remoteJupyterLaunch(workspace, jupyterPath),
         source: 'managed'
       }
     } finally {
@@ -150,18 +188,12 @@ export class RemoteKernelspecAdapter {
     try {
       const configured =
         selectedJupyterPath ?? (this.options.configuredJupyterPath?.()?.trim() || undefined)
-      input.onProgress?.(
-        configured
-          ? `正在检查设置中的 Jupyter 路径 ${configured}，以及服务器登录 shell 的 PATH…`
-          : '正在检测服务器登录 shell 的 PATH 中已有的 Jupyter…'
-      )
+      reportExistingJupyterCheck(input, configured)
       const existing = await detectExistingRemoteJupyter(workspace, configured, input.signal)
       if (!existing) return undefined
       if (selectedJupyterPath && existing.jupyter !== selectedJupyterPath) return undefined
       input.signal?.throwIfAborted()
-      input.onProgress?.(
-        `使用服务器已有的 Jupyter：${existing.jupyter}${existing.version ? `（jupyter_server ${existing.version}）` : ''}，kernel Python：${existing.python}`
-      )
+      reportExistingJupyter(input, existing)
       // The spec creates jupyter/ first; the parallel mkdirs below would race on it.
       await writeSpec(workspace, SERVER_KERNEL_NAME, serverPythonSpec(existing))
       await prepareJupyterDirectories(workspace)
@@ -217,12 +249,14 @@ export class RemoteKernelspecAdapter {
         runtimeSessionId: input.runtimeSessionId,
         environment: REMOTE_JUPYTER_REF,
         packages,
-        reason: '准备含 Jupyter Server 与 ipykernel 的远程 Notebook 环境',
+        reason: 'Prepare a remote Notebook environment with Jupyter Server and ipykernel',
         ...(requestId ? { requestId } : {})
       })
       .finally(() => input.signal?.removeEventListener('abort', cancel))
-    if (input.signal?.aborted) throw new Error('远程 Notebook 环境准备已取消')
-    if ('declined' in result) throw new Error('已取消准备远程 Notebook 环境')
+    if (input.signal?.aborted)
+      throw new Error('Remote Notebook environment preparation was cancelled')
+    if ('declined' in result)
+      throw new Error('Remote Notebook environment preparation was declined')
     if ('error' in result) throw remoteJupyterEnvironmentError(result.error)
   }
 
@@ -236,14 +270,14 @@ export class RemoteKernelspecAdapter {
     const selectedName = name ?? diagnostics.preferredKernelName
     const kernel = diagnostics.kernels.find((candidate) => candidate.name === selectedName)
     if (!kernel || kernel.status === 'not-built' || kernel.source === 'host') {
-      throw new Error(`远程 Notebook kernel ${selectedName ?? '(default)'} 不可用`)
+      throw new Error(`Remote Notebook kernel ${selectedName ?? '(default)'} is unavailable`)
     }
     return kernel
   }
 
   async registerUserPrefix(input: RegisterRemoteUserPrefixInput): Promise<AnalysisKernelSummary> {
     if (this.options.allowUserPrefixes !== true) {
-      throw new Error('远程 Notebook 用户 prefix 开关默认关闭；需由调用方显式启用')
+      throw new Error('Remote Notebook user prefixes are disabled unless the caller opts in')
     }
     const kernel = checkedUserKernel(input.name)
     const prefix = checkedUserPrefix(input.prefix)
@@ -263,7 +297,7 @@ export class RemoteKernelspecAdapter {
   ): Promise<RemoteEnvironmentHandle> {
     const handle = await this.readyManagedEnvironment(runtimeSessionId, signal)
     if (handle) return handle
-    throw new Error('远程 Notebook 环境尚未创建')
+    throw new Error('The remote Notebook environment has not been created')
   }
 
   private async readyManagedEnvironment(
@@ -390,27 +424,33 @@ function remoteJupyterLaunch(
 function remoteJupyterPackages(environmentsDir = bundledEnvironmentsDir()): string[] {
   const path = join(environmentsDir, 'phi-jupyter', REMOTE_JUPYTER_SPEC)
   const parsed = parseEnvironmentSpec(readFileSync(path, 'utf8'))
-  if (!parsed.ok) throw new Error(`远程 Notebook 环境声明无效：${parsed.errors.join('；')}`)
+  if (!parsed.ok) {
+    throw new Error(
+      `The remote Notebook environment declaration is invalid: ${parsed.errors.join('; ')}`
+    )
+  }
   const packages = parsed.spec.dependencies.filter(
     (dependency): dependency is string => typeof dependency === 'string'
   )
   if (packages.length !== parsed.spec.dependencies.length) {
-    throw new Error('远程 Notebook 环境声明只能包含 conda 包')
+    throw new Error('The remote Notebook environment declaration may contain only conda packages')
   }
   return packages
 }
 
 function remoteJupyterEnvironmentError(message: string): Error {
-  return new Error(`无法安装含 Jupyter + ipykernel 的远程 Notebook 环境：${message}`)
+  return new Error(
+    `Unable to install the remote Notebook environment with Jupyter + ipykernel: ${message}`
+  )
 }
 
 function remoteEnvironmentHandle(value: Record<string, unknown>): RemoteEnvironmentHandle {
   const required = ['ref', 'envId', 'name', 'prefix'] as const
   if (required.some((key) => typeof value[key] !== 'string')) {
-    throw new Error('远程 Notebook 环境绑定结果无效')
+    throw new Error('The remote Notebook environment binding result is invalid')
   }
   if (!Array.isArray(value.packages) || !Array.isArray(value.channels)) {
-    throw new Error('远程 Notebook 环境绑定结果无效')
+    throw new Error('The remote Notebook environment binding result is invalid')
   }
   return value as unknown as RemoteEnvironmentHandle
 }
@@ -420,7 +460,11 @@ function assertManagedPrefix(
   handle: RemoteEnvironmentHandle
 ): void {
   const expected = posix.join(workspace.runtimeRoot, 'envs', handle.envId)
-  if (handle.prefix !== expected) throw new Error('远程 Notebook 环境 prefix 不在受管运行时目录中')
+  if (handle.prefix !== expected) {
+    throw new Error(
+      'The remote Notebook environment prefix is outside the managed runtime directory'
+    )
+  }
 }
 
 function managedPythonSpec(handle: RemoteEnvironmentHandle): KernelSpecFile {
@@ -490,13 +534,13 @@ function existingDiagnostics(existing: ExistingRemoteJupyter): AnalysisKernelDia
     preferredKernelName: SERVER_KERNEL_NAME,
     hasPythonKernel: true,
     hasRKernel: false,
-    messages: [`使用服务器已有的 Jupyter：${existing.jupyter}`]
+    messages: [`Using existing server Jupyter: ${existing.jupyter}`]
   }
 }
 
 function checkedUserKernel(value: string): { label: string; name: string } {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/.test(value)) {
-    throw new Error('远程 Notebook 用户 kernel 名称无效')
+    throw new Error('The remote Notebook user kernel name is invalid')
   }
   return { label: value, name: hostKernelName(value) }
 }
@@ -504,7 +548,7 @@ function checkedUserKernel(value: string): { label: string; name: string } {
 function checkedUserPrefix(value: string): string {
   const normalized = posix.normalize(value)
   if (!posix.isAbsolute(value) || normalized !== value || /[\0\r\n]/.test(value)) {
-    throw new Error('远程 Notebook 用户 prefix 必须是规范的服务器绝对路径')
+    throw new Error('The remote Notebook user prefix must be a normalized absolute server path')
   }
   return normalized
 }
@@ -515,7 +559,9 @@ async function checkUserPrefix(workspace: RemoteRuntimeWorkspace, prefix: string
     { cwd: workspace.projectRoot, timeoutMs: 10_000, maxOutputBytes: 16_384 }
   )
   if (result.code !== 0 || result.terminationReason) {
-    throw new Error('所选服务器 Python prefix 缺少可用的 ipykernel；未登记 kernelspec')
+    throw new Error(
+      'The selected server Python prefix does not have a usable ipykernel; no kernelspec was registered'
+    )
   }
 }
 

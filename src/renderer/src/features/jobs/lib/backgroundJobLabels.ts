@@ -6,7 +6,10 @@ import type {
   BackgroundAgentJob,
   BackgroundShellJob
 } from '../../../../../shared/backgroundJobTypes'
-import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
+import type {
+  RemoteJupyterStartJob,
+  RemoteJupyterStartJobTextParams
+} from '../../../../../shared/remoteJupyterJobTypes'
 import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJobTypes'
 import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProjectUploadTypes'
 import { formatAgentDuration } from '../../../lib/agentRunsOverview'
@@ -31,6 +34,69 @@ export const JOB_TONE_COLOR: Record<JobTone, string> = {
 }
 
 export type JobDetailField = { label: string; value: string; mono?: boolean; scroll?: boolean }
+
+type RemoteJupyterPhase = Pick<RemoteJupyterStartJob, 'phase'> & {
+  phaseCode?: string
+  phaseParams?: RemoteJupyterStartJobTextParams
+}
+
+type RemoteJupyterTextParams = RemoteJupyterStartJobTextParams | undefined
+
+// Built at render time so a language switch relabels existing jobs.
+const REMOTE_JUPYTER_TEXT: Record<string, (params: RemoteJupyterTextParams) => string> = {
+  preparing: () => jobsCopy.remoteJupyterPreparing,
+  connecting: (params) => jobsCopy.remoteJupyterConnecting(params?.serverLabel),
+  checking_configured_jupyter: (params) =>
+    jobsCopy.remoteJupyterCheckingConfiguredPath(params?.configuredPath),
+  checking_server_path_jupyter: () => jobsCopy.remoteJupyterCheckingServerPath,
+  missing_jupyter_using_managed: (params) =>
+    jobsCopy.remoteJupyterMissingUsingManaged(params?.environmentRef),
+  using_existing_jupyter: (params) =>
+    jobsCopy.remoteJupyterUsingExisting(params?.jupyterPath, params?.version, params?.pythonPath),
+  using_managed_jupyter: (params) => jobsCopy.remoteJupyterUsingManaged(params?.jupyterPath),
+  allocating_ports: () => jobsCopy.remoteJupyterAllocatingPorts,
+  starting_lease: () => jobsCopy.remoteJupyterStartingLease,
+  probing_through_tunnel: () => jobsCopy.remoteJupyterProbingThroughTunnel,
+  ready: () => jobsCopy.remoteJupyterReady,
+  cleaning: () => jobsCopy.remoteJupyterCleaning,
+  reconciling: () => jobsCopy.remoteJupyterReconciling,
+  disconnected: () => jobsCopy.remoteJupyterDisconnected
+}
+
+const REMOTE_JUPYTER_PHASE_ONLY: Record<string, () => string> = {
+  failed: () => jobsCopy.remoteJupyterFailed,
+  cancelled: () => jobsCopy.remoteJupyterCancelled
+}
+
+const REMOTE_JUPYTER_ENTRY_ONLY: Record<string, () => string> = {
+  startup_cancelled: () => jobsCopy.remoteJupyterStartupCancelled
+}
+
+export function remoteJupyterPhaseLabel(job: RemoteJupyterPhase): string {
+  const code = job.phaseCode ?? ''
+  if (Object.hasOwn(REMOTE_JUPYTER_PHASE_ONLY, code)) return REMOTE_JUPYTER_PHASE_ONLY[code]()
+  if (Object.hasOwn(REMOTE_JUPYTER_TEXT, code)) return REMOTE_JUPYTER_TEXT[code](job.phaseParams)
+  return job.phase
+}
+
+export function remoteJupyterEntryLabel(
+  entry: Pick<RemoteJupyterStartJob['entries'][number], 'at' | 'kind' | 'text'> & {
+    code?: string
+    params?: RemoteJupyterStartJobTextParams
+  }
+): string {
+  // Server stdout/stderr is user data, even if a future producer accidentally attaches a code.
+  if (entry.kind === 'output') return entry.text
+  const code = entry.code ?? ''
+  const format = Object.hasOwn(REMOTE_JUPYTER_ENTRY_ONLY, code)
+    ? REMOTE_JUPYTER_ENTRY_ONLY[code]
+    : code !== 'preparing' && Object.hasOwn(REMOTE_JUPYTER_TEXT, code)
+      ? REMOTE_JUPYTER_TEXT[code]
+      : undefined
+  if (!format) return entry.text
+  const label = format(entry.params)
+  return entry.params?.detail ? `${label}: ${entry.params.detail}` : label
+}
 
 const AGENT_STATE_LABELS = {
   get queued() {
@@ -237,7 +303,7 @@ export function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
   if (item.kind === 'jupyter') {
     return [
       JUPYTER_STATE_LABELS[item.job.state],
-      item.job.state === 'failed' ? item.job.error : item.job.phase
+      item.job.state === 'failed' ? item.job.error : remoteJupyterPhaseLabel(item.job)
     ]
       .filter(Boolean)
       .join(' · ')
@@ -487,7 +553,7 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
           { label: jobsCopy.project, value: item.job.projectName },
           { label: jobsCopy.server, value: item.job.serverLabel },
           { label: jobsCopy.status, value: status },
-          { label: jobsCopy.currentStep, value: item.job.phase },
+          { label: jobsCopy.currentStep, value: remoteJupyterPhaseLabel(item.job) },
           { label: jobsCopy.started, value: timeLabel(item.job.startedAt) },
           {
             label: jobsCopy.duration,
