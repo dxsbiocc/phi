@@ -178,6 +178,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          sparse-checkout: docs/release-notes
       - uses: actions/download-artifact@v4.3.0
         with:
           path: release
@@ -189,8 +192,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+        # Hand-written notes in docs/release-notes/<tag>.md win; generated notes
+        # list only merged pull requests.
         run: |
+          notes="docs/release-notes/$GITHUB_REF_NAME.md"
+          if [ -f "$notes" ]; then source=(--notes-file "$notes"); else source=(--generate-notes); fi
           gh release create "$GITHUB_REF_NAME" release/* \
             --draft \
             --title "Phi $GITHUB_REF_NAME" \
-            --generate-notes
+            "${source[@]}"

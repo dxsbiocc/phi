@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { PassThrough, type Readable } from 'node:stream'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -17,6 +18,11 @@ import {
 } from '../src/shared/kernel-protocol'
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+const APP_VERSION = (
+  JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+    version: string
+  }
+).version
 
 function request(
   id: string,
@@ -200,7 +206,7 @@ test('the headless Bun entry negotiates, exposes worker capabilities, and exits 
     ])
     assert.equal(greetingResult.controllerGeneration, 1)
     assert.equal(greetingResult.lastSeq, 0)
-    assert.deepEqual(greetingResult.kernel, { version: '0.1.0', ompVersion: '18.10.3' })
+    assert.deepEqual(greetingResult.kernel, { version: APP_VERSION, ompVersion: '18.10.3' })
 
     const exitStarted = Date.now()
     child.stdin.end()

@@ -37,13 +37,13 @@ const packageJson = JSON.parse(packageText) as {
 
 test('release branding freezes the Phi identity and publishes to draft GitHub releases', () => {
   assert.equal(builder.appId, 'cn.phiscience.phi')
+  assert.match(packageJson.version ?? '', /^\d+\.\d+\.\d+$/)
   assert.equal(builder.productName, 'Phi')
   assert.equal(builder.linux?.maintainer, 'Phi Science')
 
   assert.deepEqual(packageJson, {
     ...packageJson,
     name: 'phi',
-    version: '0.1.0',
     description: 'A local desktop workbench for scientific AI workflows',
     author: 'Phi Science',
     homepage: 'https://phi.omicsagent.cn/'

@@ -41,6 +41,9 @@ test('releases are drafted only from version tags, never published automatically
   const create = draft?.steps?.find((step) => step.name === 'Create draft release')
   assert.match(create?.run ?? '', /gh release create "\$GITHUB_REF_NAME"/)
   assert.match(create?.run ?? '', /--draft/)
+  // Hand-written notes for the tag win over generated ones, which list only merged PRs.
+  assert.match(create?.run ?? '', /docs\/release-notes\/\$GITHUB_REF_NAME\.md/)
+  assert.match(create?.run ?? '', /--notes-file/)
   // Only the draft job may write; packaging jobs stay read-only.
   for (const [name, job] of Object.entries(workflow.jobs ?? {})) {
     if (name !== 'draft-release') assert.equal(job.permissions, undefined, name)
