@@ -591,6 +591,49 @@ test('a grouped RNA-seq run uses one compact parent card with Slurm context', ()
   assert.match(markup, /min-height:68px/)
 })
 
+test('an expanded workflow step shows its name and status without a label above the card', () => {
+  const live = selectBackgroundJobs(
+    [],
+    [
+      wrapper({
+        runId: 'wrun_fastqc',
+        executor: 'slurm',
+        remote: { host: 'GPU', runDir: '/remote/run' },
+        wrapper: {
+          canonicalId: 'nf-core/modules/fastqc',
+          namespace: 'nf-core/modules',
+          shortId: 'fastqc',
+          version: '1.0.0'
+        },
+        workflow: { id: 'rna-1', name: 'Paired-end RNA-seq', step: '1_fastqc', totalSteps: 4 }
+      })
+    ]
+  )
+  const workflow = groupBackgroundJobs(live.active)[0]
+  assert.equal(workflow.kind, 'workflow')
+  if (workflow.kind !== 'workflow') return
+  const markup = render(
+    createElement(BackgroundWorkflowRow, {
+      workflow,
+      expanded: true,
+      onToggle: () => undefined,
+      renderChild: (job) =>
+        createElement(BackgroundJobRow, {
+          compact: true,
+          item: job,
+          nowMs: Date.parse('2026-09-27T10:02:00.000Z'),
+          busy: false,
+          onOpen: () => undefined,
+          onStop: () => undefined
+        })
+    })
+  )
+  assert.match(markup, /1_fastqc/)
+  assert.doesNotMatch(markup, /fastqc ·/)
+  assert.doesNotMatch(markup, /Wrapper · wrun_fastqc/)
+  assert.match(markup, /height:44px/)
+})
+
 test('animated list starts new cards at the reference zero scale', () => {
   const markup = render(
     createElement(

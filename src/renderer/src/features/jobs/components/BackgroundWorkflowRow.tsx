@@ -70,26 +70,20 @@ export function BackgroundWorkflowRow({
         <ToggleIcon size={16} />
       </ButtonBase>
       <Collapse in={expanded} unmountOnExit>
-        <Box sx={{ pl: 1.5, pt: 0.75, borderLeft: 1, borderColor: 'divider', ml: 2.25 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 0.5,
+            mt: 0.5,
+            ml: 2.25,
+            pl: 1.25,
+            borderLeft: 1,
+            borderColor: 'divider'
+          }}
+        >
           {workflow.jobs.map((job) => (
-            <Box key={job.key}>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ display: 'block', mb: 0.35 }}
-              >
-                {[
-                  job.run.wrapper.shortId,
-                  ['slurm', 'slurm-controller'].includes(job.run.executor)
-                    ? jobsCopy.workflowSlurm
-                    : undefined,
-                  job.run.remote?.host
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </Typography>
-              {renderChild(job)}
-            </Box>
+            <Box key={job.key}>{renderChild(job)}</Box>
           ))}
         </Box>
       </Collapse>

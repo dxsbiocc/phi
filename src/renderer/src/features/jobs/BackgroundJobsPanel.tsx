@@ -186,6 +186,7 @@ export function BackgroundJobsPanel({
           }
           renderChild={(job) => (
             <BackgroundJobRow
+              compact
               item={job}
               nowMs={nowMs}
               busy={busyKey === job.key}

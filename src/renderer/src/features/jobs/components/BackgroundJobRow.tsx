@@ -23,6 +23,7 @@ const StopIcon = PhiIcons.action.stop
 export function BackgroundJobRow({
   item,
   busy,
+  compact = false,
   onOpen,
   onStop,
   onRetry
@@ -30,6 +31,8 @@ export function BackgroundJobRow({
   item: UnifiedBackgroundJob
   nowMs: number
   busy: boolean
+  /** Workflow steps show the tool name and status, without the source line. */
+  compact?: boolean
   onOpen: (item: UnifiedBackgroundJob) => void
   onStop: (item: UnifiedBackgroundJob) => void
   onRetry?: (item: UnifiedBackgroundJob) => void
@@ -59,9 +62,10 @@ export function BackgroundJobRow({
         border: 1,
         borderColor: 'divider',
         borderRadius: 2,
-        p: 1,
-        mb: 0.9,
-        height: 68,
+        px: compact ? 1.25 : 1,
+        py: compact ? 0.75 : 1,
+        mb: compact ? 0 : 0.9,
+        height: compact ? 44 : 68,
         boxSizing: 'border-box',
         position: 'relative',
         display: 'flex',
@@ -103,15 +107,17 @@ export function BackgroundJobRow({
               {status.label}
             </Typography>
           </Stack>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            component="div"
-            title={`${jobSource(item)} · ${jobSubtitle(item)}`}
-            noWrap
-          >
-            {jobSource(item)} · {jobSubtitle(item)}
-          </Typography>
+          {compact ? null : (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              component="div"
+              title={`${jobSource(item)} · ${jobSubtitle(item)}`}
+              noWrap
+            >
+              {jobSource(item)} · {jobSubtitle(item)}
+            </Typography>
+          )}
         </Box>
       </Stack>
       {(item.kind === 'environment' || item.kind === 'upload') && item.active && (
@@ -125,7 +131,15 @@ export function BackgroundJobRow({
         />
       )}
       {(canStop || canRetryJob) && (
-        <Stack direction="row" spacing={0.25} sx={{ position: 'absolute', bottom: 2, right: 5 }}>
+        <Stack
+          direction="row"
+          spacing={0.25}
+          sx={{
+            position: 'absolute',
+            right: 5,
+            ...(compact ? { top: '50%', transform: 'translateY(-50%)' } : { bottom: 2 })
+          }}
+        >
           {onRetry && item.kind !== 'history' && (
             <Button
               size="small"
