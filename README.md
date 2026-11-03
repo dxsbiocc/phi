@@ -20,27 +20,47 @@ A general AI assistant improvises every step. That is fine for a chart and dange
 
 ## Design principles
 
-- **Improvise only where improvising helps.** Exploration happens in notebooks, where a wrong cell is cheap. Known pipelines run through [Wrappers](#wrappers-known-science-as-a-fixed-tool), where a wrong command is expensive.
+- **Improvise only where improvising helps.** Exploration happens in notebooks, where a wrong cell is cheap. Known pipelines run through [Wrappers](#wrappers-known-science-as-fixed-composable-steps), where a wrong command is expensive.
 - **The environment follows the task.** Skills, specialist agents, kernels, and Wrappers declare what they need, and Phi prepares it in managed environments, isolated from your own conda and from whatever the host has installed.
 - **Compute goes to the data.** Phi does not quietly upload your data. A remote run uses paths on the server, its outputs stay there, and a remote project never falls back to your desktop.
 - **Specialists own their work.** The agent hands matching work to a focused specialist with its own tools and instructions, rather than attempting everything itself.
 - **You approve what matters.** Modes decide how much the agent may do alone, plans wait for your review, and each run is something you can inspect and cancel.
 - **Your work stays yours.** Results are ordinary files in the folder you chose, so they outlive any conversation, and any model.
 
-## Wrappers: known science as a fixed tool
+## Wrappers: known science as fixed, composable steps
 
-A Wrapper is one fixed, versioned Nextflow tool or pipeline, with its inputs, parameters, and outputs declared. It is not a prompt and not code the agent writes. The [Phi Packages](https://github.com/dxsbiocc/phi-packages) catalog has 652 of them, most adapted from nf-core modules and subworkflows, including FastQC, fastp, STAR, Salmon, and DESeq2.
+Phi breaks established analysis methods into atomic tools called Wrappers. Each Wrapper is one versioned Nextflow unit with its inputs, parameters, and outputs declared. It is not a prompt and not code the agent writes. The [Phi Packages](https://github.com/dxsbiocc/phi-packages) catalog has 652 of them: 630 single tools such as FastQC, fastp, STAR, Salmon, and DESeq2, 21 subworkflows, and one complete RNA-seq workflow. Most are adapted from nf-core.
 
-This changes what the agent is responsible for. It no longer has to assemble an environment, recall a tool's flags, or guess where the results went. It has to choose the right tool and supply the right inputs:
+This changes what the agent is responsible for. It no longer assembles environments, recalls a tool's flags, or writes pipeline commands. It chooses which tools to use, in what order, and with which inputs. Everything below that is fixed code.
+
+### Nextflow runs every step
+
+Phi does not reimplement execution. Every Wrapper run is a `nextflow run` of that Wrapper's source, with a parameter file and a configuration that Phi generates for the chosen target. Nextflow then manages the processes, containers or conda environments, the local or Slurm scheduler, and the CPU, memory, and time limits of each task.
+
+### Two ways to run an analysis
+
+- **Compose atomic tools.** For a task that no predefined workflow covers, the agent chains single-tool Wrappers into a workflow: the outputs of one step become the inputs of the next. All steps share one workflow identity with a name, a step label, and a planned step count, so Phi shows and reports them as one pipeline, even across turns. Each step is still its own Nextflow run, so it can be inspected, retried, or cancelled on its own.
+- **Run a defined workflow.** When a subworkflow or complete workflow already covers the task, such as RNA-seq, the agent runs it as one unit, and the order of steps is the one its authors fixed.
 
 ```mermaid
 flowchart TD
-    A["You: run QC on these reads"] --> B["Wrapper specialist finds the wrapper and reads its contract"]
-    B --> C["Fills in your inputs and keeps the defaults"]
-    C --> D["Runs in the background on the chosen target"]
-    D --> E["Run record, logs, and outputs"]
-    E --> F["Agent is woken with the outcome and continues"]
+    A["You: trim, align, and count these samples"] --> B["Wrapper specialist searches the catalog and reads each contract"]
+    B --> C{"A defined workflow covers it?"}
+    C -- "Yes" --> D["Run that workflow as one unit"]
+    C -- "No" --> E["Chain single tools under one workflow identity"]
+    D --> F["Nextflow runs each step locally, on a server, or on Slurm"]
+    E --> F
+    F --> G["Run records, logs, and outputs for every step"]
+    G --> H["Agent is woken with the outcome and continues"]
 ```
+
+### Every step leaves a trace
+
+- **Checked before it starts.** The Wrapper specialist reads the tool's current contract before any run. Phi checks required parameters, types, allowed values, and ranges, checks that input files exist, on the server for a remote run, and rejects file patterns that would silently merge samples.
+- **Recorded while it runs.** Each run has its own directory with the exact parameters and Nextflow configuration it ran with, its logs, and its outputs. Its record in the Wrappers view keeps its state and events, and the workflow it belongs to.
+- **Checked after it ends.** Phi confirms that each primary output exists, and a run can be exported as reproducibility metadata: the run, its manifest, events, parameters, and outputs.
+
+### Fixed where it matters
 
 |                  | Notebook                          | Wrapper                                           |
 | ---------------- | --------------------------------- | ------------------------------------------------- |
@@ -53,13 +73,12 @@ flowchart TD
 
 What this gives you in practice:
 
-- **The agent does not improvise a pipeline.** Wrapper work goes to the Wrapper specialist first, which reads the tool's current contract before any run. The agent may fall back to other tools only if that specialist reports a failure.
+- **The agent does not improvise a pipeline.** Wrapper work goes to the Wrapper specialist first. The agent may fall back to other tools only if that specialist reports a failure.
 - **Long runs do not hold the conversation.** A run returns an id straight away. You can keep working, and when it ends Phi wakes the conversation with the outcome so the next step can use the results.
-- **Pipelines stay together.** Several runs can share one workflow identity, such as the steps of an RNA-seq analysis, across turns.
-- **Clusters are first-class.** Wrappers can submit to Slurm, on a login node or as a controller job. Phi checks that remote inputs exist before starting, and remote runs keep going after you close the app. If Phi loses track of one, it reports the run as lost rather than guessing that it failed.
-- **New tools stay reviewable.** The built-in Wrapper specialist can author a new wrapper as source in Phi Packages, so it can be tested and published like the others.
+- **Clusters are first-class.** Wrappers can submit to Slurm, on a login node or as a controller job. Remote runs keep going after you close the app. If Phi loses track of one, it reports the run as lost rather than guessing that it failed.
+- **New tools stay reviewable.** The built-in Wrapper specialist can author a new Wrapper as source in Phi Packages, so it can be tested and published like the others.
 
-Reproducibility here means fixed code and declared inputs, with a record of each run. Environments are pinned as far as each wrapper's own definition pins them, so check that definition when exact reproduction matters.
+Reproducibility here means fixed code and declared inputs, with a record of each run. Environments are pinned as far as each Wrapper's own definition pins them, so check that definition when exact reproduction matters.
 
 ## How to use Phi
 
