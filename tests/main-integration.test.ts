@@ -2165,6 +2165,18 @@ async function harness(
       logServerConnections: (): void => undefined,
       logProjectConnectionState: (): void => undefined
     },
+    './agent/host-requests/missing-tool-prompt': {
+      createMissingToolPrompt: () => async () => ({ action: 'cancel' })
+    },
+    './agent/missing-tool-runtime': {
+      createMissingToolRuntime: () => ({
+        confirmManagedToolBuild: async () => false,
+        containerRuntimePath: (): undefined => undefined,
+        checkLocalWrapperEnvironment: async () => undefined,
+        checkRemoteWrapperEnvironment: async () => undefined,
+        resolveMissingJupyter: async () => undefined
+      })
+    },
     './agent/projects': {
       subscribeRemoteProjectConnection: (): (() => void) => noop,
       deleteProject: (): void => undefined,

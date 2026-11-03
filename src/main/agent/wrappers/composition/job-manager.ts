@@ -14,7 +14,7 @@ import type { WrapperExecutor, WrapperRun } from '../types'
 import {
   findWrapperCompositionEntry,
   readWrapperCompositionDag,
-  readWrapperDefaultParams,
+  wrapperRunDefaults,
   type WrapperCompositionDiscoveryOptions,
   type WrapperCompositionEntry
 } from './discovery'
@@ -98,7 +98,12 @@ export interface WrapperJobManagerOptions {
     project: Project
     resolved: ResolvedRemoteTarget
     profile: WrapperExecutionProfile
-  }) => Promise<WrapperTargetDoctorSnapshot>
+    runtimeSessionId?: string
+  }) => Promise<WrapperTargetDoctorSnapshot | { blocked: string }>
+  checkLocalEnvironment?: (input: {
+    profile: WrapperExecutionProfile
+    runtimeSessionId?: string
+  }) => Promise<void | { blocked: string }>
   /** Local root the remote bundle is built from. Defaults to the assembled wrapper tree. */
   wrappersRoot?: () => string
   discovery?: WrapperCompositionDiscoveryOptions
@@ -189,6 +194,21 @@ function requireLaunch(launch: NextflowLaunch | undefined): NextflowLaunch {
   return launch
 }
 
+class WrapperEnvironmentBlockedError extends Error {}
+
+function checkedRemoteDoctor(
+  value: WrapperTargetDoctorSnapshot | { blocked: string }
+): WrapperTargetDoctorSnapshot {
+  if ('blocked' in value) throw new WrapperEnvironmentBlockedError(value.blocked)
+  return value
+}
+
+function remoteEnvironmentCheckError(error: unknown): string {
+  return error instanceof WrapperEnvironmentBlockedError
+    ? error.message
+    : `远程环境检查失败：${errorMessage(error)}`
+}
+
 function remoteField(run: WrapperRun): { remote?: { host: string; runDir: string } } {
   return run.remote ? { remote: { host: run.remote.host, runDir: run.remote.runDir } } : {}
 }
@@ -205,6 +225,7 @@ export class WrapperJobManager implements WrapperJobClient {
     NonNullable<WrapperJobManagerOptions['resolveRemoteTarget']> | undefined
   private readonly resolveProjectForRun: WrapperJobManagerOptions['resolveProjectForRun']
   private readonly checkRemoteEnvironment: WrapperJobManagerOptions['checkRemoteEnvironment']
+  private readonly checkLocalEnvironment: WrapperJobManagerOptions['checkLocalEnvironment']
   private readonly wrappersRoot: () => string
   private readonly discovery: WrapperCompositionDiscoveryOptions
   private readonly killGraceMs: number | undefined
@@ -218,6 +239,7 @@ export class WrapperJobManager implements WrapperJobClient {
     this.resolveRemote = options.resolveRemoteTarget
     this.resolveProjectForRun = options.resolveProjectForRun
     this.checkRemoteEnvironment = options.checkRemoteEnvironment
+    this.checkLocalEnvironment = options.checkLocalEnvironment
     this.discovery = options.discovery ?? {}
     this.wrappersRoot =
       options.wrappersRoot ?? (() => this.discovery.sourceRoot ?? wrapperTreeDir(this.agentDir()))
@@ -263,6 +285,20 @@ export class WrapperJobManager implements WrapperJobClient {
     }
   }
 
+  private catalogDiscoveryForProject(
+    project: Project | null | undefined
+  ): WrapperCompositionDiscoveryOptions {
+    return {
+      ...this.discovery,
+      agentDir: this.agentDir(),
+      ...(project?.location.kind === 'local' ? { projectDir: project.workingDirectory } : {})
+    }
+  }
+
+  catalogDiscovery(originSessionId?: string): WrapperCompositionDiscoveryOptions {
+    return this.catalogDiscoveryForProject(this.resolveProjectForRun?.(originSessionId))
+  }
+
   async start(
     input: {
       id: string
@@ -293,11 +329,7 @@ export class WrapperJobManager implements WrapperJobClient {
       return { ok: false, error: '无法确认 Wrapper 请求所属的会话或项目，已拒绝本机执行。' }
     }
     const project = projectContext ?? undefined
-    const entry = findWrapperCompositionEntry(id, {
-      ...this.discovery,
-      agentDir: this.agentDir(),
-      ...(project?.location.kind === 'local' ? { projectDir: project.workingDirectory } : {})
-    })
+    const entry = findWrapperCompositionEntry(id, this.catalogDiscoveryForProject(projectContext))
     if (!entry) return { ok: false, error: `Wrapper not found or disabled: ${id}` }
     if (project?.location.kind === 'ssh' && input.target === 'local') {
       const decision = chooseWrapperTarget({
@@ -331,6 +363,13 @@ export class WrapperJobManager implements WrapperJobClient {
         ok: false,
         error: `Invalid profile: ${profile}. Must be one of ${WRAPPER_EXECUTION_PROFILES.join(', ')}.`
       }
+    }
+    if (!resolved && this.checkLocalEnvironment) {
+      const checked = await this.checkLocalEnvironment({
+        profile: profile as WrapperExecutionProfile,
+        ...(input.originSessionId ? { runtimeSessionId: input.originSessionId } : {})
+      })
+      if (checked && 'blocked' in checked) return { ok: false, error: checked.blocked }
     }
     if (project) {
       const hostProfileId = resolved
@@ -368,15 +407,18 @@ export class WrapperJobManager implements WrapperJobClient {
       let doctor: WrapperTargetDoctorSnapshot | undefined
       if (resolved && this.checkRemoteEnvironment) {
         try {
-          doctor = await this.checkRemoteEnvironment({
-            project,
-            resolved,
-            profile: profile as WrapperExecutionProfile
-          })
+          doctor = checkedRemoteDoctor(
+            await this.checkRemoteEnvironment({
+              project,
+              resolved,
+              profile: profile as WrapperExecutionProfile,
+              ...(input.originSessionId ? { runtimeSessionId: input.originSessionId } : {})
+            })
+          )
         } catch (error) {
           return {
             ok: false,
-            error: `远程环境检查失败：${errorMessage(error)}`
+            error: remoteEnvironmentCheckError(error)
           }
         }
       }
@@ -396,7 +438,7 @@ export class WrapperJobManager implements WrapperJobClient {
         return { ok: false, error: 'Wrapper 执行目标与项目策略不一致，已停止提交。' }
       }
     }
-    const defaults = readWrapperDefaultParams(entry.wrapperDir)
+    const defaults = wrapperRunDefaults(entry)
     const mapping =
       resolved && project?.location.kind === 'local'
         ? project.remoteConnections?.find((connection) => connection.id === resolved.connectionId)

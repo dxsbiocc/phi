@@ -42,10 +42,16 @@ export type JupyterServerLaunch = {
   env?: Record<string, string>
 }
 
+export type JupyterLaunchContext = {
+  runtimeSessionId?: string
+  signal?: AbortSignal
+}
+
 /** Turns `{ port }` into a full launch, or throws (for example: environment not ready). */
 export type JupyterLaunchResolver = (
   projectCwd: string,
-  launch: JupyterServerLaunch
+  launch: JupyterServerLaunch,
+  context?: JupyterLaunchContext
 ) => Promise<JupyterServerLaunch>
 
 type StreamLike = {
@@ -126,8 +132,15 @@ function defaultProcessFactory(cwd: string, launch: JupyterServerLaunch): Manage
 }
 
 export function managedLaunchResolver(options: ManagedJupyterOptions = {}): JupyterLaunchResolver {
-  return (_projectCwd, launch) =>
-    resolveManagedJupyterLaunch({ ...launch, args: jupyterServerArgs(launch) }, options)
+  return (_projectCwd, launch, context) =>
+    resolveManagedJupyterLaunch(
+      { ...launch, args: jupyterServerArgs(launch) },
+      {
+        ...options,
+        ...(context?.runtimeSessionId ? { runtimeSessionId: context.runtimeSessionId } : {}),
+        ...(context?.signal ? { signal: context.signal } : {})
+      }
+    )
 }
 
 function resolveProjectCwd(workingDirectory: string): string {
@@ -306,7 +319,7 @@ export class JupyterServerRegistry {
     return { ...record.endpoint }
   }
 
-  start(workingDirectory: string): JupyterServerPublicStatus {
+  start(workingDirectory: string, context: JupyterLaunchContext = {}): JupyterServerPublicStatus {
     const projectCwd = resolveProjectCwd(workingDirectory)
     const existing = this.records.get(projectCwd)
     if (existing && (existing.state === 'starting' || existing.state === 'ready')) {
@@ -327,7 +340,7 @@ export class JupyterServerRegistry {
 
     const launch: JupyterServerLaunch = { port: record.port }
     if (this.resolveLaunch) {
-      void this.resolveAndSpawn(record, this.resolveLaunch, launch)
+      void this.resolveAndSpawn(record, this.resolveLaunch, launch, context)
     } else {
       this.spawnInto(record, launch)
     }
@@ -365,11 +378,12 @@ export class JupyterServerRegistry {
   private async resolveAndSpawn(
     record: JupyterServerRecord,
     resolve: JupyterLaunchResolver,
-    launch: JupyterServerLaunch
+    launch: JupyterServerLaunch,
+    context: JupyterLaunchContext
   ): Promise<void> {
     let resolved: JupyterServerLaunch
     try {
-      resolved = await resolve(record.projectCwd, launch)
+      resolved = await resolve(record.projectCwd, launch, context)
     } catch (error) {
       if (this.records.get(record.projectCwd) === record && record.state === 'starting') {
         this.markError(record, error)

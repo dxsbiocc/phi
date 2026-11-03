@@ -22,9 +22,12 @@ function stripHeredocBodies(command: string): string {
   return kept.join('\n')
 }
 
+// Standard shell devices such as `2>/dev/null` hold no project data.
+const SHELL_DEVICE = /^\/dev\/(?:null|zero|u?random|tty|std(?:in|out|err)|fd\/\d+)$/
+
 // Operators such as Python's `//` or `///` are not paths; a lone `/` (cd /) still is.
 function looksLikePath(token: string): boolean {
-  return !/^\/{2,}$/.test(token)
+  return !/^\/{2,}$/.test(token) && !SHELL_DEVICE.test(token)
 }
 
 function toolPaths(toolName: string, input: unknown): string[] {

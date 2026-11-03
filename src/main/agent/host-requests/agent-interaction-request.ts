@@ -2,7 +2,11 @@ import type { PhiHostRequestContext } from '../engine/types'
 import type {
   AgentUserInteractionQuestion,
   AgentUserInteractionRequest,
-  AgentUserInteractionResponse
+  AgentUserInteractionResponse,
+  MissingToolCandidateSource,
+  MissingToolId,
+  MissingToolPrompt,
+  MissingToolRejectReason
 } from '../../../shared/agentInteractionTypes'
 import { isRecord } from '../../../shared/guards'
 
@@ -61,6 +65,106 @@ export interface AgentInteractionRequestDeps<Window = unknown> {
 interface ParsedInteractionRequest {
   runtimeSessionId: string
   questions: AgentUserInteractionQuestion[]
+  missingTool?: MissingToolPrompt
+}
+
+const missingToolIds = new Set<MissingToolId>([
+  'nextflow',
+  'java',
+  'jupyter',
+  'docker',
+  'singularity',
+  'apptainer',
+  'podman'
+])
+const missingToolSources = new Set<MissingToolCandidateSource>([
+  'saved',
+  'path',
+  'conda',
+  'micromamba',
+  'phi',
+  'common'
+])
+
+// The bounded parser checks every renderer-facing field before the request crosses IPC.
+// eslint-disable-next-line complexity
+function missingToolField<Window>(
+  value: unknown,
+  runtimeSessionId: string,
+  deps: AgentInteractionRequestDeps<Window>
+): MissingToolPrompt | undefined {
+  if (!isRecord(value) || value.runtimeSessionId !== runtimeSessionId || !isRecord(value.tool)) {
+    return undefined
+  }
+  const id = value.tool.id
+  const label = deps.fields.optionalStringField(value.tool, 'label')
+  if (typeof id !== 'string' || !missingToolIds.has(id as MissingToolId) || !label) return undefined
+  if (!Array.isArray(value.candidates) || value.candidates.length > 32) return undefined
+  const candidates = value.candidates.flatMap((candidate) => {
+    if (!isRecord(candidate)) return []
+    const path = deps.fields.optionalStringField(candidate, 'path')
+    const source = candidate.source
+    const version = deps.fields.optionalStringField(candidate, 'version')
+    if (
+      !path?.startsWith('/') ||
+      /[\0\r\n]/.test(path) ||
+      typeof source !== 'string' ||
+      !missingToolSources.has(source as MissingToolCandidateSource)
+    ) {
+      return []
+    }
+    return [{ path, source: source as MissingToolCandidateSource, ...(version ? { version } : {}) }]
+  })
+  let install: MissingToolPrompt['install']
+  if (isRecord(value.install)) {
+    const environment = deps.fields.optionalStringField(value.install, 'environment')
+    const location = deps.fields.optionalStringField(value.install, 'location')
+    const approximateSize = deps.fields.optionalStringField(value.install, 'approximateSize')
+    const packages = Array.isArray(value.install.packages)
+      ? value.install.packages.filter(
+          (item): item is string => typeof item === 'string' && item.trim().length > 0
+        )
+      : []
+    if (
+      environment &&
+      location &&
+      approximateSize &&
+      packages.length > 0 &&
+      packages.length <= 20
+    ) {
+      install = { environment, location, approximateSize, packages }
+    }
+  }
+  const rejectedPath = rejectedPathField(value.rejectedPath, deps)
+  return {
+    runtimeSessionId,
+    tool: { id: id as MissingToolId, label },
+    candidates,
+    ...(install ? { install } : {}),
+    ...(rejectedPath ? { rejectedPath } : {})
+  }
+}
+
+const rejectReasons = new Set<MissingToolRejectReason>([
+  'path-must-be-absolute',
+  'invalid-path',
+  'not-executable',
+  'host-check-failed',
+  'no-version',
+  'java-too-old'
+])
+
+function rejectedPathField<Window>(
+  value: unknown,
+  deps: AgentInteractionRequestDeps<Window>
+): MissingToolPrompt['rejectedPath'] {
+  if (!isRecord(value)) return undefined
+  const path = deps.fields.optionalStringField(value, 'path')
+  const reason = value.reason
+  if (!path || path.length > 4_096 || /[\0\r\n]/.test(path)) return undefined
+  if (typeof reason !== 'string' || !rejectReasons.has(reason as MissingToolRejectReason))
+    return undefined
+  return { path, reason: reason as MissingToolRejectReason }
 }
 
 function interactionOptionsField<Window>(
@@ -118,7 +222,11 @@ function parseInteractionRequest<Window>(
   if (!runtimeSessionId || questions.length === 0) {
     throw new Error('Invalid user interaction request')
   }
-  return { runtimeSessionId, questions }
+  const missingTool = missingToolField(record.missingTool, runtimeSessionId, deps)
+  if (record.missingTool !== undefined && !missingTool) {
+    throw new Error('Invalid missing tool interaction request')
+  }
+  return { runtimeSessionId, questions, ...(missingTool ? { missingTool } : {}) }
 }
 
 function activeInteractionRun<Window>(
@@ -141,9 +249,13 @@ function interactionRequest(
   interactionId: string,
   questions: AgentUserInteractionQuestion[],
   run: AgentInteractionPromptRun,
-  project: AgentInteractionProject | undefined,
-  sessionPath: string
+  details: {
+    project: AgentInteractionProject | undefined
+    sessionPath: string
+    missingTool?: MissingToolPrompt
+  }
 ): AgentUserInteractionRequest {
+  const { project, sessionPath, missingTool } = details
   return {
     requestId: interactionId,
     questions,
@@ -152,7 +264,8 @@ function interactionRequest(
     sessionGeneration: run.sessionGeneration,
     runId: run.runId,
     cwd: project?.location.kind === 'ssh' ? project.location.remoteRoot : run.cwd,
-    ...(project?.name ? { projectName: project.name } : {})
+    ...(project?.name ? { projectName: project.name } : {}),
+    ...(missingTool ? { missingTool } : {})
   }
 }
 
@@ -190,7 +303,7 @@ export function createAgentInteractionRequest<Window = unknown>(
     params: unknown,
     context?: PhiHostRequestContext
   ): Promise<unknown> {
-    const { runtimeSessionId, questions } = parseInteractionRequest(params, deps)
+    const { runtimeSessionId, questions, missingTool } = parseInteractionRequest(params, deps)
     const run = activeInteractionRun(runtimeSessionId, context, deps)
     const window = deps.renderer.getActiveWindow()
     if (!deps.renderer.canRequest(window)) {
@@ -206,13 +319,11 @@ export function createAgentInteractionRequest<Window = unknown>(
       message: questions[0].question
     })
     const response = await deps.renderer.waitForResponse(
-      interactionRequest(
-        interactionId,
-        questions,
-        run,
+      interactionRequest(interactionId, questions, run, {
         project,
-        deps.state.sessionPath(run.phiSessionId)
-      ),
+        sessionPath: deps.state.sessionPath(run.phiSessionId),
+        missingTool
+      }),
       window as Window,
       [context?.signal]
     )

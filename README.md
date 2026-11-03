@@ -80,6 +80,22 @@ What this gives you in practice:
 
 Reproducibility here means fixed code and declared inputs, with a record of each run. Environments are pinned as far as each Wrapper's own definition pins them, so check that definition when exact reproduction matters.
 
+### A real run
+
+This run asked for FastQC, fastp, a Salmon index, and Salmon quantification on paired-end reads, as one workflow on a GPU server, using Docker. Nextflow was not on the server's login `PATH`, so before the first step Phi paused and asked where it was. It listed the Conda environment it had found, and offered a path field or a new managed environment as alternatives. Nothing is installed without your confirmation.
+
+<p align="center"><img src="assets/readme/wrapper-missing-tool.png" alt="A 'Required tool not found' card for Nextflow, listing a Conda environment it found, a path field, and an option to install a new environment" width="100%"></p>
+
+The Wrapper specialist then ran the four steps as one workflow. Background Jobs groups them under the workflow's name. The first Salmon quantification failed on the index path; the specialist corrected it and reran that step alone, so the workflow counts four completed steps.
+
+<p align="center"><img src="assets/readme/wrapper-workflow.png" alt="The conversation delegating to the Wrapper specialist, beside Background Jobs showing the PE RNA-seq demo workflow with 4/4 steps complete and each step's status" width="100%"></p>
+
+The answer reports the QC and mapping rate, names the Wrappers it used, and delivers the reports and quantification files.
+
+<p align="center"><img src="assets/readme/wrapper-summary.png" alt="The end of the conversation listing outputs, the Wrappers used, and cards for the delivered FastQC, fastp, and Salmon files" width="100%"></p>
+
+<sub>Captures from a Phi development build after 0.1.0, resized; the Background Jobs capture is cropped. Model: Grok 4.5 Fast.</sub>
+
 ## How to use Phi
 
 1. **Install Phi** from [Releases](https://github.com/dxsbiocc/phi/releases), or [build from source](#build-from-source).

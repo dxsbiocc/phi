@@ -4,6 +4,7 @@ import test from 'node:test'
 import { validateRemotePresentedFiles } from '../src/main/agent/deliverables/remote-present-files'
 import { wrapperJobHostHandlers } from '../src/main/agent/wrappers/composition/job-host-handlers'
 import { WrapperJobManager } from '../src/main/agent/wrappers/composition/job-manager'
+import { WRAPPER_CATALOG_HOST_METHODS } from '../src/main/agent/wrappers/composition/job-types'
 import { desktopToolsFixture } from './helpers/rpcDesktopToolsFixture'
 import { startJupyterProtocolFixture, waitForJupyter } from './helpers/jupyterProtocolFixture'
 import {
@@ -15,6 +16,7 @@ import { AnalysisNotebookToolExecutor } from '../src/main/agent/notebook/noteboo
 import { createNotebookWorkspace } from '../src/main/agent/notebook/notebook-workspace'
 import { createRemoteRuntimeFixture } from './helpers/remoteRuntimeFixture'
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { writeGffreadFixture } from './helpers/compositionFixtures'
 
 function record(value: unknown): Record<string, unknown> {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value))
@@ -217,14 +219,36 @@ test('real wrapper host client/handler/manager preserve trusted origin and unava
       return undefined
     }
   })
+  const sourceRoot = join(f.root, 'desktop-wrapper-catalog')
+  writeGffreadFixture(sourceRoot)
   const methods: string[] = []
-  for (const [method, handler] of Object.entries(wrapperJobHostHandlers(jobs)))
+  for (const [method, handler] of Object.entries(
+    wrapperJobHostHandlers(jobs, { discovery: { sourceRoot } })
+  ))
     f.services.register(method, (params, context) => {
       methods.push(method)
       assert.equal(context.originSessionId, 'runtime-session')
       assert.equal(context.toolCallId, 'wrapper-call')
       return handler(params)
     })
+  const searched = await f.call(
+    'wrapper_search',
+    { query: 'annotation conversion' },
+    'wrapper-call'
+  )
+  assert.deepEqual(
+    (searched.details as { results: Array<{ id: string }> }).results.map((entry) => entry.id),
+    ['nf-core/modules/gffread']
+  )
+  const inspected = await f.call(
+    'wrapper_inspect',
+    { id: 'nf-core/modules/gffread' },
+    'wrapper-call'
+  )
+  assert.equal(
+    (inspected.details as { manifest: { id: string } }).manifest.id,
+    'nf-core/modules/gffread'
+  )
   const unavailable = await f.call(
     'wrapper_run',
     { id: 'synthetic/missing-wrapper', originSessionId: 'forged' },
@@ -232,13 +256,26 @@ test('real wrapper host client/handler/manager preserve trusted origin and unava
   )
   assert.equal(unavailable.isError, true)
   assert.deepEqual(origins, ['runtime-session'])
-  assert.deepEqual(methods, ['wrapperJob.start'])
+  assert.deepEqual(methods, [
+    WRAPPER_CATALOG_HOST_METHODS.search,
+    WRAPPER_CATALOG_HOST_METHODS.inspect,
+    'wrapperJob.start'
+  ])
   await assert.rejects(
     f.call('wrapper_run', { id: 'synthetic/missing-wrapper', target: 'local' }, 'wrapper-call'),
     /cannot run a wrapper on the desktop/
   )
-  assert.deepEqual(methods, ['wrapperJob.start'])
+  assert.deepEqual(methods, [
+    WRAPPER_CATALOG_HOST_METHODS.search,
+    WRAPPER_CATALOG_HOST_METHODS.inspect,
+    'wrapperJob.start'
+  ])
   const status = await f.call('wrapper_status', { run_id: 'missing-run' }, 'wrapper-call')
   assert.equal(status.isError, true)
-  assert.deepEqual(methods, ['wrapperJob.start', 'wrapperJob.status'])
+  assert.deepEqual(methods, [
+    WRAPPER_CATALOG_HOST_METHODS.search,
+    WRAPPER_CATALOG_HOST_METHODS.inspect,
+    'wrapperJob.start',
+    'wrapperJob.status'
+  ])
 })

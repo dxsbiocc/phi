@@ -7,6 +7,7 @@ import { createHostJobClient } from '../src/main/agent/wrappers/composition/job-
 import { wrapperJobHostHandlers } from '../src/main/agent/wrappers/composition/job-host-handlers'
 import { WrapperJobManager } from '../src/main/agent/wrappers/composition/job-manager'
 import {
+  WRAPPER_CATALOG_HOST_METHODS,
   WRAPPER_JOB_HOST_METHODS,
   type WrapperJobStatus
 } from '../src/main/agent/wrappers/composition/job-types'
@@ -26,6 +27,7 @@ import {
 import {
   FAKE_NEXTFLOW,
   WRAPPER_ID,
+  FIXTURE_GFF,
   isAlive,
   pidFileReady,
   settlesWithin,
@@ -48,7 +50,7 @@ async function startJob(
 ): Promise<WrapperJobStatus> {
   const result = await m.start({
     id: WRAPPER_ID,
-    overrides: { outdir: sb.outdir, ...overrides },
+    overrides: { gff: FIXTURE_GFF, outdir: sb.outdir, ...overrides },
     profile: 'docker'
   })
   assert.equal(result.ok, true, JSON.stringify(result))
@@ -194,10 +196,41 @@ test('invalid parameters, an unknown wrapper or an unknown profile are rejected 
     assert.equal(unknownWrapper.ok, false)
     assert.match(unknownWrapper.ok ? '' : unknownWrapper.error, /not found/i)
 
-    const badProfile = await m.start({ id: WRAPPER_ID, overrides: {}, profile: 'podman' })
+    const badProfile = await m.start({
+      id: WRAPPER_ID,
+      overrides: { gff: FIXTURE_GFF },
+      profile: 'podman'
+    })
     assert.equal(badProfile.ok, false)
     assert.match(badProfile.ok ? '' : badProfile.error, /profile/i)
 
+    assert.deepEqual(listWrapperRuns(sb.agentDir), [])
+  })
+})
+
+test('local wrapper start pauses for missing host tools and preserves a declined block', async () => {
+  await withSandbox(async (sb) => {
+    sb.useFake()
+    let seen: { profile: string; runtimeSessionId?: string } | undefined
+    const m = manager(sb, {
+      checkLocalEnvironment: async (input) => {
+        seen = input
+        return { blocked: 'Docker is missing and the user declined to choose it.' }
+      }
+    })
+
+    const result = await m.start({
+      id: WRAPPER_ID,
+      overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
+      profile: 'docker',
+      originSessionId: 'runtime-local'
+    })
+
+    assert.deepEqual(seen, { profile: 'docker', runtimeSessionId: 'runtime-local' })
+    assert.deepEqual(result, {
+      ok: false,
+      error: 'Docker is missing and the user declined to choose it.'
+    })
     assert.deepEqual(listWrapperRuns(sb.agentDir), [])
   })
 })
@@ -211,7 +244,7 @@ test('the number of concurrent jobs is limited', async () => {
 
     const second = await m.start({
       id: WRAPPER_ID,
-      overrides: { outdir: sb.outdir },
+      overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
       profile: 'docker'
     })
     assert.equal(second.ok, false)
@@ -353,7 +386,7 @@ test('wrapper_run returns immediately with a run id and leaves the run in the ba
     const result = await settlesWithin(
       executeTool(tools.wrapper_run, 'call', {
         id: WRAPPER_ID,
-        params: { outdir: sb.outdir }
+        params: { gff: FIXTURE_GFF, outdir: sb.outdir }
       }),
       'wrapper_run must not wait for the pipeline'
     )
@@ -514,6 +547,8 @@ test('the host client forwards each call to its host method and returns the resu
   await client.list(3)
   await client.cancel('r1')
   const waited = await client.wait('r1', 5000)
+  await client.search('gff annotation')
+  const inspected = await client.inspect(WRAPPER_ID)
 
   assert.deepEqual(
     calls.map((c) => c.method),
@@ -522,14 +557,125 @@ test('the host client forwards each call to its host method and returns the resu
       WRAPPER_JOB_HOST_METHODS.status,
       WRAPPER_JOB_HOST_METHODS.list,
       WRAPPER_JOB_HOST_METHODS.cancel,
-      WRAPPER_JOB_HOST_METHODS.wait
+      WRAPPER_JOB_HOST_METHODS.wait,
+      WRAPPER_CATALOG_HOST_METHODS.search,
+      WRAPPER_CATALOG_HOST_METHODS.inspect
     ]
   )
   assert.deepEqual(calls[0].params, { id: 'a', overrides: { x: 1 }, profile: 'docker' })
   assert.deepEqual(calls[1].params, { runId: 'r1' })
   assert.deepEqual(calls[2].params, { limit: 3 })
   assert.deepEqual(calls[4].params, { runId: 'r1', timeoutMs: 5000 })
+  assert.deepEqual(calls[5].params, { query: 'gff annotation' })
+  assert.deepEqual(calls[6].params, { id: WRAPPER_ID })
   assert.deepEqual(waited, { echoed: WRAPPER_JOB_HOST_METHODS.wait })
+  assert.deepEqual(inspected, { echoed: WRAPPER_CATALOG_HOST_METHODS.inspect })
+})
+
+test('worker Wrapper search and inspect return host catalog results without local discovery', async () => {
+  const searchResult = {
+    content: [{ type: 'text' as const, text: '[{"id":"desktop/wrapper"}]' }],
+    details: {
+      kind: 'wrapper_search_results',
+      results: [{ id: 'desktop/wrapper', name: 'Desktop Wrapper', summary: 'Desktop only' }]
+    }
+  }
+  const inspectResult = {
+    content: [{ type: 'text' as const, text: '{"id":"desktop/wrapper"}' }],
+    details: {
+      kind: 'wrapper_manifest',
+      manifest: { id: 'desktop/wrapper' },
+      defaultParams: { outdir: 'results' }
+    }
+  }
+  const calls: Array<{ method: string; params: unknown }> = []
+  const client = createHostJobClient(async (method, params) => {
+    calls.push({ method, params })
+    if (method === WRAPPER_CATALOG_HOST_METHODS.search) return searchResult
+    if (method === WRAPPER_CATALOG_HOST_METHODS.inspect) return inspectResult
+    throw new Error(`Unexpected host method: ${method}`)
+  })
+  const tools = Object.fromEntries(
+    buildWrapperCompositionTools(client, { agentDir: '/definitely/missing/worker-agent' }).map(
+      (tool) => [tool.name, tool]
+    )
+  )
+
+  assert.deepEqual(
+    await executeTool(tools.wrapper_search, 'search', { query: 'desktop' }),
+    searchResult
+  )
+  assert.deepEqual(
+    await executeTool(tools.wrapper_inspect, 'inspect', { id: 'desktop/wrapper' }),
+    inspectResult
+  )
+  assert.deepEqual(calls, [
+    { method: WRAPPER_CATALOG_HOST_METHODS.search, params: { query: 'desktop' } },
+    { method: WRAPPER_CATALOG_HOST_METHODS.inspect, params: { id: 'desktop/wrapper' } }
+  ])
+})
+
+test('catalog host handlers rank and inspect the desktop catalog and reject invalid input', async () => {
+  await withSandbox(async (sb) => {
+    sb.useFake()
+    const handlers = wrapperJobHostHandlers(manager(sb), {
+      discovery: { agentDir: sb.agentDir }
+    })
+
+    const searched = (await handlers[WRAPPER_CATALOG_HOST_METHODS.search]({
+      query: 'annotation conversion'
+    })) as {
+      details: { results: Array<{ id: string }> }
+    }
+    assert.deepEqual(
+      searched.details.results.map((entry) => entry.id),
+      [WRAPPER_ID]
+    )
+
+    const inspected = (await handlers[WRAPPER_CATALOG_HOST_METHODS.inspect]({
+      id: WRAPPER_ID
+    })) as {
+      details: { manifest: { id: string }; defaultParams: Record<string, unknown> }
+    }
+    assert.equal(inspected.details.manifest.id, WRAPPER_ID)
+    // The smoke-test input is not offered as a default; inputs must be passed explicitly.
+    assert.deepEqual(inspected.details.defaultParams, { outdir: 'results' })
+
+    const unknown = (await handlers[WRAPPER_CATALOG_HOST_METHODS.inspect]({
+      id: 'guessed/missing'
+    })) as {
+      content: Array<{ text: string }>
+      isError?: boolean
+    }
+    assert.equal(unknown.isError, true)
+    assert.match(unknown.content[0].text, /Wrapper not found: guessed\/missing/)
+
+    await assert.rejects(
+      () => handlers[WRAPPER_CATALOG_HOST_METHODS.search]({ query: 42 }),
+      /query/
+    )
+    await assert.rejects(
+      () => handlers[WRAPPER_CATALOG_HOST_METHODS.search]({ query: 'x'.repeat(501) }),
+      /query/
+    )
+    await assert.rejects(() => handlers[WRAPPER_CATALOG_HOST_METHODS.inspect]({ id: '' }), /id/)
+    await assert.rejects(
+      () => handlers[WRAPPER_CATALOG_HOST_METHODS.inspect]({ id: 'x'.repeat(513) }),
+      /id/
+    )
+
+    const started = (await handlers[WRAPPER_JOB_HOST_METHODS.start]({
+      id: searched.details.results[0].id,
+      overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
+      profile: 'docker'
+    })) as { ok: true; status: { runId: string } }
+    assert.equal(started.ok, true)
+    const done = (await handlers[WRAPPER_JOB_HOST_METHODS.wait]({
+      runId: started.status.runId,
+      timeoutMs: 20_000
+    })) as { state: string }
+    assert.equal(done.state, 'completed')
+  })
 })
 
 test('host handlers validate what the worker sends and drive the manager end to end', async () => {
@@ -550,7 +696,7 @@ test('host handlers validate what the worker sends and drive the manager end to 
 
     const started = (await handlers[WRAPPER_JOB_HOST_METHODS.start]({
       id: WRAPPER_ID,
-      overrides: { outdir: sb.outdir },
+      overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
       profile: 'docker'
     })) as { ok: true; status: { runId: string } }
     assert.equal(started.ok, true)
@@ -595,7 +741,7 @@ test('onFinish fires once when a run ends, with the run and its final status', a
 
     const started = await m.start({
       id: WRAPPER_ID,
-      overrides: { outdir: sb.outdir },
+      overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
       profile: 'docker',
       originSessionId: 'runtime-42'
     })
@@ -696,7 +842,7 @@ test('continue_when_done is stored on the run: default yes, and an explicit no i
     const start = async (extra: Record<string, unknown>): Promise<string> => {
       const result = await m.start({
         id: WRAPPER_ID,
-        overrides: { outdir: sb.outdir },
+        overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
         profile: 'docker',
         ...extra
       })
@@ -823,14 +969,14 @@ test('wrapper_run tells the agent whether the conversation will be woken when th
 
     const woken = await executeTool(run, 'c', {
       id: WRAPPER_ID,
-      params: { outdir: sb.outdir }
+      params: { gff: FIXTURE_GFF, outdir: sb.outdir }
     })
     assert.match(text(woken), /wakes the main agent/i)
     assert.match(text(woken), /do not need to wait/i)
 
     const quiet = await executeTool(run, 'c', {
       id: WRAPPER_ID,
-      params: { outdir: sb.outdir },
+      params: { gff: FIXTURE_GFF, outdir: sb.outdir },
       continue_when_done: false
     })
     assert.match(text(quiet), /will NOT be woken/)
@@ -863,7 +1009,7 @@ test('wrapper_run resources reach Nextflow as a run config and are kept on the r
 
       const result = await executeTool(run, 'call-1', {
         id: WRAPPER_ID,
-        params: { outdir: sb.outdir },
+        params: { gff: FIXTURE_GFF, outdir: sb.outdir },
         profile: 'docker',
         resources: { cpus: 8, memory: '40G', time: '4h' }
       })
@@ -906,7 +1052,7 @@ test('two Wrapper tool calls retain one workflow card and one arrival identity t
     const submit = async (step: string, outdir: string): Promise<string> => {
       const result = await executeTool(tool, step, {
         id: WRAPPER_ID,
-        params: { outdir },
+        params: { gff: FIXTURE_GFF, outdir },
         profile: 'docker',
         workflow: { id: workflowId, name: 'RNA-seq', step, totalSteps: 2 }
       })
@@ -952,7 +1098,7 @@ test('a run without resources passes no extra config, and invalid resources star
       const before = listWrapperRuns(sb.agentDir).length
       const refused = await m.start({
         id: WRAPPER_ID,
-        overrides: { outdir: sb.outdir },
+        overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
         profile: 'docker',
         resources: { memory: '40' }
       })
@@ -971,7 +1117,7 @@ test('a local Nextflow too old for the wrappers is refused before anything start
     const m = manager(sb)
     const result = await m.start({
       id: WRAPPER_ID,
-      overrides: { outdir: sb.outdir },
+      overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
       profile: 'docker'
     })
     assert.equal(result.ok, false)
@@ -987,7 +1133,7 @@ test('scoped job list filters ownership before limiting newer peer records', asy
     const m = manager(sb)
     const started = await m.start({
       id: WRAPPER_ID,
-      overrides: { outdir: sb.outdir },
+      overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
       profile: 'docker',
       originSessionId: 'owned-runtime'
     })

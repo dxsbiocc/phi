@@ -1,4 +1,5 @@
 import type { JupyterServerRegistry } from './analysis-jupyter-server'
+import type { NotebookToolDispatchControl } from './notebook-tools'
 
 export interface NotebookServerReadinessDeps {
   jupyterServerRegistry: Pick<JupyterServerRegistry, 'status' | 'start'>
@@ -6,16 +7,25 @@ export interface NotebookServerReadinessDeps {
 }
 
 export interface NotebookServerReadiness {
-  ensureJupyterServerReady: (projectCwd: string) => Promise<void>
+  ensureJupyterServerReady: (
+    projectCwd: string,
+    control?: NotebookToolDispatchControl
+  ) => Promise<void>
 }
 
 export function createNotebookServerReadiness(
   deps: NotebookServerReadinessDeps
 ): NotebookServerReadiness {
-  async function ensureJupyterServerReady(projectCwd: string): Promise<void> {
+  async function ensureJupyterServerReady(
+    projectCwd: string,
+    control: NotebookToolDispatchControl = {}
+  ): Promise<void> {
     let status = deps.jupyterServerRegistry.status(projectCwd)
     if (status.state !== 'ready' || !status.hasEndpoint) {
-      status = deps.jupyterServerRegistry.start(projectCwd)
+      status = deps.jupyterServerRegistry.start(projectCwd, {
+        ...(control.runtimeSessionId ? { runtimeSessionId: control.runtimeSessionId } : {}),
+        ...(control.signal ? { signal: control.signal } : {})
+      })
     }
     for (
       let attempt = 0;

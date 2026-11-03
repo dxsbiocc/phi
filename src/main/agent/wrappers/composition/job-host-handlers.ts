@@ -1,10 +1,13 @@
 import type { WrapperRun } from '../types'
 import type { PhiHostRequestContext } from '../../engine/types'
 import {
+  WRAPPER_CATALOG_HOST_METHODS,
   WRAPPER_JOB_HOST_METHODS,
   type WrapperJobClient,
   type WrapperJobControl
 } from './job-types'
+import type { WrapperCompositionDiscoveryOptions } from './discovery'
+import { inspectWrapperCompositionCatalog, searchWrapperCompositionCatalog } from './tools'
 import { parseWrapperWorkflow } from './workflow-identity'
 
 import { isRecord } from '../../../../shared/guards'
@@ -12,6 +15,17 @@ export interface WrapperJobHostScope extends WrapperJobControl {
   originSessionId: string
   ownsRun(runId: string): boolean
 }
+
+interface WrapperHostHandlerOptions {
+  scopeFor?: (context: PhiHostRequestContext | undefined) => WrapperJobHostScope | undefined
+  discovery?: WrapperCompositionDiscoveryOptions
+  discoveryFor?: (context: PhiHostRequestContext | undefined) => WrapperCompositionDiscoveryOptions
+}
+
+type WrapperHostHandler = (params: unknown, context?: PhiHostRequestContext) => Promise<unknown>
+type WrapperScopeResolver = (
+  context: PhiHostRequestContext | undefined
+) => WrapperJobHostScope | undefined
 
 /** Uses the existing durable job origin and app-lifetime origin resolver; unknown old origins stay unowned. */
 export function createWrapperJobHostScope(options: {
@@ -61,25 +75,72 @@ function requireString(params: unknown, key: string): string {
   return value
 }
 
-export function wrapperJobHostHandlers(
-  jobs: WrapperJobClient,
-  options: {
-    scopeFor?: (context: PhiHostRequestContext | undefined) => WrapperJobHostScope | undefined
-  } = {}
-): Record<string, (params: unknown, context?: PhiHostRequestContext) => Promise<unknown>> {
-  const scopeFor = (
-    context: PhiHostRequestContext | undefined
-  ): WrapperJobHostScope | undefined => {
+function requireBoundedString(
+  params: unknown,
+  key: string,
+  maxLength: number,
+  allowEmpty = false
+): string {
+  const value = isRecord(params) ? params[key] : undefined
+  if (
+    typeof value !== 'string' ||
+    value.length > maxLength ||
+    (!allowEmpty && value.length === 0)
+  ) {
+    throw new Error(`Invalid required parameter: ${key}`)
+  }
+  return value
+}
+
+function validatedScopeFor(options: WrapperHostHandlerOptions): WrapperScopeResolver {
+  return (context: PhiHostRequestContext | undefined): WrapperJobHostScope | undefined => {
     const scope = options.scopeFor?.(context)
     scope?.signal?.throwIfAborted()
     scope?.assertCurrent?.()
     return scope
   }
-  const owned = (scope: WrapperJobHostScope | undefined, runId: string): void => {
-    if (scope && !scope.ownsRun(runId))
-      throw new Error('Wrapper run is not owned by this Phi session/project')
-  }
+}
+
+function catalogHostHandlers(
+  scopeFor: ReturnType<typeof validatedScopeFor>,
+  options: WrapperHostHandlerOptions
+): Record<string, WrapperHostHandler> {
+  const discovery = (
+    context: PhiHostRequestContext | undefined
+  ): WrapperCompositionDiscoveryOptions => ({
+    ...options.discovery,
+    ...options.discoveryFor?.(context)
+  })
   return {
+    [WRAPPER_CATALOG_HOST_METHODS.search]: async (params, context) => {
+      scopeFor(context)
+      return searchWrapperCompositionCatalog(
+        requireBoundedString(params, 'query', 500, true),
+        discovery(context)
+      )
+    },
+    [WRAPPER_CATALOG_HOST_METHODS.inspect]: async (params, context) => {
+      scopeFor(context)
+      return inspectWrapperCompositionCatalog(
+        requireBoundedString(params, 'id', 512),
+        discovery(context)
+      )
+    }
+  }
+}
+
+function owned(scope: WrapperJobHostScope | undefined, runId: string): void {
+  if (scope && !scope.ownsRun(runId))
+    throw new Error('Wrapper run is not owned by this Phi session/project')
+}
+
+export function wrapperJobHostHandlers(
+  jobs: WrapperJobClient,
+  options: WrapperHostHandlerOptions = {}
+): Record<string, WrapperHostHandler> {
+  const scopeFor = validatedScopeFor(options)
+  return {
+    ...catalogHostHandlers(scopeFor, options),
     [WRAPPER_JOB_HOST_METHODS.start]: (params, context) => {
       const scope = scopeFor(context)
       if (scope && isRecord(params) && params.target === 'local')

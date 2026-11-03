@@ -89,6 +89,8 @@ export interface NextflowLaunchContext {
   platform?: PhiPlatform
   /** The host nextflow the user opted into. Defaults to `NEXTFLOW_BIN`, then `customPaths.nextflow`. */
   hostNextflowPath?: () => string | undefined
+  /** Explicit local container-runtime path selected through the missing-tool card. */
+  containerRuntimePath?: (profile: string | undefined) => string | undefined
   readVersion?: (nextflowBin: string) => Promise<string | undefined>
   baseEnv?: NodeJS.ProcessEnv
 }
@@ -141,6 +143,8 @@ async function resolveHostLaunch(
     if (typeof value === 'string') env[name] = value
   }
   env.PATH = [dirname(path), ...(base.PATH ?? '').split(delimiter).filter(Boolean)].join(delimiter)
+  const runtimePath = context.containerRuntimePath?.(context.profile)
+  if (runtimePath) env.PATH = insertBeforeSystemDirs(env.PATH, [dirname(runtimePath)])
   env.NXF_DISABLE_CHECK_LATEST = 'true'
   return {
     ok: true,
@@ -185,7 +189,11 @@ async function resolveManagedLaunch(
   if (outcome.status === 'aborted') {
     return { ok: false, error: `environment ${NEXTFLOW_ENVIRONMENT_REF} is not ready; aborted` }
   }
-  if (outcome.status === 'notReady') return { ok: false, error: outcome.message }
+  if (outcome.status === 'notReady') {
+    const selectedHostPath = (context.hostNextflowPath ?? configuredHostNextflow)()
+    if (selectedHostPath) return resolveHostLaunch(selectedHostPath, runtimeRoot, context)
+    return { ok: false, error: outcome.message }
+  }
   return managedLaunch(outcome.handle, runtimeRoot, descriptor.spec.host, context)
 }
 
@@ -197,6 +205,8 @@ function managedLaunch(
 ): NextflowLaunchResult {
   const env = environmentVariables(handle, context.baseEnv ? { baseEnv: context.baseEnv } : {})
   env.PATH = withContainerRuntime(env.PATH ?? '', hostRequirements, handle, context.profile)
+  const runtimePath = context.containerRuntimePath?.(context.profile)
+  if (runtimePath) env.PATH = insertBeforeSystemDirs(env.PATH, [dirname(runtimePath)])
   env.NXF_DISABLE_CHECK_LATEST = 'true'
   const command = resolveCommand('nextflow', env.PATH)
   if (!command) {

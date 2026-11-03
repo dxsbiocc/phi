@@ -1,62 +1,93 @@
-// Transitional: replace this file after roadmap step 2 uploads Linux micromamba and builds phi-nextflow.
 import { getRemoteHostProfile, remoteConnectionConfigForProfile } from './remote-hosts'
 import type { RemoteNextflowInstallResult } from '../../shared/remoteDoctorTypes'
+import { remoteMicromambaPath } from '../../shared/remoteMicromambaTypes'
+import { readHostRuntimeRoot } from './remote-runtime-root-store'
+import { resolveRemoteRuntimeRoot } from './remote-runtime-root'
 import { getPhiAgentDir } from './runtime-paths'
 import type { ConnectImpl } from './wrappers/executor-remote'
-import { connectRemoteSshSession, shellQuote } from './wrappers/remote-ssh-session'
+import {
+  connectRemoteSshSession,
+  shellQuote,
+  type RemoteSshSession
+} from './wrappers/remote-ssh-session'
+import { buildRemoteMicromambaShellCommand } from './workspace-host/remote-micromamba-command'
+import { currentRemoteMicromambaVersion } from './workspace-host/remote-micromamba-profile'
+import { checkRemoteRuntimeRoot } from './workspace-host/runtime-root-check'
 
-const INSTALL_TIMEOUT_MS = 5 * 60_000
-const OFFICIAL_INSTALL_URL = 'https://get.nextflow.io'
+const INSTALL_TIMEOUT_MS = 10 * 60_000
+const NEXTFLOW_ENVIRONMENT_NAME = 'phi-nextflow'
+
+export function buildRemoteNextflowEnvironmentCommand(input: {
+  micromambaPath: string
+  runtimeRoot: string
+  prefix: string
+}): string {
+  return buildRemoteMicromambaShellCommand({
+    binary: input.micromambaPath,
+    runtimeRoot: input.runtimeRoot,
+    subcommand: 'create',
+    args: [
+      '--yes',
+      '--prefix',
+      input.prefix,
+      '--channel',
+      'conda-forge',
+      '--channel',
+      'bioconda',
+      'nextflow',
+      'openjdk>=17'
+    ]
+  })
+}
 
 export interface RemoteNextflowInstallDependencies {
   agentDir?: string
   connectImpl?: ConnectImpl
+  micromambaVersion?: string
+  resolveRuntimeRoot?: (
+    session: RemoteSshSession,
+    hostProfileId: string,
+    agentDir: string
+  ) => Promise<string>
 }
 
-function javaMajor(output: string): number | null {
-  const match = output.match(/(?:openjdk|java) version\s+"?(?:1\.)?(\d+)/i)
-  return match ? Number(match[1]) : null
+async function defaultRuntimeRoot(
+  session: RemoteSshSession,
+  hostProfileId: string,
+  agentDir: string
+): Promise<string> {
+  const configured = resolveRemoteRuntimeRoot({
+    hostOverride: readHostRuntimeRoot(hostProfileId, agentDir)
+  }).configured
+  const check = await checkRemoteRuntimeRoot(session, configured)
+  if (check.status !== 'checked' || !check.expandedPath || check.hardErrors.length > 0) {
+    throw new Error(
+      'The Phi runtime root is unavailable on this server. Check Remote Hosts settings before installing Nextflow.'
+    )
+  }
+  return check.expandedPath
 }
 
-/** The reviewed, fixed-scope official self-install sequence. */
-export function buildRemoteNextflowInstallScript(): string {
-  return [
-    'set -eu',
-    'target="$HOME/.local/bin/nextflow"',
-    'if [ -x "$target" ]; then',
-    '  "$target" -version >/dev/null 2>&1',
-    '  printf "__PHI_NEXTFLOW_EXISTING__:%s\\n" "$target"',
-    '  exit 0',
-    'fi',
-    'if [ -e "$target" ]; then',
-    '  echo "Nextflow target already exists but is not executable" >&2',
-    '  exit 1',
-    'fi',
-    'if command -v nextflow >/dev/null 2>&1; then',
-    '  existing="$(command -v nextflow)"',
-    '  printf "__PHI_NEXTFLOW_EXISTING__:%s\\n" "$existing"',
-    '  exit 0',
-    'fi',
-    'tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/phi-nextflow.XXXXXX")"',
-    'trap \'rm -rf "$tmp_dir"\' EXIT',
-    'cd "$tmp_dir"',
-    `curl --fail --silent --show-error --location ${shellQuote(OFFICIAL_INSTALL_URL)} --output installer.sh`,
-    'bash installer.sh',
-    'test -f nextflow',
-    'mkdir -p "$HOME/.local/bin"',
-    'cp -n nextflow "$target"',
-    'chmod 755 "$target"',
-    '"$target" -version >/dev/null 2>&1',
-    'printf "__PHI_NEXTFLOW_INSTALLED__:%s\\n" "$target"'
-  ].join('\n')
+function environmentReadyCommand(prefix: string): string {
+  const nextflow = `${prefix}/bin/nextflow`
+  const java = `${prefix}/bin/java`
+  return `bash -lc ${shellQuote(
+    [
+      `test -x ${shellQuote(nextflow)}`,
+      `test -x ${shellQuote(java)}`,
+      `NXF_DISABLE_CHECK_LATEST=true NXF_ANSI_LOG=false ${shellQuote(nextflow)} -version >/dev/null 2>&1`,
+      `${shellQuote(java)} -version >/dev/null 2>&1`
+    ].join(' && ')
+  )}`
 }
 
-/** Install only Nextflow into the SSH account's own ~/.local/bin, never with sudo. */
+/** Create/reuse Nextflow and Java in Phi's isolated micromamba runtime. */
 export async function installRemoteNextflow(
   hostProfileId: string,
   dependencies: RemoteNextflowInstallDependencies = {}
 ): Promise<RemoteNextflowInstallResult> {
-  const profile = getRemoteHostProfile(hostProfileId, dependencies.agentDir ?? getPhiAgentDir())
+  const agentDir = dependencies.agentDir ?? getPhiAgentDir()
+  const profile = getRemoteHostProfile(hostProfileId, agentDir)
   if (!profile) throw new Error('SSH server profile not found. Select the server again.')
   const connect = dependencies.connectImpl ?? connectRemoteSshSession
   const session = await connect({
@@ -64,38 +95,38 @@ export async function installRemoteNextflow(
     execTimeoutMs: INSTALL_TIMEOUT_MS
   })
   try {
-    const java = await session.exec(`bash -lc ${shellQuote('java -version')}`)
-    const major = java.code === 0 ? javaMajor(`${java.stdout}\n${java.stderr}`) : null
-    if (major === null || major < 17) {
-      throw new Error(
-        'Automatic Nextflow installation requires Java 17 or newer on the server. Install Java manually or load an environment module.'
-      )
-    }
-    const curl = await session.exec(
-      `bash -lc ${shellQuote('test -x "$HOME/.local/bin/nextflow" || command -v nextflow >/dev/null 2>&1 || command -v curl >/dev/null 2>&1')}`
+    const runtimeRoot = await (dependencies.resolveRuntimeRoot ?? defaultRuntimeRoot)(
+      session,
+      hostProfileId,
+      agentDir
     )
-    if (curl.code !== 0) {
-      throw new Error(
-        'curl is missing on the server. Install Nextflow manually or contact the administrator.'
-      )
-    }
+    const micromambaVersion = dependencies.micromambaVersion ?? currentRemoteMicromambaVersion()
+    if (!micromambaVersion) throw new Error('The bundled remote micromamba version is unavailable.')
+    const prefix = `${runtimeRoot}/envs/${NEXTFLOW_ENVIRONMENT_NAME}`
+    const path = `${prefix}/bin/nextflow`
+    const ready = environmentReadyCommand(prefix)
+    const existing = await session.exec(ready)
+    if (existing.code === 0) return { path, alreadyInstalled: true }
 
-    const script = buildRemoteNextflowInstallScript()
-    const result = await session.exec(`bash -lc ${shellQuote(script)}`)
-    const line = result.stdout
-      .split(/\r?\n/)
-      .filter((entry) => /^__PHI_NEXTFLOW_(EXISTING|INSTALLED)__:\//.test(entry))
-      .at(-1)
-    if (result.code !== 0 || !line) {
+    const created = await session.exec(
+      buildRemoteNextflowEnvironmentCommand({
+        micromambaPath: remoteMicromambaPath(runtimeRoot, micromambaVersion),
+        runtimeRoot,
+        prefix
+      })
+    )
+    if (created.code !== 0) {
       throw new Error(
-        'Automatic Nextflow installation did not complete. Check the server network and home directory permissions, or install manually.'
+        'The Phi-managed Nextflow environment could not be created. Check the remote runtime root, micromamba, and server package access.'
       )
     }
-    const [kind, path] = line.split(':', 2)
-    if (!path || !path.startsWith('/') || /[\r\n\0]/.test(path)) {
-      throw new Error('The server did not return a valid Nextflow path. Configure it manually.')
+    const verified = await session.exec(ready)
+    if (verified.code !== 0) {
+      throw new Error(
+        'The Phi-managed Nextflow environment was created but Nextflow or Java could not be verified.'
+      )
     }
-    return { path, alreadyInstalled: kind === '__PHI_NEXTFLOW_EXISTING__' }
+    return { path, alreadyInstalled: false }
   } finally {
     await session.close().catch(() => undefined)
   }

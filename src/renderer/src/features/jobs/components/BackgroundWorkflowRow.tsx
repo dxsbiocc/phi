@@ -2,7 +2,7 @@ import { Box, ButtonBase, Collapse, Stack, Typography } from '@mui/material'
 
 import { useUiLanguage } from '../../../lib/i18n'
 import { PhiIcons } from '../../../icons'
-import type { BackgroundJobDisplayItem } from '../lib/backgroundJobGroups'
+import { workflowStepCounts, type BackgroundJobDisplayItem } from '../lib/backgroundJobGroups'
 import { jobsCopy } from '../lib/jobsCopy'
 import { BackgroundJobIcon } from './BackgroundJobIcon'
 
@@ -20,8 +20,7 @@ export function BackgroundWorkflowRow({
   renderChild: (job: Workflow['jobs'][number]) => React.ReactNode
 }): React.JSX.Element {
   useUiLanguage()
-  const completed = workflow.jobs.filter((job) => job.run.state === 'completed').length
-  const failed = workflow.jobs.filter((job) => ['failed', 'lost'].includes(job.run.state)).length
+  const { completed, failed } = workflowStepCounts(workflow.jobs)
   const onSlurm = workflow.jobs.some((job) =>
     ['slurm', 'slurm-controller'].includes(job.run.executor)
   )

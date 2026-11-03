@@ -4,6 +4,7 @@ import type {
   RemoteDoctorStatus,
   RemoteHostCapabilityProfile
 } from '../../../shared/remoteDoctorTypes'
+import { posix } from 'node:path'
 import { DEFAULT_REMOTE_RUNTIME } from '../../../shared/wrapperRemoteTypes'
 import { remotePreflightRequirements } from '../wrappers/composition/remote-config'
 import { shellQuote } from '../wrappers/remote-ssh-session'
@@ -60,9 +61,12 @@ async function nextflowCheck(
 
 async function javaCheck(context: ToolchainCheckContext): Promise<RemoteDoctorCheck> {
   const { options, profile, deferTools, run } = context
+  const configuredJava = options.nextflowBin?.startsWith('/')
+    ? posix.join(posix.dirname(options.nextflowBin), 'java')
+    : undefined
   const input = {
     id: 'java',
-    command: availableCommand(['java']),
+    command: availableCommand([...(configuredJava ? [configuredJava] : []), 'java']),
     success: 'Java command found',
     missing: 'Java not found',
     missingStatus: status(options.controller === 'sbatch' || deferTools),
@@ -71,7 +75,9 @@ async function javaCheck(context: ToolchainCheckContext): Promise<RemoteDoctorCh
         ? 'Ensure the compute node startup commands provide Java.'
         : 'Run module load java, or use the phi-base environment provided by the administrator.'
   }
-  return profile ? doctorCheckFromCapability(profile.toolchain.java, input) : run(input)
+  return profile && !configuredJava
+    ? doctorCheckFromCapability(profile.toolchain.java, input)
+    : run(input)
 }
 
 async function slurmChecks(
@@ -122,7 +128,9 @@ async function runtimeCheck(
   const capability = context.profile
     ? selectedRuntimeCapability(context.profile, runtime)
     : undefined
-  return capability ? doctorCheckFromCapability(capability, input) : context.run(input)
+  return capability && !context.options.containerRuntimeBin
+    ? doctorCheckFromCapability(capability, input)
+    : context.run(input)
 }
 
 export async function capabilityToolchainChecks(

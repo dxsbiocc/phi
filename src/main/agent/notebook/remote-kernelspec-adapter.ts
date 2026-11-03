@@ -24,6 +24,19 @@ const DETECT_TIMEOUT_MS = 45_000
 
 type RemoteEnvironmentGateway = Pick<RemoteEnvironmentService, 'request' | 'bindSession' | 'cancel'>
 
+export type MissingRemoteJupyterResolution =
+  { choice: 'path'; path: string } | { choice: 'install' } | { choice: 'cancel' }
+type MissingRemoteJupyterRecovery = Exclude<MissingRemoteJupyterResolution, { choice: 'cancel' }>
+
+export interface ResolveMissingRemoteJupyterInput {
+  runtimeSessionId: string
+  signal: AbortSignal | undefined
+}
+
+export type ResolveMissingRemoteJupyter = (
+  input: ResolveMissingRemoteJupyterInput
+) => Promise<MissingRemoteJupyterResolution>
+
 export interface RemoteKernelspecAdapterOptions {
   environments: RemoteEnvironmentGateway
   openWorkspace: OpenRemoteRuntimeWorkspace
@@ -31,6 +44,8 @@ export interface RemoteKernelspecAdapterOptions {
   allowUserPrefixes?: boolean
   /** The Jupyter path saved in the host's remote settings; tried before PATH. */
   configuredJupyterPath?: () => string | undefined
+  /** Pauses startup so the main process can ask how to recover from a missing Jupyter. */
+  resolveMissingJupyter?: ResolveMissingRemoteJupyter
 }
 
 /** A Jupyter Server already installed on the server, with an ipykernel-capable Python. */
@@ -42,6 +57,8 @@ export interface ExistingRemoteJupyter {
 
 export interface PrepareRemoteJupyterInput {
   runtimeSessionId: string
+  /** Active chat runtime used only to place the missing-tool card in the right conversation. */
+  promptRuntimeSessionId?: string
   requestId?: string
   signal?: AbortSignal
   /** Human-readable steps for the startup log. */
@@ -77,12 +94,38 @@ export class RemoteKernelspecAdapter {
   async prepareRuntime(input: PrepareRemoteJupyterInput): Promise<PreparedRemoteJupyterRuntime> {
     const existing = await this.prepareExistingRuntime(input)
     if (existing) return existing
+    const readyManaged = await this.readyManagedEnvironment(input.runtimeSessionId, input.signal)
+    if (readyManaged) return this.preparedManagedRuntime(input, readyManaged)
+    const resolution = await this.resolveMissingJupyter(input)
+    if (resolution.choice === 'path') {
+      const selected = resolution.path.trim()
+      if (!posix.isAbsolute(selected) || /[\0\r\n]/.test(selected)) {
+        throw new Error(
+          'blocked: the selected Jupyter path must be an absolute remote path; Phi did not install anything.'
+        )
+      }
+      const prepared = await this.prepareExistingRuntime(input, selected)
+      if (!prepared) {
+        throw new Error(
+          'blocked: the selected Jupyter path is not a usable Jupyter Server with ipykernel; Phi did not install anything.'
+        )
+      }
+      return prepared
+    }
     input.onProgress?.(
       '服务器上没有可用的 Jupyter Server（需要 jupyter server 与 ipykernel）；改用 Phi 受管环境 phi:jupyter@1，首次创建可能需要几分钟。'
     )
-    const kernels = await this.prepare(input)
+    await this.requestEnvironment(input)
     input.signal?.throwIfAborted()
     const handle = await this.bindManagedEnvironment(input.runtimeSessionId, input.signal)
+    return this.preparedManagedRuntime(input, handle)
+  }
+
+  private async preparedManagedRuntime(
+    input: PrepareRemoteJupyterInput,
+    handle: RemoteEnvironmentHandle
+  ): Promise<PreparedRemoteJupyterRuntime> {
+    const kernels = await this.list(input)
     const workspace = await this.options.openWorkspace(input.runtimeSessionId, input.signal)
     try {
       assertManagedPrefix(workspace, handle)
@@ -100,18 +143,21 @@ export class RemoteKernelspecAdapter {
 
   /** Uses a Jupyter already on the server when one is complete enough to run notebooks. */
   private async prepareExistingRuntime(
-    input: PrepareRemoteJupyterInput
+    input: PrepareRemoteJupyterInput,
+    selectedJupyterPath?: string
   ): Promise<PreparedRemoteJupyterRuntime | undefined> {
     const workspace = await this.options.openWorkspace(input.runtimeSessionId, input.signal)
     try {
-      const configured = this.options.configuredJupyterPath?.()?.trim() || undefined
+      const configured =
+        selectedJupyterPath ?? (this.options.configuredJupyterPath?.()?.trim() || undefined)
       input.onProgress?.(
         configured
-          ? `正在检查设置中的 Jupyter 路径 ${configured}，以及服务器 PATH 与常见 conda 位置…`
-          : '正在检测服务器上已有的 Jupyter（登录 shell 的 PATH 与常见 conda 位置）…'
+          ? `正在检查设置中的 Jupyter 路径 ${configured}，以及服务器登录 shell 的 PATH…`
+          : '正在检测服务器登录 shell 的 PATH 中已有的 Jupyter…'
       )
       const existing = await detectExistingRemoteJupyter(workspace, configured, input.signal)
       if (!existing) return undefined
+      if (selectedJupyterPath && existing.jupyter !== selectedJupyterPath) return undefined
       input.signal?.throwIfAborted()
       input.onProgress?.(
         `使用服务器已有的 Jupyter：${existing.jupyter}${existing.version ? `（jupyter_server ${existing.version}）` : ''}，kernel Python：${existing.python}`
@@ -128,6 +174,36 @@ export class RemoteKernelspecAdapter {
     } finally {
       await workspace.close?.().catch(() => undefined)
     }
+  }
+
+  private async resolveMissingJupyter(
+    input: PrepareRemoteJupyterInput
+  ): Promise<MissingRemoteJupyterRecovery> {
+    const resolver = this.options.resolveMissingJupyter
+    if (!resolver) {
+      throw new Error(
+        'blocked: Jupyter is missing on the remote host; no missing-tool resolver is available, so Phi did not install anything.'
+      )
+    }
+    input.signal?.throwIfAborted()
+    const resolution = await resolver({
+      runtimeSessionId: input.promptRuntimeSessionId ?? input.runtimeSessionId,
+      signal: input.signal
+    })
+    input.signal?.throwIfAborted()
+    const choice = (resolution as { choice?: unknown }).choice
+    if (choice === 'cancel') {
+      throw new Error(
+        'blocked: Jupyter is missing on the remote host and the user cancelled recovery; Phi did not install anything.'
+      )
+    }
+    if (choice === 'install') return { choice: 'install' }
+    if (choice === 'path' && typeof (resolution as { path?: unknown }).path === 'string') {
+      return { choice: 'path', path: (resolution as { path: string }).path }
+    }
+    throw new Error(
+      'blocked: Jupyter recovery returned an invalid decision; Phi did not install anything.'
+    )
   }
 
   private async requestEnvironment(input: PrepareRemoteJupyterInput): Promise<void> {
@@ -185,18 +261,22 @@ export class RemoteKernelspecAdapter {
     runtimeSessionId: string,
     signal?: AbortSignal
   ): Promise<RemoteEnvironmentHandle> {
+    const handle = await this.readyManagedEnvironment(runtimeSessionId, signal)
+    if (handle) return handle
+    throw new Error('远程 Notebook 环境尚未创建')
+  }
+
+  private async readyManagedEnvironment(
+    runtimeSessionId: string,
+    signal?: AbortSignal
+  ): Promise<RemoteEnvironmentHandle | undefined> {
     signal?.throwIfAborted()
     const bound = await this.options.environments.bindSession({
       runtimeSessionId,
       ref: REMOTE_JUPYTER_REF
     })
     signal?.throwIfAborted()
-    if ('notReady' in bound) {
-      const value = bound.notReady as { message?: unknown }
-      throw new Error(
-        typeof value.message === 'string' ? value.message : '远程 Notebook 环境尚未创建'
-      )
-    }
+    if ('notReady' in bound) return undefined
     return remoteEnvironmentHandle(bound)
   }
 
@@ -227,16 +307,15 @@ async function prepareJupyterDirectories(workspace: RemoteRuntimeWorkspace): Pro
 }
 
 /**
- * Candidates in order: the configured path, `jupyter` on the login shell's PATH (module and
- * conda setups live there), then common conda installs. A candidate counts only when
- * `jupyter server --version` works and the Python beside it imports ipykernel.
+ * Automatic choices are limited to the configured path and the login shell's PATH. Broader
+ * conda/common-location matches are candidates for the missing-tool card and are never selected
+ * without the user. A path counts only when `jupyter server --version` works and the Python
+ * beside it imports ipykernel.
  */
 export const DETECT_REMOTE_JUPYTER_SCRIPT = [
   'configured="$1"',
   'found=$(command -v jupyter 2>/dev/null || true)',
-  'for candidate in "$configured" "$found" "${CONDA_PREFIX:+$CONDA_PREFIX/bin/jupyter}" \\',
-  '  "$HOME/miniforge3/bin/jupyter" "$HOME/mambaforge/bin/jupyter" "$HOME/miniconda3/bin/jupyter" \\',
-  '  "$HOME/anaconda3/bin/jupyter" /opt/conda/bin/jupyter /usr/local/bin/jupyter /usr/bin/jupyter; do',
+  'for candidate in "$configured" "$found"; do',
   '  case "$candidate" in /*) ;; *) continue ;; esac',
   '  [ -x "$candidate" ] || continue',
   '  dir=$(dirname "$candidate")',

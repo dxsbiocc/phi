@@ -35,7 +35,14 @@ import {
 import type { ResolvedRemoteTarget } from '../src/main/agent/wrappers/remote-connection-resolver'
 import { installFakeSlurm } from './helpers/fakeSlurm'
 import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
-import { WRAPPER_ID, isAlive, waitFor, withSandbox, type Sandbox } from './helpers/wrapperSandbox'
+import {
+  WRAPPER_ID,
+  FIXTURE_GFF,
+  isAlive,
+  waitFor,
+  withSandbox,
+  type Sandbox
+} from './helpers/wrapperSandbox'
 
 interface Env {
   remoteRoot: string
@@ -260,17 +267,52 @@ test('SSH project rejects explicit local and failed remote checks before recordi
           }
         })
       })
-      const local = await m.start({ id: WRAPPER_ID, overrides: {}, target: 'local' })
+      const local = await m.start({
+        id: WRAPPER_ID,
+        overrides: { gff: FIXTURE_GFF },
+        target: 'local'
+      })
       assert.equal(local.ok, false)
       assert.match(local.ok ? '' : local.error, /cannot run on this device/)
       assert.equal(resolvedCount, 0)
       const offline = await m.start({
         id: WRAPPER_ID,
-        overrides: {},
+        overrides: { gff: FIXTURE_GFF },
         originSessionId: 'runtime-ssh'
       })
       assert.equal(offline.ok, false)
       assert.match(offline.ok ? '' : offline.error, /服务器离线/)
+      assert.equal(listWrapperRuns(sb.agentDir).length, 0)
+    })
+  })
+})
+
+test('remote start forwards its runtime session to missing-tool recovery and preserves blocked result', async () => {
+  await withSandbox(async (sb) => {
+    await withRemote(sb, async (env) => {
+      const project = projectForRun(env.remoteRoot, 'ssh')
+      let seenRuntimeSessionId: string | undefined
+      const m = manager(sb, env, {
+        resolveProjectForRun: () => project,
+        checkRemoteEnvironment: async (input) => {
+          seenRuntimeSessionId = input.runtimeSessionId
+          return {
+            blocked: 'Nextflow is missing and the user declined to choose or install it.'
+          }
+        }
+      })
+
+      const result = await m.start({
+        id: WRAPPER_ID,
+        overrides: { gff: FIXTURE_GFF },
+        originSessionId: 'runtime-ssh'
+      })
+
+      assert.equal(seenRuntimeSessionId, 'runtime-ssh')
+      assert.deepEqual(result, {
+        ok: false,
+        error: 'Nextflow is missing and the user declined to choose or install it.'
+      })
       assert.equal(listWrapperRuns(sb.agentDir).length, 0)
     })
   })
@@ -286,7 +328,7 @@ test('local project keeps local default and can explicitly select its saved remo
     })
     const local = await localManager.start({
       id: WRAPPER_ID,
-      overrides: { outdir: sb.outdir },
+      overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
       originSessionId: 'runtime-local'
     })
     assert.equal(local.ok, true, JSON.stringify(local))
@@ -437,7 +479,7 @@ test('unknown originating session cannot turn an omitted target into a local run
     })
     const refused = await m.start({
       id: WRAPPER_ID,
-      overrides: { outdir: sb.outdir },
+      overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
       originSessionId: 'unrecognized-session'
     })
     assert.equal(refused.ok, false)
@@ -450,7 +492,7 @@ test('unknown originating session cannot turn an omitted target into a local run
     })
     const local = await ordinary.start({
       id: WRAPPER_ID,
-      overrides: { outdir: sb.outdir },
+      overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
       originSessionId: 'known-ordinary-session'
     })
     assert.equal(local.ok, true)
@@ -540,7 +582,11 @@ test('a remote start without a usable remote is refused with the reason and leav
       const m = manager(sb, env, {
         resolveRemoteTarget: () => ({ reason: 'No remote connection is set up.' })
       })
-      const result = await m.start({ id: WRAPPER_ID, overrides: {}, target: 'remote' })
+      const result = await m.start({
+        id: WRAPPER_ID,
+        overrides: { gff: FIXTURE_GFF },
+        target: 'remote'
+      })
       assert.equal(result.ok, false)
       assert.match(result.ok ? '' : result.error, /No remote connection is set up/)
       assert.equal(listWrapperRuns(sb.agentDir).length, 0)
@@ -552,7 +598,11 @@ test('a manager with no remote support says so instead of running locally by acc
   await withSandbox(async (sb) => {
     sb.useFake()
     const m = new WrapperJobManager({ agentDir: () => sb.agentDir })
-    const result = await m.start({ id: WRAPPER_ID, overrides: {}, target: 'remote' })
+    const result = await m.start({
+      id: WRAPPER_ID,
+      overrides: { gff: FIXTURE_GFF },
+      target: 'remote'
+    })
     assert.equal(result.ok, false)
     assert.equal(listWrapperRuns(sb.agentDir).length, 0)
   })
@@ -815,7 +865,7 @@ test('local runs are unaffected: a local run never needs the remote resolver', a
     const m = new WrapperJobManager({ agentDir: () => sb.agentDir, progressThrottleMs: 0 })
     const result = await m.start({
       id: WRAPPER_ID,
-      overrides: { outdir: sb.outdir },
+      overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
       profile: 'docker'
     })
     assert.equal(result.ok, true)

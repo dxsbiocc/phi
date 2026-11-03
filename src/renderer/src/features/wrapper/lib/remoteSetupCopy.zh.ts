@@ -58,15 +58,14 @@ export const remoteSetupChinese: LocalizedCopy<typeof remoteSetupEnglish> = {
   profileUpdatedPrefix: '概况更新时间：',
   nextflowFallback: '使用 module load nextflow，或使用 phi-base 环境。',
   installing: '正在安装…',
-  installNextflow: '自动安装 Nextflow',
+  installNextflow: '安装 Phi 管理的 Nextflow 环境',
   copySuggestion: '复制建议',
   manualInstallInstructions: '手动安装说明',
-  nextflowRequired:
-    '此执行模式需要 Nextflow。请在服务器账户的个人目录安装，或按照官方安装说明操作。',
+  nextflowRequired: '此执行模式需要 Nextflow。请选择现有可执行文件，或创建 Phi 管理的环境。',
   nextflowMissingOnLogin:
     '登录节点未找到 Nextflow。如果计算节点通过模块提供，请在运行设置中添加准备命令。',
   nextflowRequirements:
-    '自动安装需要服务器提供 Java 17+ 和 curl，不使用 sudo。手动安装后，请设置“更多运行设置 → Nextflow 路径”。',
+    'Phi 会在隔离的远程 micromamba 运行时中安装 Nextflow 与 Java 17+，不会修改服务器系统 Java 或您自己的 Conda 环境。',
   javaRequired:
     '请在服务器或计算节点提供 Java 17+，或在准备命令中加载集群模块。Phi 不会修改系统 Java 安装。',
   slurmRequired:
@@ -121,6 +120,7 @@ export const remoteSetupChinese: LocalizedCopy<typeof remoteSetupEnglish> = {
   installedInRuntimeRoot: '由 Phi 安装到运行时目录',
   detectFromServerPath: '从服务器 PATH 自动检测',
   dockerPathError: 'Docker 路径必须指向名为 docker 的可执行文件',
+  singularityPathError: '路径必须指向名为 singularity 或 apptainer 的可执行文件',
   environmentSettings: '环境设置',
   environmentOverrideHelp: '留空以使用 Phi 管理。仅明确填写的路径覆盖默认值。',
   defaultRuntimeEnvironment: '默认运行环境',
@@ -200,7 +200,7 @@ export const remoteSetupChinese: LocalizedCopy<typeof remoteSetupEnglish> = {
   remote: '远程',
   useAnyway: '仍然使用',
   nextflowInstallConsent:
-    'Phi 将从 Nextflow 官方安装地址下载安装程序，在所选服务器的当前账户下运行，并安装到 ~/.local/bin。不使用 sudo，也不会安装 Java、Slurm 或容器运行时。',
+    '将在所选服务器的 Phi 运行时根目录下创建 phi-nextflow，包含 Nextflow 与 OpenJDK 17+（约需下载 350 MiB）。Phi 使用自身管理的 micromamba，不使用 sudo，也不会修改您的 Conda 环境或安装 Slurm/容器运行时。',
   confirmInstall: '确认安装',
   save: '保存',
   clear: '清除',

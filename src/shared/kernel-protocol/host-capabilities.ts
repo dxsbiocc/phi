@@ -485,6 +485,8 @@ export const KERNEL_HOST_CAPABILITIES = [
   'capabilities.install',
   'capabilities.findSkills',
   'capabilities.cancel',
+  'wrapperCatalog.search',
+  'wrapperCatalog.inspect',
   'wrapperJob.start',
   'wrapperJob.status',
   'wrapperJob.list',
@@ -893,6 +895,16 @@ export const KERNEL_HOST_CAPABILITY_REGISTRY = {
     result: z.object({ cancelled: z.boolean() }).strict(),
     ...service(DEFAULT_SERVICE_TIMEOUT_MS, true)
   },
+  'wrapperCatalog.search': {
+    params: z.object({ query: z.string().max(500) }).strict(),
+    result: desktopMcpToolResultSchema,
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
+  },
+  'wrapperCatalog.inspect': {
+    params: z.object({ id: nonEmptyStringSchema.max(512) }).strict(),
+    result: desktopMcpToolResultSchema,
+    ...service(DEFAULT_SERVICE_TIMEOUT_MS, false)
+  },
   'wrapperJob.start': {
     params: z
       .object({
@@ -910,7 +922,7 @@ export const KERNEL_HOST_CAPABILITY_REGISTRY = {
       z.object({ ok: z.literal(true), status: wrapperStatusSchema }).strict(),
       z.object({ ok: z.literal(false), error: nonEmptyStringSchema }).strict()
     ]),
-    ...service(2 * NETWORK_SERVICE_TIMEOUT_MS, true)
+    ...user()
   },
   'wrapperJob.status': {
     params: z.object({ runId: wrapperRunIdSchema }).strict(),

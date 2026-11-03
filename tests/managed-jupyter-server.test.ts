@@ -209,6 +209,32 @@ test(
 )
 
 test(
+  'choosing a host Jupyter path in the install prompt resumes the same launch resolution',
+  withFixture(async (fixture) => {
+    let selected: string | undefined
+    const launch = await resolveManagedJupyterLaunch(
+      { port: 31888, args: ['server', '--no-browser'] },
+      {
+        ...options(fixture),
+        runtimeSessionId: 'runtime-1',
+        hostJupyterPath: () => selected,
+        builds: {
+          start: () => Promise.reject(new Error('path choice must not build')),
+          list: () => [],
+          cancel: () => undefined
+        },
+        confirmBuild: async () => {
+          selected = '/opt/selected/bin/jupyter'
+          return false
+        }
+      }
+    )
+
+    assert.equal(launch.command, '/opt/selected/bin/jupyter')
+  })
+)
+
+test(
   'the registry spawns the resolved managed launch, and not after a stop during resolution',
   withFixture(async (fixture) => {
     const jupyterPrefix = install(fixture, 'phi:jupyter@1')

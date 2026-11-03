@@ -331,6 +331,20 @@ export function readWrapperDefaultParams(wrapperDir: string): Record<string, unk
   }
 }
 
+/**
+ * Defaults a run may inherit. `params.json` is the wrapper's smoke test, so its input values
+ * point at test data (often nf-core URLs); only outputs and options are real defaults. Inputs
+ * must always come from the caller, or a run could silently analyse the test dataset.
+ */
+export function wrapperRunDefaults(entry: WrapperCompositionEntry): Record<string, unknown> {
+  const params = entry.manifest.params
+  return Object.fromEntries(
+    Object.entries(readWrapperDefaultParams(entry.wrapperDir)).filter(
+      ([key]) => params[key]?.kind !== 'input'
+    )
+  )
+}
+
 export function findWrapperCompositionEntry(
   id: string,
   options: WrapperCompositionDiscoveryOptions = {}

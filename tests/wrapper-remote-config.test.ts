@@ -136,6 +136,18 @@ test('a custom Docker binary directory is added to the remote launch PATH', () =
   assert.match(preflight, /\/opt\/docker\/bin\/docker/)
 })
 
+test('an absolute Nextflow path puts its directory first on PATH, so the env Java is used', () => {
+  const hpc = { scheduler: 'local' as const, nextflowBin: '/data/envs/nextflow/bin/nextflow' }
+  const script = buildRemoteLaunchScript({ layout: LAYOUT, profile: 'docker', hpc })
+  assert.match(script, /export PATH='\/data\/envs\/nextflow\/bin':"\$PATH"/)
+  assert.ok(script.indexOf('export PATH') < script.indexOf("'run'"))
+  const preflight = buildRemotePreflightScript({ hpc, profile: 'docker' })
+  assert.ok(
+    preflight.indexOf("export PATH='/data/envs/nextflow/bin'") <
+      preflight.indexOf('command -v java')
+  )
+})
+
 test('shared remote launch runs setup in the head process and records setup failure', () => {
   const dir = mkdtempSync(join(tmpdir(), 'phi-shared-launch-'))
   try {

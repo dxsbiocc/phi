@@ -35,7 +35,7 @@ function render(override: RemoteDoctorReport = report): string {
 
 test('missing Nextflow offers an explicit personal install or official manual instructions', () => {
   const markup = render()
-  assert.match(markup, /Install Nextflow automatically/)
+  assert.match(markup, /Install Phi-managed Nextflow environment/)
   assert.match(markup, /Manual installation instructions/)
   assert.match(markup, /Slurm.*does not install the scheduler/)
   assert.doesNotMatch(markup, /Connection failed/)
@@ -48,7 +48,7 @@ test('automatic Nextflow install stays unavailable until Java is ready', () => {
       check.id === 'java' ? { ...check, status: 'error', message: 'Java not found' } : check
     )
   })
-  const button = markup.match(/<button[^>]*>Install Nextflow automatically<\/button>/)?.[0]
+  const button = markup.match(/<button[^>]*>Install Phi-managed Nextflow environment<\/button>/)?.[0]
   assert.ok(button)
   assert.match(button, /disabled/)
   assert.match(markup, /Java 17\+/)
@@ -64,7 +64,7 @@ test('capability-backed missing Nextflow keeps install beside module and phi-bas
     )
   })
 
-  assert.match(markup, /Install Nextflow automatically/)
+  assert.match(markup, /Install Phi-managed Nextflow environment/)
   assert.match(markup, /module load nextflow, or use the phi-base environment/)
   assert.match(markup, /Copy suggestion/)
   assert.match(markup, /Manual installation instructions/)

@@ -13,6 +13,7 @@ import {
   type RemoteNotebookRuntimeServices
 } from '../src/main/agent/notebook/remote-notebook-runtime'
 import type { RemoteJupyterStartJobs } from '../src/main/agent/notebook/remote-jupyter-start-jobs'
+import type { ResolveMissingRemoteJupyter } from '../src/main/agent/notebook/remote-kernelspec-adapter'
 import type { Project } from '../src/main/agent/projects'
 import type { RemoteRuntimeTarget } from '../src/main/agent/remote-runtime/workspace'
 import type { PhiSessionManifest } from '../src/main/agent/session/session-store'
@@ -225,6 +226,28 @@ test('configured Jupyter path is read at start time, not at backend creation', (
   assert.equal(backend.options.configuredJupyterPath?.(), '/second/jupyter')
   jupyter = '/third/jupyter'
   assert.equal(backend.options.configuredJupyterPath?.(), '/third/jupyter')
+})
+
+test('missing Jupyter recovery is forwarded to each remote notebook backend', async () => {
+  const created: FakeBackend[] = []
+  const resolveMissingJupyter: ResolveMissingRemoteJupyter = async ({ runtimeSessionId }) => ({
+    choice: runtimeSessionId === 'notebook:remote-project' ? 'cancel' : 'install'
+  })
+  const runtime = createRuntime(createServices(created), { resolveMissingJupyter })
+
+  const backend = runtime.remoteNotebookBackend(
+    remoteProject(),
+    'session-1'
+  ) as unknown as FakeBackend
+
+  assert.equal(backend.options.resolveMissingJupyter, resolveMissingJupyter)
+  assert.deepEqual(
+    await backend.options.resolveMissingJupyter?.({
+      runtimeSessionId: 'notebook:remote-project',
+      signal: undefined
+    }),
+    { choice: 'cancel' }
+  )
 })
 
 test('remote notebook runtime checks the workspace identity and released session', async () => {

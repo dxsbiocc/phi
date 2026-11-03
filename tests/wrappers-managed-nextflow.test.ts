@@ -45,7 +45,13 @@ import {
   writeExecutable
 } from './helpers/fakeEnvironment'
 import { createTestRuntimeRoot } from './helpers/testRuntimeRoot'
-import { FAKE_NEXTFLOW, WRAPPER_ID, bundledEntry, withSandbox } from './helpers/wrapperSandbox'
+import {
+  FAKE_NEXTFLOW,
+  WRAPPER_ID,
+  FIXTURE_GFF,
+  bundledEntry,
+  withSandbox
+} from './helpers/wrapperSandbox'
 
 interface Fixture {
   root: string
@@ -235,6 +241,23 @@ test("the profile's container runtime from the spec host section is put on PATH"
   })
 })
 
+test('an explicitly selected local container runtime is put on PATH for the resumed call', async () => {
+  await withFixture(async (fixture) => {
+    installFakeNextflow(fixture, shell(['exit 0']))
+    const runtime = join(fixture.root, 'custom', 'bin', 'docker')
+    const result = await resolveNextflowLaunch(
+      context(fixture, {
+        profile: 'docker',
+        containerRuntimePath: () => runtime
+      })
+    )
+
+    assert.equal(result.ok, true, JSON.stringify(result))
+    if (!result.ok) return
+    assert.ok(result.launch.env.PATH.split(':').includes(dirname(runtime)))
+  })
+})
+
 test('container runtime directories go before the system directories, once', () => {
   assert.equal(
     insertBeforeSystemDirs('/env/bin:/usr/bin:/bin', ['/usr/local/bin', '/usr/local/bin']),
@@ -370,7 +393,7 @@ test('the job manager runs phi:nextflow@1 and records which nextflow ran', async
       })
       const started = await manager.start({
         id: WRAPPER_ID,
-        overrides: { outdir: sb.outdir },
+        overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
         profile: 'docker'
       })
       assert.equal(started.ok, true, JSON.stringify(started))
@@ -412,7 +435,7 @@ test('the job manager refuses a local run when phi:nextflow@1 is not built', asy
       })
       const started = await manager.start({
         id: WRAPPER_ID,
-        overrides: { outdir: sb.outdir },
+        overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
         profile: 'docker',
         originSessionId: 'runtime-session-1'
       })
@@ -449,7 +472,7 @@ test('the job manager asks to build phi:nextflow@1 in the originating chat', asy
       })
       const started = await manager.start({
         id: WRAPPER_ID,
-        overrides: { outdir: sb.outdir },
+        overrides: { gff: FIXTURE_GFF, outdir: sb.outdir },
         profile: 'docker',
         originSessionId: 'runtime-session-1'
       })
@@ -457,6 +480,32 @@ test('the job manager asks to build phi:nextflow@1 in the originating chat', asy
       if (!started.ok) assert.match(started.error, /declined/)
       assert.deepEqual(asked, [`runtime-session-1 ${NEXTFLOW_ENVIRONMENT_REF} ${WRAPPER_ID}`])
     })
+  })
+})
+
+test('choosing a host Nextflow path in the build prompt resumes the same launch resolution', async () => {
+  await withFixture(async (fixture) => {
+    let selected: string | undefined
+    const result = await resolveNextflowLaunch(
+      context(fixture, {
+        runtimeSessionId: 'runtime-session-1',
+        wrapperId: WRAPPER_ID,
+        hostNextflowPath: () => selected,
+        readVersion: () => Promise.resolve('25.10.0'),
+        builds: {
+          start: () => Promise.reject(new Error('path choice must not build')),
+          list: () => [],
+          cancel: () => undefined
+        },
+        confirmBuild: async () => {
+          selected = process.execPath
+          return false
+        }
+      })
+    )
+
+    assert.equal(result.ok, true, JSON.stringify(result))
+    if (result.ok) assert.equal(result.launch.command, process.execPath)
   })
 })
 

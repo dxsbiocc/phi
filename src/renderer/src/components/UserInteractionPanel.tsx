@@ -16,6 +16,7 @@ import {
 import { useMemo, useState } from 'react'
 import { PhiIcons } from '../icons'
 import { PlanReviewPanel } from '../features/plan/components/PlanReviewPanel'
+import { MissingToolPromptCard } from '../features/chat/components/MissingToolPromptCard'
 import type {
   AgentUserInteractionAnswer,
   AgentUserInteractionRequest,
@@ -125,6 +126,15 @@ function UserInteractionPanel({
   const [draftState, setDraftState] = useState<DraftState | null>(null)
 
   if (request?.planReview) return <PlanReviewPanel request={request} onRespond={onRespond} />
+  const missingTool = request?.missingTool
+  if (request && missingTool) {
+    return (
+      <MissingToolPromptCard
+        request={{ requestId: request.requestId, ...missingTool }}
+        onRespond={onRespond}
+      />
+    )
+  }
 
   if (!request || !initialDraft || request.questions.length === 0) {
     return <></>

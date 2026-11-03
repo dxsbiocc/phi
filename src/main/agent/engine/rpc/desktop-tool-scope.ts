@@ -25,7 +25,10 @@ import { buildDecisionTool, type DecisionEvaluator } from '../../decisions/tool'
 import { buildLibraryCustomTools } from '../../library/library-tools'
 import { buildCapabilityTools, CAPABILITY_HOST_METHODS } from '../../packages/capability-tools'
 import { createHostJobClient } from '../../wrappers/composition/job-host-client'
-import { WRAPPER_JOB_HOST_METHODS } from '../../wrappers/composition/job-types'
+import {
+  WRAPPER_CATALOG_HOST_METHODS,
+  WRAPPER_JOB_HOST_METHODS
+} from '../../wrappers/composition/job-types'
 import { buildWrapperCompositionTools } from '../../wrappers/composition/tools'
 import { HostServiceRegistry } from '../host-service-registry'
 import type { PhiHostRequestContext, PhiTool, PhiToolImage, PhiToolApproval } from '../types'
@@ -276,7 +279,10 @@ export function createRpcDesktopToolScope(
   const skillRequest = requestFor(['skills.run', 'skills.scriptTool', 'skills.cancel'])
   const environmentRequest = requestFor(['environments.request', 'environments.cancel'])
   const capabilityRequest = requestFor(Object.values(CAPABILITY_HOST_METHODS))
-  const wrapperRequest = requestFor(Object.values(WRAPPER_JOB_HOST_METHODS))
+  const wrapperRequest = requestFor([
+    ...Object.values(WRAPPER_CATALOG_HOST_METHODS),
+    ...Object.values(WRAPPER_JOB_HOST_METHODS)
+  ])
   const libraryRequest = requestFor(['library.execute', 'library.cancel'])
   const download: RemoteDownloadBackend = async (request, signal) => {
     signal?.throwIfAborted()

@@ -80,6 +80,22 @@ flowchart TD
 
 这里的可复现指代码固定、输入明确，并且每次运行都有记录。环境固定到什么程度取决于各个 Wrapper 自身的定义，需要精确复现时请核对该定义。
 
+### 一次真实运行
+
+这次运行要求在一台 GPU 服务器上用 Docker，把 FastQC、fastp、Salmon 建索引和 Salmon 定量作为一条流程跑完双端 reads。服务器登录环境的 `PATH` 里没有 Nextflow，所以第一步之前 Phi 暂停下来询问它在哪里：卡片列出了找到的 Conda 环境，也可以输入路径，或者新建一个受管环境。不经你确认，Phi 不会安装任何东西。
+
+<p align="center"><img src="assets/readme/wrapper-missing-tool.png" alt="“Required tool not found”卡片：列出找到的 Nextflow Conda 环境、路径输入框和新建环境的选项" width="100%"></p>
+
+随后 Wrapper 专家把四个步骤作为一条流程运行，后台任务面板按流程名称把它们归在一起。第一次 Salmon 定量因索引路径出错失败，专家改正后只重跑了这一步，所以流程计为四个步骤全部完成。
+
+<p align="center"><img src="assets/readme/wrapper-workflow.png" alt="对话委派给 Wrapper 专家，旁边的后台任务面板显示 PE RNA-seq demo 流程 4/4 步完成以及每一步的状态" width="100%"></p>
+
+最终回答汇报 QC 和比对率，列出用到的 Wrapper，并交付报告和定量文件。
+
+<p align="center"><img src="assets/readme/wrapper-summary.png" alt="对话结尾列出输出、用到的 Wrapper，以及 FastQC、fastp 和 Salmon 文件的交付卡片" width="100%"></p>
+
+<sub>截图来自 0.1.0 之后的 Phi 开发版，界面为英文，已缩放；后台任务截图经过裁剪。模型：Grok 4.5 Fast。</sub>
+
 ## 怎么使用
 
 1. **安装 Phi**：从 [Releases](https://github.com/dxsbiocc/phi/releases) 下载，或[从源码构建](#从源码构建)。

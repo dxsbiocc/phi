@@ -22,8 +22,11 @@ import {
   getWrapperTreeOwnershipPath
 } from '../../src/main/agent/packages/wrapper-tree'
 
-/** An installed test wrapper that needs no downloads: its default `gff` is a local fixture. */
+/** An installed test wrapper that needs no downloads: its `gff` fixture ships with it. */
 export const WRAPPER_ID = 'nf-core/modules/gffread'
+
+/** Inputs are never taken from params.json, so every run passes the fixture explicitly. */
+export const FIXTURE_GFF = 'tests/data/genome.gff3'
 
 /**
  * A stand-in `nextflow`. Modes (FAKE_NF_MODE): `fail` exits 1; `hang` prints a

@@ -1,8 +1,9 @@
 import {
+  WRAPPER_CATALOG_HOST_METHODS,
   WRAPPER_JOB_HOST_METHODS,
   type CancelJobResult,
   type StartJobResult,
-  type WrapperJobClient,
+  type WrapperHostClient,
   type WrapperJobStatus,
   type WrapperJobSummary
 } from './job-types'
@@ -19,7 +20,7 @@ export function createHostJobClient(
     context?: { originSessionId?: string; agentRunId?: string }
   ) => Promise<unknown>,
   options: { originSessionId?: string; agentRunId?: string } = {}
-): WrapperJobClient {
+): WrapperHostClient {
   const context = {
     ...(options.originSessionId ? { originSessionId: options.originSessionId } : {}),
     ...(options.agentRunId ? { agentRunId: options.agentRunId } : {})
@@ -39,6 +40,12 @@ export function createHostJobClient(
     wait: (runId, timeoutMs) =>
       call(WRAPPER_JOB_HOST_METHODS.wait, { runId, timeoutMs }) as Promise<
         WrapperJobStatus | undefined
-      >
+      >,
+    search: (query) =>
+      call(WRAPPER_CATALOG_HOST_METHODS.search, { query }) as ReturnType<
+        WrapperHostClient['search']
+      >,
+    inspect: (id) =>
+      call(WRAPPER_CATALOG_HOST_METHODS.inspect, { id }) as ReturnType<WrapperHostClient['inspect']>
   }
 }

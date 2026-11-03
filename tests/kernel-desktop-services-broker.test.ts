@@ -136,6 +136,32 @@ test('A14/A15 desktop broker preserves host, cwd, references, and Wrapper owners
   }
   services.register('wrapperJob.list', () => [])
   services.register('wrapperJob.wait', () => null)
+  services.register('wrapperCatalog.search', (params, context) => {
+    observed.push({
+      method: 'wrapperCatalog.search',
+      params: params as Record<string, unknown>,
+      origin: context.originSessionId
+    })
+    return {
+      content: [{ type: 'text', text: '[{"id":"desktop/wrapper"}]' }],
+      details: { kind: 'wrapper_search_results', results: [{ id: 'desktop/wrapper' }] }
+    }
+  })
+  services.register('wrapperCatalog.inspect', (params, context) => {
+    observed.push({
+      method: 'wrapperCatalog.inspect',
+      params: params as Record<string, unknown>,
+      origin: context.originSessionId
+    })
+    return {
+      content: [{ type: 'text', text: '{"id":"desktop/wrapper"}' }],
+      details: {
+        kind: 'wrapper_manifest',
+        manifest: { id: 'desktop/wrapper' },
+        defaultParams: {}
+      }
+    }
+  })
 
   const broker = registerKernelDesktopServicesBroker(client, {
     services,
@@ -227,6 +253,37 @@ test('A14/A15 desktop broker preserves host, cwd, references, and Wrapper owners
       ).state,
       'cancelled'
     )
+    const catalog = (await core.requestHost(
+      'wrapperCatalog.search',
+      { query: 'desktop' },
+      { sessionId: 'kernel-a', runId: 'run-a' }
+    )) as Record<string, JsonValue>
+    assert.equal(
+      (
+        ((catalog.details as Record<string, JsonValue>).results as JsonValue[])[0] as Record<
+          string,
+          JsonValue
+        >
+      ).id,
+      'desktop/wrapper'
+    )
+    const inspected = (await core.requestHost(
+      'wrapperCatalog.inspect',
+      { id: 'desktop/wrapper' },
+      { sessionId: 'kernel-a', runId: 'run-a' }
+    )) as Record<string, JsonValue>
+    assert.equal(
+      ((inspected.details as Record<string, JsonValue>).manifest as Record<string, JsonValue>).id,
+      'desktop/wrapper'
+    )
+    assert.deepEqual(observed.slice(-2), [
+      { method: 'wrapperCatalog.search', params: { query: 'desktop' }, origin: 'runtime-a' },
+      {
+        method: 'wrapperCatalog.inspect',
+        params: { id: 'desktop/wrapper' },
+        origin: 'runtime-a'
+      }
+    ])
     await assert.rejects(
       core.requestHost('wrapperJob.status', { runId: 'wrapper-a' }, { sessionId: 'kernel-b' }),
       (error: unknown) => {

@@ -19,7 +19,10 @@ import {
   type JupyterRuntimeBackend,
   type JupyterRuntimeState
 } from './jupyter-runtime-backend'
-import { RemoteKernelspecAdapter } from './remote-kernelspec-adapter'
+import {
+  RemoteKernelspecAdapter,
+  type ResolveMissingRemoteJupyter
+} from './remote-kernelspec-adapter'
 import { RemoteJupyterServerSupervisor } from './remote-jupyter-server'
 import {
   describeRemoteJupyterError,
@@ -92,20 +95,22 @@ export class RemoteNotebookRuntimeController {
     }
   }
 
-  start(): RemoteNotebookServerStatus {
+  start(promptRuntimeSessionId?: string): RemoteNotebookServerStatus {
     if (!this.starting && !this.status().hasEndpoint) {
       this.lastError = undefined
       const job = this.options.beginJob?.()
       this.job = job
       job?.step(`连接 ${this.options.serverLabel}，准备启动远程 Jupyter`)
-      const pending = this.options.runtime.start(this.options.projectCwd).then(
-        () => job?.succeed(),
-        (error) => {
-          // Causes carry the actual reason, such as an early exit or a probe timeout.
-          this.lastError = describeRemoteJupyterError(error)
-          job?.fail(error)
-        }
-      )
+      const pending = this.options.runtime
+        .start(this.options.projectCwd, undefined, promptRuntimeSessionId)
+        .then(
+          () => job?.succeed(),
+          (error) => {
+            // Causes carry the actual reason, such as an early exit or a probe timeout.
+            this.lastError = describeRemoteJupyterError(error)
+            job?.fail(error)
+          }
+        )
       const tracked = pending.finally(() => {
         if (this.starting === tracked) this.starting = undefined
       })
@@ -167,7 +172,7 @@ export class RemoteNotebookRuntimeController {
         )
       }
       if (!this.starting && !this.status().hasEndpoint) {
-        this.start()
+        this.start(control.runtimeSessionId)
         initiated = true
       }
     }
@@ -255,6 +260,8 @@ type RemoteBackendOptions = {
   startJobs?: RemoteJupyterStartJobs
   /** The Jupyter path saved in the host's remote settings. */
   configuredJupyterPath?: () => string | undefined
+  /** Asks the user how to recover when no configured or discovered Jupyter is usable. */
+  resolveMissingJupyter?: ResolveMissingRemoteJupyter
 }
 
 export type RemoteAnalysisNotebookBackendOptions = Omit<RemoteBackendOptions, 'projectHost'> & {
@@ -396,6 +403,9 @@ export class RemoteAnalysisNotebookBackend {
       openWorkspace: options.openWorkspace,
       ...(options.configuredJupyterPath
         ? { configuredJupyterPath: options.configuredJupyterPath }
+        : {}),
+      ...(options.resolveMissingJupyter
+        ? { resolveMissingJupyter: options.resolveMissingJupyter }
         : {})
     })
   }

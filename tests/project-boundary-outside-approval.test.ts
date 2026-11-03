@@ -50,6 +50,22 @@ test('reads outside the project can be approved; writes there cannot', (t) => {
   }
 })
 
+test('shell devices such as 2>/dev/null are not outside the project', (t) => {
+  const project = mkdtempSync(join(tmpdir(), 'phi-boundary-'))
+  t.after(() => rmSync(project, { recursive: true, force: true }))
+
+  for (const command of [
+    'ls data 2>/dev/null',
+    'cat data.txt > /dev/stdout',
+    'head -c 8 /dev/urandom | od',
+    'echo done >&2 2>/dev/fd/2'
+  ]) {
+    assert.deepEqual(projectToolBoundaryDecision(project, 'bash', { command }), { allowed: true })
+  }
+  const other = projectToolBoundaryDecision(project, 'bash', { command: 'cat /dev/sda1' })
+  assert.equal(other.allowed, false)
+})
+
 test('the boundary asks about outside reads, runs them when approved and never asks about writes', async (t) => {
   const project = mkdtempSync(join(tmpdir(), 'phi-boundary-'))
   t.after(() => rmSync(project, { recursive: true, force: true }))

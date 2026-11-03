@@ -9,12 +9,14 @@ import {
   listWrapperCompositionCatalog,
   readWrapperCompositionDag,
   readWrapperModuleDetails,
-  resetWrapperCompositionCatalogCache
+  resetWrapperCompositionCatalogCache,
+  wrapperRunDefaults
 } from '../src/main/agent/wrappers/composition/discovery'
 import { WrapperJobManager } from '../src/main/agent/wrappers/composition/job-manager'
 import {
   buildWrapperCompositionRunTool,
-  buildWrapperCompositionTools
+  buildWrapperCompositionTools,
+  inspectWrapperCompositionCatalog
 } from '../src/main/agent/wrappers/composition/tools'
 import { writeGffreadFixture } from './helpers/compositionFixtures'
 
@@ -63,6 +65,20 @@ test('composition discovery scans all three component tiers and isolates malform
     assert.ok(found)
     assert.equal(found.manifest.params.gff.kind, 'input')
     assert.equal(findWrapperCompositionEntry('acme/modules/missing', options), undefined)
+  })
+})
+
+test('smoke-test inputs in params.json never become run defaults or inspected defaults', async () => {
+  await withTree(({ sourceRoot, agentDir }) => {
+    const entry = listWrapperCompositionCatalog({ sourceRoot, agentDir })[0]
+    assert.ok(entry)
+    // The fixture's params.json holds a test-data input (gff) and an output default.
+    assert.deepEqual(wrapperRunDefaults(entry), { outdir: 'results' })
+    const inspected = inspectWrapperCompositionCatalog(entry.manifest.id, { sourceRoot, agentDir })
+    assert.deepEqual(
+      (inspected.details as { defaultParams: Record<string, unknown> }).defaultParams,
+      { outdir: 'results' }
+    )
   })
 })
 

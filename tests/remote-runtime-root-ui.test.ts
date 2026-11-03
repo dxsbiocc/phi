@@ -269,7 +269,7 @@ describe('remote runtime root settings UI', () => {
     assert.doesNotMatch(markup, />Clear</)
     assert.doesNotMatch(markup, />Check</)
     assert.match(markup, /value="\/data\/researcher\/phi-runtime"/)
-    assert.equal((markup.match(/data-shrink="true"/g) ?? []).length, 5)
+    assert.equal((markup.match(/data-shrink="true"/g) ?? []).length, 6)
   })
 
   it('loads and saves a project override that wins over the selected host override', () => {

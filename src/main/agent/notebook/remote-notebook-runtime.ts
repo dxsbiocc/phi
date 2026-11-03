@@ -19,6 +19,7 @@ import {
   createRemoteAnalysisNotebookBackend,
   type RemoteAnalysisNotebookBackend
 } from './remote-analysis-notebook-backend'
+import type { ResolveMissingRemoteJupyter } from './remote-kernelspec-adapter'
 import { createRemoteNotebookBackendDisposal } from './remote-notebook-backend-disposal'
 import type { RemoteJupyterStartJobs } from './remote-jupyter-start-jobs'
 
@@ -55,6 +56,7 @@ export interface RemoteNotebookRuntimeDeps {
   notebookExecutor: AnalysisNotebookExecutor
   startJobs: RemoteJupyterStartJobs
   onDraftChanged: (change: NotebookDraftChange) => void
+  resolveMissingJupyter?: ResolveMissingRemoteJupyter
   services?: RemoteNotebookRuntimeServices
 }
 
@@ -146,6 +148,9 @@ function createRemoteNotebookBackend(
             state.deps.agentDir
           ).jupyter
         : undefined,
+    ...(state.deps.resolveMissingJupyter
+      ? { resolveMissingJupyter: state.deps.resolveMissingJupyter }
+      : {}),
     confirmEnvironment: async () => true,
     resolveBaseEnvironment: (ref, pluginId) =>
       state.services.resolveRemoteBaseEnvironment(ref, pluginId, state.deps.agentDir),

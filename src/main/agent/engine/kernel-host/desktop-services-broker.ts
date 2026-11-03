@@ -38,6 +38,8 @@ export const DESKTOP_SERVICE_HOST_CAPABILITIES = [
   'memory.ingest',
   'memory.deleteLesson',
   'memory.clear',
+  'wrapperCatalog.search',
+  'wrapperCatalog.inspect',
   'wrapperJob.start',
   'wrapperJob.status',
   'wrapperJob.list',
@@ -359,6 +361,18 @@ function registerWrapperServices(
   options: KernelDesktopServicesBrokerOptions
 ): Unregister[] {
   return [
+    client.registerHostCapability('wrapperCatalog.search', async (params, context) => {
+      const scope = await serviceContext(options, context)
+      return options.services.invoke('wrapperCatalog.search', params, scope.legacy) as Promise<
+        KernelHostCapabilityResult<'wrapperCatalog.search'>
+      >
+    }),
+    client.registerHostCapability('wrapperCatalog.inspect', async (params, context) => {
+      const scope = await serviceContext(options, context)
+      return options.services.invoke('wrapperCatalog.inspect', params, scope.legacy) as Promise<
+        KernelHostCapabilityResult<'wrapperCatalog.inspect'>
+      >
+    }),
     client.registerHostCapability('wrapperJob.start', async (params, context) => {
       const scope = await serviceContext(options, context)
       if (

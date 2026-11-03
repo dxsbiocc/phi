@@ -102,6 +102,48 @@ test('remote targets inherit server-level Nextflow and Docker overrides', () => 
   })
 })
 
+test('singularity profiles inherit a saved Apptainer-compatible runtime path', () => {
+  withAgentDir((agentDir) => {
+    const host = saveRemoteHostProfile({ label: 'HPC', hostAlias: 'hpc' }, agentDir)
+    saveHostRemoteEnvironmentPaths(
+      host.id,
+      { singularity: '/opt/apptainer/bin/apptainer' },
+      agentDir
+    )
+    const connection: ProjectRemoteConnection = {
+      id: 'hpc',
+      label: 'HPC',
+      hostProfileId: host.id,
+      hpc: { scheduler: 'slurm', runtime: 'singularity' }
+    }
+
+    const target = resolveProjectRemoteTarget(project(connection), undefined, agentDir)
+    assert.ok('target' in target)
+    assert.equal(target.target.hpc?.containerRuntimeBin, '/opt/apptainer/bin/apptainer')
+  })
+})
+
+test('a saved Nextflow conda environment resolves to its nextflow executable', () => {
+  withAgentDir((agentDir) => {
+    const host = saveRemoteHostProfile({ label: 'GPU', hostAlias: 'gpu' }, agentDir)
+    saveHostRemoteEnvironmentPaths(
+      host.id,
+      { nextflow: '/data/miniconda3/envs/nextflow' },
+      agentDir
+    )
+    const connection: ProjectRemoteConnection = {
+      id: 'gpu',
+      label: 'GPU',
+      hostProfileId: host.id,
+      hpc: { scheduler: 'local', runtime: 'docker' }
+    }
+
+    const target = resolveProjectRemoteTarget(project(connection), undefined, agentDir)
+    assert.ok('target' in target)
+    assert.equal(target.target.hpc?.nextflowBin, '/data/miniconda3/envs/nextflow/bin/nextflow')
+  })
+})
+
 test('SSH project always resolves its bound host and canonical directory', () => {
   withAgentDir((agentDir) => {
     const host = saveRemoteHostProfile(

@@ -1,14 +1,14 @@
-import type { PhiTool } from '../../engine/types'
+import type { PhiTool, PhiToolResult } from '../../engine/types'
 
 import {
   findWrapperCompositionEntry,
   listWrapperCompositionCatalog,
-  readWrapperDefaultParams,
+  wrapperRunDefaults,
   type WrapperCompositionDiscoveryOptions
 } from './discovery'
 import { WRAPPER_EXECUTION_PROFILES } from './executor'
 import { formatJobList, formatJobStatus } from './job-format'
-import type { WrapperJobClient } from './job-types'
+import type { WrapperCatalogClient, WrapperJobClient } from './job-types'
 import { rankWrapperEntries } from './search'
 import { parseWrapperWorkflow } from './workflow-identity'
 
@@ -36,7 +36,8 @@ export const WRAPPER_COMPOSITION_TOOL_NAMES = [
  */
 
 export function buildWrapperCompositionSearchTool(
-  discovery: WrapperCompositionDiscoveryOptions = {}
+  discovery: WrapperCompositionDiscoveryOptions = {},
+  catalog?: WrapperCatalogClient
 ): PhiTool {
   return {
     name: WRAPPER_COMPOSITION_TOOL_NAMES[0],
@@ -58,35 +59,43 @@ export function buildWrapperCompositionSearchTool(
     approval: 'read',
     async execute(_toolCallId, params) {
       const query = isRecord(params) && typeof params.query === 'string' ? params.query : ''
-      const outcome = rankWrapperEntries(listWrapperCompositionCatalog(discovery), query)
-      const results = outcome.entries.map((entry) => ({
-        id: entry.manifest.id,
-        name: entry.manifest.name,
-        summary: entry.manifest.summary
-      }))
-      if (results.length === 0) {
-        return {
-          content: [{ type: 'text', text: 'No matching wrappers found.' }],
-          details: { kind: 'wrapper_search_results', results }
-        }
-      }
-
-      const content: Array<{ type: 'text'; text: string }> = [
-        { type: 'text', text: JSON.stringify(results) }
-      ]
-      if (!outcome.matchedAll) {
-        content.push({
-          type: 'text',
-          text: `Partial matches only: no wrapper matched every word. Nothing matched: ${outcome.unmatchedWords.join(', ') || '(each word matched some wrapper, none matched all)'}.`
-        })
-      }
-      return { content, details: { kind: 'wrapper_search_results', results } }
+      return catalog ? catalog.search(query) : searchWrapperCompositionCatalog(query, discovery)
     }
   }
 }
 
-export function buildWrapperCompositionInspectTool(
+export function searchWrapperCompositionCatalog(
+  query: string,
   discovery: WrapperCompositionDiscoveryOptions = {}
+): PhiToolResult {
+  const outcome = rankWrapperEntries(listWrapperCompositionCatalog(discovery), query)
+  const results = outcome.entries.map((entry) => ({
+    id: entry.manifest.id,
+    name: entry.manifest.name,
+    summary: entry.manifest.summary
+  }))
+  if (results.length === 0) {
+    return {
+      content: [{ type: 'text', text: 'No matching wrappers found.' }],
+      details: { kind: 'wrapper_search_results', results }
+    }
+  }
+
+  const content: Array<{ type: 'text'; text: string }> = [
+    { type: 'text', text: JSON.stringify(results) }
+  ]
+  if (!outcome.matchedAll) {
+    content.push({
+      type: 'text',
+      text: `Partial matches only: no wrapper matched every word. Nothing matched: ${outcome.unmatchedWords.join(', ') || '(each word matched some wrapper, none matched all)'}.`
+    })
+  }
+  return { content, details: { kind: 'wrapper_search_results', results } }
+}
+
+export function buildWrapperCompositionInspectTool(
+  discovery: WrapperCompositionDiscoveryOptions = {},
+  catalog?: WrapperCatalogClient
 ): PhiTool {
   return {
     name: WRAPPER_COMPOSITION_TOOL_NAMES[1],
@@ -111,17 +120,24 @@ export function buildWrapperCompositionInspectTool(
           isError: true
         }
       }
-      const entry = findWrapperCompositionEntry(id, discovery)
-      if (!entry) {
-        return { content: [{ type: 'text', text: `Wrapper not found: ${id}` }], isError: true }
-      }
-      const defaultParams = readWrapperDefaultParams(entry.wrapperDir)
-
-      return {
-        content: [{ type: 'text', text: JSON.stringify({ ...entry.manifest, defaultParams }) }],
-        details: { kind: 'wrapper_manifest', manifest: entry.manifest, defaultParams }
-      }
+      return catalog ? catalog.inspect(id) : inspectWrapperCompositionCatalog(id, discovery)
     }
+  }
+}
+
+export function inspectWrapperCompositionCatalog(
+  id: string,
+  discovery: WrapperCompositionDiscoveryOptions = {}
+): PhiToolResult {
+  const entry = findWrapperCompositionEntry(id, discovery)
+  if (!entry) {
+    return { content: [{ type: 'text', text: `Wrapper not found: ${id}` }], isError: true }
+  }
+  const defaultParams = wrapperRunDefaults(entry)
+
+  return {
+    content: [{ type: 'text', text: JSON.stringify({ ...entry.manifest, defaultParams }) }],
+    details: { kind: 'wrapper_manifest', manifest: entry.manifest, defaultParams }
   }
 }
 
@@ -379,12 +395,20 @@ export function buildWrapperCompositionTools(
   jobs: WrapperJobClient,
   discovery: WrapperCompositionDiscoveryOptions = {}
 ): PhiTool[] {
+  const catalog = isWrapperCatalogClient(jobs) ? jobs : undefined
   return [
-    buildWrapperCompositionSearchTool(discovery),
-    buildWrapperCompositionInspectTool(discovery),
+    buildWrapperCompositionSearchTool(discovery, catalog),
+    buildWrapperCompositionInspectTool(discovery, catalog),
     buildWrapperCompositionRunTool(jobs),
     buildWrapperCompositionStatusTool(jobs),
     buildWrapperCompositionWaitTool(jobs),
     buildWrapperCompositionCancelTool(jobs)
   ]
+}
+
+function isWrapperCatalogClient(
+  jobs: WrapperJobClient
+): jobs is WrapperJobClient & WrapperCatalogClient {
+  const candidate = jobs as Partial<WrapperCatalogClient>
+  return typeof candidate.search === 'function' && typeof candidate.inspect === 'function'
 }

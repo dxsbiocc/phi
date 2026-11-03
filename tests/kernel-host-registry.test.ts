@@ -46,6 +46,8 @@ const EXPECTED_CAPABILITIES = [
   'capabilities.install',
   'capabilities.findSkills',
   'capabilities.cancel',
+  'wrapperCatalog.search',
+  'wrapperCatalog.inspect',
   'wrapperJob.start',
   'wrapperJob.status',
   'wrapperJob.list',
@@ -69,7 +71,8 @@ const EXPECTED_USER_CAPABILITIES = new Set([
   'environments.request',
   'skills.run',
   'skills.scriptTool',
-  'capabilities.install'
+  'capabilities.install',
+  'wrapperJob.start'
 ])
 
 test('host capability registry covers every current worker request', () => {
@@ -99,6 +102,11 @@ test('host capability interaction metadata has bounded service timeouts', () => 
   }
   assert.equal(KERNEL_HOST_CAPABILITY_REGISTRY['environments.bindSession'].runScoped, 'optional')
   assert.equal(KERNEL_HOST_CAPABILITY_REGISTRY['mcp.desktop.call'].progress, true)
+})
+
+test('wrapper start is user-interactive because missing tools pause for a chat card', () => {
+  assert.equal(KERNEL_HOST_CAPABILITY_REGISTRY['wrapperJob.start'].interaction, 'user')
+  assert.equal('timeoutMs' in KERNEL_HOST_CAPABILITY_REGISTRY['wrapperJob.start'], false)
 })
 
 test('host capability schemas reject undeclared fields and protect credential results', () => {
@@ -131,6 +139,15 @@ test('host capability schemas reject undeclared fields and protect credential re
   }
   assert.equal(modelCredentials.result.safeParse({ credentials: [oauth] }).success, true)
   assert.equal(modelRefresh.result.safeParse(oauth).success, true)
+
+  const wrapperSearch = KERNEL_HOST_CAPABILITY_REGISTRY['wrapperCatalog.search']
+  const wrapperInspect = KERNEL_HOST_CAPABILITY_REGISTRY['wrapperCatalog.inspect']
+  assert.equal(wrapperSearch.params.safeParse({ query: '' }).success, true)
+  assert.equal(wrapperSearch.params.safeParse({ query: 'x'.repeat(501) }).success, false)
+  assert.equal(wrapperSearch.params.safeParse({ query: 42 }).success, false)
+  assert.equal(wrapperInspect.params.safeParse({ id: 'nf-core/modules/fastqc' }).success, true)
+  assert.equal(wrapperInspect.params.safeParse({ id: '' }).success, false)
+  assert.equal(wrapperInspect.params.safeParse({ id: 'x'.repeat(513) }).success, false)
 })
 
 test('native task notice schemas keep card identity and bounded lifecycle payloads', () => {

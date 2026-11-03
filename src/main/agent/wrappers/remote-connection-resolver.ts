@@ -18,6 +18,13 @@ export interface RemoteSubmitOptions {
   pollIntervalMs?: number
 }
 
+/** The saved Nextflow path may be the executable or the conda environment that holds it. */
+function nextflowExecutable(path: string): string {
+  return path.endsWith('/nextflow') && !/\/envs\/nextflow$/.test(path)
+    ? path
+    : `${path}/bin/nextflow`
+}
+
 function withHostEnvironmentPaths(
   hpc: RemoteHpcSettings | undefined,
   hostProfileId: string,
@@ -25,10 +32,18 @@ function withHostEnvironmentPaths(
 ): RemoteHpcSettings | undefined {
   if (!hpc) return undefined
   const paths = readHostRemoteEnvironmentPaths(hostProfileId, agentDir)
+  const containerRuntimeBin =
+    hpc.runtime === 'docker'
+      ? paths.docker
+      : hpc.runtime === 'singularity'
+        ? (paths.singularity ?? paths.apptainer)
+        : undefined
   return {
     ...hpc,
-    ...(!hpc.nextflowBin && paths.nextflow ? { nextflowBin: paths.nextflow } : {}),
-    ...(hpc.runtime === 'docker' && paths.docker ? { containerRuntimeBin: paths.docker } : {})
+    ...(!hpc.nextflowBin && paths.nextflow
+      ? { nextflowBin: nextflowExecutable(paths.nextflow) }
+      : {}),
+    ...(!hpc.containerRuntimeBin && containerRuntimeBin ? { containerRuntimeBin } : {})
   }
 }
 

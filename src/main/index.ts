@@ -193,7 +193,6 @@ import {
   openRemoteRuntimeWorkspace,
   type RemoteRuntimeTarget
 } from './agent/remote-runtime/workspace'
-import { remoteDoctor } from './agent/remote-doctor'
 import { createCursorH2Bridge } from './agent/cursor-h2-bridge'
 import { RemoteProjectConnectionTracker } from './agent/remote-project-connection'
 import { RemoteProjectUploadService } from './agent/remote-project-upload'
@@ -247,6 +246,8 @@ import {
   waitForAgentUserInteraction
 } from './agent/user-interaction'
 import { createAgentInteractionRequest } from './agent/host-requests/agent-interaction-request'
+import { createMissingToolPrompt } from './agent/host-requests/missing-tool-prompt'
+import { createMissingToolRuntime } from './agent/missing-tool-runtime'
 import { createDeliverablesPresentation } from './agent/host-requests/deliverables-presentation'
 import { createHostConfirmations } from './agent/host-requests/host-confirmations'
 import { wirePlanExecution } from './agent/plan/plan-execution-wiring'
@@ -920,6 +921,8 @@ const handleAgentInteractionRequest = createAgentInteractionRequest({
     notifySessionChanged
   }
 })
+const promptForMissingTool = createMissingToolPrompt({ request: handleAgentInteractionRequest })
+
 const { handlePresentFilesRequest, presentScriptArtifacts } = createDeliverablesPresentation({
   agentDir: AGENT_DIR,
   fields: { optionalStringField },
@@ -980,6 +983,15 @@ const {
     notifySessionChanged
   },
   capability: { assertCurrent: (context) => capabilityHost.assertCurrent(context) }
+})
+const missingToolRuntime = createMissingToolRuntime({
+  agentDir: AGENT_DIR,
+  prompt: promptForMissingTool,
+  confirmEnvironmentBuild,
+  findActivePromptRun: findActivePromptRunByRuntimeSessionId,
+  getProject: (projectId) => getProject(projectId) ?? undefined,
+  projectRemoteRuntimeRoot,
+  connectRemoteWorkspaceHost: (request) => connectRemoteWorkspaceHost(request)
 })
 const skippedMcpNotifier = createSkippedMcpNotifier({
   append: appendSessionEvent,
@@ -1259,6 +1271,7 @@ const { installedPluginNamespace } = createInstalledPluginNamespace({
 const jupyterServerRegistry = new JupyterServerRegistry({
   managed: {
     builds: environmentBuilds,
+    confirmBuild: missingToolRuntime.confirmManagedToolBuild,
     hostJupyterPath: () => getCustomToolPath('jupyter', AGENT_DIR)
   }
 })
@@ -1291,7 +1304,8 @@ const {
   sessionKeys,
   notebookExecutor,
   startJobs: remoteJupyterStartJobs,
-  onDraftChanged: notifyAnalysisNotebookDraftChanged
+  onDraftChanged: notifyAnalysisNotebookDraftChanged,
+  resolveMissingJupyter: missingToolRuntime.resolveMissingJupyter
 })
 const notebookFileWatcher = new AnalysisNotebookFileWatcher({
   onChange: notifyAnalysisNotebookFileChanged
@@ -1369,6 +1383,7 @@ getPhiEngine().host.register('notebookTool.execute', async (params, context) => 
   return notebookToolHostRouter.execute(request, {
     signal: context?.signal,
     beforeDispatch,
+    ...(context?.originSessionId ? { runtimeSessionId: context.originSessionId } : {}),
     ...(identity && context
       ? {
           approveRemoteJupyterStart: (info) => approveRemoteJupyterStart(identity, info, context)
@@ -1787,8 +1802,10 @@ const wrapperJobs = new WrapperJobManager({
   // that started the run.
   nextflowLaunch: {
     builds: environmentBuilds,
-    confirmBuild: (request) => confirmEnvironmentBuild(request)
+    confirmBuild: missingToolRuntime.confirmManagedToolBuild,
+    containerRuntimePath: missingToolRuntime.containerRuntimePath
   },
+  checkLocalEnvironment: missingToolRuntime.checkLocalWrapperEnvironment,
   resolveProjectForRun: (originSessionId) => {
     const origin = sessionOrigins.resolveRecoverableJobOrigin(originSessionId)
     const manifest = origin ? findPhiSessionById(origin.phiSessionId) : null
@@ -1807,50 +1824,11 @@ const wrapperJobs = new WrapperJobManager({
         : undefined
     return resolveProjectRemoteTarget(project, connectionId)
   },
-  checkRemoteEnvironment: async ({ project, resolved, profile }) => {
-    const remoteConnection = project.remoteConnections?.find(
-      (connection) => connection.id === resolved.connectionId
-    )
-    const hostProfileId =
-      project.location.kind === 'ssh'
-        ? project.location.hostProfileId
-        : remoteConnection?.hostProfileId
-    if (!hostProfileId) throw new Error('找不到 Wrapper 运行连接的服务器档案')
-    const hpc = resolved.target.hpc ?? { scheduler: 'local' as const }
-    const controller = hpc.controller ?? 'login'
-    const report = await remoteDoctor(
-      hostProfileId,
-      resolved.target.workspaceRoot,
-      {
-        scope: 'full',
-        scheduler: hpc.scheduler,
-        controller,
-        runtime: profile,
-        ...(remoteConnection?.runtimeRoot
-          ? {
-              runtimeRootOverride: {
-                source: 'project' as const,
-                configured: remoteConnection.runtimeRoot
-              }
-            }
-          : {}),
-        ...(hpc.nextflowBin ? { nextflowBin: hpc.nextflowBin } : {}),
-        ...(hpc.containerRuntimeBin ? { containerRuntimeBin: hpc.containerRuntimeBin } : {})
-      },
-      { deferToolChecksToLaunch: Boolean(hpc.setupCommands?.length) }
-    )
-    return {
-      report,
-      remotePath: resolved.target.workspaceRoot,
-      scheduler: hpc.scheduler,
-      controller,
-      runtime: profile,
-      deferToolChecksToLaunch: Boolean(hpc.setupCommands?.length)
-    }
-  }
+  checkRemoteEnvironment: missingToolRuntime.checkRemoteWrapperEnvironment
 })
 for (const [method, handler] of Object.entries(
   wrapperJobHostHandlers(wrapperJobs, {
+    discoveryFor: (context) => wrapperJobs.catalogDiscovery(context?.originSessionId),
     scopeFor: (context) =>
       resolveWrapperJobHostScope(context, {
         resolveOrigin: sessionOrigins.resolveOriginSession,

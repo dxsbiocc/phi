@@ -108,6 +108,19 @@ const LOGIN_ENVIRONMENT = [
 ]
 
 /**
+ * Directories of configured absolute tool paths go first on PATH. For Nextflow this also
+ * brings the Java its environment ships with, which may be newer than the system one.
+ */
+function toolPathExports(hpc: RemoteHpcSettings | undefined, profile: string): string[] {
+  const bins = [
+    hpc?.nextflowBin,
+    profile === 'docker' ? hpc?.containerRuntimeBin : undefined
+  ].filter((bin): bin is string => Boolean(bin?.startsWith('/')))
+  const dirs = [...new Set(bins.map((bin) => bin.slice(0, bin.lastIndexOf('/')) || '/'))]
+  return dirs.reverse().map((dir) => `export PATH=${shellQuote(dir)}:"$PATH"`)
+}
+
+/**
  * `launch.sh`: setup lines, then Nextflow from the component dir. The steps run in
  * a `set -e` subshell so a failed `module load` stops the launch, and the exit code
  * is recorded either way (Phi's status polling reads that file).
@@ -118,12 +131,7 @@ export function buildRemoteLaunchScript(input: {
   hpc: RemoteHpcSettings | undefined
 }): string {
   const { layout, profile, hpc } = input
-  const runtimeBin = profile === 'docker' ? hpc?.containerRuntimeBin : undefined
-  const runtimeDir = runtimeBin?.slice(0, runtimeBin.lastIndexOf('/'))
-  const setup = [
-    ...(runtimeDir ? [`export PATH=${shellQuote(runtimeDir)}:"$PATH"`] : []),
-    ...(hpc?.setupCommands ?? [])
-  ]
+  const setup = [...toolPathExports(hpc, profile), ...(hpc?.setupCommands ?? [])]
     .map((line) => line.trim())
     .filter(Boolean)
   const nextflow = [
@@ -274,6 +282,7 @@ export function buildRemotePreflightScript(input: {
     '#!/usr/bin/env bash',
     ...LOGIN_ENVIRONMENT.map((line) => line.trimStart()),
     'set -e',
+    ...toolPathExports(hpc, profile),
     ...setup,
     ...(workspaceRoot
       ? [

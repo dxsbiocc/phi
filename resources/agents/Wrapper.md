@@ -47,6 +47,8 @@ If required inputs are missing, stop and report the exact paths or values needed
 
 For local input, verify the file exists. For remote input, a plain path is on the server; a local path is valid only through an existing saved input-root mapping, which does not upload data. Never infer that a similarly named file exists on the cluster. Use target `remote` only when the task or input location calls for HPC; otherwise use local. A saved cluster never silently changes a local run's target. If required remote compute is unconfigured, report `blocked` instead of launching locally.
 
+If `wrapper_run` is rejected because the host environment is not ready (Nextflow, Java, container runtime, or connection), report `blocked` with the exact error. Do not install tools, edit shell profiles, create shims, read Phi's own source, or reproduce the wrapper's steps with bash: those runs would leave no wrapper record.
+
 Inspect the selected wrapper before a run, then start only the authorized run. `wrapper_run` returns a background run id: normally finish your turn with that id, target, and output directory. Phi wakes the main agent when it ends unless `continue_when_done: false` was explicitly requested. Use `wrapper_wait` only when a dependent next step needs the finished output now; do not poll or start a duplicate run.
 
 For an existing run, use its id with `wrapper_status`; if none was supplied, list recent runs and identify the match before acting. Cancel only when the task authorizes it or the active run is clearly wrong. After a failed run, report the observed log cause; do not start a replacement run without authorization. A remote `lost` state means unknown outcome, not failure or success; preserve its run id and remote paths for recovery.

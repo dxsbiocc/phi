@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { parseWrapperWorkflow } from '../src/main/agent/wrappers/composition/workflow-identity'
-import { groupBackgroundJobs } from '../src/renderer/src/features/jobs/lib/backgroundJobGroups'
+import {
+  groupBackgroundJobs,
+  workflowStepCounts
+} from '../src/renderer/src/features/jobs/lib/backgroundJobGroups'
 import {
   newlyObservedJobs,
   workflowPhase
@@ -101,4 +104,26 @@ test('additional Wrapper steps reuse one notice identity and only finish at the 
     workflowPhase(groupBackgroundJobs([{ ...first, run: run('wrun_1', 'failed', 'rna') }])[0]),
     'failed'
   )
+})
+
+test('a retried or repeated step counts once, by its latest attempt', () => {
+  const attempts: Array<[string, string, WrapperRun['state']]> = [
+    ['wrun_1', 'fastqc', 'completed'],
+    ['wrun_2', 'fastp', 'completed'],
+    ['wrun_3', 'fastp', 'completed'],
+    ['wrun_4', 'salmon-index', 'completed'],
+    ['wrun_5', 'salmon-quant', 'failed'],
+    ['wrun_6', 'salmon-quant', 'completed']
+  ]
+  const jobs = attempts.map(([runId, step, state]) => {
+    const base = run(runId, state, 'session:rna')
+    return {
+      kind: 'wrapper' as const,
+      key: `wrapper:${runId}`,
+      active: false,
+      timestamp: base.createdAt,
+      run: { ...base, workflow: { ...base.workflow!, step } }
+    }
+  })
+  assert.deepEqual(workflowStepCounts(jobs), { completed: 4, failed: 0 })
 })

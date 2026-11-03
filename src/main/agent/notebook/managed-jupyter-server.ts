@@ -133,6 +133,11 @@ export async function resolveManagedJupyterLaunch(
     )
   }
   if (outcome.status === 'notReady') {
+    const selectedHostPath = options.hostJupyterPath?.()
+    if (selectedHostPath) {
+      syncManagedKernels(ctx)
+      return hostJupyterLaunch(selectedHostPath, launch, ctx)
+    }
     throw new JupyterEnvironmentNotReadyError(outcome.message, outcome.envId)
   }
   syncManagedKernels(ctx)

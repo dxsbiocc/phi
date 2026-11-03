@@ -57,15 +57,15 @@ export const remoteSetupEnglish = {
   profileUpdatedPrefix: 'Profile updated: ',
   nextflowFallback: 'module load nextflow, or use the phi-base environment.',
   installing: 'Installing…',
-  installNextflow: 'Install Nextflow automatically',
+  installNextflow: 'Install Phi-managed Nextflow environment',
   copySuggestion: 'Copy suggestion',
   manualInstallInstructions: 'Manual installation instructions',
   nextflowRequired:
-    'This execution mode requires Nextflow. Install it in the server account’s personal directory or follow the official installation instructions.',
+    'This execution mode requires Nextflow. Select an existing executable or create the Phi-managed environment.',
   nextflowMissingOnLogin:
     'Nextflow was not found on the login node. If a module provides it on compute nodes, add a setup command in the run settings.',
   nextflowRequirements:
-    'Automatic installation requires Java 17+ and curl on the server and does not use sudo. After a manual installation, set “More run settings → Nextflow path”.',
+    'Phi installs Nextflow with Java 17+ in its isolated remote micromamba runtime. It does not modify the server’s system Java or your own Conda environments.',
   javaRequired:
     'Provide Java 17+ on the server or compute nodes, or load a cluster module in the setup commands. Phi does not modify the system Java installation.',
   slurmRequired:
@@ -126,6 +126,7 @@ export const remoteSetupEnglish = {
   installedInRuntimeRoot: 'Installed by Phi in the runtime directory',
   detectFromServerPath: 'Detect automatically from the server PATH',
   dockerPathError: 'The Docker path must point to an executable named docker',
+  singularityPathError: 'The path must point to an executable named singularity or apptainer',
   environmentSettings: 'Environment Settings',
   environmentOverrideHelp:
     'Leave blank for Phi management. Only explicitly entered paths override the defaults.',
@@ -215,7 +216,7 @@ export const remoteSetupEnglish = {
   remote: 'Remote',
   useAnyway: 'Use anyway',
   nextflowInstallConsent:
-    'Phi downloads the installer from the official Nextflow installation URL, runs it under the current account on the selected server, and installs the program to ~/.local/bin. This does not use sudo or install Java, Slurm, or container runtimes.',
+    'Create phi-nextflow under the selected server’s Phi runtime root with Nextflow and OpenJDK 17+ (about 350 MiB download). Phi uses its managed micromamba, does not use sudo, and does not modify your Conda environments or install Slurm/container runtimes.',
   confirmInstall: 'Confirm installation',
   save: 'Save',
   clear: 'Clear',

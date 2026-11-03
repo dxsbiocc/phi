@@ -66,6 +66,8 @@ export type NotebookToolRequest = {
 export type NotebookToolDispatchControl = {
   signal?: AbortSignal
   beforeDispatch?: () => void
+  /** Active chat runtime whose missing-tool card should receive this paused request. */
+  runtimeSessionId?: string
   /**
    * Asks the user once before the agent starts a remote Jupyter server on their behalf.
    * Resolves false when the user denies; rejects when the run is cancelled.

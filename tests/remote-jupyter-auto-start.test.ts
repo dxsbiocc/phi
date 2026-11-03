@@ -8,12 +8,13 @@ function fakeRuntime(): {
   runtime: JupyterRuntimeBackend
   starts: number
   stops: number
+  startRuntimeSessions: Array<string | undefined>
   finish: () => void
   fail: (error: Error) => void
 } {
   let ready = false
   let pending: { resolve: () => void; reject: (error: Error) => void } | undefined
-  const state = { starts: 0, stops: 0 }
+  const state = { starts: 0, stops: 0, startRuntimeSessions: [] as Array<string | undefined> }
   const runtime = {
     kind: 'ssh',
     status: (projectCwd: string) => ({
@@ -22,8 +23,9 @@ function fakeRuntime(): {
       state: ready ? 'ready' : pending ? 'preparing_environment' : 'stopped',
       hasConnection: ready
     }),
-    start: () => {
+    start: (_projectCwd: string, _signal?: AbortSignal, runtimeSessionId?: string) => {
       state.starts += 1
+      state.startRuntimeSessions.push(runtimeSessionId)
       return new Promise<void>((resolve, reject) => {
         pending = {
           resolve: () => {
@@ -50,6 +52,9 @@ function fakeRuntime(): {
     },
     get stops() {
       return state.stops
+    },
+    get startRuntimeSessions() {
+      return state.startRuntimeSessions
     },
     finish: () => pending?.resolve(),
     fail: (error) => pending?.reject(error)
@@ -82,6 +87,19 @@ test('approved auto-start uses the controller start path once and resolves when 
   await ready
   assert.deepEqual(infos, [{ serverLabel: 'node3', projectName: '/proj' }])
   assert.equal(controller.status().state, 'ready')
+})
+
+test('approved auto-start forwards the active chat runtime to missing-Jupyter recovery', async () => {
+  const fake = fakeRuntime()
+  const controller = controllerFor(fake.runtime)
+  const ready = controller.ensureReady({
+    runtimeSessionId: 'runtime-chat-1',
+    approveRemoteJupyterStart: async () => true
+  })
+  await tick()
+  assert.deepEqual(fake.startRuntimeSessions, ['runtime-chat-1'])
+  fake.finish()
+  await ready
 })
 
 test('denied approval fails clearly without starting', async () => {

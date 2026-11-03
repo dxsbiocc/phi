@@ -6,7 +6,8 @@ import test from 'node:test'
 import type { EnvRequestResult } from '../src/main/agent/content/env-request'
 import {
   parseDetectedRemoteJupyter,
-  RemoteKernelspecAdapter
+  RemoteKernelspecAdapter,
+  type ResolveMissingRemoteJupyter
 } from '../src/main/agent/notebook/remote-kernelspec-adapter'
 import { resolveRemoteBaseEnvironment } from '../src/main/agent/remote-runtime/base-environment'
 import { RemoteEnvironmentService } from '../src/main/agent/remote-runtime/environment-service'
@@ -32,6 +33,8 @@ function createAdapter(
   fixture: RemoteRuntimeFixture,
   options: {
     allowUserPrefixes?: boolean
+    configuredJupyterPath?: () => string | undefined
+    resolveMissingJupyter?: ResolveMissingRemoteJupyter
     writeProbeFailure?: 'quota-exceeded' | 'no-space' | 'read-only'
   } = {}
 ): RemoteKernelspecAdapter {
@@ -48,7 +51,13 @@ function createAdapter(
     openWorkspace: async () => fixture.workspace,
     ...(options.allowUserPrefixes === undefined
       ? {}
-      : { allowUserPrefixes: options.allowUserPrefixes })
+      : { allowUserPrefixes: options.allowUserPrefixes }),
+    ...(options.configuredJupyterPath
+      ? { configuredJupyterPath: options.configuredJupyterPath }
+      : {}),
+    ...(options.resolveMissingJupyter
+      ? { resolveMissingJupyter: options.resolveMissingJupyter }
+      : {})
   })
 }
 
@@ -115,14 +124,22 @@ test('remote kernelspec listing returns the notebook shape and writes only serve
   }
 })
 
-test('remote runtime preparation launches managed jupyter with isolated server paths', async () => {
+test('remote runtime preparation installs managed jupyter only after the resolver chooses install', async () => {
   const fixture = createRemoteRuntimeFixture()
   try {
     installFakeMicromamba(fixture)
-    const adapter = createAdapter(fixture)
+    let resolutions = 0
+    const adapter = createAdapter(fixture, {
+      resolveMissingJupyter: async ({ runtimeSessionId }) => {
+        resolutions += 1
+        assert.equal(runtimeSessionId, 'runtime-1')
+        return { choice: 'install' }
+      }
+    })
 
     const prepared = await adapter.prepareRuntime({ runtimeSessionId: 'runtime-1' })
 
+    assert.equal(resolutions, 1)
     const envId = prepared.kernels.kernels[0]?.environment?.envId ?? ''
     assert.equal(
       prepared.launch.command,
@@ -143,6 +160,54 @@ test('remote runtime preparation launches managed jupyter with isolated server p
     for (const directory of ['config', 'data', 'runtime']) {
       assert.equal(existsSync(join(fixture.runtimeRoot, 'jupyter', directory)), true)
     }
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('remote missing-Jupyter card is attributed to the active chat runtime', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    let promptRuntime: string | undefined
+    const adapter = createAdapter(fixture, {
+      resolveMissingJupyter: async ({ runtimeSessionId }) => {
+        promptRuntime = runtimeSessionId
+        return { choice: 'cancel' }
+      }
+    })
+
+    await assert.rejects(
+      adapter.prepareRuntime({
+        runtimeSessionId: 'notebook:project-1',
+        promptRuntimeSessionId: 'runtime-chat-1'
+      }),
+      /blocked:/
+    )
+    assert.equal(promptRuntime, 'runtime-chat-1')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a previously installed managed Jupyter environment starts without asking again', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    let resolutions = 0
+    const adapter = createAdapter(fixture, {
+      resolveMissingJupyter: async () => {
+        resolutions += 1
+        return resolutions === 1 ? { choice: 'install' } : { choice: 'cancel' }
+      }
+    })
+
+    const first = await adapter.prepareRuntime({ runtimeSessionId: 'runtime-1' })
+    const second = await adapter.prepareRuntime({ runtimeSessionId: 'runtime-1' })
+
+    assert.equal(first.source, 'managed')
+    assert.equal(second.source, 'managed')
+    assert.equal(resolutions, 1)
   } finally {
     fixture.cleanup()
   }
@@ -385,13 +450,15 @@ function installFakeServerJupyter(
   return { jupyter, python }
 }
 
-test('an existing server Jupyter with ipykernel is used without building an environment', async () => {
+test('a resolver-selected server Jupyter with ipykernel is used without building an environment', async () => {
   const fixture = createRemoteRuntimeFixture()
   try {
     installFakeMicromamba(fixture)
     const existing = installFakeServerJupyter(join(fixture.remoteHome, 'miniconda3'))
     const progress: string[] = []
-    const prepared = await createAdapter(fixture).prepareRuntime({
+    const prepared = await createAdapter(fixture, {
+      resolveMissingJupyter: async () => ({ choice: 'path', path: existing.jupyter })
+    }).prepareRuntime({
       runtimeSessionId: 'runtime-1',
       onProgress: (text) => progress.push(text)
     })
@@ -444,19 +511,129 @@ test('the configured Jupyter path wins over one found elsewhere on the server', 
   }
 })
 
-test('a server Jupyter whose Python lacks ipykernel falls back to the managed environment', async () => {
+test('a resolver-selected absolute Jupyter path is revalidated and used without installation', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    const selected = installFakeServerJupyter(join(fixture.root, 'custom', 'jupyter-env'))
+    const controller = new AbortController()
+    let resolutions = 0
+    const adapter = createAdapter(fixture, {
+      resolveMissingJupyter: async (context) => {
+        resolutions += 1
+        assert.equal(context.runtimeSessionId, 'runtime-path')
+        assert.equal(context.signal, controller.signal)
+        return { choice: 'path', path: selected.jupyter }
+      }
+    })
+
+    const prepared = await adapter.prepareRuntime({
+      runtimeSessionId: 'runtime-path',
+      signal: controller.signal
+    })
+
+    assert.equal(resolutions, 1)
+    assert.equal(prepared.source, 'existing')
+    assert.equal(prepared.launch.command, selected.jupyter)
+    assert.equal(existsSync(join(fixture.runtimeRoot, 'micromamba-calls.log')), false)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a server Jupyter whose Python lacks ipykernel installs only after an explicit install choice', async () => {
   const fixture = createRemoteRuntimeFixture()
   try {
     installFakeMicromamba(fixture)
     installFakeServerJupyter(join(fixture.remoteHome, 'miniconda3'), { ipykernel: false })
     const progress: string[] = []
-    const prepared = await createAdapter(fixture).prepareRuntime({
+    const prepared = await createAdapter(fixture, {
+      resolveMissingJupyter: async () => ({ choice: 'install' })
+    }).prepareRuntime({
       runtimeSessionId: 'runtime-1',
       onProgress: (text) => progress.push(text)
     })
     assert.equal(prepared.source, 'managed')
     assert.equal(prepared.kernels.preferredKernelName, 'phi-python')
     assert.ok(progress.some((line) => line.includes('改用 Phi 受管环境')))
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('cancelling missing Jupyter recovery blocks startup without requesting an environment', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    let resolutions = 0
+    const adapter = createAdapter(fixture, {
+      resolveMissingJupyter: async () => {
+        resolutions += 1
+        return { choice: 'cancel' }
+      }
+    })
+
+    await assert.rejects(
+      adapter.prepareRuntime({ runtimeSessionId: 'runtime-cancel' }),
+      /blocked:.+Jupyter.+cancelled.+did not install/iu
+    )
+    assert.equal(resolutions, 1)
+    assert.equal(existsSync(join(fixture.runtimeRoot, 'micromamba-calls.log')), false)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('an invalid resolver-selected Jupyter path is blocked without requesting an environment', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    const adapter = createAdapter(fixture, {
+      resolveMissingJupyter: async () => ({ choice: 'path', path: 'relative/bin/jupyter' })
+    })
+
+    await assert.rejects(
+      adapter.prepareRuntime({ runtimeSessionId: 'runtime-invalid' }),
+      /blocked:.+absolute remote path.+did not install/iu
+    )
+    assert.equal(existsSync(join(fixture.runtimeRoot, 'micromamba-calls.log')), false)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('an unusable absolute resolver-selected Jupyter path is blocked without installation', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    const unusable = installFakeServerJupyter(join(fixture.root, 'bad', 'jupyter-env'), {
+      ipykernel: false
+    })
+    const adapter = createAdapter(fixture, {
+      resolveMissingJupyter: async () => ({ choice: 'path', path: unusable.jupyter })
+    })
+
+    await assert.rejects(
+      adapter.prepareRuntime({ runtimeSessionId: 'runtime-unusable' }),
+      /blocked:.+not a usable Jupyter Server with ipykernel.+did not install/iu
+    )
+    assert.equal(existsSync(join(fixture.runtimeRoot, 'micromamba-calls.log')), false)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('missing Jupyter never installs by default when no resolver is configured', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  try {
+    installFakeMicromamba(fixture)
+    const adapter = createAdapter(fixture)
+
+    await assert.rejects(
+      adapter.prepareRuntime({ runtimeSessionId: 'runtime-no-resolver' }),
+      /blocked:.+Jupyter.+no missing-tool resolver.+did not install/iu
+    )
+    assert.equal(existsSync(join(fixture.runtimeRoot, 'micromamba-calls.log')), false)
   } finally {
     fixture.cleanup()
   }

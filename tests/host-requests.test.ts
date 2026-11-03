@@ -511,6 +511,50 @@ test('agent interaction preserves parsed options before opening the renderer', a
   await createAgentInteractionRequest(fixture.deps)(validInteractionRequest)
 })
 
+test('agent interaction preserves a validated missing-tool card payload', async () => {
+  const fixture = interactionFixture()
+  fixture.deps.renderer.waitForResponse = async (request) => {
+    assert.deepEqual(request.missingTool, {
+      runtimeSessionId: 'runtime-1',
+      tool: { id: 'nextflow', label: 'Nextflow' },
+      candidates: [
+        {
+          path: '/cluster/envs/nextflow/bin/nextflow',
+          source: 'conda',
+          version: '25.04.7'
+        }
+      ],
+      install: {
+        environment: 'phi-nextflow',
+        location: '/cluster/.phi/runtime/envs',
+        packages: ['nextflow', 'openjdk>=17'],
+        approximateSize: 'about 350 MiB download'
+      }
+    })
+    return { requestId: request.requestId, answers: [], cancelled: true }
+  }
+  await createAgentInteractionRequest(fixture.deps)({
+    ...validInteractionRequest,
+    missingTool: {
+      runtimeSessionId: 'runtime-1',
+      tool: { id: 'nextflow', label: ' Nextflow ' },
+      candidates: [
+        {
+          path: '/cluster/envs/nextflow/bin/nextflow',
+          source: 'conda',
+          version: '25.04.7'
+        }
+      ],
+      install: {
+        environment: 'phi-nextflow',
+        location: '/cluster/.phi/runtime/envs',
+        packages: ['nextflow', 'openjdk>=17'],
+        approximateSize: 'about 350 MiB download'
+      }
+    }
+  })
+})
+
 test('agent interaction cancels every stale run condition after the renderer round-trip', async () => {
   for (const stale of ['signal', 'cancelled', 'replaced'] as const) {
     const fixture = interactionFixture()

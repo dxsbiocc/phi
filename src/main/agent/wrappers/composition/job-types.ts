@@ -1,4 +1,5 @@
 import type { WrapperOutputRecord, WrapperRunState, WrapperWorkflow } from '../types'
+import type { PhiToolResult } from '../../engine/types'
 import type { RunProgress } from './progress'
 
 /**
@@ -77,6 +78,18 @@ export interface WrapperJobClient {
     control?: WrapperJobControl
   ): Promise<WrapperJobStatus | undefined>
 }
+
+export interface WrapperCatalogClient {
+  search(query: string): Promise<PhiToolResult>
+  inspect(id: string): Promise<PhiToolResult>
+}
+
+export type WrapperHostClient = WrapperJobClient & WrapperCatalogClient
+
+export const WRAPPER_CATALOG_HOST_METHODS = {
+  search: 'wrapperCatalog.search',
+  inspect: 'wrapperCatalog.inspect'
+} as const
 
 export const WRAPPER_JOB_HOST_METHODS = {
   start: 'wrapperJob.start',

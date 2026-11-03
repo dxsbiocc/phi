@@ -1,6 +1,6 @@
 import { IPC } from '../../shared/ipcChannels'
 import { randomUUID } from 'node:crypto'
-import { BrowserWindow } from 'electron'
+import type { BrowserWindow } from 'electron'
 
 import type {
   AgentUserInteractionQuestion,
@@ -19,6 +19,7 @@ export type AgentUserInteractionInput = {
   requestId?: string
   questions: AgentUserInteractionQuestion[]
   planReview?: AgentUserInteractionRequest['planReview']
+  missingTool?: AgentUserInteractionRequest['missingTool']
   sessionId?: string
   sessionPath?: string
   sessionGeneration?: number
@@ -83,6 +84,7 @@ export function waitForAgentUserInteraction(
       requestId: input.requestId ?? randomUUID(),
       questions: input.questions,
       ...(input.planReview ? { planReview: input.planReview } : {}),
+      ...(input.missingTool ? { missingTool: input.missingTool } : {}),
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(input.sessionPath ? { sessionPath: input.sessionPath } : {}),
       ...(typeof input.sessionGeneration === 'number'

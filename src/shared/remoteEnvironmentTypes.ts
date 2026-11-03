@@ -1,4 +1,12 @@
-export const REMOTE_ENVIRONMENT_TOOL_IDS = ['nextflow', 'jupyter', 'micromamba', 'docker'] as const
+export const REMOTE_ENVIRONMENT_TOOL_IDS = [
+  'nextflow',
+  'jupyter',
+  'micromamba',
+  'docker',
+  'singularity',
+  'apptainer',
+  'podman'
+] as const
 
 export type RemoteEnvironmentToolId = (typeof REMOTE_ENVIRONMENT_TOOL_IDS)[number]
 
@@ -32,6 +40,20 @@ function normalizeRemotePath(value: string, label: string): string | undefined {
   return path === '/' ? path : path.replace(/\/+$/, '')
 }
 
+function validateToolExecutable(id: RemoteEnvironmentToolId, path: string | undefined): void {
+  if (!path) return
+  const executable = path.split('/').at(-1)
+  if (id === 'docker' && executable !== 'docker') {
+    throw new Error('Docker path must point to an executable named docker')
+  }
+  if (id === 'singularity' && !['singularity', 'apptainer'].includes(executable ?? '')) {
+    throw new Error('Singularity path must point to singularity or apptainer')
+  }
+  if ((id === 'apptainer' || id === 'podman') && executable !== id) {
+    throw new Error(`${id} path must point to an executable named ${id}`)
+  }
+}
+
 export function normalizeRemoteEnvironmentToolPaths(
   value: RemoteEnvironmentToolPaths | null | undefined
 ): RemoteEnvironmentToolPaths {
@@ -40,9 +62,7 @@ export function normalizeRemoteEnvironmentToolPaths(
     const path = value?.[id]
     if (path === undefined) continue
     const clean = normalizeRemotePath(path, `${id} path`)
-    if (id === 'docker' && clean && !clean.endsWith('/docker')) {
-      throw new Error('Docker path must point to an executable named docker')
-    }
+    validateToolExecutable(id, clean)
     if (clean) normalized[id] = clean
   }
   return normalized

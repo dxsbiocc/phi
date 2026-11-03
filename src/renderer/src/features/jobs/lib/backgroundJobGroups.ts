@@ -19,6 +19,27 @@ export type BackgroundJobDisplayItem =
       jobs: Extract<UnifiedBackgroundJob, { kind: 'wrapper' }>[]
     }
 
+type WrapperJob = Extract<UnifiedBackgroundJob, { kind: 'wrapper' }>
+
+/** A step that was retried or repeated counts once, by its latest attempt. */
+export function workflowStepCounts(jobs: readonly WrapperJob[]): {
+  completed: number
+  failed: number
+} {
+  const latest = new Map<string, WrapperJob>()
+  for (const job of jobs) {
+    const step = job.run.workflow?.step ?? job.run.runId
+    const previous = latest.get(step)
+    if (!previous || job.run.createdAt.localeCompare(previous.run.createdAt) >= 0)
+      latest.set(step, job)
+  }
+  const states = [...latest.values()].map((job) => job.run.state)
+  return {
+    completed: states.filter((state) => state === 'completed').length,
+    failed: states.filter((state) => state === 'failed' || state === 'lost').length
+  }
+}
+
 /** Only an explicit, persisted workflow identity can join independent runs. */
 export function groupBackgroundJobs(
   jobs: readonly UnifiedBackgroundJob[]

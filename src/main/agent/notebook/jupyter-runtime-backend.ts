@@ -39,7 +39,7 @@ export interface JupyterRuntimeStatus {
 export interface JupyterRuntimeBackend {
   readonly kind: JupyterRuntimeKind
   status(projectCwd: string): JupyterRuntimeStatus
-  start(projectCwd: string, signal?: AbortSignal): Promise<void>
+  start(projectCwd: string, signal?: AbortSignal, promptRuntimeSessionId?: string): Promise<void>
   stop(projectCwd: string, options?: { abandonUnconfirmed?: boolean }): Promise<void>
   connection(projectCwd: string): JupyterServerConnection | null
   claimKernel?(projectCwd: string, owner: string): void
@@ -174,7 +174,11 @@ export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {
     }
   }
 
-  async start(projectCwd: string, signal?: AbortSignal): Promise<void> {
+  async start(
+    projectCwd: string,
+    signal?: AbortSignal,
+    promptRuntimeSessionId?: string
+  ): Promise<void> {
     this.claimProject(projectCwd)
     if (this.isReady() && this.currentKernels) return
     if (this.starting) return this.starting
@@ -182,19 +186,20 @@ export class RemoteJupyterRuntimeBackend implements JupyterRuntimeBackend {
     const combined = signal
       ? AbortSignal.any([signal, this.startAbort.signal])
       : this.startAbort.signal
-    this.starting = this.startRuntime(combined).finally(() => {
+    this.starting = this.startRuntime(combined, promptRuntimeSessionId).finally(() => {
       this.starting = undefined
       this.startAbort = undefined
     })
     return this.starting
   }
 
-  private async startRuntime(signal: AbortSignal): Promise<void> {
+  private async startRuntime(signal: AbortSignal, promptRuntimeSessionId?: string): Promise<void> {
     await this.supervisor?.reconcile()
     this.preparing = true
     try {
       const prepared = await this.options.kernelspecs.prepareRuntime({
         runtimeSessionId: this.options.runtimeSessionId,
+        ...(promptRuntimeSessionId ? { promptRuntimeSessionId } : {}),
         signal,
         ...(this.options.onProgress ? { onProgress: this.options.onProgress } : {})
       })

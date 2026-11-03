@@ -139,6 +139,33 @@ test('notebook server readiness starts and waits for an endpoint', async () => {
   ])
 })
 
+test('notebook readiness forwards the active runtime session into Jupyter resolution', async () => {
+  let startContext: unknown
+  const controller = new AbortController()
+  const readiness = createNotebookServerReadiness({
+    jupyterServerRegistry: {
+      status: (cwd) => ({ projectCwd: cwd, state: 'stopped', hasEndpoint: false }),
+      start: (cwd, context) => {
+        startContext = context
+        return { projectCwd: cwd, state: 'error', hasEndpoint: false, message: 'stopped' }
+      }
+    },
+    delay: async () => undefined
+  })
+
+  await assert.rejects(
+    readiness.ensureJupyterServerReady('/project', {
+      runtimeSessionId: 'runtime-local',
+      signal: controller.signal
+    }),
+    /stopped/
+  )
+  assert.deepEqual(startContext, {
+    runtimeSessionId: 'runtime-local',
+    signal: controller.signal
+  })
+})
+
 test('notebook server readiness reports a terminal startup error', async () => {
   const readiness = createNotebookServerReadiness({
     jupyterServerRegistry: {

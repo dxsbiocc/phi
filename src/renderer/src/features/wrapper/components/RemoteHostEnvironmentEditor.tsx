@@ -48,6 +48,13 @@ const TOOL_FIELDS: ReadonlyArray<{
     get managed() {
       return remoteSetupCopy.detectFromServerPath
     }
+  },
+  {
+    id: 'singularity',
+    label: 'Singularity / Apptainer',
+    get managed() {
+      return remoteSetupCopy.detectFromServerPath
+    }
   }
 ]
 
@@ -77,6 +84,17 @@ function toolPathError(value: string, label: string): string | null {
   return error
 }
 
+function toolExecutableError(id: RemoteEnvironmentToolId, value: string): string | null {
+  const name = value.trim().split('/').at(-1)
+  if (id === 'docker' && value.trim() && name !== 'docker') {
+    return remoteSetupCopy.dockerPathError
+  }
+  if (id === 'singularity' && value.trim() && !['singularity', 'apptainer'].includes(name ?? '')) {
+    return remoteSetupCopy.singularityPathError
+  }
+  return null
+}
+
 function trimmedToolPaths(paths: RemoteEnvironmentToolPaths): RemoteEnvironmentToolPaths {
   return Object.fromEntries(
     REMOTE_ENVIRONMENT_TOOL_IDS.flatMap((id) => {
@@ -104,10 +122,7 @@ export function RemoteHostEnvironmentEditor({
     const entries = TOOL_FIELDS.flatMap(({ id, label }) => {
       const value = toolPaths[id] ?? ''
       const error =
-        toolPathError(value, remoteSetupCopy.toolPath(label)) ??
-        (id === 'docker' && value.trim() && !value.trim().endsWith('/docker')
-          ? remoteSetupCopy.dockerPathError
-          : null)
+        toolPathError(value, remoteSetupCopy.toolPath(label)) ?? toolExecutableError(id, value)
       return error ? [[id, error] as const] : []
     })
     return Object.fromEntries(entries) as Partial<Record<RemoteEnvironmentToolId, string>>
