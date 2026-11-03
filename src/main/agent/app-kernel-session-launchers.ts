@@ -359,6 +359,11 @@ async function launchAppRemoteKernel(input: {
       ])
     }
     input.active.add(close)
+    // A dropped forward or lease would leave the kernel calling a dead port; ending the connection
+    // lets the execution host reconnect with fresh ones.
+    for (const ended of [proxy.tunnel.closed, proxy.cursorTunnel?.closed, proxy.gateway.closed]) {
+      void ended?.then(() => launched?.close()).catch(() => undefined)
+    }
     return {
       client: launched.client,
       greeting: launched.greeting,

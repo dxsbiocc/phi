@@ -24,6 +24,9 @@ export class KernelExecutionHost {
   private lastSeq = 0
   private kernelInstanceId?: string
   private launchParams?: PhiSessionCreateParams
+  // The connection, its model gateway and its tunnels serve every session on this host, so they
+  // live until the host closes. A session's own signal only stops that session waiting.
+  private readonly lifetime = new AbortController()
   private readonly runs = new Map<string, PendingRun>()
   private readonly lateHostHandlers = new Map<string, () => void>()
 
@@ -34,8 +37,9 @@ export class KernelExecutionHost {
   ) {}
 
   async client(params: PhiSessionCreateParams, signal: AbortSignal): Promise<KernelSessionClient> {
+    signal.throwIfAborted()
     if (this.connection) return this.connection.client
-    return (await this.connect(params, signal)).client
+    return (await untilAborted(this.connect(params), signal)).client
   }
 
   currentConnection(): KernelSessionConnection | undefined {
@@ -77,6 +81,7 @@ export class KernelExecutionHost {
 
   async close(): Promise<void> {
     this.stopped = true
+    this.lifetime.abort(new Error('Kernel execution host closed'))
     const connection = this.connection
     if (connection)
       reportConnection({
@@ -89,10 +94,7 @@ export class KernelExecutionHost {
     await connection?.close().catch(() => undefined)
   }
 
-  private connect(
-    params: PhiSessionCreateParams,
-    signal: AbortSignal
-  ): Promise<KernelSessionConnection> {
+  private connect(params: PhiSessionCreateParams): Promise<KernelSessionConnection> {
     if (this.connection) return Promise.resolve(this.connection)
     if (this.connecting) return this.connecting
     this.launchParams = structuredClone(params)
@@ -113,7 +115,7 @@ export class KernelExecutionHost {
         afterSeq: this.lastSeq,
         configureClient
       },
-      signal
+      this.lifetime.signal
     )
       .then(async (connection) => {
         configureClient(connection.client)
@@ -151,7 +153,7 @@ export class KernelExecutionHost {
     reportConnection({ layer: 'kernel', change: 'closed', target: this.key, reason: 'lost' })
     this.clearConnection()
     if (this.stopped || !this.launchParams || !this.factory.hasLiveSessions(this.key)) return
-    this.recovering ??= this.connect(this.launchParams, new AbortController().signal)
+    this.recovering ??= this.connect(this.launchParams)
       .then(() => undefined)
       .catch((error) => this.factory.interruptHost(this.key, engineError(error)))
       .finally(() => {
@@ -177,4 +179,15 @@ export class KernelExecutionHost {
     }
     this.factory.projectEvent(this, event, payload)
   }
+}
+
+function untilAborted<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  let stop!: () => void
+  return Promise.race([
+    operation,
+    new Promise<never>((_, reject) => {
+      stop = () => reject(signal.reason)
+      signal.addEventListener('abort', stop, { once: true })
+    })
+  ]).finally(() => signal.removeEventListener('abort', stop))
 }
