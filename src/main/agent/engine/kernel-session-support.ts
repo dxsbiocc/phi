@@ -289,7 +289,10 @@ export function approvalFromEvent(
     ...(stringValue(payload.toolCallId) ? { toolCallId: String(payload.toolCallId) } : {}),
     ...(stringValue(payload.toolName) ? { toolName: String(payload.toolName) } : {}),
     ...(input ? { input: structuredClone(input) } : {}),
-    ...(stringValue(payload.agentRunId) ? { agentRunId: String(payload.agentRunId) } : {})
+    ...(stringValue(payload.agentRunId) ? { agentRunId: String(payload.agentRunId) } : {}),
+    ...(stringValue(payload.outsideProject)
+      ? { outsideProject: String(payload.outsideProject) }
+      : {})
   }
 }
 

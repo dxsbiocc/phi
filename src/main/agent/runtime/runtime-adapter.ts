@@ -150,6 +150,7 @@ type ToolCallEvent = {
   toolName: string
   input: Record<string, unknown>
   agentRunId?: string
+  outsideProject?: string
 }
 
 type ToolCallContext = {
@@ -972,7 +973,8 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
       toolCallId: request.toolCallId ?? request.requestId,
       toolName: request.toolName ?? '',
       input: request.input ?? {},
-      ...(request.agentRunId ? { agentRunId: request.agentRunId } : {})
+      ...(request.agentRunId ? { agentRunId: request.agentRunId } : {}),
+      ...(request.outsideProject ? { outsideProject: request.outsideProject } : {})
     }
     const context: ToolCallContext = {
       signal: this.approvalAbortController.signal

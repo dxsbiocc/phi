@@ -48,20 +48,45 @@ export {
 } from './lib/remote-mcp'
 export { remoteUrlGuardDecision } from './lib/remote-url'
 
+/** Reads outside the project go through the user; one approval covers the whole call. */
+function createOutsideProjectBoundary(
+  config: PhiExtensionConfig,
+  host: PhiExtensionHost,
+  approvedCalls: Set<string>
+): ExtensionFactory {
+  return createProjectToolBoundaryExtension(config.cwd, async (event, outsidePath) => {
+    const result = await host.requestToolApproval({
+      sessionId: config.sessionId,
+      ...(config.agentRunId ? { agentRunId: config.agentRunId } : {}),
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      input: event.input,
+      outsideProject: outsidePath
+    })
+    if (result === null || result === undefined) approvedCalls.add(event.toolCallId)
+    return result
+  })
+}
+
 export function createMainSessionExtensions(
   config: PhiExtensionConfig,
   host: PhiExtensionHost
 ): ExtensionFactory[] {
+  const approvedOutsideProject = new Set<string>()
   return [
     ...(config.workMode === 'auto' ? [createAutoWorkModeExtension(host)] : []),
     createNextActionInstructionExtension(host),
     createPlanReviewToolGuardExtension(host),
     createRemoteUrlGuardExtension(),
-    ...(config.projectBound ? [createProjectToolBoundaryExtension(config.cwd)] : []),
+    ...(config.projectBound
+      ? [createOutsideProjectBoundary(config, host, approvedOutsideProject)]
+      : []),
     ...(config.phiAgents.length > 0
       ? [createSpecialistFallbackExtension(config.phiAgents, host)]
       : []),
-    ...(config.enableToolApproval ? [createBridgeToolApprovalExtension(config, host)] : []),
+    ...(config.enableToolApproval
+      ? [createBridgeToolApprovalExtension(config, host, approvedOutsideProject)]
+      : []),
     ...(config.environmentBinding ? [createEnvironmentBindingExtension(host)] : [])
   ]
 }

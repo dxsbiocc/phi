@@ -300,13 +300,24 @@ export function assertRuntimeScope(ref: RemoteOmpRuntimeRef, scope: RemoteOmpSco
  * keeps its history locally but in its own store, so only callers that handle
  * that store (deletion) pass `allowLocalKernel`.
  */
+/** A remote fork stays on the server its source runs on. */
+export function kernelForkAccess(
+  fork: KernelRuntimeRef | undefined,
+  source: KernelRuntimeRef | undefined
+): { allowLocalKernel: boolean; allowRemoteKernel: boolean } {
+  return {
+    allowLocalKernel: fork?.host.kind === 'local',
+    allowRemoteKernel: fork?.host.kind === 'ssh' && source?.host.kind === 'ssh'
+  }
+}
+
 export function assertLocalRuntimeAccess(
   manifest: {
     runtimeRef?: PhiRuntimeRef
     kernelRuntimeRef?: KernelRuntimeRef
     runtimeRecoveryError?: RuntimeRecoveryDiagnostic
   },
-  options: { allowLocalKernel?: boolean } = {}
+  options: { allowLocalKernel?: boolean; allowRemoteKernel?: boolean } = {}
 ): void {
   if (manifest.runtimeRecoveryError)
     throw new RuntimeReferenceError(
@@ -314,7 +325,10 @@ export function assertLocalRuntimeAccess(
       manifest.runtimeRecoveryError.message
     )
   const localKernel = manifest.kernelRuntimeRef?.host.kind === 'local'
-  if (manifest.runtimeRef || (manifest.kernelRuntimeRef && !localKernel))
+  if (
+    manifest.runtimeRef ||
+    (manifest.kernelRuntimeRef && !localKernel && !options.allowRemoteKernel)
+  )
     throw new RuntimeReferenceError(
       'REMOTE_OPERATION_REQUIRED',
       '远程会话需要通过已验证的服务器操作，不能使用本地底层会话'

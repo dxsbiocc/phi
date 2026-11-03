@@ -37,7 +37,7 @@ function ReviewHeading({ title }: { title: string }): React.JSX.Element {
 
 function ReviewContent({ plan, cwd }: { plan: ReviewPlan; cwd: string }): React.JSX.Element {
   return (
-    <Box sx={{ maxHeight: 360, overflowY: 'auto' }}>
+    <Box data-testid="gui-e2e-plan-review-content" sx={{ maxHeight: 360, overflowY: 'auto' }}>
       {plan.steps ? (
         <PlanReviewSteps plan={plan.steps} />
       ) : (
@@ -78,6 +78,7 @@ function ReviewActions({
           {planCopy.revisePlan}
         </Button>
         <Button
+          data-testid="gui-e2e-plan-review-approve"
           variant="contained"
           onClick={() => onRespond('approve')}
           aria-label={planCopy.approveAndStartExecution}
@@ -104,6 +105,7 @@ export function PlanReviewPanel({
 
   return (
     <Paper
+      data-testid="gui-e2e-plan-review"
       variant="outlined"
       role="alert"
       aria-label={planCopy.planAwaitingReview}

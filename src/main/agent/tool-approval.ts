@@ -394,6 +394,12 @@ function addWindowUnavailableListener(window: ApprovalWindow, callback: () => vo
   }
 }
 
+function outsideProjectPath(event: unknown): string | undefined {
+  if (typeof event !== 'object' || event === null) return undefined
+  const path = (event as { outsideProject?: unknown }).outsideProject
+  return typeof path === 'string' && path ? path : undefined
+}
+
 // Gates local mutations, Composio execution/connection calls, and skill tools
 // classified as exec or write on an explicit renderer approval. Read-only tools
 // and script tools classified as read stay auto-approved. Used for projects whose
@@ -407,16 +413,20 @@ export function createApprovalExtension(
     factory: (pi) => {
       pi.on('tool_call', async (event, ctx) => {
         const classified = options.classifyTool?.(event.toolName, event.input)
-        if (classified !== 'exec' && classified !== 'write' && !RISKY_TOOLS.has(event.toolName)) {
-          return undefined
+        // A call reaching outside the project is asked about in every permission mode.
+        const outsideProject = outsideProjectPath(event)
+        if (!outsideProject) {
+          if (classified !== 'exec' && classified !== 'write' && !RISKY_TOOLS.has(event.toolName)) {
+            return undefined
+          }
+          if (
+            (event.toolName === 'write' || event.toolName === 'edit') &&
+            planModeToolDecision(true, event.toolName, event.input).allowed
+          ) {
+            return undefined
+          }
+          if (options.shouldGate && !options.shouldGate()) return undefined
         }
-        if (
-          (event.toolName === 'write' || event.toolName === 'edit') &&
-          planModeToolDecision(true, event.toolName, event.input).allowed
-        ) {
-          return undefined
-        }
-        if (options.shouldGate && !options.shouldGate()) return undefined
 
         if (options.signal?.aborted || ctx.signal?.aborted) {
           return {
@@ -466,6 +476,7 @@ export function createApprovalExtension(
             ? { approvalDigest: editApprovalDigest(event.input) }
             : {}),
           summary: [
+            outsideProject ? `访问项目外路径：${outsideProject}` : undefined,
             event.toolName === 'write' || event.toolName === 'edit'
               ? context?.writeScopeNote
               : context?.scopeNote,

@@ -163,6 +163,12 @@ async function readLockBody(path: string): Promise<SessionWriterLockBody | undef
   }
 }
 
+/** The process that holds a session lock on this host, when the lock names one. */
+export async function sessionWriterLockHolder(path: string): Promise<number | undefined> {
+  const body = await readLockBody(path).catch(() => undefined)
+  return body && body.hostname === hostname() && body.pid !== process.pid ? body.pid : undefined
+}
+
 async function holderIsProvablyDead(body: SessionWriterLockBody): Promise<boolean> {
   if (body.hostname !== hostname()) return false
   if (body.startedAt.startsWith(DARWIN_UNVERIFIED_SELF_PREFIX)) {

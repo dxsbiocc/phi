@@ -55,17 +55,36 @@ function toolPaths(toolName: string, input: unknown): string[] {
   return paths
 }
 
+const WRITE_TOOLS = new Set(['write', 'edit', 'ast_edit'])
+
+export type ProjectToolBoundaryDecision =
+  | { allowed: true }
+  /** `approvable` calls only reach outside the project; the user may let them through. */
+  | { allowed: false; reason: string; approvable: boolean; outsidePath: string }
+
+/** Reading or searching outside the project needs approval; writing there is never allowed. */
 export function projectToolBoundaryDecision(
   cwd: string,
   toolName: string,
   input: unknown
-): { allowed: boolean; reason?: string } {
+): ProjectToolBoundaryDecision {
   for (const path of toolPaths(toolName, input)) {
-    if (path.startsWith('~/')) {
-      return { allowed: false, reason: `Path ${path} is outside the current project (${cwd}).` }
+    const reason = path.startsWith('~/')
+      ? `Path ${path} is outside the current project (${cwd}).`
+      : (() => {
+          const resolved = resolveInsideProject(cwd, path, 'Tool path')
+          return resolved.ok ? undefined : resolved.error
+        })()
+    if (!reason) continue
+    const approvable = !WRITE_TOOLS.has(toolName)
+    return {
+      allowed: false,
+      reason: approvable
+        ? `${reason} The user did not approve access outside the project.`
+        : `${reason} Phi writes only inside the project.`,
+      approvable,
+      outsidePath: path
     }
-    const resolved = resolveInsideProject(cwd, path, 'Tool path')
-    if (!resolved.ok) return { allowed: false, reason: resolved.error }
   }
   return { allowed: true }
 }

@@ -462,6 +462,32 @@ export function setRemoteProjectConnectionState(
   }
 }
 
+/**
+ * A connected kernel proves its server answers. Projects there that were never checked, or whose
+ * check is still waiting, become reachable, so opening one confirms its folder quietly instead of
+ * showing "connecting" for a server that is already connected.
+ */
+/** The connection state this run of the app has seen; project records on disk never carry it. */
+export function getRemoteProjectConnectionState(
+  id: string
+): RemoteProjectConnectionState | undefined {
+  return remoteConnectionByProjectId.get(id)
+}
+
+export function markServerProjectsReachable(hostProfileId: string): void {
+  for (const project of listProjects()) {
+    if (project.location.kind !== 'ssh' || project.location.hostProfileId !== hostProfileId)
+      continue
+    const current = remoteConnectionByProjectId.get(project.id)
+    // A known result stands; a check still waiting (without download progress) is overtaken.
+    if (current && !(current.phase === 'connecting' && !current.startupProgress)) continue
+    setRemoteProjectConnectionState(project.id, {
+      phase: 'reachable',
+      checkedAt: new Date().toISOString()
+    })
+  }
+}
+
 export function subscribeRemoteProjectConnection(
   listener: (projectId: string, state: RemoteProjectConnectionState) => void
 ): () => void {

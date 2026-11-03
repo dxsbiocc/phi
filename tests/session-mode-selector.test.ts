@@ -13,9 +13,8 @@ import {
 import { availableSessionModes } from '../src/renderer/src/features/plan/lib/sessionModeView'
 import type { CurrentSession } from '../src/renderer/src/types'
 
-test('session mode selector exposes five local modes and hides planning modes remotely', () => {
-  assert.deepEqual(availableSessionModes(false), ['auto', 'ask', 'plan', 'plan_execute', 'full'])
-  assert.deepEqual(availableSessionModes(true), ['auto', 'ask', 'full'])
+test('session mode selector exposes all five modes for local and SSH sessions alike', () => {
+  assert.deepEqual(availableSessionModes(), ['auto', 'ask', 'plan', 'plan_execute', 'full'])
 
   setUiLanguage('zh-CN')
   const markup = renderToStaticMarkup(
@@ -24,7 +23,6 @@ test('session mode selector exposes five local modes and hides planning modes re
       { theme: createTheme() },
       createElement(SessionModeSelector, {
         mode: 'plan_execute',
-        remote: false,
         onSelectMode: () => undefined
       })
     )
@@ -100,7 +98,6 @@ test('a rejected session mode update reports the error and keeps the selector va
       { theme: createTheme() },
       createElement(SessionModeSelector, {
         mode: confirmedMode,
-        remote: false,
         onSelectMode: () => undefined
       })
     )

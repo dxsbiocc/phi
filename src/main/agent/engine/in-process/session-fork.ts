@@ -89,7 +89,8 @@ export async function cloneSessionManagerForFork(
 /** Internal worker operation. Public callers can only select the source in request context. */
 export async function forkWorkerSession(
   params: unknown,
-  kernelServices?: KernelRuntimeServices
+  kernelServices?: KernelRuntimeServices,
+  modelAccess?: NonNullable<Parameters<typeof createSession>[1]>['modelAccess']
 ): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const sourceSessionId = stringValue(record.sourceSessionId)
@@ -120,7 +121,11 @@ export async function forkWorkerSession(
         agentDir,
         sessionManager: managerInput
       },
-      { preparedSessionManager: fork, ...(kernelServices ? { kernelServices } : {}) }
+      {
+        preparedSessionManager: fork,
+        ...(kernelServices ? { kernelServices } : {}),
+        ...(modelAccess ? { modelAccess } : {})
+      }
     )
   } catch (error) {
     await fork.close().catch(() => undefined)

@@ -25,6 +25,7 @@ export interface ClientProxyModelAccess extends KernelModelAccess {
   readonly requestFetch: typeof globalThis.fetch
   readonly route: ModelProxyRoute | undefined
   configure(params: ModelAccessConfigureParams): Promise<void>
+  cursorBaseUrl(): string | undefined
   controllerAttached(): void
   controllerDetached(): void
   cancelWaiting(reason?: unknown): void
@@ -129,6 +130,7 @@ class ClientProxyModelAccessImpl implements ClientProxyModelAccess {
   private readonly publishedModels = new Set<Model<Api>>()
   private configuredModels: readonly Model<Api>[] = Object.freeze([])
   private descriptors: readonly SafeModelDescriptor[] = Object.freeze([])
+  private cursorRoute: string | undefined
   private configureQueue = Promise.resolve()
   private closed = false
 
@@ -151,6 +153,10 @@ class ClientProxyModelAccessImpl implements ClientProxyModelAccess {
 
   get route(): ModelProxyRoute | undefined {
     return this.reconnect.currentRoute
+  }
+
+  cursorBaseUrl(): string | undefined {
+    return this.cursorRoute
   }
 
   catalog(): readonly Model<Api>[] {
@@ -237,6 +243,7 @@ class ClientProxyModelAccessImpl implements ClientProxyModelAccess {
       model.transport = 'pi-native'
     }
     this.registerProxyProviders(providers, configured.baseUrl)
+    this.cursorRoute = configured.cursor?.baseUrl
     // Provider override, not a row edit: the SDK rebuilds rows and a child session resolves its model again.
     if (configured.cursor) {
       this.modelRegistry.registerProvider(CURSOR_PROVIDER, { baseUrl: configured.cursor.baseUrl })

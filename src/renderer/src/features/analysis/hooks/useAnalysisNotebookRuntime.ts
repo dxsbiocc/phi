@@ -43,6 +43,11 @@ import {
   pendingNotebookKernelSession,
   upsertNotebookKernelSession
 } from '../lib/notebookSession'
+import {
+  rememberNotebookScope,
+  takeNotebookScope,
+  type NotebookScopeSnapshot
+} from '../lib/notebookScopeSnapshots'
 
 export function useAnalysisNotebookRuntime({
   rendererApi,
@@ -295,12 +300,30 @@ export function useAnalysisNotebookRuntime({
   const notebookRegistryCwdRef = useRef<string | null>(null)
   const notebookFileCwdsRef = useRef(new WeakMap<AnalysisNotebookFile, string>())
   const notebookPathCwdsRef = useRef(new Map<string, string>())
+  // The project whose notebooks are loaded, and what other recently shown projects had loaded.
+  const scopeCwdRef = useRef<string | null>(null)
+  const scopeSnapshotsRef = useRef(new Map<string, NotebookScopeSnapshot>())
+  const scopeStateRef = useRef<Omit<NotebookScopeSnapshot, 'files'>>({
+    registry: null,
+    kernelDiagnostics: null,
+    jupyterStatus: null
+  })
+  const revalidateRestoredScopeRef = useRef(false)
+
+  useEffect(() => {
+    scopeStateRef.current = {
+      registry: analysisNotebookRegistry,
+      kernelDiagnostics: analysisKernelDiagnostics,
+      jupyterStatus: analysisJupyterStatus
+    }
+  }, [analysisNotebookRegistry, analysisKernelDiagnostics, analysisJupyterStatus])
 
   const setActiveAnalysisNotebook = useCallback(
     (file: AnalysisNotebookFile | null): void => {
       activeAnalysisNotebookRef.current = file
       if (file) {
         const cwd = notebookFileCwdsRef.current.get(file) ?? getActiveCwd()
+        scopeCwdRef.current ??= cwd
         notebookFileCwdsRef.current.set(file, cwd)
         notebookPathCwdsRef.current.set(file.path, cwd)
         analysisNotebookFileCacheRef.current = cacheAnalysisNotebookFile(
@@ -334,6 +357,7 @@ export function useAnalysisNotebookRuntime({
       const registry = await rendererApi.listAnalysisNotebooks(cwd)
       if (request !== analysisNotebooksRequestRef.current || cwd !== getActiveCwd()) return
       notebookRegistryCwdRef.current = cwd
+      scopeCwdRef.current ??= cwd
       setAnalysisNotebookRegistry(registry)
     } catch (error) {
       if (request !== analysisNotebooksRequestRef.current) return
@@ -450,8 +474,27 @@ export function useAnalysisNotebookRuntime({
     ]
   )
 
+  /** Back on a project shown earlier: put back what it had loaded, then check it in the background. */
+  const restoreNotebookScope = useCallback((): void => {
+    const cwd = getActiveCwd()
+    if (scopeCwdRef.current !== null || !cwd) return
+    scopeCwdRef.current = cwd
+    const { snapshot, remaining } = takeNotebookScope(scopeSnapshotsRef.current, cwd)
+    scopeSnapshotsRef.current = remaining
+    if (!snapshot) return
+    analysisNotebookFileCacheRef.current = snapshot.files
+    if (snapshot.registry) {
+      notebookRegistryCwdRef.current = cwd
+      setAnalysisNotebookRegistry(snapshot.registry)
+    }
+    setAnalysisKernelDiagnostics(snapshot.kernelDiagnostics)
+    setAnalysisJupyterStatus(snapshot.jupyterStatus)
+    revalidateRestoredScopeRef.current = true
+  }, [getActiveCwd])
+
   const activateCachedAnalysisNotebook = useCallback(
     (path: string): AnalysisNotebookFile | null => {
+      restoreNotebookScope()
       const file = analysisNotebookFileCacheRef.current.get(path) ?? null
       if (!file) return null
 
@@ -464,7 +507,7 @@ export function useAnalysisNotebookRuntime({
       void refreshAnalysisNotebookSessionStatus(file)
       return file
     },
-    [refreshAnalysisNotebookSessionStatus, setActiveAnalysisNotebook]
+    [refreshAnalysisNotebookSessionStatus, restoreNotebookScope, setActiveAnalysisNotebook]
   )
 
   const forgetCachedAnalysisNotebook = useCallback((path: string): void => {
@@ -1305,6 +1348,17 @@ export function useAnalysisNotebookRuntime({
     notebookRefreshRequestRef.current += 1
     cancelPendingNotebookSyncs()
     pendingNotebookSavesRef.current.clear()
+    const leaving = scopeCwdRef.current
+    if (leaving !== null) {
+      scopeSnapshotsRef.current = rememberNotebookScope(scopeSnapshotsRef.current, leaving, {
+        ...scopeStateRef.current,
+        registry:
+          notebookRegistryCwdRef.current === leaving ? scopeStateRef.current.registry : null,
+        files: analysisNotebookFileCacheRef.current
+      })
+    }
+    scopeCwdRef.current = null
+    revalidateRestoredScopeRef.current = false
     notebookRegistryCwdRef.current = null
     analysisJupyterRuntimeRequestRef.current += 1
     analysisNotebookFileCacheRef.current = new Map()
@@ -1531,6 +1585,22 @@ export function useAnalysisNotebookRuntime({
       document.removeEventListener('visibilitychange', refresh)
     }
   }, [refreshActiveNotebookFile])
+
+  // A restored project may have changed on the server while another one was in front.
+  useEffect(() => {
+    if (!revalidateRestoredScopeRef.current || !activeAnalysisNotebook) return
+    revalidateRestoredScopeRef.current = false
+    void refreshActiveNotebookFile()
+    void refreshAnalysisNotebooks()
+    void refreshAnalysisKernels()
+    void refreshAnalysisJupyterStatus()
+  }, [
+    activeAnalysisNotebook,
+    refreshActiveNotebookFile,
+    refreshAnalysisNotebooks,
+    refreshAnalysisKernels,
+    refreshAnalysisJupyterStatus
+  ])
 
   return {
     analysisNotebookRegistry,

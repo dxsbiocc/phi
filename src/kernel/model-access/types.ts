@@ -26,6 +26,8 @@ export interface KernelModelAccess {
   status(): readonly ModelAccessProviderStatus[]
   onChange(listener: ModelAccessChangeListener): () => void
   configure?(params: ModelAccessConfigureParams): void | Promise<void>
+  /** The Cursor route of the latest configuration; each desktop connection brings a new one. */
+  cursorBaseUrl?(): string | undefined
   controllerAttached?(): void
   controllerDetached?(): void
   cancelWaiting?(reason?: unknown): void

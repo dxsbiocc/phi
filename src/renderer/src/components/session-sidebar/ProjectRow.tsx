@@ -216,6 +216,7 @@ function ProjectRowImpl({
       >
         <ListItemButton
           data-phi-project-row="true"
+          data-phi-project-id={project.id}
           aria-expanded={expanded}
           onClick={() => {
             setHoverDetailsOpen(false)
@@ -352,6 +353,7 @@ function ProjectRowImpl({
                 <span>
                   <IconButton
                     size="small"
+                    data-testid="gui-e2e-new-project-session"
                     aria-label={navigationCopy.newProjectConversation}
                     sx={{ width: 32, height: 32, p: 0.5 }}
                     onClick={(event) => {

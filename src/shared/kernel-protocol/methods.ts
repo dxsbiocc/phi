@@ -742,7 +742,9 @@ export const approvalRequestedPayloadSchema = z
     toolCallId: nonEmptyIdSchema,
     toolName: z.string(),
     input: jsonValueSchema,
-    agentRunId: nonEmptyIdSchema.optional()
+    agentRunId: nonEmptyIdSchema.optional(),
+    // The path a read or search reaches outside the project, shown in the approval dialog.
+    outsideProject: z.string().min(1).max(4096).optional()
   })
   .strict()
 

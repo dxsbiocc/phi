@@ -100,7 +100,7 @@ test('resolvePromptRunTarget canonicalizes, snapshots the lifecycle, and reads t
   assert.equal(target.runSnapshot.cwd, '/work')
 })
 
-test('persisted plan work modes reject a remote project or remote anchor', () => {
+test('persisted plan work modes are admitted for SSH sessions on the default kernel route', () => {
   const remoteProject = {
     ...project,
     location: { kind: 'ssh', hostProfileId: 'host-1', remoteRoot: '/r', canonicalRoot: '/c' }
@@ -109,9 +109,9 @@ test('persisted plan work modes reject a remote project or remote anchor', () =>
   for (const workMode of ['plan', 'plan_execute'] as const) {
     const manifest = { workMode, permissionMode: 'auto' } as PhiSessionManifest
     const remote = createPromptRunAdmission(createDeps({ project: remoteProject, manifest }).deps)
-    assert.throws(() => remote.admit(remote.resolveTarget(input())), /暂不支持计划评审/)
+    assert.equal(remote.admit(remote.resolveTarget(input())).workMode, workMode)
     const anchored = createPromptRunAdmission(createDeps({ remoteAnchor: true, manifest }).deps)
-    assert.throws(() => anchored.admit(anchored.resolveTarget(input())), /暂不支持计划评审/)
+    assert.equal(anchored.admit(anchored.resolveTarget(input())).workMode, workMode)
   }
 })
 

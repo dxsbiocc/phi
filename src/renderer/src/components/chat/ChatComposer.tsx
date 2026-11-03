@@ -182,7 +182,6 @@ export type ChatComposerProps = {
   sessionMode: SessionMode
   onSelectSessionMode: (mode: SessionMode) => void
   disableSessionModeSelect?: boolean
-  remoteSession?: boolean
   models: ModelOption[]
   selectedModel: ModelOption | null
   onSelectModel: (model: ModelOption | null) => void
@@ -233,7 +232,6 @@ export function ChatComposer({
   sessionMode,
   onSelectSessionMode,
   disableSessionModeSelect = false,
-  remoteSession = false,
   models,
   selectedModel,
   onSelectModel,
@@ -365,7 +363,6 @@ export function ChatComposer({
             <SessionModeSelector
               mode={sessionMode}
               disabled={disableSessionModeSelect}
-              remote={remoteSession}
               onSelectMode={onSelectSessionMode}
               compact={compact}
             />

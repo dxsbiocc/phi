@@ -105,6 +105,18 @@ test('SSH plan review accepts only an authenticated call from its active run', a
     remotePlanPhase: 'plan_execute' as const
   }
   await assert.rejects(() => handler(request, origin), /远程项目暂不支持计划评审/)
+  // Phi's own kernel owns plan state for SSH sessions too; the RPC-era proofs do not apply.
+  assert.deepEqual(
+    await handler(request, {
+      originSessionId: 'runtime-1',
+      agentRunId: 'run-1',
+      kernelOrigin: true
+    }),
+    { decision: 'approve', planRunId: 'plan-1' }
+  )
+  assert.equal(reviews, 1)
+  reviews = 0
+  started = 0
   await assert.rejects(
     () =>
       handler(request, { ...origin, originSessionId: 'other', remoteOriginAuthenticated: true }),

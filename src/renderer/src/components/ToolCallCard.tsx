@@ -77,6 +77,9 @@ function ToolCallCard({
   return (
     <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
       <Box
+        data-testid="gui-e2e-tool-call"
+        data-phi-tool-call-name={item.toolName}
+        data-phi-tool-call-status={item.status}
         role="button"
         tabIndex={0}
         onClick={toggle}

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import {
+  approvalRequestedPayloadSchema,
   approvalRespondParamsSchema,
   approvalRespondResultSchema,
   encodeFrame,
@@ -1022,6 +1023,21 @@ describe('kernel protocol DTOs', () => {
         code: 'MADE_UP',
         message: 'No.'
       }).success,
+      false
+    )
+  })
+
+  it('lets an approval name the path outside the project it would read', () => {
+    const approval = {
+      approvalId: 'approval-1',
+      toolCallId: 'call-1',
+      toolName: 'read',
+      input: { path: '/etc/hostname' },
+      outsideProject: '/etc/hostname'
+    }
+    assert.equal(approvalRequestedPayloadSchema.safeParse(approval).success, true)
+    assert.equal(
+      approvalRequestedPayloadSchema.safeParse({ ...approval, outsideProject: '' }).success,
       false
     )
   })

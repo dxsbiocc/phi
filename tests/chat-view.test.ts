@@ -78,7 +78,6 @@ function renderChat(
     onOpenLocalPath?: (path: string, kind: 'file' | 'directory') => void
     onOpenWebUrl?: (url: string) => void
     onForkUserMessage?: (messageId: string) => void
-    remoteSession?: boolean
     disableSessionModeSelect?: boolean
     contextUsageTarget?: {
       sessionPath: string | null
@@ -136,7 +135,6 @@ function renderChat(
         onOpenWebUrl: options.onOpenWebUrl,
         onForkUserMessage: options.onForkUserMessage,
         sessionMode: options.sessionMode ?? 'auto',
-        remoteSession: options.remoteSession,
         onSelectSessionMode: () => undefined,
         disableSessionModeSelect: options.disableSessionModeSelect,
         disableModelControls: options.disableModelControls ?? false,

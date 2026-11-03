@@ -121,7 +121,6 @@ type ViewProps = {
   sessionMode: SessionMode
   onSelectSessionMode: (mode: SessionMode) => void
   disableSessionModeSelect?: boolean
-  remoteSession?: boolean
   disableModelControls?: boolean
   compactComposerControls?: boolean
   placement?: ChatPlacement
@@ -189,7 +188,6 @@ function ChatView({
   sessionMode,
   onSelectSessionMode,
   disableSessionModeSelect = false,
-  remoteSession = false,
   disableModelControls = false,
   compactComposerControls = false,
   placement = 'tab',
@@ -617,7 +615,6 @@ function ChatView({
               sessionMode={sessionMode}
               onSelectSessionMode={onSelectSessionMode}
               disableSessionModeSelect={disableSessionModeSelect}
-              remoteSession={remoteSession}
               models={models}
               selectedModel={selectedModel}
               onSelectModel={onSelectModel}

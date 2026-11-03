@@ -8,7 +8,7 @@ import {
   type SessionOpenParams,
   type SessionPolicyParams
 } from '../../shared/kernel-protocol'
-import { makeProtocolError } from '../protocol/errors'
+import { makeProtocolError, writerBusyProtocolError } from '../protocol/errors'
 import type { KernelModelAccess } from '../model-access'
 import type { KernelMethodHandlers, KernelProtocolCore, RunCompletionStatus } from '../protocol'
 import {
@@ -428,7 +428,7 @@ export function createWorkerKernelAdapter(
           return { sessionId }
         } catch (error) {
           if (error instanceof SessionWriterBusyError) {
-            throw makeProtocolError('SESSION_BUSY', 'Another kernel owns this session.')
+            throw writerBusyProtocolError(error)
           }
           if (
             error &&

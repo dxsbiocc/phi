@@ -11,6 +11,7 @@ import {
 } from '../phi-extension'
 import { toOmpCustomTool } from '../tool-adapter'
 import { withNativeWireProjection } from './native-wire-stream'
+import { withCurrentCursorRoute } from '../cursor-model-routing'
 import {
   allowApprovalWaits,
   applyAutoCompactionOverrides,
@@ -84,6 +85,7 @@ export async function createSession(
     preparedSessionManager?: SessionManager
     modelAccess?: Pick<RuntimeContext, 'authStorage' | 'modelRegistry'> & {
       requestFetch?: typeof globalThis.fetch
+      cursorBaseUrl?: () => string | undefined
     }
     kernelServices?: KernelRuntimeServices
   } = {}
@@ -310,14 +312,20 @@ export async function createSession(
         : {})
     })
     created = result
-    if (dependencies.modelAccess?.requestFetch) {
+    const access = dependencies.modelAccess
+    if (access?.requestFetch || access?.cursorBaseUrl) {
       const upstream = result.session.agent.streamFn
-      const requestFetch = dependencies.modelAccess.requestFetch
-      result.session.agent.streamFn = (model, context, options) =>
-        upstream(model, context, {
-          ...options,
-          fetch: withNativeWireProjection(requestFetch, model)
-        })
+      const requestFetch = access.requestFetch
+      result.session.agent.streamFn = (model, context, options) => {
+        const routed = withCurrentCursorRoute(model, access.cursorBaseUrl?.())
+        return upstream(
+          routed,
+          context,
+          requestFetch
+            ? { ...options, fetch: withNativeWireProjection(requestFetch, routed) }
+            : options
+        )
+      }
     }
     installAutoWorkModeBatchGuard(result.session.agent, workMode === 'auto')
     if (leasedMcp) {

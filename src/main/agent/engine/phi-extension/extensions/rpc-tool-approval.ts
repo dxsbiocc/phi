@@ -84,7 +84,7 @@ export function createRpcToolApprovalExtension(options: RpcToolApprovalOptions):
         const boundary = projectToolBoundaryDecision(identity.cwd, event.toolName, envelope.input)
         const url = remoteUrlGuardDecision(event.toolName, envelope.input)
         if (!boundary.allowed || !url.allowed)
-          return { block: true, reason: boundary.reason ?? url.reason }
+          return { block: true, reason: boundary.allowed ? url.reason : boundary.reason }
         const classification = options.classifyTool(event.toolName, envelope.input)
         if (!classification) return blocked
         if (event.toolName === 'task' || classification === 'delegate') {

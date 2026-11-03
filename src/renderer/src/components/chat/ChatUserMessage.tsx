@@ -164,6 +164,7 @@ export function ChatUserMessage({
                     <IconButton
                       type="button"
                       size="small"
+                      data-testid="gui-e2e-fork-message"
                       aria-label={chatCopy.forkConversationFromThisMessage}
                       title={chatCopy.forkConversationFromThisMessage}
                       onClick={() => onFork(message.id)}

@@ -10,7 +10,10 @@ import {
 import { phiOnlySessionPath } from '../src/main/agent/session/sessions'
 import type { PhiSessionManifest } from '../src/main/agent/session/session-store'
 import type { SessionPreferenceTable } from '../src/main/app-state/session-preferences'
-import { createSessionResolution } from '../src/main/session-runtime/session-resolution'
+import {
+  createSessionResolution,
+  rejectsRoutedChange
+} from '../src/main/session-runtime/session-resolution'
 
 interface ResolutionHarness {
   resolution: ReturnType<typeof createSessionResolution>
@@ -438,4 +441,29 @@ test('resolveSessionPermissionMode preserves table, project, and auto fallback w
     }),
     'auto'
   )
+})
+
+test('rejectsRoutedChange lets kernel sessions on either host change model and thinking', () => {
+  const owns = (): boolean => true
+  const kernelReference = (kind: 'local' | 'ssh'): PhiSessionManifest['kernelRuntimeRef'] =>
+    ({ kind: 'phi-kernel', host: { kind } }) as unknown as PhiSessionManifest['kernelRuntimeRef']
+  // A reopened SSH kernel session has no model until the run sets it, so it must not be refused.
+  const remoteKernel = createManifest({ cwd: '/remote', kernelRuntimeRef: kernelReference('ssh') })
+  const localKernel = createManifest({ cwd: '/local', kernelRuntimeRef: kernelReference('local') })
+  const newRemote = createManifest({ cwd: '/remote-new', remoteRuntime: 'rpc' })
+  const oldRpc = createManifest({
+    cwd: '/remote-old',
+    runtimeRef: { kind: 'remote-omp' } as unknown as PhiSessionManifest['runtimeRef']
+  })
+
+  assert.equal(rejectsRoutedChange('kernel-1', remoteKernel, owns, true), false)
+  assert.equal(rejectsRoutedChange('kernel-1', localKernel, owns, true), false)
+  assert.equal(rejectsRoutedChange('kernel-1', newRemote, owns, true), false)
+  assert.equal(rejectsRoutedChange('rpc-1', oldRpc, owns, true), true)
+  assert.equal(rejectsRoutedChange('rpc-1', newRemote, owns, false), true)
+  assert.equal(
+    rejectsRoutedChange('in-process', remoteKernel, () => false, false),
+    false
+  )
+  assert.equal(rejectsRoutedChange(undefined, oldRpc, owns, true), false)
 })

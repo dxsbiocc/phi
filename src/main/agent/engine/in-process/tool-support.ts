@@ -31,7 +31,10 @@ export function requestToolApproval(
           : isRecord(event.input)
             ? event.input
             : {},
-      ...(agentRunId ? { agentRunId } : {})
+      ...(agentRunId ? { agentRunId } : {}),
+      ...(stringValue(event.outsideProject)
+        ? { outsideProject: stringValue(event.outsideProject) }
+        : {})
     },
     { sessionId }
   )

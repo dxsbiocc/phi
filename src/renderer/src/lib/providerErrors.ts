@@ -82,6 +82,23 @@ export function isProviderBillingError(message: string): boolean {
   return matchesAnyPattern(message, BILLING_PATTERNS)
 }
 
+/** Kernel lock contention (src/kernel/protocol/errors.ts WRITER_BUSY_MESSAGES). */
+function kernelLockDisplay(rawMessage: string): ProviderErrorDisplay | undefined {
+  const olderKernelBusy = rawMessage.includes('An older Phi kernel is still running a task')
+  if (!olderKernelBusy && !rawMessage.includes('Another Phi kernel is using this session')) {
+    return undefined
+  }
+  return {
+    title: providerErrorCopy.otherKernelTitle,
+    description: olderKernelBusy
+      ? providerErrorCopy.olderKernelBusyBody
+      : providerErrorCopy.otherKernelBody,
+    rawMessage,
+    showRawMessage: false,
+    action: null
+  }
+}
+
 export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
   const rawMessage = redactProviderErrorMessage(message.trim() || providerErrorCopy.requestFailed)
 
@@ -94,6 +111,9 @@ export function getProviderErrorDisplay(message: string): ProviderErrorDisplay {
       action: null
     }
   }
+
+  const kernelLock = kernelLockDisplay(rawMessage)
+  if (kernelLock) return kernelLock
 
   if (
     /ERROR_RATE_LIMITED_CHANGEABLE/i.test(rawMessage) &&

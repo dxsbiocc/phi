@@ -22,6 +22,7 @@ import { createWorkspaceHostRemoteSession } from './remote-session'
 import { SshHost, SshHostClosedError } from './ssh-host'
 import type { SshHostConfig } from './ssh-host-context'
 import type { WorkspaceHost } from './types'
+import { reportConnection } from '../connection-events'
 
 export interface RemoteWorkspaceHostIdentity {
   sessionId: string
@@ -313,7 +314,7 @@ export class RemoteWorkspaceHostRegistry {
     if (!entry || [...this.entries.values()].includes(entry)) return
     if (this.hostsByProject.get(entry.cacheKey) === entry)
       this.hostsByProject.delete(entry.cacheKey)
-    await entry.host.close?.()
+    await this.closeEntry(entry, 'session_deleted')
   }
 
   /** A failed host fails for every session on it, so all of them move to a fresh one. */
@@ -324,7 +325,7 @@ export class RemoteWorkspaceHostRegistry {
     for (const [sessionId, current] of this.entries) {
       if (current === entry) this.entries.delete(sessionId)
     }
-    await entry.host.close?.()
+    await this.closeEntry(entry, 'failed')
   }
 
   async releaseProject(projectId: string): Promise<void> {
@@ -339,12 +340,12 @@ export class RemoteWorkspaceHostRegistry {
         this.hostsByProject.delete(entry.cacheKey)
       }
     }
-    await Promise.all([...closing].map((entry) => entry.host.close?.()))
+    await Promise.all([...closing].map((entry) => this.closeEntry(entry, 'project_released')))
   }
 
   async releaseAll(): Promise<void> {
-    const closing = [...new Set(this.entries.values())].flatMap((entry) =>
-      entry.host.close ? [entry.host.close()] : []
+    const closing = [...new Set(this.entries.values())].map((entry) =>
+      this.closeEntry(entry, 'app_closed')
     )
     this.entries.clear()
     this.hostsByProject.clear()
@@ -357,10 +358,21 @@ export class RemoteWorkspaceHostRegistry {
     const entry =
       current?.projectId === binding.projectId && current.cacheKey === binding.cacheKey
         ? current
-        : (this.hostsByProject.get(binding.cacheKey) ?? this.create(binding))
+        : (this.hostsByProject.get(binding.cacheKey) ?? this.opened(binding))
     this.entries.set(binding.sessionId, entry)
     this.hostsByProject.set(binding.cacheKey, entry)
     return entry
+  }
+
+  private opened(binding: RemoteWorkspaceHostBinding): HostEntry {
+    const entry = this.create(binding)
+    reportConnection({ layer: 'workspace', change: 'opened', target: binding.cacheKey })
+    return entry
+  }
+
+  private async closeEntry(entry: HostEntry, reason: string): Promise<void> {
+    reportConnection({ layer: 'workspace', change: 'closed', target: entry.cacheKey, reason })
+    await entry.host.close?.()
   }
 
   private pathStatCacheKey(bindingCacheKey: string, path: string): string {

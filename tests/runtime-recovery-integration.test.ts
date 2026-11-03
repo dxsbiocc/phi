@@ -196,7 +196,7 @@ function appExpression(name: string): string {
   }).outputText
 }
 
-test('SSH fork capability is absent and a stale App callback also refuses its IPC', async () => {
+test('a remote session forks from a message like a local one', async () => {
   const compiled = appExpression('onForkUserMessage')
   const current = { activePhiSessionId: 'phi', activeProjectLocation: { kind: 'ssh' } }
   const calls: string[] = []
@@ -234,15 +234,9 @@ test('SSH fork capability is absent and a stale App callback also refuses its IP
   )
   const callback = module.exports as (eventId: string) => Promise<void>
   await callback('event')
-  assert.deepEqual(calls, [])
-  current.activeProjectLocation.kind = 'local'
-  await callback('event')
   assert.deepEqual(calls, ['fork', 'select'])
   const app = readFileSync(resolve('src/renderer/src/App.tsx'), 'utf8')
-  assert.match(
-    app,
-    /onForkUserMessage=\{[\s\S]{0,250}activeProjectLocation\?\.kind === 'ssh'[\s\S]{0,100}\? undefined/
-  )
+  assert.doesNotMatch(app, /onForkUserMessage=\{[^}]{0,250}kind === 'ssh'/)
   assert.match(app, /<RuntimeRecoveryBanner[\s\S]{0,400}target=\{runtimeRecoveryTarget\}/)
 })
 

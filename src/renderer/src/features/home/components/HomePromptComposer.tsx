@@ -14,7 +14,6 @@ type HomePromptComposerProps = {
   selectedProject: Project | null
   draft: string
   mode: SessionMode
-  remote: boolean
   disabled: boolean
   canSend: boolean
   models: ModelOption[]
@@ -47,7 +46,6 @@ export function HomePromptComposer({
   selectedProject,
   draft,
   mode,
-  remote,
   disabled,
   canSend,
   models,
@@ -67,7 +65,11 @@ export function HomePromptComposer({
 
   return (
     <Box>
-      <Box data-phi-home-project="true" sx={{ display: 'flex', mb: 1 }}>
+      <Box
+        data-phi-home-project="true"
+        data-phi-home-project-id={selectedProject?.id ?? ''}
+        sx={{ display: 'flex', mb: 1 }}
+      >
         <HomeProjectMenu
           projects={projects}
           selectedProject={selectedProject}
@@ -89,7 +91,6 @@ export function HomePromptComposer({
           sessionMode={mode}
           onSelectSessionMode={onSelectMode}
           disableSessionModeSelect={disabled}
-          remoteSession={remote}
           models={models}
           selectedModel={selectedModel}
           onSelectModel={onSelectModel}

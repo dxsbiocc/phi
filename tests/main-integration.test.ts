@@ -2161,6 +2161,10 @@ async function harness(
         }
       })
     },
+    './agent/connection-logging': {
+      logServerConnections: (): void => undefined,
+      logProjectConnectionState: (): void => undefined
+    },
     './agent/projects': {
       subscribeRemoteProjectConnection: (): (() => void) => noop,
       deleteProject: (): void => undefined,

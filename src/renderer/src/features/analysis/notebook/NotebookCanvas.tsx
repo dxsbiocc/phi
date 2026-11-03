@@ -1341,7 +1341,9 @@ export default function NotebookCanvas({
           }}
         >
           {isOpening ? (
-            <Typography color="text.secondary">{analysisCopy.openingNotebook}</Typography>
+            <Typography data-testid="gui-e2e-notebook-opening" color="text.secondary">
+              {analysisCopy.openingNotebook}
+            </Typography>
           ) : null}
           {error || saveError ? (
             <Typography color="error.main" sx={{ mb: 2 }}>

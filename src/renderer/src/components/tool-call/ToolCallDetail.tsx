@@ -234,7 +234,7 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
       ) : null}
       {item.argsJson && item.output ? <Divider sx={{ my: 1.25 }} /> : null}
       {outputPreview ? (
-        <Box sx={{ minWidth: 0 }}>
+        <Box data-testid="gui-e2e-tool-output" sx={{ minWidth: 0 }}>
           <Box
             sx={{
               mb: 0.5,

@@ -324,6 +324,7 @@ import {
   stopBackgroundShellJob
 } from './agent/jobs/background-shell-job-operations'
 import { cleanupOldLogs, writeAppLog } from './agent/app-logger'
+import { logProjectConnectionState, logServerConnections } from './agent/connection-logging'
 import {
   configureSystemUiLanguage,
   readAppSettings,
@@ -1740,6 +1741,7 @@ const wrapperResultReadControl = createWrapperResultReadControl({
 })
 const wrapperResultDownloads: WrapperResultDownloads = new Map()
 subscribeRemoteProjectConnection((projectId, state) => {
+  logProjectConnectionState(projectId, state)
   sendToAllWindows(IPC.projects.remoteConnectionChanged, { projectId, state })
 })
 const connectRemoteWorkspaceHost = async (request: {
@@ -3175,6 +3177,7 @@ function runStartupMaintenance(): void {
     })
   }
   writeAppLog({ event: 'app_started', metadata: { removedOldLogs: removedLogs } })
+  logServerConnections()
   migrateEnablementFromHistory(['create-wrapper'], { agentDir: AGENT_DIR })
 }
 

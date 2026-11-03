@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { posix } from 'node:path'
 import { shellQuote, type RemoteSshSession } from '../../../wrappers/remote-ssh-session'
 import type { HostCapabilityProfile } from '../../../workspace-host/types'
 import {
@@ -17,6 +18,7 @@ import {
   probeRemoteKernelHostProfile,
   remoteKernelHostFromSshSession
 } from './deployment'
+import { cleanupOldKernelsCommand } from './commands'
 import { RemoteKernelTransport, type RemoteKernelAttachStatus } from './transport'
 import {
   RemoteKernelError,
@@ -293,6 +295,41 @@ async function resolveAttachHelper(
 
 // A first start reads the kernel and its addon from a shared disk, on servers already under load.
 const REMOTE_HELLO_TIMEOUT_MS = 60_000
+const CLEANUP_TIMEOUT_MS = 60_000
+
+/**
+ * Runs in the background once a newly uploaded kernel has answered. A failure only leaves
+ * old builds on disk, so it is reported and never fails the launch.
+ */
+function removeOldKernels(
+  host: RemoteKernelDeploymentHost,
+  deployment: RemoteKernelDeployment,
+  onDiagnostic: ((text: string) => void) | undefined
+): void {
+  const directory = posix.dirname(deployment.executablePath)
+  const report = (error: string): void =>
+    onDiagnostic?.(
+      JSON.stringify({
+        level: 'warn',
+        message: 'Old remote kernel cleanup failed.',
+        details: { error }
+      })
+    )
+  void host.exec
+    .run(
+      [
+        'sh',
+        '-c',
+        cleanupOldKernelsCommand({ kernelRoot: posix.dirname(posix.dirname(directory)), directory })
+      ],
+      { cwd: deployment.runtimeRoot, timeoutMs: CLEANUP_TIMEOUT_MS, maxOutputBytes: 16 * 1024 }
+    )
+    .then((result) => {
+      if (result.code !== 0 || result.terminationReason)
+        report(result.stderr.trim() || result.terminationReason || `exit ${result.code}`)
+    })
+    .catch((error: unknown) => report(error instanceof Error ? error.message : String(error)))
+}
 
 function assertHelloTimeout(helloTimeoutMs: number): void {
   if (!Number.isFinite(helloTimeoutMs) || helloTimeoutMs <= 0) {
@@ -405,6 +442,7 @@ export async function launchRemoteKernel(
     await opened.client.close().catch(() => undefined)
     throw error
   }
+  if (!deployment.reused) removeOldKernels(runtimeHost, deployment, options.onDiagnostic)
   return {
     client: opened.client,
     greeting: opened.greeting,

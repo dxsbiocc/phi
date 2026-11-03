@@ -36,6 +36,8 @@ export interface PhiExtensionToolApprovalRequest {
   toolCallId: string
   toolName: string
   input: unknown
+  /** Set when the call reaches this path outside the project; the user must approve it. */
+  outsideProject?: string
 }
 
 export interface PhiExtensionFallbackReadiness {

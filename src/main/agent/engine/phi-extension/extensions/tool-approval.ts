@@ -5,10 +5,13 @@ import { isRecord } from '../lib/common'
 
 export function createBridgeToolApprovalExtension(
   config: PhiExtensionConfig,
-  host: PhiExtensionHost
+  host: PhiExtensionHost,
+  /** Calls the user already approved for reaching outside the project. */
+  approvedCalls?: Set<string>
 ): ExtensionFactory {
   return (pi) => {
     pi.on('tool_call', async (event) => {
+      if (approvedCalls?.delete(event.toolCallId)) return undefined
       const browserTypeText =
         config.useBrowserTextVault &&
         event.toolName === 'browser' &&

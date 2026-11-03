@@ -83,6 +83,10 @@ const FIXED_TOOL_EVENTS: Record<string, unknown>[] = [
   { toolCallId: 'notebook-1', toolName: 'notebook.run_cell', input: {} }
 ]
 
+const OLD_WRITE_REFUSAL =
+  'Data files elsewhere can be read, but everything written goes in the project.'
+const NEW_WRITE_REFUSAL = 'Phi writes only inside the project.'
+
 async function assertBuilderParity(
   actual: readonly PhiExtensionFactory[],
   previous: readonly PhiExtensionFactory[]
@@ -118,9 +122,17 @@ async function assertBuilderParity(
         assert.match(String(actualInput.command), /^__phi_bound_bash_[a-f0-9]+\(\) \{ local -x /)
         assert.match(String(actualInput.command), /; eval -- '/)
       } else {
+        // Reads outside the project now ask for approval, so the write refusal no longer
+        // says data elsewhere can be read. The decision itself is unchanged.
+        const previousReason = (previousResult as { reason?: string } | undefined)?.reason
         assert.deepEqual(
           actualResult,
-          previousResult,
+          previousReason?.endsWith(OLD_WRITE_REFUSAL)
+            ? {
+                ...(previousResult as object),
+                reason: previousReason.replace(OLD_WRITE_REFUSAL, NEW_WRITE_REFUSAL)
+              }
+            : previousResult,
           `factory ${index} diverged for ${JSON.stringify(event)}`
         )
       }

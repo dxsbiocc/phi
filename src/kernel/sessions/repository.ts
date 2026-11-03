@@ -47,7 +47,7 @@ import {
   type SessionWriterLock,
   type TerminalRunReceipt
 } from './types'
-import { acquireSessionWriterLock, SessionWriterBusyError } from './writer-lock'
+import { acquireWriterLockFromOlderBuild, SessionWriterBusyError } from './superseded-writer'
 
 function sameLastRun(left: SessionManifest, right: SessionManifest): boolean {
   return (
@@ -171,7 +171,7 @@ export class KernelSessionRepository {
       await ensurePrivateDirectory(guardDirectory, true)
       guardPath = join(guardDirectory, `${sessionId}.lock`)
     }
-    return acquireSessionWriterLock({
+    return acquireWriterLockFromOlderBuild({
       path,
       kernelInstanceId: this.kernelInstanceId,
       acquireGuard: this.acquireGuard,

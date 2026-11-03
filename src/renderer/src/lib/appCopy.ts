@@ -65,8 +65,6 @@ const english = {
   compactFailed: 'Could not compact context',
   compactNotNeeded: 'Nothing to compact yet: this conversation is still short',
   retryImageFailed: 'Could not retry the image message',
-  remoteForkUnavailable:
-    'Remote chats cannot be forked yet. Open the recovery summary to start a new chat.',
   forkFailed: 'Could not fork chat',
   summaryChatCreated: 'A new chat was created with the summary. Send its first message when ready.',
   projectChat: 'Project chat',
@@ -156,7 +154,6 @@ const chinese: LocalizedCopy<typeof english> = {
   compactFailed: '上下文压缩失败',
   compactNotNeeded: '当前对话还很短，暂时不需要压缩',
   retryImageFailed: '无法重试图片消息',
-  remoteForkUnavailable: '远程会话暂不支持分叉，可从恢复提示中查看摘要并另建会话。',
   forkFailed: '无法分叉会话',
   summaryChatCreated: '已建立摘要新会话，尚未连接；下一条消息由你发送。',
   projectChat: '项目会话',

@@ -676,6 +676,11 @@ test('remote launcher negotiates over SSH stdio with explicit isolated env and c
   assert.deepEqual(launched.attach, { state: 'spawned', pid: 123 })
   assert.equal(launched.deployment.reused, true)
   assert.equal(launched.remoteCommandCount, 2)
+  assert.equal(
+    host.commands.some((command) => command.includes('kernel_root=')),
+    false,
+    'a reused build has nothing new to clean up after'
+  )
   assert.equal(launched.homePath, '/srv/phi test/home')
   assert.equal(launched.agentDir, '/srv/phi test/agent')
   assert.equal(commands.length, 1)
@@ -1045,4 +1050,47 @@ test('launch command rejects PI_NATIVES_DIR injection', async () => {
       }),
     { name: 'RemoteKernelError', code: 'INVALID_ARGUMENT' }
   )
+})
+
+test('a newly uploaded kernel removes old builds in the background once it answers', async (t) => {
+  const fixture = await createBuildFixture()
+  t.after(fixture.cleanup)
+  const host = new FakeDeploymentHost()
+  let process: LoopbackKernelProcess | undefined
+  const session: LaunchRemoteKernelOptions['session'] = {
+    remoteHelper: helperInstallation,
+    async exec() {
+      return { stdout: '', stderr: '', code: 0, signal: null }
+    },
+    async uploadFile() {
+      return undefined
+    },
+    async openStdio() {
+      process = new LoopbackKernelProcess()
+      queueMicrotask(() =>
+        process?.writeDiagnostic('PHI_HELPER_ATTACH_STATUS={"state":"spawned","pid":123}\n')
+      )
+      return process
+    }
+  }
+  const launched = await launchRemoteKernel({
+    session,
+    runtimeHost: host,
+    runtimeRoot: '/srv/phi',
+    buildDirectory: fixture.directory,
+    home: '/srv/phi/home',
+    agentDir: '/srv/phi/agent'
+  })
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(launched.deployment.reused, false)
+  const cleanup = host.commands.filter((command) => command.includes('kernel_root='))
+  assert.equal(cleanup.length, 1)
+  assert.ok(cleanup[0].includes("kernel_root='/srv/phi/kernel'"))
+  assert.ok(
+    cleanup[0].includes(`current='/srv/phi/kernel/0.1.0/${launched.deployment.kernelSha256}'`)
+  )
+  await launched.close()
+  assert.ok(process)
+  await process.closed
 })

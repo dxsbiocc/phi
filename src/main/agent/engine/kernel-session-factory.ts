@@ -104,6 +104,8 @@ export class KernelSessionFactory implements RoutedSessionFactory {
   private readonly hosts = new Map<string, KernelExecutionHost>()
   private readonly bindingsByLogical = new Map<string, SessionBinding>()
   private readonly bindingsByKernel = new Map<string, SessionBinding>()
+  /** The host of each remote fork, so a fork the desktop fails to adopt can be closed there. */
+  private readonly remoteForkHosts = new Map<string, string>()
   private readonly hostHandlers = new Map<string, PhiHostRequestHandler>()
   private readonly pendingByHost = new Map<
     string,
@@ -155,12 +157,10 @@ export class KernelSessionFactory implements RoutedSessionFactory {
   }
 
   async historyFork(params: PhiHistoryForkParams): Promise<PhiHistoryForkResult | undefined> {
-    const source = this.localHistoryForkSource(params.path)
+    const source = this.historyForkSource(params.path)
     if (!source) return undefined
-    const { phiSessionId, manifest, reference } = source
-    const binding = this.bindingsByLogical.get(phiSessionId)
-    const sourceParams =
-      binding?.params ?? kernelForkSourceParams(phiSessionId, params.path, manifest, reference)
+    const { reference } = source
+    const sourceParams = this.forkSourceParams(source, params.path)
     const host = this.hostFor(sourceParams)
     const client = await host.client(sourceParams, new AbortController().signal)
     if (
@@ -191,21 +191,59 @@ export class KernelSessionFactory implements RoutedSessionFactory {
         await client
           .request('session.close', {}, { sessionId: forkedSessionId })
           .catch(() => undefined)
-        this.removeLocalKernelFork(reference.host.agentDir, forkedSessionId)
+        if (reference.host.kind === 'local')
+          this.removeLocalKernelFork(reference.host.agentDir, forkedSessionId)
       }
       throw new TypeError('Kernel fork result omitted a valid persistent session identity.')
     }
+    if (reference.host.kind === 'ssh') this.remoteForkHosts.set(forkedSessionId, host.key)
     return {
       path: forkedPath,
       kernelRuntimeRef: { ...reference, kernelSessionId: forkedSessionId }
     }
   }
 
-  private localHistoryForkSource(path: string):
+  private forkSourceParams(
+    source: NonNullable<ReturnType<KernelSessionFactory['historyForkSource']>>,
+    path: string
+  ): PhiSessionCreateParams {
+    const { phiSessionId, manifest, reference } = source
+    const binding = this.bindingForPhiSession(phiSessionId, reference.kernelSessionId)
+    if (binding) return binding.params
+    // A remote kernel is reached only through the source session's own launch; the desktop
+    // attaches that session before asking for the fork.
+    if (reference.host.kind === 'ssh') {
+      throw new KernelEngineError(
+        'CAPABILITY_UNAVAILABLE',
+        '远程会话尚未连接，无法分叉；请稍后重试。',
+        {
+          reason: 'remote_kernel_fork_source_detached',
+          action: 'reopen'
+        }
+      )
+    }
+    return kernelForkSourceParams(phiSessionId, path, manifest, reference as LocalKernelRuntimeRef)
+  }
+
+  /** Bindings are keyed by runtime session; a fork names the Phi session it came from. */
+  private bindingForPhiSession(
+    phiSessionId: string,
+    kernelSessionId: string
+  ): SessionBinding | undefined {
+    const direct = this.bindingsByLogical.get(phiSessionId)
+    if (direct) return direct
+    const byKernel = this.bindingsByKernel.get(kernelSessionId)
+    return byKernel &&
+      (byKernel.params.phiSessionId ?? byKernel.params.remoteProject?.phiSessionId) === phiSessionId
+      ? byKernel
+      : undefined
+  }
+
+  private historyForkSource(path: string):
     | {
         phiSessionId: string
         manifest: PhiSessionManifest
-        reference: LocalKernelRuntimeRef
+        reference: KernelRuntimeRef
       }
     | undefined {
     const prefix = 'phi-session:'
@@ -215,17 +253,22 @@ export class KernelSessionFactory implements RoutedSessionFactory {
     const reference = manifest?.kernelRuntimeRef
     if (!manifest || !reference) return undefined
     if (!kernelEngineHandles(this.options.mode, reference.host.kind === 'ssh')) return undefined
-    if (reference.host.kind === 'ssh') {
-      throw new KernelEngineError('CAPABILITY_UNAVAILABLE', '远程内核会话暂不支持从消息分叉。', {
-        reason: 'remote_kernel_fork_unavailable',
-        action: 'reopen'
-      })
-    }
-    return { phiSessionId, manifest, reference: { ...reference, host: reference.host } }
+    return { phiSessionId, manifest, reference }
   }
 
   async discardHistoryFork(result: PhiHistoryForkResult): Promise<boolean> {
     const reference = result.kernelRuntimeRef
+    if (reference?.host.kind === 'ssh') {
+      const hostKey = this.remoteForkHosts.get(reference.kernelSessionId)
+      this.remoteForkHosts.delete(reference.kernelSessionId)
+      if (!hostKey) return false
+      await this.hosts
+        .get(hostKey)
+        ?.currentConnection()
+        ?.client.request('session.close', {}, { sessionId: reference.kernelSessionId })
+        .catch(() => undefined)
+      return true
+    }
     if (!reference || reference.host.kind !== 'local') return false
     if (
       kernelSessionIdFromJournalPath(result.path, reference.host.agentDir) !==
@@ -327,7 +370,7 @@ export class KernelSessionFactory implements RoutedSessionFactory {
       return handler(trustedParams, {
         signal: context.signal,
         ...(binding
-          ? { originSessionId: binding.logicalSessionId }
+          ? { originSessionId: binding.logicalSessionId, kernelOrigin: true as const }
           : context.sessionId
             ? { originSessionId: context.sessionId }
             : {}),

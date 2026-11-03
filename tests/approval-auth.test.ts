@@ -841,3 +841,38 @@ test('RPC approval uses the existing native decision UI and cancels on window lo
   assert.equal(await lost, 'cancelled')
   assert.equal(resolveToolApproval('rpc-native-3', true, window.webContents), false)
 })
+
+test('a read outside the project asks in every permission mode and shows the path', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  let handler: ToolHandler | undefined
+  const extension = createApprovalExtension({
+    classifyTool: () => 'read',
+    shouldGate: () => false,
+    getContext: () => ({ sessionId: 'phi-remote', runId: 'run-1', cwd: '/data/project' })
+  })
+  if (typeof extension !== 'function') {
+    await extension.factory({
+      on(eventName: string, candidate: ToolHandler): void {
+        if (eventName === 'tool_call') handler = candidate
+      }
+    } as never)
+  }
+  assert.ok(handler)
+  assert.equal(await handler({ toolName: 'read', input: { path: 'notes.md' } }, {}), undefined)
+  assert.equal(window.webContents.sent.length, 0)
+
+  const pending = handler(
+    {
+      toolName: 'read',
+      toolCallId: 'tool-outside',
+      input: { path: '/data/shared/refs.txt' },
+      outsideProject: '/data/shared/refs.txt'
+    } as never,
+    {}
+  )
+  const request = window.webContents.sent[0].payload as { requestId: string; summary: string }
+  assert.match(request.summary, /访问项目外路径：\/data\/shared\/refs\.txt/)
+  resolveToolApproval(request.requestId, true, window.webContents)
+  assert.equal(await pending, undefined)
+})

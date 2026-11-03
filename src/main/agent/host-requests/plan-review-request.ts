@@ -189,6 +189,7 @@ function resolvePlanReviewTarget<StoredEvent>(
   const manifest = deps.sessions.findById(run.phiSessionId)
   if (
     (project?.location.kind === 'ssh' || manifest?.projectLocation?.kind === 'ssh') &&
+    context?.kernelOrigin !== true &&
     !(
       context?.remoteOriginAuthenticated === true &&
       context.remotePlanPhase === (request.steps ? 'plan_execute' : 'plan') &&

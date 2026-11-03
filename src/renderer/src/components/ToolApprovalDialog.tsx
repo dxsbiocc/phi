@@ -48,6 +48,7 @@ function ToolApprovalDialog({
   return (
     <Paper
       variant="outlined"
+      data-testid="gui-e2e-tool-approval"
       role="alert"
       aria-label={
         resourceApproval ? resourceCatalogCopy.permissionApproval : chatCopy.permissionApproval
@@ -124,10 +125,18 @@ function ToolApprovalDialog({
               </Button>
             )}
           </Box>
-          <Button color="error" onClick={() => onRespond(request.requestId, false)}>
+          <Button
+            color="error"
+            data-testid="gui-e2e-approval-deny"
+            onClick={() => onRespond(request.requestId, false)}
+          >
             {resourceApproval ? resourceCatalogCopy.reject : chatCopy.reject}
           </Button>
-          <Button variant="contained" onClick={() => onRespond(request.requestId, true)}>
+          <Button
+            variant="contained"
+            data-testid="gui-e2e-approval-approve"
+            onClick={() => onRespond(request.requestId, true)}
+          >
             {resourceApproval
               ? resourceCatalogCopy.approve
               : request.toolName === 'browser'

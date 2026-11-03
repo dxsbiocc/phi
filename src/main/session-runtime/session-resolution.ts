@@ -5,6 +5,7 @@ import {
   type PermissionMode,
   type Project
 } from '../agent/projects'
+import { kernelEngineHandles, PHI_KERNEL_ENGINE_MODE } from '../agent/engine/kernel-engine-switch'
 import type { ThinkingLevel } from '../agent/runtime/model-thinking-levels'
 import type { SessionSnapshot } from '../agent/session/session-lifecycle'
 import { phiSessionIdFromPath } from '../agent/session/sessions'
@@ -72,16 +73,19 @@ export interface SessionResolution {
 
 type ProjectForSession = SessionResolution['projectForSession']
 
+/**
+ * Only the old RPC route can't change model or thinking mid-session. Kernel sessions take both
+ * changes on either host, and a reopened kernel session must, since it starts without a model.
+ */
 export function rejectsRoutedChange(
   runtimeSessionId: string | undefined,
   manifest: PhiSessionManifest | null,
-  ownsRuntimeSession: (sessionId: string) => boolean
+  ownsRuntimeSession: (sessionId: string) => boolean,
+  kernelHandlesRemote = kernelEngineHandles(PHI_KERNEL_ENGINE_MODE, true)
 ): boolean {
-  return Boolean(
-    runtimeSessionId &&
-    ownsRuntimeSession(runtimeSessionId) &&
-    manifest?.kernelRuntimeRef?.host.kind !== 'local'
-  )
+  if (!runtimeSessionId || !ownsRuntimeSession(runtimeSessionId)) return false
+  if (manifest?.kernelRuntimeRef) return false
+  return Boolean(manifest?.runtimeRef) || !kernelHandlesRemote
 }
 
 export function createSessionResolution<TPromptRun extends PhiSessionPromptRun>(

@@ -218,3 +218,40 @@ export function parseKernelProbeOutput(output: string): {
     reused: output.includes('PHI_KERNEL_REUSABLE')
   }
 }
+
+/** An upload in progress, or one another Phi just finished, is younger than this. */
+const CLEANUP_MIN_AGE_MINUTES = 60
+
+/**
+ * Each kernel build takes about 250 MB on the server. After a new one starts, remove the
+ * versions nothing needs: keep the running one, the newest settled one before it (for a
+ * rollback or another desktop on an older Phi), any a kernel process still runs from, and any
+ * touched recently. Sessions and kernel-home live elsewhere and are never touched.
+ */
+export function cleanupOldKernelsCommand(
+  paths: Pick<RemoteKernelPaths, 'kernelRoot' | 'directory'>,
+  procRoot = '/proc'
+): string {
+  return `kernel_root=${shellQuote(paths.kernelRoot)}
+current=${shellQuote(paths.directory)}
+[ -d "$kernel_root" ] || exit 0
+recent() { [ -n "$(find "$1" -maxdepth 0 -mmin -${CLEANUP_MIN_AGE_MINUTES} 2>/dev/null)" ]; }
+running=$(for proc in ${shellQuote(procRoot)}/[0-9]*; do readlink "$proc/exe" 2>/dev/null; done)
+previous=$(ls -1dt "$kernel_root"/*/*/ 2>/dev/null | sed 's:/$::' | while IFS= read -r dir; do
+  [ "$dir" != "$current" ] || continue
+  recent "$dir" && continue
+  printf '%s' "$dir"
+  break
+done)
+for dir in "$kernel_root"/*/*; do
+  [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+  [ "$dir" != "$current" ] && [ "$dir" != "$previous" ] || continue
+  name=\${dir##*/}
+  [ \${#name} -eq 64 ] || continue
+  case "$name" in *[!0-9a-f]*) continue ;; esac
+  printf '%s\\n' "$running" | grep -qF -- "$dir/" && continue
+  recent "$dir" && continue
+  rm -rf -- "$dir" && printf 'removed %s\\n' "$name"
+done
+exit 0`
+}

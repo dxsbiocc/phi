@@ -31,6 +31,32 @@ const safeHandlerErrorMessages: Record<ProtocolErrorCode, string> = {
   INTERNAL: 'The kernel method failed internally.'
 }
 
+/**
+ * A lock another kernel holds is not an active run here. Each reason keeps its own text, since
+ * handler errors otherwise all read as the code's generic message.
+ */
+export const WRITER_BUSY_MESSAGES = {
+  older_kernel_busy: 'An older Phi kernel is still running a task in this session.',
+  other_kernel_owner: 'Another Phi kernel is using this session.'
+} as const
+type WriterBusyReason = keyof typeof WRITER_BUSY_MESSAGES
+
+export function writerBusyProtocolError(error: Error): ProtocolError {
+  const reason: WriterBusyReason =
+    error.message === WRITER_BUSY_MESSAGES.older_kernel_busy
+      ? 'older_kernel_busy'
+      : 'other_kernel_owner'
+  return makeProtocolError('SESSION_BUSY', WRITER_BUSY_MESSAGES[reason], { reason })
+}
+
+function writerBusyMessage(detail: JsonValue | undefined): string | undefined {
+  if (detail === null || typeof detail !== 'object' || Array.isArray(detail)) return undefined
+  const reason = detail.reason
+  return typeof reason === 'string' && Object.hasOwn(WRITER_BUSY_MESSAGES, reason)
+    ? WRITER_BUSY_MESSAGES[reason as WriterBusyReason]
+    : undefined
+}
+
 export function makeProtocolError(
   code: ProtocolErrorCode,
   message: string,
@@ -71,6 +97,7 @@ export function normalizeHandlerError(value: unknown): ProtocolError | undefined
     ...error,
     message: brokerDisconnected
       ? DESKTOP_CREDENTIAL_BROKER_MESSAGE
-      : safeHandlerErrorMessages[error.code]
+      : ((error.code === 'SESSION_BUSY' ? writerBusyMessage(detail) : undefined) ??
+        safeHandlerErrorMessages[error.code])
   }
 }

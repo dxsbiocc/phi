@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 import type { DesktopBrokerCredentialEntry } from '../src/kernel/model-access'
 import type { ModelAccessConfigureParams } from '../src/shared/kernel-protocol'
+import { withCurrentCursorRoute } from '../src/main/agent/engine/cursor-model-routing'
 
 const BUN_CHILD_TEST_ENV = 'PHI_KERNEL_MODEL_ACCESS_BUN_TEST'
 const bunRuntime = 'Bun' in globalThis
@@ -385,6 +386,13 @@ it('client proxy keeps Cursor native and routes it through its own tunnel', asyn
   const reconfigured = access.modelRegistry.find('cursor', cursorDescriptor.id)
   assert.equal(reconfigured?.baseUrl, 'http://127.0.0.1:41022')
   assert.equal(reconfigured?.transport, undefined)
+  // A live session still holds the row it started with; its next request follows the new tunnel.
+  assert.equal(grok.baseUrl, 'http://127.0.0.1:41012')
+  assert.equal(access.cursorBaseUrl(), 'http://127.0.0.1:41022')
+  assert.equal(
+    withCurrentCursorRoute(grok, access.cursorBaseUrl()).baseUrl,
+    'http://127.0.0.1:41022'
+  )
 
   // A child session resolves its model again after the SDK rebuilt the catalog. Falling back to
   // the bundled endpoint would send the tunnel token straight to Cursor from the server.

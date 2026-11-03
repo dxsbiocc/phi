@@ -26,6 +26,7 @@ import {
 } from './runtime-reference-adoption'
 import {
   assertLocalRuntimeAccess,
+  kernelForkAccess,
   assertKernelRuntimeReferenceProject,
   parseKernelRuntimeReference,
   type KernelRuntimeRef,
@@ -477,7 +478,8 @@ export function forkPhiSession(
   if (!source) throw new Error('来源会话不存在')
   const runtimeSessionPath = typeof runtime === 'string' ? runtime : runtime.path
   const kernelRuntimeRef = typeof runtime === 'string' ? undefined : runtime.kernelRuntimeRef
-  assertLocalRuntimeAccess(source, { allowLocalKernel: kernelRuntimeRef?.host.kind === 'local' })
+  // A kernel fork carries its own reference; the source itself is never opened locally here.
+  assertLocalRuntimeAccess(source, kernelForkAccess(kernelRuntimeRef, source.kernelRuntimeRef))
   const events = readSessionEvents(sourceId)
   const selected = events.findIndex(
     (event) => event.eventId === eventId && event.type === 'user_message'

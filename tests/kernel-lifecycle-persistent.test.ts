@@ -15,6 +15,7 @@ import {
   type KernelClientTransport,
   type SpawnedKernelClient
 } from '../src/main/agent/engine/kernel-client'
+import { SUPERSEDE_SIGNAL } from '../src/kernel/sessions/superseded-writer'
 import { resolveBunExecutable } from '../src/main/agent/engine/bun-executable'
 import type { JsonValue, KernelEventFrame } from '../src/shared/kernel-protocol'
 import { createInProcessFixture } from './engine-contract/in-process-factory'
@@ -767,6 +768,38 @@ test(
     } finally {
       await client?.close()
       await peer?.close()
+      await fixture.close()
+    }
+  }
+)
+
+test(
+  'an idle socket kernel releases its sessions when a newer build asks, an attached one does not',
+  { timeout: 30_000 },
+  async (t) => {
+    const fixture = await startSocketKernel(t, 600_000)
+    if (!fixture) return
+    let client: KernelProtocolClient | undefined
+    try {
+      client = fixture.initialClient
+      const sessionId = await createPersistentSession(fixture, client)
+      const lock = sessionPath(fixture, sessionId, 'writer.lock')
+      assert.equal(existsSync(lock), true)
+
+      // A desktop is attached: the session is in use and stays with this kernel.
+      fixture.child.kill(SUPERSEDE_SIGNAL)
+      await new Promise((resolveWait) => setTimeout(resolveWait, 500))
+      assert.equal(fixture.child.exitCode, null)
+      assert.equal(existsSync(lock), true)
+
+      await client.close()
+      client = undefined
+      fixture.child.kill(SUPERSEDE_SIGNAL)
+      const exit = await within(fixture.exited, 'superseded idle kernel exit')
+      assert.deepEqual(exit, { code: 0, signal: null })
+      assert.equal(existsSync(lock), false, 'the newer kernel can now open the session')
+    } finally {
+      await client?.close()
       await fixture.close()
     }
   }

@@ -148,6 +148,44 @@ test('SSH automatic selection requires a trusted live run and call origin', asyn
   ])
 })
 
+test('an SSH kernel session selects a plan like a local one, without the RPC pending marker', async () => {
+  let handler: import('../src/main/agent/engine/types').PhiHostRequestHandler | undefined
+  let appended = 0
+  const persisted: unknown[] = []
+  registerWorkModeSelectionHost({
+    host: {
+      register: (_method, next) => {
+        handler = next
+        return () => undefined
+      }
+    },
+    findActivePromptRunByRuntimeSessionId: () => ({
+      phiSessionId: 'phi-1',
+      runId: 'run-1',
+      sessionGeneration: 3,
+      cancelled: false
+    }),
+    findPhiSessionById: () => ({ workMode: 'auto', projectLocation: { kind: 'ssh' } }),
+    persistPendingRemoteAutoPlan: (marker) => persisted.push(marker),
+    appendSessionEvent: (_id, event) => {
+      appended++
+      return event
+    },
+    broadcastSessionTimelineEvent: () => undefined,
+    notifySessionChanged: () => undefined
+  })
+  assert.ok(handler)
+  assert.deepEqual(
+    await handler(
+      { execute: false, reason: 'Needs a reviewed plan' },
+      { originSessionId: 'runtime-1', kernelOrigin: true }
+    ),
+    { ok: true, mode: 'plan', reason: 'Needs a reviewed plan' }
+  )
+  assert.equal(appended, 1)
+  assert.deepEqual(persisted, [])
+})
+
 test('SSH selection fails closed if pending plan persistence fails', async () => {
   let handler: import('../src/main/agent/engine/types').PhiHostRequestHandler | undefined
   let appended = 0

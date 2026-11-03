@@ -275,6 +275,10 @@ export class KernelProtocolCore {
     })
   }
 
+  hasActiveRuns(): boolean {
+    return this.activeRuns.size > 0
+  }
+
   async expireDisconnectedState(): Promise<boolean> {
     const controller = this.controller
     if (controller && this.isCurrentController(controller)) return false

@@ -22,7 +22,7 @@ export function resolveInsideProject(cwd: string, requested: string, what: strin
   if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
     return {
       ok: false,
-      error: `${what} must be inside the project directory (${cwd}); got ${requested}. Data files elsewhere can be read, but everything written goes in the project.`
+      error: `${what} must be inside the project directory (${cwd}); got ${requested}.`
     }
   }
   return { ok: true, path: target }

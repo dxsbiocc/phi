@@ -463,7 +463,9 @@ export async function setSessionModel(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const result = getSession(record.sessionId)
   const agentDir = stringValue(record.agentDir, process.env.PI_CODING_AGENT_DIR)
-  const ctx = await getContext(agentDir)
+  // A kernel session's own registry routes Cursor through the host's tunnel; a fresh one would
+  // point a remote kernel at the desktop's loopback bridge.
+  const ctx = sessions.get(stringValue(record.sessionId))?.context ?? (await getContext(agentDir))
   const model = await modelBySelector(ctx, record.model)
   if (!model) throw new Error('Unknown model')
   await result.session.setModel(model)

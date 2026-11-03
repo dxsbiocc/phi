@@ -15,6 +15,7 @@ import {
   createDesktopBrokerModelAccess,
   ModelAccessWaitCancelledError
 } from './model-access'
+import { SUPERSEDE_SIGNAL } from './sessions/superseded-writer'
 import { StdioFrameTransport } from './transports/stdio'
 import { createWorkerKernelAdapter } from './worker'
 import type { KernelHostCapabilityResult } from '../shared/kernel-protocol'
@@ -165,6 +166,21 @@ export async function startKernelStdio(): Promise<void> {
   })
 }
 
+/**
+ * A newer kernel build needs a session this one holds. Without a desktop or an active run there
+ * is nothing left to finish here, so the grace period ends now.
+ */
+function releaseWhenSuperseded(
+  grace: KernelGracePeriod,
+  core: KernelProtocolCore,
+  shutdown: () => Promise<void>
+): void {
+  process.on(SUPERSEDE_SIGNAL, () => {
+    if (grace.controllerPresent || core.hasActiveRuns()) return
+    void shutdown()
+  })
+}
+
 export async function startKernelSocket(
   socketPath: string,
   tokenFilePath: string,
@@ -226,6 +242,7 @@ export async function startKernelSocket(
     }
   })
   graceRef.value = grace
+  releaseWhenSuperseded(grace, core, shutdownAfterGrace)
 
   const unbindWorker = worker.bind(core)
   let workerUnbound = false

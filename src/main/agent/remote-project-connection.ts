@@ -1,6 +1,11 @@
 import { errorCodeOf } from '../../shared/errorCodes'
 import type { RemoteProjectConnectionState } from '../../shared/projectLocation'
-import { getProject, setRemoteProjectConnectionState, type Project } from './projects'
+import {
+  getProject,
+  getRemoteProjectConnectionState,
+  setRemoteProjectConnectionState,
+  type Project
+} from './projects'
 import {
   RemoteProjectRootChangedError,
   resolveRemoteWorkspacePath
@@ -86,6 +91,11 @@ export class RemoteProjectConnectionTracker {
     release(projectId)
   }
 
+  // getProject reads the record on disk, which has no connection state; the live state is in memory.
+  private currentPhase(projectId: string, project: Project | undefined): string | undefined {
+    return (getRemoteProjectConnectionState(projectId) ?? project?.remoteConnection)?.phase
+  }
+
   private nextRevision(projectId: string): number {
     const revision = (this.revisions.get(projectId) ?? 0) + 1
     this.revisions.set(projectId, revision)
@@ -108,7 +118,7 @@ export class RemoteProjectConnectionTracker {
    */
   private settle(projectId: string, state: RemoteProjectConnectionState, revision: number): void {
     const project = (this.dependencies.getProject ?? getProject)(projectId)
-    const connecting = project?.remoteConnection?.phase === 'connecting'
+    const connecting = this.currentPhase(projectId, project) === 'connecting'
     this.set(projectId, state, connecting ? this.revisions.get(projectId)! : revision)
   }
 
@@ -135,7 +145,7 @@ export class RemoteProjectConnectionTracker {
     const project = this.ownedRemoteProject(sessionId, projectId)
     const revision = this.nextRevision(projectId)
     // A connection already known to work is verified quietly; a failure below still reports.
-    if (project.remoteConnection?.phase !== 'reachable') {
+    if (this.currentPhase(projectId, project) !== 'reachable') {
       this.set(projectId, connectionState('connecting', '正在连接服务器'), revision)
     }
     try {

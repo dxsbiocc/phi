@@ -12,6 +12,7 @@ import { analysisCopy } from '../src/renderer/src/features/analysis/lib/analysis
 import * as runtimeUtils from '../src/renderer/src/features/analysis/lib/analysisNotebookRuntimeUtils'
 import { pollJupyterServerStartupStatus } from '../src/renderer/src/features/runtime/lib/jupyterStatusPolling'
 import * as notebookSession from '../src/renderer/src/features/analysis/lib/notebookSession'
+import * as notebookScopeSnapshots from '../src/renderer/src/features/analysis/lib/notebookScopeSnapshots'
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as executionMetadata from '../src/shared/notebookExecutionMetadata'
 import type {
@@ -166,6 +167,7 @@ function runtimeHarness(): {
     ...runtimeUtils,
     pollJupyterServerStartupStatus,
     ...notebookSession,
+    ...notebookScopeSnapshots,
     ...notebookDocument,
     ...executionMetadata,
     readableErrorMessage: (error: unknown, fallback: string) =>
@@ -777,4 +779,33 @@ test('the read-only refresh IPC registers disk watching without changing the act
   assert.deepEqual(diskReads[0], [{ workingDirectory: '/project' }, file.relativePath, true])
   assert.equal(activePaths.get('/project'), '/project/notebooks/current.ipynb')
   await assert.rejects(handler(null, '/missing', file.relativePath), /请选择/)
+})
+
+test('returning to a project shows its notebook from memory and then checks the server', async () => {
+  const runtime = runtimeHarness()
+  const gpu = notebookFile('gpu work')
+  runtime.setDisk(gpu)
+  await runtime.activate(gpu)
+
+  runtime.switchCwd('/node3')
+  runtime.state.resetAnalysisJupyterRuntimeForCwdChange()
+  await runtime.flush()
+  assert.equal(
+    runtime.state.activateCachedAnalysisNotebook(gpu.path),
+    null,
+    'another project never sees this one'
+  )
+  await runtime.activate(notebookFile('node3 work', 'node3'))
+
+  runtime.switchCwd('/project')
+  runtime.state.resetAnalysisJupyterRuntimeForCwdChange()
+  await runtime.flush()
+  const refreshesBefore = runtime.calls.refresh
+  const restored = runtime.state.activateCachedAnalysisNotebook(gpu.path)
+  assert.equal(restored?.document.cells[0].source, 'gpu work')
+  await runtime.flush()
+  assert.equal(runtime.state.activeAnalysisNotebook?.document.cells[0].source, 'gpu work')
+  assert.equal(runtime.calls.open, 0, 'no full reopen from the server')
+  assert.equal(runtime.calls.refresh, refreshesBefore + 1, 'one background check of the file')
+  runtime.dispose()
 })

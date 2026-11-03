@@ -102,6 +102,9 @@ function emitApproval(
       input: (isRecord(payload.input) ? payload.input : {}) as JsonValue,
       ...(typeof payload.agentRunId === 'string' && payload.agentRunId
         ? { agentRunId: payload.agentRunId }
+        : {}),
+      ...(typeof payload.outsideProject === 'string' && payload.outsideProject
+        ? { outsideProject: payload.outsideProject }
         : {})
     },
     { sessionId, runId }

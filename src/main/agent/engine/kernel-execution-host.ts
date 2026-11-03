@@ -1,4 +1,5 @@
 import type { KernelEventFrame } from '../../../shared/kernel-protocol'
+import { reportConnection } from '../connection-events'
 import type { PhiHostRequestHandler, PhiSessionCreateParams } from './types'
 import { subscribeReportingReplayGap } from './kernel-client'
 import type { KernelSessionFactory } from './kernel-session-factory'
@@ -77,6 +78,13 @@ export class KernelExecutionHost {
   async close(): Promise<void> {
     this.stopped = true
     const connection = this.connection
+    if (connection)
+      reportConnection({
+        layer: 'kernel',
+        change: 'closed',
+        target: this.key,
+        reason: 'app_closed'
+      })
     this.clearConnection()
     await connection?.close().catch(() => undefined)
   }
@@ -111,6 +119,7 @@ export class KernelExecutionHost {
         configureClient(connection.client)
         this.factory.assertConnectionIdentity(params, connection)
         this.connection = connection
+        reportConnection({ layer: 'kernel', change: 'opened', target: this.key })
         const replayFrom =
           this.kernelInstanceId === connection.greeting.kernelInstanceId ? this.lastSeq : 0
         if (replayFrom === 0) this.lastSeq = 0
@@ -139,6 +148,7 @@ export class KernelExecutionHost {
 
   private onClose(client: KernelSessionClient): void {
     if (!this.isCurrent(client)) return
+    reportConnection({ layer: 'kernel', change: 'closed', target: this.key, reason: 'lost' })
     this.clearConnection()
     if (this.stopped || !this.launchParams || !this.factory.hasLiveSessions(this.key)) return
     this.recovering ??= this.connect(this.launchParams, new AbortController().signal)

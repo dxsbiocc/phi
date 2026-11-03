@@ -133,7 +133,8 @@ test('history handler maps a held target writer to SESSION_BUSY', async () => {
     await assert.rejects(invoke(handler, input), (error: unknown) => {
       assert.deepEqual(error, {
         code: 'SESSION_BUSY',
-        message: 'Another kernel owns this session.'
+        message: 'Another Phi kernel is using this session.',
+        detail: { reason: 'other_kernel_owner' }
       })
       return true
     })

@@ -66,6 +66,7 @@
     "registry:sign": "node --import ./scripts/test-loader.mjs scripts/packages/sign-registry.ts",
     "usage:report": "node --import ./scripts/test-loader.mjs scripts/agent-usage-report.mjs",
     "eval:fetch": "bun scripts/eval/db-vs-fetch.ts",
+    "e2e:gui": "bun scripts/gui-e2e.ts",
     "spike:terminal-pty": "bun scripts/terminal-pty-spike.ts",
     "check:main-boundaries": "node scripts/check-main-boundaries.mjs"
   },
@@ -133,6 +134,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
+    "playwright-core": "1.64.1",
     "prettier": "^3.7.4",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",

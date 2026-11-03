@@ -60,7 +60,9 @@ export function registerWorkModeSelectionHost<StoredEvent>(
     if (!run || run.cancelled || context.signal?.aborted)
       throw new Error('Automatic work mode run is no longer active')
     const manifest = deps.findPhiSessionById(run.phiSessionId)
-    const remote = manifest?.projectLocation?.kind === 'ssh'
+    // A kernel session keeps its plan in the kernel on either host; only the RPC route needs
+    // the pending marker and the remote proofs.
+    const remote = manifest?.projectLocation?.kind === 'ssh' && context.kernelOrigin !== true
     if (
       manifest?.workMode !== 'auto' ||
       (remote &&

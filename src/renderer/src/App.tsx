@@ -2388,10 +2388,6 @@ function App(): React.JSX.Element {
   const onForkUserMessage = useCallback(
     async (eventId: string): Promise<void> => {
       if (forkInProgressRef.current) return
-      if (useSessionStore.getState().activeProjectLocation?.kind === 'ssh') {
-        showSnackbar(appCopy.remoteForkUnavailable, 'info')
-        return
-      }
       const sourceId = useSessionStore.getState().activePhiSessionId
       if (!sourceId) return
       forkInProgressRef.current = true
@@ -2408,7 +2404,7 @@ function App(): React.JSX.Element {
         forkInProgressRef.current = false
       }
     },
-    [onSelectSession, refreshSessions, rendererApi, showSnackbar, showSnackbarError]
+    [onSelectSession, refreshSessions, rendererApi, showSnackbarError]
   )
   const onRuntimeRecovered = useCallback(
     async (state: RuntimeRecoveryState): Promise<void> => {
@@ -3551,10 +3547,7 @@ function App(): React.JSX.Element {
             onInputChange={setActiveInput}
             onRetryUserMessage={onRetryUserMessage}
             onForkUserMessage={
-              currentSessionIsBusy ||
-              currentSessionIsCompacting ||
-              !activePhiSessionId ||
-              activeProjectLocation?.kind === 'ssh'
+              currentSessionIsBusy || currentSessionIsCompacting || !activePhiSessionId
                 ? undefined
                 : onForkUserMessage
             }
@@ -3589,7 +3582,6 @@ function App(): React.JSX.Element {
               currentSessionIsCompacting ||
               sessionMode.updating
             }
-            remoteSession={activeProjectLocation?.kind === 'ssh'}
             disableModelControls={
               isSessionChanging || currentSessionIsCompacting || remoteControlsUnavailable
             }

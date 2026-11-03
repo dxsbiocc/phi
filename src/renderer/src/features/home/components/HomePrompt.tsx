@@ -79,7 +79,6 @@ export function HomePrompt(props: HomePromptProps): React.JSX.Element {
         selectedProject={prompt.selectedProject}
         draft={prompt.draft}
         mode={prompt.mode}
-        remote={prompt.remote}
         disabled={prompt.disabled}
         canSend={prompt.canSend}
         models={props.models}

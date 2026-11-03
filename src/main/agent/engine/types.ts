@@ -355,6 +355,8 @@ export type ToolApprovalRequest = {
   toolName?: string
   input?: Record<string, unknown>
   agentRunId?: string
+  /** The path outside the project this call reaches; asked about in every permission mode. */
+  outsideProject?: string
 }
 
 export type PhiHostRequestContext = {
@@ -367,6 +369,11 @@ export type PhiHostRequestContext = {
   readonly remoteOriginAuthenticated?: true
   /** Main-only in-run RPC plan phase, proven by the signed enter_plan_mode host result. */
   readonly remotePlanPhase?: 'plan' | 'plan_execute'
+  /**
+   * Main-only: the request came over Phi's own kernel connection for a bound session, local or
+   * SSH. The kernel owns plan state there, so the RPC-era remote proofs above do not apply.
+   */
+  readonly kernelOrigin?: true
 }
 
 export type PhiHostRequestHandler = (

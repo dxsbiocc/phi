@@ -1,6 +1,6 @@
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -12,12 +12,15 @@ import {
   getProject,
   getProjectByCwd,
   listProjects,
+  markServerProjectsReachable,
   renameProject,
   setRemoteProjectConnectionState,
   subscribeRemoteProjectConnection,
   updateProjectPermissionMode
 } from '../src/main/agent/projects'
 import { deleteRemoteHostProfile, saveRemoteHostProfile } from '../src/main/agent/remote-hosts'
+import { RemoteProjectConnectionTracker } from '../src/main/agent/remote-project-connection'
+import type { PhiSessionManifest } from '../src/main/agent/session/session-store'
 import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
 import { projectLocationSummary } from '../src/renderer/src/lib/projectTypes'
 
@@ -300,5 +303,65 @@ test('invalid or inaccessible SSH paths never create a project record', async ()
       /绝对路径/
     )
     assert.deepEqual(listProjects(), [])
+  })
+})
+
+test('a connected kernel marks never-checked and still-checking projects on its server reachable', async () => {
+  await withPhiDir(async (_root, agentDir) => {
+    const gpu = saveRemoteHostProfile({ label: 'GPU', hostAlias: 'gpu' })
+    const node3 = saveRemoteHostProfile({ label: 'node3', hostAlias: 'node3' })
+    const create = (hostProfileId: string, name: string): ReturnType<typeof createRemoteProject> =>
+      createRemoteProject(
+        { name, hostProfileId, remoteRoot: `/remote/${name}`, permissionMode: 'ask' },
+        { connectImpl: fakeSsh(`/canonical/${name}`).connectImpl }
+      )
+    const checked = await create(gpu.id, 'checked')
+    const other = await create(node3.id, 'other')
+    const pending = await create(gpu.id, 'pending')
+    setRemoteProjectConnectionState(pending.id, { phase: 'connecting' })
+    setRemoteProjectConnectionState(checked.id, { phase: 'configuration_failed' })
+    setRemoteProjectConnectionState(other.id, { phase: 'offline' })
+    // A project read from disk after a restart has no connection state yet.
+    const file = join(agentDir, 'projects.json')
+    const records = JSON.parse(readFileSync(file, 'utf8')) as Array<Record<string, unknown>>
+    writeFileSync(file, JSON.stringify([...records, { ...records[0], id: 'never-checked' }]))
+
+    markServerProjectsReachable(gpu.id)
+
+    const phase = (id: string): string | undefined =>
+      listProjects().find((project) => project.id === id)?.remoteReachability
+    assert.equal(phase('never-checked'), 'reachable')
+    assert.equal(phase(pending.id), 'reachable', 'a waiting check is overtaken')
+    assert.equal(phase(checked.id), 'configuration_failed')
+    assert.equal(phase(other.id), 'offline')
+  })
+})
+
+test('switching back to a reachable project checks it without showing connecting', async () => {
+  await withPhiDir(async () => {
+    const host = saveRemoteHostProfile({ label: 'node3', hostAlias: 'node3' })
+    const project = await createRemoteProject(
+      { name: 'work', hostProfileId: host.id, remoteRoot: '/remote/work', permissionMode: 'ask' },
+      { connectImpl: fakeSsh('/canonical/work').connectImpl }
+    )
+    const phases: string[] = []
+    // The real project store: its records on disk carry no connection state.
+    const tracker = new RemoteProjectConnectionTracker({
+      getManifest: () =>
+        ({
+          sessionId: 's',
+          kind: 'project',
+          projectId: project.id,
+          projectLocation: project.location
+        }) as PhiSessionManifest,
+      setState: (id, state) => {
+        phases.push(state.phase)
+        setRemoteProjectConnectionState(id, state)
+      },
+      resolvePath: async () => ({ path: '/canonical/work' }) as never
+    })
+    await tracker.check('s', project.id)
+    await tracker.check('s', project.id)
+    assert.deepEqual(phases, ['reachable', 'reachable'])
   })
 })

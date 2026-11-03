@@ -42,7 +42,8 @@ export function createInProcessExtensionHost(
         {
           toolCallId: request.toolCallId,
           toolName: request.toolName,
-          input: request.input
+          input: request.input,
+          ...(request.outsideProject ? { outsideProject: request.outsideProject } : {})
         },
         request.agentRunId,
         options.browserTextVault

@@ -16,8 +16,7 @@ import {
   createPhiSession,
   deletePhiSession,
   findPhiSessionById,
-  forkPhiSession,
-  recordKernelRuntimeReference
+  forkPhiSession
 } from '../src/main/agent/session/session-store'
 
 import { FakeKernelClient, legacyEngine, params } from './helpers/kernelSessionFactoryFake'
@@ -457,7 +456,7 @@ test('SessionRoutingEngine routes selected-turn fork to the local kernel and ret
   )
 })
 
-test('SessionRoutingEngine refuses remote kernel fork with an accurate capability message', async (t) => {
+test('SessionRoutingEngine forks an attached remote kernel session on its server', async (t) => {
   const location = {
     kind: 'ssh' as const,
     hostProfileId: 'ssh-config:fork',
@@ -474,36 +473,77 @@ test('SessionRoutingEngine refuses remote kernel fork with an accurate capabilit
     model: { providerId: 'test', modelId: 'model' }
   })
   t.after(() => deletePhiSession(phi.sessionId))
-  recordKernelRuntimeReference(phi.sessionId, {
-    kind: 'phi-kernel',
-    version: 1,
-    kernelSessionId: 'remote-kernel-source',
-    host: {
-      kind: 'ssh',
-      hostProfileId: location.hostProfileId,
-      projectId: 'remote-project',
-      projectRoot: location.canonicalRoot,
+  const client = new FakeKernelClient()
+  const factory = new KernelSessionFactory({
+    mode: 'both',
+    launchRemote: async () => ({
+      client,
+      greeting: {
+        protocol: { major: 1, minor: 1 },
+        kernel: { version: 'test', ompVersion: 'test' },
+        kernelInstanceId: 'remote-kernel',
+        controllerGeneration: 1,
+        capabilities: [],
+        lastSeq: 0,
+        runtime: { home: '/srv/home', agentDir: '/agent' }
+      },
       runtimeRoot: '/srv/runtime',
-      home: '/srv/home',
-      agentDir: '/srv/home/agent'
+      close: async () => undefined
+    })
+  })
+  const engine = new SessionRoutingEngine(legacyEngine(), () => factory)
+  const forkRequest = {
+    path: `phi-session:${phi.sessionId}`,
+    cwd: phi.manifest.cwd,
+    userMessages: ['selected'],
+    selectedIndex: 0
+  }
+
+  await engine.sessions.create({
+    ...params('remote-source'),
+    phiSessionId: phi.sessionId,
+    cwd: '/local/anchor',
+    remoteProject: {
+      phiSessionId: phi.sessionId,
+      projectId: 'remote-project',
+      location,
+      contextFiles: []
     }
   })
-  const engine = new SessionRoutingEngine(
+  const source = findPhiSessionById(phi.sessionId)?.kernelRuntimeRef
+  assert.equal(source?.host.kind, 'ssh')
+  // A desktop without this session attached cannot reach its server to fork it.
+  const detached = new SessionRoutingEngine(
     legacyEngine(),
     () => new KernelSessionFactory({ mode: 'both' })
   )
+  await assert.rejects(detached.history.fork(forkRequest), /远程会话尚未连接/)
 
-  await assert.rejects(
-    engine.history.fork({
-      path: `phi-session:${phi.sessionId}`,
-      cwd: phi.manifest.cwd,
-      userMessages: ['selected'],
-      selectedIndex: 0
-    }),
-    (error: unknown) => {
-      assert.match((error as Error).message, /远程内核会话暂不支持从消息分叉/)
-      assert.doesNotMatch((error as Error).message, /尚无可分叉的历史/)
-      return true
+  const result = await engine.history.fork(forkRequest)
+  assert.equal(
+    result.path,
+    `/agent/phi-kernel/sessions/${result.kernelRuntimeRef?.kernelSessionId}/journal.jsonl`
+  )
+  assert.deepEqual(result.kernelRuntimeRef, {
+    ...source,
+    kernelSessionId: result.kernelRuntimeRef?.kernelSessionId
+  })
+  assert.notEqual(result.kernelRuntimeRef?.kernelSessionId, source?.kernelSessionId)
+
+  const selected = appendSessionEvent(phi.sessionId, { type: 'user_message', content: 'selected' })
+  const phiFork = forkPhiSession(phi.sessionId, selected.eventId, result)
+  t.after(() => deletePhiSession(phiFork.sessionId))
+  assert.deepEqual(phiFork.manifest.kernelRuntimeRef, result.kernelRuntimeRef)
+  assert.deepEqual(phiFork.manifest.projectLocation, location)
+
+  const orphan = await engine.history.fork(forkRequest)
+  await engine.history.discardFork?.(orphan)
+  assert.deepEqual(
+    client.requests.findLast((request) => request.method === 'session.close'),
+    {
+      method: 'session.close',
+      params: {},
+      context: { sessionId: orphan.kernelRuntimeRef?.kernelSessionId }
     }
   )
 })

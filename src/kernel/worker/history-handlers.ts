@@ -2,7 +2,7 @@ import {
   sessionAdoptParamsSchema,
   type SessionAdoptParams
 } from '../../shared/kernel-protocol/history'
-import { makeProtocolError } from '../protocol/errors'
+import { makeProtocolError, writerBusyProtocolError } from '../protocol/errors'
 import type { KernelMethodHandler } from '../protocol/types'
 import {
   KernelSessionRepository,
@@ -58,7 +58,7 @@ export function createHistoryHandlers(options: HistoryHandlerOptions): HistoryKe
         })
       } catch (error) {
         if (error instanceof SessionWriterBusyError) {
-          throw makeProtocolError('SESSION_BUSY', 'Another kernel owns this session.')
+          throw writerBusyProtocolError(error)
         }
         if (
           error instanceof Error &&

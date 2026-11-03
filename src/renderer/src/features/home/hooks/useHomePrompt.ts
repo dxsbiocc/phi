@@ -28,7 +28,6 @@ type HomePromptController = {
   setProjectId: (projectId: string | null) => void
   selectedProject: Project | null
   mode: SessionMode
-  remote: boolean
   disabled: boolean
   canSend: boolean
   selectMode: (mode: SessionMode) => void
@@ -102,7 +101,6 @@ export function useHomePrompt(
     setProjectId,
     selectedProject,
     mode,
-    remote: selectedProject?.location.kind === 'ssh',
     disabled: prompt.disabled,
     canSend: prompt.draft.trim().length > 0 && !prompt.disabled,
     selectMode,

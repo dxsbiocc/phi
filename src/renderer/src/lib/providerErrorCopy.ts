@@ -26,7 +26,12 @@ export const providerErrorCopy = defineCopy(
     configurationBody:
       'No provider, model or credentials are available for this request. Check your provider settings and try again.',
     requestFailedBody:
-      'The model request did not finish. Review the original error, address the issue and try again.'
+      'The model request did not finish. Review the original error, address the issue and try again.',
+    otherKernelTitle: 'Another Phi is using this chat',
+    olderKernelBusyBody:
+      'After an update, the previous version on the server is still running a task in this chat. It stops within 10 minutes after that task ends; send the message again then.',
+    otherKernelBody:
+      'Another Phi on this server is using this chat, for example Phi on another computer. Close it there, or wait a few minutes and try again.'
   },
   {
     requestFailed: '请求失败',
@@ -49,6 +54,11 @@ export const providerErrorCopy = defineCopy(
       'Cursor 登录状态可能正常，但模型运行通道未能建立 HTTP/2 连接。Phi 会使用本机桥接；若仍失败，请检查网络代理后重试。',
     configurationTitle: 'Provider 需要处理',
     configurationBody: '当前请求没有可用的 Provider、模型或凭据。请检查 Provider 后重试。',
-    requestFailedBody: '模型请求没有完成，请根据原始错误信息处理后重试。'
+    requestFailedBody: '模型请求没有完成，请根据原始错误信息处理后重试。',
+    otherKernelTitle: '另一个 Phi 正在使用此会话',
+    olderKernelBusyBody:
+      '更新后，服务器上的旧版本还在为此会话执行任务。该任务结束后 10 分钟内它会退出，届时重新发送即可。',
+    otherKernelBody:
+      '服务器上另一个 Phi（例如另一台电脑上的 Phi）正在使用此会话。请在那边关闭，或等几分钟后重试。'
   }
 )

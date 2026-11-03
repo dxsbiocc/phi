@@ -70,7 +70,7 @@ async function callWorkerSessionRuntime(
       return (await runtime()).promptSession(params)
     case 'session.fork': {
       const { forkWorkerSession } = await import('../../main/agent/engine/in-process/session-fork')
-      return forkWorkerSession(params, kernelServices)
+      return forkWorkerSession(params, kernelServices, modelAccess)
     }
     case 'resources.reload': {
       const [{ reloadResources }, { toJsonSafe }] = await Promise.all([

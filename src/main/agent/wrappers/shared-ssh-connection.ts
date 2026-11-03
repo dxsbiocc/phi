@@ -1,4 +1,5 @@
 import { CodedError } from '../../../shared/errorCodes'
+import { reportConnection } from '../connection-events'
 import {
   connectRemoteSshSession,
   type RemoteConnectionConfig,
@@ -33,10 +34,11 @@ function serverKey(config: RemoteConnectionConfig): string {
   })
 }
 
-function retire(key: string, shared: SharedConnection): void {
+function retire(key: string, shared: SharedConnection, host: string, reason: string): void {
   const remaining = (connectionsByServer.get(key) ?? []).filter((entry) => entry !== shared)
   if (remaining.length > 0) connectionsByServer.set(key, remaining)
   else connectionsByServer.delete(key)
+  reportConnection({ layer: 'ssh', change: 'closed', target: host, reason })
   void shared.session.then((session) => session.close()).catch(() => undefined)
 }
 
@@ -54,7 +56,7 @@ async function acquire(
       () => false
     )
     if (alive) return shared
-    retire(key, shared)
+    retire(key, shared, config.host, 'not_answering')
   }
   const shared: SharedConnection = {
     session: connect({
@@ -70,9 +72,10 @@ async function acquire(
   try {
     await shared.session
   } catch (error) {
-    retire(key, shared)
+    retire(key, shared, config.host, 'connect_failed')
     throw error
   }
+  reportConnection({ layer: 'ssh', change: 'opened', target: config.host })
   return shared
 }
 

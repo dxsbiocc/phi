@@ -21,6 +21,11 @@ export class KernelGracePeriod {
     if (!this.attached) this.schedule()
   }
 
+  /** A desktop is attached, so its sessions are in use. */
+  get controllerPresent(): boolean {
+    return this.attached
+  }
+
   controllerAttached(): void {
     this.attached = true
     this.clearTimer()

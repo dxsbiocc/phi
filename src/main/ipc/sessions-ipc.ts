@@ -273,6 +273,17 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
     const session = lifecycle.createPhiManagedSession(cwd, 'auto')
     return lifecycle.disposeAndSwitchSession(session.path, cwd, session.permissionMode)
   })
+  /** A remote kernel forks inside the source session, so that session must be attached first. */
+  const attachForkSource = async (source: PhiSessionManifest): Promise<void> => {
+    const path = phiOnlySessionPath(source.sessionId)
+    const key = identity.createSessionKey(path, source.cwd)
+    identity.setPhiSessionIdForKey(key, source.sessionId)
+    await lifecycle.getAgentSession(key, {
+      path,
+      cwd: source.cwd,
+      permissionMode: source.permissionMode
+    })
+  }
   ipcMain.handle(IPC.sessions.fork, async (_, sourceId: unknown, eventId: unknown) => {
     if (typeof sourceId !== 'string' || typeof eventId !== 'string') {
       throw new Error('无效的会话分叉请求')
@@ -291,6 +302,8 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
     const userMessages = events.filter((event) => event.type === 'user_message')
     const selectedIndex = userMessages.findIndex((event) => event.eventId === eventId)
     if (selectedIndex < 0) throw new Error('分叉消息不存在')
+    const remoteKernel = source.kernelRuntimeRef?.host.kind === 'ssh'
+    if (remoteKernel) await attachForkSource(source)
     const result = await getPhiEngine().history.fork({
       path: source.runtimeSessionPath ?? phiOnlySessionPath(sourceId),
       cwd: source.cwd,
@@ -307,7 +320,8 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
       await getPhiEngine()
         .history.discardFork?.(result)
         .catch(() => undefined)
-      deleteSession(result.path)
+      // A remote fork's journal lives on the server; only a local one can be removed here.
+      if (!remoteKernel) deleteSession(result.path)
       throw error
     }
   })

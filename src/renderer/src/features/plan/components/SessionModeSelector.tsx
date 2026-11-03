@@ -8,7 +8,8 @@ import {
   ListItemText,
   Popover,
   Tooltip,
-  useTheme
+  useTheme,
+  type Theme
 } from '@mui/material'
 import { useId, useState } from 'react'
 
@@ -38,7 +39,7 @@ type SessionModeTriggerProps = {
   onOpen: (event: React.MouseEvent<HTMLElement>) => void
 }
 
-function sessionModeOptions(remote: boolean): SessionModeOption[] {
+function sessionModeOptions(): SessionModeOption[] {
   const options: Record<SessionMode, SessionModeOption> = {
     auto: {
       mode: 'auto',
@@ -77,7 +78,7 @@ function sessionModeOptions(remote: boolean): SessionModeOption[] {
       danger: true
     }
   }
-  return availableSessionModes(remote).map((mode) => options[mode])
+  return availableSessionModes().map((mode) => options[mode])
 }
 
 function CompactSessionModeTrigger({
@@ -88,21 +89,39 @@ function CompactSessionModeTrigger({
 }: SessionModeTriggerProps): React.JSX.Element {
   const { Icon } = option
   const label = planCopy.chooseSessionMode(option.label)
-  const color = option.danger ? 'error.main' : 'text.secondary'
+  const { color, iconColor } = sessionModeColors(useTheme(), option)
   return (
     <Tooltip title={label} enterDelay={400}>
       <IconButton
         size="small"
+        data-testid="gui-e2e-session-mode-trigger"
         aria-label={label}
         aria-describedby={popoverId}
         disabled={disabled}
         onClick={onOpen}
         sx={{ ...compactComposerIconButtonSx, color }}
       >
-        <Icon size={COMPOSER_ICON_SIZE} />
+        <Icon color={iconColor} size={COMPOSER_ICON_SIZE} />
       </IconButton>
     </Tooltip>
   )
+}
+
+/** The composer trigger and the menu row show a mode in the same colours. */
+function sessionModeColors(
+  theme: Theme,
+  option: SessionModeOption
+): { color: string; iconColor: string } {
+  const tone = theme.palette[option.tone]
+  const isPlanningMode = option.mode === 'plan' || option.mode === 'plan_execute'
+  const color =
+    theme.palette.mode === 'dark'
+      ? tone.light
+      : isPlanningMode
+        ? tone.dark
+        : (tone.darker ?? tone.dark)
+  const iconColor = isPlanningMode && theme.palette.mode === 'light' ? tone.main : color
+  return { color, iconColor }
 }
 
 function SessionModeTrigger({
@@ -113,21 +132,23 @@ function SessionModeTrigger({
 }: SessionModeTriggerProps): React.JSX.Element {
   const { Icon } = option
   const label = planCopy.chooseSessionMode(option.label)
+  const { color, iconColor } = sessionModeColors(useTheme(), option)
   return (
     <Button
       size="small"
+      data-testid="gui-e2e-session-mode-trigger"
       aria-label={label}
       aria-describedby={popoverId}
       disabled={disabled}
       onClick={onOpen}
-      startIcon={<Icon size={COMPOSER_ICON_SIZE} />}
+      startIcon={<Icon color={iconColor} size={COMPOSER_ICON_SIZE} />}
       sx={{
         minWidth: 0,
         px: 1,
         flexShrink: 0,
         whiteSpace: 'nowrap',
         textTransform: 'none',
-        color: option.danger ? 'error.main' : 'text.secondary'
+        color
       }}
     >
       {option.label}
@@ -157,17 +178,11 @@ function SessionModeMenu({
       {options.map((option) => {
         const { Icon } = option
         const tone = theme.palette[option.tone]
-        const isPlanningMode = option.mode === 'plan' || option.mode === 'plan_execute'
-        const color =
-          theme.palette.mode === 'dark'
-            ? tone.light
-            : isPlanningMode
-              ? tone.dark
-              : (tone.darker ?? tone.dark)
-        const iconColor = isPlanningMode && theme.palette.mode === 'light' ? tone.main : color
+        const { color, iconColor } = sessionModeColors(theme, option)
         return (
           <ListItemButton
             key={option.mode}
+            data-testid={`gui-e2e-session-mode-${option.mode}`}
             selected={mode === option.mode}
             onClick={() => onSelect(option.mode)}
             sx={{
@@ -216,13 +231,11 @@ function SessionModeMenu({
 
 export function SessionModeSelector({
   mode,
-  remote = false,
   disabled = false,
   compact = false,
   onSelectMode
 }: {
   mode: SessionMode
-  remote?: boolean
   disabled?: boolean
   compact?: boolean
   onSelectMode: (mode: SessionMode) => void
@@ -230,7 +243,7 @@ export function SessionModeSelector({
   useUiLanguage()
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const popoverId = useId()
-  const options = sessionModeOptions(remote)
+  const options = sessionModeOptions()
   const selected = options.find((option) => option.mode === mode) ?? options[0]!
   const close = (): void => setAnchor(null)
   return (
