@@ -20,20 +20,22 @@ function planModeResult(execute: boolean): string {
     : 'Plan review mode is now active. Use only read-only investigation, then write the plan under local:// and submit it through xd://propose for user review.'
 }
 
+/**
+ * Rejects the call only when its response is known to hold other tool calls.
+ * Cursor runs tools while the response streams, before `assistant_message`
+ * fires, so an unseen response cannot count as mixed.
+ */
 function registerExclusiveCallGate(pi: ExtensionAPI): () => boolean {
-  let allowed = false
+  let mixed = false
   pi.on('assistant_message', (event) => {
     const toolCalls = event.message.content.filter((part) => part.type === 'toolCall')
-    allowed = toolCalls.length === 1 && toolCalls[0]?.name === ENTER_PLAN_MODE_TOOL_NAME
+    mixed =
+      toolCalls.length > 1 && toolCalls.some((part) => part.name === ENTER_PLAN_MODE_TOOL_NAME)
   })
   pi.on('turn_end', () => {
-    allowed = false
+    mixed = false
   })
-  return () => {
-    const current = allowed
-    allowed = false
-    return current
-  }
+  return () => !mixed
 }
 
 export function createAutoWorkModeExtension(host: PhiExtensionHost): ExtensionFactory {

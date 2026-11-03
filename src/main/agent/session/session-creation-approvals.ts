@@ -2,6 +2,7 @@ import type { ToolApprovalContext, ToolApprovalRequest } from '../tool-approval'
 import { createApprovalExtension } from '../tool-approval'
 import type { PermissionMode, Project } from '../projects'
 import type { InlineExtension } from '../runtime/runtime-adapter'
+import { approvalDisplayCwd } from './approval-display-cwd'
 import type { SessionSnapshot } from './session-lifecycle'
 
 type ToolClassification = 'exec' | 'read' | 'write' | undefined
@@ -88,7 +89,7 @@ export function createSessionCreationApprovalDependencies(
 function approvalLocation(
   context: SessionCreationApprovalContext
 ): Pick<ToolApprovalContext, 'cwd' | 'scopeNote' | 'writeScopeNote'> {
-  return { cwd: context.snapshot.cwd }
+  return { cwd: approvalDisplayCwd(context.snapshot.cwd, context.project?.location) }
 }
 
 function approvalContext(

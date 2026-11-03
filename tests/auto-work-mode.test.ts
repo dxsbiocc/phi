@@ -57,7 +57,9 @@ function baseHost(overrides: Partial<PhiExtensionHost> = {}): PhiExtensionHost {
 
 async function registeredAutoTool(
   host: PhiExtensionHost,
-  siblingTool?: string
+  siblingTool?: string,
+  // Cursor runs tools while the response streams, before `assistant_message`.
+  executedBeforeResponse = false
 ): Promise<Record<string, unknown>> {
   let tool: Record<string, unknown> | undefined
   let assistantMessage: ((event: Record<string, unknown>) => unknown) | undefined
@@ -71,6 +73,7 @@ async function registeredAutoTool(
   } as never)
   assert.ok(tool)
   assert.ok(assistantMessage)
+  if (executedBeforeResponse) return tool
   await assistantMessage({
     message: {
       content: [
@@ -194,4 +197,21 @@ test('enter_plan_mode cannot activate when the assistant batches a sibling tool 
   assert.equal(result.isError, true)
   assert.match(JSON.stringify(result), /only tool call/)
   assert.equal(entered, false)
+})
+
+test('enter_plan_mode activates when the tool runs before its response is finalized', async () => {
+  const selected: Array<{ execute: boolean; reason: string }> = []
+  const tool = await registeredAutoTool(
+    baseHost({
+      enterAutoPlanMode: async (input) => {
+        selected.push(input)
+      }
+    }),
+    undefined,
+    true
+  )
+  const execute = tool.execute as (id: string, input: unknown) => Promise<Record<string, unknown>>
+  const result = await execute('call-1', { execute: false, reason: 'large task' })
+  assert.notEqual(result.isError, true)
+  assert.deepEqual(selected, [{ execute: false, reason: 'large task' }])
 })

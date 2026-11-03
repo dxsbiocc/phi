@@ -1,6 +1,7 @@
 import { isRecord } from './common'
 import { resolveInsideProject } from './project-path'
 import { isXdevDevicePath } from './rpc-xdev'
+import { protectedShellWrite } from './shell-protected-paths'
 
 const FILE_TOOLS = new Set(['read', 'write', 'edit', 'glob', 'grep', 'ast_edit', 'ast_grep'])
 const SHELL_TOOLS = new Set(['bash', 'powershell'])
@@ -65,12 +66,31 @@ export type ProjectToolBoundaryDecision =
   /** `approvable` calls only reach outside the project; the user may let them through. */
   | { allowed: false; reason: string; approvable: boolean; outsidePath: string }
 
+/** Shell commands never change shell profiles or credentials in the home directory, in any session. */
+export function protectedHomeWriteDecision(
+  toolName: string,
+  input: unknown
+): ProjectToolBoundaryDecision {
+  if (!SHELL_TOOLS.has(toolName) || !isRecord(input) || typeof input.command !== 'string')
+    return { allowed: true }
+  const target = protectedShellWrite(stripHeredocBodies(input.command))
+  if (!target) return { allowed: true }
+  return {
+    allowed: false,
+    reason: `The command would change ${target}. Phi never lets commands change shell profiles, credentials or tool configuration in the home directory; ask the user to make this change themselves.`,
+    approvable: false,
+    outsidePath: target
+  }
+}
+
 /** Reading or searching outside the project needs approval; writing there is never allowed. */
 export function projectToolBoundaryDecision(
   cwd: string,
   toolName: string,
   input: unknown
 ): ProjectToolBoundaryDecision {
+  const protectedWrite = protectedHomeWriteDecision(toolName, input)
+  if (!protectedWrite.allowed) return protectedWrite
   for (const path of toolPaths(toolName, input)) {
     const reason = path.startsWith('~/')
       ? `Path ${path} is outside the current project (${cwd}).`
