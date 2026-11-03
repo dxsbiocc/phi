@@ -116,6 +116,48 @@ export function sessionStateKeyFromAgentUserInteraction(
  */
 export const sessionRuntimeStates = new Map<string, SessionRuntimeState>()
 export const pendingApprovalsBySession = new Map<string, ToolApprovalRequest>()
+/** Requests waiting behind the one on screen: parallel tool calls can each ask at once. */
+export const queuedApprovalsBySession = new Map<string, ToolApprovalRequest[]>()
+
+/** Records a request and returns the one the session should show. */
+export function addPendingApproval(key: string, request: ToolApprovalRequest): ToolApprovalRequest {
+  const shown = pendingApprovalsBySession.get(key)
+  if (!shown) {
+    pendingApprovalsBySession.set(key, request)
+    return request
+  }
+  const queued = queuedApprovalsBySession.get(key) ?? []
+  if (
+    shown.requestId !== request.requestId &&
+    !queued.some((item) => item.requestId === request.requestId)
+  ) {
+    queuedApprovalsBySession.set(key, [...queued, request])
+  }
+  return shown
+}
+
+/** Drops an answered or cancelled request; the next queued one takes its place on screen. */
+export function removePendingApproval(requestId: string): void {
+  for (const [key, queued] of queuedApprovalsBySession) {
+    const rest = queued.filter((item) => item.requestId !== requestId)
+    if (rest.length) queuedApprovalsBySession.set(key, rest)
+    else queuedApprovalsBySession.delete(key)
+  }
+  for (const [key, shown] of pendingApprovalsBySession) {
+    if (shown.requestId !== requestId) continue
+    const [next, ...rest] = queuedApprovalsBySession.get(key) ?? []
+    if (next) pendingApprovalsBySession.set(key, next)
+    else pendingApprovalsBySession.delete(key)
+    if (rest.length) queuedApprovalsBySession.set(key, rest)
+    else queuedApprovalsBySession.delete(key)
+  }
+}
+
+export function clearPendingApprovals(): void {
+  pendingApprovalsBySession.clear()
+  queuedApprovalsBySession.clear()
+}
+
 export const pendingUserInteractionsBySession = new Map<string, AgentUserInteractionRequest>()
 export const sessionAgentEventStates = new Map<string, AgentEventReducerState>()
 
@@ -340,6 +382,9 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       if (previousPendingApproval && !pendingApprovalsBySession.has(nextStateKey)) {
         pendingApprovalsBySession.set(nextStateKey, previousPendingApproval)
         pendingApprovalsBySession.delete(previousStateKey)
+        const previousQueued = queuedApprovalsBySession.get(previousStateKey)
+        if (previousQueued) queuedApprovalsBySession.set(nextStateKey, previousQueued)
+        queuedApprovalsBySession.delete(previousStateKey)
       }
       const previousPendingUserInteraction = pendingUserInteractionsBySession.get(previousStateKey)
       if (previousPendingUserInteraction && !pendingUserInteractionsBySession.has(nextStateKey)) {
@@ -549,10 +594,8 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
   onRespondToolApproval: async (requestId, approved) => {
     const rendererApi = getRendererApi()
     const activeKey = get().activeAgentEventStateKey
-    if (activeKey) {
-      pendingApprovalsBySession.delete(activeKey)
-    }
-    set({ pendingApproval: null })
+    removePendingApproval(requestId)
+    set({ pendingApproval: (activeKey && pendingApprovalsBySession.get(activeKey)) || null })
     await rendererApi.respondToolApproval(requestId, approved)
     await get().refreshSessions()
     get().setProjectSessionRefreshKey((key) => key + 1)

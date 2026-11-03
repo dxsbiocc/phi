@@ -15,8 +15,10 @@ import {
   type SessionEventStoreState
 } from '../src/renderer/src/features/chat/lib/sessionEventBridge'
 import {
+  clearPendingApprovals,
   pendingApprovalsBySession,
   pendingUserInteractionsBySession,
+  removePendingApproval,
   sessionAgentEventStates,
   sessionRuntimeStates,
   sessionStateKey,
@@ -152,7 +154,7 @@ function harness(
 
 beforeEach(() => {
   sessionRuntimeStates.clear()
-  pendingApprovalsBySession.clear()
+  clearPendingApprovals()
   pendingUserInteractionsBySession.clear()
   sessionAgentEventStates.clear()
 })
@@ -296,6 +298,40 @@ test('cancelling one approval removes only that request and clears the visible p
   assert.equal(h.state.pendingApproval, null)
   assert.deepEqual(h.cancels, [['approval', 'approval-1']])
   assert.ok(!pendingApprovalsBySession.has(key))
+})
+
+test('parallel approvals in one session are shown one after another', () => {
+  const h = harness()
+  handleToolApprovalRequest(h.deps, approval())
+  handleToolApprovalRequest(h.deps, approval({ requestId: 'approval-2', summary: 'du /data2' }))
+  h.overlays[0].publish()
+  h.overlays[1].publish()
+  const key = sessionStateKeyFromToolApproval(approval(), 3)
+  assert.ok(key)
+  assert.equal(h.state.pendingApproval?.requestId, 'approval-1', 'the first stays on screen')
+
+  // Answering goes through the store; the bridge sees the same removal.
+  removePendingApproval('approval-1')
+  assert.equal(
+    pendingApprovalsBySession.get(key)?.requestId,
+    'approval-2',
+    'the next takes its place'
+  )
+
+  handleToolApprovalCancelled(h.deps, 'approval-1')
+  handleToolApprovalCancelled(h.deps, 'approval-2')
+  assert.ok(!pendingApprovalsBySession.has(key))
+})
+
+test('cancelling the shown approval reveals the one queued behind it', () => {
+  const h = harness()
+  handleToolApprovalRequest(h.deps, approval())
+  handleToolApprovalRequest(h.deps, approval({ requestId: 'approval-2' }))
+  h.overlays[0].publish()
+  h.overlays[1].publish()
+
+  handleToolApprovalCancelled(h.deps, 'approval-1')
+  assert.equal(h.state.pendingApproval?.requestId, 'approval-2')
 })
 
 test('cancelling without a request id clears every pending approval', () => {

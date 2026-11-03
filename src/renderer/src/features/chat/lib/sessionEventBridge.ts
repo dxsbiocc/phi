@@ -11,8 +11,11 @@ import {
 } from '../../../lib/sessionRuntimeState'
 import type { WorkspaceSidebarMode } from '../../../lib/workspaceSidebar'
 import {
+  addPendingApproval,
+  clearPendingApprovals,
   pendingApprovalsBySession,
   pendingUserInteractionsBySession,
+  removePendingApproval,
   sessionAgentEventStates,
   sessionRuntimeStates,
   sessionStateKeyFromAgentEvent,
@@ -203,7 +206,7 @@ export function handleToolApprovalRequest(
       const state = deps.store.getState()
       const approvalStateKey = sessionStateKeyFromToolApproval(event, state.activeSessionGeneration)
       if (approvalStateKey) {
-        pendingApprovalsBySession.set(approvalStateKey, event)
+        const shown = addPendingApproval(approvalStateKey, event)
         const nextRuntimeState = {
           ...(sessionRuntimeStates.get(approvalStateKey) ?? idleSessionRuntimeState()),
           status: 'needs_approval' as const,
@@ -212,7 +215,7 @@ export function handleToolApprovalRequest(
         }
         state.storeSessionRuntimeState(approvalStateKey, nextRuntimeState)
         if (approvalStateKey === state.activeAgentEventStateKey) {
-          state.setPendingApproval(event)
+          state.setPendingApproval(shown)
           state.setActiveSessionRuntimeState(nextRuntimeState)
         }
       } else {
@@ -231,12 +234,13 @@ export function handleToolApprovalCancelled(
   deps.cancelTrustedOverlay('approval', requestId)
   const state = deps.store.getState()
   if (requestId) {
-    for (const [key, request] of pendingApprovalsBySession) {
-      if (request.requestId === requestId) pendingApprovalsBySession.delete(key)
+    removePendingApproval(requestId)
+    if (state.pendingApproval?.requestId === requestId) {
+      const activeKey = state.activeAgentEventStateKey
+      state.setPendingApproval((activeKey && pendingApprovalsBySession.get(activeKey)) || null)
     }
-    if (state.pendingApproval?.requestId === requestId) state.setPendingApproval(null)
   } else {
-    pendingApprovalsBySession.clear()
+    clearPendingApprovals()
     state.setPendingApproval(null)
   }
   state.scheduleSessionRefresh()
