@@ -322,8 +322,21 @@ export function ComposerTextEditor({
           color: theme.palette.text.primary,
           caretColor: theme.palette.text.primary
         },
-        '.cm-line': { padding: '0' },
-        '.cm-placeholder': { color: theme.palette.text.secondary },
+        '.cm-line': { padding: '0', lineHeight: '1.6' },
+        // An empty line's native caret uses the line box. The placeholder is an
+        // inline-block aligned to the top, which stretches that box above the
+        // caret shown beside real text.
+        '.cm-line:has(.cm-placeholder)': { lineHeight: 1 },
+        '.cm-line:has(.cm-placeholder) .cm-widgetBuffer': {
+          height: '1em',
+          verticalAlign: 'baseline'
+        },
+        '.cm-placeholder': {
+          color: theme.palette.text.secondary,
+          display: 'inline',
+          lineHeight: 1,
+          verticalAlign: 'baseline'
+        },
         '.phi-composer-inline-reference': {
           display: 'inline-flex',
           maxWidth: '100%',
