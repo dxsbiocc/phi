@@ -94,7 +94,7 @@ flowchart TD
 
 <p align="center"><img src="assets/readme/wrapper-summary.png" alt="对话结尾列出输出、用到的 Wrapper，以及 FastQC、fastp 和 Salmon 文件的交付卡片" width="100%"></p>
 
-<sub>截图来自 0.1.0 之后的 Phi 开发版，界面为英文，已缩放；后台任务截图经过裁剪。模型：Grok 4.5 Fast。</sub>
+<sub>截图来自 Phi 0.1.1 开发版，界面为英文，已缩放；后台任务截图经过裁剪。模型：Grok 4.5 Fast。</sub>
 
 ## 怎么使用
 

@@ -94,7 +94,7 @@ The answer reports the QC and mapping rate, names the Wrappers it used, and deli
 
 <p align="center"><img src="assets/readme/wrapper-summary.png" alt="The end of the conversation listing outputs, the Wrappers used, and cards for the delivered FastQC, fastp, and Salmon files" width="100%"></p>
 
-<sub>Captures from a Phi development build after 0.1.0, resized; the Background Jobs capture is cropped. Model: Grok 4.5 Fast.</sub>
+<sub>Captures from a Phi 0.1.1 development build, resized; the Background Jobs capture is cropped. Model: Grok 4.5 Fast.</sub>
 
 ## How to use Phi
 
