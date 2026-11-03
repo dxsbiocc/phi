@@ -2,34 +2,18 @@ import { Box, Typography } from '@mui/material'
 import { alpha, useTheme, type Theme } from '@mui/material/styles'
 
 import type { MetricsUiBlock } from '../../../../../../shared/uiBlockTypes'
+import { metricColorKeys, type MetricColor } from '../../lib/metricColors'
 import { UiBlockContainer } from './UiBlockContainer'
 
-const STATUS_COLOR = {
-  ok: 'success',
-  warn: 'warning',
-  error: 'error',
-  neutral: 'grey'
-} as const
-
-const FALLBACK_COLORS = ['info', 'secondary', 'primary'] as const
-
-type MetricStatus = keyof typeof STATUS_COLOR | undefined
-type MetricColor =
-  (typeof STATUS_COLOR)[keyof typeof STATUS_COLOR] | (typeof FALLBACK_COLORS)[number]
-
-export function metricColorKeys(statuses: MetricStatus[]): MetricColor[] {
-  const used = new Set<MetricColor>()
-  return statuses.map((status) => {
-    const preferred: MetricColor = STATUS_COLOR[status ?? 'neutral']
-    const color = used.has(preferred)
-      ? (FALLBACK_COLORS.find((candidate) => !used.has(candidate)) ?? preferred)
-      : preferred
-    used.add(color)
-    return color
-  })
+type MetricSurface = {
+  background: string
+  foreground: string
+  muted: string
+  line: string
+  wash: string
 }
 
-function metricSurface(color: MetricColor, theme: Theme) {
+function metricSurface(color: MetricColor, theme: Theme): MetricSurface {
   const background =
     color === 'grey'
       ? theme.palette.mode === 'dark'
@@ -44,6 +28,31 @@ function metricSurface(color: MetricColor, theme: Theme) {
     line: alpha(foreground, 0.22),
     wash: alpha(foreground, 0.12)
   }
+}
+
+function MetricCircle({
+  color,
+  size,
+  sx
+}: {
+  color: string
+  size: number
+  sx: Record<string, number>
+}): React.JSX.Element {
+  return (
+    <Box
+      aria-hidden
+      sx={{
+        position: 'absolute',
+        width: size,
+        height: size,
+        borderRadius: '50%',
+        bgcolor: color,
+        pointerEvents: 'none',
+        ...sx
+      }}
+    />
+  )
 }
 
 function MetricCard({
@@ -68,32 +77,8 @@ function MetricCard({
         color: surface.foreground
       }}
     >
-      <Box
-        aria-hidden
-        sx={{
-          position: 'absolute',
-          right: -28,
-          top: -36,
-          width: 108,
-          height: 108,
-          borderRadius: '50%',
-          bgcolor: surface.wash,
-          pointerEvents: 'none'
-        }}
-      />
-      <Box
-        aria-hidden
-        sx={{
-          position: 'absolute',
-          right: 18,
-          bottom: -30,
-          width: 72,
-          height: 72,
-          borderRadius: '50%',
-          bgcolor: surface.wash,
-          pointerEvents: 'none'
-        }}
-      />
+      <MetricCircle color={surface.wash} size={108} sx={{ right: -28, top: -36 }} />
+      <MetricCircle color={surface.wash} size={72} sx={{ right: 18, bottom: -30 }} />
       <Typography
         variant="caption"
         sx={{ position: 'relative', display: 'block', color: surface.muted, fontWeight: 600 }}

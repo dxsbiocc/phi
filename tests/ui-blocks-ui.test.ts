@@ -6,7 +6,7 @@ import { createTheme, ThemeProvider } from '@mui/material'
 import test from 'node:test'
 
 import { UiBlocksCard } from '../src/renderer/src/features/chat/components/UiBlocks/UiBlocksCard'
-import { metricColorKeys } from '../src/renderer/src/features/chat/components/UiBlocks/MetricsBlock'
+import { metricColorKeys } from '../src/renderer/src/features/chat/lib/metricColors'
 import type { UiBlocksItem } from '../src/renderer/src/features/chat/lib/uiBlocks'
 
 function render(item: UiBlocksItem): string {
