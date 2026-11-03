@@ -15,6 +15,7 @@ import {
   EditorView,
   ViewPlugin,
   WidgetType,
+  drawSelection,
   keymap,
   placeholder as editorPlaceholder,
   type DecorationSet,
@@ -288,6 +289,9 @@ export function ComposerTextEditor({
   const visualExtensions = useMemo(
     () => [
       editorPlaceholder(placeholder ?? ''),
+      // An empty line only contains the placeholder widget, so the native caret
+      // grows to the whole line. Draw it from the same font box used beside text.
+      drawSelection(),
       EditorView.editable.of(!disabled),
       EditorState.readOnly.of(Boolean(disabled)),
       EditorView.contentAttributes.of({
@@ -320,23 +324,22 @@ export function ComposerTextEditor({
         '.cm-content': {
           padding: '9px 9px 0 0',
           color: theme.palette.text.primary,
-          caretColor: theme.palette.text.primary
+          caretColor: 'transparent'
         },
         '.cm-line': { padding: '0', lineHeight: '1.6' },
-        // An empty line's native caret uses the line box. The placeholder is an
-        // inline-block aligned to the top, which stretches that box above the
-        // caret shown beside real text.
-        '.cm-line:has(.cm-placeholder)': { lineHeight: 1 },
-        '.cm-line:has(.cm-placeholder) .cm-widgetBuffer': {
-          height: '1em',
-          verticalAlign: 'baseline'
+        '.cm-placeholder': { color: theme.palette.text.secondary },
+        '.cm-cursor': {
+          borderLeftWidth: '1.5px',
+          borderLeftStyle: 'solid',
+          // Centered with a negative margin, the empty caret sits on the
+          // clipped left edge and only half of it shows.
+          borderLeftColor: 'currentColor !important',
+          marginLeft: '0'
         },
-        '.cm-placeholder': {
-          color: theme.palette.text.secondary,
-          display: 'inline',
-          lineHeight: 1,
-          verticalAlign: 'baseline'
-        },
+        '.cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground':
+          {
+            backgroundColor: theme.palette.action.selected
+          },
         '.phi-composer-inline-reference': {
           display: 'inline-flex',
           maxWidth: '100%',
