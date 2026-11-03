@@ -13,6 +13,7 @@ import {
   TableSortLabel,
   Tooltip
 } from '@mui/material'
+import type { Theme } from '@mui/material/styles'
 import { GoCopy } from 'react-icons/go'
 
 import type { TableUiBlock } from '../../../../../../shared/uiBlockTypes'
@@ -20,6 +21,12 @@ import { sortTableRows, type TableSortDirection } from '../../lib/uiBlocks'
 import { UiBlockContainer } from './UiBlockContainer'
 
 type CopyState = 'idle' | 'copied' | 'failed'
+
+const TABLE_HEAD_HEIGHT = 37
+
+function tableHeadColor(theme: Theme): string {
+  return theme.palette.mode === 'dark' ? theme.palette.grey[800] : theme.palette.grey[100]
+}
 
 export function TableBlock({ block }: { block: TableUiBlock }): React.JSX.Element {
   useUiLanguage()
@@ -65,13 +72,17 @@ export function TableBlock({ block }: { block: TableUiBlock }): React.JSX.Elemen
   return (
     <UiBlockContainer title={block.title}>
       <Box
-        sx={{
+        sx={(theme) => ({
           position: 'relative',
+          // The scrollbar track is transparent and shows this box, not the table.
+          // Continue the header fill and its divider through that slot to the card edge.
+          backgroundImage: `linear-gradient(${tableHeadColor(theme)} ${TABLE_HEAD_HEIGHT - 1}px, ${theme.palette.divider} ${TABLE_HEAD_HEIGHT - 1}px ${TABLE_HEAD_HEIGHT}px, transparent ${TABLE_HEAD_HEIGHT}px)`,
+          backgroundRepeat: 'no-repeat',
           '&:hover .phi-table-copy, &:focus-within .phi-table-copy': {
             opacity: 1,
             pointerEvents: 'auto'
           }
-        }}
+        })}
       >
         <Tooltip title={copyLabel}>
           <IconButton
@@ -98,7 +109,7 @@ export function TableBlock({ block }: { block: TableUiBlock }): React.JSX.Elemen
             <GoCopy size={14} aria-hidden="true" />
           </IconButton>
         </Tooltip>
-        <TableContainer sx={{ maxHeight: 360, overflow: 'auto' }}>
+        <TableContainer sx={{ maxHeight: 360, overflow: 'auto', bgcolor: 'transparent' }}>
           <Table
             size="small"
             aria-label={block.title ?? chatCopy.structuredDataTable}
@@ -109,8 +120,10 @@ export function TableBlock({ block }: { block: TableUiBlock }): React.JSX.Elemen
                 position: 'sticky',
                 top: 0,
                 zIndex: 2,
-                bgcolor: (theme) =>
-                  theme.palette.mode === 'dark' ? theme.palette.grey[800] : theme.palette.grey[100],
+                height: TABLE_HEAD_HEIGHT,
+                py: 0,
+                boxSizing: 'border-box',
+                bgcolor: tableHeadColor,
                 borderBottom: '1px solid',
                 borderBottomColor: 'divider'
               },
@@ -127,8 +140,10 @@ export function TableBlock({ block }: { block: TableUiBlock }): React.JSX.Elemen
                     align={column.align ?? 'left'}
                     sortDirection={sortKey === column.key ? direction : false}
                     sx={{
-                      py: 0.75,
+                      height: TABLE_HEAD_HEIGHT,
+                      py: 0,
                       px: 1.25,
+                      verticalAlign: 'middle',
                       fontWeight: 700,
                       whiteSpace: 'nowrap',
                       '@container phi-chat (max-width: 560px)': { px: 0.75, fontSize: '0.72rem' }

@@ -6,6 +6,7 @@ import { createTheme, ThemeProvider } from '@mui/material'
 import test from 'node:test'
 
 import { UiBlocksCard } from '../src/renderer/src/features/chat/components/UiBlocks/UiBlocksCard'
+import { metricColorKeys } from '../src/renderer/src/features/chat/components/UiBlocks/MetricsBlock'
 import type { UiBlocksItem } from '../src/renderer/src/features/chat/lib/uiBlocks'
 
 function render(item: UiBlocksItem): string {
@@ -31,6 +32,15 @@ test('ui blocks render HTML-like agent strings as inert text', () => {
   assert.doesNotMatch(markup, /<script>/u)
   assert.match(markup, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/u)
   assert.match(markup, /\*\*not bold\*\*/u)
+})
+
+test('repeated metric statuses use a different theme color', () => {
+  assert.deepEqual(metricColorKeys(['neutral', 'ok', 'warn', 'warn']), [
+    'grey',
+    'success',
+    'warning',
+    'info'
+  ])
 })
 
 test('invalid replay placeholder renders only the muted unavailable message', () => {
