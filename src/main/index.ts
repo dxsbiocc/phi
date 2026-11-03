@@ -217,7 +217,8 @@ import {
   cancelToolApprovals,
   requestToolApproval,
   requestRuntimeToolApproval,
-  resolveToolApproval
+  resolveToolApproval,
+  showPendingApprovals
 } from './agent/tool-approval'
 import { createEnvironmentBuilds } from './agent/content/environment-builds'
 import { buildEnvironment } from './agent/content/environment-refs'
@@ -240,9 +241,9 @@ import {
 } from './agent/content/environment-build-prompt'
 import { confirmedEnvironmentRequest, requestProjectEnvironment } from './agent/content/env-request'
 import {
-  canRequestAgentUserInteraction,
   cancelAgentUserInteractions,
   resolveAgentUserInteraction,
+  showPendingAgentUserInteractions,
   waitForAgentUserInteraction
 } from './agent/user-interaction'
 import { createAgentInteractionRequest } from './agent/host-requests/agent-interaction-request'
@@ -906,7 +907,6 @@ const handleAgentInteractionRequest = createAgentInteractionRequest({
   },
   renderer: {
     getActiveWindow,
-    canRequest: canRequestAgentUserInteraction,
     waitForResponse: waitForAgentUserInteraction
   },
   state: {
@@ -1643,7 +1643,6 @@ const planExecution = wirePlanExecution({
   findPhiSessionById,
   phiOnlySessionPath,
   getActiveWindow,
-  canRequestAgentUserInteraction,
   waitForAgentUserInteraction,
   appendSessionEvent,
   broadcastSessionTimelineEvent,
@@ -2872,6 +2871,18 @@ function safeCleanupStep(event: string, run: () => void | Promise<void>): Promis
   }
 }
 
+/**
+ * Closing the window without quitting releases only what lives in the window. Conversations keep
+ * running, and their approvals and questions wait for the window to reopen; quitting stops them.
+ */
+async function cleanupMainWindowInterface(): Promise<void> {
+  await Promise.allSettled([
+    safeCleanupStep('terminal_cleanup_failed', () => disposeTerminalManager()),
+    safeCleanupStep('notebook_watcher_cleanup_failed', () => notebookFileWatcher.dispose()),
+    cleanupBrowserWorkspaceRegistry()
+  ])
+}
+
 function cleanupMainWindowRuntime(): Promise<void> {
   return runtime.window.beginCleanup(
     () => runtime.caches.disposeSessionTitleGenerator(),
@@ -3046,8 +3057,9 @@ function registerMainWindowLifecycleHandlers(
 ): void {
   window.once('ready-to-show', startup.painted)
 
+  // Quitting runs the full cleanup from before-quit, before any window closes.
   window.on('close', () => {
-    void cleanupMainWindowRuntime()
+    void cleanupMainWindowInterface()
   })
 
   window.on('closed', () => {
@@ -3748,7 +3760,15 @@ function registerProjectAndAnalysisIpc(): void {
     },
     generation: analysisNotebookCodeGenerator
   })
-  registerToolIpc({ ipcMain, resolveToolApproval })
+  registerToolIpc({
+    ipcMain,
+    resolveToolApproval,
+    requireMainWindowRenderer,
+    showPendingRequests: (window) => {
+      showPendingApprovals(window)
+      showPendingAgentUserInteractions(window)
+    }
+  })
   registerAgentInteractionIpc({
     ipcMain,
     requireMainWindowRenderer,

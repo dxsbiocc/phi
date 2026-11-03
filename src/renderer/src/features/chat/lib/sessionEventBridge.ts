@@ -98,6 +98,7 @@ export type SessionEventBridgeDeps = {
     RendererApi,
     | 'submitAuthInteraction'
     | 'respondToolApproval'
+    | 'showPendingRequests'
     | 'respondAgentUserInteraction'
     | 'onAgentEvent'
     | 'onAuthInteraction'

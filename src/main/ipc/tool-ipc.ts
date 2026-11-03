@@ -1,10 +1,13 @@
-import type { IpcMain, WebContents } from 'electron'
+import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
 
 import { IPC } from '../../shared/ipcChannels'
 
 export interface ToolIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
   resolveToolApproval: (requestId: string, approved: boolean, sender: WebContents) => boolean
+  requireMainWindowRenderer: (event: IpcMainInvokeEvent) => BrowserWindow
+  /** Shows a window everything still waiting for an answer, e.g. after it was closed and reopened. */
+  showPendingRequests: (window: BrowserWindow) => void
 }
 
 export function registerToolIpc(options: ToolIpcOptions): void {
@@ -25,4 +28,7 @@ export function registerToolIpc(options: ToolIpcOptions): void {
       return resolveToolApproval(requestId, approved, event.sender)
     }
   )
+  ipcMain.handle(IPC.tool.showPending, (event) => {
+    options.showPendingRequests(options.requireMainWindowRenderer(event))
+  })
 }

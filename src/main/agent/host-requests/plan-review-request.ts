@@ -68,10 +68,10 @@ export interface PlanReviewRequestDeps<StoredEvent> {
   }
   renderer: {
     getActiveWindow(): BrowserWindow | null
-    canRequest(window: BrowserWindow | null): window is BrowserWindow
+    /** With no window open the review waits; the next window to load shows it. */
     waitForResponse(
       input: AgentUserInteractionInput,
-      window: BrowserWindow,
+      window: BrowserWindow | null,
       signals?: ReadonlyArray<AbortSignal | undefined>
     ): Promise<PlanReviewResponse>
   }
@@ -128,7 +128,7 @@ interface PlanReviewTarget {
   run: PlanReviewPromptRun
   project: PlanReviewProject | undefined
   planOwner: PlanExecutionOwner
-  window: BrowserWindow
+  window: BrowserWindow | null
 }
 
 function readPlanSteps(value: unknown): PlanSpec | undefined {
@@ -203,7 +203,6 @@ function resolvePlanReviewTarget<StoredEvent>(
     throw new Error('远程项目暂不支持计划评审')
   }
   const window = deps.renderer.getActiveWindow()
-  if (!deps.renderer.canRequest(window)) throw new Error('没有可用窗口来评审计划')
   return { run, project, planOwner: planExecutionOwner(manifest), window }
 }
 

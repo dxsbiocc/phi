@@ -45,10 +45,10 @@ export interface AgentInteractionRequestDeps<Window = unknown> {
   }
   renderer: {
     getActiveWindow(): Window | null
-    canRequest(window: Window | null): boolean
+    /** With no window open the request waits; the next window to load shows it. */
     waitForResponse(
       request: AgentUserInteractionRequest,
-      window: Window,
+      window: Window | null,
       signals: ReadonlyArray<AbortSignal | undefined>
     ): Promise<AgentUserInteractionResponse>
   }
@@ -306,9 +306,6 @@ export function createAgentInteractionRequest<Window = unknown>(
     const { runtimeSessionId, questions, missingTool } = parseInteractionRequest(params, deps)
     const run = activeInteractionRun(runtimeSessionId, context, deps)
     const window = deps.renderer.getActiveWindow()
-    if (!deps.renderer.canRequest(window)) {
-      throw new Error('没有可用窗口来请求用户输入')
-    }
 
     const interactionId = deps.state.createId()
     const project = run.projectId

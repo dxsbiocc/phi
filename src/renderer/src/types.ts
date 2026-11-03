@@ -737,6 +737,7 @@ export interface RendererApi
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => () => void
   onToolApprovalCancelled: (cb: (requestId?: string) => void) => () => void
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
+  showPendingRequests: () => Promise<void>
   pickPackageRegistryDirectory: () => Promise<string | null>
   pickPackageArchive: () => Promise<string | null>
   readPackageRegistry: (dir: string) => Promise<PackageRegistryView>

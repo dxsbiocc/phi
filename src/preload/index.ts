@@ -1123,6 +1123,7 @@ type RendererAuthApi = PreloadApiBase & {
   onToolApprovalRequest: (cb: (event: ToolApprovalRequest) => void) => Unsubscribe
   onToolApprovalCancelled: (cb: (requestId?: string) => void) => Unsubscribe
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
+  showPendingRequests: () => Promise<void>
   listPhiPlugins: () => Promise<PhiPluginListItem[]>
   pickPhiPluginDirectory: () => Promise<string | null>
   previewPhiPluginDirectory: (path: string) => Promise<PhiPluginInstallPreview>
@@ -1941,6 +1942,7 @@ const api: RendererAuthApi = {
   },
   respondToolApproval: (requestId: string, approved: boolean): Promise<void> =>
     ipcRenderer.invoke(IPC.tool.approvalResponse, requestId, approved),
+  showPendingRequests: (): Promise<void> => ipcRenderer.invoke(IPC.tool.showPending),
   onAgentUserInteractionRequest: (
     cb: (event: AgentUserInteractionRequest) => void
   ): Unsubscribe => {

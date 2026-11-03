@@ -415,7 +415,7 @@ test('browser approvals are scoped and presented as one-action decisions in both
   )
   assert.match(
     bridge,
-    /export function handleToolApprovalCancelled[\s\S]{0,500}request\.requestId === requestId/
+    /export function handleToolApprovalCancelled[\s\S]{0,500}removePendingApproval\(requestId\)/
   )
   assert.match(bridge, /cancelTrustedOverlay\('approval', requestId\)/)
   for (const source of [dialogSource, permissionSource]) {

@@ -11,8 +11,11 @@ import type {
 type InteractionWindow = BrowserWindow
 
 type PendingInteraction = {
+  request: AgentUserInteractionRequest
   settle: (response: AgentUserInteractionResponse) => void
-  senderId: number
+  /** Only the window showing the request may answer it; null while no window shows it. */
+  senderId: number | null
+  detachWindow: () => void
 }
 
 export type AgentUserInteractionInput = {
@@ -74,9 +77,35 @@ export function cancelAgentUserInteractions(): void {
   }
 }
 
+/**
+ * Shows a pending question in `window`. Losing that window does not cancel it: the run keeps
+ * waiting, and the next window to load receives it again.
+ */
+function showInteraction(pending: PendingInteraction, window: InteractionWindow): void {
+  pending.detachWindow()
+  const senderId = window.webContents.id
+  pending.senderId = senderId
+  const release = (): void => {
+    pending.detachWindow()
+    if (pending.senderId === senderId) pending.senderId = null
+  }
+  pending.detachWindow = addWindowUnavailableListener(window, release)
+  try {
+    window.webContents.send(IPC.agent.interactionRequested, pending.request)
+  } catch {
+    release()
+  }
+}
+
+/** A newly loaded window takes over every question still waiting for an answer. */
+export function showPendingAgentUserInteractions(window: InteractionWindow): void {
+  if (!isUsableWindow(window)) return
+  for (const pending of pendingInteractions.values()) showInteraction(pending, window)
+}
+
 export function waitForAgentUserInteraction(
   input: AgentUserInteractionInput,
-  window: InteractionWindow,
+  window: InteractionWindow | null,
   signals: ReadonlyArray<AbortSignal | undefined> = []
 ): Promise<AgentUserInteractionResponse> {
   return new Promise<AgentUserInteractionResponse>((resolve) => {
@@ -107,7 +136,14 @@ export function waitForAgentUserInteraction(
       resolve(response)
     }
 
-    pendingInteractions.set(request.requestId, { settle, senderId: window.webContents.id })
+    const pending: PendingInteraction = {
+      request,
+      settle,
+      senderId: null,
+      detachWindow: () => undefined
+    }
+    pendingInteractions.set(request.requestId, pending)
+    cleanupFns.push(() => pending.detachWindow())
 
     for (const signal of signals) {
       if (!signal) continue
@@ -121,22 +157,6 @@ export function waitForAgentUserInteraction(
       cleanupFns.push(() => signal.removeEventListener('abort', onAbort))
     }
 
-    cleanupFns.push(
-      addWindowUnavailableListener(window, () =>
-        settle({ requestId: request.requestId, answers: [], cancelled: true })
-      )
-    )
-
-    try {
-      window.webContents.send(IPC.agent.interactionRequested, request)
-    } catch {
-      settle({ requestId: request.requestId, answers: [], cancelled: true })
-    }
+    if (isUsableWindow(window)) showInteraction(pending, window)
   })
-}
-
-export function canRequestAgentUserInteraction(
-  window: InteractionWindow | null
-): window is InteractionWindow {
-  return isUsableWindow(window)
 }

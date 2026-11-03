@@ -156,6 +156,7 @@ const {
   requestToolApproval,
   requestRuntimeToolApproval,
   resolveToolApproval,
+  showPendingApprovals,
   TOOL_DENIED_REASON
 } = await import('../src/main/agent/tool-approval')
 
@@ -377,15 +378,13 @@ test('plan drafts and proposal writes use the session sandbox without a second a
     await handler({ toolName: 'write', input: { path: 'xd://propose', content: 'analysis' } }, {}),
     undefined
   )
-  assert.match(
-    String(
-      (
-        (await handler({ toolName: 'write', input: { path: '/project/result.txt' } }, {})) as
-          { reason?: unknown } | undefined
-      )?.reason
-    ),
-    /没有可用窗口/
-  )
+  // A project write still asks: it waits for a window and is answered there.
+  const projectWrite = handler({ toolName: 'write', input: { path: '/project/result.txt' } }, {})
+  const window = new FakeWindow()
+  showPendingApprovals(window as never)
+  const request = window.webContents.sent[0].payload as { requestId: string }
+  resolveToolApproval(request.requestId, false, window.webContents)
+  assert.deepEqual(await projectWrite, { block: true, reason: TOOL_DENIED_REASON })
 })
 
 test('remote Bash approval shows host, pinned cwd, scope warning and exact command', async () => {
@@ -603,7 +602,7 @@ test('aborted tool approval scopes deny late tool calls without creating request
   assert.equal(window.webContents.sent.length, 0)
 })
 
-test('explicit null approval window getter denies without falling back', async () => {
+test('with no window open, an approval waits and the next window receives it', async () => {
   const fallbackWindow = new FakeWindow()
   __electronMock.setFocusedWindow(fallbackWindow)
   let handler: ToolHandler | undefined
@@ -618,32 +617,56 @@ test('explicit null approval window getter denies without falling back', async (
   }
 
   assert.ok(handler)
-  const result = await handler({ toolName: 'bash', input: { command: 'date' } }, {})
-  assert.deepEqual(result, { block: true, reason: '没有可用窗口来请求批准' })
-  assert.equal(fallbackWindow.webContents.sent.length, 0)
+  const pending = handler({ toolName: 'bash', input: { command: 'date' } }, {})
+  assert.equal(fallbackWindow.webContents.sent.length, 0, 'no fallback to another window')
+
+  const reopened = new FakeWindow()
+  showPendingApprovals(reopened as never)
+  const request = reopened.webContents.sent[0].payload as { requestId: string }
+  assert.equal(resolveToolApproval(request.requestId, true, reopened.webContents), true)
+  assert.equal(await pending, undefined)
 })
 
-test('tool approval denies safely when the renderer disappears or delivery fails', async () => {
+test('losing the window keeps an approval for the next window, which alone may answer', async () => {
   const window = new FakeWindow()
   __electronMock.setFocusedWindow(window)
   const handler = await registerApprovalHandler()
 
-  const pending = handler({ toolName: 'bash', input: { command: 'date' } }, {})
+  let settled = false
+  const pending = handler({ toolName: 'bash', input: { command: 'date' } }, {}).finally(() => {
+    settled = true
+  })
+  const request = window.webContents.sent[0].payload as { requestId: string }
   window.webContents.navigate(true, true)
   assert.equal(window.webContents.listenerCount('did-start-navigation'), 1)
-  window.webContents.navigate(false, true)
-
-  assert.deepEqual(await pending, { block: true, reason: TOOL_DENIED_REASON })
+  window.close()
+  await Promise.resolve()
+  assert.equal(settled, false, 'the run keeps waiting')
   assert.equal(window.listenerCount('closed'), 0)
   assert.equal(window.webContents.listenerCount('did-start-navigation'), 0)
+  assert.equal(resolveToolApproval(request.requestId, true, window.webContents), false)
 
+  const reopened = new FakeWindow()
+  showPendingApprovals(reopened as never)
+  assert.equal(resolveToolApproval(request.requestId, false, reopened.webContents), true)
+  assert.deepEqual(await pending, { block: true, reason: TOOL_DENIED_REASON })
+  assert.equal(reopened.listenerCount('closed'), 0)
+})
+
+test('a failed delivery leaves the approval waiting for a window that can show it', async () => {
   const brokenWindow = new FakeWindow()
   brokenWindow.webContents.sendThrows = true
   __electronMock.setFocusedWindow(brokenWindow)
+  const handler = await registerApprovalHandler()
 
-  const failedDelivery = await handler({ toolName: 'bash', input: { command: 'date' } }, {})
-  assert.deepEqual(failedDelivery, { block: true, reason: TOOL_DENIED_REASON })
+  const pending = handler({ toolName: 'bash', input: { command: 'date' } }, {})
   assert.equal(brokenWindow.listenerCount('closed'), 0)
+
+  const working = new FakeWindow()
+  showPendingApprovals(working as never)
+  const request = working.webContents.sent[0].payload as { requestId: string }
+  resolveToolApproval(request.requestId, true, working.webContents)
+  assert.equal(await pending, undefined)
 })
 
 test('auth prompt resolves normally through the renderer response', async () => {
@@ -816,7 +839,7 @@ test('RPC approval preserves the background session identity and rejects foreign
   assert.equal(window.webContents.listenerCount('destroyed'), 0)
 })
 
-test('RPC approval uses the existing native decision UI and cancels on window loss', async () => {
+test('RPC approval uses the existing native decision UI and survives window loss', async () => {
   const window = new FakeWindow()
   const request = {
     requestId: 'rpc-native-2',
@@ -838,8 +861,11 @@ test('RPC approval uses the existing native decision UI and cancels on window lo
     () => window as never
   )
   window.close()
-  assert.equal(await lost, 'cancelled')
   assert.equal(resolveToolApproval('rpc-native-3', true, window.webContents), false)
+  const reopened = new FakeWindow()
+  showPendingApprovals(reopened as never)
+  assert.equal(resolveToolApproval('rpc-native-3', true, reopened.webContents), true)
+  assert.equal(await lost, 'approved')
 })
 
 test('a read outside the project asks in every permission mode and shows the path', async () => {

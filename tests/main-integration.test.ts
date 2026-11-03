@@ -7566,6 +7566,7 @@ const expectedStartupRegistrationOrder = [
   'analysis:generateNotebookCode',
   'analysis:executeNotebookCell',
   'tool:approval-response',
+  'tool:show-pending',
   'agent:interaction-response',
   'phiPlugins:list',
   'phiPlugins:pickDirectory',
@@ -13488,32 +13489,46 @@ test('main IPC: an unfinished environment scan cannot hold up the themed window 
   app.closeMainWindow()
 })
 
-test('main IPC: closing the window stops all active prompt runs', { timeout: 3000 }, async () => {
-  const app = await harness(async (_cwd, file) => {
-    const session = new FakeSession(file)
-    session.hold = true
-    return session
-  })
+test(
+  'main IPC: closing the window keeps prompt runs going; quitting stops them',
+  { timeout: 3000 },
+  async () => {
+    const app = await harness(async (_cwd, file) => {
+      const session = new FakeSession(file)
+      session.hold = true
+      return session
+    })
 
-  await app.invoke('sessions:switch', 'A')
-  const first = app.invoke('agent:prompt', 'first')
-  await tick()
-  await app.invoke('sessions:switch', 'B')
-  const second = app.invoke('agent:prompt', 'second')
-  await tick()
+    await app.invoke('sessions:switch', 'A')
+    const first = app.invoke('agent:prompt', 'first')
+    await tick()
+    await app.invoke('sessions:switch', 'B')
+    const second = app.invoke('agent:prompt', 'second')
+    await tick()
 
-  await app.invoke('window:close')
-  await Promise.all([first, second])
+    await app.invoke('window:close')
+    await tick()
+    assert.equal(
+      app.runnerEvents.some((event) => event.type === 'stop_all'),
+      false
+    )
+    assert.deepEqual(
+      app.sessions.map((session) => session.log.includes('abort')),
+      [false, false]
+    )
 
-  assert.equal(
-    app.runnerEvents.some((event) => event.type === 'stop_all'),
-    true
-  )
-  assert.deepEqual(
-    app.sessions.map((session) => session.log.includes('abort')),
-    [true, true]
-  )
-})
+    app.beforeQuit()
+    await Promise.all([first, second])
+    assert.equal(
+      app.runnerEvents.some((event) => event.type === 'stop_all'),
+      true
+    )
+    assert.deepEqual(
+      app.sessions.map((session) => session.log.includes('abort')),
+      [true, true]
+    )
+  }
+)
 
 test(
   'main IPC: returning to a background conversation reuses its live session',
@@ -17613,7 +17628,7 @@ test('T14 main browser: a verified background child keeps its own browser actor 
   assert.equal(app.createdAgentOptions.length, 1)
 })
 
-test('T15 main recovery: closing the window cancels accepted background preparation without dispatching a prompt', async () => {
+test('T15 main recovery: quitting cancels accepted background preparation without dispatching a prompt', async () => {
   let entered = false,
     cancelled = false
   const app = await harness(undefined, {
@@ -17646,7 +17661,7 @@ test('T15 main recovery: closing the window cancels accepted background preparat
   const rejected = assert.rejects(restoring, /cancelled/)
   await waitUntil(() => entered)
   await app.invoke('projects:newRemoteSession', 'remote-project-1')
-  app.closeMainWindow()
+  app.beforeQuit()
   await rejected
   assert.equal(cancelled, true)
   assert.equal(app.sessions.length, 0)

@@ -418,9 +418,8 @@ function interactionFixture(): {
       },
       renderer: {
         getActiveWindow: () => (windowAvailable ? ({} as never) : null),
-        canRequest: () => windowAvailable,
-        waitForResponse: async (request) => {
-          calls.push(`wait:${request.cwd}`)
+        waitForResponse: async (request, window) => {
+          calls.push(`wait:${request.cwd}${window ? '' : ' (no window)'}`)
           return response as never
         }
       },
@@ -472,14 +471,17 @@ test('agent interaction rejects malformed questions and unavailable run bindings
   )
 })
 
-test('agent interaction rejects a request when no renderer window is usable', async () => {
+test('agent interaction waits for a window instead of failing when none is open', async () => {
   const fixture = interactionFixture()
   fixture.setWindowAvailable(false)
-  await assert.rejects(
-    createAgentInteractionRequest(fixture.deps)(validInteractionRequest),
-    /没有可用窗口/
-  )
-  assert.deepEqual(fixture.calls, [])
+  fixture.setResponse({ answers: [{ question: 'Which scope?', answer: 'Project' }] })
+  await createAgentInteractionRequest(fixture.deps)(validInteractionRequest)
+  assert.deepEqual(fixture.calls, [
+    'requested',
+    'wait:/workspace (no window)',
+    'answered',
+    'notified'
+  ])
 })
 
 test('agent interaction records answered and renderer-cancelled outcomes in order', async () => {
@@ -625,12 +627,8 @@ function planFixture(): {
       },
       renderer: {
         getActiveWindow: () => (windowAvailable ? ({} as never) : null),
-        canRequest: (_window): _window is NonNullable<typeof _window> => {
-          void _window
-          return windowAvailable
-        },
-        waitForResponse: async () => {
-          calls.push('wait')
+        waitForResponse: async (_input, window) => {
+          calls.push(window ? 'wait' : 'wait (no window)')
           return response as never
         }
       },
@@ -692,7 +690,7 @@ test('plan review rejects every malformed request before resolving a run', async
   assert.deepEqual(fixture.calls, [])
 })
 
-test('plan review rejects missing, cancelled, remote, and windowless conversations', async () => {
+test('plan review rejects missing, cancelled and remote conversations', async () => {
   const wrongOrigin = planFixture()
   await assert.rejects(
     createPlanReviewRequest(wrongOrigin.deps)(validPlanRequest, { originSessionId: 'runtime-2' }),
@@ -733,13 +731,14 @@ test('plan review rejects missing, cancelled, remote, and windowless conversatio
     }),
     /远程项目暂不支持/
   )
+})
 
+test('plan review waits for a window instead of failing when none is open', async () => {
   const windowless = planFixture()
   windowless.setWindowAvailable(false)
-  await assert.rejects(
-    createPlanReviewRequest(windowless.deps)(validPlanRequest, { originSessionId: 'runtime-1' }),
-    /没有可用窗口/
-  )
+  windowless.setResponse({ answers: [{ question: 'plan_review', answer: 'approve' }] })
+  await createPlanReviewRequest(windowless.deps)(validPlanRequest, { originSessionId: 'runtime-1' })
+  assert.ok(windowless.calls.includes('wait (no window)'))
 })
 
 test('plan review records approval after the submitted event and renderer round-trip', async () => {

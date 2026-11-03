@@ -346,7 +346,8 @@ export const IPC = {
   tool: {
     approvalCancelled: 'tool:approval-cancelled',
     approvalRequested: 'tool:approval-request',
-    approvalResponse: 'tool:approval-response'
+    approvalResponse: 'tool:approval-response',
+    showPending: 'tool:show-pending'
   },
   webLink: {
     preview: 'web-link:preview'

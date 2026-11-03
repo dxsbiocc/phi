@@ -16,7 +16,6 @@ export interface PlanReviewHostServiceDeps<StoredEvent> {
   findPhiSessionById: ReviewDeps<StoredEvent>['sessions']['findById']
   phiOnlySessionPath: ReviewDeps<StoredEvent>['sessions']['sessionPath']
   getActiveWindow(): BrowserWindow | null
-  canRequestAgentUserInteraction: ReviewDeps<StoredEvent>['renderer']['canRequest']
   waitForAgentUserInteraction: ReviewDeps<StoredEvent>['renderer']['waitForResponse']
   appendSessionEvent: ReviewDeps<StoredEvent>['timeline']['append']
   broadcastSessionTimelineEvent: ReviewDeps<StoredEvent>['timeline']['broadcast']
@@ -42,7 +41,6 @@ export function registerPlanReviewHostService<StoredEvent>(
     },
     renderer: {
       getActiveWindow: deps.getActiveWindow,
-      canRequest: deps.canRequestAgentUserInteraction,
       waitForResponse: deps.waitForAgentUserInteraction
     },
     timeline: {

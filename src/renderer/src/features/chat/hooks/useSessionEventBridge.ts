@@ -79,6 +79,8 @@ export function useSessionEventBridge(deps: Omit<SessionEventBridgeDeps, 'store'
       rendererApi.onAnalysisNotebookFileChanged(handleNotebookFileChangedEvent),
       rendererApi.onSessionChanged((session) => handleSessionChanged(bridge, session))
     ]
+    // Approvals and questions asked while no window was listening, e.g. after closing the window.
+    void rendererApi.showPendingRequests?.().catch(() => undefined)
     return () => {
       for (const unsubscribe of unsubscribes) unsubscribe()
       store.getState().cancelScheduledSessionRefresh()

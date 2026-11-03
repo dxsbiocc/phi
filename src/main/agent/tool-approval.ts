@@ -62,7 +62,9 @@ interface CreateApprovalExtensionOptions {
 
 interface PendingApproval {
   request: ToolApprovalRequest
+  /** Only the window showing the request may answer it; null while no window shows it. */
   responder: unknown
+  detachWindow: () => void
   settle: (decision: ApprovalDecision) => void
 }
 
@@ -212,9 +214,35 @@ export function cancelToolApprovals(scope?: {
   return cancelled
 }
 
+/**
+ * Shows a pending request in `window`. Losing that window does not cancel the request: the run
+ * keeps waiting, and the next window to load receives it again.
+ */
+function showApproval(pending: PendingApproval, window: ApprovalWindow): void {
+  pending.detachWindow()
+  const responder = window.webContents
+  pending.responder = responder
+  const release = (): void => {
+    pending.detachWindow()
+    if (pending.responder === responder) pending.responder = null
+  }
+  pending.detachWindow = addWindowUnavailableListener(window, release)
+  try {
+    responder.send(IPC.tool.approvalRequested, pending.request)
+  } catch {
+    release()
+  }
+}
+
+/** A newly loaded window takes over every approval still waiting for an answer. */
+export function showPendingApprovals(window: ApprovalWindow): void {
+  if (!isUsableWindow(window)) return
+  for (const pending of pendingApprovals.values()) showApproval(pending, window)
+}
+
 function waitForApproval(
   request: ToolApprovalRequest,
-  window: ApprovalWindow,
+  window: ApprovalWindow | null,
   signals: ReadonlyArray<AbortSignal | undefined>
 ): Promise<ApprovalDecision> {
   if (pendingApprovals.has(request.requestId)) {
@@ -234,8 +262,14 @@ function waitForApproval(
       resolve(decision)
     }
 
-    const pending: PendingApproval = { request, responder: window.webContents, settle }
+    const pending: PendingApproval = {
+      request,
+      responder: null,
+      detachWindow: () => undefined,
+      settle
+    }
     pendingApprovals.set(request.requestId, pending)
+    cleanupFns.push(() => pending.detachWindow())
 
     for (const signal of signals) {
       if (!signal) continue
@@ -248,15 +282,7 @@ function waitForApproval(
       cleanupFns.push(() => signal.removeEventListener('abort', onAbort))
     }
 
-    cleanupFns.push(
-      addWindowUnavailableListener(window, () => settle({ approved: false, cancelled: true }))
-    )
-
-    try {
-      window.webContents.send(IPC.tool.approvalRequested, request)
-    } catch {
-      settle({ approved: false, cancelled: true })
-    }
+    if (isUsableWindow(window)) showApproval(pending, window)
   })
 }
 
@@ -325,7 +351,6 @@ export async function requestToolApproval(
   const browser = safeBrowserApprovalMetadata(options.browser)
   if (!browser || options.signal?.aborted) return 'cancelled'
   const window = options.getWindow ? options.getWindow() : getActiveWindow()
-  if (!isUsableWindow(window)) return 'cancelled'
   const requestId = options.requestId ? options.requestId() : randomUUID()
   if (!requestId || requestId.length > 256 || pendingApprovals.has(requestId)) return 'cancelled'
   const request: ToolApprovalRequest = {
@@ -365,9 +390,7 @@ export async function requestRuntimeToolApproval(
     pendingApprovals.has(request.requestId)
   )
     return 'cancelled'
-  const window = getWindow()
-  if (!isUsableWindow(window)) return 'cancelled'
-  const decision = await waitForApproval({ ...request }, window, [signal])
+  const decision = await waitForApproval({ ...request }, getWindow(), [signal])
   return decision.cancelled ? 'cancelled' : decision.approved ? 'approved' : 'denied'
 }
 
@@ -438,9 +461,6 @@ export function createApprovalExtension(
         const requestId = randomUUID()
         const context = options.getContext?.(event) ?? null
         const window = options.getWindow ? options.getWindow() : getActiveWindow()
-        if (!isUsableWindow(window)) {
-          return { block: true, reason: '没有可用窗口来请求批准' }
-        }
         const request: ToolApprovalRequest = {
           requestId,
           ...(typeof event.toolCallId === 'string' ? { toolCallId: event.toolCallId } : {}),
