@@ -444,7 +444,7 @@ test('App recovery refresh never applies an old result after navigation to a pee
     'module',
     'useSessionStore',
     'sessionRequestRef',
-    'setIsSessionChanging',
+    'recoveryRefreshRef',
     'rendererApi',
     'applyCurrentSession',
     'resetAnalysisJupyterRuntimeForCwdChange',
@@ -458,7 +458,7 @@ test('App recovery refresh never applies an old result after navigation to a pee
     module,
     { getState: () => current },
     request,
-    () => undefined,
+    { current: 0 },
     { getCurrentSession: () => switching },
     () => calls.push('apply'),
     () => undefined,
@@ -498,13 +498,13 @@ test('connected remote chat stops loading before the background session list ref
   const refreshing = new Promise<void>((resolve) => {
     finishRefresh = resolve
   })
-  const loading: boolean[] = []
+  const sessionRequest = { current: 7 }
   const module = { exports: undefined as unknown }
   new Function(
     'module',
     'useSessionStore',
     'sessionRequestRef',
-    'setIsSessionChanging',
+    'recoveryRefreshRef',
     'rendererApi',
     'applyCurrentSession',
     'resetAnalysisJupyterRuntimeForCwdChange',
@@ -519,8 +519,8 @@ test('connected remote chat stops loading before the background session list ref
   )(
     module,
     { getState: () => current },
+    sessionRequest,
     { current: 0 },
-    (value: boolean) => loading.push(value),
     {
       getCurrentSession: async () => ({
         path: current.activeSessionPath,
@@ -557,5 +557,7 @@ test('connected remote chat stops loading before the background session list ref
   finishRefresh()
   await pending
   assert.equal(completedBeforeRefresh, true)
-  assert.deepEqual(loading, [true, false])
+  // The refresh never takes over the user's session request: a new conversation the user is
+  // starting at the same moment must not be discarded (its home text was lost before).
+  assert.equal(sessionRequest.current, 7)
 })

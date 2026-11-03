@@ -78,7 +78,11 @@ function useHomeSubmission(
       projectId: selectedProject?.id ?? null,
       mode
     })
-      .then(() => setDraft(''))
+      // A failed start keeps the text so the user can send it again.
+      .then(
+        () => setDraft(''),
+        () => undefined
+      )
       .finally(() => setStarting(false))
   }
   return { draft, setDraft, disabled, submit }

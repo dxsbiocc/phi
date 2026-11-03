@@ -384,6 +384,7 @@ function App(): React.JSX.Element {
   const isSendingRef = useRef(false)
   const currentSessionIsBusyRef = useRef(false)
   const sessionRequestRef = useRef(0)
+  const recoveryRefreshRef = useRef(0)
   const getModelSelectionSessionKey = useCallback(() => {
     if (!sessionTabWasOpened) return `new-session:${homeProjectSelection?.key ?? 0}`
     const state = useSessionStore.getState()
@@ -1912,7 +1913,12 @@ function App(): React.JSX.Element {
       ? (projectsRef.current.find((item) => item.id === request.projectId) ?? null)
       : null
     const created = project ? await onStartProjectChat(project) : await openNewChat()
-    if (!created) return
+    if (!created) {
+      // Another session change replaced this one; keep the text in the home box.
+      const error = new Error(appCopy.homePromptNotStarted)
+      showSnackbarError(error, appCopy.homePromptNotStarted)
+      throw error
+    }
     const current = await rendererApi.updateCurrentSessionMode(request.mode, {
       sessionPath: created.path,
       phiSessionId: created.phiSessionId ?? null,
@@ -2418,44 +2424,43 @@ function App(): React.JSX.Element {
         current.activeSessionGeneration !== target.sessionGeneration
       )
         return
-      const request = ++sessionRequestRef.current
-      setIsSessionChanging(true)
-      try {
-        // Recovery already keeps this conversation selected. Read its updated local payload
-        // instead of switching it a second time and replaying sidebar/browser navigation.
-        const result = await rendererApi.getCurrentSession()
-        const latest = useSessionStore.getState()
-        if (
-          !result ||
-          request !== sessionRequestRef.current ||
-          result.path !== target.sessionPath ||
-          result.phiSessionId !== target.sessionId ||
-          result.projectId !== target.projectId ||
-          result.sessionGeneration !== target.sessionGeneration ||
-          latest.activePhiSessionId !== target.sessionId ||
-          latest.activeProjectId !== target.projectId ||
-          latest.activeSessionPath !== target.sessionPath ||
-          latest.activeSessionGeneration !== target.sessionGeneration
-        )
-          return
-        applyCurrentSession(result, undefined, {
-          onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
-        })
-        // A resume keeps the live timeline in memory. The persisted events for the interrupted
-        // turn stop at run_failed, so replacing the list would silently drop the assistant text
-        // and tool cards the user just watched. Only load from disk when nothing is loaded yet.
-        if (useSessionStore.getState().agentEventState.messages.length === 0) {
-          replaceMessages(chatItemsFromSessionMessages(result.messages ?? []))
-        } else {
-          const persistedMessages = chatItemsFromSessionMessages(result.messages ?? [])
-          updateMessages((cached) => restoreRemoteRunStopNotices(cached, persistedMessages))
-        }
-        refreshContextUsage()
-        void refreshCurrentModelControls(request)
-        void refreshSessions()
-      } finally {
-        if (request === sessionRequestRef.current) setIsSessionChanging(false)
+      // A background refresh must not cancel a switch or a new conversation the user started,
+      // so it takes its own counter and gives way to any session request made meanwhile.
+      const request = sessionRequestRef.current
+      const refresh = ++recoveryRefreshRef.current
+      // Recovery already keeps this conversation selected. Read its updated local payload
+      // instead of switching it a second time and replaying sidebar/browser navigation.
+      const result = await rendererApi.getCurrentSession()
+      const latest = useSessionStore.getState()
+      if (
+        !result ||
+        request !== sessionRequestRef.current ||
+        refresh !== recoveryRefreshRef.current ||
+        result.path !== target.sessionPath ||
+        result.phiSessionId !== target.sessionId ||
+        result.projectId !== target.projectId ||
+        result.sessionGeneration !== target.sessionGeneration ||
+        latest.activePhiSessionId !== target.sessionId ||
+        latest.activeProjectId !== target.projectId ||
+        latest.activeSessionPath !== target.sessionPath ||
+        latest.activeSessionGeneration !== target.sessionGeneration
+      )
+        return
+      applyCurrentSession(result, undefined, {
+        onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
+      })
+      // A resume keeps the live timeline in memory. The persisted events for the interrupted
+      // turn stop at run_failed, so replacing the list would silently drop the assistant text
+      // and tool cards the user just watched. Only load from disk when nothing is loaded yet.
+      if (useSessionStore.getState().agentEventState.messages.length === 0) {
+        replaceMessages(chatItemsFromSessionMessages(result.messages ?? []))
+      } else {
+        const persistedMessages = chatItemsFromSessionMessages(result.messages ?? [])
+        updateMessages((cached) => restoreRemoteRunStopNotices(cached, persistedMessages))
       }
+      refreshContextUsage()
+      void refreshCurrentModelControls(request)
+      void refreshSessions()
     },
     [
       applyCurrentSession,
@@ -2465,7 +2470,6 @@ function App(): React.JSX.Element {
       rendererApi,
       replaceMessages,
       resetAnalysisJupyterRuntimeForCwdChange,
-      setIsSessionChanging,
       updateMessages
     ]
   )
