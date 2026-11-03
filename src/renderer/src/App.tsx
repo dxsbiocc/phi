@@ -3599,7 +3599,6 @@ function App(): React.JSX.Element {
             onRespondApproval={onRespondToolApproval}
             onRespondUserInteraction={onRespondAgentUserInteraction}
             onRemoveQueuedPrompt={removeQueuedPrompt}
-            onOpenApprovalSession={onOpenApprovalSession}
             onOpenLocalPath={onOpenLocalPath}
             onOpenWebUrl={onOpenWebUrl}
             onJumpToNotebookCell={onJumpToAnalysisNotebookCell}

@@ -111,8 +111,7 @@ test('approval actions translate while command and workspace evidence stay origi
       summary: 'echo "原始命令"',
       sessionPath: 'phi-session:one'
     },
-    onRespond: () => undefined,
-    onOpenSession: () => undefined
+    onRespond: () => undefined
   }
   setUiLanguage('en')
   const english = text(renderToStaticMarkup(createElement(ToolApprovalDialog, props)))

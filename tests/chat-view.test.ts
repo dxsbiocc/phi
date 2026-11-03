@@ -144,7 +144,6 @@ function renderChat(
         onRespondApproval: () => undefined,
         onRespondUserInteraction: () => undefined,
         onRemoveQueuedPrompt: () => undefined,
-        onOpenApprovalSession: () => undefined,
         compactComposerControls: options.compactComposerControls ?? false
       })
     )

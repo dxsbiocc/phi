@@ -31,14 +31,9 @@ const TOOL_LABELS: Record<string, string> = {
 type ToolApprovalDialogProps = {
   request: ToolApprovalRequest | null
   onRespond: (requestId: string, approved: boolean) => void
-  onOpenSession: (path: string) => void
 }
 
-function ToolApprovalDialog({
-  request,
-  onRespond,
-  onOpenSession
-}: ToolApprovalDialogProps): React.JSX.Element {
+function ToolApprovalDialog({ request, onRespond }: ToolApprovalDialogProps): React.JSX.Element {
   useUiLanguage()
   if (!request) {
     return <></>
@@ -113,18 +108,7 @@ function ToolApprovalDialog({
         >
           {request.summary}
         </Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Box sx={{ flex: 1 }}>
-            {request.sessionPath && (
-              <Button
-                size="small"
-                onClick={() => onOpenSession(request.sessionPath as string)}
-                sx={{ minHeight: 36 }}
-              >
-                {resourceApproval ? resourceCatalogCopy.openSession : chatCopy.openConversation}
-              </Button>
-            )}
-          </Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1 }}>
           <Button
             color="error"
             data-testid="gui-e2e-approval-deny"

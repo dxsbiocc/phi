@@ -135,7 +135,6 @@ type ViewProps = {
     cancelled?: boolean
   ) => void
   onRemoveQueuedPrompt?: (id: string) => void
-  onOpenApprovalSession: (path: string) => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onOpenWebUrl?: (url: string) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
@@ -198,7 +197,6 @@ function ChatView({
   onRespondApproval,
   onRespondUserInteraction,
   onRemoveQueuedPrompt,
-  onOpenApprovalSession,
   onOpenLocalPath,
   onOpenWebUrl,
   onJumpToNotebookCell,
@@ -515,11 +513,7 @@ function ChatView({
             onSubmit={handleChatSubmit}
             sx={{ maxWidth: 'var(--phi-chat-content-max-width)', mx: 'auto' }}
           >
-            <ToolApprovalDialog
-              request={pendingApproval}
-              onRespond={onRespondApproval}
-              onOpenSession={onOpenApprovalSession}
-            />
+            <ToolApprovalDialog request={pendingApproval} onRespond={onRespondApproval} />
             <UserInteractionPanel
               request={pendingUserInteraction}
               onRespond={onRespondUserInteraction}

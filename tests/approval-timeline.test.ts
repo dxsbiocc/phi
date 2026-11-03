@@ -147,8 +147,7 @@ test('decided approval timeline stays collapsed while the pending approval shows
   const approval = renderToStaticMarkup(
     createElement(ToolApprovalDialog, {
       request: { requestId: 'approval-1', toolName: 'bash', summary },
-      onRespond: () => undefined,
-      onOpenSession: () => undefined
+      onRespond: () => undefined
     })
   )
   assert.match(approval, />批准</)
@@ -156,7 +155,7 @@ test('decided approval timeline stays collapsed while the pending approval shows
   assert.match(approval, /a long command/)
 })
 
-test('pending approval retains the exact approve, refuse and open-session actions', () => {
+test('pending approval retains the approve and refuse actions', () => {
   const actions: Array<string | boolean> = []
   let tree: ReactNode
   renderToStaticMarkup(
@@ -168,8 +167,7 @@ test('pending approval retains the exact approve, refuse and open-session action
           summary,
           sessionPath: '/sessions/one'
         },
-        onRespond: (id, approved) => actions.push(id, approved),
-        onOpenSession: (path) => actions.push(path)
+        onRespond: (id, approved) => actions.push(id, approved)
       })
       return null
     })
@@ -186,10 +184,11 @@ test('pending approval retains the exact approve, refuse and open-session action
     }
     return undefined
   }
-  for (const label of ['批准', '拒绝', '打开会话']) {
+  for (const label of ['批准', '拒绝']) {
     const button = find(tree, label)
     assert.ok(button, label)
     button.props.onClick()
   }
-  assert.deepEqual(actions, ['approval-1', true, 'approval-1', false, '/sessions/one'])
+  assert.equal(find(tree, '打开会话'), undefined)
+  assert.deepEqual(actions, ['approval-1', true, 'approval-1', false])
 })
