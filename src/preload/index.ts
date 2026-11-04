@@ -864,6 +864,7 @@ type RendererAuthApi = PreloadApiBase & {
   logout: (providerId: string) => Promise<void>
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => Unsubscribe
+  onCredentialsChanged: (cb: () => void) => Unsubscribe
   getAppSettings: () => Promise<PhiAppSettings>
   getModelAvailability: () => Promise<ModelAvailabilitySnapshot>
   setModelEnabled: (change: ModelAvailabilityChange) => Promise<ModelAvailabilitySnapshot>
@@ -1499,6 +1500,13 @@ const api: RendererAuthApi = {
 
     return () => {
       ipcRenderer.removeListener(IPC.auth.interactionRequested, handler)
+    }
+  },
+  onCredentialsChanged: (cb: () => void): Unsubscribe => {
+    const handler = (): void => cb()
+    ipcRenderer.on(IPC.auth.credentialsChanged, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC.auth.credentialsChanged, handler)
     }
   },
   getAppSettings: (): Promise<PhiAppSettings> => ipcRenderer.invoke(IPC.settings.get),

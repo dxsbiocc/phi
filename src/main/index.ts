@@ -435,7 +435,8 @@ const teamSourceService = new TeamSourceService({
   getMemberIdentity: async () => {
     const { safeStorage } = await import('electron')
     return (await loadOrCreateMemberIdentity({ agentDir: AGENT_DIR, safeStorage })).identity
-  }
+  },
+  onCredentialsChanged: () => sendToAllWindows(IPC.auth.credentialsChanged)
 })
 const teamSourceScheduler = createTeamSourceScheduler({ service: teamSourceService })
 const teamPackAdminService = new TeamPackAdminService({ agentDir: AGENT_DIR, safeStorage })

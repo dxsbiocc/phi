@@ -847,6 +847,7 @@ declare global {
               }
         ) => void
       ) => () => void
+      onCredentialsChanged: (cb: () => void) => () => void
       getAppSettings: () => Promise<PhiAppSettings>
       getModelAvailability: () => Promise<ModelAvailabilitySnapshot>
       setModelEnabled: (change: ModelAvailabilityChange) => Promise<ModelAvailabilitySnapshot>

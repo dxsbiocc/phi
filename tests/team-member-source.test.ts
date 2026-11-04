@@ -419,6 +419,49 @@ test('removes source state and only its unchanged team credential without uninst
   assert.equal(await service.removeSource(added.id), false)
 })
 
+test('notifies only when a pull or removal changes team-owned model credentials', async () => {
+  const root = sandbox('credential-notify')
+  const agentDir = join(root, 'agent')
+  const registryDir = join(root, 'registry')
+  const storeDir = join(root, 'store')
+  const team = createTeamKeys({ teamId: TEAM_ID, name: 'Alpha Team' })
+  const member = await createMemberKeys()
+  writeSkillRegistry(registryDir, '1.0.0')
+  const grants = [
+    {
+      recipient: member.recipient,
+      models: [{ providerId: 'openai', label: 'Team OpenAI', apiKey: 'team-openai' }]
+    }
+  ]
+  await publishTeamRelease({ storeDir, team, members: [member.recipient], grants, registryDir })
+  let notifications = 0
+  const service = new TeamSourceService({
+    agentDir,
+    getMemberIdentity: async () => member.identity,
+    authStorage: new FakeAuthStorage(),
+    createId: () => 'source-alpha',
+    onCredentialsChanged: () => {
+      notifications += 1
+      throw new Error('renderer gone')
+    }
+  })
+  const added = await service.addSource({
+    teamKeyId: team.keyId,
+    location: { kind: 'directory', path: storeDir }
+  })
+
+  await service.pullSource(added.id)
+  assert.equal(notifications, 1)
+
+  writeSkillRegistry(registryDir, '2.0.0')
+  await publishTeamRelease({ storeDir, team, members: [member.recipient], grants, registryDir })
+  await service.pullSource(added.id)
+  assert.equal(notifications, 1)
+
+  assert.equal(await service.removeSource(added.id), true)
+  assert.equal(notifications, 2)
+})
+
 test('does not rotate or delete a user key added beside an owned team provider', async () => {
   const root = sandbox('late-conflict')
   const agentDir = join(root, 'agent')

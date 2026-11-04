@@ -24,6 +24,7 @@ import {
 } from './team-source-storage'
 import type {
   AddTeamSourceInput,
+  TeamCredentialOwner,
   TeamSource,
   TeamSourceAuthStorage,
   TeamSourceServiceOptions,
@@ -151,13 +152,15 @@ export class TeamSourceService {
 
   async #performRemove(id: string): Promise<boolean> {
     await this.#inFlight.get(id)?.catch(() => undefined)
-    return this.#mutateState(async (state) => {
+    let credentialsChanged = false
+    const removed = await this.#mutateState(async (state) => {
       const source = state.sources.find((entry) => entry.id === id)
       if (!source) return { state, result: false, write: false }
       const credentialOwners = await removeTeamCredentialOwners(state, source.teamId, () =>
         this.#authStorage()
       )
       removeTeamState(this.#options.agentDir, source.teamId)
+      credentialsChanged = !sameCredentialOwners(state.credentialOwners, credentialOwners)
       return {
         state: {
           ...state,
@@ -167,6 +170,8 @@ export class TeamSourceService {
         result: true
       }
     })
+    if (credentialsChanged) this.#notifyCredentialsChanged()
+    return removed
   }
 
   close(): Promise<void> {
@@ -210,8 +215,12 @@ export class TeamSourceService {
     }
   }
 
-  #recordSuccessfulPull(source: TeamSource, result: PullTeamReleaseResult): Promise<TeamSource> {
-    return this.#mutateState(async (state) => {
+  async #recordSuccessfulPull(
+    source: TeamSource,
+    result: PullTeamReleaseResult
+  ): Promise<TeamSource> {
+    let credentialsChanged = false
+    const recorded = await this.#mutateState(async (state) => {
       const current = state.sources.find((entry) => entry.id === source.id)
       if (!current) throw teamPackError('INVALID_FORMAT', '团队来源已被删除')
       const reconciled = await reconcileTeamModels({
@@ -220,6 +229,7 @@ export class TeamSourceService {
         models: result.models,
         getAuthStorage: () => this.#authStorage()
       })
+      credentialsChanged = !sameCredentialOwners(state.credentialOwners, reconciled.owners)
       const changed = successfulSource(current, result, reconciled, nowIso(this.#options.now))
       return {
         state: {
@@ -230,6 +240,16 @@ export class TeamSourceService {
         result: changed
       }
     })
+    if (credentialsChanged) this.#notifyCredentialsChanged()
+    return recorded
+  }
+
+  #notifyCredentialsChanged(): void {
+    try {
+      this.#options.onCredentialsChanged?.()
+    } catch {
+      // A failed UI notification must not turn a recorded pull or removal into a failure.
+    }
   }
 
   #recordFailedPull(id: string, error: unknown): Promise<TeamSource | null> {
@@ -324,6 +344,16 @@ function successfulSource(
       submissionRecipient: result.submissionRecipient ?? null
     }
   }
+}
+
+function sameCredentialOwners(
+  left: readonly TeamCredentialOwner[],
+  right: readonly TeamCredentialOwner[]
+): boolean {
+  const key = (owner: TeamCredentialOwner): string =>
+    `${owner.teamId}\u0000${owner.providerId}\u0000${owner.credentialId}\u0000${owner.keySha256}`
+  const before = new Set(left.map(key))
+  return left.length === right.length && right.every((owner) => before.has(key(owner)))
 }
 
 function emptyStatus(): TeamSourceStatus {

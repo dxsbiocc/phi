@@ -75,6 +75,8 @@ export interface TeamSourceServiceOptions {
   now?: Date | (() => Date)
   httpStoreOptions?: HttpTeamPackStoreOptions
   pullRelease?: typeof pullTeamRelease
+  /** Called after a pull or removal adds, rotates, or deletes team-owned model credentials. */
+  onCredentialsChanged?: () => void
 }
 
 export interface ReconciledTeamModels {

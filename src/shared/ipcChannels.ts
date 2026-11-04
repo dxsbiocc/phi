@@ -54,6 +54,7 @@ export const IPC = {
   auth: {
     interactionRequested: 'auth:interaction',
     interactionResponse: 'auth:interaction-response',
+    credentialsChanged: 'auth:credentials-changed',
     loginApiKey: 'auth:loginApiKey',
     loginOAuth: 'auth:loginOAuth',
     logout: 'auth:logout',
