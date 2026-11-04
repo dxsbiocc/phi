@@ -50,7 +50,8 @@ test('tampered metadata, payload, and team key fail without changing local state
       code: 'BAD_SIGNATURE',
       mutate(storeDir) {
         const latest = readJson(join(storeDir, 'latest.json'))
-        latest.createdAt = '2026-10-25T00:00:00.000Z'
+        const pointer = latest.pointer as Record<string, unknown>
+        pointer.createdAt = '2026-10-25T00:00:00.000Z'
         writeFileSync(join(storeDir, 'latest.json'), jsonBytes(latest))
       }
     },
@@ -109,7 +110,6 @@ test('a genuinely signed old latest pointer is rejected as rollback', async () =
   const fixture = await publishedFixture('rollback')
   const store = new DirectoryTeamPackStore(fixture.storeDir)
   const oldLatest = readFileSync(join(fixture.storeDir, 'latest.json'))
-  const oldSignature = readFileSync(join(fixture.storeDir, 'latest.sig.json'))
   const stateDir = join(fixture.root, 'state')
   await pullTeamRelease({
     store,
@@ -134,7 +134,6 @@ test('a genuinely signed old latest pointer is rejected as rollback', async () =
   })
   const stateBefore = readFileSync(join(stateDir, TEAM_ID, 'state.json'))
   writeFileSync(join(fixture.storeDir, 'latest.json'), oldLatest)
-  writeFileSync(join(fixture.storeDir, 'latest.sig.json'), oldSignature)
 
   await expectCode(
     pullTeamRelease({
@@ -180,9 +179,6 @@ test('moving ciphertext across versions or teams is rejected', async (t) => {
       force: true
     })
     cpSync(join(second.storeDir, 'latest.json'), join(first.storeDir, 'latest.json'), {
-      force: true
-    })
-    cpSync(join(second.storeDir, 'latest.sig.json'), join(first.storeDir, 'latest.sig.json'), {
       force: true
     })
     await expectCode(
@@ -285,10 +281,9 @@ test('local state binds a team id to one trusted public key and manifest', async
   )
 
   const latest = readJson(join(first.storeDir, 'latest.json'))
-  latest.manifestSha256 = '0'.repeat(64)
-  const bytes = jsonBytes(latest)
-  writeFileSync(join(first.storeDir, 'latest.json'), bytes)
-  writeFileSync(join(first.storeDir, 'latest.sig.json'), signTeamFile(bytes, first.team.privateKey))
+  const pointer = latest.pointer as Record<string, unknown>
+  pointer.manifestSha256 = '0'.repeat(64)
+  writeSignedLatest(join(first.storeDir, 'latest.json'), pointer, first.team)
   await expectCode(
     pullTeamRelease({
       store: new DirectoryTeamPackStore(first.storeDir),
@@ -403,10 +398,17 @@ function rewriteSignedPayload(
   writeFileSync(join(releaseDir, 'manifest.sig.json'), signTeamFile(manifestBytes, team.privateKey))
 
   const latest = readJson(join(storeDir, 'latest.json'))
-  latest.manifestSha256 = sha256(manifestBytes)
-  const latestBytes = jsonBytes(latest)
-  writeFileSync(join(storeDir, 'latest.sig.json'), signTeamFile(latestBytes, team.privateKey))
-  writeFileSync(join(storeDir, 'latest.json'), latestBytes)
+  const pointer = latest.pointer as Record<string, unknown>
+  pointer.manifestSha256 = sha256(manifestBytes)
+  writeSignedLatest(join(storeDir, 'latest.json'), pointer, team)
+}
+
+function writeSignedLatest(path: string, pointer: Record<string, unknown>, team: TeamKeys): void {
+  const pointerBytes = jsonBytes(pointer)
+  const signature = JSON.parse(
+    signTeamFile(pointerBytes, team.privateKey).toString('utf8')
+  ) as unknown
+  writeFileSync(path, jsonBytes({ pointer, signature }))
 }
 
 function emptyRegistry(): Record<string, unknown> {

@@ -2,16 +2,41 @@ export { TeamPackError, isTeamPackError, type TeamPackErrorCode } from './errors
 export {
   createMemberKeys,
   createTeamKeys,
-  readMemberKeys,
-  readTeamKeys,
-  writeMemberKeys,
-  writeTeamKeys,
   type CreateTeamKeysOptions,
   type MemberKeys,
   type TeamKeys
 } from './keys'
 export {
+  exportMemberKeyBackup,
+  exportTeamKeyBackup,
+  importMemberKeyBackup,
+  importTeamKeyBackup,
+  loadMemberKeyMaterial,
+  loadTeamKeyMaterial,
+  readMemberPublicKeyMaterial,
+  readTeamPublicKeyMaterial,
+  storeMemberKeyMaterial,
+  storeTeamKeyMaterial,
+  MEMBER_PRIVATE_KEY_FILE,
+  MEMBER_PUBLIC_KEY_FILE,
+  TEAM_PRIVATE_KEY_FILE,
+  TEAM_PUBLIC_KEY_FILE,
+  type ExportMemberKeyBackupOptions,
+  type ExportTeamKeyBackupOptions,
+  type ImportMemberKeyBackupOptions,
+  type ImportTeamKeyBackupOptions,
+  type LoadMemberKeyMaterialOptions,
+  type LoadTeamKeyMaterialOptions,
+  type MemberPublicKeyMaterial,
+  type SafeStorageLike,
+  type StoreMemberKeyMaterialOptions,
+  type StoreTeamKeyMaterialOptions,
+  type TeamPublicKeyMaterial
+} from './key-store'
+export {
   publishTeamRelease,
+  type MemberModelGrant,
+  type ModelKeyGrant,
   type PublishedTeamRelease,
   type PublishTeamReleaseOptions
 } from './publish'
@@ -24,3 +49,15 @@ export {
   type HttpTeamPackStoreOptions,
   type TeamPackStore
 } from './store'
+export {
+  addRosterMember,
+  listCurrentRosterMembers,
+  readTeamRoster,
+  recordRosterRelease,
+  removeRosterMember,
+  TEAM_ROSTER_FILE_NAME,
+  type AddRosterMemberInput,
+  type RosterMember,
+  type RosterRelease,
+  type TeamRoster
+} from './roster'

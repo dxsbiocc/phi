@@ -5,6 +5,8 @@ export type TeamPackErrorCode =
   | 'ROLLBACK'
   | 'HASH_MISMATCH'
   | 'INNER_MISMATCH'
+  | 'BAD_PASSPHRASE'
+  | 'RELEASE_WITHDRAWN'
   | 'STORE_UNAVAILABLE'
   | 'INVALID_FORMAT'
 

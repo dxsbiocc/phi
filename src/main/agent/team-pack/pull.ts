@@ -14,14 +14,17 @@ import {
 } from './files'
 import {
   parseInnerFile,
-  parseLatestFile,
+  parseGrantPlaintext,
   parseReleaseManifest,
+  parseSignedLatestFile,
   parseTeamFile,
+  releaseGrantPath,
   releaseManifestPath,
   releasePayloadPath,
   releaseSignaturePath,
   sha256,
   type LatestFile,
+  type ModelKeyGrant,
   type ReleaseManifest,
   type TeamFile
 } from './format'
@@ -33,6 +36,8 @@ import { assertX25519Identity } from './validation'
 const MAX_METADATA_BYTES = 64 * 1024
 const MAX_PAYLOAD_BYTES = 128 * 1024 * 1024
 const MAX_EXPANDED_BYTES = 256 * 1024 * 1024
+const MAX_GRANT_FILES = 256
+const MAX_GRANT_BYTES = 256 * 1024
 
 export interface PullTeamReleaseOptions {
   store: TeamPackStore
@@ -48,13 +53,16 @@ export type PullTeamReleaseResult =
       teamId: string
       release: number
       registryDir: string
-      revoked: number[]
+      withdrawnReleases: number[]
+      models: ModelKeyGrant[]
     }
   | {
       status: 'up-to-date'
       teamId: string
       release: number
       registryDir: string
+      withdrawnReleases: number[]
+      models: ModelKeyGrant[]
     }
 
 export async function pullTeamRelease(
@@ -82,23 +90,30 @@ async function pullTeamReleaseInternal(
   if (highest !== null && latest.release < highest) {
     throw teamPackError('ROLLBACK', '存储中的团队包版本低于本地已见最高版本')
   }
+  if (highest === latest.release && state?.manifestSha256 !== latest.manifestSha256) {
+    throw teamPackError('ROLLBACK', '同一团队包版本出现了不同的 manifest')
+  }
+  const manifest = await loadManifest(options.store, team, latest, options.teamKeyId)
+  if (manifest.withdrawnReleases.includes(latest.release)) {
+    throw teamPackError('RELEASE_WITHDRAWN', '当前团队包版本已被发布者撤回')
+  }
+  await assertValidIdentity(options.identity)
+  const models = await loadGrants(options.store, manifest, options.identity)
   const registryDir = join(
     teamStateRoot(options.stateDir, team.teamId),
     String(latest.release),
     'registry'
   )
   if (highest === latest.release) {
-    if (state?.manifestSha256 !== latest.manifestSha256) {
-      throw teamPackError('ROLLBACK', '同一团队包版本出现了不同的 manifest')
-    }
     return {
       status: 'up-to-date',
       teamId: team.teamId,
       release: latest.release,
-      registryDir
+      registryDir,
+      withdrawnReleases: manifest.withdrawnReleases,
+      models
     }
   }
-  const manifest = await loadManifest(options.store, team, latest, options.teamKeyId)
   const entries = await loadArchive(options.store, manifest, options.identity)
   commitRelease({
     stateDir: options.stateDir,
@@ -113,7 +128,8 @@ async function pullTeamReleaseInternal(
     teamId: team.teamId,
     release: latest.release,
     registryDir,
-    revoked: manifest.revoked ?? []
+    withdrawnReleases: manifest.withdrawnReleases,
+    models
   }
 }
 
@@ -186,16 +202,52 @@ async function loadLatest(
   team: TeamFile,
   keyId: string
 ): Promise<LatestFile> {
-  const [data, signature] = await Promise.all([
-    readRequired(store, 'latest.json', MAX_METADATA_BYTES),
-    readRequired(store, 'latest.sig.json', MAX_METADATA_BYTES)
-  ])
-  verifyTeamFile(data, signature, team.publicKey, keyId)
-  const latest = parseLatestFile(data)
+  const data = await readRequired(store, 'latest.json', MAX_METADATA_BYTES)
+  const signedLatest = parseSignedLatestFile(data)
+  verifyTeamFile(signedLatest.pointerBytes, signedLatest.signatureBytes, team.publicKey, keyId)
+  const latest = signedLatest.pointer
   if (latest.teamId !== team.teamId) {
     throw teamPackError('INVALID_FORMAT', 'latest.json 的团队标识不匹配')
   }
   return latest
+}
+
+async function loadGrants(
+  store: TeamPackStore,
+  manifest: ReleaseManifest,
+  identity: string
+): Promise<ModelKeyGrant[]> {
+  if (manifest.grants.length > MAX_GRANT_FILES) {
+    throw teamPackError('INVALID_FORMAT', '模型子 key grant 数量超过限制')
+  }
+  const encrypted = await Promise.all(
+    manifest.grants.map(async (file) => {
+      const data = await readRequired(
+        store,
+        releaseGrantPath(manifest.release, file.name),
+        Math.min(file.bytes, MAX_GRANT_BYTES)
+      )
+      if (data.length !== file.bytes || sha256(data) !== file.sha256) {
+        throw teamPackError('HASH_MISMATCH', `模型子 key grant ${file.name} 大小或哈希不匹配`)
+      }
+      return data
+    })
+  )
+
+  let matched: ModelKeyGrant[] | undefined
+  for (const data of encrypted) {
+    const plaintext = await tryDecryptGrant(data, identity)
+    if (!plaintext) continue
+    const grant = parseGrantPlaintext(plaintext)
+    if (grant.teamId !== manifest.teamId || grant.release !== manifest.release) {
+      throw teamPackError('INNER_MISMATCH', '解密后的模型子 key grant 与团队或版本不匹配')
+    }
+    if (matched) {
+      throw teamPackError('INVALID_FORMAT', '成员匹配到多个模型子 key grant')
+    }
+    matched = grant.models
+  }
+  return matched ?? []
 }
 
 async function loadManifest(
@@ -248,18 +300,32 @@ async function readRequired(store: TeamPackStore, path: string, maxBytes: number
 }
 
 async function decryptPayload(payload: Buffer, identity: string): Promise<Buffer> {
-  assertX25519Identity(identity)
-  try {
-    await identityToRecipient(identity)
-  } catch {
-    throw teamPackError('INVALID_FORMAT', '成员 age X25519 私钥格式无效')
-  }
+  await assertValidIdentity(identity)
   try {
     const decrypter = new Decrypter()
     decrypter.addIdentity(identity)
     return Buffer.from(await decrypter.decrypt(payload))
   } catch {
     throw teamPackError('NOT_A_MEMBER', '无法解密：你不在这个版本的接收方中')
+  }
+}
+
+async function assertValidIdentity(identity: string): Promise<void> {
+  assertX25519Identity(identity)
+  try {
+    await identityToRecipient(identity)
+  } catch {
+    throw teamPackError('INVALID_FORMAT', '成员 age X25519 私钥格式无效')
+  }
+}
+
+async function tryDecryptGrant(payload: Buffer, identity: string): Promise<Buffer | null> {
+  try {
+    const decrypter = new Decrypter()
+    decrypter.addIdentity(identity)
+    return Buffer.from(await decrypter.decrypt(payload))
+  } catch {
+    return null
   }
 }
 

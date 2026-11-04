@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -59,6 +67,12 @@ test('three members install v1; a removed member cannot decrypt v2 and keeps v1'
     registryDir,
     createdAt: '2026-10-24T01:00:00.000Z'
   })
+  const latest = JSON.parse(readFileSync(join(storeDir, 'latest.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >
+  assert.deepEqual(Object.keys(latest).sort(), ['pointer', 'signature'])
+  assert.equal(existsSync(join(storeDir, 'latest.sig.json')), false)
   const store = new DirectoryTeamPackStore(storeDir)
   for (const [index, member] of members.entries()) {
     const pull = await pullTeamRelease({
@@ -92,7 +106,7 @@ test('three members install v1; a removed member cannot decrypt v2 and keeps v1'
     members: members.slice(0, 2).map((member) => member.recipient),
     registryDir,
     createdAt: '2026-10-24T02:00:00.000Z',
-    revoked: [1]
+    withdrawReleases: [1]
   })
   for (let index = 0; index < 2; index++) {
     const pull = await pullTeamRelease({
@@ -102,7 +116,8 @@ test('three members install v1; a removed member cannot decrypt v2 and keeps v1'
       stateDir: join(root, `state-${index}`)
     })
     assert.equal(pull.release, 2)
-    assert.deepEqual(pull.status === 'updated' ? pull.revoked : [], [1])
+    assert.deepEqual(pull.withdrawnReleases, [1])
+    assert.deepEqual(pull.models, [])
   }
   const removedError = await expectCode(
     pullTeamRelease({
@@ -165,6 +180,39 @@ test('publication requires recipients and never overwrites an existing release d
     'INVALID_FORMAT'
   )
   assert.equal(readFileSync(join(storeDir, 'latest.json'), 'utf8').includes('"release": 1'), true)
+})
+
+test('the single-file latest signature covers canonical pointer bytes', async () => {
+  const root = sandbox('canonical-latest')
+  const registryDir = join(root, 'registry')
+  const storeDir = join(root, 'store')
+  const team = createTeamKeys({ teamId: TEAM_ID, name: 'Alpha Team' })
+  const member = await createMemberKeys()
+  writeSkillRegistry(registryDir, '1.0.0')
+  await publishTeamRelease({ storeDir, team, members: [member.recipient], registryDir })
+
+  const path = join(storeDir, 'latest.json')
+  const envelope = JSON.parse(readFileSync(path, 'utf8')) as {
+    pointer: Record<string, unknown>
+    signature: unknown
+  }
+  const pointer = envelope.pointer
+  envelope.pointer = {
+    createdAt: pointer.createdAt,
+    manifestSha256: pointer.manifestSha256,
+    release: pointer.release,
+    teamId: pointer.teamId,
+    version: pointer.version
+  }
+  writeFileSync(path, `${JSON.stringify(envelope, null, 2)}\n`)
+
+  const result = await pullTeamRelease({
+    store: new DirectoryTeamPackStore(storeDir),
+    teamKeyId: team.keyId,
+    identity: member.identity,
+    stateDir: join(root, 'state')
+  })
+  assert.equal(result.release, 1)
 })
 
 test('members pull and install from static HTTP after publisher keys are deleted', async (t) => {
