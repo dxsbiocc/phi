@@ -54,6 +54,7 @@ export const IPC = {
   auth: {
     interactionRequested: 'auth:interaction',
     interactionResponse: 'auth:interaction-response',
+    credentialsChanged: 'auth:credentials-changed',
     loginApiKey: 'auth:loginApiKey',
     loginOAuth: 'auth:loginOAuth',
     logout: 'auth:logout',
@@ -326,6 +327,33 @@ export const IPC = {
   },
   system: {
     ping: 'ping'
+  },
+  teamPack: {
+    acceptAdminSubmission: 'teamPack:acceptAdminSubmission',
+    addAdminMember: 'teamPack:addAdminMember',
+    addSource: 'teamPack:addSource',
+    checkSource: 'teamPack:checkSource',
+    createAdminTeam: 'teamPack:createAdminTeam',
+    deleteAdminSubmission: 'teamPack:deleteAdminSubmission',
+    exportAdminBackup: 'teamPack:exportAdminBackup',
+    exportMemberBackup: 'teamPack:exportMemberBackup',
+    getMemberSnapshot: 'teamPack:getMemberSnapshot',
+    importAdminBackup: 'teamPack:importAdminBackup',
+    importAdminSubmission: 'teamPack:importAdminSubmission',
+    importMemberBackup: 'teamPack:importMemberBackup',
+    getAdminTeam: 'teamPack:getAdminTeam',
+    listAdminTeams: 'teamPack:listAdminTeams',
+    listAdminSubmissions: 'teamPack:listAdminSubmissions',
+    listSubmissionCandidates: 'teamPack:listSubmissionCandidates',
+    listSources: 'teamPack:listSources',
+    pickSourceDirectory: 'teamPack:pickSourceDirectory',
+    previewSource: 'teamPack:previewSource',
+    publishAdminRelease: 'teamPack:publishAdminRelease',
+    removeAdminMember: 'teamPack:removeAdminMember',
+    removeSource: 'teamPack:removeSource',
+    setAdminMemberModels: 'teamPack:setAdminMemberModels',
+    submitPackages: 'teamPack:submitPackages',
+    withdrawAdminRelease: 'teamPack:withdrawAdminRelease'
   },
   terminal: {
     ack: 'terminal:ack',

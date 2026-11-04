@@ -68,6 +68,16 @@ export function useProviderAuth(
     return () => window.clearTimeout(timer)
   }, [refreshAuthStatuses])
 
+  useEffect(
+    () =>
+      window.api.onCredentialsChanged(() => {
+        void refreshAuthStatuses().catch(() => {
+          // Keep the last known provider state; the next refresh will retry.
+        })
+      }),
+    [refreshAuthStatuses]
+  )
+
   const openProviderDialog = useCallback((providerId: string | null = null): void => {
     setProviderDialogProviderId(providerId)
     setIsProviderDialogOpen(true)

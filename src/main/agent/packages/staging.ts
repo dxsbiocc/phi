@@ -26,6 +26,7 @@ import {
   errorMessage,
   isRecord,
   localArchivePath,
+  packageKey,
   sha256
 } from './installer-utils'
 import { readPackageManifest, validatePackage } from './manifest'
@@ -118,12 +119,31 @@ export function stagePackage(
       sha256: entry.sha256,
       installedAt: (now?.() ?? new Date()).toISOString(),
       installedBy: entry.installedBy,
-      trust: registry.trust
+      trust: registry.trust,
+      ...teamSourceMetadata(registry, entry)
     }
     return { entry, dir, source }
   } catch (error) {
     rmSync(dir, { recursive: true, force: true })
     throw error
+  }
+}
+
+function teamSourceMetadata(
+  registry: LocalRegistry,
+  entry: RegistryPackageEntry
+): Pick<PackageSourceMetadata, 'teamSource'> | Record<string, never> {
+  if (registry.source?.kind !== 'team') return {}
+  const resource = registry.source.resources[packageKey(entry)]
+  return {
+    teamSource: {
+      teamId: registry.source.teamId,
+      teamName: registry.source.teamName,
+      teamKeyId: registry.source.teamKeyId,
+      release: registry.source.release,
+      sharing: resource?.sharing ?? 'team-only',
+      ...(resource?.originalSource ? { originalSource: resource.originalSource } : {})
+    }
   }
 }
 

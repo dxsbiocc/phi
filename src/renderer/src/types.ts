@@ -549,6 +549,7 @@ export interface RendererApi
   logout: (providerId: string) => Promise<void>
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => () => void
+  onCredentialsChanged: (cb: () => void) => () => void
   getAppSettings: () => Promise<PhiAppSettings>
   getModelAvailability: () => Promise<ModelAvailabilitySnapshot>
   setModelEnabled: (change: ModelAvailabilityChange) => Promise<ModelAvailabilitySnapshot>

@@ -1912,7 +1912,12 @@ async function harness(
           toDataURL: () => 'data:image/png;base64,aWNvbg=='
         })
       },
-      nativeTheme: { shouldUseDarkColors: false }
+      nativeTheme: { shouldUseDarkColors: false },
+      safeStorage: {
+        isEncryptionAvailable: (): boolean => true,
+        encryptString: (value: string): Buffer => Buffer.from(value),
+        decryptString: (value: Buffer): string => value.toString('utf8')
+      }
     },
     './browser/browser-ipc': browserIpc,
     './terminal/terminal-ipc': {
@@ -2093,6 +2098,75 @@ async function harness(
                   }
           }
         }
+      })
+    },
+    './agent/runtime-paths': {
+      getPhiAgentDir: (): string => '/isolated'
+    },
+    './agent/team-pack/member-service': {
+      exportMemberIdentityBackup: async (): Promise<void> => undefined,
+      getMemberPublicKey: async (): Promise<string> => 'phi-member-v1.test-only',
+      importMemberIdentityBackup: async (): Promise<string> => 'age1test-only',
+      loadOrCreateMemberIdentity: async () => ({
+        version: 1,
+        identity: 'AGE-SECRET-KEY-TEST-ONLY',
+        recipient: 'age1test-only'
+      })
+    },
+    './agent/team-pack/member-submissions': {
+      TeamMemberSubmissionService: class {
+        listCandidates(): unknown[] {
+          return []
+        }
+
+        async submit(): Promise<null> {
+          return null
+        }
+      }
+    },
+    './agent/team-pack/keys': {
+      parseMemberPublicKey: (value: string) => ({ recipient: value, combined: value })
+    },
+    './agent/team-pack/admin-service': {
+      TeamPackAdminService: class {
+        listTeams(): unknown[] {
+          return []
+        }
+      }
+    },
+    './agent/team-pack/errors': {
+      isTeamPackError: (): boolean => false,
+      teamPackError: (code: string, message: string): Error & { code: string } =>
+        Object.assign(new Error(message), { code })
+    },
+    './agent/team-pack/format': {
+      validateModelKeyGrants: (value: unknown): unknown => value
+    },
+    './agent/team-pack/validation': {
+      assertRelease: (): void => undefined,
+      assertTeamId: (): void => undefined,
+      assertTeamName: (): void => undefined,
+      assertX25519Recipient: (): void => undefined
+    },
+    './agent/team-pack/team-source': {
+      TeamSourceService: class {
+        listSources(): unknown[] {
+          return []
+        }
+
+        async pullAllSources(): Promise<unknown[]> {
+          return []
+        }
+
+        close(): void {
+          return undefined
+        }
+      }
+    },
+    './agent/team-pack/team-source-scheduler': {
+      createTeamSourceScheduler: () => ({
+        start: async (): Promise<void> => undefined,
+        stop: (): void => undefined
       })
     },
     './agent/persona-manager': {
@@ -4695,7 +4769,8 @@ async function harness(
     './agent/wrappers/remote-result-read-control',
     './local-file-access-control',
     './local-file-icons',
-    './local-file-previews'
+    './local-file-previews',
+    './team-pack-desktop'
   ])
   const mockProcess = {
     platform: process.platform,
@@ -7392,6 +7467,7 @@ test('main startup callback delegates its named phases in order', () => {
   registerSessionIpc()
   registerProjectAndAnalysisIpc()
   registerPluginAndPackageIpc()
+  startTeamPackDesktop({ requireMainWindowRenderer, getActiveWindow, sendToAllWindows })
   registerSkillAgentAndMcpIpc(wrappersIpcOptions)
   registerWrapperJobsAndPersonaIpc(wrappersIpcOptions)
   openInitialWindow()
@@ -7603,6 +7679,31 @@ const expectedStartupRegistrationOrder = [
   'packages:listUpdates',
   'packages:applyUpdate',
   'packages:applyAllUpdates',
+  'teamPack:getMemberSnapshot',
+  'teamPack:exportMemberBackup',
+  'teamPack:importMemberBackup',
+  'teamPack:listSubmissionCandidates',
+  'teamPack:submitPackages',
+  'teamPack:listAdminTeams',
+  'teamPack:getAdminTeam',
+  'teamPack:createAdminTeam',
+  'teamPack:addAdminMember',
+  'teamPack:removeAdminMember',
+  'teamPack:setAdminMemberModels',
+  'teamPack:exportAdminBackup',
+  'teamPack:importAdminBackup',
+  'teamPack:publishAdminRelease',
+  'teamPack:withdrawAdminRelease',
+  'teamPack:listAdminSubmissions',
+  'teamPack:importAdminSubmission',
+  'teamPack:acceptAdminSubmission',
+  'teamPack:deleteAdminSubmission',
+  'teamPack:listSources',
+  'teamPack:pickSourceDirectory',
+  'teamPack:previewSource',
+  'teamPack:addSource',
+  'teamPack:checkSource',
+  'teamPack:removeSource',
   'enablement:get',
   'enablement:set',
   'skills:list',
@@ -8120,7 +8221,8 @@ test('main agent registry loading scopes MCP to its API and merges all types wit
   assert(
     all.registries.some(
       (registry) =>
-        registry.source?.repo === 'user/connectors' &&
+        registry.source?.kind === 'github' &&
+        registry.source.repo === 'user/connectors' &&
         registry.packages.some((entry) => entry.id === 'custom-connector')
     )
   )

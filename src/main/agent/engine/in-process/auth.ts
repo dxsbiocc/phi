@@ -1,4 +1,5 @@
 import type { AuthStorage, CredentialOrigin } from '@oh-my-pi/pi-ai'
+import { createHash } from 'node:crypto'
 
 import { mcpOAuthCredentialId } from '../mcp/oauth'
 import type {
@@ -32,7 +33,10 @@ export function createPhiAuth(authStorage: AuthStorage): PhiAuth {
         id: String(entry.id),
         providerId: entry.provider,
         type: entry.credential.type,
-        label: storedCredentialLabel(entry)
+        label: storedCredentialLabel(entry),
+        ...(entry.credential.type === 'api_key'
+          ? { keySha256: createHash('sha256').update(entry.credential.key).digest('hex') }
+          : {})
       }))
     },
 

@@ -130,6 +130,52 @@ connector:
   }
 })
 
+test('catalog labels team registries without treating them as GitHub sources', () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-mcp-team-catalog-'))
+  try {
+    const registry = writeMcpRegistryFixture(join(agentDir, 'team'), [
+      `schemaVersion: 1
+id: team-fixture
+type: mcp
+version: 1.0.0
+title: Team fixture
+summary: Team registry fixture.
+connector:
+  transport: http
+  publisher: Fixture
+  category: 科研数据
+  url: https://fixture.example/mcp
+  auth: none
+`
+    ])
+    registry.id = 'team-source-alpha'
+    registry.label = '来自 Alpha 团队'
+    registry.source = {
+      kind: 'team',
+      id: 'team-source-alpha',
+      teamId: 'alpha-team',
+      teamName: 'Alpha',
+      teamKeyId: '7777777777777777',
+      release: 3,
+      resources: { 'mcp:team-fixture': { sharing: 'team-only' } }
+    }
+
+    const connectors = listConnectorCatalog({
+      agentDir,
+      appVersion: '1.0.0',
+      registries: [registry]
+    })
+    assert.deepEqual(connectors[0]?.source, {
+      kind: 'directory',
+      label: '来自 Alpha 团队',
+      trust: 'imported',
+      sourceId: 'team-source-alpha'
+    })
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
 test('a materialized GitHub registry installs through the existing imported-trust installer', async () => {
   const agentDir = mkdtempSync(join(tmpdir(), 'phi-mcp-github-install-'))
   try {

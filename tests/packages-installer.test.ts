@@ -476,6 +476,51 @@ test('resolves dependencies, checks compatibility, refuses dependent removal, an
   }
 })
 
+test('promoting a team-installed dependency preserves its source metadata', async () => {
+  const { root, agentDir, registryDir } = sandbox()
+  try {
+    const dependency = skillEntry(registryDir, 'beta-skill')
+    const rootEntry = skillEntry(registryDir, 'alpha-skill', {
+      dependsOn: [{ id: 'beta-skill', type: 'skill', version: '^1.0.0' }]
+    })
+    const registry = writeIndex(registryDir, [rootEntry, dependency])
+    registry.source = {
+      kind: 'team',
+      id: 'dependency-team-source',
+      teamId: 'dependency-team',
+      teamName: 'Dependency Team',
+      teamKeyId: '6666666666666666',
+      release: 8,
+      resources: {
+        'skill:alpha-skill': { sharing: 'team-only' },
+        'skill:beta-skill': { sharing: 'forwardable' }
+      }
+    }
+    await installPackages(
+      planInstall(registry, { type: 'skill', id: 'alpha-skill' }, { agentDir }),
+      { agentDir }
+    )
+    await installPackages(
+      planInstall(registry, { type: 'skill', id: 'beta-skill' }, { agentDir }),
+      {
+        agentDir
+      }
+    )
+
+    const promoted = listInstalledPackages({ agentDir }).find((item) => item.id === 'beta-skill')
+    assert.equal(promoted?.installedBy, 'user')
+    assert.deepEqual(promoted?.teamSource, {
+      teamId: 'dependency-team',
+      teamName: 'Dependency Team',
+      teamKeyId: '6666666666666666',
+      release: 8,
+      sharing: 'forwardable'
+    })
+  } finally {
+    cleanup(root)
+  }
+})
+
 test('refuses missing, conflicting, and cyclic dependencies', async () => {
   const { root, agentDir, registryDir } = sandbox()
   try {

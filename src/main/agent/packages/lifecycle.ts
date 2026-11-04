@@ -538,7 +538,8 @@ function promoteRootToUser(root: InstallPlan['root'], agentDir: string): void {
     sha256: installed.sha256,
     installedAt: installed.installedAt,
     installedBy: 'user',
-    trust: installed.trust
+    trust: installed.trust,
+    ...(installed.teamSource ? { teamSource: installed.teamSource } : {})
   })
 }
 

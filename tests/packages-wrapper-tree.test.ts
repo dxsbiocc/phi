@@ -149,6 +149,17 @@ outputs:
       }
     })
     const source = registry(registryDir, [entry])
+    source.source = {
+      kind: 'team',
+      id: 'wrapper-team-source',
+      teamId: 'wrapper-team',
+      teamName: 'Wrapper Team',
+      teamKeyId: '5555555555555555',
+      release: 7,
+      resources: {
+        [`wrapper:${entry.id}`]: { sharing: 'forwardable' }
+      }
+    }
 
     resetWrapperCompositionCatalogCache()
     assert.deepEqual(listWrapperCompositionCatalog({ agentDir }), [])
@@ -173,6 +184,13 @@ outputs:
       listInstalledPackages({ agentDir }).map((item) => [item.type, item.id, item.version]),
       [['wrapper', entry.id, '1.0.0']]
     )
+    assert.deepEqual(listInstalledPackages({ agentDir })[0]?.teamSource, {
+      teamId: 'wrapper-team',
+      teamName: 'Wrapper Team',
+      teamKeyId: '5555555555555555',
+      release: 7,
+      sharing: 'forwardable'
+    })
     assert.equal(existsSync(join(agentDir, 'wrappers', 'tree', 'phi-package.yaml')), false)
     assert.equal(existsSync(join(agentDir, 'wrappers', 'tree', 'files.json')), false)
     const discovered = listWrapperCompositionCatalogStatus({ agentDir })

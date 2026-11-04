@@ -69,6 +69,18 @@ export interface InstalledPackageView {
   sha256: string
   trust: PackageTrust
   enabled?: boolean
+  teamSource?: {
+    teamId: string
+    teamName: string
+    teamKeyId: string
+    release: number
+    sharing: 'team-only' | 'forwardable'
+    originalSource?: {
+      teamId: string
+      teamName: string
+      teamKeyId: string
+    }
+  }
 }
 
 export interface KnownPackageRegistryView {

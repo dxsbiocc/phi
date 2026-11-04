@@ -67,6 +67,7 @@ import type { SessionDeleteResult } from '../shared/sessionDeleteTypes'
 import type { RuntimeRecoveryApi } from '../shared/runtimeRecoveryTypes'
 import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
 import type { PlanRunRendererApi } from '../shared/planRunTypes'
+import type { TeamPackRendererApi } from '../shared/teamPackTypes'
 import type {
   SessionMode as PreloadSessionMode,
   WorkMode as PreloadWorkMode
@@ -682,6 +683,7 @@ declare global {
       browser: BrowserRendererBridge
       terminal: TerminalRendererBridge
       sshBootstrap: SshBootstrapRendererBridge
+      teamPack: TeamPackRendererApi
       readyWindow: (background: string) => Promise<void>
       closeWindow: () => Promise<void>
       minimizeWindow: () => Promise<void>
@@ -846,6 +848,7 @@ declare global {
               }
         ) => void
       ) => () => void
+      onCredentialsChanged: (cb: () => void) => () => void
       getAppSettings: () => Promise<PhiAppSettings>
       getModelAvailability: () => Promise<ModelAvailabilitySnapshot>
       setModelEnabled: (change: ModelAvailabilityChange) => Promise<ModelAvailabilitySnapshot>

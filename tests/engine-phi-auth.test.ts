@@ -204,6 +204,8 @@ async function executeChildScenario(scenario: string): Promise<void> {
           label: 'phi-test-provider'
         }
       )
+      assert.match(all[0].keySha256 ?? '', /^[a-f0-9]{64}$/u)
+      assert.notEqual(all[0].keySha256, 'secret-key')
       assert.equal(storage.credentials.list('phi-test-provider')[0].credential.source, 'login')
 
       const status = auth.credentialStatus('phi-test-provider')

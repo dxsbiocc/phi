@@ -20,6 +20,7 @@ import { migrateStartupPluginEnablement as migratePluginEnablement } from './sta
 import { registerWorkspaceFileIpc } from './workspace-file-ipc'
 import { registerAnalysisIpc } from './ipc/analysis-ipc'
 import { registerGithubSourceIpc } from './ipc/github-sources-ipc'
+import { closeTeamPackDesktop, startTeamPackDesktop } from './team-pack-desktop'
 import {
   registerPackageCatalogIpc,
   registerPackageOperationsIpc,
@@ -3935,6 +3936,7 @@ app.whenReady().then(async () => {
   registerSessionIpc()
   registerProjectAndAnalysisIpc()
   registerPluginAndPackageIpc()
+  startTeamPackDesktop({ requireMainWindowRenderer, getActiveWindow, sendToAllWindows })
   registerSkillAgentAndMcpIpc(wrappersIpcOptions)
   registerWrapperJobsAndPersonaIpc(wrappersIpcOptions)
   openInitialWindow()
@@ -3966,7 +3968,8 @@ app.on(
     cleanup: async () => {
       await Promise.all([
         cleanupMainWindowRuntime(),
-        safeCleanupStep('environment_scan_cleanup_failed', () => backgroundEnvironment.dispose())
+        safeCleanupStep('environment_scan_cleanup_failed', () => backgroundEnvironment.dispose()),
+        safeCleanupStep('team_source_service_cleanup_failed', closeTeamPackDesktop)
       ])
     },
     quit: () => app.quit(),

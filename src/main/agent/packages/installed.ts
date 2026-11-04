@@ -107,6 +107,7 @@ function installedPackageFromDir(
     installedBy: source.installedBy,
     registry: source.registry,
     sha256: source.sha256,
-    trust: source.trust
+    trust: source.trust,
+    ...(source.teamSource ? { teamSource: source.teamSource } : {})
   }
 }

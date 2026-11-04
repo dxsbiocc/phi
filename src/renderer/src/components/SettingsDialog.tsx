@@ -38,6 +38,8 @@ import { MemorySettingsPanel } from '../features/memory/MemorySettingsPanel'
 import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
 import type { ManualCompactionTarget } from '../../../shared/contextUsageTypes'
 import { AutoCompactionSettingsSection } from '../features/chat/components/AutoCompactionSettingsSection'
+import { TeamSettingsPanel } from '../features/team/TeamSettingsPanel'
+import { teamCopy } from '../features/team/lib/teamCopy'
 
 const CloseIcon = PhiIcons.action.close
 const PaletteIcon = PhiIcons.settings.appearance
@@ -46,6 +48,7 @@ const SearchIcon = PhiIcons.action.search
 const PsychologyIcon = PhiIcons.settings.persona
 const ShieldIcon = PhiIcons.settings.permissions
 const MemoryIcon = PhiIcons.settings.memory
+const TeamIcon = PhiIcons.entity.provider
 const RemoteExecutionIcon = PhiIcons.settings.remoteExecution
 const GeneralIcon = PhiIcons.nav.settings
 
@@ -57,6 +60,7 @@ export type SettingsCategory =
   | 'web-search'
   | 'permissions'
   | 'memory'
+  | 'team'
   | 'remote'
   | 'appearance'
 
@@ -109,6 +113,13 @@ const CATEGORIES: Array<{ id: SettingsCategory; label: string; icon: React.JSX.E
       return settingsUi.memory
     },
     icon: <MemoryIcon fontSize="small" />
+  },
+  {
+    id: 'team',
+    get label() {
+      return teamCopy.team
+    },
+    icon: <TeamIcon fontSize="small" />
   },
   {
     id: 'remote',
@@ -651,6 +662,7 @@ function SettingsDialog({
           {category === 'memory' && (
             <MemorySettingsPanel projects={projects} onProjectUpdated={onProjectUpdated} />
           )}
+          {category === 'team' && <TeamSettingsPanel />}
           {category === 'remote' && <RemoteHostSettingsSection />}
           {category === 'appearance' && (
             <AppearanceSettingsSection

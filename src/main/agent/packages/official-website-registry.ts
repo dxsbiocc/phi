@@ -97,7 +97,8 @@ async function synchronizeWebsite(options: OfficialRegistryOptions): Promise<Loc
       // Missing, outdated, or invalid generations are rebuilt from a bounded pinned snapshot.
     }
     if (
-      cached?.source?.sha === catalog.commit &&
+      cached?.source?.kind === 'github' &&
+      cached.source.sha === catalog.commit &&
       readOfficialWebsiteMaterializerRevision(cached) === OFFICIAL_WEBSITE_MATERIALIZER_REVISION
     ) {
       const metadata =
