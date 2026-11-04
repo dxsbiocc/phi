@@ -8193,7 +8193,8 @@ test('main agent registry loading scopes MCP to its API and merges all types wit
   assert(
     all.registries.some(
       (registry) =>
-        registry.source?.repo === 'user/connectors' &&
+        registry.source?.kind === 'github' &&
+        registry.source.repo === 'user/connectors' &&
         registry.packages.some((entry) => entry.id === 'custom-connector')
     )
   )

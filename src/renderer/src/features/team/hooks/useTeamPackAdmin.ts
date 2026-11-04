@@ -28,7 +28,8 @@ export interface TeamPackAdminController {
   addMember: (displayName: string, recipient: string) => Promise<boolean>
   removeMember: (memberId: string) => Promise<boolean>
   setMemberModels: (memberId: string, models: TeamAdminModelInput[]) => Promise<boolean>
-  publish: (selections: TeamPackageSelection[]) => Promise<boolean>
+  publish: (selections: TeamPackageSelection[], announcement?: string) => Promise<boolean>
+  announceOnly: (announcement: string) => Promise<boolean>
   withdraw: (release: number) => Promise<boolean>
 }
 
@@ -98,6 +99,30 @@ export function useTeamPackAdmin(): TeamPackAdminController {
 
   async function refreshDetail(teamId: string): Promise<void> {
     if (selectedTeamId.current === teamId) await loadDetail(teamId, true)
+  }
+
+  async function publishRelease(
+    packages: TeamPackageSelection[],
+    announcement?: string,
+    announcementOnly = false
+  ): Promise<boolean> {
+    if (!detail) return false
+    const teamId = detail.teamId
+    const release = await run('publish', async () =>
+      resultValue(
+        await teamPackApi().publishAdminRelease({
+          teamId,
+          packages,
+          ...(announcement === undefined ? {} : { announcement }),
+          ...(announcementOnly ? { announcementOnly: true } : {})
+        })
+      )
+    )
+    if (!release) return false
+    if (selectedTeamId.current !== teamId) return false
+    setPublished(release)
+    await refreshDetail(teamId)
+    return true
   }
 
   return {
@@ -172,18 +197,9 @@ export function useTeamPackAdmin(): TeamPackAdminController {
       await refreshDetail(teamId)
       return true
     },
-    publish: async (selections: TeamPackageSelection[]) => {
-      if (!detail) return false
-      const teamId = detail.teamId
-      const release = await run('publish', async () =>
-        resultValue(await teamPackApi().publishAdminRelease({ teamId, packages: selections }))
-      )
-      if (!release) return false
-      if (selectedTeamId.current !== teamId) return false
-      setPublished(release)
-      await refreshDetail(teamId)
-      return true
-    },
+    publish: (selections: TeamPackageSelection[], announcement?: string) =>
+      publishRelease(selections, announcement),
+    announceOnly: (announcement: string) => publishRelease([], announcement, true),
     withdraw: async (release: number) => {
       if (!detail) return false
       const teamId = detail.teamId

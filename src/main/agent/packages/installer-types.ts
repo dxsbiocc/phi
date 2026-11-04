@@ -10,6 +10,27 @@ import type { CatalogSkillGroup } from '../../../shared/packageManagerTypes'
 export type RegistryTrust = 'builtin' | 'official' | 'imported'
 export type RegistryTrustTier = RegistryTrust
 
+export type TeamResourceSharing = 'team-only' | 'forwardable'
+
+export interface TeamResourceOrigin {
+  teamId: string
+  teamName: string
+  teamKeyId: string
+}
+
+export interface TeamResourceMetadata {
+  sharing: TeamResourceSharing
+  originalSource?: TeamResourceOrigin
+}
+
+export type TeamResourceMap = Record<string, TeamResourceMetadata>
+
+export interface InstalledTeamResourceSource extends TeamResourceOrigin {
+  release: number
+  sharing: TeamResourceSharing
+  originalSource?: TeamResourceOrigin
+}
+
 export interface RegistryPackageEntry {
   id: string
   type: PackageType
@@ -41,7 +62,9 @@ export interface LocalRegistry {
         id: string
         teamId: string
         teamName: string
+        teamKeyId: string
         release: number
+        resources: TeamResourceMap
       }
   label?: string
   status?: 'ready' | 'cached'
@@ -87,6 +110,7 @@ export interface PackageSourceMetadata {
   installedAt: string
   installedBy: 'user' | 'dependency'
   trust: RegistryTrustTier
+  teamSource?: InstalledTeamResourceSource
 }
 
 export interface InstalledPackage {
@@ -102,6 +126,7 @@ export interface InstalledPackage {
   sha256: string
   trust: RegistryTrustTier
   enabled?: boolean
+  teamSource?: InstalledTeamResourceSource
 }
 
 export interface InstallerOptions {

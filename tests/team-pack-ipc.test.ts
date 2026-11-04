@@ -19,7 +19,24 @@ const source = {
     lastErrorCode: null,
     withdrawnReleases: [1],
     credentialConflicts: ['anthropic'],
-    skippedProviders: ['unsupported']
+    skippedProviders: ['unsupported'],
+    announcements: [
+      {
+        release: 2,
+        publishedAt: '2026-11-04T01:30:00.000Z',
+        text: 'Line one\nLine two'
+      }
+    ],
+    resources: {
+      'skill:shared-skill': {
+        sharing: 'forwardable' as const,
+        originalSource: {
+          teamId: 'origin-team',
+          teamName: 'Origin Team',
+          teamKeyId: 'b'.repeat(16)
+        }
+      }
+    }
   }
 }
 
@@ -46,7 +63,8 @@ function fakeAdmin(): TeamPackIpcOptions['admin'] {
           release: 2,
           publishedAt: '2026-11-04T02:00:00.000Z',
           memberIds: ['member-1'],
-          withdrawn: false
+          withdrawn: false,
+          hasAnnouncement: true
         }
       ],
       withdrawnReleases: [1],
@@ -312,7 +330,7 @@ test('publishing accepts package selections only and withdraws by release number
     getTeamSummary: () => ({ ...base.getTeamSummary(), storeDir: null }),
     publishRelease: async (input: unknown) => {
       calls.push(['publish', input])
-      return base.publishRelease()
+      return base.publishRelease(input as Parameters<typeof base.publishRelease>[0])
     },
     withdrawRelease: async (input: unknown) => {
       calls.push(['withdraw', input])
@@ -346,6 +364,67 @@ test('publishing accepts package selections only and withdraws by release number
     ],
     ['withdraw', { teamId: 'alpha-team', release: 2 }]
   ])
+})
+
+test('publishing validates announcement-only input and forwards no private material', async () => {
+  const calls: unknown[] = []
+  const base = fakeAdmin()
+  const admin = {
+    ...base,
+    publishRelease: async (input: unknown) => {
+      calls.push(input)
+      return base.publishRelease(input as Parameters<typeof base.publishRelease>[0])
+    }
+  }
+  const publish = harness(admin).get(IPC.teamPack.publishAdminRelease)
+  assert.ok(publish)
+
+  const result = await publish(null, {
+    teamId: 'alpha-team',
+    packages: [],
+    announcement: 'First line\nSecond line',
+    announcementOnly: true
+  })
+
+  assert.equal((result as { ok: boolean }).ok, true)
+  assert.deepEqual(calls, [
+    {
+      teamId: 'alpha-team',
+      storeDir: '/team/publish',
+      packages: [],
+      announcement: 'First line\nSecond line',
+      announcementOnly: true
+    }
+  ])
+  assert.equal(JSON.stringify(result).includes('apiKey'), false)
+  assert.equal(JSON.stringify(result).includes('privateKey'), false)
+})
+
+test('publishing rejects invalid announcements and missing announcement-only text', async () => {
+  const publish = harness().get(IPC.teamPack.publishAdminRelease)
+  assert.ok(publish)
+
+  for (const input of [
+    { teamId: 'alpha-team', packages: [], announcementOnly: true },
+    {
+      teamId: 'alpha-team',
+      packages: [],
+      announcement: `bad\u0000text`,
+      announcementOnly: true
+    },
+    {
+      teamId: 'alpha-team',
+      packages: [],
+      announcement: 'x'.repeat(4_001),
+      announcementOnly: true
+    }
+  ]) {
+    const result = await publish(null, input)
+    assert.deepEqual(
+      (result as { ok: boolean; error?: { code: string } }).error?.code,
+      'INVALID_FORMAT'
+    )
+  }
 })
 
 test('member backups obtain paths in main and never return identity material', async () => {
@@ -514,6 +593,23 @@ test('source list projects configured provider IDs without credential ownership 
           withdrawnReleases: [1],
           credentialConflicts: ['anthropic'],
           skippedProviders: ['unsupported'],
+          announcements: [
+            {
+              release: 2,
+              publishedAt: '2026-11-04T01:30:00.000Z',
+              text: 'Line one\nLine two'
+            }
+          ],
+          resources: {
+            'skill:shared-skill': {
+              sharing: 'forwardable',
+              originalSource: {
+                teamId: 'origin-team',
+                teamName: 'Origin Team',
+                publicKeyFingerprint: 'b'.repeat(16)
+              }
+            }
+          },
           configuredProviders: ['openai']
         }
       }

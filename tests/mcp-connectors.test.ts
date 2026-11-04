@@ -155,7 +155,9 @@ connector:
       id: 'team-source-alpha',
       teamId: 'alpha-team',
       teamName: 'Alpha',
-      release: 3
+      teamKeyId: '7777777777777777',
+      release: 3,
+      resources: { 'mcp:team-fixture': { sharing: 'team-only' } }
     }
 
     const connectors = listConnectorCatalog({

@@ -1,7 +1,11 @@
 import type { TeamSourceInput } from '../../shared/teamPackTypes'
 import type { TeamPackageSelection } from '../agent/team-pack/admin-service'
 import { teamPackError } from '../agent/team-pack/errors'
-import { validateModelKeyGrants, type ModelKeyGrant } from '../agent/team-pack/format'
+import {
+  validateAnnouncementText,
+  validateModelKeyGrants,
+  type ModelKeyGrant
+} from '../agent/team-pack/format'
 import type { AddTeamSourceInput } from '../agent/team-pack/team-source'
 import {
   assertRelease,
@@ -130,33 +134,73 @@ export function modelGrantInput(value: unknown): {
 export function publishInput(value: unknown): {
   teamId: string
   packages: TeamPackageSelection[]
+  announcement?: string
+  announcementOnly?: boolean
 } {
+  if (!isRecord(value)) invalidInput()
+  const announcement = optionalAnnouncement(value)
+  const announcementOnly = optionalAnnouncementOnly(value)
+  assertPublishRequestShape(value, announcement, announcementOnly)
+  assertTeamId(value.teamId)
+  const packages = value.packages.map(parsePackageSelection)
+  if (new Set(packages.map(({ type, id }) => `${type}:${id}`)).size !== packages.length) {
+    invalidInput()
+  }
+  return {
+    teamId: value.teamId,
+    packages,
+    ...(announcement === undefined ? {} : { announcement }),
+    ...(announcementOnly === undefined ? {} : { announcementOnly })
+  }
+}
+
+function assertPublishRequestShape(
+  value: Record<string, unknown>,
+  announcement: string | undefined,
+  announcementOnly: boolean | undefined
+): asserts value is Record<string, unknown> & { teamId: unknown; packages: unknown[] } {
+  const expectedKeys = [
+    'teamId',
+    'packages',
+    ...(announcement === undefined ? [] : ['announcement']),
+    ...(announcementOnly === undefined ? [] : ['announcementOnly'])
+  ]
   if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ['teamId', 'packages']) ||
+    !hasExactKeys(value, expectedKeys) ||
     !Array.isArray(value.packages) ||
-    value.packages.length < 1 ||
+    (announcementOnly === true ? value.packages.length !== 0 : value.packages.length < 1) ||
     value.packages.length > 10_000
   ) {
     invalidInput()
   }
-  assertTeamId(value.teamId)
-  const packages = value.packages.map((selection) => {
-    if (
-      !isRecord(selection) ||
-      !hasExactKeys(selection, ['type', 'id']) ||
-      !['skill', 'plugin', 'wrapper', 'mcp'].includes(String(selection.type)) ||
-      typeof selection.id !== 'string' ||
-      !/^[a-z][a-z0-9-]{1,63}$/.test(selection.id)
-    ) {
-      invalidInput()
-    }
-    return selection as unknown as TeamPackageSelection
-  })
-  if (new Set(packages.map(({ type, id }) => `${type}:${id}`)).size !== packages.length) {
+  if (announcementOnly === true && announcement === undefined) invalidInput()
+}
+
+function optionalAnnouncement(value: Record<string, unknown>): string | undefined {
+  return value.announcement === undefined ? undefined : validateAnnouncementText(value.announcement)
+}
+
+function optionalAnnouncementOnly(value: Record<string, unknown>): boolean | undefined {
+  if (value.announcementOnly === undefined) return undefined
+  if (typeof value.announcementOnly !== 'boolean') invalidInput()
+  return value.announcementOnly
+}
+
+function parsePackageSelection(selection: unknown): TeamPackageSelection {
+  if (!isRecord(selection)) invalidInput()
+  const selectionKeys = selection.sharing === undefined ? ['type', 'id'] : ['type', 'id', 'sharing']
+  if (
+    !hasExactKeys(selection, selectionKeys) ||
+    !['skill', 'plugin', 'wrapper', 'mcp'].includes(String(selection.type)) ||
+    typeof selection.id !== 'string' ||
+    !/^[a-z][a-z0-9-]{1,63}$/.test(selection.id) ||
+    (selection.sharing !== undefined &&
+      selection.sharing !== 'team-only' &&
+      selection.sharing !== 'forwardable')
+  ) {
     invalidInput()
   }
-  return { teamId: value.teamId, packages }
+  return selection as unknown as TeamPackageSelection
 }
 
 export function withdrawInput(value: unknown): { teamId: string; release: number } {

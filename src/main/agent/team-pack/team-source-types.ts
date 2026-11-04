@@ -1,7 +1,9 @@
 import type { TeamPackErrorCode } from './errors'
+import type { TeamAnnouncement } from './format'
 import type { pullTeamRelease } from './pull'
 import type { HttpTeamPackStoreOptions } from './store'
 import type { ModelRuntime } from '../runtime/runtime-adapter'
+import type { TeamResourceMap } from '../packages/installer-types'
 
 export type TeamSourceLocation =
   { kind: 'directory'; path: string } | { kind: 'https'; url: string }
@@ -13,6 +15,8 @@ export interface TeamSourceStatus {
   lastCheckedAt: string | null
   lastErrorCode: TeamSourceErrorCode | null
   withdrawnReleases: number[]
+  announcements: TeamAnnouncement[]
+  resources: TeamResourceMap
   credentialConflicts: string[]
   skippedProviders: string[]
 }

@@ -51,7 +51,7 @@ test('member source list renders the healthy state in both interface languages',
     id: 'source-1',
     teamId: 'team-1',
     teamName: 'Atlas Lab',
-    teamKeyId: 'a1b2c3d4e5f60708',
+    publicKeyFingerprint: 'a1b2c3d4e5f60708',
     location: { kind: 'directory' as const, path: '/Shared/atlas' },
     addedAt: '2026-11-01T09:00:00.000Z',
     status: {
@@ -61,8 +61,11 @@ test('member source list renders the healthy state in both interface languages',
       lastErrorCode: null,
       withdrawnReleases: [],
       credentialProviders: ['openai'],
+      configuredProviders: ['openai'],
       credentialConflicts: [],
-      skippedProviders: []
+      skippedProviders: [],
+      announcements: [],
+      resources: {}
     }
   }
 
@@ -108,7 +111,7 @@ test('member source list explains degraded states and model credential decisions
     id,
     teamId: `team-${id}`,
     teamName: `Team ${id}`,
-    teamKeyId: 'a1b2c3d4e5f60708',
+    publicKeyFingerprint: 'a1b2c3d4e5f60708',
     location: { kind: 'https' as const, url: `https://example.test/${id}` },
     addedAt: '2026-11-01T09:00:00.000Z',
     status: {
@@ -118,8 +121,11 @@ test('member source list explains degraded states and model credential decisions
       lastErrorCode: state === 'error' ? 'STORE_UNAVAILABLE' : null,
       withdrawnReleases: state === 'withdrawn' ? [3] : [],
       credentialProviders: extras.credentialProviders ?? [],
+      configuredProviders: extras.credentialProviders ?? [],
       credentialConflicts: extras.credentialConflicts ?? [],
-      skippedProviders: extras.skippedProviders ?? []
+      skippedProviders: extras.skippedProviders ?? [],
+      announcements: [],
+      resources: {}
     }
   })
   const markup = render(
@@ -488,6 +494,8 @@ test('publishing selects installed resources, explains the fixed folder, and rep
   const markup = render(
     createElement(TeamPublishSection, {
       storeDir: '/Shared/atlas-team',
+      teamId: 'atlas-team',
+      latestRelease: 6,
       packages: [
         {
           id: 'rna-tools',
@@ -504,6 +512,8 @@ test('publishing selects installed resources, explains the fixed folder, and rep
         }
       ],
       selected: ['skill:rna-tools'],
+      sharingByKey: { 'skill:rna-tools': 'team-only' },
+      announcement: '',
       busy: false,
       published: {
         release: 7,
@@ -514,7 +524,10 @@ test('publishing selects installed resources, explains the fixed folder, and rep
         withdrawnReleases: []
       },
       onToggle: () => undefined,
-      onPublish: () => undefined
+      onSharingChange: () => undefined,
+      onAnnouncementChange: () => undefined,
+      onPublish: () => undefined,
+      onAnnounceOnly: () => undefined
     })
   )
 
@@ -533,7 +546,8 @@ test('release history shows recipients and withdrawal limits for downloaded and 
     release: 6,
     publishedAt: '2026-11-03T09:30:00.000Z',
     memberIds: ['member-1', 'member-2'],
-    withdrawn: false
+    withdrawn: false,
+    hasAnnouncement: false
   }
   const markup = render(
     createElement(ReleaseHistorySection, {

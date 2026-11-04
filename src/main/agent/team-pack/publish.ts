@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { Encrypter } from 'age-encryption'
 
 import { createDeterministicTarGz } from '../packages/archive'
+import type { TeamResourceMap } from '../packages/installer-types'
 import { readRegistry } from '../packages/registry'
 import { publicKeyPem, registryKeyId } from '../packages/signature'
 import { teamPackError, isTeamPackError } from './errors'
@@ -17,6 +18,7 @@ import {
 } from './files'
 import {
   jsonBytes,
+  parseInnerFile,
   parseReleaseManifest,
   parseSignedLatestFile,
   parseTeamFile,
@@ -24,10 +26,10 @@ import {
   validateModelKeyGrants,
   type GrantFile,
   type GrantPlaintext,
-  type InnerFile,
   type LatestFile,
   type ModelKeyGrant,
   type ReleaseManifest,
+  type TeamAnnouncement,
   type TeamFile
 } from './format'
 import type { TeamKeys } from './keys'
@@ -38,7 +40,7 @@ const MAX_PUBLISH_PAYLOAD_BYTES = 128 * 1024 * 1024
 const MAX_GRANT_FILES = 256
 const MAX_GRANT_BYTES = 256 * 1024
 
-export type { ModelKeyGrant } from './format'
+export type { ModelKeyGrant, TeamAnnouncement } from './format'
 
 export interface MemberModelGrant {
   recipient: string
@@ -53,6 +55,8 @@ export interface PublishTeamReleaseOptions {
   registryDir: string
   createdAt?: Date | string
   withdrawReleases?: readonly number[]
+  announcements?: readonly TeamAnnouncement[]
+  resources?: TeamResourceMap
 }
 
 export interface PublishedTeamRelease {
@@ -100,7 +104,7 @@ async function publishTeamReleaseInternal(
   const release = (previous?.release ?? 0) + 1
   const { releasesDir, targetDir } = prepareReleaseDirectory(options.storeDir, release)
 
-  const inner: InnerFile = { version: 1, teamId: options.team.teamId, release }
+  const inner = createInnerFile(options, release)
   const archive = createDeterministicTarGz([
     { path: 'inner.json', data: jsonBytes(inner) },
     ...collectArchiveFiles(options.registryDir, 'registry')
@@ -158,6 +162,21 @@ async function publishTeamReleaseInternal(
     throw teamPackError('STORE_UNAVAILABLE', '无法更新团队包 latest 指针', error)
   }
   return { release, payloadBytes: payload.length, manifestSha256: latest.manifestSha256 }
+}
+
+function createInnerFile(
+  options: PublishTeamReleaseOptions,
+  release: number
+): ReturnType<typeof parseInnerFile> {
+  return parseInnerFile(
+    jsonBytes({
+      version: 1,
+      teamId: options.team.teamId,
+      release,
+      announcements: options.announcements ?? [],
+      resources: options.resources ?? {}
+    })
+  )
 }
 
 function prepareReleaseDirectory(

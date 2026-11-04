@@ -42,13 +42,18 @@ export function ReleaseHistorySection({
                 disableGutters
                 divider={index < releases.length - 1}
                 secondaryAction={
-                  release.withdrawn ? (
-                    <Chip size="small" label={teamCopy.withdrawn} />
-                  ) : (
-                    <Button color="error" onClick={() => onWithdraw(release)}>
-                      {teamCopy.withdraw}
-                    </Button>
-                  )
+                  <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                    {release.hasAnnouncement ? (
+                      <Chip size="small" color="info" label={teamCopy.hasAnnouncement} />
+                    ) : null}
+                    {release.withdrawn ? (
+                      <Chip size="small" label={teamCopy.withdrawn} />
+                    ) : (
+                      <Button color="error" onClick={() => onWithdraw(release)}>
+                        {teamCopy.withdraw}
+                      </Button>
+                    )}
+                  </Stack>
                 }
               >
                 <ListItemText

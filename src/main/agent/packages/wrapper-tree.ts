@@ -143,7 +143,8 @@ export function listInstalledWrapperPackages(agentDir = getPhiAgentDir()): Insta
       installedBy: state.source.installedBy,
       registry: state.source.registry,
       sha256: state.source.sha256,
-      trust: state.source.trust
+      trust: state.source.trust,
+      ...(state.source.teamSource ? { teamSource: state.source.teamSource } : {})
     }))
 }
 

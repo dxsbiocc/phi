@@ -3,20 +3,33 @@ import { chmodSync, lstatSync, mkdirSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 
 import { listInstalledPackages } from '../packages/installed'
-import type { InstalledPackage } from '../packages/installer-types'
+import type {
+  InstalledPackage,
+  TeamResourceMetadata,
+  TeamResourceOrigin,
+  TeamResourceSharing
+} from '../packages/installer-types'
+import { packageKey } from '../packages/installer-utils'
 import type { PackageType } from '../packages/manifest'
 import type { AdminTeamListItem, CreatedAdminTeam, TeamPackageSelection } from './admin-service'
 import { isTeamPackError, teamPackError } from './errors'
 import { writeAtomic } from './files'
 import { readTeamRoster, TEAM_ROSTER_FILE_NAME } from './roster'
+import { listTeamSources } from './team-source-storage'
 
 const SNAPSHOTS_DIRECTORY = 'registry-snapshots'
 const SUPPORTED_PACKAGE_TYPES = new Set<PackageType>(['skill', 'plugin', 'wrapper', 'mcp'])
 
+export interface ResolvedTeamPackageSelection {
+  installed: InstalledPackage
+  resource: TeamResourceMetadata
+}
+
 export function resolveSelections(
   agentDir: string,
+  teamId: string,
   selections: readonly TeamPackageSelection[]
-): InstalledPackage[] {
+): ResolvedTeamPackageSelection[] {
   if (!Array.isArray(selections) || selections.length === 0) {
     throw teamPackError('INVALID_FORMAT', '团队发布至少需要选择一个已安装资源')
   }
@@ -31,6 +44,13 @@ export function resolveSelections(
     if (typeof selection.id !== 'string' || !/^[a-z][a-z0-9-]{1,63}$/.test(selection.id)) {
       throw teamPackError('INVALID_FORMAT', '团队发布资源标识格式无效')
     }
+    if (
+      selection.sharing !== undefined &&
+      selection.sharing !== 'team-only' &&
+      selection.sharing !== 'forwardable'
+    ) {
+      throw teamPackError('INVALID_FORMAT', '团队发布资源转发标记无效')
+    }
     const identity = `${selection.type}:${selection.id}`
     if (identities.has(identity)) {
       throw teamPackError('INVALID_FORMAT', `团队发布资源选择重复: ${identity}`)
@@ -39,6 +59,7 @@ export function resolveSelections(
   }
 
   const installed = listInstalledPackages({ agentDir })
+  const teamSources = listTeamSources(agentDir)
   return selections.map((selection) => {
     const found = installed.find((item) => item.type === selection.type && item.id === selection.id)
     if (!found) {
@@ -47,8 +68,58 @@ export function resolveSelections(
         `找不到当前已安装的团队发布资源: ${selection.type}:${selection.id}`
       )
     }
-    return found
+    const source = installedTeamSource(found, teamSources)
+    if (source && source.teamId !== teamId && source.sharing === 'team-only') {
+      throw teamPackError(
+        'INVALID_FORMAT',
+        `资源 ${selection.type}:${selection.id} 仅限来源团队使用，不能转发`
+      )
+    }
+    const originalSource = originalResourceSource(source, teamId)
+    return {
+      installed: found,
+      resource: {
+        sharing: selection.sharing ?? 'team-only',
+        ...(originalSource ? { originalSource } : {})
+      }
+    }
   })
+}
+
+function installedTeamSource(
+  installed: InstalledPackage,
+  sources: ReturnType<typeof listTeamSources>
+):
+  | (TeamResourceOrigin & { sharing: TeamResourceSharing; originalSource?: TeamResourceOrigin })
+  | null {
+  if (installed.teamSource) return installed.teamSource
+  const source = sources.find((candidate) => candidate.id === installed.registry)
+  if (!source) return null
+  const status = source.status as typeof source.status & {
+    resources?: Record<string, TeamResourceMetadata>
+  }
+  const metadata = status.resources?.[packageKey(installed)]
+  return {
+    teamId: source.teamId,
+    teamName: source.teamName,
+    teamKeyId: source.teamKeyId,
+    sharing: metadata?.sharing ?? 'team-only',
+    ...(metadata?.originalSource ? { originalSource: metadata.originalSource } : {})
+  }
+}
+
+function originalResourceSource(
+  source: ReturnType<typeof installedTeamSource>,
+  currentTeamId: string
+): TeamResourceOrigin | undefined {
+  if (!source) return undefined
+  if (source.originalSource) return source.originalSource
+  if (source.teamId === currentTeamId) return undefined
+  return {
+    teamId: source.teamId,
+    teamName: source.teamName,
+    teamKeyId: source.teamKeyId
+  }
 }
 
 export function initializeRoster(directory: string): void {

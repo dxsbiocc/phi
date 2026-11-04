@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path'
 
 import { isTeamPackError, teamPackError } from './errors'
 import { assertManagedFile, writeAtomic } from './files'
-import { jsonBytes } from './format'
+import { jsonBytes, validateTeamAnnouncements, validateTeamResourceMap } from './format'
 import type {
   TeamCredentialOwner,
   TeamSource,
@@ -74,6 +74,15 @@ export function readTeamSourcesState(agentDir: string): TeamSourcesState {
 }
 
 export function writeTeamSourcesState(agentDir: string, state: TeamSourcesState): void {
+  if (
+    !isRecord(state) ||
+    !hasExactKeys(state, ['version', 'sources', 'credentialOwners']) ||
+    state.version !== 1 ||
+    !Array.isArray(state.sources) ||
+    !Array.isArray(state.credentialOwners)
+  ) {
+    invalidState()
+  }
   for (const source of state.sources) assertTeamSource(source)
   for (const owner of state.credentialOwners) assertCredentialOwner(owner)
   assertStateRelationships(state)
@@ -101,8 +110,15 @@ function parseSourceUrl(value: string): URL {
 }
 
 function parseTeamSource(value: unknown): TeamSource {
-  assertTeamSource(value)
-  return value
+  if (!isRecord(value)) invalidSource()
+  if (
+    !hasExactKeys(value, ['id', 'teamId', 'teamName', 'teamKeyId', 'location', 'addedAt', 'status'])
+  ) {
+    invalidSource()
+  }
+  const normalized = { ...value, status: parseStoredStatus(value.status) }
+  assertTeamSource(normalized)
+  return normalized
 }
 
 function assertTeamSource(value: unknown): asserts value is TeamSource {
@@ -156,6 +172,8 @@ function assertStatus(value: unknown): asserts value is TeamSourceStatus {
     'lastCheckedAt',
     'lastErrorCode',
     'withdrawnReleases',
+    'announcements',
+    'resources',
     'credentialConflicts',
     'skippedProviders'
   ]
@@ -166,6 +184,42 @@ function assertStatus(value: unknown): asserts value is TeamSourceStatus {
   if (!isUniqueProviderArray(value.credentialConflicts)) invalidStatus()
   if (!isUniqueProviderArray(value.skippedProviders)) invalidStatus()
   if (!validWithdrawn(value.withdrawnReleases, value.lastSuccessfulRelease)) invalidStatus()
+  const announcements = validateTeamAnnouncements(value.announcements)
+  validateTeamResourceMap(value.resources)
+  const lastSuccessfulRelease = value.lastSuccessfulRelease
+  if (
+    (lastSuccessfulRelease === null && announcements.length > 0) ||
+    (typeof lastSuccessfulRelease === 'number' &&
+      announcements.some(({ release }) => release > lastSuccessfulRelease))
+  ) {
+    invalidStatus()
+  }
+}
+
+function parseStoredStatus(value: unknown): TeamSourceStatus {
+  if (!isRecord(value)) invalidStatus()
+  const required = [
+    'lastSuccessfulRelease',
+    'lastCheckedAt',
+    'lastErrorCode',
+    'withdrawnReleases',
+    'credentialConflicts',
+    'skippedProviders'
+  ]
+  const allowed = [...required, 'announcements', 'resources']
+  if (
+    required.some((key) => !Object.prototype.hasOwnProperty.call(value, key)) ||
+    Object.keys(value).some((key) => !allowed.includes(key))
+  ) {
+    invalidStatus()
+  }
+  const status = {
+    ...value,
+    announcements: validateTeamAnnouncements(value.announcements ?? []),
+    resources: validateTeamResourceMap(value.resources ?? {})
+  }
+  assertStatus(status)
+  return status
 }
 
 function validOptionalRelease(value: unknown): value is number | null {

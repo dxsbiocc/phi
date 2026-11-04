@@ -314,6 +314,24 @@ function sourceView(source: TeamSource, configuredProviders: string[]): TeamSour
       withdrawnReleases: [...source.status.withdrawnReleases],
       credentialConflicts: [...source.status.credentialConflicts],
       skippedProviders: [...source.status.skippedProviders],
+      announcements: source.status.announcements.map((announcement) => ({ ...announcement })),
+      resources: Object.fromEntries(
+        Object.entries(source.status.resources).map(([identity, metadata]) => [
+          identity,
+          {
+            sharing: metadata.sharing,
+            ...(metadata.originalSource
+              ? {
+                  originalSource: {
+                    teamId: metadata.originalSource.teamId,
+                    teamName: metadata.originalSource.teamName,
+                    publicKeyFingerprint: metadata.originalSource.teamKeyId
+                  }
+                }
+              : {})
+          }
+        ])
+      ),
       configuredProviders: [...configuredProviders]
     }
   }

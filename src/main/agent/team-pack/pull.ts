@@ -5,6 +5,7 @@ import { basename, dirname, join } from 'node:path'
 import { Decrypter, identityToRecipient } from 'age-encryption'
 
 import { parseTarGz, type TarEntry } from '../packages/archive'
+import type { TeamResourceMap } from '../packages/installer-types'
 import { readRegistry } from '../packages/registry'
 import { teamPackError, isTeamPackError } from './errors'
 import {
@@ -24,8 +25,10 @@ import {
   releaseSignaturePath,
   sha256,
   type LatestFile,
+  type InnerFile,
   type ModelKeyGrant,
   type ReleaseManifest,
+  type TeamAnnouncement,
   type TeamFile
 } from './format'
 import { assertTrustedTeamKey, verifyTeamFile } from './signing'
@@ -55,6 +58,8 @@ export type PullTeamReleaseResult =
       registryDir: string
       withdrawnReleases: number[]
       models: ModelKeyGrant[]
+      announcements: TeamAnnouncement[]
+      resources: TeamResourceMap
     }
   | {
       status: 'up-to-date'
@@ -63,6 +68,8 @@ export type PullTeamReleaseResult =
       registryDir: string
       withdrawnReleases: number[]
       models: ModelKeyGrant[]
+      announcements: TeamAnnouncement[]
+      resources: TeamResourceMap
     }
 
 export async function pullTeamRelease(
@@ -99,6 +106,8 @@ async function pullTeamReleaseInternal(
   }
   await assertValidIdentity(options.identity)
   const models = await loadGrants(options.store, manifest, options.identity)
+  const entries = await loadArchive(options.store, manifest, options.identity)
+  const inner = readReleaseInner(entries, team.teamId, latest.release)
   const registryDir = join(
     teamStateRoot(options.stateDir, team.teamId),
     String(latest.release),
@@ -111,10 +120,11 @@ async function pullTeamReleaseInternal(
       release: latest.release,
       registryDir,
       withdrawnReleases: manifest.withdrawnReleases,
-      models
+      models,
+      announcements: inner.announcements,
+      resources: inner.resources
     }
   }
-  const entries = await loadArchive(options.store, manifest, options.identity)
   commitRelease({
     stateDir: options.stateDir,
     teamId: team.teamId,
@@ -129,7 +139,9 @@ async function pullTeamReleaseInternal(
     release: latest.release,
     registryDir,
     withdrawnReleases: manifest.withdrawnReleases,
-    models
+    models,
+    announcements: inner.announcements,
+    resources: inner.resources
   }
 }
 
@@ -189,6 +201,18 @@ function commitRelease(options: CommitReleaseOptions): void {
 function assertStateLocation(stateDir: string, teamId: string): void {
   assertManagedDirectory(stateDir, '团队包状态目录')
   assertManagedChildDirectory(stateDir, teamStateRoot(stateDir, teamId), '团队状态根目录')
+}
+
+function readReleaseInner(entries: TarEntry[], teamId: string, release: number): InnerFile {
+  const matching = entries.filter((entry) => entry.path === 'inner.json')
+  if (matching.length !== 1 || matching[0]?.type !== 'file') {
+    throw teamPackError('INVALID_FORMAT', '团队包归档必须包含一个普通 inner.json 文件')
+  }
+  const inner = parseInnerFile(matching[0].data)
+  if (inner.teamId !== teamId || inner.release !== release) {
+    throw teamPackError('INNER_MISMATCH', '解密后的 inner.json 与外层团队或版本不匹配')
+  }
+  return inner
 }
 
 async function loadTeam(store: TeamPackStore, keyId: string): Promise<TeamFile> {

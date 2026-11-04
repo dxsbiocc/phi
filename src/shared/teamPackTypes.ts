@@ -22,6 +22,25 @@ export type TeamSourceLocation =
 
 export type TeamSourceErrorCode = TeamPackIpcErrorCode | 'UNKNOWN'
 
+export type TeamResourceSharing = 'team-only' | 'forwardable'
+
+export interface TeamResourceOriginView {
+  teamId: string
+  teamName: string
+  publicKeyFingerprint: string
+}
+
+export interface TeamResourceMetadataView {
+  sharing: TeamResourceSharing
+  originalSource?: TeamResourceOriginView
+}
+
+export interface TeamAnnouncement {
+  release: number
+  publishedAt: string
+  text: string
+}
+
 export interface TeamSourceStatusView {
   lastSuccessfulRelease: number | null
   lastCheckedAt: string | null
@@ -30,6 +49,8 @@ export interface TeamSourceStatusView {
   credentialConflicts: string[]
   skippedProviders: string[]
   configuredProviders: string[]
+  announcements: TeamAnnouncement[]
+  resources: Record<string, TeamResourceMetadataView>
 }
 
 export interface TeamSourceView {
@@ -105,6 +126,7 @@ export interface TeamAdminRelease {
   publishedAt: string
   memberIds: string[]
   withdrawn: boolean
+  hasAnnouncement: boolean
 }
 
 export interface TeamAdminDetail extends TeamAdminListItem {
@@ -165,11 +187,14 @@ export type TeamPackageType = 'skill' | 'plugin' | 'wrapper' | 'mcp'
 export interface TeamPackageSelection {
   type: TeamPackageType
   id: string
+  sharing?: TeamResourceSharing
 }
 
 export interface TeamPublishAdminReleaseRequest {
   teamId: string
   packages: TeamPackageSelection[]
+  announcement?: string
+  announcementOnly?: boolean
 }
 
 export interface TeamPublishedAdminRelease {

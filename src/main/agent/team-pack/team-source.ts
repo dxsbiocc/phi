@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { isTeamPackError, teamPackError } from './errors'
 import { assertManagedChildDirectory, assertManagedDirectory } from './files'
-import { parseTeamFile } from './format'
+import { parseTeamFile, validateTeamAnnouncements, validateTeamResourceMap } from './format'
 import { pullTeamRelease, type PullTeamReleaseResult } from './pull'
 import { assertTrustedTeamKey } from './signing'
 import {
@@ -317,6 +317,8 @@ function successfulSource(
       lastCheckedAt: checkedAt,
       lastErrorCode: null,
       withdrawnReleases: [...result.withdrawnReleases],
+      announcements: validateTeamAnnouncements(result.announcements.slice(-20)),
+      resources: validateTeamResourceMap(result.resources),
       credentialConflicts: reconciled.conflicts,
       skippedProviders: reconciled.skipped
     }
@@ -329,6 +331,8 @@ function emptyStatus(): TeamSourceStatus {
     lastCheckedAt: null,
     lastErrorCode: null,
     withdrawnReleases: [],
+    announcements: [],
+    resources: {},
     credentialConflicts: [],
     skippedProviders: []
   }

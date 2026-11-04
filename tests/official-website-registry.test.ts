@@ -132,8 +132,11 @@ test('website commit changes replace old 14-skill metadata with 17 complete inst
   assert.equal(registry.kind, 'official')
   assert.equal(registry.trust, 'imported')
   assert.equal(registry.id, 'phi-packages')
-  assert.equal(registry.source?.sha, newCommit)
-  assert.equal(registry.source?.repo, 'dxsbiocc/phi-packages')
+  assert.equal(registry.source?.kind === 'github' ? registry.source.sha : undefined, newCommit)
+  assert.equal(
+    registry.source?.kind === 'github' ? registry.source.repo : undefined,
+    'dxsbiocc/phi-packages'
+  )
   assert.notEqual(registry.dir, old.dir)
   assert.equal(readOfficialWebsiteRegistry(old.dir, f.options).packages.length, 14)
   const entry = registry.packages.find((item) => item.id === 'create-workflow')!

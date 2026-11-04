@@ -1,16 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync
-} from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { readRegistry } from '../packages/registry'
+import type { TeamResourceMap, TeamResourceSharing } from '../packages/installer-types'
+import { packageKey } from '../packages/installer-utils'
 import type { PackageType } from '../packages/manifest'
 import { ADMIN_PUBLISH_LOCK_FILE, withAdminPublishLock } from './admin-lock'
 import {
@@ -38,6 +32,7 @@ import {
   errorMessage
 } from './admin-helpers'
 import { materializeInstalledRegistry } from './admin-registry'
+import { publishPreparedRegistry, type PublishedPreparedAdminRelease } from './admin-release'
 import {
   ADMIN_STATE_FILE,
   readAdminState,
@@ -45,7 +40,7 @@ import {
   type AdminTeamState
 } from './admin-state'
 import { isTeamPackError, teamPackError } from './errors'
-import { parseReleaseManifest, type ModelKeyGrant } from './format'
+import type { ModelKeyGrant } from './format'
 import {
   exportTeamKeyBackup,
   importTeamKeyBackup,
@@ -59,19 +54,16 @@ import { createTeamKeys } from './keys'
 import {
   addRosterMember,
   readTeamRoster,
-  recordRosterRelease,
   removeRosterMember,
   TEAM_ROSTER_FILE_NAME,
   type RosterMember
 } from './roster'
-import { publishTeamRelease, type PublishedTeamRelease } from './publish'
 import { assertRelease, assertTeamId } from './validation'
 
 const ADMIN_ROOT_PARTS = ['team-pack', 'admin'] as const
 const KEYS_DIRECTORY = 'keys'
 const SNAPSHOTS_DIRECTORY = 'registry-snapshots'
 const PREPARED_DIRECTORY = 'prepared-registries'
-const MAX_PUBLISH_PAYLOAD_BYTES = 128 * 1024 * 1024
 
 export { ADMIN_PUBLISH_LOCK_FILE }
 export type { AdminMemberModelGrant } from './admin-grants'
@@ -99,17 +91,17 @@ export interface CreatedAdminTeam extends AdminTeamListItem {
 export interface TeamPackageSelection {
   type: PackageType
   id: string
+  sharing?: TeamResourceSharing
 }
 
 export interface PreparedAdminRegistry {
   registryDir: string
   packages: Array<TeamPackageSelection & { version: string }>
+  resources: TeamResourceMap
 }
 
-export interface PublishedAdminRelease extends PublishedTeamRelease {
-  storeDir: string
+export interface PublishedAdminRelease extends PublishedPreparedAdminRelease {
   packages: Array<TeamPackageSelection & { version: string }>
-  withdrawnReleases: number[]
 }
 
 export interface AdminTeamReleaseSummary {
@@ -117,6 +109,7 @@ export interface AdminTeamReleaseSummary {
   publishedAt: string
   memberIds: string[]
   withdrawn: boolean
+  hasAnnouncement: boolean
 }
 
 export interface AdminTeamSummary extends AdminTeamListItem {
@@ -311,7 +304,20 @@ export class TeamPackAdminService {
     packages: readonly TeamPackageSelection[]
     grants?: readonly AdminMemberModelGrant[]
     withdrawReleases?: readonly number[]
+    announcement?: string
+    announcementOnly?: boolean
   }): Promise<PublishedAdminRelease> {
+    if (input.announcementOnly !== undefined && typeof input.announcementOnly !== 'boolean') {
+      throw teamPackError('INVALID_FORMAT', '公告发布标记无效')
+    }
+    if (input.announcementOnly === true) {
+      if (input.packages.length !== 0 || input.announcement === undefined) {
+        throw teamPackError('INVALID_FORMAT', '只发公告必须提供公告且不能选择资源')
+      }
+      if (input.grants !== undefined || (input.withdrawReleases?.length ?? 0) > 0) {
+        throw teamPackError('INVALID_FORMAT', '只发公告不能同时修改子 key 或撤回版本')
+      }
+    }
     const storeDir = absoluteStoreDirectory(input.storeDir)
     return withAdminPublishLock(
       {
@@ -332,7 +338,10 @@ export class TeamPackAdminService {
         }
         const pending = pendingSnapshotDirectory(team.directory)
         try {
-          const prepared = this.materializeSelections(input.teamId, input.packages, pending)
+          const prepared =
+            input.announcementOnly === true
+              ? this.copyLatestSnapshot(team, pending)
+              : this.materializeSelections(input.teamId, input.packages, pending)
           const currentGrants = readCurrentAdminModelGrants(team.directory, this.safeStorage)
           if (input.grants !== undefined) {
             assertAdminGrantMembersAreCurrent(team.directory, input.grants)
@@ -345,13 +354,17 @@ export class TeamPackAdminService {
             input.grants === undefined
               ? undefined
               : prepareAdminModelGrants(this.safeStorage, grants)
-          const published = await this.publishPreparedRegistry({
+          const published = await publishPreparedRegistry({
             team,
+            safeStorage: this.safeStorage,
+            publishedAt: this.timestamp(),
             storeDir,
             registryDir: prepared.registryDir,
             packages: prepared.packages,
             grants,
-            withdrawReleases: input.withdrawReleases ?? []
+            withdrawReleases: input.withdrawReleases ?? [],
+            resources: prepared.resources,
+            ...(input.announcement === undefined ? {} : { announcement: input.announcement })
           })
           if (preparedGrants !== undefined) {
             commitPreparedAdminModelGrants(team.directory, preparedGrants)
@@ -409,13 +422,16 @@ export class TeamPackAdminService {
           cpSync(source, pending, { recursive: true, errorOnExist: true, force: false })
           const registry = readRegistry(pending)
           const grants = readCurrentAdminModelGrants(team.directory, this.safeStorage)
-          return await this.publishPreparedRegistry({
+          return await publishPreparedRegistry({
             team,
+            safeStorage: this.safeStorage,
+            publishedAt: this.timestamp(),
             storeDir,
             registryDir: pending,
             packages: registry.packages.map(({ type, id, version }) => ({ type, id, version })),
             grants,
-            withdrawReleases: [input.release]
+            withdrawReleases: [input.release],
+            resources: this.releaseResources(team.directory, team.state.latestRelease, registry)
           })
         } finally {
           rmSync(pending, { recursive: true, force: true })
@@ -440,79 +456,11 @@ export class TeamPackAdminService {
         release: release.release,
         publishedAt: release.publishedAt,
         memberIds: [...release.memberIds],
-        withdrawn: withdrawn.has(release.release)
+        withdrawn: withdrawn.has(release.release),
+        hasAnnouncement: release.announcement !== undefined
       })),
       withdrawnReleases: [...team.state.withdrawnReleases],
       storeDir: team.state.storeDir
-    }
-  }
-
-  private async publishPreparedRegistry(input: {
-    team: ReturnType<TeamPackAdminService['requireTeam']>
-    storeDir: string
-    registryDir: string
-    packages: Array<TeamPackageSelection & { version: string }>
-    grants: readonly AdminMemberModelGrant[]
-    withdrawReleases: readonly number[]
-  }): Promise<PublishedAdminRelease> {
-    const roster = readTeamRoster(input.team.directory)
-    const members = roster.members.filter((member) => member.removedAt === undefined)
-    const memberById = new Map(members.map((member) => [member.memberId, member]))
-    const grants = input.grants.map((grant) => {
-      const member = memberById.get(grant.memberId)
-      if (!member) {
-        throw teamPackError(
-          'INVALID_FORMAT',
-          `模型子 key 的接收成员不存在或已移除: ${grant.memberId}`
-        )
-      }
-      return { recipient: member.recipient, models: grant.models }
-    })
-    const publishedAt = this.timestamp()
-    const keys = loadTeamKeyMaterial({
-      keyDir: input.team.keysDirectory,
-      safeStorage: this.safeStorage
-    })
-    const published = await publishTeamRelease({
-      storeDir: input.storeDir,
-      team: keys,
-      members: members.map((member) => member.recipient),
-      grants,
-      registryDir: input.registryDir,
-      createdAt: publishedAt,
-      withdrawReleases: input.withdrawReleases
-    })
-
-    const targetSnapshot = snapshotDirectory(input.team.directory, published.release)
-    if (existsSync(targetSnapshot)) {
-      throw teamPackError('INVALID_FORMAT', `管理员发布内容快照 ${published.release} 已存在`)
-    }
-    mkdirSync(join(input.team.directory, SNAPSHOTS_DIRECTORY), { recursive: true })
-    renameSync(input.registryDir, targetSnapshot)
-
-    const manifest = parseReleaseManifest(
-      readFileSync(join(input.storeDir, 'releases', String(published.release), 'manifest.json')),
-      MAX_PUBLISH_PAYLOAD_BYTES
-    )
-    recordRosterRelease(input.team.directory, {
-      release: published.release,
-      publishedAt,
-      memberIds: members.map((member) => member.memberId),
-      withdrawn: manifest.withdrawnReleases.includes(published.release)
-    })
-    writeAdminState(input.team.directory, {
-      version: 1,
-      teamId: input.team.publicMaterial.teamId,
-      keyId: input.team.publicMaterial.keyId,
-      storeDir: input.storeDir,
-      latestRelease: published.release,
-      withdrawnReleases: manifest.withdrawnReleases
-    })
-    return {
-      ...published,
-      storeDir: input.storeDir,
-      packages: input.packages,
-      withdrawnReleases: manifest.withdrawnReleases
     }
   }
 
@@ -521,22 +469,61 @@ export class TeamPackAdminService {
     selections: readonly TeamPackageSelection[],
     registryDir: string
   ): PreparedAdminRegistry {
-    const selected = resolveSelections(this.agentDir, selections)
+    const selected = resolveSelections(this.agentDir, teamId, selections)
     try {
       const registry = materializeInstalledRegistry({
         agentDir: this.agentDir,
         teamId,
-        installed: selected,
+        installed: selected.map(({ installed }) => installed),
         registryDir,
         generatedAt: this.timestamp()
       })
       const packages = registry.packages.map(({ type, id, version }) => ({ type, id, version }))
-      return { registryDir, packages }
+      const resources = Object.fromEntries(
+        selected.map(({ installed, resource }) => [packageKey(installed), resource])
+      )
+      return { registryDir, packages, resources }
     } catch (error) {
       rmSync(registryDir, { recursive: true, force: true })
       if (isTeamPackError(error)) throw error
       throw teamPackError('INVALID_FORMAT', `无法组装团队发布软件源: ${errorMessage(error)}`, error)
     }
+  }
+
+  private copyLatestSnapshot(
+    team: ReturnType<TeamPackAdminService['requireTeam']>,
+    pending: string
+  ): PreparedAdminRegistry {
+    if (team.state.latestRelease === null) {
+      throw teamPackError('INVALID_FORMAT', '团队尚未发布，不能只发公告')
+    }
+    const source = snapshotDirectory(team.directory, team.state.latestRelease)
+    if (!existsSync(source)) {
+      throw teamPackError('STORE_UNAVAILABLE', '找不到上一版发布内容快照，无法只发公告')
+    }
+    readRegistry(source)
+    mkdirSync(join(team.directory, SNAPSHOTS_DIRECTORY), { recursive: true })
+    cpSync(source, pending, { recursive: true, errorOnExist: true, force: false })
+    const registry = readRegistry(pending)
+    return {
+      registryDir: pending,
+      packages: registry.packages.map(({ type, id, version }) => ({ type, id, version })),
+      resources: this.releaseResources(team.directory, team.state.latestRelease, registry)
+    }
+  }
+
+  private releaseResources(
+    directory: string,
+    release: number,
+    registry: ReturnType<typeof readRegistry>
+  ): TeamResourceMap {
+    const recorded = readTeamRoster(directory).releases.find((entry) => entry.release === release)
+    return (
+      recorded?.resources ??
+      Object.fromEntries(
+        registry.packages.map((entry) => [packageKey(entry), { sharing: 'team-only' }])
+      )
+    )
   }
 
   private publicTeam(teamId: string): AdminTeamListItem {

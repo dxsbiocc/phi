@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Button, Chip, List, ListItem, ListItemText, Stack, Typography } from '@mui/material'
 
 import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
@@ -21,11 +22,24 @@ export function TeamSourceList({
   onRemove: (source: TeamSourceView) => void
 }): React.JSX.Element {
   useUiLanguage()
+  const [expandedAnnouncements, setExpandedAnnouncements] = useState<Set<string>>(() => new Set())
 
   return (
     <List disablePadding>
       {/* eslint-disable-next-line max-lines-per-function -- row renders one cohesive source summary */}
       {sources.map((source, index) => {
+        const announcements = [...source.status.announcements].sort(
+          (left, right) =>
+            Date.parse(right.publishedAt) - Date.parse(left.publishedAt) ||
+            right.release - left.release
+        )
+        const announcementsExpanded = expandedAnnouncements.has(source.id)
+        const visibleAnnouncements = announcementsExpanded
+          ? announcements
+          : announcements.slice(0, 1)
+        const forwardedResources = Object.entries(source.status.resources)
+          .filter((entry) => entry[1].originalSource !== undefined)
+          .sort(([left], [right]) => left.localeCompare(right))
         const checkedAt = source.status.lastCheckedAt
           ? new Intl.DateTimeFormat(getUiLocale(), {
               dateStyle: 'medium',
@@ -111,6 +125,89 @@ export function TeamSourceList({
                       {teamCopy.skippedProviderValue(provider)}
                     </Typography>
                   ))}
+                  {announcements.length > 0 ? (
+                    <Stack component="span" spacing={0.5} sx={{ display: 'block', pt: 0.75 }}>
+                      <Typography component="span" variant="subtitle2" sx={{ display: 'block' }}>
+                        {announcementsExpanded
+                          ? teamCopy.announcements
+                          : teamCopy.latestAnnouncement}
+                      </Typography>
+                      {visibleAnnouncements.map((announcement) => (
+                        <Stack
+                          key={`${announcement.release}:${announcement.publishedAt}`}
+                          component="span"
+                          spacing={0.25}
+                          sx={{ display: 'block' }}
+                        >
+                          <Typography
+                            component="span"
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: 'block' }}
+                          >
+                            {teamCopy.announcementVersionValue(
+                              announcement.release,
+                              new Intl.DateTimeFormat(getUiLocale(), {
+                                dateStyle: 'medium',
+                                timeStyle: 'short'
+                              }).format(new Date(announcement.publishedAt))
+                            )}
+                          </Typography>
+                          <Typography
+                            component="span"
+                            variant="body2"
+                            sx={{ display: 'block', whiteSpace: 'pre-wrap' }}
+                          >
+                            {announcement.text}
+                          </Typography>
+                        </Stack>
+                      ))}
+                      {announcements.length > 1 ? (
+                        <Button
+                          size="small"
+                          sx={{ alignSelf: 'flex-start' }}
+                          onClick={() =>
+                            setExpandedAnnouncements((current) => {
+                              const next = new Set(current)
+                              if (next.has(source.id)) next.delete(source.id)
+                              else next.add(source.id)
+                              return next
+                            })
+                          }
+                        >
+                          {announcementsExpanded
+                            ? teamCopy.showLatestAnnouncement
+                            : teamCopy.showAllAnnouncements(announcements.length)}
+                        </Button>
+                      ) : null}
+                    </Stack>
+                  ) : null}
+                  {forwardedResources.length > 0 ? (
+                    <Stack component="span" spacing={0.25} sx={{ display: 'block', pt: 0.75 }}>
+                      <Typography component="span" variant="subtitle2" sx={{ display: 'block' }}>
+                        {teamCopy.forwardedResources}
+                      </Typography>
+                      {forwardedResources.map(([resource, metadata]) => {
+                        const origin = metadata.originalSource
+                        if (!origin) return null
+                        return (
+                          <Typography
+                            key={resource}
+                            component="span"
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: 'block' }}
+                          >
+                            {teamCopy.originalSourceValue(
+                              resource,
+                              origin.teamName,
+                              origin.publicKeyFingerprint
+                            )}
+                          </Typography>
+                        )
+                      })}
+                    </Stack>
+                  ) : null}
                 </Stack>
               }
             />

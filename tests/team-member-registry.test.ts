@@ -50,6 +50,8 @@ function teamSource(
       lastCheckedAt: '2026-11-04T02:00:00.000Z',
       lastErrorCode: null,
       withdrawnReleases: [],
+      announcements: [],
+      resources: { 'skill:team-skill': { sharing: 'forwardable' } },
       credentialConflicts: [],
       skippedProviders: []
     },
@@ -159,7 +161,9 @@ test('lists a ready team source and installs its latest pulled registry with imp
       id: source.id,
       teamId: source.teamId,
       teamName: source.teamName,
-      release: 3
+      teamKeyId: source.teamKeyId,
+      release: 3,
+      resources: { 'skill:team-skill': { sharing: 'forwardable' } }
     })
 
     await installPackages(
@@ -168,10 +172,15 @@ test('lists a ready team source and installs its latest pulled registry with imp
     )
     const installed = join(agentDir, 'packages', 'skill', 'team-skill', '1.0.0')
     assert.equal(existsSync(join(installed, 'SKILL.md')), true)
-    assert.equal(
-      JSON.parse(readFileSync(join(installed, '.source.json'), 'utf8')).trust,
-      'imported'
-    )
+    const installedSource = JSON.parse(readFileSync(join(installed, '.source.json'), 'utf8'))
+    assert.equal(installedSource.trust, 'imported')
+    assert.deepEqual(installedSource.teamSource, {
+      teamId: source.teamId,
+      teamName: source.teamName,
+      teamKeyId: source.teamKeyId,
+      release: 3,
+      sharing: 'forwardable'
+    })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -189,6 +198,8 @@ test('keeps a successfully pulled registry cached but blocks withdrawn and never
         lastCheckedAt: '2026-11-04T02:00:00.000Z',
         lastErrorCode: 'NOT_A_MEMBER',
         withdrawnReleases: [],
+        announcements: [],
+        resources: { 'skill:team-skill': { sharing: 'forwardable' } },
         credentialConflicts: [],
         skippedProviders: []
       }
@@ -202,6 +213,8 @@ test('keeps a successfully pulled registry cached but blocks withdrawn and never
         lastCheckedAt: '2026-11-04T02:00:00.000Z',
         lastErrorCode: null,
         withdrawnReleases: [3],
+        announcements: [],
+        resources: { 'skill:team-skill': { sharing: 'forwardable' } },
         credentialConflicts: [],
         skippedProviders: []
       }
@@ -215,6 +228,8 @@ test('keeps a successfully pulled registry cached but blocks withdrawn and never
         lastCheckedAt: null,
         lastErrorCode: null,
         withdrawnReleases: [],
+        announcements: [],
+        resources: {},
         credentialConflicts: [],
         skippedProviders: []
       }

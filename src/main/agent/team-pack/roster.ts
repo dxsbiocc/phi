@@ -3,8 +3,10 @@ import { join } from 'node:path'
 
 import { Encrypter } from 'age-encryption'
 
+import type { TeamResourceMap } from '../packages/installer-types'
 import { isTeamPackError, teamPackError } from './errors'
 import { assertManagedDirectory, assertManagedFile, writeAtomic } from './files'
+import { validateAnnouncementText, validateTeamResourceMap } from './format'
 import { assertRelease, assertX25519Recipient } from './validation'
 
 export const TEAM_ROSTER_FILE_NAME = 'roster.json'
@@ -26,6 +28,8 @@ export interface RosterRelease {
   publishedAt: string
   memberIds: string[]
   withdrawn: boolean
+  announcement?: string
+  resources?: TeamResourceMap
 }
 
 export interface TeamRoster {
@@ -200,7 +204,11 @@ function parseMember(value: unknown, allowRemovedAt: boolean): RosterMember {
 
 function parseReleaseRecord(value: unknown): RosterRelease {
   if (!isRecord(value)) invalid('发布记录格式无效')
-  assertExactKeys(value, ['release', 'publishedAt', 'memberIds', 'withdrawn'], '发布记录')
+  assertExactKeys(
+    value,
+    ['release', 'publishedAt', 'memberIds', 'withdrawn', 'announcement', 'resources'],
+    '发布记录'
+  )
   assertRelease(value.release)
   assertTimestamp(value.publishedAt, '发布时间')
   if (
@@ -216,11 +224,17 @@ function parseReleaseRecord(value: unknown): RosterRelease {
     return memberId
   })
   assertUnique(memberIds, '发布记录包含重复成员')
+  const announcement =
+    value.announcement === undefined ? undefined : validateAnnouncementText(value.announcement)
+  const resources =
+    value.resources === undefined ? undefined : validateTeamResourceMap(value.resources)
   return {
     release: value.release,
     publishedAt: value.publishedAt,
     memberIds,
-    withdrawn: value.withdrawn
+    withdrawn: value.withdrawn,
+    ...(announcement === undefined ? {} : { announcement }),
+    ...(resources === undefined ? {} : { resources })
   }
 }
 

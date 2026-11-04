@@ -5,7 +5,11 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import type { LocalRegistry } from '../src/main/agent/packages/installer-types'
-import { installPackages, planInstall } from '../src/main/agent/packages/installer'
+import {
+  installPackages,
+  listInstalledPackages,
+  planInstall
+} from '../src/main/agent/packages/installer'
 import {
   listKnownRegistries,
   loadKnownRegistryIndexes
@@ -55,6 +59,13 @@ test('two members install the same release and a removed member keeps the old in
     ])
     assert.equal(existsSync(installedSkillPath(firstAgentDir, '1.0.0')), true)
     assert.equal(existsSync(installedSkillPath(secondAgentDir, '1.0.0')), true)
+    assert.deepEqual(listInstalledPackages({ agentDir: firstAgentDir })[0]?.teamSource, {
+      teamId: team.teamId,
+      teamName: team.name,
+      teamKeyId: team.keyId,
+      release: 1,
+      sharing: 'team-only'
+    })
 
     writeSkillRegistry(registryDir, '2.0.0')
     await publishTeamRelease({

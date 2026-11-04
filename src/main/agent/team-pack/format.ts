@@ -1,7 +1,13 @@
 import { createHash } from 'node:crypto'
 
+import type { TeamResourceMap } from '../packages/installer-types'
 import { teamPackError } from './errors'
 import { assertIsoDate, assertRelease, assertTeamId, assertTeamName } from './validation'
+
+const MAX_ANNOUNCEMENTS = 20
+const MAX_ANNOUNCEMENT_CODE_POINTS = 4_000
+const MAX_TEAM_RESOURCES = 10_000
+const TEAM_RESOURCE_KEY = /^(?:skill|plugin|wrapper|mcp):[a-z][a-z0-9-]{1,63}$/
 
 export interface TeamFile {
   version: 1
@@ -54,10 +60,18 @@ export interface ReleaseManifest {
   withdrawnReleases: number[]
 }
 
+export interface TeamAnnouncement {
+  release: number
+  publishedAt: string
+  text: string
+}
+
 export interface InnerFile {
   version: 1
   teamId: string
   release: number
+  announcements: TeamAnnouncement[]
+  resources: TeamResourceMap
 }
 
 export interface TeamState {
@@ -210,9 +224,103 @@ export function validateModelKeyGrants(value: readonly unknown[]): ModelKeyGrant
 export function parseInnerFile(data: Buffer): InnerFile {
   const value = parseJsonRecord(data, 'inner.json')
   if (value.version !== 1) invalid('inner.json')
+  assertAllowedFields(
+    value,
+    ['version', 'teamId', 'release', 'announcements', 'resources'],
+    'inner.json'
+  )
   assertTeamId(value.teamId)
   assertRelease(value.release)
-  return { version: 1, teamId: value.teamId, release: value.release }
+  const release = value.release
+  const announcements = validateTeamAnnouncements(value.announcements ?? [])
+  if (announcements.some((announcement) => announcement.release > release)) {
+    invalid('inner.json announcements')
+  }
+  return {
+    version: 1,
+    teamId: value.teamId,
+    release,
+    announcements,
+    resources: validateTeamResourceMap(value.resources ?? {})
+  }
+}
+
+export function validateAnnouncementText(value: unknown): string {
+  if (typeof value !== 'string') invalid('announcement text')
+  const characters = [...value]
+  if (
+    characters.length < 1 ||
+    characters.length > MAX_ANNOUNCEMENT_CODE_POINTS ||
+    characters.some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0
+      return (
+        (codePoint >= 0x00 && codePoint <= 0x09) ||
+        (codePoint >= 0x0b && codePoint <= 0x1f) ||
+        (codePoint >= 0x7f && codePoint <= 0x9f)
+      )
+    })
+  ) {
+    invalid('announcement text')
+  }
+  return value
+}
+
+export function validateTeamAnnouncements(value: unknown): TeamAnnouncement[] {
+  if (!Array.isArray(value) || value.length > MAX_ANNOUNCEMENTS) {
+    invalid('inner.json announcements')
+  }
+  const announcements = value.map((entry) => {
+    if (!isRecord(entry)) invalid('inner.json announcement')
+    assertFields(entry, ['release', 'publishedAt', 'text'], 'inner.json announcement')
+    assertRelease(entry.release)
+    assertIsoDate(entry.publishedAt)
+    if (new Date(entry.publishedAt).toISOString() !== entry.publishedAt) {
+      invalid('inner.json announcement publishedAt')
+    }
+    return {
+      release: entry.release,
+      publishedAt: entry.publishedAt,
+      text: validateAnnouncementText(entry.text)
+    }
+  })
+  if (
+    announcements.some(
+      ({ release }, index) => index > 0 && release <= announcements[index - 1]!.release
+    )
+  ) {
+    invalid('inner.json announcements')
+  }
+  return announcements
+}
+
+export function validateTeamResourceMap(value: unknown): TeamResourceMap {
+  if (!isRecord(value)) invalid('inner.json resources')
+  const entries = Object.entries(value)
+  if (entries.length > MAX_TEAM_RESOURCES) invalid('inner.json resources')
+  return Object.fromEntries(
+    entries.map(([key, metadata]) => {
+      if (!TEAM_RESOURCE_KEY.test(key) || !isRecord(metadata)) {
+        invalid('inner.json resource')
+      }
+      const fields =
+        metadata.originalSource === undefined ? ['sharing'] : ['sharing', 'originalSource']
+      assertFields(metadata, fields, 'inner.json resource')
+      if (metadata.sharing !== 'team-only' && metadata.sharing !== 'forwardable') {
+        invalid('inner.json resource sharing')
+      }
+      const originalSource =
+        metadata.originalSource === undefined
+          ? undefined
+          : validateTeamResourceOrigin(metadata.originalSource)
+      return [
+        key,
+        {
+          sharing: metadata.sharing,
+          ...(originalSource === undefined ? {} : { originalSource })
+        }
+      ]
+    })
+  )
 }
 
 export function parseTeamState(data: Buffer): TeamState {
@@ -346,6 +454,29 @@ function assertFields(value: Record<string, unknown>, fields: string[], label: s
   ) {
     invalid(label)
   }
+}
+
+function assertAllowedFields(
+  value: Record<string, unknown>,
+  fields: readonly string[],
+  label: string
+): void {
+  if (Object.keys(value).some((field) => !fields.includes(field))) invalid(label)
+}
+
+function validateTeamResourceOrigin(value: unknown): {
+  teamId: string
+  teamName: string
+  teamKeyId: string
+} {
+  if (!isRecord(value)) invalid('inner.json resource originalSource')
+  assertFields(value, ['teamId', 'teamName', 'teamKeyId'], 'inner.json resource originalSource')
+  assertTeamId(value.teamId)
+  assertTeamName(value.teamName)
+  if (typeof value.teamKeyId !== 'string' || !/^[a-f0-9]{16}$/.test(value.teamKeyId)) {
+    invalid('inner.json resource originalSource')
+  }
+  return { teamId: value.teamId, teamName: value.teamName, teamKeyId: value.teamKeyId }
 }
 
 function isSha256(value: unknown): value is string {

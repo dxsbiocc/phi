@@ -41,7 +41,7 @@ export function sourceView(source: IpcTeamSourceView): TeamSourceView {
     id: source.id,
     teamId: source.teamId,
     teamName: source.teamName,
-    teamKeyId: source.publicKeyFingerprint,
+    publicKeyFingerprint: source.publicKeyFingerprint,
     location: source.location,
     addedAt: source.addedAt,
     status: {

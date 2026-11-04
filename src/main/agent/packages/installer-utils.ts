@@ -4,7 +4,13 @@ import { isAbsolute, relative, resolve, win32 } from 'node:path'
 import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
 import { isLegacyPackageRegistry } from '../../../shared/packageSourceIds'
-import type { LocalRegistry, PackageSourceMetadata, RegistryTrustTier } from './installer-types'
+import type {
+  InstalledTeamResourceSource,
+  LocalRegistry,
+  PackageSourceMetadata,
+  RegistryTrustTier,
+  TeamResourceOrigin
+} from './installer-types'
 import type { PackageType } from './manifest'
 
 // Historical import surface for the packages module; the definitions now live in src/shared.
@@ -62,14 +68,15 @@ export function sha256(value: Buffer): string {
 }
 
 export function isSourceMetadata(value: unknown): value is ReadablePackageSourceMetadata {
+  return isBaseSourceMetadata(value) && validTeamSourceMetadata(value.teamSource)
+}
+
+function isBaseSourceMetadata(value: unknown): value is ReadablePackageSourceMetadata {
   return (
     isRecord(value) &&
     typeof value.registry === 'string' &&
     typeof value.id === 'string' &&
-    (value.type === 'skill' ||
-      value.type === 'plugin' ||
-      value.type === 'wrapper' ||
-      value.type === 'mcp') &&
+    isPackageType(value.type) &&
     typeof value.version === 'string' &&
     typeof value.sha256 === 'string' &&
     typeof value.installedAt === 'string' &&
@@ -78,6 +85,44 @@ export function isSourceMetadata(value: unknown): value is ReadablePackageSource
       value.trust === 'builtin' ||
       value.trust === 'official' ||
       value.trust === 'imported')
+  )
+}
+
+function isPackageType(value: unknown): value is PackageType {
+  return value === 'skill' || value === 'plugin' || value === 'wrapper' || value === 'mcp'
+}
+
+function validTeamSourceMetadata(value: unknown): boolean {
+  return value === undefined || isInstalledTeamResourceSource(value)
+}
+
+function isInstalledTeamResourceSource(value: unknown): value is InstalledTeamResourceSource {
+  return (
+    isRecord(value) &&
+    isTeamResourceOrigin(value) &&
+    typeof value.release === 'number' &&
+    Number.isSafeInteger(value.release) &&
+    value.release >= 1 &&
+    (value.sharing === 'team-only' || value.sharing === 'forwardable') &&
+    (value.originalSource === undefined || isTeamResourceOrigin(value.originalSource))
+  )
+}
+
+function isTeamResourceOrigin(value: unknown): value is TeamResourceOrigin {
+  return (
+    isRecord(value) &&
+    typeof value.teamId === 'string' &&
+    /^[a-z][a-z0-9-]{1,63}$/.test(value.teamId) &&
+    typeof value.teamName === 'string' &&
+    value.teamName.trim() === value.teamName &&
+    value.teamName.length >= 1 &&
+    value.teamName.length <= 100 &&
+    ![...value.teamName].some((character) => {
+      const code = character.charCodeAt(0)
+      return code < 32 || code === 127
+    }) &&
+    typeof value.teamKeyId === 'string' &&
+    /^[a-f0-9]{16}$/.test(value.teamKeyId)
   )
 }
 

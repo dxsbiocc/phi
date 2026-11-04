@@ -212,7 +212,9 @@ function loadTeamRegistryIndexes(
           id: source.id,
           teamId: source.teamId,
           teamName: source.teamName,
-          release
+          teamKeyId: source.teamKeyId,
+          release,
+          resources: teamSourceResources(source)
         }
       })
     } catch (error) {
@@ -220,6 +222,15 @@ function loadTeamRegistryIndexes(
     }
   }
   return { registries, errors }
+}
+
+function teamSourceResources(
+  source: TeamSource
+): Extract<NonNullable<LocalRegistry['source']>, { kind: 'team' }>['resources'] {
+  const status = source.status as TeamSource['status'] & {
+    resources?: Extract<NonNullable<LocalRegistry['source']>, { kind: 'team' }>['resources']
+  }
+  return status.resources ?? {}
 }
 
 function loadOfficialRegistry(options: KnownRegistryListOptions): Promise<LocalRegistry> {

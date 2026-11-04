@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { beforeEach, afterEach } from 'node:test'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 
@@ -11,6 +12,12 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
 import SettingsDialog from '../src/renderer/src/components/SettingsDialog'
+import { ReleaseHistorySection } from '../src/renderer/src/features/team/components/ReleaseHistorySection'
+import { TeamPublishSection } from '../src/renderer/src/features/team/components/TeamPublishSection'
+import { TeamSourceList } from '../src/renderer/src/features/team/components/TeamSourceList'
+import { teamCopy } from '../src/renderer/src/features/team/lib/teamCopy'
+import type { TeamSourceView } from '../src/renderer/src/features/team/lib/teamTypes'
+import type { InstalledPackageView } from '../src/shared/packageManagerTypes'
 import type { ModelOption, Project, ProviderAuthStatus } from '../src/renderer/src/types'
 
 const provider: ProviderAuthStatus = {
@@ -131,12 +138,179 @@ test('settings dialog has a dedicated bilingual team category', () => {
   assert.match(chinese, /团队/)
   assert.match(chinese, /我加入的团队/)
   assert.match(chinese, /我管理的团队/)
+  assert.equal(teamCopy.announcement, '公告')
+  assert.equal(teamCopy.teamOnly, '仅限本团队')
+  assert.equal(teamCopy.forwardable, '允许转发')
+  assert.match(teamCopy.teamOnlySourceReason, /尊重这项分享约定/)
 
   setUiLanguage('en')
   const english = renderSettingsDialog({ category: 'team' })
   assert.match(english, /Team/)
   assert.match(english, /Teams I joined/)
   assert.match(english, /Teams I manage/)
+  assert.equal(teamCopy.announcement, 'Announcement')
+  assert.equal(teamCopy.teamOnly, 'Only this team')
+  assert.equal(teamCopy.forwardable, 'Allow forwarding')
+  assert.match(teamCopy.teamOnlySourceReason, /respects that sharing request/)
+})
+
+test('team source cards render announcements as escaped plain text and show original sources', () => {
+  const source: TeamSourceView = {
+    id: 'source-1',
+    teamId: 'team-1',
+    teamName: '当前团队',
+    publicKeyFingerprint: '0123456789abcdef',
+    location: { kind: 'https', url: 'https://example.test/team' },
+    addedAt: '2026-11-01T00:00:00.000Z',
+    status: {
+      state: 'healthy',
+      lastSuccessfulRelease: 2,
+      lastCheckedAt: '2026-11-04T08:00:00.000Z',
+      lastErrorCode: null,
+      withdrawnReleases: [],
+      credentialProviders: [],
+      credentialConflicts: [],
+      skippedProviders: [],
+      configuredProviders: [],
+      announcements: [
+        { release: 1, publishedAt: '2026-11-02T08:00:00.000Z', text: '旧公告' },
+        {
+          release: 2,
+          publishedAt: '2026-11-03T08:00:00.000Z',
+          text: '<strong>纯文本</strong>\n**不是 Markdown**'
+        }
+      ],
+      resources: {
+        'skill:forwarded': {
+          sharing: 'forwardable',
+          originalSource: {
+            teamId: 'upstream-team',
+            teamName: '上游团队',
+            publicKeyFingerprint: 'fedcba9876543210'
+          }
+        }
+      }
+    }
+  }
+  const theme = createTheme()
+  const renderSource = (): string =>
+    renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme },
+        createElement(TeamSourceList, {
+          sources: [source],
+          busySourceId: null,
+          onCheck: () => undefined,
+          onRemove: () => undefined
+        })
+      )
+    )
+
+  const chinese = renderSource()
+  assert.match(chinese, /最新公告/)
+  assert.match(chinese, /展开全部公告（2）/)
+  assert.match(chinese, /原始来源：上游团队/)
+  assert.match(chinese, /&lt;strong&gt;纯文本&lt;\/strong&gt;/)
+  assert.match(chinese, /\*\*不是 Markdown\*\*/)
+  assert.doesNotMatch(chinese, /<strong>纯文本<\/strong>/)
+  assert.doesNotMatch(chinese, /旧公告/)
+
+  setUiLanguage('en')
+  source.teamName = 'Current Team'
+  const originalSource = source.status.resources['skill:forwarded'].originalSource
+  assert.ok(originalSource)
+  originalSource.teamName = 'Upstream Team'
+  const english = renderSource()
+  assert.match(english, /Latest announcement/)
+  assert.match(english, /Show all announcements \(2\)/)
+  assert.match(english, /Original source: Upstream Team/)
+
+  const rendererSource = readFileSync(
+    new URL('../src/renderer/src/features/team/components/TeamSourceList.tsx', import.meta.url),
+    'utf8'
+  )
+  assert.doesNotMatch(rendererSource, /dangerouslySetInnerHTML|ReactMarkdown|MarkdownRenderer/)
+})
+
+test('team publishing UI explains forwarding policy and marks announcement releases bilingually', () => {
+  const entry: InstalledPackageView = {
+    id: 'shared-skill',
+    type: 'skill',
+    version: '1.0.0',
+    title: 'Shared skill',
+    summary: 'summary',
+    dir: '/tmp/shared-skill',
+    installedAt: '2026-11-01T00:00:00.000Z',
+    installedBy: 'user',
+    registry: 'team:upstream',
+    sha256: 'a'.repeat(64),
+    trust: 'imported',
+    teamSource: {
+      teamId: 'upstream-team',
+      teamName: '上游团队',
+      teamKeyId: 'fedcba9876543210',
+      release: 3,
+      sharing: 'team-only'
+    }
+  }
+  const theme = createTheme()
+  const renderPublishing = (): string =>
+    renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme },
+        createElement(
+          'div',
+          null,
+          createElement(TeamPublishSection, {
+            storeDir: '/tmp/team',
+            teamId: 'managed-team',
+            latestRelease: 1,
+            packages: [entry],
+            selected: [],
+            sharingByKey: {},
+            announcement: '更新说明',
+            busy: false,
+            published: null,
+            onToggle: () => undefined,
+            onSharingChange: () => undefined,
+            onAnnouncementChange: () => undefined,
+            onPublish: () => undefined,
+            onAnnounceOnly: () => undefined
+          }),
+          createElement(ReleaseHistorySection, {
+            releases: [
+              {
+                release: 1,
+                publishedAt: '2026-11-03T08:00:00.000Z',
+                memberIds: ['member-1'],
+                withdrawn: false,
+                hasAnnouncement: true
+              }
+            ],
+            onWithdraw: () => undefined
+          })
+        )
+      )
+    )
+
+  const chinese = renderPublishing()
+  assert.match(chinese, /公告/)
+  assert.match(chinese, /仅限本团队/)
+  assert.match(chinese, /来源：上游团队/)
+  assert.match(chinese, /尊重这项分享约定/)
+  assert.match(chinese, /带公告/)
+  assert.match(chinese, /type="checkbox"[^>]*disabled=""|disabled=""[^>]*type="checkbox"/)
+
+  setUiLanguage('en')
+  assert.ok(entry.teamSource)
+  entry.teamSource.teamName = 'Upstream Team'
+  const english = renderPublishing()
+  assert.match(english, /Announcement/)
+  assert.match(english, /Only this team/)
+  assert.match(english, /Source: Upstream Team/)
+  assert.match(english, /respects that sharing request/)
 })
 
 test('settings dialog keeps configured provider rows information-dense', () => {

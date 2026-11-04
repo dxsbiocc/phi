@@ -83,6 +83,8 @@ test('adds a directory source only after validating team.json and persists stric
       lastCheckedAt: null,
       lastErrorCode: null,
       withdrawnReleases: [],
+      announcements: [],
+      resources: {},
       credentialConflicts: [],
       skippedProviders: []
     }
@@ -591,6 +593,8 @@ test('deduplicates concurrent pulls of the same source', async () => {
     registryDir: string
     withdrawnReleases: number[]
     models: []
+    announcements: []
+    resources: Record<string, never>
   }>()
   let calls = 0
   const service = new TeamSourceService({
@@ -618,7 +622,9 @@ test('deduplicates concurrent pulls of the same source', async () => {
     release: 1,
     registryDir: join(root, 'synthetic-registry'),
     withdrawnReleases: [],
-    models: []
+    models: [],
+    announcements: [],
+    resources: {}
   })
   await Promise.all([first, second])
   assert.equal(calls, 1)
@@ -678,6 +684,8 @@ test('service close drains an in-flight pull and rejects later mutations', async
     registryDir: string
     withdrawnReleases: number[]
     models: []
+    announcements: []
+    resources: Record<string, never>
   }>()
   const service = new TeamSourceService({
     agentDir,
@@ -703,7 +711,9 @@ test('service close drains an in-flight pull and rejects later mutations', async
     release: 1,
     registryDir: join(root, 'synthetic-registry'),
     withdrawnReleases: [],
-    models: []
+    models: [],
+    announcements: [],
+    resources: {}
   })
   await pull
   await close
@@ -843,6 +853,8 @@ function sourceRecord(): TeamSource {
       lastCheckedAt: null,
       lastErrorCode: null,
       withdrawnReleases: [],
+      announcements: [],
+      resources: {},
       credentialConflicts: [],
       skippedProviders: []
     }

@@ -34,6 +34,7 @@ import { TEAM_PRIVATE_KEY_FILE } from '../src/main/agent/team-pack/key-store'
 import { createMemberKeys } from '../src/main/agent/team-pack/keys'
 import { pullTeamRelease } from '../src/main/agent/team-pack/pull'
 import { DirectoryTeamPackStore } from '../src/main/agent/team-pack/store'
+import { writeTeamSourcesState } from '../src/main/agent/team-pack/team-source-storage'
 import { installPulledSkill, installedSkillPath, writeSkillRegistry } from './team-pack-fixtures'
 
 const roots: string[] = []
@@ -146,8 +147,143 @@ test('prepareRegistry materializes the selected current installed package versio
   const registry = readRegistry(prepared.registryDir)
 
   assert.deepEqual(prepared.packages, [{ type: 'skill', id: 'shared-analysis', version: '1.0.0' }])
+  assert.deepEqual(prepared.resources, {
+    'skill:shared-analysis': { sharing: 'team-only' }
+  })
   assert.equal(registry.packages[0]?.id, 'shared-analysis')
   assert.equal(registry.packages[0]?.version, '1.0.0')
+})
+
+test('cross-team selections reject team-only resources and preserve the original source when forwarded', async () => {
+  const root = sandbox('forwarding')
+  const agentDir = join(root, 'agent')
+  const service = adminService(agentDir)
+  await installFixtureSkill(agentDir, root)
+  const installed = listInstalledPackages({ agentDir })[0]
+  assert.ok(installed)
+  const sourcePath = join(installed.dir, '.source.json')
+  const source = JSON.parse(readFileSync(sourcePath, 'utf8')) as Record<string, unknown>
+  const immediate = {
+    teamId: 'source-team',
+    teamName: 'Source Team',
+    teamKeyId: '1111111111111111',
+    release: 3,
+    sharing: 'team-only'
+  }
+  writeFileSync(sourcePath, `${JSON.stringify({ ...source, teamSource: immediate }, null, 2)}\n`)
+  const team = service.createTeam({ name: 'Forwarding Team', teamId: 'forwarding-team' })
+
+  await expectCode(
+    () =>
+      service.prepareRegistry({
+        teamId: team.teamId,
+        packages: [{ type: 'skill', id: 'shared-analysis' }]
+      }),
+    'INVALID_FORMAT'
+  )
+
+  writeFileSync(
+    sourcePath,
+    `${JSON.stringify(
+      { ...source, teamSource: { ...immediate, sharing: 'forwardable' } },
+      null,
+      2
+    )}\n`
+  )
+  const immediateForward = service.prepareRegistry({
+    teamId: team.teamId,
+    packages: [{ type: 'skill', id: 'shared-analysis' }]
+  })
+  assert.deepEqual(immediateForward.resources, {
+    'skill:shared-analysis': {
+      sharing: 'team-only',
+      originalSource: {
+        teamId: immediate.teamId,
+        teamName: immediate.teamName,
+        teamKeyId: immediate.teamKeyId
+      }
+    }
+  })
+
+  const originalSource = {
+    teamId: 'original-team',
+    teamName: 'Original Team',
+    teamKeyId: '2222222222222222'
+  }
+  writeFileSync(
+    sourcePath,
+    `${JSON.stringify(
+      {
+        ...source,
+        teamSource: { ...immediate, sharing: 'forwardable', originalSource }
+      },
+      null,
+      2
+    )}\n`
+  )
+  const prepared = service.prepareRegistry({
+    teamId: team.teamId,
+    packages: [{ type: 'skill', id: 'shared-analysis', sharing: 'forwardable' }]
+  })
+
+  assert.deepEqual(prepared.resources, {
+    'skill:shared-analysis': { sharing: 'forwardable', originalSource }
+  })
+})
+
+test('legacy team installs use team source state for forwarding validation and provenance', async () => {
+  const root = sandbox('forwarding-legacy')
+  const agentDir = join(root, 'agent')
+  const service = adminService(agentDir)
+  await installFixtureSkill(agentDir, root)
+  const installed = listInstalledPackages({ agentDir })[0]
+  assert.ok(installed)
+  const sourcePath = join(installed.dir, '.source.json')
+  const source = JSON.parse(readFileSync(sourcePath, 'utf8')) as Record<string, unknown>
+  writeFileSync(
+    sourcePath,
+    `${JSON.stringify({ ...source, registry: 'legacy-team-source' }, null, 2)}\n`
+  )
+  const originalSource = {
+    teamId: 'original-team',
+    teamName: 'Original Team',
+    teamKeyId: '3333333333333333'
+  }
+  writeTeamSourcesState(agentDir, {
+    version: 1,
+    sources: [
+      {
+        id: 'legacy-team-source',
+        teamId: 'relay-team',
+        teamName: 'Relay Team',
+        teamKeyId: '4444444444444444',
+        location: { kind: 'directory', path: join(root, 'relay-store') },
+        addedAt: '2026-11-04T00:00:00.000Z',
+        status: {
+          lastSuccessfulRelease: 4,
+          lastCheckedAt: '2026-11-04T00:00:00.000Z',
+          lastErrorCode: null,
+          withdrawnReleases: [],
+          announcements: [],
+          resources: {
+            'skill:shared-analysis': { sharing: 'forwardable', originalSource }
+          },
+          credentialConflicts: [],
+          skippedProviders: []
+        }
+      }
+    ],
+    credentialOwners: []
+  })
+  const team = service.createTeam({ name: 'Legacy Forwarding', teamId: 'legacy-forwarding' })
+  const prepared = service.prepareRegistry({
+    teamId: team.teamId,
+    packages: [{ type: 'skill', id: 'shared-analysis' }]
+  })
+
+  assert.deepEqual(prepared.resources, {
+    'skill:shared-analysis': { sharing: 'team-only', originalSource }
+  })
 })
 
 test('prepareRegistry rejects missing and unsupported package selections clearly', async () => {
@@ -363,6 +499,72 @@ test('saved model grants survive consecutive publications and withdrawal publica
   assert.deepEqual(second.models, expected)
   assert.deepEqual(withdrawn.models, expected)
   assert.deepEqual(withdrawn.withdrawnReleases, [1])
+})
+
+test('announcement-only releases reuse resources and grants while retaining the latest 20 announcements', async () => {
+  const root = sandbox('announcement-only')
+  const agentDir = join(root, 'admin-agent')
+  const storeDir = join(root, 'store')
+  const service = adminService(agentDir)
+  await installFixtureSkill(agentDir, root)
+  const team = service.createTeam({ name: 'Announcements', teamId: 'announcement-team' })
+  const memberKeys = await createMemberKeys()
+  const member = service.addMember({
+    teamId: team.teamId,
+    displayName: 'Member',
+    recipient: memberKeys.recipient
+  })
+  const apiKey = 'sk-announcement-continuity'
+  const first = await service.publishRelease({
+    teamId: team.teamId,
+    storeDir,
+    packages: [{ type: 'skill', id: 'shared-analysis', sharing: 'forwardable' }],
+    announcement: 'announcement 1',
+    grants: [
+      {
+        memberId: member.memberId,
+        models: [{ providerId: 'openai', label: 'Announcement Model', apiKey }]
+      }
+    ]
+  })
+  const firstSnapshot = readFileSync(
+    join(agentDir, 'team-pack', 'admin', team.teamId, 'registry-snapshots', '1', 'index.json')
+  )
+
+  let latest = first
+  for (let release = 2; release <= 21; release++) {
+    latest = await service.publishRelease({
+      teamId: team.teamId,
+      storeDir,
+      packages: [],
+      announcement: `announcement ${release}`,
+      announcementOnly: true
+    })
+  }
+  const latestSnapshot = readFileSync(
+    join(agentDir, 'team-pack', 'admin', team.teamId, 'registry-snapshots', '21', 'index.json')
+  )
+  const pulled = await pullTeamRelease({
+    store: new DirectoryTeamPackStore(storeDir),
+    teamKeyId: team.publicKeyFingerprint,
+    identity: memberKeys.identity,
+    stateDir: join(root, 'member-state')
+  })
+
+  assert.equal(latest.release, 21)
+  assert.deepEqual(latest.packages, first.packages)
+  assert.deepEqual(latestSnapshot, firstSnapshot)
+  assert.deepEqual(pulled.resources, {
+    'skill:shared-analysis': { sharing: 'forwardable' }
+  })
+  assert.deepEqual(pulled.models, [{ providerId: 'openai', label: 'Announcement Model', apiKey }])
+  assert.equal(pulled.announcements.length, 20)
+  assert.equal(pulled.announcements[0]?.release, 2)
+  assert.equal(pulled.announcements[19]?.release, 21)
+  assert.equal(
+    service.getTeamSummary(team.teamId).releases.every((release) => release.hasAnnouncement),
+    true
+  )
 })
 
 test('model grant management replaces and deletes providers without exposing secrets', async () => {
@@ -631,7 +833,8 @@ test('withdrawRelease republishes the latest content with cumulative withdrawal 
   await service.publishRelease({
     teamId: team.teamId,
     storeDir: join(root, 'store'),
-    packages: [{ type: 'skill', id: 'shared-analysis' }]
+    packages: [{ type: 'skill', id: 'shared-analysis' }],
+    announcement: 'Before withdrawal'
   })
 
   const withdrawn = await service.withdrawRelease({ teamId: team.teamId, release: 1 })
@@ -646,12 +849,23 @@ test('withdrawRelease republishes the latest content with cumulative withdrawal 
   assert.equal(withdrawn.release, 2)
   assert.deepEqual(withdrawn.withdrawnReleases, [1])
   assert.deepEqual(pulled.withdrawnReleases, [1])
+  assert.deepEqual(pulled.announcements, [
+    {
+      release: 1,
+      publishedAt: summary.releases[0]?.publishedAt,
+      text: 'Before withdrawal'
+    }
+  ])
   assert.equal(summary.latestRelease, 2)
   assert.deepEqual(
-    summary.releases.map(({ release, withdrawn: value }) => [release, value]),
+    summary.releases.map(({ release, withdrawn: value, hasAnnouncement }) => [
+      release,
+      value,
+      hasAnnouncement
+    ]),
     [
-      [1, true],
-      [2, false]
+      [1, true, true],
+      [2, false, false]
     ]
   )
 })

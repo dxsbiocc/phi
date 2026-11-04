@@ -4,7 +4,8 @@ import type {
   TeamAdminMember,
   TeamAdminModelInput,
   TeamAdminRelease,
-  TeamPackageSelection
+  TeamPackageSelection,
+  TeamResourceSharing
 } from '../../../../../shared/teamPackTypes'
 
 import { useUiLanguage } from '../../../lib/i18n'
@@ -41,6 +42,8 @@ export function AdminTeamsPanel(): React.JSX.Element {
   const [modelsMember, setModelsMember] = useState<TeamAdminMember | null>(null)
   const [models, setModels] = useState<TeamAdminModelInput[]>([])
   const [selectedPackages, setSelectedPackages] = useState<string[]>([])
+  const [sharingByPackage, setSharingByPackage] = useState<Record<string, TeamResourceSharing>>({})
+  const [announcement, setAnnouncement] = useState('')
   const [withdrawRelease, setWithdrawRelease] = useState<TeamAdminRelease | null>(null)
   const [notice, setNotice] = useState<AdminNotice | null>(null)
 
@@ -57,8 +60,20 @@ export function AdminTeamsPanel(): React.JSX.Element {
   function selections(): TeamPackageSelection[] {
     const selected = new Set(selectedPackages)
     return controller.packages
-      .filter((entry) => selected.has(packageSelectionKey(entry)))
-      .map((entry) => ({ type: entry.type, id: entry.id }))
+      .filter((entry) => {
+        if (!selected.has(packageSelectionKey(entry))) return false
+        const source = entry.teamSource
+        return (
+          source === undefined ||
+          source.teamId === controller.detail?.teamId ||
+          source.sharing === 'forwardable'
+        )
+      })
+      .map((entry) => ({
+        type: entry.type,
+        id: entry.id,
+        sharing: sharingByPackage[packageSelectionKey(entry)] ?? 'team-only'
+      }))
   }
 
   function resetTeamScopedState(): void {
@@ -69,6 +84,8 @@ export function AdminTeamsPanel(): React.JSX.Element {
     setModelsMember(null)
     setModels([])
     setSelectedPackages([])
+    setSharingByPackage({})
+    setAnnouncement('')
     setWithdrawRelease(null)
     setNotice(null)
   }
@@ -117,17 +134,46 @@ export function AdminTeamsPanel(): React.JSX.Element {
           />
           <TeamPublishSection
             storeDir={controller.detail.storeDir}
+            teamId={controller.detail.teamId}
+            latestRelease={controller.detail.latestRelease}
             packages={controller.packages}
             selected={selectedPackages}
+            sharingByKey={sharingByPackage}
+            announcement={announcement}
             busy={controller.busy === 'publish'}
             published={controller.published}
             onToggle={(entry) => {
               const key = packageSelectionKey(entry)
-              setSelectedPackages((current) =>
-                current.includes(key) ? current.filter((value) => value !== key) : [...current, key]
-              )
+              if (selectedPackages.includes(key)) {
+                setSelectedPackages((current) => current.filter((value) => value !== key))
+                setSharingByPackage((sharing) => {
+                  const next = { ...sharing }
+                  delete next[key]
+                  return next
+                })
+              } else {
+                setSelectedPackages((current) => [...current, key])
+                setSharingByPackage((sharing) => ({ ...sharing, [key]: 'team-only' }))
+              }
             }}
-            onPublish={() => void controller.publish(selections())}
+            onSharingChange={(entry, sharing) =>
+              setSharingByPackage((current) => ({
+                ...current,
+                [packageSelectionKey(entry)]: sharing
+              }))
+            }
+            onAnnouncementChange={setAnnouncement}
+            onPublish={() => {
+              const text = announcement.trim().length > 0 ? announcement : undefined
+              void controller.publish(selections(), text).then((published) => {
+                if (published) setAnnouncement('')
+              })
+            }}
+            onAnnounceOnly={() => {
+              void controller.announceOnly(announcement).then((published) => {
+                if (published) setAnnouncement('')
+              })
+            }}
           />
           <ReleaseHistorySection
             releases={controller.detail.releases}
