@@ -206,7 +206,8 @@ export const IPC = {
     pickDirectory: 'phiPlugins:pickDirectory',
     previewDirectory: 'phiPlugins:previewDirectory',
     setEnabled: 'phiPlugins:setEnabled',
-    uninstall: 'phiPlugins:uninstall'
+    uninstall: 'phiPlugins:uninstall',
+    visualizationTemplates: 'phiPlugins:visualizationTemplates'
   },
   projects: {
     create: 'projects:create',

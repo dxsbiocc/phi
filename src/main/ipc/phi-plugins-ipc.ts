@@ -21,6 +21,7 @@ import {
   type PluginNamespace
 } from '../agent/plugins/loader'
 import { validatePlugin } from '../agent/plugins/validate'
+import { visualizationTemplateCatalog } from '../agent/plugins/visualization-catalog'
 import { nativeUiCopy } from '../native-ui-copy'
 
 export interface PhiPluginIpcOptions {
@@ -71,6 +72,9 @@ function registerPhiPluginBrowseIpc(context: PhiPluginIpcContext): void {
   const phiPluginProblemView = context.view.problem
   const phiPluginInstallPreview = context.view.installPreview
   ipcMain.handle(IPC.phiPlugins.list, async () => phiPluginListItems())
+  ipcMain.handle(IPC.phiPlugins.visualizationTemplates, () =>
+    visualizationTemplateCatalog({ agentDir: context.AGENT_DIR })
+  )
   ipcMain.handle(IPC.phiPlugins.pickDirectory, async () => {
     const window = getActiveWindow()
     const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)

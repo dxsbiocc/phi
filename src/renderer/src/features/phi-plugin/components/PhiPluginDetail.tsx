@@ -1,6 +1,8 @@
 import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
 import { pluginCopy } from '../lib/pluginCopy'
+import { VisualizationPanel } from '../../visualization/VisualizationPanel'
+import { visualizationCopy } from '../../visualization/lib/visualizationCopy'
 import { useState } from 'react'
 import {
   Alert,
@@ -58,6 +60,8 @@ export function PhiPluginDetail({
   useUiLanguage()
 
   const [pendingUninstall, setPendingUninstall] = useState<PhiPluginDisplayItem | null>(null)
+  const [segment, setSegment] = useState<'overview' | 'templates'>('overview')
+  const showTemplates = plugin?.id === 'visualization' && segment === 'templates'
   const [pendingBuildState, setPendingBuild] = useState<{
     pluginId: string
     environment: PhiPluginEnvironmentStatus
@@ -144,7 +148,9 @@ export function PhiPluginDetail({
         minWidth: 0,
         minHeight: 0,
         height: '100%',
-        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: showTemplates ? 'hidden' : 'auto',
         scrollbarGutter: 'stable'
       }}
     >
@@ -226,9 +232,41 @@ export function PhiPluginDetail({
                 </Box>
                 <Stack
                   direction="row"
-                  spacing={1}
+                  spacing={1.5}
                   sx={{ alignItems: 'center', alignSelf: 'flex-start' }}
                 >
+                  {plugin.id === 'visualization' ? (
+                    <Stack
+                      direction="row"
+                      spacing={0.5}
+                      data-phi-visualization-segment={segment}
+                      sx={{ alignItems: 'center' }}
+                    >
+                      <Typography
+                        variant="body2"
+                        color={segment === 'overview' ? 'text.primary' : 'text.secondary'}
+                        sx={{ fontWeight: segment === 'overview' ? 650 : 500 }}
+                      >
+                        {visualizationCopy.overview}
+                      </Typography>
+                      <Switch
+                        checked={segment === 'templates'}
+                        onChange={(_event, checked) =>
+                          setSegment(checked ? 'templates' : 'overview')
+                        }
+                        slotProps={{
+                          input: { 'aria-label': visualizationCopy.showTemplates }
+                        }}
+                      />
+                      <Typography
+                        variant="body2"
+                        color={segment === 'templates' ? 'text.primary' : 'text.secondary'}
+                        sx={{ fontWeight: segment === 'templates' ? 650 : 500 }}
+                      >
+                        {visualizationCopy.templates}
+                      </Typography>
+                    </Stack>
+                  ) : null}
                   <Typography variant="body2" color="text.secondary">
                     {resourceUi.enable}
                   </Typography>
@@ -267,35 +305,39 @@ export function PhiPluginDetail({
               </Stack>
 
               <Divider />
-              <PhiPluginComponentDetails plugin={plugin} />
+              {showTemplates ? null : (
+                <>
+                  <PhiPluginComponentDetails plugin={plugin} />
 
-              <Divider />
-              <PhiPluginEnvironmentDetails
-                environments={plugin.environmentStatuses}
-                busyEnvironment={busyEnvironment}
-                busyPluginId={busyPluginId}
-                actionError={environmentActionError}
-                onDismissError={() => setEnvironmentActionError(null)}
-                onBuild={(environment) => setPendingBuild({ pluginId: plugin.id, environment })}
-                onRebuild={(environment) => void rebuildEnvironment(environment)}
-              />
+                  <Divider />
+                  <PhiPluginEnvironmentDetails
+                    environments={plugin.environmentStatuses}
+                    busyEnvironment={busyEnvironment}
+                    busyPluginId={busyPluginId}
+                    actionError={environmentActionError}
+                    onDismissError={() => setEnvironmentActionError(null)}
+                    onBuild={(environment) => setPendingBuild({ pluginId: plugin.id, environment })}
+                    onRebuild={(environment) => void rebuildEnvironment(environment)}
+                  />
 
-              <Divider />
-              <Stack spacing={0.75}>
-                <Typography variant="body2" color="text.secondary">
-                  {pluginCopy.installedAt(
-                    new Date(plugin.installedAt).toLocaleString(getUiLocale())
-                  )}
-                </Typography>
-                <Typography
-                  component="code"
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}
-                >
-                  {plugin.directory}
-                </Typography>
-              </Stack>
+                  <Divider />
+                  <Stack spacing={0.75}>
+                    <Typography variant="body2" color="text.secondary">
+                      {pluginCopy.installedAt(
+                        new Date(plugin.installedAt).toLocaleString(getUiLocale())
+                      )}
+                    </Typography>
+                    <Typography
+                      component="code"
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}
+                    >
+                      {plugin.directory}
+                    </Typography>
+                  </Stack>
+                </>
+              )}
             </>
           ) : (
             <Stack spacing={1} sx={{ alignItems: 'center', textAlign: 'center', py: 12 }}>
@@ -308,6 +350,7 @@ export function PhiPluginDetail({
           )}
         </Stack>
       </Box>
+      {showTemplates ? <VisualizationPanel /> : null}
 
       <ConfirmationDialog
         open={pendingUninstall !== null}

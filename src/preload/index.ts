@@ -139,6 +139,7 @@ import type {
   PhiPluginListItem,
   PhiPluginMutationResult
 } from '../shared/phiPluginTypes'
+import type { VisualizationTemplateCatalog } from '../shared/visualizationTemplateTypes'
 import type {
   KnownPackageRegistryView,
   OfflinePackageImportPreview,
@@ -1125,6 +1126,7 @@ type RendererAuthApi = PreloadApiBase & {
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   showPendingRequests: () => Promise<void>
   listPhiPlugins: () => Promise<PhiPluginListItem[]>
+  listVisualizationTemplates: () => Promise<VisualizationTemplateCatalog>
   pickPhiPluginDirectory: () => Promise<string | null>
   previewPhiPluginDirectory: (path: string) => Promise<PhiPluginInstallPreview>
   installPhiPluginFromDirectory: (path: string) => Promise<PhiPluginMutationResult>
@@ -1974,6 +1976,8 @@ const api: RendererAuthApi = {
   ): Promise<void> =>
     ipcRenderer.invoke(IPC.agent.interactionResponse, requestId, response, cancelled),
   listPhiPlugins: (): Promise<PhiPluginListItem[]> => ipcRenderer.invoke(IPC.phiPlugins.list),
+  listVisualizationTemplates: (): Promise<VisualizationTemplateCatalog> =>
+    ipcRenderer.invoke(IPC.phiPlugins.visualizationTemplates),
   pickPhiPluginDirectory: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC.phiPlugins.pickDirectory),
   previewPhiPluginDirectory: (path: string): Promise<PhiPluginInstallPreview> =>

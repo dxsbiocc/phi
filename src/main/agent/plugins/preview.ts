@@ -1,7 +1,7 @@
 import { realpathSync, statSync } from 'node:fs'
 import { basename, isAbsolute, relative, sep } from 'node:path'
 
-import { loadedPlugins } from './loader'
+import { listInstalledPlugins } from './loader'
 
 /**
  * Allow chat to display installed template previews while keeping every other
@@ -17,7 +17,7 @@ export function isPluginSkillPreviewPath(target: string, agentDir?: string): boo
     return false
   }
 
-  for (const plugin of loadedPlugins(agentDir ? { agentDir } : {})) {
+  for (const plugin of listInstalledPlugins(agentDir ? { agentDir } : {})) {
     for (const skillsRoot of plugin.components.skills) {
       let realRoot: string
       try {
