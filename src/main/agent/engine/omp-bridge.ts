@@ -3,12 +3,13 @@ import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { createInterface } from 'node:readline'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { CodedError } from '../../../shared/errorCodes'
 import { writeAppLog } from '../app-logger'
 import { getPhiAgentDir } from '../runtime-paths'
+import { sourceCheckoutPath } from '../../source-checkout-path'
 import { resolveBunExecutable, workerPathWithBun } from './bun-executable'
 import { ConfiguredStdioProbeError } from './mcp/configured-stdio-probe-error'
 import { resolveWorkerProxyEnv } from './worker-proxy-env'
@@ -211,10 +212,10 @@ function resolveWorkerPath(): string {
   const explicit = process.env.PHI_OMP_WORKER_PATH
   if (explicit) return explicit
 
-  const sourcePath = resolve(process.cwd(), 'src/main/agent/engine/in-process/main.ts')
-  if (existsSync(sourcePath)) return sourcePath
-
   const bundleDir = dirname(fileURLToPath(import.meta.url))
+  const sourcePath = sourceCheckoutPath('src/main/agent/engine/in-process/main.ts', bundleDir)
+  if (sourcePath) return sourcePath
+
   const candidates = [
     join(bundleDir, 'agent', 'engine', 'in-process', 'main.ts'),
     join(bundleDir, 'engine', 'in-process', 'main.ts')

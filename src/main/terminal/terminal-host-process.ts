@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { sourceCheckoutPath } from '../source-checkout-path'
 import { resolveBunExecutable } from './terminal-bun'
 
 function asarUnpackedPath(path: string): string {
@@ -17,10 +18,10 @@ export function resolveTerminalScript(
   const fromEnvironment = process.env[envName]
   if (fromEnvironment) return fromEnvironment
 
-  const sourcePath = resolve(process.cwd(), 'src/main/terminal', fileName)
-  if (existsSync(sourcePath)) return sourcePath
-
   const bundleDir = dirname(fileURLToPath(import.meta.url))
+  const sourcePath = sourceCheckoutPath(`src/main/terminal/${fileName}`, bundleDir)
+  if (sourcePath) return sourcePath
+
   const candidates = [join(bundleDir, fileName), join(bundleDir, 'terminal', fileName)]
   return pickTerminalScript(candidates, existsSync)
 }

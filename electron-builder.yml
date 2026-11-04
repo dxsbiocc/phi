@@ -51,6 +51,7 @@ asarUnpack:
   # required set from the worker's import graph and prints any glob missing here.
   - package.json
   - out/main/file-preview-media.*
+  - out/main/source-checkout-path.*
   - out/main/agent/**
   - out/shared/**
   # Runtime package closure of the OMP worker (scoped packages grouped by scope).
