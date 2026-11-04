@@ -20,7 +20,7 @@ import { migrateStartupPluginEnablement as migratePluginEnablement } from './sta
 import { registerWorkspaceFileIpc } from './workspace-file-ipc'
 import { registerAnalysisIpc } from './ipc/analysis-ipc'
 import { registerGithubSourceIpc } from './ipc/github-sources-ipc'
-import { registerTeamPackIpc } from './ipc/team-pack-ipc'
+import { closeTeamPackDesktop, startTeamPackDesktop } from './team-pack-desktop'
 import {
   registerPackageCatalogIpc,
   registerPackageOperationsIpc,
@@ -99,8 +99,7 @@ import {
   nativeImage,
   net,
   Notification,
-  powerSaveBlocker,
-  safeStorage
+  powerSaveBlocker
 } from 'electron'
 import {
   BrowserIpcCoordinator,
@@ -148,16 +147,6 @@ import {
   redactStructuredValue
 } from './agent/session/message-text'
 import { getAuthManager } from './agent/auth-manager'
-import {
-  exportMemberIdentityBackup,
-  getMemberPublicKey,
-  importMemberIdentityBackup,
-  loadOrCreateMemberIdentity
-} from './agent/team-pack/member-service'
-import { TeamMemberSubmissionService } from './agent/team-pack/member-submissions'
-import { TeamPackAdminService } from './agent/team-pack/admin-service'
-import { TeamSourceService } from './agent/team-pack/team-source'
-import { createTeamSourceScheduler } from './agent/team-pack/team-source-scheduler'
 import { getPersonaMarkdown } from './agent/persona-manager'
 import { generatePersonaMarkdown as generatePersonaMarkdownForIpc } from './agent/persona-generation'
 import {
@@ -429,21 +418,6 @@ const appIcon = nativeImage.createFromPath(icon)
 
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
-const teamSourceService = new TeamSourceService({
-  agentDir: AGENT_DIR,
-  authStorage: () => getAuthManager().getRuntime(),
-  getMemberIdentity: async () => {
-    const { safeStorage } = await import('electron')
-    return (await loadOrCreateMemberIdentity({ agentDir: AGENT_DIR, safeStorage })).identity
-  },
-  onCredentialsChanged: () => sendToAllWindows(IPC.auth.credentialsChanged)
-})
-const teamSourceScheduler = createTeamSourceScheduler({ service: teamSourceService })
-const teamPackAdminService = new TeamPackAdminService({ agentDir: AGENT_DIR, safeStorage })
-const teamMemberSubmissionService = new TeamMemberSubmissionService({
-  agentDir: AGENT_DIR,
-  safeStorage
-})
 
 app.setName(APP_NAME)
 
@@ -3846,143 +3820,6 @@ function registerPluginAndPackageIpc(): void {
   registerPackageOperationsIpc(packagesIpcOptions)
 }
 
-async function pickTeamPackDirectory(title: string): Promise<string | null> {
-  const window = getActiveWindow()
-  const copy = nativeUiCopy(readAppSettings().uiLanguage)
-  const options: Electron.OpenDialogOptions = {
-    title,
-    buttonLabel: copy.select,
-    properties: ['openDirectory', 'createDirectory']
-  }
-  const result = window
-    ? await dialog.showOpenDialog(window, options)
-    : await dialog.showOpenDialog(options)
-  return result.canceled ? null : (result.filePaths[0] ?? null)
-}
-
-async function pickTeamPackBackup(
-  mode: 'export' | 'import',
-  title: string,
-  defaultPath?: string
-): Promise<string | null> {
-  const window = getActiveWindow()
-  const copy = nativeUiCopy(readAppSettings().uiLanguage)
-  if (mode === 'export') {
-    const options: Electron.SaveDialogOptions = {
-      title,
-      buttonLabel: copy.save,
-      defaultPath,
-      filters: [{ name: copy.ageBackupFile, extensions: ['age'] }]
-    }
-    const result = window
-      ? await dialog.showSaveDialog(window, options)
-      : await dialog.showSaveDialog(options)
-    return result.canceled ? null : (result.filePath ?? null)
-  }
-
-  const options: Electron.OpenDialogOptions = {
-    title,
-    buttonLabel: copy.import,
-    properties: ['openFile'],
-    filters: [{ name: copy.ageBackupFile, extensions: ['age'] }]
-  }
-  const result = window
-    ? await dialog.showOpenDialog(window, options)
-    : await dialog.showOpenDialog(options)
-  return result.canceled ? null : (result.filePaths[0] ?? null)
-}
-
-async function pickTeamSubmission(
-  mode: 'export' | 'import',
-  defaultPath?: string
-): Promise<string | null> {
-  const window = getActiveWindow()
-  const copy = nativeUiCopy(readAppSettings().uiLanguage)
-  if (mode === 'export') {
-    const options: Electron.SaveDialogOptions = {
-      title: copy.exportTeamSubmission,
-      buttonLabel: copy.save,
-      defaultPath,
-      filters: [{ name: copy.teamSubmissionFile, extensions: ['phi-submission'] }]
-    }
-    const result = window
-      ? await dialog.showSaveDialog(window, options)
-      : await dialog.showSaveDialog(options)
-    return result.canceled ? null : (result.filePath ?? null)
-  }
-  const options: Electron.OpenDialogOptions = {
-    title: copy.importTeamSubmission,
-    buttonLabel: copy.import,
-    properties: ['openFile'],
-    filters: [{ name: copy.teamSubmissionFile, extensions: ['phi-submission'] }]
-  }
-  const result = window
-    ? await dialog.showOpenDialog(window, options)
-    : await dialog.showOpenDialog(options)
-  return result.canceled ? null : (result.filePaths[0] ?? null)
-}
-
-function registerTeamPackManagementIpc(): void {
-  const memberIdentityOptions = { agentDir: AGENT_DIR, safeStorage }
-  registerTeamPackIpc({
-    ipcMain,
-    requireMainWindowRenderer,
-    member: {
-      getPublicKey: () => getMemberPublicKey(memberIdentityOptions),
-      exportBackup: (backupPath, passphrase) =>
-        exportMemberIdentityBackup({ ...memberIdentityOptions, backupPath, passphrase }),
-      importBackup: async (backupPath, passphrase) => {
-        await importMemberIdentityBackup({ ...memberIdentityOptions, backupPath, passphrase })
-        return getMemberPublicKey(memberIdentityOptions)
-      },
-      listSubmissionCandidates: (sourceId) => teamMemberSubmissionService.listCandidates(sourceId),
-      submitPackages: (input, pickExportPath) =>
-        teamMemberSubmissionService.submit(input, pickExportPath)
-    },
-    sources: {
-      listSources: () => teamSourceService.listSources(),
-      configuredProviders: (teamId) => teamSourceService.configuredProviders(teamId),
-      previewSource: (input) => teamSourceService.previewSource(input),
-      addSource: (input) => teamSourceService.addSource(input),
-      pullSource: (id) => teamSourceService.pullSource(id),
-      removeSource: (id) => teamSourceService.removeSource(id)
-    },
-    scheduler: {
-      start: () => teamSourceScheduler.start(),
-      stop: () => teamSourceScheduler.stop()
-    },
-    admin: teamPackAdminService,
-    dialogs: {
-      pickSourceDirectory: () => {
-        const copy = nativeUiCopy(readAppSettings().uiLanguage)
-        return pickTeamPackDirectory(copy.selectTeamSource)
-      },
-      pickMemberBackupExport: () => {
-        const copy = nativeUiCopy(readAppSettings().uiLanguage)
-        return pickTeamPackBackup('export', copy.exportMemberIdentity, 'phi-member-identity.age')
-      },
-      pickMemberBackupImport: () => {
-        const copy = nativeUiCopy(readAppSettings().uiLanguage)
-        return pickTeamPackBackup('import', copy.importMemberIdentity)
-      },
-      pickAdminBackupExport: (teamId) => {
-        const copy = nativeUiCopy(readAppSettings().uiLanguage)
-        return pickTeamPackBackup('export', copy.exportTeamSigningKey, `${teamId}-signing-key.age`)
-      },
-      pickAdminBackupImport: () => {
-        const copy = nativeUiCopy(readAppSettings().uiLanguage)
-        return pickTeamPackBackup('import', copy.importTeamSigningKey)
-      },
-      pickPublishDirectory: () => {
-        const copy = nativeUiCopy(readAppSettings().uiLanguage)
-        return pickTeamPackDirectory(copy.selectTeamPublishFolder)
-      },
-      pickSubmissionExport: (suggestedName) => pickTeamSubmission('export', suggestedName),
-      pickSubmissionImport: () => pickTeamSubmission('import')
-    }
-  })
-}
-
 function registerSkillAgentAndMcpIpc(
   wrappersIpcOptions: ReturnType<typeof registerRemoteFileAndWrapperIpc>
 ): void {
@@ -4072,9 +3909,6 @@ function registerWrapperJobsAndPersonaIpc(
 function openInitialWindow(): void {
   createWindow()
   scheduleStartupPackageUpdateCheck()
-  void teamSourceScheduler.start().catch(() => {
-    writeAppLog({ level: 'error', event: 'team_source_scheduler_start_failed' })
-  })
 }
 
 function registerAppActivationHandler(): void {
@@ -4102,7 +3936,7 @@ app.whenReady().then(async () => {
   registerSessionIpc()
   registerProjectAndAnalysisIpc()
   registerPluginAndPackageIpc()
-  registerTeamPackManagementIpc()
+  startTeamPackDesktop({ requireMainWindowRenderer, getActiveWindow, sendToAllWindows })
   registerSkillAgentAndMcpIpc(wrappersIpcOptions)
   registerWrapperJobsAndPersonaIpc(wrappersIpcOptions)
   openInitialWindow()
@@ -4115,7 +3949,6 @@ app.on(
     beginShutdown: () => {
       finishStartupSplash(null)
       runtime.window.destroyMenuBarController()
-      teamSourceScheduler.stop()
       // Stop local wrapper runs; detach remote runs so the next app launch can resume watching them.
       try {
         wrapperJobs.shutdown()
@@ -4136,7 +3969,7 @@ app.on(
       await Promise.all([
         cleanupMainWindowRuntime(),
         safeCleanupStep('environment_scan_cleanup_failed', () => backgroundEnvironment.dispose()),
-        safeCleanupStep('team_source_service_cleanup_failed', () => teamSourceService.close())
+        safeCleanupStep('team_source_service_cleanup_failed', closeTeamPackDesktop)
       ])
     },
     quit: () => app.quit(),

@@ -2100,6 +2100,9 @@ async function harness(
         }
       })
     },
+    './agent/runtime-paths': {
+      getPhiAgentDir: (): string => '/isolated'
+    },
     './agent/team-pack/member-service': {
       exportMemberIdentityBackup: async (): Promise<void> => undefined,
       getMemberPublicKey: async (): Promise<string> => 'phi-member-v1.test-only',
@@ -4763,7 +4766,8 @@ async function harness(
     './agent/wrappers/remote-result-read-control',
     './local-file-access-control',
     './local-file-icons',
-    './local-file-previews'
+    './local-file-previews',
+    './team-pack-desktop'
   ])
   const mockProcess = {
     platform: process.platform,
@@ -7460,7 +7464,7 @@ test('main startup callback delegates its named phases in order', () => {
   registerSessionIpc()
   registerProjectAndAnalysisIpc()
   registerPluginAndPackageIpc()
-  registerTeamPackManagementIpc()
+  startTeamPackDesktop({ requireMainWindowRenderer, getActiveWindow, sendToAllWindows })
   registerSkillAgentAndMcpIpc(wrappersIpcOptions)
   registerWrapperJobsAndPersonaIpc(wrappersIpcOptions)
   openInitialWindow()

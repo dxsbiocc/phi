@@ -125,23 +125,39 @@ test('ambient preload contract reuses the shared nested TeamPackRendererApi', ()
 
 test('main registers TeamPack IPC with safe storage, live native copy, shared services, and shutdown', () => {
   const main = readFileSync(resolve('src/main/index.ts'), 'utf8')
+  const desktop = readFileSync(resolve('src/main/team-pack-desktop.ts'), 'utf8')
   const nativeCopy = readFileSync(resolve('src/main/native-ui-copy.ts'), 'utf8')
 
-  assert.match(main, /import \{ registerTeamPackIpc \} from '\.\/ipc\/team-pack-ipc'/u)
-  assert.match(main, /new TeamPackAdminService\(\{ agentDir: AGENT_DIR, safeStorage \}\)/u)
-  assert.match(main, /authStorage: \(\) => getAuthManager\(\)\.getRuntime\(\)/u)
-  assert.match(main, /function registerTeamPackManagementIpc\(\): void/u)
-  assert.match(main, /registerTeamPackIpc\(\{/u)
-  assert.match(main, /registerTeamPackIpc\(\{\s*ipcMain,\s*requireMainWindowRenderer,/u)
-  assert.match(main, /registerTeamPackManagementIpc\(\)/u)
-  assert.match(main, /getPublicKey: \(\) => getMemberPublicKey\(memberIdentityOptions\)/u)
-  assert.match(main, /new TeamMemberSubmissionService\(\{/u)
-  assert.match(main, /listSources: \(\) => teamSourceService\.listSources\(\)/u)
-  assert.match(main, /start: \(\) => teamSourceScheduler\.start\(\)/u)
-  assert.match(main, /admin: teamPackAdminService/u)
-  assert.match(main, /nativeUiCopy\(readAppSettings\(\)\.uiLanguage\)/u)
-  assert.match(main, /teamSourceScheduler\.stop\(\)/u)
-  assert.match(main, /teamSourceService\.close\(\)/u)
+  assert.match(
+    main,
+    /startTeamPackDesktop\(\{ requireMainWindowRenderer, getActiveWindow, sendToAllWindows \}\)/u
+  )
+  assert.match(
+    main,
+    /safeCleanupStep\('team_source_service_cleanup_failed', closeTeamPackDesktop\)/u
+  )
+
+  assert.match(
+    desktop,
+    /import \{ registerTeamPackIpc, type TeamPackIpcOptions \} from '\.\/ipc\/team-pack-ipc'/u
+  )
+  assert.match(desktop, /dialogs: teamPackDialogs\(options\)/u)
+  assert.match(desktop, /new TeamPackAdminService\(\{ agentDir, safeStorage \}\)/u)
+  assert.match(desktop, /new TeamMemberSubmissionService\(\{ agentDir, safeStorage \}\)/u)
+  assert.match(desktop, /authStorage: \(\) => getAuthManager\(\)\.getRuntime\(\)/u)
+  assert.match(
+    desktop,
+    /onCredentialsChanged: \(\) => options\.sendToAllWindows\(IPC\.auth\.credentialsChanged\)/u
+  )
+  assert.match(desktop, /registerTeamPackIpc\(\{\s*ipcMain,\s*requireMainWindowRenderer,/u)
+  assert.match(desktop, /desktop\.registerIpc\(ipcMain, options\.requireMainWindowRenderer\)/u)
+  assert.match(desktop, /getPublicKey: \(\) => getMemberPublicKey\(memberIdentityOptions\)/u)
+  assert.match(desktop, /listSources: \(\) => sources\.listSources\(\)/u)
+  assert.match(desktop, /start: \(\) => scheduler\.start\(\)/u)
+  assert.match(desktop, /\badmin,/u)
+  assert.match(desktop, /nativeUiCopy\(readAppSettings\(\)\.uiLanguage\)/u)
+  assert.match(desktop, /app\.once\('browser-window-created'/u)
+  assert.match(desktop, /running\?\.stopScheduler\(\)\s*await running\?\.close\(\)/u)
 
   for (const key of [
     'selectTeamSource',
