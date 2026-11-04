@@ -1,5 +1,19 @@
 export { TeamPackError, isTeamPackError, type TeamPackErrorCode } from './errors'
 export {
+  createTeamPackAdminService,
+  TeamPackAdminService,
+  ADMIN_PUBLISH_LOCK_FILE,
+  type AdminMemberModelGrant,
+  type AdminTeamListItem,
+  type AdminTeamReleaseSummary,
+  type AdminTeamSummary,
+  type CreatedAdminTeam,
+  type PreparedAdminRegistry,
+  type PublishedAdminRelease,
+  type TeamPackageSelection,
+  type TeamPackAdminServiceOptions
+} from './admin-service'
+export {
   createMemberKeys,
   createTeamKeys,
   type CreateTeamKeysOptions,
@@ -92,3 +106,9 @@ export {
   type TeamSourceSchedulerOptions,
   type TeamSourceSchedulerService
 } from './team-source-scheduler'
+export {
+  ADMIN_MODEL_GRANTS_FILE,
+  type AdminMemberModelGrantMetadata,
+  type AdminModelGrantMetadata
+} from './admin-grants'
+export type { RemovedAdminMember } from './admin-service'
