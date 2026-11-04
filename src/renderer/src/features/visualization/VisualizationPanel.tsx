@@ -106,7 +106,7 @@ export function VisualizationPanel({
   catalog: providedCatalog
 }: {
   catalog?: VisualizationTemplateCatalog
-} = {}): React.JSX.Element {
+}): React.JSX.Element {
   useUiLanguage()
   const loaded = useVisualizationTemplates(providedCatalog === undefined)
   const catalog = providedCatalog ?? loaded.catalog
