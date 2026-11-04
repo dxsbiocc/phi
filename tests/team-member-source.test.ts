@@ -621,6 +621,100 @@ test('does not rotate an owned team key while an external provider source is con
   assert.deepEqual(service.configuredProviders(TEAM_ID), ['openai'])
 })
 
+test('rolls back team keys written by a pull that fails before recording ownership', async () => {
+  const root = sandbox('rollback-insert')
+  const agentDir = join(root, 'agent')
+  const registryDir = join(root, 'registry')
+  const storeDir = join(root, 'store')
+  const team = createTeamKeys({ teamId: TEAM_ID, name: 'Alpha Team' })
+  const member = await createMemberKeys()
+  const auth = new FakeAuthStorage()
+  writeSkillRegistry(registryDir, '1.0.0')
+  await publishTeamRelease({
+    storeDir,
+    team,
+    members: [member.recipient],
+    grants: [
+      {
+        recipient: member.recipient,
+        models: [
+          { providerId: 'openai', label: 'Team OpenAI', apiKey: 'team-openai' },
+          { providerId: 'anthropic', label: 'Team Claude', apiKey: 'team-anthropic' }
+        ]
+      }
+    ],
+    registryDir
+  })
+  const service = new TeamSourceService({
+    agentDir,
+    getMemberIdentity: async () => member.identity,
+    authStorage: auth,
+    createId: () => 'source-alpha'
+  })
+  const source = await service.addSource({
+    teamKeyId: team.keyId,
+    location: { kind: 'directory', path: storeDir }
+  })
+  auth.unstableIdProvider = 'anthropic'
+
+  await assert.rejects(service.pullSource(source.id), { code: 'STORE_UNAVAILABLE' })
+  assert.equal(auth.key('openai'), undefined)
+  assert.equal(auth.key('anthropic'), undefined)
+  assert.deepEqual(service.configuredProviders(TEAM_ID), [])
+
+  auth.unstableIdProvider = null
+  const recovered = await service.pullSource(source.id)
+  assert.deepEqual(recovered.status.credentialConflicts, [])
+  assert.deepEqual(service.configuredProviders(TEAM_ID), ['anthropic', 'openai'])
+})
+
+test('adopts an unowned stored key identical to the team grant instead of reporting a conflict', async () => {
+  const root = sandbox('adopt-orphan')
+  const agentDir = join(root, 'agent')
+  const registryDir = join(root, 'registry')
+  const storeDir = join(root, 'store')
+  const team = createTeamKeys({ teamId: TEAM_ID, name: 'Alpha Team' })
+  const member = await createMemberKeys()
+  const auth = new FakeAuthStorage()
+  await auth.credentials.upsert('openai', { type: 'api_key', key: 'team-openai' })
+  await auth.credentials.upsert('anthropic', { type: 'api_key', key: 'user-anthropic' })
+  writeSkillRegistry(registryDir, '1.0.0')
+  await publishTeamRelease({
+    storeDir,
+    team,
+    members: [member.recipient],
+    grants: [
+      {
+        recipient: member.recipient,
+        models: [
+          { providerId: 'openai', label: 'Team OpenAI', apiKey: 'team-openai' },
+          { providerId: 'anthropic', label: 'Team Claude', apiKey: 'team-anthropic' }
+        ]
+      }
+    ],
+    registryDir
+  })
+  const service = new TeamSourceService({
+    agentDir,
+    getMemberIdentity: async () => member.identity,
+    authStorage: auth,
+    createId: () => 'source-alpha'
+  })
+  const source = await service.addSource({
+    teamKeyId: team.keyId,
+    location: { kind: 'directory', path: storeDir }
+  })
+
+  const pulled = await service.pullSource(source.id)
+  assert.deepEqual(pulled.status.credentialConflicts, ['anthropic'])
+  assert.deepEqual(service.configuredProviders(TEAM_ID), ['openai'])
+  assert.equal(auth.key('anthropic'), 'user-anthropic')
+
+  assert.equal(await service.removeSource(source.id), true)
+  assert.equal(auth.key('openai'), undefined)
+  assert.equal(auth.key('anthropic'), 'user-anthropic')
+})
+
 test('deduplicates concurrent pulls of the same source', async () => {
   const root = sandbox('dedupe')
   const agentDir = join(root, 'agent')
@@ -928,6 +1022,7 @@ class FakeAuthStorage implements TeamSourceAuthStorage {
     'runtime' | 'environment' | 'models_json_key' | 'models_json_command'
   >()
   logoutCalls = 0
+  unstableIdProvider: string | null = null
 
   readonly credentials = {
     list: (provider?: string) => {
@@ -987,7 +1082,7 @@ class FakeAuthStorage implements TeamSourceAuthStorage {
   > {
     return [...this.#rows].flatMap(([providerId, rows]) =>
       rows.map((row) => ({
-        id: String(row.id),
+        id: providerId === this.unstableIdProvider ? 'pending' : String(row.id),
         providerId,
         type: row.credential.type,
         label: providerId,

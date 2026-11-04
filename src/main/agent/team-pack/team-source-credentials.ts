@@ -40,16 +40,23 @@ export async function reconcileTeamModels(
   const removed = await removeMissingTeamCredentials(auth, owners, currentOwners, desired)
   owners = removed.owners
   const conflicts = [...removed.conflicts]
-  for (const [providerId, model] of desired) {
-    const reconciled = await reconcileProvider({
-      auth,
-      owners,
-      teamId: options.teamId,
-      providerId,
-      apiKey: model.apiKey
-    })
-    owners = reconciled.owners
-    if (reconciled.conflict) conflicts.push(providerId)
+  const inserted: InsertedCredential[] = []
+  try {
+    for (const [providerId, model] of desired) {
+      const reconciled = await reconcileProvider({
+        auth,
+        owners,
+        teamId: options.teamId,
+        providerId,
+        apiKey: model.apiKey,
+        inserted
+      })
+      owners = reconciled.owners
+      if (reconciled.conflict) conflicts.push(providerId)
+    }
+  } catch (error) {
+    await rollbackInsertedCredentials(auth, inserted)
+    throw error
   }
   return { owners, conflicts, skipped }
 }
@@ -74,6 +81,12 @@ interface ReconcileProviderOptions {
   teamId: string
   providerId: string
   apiKey: string
+  inserted: InsertedCredential[]
+}
+
+interface InsertedCredential {
+  providerId: string
+  keySha256: string
 }
 
 async function reconcileProvider(
@@ -89,9 +102,7 @@ async function reconcileProvider(
   const ownedRow = rows.find((candidate) => ownedCredentialMatches(candidate, owner))
   if (!ownedRow) {
     const remainingOwners = options.owners.filter((candidate) => candidate !== owner)
-    return rows.length > 0 || options.auth.getProviderAuthStatus(options.providerId).configured
-      ? { owners: remainingOwners, conflict: true }
-      : addTeamCredential({ ...options, owners: remainingOwners }, rows)
+    return addTeamCredential({ ...options, owners: remainingOwners }, rows)
   }
   if (rows.length !== 1 || hasExternalCredentialSource(options.auth, options.providerId)) {
     return { owners: options.owners, conflict: true }
@@ -116,10 +127,20 @@ async function addTeamCredential(
   const anotherTeamOwnsProvider = options.owners.some(
     (candidate) => candidate.providerId === options.providerId
   )
-  const configured = options.auth.getProviderAuthStatus(options.providerId).configured
-  if (anotherTeamOwnsProvider || rows.length > 0 || configured) {
-    return { owners: options.owners, conflict: true }
+  if (anotherTeamOwnsProvider) return { owners: options.owners, conflict: true }
+  const adoptable = adoptableCredentialId(options, rows)
+  if (adoptable !== null) {
+    return {
+      owners: [
+        ...options.owners,
+        ownerRecord(options.teamId, options.providerId, adoptable, options.apiKey)
+      ],
+      conflict: false
+    }
   }
+  const configured = options.auth.getProviderAuthStatus(options.providerId).configured
+  if (rows.length > 0 || configured) return { owners: options.owners, conflict: true }
+  options.inserted.push({ providerId: options.providerId, keySha256: keySha256(options.apiKey) })
   await loginApiKey(options.auth, options.providerId, options.apiKey)
   const inserted = await findApiKeyRow(options.auth, options.providerId, options.apiKey)
   return {
@@ -128,6 +149,35 @@ async function addTeamCredential(
       ownerRecord(options.teamId, options.providerId, inserted.id, options.apiKey)
     ],
     conflict: false
+  }
+}
+
+// A failed pull or state write can leave the team's own key stored without an owner record.
+// Only a single stored row whose secret equals this grant is reclaimed; anything else stays a
+// conflict so a user-entered key is never taken over.
+function adoptableCredentialId(
+  options: ReconcileProviderOptions,
+  rows: TeamSourceStoredCredential[]
+): number | null {
+  if (rows.length !== 1 || rows[0].type !== 'api_key') return null
+  if (rows[0].keySha256 !== keySha256(options.apiKey)) return null
+  if (hasExternalCredentialSource(options.auth, options.providerId)) return null
+  return credentialId(rows[0])
+}
+
+async function rollbackInsertedCredentials(
+  auth: TeamSourceAuthStorage,
+  inserted: readonly InsertedCredential[]
+): Promise<void> {
+  for (const { providerId, keySha256: digest } of inserted) {
+    try {
+      const rows = await providerCredentials(auth, providerId)
+      if (rows.length === 1 && rows[0].type === 'api_key' && rows[0].keySha256 === digest) {
+        await auth.logout(providerId)
+      }
+    } catch {
+      // Keep the original pull error; the next pull reclaims any key this could not remove.
+    }
   }
 }
 
