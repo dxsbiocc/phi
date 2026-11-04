@@ -260,7 +260,7 @@ test('only the visualization plugin detail offers the template gallery', () => {
   const office = themed(createElement(PhiPluginsView, { ...detailProps, plugin: plugin('office') }))
   assert.match(visualization, /data-phi-visualization-segment="overview"/)
   assert.match(visualization, />Overview</)
-  assert.match(visualization, />Templates</)
+  assert.match(visualization, />Gallery</)
   assert.doesNotMatch(visualization, /data-phi-visualization-gallery/)
   assert.doesNotMatch(office, /data-phi-visualization-segment/)
 
@@ -271,7 +271,7 @@ test('only the visualization plugin detail offers the template gallery', () => {
     )
     const gallery = themed(createElement(VisualizationPanel, { catalog: sampleCatalog }))
     assert.match(chinese, />概览</)
-    assert.match(chinese, />模板</)
+    assert.match(chinese, />模板图</)
     assert.match(gallery, />全部</)
     assert.match(gallery, />散点图</)
     assert.match(gallery, />热图</)

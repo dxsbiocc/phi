@@ -1,6 +1,7 @@
+import { OverlayScroll } from './OverlayScroll'
 import { useUiLanguage } from '../../../lib/i18n'
 import { visualizationCopy, visualizationGroupLabel } from '../lib/visualizationCopy'
-import { Box, ButtonBase, Typography } from '@mui/material'
+import { ButtonBase, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 
 import type { VisualizationTemplateGroup } from '../../../../../shared/visualizationTemplateTypes'
@@ -19,20 +20,12 @@ export function VisualizationGroupPanel({
   useUiLanguage()
 
   return (
-    <Box
+    <OverlayScroll
       component="nav"
       aria-label={visualizationCopy.groups}
       data-phi-visualization-groups="true"
-      sx={{
-        width: 168,
-        flexShrink: 0,
-        minHeight: 0,
-        overflowY: 'auto',
-        borderRight: 1,
-        borderColor: 'divider',
-        py: 1,
-        px: 1
-      }}
+      sx={{ width: 168, flexShrink: 0, borderRight: 1, borderColor: 'divider' }}
+      contentSx={{ py: 1 }}
     >
       <GroupButton
         label={visualizationCopy.allGroups}
@@ -51,7 +44,7 @@ export function VisualizationGroupPanel({
           onClick={() => onSelect(group.id)}
         />
       ))}
-    </Box>
+    </OverlayScroll>
   )
 }
 

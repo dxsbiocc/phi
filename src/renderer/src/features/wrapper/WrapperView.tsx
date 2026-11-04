@@ -188,7 +188,7 @@ export function WrapperDetail({
           onSelect={onSelectWrapper}
         />
       ) : null}
-      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto', scrollbarGutter: 'stable' }}>
         {error && (
           <Alert severity="error" sx={{ m: 3, mb: 0 }}>
             {error}

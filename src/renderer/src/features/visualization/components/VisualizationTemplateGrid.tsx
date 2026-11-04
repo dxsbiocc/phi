@@ -81,7 +81,10 @@ export function VisualizationTemplateGrid({
         gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
         gap: 1.5,
         alignContent: 'start',
-        p: 2
+        pt: 2,
+        pb: 2,
+        pl: 2,
+        pr: 0
       }}
     >
       {templates.map((template) => (

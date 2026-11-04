@@ -2,7 +2,7 @@ import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
 import { pluginCopy } from '../lib/pluginCopy'
 import { VisualizationPanel } from '../../visualization/VisualizationPanel'
-import { visualizationCopy } from '../../visualization/lib/visualizationCopy'
+import { VisualizationViewSwitch } from '../../visualization/components/VisualizationViewSwitch'
 import { useState } from 'react'
 import {
   Alert,
@@ -151,10 +151,22 @@ export function PhiPluginDetail({
         display: 'flex',
         flexDirection: 'column',
         overflow: showTemplates ? 'hidden' : 'auto',
+        // Classic scrollbars are 12px. Keep that gutter in both modes so the header
+        // stays put when switching overview and gallery, matching skill and connector details.
         scrollbarGutter: 'stable'
       }}
     >
-      <Box sx={{ width: '100%', maxWidth: 940, mx: 'auto', px: { xs: 2.5, md: 4 }, py: 3.5 }}>
+      <Box
+        sx={{
+          width: '100%',
+          maxWidth: 940,
+          mx: 'auto',
+          px: { xs: 2.5, md: 4 },
+          pt: 3.5,
+          pb: showTemplates ? 2 : 3.5,
+          flexShrink: 0
+        }}
+      >
         <Stack spacing={2.5}>
           {error ? (
             <Alert severity="error" variant="outlined" onClose={onClearError}>
@@ -236,36 +248,10 @@ export function PhiPluginDetail({
                   sx={{ alignItems: 'center', alignSelf: 'flex-start' }}
                 >
                   {plugin.id === 'visualization' ? (
-                    <Stack
-                      direction="row"
-                      spacing={0.5}
-                      data-phi-visualization-segment={segment}
-                      sx={{ alignItems: 'center' }}
-                    >
-                      <Typography
-                        variant="body2"
-                        color={segment === 'overview' ? 'text.primary' : 'text.secondary'}
-                        sx={{ fontWeight: segment === 'overview' ? 650 : 500 }}
-                      >
-                        {visualizationCopy.overview}
-                      </Typography>
-                      <Switch
-                        checked={segment === 'templates'}
-                        onChange={(_event, checked) =>
-                          setSegment(checked ? 'templates' : 'overview')
-                        }
-                        slotProps={{
-                          input: { 'aria-label': visualizationCopy.showTemplates }
-                        }}
-                      />
-                      <Typography
-                        variant="body2"
-                        color={segment === 'templates' ? 'text.primary' : 'text.secondary'}
-                        sx={{ fontWeight: segment === 'templates' ? 650 : 500 }}
-                      >
-                        {visualizationCopy.templates}
-                      </Typography>
-                    </Stack>
+                    <>
+                      <VisualizationViewSwitch segment={segment} onChange={setSegment} />
+                      <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
+                    </>
                   ) : null}
                   <Typography variant="body2" color="text.secondary">
                     {resourceUi.enable}
@@ -304,9 +290,9 @@ export function PhiPluginDetail({
                 </Stack>
               </Stack>
 
-              <Divider />
               {showTemplates ? null : (
                 <>
+                  <Divider />
                   <PhiPluginComponentDetails plugin={plugin} />
 
                   <Divider />

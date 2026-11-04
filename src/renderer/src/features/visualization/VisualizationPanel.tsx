@@ -5,8 +5,9 @@ import {
   selectedVisualizationGroupId,
   visibleVisualizationTemplates
 } from './lib/visualizationTemplates'
+import { OverlayScroll } from './components/OverlayScroll'
 import { useVisualizationTemplates } from './hooks/useVisualizationTemplates'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { Alert, Box, CircularProgress, TextField, Typography } from '@mui/material'
 
 import type {
@@ -59,14 +60,6 @@ function GalleryResults({
   )
 }
 
-const galleryScrollSx = {
-  flex: 1,
-  minHeight: 0,
-  maxHeight: '100%',
-  overflowY: 'auto',
-  overflowAnchor: 'none'
-} as const
-
 function useGroupScrollRequest(): {
   nonce: number
   selectedGroupId: string | null
@@ -79,25 +72,6 @@ function useGroupScrollRequest(): {
     setNonce((current) => current + 1)
   }
   return { nonce, selectedGroupId, selectGroup }
-}
-
-function GalleryScroll({
-  scrollKey,
-  children
-}: {
-  scrollKey: number
-  children: React.ReactNode
-}): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  useLayoutEffect(() => {
-    const node = ref.current
-    if (node) node.scrollTop = 0
-  }, [scrollKey])
-  return (
-    <Box ref={ref} sx={galleryScrollSx}>
-      {children}
-    </Box>
-  )
 }
 
 function GalleryPreviewDialog({
@@ -153,29 +127,41 @@ export function VisualizationPanel({
         flex: 1,
         minHeight: 0,
         minWidth: 0,
+        width: '100%',
+        maxWidth: 940,
+        mx: 'auto',
+        px: { xs: 2.5, md: 4 },
         display: 'flex',
-        borderTop: 1,
-        borderColor: 'divider'
+        flexDirection: 'column'
       }}
     >
-      <VisualizationGroupPanel
-        groups={filteredGroups}
-        selectedGroupId={activeGroupId}
-        totalCount={filteredGroups.reduce((count, group) => count + group.templates.length, 0)}
-        onSelect={group.selectGroup}
-      />
-      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <Box sx={{ px: 2, pt: 2, pb: 0.5, flexShrink: 0 }}>
-          <TextField
-            fullWidth
-            size="small"
-            value={query}
-            placeholder={visualizationCopy.searchTemplates}
-            onChange={(event) => setQuery(event.target.value)}
-            slotProps={{ htmlInput: { 'aria-label': visualizationCopy.searchTemplates } }}
-          />
-        </Box>
-        <GalleryScroll scrollKey={group.nonce}>
+      <Box sx={{ pt: 0.5, pb: 1.5, flexShrink: 0 }}>
+        <TextField
+          fullWidth
+          size="small"
+          value={query}
+          placeholder={visualizationCopy.searchTemplates}
+          onChange={(event) => setQuery(event.target.value)}
+          slotProps={{ htmlInput: { 'aria-label': visualizationCopy.searchTemplates } }}
+        />
+      </Box>
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0,
+          display: 'flex',
+          borderTop: 1,
+          borderColor: 'divider'
+        }}
+      >
+        <VisualizationGroupPanel
+          groups={filteredGroups}
+          selectedGroupId={activeGroupId}
+          totalCount={filteredGroups.reduce((count, group) => count + group.templates.length, 0)}
+          onSelect={group.selectGroup}
+        />
+        <OverlayScroll scrollKey={group.nonce} sx={{ flex: 1 }}>
           <GalleryResults
             error={error}
             loading={loading}
@@ -185,7 +171,7 @@ export function VisualizationPanel({
             }
             onOpen={(template) => setOpenPreviewPath(template.previewPath)}
           />
-        </GalleryScroll>
+        </OverlayScroll>
       </Box>
       <GalleryPreviewDialog
         templates={templates}

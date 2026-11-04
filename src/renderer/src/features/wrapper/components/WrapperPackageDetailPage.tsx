@@ -53,7 +53,16 @@ export function WrapperPackageDetailPage({
           onSelect={(entry) => setPickedId(entry.id)}
         />
       ) : null}
-      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto', p: 3 }}>
+      <Box
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          overflow: 'auto',
+          scrollbarGutter: 'stable',
+          p: 3
+        }}
+      >
         {members.status === 'loading' ? (
           <Box sx={{ display: 'grid', placeItems: 'center', py: 6 }}>
             <CircularProgress size={22} />

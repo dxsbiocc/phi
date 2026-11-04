@@ -4,7 +4,8 @@ import { defineCopy } from '../../../lib/i18n'
 export const visualizationCopy = defineCopy(
   {
     overview: 'Overview',
-    templates: 'Templates',
+    templates: 'Gallery',
+    viewMode: 'Overview or template gallery',
     searchTemplates: 'Search templates',
     groups: 'Groups',
     allGroups: 'All',
@@ -33,7 +34,8 @@ export const visualizationCopy = defineCopy(
   },
   {
     overview: '概览',
-    templates: '模板',
+    templates: '模板图',
+    viewMode: '概览或模板图',
     searchTemplates: '搜索模板',
     groups: '分组',
     allGroups: '全部',

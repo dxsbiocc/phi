@@ -244,7 +244,7 @@ export function McpDetailPanel({
   }
 
   return (
-    <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+    <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto', scrollbarGutter: 'stable' }}>
       {selectedServer ? (
         <Box sx={{ width: '100%', maxWidth: 1000, mx: 'auto', px: { xs: 3, md: 5 }, pt: 3, pb: 5 }}>
           {connector ? (
