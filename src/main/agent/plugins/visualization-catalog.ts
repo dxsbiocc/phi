@@ -1,12 +1,13 @@
-import { readFileSync, realpathSync } from 'node:fs'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 
 import { parse as parseYaml } from 'yaml'
 
-import type {
-  VisualizationTemplate,
-  VisualizationTemplateCatalog,
-  VisualizationTemplateGroup
+import {
+  templatePreviewFile,
+  type VisualizationTemplate,
+  type VisualizationTemplateCatalog,
+  type VisualizationTemplateGroup
 } from '../../../shared/visualizationTemplateTypes'
 import { listInstalledPlugins, type PluginLoaderOptions } from './loader'
 
@@ -80,6 +81,69 @@ function acceptedPreview(skillRoot: string, groupId: string, preview: string): s
   return realPath
 }
 
+const VARIANT_LIMIT = 24
+
+function variantTitle(title: string, variant: string): string {
+  return `${title} · ${variant.replace(/[_-]+/g, ' ')}`
+}
+
+/** Other drawings shipped next to the catalog `preview.png`. */
+function variantTemplates(
+  skillRoot: string,
+  groupId: string,
+  template: VisualizationTemplate
+): VisualizationTemplate[] {
+  const folder = basename(dirname(template.previewPath))
+  let names: string[]
+  try {
+    names = readdirSync(dirname(template.previewPath))
+  } catch {
+    return [template]
+  }
+  const extras: VisualizationTemplate[] = []
+  for (const name of names.sort((left, right) => left.localeCompare(right, 'en'))) {
+    if (extras.length >= VARIANT_LIMIT) break
+    const parsed = templatePreviewFile(name)
+    if (!parsed?.variant) continue
+    const previewPath = acceptedVariant(skillRoot, groupId, folder, name)
+    if (!previewPath || previewPath === template.previewPath) continue
+    extras.push({
+      id: template.id,
+      title: variantTitle(template.title, parsed.variant),
+      aliases: template.aliases,
+      previewPath,
+      variant: parsed.variant
+    })
+  }
+  return [template, ...extras]
+}
+
+function acceptedVariant(
+  skillRoot: string,
+  groupId: string,
+  folder: string,
+  name: string
+): string | null {
+  const realPath = resolveInside(skillRoot, `scripts/${groupId}/${folder}/${name}`)
+  if (!realPath) return null
+  try {
+    if (!statSync(realPath).isFile()) return null
+  } catch {
+    return null
+  }
+  const parts = relative(skillRoot, realPath).split(sep)
+  if (
+    parts.length !== 4 ||
+    parts[0] !== 'scripts' ||
+    parts[1] !== groupId ||
+    parts[2] !== folder ||
+    parts[3] !== name
+  ) {
+    return null
+  }
+  return realPath
+}
+
 function readTemplates(
   skillRoot: string,
   groupId: string,
@@ -103,15 +167,23 @@ function readTemplates(
     const previewPath = acceptedPreview(skillRoot, groupId, raw.preview)
     if (!previewPath) continue
     seen.add(id)
-    templates.push({ id, title, aliases: aliasesOf(raw.aliases), previewPath })
+    templates.push(
+      ...variantTemplates(skillRoot, groupId, {
+        id,
+        title,
+        aliases: aliasesOf(raw.aliases),
+        previewPath
+      })
+    )
   }
   return templates
 }
 
 /**
  * Read `references/plots.yaml` and each family's catalog. Groups and templates
- * keep catalog order. Previews outside `scripts/<group>/<template>/preview.png`
- * are dropped, including layout previews that are not part of a plot family.
+ * keep catalog order. Each template keeps its `preview.png`, then any
+ * `preview_<name>.png` siblings, so other supported drawings are visible.
+ * Anything outside `scripts/<group>/<template>/` is dropped.
  */
 export function readVisualizationTemplateCatalog(skillDir: string): VisualizationTemplateCatalog {
   let skillRoot: string

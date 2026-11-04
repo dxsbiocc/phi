@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -36,6 +36,14 @@ function writeSkill(root: string): string {
   const skill = join(root, 'omics-visualization')
   mkdirSync(join(skill, 'references', 'catalog'), { recursive: true })
   writePreview(join(skill, 'scripts', 'scatter', 'basic', 'preview.png'))
+  writePreview(join(skill, 'scripts', 'scatter', 'basic', 'preview_zeta.png'))
+  writePreview(join(skill, 'scripts', 'scatter', 'basic', 'preview_with_trend.png'))
+  writePreview(join(skill, 'scripts', 'scatter', 'basic', 'preview_.png'))
+  writePreview(join(skill, 'scripts', 'scatter', 'basic', 'notes.png'))
+  symlinkSync(
+    join(root, 'outside', 'preview.png'),
+    join(skill, 'scripts', 'scatter', 'basic', 'preview_leaked.png')
+  )
   writePreview(join(skill, 'scripts', 'heatmap', 'clustered', 'preview.png'))
   writePreview(join(skill, 'scripts', 'layouts', 'equal_2x2', 'preview.png'))
   writePreview(join(root, 'outside', 'preview.png'))
@@ -152,12 +160,27 @@ test('visualization catalog keeps plot families and drops previews outside the f
       catalog.groups.map((group) => group.id),
       ['scatter', 'heatmap']
     )
+    const basic = join(skill, 'scripts', 'scatter', 'basic')
     assert.deepEqual(catalog.groups[0]?.templates, [
       {
         id: 'scatter-basic',
         title: 'Basic scatter plot',
         aliases: ['散点图', 'xy scatter'],
-        previewPath: realpathSync(join(skill, 'scripts', 'scatter', 'basic', 'preview.png'))
+        previewPath: realpathSync(join(basic, 'preview.png'))
+      },
+      {
+        id: 'scatter-basic',
+        title: 'Basic scatter plot · with trend',
+        aliases: ['散点图', 'xy scatter'],
+        previewPath: realpathSync(join(basic, 'preview_with_trend.png')),
+        variant: 'with_trend'
+      },
+      {
+        id: 'scatter-basic',
+        title: 'Basic scatter plot · zeta',
+        aliases: ['散点图', 'xy scatter'],
+        previewPath: realpathSync(join(basic, 'preview_zeta.png')),
+        variant: 'zeta'
       }
     ])
     assert.equal(catalog.groups[1]?.templates[0]?.id, 'heatmap-clustered')

@@ -321,7 +321,6 @@ export function VisualizationPreviewStage({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 1.5,
-        bgcolor: '#fff',
         borderRadius: 1,
         minHeight: 240,
         '&:hover .phi-carousel-nav, &:focus-within .phi-carousel-nav': {
@@ -403,6 +402,7 @@ function StablePreview({ src, alt }: { src: string | null; alt: string }): React
         width: '100%',
         height: '100%',
         overflow: 'hidden',
+        // The preview PNGs are transparent and drawn with dark ink.
         bgcolor: '#fff'
       }}
     >
@@ -501,18 +501,24 @@ function CarouselButton({
         height: 40,
         opacity: 0,
         pointerEvents: 'none',
-        color: 'common.black',
-        bgcolor: '#fff',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.16)',
+        color: 'text.primary',
+        bgcolor: 'background.default',
+        border: 1,
+        borderColor: 'divider',
+        boxShadow: (theme) =>
+          theme.palette.mode === 'dark'
+            ? '0 8px 24px rgba(0, 0, 0, 0.45)'
+            : '0 8px 24px rgba(0, 0, 0, 0.16)',
         transition: 'opacity 180ms ease, transform 180ms ease',
         '&:hover': {
-          bgcolor: '#fff',
+          bgcolor: 'background.default',
           opacity: 1,
           transform: 'scale(1.1)'
         },
         '&.Mui-disabled': {
-          color: 'common.black',
-          bgcolor: '#fff'
+          color: 'text.disabled',
+          bgcolor: 'background.default',
+          borderColor: 'divider'
         }
       }}
     >

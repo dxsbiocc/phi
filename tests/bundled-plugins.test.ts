@@ -64,6 +64,8 @@ description: Fixture for installed skill loading.
 `
   )
   writeFileSync(join(skill, 'scripts', 'tree', 'basic', 'preview.png'), 'fixture preview')
+  writeFileSync(join(skill, 'scripts', 'tree', 'basic', 'preview_circular.png'), 'fixture variant')
+  writeFileSync(join(skill, 'scripts', 'tree', 'basic', 'notes.png'), 'not a preview')
   return source
 }
 
@@ -198,6 +200,17 @@ test('runtime skill loading and preview access use installed plugin files', asyn
       'preview.png'
     )
     assert.equal(isPluginSkillPreviewPath(installedPreview, agentDir), true)
+    assert.equal(
+      isPluginSkillPreviewPath(
+        join(skillDir, 'scripts', 'tree', 'basic', 'preview_circular.png'),
+        agentDir
+      ),
+      true
+    )
+    assert.equal(
+      isPluginSkillPreviewPath(join(skillDir, 'scripts', 'tree', 'basic', 'notes.png'), agentDir),
+      false
+    )
     assert.equal(isPluginSkillPreviewPath(sourcePreview, agentDir), false)
   })
 })

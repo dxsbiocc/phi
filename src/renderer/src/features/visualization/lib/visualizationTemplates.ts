@@ -9,8 +9,8 @@ export function visualizationTemplateMatches(
 ): boolean {
   const normalized = query.trim().toLowerCase()
   if (!normalized) return true
-  return [template.title, template.id, ...template.aliases].some((value) =>
-    value.toLowerCase().includes(normalized)
+  return [template.title, template.id, template.variant, ...template.aliases].some((value) =>
+    value?.toLowerCase().includes(normalized)
   )
 }
 
