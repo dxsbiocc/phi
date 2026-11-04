@@ -430,6 +430,7 @@ const appIcon = nativeImage.createFromPath(icon)
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
 const teamSourceService = new TeamSourceService({
   agentDir: AGENT_DIR,
+  authStorage: () => getAuthManager().getRuntime(),
   getMemberIdentity: async () => {
     const { safeStorage } = await import('electron')
     return (await loadOrCreateMemberIdentity({ agentDir: AGENT_DIR, safeStorage })).identity

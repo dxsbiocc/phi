@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -189,8 +190,7 @@ test('allows an explicitly enabled HTTP source for local tests', async (t) => {
   const productionService = new TeamSourceService({
     agentDir,
     getMemberIdentity: async () => member.identity,
-    authStorage: new FakeAuthStorage(),
-    supportedProviders: new Set()
+    authStorage: new FakeAuthStorage()
   })
   await assert.rejects(productionService.pullSource(source.id), { code: 'INVALID_FORMAT' })
   assert.equal(productionService.listSources()[0]?.status.lastErrorCode, 'INVALID_FORMAT')
@@ -208,6 +208,7 @@ test('pulls releases, reconciles team model keys, records withdrawals, and prese
     type: 'api_key',
     key: 'user-owned-anthropic'
   })
+  auth.configureExternal('google', 'environment')
   writeSkillRegistry(registryDir, '1.0.0')
   await publishTeamRelease({
     storeDir,
@@ -219,6 +220,7 @@ test('pulls releases, reconciles team model keys, records withdrawals, and prese
         models: [
           { providerId: 'openai', label: 'Team OpenAI', apiKey: 'team-openai-v1' },
           { providerId: 'anthropic', label: 'Team Claude', apiKey: 'team-anthropic' },
+          { providerId: 'google', label: 'Team Gemini', apiKey: 'team-google' },
           { providerId: 'unknown-provider', label: 'Unknown', apiKey: 'team-unknown' }
         ]
       }
@@ -230,7 +232,6 @@ test('pulls releases, reconciles team model keys, records withdrawals, and prese
     agentDir,
     getMemberIdentity: async () => member.identity,
     authStorage: auth,
-    supportedProviders: new Set(['openai', 'anthropic']),
     createId: () => 'source-alpha',
     now: () => new Date(Date.UTC(2026, 10, 4, 1, 0, clock++))
   })
@@ -242,11 +243,12 @@ test('pulls releases, reconciles team model keys, records withdrawals, and prese
 
   assert.equal(first.status.lastSuccessfulRelease, 1)
   assert.equal(first.status.lastErrorCode, null)
-  assert.deepEqual(first.status.credentialConflicts, ['anthropic'])
+  assert.deepEqual(first.status.credentialConflicts, ['anthropic', 'google'])
   assert.deepEqual(first.status.skippedProviders, ['unknown-provider'])
   assert.deepEqual(service.configuredProviders(TEAM_ID), ['openai'])
   assert.equal(auth.key('openai'), 'team-openai-v1')
   assert.equal(auth.key('anthropic'), 'user-owned-anthropic')
+  assert.equal(auth.key('google'), undefined)
   assert.equal(existsSync(teamSourceRegistryDir(agentDir, first)!), true)
 
   writeSkillRegistry(registryDir, '2.0.0')
@@ -308,7 +310,6 @@ test('records NOT_A_MEMBER while retaining the previous successful registry', as
     agentDir,
     getMemberIdentity: async () => member.identity,
     authStorage: new FakeAuthStorage(),
-    supportedProviders: new Set(),
     createId: () => 'source-alpha',
     now: () => new Date('2026-11-04T04:00:00.000Z')
   })
@@ -348,7 +349,6 @@ test('records RELEASE_WITHDRAWN without replacing the last successful release', 
     agentDir,
     getMemberIdentity: async () => member.identity,
     authStorage: new FakeAuthStorage(),
-    supportedProviders: new Set(),
     createId: () => 'source-alpha'
   })
   const added = await service.addSource({
@@ -396,7 +396,6 @@ test('removes source state and only its unchanged team credential without uninst
     agentDir,
     getMemberIdentity: async () => member.identity,
     authStorage: auth,
-    supportedProviders: new Set(['openai']),
     createId: () => 'source-alpha'
   })
   const added = await service.addSource({
@@ -442,7 +441,6 @@ test('does not rotate or delete a user key added beside an owned team provider',
     agentDir,
     getMemberIdentity: async () => member.identity,
     authStorage: auth,
-    supportedProviders: new Set(['openai']),
     createId: () => 'source-alpha'
   })
   const added = await service.addSource({
@@ -471,8 +469,110 @@ test('does not rotate or delete a user key added beside an owned team provider',
 
   writeSkillRegistry(registryDir, '3.0.0')
   await publishTeamRelease({ storeDir, team, members: [member.recipient], registryDir })
-  await service.pullSource(added.id)
-  assert.deepEqual(auth.keysFor('openai'), ['user-openai'])
+  const removalConflict = await service.pullSource(added.id)
+  assert.deepEqual(removalConflict.status.credentialConflicts, ['openai'])
+  assert.deepEqual(auth.keysFor('openai'), ['team-openai-v1', 'user-openai'])
+  assert.deepEqual(service.configuredProviders(TEAM_ID), [])
+})
+
+test('preserves a user replacement that reused the team credential id and records a conflict', async () => {
+  const root = sandbox('same-id-replacement')
+  const agentDir = join(root, 'agent')
+  const registryDir = join(root, 'registry')
+  const storeDir = join(root, 'store')
+  const team = createTeamKeys({ teamId: TEAM_ID, name: 'Alpha Team' })
+  const member = await createMemberKeys()
+  const auth = new FakeAuthStorage()
+  writeSkillRegistry(registryDir, '1.0.0')
+  await publishTeamRelease({
+    storeDir,
+    team,
+    members: [member.recipient],
+    grants: [
+      {
+        recipient: member.recipient,
+        models: [{ providerId: 'openai', label: 'Team OpenAI', apiKey: 'team-openai' }]
+      }
+    ],
+    registryDir
+  })
+  const service = new TeamSourceService({
+    agentDir,
+    getMemberIdentity: async () => member.identity,
+    authStorage: auth,
+    createId: () => 'source-alpha'
+  })
+  const source = await service.addSource({
+    teamKeyId: team.keyId,
+    location: { kind: 'directory', path: storeDir }
+  })
+  await service.pullSource(source.id)
+  const teamCredentialId = auth.credentials.list('openai')[0]?.id
+
+  await auth.credentials.set('openai', { type: 'api_key', key: 'user-openai' })
+  assert.equal(auth.credentials.list('openai')[0]?.id, teamCredentialId)
+  writeSkillRegistry(registryDir, '2.0.0')
+  await publishTeamRelease({ storeDir, team, members: [member.recipient], registryDir })
+  const updated = await service.pullSource(source.id)
+
+  assert.deepEqual(updated.status.credentialConflicts, ['openai'])
+  assert.equal(auth.key('openai'), 'user-openai')
+  assert.equal(auth.logoutCalls, 0)
+  assert.deepEqual(service.configuredProviders(TEAM_ID), [])
+})
+
+test('does not rotate an owned team key while an external provider source is configured', async () => {
+  const root = sandbox('external-source-conflict')
+  const agentDir = join(root, 'agent')
+  const registryDir = join(root, 'registry')
+  const storeDir = join(root, 'store')
+  const team = createTeamKeys({ teamId: TEAM_ID, name: 'Alpha Team' })
+  const member = await createMemberKeys()
+  const auth = new FakeAuthStorage()
+  writeSkillRegistry(registryDir, '1.0.0')
+  await publishTeamRelease({
+    storeDir,
+    team,
+    members: [member.recipient],
+    grants: [
+      {
+        recipient: member.recipient,
+        models: [{ providerId: 'openai', label: 'Team OpenAI', apiKey: 'team-openai-v1' }]
+      }
+    ],
+    registryDir
+  })
+  const service = new TeamSourceService({
+    agentDir,
+    getMemberIdentity: async () => member.identity,
+    authStorage: auth,
+    createId: () => 'source-alpha'
+  })
+  const source = await service.addSource({
+    teamKeyId: team.keyId,
+    location: { kind: 'directory', path: storeDir }
+  })
+  await service.pullSource(source.id)
+  auth.configureExternal('openai', 'environment')
+
+  writeSkillRegistry(registryDir, '2.0.0')
+  await publishTeamRelease({
+    storeDir,
+    team,
+    members: [member.recipient],
+    grants: [
+      {
+        recipient: member.recipient,
+        models: [{ providerId: 'openai', label: 'Team OpenAI', apiKey: 'team-openai-v2' }]
+      }
+    ],
+    registryDir
+  })
+  const conflicted = await service.pullSource(source.id)
+
+  assert.deepEqual(conflicted.status.credentialConflicts, ['openai'])
+  assert.equal(auth.key('openai'), 'team-openai-v1')
+  assert.deepEqual(service.configuredProviders(TEAM_ID), ['openai'])
 })
 
 test('deduplicates concurrent pulls of the same source', async () => {
@@ -497,7 +597,6 @@ test('deduplicates concurrent pulls of the same source', async () => {
     agentDir,
     getMemberIdentity: async () => member.identity,
     authStorage: new FakeAuthStorage(),
-    supportedProviders: new Set(),
     createId: () => 'source-alpha',
     pullRelease: async () => {
       calls += 1
@@ -539,7 +638,6 @@ test('source removal waits for an in-flight pull before deleting committed state
   const service = new TeamSourceService({
     agentDir,
     getMemberIdentity: async () => member.identity,
-    supportedProviders: new Set(),
     createId: () => 'source-alpha',
     pullRelease: async (options) => {
       entered.resolve(undefined)
@@ -584,7 +682,6 @@ test('service close drains an in-flight pull and rejects later mutations', async
   const service = new TeamSourceService({
     agentDir,
     getMemberIdentity: async () => member.identity,
-    supportedProviders: new Set(),
     createId: () => 'source-alpha',
     pullRelease: async () => pending.promise
   })
@@ -769,6 +866,11 @@ class FakeAuthStorage implements TeamSourceAuthStorage {
     Array<{ id: number; credential: { type: 'api_key'; key: string } }>
   >()
   #nextId = 1
+  readonly #externalSources = new Map<
+    string,
+    'runtime' | 'environment' | 'models_json_key' | 'models_json_command'
+  >()
+  logoutCalls = 0
 
   readonly credentials = {
     list: (provider?: string) => {
@@ -802,11 +904,61 @@ class FakeAuthStorage implements TeamSourceAuthStorage {
     }
   }
 
-  readonly keys = {
-    source: (provider: string) =>
-      this.#rows.has(provider)
-        ? ({ kind: 'api_key' as const } satisfies { kind: string })
-        : undefined
+  getProviders(): Array<{ id: string; name: string }> {
+    return ['openai', 'anthropic', 'google'].map((id) => ({ id, name: id }))
+  }
+
+  getProviderAuthStatus(providerId: string): {
+    configured: boolean
+    source?: 'stored' | 'runtime' | 'environment' | 'models_json_key' | 'models_json_command'
+  } {
+    const externalSource = this.#externalSources.get(providerId)
+    if (externalSource) return { configured: true, source: externalSource }
+    return this.#rows.has(providerId)
+      ? { configured: true, source: 'stored' }
+      : { configured: false }
+  }
+
+  async listCredentials(): Promise<
+    Array<{
+      id: string
+      providerId: string
+      type: 'api_key'
+      label: string
+      keySha256: string
+    }>
+  > {
+    return [...this.#rows].flatMap(([providerId, rows]) =>
+      rows.map((row) => ({
+        id: String(row.id),
+        providerId,
+        type: row.credential.type,
+        label: providerId,
+        keySha256: createHash('sha256').update(row.credential.key).digest('hex')
+      }))
+    )
+  }
+
+  async login(
+    providerId: string,
+    type: 'api_key' | 'oauth',
+    interaction: Parameters<TeamSourceAuthStorage['login']>[2]
+  ): Promise<void> {
+    assert.equal(type, 'api_key')
+    const key = await interaction.prompt({ type: 'secret', message: '' })
+    await this.credentials.set(providerId, { type: 'api_key', key })
+  }
+
+  async logout(providerId: string): Promise<void> {
+    this.logoutCalls += 1
+    this.#rows.delete(providerId)
+  }
+
+  configureExternal(
+    providerId: string,
+    source: 'runtime' | 'environment' | 'models_json_key' | 'models_json_command'
+  ): void {
+    this.#externalSources.set(providerId, source)
   }
 
   key(provider: string): string | undefined {

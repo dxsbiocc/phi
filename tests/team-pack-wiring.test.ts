@@ -120,6 +120,7 @@ test('main registers TeamPack IPC with safe storage, live native copy, shared se
 
   assert.match(main, /import \{ registerTeamPackIpc \} from '\.\/ipc\/team-pack-ipc'/u)
   assert.match(main, /new TeamPackAdminService\(\{ agentDir: AGENT_DIR, safeStorage \}\)/u)
+  assert.match(main, /authStorage: \(\) => getAuthManager\(\)\.getRuntime\(\)/u)
   assert.match(main, /function registerTeamPackManagementIpc\(\): void/u)
   assert.match(main, /registerTeamPackIpc\(\{/u)
   assert.match(main, /registerTeamPackIpc\(\{\s*ipcMain,\s*requireMainWindowRenderer,/u)

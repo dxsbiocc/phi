@@ -172,6 +172,8 @@ export interface PhiStoredCredential {
   type: PhiCredentialType
   /** OAuth: email, else accountId, else providerId. API key: providerId. */
   label: string
+  /** One-way identity for API keys; never contains or reveals the credential value. */
+  keySha256?: string
 }
 
 export type PhiCredentialOrigin =
@@ -259,6 +261,7 @@ export interface RuntimeCredential {
   providerId: string
   type?: string
   label?: string
+  keySha256?: string
 }
 
 export interface RuntimeProviderAuthStatus {

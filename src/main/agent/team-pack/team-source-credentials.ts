@@ -6,7 +6,6 @@ import type {
   ReconciledTeamModels,
   TeamCredentialOwner,
   TeamSourceAuthStorage,
-  TeamSourceServiceOptions,
   TeamSourceStoredCredential,
   TeamSourcesState
 } from './team-source-types'
@@ -15,7 +14,6 @@ interface ReconcileOptions {
   state: TeamSourcesState
   teamId: string
   models: readonly ModelKeyGrant[]
-  supportedProviders: TeamSourceServiceOptions['supportedProviders']
   getAuthStorage: () => Promise<TeamSourceAuthStorage>
 }
 
@@ -23,23 +21,25 @@ export async function reconcileTeamModels(
   options: ReconcileOptions
 ): Promise<ReconciledTeamModels> {
   assertUniqueProviders(options.models)
-  const supported = await supportedProviderPredicate(options.supportedProviders)
+  let owners = [...options.state.credentialOwners]
+  const currentOwners = owners.filter((owner) => owner.teamId === options.teamId)
+  if (currentOwners.length === 0 && options.models.length === 0) {
+    return { owners, conflicts: [], skipped: [] }
+  }
+
+  const auth = await options.getAuthStorage()
+  const supportedProviders = new Set(auth.getProviders().map(({ id }) => id))
   const skipped = options.models
-    .filter(({ providerId }) => !supported(providerId))
+    .filter(({ providerId }) => !supportedProviders.has(providerId))
     .map(({ providerId }) => providerId)
   const desired = new Map(
     options.models
-      .filter(({ providerId }) => supported(providerId))
+      .filter(({ providerId }) => supportedProviders.has(providerId))
       .map((model) => [model.providerId, model])
   )
-  let owners = [...options.state.credentialOwners]
-  const currentOwners = owners.filter((owner) => owner.teamId === options.teamId)
-  if (currentOwners.length === 0 && desired.size === 0) {
-    return { owners, conflicts: [], skipped }
-  }
-  const auth = await options.getAuthStorage()
-  owners = await removeMissingTeamCredentials(auth, owners, currentOwners, desired)
-  const conflicts: string[] = []
+  const removed = await removeMissingTeamCredentials(auth, owners, currentOwners, desired)
+  owners = removed.owners
+  const conflicts = [...removed.conflicts]
   for (const [providerId, model] of desired) {
     const reconciled = await reconcileProvider({
       auth,
@@ -63,6 +63,8 @@ export async function removeTeamCredentialOwners(
   if (owned.length === 0) return state.credentialOwners
   const auth = await getAuthStorage()
   for (const owner of owned) await removeOwnedCredential(auth, owner)
+  // Source removal has no surviving status record on which to persist conflicts. Always drop
+  // ownership metadata so the registry cannot contain an owner for a removed team.
   return state.credentialOwners.filter((owner) => owner.teamId !== teamId)
 }
 
@@ -81,23 +83,22 @@ async function reconcileProvider(
     (candidate) =>
       candidate.teamId === options.teamId && candidate.providerId === options.providerId
   )
-  const rows = options.auth.credentials.list(options.providerId)
+  const rows = await providerCredentials(options.auth, options.providerId)
   if (!owner) return addTeamCredential(options, rows)
-  const ownedRow = rows.find((candidate) => candidate.id === owner.credentialId)
-  if (!ownedRow || credentialKeySha256(ownedRow) !== owner.keySha256) {
+
+  const ownedRow = rows.find((candidate) => ownedCredentialMatches(candidate, owner))
+  if (!ownedRow) {
     const remainingOwners = options.owners.filter((candidate) => candidate !== owner)
-    return rows.length > 0
+    return rows.length > 0 || options.auth.getProviderAuthStatus(options.providerId).configured
       ? { owners: remainingOwners, conflict: true }
       : addTeamCredential({ ...options, owners: remainingOwners }, rows)
   }
-  if (rows.some((candidate) => candidate.id !== owner.credentialId)) {
+  if (rows.length !== 1 || hasExternalCredentialSource(options.auth, options.providerId)) {
     return { owners: options.owners, conflict: true }
   }
-  await options.auth.credentials.set(options.providerId, {
-    type: 'api_key',
-    key: options.apiKey
-  })
-  const updated = findApiKeyRow(options.auth, options.providerId, options.apiKey)
+
+  await loginApiKey(options.auth, options.providerId, options.apiKey)
+  const updated = await findApiKeyRow(options.auth, options.providerId, options.apiKey)
   return {
     owners: options.owners.map((candidate) =>
       candidate === owner
@@ -115,15 +116,12 @@ async function addTeamCredential(
   const anotherTeamOwnsProvider = options.owners.some(
     (candidate) => candidate.providerId === options.providerId
   )
-  const configured = options.auth.keys?.source(options.providerId) !== undefined
+  const configured = options.auth.getProviderAuthStatus(options.providerId).configured
   if (anotherTeamOwnsProvider || rows.length > 0 || configured) {
     return { owners: options.owners, conflict: true }
   }
-  await options.auth.credentials.set(options.providerId, {
-    type: 'api_key',
-    key: options.apiKey
-  })
-  const inserted = findApiKeyRow(options.auth, options.providerId, options.apiKey)
+  await loginApiKey(options.auth, options.providerId, options.apiKey)
+  const inserted = await findApiKeyRow(options.auth, options.providerId, options.apiKey)
   return {
     owners: [
       ...options.owners,
@@ -138,45 +136,84 @@ async function removeMissingTeamCredentials(
   owners: TeamCredentialOwner[],
   currentOwners: TeamCredentialOwner[],
   desired: ReadonlyMap<string, ModelKeyGrant>
-): Promise<TeamCredentialOwner[]> {
+): Promise<{ owners: TeamCredentialOwner[]; conflicts: string[] }> {
   let remaining = owners
+  const conflicts: string[] = []
   for (const owner of currentOwners) {
     if (desired.has(owner.providerId)) continue
-    await removeOwnedCredential(auth, owner)
+    const result = await removeOwnedCredential(auth, owner)
+    if (result === 'conflict') conflicts.push(owner.providerId)
     remaining = remaining.filter((candidate) => candidate !== owner)
   }
-  return remaining
+  return { owners: remaining, conflicts }
 }
 
 async function removeOwnedCredential(
   auth: TeamSourceAuthStorage,
   owner: TeamCredentialOwner
-): Promise<void> {
-  const row = auth.credentials
-    .list(owner.providerId)
-    .find((candidate) => candidate.id === owner.credentialId)
-  if (row && credentialKeySha256(row) === owner.keySha256) {
-    await auth.credentials.removeById(owner.providerId, owner.credentialId)
-  }
+): Promise<'removed' | 'missing' | 'conflict'> {
+  const rows = await providerCredentials(auth, owner.providerId)
+  if (rows.length === 0) return 'missing'
+  if (rows.length !== 1 || !ownedCredentialMatches(rows[0], owner)) return 'conflict'
+  await auth.logout(owner.providerId)
+  return 'removed'
 }
 
-function findApiKeyRow(
+async function loginApiKey(
   auth: TeamSourceAuthStorage,
   providerId: string,
   apiKey: string
-): TeamSourceStoredCredential {
-  const digest = keySha256(apiKey)
-  const row = auth.credentials
-    .list(providerId)
-    .find((candidate) => credentialKeySha256(candidate) === digest)
-  if (!row) throw teamPackError('STORE_UNAVAILABLE', '模型凭据写入后无法确认持久化结果')
-  return row
+): Promise<void> {
+  await auth.login(providerId, 'api_key', {
+    prompt: async () => apiKey,
+    notify: () => undefined
+  })
 }
 
-function credentialKeySha256(row: TeamSourceStoredCredential): string | null {
-  return row.credential.type === 'api_key' && typeof row.credential.key === 'string'
-    ? keySha256(row.credential.key)
-    : null
+async function providerCredentials(
+  auth: TeamSourceAuthStorage,
+  providerId: string
+): Promise<TeamSourceStoredCredential[]> {
+  return (await auth.listCredentials()).filter((candidate) => candidate.providerId === providerId)
+}
+
+async function findApiKeyRow(
+  auth: TeamSourceAuthStorage,
+  providerId: string,
+  apiKey: string
+): Promise<{ id: number }> {
+  const rows = await providerCredentials(auth, providerId)
+  const digest = keySha256(apiKey)
+  if (rows.length !== 1 || rows[0].type !== 'api_key' || rows[0].keySha256 !== digest) {
+    throw teamPackError('STORE_UNAVAILABLE', '模型凭据写入后无法确认持久化结果')
+  }
+  const id = credentialId(rows[0])
+  if (id === null) {
+    throw teamPackError('STORE_UNAVAILABLE', '模型凭据写入后缺少稳定标识')
+  }
+  return { id }
+}
+
+function ownedCredentialMatches(
+  row: TeamSourceStoredCredential,
+  owner: TeamCredentialOwner
+): boolean {
+  return (
+    row.id === String(owner.credentialId) &&
+    row.type === 'api_key' &&
+    row.keySha256 === owner.keySha256
+  )
+}
+
+function hasExternalCredentialSource(auth: TeamSourceAuthStorage, providerId: string): boolean {
+  const status = auth.getProviderAuthStatus(providerId)
+  return status.configured && status.source !== 'stored'
+}
+
+function credentialId(row: TeamSourceStoredCredential): number | null {
+  if (typeof row.id !== 'string' || !/^[1-9]\d*$/u.test(row.id)) return null
+  const id = Number(row.id)
+  return Number.isSafeInteger(id) ? id : null
 }
 
 function ownerRecord(
@@ -197,13 +234,4 @@ function assertUniqueProviders(models: readonly ModelKeyGrant[]): void {
   if (new Set(providers).size !== providers.length) {
     throw teamPackError('INVALID_FORMAT', '团队模型子 key 包含重复 provider')
   }
-}
-
-async function supportedProviderPredicate(
-  configured: TeamSourceServiceOptions['supportedProviders']
-): Promise<(providerId: string) => boolean> {
-  if (typeof configured === 'function') return configured
-  if (configured) return (providerId) => configured.has(providerId)
-  const { getCatalogProviderEntry } = await import('../engine/omp-internals')
-  return (providerId) => getCatalogProviderEntry(providerId) !== undefined
 }

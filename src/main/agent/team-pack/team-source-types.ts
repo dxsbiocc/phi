@@ -1,6 +1,7 @@
 import type { TeamPackErrorCode } from './errors'
 import type { pullTeamRelease } from './pull'
 import type { HttpTeamPackStoreOptions } from './store'
+import type { ModelRuntime } from '../runtime/runtime-adapter'
 
 export type TeamSourceLocation =
   { kind: 'directory'; path: string } | { kind: 'https'; url: string }
@@ -51,27 +52,19 @@ export interface TeamSourcePreview {
   location: TeamSourceLocation
 }
 
-export interface TeamSourceStoredCredential {
-  id: number
-  provider: string
-  credential: { type: string; key?: string }
-}
+export type TeamSourceStoredCredential = Awaited<
+  ReturnType<ModelRuntime['listCredentials']>
+>[number]
 
-export interface TeamSourceAuthStorage {
-  credentials: {
-    list(provider?: string): TeamSourceStoredCredential[]
-    set(provider: string, credential: { type: 'api_key'; key: string }): Promise<void>
-    removeById(provider: string, credentialId: number): Promise<boolean>
-  }
-  keys?: { source(provider: string): unknown }
-  close?(): void
-}
+export type TeamSourceAuthStorage = Pick<
+  ModelRuntime,
+  'getProviders' | 'getProviderAuthStatus' | 'listCredentials' | 'login' | 'logout'
+>
 
 export interface TeamSourceServiceOptions {
   agentDir: string
   getMemberIdentity: () => Promise<string>
   authStorage?: TeamSourceAuthStorage | (() => Promise<TeamSourceAuthStorage>)
-  supportedProviders?: ReadonlySet<string> | ((providerId: string) => boolean)
   allowHttp?: boolean
   createId?: () => string
   now?: Date | (() => Date)

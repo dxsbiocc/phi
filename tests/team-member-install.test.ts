@@ -87,7 +87,6 @@ function sourceService(agentDir: string, identity: string, id: string): TeamSour
   return new TeamSourceService({
     agentDir,
     getMemberIdentity: async () => identity,
-    supportedProviders: new Set(),
     createId: () => id,
     now: () => new Date('2026-11-04T08:00:00.000Z')
   })

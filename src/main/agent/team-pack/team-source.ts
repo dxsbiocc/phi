@@ -54,7 +54,6 @@ export class TeamSourceService {
   readonly #removals = new Map<string, Promise<boolean>>()
   #stateTail: Promise<void> = Promise.resolve()
   #authStoragePromise: Promise<TeamSourceAuthStorage> | undefined
-  #ownsAuthStorage = false
   #closing: Promise<void> | undefined
 
   constructor(options: TeamSourceServiceOptions) {
@@ -182,14 +181,6 @@ export class TeamSourceService {
       ...this.#removals.values()
     ])
     await this.#stateTail
-    if (!this.#ownsAuthStorage || !this.#authStoragePromise) return
-    try {
-      const storage = await this.#authStoragePromise
-      storage.close?.()
-    } finally {
-      this.#authStoragePromise = undefined
-      this.#ownsAuthStorage = false
-    }
   }
 
   #assertOpen(): void {
@@ -227,7 +218,6 @@ export class TeamSourceService {
         state,
         teamId: current.teamId,
         models: result.models,
-        supportedProviders: this.#options.supportedProviders,
         getAuthStorage: () => this.#authStorage()
       })
       const changed = successfulSource(current, result, reconciled, nowIso(this.#options.now))
@@ -269,16 +259,12 @@ export class TeamSourceService {
     const configured = this.#options.authStorage
     if (typeof configured === 'function') this.#authStoragePromise = configured()
     else if (configured) this.#authStoragePromise = Promise.resolve(configured)
-    else this.#authStoragePromise = this.#discoverAuthStorage()
+    else {
+      this.#authStoragePromise = Promise.reject(
+        teamPackError('STORE_UNAVAILABLE', '团队模型凭据运行时不可用')
+      )
+    }
     return this.#authStoragePromise
-  }
-
-  async #discoverAuthStorage(): Promise<TeamSourceAuthStorage> {
-    this.#ownsAuthStorage = true
-    const { discoverAuthStorage } = await import('@oh-my-pi/pi-ai/auth-broker')
-    return (await discoverAuthStorage({
-      agentDir: this.#options.agentDir
-    })) as TeamSourceAuthStorage
   }
 
   #mutateState<T>(
