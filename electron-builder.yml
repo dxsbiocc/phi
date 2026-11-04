@@ -59,13 +59,16 @@ asarUnpack:
   - node_modules/@img/**
   - node_modules/@jridgewell/**
   - node_modules/@kurkle/**
+  - node_modules/@noble/**
   - node_modules/@oh-my-pi/**
   - node_modules/@opentelemetry/**
   - node_modules/@protobufjs/**
   - node_modules/@puppeteer/**
+  - node_modules/@scure/**
   - node_modules/@tailwindcss/**
   - node_modules/@types/**
   - node_modules/adm-zip/**
+  - node_modules/age-encryption/**
   - node_modules/ajv/**
   - node_modules/axe-core/**
   - node_modules/boolean/**
