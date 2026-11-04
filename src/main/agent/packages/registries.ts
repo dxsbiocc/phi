@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
 import { listTeamSources, teamSourceRegistryDir, type TeamSource } from '../team-pack/team-source'
@@ -179,6 +179,31 @@ export async function loadKnownRegistryIndexes(
     errors,
     ...(stateError ? { stateError } : {})
   }
+}
+
+/**
+ * Resolve a directory under the pulled team-pack state to its current team registry.
+ * Returns null for paths outside that state so callers fall back to ordinary directories;
+ * stale, withdrawn, or unknown team release paths are rejected instead of loaded untagged.
+ */
+export function readTeamContentRegistry(
+  path: string,
+  options: Pick<KnownRegistryListOptions, 'agentDir' | 'loadTeamSources'> = {}
+): LocalRegistry | null {
+  const root = resolve(agentDir(options.agentDir), 'team-pack', 'state')
+  const target = resolve(path)
+  if (target !== root && !target.startsWith(`${root}${sep}`)) return null
+  const team = readTeamSourcesForRegistries(options)
+  if (team.error) throw new Error(team.error)
+  const source = team.sources.find((candidate) => {
+    const registryDir = teamSourceRegistryDir(agentDir(options.agentDir), candidate)
+    return registryDir !== null && resolve(registryDir) === target
+  })
+  if (!source) throw new Error('这个团队版本已不是当前可用的团队来源版本')
+  const loaded = loadTeamRegistryIndexes([source], options.agentDir)
+  const registry = loaded.registries[0]
+  if (!registry) throw new Error(loaded.errors[0] ?? '团队来源不可用')
+  return registry
 }
 
 function loadTeamRegistryIndexes(

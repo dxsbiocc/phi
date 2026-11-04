@@ -13,9 +13,12 @@ import {
   planInstall,
   type RegistryPackageEntry
 } from '../src/main/agent/packages/installer'
+import { readContentRegistry } from '../src/main/agent/packages/content-source'
 import {
   listKnownRegistries,
-  loadKnownRegistryIndexes
+  loadKnownRegistryIndexes,
+  readKnownRegistries,
+  readTeamContentRegistry
 } from '../src/main/agent/packages/registries'
 import { OFFICIAL_REGISTRY_ID } from '../src/main/agent/packages/official-registry'
 import type { LocalRegistry } from '../src/main/agent/packages/installer-types'
@@ -261,6 +264,74 @@ test('keeps a successfully pulled registry cached but blocks withdrawn and never
     assert.doesNotMatch(loaded.errors.join('\n'), /NOT_A_MEMBER/)
     assert.match(loaded.errors.join('\n'), /版本 3 已撤回/)
     assert.match(loaded.errors.join('\n'), /尚无成功拉取/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('installing by team registry path keeps the team source and its team-only flag', async () => {
+  const { root, agentDir } = sandbox()
+  try {
+    const base = teamSource({ id: 'team-source-alpha', teamId: 'alpha-team', teamName: 'Alpha' })
+    const source: TeamSource = {
+      ...base,
+      status: { ...base.status, resources: { 'skill:team-skill': { sharing: 'team-only' } } }
+    }
+    const registryDir = teamRegistryDir(agentDir, source)
+    writeInstallableRegistry(registryDir)
+
+    const registry = readTeamContentRegistry(registryDir, {
+      agentDir,
+      loadTeamSources: () => [source]
+    })
+    assert(registry)
+    assert.equal(registry.id, source.id)
+    assert.equal(registry.source?.kind, 'team')
+
+    await installPackages(
+      planInstall(registry, { type: 'skill', id: 'team-skill' }, { agentDir }),
+      { agentDir }
+    )
+    const installedSource = JSON.parse(
+      readFileSync(
+        join(agentDir, 'packages', 'skill', 'team-skill', '1.0.0', '.source.json'),
+        'utf8'
+      )
+    )
+    assert.equal(installedSource.registry, source.id)
+    assert.equal(installedSource.teamSource?.teamId, source.teamId)
+    assert.equal(installedSource.teamSource?.sharing, 'team-only')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('rejects stale, withdrawn, and unknown team release paths instead of reading them untagged', async () => {
+  const { root, agentDir } = sandbox()
+  try {
+    const current = teamSource({ id: 'team-source-alpha', teamId: 'alpha-team', teamName: 'Alpha' })
+    const withdrawn = teamSource({
+      id: 'team-source-beta',
+      teamId: 'beta-team',
+      teamName: 'Beta',
+      status: { ...current.status, withdrawnReleases: [3] }
+    })
+    const staleDir = join(agentDir, 'team-pack', 'state', current.teamId, '2', 'registry')
+    writeInstallableRegistry(staleDir)
+    writeInstallableRegistry(teamRegistryDir(agentDir, withdrawn))
+    const options = { agentDir, loadTeamSources: () => [current, withdrawn] }
+
+    assert.throws(() => readTeamContentRegistry(staleDir, options), /不是当前可用/)
+    assert.throws(
+      () => readTeamContentRegistry(teamRegistryDir(agentDir, withdrawn), options),
+      /版本 3 已撤回/
+    )
+    const ordinary = join(root, 'ordinary-registry')
+    writeInstallableRegistry(ordinary)
+    assert.equal(readTeamContentRegistry(ordinary, options), null)
+
+    await assert.rejects(readContentRegistry(staleDir, { agentDir }), /不是当前可用/)
+    assert.deepEqual(readKnownRegistries(agentDir).registries, [])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

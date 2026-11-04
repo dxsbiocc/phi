@@ -1,5 +1,5 @@
 import type { InstallerOptions, LocalRegistry, PackageRequest } from './installer-types'
-import { addKnownRegistry } from './registries'
+import { addKnownRegistry, readTeamContentRegistry } from './registries'
 import { readRegistry } from './registry'
 import {
   isOfficialConnectorRegistryDirectory,
@@ -31,6 +31,8 @@ export async function readContentRegistry(
   if (isOfficialWebsiteRegistryDirectory(source, options.agentDir)) {
     return readOfficialWebsiteRegistry(source, options)
   }
+  const team = readTeamContentRegistry(source, options)
+  if (team) return team
   const registry = readRegistry(source)
   addKnownRegistry(registry.dir, options)
   return registry
