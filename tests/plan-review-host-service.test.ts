@@ -60,7 +60,6 @@ test('SSH plan review accepts only an authenticated call from its active run', a
     },
     renderer: {
       getActiveWindow: () => ({}) as never,
-      canRequest: (window): window is NonNullable<typeof window> => Boolean(window),
       waitForResponse: async () => {
         reviews++
         return { answers: [{ question: 'plan_review', answer: 'approve' }] } as never
@@ -200,8 +199,6 @@ test('plan review host service owns registration and forwards approved steps to 
     findPhiSessionById: () => ({ projectLocation: { kind: 'local' } }),
     phiOnlySessionPath: (sessionId) => `phi-session:${sessionId}`,
     getActiveWindow: () => ({}) as never,
-    canRequestAgentUserInteraction: (window): window is NonNullable<typeof window> =>
-      Boolean(window),
     waitForAgentUserInteraction: async () =>
       ({ answers: [{ question: 'plan_review', answer: 'approve' }] }) as never,
     appendSessionEvent: (_sessionId, event) => {
@@ -312,7 +309,6 @@ test('kernel-owned plan approval records the decision without starting a desktop
     },
     renderer: {
       getActiveWindow: () => ({}) as never,
-      canRequest: (window): window is NonNullable<typeof window> => Boolean(window),
       waitForResponse: async () =>
         ({ answers: [{ question: 'plan_review', answer: 'approve' }] }) as never
     },
@@ -418,8 +414,6 @@ test('reviewed replan applies only to its bound session and keeps revisions pend
     findPhiSessionById: () => ({ projectLocation: { kind: 'local' } }),
     phiOnlySessionPath: (sessionId) => `phi-session:${sessionId}`,
     getActiveWindow: () => ({}) as never,
-    canRequestAgentUserInteraction: (window): window is NonNullable<typeof window> =>
-      Boolean(window),
     waitForAgentUserInteraction: async () => {
       reviewCards += 1
       return { answers: [{ question: 'plan_review', answer: decision }] } as never

@@ -113,6 +113,7 @@ function harness(
       submitAuthInteraction: async () => undefined,
       respondToolApproval: async () => undefined,
       respondAgentUserInteraction: async () => undefined,
+      showPendingRequests: async () => undefined,
       onAgentEvent: () => () => undefined,
       onAuthInteraction: () => () => undefined,
       onToolApprovalRequest: () => () => undefined,

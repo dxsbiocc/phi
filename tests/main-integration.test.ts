@@ -3496,6 +3496,9 @@ async function harness(
           homeDir: '/nonexistent-home'
         })
     },
+    './agent/plugins/visualization-catalog': {
+      visualizationTemplateCatalog: () => ({ groups: [] })
+    },
     './agent/plugins/preview': {
       isPluginSkillPreviewPath: (target: string): boolean =>
         target.includes(path.join('packages', 'plugin')) && target.endsWith('preview.png')
@@ -7569,6 +7572,7 @@ const expectedStartupRegistrationOrder = [
   'tool:show-pending',
   'agent:interaction-response',
   'phiPlugins:list',
+  'phiPlugins:visualizationTemplates',
   'phiPlugins:pickDirectory',
   'phiPlugins:previewDirectory',
   'phiPlugins:installFromDirectory',

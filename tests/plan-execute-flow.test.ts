@@ -155,7 +155,6 @@ test('planExecute validates, reviews, executes a diamond and wakes the main agen
     },
     renderer: {
       getActiveWindow: () => ({}) as never,
-      canRequest: (window): window is NonNullable<typeof window> => Boolean(window),
       waitForResponse: async () =>
         ({ answers: [{ question: 'plan_review', answer: 'approve' }] }) as never
     },
