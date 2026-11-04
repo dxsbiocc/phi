@@ -54,6 +54,17 @@ test('adds a directory source only after validating team.json and persists stric
     createId: () => 'source-alpha',
     now: () => new Date('2026-11-04T01:02:03.000Z')
   })
+  const preview = await service.previewSource({
+    teamKeyId: team.keyId,
+    location: { kind: 'directory', path: storeDir }
+  })
+  assert.deepEqual(preview, {
+    teamId: TEAM_ID,
+    teamName: 'Alpha Team',
+    teamKeyId: team.keyId,
+    location: { kind: 'directory', path: storeDir }
+  })
+  assert.equal(existsSync(teamSourcesPath(agentDir)), false)
   const source = await service.addSource({
     teamKeyId: team.keyId,
     location: { kind: 'directory', path: storeDir }
@@ -233,6 +244,7 @@ test('pulls releases, reconciles team model keys, records withdrawals, and prese
   assert.equal(first.status.lastErrorCode, null)
   assert.deepEqual(first.status.credentialConflicts, ['anthropic'])
   assert.deepEqual(first.status.skippedProviders, ['unknown-provider'])
+  assert.deepEqual(service.configuredProviders(TEAM_ID), ['openai'])
   assert.equal(auth.key('openai'), 'team-openai-v1')
   assert.equal(auth.key('anthropic'), 'user-owned-anthropic')
   assert.equal(existsSync(teamSourceRegistryDir(agentDir, first)!), true)
@@ -270,6 +282,7 @@ test('pulls releases, reconciles team model keys, records withdrawals, and prese
   const third = await service.pullSource(added.id)
   assert.equal(third.status.lastSuccessfulRelease, 3)
   assert.equal(auth.key('openai'), undefined)
+  assert.deepEqual(service.configuredProviders(TEAM_ID), [])
   assert.equal(auth.key('anthropic'), 'user-owned-anthropic')
   assert.deepEqual(
     (

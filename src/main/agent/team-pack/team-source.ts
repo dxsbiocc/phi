@@ -28,7 +28,8 @@ import type {
   TeamSourceAuthStorage,
   TeamSourceServiceOptions,
   TeamSourceStatus,
-  TeamSourcesState
+  TeamSourcesState,
+  TeamSourcePreview
 } from './team-source-types'
 
 const MAX_TEAM_FILE_BYTES = 64 * 1024
@@ -42,7 +43,8 @@ export type {
   TeamSourceLocation,
   TeamSourceServiceOptions,
   TeamSourceStatus,
-  TeamSourceStoredCredential
+  TeamSourceStoredCredential,
+  TeamSourcePreview
 } from './team-source-types'
 
 export class TeamSourceService {
@@ -64,6 +66,13 @@ export class TeamSourceService {
     return listTeamSources(this.#options.agentDir)
   }
 
+  configuredProviders(teamId: string): string[] {
+    return readTeamSourcesState(this.#options.agentDir)
+      .credentialOwners.filter((owner) => owner.teamId === teamId)
+      .map((owner) => owner.providerId)
+      .sort((left, right) => left.localeCompare(right))
+  }
+
   async addSource(input: AddTeamSourceInput): Promise<TeamSource> {
     this.#assertOpen()
     const pending = this.#performAdd(input)
@@ -72,19 +81,30 @@ export class TeamSourceService {
     return tracked
   }
 
-  async #performAdd(input: AddTeamSourceInput): Promise<TeamSource> {
+  async previewSource(input: AddTeamSourceInput): Promise<TeamSourcePreview> {
+    this.#assertOpen()
     const location = normalizeTeamSourceLocation(input.location, this.#options.allowHttp === true)
     const store = createStore(location, this.#options.httpStoreOptions)
     const data = await store.read('team.json', MAX_TEAM_FILE_BYTES)
     if (!data) throw teamPackError('STORE_UNAVAILABLE', '团队包存储缺少 team.json')
     const team = parseTeamFile(data)
     assertTrustedTeamKey(team.publicKey, input.teamKeyId)
-    const source: TeamSource = {
-      id: this.#options.createId?.() ?? randomUUID(),
+    return {
       teamId: team.teamId,
       teamName: team.name,
       teamKeyId: input.teamKeyId,
-      location,
+      location
+    }
+  }
+
+  async #performAdd(input: AddTeamSourceInput): Promise<TeamSource> {
+    const preview = await this.previewSource(input)
+    const source: TeamSource = {
+      id: this.#options.createId?.() ?? randomUUID(),
+      teamId: preview.teamId,
+      teamName: preview.teamName,
+      teamKeyId: preview.teamKeyId,
+      location: preview.location,
       addedAt: nowIso(this.#options.now),
       status: emptyStatus()
     }
@@ -92,7 +112,7 @@ export class TeamSourceService {
       if (state.sources.some((entry) => entry.id === source.id)) {
         throw teamPackError('INVALID_FORMAT', '团队来源标识重复')
       }
-      if (state.sources.some((entry) => entry.teamId === team.teamId)) {
+      if (state.sources.some((entry) => entry.teamId === preview.teamId)) {
         throw teamPackError('INVALID_FORMAT', '该团队来源已登记')
       }
       return { state: { ...state, sources: [...state.sources, source] }, result: source }

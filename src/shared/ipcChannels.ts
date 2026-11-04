@@ -326,6 +326,27 @@ export const IPC = {
   system: {
     ping: 'ping'
   },
+  teamPack: {
+    addAdminMember: 'teamPack:addAdminMember',
+    addSource: 'teamPack:addSource',
+    checkSource: 'teamPack:checkSource',
+    createAdminTeam: 'teamPack:createAdminTeam',
+    exportAdminBackup: 'teamPack:exportAdminBackup',
+    exportMemberBackup: 'teamPack:exportMemberBackup',
+    getMemberSnapshot: 'teamPack:getMemberSnapshot',
+    importAdminBackup: 'teamPack:importAdminBackup',
+    importMemberBackup: 'teamPack:importMemberBackup',
+    getAdminTeam: 'teamPack:getAdminTeam',
+    listAdminTeams: 'teamPack:listAdminTeams',
+    listSources: 'teamPack:listSources',
+    pickSourceDirectory: 'teamPack:pickSourceDirectory',
+    previewSource: 'teamPack:previewSource',
+    publishAdminRelease: 'teamPack:publishAdminRelease',
+    removeAdminMember: 'teamPack:removeAdminMember',
+    removeSource: 'teamPack:removeSource',
+    setAdminMemberModels: 'teamPack:setAdminMemberModels',
+    withdrawAdminRelease: 'teamPack:withdrawAdminRelease'
+  },
   terminal: {
     ack: 'terminal:ack',
     attach: 'terminal:attach',

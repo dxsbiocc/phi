@@ -156,6 +156,25 @@ test('model grants reject duplicate recipients, unsafe fields, secrets, and endp
 
   await expectCode(
     publishTeamRelease({
+      storeDir: join(root, 'duplicate-provider-store'),
+      team,
+      members: [member.recipient],
+      grants: [
+        {
+          recipient: member.recipient,
+          models: [
+            { providerId: 'openai', label: 'First', apiKey: 'sk-first' },
+            { providerId: 'openai', label: 'Second', apiKey: 'sk-second' }
+          ]
+        }
+      ],
+      registryDir
+    }),
+    'INVALID_FORMAT'
+  )
+
+  await expectCode(
+    publishTeamRelease({
       storeDir: join(root, 'http-store'),
       team,
       members: [member.recipient],

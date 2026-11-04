@@ -126,6 +126,19 @@ test('settings dialog has a dedicated web search category', () => {
   assert.doesNotMatch(markup, /尚未配置任何 Provider/)
 })
 
+test('settings dialog has a dedicated bilingual team category', () => {
+  const chinese = renderSettingsDialog({ category: 'team' })
+  assert.match(chinese, /团队/)
+  assert.match(chinese, /我加入的团队/)
+  assert.match(chinese, /我管理的团队/)
+
+  setUiLanguage('en')
+  const english = renderSettingsDialog({ category: 'team' })
+  assert.match(english, /Team/)
+  assert.match(english, /Teams I joined/)
+  assert.match(english, /Teams I manage/)
+})
+
 test('settings dialog keeps configured provider rows information-dense', () => {
   const markup = renderSettingsDialog({
     category: 'providers',

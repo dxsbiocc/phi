@@ -44,6 +44,13 @@ export interface AddTeamSourceInput {
   location: TeamSourceLocation
 }
 
+export interface TeamSourcePreview {
+  teamId: string
+  teamName: string
+  teamKeyId: string
+  location: TeamSourceLocation
+}
+
 export interface TeamSourceStoredCredential {
   id: number
   provider: string

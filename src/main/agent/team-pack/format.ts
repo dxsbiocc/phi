@@ -175,7 +175,7 @@ export function parseGrantPlaintext(data: Buffer): GrantPlaintext {
 
 export function validateModelKeyGrants(value: readonly unknown[]): ModelKeyGrant[] {
   if (value.length > 64) invalid('models')
-  return value.map((entry) => {
+  const models = value.map((entry) => {
     if (!isRecord(entry)) invalid('model grant')
     const allowedFields =
       entry.baseUrl === undefined
@@ -202,6 +202,9 @@ export function validateModelKeyGrants(value: readonly unknown[]): ModelKeyGrant
       ...(entry.baseUrl === undefined ? {} : { baseUrl: entry.baseUrl })
     }
   })
+  const providers = models.map((model) => model.providerId)
+  if (new Set(providers).size !== providers.length) invalid('model grant providerId')
+  return models
 }
 
 export function parseInnerFile(data: Buffer): InnerFile {

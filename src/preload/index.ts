@@ -79,6 +79,7 @@ import type {
 import type { PromptAgentSummary, RemoteProjectAgentTrustRequest } from '../shared/promptAgentTypes'
 import type { RemoteProjectMcpTrustRequest } from '../shared/remoteProjectMcpTypes'
 import type { PlanRunRendererApi } from '../shared/planRunTypes'
+import type { TeamPackRendererApi } from '../shared/teamPackTypes'
 import type { SessionMode, WorkMode } from '../shared/sessionMode'
 import type {
   GithubSourcePreview,
@@ -810,6 +811,7 @@ type RendererAuthApi = PreloadApiBase & {
   browser: BrowserRendererBridge
   terminal: TerminalRendererBridge
   sshBootstrap: SshBootstrapRendererBridge
+  teamPack: TeamPackRendererApi
   readyWindow: (background: string) => Promise<void>
   closeWindow: () => Promise<void>
   minimizeWindow: () => Promise<void>
@@ -1339,11 +1341,34 @@ const sshBootstrapBridge: SshBootstrapRendererBridge = {
 
 const planRunApi = createPlanRunApi(ipcRenderer)
 
+const teamPackApi: TeamPackRendererApi = {
+  getMemberSnapshot: () => ipcRenderer.invoke(IPC.teamPack.getMemberSnapshot),
+  listSources: () => ipcRenderer.invoke(IPC.teamPack.listSources),
+  pickSourceDirectory: () => ipcRenderer.invoke(IPC.teamPack.pickSourceDirectory),
+  previewSource: (input) => ipcRenderer.invoke(IPC.teamPack.previewSource, input),
+  addSource: (input) => ipcRenderer.invoke(IPC.teamPack.addSource, input),
+  checkSource: (input) => ipcRenderer.invoke(IPC.teamPack.checkSource, input),
+  removeSource: (input) => ipcRenderer.invoke(IPC.teamPack.removeSource, input),
+  exportMemberBackup: (input) => ipcRenderer.invoke(IPC.teamPack.exportMemberBackup, input),
+  importMemberBackup: (input) => ipcRenderer.invoke(IPC.teamPack.importMemberBackup, input),
+  listAdminTeams: () => ipcRenderer.invoke(IPC.teamPack.listAdminTeams),
+  getAdminTeam: (input) => ipcRenderer.invoke(IPC.teamPack.getAdminTeam, input),
+  createAdminTeam: (input) => ipcRenderer.invoke(IPC.teamPack.createAdminTeam, input),
+  exportAdminBackup: (input) => ipcRenderer.invoke(IPC.teamPack.exportAdminBackup, input),
+  importAdminBackup: (input) => ipcRenderer.invoke(IPC.teamPack.importAdminBackup, input),
+  addAdminMember: (input) => ipcRenderer.invoke(IPC.teamPack.addAdminMember, input),
+  removeAdminMember: (input) => ipcRenderer.invoke(IPC.teamPack.removeAdminMember, input),
+  setAdminMemberModels: (input) => ipcRenderer.invoke(IPC.teamPack.setAdminMemberModels, input),
+  publishAdminRelease: (input) => ipcRenderer.invoke(IPC.teamPack.publishAdminRelease, input),
+  withdrawAdminRelease: (input) => ipcRenderer.invoke(IPC.teamPack.withdrawAdminRelease, input)
+}
+
 const api: RendererAuthApi = {
   ...planRunApi,
   browser: browserBridge,
   terminal: terminalBridge,
   sshBootstrap: sshBootstrapBridge,
+  teamPack: teamPackApi,
   readyWindow: (background: string): Promise<void> =>
     ipcRenderer.invoke(IPC.window.rendererReady, background),
   closeWindow: (): Promise<void> => ipcRenderer.invoke(IPC.window.close),

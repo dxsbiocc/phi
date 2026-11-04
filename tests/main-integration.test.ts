@@ -1912,7 +1912,12 @@ async function harness(
           toDataURL: () => 'data:image/png;base64,aWNvbg=='
         })
       },
-      nativeTheme: { shouldUseDarkColors: false }
+      nativeTheme: { shouldUseDarkColors: false },
+      safeStorage: {
+        isEncryptionAvailable: (): boolean => true,
+        encryptString: (value: string): Buffer => Buffer.from(value),
+        decryptString: (value: Buffer): string => value.toString('utf8')
+      }
     },
     './browser/browser-ipc': browserIpc,
     './terminal/terminal-ipc': {
@@ -2096,11 +2101,35 @@ async function harness(
       })
     },
     './agent/team-pack/member-service': {
+      exportMemberIdentityBackup: async (): Promise<void> => undefined,
+      getMemberRecipient: async (): Promise<string> => 'age1test-only',
+      importMemberIdentityBackup: async (): Promise<string> => 'age1test-only',
       loadOrCreateMemberIdentity: async () => ({
         version: 1,
         identity: 'AGE-SECRET-KEY-TEST-ONLY',
         recipient: 'age1test-only'
       })
+    },
+    './agent/team-pack/admin-service': {
+      TeamPackAdminService: class {
+        listTeams(): unknown[] {
+          return []
+        }
+      }
+    },
+    './agent/team-pack/errors': {
+      isTeamPackError: (): boolean => false,
+      teamPackError: (code: string, message: string): Error & { code: string } =>
+        Object.assign(new Error(message), { code })
+    },
+    './agent/team-pack/format': {
+      validateModelKeyGrants: (value: unknown): unknown => value
+    },
+    './agent/team-pack/validation': {
+      assertRelease: (): void => undefined,
+      assertTeamId: (): void => undefined,
+      assertTeamName: (): void => undefined,
+      assertX25519Recipient: (): void => undefined
     },
     './agent/team-pack/team-source': {
       TeamSourceService: class {
@@ -7417,6 +7446,7 @@ test('main startup callback delegates its named phases in order', () => {
   registerSessionIpc()
   registerProjectAndAnalysisIpc()
   registerPluginAndPackageIpc()
+  registerTeamPackManagementIpc()
   registerSkillAgentAndMcpIpc(wrappersIpcOptions)
   registerWrapperJobsAndPersonaIpc(wrappersIpcOptions)
   openInitialWindow()
@@ -7627,6 +7657,25 @@ const expectedStartupRegistrationOrder = [
   'packages:listUpdates',
   'packages:applyUpdate',
   'packages:applyAllUpdates',
+  'teamPack:getMemberSnapshot',
+  'teamPack:exportMemberBackup',
+  'teamPack:importMemberBackup',
+  'teamPack:listAdminTeams',
+  'teamPack:getAdminTeam',
+  'teamPack:createAdminTeam',
+  'teamPack:addAdminMember',
+  'teamPack:removeAdminMember',
+  'teamPack:setAdminMemberModels',
+  'teamPack:exportAdminBackup',
+  'teamPack:importAdminBackup',
+  'teamPack:publishAdminRelease',
+  'teamPack:withdrawAdminRelease',
+  'teamPack:listSources',
+  'teamPack:pickSourceDirectory',
+  'teamPack:previewSource',
+  'teamPack:addSource',
+  'teamPack:checkSource',
+  'teamPack:removeSource',
   'enablement:get',
   'enablement:set',
   'skills:list',

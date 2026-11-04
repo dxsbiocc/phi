@@ -96,6 +96,7 @@ export {
   type TeamSourceAuthStorage,
   type TeamSourceErrorCode,
   type TeamSourceLocation,
+  type TeamSourcePreview,
   type TeamSourceServiceOptions,
   type TeamSourceStatus,
   type TeamSourceStoredCredential

@@ -1,0 +1,216 @@
+import type { TeamSourceInput } from '../../shared/teamPackTypes'
+import type { TeamPackageSelection } from '../agent/team-pack/admin-service'
+import { teamPackError } from '../agent/team-pack/errors'
+import { validateModelKeyGrants, type ModelKeyGrant } from '../agent/team-pack/format'
+import type { AddTeamSourceInput } from '../agent/team-pack/team-source'
+import {
+  assertRelease,
+  assertTeamId,
+  assertTeamName,
+  assertX25519Recipient
+} from '../agent/team-pack/validation'
+
+export function sourceInput(value: unknown): AddTeamSourceInput {
+  if (!isRecord(value) || !hasExactKeys(value, ['location', 'fingerprint'])) invalidInput()
+  if (typeof value.fingerprint !== 'string' || !/^[a-f0-9]{16}$/.test(value.fingerprint)) {
+    invalidInput()
+  }
+  return {
+    teamKeyId: value.fingerprint,
+    location: sourceLocation(value.location)
+  }
+}
+
+export function sourceIdInput(value: unknown): string {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['sourceId']) ||
+    typeof value.sourceId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value.sourceId)
+  ) {
+    invalidInput()
+  }
+  return value.sourceId
+}
+
+export function backupPassphrase(value: unknown): string {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['passphrase']) ||
+    typeof value.passphrase !== 'string' ||
+    value.passphrase.length < 1 ||
+    value.passphrase.length > 1024
+  ) {
+    invalidInput()
+  }
+  return value.passphrase
+}
+
+export function adminBackupInput(value: unknown): { teamId: string; passphrase: string } {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['teamId', 'passphrase']) ||
+    typeof value.passphrase !== 'string' ||
+    value.passphrase.length < 1 ||
+    value.passphrase.length > 1024
+  ) {
+    invalidInput()
+  }
+  assertTeamId(value.teamId)
+  return { teamId: value.teamId, passphrase: value.passphrase }
+}
+
+export function teamIdInput(value: unknown): string {
+  if (!isRecord(value) || !hasExactKeys(value, ['teamId'])) invalidInput()
+  assertTeamId(value.teamId)
+  return value.teamId
+}
+
+export function createTeamInput(value: unknown): { name: string } {
+  if (!isRecord(value) || !hasExactKeys(value, ['name'])) invalidInput()
+  assertTeamName(value.name)
+  return { name: value.name }
+}
+
+export function addMemberInput(value: unknown): {
+  teamId: string
+  displayName: string
+  recipient: string
+} {
+  if (!isRecord(value) || !hasExactKeys(value, ['teamId', 'displayName', 'recipient'])) {
+    invalidInput()
+  }
+  assertTeamId(value.teamId)
+  assertTeamName(value.displayName)
+  assertX25519Recipient(value.recipient)
+  return {
+    teamId: value.teamId,
+    displayName: value.displayName,
+    recipient: value.recipient
+  }
+}
+
+export function removeMemberInput(value: unknown): { teamId: string; memberId: string } {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['teamId', 'memberId']) ||
+    typeof value.memberId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.memberId)
+  ) {
+    invalidInput()
+  }
+  assertTeamId(value.teamId)
+  return { teamId: value.teamId, memberId: value.memberId }
+}
+
+export function modelGrantInput(value: unknown): {
+  teamId: string
+  memberId: string
+  models: ModelKeyGrant[]
+} {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['teamId', 'memberId', 'models']) ||
+    typeof value.memberId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.memberId) ||
+    !Array.isArray(value.models) ||
+    value.models.length > 64 ||
+    value.models.some((model) => !isBoundaryModelGrant(model))
+  ) {
+    invalidInput()
+  }
+  assertTeamId(value.teamId)
+  return {
+    teamId: value.teamId,
+    memberId: value.memberId,
+    models: validateModelKeyGrants(value.models)
+  }
+}
+
+export function publishInput(value: unknown): {
+  teamId: string
+  packages: TeamPackageSelection[]
+} {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['teamId', 'packages']) ||
+    !Array.isArray(value.packages) ||
+    value.packages.length < 1 ||
+    value.packages.length > 10_000
+  ) {
+    invalidInput()
+  }
+  assertTeamId(value.teamId)
+  const packages = value.packages.map((selection) => {
+    if (
+      !isRecord(selection) ||
+      !hasExactKeys(selection, ['type', 'id']) ||
+      !['skill', 'plugin', 'wrapper', 'mcp'].includes(String(selection.type)) ||
+      typeof selection.id !== 'string' ||
+      !/^[a-z][a-z0-9-]{1,63}$/.test(selection.id)
+    ) {
+      invalidInput()
+    }
+    return selection as unknown as TeamPackageSelection
+  })
+  if (new Set(packages.map(({ type, id }) => `${type}:${id}`)).size !== packages.length) {
+    invalidInput()
+  }
+  return { teamId: value.teamId, packages }
+}
+
+export function withdrawInput(value: unknown): { teamId: string; release: number } {
+  if (!isRecord(value) || !hasExactKeys(value, ['teamId', 'release'])) invalidInput()
+  assertTeamId(value.teamId)
+  assertRelease(value.release)
+  return { teamId: value.teamId, release: value.release }
+}
+
+function sourceLocation(value: unknown): TeamSourceInput['location'] {
+  if (!isRecord(value)) invalidInput()
+  if (value.kind === 'directory' && hasExactKeys(value, ['kind', 'path'])) {
+    if (typeof value.path !== 'string' || value.path.length < 1 || value.path.length > 4096) {
+      invalidInput()
+    }
+    return { kind: 'directory', path: value.path }
+  }
+  if (value.kind === 'https' && hasExactKeys(value, ['kind', 'url'])) {
+    if (typeof value.url !== 'string' || value.url.length < 1 || value.url.length > 2048) {
+      invalidInput()
+    }
+    return { kind: 'https', url: value.url }
+  }
+  return invalidInput()
+}
+
+function isBoundaryModelGrant(value: unknown): boolean {
+  if (!isRecord(value)) return false
+  const expected =
+    value.baseUrl === undefined
+      ? ['providerId', 'label', 'apiKey']
+      : ['providerId', 'label', 'apiKey', 'baseUrl']
+  return (
+    hasExactKeys(value, expected) &&
+    typeof value.providerId === 'string' &&
+    value.providerId.length <= 100 &&
+    typeof value.label === 'string' &&
+    value.label.length <= 100 &&
+    typeof value.apiKey === 'string' &&
+    value.apiKey.length <= 16_384 &&
+    (value.baseUrl === undefined ||
+      (typeof value.baseUrl === 'string' && value.baseUrl.length <= 2048))
+  )
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value)
+  return keys.length === expected.length && expected.every((key) => keys.includes(key))
+}
+
+function invalidInput(): never {
+  throw teamPackError('INVALID_FORMAT', '团队包请求格式无效')
+}
