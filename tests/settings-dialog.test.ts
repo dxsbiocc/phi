@@ -172,6 +172,7 @@ test('team source cards render announcements as escaped plain text and show orig
       credentialConflicts: [],
       skippedProviders: [],
       configuredProviders: [],
+      submissionsAvailable: false,
       announcements: [
         { release: 1, publishedAt: '2026-11-02T08:00:00.000Z', text: '旧公告' },
         {
@@ -202,7 +203,8 @@ test('team source cards render announcements as escaped plain text and show orig
           sources: [source],
           busySourceId: null,
           onCheck: () => undefined,
-          onRemove: () => undefined
+          onRemove: () => undefined,
+          onSubmit: () => undefined
         })
       )
     )

@@ -342,14 +342,17 @@ test('publishing accepts package selections only and withdraws by release number
   const base = fakeAdmin()
   const admin = {
     ...base,
-    getTeamSummary: () => ({ ...base.getTeamSummary(), storeDir: null }),
+    getTeamSummary: (input: Parameters<typeof base.getTeamSummary>[0]) => ({
+      ...base.getTeamSummary(input),
+      storeDir: null
+    }),
     publishRelease: async (input: unknown) => {
       calls.push(['publish', input])
       return base.publishRelease(input as Parameters<typeof base.publishRelease>[0])
     },
     withdrawRelease: async (input: unknown) => {
       calls.push(['withdraw', input])
-      return base.withdrawRelease()
+      return base.withdrawRelease(input as Parameters<typeof base.withdrawRelease>[0])
     }
   }
   const handlers = harness(admin)

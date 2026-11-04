@@ -56,7 +56,8 @@ function teamSource(
       announcements: [],
       resources: { 'skill:team-skill': { sharing: 'forwardable' } },
       credentialConflicts: [],
-      skippedProviders: []
+      skippedProviders: [],
+      submissionRecipient: null
     },
     ...overrides
   }
@@ -204,7 +205,8 @@ test('keeps a successfully pulled registry cached but blocks withdrawn and never
         announcements: [],
         resources: { 'skill:team-skill': { sharing: 'forwardable' } },
         credentialConflicts: [],
-        skippedProviders: []
+        skippedProviders: [],
+        submissionRecipient: null
       }
     })
     const withdrawn = teamSource({
@@ -219,7 +221,8 @@ test('keeps a successfully pulled registry cached but blocks withdrawn and never
         announcements: [],
         resources: { 'skill:team-skill': { sharing: 'forwardable' } },
         credentialConflicts: [],
-        skippedProviders: []
+        skippedProviders: [],
+        submissionRecipient: null
       }
     })
     const neverPulled = teamSource({
@@ -234,7 +237,8 @@ test('keeps a successfully pulled registry cached but blocks withdrawn and never
         announcements: [],
         resources: {},
         credentialConflicts: [],
-        skippedProviders: []
+        skippedProviders: [],
+        submissionRecipient: null
       }
     })
     writeInstallableRegistry(teamRegistryDir(agentDir, unavailable))

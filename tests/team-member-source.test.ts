@@ -900,7 +900,8 @@ function sourceRecord(): TeamSource {
       announcements: [],
       resources: {},
       credentialConflicts: [],
-      skippedProviders: []
+      skippedProviders: [],
+      submissionRecipient: null
     }
   }
 }

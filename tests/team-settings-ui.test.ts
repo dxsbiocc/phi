@@ -67,7 +67,8 @@ test('member source list renders the healthy state in both interface languages',
       credentialConflicts: [],
       skippedProviders: [],
       announcements: [],
-      resources: {}
+      resources: {},
+      submissionsAvailable: false
     }
   }
 
@@ -76,7 +77,8 @@ test('member source list renders the healthy state in both interface languages',
       sources: [source],
       busySourceId: null,
       onCheck: () => undefined,
-      onRemove: () => undefined
+      onRemove: () => undefined,
+      onSubmit: () => undefined
     })
   )
   assert.match(english, /Atlas Lab/)
@@ -90,7 +92,8 @@ test('member source list renders the healthy state in both interface languages',
       sources: [source],
       busySourceId: null,
       onCheck: () => undefined,
-      onRemove: () => undefined
+      onRemove: () => undefined,
+      onSubmit: () => undefined
     })
   )
   assert.match(chinese, /Atlas Lab/)
@@ -127,7 +130,8 @@ test('member source list explains degraded states and model credential decisions
       credentialConflicts: extras.credentialConflicts ?? [],
       skippedProviders: extras.skippedProviders ?? [],
       announcements: [],
-      resources: {}
+      resources: {},
+      submissionsAvailable: false
     }
   })
   const markup = render(
@@ -144,7 +148,8 @@ test('member source list explains degraded states and model credential decisions
       ],
       busySourceId: null,
       onCheck: () => undefined,
-      onRemove: () => undefined
+      onRemove: () => undefined,
+      onSubmit: () => undefined
     })
   )
 
@@ -399,7 +404,7 @@ test('remove-team confirmation explains credential cleanup and retained installe
         id: 'source-1',
         teamId: 'team-1',
         teamName: 'Atlas Lab',
-        teamKeyId: 'a1b2c3d4e5f60708',
+        publicKeyFingerprint: 'a1b2c3d4e5f60708',
         location: { kind: 'directory', path: '/Shared/atlas' },
         addedAt: '2026-11-01T09:00:00.000Z',
         status: {
@@ -410,7 +415,11 @@ test('remove-team confirmation explains credential cleanup and retained installe
           withdrawnReleases: [],
           credentialProviders: ['openai'],
           credentialConflicts: [],
-          skippedProviders: []
+          skippedProviders: [],
+          configuredProviders: ['openai'],
+          announcements: [],
+          resources: {},
+          submissionsAvailable: false
         }
       },
       busy: false,
