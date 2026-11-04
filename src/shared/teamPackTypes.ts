@@ -51,6 +51,7 @@ export interface TeamSourceStatusView {
   configuredProviders: string[]
   announcements: TeamAnnouncement[]
   resources: Record<string, TeamResourceMetadataView>
+  submissionsAvailable: boolean
 }
 
 export interface TeamSourceView {
@@ -80,7 +81,7 @@ export interface TeamSourceIdRequest {
 }
 
 export interface TeamMemberSnapshot {
-  recipient: string
+  publicKey: string
 }
 
 export interface TeamBackupPassphraseRequest {
@@ -89,7 +90,7 @@ export interface TeamBackupPassphraseRequest {
 
 export interface TeamMemberBackupImportResult {
   imported: boolean
-  recipient?: string
+  publicKey?: string
 }
 
 export interface TeamAdminListItem {
@@ -109,6 +110,7 @@ export interface TeamAdminMember {
   recipient: string
   addedAt: string
   removedAt?: string
+  canSubmit?: boolean
 }
 
 export interface TeamAdminModelMetadata {
@@ -137,6 +139,7 @@ export interface TeamAdminDetail extends TeamAdminListItem {
   storeDir: string | null
   members: TeamAdminMember[]
   modelGrants: TeamAdminMemberModelMetadata[]
+  pendingSubmissionPackages: TeamPendingSubmissionPackageView[]
 }
 
 export interface TeamAdminIdRequest {
@@ -188,6 +191,7 @@ export interface TeamPackageSelection {
   type: TeamPackageType
   id: string
   sharing?: TeamResourceSharing
+  pendingSubmissionId?: string
 }
 
 export interface TeamPublishAdminReleaseRequest {
@@ -211,6 +215,74 @@ export interface TeamWithdrawAdminReleaseRequest {
   release: number
 }
 
+export interface TeamSubmissionCandidate {
+  type: TeamPackageType
+  id: string
+  version: string
+  title: string
+  summary: string
+  canSubmit: boolean
+  reason?: 'team-only'
+}
+
+export interface TeamListSubmissionCandidatesRequest extends TeamSourceIdRequest {}
+
+export interface TeamSubmitPackagesRequest extends TeamSourceIdRequest {
+  packages: Array<Pick<TeamPackageSelection, 'type' | 'id'>>
+  note?: string
+}
+
+export interface TeamSubmissionDeliveryResult {
+  submissionId: string
+  delivery: 'directory' | 'export'
+  path: string
+}
+
+export interface TeamSubmissionPackageView {
+  type: TeamPackageType
+  id: string
+  version: string
+  sha256: string
+}
+
+export interface TeamPendingSubmissionPackageView extends TeamSubmissionPackageView {
+  title: string
+  summary: string
+  submissionId: string
+  memberName: string
+}
+
+export type TeamSubmissionInvalidReasonCode =
+  'decrypt' | 'signature' | 'member' | 'team' | 'hash' | 'format' | 'size' | 'unknown'
+
+export interface TeamAdminSubmissionView {
+  entryId: string
+  submissionId?: string
+  valid: boolean
+  invalidReasonCode?: TeamSubmissionInvalidReasonCode
+  invalidDetail?: string
+  memberName?: string
+  packages: TeamSubmissionPackageView[]
+  note?: string
+  createdAt?: string
+  bytes: number
+}
+
+export interface TeamAdminSubmissionRequest {
+  teamId: string
+  entryId: string
+}
+
+export interface TeamAdminSubmissionImportResult {
+  imported: boolean
+  submission?: TeamAdminSubmissionView
+}
+
+export interface TeamAdminSubmissionAcceptResult {
+  submissionId: string
+  packages: TeamSubmissionPackageView[]
+}
+
 export interface TeamPackRendererApi {
   getMemberSnapshot: () => Promise<TeamPackResult<TeamMemberSnapshot>>
   listSources: () => Promise<TeamPackResult<TeamSourceView[]>>
@@ -225,6 +297,12 @@ export interface TeamPackRendererApi {
   importMemberBackup: (
     input: TeamBackupPassphraseRequest
   ) => Promise<TeamPackResult<TeamMemberBackupImportResult>>
+  listSubmissionCandidates: (
+    input: TeamListSubmissionCandidatesRequest
+  ) => Promise<TeamPackResult<TeamSubmissionCandidate[]>>
+  submitPackages: (
+    input: TeamSubmitPackagesRequest
+  ) => Promise<TeamPackResult<TeamSubmissionDeliveryResult | null>>
   listAdminTeams: () => Promise<TeamPackResult<TeamAdminListItem[]>>
   getAdminTeam: (input: TeamAdminIdRequest) => Promise<TeamPackResult<TeamAdminDetail>>
   createAdminTeam: (input: TeamCreateAdminRequest) => Promise<TeamPackResult<TeamCreatedAdminTeam>>
@@ -247,4 +325,16 @@ export interface TeamPackRendererApi {
   withdrawAdminRelease: (
     input: TeamWithdrawAdminReleaseRequest
   ) => Promise<TeamPackResult<TeamPublishedAdminRelease>>
+  listAdminSubmissions: (
+    input: TeamAdminIdRequest
+  ) => Promise<TeamPackResult<TeamAdminSubmissionView[]>>
+  importAdminSubmission: (
+    input: TeamAdminIdRequest
+  ) => Promise<TeamPackResult<TeamAdminSubmissionImportResult>>
+  acceptAdminSubmission: (
+    input: TeamAdminSubmissionRequest
+  ) => Promise<TeamPackResult<TeamAdminSubmissionAcceptResult>>
+  deleteAdminSubmission: (
+    input: TeamAdminSubmissionRequest
+  ) => Promise<TeamPackResult<{ deleted: boolean }>>
 }

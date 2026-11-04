@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { TeamSourceInput, TeamSourcePreview } from '../../../../../shared/teamPackTypes'
+import type {
+  TeamSourceInput,
+  TeamSourcePreview,
+  TeamSubmissionCandidate,
+  TeamSubmissionDeliveryResult
+} from '../../../../../shared/teamPackTypes'
 
 import { resultErrorCode, resultValue, sourceView, teamPackApi } from '../lib/teamApi'
 import type { TeamSourceView } from '../lib/teamTypes'
 
 export interface TeamPackMemberController {
-  recipient: string | null
+  publicKey: string | null
   sources: TeamSourceView[]
   errorCode: string | null
   busy: string | null
@@ -17,11 +22,17 @@ export interface TeamPackMemberController {
   removeSource: (sourceId: string) => Promise<boolean>
   exportBackup: (passphrase: string) => Promise<boolean>
   importBackup: (passphrase: string) => Promise<boolean>
+  listSubmissionCandidates: (sourceId: string) => Promise<TeamSubmissionCandidate[] | null>
+  submitPackages: (
+    sourceId: string,
+    packages: Array<Pick<TeamSubmissionCandidate, 'type' | 'id'>>,
+    note?: string
+  ) => Promise<TeamSubmissionDeliveryResult | null>
 }
 
 // eslint-disable-next-line max-lines-per-function -- public hook composes the bounded member IPC workflow
 export function useTeamPackMember(): TeamPackMemberController {
-  const [recipient, setRecipient] = useState<string | null>(null)
+  const [publicKey, setPublicKey] = useState<string | null>(null)
   const [sources, setSources] = useState<TeamSourceView[]>([])
   const [errorCode, setErrorCode] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>('load-member')
@@ -48,7 +59,7 @@ export function useTeamPackMember(): TeamPackMemberController {
       .then(([memberSettled, sourceSettled]) => {
         if (!active) return
         if (memberSettled.status === 'fulfilled') {
-          if (memberSettled.value.ok) setRecipient(memberSettled.value.value.recipient)
+          if (memberSettled.value.ok) setPublicKey(memberSettled.value.value.publicKey)
           else setErrorCode(memberSettled.value.error.code)
         } else {
           setErrorCode(resultErrorCode(memberSettled.reason))
@@ -69,7 +80,7 @@ export function useTeamPackMember(): TeamPackMemberController {
   }, [])
 
   return {
-    recipient,
+    publicKey,
     sources,
     errorCode,
     busy,
@@ -124,8 +135,22 @@ export function useTeamPackMember(): TeamPackMemberController {
         resultValue(await teamPackApi().importMemberBackup({ passphrase }))
       )
       if (!imported?.imported) return false
-      if (imported.recipient) setRecipient(imported.recipient)
+      if (imported.publicKey) setPublicKey(imported.publicKey)
       return true
-    }
+    },
+    listSubmissionCandidates: (sourceId) =>
+      run(`submission-candidates:${sourceId}`, async () =>
+        resultValue(await teamPackApi().listSubmissionCandidates({ sourceId }))
+      ),
+    submitPackages: (sourceId, packages, note) =>
+      run(`submit:${sourceId}`, async () =>
+        resultValue(
+          await teamPackApi().submitPackages({
+            sourceId,
+            packages,
+            ...(note === undefined ? {} : { note })
+          })
+        )
+      )
   }
 }

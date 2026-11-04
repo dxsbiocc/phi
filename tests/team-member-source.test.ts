@@ -86,7 +86,8 @@ test('adds a directory source only after validating team.json and persists stric
       announcements: [],
       resources: {},
       credentialConflicts: [],
-      skippedProviders: []
+      skippedProviders: [],
+      submissionRecipient: null
     }
   })
   assert.deepEqual(listTeamSources(agentDir), [source])

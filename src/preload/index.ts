@@ -1351,6 +1351,9 @@ const teamPackApi: TeamPackRendererApi = {
   removeSource: (input) => ipcRenderer.invoke(IPC.teamPack.removeSource, input),
   exportMemberBackup: (input) => ipcRenderer.invoke(IPC.teamPack.exportMemberBackup, input),
   importMemberBackup: (input) => ipcRenderer.invoke(IPC.teamPack.importMemberBackup, input),
+  listSubmissionCandidates: (input) =>
+    ipcRenderer.invoke(IPC.teamPack.listSubmissionCandidates, input),
+  submitPackages: (input) => ipcRenderer.invoke(IPC.teamPack.submitPackages, input),
   listAdminTeams: () => ipcRenderer.invoke(IPC.teamPack.listAdminTeams),
   getAdminTeam: (input) => ipcRenderer.invoke(IPC.teamPack.getAdminTeam, input),
   createAdminTeam: (input) => ipcRenderer.invoke(IPC.teamPack.createAdminTeam, input),
@@ -1360,7 +1363,11 @@ const teamPackApi: TeamPackRendererApi = {
   removeAdminMember: (input) => ipcRenderer.invoke(IPC.teamPack.removeAdminMember, input),
   setAdminMemberModels: (input) => ipcRenderer.invoke(IPC.teamPack.setAdminMemberModels, input),
   publishAdminRelease: (input) => ipcRenderer.invoke(IPC.teamPack.publishAdminRelease, input),
-  withdrawAdminRelease: (input) => ipcRenderer.invoke(IPC.teamPack.withdrawAdminRelease, input)
+  withdrawAdminRelease: (input) => ipcRenderer.invoke(IPC.teamPack.withdrawAdminRelease, input),
+  listAdminSubmissions: (input) => ipcRenderer.invoke(IPC.teamPack.listAdminSubmissions, input),
+  importAdminSubmission: (input) => ipcRenderer.invoke(IPC.teamPack.importAdminSubmission, input),
+  acceptAdminSubmission: (input) => ipcRenderer.invoke(IPC.teamPack.acceptAdminSubmission, input),
+  deleteAdminSubmission: (input) => ipcRenderer.invoke(IPC.teamPack.deleteAdminSubmission, input)
 }
 
 const api: RendererAuthApi = {

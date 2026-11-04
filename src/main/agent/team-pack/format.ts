@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto'
 
 import type { TeamResourceMap } from '../packages/installer-types'
 import { teamPackError } from './errors'
-import { assertIsoDate, assertRelease, assertTeamId, assertTeamName } from './validation'
+import {
+  assertIsoDate,
+  assertRelease,
+  assertTeamId,
+  assertTeamName,
+  assertX25519Recipient
+} from './validation'
 
 const MAX_ANNOUNCEMENTS = 20
 const MAX_ANNOUNCEMENT_CODE_POINTS = 4_000
@@ -72,6 +78,7 @@ export interface InnerFile {
   release: number
   announcements: TeamAnnouncement[]
   resources: TeamResourceMap
+  submissionRecipient?: string
 }
 
 export interface TeamState {
@@ -226,7 +233,7 @@ export function parseInnerFile(data: Buffer): InnerFile {
   if (value.version !== 1) invalid('inner.json')
   assertAllowedFields(
     value,
-    ['version', 'teamId', 'release', 'announcements', 'resources'],
+    ['version', 'teamId', 'release', 'announcements', 'resources', 'submissionRecipient'],
     'inner.json'
   )
   assertTeamId(value.teamId)
@@ -236,12 +243,18 @@ export function parseInnerFile(data: Buffer): InnerFile {
   if (announcements.some((announcement) => announcement.release > release)) {
     invalid('inner.json announcements')
   }
+  if (value.submissionRecipient !== undefined) {
+    assertX25519Recipient(value.submissionRecipient)
+  }
   return {
     version: 1,
     teamId: value.teamId,
     release,
     announcements,
-    resources: validateTeamResourceMap(value.resources ?? {})
+    resources: validateTeamResourceMap(value.resources ?? {}),
+    ...(value.submissionRecipient === undefined
+      ? {}
+      : { submissionRecipient: value.submissionRecipient })
   }
 }
 

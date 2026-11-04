@@ -19,6 +19,7 @@ export interface TeamSourceStatus {
   resources: TeamResourceMap
   credentialConflicts: string[]
   skippedProviders: string[]
+  submissionRecipient: string | null
 }
 
 export interface TeamSource {

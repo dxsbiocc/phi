@@ -327,17 +327,22 @@ export const IPC = {
     ping: 'ping'
   },
   teamPack: {
+    acceptAdminSubmission: 'teamPack:acceptAdminSubmission',
     addAdminMember: 'teamPack:addAdminMember',
     addSource: 'teamPack:addSource',
     checkSource: 'teamPack:checkSource',
     createAdminTeam: 'teamPack:createAdminTeam',
+    deleteAdminSubmission: 'teamPack:deleteAdminSubmission',
     exportAdminBackup: 'teamPack:exportAdminBackup',
     exportMemberBackup: 'teamPack:exportMemberBackup',
     getMemberSnapshot: 'teamPack:getMemberSnapshot',
     importAdminBackup: 'teamPack:importAdminBackup',
+    importAdminSubmission: 'teamPack:importAdminSubmission',
     importMemberBackup: 'teamPack:importMemberBackup',
     getAdminTeam: 'teamPack:getAdminTeam',
     listAdminTeams: 'teamPack:listAdminTeams',
+    listAdminSubmissions: 'teamPack:listAdminSubmissions',
+    listSubmissionCandidates: 'teamPack:listSubmissionCandidates',
     listSources: 'teamPack:listSources',
     pickSourceDirectory: 'teamPack:pickSourceDirectory',
     previewSource: 'teamPack:previewSource',
@@ -345,6 +350,7 @@ export const IPC = {
     removeAdminMember: 'teamPack:removeAdminMember',
     removeSource: 'teamPack:removeSource',
     setAdminMemberModels: 'teamPack:setAdminMemberModels',
+    submitPackages: 'teamPack:submitPackages',
     withdrawAdminRelease: 'teamPack:withdrawAdminRelease'
   },
   terminal: {

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { Encrypter } from 'age-encryption'
 
 import type { TeamResourceMap } from '../packages/installer-types'
+import { registryKeyId } from '../packages/signature'
 import { isTeamPackError, teamPackError } from './errors'
 import { assertManagedDirectory, assertManagedFile, writeAtomic } from './files'
 import { validateAnnouncementText, validateTeamResourceMap } from './format'
@@ -19,6 +20,7 @@ export interface RosterMember {
   memberId: string
   displayName: string
   recipient: string
+  signingPublicKey?: string
   addedAt: string
   removedAt?: string
 }
@@ -71,6 +73,12 @@ export function addRosterMember(directory: string, input: AddRosterMemberInput):
   if (roster.members.some((entry) => entry.recipient === member.recipient)) {
     invalid('成员接收方重复')
   }
+  if (
+    member.signingPublicKey &&
+    roster.members.some((entry) => entry.signingPublicKey === member.signingPublicKey)
+  ) {
+    invalid('成员签名公钥重复')
+  }
   if (roster.members.length >= MAX_MEMBERS) invalid('成员数量超过上限')
 
   roster.members.push(member)
@@ -92,6 +100,26 @@ export function removeRosterMember(
   if (removedAt < member.addedAt) invalid('移除时间不能早于加入时间')
 
   member.removedAt = removedAt
+  writeRoster(directory, roster)
+  return member
+}
+
+export function upgradeRosterMemberSigningKey(
+  directory: string,
+  recipient: string,
+  signingPublicKey: string
+): RosterMember {
+  assertRecipient(recipient)
+  assertSigningPublicKey(signingPublicKey)
+  const roster = readTeamRoster(directory)
+  const member = roster.members.find((entry) => entry.recipient === recipient)
+  if (!member || member.removedAt !== undefined || member.signingPublicKey !== undefined) {
+    invalid('只有当前旧版成员可以升级签名公钥')
+  }
+  if (roster.members.some((entry) => entry.signingPublicKey === signingPublicKey)) {
+    invalid('成员签名公钥重复')
+  }
+  member.signingPublicKey = signingPublicKey
   writeRoster(directory, roster)
   return member
 }
@@ -154,6 +182,10 @@ function parseRoster(value: unknown): TeamRoster {
     '成员接收方重复'
   )
   assertUnique(
+    members.flatMap((member) => (member.signingPublicKey ? [member.signingPublicKey] : [])),
+    '成员签名公钥重复'
+  )
+  assertUnique(
     releases.map((release) => release.release),
     '发布版本重复'
   )
@@ -178,8 +210,8 @@ function parseMember(value: unknown, allowRemovedAt: boolean): RosterMember {
   assertExactKeys(
     value,
     allowRemovedAt
-      ? ['memberId', 'displayName', 'recipient', 'addedAt', 'removedAt']
-      : ['memberId', 'displayName', 'recipient', 'addedAt'],
+      ? ['memberId', 'displayName', 'recipient', 'signingPublicKey', 'addedAt', 'removedAt']
+      : ['memberId', 'displayName', 'recipient', 'signingPublicKey', 'addedAt'],
     '成员'
   )
   assertMemberId(value.memberId)
@@ -192,6 +224,10 @@ function parseMember(value: unknown, allowRemovedAt: boolean): RosterMember {
     displayName: value.displayName,
     recipient: value.recipient,
     addedAt: value.addedAt
+  }
+  if (value.signingPublicKey !== undefined) {
+    assertSigningPublicKey(value.signingPublicKey)
+    member.signingPublicKey = value.signingPublicKey
   }
   if ('removedAt' in value) {
     if (!allowRemovedAt) invalid('新增成员不能包含移除时间')
@@ -269,6 +305,17 @@ function assertRecipient(value: unknown): asserts value is string {
     new Encrypter().addRecipient(value)
   } catch {
     invalid('成员接收方必须是有效的 age X25519 公钥')
+  }
+}
+
+function assertSigningPublicKey(value: unknown): asserts value is string {
+  if (typeof value !== 'string') invalid('成员签名公钥格式无效')
+  try {
+    if (!/^[a-f0-9]{16}$/.test(registryKeyId(value))) {
+      invalid('成员签名公钥格式无效')
+    }
+  } catch {
+    invalid('成员签名公钥格式无效')
   }
 }
 

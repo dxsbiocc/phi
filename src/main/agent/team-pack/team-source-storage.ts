@@ -165,6 +165,7 @@ function validTeamName(value: string): boolean {
   )
 }
 
+// eslint-disable-next-line complexity -- persisted source status is a strict, closed schema boundary
 function assertStatus(value: unknown): asserts value is TeamSourceStatus {
   if (!isRecord(value)) invalidStatus()
   const keys = [
@@ -175,7 +176,8 @@ function assertStatus(value: unknown): asserts value is TeamSourceStatus {
     'announcements',
     'resources',
     'credentialConflicts',
-    'skippedProviders'
+    'skippedProviders',
+    'submissionRecipient'
   ]
   if (!hasExactKeys(value, keys)) invalidStatus()
   if (!validOptionalRelease(value.lastSuccessfulRelease)) invalidStatus()
@@ -183,6 +185,15 @@ function assertStatus(value: unknown): asserts value is TeamSourceStatus {
   if (value.lastErrorCode !== null && !isErrorCode(value.lastErrorCode)) invalidStatus()
   if (!isUniqueProviderArray(value.credentialConflicts)) invalidStatus()
   if (!isUniqueProviderArray(value.skippedProviders)) invalidStatus()
+  if (value.submissionRecipient !== null) {
+    if (typeof value.submissionRecipient !== 'string') invalidStatus()
+    try {
+      const normalized = normalizeSubmissionRecipient(value.submissionRecipient)
+      if (normalized !== value.submissionRecipient) invalidStatus()
+    } catch {
+      invalidStatus()
+    }
+  }
   if (!validWithdrawn(value.withdrawnReleases, value.lastSuccessfulRelease)) invalidStatus()
   const announcements = validateTeamAnnouncements(value.announcements)
   validateTeamResourceMap(value.resources)
@@ -206,7 +217,7 @@ function parseStoredStatus(value: unknown): TeamSourceStatus {
     'credentialConflicts',
     'skippedProviders'
   ]
-  const allowed = [...required, 'announcements', 'resources']
+  const allowed = [...required, 'announcements', 'resources', 'submissionRecipient']
   if (
     required.some((key) => !Object.prototype.hasOwnProperty.call(value, key)) ||
     Object.keys(value).some((key) => !allowed.includes(key))
@@ -216,10 +227,18 @@ function parseStoredStatus(value: unknown): TeamSourceStatus {
   const status = {
     ...value,
     announcements: validateTeamAnnouncements(value.announcements ?? []),
-    resources: validateTeamResourceMap(value.resources ?? {})
+    resources: validateTeamResourceMap(value.resources ?? {}),
+    submissionRecipient: value.submissionRecipient === undefined ? null : value.submissionRecipient
   }
   assertStatus(status)
   return status
+}
+
+function normalizeSubmissionRecipient(value: string): string {
+  if (!/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/.test(value)) {
+    throw new Error('invalid recipient')
+  }
+  return value
 }
 
 function validOptionalRelease(value: unknown): value is number | null {

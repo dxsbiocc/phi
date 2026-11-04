@@ -320,7 +320,8 @@ function successfulSource(
       announcements: validateTeamAnnouncements(result.announcements.slice(-20)),
       resources: validateTeamResourceMap(result.resources),
       credentialConflicts: reconciled.conflicts,
-      skippedProviders: reconciled.skipped
+      skippedProviders: reconciled.skipped,
+      submissionRecipient: result.submissionRecipient ?? null
     }
   }
 }
@@ -334,7 +335,8 @@ function emptyStatus(): TeamSourceStatus {
     announcements: [],
     resources: {},
     credentialConflicts: [],
-    skippedProviders: []
+    skippedProviders: [],
+    submissionRecipient: null
   }
 }
 

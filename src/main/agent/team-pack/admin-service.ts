@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { readRegistry } from '../packages/registry'
-import type { TeamResourceMap, TeamResourceSharing } from '../packages/installer-types'
+import type { TeamResourceMap } from '../packages/installer-types'
 import { packageKey } from '../packages/installer-utils'
 import type { PackageType } from '../packages/manifest'
 import { ADMIN_PUBLISH_LOCK_FILE, withAdminPublishLock } from './admin-lock'
@@ -20,7 +20,17 @@ import {
   type AdminMemberModelGrantMetadata
 } from './admin-grants'
 import {
-  resolveSelections,
+  consumePendingSelections,
+  TeamAdminSubmissionService,
+  type AdminSubmissionView
+} from './admin-submissions'
+import {
+  materializeAdminSelections,
+  pendingSelectionsFromPackages,
+  type PreparedAdminRegistry,
+  type TeamPackageSelection
+} from './admin-selection'
+import {
   initializeRoster,
   createdTeamResult,
   teamListItem,
@@ -28,18 +38,23 @@ import {
   assertPlainDirectory,
   pendingSnapshotDirectory,
   snapshotDirectory,
-  absoluteStoreDirectory,
-  errorMessage
+  absoluteStoreDirectory
 } from './admin-helpers'
-import { materializeInstalledRegistry } from './admin-registry'
-import { publishPreparedRegistry, type PublishedPreparedAdminRelease } from './admin-release'
+import { publishPreparedRegistry } from './admin-release'
+import type {
+  AdminTeamListItem,
+  AdminTeamSummary,
+  CreatedAdminTeam,
+  PublishedAdminRelease,
+  RemovedAdminMember
+} from './admin-service-types'
 import {
   ADMIN_STATE_FILE,
   readAdminState,
   writeAdminState,
   type AdminTeamState
 } from './admin-state'
-import { isTeamPackError, teamPackError } from './errors'
+import { teamPackError } from './errors'
 import type { ModelKeyGrant } from './format'
 import {
   exportTeamKeyBackup,
@@ -50,12 +65,13 @@ import {
   type SafeStorageLike,
   type TeamPublicKeyMaterial
 } from './key-store'
-import { createTeamKeys } from './keys'
+import { createTeamKeys, parseMemberPublicKey } from './keys'
 import {
   addRosterMember,
   readTeamRoster,
   removeRosterMember,
   TEAM_ROSTER_FILE_NAME,
+  upgradeRosterMemberSigningKey,
   type RosterMember
 } from './roster'
 import { assertRelease, assertTeamId } from './validation'
@@ -77,53 +93,15 @@ export interface TeamPackAdminServiceOptions {
   staleLockMs?: number
 }
 
-export interface AdminTeamListItem {
-  teamId: string
-  name: string
-  publicKeyFingerprint: string
-}
-
-export interface CreatedAdminTeam extends AdminTeamListItem {
-  backupRequired: true
-  warning: string
-}
-
-export interface TeamPackageSelection {
-  type: PackageType
-  id: string
-  sharing?: TeamResourceSharing
-}
-
-export interface PreparedAdminRegistry {
-  registryDir: string
-  packages: Array<TeamPackageSelection & { version: string }>
-  resources: TeamResourceMap
-}
-
-export interface PublishedAdminRelease extends PublishedPreparedAdminRelease {
-  packages: Array<TeamPackageSelection & { version: string }>
-}
-
-export interface AdminTeamReleaseSummary {
-  release: number
-  publishedAt: string
-  memberIds: string[]
-  withdrawn: boolean
-  hasAnnouncement: boolean
-}
-
-export interface AdminTeamSummary extends AdminTeamListItem {
-  currentMemberCount: number
-  modelGrants: AdminMemberModelGrantMetadata[]
-  latestRelease: number | null
-  releases: AdminTeamReleaseSummary[]
-  withdrawnReleases: number[]
-  storeDir: string | null
-}
-
-export interface RemovedAdminMember extends RosterMember {
-  modelKeyRevocationWarning: string
-}
+export type { PreparedAdminRegistry, TeamPackageSelection } from './admin-selection'
+export type {
+  AdminTeamListItem,
+  AdminTeamReleaseSummary,
+  AdminTeamSummary,
+  CreatedAdminTeam,
+  PublishedAdminRelease,
+  RemovedAdminMember
+} from './admin-service-types'
 
 export class TeamPackAdminService {
   private readonly agentDir: string
@@ -132,6 +110,7 @@ export class TeamPackAdminService {
   private readonly lockWaitMs?: number
   private readonly lockRetryMs?: number
   private readonly staleLockMs?: number
+  private readonly submissions: TeamAdminSubmissionService
 
   constructor(options: TeamPackAdminServiceOptions) {
     if (!options || typeof options.agentDir !== 'string' || options.agentDir.length === 0) {
@@ -143,6 +122,10 @@ export class TeamPackAdminService {
     this.lockWaitMs = options.lockWaitMs
     this.lockRetryMs = options.lockRetryMs
     this.staleLockMs = options.staleLockMs
+    this.submissions = new TeamAdminSubmissionService({
+      agentDir: this.agentDir,
+      safeStorage: this.safeStorage
+    })
   }
 
   createTeam(input: { name: string; teamId?: string }): CreatedAdminTeam {
@@ -237,10 +220,27 @@ export class TeamPackAdminService {
 
   addMember(input: { teamId: string; displayName: string; recipient: string }): RosterMember {
     const { directory } = this.requireTeam(input.teamId)
+    const publicKey = parseMemberPublicKey(input.recipient)
+    const existing = readTeamRoster(directory).members.find(
+      (member) => member.recipient === publicKey.recipient
+    )
+    if (
+      existing &&
+      existing.removedAt === undefined &&
+      existing.signingPublicKey === undefined &&
+      publicKey.signingPublicKey
+    ) {
+      return upgradeRosterMemberSigningKey(
+        directory,
+        publicKey.recipient,
+        publicKey.signingPublicKey
+      )
+    }
     return addRosterMember(directory, {
       memberId: `member-${randomUUID()}`,
       displayName: input.displayName,
-      recipient: input.recipient,
+      recipient: publicKey.recipient,
+      ...(publicKey.signingPublicKey ? { signingPublicKey: publicKey.signingPublicKey } : {}),
       addedAt: this.timestamp()
     })
   }
@@ -259,6 +259,25 @@ export class TeamPackAdminService {
   listMembers(teamId: string): RosterMember[] {
     const { directory } = this.requireTeam(teamId)
     return readTeamRoster(directory).members
+  }
+
+  listSubmissions(teamId: string): Promise<AdminSubmissionView[]> {
+    return this.submissions.list(teamId)
+  }
+
+  importSubmission(input: { teamId: string; path: string }): Promise<AdminSubmissionView> {
+    return this.submissions.import(input.teamId, input.path)
+  }
+
+  acceptSubmission(input: { teamId: string; entryId: string }): Promise<{
+    submissionId: string
+    packages: Array<{ type: PackageType; id: string; version: string; sha256: string }>
+  }> {
+    return this.submissions.accept(input.teamId, input.entryId)
+  }
+
+  deleteSubmission(input: { teamId: string; entryId: string }): boolean {
+    return this.submissions.delete(input.teamId, input.entryId)
   }
 
   setMemberModelGrants(input: {
@@ -369,6 +388,7 @@ export class TeamPackAdminService {
           if (preparedGrants !== undefined) {
             commitPreparedAdminModelGrants(team.directory, preparedGrants)
           }
+          this.consumePublishedSubmissions(team.directory, input.packages)
           return published
         } finally {
           rmSync(pending, { recursive: true, force: true })
@@ -460,7 +480,8 @@ export class TeamPackAdminService {
         hasAnnouncement: release.announcement !== undefined
       })),
       withdrawnReleases: [...team.state.withdrawnReleases],
-      storeDir: team.state.storeDir
+      storeDir: team.state.storeDir,
+      pendingSubmissionPackages: this.submissions.listPendingPackages(teamId)
     }
   }
 
@@ -469,25 +490,15 @@ export class TeamPackAdminService {
     selections: readonly TeamPackageSelection[],
     registryDir: string
   ): PreparedAdminRegistry {
-    const selected = resolveSelections(this.agentDir, teamId, selections)
-    try {
-      const registry = materializeInstalledRegistry({
-        agentDir: this.agentDir,
-        teamId,
-        installed: selected.map(({ installed }) => installed),
-        registryDir,
-        generatedAt: this.timestamp()
-      })
-      const packages = registry.packages.map(({ type, id, version }) => ({ type, id, version }))
-      const resources = Object.fromEntries(
-        selected.map(({ installed, resource }) => [packageKey(installed), resource])
-      )
-      return { registryDir, packages, resources }
-    } catch (error) {
-      rmSync(registryDir, { recursive: true, force: true })
-      if (isTeamPackError(error)) throw error
-      throw teamPackError('INVALID_FORMAT', `无法组装团队发布软件源: ${errorMessage(error)}`, error)
-    }
+    const { directory } = this.requireTeam(teamId)
+    return materializeAdminSelections({
+      agentDir: this.agentDir,
+      teamId,
+      teamDirectory: directory,
+      selections,
+      registryDir,
+      generatedAt: this.timestamp()
+    })
   }
 
   private copyLatestSnapshot(
@@ -510,6 +521,14 @@ export class TeamPackAdminService {
       packages: registry.packages.map(({ type, id, version }) => ({ type, id, version })),
       resources: this.releaseResources(team.directory, team.state.latestRelease, registry)
     }
+  }
+
+  private consumePublishedSubmissions(
+    directory: string,
+    packages: readonly TeamPackageSelection[]
+  ): void {
+    const pending = pendingSelectionsFromPackages(packages)
+    if (pending.length > 0) consumePendingSelections(directory, pending)
   }
 
   private releaseResources(

@@ -4,6 +4,7 @@ import type {
   TeamAdminDetail,
   TeamAdminListItem,
   TeamAdminModelInput,
+  TeamAdminSubmissionView,
   TeamCreatedAdminTeam,
   TeamPackageSelection,
   TeamPublishedAdminRelease
@@ -17,6 +18,7 @@ export interface TeamPackAdminController {
   packages: InstalledPackageView[]
   createdTeam: TeamCreatedAdminTeam | null
   published: TeamPublishedAdminRelease | null
+  submissions: TeamAdminSubmissionView[]
   errorCode: string | null
   busy: string | null
   setCreatedTeam: (team: TeamCreatedAdminTeam | null) => void
@@ -31,6 +33,10 @@ export interface TeamPackAdminController {
   publish: (selections: TeamPackageSelection[], announcement?: string) => Promise<boolean>
   announceOnly: (announcement: string) => Promise<boolean>
   withdraw: (release: number) => Promise<boolean>
+  refreshSubmissions: () => Promise<void>
+  importSubmission: () => Promise<boolean>
+  acceptSubmission: (entryId: string) => Promise<boolean>
+  deleteSubmission: (entryId: string) => Promise<boolean>
 }
 
 // eslint-disable-next-line max-lines-per-function -- public hook composes the bounded administrator IPC workflow
@@ -40,6 +46,7 @@ export function useTeamPackAdmin(): TeamPackAdminController {
   const [packages, setPackages] = useState<InstalledPackageView[]>([])
   const [createdTeam, setCreatedTeam] = useState<TeamCreatedAdminTeam | null>(null)
   const [published, setPublished] = useState<TeamPublishedAdminRelease | null>(null)
+  const [submissions, setSubmissions] = useState<TeamAdminSubmissionView[]>([])
   const [errorCode, setErrorCode] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const selectedTeamId = useRef<string | null>(null)
@@ -71,12 +78,18 @@ export function useTeamPackAdmin(): TeamPackAdminController {
         setPublished(null)
         setDetail(null)
       }
-      const next = await run('load-team', async () =>
-        resultValue(await teamPackApi().getAdminTeam({ teamId }))
+      if (!preservePublished) setSubmissions([])
+      const loaded = await run('load-team', async () =>
+        Promise.all([
+          teamPackApi().getAdminTeam({ teamId }).then(resultValue),
+          teamPackApi().listAdminSubmissions({ teamId }).then(resultValue)
+        ])
       )
       if (request !== detailRequest.current || selectedTeamId.current !== teamId) return null
-      if (next) setDetail(next)
-      return next
+      if (!loaded) return null
+      setDetail(loaded[0])
+      setSubmissions(loaded[1])
+      return loaded[0]
     },
     [run]
   )
@@ -99,6 +112,15 @@ export function useTeamPackAdmin(): TeamPackAdminController {
 
   async function refreshDetail(teamId: string): Promise<void> {
     if (selectedTeamId.current === teamId) await loadDetail(teamId, true)
+  }
+
+  async function refreshSubmissions(): Promise<void> {
+    const teamId = selectedTeamId.current
+    if (!teamId) return
+    const next = await run('submissions', async () =>
+      resultValue(await teamPackApi().listAdminSubmissions({ teamId }))
+    )
+    if (next && selectedTeamId.current === teamId) setSubmissions(next)
   }
 
   async function publishRelease(
@@ -131,6 +153,7 @@ export function useTeamPackAdmin(): TeamPackAdminController {
     packages,
     createdTeam,
     published,
+    submissions,
     errorCode,
     busy,
     setCreatedTeam,
@@ -209,6 +232,37 @@ export function useTeamPackAdmin(): TeamPackAdminController {
       if (!withdrawn) return false
       if (selectedTeamId.current !== teamId) return false
       await refreshDetail(teamId)
+      return true
+    },
+    refreshSubmissions,
+    importSubmission: async () => {
+      if (!detail) return false
+      const teamId = detail.teamId
+      const imported = await run('submission-import', async () =>
+        resultValue(await teamPackApi().importAdminSubmission({ teamId }))
+      )
+      if (!imported?.imported || selectedTeamId.current !== teamId) return false
+      await refreshSubmissions()
+      return true
+    },
+    acceptSubmission: async (entryId: string) => {
+      if (!detail) return false
+      const teamId = detail.teamId
+      const accepted = await run('submission-accept', async () =>
+        resultValue(await teamPackApi().acceptAdminSubmission({ teamId, entryId }))
+      )
+      if (!accepted || selectedTeamId.current !== teamId) return false
+      await refreshDetail(teamId)
+      return true
+    },
+    deleteSubmission: async (entryId: string) => {
+      if (!detail) return false
+      const teamId = detail.teamId
+      const deleted = await run('submission-delete', async () =>
+        resultValue(await teamPackApi().deleteAdminSubmission({ teamId, entryId }))
+      )
+      if (!deleted?.deleted || selectedTeamId.current !== teamId) return false
+      await refreshSubmissions()
       return true
     }
   }

@@ -10,7 +10,7 @@ import {
   storeMemberKeyMaterial,
   type SafeStorageLike
 } from './key-store'
-import { createMemberKeys, type MemberKeys } from './keys'
+import { createMemberKeys, formatMemberPublicKey, type MemberKeys } from './keys'
 import { teamPackError } from './errors'
 
 export const MEMBER_KEY_DIRECTORY = join('team-pack', 'member')
@@ -60,6 +60,11 @@ export async function loadOrCreateMemberIdentity(
 /** Returns the public age recipient suitable for copying through a future IPC handler. */
 export async function getMemberRecipient(options: MemberIdentityOptions): Promise<string> {
   return (await loadOrCreateMemberIdentity(options)).recipient
+}
+
+/** Returns the versioned age + Ed25519 public identity used for new member registrations. */
+export async function getMemberPublicKey(options: MemberIdentityOptions): Promise<string> {
+  return formatMemberPublicKey(await loadOrCreateMemberIdentity(options))
 }
 
 /** Exports the current member identity as a passphrase-encrypted age backup. */

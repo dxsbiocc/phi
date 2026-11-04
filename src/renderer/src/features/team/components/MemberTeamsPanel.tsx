@@ -1,14 +1,21 @@
 import { useRef, useState } from 'react'
 import { Alert, Button, Paper, Stack, Typography } from '@mui/material'
-import type { TeamSourceInput, TeamSourcePreview } from '../../../../../shared/teamPackTypes'
+import type {
+  TeamSourceInput,
+  TeamSourcePreview,
+  TeamSubmissionCandidate,
+  TeamSubmissionDeliveryResult
+} from '../../../../../shared/teamPackTypes'
 
 import { useUiLanguage } from '../../../lib/i18n'
 import type { TeamPackMemberController } from '../hooks/useTeamPackMember'
 import { teamCopy } from '../lib/teamCopy'
 import { teamErrorText } from '../lib/teamErrors'
+import { packageSelectionKey } from '../lib/teamPackages'
 import type { TeamSourceView } from '../lib/teamTypes'
 import { AddTeamSourceDialogView, type SourceLocationKind } from './AddTeamSourceDialog'
 import { MemberIdentityCard } from './MemberIdentityCard'
+import { MemberSubmissionDialog } from './MemberSubmissionDialog'
 import { PassphraseDialog, type PassphraseDialogKind } from './PassphraseDialog'
 import { RemoveTeamSourceDialog } from './RemoveTeamSourceDialog'
 import { TeamSourceList } from './TeamSourceList'
@@ -16,7 +23,7 @@ import { TeamSourceList } from './TeamSourceList'
 type MemberNotice =
   'sourceAdded' | 'sourceRemoved' | 'memberBackupImported' | 'memberBackupExported'
 
-// eslint-disable-next-line max-lines-per-function -- one coordinator preserves dialog drafts across live language changes
+// eslint-disable-next-line max-lines-per-function, complexity -- one coordinator preserves dialog drafts across live language changes
 export function MemberTeamsPanel({
   controller
 }: {
@@ -31,6 +38,13 @@ export function MemberTeamsPanel({
   const [removeTarget, setRemoveTarget] = useState<TeamSourceView | null>(null)
   const [backupKind, setBackupKind] = useState<PassphraseDialogKind | null>(null)
   const [notice, setNotice] = useState<MemberNotice | null>(null)
+  const [submissionTarget, setSubmissionTarget] = useState<TeamSourceView | null>(null)
+  const [submissionCandidates, setSubmissionCandidates] = useState<TeamSubmissionCandidate[]>([])
+  const [submissionSelected, setSubmissionSelected] = useState<string[]>([])
+  const [submissionNote, setSubmissionNote] = useState('')
+  const [submissionResult, setSubmissionResult] = useState<TeamSubmissionDeliveryResult | null>(
+    null
+  )
   const previewRequest = useRef(0)
 
   function sourceInput(): TeamSourceInput {
@@ -55,6 +69,15 @@ export function MemberTeamsPanel({
     setPreview(null)
   }
 
+  function closeSubmission(): void {
+    setSubmissionTarget(null)
+    setSubmissionCandidates([])
+    setSubmissionSelected([])
+    setSubmissionNote('')
+    setSubmissionResult(null)
+    controller.clearError()
+  }
+
   const error = teamErrorText(controller.errorCode)
   return (
     <Stack spacing={2}>
@@ -76,10 +99,10 @@ export function MemberTeamsPanel({
       {error && !addOpen && !backupKind ? <Alert severity="error">{error}</Alert> : null}
       {notice ? <Alert severity="success">{teamCopy[notice]}</Alert> : null}
       <MemberIdentityCard
-        recipient={controller.recipient}
-        errorCode={!controller.recipient ? controller.errorCode : null}
+        recipient={controller.publicKey}
+        errorCode={!controller.publicKey ? controller.errorCode : null}
         onCopy={() => {
-          if (controller.recipient) void navigator.clipboard.writeText(controller.recipient)
+          if (controller.publicKey) void navigator.clipboard.writeText(controller.publicKey)
         }}
         onExport={() => setBackupKind('member-export')}
         onImport={() => setBackupKind('member-import')}
@@ -95,6 +118,16 @@ export function MemberTeamsPanel({
             busySourceId={controller.busy}
             onCheck={(source) => void controller.checkSource(source.id)}
             onRemove={setRemoveTarget}
+            onSubmit={(source) => {
+              setSubmissionTarget(source)
+              setSubmissionCandidates([])
+              setSubmissionSelected([])
+              setSubmissionNote('')
+              setSubmissionResult(null)
+              void controller.listSubmissionCandidates(source.id).then((candidates) => {
+                if (candidates) setSubmissionCandidates(candidates)
+              })
+            }}
           />
         )}
       </Paper>
@@ -169,6 +202,42 @@ export function MemberTeamsPanel({
               setNotice('sourceRemoved')
             }
           })
+        }}
+      />
+      <MemberSubmissionDialog
+        open={submissionTarget !== null}
+        teamName={submissionTarget?.teamName ?? ''}
+        candidates={submissionCandidates}
+        selected={submissionSelected}
+        note={submissionNote}
+        busy={Boolean(
+          submissionTarget &&
+          (controller.busy === `submission-candidates:${submissionTarget.id}` ||
+            controller.busy === `submit:${submissionTarget.id}`)
+        )}
+        errorCode={submissionTarget ? controller.errorCode : null}
+        result={submissionResult}
+        onToggle={(candidate) => {
+          if (!candidate.canSubmit) return
+          const key = packageSelectionKey(candidate)
+          setSubmissionSelected((current) =>
+            current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key]
+          )
+        }}
+        onNoteChange={setSubmissionNote}
+        onClose={closeSubmission}
+        onSubmit={() => {
+          if (!submissionTarget) return
+          const selected = new Set(submissionSelected)
+          const packages = submissionCandidates
+            .filter(
+              (candidate) => candidate.canSubmit && selected.has(packageSelectionKey(candidate))
+            )
+            .map(({ type, id }) => ({ type, id }))
+          const note = submissionNote.length > 0 ? submissionNote : undefined
+          void controller
+            .submitPackages(submissionTarget.id, packages, note)
+            .then((result) => setSubmissionResult(result))
         }}
       />
       <PassphraseDialog

@@ -15,6 +15,7 @@ import { teamErrorText } from '../lib/teamErrors'
 import { packageSelectionKey } from '../lib/teamPackages'
 import { AddAdminMemberDialogView, RemoveAdminMemberDialog } from './AdminMemberDialogs'
 import { AdminMembersSection } from './AdminMembersSection'
+import { AdminSubmissionsSection } from './AdminSubmissionsSection'
 import { AdminTeamList, CreatedTeamBackupDialog } from './AdminTeamList'
 import { CreateTeamDialog } from './CreateTeamDialog'
 import { MemberModelsDialogView } from './MemberModelsDialog'
@@ -25,7 +26,14 @@ import { TeamPublishSection } from './TeamPublishSection'
 const emptyModel = (): TeamAdminModelInput => ({ providerId: '', label: '', apiKey: '' })
 
 type AdminNotice =
-  'memberAdded' | 'memberRemoved' | 'modelsSaved' | 'adminBackupImported' | 'adminBackupExported'
+  | 'memberAdded'
+  | 'memberRemoved'
+  | 'modelsSaved'
+  | 'adminBackupImported'
+  | 'adminBackupExported'
+  | 'submissionAccepted'
+  | 'submissionImported'
+  | 'submissionDeleted'
 
 // eslint-disable-next-line max-lines-per-function -- one coordinator preserves dialog drafts across live language changes
 export function AdminTeamsPanel(): React.JSX.Element {
@@ -42,10 +50,26 @@ export function AdminTeamsPanel(): React.JSX.Element {
   const [modelsMember, setModelsMember] = useState<TeamAdminMember | null>(null)
   const [models, setModels] = useState<TeamAdminModelInput[]>([])
   const [selectedPackages, setSelectedPackages] = useState<string[]>([])
+  const [deselectedPendingPackages, setDeselectedPendingPackages] = useState<string[]>([])
   const [sharingByPackage, setSharingByPackage] = useState<Record<string, TeamResourceSharing>>({})
   const [announcement, setAnnouncement] = useState('')
   const [withdrawRelease, setWithdrawRelease] = useState<TeamAdminRelease | null>(null)
   const [notice, setNotice] = useState<AdminNotice | null>(null)
+
+  const publishPackages = [
+    ...controller.packages,
+    ...(controller.detail?.pendingSubmissionPackages ?? [])
+  ]
+  const availablePackageKeys = new Set(publishPackages.map(packageSelectionKey))
+  const pendingPackageKeys = (controller.detail?.pendingSubmissionPackages ?? []).map(
+    packageSelectionKey
+  )
+  const effectiveSelectedPackages = [
+    ...new Set([
+      ...selectedPackages.filter((key) => availablePackageKeys.has(key)),
+      ...pendingPackageKeys.filter((key) => !deselectedPendingPackages.includes(key))
+    ])
+  ]
 
   function openModels(member: TeamAdminMember): void {
     const existing =
@@ -58,22 +82,26 @@ export function AdminTeamsPanel(): React.JSX.Element {
   }
 
   function selections(): TeamPackageSelection[] {
-    const selected = new Set(selectedPackages)
-    return controller.packages
+    const selected = new Set(effectiveSelectedPackages)
+    return publishPackages
       .filter((entry) => {
         if (!selected.has(packageSelectionKey(entry))) return false
-        const source = entry.teamSource
+        const source = 'teamSource' in entry ? entry.teamSource : undefined
         return (
           source === undefined ||
           source.teamId === controller.detail?.teamId ||
           source.sharing === 'forwardable'
         )
       })
-      .map((entry) => ({
-        type: entry.type,
-        id: entry.id,
-        sharing: sharingByPackage[packageSelectionKey(entry)] ?? 'team-only'
-      }))
+      .map((entry) => {
+        const pendingSubmissionId = 'submissionId' in entry ? entry.submissionId : undefined
+        return {
+          type: entry.type,
+          id: entry.id,
+          sharing: sharingByPackage[packageSelectionKey(entry)] ?? 'team-only',
+          ...(pendingSubmissionId ? { pendingSubmissionId } : {})
+        }
+      })
   }
 
   function resetTeamScopedState(): void {
@@ -84,6 +112,7 @@ export function AdminTeamsPanel(): React.JSX.Element {
     setModelsMember(null)
     setModels([])
     setSelectedPackages([])
+    setDeselectedPendingPackages([])
     setSharingByPackage({})
     setAnnouncement('')
     setWithdrawRelease(null)
@@ -132,19 +161,45 @@ export function AdminTeamsPanel(): React.JSX.Element {
             onEditModels={openModels}
             onRemove={setRemoveMember}
           />
+          <AdminSubmissionsSection
+            submissions={controller.submissions}
+            busy={controller.busy !== null}
+            onRefresh={() => void controller.refreshSubmissions()}
+            onImport={() => {
+              void controller.importSubmission().then((imported) => {
+                if (imported) setNotice('submissionImported')
+              })
+            }}
+            onAccept={(submission) => {
+              void controller.acceptSubmission(submission.entryId).then((accepted) => {
+                if (accepted) setNotice('submissionAccepted')
+              })
+            }}
+            onDelete={(submission) => {
+              void controller.deleteSubmission(submission.entryId).then((deleted) => {
+                if (deleted) setNotice('submissionDeleted')
+              })
+            }}
+          />
           <TeamPublishSection
             storeDir={controller.detail.storeDir}
             teamId={controller.detail.teamId}
             latestRelease={controller.detail.latestRelease}
-            packages={controller.packages}
-            selected={selectedPackages}
+            packages={publishPackages}
+            selected={effectiveSelectedPackages}
             sharingByKey={sharingByPackage}
             announcement={announcement}
             busy={controller.busy === 'publish'}
             published={controller.published}
             onToggle={(entry) => {
               const key = packageSelectionKey(entry)
-              if (selectedPackages.includes(key)) {
+              if ('submissionId' in entry) {
+                setDeselectedPendingPackages((current) =>
+                  effectiveSelectedPackages.includes(key)
+                    ? [...current.filter((value) => value !== key), key]
+                    : current.filter((value) => value !== key)
+                )
+              } else if (selectedPackages.includes(key)) {
                 setSelectedPackages((current) => current.filter((value) => value !== key))
                 setSharingByPackage((sharing) => {
                   const next = { ...sharing }

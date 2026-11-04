@@ -16,6 +16,8 @@ export {
 export {
   createMemberKeys,
   createTeamKeys,
+  formatMemberPublicKey,
+  parseMemberPublicKey,
   type CreateTeamKeysOptions,
   type MemberKeys,
   type TeamKeys
@@ -69,6 +71,7 @@ export {
   readTeamRoster,
   recordRosterRelease,
   removeRosterMember,
+  upgradeRosterMemberSigningKey,
   TEAM_ROSTER_FILE_NAME,
   type AddRosterMemberInput,
   type RosterMember,
@@ -77,6 +80,7 @@ export {
 } from './roster'
 export {
   exportMemberIdentityBackup,
+  getMemberPublicKey,
   getMemberRecipient,
   importMemberIdentityBackup,
   loadOrCreateMemberIdentity,
@@ -86,6 +90,18 @@ export {
   type ImportMemberIdentityBackupOptions,
   type MemberIdentityOptions
 } from './member-service'
+export {
+  createTeamMemberSubmissionService,
+  TeamMemberSubmissionService,
+  type SubmissionCandidate,
+  type SubmissionDeliveryResult,
+  type TeamMemberSubmissionServiceOptions
+} from './member-submissions'
+export {
+  TeamAdminSubmissionService,
+  type AdminSubmissionView,
+  type PendingSubmissionPackage
+} from './admin-submissions'
 export {
   listTeamSources,
   teamSourceRegistryDir,

@@ -14,6 +14,7 @@ import {
 } from '@mui/material'
 import type { InstalledPackageView } from '../../../../../shared/packageManagerTypes'
 import type {
+  TeamPendingSubmissionPackageView,
   TeamPublishedAdminRelease,
   TeamResourceSharing
 } from '../../../../../shared/teamPackTypes'
@@ -23,19 +24,20 @@ import { teamCopy } from '../lib/teamCopy'
 import { packageSelectionKey } from '../lib/teamPackages'
 
 const MAX_ANNOUNCEMENT_LENGTH = 4000
+type PublishablePackage = InstalledPackageView | TeamPendingSubmissionPackageView
 
 interface TeamPublishSectionProps {
   storeDir: string | null
   teamId: string
   latestRelease: number | null
-  packages: InstalledPackageView[]
+  packages: PublishablePackage[]
   selected: string[]
   sharingByKey: Record<string, TeamResourceSharing>
   announcement: string
   busy: boolean
   published: TeamPublishedAdminRelease | null
-  onToggle: (entry: InstalledPackageView) => void
-  onSharingChange: (entry: InstalledPackageView, sharing: TeamResourceSharing) => void
+  onToggle: (entry: PublishablePackage) => void
+  onSharingChange: (entry: PublishablePackage, sharing: TeamResourceSharing) => void
   onAnnouncementChange: (value: string) => void
   onPublish: () => void
   onAnnounceOnly: () => void
@@ -60,14 +62,15 @@ function TeamPackageRow({
   onToggle,
   onSharingChange
 }: {
-  entry: InstalledPackageView
+  entry: PublishablePackage
   teamId: string
   selected: boolean
   sharing: TeamResourceSharing
   onToggle: () => void
   onSharingChange: (sharing: TeamResourceSharing) => void
 }): React.JSX.Element {
-  const teamSource = entry.teamSource
+  const teamSource = 'teamSource' in entry ? entry.teamSource : undefined
+  const pendingMember = 'memberName' in entry ? entry.memberName : undefined
   const sourceOrigin = teamSource?.originalSource ?? teamSource
   const restrictedBySource =
     teamSource !== undefined && teamSource.teamId !== teamId && teamSource.sharing === 'team-only'
@@ -103,6 +106,11 @@ function TeamPackageRow({
         {sourceOrigin ? (
           <Typography variant="caption" color="text.secondary">
             {teamCopy.teamSourceValue(sourceOrigin.teamName, sourceOrigin.teamKeyId)}
+          </Typography>
+        ) : null}
+        {pendingMember ? (
+          <Typography variant="caption" color="info.main">
+            {teamCopy.pendingSubmissionValue(pendingMember)}
           </Typography>
         ) : null}
         {restrictedBySource ? (

@@ -36,7 +36,8 @@ const source = {
           teamKeyId: 'b'.repeat(16)
         }
       }
-    }
+    },
+    submissionRecipient: `age1${'q'.repeat(58)}`
   }
 }
 
@@ -68,7 +69,8 @@ function fakeAdmin(): TeamPackIpcOptions['admin'] {
         }
       ],
       withdrawnReleases: [1],
-      storeDir: '/team/publish'
+      storeDir: '/team/publish',
+      pendingSubmissionPackages: []
     }),
     listMembers: () => [
       {
@@ -124,7 +126,16 @@ function fakeAdmin(): TeamPackIpcOptions['admin'] {
       storeDir: '/team/publish',
       packages: [{ type: 'skill' as const, id: 'shared-skill', version: '1.0.0' }],
       withdrawnReleases: [1, 2]
-    })
+    }),
+    listSubmissions: async () => [],
+    importSubmission: async () => ({
+      entryId: 'i-imported',
+      valid: true,
+      packages: [],
+      bytes: 100
+    }),
+    acceptSubmission: async () => ({ submissionId: 'submission-1', packages: [] }),
+    deleteSubmission: () => true
   }
 }
 
@@ -141,9 +152,11 @@ function harness(
     },
     requireMainWindowRenderer,
     member: {
-      getRecipient: async () => 'age1public-recipient',
+      getPublicKey: async () => 'phi-member-v1.public-key',
       exportBackup: async () => undefined,
-      importBackup: async () => 'age1imported-recipient'
+      importBackup: async () => 'phi-member-v1.imported-public-key',
+      listSubmissionCandidates: () => [],
+      submitPackages: async () => null
     },
     sources: {
       listSources: () => [source],
@@ -166,13 +179,15 @@ function harness(
       pickMemberBackupImport: async () => '/chosen/member-backup.age',
       pickAdminBackupExport: async () => '/chosen/admin-backup.age',
       pickAdminBackupImport: async () => '/chosen/admin-backup.age',
-      pickPublishDirectory: async () => '/team/publish'
+      pickPublishDirectory: async () => '/team/publish',
+      pickSubmissionExport: async () => '/chosen/submission.phi-submission',
+      pickSubmissionImport: async () => '/chosen/submission.phi-submission'
     }
   })
   return handlers
 }
 
-test('member snapshot exposes only the public recipient in a result envelope', async () => {
+test('member snapshot exposes only the combined public key in a result envelope', async () => {
   const handler = harness().get(IPC.teamPack.getMemberSnapshot)
   assert.ok(handler)
 
@@ -180,7 +195,7 @@ test('member snapshot exposes only the public recipient in a result envelope', a
 
   assert.deepEqual(result, {
     ok: true,
-    value: { recipient: 'age1public-recipient' }
+    value: { publicKey: 'phi-member-v1.public-key' }
   })
   const serialized = JSON.stringify(result)
   assert.equal(serialized.includes('identity'), false)
@@ -441,11 +456,41 @@ test('member backups obtain paths in main and never return identity material', a
   const imported = await importBackup(null, { passphrase: 'correct horse battery staple' })
   assert.deepEqual(imported, {
     ok: true,
-    value: { imported: true, recipient: 'age1imported-recipient' }
+    value: { imported: true, publicKey: 'phi-member-v1.imported-public-key' }
   })
   const serialized = JSON.stringify(imported)
   assert.equal(serialized.includes('identity'), false)
   assert.equal(serialized.includes('passphrase'), false)
+})
+
+test('submission IPC returns only review metadata and delivery status', async () => {
+  const handlers = harness()
+  const results = await Promise.all([
+    handlers.get(IPC.teamPack.listSubmissionCandidates)!(null, { sourceId: source.id }),
+    handlers.get(IPC.teamPack.submitPackages)!(null, {
+      sourceId: source.id,
+      packages: [{ type: 'skill', id: 'shared-skill' }]
+    }),
+    handlers.get(IPC.teamPack.listAdminSubmissions)!(null, { teamId: 'alpha-team' }),
+    handlers.get(IPC.teamPack.importAdminSubmission)!(null, { teamId: 'alpha-team' }),
+    handlers.get(IPC.teamPack.acceptAdminSubmission)!(null, {
+      teamId: 'alpha-team',
+      entryId: 'entry-1'
+    }),
+    handlers.get(IPC.teamPack.deleteAdminSubmission)!(null, {
+      teamId: 'alpha-team',
+      entryId: 'entry-1'
+    })
+  ])
+  assert.equal(
+    results.every((result) => (result as { ok: boolean }).ok),
+    true
+  )
+  const serialized = JSON.stringify(results)
+  assert.equal(serialized.includes('privateKey'), false)
+  assert.equal(serialized.includes('signingPrivateKey'), false)
+  assert.equal(serialized.includes('submissionIdentity'), false)
+  assert.equal(serialized.includes('apiKey'), false)
 })
 
 test('source directory selection stays behind the main-process dialog boundary', async () => {
@@ -482,9 +527,11 @@ test('adding a source starts scheduling and removing the final source stops it',
     },
     requireMainWindowRenderer: () => undefined,
     member: {
-      getRecipient: async () => 'age1public-recipient',
+      getPublicKey: async () => 'phi-member-v1.public-key',
       exportBackup: async () => undefined,
-      importBackup: async () => 'age1imported-recipient'
+      importBackup: async () => 'phi-member-v1.imported-public-key',
+      listSubmissionCandidates: () => [],
+      submitPackages: async () => null
     },
     sources: {
       listSources: () => sources,
@@ -521,7 +568,9 @@ test('adding a source starts scheduling and removing the final source stops it',
       pickMemberBackupImport: async () => null,
       pickAdminBackupExport: async () => null,
       pickAdminBackupImport: async () => null,
-      pickPublishDirectory: async () => null
+      pickPublishDirectory: async () => null,
+      pickSubmissionExport: async () => null,
+      pickSubmissionImport: async () => null
     }
   })
 
@@ -610,6 +659,7 @@ test('source list projects configured provider IDs without credential ownership 
               }
             }
           },
+          submissionsAvailable: true,
           configuredProviders: ['openai']
         }
       }

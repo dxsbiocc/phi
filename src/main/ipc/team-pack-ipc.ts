@@ -2,6 +2,7 @@ import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 
 import { IPC } from '../../shared/ipcChannels'
 import type {
+  TeamAdminSubmissionView,
   TeamAdminDetail,
   TeamPackResult,
   TeamSourcePreview,
@@ -16,12 +17,14 @@ import type {
 } from '../agent/team-pack/team-source'
 import {
   addMemberInput,
+  adminSubmissionInput,
   adminBackupInput,
   backupPassphrase,
   createTeamInput,
   modelGrantInput,
   publishInput,
   removeMemberInput,
+  submitPackagesInput,
   sourceIdInput,
   sourceInput,
   teamIdInput,
@@ -32,9 +35,14 @@ export interface TeamPackIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
   requireMainWindowRenderer: (event: IpcMainInvokeEvent) => unknown
   member: {
-    getRecipient: () => Promise<string>
+    getPublicKey: () => Promise<string>
     exportBackup: (path: string, passphrase: string) => Promise<void>
     importBackup: (path: string, passphrase: string) => Promise<string>
+    listSubmissionCandidates: (sourceId: string) => unknown
+    submitPackages: (
+      input: ReturnType<typeof submitPackagesInput>,
+      pickExportPath: (suggestedName: string) => Promise<string | null>
+    ) => Promise<unknown>
   }
   sources: {
     listSources: () => TeamSource[]
@@ -61,6 +69,10 @@ export interface TeamPackIpcOptions {
     | 'setMemberModelGrants'
     | 'publishRelease'
     | 'withdrawRelease'
+    | 'listSubmissions'
+    | 'importSubmission'
+    | 'acceptSubmission'
+    | 'deleteSubmission'
   >
   dialogs: {
     pickSourceDirectory: () => Promise<string | null>
@@ -69,6 +81,8 @@ export interface TeamPackIpcOptions {
     pickAdminBackupExport: (teamId: string) => Promise<string | null>
     pickAdminBackupImport: () => Promise<string | null>
     pickPublishDirectory: (teamId: string) => Promise<string | null>
+    pickSubmissionExport: (suggestedName: string) => Promise<string | null>
+    pickSubmissionImport: () => Promise<string | null>
   }
 }
 
@@ -82,7 +96,7 @@ function registerMemberTeamPackIpc(options: TeamPackIpcOptions): void {
   options.ipcMain.handle(
     IPC.teamPack.getMemberSnapshot,
     trustedHandler(options, async () =>
-      teamPackResult(async () => ({ recipient: await options.member.getRecipient() }))
+      teamPackResult(async () => ({ publicKey: await options.member.getPublicKey() }))
     )
   )
   options.ipcMain.handle(
@@ -104,9 +118,26 @@ function registerMemberTeamPackIpc(options: TeamPackIpcOptions): void {
         const passphrase = backupPassphrase(input)
         const path = await options.dialogs.pickMemberBackupImport()
         if (path === null) return { imported: false }
-        const recipient = await options.member.importBackup(path, passphrase)
-        return { imported: true, recipient }
+        const publicKey = await options.member.importBackup(path, passphrase)
+        return { imported: true, publicKey }
       })
+    )
+  )
+  options.ipcMain.handle(
+    IPC.teamPack.listSubmissionCandidates,
+    trustedHandler(options, async (_, input: unknown) =>
+      teamPackResult(() => options.member.listSubmissionCandidates(sourceIdInput(input)))
+    )
+  )
+  options.ipcMain.handle(
+    IPC.teamPack.submitPackages,
+    trustedHandler(options, async (_, input: unknown) =>
+      teamPackResult(() =>
+        options.member.submitPackages(
+          submitPackagesInput(input),
+          options.dialogs.pickSubmissionExport
+        )
+      )
     )
   )
 }
@@ -148,6 +179,42 @@ function registerAdminTeamPackIpc(options: TeamPackIpcOptions): void {
   )
   registerAdminBackupTeamPackIpc(options)
   registerAdminReleaseTeamPackIpc(options)
+  registerAdminSubmissionTeamPackIpc(options)
+}
+
+function registerAdminSubmissionTeamPackIpc(options: TeamPackIpcOptions): void {
+  options.ipcMain.handle(
+    IPC.teamPack.listAdminSubmissions,
+    trustedHandler(options, async (_, input: unknown) =>
+      teamPackResult(() => options.admin.listSubmissions(teamIdInput(input)))
+    )
+  )
+  options.ipcMain.handle(
+    IPC.teamPack.importAdminSubmission,
+    trustedHandler(options, async (_, input: unknown) =>
+      teamPackResult(async () => {
+        const teamId = teamIdInput(input)
+        const path = await options.dialogs.pickSubmissionImport()
+        if (path === null) return { imported: false }
+        const submission = await options.admin.importSubmission({ teamId, path })
+        return { imported: true, submission: submissionView(submission) }
+      })
+    )
+  )
+  options.ipcMain.handle(
+    IPC.teamPack.acceptAdminSubmission,
+    trustedHandler(options, async (_, input: unknown) =>
+      teamPackResult(() => options.admin.acceptSubmission(adminSubmissionInput(input)))
+    )
+  )
+  options.ipcMain.handle(
+    IPC.teamPack.deleteAdminSubmission,
+    trustedHandler(options, async (_, input: unknown) =>
+      teamPackResult(() => ({
+        deleted: options.admin.deleteSubmission(adminSubmissionInput(input))
+      }))
+    )
+  )
 }
 
 function registerAdminBackupTeamPackIpc(options: TeamPackIpcOptions): void {
@@ -284,12 +351,20 @@ function adminDetail(
       memberIds: [...release.memberIds]
     })),
     withdrawnReleases: [...summary.withdrawnReleases],
-    members: admin.listMembers(teamId).map((member) => ({ ...member })),
+    members: admin.listMembers(teamId).map(({ signingPublicKey, ...member }) => ({
+      ...member,
+      canSubmit: signingPublicKey !== undefined
+    })),
     modelGrants: summary.modelGrants.map((grant) => ({
       memberId: grant.memberId,
       models: grant.models.map((model) => ({ ...model }))
-    }))
+    })),
+    pendingSubmissionPackages: summary.pendingSubmissionPackages.map((entry) => ({ ...entry }))
   }
+}
+
+function submissionView(submission: TeamAdminSubmissionView): TeamAdminSubmissionView {
+  return { ...submission, packages: submission.packages.map((entry) => ({ ...entry })) }
 }
 
 function previewView(preview: ServiceTeamSourcePreview): TeamSourcePreview {
@@ -302,6 +377,7 @@ function previewView(preview: ServiceTeamSourcePreview): TeamSourcePreview {
 }
 
 function sourceView(source: TeamSource, configuredProviders: string[]): TeamSourceView {
+  const { submissionRecipient, ...status } = source.status
   return {
     id: source.id,
     teamId: source.teamId,
@@ -310,7 +386,7 @@ function sourceView(source: TeamSource, configuredProviders: string[]): TeamSour
     location: source.location,
     addedAt: source.addedAt,
     status: {
-      ...source.status,
+      ...status,
       withdrawnReleases: [...source.status.withdrawnReleases],
       credentialConflicts: [...source.status.credentialConflicts],
       skippedProviders: [...source.status.skippedProviders],
@@ -332,6 +408,7 @@ function sourceView(source: TeamSource, configuredProviders: string[]): TeamSour
           }
         ])
       ),
+      submissionsAvailable: submissionRecipient !== null,
       configuredProviders: [...configuredProviders]
     }
   }

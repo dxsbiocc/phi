@@ -174,7 +174,8 @@ function createInnerFile(
       teamId: options.team.teamId,
       release,
       announcements: options.announcements ?? [],
-      resources: options.resources ?? {}
+      resources: options.resources ?? {},
+      submissionRecipient: options.team.submissionRecipient
     })
   )
 }
@@ -234,7 +235,7 @@ function validatePublisher(team: TeamKeys): void {
   assertTeamName(team.name)
   try {
     if (
-      team.version !== 1 ||
+      team.version !== 2 ||
       publicKeyPem(team.privateKey) !== team.publicKey ||
       registryKeyId(team.publicKey) !== team.keyId
     ) {

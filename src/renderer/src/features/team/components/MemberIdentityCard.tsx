@@ -30,6 +30,9 @@ export function MemberIdentityCard({
           <Typography variant="body2" color="text.secondary">
             {teamCopy.memberPublicKeyHint}
           </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            {teamCopy.memberPublicKeyUpgradeHint}
+          </Typography>
         </Box>
         {errorCode ? (
           <Alert severity="error">

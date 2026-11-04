@@ -1,18 +1,14 @@
 import type { TeamSourceInput } from '../../shared/teamPackTypes'
 import type { TeamPackageSelection } from '../agent/team-pack/admin-service'
 import { teamPackError } from '../agent/team-pack/errors'
+import { parseMemberPublicKey } from '../agent/team-pack/keys'
 import {
   validateAnnouncementText,
   validateModelKeyGrants,
   type ModelKeyGrant
 } from '../agent/team-pack/format'
 import type { AddTeamSourceInput } from '../agent/team-pack/team-source'
-import {
-  assertRelease,
-  assertTeamId,
-  assertTeamName,
-  assertX25519Recipient
-} from '../agent/team-pack/validation'
+import { assertRelease, assertTeamId, assertTeamName } from '../agent/team-pack/validation'
 
 export function sourceInput(value: unknown): AddTeamSourceInput {
   if (!isRecord(value) || !hasExactKeys(value, ['location', 'fingerprint'])) invalidInput()
@@ -35,6 +31,52 @@ export function sourceIdInput(value: unknown): string {
     invalidInput()
   }
   return value.sourceId
+}
+
+export function submitPackagesInput(value: unknown): {
+  sourceId: string
+  packages: Array<Pick<TeamPackageSelection, 'type' | 'id'>>
+  note?: string
+} {
+  if (!isRecord(value)) invalidInput()
+  const expected =
+    value.note === undefined ? ['sourceId', 'packages'] : ['sourceId', 'packages', 'note']
+  if (
+    !hasExactKeys(value, expected) ||
+    typeof value.sourceId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value.sourceId) ||
+    !Array.isArray(value.packages) ||
+    value.packages.length < 1 ||
+    value.packages.length > 10_000
+  ) {
+    invalidInput()
+  }
+  const packages = value.packages.map((entry) => {
+    const parsed = parsePackageSelection(entry)
+    if (parsed.sharing !== undefined || parsed.pendingSubmissionId !== undefined) invalidInput()
+    return { type: parsed.type, id: parsed.id }
+  })
+  if (new Set(packages.map(({ type, id }) => `${type}:${id}`)).size !== packages.length) {
+    invalidInput()
+  }
+  const note = value.note === undefined ? undefined : submissionNote(value.note)
+  return { sourceId: value.sourceId, packages, ...(note === undefined ? {} : { note }) }
+}
+
+export function adminSubmissionInput(value: unknown): {
+  teamId: string
+  entryId: string
+} {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['teamId', 'entryId']) ||
+    typeof value.entryId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(value.entryId)
+  ) {
+    invalidInput()
+  }
+  assertTeamId(value.teamId)
+  return { teamId: value.teamId, entryId: value.entryId }
 }
 
 export function backupPassphrase(value: unknown): string {
@@ -81,16 +123,20 @@ export function addMemberInput(value: unknown): {
   displayName: string
   recipient: string
 } {
-  if (!isRecord(value) || !hasExactKeys(value, ['teamId', 'displayName', 'recipient'])) {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['teamId', 'displayName', 'recipient']) ||
+    typeof value.recipient !== 'string'
+  ) {
     invalidInput()
   }
   assertTeamId(value.teamId)
   assertTeamName(value.displayName)
-  assertX25519Recipient(value.recipient)
+  const publicKey = parseMemberPublicKey(value.recipient)
   return {
     teamId: value.teamId,
     displayName: value.displayName,
-    recipient: value.recipient
+    recipient: publicKey.combined
   }
 }
 
@@ -188,7 +234,12 @@ function optionalAnnouncementOnly(value: Record<string, unknown>): boolean | und
 
 function parsePackageSelection(selection: unknown): TeamPackageSelection {
   if (!isRecord(selection)) invalidInput()
-  const selectionKeys = selection.sharing === undefined ? ['type', 'id'] : ['type', 'id', 'sharing']
+  const selectionKeys = [
+    'type',
+    'id',
+    ...(selection.sharing === undefined ? [] : ['sharing']),
+    ...(selection.pendingSubmissionId === undefined ? [] : ['pendingSubmissionId'])
+  ]
   if (
     !hasExactKeys(selection, selectionKeys) ||
     !['skill', 'plugin', 'wrapper', 'mcp'].includes(String(selection.type)) ||
@@ -196,11 +247,34 @@ function parsePackageSelection(selection: unknown): TeamPackageSelection {
     !/^[a-z][a-z0-9-]{1,63}$/.test(selection.id) ||
     (selection.sharing !== undefined &&
       selection.sharing !== 'team-only' &&
-      selection.sharing !== 'forwardable')
+      selection.sharing !== 'forwardable') ||
+    (selection.pendingSubmissionId !== undefined &&
+      (typeof selection.pendingSubmissionId !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+          selection.pendingSubmissionId
+        )))
   ) {
     invalidInput()
   }
   return selection as unknown as TeamPackageSelection
+}
+
+function submissionNote(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    [...value].length > 1_000 ||
+    [...value].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0
+      return (
+        (codePoint >= 0x00 && codePoint <= 0x08) ||
+        (codePoint >= 0x0b && codePoint <= 0x1f) ||
+        (codePoint >= 0x7f && codePoint <= 0x9f)
+      )
+    })
+  ) {
+    invalidInput()
+  }
+  return value
 }
 
 export function withdrawInput(value: unknown): { teamId: string; release: number } {

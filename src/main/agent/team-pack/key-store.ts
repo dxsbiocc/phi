@@ -1,19 +1,24 @@
 import { lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { Decrypter, Encrypter, identityToRecipient } from 'age-encryption'
+import { Decrypter, Encrypter } from 'age-encryption'
 
 import type { SafeStorageLike } from '../credentials/credential-store'
-import { publicKeyPem, registryKeyId } from '../packages/signature'
+import { registryKeyId } from '../packages/signature'
 import { isTeamPackError, teamPackError } from './errors'
 import { writeAtomic } from './files'
 import type { MemberKeys, TeamKeys } from './keys'
 import {
-  assertTeamId,
-  assertTeamName,
-  assertX25519Identity,
-  assertX25519Recipient
-} from './validation'
+  normalizeMemberKeys,
+  normalizeTeamKeys,
+  parseMemberPrivateKeyMaterial,
+  parseTeamPrivateKeyMaterial,
+  validatedMemberKeys,
+  validateTeamKeys,
+  type MemberPrivateKeyMaterial,
+  type TeamPrivateKeyMaterial
+} from './key-material-validation'
+import { assertTeamId, assertTeamName, assertX25519Recipient } from './validation'
 
 export type { SafeStorageLike } from '../credentials/credential-store'
 
@@ -90,21 +95,6 @@ export interface ImportMemberKeyBackupOptions {
   expectedRecipient?: string
 }
 
-interface TeamPrivateKeyMaterial {
-  version: 1
-  type: 'phi-team-signing-private-key'
-  teamId: string
-  keyId: string
-  privateKey: string
-}
-
-interface MemberPrivateKeyMaterial {
-  version: 1
-  type: 'phi-team-member-identity'
-  recipient: string
-  identity: string
-}
-
 interface TeamKeyBackup {
   version: 1
   type: 'phi-team-key-backup'
@@ -122,11 +112,13 @@ export function storeTeamKeyMaterial(options: StoreTeamKeyMaterialOptions): void
   validateTeamKeys(options.keys)
   const publicMaterial = teamPublicMaterial(options.keys)
   const privateMaterial: TeamPrivateKeyMaterial = {
-    version: 1,
+    version: 2,
     type: 'phi-team-signing-private-key',
     teamId: options.keys.teamId,
     keyId: options.keys.keyId,
-    privateKey: options.keys.privateKey
+    privateKey: options.keys.privateKey,
+    submissionIdentity: options.keys.submissionIdentity,
+    submissionRecipient: options.keys.submissionRecipient
   }
   const encrypted = encryptWithSafeStorage(options.safeStorage, privateMaterial)
   writeKeyFile(join(options.keyDir, TEAM_PRIVATE_KEY_FILE), encrypted, PRIVATE_FILE_MODE)
@@ -155,14 +147,17 @@ export function loadTeamKeyMaterial(options: LoadTeamKeyMaterialOptions): TeamKe
     throw teamPackError('INVALID_FORMAT', '团队公钥与签名私钥记录不一致')
   }
   const keys: TeamKeys = {
-    version: 1,
+    version: 2,
     teamId: publicMaterial.teamId,
     name: publicMaterial.name,
     publicKey: publicMaterial.publicKey,
     privateKey: privateMaterial.privateKey,
-    keyId: publicMaterial.keyId
+    keyId: publicMaterial.keyId,
+    submissionIdentity: privateMaterial.submissionIdentity,
+    submissionRecipient: privateMaterial.submissionRecipient
   }
   validateTeamKeys(keys)
+  if (privateMaterial.upgraded) storeTeamKeyMaterial({ ...options, keys })
   return keys
 }
 
@@ -177,10 +172,13 @@ export async function storeMemberKeyMaterial(
     recipient: options.keys.recipient
   }
   const privateMaterial: MemberPrivateKeyMaterial = {
-    version: 1,
+    version: 2,
     type: 'phi-team-member-identity',
     recipient: options.keys.recipient,
-    identity: options.keys.identity
+    identity: options.keys.identity,
+    signingPublicKey: options.keys.signingPublicKey,
+    signingPrivateKey: options.keys.signingPrivateKey,
+    signingKeyId: options.keys.signingKeyId
   }
   const encrypted = encryptWithSafeStorage(options.safeStorage, privateMaterial)
   writeKeyFile(join(options.keyDir, MEMBER_PRIVATE_KEY_FILE), encrypted, PRIVATE_FILE_MODE)
@@ -208,11 +206,18 @@ export async function loadMemberKeyMaterial(
     throw teamPackError('INVALID_FORMAT', '成员 recipient 与身份记录不一致')
   }
   const keys: MemberKeys = {
-    version: 1,
+    version: 2,
     identity: privateMaterial.identity,
-    recipient: publicMaterial.recipient
+    recipient: publicMaterial.recipient,
+    signingPublicKey: privateMaterial.signingPublicKey,
+    signingPrivateKey: privateMaterial.signingPrivateKey,
+    signingKeyId: privateMaterial.signingKeyId
   }
-  return validatedMemberKeys(keys)
+  const validated = await validatedMemberKeys(keys)
+  if (privateMaterial.upgraded) {
+    await storeMemberKeyMaterial({ ...options, keys: validated })
+  }
+  return validated
 }
 
 export function readTeamPublicKeyMaterial(keyDir: string): TeamPublicKeyMaterial {
@@ -289,14 +294,14 @@ export async function importTeamKeyBackup(options: ImportTeamKeyBackupOptions): 
   ) {
     throw teamPackError('INVALID_FORMAT', '备份不是团队签名密钥备份')
   }
-  validateTeamKeys(value.keys)
-  if (options.expectedTeamId !== undefined && value.keys.teamId !== options.expectedTeamId) {
+  const keys = normalizeTeamKeys(value.keys)
+  if (options.expectedTeamId !== undefined && keys.teamId !== options.expectedTeamId) {
     throw teamPackError('INVALID_FORMAT', '团队密钥备份与目标团队不一致')
   }
-  if (options.expectedKeyId !== undefined && value.keys.keyId !== options.expectedKeyId) {
+  if (options.expectedKeyId !== undefined && keys.keyId !== options.expectedKeyId) {
     throw teamPackError('INVALID_FORMAT', '团队密钥备份与目标团队公钥不一致')
   }
-  return value.keys
+  return keys
 }
 
 export async function exportMemberKeyBackup(options: ExportMemberKeyBackupOptions): Promise<void> {
@@ -323,7 +328,7 @@ export async function importMemberKeyBackup(
   ) {
     throw teamPackError('INVALID_FORMAT', '备份不是成员 age 身份备份')
   }
-  const keys = await validatedMemberKeys(value.keys)
+  const keys = await normalizeMemberKeys(value.keys)
   if (options.expectedRecipient !== undefined && keys.recipient !== options.expectedRecipient) {
     throw teamPackError('INVALID_FORMAT', '成员身份备份与目标成员不一致')
   }
@@ -398,54 +403,6 @@ async function readPassphraseBackup(
   return parseJson(Buffer.from(plaintext), '团队密钥备份')
 }
 
-function validateTeamKeys(value: unknown): asserts value is TeamKeys {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ['version', 'teamId', 'name', 'publicKey', 'privateKey', 'keyId']) ||
-    value.version !== 1 ||
-    typeof value.publicKey !== 'string' ||
-    typeof value.privateKey !== 'string' ||
-    typeof value.keyId !== 'string'
-  ) {
-    throw teamPackError('INVALID_FORMAT', '团队密钥格式无效')
-  }
-  try {
-    assertTeamId(value.teamId)
-    assertTeamName(value.name)
-    if (
-      !/^[a-f0-9]{16}$/.test(value.keyId) ||
-      publicKeyPem(value.privateKey) !== value.publicKey ||
-      registryKeyId(value.publicKey) !== value.keyId
-    ) {
-      throw new Error('key mismatch')
-    }
-  } catch (error) {
-    if (isTeamPackError(error)) throw error
-    throw teamPackError('INVALID_FORMAT', '团队密钥格式无效', error)
-  }
-}
-
-async function validatedMemberKeys(value: unknown): Promise<MemberKeys> {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ['version', 'identity', 'recipient']) ||
-    value.version !== 1
-  ) {
-    throw teamPackError('INVALID_FORMAT', '成员密钥格式无效')
-  }
-  try {
-    assertX25519Identity(value.identity)
-    assertX25519Recipient(value.recipient)
-    if ((await identityToRecipient(value.identity)) !== value.recipient) {
-      throw new Error('recipient mismatch')
-    }
-  } catch (error) {
-    if (isTeamPackError(error)) throw error
-    throw teamPackError('INVALID_FORMAT', '成员密钥格式无效', error)
-  }
-  return { version: 1, identity: value.identity, recipient: value.recipient }
-}
-
 function teamPublicMaterial(keys: TeamKeys): TeamPublicKeyMaterial {
   return {
     version: 1,
@@ -454,49 +411,6 @@ function teamPublicMaterial(keys: TeamKeys): TeamPublicKeyMaterial {
     name: keys.name,
     publicKey: keys.publicKey,
     keyId: keys.keyId
-  }
-}
-
-function parseTeamPrivateKeyMaterial(value: unknown): TeamPrivateKeyMaterial {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ['version', 'type', 'teamId', 'keyId', 'privateKey']) ||
-    value.version !== 1 ||
-    value.type !== 'phi-team-signing-private-key' ||
-    typeof value.keyId !== 'string' ||
-    typeof value.privateKey !== 'string'
-  ) {
-    throw teamPackError('INVALID_FORMAT', '团队签名私钥密文格式无效')
-  }
-  assertTeamId(value.teamId)
-  if (!/^[a-f0-9]{16}$/.test(value.keyId)) {
-    throw teamPackError('INVALID_FORMAT', '团队签名私钥密文格式无效')
-  }
-  return {
-    version: 1,
-    type: 'phi-team-signing-private-key',
-    teamId: value.teamId,
-    keyId: value.keyId,
-    privateKey: value.privateKey
-  }
-}
-
-function parseMemberPrivateKeyMaterial(value: unknown): MemberPrivateKeyMaterial {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ['version', 'type', 'recipient', 'identity']) ||
-    value.version !== 1 ||
-    value.type !== 'phi-team-member-identity'
-  ) {
-    throw teamPackError('INVALID_FORMAT', '成员身份密文格式无效')
-  }
-  assertX25519Recipient(value.recipient)
-  assertX25519Identity(value.identity)
-  return {
-    version: 1,
-    type: 'phi-team-member-identity',
-    recipient: value.recipient,
-    identity: value.identity
   }
 }
 

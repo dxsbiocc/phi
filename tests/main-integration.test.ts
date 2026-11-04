@@ -2102,13 +2102,27 @@ async function harness(
     },
     './agent/team-pack/member-service': {
       exportMemberIdentityBackup: async (): Promise<void> => undefined,
-      getMemberRecipient: async (): Promise<string> => 'age1test-only',
+      getMemberPublicKey: async (): Promise<string> => 'phi-member-v1.test-only',
       importMemberIdentityBackup: async (): Promise<string> => 'age1test-only',
       loadOrCreateMemberIdentity: async () => ({
         version: 1,
         identity: 'AGE-SECRET-KEY-TEST-ONLY',
         recipient: 'age1test-only'
       })
+    },
+    './agent/team-pack/member-submissions': {
+      TeamMemberSubmissionService: class {
+        listCandidates(): unknown[] {
+          return []
+        }
+
+        async submit(): Promise<null> {
+          return null
+        }
+      }
+    },
+    './agent/team-pack/keys': {
+      parseMemberPublicKey: (value: string) => ({ recipient: value, combined: value })
     },
     './agent/team-pack/admin-service': {
       TeamPackAdminService: class {
@@ -7660,6 +7674,8 @@ const expectedStartupRegistrationOrder = [
   'teamPack:getMemberSnapshot',
   'teamPack:exportMemberBackup',
   'teamPack:importMemberBackup',
+  'teamPack:listSubmissionCandidates',
+  'teamPack:submitPackages',
   'teamPack:listAdminTeams',
   'teamPack:getAdminTeam',
   'teamPack:createAdminTeam',
@@ -7670,6 +7686,10 @@ const expectedStartupRegistrationOrder = [
   'teamPack:importAdminBackup',
   'teamPack:publishAdminRelease',
   'teamPack:withdrawAdminRelease',
+  'teamPack:listAdminSubmissions',
+  'teamPack:importAdminSubmission',
+  'teamPack:acceptAdminSubmission',
+  'teamPack:deleteAdminSubmission',
   'teamPack:listSources',
   'teamPack:pickSourceDirectory',
   'teamPack:previewSource',

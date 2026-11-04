@@ -60,6 +60,7 @@ export type PullTeamReleaseResult =
       models: ModelKeyGrant[]
       announcements: TeamAnnouncement[]
       resources: TeamResourceMap
+      submissionRecipient?: string
     }
   | {
       status: 'up-to-date'
@@ -70,6 +71,7 @@ export type PullTeamReleaseResult =
       models: ModelKeyGrant[]
       announcements: TeamAnnouncement[]
       resources: TeamResourceMap
+      submissionRecipient?: string
     }
 
 export async function pullTeamRelease(
@@ -122,7 +124,8 @@ async function pullTeamReleaseInternal(
       withdrawnReleases: manifest.withdrawnReleases,
       models,
       announcements: inner.announcements,
-      resources: inner.resources
+      resources: inner.resources,
+      ...(inner.submissionRecipient ? { submissionRecipient: inner.submissionRecipient } : {})
     }
   }
   commitRelease({
@@ -141,7 +144,8 @@ async function pullTeamReleaseInternal(
     withdrawnReleases: manifest.withdrawnReleases,
     models,
     announcements: inner.announcements,
-    resources: inner.resources
+    resources: inner.resources,
+    ...(inner.submissionRecipient ? { submissionRecipient: inner.submissionRecipient } : {})
   }
 }
 

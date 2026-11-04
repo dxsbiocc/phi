@@ -269,7 +269,8 @@ test('legacy team installs use team source state for forwarding validation and p
             'skill:shared-analysis': { sharing: 'forwardable', originalSource }
           },
           credentialConflicts: [],
-          skippedProviders: []
+          skippedProviders: [],
+          submissionRecipient: null
         }
       }
     ],

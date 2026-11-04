@@ -14,12 +14,14 @@ export function TeamSourceList({
   sources,
   busySourceId,
   onCheck,
-  onRemove
+  onRemove,
+  onSubmit
 }: {
   sources: TeamSourceView[]
   busySourceId: string | null
   onCheck: (source: TeamSourceView) => void
   onRemove: (source: TeamSourceView) => void
+  onSubmit: (source: TeamSourceView) => void
 }): React.JSX.Element {
   useUiLanguage()
   const [expandedAnnouncements, setExpandedAnnouncements] = useState<Set<string>>(() => new Set())
@@ -54,6 +56,16 @@ export function TeamSourceList({
             alignItems="flex-start"
             secondaryAction={
               <Stack direction="row" spacing={1}>
+                <Button
+                  disabled={
+                    busySourceId !== null ||
+                    !source.status.submissionsAvailable ||
+                    source.status.state === 'not-member'
+                  }
+                  onClick={() => onSubmit(source)}
+                >
+                  {teamCopy.submitResources}
+                </Button>
                 <Button disabled={busySourceId !== null} onClick={() => onCheck(source)}>
                   {teamCopy.checkNow}
                 </Button>
@@ -96,6 +108,11 @@ export function TeamSourceList({
                   {source.status.state === 'not-member' ? (
                     <Typography component="span" variant="caption" color="warning.dark">
                       {teamCopy.formerMemberHint}
+                    </Typography>
+                  ) : null}
+                  {!source.status.submissionsAvailable ? (
+                    <Typography component="span" variant="caption" color="text.secondary">
+                      {teamCopy.submissionUnavailable}
                     </Typography>
                   ) : null}
                   {source.status.credentialProviders.length > 0 ? (

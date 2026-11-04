@@ -27,6 +27,8 @@ import {
   WithdrawReleaseDialog
 } from '../src/renderer/src/features/team/components/ReleaseHistorySection'
 import { TeamSettingsPanel } from '../src/renderer/src/features/team/TeamSettingsPanel'
+import { MemberSubmissionDialog } from '../src/renderer/src/features/team/components/MemberSubmissionDialog'
+import { AdminSubmissionsSection } from '../src/renderer/src/features/team/components/AdminSubmissionsSection'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 
 beforeEach(() => setUiLanguage('en'))
@@ -175,6 +177,105 @@ test('member identity labels the recipient as public and explains safe sharing',
   assert.match(markup, /发给团队管理员；不包含任何秘密/)
   assert.match(markup, /导出身份备份/)
   assert.match(markup, /导入身份备份/)
+})
+
+test('member submission dialog localizes selectable, restricted, and delivered states', () => {
+  const props = {
+    open: true,
+    teamName: 'Atlas Lab',
+    candidates: [
+      {
+        type: 'skill' as const,
+        id: 'open-skill',
+        version: '1.0.0',
+        title: 'Open skill',
+        summary: 'Open',
+        canSubmit: true
+      },
+      {
+        type: 'plugin' as const,
+        id: 'team-only-plugin',
+        version: '2.0.0',
+        title: 'Restricted plugin',
+        summary: 'Restricted',
+        canSubmit: false,
+        reason: 'team-only' as const
+      }
+    ],
+    selected: ['skill:open-skill'],
+    note: 'Review this',
+    busy: false,
+    errorCode: null,
+    result: null,
+    onToggle: () => undefined,
+    onNoteChange: () => undefined,
+    onClose: () => undefined,
+    onSubmit: () => undefined
+  }
+  const english = render(createElement(MemberSubmissionDialog, props))
+  assert.match(english, /Submit resources to Atlas Lab/)
+  assert.match(english, /restricted to its source team/)
+  assert.match(english, /Note to the administrator/)
+
+  setUiLanguage('zh-CN')
+  const chinese = render(
+    createElement(MemberSubmissionDialog, {
+      ...props,
+      result: {
+        submissionId: 'submission-1',
+        delivery: 'export' as const,
+        path: '/tmp/submission.phi-submission'
+      }
+    })
+  )
+  assert.match(chinese, /向 Atlas Lab 投稿/)
+  assert.match(chinese, /仅限其来源团队使用/)
+  assert.match(chinese, /投稿文件已导出/)
+})
+
+test('administrator submission review warns about code and explains invalid entries bilingually', () => {
+  const props = {
+    submissions: [
+      {
+        entryId: 'entry-1',
+        valid: true,
+        memberName: 'Lin',
+        packages: [
+          {
+            type: 'skill' as const,
+            id: 'shared-analysis',
+            version: '2.0.0',
+            sha256: 'a'.repeat(64)
+          }
+        ],
+        note: 'Review the parser.',
+        createdAt: '2026-11-04T01:00:00.000Z',
+        bytes: 1024
+      },
+      {
+        entryId: 'entry-2',
+        valid: false,
+        invalidReasonCode: 'signature' as const,
+        packages: [],
+        bytes: 100
+      }
+    ],
+    busy: false,
+    onRefresh: () => undefined,
+    onImport: () => undefined,
+    onAccept: () => undefined,
+    onDelete: () => undefined
+  }
+  const english = render(createElement(AdminSubmissionsSection, props))
+  assert.match(english, /member-provided code/)
+  assert.match(english, /From Lin/)
+  assert.match(english, /member signature is invalid/i)
+
+  setUiLanguage('zh-CN')
+  const chinese = render(createElement(AdminSubmissionsSection, props))
+  assert.match(chinese, /投稿内容是成员提供的代码/)
+  assert.match(chinese, /来自 Lin/)
+  assert.match(chinese, /成员签名无效/)
 })
 
 test('backup passphrase view keeps inputs enabled and gates submission on strength and equality', () => {

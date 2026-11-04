@@ -24,6 +24,9 @@ const english = {
   importTeamSigningKey: 'Import team signing key backup',
   selectTeamPublishFolder: 'Select the team publishing folder',
   ageBackupFile: 'age backup',
+  exportTeamSubmission: 'Export team submission',
+  importTeamSubmission: 'Import team submission',
+  teamSubmissionFile: 'Phi submission',
   importPackage: 'Import package',
   packageFilter: 'Phi package',
   exportReproducibility: 'Export Wrapper reproducibility record'
@@ -55,6 +58,9 @@ const chinese: NativeUiCopy = {
   importTeamSigningKey: '导入团队签名密钥备份',
   selectTeamPublishFolder: '选择团队发布文件夹',
   ageBackupFile: 'age 备份',
+  exportTeamSubmission: '导出团队投稿',
+  importTeamSubmission: '导入团队投稿',
+  teamSubmissionFile: 'Phi 投稿',
   importPackage: '导入软件包',
   packageFilter: 'Phi 软件包',
   exportReproducibility: '导出 Wrapper 复现记录'

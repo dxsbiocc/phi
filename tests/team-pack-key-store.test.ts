@@ -1,8 +1,19 @@
 import assert from 'node:assert/strict'
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+
+import { identityToRecipient } from 'age-encryption'
 
 import type { SafeStorageLike } from '../src/main/agent/credentials/credential-store'
 import { TeamPackError, type TeamPackErrorCode } from '../src/main/agent/team-pack/errors'
@@ -68,7 +79,9 @@ test('私钥只以 safeStorage 密文落盘且为 0600，公开部分保持可�
   assert.equal(statSync(join(teamDir, TEAM_PRIVATE_KEY_FILE)).mode & 0o777, 0o600)
   assert.equal(statSync(join(memberDir, MEMBER_PRIVATE_KEY_FILE)).mode & 0o777, 0o600)
   assert.equal(teamCiphertext.includes(Buffer.from(team.privateKey)), false)
+  assert.equal(teamCiphertext.includes(Buffer.from(team.submissionIdentity)), false)
   assert.equal(memberCiphertext.includes(Buffer.from(member.identity)), false)
+  assert.equal(memberCiphertext.includes(Buffer.from(member.signingPrivateKey)), false)
   assert.throws(() => JSON.parse(teamCiphertext.toString('utf8')))
   assert.throws(() => JSON.parse(memberCiphertext.toString('utf8')))
 
@@ -109,6 +122,79 @@ test('读取时拒绝公钥和密文记录来自不同团队', async () => {
   copyFileSync(join(secondDir, TEAM_PUBLIC_KEY_FILE), join(firstDir, TEAM_PUBLIC_KEY_FILE))
 
   await expectCode(() => loadTeamKeyMaterial({ keyDir: firstDir, safeStorage }), 'INVALID_FORMAT')
+})
+
+test('旧版安全存储记录在读取时生成投稿和签名钥匙并原地升级', async () => {
+  const root = sandbox('legacy-upgrade')
+  const teamDir = join(root, 'team')
+  const memberDir = join(root, 'member')
+  const safeStorage = new FakeSafeStorage(true)
+  const team = createTeamKeys({ teamId: 'legacy-team', name: 'Legacy Team' })
+  const member = await createMemberKeys()
+  mkdirSync(teamDir, { recursive: true })
+  mkdirSync(memberDir, { recursive: true })
+  writeFileSync(
+    join(teamDir, TEAM_PUBLIC_KEY_FILE),
+    `${JSON.stringify({
+      version: 1,
+      type: 'phi-team-public-key',
+      teamId: team.teamId,
+      name: team.name,
+      publicKey: team.publicKey,
+      keyId: team.keyId
+    })}\n`
+  )
+  writeFileSync(
+    join(teamDir, TEAM_PRIVATE_KEY_FILE),
+    safeStorage.encryptString(
+      JSON.stringify({
+        version: 1,
+        type: 'phi-team-signing-private-key',
+        teamId: team.teamId,
+        keyId: team.keyId,
+        privateKey: team.privateKey
+      })
+    )
+  )
+  writeFileSync(
+    join(memberDir, MEMBER_PUBLIC_KEY_FILE),
+    `${JSON.stringify({
+      version: 1,
+      type: 'phi-team-member-recipient',
+      recipient: member.recipient
+    })}\n`
+  )
+  writeFileSync(
+    join(memberDir, MEMBER_PRIVATE_KEY_FILE),
+    safeStorage.encryptString(
+      JSON.stringify({
+        version: 1,
+        type: 'phi-team-member-identity',
+        recipient: member.recipient,
+        identity: member.identity
+      })
+    )
+  )
+
+  const upgradedTeam = loadTeamKeyMaterial({ keyDir: teamDir, safeStorage })
+  const upgradedMember = await loadMemberKeyMaterial({ keyDir: memberDir, safeStorage })
+  assert.equal(upgradedTeam.version, 2)
+  assert.equal(
+    await identityToRecipient(upgradedTeam.submissionIdentity),
+    upgradedTeam.submissionRecipient
+  )
+  assert.equal(upgradedMember.version, 2)
+  assert.match(upgradedMember.signingKeyId, /^[a-f0-9]{16}$/u)
+  assert.equal(
+    JSON.parse(safeStorage.decryptString(readFileSync(join(teamDir, TEAM_PRIVATE_KEY_FILE))))
+      .version,
+    2
+  )
+  assert.equal(
+    JSON.parse(safeStorage.decryptString(readFileSync(join(memberDir, MEMBER_PRIVATE_KEY_FILE))))
+      .version,
+    2
+  )
 })
 
 test('age scrypt 口令备份支持团队和成员往返，并校验类型及目标一致性', async () => {

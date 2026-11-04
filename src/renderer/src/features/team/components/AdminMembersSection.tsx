@@ -86,6 +86,11 @@ export function AdminMembersSection({
                       ))
                     )}
                   </Stack>
+                  {member.canSubmit === false ? (
+                    <Typography variant="caption" color="warning.dark">
+                      {teamCopy.legacyMemberCannotSubmit}
+                    </Typography>
+                  ) : null}
                   <Stack direction="row" spacing={1}>
                     <Button size="small" onClick={() => onEditModels(member)}>
                       {teamCopy.editModelKeys}

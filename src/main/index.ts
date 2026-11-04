@@ -150,10 +150,11 @@ import {
 import { getAuthManager } from './agent/auth-manager'
 import {
   exportMemberIdentityBackup,
-  getMemberRecipient,
+  getMemberPublicKey,
   importMemberIdentityBackup,
   loadOrCreateMemberIdentity
 } from './agent/team-pack/member-service'
+import { TeamMemberSubmissionService } from './agent/team-pack/member-submissions'
 import { TeamPackAdminService } from './agent/team-pack/admin-service'
 import { TeamSourceService } from './agent/team-pack/team-source'
 import { createTeamSourceScheduler } from './agent/team-pack/team-source-scheduler'
@@ -438,6 +439,10 @@ const teamSourceService = new TeamSourceService({
 })
 const teamSourceScheduler = createTeamSourceScheduler({ service: teamSourceService })
 const teamPackAdminService = new TeamPackAdminService({ agentDir: AGENT_DIR, safeStorage })
+const teamMemberSubmissionService = new TeamMemberSubmissionService({
+  agentDir: AGENT_DIR,
+  safeStorage
+})
 
 app.setName(APP_NAME)
 
@@ -3886,17 +3891,52 @@ async function pickTeamPackBackup(
   return result.canceled ? null : (result.filePaths[0] ?? null)
 }
 
+async function pickTeamSubmission(
+  mode: 'export' | 'import',
+  defaultPath?: string
+): Promise<string | null> {
+  const window = getActiveWindow()
+  const copy = nativeUiCopy(readAppSettings().uiLanguage)
+  if (mode === 'export') {
+    const options: Electron.SaveDialogOptions = {
+      title: copy.exportTeamSubmission,
+      buttonLabel: copy.save,
+      defaultPath,
+      filters: [{ name: copy.teamSubmissionFile, extensions: ['phi-submission'] }]
+    }
+    const result = window
+      ? await dialog.showSaveDialog(window, options)
+      : await dialog.showSaveDialog(options)
+    return result.canceled ? null : (result.filePath ?? null)
+  }
+  const options: Electron.OpenDialogOptions = {
+    title: copy.importTeamSubmission,
+    buttonLabel: copy.import,
+    properties: ['openFile'],
+    filters: [{ name: copy.teamSubmissionFile, extensions: ['phi-submission'] }]
+  }
+  const result = window
+    ? await dialog.showOpenDialog(window, options)
+    : await dialog.showOpenDialog(options)
+  return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
 function registerTeamPackManagementIpc(): void {
   const memberIdentityOptions = { agentDir: AGENT_DIR, safeStorage }
   registerTeamPackIpc({
     ipcMain,
     requireMainWindowRenderer,
     member: {
-      getRecipient: () => getMemberRecipient(memberIdentityOptions),
+      getPublicKey: () => getMemberPublicKey(memberIdentityOptions),
       exportBackup: (backupPath, passphrase) =>
         exportMemberIdentityBackup({ ...memberIdentityOptions, backupPath, passphrase }),
-      importBackup: (backupPath, passphrase) =>
-        importMemberIdentityBackup({ ...memberIdentityOptions, backupPath, passphrase })
+      importBackup: async (backupPath, passphrase) => {
+        await importMemberIdentityBackup({ ...memberIdentityOptions, backupPath, passphrase })
+        return getMemberPublicKey(memberIdentityOptions)
+      },
+      listSubmissionCandidates: (sourceId) => teamMemberSubmissionService.listCandidates(sourceId),
+      submitPackages: (input, pickExportPath) =>
+        teamMemberSubmissionService.submit(input, pickExportPath)
     },
     sources: {
       listSources: () => teamSourceService.listSources(),
@@ -3935,7 +3975,9 @@ function registerTeamPackManagementIpc(): void {
       pickPublishDirectory: () => {
         const copy = nativeUiCopy(readAppSettings().uiLanguage)
         return pickTeamPackDirectory(copy.selectTeamPublishFolder)
-      }
+      },
+      pickSubmissionExport: (suggestedName) => pickTeamSubmission('export', suggestedName),
+      pickSubmissionImport: () => pickTeamSubmission('import')
     }
   })
 }

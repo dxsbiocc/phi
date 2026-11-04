@@ -4,6 +4,7 @@ import {
   copyFileSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   rmSync,
   writeFileSync
@@ -12,6 +13,8 @@ import { dirname, join, relative, sep } from 'node:path'
 
 import { stringify as stringifyYaml } from 'yaml'
 
+import { parseTarGz } from '../packages/archive'
+import { assertSafePackagePath, sha256 } from '../packages/installer-utils'
 import type { InstalledPackage, LocalRegistry } from '../packages/installer-types'
 import { materializeRegistry } from '../packages/materialize-registry'
 import type { PackageType } from '../packages/manifest'
@@ -38,6 +41,48 @@ export function materializeInstalledRegistry(options: {
         copyInstalledWrapper(options.agentDir, installed, destination)
       } else {
         copyPackageDirectory(installed.dir, destination)
+      }
+      return destination
+    })
+    materializeRegistry(packageDirs, options.registryDir, {
+      id: `team-pack:${options.teamId}`,
+      trust: 'imported',
+      generatedAt: options.generatedAt,
+      allowedTypes: ALLOWED_TYPES
+    })
+    return readRegistry(options.registryDir)
+  } finally {
+    rmSync(sourcesRoot, { recursive: true, force: true })
+  }
+}
+
+export function materializeRegistryEntries(options: {
+  teamId: string
+  entries: Array<{ registry: LocalRegistry; entry: LocalRegistry['packages'][number] }>
+  registryDir: string
+  generatedAt: string
+}): LocalRegistry {
+  const sourcesRoot = join(dirname(options.registryDir), `.registry-entries-${randomUUID()}`)
+  mkdirSync(sourcesRoot, { recursive: true, mode: 0o700 })
+  try {
+    const packageDirs = options.entries.map(({ registry, entry }) => {
+      const archive = readFileSync(join(registry.dir, entry.archive))
+      if (archive.length !== entry.size || sha256(archive) !== entry.sha256) {
+        throw teamPackError('HASH_MISMATCH', `软件源资源哈希不匹配: ${entry.type}:${entry.id}`)
+      }
+      const destination = join(sourcesRoot, `${entry.type}-${entry.id}`)
+      for (const item of parseTarGz(archive)) {
+        const path = item.type === 'directory' ? item.path.replace(/\/+$/u, '') : item.path
+        assertSafePackagePath(path)
+        if (item.type === 'link' || (item.type !== 'file' && item.type !== 'directory')) {
+          throw teamPackError('INVALID_FORMAT', '软件源资源归档包含不支持的条目')
+        }
+        const target = join(destination, ...path.split('/'))
+        if (item.type === 'directory') mkdirSync(target, { recursive: true })
+        else {
+          mkdirSync(dirname(target), { recursive: true })
+          writeFileSync(target, item.data, { flag: 'wx', mode: item.mode & 0o666 })
+        }
       }
       return destination
     })

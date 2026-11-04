@@ -24,6 +24,11 @@ const TEAM_PACK_CALLS = [
   ['removeSource', { sourceId: 'source-1' }],
   ['exportMemberBackup', { passphrase: 'member-backup-passphrase' }],
   ['importMemberBackup', { passphrase: 'member-backup-passphrase' }],
+  ['listSubmissionCandidates', { sourceId: 'source-1' }],
+  [
+    'submitPackages',
+    { sourceId: 'source-1', packages: [{ type: 'skill', id: 'literature-review' }] }
+  ],
   ['listAdminTeams'],
   ['getAdminTeam', { teamId: 'acme-lab' }],
   ['createAdminTeam', { name: 'Acme Lab' }],
@@ -46,7 +51,11 @@ const TEAM_PACK_CALLS = [
     'publishAdminRelease',
     { teamId: 'acme-lab', packages: [{ type: 'skill', id: 'literature-review' }] }
   ],
-  ['withdrawAdminRelease', { teamId: 'acme-lab', release: 1 }]
+  ['withdrawAdminRelease', { teamId: 'acme-lab', release: 1 }],
+  ['listAdminSubmissions', { teamId: 'acme-lab' }],
+  ['importAdminSubmission', { teamId: 'acme-lab' }],
+  ['acceptAdminSubmission', { teamId: 'acme-lab', entryId: 'entry-1' }],
+  ['deleteAdminSubmission', { teamId: 'acme-lab', entryId: 'entry-1' }]
 ] as const
 
 test('preload exposes one nested teamPack API and forwards each payload unchanged', async () => {
@@ -125,7 +134,8 @@ test('main registers TeamPack IPC with safe storage, live native copy, shared se
   assert.match(main, /registerTeamPackIpc\(\{/u)
   assert.match(main, /registerTeamPackIpc\(\{\s*ipcMain,\s*requireMainWindowRenderer,/u)
   assert.match(main, /registerTeamPackManagementIpc\(\)/u)
-  assert.match(main, /getRecipient: \(\) => getMemberRecipient\(memberIdentityOptions\)/u)
+  assert.match(main, /getPublicKey: \(\) => getMemberPublicKey\(memberIdentityOptions\)/u)
+  assert.match(main, /new TeamMemberSubmissionService\(\{/u)
   assert.match(main, /listSources: \(\) => teamSourceService\.listSources\(\)/u)
   assert.match(main, /start: \(\) => teamSourceScheduler\.start\(\)/u)
   assert.match(main, /admin: teamPackAdminService/u)
@@ -140,7 +150,10 @@ test('main registers TeamPack IPC with safe storage, live native copy, shared se
     'exportTeamSigningKey',
     'importTeamSigningKey',
     'selectTeamPublishFolder',
-    'ageBackupFile'
+    'ageBackupFile',
+    'exportTeamSubmission',
+    'importTeamSubmission',
+    'teamSubmissionFile'
   ]) {
     assert.equal((nativeCopy.match(new RegExp(`\\b${key}:`, 'gu')) ?? []).length, 2, key)
   }
