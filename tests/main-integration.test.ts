@@ -2095,6 +2095,34 @@ async function harness(
         }
       })
     },
+    './agent/team-pack/member-service': {
+      loadOrCreateMemberIdentity: async () => ({
+        version: 1,
+        identity: 'AGE-SECRET-KEY-TEST-ONLY',
+        recipient: 'age1test-only'
+      })
+    },
+    './agent/team-pack/team-source': {
+      TeamSourceService: class {
+        listSources(): unknown[] {
+          return []
+        }
+
+        async pullAllSources(): Promise<unknown[]> {
+          return []
+        }
+
+        close(): void {
+          return undefined
+        }
+      }
+    },
+    './agent/team-pack/team-source-scheduler': {
+      createTeamSourceScheduler: () => ({
+        start: async (): Promise<void> => undefined,
+        stop: (): void => undefined
+      })
+    },
     './agent/persona-manager': {
       setPersonaMarkdown: (value: string): void => {
         savedPersonas.push(value)

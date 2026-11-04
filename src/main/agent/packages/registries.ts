@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSyn
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
+import { listTeamSources, teamSourceRegistryDir, type TeamSource } from '../team-pack/team-source'
 import { readGithubSources, type GithubSourceRecord } from './github-source-store'
 import type { LocalRegistry, RegistryTrustTier } from './installer-types'
 import { errorMessage, isRecord } from './installer-utils'
@@ -34,11 +35,13 @@ export interface KnownRegistryMutationOptions {
 export interface KnownRegistryListOptions extends Pick<KnownRegistryMutationOptions, 'agentDir'> {
   /** Isolated source override for tests; production prefers complete website content. */
   loadOfficialRegistry?: () => Promise<LocalRegistry>
+  /** Isolated team-source override for registry integration tests. */
+  loadTeamSources?: (agentDir: string) => TeamSource[]
 }
 
 export interface KnownRegistryDetails {
   id: string
-  kind: 'official' | 'directory' | 'github'
+  kind: 'official' | 'directory' | 'github' | 'team'
   path: string
   addedAt?: string
   removable: boolean
@@ -50,6 +53,7 @@ export interface KnownRegistryDetails {
   refreshedAt?: string
   sha?: string
   ref?: string
+  version?: number
   error?: string
 }
 
@@ -90,6 +94,7 @@ export async function listKnownRegistries(
 ): Promise<KnownRegistryListResult> {
   const state = readKnownRegistries(options.agentDir)
   const github = readGithubSources(options.agentDir)
+  const team = readTeamSourcesForRegistries(options)
   let official: KnownRegistryDetails
   try {
     const registry = await loadOfficialRegistry(options)
@@ -119,9 +124,10 @@ export async function listKnownRegistries(
   const registries = [
     official,
     ...state.registries.map((entry) => registryDetails({ ...entry, removable: true })),
-    ...github.sources.map(githubRegistryDetails)
+    ...github.sources.map(githubRegistryDetails),
+    ...team.sources.map((source) => teamRegistryDetails(source, options.agentDir))
   ]
-  const error = [state.error, github.error].filter(Boolean).join('\n')
+  const error = [state.error, github.error, team.error].filter(Boolean).join('\n')
   return error ? { registries, error } : { registries }
 }
 
@@ -130,6 +136,7 @@ export async function loadKnownRegistryIndexes(
 ): Promise<LoadedKnownRegistries> {
   const state = readKnownRegistries(options.agentDir)
   const github = readGithubSources(options.agentDir)
+  const team = readTeamSourcesForRegistries(options)
   const registries: LocalRegistry[] = []
   const errors: string[] = []
   try {
@@ -163,12 +170,56 @@ export async function loadKnownRegistryIndexes(
       errors.push(`GitHub · ${source.repo}@${source.sha.slice(0, 7)}：${errorMessage(error)}`)
     }
   }
-  const stateError = [state.error, github.error].filter(Boolean).join('\n')
+  const loadedTeam = loadTeamRegistryIndexes(team.sources, options.agentDir)
+  registries.push(...loadedTeam.registries)
+  errors.push(...loadedTeam.errors)
+  const stateError = [state.error, github.error, team.error].filter(Boolean).join('\n')
   return {
     registries,
     errors,
     ...(stateError ? { stateError } : {})
   }
+}
+
+function loadTeamRegistryIndexes(
+  sources: readonly TeamSource[],
+  customAgentDir?: string
+): Pick<LoadedKnownRegistries, 'registries' | 'errors'> {
+  const registries: LocalRegistry[] = []
+  const errors: string[] = []
+  for (const source of sources) {
+    const label = teamRegistryLabel(source)
+    const release = source.status.lastSuccessfulRelease
+    const registryDir = teamSourceRegistryDir(agentDir(customAgentDir), source)
+    const unavailable = teamRegistryUnavailableReason(source, registryDir)
+    if (unavailable || !registryDir || release === null) {
+      errors.push(`${label}：${unavailable ?? '团队来源尚无成功拉取的版本'}`)
+      continue
+    }
+    try {
+      const registry = readRegistry(registryDir)
+      const cached = source.status.lastErrorCode !== null
+      registries.push({
+        ...registry,
+        id: source.id,
+        dir: registryDir,
+        trust: 'imported',
+        label,
+        status: cached ? 'cached' : 'ready',
+        ...(cached ? { notice: teamRegistryCachedNotice(source, release) } : {}),
+        source: {
+          kind: 'team',
+          id: source.id,
+          teamId: source.teamId,
+          teamName: source.teamName,
+          release
+        }
+      })
+    } catch (error) {
+      errors.push(`${label}：${errorMessage(error)}`)
+    }
+  }
+  return { registries, errors }
 }
 
 function loadOfficialRegistry(options: KnownRegistryListOptions): Promise<LocalRegistry> {
@@ -263,6 +314,87 @@ function githubRegistryDetails(source: GithubSourceRecord): KnownRegistryDetails
   } catch (error) {
     return { ...details, error: errorMessage(error) }
   }
+}
+
+function teamRegistryDetails(source: TeamSource, customAgentDir?: string): KnownRegistryDetails {
+  const registryDir = teamSourceRegistryDir(agentDir(customAgentDir), source)
+  const unavailable = teamRegistryUnavailableReason(source, registryDir)
+  const details: KnownRegistryDetails = {
+    id: source.id,
+    kind: 'team',
+    label: teamRegistryLabel(source),
+    path: registryDir ?? teamSourceLocation(source),
+    addedAt: source.addedAt,
+    removable: true,
+    trust: 'imported',
+    status: unavailable ? 'unavailable' : source.status.lastErrorCode ? 'cached' : 'ready',
+    ...(source.status.lastSuccessfulRelease === null
+      ? {}
+      : { version: source.status.lastSuccessfulRelease }),
+    ...(source.status.lastCheckedAt ? { refreshedAt: source.status.lastCheckedAt } : {}),
+    ...(unavailable ? { error: unavailable } : {}),
+    ...(!unavailable && source.status.lastErrorCode && source.status.lastSuccessfulRelease !== null
+      ? {
+          notice: teamRegistryCachedNotice(source, source.status.lastSuccessfulRelease)
+        }
+      : {})
+  }
+  if (unavailable || !registryDir) return details
+  try {
+    const registry = readRegistry(registryDir)
+    return { ...details, packageCount: registry.packages.length }
+  } catch (error) {
+    return {
+      ...details,
+      status: 'unavailable',
+      error: errorMessage(error)
+    }
+  }
+}
+
+function teamRegistryUnavailableReason(
+  source: TeamSource,
+  registryDir: string | null
+): string | undefined {
+  const release = source.status.lastSuccessfulRelease
+  if (release === null || !registryDir) {
+    return source.status.lastErrorCode
+      ? `团队来源不可用：${source.status.lastErrorCode}`
+      : '团队来源尚无成功拉取的版本'
+  }
+  if (source.status.withdrawnReleases.includes(release)) {
+    return `团队版本 ${release} 已撤回`
+  }
+  return undefined
+}
+
+function teamRegistryCachedNotice(source: TeamSource, release: number): string {
+  return `最近检查失败（${source.status.lastErrorCode}），使用已成功拉取的团队版本 ${release}`
+}
+
+function teamRegistryLabel(source: TeamSource): string {
+  return `来自 ${source.teamName} 团队`
+}
+
+function teamSourceLocation(source: TeamSource): string {
+  return source.location.kind === 'directory' ? source.location.path : source.location.url
+}
+
+function readTeamSourcesForRegistries(options: KnownRegistryListOptions): {
+  sources: TeamSource[]
+  error?: string
+} {
+  try {
+    return {
+      sources: (options.loadTeamSources ?? listTeamSources)(agentDir(options.agentDir))
+    }
+  } catch (error) {
+    return { sources: [], error: `团队来源配置：${errorMessage(error)}` }
+  }
+}
+
+function agentDir(customAgentDir?: string): string {
+  return customAgentDir ?? getPhiAgentDir()
 }
 
 function writeKnownRegistries(state: KnownRegistriesState, agentDir = getPhiAgentDir()): void {

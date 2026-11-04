@@ -624,21 +624,29 @@ function catalogSourcesFromRegistryIndex(registry: LocalRegistry): CatalogSource
   const official =
     registry.id === OFFICIAL_REGISTRY_ID &&
     (registry.kind === 'official' || registry.trust === 'official')
-  const source: FeaturedMcpConnector['source'] = registry.source
-    ? {
-        kind: 'github',
-        label: `GitHub · ${registry.source.repo}@${registry.source.sha.slice(0, 7)}`,
-        trust: 'imported',
-        sourceId: registry.source.id,
-        sha: registry.source.sha
-      }
-    : official
-      ? { kind: 'official', label: registry.label ?? 'Phi Packages', trust: registry.trust }
-      : {
-          kind: 'directory',
-          label: registry.label ?? '用户软件源',
-          trust: registry.trust
+  const source: FeaturedMcpConnector['source'] =
+    registry.source?.kind === 'github'
+      ? {
+          kind: 'github',
+          label: `GitHub · ${registry.source.repo}@${registry.source.sha.slice(0, 7)}`,
+          trust: 'imported',
+          sourceId: registry.source.id,
+          sha: registry.source.sha
         }
+      : registry.source?.kind === 'team'
+        ? {
+            kind: 'directory',
+            label: registry.label ?? `来自 ${registry.source.teamName} 团队`,
+            trust: 'imported',
+            sourceId: registry.source.id
+          }
+        : official
+          ? { kind: 'official', label: registry.label ?? 'Phi Packages', trust: registry.trust }
+          : {
+              kind: 'directory',
+              label: registry.label ?? '用户软件源',
+              trust: registry.trust
+            }
   return registry.packages
     .filter((entry) => entry.type === 'mcp')
     .map((entry) => ({

@@ -61,3 +61,34 @@ export {
   type RosterRelease,
   type TeamRoster
 } from './roster'
+export {
+  exportMemberIdentityBackup,
+  getMemberRecipient,
+  importMemberIdentityBackup,
+  loadOrCreateMemberIdentity,
+  memberKeyDirectory,
+  MEMBER_KEY_DIRECTORY,
+  type ExportMemberIdentityBackupOptions,
+  type ImportMemberIdentityBackupOptions,
+  type MemberIdentityOptions
+} from './member-service'
+export {
+  listTeamSources,
+  teamSourceRegistryDir,
+  teamSourcesPath,
+  TeamSourceService,
+  type AddTeamSourceInput,
+  type TeamSource,
+  type TeamSourceAuthStorage,
+  type TeamSourceErrorCode,
+  type TeamSourceLocation,
+  type TeamSourceServiceOptions,
+  type TeamSourceStatus,
+  type TeamSourceStoredCredential
+} from './team-source'
+export {
+  createTeamSourceScheduler,
+  TeamSourceScheduler,
+  type TeamSourceSchedulerOptions,
+  type TeamSourceSchedulerService
+} from './team-source-scheduler'

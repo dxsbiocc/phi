@@ -456,7 +456,13 @@ function sourceRank(registry: LocalRegistry): number {
 function sourceLabel(registry: LocalRegistry): string {
   return (
     registry.label ??
-    (registry.trust === 'official' ? 'Phi Packages' : (registry.source?.repo ?? registry.id))
+    (registry.trust === 'official'
+      ? 'Phi Packages'
+      : registry.source?.kind === 'github'
+        ? registry.source.repo
+        : registry.source?.kind === 'team'
+          ? `来自 ${registry.source.teamName} 团队`
+          : registry.id)
   )
 }
 

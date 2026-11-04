@@ -146,6 +146,9 @@ import {
   redactStructuredValue
 } from './agent/session/message-text'
 import { getAuthManager } from './agent/auth-manager'
+import { loadOrCreateMemberIdentity } from './agent/team-pack/member-service'
+import { TeamSourceService } from './agent/team-pack/team-source'
+import { createTeamSourceScheduler } from './agent/team-pack/team-source-scheduler'
 import { getPersonaMarkdown } from './agent/persona-manager'
 import { generatePersonaMarkdown as generatePersonaMarkdownForIpc } from './agent/persona-generation'
 import {
@@ -417,6 +420,14 @@ const appIcon = nativeImage.createFromPath(icon)
 
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
+const teamSourceService = new TeamSourceService({
+  agentDir: AGENT_DIR,
+  getMemberIdentity: async () => {
+    const { safeStorage } = await import('electron')
+    return (await loadOrCreateMemberIdentity({ agentDir: AGENT_DIR, safeStorage })).identity
+  }
+})
+const teamSourceScheduler = createTeamSourceScheduler({ service: teamSourceService })
 
 app.setName(APP_NAME)
 
@@ -3908,6 +3919,9 @@ function registerWrapperJobsAndPersonaIpc(
 function openInitialWindow(): void {
   createWindow()
   scheduleStartupPackageUpdateCheck()
+  void teamSourceScheduler.start().catch(() => {
+    writeAppLog({ level: 'error', event: 'team_source_scheduler_start_failed' })
+  })
 }
 
 function registerAppActivationHandler(): void {
@@ -3947,6 +3961,7 @@ app.on(
     beginShutdown: () => {
       finishStartupSplash(null)
       runtime.window.destroyMenuBarController()
+      teamSourceScheduler.stop()
       // Stop local wrapper runs; detach remote runs so the next app launch can resume watching them.
       try {
         wrapperJobs.shutdown()
@@ -3966,7 +3981,8 @@ app.on(
     cleanup: async () => {
       await Promise.all([
         cleanupMainWindowRuntime(),
-        safeCleanupStep('environment_scan_cleanup_failed', () => backgroundEnvironment.dispose())
+        safeCleanupStep('environment_scan_cleanup_failed', () => backgroundEnvironment.dispose()),
+        safeCleanupStep('team_source_service_cleanup_failed', () => teamSourceService.close())
       ])
     },
     quit: () => app.quit(),
