@@ -2,6 +2,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { resolve } from 'node:path'
 
+import {
+  KERNEL_STDIO_FRAME_PREFIX,
+  KERNEL_STDIO_FRAMES_ENV
+} from '../../../../shared/kernel-protocol/constants'
 import { resolveBunExecutable } from '../bun-executable'
 import { KernelProtocolClient, type KernelClientTransport } from '.'
 
@@ -27,7 +31,11 @@ class ChildProcessKernelTransport implements KernelClientTransport {
   private closing?: Promise<LocalKernelCloseOutcome>
   private closed = false
 
-  constructor(private readonly child: ChildProcessWithoutNullStreams) {
+  constructor(
+    private readonly child: ChildProcessWithoutNullStreams,
+    taggedOutput: boolean,
+    onDiagnostic?: (text: string) => void
+  ) {
     this.lines = createInterface({ input: child.stdout, crlfDelay: Infinity })
     this.exited = new Promise((resolveExit) => {
       child.once('close', (code, signal) => {
@@ -36,8 +44,17 @@ class ChildProcessKernelTransport implements KernelClientTransport {
         this.notifyClosed()
       })
     })
+    let reportedNoise = false
     this.lines.on('line', (line) => {
-      for (const listener of this.lineListeners) listener(line)
+      if (taggedOutput && !line.startsWith(KERNEL_STDIO_FRAME_PREFIX)) {
+        if (!reportedNoise && line.trim()) {
+          reportedNoise = true
+          onDiagnostic?.('Ignored non-protocol output from the local kernel.\n')
+        }
+        return
+      }
+      const frame = taggedOutput ? line.slice(KERNEL_STDIO_FRAME_PREFIX.length) : line
+      for (const listener of this.lineListeners) listener(frame)
     })
     this.lines.once('close', () => this.notifyClosed())
     child.once('error', () => this.notifyClosed())
@@ -129,6 +146,7 @@ type SpawnKernelStdioCommonOptions = {
   cwd?: string
   env?: NodeJS.ProcessEnv
   onDiagnostic?: (text: string) => void
+  taggedOutput?: boolean
 }
 
 type SpawnSourceKernelStdioOptions = SpawnKernelStdioCommonOptions & {
@@ -168,7 +186,10 @@ export function spawnKernelStdio(options: SpawnKernelStdioOptions = {}): Spawned
     : [...(options.bunArgs ?? []), options.entry ?? resolve('src/kernel/main.ts')]
   const child = spawn(executable, args, {
     cwd: options.cwd ?? process.cwd(),
-    env: options.env ?? process.env,
+    env: {
+      ...(options.env ?? process.env),
+      [KERNEL_STDIO_FRAMES_ENV]: options.taggedOutput ? '1' : undefined
+    },
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: process.platform !== 'win32'
   })
@@ -189,7 +210,11 @@ export function spawnKernelStdio(options: SpawnKernelStdioOptions = {}): Spawned
       diagnosticRemainder = ''
     })
   }
-  const transport = new ChildProcessKernelTransport(child)
+  const transport = new ChildProcessKernelTransport(
+    child,
+    options.taggedOutput === true,
+    options.onDiagnostic
+  )
   const client = new KernelProtocolClient(transport)
   return {
     client,

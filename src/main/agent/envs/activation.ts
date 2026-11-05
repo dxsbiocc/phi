@@ -20,7 +20,9 @@ const WINDOWS_ENV_PROBE = Buffer.from(
     `[Console]::WriteLine('${WINDOWS_ENV_FRAME}' + (ConvertTo-Json -Compress -InputObject ([Environment]::GetEnvironmentVariables())))`,
   'utf16le'
 ).toString('base64')
-const ACTIVATION_TIMEOUT_MS = 30_000
+// Cold Windows runners have taken over 30 seconds to activate a freshly installed
+// prefix and start PowerShell, even though the same prefix works on subsequent runs.
+const ACTIVATION_TIMEOUT_MS = 120_000
 
 const EXCLUDED_NAMES = new Set([
   'PATH',

@@ -2,6 +2,7 @@ import type { IpcMain } from 'electron'
 
 import { IPC } from '../../shared/ipcChannels'
 import { errorMessage } from '../../shared/errorCodes'
+import { writeAppLog } from '../agent/app-logger'
 import type { EnvironmentBuilds } from '../agent/content/environment-builds'
 import { createManagedEnvironmentActions, listManagedEnvironments } from '../agent/environment'
 import { collectGarbage } from '../agent/envs/gc'
@@ -29,7 +30,13 @@ export function registerManagedEnvironmentsIpc(options: ManagedEnvironmentsIpcOp
       listManagedEnvironments({
         ...(projectDir ? { projectDir } : {}),
         builds: environmentBuilds.list(),
-        includeDynamic
+        includeDynamic,
+        onSkillDiscoveryError: (error) =>
+          writeAppLog({
+            level: 'warn',
+            event: 'managed_environment_skill_discovery_failed',
+            metadata: { reason: errorMessage(error) }
+          })
       })
   })
   ipcMain.handle(
@@ -46,7 +53,7 @@ export function registerManagedEnvironmentsIpc(options: ManagedEnvironmentsIpcOp
     IPC.managedEnvironments.build,
     async (_, ref: unknown, projectCwd: unknown, pluginId: unknown) => {
       try {
-        return managedEnvironmentActions.build(ref, projectCwd, pluginId)
+        return await managedEnvironmentActions.build(ref, projectCwd, pluginId)
       } catch (error) {
         throw new Error(`启动环境构建失败：${errorMessage(error)}`)
       }

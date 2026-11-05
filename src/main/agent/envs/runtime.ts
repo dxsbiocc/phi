@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, resolve, win32 } from 'node:path'
@@ -420,6 +420,25 @@ function micromambaInvocationArgs(root: string, args: readonly string[], posix =
   return ['--rc-file', rcFile, '--no-env', '--root-prefix', root, ...args]
 }
 
+function terminateMicromamba(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (process.platform !== 'win32') {
+    child.kill(signal)
+    return
+  }
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return
+  // The activated command inherits micromamba's output pipes. Terminating only
+  // the wrapper leaves those pipes open and may race with prefix cleanup.
+  const taskkill = win32.join(windowsSystemRoot(process.env), 'System32', 'taskkill.exe')
+  execFile(
+    taskkill,
+    ['/PID', String(child.pid), '/T', '/F'],
+    { windowsHide: true, timeout: 10_000 },
+    (error) => {
+      if (error && child.exitCode === null && child.signalCode === null) child.kill(signal)
+    }
+  )
+}
+
 function spawnMicromamba(
   executable: string,
   args: readonly string[],
@@ -464,9 +483,7 @@ function spawnMicromamba(
     })
     return {
       child,
-      signal: (name) => {
-        child.kill(name)
-      }
+      signal: (name) => terminateMicromamba(child, name)
     }
   } catch (error) {
     const message = errorMessage(error)

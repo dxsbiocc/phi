@@ -304,6 +304,46 @@ test('ordinary origin normalizes absent project and rejects a later remote conve
   assert.equal(resolveRuntimeSessionOrigin('local', options, dir), undefined)
 })
 
+test('a local Windows runtime origin persists and resolves its native working directory', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'phi-origin-windows-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const cwd = String.raw`D:\科研 项目\Phi`
+  registerRuntimeSessionOrigin(
+    { runtimeSessionId: 'windows-local', phiSessionId: 'phi', projectId: null, cwd },
+    dir
+  )
+  const current = {
+    ...manifest(),
+    kind: 'ordinary',
+    projectId: undefined,
+    projectLocation: undefined,
+    cwd
+  } as unknown as PhiSessionManifest
+  assert.deepEqual(
+    resolveRuntimeSessionOrigin(
+      'windows-local',
+      { readManifest: () => current, resolveRemoteScope: () => undefined },
+      dir
+    ),
+    { phiSessionId: 'phi', cwd }
+  )
+  assert.throws(
+    () =>
+      registerRuntimeSessionOrigin(
+        {
+          runtimeSessionId: 'windows-remote',
+          phiSessionId: 'phi',
+          projectId: scope.projectId,
+          cwd,
+          remoteScope: scope,
+          configuredRuntimeRoot: null
+        },
+        dir
+      ),
+    /Invalid runtime origin/
+  )
+})
+
 const reference = parseRuntimeReference(
   {
     ...scope,

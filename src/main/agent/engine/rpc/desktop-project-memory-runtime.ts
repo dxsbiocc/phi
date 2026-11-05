@@ -4,6 +4,7 @@ import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promis
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { externalWorkerPath } from '../../../source-checkout-path'
 import { normalizeProjectMemorySettings } from '../../../../shared/projectMemoryTypes'
 import type { ProjectMemoryTarget } from '../../memory/project-memory-worker'
 import {
@@ -141,9 +142,9 @@ async function cancelJob(project: Project, owner?: string, requestId?: string): 
 function startJob(scope: Scope, project: Project, requestId: string, model: ModelRef): void {
   const epoch = project.manifest.epoch
   const bun = resolveBunExecutable({ resourcesPath: process.resourcesPath })
-  const workerPath = fileURLToPath(
-    new URL('./desktop-project-memory-sdk-worker.ts', import.meta.url)
-  ).replace(/app\.asar(?=\/)/, 'app.asar.unpacked')
+  const workerPath = externalWorkerPath(
+    fileURLToPath(new URL('./desktop-project-memory-sdk-worker.ts', import.meta.url))
+  )
   const env: NodeJS.ProcessEnv = {
     ...projectMemoryWorkerEnvironment(process.env),
     PATH: workerPathWithBun(bun, process.env.PATH),

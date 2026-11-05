@@ -1,12 +1,9 @@
 name: Release
-
 on:
   workflow_dispatch:
-
 permissions:
   actions: read
   contents: write
-
 jobs:
   transfer-windows-draft:
     if: github.ref == 'refs/heads/codex/windows-preview-draft'
@@ -16,15 +13,16 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: dxsbiocc/phi
     steps:
-      - name: Attach the verified installer to a draft release
+      - name: Attach the verified Windows fix to the second preview draft
         shell: bash
         run: |
           set -euo pipefail
-          gh run download 42000458834 --name Phi-windows-x64 --dir artifact
+          gh run download 42041541513 --name Phi-windows-x64 --dir artifact
           cd artifact
-          printf '%s  %s\n' 'a5e2bce3d011bfc837d5259878af85f1520a171b5ace6380831482acd2eead44' phi-0.1.1-setup.exe > SHA256SUMS.txt
+          mv phi-0.1.1-setup.exe Phi-Windows-x64-preview-2.exe
+          printf '%s  %s\n' '5aece4e40be17b24b1ca49b4952a03dbc92d98dcf7d401080513fb22cc8e3bc8' Phi-Windows-x64-preview-2.exe > SHA256SUMS.txt
           sha256sum -c SHA256SUMS.txt
-          printf '%s' 'IyMgV2luZG93cyB4NjQg5YaF5rWLCgrlronoo4Xmlofku7bkuLogYHBoaS0wLjEuMS1zZXR1cC5leGVg77yM6ZqP6ZmEIGBTSEEyNTZTVU1TLnR4dGDjgILmtYvor5XljIXkvb/nlKjlupTnlKjniYjmnKwgYDAuMS4xYO+8jOivt+S7peacrOiNieeov+eahOaPkOS6pOWSjOagoemqjOWAvOivhuWIq+WuieijheWMheOAggoKIyMjIOWunuacuumqjOaUtgoKMS4g5Zyo5bmy5YeA55qEIFdpbmRvd3MgMTEgeDY0IOeUqOaIt+i0puaIt+WuieijheOAguWFiOWcqOacqumFjee9riBXU0wy44CB57O757ufIFB5dGhvbiDmiJYgQ29uZGEg55qE5oOF5Ya15LiL5ZCv5YqoIFBoae+8jOWPkemAgeS4gOadoea2iOaBr++8jOWBnOatouS4gOasoei/kOihjO+8jOmAgOWHuuW5tumHjeaWsOaJk+W8gOWOhuWPsuS8muivneOAggoyLiDlnKjorr7nva7kuK3mnoTlu7ogYHBoaS1qdXB5dGVyYCDlkozljp/nlJ8gYHBoaS1weXRob25g44CC55So6Lev5b6E5ZCr5Lit5paH5ZKM56m65qC855qE6aG555uu5omT5byAIE5vdGVib29r77yM5a+85YWlIGBudW1weWDjgIFgcGFuZGFzYOOAgWBzY2FucHlgIOW5tuaJp+ihjOS4gOS4quWNleWFg+agvOOAgumHjeWQr+WQjuehruiupOeOr+Wig+WPr+WkjeeUqOOAggozLiDliJ3lp4vljJYgV1NMMiBMaW51eCDlj5HooYzniYjvvIzlho3mnoTlu7ogKipwaGktcHl0aG9uIChXU0wyKSoq44CC6YCJ5oup5a+55bqU5YaF5qC45bm25a+85YWlIGBweXNhbWAg5ZKMIGBoYXJtb255cHlg44CC6L+Q6KGMIFIgTm90ZWJvb2sg5ZKM5pyA5bCPIE5leHRmbG93IENvbmRhIOS9nOS4mu+8jOajgOafpeWPlua2iOWQjuS7u+WKoeaYr+WQpuWBnOatouOAggoK5Y+N6aaI6K+36ZmEIFdpbmRvd3Mg54mI5pys44CB5piv5ZCm5ZCv55So5LqGIFdTTDLjgIHlpLHotKXmraXpqqTlkozplJnor6/kv6Hmga/jgIIKCiMjIyDmnKzlgJnpgInnmoQgQ0kg57uT5p6cCgotIFtXaW5kb3dzIE5TSVMg5omT5YyF5LiO5a6J6KOF5YaS54OfXShodHRwczovL2dpdGh1Yi5jb20vZHhzYmlvY2MvcGhpL2FjdGlvbnMvcnVucy80MjAwMDQ1ODgzNCnlt7LpgJrov4fvvIzljIXmi6zlronoo4XlkI7nmoTlt6XkvZzov5vnqIvjgIHlhoXmoLjmj6HmiYvlkozlkb3lkI3nrqHpgZPjgIIKLSBb5Y6f55SfIE5vdGVib29rIOmqjOaUtl0oaHR0cHM6Ly9naXRodWIuY29tL2R4c2Jpb2NjL3BoaS9hY3Rpb25zL3J1bnMvNDIwMDA0NTY3OTgp5LuN5LiN56iz5a6a44CC5LiA5qyh5p6E5bu65bm25aSN55So5LqG5Lik5aWX546v5aKD77yM6ZqP5ZCO5Yib5bu6IEp1cHl0ZXIg5Lya6K+d5pe25oqlIGBmZXRjaCBmYWlsZWRg44CC5Y+m5LiA5qyh6aaW5bu65pe2IFdpbmRvd3Mg5r+A5rS75o6i6ZKI6LaF5pe244CC6K+35Zyo5a6e5py65YiG5Yir6K6w5b2V546v5aKD5p6E5bu66Zi25q615ZKMIE5vdGVib29rIOS8muivneWQr+WKqOmYtuauteeahOihqOeOsOOAggotIOa1i+ivleWMheacqumFjee9riBXaW5kb3dzIOS7o+eggeetvuWQjeOAguivt+WcqOi/kOihjOWJjeaguOWvuemaj+mZhOeahCBTSEEtMjU244CCCgrmnoTlu7rmj5DkuqQgYGIxZTdlZWI1OGQ0ZjA4ODc4OTY0M2UxN2Y5NGFiNTRjYzI3OWRmZDFg44CCCg==' | base64 -d > notes.md
-          gh release create windows-x64-preview-20261105 phi-0.1.1-setup.exe SHA256SUMS.txt \
-            --draft --prerelease --target 'b1e7eeb58d4f088789643e17f94ab54cc279dfd1' \
-            --title 'Phi Windows x64 内测（0.1.1 构建）' --notes-file notes.md
+          printf '%s' 'IyMgUGhpIFdpbmRvd3MgeDY0IOWGhea1i+esrCAyIOeJiAoK5a6J6KOF5YyF5Li6IGBQaGktV2luZG93cy14NjQtcHJldmlldy0yLmV4ZWDvvIzpmo/pmYQgYFNIQTI1NlNVTVMudHh0YOOAguW6lOeUqOWGheeJiOacrOS7jeaYvuekuiBgMC4xLjFg77yM6K+355So5a6J6KOF5paH5Lu25ZCN5ZKM5qCh6aqM5YC85Yy65YiG56ysIDEg54mI5LiO56ysIDIg54mI44CCCgotIOS/ruWkjSBXaW5kb3dzIOS4iuWklumDqCBCdW4g6K+75Y+WIEFTQVIg6Jma5ouf6Lev5b6E55qE6Zeu6aKY77yM5b2x5ZON5pys5Zyw6IGK5aSp44CB5pyN5Yqh5ZWG44CB5omY566h546v5aKD5YiX6KGo5ZKM572R6aG15pCc57Si6K6+572u44CCCi0g5a6J6KOF5ZCR5a+85o+Q5L6b55uu5b2V6YCJ5oup77yM6buY6K6k5a6J6KOF57uZ5b2T5YmN55So5oi344CCCi0g5Y6f55SfIFB5dGhvbi9KdXB5dGVyIOS4juWPr+mAiSBXU0wyIOeOr+Wig+WIhuW8gOOAgue8uuWwkSBXU0wyIOaXtu+8jOWcqOaOkumYn+WJjeaYvuekuuWJjee9ruadoeS7tuOAguWOn+eUn+eOr+Wig+aUuei/m+S6hua/gOa0u+i2heaXtuOAgeWPlua2iOa4heeQhuWSjCBKdXB5dGVyIOWwsee7quWcsOWdgOivhuWIq+OAggotIE1vbCog5YiG5a2Q5p+l55yL5Zmo5pS55Li66aaW5qyh5L2/55So5pe25Yqg6L2944CCCgojIyMg5a6e5py66aG65bqPCgoxLiDpgIDlh7rml6fniYggUGhp77yM6L+Q6KGM5pys5a6J6KOF5YyF44CC56Gu6K6k5ZCR5a+85Y+v6YCJ5oup55uu5b2V77yM5a6J6KOF5ZCO5omT5byA5pyN5Yqh5ZWG44CB572R6aG15pCc57Si5ZKM546v5aKD6K6+572u77yM5YaN55So5a6e6ZmF6YWN572u55qE5qih5Z6L5Y+R6YCB5raI5oGv44CCCjIuIOmAieaLqeWOn+eUnyBgcGhpLXB5dGhvbmAg5ZKMIGBwaGktanVweXRlcmDvvIzlnKjlkKvkuK3mloflkoznqbrmoLznmoTnm67lvZXov5DooYwgTm90ZWJvb2vvvIzph43lkK/lkI7mo4Dmn6Xnjq/looPlpI3nlKjjgIIKMy4g6ZyA6KaBIGBweXNhbWDjgIFSIOaIliBOZXh0ZmxvdyDml7blho3lkK/nlKggV1NMMuOAgua1i+ivlee7k+adn+WQjuiusOW9leW6lOeUqOi/m+eoi+eahOepuumXsuWGheWtmOWSjOWFt+S9k+Wksei0peatpemqpOOAggoK56ysIDIg54mI5Lmf5YiG56a75LqGIFdpbmRvd3Mg5YaF5qC455qE5Y2P6K6u5bin5ZKM5pmu6YCa6L+b56iL6L6T5Ye677yM5L+u5aSN5a6e6ZmF6IGK5aSp6aqM5pS25Lit55qEIGBGcmFtZSBpcyBub3QgdmFsaWQgSlNPTmDjgILpppbpobXlkK/liqjkvp3otZbnmoQgSmF2YVNjcmlwdCDku47nuqYgMTYuNjUgTUIg6ZmN5YiwIDkuNjggTULjgIIKCltXaW5kb3dzIOWOn+eUnyBOb3RlYm9vayDpqozmlLZdKGh0dHBzOi8vZ2l0aHViLmNvbS9keHNiaW9jYy9waGkvYWN0aW9ucy9ydW5zLzQyMDI3ODkyMTMzKQoKW+mAmui/h+eahCBXaW5kb3dzIE5TSVMg5a6J6KOF54mI6aqM5pS2XShodHRwczovL2dpdGh1Yi5jb20vZHhzYmlvY2MvcGhpL2FjdGlvbnMvcnVucy80MjA0MTU0MTUxMynjgILmnoTlu7rmj5DkuqQgYDg3MTM3YTE5M2RkNTcxNGU3OWJlODQ2NTUwYjAzYTRlOGE5ZTNjMzFg44CCCg==' | base64 -d > notes.md
+          gh release create windows-x64-preview-20261105-r2 Phi-Windows-x64-preview-2.exe SHA256SUMS.txt \
+            --draft --prerelease --target '87137a193dd5714e79be846550b03a4e8a9e3c31' \
+            --title 'Phi Windows x64 内测第 2 版' --notes-file notes.md

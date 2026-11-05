@@ -21,7 +21,8 @@ import {
   formatEnvironmentSize,
   type ManagedEnvironmentHostResources,
   managedEnvironmentSourceLabel,
-  managedEnvironmentStateLabel
+  managedEnvironmentStateLabel,
+  managedEnvironmentWslBlocker
 } from '../lib/environmentPanel'
 import { EnvironmentBrandIcon, EnvironmentCapabilityChips } from './EnvironmentBrandIcon'
 import { EnvironmentPackageList } from './EnvironmentPackageList'
@@ -58,8 +59,11 @@ export function ManagedEnvironmentDetail({
   onSaveHostPath
 }: ManagedEnvironmentDetailProps): React.JSX.Element {
   useUiLanguage()
-  const canBuild = environment.source !== 'orphaned' && environment.state === 'absent'
+  const wslBlocker = managedEnvironmentWslBlocker(hostResources)
+  const canBuild =
+    !wslBlocker && environment.source !== 'orphaned' && environment.state === 'absent'
   const canRebuild =
+    !wslBlocker &&
     environment.source !== 'orphaned' &&
     (environment.state === 'ready' ||
       environment.state === 'failed' ||
@@ -143,7 +147,9 @@ export function ManagedEnvironmentDetail({
         <Alert severity="error">{error ?? environment.error}</Alert>
       ) : null}
       {environment.runtime === 'wsl2' && environment.state !== 'unavailable' ? (
-        <Alert severity="info">{environmentUi.buildsAndRunsInWsl2}</Alert>
+        <Alert severity={wslBlocker ? 'warning' : 'info'}>
+          {wslBlocker ?? environmentUi.buildsAndRunsInWsl2}
+        </Alert>
       ) : null}
 
       {hasHostResources ? (

@@ -124,6 +124,11 @@ export const environmentUi = defineCopy(
       'Phi has no official lock for this platform yet, so this environment cannot be built here.',
     buildsAndRunsInWsl2:
       'This environment uses Linux packages, so Phi builds and runs it in WSL2. Install WSL2 once if needed, then click Build.',
+    installWsl2:
+      'This environment requires WSL2. Run wsl --install in administrator PowerShell, restart Windows, open the Linux distribution once, then detect again.',
+    initializeWsl2:
+      'This environment requires a working WSL2 distribution. Check the WSL2 details, open the distribution once, then detect again.',
+    nativeWindowsPython: 'Default Notebook kernel. Builds and runs directly on Windows.',
     wsl2: 'WSL2',
     cleanUpLegacyEnvironments: 'Clean up legacy environments',
     found: 'Found',
@@ -257,6 +262,11 @@ export const environmentUi = defineCopy(
     noOfficialLockForThisPlatform: '此环境还没有当前平台的官方锁文件，因此无法在此构建。',
     buildsAndRunsInWsl2:
       '此环境依赖 Linux 软件包，因此 Phi 通过 WSL2 一次性构建并调用。若尚未安装 WSL2，请先安装，然后点击构建。',
+    installWsl2:
+      '此环境需要 WSL2。请在管理员 PowerShell 中运行 wsl --install，重启 Windows，首次打开 Linux 发行版完成初始化，再重新检测。',
+    initializeWsl2:
+      '此环境需要可用的 WSL2 发行版。请查看 WSL2 详情，打开对应发行版完成初始化，再重新检测。',
+    nativeWindowsPython: 'Notebook 默认 Python 内核，可直接在 Windows 上构建和运行。',
     wsl2: 'WSL2',
     cleanUpLegacyEnvironments: '清理遗留环境',
     found: '发现',

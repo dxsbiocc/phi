@@ -10,10 +10,20 @@ import { errorCodeOf } from '../src/shared/errorCodes'
 import {
   OmpBridge,
   OmpBridgeAbortError,
-  OmpBridgeTimeoutError
+  OmpBridgeTimeoutError,
+  pickOmpWorkerScript
 } from '../src/main/agent/engine/omp-bridge'
 
 const FAKE_WORKER = join(process.cwd(), 'tests/helpers/fakeOmpWorker.mjs')
+
+test('the Windows OMP worker resolves to the real file outside app.asar', () => {
+  const packed = String.raw`C:\Users\y\AppData\Local\Programs\phi\resources\app.asar\out\main\agent\engine\in-process\main.ts`
+  const unpacked = packed.replace('app.asar', 'app.asar.unpacked')
+  const electronExists = (path: string): boolean => path === packed || path === unpacked
+
+  assert.equal(pickOmpWorkerScript([packed], electronExists), unpacked)
+  assert.throws(() => pickOmpWorkerScript([packed], (path) => path === packed), /missing/i)
+})
 
 function newBridge(): OmpBridge {
   return new OmpBridge((_workerPath, agentDir) =>

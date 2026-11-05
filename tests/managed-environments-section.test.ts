@@ -65,14 +65,14 @@ const snapshot: EnvironmentSnapshot = {
   ]
 }
 
-function render(environments: ManagedEnvironmentEntry[]): string {
+function render(environments: ManagedEnvironmentEntry[], hostSnapshot = snapshot): string {
   return renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
       createElement(ManagedEnvironmentsSection, {
         environments,
-        snapshot,
+        snapshot: hostSnapshot,
         loading: false,
         error: null,
         busyEnvId: null,
@@ -86,6 +86,30 @@ function render(environments: ManagedEnvironmentEntry[]): string {
     )
   )
 }
+
+test('only the native Python card offers a build when WSL2 is missing', () => {
+  const native: ManagedEnvironmentEntry = {
+    ref: 'phi:python@1',
+    envId: 'phi-python-0123456789ab',
+    state: 'absent',
+    source: 'official',
+    label: 'phi-python',
+    referrers: [],
+    consumers: []
+  }
+  const wsl: ManagedEnvironmentEntry = {
+    ...native,
+    ref: 'phi:python-wsl@1',
+    envId: 'phi-python-bbbbbbbbbbbb',
+    runtime: 'wsl2'
+  }
+  const markup = render([native, wsl], {
+    ...snapshot,
+    hostDependencies: [{ id: 'wsl', label: 'WSL2', status: 'missing' }]
+  })
+  assert.match(markup, /wsl --install/)
+  assert.equal(markup.match(/查看估算并构建/g)?.length, 1)
+})
 
 test('managed environments render as openable branded cards', () => {
   const markup = render([

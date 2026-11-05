@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { CodedError } from '../../../shared/errorCodes'
 import { writeAppLog } from '../app-logger'
 import { getPhiAgentDir } from '../runtime-paths'
-import { sourceCheckoutPath } from '../../source-checkout-path'
+import { findExternalWorkerScript, sourceCheckoutPath } from '../../source-checkout-path'
 import { resolveBunExecutable, workerPathWithBun } from './bun-executable'
 import { ConfiguredStdioProbeError } from './mcp/configured-stdio-probe-error'
 import { resolveWorkerProxyEnv } from './worker-proxy-env'
@@ -204,10 +204,6 @@ function boundedContextId(value: unknown): string | undefined {
     : undefined
 }
 
-function asarUnpackedPath(path: string): string {
-  return path.includes('.asar/') ? path.replace('.asar/', '.asar.unpacked/') : path
-}
-
 function resolveWorkerPath(): string {
   const explicit = process.env.PHI_OMP_WORKER_PATH
   if (explicit) return explicit
@@ -220,15 +216,16 @@ function resolveWorkerPath(): string {
     join(bundleDir, 'agent', 'engine', 'in-process', 'main.ts'),
     join(bundleDir, 'engine', 'in-process', 'main.ts')
   ]
-  for (const candidate of candidates) {
-    // Unpacked first: Electron's fs reports in-asar paths as existing, but the
-    // worker runs under bun, which cannot read inside app.asar.
-    const unpacked = asarUnpackedPath(candidate)
-    if (existsSync(unpacked)) return unpacked
-    if (existsSync(candidate)) return candidate
-  }
+  return pickOmpWorkerScript(candidates)
+}
 
-  return candidates[0]
+export function pickOmpWorkerScript(
+  candidates: readonly string[],
+  exists: (path: string) => boolean = existsSync
+): string {
+  const worker = findExternalWorkerScript(candidates, exists)
+  if (!worker) throw new Error('OMP worker script is missing from the application files')
+  return worker
 }
 
 function hasExited(child: ChildProcessWithoutNullStreams): boolean {

@@ -2,6 +2,7 @@ import { copyFileSync, cpSync, mkdirSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+import type { Plugin } from 'vite'
 import { copyOmpWorkerClosure } from './scripts/build/omp-worker-closure.mjs'
 
 /**
@@ -38,6 +39,25 @@ function copyTerminalWorkersPlugin(): { name: string; closeBundle(): void } {
       const sharedTarget = resolve('out/shared/terminalTypes.ts')
       mkdirSync(dirname(sharedTarget), { recursive: true })
       copyFileSync(resolve('src/shared/terminalTypes.ts'), sharedTarget)
+    }
+  }
+}
+
+const keepMolstarDeferred: Plugin = {
+  name: 'keep-molstar-deferred',
+  generateBundle(_, bundle) {
+    const startupFiles = new Set(
+      Object.values(bundle).flatMap((file) =>
+        file.type === 'chunk' && file.isEntry ? [file.fileName] : []
+      )
+    )
+    for (const name of startupFiles) {
+      const chunk = bundle[name]
+      if (chunk?.type !== 'chunk') continue
+      if (chunk.moduleIds.some((id) => id.includes('node_modules/molstar/'))) {
+        this.error(`The renderer loads the Mol* viewer during startup via ${name}`)
+      }
+      for (const dependency of chunk.imports) startupFiles.add(dependency)
     }
   }
 }
@@ -82,10 +102,13 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
-    plugins: [react()],
+    plugins: [react(), keepMolstarDeferred],
     build: {
       rollupOptions: {
         output: {
+          // Keep shared dependencies such as React out of optional viewer chunks.
+          // Otherwise the home screen imports the Mol* viewer just to load React.
+          onlyExplicitManualChunks: true,
           manualChunks(id): string | undefined {
             if (id.includes('node_modules/molstar/')) {
               return 'molstar'

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { posix } from 'node:path'
+import { posix, win32 } from 'node:path'
 import type { ProjectLocation } from '../../../shared/projectLocation'
 import { PINNED_OMP_VERSION } from '../engine/omp-version'
 
@@ -106,18 +106,34 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function canonicalPath(value: unknown, allowRoot: boolean): value is string {
+function safePathText(value: unknown): value is string {
   return (
     typeof value === 'string' &&
     value.length <= 4096 &&
-    posix.isAbsolute(value) &&
-    (allowRoot || value !== '/') &&
-    (value === '/' || !value.endsWith('/')) &&
-    posix.normalize(value) === value &&
     !Array.from(value).some(
       (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
     )
   )
+}
+
+function canonicalPath(value: unknown, allowRoot: boolean): value is string {
+  return (
+    safePathText(value) &&
+    posix.isAbsolute(value) &&
+    (allowRoot || value !== '/') &&
+    (value === '/' || !value.endsWith('/')) &&
+    posix.normalize(value) === value
+  )
+}
+
+export function isCanonicalWindowsPath(value: unknown, allowRoot = false): value is string {
+  if (!safePathText(value) || win32.normalize(value) !== value) return false
+
+  const { root } = win32.parse(value)
+  const drive = /^[a-z]:\\$/iu.test(root)
+  const share = /^\\\\[^\\/:*?"<>|]+\\[^\\/:*?"<>|]+\\$/u.test(root) && !root.startsWith('\\\\.\\')
+  const tail = value.slice(root.length)
+  return (drive || share) && (tail ? !tail.endsWith('\\') && !/[/:*?"<>|]/u.test(tail) : allowRoot)
 }
 
 export function remoteOmpDurableSessionKey(scope: RemoteOmpScope, sessionId: string): string {
@@ -220,7 +236,7 @@ function parseLocalKernelHost(
 ): KernelLocalRuntimeRef {
   if (
     Object.keys(host).sort().join(',') !== 'agentDir,kind' ||
-    !canonicalPath(host.agentDir, false)
+    !(canonicalPath(host.agentDir, false) || isCanonicalWindowsPath(host.agentDir))
   ) {
     return invalidKernelReference()
   }
