@@ -126,14 +126,14 @@ function canonicalPath(value: unknown, allowRoot: boolean): value is string {
   )
 }
 
-function canonicalLocalAgentDir(value: unknown): value is string {
-  if (canonicalPath(value, false)) return true
-  if (!safePathText(value) || value.endsWith('\\') || win32.normalize(value) !== value) return false
+export function isCanonicalWindowsPath(value: unknown, allowRoot = false): value is string {
+  if (!safePathText(value) || win32.normalize(value) !== value) return false
 
   const { root } = win32.parse(value)
   const drive = /^[a-z]:\\$/iu.test(root)
   const share = /^\\\\[^\\/:*?"<>|]+\\[^\\/:*?"<>|]+\\$/u.test(root) && !root.startsWith('\\\\.\\')
-  return (drive || share) && !/[/:*?"<>|]/u.test(value.slice(root.length))
+  const tail = value.slice(root.length)
+  return (drive || share) && (tail ? !tail.endsWith('\\') && !/[/:*?"<>|]/u.test(tail) : allowRoot)
 }
 
 export function remoteOmpDurableSessionKey(scope: RemoteOmpScope, sessionId: string): string {
@@ -236,7 +236,7 @@ function parseLocalKernelHost(
 ): KernelLocalRuntimeRef {
   if (
     Object.keys(host).sort().join(',') !== 'agentDir,kind' ||
-    !canonicalLocalAgentDir(host.agentDir)
+    !(canonicalPath(host.agentDir, false) || isCanonicalWindowsPath(host.agentDir))
   ) {
     return invalidKernelReference()
   }

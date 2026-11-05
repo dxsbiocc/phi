@@ -21,6 +21,7 @@ export interface AppHandle {
 interface ExecutableLaunchOptions {
   env: Record<string, string>
   userData: string
+  cwd?: string
   args?: string[]
 }
 
@@ -117,6 +118,7 @@ async function launchElectron(
   const app = await _electron.launch({
     executablePath: executable,
     env: options.env,
+    cwd: options.cwd,
     args: [`--user-data-dir=${options.userData}`, ...(options.args ?? [])],
     timeout: 30_000
   })
@@ -215,6 +217,7 @@ async function launchCdp(executable: string, options: ExecutableLaunchOptions): 
     ],
     {
       env: options.env,
+      cwd: options.cwd,
       detached: process.platform !== 'win32',
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
