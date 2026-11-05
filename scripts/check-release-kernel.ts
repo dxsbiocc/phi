@@ -25,7 +25,8 @@ const exists = (path: string): Promise<boolean> =>
 
 const REQUIRED_TARGETS: Partial<Record<NodeJS.Platform, readonly LocalKernelPackageTarget[]>> = {
   darwin: ['darwin-arm64', 'linux-x64'],
-  linux: ['linux-x64']
+  linux: ['linux-x64'],
+  win32: ['win32-x64']
 }
 
 export async function checkReleaseKernels(options: {

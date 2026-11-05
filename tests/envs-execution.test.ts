@@ -258,6 +258,38 @@ test('environmentVariables applies sources in order and builds an isolated PATH'
   })
 })
 
+test('environmentVariables on Windows uses a semicolon PATH and NUL for R user files', async () => {
+  await withTemp('win-vars', (root) => {
+    const envId = 'jupyter-0123456789ab'
+    const prefix = join(root, 'envs', envId)
+    const scripts = join(prefix, 'Scripts')
+    const env = handle(
+      root,
+      metadata(envId, {
+        activation: {
+          set: { CONDA_PREFIX: prefix },
+          pathPrepend: [prefix, scripts]
+        }
+      })
+    )
+    const variables = environmentVariables(env, {
+      baseEnv: {
+        USERPROFILE: 'C:\\Users\\phi',
+        SystemRoot: 'C:\\Windows',
+        LANG: 'en_US.UTF-8'
+      },
+      platform: 'win32'
+    })
+    assert.equal(variables.USERPROFILE, 'C:\\Users\\phi')
+    assert.equal(variables.R_PROFILE_USER, 'NUL')
+    assert.equal(variables.R_ENVIRON_USER, 'NUL')
+    assert.equal(
+      variables.PATH,
+      [prefix, scripts, join('C:\\Windows', 'System32'), 'C:\\Windows'].join(';')
+    )
+  })
+})
+
 test('removeEnvironmentCache deletes the environment cache and ignores a missing one', async () => {
   await withTemp('cache', (root) => {
     const env = handle(root, metadata(ENV_ID))
@@ -287,6 +319,13 @@ test('resolveCommand searches PATH, skips non-executables, and returns undefined
     assert.equal(resolveCommand('missing', `${first}:${second}`), undefined)
     assert.equal(resolveCommand(skipped, second), undefined)
     assert.equal(resolveCommand(found, first), found)
+    const windowsTool = join(second, 'jupyter.exe')
+    writeFileSync(windowsTool, 'MZ', { mode: 0o755 })
+    chmodSync(windowsTool, 0o755)
+    assert.equal(
+      resolveCommand('jupyter', `${first};${second}`, 'win32')?.toLowerCase(),
+      windowsTool.toLowerCase()
+    )
   })
 })
 

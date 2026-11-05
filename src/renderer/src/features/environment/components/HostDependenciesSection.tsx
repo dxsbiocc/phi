@@ -2,7 +2,7 @@ import { environmentUi } from '../lib/environmentUi'
 import { useUiLanguage } from '../../../lib/i18n'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
-import { TbContainer } from 'react-icons/tb'
+import { TbContainer, TbTerminal2 } from 'react-icons/tb'
 
 import type {
   EnvironmentHostDependency,
@@ -23,6 +23,7 @@ function dependencyStatus(dependency: EnvironmentHostDependency): {
 
 function dependencyIcon(id: EnvironmentHostDependencyId): React.JSX.Element {
   if (id === 'docker') return <PhiIcons.file.docker size={22} />
+  if (id === 'wsl') return <TbTerminal2 aria-hidden size={22} />
   return <TbContainer aria-hidden size={22} />
 }
 
@@ -56,7 +57,7 @@ export function HostDependenciesList({
             key={dependency.id}
             id={dependency.id}
             icon={dependencyIcon(dependency.id)}
-            title={dependency.label}
+            title={dependency.id === 'wsl' ? environmentUi.wsl2 : dependency.label}
             summary={summary || environmentUi.noUsablePathDetected}
             status={status}
           />

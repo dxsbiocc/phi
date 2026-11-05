@@ -47,6 +47,9 @@ const STATE_LABELS: Record<ManagedEnvironmentState, string> = {
   },
   get drifted() {
     return environmentUi.repairNeeded
+  },
+  get unavailable() {
+    return environmentUi.notAvailableOnThisPlatform
   }
 }
 
@@ -117,6 +120,7 @@ export function managedEnvironmentHostResources(
   snapshot: EnvironmentSnapshot | null
 ): ManagedEnvironmentHostResources {
   const resources = environmentHostResources(snapshot)
+  const wsl = resources.dependencies.filter((dependency) => dependency.id === 'wsl')
   if (environment.ref.startsWith('phi:jupyter@')) {
     return {
       dependencies: [],
@@ -125,11 +129,17 @@ export function managedEnvironmentHostResources(
   }
   if (environment.ref.startsWith('phi:nextflow@')) {
     return {
-      dependencies: resources.dependencies.filter(
-        (dependency) => dependency.id === 'docker' || dependency.id === 'singularity'
-      ),
+      dependencies: [
+        ...(environment.runtime === 'wsl2' ? wsl : []),
+        ...resources.dependencies.filter(
+          (dependency) => dependency.id === 'docker' || dependency.id === 'singularity'
+        )
+      ],
       tools: resources.tools.filter((tool) => tool.id === 'nextflow')
     }
+  }
+  if (environment.runtime === 'wsl2') {
+    return { dependencies: wsl, tools: [] }
   }
   return { dependencies: [], tools: [] }
 }

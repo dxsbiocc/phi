@@ -82,3 +82,15 @@ test('electron-builder ships local and remote kernel packages in the mac app', (
     mappings.includes('.phi-build/kernel/${version}/linux-x64 -> kernel/${version}/linux-x64')
   )
 })
+
+test('electron-builder ships a Windows kernel package in the Windows app', () => {
+  const config = parse(readFileSync('electron-builder.yml', 'utf8'))
+  const mappings = config.win.extraResources.map(
+    (entry: { from?: string; to?: string }) => `${entry.from} -> ${entry.to}`
+  )
+  assert.ok(
+    mappings.includes(
+      '.phi-build/kernel/${version}/win32-${arch} -> kernel/${version}/win32-${arch}'
+    )
+  )
+})

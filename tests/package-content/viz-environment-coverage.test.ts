@@ -4,7 +4,7 @@ import { join, relative } from 'node:path'
 import test from 'node:test'
 
 import {
-  PHI_PLATFORMS,
+  PHI_LOCK_PLATFORMS,
   parseEnvironmentSpec,
   parseExplicitLock,
   parseLockPackage,
@@ -83,7 +83,7 @@ function declaredRNamespaces(spec: EnvironmentSpec): Set<string> {
   return names
 }
 
-function lockedRNamespaces(platform: (typeof PHI_PLATFORMS)[number]): Set<string> {
+function lockedRNamespaces(platform: (typeof PHI_LOCK_PLATFORMS)[number]): Set<string> {
   const lockPath = join(PHI_R_DIR, 'locks', `${platform}.txt`)
   const parsed = parseExplicitLock(readFileSync(lockPath, 'utf8'))
   if (!parsed.ok) assert.fail(`${lockPath}: ${parsed.errors.join('\n')}`)
@@ -183,7 +183,7 @@ test('every visualization R template import is provided by phi-r declarations or
   const spec = parsePhiR()
   const declared = declaredRNamespaces(spec)
   const lockedByPlatform = new Map(
-    PHI_PLATFORMS.map((platform) => [platform, lockedRNamespaces(platform)] as const)
+    PHI_LOCK_PLATFORMS.map((platform) => [platform, lockedRNamespaces(platform)] as const)
   )
   const files = rFiles(VIZ_R_DIR)
   assert.ok(files.length > 0, `no R templates found under ${VIZ_R_DIR}`)
@@ -194,7 +194,7 @@ test('every visualization R template import is provided by phi-r declarations or
     for (const imported of importedRNamespaces(readFileSync(file, 'utf8'))) {
       scannedImports += 1
       if (declared.has(imported)) continue
-      const missingFromLocks = PHI_PLATFORMS.filter(
+      const missingFromLocks = PHI_LOCK_PLATFORMS.filter(
         (platform) => !lockedByPlatform.get(platform)?.has(imported)
       )
       if (missingFromLocks.length === 0) continue

@@ -64,6 +64,26 @@ test('detectEnvironmentTools marks tools ready from injected which/runner', () =
   assert.equal(byId.singularity?.status, 'missing')
 })
 
+test('Windows host probing reports WSL2 next to container runtimes', () => {
+  const dependencies = detectHostDependencies({
+    platform: 'win32',
+    which: () => undefined,
+    runner: () => '',
+    probeWsl: () => ({
+      status: 'ready',
+      executable: 'C:\\Windows\\System32\\wsl.exe',
+      distro: 'Ubuntu'
+    })
+  })
+  assert.equal(dependencies[0]?.id, 'wsl')
+  assert.equal(dependencies[0]?.status, 'ready')
+  assert.equal(dependencies[0]?.detail, 'Ubuntu')
+  assert.deepEqual(
+    dependencies.map((dependency) => dependency.id),
+    ['wsl', 'docker', 'singularity']
+  )
+})
+
 test('host dependency probing requires a reachable Docker daemon and reports versions', () => {
   const dependencies = detectHostDependencies({
     which: (name) => {

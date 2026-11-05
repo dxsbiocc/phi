@@ -13,6 +13,10 @@ import type {
 } from './engine/kernel-session-factory'
 import type { PhiSessionCreateParams } from './engine/types'
 import { launchLocalKernel } from './engine/kernel-client'
+import {
+  localKernelBuildTarget,
+  type LocalKernelPackageTarget
+} from './engine/kernel-client/local-package'
 import { launchRemoteKernel } from './engine/kernel-client/remote'
 import {
   createDesktopModelAccessOwner,
@@ -34,21 +38,58 @@ import type {
   AppRemoteSessionRoutingOptions
 } from './remote-session-routing'
 
-function localKernelTarget(): 'darwin-arm64' | 'linux-x64' {
-  if (process.platform === 'darwin' && process.arch === 'arm64') return 'darwin-arm64'
-  if (process.platform === 'linux' && process.arch === 'x64') return 'linux-x64'
-  throw new Error(
-    `The kernel engine has no local build target for ${process.platform}/${process.arch}.`
-  )
-}
-
 function kernelBuildDirectory(
   paths: ReturnType<AppRemoteSessionRoutingOptions['appPaths']>,
-  target: 'darwin-arm64' | 'linux-x64'
+  target: LocalKernelPackageTarget
 ): string {
   return paths.isPackaged
     ? join(paths.resourcesPath, 'kernel', paths.version ?? '0.0.0', target)
     : join(paths.appPath, '.phi-build', 'kernel', paths.version ?? '0.0.0', target)
+}
+
+export type LocalKernelLaunchPlan =
+  | {
+      mode: 'source'
+      cwd: string
+      entry: string
+    }
+  | {
+      mode: 'package'
+      cwd: string
+      package: {
+        directory: string
+        target: LocalKernelPackageTarget
+        phiVersion: string
+      }
+    }
+
+/**
+ * Unpackaged desktop chat runs the TypeScript kernel under bun. A compile target is
+ * only required for a packaged app, where the kernel is the extraResources binary.
+ */
+export function resolveLocalKernelLaunch(
+  paths: ReturnType<AppRemoteSessionRoutingOptions['appPaths']>,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch
+): LocalKernelLaunchPlan {
+  if (!paths.isPackaged) {
+    return {
+      mode: 'source',
+      cwd: paths.appPath,
+      entry: join(paths.appPath, 'src', 'kernel', 'main.ts')
+    }
+  }
+  const target = localKernelBuildTarget(platform, arch)
+  const directory = kernelBuildDirectory(paths, target)
+  return {
+    mode: 'package',
+    cwd: directory,
+    package: {
+      directory,
+      target,
+      phiVersion: paths.version ?? '0.0.0'
+    }
+  }
 }
 
 // Kernel stderr carries the real cause behind INTERNAL protocol errors.
@@ -394,8 +435,7 @@ function createAppLocalKernelLauncher(
     signal.throwIfAborted()
     modelAccess.owner ??= createDesktopModelAccessOwner(params.agentDir, getPhiEngineBridge())
     const paths = options.appPaths()
-    const target = localKernelTarget()
-    const buildDirectory = kernelBuildDirectory(paths, target)
+    const plan = resolveLocalKernelLaunch(paths)
     const adoptRoots = [
       params.agentDir,
       ...(params.sessionManager.path && isAbsolute(params.sessionManager.path)
@@ -405,7 +445,7 @@ function createAppLocalKernelLauncher(
     const common = {
       agentDir: params.agentDir,
       home: homedir(),
-      cwd: kernelLaunchCwd(paths, buildDirectory),
+      cwd: plan.cwd,
       onDiagnostic: (text: string) => logKernelDiagnostic('local', text),
       env: {
         ...process.env,
@@ -418,20 +458,17 @@ function createAppLocalKernelLauncher(
         hostCapabilities: Array.from(context.hostCapabilities)
       }
     }
-    const launched = paths.isPackaged
-      ? await launchLocalKernel({
-          ...common,
-          package: {
-            directory: buildDirectory,
-            target,
-            phiVersion: paths.version ?? '0.0.0'
-          }
-        })
-      : await launchLocalKernel({
-          ...common,
-          sourceMode: true,
-          entry: join(paths.appPath, 'src', 'kernel', 'main.ts')
-        })
+    const launched =
+      plan.mode === 'package'
+        ? await launchLocalKernel({
+            ...common,
+            package: plan.package
+          })
+        : await launchLocalKernel({
+            ...common,
+            sourceMode: true,
+            entry: plan.entry
+          })
     const close = async (): Promise<void> => {
       active.delete(close)
       await launched.close()

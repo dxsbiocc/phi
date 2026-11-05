@@ -55,8 +55,14 @@ test('asar check reports missing kernel and arch-specific Bun resource mappings'
     assert.deepEqual(missingExtraResourceMappings(root), [
       'mac.extraResources: .phi-build/kernel/${version}/darwin-${arch} -> kernel/${version}/darwin-${arch}',
       'mac.extraResources: .phi-build/kernel/${version}/linux-x64 -> kernel/${version}/linux-x64',
+      'mac.extraResources: resources/runtime/micromamba/darwin-${arch} -> runtime/micromamba/darwin-${arch}',
       'mac.extraResources: resources/runtime/bun/darwin-${arch} -> runtime/bun/darwin-${arch}',
-      'linux.extraResources: resources/runtime/bun/linux-${arch} -> runtime/bun/linux-${arch}'
+      'linux.extraResources: resources/runtime/micromamba/linux-${arch} -> runtime/micromamba/linux-${arch}',
+      'linux.extraResources: resources/runtime/bun/linux-${arch} -> runtime/bun/linux-${arch}',
+      'win.extraResources: resources/runtime/micromamba/win32-${arch} -> runtime/micromamba/win32-${arch}',
+      'win.extraResources: resources/runtime/micromamba/linux-x64 -> runtime/micromamba/linux-x64',
+      'win.extraResources: .phi-build/kernel/${version}/win32-${arch} -> kernel/${version}/win32-${arch}',
+      'win.extraResources: resources/runtime/bun/win32-${arch} -> runtime/bun/win32-${arch}'
     ])
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -80,6 +86,28 @@ test('electron-builder packages Bun as arch-specific external resources', () => 
         entry.to === 'runtime/bun/linux-${arch}'
     )
   )
+  assert.ok(
+    config.win.extraResources.some(
+      (entry: { from?: string; to?: string }) =>
+        entry.from === 'resources/runtime/bun/win32-${arch}' &&
+        entry.to === 'runtime/bun/win32-${arch}'
+    )
+  )
+  assert.ok(
+    config.win.extraResources.some(
+      (entry: { from?: string; to?: string }) =>
+        entry.from === 'resources/runtime/micromamba/win32-${arch}' &&
+        entry.to === 'runtime/micromamba/win32-${arch}'
+    )
+  )
+  assert.ok(
+    config.win.extraResources.some(
+      (entry: { from?: string; to?: string }) =>
+        entry.from === 'resources/runtime/micromamba/linux-x64' &&
+        entry.to === 'runtime/micromamba/linux-x64'
+    )
+  )
+  assert.equal(config.win.icon, 'build/icon.ico')
   assert.match(
     readFileSync(path.join(repoRoot, '.gitignore'), 'utf8'),
     /resources\/runtime\/bun\//u
@@ -96,6 +124,26 @@ test('afterPack rejects a packaged app with a missing or non-executable Bun', ()
     assert.throws(() => assertBundledBun(root, 'darwin-arm64'), /not executable/u)
     chmodSync(bunPath, 0o755)
     assert.equal(assertBundledBun(root, 'darwin-arm64'), bunPath)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('Windows afterPack rejects a missing or non-executable x64 Bun', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-win-packaged-bun-'))
+  const bunPath = path.join(root, 'runtime', 'bun', 'win32-x64', 'bun.exe')
+  const context = {
+    appOutDir: root,
+    // electron-builder passes its Arch enum; x64 is index 1.
+    arch: 1,
+    electronPlatformName: 'win32',
+    packager: { getResourcesDir: () => root }
+  }
+  try {
+    await assert.rejects(() => afterPack(context), /missing bundled Bun.*win32-x64/u)
+    mkdirSync(path.dirname(bunPath), { recursive: true })
+    writeFileSync(bunPath, 'MZ')
+    await assert.rejects(() => afterPack(context), /not executable.*win32-x64/u)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

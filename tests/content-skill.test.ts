@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 
-import { PHI_PLATFORMS } from '../src/main/agent/envs/contract'
+import { PHI_LOCK_PLATFORMS } from '../src/main/agent/envs/contract'
 import { SKILL_CONTRACT_VERSION, phiSkillBlockSchema } from '../src/main/agent/content/skill-schema'
 import {
   hasScripts,
@@ -115,7 +115,7 @@ function assertValid(dir: string, options?: { insidePlugin?: boolean }): SkillVa
 }
 
 function writeLocks(dir: string): void {
-  for (const platform of PHI_PLATFORMS) {
+  for (const platform of PHI_LOCK_PLATFORMS) {
     const path = join(dir, 'locks', `${platform}.txt`)
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, '')
@@ -392,7 +392,7 @@ phi:
   )
   assert.deepEqual(
     errorsOf(missingLocks).sort(),
-    PHI_PLATFORMS.map(
+    PHI_LOCK_PLATFORMS.map(
       (platform) => `locks/${platform}.txt: lock file locks/${platform}.txt is required`
     ).sort()
   )

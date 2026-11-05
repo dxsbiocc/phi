@@ -65,7 +65,7 @@ export const ENVIRONMENT_TOOL_LABELS: Record<EnvironmentToolId, string> = {
   rscript: 'Rscript'
 }
 
-export type EnvironmentHostDependencyId = 'docker' | 'singularity'
+export type EnvironmentHostDependencyId = 'docker' | 'singularity' | 'wsl'
 export type EnvironmentHostDependencyStatus = 'ready' | 'missing' | 'unavailable'
 
 export interface EnvironmentHostDependency {
@@ -100,7 +100,8 @@ export interface EnvironmentHostTool {
   kernels?: EnvironmentHostKernel[]
 }
 
-export type ManagedEnvironmentState = 'absent' | 'building' | 'ready' | 'failed' | 'drifted'
+export type ManagedEnvironmentState =
+  'absent' | 'building' | 'ready' | 'failed' | 'drifted' | 'unavailable'
 export type ManagedEnvironmentSource = 'official' | 'plugin' | 'project' | 'orphaned'
 export type ManagedEnvironmentConsumerKind =
   'skill' | 'agent' | 'plugin' | 'wrapper' | 'notebook' | 'kernel'
@@ -134,6 +135,10 @@ export interface ManagedEnvironmentEntry {
   /** Base reference replaced by this project environment. */
   overrideFrom?: string[]
   error?: string
+  /** Official or plugin environment that has no lock for the current platform. */
+  unavailableReason?: 'missing-lock'
+  /** Windows hosts build and invoke Linux locks through WSL2. */
+  runtime?: 'wsl2'
 }
 
 export interface ManagedEnvironmentRemoveResult {

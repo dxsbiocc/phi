@@ -50,7 +50,7 @@ still listed when a skill imports or documents them.
 | Conda package                                            | Why it is in the union                                                            | Channel                             |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------- |
 | `python` (>=3.12), `ipykernel`                           | interpreter; step 5.3 default Python kernel                                       | conda-forge, all three              |
-| `coreutils`                                              | shared runtime compatibility; not an Office-skill dependency                      | conda-forge, all three              |
+| `coreutils`                                              | shared runtime compatibility; not an Office-skill dependency                      | conda-forge, Unix three (no win-64) |
 | `nodejs`                                                 | `pptx` JS generation via `pptxgenjs` (that package depends on `nodejs`)           | conda-forge, all three              |
 | `poppler`                                                | PDF page rendering documented by the `pdf` skill                                  | conda-forge, all three              |
 | `tesseract`                                              | markitdown SKILL.md OCR troubleshooting                                           | conda-forge and bioconda, all three |
@@ -62,14 +62,14 @@ still listed when a skill imports or documents them.
 | `rdkit`                                                  | rdkit scripts                                                                     | conda-forge, all three              |
 | `scanpy`, `scvelo`                                       | scanpy and scvelo scripts                                                         | both channels, all three            |
 | `leidenalg`, `python-igraph`                             | scanpy Leiden extra; not a direct import                                          | conda-forge, all three              |
-| `harmonypy`, `bbknn`                                     | scanpy batch-correction methods; not direct imports                               | bioconda only, all three            |
+| `harmonypy`, `bbknn`                                     | scanpy batch-correction methods; not direct imports                               | bioconda only, Unix three (no win-64) |
 | `reportlab`, `pdfplumber`, `pypdf`                       | PDF generation/extraction; `pdf_inspect.py` imports `pypdf`                       | conda-forge, all three              |
 | `python-calamine`                                        | xlsx SKILL.md, marked optional there                                              | conda-forge, all three              |
 | `anndata`                                                | anndata skill; also a scanpy dependency                                           | both channels, all three            |
 | `seaborn`                                                | seaborn skill; also a scanpy dependency                                           | conda-forge, all three              |
 | `networkx`                                               | networkx skill; also a scanpy dependency                                          | conda-forge, all three              |
 | `shap`                                                   | shap skill                                                                        | conda-forge, all three              |
-| `pysam`                                                  | pysam skill                                                                       | bioconda only, all three            |
+| `pysam`                                                  | pysam skill                                                                       | bioconda only, Unix three (no win-64) |
 | `scikit-survival`                                        | scikit-survival skill (`import sksurv`)                                           | conda-forge, all three              |
 
 `pandoc` is not in the union. The current `docx` workflow does not require it.
@@ -87,6 +87,9 @@ conda-forge `scanpy` 1.12.4 (noarch) already depends on `anndata`, `numpy`,
 `scipy`, `pandas`, `matplotlib-base`, `seaborn`, `scikit-learn`, `networkx`,
 `h5py`, `numba`, `umap-learn`, and `statsmodels`. It does not depend on
 `leidenalg`, `python-igraph`, `harmonypy`, or `bbknn`.
+
+Windows ships a native `locks/win32-x64.txt`. `coreutils`, `bbknn`, `harmonypy`,
+and `pysam` are declared with `{ conda, platforms }` and are omitted on win-64.
 
 Not proposed for `phi-python`: `anndata[dask,lazy]`,
 `scanpy` plus `dask`, `rapids-singlecell`, and example-only installs in skill

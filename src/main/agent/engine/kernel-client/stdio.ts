@@ -157,7 +157,12 @@ export type SpawnedKernelClient = {
 }
 
 export function spawnKernelStdio(options: SpawnKernelStdioOptions = {}): SpawnedKernelClient {
-  const executable = options.executable ?? options.bunExecutable ?? resolveBunExecutable()
+  const executable =
+    options.executable ??
+    options.bunExecutable ??
+    resolveBunExecutable({
+      resourcesPath: typeof process.resourcesPath === 'string' ? process.resourcesPath : undefined
+    })
   const args = options.executable
     ? []
     : [...(options.bunArgs ?? []), options.entry ?? resolve('src/kernel/main.ts')]

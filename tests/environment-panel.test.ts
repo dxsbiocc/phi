@@ -76,6 +76,16 @@ test('builds one environment section and sorts managed sources', () => {
     nextflowResources.tools.map((item) => item.label),
     ['Nextflow']
   )
+  assert.deepEqual(
+    managedEnvironmentHostResources(managed({ ref: 'phi:python@1', runtime: 'wsl2' }), {
+      ...snapshot,
+      hostDependencies: [
+        ...snapshot.hostDependencies,
+        { id: 'wsl', label: 'WSL2', status: 'missing' }
+      ]
+    }).dependencies.map((item) => item.id),
+    ['wsl']
+  )
 })
 
 test('legacy snapshot host detection is merged into its matching environment', () => {

@@ -22,7 +22,7 @@ import {
   readyEnvironment,
   type EnvironmentDescriptor
 } from '../content/environment-refs'
-import { environmentVariables, type EnvHandle, type PhiPlatform } from '../envs'
+import { environmentVariables, prefixExecutable, type EnvHandle, type PhiPlatform } from '../envs'
 
 import { errorMessage } from '../../../shared/errorCodes'
 export const HOST_KERNEL_LABEL = 'host (unmanaged)'
@@ -203,7 +203,7 @@ const DEFAULT_IRKERNEL_ARGV = [
 ]
 
 /** IRkernel's own installed spec when present, with its `R` replaced by the prefix's. */
-function irkernelArgv(prefix: string): string[] {
+function irkernelArgv(prefix: string, platform?: NodeJS.Platform): string[] {
   const installed = join(prefix, 'share', 'jupyter', 'kernels', 'ir', 'kernel.json')
   let argv = DEFAULT_IRKERNEL_ARGV
   try {
@@ -221,9 +221,7 @@ function irkernelArgv(prefix: string): string[] {
   }
   const [command, ...rest] = argv
   const r =
-    command && command.includes('/') && command.startsWith(prefix)
-      ? command
-      : join(prefix, 'bin', 'R')
+    command && command.startsWith(prefix) ? command : prefixExecutable(prefix, 'R', platform)
   return [r, ...rest]
 }
 
@@ -237,7 +235,7 @@ export function managedKernelSpec(
   if (definition.language === 'python') {
     return {
       argv: [
-        join(handle.prefix, 'bin', 'python'),
+        prefixExecutable(handle.prefix, 'python', ctx.hostPlatform),
         '-m',
         'ipykernel_launcher',
         '-f',
@@ -251,7 +249,7 @@ export function managedKernelSpec(
     }
   }
   return {
-    argv: irkernelArgv(handle.prefix),
+    argv: irkernelArgv(handle.prefix, ctx.hostPlatform),
     display_name: definition.displayName,
     language: 'R',
     env,

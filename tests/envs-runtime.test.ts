@@ -177,6 +177,34 @@ test('writeMambarc writes once and again only when the content changes', async (
   })
 })
 
+test('micromambaEnvironment on Windows keeps SystemRoot and overrides USERPROFILE', () => {
+  const env = micromambaEnvironment(
+    '/runtime',
+    {
+      HOME: 'C:\\Users\\phi',
+      USERPROFILE: 'C:\\Users\\phi',
+      SystemRoot: 'C:\\Windows',
+      windir: 'C:\\Windows',
+      TEMP: 'C:\\Users\\phi\\AppData\\Local\\Temp',
+      TMP: 'C:\\Users\\phi\\AppData\\Local\\Temp',
+      PATHEXT: '.EXE;.CMD',
+      COMSPEC: 'C:\\Windows\\System32\\cmd.exe',
+      PATH: 'C:\\Windows\\System32',
+      CONDA_PREFIX: 'C:\\conda',
+      FOO: 'bar'
+    },
+    'win32'
+  )
+  assert.equal(env.HOME, join('/runtime', 'home'))
+  assert.equal(env.USERPROFILE, join('/runtime', 'home'))
+  assert.equal(env.SystemRoot, 'C:\\Windows')
+  assert.equal(env.windir, 'C:\\Windows')
+  assert.equal(env.PATH, [join('C:\\Windows', 'System32'), 'C:\\Windows'].join(';'))
+  assert.equal(env.MAMBA_ROOT_PREFIX, '/runtime')
+  assert.equal(env.CONDA_PREFIX, undefined)
+  assert.equal(env.FOO, undefined)
+})
+
 test('micromambaEnvironment keeps, drops, and sets the invocation allowlist', () => {
   const base: NodeJS.ProcessEnv = {
     HOME: '/Users/phi',

@@ -3,7 +3,21 @@ import { createReadStream } from 'node:fs'
 import { lstat, readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
-export type LocalKernelPackageTarget = 'darwin-arm64' | 'linux-x64'
+export type LocalKernelPackageTarget = 'darwin-arm64' | 'linux-x64' | 'win32-x64'
+
+export function localKernelBuildTarget(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch
+): LocalKernelPackageTarget {
+  if (platform === 'darwin' && arch === 'arm64') return 'darwin-arm64'
+  if (platform === 'linux' && arch === 'x64') return 'linux-x64'
+  if (platform === 'win32' && arch === 'x64') return 'win32-x64'
+  throw new Error(`The kernel engine has no local build target for ${platform}/${arch}.`)
+}
+
+export function localKernelExecutableName(target: LocalKernelPackageTarget): string {
+  return target === 'win32-x64' ? 'phi-kernel.exe' : 'phi-kernel'
+}
 
 export interface LocalKernelPackageFile {
   readonly name: string
@@ -91,19 +105,19 @@ function validateFiles(
   }
   const kernels = files.filter((file) => file.role === 'kernel')
   const natives = files.filter((file) => file.role === 'native')
-  if (kernels.length !== 1 || kernels[0].name !== 'phi-kernel') {
-    throw new LocalKernelPackageError('Packaged kernel manifest must contain one phi-kernel.')
+  const executable = localKernelExecutableName(target)
+  if (kernels.length !== 1 || kernels[0].name !== executable) {
+    throw new LocalKernelPackageError(`Packaged kernel manifest must contain one ${executable}.`)
   }
-  if (target === 'darwin-arm64') {
+  if (target === 'darwin-arm64' || target === 'win32-x64') {
     if (
       files.length !== 2 ||
       natives.length !== 1 ||
-      natives[0].variant !== undefined ||
+      (target === 'darwin-arm64' && natives[0].variant !== undefined) ||
+      (target === 'win32-x64' && natives[0].variant !== 'baseline') ||
       !natives[0].name.endsWith('.node')
     ) {
-      throw new LocalKernelPackageError(
-        'darwin-arm64 packaged kernel must contain one native addon.'
-      )
+      throw new LocalKernelPackageError(`${target} packaged kernel must contain one native addon.`)
     }
   } else {
     const variants = natives.map((file) => file.variant).sort()
@@ -139,7 +153,12 @@ async function verifyFile(directory: string, file: LocalKernelPackageFile): Prom
     if (!info.isFile() || info.isSymbolicLink() || info.size !== file.size) {
       throw new Error(`expected ${file.size} regular-file bytes, found ${info.size}`)
     }
-    if (file.role === 'kernel' && (info.mode & 0o111) === 0) {
+    if (
+      file.role === 'kernel' &&
+      process.platform !== 'win32' &&
+      !file.name.endsWith('.exe') &&
+      (info.mode & 0o111) === 0
+    ) {
       throw new Error('kernel executable has no execute bit')
     }
     const actual = await sha256(path)

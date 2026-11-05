@@ -19,6 +19,7 @@ import { finished } from 'node:stream/promises'
 import Ajv from 'ajv'
 
 import { captureActivation } from './activation'
+import { prefixExecutable } from './prefix-executable'
 import {
   installEnvironmentApplication,
   validateApplicationInstallationSource,
@@ -49,7 +50,16 @@ import {
   linkScriptFailureFromOutput,
   unreplacedLinkScriptFailureFromOutput
 } from './link-script-failures'
-import { ensureRuntimeLayout, runMicromamba, writeMambarc, type RuntimeSettings } from './runtime'
+import {
+  ensureRuntimeLayout,
+  prepareWslMicromambaRun,
+  runMicromamba,
+  withWsl,
+  writeMambarc,
+  type RunMicromambaOptions,
+  type RuntimeSettings
+} from './runtime'
+import { toLinuxPath, type ReadyWsl } from './wsl'
 import { envMetadataSchema } from './schemas'
 import { createSourcePackageInstaller } from './source-packages'
 
@@ -95,6 +105,8 @@ export interface EnsureEnvironmentInput {
   sourceDir?: string
   fetch?: typeof globalThis.fetch
   applicationInstaller?: ApplicationInstallationProvider
+  hostPlatform?: NodeJS.Platform
+  wsl?: ReadyWsl
 }
 
 export interface EnsureEnvironmentResult {
@@ -274,17 +286,7 @@ function makeTreeReadOnly(target: string): void {
 }
 
 function cloneSourcePackages(packages: SourcePackage[] | undefined): SourcePackage[] {
-  return (packages ?? []).map((pkg) => {
-    const clone: SourcePackage = {
-      language: pkg.language,
-      name: pkg.name,
-      source: pkg.source,
-      ref: pkg.ref,
-      sha256: pkg.sha256
-    }
-    if (pkg.repo !== undefined) clone.repo = pkg.repo
-    return clone
-  })
+  return (packages ?? []).map((pkg) => ({ ...pkg }))
 }
 
 function logStamp(date = new Date()): string {
@@ -301,14 +303,20 @@ async function closeLog(stream: WriteStream): Promise<void> {
 
 async function createFromLock(
   input: EnsureEnvironmentInput,
-  prepared: PreparedEnvironment
+  prepared: PreparedEnvironment,
+  wsl?: RunMicromambaOptions['wsl']
 ): Promise<void> {
   mkdirSync(join(prepared.root, 'state', 'tmp'), { recursive: true })
   const lockFile = join(prepared.root, 'state', 'tmp', `${prepared.envId}.lock.txt`)
   writeFileSync(lockFile, input.lockText, 'utf8')
   const logPath = join(prepared.root, 'logs', `${prepared.envId}-${logStamp()}.log`)
   const logStream = createWriteStream(logPath)
-  input.onProgress?.({ phase: 'create', message: 'micromamba create' })
+  input.onProgress?.({
+    phase: 'create',
+    message: wsl ? 'micromamba create (WSL2)' : 'micromamba create'
+  })
+  const prefix = wsl ? toLinuxPath(prepared.prefix, wsl.ready.distro) : prepared.prefix
+  const lock = wsl ? toLinuxPath(lockFile, wsl.ready.distro) : lockFile
   try {
     throwIfAborted(input.signal)
     const cacheLock = await acquirePackageCacheLock({
@@ -321,14 +329,21 @@ async function createFromLock(
     let result: Awaited<ReturnType<typeof runMicromamba>>
     try {
       // micromamba 2.9.0: create --yes -p <prefix> -f <explicit lock>
-      result = await runMicromamba(['create', '--yes', '-p', prepared.prefix, '-f', lockFile], {
-        root: prepared.root,
-        signal: input.signal,
-        onOutput: (chunk) => {
-          logStream.write(chunk.text)
-          if (chunk.text.length > 0) input.onProgress?.({ phase: 'create', message: chunk.text })
-        }
-      })
+      result = await runMicromamba(
+        ['create', '--yes', '-p', prefix, '-f', lock],
+        withWsl(
+          {
+            root: prepared.root,
+            signal: input.signal,
+            onOutput: (chunk) => {
+              logStream.write(chunk.text)
+              if (chunk.text.length > 0)
+                input.onProgress?.({ phase: 'create', message: chunk.text })
+            }
+          },
+          wsl
+        )
+      )
     } finally {
       cacheLock.release()
     }
@@ -372,18 +387,37 @@ async function createFromLock(
  * Precompile Python bytecode while the prefix is still writable. Once it is read-only,
  * Python cannot cache .pyc files and would recompile every import on every run.
  */
-async function precompilePython(input: EnsureEnvironmentInput, prefix: string): Promise<void> {
-  if (!existsSync(join(prefix, 'bin', 'python'))) return
+async function precompilePython(
+  input: EnsureEnvironmentInput,
+  prefix: string,
+  wsl?: RunMicromambaOptions['wsl']
+): Promise<void> {
+  if (!existsSync(prefixExecutable(prefix, 'python'))) return
   const libDir = join(prefix, 'lib')
-  const sitePackages = readdirSync(libDir)
-    .filter((name) => /^python3\.\d+$/.test(name))
-    .map((name) => join(libDir, name, 'site-packages'))
-    .filter((dir) => existsSync(dir))
+  const unixSites = existsSync(libDir)
+    ? readdirSync(libDir)
+        .filter((name) => /^python3\.\d+$/.test(name))
+        .map((name) => join(libDir, name, 'site-packages'))
+        .filter((dir) => existsSync(dir))
+    : []
+  const windowsSite = join(prefix, 'Lib', 'site-packages')
+  const sitePackages = existsSync(windowsSite) ? [...unixSites, windowsSite] : unixSites
   if (sitePackages.length === 0) return
   input.onProgress?.({ phase: 'finalize', message: 'precompiling Python bytecode' })
   const result = await runMicromamba(
-    ['run', '-p', prefix, 'python', '-m', 'compileall', '-q', '-j', '0', ...sitePackages],
-    { root: input.root, signal: input.signal }
+    [
+      'run',
+      '-p',
+      wsl ? toLinuxPath(prefix, wsl.ready.distro) : prefix,
+      'python',
+      '-m',
+      'compileall',
+      '-q',
+      '-j',
+      '0',
+      ...sitePackages.map((dir) => (wsl ? toLinuxPath(dir, wsl.ready.distro) : dir))
+    ],
+    withWsl({ root: input.root, signal: input.signal }, wsl)
   )
   if (input.signal?.aborted || result.code === null) throw new Error('environment build aborted')
   // compileall exits 1 when some file fails to compile (e.g. test fixtures with invalid
@@ -416,8 +450,12 @@ async function installSourcePackages(
   throwIfAborted(input.signal)
 }
 
-async function micromambaVersion(root: string, signal: AbortSignal | undefined): Promise<string> {
-  const result = await runMicromamba(['--version'], { root, signal })
+async function micromambaVersion(
+  root: string,
+  signal: AbortSignal | undefined,
+  wsl?: RunMicromambaOptions['wsl']
+): Promise<string> {
+  const result = await runMicromamba(['--version'], withWsl({ root, signal }, wsl))
   if (signal?.aborted || result.code === null) throw new Error('environment build aborted')
   if (result.code !== 0) throw new Error(`micromamba --version failed (${result.code})`)
   const version = result.stdout.trim().split(/\s+/).pop() ?? ''
@@ -523,21 +561,32 @@ async function runBuild(
     markEntry(input, prepared, 'building')
     if (existsSync(prepared.prefix)) removeTree(prepared.prefix)
     const nativeOnly = usesNativeApplicationRuntime(input.spec)
+    const wsl = nativeOnly
+      ? undefined
+      : prepareWslMicromambaRun({
+          hostPlatform: input.hostPlatform,
+          platform: prepared.platform,
+          root: prepared.root,
+          settings: input.settings,
+          wsl: input.wsl
+        })
     if (nativeOnly) mkdirSync(join(prepared.prefix, 'bin'), { recursive: true })
     else {
-      await createFromLock(input, prepared)
+      await createFromLock(input, prepared, wsl)
     }
     await installSourcePackages(input, prepared.root, prepared.prefix)
     const installation = await installEnvironmentApplication(input, prepared)
     throwIfAborted(input.signal)
-    if (!nativeOnly) await precompilePython(input, prepared.prefix)
+    if (!nativeOnly) await precompilePython(input, prepared.prefix, wsl)
     if (!nativeOnly) input.onProgress?.({ phase: 'activation', message: 'capturing activation' })
     const activation = nativeOnly
       ? { set: {}, pathPrepend: [join(prepared.prefix, 'bin')] }
-      : await captureActivation(prepared.root, prepared.prefix, input.signal)
+      : await captureActivation(prepared.root, prepared.prefix, input.signal, wsl)
     const host = probeHostRequirements(input.spec.host, prepared.platform)
     input.onProgress?.({ phase: 'finalize', message: 'writing environment metadata' })
-    const version = nativeOnly ? undefined : await micromambaVersion(prepared.root, input.signal)
+    const version = nativeOnly
+      ? undefined
+      : await micromambaVersion(prepared.root, input.signal, wsl)
     const metadata: EnvMetadata = {
       envId: prepared.envId,
       name: input.spec.name,

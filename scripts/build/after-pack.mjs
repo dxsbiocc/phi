@@ -53,7 +53,11 @@ function archName(arch) {
 
 export async function afterPack(context) {
   const resourcesDir = context.packager.getResourcesDir(context.appOutDir)
-  if (context.electronPlatformName === 'darwin' || context.electronPlatformName === 'linux') {
+  if (
+    context.electronPlatformName === 'darwin' ||
+    context.electronPlatformName === 'linux' ||
+    context.electronPlatformName === 'win32'
+  ) {
     const arch = archName(context.arch)
     if (!arch) throw new Error(`afterPack: unsupported architecture ${context.arch}`)
     assertBundledBun(resourcesDir, `${context.electronPlatformName}-${arch}`)

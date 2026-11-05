@@ -7,6 +7,16 @@ import { stringify } from 'yaml'
 
 import { getPhiAgentDir } from '../runtime-paths'
 import { getMicromambaPath } from './paths'
+import { type PhiPlatform } from './platform'
+import {
+  posixJoin,
+  requireReadyWsl,
+  stageWslMicromamba,
+  toLinuxPath,
+  usesWslEnvironment,
+  wslSpawnArgv,
+  type ReadyWsl
+} from './wsl'
 
 import { errorMessage } from '../../../shared/errorCodes'
 const RUNTIME_DIRECTORIES = ['envs', 'pkgs', 'logs', 'state', 'sources'] as const
@@ -32,7 +42,19 @@ const KEPT_ENV_NAMES = new Set([
   'REQUESTS_CA_BUNDLE'
 ])
 
-const MINIMAL_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
+const WINDOWS_KEPT_ENV_NAMES = new Set([
+  'USERPROFILE',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'SystemRoot',
+  'windir',
+  'TEMP',
+  'TMP',
+  'PATHEXT',
+  'COMSPEC'
+])
+
+const UNIX_MINIMAL_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 
 export interface RuntimeLayout {
   root: string
@@ -66,12 +88,19 @@ export interface RunMicromambaOptions {
    * A macOS host has no glibc, so a linux-64 cross-solve needs `glibc` set.
    */
   condaOverrides?: CondaOverrides
+  /** Windows hosts invoke linux-x64 micromamba through WSL2. */
+  wsl?: {
+    ready: import('./wsl').ReadyWsl
+    linuxRoot: string
+    linuxMicromamba: string
+  }
 }
 
 export interface CondaOverrides {
   glibc?: string
   linux?: string
   osx?: string
+  win?: string
 }
 
 export function getRuntimeRoot(agentDir = getPhiAgentDir()): string {
@@ -109,6 +138,68 @@ export function renderMambarc(root: string, settings: RuntimeSettings = {}): str
   return stringify(document, { lineWidth: 0 })
 }
 
+export function withWsl(
+  options: RunMicromambaOptions,
+  wsl: RunMicromambaOptions['wsl']
+): RunMicromambaOptions {
+  return wsl ? { ...options, wsl } : options
+}
+
+export function prepareWslMicromambaRun(input: {
+  hostPlatform?: NodeJS.Platform
+  platform: PhiPlatform
+  root: string
+  settings?: RuntimeSettings
+  wsl?: ReadyWsl
+}): RunMicromambaOptions['wsl'] {
+  if (!usesWslEnvironment(input.hostPlatform ?? process.platform, input.platform)) return undefined
+  const ready = input.wsl ?? requireReadyWsl()
+  mkdirSync(join(input.root, 'pkgs-linux-x64'), { recursive: true })
+  const linuxRoot = toLinuxPath(input.root, ready.distro)
+  writeLinuxMambarc(input.root, linuxRoot, input.settings)
+  return {
+    ready,
+    linuxRoot,
+    linuxMicromamba: stageWslMicromamba(ready, getMicromambaPath('linux-x64'))
+  }
+}
+
+export function writeLinuxMambarc(
+  root: string,
+  linuxRoot: string,
+  settings: RuntimeSettings = {}
+): boolean {
+  const document: Record<string, unknown> = {
+    channels: ['conda-forge', 'bioconda'],
+    channel_priority: 'strict',
+    pkgs_dirs: [posixJoin(linuxRoot, 'pkgs-linux-x64')],
+    envs_dirs: [posixJoin(linuxRoot, 'envs')]
+  }
+  const mirrors = mirroredChannels(settings.channelMirrors)
+  if (mirrors) document.mirrored_channels = mirrors
+  const proxy = proxyServers(settings.proxy)
+  if (proxy) document.proxy_servers = proxy
+  const content = stringify(document, { lineWidth: 0 })
+  const target = join(root, 'mambarc.linux-x64')
+  if (readTextIfExists(target) === content) return false
+  const temporary = join(
+    root,
+    `.mambarc.linux.${process.pid}.${randomBytes(6).toString('hex')}.tmp`
+  )
+  try {
+    writeFileSync(temporary, content, 'utf8')
+    renameSync(temporary, target)
+  } catch (error) {
+    try {
+      unlinkSync(temporary)
+    } catch {
+      // writeFileSync may have failed before the temp file existed.
+    }
+    throw error
+  }
+  return true
+}
+
 export function writeMambarc(root: string, settings: RuntimeSettings = {}): boolean {
   const content = renderMambarc(root, settings)
   const target = join(root, 'mambarc')
@@ -138,16 +229,27 @@ export function ensureMambarc(root: string): void {
   writeMambarc(root)
 }
 
+function windowsSystemRoot(base: NodeJS.ProcessEnv): string {
+  return base.SystemRoot || base.windir || 'C:\\Windows'
+}
+
+function minimalPath(platform: NodeJS.Platform, base: NodeJS.ProcessEnv): string {
+  if (platform !== 'win32') return UNIX_MINIMAL_PATH
+  const systemRoot = windowsSystemRoot(base)
+  return [join(systemRoot, 'System32'), systemRoot].join(';')
+}
+
 export function micromambaEnvironment(
   root: string,
-  base: NodeJS.ProcessEnv = process.env
+  base: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
 ): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [name, value] of Object.entries(base)) {
-    if (value === undefined || !keptEnvName(name)) continue
+    if (value === undefined || !keptEnvName(name, platform)) continue
     env[name] = value
   }
-  env.PATH = MINIMAL_PATH
+  env.PATH = minimalPath(platform, base)
   env.MAMBA_ROOT_PREFIX = root
   env.MAMBA_NO_BANNER = '1'
   // micromamba keeps per-user state under $HOME (for example the `micromamba run` process
@@ -155,7 +257,15 @@ export function micromambaEnvironment(
   // shares or writes the user's mamba/conda state. Content processes are unaffected: they
   // are started through `environmentVariables`, which keeps the real HOME. The activation
   // snapshot is unaffected too: it diffs against this same environment.
-  env.HOME = micromambaHome(root)
+  const home = micromambaHome(root)
+  env.HOME = home
+  if (platform === 'win32') {
+    env.USERPROFILE = home
+    env.SystemRoot = windowsSystemRoot(base)
+    env.windir = base.windir || env.SystemRoot
+    env.TEMP = base.TEMP || join(home, 'Temp')
+    env.TMP = base.TMP || env.TEMP
+  }
   return env
 }
 
@@ -253,8 +363,12 @@ function condaOverrideVariables(overrides: CondaOverrides | undefined): Record<s
   return variables
 }
 
-function keptEnvName(name: string): boolean {
-  return name.startsWith('LC_') || KEPT_ENV_NAMES.has(name)
+function keptEnvName(name: string, platform: NodeJS.Platform = process.platform): boolean {
+  return (
+    name.startsWith('LC_') ||
+    KEPT_ENV_NAMES.has(name) ||
+    (platform === 'win32' && WINDOWS_KEPT_ENV_NAMES.has(name))
+  )
 }
 
 function mirroredChannels(
@@ -292,8 +406,9 @@ function readTextIfExists(filePath: string): string | undefined {
 // `--no-rc` exists but cannot be combined with `--rc-file`: 2.9.0 aborts with
 // "Configuration files disabled by 'no_rc'". `--rc-file` replaces the user rc search,
 // so `~/.condarc` and `~/.mambarc` are not loaded (`config sources` lists only this file).
-function micromambaInvocationArgs(root: string, args: readonly string[]): string[] {
-  return ['--rc-file', join(root, 'mambarc'), '--no-env', '--root-prefix', root, ...args]
+function micromambaInvocationArgs(root: string, args: readonly string[], posix = false): string[] {
+  const rcFile = posix ? posixJoin(root, 'mambarc.linux-x64') : join(root, 'mambarc')
+  return ['--rc-file', rcFile, '--no-env', '--root-prefix', root, ...args]
 }
 
 function spawnMicromamba(
@@ -303,6 +418,30 @@ function spawnMicromamba(
 ): ReturnType<typeof spawn> {
   try {
     mkdirSync(micromambaHome(options.root), { recursive: true })
+    if (options.wsl) {
+      const linuxHome = posixJoin(options.wsl.linuxRoot, 'home')
+      const plan = wslSpawnArgv(
+        options.wsl.ready,
+        options.wsl.linuxMicromamba,
+        micromambaInvocationArgs(options.wsl.linuxRoot, args, true),
+        {
+          cwd: options.wsl.linuxRoot,
+          env: {
+            HOME: linuxHome,
+            PATH: UNIX_MINIMAL_PATH,
+            MAMBA_ROOT_PREFIX: options.wsl.linuxRoot,
+            MAMBA_NO_BANNER: '1',
+            ...condaOverrideVariables(options.condaOverrides)
+          }
+        }
+      )
+      return spawn(plan.executable, plan.args, {
+        cwd: options.root,
+        env: process.env,
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+    }
     return spawn(executable, micromambaInvocationArgs(options.root, args), {
       cwd: options.root,
       env: {

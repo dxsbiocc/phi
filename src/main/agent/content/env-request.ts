@@ -1,4 +1,5 @@
 import {
+  cloneCondaDependency,
   currentPlatform,
   parseEnvironmentRef,
   type EnvironmentSpec,
@@ -232,12 +233,7 @@ function extendSpec(
   const spec: EnvironmentSpec = {
     name,
     channels: [...base.channels],
-    dependencies: [
-      ...base.dependencies.map((dependency) =>
-        typeof dependency === 'string' ? dependency : { pip: [...dependency.pip] }
-      ),
-      ...packages
-    ]
+    dependencies: [...base.dependencies.map(cloneCondaDependency), ...packages]
   }
   if (base.description !== undefined) spec.description = base.description
   if (base.host) spec.host = base.host.map(cloneHost)

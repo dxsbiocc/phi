@@ -11,16 +11,18 @@ import {
 } from '../node_modules/@oh-my-pi/pi-natives/native/version-sentinel.js'
 import { createPhiLegacyPiVirtualModulePlugin } from './build/kernel-legacy-pi-virtual-module'
 
-export type KernelBuildTarget = 'darwin-arm64' | 'linux-x64'
+export type KernelBuildTarget = 'darwin-arm64' | 'linux-x64' | 'win32-x64'
 export type KernelBuildSelection = KernelBuildTarget | 'all'
 
 type TargetDefinition = {
   id: KernelBuildTarget
-  platform: 'darwin' | 'linux'
+  platform: 'darwin' | 'linux' | 'win32'
   arch: 'arm64' | 'x64'
   bunTarget: Bun.Build.CompileTarget
   packageName: string
   nativeFiles: ReadonlyArray<{ name: string; variant?: 'modern' | 'baseline' }>
+  download?: { tarball: string; integrity: string; folder: string }
+  executableName: string
 }
 
 type FileManifest = {
@@ -64,11 +66,6 @@ const OMP_PACKAGE = join(repoRoot, 'node_modules', '@oh-my-pi', 'pi-coding-agent
 const NATIVE_PACKAGE = join(repoRoot, 'node_modules', '@oh-my-pi', 'pi-natives', 'package.json')
 
 const NATIVE_VERSION = '18.10.3'
-const LINUX_PACKAGE = '@oh-my-pi/pi-natives-linux-x64'
-const LINUX_INTEGRITY =
-  'sha512-cRoSyXfUwvMe8yBu3w2nW03GriZD+Oc31TvJmeHmCYTAAqaiP3OtGBxCKwUTWQjg7G8vw8h56ftyH62fdcPguA=='
-const LINUX_TARBALL =
-  'https://registry.npmjs.org/@oh-my-pi/pi-natives-linux-x64/-/pi-natives-linux-x64-18.10.3.tgz'
 const CROSS_BUILD_CHILD_ENV = 'PHI_KERNEL_CROSS_BUILD_CHILD'
 
 const TARGETS: Readonly<Record<KernelBuildTarget, TargetDefinition>> = {
@@ -78,28 +75,57 @@ const TARGETS: Readonly<Record<KernelBuildTarget, TargetDefinition>> = {
     arch: 'arm64',
     bunTarget: 'bun-darwin-arm64',
     packageName: '@oh-my-pi/pi-natives-darwin-arm64',
-    nativeFiles: [{ name: 'pi_natives.darwin-arm64.node' }]
+    nativeFiles: [{ name: 'pi_natives.darwin-arm64.node' }],
+    executableName: 'phi-kernel'
   },
   'linux-x64': {
     id: 'linux-x64',
     platform: 'linux',
     arch: 'x64',
     bunTarget: 'bun-linux-x64-baseline',
-    packageName: LINUX_PACKAGE,
+    packageName: '@oh-my-pi/pi-natives-linux-x64',
     nativeFiles: [
       { name: 'pi_natives.linux-x64-modern.node', variant: 'modern' },
       { name: 'pi_natives.linux-x64-baseline.node', variant: 'baseline' }
-    ]
+    ],
+    executableName: 'phi-kernel',
+    download: {
+      tarball:
+        'https://registry.npmjs.org/@oh-my-pi/pi-natives-linux-x64/-/pi-natives-linux-x64-18.10.3.tgz',
+      integrity:
+        'sha512-cRoSyXfUwvMe8yBu3w2nW03GriZD+Oc31TvJmeHmCYTAAqaiP3OtGBxCKwUTWQjg7G8vw8h56ftyH62fdcPguA==',
+      folder: 'pi-natives-linux-x64-18.10.3'
+    }
+  },
+  'win32-x64': {
+    id: 'win32-x64',
+    platform: 'win32',
+    arch: 'x64',
+    bunTarget: 'bun-windows-x64-baseline',
+    packageName: '@oh-my-pi/pi-natives-win32-x64',
+    nativeFiles: [{ name: 'pi_natives.win32-x64-baseline.node', variant: 'baseline' }],
+    executableName: 'phi-kernel.exe',
+    download: {
+      tarball:
+        'https://registry.npmjs.org/@oh-my-pi/pi-natives-win32-x64/-/pi-natives-win32-x64-18.10.3.tgz',
+      integrity:
+        'sha512-CNY8oVniS0Nbr86rZMBY5RUBqo40rVBdyfnazGsuYNFqNE2XzXzwJD05g0sw+hACqm8fNc9MFWoBgNf2fLCdKg==',
+      folder: 'pi-natives-win32-x64-18.10.3'
+    }
   }
 }
 
 function parseSelection(argv: string[]): KernelBuildSelection {
-  if (argv.length === 0) return 'all'
+  if (argv.length === 0) {
+    return process.platform === 'win32' && process.arch === 'x64' ? 'win32-x64' : 'all'
+  }
   if (argv.length === 2 && argv[0] === '--target') {
     const value = argv[1]
-    if (value === 'all' || value === 'darwin-arm64' || value === 'linux-x64') return value
+    if (value === 'all' || value in TARGETS) return value as KernelBuildSelection
   }
-  throw new Error('Usage: bun scripts/build-kernel.ts [--target darwin-arm64|linux-x64|all]')
+  throw new Error(
+    'Usage: bun scripts/build-kernel.ts [--target darwin-arm64|linux-x64|win32-x64|all]'
+  )
 }
 
 async function packageVersion(file: string, label: string): Promise<string> {
@@ -155,28 +181,32 @@ async function assertNativeVersionStamp(file: string): Promise<void> {
   }
 }
 
-async function downloadLinuxNativePackage(cacheRoot: string): Promise<string> {
+async function downloadNativePackage(target: TargetDefinition, cacheRoot: string): Promise<string> {
+  const download = target.download
+  if (!download) {
+    throw new Error(`${target.packageName} has no download metadata for a cross build`)
+  }
   const vendorRoot = join(cacheRoot, 'vendor')
-  const packageRoot = join(vendorRoot, 'pi-natives-linux-x64-18.10.3')
+  const packageRoot = join(vendorRoot, download.folder)
   const packageDir = join(packageRoot, 'package')
   const manifestPath = join(packageDir, 'package.json')
-  const tarballPath = join(vendorRoot, 'pi-natives-linux-x64-18.10.3.tgz')
+  const tarballPath = join(vendorRoot, `${download.folder}.tgz`)
   await mkdir(vendorRoot, { recursive: true })
 
   if (!(await Bun.file(tarballPath).exists())) {
-    const response = await fetch(LINUX_TARBALL)
+    const response = await fetch(download.tarball)
     if (!response.ok) {
       throw new Error(
-        `Failed to download ${LINUX_PACKAGE}@${NATIVE_VERSION}: HTTP ${response.status}`
+        `Failed to download ${target.packageName}@${NATIVE_VERSION}: HTTP ${response.status}`
       )
     }
     await Bun.write(tarballPath, await response.arrayBuffer())
   }
 
   const actualIntegrity = `sha512-${await fileDigest(tarballPath, 'sha512')}`
-  if (actualIntegrity !== LINUX_INTEGRITY) {
+  if (actualIntegrity !== download.integrity) {
     throw new Error(
-      `Integrity mismatch for ${basename(tarballPath)}: expected ${LINUX_INTEGRITY}, got ${actualIntegrity}`
+      `Integrity mismatch for ${basename(tarballPath)}: expected ${download.integrity}, got ${actualIntegrity}`
     )
   }
 
@@ -192,7 +222,7 @@ async function downloadLinuxNativePackage(cacheRoot: string): Promise<string> {
     if (exitCode !== 0) throw new Error(`tar failed with exit code ${exitCode}`)
   }
 
-  await assertNativePackage(packageDir, TARGETS['linux-x64'])
+  await assertNativePackage(packageDir, target)
   return packageDir
 }
 
@@ -200,10 +230,13 @@ async function nativePackageDirectory(
   target: TargetDefinition,
   cacheRoot: string
 ): Promise<string> {
-  if (target.id === 'linux-x64') return downloadLinuxNativePackage(cacheRoot)
-  const packageDir = join(repoRoot, 'node_modules', '@oh-my-pi', 'pi-natives-darwin-arm64')
-  await assertNativePackage(packageDir, target)
-  return packageDir
+  const scopedName = target.packageName.replace('@oh-my-pi/', '')
+  const installed = join(repoRoot, 'node_modules', '@oh-my-pi', scopedName)
+  if (await Bun.file(join(installed, 'package.json')).exists()) {
+    await assertNativePackage(installed, target)
+    return installed
+  }
+  return downloadNativePackage(target, cacheRoot)
 }
 
 async function compileKernel(outfile: string, target: TargetDefinition): Promise<void> {
@@ -270,7 +303,7 @@ async function buildTarget(
   await mkdir(stagingDirectory, { recursive: true })
 
   try {
-    const kernelPath = join(stagingDirectory, 'phi-kernel')
+    const kernelPath = join(stagingDirectory, target.executableName)
     process.stderr.write(`Building phi-kernel for ${target.id} (${target.bunTarget})\n`)
     await compileKernel(kernelPath, target)
 
@@ -308,7 +341,7 @@ async function compatibleTargets(
   expected: Omit<TopLevelManifest, 'builtAt' | 'buildDurationMs' | 'targets'>
 ): Promise<TopLevelManifest['targets']> {
   const targets: TopLevelManifest['targets'] = []
-  for (const id of ['darwin-arm64', 'linux-x64'] as const) {
+  for (const id of Object.keys(TARGETS) as KernelBuildTarget[]) {
     const file = join(versionRoot, id, 'manifest.json')
     if (!(await Bun.file(file).exists())) continue
     const manifest = (await Bun.file(file).json()) as Partial<KernelTargetManifest>
@@ -346,9 +379,7 @@ export async function buildKernelPackage(options: {
   await mkdir(versionRoot, { recursive: true })
   await mkdir(cacheRoot, { recursive: true })
   const selection =
-    options.selection === 'all'
-      ? ([TARGETS['darwin-arm64'], TARGETS['linux-x64']] as const)
-      : [TARGETS[options.selection]]
+    options.selection === 'all' ? Object.values(TARGETS) : [TARGETS[options.selection]]
   const versions = { phiVersion, ompVersion, nativeVersion: installedNativeVersion }
   for (const target of selection) await buildTarget(target, versionRoot, cacheRoot, versions)
 
@@ -364,7 +395,12 @@ export async function buildKernelPackage(options: {
 }
 
 async function reexecWithWritableCrossBuildHome(selection: KernelBuildSelection): Promise<void> {
-  if (selection === 'darwin-arm64' || process.env[CROSS_BUILD_CHILD_ENV] === '1') return
+  if (
+    selection === 'darwin-arm64' ||
+    selection === 'win32-x64' ||
+    process.env[CROSS_BUILD_CHILD_ENV] === '1'
+  )
+    return
   const buildRoot = process.env.PHI_KERNEL_BUILD_ROOT
     ? resolve(process.env.PHI_KERNEL_BUILD_ROOT)
     : DEFAULT_BUILD_ROOT

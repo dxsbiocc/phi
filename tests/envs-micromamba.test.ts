@@ -20,7 +20,8 @@ const condaSubdirByPlatform: Record<string, string> = {
   'darwin-arm64': 'osx-arm64',
   'darwin-x64': 'osx-64',
   'linux-x64': 'linux-64',
-  'linux-arm64': 'linux-aarch64'
+  'linux-arm64': 'linux-aarch64',
+  'win32-x64': 'win-64'
 }
 
 test('micromamba manifest lists bundled and on-demand remote platforms', () => {
@@ -51,20 +52,20 @@ test('micromamba manifest lists bundled and on-demand remote platforms', () => {
     assert.equal(release.url.startsWith('https://'), true)
   }
 
-  assert.equal(lookupMicromambaPlatform(manifest, 'win32-x64'), undefined)
+  assert.ok(lookupMicromambaPlatform(manifest, 'win32-x64'))
 })
 
 test('platform ids map process.platform and process.arch', () => {
   assert.equal(phiPlatformId('darwin', 'arm64'), 'darwin-arm64')
   assert.equal(phiPlatformId('darwin', 'x64'), 'darwin-x64')
   assert.equal(phiPlatformId('linux', 'x64'), 'linux-x64')
-  assert.equal(phiPlatformId('win32', 'x64'), undefined)
+  assert.equal(phiPlatformId('win32', 'x64'), 'win32-x64')
   assert.equal(phiPlatformId('linux', 'arm64'), undefined)
 
   assert.equal(findPlatform('darwin', 'arm64'), 'darwin-arm64')
   assert.equal(findPlatform('darwin', 'x64'), 'darwin-x64')
   assert.equal(findPlatform('linux', 'x64'), 'linux-x64')
-  assert.equal(findPlatform('win32', 'x64'), undefined)
+  assert.equal(findPlatform('win32', 'x64'), 'win32-x64')
   assert.equal(findPlatform('linux', 'arm64'), undefined)
   assert.equal(findPlatform(), phiPlatformId())
 })
@@ -127,6 +128,13 @@ test('getMicromambaPath resolves a binary under the working directory', () => {
     process.chdir(previous)
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('micromambaCandidates uses the .exe name on Windows', () => {
+  const bundledRuntimeDir = '/repo/resources/runtime'
+  assert.deepEqual(micromambaCandidates('win32-x64', { bundledRuntimeDir }), [
+    join(bundledRuntimeDir, 'micromamba', 'win32-x64', 'micromamba.exe')
+  ])
 })
 
 test('micromambaCandidates prefers the packaged resources path', () => {

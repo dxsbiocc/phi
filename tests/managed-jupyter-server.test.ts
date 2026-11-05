@@ -140,6 +140,23 @@ test(
 )
 
 test(
+  'the Windows server command is Scripts/jupyter.exe with a semicolon PATH',
+  withFixture(async (fixture) => {
+    const jupyterPrefix = install(fixture, 'phi:jupyter@1')
+    const launch = await resolveManagedJupyterLaunch(
+      { port: 31888, args: ['server', '--no-browser'] },
+      { ...options(fixture), hostPlatform: 'win32' }
+    )
+    assert.equal(launch.command, join(jupyterPrefix, 'Scripts', 'jupyter.exe'))
+    assert.equal(
+      launch.env.PATH,
+      [join(jupyterPrefix, 'bin'), join('C:\\Windows', 'System32'), 'C:\\Windows'].join(';')
+    )
+    assert.equal(launch.env.R_PROFILE_USER, 'NUL')
+  })
+)
+
+test(
   'a missing phi-jupyter fails with the not-ready message and never reaches the host jupyter',
   withFixture(async (fixture) => {
     await assert.rejects(

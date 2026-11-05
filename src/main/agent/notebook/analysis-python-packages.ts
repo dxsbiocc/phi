@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { environmentVariables, getRuntimeRoot } from '../envs'
+import { environmentVariables, getRuntimeRoot, prefixExecutable } from '../envs'
 import { managedEnvironmentState } from './managed-kernels'
 
 export interface AnalysisPythonPackageSummary {
@@ -99,7 +99,7 @@ export function managedPythonInterpreter(
   const state = managedEnvironmentState('phi:python@1', { root })
   if ('notBuilt' in state) return null
   return {
-    command: join(state.handle.prefix, 'bin', 'python'),
+    command: prefixExecutable(state.handle.prefix, 'python'),
     env: environmentVariables(state.handle)
   }
 }

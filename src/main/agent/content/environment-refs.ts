@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { listInstalledPlugins } from '../plugins/loader'
@@ -11,6 +11,7 @@ import {
   parseEnvironmentRef,
   parseEnvironmentSpec,
   parseExplicitLock,
+  resolveManagedLockPlatform,
   type EnsureProgressEvent,
   type EnvHandle,
   type EnvKind,
@@ -41,6 +42,8 @@ export interface EnvironmentDescriptor {
   spec: EnvironmentSpec
   lockText: string
   platform: PhiPlatform
+  /** Windows hosts build Linux locks through WSL2 when no native lock exists. */
+  runtime?: 'wsl2'
   /** Directory containing the declared environment spec and its signed installation assets. */
   sourceDir?: string
 }
@@ -262,8 +265,12 @@ function loadDescriptor(
   kind: EnvKind,
   owner: string | undefined,
   dir: string,
-  platform: PhiPlatform
+  hostPlatform: PhiPlatform
 ): EnvironmentDescriptor {
+  const resolved = resolveManagedLockPlatform(hostPlatform, (platform) =>
+    existsSync(join(dir, 'locks', `${platform}.txt`))
+  ) ?? { platform: hostPlatform, runtime: 'native' as const }
+  const platform = resolved.platform
   const specPath = join(dir, 'environment.yml')
   const lockPath = join(dir, 'locks', `${platform}.txt`)
   const parsed = parseEnvironmentSpec(readText(specPath, 'environment spec'))
@@ -293,6 +300,7 @@ function loadDescriptor(
     platform,
     sourceDir: dir
   }
+  if (resolved.runtime === 'wsl2') descriptor.runtime = 'wsl2'
   if (owner !== undefined) descriptor.owner = owner
   return descriptor
 }

@@ -3,13 +3,17 @@ export { environmentSpecSchema, envMetadataSchema } from './schemas'
 export {
   ENVIRONMENT_CONTRACT_VERSION,
   ENV_STATUS_TRANSITIONS,
+  PHI_LOCK_PLATFORMS,
   PHI_PLATFORMS,
   canTransition,
   computeEnvId,
+  cloneCondaDependency,
   condaSpecOf,
   condaSubdir,
   currentPlatform,
   findPlatform,
+  isPipDependency,
+  resolveManagedLockPlatform,
   lockSha256,
   normalizeLockText,
   parseEnvironmentRef,
@@ -20,6 +24,8 @@ export {
 
 export type {
   CondaDependency,
+  CondaPipDependency,
+  CondaPlatformDependency,
   CondaEnvironmentSpec,
   EnvIdInput,
   EnvKind,
@@ -32,6 +38,8 @@ export type {
   HostRequirement,
   LockEntry,
   LockParseResult,
+  ManagedLockResolution,
+  PhiLockPlatform,
   PhiPlatform,
   SourcePackage
 } from './contract'
@@ -52,6 +60,21 @@ export type {
   RuntimeLayout,
   RuntimeSettings
 } from './runtime'
+
+export { prefixExecutable } from './prefix-executable'
+
+export {
+  decodeWslOutput,
+  parseWslList,
+  probeWsl,
+  requireReadyWsl,
+  toLinuxPath,
+  toWindowsPath,
+  usesWslEnvironment,
+  wslRequiredMessage,
+  wslSpawnArgv
+} from './wsl'
+export type { ReadyWsl, WslProbe, WslSpawnPlan } from './wsl'
 
 export { captureActivation, diffActivation } from './activation'
 export type { ActivationSnapshot } from './activation'

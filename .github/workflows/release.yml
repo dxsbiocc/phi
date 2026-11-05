@@ -1,7 +1,7 @@
 name: Release
 
-# Builds macOS (Apple Silicon) and Linux x64 packages and attaches them to a
-# **draft** GitHub release, so a person reviews and publishes it by hand.
+# Builds macOS (Apple Silicon), Linux x64, and Windows x64 packages and attaches
+# them to a **draft** GitHub release, so a person reviews and publishes it by hand.
 #
 # macOS signing is optional. With the CSC_LINK / CSC_KEY_PASSWORD secrets the
 # app is signed with that certificate, and with APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
@@ -72,6 +72,11 @@ jobs:
             builder: --linux AppImage deb --x64
             kernel_target: linux-x64
             artifact: Phi-linux-x64
+          - name: Windows x64
+            os: windows-2022
+            builder: --win nsis --x64
+            kernel_target: win32-x64
+            artifact: Phi-windows-x64
     steps:
       - uses: actions/checkout@v4.2.2
         with:
@@ -132,11 +137,17 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = macOS ]; then
             resources=dist/mac-arm64/Phi.app/Contents/Resources
+          elif [ "$RUNNER_OS" = Windows ]; then
+            resources=dist/win-unpacked/resources
           else
             resources=dist/linux-unpacked/resources
           fi
           node scripts/smoke-packaged-worker.mjs --resources "$resources"
-          test -x "$(find "$resources/kernel" -path '*linux-x64/phi-kernel' -print -quit)"
+          if [ "$RUNNER_OS" = Windows ]; then
+            test -f "$resources"/kernel/*/win32-x64/phi-kernel.exe
+          else
+            test -x "$(find "$resources/kernel" -path '*linux-x64/phi-kernel' -print -quit)"
+          fi
           bun scripts/check-release-kernel.ts --resources "$resources"
       - name: Check macOS signature
         if: runner.os == 'macOS'
@@ -153,7 +164,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/latest*.yml)
+          files=(dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/*.exe dist/latest*.yml)
           (( ${#files[@]} > 0 )) || { echo "No package artifacts in dist/" >&2; exit 1; }
           for file in "${files[@]}"; do
             if command -v sha256sum >/dev/null; then sha256sum "$file"; else shasum -a 256 "$file"; fi
@@ -166,6 +177,7 @@ jobs:
             dist/*.zip
             dist/*.AppImage
             dist/*.deb
+            dist/*.exe
             dist/latest*.yml
           if-no-files-found: error
 

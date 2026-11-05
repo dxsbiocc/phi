@@ -92,7 +92,7 @@ A skill **has scripts** when `scripts/` contains any file ending in `.py`, `.R`,
 ### 3.2 Skill-local environments
 
 `environment: ./environment.yml` gives the skill its own environment. The file follows the
-environment contract, and `locks/<platform>.txt` must exist for every platform Phi ships.
+environment contract, and `locks/<platform>.txt` must exist for every platform that currently ships official conda locks (`darwin-arm64`, `darwin-x64`, `linux-x64`).
 Its envId uses scope `skill` with the skill name as owner:
 `skill-<skill name>-<environment name>-<hash12>` (environment contract 1.1.0).
 

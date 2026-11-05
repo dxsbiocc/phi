@@ -12,6 +12,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
+  PHI_LOCK_PLATFORMS,
   PHI_PLATFORMS,
   lockSha256,
   parseEnvironmentSpec,
@@ -56,7 +57,7 @@ export async function lockEnvironment(options: LockEnvironmentOptions): Promise<
   const parsed = parseEnvironmentSpec(readSpec(specPath))
   if (!parsed.ok) throw new Error(parsed.errors.join('\n'))
 
-  const platforms = options.platforms ?? PHI_PLATFORMS
+  const platforms = options.platforms ?? PHI_LOCK_PLATFORMS
   const outDir = resolve(options.outDir ?? join(dirname(specPath), 'locks'))
   mkdirSync(outDir, { recursive: true })
   const specLabel = repoRelative(specPath, repoRoot)
@@ -266,7 +267,7 @@ function parseArgs(argv: readonly string[]): LockCliOptions {
   return {
     specPath,
     outDir,
-    platforms: platforms.length > 0 ? platforms : PHI_PLATFORMS,
+    platforms: platforms.length > 0 ? platforms : PHI_LOCK_PLATFORMS,
     annotate
   }
 }

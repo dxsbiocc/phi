@@ -90,7 +90,12 @@ test('remote capability platforms map to dedicated manifest targets without expa
   }
 
   assert.deepEqual(REMOTE_MICROMAMBA_TARGETS, ['linux-x64', 'linux-arm64'])
-  assert.deepEqual(MICROMAMBA_PLATFORM_IDS, ['darwin-arm64', 'darwin-x64', 'linux-x64'])
+  assert.deepEqual(MICROMAMBA_PLATFORM_IDS, [
+    'darwin-arm64',
+    'darwin-x64',
+    'linux-x64',
+    'win32-x64'
+  ])
 
   const x64 = describeRemoteMicromambaArtifact(
     { os: 'linux', arch: 'x86_64', libc: { name: 'glibc', version: '2.17' } },

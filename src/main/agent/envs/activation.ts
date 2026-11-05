@@ -1,4 +1,5 @@
-import { micromambaEnvironment, runMicromamba } from './runtime'
+import { micromambaEnvironment, runMicromamba, type RunMicromambaOptions } from './runtime'
+import { toLinuxPath, toWindowsPath } from './wsl'
 
 /** Same minimal PATH assigned by `micromambaEnvironment`. */
 const MINIMAL_SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin']
@@ -69,12 +70,15 @@ function parseNulEnvironment(text: string): Record<string, string> {
 export async function captureActivation(
   root: string,
   prefix: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  wsl?: RunMicromambaOptions['wsl']
 ): Promise<ActivationSnapshot> {
-  const before = micromambaEnvironment(root)
-  const result = await runMicromamba(['run', '-p', prefix, '/usr/bin/env', '-0'], {
+  const before = micromambaEnvironment(root, process.env, wsl ? 'linux' : process.platform)
+  const runPrefix = wsl ? toLinuxPath(prefix, wsl.ready.distro) : prefix
+  const result = await runMicromamba(['run', '-p', runPrefix, '/usr/bin/env', '-0'], {
     root,
-    signal
+    signal,
+    ...(wsl ? { wsl } : {})
   })
   if (signal?.aborted || result.code === null) throw new Error('environment build aborted')
   if (result.code !== 0) {
@@ -89,5 +93,11 @@ export async function captureActivation(
   if (!snapshot.set.CONDA_PREFIX) {
     throw new Error('activation snapshot is missing CONDA_PREFIX')
   }
-  return snapshot
+  if (!wsl) return snapshot
+  return {
+    set: Object.fromEntries(
+      Object.entries(snapshot.set).map(([name, value]) => [name, toWindowsPath(value)])
+    ),
+    pathPrepend: snapshot.pathPrepend.map((entry) => toWindowsPath(entry))
+  }
 }

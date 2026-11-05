@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   condaSpecOf,
   condaSubdir,
+  isPipDependency,
   parseExplicitLock,
   type CondaDependency,
   type EnvironmentSpec,
@@ -22,13 +23,15 @@ import { errorMessage } from '../../../shared/errorCodes'
 export const PLATFORM_BASELINES: Record<PhiPlatform, CondaOverrides> = {
   'linux-x64': { glibc: '2.17', linux: '4.18' },
   'darwin-arm64': { osx: '11.0' },
-  'darwin-x64': { osx: '10.15' }
+  'darwin-x64': { osx: '10.15' },
+  'win32-x64': { win: '10' }
 }
 
 export function baselineLabel(platform: PhiPlatform): string {
-  return Object.entries(PLATFORM_BASELINES[platform])
+  const label = Object.entries(PLATFORM_BASELINES[platform])
     .map(([key, value]) => `${key} ${value}`)
     .join(', ')
+  return label || 'none'
 }
 
 const SOLVE_ATTEMPTS = 3
@@ -94,7 +97,7 @@ export function explicitLockFromDryRun(json: unknown, meta: ExplicitLockMeta): s
 
 /** Explicit locks cannot record pip dependencies. Throws when any are present. */
 export function refusePipDependencies(dependencies: readonly CondaDependency[]): void {
-  const pip = dependencies.filter((dependency) => typeof dependency !== 'string')
+  const pip = dependencies.filter(isPipDependency)
   if (pip.length === 0) return
   const packages = pip.flatMap((dependency) => dependency.pip)
   const detail = packages.length > 0 ? ` (${packages.join(', ')})` : ''
@@ -106,7 +109,7 @@ export function refusePipDependencies(dependencies: readonly CondaDependency[]):
  * solver reported sizes. `condaOverrides` is forwarded only when the caller sets it.
  */
 export async function solveExplicitLock(input: SolveExplicitLockInput): Promise<string> {
-  const conda = condaSpecOf(input.spec)
+  const conda = condaSpecOf(input.spec, input.platform)
   refusePipDependencies(conda.dependencies)
   const specs = conda.dependencies.filter(
     (dependency): dependency is string => typeof dependency === 'string'

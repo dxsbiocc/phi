@@ -12,6 +12,7 @@ import {
   type EnvironmentToolId,
   type EnvironmentToolState
 } from '../../../shared/environmentTypes'
+import { probeWsl, wslRequiredMessage } from '../envs/wsl'
 import { detectAnalysisKernels } from '../notebook/analysis-kernels'
 import {
   MIN_NEXTFLOW_VERSION,
@@ -301,12 +302,48 @@ function hostDependency(
   }
 }
 
+function detectWslDependency(options: DetectEnvironmentOptions): EnvironmentHostDependency {
+  const probe = options.probeWsl?.() ?? probeWsl({ platform: options.platform ?? process.platform })
+  if (probe.status === 'unsupported') {
+    return { id: 'wsl', label: 'WSL2', status: 'missing' }
+  }
+  if (probe.status === 'ready') {
+    return {
+      id: 'wsl',
+      label: 'WSL2',
+      status: 'ready',
+      path: probe.executable,
+      detail: probe.distro,
+      version: '2'
+    }
+  }
+  if (probe.status === 'not-version-2') {
+    return {
+      id: 'wsl',
+      label: 'WSL2',
+      status: 'unavailable',
+      path: probe.executable,
+      detail: probe.distro,
+      version: String(probe.version),
+      messages: [wslRequiredMessage(probe)]
+    }
+  }
+  return {
+    id: 'wsl',
+    label: 'WSL2',
+    status: probe.status === 'no-distro' ? 'unavailable' : 'missing',
+    ...(probe.status === 'no-distro' ? { path: probe.executable } : {}),
+    messages: [wslRequiredMessage(probe)]
+  }
+}
+
 /** Host-only dependencies are checked and reported; Phi never installs them. */
 export function detectHostDependencies(
   options: DetectEnvironmentOptions = {}
 ): EnvironmentHostDependency[] {
   const runner = options.runner ?? defaultRunner
   const which = options.which ?? defaultWhich
+  const platform = options.platform ?? process.platform
 
   const dockerPath = resolveNamedBinary(['docker'], which)
   let docker: EnvironmentHostDependency
@@ -345,7 +382,9 @@ export function detectHostDependencies(
     singularityName ? `检测到 ${singularityName}` : undefined
   )
 
-  return [docker, singularity]
+  return platform === 'win32'
+    ? [detectWslDependency(options), docker, singularity]
+    : [docker, singularity]
 }
 
 function hostKernels(
@@ -450,6 +489,8 @@ export interface DetectEnvironmentOptions {
   runner?: CommandRunner
   which?: WhichResolver
   now?: () => string
+  platform?: NodeJS.Platform
+  probeWsl?: () => ReturnType<typeof probeWsl>
 }
 
 /** Fresh detection of all toolchain tools (no user overrides applied). */

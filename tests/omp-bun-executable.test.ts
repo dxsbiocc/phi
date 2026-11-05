@@ -70,6 +70,28 @@ test('prefers packaged bun over the inherited PATH', () => {
   })
 })
 
+test('resolves the packaged Windows x64 Bun from the platform-specific resource path', () => {
+  withTempDir((root) => {
+    const resourcesPath = join(root, 'resources')
+    mkdirSync(join(resourcesPath, 'runtime', 'bun', 'win32-x64'), { recursive: true })
+    const bundled = join(resourcesPath, 'runtime', 'bun', 'win32-x64', 'bun.exe')
+    writeFileSync(bundled, 'MZ')
+    chmodSync(bundled, 0o755)
+
+    assert.equal(
+      findBunExecutable({
+        env: { PATH: FINDER_PATH },
+        homeDir: join(root, 'home'),
+        platform: 'win32',
+        arch: 'x64',
+        resourcesPath,
+        readLoginShellPath: noLoginShell
+      }),
+      bundled
+    )
+  })
+})
+
 test('resolves the packaged Linux x64 Bun from the platform-specific resource path', () => {
   withTempDir((root) => {
     const resourcesPath = join(root, 'resources')

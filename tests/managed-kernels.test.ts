@@ -175,6 +175,19 @@ test(
 )
 
 test(
+  'Windows python kernelspec uses prefix python.exe and a semicolon PATH',
+  withFixture((fixture) => {
+    const { prefix } = install(fixture, 'phi:python@1')
+    writeFileSync(join(prefix, 'python.exe'), 'MZ')
+    syncManagedKernels({ ...ctx(fixture), hostPlatform: 'win32' })
+    const spec = readSpec(fixture, 'phi-python')
+    assert.equal(spec.argv[0], join(prefix, 'python.exe'))
+    assert.match(spec.env?.PATH ?? '', /;/u)
+    assert.equal(spec.env?.R_PROFILE_USER, 'NUL')
+  })
+)
+
+test(
   'phi-r uses the prefix R with IRkernel installed argv, or the documented default',
   withFixture((fixture) => {
     const { envId, prefix } = install(fixture, 'phi:r@1')

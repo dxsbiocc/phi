@@ -52,13 +52,14 @@ test('releases are drafted only from version tags, never published automatically
   assert.match(verify?.run ?? '', /package\.json/)
 })
 
-test('packages macOS arm64 and Linux x64, smoke-testing the bundled worker on both', () => {
+test('packages macOS arm64, Linux x64, and Windows x64, smoke-testing the bundled worker on each', () => {
   const pkg = workflow.jobs?.package
   assert.deepEqual(
     pkg?.strategy?.matrix?.include?.map((entry) => [entry.os, entry.builder]),
     [
       ['macos-15', '--mac dmg zip --arm64'],
-      ['ubuntu-22.04', '--linux AppImage deb --x64']
+      ['ubuntu-22.04', '--linux AppImage deb --x64'],
+      ['windows-2022', '--win nsis --x64']
     ]
   )
   const steps = pkg?.steps ?? []
@@ -70,6 +71,9 @@ test('packages macOS arm64 and Linux x64, smoke-testing the bundled worker on bo
   assert.ok(smoke, 'packaged worker smoke test runs')
   assert.match(smoke?.run ?? '', /dist\/mac-arm64\/Phi\.app\/Contents\/Resources/)
   assert.match(smoke?.run ?? '', /dist\/linux-unpacked\/resources/)
+  assert.match(smoke?.run ?? '', /dist\/win-unpacked\/resources/)
+  assert.match(smoke?.run ?? '', /phi-kernel\.exe/)
+  assert.match(workflowText, /dist\/\*\.exe/)
   const packageStep = steps.find((step) => step.name === 'Package')
   assert.match(packageStep?.run ?? '', /--publish never/)
   // Empty secrets would be read as a certificate path.

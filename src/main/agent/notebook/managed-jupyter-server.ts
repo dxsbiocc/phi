@@ -2,7 +2,6 @@
 // configured host Jupyter path may override it; automatic PATH detection never does.
 
 import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
 
 import type { ConfirmBuildRequest } from '../content/environment-gate'
 import { ensureEnvironmentReady } from '../content/environment-gate'
@@ -10,6 +9,7 @@ import type { EnvironmentBuilds } from '../content/environment-builds'
 import {
   environmentVariables,
   getRuntimeRoot,
+  prefixExecutable,
   sanitizeHostEnvironment,
   type EnvHandle
 } from '../envs'
@@ -76,7 +76,7 @@ export function managedJupyterLaunch(
   })
   return {
     port: launch.port,
-    command: join(handle.prefix, 'bin', 'jupyter'),
+    command: prefixExecutable(handle.prefix, 'jupyter', ctx.hostPlatform),
     args: [...(launch.args ?? []), ...managedKernelArgs(ctx.root)],
     env
   }

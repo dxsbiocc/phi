@@ -12,10 +12,17 @@ import { type PhiPlatform } from './platform'
 import { environmentSpecSchema } from './schemas'
 
 import { errorMessage } from '../../../shared/errorCodes'
-export { PHI_PLATFORMS, condaSubdir, currentPlatform, findPlatform } from './platform'
-export type { PhiPlatform } from './platform'
+export {
+  PHI_LOCK_PLATFORMS,
+  PHI_PLATFORMS,
+  condaSubdir,
+  currentPlatform,
+  findPlatform,
+  resolveManagedLockPlatform
+} from './platform'
+export type { ManagedLockResolution, PhiLockPlatform, PhiPlatform } from './platform'
 
-export const ENVIRONMENT_CONTRACT_VERSION = '1.4.0'
+export const ENVIRONMENT_CONTRACT_VERSION = '1.5.0'
 
 const ENV_NAME = /^[a-z][a-z0-9-]{0,62}$/
 
@@ -35,7 +42,19 @@ export interface SourcePackage {
   sha256: string
 }
 
-export type CondaDependency = string | { pip: string[] }
+export type CondaPipDependency = { pip: string[] }
+export type CondaPlatformDependency = { conda: string; platforms: PhiPlatform[] }
+export type CondaDependency = string | CondaPipDependency | CondaPlatformDependency
+
+export function isPipDependency(dependency: CondaDependency): dependency is CondaPipDependency {
+  return typeof dependency !== 'string' && 'pip' in dependency
+}
+
+export function cloneCondaDependency(dependency: CondaDependency): CondaDependency {
+  if (typeof dependency === 'string') return dependency
+  if (isPipDependency(dependency)) return { pip: [...dependency.pip] }
+  return { conda: dependency.conda, platforms: [...dependency.platforms] }
+}
 
 export interface EnvironmentSpec {
   name: string
@@ -176,13 +195,25 @@ export function parseEnvironmentSpec(yamlText: string): EnvironmentSpecParseResu
   return { ok: false, errors: errors.length > 0 ? errors : ['environment spec is invalid'] }
 }
 
-export function condaSpecOf(spec: EnvironmentSpec): CondaEnvironmentSpec {
+export function condaSpecOf(spec: EnvironmentSpec, platform?: PhiPlatform): CondaEnvironmentSpec {
+  const dependencies: CondaDependency[] = []
+  for (const dependency of spec.dependencies) {
+    if (typeof dependency === 'string') {
+      dependencies.push(dependency)
+      continue
+    }
+    if (isPipDependency(dependency)) {
+      dependencies.push({ pip: [...dependency.pip] })
+      continue
+    }
+    if (!platform || dependency.platforms.includes(platform)) {
+      dependencies.push(dependency.conda)
+    }
+  }
   return {
     name: spec.name,
     channels: [...spec.channels],
-    dependencies: spec.dependencies.map((dependency) =>
-      typeof dependency === 'string' ? dependency : { pip: [...dependency.pip] }
-    )
+    dependencies
   }
 }
 

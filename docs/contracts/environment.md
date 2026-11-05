@@ -1,6 +1,6 @@
 # Environment contract
 
-Version **1.4.0** (1.1.0 adds the `skill` scope; 1.2.0 adds project environments and overrides; see § Changes). Normative schemas:
+Version **1.5.0** (1.1.0 adds the `skill` scope; 1.2.0 adds project environments and overrides; see § Changes). Normative schemas:
 
 - [environment.schema.json](environment.schema.json) — `environment.yml`
 - [env-metadata.schema.json](env-metadata.schema.json) — `.phi/env.json`
@@ -19,7 +19,7 @@ UTF-8 YAML mapping. Unknown keys are errors, including conda keys this contract 
 | ---------------- | -------- | -------------------------------------------------------------------------------------------- |
 | `name`           | yes      | `^[a-z][a-z0-9-]{0,62}$`                                                                     |
 | `channels`       | yes      | non-empty array of non-empty strings                                                         |
-| `dependencies`   | yes      | at least one item: conda match-spec strings, or a single-key object `{ pip: [string, ...] }` |
+| `dependencies`   | yes      | at least one item: conda match-spec strings, `{ pip: [string, ...] }`, or `{ conda, platforms }` for packages that exist only on some Phi platforms |
 | `description`    | no       | human-readable string; stripped before micromamba                                            |
 | `host`           | no       | Phi extension below                                                                          |
 | `sourcePackages` | no       | Phi extension below                                                                          |
@@ -27,18 +27,29 @@ UTF-8 YAML mapping. Unknown keys are errors, including conda keys this contract 
 
 ## Phi extensions
 
-`condaSpecOf` returns only `name`, `channels`, and `dependencies`. `description`, `host`, `sourcePackages`, and `installation` are removed before anything is passed to micromamba. This contract does not invoke micromamba.
+`condaSpecOf` returns only `name`, `channels`, and `dependencies`. `description`, `host`, `sourcePackages`, and `installation` are removed before anything is passed to micromamba. `{ conda, platforms }` entries become ordinary match-spec strings when the platform matches, and are dropped otherwise. This contract does not invoke micromamba.
+
+### Platform-scoped conda packages (1.5.0)
+
+Packages that conda does not build for every Phi platform, such as GNU `coreutils` or bioconda `pysam` on `win-64`, are declared as:
+
+```yaml
+- conda: coreutils
+  platforms: [darwin-arm64, darwin-x64, linux-x64]
+```
+
+`platforms` is a non-empty list of Phi platform ids. A string match spec remains available on every platform. The pip object is unchanged.
 
 ### `host`
 
 Commands the host must already provide (LibreOffice, Docker, Singularity). Phi probes them and records the path it found. It does not install them.
 
-| Field         | Required | Rule                                               |
-| ------------- | -------- | -------------------------------------------------- |
-| `name`        | yes      | plain command name, `^[A-Za-z0-9._+-]+$` (no path) |
-| `description` | no       | string                                             |
-| `platforms`   | no       | any of `darwin-arm64`, `darwin-x64`, `linux-x64`   |
-| `candidates`  | no       | absolute paths to probe, each starting with `/`    |
+| Field         | Required | Rule                                                          |
+| ------------- | -------- | ------------------------------------------------------------- |
+| `name`        | yes      | plain command name, `^[A-Za-z0-9._+-]+$` (no path)            |
+| `description` | no       | string                                                        |
+| `platforms`   | no       | any of `darwin-arm64`, `darwin-x64`, `linux-x64`, `win32-x64` |
+| `candidates`  | no       | absolute paths to probe, each starting with `/`               |
 
 ### `sourcePackages`
 
@@ -105,8 +116,11 @@ hash, artifact references, resolved packages and installer version when availabl
 | `darwin-arm64` | `osx-arm64`  |
 | `darwin-x64`   | `osx-64`     |
 | `linux-x64`    | `linux-64`   |
+| `win32-x64`    | `win-64`     |
 
-`currentPlatform(platform, arch)` joins `platform` and `arch` (defaulting to `process.platform` and `process.arch`) and returns that id when it is in the table. Any other pair, including `win32`, throws `unsupported platform: <platform>-<arch>`.
+`currentPlatform(platform, arch)` joins `platform` and `arch` (defaulting to `process.platform` and `process.arch`) and returns that id when it is in the table. Any other pair throws `unsupported platform: <platform>-<arch>`.
+
+`win32-x64` is a runtime platform: the local kernel and bundled micromamba accept it. Official `phi-jupyter` and `phi-python` ship `locks/win32-x64.txt`. `phi-python` omits Unix-only packages (`coreutils`, bioconda `bbknn` / `harmonypy` / `pysam`) on Windows via `{ conda, platforms }`. `phi-r` and `phi-nextflow` still cannot solve on win-64; on Windows they stay in the catalog and build once through WSL2 using their `linux-x64` locks, then Phi invokes them with `wsl.exe`. Skill and plugin validation therefore require locks only for `darwin-arm64`, `darwin-x64`, and `linux-x64`. Environments without a native lock *and* without a Linux lock appear as unavailable.
 
 ## Names and references
 
@@ -258,7 +272,7 @@ original environment is never modified.
 
 ## Versioning
 
-`ENVIRONMENT_CONTRACT_VERSION` is `1.4.0`. Per content distribution design §4.4:
+`ENVIRONMENT_CONTRACT_VERSION` is `1.5.0`. Per content distribution design §4.4:
 
 - Minor versions are additive only: new optional fields, no change to the meaning of existing fields.
 - A major version needs an ADR, a deprecation window of at least two app releases in which both versions are accepted, and a migration note.
@@ -268,6 +282,7 @@ The 1.0.0 schemas use `additionalProperties: false`. A conda key or typo that th
 
 ## Changes
 
+- **1.5.0** (2026-11-05): `{ conda, platforms }` dependency objects so a spec can omit packages that conda does not build for a platform. Additive: existing string and `{ pip }` entries keep their meaning.
 - **1.4.0** (2026-10-09): private application installation with Python/uv, JavaScript/Bun and pinned native artifacts; installation-aware identity and metadata; declared artifact runtime tools; legacy IDs and environment behavior remain valid.
 
 - **1.1.0** (2026-09-30): envId scope `skill` for a standalone skill's own environment (`./environment.yml`), with the skill name as owner. Additive: no existing id or file changes.
