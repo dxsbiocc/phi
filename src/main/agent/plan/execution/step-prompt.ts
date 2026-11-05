@@ -11,6 +11,8 @@ const TRUNCATION_MARKER = '\n[truncated to 4 KiB]'
 const BUDGET_TRUNCATION_MARKER = '\n[truncated to prompt budget]'
 const OMITTED_REPORT = '[report omitted: prompt budget exhausted]'
 const MIN_REPORT_SHARE_BYTES = 512
+const STEP_STATUS_RULE =
+  'For this plan step, report "completed" only when you verified every acceptance criterion above. If any criterion is unmet or unverified, report "partial" or "failed" and name that criterion in the report.'
 const encoder = new TextEncoder()
 
 function byteLength(value: string): number {
@@ -68,7 +70,8 @@ function promptParts(state: PlanRunState, step: PlanStep, upstream: string): str
     '## Upstream reports',
     upstream,
     '## Required final report protocol',
-    AGENT_REPORT_PROTOCOL
+    AGENT_REPORT_PROTOCOL,
+    STEP_STATUS_RULE
   ]
 }
 

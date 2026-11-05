@@ -5,7 +5,7 @@ import type { RpcChildRunSnapshot } from './subagents/types'
 import type { SessionRun } from '../../session/session-runner-registry'
 import type { PhiRuntimeRef } from '../../session/runtime-reference'
 import { recordChildRunRecovery } from '../../session/child-run-recovery'
-import { parseAgentReport } from '../../agents/report'
+import { parseAgentReport, requireDeclaredCompletion } from '../../agents/report'
 
 export function createFacadeChildObservers(input: {
   readonly reference: () => PhiRuntimeRef | undefined
@@ -96,7 +96,10 @@ export async function deliverFacadeChildCompletion(input: {
         toolCallId: snapshot.parentToolCallId,
         ...(validReport ? { report } : { error: '专家任务未提供完整结果，请查看任务记录。' }),
         ...(hostTask && validReport
-          ? { reportStatus: parsed.status, missingInputs: parsed.missingInputs }
+          ? {
+              reportStatus: requireDeclaredCompletion(parsed).status,
+              missingInputs: parsed.missingInputs
+            }
           : {})
       }
     },

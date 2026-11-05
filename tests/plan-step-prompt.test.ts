@@ -94,7 +94,11 @@ test('builds the required prompt sections in order and appends the shared protoc
   assert.match(prompt, /Status: completed/)
   assert.match(prompt, /Missing inputs: none/)
   assert.match(prompt, /Found the relevant boundary\./)
-  assert.ok(prompt.endsWith(AGENT_REPORT_PROTOCOL))
+  assert.ok(prompt.includes(AGENT_REPORT_PROTOCOL))
+  assert.match(
+    prompt.slice(prompt.indexOf(AGENT_REPORT_PROTOCOL)),
+    /report "completed" only when you verified every acceptance criterion above/
+  )
 })
 
 test('includes only direct dependency reports while keeping every step in the overview', () => {

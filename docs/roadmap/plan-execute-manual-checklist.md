@@ -4,6 +4,8 @@ Status: pending desktop and SSH validation. Automated tests do not prove model b
 
 2026-10-24 local desktop observation: In the existing `localhost:5173` development window, a new ordinary Kimi K2.6 conversation stayed selected beyond 35 seconds, produced a two-step read-only review card, accepted approval, ran both steps, and received a final agent summary. The first step verified `/Users/dengxsh/.phi/workspace`. The second step was recorded as done by the runner, but the final agent correctly reported that its `glob` result did not meet the top-level listing criterion; this remains an acceptance-quality gap. The live page revealed duplicate full plan lists during review and execution. After the fix and a development-window restart, the history card displayed a meaningful title and status with details collapsed by default; clicking “查看计划详情” revealed both original steps, and collapsing it hid them again. This post-change UI check passed.
 
+2026-11-05 follow-up for the done-but-unmet step: a plan step whose final reply lacks a valid `<phi_agent_result>` block is now recorded as `partial` (one automatic retry, then a paused run) instead of done, on both the in-process and RPC delivery paths. Step prompts also state that `completed` requires every acceptance criterion to be verified. A model that declares `completed` while the criterion is unmet is still possible; recheck this during the Completion row below.
+
 Use a disposable local project and a separate test conversation. Record the Phi build, model, date, and session ID before testing. Do not use production files for write steps.
 
 ## E4: Local plan-execute

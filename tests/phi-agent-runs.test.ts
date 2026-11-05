@@ -125,6 +125,19 @@ function launch(
 
 // ── registry ─────────────────────────────────────────────────────────────
 
+test('host-origin prose is partial while tool-origin prose stays completed', async () => {
+  const registry = new AgentRunRegistry()
+  const prose = async (): Promise<AgentRunResult> => ({
+    text: 'The glob result does not meet the listing criterion.',
+    toolCalls: 1
+  })
+  const host = await launch(registry, prose, { origin: 'host', background: true }).done
+  const tool = await launch(registry, prose).done
+  assert.equal(host.reportStatus, 'partial')
+  assert.match(host.report ?? '', /not treated as meeting its acceptance criteria/)
+  assert.equal(tool.reportStatus, 'completed')
+})
+
 test('a launched run resolves to a done snapshot carrying the trimmed report', async () => {
   const registry = new AgentRunRegistry()
   const run = launch(registry, async () => ({ text: '  all done  ', toolCalls: 4 }))

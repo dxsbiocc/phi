@@ -9,6 +9,9 @@ import { createAgentRunCompletions } from '../src/main/agent/plan/execution/agen
 import { createEngineStepRunner } from '../src/main/agent/plan/execution/engine-step-runner'
 import { createPlanExecutor } from '../src/main/agent/plan/execution/plan-executor'
 
+const DECLARED_REPORT =
+  '<phi_agent_result>{"status":"completed","missingInputs":[]}</phi_agent_result>\nFinished plan step'
+
 test('verified remote child completion reaches the originating plan run', async () => {
   const delivered: unknown[][] = []
   const snapshot = {
@@ -20,7 +23,7 @@ test('verified remote child completion reaches the originating plan run', async 
     completedAt: 20
   } as RpcChildRunSnapshot
   const runtime = {
-    readChildReport: async () => 'Finished plan step'
+    readChildReport: async () => DECLARED_REPORT
   } as unknown as RemoteSessionRuntime
   const hostServices = {
     invoke: async (...args: unknown[]) => {
@@ -50,7 +53,7 @@ test('verified remote child completion reaches the originating plan run', async 
       startedAt: 10,
       completedAt: 20,
       toolCallId: 'persisted-request-id',
-      report: 'Finished plan step',
+      report: DECLARED_REPORT,
       reportStatus: 'completed',
       missingInputs: []
     }
@@ -59,6 +62,35 @@ test('verified remote child completion reaches the originating plan run', async 
     originSessionId: 'runtime-session-a',
     agentRunId: 'child-run'
   })
+})
+
+test('a plan step report without result metadata is not delivered as completed', async () => {
+  const delivered: Array<{ run: { reportStatus?: string; state: string } }> = []
+  const runtime = {
+    readChildReport: async () => 'The glob result does not meet the listing criterion.'
+  } as unknown as RemoteSessionRuntime
+  await deliverFacadeChildCompletion({
+    snapshot: {
+      id: 'prose-run',
+      agent: 'PlanStep',
+      status: 'completed',
+      startedAt: 10,
+      completedAt: 20
+    } as RpcChildRunSnapshot,
+    runtime: () => runtime,
+    unavailable: () => false,
+    isCurrent: () => true,
+    task: 'List top-level entries',
+    originSessionId: 'runtime-session-a',
+    hostServices: {
+      invoke: async (_method: unknown, params: (typeof delivered)[number]) => {
+        delivered.push(params)
+      }
+    } as unknown as OmpBridge['hostServices']
+  })
+  assert.equal(delivered.length, 1)
+  assert.equal(delivered[0].run.state, 'done')
+  assert.equal(delivered[0].run.reportStatus, 'partial')
 })
 
 test('a report read finishing after runtime rotation cannot deliver the old child', async () => {

@@ -67,6 +67,22 @@ export function parseAgentReport(value: string): AgentReport {
   }
 }
 
+export const UNDECLARED_COMPLETION_NOTE =
+  'Phi: this report has no valid <phi_agent_result> block, so the step is not treated as meeting its acceptance criteria.'
+
+/**
+ * Host-dispatched work (plan steps) always asks for the report protocol, so prose
+ * without valid metadata must not pass as a verified completion.
+ */
+export function requireDeclaredCompletion(report: AgentReport): AgentReport {
+  if (report.structured || report.status !== 'completed') return report
+  return {
+    ...report,
+    status: 'partial',
+    text: [UNDECLARED_COMPLETION_NOTE, report.text].filter(Boolean).join('\n\n')
+  }
+}
+
 export const AGENT_REPORT_PROTOCOL = `<phi_agent_reporting>
 Begin your final response with one machine-readable metadata block followed by a useful report for the main agent:
 <phi_agent_result>{"status":"completed|partial|not_found|blocked|failed","missingInputs":[],"nextAgent":null,"fallbackReason":null}</phi_agent_result>

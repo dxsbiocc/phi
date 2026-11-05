@@ -15,7 +15,7 @@ import {
   type AgentRunResult,
   type AgentRunToolStep
 } from './runner'
-import { parseAgentReport, type AgentReportStatus } from './report'
+import { parseAgentReport, requireDeclaredCompletion, type AgentReportStatus } from './report'
 
 import { errorMessage } from '../../../shared/errorCodes'
 
@@ -412,7 +412,8 @@ export class AgentRunRegistry {
           record.control = control
         }
       })
-      const report = parseAgentReport(result.text)
+      const parsed = parseAgentReport(result.text)
+      const report = record.snapshot.origin === 'host' ? requireDeclaredCompletion(parsed) : parsed
       if (report.text) {
         this.finish(record, {
           state: 'done',
