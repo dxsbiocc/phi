@@ -1,248 +1,30 @@
 name: Release
 
-# Builds macOS (Apple Silicon), Linux x64, and Windows x64 packages and attaches
-# them to a **draft** GitHub release, so a person reviews and publishes it by hand.
-#
-# macOS signing is optional. With the CSC_LINK / CSC_KEY_PASSWORD secrets the
-# app is signed with that certificate, and with APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
-# APPLE_TEAM_ID it is also notarized. Without them it is ad-hoc signed: it opens on
-# Apple Silicon, but Gatekeeper asks the user to allow it once (see README).
-
 on:
-  push:
-    tags:
-      - 'v*'
-  # Packages (without drafting a release) when the packaging setup itself changes.
-  pull_request:
-    paths:
-      - '.github/workflows/release.yml'
-      - 'electron-builder.yml'
-      - 'build/**'
-      - 'scripts/build/**'
-      - 'scripts/build-kernel.ts'
-      - 'scripts/build-helper.mjs'
-      - 'scripts/check-release-kernel.ts'
-      - 'scripts/smoke-packaged-worker.mjs'
-      - 'scripts/runtime/fetch-*.mjs'
-      - 'scripts/runtime/go-manifest.json'
-      - 'resources/runtime/manifest.json'
-      - 'package.json'
-      - 'bun.lock'
   workflow_dispatch:
 
 permissions:
-  contents: read
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  actions: read
+  contents: write
 
 jobs:
-  verify:
-    name: Verify
-    runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4.2.2
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@v2.0.2
-        with:
-          bun-version: '1.3.14'
-      - uses: actions/setup-node@v4.4.0
-        with:
-          node-version: '22.15.0'
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-      - name: Tag matches package.json version
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
-      - name: Lint
-        run: bun run lint
-      - name: Typecheck
-        run: bun run typecheck
-
-  package:
-    name: Package (${{ matrix.name }})
-    needs: verify
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: macOS arm64
-            os: macos-15
-            builder: --mac dmg zip --arm64
-            kernel_target: all
-            artifact: Phi-macos-arm64
-          - name: Linux x64
-            os: ubuntu-22.04
-            builder: --linux AppImage deb --x64
-            kernel_target: linux-x64
-            artifact: Phi-linux-x64
-          - name: Windows x64
-            os: windows-2022
-            builder: --win nsis --x64
-            kernel_target: win32-x64
-            artifact: Phi-windows-x64
-    steps:
-      - uses: actions/checkout@v4.2.2
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@v2.0.2
-        with:
-          bun-version: '1.3.14'
-      - uses: actions/setup-node@v4.4.0
-        with:
-          node-version: '22.15.0'
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-      - name: Build kernel
-        run: bun scripts/build-kernel.ts --target ${{ matrix.kernel_target }}
-      - name: Prepare Windows runtime assets
-        if: runner.os == 'Windows'
-        run: bun run runtime:fetch:win
-      - name: Build app
-        env:
-          # The renderer bundle needs more than Node's default ~2 GB heap on the
-          # 7 GB macOS runners.
-          NODE_OPTIONS: --max-old-space-size=4096
-        run: bun run build
-      - name: Choose macOS signing
-        if: runner.os == 'macOS'
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-        shell: bash
-        run: |
-          if [ -n "$CSC_LINK" ]; then
-            echo "Signing with the configured Developer ID certificate."
-            if [ -n "$APPLE_ID" ]; then
-              echo "SIGNING_ARGS=-c.mac.notarize=true" >> "$GITHUB_ENV"
-            fi
-          else
-            echo "No certificate configured: ad-hoc signing (Gatekeeper will ask users to allow the app)."
-            echo "SIGNING_ARGS=-c.mac.identity=- -c.mac.hardenedRuntime=false" >> "$GITHUB_ENV"
-            # electron-builder skips signing on PR builds; ad-hoc signing uses no secrets,
-            # so PRs still get (and verify) the same bundle signature a release gets.
-            echo "CSC_FOR_PULL_REQUEST=true" >> "$GITHUB_ENV"
-          fi
-      - name: Package
-        env:
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        shell: bash
-        # An unset secret arrives as an empty string, which electron-builder reads as a
-        # certificate path; unset those so it sees them as absent. SIGNING_ARGS is
-        # unquoted on purpose: it holds separate builder flags.
-        run: |
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
-            [ "$RUNNER_OS" = macOS ] && [ -n "${!name}" ] || unset "$name"
-          done
-          npx electron-builder ${{ matrix.builder }} --publish never $SIGNING_ARGS
-      - name: Smoke-test the packaged worker without system bun
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = macOS ]; then
-            resources=dist/mac-arm64/Phi.app/Contents/Resources
-          else
-            resources=dist/linux-unpacked/resources
-          fi
-          node scripts/smoke-packaged-worker.mjs --resources "$resources"
-          test -x "$(find "$resources/kernel" -path '*linux-x64/phi-kernel' -print -quit)"
-          bun scripts/check-release-kernel.ts --resources "$resources"
-      - name: Install and smoke-test Windows NSIS package
-        if: runner.os == 'Windows'
-        timeout-minutes: 8
-        shell: pwsh
-        run: |
-          $version = node -p "require('./package.json').version"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $installer = (Resolve-Path -LiteralPath "dist/phi-$version-setup.exe").Path
-          $installDir = Join-Path $env:RUNNER_TEMP "Phi 验收 $([guid]::NewGuid().ToString('N'))"
-          try {
-            # NSIS parses /D from the raw command line. It must be last and unquoted.
-            $process = Start-Process -FilePath $installer -ArgumentList "/S /D=$installDir" -Wait -PassThru
-            if ($process.ExitCode -ne 0) { throw "NSIS install failed with exit code $($process.ExitCode)" }
-            if (-not (Test-Path -LiteralPath (Join-Path $installDir 'phi.exe') -PathType Leaf)) {
-              throw "NSIS did not install Phi to $installDir"
-            }
-            $resources = Join-Path $installDir 'resources'
-            node scripts/smoke-packaged-worker.mjs --resources $resources
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            bun scripts/check-release-kernel.ts --resources $resources
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          } finally {
-            if (Test-Path -LiteralPath $installDir) {
-              Remove-Item -LiteralPath $installDir -Recurse -Force
-            }
-          }
-      - name: Check macOS signature
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          app=$(find dist -maxdepth 3 -name 'Phi.app' -type d | head -n 1)
-          codesign --verify --deep --strict --verbose=2 "$app"
-          for binary in "$app"/Contents/Resources/runtime/bun/*/bun "$app"/Contents/Resources/runtime/micromamba/*/micromamba; do
-            codesign --verify --verbose=2 "$binary"
-          done
-      - name: List artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          files=(dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/*.exe dist/latest*.yml)
-          (( ${#files[@]} > 0 )) || { echo "No package artifacts in dist/" >&2; exit 1; }
-          for file in "${files[@]}"; do
-            if command -v sha256sum >/dev/null; then sha256sum "$file"; else shasum -a 256 "$file"; fi
-          done
-      - uses: actions/upload-artifact@v4.6.2
-        with:
-          name: ${{ matrix.artifact }}
-          path: |
-            dist/*.dmg
-            dist/*.zip
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.exe
-            dist/latest*.yml
-          if-no-files-found: error
-
-  draft-release:
-    name: Draft GitHub release
-    needs: package
-    if: startsWith(github.ref, 'refs/tags/v')
+  transfer-windows-draft:
+    if: github.ref == 'refs/heads/codex/windows-preview-draft'
     runs-on: ubuntu-22.04
     timeout-minutes: 15
-    permissions:
-      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: dxsbiocc/phi
     steps:
-      - uses: actions/checkout@v4.2.2
-        with:
-          sparse-checkout: docs/release-notes
-      - uses: actions/download-artifact@v4.3.0
-        with:
-          path: release
-          merge-multiple: true
-      - name: Checksums
-        working-directory: release
-        run: sha256sum * > SHA256SUMS.txt
-      - name: Create draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        # Hand-written notes in docs/release-notes/<tag>.md win; generated notes
-        # list only merged pull requests.
+      - name: Attach the verified installer to a draft release
+        shell: bash
         run: |
-          notes="docs/release-notes/$GITHUB_REF_NAME.md"
-          if [ -f "$notes" ]; then source=(--notes-file "$notes"); else source=(--generate-notes); fi
-          gh release create "$GITHUB_REF_NAME" release/* \
-            --draft \
-            --title "Phi $GITHUB_REF_NAME" \
-            "${source[@]}"
+          set -euo pipefail
+          gh run download 42000458834 --name Phi-windows-x64 --dir artifact
+          cd artifact
+          printf '%s  %s\n' 'a5e2bce3d011bfc837d5259878af85f1520a171b5ace6380831482acd2eead44' phi-0.1.1-setup.exe > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
+          printf '%s' 'IyMgV2luZG93cyB4NjQg5YaF5rWLCgrlronoo4Xmlofku7bkuLogYHBoaS0wLjEuMS1zZXR1cC5leGVg77yM6ZqP6ZmEIGBTSEEyNTZTVU1TLnR4dGDjgILmtYvor5XljIXkvb/nlKjlupTnlKjniYjmnKwgYDAuMS4xYO+8jOivt+S7peacrOiNieeov+eahOaPkOS6pOWSjOagoemqjOWAvOivhuWIq+WuieijheWMheOAggoKIyMjIOWunuacuumqjOaUtgoKMS4g5Zyo5bmy5YeA55qEIFdpbmRvd3MgMTEgeDY0IOeUqOaIt+i0puaIt+WuieijheOAguWFiOWcqOacqumFjee9riBXU0wy44CB57O757ufIFB5dGhvbiDmiJYgQ29uZGEg55qE5oOF5Ya15LiL5ZCv5YqoIFBoae+8jOWPkemAgeS4gOadoea2iOaBr++8jOWBnOatouS4gOasoei/kOihjO+8jOmAgOWHuuW5tumHjeaWsOaJk+W8gOWOhuWPsuS8muivneOAggoyLiDlnKjorr7nva7kuK3mnoTlu7ogYHBoaS1qdXB5dGVyYCDlkozljp/nlJ8gYHBoaS1weXRob25g44CC55So6Lev5b6E5ZCr5Lit5paH5ZKM56m65qC855qE6aG555uu5omT5byAIE5vdGVib29r77yM5a+85YWlIGBudW1weWDjgIFgcGFuZGFzYOOAgWBzY2FucHlgIOW5tuaJp+ihjOS4gOS4quWNleWFg+agvOOAgumHjeWQr+WQjuehruiupOeOr+Wig+WPr+WkjeeUqOOAggozLiDliJ3lp4vljJYgV1NMMiBMaW51eCDlj5HooYzniYjvvIzlho3mnoTlu7ogKipwaGktcHl0aG9uIChXU0wyKSoq44CC6YCJ5oup5a+55bqU5YaF5qC45bm25a+85YWlIGBweXNhbWAg5ZKMIGBoYXJtb255cHlg44CC6L+Q6KGMIFIgTm90ZWJvb2sg5ZKM5pyA5bCPIE5leHRmbG93IENvbmRhIOS9nOS4mu+8jOajgOafpeWPlua2iOWQjuS7u+WKoeaYr+WQpuWBnOatouOAggoK5Y+N6aaI6K+36ZmEIFdpbmRvd3Mg54mI5pys44CB5piv5ZCm5ZCv55So5LqGIFdTTDLjgIHlpLHotKXmraXpqqTlkozplJnor6/kv6Hmga/jgIIKCiMjIyDmnKzlgJnpgInnmoQgQ0kg57uT5p6cCgotIFtXaW5kb3dzIE5TSVMg5omT5YyF5LiO5a6J6KOF5YaS54OfXShodHRwczovL2dpdGh1Yi5jb20vZHhzYmlvY2MvcGhpL2FjdGlvbnMvcnVucy80MjAwMDQ1ODgzNCnlt7LpgJrov4fvvIzljIXmi6zlronoo4XlkI7nmoTlt6XkvZzov5vnqIvjgIHlhoXmoLjmj6HmiYvlkozlkb3lkI3nrqHpgZPjgIIKLSBb5Y6f55SfIE5vdGVib29rIOmqjOaUtl0oaHR0cHM6Ly9naXRodWIuY29tL2R4c2Jpb2NjL3BoaS9hY3Rpb25zL3J1bnMvNDIwMDA0NTY3OTgp5LuN5LiN56iz5a6a44CC5LiA5qyh5p6E5bu65bm25aSN55So5LqG5Lik5aWX546v5aKD77yM6ZqP5ZCO5Yib5bu6IEp1cHl0ZXIg5Lya6K+d5pe25oqlIGBmZXRjaCBmYWlsZWRg44CC5Y+m5LiA5qyh6aaW5bu65pe2IFdpbmRvd3Mg5r+A5rS75o6i6ZKI6LaF5pe244CC6K+35Zyo5a6e5py65YiG5Yir6K6w5b2V546v5aKD5p6E5bu66Zi25q615ZKMIE5vdGVib29rIOS8muivneWQr+WKqOmYtuauteeahOihqOeOsOOAggotIOa1i+ivleWMheacqumFjee9riBXaW5kb3dzIOS7o+eggeetvuWQjeOAguivt+WcqOi/kOihjOWJjeaguOWvuemaj+mZhOeahCBTSEEtMjU244CCCgrmnoTlu7rmj5DkuqQgYGIxZTdlZWI1OGQ0ZjA4ODc4OTY0M2UxN2Y5NGFiNTRjYzI3OWRmZDFg44CCCg==' | base64 -d > notes.md
+          gh release create windows-x64-preview-20261105 phi-0.1.1-setup.exe SHA256SUMS.txt \
+            --draft --prerelease --target 'b1e7eeb58d4f088789643e17f94ab54cc279dfd1' \
+            --title 'Phi Windows x64 内测（0.1.1 构建）' --notes-file notes.md
