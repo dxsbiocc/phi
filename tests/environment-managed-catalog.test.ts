@@ -79,6 +79,36 @@ test('managed environment catalog excludes host-only agent consumers', async () 
   }
 })
 
+test('bundled environments and file-backed agent consumers survive skill discovery failure', async (t) => {
+  const temp = mkdtempSync(join(tmpdir(), 'phi-catalog-optional-skills-'))
+  t.after(() => rmSync(temp, { recursive: true, force: true }))
+  const environmentsDir = join(temp, 'official')
+  const agentDir = join(temp, 'agent')
+  const failure = new Error('OMP worker exited (1): Module not found')
+  const diagnostics: unknown[] = []
+  copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
+  mkdirSync(join(agentDir, 'agents'), { recursive: true })
+  writeFileSync(join(agentDir, 'agents', 'Visible.md'), environmentAgent('Visible'))
+
+  const entries = await listManagedEnvironments({
+    root: join(temp, 'runtime'),
+    environmentsDir,
+    agentDir,
+    projectDir: temp,
+    platform: 'darwin-arm64',
+    loadSkills: async () => {
+      throw failure
+    },
+    onSkillDiscoveryError: (error) => diagnostics.push(error)
+  })
+
+  const python = entries.find((entry) => entry.ref === 'phi:python@1')
+  assert.equal(python?.state, 'absent')
+  assert.ok(python?.consumers.some((consumer) => consumer.name === 'Visible'))
+  assert.ok(python?.consumers.some((consumer) => consumer.kind === 'kernel'))
+  assert.deepEqual(diagnostics, [failure])
+})
+
 test('managed catalog includes shared phi-r, project overrides, and orphaned environments', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'phi-managed-catalog-'))
   const root = join(temp, 'runtime')

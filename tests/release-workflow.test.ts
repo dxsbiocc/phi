@@ -86,12 +86,17 @@ test('Windows release verifies the installed NSIS app before uploading artifacts
   assert.equal(install?.if, "runner.os == 'Windows'")
   assert.equal(install?.shell, 'pwsh')
   assert.match(install?.run ?? '', /Join-Path \$env:RUNNER_TEMP/)
-  assert.match(install?.run ?? '', /-ArgumentList "\/S \/D=\$installDir" -Wait -PassThru/)
+  assert.match(
+    install?.run ?? '',
+    /-ArgumentList "\/S \/currentuser \/D=\$installDir" -Wait -PassThru/
+  )
   assert.match(install?.run ?? '', /\$process\.ExitCode -ne 0/)
-  assert.match(install?.run ?? '', /Test-Path -LiteralPath \(Join-Path \$installDir 'phi\.exe'\)/)
+  assert.match(install?.run ?? '', /\$app = Join-Path \$installDir 'phi\.exe'/)
+  assert.match(install?.run ?? '', /Test-Path -LiteralPath \$app/)
   assert.match(install?.run ?? '', /\$resources = Join-Path \$installDir 'resources'/)
   assert.match(install?.run ?? '', /smoke-packaged-worker\.mjs --resources \$resources/)
   assert.match(install?.run ?? '', /check-release-kernel\.ts --resources \$resources/)
+  assert.match(install?.run ?? '', /smoke-installed-desktop\.ts --app \$app/)
   const uploadIndex = steps.findIndex((step) => step.uses?.startsWith('actions/upload-artifact@'))
   assert.ok(install && steps.indexOf(install) < uploadIndex)
   const builder = parse(readFileSync('electron-builder.yml', 'utf8')) as {
@@ -115,6 +120,21 @@ test('local and CI Windows builds prepare the same native and WSL runtimes befor
   assert.match(scripts['runtime:fetch:win'], /fetch-micromamba\.mjs --platform win32-x64/)
   assert.match(scripts['runtime:fetch:win'], /fetch-micromamba\.mjs --platform linux-x64/)
   assert.match(scripts['runtime:fetch:win'], /fetch-bun\.mjs --platform win32-x64/)
+})
+
+test('Windows interactive installer offers a directory picker and defaults to the current user', () => {
+  const builder = parse(readFileSync('electron-builder.yml', 'utf8')) as {
+    nsis?: {
+      oneClick?: boolean
+      allowToChangeInstallationDirectory?: boolean
+      perMachine?: boolean
+      selectPerMachineByDefault?: boolean
+    }
+  }
+  assert.equal(builder.nsis?.oneClick, false)
+  assert.equal(builder.nsis?.allowToChangeInstallationDirectory, true)
+  assert.equal(builder.nsis?.perMachine, false)
+  assert.equal(builder.nsis?.selectPerMachineByDefault, false)
 })
 
 test('macOS signing uses a certificate when configured and ad-hoc signing otherwise', () => {

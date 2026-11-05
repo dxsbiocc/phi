@@ -170,7 +170,7 @@ Phi 目前是**内部测试版**。主要目标平台是 Apple Silicon 上的 ma
 
 - **macOS**（`.dmg`、`.zip`）：把 Phi 拖到“应用程序”。首次启动时 macOS 会提示无法验证 Phi，请打开“系统设置 → 隐私与安全性”，点击“仍要打开”；每个安装版本只需操作一次。
 - **Linux**（`.AppImage`、`.deb`）：运行 `sudo apt install ./phi_*.deb`，或执行 `chmod +x Phi-*.AppImage` 后运行 AppImage。
-- **Windows x64**（`.exe` 预览包）：运行安装程序。本地聊天和默认 Python Notebook 使用 Phi 自带的 Windows 运行时。在**设置 → 环境**中构建 Notebook 环境。R、Nextflow，以及依赖 `pysam` 或 `harmonypy` 的分析需要先安装 WSL2 并初始化 Linux 发行版。使用这些 Python 包时，构建 **phi-python (WSL2)**，再在 Notebook 中选择 Python (WSL2) 内核。
+- **Windows x64**（`.exe` 预览包）：运行安装向导并选择安装目录。向导默认安装给当前用户。本地聊天和默认 Python Notebook 使用 Phi 自带的 Windows 运行时。在**设置 → 环境**中构建 Notebook 环境。R、Nextflow，以及依赖 `pysam` 或 `harmonypy` 的分析需要先安装 WSL2 并初始化 Linux 发行版。使用这些 Python 包时，构建 **phi-python (WSL2)**，再在 Notebook 中选择 Python (WSL2) 内核。
 
 ## 从源码构建
 

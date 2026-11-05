@@ -107,14 +107,42 @@ test('managed environment actions reject invalid IPC arguments with readable mes
   const root = mkdtempSync(join(tmpdir(), 'phi-environment-actions-'))
   try {
     await assert.rejects(actions(root).list('relative/project'), /项目目录必须是绝对路径/)
-    assert.throws(() => actions(root).build('', undefined), /环境引用不能为空/)
-    assert.throws(() => actions(root).build('./environment.yml', undefined), /技能私有路径环境/)
-    assert.throws(() => actions(root).build('phi:python@1', undefined, 42), /插件标识无效/)
+    await assert.rejects(actions(root).build('', undefined), /环境引用不能为空/)
+    await assert.rejects(actions(root).build('./environment.yml', undefined), /技能私有路径环境/)
+    await assert.rejects(actions(root).build('phi:python@1', undefined, 42), /插件标识无效/)
     await assert.rejects(actions(root).remove('../bad'), /envId 无效/)
     await assert.rejects(actions(root).rebuild('bad'), /envId 无效/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('a missing WSL2 prerequisite is reported before queueing while native Windows Python can build', async () => {
+  const started: string[] = []
+  let probes = 0
+  const env = createManagedEnvironmentActions({
+    root: '/runtime-unused',
+    platform: 'win32-x64',
+    probeWsl: async () => {
+      probes += 1
+      return { status: 'missing' }
+    },
+    builds: {
+      ...fakeBuilds(),
+      start: async (descriptor) => {
+        started.push(descriptor.platform)
+        return undefined as never
+      }
+    },
+    catalog: async () => []
+  })
+
+  await assert.rejects(env.build('phi:python-wsl@1'), /wsl --install/)
+  assert.deepEqual(started, [])
+  assert.equal(probes, 1)
+  await env.build('phi:python@1')
+  assert.deepEqual(started, ['win32-x64'])
+  assert.equal(probes, 1)
 })
 
 test('plugin environment builds require the installed owning plugin and remember it for rebuild', async () => {
@@ -157,21 +185,21 @@ test('plugin environment builds require the installed owning plugin and remember
       }
     })
 
-    assert.throws(() => pluginActions.build('plugin:demo'), /构建插件私有环境时必须提供插件标识/)
-    assert.throws(
-      () => pluginActions.build('plugin:demo', undefined, 'visualization'),
+    await assert.rejects(pluginActions.build('plugin:demo'), /构建插件私有环境时必须提供插件标识/)
+    await assert.rejects(
+      pluginActions.build('plugin:demo', undefined, 'visualization'),
       /插件 visualization 未声明环境 demo/
     )
-    assert.throws(
-      () => pluginActions.build('plugin:demo', undefined, 'missing-plugin'),
+    await assert.rejects(
+      pluginActions.build('plugin:demo', undefined, 'missing-plugin'),
       /找不到已安装插件：missing-plugin/
     )
-    assert.throws(
-      () => pluginActions.build('phi:python@1', undefined, 'visualization'),
+    await assert.rejects(
+      pluginActions.build('phi:python@1', undefined, 'visualization'),
       /插件标识只能用于插件私有环境/
     )
 
-    const built = pluginActions.build('plugin:demo', undefined, 'other-plugin')
+    const built = await pluginActions.build('plugin:demo', undefined, 'other-plugin')
     assert.match(built.envId, /^plugin-other-plugin-demo-[0-9a-f]{12}$/)
     assert.deepEqual(starts, [{ owner: 'other-plugin', requestedBy: 'other-plugin' }])
 

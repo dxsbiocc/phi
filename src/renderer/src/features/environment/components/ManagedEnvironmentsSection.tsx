@@ -21,7 +21,8 @@ import {
   formatEnvironmentSize,
   managedEnvironmentHostResources,
   managedEnvironmentSourceLabel,
-  managedEnvironmentStateLabel
+  managedEnvironmentStateLabel,
+  managedEnvironmentWslBlocker
 } from '../lib/environmentPanel'
 import {
   EnvironmentBrandIcon,
@@ -77,30 +78,41 @@ function EnvironmentCard({
 }): React.JSX.Element {
   useUiLanguage()
   const hostResources = managedEnvironmentHostResources(environment, snapshot)
+  const wslBlocker = managedEnvironmentWslBlocker(hostResources)
   const hasHostResources = hostResources.tools.length + hostResources.dependencies.length > 0
   const removable =
     environment.referrers.length === 0 &&
     (environment.state === 'ready' ||
       environment.state === 'failed' ||
       environment.state === 'drifted')
-  const canBuild = environment.source !== 'orphaned' && environment.state === 'absent'
+  const canBuild =
+    !wslBlocker && environment.source !== 'orphaned' && environment.state === 'absent'
   const unavailable = environment.state === 'unavailable'
   const canRebuild =
+    !wslBlocker &&
     environment.source !== 'orphaned' &&
     (environment.state === 'ready' ||
       environment.state === 'failed' ||
       environment.state === 'drifted')
-  const description = unavailable
-    ? environmentUi.noOfficialLockForThisPlatform
-    : environment.runtime === 'wsl2' && environment.state === 'absent'
-      ? environmentUi.buildsAndRunsInWsl2
-      : environment.error
-        ? environment.error
-        : environment.source === 'orphaned'
-          ? environmentUi.legacyEnvironmentItCanBeSafelyRemovedWhen
-          : environment.description || environmentUi.noAdditionalDescriptionForThisEnvironment
+  const nativePython =
+    environment.ref === 'phi:python@1' &&
+    !environment.runtime &&
+    snapshot?.hostDependencies?.some((dependency) => dependency.id === 'wsl')
+  const description =
+    wslBlocker ??
+    (unavailable
+      ? environmentUi.noOfficialLockForThisPlatform
+      : environment.runtime === 'wsl2' && environment.state === 'absent'
+        ? environmentUi.buildsAndRunsInWsl2
+        : environment.error
+          ? environment.error
+          : environment.source === 'orphaned'
+            ? environmentUi.legacyEnvironmentItCanBeSafelyRemovedWhen
+            : nativePython
+              ? environmentUi.nativeWindowsPython
+              : environment.description || environmentUi.noAdditionalDescriptionForThisEnvironment)
   const secondaryMetric =
-    environment.state === 'absent'
+    environment.state === 'absent' && !wslBlocker
       ? formatBuildEstimate(environment.estimate)
       : environment.overrideFrom?.length
         ? environmentUi.overridesValue(environment.overrideFrom.join('、'))

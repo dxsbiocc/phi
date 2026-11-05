@@ -110,7 +110,7 @@ export const PHI_JUPYTER_PORT = 28888
 const READY_PROBE_ATTEMPTS = 40
 const READY_PROBE_INTERVAL_MS = 250
 const READY_PROBE_TIMEOUT_MS = 500
-const JUPYTER_LOCAL_URL_PATTERN = /https?:\/\/(?:127\.0\.0\.1|localhost):\d+\/[^\s'"]*/i
+const JUPYTER_LOCAL_URL_PATTERN = /https?:\/\/(?:127\.0\.0\.1|localhost):\d+\/[^\s'"]*/gi
 
 export function jupyterPortForProject(projectCwd: string): number {
   void projectCwd
@@ -176,21 +176,6 @@ function delay(ms: number): Promise<void> {
   })
 }
 
-function defaultReadyProbe(url: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const probe = request(url, { method: 'GET', timeout: READY_PROBE_TIMEOUT_MS }, (response) => {
-      response.resume()
-      resolve(true)
-    })
-    probe.on('timeout', () => {
-      probe.destroy()
-      resolve(false)
-    })
-    probe.on('error', () => resolve(false))
-    probe.end()
-  })
-}
-
 function defaultServerIdentityProbe(url: string): Promise<boolean> {
   // Jupyter Server always exposes GET /api/status returning a small JSON
   // object (e.g. {"started": "...", "kernels": 0, ...}). Anything else
@@ -232,22 +217,26 @@ function defaultServerIdentityProbe(url: string): Promise<boolean> {
   })
 }
 
-export function extractJupyterEndpoint(text: string): JupyterEndpoint | null {
-  const match = text.match(JUPYTER_LOCAL_URL_PATTERN)
-  if (!match) return null
-
-  try {
-    const url = new URL(match[0])
-    const token = url.searchParams.get('token') ?? undefined
-    url.searchParams.delete('token')
-    return {
-      url: url.toString(),
-      token,
-      port: Number(url.port)
+export function extractJupyterEndpoint(
+  text: string,
+  expectedPort?: number
+): JupyterEndpoint | null {
+  for (const [candidate] of text.matchAll(JUPYTER_LOCAL_URL_PATTERN)) {
+    try {
+      const url = new URL(candidate)
+      const port = Number(url.port)
+      if (expectedPort !== undefined && port !== expectedPort) continue
+      const token = url.searchParams.get('token') ?? undefined
+      url.searchParams.delete('token')
+      // Jupyter is launched with ServerApp.ip=127.0.0.1, so avoid a separate
+      // localhost lookup when the banner spells it that way.
+      url.hostname = '127.0.0.1'
+      return { url: url.toString(), token, port }
+    } catch {
+      // A malformed log fragment is not a server endpoint.
     }
-  } catch {
-    return null
   }
+  return null
 }
 
 function publicStatus(record: JupyterServerRecord): JupyterServerPublicStatus {
@@ -314,7 +303,7 @@ export class JupyterServerRegistry {
       (options.createProcess ? undefined : managedLaunchResolver(options.managed))
     if (resolveLaunch) this.resolveLaunch = resolveLaunch
     if (options.port !== undefined) this.port = options.port
-    this.readyProbe = options.readyProbe ?? defaultReadyProbe
+    this.readyProbe = options.readyProbe ?? defaultServerIdentityProbe
     this.identityProbe = options.identityProbe ?? defaultServerIdentityProbe
     this.readyProbeAttempts = options.readyProbeAttempts ?? READY_PROBE_ATTEMPTS
     this.readyProbeIntervalMs = options.readyProbeIntervalMs ?? READY_PROBE_INTERVAL_MS
@@ -441,9 +430,8 @@ export class JupyterServerRegistry {
   }
 
   private consumeOutput(record: JupyterServerRecord, chunk: Buffer | string): void {
-    // Buffer across chunks: a process pipe can split a single line (including
-    // the ready-URL banner) across multiple 'data' events, so search for the
-    // endpoint in the combined text before splitting into complete lines.
+    // A process pipe can split a port number or token across chunks. Consume
+    // complete lines before interpreting a startup URL.
     const combined = record.pendingOutput + chunk.toString()
 
     const lastNewlineIndex = combined.lastIndexOf('\n')
@@ -465,7 +453,8 @@ export class JupyterServerRegistry {
 
     // markReady (which sets a clean, sanitized status message) must run last
     // so it wins over the raw log line set above.
-    const endpoint = extractJupyterEndpoint(combined)
+    if (record.state !== 'starting') return
+    const endpoint = extractJupyterEndpoint(completeText, record.port)
     if (endpoint) {
       this.markReady(record, endpoint)
     }

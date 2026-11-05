@@ -2,12 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { sourceCheckoutPath } from '../source-checkout-path'
+import {
+  externalWorkerPath,
+  findExternalWorkerScript,
+  sourceCheckoutPath
+} from '../source-checkout-path'
 import { resolveBunExecutable } from './terminal-bun'
-
-function asarUnpackedPath(path: string): string {
-  return path.includes('.asar/') ? path.replace('.asar/', '.asar.unpacked/') : path
-}
 
 export function resolveTerminalScript(
   fileName: string,
@@ -34,12 +34,7 @@ export function pickTerminalScript(
   candidates: readonly string[],
   exists: (path: string) => boolean
 ): string {
-  for (const candidate of candidates) {
-    const unpacked = asarUnpackedPath(candidate)
-    if (unpacked !== candidate && exists(unpacked)) return unpacked
-    if (exists(candidate)) return candidate
-  }
-  return candidates[candidates.length - 1]
+  return findExternalWorkerScript(candidates, exists) ?? externalWorkerPath(candidates.at(-1) ?? '')
 }
 
 function terminalChildEnvironment(): NodeJS.ProcessEnv {

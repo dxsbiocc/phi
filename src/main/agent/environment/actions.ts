@@ -27,6 +27,7 @@ import { deleteEnvironmentEntry } from '../envs/index-store'
 import { tryAcquireEnvironmentLock } from '../envs/lock'
 import { hasLiveEnvironmentLeases } from '../envs/leases'
 import { ownedEnvironmentPrefix, ownedRuntimeDirectory } from '../envs/ownership'
+import { probeManagedWsl, requireReadyWsl, type WslProbe } from '../envs/wsl'
 import { listInstalledPlugins } from '../plugins/loader'
 import { directorySize } from './size'
 
@@ -40,7 +41,7 @@ type Catalog = (projectCwd?: string, includeDynamic?: boolean) => Promise<Manage
 
 export interface ManagedEnvironmentActions {
   list(projectCwd?: unknown, includeDynamic?: unknown): Promise<ManagedEnvironmentEntry[]>
-  build(ref: unknown, projectCwd?: unknown, pluginId?: unknown): { envId: string }
+  build(ref: unknown, projectCwd?: unknown, pluginId?: unknown): Promise<{ envId: string }>
   rebuild(envId: unknown): Promise<void>
   remove(envId: unknown): Promise<ManagedEnvironmentRemoveResult>
   clean(): Promise<ManagedEnvironmentCleanResult>
@@ -54,6 +55,8 @@ export interface ManagedEnvironmentActionDependencies {
   sizeOf?: typeof directorySize
   collect?: typeof collectGarbage
   repair?: typeof repairEnvironment
+  platform?: PhiPlatform
+  probeWsl?: (root: string) => Promise<WslProbe>
 }
 
 function projectDirectory(value: unknown): string | undefined {
@@ -124,13 +127,14 @@ function validatePluginEnvironment(
 
 function envIdOf(
   target: BuildTarget,
-  agentDir?: string
+  { agentDir, platform }: Pick<ManagedEnvironmentActionDependencies, 'agentDir' | 'platform'>
 ): { envId: string; descriptor: ReturnType<typeof describeEnvironment> } {
   validatePluginEnvironment(target.ref, target.pluginId, agentDir)
   const descriptor = describeEnvironment(target.ref, {
     ...(target.projectCwd ? { projectDir: target.projectCwd } : {}),
     ...(target.pluginId ? { pluginId: target.pluginId } : {}),
-    ...(agentDir ? { agentDir } : {})
+    ...(agentDir ? { agentDir } : {}),
+    ...(platform ? { platform } : {})
   })
   return {
     descriptor,
@@ -161,7 +165,12 @@ export function createManagedEnvironmentActions(
   const sizeOf = dependencies.sizeOf ?? directorySize
   const collect = dependencies.collect ?? collectGarbage
   const repair = dependencies.repair ?? repairEnvironment
+  const probeWsl = dependencies.probeWsl ?? probeManagedWsl
   const descriptors = new Map<string, BuildTarget>()
+
+  async function preflight(descriptor: ReturnType<typeof describeEnvironment>): Promise<void> {
+    if (descriptor.runtime === 'wsl2') requireReadyWsl(await probeWsl(dependencies.root))
+  }
 
   async function list(
     projectCwdValue?: unknown,
@@ -180,11 +189,11 @@ export function createManagedEnvironmentActions(
     return entries
   }
 
-  function build(
+  async function build(
     refValue: unknown,
     projectCwdValue?: unknown,
     pluginIdValue?: unknown
-  ): { envId: string } {
+  ): Promise<{ envId: string }> {
     const ref = environmentRef(refValue)
     const projectCwd = projectDirectory(projectCwdValue)
     const pluginId = pluginIdentifier(pluginIdValue)
@@ -197,7 +206,8 @@ export function createManagedEnvironmentActions(
       ...(projectCwd ? { projectCwd } : {}),
       ...(pluginId ? { pluginId } : {})
     }
-    const { descriptor, envId } = envIdOf(target, dependencies.agentDir)
+    const { descriptor, envId } = envIdOf(target, dependencies)
+    await preflight(descriptor)
     descriptors.set(envId, target)
     void dependencies.builds
       .start(descriptor, {
@@ -223,8 +233,9 @@ export function createManagedEnvironmentActions(
       target = descriptors.get(envId)
     }
     if (!target) throw new Error('找不到该环境的构建定义，请先刷新环境列表')
-    const { descriptor, envId: describedId } = envIdOf(target, dependencies.agentDir)
+    const { descriptor, envId: describedId } = envIdOf(target, dependencies)
     if (describedId !== envId) throw new Error('环境定义已经变化，请刷新环境列表后重试')
+    await preflight(descriptor)
     await repair({
       root: dependencies.root,
       scope: descriptor.scope,
