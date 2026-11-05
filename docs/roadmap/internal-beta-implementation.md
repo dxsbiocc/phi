@@ -180,7 +180,7 @@ Goal: make the internal beta comfortable without expanding scope.
 - Refresh Git status on project enter/switch, run completion, and manual refresh only.
 - Show edit/write targets in the timeline and provide external reveal/open actions.
 - Do not build a full diff viewer, command palette, drag-and-drop attachments, system notifications, automatic updates, or first-class OMX team/swarm dashboard in the beta.
-- Update README with internal beta scope, resettable data model notice, manual update expectations, and macOS security prompt notes.
+- Update README with internal beta scope, manual update expectations, and macOS security prompt notes. Upgrades keep data in `~/.phi` (decided 2026-11-05); the README does not warn about resets.
 - Run `bun run test`, `bun run lint`, `bun run typecheck`, and `bun run build` before beta handoff.
 
 ## Public Biological Database Access
