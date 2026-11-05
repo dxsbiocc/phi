@@ -25,7 +25,7 @@ test('Windows activation captures UTF-8 values and preserves the prefix DLL sear
         '-EncodedCommand'
       ])
       assert.match(Buffer.from(args[8], 'base64').toString('utf16le'), /Console.*OutputEncoding/)
-      assert.equal(options.timeoutMs, 30_000)
+      assert.equal(options.timeoutMs, 120_000)
       return {
         code: 0,
         stderr: '',

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { isPackagedBundleDir, sourceCheckoutPath } from '../src/main/source-checkout-path'
+import {
+  externalWorkerPath,
+  isPackagedBundleDir,
+  sourceCheckoutPath
+} from '../src/main/source-checkout-path'
 
 const repo = '/Users/me/Phi'
 const workerSource = `${repo}/src/main/agent/engine/in-process/main.ts`
@@ -42,4 +46,13 @@ test('a packaged bundle ignores a source checkout in the working directory', () 
 test('only an asar path segment marks a bundle as packaged', () => {
   assert.equal(isPackagedBundleDir('/work/my.asar-notes/out/main'), false)
   assert.equal(isPackagedBundleDir('/work/Phi/out/main'), false)
+})
+
+test('worker paths retain an install folder named app.asar and rewrite the actual archive', () => {
+  assert.equal(
+    externalWorkerPath(String.raw`D:\app.asar\Phi\resources\app.asar\out\main\worker.ts`),
+    String.raw`D:\app.asar\Phi\resources\app.asar.unpacked\out\main\worker.ts`
+  )
+  const unpacked = '/Applications/Phi.app/Contents/Resources/app.asar.unpacked/out/main/worker.ts'
+  assert.equal(externalWorkerPath(unpacked), unpacked)
 })

@@ -189,6 +189,11 @@ async function probeWslForBuild(distro?: string): Promise<WslProbe> {
   }
 }
 
+/** Check the saved distribution without starting it, staging tools, or writing runtime state. */
+export function probeManagedWsl(root: string): Promise<WslProbe> {
+  return probeWslForBuild(readWslRuntime(root)?.ready.distro)
+}
+
 export function wslRequiredMessage(probe: WslProbe): string {
   if (probe.status === 'missing' || probe.status === 'unsupported') {
     return 'WSL2 is not installed. Open an elevated PowerShell, run wsl --install, restart Windows, then build this environment.'

@@ -23,6 +23,7 @@ on:
       - 'scripts/build-helper.mjs'
       - 'scripts/check-release-kernel.ts'
       - 'scripts/smoke-packaged-worker.mjs'
+      - 'scripts/smoke-installed-desktop.ts'
       - 'scripts/runtime/fetch-*.mjs'
       - 'scripts/runtime/go-manifest.json'
       - 'resources/runtime/manifest.json'
@@ -158,7 +159,7 @@ jobs:
           bun scripts/check-release-kernel.ts --resources "$resources"
       - name: Install and smoke-test Windows NSIS package
         if: runner.os == 'Windows'
-        timeout-minutes: 8
+        timeout-minutes: 12
         shell: pwsh
         run: |
           $version = node -p "require('./package.json').version"
@@ -167,15 +168,18 @@ jobs:
           $installDir = Join-Path $env:RUNNER_TEMP "Phi 验收 $([guid]::NewGuid().ToString('N'))"
           try {
             # NSIS parses /D from the raw command line. It must be last and unquoted.
-            $process = Start-Process -FilePath $installer -ArgumentList "/S /D=$installDir" -Wait -PassThru
+            $process = Start-Process -FilePath $installer -ArgumentList "/S /currentuser /D=$installDir" -Wait -PassThru
             if ($process.ExitCode -ne 0) { throw "NSIS install failed with exit code $($process.ExitCode)" }
-            if (-not (Test-Path -LiteralPath (Join-Path $installDir 'phi.exe') -PathType Leaf)) {
+            $app = Join-Path $installDir 'phi.exe'
+            if (-not (Test-Path -LiteralPath $app -PathType Leaf)) {
               throw "NSIS did not install Phi to $installDir"
             }
             $resources = Join-Path $installDir 'resources'
             node scripts/smoke-packaged-worker.mjs --resources $resources
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             bun scripts/check-release-kernel.ts --resources $resources
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            node --import ./scripts/test-loader.mjs scripts/smoke-installed-desktop.ts --app $app
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally {
             if (Test-Path -LiteralPath $installDir) {

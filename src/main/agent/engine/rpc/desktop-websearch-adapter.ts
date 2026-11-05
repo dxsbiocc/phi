@@ -1,8 +1,8 @@
-import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { encodeRpcCommand } from './frame-codec'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
+import { findExternalWorkerScript } from '../../../source-checkout-path'
 import {
   encodeHostResult,
   validHostResultPayload
@@ -32,11 +32,8 @@ export function resolveDesktopWebSearchWorkerPath(moduleUrl = import.meta.url): 
     join(bundleDir, 'agent/engine/rpc/desktop-websearch-worker.ts'),
     join(bundleDir, 'engine/rpc/desktop-websearch-worker.ts')
   ]
-  for (const candidate of candidates) {
-    const unpacked = candidate.replace(/\.asar([/\\])/u, '.asar.unpacked$1')
-    if (existsSync(unpacked)) return unpacked
-    if (existsSync(candidate)) return candidate
-  }
+  const worker = findExternalWorkerScript(candidates)
+  if (worker) return worker
   throw new Error('Desktop web search worker is missing from the application closure')
 }
 /** Metadata-only probes initialize no Settings/AuthStorage and exit immediately. */

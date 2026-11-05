@@ -144,6 +144,14 @@ export function managedEnvironmentHostResources(
   return { dependencies: [], tools: [] }
 }
 
+export function managedEnvironmentWslBlocker(
+  resources: ManagedEnvironmentHostResources
+): string | null {
+  const wsl = resources.dependencies.find((dependency) => dependency.id === 'wsl')
+  if (!wsl || wsl.status === 'ready') return null
+  return wsl.status === 'missing' ? environmentUi.installWsl2 : environmentUi.initializeWsl2
+}
+
 function legacyHostTools(snapshot: EnvironmentSnapshot): EnvironmentHostTool[] {
   return snapshot.tools
     .filter(
@@ -168,6 +176,8 @@ function sortedManaged(items: readonly ManagedEnvironmentEntry[]): ManagedEnviro
   return [...items].sort((left, right) => {
     const sourceDifference = SOURCE_ORDER[left.source] - SOURCE_ORDER[right.source]
     if (sourceDifference !== 0) return sourceDifference
+    const wslDifference = Number(left.runtime === 'wsl2') - Number(right.runtime === 'wsl2')
+    if (wslDifference !== 0) return wslDifference
     return (left.label ?? left.ref).localeCompare(right.label ?? right.ref, getUiLocale())
   })
 }

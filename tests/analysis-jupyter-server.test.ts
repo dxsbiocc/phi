@@ -163,6 +163,7 @@ test('JupyterServerRegistry marks server ready from local Jupyter output without
   let process!: FakeJupyterProcess
   const project = projectDir()
   const registry = new JupyterServerRegistry({
+    port: 8899,
     readyProbeAttempts: 0,
     createProcess: () => {
       process = new FakeJupyterProcess(5678)
@@ -182,10 +183,31 @@ test('JupyterServerRegistry marks server ready from local Jupyter output without
   assert.doesNotMatch(JSON.stringify(status), /token=/)
 })
 
+test('JupyterServerRegistry ignores unrelated and partial URLs and connects to its bound IPv4 port', () => {
+  let process!: FakeJupyterProcess
+  const project = projectDir()
+  const registry = new JupyterServerRegistry({
+    readyProbeAttempts: 0,
+    createProcess: () => (process = new FakeJupyterProcess(5680))
+  })
+
+  registry.start(project)
+  process.stderr.write('extension endpoint http://localhost:9000/docs\n')
+  assert.equal(registry.status(project).state, 'starting')
+  assert.equal(registry.connection(project), null)
+  process.stderr.write(`http://localhost:${PHI_JUPYTER_PORT}/tree?token=split-`)
+  assert.equal(registry.connection(project), null)
+  process.stderr.write('token\n')
+  const connection = registry.connection(project)
+  assert.equal(connection?.url, `http://127.0.0.1:${PHI_JUPYTER_PORT}/tree`)
+  assert.equal(connection?.token, 'split-token')
+})
+
 test('JupyterServerRegistry marks server ready even when the URL banner is split across stdout chunks', () => {
   let process!: FakeJupyterProcess
   const project = projectDir()
   const registry = new JupyterServerRegistry({
+    port: 8899,
     readyProbeAttempts: 0,
     createProcess: () => {
       process = new FakeJupyterProcess(5679)

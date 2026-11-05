@@ -53,6 +53,8 @@ export interface ListManagedEnvironmentsOptions {
   builds?: readonly EnvironmentBuild[]
   /** Tests and non-UI callers can supply the already-loaded consumer declarations. */
   consumers?: readonly ManagedEnvironmentConsumerDeclaration[]
+  loadSkills?: typeof listSkills
+  onSkillDiscoveryError?: (error: unknown) => void
   sizeOf?: (prefix: string) => Promise<number>
   /** False returns only file-backed catalog data; sizes, cache estimates and discovered consumers are deferred. */
   includeDynamic?: boolean
@@ -315,11 +317,18 @@ function addConsumer(
 async function loadedConsumerDeclarations(
   projectDir: string | undefined,
   plugins: readonly LoadedPlugin[],
-  agentDir: string
+  agentDir: string,
+  { loadSkills = listSkills, onSkillDiscoveryError }: ListManagedEnvironmentsOptions
 ): Promise<ManagedEnvironmentConsumerDeclaration[]> {
   const cwd = projectDir ?? process.cwd()
   const declarations: ManagedEnvironmentConsumerDeclaration[] = []
-  for (const skill of await listSkills(cwd)) {
+  const skills = await loadSkills(cwd).catch((error: unknown) => {
+    // The OMP worker enriches this catalog with skills. Native environment builds
+    // and their fixed consumers can still be shown when that worker is unavailable.
+    onSkillDiscoveryError?.(error)
+    return []
+  })
+  for (const skill of skills) {
     try {
       const parsed = parseSkillFile(readFileSync(skill.filePath, 'utf8'))
       if (!parsed.ok) continue
@@ -498,7 +507,7 @@ export async function listManagedEnvironments(
   const consumerDeclarations = [
     ...(includeDynamic
       ? (options.consumers ??
-        (await loadedConsumerDeclarations(options.projectDir, plugins, agentDir)))
+        (await loadedConsumerDeclarations(options.projectDir, plugins, agentDir, options)))
       : []),
     ...FIXED_CONSUMERS
   ]

@@ -14,7 +14,14 @@ import {
 export interface AppHandle {
   page: Page
   mode: 'electron' | 'cdp'
+  sampleMemory?(): Promise<Array<{ type: string; workingSetKiB: number; privateKiB?: number }>>
   close(): Promise<void>
+}
+
+interface ExecutableLaunchOptions {
+  env: Record<string, string>
+  userData: string
+  args?: string[]
 }
 
 const READY_SELECTOR = '[data-phi-home-prompt], [data-phi-chat-placement], .app-activity-bar'
@@ -103,16 +110,31 @@ async function closeElectron(app: ElectronApplication): Promise<void> {
   await stopChild(child)
 }
 
-async function launchElectron(executable: string, home: string): Promise<AppHandle> {
+async function launchElectron(
+  executable: string,
+  options: ExecutableLaunchOptions
+): Promise<AppHandle> {
   const app = await _electron.launch({
     executablePath: executable,
-    env: isolatedEnvironment(home),
-    args: [`--user-data-dir=${isolatedUserData(home)}`],
+    env: options.env,
+    args: [`--user-data-dir=${options.userData}`, ...(options.args ?? [])],
     timeout: 30_000
   })
   try {
     const page = await firstReadyPage(() => app.windows(), 90_000)
-    return { page, mode: 'electron', close: () => closeElectron(app) }
+    return {
+      page,
+      mode: 'electron',
+      sampleMemory: () =>
+        app.evaluate(({ app }) =>
+          app.getAppMetrics().map(({ type, memory }) => ({
+            type,
+            workingSetKiB: memory.workingSetSize,
+            ...(memory.privateBytes !== undefined ? { privateKiB: memory.privateBytes } : {})
+          }))
+        ),
+      close: () => closeElectron(app)
+    }
   } catch (error) {
     await closeElectron(app)
     throw error
@@ -180,7 +202,7 @@ async function closeCdp(browser: Browser, page: Page, child: ChildProcess): Prom
   await stopChild(child, true)
 }
 
-async function launchCdp(executable: string, home: string): Promise<AppHandle> {
+async function launchCdp(executable: string, options: ExecutableLaunchOptions): Promise<AppHandle> {
   const port = await availablePort()
   const child = spawn(
     executable,
@@ -188,9 +210,15 @@ async function launchCdp(executable: string, home: string): Promise<AppHandle> {
       `--remote-debugging-port=${port}`,
       '--remote-debugging-address=127.0.0.1',
       '--remote-allow-origins=*',
-      `--user-data-dir=${isolatedUserData(home)}`
+      `--user-data-dir=${options.userData}`,
+      ...(options.args ?? [])
     ],
-    { env: isolatedEnvironment(home), detached: true, stdio: ['ignore', 'pipe', 'pipe'] }
+    {
+      env: options.env,
+      detached: process.platform !== 'win32',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    }
   )
   let diagnostics = ''
   const collect = (chunk: Buffer): void => {
@@ -213,10 +241,20 @@ async function launchCdp(executable: string, home: string): Promise<AppHandle> {
 }
 
 export async function launchPackagedApp(appPath: string, home: string): Promise<AppHandle> {
-  const executable = executableFor(appPath)
+  return launchPackagedExecutable(executableFor(appPath), {
+    env: isolatedEnvironment(home),
+    userData: isolatedUserData(home)
+  })
+}
+
+export async function launchPackagedExecutable(
+  executable: string,
+  options: ExecutableLaunchOptions
+): Promise<AppHandle> {
+  if (!existsSync(executable)) throw new Error(`Packaged executable not found: ${executable}`)
   try {
-    return await launchElectron(executable, home)
+    return await launchElectron(executable, options)
   } catch {
-    return await launchCdp(executable, home)
+    return await launchCdp(executable, options)
   }
 }
