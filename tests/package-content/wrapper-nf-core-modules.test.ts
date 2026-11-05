@@ -791,10 +791,7 @@ test('wrapper_inspect returns the composition manifest plus default params', asy
     defaultParams: Record<string, unknown>
   }
   assert.equal(details.manifest.id, 'nf-core/modules/fastqc')
-  assert.deepEqual(details.defaultParams, {
-    reads: 'tests/data/test_{1,2}.fastq.gz',
-    outdir: 'results'
-  })
+  assert.deepEqual(details.defaultParams, { outdir: 'results' })
 })
 
 test('composition tools expose the generic wrapper workflow only', () => {
