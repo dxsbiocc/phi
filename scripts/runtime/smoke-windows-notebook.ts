@@ -84,7 +84,7 @@ assert sys.platform == "win32", sys.platform
 assert os.path.samefile(sys.prefix, ${JSON.stringify(python.prefix)}), sys.prefix
 assert os.path.samefile(os.getcwd(), ${JSON.stringify(cwd)}), os.getcwd()
 frame = pd.DataFrame([[1, 2], [3, 4]], dtype=np.float32)
-adata = AnnData(frame.to_numpy())
+adata = AnnData(frame.to_numpy(copy=True))
 sc.pp.normalize_total(adata, target_sum=10)
 np.testing.assert_allclose(adata.X.sum(axis=1), [10, 10])
 print("PHI_WINDOWS_NOTEBOOK_OK")

@@ -64,6 +64,7 @@ const DEFAULT_BUILD_ROOT = join(repoRoot, '.phi-build', 'kernel')
 const PHI_PACKAGE = join(repoRoot, 'package.json')
 const OMP_PACKAGE = join(repoRoot, 'node_modules', '@oh-my-pi', 'pi-coding-agent', 'package.json')
 const NATIVE_PACKAGE = join(repoRoot, 'node_modules', '@oh-my-pi', 'pi-natives', 'package.json')
+const RUNTIME_MANIFEST = join(repoRoot, 'resources', 'runtime', 'manifest.json')
 
 const NATIVE_VERSION = '18.10.3'
 const CROSS_BUILD_CHILD_ENV = 'PHI_KERNEL_CROSS_BUILD_CHILD'
@@ -262,7 +263,7 @@ async function compileKernel(outfile: string, target: TargetDefinition): Promise
     // Intentionally omit Bun.build `files`: pi-natives' shipped embedded-addon.js
     // stays `null`, so the loader uses the version-checked sibling `.node` file.
     compile: {
-      target: target.bunTarget,
+      ...(target.id === 'win32-x64' && onWindowsX64() ? {} : { target: target.bunTarget }),
       outfile,
       autoloadBunfig: false,
       autoloadDotenv: false,
@@ -421,8 +422,42 @@ async function reexecWithWritableCrossBuildHome(selection: KernelBuildSelection)
   process.exit(await child.exited)
 }
 
+function onWindowsX64(): boolean {
+  return process.platform === 'win32' && process.arch === 'x64'
+}
+
+async function reexecWithWindowsBaselineBun(selection: KernelBuildSelection): Promise<void> {
+  if (!onWindowsX64() || (selection !== 'win32-x64' && selection !== 'all')) return
+
+  // Bun 1.3.14's explicit baseline target takes the archive extraction path on Windows.
+  // Native compilation instead uses the running executable, so verify that it is baseline.
+  const manifest = (await Bun.file(RUNTIME_MANIFEST).json()) as {
+    bun?: { platforms?: Record<string, { executableSha256?: string }> }
+  }
+  const expected = manifest.bun?.platforms?.['win32-x64']?.executableSha256
+  if (!expected || !/^[0-9a-f]{64}$/.test(expected)) {
+    throw new Error('Phi has no pinned Windows x64 Bun executable checksum')
+  }
+  if ((await fileDigest(process.execPath, 'sha256')) === expected) return
+
+  const fetch = Bun.spawn(
+    ['node', join(repoRoot, 'scripts', 'runtime', 'fetch-bun.mjs'), '--platform', 'win32-x64'],
+    { cwd: repoRoot, stdin: 'ignore', stdout: 'inherit', stderr: 'inherit' }
+  )
+  if ((await fetch.exited) !== 0) throw new Error('Failed to prepare the Windows baseline compiler')
+  const baseline = join(repoRoot, 'resources', 'runtime', 'bun', 'win32-x64', 'bun.exe')
+  const child = Bun.spawn([baseline, import.meta.path, ...Bun.argv.slice(2)], {
+    cwd: repoRoot,
+    stdin: 'ignore',
+    stdout: 'inherit',
+    stderr: 'inherit'
+  })
+  process.exit(await child.exited)
+}
+
 async function main(): Promise<void> {
   const selection = parseSelection(Bun.argv.slice(2))
+  await reexecWithWindowsBaselineBun(selection)
   await reexecWithWritableCrossBuildHome(selection)
   const manifest = await buildKernelPackage({
     selection,
