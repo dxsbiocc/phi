@@ -119,6 +119,12 @@ export const environmentUi = defineCopy(
     cleanUpUnreferencedEnvironments2: 'Clean up unreferenced environments',
     retry: 'Retry',
     noEnvironmentsToManage: 'No environments to manage.',
+    notAvailableOnThisPlatform: 'Not available on this platform',
+    noOfficialLockForThisPlatform:
+      'Phi has no official lock for this platform yet, so this environment cannot be built here.',
+    buildsAndRunsInWsl2:
+      'This environment uses Linux packages, so Phi builds and runs it in WSL2. Install WSL2 once if needed, then click Build.',
+    wsl2: 'WSL2',
     cleanUpLegacyEnvironments: 'Clean up legacy environments',
     found: 'Found',
     notBuilt: 'Not built',
@@ -247,6 +253,11 @@ export const environmentUi = defineCopy(
     cleanUpUnreferencedEnvironments2: '清理未引用环境',
     retry: '重试',
     noEnvironmentsToManage: '暂无可管理的环境。',
+    notAvailableOnThisPlatform: '本平台未提供',
+    noOfficialLockForThisPlatform: '此环境还没有当前平台的官方锁文件，因此无法在此构建。',
+    buildsAndRunsInWsl2:
+      '此环境依赖 Linux 软件包，因此 Phi 通过 WSL2 一次性构建并调用。若尚未安装 WSL2，请先安装，然后点击构建。',
+    wsl2: 'WSL2',
     cleanUpLegacyEnvironments: '清理遗留环境',
     found: '发现',
     notBuilt: '未构建',

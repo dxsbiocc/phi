@@ -5,13 +5,18 @@ import { getBundledResourceDir } from '../runtime/runtime-adapter'
 import { findPlatform } from './platform'
 
 /** Packaged extraResources path first, then the repository bundle used in development. */
+export function micromambaFileName(platform: string): string {
+  return platform.startsWith('win32-') ? 'micromamba.exe' : 'micromamba'
+}
+
 export function micromambaCandidates(
   platform: string,
   options: { resourcesPath?: string; bundledRuntimeDir: string }
 ): string[] {
-  const bundledPath = join(options.bundledRuntimeDir, 'micromamba', platform, 'micromamba')
+  const fileName = micromambaFileName(platform)
+  const bundledPath = join(options.bundledRuntimeDir, 'micromamba', platform, fileName)
   if (typeof options.resourcesPath !== 'string') return [bundledPath]
-  return [join(options.resourcesPath, 'runtime', 'micromamba', platform, 'micromamba'), bundledPath]
+  return [join(options.resourcesPath, 'runtime', 'micromamba', platform, fileName), bundledPath]
 }
 
 export function getMicromambaPath(platform: string | undefined = findPlatform()): string {

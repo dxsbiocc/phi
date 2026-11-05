@@ -8,7 +8,7 @@ declare namespace Bun {
   const version: string
 
   namespace Build {
-    type CompileTarget = 'bun-darwin-arm64' | 'bun-linux-x64-baseline'
+    type CompileTarget = 'bun-darwin-arm64' | 'bun-linux-x64-baseline' | 'bun-windows-x64-baseline'
   }
 
   interface PluginBuilder {

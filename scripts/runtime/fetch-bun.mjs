@@ -18,7 +18,7 @@ const MAX_BUN_BINARY_BYTES = 128 * 1024 * 1024
 
 // Phi ids are `${process.platform}-${process.arch}`. The manifest can add more
 // targets without changing the download/extraction flow.
-export const BUN_PLATFORM_IDS = ['darwin-arm64', 'linux-x64']
+export const BUN_PLATFORM_IDS = ['darwin-arm64', 'linux-x64', 'win32-x64']
 
 export function bunPlatformId(platform = process.platform, arch = process.arch) {
   const id = `${platform}-${arch}`
@@ -36,12 +36,24 @@ export function lookupBunPlatform(manifest, platformId) {
   ) {
     return undefined
   }
-  return {
+  const release = {
     url: entry.url,
     sha256: entry.sha256,
     executableSha256: entry.executableSha256,
     archivePath: entry.archivePath
   }
+  if (
+    Array.isArray(entry.mirrorPrefixes) &&
+    entry.mirrorPrefixes.every((value) => typeof value === 'string')
+  ) {
+    release.mirrorPrefixes = entry.mirrorPrefixes
+  }
+  return release
+}
+
+export function bunDownloadUrls(release) {
+  const prefixes = release.mirrorPrefixes ?? []
+  return [release.url, ...prefixes.map((prefix) => `${prefix}${release.url}`)]
 }
 
 export function fileSha256(filePath) {
@@ -112,23 +124,66 @@ function bunFileName(platformId) {
   return platformId.startsWith('win32-') ? 'bun.exe' : 'bun'
 }
 
+function extractWith(command, args) {
+  return execFileSync(command, args, {
+    encoding: 'buffer',
+    maxBuffer: MAX_BUN_BINARY_BYTES,
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+}
+
 function extractExecutable(archive, archivePath) {
-  try {
-    return execFileSync('unzip', ['-p', archive, archivePath], {
-      encoding: 'buffer',
-      maxBuffer: MAX_BUN_BINARY_BYTES,
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
-  } catch (error) {
-    throw new Error(`fetch-bun: failed to extract ${archivePath}: ${errorText(error)}`)
+  const attempts = [
+    ['unzip', ['-p', archive, archivePath]],
+    // windows-2022 ships bsdtar, which reads zip; GNU tar on Linux does not.
+    ['tar', ['-xOf', archive, archivePath]]
+  ]
+  const errors = []
+  for (const [command, args] of attempts) {
+    try {
+      return extractWith(command, args)
+    } catch (error) {
+      errors.push(`${command}: ${errorText(error)}`)
+    }
   }
+  throw new Error(`fetch-bun: failed to extract ${archivePath}: ${errors.join('; ')}`)
 }
 
 function downloadArchive(url, destination) {
-  execFileSync('curl', ['-fsSL', '--retry', '5', '--retry-all-errors', '-o', destination, url], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'ignore', 'pipe']
-  })
+  execFileSync(
+    'curl',
+    [
+      '-fsSL',
+      '--retry',
+      '2',
+      '--retry-all-errors',
+      '--connect-timeout',
+      '20',
+      '--max-time',
+      '180',
+      '-o',
+      destination,
+      url
+    ],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'ignore', 'pipe']
+    }
+  )
+}
+
+function downloadFirstAvailable(urls, destination, download) {
+  const errors = []
+  for (const url of urls) {
+    try {
+      download(url, destination)
+      return
+    } catch (error) {
+      rmSync(destination, { force: true })
+      errors.push(`${url}: ${errorText(error)}`)
+    }
+  }
+  throw new Error(errors.join('; '))
 }
 
 export function fetchBunPlatform(manifest, platformId, options = {}) {
@@ -156,8 +211,7 @@ export function fetchBunPlatform(manifest, platformId, options = {}) {
   rmSync(partial, { force: true })
 
   try {
-    const download = options.download ?? downloadArchive
-    download(release.url, archive)
+    downloadFirstAvailable(bunDownloadUrls(release), archive, options.download ?? downloadArchive)
   } catch (error) {
     rmSync(archive, { force: true })
     fail(`fetch-bun: download failed for ${platformId}: ${errorText(error)}`)

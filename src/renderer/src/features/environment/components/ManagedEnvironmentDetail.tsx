@@ -137,8 +137,13 @@ export function ManagedEnvironmentDetail({
 
       {environment.description ? <Typography>{environment.description}</Typography> : null}
       <EnvironmentCapabilityChips environment={environment} />
-      {error || environment.error ? (
+      {environment.state === 'unavailable' ? (
+        <Alert severity="info">{environmentUi.noOfficialLockForThisPlatform}</Alert>
+      ) : error || environment.error ? (
         <Alert severity="error">{error ?? environment.error}</Alert>
+      ) : null}
+      {environment.runtime === 'wsl2' && environment.state !== 'unavailable' ? (
+        <Alert severity="info">{environmentUi.buildsAndRunsInWsl2}</Alert>
       ) : null}
 
       {hasHostResources ? (

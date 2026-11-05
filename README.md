@@ -170,6 +170,7 @@ Builds are not yet signed or notarized. Preview builds, when published, appear o
 
 - **macOS** (`.dmg`, `.zip`): drag Phi to Applications. macOS blocks the first launch with "Apple could not verify Phi". Open **System Settings → Privacy & Security** and click **Open Anyway**; you do this once per installed version.
 - **Linux** (`.AppImage`, `.deb`): run `sudo apt install ./phi_*.deb`, or `chmod +x Phi-*.AppImage` and run the AppImage.
+- **Windows x64** (`.exe` preview): run the installer. Local chat and the default Python Notebook use Phi's bundled Windows runtime. Build the Notebook environments in **Settings → Environment**. For R, Nextflow, or Python packages such as `pysam` and `harmonypy`, install WSL2 and initialize a Linux distribution. For those Python packages, build **phi-python (WSL2)** and select the Python (WSL2) kernel in the Notebook.
 
 ## Build from source
 
@@ -191,7 +192,7 @@ bun run typecheck
 bun run test:gate
 ```
 
-`bun run build:mac` and `bun run build:linux` produce packages. Maintainers publish releases from a `v*` tag; see [release-signing-update.md](docs/roadmap/release-signing-update.md).
+Run `bun run build:mac`, `bun run build:linux`, or `bun run build:win` on the matching host to produce packages. Maintainers publish releases from a `v*` tag; see [release-signing-update.md](docs/roadmap/release-signing-update.md).
 
 ## License
 

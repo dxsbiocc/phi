@@ -3,13 +3,17 @@ export { environmentSpecSchema, envMetadataSchema } from './schemas'
 export {
   ENVIRONMENT_CONTRACT_VERSION,
   ENV_STATUS_TRANSITIONS,
+  PHI_LOCK_PLATFORMS,
   PHI_PLATFORMS,
   canTransition,
   computeEnvId,
+  cloneCondaDependency,
   condaSpecOf,
   condaSubdir,
   currentPlatform,
   findPlatform,
+  isPipDependency,
+  resolveManagedLockPlatform,
   lockSha256,
   normalizeLockText,
   parseEnvironmentRef,
@@ -20,6 +24,8 @@ export {
 
 export type {
   CondaDependency,
+  CondaPipDependency,
+  CondaPlatformDependency,
   CondaEnvironmentSpec,
   EnvIdInput,
   EnvKind,
@@ -32,6 +38,8 @@ export type {
   HostRequirement,
   LockEntry,
   LockParseResult,
+  ManagedLockResolution,
+  PhiLockPlatform,
   PhiPlatform,
   SourcePackage
 } from './contract'
@@ -53,10 +61,36 @@ export type {
   RuntimeSettings
 } from './runtime'
 
+export { prefixExecutable } from './prefix-executable'
+
+export {
+  decodeWslOutput,
+  parseWslList,
+  probeWsl,
+  readWslRuntime,
+  requireReadyWsl,
+  toLinuxPath,
+  toUncPath,
+  toWindowsPath,
+  toWslPath,
+  usesWslEnvironment,
+  wslRequiredMessage,
+  wslProcessEnvironment,
+  wslEnvironmentPrefix,
+  wslRuntimeDirectory,
+  wslSpawnArgv
+} from './wsl'
+export type { ReadyWsl, WslProbe, WslRuntime, WslSpawnPlan } from './wsl'
+
 export { captureActivation, diffActivation } from './activation'
 export type { ActivationSnapshot } from './activation'
 
-export { acquireEnvironmentLock, ensureEnvironment, removeTree } from './ensure'
+export {
+  acquireEnvironmentLock,
+  ensureEnvironment,
+  removeManagedEnvironmentPrefix,
+  removeTree
+} from './ensure'
 export type {
   EnsureEnvironmentInput,
   EnsureEnvironmentResult,
@@ -98,9 +132,16 @@ export {
   environmentCacheDir,
   environmentVariables,
   loadEnvironment,
+  prepareEnvironmentCommand,
   removeEnvironmentCache,
   resolveCommand,
   runInEnvironment,
   sanitizeHostEnvironment
 } from './execution'
-export type { EnvHandle, ExecutionOptions, RunOptions, RunResult } from './execution'
+export type {
+  EnvHandle,
+  EnvironmentCommand,
+  ExecutionOptions,
+  RunOptions,
+  RunResult
+} from './execution'

@@ -9,6 +9,7 @@ type Step = {
   uses?: string
   run?: string
   if?: string
+  shell?: string
   env?: Record<string, string>
 }
 type Job = {
@@ -52,13 +53,14 @@ test('releases are drafted only from version tags, never published automatically
   assert.match(verify?.run ?? '', /package\.json/)
 })
 
-test('packages macOS arm64 and Linux x64, smoke-testing the bundled worker on both', () => {
+test('packages macOS arm64, Linux x64, and Windows x64, smoke-testing the bundled worker on each', () => {
   const pkg = workflow.jobs?.package
   assert.deepEqual(
     pkg?.strategy?.matrix?.include?.map((entry) => [entry.os, entry.builder]),
     [
       ['macos-15', '--mac dmg zip --arm64'],
-      ['ubuntu-22.04', '--linux AppImage deb --x64']
+      ['ubuntu-22.04', '--linux AppImage deb --x64'],
+      ['windows-2022', '--win nsis --x64']
     ]
   )
   const steps = pkg?.steps ?? []
@@ -68,12 +70,51 @@ test('packages macOS arm64 and Linux x64, smoke-testing the bundled worker on bo
   assert.ok(buildKernel >= 0 && buildKernel < builderStep)
   const smoke = steps.find((step) => step.run?.includes('smoke-packaged-worker.mjs'))
   assert.ok(smoke, 'packaged worker smoke test runs')
+  assert.equal(smoke?.if, "runner.os != 'Windows'")
   assert.match(smoke?.run ?? '', /dist\/mac-arm64\/Phi\.app\/Contents\/Resources/)
   assert.match(smoke?.run ?? '', /dist\/linux-unpacked\/resources/)
+  assert.match(workflowText, /dist\/\*\.exe/)
   const packageStep = steps.find((step) => step.name === 'Package')
   assert.match(packageStep?.run ?? '', /--publish never/)
   // Empty secrets would be read as a certificate path.
   assert.match(packageStep?.run ?? '', /\[ -n "\$\{!name\}" \] \|\| unset "\$name"/)
+})
+
+test('Windows release verifies the installed NSIS app before uploading artifacts', () => {
+  const steps = workflow.jobs?.package?.steps ?? []
+  const install = steps.find((step) => step.name === 'Install and smoke-test Windows NSIS package')
+  assert.equal(install?.if, "runner.os == 'Windows'")
+  assert.equal(install?.shell, 'pwsh')
+  assert.match(install?.run ?? '', /Join-Path \$env:RUNNER_TEMP/)
+  assert.match(install?.run ?? '', /-ArgumentList "\/S \/D=\$installDir" -Wait -PassThru/)
+  assert.match(install?.run ?? '', /\$process\.ExitCode -ne 0/)
+  assert.match(install?.run ?? '', /Test-Path -LiteralPath \(Join-Path \$installDir 'phi\.exe'\)/)
+  assert.match(install?.run ?? '', /\$resources = Join-Path \$installDir 'resources'/)
+  assert.match(install?.run ?? '', /smoke-packaged-worker\.mjs --resources \$resources/)
+  assert.match(install?.run ?? '', /check-release-kernel\.ts --resources \$resources/)
+  const uploadIndex = steps.findIndex((step) => step.uses?.startsWith('actions/upload-artifact@'))
+  assert.ok(install && steps.indexOf(install) < uploadIndex)
+  const builder = parse(readFileSync('electron-builder.yml', 'utf8')) as {
+    nsis?: { perMachine?: boolean }
+  }
+  assert.equal(builder.nsis?.perMachine, false)
+})
+
+test('local and CI Windows builds prepare the same native and WSL runtimes before packaging', () => {
+  const scripts = (
+    JSON.parse(readFileSync('package.json', 'utf8')) as {
+      scripts: Record<string, string>
+    }
+  ).scripts
+  const steps = workflow.jobs?.package?.steps ?? []
+  const prepareIndex = steps.findIndex((step) => step.run === 'bun run runtime:fetch:win')
+  const packageIndex = steps.findIndex((step) => step.name === 'Package')
+  assert.ok(prepareIndex >= 0 && prepareIndex < packageIndex)
+  assert.equal(steps[prepareIndex].if, "runner.os == 'Windows'")
+  assert.match(scripts['build:win'], /bun run runtime:fetch:win.*electron-builder --win --x64/)
+  assert.match(scripts['runtime:fetch:win'], /fetch-micromamba\.mjs --platform win32-x64/)
+  assert.match(scripts['runtime:fetch:win'], /fetch-micromamba\.mjs --platform linux-x64/)
+  assert.match(scripts['runtime:fetch:win'], /fetch-bun\.mjs --platform win32-x64/)
 })
 
 test('macOS signing uses a certificate when configured and ad-hoc signing otherwise', () => {

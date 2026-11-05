@@ -50,6 +50,7 @@ function stateColor(
   if (state === 'ready') return 'success'
   if (state === 'failed') return 'error'
   if (state === 'drifted') return 'warning'
+  if (state === 'unavailable') return 'warning'
   return 'default'
 }
 
@@ -83,16 +84,21 @@ function EnvironmentCard({
       environment.state === 'failed' ||
       environment.state === 'drifted')
   const canBuild = environment.source !== 'orphaned' && environment.state === 'absent'
+  const unavailable = environment.state === 'unavailable'
   const canRebuild =
     environment.source !== 'orphaned' &&
     (environment.state === 'ready' ||
       environment.state === 'failed' ||
       environment.state === 'drifted')
-  const description = environment.error
-    ? environment.error
-    : environment.source === 'orphaned'
-      ? environmentUi.legacyEnvironmentItCanBeSafelyRemovedWhen
-      : environment.description || environmentUi.noAdditionalDescriptionForThisEnvironment
+  const description = unavailable
+    ? environmentUi.noOfficialLockForThisPlatform
+    : environment.runtime === 'wsl2' && environment.state === 'absent'
+      ? environmentUi.buildsAndRunsInWsl2
+      : environment.error
+        ? environment.error
+        : environment.source === 'orphaned'
+          ? environmentUi.legacyEnvironmentItCanBeSafelyRemovedWhen
+          : environment.description || environmentUi.noAdditionalDescriptionForThisEnvironment
   const secondaryMetric =
     environment.state === 'absent'
       ? formatBuildEstimate(environment.estimate)

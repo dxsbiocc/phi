@@ -106,6 +106,7 @@ async function runEnvRequest(
       packages: input.packages,
       reason: input.reason,
       environment,
+      ...(options.binding && !options.remoteProject ? { boundSession: true } : {}),
       ...(requestId ? { requestId } : {}),
       ...(options.remoteProject
         ? {

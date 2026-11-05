@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url'
 import {
   createAppKernelSessionLaunchers,
   kernelDiagnosticLogEntry,
-  kernelLaunchCwd
+  kernelLaunchCwd,
+  resolveLocalKernelLaunch
 } from '../src/main/agent/app-kernel-session-launchers'
 import { KernelSessionFactory } from '../src/main/agent/engine/kernel-session-factory'
 import type { PhiSessionCreateParams } from '../src/main/agent/engine/types'
@@ -180,6 +181,43 @@ test('Node main launches a kernel-routed faux-provider run without loading the S
     }
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('unpackaged Windows chat uses the source kernel and does not require a compile target', () => {
+  const unpackaged = {
+    appPath: 'D:\\src\\Phi',
+    resourcesPath: 'D:\\src\\Phi\\resources',
+    isPackaged: false,
+    version: '0.1.1'
+  }
+  assert.deepEqual(resolveLocalKernelLaunch(unpackaged, 'win32', 'x64'), {
+    mode: 'source',
+    cwd: 'D:\\src\\Phi',
+    entry: join('D:\\src\\Phi', 'src', 'kernel', 'main.ts')
+  })
+  // Source-mode chat must not consult the compile-target table at all.
+  assert.equal(resolveLocalKernelLaunch(unpackaged, 'win32', 'arm64').mode, 'source')
+})
+
+test('a packaged Windows app launches the win32-x64 kernel extraResource', () => {
+  const plan = resolveLocalKernelLaunch(
+    {
+      appPath: 'C:\\Program Files\\Phi\\resources\\app.asar',
+      resourcesPath: 'C:\\Program Files\\Phi\\resources',
+      isPackaged: true,
+      version: '0.1.1'
+    },
+    'win32',
+    'x64'
+  )
+  assert.equal(plan.mode, 'package')
+  if (plan.mode !== 'package') return
+  assert.equal(plan.package.target, 'win32-x64')
+  assert.equal(
+    plan.package.directory,
+    join('C:\\Program Files\\Phi\\resources', 'kernel', '0.1.1', 'win32-x64')
+  )
+  assert.equal(plan.cwd, plan.package.directory)
 })
 
 test('packaged kernel launches from a real directory, never the app.asar file', () => {

@@ -31,7 +31,7 @@
     },
     "platform": {
       "type": "string",
-      "enum": ["darwin-arm64", "darwin-x64", "linux-x64"]
+      "enum": ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]
     },
     "lockSha256": {
       "type": "string",

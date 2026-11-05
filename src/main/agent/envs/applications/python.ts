@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   accessSync,
@@ -14,6 +14,9 @@ import {
 } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
+import type { PhiPlatform } from '../platform'
+import { prefixExecutable } from '../prefix-executable'
+import { normalizeWindowsEnvironment, windowsSystemPath } from '../runtime'
 import {
   cacheVerifiedArtifact,
   installationSpecSha256,
@@ -71,8 +74,16 @@ function resolvedPath(path: string): string {
   return join(resolvedPath(parent), relative(parent, path))
 }
 
-function managedExecutable(prefix: string, name: string): string {
-  const path = join(prefix, 'bin', name)
+export function pythonApplicationExecutable(
+  prefix: string,
+  name: string,
+  platform: PhiPlatform
+): string {
+  if (platform !== 'win32-x64') return resolve(prefix, 'bin', name)
+  return resolve(prefix, 'Scripts', name.toLowerCase().endsWith('.exe') ? name : `${name}.exe`)
+}
+
+function managedExecutable(prefix: string, name: string, path: string): string {
   let actual: string
   try {
     actual = realpathSync(path)
@@ -157,7 +168,44 @@ function ownedDirectory(path: string, base: string): void {
   }
 }
 
-function isolatedEnvironment(prefix: string, state: string): NodeJS.ProcessEnv {
+function windowsEnvironment(
+  input: ApplicationInstallInput,
+  state: string,
+  home: string,
+  host: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+  const systemPath = windowsSystemPath(host)
+  const systemRoot = systemPath[1]
+  const prefix = input.prefix
+  const prefixPath = [
+    prefix,
+    join(prefix, 'Library', 'mingw-w64', 'bin'),
+    join(prefix, 'Library', 'usr', 'bin'),
+    join(prefix, 'Library', 'bin'),
+    join(prefix, 'Scripts'),
+    join(prefix, 'bin')
+  ]
+  const captured = input.activation?.pathPrepend.filter(
+    (entry) => isAbsolute(entry) && isContained(entry, prefix)
+  )
+  const path = [...new Set([...(captured ?? []), ...prefixPath])]
+  return {
+    PATH: [...path, ...systemPath].join(';'),
+    SystemRoot: systemRoot,
+    windir: systemRoot,
+    CONDA_PREFIX: prefix,
+    USERPROFILE: home,
+    APPDATA: join(state, 'config'),
+    LOCALAPPDATA: join(state, 'cache'),
+    TEMP: join(state, 'tmp'),
+    TMP: join(state, 'tmp'),
+    PYTHONUTF8: '1'
+  }
+}
+
+function isolatedEnvironment(input: ApplicationInstallInput, state: string): NodeJS.ProcessEnv {
+  const windows = input.platform === 'win32-x64'
+  const host = windows ? normalizeWindowsEnvironment(process.env) : process.env
   const env: NodeJS.ProcessEnv = {}
   for (const name of [
     'HTTP_PROXY',
@@ -169,12 +217,15 @@ function isolatedEnvironment(prefix: string, state: string): NodeJS.ProcessEnv {
     'SSL_CERT_FILE',
     'REQUESTS_CA_BUNDLE'
   ]) {
-    if (process.env[name] !== undefined) env[name] = process.env[name]
+    if (host[name] !== undefined) env[name] = host[name]
   }
+  const home = join(state, 'home')
   return {
     ...env,
-    PATH: join(prefix, 'bin'),
-    HOME: join(state, 'home'),
+    ...(windows
+      ? windowsEnvironment(input, state, home, host)
+      : { PATH: join(input.prefix, 'bin') }),
+    HOME: home,
     XDG_CONFIG_HOME: join(state, 'config'),
     XDG_CACHE_HOME: join(state, 'cache'),
     TMPDIR: join(state, 'tmp'),
@@ -182,13 +233,25 @@ function isolatedEnvironment(prefix: string, state: string): NodeJS.ProcessEnv {
     LC_ALL: process.platform === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8',
     PYTHONNOUSERSITE: '1',
     PYTHONDONTWRITEBYTECODE: '1',
-    PIP_CONFIG_FILE: '/dev/null',
+    PIP_CONFIG_FILE: windows ? 'NUL' : '/dev/null',
     UV_NO_CONFIG: '1',
     UV_PYTHON_DOWNLOADS: 'never',
     UV_CACHE_DIR: join(state, 'uv'),
     UV_LINK_MODE: 'copy',
     ...(env.SSL_CERT_FILE ? { UV_NATIVE_TLS: 'true' } : {})
   }
+}
+
+function killInstaller(child: ChildProcess, detached: boolean): void {
+  if (detached && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, 'SIGKILL')
+      return
+    } catch {
+      // The process group may have already exited.
+    }
+  }
+  child.kill('SIGKILL')
 }
 
 async function runManaged(
@@ -199,26 +262,22 @@ async function runManaged(
   phase: string
 ): Promise<string> {
   throwIfAborted(input.signal)
+  const windows = input.platform === 'win32-x64'
   const child = spawn(executable, args, {
     cwd: input.prefix,
     env,
-    detached: true,
+    detached: !windows,
+    windowsHide: true,
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe']
   })
   return await new Promise((resolveResult, reject) => {
     let stdout = ''
     let stderr = ''
+    let outputBytes = 0
     let failure: Error | undefined
     let settled = false
-    const kill = (): void => {
-      try {
-        if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL')
-        else child.kill('SIGKILL')
-      } catch {
-        child.kill('SIGKILL')
-      }
-    }
+    const kill = (): void => killInstaller(child, !windows)
     const abort = (): void => {
       failure = new Error('Python application installation aborted')
       failure.name = 'AbortError'
@@ -228,14 +287,19 @@ async function runManaged(
       failure = new Error(`Python application ${phase} timed out`)
       kill()
     }, PROCESS_TIMEOUT_MS)
-    const cleanup = (): void => {
+    const finish = (error?: Error): void => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
       input.signal?.removeEventListener('abort', abort)
+      const reason = failure ?? error
+      if (reason) reject(reason)
+      else resolveResult(stdout)
     }
-    const append = (stream: 'stdout' | 'stderr', chunk: Buffer): void => {
+    const append = (stream: 'stdout' | 'stderr', text: string): void => {
       if (failure) return
-      const text = chunk.toString('utf8')
-      if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) + chunk.length > MAX_OUTPUT_BYTES) {
+      outputBytes += Buffer.byteLength(text)
+      if (outputBytes > MAX_OUTPUT_BYTES) {
         failure = new Error(`Python application ${phase} output exceeded its limit`)
         kill()
         return
@@ -251,23 +315,18 @@ async function runManaged(
         kill()
       }
     }
-    child.stdout.on('data', (chunk: Buffer) => append('stdout', chunk))
-    child.stderr.on('data', (chunk: Buffer) => append('stderr', chunk))
-    child.on('error', (error) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(failure ?? new Error(`failed to start managed Python tool: ${error.message}`))
-    })
-    child.on('close', (code) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      if (failure) reject(failure)
-      else if (code !== 0)
-        reject(new Error(`Python application ${phase} failed: ${stderr.trim() || `exit ${code}`}`))
-      else resolveResult(stdout)
-    })
+    child.stdout.setEncoding('utf8').on('data', (text: string) => append('stdout', text))
+    child.stderr.setEncoding('utf8').on('data', (text: string) => append('stderr', text))
+    child.once('error', (error) =>
+      finish(new Error(`failed to start managed Python tool: ${error.message}`))
+    )
+    child.once('close', (code) =>
+      finish(
+        code === 0
+          ? undefined
+          : new Error(`Python application ${phase} failed: ${stderr.trim() || `exit ${code}`}`)
+      )
+    )
     input.signal?.addEventListener('abort', abort, { once: true })
     if (input.signal?.aborted) abort()
   })
@@ -308,7 +367,8 @@ function reusableInstallation(
   prefix: string,
   state: string,
   installation: PythonUvInstallation,
-  specSha256: string
+  specSha256: string,
+  applicationPath: string
 ): { executable: string; packages: InstalledPackage[] } | undefined {
   try {
     const receiptPath = join(state, 'receipt.json')
@@ -326,7 +386,7 @@ function reusableInstallation(
       receipt.requirementsSha256 !== installation.requirementsSha256.toLowerCase()
     )
       return undefined
-    const executable = managedExecutable(prefix, installation.executable)
+    const executable = managedExecutable(prefix, installation.executable, applicationPath)
     if (
       receipt.executableSha256 !== sha256(readFileSync(executable)) ||
       receipt.installedSha256 !== sha256(readFileSync(installedPath))
@@ -356,15 +416,21 @@ export async function installPythonApplication(
   )
   validateRequirements(requirements)
   const prefix = realpathSync(input.prefix)
-  const python = managedExecutable(prefix, 'python')
-  const uv = managedExecutable(prefix, 'uv')
+  const platform = input.platform === 'win32-x64' ? 'win32' : 'linux'
+  const python = managedExecutable(prefix, 'python', prefixExecutable(prefix, 'python', platform))
+  const uv = managedExecutable(prefix, 'uv', prefixExecutable(prefix, 'uv', platform))
+  const applicationPath = pythonApplicationExecutable(
+    prefix,
+    installation.executable,
+    input.platform
+  )
   const artifact = await cacheVerifiedArtifact(input.root, requirements)
   throwIfAborted(input.signal)
   const artifacts = [{ key: artifact.key, sha256: artifact.sha256, size: artifact.size }]
   const state = join(prefix, '.phi', 'python-uv')
   const specSha256 = installationSpecSha256(installation)
   for (const directory of [join(prefix, '.phi'), state]) ownedDirectory(directory, prefix)
-  const cached = reusableInstallation(prefix, state, installation, specSha256)
+  const cached = reusableInstallation(prefix, state, installation, specSha256, applicationPath)
   if (cached) {
     input.onProgress?.({ phase: 'reusing', message: 'Verified installed Python application' })
     throwIfAborted(input.signal)
@@ -380,8 +446,8 @@ export async function installPythonApplication(
   const work = join(root, 'cache', basename(prefix), 'applications')
   for (const directory of ['home', 'config', 'cache', 'tmp', 'uv'])
     ownedDirectory(join(work, directory), root)
-  const env = isolatedEnvironment(prefix, work)
   const actualInput = { ...input, prefix }
+  const env = isolatedEnvironment(actualInput, work)
   const lock = join(work, 'requirements.txt')
   rmSync(lock, { force: true })
   writeFileSync(lock, requirements, { mode: 0o600, flag: 'wx' })
@@ -438,7 +504,7 @@ export async function installPythonApplication(
       'verifying'
     )
   )
-  const executable = managedExecutable(prefix, installation.executable)
+  const executable = managedExecutable(prefix, installation.executable, applicationPath)
   throwIfAborted(input.signal)
   const installed = JSON.stringify(packages)
   const receipt: InstallationReceipt = {

@@ -6,6 +6,7 @@ import type {
   AnalysisKernelSummary
 } from './analysis-kernels'
 import type { JupyterServerConnection } from './analysis-jupyter-server'
+import { HOST_KERNEL_PREFIX, WSL_PYTHON_KERNEL_NAME } from './managed-kernels'
 import {
   jupyterAuthorizationHeader,
   jupyterConnectionIdentity,
@@ -158,6 +159,12 @@ export function selectNotebookKernel(
   if (requested.name) {
     const exact = kernels.kernels.find((kernel) => kernel.name === requested.name)
     if (exact) return exact
+    if (
+      requested.name === WSL_PYTHON_KERNEL_NAME ||
+      (kernels.hostKernelLaunchSupported === false && requested.name.startsWith(HOST_KERNEL_PREFIX))
+    ) {
+      return null
+    }
   }
   const defaults = kernels.kernels.filter((kernel) => kernel.source !== 'host')
   if (requested.displayName) {

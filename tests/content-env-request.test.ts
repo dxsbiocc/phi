@@ -72,8 +72,10 @@ interface Harness {
   questions: string[]
   solved: SolveExplicitLockInput[]
   started: string[]
+  buildTargets: Array<{ platform: PhiPlatform; runtime?: 'wsl2' }>
   confirm: boolean
   failSolve?: string
+  failBuild?: string
 }
 
 function lockText(platform: string): string {
@@ -99,6 +101,7 @@ function harness(): Harness {
     questions: [],
     solved: [],
     started: [],
+    buildTargets: [],
     confirm: true
   }
   return state
@@ -129,7 +132,7 @@ async function request(
       solve: async (input) => {
         state.solved.push(input)
         if (state.failSolve) throw new Error(state.failSolve)
-        return lockText(state.platform)
+        return lockText(input.platform)
       },
       builds: {
         list: () => [],
@@ -137,8 +140,9 @@ async function request(
           return undefined
         },
         async start(descriptor, options) {
-          assert.equal(existsSync(join(state.project, '.phi', 'environments.json')), true)
           state.started.push(options.ref)
+          state.buildTargets.push({ platform: descriptor.platform, runtime: descriptor.runtime })
+          if (state.failBuild) throw new Error(state.failBuild)
           return {
             envId: `built-${descriptor.spec.name}`,
             prefix: join(state.project, 'prefix'),
@@ -287,6 +291,58 @@ test('env_request writes a project environment, then builds it, and a second req
       }
     )
     assert.equal(readProjectSpec(state.project, 'python-x2').name, 'python-x2')
+  } finally {
+    remove(state.project)
+  }
+})
+
+test('a Windows request for a WSL base keeps the WSL target through solve and build', async () => {
+  const state = harness()
+  try {
+    state.platform = 'win32-x64'
+    const result = await request(state, {
+      environment: 'phi:python-wsl@1',
+      packages: ['six'],
+      reason: 'need six'
+    })
+    assert.ok('ref' in result, JSON.stringify(result))
+    assert.match(state.questions[0] ?? '', /WSL2/)
+    assert.equal(state.solved[0]?.platform, 'linux-x64')
+    assert.equal(state.solved[0]?.runtime, 'wsl2')
+    assert.deepEqual(state.buildTargets, [{ platform: 'linux-x64', runtime: 'wsl2' }])
+    assert.equal(
+      readFileSync(
+        join(state.project, '.phi/environments/python-wsl-x1/locks/linux-x64.txt'),
+        'utf8'
+      ),
+      lockText('linux-x64')
+    )
+    const bound = await request(state, {
+      boundSession: true,
+      environment: 'phi:python-wsl@1',
+      packages: ['requests'],
+      reason: 'need requests'
+    })
+    assert.ok('error' in bound)
+    assert.match(bound.error, /Windows agent shell cannot be bound/)
+    assert.equal(state.questions.length, 1)
+  } finally {
+    remove(state.project)
+  }
+})
+
+test('a failed project environment build preserves the previously ready override', async () => {
+  const state = harness()
+  try {
+    const original = await request(state, { packages: ['six'], reason: 'need six' })
+    assert.ok('ref' in original, JSON.stringify(original))
+    const overridePath = join(state.project, '.phi', 'environments.json')
+    const before = readFileSync(overridePath, 'utf8')
+    state.failBuild = 'dependency install failed'
+    const failed = await request(state, { packages: ['requests'], reason: 'need requests' })
+    assert.deepEqual(failed, { error: 'dependency install failed' })
+    assert.deepEqual(state.started, ['project:python-x1', 'project:python-x2'])
+    assert.equal(readFileSync(overridePath, 'utf8'), before)
   } finally {
     remove(state.project)
   }

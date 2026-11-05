@@ -17,6 +17,10 @@
     "linux-arm64": {
       "url": "https://go.dev/dl/go1.27.2.linux-arm64.tar.gz",
       "sha256": "94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8"
+    },
+    "windows-amd64": {
+      "url": "https://go.dev/dl/go1.27.2.windows-amd64.zip",
+      "sha256": "1314008898bd40df77af4b014f777f08873dbdfbcd3d92308728ee03304fe04f"
     }
   }
 }

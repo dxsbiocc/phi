@@ -15,7 +15,7 @@ import path from 'node:path'
 import test from 'node:test'
 import { ensureGoToolchain, GO_RELEASE, goBinaryPath } from '../scripts/runtime/fetch-go.mjs'
 
-function createFixture(): {
+function createFixture(platform: 'linux' | 'win32' = 'linux'): {
   root: string
   cacheRoot: string
   binary: string
@@ -34,8 +34,8 @@ function createFixture(): {
 } {
   const root = mkdtempSync(path.join(tmpdir(), 'phi-go-install-'))
   const cacheRoot = path.join(root, 'cache')
-  const release = GO_RELEASE.platforms['linux-amd64']
-  const binary = goBinaryPath(cacheRoot)
+  const release = GO_RELEASE.platforms[platform === 'win32' ? 'windows-amd64' : 'linux-amd64']
+  const binary = goBinaryPath(cacheRoot, platform)
   const archive = path.join(cacheRoot, path.basename(new URL(release.url).pathname))
   const calls: string[] = []
   return {
@@ -46,7 +46,7 @@ function createFixture(): {
     calls,
     options: {
       cacheRoot,
-      platform: 'linux',
+      platform,
       arch: 'x64',
       verifyArchive: (file, hash): boolean => {
         assert.equal(hash, release.sha256)
@@ -70,6 +70,15 @@ function createFixture(): {
     cleanup: (): void => rmSync(root, { force: true, recursive: true })
   }
 }
+
+test('Windows Go preparation selects the pinned ZIP and go.exe', (t) => {
+  const fixture = createFixture('win32')
+  t.after(fixture.cleanup)
+  assert.equal(ensureGoToolchain(fixture.options), fixture.binary)
+  assert.equal(path.basename(fixture.binary), 'go.exe')
+  assert.equal(path.extname(fixture.archive), '.zip')
+  assert.deepEqual(fixture.calls, ['download', 'extract'])
+})
 
 test('Go preparation reuses a verified install without acquiring a busy installation lock', () => {
   const fixture = createFixture()
@@ -167,7 +176,7 @@ import path from 'node:path'
 import { syncBuiltinESMExports } from 'node:module'
 const [root, role] = process.argv.slice(2)
 const cacheRoot = path.join(root, 'cache')
-const binary = path.join(cacheRoot, 'go', 'bin', process.platform === 'win32' ? 'go.exe' : 'go')
+const binary = path.join(cacheRoot, 'go', 'bin', 'go')
 const cell = new Int32Array(new SharedArrayBuffer(4))
 const waitFor = (name) => {
   const deadline = Date.now() + 10000

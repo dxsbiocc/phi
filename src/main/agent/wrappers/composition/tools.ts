@@ -168,7 +168,7 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): PhiTool 
     loadMode: 'essential',
     label: 'Run Wrapper',
     description:
-      'Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. When several wrappers form one user workflow, pass the same workflow.id and workflow.name on each call, with a distinct workflow.step; reuse the id across follow-up turns for this execution and choose a new id for another execution. In an SSH project the target defaults to that project server and explicit "local" is rejected; in a local project the target defaults to local, and "remote" uses its saved server. For a remote run every kind:input path MUST be a path on the server (Phi checks it exists there; local paths do not work), outputs stay on the server, and it survives Phi being closed. Choose `profile` based on what the user has available or prefers: docker (default locally) or singularity (default on the server) for container runtimes, conda to build/reuse a conda environment from the module\'s environment.yml instead.',
+      'Start one wrapper by id in the BACKGROUND, merging the given parameter overrides into its default params.json, and return immediately with a run id. It launches a real Nextflow run that keeps going by itself; follow it with wrapper_status, block on it with wrapper_wait, stop it with wrapper_cancel. When several wrappers form one user workflow, pass the same workflow.id and workflow.name on each call, with a distinct workflow.step; reuse the id across follow-up turns for this execution and choose a new id for another execution. In an SSH project the target defaults to that project server and explicit "local" is rejected; in a local project the target defaults to local, and "remote" uses its saved server. For a remote run every kind:input path MUST be a path on the server (Phi checks it exists there; local paths do not work), outputs stay on the server, and it survives Phi being closed. Choose `profile` based on what the user has available or prefers: docker (default locally outside managed Windows) or singularity (default on the server) for container runtimes, conda (the supported profile for managed Nextflow in Windows WSL2) to build/reuse a conda environment from the module\'s environment.yml instead.',
     site: 'host',
     parameters: {
       type: 'object',
@@ -190,7 +190,7 @@ export function buildWrapperCompositionRunTool(jobs: WrapperJobClient): PhiTool 
           type: 'string',
           enum: [...WRAPPER_EXECUTION_PROFILES],
           description:
-            'Execution profile: "docker" or "singularity" run the tool in a container; "conda" builds/reuses a conda environment instead. Omit it to use the default (docker locally, the cluster connection\'s configured runtime remotely). Ask the user which is available if unsure — do not assume Docker is installed.'
+            'Execution profile. Omit it to use the default: conda for managed Nextflow on Windows WSL2, docker for other local runs, or the configured runtime for a remote run. Docker and Singularity use containers. Conda builds or reuses an environment.'
         },
         continue_when_done: {
           type: 'boolean',

@@ -15,16 +15,16 @@ Only `python=3.12` is pinned in `environment.yml`. The lock files pin every othe
 
 ## Locks
 
-Solved on 2026-10-01 against the lock baselines: macOS arm64 11.0, macOS x64 10.15, and linux glibc 2.17 / linux 4.18.
+Solved on 2026-10-01 against the lock baselines: macOS arm64 11.0, macOS x64 10.15, linux glibc 2.17 / linux 4.18, and Windows 10. The Windows lock was regenerated later against the same `environment.yml`.
 
-Regenerate all three platform locks:
+Regenerate the official Unix lock platforms:
 
 ```bash
 npm run runtime:lock -- --spec resources/runtime/environments/phi-jupyter/environment.yml
 ```
 
-That writes `locks/darwin-arm64.txt`, `locks/darwin-x64.txt`, and `locks/linux-x64.txt` next to `environment.yml`.
+That writes `locks/darwin-arm64.txt`, `locks/darwin-x64.txt`, and `locks/linux-x64.txt` next to `environment.yml`. Jupyter also ships `locks/win32-x64.txt`; regenerate it with `--platform win32-x64`.
 
 ## Known platform differences
 
-`darwin-x64` resolves `python` 3.12.12 under the macOS 10.15 baseline; `darwin-arm64` and `linux-x64` get 3.12.14. `jupyter_server` is 2.21.1 on all three.
+`darwin-x64` resolves `python` 3.12.12 under the macOS 10.15 baseline; `darwin-arm64` and `linux-x64` get 3.12.14. `jupyter_server` is 2.21.1 on all three. The Windows lock uses the win 10 baseline and conda-forge only.

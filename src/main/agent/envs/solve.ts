@@ -1,15 +1,24 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
   condaSpecOf,
   condaSubdir,
+  isPipDependency,
   parseExplicitLock,
   type CondaDependency,
   type EnvironmentSpec,
   type PhiPlatform
 } from './contract'
-import { ensureMambarc, ensureRuntimeLayout, runMicromamba, type CondaOverrides } from './runtime'
+import {
+  ensureMambarc,
+  ensureRuntimeLayout,
+  prepareWslMicromambaRun,
+  runMicromamba,
+  type CondaOverrides,
+  type RunMicromambaOptions
+} from './runtime'
+import { toLinuxPath, toUncPath } from './wsl'
 
 import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
@@ -17,18 +26,20 @@ import { errorMessage } from '../../../shared/errorCodes'
  * Oldest systems an official lock must support. Virtual-package overrides keep a lock
  * independent of the machine that solved it (a macOS host has no glibc, so a linux-64
  * cross-solve needs `glibc` set). glibc 2.17 matches the offline HPC clusters Phi targets.
- * Project solves do not use these: they solve the current platform with no CONDA_OVERRIDE_*.
+ * Project solves use their execution host's real virtual packages.
  */
 export const PLATFORM_BASELINES: Record<PhiPlatform, CondaOverrides> = {
   'linux-x64': { glibc: '2.17', linux: '4.18' },
   'darwin-arm64': { osx: '11.0' },
-  'darwin-x64': { osx: '10.15' }
+  'darwin-x64': { osx: '10.15' },
+  'win32-x64': { win: '10' }
 }
 
 export function baselineLabel(platform: PhiPlatform): string {
-  return Object.entries(PLATFORM_BASELINES[platform])
+  const label = Object.entries(PLATFORM_BASELINES[platform])
     .map(([key, value]) => `${key} ${value}`)
     .join(', ')
+  return label || 'none'
 }
 
 const SOLVE_ATTEMPTS = 3
@@ -54,6 +65,8 @@ export interface SolveExplicitLockInput {
   root: string
   spec: EnvironmentSpec
   platform: PhiPlatform
+  /** Use the Windows project's WSL distro to solve a Linux project environment. */
+  runtime?: 'wsl2'
   signal?: AbortSignal
   /** Set only for official cross-platform locks. Project solves omit this. */
   condaOverrides?: CondaOverrides
@@ -94,7 +107,7 @@ export function explicitLockFromDryRun(json: unknown, meta: ExplicitLockMeta): s
 
 /** Explicit locks cannot record pip dependencies. Throws when any are present. */
 export function refusePipDependencies(dependencies: readonly CondaDependency[]): void {
-  const pip = dependencies.filter((dependency) => typeof dependency !== 'string')
+  const pip = dependencies.filter(isPipDependency)
   if (pip.length === 0) return
   const packages = pip.flatMap((dependency) => dependency.pip)
   const detail = packages.length > 0 ? ` (${packages.join(', ')})` : ''
@@ -106,7 +119,7 @@ export function refusePipDependencies(dependencies: readonly CondaDependency[]):
  * solver reported sizes. `condaOverrides` is forwarded only when the caller sets it.
  */
 export async function solveExplicitLock(input: SolveExplicitLockInput): Promise<string> {
-  const conda = condaSpecOf(input.spec)
+  const conda = condaSpecOf(input.spec, input.platform)
   refusePipDependencies(conda.dependencies)
   const specs = conda.dependencies.filter(
     (dependency): dependency is string => typeof dependency === 'string'
@@ -114,22 +127,26 @@ export async function solveExplicitLock(input: SolveExplicitLockInput): Promise<
   if (input.signal?.aborted) throw abortError()
   ensureRuntimeLayout(input.root)
   ensureMambarc(input.root)
-  const micromambaVersion = await readMicromambaVersion(input.root, input.signal)
-  const strictChannelPriority = await supportsStrictChannelPriority(input.root, input.signal)
-  const prefix = mkdtempSync(join(input.root, 'state', 'solve-'))
+  const options = await solveRuntimeOptions(input)
+  const micromambaVersion = await readMicromambaVersion(options)
+  const strictChannelPriority = await supportsStrictChannelPriority(options)
+  const solverRoot = options.wsl
+    ? toUncPath(options.wsl.ready.distro, options.wsl.linuxRoot)
+    : input.root
+  const state = join(solverRoot, 'state')
+  mkdirSync(state, { recursive: true })
+  const prefix = mkdtempSync(join(state, 'solve-'))
   try {
     const json = await solveDryRun(
-      input.root,
       solveArgs({
         platform: input.platform,
         channels: conda.channels,
         specs,
-        prefix,
+        prefix: options.wsl ? toLinuxPath(prefix, options.wsl.ready.distro) : prefix,
         strictChannelPriority
       }),
       input.platform,
-      input.signal,
-      input.condaOverrides,
+      options,
       input.log
     )
     const text = explicitLockFromDryRun(json, {
@@ -150,6 +167,18 @@ export async function solveExplicitLock(input: SolveExplicitLockInput): Promise<
   } finally {
     rmSync(prefix, { recursive: true, force: true })
   }
+}
+
+async function solveRuntimeOptions(input: SolveExplicitLockInput): Promise<RunMicromambaOptions> {
+  const options: RunMicromambaOptions = {
+    root: input.root,
+    signal: input.signal,
+    condaOverrides: input.condaOverrides
+  }
+  if (input.runtime !== 'wsl2') return options
+  const wsl = await prepareWslMicromambaRun({ root: input.root, platform: input.platform })
+  if (!wsl) throw new Error('a WSL2 solve requires a Windows host and a linux-x64 target')
+  return { ...options, wsl }
 }
 
 /** Insert or replace `# download-bytes:` after `# baseline:` without changing any other line. */
@@ -288,36 +317,23 @@ function solveArgs(input: SolveArgInput): string[] {
 }
 
 async function solveDryRun(
-  root: string,
   args: readonly string[],
   platform: PhiPlatform,
-  signal: AbortSignal | undefined,
-  condaOverrides: CondaOverrides | undefined,
+  options: RunMicromambaOptions,
   log: ((message: string) => void) | undefined
 ): Promise<unknown> {
+  const { signal } = options
   let lastError = `micromamba solve produced no error text for ${platform}`
   for (let attempt = 1; attempt <= SOLVE_ATTEMPTS; attempt += 1) {
     if (signal?.aborted) throw abortError()
-    const result = await runMicromamba(args, {
-      root,
-      timeoutMs: SOLVE_TIMEOUT_MS,
-      signal,
-      ...(condaOverrides ? { condaOverrides } : {})
-    })
+    const result = await runMicromamba(args, { ...options, timeoutMs: SOLVE_TIMEOUT_MS })
     if (signal?.aborted) throw abortError()
-    if (result.code === 0) {
-      try {
-        const json = parseSolverJson(result.stdout)
-        if (isRecord(json) && json.success === false) {
-          lastError = solverFailureText(result)
-        } else {
-          return json
-        }
-      } catch (error) {
-        lastError = errorMessage(error)
-      }
-    } else {
+    try {
+      const json = result.code === 0 ? parseSolverJson(result.stdout) : undefined
+      if (json !== undefined && (!isRecord(json) || json.success !== false)) return json
       lastError = solverFailureText(result)
+    } catch (error) {
+      lastError = errorMessage(error)
     }
     if (attempt < SOLVE_ATTEMPTS) {
       log?.(`${platform}: solve attempt ${attempt} failed; retrying`)
@@ -357,12 +373,9 @@ function parseSolverJson(stdout: string): unknown {
   }
 }
 
-async function readMicromambaVersion(
-  root: string,
-  signal: AbortSignal | undefined
-): Promise<string> {
-  const result = await runMicromamba(['--version'], { root, signal })
-  if (signal?.aborted) throw abortError()
+async function readMicromambaVersion(options: RunMicromambaOptions): Promise<string> {
+  const result = await runMicromamba(['--version'], options)
+  if (options.signal?.aborted) throw abortError()
   if (result.code !== 0) throw new Error(solverFailureText(result))
   const version = result.stdout
     .split(/\r?\n/)
@@ -372,12 +385,9 @@ async function readMicromambaVersion(
   return version
 }
 
-async function supportsStrictChannelPriority(
-  root: string,
-  signal: AbortSignal | undefined
-): Promise<boolean> {
-  const result = await runMicromamba(['create', '--help'], { root, signal })
-  if (signal?.aborted) throw abortError()
+async function supportsStrictChannelPriority(options: RunMicromambaOptions): Promise<boolean> {
+  const result = await runMicromamba(['create', '--help'], options)
+  if (options.signal?.aborted) throw abortError()
   return `${result.stdout}\n${result.stderr}`.includes('--strict-channel-priority')
 }
 

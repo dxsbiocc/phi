@@ -6,7 +6,7 @@ import test from 'node:test'
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
-import { PHI_PLATFORMS } from '../src/main/agent/envs/contract'
+import { PHI_LOCK_PLATFORMS } from '../src/main/agent/envs/contract'
 import {
   PLUGIN_CONTRACT_VERSION,
   pluginManifestSchema,
@@ -221,7 +221,7 @@ test('a complete plugin returns its validated components and environments', () =
     ['demo-skill']
   )
   assert.equal(result.plugin?.environments.demo.environment.name, 'demo')
-  assert.deepEqual(Object.keys(result.plugin?.environments.demo.locks ?? {}), PHI_PLATFORMS)
+  assert.deepEqual(Object.keys(result.plugin?.environments.demo.locks ?? {}), PHI_LOCK_PLATFORMS)
 })
 
 test('phi-package.yaml is required, valid YAML, and a mapping', () => {
@@ -372,14 +372,14 @@ test('environment specs are parsed and must name their manifest environment', ()
 
 test('every shipped platform needs a valid explicit lock', () => {
   const missing = pluginFixture()
-  const missingPlatform = PHI_PLATFORMS[0]
+  const missingPlatform = PHI_LOCK_PLATFORMS[0]
   rmSync(join(missing, 'environments', 'demo', 'locks', `${missingPlatform}.txt`))
   assertInvalid(missing, [
     new RegExp(`^environments/demo/locks/${missingPlatform}\\.txt: lock file .* is required`)
   ])
 
   const malformed = pluginFixture()
-  const malformedPlatform = PHI_PLATFORMS[1]
+  const malformedPlatform = PHI_LOCK_PLATFORMS[1]
   write(
     join(malformed, 'environments', 'demo', 'locks', `${malformedPlatform}.txt`),
     'not-explicit\n'

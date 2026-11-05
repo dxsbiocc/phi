@@ -198,7 +198,8 @@ test('native applications require bounded, pinned artifacts and format-appropria
     )
   }
   assert.equal(validateSpec(spec({ ...native, artifacts: {} })), false)
-  assert.equal(validateSpec(spec({ ...native, artifacts: { 'win32-x64': artifact } })), false)
+  assert.equal(validateSpec(spec({ ...native, artifacts: { 'win32-x64': artifact } })), true)
+  assert.equal(validateSpec(spec({ ...native, artifacts: { 'linux-arm64': artifact } })), false)
   assert.equal(
     validateSpec(spec({ ...native, artifacts: { 'linux-x64': { ...artifact, format: 'zip' } } })),
     true
@@ -388,7 +389,7 @@ test('application metadata preserves micromamba version requirements outside the
     assert.equal(validateMetadata({ ...legacy, installation }), false, JSON.stringify(installation))
 })
 
-test('published application schemas match runtime objects and declare contract 1.4.0', () => {
+test('published application schemas match runtime objects and declare contract 1.5.0', () => {
   assert.deepEqual(
     JSON.parse(readFileSync(resolve('docs/contracts/environment.schema.json'), 'utf8')),
     environmentSpecSchema
@@ -397,7 +398,7 @@ test('published application schemas match runtime objects and declare contract 1
     JSON.parse(readFileSync(resolve('docs/contracts/env-metadata.schema.json'), 'utf8')),
     envMetadataSchema
   )
-  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.4.0')
+  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.5.0')
 })
 
 test('resolved package metadata records bounded exact Python and Node versions without unknown fields', () => {

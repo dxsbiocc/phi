@@ -8,18 +8,26 @@ import {
   currentPlatform,
   lockSha256,
   parseExplicitLock,
-  type EnvMetadata
+  type EnvMetadata,
+  type PhiPlatform
 } from './contract'
 import {
   acquireEnvironmentLock,
   ensureEnvironment,
-  removeTree,
+  removeManagedEnvironmentPrefix,
   type EnsureEnvironmentResult
 } from './ensure'
 import { readEnvironmentIndex, updateEnvironmentEntry } from './index-store'
 import { hasLiveEnvironmentLeases } from './leases'
 import { ensureMambarc, ensureRuntimeLayout, runMicromamba } from './runtime'
 import { envMetadataSchema } from './schemas'
+import {
+  readWslRuntime,
+  toLinuxPath,
+  usesWslEnvironment,
+  wslEnvironmentPrefix,
+  type WslRuntime
+} from './wsl'
 
 import { errorMessage } from '../../../shared/errorCodes'
 const ajv = new Ajv({ allErrors: true, strict: false })
@@ -223,13 +231,18 @@ function packageDifferences(expected: PackageIdentity[], actual: PackageIdentity
 
 async function listInstalled(
   root: string,
-  prefix: string
+  prefix: string,
+  wsl?: WslRuntime
 ): Promise<{ packages: PackageIdentity[]; problems: string[] }> {
   const layout = ensureRuntimeLayout(root)
   const runtimeRoot = realpathSync(layout.root)
   ensureMambarc(runtimeRoot)
   // micromamba 2.9.0: list -p <prefix> --json
-  const result = await runMicromamba(['list', '-p', prefix, '--json'], { root: runtimeRoot })
+  const runtimePrefix = wsl ? toLinuxPath(prefix, wsl.ready.distro) : prefix
+  const result = await runMicromamba(['list', '-p', runtimePrefix, '--json'], {
+    root: runtimeRoot,
+    wsl
+  })
   if (result.code !== 0) {
     const detail = (result.stderr.trim() || result.stdout.trim()).split('\n')[0]
     const code = result.code === null ? 'aborted' : String(result.code)
@@ -294,14 +307,19 @@ export async function checkEnvironment(
 ): Promise<EnvironmentCheck> {
   const problems: string[] = []
   const entry = readEnvironmentIndex(root).environments[envId]
-  const prefix = entry?.prefix ?? join(root, 'envs', envId)
+  const marker = entry?.prefix ?? join(root, 'envs', envId)
+  const viaWsl = entry && usesWslEnvironment(process.platform, entry.platform)
+  const wsl = viaWsl ? readWslRuntime(root) : undefined
+  const prefix = wsl ? wslEnvironmentPrefix(wsl, envId) : marker
   if (!entry) problems.push(`index entry for '${envId}' is missing`)
-  problems.push(...inspectEnvJson(prefix, lockText))
-  if (isDirectory(prefix)) {
+  problems.push(...inspectEnvJson(marker, lockText))
+  if (viaWsl && (!wsl || !isDirectory(prefix)))
+    problems.push('WSL environment prefix is unavailable')
+  if ((!viaWsl || wsl) && isDirectory(prefix)) {
     const lock = lockPackages(lockText)
     problems.push(...lock.problems)
     if (lock.problems.length === 0) {
-      const installed = await listInstalled(root, prefix)
+      const installed = await listInstalled(root, prefix, wsl)
       problems.push(...installed.problems)
       if (installed.problems.length === 0) {
         problems.push(...packageDifferences(lock.packages, installed.packages))
@@ -325,19 +343,21 @@ function environmentTarget(input: Parameters<typeof ensureEnvironment>[0]): {
   root: string
   envId: string
   prefix: string
+  platform: PhiPlatform
 } {
   const layout = ensureRuntimeLayout(input.root)
   const root = realpathSync(layout.root)
+  const platform = input.platform ?? currentPlatform()
   const envId = computeEnvId({
     scope: input.scope,
     owner: input.owner,
     name: input.spec.name,
-    platform: input.platform ?? currentPlatform(),
+    platform,
     lockText: input.lockText,
     sourcePackages: input.spec.sourcePackages,
     installation: input.spec.installation
   })
-  return { root, envId, prefix: join(root, 'envs', envId) }
+  return { root, envId, prefix: join(root, 'envs', envId), platform }
 }
 
 export async function repairEnvironment(
@@ -352,7 +372,7 @@ export async function repairEnvironment(
   try {
     if (hasLiveEnvironmentLeases(target.root, target.envId))
       throw new Error(`environment ${target.envId} is in use by active consumer leases`)
-    removeTree(target.prefix)
+    await removeManagedEnvironmentPrefix(target.root, target.envId, target.prefix, target.platform)
   } finally {
     lock.release()
   }

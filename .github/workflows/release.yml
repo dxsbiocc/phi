@@ -1,7 +1,7 @@
 name: Release
 
-# Builds macOS (Apple Silicon) and Linux x64 packages and attaches them to a
-# **draft** GitHub release, so a person reviews and publishes it by hand.
+# Builds macOS (Apple Silicon), Linux x64, and Windows x64 packages and attaches
+# them to a **draft** GitHub release, so a person reviews and publishes it by hand.
 #
 # macOS signing is optional. With the CSC_LINK / CSC_KEY_PASSWORD secrets the
 # app is signed with that certificate, and with APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD /
@@ -19,6 +19,15 @@ on:
       - 'electron-builder.yml'
       - 'build/**'
       - 'scripts/build/**'
+      - 'scripts/build-kernel.ts'
+      - 'scripts/build-helper.mjs'
+      - 'scripts/check-release-kernel.ts'
+      - 'scripts/smoke-packaged-worker.mjs'
+      - 'scripts/runtime/fetch-*.mjs'
+      - 'scripts/runtime/go-manifest.json'
+      - 'resources/runtime/manifest.json'
+      - 'package.json'
+      - 'bun.lock'
   workflow_dispatch:
 
 permissions:
@@ -72,6 +81,11 @@ jobs:
             builder: --linux AppImage deb --x64
             kernel_target: linux-x64
             artifact: Phi-linux-x64
+          - name: Windows x64
+            os: windows-2022
+            builder: --win nsis --x64
+            kernel_target: win32-x64
+            artifact: Phi-windows-x64
     steps:
       - uses: actions/checkout@v4.2.2
         with:
@@ -86,6 +100,9 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Build kernel
         run: bun scripts/build-kernel.ts --target ${{ matrix.kernel_target }}
+      - name: Prepare Windows runtime assets
+        if: runner.os == 'Windows'
+        run: bun run runtime:fetch:win
       - name: Build app
         env:
           # The renderer bundle needs more than Node's default ~2 GB heap on the
@@ -124,10 +141,11 @@ jobs:
         # unquoted on purpose: it holds separate builder flags.
         run: |
           for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
-            [ -n "${!name}" ] || unset "$name"
+            [ "$RUNNER_OS" = macOS ] && [ -n "${!name}" ] || unset "$name"
           done
           npx electron-builder ${{ matrix.builder }} --publish never $SIGNING_ARGS
       - name: Smoke-test the packaged worker without system bun
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           if [ "$RUNNER_OS" = macOS ]; then
@@ -138,6 +156,32 @@ jobs:
           node scripts/smoke-packaged-worker.mjs --resources "$resources"
           test -x "$(find "$resources/kernel" -path '*linux-x64/phi-kernel' -print -quit)"
           bun scripts/check-release-kernel.ts --resources "$resources"
+      - name: Install and smoke-test Windows NSIS package
+        if: runner.os == 'Windows'
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installer = (Resolve-Path -LiteralPath "dist/phi-$version-setup.exe").Path
+          $installDir = Join-Path $env:RUNNER_TEMP "Phi 验收 $([guid]::NewGuid().ToString('N'))"
+          try {
+            # NSIS parses /D from the raw command line. It must be last and unquoted.
+            $process = Start-Process -FilePath $installer -ArgumentList "/S /D=$installDir" -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "NSIS install failed with exit code $($process.ExitCode)" }
+            if (-not (Test-Path -LiteralPath (Join-Path $installDir 'phi.exe') -PathType Leaf)) {
+              throw "NSIS did not install Phi to $installDir"
+            }
+            $resources = Join-Path $installDir 'resources'
+            node scripts/smoke-packaged-worker.mjs --resources $resources
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            bun scripts/check-release-kernel.ts --resources $resources
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            if (Test-Path -LiteralPath $installDir) {
+              Remove-Item -LiteralPath $installDir -Recurse -Force
+            }
+          }
       - name: Check macOS signature
         if: runner.os == 'macOS'
         shell: bash
@@ -153,7 +197,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/latest*.yml)
+          files=(dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb dist/*.exe dist/latest*.yml)
           (( ${#files[@]} > 0 )) || { echo "No package artifacts in dist/" >&2; exit 1; }
           for file in "${files[@]}"; do
             if command -v sha256sum >/dev/null; then sha256sum "$file"; else shasum -a 256 "$file"; fi
@@ -166,6 +210,7 @@ jobs:
             dist/*.zip
             dist/*.AppImage
             dist/*.deb
+            dist/*.exe
             dist/latest*.yml
           if-no-files-found: error
 

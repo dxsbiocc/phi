@@ -140,6 +140,7 @@ function defaultProcessFactory(cwd: string, launch: JupyterServerLaunch): Manage
   return spawn(launch.command, launch.args ?? jupyterServerArgs(launch), {
     cwd,
     env: launch.env,
+    windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe']
   })
 }

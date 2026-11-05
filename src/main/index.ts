@@ -1555,9 +1555,9 @@ getPhiEngine().host.register('environments.request', (params, context) => {
   return remoteRuntimeController.owns(params)
     ? remoteRuntimeController.requestEnvironment(params, control)
     : requestProjectEnvironment(params, {
-        root: getRuntimeRoot(),
         builds: environmentBuilds,
-        confirm: (request) => confirmEnvironmentRequest(request)
+        confirm: (request) => confirmEnvironmentRequest(request),
+        signal: context.signal
       })
 })
 getPhiEngine().host.register('environments.cancel', (params, context) =>

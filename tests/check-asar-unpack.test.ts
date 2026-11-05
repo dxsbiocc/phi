@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   chmodSync,
   mkdirSync,
@@ -20,7 +21,11 @@ import {
   copyOmpWorkerClosure,
   ompWorkerOutputFiles
 } from '../scripts/build/omp-worker-closure.mjs'
-import { afterPack, assertBundledBun } from '../scripts/build/after-pack.mjs'
+import {
+  afterPack,
+  assertBundledBun,
+  assertBundledWindowsRuntimes
+} from '../scripts/build/after-pack.mjs'
 import {
   checkAsarUnpack,
   globToRegExp,
@@ -55,8 +60,14 @@ test('asar check reports missing kernel and arch-specific Bun resource mappings'
     assert.deepEqual(missingExtraResourceMappings(root), [
       'mac.extraResources: .phi-build/kernel/${version}/darwin-${arch} -> kernel/${version}/darwin-${arch}',
       'mac.extraResources: .phi-build/kernel/${version}/linux-x64 -> kernel/${version}/linux-x64',
+      'mac.extraResources: resources/runtime/micromamba/darwin-${arch} -> runtime/micromamba/darwin-${arch}',
       'mac.extraResources: resources/runtime/bun/darwin-${arch} -> runtime/bun/darwin-${arch}',
-      'linux.extraResources: resources/runtime/bun/linux-${arch} -> runtime/bun/linux-${arch}'
+      'linux.extraResources: resources/runtime/micromamba/linux-${arch} -> runtime/micromamba/linux-${arch}',
+      'linux.extraResources: resources/runtime/bun/linux-${arch} -> runtime/bun/linux-${arch}',
+      'win.extraResources: resources/runtime/micromamba/win32-${arch} -> runtime/micromamba/win32-${arch}',
+      'win.extraResources: resources/runtime/micromamba/linux-x64 -> runtime/micromamba/linux-x64',
+      'win.extraResources: .phi-build/kernel/${version}/win32-${arch} -> kernel/${version}/win32-${arch}',
+      'win.extraResources: resources/runtime/bun/win32-${arch} -> runtime/bun/win32-${arch}'
     ])
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -80,6 +91,28 @@ test('electron-builder packages Bun as arch-specific external resources', () => 
         entry.to === 'runtime/bun/linux-${arch}'
     )
   )
+  assert.ok(
+    config.win.extraResources.some(
+      (entry: { from?: string; to?: string }) =>
+        entry.from === 'resources/runtime/bun/win32-${arch}' &&
+        entry.to === 'runtime/bun/win32-${arch}'
+    )
+  )
+  assert.ok(
+    config.win.extraResources.some(
+      (entry: { from?: string; to?: string }) =>
+        entry.from === 'resources/runtime/micromamba/win32-${arch}' &&
+        entry.to === 'runtime/micromamba/win32-${arch}'
+    )
+  )
+  assert.ok(
+    config.win.extraResources.some(
+      (entry: { from?: string; to?: string }) =>
+        entry.from === 'resources/runtime/micromamba/linux-x64' &&
+        entry.to === 'runtime/micromamba/linux-x64'
+    )
+  )
+  assert.equal(config.win.icon, 'build/icon.ico')
   assert.match(
     readFileSync(path.join(repoRoot, '.gitignore'), 'utf8'),
     /resources\/runtime\/bun\//u
@@ -99,6 +132,62 @@ test('afterPack rejects a packaged app with a missing or non-executable Bun', ()
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('Windows afterPack rejects a missing or changed x64 Bun', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-win-packaged-bun-'))
+  const bunPath = path.join(root, 'runtime', 'bun', 'win32-x64', 'bun.exe')
+  const context = {
+    appOutDir: root,
+    // electron-builder passes its Arch enum; x64 is index 1.
+    arch: 1,
+    electronPlatformName: 'win32',
+    packager: { getResourcesDir: () => root }
+  }
+  try {
+    await assert.rejects(() => afterPack(context), /missing bundled Bun.*win32-x64/u)
+    mkdirSync(path.dirname(bunPath), { recursive: true })
+    writeFileSync(bunPath, 'MZ', { mode: 0o755 })
+    await assert.rejects(() => afterPack(context), /checksum mismatch.*win32-x64/u)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('Windows packaging requires unchanged native and WSL runtime binaries', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-win-packaged-runtime-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const digest = createHash('sha256').update('verified').digest('hex')
+  const manifest = {
+    bun: {
+      platforms: {
+        'win32-x64': { url: '', sha256: '', executableSha256: digest, archivePath: '' }
+      }
+    },
+    micromamba: {
+      platforms: {
+        'win32-x64': { url: '', sha256: digest },
+        'linux-x64': { url: '', sha256: digest }
+      }
+    }
+  }
+  const wsl = path.join(root, 'runtime', 'micromamba', 'linux-x64', 'micromamba')
+  for (const file of [
+    path.join(root, 'runtime', 'bun', 'win32-x64', 'bun.exe'),
+    path.join(root, 'runtime', 'micromamba', 'win32-x64', 'micromamba.exe')
+  ]) {
+    mkdirSync(path.dirname(file), { recursive: true })
+    writeFileSync(file, 'verified', { mode: 0o755 })
+  }
+  assert.throws(
+    () => assertBundledWindowsRuntimes(root, manifest),
+    /missing bundled runtime.*linux-x64/u
+  )
+  mkdirSync(path.dirname(wsl), { recursive: true })
+  writeFileSync(wsl, 'verified')
+  assert.doesNotThrow(() => assertBundledWindowsRuntimes(root, manifest))
+  writeFileSync(wsl, 'changed')
+  assert.throws(() => assertBundledWindowsRuntimes(root, manifest), /checksum mismatch.*linux-x64/u)
 })
 
 test('Linux afterPack rejects a missing or non-executable x64 Bun', async () => {

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
+import { toWslPath, wslProcessEnvironment } from '../envs/wsl'
 import { findWrapperCatalogEntry } from './catalog'
 import { prepareNextflowProfile } from './composition/conda-profile'
 import {
@@ -10,6 +11,11 @@ import {
   resolveNextflowLaunch,
   type NextflowLaunchContext
 } from './composition/nextflow-launch'
+import {
+  trackWslNextflowProcess,
+  wslNextflowParams,
+  wslNextflowProcess
+} from './composition/nextflow-wsl'
 import { checkLocalDoctor } from './doctor'
 import { buildNextflowInvocation } from './executor-nextflow'
 import {
@@ -156,11 +162,13 @@ export async function runLocalWrapperExecution(
   if (!resolved.ok) {
     return failRun(run, agentDir, resolved.error, { environmentError: resolved.error })
   }
+  const launch = resolved.launch
+  const wsl = launch.source === 'managed' ? launch.wsl : undefined
 
   const requiresDocker =
     manifest.engine.profiles.find((profile) => profile.id === run.profile)?.containerRuntime ===
     'docker'
-  const doctor = doctorImpl({ requireDocker: requiresDocker })
+  const doctor = doctorImpl({ requireDocker: !wsl && requiresDocker })
   if (!doctor.ok) {
     const missing = doctor.checks
       .filter((check) => !check.ok)
@@ -181,9 +189,10 @@ export async function runLocalWrapperExecution(
   try {
     preparedProfile = prepareNextflowProfile(
       nextflowProfile,
-      resolved.launch.runtimeRoot,
-      resolved.launch.env,
-      options.micromambaPath
+      launch.runtimeRoot,
+      launch.env,
+      options.micromambaPath,
+      wsl
     )
   } catch (error) {
     const reason = errorMessage(error)
@@ -191,7 +200,9 @@ export async function runLocalWrapperExecution(
   }
 
   let weblog: WeblogListenerHandle | undefined
-  if (run.steps && run.steps.length > 0) {
+  // The local weblog listener binds Windows loopback, which is not reachable
+  // from Linux under the default WSL2 NAT mode. The regular run logs still stream.
+  if (!wsl && run.steps && run.steps.length > 0) {
     weblog = await startWeblogListener(run.runId, run.steps, agentDir)
   }
 
@@ -205,7 +216,7 @@ export async function runLocalWrapperExecution(
   writeFileSync(join(runDir, 'params.json'), invocation.paramsJson, 'utf-8')
   writeFileSync(
     join(runDir, 'nextflow.json'),
-    `${JSON.stringify(nextflowLaunchRecord(resolved.launch), null, 2)}\n`,
+    `${JSON.stringify(nextflowLaunchRecord(launch), null, 2)}\n`,
     'utf-8'
   )
 
@@ -215,17 +226,44 @@ export async function runLocalWrapperExecution(
     invocation.args.push('-c', configPath)
   }
 
+  let processPlan: { executable: string; args: string[] } = {
+    executable: launch.command,
+    args: invocation.args
+  }
+  if (wsl) {
+    try {
+      const pathParams = ['outdir', ...manifest.inputs.map((input) => input.id)]
+      const params = wslNextflowParams(JSON.parse(invocation.paramsJson), pathParams, (path) =>
+        toWslPath(wsl.ready, path)
+      )
+      writeFileSync(join(runDir, 'params.wsl.json'), JSON.stringify(params, null, 2), 'utf-8')
+      invocation.args[invocation.args.indexOf('-params-file') + 1] = 'params.wsl.json'
+      processPlan = wslNextflowProcess(wsl, {
+        command: launch.command,
+        args: invocation.args,
+        cwd: runDir,
+        env: preparedProfile.env,
+        graceMs: 10_000
+      })
+    } catch (error) {
+      const reason = errorMessage(error)
+      return failRun(run, agentDir, reason, { environmentError: reason })
+    }
+  }
+
   transition(run, agentDir, 'provisioning')
   const running = transition(run, agentDir, 'running', { startedAt: new Date().toISOString() })
 
   const exitCode = await new Promise<number>((resolve) => {
     let child: ChildProcess
     try {
-      child = spawnImpl(resolved.launch.command, invocation.args, {
-        cwd: runDir,
-        env: preparedProfile.env,
-        stdio: ['ignore', 'pipe', 'pipe']
+      child = spawnImpl(processPlan.executable, processPlan.args, {
+        ...(wsl
+          ? { env: wslProcessEnvironment(), windowsHide: true }
+          : { cwd: runDir, env: preparedProfile.env }),
+        stdio: [wsl ? 'pipe' : 'ignore', 'pipe', 'pipe']
       })
+      if (wsl) trackWslNextflowProcess(child)
     } catch {
       resolve(1)
       return

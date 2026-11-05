@@ -10,7 +10,11 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 // Phi ids are `${process.platform}-${process.arch}` for the platforms we ship.
 // conda-forge subdirs differ (osx-arm64, osx-64, linux-64) and are encoded in
 // the manifest URLs.
-export const MICROMAMBA_PLATFORM_IDS = ['darwin-arm64', 'darwin-x64', 'linux-x64']
+export const MICROMAMBA_PLATFORM_IDS = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'win32-x64']
+
+export function micromambaFileName(platformId) {
+  return platformId.startsWith('win32-') ? 'micromamba.exe' : 'micromamba'
+}
 
 export function phiPlatformId(platform = process.platform, arch = process.arch) {
   const id = `${platform}-${arch}`
@@ -20,7 +24,19 @@ export function phiPlatformId(platform = process.platform, arch = process.arch) 
 export function lookupMicromambaPlatform(manifest, platformId) {
   const entry = manifest?.micromamba?.platforms?.[platformId]
   if (!entry || typeof entry.url !== 'string' || typeof entry.sha256 !== 'string') return undefined
-  return { url: entry.url, sha256: entry.sha256 }
+  const release = { url: entry.url, sha256: entry.sha256 }
+  if (
+    Array.isArray(entry.mirrorPrefixes) &&
+    entry.mirrorPrefixes.every((value) => typeof value === 'string')
+  ) {
+    release.mirrorPrefixes = entry.mirrorPrefixes
+  }
+  return release
+}
+
+export function micromambaDownloadUrls(release) {
+  const prefixes = release.mirrorPrefixes ?? []
+  return [release.url, ...prefixes.map((prefix) => `${prefix}${release.url}`)]
 }
 
 export function fileSha256(filePath) {
@@ -98,25 +114,53 @@ function fetchPlatform(manifest, platformId) {
     )
   }
 
-  const target = path.join(repoRoot, 'resources', 'runtime', 'micromamba', platformId, 'micromamba')
+  const target = path.join(
+    repoRoot,
+    'resources',
+    'runtime',
+    'micromamba',
+    platformId,
+    micromambaFileName(platformId)
+  )
   if (existsSync(target) && fileSha256(target) === release.sha256) return
 
   const directory = path.dirname(target)
   mkdirSync(directory, { recursive: true })
   // Same directory as the destination so the final rename does not cross filesystems.
   const partial = path.join(directory, `.micromamba.${platformId}.${process.pid}.partial`)
-  try {
-    execFileSync(
-      'curl',
-      ['-fsSL', '--retry', '5', '--retry-all-errors', '-o', partial, release.url],
-      {
-        encoding: 'utf8',
-        stdio: ['ignore', 'ignore', 'pipe']
-      }
-    )
-  } catch (error) {
-    rmSync(partial, { force: true })
-    fail(`fetch-micromamba: download failed for ${platformId}: ${errorText(error)}`)
+  const errors = []
+  let downloaded = false
+  for (const url of micromambaDownloadUrls(release)) {
+    try {
+      execFileSync(
+        'curl',
+        [
+          '-fsSL',
+          '--retry',
+          '2',
+          '--retry-all-errors',
+          '--connect-timeout',
+          '20',
+          '--max-time',
+          '180',
+          '-o',
+          partial,
+          url
+        ],
+        {
+          encoding: 'utf8',
+          stdio: ['ignore', 'ignore', 'pipe']
+        }
+      )
+      downloaded = true
+      break
+    } catch (error) {
+      rmSync(partial, { force: true })
+      errors.push(`${url}: ${errorText(error)}`)
+    }
+  }
+  if (!downloaded) {
+    fail(`fetch-micromamba: download failed for ${platformId}: ${errors.join('; ')}`)
   }
 
   const digest = fileSha256(partial)

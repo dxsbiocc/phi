@@ -1,6 +1,12 @@
 {
   "entries": [
     {
+      "file": "scripts/check-release-kernel.ts",
+      "specifiers": ["@oh-my-pi/pi-natives"],
+      "purpose": "Connect to the packaged OMP broker through its native Unix socket or Windows named pipe during release smoke checks",
+      "plan": "keep"
+    },
+    {
       "file": "scripts/eval/db-vs-fetch.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent",

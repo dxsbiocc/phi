@@ -8,12 +8,12 @@ import { parse as parseYaml } from 'yaml'
 import { validateAgentFile, type PhiAgentDefinition } from '../agents/definition'
 import { toolPrefixError, validateSkill, type ValidatedSkill } from '../content/skill'
 import {
-  PHI_PLATFORMS,
+  PHI_LOCK_PLATFORMS,
   parseEnvironmentRef,
   parseEnvironmentSpec,
   parseExplicitLock,
   type EnvironmentSpec,
-  type PhiPlatform
+  type PhiLockPlatform
 } from '../envs/contract'
 import { pluginManifestSchema, type PhiPluginManifest } from './phi-package'
 
@@ -37,8 +37,8 @@ export interface ValidatedPluginEnvironment {
   spec: string
   /** Absolute environment spec path. */
   specPath: string
-  /** Absolute lock path for every platform Phi ships. */
-  locks: Record<PhiPlatform, string>
+  /** Absolute lock path for every platform that currently ships official conda locks. */
+  locks: Record<PhiLockPlatform, string>
   environment: EnvironmentSpec
 }
 
@@ -251,9 +251,9 @@ function validateEnvironments(
       }
     }
 
-    const locks = {} as Record<PhiPlatform, string>
+    const locks = {} as Record<PhiLockPlatform, string>
     let locksValid = true
-    for (const platform of PHI_PLATFORMS) {
+    for (const platform of PHI_LOCK_PLATFORMS) {
       const relativePath = `environments/${name}/locks/${platform}.txt`
       const lockPath = join(pluginDir, relativePath)
       if (!isFile(lockPath)) {

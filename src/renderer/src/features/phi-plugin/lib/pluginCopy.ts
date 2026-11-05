@@ -50,7 +50,8 @@ export const pluginCopy = defineCopy(
       building: 'Building',
       ready: 'Ready',
       failed: 'Build failed',
-      drifted: 'Needs repair'
+      drifted: 'Needs repair',
+      unavailable: 'Not available on this platform'
     },
     startingBuild: 'Starting build…',
     buildProgress: (message: string, done: number, total: number) =>
@@ -159,7 +160,8 @@ export const pluginCopy = defineCopy(
       building: '构建中',
       ready: '已就绪',
       failed: '构建失败',
-      drifted: '需要修复'
+      drifted: '需要修复',
+      unavailable: '本平台未提供'
     },
     startingBuild: '正在开始构建…',
     buildProgress: (message: string, done: number, total: number) =>

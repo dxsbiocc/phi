@@ -23,7 +23,7 @@ import {
 
 import { isRecord } from '../../../shared/guards'
 const ENVIRONMENT_FILE = 'environment.json'
-const HOST_DEPENDENCY_IDS = new Set(['docker', 'singularity'])
+const HOST_DEPENDENCY_IDS = new Set(['docker', 'singularity', 'wsl'])
 
 type PersistedCustomPaths = Partial<Record<EnvironmentToolId, string>>
 

@@ -1,5 +1,5 @@
 import {
-  currentPlatform,
+  cloneCondaDependency,
   parseEnvironmentRef,
   type EnvironmentSpec,
   type HostRequirement,
@@ -16,7 +16,8 @@ import {
   writeProjectEnvironment
 } from '../envs/project-environments'
 import type { EnvironmentBuilds } from './environment-builds'
-import { describeEnvironment } from './environment-refs'
+import { wslShellBindingError } from './environment-gate'
+import { describeEnvironment, type EnvironmentDescriptor } from './environment-refs'
 
 import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
@@ -53,8 +54,10 @@ export function environmentRequestQuestion(input: {
   packages: readonly string[]
   reason: string
   environment: string
+  runtime?: 'wsl2'
 }): string {
-  return `向环境 ${input.environment} 添加 ${input.packages.join('、')}。原因：${input.reason}`
+  const target = input.runtime === 'wsl2' ? `${input.environment}（WSL2）` : input.environment
+  return `向环境 ${target} 添加 ${input.packages.join('、')}。原因：${input.reason}`
 }
 
 export function confirmedEnvironmentRequest(response: unknown): boolean {
@@ -82,15 +85,16 @@ export async function requestProjectEnvironment(
 
   const projectDir = request.cwd
   const applied = applyOverrides(request.environment, projectDir)
-  let baseSpec: EnvironmentSpec
+  let base: EnvironmentDescriptor
   try {
-    baseSpec = describeEnvironment(applied.ref, {
+    base = describeEnvironment(applied.ref, {
       projectDir,
       ...(request.pluginId ? { pluginId: request.pluginId } : {}),
       ...(deps.agentDir ? { agentDir: deps.agentDir } : {}),
       ...(deps.environmentsDir ? { environmentsDir: deps.environmentsDir } : {}),
       ...(deps.platform ? { platform: deps.platform } : {})
-    }).spec
+    })
+    if (request.boundSession && base.runtime === 'wsl2') throw wslShellBindingError(base.ref)
   } catch (error) {
     return { error: shortError(error) }
   }
@@ -99,7 +103,8 @@ export async function requestProjectEnvironment(
   const question = environmentRequestQuestion({
     packages: request.packages,
     reason: request.reason,
-    environment: applied.ref
+    environment: applied.ref,
+    runtime: base.runtime
   })
   const accepted = await deps.confirm({
     runtimeSessionId: request.runtimeSessionId,
@@ -110,41 +115,53 @@ export async function requestProjectEnvironment(
   })
   if (!accepted) return { declined: true }
 
-  const platform = deps.platform ?? currentPlatform()
-  let name: string
-  let spec: EnvironmentSpec
+  const builds = deps.builds
+  if (!builds) return { error: 'environment builds are unavailable' }
   try {
-    name = nextProjectEnvironmentName(projectDir, baseNameOf(applied.ref, baseSpec.name))
-    spec = extendSpec(baseSpec, name, request.packages)
+    return await extendProjectEnvironment(request, base, builds, deps)
   } catch (error) {
     return { error: shortError(error) }
   }
+}
 
-  const root = deps.root ?? getRuntimeRoot()
+async function extendProjectEnvironment(
+  request: ValidRequest,
+  base: EnvironmentDescriptor,
+  builds: EnvironmentBuilds,
+  deps: RequestProjectEnvironmentDeps
+): Promise<EnvRequestResult> {
+  const projectDir = request.cwd
+  const baseName = baseNameOf(base.ref, base.spec.name)
+  const name = nextProjectEnvironmentName(projectDir, baseName)
+  const spec = extendSpec(base.spec, name, request.packages)
+  const platform = base.platform
   const solve = deps.solve ?? solveExplicitLock
-  let lockText: string
-  try {
-    lockText = await solve({
-      root,
-      spec,
-      platform,
-      ...(deps.signal ? { signal: deps.signal } : {})
-    })
-  } catch (error) {
-    return { error: shortError(error) }
-  }
+  const lockText = await solve({
+    root: deps.root ?? getRuntimeRoot(),
+    spec,
+    platform,
+    runtime: base.runtime,
+    signal: deps.signal
+  })
 
-  if (!deps.builds) return { error: 'environment builds are unavailable' }
-  const newRef = `project:${name}`
-  try {
-    writeProjectEnvironment(projectDir, { name, spec, lockText, platform })
-    retargetOverrides(projectDir, request.environment, applied.ref, newRef)
-    const descriptor = describeEnvironment(newRef, { projectDir, platform })
-    const handle = await deps.builds.start(descriptor, { ref: newRef })
-    return { ref: newRef, envId: handle.envId, name, added: [...request.packages] }
-  } catch (error) {
-    return { error: shortError(error) }
+  if (deps.signal?.aborted) throw new Error('environment request aborted')
+  if (nextProjectEnvironmentName(projectDir, baseName) !== name) {
+    throw new Error(
+      'another request created a project environment while solving; retry this request'
+    )
   }
+  const newRef = `project:${name}`
+  writeProjectEnvironment(projectDir, { name, spec, lockText, platform })
+  const descriptor = describeEnvironment(newRef, { projectDir, platform: deps.platform })
+  const handle = await builds.start(descriptor, { ref: newRef })
+  if (deps.signal?.aborted) throw new Error('environment request aborted')
+  if (applyOverrides(request.environment, projectDir).ref !== base.ref) {
+    throw new Error(
+      'the project environment changed while building; retry to extend the active environment'
+    )
+  }
+  retargetOverrides(projectDir, request.environment, base.ref, newRef)
+  return { ref: newRef, envId: handle.envId, name, added: [...request.packages] }
 }
 
 interface ValidRequest {
@@ -154,6 +171,7 @@ interface ValidRequest {
   reason: string
   environment: string
   pluginId?: string
+  boundSession: boolean
 }
 
 function validateRequest(params: unknown): ValidRequest {
@@ -177,6 +195,7 @@ function validateRequest(params: unknown): ValidRequest {
     cwd,
     packages,
     reason,
+    boundSession: record.boundSession === true,
     environment,
     ...(pluginId ? { pluginId } : {})
   }
@@ -232,12 +251,7 @@ function extendSpec(
   const spec: EnvironmentSpec = {
     name,
     channels: [...base.channels],
-    dependencies: [
-      ...base.dependencies.map((dependency) =>
-        typeof dependency === 'string' ? dependency : { pip: [...dependency.pip] }
-      ),
-      ...packages
-    ]
+    dependencies: [...base.dependencies.map(cloneCondaDependency), ...packages]
   }
   if (base.description !== undefined) spec.description = base.description
   if (base.host) spec.host = base.host.map(cloneHost)

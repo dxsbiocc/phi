@@ -1,4 +1,5 @@
 import type { PhiPlatform } from '../platform'
+import type { ActivationSnapshot } from '../activation'
 
 export interface PythonUvInstallation {
   backend: 'python-uv'
@@ -50,6 +51,7 @@ export interface ApplicationInstallInput {
   prefix: string
   sourceDir: string
   platform: PhiPlatform
+  activation?: ActivationSnapshot
   installation: ApplicationInstallation
   signal?: AbortSignal
   onProgress?: (event: ApplicationInstallProgress) => void

@@ -115,9 +115,10 @@ function packageVersions(repoRoot: string): { phi: string; omp: string; native: 
   }
 }
 
-function localTarget(): 'darwin-arm64' | 'linux-x64' {
+function localTarget(): 'darwin-arm64' | 'linux-x64' | 'win32-x64' {
   if (process.platform === 'darwin' && process.arch === 'arm64') return 'darwin-arm64'
   if (process.platform === 'linux' && process.arch === 'x64') return 'linux-x64'
+  if (process.platform === 'win32' && process.arch === 'x64') return 'win32-x64'
   throw new Error(`Local kernel performance is unsupported on ${process.platform}/${process.arch}.`)
 }
 

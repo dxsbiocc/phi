@@ -27,13 +27,43 @@ const REQUIRED_EXTRA_RESOURCE_MAPPINGS = [
   },
   {
     section: 'mac.extraResources',
+    from: 'resources/runtime/micromamba/darwin-${arch}',
+    to: 'runtime/micromamba/darwin-${arch}'
+  },
+  {
+    section: 'mac.extraResources',
     from: 'resources/runtime/bun/darwin-${arch}',
     to: 'runtime/bun/darwin-${arch}'
   },
   {
     section: 'linux.extraResources',
+    from: 'resources/runtime/micromamba/linux-${arch}',
+    to: 'runtime/micromamba/linux-${arch}'
+  },
+  {
+    section: 'linux.extraResources',
     from: 'resources/runtime/bun/linux-${arch}',
     to: 'runtime/bun/linux-${arch}'
+  },
+  {
+    section: 'win.extraResources',
+    from: 'resources/runtime/micromamba/win32-${arch}',
+    to: 'runtime/micromamba/win32-${arch}'
+  },
+  {
+    section: 'win.extraResources',
+    from: 'resources/runtime/micromamba/linux-x64',
+    to: 'runtime/micromamba/linux-x64'
+  },
+  {
+    section: 'win.extraResources',
+    from: '.phi-build/kernel/${version}/win32-${arch}',
+    to: 'kernel/${version}/win32-${arch}'
+  },
+  {
+    section: 'win.extraResources',
+    from: 'resources/runtime/bun/win32-${arch}',
+    to: 'runtime/bun/win32-${arch}'
   }
 ]
 

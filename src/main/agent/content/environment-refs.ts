@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { listInstalledPlugins } from '../plugins/loader'
@@ -11,6 +11,7 @@ import {
   parseEnvironmentRef,
   parseEnvironmentSpec,
   parseExplicitLock,
+  resolveManagedLockPlatform,
   type EnsureProgressEvent,
   type EnvHandle,
   type EnvKind,
@@ -32,6 +33,7 @@ import { errorMessage } from '../../../shared/errorCodes'
 
 const LOCAL_ENVIRONMENT = './environment.yml'
 const FALLBACK_ENVIRONMENT = 'phi:python@1'
+export const WINDOWS_WSL_PYTHON_REF = 'phi:python-wsl@1'
 
 export interface EnvironmentDescriptor {
   ref: string
@@ -41,6 +43,8 @@ export interface EnvironmentDescriptor {
   spec: EnvironmentSpec
   lockText: string
   platform: PhiPlatform
+  /** Windows hosts build Linux locks through WSL2 when no native lock exists. */
+  runtime?: 'wsl2'
   /** Directory containing the declared environment spec and its signed installation assets. */
   sourceDir?: string
 }
@@ -90,17 +94,7 @@ export function describeEnvironment(
   const platform = ctx.platform ?? currentPlatform()
   switch (parsed.kind) {
     case 'phi':
-      if (parsed.major !== 1) {
-        throw new Error(`environment phi:${parsed.name}@${parsed.major} is not available`)
-      }
-      return loadDescriptor(
-        ref,
-        'phi',
-        'base',
-        undefined,
-        join(ctx.environmentsDir ?? bundledEnvironmentsDir(), `phi-${parsed.name}`),
-        platform
-      )
+      return describeOfficialEnvironment(ref, parsed, platform, ctx.environmentsDir)
     case 'path':
       if (parsed.path !== LOCAL_ENVIRONMENT) {
         throw new Error('package-local environment must be ./environment.yml')
@@ -130,6 +124,29 @@ export function describeEnvironment(
         platform
       )
   }
+}
+
+function describeOfficialEnvironment(
+  ref: string,
+  parsed: { name: string; major: number },
+  platform: PhiPlatform,
+  environmentsDir = bundledEnvironmentsDir()
+): EnvironmentDescriptor {
+  if (parsed.major !== 1) throw new Error(`environment ${ref} is not available`)
+  const useWsl = ref === WINDOWS_WSL_PYTHON_REF
+  if (useWsl && platform !== 'win32-x64') {
+    throw new Error(`environment ${ref} requires Windows x64`)
+  }
+  const dir = join(environmentsDir, useWsl ? 'phi-python' : `phi-${parsed.name}`)
+  const descriptor = loadDescriptor(
+    ref,
+    'phi',
+    'base',
+    undefined,
+    dir,
+    useWsl ? 'linux-x64' : platform
+  )
+  return useWsl ? { ...descriptor, runtime: 'wsl2' } : descriptor
 }
 
 /** The call fails closed. A missing or unfinished environment is never replaced by the host. */
@@ -175,7 +192,8 @@ export function readyEnvironment(root: string, descriptor: EnvironmentDescriptor
       validateApplicationMetadata(
         handle.prefix,
         descriptor.spec.installation,
-        handle.metadata.installation
+        handle.metadata.installation,
+        handle.metadata.platform
       )
       validateApplicationRuntimeTools({
         root,
@@ -220,7 +238,8 @@ export function buildEnvironment(
   }).then((result) => ({
     envId: result.envId,
     prefix: result.prefix,
-    metadata: result.metadata
+    metadata: result.metadata,
+    ...(result.wsl ? { wsl: result.wsl } : {})
   }))
 }
 
@@ -262,8 +281,16 @@ function loadDescriptor(
   kind: EnvKind,
   owner: string | undefined,
   dir: string,
-  platform: PhiPlatform
+  hostPlatform: PhiPlatform
 ): EnvironmentDescriptor {
+  const requiresNativeWindows =
+    hostPlatform === 'win32-x64' && (ref === FALLBACK_ENVIRONMENT || ref === 'phi:jupyter@1')
+  const resolved = requiresNativeWindows
+    ? { platform: hostPlatform, runtime: 'native' as const }
+    : (resolveManagedLockPlatform(hostPlatform, (platform) =>
+        existsSync(join(dir, 'locks', `${platform}.txt`))
+      ) ?? { platform: hostPlatform, runtime: 'native' as const })
+  const platform = resolved.platform
   const specPath = join(dir, 'environment.yml')
   const lockPath = join(dir, 'locks', `${platform}.txt`)
   const parsed = parseEnvironmentSpec(readText(specPath, 'environment spec'))
@@ -293,6 +320,7 @@ function loadDescriptor(
     platform,
     sourceDir: dir
   }
+  if (resolved.runtime === 'wsl2') descriptor.runtime = 'wsl2'
   if (owner !== undefined) descriptor.owner = owner
   return descriptor
 }

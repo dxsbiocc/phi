@@ -1,5 +1,5 @@
 import { describeEnvironment } from '../content/environment-refs'
-import { parseEnvironmentRef } from '../envs'
+import { condaSpecOf, isPipDependency, parseEnvironmentRef } from '../envs'
 
 export async function resolveRemoteBaseEnvironment(
   ref: string,
@@ -21,7 +21,8 @@ export async function resolveRemoteBaseEnvironment(
     agentDir,
     ...(pluginId ? { pluginId } : {})
   })
-  if (descriptor.spec.dependencies.some((dependency) => typeof dependency !== 'string')) {
+  const conda = condaSpecOf(descriptor.spec)
+  if (conda.dependencies.some(isPipDependency)) {
     throw new Error(
       'Remote env_request does not yet support base environments with pip dependencies. Build on a machine with network access and transfer the environment.'
     )
@@ -32,7 +33,9 @@ export async function resolveRemoteBaseEnvironment(
     )
   }
   return {
-    packages: descriptor.spec.dependencies as string[],
-    channels: descriptor.spec.channels
+    packages: conda.dependencies.filter(
+      (dependency): dependency is string => typeof dependency === 'string'
+    ),
+    channels: conda.channels
   }
 }

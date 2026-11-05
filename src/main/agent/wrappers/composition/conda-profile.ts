@@ -1,8 +1,9 @@
 import { mkdirSync } from 'node:fs'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, dirname, join, posix } from 'node:path'
 
 import { ensureMambarc } from '../../envs'
 import { getMicromambaPath } from '../../envs/paths'
+import type { WslRuntime } from '../../envs/wsl'
 
 /**
  * `-profile conda` on the bundled micromamba (runtime foundation §5, step 5.2).
@@ -76,12 +77,33 @@ export function prepareNextflowProfile(
   profile: string,
   runtimeRoot: string,
   env: Record<string, string>,
-  micromamba?: string
+  micromamba?: string,
+  wsl?: WslRuntime
 ): PreparedNextflowProfile {
   if (profile !== 'conda') return { env }
+  if (wsl) return prepareWslCondaProfile(wsl, env)
   const setup = condaProfileSetup(runtimeRoot, micromamba)
   prepareCondaProfile(setup, runtimeRoot)
   return { env: withCondaProfileEnv(env, setup), config: setup.config }
+}
+
+function prepareWslCondaProfile(
+  wsl: WslRuntime,
+  env: Record<string, string>
+): PreparedNextflowProfile {
+  const cacheDir = posix.join(wsl.linuxRoot, NEXTFLOW_CONDA_CACHE_DIR)
+  const setup = {
+    config: renderCondaProfileConfig(cacheDir),
+    env: {
+      MAMBA_ROOT_PREFIX: wsl.linuxRoot,
+      MAMBARC: posix.join(wsl.linuxRoot, 'mambarc.linux-x64'),
+      MAMBA_NO_BANNER: '1',
+      NXF_HOME: posix.join(wsl.linuxRoot, 'nextflow')
+    },
+    cacheDir,
+    micromamba: wsl.linuxMicromamba
+  }
+  return { env: withCondaProfileEnv(env, setup, true), config: setup.config }
 }
 
 export function renderCondaProfileConfig(cacheDir: string): string {
@@ -103,16 +125,18 @@ export function renderCondaProfileConfig(cacheDir: string): string {
  */
 export function withCondaProfileEnv(
   env: Record<string, string>,
-  setup: CondaProfileSetup
+  setup: CondaProfileSetup,
+  linuxPaths = false
 ): Record<string, string> {
   const next: Record<string, string> = {}
   for (const [name, value] of Object.entries(env)) {
     if (isCondaVariable(name)) continue
     next[name] = value
   }
-  const micromambaDir = dirname(setup.micromamba)
-  const rest = (env.PATH ?? '').split(delimiter).filter((entry) => entry && entry !== micromambaDir)
-  return { ...next, ...setup.env, PATH: [micromambaDir, ...rest].join(delimiter) }
+  const micromambaDir = linuxPaths ? posix.dirname(setup.micromamba) : dirname(setup.micromamba)
+  const separator = linuxPaths ? ':' : delimiter
+  const rest = (env.PATH ?? '').split(separator).filter((entry) => entry && entry !== micromambaDir)
+  return { ...next, ...setup.env, PATH: [micromambaDir, ...rest].join(separator) }
 }
 
 function isCondaVariable(name: string): boolean {

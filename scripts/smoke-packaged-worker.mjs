@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-// Packaged-app worker smoke test (macOS and Linux), headless. Run after packaging:
+// Packaged-app worker smoke test (macOS, Linux, and Windows), headless. Run after packaging:
 //   node scripts/smoke-packaged-worker.mjs --resources <app resources directory>
-// e.g. dist/linux-unpacked/resources or dist/mac-arm64/Phi.app/Contents/Resources.
+// e.g. dist/linux-unpacked/resources, dist/win-unpacked/resources, or
+// dist/mac-arm64/Phi.app/Contents/Resources.
 //
 // A clean machine has no system bun, so this starts the OMP worker the way the app
 // does, with the bundled bun and the unpacked worker, on a PATH that holds no bun, and
@@ -11,13 +12,28 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
+import { assertBundledWindowsRuntimes } from './build/after-pack.mjs'
 import { OMP_WORKER_ENTRY } from './build/omp-worker-closure.mjs'
 
 const RESPONSE_TIMEOUT_MS = 90_000
-const CLEAN_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
+const UNIX_CLEAN_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
+
+function bunFileName() {
+  return process.platform === 'win32' ? 'bun.exe' : 'bun'
+}
+
+function micromambaFileName() {
+  return process.platform === 'win32' ? 'micromamba.exe' : 'micromamba'
+}
+
+function cleanPath() {
+  if (process.platform !== 'win32') return UNIX_CLEAN_PATH
+  const root = process.env.SystemRoot || 'C:\\Windows'
+  return join(root, 'System32')
+}
 
 function parseArgs(argv) {
   const args = { resources: undefined }
@@ -46,7 +62,7 @@ function findWorker(resources) {
 
 function checkMicromamba(resources, env) {
   const micromamba = requireFile(
-    join(resources, 'runtime', 'micromamba', platformId(), 'micromamba'),
+    join(resources, 'runtime', 'micromamba', platformId(), micromambaFileName()),
     'bundled micromamba'
   )
   const result = spawnSync(micromamba, ['--version'], { env, encoding: 'utf8', timeout: 30_000 })
@@ -60,20 +76,29 @@ function requestOnce(bun, worker, env, request) {
   return new Promise((resolveResponse, reject) => {
     const child = spawn(bun, [worker], { env, stdio: ['pipe', 'pipe', 'pipe'] })
     let stderr = ''
+    let failure
+    let response
     const timer = setTimeout(() => {
+      failure ??= new Error(`worker did not exit within ${RESPONSE_TIMEOUT_MS} ms\n${stderr}`)
       child.kill('SIGKILL')
-      reject(new Error(`worker did not answer within ${RESPONSE_TIMEOUT_MS} ms\n${stderr}`))
     }, RESPONSE_TIMEOUT_MS)
     child.stderr.on('data', (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-8000)
     })
     child.on('error', (error) => {
-      clearTimeout(timer)
-      reject(error)
+      failure ??= error
     })
-    child.on('exit', (code, signal) => {
+    child.stdin.on('error', (error) => {
+      if (!response) failure ??= error
+    })
+    child.on('close', (code, signal) => {
       clearTimeout(timer)
-      reject(new Error(`worker exited early (code ${code}, signal ${signal})\n${stderr}`))
+      if (failure) reject(failure)
+      else if (!response) {
+        reject(new Error(`worker exited early (code ${code}, signal ${signal})\n${stderr}`))
+      } else if (!response.ok)
+        reject(new Error(`worker request failed: ${response.error}\n${stderr}`))
+      else resolveResponse(response.result)
     })
     createInterface({ input: child.stdout }).on('line', (line) => {
       let message
@@ -82,12 +107,9 @@ function requestOnce(bun, worker, env, request) {
       } catch {
         return
       }
-      if (message?.id !== request.id) return
-      clearTimeout(timer)
-      child.removeAllListeners('exit')
+      if (response || message?.id !== request.id) return
+      response = message
       child.kill('SIGTERM')
-      if (message.ok) resolveResponse(message.result)
-      else reject(new Error(`worker request failed: ${message.error}\n${stderr}`))
     })
     child.stdin.write(`${JSON.stringify(request)}\n`)
   })
@@ -95,23 +117,40 @@ function requestOnce(bun, worker, env, request) {
 
 async function main() {
   const { resources } = parseArgs(process.argv.slice(2))
-  const bun = requireFile(join(resources, 'runtime', 'bun', platformId(), 'bun'), 'bundled bun')
+  if (process.platform === 'win32') assertBundledWindowsRuntimes(resources)
+  const bun = requireFile(
+    join(resources, 'runtime', 'bun', platformId(), bunFileName()),
+    'bundled bun'
+  )
   const worker = findWorker(resources)
   const home = mkdtempSync(join(tmpdir(), 'phi-packaged-worker-'))
   const agentDir = join(home, '.phi')
+  const pathValue = `${resolve(bun, '..')}${delimiter}${cleanPath()}`
   // The app adds the bundled bun's directory to the worker's PATH; nothing else.
   const env = {
     HOME: home,
-    PATH: `${resolve(bun, '..')}:${CLEAN_PATH}`,
+    ...(process.platform === 'win32'
+      ? {
+          USERPROFILE: home,
+          SystemRoot: process.env.SystemRoot || 'C:\\Windows',
+          windir: process.env.windir || 'C:\\Windows',
+          TEMP: process.env.TEMP || join(home, 'Temp'),
+          TMP: process.env.TMP || join(home, 'Temp')
+        }
+      : {}),
+    PATH: pathValue,
     PI_CODING_AGENT_DIR: agentDir,
     OMP_APP_NAME: 'Phi',
     LANG: 'C.UTF-8'
   }
   try {
-    const system = spawnSync('sh', ['-c', 'command -v bun'], {
-      env: { PATH: CLEAN_PATH },
-      encoding: 'utf8'
-    })
+    const system =
+      process.platform === 'win32'
+        ? { status: 1, stdout: '' }
+        : spawnSync('sh', ['-c', 'command -v bun'], {
+            env: { PATH: UNIX_CLEAN_PATH },
+            encoding: 'utf8'
+          })
     if (system.status === 0) {
       console.warn(
         `note: ${system.stdout.trim()} is on the clean PATH; the bundled bun is used anyway`
@@ -126,7 +165,7 @@ async function main() {
     console.log(`OMP worker answered: ${JSON.stringify(result)}`)
     console.log('packaged worker smoke passed')
   } finally {
-    rmSync(home, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   }
 }
 

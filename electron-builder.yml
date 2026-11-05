@@ -152,7 +152,23 @@ asarUnpack:
   - out/main/terminal/**
 win:
   executableName: phi
+  icon: build/icon.ico
+  extraResources:
+    - from: .phi-build/kernel/${version}/win32-${arch}
+      to: kernel/${version}/win32-${arch}
+      filter:
+        - manifest.json
+        - phi-kernel.exe
+        - '*.node'
+    - from: resources/runtime/micromamba/win32-${arch}
+      to: runtime/micromamba/win32-${arch}
+    # WSL2 builds linux-x64 official environments (python / r / nextflow).
+    - from: resources/runtime/micromamba/linux-x64
+      to: runtime/micromamba/linux-x64
+    - from: resources/runtime/bun/win32-${arch}
+      to: runtime/bun/win32-${arch}
 nsis:
+  perMachine: false
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}

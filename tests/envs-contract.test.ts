@@ -8,6 +8,7 @@ import Ajv from 'ajv'
 
 import {
   ENVIRONMENT_CONTRACT_VERSION,
+  PHI_LOCK_PLATFORMS,
   PHI_PLATFORMS,
   canTransition,
   computeEnvId,
@@ -120,6 +121,16 @@ test('invalid specs are rejected', () => {
   expectInvalid(validSpecYaml.replace('ref: 3.5.1', 'ref: 3.5.1.2.3'), /ref/)
   expectInvalid(validSpecYaml.replace(SHA_B, 'deadbeef'), /sha256/)
   expectInvalid(`${validSpecYaml}prefix: /tmp/env\n`, /prefix/)
+  expectInvalid(
+    `
+name: demo
+channels:
+  - conda-forge
+dependencies:
+  - conda: coreutils
+`,
+    /platforms|conda/
+  )
 })
 
 test('condaSpecOf strips Phi sections and description', () => {
@@ -135,6 +146,63 @@ test('condaSpecOf strips Phi sections and description', () => {
   assert.equal(Object.hasOwn(conda, 'host'), false)
   assert.equal(Object.hasOwn(conda, 'sourcePackages'), false)
   assert.equal(Object.hasOwn(conda, 'description'), false)
+})
+
+test('condaSpecOf drops platform-scoped conda packages that do not match', () => {
+  const result = parseEnvironmentSpec(`
+name: demo
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - conda: coreutils
+    platforms:
+      - darwin-arm64
+      - darwin-x64
+      - linux-x64
+`)
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(condaSpecOf(result.spec).dependencies, ['python=3.12', 'coreutils'])
+  assert.deepEqual(condaSpecOf(result.spec, 'linux-x64').dependencies, ['python=3.12', 'coreutils'])
+  assert.deepEqual(condaSpecOf(result.spec, 'win32-x64').dependencies, ['python=3.12'])
+})
+
+test('phi-python omits Unix-only packages on win32-x64', () => {
+  const result = parseEnvironmentSpec(
+    readFileSync(resolve('resources/runtime/environments/phi-python/environment.yml'), 'utf8')
+  )
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  const unixOnly = ['coreutils', 'bbknn', 'harmonypy', 'pysam']
+  const linux = condaSpecOf(result.spec, 'linux-x64').dependencies.filter(
+    (dependency): dependency is string => typeof dependency === 'string'
+  )
+  const win = condaSpecOf(result.spec, 'win32-x64').dependencies.filter(
+    (dependency): dependency is string => typeof dependency === 'string'
+  )
+  for (const name of unixOnly) {
+    assert.ok(linux.includes(name), `${name} stays on linux-x64`)
+    assert.ok(!win.includes(name), `${name} is omitted on win32-x64`)
+  }
+  assert.ok(win.includes('python=3.12'))
+  assert.ok(win.includes('scanpy'))
+})
+
+test('official phi-python ships a native win32-x64 lock', () => {
+  const text = readFileSync(
+    resolve('resources/runtime/environments/phi-python/locks/win32-x64.txt'),
+    'utf8'
+  )
+  const parsed = parseExplicitLock(text)
+  assert.equal(parsed.ok, true)
+  if (!parsed.ok) return
+  assert.match(text, /# platform: win32-x64 \(win-64\)/)
+  assert.ok(parsed.entries.length > 0)
+  assert.equal(
+    parsed.entries.some((entry) => /\/(coreutils|pysam|bbknn|harmonypy)-/.test(entry.url)),
+    false
+  )
 })
 
 test('explicit locks accept https URLs with an md5 fragment', () => {
@@ -262,14 +330,17 @@ test('parseEnvironmentRef accepts the four reference forms and rejects the rest'
 })
 
 test('platforms map to conda subdirs and unsupported hosts throw', () => {
-  assert.deepEqual(PHI_PLATFORMS, ['darwin-arm64', 'darwin-x64', 'linux-x64'])
+  assert.deepEqual(PHI_PLATFORMS, ['darwin-arm64', 'darwin-x64', 'linux-x64', 'win32-x64'])
+  assert.deepEqual(PHI_LOCK_PLATFORMS, ['darwin-arm64', 'darwin-x64', 'linux-x64'])
   assert.equal(condaSubdir('darwin-arm64'), 'osx-arm64')
   assert.equal(condaSubdir('darwin-x64'), 'osx-64')
   assert.equal(condaSubdir('linux-x64'), 'linux-64')
+  assert.equal(condaSubdir('win32-x64'), 'win-64')
   assert.equal(currentPlatform('darwin', 'arm64'), 'darwin-arm64')
   assert.equal(currentPlatform('darwin', 'x64'), 'darwin-x64')
   assert.equal(currentPlatform('linux', 'x64'), 'linux-x64')
-  assert.throws(() => currentPlatform('win32', 'x64'), /unsupported platform: win32-x64/)
+  assert.equal(currentPlatform('win32', 'x64'), 'win32-x64')
+  assert.throws(() => currentPlatform('linux', 'arm64'), /unsupported platform: linux-arm64/)
 })
 
 test('environment status only follows the v1 transitions', () => {
@@ -296,7 +367,7 @@ test('published schemas match the runtime constants', () => {
   ) as unknown
   assert.deepEqual(spec, environmentSpecSchema)
   assert.deepEqual(metadata, envMetadataSchema)
-  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.4.0')
+  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.5.0')
 })
 
 test('env.json metadata matching the contract validates', () => {
@@ -374,7 +445,7 @@ test('skill scope envIds carry the skill name as owner (contract 1.1.0)', () => 
   assert.throws(() =>
     computeEnvId({ scope: 'skill', name: 'scanpy', platform: 'darwin-arm64', lockText })
   )
-  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.4.0')
+  assert.equal(ENVIRONMENT_CONTRACT_VERSION, '1.5.0')
 })
 
 test('mcp scope envIds carry the connector package id as owner (contract 1.3.0)', () => {

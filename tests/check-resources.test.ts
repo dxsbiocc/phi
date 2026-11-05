@@ -8,17 +8,22 @@ import {
   runtimeMirrorPrefixErrors
 } from '../scripts/check-resources.mjs'
 
-test('runtime manifest assigns ordered mirrors to every micromamba platform', () => {
+test('runtime manifest assigns ordered mirrors to every micromamba and bun platform', () => {
   const manifest = JSON.parse(
     readFileSync(new URL('../resources/runtime/manifest.json', import.meta.url), 'utf8')
   ) as {
     micromamba: {
       platforms: Record<string, { url: string; mirrorPrefixes?: string[] }>
     }
+    bun: {
+      platforms: Record<string, { url: string; mirrorPrefixes?: string[] }>
+    }
   }
-  for (const release of Object.values(manifest.micromamba.platforms)) {
-    assert.equal(new URL(release.url).hostname, 'github.com')
-    assert.deepEqual(release.mirrorPrefixes, ['https://gh-proxy.com/', 'https://ghfast.top/'])
+  for (const runtime of [manifest.micromamba, manifest.bun]) {
+    for (const release of Object.values(runtime.platforms)) {
+      assert.equal(new URL(release.url).hostname, 'github.com')
+      assert.deepEqual(release.mirrorPrefixes, ['https://gh-proxy.com/', 'https://ghfast.top/'])
+    }
   }
 })
 
@@ -119,7 +124,8 @@ test('resource check allows fetched runtime binaries and nothing else under reso
       'resources/runtime/micromamba/linux-x64/micromamba',
       'resources\\runtime\\micromamba\\linux-x64\\micromamba',
       'resources/runtime/bun/darwin-arm64/bun',
-      'resources\\runtime\\bun\\darwin-arm64\\bun'
+      'resources\\runtime\\bun\\darwin-arm64\\bun',
+      'resources/runtime/bun/win32-x64/bun.exe'
     ]),
     []
   )

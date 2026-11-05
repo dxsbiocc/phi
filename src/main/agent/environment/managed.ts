@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { stat } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 
 import type { EnvironmentBuild } from '../../../shared/environmentBuildTypes'
 import type {
@@ -9,19 +10,28 @@ import type {
   ManagedEnvironmentState
 } from '../../../shared/environmentTypes'
 import { discoverPhiAgents } from '../agents/discovery'
-import { describeEnvironment, bundledEnvironmentsDir } from '../content/environment-refs'
+import {
+  describeEnvironment,
+  bundledEnvironmentsDir,
+  WINDOWS_WSL_PYTHON_REF
+} from '../content/environment-refs'
 import { parseSkillFile } from '../content/skill'
 import {
   computeEnvId,
   currentPlatform,
   getRuntimeRoot,
+  isPipDependency,
+  parseEnvironmentRef,
+  parseEnvironmentSpec,
   parseExplicitLock,
   readEnvironmentIndex,
   type EnvironmentIndexEntry,
+  type EnvironmentSpec,
   type PhiPlatform
 } from '../envs'
 import { estimateBuild } from '../envs/estimate'
 import { projectEnvironmentExists, readOverrides } from '../envs/project-environments'
+import { readWslRuntime, wslEnvironmentPrefix } from '../envs/wsl'
 import { listInstalledPlugins, type LoadedPlugin } from '../plugins/loader'
 import { listSkills } from '../resources'
 import { getPhiAgentDir } from '../runtime-paths'
@@ -69,6 +79,10 @@ const FIXED_CONSUMERS: readonly ManagedEnvironmentConsumerDeclaration[] = [
     consumer: { kind: 'kernel', name: 'phi-python', label: 'Python kernel' }
   },
   {
+    ref: WINDOWS_WSL_PYTHON_REF,
+    consumer: { kind: 'kernel', name: 'phi-python-wsl', label: 'Python (WSL2)' }
+  },
+  {
     ref: 'phi:r@1',
     consumer: { kind: 'kernel', name: 'phi-r', label: 'R kernel' }
   }
@@ -94,13 +108,23 @@ function isFile(path: string): boolean {
   }
 }
 
-function officialEnvironments(environmentsDir: string): KnownEnvironment[] {
-  return listDirectories(environmentsDir).flatMap((name) => {
+function officialEnvironments(environmentsDir: string, platform: PhiPlatform): KnownEnvironment[] {
+  const official = listDirectories(environmentsDir).flatMap((name) => {
     if (!name.startsWith('phi-') || !isFile(join(environmentsDir, name, 'environment.yml'))) {
       return []
     }
     return [{ ref: `phi:${name.slice('phi-'.length)}@1`, source: 'official' as const }]
   })
+  const python = join(environmentsDir, 'phi-python')
+  if (
+    platform === 'win32-x64' &&
+    isFile(join(python, 'environment.yml')) &&
+    isFile(join(python, 'locks', 'win32-x64.txt')) &&
+    isFile(join(python, 'locks', 'linux-x64.txt'))
+  ) {
+    official.push({ ref: WINDOWS_WSL_PYTHON_REF, source: 'official' })
+  }
+  return official
 }
 
 function pluginEnvironments(plugins: readonly LoadedPlugin[]): KnownEnvironment[] {
@@ -184,10 +208,12 @@ function requestedDependency(value: string): { name: string; version?: string } 
   return { name: match[1], ...(requested ? { version: requested } : {}) }
 }
 
-function environmentPackages(
-  descriptor: ReturnType<typeof describeEnvironment>
-): ManagedEnvironmentPackage[] {
-  const locked = lockedPackageVersions(descriptor.lockText)
+function environmentPackages(input: {
+  spec: Pick<EnvironmentSpec, 'dependencies' | 'sourcePackages'>
+  lockText?: string
+  platform?: PhiPlatform
+}): ManagedEnvironmentPackage[] {
+  const locked = lockedPackageVersions(input.lockText ?? '')
   const packages = new Map<string, ManagedEnvironmentPackage>()
   const add = (
     dependency: { name: string; version?: string },
@@ -202,18 +228,24 @@ function environmentPackages(
         : {})
     })
   }
-  for (const dependency of descriptor.spec.dependencies) {
+  for (const dependency of input.spec.dependencies) {
     if (typeof dependency === 'string') {
       const parsed = requestedDependency(dependency)
       if (parsed) add(parsed, 'conda')
       continue
     }
-    for (const pip of dependency.pip) {
-      const parsed = requestedDependency(pip)
-      if (parsed) add(parsed, 'pip')
+    if (isPipDependency(dependency)) {
+      for (const pip of dependency.pip) {
+        const parsed = requestedDependency(pip)
+        if (parsed) add(parsed, 'pip')
+      }
+      continue
     }
+    if (input.platform && !dependency.platforms.includes(input.platform)) continue
+    const parsed = requestedDependency(dependency.conda)
+    if (parsed) add(parsed, 'conda')
   }
-  for (const source of descriptor.spec.sourcePackages ?? []) {
+  for (const source of input.spec.sourcePackages ?? []) {
     add({ name: source.name, version: source.ref.slice(0, 12) }, source.source)
   }
   return [...packages.values()]
@@ -373,6 +405,79 @@ function consumerRefKey(ref: string, pluginId?: string): string {
   return pluginId ? `${pluginId}\0${ref}` : ref
 }
 
+function knownEnvironmentDir(
+  environment: KnownEnvironment,
+  environmentsDir: string,
+  plugins: readonly LoadedPlugin[],
+  projectDir?: string
+): string | undefined {
+  const parsed = parseEnvironmentRef(environment.ref)
+  if (parsed.kind === 'phi') return join(environmentsDir, `phi-${parsed.name}`)
+  if (parsed.kind === 'plugin' && environment.pluginId) {
+    const plugin = plugins.find((candidate) => candidate.id === environment.pluginId)
+    const spec = plugin?.manifest.environments?.[parsed.name]?.spec
+    return plugin && spec ? dirname(join(plugin.dir, spec)) : undefined
+  }
+  if (parsed.kind === 'project' && projectDir) {
+    return join(projectDir, '.phi', 'environments', parsed.name)
+  }
+  return undefined
+}
+
+function readEnvironmentSpec(dir: string): EnvironmentSpec | undefined {
+  try {
+    const parsed = parseEnvironmentSpec(readFileSync(join(dir, 'environment.yml'), 'utf8'))
+    return parsed.ok ? parsed.spec : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function unavailableCatalogEntry(
+  environment: KnownEnvironment,
+  spec: EnvironmentSpec,
+  platform: PhiPlatform,
+  consumers: Map<string, ManagedEnvironmentConsumer[]>
+): ManagedEnvironmentEntry {
+  return {
+    ref: environment.ref,
+    envId: `unavailable:${environment.ref}:${platform}`,
+    state: 'unavailable',
+    source: environment.source,
+    ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
+    label: spec.name,
+    packages: environmentPackages({ spec, platform }),
+    ...(spec.description ? { description: spec.description } : {}),
+    referrers: [],
+    consumers: consumers.get(consumerRefKey(environment.ref, environment.pluginId)) ?? [],
+    ...(environment.overrideFrom ? { overrideFrom: environment.overrideFrom } : {}),
+    unavailableReason: 'missing-lock'
+  }
+}
+
+async function indexedEnvironmentSize(
+  root: string,
+  entry: ManagedEnvironmentEntry,
+  indexEntry: EnvironmentIndexEntry,
+  sizeOf: (prefix: string) => Promise<number>
+): Promise<void> {
+  if (entry.runtime !== 'wsl2') {
+    entry.sizeBytes = await sizeOf(indexEntry.prefix)
+    return
+  }
+  try {
+    const wsl = readWslRuntime(root)
+    if (!wsl) throw new Error('WSL runtime is not configured')
+    const prefix = wslEnvironmentPrefix(wsl, entry.envId)
+    if (!(await stat(join(prefix, 'conda-meta'))).isDirectory()) {
+      throw new Error('WSL Conda metadata is missing')
+    }
+    entry.sizeBytes = await sizeOf(prefix)
+  } catch {
+    if (entry.state === 'ready') entry.state = 'drifted'
+  }
+}
+
 /** Catalog all known managed environments without building or mutating the runtime. */
 export async function listManagedEnvironments(
   options: ListManagedEnvironmentsOptions = {}
@@ -386,7 +491,7 @@ export async function listManagedEnvironments(
   const sizeOf = options.sizeOf ?? directorySize
   const includeDynamic = options.includeDynamic !== false
   const known = [
-    ...officialEnvironments(environmentsDir),
+    ...officialEnvironments(environmentsDir, platform),
     ...pluginEnvironments(plugins),
     ...projectEnvironments(options.projectDir)
   ]
@@ -401,40 +506,56 @@ export async function listManagedEnvironments(
   const index = readEnvironmentIndex(root)
   const describedIds = new Set<string>()
 
-  const entries = await Promise.all(
-    known.map(async (environment): Promise<ManagedEnvironmentEntry> => {
-      const descriptor = describeEnvironment(environment.ref, {
-        environmentsDir,
-        agentDir,
-        ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
-        platform,
-        ...(options.projectDir ? { projectDir: options.projectDir } : {})
+  const entries = (
+    await Promise.all(
+      known.map(async (environment): Promise<ManagedEnvironmentEntry | undefined> => {
+        let descriptor: ReturnType<typeof describeEnvironment>
+        try {
+          descriptor = describeEnvironment(environment.ref, {
+            environmentsDir,
+            agentDir,
+            ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
+            platform,
+            ...(options.projectDir ? { projectDir: options.projectDir } : {})
+          })
+        } catch {
+          const dir = knownEnvironmentDir(environment, environmentsDir, plugins, options.projectDir)
+          const spec = dir ? readEnvironmentSpec(dir) : undefined
+          if (!spec || !dir || isFile(join(dir, 'locks', `${platform}.txt`))) return undefined
+          return unavailableCatalogEntry(environment, spec, platform, consumers)
+        }
+        const envId = environmentId(descriptor)
+        describedIds.add(envId)
+        const indexEntry = index.environments[envId]
+        const build = builds.find((candidate) => candidate.envId === envId)
+        const state = resolvedState(indexEntry, build)
+        const entry: ManagedEnvironmentEntry = {
+          ref: environment.ref,
+          envId,
+          state,
+          source: environment.source,
+          ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
+          label:
+            environment.ref === WINDOWS_WSL_PYTHON_REF ? 'phi-python (WSL2)' : descriptor.spec.name,
+          packages: environmentPackages(descriptor),
+          ...(descriptor.spec.description ? { description: descriptor.spec.description } : {}),
+          referrers: [...(indexEntry?.referrers ?? [])].sort(),
+          consumers: consumers.get(consumerRefKey(environment.ref, environment.pluginId)) ?? [],
+          ...(environment.overrideFrom ? { overrideFrom: environment.overrideFrom } : {}),
+          ...(descriptor.runtime === 'wsl2' ? { runtime: 'wsl2' as const } : {}),
+          ...(errorFor(indexEntry, build, state)
+            ? { error: errorFor(indexEntry, build, state) }
+            : {})
+        }
+        if (includeDynamic && state === 'absent')
+          entry.estimate = estimateBuild(root, descriptor.lockText, descriptor.runtime)
+        else if (includeDynamic && indexEntry) {
+          await indexedEnvironmentSize(root, entry, indexEntry, sizeOf)
+        }
+        return entry
       })
-      const envId = environmentId(descriptor)
-      describedIds.add(envId)
-      const indexEntry = index.environments[envId]
-      const build = builds.find((candidate) => candidate.envId === envId)
-      const state = resolvedState(indexEntry, build)
-      const entry: ManagedEnvironmentEntry = {
-        ref: environment.ref,
-        envId,
-        state,
-        source: environment.source,
-        ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
-        label: descriptor.spec.name,
-        packages: environmentPackages(descriptor),
-        ...(descriptor.spec.description ? { description: descriptor.spec.description } : {}),
-        referrers: [...(indexEntry?.referrers ?? [])].sort(),
-        consumers: consumers.get(consumerRefKey(environment.ref, environment.pluginId)) ?? [],
-        ...(environment.overrideFrom ? { overrideFrom: environment.overrideFrom } : {}),
-        ...(errorFor(indexEntry, build, state) ? { error: errorFor(indexEntry, build, state) } : {})
-      }
-      if (includeDynamic && state === 'absent')
-        entry.estimate = estimateBuild(root, descriptor.lockText)
-      else if (includeDynamic && indexEntry) entry.sizeBytes = await sizeOf(indexEntry.prefix)
-      return entry
-    })
-  )
+    )
+  ).filter((entry): entry is ManagedEnvironmentEntry => entry !== undefined)
 
   for (const [envId, indexEntry] of Object.entries(index.environments)) {
     if (describedIds.has(envId)) continue

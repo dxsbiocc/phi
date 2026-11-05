@@ -140,6 +140,31 @@ test(
 )
 
 test(
+  'the Windows launch owns the Jupyter server process with a semicolon PATH',
+  withFixture(async (fixture) => {
+    const jupyterPrefix = install(fixture, 'phi:jupyter@1')
+    const launch = await resolveManagedJupyterLaunch(
+      { port: 31888, args: ['server', '--no-browser'] },
+      { ...options(fixture), hostPlatform: 'win32', baseEnv: { SystemRoot: 'C:\\Windows' } }
+    )
+    assert.equal(launch.command, join(jupyterPrefix, 'python.exe'))
+    assert.deepEqual(launch.args, [
+      '-m',
+      'jupyter_server',
+      '--no-browser',
+      `--KernelSpecManager.kernel_dirs=${managedKernelsDir(fixture.root)}`,
+      '--KernelSpecManager.ensure_native_kernel=False',
+      '--MultiKernelManager.default_kernel_name=phi-python'
+    ])
+    assert.equal(
+      launch.env.PATH,
+      [join(jupyterPrefix, 'bin'), 'C:\\Windows\\System32', 'C:\\Windows'].join(';')
+    )
+    assert.equal(launch.env.R_PROFILE_USER, 'NUL')
+  })
+)
+
+test(
   'a missing phi-jupyter fails with the not-ready message and never reaches the host jupyter',
   withFixture(async (fixture) => {
     await assert.rejects(

@@ -1,24 +1,27 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import {
-  accessSync,
-  constants,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync
-} from 'node:fs'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { accessSync, constants, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { dirname, isAbsolute, join, posix, relative, resolve, win32 } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
-
-import Ajv from 'ajv'
 
 import { type EnvMetadata } from './contract'
 import { isReservedExecutionName } from '../engine/phi-extension'
-import { envMetadataSchema } from './schemas'
 import { ownedRuntimeDirectory } from './ownership'
+import { normalizeWindowsEnvironment, windowsSystemPath } from './runtime'
+import { spawnWslProcess, type WslProcess } from './wsl-process'
+import {
+  toLinuxPath,
+  toWslPath,
+  usesWslEnvironment,
+  type ReadyWsl,
+  type WslRuntime,
+  wslArgument,
+  wslProcessEnvironment,
+  wslSpawnArgv
+} from './wsl'
 
 import { errorMessage } from '../../../shared/errorCodes'
+export { loadEnvironment } from './load'
+
 export const EXECUTION_CONTRACT_VERSION = '1.0.0'
 
 /** `{ envId, prefix, metadata }` as returned by `ensureEnvironment`. */
@@ -26,13 +29,14 @@ export interface EnvHandle {
   envId: string
   prefix: string
   metadata: EnvMetadata
+  wsl?: WslRuntime
 }
 
 export interface ExecutionOptions {
   /** Defaults to `process.env`. */
   baseEnv?: NodeJS.ProcessEnv
   extraEnv?: Record<string, string>
-  /** Defaults to `process.platform`. Selects the locale default only. */
+  /** Defaults to `process.platform`. Selects path and environment conventions. */
   platform?: NodeJS.Platform
 }
 
@@ -46,6 +50,20 @@ export interface RunOptions {
   maxOutputBytes?: number
   extraEnv?: Record<string, string>
   baseEnv?: NodeJS.ProcessEnv
+  /** Defaults to `process.platform`. Windows + a Linux lock runs through WSL2. */
+  hostPlatform?: NodeJS.Platform
+  wsl?: ReadyWsl
+}
+
+export interface EnvironmentCommand {
+  executable: string
+  args: string[]
+  cwd?: string
+  env: NodeJS.ProcessEnv
+  runtime: 'native' | 'wsl2'
+  resolvedCommand: string
+  wsl?: ReadyWsl
+  linuxEnv?: Record<string, string>
 }
 
 export interface RunResult {
@@ -84,34 +102,45 @@ const KEPT_HOST_NAMES = new Set([
   'SSH_AUTH_SOCK'
 ])
 
-const SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin']
+const WINDOWS_KEPT_HOST_NAMES = new Set([
+  'USERPROFILE',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'SystemRoot',
+  'windir',
+  'TEMP',
+  'TMP',
+  'PATHEXT',
+  'COMSPEC'
+])
+
+const UNIX_SYSTEM_PATH = ['/usr/bin', '/bin', '/usr/sbin', '/sbin']
 const CACHE_DIRECTORIES = ['matplotlib', 'numba', 'xdg'] as const
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
 const KILL_GRACE_MS = 5000
 const UTF8_LOCALE = /utf-?8/i
-
-const ajv = new Ajv({ allErrors: true, strict: false })
-const validateEnvMetadata = ajv.compile(envMetadataSchema)
 
 function errorCode(error: unknown): string | undefined {
   if (error instanceof Error && 'code' in error) return String(error.code)
   return undefined
 }
 
-function validationErrors(): string {
-  return (validateEnvMetadata.errors ?? [])
-    .map((error) => `${error.instancePath || '(root)'} ${error.message ?? 'is invalid'}`.trim())
-    .join('; ')
-}
-
 function keptHostName(name: string): boolean {
-  return name.startsWith('LC_') || KEPT_HOST_NAMES.has(name)
+  return name.startsWith('LC_') || KEPT_HOST_NAMES.has(name) || WINDOWS_KEPT_HOST_NAMES.has(name)
 }
 
-function rejectExtraEnv(extra: Record<string, string> | undefined): void {
+function pathDelimiter(platform: NodeJS.Platform): string {
+  return platform === 'win32' ? ';' : ':'
+}
+
+function rejectExtraEnv(
+  extra: Record<string, string> | undefined,
+  platform: NodeJS.Platform
+): void {
   if (!extra) return
   for (const name of Object.keys(extra)) {
-    if (isReservedExecutionName(name)) throw new Error(`extraEnv cannot set ${name}`)
+    const key = platform === 'win32' ? name.toUpperCase() : name
+    if (isReservedExecutionName(key)) throw new Error(`extraEnv cannot set ${name}`)
   }
 }
 
@@ -139,12 +168,19 @@ function realPathOrSelf(path: string): string {
   }
 }
 
-function environmentPath(prefix: string, metadata: EnvMetadata): string {
+function environmentPath(
+  prefix: string,
+  metadata: EnvMetadata,
+  platform: NodeJS.Platform,
+  host: NodeJS.ProcessEnv
+): string {
   const entries: string[] = []
   const seen = new Set<string>()
   const add = (entry: string): void => {
-    if (entry.length === 0 || seen.has(entry)) return
-    seen.add(entry)
+    if (entry.length === 0) return
+    const key = platform === 'win32' ? win32.normalize(entry).toLowerCase() : entry
+    if (seen.has(key)) return
+    seen.add(key)
     entries.push(entry)
   }
   // Only the environment's own directories. `micromamba run` also prepends the runtime's
@@ -156,25 +192,33 @@ function environmentPath(prefix: string, metadata: EnvMetadata): string {
     if (prefixes.some((candidate) => isInsideDirectory(entry, candidate))) add(entry)
   }
   for (const executable of Object.values(metadata.host)) add(dirname(executable))
-  for (const entry of SYSTEM_PATH) add(entry)
-  return entries.join(':')
+  for (const entry of platform === 'win32' ? windowsSystemPath(host) : UNIX_SYSTEM_PATH) add(entry)
+  return entries.join(pathDelimiter(platform))
 }
 
-function isolationVariables(env: EnvHandle, cache: string): Record<string, string> {
-  const library = join(env.prefix, 'lib', 'R', 'library')
+function isolationVariables(
+  env: EnvHandle,
+  cache: string,
+  platform: NodeJS.Platform
+): Record<string, string> {
+  const joinPath = env.wsl ? posix.join : join
+  const prefix = env.wsl ? toLinuxPath(env.prefix, env.wsl.ready.distro) : env.prefix
+  const library = joinPath(prefix, 'lib', 'R', 'library')
+  const discarded = platform === 'win32' ? 'NUL' : '/dev/null'
   return {
     PYTHONNOUSERSITE: '1',
     PYTHONDONTWRITEBYTECODE: '1',
+    ...(platform === 'win32' ? { PYTHONUTF8: '1' } : {}),
     R_LIBS_USER: library,
     R_LIBS_SITE: library,
-    R_PROFILE_USER: '/dev/null',
-    R_ENVIRON_USER: '/dev/null',
+    R_PROFILE_USER: discarded,
+    R_ENVIRON_USER: discarded,
     MPLBACKEND: 'Agg',
-    MPLCONFIGDIR: join(cache, 'matplotlib'),
-    NUMBA_CACHE_DIR: join(cache, 'numba'),
-    XDG_CACHE_HOME: join(cache, 'xdg'),
+    MPLCONFIGDIR: joinPath(cache, 'matplotlib'),
+    NUMBA_CACHE_DIR: joinPath(cache, 'numba'),
+    XDG_CACHE_HOME: joinPath(cache, 'xdg'),
     PHI_ENV_ID: env.envId,
-    PHI_ENV_PREFIX: env.prefix
+    PHI_ENV_PREFIX: prefix
   }
 }
 
@@ -249,21 +293,23 @@ function captureStream(
 function spawnCommand(
   env: EnvHandle,
   argv: readonly string[],
-  resolved: string,
-  variables: Record<string, string>,
+  plan: EnvironmentCommand,
   options: RunOptions
 ): Promise<RunResult> {
+  const resolved = plan.resolvedCommand
   let child: ChildProcess
+  let wslProcess: WslProcess | undefined
   try {
-    // Own process group, so termination reaches grandchildren (R subprocesses, Nextflow
-    // tasks) instead of leaving them running after the direct child exits.
-    child = spawn(resolved, argv.slice(1), {
-      cwd: options.cwd,
-      env: variables,
+    const childOptions = {
+      cwd: plan.cwd,
+      env: plan.env,
       shell: false,
-      detached: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+      windowsHide: true,
+      detached: plan.runtime === 'native' && process.platform !== 'win32',
+      stdio: 'pipe' as const
+    }
+    wslProcess = env.wsl ? spawnWslProcess(env.wsl, plan, childOptions) : undefined
+    child = wslProcess?.child ?? spawn(plan.executable, plan.args, childOptions)
   } catch (error) {
     const message = errorMessage(error)
     throw new Error(`failed to spawn ${resolved}: ${message}`)
@@ -273,7 +319,8 @@ function spawnCommand(
   const errors = child.stderr
   const input = child.stdin
   if (!output || !errors || !input) {
-    child.kill('SIGKILL')
+    if (wslProcess) wslProcess.signal('SIGKILL')
+    else child.kill('SIGKILL')
     throw new Error(`failed to spawn ${resolved}: stdio pipes were not created`)
   }
 
@@ -298,7 +345,7 @@ function spawnCommand(
       if (settled) return
       settled = true
       cleanup()
-      child.kill('SIGKILL')
+      signalGroup('SIGKILL')
       reject(error instanceof Error ? error : new Error(String(error)))
     }
 
@@ -310,7 +357,7 @@ function spawnCommand(
         stdout.end()
         stderr.end()
       } catch (error) {
-        child.kill('SIGKILL')
+        signalGroup('SIGKILL')
         reject(error instanceof Error ? error : new Error(String(error)))
         return
       }
@@ -330,10 +377,14 @@ function spawnCommand(
       resolveResult(result)
     }
 
-    const signalGroup = (signal: NodeJS.Signals): void => {
+    const signalGroup = (signal: 'SIGTERM' | 'SIGKILL'): void => {
       try {
-        if (child.pid !== undefined) process.kill(-child.pid, signal)
-        else child.kill(signal)
+        if (wslProcess) wslProcess.signal(signal)
+        else if (child.pid !== undefined && process.platform !== 'win32') {
+          process.kill(-child.pid, signal)
+        } else {
+          child.kill(signal)
+        }
       } catch {
         child.kill(signal)
       }
@@ -392,9 +443,13 @@ function spawnCommand(
   })
 }
 
-export function sanitizeHostEnvironment(base: NodeJS.ProcessEnv): Record<string, string> {
+export function sanitizeHostEnvironment(
+  base: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform
+): Record<string, string> {
   const env: Record<string, string> = {}
-  for (const [name, value] of Object.entries(base)) {
+  const host = platform === 'win32' ? normalizeWindowsEnvironment(base) : base
+  for (const [name, value] of Object.entries(host)) {
     if (value === undefined || !keptHostName(name)) continue
     env[name] = value
   }
@@ -417,84 +472,136 @@ export function environmentVariables(
   env: EnvHandle,
   options: ExecutionOptions = {}
 ): Record<string, string> {
-  rejectExtraEnv(options.extraEnv)
-  const variables = sanitizeHostEnvironment(options.baseEnv ?? process.env)
-  for (const [name, value] of Object.entries(env.metadata.activation.set)) {
-    variables[name] = value
-  }
+  if (env.wsl) return wslEnvironmentVariables(env, env.wsl, options)
+  const platform = options.platform ?? process.platform
+  const windows = platform === 'win32'
+  rejectExtraEnv(options.extraEnv, platform)
+  const host = sanitizeHostEnvironment(options.baseEnv ?? process.env, platform)
+  const activation = env.metadata.activation.set
+  const extra = options.extraEnv
+  const variables = { ...host, ...(windows ? normalizeWindowsEnvironment(activation) : activation) }
   const cache = environmentCacheDir(runtimeRoot(env.prefix), env.envId)
-  for (const [name, value] of Object.entries(isolationVariables(env, cache))) {
-    variables[name] = value
+  return {
+    ...variables,
+    ...isolationVariables(env, cache, platform),
+    ...utf8LocaleEnv(variables, platform),
+    ...(windows && extra ? normalizeWindowsEnvironment(extra) : extra),
+    PATH: environmentPath(env.prefix, env.metadata, platform, host)
   }
-  const locale = utf8LocaleEnv(variables, options.platform ?? process.platform)
-  for (const [name, value] of Object.entries(locale)) variables[name] = value
-  if (options.extraEnv) {
-    for (const [name, value] of Object.entries(options.extraEnv)) variables[name] = value
-  }
-  variables.PATH = environmentPath(env.prefix, env.metadata)
-  return variables
 }
 
-export function resolveCommand(command: string, pathValue: string): string | undefined {
+function wslEnvironmentVariables(
+  env: EnvHandle,
+  wsl: WslRuntime,
+  options: ExecutionOptions
+): Record<string, string> {
+  rejectExtraEnv(options.extraEnv, 'linux')
+  const host = sanitizeHostEnvironment(options.baseEnv ?? process.env, 'linux')
+  for (const name of ['USER', 'LOGNAME', 'TMPDIR', 'SSH_AUTH_SOCK']) delete host[name]
+  const vars = { ...host, ...env.metadata.activation.set, HOME: wsl.linuxHome }
+  const prefix = toLinuxPath(env.prefix, wsl.ready.distro)
+  const cache = posix.join(wsl.linuxRoot, 'cache', env.envId)
+  const paths = env.metadata.activation.pathPrepend.filter((entry) =>
+    posix.resolve(entry).startsWith(`${prefix}/`)
+  )
+  return {
+    ...vars,
+    ...isolationVariables(env, cache, 'linux'),
+    ...utf8LocaleEnv(vars, 'linux'),
+    ...options.extraEnv,
+    PATH: [...new Set([posix.join(prefix, 'bin'), ...paths, ...UNIX_SYSTEM_PATH])].join(':')
+  }
+}
+
+function commandLooksAbsolute(command: string, platform: NodeJS.Platform): boolean {
+  return (
+    isAbsolute(command) || command.includes('/') || (platform === 'win32' && command.includes('\\'))
+  )
+}
+
+function pathCommandCandidates(
+  directory: string,
+  command: string,
+  platform: NodeJS.Platform
+): string[] {
+  if (platform !== 'win32') return [join(directory, command)]
+  if (/\.[A-Za-z0-9]+$/u.test(command)) return [join(directory, command)]
+  const extensions = (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';').filter(Boolean)
+  return [join(directory, command), ...extensions.map((ext) => join(directory, `${command}${ext}`))]
+}
+
+export function resolveCommand(
+  command: string,
+  pathValue: string,
+  platform: NodeJS.Platform = process.platform
+): string | undefined {
   if (command.length === 0) return undefined
-  if (isAbsolute(command) || command.includes('/')) {
+  if (commandLooksAbsolute(command, platform)) {
     return isExecutableFile(command) ? resolve(command) : undefined
   }
-  for (const directory of pathValue.split(':')) {
+  for (const directory of pathValue.split(pathDelimiter(platform))) {
     if (directory.length === 0) continue
-    const candidate = join(directory, command)
-    if (isExecutableFile(candidate)) return resolve(candidate)
+    for (const candidate of pathCommandCandidates(directory, command, platform)) {
+      if (isExecutableFile(candidate)) return resolve(candidate)
+    }
   }
   return undefined
 }
 
-export function loadEnvironment(root: string, envId: string): EnvHandle {
-  const prefix = join(root, 'envs', envId)
-  const file = join(prefix, '.phi', 'env.json')
-  let text: string
-  try {
-    text = readFileSync(file, 'utf8')
-  } catch (error) {
-    const code = errorCode(error)
-    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR') {
-      throw new Error(`environment ${envId} metadata is missing: ${file}`)
-    }
-    throw error
+export function prepareEnvironmentCommand(
+  env: EnvHandle,
+  argv: readonly string[],
+  options: Pick<RunOptions, 'baseEnv' | 'extraEnv' | 'hostPlatform' | 'wsl'> & { cwd?: string } = {}
+): EnvironmentCommand {
+  const [command, ...args] = argv
+  if (!command) throw new Error(`command not found in environment ${env.envId}: ${command ?? ''}`)
+  if (options.cwd) assertDirectory(options.cwd)
+  const hostPlatform = options.hostPlatform ?? process.platform
+  if (!env.wsl && usesWslEnvironment(hostPlatform, env.metadata.platform)) {
+    throw new Error(`environment ${env.envId} must be built in Phi's WSL runtime`)
   }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text) as unknown
-  } catch (error) {
-    const message = errorMessage(error)
-    throw new Error(`environment ${envId} metadata is invalid JSON: ${message}`)
-  }
-  if (!validateEnvMetadata(parsed)) {
-    const detail = validationErrors()
-    throw new Error(
-      detail
-        ? `environment ${envId} metadata is invalid: ${detail}`
-        : `environment ${envId} metadata is invalid`
-    )
-  }
-  const metadata = parsed as unknown as EnvMetadata
-  if (metadata.envId !== envId) {
-    throw new Error(`environment ${envId} metadata is for ${metadata.envId}`)
-  }
-  if (metadata.status !== 'ready') {
-    throw new Error(`environment ${envId} is not ready (status: ${metadata.status})`)
-  }
-  if (metadata.installation) {
-    const executable = metadata.installation.executable
-    if (
-      !isInsideDirectory(realpathSync(executable), realpathSync(prefix)) ||
-      !isExecutableFile(executable)
-    ) {
+  const variables = environmentVariables(env, {
+    baseEnv: options.baseEnv,
+    extraEnv: options.extraEnv,
+    platform: hostPlatform
+  })
+  if (env.wsl) {
+    const ready = options.wsl ?? env.wsl.ready
+    if (ready.distro.toLowerCase() !== env.wsl.ready.distro.toLowerCase()) {
       throw new Error(
-        `environment ${envId} application executable is invalid or outside its prefix`
+        `environment ${env.envId} was built in WSL distribution ${env.wsl.ready.distro}`
       )
     }
+    const resolvedCommand = wslArgument(command, ready)
+    if (resolvedCommand.includes('=')) throw new Error('WSL executable name cannot contain =')
+    const plan = wslSpawnArgv(
+      ready,
+      resolvedCommand,
+      args.map((arg) => wslArgument(arg, ready)),
+      {
+        cwd: options.cwd ? toWslPath(ready, options.cwd) : undefined,
+        env: variables
+      }
+    )
+    return {
+      ...plan,
+      env: wslProcessEnvironment(),
+      runtime: 'wsl2',
+      resolvedCommand,
+      wsl: ready,
+      linuxEnv: variables
+    }
   }
-  return { envId, prefix, metadata }
+  const resolved = resolveCommand(command, variables.PATH ?? '', hostPlatform)
+  if (!resolved) throw new Error(`command not found in environment ${env.envId}: ${command}`)
+  return {
+    executable: resolved,
+    args,
+    cwd: options.cwd,
+    env: variables,
+    runtime: 'native',
+    resolvedCommand: resolved
+  }
 }
 
 export async function runInEnvironment(
@@ -502,14 +609,6 @@ export async function runInEnvironment(
   argv: readonly string[],
   options: RunOptions
 ): Promise<RunResult> {
-  const command = argv[0]
-  if (!command) throw new Error(`command not found in environment ${env.envId}: ${command ?? ''}`)
-  assertDirectory(options.cwd)
-  const variables = environmentVariables(env, {
-    baseEnv: options.baseEnv,
-    extraEnv: options.extraEnv
-  })
-  const resolved = resolveCommand(command, variables.PATH ?? '')
-  if (!resolved) throw new Error(`command not found in environment ${env.envId}: ${command}`)
-  return await spawnCommand(env, argv, resolved, variables, options)
+  const plan = prepareEnvironmentCommand(env, argv, options)
+  return await spawnCommand(env, argv, plan, options)
 }

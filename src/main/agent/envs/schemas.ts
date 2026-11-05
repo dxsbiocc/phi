@@ -282,6 +282,19 @@ export const environmentSpecSchema = {
                 items: { type: 'string', minLength: 1 }
               }
             }
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['conda', 'platforms'],
+            properties: {
+              conda: { type: 'string', minLength: 1 },
+              platforms: {
+                type: 'array',
+                minItems: 1,
+                items: platformIdSchema()
+              }
+            }
           }
         ]
       }

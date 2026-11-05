@@ -5,7 +5,7 @@ import Ajv, { type ErrorObject } from 'ajv'
 import { parse as parseYaml } from 'yaml'
 
 import {
-  PHI_PLATFORMS,
+  PHI_LOCK_PLATFORMS,
   parseEnvironmentRef,
   parseEnvironmentSpec,
   type EnvironmentRef
@@ -392,7 +392,7 @@ function validateLocalEnvironment(
       fail('environment.yml', `cannot read environment.yml: ${message}`)
     }
   }
-  for (const platform of PHI_PLATFORMS) {
+  for (const platform of PHI_LOCK_PLATFORMS) {
     const rel = `locks/${platform}.txt`
     if (!isFile(join(skillDir, 'locks', `${platform}.txt`))) {
       fail(rel, `lock file ${rel} is required`)

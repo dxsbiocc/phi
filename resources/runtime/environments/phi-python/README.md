@@ -4,10 +4,9 @@ Shared Python 3.12 environment for the official Python skills. Notebooks use `ip
 
 Only `python=3.12` is pinned in `environment.yml`. The lock files pin every other package.
 
-Channels are `conda-forge`, then `bioconda`. `harmonypy`, `bbknn`, and `pysam` come from bioconda. Every other package comes from conda-forge.
+Channels are `conda-forge`, then `bioconda`. `harmonypy`, `bbknn`, and `pysam` come from bioconda and are declared only for `darwin-arm64`, `darwin-x64`, and `linux-x64`. Every other package comes from conda-forge.
 
-`coreutils` remains shared runtime tooling for compatibility. The Office
-skills do not depend on it.
+`coreutils` remains shared runtime tooling for Unix compatibility. GNU coreutils, `bbknn`, `harmonypy`, and `pysam` have no win-64 builds, so Windows uses the rest of this stack natively. The Office skills do not depend on `coreutils`.
 
 ## Skills
 
@@ -33,20 +32,24 @@ skills do not depend on it.
 
 ## Locks
 
-Solved on 2026-10-07 against the lock baselines: macOS arm64 11.0, macOS x64 10.15, and linux glibc 2.17 / linux 4.18.
+Solved on 2026-10-07 against the lock baselines: macOS arm64 11.0, macOS x64 10.15, and linux glibc 2.17 / linux 4.18. The Windows lock uses the win 10 baseline.
 
-Regenerate all three platform locks:
+Regenerate the official Unix lock platforms:
 
 ```bash
 bun run runtime:lock -- --spec resources/runtime/environments/phi-python/environment.yml
 ```
 
-That writes `locks/darwin-arm64.txt`, `locks/darwin-x64.txt`, and `locks/linux-x64.txt` next to `environment.yml`.
+That writes `locks/darwin-arm64.txt`, `locks/darwin-x64.txt`, and `locks/linux-x64.txt` next to `environment.yml`. Python also ships `locks/win32-x64.txt`; regenerate it with `--platform win32-x64`.
 
 ## Known platform differences
 
-Locks are solved against fixed baselines (linux glibc 2.17, macOS arm64 11.0, macOS x64 10.15;
-see `scripts/runtime/lock-env.ts`). With the macOS 10.15 baseline, `darwin-x64` resolves
-`harmonypy` 0.2.0 while `darwin-arm64` and `linux-x64` get 2.0.2; the two versions differ in
-API. Skills that call Harmony directly should check `harmonypy.__version__`, or the x64
-baseline can be raised when Intel Macs on 10.15 no longer need support.
+Locks are solved against fixed baselines (linux glibc 2.17, macOS arm64 11.0, macOS x64 10.15,
+Windows 10; see `scripts/runtime/lock-env.ts`). With the macOS 10.15 baseline, `darwin-x64`
+resolves `harmonypy` 0.2.0 while `darwin-arm64` and `linux-x64` get 2.0.2; the two versions
+differ in API. Skills that call Harmony directly should check `harmonypy.__version__`, or the
+x64 baseline can be raised when Intel Macs on 10.15 no longer need support.
+
+Windows omits `coreutils`, `bbknn`, `harmonypy`, and `pysam`. scanpy, scvelo, rdkit, and the
+Office stack still lock natively on `win-64`. Harmony/BBKNN batch correction and pysam stay
+Unix-only until those packages publish win-64 builds.

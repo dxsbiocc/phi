@@ -72,3 +72,7 @@ T1-2 与 T1-3 可以并行。每个任务由 Codex 实现、我审查后提交�
 - 团队包接线移出 `src/main/index.ts` 到 `src/main/team-pack-desktop.ts`；加密依赖加入 `asarUnpack`。
 
 不属于 T1、单独处理：打包应用在源码目录启动时 worker 优先加载当前目录源码，修复在 `fix/packaged-worker-path`。
+
+## 合入 main（2026-11-04）
+
+T1 验收后合入 `main`（`7b2ff44d`），不再走长期分支。打包 worker 路径修复与测试基线一并合入。2026-11-05 已推送，CI 通过。

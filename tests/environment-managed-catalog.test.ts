@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -276,6 +276,98 @@ test('summary catalog returns locked package versions without dynamic filesystem
       python?.packages?.some(
         (dependency) => dependency.name === 'python' && dependency.version === '3.12.14'
       )
+    )
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('Windows keeps default Python native and offers WSL2 for a Linux-only R environment', async () => {
+  const temp = mkdtempSync(join(tmpdir(), 'phi-managed-win32-'))
+  try {
+    const environmentsDir = join(temp, 'official')
+    copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
+    copyMinimal(join(environmentsDir, 'phi-r'), 'phi-r')
+    const catalog = await listManagedEnvironments({
+      root: join(temp, 'runtime'),
+      environmentsDir,
+      agentDir: join(temp, 'agent'),
+      platform: 'win32-x64',
+      consumers: [],
+      includeDynamic: false
+    })
+    const python = catalog.find((entry) => entry.ref === 'phi:python@1')
+    assert.equal(python?.state, 'unavailable')
+    assert.equal(python?.unavailableReason, 'missing-lock')
+    const r = catalog.find((entry) => entry.ref === 'phi:r@1')
+    assert.equal(r?.state, 'absent')
+    assert.equal(r?.runtime, 'wsl2')
+    assert.equal(r?.unavailableReason, undefined)
+    const linux = describeEnvironment('phi:r@1', {
+      environmentsDir,
+      platform: 'linux-x64'
+    })
+    assert.equal(r?.envId, envIdFor(linux))
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('listing on Windows marks official environments without any lock unavailable', async () => {
+  const temp = mkdtempSync(join(tmpdir(), 'phi-managed-win32-nolock-'))
+  try {
+    const environmentsDir = join(temp, 'official')
+    copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
+    rmSync(join(environmentsDir, 'phi-python', 'locks'), { recursive: true, force: true })
+    mkdirSync(join(environmentsDir, 'phi-python', 'locks'))
+    const catalog = await listManagedEnvironments({
+      root: join(temp, 'runtime'),
+      environmentsDir,
+      agentDir: join(temp, 'agent'),
+      platform: 'win32-x64',
+      consumers: [],
+      includeDynamic: false
+    })
+    const python = catalog.find((entry) => entry.ref === 'phi:python@1')
+    assert.equal(python?.state, 'unavailable')
+    assert.equal(python?.unavailableReason, 'missing-lock')
+    assert.equal(python?.envId, 'unavailable:phi:python@1:win32-x64')
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('Windows lists separate native and WSL builds of official Python', async () => {
+  const temp = mkdtempSync(join(tmpdir(), 'phi-managed-win32-lock-'))
+  try {
+    const environmentsDir = join(temp, 'official')
+    copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
+    writeFileSync(
+      join(environmentsDir, 'phi-python', 'locks', 'win32-x64.txt'),
+      readFileSync(join(environmentsDir, 'phi-python', 'locks', 'darwin-arm64.txt'))
+    )
+    const catalog = await listManagedEnvironments({
+      root: join(temp, 'runtime'),
+      environmentsDir,
+      agentDir: join(temp, 'agent'),
+      platform: 'win32-x64',
+      consumers: [],
+      includeDynamic: false
+    })
+    const python = catalog.find((entry) => entry.ref === 'phi:python@1')
+    assert.equal(python?.state, 'absent')
+    assert.equal(python?.runtime, undefined)
+    assert.equal(python?.unavailableReason, undefined)
+    const wsl = catalog.find((entry) => entry.ref === 'phi:python-wsl@1')
+    assert.equal(wsl?.state, 'absent')
+    assert.equal(wsl?.runtime, 'wsl2')
+    assert.ok(wsl?.consumers.some((consumer) => consumer.name === 'phi-python-wsl'))
+    assert.notEqual(python?.envId, wsl?.envId)
+    const linux = describeEnvironment('phi:python@1', { environmentsDir, platform: 'linux-x64' })
+    assert.equal(wsl?.envId, envIdFor(linux))
+    assert.throws(
+      () => describeEnvironment('phi:python-wsl@1', { environmentsDir, platform: 'linux-x64' }),
+      /requires Windows x64/
     )
   } finally {
     rmSync(temp, { recursive: true, force: true })

@@ -55,6 +55,7 @@ export interface AnalysisKernelDiagnostics {
   preferredKernelName?: string
   hasPythonKernel: boolean
   hasRKernel: boolean
+  hostKernelLaunchSupported?: false
   messages: string[]
 }
 
@@ -305,9 +306,19 @@ export function listAnalysisKernels(
       messages.push(`${kernel.displayName}: ${NOT_BUILT_KERNEL_LABEL}`)
     }
   }
+  const windows = (ctx.hostPlatform ?? process.platform) === 'win32'
   let host: AnalysisKernelSummary[] = []
   try {
-    host = hostKernelSummaries(ctx.root, options)
+    if (windows) {
+      syncHostKernels(ctx.root, [])
+      if (options.hostJupyterCommand !== null) {
+        messages.push(
+          'Windows supports managed Notebook kernels. Host kernel launch is unavailable.'
+        )
+      }
+    } else {
+      host = hostKernelSummaries(ctx.root, options)
+    }
   } catch (error) {
     messages.push(`无法读取 host kernel: ${errorMessage(error)}`)
   }
@@ -318,6 +329,7 @@ export function listAnalysisKernels(
     preferredKernelName: DEFAULT_KERNEL_NAME,
     hasPythonKernel: kernels.some((kernel) => kernel.language === 'python'),
     hasRKernel: kernels.some((kernel) => kernel.language === 'r'),
+    ...(windows ? { hostKernelLaunchSupported: false as const } : {}),
     messages
   }
 }
