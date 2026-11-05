@@ -18,7 +18,7 @@ import {
 import { SUPERSEDE_SIGNAL } from './sessions/superseded-writer'
 import { StdioFrameTransport } from './transports/stdio'
 import { createWorkerKernelAdapter } from './worker'
-import type { KernelHostCapabilityResult } from '../shared/kernel-protocol'
+import { KERNEL_STDIO_FRAMES_ENV, type KernelHostCapabilityResult } from '../shared/kernel-protocol'
 
 const HOST_EXIT_CLEANUP_TIMEOUT_MS = 1_000
 
@@ -91,7 +91,11 @@ function runtimeIdentity(agentDir: string): { home: string; agentDir: string; pi
 
 export async function startKernelStdio(): Promise<void> {
   const kernelInstanceId = randomUUID()
-  const transport = new StdioFrameTransport(process.stdin, process.stdout)
+  const transport = new StdioFrameTransport(
+    process.stdin,
+    process.stdout,
+    process.env[KERNEL_STDIO_FRAMES_ENV] === '1'
+  )
   const agentDir = process.env.PI_CODING_AGENT_DIR ?? ''
   const coreRef: { value?: KernelProtocolCore } = {}
   const modelAccess = await createDesktopBrokerModelAccess({

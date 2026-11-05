@@ -1,6 +1,7 @@
 import { createInterface, type Interface } from 'node:readline'
 import type { Readable, Writable } from 'node:stream'
 
+import { KERNEL_STDIO_FRAME_PREFIX } from '../../shared/kernel-protocol/constants'
 import type { FrameTransport } from '../protocol'
 
 export class StdioFrameTransport implements FrameTransport {
@@ -11,7 +12,8 @@ export class StdioFrameTransport implements FrameTransport {
 
   constructor(
     input: Readable,
-    private readonly output: Writable
+    private readonly output: Writable,
+    private readonly taggedOutput = false
   ) {
     this.lines = createInterface({ input, crlfDelay: Infinity })
     this.lines.on('line', (line) => {
@@ -24,7 +26,8 @@ export class StdioFrameTransport implements FrameTransport {
 
   send(line: string): void {
     if (this.closed) return
-    this.output.write(line)
+    // Start a fresh line even if a dependency wrote a partial diagnostic to stdout.
+    this.output.write(this.taggedOutput ? `\n${KERNEL_STDIO_FRAME_PREFIX}${line}` : line)
   }
 
   onLine(callback: (line: string) => void): void {
