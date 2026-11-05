@@ -246,6 +246,7 @@ async function main(): Promise<void> {
       const app = await launchPackagedExecutable(executable, {
         env: isolatedEnvironment(profile),
         userData,
+        cwd: profile,
         args: ['--disable-background-networking', '--proxy-server=http://127.0.0.1:9']
       })
       try {
