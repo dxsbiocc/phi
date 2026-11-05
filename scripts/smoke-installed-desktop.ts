@@ -11,7 +11,13 @@ import type { ModelAvailabilitySnapshot } from '../src/shared/modelAvailabilityT
 import type { WebSearchSettings } from '../src/shared/webSearchSettingsTypes'
 import { launchPackagedExecutable, type AppHandle } from './gui-e2e/app-launcher'
 import { readAppLogDirectory } from './gui-e2e/jsonl'
-import { agentConfig, MODEL_ID, PROVIDER_ID, startLoopbackProvider } from './kernel-e2e/harness'
+import {
+  agentConfig,
+  MODEL_ID,
+  PROVIDER_ID,
+  record,
+  startLoopbackProvider
+} from './kernel-e2e/harness'
 
 const REPLY = 'Phi installed desktop loopback reply verified'
 const IPC_TIMEOUT_MS = 90_000
@@ -179,13 +185,19 @@ function reportSmokeFailure(agentDir: string, token: string): void {
       .filter((entry) => relevantEvents.has(entry.event))
       .slice(-12)
       .map((entry) => {
+        const source: Record<string, unknown> = {
+          ...entry.metadata,
+          detail: record(entry.metadata?.details).error
+        }
         const metadata = Object.fromEntries(
-          ['error', 'message', 'reason', 'target', 'stderrTail'].flatMap((field) => {
-            const text = entry.metadata?.[field]
-            return typeof text === 'string'
-              ? [[field, redactSensitiveText(text.replaceAll(token, '[redacted]')).slice(0, 400)]]
-              : []
-          })
+          (['error', 'message', 'reason', 'target', 'stderrTail', 'detail'] as const).flatMap(
+            (field) => {
+              const text = source[field]
+              return typeof text === 'string'
+                ? [[field, redactSensitiveText(text.replaceAll(token, '[redacted]')).slice(0, 400)]]
+                : []
+            }
+          )
         )
         return { event: entry.event, metadata }
       })

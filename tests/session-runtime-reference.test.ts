@@ -14,11 +14,13 @@ import { dirname, join } from 'node:path'
 import test, { mock } from 'node:test'
 import {
   assertRuntimeScope,
+  parseKernelRuntimeReference,
   parseRuntimeReference,
   remoteOmpDurableSessionKey,
   remoteOmpJournalPath,
   RuntimeReferenceError
 } from '../src/main/agent/session/runtime-reference'
+
 import {
   appendSessionEvent,
   beginRuntimeReferenceAdoption,
@@ -41,6 +43,39 @@ import {
 } from '../src/main/agent/session/sessions'
 import { exportPhiSession } from '../src/main/agent/session/session-export'
 
+test('a local kernel reference accepts a canonical Windows agent directory', () => {
+  const reference = {
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId: 'windows-session',
+    host: { kind: 'local', agentDir: String.raw`C:\Users\y\测试\.phi` }
+  }
+  assert.deepEqual(parseKernelRuntimeReference(reference), reference)
+  const unc = { ...reference, host: { kind: 'local', agentDir: String.raw`\\server\share\y\.phi` } }
+  assert.deepEqual(parseKernelRuntimeReference(unc), unc)
+  for (const path of [String.raw`C:Users\y\.phi`, String.raw`C:\Users\..\.phi`, 'C:\\']) {
+    assert.throws(
+      () => parseKernelRuntimeReference({ ...reference, host: { kind: 'local', agentDir: path } }),
+      RuntimeReferenceError
+    )
+  }
+  assert.throws(
+    () =>
+      parseKernelRuntimeReference({
+        ...reference,
+        host: {
+          kind: 'ssh',
+          hostProfileId: 'lab',
+          projectId: 'project',
+          projectRoot: '/project',
+          runtimeRoot: '/runtime',
+          home: '/home/user',
+          agentDir: reference.host.agentDir
+        }
+      }),
+    RuntimeReferenceError
+  )
+})
 function fixture(run: (session: ReturnType<typeof createPhiSession>) => void): void {
   const previous = process.env.PI_CODING_AGENT_DIR
   const dir = mkdtempSync(join(tmpdir(), 'phi-runtime-reference-'))
