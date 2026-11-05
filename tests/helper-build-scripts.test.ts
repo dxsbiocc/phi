@@ -26,17 +26,20 @@ test('Go release manifest pins every supported official archive', () => {
     'darwin-amd64',
     'darwin-arm64',
     'linux-amd64',
-    'linux-arm64'
+    'linux-arm64',
+    'windows-amd64'
   ])
   const expectedSha256 = {
     'darwin-amd64': '587b59182488b23aa6e5fc25110405a3e0e5b38ed2f5b2f46ed13c32aee356fe',
     'darwin-arm64': '76812b213b1b2302c978d28fa52fa92d541704b9e7d9d5db8002c50e4018c4c5',
     'linux-amd64': 'ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5',
-    'linux-arm64': '94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8'
+    'linux-arm64': '94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8',
+    'windows-amd64': '1314008898bd40df77af4b014f777f08873dbdfbcd3d92308728ee03304fe04f'
   }
   const releases = GO_RELEASE.platforms as Record<string, { url: string; sha256: string }>
   for (const [platformId, release] of Object.entries(releases)) {
-    assert.equal(release.url, `https://go.dev/dl/go1.27.2.${platformId}.tar.gz`)
+    const extension = platformId.startsWith('windows-') ? 'zip' : 'tar.gz'
+    assert.equal(release.url, `https://go.dev/dl/go1.27.2.${platformId}.${extension}`)
     assert.equal(release.sha256, expectedSha256[platformId as keyof typeof expectedSha256])
   }
 })
@@ -44,13 +47,15 @@ test('Go release manifest pins every supported official archive', () => {
 test('Go platform selection translates Node x64 without widening support', () => {
   assert.equal(goArchivePlatform('darwin', 'arm64'), 'darwin-arm64')
   assert.equal(goArchivePlatform('linux', 'x64'), 'linux-amd64')
-  assert.equal(goArchivePlatform('win32', 'x64'), undefined)
+  assert.equal(goArchivePlatform('win32', 'x64'), 'windows-amd64')
+  assert.equal(goArchivePlatform('win32', 'arm64'), undefined)
 })
 
 test('Go commands receive an offline cache-scoped environment', () => {
   const cacheRoot = '/cache/phi-go/1.27.2'
   const env = goToolchainEnvironment({ PATH: '/usr/bin' }, cacheRoot)
-  assert.equal(goBinaryPath(cacheRoot), '/cache/phi-go/1.27.2/go/bin/go')
+  assert.equal(goBinaryPath(cacheRoot, 'linux'), path.join(cacheRoot, 'go', 'bin', 'go'))
+  assert.equal(goBinaryPath(cacheRoot, 'win32'), path.join(cacheRoot, 'go', 'bin', 'go.exe'))
   assert.equal(env.GOFLAGS, '-mod=readonly')
   assert.equal(env.GOTOOLCHAIN, 'local')
   assert.equal(env.GOPROXY, 'off')

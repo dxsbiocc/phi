@@ -18,7 +18,8 @@ runInEnvironment(env: EnvHandle, argv: string[], options: RunOptions): Promise<R
 loadEnvironment(root: string, envId: string): EnvHandle   // reads and validates env.json
 ```
 
-`EnvHandle` is `{ envId, prefix, metadata }` as returned by `ensureEnvironment`. Resolving
+`EnvHandle` contains `{ envId, prefix, metadata }` and the bound runtime for a WSL2
+environment, as returned by `ensureEnvironment`. Resolving
 references such as `phi:python@1` into a handle is not part of this contract (it belongs to
 `skill_run` and agent binding).
 
@@ -57,6 +58,12 @@ sources, in this order (later sources win):
 4. **Locale default** — when none of `LC_ALL`, `LC_CTYPE`, `LANG` names a UTF-8 locale, set
    `LC_ALL` to `en_US.UTF-8` on macOS and `C.UTF-8` on Linux.
 
+Native Windows environment names are compared case-insensitively. Windows also
+keeps the platform's system, profile, temp, and executable lookup variables and
+uses `NUL` for the R profile files and `PYTHONUTF8=1` for Python. A WSL2 process
+gets Linux paths and a guest-owned cache. The Windows proxy and the guest process
+both start with restricted environments.
+
 `options.extraEnv` (caller-supplied, e.g. `OMICS_VISUALIZATION_SKILL_ROOT`) is applied last but
 may not set `PATH`, any `PYTHON*`, `R_*`, `CONDA_*`, `MAMBA_*`, `LD_*`, `DYLD_*`, or the
 `PHI_ENV_*` names above; such keys are rejected with an error.
@@ -70,20 +77,24 @@ may not set `PATH`, any `PYTHON*`, `R_*`, `CONDA_*`, `MAMBA_*`, `LD_*`, `DYLD_*`
    `micromamba run` adds, are dropped;
 2. the directories of the host dependencies recorded in `metadata.host` (for example the
    directory containing `soffice`), deduplicated;
-3. `/usr/bin:/bin:/usr/sbin:/sbin`.
+3. `/usr/bin:/bin:/usr/sbin:/sbin` on Unix, or `%SystemRoot%\System32` and
+   `%SystemRoot%` on native Windows. Windows uses `;` and keeps the environment's
+   activated DLL directories in their original order.
 
 It never contains the user's conda, Homebrew, pyenv, `~/.local/bin`, or any other host
 directory.
 
 ## Running
 
-- `argv[0]` is resolved against the constructed `PATH` (or used as-is when it contains a `/`);
-  if it cannot be resolved, the call fails before spawning with `command not found in
-environment <envId>: <argv[0]>`.
+- Native execution resolves `argv[0]` against the constructed `PATH` or checks
+  the supplied path. An unresolved command fails before launch. In WSL2, the
+  guest resolves the translated command against its isolated Linux `PATH`.
 - No shell is involved: arguments are passed as an array.
 - `options.cwd` is required and must be an existing directory.
-- `options.timeoutMs` and `options.signal` terminate the child (SIGTERM, then SIGKILL after
-  5 s); the result then has `exitCode: null` and `terminated: 'timeout' | 'aborted'`.
+- `options.timeoutMs` and `options.signal` terminate the child. Unix sends SIGTERM
+  to the process group, then SIGKILL after 5 s. Native Windows terminates the
+  child through Windows, and WSL2 sends termination to the owned Linux process
+  group. The result has `exitCode: null` and `terminated: 'timeout' | 'aborted'`.
 - `options.onOutput` receives `{ stream: 'stdout' | 'stderr', text }` chunks as they arrive.
 - `options.stdin` (string) is written to the child and closed.
 - Captured `stdout` and `stderr` are each limited to `options.maxOutputBytes` (default 1 MiB);
@@ -96,7 +107,7 @@ environment <envId>: <argv[0]>`.
 interface RunResult {
   envId: string
   argv: string[]
-  resolvedCommand: string // absolute path argv[0] resolved to
+  resolvedCommand: string // native absolute path or command passed to WSL
   cwd: string
   exitCode: number | null
   signal: string | null
@@ -121,6 +132,14 @@ Isolation is a tested property, not a convention. The conformance suite
    library / `~/.Rprofile`) is **not** importable under `runInEnvironment`;
 3. `numba` / `matplotlib` style caches land in `<cache>`, not in the prefix or `$HOME`;
 4. the same results on a clean CI machine with no host Python or R.
+
+The Windows CI smoke builds the official Python and Jupyter locks on Windows x64,
+checks prefix reuse, and executes a scientific Python cell through the managed
+Notebook. WSL2 acceptance uses a Windows machine with an initialized distribution.
+Windows WSL2 environments are available to managed Notebook kernels, script
+tools, and Conda-profile Nextflow jobs. Binding an agent shell to a WSL2
+environment is rejected. Host Notebook kernels and managed stdio MCP launch
+remain outside the Windows acceptance scope.
 
 ## Versioning
 

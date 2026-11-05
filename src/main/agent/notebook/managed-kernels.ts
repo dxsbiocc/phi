@@ -22,14 +22,22 @@ import {
   readyEnvironment,
   type EnvironmentDescriptor
 } from '../content/environment-refs'
-import { environmentVariables, prefixExecutable, type EnvHandle, type PhiPlatform } from '../envs'
+import {
+  environmentVariables,
+  prefixExecutable,
+  toLinuxPath,
+  usesWslEnvironment,
+  type EnvHandle,
+  type PhiPlatform
+} from '../envs'
 
 import { errorMessage } from '../../../shared/errorCodes'
+import { wslKernelArgv } from './wsl-kernel-launch'
 export const HOST_KERNEL_LABEL = 'host (unmanaged)'
 export const NOT_BUILT_KERNEL_LABEL = 'not built'
 export const HOST_KERNEL_PREFIX = 'host-'
 
-export type ManagedKernelName = 'phi-python' | 'phi-r'
+export type ManagedKernelName = 'phi-python' | 'phi-r' | 'phi-python-wsl'
 
 export interface ManagedKernelDefinition {
   name: ManagedKernelName
@@ -48,6 +56,15 @@ export const MANAGED_KERNELS: readonly ManagedKernelDefinition[] = [
   },
   { name: 'phi-r', ref: 'phi:r@1', displayName: 'R 4.4 (phi-r)', language: 'R' }
 ]
+
+export const WSL_PYTHON_KERNEL_NAME = 'phi-python-wsl'
+
+const WSL_PYTHON_KERNEL: ManagedKernelDefinition = {
+  name: WSL_PYTHON_KERNEL_NAME,
+  ref: 'phi:python-wsl@1',
+  displayName: 'Python 3.12 (WSL2)',
+  language: 'python'
+}
 
 export interface ManagedEnvironmentContext {
   /** Runtime root, normally `getRuntimeRoot()`. */
@@ -119,6 +136,10 @@ const PYTHON_KERNEL_EXTRA_ENV = { MPLBACKEND: 'module://matplotlib_inline.backen
 
 const LOCALE_NAME = /^(LANG|LC_[A-Z_]+)$/
 
+function kernelLocale(baseEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(baseEnv).filter(([name]) => LOCALE_NAME.test(name)))
+}
+
 export function jupyterHome(root: string): string {
   return join(root, 'jupyter')
 }
@@ -181,13 +202,8 @@ export function kernelEnvironmentVariables(
   handle: EnvHandle,
   ctx: Pick<ManagedEnvironmentContext, 'baseEnv' | 'hostPlatform'> = {}
 ): Record<string, string> {
-  const host = ctx.baseEnv ?? process.env
-  const locale: NodeJS.ProcessEnv = {}
-  for (const [name, value] of Object.entries(host)) {
-    if (LOCALE_NAME.test(name) && value !== undefined) locale[name] = value
-  }
   return environmentVariables(handle, {
-    baseEnv: locale,
+    baseEnv: kernelLocale(ctx.baseEnv),
     ...(ctx.hostPlatform ? { platform: ctx.hostPlatform } : {}),
     ...(definition.language === 'python' ? { extraEnv: PYTHON_KERNEL_EXTRA_ENV } : {})
   })
@@ -230,6 +246,9 @@ export function managedKernelSpec(
   handle: EnvHandle,
   ctx: Pick<ManagedEnvironmentContext, 'baseEnv' | 'hostPlatform'> = {}
 ): KernelSpecFile {
+  if (usesWslEnvironment(ctx.hostPlatform ?? process.platform, handle.metadata.platform)) {
+    return managedWslKernelSpec(definition, handle, ctx.baseEnv)
+  }
   const env = kernelEnvironmentVariables(definition, handle, ctx)
   const metadata = { phi: { managed: true, ref: definition.ref, envId: handle.envId } }
   if (definition.language === 'python') {
@@ -258,6 +277,30 @@ export function managedKernelSpec(
   }
 }
 
+function managedWslKernelSpec(
+  definition: ManagedKernelDefinition,
+  handle: EnvHandle,
+  baseEnv: NodeJS.ProcessEnv | undefined
+): KernelSpecFile {
+  const python = definition.language === 'python'
+  const [command, ...args] = python
+    ? [join(handle.prefix, 'bin', 'python'), '-m', 'ipykernel_launcher', '-f', '{connection_file}']
+    : irkernelArgv(handle.prefix, 'linux')
+  return {
+    argv: wslKernelArgv(handle, [toLinuxPath(command, handle.wsl?.ready.distro), ...args], {
+      baseEnv: kernelLocale(baseEnv),
+      ...(python ? { extraEnv: PYTHON_KERNEL_EXTRA_ENV } : {})
+    }),
+    display_name: definition.displayName,
+    language: definition.language,
+    interrupt_mode: 'signal',
+    metadata: {
+      phi: { managed: true, ref: definition.ref, envId: handle.envId },
+      ...(python ? { debugger: true } : {})
+    }
+  }
+}
+
 function writeIfChanged(file: string, text: string): void {
   try {
     if (readFileSync(file, 'utf8') === text) return
@@ -279,30 +322,37 @@ function specText(spec: KernelSpecFile): string {
 export function syncManagedKernels(ctx: ManagedEnvironmentContext): ManagedKernelState[] {
   const dir = managedKernelsDir(ctx.root)
   mkdirSync(dir, { recursive: true })
-  return MANAGED_KERNELS.map((definition): ManagedKernelState => {
-    const resourceDir = join(dir, definition.name)
-    const state = managedEnvironmentState(definition.ref, ctx)
-    if ('notBuilt' in state) {
-      rmSync(resourceDir, { recursive: true, force: true })
-      return {
-        definition,
-        status: 'not-built',
-        message: state.notBuilt.message,
-        ...(state.notBuilt.envId ? { envId: state.notBuilt.envId } : {})
-      }
-    }
-    const spec = managedKernelSpec(definition, state.handle, ctx)
-    mkdirSync(resourceDir, { recursive: true })
-    writeIfChanged(join(resourceDir, 'kernel.json'), specText(spec))
-    return {
-      definition,
-      status: 'ready',
-      envId: state.handle.envId,
-      handle: state.handle,
-      resourceDir,
-      spec
-    }
-  })
+  const hostPlatform = ctx.hostPlatform ?? process.platform
+  const definitions =
+    hostPlatform === 'win32' ? [...MANAGED_KERNELS, WSL_PYTHON_KERNEL] : MANAGED_KERNELS
+  return definitions.map((definition) =>
+    syncManagedKernel(definition, dir, { ...ctx, hostPlatform })
+  )
+}
+
+function syncManagedKernel(
+  definition: ManagedKernelDefinition,
+  dir: string,
+  ctx: ManagedEnvironmentContext & { hostPlatform: NodeJS.Platform }
+): ManagedKernelState {
+  const resourceDir = join(dir, definition.name)
+  const removeSpec = (info: { message: string; envId?: string }): ManagedKernelState => {
+    rmSync(resourceDir, { recursive: true, force: true })
+    return { definition, status: 'not-built', ...info }
+  }
+  const state = managedEnvironmentState(definition.ref, ctx)
+  if ('notBuilt' in state) return removeSpec(state.notBuilt)
+  const { handle } = state
+  let spec: KernelSpecFile
+  try {
+    spec = managedKernelSpec(definition, handle, ctx)
+  } catch (error) {
+    if (!usesWslEnvironment(ctx.hostPlatform, handle.metadata.platform)) throw error
+    return removeSpec({ envId: handle.envId, message: errorMessage(error) })
+  }
+  mkdirSync(resourceDir, { recursive: true })
+  writeIfChanged(join(resourceDir, 'kernel.json'), specText(spec))
+  return { definition, status: 'ready', envId: handle.envId, handle, resourceDir, spec }
 }
 
 export function hostKernelName(name: string): string {

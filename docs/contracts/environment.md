@@ -98,6 +98,10 @@ a declared Bun pin and, for `runtime: node`, a declared Node pin. All other envi
 retain the existing nonempty runtime requirements. No source-build fallback is selected.
 
 Python uses managed Python/uv, hash-enforced wheel installation and closure validation.
+On Windows, `python-uv` requires a native `win32-x64` Conda lock with Python and uv.
+Its console entry is under `Scripts/`. Requirements can use PEP 508 markers and
+hashes for the wheels for each supported target. Application installations on
+Windows require a native lock.
 JavaScript uses managed Bun, frozen locks, disabled dependency scripts, verified offline
 cache material, and the declared runtime. The initial Bun cache adapter supports exactly
 Bun **1.3.14**; unknown cache formats fail explicitly. Native artifacts copy only the
@@ -120,7 +124,19 @@ hash, artifact references, resolved packages and installer version when availabl
 
 `currentPlatform(platform, arch)` joins `platform` and `arch` (defaulting to `process.platform` and `process.arch`) and returns that id when it is in the table. Any other pair throws `unsupported platform: <platform>-<arch>`.
 
-`win32-x64` is a runtime platform: the local kernel and bundled micromamba accept it. Official `phi-jupyter` and `phi-python` ship `locks/win32-x64.txt`. `phi-python` omits Unix-only packages (`coreutils`, bioconda `bbknn` / `harmonypy` / `pysam`) on Windows via `{ conda, platforms }`. `phi-r` and `phi-nextflow` still cannot solve on win-64; on Windows they stay in the catalog and build once through WSL2 using their `linux-x64` locks, then Phi invokes them with `wsl.exe`. Skill and plugin validation therefore require locks only for `darwin-arm64`, `darwin-x64`, and `linux-x64`. Environments without a native lock *and* without a Linux lock appear as unavailable.
+`win32-x64` is a runtime platform. Official `phi-jupyter` and `phi-python` ship
+`locks/win32-x64.txt`. The native Python environment omits `coreutils` and the
+Bioconda builds of `bbknn`, `harmonypy`, and `pysam`. On Windows, build
+`phi:python-wsl@1` in Settings → Environment to select the Python (WSL2)
+Notebook kernel with those packages. That reference uses the same spec and
+`linux-x64` lock as official Python on Linux.
+
+`phi-r` and `phi-nextflow` also use their `linux-x64` locks through WSL2 on
+Windows. Phi records the selected distribution when first preparing the WSL
+runtime. The Linux prefixes and archives are built inside that distribution.
+Skill and plugin validation require locks for `darwin-arm64`, `darwin-x64`, and
+`linux-x64`. On Windows, a Conda environment with neither a native nor a Linux
+lock appears as unavailable.
 
 ## Names and references
 
@@ -182,7 +198,10 @@ Path: `<prefix>/.phi/env.json`. The legacy fields below are required except `mic
 | `status`            | `absent`, `building`, `ready`, `failed`, or `drifted`                                      |
 | `contractVersion`   | `1.<minor>.<patch>`                                                                        |
 
-`activation.set` is the diff of `micromamba run -p <prefix> env` against the sanitised base environment, including variables set by `activate.d` scripts. Later runs apply this snapshot directly.
+`activation.set` is the diff between the environment under `micromamba run` and
+the sanitised base environment, including variables set by `activate.d`. Unix
+targets use `env -0`; native Windows uses a fixed PowerShell probe that emits
+UTF-8 JSON. Later runs apply the snapshot directly.
 
 Optional metadata fields: `runtimeEngine` (`micromamba` or `native`) and `installation` (backend, absolute executable, `specSha256`, owned artifact records, optional resolved package list and installer/version receipt). Native runtime metadata requires an application installation. Executables must remain within the prefix; missing or escaped paths are rejected even by direct environment loads.
 
@@ -218,10 +237,10 @@ created through `env_request` (runtime foundation §6.3) after the user confirms
   specs appended to `dependencies`, `name` set to `<name>`, and the base's
   `sourcePackages` and `host` kept. Its channels are the base's channels; extras
   cannot add channels or `pip` entries.
-- The lock is solved on the user's machine for the current platform only, by the
-  same dry-run export as official locks (one `@EXPLICIT` lock with a
-  `# download-bytes:` header). Other platforms have no lock; the environment is
-  not portable, and that is expected.
+- The lock is solved for the base environment's execution platform. A Windows
+  request extending a WSL2 environment solves in the selected distribution.
+  The result is one `@EXPLICIT` lock with a `# download-bytes:` header. For use
+  on another platform, generate a separate lock from the same spec.
 - `<name>` is `<base name>-x<n>` (`statistics-x1`, `python-x2`), with `n` one more than the
   highest existing project environment of that base.
 - The envId uses scope `project` and, as owner, `p` followed by the first 10 hex
@@ -261,14 +280,12 @@ env_request({ packages: string[], reason: string, environment?: string })
 | `reason`      | 1–500 characters, shown to the user                                                                                                                        |
 | `environment` | the reference to extend. Optional in a bound agent session (default: the session's environment); required elsewhere (the main agent's bash is never bound) |
 
-Flow: the engine applies the project's overrides to `environment`, asks the user in
-the conversation (packages, reason, the environment being extended), and on
-confirmation solves the new spec, writes the files and the override, then builds
-the environment with the usual prompt-free progress (the user already agreed). In a
-bound session the binding switches to the new environment for the rest of the
-session. Result: `{ ref, envId, name, added: [...] }`, or an error saying the user
-declined, the solve failed (with the solver's message), or the build failed. The
-original environment is never modified.
+The engine applies the project's overrides to `environment` and asks the user to
+confirm the packages, reason, and environment. The confirmation identifies a
+WSL2 target when selected. Phi solves the new spec, writes its files, and builds
+the environment. Only a successful build updates the project override and
+rebinds the session. The result contains `{ ref, envId, name, added: [...] }` or
+the reason the request failed.
 
 ## Versioning
 

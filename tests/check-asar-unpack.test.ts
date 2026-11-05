@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   chmodSync,
   mkdirSync,
@@ -20,7 +21,11 @@ import {
   copyOmpWorkerClosure,
   ompWorkerOutputFiles
 } from '../scripts/build/omp-worker-closure.mjs'
-import { afterPack, assertBundledBun } from '../scripts/build/after-pack.mjs'
+import {
+  afterPack,
+  assertBundledBun,
+  assertBundledWindowsRuntimes
+} from '../scripts/build/after-pack.mjs'
 import {
   checkAsarUnpack,
   globToRegExp,
@@ -129,7 +134,7 @@ test('afterPack rejects a packaged app with a missing or non-executable Bun', ()
   }
 })
 
-test('Windows afterPack rejects a missing or non-executable x64 Bun', async () => {
+test('Windows afterPack rejects a missing or changed x64 Bun', async () => {
   const root = mkdtempSync(path.join(tmpdir(), 'phi-win-packaged-bun-'))
   const bunPath = path.join(root, 'runtime', 'bun', 'win32-x64', 'bun.exe')
   const context = {
@@ -142,11 +147,47 @@ test('Windows afterPack rejects a missing or non-executable x64 Bun', async () =
   try {
     await assert.rejects(() => afterPack(context), /missing bundled Bun.*win32-x64/u)
     mkdirSync(path.dirname(bunPath), { recursive: true })
-    writeFileSync(bunPath, 'MZ')
-    await assert.rejects(() => afterPack(context), /not executable.*win32-x64/u)
+    writeFileSync(bunPath, 'MZ', { mode: 0o755 })
+    await assert.rejects(() => afterPack(context), /checksum mismatch.*win32-x64/u)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('Windows packaging requires unchanged native and WSL runtime binaries', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'phi-win-packaged-runtime-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const digest = createHash('sha256').update('verified').digest('hex')
+  const manifest = {
+    bun: {
+      platforms: {
+        'win32-x64': { url: '', sha256: '', executableSha256: digest, archivePath: '' }
+      }
+    },
+    micromamba: {
+      platforms: {
+        'win32-x64': { url: '', sha256: digest },
+        'linux-x64': { url: '', sha256: digest }
+      }
+    }
+  }
+  const wsl = path.join(root, 'runtime', 'micromamba', 'linux-x64', 'micromamba')
+  for (const file of [
+    path.join(root, 'runtime', 'bun', 'win32-x64', 'bun.exe'),
+    path.join(root, 'runtime', 'micromamba', 'win32-x64', 'micromamba.exe')
+  ]) {
+    mkdirSync(path.dirname(file), { recursive: true })
+    writeFileSync(file, 'verified', { mode: 0o755 })
+  }
+  assert.throws(
+    () => assertBundledWindowsRuntimes(root, manifest),
+    /missing bundled runtime.*linux-x64/u
+  )
+  mkdirSync(path.dirname(wsl), { recursive: true })
+  writeFileSync(wsl, 'verified')
+  assert.doesNotThrow(() => assertBundledWindowsRuntimes(root, manifest))
+  writeFileSync(wsl, 'changed')
+  assert.throws(() => assertBundledWindowsRuntimes(root, manifest), /checksum mismatch.*linux-x64/u)
 })
 
 test('Linux afterPack rejects a missing or non-executable x64 Bun', async () => {

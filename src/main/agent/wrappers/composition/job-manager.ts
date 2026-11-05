@@ -19,9 +19,11 @@ import {
   type WrapperCompositionEntry
 } from './discovery'
 import {
+  configuredHostNextflow,
   describeNextflowLaunch,
   nextflowLaunchRecord,
   resolveNextflowLaunch,
+  wslNextflowProfileError,
   type NextflowLaunch,
   type NextflowLaunchContext
 } from './nextflow-launch'
@@ -253,6 +255,13 @@ export class WrapperJobManager implements WrapperJobClient {
     return () => this.listeners.delete(listener)
   }
 
+  private usesWindowsManagedNextflow(): boolean {
+    return (
+      process.platform === 'win32' &&
+      !(this.nextflowLaunch?.hostNextflowPath ?? configuredHostNextflow)()
+    )
+  }
+
   /**
    * Called once when a run ends on its own (completed, failed or cancelled).
    * Not called when the app is shutting down: nobody is left to tell.
@@ -354,15 +363,23 @@ export class WrapperJobManager implements WrapperJobClient {
       resolved = target
     }
     const remote = resolved !== undefined
+    const wslNextflow = !remote && this.usesWindowsManagedNextflow()
     let environmentWarnings: string[] = []
     const profile =
       input.profile ??
-      (resolved ? (resolved.target.hpc?.runtime ?? DEFAULT_REMOTE_RUNTIME) : 'docker')
+      (resolved
+        ? (resolved.target.hpc?.runtime ?? DEFAULT_REMOTE_RUNTIME)
+        : wslNextflow
+          ? 'conda'
+          : 'docker')
     if (!(WRAPPER_EXECUTION_PROFILES as readonly string[]).includes(profile)) {
       return {
         ok: false,
         error: `Invalid profile: ${profile}. Must be one of ${WRAPPER_EXECUTION_PROFILES.join(', ')}.`
       }
+    }
+    if (wslNextflow && profile !== 'conda') {
+      return { ok: false, error: wslNextflowProfileError(profile) }
     }
     if (!resolved && this.checkLocalEnvironment) {
       const checked = await this.checkLocalEnvironment({

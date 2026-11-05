@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 import type { EnvironmentBuild } from '../../../shared/environmentBuildTypes'
@@ -9,7 +10,11 @@ import type {
   ManagedEnvironmentState
 } from '../../../shared/environmentTypes'
 import { discoverPhiAgents } from '../agents/discovery'
-import { describeEnvironment, bundledEnvironmentsDir } from '../content/environment-refs'
+import {
+  describeEnvironment,
+  bundledEnvironmentsDir,
+  WINDOWS_WSL_PYTHON_REF
+} from '../content/environment-refs'
 import { parseSkillFile } from '../content/skill'
 import {
   computeEnvId,
@@ -26,6 +31,7 @@ import {
 } from '../envs'
 import { estimateBuild } from '../envs/estimate'
 import { projectEnvironmentExists, readOverrides } from '../envs/project-environments'
+import { readWslRuntime, wslEnvironmentPrefix } from '../envs/wsl'
 import { listInstalledPlugins, type LoadedPlugin } from '../plugins/loader'
 import { listSkills } from '../resources'
 import { getPhiAgentDir } from '../runtime-paths'
@@ -73,6 +79,10 @@ const FIXED_CONSUMERS: readonly ManagedEnvironmentConsumerDeclaration[] = [
     consumer: { kind: 'kernel', name: 'phi-python', label: 'Python kernel' }
   },
   {
+    ref: WINDOWS_WSL_PYTHON_REF,
+    consumer: { kind: 'kernel', name: 'phi-python-wsl', label: 'Python (WSL2)' }
+  },
+  {
     ref: 'phi:r@1',
     consumer: { kind: 'kernel', name: 'phi-r', label: 'R kernel' }
   }
@@ -98,13 +108,23 @@ function isFile(path: string): boolean {
   }
 }
 
-function officialEnvironments(environmentsDir: string): KnownEnvironment[] {
-  return listDirectories(environmentsDir).flatMap((name) => {
+function officialEnvironments(environmentsDir: string, platform: PhiPlatform): KnownEnvironment[] {
+  const official = listDirectories(environmentsDir).flatMap((name) => {
     if (!name.startsWith('phi-') || !isFile(join(environmentsDir, name, 'environment.yml'))) {
       return []
     }
     return [{ ref: `phi:${name.slice('phi-'.length)}@1`, source: 'official' as const }]
   })
+  const python = join(environmentsDir, 'phi-python')
+  if (
+    platform === 'win32-x64' &&
+    isFile(join(python, 'environment.yml')) &&
+    isFile(join(python, 'locks', 'win32-x64.txt')) &&
+    isFile(join(python, 'locks', 'linux-x64.txt'))
+  ) {
+    official.push({ ref: WINDOWS_WSL_PYTHON_REF, source: 'official' })
+  }
+  return official
 }
 
 function pluginEnvironments(plugins: readonly LoadedPlugin[]): KnownEnvironment[] {
@@ -435,6 +455,29 @@ function unavailableCatalogEntry(
   }
 }
 
+async function indexedEnvironmentSize(
+  root: string,
+  entry: ManagedEnvironmentEntry,
+  indexEntry: EnvironmentIndexEntry,
+  sizeOf: (prefix: string) => Promise<number>
+): Promise<void> {
+  if (entry.runtime !== 'wsl2') {
+    entry.sizeBytes = await sizeOf(indexEntry.prefix)
+    return
+  }
+  try {
+    const wsl = readWslRuntime(root)
+    if (!wsl) throw new Error('WSL runtime is not configured')
+    const prefix = wslEnvironmentPrefix(wsl, entry.envId)
+    if (!(await stat(join(prefix, 'conda-meta'))).isDirectory()) {
+      throw new Error('WSL Conda metadata is missing')
+    }
+    entry.sizeBytes = await sizeOf(prefix)
+  } catch {
+    if (entry.state === 'ready') entry.state = 'drifted'
+  }
+}
+
 /** Catalog all known managed environments without building or mutating the runtime. */
 export async function listManagedEnvironments(
   options: ListManagedEnvironmentsOptions = {}
@@ -448,7 +491,7 @@ export async function listManagedEnvironments(
   const sizeOf = options.sizeOf ?? directorySize
   const includeDynamic = options.includeDynamic !== false
   const known = [
-    ...officialEnvironments(environmentsDir),
+    ...officialEnvironments(environmentsDir, platform),
     ...pluginEnvironments(plugins),
     ...projectEnvironments(options.projectDir)
   ]
@@ -492,7 +535,8 @@ export async function listManagedEnvironments(
           state,
           source: environment.source,
           ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
-          label: descriptor.spec.name,
+          label:
+            environment.ref === WINDOWS_WSL_PYTHON_REF ? 'phi-python (WSL2)' : descriptor.spec.name,
           packages: environmentPackages(descriptor),
           ...(descriptor.spec.description ? { description: descriptor.spec.description } : {}),
           referrers: [...(indexEntry?.referrers ?? [])].sort(),
@@ -504,8 +548,10 @@ export async function listManagedEnvironments(
             : {})
         }
         if (includeDynamic && state === 'absent')
-          entry.estimate = estimateBuild(root, descriptor.lockText)
-        else if (includeDynamic && indexEntry) entry.sizeBytes = await sizeOf(indexEntry.prefix)
+          entry.estimate = estimateBuild(root, descriptor.lockText, descriptor.runtime)
+        else if (includeDynamic && indexEntry) {
+          await indexedEnvironmentSize(root, entry, indexEntry, sizeOf)
+        }
         return entry
       })
     )

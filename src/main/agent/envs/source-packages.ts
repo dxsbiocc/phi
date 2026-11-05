@@ -15,7 +15,8 @@ import { promisify } from 'node:util'
 
 import { type SourcePackage } from './contract'
 import { type SourcePackageInstaller } from './ensure'
-import { runMicromamba } from './runtime'
+import { runMicromamba, withWsl } from './runtime'
+import { toLinuxPath, wslProcessEnvironment, wslSpawnArgv, type WslRuntime } from './wsl'
 
 import { errorMessage } from '../../../shared/errorCodes'
 const execFileAsync = promisify(execFile)
@@ -27,6 +28,8 @@ export interface SourcePackageProgress {
 
 export interface SourcePackageInstallOptions {
   root: string
+  storageRoot?: string
+  wsl?: WslRuntime
   signal?: AbortSignal
   onProgress?: (event: SourcePackageProgress) => void
 }
@@ -129,16 +132,17 @@ export async function installRSourcePackages(
     throw new Error(`source package ${packages[0].name}: R library not found at ${library}`)
   }
 
-  const tmpRoot = join(options.root, 'state', 'tmp')
+  const storageRoot = options.storageRoot ?? options.root
+  const tmpRoot = join(storageRoot, 'state', 'tmp')
   mkdirSync(tmpRoot, { recursive: true })
 
   for (const pkg of packages) {
     throwIfAborted(options.signal)
     options.onProgress?.({ phase: 'source-packages', message: `fetching ${pkg.name}` })
-    const archive = await fetchSourceArchive(options.root, pkg, { signal: options.signal })
+    const archive = await fetchSourceArchive(storageRoot, pkg, { signal: options.signal })
     const temp = mkdtempSync(join(tmpRoot, `${pkg.name}-`))
     try {
-      await extractArchive(archive, temp, options.signal)
+      await extractArchive(archive, temp, options)
       const packageDir = findPackageDirectory(temp, pkg)
       const described = descriptionPackageName(join(packageDir, 'DESCRIPTION'))
       if (described !== pkg.name) {
@@ -202,11 +206,26 @@ function delay(ms: number): Promise<void> {
 async function extractArchive(
   archive: string,
   destination: string,
-  signal: AbortSignal | undefined
+  { signal, wsl }: SourcePackageInstallOptions
 ): Promise<void> {
   throwIfAborted(signal)
   try {
-    await execFileAsync('tar', ['-xzf', archive, '-C', destination], { signal })
+    if (wsl) {
+      const { ready } = wsl
+      const plan = wslSpawnArgv(
+        ready,
+        '/usr/bin/tar',
+        ['-xzf', toLinuxPath(archive, ready.distro), '-C', toLinuxPath(destination, ready.distro)],
+        { env: {} }
+      )
+      await execFileAsync(plan.executable, plan.args, {
+        signal,
+        env: wslProcessEnvironment(),
+        windowsHide: true
+      })
+    } else {
+      await execFileAsync('tar', ['-xzf', archive, '-C', destination], { signal })
+    }
   } catch (error) {
     if (signal?.aborted) throw new Error('environment build aborted')
     throw error
@@ -238,21 +257,23 @@ async function installPackage(
   pkg: SourcePackage,
   options: SourcePackageInstallOptions
 ): Promise<void> {
+  const pathForRuntime = (path: string): string =>
+    options.wsl ? toLinuxPath(path, options.wsl.ready.distro) : path
   const result = await runMicromamba(
     [
       'run',
       '-p',
-      prefix,
+      pathForRuntime(prefix),
       'R',
       'CMD',
       'INSTALL',
       '--no-docs',
       '--no-html',
       '--no-multiarch',
-      `--library=${library}`,
-      packageDir
+      `--library=${pathForRuntime(library)}`,
+      pathForRuntime(packageDir)
     ],
-    { root: options.root, signal: options.signal }
+    withWsl({ root: options.root, signal: options.signal }, options.wsl)
   )
   if (options.signal?.aborted || result.code === null) throw new Error('environment build aborted')
   const output = `${result.stdout}\n${result.stderr}`
@@ -277,9 +298,17 @@ async function verifyInstalledVersion(
   pkg: SourcePackage,
   options: SourcePackageInstallOptions
 ): Promise<void> {
+  const runtimePrefix = options.wsl ? toLinuxPath(prefix, options.wsl.ready.distro) : prefix
   const result = await runMicromamba(
-    ['run', '-p', prefix, 'Rscript', '-e', `cat(as.character(packageVersion("${pkg.name}")))`],
-    { root: options.root, signal: options.signal }
+    [
+      'run',
+      '-p',
+      runtimePrefix,
+      'Rscript',
+      '-e',
+      `cat(as.character(packageVersion("${pkg.name}")))`
+    ],
+    withWsl({ root: options.root, signal: options.signal }, options.wsl)
   )
   if (options.signal?.aborted || result.code === null) throw new Error('environment build aborted')
   if (result.code !== 0) {

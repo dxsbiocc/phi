@@ -4,12 +4,21 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import type { WrapperOutputRecord } from '../types'
+import { toWslPath, wslProcessEnvironment, type ReadyWsl } from '../../envs/wsl'
 import { prepareNextflowProfile } from './conda-profile'
+import { parseWrapperCompositionManifest } from './manifest'
 import {
   resolveNextflowLaunch,
+  wslNextflowProfileError,
   type NextflowLaunch,
   type NextflowLaunchContext
 } from './nextflow-launch'
+import {
+  stopWslNextflowProcesses,
+  trackWslNextflowProcess,
+  wslNextflowParams,
+  wslNextflowProcess
+} from './nextflow-wsl'
 import { buildResourceConfig, type WrapperRunResources } from './resources'
 
 /** Execution profile a wrapper can run under — see each `wrapper/nextflow.config`'s `profiles {}` block. */
@@ -99,6 +108,7 @@ function signalGroup(pid: number, signal: NodeJS.Signals): void {
 /** SIGTERM every live Nextflow process group. Called on app quit; also runs on process exit. */
 export function killAllWrapperProcesses(): void {
   for (const pid of activeGroups) signalGroup(pid, 'SIGTERM')
+  stopWslNextflowProcesses()
 }
 
 function installExitHook(): void {
@@ -136,16 +146,25 @@ export function startWrapperComposition(
   }
 
   const { launch } = options
+  const wsl = launch.source === 'managed' ? launch.wsl : undefined
+  if (wsl && profile !== 'conda') throw new Error(wslNextflowProfileError(profile))
   // Built before anything is written, so a missing micromamba throws with nothing to clean up.
-  const preparedProfile = prepareNextflowProfile(profile, launch.runtimeRoot, launch.env)
+  const preparedProfile = prepareNextflowProfile(
+    profile,
+    launch.runtimeRoot,
+    launch.env,
+    undefined,
+    wsl
+  )
   const defaultParams = JSON.parse(
     readFileSync(join(wrapperDir, 'params.json'), 'utf-8')
   ) as Record<string, unknown>
   const mergedParams = { ...defaultParams, ...overrides }
+  const params = wsl ? compositionWslParams(wrapperDir, mergedParams, wsl.ready) : mergedParams
 
   const tmpDir = mkdtempSync(join(tmpdir(), 'phi-wrapper-run-'))
   const paramsFilePath = join(tmpDir, 'params.json')
-  writeFileSync(paramsFilePath, JSON.stringify(mergedParams, null, 2))
+  writeFileSync(paramsFilePath, JSON.stringify(params, null, 2))
 
   const componentDir = dirname(wrapperDir)
   // The launch env already sets NXF_DISABLE_CHECK_LATEST: the launcher otherwise curls
@@ -166,33 +185,49 @@ export function startWrapperComposition(
   }
 
   installExitHook()
-  const child = spawn(launch.command, args, {
-    cwd: componentDir,
-    env,
-    detached: process.platform !== 'win32'
-  })
+  const graceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS
+  let child: ReturnType<typeof spawn>
+  try {
+    child = spawnWrapperChild(launch, { args, cwd: componentDir, env, graceMs })
+  } catch (error) {
+    rmSync(tmpDir, { recursive: true, force: true })
+    throw error
+  }
+  return monitorWrapperChild(child, { tmpDir, graceMs, viaWsl: wsl !== undefined }, options)
+}
+
+function monitorWrapperChild(
+  child: ReturnType<typeof spawn>,
+  { tmpDir, graceMs, viaWsl }: { tmpDir: string; graceMs: number; viaWsl: boolean },
+  { signal, onOutput }: Pick<StartWrapperOptions, 'signal' | 'onOutput'>
+): WrapperProcess {
+  const stopWsl = viaWsl ? trackWslNextflowProcess(child) : undefined
   const pid = child.pid
-  if (pid !== undefined) activeGroups.add(pid)
+  if (!viaWsl && pid !== undefined) activeGroups.add(pid)
 
   let combined = ''
   let cancelled = false
+  let settled = false
   let killTimer: NodeJS.Timeout | undefined
 
   const cancel = (): void => {
     if (cancelled) return
     cancelled = true
+    if (stopWsl) {
+      stopWsl()
+      return
+    }
     if (pid === undefined) return
     signalGroup(pid, 'SIGTERM')
-    killTimer = setTimeout(
-      () => signalGroup(pid, 'SIGKILL'),
-      options.killGraceMs ?? DEFAULT_KILL_GRACE_MS
-    )
+    killTimer = setTimeout(() => signalGroup(pid, 'SIGKILL'), graceMs)
     killTimer.unref()
   }
   signal?.addEventListener('abort', cancel, { once: true })
 
   const done = new Promise<WrapperRunResult>((resolve) => {
     const settle = (exitCode: number): void => {
+      if (settled) return
+      settled = true
       if (killTimer) clearTimeout(killTimer)
       signal?.removeEventListener('abort', cancel)
       if (pid !== undefined) activeGroups.delete(pid)
@@ -207,10 +242,10 @@ export function startWrapperComposition(
     const onData = (chunk: Buffer): void => {
       const text = chunk.toString('utf-8')
       combined = (combined + text).slice(-MAX_BUFFERED_OUTPUT)
-      options.onOutput?.(text)
+      onOutput?.(text)
     }
-    child.stdout.on('data', onData)
-    child.stderr.on('data', onData)
+    child.stdout?.on('data', onData)
+    child.stderr?.on('data', onData)
     child.on('close', (code) => settle(code ?? -1))
     child.on('error', (error) => {
       combined += String(error)
@@ -219,6 +254,35 @@ export function startWrapperComposition(
   })
 
   return { pid, done, cancel }
+}
+
+function spawnWrapperChild(
+  launch: NextflowLaunch,
+  input: { args: string[]; cwd: string; env: Record<string, string>; graceMs: number }
+): ReturnType<typeof spawn> {
+  if (launch.source === 'managed' && launch.wsl) {
+    const plan = wslNextflowProcess(launch.wsl, { command: launch.command, ...input })
+    return spawn(plan.executable, plan.args, { env: wslProcessEnvironment(), windowsHide: true })
+  }
+  return spawn(launch.command, input.args, {
+    cwd: input.cwd,
+    env: input.env,
+    detached: process.platform !== 'win32'
+  })
+}
+
+function compositionWslParams(
+  wrapperDir: string,
+  params: Record<string, unknown>,
+  wsl: ReadyWsl
+): Record<string, unknown> {
+  const manifest = parseWrapperCompositionManifest(
+    readFileSync(join(wrapperDir, 'wrapper.yaml'), 'utf8')
+  )
+  const keys = Object.entries(manifest.params)
+    .filter(([, declaration]) => declaration.kind !== 'option')
+    .map(([key]) => key)
+  return wslNextflowParams(params, keys, (path) => toWslPath(wsl, path))
 }
 
 /** Blocking form of {@link startWrapperComposition}: resolves when Nextflow exits. */

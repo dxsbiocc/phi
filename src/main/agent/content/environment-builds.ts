@@ -163,15 +163,16 @@ export function createEnvironmentBuilds({
 
   function applyProgress(
     active: ActiveBuild,
-    lockText: string,
+    descriptor: EnvironmentDescriptor,
     event: { phase: string; message: string }
   ): void {
     if (active.record.state !== 'building') return
     const changed = active.record.phase !== event.phase || active.record.message !== event.message
     active.record.phase = event.phase
     active.record.message = event.message
-    if (event.phase === 'create') startSampling(active, lockText)
-    else stopSampling(active)
+    if (event.phase === 'create' && descriptor.runtime !== 'wsl2') {
+      startSampling(active, descriptor.lockText)
+    } else stopSampling(active)
     if (changed) publish(active)
   }
 
@@ -183,7 +184,7 @@ export function createEnvironmentBuilds({
     try {
       const handle = await build(root, descriptor, {
         signal: active.controller.signal,
-        onProgress: (event) => applyProgress(active, descriptor.lockText, event)
+        onProgress: (event) => applyProgress(active, descriptor, event)
       })
       if (active.record.state === 'cancelled') {
         throw new Error(active.record.error ?? 'environment build cancelled')
@@ -212,7 +213,7 @@ export function createEnvironmentBuilds({
       const existing = records.get(envId)
       if (existing?.record.state === 'building') return existing.promise
 
-      const estimate = estimateBuild(root, descriptor.lockText)
+      const estimate = estimateBuild(root, descriptor.lockText, descriptor.runtime)
       const record: EnvironmentBuild = {
         envId,
         ref: options.ref,

@@ -1,9 +1,11 @@
 import { accessSync, constants, lstatSync, mkdirSync, realpathSync, statSync } from 'node:fs'
-import { basename, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
+import type { ActivationSnapshot } from '../activation'
 import { currentPlatform, type PhiPlatform } from '../platform'
 import type { EnvironmentSpec } from '../contract'
 import type { EnsureEnvironmentInput } from '../ensure'
+import { usesWslEnvironment } from '../wsl'
 import {
   cacheVerifiedArtifact,
   installationSpecSha256,
@@ -12,7 +14,7 @@ import {
 } from './artifacts'
 import { installNativeApplication } from './native'
 import { installBunApplication } from './bun'
-import { installPythonApplication } from './python'
+import { installPythonApplication, pythonApplicationExecutable } from './python'
 import { installDeclaredApplicationTools, validateDeclaredApplicationTools } from './tools'
 import type {
   ApplicationInstallInput,
@@ -29,8 +31,13 @@ interface SourceAsset {
 function sourceAssets(
   installation: ApplicationInstallation,
   sourceDir: string | undefined,
-  platform: PhiPlatform
+  platform: PhiPlatform,
+  hostPlatform: NodeJS.Platform = process.platform
 ): SourceAsset[] {
+  if (usesWslEnvironment(hostPlatform, platform))
+    throw new Error(
+      `The ${installation.backend} application installer requires a Windows lock on Windows. WSL2 application installation is unavailable.`
+    )
   if (!sourceDir || !isAbsolute(sourceDir))
     throw new Error('application installation requires a private source directory')
   const stat = lstatSync(sourceDir)
@@ -65,30 +72,35 @@ function sourceAssets(
 export function validateApplicationInstallationSource(
   installation: ApplicationInstallation,
   sourceDir: string | undefined,
-  platform: PhiPlatform
+  platform: PhiPlatform,
+  hostPlatform?: NodeJS.Platform
 ): void {
-  sourceAssets(installation, sourceDir, platform)
+  sourceAssets(installation, sourceDir, platform, hostPlatform)
 }
 
 /** Provider receipts describe the declared executable, which must stay inside its prefix. */
 export function validateApplicationMetadata(
   prefix: string,
   installation: ApplicationInstallation,
-  metadata: ApplicationInstallationMetadata
+  metadata: ApplicationInstallationMetadata,
+  platform: PhiPlatform = currentPlatform()
 ): ApplicationInstallationMetadata {
   if (
     metadata.backend !== installation.backend ||
     metadata.specSha256 !== installationSpecSha256(installation)
   )
     throw new Error('application metadata does not match its installation spec')
-  const expected = resolve(prefix, 'bin', installation.executable)
+  const expected =
+    installation.backend === 'python-uv'
+      ? pythonApplicationExecutable(prefix, installation.executable, platform)
+      : resolve(prefix, 'bin', installation.executable)
   const executable = isAbsolute(metadata.executable)
     ? resolve(metadata.executable)
     : resolve(prefix, 'bin', metadata.executable)
   if (realpathSync(executable) !== realpathSync(expected))
     throw new Error('application metadata executable does not match its prefix entry')
   const within = relative(realpathSync(prefix), realpathSync(executable))
-  if (!within || within === '..' || within.startsWith('../') || isAbsolute(within))
+  if (!within || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within))
     throw new Error('application executable resolves outside its prefix')
   if (!statSync(executable).isFile())
     throw new Error('application executable is not a regular file')
@@ -145,7 +157,8 @@ export async function installApplication(
   const installed = validateApplicationMetadata(
     input.prefix,
     input.installation,
-    await provider(request)
+    await provider(request),
+    input.platform
   )
   const artifacts = [...installed.artifacts, ...preserved, ...tools].map(artifactReference)
   return {
@@ -194,7 +207,7 @@ export function validateEnvironmentApplicationTools(
 /** Adapt provider progress to the existing environment build and verify injected installers too. */
 export async function installEnvironmentApplication(
   input: EnsureEnvironmentInput,
-  context: { root: string; prefix: string; platform: PhiPlatform }
+  context: { root: string; prefix: string; platform: PhiPlatform; activation?: ActivationSnapshot }
 ): Promise<ApplicationInstallationMetadata | undefined> {
   if (!input.spec.installation) return undefined
   const metadata = await (input.applicationInstaller ?? installApplication)({
@@ -206,5 +219,10 @@ export async function installEnvironmentApplication(
     onProgress: ({ message }) => input.onProgress?.({ phase: 'application', message })
   })
   input.signal?.throwIfAborted()
-  return validateApplicationMetadata(context.prefix, input.spec.installation, metadata)
+  return validateApplicationMetadata(
+    context.prefix,
+    input.spec.installation,
+    metadata,
+    context.platform
+  )
 }

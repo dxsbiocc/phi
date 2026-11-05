@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { delimiter, dirname } from 'node:path'
+import { delimiter, dirname, posix } from 'node:path'
 
 import type { EnvironmentBuilds } from '../../content/environment-builds'
 import { ensureEnvironmentReady, type ConfirmBuildRequest } from '../../content/environment-gate'
@@ -8,12 +8,16 @@ import { getCustomToolPath } from '../../environment/store'
 import {
   environmentVariables,
   getRuntimeRoot,
+  prepareEnvironmentCommand,
   probeHostRequirements,
   resolveCommand,
+  toLinuxPath,
+  usesWslEnvironment,
   type EnvHandle,
   type HostRequirement,
   type PhiPlatform
 } from '../../envs'
+import type { WslRuntime } from '../../envs/wsl'
 import {
   MIN_NEXTFLOW_VERSION,
   isNextflowVersionSupported,
@@ -59,6 +63,7 @@ export interface ManagedNextflowLaunch extends LaunchBase {
   source: 'managed'
   ref: string
   envId: string
+  wsl?: WslRuntime
 }
 
 export interface HostNextflowLaunch extends LaunchBase {
@@ -122,6 +127,10 @@ export async function resolveNextflowLaunch(
   const runtimeRoot = context.runtimeRoot ?? getRuntimeRoot()
   const hostPath = (context.hostNextflowPath ?? configuredHostNextflow)()
   if (hostPath) return resolveHostLaunch(hostPath, runtimeRoot, context)
+  const windows = context.platform ? context.platform === 'win32-x64' : process.platform === 'win32'
+  if (windows && context.profile && context.profile !== 'conda') {
+    return { ok: false, error: wslNextflowProfileError(context.profile) }
+  }
   return resolveManagedLaunch(runtimeRoot, context)
 }
 
@@ -203,6 +212,9 @@ function managedLaunch(
   hostRequirements: readonly HostRequirement[] | undefined,
   context: NextflowLaunchContext
 ): NextflowLaunchResult {
+  if (usesWslEnvironment(process.platform, handle.metadata.platform)) {
+    return managedWslLaunch(handle, runtimeRoot, context)
+  }
   const env = environmentVariables(handle, context.baseEnv ? { baseEnv: context.baseEnv } : {})
   env.PATH = withContainerRuntime(env.PATH ?? '', hostRequirements, handle, context.profile)
   const runtimePath = context.containerRuntimePath?.(context.profile)
@@ -223,6 +235,41 @@ function managedLaunch(
       runtimeRoot
     }
   }
+}
+
+function managedWslLaunch(
+  handle: EnvHandle,
+  runtimeRoot: string,
+  context: NextflowLaunchContext
+): NextflowLaunchResult {
+  try {
+    if (!handle.wsl) throw new Error('Build the Nextflow environment in Phi’s WSL2 runtime first.')
+    const wsl = handle.wsl
+    const command = posix.join(toLinuxPath(handle.prefix, wsl.ready.distro), 'bin', 'nextflow')
+    const { linuxEnv } = prepareEnvironmentCommand(handle, [command], {
+      ...(context.baseEnv ? { baseEnv: context.baseEnv } : {}),
+      extraEnv: { NXF_DISABLE_CHECK_LATEST: 'true' }
+    })
+    if (!linuxEnv) throw new Error('The managed Nextflow launch has no WSL2 environment.')
+    return {
+      ok: true,
+      launch: {
+        source: 'managed',
+        ref: NEXTFLOW_ENVIRONMENT_REF,
+        envId: handle.envId,
+        command,
+        env: linuxEnv,
+        runtimeRoot,
+        wsl
+      }
+    }
+  } catch (error) {
+    return { ok: false, error: errorMessage(error) }
+  }
+}
+
+export function wslNextflowProfileError(profile: string): string {
+  return `Local Nextflow in WSL2 cannot use the ${profile} profile. Choose conda, or run this Wrapper on a configured Linux server.`
 }
 
 /**
@@ -261,7 +308,7 @@ export function insertBeforeSystemDirs(pathValue: string, dirs: readonly string[
 /** One line for the run log and the run record. */
 export function describeNextflowLaunch(launch: NextflowLaunch): string {
   return launch.source === 'managed'
-    ? `Nextflow: ${launch.ref} (${launch.envId})`
+    ? `Nextflow: ${launch.ref} (${launch.envId})${launch.wsl ? ` · WSL2 (${launch.wsl.ready.distro})` : ''}`
     : `Nextflow: ${launch.label} ${launch.version} at ${launch.command}`
 }
 
@@ -271,7 +318,13 @@ export function describeNextflowLaunch(launch: NextflowLaunch): string {
  */
 export function nextflowLaunchRecord(launch: NextflowLaunch): Record<string, string> {
   return launch.source === 'managed'
-    ? { source: 'managed', ref: launch.ref, envId: launch.envId, resolvedCommand: launch.command }
+    ? {
+        source: 'managed',
+        ref: launch.ref,
+        envId: launch.envId,
+        resolvedCommand: launch.command,
+        ...(launch.wsl ? { runtime: 'wsl2', distro: launch.wsl.ready.distro } : {})
+      }
     : {
         source: 'host',
         label: launch.label,

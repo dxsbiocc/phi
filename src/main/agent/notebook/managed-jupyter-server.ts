@@ -13,6 +13,7 @@ import {
   sanitizeHostEnvironment,
   type EnvHandle
 } from '../envs'
+import { normalizeWindowsEnvironment, windowsSystemPath } from '../envs/runtime'
 import { DEFAULT_KERNEL_NAME, JUPYTER_ENVIRONMENT_REF } from './analysis-kernels'
 import {
   describeManagedEnvironment,
@@ -69,15 +70,29 @@ export function managedJupyterLaunch(
 ): Required<ManagedJupyterLaunch> {
   const directories = jupyterDirectoryVariables(ctx.root)
   for (const directory of Object.values(directories)) mkdirSync(directory, { recursive: true })
+  const platform = ctx.hostPlatform ?? process.platform
   const env = environmentVariables(handle, {
     ...(ctx.baseEnv ? { baseEnv: ctx.baseEnv } : {}),
-    ...(ctx.hostPlatform ? { platform: ctx.hostPlatform } : {}),
+    platform,
     extraEnv: directories
   })
+  const args = launch.args ?? []
+  const kernelArgs = managedKernelArgs(ctx.root)
+  if (platform === 'win32') {
+    // Own the actual server process. The jupyter.exe dispatcher can leave its server running
+    // after Windows terminates the dispatcher.
+    const serverArgs = args[0] === 'server' ? args.slice(1) : args
+    return {
+      port: launch.port,
+      command: prefixExecutable(handle.prefix, 'python', platform),
+      args: ['-m', 'jupyter_server', ...serverArgs, ...kernelArgs],
+      env
+    }
+  }
   return {
     port: launch.port,
-    command: prefixExecutable(handle.prefix, 'jupyter', ctx.hostPlatform),
-    args: [...(launch.args ?? []), ...managedKernelArgs(ctx.root)],
+    command: prefixExecutable(handle.prefix, 'jupyter', platform),
+    args: [...args, ...kernelArgs],
     env
   }
 }
@@ -90,9 +105,13 @@ export function hostJupyterLaunch(
 ): Required<ManagedJupyterLaunch> {
   const directories = jupyterDirectoryVariables(ctx.root)
   for (const directory of Object.values(directories)) mkdirSync(directory, { recursive: true })
-  const baseEnv = ctx.baseEnv ?? process.env
-  const env = { ...sanitizeHostEnvironment(baseEnv), ...directories }
-  env.PATH = baseEnv.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin'
+  const platform = ctx.hostPlatform ?? process.platform
+  const host = ctx.baseEnv ?? process.env
+  const baseEnv = platform === 'win32' ? normalizeWindowsEnvironment(host) : host
+  const env = { ...sanitizeHostEnvironment(baseEnv, platform), ...directories }
+  const systemPath =
+    platform === 'win32' ? windowsSystemPath(baseEnv).join(';') : '/usr/bin:/bin:/usr/sbin:/sbin'
+  env.PATH = baseEnv.PATH ?? systemPath
   return {
     port: launch.port,
     command,

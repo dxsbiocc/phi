@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
+import { assertBundledWindowsRuntimes } from './build/after-pack.mjs'
 import { OMP_WORKER_ENTRY } from './build/omp-worker-closure.mjs'
 
 const RESPONSE_TIMEOUT_MS = 90_000
@@ -75,20 +76,29 @@ function requestOnce(bun, worker, env, request) {
   return new Promise((resolveResponse, reject) => {
     const child = spawn(bun, [worker], { env, stdio: ['pipe', 'pipe', 'pipe'] })
     let stderr = ''
+    let failure
+    let response
     const timer = setTimeout(() => {
+      failure ??= new Error(`worker did not exit within ${RESPONSE_TIMEOUT_MS} ms\n${stderr}`)
       child.kill('SIGKILL')
-      reject(new Error(`worker did not answer within ${RESPONSE_TIMEOUT_MS} ms\n${stderr}`))
     }, RESPONSE_TIMEOUT_MS)
     child.stderr.on('data', (chunk) => {
       stderr = `${stderr}${chunk}`.slice(-8000)
     })
     child.on('error', (error) => {
-      clearTimeout(timer)
-      reject(error)
+      failure ??= error
     })
-    child.on('exit', (code, signal) => {
+    child.stdin.on('error', (error) => {
+      if (!response) failure ??= error
+    })
+    child.on('close', (code, signal) => {
       clearTimeout(timer)
-      reject(new Error(`worker exited early (code ${code}, signal ${signal})\n${stderr}`))
+      if (failure) reject(failure)
+      else if (!response) {
+        reject(new Error(`worker exited early (code ${code}, signal ${signal})\n${stderr}`))
+      } else if (!response.ok)
+        reject(new Error(`worker request failed: ${response.error}\n${stderr}`))
+      else resolveResponse(response.result)
     })
     createInterface({ input: child.stdout }).on('line', (line) => {
       let message
@@ -97,12 +107,9 @@ function requestOnce(bun, worker, env, request) {
       } catch {
         return
       }
-      if (message?.id !== request.id) return
-      clearTimeout(timer)
-      child.removeAllListeners('exit')
+      if (response || message?.id !== request.id) return
+      response = message
       child.kill('SIGTERM')
-      if (message.ok) resolveResponse(message.result)
-      else reject(new Error(`worker request failed: ${message.error}\n${stderr}`))
     })
     child.stdin.write(`${JSON.stringify(request)}\n`)
   })
@@ -110,6 +117,7 @@ function requestOnce(bun, worker, env, request) {
 
 async function main() {
   const { resources } = parseArgs(process.argv.slice(2))
+  if (process.platform === 'win32') assertBundledWindowsRuntimes(resources)
   const bun = requireFile(
     join(resources, 'runtime', 'bun', platformId(), bunFileName()),
     'bundled bun'
@@ -157,7 +165,7 @@ async function main() {
     console.log(`OMP worker answered: ${JSON.stringify(result)}`)
     console.log('packaged worker smoke passed')
   } finally {
-    rmSync(home, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
   }
 }
 

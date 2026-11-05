@@ -3,9 +3,19 @@
 // OMP worker's runtime packages (see collectOmpWorkerPackageAssets) that the
 // node_modules copier strips, so bun can load the unpacked worker. Fails the
 // build if an asset still cannot be found afterwards.
-import { accessSync, constants, cpSync, existsSync, mkdirSync, statSync } from 'node:fs'
+import {
+  accessSync,
+  constants,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync
+} from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { fileSha256, lookupBunPlatform } from '../runtime/fetch-bun.mjs'
+import { lookupMicromambaPlatform, micromambaFileName } from '../runtime/fetch-micromamba.mjs'
 import { collectOmpWorkerPackageAssets } from './omp-worker-closure.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -46,6 +56,35 @@ export function assertBundledBun(resourcesDir, platformId) {
   return bunPath
 }
 
+export function assertBundledWindowsRuntimes(
+  resourcesDir,
+  manifest = JSON.parse(
+    readFileSync(path.join(repoRoot, 'resources/runtime/manifest.json'), 'utf8')
+  )
+) {
+  const bun = assertBundledBun(resourcesDir, 'win32-x64')
+  assertBundledDigest(bun, lookupBunPlatform(manifest, 'win32-x64')?.executableSha256)
+  for (const platform of ['win32-x64', 'linux-x64']) {
+    const micromamba = path.join(
+      resourcesDir,
+      'runtime',
+      'micromamba',
+      platform,
+      micromambaFileName(platform)
+    )
+    assertBundledDigest(micromamba, lookupMicromambaPlatform(manifest, platform)?.sha256)
+  }
+}
+
+function assertBundledDigest(file, expected) {
+  if (!existsSync(file) || !statSync(file).isFile()) {
+    throw new Error(`afterPack: missing bundled runtime at ${file}`)
+  }
+  if (!expected || fileSha256(file) !== expected) {
+    throw new Error(`afterPack: bundled runtime checksum mismatch at ${file}`)
+  }
+}
+
 function archName(arch) {
   if (typeof arch === 'string') return arch
   return ['ia32', 'x64', 'armv7l', 'arm64', 'universal'][arch]
@@ -53,10 +92,13 @@ function archName(arch) {
 
 export async function afterPack(context) {
   const resourcesDir = context.packager.getResourcesDir(context.appOutDir)
-  if (
+  if (context.electronPlatformName === 'win32') {
+    if (archName(context.arch) !== 'x64')
+      throw new Error('afterPack: Windows packaging requires x64')
+    assertBundledWindowsRuntimes(resourcesDir)
+  } else if (
     context.electronPlatformName === 'darwin' ||
-    context.electronPlatformName === 'linux' ||
-    context.electronPlatformName === 'win32'
+    context.electronPlatformName === 'linux'
   ) {
     const arch = archName(context.arch)
     if (!arch) throw new Error(`afterPack: unsupported architecture ${context.arch}`)

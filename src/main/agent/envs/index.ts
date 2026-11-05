@@ -67,19 +67,30 @@ export {
   decodeWslOutput,
   parseWslList,
   probeWsl,
+  readWslRuntime,
   requireReadyWsl,
   toLinuxPath,
+  toUncPath,
   toWindowsPath,
+  toWslPath,
   usesWslEnvironment,
   wslRequiredMessage,
+  wslProcessEnvironment,
+  wslEnvironmentPrefix,
+  wslRuntimeDirectory,
   wslSpawnArgv
 } from './wsl'
-export type { ReadyWsl, WslProbe, WslSpawnPlan } from './wsl'
+export type { ReadyWsl, WslProbe, WslRuntime, WslSpawnPlan } from './wsl'
 
 export { captureActivation, diffActivation } from './activation'
 export type { ActivationSnapshot } from './activation'
 
-export { acquireEnvironmentLock, ensureEnvironment, removeTree } from './ensure'
+export {
+  acquireEnvironmentLock,
+  ensureEnvironment,
+  removeManagedEnvironmentPrefix,
+  removeTree
+} from './ensure'
 export type {
   EnsureEnvironmentInput,
   EnsureEnvironmentResult,
@@ -121,9 +132,16 @@ export {
   environmentCacheDir,
   environmentVariables,
   loadEnvironment,
+  prepareEnvironmentCommand,
   removeEnvironmentCache,
   resolveCommand,
   runInEnvironment,
   sanitizeHostEnvironment
 } from './execution'
-export type { EnvHandle, ExecutionOptions, RunOptions, RunResult } from './execution'
+export type {
+  EnvHandle,
+  EnvironmentCommand,
+  ExecutionOptions,
+  RunOptions,
+  RunResult
+} from './execution'

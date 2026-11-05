@@ -168,6 +168,7 @@ win:
     - from: resources/runtime/bun/win32-${arch}
       to: runtime/bun/win32-${arch}
 nsis:
+  perMachine: false
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}

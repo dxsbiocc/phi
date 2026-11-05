@@ -14,7 +14,7 @@ export const GO_RELEASE = Object.freeze(JSON.parse(readFileSync(manifestPath, 'u
 
 export function goArchivePlatform(platform = process.platform, arch = process.arch) {
   const goArch = arch === 'x64' ? 'amd64' : arch
-  const platformId = `${platform}-${goArch}`
+  const platformId = `${platform === 'win32' ? 'windows' : platform}-${goArch}`
   return GO_RELEASE.platforms[platformId] ? platformId : undefined
 }
 
@@ -22,8 +22,8 @@ export function goCacheRoot(root = repoRoot) {
   return path.join(root, 'node_modules', '.cache', 'phi-go', GO_RELEASE.version)
 }
 
-export function goBinaryPath(cacheRoot = goCacheRoot()) {
-  return path.join(cacheRoot, 'go', 'bin', process.platform === 'win32' ? 'go.exe' : 'go')
+export function goBinaryPath(cacheRoot = goCacheRoot(), platform = process.platform) {
+  return path.join(cacheRoot, 'go', 'bin', platform === 'win32' ? 'go.exe' : 'go')
 }
 
 export function goToolchainEnvironment(baseEnv = process.env, cacheRoot = goCacheRoot()) {
@@ -104,20 +104,25 @@ function downloadArchive(release, target) {
   }
 }
 
-function extractToolchain(archive, cacheRoot) {
+function extractToolchain(archive, cacheRoot, platform) {
   const staging = path.join(cacheRoot, `.extract.${process.pid}`)
   const extracted = path.join(staging, 'go')
   const target = path.join(cacheRoot, 'go')
   rmSync(staging, { force: true, recursive: true })
   mkdirSync(staging, { recursive: true })
   try {
-    execFileSync('tar', ['-xzf', archive, '-C', staging], {
+    // Windows ships bsdtar, whose format detection also handles the Go ZIP.
+    const tar =
+      platform === 'win32'
+        ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+        : 'tar'
+    execFileSync(tar, ['-xf', archive, '-C', staging], {
       encoding: 'utf8',
       stdio: ['ignore', 'ignore', 'pipe']
     })
     rmSync(target, { force: true, recursive: true })
     renameSync(extracted, target)
-    chmodSync(goBinaryPath(cacheRoot), 0o755)
+    if (platform !== 'win32') chmodSync(goBinaryPath(cacheRoot, platform), 0o755)
   } catch (error) {
     fail(`extraction failed: ${errorText(error)}`)
   } finally {
@@ -138,7 +143,7 @@ export function ensureGoToolchain({
   const platformId = goArchivePlatform(platform, arch)
   if (!platformId) fail(`unsupported host platform ${platform}-${arch}`)
   const release = GO_RELEASE.platforms[platformId]
-  const binary = goBinaryPath(cacheRoot)
+  const binary = goBinaryPath(cacheRoot, platform)
   const archive = archivePath(cacheRoot, release)
   mkdirSync(cacheRoot, { recursive: true })
   mkdirSync(path.join(cacheRoot, 'gocache'), { recursive: true })
@@ -154,7 +159,7 @@ export function ensureGoToolchain({
         rmSync(archive, { force: true })
         download(release, archive)
       }
-      extract(archive, cacheRoot)
+      extract(archive, cacheRoot, platform)
       if (!versionMatches(binary, cacheRoot))
         fail(`extracted toolchain is not Go ${GO_RELEASE.version}`)
       console.log(`fetch-go: ready ${platformId} (go${GO_RELEASE.version})`)

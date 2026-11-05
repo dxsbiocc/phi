@@ -36,6 +36,12 @@ export type BoundSession =
     }
   | { notReady: { ref: string; envId: string; message: string } }
 
+export function wslShellBindingError(ref: string): Error {
+  return new Error(
+    `Environment ${ref} uses WSL2. Run it from a managed Notebook, Wrapper, or script tool. The Windows agent shell cannot be bound to it.`
+  )
+}
+
 /**
  * The not-ready path shared by skill runs and specialist binding: join a build
  * that is already running, otherwise ask, then build. Declining, failing, or
@@ -78,24 +84,12 @@ export async function ensureEnvironmentReady(input: {
     }
   }
   try {
-    if (!join && input.runtimeSessionId && input.confirmBuild) {
-      const estimate = estimateBuild(input.root, input.descriptor.lockText)
-      const request: ConfirmBuildRequest = {
-        runtimeSessionId: input.runtimeSessionId,
+    if (!join && !(await confirmEnvironmentPreparation(input, missing.ref))) {
+      return {
+        status: 'notReady',
         ref: missing.ref,
-        estimate
-      }
-      if (input.requester.skill) request.skill = input.requester.skill
-      if (input.requester.agent) request.agent = input.requester.agent
-      if (input.requester.wrapper) request.wrapper = input.requester.wrapper
-      const accepted = await untilAbort(input.confirmBuild(request), input.signal)
-      if (!accepted) {
-        return {
-          status: 'notReady',
-          ref: missing.ref,
-          envId: missing.envId,
-          message: `environment ${missing.ref} is not built; the user declined to build it now`
-        }
+        envId: missing.envId,
+        message: `environment ${missing.ref} is not built; the user declined to build it now`
       }
     }
     const requestedBy: { skill?: string; agent?: string; wrapper?: string } = {}
@@ -125,6 +119,16 @@ export async function ensureEnvironmentReady(input: {
       )}`
     }
   }
+}
+
+function confirmEnvironmentPreparation(
+  input: Parameters<typeof ensureEnvironmentReady>[0],
+  ref: string
+): Promise<boolean> | boolean {
+  const { root, descriptor, requester, runtimeSessionId, confirmBuild, signal } = input
+  if (!runtimeSessionId || !confirmBuild) return true
+  const estimate = estimateBuild(root, descriptor.lockText, descriptor.runtime)
+  return untilAbort(confirmBuild({ ...requester, runtimeSessionId, ref, estimate }), signal)
 }
 
 /**
@@ -158,6 +162,7 @@ export async function bindAgentSession(
     ...(deps.environmentsDir ? { environmentsDir: deps.environmentsDir } : {}),
     ...(deps.platform ? { platform: deps.platform } : {})
   })
+  if (descriptor.runtime === 'wsl2') throw wslShellBindingError(descriptor.ref)
   const outcome = await ensureEnvironmentReady({
     root,
     descriptor,

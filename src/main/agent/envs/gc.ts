@@ -1,7 +1,7 @@
 import { lstatSync, readdirSync, realpathSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { removeTree } from './ensure'
+import { removeManagedEnvironmentPrefixSync, removeTree } from './ensure'
 import { removeEnvironmentCache } from './execution'
 import { ownedEnvironmentPrefix, ownedRuntimeDirectory } from './ownership'
 import { hasLiveEnvironmentLeases } from './leases'
@@ -12,6 +12,7 @@ import {
   type EnvironmentIndexEntry
 } from './index-store'
 import { ensureMambarc, ensureRuntimeLayout, runMicromamba } from './runtime'
+import { readWslRuntime } from './wsl'
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 const TEMP_RETENTION_DAYS = 1
@@ -141,7 +142,12 @@ export function collectGarbage(
         continue
       }
       ownedRuntimeDirectory(root, 'cache', envId)
-      removeTree(ownedEnvironmentPrefix(root, envId, current.prefix))
+      removeManagedEnvironmentPrefixSync(
+        root,
+        envId,
+        ownedEnvironmentPrefix(root, envId, current.prefix),
+        current.platform
+      )
       removeEnvironmentCache(root, envId)
       deleteEnvironmentEntry(root, envId)
       removed.push(envId)
@@ -220,16 +226,27 @@ export async function trimPackageCache(
   const runtimeRoot = realpathSync(layout.root)
   ensureMambarc(runtimeRoot)
   const cacheLock = await acquirePackageCacheLock({ root: runtimeRoot, signal: options.signal })
-  let result: Awaited<ReturnType<typeof runMicromamba>>
   try {
-    result = await runMicromamba(['clean', '--tarballs', '--yes'], {
-      root: runtimeRoot,
-      signal: options.signal
-    })
+    const wsl = process.platform === 'win32' ? readWslRuntime(runtimeRoot) : undefined
+    const targets = wsl ? [undefined, wsl] : [undefined]
+    for (const target of targets) {
+      const result = await runMicromamba(['clean', '--tarballs', '--yes'], {
+        root: runtimeRoot,
+        signal: options.signal,
+        ...(target ? { wsl: target } : {})
+      })
+      validateTrimResult(result, options.signal)
+    }
   } finally {
     cacheLock.release()
   }
-  if (options.signal?.aborted || result.code === null) throw new Error('package cache trim aborted')
+}
+
+function validateTrimResult(
+  result: Awaited<ReturnType<typeof runMicromamba>>,
+  signal: AbortSignal | undefined
+): void {
+  if (signal?.aborted || result.code === null) throw new Error('package cache trim aborted')
   if (result.code !== 0) {
     const detail = (result.stderr.trim() || result.stdout.trim()).split('\n')[0]
     throw new Error(

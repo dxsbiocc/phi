@@ -59,31 +59,38 @@ function isDirectory(path: string): boolean {
   }
 }
 
-/**
- * How much of a lock is already in `<root>/pkgs`.
- * An archive counts as its file size. An extracted directory with no archive counts as
- * `downloadBytes / packages`. `remainingBytes` is omitted when the lock has no download size.
- */
-export function estimateBuild(root: string, lockText: string): BuildEstimate {
-  const parsed = parseExplicitLock(lockText)
-  if (!parsed.ok) throw new Error(parsed.errors.join('\n'))
-  const downloadBytes = parseLockDownloadBytes(lockText)
-  const packages = parsed.entries.length
-  const share = downloadBytes !== undefined && packages > 0 ? downloadBytes / packages : undefined
-  const pkgs = join(root, 'pkgs')
+function cacheProgress(
+  pkgs: string,
+  entries: readonly { url: string }[],
+  share: number | undefined
+): { cachedPackages: number; cachedBytes: number } {
   let cachedPackages = 0
   let cachedBytes = 0
-  for (const entry of parsed.entries) {
+  for (const entry of entries) {
     const filename = packageArchiveName(entry.url)
     const archiveSize = fileSize(join(pkgs, filename))
     const extractedOnly =
       archiveSize === undefined && isDirectory(join(pkgs, packageExtractDir(filename)))
     if (archiveSize === undefined && !extractedOnly) continue
     cachedPackages += 1
-    if (downloadBytes === undefined) continue
     if (archiveSize !== undefined) cachedBytes += archiveSize
     else if (share !== undefined) cachedBytes += share
   }
+  return { cachedPackages, cachedBytes }
+}
+
+/** An extracted package with no archive counts as its share of the total download size. */
+export function estimateBuild(root: string, lockText: string, runtime?: 'wsl2'): BuildEstimate {
+  const parsed = parseExplicitLock(lockText)
+  if (!parsed.ok) throw new Error(parsed.errors.join('\n'))
+  const downloadBytes = parseLockDownloadBytes(lockText)
+  const packages = parsed.entries.length
+  const share = downloadBytes !== undefined && packages > 0 ? downloadBytes / packages : undefined
+  // The WSL cache belongs to the guest. Avoid synchronous scans over its network share.
+  const { cachedPackages, cachedBytes } =
+    runtime === 'wsl2'
+      ? { cachedPackages: 0, cachedBytes: 0 }
+      : cacheProgress(join(root, 'pkgs'), parsed.entries, share)
   const estimate: BuildEstimate = { packages, cachedPackages }
   if (downloadBytes !== undefined) {
     estimate.downloadBytes = downloadBytes

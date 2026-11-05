@@ -19,6 +19,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 
+import {
+  installApplication,
+  validateApplicationInstallationSource,
+  validateApplicationMetadata
+} from '../src/main/agent/envs/applications'
 import { installPythonApplication } from '../src/main/agent/envs/applications/python'
 import type {
   ApplicationInstallInput,
@@ -40,7 +45,10 @@ function script(path: string, source: string): void {
   chmodSync(path, 0o755)
 }
 
-function fixture(requirements = VALID_REQUIREMENTS): {
+function fixture(
+  requirements = VALID_REQUIREMENTS,
+  platform = currentPlatform()
+): {
   input: ApplicationInstallInput
   installation: PythonUvInstallation
   calls: () => Array<{ tool: string; args: string[]; env: Record<string, string> }>
@@ -53,20 +61,24 @@ function fixture(requirements = VALID_REQUIREMENTS): {
   mkdirSync(join(prefix, 'bin'), { recursive: true })
   writeFileSync(join(sourceDir, 'requirements.lock'), requirements)
   const record = join(root, 'calls.jsonl')
+  const windows = platform === 'win32-x64'
+  const scripts = join(prefix, windows ? 'Scripts' : 'bin')
+  const entry = join(scripts, windows ? 'demo.exe' : 'demo')
+  mkdirSync(scripts, { recursive: true })
   const common = `
 const fs = require('node:fs')
 const path = require('node:path')
-const prefix = path.dirname(path.dirname(__filename))
+const prefix = process.cwd()
 fs.appendFileSync(${JSON.stringify(record)}, JSON.stringify({tool: path.basename(__filename), args: process.argv.slice(2), env: process.env}) + '\\n')
 `
   script(
-    join(prefix, 'bin', 'python'),
+    windows ? join(prefix, 'python.exe') : join(scripts, 'python'),
     `${common}
-console.log(JSON.stringify({prefix, scripts: path.join(prefix, 'bin'), purelib: path.join(prefix, 'lib'), platlib: path.join(prefix, 'lib')}))
+console.log(JSON.stringify({prefix, scripts: ${JSON.stringify(scripts)}, purelib: path.join(prefix, 'lib'), platlib: path.join(prefix, 'lib')}))
 `
   )
   script(
-    join(prefix, 'bin', 'uv'),
+    windows ? join(prefix, 'Library', 'bin', 'uv.exe') : join(scripts, 'uv'),
     `${common}
 const args = process.argv.slice(2)
 if (args.includes('--dry-run')) process.exit(0)
@@ -81,9 +93,9 @@ if (args.includes('sync') || args.includes('install')) {
     console.error('Hash mismatch')
     process.exitCode = 1
   } else if (mode === 'outside') {
-    fs.symlinkSync(${JSON.stringify(process.execPath)}, path.join(prefix, 'bin', 'demo'))
+    fs.symlinkSync(${JSON.stringify(process.execPath)}, ${JSON.stringify(entry)})
   } else {
-    fs.writeFileSync(path.join(prefix, 'bin', 'demo'), '#!/bin/sh\\necho installed\\n', {mode: 0o755})
+    fs.writeFileSync(${JSON.stringify(entry)}, '#!/bin/sh\\necho installed\\n', {mode: 0o755})
   }
 } else if (args.includes('check')) {
   if (fs.existsSync(path.join(prefix, 'incomplete'))) {
@@ -102,7 +114,7 @@ if (args.includes('sync') || args.includes('install')) {
     executable: 'demo'
   }
   return {
-    input: { root, prefix, sourceDir, platform: currentPlatform(), installation },
+    input: { root, prefix, sourceDir, platform, installation },
     installation,
     calls: () =>
       existsSync(record)
@@ -308,6 +320,69 @@ test('Python installer uses hashed wheels with isolated settings and records ins
   }
 })
 
+test(
+  'Windows Python applications use prefix tools, the DLL search path and a Scripts executable',
+  { skip: process.platform === 'win32' ? 'The fake executables use POSIX shebangs' : false },
+  async () => {
+    const f = fixture(VALID_REQUIREMENTS, 'win32-x64')
+    try {
+      const dllPath = join(f.input.prefix, 'Library', 'bin')
+      const input = {
+        ...f.input,
+        activation: {
+          pathPrepend: [dllPath, f.input.sourceDir, 'bin'],
+          set: { UV_INDEX_URL: 'https://untrusted.example/simple' }
+        }
+      }
+      const result = await installApplication(input)
+      const expected = join(input.prefix, 'Scripts', 'demo.exe')
+      assert.equal(result.executable, expected)
+      assert.deepEqual(
+        validateApplicationMetadata(input.prefix, f.installation, result, input.platform),
+        result
+      )
+      const calls = f.calls()
+      assert.deepEqual([...new Set(calls.map((call) => call.tool))], ['python.exe', 'uv.exe'])
+      const uv = calls.find((call) => call.tool === 'uv.exe')
+      assert.ok(uv)
+      assert.equal(uv.args[uv.args.indexOf('--python') + 1], join(input.prefix, 'python.exe'))
+      assert.equal(uv.env.PATH.split(';')[0], dllPath)
+      assert.ok(uv.env.PATH.split(';').includes(join(input.prefix, 'Scripts')))
+      assert.ok(!uv.env.PATH.split(';').includes(input.sourceDir))
+      assert.ok(!uv.env.PATH.split(';').includes('bin'))
+      assert.equal(uv.env.PIP_CONFIG_FILE, 'NUL')
+      assert.equal(uv.env.PYTHONUTF8, '1')
+      assert.equal(uv.env.USERPROFILE, uv.env.HOME)
+      assert.ok(uv.env.TEMP.startsWith(input.root))
+      assert.ok(uv.env.APPDATA.startsWith(input.root))
+      assert.equal(uv.env.UV_INDEX_URL, undefined)
+      assert.deepEqual(await installApplication(input), result)
+      assert.equal(f.calls().length, calls.length)
+    } finally {
+      f.clean()
+    }
+  }
+)
+
+test('Windows rejects Python application WSL fallback before provisioning tools', () => {
+  const f = fixture()
+  try {
+    assert.throws(
+      () =>
+        validateApplicationInstallationSource(
+          f.installation,
+          f.input.sourceDir,
+          'linux-x64',
+          'win32'
+        ),
+      /requires a Windows lock/
+    )
+    assert.deepEqual(f.calls(), [])
+  } finally {
+    f.clean()
+  }
+})
+
 test('Python installer rejects Python installation paths outside its prefix', async () => {
   const f = fixture()
   try {
@@ -414,7 +489,9 @@ test(
     let closed = false
     let incompleteWheel: Awaited<ReturnType<typeof createPythonWheelFixture>> | undefined
     try {
-      const requirements = `phi-test-app @ ${wheel.url} --hash=sha256:${wheel.sha256}\n`
+      const requirements =
+        `phi-test-app @ ${wheel.url} ; sys_platform == '${process.platform}' --hash=sha256:${wheel.sha256}\n` +
+        `phi-test-app @ https://example.invalid/phi_test_app-1.0.0-py3-none-any.whl ; sys_platform != '${process.platform}' --hash=sha256:${HASH}\n`
       const sourceDir = join(root, 'source')
       const prefix = join(root, 'envs', 'wheel')
       mkdirSync(sourceDir, { recursive: true })

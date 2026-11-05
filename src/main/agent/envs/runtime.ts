@@ -1,21 +1,24 @@
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, resolve, win32 } from 'node:path'
 
 import { stringify } from 'yaml'
 
 import { getPhiAgentDir } from '../runtime-paths'
 import { getMicromambaPath } from './paths'
 import { type PhiPlatform } from './platform'
+import { spawnWslProcess, type WslProcess } from './wsl-process'
 import {
+  bindWslRuntime,
   posixJoin,
-  requireReadyWsl,
-  stageWslMicromamba,
-  toLinuxPath,
+  stageWslRuntime,
   usesWslEnvironment,
+  wslProcessEnvironment,
+  wslRuntimeDirectory,
   wslSpawnArgv,
-  type ReadyWsl
+  type ReadyWsl,
+  type WslRuntime
 } from './wsl'
 
 import { errorMessage } from '../../../shared/errorCodes'
@@ -89,11 +92,7 @@ export interface RunMicromambaOptions {
    */
   condaOverrides?: CondaOverrides
   /** Windows hosts invoke linux-x64 micromamba through WSL2. */
-  wsl?: {
-    ready: import('./wsl').ReadyWsl
-    linuxRoot: string
-    linuxMicromamba: string
-  }
+  wsl?: WslRuntime
 }
 
 export interface CondaOverrides {
@@ -145,23 +144,18 @@ export function withWsl(
   return wsl ? { ...options, wsl } : options
 }
 
-export function prepareWslMicromambaRun(input: {
+export async function prepareWslMicromambaRun(input: {
   hostPlatform?: NodeJS.Platform
   platform: PhiPlatform
   root: string
   settings?: RuntimeSettings
   wsl?: ReadyWsl
-}): RunMicromambaOptions['wsl'] {
+}): Promise<RunMicromambaOptions['wsl']> {
   if (!usesWslEnvironment(input.hostPlatform ?? process.platform, input.platform)) return undefined
-  const ready = input.wsl ?? requireReadyWsl()
-  mkdirSync(join(input.root, 'pkgs-linux-x64'), { recursive: true })
-  const linuxRoot = toLinuxPath(input.root, ready.distro)
-  writeLinuxMambarc(input.root, linuxRoot, input.settings)
-  return {
-    ready,
-    linuxRoot,
-    linuxMicromamba: stageWslMicromamba(ready, getMicromambaPath('linux-x64'))
-  }
+  const runtime = await bindWslRuntime(input.root, input.wsl)
+  await stageWslRuntime(runtime, getMicromambaPath('linux-x64'))
+  writeLinuxMambarc(wslRuntimeDirectory(runtime), runtime.linuxRoot, input.settings)
+  return runtime
 }
 
 export function writeLinuxMambarc(
@@ -172,7 +166,7 @@ export function writeLinuxMambarc(
   const document: Record<string, unknown> = {
     channels: ['conda-forge', 'bioconda'],
     channel_priority: 'strict',
-    pkgs_dirs: [posixJoin(linuxRoot, 'pkgs-linux-x64')],
+    pkgs_dirs: [posixJoin(linuxRoot, 'pkgs')],
     envs_dirs: [posixJoin(linuxRoot, 'envs')]
   }
   const mirrors = mirroredChannels(settings.channelMirrors)
@@ -229,14 +223,27 @@ export function ensureMambarc(root: string): void {
   writeMambarc(root)
 }
 
-function windowsSystemRoot(base: NodeJS.ProcessEnv): string {
-  return base.SystemRoot || base.windir || 'C:\\Windows'
+/** Use one spelling per Windows variable so a case variant cannot override it at spawn. */
+export function normalizeWindowsEnvironment(base: NodeJS.ProcessEnv): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined || key.startsWith('=')) continue
+    const name = key.toUpperCase()
+    const canonical = name === 'SYSTEMROOT' ? 'SystemRoot' : name === 'WINDIR' ? 'windir' : name
+    result[canonical] = value
+  }
+  return result
 }
 
-function minimalPath(platform: NodeJS.Platform, base: NodeJS.ProcessEnv): string {
-  if (platform !== 'win32') return UNIX_MINIMAL_PATH
+function windowsSystemRoot(base: NodeJS.ProcessEnv): string {
+  return (
+    base.SystemRoot || base.windir || process.env.SystemRoot || process.env.windir || 'C:\\Windows'
+  )
+}
+
+export function windowsSystemPath(base: NodeJS.ProcessEnv): string[] {
   const systemRoot = windowsSystemRoot(base)
-  return [join(systemRoot, 'System32'), systemRoot].join(';')
+  return [win32.join(systemRoot, 'System32'), systemRoot]
 }
 
 export function micromambaEnvironment(
@@ -244,12 +251,13 @@ export function micromambaEnvironment(
   base: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
 ): Record<string, string> {
+  const host = platform === 'win32' ? normalizeWindowsEnvironment(base) : base
   const env: Record<string, string> = {}
-  for (const [name, value] of Object.entries(base)) {
+  for (const [name, value] of Object.entries(host)) {
     if (value === undefined || !keptEnvName(name, platform)) continue
     env[name] = value
   }
-  env.PATH = minimalPath(platform, base)
+  env.PATH = platform === 'win32' ? windowsSystemPath(host).join(';') : UNIX_MINIMAL_PATH
   env.MAMBA_ROOT_PREFIX = root
   env.MAMBA_NO_BANNER = '1'
   // micromamba keeps per-user state under $HOME (for example the `micromamba run` process
@@ -261,10 +269,11 @@ export function micromambaEnvironment(
   env.HOME = home
   if (platform === 'win32') {
     env.USERPROFILE = home
-    env.SystemRoot = windowsSystemRoot(base)
-    env.windir = base.windir || env.SystemRoot
-    env.TEMP = base.TEMP || join(home, 'Temp')
-    env.TMP = base.TMP || env.TEMP
+    env.SystemRoot = windowsSystemRoot(host)
+    env.windir = env.SystemRoot
+    env.COMSPEC = win32.join(env.SystemRoot, 'System32', 'cmd.exe')
+    env.TEMP = host.TEMP || join(home, 'Temp')
+    env.TMP = host.TMP || env.TEMP
   }
   return env
 }
@@ -278,12 +287,12 @@ export async function runMicromamba(
   args: readonly string[],
   options: RunMicromambaOptions
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const executable = options.executable ?? getMicromambaPath()
-  const child = spawnMicromamba(executable, args, options)
+  const executable = options.wsl?.ready.executable ?? options.executable ?? getMicromambaPath()
+  const { child, signal } = spawnMicromamba(executable, args, options)
   const stdoutStream = child.stdout
   const stderrStream = child.stderr
   if (!stdoutStream || !stderrStream) {
-    child.kill('SIGKILL')
+    signal('SIGKILL')
     throw new Error(`Failed to spawn micromamba at ${executable}: stdio pipes were not created`)
   }
   stdoutStream.setEncoding('utf8')
@@ -312,7 +321,7 @@ export async function runMicromamba(
     const kill = (): void => {
       if (settled || killed) return
       killed = true
-      child.kill('SIGKILL')
+      signal('SIGKILL')
     }
 
     const append = (stream: 'stdout' | 'stderr', text: string): void => {
@@ -415,7 +424,7 @@ function spawnMicromamba(
   executable: string,
   args: readonly string[],
   options: RunMicromambaOptions
-): ReturnType<typeof spawn> {
+): WslProcess {
   try {
     mkdirSync(micromambaHome(options.root), { recursive: true })
     if (options.wsl) {
@@ -435,22 +444,30 @@ function spawnMicromamba(
           }
         }
       )
-      return spawn(plan.executable, plan.args, {
+      return spawnWslProcess(options.wsl, plan, {
         cwd: options.root,
-        env: process.env,
+        env: wslProcessEnvironment(options.baseEnv),
         shell: false,
+        windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe']
       })
     }
-    return spawn(executable, micromambaInvocationArgs(options.root, args), {
+    const child = spawn(executable, micromambaInvocationArgs(options.root, args), {
       cwd: options.root,
       env: {
         ...micromambaEnvironment(options.root, options.baseEnv ?? process.env),
         ...condaOverrideVariables(options.condaOverrides)
       },
       shell: false,
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     })
+    return {
+      child,
+      signal: (name) => {
+        child.kill(name)
+      }
+    }
   } catch (error) {
     const message = errorMessage(error)
     throw new Error(`Failed to spawn micromamba at ${executable}: ${message}`)

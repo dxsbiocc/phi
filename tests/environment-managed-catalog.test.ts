@@ -282,11 +282,12 @@ test('summary catalog returns locked package versions without dynamic filesystem
   }
 })
 
-test('listing on Windows builds official environments without a win32 lock through WSL2', async () => {
+test('Windows keeps default Python native and offers WSL2 for a Linux-only R environment', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'phi-managed-win32-'))
   try {
     const environmentsDir = join(temp, 'official')
     copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
+    copyMinimal(join(environmentsDir, 'phi-r'), 'phi-r')
     const catalog = await listManagedEnvironments({
       root: join(temp, 'runtime'),
       environmentsDir,
@@ -296,14 +297,17 @@ test('listing on Windows builds official environments without a win32 lock throu
       includeDynamic: false
     })
     const python = catalog.find((entry) => entry.ref === 'phi:python@1')
-    assert.equal(python?.state, 'absent')
-    assert.equal(python?.runtime, 'wsl2')
-    assert.equal(python?.unavailableReason, undefined)
-    const linux = describeEnvironment('phi:python@1', {
+    assert.equal(python?.state, 'unavailable')
+    assert.equal(python?.unavailableReason, 'missing-lock')
+    const r = catalog.find((entry) => entry.ref === 'phi:r@1')
+    assert.equal(r?.state, 'absent')
+    assert.equal(r?.runtime, 'wsl2')
+    assert.equal(r?.unavailableReason, undefined)
+    const linux = describeEnvironment('phi:r@1', {
       environmentsDir,
       platform: 'linux-x64'
     })
-    assert.equal(python?.envId, envIdFor(linux))
+    assert.equal(r?.envId, envIdFor(linux))
   } finally {
     rmSync(temp, { recursive: true, force: true })
   }
@@ -333,7 +337,7 @@ test('listing on Windows marks official environments without any lock unavailabl
   }
 })
 
-test('listing on Windows includes official environments that have a win32 lock', async () => {
+test('Windows lists separate native and WSL builds of official Python', async () => {
   const temp = mkdtempSync(join(tmpdir(), 'phi-managed-win32-lock-'))
   try {
     const environmentsDir = join(temp, 'official')
@@ -352,7 +356,19 @@ test('listing on Windows includes official environments that have a win32 lock',
     })
     const python = catalog.find((entry) => entry.ref === 'phi:python@1')
     assert.equal(python?.state, 'absent')
+    assert.equal(python?.runtime, undefined)
     assert.equal(python?.unavailableReason, undefined)
+    const wsl = catalog.find((entry) => entry.ref === 'phi:python-wsl@1')
+    assert.equal(wsl?.state, 'absent')
+    assert.equal(wsl?.runtime, 'wsl2')
+    assert.ok(wsl?.consumers.some((consumer) => consumer.name === 'phi-python-wsl'))
+    assert.notEqual(python?.envId, wsl?.envId)
+    const linux = describeEnvironment('phi:python@1', { environmentsDir, platform: 'linux-x64' })
+    assert.equal(wsl?.envId, envIdFor(linux))
+    assert.throws(
+      () => describeEnvironment('phi:python-wsl@1', { environmentsDir, platform: 'linux-x64' }),
+      /requires Windows x64/
+    )
   } finally {
     rmSync(temp, { recursive: true, force: true })
   }

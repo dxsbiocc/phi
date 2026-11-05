@@ -7,7 +7,9 @@ import test, { type TestContext } from 'node:test'
 import {
   PHI_LOCK_PLATFORMS,
   computeEnvId,
+  condaSpecOf,
   lockSha256,
+  parseEnvironmentSpec,
   parseExplicitLock,
   parseLockDownloadBytes
 } from '../src/main/agent/envs'
@@ -154,6 +156,28 @@ test('committed minimal locks parse and pin python 3.12', () => {
     assert.equal(parsed.ok, true)
     if (!parsed.ok) return
     assert.ok(hasPython312(parsed.entries.map((entry) => entry.url)), `${platform} lock`)
+  }
+})
+
+test('Windows official Python locks contain the declared native dependencies', () => {
+  for (const name of ['phi-python', 'phi-jupyter']) {
+    const directory = join(repoRoot, 'resources/runtime/environments', name)
+    const spec = parseEnvironmentSpec(readFileSync(join(directory, 'environment.yml'), 'utf8'))
+    const lock = parseExplicitLock(readFileSync(join(directory, 'locks/win32-x64.txt'), 'utf8'))
+    assert.ok(spec.ok, name)
+    assert.ok(lock.ok, name)
+    const locked = new Set(
+      lock.entries.map(({ url }) => {
+        const [subdir, archive] = new URL(url).pathname.split('/').slice(-2)
+        assert.ok(subdir === 'win-64' || subdir === 'noarch', `${name}: unexpected ${subdir}`)
+        return /^(.+)-[^-]+-[^-]+\.(?:conda|tar\.bz2)$/u.exec(archive)?.[1]
+      })
+    )
+    for (const specifier of condaSpecOf(spec.spec, 'win32-x64').dependencies) {
+      assert.equal(typeof specifier, 'string')
+      const [dependency] = String(specifier).split(/[\s=<>!~]/u, 1)
+      assert.ok(locked.has(dependency), `${name}: regenerate win32-x64.txt for ${dependency}`)
+    }
   }
 })
 

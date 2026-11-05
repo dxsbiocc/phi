@@ -27,6 +27,7 @@ import {
 import {
   HOST_KERNEL_LABEL,
   NOT_BUILT_KERNEL_LABEL,
+  WSL_PYTHON_KERNEL_NAME,
   hostKernelArgv,
   managedKernelsDir,
   syncManagedKernels,
@@ -175,6 +176,35 @@ test(
 )
 
 test(
+  'WSL Python is listed only on Windows and never replaces native Python as default',
+  withFixture((fixture) => {
+    const windows = listAnalysisKernels({
+      ...ctx(fixture),
+      platform: 'win32-x64',
+      hostPlatform: 'win32',
+      hostJupyterCommand: null
+    })
+    const optional = windows.kernels.find((kernel) => kernel.name === WSL_PYTHON_KERNEL_NAME)
+    assert.equal(optional?.environment?.ref, 'phi:python-wsl@1')
+    assert.equal(windows.preferredKernelName, DEFAULT_KERNEL_NAME)
+    assert.equal(
+      selectNotebookKernel(notebook(undefined, 'python'), windows)?.name,
+      DEFAULT_KERNEL_NAME
+    )
+
+    const native = listAnalysisKernels({ ...ctx(fixture), hostJupyterCommand: null })
+    assert.equal(
+      native.kernels.some((kernel) => kernel.name === WSL_PYTHON_KERNEL_NAME),
+      false
+    )
+    assert.equal(
+      selectNotebookKernel(notebook({ name: WSL_PYTHON_KERNEL_NAME }, 'python'), native),
+      null
+    )
+  })
+)
+
+test(
   'Windows python kernelspec uses prefix python.exe and a semicolon PATH',
   withFixture((fixture) => {
     const { prefix } = install(fixture, 'phi:python@1')
@@ -184,6 +214,26 @@ test(
     assert.equal(spec.argv[0], join(prefix, 'python.exe'))
     assert.match(spec.env?.PATH ?? '', /;/u)
     assert.equal(spec.env?.R_PROFILE_USER, 'NUL')
+  })
+)
+
+test(
+  'Windows removes unusable host kernel copies instead of advertising a broken launcher',
+  withFixture((fixture) => {
+    const hostDir = join(fixture.root, '..', 'host-kernels')
+    const listing = hostKernelspecs(hostDir)
+    const options = { ...ctx(fixture), hostRunner: hostRunner(listing) }
+    listAnalysisKernels(options)
+    const stale = join(managedKernelsDir(fixture.root), 'host-python3')
+    assert.equal(existsSync(stale), true)
+
+    const windows = listAnalysisKernels({ ...options, hostPlatform: 'win32' })
+    assert.equal(existsSync(stale), false)
+    assert.equal(
+      windows.kernels.some((kernel) => kernel.source === 'host'),
+      false
+    )
+    assert.equal(selectNotebookKernel(notebook({ name: 'host-python3' }, 'python'), windows), null)
   })
 )
 

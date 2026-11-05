@@ -14,10 +14,14 @@ import {
   computeEnvId,
   parseEnvironmentRef,
   readEnvironmentIndex,
+  readWslRuntime,
   removeReferrer,
   removeEnvironmentCache,
-  removeTree,
-  repairEnvironment
+  removeManagedEnvironmentPrefix,
+  repairEnvironment,
+  usesWslEnvironment,
+  wslEnvironmentPrefix,
+  type PhiPlatform
 } from '../envs'
 import { deleteEnvironmentEntry } from '../envs/index-store'
 import { tryAcquireEnvironmentLock } from '../envs/lock'
@@ -259,9 +263,9 @@ export function createManagedEnvironmentActions(
         throw new Error('该环境仍被运行中的会话使用，暂时不能删除')
       }
       const prefix = ownedEnvironmentPrefix(dependencies.root, envId, current.prefix)
-      const bytesFreed = await sizeOf(prefix)
+      const bytesFreed = await sizeOf(runtimePrefix(envId, current.platform, prefix))
       ownedRuntimeDirectory(dependencies.root, 'cache', envId)
-      removeTree(ownedEnvironmentPrefix(dependencies.root, envId, prefix))
+      await removeManagedEnvironmentPrefix(dependencies.root, envId, prefix, current.platform)
       removeEnvironmentCache(dependencies.root, envId)
       deleteEnvironmentEntry(dependencies.root, envId)
       descriptors.delete(envId)
@@ -269,6 +273,13 @@ export function createManagedEnvironmentActions(
     } finally {
       lock.release()
     }
+  }
+
+  function runtimePrefix(envId: string, platform: PhiPlatform, hostPrefix: string): string {
+    const wsl = usesWslEnvironment(process.platform, platform)
+      ? readWslRuntime(dependencies.root)
+      : undefined
+    return wsl ? wslEnvironmentPrefix(wsl, envId) : hostPrefix
   }
 
   async function clean(): Promise<ManagedEnvironmentCleanResult> {
@@ -308,7 +319,7 @@ export function createManagedEnvironmentActions(
           entry.referrers.length === 0 &&
           REMOVABLE_STATES.has(entry.status)
         ) {
-          sizes.set(envId, await sizeOf(entry.prefix))
+          sizes.set(envId, await sizeOf(runtimePrefix(envId, entry.platform, entry.prefix)))
         }
       })
     )

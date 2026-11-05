@@ -137,6 +137,7 @@ Foundation (confirmed 2026-09-29): [phi-runtime-foundation.md](../design/phi-run
 - The main agent's bash keeps using the host environment.
 - Plugins (step 6), content distribution (step 7), and remote / HPC runtime (step 8) follow after the beta, except the local skill catalog and enablement, which may land in the beta if time allows.
 - Status (2026-10-23): SSH projects now use the remote OMP RPC runtime exclusively; the rollback flag and desktop-side remote agent tools are removed. Legacy SSH sessions remain readable but cannot continue. First-use asset delivery remains release-verification work and does not change the internal beta's local workbench scope.
+- Windows x64 acceptance: install the NSIS preview on a clean Windows account and verify local chat and restart without system Bun, Conda, or WSL. The native CI smoke builds the official Python and Jupyter locks and runs a Notebook cell. Verify the separate WSL2 routes with a Linux distribution for R, Python packages such as `pysam`, and a Conda-profile Nextflow job.
 
 ## P1: In-App Terminal (local, manual)
 

@@ -183,13 +183,13 @@ test('micromambaEnvironment on Windows keeps SystemRoot and overrides USERPROFIL
     {
       HOME: 'C:\\Users\\phi',
       USERPROFILE: 'C:\\Users\\phi',
-      SystemRoot: 'C:\\Windows',
+      SYSTEMROOT: 'C:\\Windows',
       windir: 'C:\\Windows',
-      TEMP: 'C:\\Users\\phi\\AppData\\Local\\Temp',
+      temp: 'C:\\Users\\phi\\AppData\\Local\\Temp',
       TMP: 'C:\\Users\\phi\\AppData\\Local\\Temp',
       PATHEXT: '.EXE;.CMD',
-      COMSPEC: 'C:\\Windows\\System32\\cmd.exe',
-      PATH: 'C:\\Windows\\System32',
+      ComSpec: 'C:\\untrusted\\cmd.exe',
+      Path: 'C:\\conda\\Scripts',
       CONDA_PREFIX: 'C:\\conda',
       FOO: 'bar'
     },
@@ -199,7 +199,10 @@ test('micromambaEnvironment on Windows keeps SystemRoot and overrides USERPROFIL
   assert.equal(env.USERPROFILE, join('/runtime', 'home'))
   assert.equal(env.SystemRoot, 'C:\\Windows')
   assert.equal(env.windir, 'C:\\Windows')
-  assert.equal(env.PATH, [join('C:\\Windows', 'System32'), 'C:\\Windows'].join(';'))
+  assert.equal(env.PATH, 'C:\\Windows\\System32;C:\\Windows')
+  assert.equal(env.Path, undefined)
+  assert.equal(env.COMSPEC, 'C:\\Windows\\System32\\cmd.exe')
+  assert.equal(env.TEMP, 'C:\\Users\\phi\\AppData\\Local\\Temp')
   assert.equal(env.MAMBA_ROOT_PREFIX, '/runtime')
   assert.equal(env.CONDA_PREFIX, undefined)
   assert.equal(env.FOO, undefined)

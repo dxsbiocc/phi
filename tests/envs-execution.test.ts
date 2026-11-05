@@ -263,29 +263,41 @@ test('environmentVariables on Windows uses a semicolon PATH and NUL for R user f
     const envId = 'jupyter-0123456789ab'
     const prefix = join(root, 'envs', envId)
     const scripts = join(prefix, 'Scripts')
+    const library = join(prefix, 'Library', 'bin')
     const env = handle(
       root,
       metadata(envId, {
         activation: {
-          set: { CONDA_PREFIX: prefix },
-          pathPrepend: [prefix, scripts]
+          set: { conda_prefix: prefix, PythonUtf8: '0' },
+          pathPrepend: [prefix, library, scripts, scripts.toUpperCase()]
         }
       })
     )
     const variables = environmentVariables(env, {
       baseEnv: {
-        USERPROFILE: 'C:\\Users\\phi',
-        SystemRoot: 'C:\\Windows',
+        userprofile: 'C:\\Users\\phi',
+        SYSTEMROOT: 'D:\\Windows',
+        Path: 'C:\\untrusted',
         LANG: 'en_US.UTF-8'
       },
       platform: 'win32'
     })
     assert.equal(variables.USERPROFILE, 'C:\\Users\\phi')
+    assert.equal(variables.CONDA_PREFIX, prefix)
+    assert.equal(variables.SystemRoot, 'D:\\Windows')
+    assert.equal(variables.PYTHONUTF8, '1')
+    assert.equal(variables.PythonUtf8, undefined)
+    assert.equal(variables.Path, undefined)
     assert.equal(variables.R_PROFILE_USER, 'NUL')
     assert.equal(variables.R_ENVIRON_USER, 'NUL')
     assert.equal(
       variables.PATH,
-      [prefix, scripts, join('C:\\Windows', 'System32'), 'C:\\Windows'].join(';')
+      [prefix, library, scripts, 'D:\\Windows\\System32', 'D:\\Windows'].join(';')
+    )
+    assert.throws(
+      () =>
+        environmentVariables(env, { extraEnv: { PythonPath: 'C:\\untrusted' }, platform: 'win32' }),
+      /extraEnv cannot set PythonPath/
     )
   })
 })
