@@ -3,6 +3,7 @@ import { getPhiAgentDir } from '../runtime-paths'
 import type { PhiSessionManifest } from './session-store'
 import {
   assertRuntimeReferenceProject,
+  isCanonicalWindowsPath,
   remoteOmpDurableSessionKey,
   type RemoteOmpScope
 } from './runtime-reference'
@@ -40,7 +41,10 @@ function parse(value: unknown): RuntimeSessionOrigin {
     (data.projectId !== null && !id(data.projectId)) ||
     typeof data.cwd !== 'string' ||
     data.cwd.length > 4096 ||
-    !data.cwd.startsWith('/') ||
+    !(
+      data.cwd.startsWith('/') ||
+      (data.remoteScope === undefined && isCanonicalWindowsPath(data.cwd, true))
+    ) ||
     Array.from(data.cwd).some(
       (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
     )
