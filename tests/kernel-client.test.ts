@@ -305,6 +305,34 @@ test('kernel client maps protocol failures to typed errors', async () => {
   await client.close()
 })
 
+test('tagged local kernel stdio separates unrelated stdout from protocol frames', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-noisy-kernel-'))
+  const entry = join(root, 'noisy-kernel.cjs')
+  writeFileSync(
+    entry,
+    `const { createInterface } = require('node:readline');
+     const prefix = process.env.PHI_KERNEL_STDIO_FRAMES === '1' ? '\\nPHI-KERNEL ' : '';
+     let request = 0;
+     createInterface({input: process.stdin}).on('line', (line) => {
+       const { id } = JSON.parse(line);
+       request += 1;
+       if (request === 2) process.stdout.write('dependency output without a line ending');
+       const result = request === 1 ? {controllerGeneration:1} : {sessions:[]};
+       const payload = request === 3 ? 'broken frame' : JSON.stringify({kind:'response', id, ok:true, result});
+       process.stdout.write(prefix + payload + '\\n');
+     });`
+  )
+  const kernel = spawnKernelStdio({ bunExecutable: process.execPath, entry, taggedOutput: true })
+  try {
+    await kernel.client.hello()
+    assert.deepEqual(await kernel.client.request('sessions.list', {}), { sessions: [] })
+    await assert.rejects(kernel.client.request('sessions.list', {}), /Frame is not valid JSON/)
+  } finally {
+    await kernel.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test(
   'stdio adapter spawns the kernel and reserves stderr for diagnostics',
   { timeout: 15_000 },

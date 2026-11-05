@@ -5,6 +5,9 @@ export const MAX_FRAME_BYTES = 1024 * 1024
 export const MAX_ERROR_DETAIL_BYTES = 4 * 1024
 export const MAX_CLIENT_RUN_KEY_LENGTH = 256
 
+export const KERNEL_STDIO_FRAMES_ENV = 'PHI_KERNEL_STDIO_FRAMES'
+export const KERNEL_STDIO_FRAME_PREFIX = 'PHI-KERNEL '
+
 export const KERNEL_V1_METHODS = [
   'kernel.hello',
   'session.create',

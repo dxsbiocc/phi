@@ -74,12 +74,20 @@ export async function launchLocalKernel(
   }
   const verified =
     'package' in options ? await verifyLocalKernelPackage(options.package) : undefined
+  const taggedOutput = process.platform === 'win32'
   const mode: SpawnKernelStdioOptions = verified
-    ? { executable: verified.executable, cwd: options.cwd, env, onDiagnostic: options.onDiagnostic }
+    ? {
+        executable: verified.executable,
+        cwd: options.cwd,
+        env,
+        taggedOutput,
+        onDiagnostic: options.onDiagnostic
+      }
     : {
         sourceMode: true,
         cwd: options.cwd,
         env,
+        taggedOutput,
         bunExecutable: options.bunExecutable,
         bunArgs: options.bunArgs,
         entry: options.entry,
