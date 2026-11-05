@@ -49,6 +49,7 @@ type SessionSidebarProps = {
   onExportSession: (session: SessionSummary) => void
   onStartProjectChat: (project: Project) => void
   onDeleteProject: (project: Project) => void
+  onRefreshProjects?: () => void | Promise<void>
   onFetchProjectSessions: (
     workingDirectory: string,
     projectId?: string
@@ -81,6 +82,7 @@ function SessionSidebar({
   onExportSession,
   onStartProjectChat,
   onDeleteProject,
+  onRefreshProjects,
   onFetchProjectSessions,
   getSessionRuntimeState
 }: SessionSidebarProps): React.JSX.Element {
@@ -271,6 +273,7 @@ function SessionSidebar({
                   setDeleteProjectTarget(project)
                 })
               }}
+              onRefreshGitStatus={onRefreshProjects}
               onFetchSessions={onFetchProjectSessions}
               getSessionRuntimeState={getSessionRuntimeState}
               compactHoverPreview={compactHoverPreview}

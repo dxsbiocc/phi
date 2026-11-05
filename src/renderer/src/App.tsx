@@ -4082,6 +4082,7 @@ function App(): React.JSX.Element {
       onExportSession: onExportSession,
       onStartProjectChat: onStartProjectChatFromSidebar,
       onDeleteProjectEntry: onDeleteProjectEntry,
+      onRefreshProjects: refreshProjects,
       onFetchProjectSessions: onFetchProjectSessions,
       getSessionRuntimeState: getSessionRuntimeState
     }),
@@ -4165,6 +4166,7 @@ function App(): React.JSX.Element {
       onExportSession,
       onStartProjectChatFromSidebar,
       onDeleteProjectEntry,
+      refreshProjects,
       onFetchProjectSessions,
       getSessionRuntimeState
     ]

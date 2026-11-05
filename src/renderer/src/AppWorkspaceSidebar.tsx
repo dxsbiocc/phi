@@ -132,6 +132,7 @@ export type AppWorkspaceSidebarProps = {
   onExportSession: (session: SessionSummary) => void
   onStartProjectChat: (project: Project) => Promise<void>
   onDeleteProjectEntry: (project: Project) => Promise<void>
+  onRefreshProjects: () => Promise<void>
   onFetchProjectSessions: (
     workingDirectory: string,
     projectId?: string
@@ -245,6 +246,7 @@ function AppWorkspaceSidebarImpl({
   onExportSession,
   onStartProjectChat,
   onDeleteProjectEntry,
+  onRefreshProjects,
   onFetchProjectSessions,
   getSessionRuntimeState
 }: AppWorkspaceSidebarProps): React.JSX.Element | null {
@@ -508,6 +510,7 @@ function AppWorkspaceSidebarImpl({
         onDeleteProject={(project) => {
           void onDeleteProjectEntry(project)
         }}
+        onRefreshProjects={onRefreshProjects}
         onFetchProjectSessions={onFetchProjectSessions}
         getSessionRuntimeState={getSessionRuntimeState}
       />

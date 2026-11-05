@@ -33,6 +33,19 @@ const FolderIcon = PhiIcons.entity.folder
 const ServerIcon = PhiIcons.settings.remoteExecution
 const MoreHorizIcon = PhiIcons.action.more
 const DeleteIcon = PhiIcons.action.delete
+const RefreshIcon = PhiIcons.action.refresh
+
+const projectMenuItemSx = {
+  minHeight: 36,
+  mx: 0.5,
+  my: 0.25,
+  px: 1.5,
+  py: 1,
+  gap: 1.5,
+  borderRadius: 1,
+  fontSize: ROW_LABEL_FONT_SIZE,
+  fontWeight: 500
+} as const
 
 type ProjectRowProps = {
   project: Project
@@ -47,6 +60,7 @@ type ProjectRowProps = {
   onDeleteSession: (session: SessionSummary, projectId: string) => void
   onExportSession: (session: SessionSummary) => void
   onDeleteProject: () => void
+  onRefreshGitStatus?: () => void | Promise<void>
   onFetchSessions: (workingDirectory: string, projectId?: string) => Promise<SessionSummary[]>
   getSessionRuntimeState?: (
     path: string,
@@ -87,6 +101,7 @@ function ProjectRowImpl({
   onDeleteSession,
   onExportSession,
   onDeleteProject,
+  onRefreshGitStatus,
   onFetchSessions,
   getSessionRuntimeState,
   compactHoverPreview = false,
@@ -389,17 +404,21 @@ function ProjectRowImpl({
           compactHoverPreview ? { zIndex: (theme: Theme) => theme.zIndex.tooltip + 1 } : undefined
         }
       >
+        {!isRemote && onRefreshGitStatus ? (
+          <MenuItem
+            sx={projectMenuItemSx}
+            onClick={() => {
+              closeProjectMenu()
+              void onRefreshGitStatus()
+            }}
+          >
+            <RefreshIcon aria-hidden fontSize="small" />
+            {navigationCopy.refreshGitStatus}
+          </MenuItem>
+        ) : null}
         <MenuItem
           sx={{
-            minHeight: 36,
-            mx: 0.5,
-            my: 0.25,
-            px: 1.5,
-            py: 1,
-            gap: 1.5,
-            borderRadius: 1,
-            fontSize: ROW_LABEL_FONT_SIZE,
-            fontWeight: 500,
+            ...projectMenuItemSx,
             color: 'error.main',
             '& svg': { flexShrink: 0, color: 'error.main' },
             '&:hover': { bgcolor: (theme: Theme) => alpha(theme.palette.error.main, 0.08) }

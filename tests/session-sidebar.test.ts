@@ -23,6 +23,7 @@ import {
   sessionRunningBeaconSlotWidth
 } from '../src/renderer/src/lib/sessionBeacon'
 import { editableSessionTitle, sessionTitle } from '../src/renderer/src/lib/sessionSidebarShared'
+import { navigationCopy } from '../src/renderer/src/lib/navigationCopy'
 import { orderSessionsForDisplay } from '../src/renderer/src/lib/sessionOrder'
 import type { SessionRuntimeState, SessionSummary } from '../src/renderer/src/types'
 
@@ -379,6 +380,25 @@ test('hover preview project actions keep their menu above the flyout', () => {
   assert.match(projectRowSource, /menuAnchor === null/)
   assert.match(projectRowSource, /theme\.zIndex\.tooltip \+ 1/)
   assert.match(deleteDialogsSource, /theme\.zIndex\.tooltip \+ 2/)
+})
+
+test('local project menu offers a manual Git status refresh wired to the project list', () => {
+  const read = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8')
+  const projectRowSource = read('src/renderer/src/components/session-sidebar/ProjectRow.tsx')
+  const sidebarSource = read('src/renderer/src/components/SessionSidebar.tsx')
+  const workspaceSidebarSource = read('src/renderer/src/AppWorkspaceSidebar.tsx')
+  const appSource = read('src/renderer/src/App.tsx')
+
+  assert.match(projectRowSource, /!isRemote && onRefreshGitStatus \?/)
+  assert.match(projectRowSource, /navigationCopy\.refreshGitStatus/)
+  assert.match(sidebarSource, /onRefreshGitStatus=\{onRefreshProjects\}/)
+  assert.match(workspaceSidebarSource, /onRefreshProjects=\{onRefreshProjects\}/)
+  assert.match(appSource, /onRefreshProjects: refreshProjects/)
+
+  setUiLanguage('en')
+  assert.equal(navigationCopy.refreshGitStatus, 'Refresh Git status')
+  setUiLanguage('zh-CN')
+  assert.equal(navigationCopy.refreshGitStatus, '刷新 Git 状态')
 })
 
 test('project actions follow pointer hover and hover borders stay even', () => {
