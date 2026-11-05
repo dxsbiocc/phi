@@ -5,10 +5,12 @@ import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join, win32 } from 'node:path'
 
 import type { Page } from 'playwright-core'
+import { redactSensitiveText } from '../src/main/agent/redaction'
 import type { ManagedEnvironmentEntry } from '../src/shared/environmentTypes'
 import type { ModelAvailabilitySnapshot } from '../src/shared/modelAvailabilityTypes'
 import type { WebSearchSettings } from '../src/shared/webSearchSettingsTypes'
 import { launchPackagedExecutable, type AppHandle } from './gui-e2e/app-launcher'
+import { readAppLogDirectory } from './gui-e2e/jsonl'
 import { agentConfig, MODEL_ID, PROVIDER_ID, startLoopbackProvider } from './kernel-e2e/harness'
 
 const REPLY = 'Phi installed desktop loopback reply verified'
@@ -127,22 +129,27 @@ async function checkSettings(page: Page, token: string): Promise<void> {
 }
 
 async function checkChat(page: Page): Promise<void> {
-  await withDeadline(
+  const rejected = await withDeadline(
     'Installed desktop local chat',
     page.evaluate(
       async ({ providerId, modelId, reply }) => {
         const { api } = globalThis as unknown as { api: SmokeApi }
         await api.selectModel(providerId, modelId)
         let unsubscribe: () => void = () => undefined
+        const eventTypes = new Set<string>()
         const observed = new Promise<void>((resolve) => {
           unsubscribe = api.onAgentEvent((event) => {
+            const type =
+              event && typeof event === 'object' && 'type' in event ? event.type : undefined
+            if (typeof type === 'string' && /^[a-z_]{1,48}$/.test(type)) eventTypes.add(type)
             if (JSON.stringify(event)?.includes(reply)) resolve()
           })
         })
         try {
           const submitted = await api.sendPrompt('Respond with the scripted acceptance result.')
-          if (!submitted) throw new Error('Installed desktop did not accept the local prompt')
+          if (!submitted) return [...eventTypes]
           await observed
+          return null
         } finally {
           unsubscribe()
         }
@@ -150,6 +157,44 @@ async function checkChat(page: Page): Promise<void> {
       { providerId: PROVIDER_ID, modelId: MODEL_ID, reply: REPLY }
     )
   )
+  assert.equal(
+    rejected,
+    null,
+    `Installed desktop did not complete the local prompt (events: ${rejected?.join(', ') || 'none'})`
+  )
+}
+
+function reportSmokeFailure(agentDir: string, token: string): void {
+  try {
+    const relevantEvents = new Set([
+      'run_started',
+      'run_failed',
+      'run_interrupted',
+      'run_completed',
+      'kernel_diagnostic',
+      'omp_worker_exited'
+    ])
+    const { entries } = readAppLogDirectory(join(agentDir, 'logs'))
+    const diagnostics = entries
+      .filter((entry) => relevantEvents.has(entry.event))
+      .slice(-12)
+      .map((entry) => {
+        const metadata = Object.fromEntries(
+          ['error', 'message', 'reason', 'target', 'stderrTail'].flatMap((field) => {
+            const text = entry.metadata?.[field]
+            return typeof text === 'string'
+              ? [[field, redactSensitiveText(text.replaceAll(token, '[redacted]')).slice(0, 400)]]
+              : []
+          })
+        )
+        return { event: entry.event, metadata }
+      })
+    console.error(
+      `Installed desktop diagnostics from isolated profile: ${JSON.stringify(diagnostics)}`
+    )
+  } catch {
+    console.error('Could not read diagnostics from the isolated desktop profile')
+  }
 }
 
 function writeModelFixture(agentDir: string, url: string, token: string): void {
@@ -192,6 +237,12 @@ async function main(): Promise<void> {
         await checkChat(app.page)
         assert.ok(provider.completedRequestCount() > 0)
         console.log('Installed desktop local chat passed with the synthetic loopback provider')
+      } catch (error) {
+        console.error(
+          `Loopback model requests observed: ${provider.requests.length}, completed: ${provider.completedRequestCount()}`
+        )
+        reportSmokeFailure(agentDir, token)
+        throw error
       } finally {
         await app.close()
       }
