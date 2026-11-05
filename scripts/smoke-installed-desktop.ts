@@ -7,17 +7,12 @@ import { delimiter, isAbsolute, join, win32 } from 'node:path'
 import type { Page } from 'playwright-core'
 import { redactSensitiveText } from '../src/main/agent/redaction'
 import type { ManagedEnvironmentEntry } from '../src/shared/environmentTypes'
+import { isRecord } from '../src/shared/guards'
 import type { ModelAvailabilitySnapshot } from '../src/shared/modelAvailabilityTypes'
 import type { WebSearchSettings } from '../src/shared/webSearchSettingsTypes'
 import { launchPackagedExecutable, type AppHandle } from './gui-e2e/app-launcher'
 import { readAppLogDirectory } from './gui-e2e/jsonl'
-import {
-  agentConfig,
-  MODEL_ID,
-  PROVIDER_ID,
-  record,
-  startLoopbackProvider
-} from './kernel-e2e/harness'
+import { agentConfig, MODEL_ID, PROVIDER_ID, startLoopbackProvider } from './kernel-e2e/harness'
 
 const REPLY = 'Phi installed desktop loopback reply verified'
 const IPC_TIMEOUT_MS = 90_000
@@ -134,7 +129,7 @@ async function checkSettings(page: Page, token: string): Promise<void> {
   )
 }
 
-async function checkChat(page: Page): Promise<void> {
+async function checkChat(page: Page, token: string): Promise<void> {
   const rejected = await withDeadline(
     'Installed desktop local chat',
     page.evaluate(
@@ -143,17 +138,27 @@ async function checkChat(page: Page): Promise<void> {
         await api.selectModel(providerId, modelId)
         let unsubscribe: () => void = () => undefined
         const eventTypes = new Set<string>()
+        let failure: string | undefined
         const observed = new Promise<void>((resolve) => {
           unsubscribe = api.onAgentEvent((event) => {
             const type =
               event && typeof event === 'object' && 'type' in event ? event.type : undefined
             if (typeof type === 'string' && /^[a-z_]{1,48}$/.test(type)) eventTypes.add(type)
+            if (
+              type === 'run_failed' &&
+              event &&
+              typeof event === 'object' &&
+              'errorMessage' in event &&
+              typeof event.errorMessage === 'string'
+            ) {
+              failure = event.errorMessage.slice(0, 400)
+            }
             if (JSON.stringify(event)?.includes(reply)) resolve()
           })
         })
         try {
           const submitted = await api.sendPrompt('Respond with the scripted acceptance result.')
-          if (!submitted) return [...eventTypes]
+          if (!submitted) return { events: [...eventTypes], failure }
           await observed
           return null
         } finally {
@@ -163,10 +168,10 @@ async function checkChat(page: Page): Promise<void> {
       { providerId: PROVIDER_ID, modelId: MODEL_ID, reply: REPLY }
     )
   )
-  assert.equal(
-    rejected,
-    null,
-    `Installed desktop did not complete the local prompt (events: ${rejected?.join(', ') || 'none'})`
+  if (!rejected) return
+  const detail = redactSensitiveText(rejected.failure?.replaceAll(token, '[redacted]') ?? '')
+  throw new Error(
+    `Installed desktop did not complete the local prompt (events: ${rejected.events.join(', ') || 'none'})${detail ? `. ${detail}` : ''}`
   )
 }
 
@@ -185,9 +190,10 @@ function reportSmokeFailure(agentDir: string, token: string): void {
       .filter((entry) => relevantEvents.has(entry.event))
       .slice(-12)
       .map((entry) => {
+        const details = entry.metadata?.details
         const source: Record<string, unknown> = {
           ...entry.metadata,
-          detail: record(entry.metadata?.details).error
+          detail: isRecord(details) ? details.error : undefined
         }
         const metadata = Object.fromEntries(
           (['error', 'message', 'reason', 'target', 'stderrTail', 'detail'] as const).flatMap(
@@ -246,7 +252,7 @@ async function main(): Promise<void> {
         await sampleStartupMemory(app)
         await checkSettings(app.page, token)
         provider.enqueue({ text: REPLY })
-        await checkChat(app.page)
+        await checkChat(app.page, token)
         assert.ok(provider.completedRequestCount() > 0)
         console.log('Installed desktop local chat passed with the synthetic loopback provider')
       } catch (error) {
