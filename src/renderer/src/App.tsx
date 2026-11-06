@@ -169,6 +169,7 @@ import { chatItemsFromSessionMessages } from './lib/chatItems'
 import { readableErrorMessage } from './lib/sessionNotifications'
 import { localizeKernelError } from './features/chat/lib/kernelErrorCopy'
 import { sessionDraftKey, updateSessionDraft } from './lib/sessionDrafts'
+import { sendHomePrompt } from './features/home/lib/homePromptSend'
 import {
   isPointerWithinWorkspaceSidebarPreview,
   isWorkspaceSidebarPreviewDialogActive
@@ -699,6 +700,10 @@ function App(): React.JSX.Element {
     getModelSelectionSessionKey,
     getModelSelectionScope
   )
+  const modelStateReadyRef = useRef(isModelStateReady)
+  useLayoutEffect(() => {
+    modelStateReadyRef.current = isModelStateReady
+  }, [isModelStateReady])
   const {
     projects,
     setProjects,
@@ -1919,19 +1924,39 @@ function App(): React.JSX.Element {
       showSnackbarError(error, appCopy.homePromptNotStarted)
       throw error
     }
-    const current = await rendererApi.updateCurrentSessionMode(request.mode, {
-      sessionPath: created.path,
-      phiSessionId: created.phiSessionId ?? null,
-      sessionGeneration: created.sessionGeneration
-    })
-    applyCurrentSession(current, undefined, {
-      onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
-    })
-    await sendPromptText(text, {
-      path: current.path,
-      phiSessionId: current.phiSessionId,
-      cwd: current.cwd,
-      sessionGeneration: current.sessionGeneration
+    // The home box is gone from here on, so an unsent message goes to the new conversation's composer.
+    let target: CurrentSession = created
+    await sendHomePrompt({
+      isModelStateReady: () => modelStateReadyRef.current,
+      send: async () => {
+        target = await rendererApi.updateCurrentSessionMode(request.mode, {
+          sessionPath: created.path,
+          phiSessionId: created.phiSessionId ?? null,
+          sessionGeneration: created.sessionGeneration
+        })
+        applyCurrentSession(target, undefined, {
+          onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
+        })
+        return sendPromptText(text, {
+          path: target.path,
+          phiSessionId: target.phiSessionId,
+          cwd: target.cwd,
+          sessionGeneration: target.sessionGeneration
+        })
+      },
+      keepUnsentText: () => {
+        const draftKey = sessionDraftKey({
+          phiSessionId: target.phiSessionId,
+          path: target.path,
+          cwd: target.cwd,
+          sessionGeneration: target.sessionGeneration
+        })
+        setDraftInputs((previous) => updateSessionDraft(previous, draftKey, text))
+      },
+      reportUnsent: () => {
+        const error = new Error(appCopy.homePromptNotSent)
+        showSnackbarError(error, appCopy.homePromptNotSent)
+      }
     })
   }
 

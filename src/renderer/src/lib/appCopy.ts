@@ -12,6 +12,8 @@ const english = {
   remoteFilesUnavailable: 'File operations are unavailable for this remote project',
   homePromptNotStarted:
     'The new conversation was interrupted before your message was sent. Your text is still in the box; send it again.',
+  homePromptNotSent:
+    'Your first message was not sent. It is in the new conversation\'s box; send it again.',
   loadSettingsFailed: 'Could not load general settings',
   loadEnvironmentFailed: 'Could not load the workspace environment',
   detectEnvironmentFailed: 'Could not detect the environment again',
@@ -105,6 +107,7 @@ const chinese: LocalizedCopy<typeof english> = {
   openFiles: '已打开的文件',
   remoteFilesUnavailable: '远程项目的文件操作暂不可用',
   homePromptNotStarted: '新对话在发送消息前被打断，消息仍保留在输入框中，请重新发送。',
+  homePromptNotSent: '第一条消息没有发出去，已放回新对话的输入框，请重新发送。',
   loadSettingsFailed: '读取通用设置失败',
   loadEnvironmentFailed: '读取工作台环境失败',
   detectEnvironmentFailed: '重新检测环境失败',
