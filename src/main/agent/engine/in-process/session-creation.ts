@@ -19,6 +19,7 @@ import {
   ensureStructuredNativeTaskResults
 } from './settings'
 import { normalizeProjectMemorySettings } from '../../../../shared/projectMemoryTypes'
+import { followSessionModelForSubagents } from './subagent-model-role'
 import { type EnvironmentLease } from '../../envs/leases'
 import { disableFeaturedApiKeyAutoDiscovery } from '../../mcp-connectors'
 import {
@@ -346,6 +347,7 @@ export async function createSession(
     installBrowserTextPreDispatchRedaction(result.session, browserTextVault)
 
     parentRef.current = result
+    followSessionModelForSubagents(result.session, settings)
 
     stopNativeTaskRunNotices = subscribeToNativeTaskRunNotices({
       eventBus: result.subagentEventBus ?? result.eventBus,
