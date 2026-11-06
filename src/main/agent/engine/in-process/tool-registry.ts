@@ -1,5 +1,9 @@
 import { join } from 'node:path'
-import { type CreateAgentSessionResult, type ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
+import {
+  type CreateAgentSessionResult,
+  type ExtensionFactory,
+  type Settings
+} from '@oh-my-pi/pi-coding-agent'
 import { mainSkillEnablementOptions } from '../main-skill-enablement'
 import { buildProjectDownloadTool } from '../../download/project-download-tool'
 import { buildPresentFilesTool } from '../../deliverables/present-tool'
@@ -31,7 +35,7 @@ import { RuntimeContext, UnknownRecord, isRecord } from './common'
 import { requestHost } from './ipc'
 import { resourceOptions } from './resources'
 import { mergeRemoteProjectSkills } from '../remote-project-skills'
-import { DefaultResourceLoader, SettingsManager } from './session-factory'
+import { DefaultResourceLoader } from './session-factory'
 import { sessions } from './state'
 import { loadWorkerDecisionRuntime, loadWorkerMcpRuntime } from './worker-subsystems'
 import {
@@ -60,6 +64,7 @@ export async function createSessionToolRegistry(deps: {
   cwd: string
   agentDir: string
   settingsCwd: string
+  settings: Settings
   resourceSnapshot: SessionResourceSnapshot
   environmentBinding?: PhiExtensionEnvironmentBinding
   extensionFactories: ExtensionFactory[]
@@ -90,6 +95,7 @@ export async function createSessionToolRegistry(deps: {
     cwd,
     agentDir,
     settingsCwd,
+    settings,
     resourceSnapshot,
     environmentBinding,
     extensionFactories,
@@ -174,7 +180,7 @@ export async function createSessionToolRegistry(deps: {
     isRecord(record.resourceOptions) || sessionExtensionFactories.length > 0
       ? new DefaultResourceLoader({
           ...contentResourceOptions,
-          settingsManager: SettingsManager.create(settingsCwd, agentDir),
+          settingsManager: settings,
           skillsOverride: (base) => {
             const resolved = contentResourceOptions.skillsOverride?.(base) ?? base
             const installed = contentResourceOptions.noSkills

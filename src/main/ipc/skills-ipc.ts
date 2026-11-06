@@ -20,6 +20,11 @@ import { getEnablementSnapshot, setEnabled } from '../agent/enablement'
 import { setMcpPackageEnabled } from '../agent/mcp-connectors'
 import { setPluginEnabled, type PluginNamespace } from '../agent/plugins/loader'
 import {
+  importHomeSkills,
+  listHomeSkillImportCandidates,
+  parseHomeSkillImportSelections
+} from '../agent/packages/home-skill-import'
+import {
   deleteSkill,
   listSkills,
   readGlobalSkillContent,
@@ -32,6 +37,8 @@ export interface SkillsIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
   lifecycle: {
     invalidateAgentSession: () => Promise<void>
+    getAppVersion: () => string
+    notifyResourcesChanged?: () => void
   }
   workspace: {
     agentDir: string
@@ -165,5 +172,23 @@ function registerSkillResourcesIpc(context: SkillsIpcOptions): void {
     })
     await invalidateAgentSession()
     return listRemoteProjectSkills(request.cwd)
+  })
+  ipcMain.handle(IPC.skills.listHomeImportCandidates, async () =>
+    listHomeSkillImportCandidates({ agentDir: context.workspace.agentDir })
+  )
+  ipcMain.handle(IPC.skills.importHomeSkills, async (_, input: unknown) => {
+    const selections = parseHomeSkillImportSelections(input)
+    const result = await importHomeSkills(selections, {
+      agentDir: context.workspace.agentDir,
+      appVersion: context.lifecycle.getAppVersion()
+    })
+    if (result.imported.length > 0) {
+      // Same path as package installs: invalidate the live agent session and let
+      // the renderer refresh from packages:resourcesChanged. Avoid importing the
+      // in-process OMP settings module into the IPC graph.
+      await invalidateAgentSession()
+      context.lifecycle.notifyResourcesChanged?.()
+    }
+    return result
   })
 }

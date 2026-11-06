@@ -9,12 +9,13 @@ import {
   stringArrayValue,
   stringValue
 } from './common'
+import { Settings } from '@oh-my-pi/pi-coding-agent'
 import {
   DefaultResourceLoader,
-  SettingsManager,
   type DefaultResourceLoaderOptions,
   type ResourceDiagnostic
 } from './session-factory'
+import { applyForeignHomeSkillsPolicy } from './settings'
 import { sessions } from './state'
 import { isPhiAgentDefinition } from '../../agents/definition'
 import { sessionContextFiles } from './session-resource-input'
@@ -208,9 +209,11 @@ export async function reloadResources(params: unknown): Promise<unknown> {
     }
   }
   const options = resourceOptions(params)
+  const settings = await Settings.init({ cwd: options.cwd, agentDir: options.agentDir })
+  applyForeignHomeSkillsPolicy(settings)
   const loader = new DefaultResourceLoader({
     ...options,
-    settingsManager: SettingsManager.create(options.cwd, options.agentDir)
+    settingsManager: settings
   })
   await loader.reload()
 

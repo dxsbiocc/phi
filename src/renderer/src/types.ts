@@ -93,7 +93,20 @@ import type {
   PackageRegistryView,
   PackageUpdateView
 } from '../../shared/packageManagerTypes'
+import type {
+  HomeSkillImportCandidatesResult,
+  HomeSkillImportResult,
+  HomeSkillImportSelection
+} from '../../shared/homeSkillImportTypes'
 import type { SkillContent, SkillSummary } from '../../shared/skillTypes'
+export type {
+  HomeSkillCandidate,
+  HomeSkillImportCandidatesResult,
+  HomeSkillImportResult,
+  HomeSkillImportSelection,
+  HomeSkillSource,
+  HomeSkillSourceStatus
+} from '../../shared/homeSkillImportTypes'
 export type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shared/skillTypes'
 import type {
   AutoCompactionApi,
@@ -769,6 +782,8 @@ export interface RendererApi
     scope: EnablementScope
   ) => Promise<EnablementSnapshot>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
+  listHomeSkillImportCandidates: () => Promise<HomeSkillImportCandidatesResult>
+  importHomeSkills: (selections: HomeSkillImportSelection[]) => Promise<HomeSkillImportResult>
   readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
   deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>

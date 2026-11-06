@@ -160,6 +160,11 @@ import type {
   EnablementSnapshot
 } from '../shared/enablementTypes'
 import type {
+  HomeSkillImportCandidatesResult,
+  HomeSkillImportResult,
+  HomeSkillImportSelection
+} from '../shared/homeSkillImportTypes'
+import type {
   RemoteProjectSkillTrustRequest,
   SkillContent,
   SkillSummary
@@ -1176,6 +1181,8 @@ type RendererAuthApi = PreloadApiBase & {
     scope: EnablementScope
   ) => Promise<EnablementSnapshot>
   listSkills: (cwd?: string) => Promise<SkillSummary[]>
+  listHomeSkillImportCandidates: () => Promise<HomeSkillImportCandidatesResult>
+  importHomeSkills: (selections: HomeSkillImportSelection[]) => Promise<HomeSkillImportResult>
   readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string) => Promise<SkillSummary[]>
   deleteSkill: (filePath: string, cwd?: string) => Promise<SkillSummary[]>
@@ -2096,6 +2103,10 @@ const api: RendererAuthApi = {
     scope: EnablementScope
   ): Promise<EnablementSnapshot> => ipcRenderer.invoke(IPC.enablement.set, item, value, scope),
   listSkills: (cwd?: string): Promise<SkillSummary[]> => ipcRenderer.invoke(IPC.skills.list, cwd),
+  listHomeSkillImportCandidates: (): Promise<HomeSkillImportCandidatesResult> =>
+    ipcRenderer.invoke(IPC.skills.listHomeImportCandidates),
+  importHomeSkills: (selections: HomeSkillImportSelection[]): Promise<HomeSkillImportResult> =>
+    ipcRenderer.invoke(IPC.skills.importHomeSkills, selections),
   readSkillContent: (filePath: string, cwd?: string): Promise<SkillContent> =>
     ipcRenderer.invoke(IPC.skills.read, filePath, cwd),
   setSkillDisabled: (filePath: string, disabled: boolean, cwd?: string): Promise<SkillSummary[]> =>

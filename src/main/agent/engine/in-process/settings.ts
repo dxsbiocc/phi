@@ -6,8 +6,12 @@ import {
 } from '@oh-my-pi/pi-coding-agent/config/model-resolver'
 import {
   cfgExtensionHandlersToolCallTimeoutMs,
-  cfgExtensions
+  cfgExtensions,
+  cfgSkillsEnableAgentsUser,
+  cfgSkillsEnableClaudeUser,
+  cfgSkillsEnableCodexUser
 } from '@oh-my-pi/pi-coding-agent/extensibility/settings'
+import { sessions } from './state'
 import {
   cfgMcpEnableProjectConfig,
   cfgMcpNotifications
@@ -221,6 +225,29 @@ const APPROVAL_WAIT_HANDLER_TIMEOUT_MS = 2_147_483_647
  */
 export function allowApprovalWaits(settings: Settings): void {
   cfgExtensionHandlersToolCallTimeoutMs.override(settings, APPROVAL_WAIT_HANDLER_TIMEOUT_MS)
+}
+
+/**
+ * OMP can live-scan ~/.agents, ~/.claude, and ~/.codex skills. Phi keeps those
+ * off; users copy selected skills in through the Settings import flow instead.
+ */
+export function applyForeignHomeSkillsPolicy(settings: Settings): void {
+  cfgSkillsEnableAgentsUser.override(settings, false)
+  cfgSkillsEnableClaudeUser.override(settings, false)
+  cfgSkillsEnableCodexUser.override(settings, false)
+}
+
+/** Re-apply the foreign home skill gate and refresh every live session for `agentDir`. */
+export async function refreshForeignHomeSkillsPolicy(agentDir: string): Promise<void> {
+  await Promise.all(
+    [...sessions.values()]
+      .filter((entry) => entry.agentDir === agentDir && entry.resourceLoader)
+      .map(async (entry) => {
+        applyForeignHomeSkillsPolicy(entry.result.session.settings)
+        await entry.resourceLoader!.reload()
+        await entry.result.session.refreshSkills()
+      })
+  )
 }
 
 /**

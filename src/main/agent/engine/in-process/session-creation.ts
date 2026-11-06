@@ -15,6 +15,7 @@ import { withCurrentCursorRoute } from '../cursor-model-routing'
 import {
   allowApprovalWaits,
   applyAutoCompactionOverrides,
+  applyForeignHomeSkillsPolicy,
   createPhiSettings,
   ensureStructuredNativeTaskResults
 } from './settings'
@@ -104,6 +105,7 @@ export async function createSession(
   const settings = await baseSettings.cloneForCwd(settingsCwd)
   applyAutoCompactionOverrides(settings, autoCompactionOverrides(record.autoCompaction))
   allowApprovalWaits(settings)
+  applyForeignHomeSkillsPolicy(settings)
   ensureStructuredNativeTaskResults(settings)
   const memoryPolicy = normalizeProjectMemorySettings(record.memory)
   const memoryTarget = memoryPolicy.enabled ? { agentDir, cwd } : undefined
@@ -212,6 +214,7 @@ export async function createSession(
     cwd,
     agentDir,
     settingsCwd,
+    settings,
     resourceSnapshot,
     environmentBinding,
     extensionFactories,

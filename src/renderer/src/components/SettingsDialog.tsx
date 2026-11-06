@@ -33,6 +33,7 @@ import { WebSearchSettingsPanel } from '../features/settings/WebSearchSettingsPa
 import { ProvidersSection } from '../features/settings/components/ProvidersSection'
 import { AppearanceSettingsSection } from '../features/settings/components/AppearanceSettingsSection'
 import { AppUpdateSection } from '../features/settings/components/AppUpdateSection'
+import { ExternalSkillsSettingsGroup } from '../features/settings/components/ExternalSkillsSettingsGroup'
 import { PermissionSettingsSection } from './PermissionView'
 import { MemorySettingsPanel } from '../features/memory/MemorySettingsPanel'
 import type { EnvironmentSnapshot, EnvironmentToolId } from '../types'
@@ -400,6 +401,8 @@ function GeneralSection({
           {settingsUi.allowTheAssistantToSuggestANextStep}
         </Typography>
       </Box>
+
+      <ExternalSkillsSettingsGroup />
 
       <AutoCompactionSettingsSection
         target={autoCompactionTarget ?? null}

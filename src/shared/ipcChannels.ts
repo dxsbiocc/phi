@@ -302,7 +302,9 @@ export const IPC = {
   },
   skills: {
     delete: 'skills:delete',
+    importHomeSkills: 'skills:importHomeSkills',
     list: 'skills:list',
+    listHomeImportCandidates: 'skills:listHomeImportCandidates',
     read: 'skills:read',
     revokeRemoteProjectTrust: 'skills:revokeRemoteProjectTrust',
     setDisabled: 'skills:setDisabled',

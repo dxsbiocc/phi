@@ -149,6 +149,11 @@ import type {
   EnablementSnapshot
 } from '../shared/enablementTypes'
 import type {
+  HomeSkillImportCandidatesResult,
+  HomeSkillImportResult,
+  HomeSkillImportSelection
+} from '../shared/homeSkillImportTypes'
+import type {
   RemoteProjectSkillTrustRequest,
   SkillContent,
   SkillSummary
@@ -1272,6 +1277,8 @@ declare global {
         scope: EnablementScope
       ) => Promise<EnablementSnapshot>
       listSkills: (cwd?: string) => Promise<SkillSummary[]>
+      listHomeSkillImportCandidates: () => Promise<HomeSkillImportCandidatesResult>
+      importHomeSkills: (selections: HomeSkillImportSelection[]) => Promise<HomeSkillImportResult>
       readSkillContent: (filePath: string, cwd?: string) => Promise<SkillContent>
       setSkillDisabled: (
         filePath: string,

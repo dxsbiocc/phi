@@ -3825,7 +3825,11 @@ function registerSkillAgentAndMcpIpc(
 ): void {
   registerSkillsIpc({
     ipcMain,
-    lifecycle: { invalidateAgentSession },
+    lifecycle: {
+      invalidateAgentSession,
+      getAppVersion: () => app.getVersion(),
+      notifyResourcesChanged: () => sendToAllWindows(IPC.packages.resourcesChanged)
+    },
     workspace: {
       agentDir: AGENT_DIR,
       getCurrentCwd: () => sessionState.cwd,

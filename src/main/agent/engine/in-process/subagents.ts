@@ -25,9 +25,9 @@ import { createInProcessExtensionHost } from './extension-host'
 import { requestHost } from './ipc'
 import { assertInProcessLocalProject } from './local-project-boundary'
 import { resourceOptions } from './resources'
-import { allowApprovalWaits } from './settings'
+import { allowApprovalWaits, applyForeignHomeSkillsPolicy } from './settings'
 import { modelBySelector, runtimeThinkingLevel } from './runtime-context'
-import { createAgentSession, DefaultResourceLoader, SettingsManager } from './session-factory'
+import { createAgentSession, DefaultResourceLoader } from './session-factory'
 import { sessions } from './state'
 import type { RuntimeThinkingLevel } from './state'
 import { createSessionModelAvailability } from './session-model-availability'
@@ -167,6 +167,7 @@ export async function createPhiAgentSession(
   // shell exports Phi specialists had on 18.1. Explicit async remains available.
   cfgBashAutoBackgroundEnabled.override(settings, false)
   allowApprovalWaits(settings)
+  applyForeignHomeSkillsPolicy(settings)
   const loader = isRecord(deps.resourceOptions)
     ? new DefaultResourceLoader({
         ...resourceOptions({
@@ -174,7 +175,7 @@ export async function createPhiAgentSession(
           cwd: sessionCwd,
           agentDir
         }),
-        settingsManager: SettingsManager.create(sessionCwd, agentDir),
+        settingsManager: settings,
         extensionFactories: toolCallFactories
       })
     : undefined
