@@ -129,6 +129,7 @@ test('POSIX release jobs reuse the installed Electron and prepare a verified 7-Z
   const packaging = steps.find((step) => step.name === 'Package')
   assert.ok(inputs && packaging && steps.indexOf(inputs) < steps.indexOf(packaging))
   assert.equal(inputs.if, "runner.os != 'Windows'")
+  assert.match(inputs.run ?? '', /node node_modules\/electron\/install\.js\n[\s\S]*dist=/)
   assert.match(inputs.run ?? '', /node_modules\/electron\/dist/)
   assert.match(inputs.run ?? '', /require\('electron\/package.json'\)\.version/)
   assert.match(inputs.run ?? '', /fetch-builder-7zip\.sh/)
