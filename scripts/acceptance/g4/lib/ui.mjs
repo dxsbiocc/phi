@@ -24,8 +24,14 @@ export class PhiUi {
   async selectDefaultModel(name) {
     const selected = await this.client.evaluate(`
       (async () => {
-        const model = (await window.api.listModels()).find((item) => item.name === ${q(name)});
-        if (!model) throw new Error('Model is unavailable: ' + ${q(name)});
+        // Several providers can list the same display name; only a configured one can answer.
+        const configured = new Set((await window.api.getAuthStatus())
+          .filter((item) => item.configured).map((item) => item.providerId));
+        const wanted = ${q(name)};
+        const models = await window.api.listModels();
+        const model = models.find((item) => wanted === item.providerId + '/' + item.modelId) ??
+          models.find((item) => item.name === wanted && configured.has(item.providerId));
+        if (!model) throw new Error('No configured provider offers model: ' + wanted);
         await window.api.selectModel(model.providerId, model.modelId, 'new-session');
         return window.api.getSelectedModel('new-session');
       })()

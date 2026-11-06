@@ -33,7 +33,7 @@ bun scripts/acceptance/g4/run.mjs [--remote-only | --local-only | --dry-run]
 | `G4_SOURCE_HOME` | HOME to clone (must contain `.phi`; a `.ssh` symlink is kept as a link) | required |
 | `G4_SOURCE_USERDATA` | Electron user-data directory to clone | required |
 | `G4_APP` | Packaged executable | `dist/mac-arm64/Phi.app/Contents/MacOS/Phi` |
-| `G4_MODEL` | Default model to select before the run | the data copy's own default |
+| `G4_MODEL` | Default model: a display name (first match from a configured provider) or `provider/id` | the data copy's own default |
 | `G4_REMOTE_HOST` / `G4_REMOTE_PROJECT` | SSH host alias and project name used by F5, M4, M5 | `GPU` / `software` |
 | `G4_APPROVE` | `1` answers every tool approval with 批准 | off |
 | `G4_SUBAGENT_PROMPT` | Replaces the remote M5 prompt | lists the project root |
