@@ -356,6 +356,23 @@ export class PhiUi {
     `)
   }
 
+  async currentSessionId() {
+    return this.client.evaluate(`window.api.getCurrentSession().then((session) => session.phiSessionId || '')`)
+  }
+
+  /** Titles change (auto titles, forks), so a conversation is found again by its id. */
+  async openSessionById(sessionId) {
+    if ((await this.currentSessionId()) === sessionId) return this.snapshot()
+    const title = await this.client.evaluate(`
+      window.api.listSessions().then((sessions) => {
+        const match = sessions.find((session) => (session.phiSessionId || session.id) === ${q(sessionId)});
+        return match?.name || match?.firstMessage || '';
+      })
+    `)
+    if (!title) throw new Error(`Session ${sessionId} is not listed`)
+    return this.openSessionByTitle(title)
+  }
+
   async openSessionByTitle(title) {
     await this.client.evaluate(`
       (() => {

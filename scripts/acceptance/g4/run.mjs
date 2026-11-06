@@ -344,6 +344,7 @@ async function runLocal(ui) {
   ]
   const forkReplies = []
   let sourceTitle = ''
+  let sourceId = ''
   let forkTitle = ''
   let f6StreamingObserved = false
 
@@ -358,7 +359,8 @@ async function runLocal(ui) {
       }
       const beforeFork = await ui.snapshot()
       sourceTitle = beforeFork.activeSessionTitle
-      assert(sourceTitle, 'Source session title is empty')
+      sourceId = await ui.currentSessionId()
+      assert(sourceTitle && sourceId, 'Source session title or id is empty')
       assert(beforeFork.forkButtonCount >= 3, `Expected 3 fork controls, got ${beforeFork.forkButtonCount}`)
       await ui.forkMessage(1)
       const forked = await client.waitForValue(
@@ -412,7 +414,7 @@ async function runLocal(ui) {
   })
 
   await recordStep(ui, 'F4', async () => {
-    const snapshot = await ui.openSessionByTitle(sourceTitle)
+    const snapshot = await ui.openSessionById(sourceId)
     assert(snapshot.users.length === 3, `Source contains ${snapshot.users.length} user messages, expected 3`)
     for (const prompt of forkPrompts) {
       assert(snapshot.users.some((text) => text.includes(prompt)), `Source is missing ${prompt}`)
@@ -451,7 +453,7 @@ async function runLocal(ui) {
     }
   })
   if (f6StreamingObserved) await ui.waitForGenerationToFinish(MODEL_TIMEOUT_MS, true)
-  if (sourceTitle) await ui.openSessionByTitle(sourceTitle)
+  if (sourceId) await ui.openSessionById(sourceId)
 
   await recordStep(ui, 'M1', async () => {
     const sent = await sendPrompt(ui, '用一个子智能体读 README.md，只返回前三行', {
