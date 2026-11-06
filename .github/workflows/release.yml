@@ -129,8 +129,31 @@ jobs:
             # so PRs still get (and verify) the same bundle signature a release gets.
             echo "CSC_FOR_PULL_REQUEST=true" >> "$GITHUB_ENV"
           fi
+      - name: Cache verified builder downloads
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/phi-builder-cache
+          key: release-builder-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+      - name: Prepare native packaging inputs
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dist="$PWD/node_modules/electron/dist"
+          version=$(tr -d '\r\n' < "$dist/version")
+          test "${version#v}" = "$(node -p "require('electron/package.json').version")"
+          if [ "$RUNNER_OS" = macOS ]; then
+            test -x "$dist/Electron.app/Contents/MacOS/Electron"
+          else
+            test -x "$dist/electron"
+          fi
+          seven_zip=$(bash scripts/build/fetch-builder-7zip.sh "$RUNNER_TEMP/phi-builder-7zip")
+          printf 'PHI_RELEASE_ELECTRON_DIST=%s\nELECTRON_BUILDER_7ZIP_PATH=%s\n' "$dist" "$seven_zip" >> "$GITHUB_ENV"
       - name: Package
         env:
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/phi-builder-cache
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -144,7 +167,25 @@ jobs:
           for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
             [ "$RUNNER_OS" = macOS ] && [ -n "${!name}" ] || unset "$name"
           done
-          npx electron-builder ${{ matrix.builder }} --publish never $SIGNING_ARGS
+          runtime_args=()
+          if [ -n "${PHI_RELEASE_ELECTRON_DIST:-}" ]; then
+            runtime_args=("-c.electronDist=$PHI_RELEASE_ELECTRON_DIST")
+          fi
+          log=$(mktemp)
+          trap 'rm -f "$log"' EXIT
+          for attempt in 1 2 3; do
+            if npx electron-builder ${{ matrix.builder }} --publish never "${runtime_args[@]}" $SIGNING_ARGS 2>&1 | tee "$log"; then
+              exit 0
+            else
+              codes=("${PIPESTATUS[@]}")
+            fi
+            if (( codes[0] == 0 )); then exit "${codes[1]}"; fi
+            if (( attempt == 3 )) || ! grep -Eq 'Response code (408|429|500|502|503|504)|ECONNRESET|ETIMEDOUT|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT' "$log"; then
+              exit "${codes[0]}"
+            fi
+            echo "Transient packaging download failure, retrying after attempt $attempt/3."
+            sleep "$((10 * attempt))"
+          done
       - name: Smoke-test the packaged worker without system bun
         if: runner.os != 'Windows'
         shell: bash

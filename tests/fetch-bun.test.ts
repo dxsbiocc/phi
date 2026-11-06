@@ -227,9 +227,11 @@ test('package scripts fetch Bun before building application output', () => {
   }
   assert.equal(packageJson.scripts['bun:fetch'], 'node scripts/runtime/fetch-bun.mjs')
   assert.match(packageJson.scripts.build, /runtime:fetch && bun run bun:fetch &&/u)
-  assert.match(packageJson.scripts['build:win'], /fetch-bun\.mjs --platform win32-x64/u)
-  assert.match(packageJson.scripts['build:win'], /fetch-micromamba\.mjs --platform win32-x64/u)
-  assert.match(packageJson.scripts['build:win'], /fetch-micromamba\.mjs --platform linux-x64/u)
+  assert.match(packageJson.scripts['build:win'], /bun run runtime:fetch:win && bun run build/u)
+  const windowsRuntimeFetch = packageJson.scripts['runtime:fetch:win']
+  assert.match(windowsRuntimeFetch, /fetch-bun\.mjs --platform win32-x64/u)
+  assert.match(windowsRuntimeFetch, /fetch-micromamba\.mjs --platform win32-x64/u)
+  assert.match(windowsRuntimeFetch, /fetch-micromamba\.mjs --platform linux-x64/u)
   for (const scriptName of Object.keys(packageJson.scripts)) {
     assert.doesNotMatch(scriptName, /^office:/u, 'the retired Office runtime has no scripts')
   }

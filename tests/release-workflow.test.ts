@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
@@ -120,6 +121,58 @@ test('local and CI Windows builds prepare the same native and WSL runtimes befor
   assert.match(scripts['runtime:fetch:win'], /fetch-micromamba\.mjs --platform win32-x64/)
   assert.match(scripts['runtime:fetch:win'], /fetch-micromamba\.mjs --platform linux-x64/)
   assert.match(scripts['runtime:fetch:win'], /fetch-bun\.mjs --platform win32-x64/)
+})
+
+test('POSIX release jobs reuse the installed Electron and prepare a verified 7-Zip', () => {
+  const steps = workflow.jobs?.package?.steps ?? []
+  const inputs = steps.find((step) => step.name === 'Prepare native packaging inputs')
+  const packaging = steps.find((step) => step.name === 'Package')
+  assert.ok(inputs && packaging && steps.indexOf(inputs) < steps.indexOf(packaging))
+  assert.equal(inputs.if, "runner.os != 'Windows'")
+  assert.match(inputs.run ?? '', /node_modules\/electron\/dist/)
+  assert.match(inputs.run ?? '', /require\('electron\/package.json'\)\.version/)
+  assert.match(inputs.run ?? '', /fetch-builder-7zip\.sh/)
+  assert.match(inputs.run ?? '', /ELECTRON_BUILDER_7ZIP_PATH/)
+  assert.match(packaging.run ?? '', /-c\.electronDist=\$PHI_RELEASE_ELECTRON_DIST/)
+})
+
+test('release packaging retries a gateway failure and preserves deterministic failures', () => {
+  const packaging = workflow.jobs?.package?.steps?.find((step) => step.name === 'Package')
+  assert.ok(packaging?.run)
+  const command = packaging.run.replace('${{ matrix.builder }}', '--linux AppImage deb --x64')
+  for (const [message, exitCode, attempts] of [
+    ['Response code 504 (Gateway Time-out)', 0, 2],
+    ['Signature verification failed', 17, 1]
+  ] as const) {
+    const result = spawnSync(
+      'bash',
+      [
+        '-e',
+        '-o',
+        'pipefail',
+        '-c',
+        `npx() {
+          echo "Builder attempt $attempt"
+          if (( attempt > 1 )); then return 0; fi
+          echo "$PHI_TEST_BUILDER_ERROR" >&2
+          return 17
+        }
+        sleep() { :; }
+        ${command}`
+      ],
+      {
+        env: {
+          ...process.env,
+          RUNNER_OS: 'Linux',
+          SIGNING_ARGS: '',
+          PHI_TEST_BUILDER_ERROR: message
+        },
+        encoding: 'utf8'
+      }
+    )
+    assert.equal(result.status, exitCode, result.error?.message ?? result.stderr)
+    assert.equal(result.stdout.match(/Builder attempt/g)?.length, attempts)
+  }
 })
 
 test('Windows interactive installer offers a directory picker and defaults to the current user', () => {
