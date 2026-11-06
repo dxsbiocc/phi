@@ -364,13 +364,36 @@ export class PhiUi {
   async openSessionById(sessionId) {
     if ((await this.currentSessionId()) === sessionId) return this.snapshot()
     const title = await this.client.evaluate(`
-      window.api.listSessions().then((sessions) => {
-        const match = sessions.find((session) => (session.phiSessionId || session.id) === ${q(sessionId)});
-        return match?.name || match?.firstMessage || '';
-      })
+      (async () => {
+        const projects = await window.api.listProjects();
+        const lists = await Promise.all([
+          window.api.listSessions(),
+          ...projects.map((project) => window.api.listProjectSessionsById(project.id))
+        ]);
+        const match = lists.flat().find((session) => (session.phiSessionId || session.id) === ${q(sessionId)});
+        return (match?.name || match?.firstMessage || '').trim();
+      })()
     `)
     if (!title) throw new Error(`Session ${sessionId} is not listed`)
-    return this.openSessionByTitle(title)
+    await this.client.evaluate(`
+      (() => {
+        const wanted = ${q(title)};
+        const shells = [...document.querySelectorAll('[data-phi-session-row-shell="true"]')];
+        const shell = shells.find((item) => {
+          const shown = item.querySelector('.session-title')?.textContent?.trim() || '';
+          return shown === wanted || (shown.endsWith('…') && wanted.startsWith(shown.slice(0, -1)));
+        });
+        const row = shell?.querySelector('[data-phi-session-row]');
+        if (!row) throw new Error('Session row is unavailable: ' + wanted);
+        row.click();
+        return true;
+      })()
+    `)
+    await this.client.waitForValue(
+      `window.api.getCurrentSession().then((session) => session.phiSessionId === ${q(sessionId)})`,
+      { timeoutMs: 30_000, description: `session ${sessionId}` }
+    )
+    return this.snapshot()
   }
 
   async openSessionByTitle(title) {
@@ -527,7 +550,7 @@ export class PhiUi {
         .map((item, index) => ({ index, text: (item.innerText || '').trim() }))
     `)
     const seenOptions = []
-    let candidate = null
+    const choices = []
     for (const provider of providers) {
       await this.client.evaluate(`
         (() => {
@@ -547,9 +570,17 @@ export class PhiUi {
         })()
       `)
       for (const option of options) seenOptions.push(`${provider.text}/${option.text}`)
-      const option = options.find((item) => !item.selected)
-      if (!candidate && option) candidate = { provider, option }
+      const providerSelected = options.some((item) => item.selected)
+      for (const option of options) {
+        if (!option.selected) choices.push({ provider, option, providerSelected })
+      }
     }
+    // G4_SWITCH_MODEL names the target; otherwise stay with the current provider, whose
+    // credentials and region already work, before trying another provider.
+    const wanted = process.env.G4_SWITCH_MODEL
+    const candidate = wanted
+      ? choices.find((item) => `${item.provider.text}/${item.option.text}`.includes(wanted)) ?? null
+      : (choices.find((item) => item.providerSelected) ?? choices[0] ?? null)
     let selected = null
     if (candidate) {
       const wasGenerating = Boolean(

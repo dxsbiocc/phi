@@ -226,7 +226,12 @@ async function recordStep(ui, id, operation, options = {}) {
     throw operationError ?? new Error(`${id} aborted with the acceptance workflow`)
   }
 
-  const transientErrors = (probe.events ?? []).filter((event) => event.severity === 'error')
+  // A step that provokes a refusal names it, so that notice is its evidence, not a failure.
+  const expectedErrors = options.expectedErrors ?? []
+  const transientErrors = (probe.events ?? []).filter(
+    (event) =>
+      event.severity === 'error' && !expectedErrors.some((text) => String(event.text).includes(text))
+  )
   const assistantErrors = probe.newAssistantErrors ?? []
   const allowRemoteConnectionBlock =
     id === 'F5' &&
@@ -451,7 +456,7 @@ async function runLocal(ui) {
         activeSessionTitle: snapshot.activeSessionTitle
       }
     }
-  })
+  }, { expectedErrors: ['请等待来源会话运行结束后再分叉'] })
   if (f6StreamingObserved) await ui.waitForGenerationToFinish(MODEL_TIMEOUT_MS, true)
   if (sourceId) await ui.openSessionById(sourceId)
 
