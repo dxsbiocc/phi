@@ -78,15 +78,21 @@ export function CatalogBrowseLayout({
       sx={{
         display: 'grid',
         gridTemplateColumns: { xs: 'minmax(0, 1fr)', md: '216px minmax(0, 1fr)' },
-        gridTemplateRows: { xs: 'auto auto minmax(0, 1fr)', md: 'auto minmax(0, 1fr)' },
+        // Fixed header track: list title (h5) vs detail back-button must not resize row 1,
+        // or the whole browse shell (left rail + content) jumps vertically together.
+        gridTemplateRows: { xs: '72px auto minmax(0, 1fr)', md: '72px minmax(0, 1fr)' },
         height: '100%',
         minHeight: 0
       }}
     >
       <Box
         sx={{
+          gridColumn: 1,
+          gridRow: 1,
           display: { xs: 'none', md: 'flex' },
           alignItems: 'center',
+          height: 72,
+          boxSizing: 'border-box',
           px: 2.5,
           borderRight: 1,
           borderColor: 'divider',
@@ -100,7 +106,14 @@ export function CatalogBrowseLayout({
       <Stack
         direction="row"
         spacing={1}
-        sx={{ gridColumn: { xs: 1, md: 2 }, gridRow: 1, alignItems: 'center', px: 3, py: 2 }}
+        sx={{
+          gridColumn: { xs: 1, md: 2 },
+          gridRow: 1,
+          alignItems: 'center',
+          height: 72,
+          boxSizing: 'border-box',
+          px: 3
+        }}
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {heading != null && typeof heading !== 'string' ? (

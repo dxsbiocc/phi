@@ -7,11 +7,16 @@ export const CATALOG_SCROLLBAR_GUTTER = '12px'
 export const catalogDialogPaperSx = {
   width: 'min(1100px, calc(100vw - 48px))',
   height: 'min(720px, calc(100vh - 64px))',
+  minHeight: 'min(720px, calc(100vh - 64px))',
   maxWidth: 'calc(100vw - 48px)',
   maxHeight: 'calc(100vh - 64px)',
   m: 3,
   borderRadius: 2,
-  overflow: 'hidden'
+  // MUI Dialog paper defaults to overflowY:auto; the longhand would otherwise beat
+  // `overflow` and let short/tall catalog pages resize the centered paper.
+  overflow: 'hidden',
+  overflowX: 'hidden',
+  overflowY: 'hidden'
 } as const
 
 export function getCatalogPage<T>(

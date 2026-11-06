@@ -47,6 +47,15 @@ test('catalog tables reserve the scrollbar slot inside the right padding', () =>
   assert.match(layout, /pr: scrollContent \? CATALOG_SCROLLBAR_GUTTER : 3/)
 })
 
+test('catalog browse header row stays fixed so list/detail does not shift the shell', () => {
+  const layout = readFileSync('src/renderer/src/components/catalog/CatalogBrowseLayout.tsx', 'utf8')
+  const paging = readFileSync('src/renderer/src/components/catalog/catalogPaging.ts', 'utf8')
+  assert.match(layout, /md: '72px minmax\(0, 1fr\)'/)
+  assert.match(layout, /height: 72/)
+  assert.match(paging, /minHeight: 'min\(720px, calc\(100vh - 64px\)\)'/)
+  assert.match(paging, /overflowY: 'hidden'/)
+})
+
 test('catalog reset tolerates loading and empty content without a table', () => {
   const results = { scrollTop: 0, querySelector: () => null }
   assert.doesNotThrow(() => runInNewContext(effect, { resultsRef: { current: results } }))
