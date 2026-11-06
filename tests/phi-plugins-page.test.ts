@@ -14,6 +14,7 @@ import { EnvironmentBuildConfirmDialog } from '../src/renderer/src/components/En
 import { cacheResourceIconFixture } from './helpers/resourceIconFixture'
 import PhiPluginsView, {
   PhiPluginCatalogContent,
+  PhiPluginDetail,
   PhiPluginSidebar,
   type PhiPluginCatalogEntry
 } from '../src/renderer/src/features/phi-plugin/PhiPluginsView'
@@ -200,7 +201,11 @@ test('plugins display their own icons in sidebar, detail and installed or regist
         busyId: null,
         initialCategory,
         onChooseDirectory: () => undefined,
-        onInstall: () => undefined
+        onInstall: () => undefined,
+        onClearError: () => undefined,
+        onClearNotice: () => undefined,
+        onSetEnabled: async () => true,
+        onUninstall: async () => true
       })
     )
   for (const markup of [sidebar, detail, catalog('installed'), catalog('科研')]) {
@@ -338,7 +343,7 @@ test('plugin sidebar exposes separate enablement switches and pending state', ()
   assert.match(markup, /aria-current="true"/)
 })
 
-test('plugin sidebar renders the requested empty state with an add action', () => {
+test('plugin sidebar renders a discover hint when no plugins are installed', () => {
   const markup = themed(
     createElement(PhiPluginSidebar, {
       plugins: [],
@@ -349,8 +354,8 @@ test('plugin sidebar renders the requested empty state with an add action', () =
     })
   )
 
-  assert.match(markup, /No plugins installed/)
-  assert.match(markup, /aria-label="Add plugin"/)
+  assert.match(markup, /No plugins installed\. Select Discover to browse the catalog\./)
+  assert.doesNotMatch(markup, /aria-label="Add plugin"/)
 })
 
 test('plugin detail contains management, components, environment state and source metadata', () => {
@@ -374,6 +379,8 @@ test('plugin detail contains management, components, environment state and sourc
     })
   )
 
+  assert.match(markup, /data-phi-plugin-detail="true"/)
+  assert.match(markup, /data-phi-plugin-detail-mode="installed"/)
   assert.match(markup, /科研绘图/)
   assert.match(markup, /visualization · v1\.2\.0/)
   assert.match(markup, /Agents/)
@@ -919,7 +926,11 @@ test('catalog shows installed, update and install states plus local-directory ac
       busyId: null,
       initialCategory: '科研',
       onChooseDirectory: () => undefined,
-      onInstall: () => undefined
+      onInstall: () => undefined,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
     })
   )
 
@@ -927,14 +938,27 @@ test('catalog shows installed, update and install states plus local-directory ac
   assert.match(markup, /Research · 3/)
   assert.match(markup, /Install from local directory/)
   assert.match(markup, /Search plugin catalog/)
-  assert.match(markup, />Installed</)
-  assert.match(markup, />Update</)
-  assert.match(markup, />Install</)
+  assert.match(markup, /role="button"/)
+  assert.match(markup, /aria-label="Installed 软件源审稿助手"/)
+  assert.match(markup, /aria-label="Update 本地工具"/)
+  assert.match(markup, /aria-label="Install 新插件"/)
+  assert.match(markup, /data-phi-plugin-state="added"/)
+  assert.doesNotMatch(markup, />Install</)
+  assert.doesNotMatch(markup, />Update</)
   assert.match(markup, /Official/)
   const installedIds = new Set(installedPlugins.map((item) => item.id))
   assert.equal(phiPluginCatalogAction(entries[0], installedIds, updates), 'installed')
   assert.equal(phiPluginCatalogAction(entries[1], installedIds, updates), 'update')
   assert.equal(phiPluginCatalogAction(entries[2], installedIds, updates), 'install')
+
+  const catalogSource = readFileSync(
+    'src/renderer/src/features/phi-plugin/components/PhiPluginCatalogDialog.tsx',
+    'utf8'
+  )
+  assert.match(catalogSource, /onOpen=\{\(\) => openDetail\(/)
+  assert.match(catalogSource, /event\.stopPropagation\(\)/)
+  assert.match(catalogSource, /setPage\('list'\)|setPage\('detail'\)/)
+  assert.match(catalogSource, /pluginCopy\.backToCatalog/)
 
   const busyMarkup = themed(
     createElement(PhiPluginCatalogContent, {
@@ -945,10 +969,68 @@ test('catalog shows installed, update and install states plus local-directory ac
       busyId: 'local-tools',
       initialCategory: '科研',
       onChooseDirectory: () => undefined,
+      onInstall: () => undefined,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
+    })
+  )
+  assert.match(busyMarkup, /aria-label="Working…"/)
+  assert.ok((busyMarkup.match(/disabled=""/g)?.length ?? 0) >= 2)
+})
+
+test('catalog and installed plugin details reuse PhiPluginDetail with mode markers', () => {
+  const entry = catalogEntry('new-plugin', '新插件')
+  const catalogDetail = themed(
+    createElement(PhiPluginDetail, {
+      plugin: null,
+      busyPluginId: null,
+      error: null,
+      notice: null,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onRefresh: async () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true,
+      catalogEntry: entry,
+      catalogAction: 'install',
       onInstall: () => undefined
     })
   )
-  assert.equal(busyMarkup.match(/disabled=""/g)?.length ?? 0, 4)
+  assert.match(catalogDetail, /data-phi-plugin-detail="true"/)
+  assert.match(catalogDetail, /data-phi-plugin-detail-mode="catalog"/)
+  assert.match(catalogDetail, /aria-label="Install 新插件"/)
+  assert.match(catalogDetail, />Components</)
+  assert.match(catalogDetail, /Install the plugin to view its agents, skills, and script tools\./)
+  assert.match(catalogDetail, /Install the plugin to view its environment requirements\./)
+  assert.doesNotMatch(catalogDetail, /Uninstall/)
+
+  const catalogSource = readFileSync(
+    'src/renderer/src/features/phi-plugin/components/PhiPluginCatalogDialog.tsx',
+    'utf8'
+  )
+  assert.match(catalogSource, /error=\{error \?\? null\}/)
+  assert.match(catalogSource, /notice=\{notice \?\? null\}/)
+  assert.match(catalogSource, /onClearError=\{onClearError\}/)
+  assert.match(catalogSource, /onClearNotice=\{onClearNotice\}/)
+
+  const installedDetail = themed(
+    createElement(PhiPluginDetail, {
+      plugin: plugin(),
+      busyPluginId: null,
+      error: null,
+      notice: null,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onRefresh: async () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
+    })
+  )
+  assert.match(installedDetail, /data-phi-plugin-detail="true"/)
+  assert.match(installedDetail, /data-phi-plugin-detail-mode="installed"/)
+  assert.match(installedDetail, /Uninstall/)
 })
 
 test('plugin selection uses resource tabs, preserves sidebar visibility, and uninstall stays confirmed', () => {

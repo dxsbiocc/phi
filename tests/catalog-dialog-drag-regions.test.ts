@@ -35,7 +35,9 @@ const dialogs = [
       onChanged: async () => undefined,
       onClearFeedback: () => undefined,
       onShowError: () => undefined,
-      onInstallFromDirectory: async () => false
+      onInstallFromDirectory: async () => false,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
     })
   ]
 ] as const

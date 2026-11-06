@@ -15,12 +15,14 @@ import {
   DialogContentText,
   DialogTitle,
   Divider,
+  IconButton,
   Stack,
   Switch,
   Tooltip,
   Typography
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
+import { GoPlus, GoSync } from 'react-icons/go'
 
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
@@ -30,7 +32,12 @@ import { ResourceIcon } from '../../../components/ResourceIcon'
 import type { PhiPluginDisplayItem, PhiPluginEnvironmentStatus } from '../hooks/usePhiPlugins'
 import { errorMessage } from '../../../../../shared/errorCodes'
 import { requestPhiPluginEnvironmentBuild } from '../lib/environmentBuild'
-import { phiPluginDistributionLabel, phiPluginEnabledLabel } from '../lib/phiPlugins'
+import type { PhiPluginCatalogAction, PhiPluginCatalogEntry } from '../lib/phiPluginCatalog'
+import {
+  phiPluginDisplayTitle,
+  phiPluginDistributionLabel,
+  phiPluginEnabledLabel
+} from '../lib/phiPlugins'
 import { PhiPluginComponentDetails } from './PhiPluginComponentDetails'
 import { PhiPluginEnvironmentDetails } from './PhiPluginEnvironmentDetails'
 
@@ -44,6 +51,11 @@ export type PhiPluginDetailProps = {
   onRefresh: () => Promise<void>
   onSetEnabled: (plugin: PhiPluginDisplayItem, enabled: boolean) => Promise<boolean>
   onUninstall: (plugin: PhiPluginDisplayItem) => Promise<boolean>
+  /** Catalog preview when the plugin is not installed yet (or only registry metadata exists). */
+  catalogEntry?: PhiPluginCatalogEntry | null
+  catalogAction?: PhiPluginCatalogAction
+  installBusy?: boolean
+  onInstall?: () => void
 }
 
 export function PhiPluginDetail({
@@ -55,7 +67,11 @@ export function PhiPluginDetail({
   onClearNotice,
   onRefresh,
   onSetEnabled,
-  onUninstall
+  onUninstall,
+  catalogEntry = null,
+  catalogAction = 'install',
+  installBusy = false,
+  onInstall
 }: PhiPluginDetailProps): React.JSX.Element {
   useUiLanguage()
 
@@ -88,6 +104,14 @@ export function PhiPluginDetail({
     environmentErrorState && environmentErrorState.pluginId === plugin?.id
       ? environmentErrorState.message
       : null
+  const catalogPreview = plugin === null && catalogEntry !== null
+  const catalogTitle = catalogEntry
+    ? phiPluginDisplayTitle(catalogEntry)
+    : pluginCopy.fallbackPlugin
+  const installActionLabel =
+    catalogAction === 'update'
+      ? pluginCopy.updateNamed(catalogTitle)
+      : pluginCopy.installNamed(catalogTitle)
 
   async function confirmUninstall(): Promise<void> {
     if (!pendingUninstall) return
@@ -143,6 +167,7 @@ export function PhiPluginDetail({
     <Box
       component="main"
       data-phi-plugin-detail="true"
+      data-phi-plugin-detail-mode={catalogPreview ? 'catalog' : plugin ? 'installed' : 'empty'}
       sx={{
         flex: 1,
         minWidth: 0,
@@ -253,6 +278,32 @@ export function PhiPluginDetail({
                       <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
                     </>
                   ) : null}
+                  {catalogAction === 'update' && onInstall ? (
+                    <IconButton
+                      aria-label={pluginCopy.updateNamed(plugin.title)}
+                      title={pluginCopy.updateNamed(plugin.title)}
+                      size="small"
+                      disabled={installBusy || busyPluginId !== null}
+                      onClick={onInstall}
+                      sx={{
+                        width: 34,
+                        height: 34,
+                        p: 0,
+                        display: 'grid',
+                        placeItems: 'center',
+                        flexShrink: 0,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 1.5
+                      }}
+                    >
+                      {installBusy ? (
+                        <CircularProgress size={18} />
+                      ) : (
+                        <GoSync size={18} aria-hidden="true" />
+                      )}
+                    </IconButton>
+                  ) : null}
                   <Typography variant="body2" color="text.secondary">
                     {resourceUi.enable}
                   </Typography>
@@ -324,6 +375,128 @@ export function PhiPluginDetail({
                   </Stack>
                 </>
               )}
+            </>
+          ) : catalogPreview && catalogEntry ? (
+            <>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <Box
+                  sx={{
+                    width: 58,
+                    height: 58,
+                    flexShrink: 0,
+                    borderRadius: 2,
+                    display: 'grid',
+                    placeItems: 'center',
+                    color: 'primary.main',
+                    bgcolor: (theme) =>
+                      alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.09)
+                  }}
+                >
+                  <ResourceIcon
+                    icon={catalogEntry.icon}
+                    kind="plugin"
+                    size={58}
+                    fallbackSize={30}
+                  />
+                </Box>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography variant="h4" sx={{ fontWeight: 750 }}>
+                    {catalogTitle}
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ mt: 0.25, fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}
+                  >
+                    {catalogEntry.id} · v{catalogEntry.version}
+                  </Typography>
+                  <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25 }}>
+                    {catalogEntry.summary}
+                  </Typography>
+                  <Stack
+                    direction="row"
+                    spacing={0.75}
+                    useFlexGap
+                    sx={{ mt: 1.5, flexWrap: 'wrap' }}
+                  >
+                    {catalogEntry.registryLabel ? (
+                      <Chip size="small" variant="outlined" label={catalogEntry.registryLabel} />
+                    ) : null}
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={PACKAGE_TRUST_LABELS[catalogEntry.trust]}
+                      title={PACKAGE_TRUST_DESCRIPTIONS[catalogEntry.trust]}
+                    />
+                  </Stack>
+                </Box>
+                <Stack
+                  direction="row"
+                  spacing={1.5}
+                  sx={{ alignItems: 'center', alignSelf: 'flex-start' }}
+                >
+                  {installBusy ? (
+                    <Box
+                      role="status"
+                      aria-label={pluginCopy.processing}
+                      sx={{
+                        width: 34,
+                        height: 34,
+                        display: 'grid',
+                        placeItems: 'center',
+                        flexShrink: 0
+                      }}
+                    >
+                      <CircularProgress size={18} />
+                    </Box>
+                  ) : (
+                    <IconButton
+                      aria-label={installActionLabel}
+                      title={installActionLabel}
+                      size="small"
+                      disabled={!onInstall}
+                      onClick={onInstall}
+                      sx={{
+                        width: 34,
+                        height: 34,
+                        p: 0,
+                        display: 'grid',
+                        placeItems: 'center',
+                        flexShrink: 0,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 1.5
+                      }}
+                    >
+                      {catalogAction === 'update' ? (
+                        <GoSync size={18} aria-hidden="true" />
+                      ) : (
+                        <GoPlus size={18} aria-hidden="true" />
+                      )}
+                    </IconButton>
+                  )}
+                </Stack>
+              </Stack>
+
+              <Divider />
+              <Stack spacing={1}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                  {pluginCopy.components}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {pluginCopy.componentsAfterInstall}
+                </Typography>
+              </Stack>
+
+              <Divider />
+              <Stack spacing={1}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                  {pluginCopy.environments}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {pluginCopy.environmentsAfterInstall}
+                </Typography>
+              </Stack>
             </>
           ) : (
             <Stack spacing={1} sx={{ alignItems: 'center', textAlign: 'center', py: 12 }}>

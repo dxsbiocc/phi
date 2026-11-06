@@ -77,6 +77,10 @@ function render(overrides: Partial<PhiPluginCatalogContentProps> = {}): string {
         busyId: null,
         onChooseDirectory: () => undefined,
         onInstall: () => assert.fail('installed-only rows must not request an installation'),
+        onClearError: () => undefined,
+        onClearNotice: () => undefined,
+        onSetEnabled: async () => true,
+        onUninstall: async () => true,
         ...overrides
       })
     )

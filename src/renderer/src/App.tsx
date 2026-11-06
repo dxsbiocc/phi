@@ -4177,6 +4177,8 @@ function App(): React.JSX.Element {
           }}
           onShowError={phiPluginsState.showError}
           onInstallFromDirectory={phiPluginsState.installFromDirectory}
+          onSetEnabled={phiPluginsState.setEnabled}
+          onUninstall={phiPluginsState.uninstall}
         />
 
         <WorkspaceView

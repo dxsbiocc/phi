@@ -19,11 +19,12 @@ import {
   InputAdornment,
   List,
   ListItemButton,
-  Paper,
   Stack,
   TextField,
   Typography
 } from '@mui/material'
+import { alpha } from '@mui/material/styles'
+import { GoCheck, GoPlus, GoSync } from 'react-icons/go'
 
 import type { PackageTrust, PackageUpdateView } from '../../../../../shared/packageManagerTypes'
 import { errorMessage } from '../../../../../shared/errorCodes'
@@ -52,6 +53,7 @@ import {
   phiPluginDisplayTitle,
   phiPluginDistributionLabel
 } from '../lib/phiPlugins'
+import { PhiPluginDetail } from './PhiPluginDetail'
 
 function installIsUpgrade(preview: PhiPluginInstallPreview): boolean {
   return (
@@ -66,6 +68,29 @@ function pluginDisplayName(preview: PhiPluginInstallPreview): string {
     : preview.id?.trim() || pluginCopy.fallbackPlugin
 }
 
+function PluginAddedMark({ label }: { label: string }): React.JSX.Element {
+  return (
+    <Box
+      role="img"
+      aria-label={label}
+      data-phi-plugin-state="added"
+      sx={{
+        width: 34,
+        height: 34,
+        display: 'grid',
+        placeItems: 'center',
+        flexShrink: 0,
+        borderRadius: 1.5,
+        color: 'success.dark',
+        bgcolor: (theme) =>
+          alpha(theme.palette.success.main, theme.palette.mode === 'dark' ? 0.28 : 0.16)
+      }}
+    >
+      <GoCheck size={20} aria-hidden="true" />
+    </Box>
+  )
+}
+
 function CatalogCard({
   icon,
   title,
@@ -76,6 +101,7 @@ function CatalogCard({
   action,
   busy,
   disabled,
+  onOpen,
   onAction
 }: {
   icon?: ResourceIconRef
@@ -87,62 +113,120 @@ function CatalogCard({
   action: PhiPluginCatalogAction
   busy: boolean
   disabled: boolean
+  onOpen: () => void
   onAction?: () => void
 }): React.JSX.Element {
   useUiLanguage()
 
+  const actionLabel =
+    action === 'update'
+      ? pluginCopy.updateNamed(title)
+      : action === 'installed'
+        ? pluginCopy.installedNamed(title)
+        : pluginCopy.installNamed(title)
+
   return (
-    <Paper variant="outlined" sx={{ p: 1.75, borderRadius: 2 }}>
-      <Stack direction="row" spacing={1.5} sx={{ alignItems: 'flex-start' }}>
+    <Box
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onOpen()
+        }
+      }}
+      sx={{
+        minWidth: 0,
+        minHeight: 108,
+        p: 1.75,
+        border: '1px solid',
+        borderColor: 'divider',
+        borderRadius: 2,
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 1.5,
+        cursor: 'pointer',
+        '&:hover': { bgcolor: 'action.hover' }
+      }}
+    >
+      <Box
+        sx={{
+          width: 42,
+          height: 42,
+          flexShrink: 0,
+          borderRadius: 1.5,
+          display: 'grid',
+          placeItems: 'center',
+          bgcolor: 'action.hover',
+          color: 'primary.main'
+        }}
+      >
+        <ResourceIcon icon={icon} kind="plugin" size={42} fallbackSize={23} />
+      </Box>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography noWrap title={title} sx={{ fontWeight: 700 }}>
+          {title}
+        </Typography>
+        <Typography noWrap title={summary} variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+          {summary}
+        </Typography>
+        <Stack direction="row" spacing={0.75} useFlexGap sx={{ mt: 1, flexWrap: 'wrap' }}>
+          <Chip size="small" label={`v${version}`} />
+          {source ? (
+            <Chip size="small" variant="outlined" label={resourceSourceLabel(source)} />
+          ) : null}
+          {resourceSourceLabel(source ?? '') !== PACKAGE_TRUST_LABELS[trust] ? (
+            <Chip
+              size="small"
+              variant="outlined"
+              label={PACKAGE_TRUST_LABELS[trust]}
+              title={PACKAGE_TRUST_DESCRIPTIONS[trust]}
+            />
+          ) : null}
+        </Stack>
+      </Box>
+      {busy ? (
         <Box
+          role="status"
+          aria-label={pluginCopy.processing}
+          sx={{ width: 34, height: 34, display: 'grid', placeItems: 'center', flexShrink: 0 }}
+        >
+          <CircularProgress size={18} />
+        </Box>
+      ) : action === 'installed' ? (
+        <PluginAddedMark label={actionLabel} />
+      ) : (
+        <IconButton
+          aria-label={actionLabel}
+          title={actionLabel}
+          size="small"
+          disabled={disabled || !onAction}
+          onClick={(event) => {
+            event.stopPropagation()
+            onAction?.()
+          }}
           sx={{
-            width: 42,
-            height: 42,
-            flexShrink: 0,
-            borderRadius: 1.5,
+            width: 34,
+            height: 34,
+            p: 0,
             display: 'grid',
             placeItems: 'center',
-            bgcolor: 'action.hover',
-            color: 'primary.main'
+            flexShrink: 0,
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 1.5
           }}
         >
-          <ResourceIcon icon={icon} kind="plugin" size={42} fallbackSize={23} />
-        </Box>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ fontWeight: 700 }}>{title}</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-            {summary}
-          </Typography>
-          <Stack direction="row" spacing={0.75} useFlexGap sx={{ mt: 1, flexWrap: 'wrap' }}>
-            <Chip size="small" label={`v${version}`} />
-            {source ? (
-              <Chip size="small" variant="outlined" label={resourceSourceLabel(source)} />
-            ) : null}
-            {resourceSourceLabel(source ?? '') !== PACKAGE_TRUST_LABELS[trust] ? (
-              <Chip
-                size="small"
-                variant="outlined"
-                label={PACKAGE_TRUST_LABELS[trust]}
-                title={PACKAGE_TRUST_DESCRIPTIONS[trust]}
-              />
-            ) : null}
-          </Stack>
-        </Box>
-        <Button
-          variant={action === 'installed' ? 'outlined' : 'contained'}
-          disabled={disabled || action === 'installed' || !onAction}
-          onClick={onAction}
-        >
-          {busy
-            ? pluginCopy.processing
-            : action === 'update'
-              ? resourceUi.update
-              : action === 'installed'
-                ? resourceUi.installed
-                : resourceUi.install}
-        </Button>
-      </Stack>
-    </Paper>
+          {action === 'update' ? (
+            <GoSync size={18} aria-hidden="true" />
+          ) : (
+            <GoPlus size={18} aria-hidden="true" />
+          )}
+        </IconButton>
+      )}
+    </Box>
   )
 }
 
@@ -158,6 +242,11 @@ export type PhiPluginCatalogContentProps = {
   initialCategory?: string
   onChooseDirectory: () => void
   onInstall: (entry: PhiPluginCatalogEntry, update: boolean) => void
+  onClearError: () => void
+  onClearNotice: () => void
+  onRefresh?: () => Promise<void>
+  onSetEnabled: (plugin: PhiPluginDisplayItem, enabled: boolean) => Promise<boolean>
+  onUninstall: (plugin: PhiPluginDisplayItem) => Promise<boolean>
 }
 
 export function PhiPluginCatalogContent({
@@ -171,12 +260,19 @@ export function PhiPluginCatalogContent({
   sourceNotice,
   initialCategory = 'all',
   onChooseDirectory,
-  onInstall
+  onInstall,
+  onClearError,
+  onClearNotice,
+  onRefresh,
+  onSetEnabled,
+  onUninstall
 }: PhiPluginCatalogContentProps): React.JSX.Element {
   const uiLanguage = useUiLanguage()
 
   const [category, setCategory] = useState(initialCategory)
   const [query, setQuery] = useState('')
+  const [page, setPage] = useState<'list' | 'detail'>('list')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const installedIds = useMemo(() => new Set(plugins.map((plugin) => plugin.id)), [plugins])
   const catalog = useMemo(() => {
     void uiLanguage // Invalidate localized presentation.
@@ -201,6 +297,34 @@ export function PhiPluginCatalogContent({
   )
   const visibleItems = filterPhiPluginCatalog(catalog, category, query)
   const installedSelected = category === 'installed'
+  const selectedPlugin = selectedId
+    ? (plugins.find((plugin) => plugin.id === selectedId) ?? null)
+    : null
+  const selectedCatalogItem = selectedId
+    ? (catalog.find((item) => item.id === selectedId) ?? null)
+    : null
+  const selectedEntry = selectedCatalogItem?.entry ?? null
+  const selectedAction = selectedEntry
+    ? phiPluginCatalogAction(selectedEntry, installedIds, updates)
+    : selectedPlugin
+      ? 'installed'
+      : 'install'
+  const showingDetail =
+    page === 'detail' && selectedId !== null && (selectedPlugin !== null || selectedEntry !== null)
+
+  function openDetail(id: string): void {
+    setSelectedId(id)
+    setPage('detail')
+  }
+
+  function backToList(): void {
+    setPage('list')
+  }
+
+  function selectCategory(next: string): void {
+    setCategory(next)
+    setPage('list')
+  }
 
   return (
     <Box
@@ -228,7 +352,7 @@ export function PhiPluginCatalogContent({
         <List disablePadding>
           <ListItemButton
             selected={category === 'all'}
-            onClick={() => setCategory('all')}
+            onClick={() => selectCategory('all')}
             sx={{ borderRadius: 1.5, mb: 0.5 }}
           >
             <Typography variant="body2">
@@ -237,7 +361,7 @@ export function PhiPluginCatalogContent({
           </ListItemButton>
           <ListItemButton
             selected={installedSelected}
-            onClick={() => setCategory('installed')}
+            onClick={() => selectCategory('installed')}
             sx={{ borderRadius: 1.5, mb: 0.5 }}
           >
             <Typography variant="body2">
@@ -248,7 +372,7 @@ export function PhiPluginCatalogContent({
             <ListItemButton
               key={label}
               selected={category === label}
-              onClick={() => setCategory(label)}
+              onClick={() => selectCategory(label)}
               sx={{ borderRadius: 1.5, mb: 0.5 }}
             >
               <Typography variant="body2">
@@ -270,121 +394,158 @@ export function PhiPluginCatalogContent({
       </Box>
 
       <Box sx={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', px: 3, py: 2 }}>
-          <Typography variant="h5" sx={{ flex: 1, fontWeight: 700 }}>
-            {installedSelected
-              ? resourceUi.installed
-              : category === 'all'
-                ? pluginCopy.allPlugins
-                : resourceCategoryLabel(category)}
-          </Typography>
-          <TextField
-            size="small"
-            placeholder={pluginCopy.searchCatalog}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            slotProps={{
-              input: {
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <PhiIcons.action.search fontSize="small" />
-                  </InputAdornment>
-                )
-              }
-            }}
-          />
-        </Stack>
-        <Box
-          sx={{
-            flex: 1,
-            minHeight: 0,
-            overflowY: 'auto',
-            scrollbarGutter: 'stable',
-            pl: 3,
-            pr: CATALOG_SCROLLBAR_GUTTER,
-            pb: 3
-          }}
-        >
-          {error ? (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
-            </Alert>
-          ) : null}
-          {notice ? (
-            <Alert severity="success" sx={{ mb: 2 }}>
-              {notice}
-            </Alert>
-          ) : null}
-          {sourceNotice ? (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              {sourceNotice}
-            </Alert>
-          ) : null}
-          {loading ? (
-            <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-              <CircularProgress size={20} />
-              <Typography variant="body2" color="text.secondary">
-                {pluginCopy.loadingCatalog}
-              </Typography>
+        {showingDetail ? (
+          <>
+            <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', px: 3, py: 2 }}>
+              <Button onClick={backToList} sx={{ px: 0, minWidth: 0 }}>
+                {pluginCopy.backToCatalog}
+              </Button>
             </Stack>
-          ) : (
+            <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <PhiPluginDetail
+                plugin={selectedPlugin}
+                busyPluginId={busyId}
+                error={error ?? null}
+                notice={notice ?? null}
+                onClearError={onClearError}
+                onClearNotice={onClearNotice}
+                onRefresh={onRefresh ?? (async () => undefined)}
+                onSetEnabled={onSetEnabled}
+                onUninstall={onUninstall}
+                catalogEntry={selectedPlugin ? null : selectedEntry}
+                catalogAction={selectedAction}
+                installBusy={busyId !== null && busyId === selectedId}
+                onInstall={
+                  selectedEntry
+                    ? () => onInstall(selectedEntry, selectedAction === 'update')
+                    : undefined
+                }
+              />
+            </Box>
+          </>
+        ) : (
+          <>
+            <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', px: 3, py: 2 }}>
+              <Typography variant="h5" sx={{ flex: 1, fontWeight: 700 }}>
+                {installedSelected
+                  ? resourceUi.installed
+                  : category === 'all'
+                    ? pluginCopy.allPlugins
+                    : resourceCategoryLabel(category)}
+              </Typography>
+              <TextField
+                size="small"
+                placeholder={pluginCopy.searchCatalog}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                slotProps={{
+                  input: {
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <PhiIcons.action.search fontSize="small" />
+                      </InputAdornment>
+                    )
+                  }
+                }}
+              />
+            </Stack>
             <Box
               sx={{
-                display: 'grid',
-                gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
-                gap: 1.5
+                flex: 1,
+                minHeight: 0,
+                overflowY: 'auto',
+                scrollbarGutter: 'stable',
+                pl: 3,
+                pr: CATALOG_SCROLLBAR_GUTTER,
+                pb: 3
               }}
             >
-              {installedSelected
-                ? visiblePlugins.map((plugin) => (
-                    <CatalogCard
-                      key={plugin.id}
-                      icon={plugin.icon}
-                      title={plugin.title}
-                      summary={plugin.summary}
-                      version={plugin.version}
-                      trust={plugin.trust}
-                      source={phiPluginDistributionLabel(plugin.distribution)}
-                      action="installed"
-                      busy={false}
-                      disabled
-                    />
-                  ))
-                : visibleItems.map((item) => {
-                    const entry = item.entry
-                    const action = entry
-                      ? phiPluginCatalogAction(entry, installedIds, updates)
-                      : 'installed'
-                    return (
-                      <CatalogCard
-                        key={item.id}
-                        icon={item.icon}
-                        title={item.title}
-                        summary={item.summary}
-                        version={item.version}
-                        trust={item.trust}
-                        source={item.source}
-                        action={action}
-                        busy={busyId === item.id}
-                        disabled={busyId !== null}
-                        onAction={entry ? () => onInstall(entry, action === 'update') : undefined}
-                      />
-                    )
-                  })}
+              {error ? (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {error}
+                </Alert>
+              ) : null}
+              {notice ? (
+                <Alert severity="success" sx={{ mb: 2 }}>
+                  {notice}
+                </Alert>
+              ) : null}
+              {sourceNotice ? (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  {sourceNotice}
+                </Alert>
+              ) : null}
+              {loading ? (
+                <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                  <CircularProgress size={20} />
+                  <Typography variant="body2" color="text.secondary">
+                    {pluginCopy.loadingCatalog}
+                  </Typography>
+                </Stack>
+              ) : (
+                <Box
+                  sx={{
+                    display: 'grid',
+                    gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+                    gap: 1.5
+                  }}
+                >
+                  {installedSelected
+                    ? visiblePlugins.map((plugin) => (
+                        <CatalogCard
+                          key={plugin.id}
+                          icon={plugin.icon}
+                          title={plugin.title}
+                          summary={plugin.summary}
+                          version={plugin.version}
+                          trust={plugin.trust}
+                          source={phiPluginDistributionLabel(plugin.distribution)}
+                          action="installed"
+                          busy={false}
+                          disabled
+                          onOpen={() => openDetail(plugin.id)}
+                        />
+                      ))
+                    : visibleItems.map((item) => {
+                        const entry = item.entry
+                        const action = entry
+                          ? phiPluginCatalogAction(entry, installedIds, updates)
+                          : 'installed'
+                        return (
+                          <CatalogCard
+                            key={item.id}
+                            icon={item.icon}
+                            title={item.title}
+                            summary={item.summary}
+                            version={item.version}
+                            trust={item.trust}
+                            source={item.source}
+                            action={action}
+                            busy={busyId === item.id}
+                            disabled={busyId !== null}
+                            onOpen={() => openDetail(item.id)}
+                            onAction={
+                              entry ? () => onInstall(entry, action === 'update') : undefined
+                            }
+                          />
+                        )
+                      })}
+                </Box>
+              )}
+              {!loading &&
+              ((installedSelected && visiblePlugins.length === 0) ||
+                (!installedSelected && visibleItems.length === 0)) ? (
+                <Typography variant="body2" color="text.secondary">
+                  {normalizedQuery
+                    ? pluginCopy.noCatalogMatches
+                    : installedSelected
+                      ? pluginCopy.noneInstalled
+                      : pluginCopy.noCategoryPlugins}
+                </Typography>
+              ) : null}
             </Box>
-          )}
-          {!loading &&
-          ((installedSelected && visiblePlugins.length === 0) ||
-            (!installedSelected && visibleItems.length === 0)) ? (
-            <Typography variant="body2" color="text.secondary">
-              {normalizedQuery
-                ? pluginCopy.noCatalogMatches
-                : installedSelected
-                  ? pluginCopy.noneInstalled
-                  : pluginCopy.noCategoryPlugins}
-            </Typography>
-          ) : null}
-        </Box>
+          </>
+        )}
       </Box>
     </Box>
   )
@@ -401,6 +562,8 @@ export type PhiPluginCatalogDialogProps = {
   onClearFeedback: () => void
   onShowError: (message: string) => void
   onInstallFromDirectory: (path: string, description: string) => Promise<boolean>
+  onSetEnabled: (plugin: PhiPluginDisplayItem, enabled: boolean) => Promise<boolean>
+  onUninstall: (plugin: PhiPluginDisplayItem) => Promise<boolean>
 }
 
 export function PhiPluginCatalogDialog({
@@ -413,7 +576,9 @@ export function PhiPluginCatalogDialog({
   onChanged,
   onClearFeedback,
   onShowError,
-  onInstallFromDirectory
+  onInstallFromDirectory,
+  onSetEnabled,
+  onUninstall
 }: PhiPluginCatalogDialogProps): React.JSX.Element {
   useUiLanguage()
 
@@ -577,6 +742,17 @@ export function PhiPluginCatalogDialog({
           sourceNotice={sourceNotice}
           onChooseDirectory={() => void choosePluginDirectory()}
           onInstall={(entry, update) => void install(entry, update)}
+          onClearError={() => {
+            setError(null)
+            onClearFeedback()
+          }}
+          onClearNotice={() => {
+            setError(null)
+            onClearFeedback()
+          }}
+          onRefresh={onChanged}
+          onSetEnabled={onSetEnabled}
+          onUninstall={onUninstall}
         />
       </Box>
 

@@ -2,13 +2,12 @@ import { useUiLanguage } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
 import { pluginCopy } from '../lib/pluginCopy'
 import { useMemo, useState } from 'react'
-import { Box, CircularProgress, IconButton, List, Stack, Typography } from '@mui/material'
+import { Box, CircularProgress, List, Stack, Typography } from '@mui/material'
 
 import { SidebarAccordionGroup } from '../../../components/SidebarAccordionGroup'
 import { CatalogSidebar } from '../../../components/CatalogSidebar'
 import { CatalogResourceRow } from '../../../components/CatalogResourceRow'
 import { ResourceIcon } from '../../../components/ResourceIcon'
-import { PhiIcons } from '../../../icons'
 import type { PhiPluginDisplayItem } from '../hooks/usePhiPlugins'
 import {
   filterPhiPlugins,
@@ -153,17 +152,11 @@ export function PhiPluginSidebar({
             </SidebarAccordionGroup>
           ))
         ) : (
-          <Stack spacing={1.25} sx={{ alignItems: 'center', textAlign: 'center', px: 2, py: 5 }}>
-            <PhiIcons.entity.plugin color="disabled" />
+          <Box sx={{ px: 1.5, py: 2 }}>
             <Typography variant="body2" color="text.secondary">
-              {normalizedQuery ? pluginCopy.noMatches : pluginCopy.noneInstalled}
+              {normalizedQuery ? pluginCopy.noMatches : pluginCopy.noneInstalledHint}
             </Typography>
-            {!normalizedQuery ? (
-              <IconButton aria-label={pluginCopy.addPlugin} color="primary" onClick={onOpenCatalog}>
-                <PhiIcons.action.add size={20} />
-              </IconButton>
-            ) : null}
-          </Stack>
+          </Box>
         )}
       </List>
     </CatalogSidebar>
