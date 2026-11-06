@@ -8,6 +8,7 @@ import * as runtimeRecoveryIpc from '../src/main/agent/session/runtime-recovery-
 import * as recoverySummary from '../src/main/agent/session/recovery-summary'
 import * as recoveryFailures from '../src/main/agent/engine/rpc/session-recovery'
 import * as runtimeReference from '../src/main/agent/session/runtime-reference'
+import * as forkSourceBusy from '../src/main/agent/session/fork-source-busy'
 import { createWrapperJobHostScope } from '../src/main/agent/wrappers/composition/job-host-handlers'
 import { createWebLinkPreviewService } from '../src/main/web-link-preview'
 import * as permissionModeControl from '../src/main/agent/session/permission-mode-control'
@@ -2845,6 +2846,7 @@ async function harness(
     './agent/session/recovery-summary': recoverySummary,
     './agent/engine/rpc/session-recovery': recoveryFailures,
     './agent/session/runtime-reference': runtimeReference,
+    './agent/session/fork-source-busy': forkSourceBusy,
     './agent/engine/rpc/facade-session-driver': { facadeBindingHash: () => 'a'.repeat(64) },
     './agent/session/child-run-recovery': {
       readColdChildRuns: (input: { phiSessionId: string }) =>
