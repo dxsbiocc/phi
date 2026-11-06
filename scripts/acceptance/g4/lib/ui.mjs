@@ -10,6 +10,9 @@ import {
 export { SELECTORS } from './renderer-contract.mjs'
 
 const q = (value) => JSON.stringify(value)
+const COMPACTED_NOTICE = '上下文已压缩'
+// appCopy.compactNotNeeded (zh)
+const COMPACT_NOT_NEEDED_NOTICE = '暂时不需要压缩'
 
 export class PhiUi {
   constructor(client, run) {
@@ -482,7 +485,7 @@ export class PhiUi {
 
   async findNoticeContainingOrNull(text, timeoutMs = 15_000) {
     const deadline = Date.now() + timeoutMs
-    while (Date.now() < deadline) {
+    for (;;) {
       const found = await this.client.evaluate(`
         (() => {
           const probe = window.__phiG4Probe?.peek?.() || [];
@@ -494,12 +497,30 @@ export class PhiUi {
         })()
       `)
       if (found) return found
+      if (Date.now() >= deadline) return null
       await sleep(200)
     }
-    return null
   }
 
-  async inspectContextAndCompact(stepId) {
+  async countNotNeededNotices() {
+    const events = await this.currentStepEvents()
+    return events.filter((item) => item.text.includes(COMPACT_NOT_NEEDED_NOTICE)).length
+  }
+
+  /** Success, or a not-needed notice newer than the `prior` ones from earlier attempts. */
+  async waitForCompactionOutcome(prior, timeoutMs) {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const notice = await this.findNoticeContainingOrNull(COMPACTED_NOTICE, 0)
+      if (notice) return { matched: COMPACTED_NOTICE, notice }
+      if ((await this.countNotNeededNotices()) > prior) return { matched: COMPACT_NOT_NEEDED_NOTICE, notice: null }
+      if (Date.now() >= deadline) throw new Error('Timed out waiting for a compaction notice')
+      await sleep(200)
+    }
+  }
+
+  async inspectContextAndCompact(stepId, { allowNotNeeded = false } = {}) {
+    const priorNotNeeded = await this.countNotNeededNotices()
     await this.clickSelector(SELECTORS.contextUsage)
     await this.client.waitForValue(`Boolean(document.querySelector(${q(SELECTORS.contextPanel)}))`, {
       timeoutMs: 10_000,
@@ -533,14 +554,20 @@ export class PhiUi {
       )
       await this.clickSelector(SELECTORS.manualCompaction)
     }
-    const success = await this.findNoticeContaining('上下文已压缩', 120_000)
+    // OMP declines to compact a conversation below its token threshold, and how long the
+    // earlier replies run is up to the model.
+    const outcome = allowNotNeeded
+      ? await this.waitForCompactionOutcome(priorNotNeeded, 120_000)
+      : { matched: COMPACTED_NOTICE, notice: await this.findNoticeContaining(COMPACTED_NOTICE, 120_000) }
+    const success = outcome.matched === COMPACTED_NOTICE ? outcome.notice : null
     if (await this.client.evaluate(`Boolean(document.querySelector('button[aria-label="关闭设置"]'))`)) {
       await this.clickSelector('button[aria-label="关闭设置"]')
     }
     return {
       route: popoverHasCompaction ? 'context-usage popover' : 'context-usage inspection → 设置 → 通用',
       contextShot,
-      success
+      success,
+      notNeeded: outcome.matched === COMPACT_NOT_NEEDED_NOTICE
     }
   }
 

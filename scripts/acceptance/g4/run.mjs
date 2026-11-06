@@ -478,7 +478,19 @@ async function runLocal(ui) {
   })
 
   await recordStep(ui, 'M2', async () => {
-    const compaction = await ui.inspectContextAndCompact('M2')
+    let compaction = await ui.inspectContextAndCompact('M2', { allowNotNeeded: true })
+    // OMP keeps about 20k recent tokens (scaled down by the system prompt's share), so a
+    // conversation of a few short turns and one essay can sit right at the edge.
+    const growthTopics = ['测试、发布和回滚', '代码评审与重构', '监控、告警和故障复盘']
+    let grownBy = 0
+    while (compaction.notNeeded) {
+      assert(grownBy < growthTopics.length, 'Still too short to compact after growing the conversation')
+      const topic = growthTopics[grownBy]
+      grownBy += 1
+      const grown = await sendPrompt(ui, `请写一篇至少 3000 字的长文，分成十五段，逐段解释软件项目里${topic}的做法。`)
+      assert(grown.assistantText, 'No assistant reply while growing the conversation for compaction')
+      compaction = await ui.inspectContextAndCompact('M2', { allowNotNeeded: grownBy < growthTopics.length })
+    }
     const sent = await sendPrompt(ui, '继续，用一句话总结我们之前在做什么')
     assert(sent.assistantText, 'No assistant reply after manual compaction')
     return {
@@ -486,6 +498,7 @@ async function runLocal(ui) {
       evidence: {
         compactionRoute: compaction.route,
         compactionNotice: compaction.success,
+        grownBeforeCompaction: grownBy,
         assistantText: sent.assistantText,
         screenshots: [compaction.contextShot]
       }
