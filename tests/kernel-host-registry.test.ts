@@ -109,6 +109,22 @@ test('wrapper start is user-interactive because missing tools pause for a chat c
   assert.equal('timeoutMs' in KERNEL_HOST_CAPABILITY_REGISTRY['wrapperJob.start'], false)
 })
 
+test('environment requests carry the optional local binding marker', () => {
+  const { params } = KERNEL_HOST_CAPABILITY_REGISTRY['environments.request']
+  const request = {
+    runtimeSessionId: 'bound-session',
+    cwd: '/tmp/phi-project',
+    packages: ['numpy'],
+    reason: 'Rebind the environment',
+    environment: 'env-base'
+  }
+  const bound = { ...request, boundSession: true }
+  assert.deepEqual(params.parse(bound), bound)
+  const remote = { ...request, remoteSessionId: 'remote-session', projectId: 'project' }
+  assert.deepEqual(params.parse(remote), remote)
+  assert.equal(params.safeParse({ ...request, boundSession: 'true' }).success, false)
+})
+
 test('host capability schemas reject undeclared fields and protect credential results', () => {
   const settings = KERNEL_HOST_CAPABILITY_REGISTRY['settings.nextActionSuggestionsEnabled']
   assert.equal(settings.params.safeParse({}).success, true)

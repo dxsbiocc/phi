@@ -331,13 +331,25 @@ test('resolveCommand searches PATH, skips non-executables, and returns undefined
     assert.equal(resolveCommand('missing', `${first}:${second}`), undefined)
     assert.equal(resolveCommand(skipped, second), undefined)
     assert.equal(resolveCommand(found, first), found)
-    const windowsTool = join(second, 'jupyter.exe')
+  })
+})
+
+test('resolveCommand uses PATHEXT and semicolon-separated PATH entries in Windows mode', async (t) => {
+  const previousPathExt = process.env.PATHEXT
+  process.env.PATHEXT = '.EXE'
+  t.after(() => {
+    if (previousPathExt === undefined) delete process.env.PATHEXT
+    else process.env.PATHEXT = previousPathExt
+  })
+  await withTemp('resolve-win32', (root) => {
+    const first = join(root, 'first')
+    const second = join(root, 'second')
+    mkdirSync(first)
+    mkdirSync(second)
+    const windowsTool = join(second, 'jupyter.EXE')
     writeFileSync(windowsTool, 'MZ', { mode: 0o755 })
     chmodSync(windowsTool, 0o755)
-    assert.equal(
-      resolveCommand('jupyter', `${first};${second}`, 'win32')?.toLowerCase(),
-      windowsTool.toLowerCase()
-    )
+    assert.equal(resolveCommand('jupyter', `${first};${second}`, 'win32'), windowsTool)
   })
 })
 

@@ -675,6 +675,7 @@ export const KERNEL_HOST_CAPABILITY_REGISTRY = {
         packages: z.array(nonEmptyStringSchema).min(1).max(20),
         reason: nonEmptyStringSchema.max(500),
         environment: nonEmptyStringSchema,
+        boundSession: z.literal(true).optional(),
         requestId: boundedIdSchema.optional(),
         remoteSessionId: boundedIdSchema.optional(),
         projectId: boundedIdSchema.optional(),

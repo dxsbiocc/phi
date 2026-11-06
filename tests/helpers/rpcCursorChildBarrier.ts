@@ -26,6 +26,11 @@ export function cursorChildBarrierBundle(
   const paths = cursorChildBarrierPaths(directory)
   const observer = `
   const cursorQueuedObservers = new Map()
+  const cursorPublish = (path, value) => {
+    const temporary = path + '.tmp'
+    cursorWrite(temporary, JSON.stringify(value), {mode: 0o600})
+    cursorRename(temporary, path)
+  }
   pi.on('session_start', (_event, ctx) => {
     if (ctx.agent.kind !== 'sub') return
     const ref = pi.pi.AgentRegistry.global().get(ctx.agent.id)
@@ -46,9 +51,9 @@ export function cursorChildBarrierBundle(
         throw new Error('Cursor dequeue observer requires one live owned continuation')
       held = true
       owned = queued[0]
-      const aborted = () => cursorWrite(${JSON.stringify(paths.aborted)}, JSON.stringify({aborted: true}), {mode: 0o600})
+      const aborted = () => cursorPublish(${JSON.stringify(paths.aborted)}, {aborted: true})
       signal.addEventListener('abort', aborted, {once: true})
-      cursorWrite(${JSON.stringify(paths.ready)}, JSON.stringify({nativeId: ctx.agent.id, queued: true, ownedCount: queued.length}), {mode: 0o600})
+      cursorPublish(${JSON.stringify(paths.ready)}, {nativeId: ctx.agent.id, queued: true, ownedCount: queued.length})
       try {
         while (!cursorExists(${JSON.stringify(paths.release)}))
           await new Promise((resolve) => setTimeout(resolve, 5))
@@ -66,7 +71,7 @@ export function cursorChildBarrierBundle(
     if (!state || state.session.sessionManager !== ctx.sessionManager) return
     state.detach()
     cursorQueuedObservers.delete(ctx.agent.id)
-    cursorWrite(${JSON.stringify(paths.shutdown)}, JSON.stringify({ownedRemaining: state.remaining(), detached: true}), {mode: 0o600})
+    cursorPublish(${JSON.stringify(paths.shutdown)}, {ownedRemaining: state.remaining(), detached: true})
   })
 `
   let patched = false
@@ -79,7 +84,7 @@ export function cursorChildBarrierBundle(
     assert.equal(original.split(start).length, 2)
     assert.equal(original.split(end).length, 2)
     const source =
-      "import { existsSync as cursorExists, writeFileSync as cursorWrite } from 'node:fs'\n" +
+      "import { existsSync as cursorExists, renameSync as cursorRename, writeFileSync as cursorWrite } from 'node:fs'\n" +
       original.replace(start, start + observer).replace(end, shutdown + end)
     const bytes = Buffer.from(source)
     patched = true
