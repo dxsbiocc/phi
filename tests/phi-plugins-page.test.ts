@@ -200,6 +200,7 @@ test('plugins display their own icons in sidebar, detail and installed or regist
         loading: false,
         busyId: null,
         initialCategory,
+        onClose: () => undefined,
         onChooseDirectory: () => undefined,
         onInstall: () => undefined,
         onClearError: () => undefined,
@@ -925,6 +926,7 @@ test('catalog shows installed, update and install states plus local-directory ac
       loading: false,
       busyId: null,
       initialCategory: '科研',
+      onClose: () => undefined,
       onChooseDirectory: () => undefined,
       onInstall: () => undefined,
       onClearError: () => undefined,
@@ -934,9 +936,10 @@ test('catalog shows installed, update and install states plus local-directory ac
     })
   )
 
-  assert.match(markup, /Installed · 3/)
-  assert.match(markup, /Research · 3/)
-  assert.match(markup, /Install from local directory/)
+  assert.match(markup, /data-phi-catalog-browser="Plugins"/)
+  assert.match(markup, /Installed/)
+  assert.match(markup, /Research/)
+  assert.match(markup, /aria-label="Install from local directory"/)
   assert.match(markup, /Search plugin catalog/)
   assert.match(markup, /role="button"/)
   assert.match(markup, /aria-label="Installed 软件源审稿助手"/)
@@ -955,6 +958,7 @@ test('catalog shows installed, update and install states plus local-directory ac
     'src/renderer/src/features/phi-plugin/components/PhiPluginCatalogDialog.tsx',
     'utf8'
   )
+  assert.match(catalogSource, /CatalogBrowseLayout/)
   assert.match(catalogSource, /onOpen=\{\(\) => openDetail\(/)
   assert.match(catalogSource, /event\.stopPropagation\(\)/)
   assert.match(catalogSource, /setPage\('list'\)|setPage\('detail'\)/)
@@ -968,6 +972,7 @@ test('catalog shows installed, update and install states plus local-directory ac
       loading: false,
       busyId: 'local-tools',
       initialCategory: '科研',
+      onClose: () => undefined,
       onChooseDirectory: () => undefined,
       onInstall: () => undefined,
       onClearError: () => undefined,

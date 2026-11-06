@@ -75,6 +75,7 @@ function render(overrides: Partial<PhiPluginCatalogContentProps> = {}): string {
         updates: [],
         loading: false,
         busyId: null,
+        onClose: () => undefined,
         onChooseDirectory: () => undefined,
         onInstall: () => assert.fail('installed-only rows must not request an installation'),
         onClearError: () => undefined,
@@ -89,19 +90,20 @@ function render(overrides: Partial<PhiPluginCatalogContentProps> = {}): string {
 
 test('all plugins includes installed Office when only visualization is available remotely', () => {
   const markup = render()
-  assert.match(markup, /All Plugins · 2/)
-  assert.match(markup, /Installed · 2/)
-  assert.match(markup, /Other · 2/)
+  assert.match(markup, /All Plugins/)
+  assert.match(markup, /title="Installed"[\s\S]*?>2</)
+  assert.match(markup, /title="Other"[\s\S]*?>2</)
   assert.match(markup, /办公文档/)
   assert.match(markup, /科研绘图/)
   assert.equal(markup.match(/>Visualization</g)?.length, 1)
-  assert.match(markup, /办公文档[\s\S]*?<button[^>]*disabled=""[^>]*>Installed<\/button>/)
+  assert.match(markup, /aria-label="Installed 办公文档"/)
+  assert.match(markup, /data-phi-plugin-state="added"/)
 })
 
 test('installed plugins remain in all plugins when no remote entries are available', () => {
   const markup = render({ entries: [] })
-  assert.match(markup, /All Plugins · 2/)
-  assert.match(markup, /Other · 2/)
+  assert.match(markup, /All Plugins/)
+  assert.match(markup, /title="Other"[\s\S]*?>2</)
   assert.match(markup, /办公文档/)
   assert.match(markup, /科研绘图/)
   assert.doesNotMatch(markup, /No plugins in this group/)
@@ -111,10 +113,10 @@ test('all and category counts include installed-only plugins without duplicating
   const markup = render({
     entries: [...entries, available('reviewer', '审稿助手', '科研')]
   })
-  assert.match(markup, /All Plugins · 3/)
-  assert.match(markup, /Installed · 2/)
-  assert.match(markup, /Other · 2/)
-  assert.match(markup, /Research · 1/)
+  assert.match(markup, /All Plugins/)
+  assert.match(markup, /title="Installed"[\s\S]*?>2</)
+  assert.match(markup, /title="Other"[\s\S]*?>2</)
+  assert.match(markup, /title="Research"[\s\S]*?>1</)
   assert.equal(markup.match(/>Visualization</g)?.length, 1)
   const category = render({ initialCategory: '其他' })
   assert.match(category, /办公文档/)
