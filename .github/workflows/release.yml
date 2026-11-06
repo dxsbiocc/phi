@@ -138,9 +138,12 @@ jobs:
       - name: Prepare native packaging inputs
         if: runner.os != 'Windows'
         shell: bash
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Electron can defer its binary download until the first executable lookup.
+          node node_modules/electron/install.js
           dist="$PWD/node_modules/electron/dist"
           version=$(tr -d '\r\n' < "$dist/version")
           test "${version#v}" = "$(node -p "require('electron/package.json').version")"
