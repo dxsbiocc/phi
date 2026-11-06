@@ -46,6 +46,10 @@ import {
 import { runToolsScenario, type ToolsReadEvidence } from './kernel-e2e/tools-scenario'
 import { runPlanScenario } from './kernel-e2e/plan-scenario'
 import {
+  runIsolationScenario,
+  type IsolationScenarioEvidence
+} from './kernel-e2e/isolation-scenario'
+import {
   configureDesktopServicesE2eClient,
   createDesktopServicesE2eState,
   DESKTOP_SERVICES_E2E_HOST_CAPABILITIES,
@@ -133,6 +137,7 @@ interface E2eReport {
     planReviewCount?: number
     agentRunState?: string
     planApprovalTools?: string[]
+    isolation?: IsolationScenarioEvidence
   }
   steps: StepResult[]
   cleanup: {
@@ -619,6 +624,19 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
           write: (path, content) => files!.write(path, content)
         },
         report,
+        step
+      })
+      report.ok = report.steps.every((item) => item.passed)
+      return report
+    }
+
+    if (options.scenario === 'isolation') {
+      report.evidence.isolation = await runIsolationScenario({
+        provider,
+        client: scenario,
+        projectA: files.paths.projectA,
+        projectB: files.paths.projectB,
+        evidenceDirectory: resolve('.phi-acceptance/k5-isolation'),
         step
       })
       report.ok = report.steps.every((item) => item.passed)
