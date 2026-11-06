@@ -250,7 +250,7 @@ test('kernel E2E CLI accepts tools on either execution host without changing lif
   )
   assert.match(
     kernelE2eUsage(),
-    /baseline\|tools\|plan\|isolation\|desktop-services\|desktop-engine\|reconnect\|grace-expiry/
+    /baseline\|tools\|plan\|isolation\|fork\|desktop-services\|desktop-engine\|reconnect\|grace-expiry/
   )
   assert.match(kernelE2eUsage(), /--deadline-min/)
 })

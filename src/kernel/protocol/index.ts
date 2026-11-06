@@ -793,6 +793,15 @@ export class KernelProtocolCore {
   ): void {
     const normalized = normalizeHandlerError(error)
     if (normalized) {
+      // INTERNAL replaces its message with generic text, so keep the cause where it can be read.
+      if (normalized.code === 'INTERNAL') {
+        this.log.error?.('Kernel method failed internally.', {
+          connectionId: state.id,
+          method: request.method,
+          requestId: request.id,
+          error: String((error as { message?: unknown }).message).slice(0, 1024)
+        })
+      }
       this.sendError(state, request.id, normalized)
       return
     }

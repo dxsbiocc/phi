@@ -9,7 +9,7 @@ import {
   type KernelSessionConnection
 } from '../src/main/agent/engine/kernel-session-factory'
 import { SessionRoutingEngine } from '../src/main/agent/engine/session-routing-engine'
-import { sessionCreateParamsSchema } from '../src/shared/kernel-protocol'
+import { sessionCreateParamsSchema, type JsonValue } from '../src/shared/kernel-protocol'
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
 import {
   appendSessionEvent,
@@ -519,7 +519,24 @@ test('SessionRoutingEngine forks an attached remote kernel session on its server
   )
   await assert.rejects(detached.history.fork(forkRequest), /远程会话尚未连接/)
 
+  // The kernel creates the fork's runtime inside session.fork; its host requests must reach
+  // the source's remote project, not the local skill host.
+  const forkHostParams: JsonValue[] = []
+  factory.registerHostHandler('skills.scriptTools', (hostParams) => {
+    forkHostParams.push(hostParams)
+    return { tools: [] }
+  })
+  client.onFork = async (forkedSessionId) => {
+    await client.host.get('skills.scriptTools')?.(
+      { cwd: '/srv/project' },
+      { sessionId: forkedSessionId, signal: new AbortController().signal }
+    )
+  }
   const result = await engine.history.fork(forkRequest)
+  assert.deepEqual(forkHostParams, [
+    { cwd: '/srv/project', remoteSessionId: phi.sessionId, projectId: 'remote-project' }
+  ])
+  client.onFork = undefined
   assert.equal(
     result.path,
     `/agent/phi-kernel/sessions/${result.kernelRuntimeRef?.kernelSessionId}/journal.jsonl`

@@ -33,6 +33,8 @@ export class FakeKernelClient implements KernelSessionClient {
   private nextRun = 0
   onCreate?: (kernelSessionId: string) => void
   onOpen?: (kernelSessionId: string) => void | Promise<void>
+  /** Runs while the fork request is in flight, as the kernel creates the fork's runtime. */
+  onFork?: (kernelSessionId: string) => void | Promise<void>
   asyncCreate = false
   approvalResponseError?: ConstructorParameters<typeof KernelClientError>[0]
   snapshotModel: JsonValue | undefined = { provider: 'test', id: 'model' }
@@ -74,10 +76,10 @@ export class FakeKernelClient implements KernelSessionClient {
       })
     if (method === 'session.fork') {
       const sessionId = `kernel-${++this.nextSession}`
-      return Promise.resolve({
+      return Promise.resolve(this.onFork?.(sessionId)).then(() => ({
         sessionId,
         sessionFile: `/agent/phi-kernel/sessions/${sessionId}/journal.jsonl`
-      })
+      }))
     }
     if (method === 'session.snapshot') {
       return Promise.resolve({

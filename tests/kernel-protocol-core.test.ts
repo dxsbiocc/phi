@@ -439,6 +439,33 @@ test('internal handler failures are logged with the error and invalid result pat
   assert.match(String(errors[0]?.error), /invalid result at: messages\.0/)
 })
 
+test('an INTERNAL error relayed from a host keeps its cause in the log, not on the wire', async () => {
+  const transport = new MemoryTransport()
+  const errors: Array<Readonly<Record<string, JsonValue>> | undefined> = []
+  const core = new KernelProtocolCore({
+    kernelVersion: '1.2.3-test',
+    ompVersion: '18.10.3-test',
+    handlers: {
+      'session.snapshot': () => {
+        throw { code: 'INTERNAL', message: 'skill host could not read /srv/project' }
+      }
+    },
+    log: { error: (_message, details) => errors.push(details) }
+  })
+  core.attachTransport(transport, { trusted: true })
+  const generation = generationFrom(await hello(transport))
+
+  const response = await sendRequest(
+    transport,
+    request('relayed-internal', 'session.snapshot', generation, {}, { sessionId: 'session-1' })
+  )
+  assert.equal(responseError(response).code, 'INTERNAL')
+  assert.equal(responseError(response).message, 'The kernel method failed internally.')
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0]?.method, 'session.snapshot')
+  assert.equal(errors[0]?.error, 'skill host could not read /srv/project')
+})
+
 test('a pending handler does not block later requests on the same connection', async () => {
   const createResult = deferred<JsonValue>()
   const transport = new MemoryTransport()
