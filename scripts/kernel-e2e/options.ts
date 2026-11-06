@@ -5,6 +5,8 @@ export type KernelE2eScenario =
   | 'baseline'
   | 'tools'
   | 'plan'
+  | 'isolation'
+  | 'fork'
   | 'desktop-services'
   | 'desktop-engine'
   | 'reconnect'
@@ -26,7 +28,7 @@ export function kernelE2eUsage(): string {
   return [
     'Usage: bun scripts/kernel-e2e.ts --target local|ssh --runtime-root <absolute-path>',
     '       [--host <ssh-alias>] [--build-dir <target-build-directory>]',
-    '       [--scenario baseline|tools|plan|desktop-services|desktop-engine|reconnect|grace-expiry|model-proxy-reconnect]',
+    '       [--scenario baseline|tools|plan|isolation|fork|desktop-services|desktop-engine|reconnect|grace-expiry|model-proxy-reconnect]',
     '       [--helper-path <local-phi-helper>]',
     '       [--deadline-min <minutes, default 30>]',
     '       [--out <report.json>]',
@@ -79,6 +81,8 @@ export function parseKernelE2eArgs(argv: string[], packageVersion: string): Kern
     scenario !== 'baseline' &&
     scenario !== 'tools' &&
     scenario !== 'plan' &&
+    scenario !== 'isolation' &&
+    scenario !== 'fork' &&
     scenario !== 'desktop-services' &&
     scenario !== 'desktop-engine' &&
     scenario !== 'reconnect' &&
@@ -87,8 +91,18 @@ export function parseKernelE2eArgs(argv: string[], packageVersion: string): Kern
   ) {
     throw new Error(`Invalid --scenario: ${scenario}\n${kernelE2eUsage()}`)
   }
-  if (scenario !== 'baseline' && scenario !== 'tools' && scenario !== 'plan' && target !== 'ssh') {
+  if (
+    scenario !== 'baseline' &&
+    scenario !== 'tools' &&
+    scenario !== 'plan' &&
+    scenario !== 'isolation' &&
+    scenario !== 'fork' &&
+    target !== 'ssh'
+  ) {
     throw new Error(`--scenario ${scenario} requires --target ssh`)
+  }
+  if (scenario === 'isolation' && target !== 'local') {
+    throw new Error('--scenario isolation requires --target local')
   }
   const helperPath = values.get('--helper-path')
   if (helperPath && (!isAbsolute(helperPath) || /[\0\r\n]/.test(helperPath))) {

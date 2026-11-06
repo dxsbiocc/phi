@@ -17,6 +17,7 @@ import {
   closeDesktopMcpHostBrokerState,
   createDesktopMcpHostBrokerState,
   DESKTOP_MCP_HOST_CAPABILITIES,
+  NO_DESKTOP_MCP_SERVERS,
   registerDesktopMcpHostBroker
 } from './engine/kernel-host/desktop-mcp-broker'
 import type { DesktopMcpAdapter, DesktopMcpOptions } from './engine/rpc/desktop-mcp-types'
@@ -290,7 +291,7 @@ export class AppKernelDesktopServices {
   private async resolveDesktopMcp(
     resolver: DesktopSessionResolver,
     input: { bindingId: string; kernelSessionId: string; cwd: string; signal: AbortSignal }
-  ): Promise<DesktopMcpOptions | undefined> {
+  ): Promise<DesktopMcpOptions | typeof NO_DESKTOP_MCP_SERVERS | undefined> {
     const value = resolver.known(input.kernelSessionId)
     const remote = value.params.remoteProject
     if (
@@ -316,7 +317,7 @@ export class AppKernelDesktopServices {
       this.mcpResources.set(input.kernelSessionId, resources)
     }
     const adapter = resources.tools.desktopMcp
-    if (!adapter) return undefined
+    if (!adapter) return NO_DESKTOP_MCP_SERVERS
     // The adapter keeps the logical Phi owner used by desktop dispatch guards; only the
     // kernel-facing broker binding uses the kernel protocol's session identity.
     this.pendingMcpAdapters.set(input.kernelSessionId, adapter)

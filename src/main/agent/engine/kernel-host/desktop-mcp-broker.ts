@@ -26,8 +26,13 @@ export interface DesktopMcpBrokerResolveInput {
   readonly signal: AbortSignal
 }
 
+/** The session is bound correctly but the desktop has no MCP servers selected for it. */
+export const NO_DESKTOP_MCP_SERVERS = 'no-desktop-mcp-servers'
+
 export interface DesktopMcpHostBrokerOptions {
-  resolve(input: DesktopMcpBrokerResolveInput): Promise<DesktopMcpOptions | undefined>
+  resolve(
+    input: DesktopMcpBrokerResolveInput
+  ): Promise<DesktopMcpOptions | typeof NO_DESKTOP_MCP_SERVERS | undefined>
   createAdapter?: typeof createDesktopMcpAdapter
   state?: DesktopMcpHostBrokerState
   /** Reattach unbinds one client without retiring desktop MCP processes. */
@@ -144,6 +149,8 @@ export function registerDesktopMcpHostBroker(
       if (!resolved) {
         throw unavailable('desktop_mcp_unavailable', 'Desktop MCP is unavailable for this session.')
       }
+      // Having no MCP servers is an ordinary setup; the session runs without desktop MCP tools.
+      if (resolved === NO_DESKTOP_MCP_SERVERS) return { tools: [], skipped: [] }
       if (
         resolved.identity.runtimeSessionId !== kernelSessionId ||
         resolved.identity.cwd !== params.cwd

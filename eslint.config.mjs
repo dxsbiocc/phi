@@ -31,7 +31,9 @@ export default defineConfig(
       '**/out',
       '.omx/**',
       '.claude/worktrees/**',
-      '.phi-acceptance/**'
+      '.phi-acceptance/**',
+      // Standalone Bun acceptance driver; it runs against the packaged app, not inside it.
+      'scripts/acceptance/**'
     ]
   },
   tseslint.configs.recommended,

@@ -173,13 +173,25 @@ export class KernelSessionFactory implements RoutedSessionFactory {
       )
     }
     await this.openKernelSession(client, reference.kernelSessionId, {})
-    const result = record(
-      await client.request(
-        'session.fork',
-        { cut: { userMessages: params.userMessages, selectedIndex: params.selectedIndex } },
-        { sessionId: reference.kernelSessionId }
-      )
-    )
+    // The fork's runtime is created before the desktop knows its id. Its host requests (skill
+    // tools, environments) must still resolve to the source's project, as a new session's do.
+    const result = await this.withHostCreation(host.key, async () => {
+      this.pendingByHost.set(host.key, {
+        logicalSessionId: sourceParams.sessionId,
+        params: structuredClone(sourceParams)
+      })
+      try {
+        return record(
+          await client.request(
+            'session.fork',
+            { cut: { userMessages: params.userMessages, selectedIndex: params.selectedIndex } },
+            { sessionId: reference.kernelSessionId }
+          )
+        )
+      } finally {
+        this.pendingByHost.delete(host.key)
+      }
+    })
     const forkedSessionId = stringValue(result?.sessionId)
     const forkedPath = stringValue(result?.sessionFile)
     if (

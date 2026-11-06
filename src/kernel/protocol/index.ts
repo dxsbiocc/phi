@@ -793,6 +793,25 @@ export class KernelProtocolCore {
   ): void {
     const normalized = normalizeHandlerError(error)
     if (normalized) {
+      // The wire carries fixed text for most codes, so keep the real cause where it can be read.
+      const original = String((error as { message?: unknown }).message)
+      if (normalized.code === 'INTERNAL') {
+        this.log.error?.('Kernel method failed internally.', {
+          connectionId: state.id,
+          method: request.method,
+          requestId: request.id,
+          error: original.slice(0, 1024)
+        })
+      } else if (normalized.code === 'CAPABILITY_UNAVAILABLE') {
+        const reason = (normalized.detail as { reason?: unknown } | undefined)?.reason
+        this.log.error?.('Kernel method hit an unavailable capability.', {
+          connectionId: state.id,
+          method: request.method,
+          requestId: request.id,
+          error: original.slice(0, 1024),
+          ...(typeof reason === 'string' ? { reason: reason.slice(0, 128) } : {})
+        })
+      }
       this.sendError(state, request.id, normalized)
       return
     }

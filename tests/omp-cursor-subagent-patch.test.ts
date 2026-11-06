@@ -84,3 +84,86 @@ it('avoids a child name another session in the process already uses', () => {
   )
   assert.equal(output.trim(), 'ReadmeHead-2')
 })
+
+it('keeps agent, history, and artifact URL fallbacks inside the caller session', () => {
+  const output = execFileSync(
+    'bun',
+    [
+      '--eval',
+      `import assert from 'node:assert/strict'
+      import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+      import { tmpdir } from 'node:os'
+      import { join } from 'node:path'
+      import { AgentRegistry } from '@oh-my-pi/pi-coding-agent/registry/agent-registry'
+      import { InternalUrlRouter } from '@oh-my-pi/pi-coding-agent/internal-urls'
+
+      const root = mkdtempSync(join(tmpdir(), 'phi-omp-isolation-'))
+      try {
+        const aRoot = join(root, 'a.jsonl')
+        const bRoot = join(root, 'b.jsonl')
+        const aArtifacts = join(root, 'a')
+        const bArtifacts = join(root, 'b')
+        mkdirSync(aArtifacts)
+        mkdirSync(bArtifacts)
+        writeFileSync(aRoot, '{"type":"session"}\\n')
+        writeFileSync(bRoot, '{"type":"session"}\\n')
+        writeFileSync(join(aArtifacts, 'probe.jsonl'), '{"type":"session","marker":"FOREIGN_TRANSCRIPT"}\\n')
+        writeFileSync(join(aArtifacts, 'probe.md'), 'FOREIGN_AGENT_OUTPUT\\n')
+        writeFileSync(join(aArtifacts, '0.bash.log'), 'FOREIGN_ARTIFACT\\n')
+        writeFileSync(join(bArtifacts, 'own.jsonl'), '{"type":"session"}\\n')
+
+        AgentRegistry.resetGlobalForTests()
+        const registry = AgentRegistry.global()
+        const add = (id, kind, sessionFile) =>
+          registry.register({ id, displayName: id, kind, session: null, sessionFile, status: 'running' })
+        add('main-a', 'main', aRoot)
+        add('probe', 'sub', join(aArtifacts, 'probe.jsonl'))
+        add('main-b', 'main', bRoot)
+        add('own', 'sub', join(bArtifacts, 'own.jsonl'))
+
+        const context = {
+          sessionFile: bRoot,
+          agentRegistry: registry,
+          localProtocolOptions: {
+            getArtifactsDir: () => bArtifacts,
+            getSessionId: () => 'session-b'
+          }
+        }
+        const router = new InternalUrlRouter()
+        const errors = []
+        for (const url of ['agent://probe', 'history://probe', 'artifact://0']) {
+          try {
+            const result = await router.resolve(url, context)
+            errors.push('LEAK:' + url + ':' + result.content)
+          } catch (error) {
+            errors.push(error instanceof Error ? error.message : String(error))
+          }
+        }
+        const evidence = errors.join('\\n')
+        assert.doesNotMatch(evidence, /FOREIGN_(?:TRANSCRIPT|AGENT_OUTPUT|ARTIFACT)/)
+        assert.ok(errors.every((item) => !item.startsWith('LEAK:')), evidence)
+        console.log(JSON.stringify(errors))
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }`
+    ],
+    { encoding: 'utf8' }
+  )
+  const errors = JSON.parse(output) as string[]
+  assert.equal(errors.length, 3)
+})
+
+it('gives same-project in-memory sessions distinct eval namespaces', () => {
+  const output = execFileSync(
+    'bun',
+    [
+      '--eval',
+      `import { defaultEvalSessionId } from '@oh-my-pi/pi-coding-agent/eval/session-id'
+      const make = (id) => ({ cwd: '/same/project', getSessionFile: () => null, getSessionId: () => id })
+      console.log(JSON.stringify([defaultEvalSessionId(make('session-a')), defaultEvalSessionId(make('session-b'))]))`
+    ],
+    { encoding: 'utf8' }
+  )
+  const [a, b] = JSON.parse(output) as string[]
+  assert.notEqual(a, b)
+})

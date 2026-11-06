@@ -45,6 +45,11 @@ import {
 } from './kernel-e2e/lifecycle-scenarios'
 import { runToolsScenario, type ToolsReadEvidence } from './kernel-e2e/tools-scenario'
 import { runPlanScenario } from './kernel-e2e/plan-scenario'
+import { runForkScenario, type ForkScenarioEvidence } from './kernel-e2e/fork-scenario'
+import {
+  runIsolationScenario,
+  type IsolationScenarioEvidence
+} from './kernel-e2e/isolation-scenario'
 import {
   configureDesktopServicesE2eClient,
   createDesktopServicesE2eState,
@@ -133,6 +138,8 @@ interface E2eReport {
     planReviewCount?: number
     agentRunState?: string
     planApprovalTools?: string[]
+    isolation?: IsolationScenarioEvidence
+    fork?: ForkScenarioEvidence
   }
   steps: StepResult[]
   cleanup: {
@@ -436,6 +443,7 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
           options.scenario === 'baseline' ||
           options.scenario === 'tools' ||
           options.scenario === 'plan' ||
+          options.scenario === 'fork' ||
           options.scenario === 'desktop-services'
             ? { graceMs: 500 }
             : {}),
@@ -619,6 +627,30 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
           write: (path, content) => files!.write(path, content)
         },
         report,
+        step
+      })
+      report.ok = report.steps.every((item) => item.passed)
+      return report
+    }
+
+    if (options.scenario === 'fork') {
+      report.evidence.fork = await runForkScenario({
+        provider,
+        client: scenario,
+        projectRoot: files.paths.projectA,
+        step
+      })
+      report.ok = report.steps.every((item) => item.passed)
+      return report
+    }
+
+    if (options.scenario === 'isolation') {
+      report.evidence.isolation = await runIsolationScenario({
+        provider,
+        client: scenario,
+        projectA: files.paths.projectA,
+        projectB: files.paths.projectB,
+        evidenceDirectory: resolve('.phi-acceptance/k5-isolation'),
         step
       })
       report.ok = report.steps.every((item) => item.passed)

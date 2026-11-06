@@ -33,15 +33,35 @@ const PLAN_STEP_AGENT = {
 }
 
 export interface ModelReply {
+  /** Optional latest-user-message discriminator for concurrent scripted sessions. */
+  match?: string
+  /** Optional test gate that keeps this matching model request in flight until released. */
+  gate?: string
   text?: string
   tool?: { name: string; id: string; args: Record<string, unknown> }
 }
 
-interface ModelRequest {
+export interface ModelRequest {
   messages?: Array<Record<string, unknown>>
   context?: { messages?: Array<Record<string, unknown>> }
   modelId?: string
   tools?: unknown[]
+}
+
+function requestText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map(requestText).join('\n')
+  if (!value || typeof value !== 'object') return ''
+  const record = value as Record<string, unknown>
+  return typeof record.text === 'string' ? record.text : requestText(record.content)
+}
+
+function latestUserText(messages: Array<Record<string, unknown>>): string {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message?.role === 'user') return requestText(message.content)
+  }
+  return ''
 }
 
 /** The full pi-native event sequence the desktop gateway streams (start, block events, done). */
@@ -169,6 +189,8 @@ export async function startLoopbackProvider(token: string): Promise<{
   port: number
   requests: ModelRequest[]
   enqueue(...replies: ModelReply[]): void
+  waitForGate(name: string): Promise<void>
+  releaseGate(name: string): void
   holdNextRequestBeforeResponse(): Promise<void>
   dropActiveConnections(): void
   completedRequestCount(): number
@@ -177,6 +199,27 @@ export async function startLoopbackProvider(token: string): Promise<{
   const requests: ModelRequest[] = []
   const replies: ModelReply[] = []
   const active = new Set<ServerResponse>()
+  type LoopbackGate = {
+    reached: Promise<void>
+    markReached(): void
+    released: Promise<void>
+    release(): void
+  }
+  const gates = new Map<string, LoopbackGate>()
+  const gateFor = (name: string): LoopbackGate => {
+    let gate = gates.get(name)
+    if (gate) return gate
+    const reached = Promise.withResolvers<void>()
+    const released = Promise.withResolvers<void>()
+    gate = {
+      reached: reached.promise,
+      markReached: reached.resolve,
+      released: released.promise,
+      release: released.resolve
+    }
+    gates.set(name, gate)
+    return gate
+  }
   let completedRequests = 0
   let holdNextRequest = false
   let heldRequestReached: (() => void) | undefined
@@ -215,10 +258,30 @@ export async function startLoopbackProvider(token: string): Promise<{
             message.content.includes('Is this specialist suitable for the exact delegated task')
         ) &&
         (!Array.isArray(parsed.tools) || parsed.tools.length === 0)
-      const reply = taskAssessment ? { text: 'suitable' } : replies.shift()
+      let reply: ModelReply | undefined
+      if (taskAssessment) {
+        reply = { text: 'suitable' }
+      } else {
+        const latest = latestUserText(messages)
+        let index = replies.findIndex(
+          (candidate) => !candidate.match || latest.includes(candidate.match)
+        )
+        if (index < 0) {
+          const all = requestText(messages)
+          index = replies.findIndex((candidate) =>
+            Boolean(candidate.match && all.includes(candidate.match))
+          )
+        }
+        if (index >= 0) reply = replies.splice(index, 1)[0]
+      }
       if (!reply) {
-        response.writeHead(500).end('No scripted reply remains')
+        response.writeHead(500).end('No matching scripted reply remains')
         return
+      }
+      if (reply.gate) {
+        const gate = gateFor(reply.gate)
+        gate.markReached()
+        await gate.released
       }
       active.add(response)
       response.on('close', () => active.delete(response))
@@ -289,6 +352,10 @@ export async function startLoopbackProvider(token: string): Promise<{
     port,
     requests,
     enqueue: (...items) => replies.push(...items),
+    waitForGate: (name) => gateFor(name).reached,
+    releaseGate(name) {
+      gateFor(name).release()
+    },
     holdNextRequestBeforeResponse() {
       if (holdNextRequest || heldRequestReached) {
         throw new Error('A loopback provider request is already held')
@@ -303,6 +370,7 @@ export async function startLoopbackProvider(token: string): Promise<{
     },
     completedRequestCount: () => completedRequests,
     async close() {
+      for (const gate of gates.values()) gate.release()
       for (const response of active) response.destroy()
       server.closeAllConnections()
       await new Promise<void>((complete) => server.close(() => complete()))
@@ -384,6 +452,7 @@ export class ScenarioClient {
     options: {
       workMode?: 'direct' | 'plan' | 'plan_execute' | 'auto'
       phiAgents?: JsonValue[]
+      sessionManager?: JsonValue
     } = {}
   ): Promise<string> {
     const result = record(
@@ -391,7 +460,7 @@ export class ScenarioClient {
         this.client.request('session.create', {
           cwd,
           model: { provider: PROVIDER_ID, id: MODEL_ID },
-          sessionManager: { kind: 'memory' },
+          sessionManager: options.sessionManager ?? { kind: 'memory' },
           enableToolApproval: approval,
           workMode: options.workMode ?? 'direct',
           phiAgents: [PLAN_STEP_AGENT],
