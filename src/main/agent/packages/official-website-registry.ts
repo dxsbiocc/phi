@@ -32,7 +32,10 @@ export {
 
 const WEBSITE_CATALOG_URL = 'https://phi.omicsagent.cn/api/catalog'
 const REFRESH_WINDOW_MS = 5 * 60_000
+/** A snapshot that failed to download or build is not retried for this long unless forced. */
+export const FAILED_SNAPSHOT_RETRY_MS = 30 * 60_000
 const refreshes = new Map<string, number>()
+const failedSnapshots = new Map<string, { commit: string; at: number; reason: string }>()
 const synchronizations = new Map<string, Promise<LocalRegistry>>()
 
 interface WebsiteCatalog {
@@ -86,10 +89,21 @@ export async function syncPreferredOfficialRegistry(
 async function synchronizeWebsite(options: OfficialRegistryOptions): Promise<LocalRegistry> {
   const agentDir = options.agentDir ?? getPhiAgentDir()
   const root = officialWebsiteRegistryDirectory(agentDir)
+  const now = (options.now?.() ?? new Date()).getTime()
   let staging: string | undefined
+  let snapshotCommit: string | undefined
   try {
     safeRegistryDirectory(agentDir, root, true)
     const catalog = await fetchWebsiteCatalog(options)
+    const failed = failedSnapshots.get(root)
+    if (
+      !options.forceRefresh &&
+      failed?.commit === catalog.commit &&
+      now >= failed.at &&
+      now - failed.at < FAILED_SNAPSHOT_RETRY_MS
+    ) {
+      throw new Error(failed.reason)
+    }
     let cached: LocalRegistry | undefined
     try {
       cached = readOfficialWebsiteRegistry(root, { agentDir })
@@ -125,6 +139,7 @@ async function synchronizeWebsite(options: OfficialRegistryOptions): Promise<Loc
     safeRegistryDirectory(root, snapshotRoot, true)
     const snapshotStagingRoot = join(snapshotsRoot, '.staging')
     safeRegistryDirectory(root, snapshotStagingRoot, true)
+    snapshotCommit = catalog.commit
     const sourceDir = await fetchGithubSnapshot(OFFICIAL_WEBSITE_REPOSITORY, catalog.commit, {
       cacheRoot: snapshotsRoot,
       tmpDir: snapshotStagingRoot,
@@ -158,9 +173,11 @@ async function synchronizeWebsite(options: OfficialRegistryOptions): Promise<Loc
       agentDir,
       notice
     })
+    failedSnapshots.delete(root)
     return ready(verified, options)
   } catch (error) {
     const reason = errorMessage(error).slice(0, 500)
+    if (snapshotCommit) failedSnapshots.set(root, { commit: snapshotCommit, at: now, reason })
     try {
       const cached = readOfficialWebsiteRegistry(root, { agentDir })
       return {

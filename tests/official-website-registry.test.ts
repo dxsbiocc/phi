@@ -28,6 +28,7 @@ import { sha256 } from '../src/main/agent/packages/installer-utils'
 import { materializeRegistry } from '../src/main/agent/packages/materialize-registry'
 import { officialRegistryDirectory } from '../src/main/agent/packages/official-registry'
 import {
+  FAILED_SNAPSHOT_RETRY_MS,
   isOfficialWebsiteRegistryDirectory,
   officialWebsiteRegistryDirectory,
   readOfficialWebsiteRegistry,
@@ -220,6 +221,36 @@ test('failed replacement leaves the previous pointer and complete generation unc
   assert.equal(cached.dir, original.dir)
   assert.equal(readFileSync(pointer, 'utf8'), before)
   assert.match(cached.notice ?? '', /Skill count/)
+})
+
+test('a failed snapshot commit is not downloaded again until the retry window passes or a refresh is forced', async () => {
+  const f = fixture(1)
+  let clock = Date.parse('2026-11-06T12:00:00Z')
+  const options = { ...f.options, forceRefresh: false, now: () => new Date(clock) }
+  await syncPreferredOfficialRegistry({ ...options, forceRefresh: true })
+  f.catalog.commit = newCommit
+  f.catalog.counts.skills = 2
+  f.snapshots.set(newCommit, skillFiles('only-one'))
+  const archiveRequests = (): number =>
+    f.requests.filter((url) => url.endsWith(`/tar.gz/${newCommit}`)).length
+
+  clock += 6 * 60_000
+  const first = await syncPreferredOfficialRegistry(options)
+  assert.equal(first.status, 'cached')
+  assert.equal(archiveRequests(), 1)
+
+  clock += 6 * 60_000
+  const repeated = await syncPreferredOfficialRegistry(options)
+  assert.equal(repeated.status, 'cached')
+  assert.match(repeated.notice ?? '', /Skill count/)
+  assert.equal(archiveRequests(), 1)
+
+  await syncPreferredOfficialRegistry({ ...options, forceRefresh: true })
+  assert.equal(archiveRequests(), 2)
+
+  clock += FAILED_SNAPSHOT_RETRY_MS
+  await syncPreferredOfficialRegistry(options)
+  assert.equal(archiveRequests(), 3)
 })
 
 test('archive corruption and index symlinks are rejected before cached installation', async () => {

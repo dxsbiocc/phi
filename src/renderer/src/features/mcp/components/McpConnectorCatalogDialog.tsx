@@ -202,17 +202,28 @@ export function McpConnectorCatalogDialog({
     void Promise.resolve().then(() => {
       if (active) setCatalogLoading(true)
     })
-    void Promise.all([
-      window.api.listMcpConnectorCatalog(),
-      window.api.listPackageUpdates().catch(() => []),
-      loadContentCatalog(window.api)
-    ])
-      .then(([entries, availableUpdates, catalog]) => {
+    // Updates and the content-source notices can wait on a slow website snapshot sync;
+    // they must never hold back the connector list itself.
+    void window.api
+      .listPackageUpdates()
+      .catch(() => [])
+      .then((availableUpdates) => {
+        if (active) setUpdates(availableUpdates)
+      })
+    void loadContentCatalog(window.api)
+      .then((catalog) => {
         if (!active) return
-        setConnectors(entries)
-        setUpdates(availableUpdates)
         setSourceError(catalog.errors.join('\n') || null)
         setSourceNotice(catalog.notices.join('\n') || null)
+      })
+      .catch((cause: unknown) => {
+        if (active) setSourceError(ipcErrorMessage(cause))
+      })
+    void window.api
+      .listMcpConnectorCatalog()
+      .then((entries) => {
+        if (!active) return
+        setConnectors(entries)
         for (const connector of entries.filter(
           (entry) => entry.oauthAuthorizationOrigin || entry.apiKey
         )) {
