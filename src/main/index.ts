@@ -321,11 +321,7 @@ import { customMcpAuthUrl } from './agent/mcp/custom-auth-url'
 import { agentRunCompletions } from './agent/plan/execution/agent-run-completions'
 import { connectRemoteSshSession } from './agent/wrappers/remote-ssh-session'
 import { readWrapperRun } from './agent/wrappers/store'
-import { listBackgroundAgentJobs } from './agent/jobs/background-agent-job-listing'
-import {
-  listBackgroundShellJobs,
-  stopBackgroundShellJob
-} from './agent/jobs/background-shell-job-operations'
+import { createBackgroundJobOperations } from './agent/jobs/background-job-operations'
 import { cleanupOldLogs, writeAppLog } from './agent/app-logger'
 import { logProjectConnectionState, logServerConnections } from './agent/connection-logging'
 import {
@@ -384,6 +380,7 @@ import {
 import type { NotebookDocument } from '../shared/notebookDocument'
 import { messageContentTitleText } from '../shared/sessionTitle'
 import { createBeforeQuitHandler } from './app-quit'
+import { createMainWindowRetention } from './main-window-retention'
 import { createMainRuntimeContext } from './app-state/main-runtime-context'
 import { createSessionKeyLinking } from './session-runtime/session-key-linking'
 import { createSessionOrigins } from './session-runtime/session-origins'
@@ -428,6 +425,7 @@ function applyDockIcon(): void {
 }
 
 const mainWindowStartups = new WeakMap<BrowserWindow, ReturnType<typeof createMainWindowStartup>>()
+const mainWindowRetention = createMainWindowRetention(process.platform)
 
 function showMainWindowFromMenuBar(): void {
   const mainWindow = runtime.window.mainWindow
@@ -436,9 +434,7 @@ function showMainWindowFromMenuBar(): void {
   if (!window || window.isDestroyed()) return
   const splash = runtime.window.startupSplashWindow
   if (splash && !splash.isDestroyed()) return
-  if (window.isMinimized()) window.restore()
-  if (!window.isVisible()) window.show()
-  window.focus()
+  mainWindowRetention.reveal(window)
 }
 
 function queueMenuBarAction(action: MenuBarAction): void {
@@ -447,8 +443,7 @@ function queueMenuBarAction(action: MenuBarAction): void {
 }
 
 function hideMainWindowFromMenuBar(): void {
-  const mainWindow = runtime.window.mainWindow
-  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) mainWindow.hide()
+  mainWindowRetention.hide(runtime.window.mainWindow)
 }
 
 function requireMainWindowRenderer(event: IpcMainInvokeEvent): BrowserWindow {
@@ -1912,21 +1907,19 @@ getPhiEngine().host.register('browser.cancel', (params, context) => {
   }
   return browserToolHostCoordinator.cancel(params)
 })
-const backgroundAgentJobListingOptions = {
-  agentDir: AGENT_DIR,
-  resolveRecoverableJobOrigin: sessionOrigins.resolveRecoverableJobOrigin,
-  currentRuntimeOriginScope: sessionOrigins.currentRuntimeOriginScope,
-  optionalStringField
-}
-const backgroundShellJobOperationsOptions = {
-  resolveOriginSession: sessionOrigins.resolveOriginSession,
-  optionalStringField
-}
-const backgroundJobOperations = {
-  listAgentJobs: () => listBackgroundAgentJobs(backgroundAgentJobListingOptions),
-  listShellJobs: () => listBackgroundShellJobs(backgroundShellJobOperationsOptions),
-  stopShellJob: stopBackgroundShellJob
-}
+const backgroundJobOperations = createBackgroundJobOperations({
+  agents: {
+    agentDir: AGENT_DIR,
+    resolveRecoverableJobOrigin: sessionOrigins.resolveRecoverableJobOrigin,
+    currentRuntimeOriginScope: sessionOrigins.currentRuntimeOriginScope,
+    optionalStringField
+  },
+  shell: { resolveOriginSession: sessionOrigins.resolveOriginSession, optionalStringField },
+  sendToWindow: sendRunEventToWindow,
+  continueConversation: wakeConversation,
+  automaticCount: (sessionId) => automaticContinuations.get(sessionId) ?? 0,
+  onError: logUnexpectedError
+})
 
 function sendRunEventToWindow(payload: Record<string, unknown>): void {
   sendToWindow(getActiveWindow(), IPC.agent.event, {
@@ -2095,8 +2088,8 @@ function uiSessionPathForKey(sessionKey: string, fallbackPath: string | undefine
   return phiSessionId ? phiOnlySessionPath(phiSessionId) : (fallbackPath ?? null)
 }
 
-// Waking a conversation when a background run it started has ended: a wrapper run, or a
-// specialist agent run. The policy and the message are in job-continue.ts and run-continue.ts;
+// Wake the originating conversation when a wrapper, specialist agent, plan, or Bash job ends.
+// The policy and the message are in job-continue.ts and run-continue.ts;
 // this is the plumbing, shared by both so they count against one cap and can be reported in one
 // message. State is per Phi conversation.
 const automaticContinuations = new Map<string, number>()
@@ -2907,6 +2900,7 @@ function cleanupMainWindowRuntime(): Promise<void> {
         safeCleanupStep('jupyter_cleanup_failed', () => jupyterServerRegistry.disposeAll()),
         safeCleanupStep('remote_jupyter_cleanup_failed', disposeRemoteNotebookBackends),
         safeCleanupStep('remote_upload_cleanup_failed', () => remoteProjectUploads.dispose()),
+        safeCleanupStep('chat_shell_cleanup_failed', backgroundJobOperations.dispose),
         safeCleanupStep('agent_session_cleanup_failed', () => invalidateAgentSession()),
         safeCleanupStep('cursor_bridge_cleanup_failed', () => cursorH2Bridge.close())
       ])
@@ -3007,12 +3001,10 @@ function createMainWindowStartupCoordinator(
           if (response === 0) {
             if (startup.retry()) window.webContents.reload()
           } else {
-            window.close()
+            mainWindowRetention.closeForReal(window)
           }
         })
-        .catch(() => {
-          if (!window.isDestroyed()) window.close()
-        })
+        .catch(() => mainWindowRetention.closeForReal(window))
     },
     15_000,
     () => finishStartupSplash(window)
@@ -3058,8 +3050,9 @@ function registerMainWindowLifecycleHandlers(
 ): void {
   window.once('ready-to-show', startup.painted)
 
-  // Quitting runs the full cleanup from before-quit, before any window closes.
-  window.on('close', () => {
+  // Quitting runs the full cleanup from before-quit first; otherwise macOS only hides the window.
+  window.on('close', (event) => {
+    if (mainWindowRetention.handleClose(window, event) === 'hidden') return
     void cleanupMainWindowInterface()
   })
 
@@ -3881,7 +3874,7 @@ function registerWrapperJobsAndPersonaIpc(
   wrappersIpcOptions: ReturnType<typeof registerRemoteFileAndWrapperIpc>
 ): void {
   registerEnvironmentBuildsIpc({ ipcMain, environmentBuilds })
-  registerJobsIpc({ ipcMain, operations: backgroundJobOperations })
+  registerJobsIpc({ ipcMain, operations: backgroundJobOperations, requireMainWindowRenderer })
   registerWrapperRunIpc(wrappersIpcOptions)
 
   registerPersonaIpc({
@@ -3919,9 +3912,10 @@ function registerAppActivationHandler(): void {
   app.on('activate', function () {
     applyDockIcon()
 
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    // macOS only hides a closed main window (main-window-retention.ts): bring that one back.
+    const mainWindow = runtime.window.mainWindow
+    if (mainWindow && !mainWindow.isDestroyed()) showMainWindowFromMenuBar()
+    else if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 }
 
@@ -3947,6 +3941,7 @@ app.whenReady().then(async () => {
   registerAppActivationHandler()
 })
 
+app.on('before-quit', () => mainWindowRetention.markQuitting()) // before cleanup: close, not hide
 app.on(
   'before-quit',
   createBeforeQuitHandler({

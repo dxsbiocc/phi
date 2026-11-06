@@ -130,7 +130,10 @@ function validateOptions(command: HostCommand, options: RunCommandOptions): numb
 class LocalExecution {
   private readonly root: string
 
-  constructor(root: string) {
+  constructor(
+    root: string,
+    private readonly environment: NodeJS.ProcessEnv
+  ) {
     this.root = resolve(root)
   }
 
@@ -156,9 +159,13 @@ class LocalExecution {
 
   private async start(command: HostCommand, options: RunCommandOptions): Promise<LocalProcess> {
     const maxBytes = validateOptions(command, options)
+    options.signal?.throwIfAborted()
+    const cwd = await this.resolveCwd(options.cwd)
+    options.signal?.throwIfAborted()
+    options.beforeExec?.()
     const child = spawn(command[0], command.slice(1), {
-      cwd: await this.resolveCwd(options.cwd),
-      env: { ...process.env, ...options.env },
+      cwd,
+      env: { ...this.environment, ...options.env },
       shell: false,
       detached: true,
       stdio: ['pipe', 'pipe', 'pipe']
@@ -209,6 +216,9 @@ class LocalExecution {
   }
 }
 
-export function createLocalExecution(root: string): ExecutionHost {
-  return new LocalExecution(root).asHost()
+export function createLocalExecution(
+  root: string,
+  environment: NodeJS.ProcessEnv = process.env
+): ExecutionHost {
+  return new LocalExecution(root, environment).asHost()
 }

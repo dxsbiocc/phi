@@ -62,6 +62,7 @@ import {
 } from '../lib/markdownLocalPathPreview'
 import { MarkdownWebLink } from './markdown/MarkdownWebLink'
 import { MarkdownCodeBlock } from './markdown/MarkdownCodeBlock'
+import { rehypeClosedCodeFences } from '../lib/markdownCodeLanguage'
 import { ResourceMention } from './ResourceMention'
 import { useChatResourceMatcher } from '../lib/chatResourceMentionContext'
 import { createResourceMentionRemarkPlugin } from '../lib/markdownResourceMentions'
@@ -544,6 +545,7 @@ type MarkdownContentProps = {
   onOpenWebUrl?: (url: string) => void
   enableMath?: boolean // off by default -- see markdownMathPlugins.ts for why
   showColorPalettes?: boolean
+  allowCodeActions?: boolean
 }
 
 function MarkdownContentImpl({
@@ -552,7 +554,8 @@ function MarkdownContentImpl({
   onOpenLocalPath,
   onOpenWebUrl,
   enableMath = false,
-  showColorPalettes = false
+  showColorPalettes = false,
+  allowCodeActions = false
 }: MarkdownContentProps): React.JSX.Element {
   useUiLanguage()
   const inheritedOpenWebUrl = useContext(WebLinkOpenContext)
@@ -578,6 +581,10 @@ function MarkdownContentImpl({
   const plugins = useMemo(
     () => [...remarkPlugins, createResourceMentionRemarkPlugin(resourceMentions)],
     [remarkPlugins, resourceMentions]
+  )
+  const htmlPlugins = useMemo(
+    () => (allowCodeActions ? [...rehypePlugins, rehypeClosedCodeFences] : rehypePlugins),
+    [allowCodeActions, rehypePlugins]
   )
 
   const components = useMemo<Components>(
@@ -732,7 +739,11 @@ function MarkdownContentImpl({
         />
       ),
       hr: () => <Divider sx={{ my: 1.5 }} />,
-      pre: ({ children }) => <MarkdownCodeBlock>{children}</MarkdownCodeBlock>,
+      pre: ({ children, node }) => (
+        <MarkdownCodeBlock allowActions={node?.properties['data-phi-code-closed'] === true}>
+          {children}
+        </MarkdownCodeBlock>
+      ),
       code: ({ className, children }) =>
         className ? (
           <Box component="code" sx={{ fontFamily: 'var(--font-mono)', fontSize: 'inherit' }}>
@@ -841,7 +852,7 @@ function MarkdownContentImpl({
               : defaultUrlTransform(value)
         }
         remarkPlugins={plugins}
-        rehypePlugins={rehypePlugins}
+        rehypePlugins={htmlPlugins}
         components={components}
       >
         {text}
@@ -864,6 +875,7 @@ function markdownContentPropsEqual(
     prev.cwd === next.cwd &&
     prev.onOpenWebUrl === next.onOpenWebUrl &&
     prev.enableMath === next.enableMath &&
+    prev.allowCodeActions === next.allowCodeActions &&
     prev.showColorPalettes === next.showColorPalettes
   )
 }

@@ -53,6 +53,58 @@ test('remote workspace host registry keeps one host per Phi session until releas
   assert.equal(hostsCreated, 2)
 })
 
+test('confirmed remote commands pin the canonical session root and recheck the binding before dispatch', async () => {
+  let cacheKey = 'host-a:/canonical/project'
+  let changeBeforeDispatch = false
+  let launches = 0
+  const command = ['/bin/bash', '-c', 'pwd'] as const
+  const registry = new RemoteWorkspaceHostRegistry({
+    resolveBinding: (request) => ({
+      ...request,
+      hostAlias: 'cluster-a',
+      remoteRoot: '/remote/project',
+      canonicalRoot: '/canonical/project',
+      cacheKey,
+      config: {
+        remoteRoot: '/remote/project',
+        canonicalRoot: '/canonical/project',
+        connect: async () => {
+          throw new Error('not used')
+        }
+      }
+    }),
+    createHost: () => ({
+      fs: {} as WorkspaceHost['fs'],
+      exec: {
+        async run(argv, options) {
+          assert.deepEqual(argv, command)
+          assert.equal(options.cwd, '/canonical/project')
+          if (changeBeforeDispatch) cacheKey = 'another-host:/canonical/project'
+          options.beforeExec?.()
+          launches++
+          return { stdout: options.cwd, stderr: '', code: 0, signal: null, truncated: false }
+        },
+        async spawnBackground() {
+          throw new Error('not used')
+        }
+      },
+      capabilities() {
+        throw new Error('not used')
+      }
+    })
+  })
+  const identity = { sessionId: 'session-a', projectId: 'project-a' }
+  const expectedBinding = cacheKey
+  const first = await registry.runSessionCommand(identity, expectedBinding, command, {})
+  assert.equal(first.stdout, '/canonical/project')
+  changeBeforeDispatch = true
+  await assert.rejects(
+    registry.runSessionCommand(identity, expectedBinding, command, {}),
+    /SSH project binding changed/
+  )
+  assert.equal(launches, 1)
+})
+
 test('isolated remote session stays owned across regular session cleanup', async () => {
   let created = 0
   const closed: number[] = []

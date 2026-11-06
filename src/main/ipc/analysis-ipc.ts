@@ -169,13 +169,22 @@ function registerNotebookSaveIpc(options: AnalysisIpcOptions): void {
   )
   options.ipcMain.handle(
     IPC.analysis.createNotebook,
-    async (_, cwd: string, relativePath?: string) => {
+    async (_, cwd: string, relativePath?: string, initialCode?: unknown) => {
+      if (initialCode !== undefined && (typeof initialCode !== 'string' || !initialCode.trim())) {
+        throw new Error('Expected non-empty Python source')
+      }
       const workspace = options.notebooks.resolveWorkspaceByCwd(cwd)
       if (!workspace) {
         throw new Error('请选择一个已添加的项目或当前 workspace')
       }
-      const file = await options.notebooks.operations.createFile(workspace, relativePath)
-      options.notebooks.activePathByProjectCwd.set(workspace.workingDirectory, file.path)
+      const file = await options.notebooks.operations.createFile(
+        workspace,
+        relativePath,
+        initialCode
+      )
+      if (initialCode === undefined) {
+        options.notebooks.activePathByProjectCwd.set(workspace.workingDirectory, file.path)
+      }
       return file
     }
   )

@@ -76,6 +76,7 @@ export interface AgentEventSummary {
   toolCalls?: number
   reason?: string
   state?: unknown
+  shellJob?: unknown
   action?: string
   execute?: boolean
   aborted?: boolean

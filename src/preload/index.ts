@@ -53,7 +53,11 @@ import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageT
 import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { SessionDeleteResult } from '../shared/sessionDeleteTypes'
 import type { RuntimeRecoveryApi } from '../shared/runtimeRecoveryTypes'
-import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
+import type {
+  BackgroundAgentJob,
+  BackgroundShellJob,
+  StartChatShellJobRequest
+} from '../shared/backgroundJobTypes'
 import type {
   AutoCompactionSettingsPatch,
   CurrentAutoCompactionSettings,
@@ -1059,7 +1063,11 @@ type RendererAuthApi = PreloadApiBase & {
     document: Record<string, unknown>,
     savedRevision?: string
   ) => Promise<AnalysisNotebookDraftChange>
-  createAnalysisNotebook: (cwd: string, relativePath?: string) => Promise<AnalysisNotebookFile>
+  createAnalysisNotebook: (
+    cwd: string,
+    relativePath?: string,
+    initialCode?: string
+  ) => Promise<AnalysisNotebookFile>
   closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
   deleteAnalysisNotebook: (
     cwd: string,
@@ -1281,6 +1289,7 @@ type RendererAuthApi = PreloadApiBase & {
   readBackgroundJobHistory: () => Promise<string | null>
   writeBackgroundJobHistory: (serialized: string) => Promise<void>
   listShellJobs: () => Promise<BackgroundShellJob[]>
+  startShellJob: (input: StartChatShellJobRequest) => Promise<BackgroundShellJob>
   stopShellJob: (agentSessionId: string, jobId: string) => Promise<void>
   getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
   cancelWrapperRun: (runId: string) => Promise<WrapperRun>
@@ -1791,8 +1800,12 @@ const api: RendererAuthApi = {
     savedRevision?: string
   ): Promise<AnalysisNotebookDraftChange> =>
     ipcRenderer.invoke(IPC.analysis.syncNotebookDraft, cwd, path, document, savedRevision),
-  createAnalysisNotebook: (cwd: string, relativePath?: string): Promise<AnalysisNotebookFile> =>
-    ipcRenderer.invoke(IPC.analysis.createNotebook, cwd, relativePath),
+  createAnalysisNotebook: (
+    cwd: string,
+    relativePath?: string,
+    initialCode?: string
+  ): Promise<AnalysisNotebookFile> =>
+    ipcRenderer.invoke(IPC.analysis.createNotebook, cwd, relativePath, initialCode),
   closeAnalysisNotebook: (cwd: string, path: string): Promise<{ path: string }> =>
     ipcRenderer.invoke(IPC.analysis.closeNotebook, cwd, path),
   deleteAnalysisNotebook: (
@@ -2241,6 +2254,8 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke(IPC.jobs.writeHistory, serialized),
   listAgentJobs: (): Promise<BackgroundAgentJob[]> => ipcRenderer.invoke(IPC.jobs.listAgents),
   listShellJobs: (): Promise<BackgroundShellJob[]> => ipcRenderer.invoke(IPC.jobs.listShell),
+  startShellJob: (input): Promise<BackgroundShellJob> =>
+    ipcRenderer.invoke(IPC.jobs.startShell, input),
   stopShellJob: (agentSessionId: string, jobId: string): Promise<void> =>
     ipcRenderer.invoke(IPC.jobs.stopShell, agentSessionId, jobId),
   getWrapperRun: (runId: string): Promise<WrapperRun | undefined> =>

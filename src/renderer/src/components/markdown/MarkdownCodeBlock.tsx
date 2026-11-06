@@ -1,6 +1,6 @@
 import { Box, Button, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
-import { Fragment, isValidElement, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, isValidElement, useContext, useMemo, useState, type ReactNode } from 'react'
 import { PhiIcons } from '../../icons'
 import { useUiLanguage } from '../../lib/i18n'
 import { syntaxLanguageForMarkdownCode } from '../../lib/markdownCodeLanguage'
@@ -8,6 +8,7 @@ import { textFromNode } from '../../lib/markdownText'
 import { highlightLine, type SyntaxLanguage } from '../../lib/syntaxHighlight'
 import { syntaxTokenColor } from '../../lib/syntaxTheme'
 import { markdownCopy } from './markdownUiCopy'
+import { MarkdownCodeActionsContext } from './MarkdownCodeActionsContext'
 
 const ContentCopyIcon = PhiIcons.action.copy
 
@@ -61,11 +62,13 @@ function HighlightedCodeContent({
 function CodeBlockHeader({
   languageLabel,
   copied,
-  onCopy
+  onCopy,
+  action
 }: {
   languageLabel: string
   copied: boolean
   onCopy: () => void
+  action: ReactNode
 }): React.JSX.Element {
   return (
     <Box
@@ -99,21 +102,31 @@ function CodeBlockHeader({
       >
         {languageLabel}
       </Typography>
-      <Button
-        size="small"
-        variant="text"
-        startIcon={<ContentCopyIcon sx={{ fontSize: 15 }} />}
-        onClick={onCopy}
-        sx={{ minHeight: 28, textTransform: 'none', color: 'text.secondary' }}
-      >
-        {copied ? markdownCopy.copied : markdownCopy.copy}
-      </Button>
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 0.5 }}>
+        {action}
+        <Button
+          size="small"
+          variant="text"
+          startIcon={<ContentCopyIcon sx={{ fontSize: 15 }} />}
+          onClick={onCopy}
+          sx={{ minHeight: 28, textTransform: 'none', color: 'text.secondary' }}
+        >
+          {copied ? markdownCopy.copied : markdownCopy.copy}
+        </Button>
+      </Box>
     </Box>
   )
 }
 
-export function MarkdownCodeBlock({ children }: { children?: ReactNode }): React.JSX.Element {
+export function MarkdownCodeBlock({
+  children,
+  allowActions = false
+}: {
+  children?: ReactNode
+  allowActions?: boolean
+}): React.JSX.Element {
   useUiLanguage()
+  const renderAction = useContext(MarkdownCodeActionsContext)
   const [copied, setCopied] = useState(false)
   const language = languageFromCodeChild(children)
   const languageLabel = language ?? markdownCopy.code
@@ -148,7 +161,12 @@ export function MarkdownCodeBlock({ children }: { children?: ReactNode }): React
         color: 'text.primary'
       }}
     >
-      <CodeBlockHeader languageLabel={languageLabel} copied={copied} onCopy={copyCode} />
+      <CodeBlockHeader
+        languageLabel={languageLabel}
+        copied={copied}
+        onCopy={copyCode}
+        action={allowActions && language && codeText.trim() && renderAction?.(language, codeText)}
+      />
       <Box
         component="pre"
         sx={{

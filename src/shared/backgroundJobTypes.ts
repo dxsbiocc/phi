@@ -18,7 +18,7 @@ export type BackgroundAgentJob = {
   toolCallId?: string
 }
 
-/** A bash command the runtime is running in the background of a live conversation. */
+/** A Bash command running in the background of a conversation. */
 export type BackgroundShellJob = {
   agentSessionId: string
   jobId: string
@@ -26,8 +26,19 @@ export type BackgroundShellJob = {
   sessionPath: string
   sessionTitle: string
   command: string
-  state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
   startedAt: string
   completedAt?: string
+  exitCode?: number
   output?: string
+  outputPath?: string
+  outputTruncated?: boolean
 }
+
+export type StartChatShellJobRequest = { sessionId: string; command: string }
+
+export type ShellJobTimelineEvent =
+  | { type: 'shell_job_started'; shellJob: BackgroundShellJob; shellJobLaunchId: string }
+  | { type: 'shell_job_finished'; shellJob: BackgroundShellJob }
+
+export type ShellJobFinishedEvent = Extract<ShellJobTimelineEvent, { type: 'shell_job_finished' }>

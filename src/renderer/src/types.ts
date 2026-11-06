@@ -227,6 +227,7 @@ export interface ChatMessage {
   role: Role
   content: string
   backgroundJobNotice?: { state: 'completed' | 'failed' | 'cancelled' }
+  shellJob?: import('./features/chat/lib/chatShellTimeline').ChatShellJob
   /** Stable identifier of an app-generated notice; the title is localized from it at render time. */
   noticeKind?: ChatNoticeKind
   contextCompaction?: ContextCompactionDetails
@@ -546,6 +547,7 @@ export interface RendererApi
   ) => () => void
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
+  startShellJob: Window['api']['startShellJob']
   readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
   readWorkspaceDiff: (ref: WorkspaceDiffReference) => Promise<string>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => () => void
@@ -688,7 +690,11 @@ export interface RendererApi
     document: NotebookDocument,
     savedRevision?: string
   ) => Promise<AnalysisNotebookDraftChange>
-  createAnalysisNotebook: (cwd: string, relativePath?: string) => Promise<AnalysisNotebookFile>
+  createAnalysisNotebook: (
+    cwd: string,
+    relativePath?: string,
+    initialCode?: string
+  ) => Promise<AnalysisNotebookFile>
   closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
   deleteAnalysisNotebook: (
     cwd: string,

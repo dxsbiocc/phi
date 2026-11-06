@@ -1,4 +1,5 @@
 import { chatItemFromPhiTimelineEvent } from '../features/chat/lib/chatTimelineNotices'
+import { applyChatShellJobEvent } from '../features/chat/lib/chatShellTimeline'
 export { chatItemFromPhiTimelineEvent } from '../features/chat/lib/chatTimelineNotices'
 import type { ChatItem, NotebookToolSummary, RunLifecycleItem, ToolCallItem } from '../types'
 import { workspaceChangesItemFromPhiTimelineEvent } from '../features/chat/lib/workspaceChanges'
@@ -462,6 +463,7 @@ type RestoredSessionMessage = {
   sessionId?: string
   summary?: string
   state?: unknown
+  shellJob?: unknown
   userMessageId?: string
   preferPhiTimeline?: boolean
   content?: unknown
@@ -789,6 +791,7 @@ function appendGenericPhiTimelineItem(items: ChatItem[], message: RestoredSessio
 }
 
 function appendPhiTimelineMessage(state: RestoreState, message: RestoredSessionMessage): void {
+  if (applyChatShellJobEvent(state.items, message)) return
   if (applyRemoteKernelDeploymentProgress(state.items, message)) return
   if (applyPrimaryPhiTimelineEvent(state.items, message)) return
   appendPhiRunLifecycle(state.items, message)

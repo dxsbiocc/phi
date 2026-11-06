@@ -134,6 +134,9 @@ const SHELL_STATE_LABELS = {
   },
   get cancelled() {
     return jobsCopy.stopped
+  },
+  get interrupted() {
+    return jobsCopy.interrupted
   }
 } satisfies Record<BackgroundShellJob['state'], string>
 

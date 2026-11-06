@@ -1,18 +1,15 @@
-import type { IpcMain } from 'electron'
+import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 
-import type { BackgroundAgentJob, BackgroundShellJob } from '../../shared/backgroundJobTypes'
 import { IPC } from '../../shared/ipcChannels'
+import type { BackgroundJobOperations } from '../agent/jobs/background-job-operations'
 import {
   readBackgroundJobHistory,
   writeBackgroundJobHistory
 } from '../agent/jobs/background-job-history-store'
 export interface JobsIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
-  operations: {
-    listAgentJobs: () => Promise<BackgroundAgentJob[]>
-    listShellJobs: () => Promise<BackgroundShellJob[]>
-    stopShellJob: (agentSessionId: unknown, jobId: unknown) => Promise<void>
-  }
+  requireMainWindowRenderer: (event: IpcMainInvokeEvent) => void
+  operations: Omit<BackgroundJobOperations, 'dispose'>
 }
 
 export function registerJobsIpc(options: JobsIpcOptions): void {
@@ -25,7 +22,12 @@ export function registerJobsIpc(options: JobsIpcOptions): void {
   ipcMain.handle(IPC.jobs.readHistory, () => readBackgroundJobHistory())
   ipcMain.handle(IPC.jobs.writeHistory, (_, value: unknown) => writeBackgroundJobHistory(value))
   ipcMain.handle(IPC.jobs.listShell, listBackgroundShellJobs)
-  ipcMain.handle(IPC.jobs.stopShell, async (_, agentSessionId: unknown, jobId: unknown) => {
+  ipcMain.handle(IPC.jobs.startShell, (event, request: unknown) => {
+    options.requireMainWindowRenderer(event)
+    return options.operations.startShellJob(request)
+  })
+  ipcMain.handle(IPC.jobs.stopShell, async (event, agentSessionId: unknown, jobId: unknown) => {
+    options.requireMainWindowRenderer(event)
     await stopBackgroundShellJob(agentSessionId, jobId)
   })
 }

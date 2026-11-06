@@ -16,6 +16,7 @@ import { NoticeRow, type NoticeLevel } from './NoticeRow'
 import { ThinkingBlock } from './ThinkingBlock'
 import type { ChatContentResizeHandler } from './useCollapseResizeNotifier'
 import { ApprovalTimelineCard } from '../../features/chat/components/ApprovalTimelineCard'
+import { ChatShellJobCard } from '../../features/chat/components/ChatShellJobCard'
 
 function firstLine(text: string): string {
   return text.trim().split('\n', 1)[0] ?? ''
@@ -154,6 +155,15 @@ export const ChatBubble = memo(function ChatBubble({
   }
 
   if (message.role === 'warning') {
+    if (message.shellJob) {
+      return (
+        <ChatShellJobCard
+          job={message.shellJob}
+          onOpenBackgroundJobs={onOpenBackgroundJobs}
+          onContentResize={onContentResize}
+        />
+      )
+    }
     if (
       message.noticeKind === 'work_mode_selected' ||
       message.noticeKind === 'plan_run_finished' ||
@@ -234,6 +244,7 @@ export const ChatBubble = memo(function ChatBubble({
         cwd={cwd}
         onOpenLocalPath={onOpenLocalPath}
         onOpenWebUrl={onOpenWebUrl}
+        allowCodeActions={message.role === 'assistant'}
         showColorPalettes
       />
     </Box>

@@ -10,7 +10,7 @@ import { LocalHost } from '../workspace-host/local-host'
 import type { WorkspaceHost, WorkspaceStat } from '../workspace-host/types'
 import type { AnalysisNotebookSummary, NotebookDiscoveryOptions } from './analysis-notebooks'
 import {
-  createEmptyNotebookDocument,
+  createInitialNotebookDocument,
   type AnalysisNotebookFile,
   type DeleteProjectNotebookResult,
   type SaveProjectNotebookInput
@@ -41,7 +41,7 @@ export interface NotebookWorkspace {
   readonly projectCwd: string
   list(options?: NotebookDiscoveryOptions): Promise<NotebookWorkspaceList>
   open(path: string): Promise<AnalysisNotebookFile>
-  create(relativePath?: string): Promise<AnalysisNotebookFile>
+  create(relativePath?: string, initialCode?: string): Promise<AnalysisNotebookFile>
   save(input: SaveProjectNotebookInput): Promise<AnalysisNotebookFile>
   close(path: string): Promise<{ path: string }>
   delete(path: string): Promise<DeleteProjectNotebookResult>
@@ -190,6 +190,8 @@ function notebookSortKey(notebook: AnalysisNotebookSummary): string {
   return `${priority}:${notebook.relativePath.toLocaleLowerCase()}`
 }
 class HostNotebookWorkspace implements NotebookWorkspace {
+  private createTail = Promise.resolve()
+
   constructor(
     readonly projectCwd: string,
     private readonly host: WorkspaceHost
@@ -231,15 +233,31 @@ class HostNotebookWorkspace implements NotebookWorkspace {
     return notebookFile(target, bytes, stat)
   }
 
-  async create(relativePath?: string): Promise<AnalysisNotebookFile> {
-    const target = relativePath
-      ? workspacePath(this.projectCwd, relativePath)
-      : await this.uniqueNotebookPath()
-    if (await pathExists(this.host, target.relativePath)) throw new Error('Notebook 已存在')
-    await this.host.fs.mkdirp(posix.dirname(target.relativePath))
-    const document = createEmptyNotebookDocument()
-    await this.host.fs.writeAtomic(target.relativePath, serializeNotebookBytes(document))
-    return this.open(target.relativePath)
+  create(relativePath?: string, initialCode?: string): Promise<AnalysisNotebookFile> {
+    // SSH path validation and directory creation are separate operations.
+    const pending = this.createTail.then(() => this.createFile(relativePath, initialCode))
+    this.createTail = pending.then(
+      () => undefined,
+      () => undefined
+    )
+    return pending
+  }
+
+  private async createFile(
+    relativePath?: string,
+    initialCode?: string
+  ): Promise<AnalysisNotebookFile> {
+    const bytes = serializeNotebookBytes(createInitialNotebookDocument(initialCode))
+    if (relativePath) {
+      const file = await this.tryCreateNotebook(relativePath, bytes)
+      if (!file) throw new Error('Notebook 已存在')
+      return file
+    }
+    for (let index = 1; ; index += 1) {
+      const name = index === 1 ? 'Untitled.ipynb' : `Untitled ${index}.ipynb`
+      const file = await this.tryCreateNotebook(posix.join('notebooks', name), bytes)
+      if (file) return file
+    }
   }
 
   async save(input: SaveProjectNotebookInput): Promise<AnalysisNotebookFile> {
@@ -367,13 +385,20 @@ class HostNotebookWorkspace implements NotebookWorkspace {
     })
   }
 
-  private async uniqueNotebookPath(): Promise<WorkspacePath> {
-    await this.host.fs.mkdirp('notebooks')
-    for (let index = 1; ; index += 1) {
-      const name = index === 1 ? 'Untitled.ipynb' : `Untitled ${index}.ipynb`
-      const target = workspacePath(this.projectCwd, posix.join('notebooks', name))
-      if (!(await pathExists(this.host, target.relativePath))) return target
+  private async tryCreateNotebook(
+    path: string,
+    bytes: Uint8Array
+  ): Promise<AnalysisNotebookFile | null> {
+    const target = workspacePath(this.projectCwd, path)
+    if (await pathExists(this.host, target.relativePath)) return null
+    await this.host.fs.mkdirp(posix.dirname(target.relativePath))
+    try {
+      await this.host.fs.writeAtomic(target.relativePath, bytes, { ifAbsent: true })
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'HASH_MISMATCH') return null
+      throw error
     }
+    return this.open(target.relativePath)
   }
 }
 

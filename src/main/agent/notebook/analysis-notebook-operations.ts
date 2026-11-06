@@ -13,6 +13,7 @@ import type { AnalysisNotebookFileWatcher } from './analysis-notebook-watch'
 import type { JupyterKernelCompletionResult } from './analysis-jupyter-execution'
 import type { AnalysisNotebookSessionRegistry } from './analysis-jupyter-sessions'
 import type { AnalysisNotebookToolExecutor } from './notebook-tool-executor'
+import { createLocalNotebookWorkspace } from './notebook-workspace'
 import {
   remoteNotebookFileChange,
   type RemoteAnalysisNotebookBackend
@@ -107,15 +108,22 @@ export class AnalysisNotebookOperations {
 
   async createFile(
     workspace: AnalysisWorkspaceContext,
-    relativePath?: string
+    relativePath?: string,
+    initialCode?: string
   ): Promise<Awaited<ReturnType<RemoteAnalysisNotebookBackend['workspace']['create']>>> {
     const remote = this.remoteBackendFor(workspace)
     if (!remote) {
-      const file = createProjectNotebook(workspace.workingDirectory, relativePath)
+      const file =
+        initialCode === undefined
+          ? createProjectNotebook(workspace.workingDirectory, relativePath)
+          : await createLocalNotebookWorkspace(workspace.workingDirectory).create(
+              relativePath,
+              initialCode
+            )
       this.options.notebookFileWatcher.watchFile(workspace.workingDirectory, file)
       return file
     }
-    const created = await remote.workspace.create(relativePath)
+    const created = await remote.workspace.create(relativePath, initialCode)
     return remote.open(created.path, (event) =>
       this.options.notifyAnalysisNotebookFileChanged(
         remoteNotebookFileChange(remote.projectCwd, event)

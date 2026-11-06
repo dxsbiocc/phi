@@ -65,7 +65,11 @@ import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageT
 import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { SessionDeleteResult } from '../shared/sessionDeleteTypes'
 import type { RuntimeRecoveryApi } from '../shared/runtimeRecoveryTypes'
-import type { BackgroundAgentJob, BackgroundShellJob } from '../shared/backgroundJobTypes'
+import type {
+  BackgroundAgentJob,
+  BackgroundShellJob,
+  StartChatShellJobRequest
+} from '../shared/backgroundJobTypes'
 import type { PlanRunRendererApi } from '../shared/planRunTypes'
 import type { TeamPackRendererApi } from '../shared/teamPackTypes'
 import type {
@@ -1147,7 +1151,8 @@ declare global {
       ) => Promise<PreloadAnalysisNotebookDraftChange>
       createAnalysisNotebook: (
         cwd: string,
-        relativePath?: string
+        relativePath?: string,
+        initialCode?: string
       ) => Promise<PreloadAnalysisNotebookFile>
       closeAnalysisNotebook: (cwd: string, path: string) => Promise<{ path: string }>
       deleteAnalysisNotebook: (
@@ -1392,6 +1397,7 @@ declare global {
       readBackgroundJobHistory: () => Promise<string | null>
       writeBackgroundJobHistory: (serialized: string) => Promise<void>
       listShellJobs: () => Promise<BackgroundShellJob[]>
+      startShellJob: (input: StartChatShellJobRequest) => Promise<BackgroundShellJob>
       stopShellJob: (agentSessionId: string, jobId: string) => Promise<void>
       getWrapperRun: (runId: string) => Promise<WrapperRun | undefined>
       cancelWrapperRun: (runId: string) => Promise<WrapperRun>

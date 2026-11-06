@@ -16,6 +16,7 @@ import type { SessionMode } from '../../../../shared/sessionMode'
 import { PastedImagePreview } from './components/PastedImagePreview'
 import { LegacyRemoteSessionNotice } from './components/LegacyRemoteSessionNotice'
 import { ContextUsageIndicator } from './components/ContextUsageIndicator'
+import { ChatCodeActions } from './components/ChatCodeActions'
 import { usePastedImages } from './hooks/usePastedImages'
 import { useContextUsage, type ContextUsageTarget } from './hooks/useContextUsage'
 import { useChatResourceCatalog } from './hooks/useChatResourceCatalog'
@@ -138,6 +139,8 @@ type ViewProps = {
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onOpenWebUrl?: (url: string) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
+  onRunBash?: (source: string) => void
+  onCreateCodeNotebook?: (source: string) => Promise<void>
   cwd?: string
   loadPlanRun?: (runId: string) => Promise<PlanRunState | null>
 }
@@ -200,6 +203,8 @@ function ChatView({
   onOpenLocalPath,
   onOpenWebUrl,
   onJumpToNotebookCell,
+  onRunBash,
+  onCreateCodeNotebook,
   cwd = '',
   loadPlanRun
 }: ViewProps): React.JSX.Element {
@@ -456,27 +461,29 @@ function ChatView({
       {agentDetails}
       <ResourceMentionsProvider resources={messageResources}>
         <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative', display: 'flex' }}>
-          <ChatMessageList
-            messages={messages}
-            messagesContainerRef={messagesContainerRef}
-            scrollResetKey={scrollResetKey}
-            scrollPositionStore={scrollPositionStore}
-            isGenerating={isGenerating}
-            currentRunStartedAt={currentRunStartedAt}
-            onGoSettings={onGoSettings}
-            onOpenBackgroundJobs={onOpenBackgroundJobs}
-            onOpenLocalPath={onOpenLocalPath}
-            onOpenWebUrl={onOpenWebUrl}
-            onJumpToNotebookCell={onJumpToNotebookCell}
-            onEditUserMessage={editUserMessage}
-            onRetryUserMessage={retryUserMessage}
-            onForkUserMessage={onForkUserMessage}
-            cwd={cwd}
-            openPlanReviewId={
-              pendingUserInteraction?.planReview ? pendingUserInteraction.requestId : null
-            }
-            loadPlanRun={stableLoadPlanRun}
-          />
+          <ChatCodeActions onRunBash={onRunBash} onCreateNotebook={onCreateCodeNotebook}>
+            <ChatMessageList
+              messages={messages}
+              messagesContainerRef={messagesContainerRef}
+              scrollResetKey={scrollResetKey}
+              scrollPositionStore={scrollPositionStore}
+              isGenerating={isGenerating}
+              currentRunStartedAt={currentRunStartedAt}
+              onGoSettings={onGoSettings}
+              onOpenBackgroundJobs={onOpenBackgroundJobs}
+              onOpenLocalPath={onOpenLocalPath}
+              onOpenWebUrl={onOpenWebUrl}
+              onJumpToNotebookCell={onJumpToNotebookCell}
+              onEditUserMessage={editUserMessage}
+              onRetryUserMessage={retryUserMessage}
+              onForkUserMessage={onForkUserMessage}
+              cwd={cwd}
+              openPlanReviewId={
+                pendingUserInteraction?.planReview ? pendingUserInteraction.requestId : null
+              }
+              loadPlanRun={stableLoadPlanRun}
+            />
+          </ChatCodeActions>
           {recoveryNotice ? (
             <Box
               data-phi-recovery-notice="true"

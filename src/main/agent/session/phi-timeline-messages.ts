@@ -4,6 +4,7 @@ import {
   readSessionEvents,
   type PhiSessionManifest
 } from './session-store'
+import { recoverChatShellHistory } from '../jobs/chat-shell-history'
 
 export function readPhiTimelineMessages(
   runtimeSessionPath: string | null | undefined,
@@ -39,7 +40,7 @@ export function readPhiTimelineMessages(
   const hasPhiText = events.some(
     (event) => event.type === 'user_message' || event.type === 'assistant_message_finalized'
   )
-  return events.map((event) => ({
+  return recoverChatShellHistory(events).map((event) => ({
     ...event,
     ...(hasPhiText ? { preferPhiTimeline: true } : {}),
     source: 'phi'

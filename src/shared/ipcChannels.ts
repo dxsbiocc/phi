@@ -103,6 +103,7 @@ export const IPC = {
     writeHistory: 'jobs:writeHistory',
     listAgents: 'jobs:listAgents',
     listShell: 'jobs:listShell',
+    startShell: 'jobs:startShell',
     stopShell: 'jobs:stopShell'
   },
   managedEnvironments: {

@@ -1,6 +1,6 @@
 import { posix } from 'node:path'
 
-import { CodedError } from '../../../shared/errorCodes'
+import { CodedError, errorCodeOf } from '../../../shared/errorCodes'
 import {
   REMOTE_WORKSPACE_PATH_PROBE_LIMIT,
   type RemoteWorkspacePathProbeRequest,
@@ -21,7 +21,7 @@ import { resolveRemoteHelperPreparation } from './helper-development'
 import { createWorkspaceHostRemoteSession } from './remote-session'
 import { SshHost, SshHostClosedError } from './ssh-host'
 import type { SshHostConfig } from './ssh-host-context'
-import type { WorkspaceHost } from './types'
+import type { CommandResult, HostCommand, RunCommandOptions, WorkspaceHost } from './types'
 import { reportConnection } from '../connection-events'
 
 export interface RemoteWorkspaceHostIdentity {
@@ -188,6 +188,35 @@ export class RemoteWorkspaceHostRegistry {
         defaultTimeoutMs: request.execTimeoutMs
       }
     )
+  }
+
+  /** Runs a user-confirmed command in the session's pinned SSH project. */
+  async runSessionCommand(
+    identity: RemoteWorkspaceHostIdentity,
+    expectedBindingKey: string,
+    command: HostCommand,
+    options: Pick<RunCommandOptions, 'maxOutputBytes' | 'timeoutMs' | 'signal'>
+  ): Promise<CommandResult> {
+    const resolve = this.dependencies.resolveBinding ?? resolveRemoteWorkspaceHostBinding
+    const checkBinding = (): RemoteWorkspaceHostBinding => {
+      const binding = resolve(identity)
+      if (binding.cacheKey !== expectedBindingKey)
+        throw new Error('The SSH project binding changed')
+      return binding
+    }
+    const binding = checkBinding()
+    try {
+      return await this.reacquiring(binding, this.entry(binding).host).exec.run(command, {
+        ...options,
+        cwd: binding.canonicalRoot,
+        beforeExec: checkBinding
+      })
+    } catch (error) {
+      if (errorCodeOf(error) === 'TRANSPORT_LOST') {
+        void this.retireHost(binding.cacheKey).catch(() => undefined)
+      }
+      throw error
+    }
   }
 
   /** A destructive transaction must not share the session host that cleanup can close. */

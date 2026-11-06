@@ -235,6 +235,28 @@ for (const backend of BACKENDS) {
     })
   })
 
+  test(`${backend.name} creates distinct notebooks with the exact unexecuted Python source`, async () => {
+    await fixture(backend, async ({ root, workspace }) => {
+      const sources = ['# 温度\nif True:\n    print("°C")\n', 'print("second")']
+      const created = await Promise.all(
+        sources.map((source) => workspace.create(undefined, source))
+      )
+      assert.equal(new Set(created.map(({ path }) => path)).size, sources.length)
+      for (const [index, file] of created.entries()) {
+        assert.deepEqual(file.document.metadata.language_info, { name: 'python' })
+        assert.equal(file.document.cells.length, 1)
+        const [cell] = file.document.cells
+        assert.equal(cell.cellType, 'code')
+        assert.equal(cell.source, sources[index])
+        assert.equal(cell.executionCount, null)
+        assert.deepEqual(cell.outputs, [])
+        const saved = await workspace.open(file.relativePath)
+        assert.equal(saved.document.cells[0].source, sources[index])
+        await access(join(root, file.relativePath))
+      }
+    })
+  })
+
   test(`${backend.name} notebook workspace enforces boundaries and file limits`, async () => {
     await fixture(backend, async ({ root, workspace }) => {
       const outside = await mkdtemp(join(tmpdir(), 'phi-notebook-outside-'))

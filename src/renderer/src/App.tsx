@@ -65,6 +65,8 @@ import { useAppCommands } from './lib/app-shell/useAppCommands'
 import { useAppBootstrap } from './lib/app-shell/useAppBootstrap'
 import { useWorkspaceSidebar } from './lib/app-shell/useWorkspaceSidebar'
 import { useChatRunControl } from './features/chat/hooks/useChatRunControl'
+import { useChatShellRun } from './features/chat/hooks/useChatShellRun'
+import { ChatShellConfirmation } from './features/chat/components/ChatShellConfirmation'
 import { useSessionEventBridge } from './features/chat/hooks/useSessionEventBridge'
 import { usePromptSend } from './features/chat/hooks/usePromptSend'
 import { useQueuedPromptDrain } from './features/chat/hooks/useQueuedPromptDrain'
@@ -129,6 +131,7 @@ import type { AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
 import { WorkspaceSidePanel } from './components/WorkspaceSidePanel'
 import { PackageUpdateNotice } from './components/PackageUpdateNotice'
 import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
+import { analysisCopy } from './features/analysis/lib/analysisUiCopy'
 import { createPaletteTheme } from './theme'
 import { useThemeMode } from './useThemeMode'
 import { syncWindowBackground } from './lib/windowStartup'
@@ -1015,6 +1018,16 @@ function App(): React.JSX.Element {
     (key: string): void => cancelBrowserTrustedOverlay('local', key),
     [cancelBrowserTrustedOverlay]
   )
+  const {
+    pending: pendingChatShellRun,
+    request: requestChatShellRun,
+    dismiss: dismissChatShellRun,
+    confirm: confirmChatShellRun
+  } = useChatShellRun({
+    start: rendererApi.startShellJob,
+    requestOverlay: openLocalTrustedOverlay,
+    onError: showSnackbarError
+  })
   const setSettingsOpenWithBrowserGate = useCallback(
     (open: boolean): void => {
       if (!open) {
@@ -1490,6 +1503,32 @@ function App(): React.JSX.Element {
       setWorkspaceFileTabs,
       navigateToView
     ]
+  )
+
+  const onCreateCodeNotebook = useCallback(
+    async (source: string): Promise<void> => {
+      const origin = useSessionStore.getState()
+      if (!origin.activeCwd || origin.isSessionChanging) return
+      const request = sessionRequestRef.current
+      try {
+        const file = await rendererApi.createAnalysisNotebook(origin.activeCwd, undefined, source)
+        const current = useSessionStore.getState()
+        if (
+          request === sessionRequestRef.current &&
+          !current.isSessionChanging &&
+          current.activeSessionPath === origin.activeSessionPath &&
+          current.activeProjectId === origin.activeProjectId &&
+          current.activeCwd === origin.activeCwd
+        ) {
+          onOpenNotebookWorkspaceFile(file.path)
+        } else {
+          showSnackbar(analysisCopy.createdNamed(file.path), 'success')
+        }
+      } catch (error) {
+        showSnackbarError(error, analysisCopy.createNotebookFailed)
+      }
+    },
+    [onOpenNotebookWorkspaceFile, rendererApi, showSnackbar, showSnackbarError]
   )
 
   const onStartProjectChat = useCallback(
@@ -3447,6 +3486,21 @@ function App(): React.JSX.Element {
   const remoteControlsUnavailable =
     remoteModelControlsBlocked(runtimeRecoveryTarget, remoteRecoverySelectionState) ||
     (activeProjectLocation?.kind === 'ssh' && currentSessionIsBusy)
+  const canRunChatBash =
+    Boolean(activePhiSessionId && activeDisplayCwd) &&
+    !isSessionChanging &&
+    !activeLegacyRemoteSession &&
+    (activeProjectLocation?.kind === 'ssh' || window.platform !== 'win32')
+  const onRunChatBash = useCallback(
+    (command: string): void => {
+      if (!activePhiSessionId || !activeDisplayCwd) return
+      const cwd = activeRemoteFileScope
+        ? `${activeRemoteFileScope.hostAlias}:${activeDisplayCwd}`
+        : activeDisplayCwd
+      requestChatShellRun({ sessionId: activePhiSessionId, cwd, command })
+    },
+    [activeDisplayCwd, activePhiSessionId, activeRemoteFileScope, requestChatShellRun]
+  )
   const activeChatView = (
     <RemoteProjectFileContext.Provider
       value={
@@ -3602,6 +3656,12 @@ function App(): React.JSX.Element {
             onOpenLocalPath={onOpenLocalPath}
             onOpenWebUrl={onOpenWebUrl}
             onJumpToNotebookCell={onJumpToAnalysisNotebookCell}
+            onRunBash={canRunChatBash ? onRunChatBash : undefined}
+            onCreateCodeNotebook={
+              activeCwd && !isSessionChanging && !activeLegacyRemoteSession
+                ? onCreateCodeNotebook
+                : undefined
+            }
             compactComposerControls={activeView === 'analysis'}
             placement={
               activeView === 'analysis' && workspaceSidebarMode === 'conversations'
@@ -4282,6 +4342,7 @@ function App(): React.JSX.Element {
                           !pendingApproval &&
                           !pendingUserInteraction &&
                           !browserOverlaySuspended &&
+                          !pendingChatShellRun &&
                           !isSettingsOpen &&
                           !isSessionSearchOpen &&
                           !isProviderDialogOpen &&
@@ -4431,6 +4492,14 @@ function App(): React.JSX.Element {
           sidebarWidth={sidebarWidth}
           macTitlebarHeight={WINDOW_TITLEBAR_HEIGHT}
         />
+        {pendingChatShellRun ? (
+          <ChatShellConfirmation
+            command={pendingChatShellRun.command}
+            cwd={pendingChatShellRun.cwd}
+            onClose={dismissChatShellRun}
+            onRun={confirmChatShellRun}
+          />
+        ) : null}
         <SessionExportDialog
           session={exportTarget}
           busy={isExportingSession}

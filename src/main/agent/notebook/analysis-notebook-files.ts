@@ -135,12 +135,12 @@ function readNotebookDocument(target: string): {
   }
 }
 
-function writeNotebookDocument(target: string, document: NotebookDocument): void {
+function writeNotebookDocument(target: string, document: NotebookDocument, flag = 'w'): void {
   const body = serializeNotebook(document)
-  writeFileSync(target, `${JSON.stringify(body, null, 2)}\n`, 'utf-8')
+  writeFileSync(target, `${JSON.stringify(body, null, 2)}\n`, { encoding: 'utf-8', flag })
 }
 
-export function createEmptyNotebookDocument(): NotebookDocument {
+export function createInitialNotebookDocument(initialCode?: string): NotebookDocument {
   return parseNotebook({
     nbformat: 4,
     nbformat_minor: 5,
@@ -158,17 +158,15 @@ export function createEmptyNotebookDocument(): NotebookDocument {
       }
     },
     cells: [
-      {
-        cell_type: 'markdown',
-        metadata: {},
-        source: ['# Untitled analysis\n']
-      },
+      ...(initialCode === undefined
+        ? [{ cell_type: 'markdown', metadata: {}, source: ['# Untitled analysis\n'] }]
+        : []),
       {
         cell_type: 'code',
         execution_count: null,
         metadata: {},
         outputs: [],
-        source: []
+        source: initialCode ?? ''
       }
     ]
   })
@@ -241,7 +239,7 @@ export function createProjectNotebook(
   if (!isInsideRoot(root, parent)) {
     throw new Error('只能在当前项目内新建 notebook')
   }
-  writeNotebookDocument(target, createEmptyNotebookDocument())
+  writeNotebookDocument(target, createInitialNotebookDocument(), 'wx')
   return notebookPayload(root, target)
 }
 

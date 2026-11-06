@@ -41,6 +41,8 @@ import { deliverWrapperRunFinished } from '../src/main/agent/wrappers/compositio
 import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import { isSecretMetadataKey } from '../src/main/agent/redaction'
 import * as agentRunContinue from '../src/main/agent/agents/run-continue'
+import { ChatShellJobs } from '../src/main/agent/jobs/chat-shell-jobs'
+import * as chatShellHistory from '../src/main/agent/jobs/chat-shell-history'
 import { agentRunHostHandlers } from '../src/main/agent/agents/run-host'
 import * as agentRunCompletions from '../src/main/agent/plan/execution/agent-run-completions'
 import assert from 'node:assert/strict'
@@ -76,6 +78,7 @@ import type { HomeActivitySummary } from '../src/shared/homeActivityTypes'
 import { declaredExternalOutputRoot } from '../src/shared/wrapperResultTypes'
 import { hoverMediaPreviewType, mediaPreviewType } from '../src/main/file-preview-media'
 import { createBeforeQuitHandler } from '../src/main/app-quit'
+import { createMainWindowRetention } from '../src/main/main-window-retention'
 import { validateWrapperResultDownloadRequest } from '../src/main/agent/wrappers/remote-result-download'
 import * as localFileAccess from '../src/main/agent/local-file-access'
 import * as browserIpc from '../src/main/browser/browser-ipc'
@@ -430,6 +433,8 @@ type HostContext = {
 }
 type HostHandler = (params: unknown, context?: HostContext) => Promise<unknown>
 type HarnessOptions = {
+  /** Platform the main window close policy follows; defaults to a platform that really closes. */
+  windowRetentionPlatform?: NodeJS.Platform
   systemLanguages?: string[]
   uiLanguage?: 'en' | 'zh-CN'
   capabilityServiceCreate?: typeof capabilityService.createCapabilityService
@@ -1218,8 +1223,11 @@ async function harness(
         if (name === 'will-frame-navigate') frameNavigationHandler = handler
       },
       setBackgroundThrottling: noop,
-      isDestroyed: (): boolean => false
+      isDestroyed: (): boolean => false,
+      isCrashed: (): boolean => false,
+      reload: noop
     }
+    focus = noop
     constructor(windowOptions: { show?: boolean; backgroundColor?: string }) {
       super()
       this.visible = windowOptions.show !== false
@@ -1237,7 +1245,9 @@ async function harness(
       return false
     }
     close(): void {
-      this.emit('close')
+      let prevented = false
+      this.emit('close', { preventDefault: () => (prevented = true) })
+      if (prevented) return
       const index = Window.windows.indexOf(this)
       if (index >= 0) Window.windows.splice(index, 1)
       this.emit('closed')
@@ -1660,6 +1670,10 @@ async function harness(
     semver: { gt: (left: string, right: string): boolean => left > right },
     './agent-env': {},
     './app-quit': { createBeforeQuitHandler },
+    './main-window-retention': {
+      createMainWindowRetention: () =>
+        createMainWindowRetention(harnessOptions.windowRetentionPlatform ?? 'linux')
+    },
     './file-preview-media': { hoverMediaPreviewType, mediaPreviewType },
     '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
     '../shared/htmlReportPreview': htmlReportPreview,
@@ -2509,6 +2523,35 @@ async function harness(
       deleteProjectNotebook: (workingDirectory: string, notebookPath: string) => ({
         path: `${workingDirectory}/${notebookPath}`,
         relativePath: notebookPath
+      })
+    },
+    './agent/notebook/notebook-workspace': {
+      createLocalNotebookWorkspace: (cwd: string) => ({
+        create: async (relativePath = 'notebooks/Untitled.ipynb', initialCode?: string) => {
+          const document = notebookDocument.parseNotebook({
+            nbformat: 4,
+            nbformat_minor: 5,
+            metadata: { language_info: { name: 'python' } },
+            cells: [
+              {
+                cell_type: 'code',
+                execution_count: null,
+                metadata: {},
+                outputs: [],
+                source: initialCode ?? ''
+              }
+            ]
+          })
+          return {
+            path: `${cwd}/${relativePath}`,
+            relativePath,
+            name: 'Untitled.ipynb',
+            bytes: 512,
+            modifiedAt: '2026-09-09T00:02:00.000Z',
+            savedRevision: document.revision,
+            document
+          }
+        }
       })
     },
     './agent/notebook/analysis-notebook-watch': {
@@ -3657,6 +3700,7 @@ async function harness(
         (options.capabilityServiceCreate ?? capabilityService.createCapabilityService)(deps)
     },
     './agent/packages/external-skills': externalSkills,
+    './agent/packages/home-skill-import': {},
     './agent/packages/official-catalog-api': {
       searchOfficialCatalog: async () => ({ matches: [], available: false })
     },
@@ -3677,6 +3721,9 @@ async function harness(
     },
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },
     './agent/agents/run-continue': agentRunContinue,
+    './agent/jobs/chat-shell-jobs': { ChatShellJobs },
+    './agent/jobs/chat-shell-history': chatShellHistory,
+    './agent/jobs/chat-shell-origin': {},
     './agent/agents/run-host': { agentRunHostHandlers },
     './agent/plan/execution/agent-run-completions': agentRunCompletions,
     './agent/plan/model/plan-spec': {
@@ -4416,7 +4463,7 @@ async function harness(
           allowExternalFileRead,
           preventSleepDuringRuns: false,
           nextActionSuggestionsEnabled: true,
-          fileOpenConversationLayout: 'sidebar',
+            fileOpenConversationLayout: 'sidebar',
           modelAvailability
         }
       }
@@ -4715,6 +4762,7 @@ async function harness(
     './agent/host-requests/host-confirmations',
     './agent/host-requests/plan-review-request',
     './agent/jobs/background-agent-job-listing',
+    './agent/jobs/background-job-operations',
     './agent/jobs/background-shell-job-operations',
     './agent/mcp/featured-api-key-verification',
     './agent/mcp/remote-mcp-trust-request',
@@ -7713,6 +7761,8 @@ const expectedStartupRegistrationOrder = [
   'skills:delete',
   'skills:trustRemoteProject',
   'skills:revokeRemoteProjectTrust',
+  'skills:listHomeImportCandidates',
+  'skills:importHomeSkills',
   'agents:list',
   'agents:trustRemoteProject',
   'agents:revokeRemoteProjectTrust',
@@ -7758,6 +7808,7 @@ const expectedStartupRegistrationOrder = [
   'jobs:readHistory',
   'jobs:writeHistory',
   'jobs:listShell',
+  'jobs:startShell',
   'jobs:stopShell',
   'wrappers:getRun',
   'wrappers:cancelRun',
@@ -9563,6 +9614,25 @@ test('main IPC: analysis notebook files also support the ordinary workspace', as
   assert.equal(created.relativePath, 'notebooks/Untitled.ipynb')
   assert.equal(opened.path, '/workspace/notebooks/Untitled.ipynb')
   assert.equal(opened.relativePath, 'notebooks/Untitled.ipynb')
+})
+
+test('main IPC: analysis notebook creation seeds Python code in the requested workspace', async () => {
+  const app = await harness()
+  const source = 'if True:\n    print("温度")\n'
+  const created = (await app.invoke(
+    'analysis:createNotebook',
+    '/workspace',
+    undefined,
+    source
+  )) as { path: string; document: ReturnType<typeof notebookDocument.parseNotebook> }
+  assert.equal(created.path, '/workspace/notebooks/Untitled.ipynb')
+  assert.equal(created.document.cells.length, 1)
+  assert.equal(created.document.cells[0].source, source)
+  assert.equal(created.document.cells[0].executionCount, null)
+  await assert.rejects(
+    app.invoke('analysis:createNotebook', '/workspace', undefined, ' \n'),
+    /Python source/
+  )
 })
 
 test('main IPC: analysis kernel diagnostics tolerate a missing project cwd', async () => {
@@ -13634,6 +13704,47 @@ test(
       app.sessions.map((session) => session.log.includes('abort')),
       [true, true]
     )
+  }
+)
+
+test(
+  'main IPC: on macOS closing the window hides it and reopening reuses the same renderer',
+  { timeout: 3000 },
+  async () => {
+    const app = await harness(
+      async (_cwd, file) => {
+        const session = new FakeSession(file)
+        session.hold = true
+        return session
+      },
+      { windowRetentionPlatform: 'darwin' }
+    )
+    await app.invoke('sessions:switch', 'A')
+    const run = app.invoke('agent:prompt', 'first')
+    await tick()
+    assert.equal(app.browserWindowCount(), 1)
+
+    await app.invoke('window:close')
+    await tick()
+    assert.equal(app.browserWindowCount(), 1)
+    assert.equal(
+      app.runnerEvents.some((event) => event.type === 'stop_all'),
+      false
+    )
+    assert.equal(app.sessions[0].log.includes('abort'), false)
+
+    const created = app.operationLog.filter((entry) => entry.type === 'window.create').length
+    const logLength = app.operationLog.length
+    app.activateApp()
+    assert.equal(app.browserWindowCount(), 1)
+    assert.equal(app.operationLog.filter((entry) => entry.type === 'window.create').length, created)
+    assert.ok(app.operationLog.slice(logLength).some((entry) => entry.type === 'window.show'))
+
+    app.beforeQuit()
+    await run
+    assert.equal(app.sessions[0].log.includes('abort'), true)
+    app.closeMainWindow()
+    assert.equal(app.browserWindowCount(), 0)
   }
 )
 

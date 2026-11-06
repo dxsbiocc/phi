@@ -24,6 +24,7 @@ import {
 } from '../features/chat/lib/uiBlocks'
 import { outputPreviewText } from './toolOutputPresentation'
 import { applyApprovalTimelineEvent } from '../features/chat/lib/approvalTimeline'
+import { applyChatShellJobEvent } from '../features/chat/lib/chatShellTimeline'
 import {
   applyRemoteKernelDeploymentProgress,
   clearRemoteKernelDeploymentProgress
@@ -564,6 +565,10 @@ export function reduceAgentEventState(
   }
 
   if (applyApprovalTimelineEvent(next, event)) {
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
+  if (applyChatShellJobEvent(next, event)) {
     return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
   }
 
