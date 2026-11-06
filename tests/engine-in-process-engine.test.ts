@@ -597,6 +597,42 @@ try {
   }
 })
 
+test('provider login cancellation reaches the worker with the original attempt ID', async () => {
+  const recording = recordingBridge()
+  const engine = createInProcessEngine(recording.bridge)
+  const controller = new AbortController()
+  const request = {
+    agentDir: '/agent',
+    providerId: 'provider',
+    type: 'oauth' as const,
+    attemptId: 'login'
+  }
+  const login = engine.models.login({ ...request, key: undefined }, controller.signal)
+  controller.abort(new Error('Login cancelled'))
+  await assert.rejects(login, /Login cancelled/)
+  assert.deepEqual(
+    recording.calls.map(({ method, params }) => [method, params]),
+    [
+      ['modelRuntime.login', request],
+      ['modelRuntime.cancelLogin', { attemptId: 'login' }]
+    ]
+  )
+  await engine.stop()
+})
+
+test('a direct engine OAuth login receives an attempt ID when the caller omits it', async () => {
+  const recording = recordingBridge()
+  const engine = createInProcessEngine(recording.bridge)
+  await engine.models.login({
+    agentDir: '/agent',
+    providerId: 'provider',
+    type: 'oauth',
+    key: undefined
+  })
+  assert.ok((recording.calls[0].params as { attemptId?: string }).attemptId)
+  await engine.stop()
+})
+
 test('non-request PhiEngine methods forward subscriptions, host handlers, presence, and stop', async () => {
   const recording = recordingBridge()
   const engine = createInProcessEngine(recording.bridge)
@@ -630,20 +666,23 @@ test('non-request PhiEngine methods forward subscriptions, host handlers, presen
     type: 'event',
     event: 'authPrompt',
     requestId: 'auth',
-    payload: { providerId: 'provider', prompt: { type: 'text' } }
+    payload: { attemptId: 'login', providerId: 'provider', prompt: { type: 'text' } }
   })
   recording.emit({
     type: 'event',
     event: 'authNotify',
-    payload: { providerId: 'provider', event: { type: 'progress' } }
+    payload: { attemptId: 'login', providerId: 'provider', event: { type: 'progress' } }
   })
   await new Promise<void>((resolve) => setImmediate(resolve))
   assert.deepEqual(received, [
     ['event', { type: 'fixture_event', value: 'event' }],
     ['state', 'state'],
     ['approval', { requestId: 'approval' }],
-    ['authPrompt', { requestId: 'auth', providerId: 'provider', prompt: { type: 'text' } }],
-    ['authNotify', { providerId: 'provider', event: { type: 'progress' } }]
+    [
+      'authPrompt',
+      { requestId: 'auth', attemptId: 'login', providerId: 'provider', prompt: { type: 'text' } }
+    ],
+    ['authNotify', { attemptId: 'login', providerId: 'provider', event: { type: 'progress' } }]
   ])
   cleanups.forEach((cleanup) => cleanup())
 
@@ -730,6 +769,7 @@ test('worker dispatch matches the PhiEngine facade and private runtime service c
     ...requestCases.map((entry) => entry.method),
     'decisions.evaluate',
     'decisions.cancel',
+    'modelRuntime.cancelLogin',
     'modelGateway.create',
     'modelGateway.revoke',
     'mcp.desktopCreate',

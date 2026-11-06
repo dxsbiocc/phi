@@ -184,7 +184,7 @@ export function handleAuthInteraction(
 ): void {
   deps.enqueueTrustedOverlay({
     kind: 'auth',
-    key: event.type === 'prompt' ? event.requestId : `${event.providerId}:${event.event.type}`,
+    key: event.type === 'prompt' ? event.requestId : `${event.attemptId}:${event.event.type}`,
     onCancel:
       event.type === 'prompt'
         ? () => deps.rendererApi.submitAuthInteraction(event.requestId, '')

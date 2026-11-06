@@ -208,14 +208,21 @@ export async function modelRuntimeSnapshot(params: unknown): Promise<unknown> {
   }
 }
 
+const oauthAttempts = new Map<string, AbortController>()
+
+export function cancelModelLogin(params: unknown): void {
+  const attemptId = isRecord(params) ? stringValue(params.attemptId) : ''
+  oauthAttempts.get(attemptId)?.abort(new Error('Auth interaction was cancelled'))
+}
+
 export async function loginModelRuntime(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const providerId = stringValue(record.providerId)
   const type = stringValue(record.type)
-  const ctx = await getContext(record.agentDir)
   if (!providerId) throw new Error('Missing providerId')
 
   if (type === 'api_key') {
+    const ctx = await getContext(record.agentDir)
     const key = stringValue(record.key)
     if (!key) throw new Error('Missing API key')
     await ctx.auth.setApiKey(providerId, key)
@@ -227,41 +234,51 @@ export async function loginModelRuntime(params: unknown): Promise<unknown> {
     throw new Error(`Unsupported auth type: ${type}`)
   }
 
-  await ctx.auth.login(providerId, {
-    signal: undefined,
-    onAuth: (info) => {
-      sendEvent('authNotify', {
-        providerId,
-        event: {
-          type: 'auth_url',
-          url: info.url,
-          instructions: info.instructions
-        }
-      })
-    },
-    onProgress: (message) => {
-      sendEvent('authNotify', {
-        providerId,
-        event: {
-          type: 'progress',
-          message
-        }
-      })
-    },
-    onManualCodeInput: () =>
-      requestAuthPrompt(providerId, {
-        type: 'manual_code',
-        message: `输入授权码完成 ${providerId} 登录`
-      }),
-    onPrompt: (prompt) =>
-      requestAuthPrompt(providerId, {
-        type: 'text',
-        message: prompt.message,
-        ...(prompt.placeholder ? { placeholder: prompt.placeholder } : {})
-      })
-  })
-  await ctx.modelRegistry.refresh('offline').catch(() => undefined)
-  return modelRuntimeSnapshot(record)
+  const attemptId = stringValue(record.attemptId)
+  if (!attemptId || oauthAttempts.has(attemptId)) throw new Error('Invalid auth attempt')
+  const controller = new AbortController()
+  const { signal } = controller
+  oauthAttempts.set(attemptId, controller)
+  try {
+    const ctx = await getContext(record.agentDir)
+    signal.throwIfAborted()
+    const notify = (event: UnknownRecord): void => {
+      if (!signal.aborted) sendEvent('authNotify', { attemptId, providerId, event })
+    }
+    await ctx.auth.login(providerId, {
+      signal,
+      onAuth: (info) =>
+        notify({ type: 'auth_url', url: info.url, instructions: info.instructions }),
+      onProgress: (message) => notify({ type: 'progress', message }),
+      onManualCodeInput: (promptSignal) =>
+        requestAuthPrompt(
+          attemptId,
+          providerId,
+          {
+            type: 'manual_code',
+            message: `输入授权码完成 ${providerId} 登录`
+          },
+          promptSignal ? AbortSignal.any([signal, promptSignal]) : signal
+        ),
+      onPrompt: (prompt) =>
+        requestAuthPrompt(
+          attemptId,
+          providerId,
+          {
+            type: 'text',
+            message: prompt.message,
+            ...(prompt.placeholder ? { placeholder: prompt.placeholder } : {})
+          },
+          signal
+        )
+    })
+    signal.throwIfAborted()
+    await ctx.modelRegistry.refresh('offline').catch(() => undefined)
+    return await modelRuntimeSnapshot(record)
+  } finally {
+    oauthAttempts.delete(attemptId)
+    controller.abort(new Error('Auth interaction has ended'))
+  }
 }
 
 export async function logoutModelRuntime(params: unknown): Promise<unknown> {
@@ -274,21 +291,40 @@ export async function logoutModelRuntime(params: unknown): Promise<unknown> {
   return modelRuntimeSnapshot(record)
 }
 
-export function requestAuthPrompt(providerId: string, prompt: UnknownRecord): Promise<string> {
-  const requestId = randomUUID()
-  sendEvent(
-    'authPrompt',
-    {
-      providerId,
-      prompt
-    },
-    { requestId }
-  )
+function requestAuthPrompt(
+  attemptId: string,
+  providerId: string,
+  prompt: UnknownRecord,
+  signal: AbortSignal
+): Promise<string> {
   return new Promise<string>((resolve, reject) => {
+    signal.throwIfAborted()
+    const requestId = randomUUID()
+    const cleanup = (): void => {
+      pendingAuthPrompts.delete(requestId)
+      signal.removeEventListener('abort', onAbort)
+    }
+    const onAbort = (): void => {
+      cleanup()
+      reject(signal.reason)
+    }
     pendingAuthPrompts.set(requestId, {
-      resolve,
-      reject
+      resolve: (value) => {
+        cleanup()
+        resolve(value)
+      },
+      reject: (error) => {
+        cleanup()
+        reject(error)
+      }
     })
+    signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      sendEvent('authPrompt', { attemptId, providerId, prompt }, { requestId })
+    } catch (error) {
+      cleanup()
+      reject(error)
+    }
   })
 }
 

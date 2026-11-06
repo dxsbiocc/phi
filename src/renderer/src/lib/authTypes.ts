@@ -35,12 +35,14 @@ export type AuthEvent =
 export type AuthInteractionEvent =
   | {
       type: 'prompt'
+      attemptId: string
       requestId: string
       providerId: string
       prompt: AuthPrompt
     }
   | {
       type: 'notify'
+      attemptId: string
       providerId: string
       event: AuthEvent
     }

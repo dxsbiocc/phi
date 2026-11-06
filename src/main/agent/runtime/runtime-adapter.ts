@@ -119,6 +119,7 @@ export type AuthEvent =
     }
 
 export type AuthInteraction = {
+  attemptId?: string
   signal?: AbortSignal
   prompt(prompt: AuthPrompt): Promise<string>
   notify(event: AuthEvent): void

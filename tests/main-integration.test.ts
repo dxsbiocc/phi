@@ -7540,6 +7540,7 @@ const expectedStartupRegistrationOrder = [
   'auth:status',
   'auth:loginApiKey',
   'auth:loginOAuth',
+  'auth:cancelOAuth',
   'auth:logout',
   'auth:interaction-response',
   'app:checkForUpdates',

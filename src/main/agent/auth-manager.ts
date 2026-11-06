@@ -1,62 +1,14 @@
 import { IPC } from '../../shared/ipcChannels'
-import { BrowserWindow, shell } from 'electron'
+import { BrowserWindow, shell, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 
-import { createModelRuntime, type ModelRuntime } from './runtime/runtime-adapter'
-type AuthInteraction = {
-  signal?: AbortSignal
-  prompt(prompt: AuthPrompt): Promise<string>
-  notify(event: AuthEvent): void
-}
-
-type AuthPrompt =
-  | {
-      type: 'text'
-      message: string
-      placeholder?: string
-      signal?: AbortSignal
-    }
-  | {
-      type: 'secret'
-      message: string
-      placeholder?: string
-      signal?: AbortSignal
-    }
-  | {
-      type: 'select'
-      message: string
-      options: ReadonlyArray<{ id: string; label: string; description?: string }>
-      signal?: AbortSignal
-    }
-  | {
-      type: 'manual_code'
-      message: string
-      placeholder?: string
-      signal?: AbortSignal
-    }
-
-type AuthEvent =
-  | {
-      type: 'info'
-      message: string
-      links?: ReadonlyArray<{ url: string; label?: string }>
-    }
-  | {
-      type: 'auth_url'
-      url: string
-      instructions?: string
-    }
-  | {
-      type: 'device_code'
-      userCode: string
-      verificationUri: string
-      intervalSeconds?: number
-      expiresInSeconds?: number
-    }
-  | {
-      type: 'progress'
-      message: string
-    }
+import {
+  createModelRuntime,
+  type AuthEvent,
+  type AuthInteraction,
+  type AuthPrompt,
+  type ModelRuntime
+} from './runtime/runtime-adapter'
 
 export interface AuthProviderStatusItem {
   modelKinds?: Array<'chat' | 'decision'>
@@ -74,6 +26,7 @@ export interface AuthProviderStatusItem {
 
 export interface AuthInteractionPromptEvent {
   type: 'prompt'
+  attemptId: string
   requestId: string
   providerId: string
   prompt: AuthPrompt
@@ -81,6 +34,7 @@ export interface AuthInteractionPromptEvent {
 
 export interface AuthInteractionNotifyEvent {
   type: 'notify'
+  attemptId: string
   providerId: string
   event: AuthEvent
 }
@@ -140,6 +94,10 @@ function addWindowUnavailableListener(window: AuthWindow, callback: () => void):
 export class AuthManager {
   private runtime: Promise<ModelRuntime> | null
   private readonly pendingInteractions = new Map<string, PendingInteraction>()
+  private readonly oauthAttempts = new Map<
+    string,
+    { controller: AbortController; owner: WebContents }
+  >()
 
   constructor(runtime?: Promise<ModelRuntime>) {
     // No explicit authPath: PI_CODING_AGENT_DIR (set in main/index.ts) already
@@ -195,11 +153,44 @@ export class AuthManager {
     return this.getProviderStatuses()
   }
 
-  async loginOAuth(providerId: string): Promise<AuthProviderStatusItem[]> {
-    const runtime = await this.getRuntime()
-    const interaction = this.createInteraction(providerId)
-    await runtime.login(providerId, 'oauth', interaction)
-    return this.getProviderStatuses()
+  async loginOAuth(
+    providerId: string,
+    attemptId: string = randomUUID(),
+    sender?: WebContents
+  ): Promise<AuthProviderStatusItem[]> {
+    const window = sender ? BrowserWindow.fromWebContents(sender) : this.getActiveWindow()
+    if (!isUsableWindow(window)) throw new Error('No active window for auth interaction')
+    if (typeof attemptId !== 'string' || !attemptId || this.oauthAttempts.has(attemptId)) {
+      throw new Error('Invalid auth attempt')
+    }
+
+    const controller = new AbortController()
+    this.oauthAttempts.set(attemptId, { controller, owner: window.webContents })
+    const detach = addWindowUnavailableListener(window, () => {
+      controller.abort(new Error('Auth window was closed'))
+    })
+    try {
+      const runtime = await this.getRuntime()
+      controller.signal.throwIfAborted()
+      await runtime.login(
+        providerId,
+        'oauth',
+        this.createInteraction(providerId, attemptId, window, controller)
+      )
+      controller.signal.throwIfAborted()
+      return await this.getProviderStatuses()
+    } finally {
+      this.oauthAttempts.delete(attemptId)
+      detach()
+      controller.abort(new Error('Auth interaction has ended'))
+    }
+  }
+
+  cancelOAuth(attemptId: string, sender?: WebContents): void {
+    const attempt = this.oauthAttempts.get(attemptId)
+    if (attempt && (!sender || attempt.owner === sender)) {
+      attempt.controller.abort(new Error('Auth interaction was cancelled'))
+    }
   }
 
   async logout(providerId: string): Promise<void> {
@@ -213,18 +204,22 @@ export class AuthManager {
     pending.resolve(value)
   }
 
-  private createInteraction(providerId: string): AuthInteraction {
-    const interactionController = new AbortController()
-
+  private createInteraction(
+    providerId: string,
+    attemptId: string,
+    window: AuthWindow,
+    interactionController: AbortController
+  ): AuthInteraction {
     return {
+      attemptId,
       signal: interactionController.signal,
       prompt: async (prompt: AuthPrompt): Promise<string> => {
-        const window = this.getActiveWindow()
+        interactionController.signal.throwIfAborted()
         if (!isUsableWindow(window)) {
           interactionController.abort()
           throw new Error('No active window for auth interaction')
         }
-        if (interactionController.signal.aborted || prompt.signal?.aborted) {
+        if (prompt.signal?.aborted) {
           throw new Error('Auth interaction was cancelled')
         }
 
@@ -258,7 +253,10 @@ export class AuthManager {
 
           this.pendingInteractions.set(requestId, pending)
 
-          const onAbort = (): void => pending.reject(new Error('Auth interaction was cancelled'))
+          const onAbort = (): void =>
+            pending.reject(
+              interactionController.signal.reason ?? new Error('Auth interaction was cancelled')
+            )
           const signals = [interactionController.signal, prompt.signal]
           for (const signal of signals) {
             if (!signal) continue
@@ -270,16 +268,10 @@ export class AuthManager {
             cleanupFns.push(() => signal.removeEventListener('abort', onAbort))
           }
 
-          cleanupFns.push(
-            addWindowUnavailableListener(window, () => {
-              pending.reject(new Error('Auth window was closed'))
-              interactionController.abort()
-            })
-          )
-
           try {
             window.webContents.send(IPC.auth.interactionRequested, {
               type: 'prompt',
+              attemptId,
               requestId,
               providerId,
               prompt: toRendererPrompt(prompt)
@@ -289,6 +281,7 @@ export class AuthManager {
               const url = `输入授权码完成 ${providerId} 登录`
               window.webContents.send(IPC.auth.interactionRequested, {
                 type: 'notify',
+                attemptId,
                 providerId,
                 event: {
                   type: 'info',
@@ -302,20 +295,20 @@ export class AuthManager {
         })
       },
       notify: (event: AuthEvent): void => {
-        if (event.type === 'auth_url') {
-          void shell.openExternal(event.url)
+        if (interactionController.signal.aborted || !isUsableWindow(window)) return
+        try {
+          window.webContents.send(IPC.auth.interactionRequested, {
+            type: 'notify',
+            attemptId,
+            providerId,
+            event
+          })
+          if (event.type === 'auth_url') {
+            void shell.openExternal(event.url).catch((error) => interactionController.abort(error))
+          }
+        } catch (error) {
+          interactionController.abort(error)
         }
-
-        const targetWindow = this.getActiveWindow()
-        if (!targetWindow) {
-          return
-        }
-
-        targetWindow.webContents.send(IPC.auth.interactionRequested, {
-          type: 'notify',
-          providerId,
-          event
-        })
       }
     }
   }

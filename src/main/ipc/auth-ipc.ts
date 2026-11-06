@@ -17,10 +17,13 @@ export function registerAuthIpc(options: AuthIpcOptions): void {
     await invalidateAgentSession()
     return status
   })
-  ipcMain.handle(IPC.auth.loginOAuth, async (_, providerId: string) => {
-    const status = await getAuthManager().loginOAuth(providerId)
+  ipcMain.handle(IPC.auth.loginOAuth, async ({ sender }, providerId: string, attemptId: string) => {
+    const status = await getAuthManager().loginOAuth(providerId, attemptId, sender)
     await invalidateAgentSession()
     return status
+  })
+  ipcMain.handle(IPC.auth.cancelOAuth, ({ sender }, attemptId: string) => {
+    getAuthManager().cancelOAuth(attemptId, sender)
   })
   ipcMain.handle(IPC.auth.logout, async (_, providerId: string) => {
     await getAuthManager().logout(providerId)

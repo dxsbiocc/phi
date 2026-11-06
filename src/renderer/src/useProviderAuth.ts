@@ -1,5 +1,5 @@
 import { MODEL_AVAILABILITY_CHANGED } from './lib/modelAvailabilityEvents'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ActiveAuthPrompt, AuthInteractionEvent, ProviderAuthStatus } from './types'
 import { readableErrorMessage } from './lib/sessionNotifications'
 import type { AuthEvent } from './lib/authTypes'
@@ -53,7 +53,8 @@ export function useProviderAuth(
   const [activePrompts, setActivePrompts] = useState<ActiveAuthPrompt[]>([])
   const [providerHintEvents, setProviderHintEvents] = useState<Record<string, AuthEvent | null>>({})
   const [isProviderDialogOpen, setIsProviderDialogOpen] = useState(false)
-  const [providerDialogProviderId, setProviderDialogProviderId] = useState<string | null>(null)
+  const [providerDialogProviderId, setSelectedProvider] = useState<string | null>(null)
+  const activeOAuth = useRef<{ id: string; providerId: string } | null>(null)
 
   const refreshAuthStatuses = useCallback(async (): Promise<void> => {
     const data = await window.api.getAuthStatus()
@@ -78,20 +79,41 @@ export function useProviderAuth(
     [refreshAuthStatuses]
   )
 
-  const openProviderDialog = useCallback((providerId: string | null = null): void => {
-    setProviderDialogProviderId(providerId)
-    setIsProviderDialogOpen(true)
-  }, [])
+  const cancelOAuth = useCallback((): void => {
+    const attempt = activeOAuth.current
+    if (!attempt) return
+    activeOAuth.current = null
+    setIsBusy(false)
+    setActivePrompts([])
+    setProviderHintEvents((prev) => ({ ...prev, [attempt.providerId]: null }))
+    void window.api.cancelProviderOAuth(attempt.id).catch(() => undefined)
+  }, [setIsBusy])
+
+  const setProviderDialogProviderId = useCallback(
+    (providerId: string | null): void => {
+      if (activeOAuth.current?.providerId !== providerId) cancelOAuth()
+      setSelectedProvider(providerId)
+    },
+    [cancelOAuth]
+  )
+
+  const openProviderDialog = useCallback(
+    (providerId: string | null = null): void => {
+      setProviderDialogProviderId(providerId)
+      setIsProviderDialogOpen(true)
+    },
+    [setProviderDialogProviderId]
+  )
 
   const closeProviderDialog = useCallback((): void => {
+    cancelOAuth()
     setIsProviderDialogOpen(false)
-    setProviderDialogProviderId(null)
-    setActivePrompts([])
-  }, [])
+    setSelectedProvider(null)
+  }, [cancelOAuth])
 
   const submitProviderApiKey = useCallback(
     async (providerId: string, key: string): Promise<void> => {
-      if (!key.trim()) {
+      if (activeOAuth.current || !key.trim()) {
         return
       }
       setIsBusy(true)
@@ -118,17 +140,19 @@ export function useProviderAuth(
 
   const submitProviderOAuth = useCallback(
     async (providerId: string): Promise<void> => {
+      if (activeOAuth.current) return
+      const attempt = { id: crypto.randomUUID(), providerId }
+      activeOAuth.current = attempt
       setIsBusy(true)
       try {
-        const next = await window.api.loginOAuth(providerId)
+        const next = await window.api.loginOAuth(providerId, attempt.id)
+        if (activeOAuth.current !== attempt) return
         setProviderStatuses(next)
         window.dispatchEvent(new Event(MODEL_AVAILABILITY_CHANGED))
-        setProviderHintEvents((prev) => ({ ...prev, [providerId]: null }))
-        setActivePrompts((prev) => prev.filter((item) => item.providerId !== providerId))
         setIsProviderDialogOpen(false)
         notify(settingsUi.providerAuth.loginSucceeded, 'success')
       } catch (error) {
-        setProviderHintEvents((prev) => ({ ...prev, [providerId]: null }))
+        if (activeOAuth.current !== attempt) return
         notify(
           settingsUi.providerAuth.loginFailed(
             readableErrorMessage(error, settingsUi.providerAuth.retry)
@@ -136,7 +160,12 @@ export function useProviderAuth(
           'error'
         )
       } finally {
-        setIsBusy(false)
+        if (activeOAuth.current === attempt) {
+          activeOAuth.current = null
+          setActivePrompts([])
+          setProviderHintEvents((prev) => ({ ...prev, [providerId]: null }))
+          setIsBusy(false)
+        }
       }
     },
     [notify, setIsBusy]
@@ -163,18 +192,11 @@ export function useProviderAuth(
 
   const onSubmitAuthPrompt = useCallback(
     async (requestId: string, value: string): Promise<void> => {
-      if (!value.trim()) {
-        return
-      }
-      setIsBusy(true)
-      try {
-        await window.api.submitAuthInteraction(requestId, value)
-        setActivePrompts((prev) => prev.filter((item) => item.requestId !== requestId))
-      } finally {
-        setIsBusy(false)
-      }
+      if (!value.trim()) return
+      await window.api.submitAuthInteraction(requestId, value)
+      setActivePrompts((prev) => prev.filter((item) => item.requestId !== requestId))
     },
-    [setIsBusy]
+    []
   )
 
   const onUpdatePromptValue = useCallback((requestId: string, value: string): void => {
@@ -184,6 +206,10 @@ export function useProviderAuth(
   }, [])
 
   const handleAuthInteractionEvent = useCallback((event: AuthInteractionEvent): boolean => {
+    const attempt = activeOAuth.current
+    if (!attempt || attempt.id !== event.attemptId || attempt.providerId !== event.providerId) {
+      return false
+    }
     if (event.type === 'prompt') {
       setActivePrompts((prev) => {
         const exists = prev.some((item) => item.requestId === event.requestId)
@@ -210,7 +236,7 @@ export function useProviderAuth(
         ]
       })
 
-      setProviderDialogProviderId(event.providerId)
+      setSelectedProvider(event.providerId)
       setIsProviderDialogOpen(true)
       return true
     }
@@ -220,7 +246,7 @@ export function useProviderAuth(
       [event.providerId]: event.event
     }))
 
-    setProviderDialogProviderId(event.providerId)
+    setSelectedProvider(event.providerId)
     if (
       event.event.type === 'progress' ||
       event.event.type === 'auth_url' ||

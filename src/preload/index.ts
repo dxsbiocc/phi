@@ -235,6 +235,7 @@ type AuthEvent =
 
 type AuthInteractionPromptEvent = {
   type: 'prompt'
+  attemptId: string
   requestId: string
   providerId: string
   prompt: AuthPrompt
@@ -242,6 +243,7 @@ type AuthInteractionPromptEvent = {
 
 type AuthInteractionNotifyEvent = {
   type: 'notify'
+  attemptId: string
   providerId: string
   event: AuthEvent
 }
@@ -866,7 +868,8 @@ type RendererAuthApi = PreloadApiBase & {
   ) => Promise<void>
   getAuthStatus: () => Promise<AuthStatusItem[]>
   loginApiKey: (providerId: string, key: string) => Promise<AuthStatusItem[]>
-  loginOAuth: (providerId: string) => Promise<AuthStatusItem[]>
+  loginOAuth: (providerId: string, attemptId: string) => Promise<AuthStatusItem[]>
+  cancelProviderOAuth: (attemptId: string) => Promise<void>
   logout: (providerId: string) => Promise<void>
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => Unsubscribe
@@ -1495,8 +1498,10 @@ const api: RendererAuthApi = {
   getAuthStatus: (): Promise<AuthStatusItem[]> => ipcRenderer.invoke(IPC.auth.status),
   loginApiKey: (providerId: string, key: string): Promise<AuthStatusItem[]> =>
     ipcRenderer.invoke(IPC.auth.loginApiKey, providerId, key),
-  loginOAuth: (providerId: string): Promise<AuthStatusItem[]> =>
-    ipcRenderer.invoke(IPC.auth.loginOAuth, providerId),
+  loginOAuth: (providerId: string, attemptId: string): Promise<AuthStatusItem[]> =>
+    ipcRenderer.invoke(IPC.auth.loginOAuth, providerId, attemptId),
+  cancelProviderOAuth: (attemptId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.auth.cancelOAuth, attemptId),
   logout: (providerId: string): Promise<void> => ipcRenderer.invoke(IPC.auth.logout, providerId),
   submitAuthInteraction: (requestId: string, value: string): Promise<void> =>
     ipcRenderer.invoke(IPC.auth.interactionResponse, requestId, value),

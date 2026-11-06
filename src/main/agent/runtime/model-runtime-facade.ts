@@ -65,30 +65,34 @@ export class OmpModelRuntimeFacade implements ModelRuntime {
   ): Promise<void> {
     const cleanups: Array<() => void> = []
     cleanups.push(
-      this.engine.models.onAuthNotify(({ providerId: notifiedProviderId, event }) => {
-        if (notifiedProviderId !== providerId) return
+      this.engine.models.onAuthNotify(({ attemptId, event }) => {
+        if (attemptId !== interaction.attemptId || interaction.signal?.aborted) return
         interaction.notify(event as AuthEvent)
       })
     )
     cleanups.push(
-      this.engine.models.onAuthPrompt(({ providerId: promptProviderId, requestId, prompt }) => {
-        if (promptProviderId !== providerId) return
+      this.engine.models.onAuthPrompt(({ attemptId, requestId, prompt }) => {
+        if (attemptId !== interaction.attemptId || interaction.signal?.aborted) return
         void interaction
           .prompt(prompt as AuthPrompt)
           .then((value) => this.engine.models.respondAuthPrompt(requestId, value))
-          .catch((error: unknown) => this.engine.models.rejectAuthPrompt(requestId, error))
+          .catch((error: unknown) => {
+            if (!interaction.signal?.aborted) {
+              return this.engine.models.rejectAuthPrompt(requestId, error)
+            }
+            return undefined
+          })
+          .catch(() => undefined)
       })
     )
 
     try {
       const key =
         type === 'api_key' ? await interaction.prompt({ type: 'secret', message: '' }) : undefined
-      const snapshot = await this.engine.models.login({
-        agentDir: this.agentDir,
-        providerId,
-        type,
-        key
-      })
+      const snapshot = await this.engine.models.login(
+        { agentDir: this.agentDir, providerId, type, key, attemptId: interaction.attemptId },
+        interaction.signal
+      )
       this.update(snapshot)
     } finally {
       cleanups.forEach((cleanup) => cleanup())

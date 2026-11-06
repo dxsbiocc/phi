@@ -377,6 +377,7 @@ test('an auth prompt publishes through the overlay and reveals settings without 
   const h = harness()
   handleAuthInteraction(h.deps, {
     type: 'prompt',
+    attemptId: 'login',
     requestId: 'auth-1',
     providerId: 'openai',
     prompt: { type: 'secret', message: 'Key' }

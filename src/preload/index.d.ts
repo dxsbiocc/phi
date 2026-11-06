@@ -796,7 +796,10 @@ declare global {
           statusText: string
         }>
       >
-      loginOAuth: (providerId: string) => Promise<
+      loginOAuth: (
+        providerId: string,
+        attemptId: string
+      ) => Promise<
         Array<{
           providerId: string
           name: string
@@ -816,6 +819,7 @@ declare global {
           statusText: string
         }>
       >
+      cancelProviderOAuth: (attemptId: string) => Promise<void>
       logout: (providerId: string) => Promise<void>
       submitAuthInteraction: (requestId: string, value: string) => Promise<void>
       onAuthInteraction: (
@@ -823,6 +827,7 @@ declare global {
           event:
             | {
                 type: 'prompt'
+                attemptId: string
                 requestId: string
                 providerId: string
                 prompt: {
@@ -834,6 +839,7 @@ declare global {
               }
             | {
                 type: 'notify'
+                attemptId: string
                 providerId: string
                 event:
                   | {

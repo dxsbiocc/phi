@@ -14,7 +14,12 @@ afterEach(() => setUiLanguage('en'))
 
 type AuthApi = Pick<
   Window['api'],
-  'getAuthStatus' | 'loginApiKey' | 'loginOAuth' | 'logout' | 'submitAuthInteraction'
+  | 'getAuthStatus'
+  | 'loginApiKey'
+  | 'loginOAuth'
+  | 'cancelProviderOAuth'
+  | 'logout'
+  | 'submitAuthInteraction'
 >
 
 const statuses: ProviderAuthStatus[] = [
@@ -34,15 +39,23 @@ function harness(overrides: Partial<AuthApi> = {}): {
   read(): ProviderAuthState
   notices: { message: string; severity: 'success' | 'error' }[]
   busy: boolean[]
-  calls: { keys: string[][]; oauth: string[]; logout: string[]; prompts: string[][] }
+  calls: {
+    keys: string[][]
+    oauth: string[]
+    cancel: string[]
+    logout: string[]
+    prompts: string[][]
+  }
 } {
   let cursor = 0
+  let nextAttempt = 0
   const slots: { value: unknown }[] = []
   const notices: { message: string; severity: 'success' | 'error' }[] = []
   const busy: boolean[] = []
   const calls = {
     keys: [] as string[][],
     oauth: [] as string[],
+    cancel: [] as string[],
     logout: [] as string[],
     prompts: [] as string[][]
   }
@@ -55,6 +68,9 @@ function harness(overrides: Partial<AuthApi> = {}): {
     loginOAuth: async (id) => {
       calls.oauth.push(id)
       return statuses
+    },
+    cancelProviderOAuth: async (id) => {
+      calls.cancel.push(id)
     },
     logout: async (id) => {
       calls.logout.push(id)
@@ -78,6 +94,11 @@ function harness(overrides: Partial<AuthApi> = {}): {
       ]
     },
     useCallback: <T>(callback: T): T => callback,
+    useRef<T>(initial: T): { current: T } {
+      const index = cursor++
+      slots[index] ??= { value: { current: initial } }
+      return slots[index].value as { current: T }
+    },
     // Startup scheduling is covered separately; these tests drive explicit auth actions.
     useEffect: (): void => undefined
   }
@@ -90,6 +111,7 @@ function harness(overrides: Partial<AuthApi> = {}): {
     exports: module.exports,
     window: { api, dispatchEvent: () => true },
     Event,
+    crypto: { randomUUID: () => `attempt-${++nextAttempt}` },
     require(specifier: string): unknown {
       if (specifier === 'react') return react
       if (specifier.endsWith('/modelAvailabilityEvents')) return { MODEL_AVAILABILITY_CHANGED }
@@ -151,28 +173,42 @@ test('auth actions localize notices without changing provider IDs, keys, or subm
   }
 })
 
-test('authorization hints update immediately while URLs, device codes, raw messages and prompt drafts stay intact', () => {
+test('authorization hints update immediately while URLs, device codes, raw messages and prompt drafts stay intact', async () => {
   setUiLanguage('en')
-  const f = harness()
+  const response = Promise.withResolvers<ProviderAuthStatus[]>()
+  const f = harness({ loginOAuth: () => response.promise })
+  const providerId = 'provider'
+  const pending = f.read().submitProviderOAuth(providerId)
+  const attemptId = 'attempt-1'
   const url = 'https://auth.example.test/authorize?state=AbC%2F123&lang=zh-CN'
   const code = 'ABCD-原值'
   f.read().handleAuthInteractionEvent({
     type: 'notify',
-    providerId: 'url',
+    attemptId,
+    providerId,
     event: { type: 'auth_url', url }
   })
+  assert.equal(f.read().providerHints[providerId], `Authorization link: ${url}`)
+  setUiLanguage('zh-CN')
+  assert.equal(f.read().providerHints[providerId], `授权链接：${url}`)
+  setUiLanguage('en')
   f.read().handleAuthInteractionEvent({
     type: 'notify',
-    providerId: 'device',
+    attemptId,
+    providerId,
     event: {
       type: 'device_code',
       userCode: code,
       verificationUri: 'https://auth.example.test/device'
     }
   })
+  assert.equal(f.read().providerHints[providerId], `Verification code: ${code}`)
+  setUiLanguage('zh-CN')
+  assert.equal(f.read().providerHints[providerId], `验证码：${code}`)
   f.read().handleAuthInteractionEvent({
     type: 'notify',
-    providerId: 'raw',
+    attemptId,
+    providerId,
     event: { type: 'progress', message: '服务原文 · Please continue' }
   })
   const prompt = {
@@ -182,31 +218,82 @@ test('authorization hints update immediately while URLs, device codes, raw messa
   }
   const promptNeedsSettings = f.read().handleAuthInteractionEvent({
     type: 'prompt',
-    providerId: 'url',
+    attemptId,
+    providerId,
     requestId: 'prompt-1',
     prompt
   })
   assert.equal(promptNeedsSettings, true)
   f.read().onUpdatePromptValue('prompt-1', '尚未提交的 code')
-  assert.equal(f.read().providerHints.url, `Authorization link: ${url}`)
-  assert.equal(f.read().providerHints.device, `Verification code: ${code}`)
-  setUiLanguage('zh-CN')
-  assert.equal(f.read().providerHints.url, `授权链接：${url}`)
-  assert.equal(f.read().providerHints.device, `验证码：${code}`)
-  assert.equal(f.read().providerHints.raw, '服务原文 · Please continue')
+  setUiLanguage('en')
+  assert.equal(f.read().providerHints[providerId], '服务原文 · Please continue')
   assert.equal(f.read().activePrompts[0].prompt, prompt)
   assert.equal(f.read().activePrompts[0].value, '尚未提交的 code')
   assert.equal(f.read().isProviderDialogOpen, true)
   f.read().handleAuthInteractionEvent({
     type: 'prompt',
-    providerId: 'url',
+    attemptId,
+    providerId,
     requestId: 'prompt-1',
     prompt: { ...prompt, message: '新的服务原文' }
   })
   assert.equal(f.read().activePrompts.length, 1)
   assert.equal(f.read().activePrompts[0].value, '尚未提交的 code')
-  assert.equal(f.calls.oauth.length, 0)
+  response.resolve(statuses)
+  await pending
 })
+
+for (const [action, nextProvider] of [
+  ['close', 'second'],
+  ['back', 'first']
+] as const) {
+  test(`provider dialog ${action} cancels OAuth and lets the next login start immediately`, async () => {
+    const first = Promise.withResolvers<ProviderAuthStatus[]>()
+    const second = Promise.withResolvers<ProviderAuthStatus[]>()
+    const attempts: string[] = []
+    const f = harness({
+      loginOAuth: (_providerId, attemptId) => {
+        attempts.push(attemptId)
+        return attempts.length === 1 ? first.promise : second.promise
+      }
+    })
+    f.read().openProviderDialog('first')
+    const pending = f.read().submitProviderOAuth('first')
+    const prompt = {
+      type: 'prompt' as const,
+      attemptId: attempts[0],
+      requestId: 'pending-code',
+      providerId: 'first',
+      prompt: { type: 'manual_code' as const, message: 'Paste code' }
+    }
+    assert.equal(f.read().handleAuthInteractionEvent(prompt), true)
+    assert.equal(f.busy.at(-1), true)
+    if (action === 'close') f.read().closeProviderDialog()
+    else f.read().setProviderDialogProviderId(null)
+    assert.deepEqual(f.calls.cancel, [attempts[0]])
+    assert.equal(f.busy.at(-1), false)
+    assert.equal(f.read().activePrompts.length, 0)
+
+    f.read().openProviderDialog(nextProvider)
+    const retry = f.read().submitProviderOAuth(nextProvider)
+    assert.equal(attempts.length, 2)
+    assert.equal(f.read().handleAuthInteractionEvent(prompt), false)
+    first.reject(new Error('Old attempt failed'))
+    await pending
+    assert.equal(f.read().providerDialogProviderId, nextProvider)
+    assert.equal(f.read().isProviderDialogOpen, true)
+    assert.equal(f.busy.at(-1), true)
+    assert.equal(f.notices.length, 0)
+
+    second.resolve(statuses)
+    await retry
+    assert.equal(f.busy.at(-1), false)
+    assert.deepEqual(
+      f.notices.map((notice) => notice.severity),
+      ['success']
+    )
+  })
+}
 
 test('failed actions localize only the UI prefix and keep service diagnostics unchanged', async () => {
   for (const [language, prefix, fallback] of [

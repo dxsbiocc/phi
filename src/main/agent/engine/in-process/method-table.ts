@@ -6,6 +6,8 @@ import {
 } from './worker-subsystems'
 import { DESKTOP_MODEL_ACCESS_WORKER_METHODS } from '../kernel-host/model-access-broker'
 
+let modelRuntime: Promise<typeof import('./runtime-context')> | undefined
+
 export async function handleWorkerRequest(method: string, params: unknown): Promise<unknown> {
   switch (method) {
     case DESKTOP_MODEL_ACCESS_WORKER_METHODS.credentials:
@@ -51,9 +53,13 @@ export async function handleWorkerRequest(method: string, params: unknown): Prom
       const { modelRuntimeSnapshot } = await import('./runtime-context')
       return modelRuntimeSnapshot(params)
     }
-    case 'modelRuntime.login': {
-      const { loginModelRuntime } = await import('./runtime-context')
-      return loginModelRuntime(params)
+    case 'modelRuntime.login':
+    case 'modelRuntime.cancelLogin': {
+      // Keep login and cancellation ordered even when the module is still loading.
+      const runtime = await (modelRuntime ??= import('./runtime-context'))
+      return method === 'modelRuntime.login'
+        ? runtime.loginModelRuntime(params)
+        : runtime.cancelModelLogin(params)
     }
     case 'modelRuntime.logout': {
       const { logoutModelRuntime } = await import('./runtime-context')
@@ -178,7 +184,6 @@ export async function handleWorkerRequest(method: string, params: unknown): Prom
       const requestId = stringValue(record.requestId)
       const pending = pendingAuthPrompts.get(requestId)
       if (pending) {
-        pendingAuthPrompts.delete(requestId)
         if (typeof record.error === 'string' && record.error) {
           pending.reject(new Error(record.error))
         } else {

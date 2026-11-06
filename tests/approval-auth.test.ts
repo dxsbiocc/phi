@@ -743,6 +743,29 @@ test('auth prompt renderer death rejects and aborts the login interaction signal
   await manager.resolveInteraction(requestId, 'late')
 })
 
+test('cancelling a provider login rejects its pending prompt and allows another login', async () => {
+  const window = new FakeWindow()
+  __electronMock.setFocusedWindow(window)
+  const prompted = Promise.withResolvers<void>()
+  const manager = new AuthManager(
+    Promise.resolve(
+      createRuntime(async (interaction) => {
+        if (window.webContents.sent.length > 0) return
+        const prompt = interaction.prompt({ type: 'manual_code', message: 'Paste code' })
+        prompted.resolve()
+        await prompt
+      })
+    ) as ConstructorParameters<typeof AuthManager>[0]
+  )
+
+  const login = manager.loginOAuth('provider', 'cancelled-attempt')
+  await prompted.promise
+  manager.cancelOAuth('cancelled-attempt')
+  await assert.rejects(login, /cancelled/)
+  assert.equal(window.listenerCount('closed'), 0)
+  assert.deepEqual(await manager.loginOAuth('another-provider'), [])
+})
+
 test('classifyTool gates exec and write skill tools and leaves read alone', async () => {
   const window = new FakeWindow()
   __electronMock.setFocusedWindow(window)

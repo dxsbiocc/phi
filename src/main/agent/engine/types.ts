@@ -196,7 +196,7 @@ export interface PhiLoginCallbacks {
   signal?: AbortSignal
   onAuth(info: { url: string; instructions?: string }): void
   onProgress(message: string): void
-  onManualCodeInput(): Promise<string>
+  onManualCodeInput(signal?: AbortSignal): Promise<string>
   onPrompt(prompt: { message: string; placeholder?: string }): Promise<string>
 }
 
@@ -533,17 +533,28 @@ export interface PhiEngine {
   }
   models: {
     snapshot(params: { agentDir: string }): Promise<RuntimeSnapshot>
-    login(params: {
-      agentDir: string
-      providerId: string
-      type: 'api_key' | 'oauth'
-      key: string | undefined
-    }): Promise<RuntimeSnapshot>
+    login(
+      params: {
+        agentDir: string
+        providerId: string
+        type: 'api_key' | 'oauth'
+        key: string | undefined
+        attemptId?: string
+      },
+      signal?: AbortSignal
+    ): Promise<RuntimeSnapshot>
     logout(params: { agentDir: string; providerId: string }): Promise<RuntimeSnapshot>
     onAuthPrompt(
-      listener: (request: { requestId: string; providerId: string; prompt: unknown }) => void
+      listener: (request: {
+        requestId: string
+        attemptId: string
+        providerId: string
+        prompt: unknown
+      }) => void
     ): () => void
-    onAuthNotify(listener: (request: { providerId: string; event: unknown }) => void): () => void
+    onAuthNotify(
+      listener: (request: { attemptId: string; providerId: string; event: unknown }) => void
+    ): () => void
     respondAuthPrompt(requestId: string, value: string): Promise<void>
     rejectAuthPrompt(requestId: string, error: unknown): Promise<void>
   }

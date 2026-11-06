@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import test from 'node:test'
 
-import type { PhiMcpOAuthCredential } from '../src/main/agent/engine/types'
+import type { PhiAuth, PhiMcpOAuthCredential } from '../src/main/agent/engine/types'
+import type { RuntimeContext } from '../src/main/agent/engine/in-process/common'
 
 const execFileAsync = promisify(execFile)
 const testFile = fileURLToPath(import.meta.url)
@@ -53,6 +54,56 @@ async function runBunScenario(scenario: string, realStorage = true): Promise<voi
 
 async function executeChildScenario(scenario: string): Promise<void> {
   const { createPhiAuth } = await import('../src/main/agent/engine/in-process/auth')
+
+  if (scenario === 'worker-login-abort') {
+    const { handleWorkerRequest } = await import('../src/main/agent/engine/in-process/method-table')
+    const { contexts, pendingAuthPrompts } =
+      await import('../src/main/agent/engine/in-process/state')
+    const { createStdoutWorkerOutbound, setWorkerOutbound } =
+      await import('../src/main/agent/engine/in-process/ipc')
+    const started = Promise.withResolvers<string>()
+    setWorkerOutbound(
+      createStdoutWorkerOutbound((line) => {
+        const message = JSON.parse(line)
+        if (message.event === 'authPrompt') {
+          assert.equal(message.payload.attemptId, 'first')
+          started.resolve(message.requestId)
+        }
+      })
+    )
+    let calls = 0
+    let signal: AbortSignal | undefined
+    const auth = {
+      login: async (_providerId, callbacks) => {
+        calls++
+        signal = callbacks.signal
+        await callbacks.onManualCodeInput()
+      }
+    } satisfies Pick<PhiAuth, 'login'>
+    contexts.set('/fixture', Promise.resolve({ auth } as RuntimeContext))
+    const loginParams = { agentDir: '/fixture', providerId: 'provider', type: 'oauth' }
+    const login = handleWorkerRequest('modelRuntime.login', { ...loginParams, attemptId: 'first' })
+    const requestId = await started.promise
+    assert.equal(pendingAuthPrompts.has(requestId), true)
+    await handleWorkerRequest('modelRuntime.cancelLogin', { attemptId: 'stale' })
+    assert.equal(signal?.aborted, false)
+    const cancelled = assert.rejects(login, /cancelled/)
+    await handleWorkerRequest('modelRuntime.cancelLogin', { attemptId: 'first' })
+    await cancelled
+    assert.equal(signal?.aborted, true)
+    assert.equal(pendingAuthPrompts.size, 0)
+
+    // Cancel while the worker is still waiting for its model context.
+    const context = Promise.withResolvers<RuntimeContext>()
+    contexts.set('/fixture', context.promise)
+    const early = handleWorkerRequest('modelRuntime.login', { ...loginParams, attemptId: 'early' })
+    await handleWorkerRequest('modelRuntime.cancelLogin', { attemptId: 'early' })
+    context.resolve({ auth } as RuntimeContext)
+    await assert.rejects(early, /cancelled/)
+    assert.equal(calls, 1)
+    process.stdout.write(`phi-auth:${scenario}:ok\n`)
+    return
+  }
 
   if (scenario === 'login' || scenario === 'login-abort') {
     const controller = new AbortController()
@@ -412,5 +463,9 @@ if (childScenario) {
 
   test('login forwards the abort signal and preserves the OMP rejection', async () => {
     await runBunScenario('login-abort', false)
+  })
+
+  test('worker cancels only the matching OAuth attempt and releases its pending prompt', async () => {
+    await runBunScenario('worker-login-abort', false)
   })
 }

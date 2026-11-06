@@ -558,7 +558,8 @@ export interface RendererApi
   ) => Promise<void>
   getAuthStatus: () => Promise<ProviderAuthStatus[]>
   loginApiKey: (providerId: string, key: string) => Promise<ProviderAuthStatus[]>
-  loginOAuth: (providerId: string) => Promise<ProviderAuthStatus[]>
+  loginOAuth: (providerId: string, attemptId: string) => Promise<ProviderAuthStatus[]>
+  cancelProviderOAuth: (attemptId: string) => Promise<void>
   logout: (providerId: string) => Promise<void>
   submitAuthInteraction: (requestId: string, value: string) => Promise<void>
   onAuthInteraction: (cb: (event: AuthInteractionEvent) => void) => () => void

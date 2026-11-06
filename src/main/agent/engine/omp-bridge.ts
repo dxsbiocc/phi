@@ -127,6 +127,7 @@ const REQUEST_POLICIES: ReadonlyMap<string, RequestPolicy> = new Map([
   ['shellJobs.cancel', controlPolicy],
   ['toolApproval.result', controlPolicy],
   ['auth.promptResult', controlPolicy],
+  ['modelRuntime.cancelLogin', controlPolicy],
   ['session.contextUsage', controlPolicy],
   ['session.setThinkingLevel', controlPolicy],
   ['session.rename', controlPolicy],
@@ -545,13 +546,20 @@ export class OmpBridge extends EventEmitter {
   }
 
   onAuthPrompt(
-    listener: (request: { requestId: string; providerId: string; prompt: unknown }) => void
+    listener: (request: {
+      requestId: string
+      attemptId: string
+      providerId: string
+      prompt: unknown
+    }) => void
   ): () => void {
     this.on('auth:prompt', listener)
     return () => this.off('auth:prompt', listener)
   }
 
-  onAuthNotify(listener: (request: { providerId: string; event: unknown }) => void): () => void {
+  onAuthNotify(
+    listener: (request: { attemptId: string; providerId: string; event: unknown }) => void
+  ): () => void {
     this.on('auth:notify', listener)
     return () => this.off('auth:notify', listener)
   }
@@ -743,9 +751,15 @@ export class OmpBridge extends EventEmitter {
       typeof message.payload === 'object' &&
       message.payload !== null
     ) {
-      const payload = message.payload as { providerId?: unknown; prompt?: unknown }
+      const payload = message.payload as {
+        attemptId?: unknown
+        providerId?: unknown
+        prompt?: unknown
+      }
+      if (typeof payload.attemptId !== 'string') return
       this.emit('auth:prompt', {
         requestId: message.requestId,
+        attemptId: payload.attemptId,
         providerId: typeof payload.providerId === 'string' ? payload.providerId : '',
         prompt: payload.prompt
       })
@@ -754,8 +768,14 @@ export class OmpBridge extends EventEmitter {
       typeof message.payload === 'object' &&
       message.payload !== null
     ) {
-      const payload = message.payload as { providerId?: unknown; event?: unknown }
+      const payload = message.payload as {
+        attemptId?: unknown
+        providerId?: unknown
+        event?: unknown
+      }
+      if (typeof payload.attemptId !== 'string') return
       this.emit('auth:notify', {
+        attemptId: payload.attemptId,
         providerId: typeof payload.providerId === 'string' ? payload.providerId : '',
         event: payload.event
       })

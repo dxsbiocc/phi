@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { getOmpBridge, type OmpBridge } from './omp-bridge'
 import { createDecisionClient } from './decision-client'
 import { SessionRoutingEngine } from './session-routing-engine'
@@ -74,7 +76,22 @@ export function createInProcessEngine(bridge: OmpBridge): PhiEngine {
     },
     models: {
       snapshot: (params) => bridge.request('modelRuntime.snapshot', params),
-      login: (params) => bridge.request('modelRuntime.login', params),
+      login: async (params, signal) => {
+        signal?.throwIfAborted()
+        const attemptId = params.type === 'oauth' ? (params.attemptId ?? randomUUID()) : undefined
+        const cancel = (): void => {
+          void bridge.request('modelRuntime.cancelLogin', { attemptId }).catch(() => undefined)
+        }
+        if (attemptId) signal?.addEventListener('abort', cancel, { once: true })
+        try {
+          return await bridge.request('modelRuntime.login', { ...params, attemptId }, { signal })
+        } catch (error) {
+          signal?.throwIfAborted()
+          throw error
+        } finally {
+          signal?.removeEventListener('abort', cancel)
+        }
+      },
       logout: (params) => bridge.request('modelRuntime.logout', params),
       onAuthPrompt: (listener) => bridge.onAuthPrompt(listener),
       onAuthNotify: (listener) => bridge.onAuthNotify(listener),

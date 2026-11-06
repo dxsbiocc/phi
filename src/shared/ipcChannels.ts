@@ -57,6 +57,7 @@ export const IPC = {
     credentialsChanged: 'auth:credentials-changed',
     loginApiKey: 'auth:loginApiKey',
     loginOAuth: 'auth:loginOAuth',
+    cancelOAuth: 'auth:cancelOAuth',
     logout: 'auth:logout',
     status: 'auth:status'
   },
