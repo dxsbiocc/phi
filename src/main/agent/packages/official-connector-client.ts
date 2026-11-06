@@ -3,7 +3,7 @@ import { stringify as stringifyYaml } from 'yaml'
 
 import { readBoundedResponse } from './github-source'
 import { PACKAGE_ICON_FILENAMES } from './icon-assets'
-import { isRecord } from './installer-utils'
+import { errorMessage, isRecord } from './installer-utils'
 import {
   CONNECTOR_CATEGORIES,
   parsePackageManifestText,
@@ -35,10 +35,15 @@ export interface OfficialConnectorPayload {
   icon?: { name: string; bytes: Buffer }
 }
 
+export interface OfficialConnectorCatalog {
+  packages: OfficialConnectorPayload[]
+  notices: string[]
+}
+
 /** HTTP connector payloads are completely described by the API manifest and optional root icon. */
 export async function fetchOfficialConnectorPackages(
   options: { fetch?: typeof fetch; timeoutMs?: number } = {}
-): Promise<OfficialConnectorPayload[]> {
+): Promise<OfficialConnectorCatalog> {
   const timeoutMs = options.timeoutMs ?? 60_000
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 120_000)
     throw new Error('Invalid Phi Website Connector request timeout')
@@ -81,7 +86,9 @@ export async function fetchOfficialConnectorPackages(
     JSON.parse((await read(path, MAX_RESPONSE_BYTES)).toString('utf8')) as unknown
   try {
     const items: ConnectorItem[] = []
+    const notices: string[] = []
     const ids = new Set<string>()
+    let itemNumber = 0
     let expectedTotal: number | undefined
     let expectedCategories: string | undefined
     for (let page = 1; page <= 5; page += 1) {
@@ -111,36 +118,22 @@ export async function fetchOfficialConnectorPackages(
         (!isRecord(value.meta) || value.meta.connectors !== expectedTotal)
       )
         throw new Error('Phi Website Connector catalog count mismatch')
-      for (const raw of value.items) {
-        const item = parseItem(raw)
-        if (ids.has(item.id)) throw new Error(`Duplicate Phi Website Connector ID: ${item.id}`)
-        ids.add(item.id)
-        items.push(item)
-      }
+      itemNumber = appendConnectorItems(value.items, itemNumber, items, ids, notices)
       if (page === value.pageCount) break
     }
-    const categories = JSON.parse(expectedCategories!) as Array<{ name: string; count: number }>
-    if (
-      categories.some(
-        (category) =>
-          items.filter((item) => item.category === category.name).length !== category.count
+    const installable = items.filter((item) => {
+      if (!item.catalogInstallable) return false
+      if (item.transport === 'http') return true
+      notices.push(
+        `Connector ${item.id}: The Phi Website Connector API cannot deliver complete stdio contents`
       )
-    )
-      throw new Error('Phi Website Connector categories do not cover the complete catalog')
-    const installable = items.filter((item) => item.catalogInstallable)
-    if (!installable.length)
-      throw new Error(
-        'The Phi Website Connector catalog contains no completely installable packages'
-      )
-    if (installable.some((item) => item.transport !== 'http'))
-      throw new Error(
-        'The Phi Website Connector API cannot deliver complete stdio contents. Use the signed release catalog'
-      )
-    const result: OfficialConnectorPayload[] = new Array(installable.length)
+      return false
+    })
+    if (!installable.length) throw noValidConnectorError(notices)
+    const result: OfficialConnectorPayload[] = []
     let cursor = 0
     const tasks = Array.from({ length: Math.min(4, installable.length) }, async () => {
       while (cursor < installable.length) {
-        controller.signal.throwIfAborted()
         const index = cursor++
         const item = installable[index]
         try {
@@ -166,35 +159,85 @@ export async function fetchOfficialConnectorPackages(
             manifest.connector.auth !== item.auth
           )
             throw new Error(`Phi Website Connector package does not match the catalog: ${item.id}`)
-          const declaredIcon =
-            detail.iconUrl === undefined ? undefined : iconPath(detail.iconUrl, item.id)
-          const listIcon = item.iconUrl === undefined ? undefined : iconPath(item.iconUrl, item.id)
-          if (declaredIcon && listIcon && declaredIcon !== listIcon)
-            throw new Error(`Phi Website Connector icon does not match the catalog: ${item.id}`)
-          const icon = declaredIcon ?? listIcon
-          result[index] = {
+          const icon = await fetchConnectorIcon(item, detail, read, notices)
+          const payload: OfficialConnectorPayload = {
             manifest,
             yaml,
             directoryAuthBlocked: item.directoryAuthBlocked,
-            ...(icon
-              ? { icon: { name: icon.split('/').at(-1)!, bytes: await read(icon, MAX_ICON_BYTES) } }
-              : {})
+            ...(icon ? { icon } : {})
           }
-          if (result[index].icon?.bytes.length === 0)
-            throw new Error('The Phi Website Connector icon is empty')
+          result.push(payload)
         } catch (error) {
-          controller.abort(error)
-          throw error
+          addNotice(notices, `Connector ${item.id}`, error)
         }
       }
     })
     const settled = await Promise.allSettled(tasks)
     const failure = settled.find((item) => item.status === 'rejected')
     if (failure?.status === 'rejected') throw failure.reason
-    return result.sort((left, right) => left.manifest.id.localeCompare(right.manifest.id))
+    if (!result.length) throw noValidConnectorError(notices)
+    return {
+      packages: result.sort((left, right) => left.manifest.id.localeCompare(right.manifest.id)),
+      notices
+    }
   } finally {
     clearTimeout(timer)
   }
+}
+
+function appendConnectorItems(
+  values: unknown[],
+  firstItemNumber: number,
+  items: ConnectorItem[],
+  ids: Set<string>,
+  notices: string[]
+): number {
+  let itemNumber = firstItemNumber
+  for (const raw of values) {
+    itemNumber += 1
+    try {
+      const item = parseItem(raw)
+      if (ids.has(item.id)) throw new Error(`Duplicate Phi Website Connector ID: ${item.id}`)
+      ids.add(item.id)
+      items.push(item)
+    } catch (error) {
+      addNotice(notices, `Connector list item ${itemNumber}`, error)
+    }
+  }
+  return itemNumber
+}
+
+async function fetchConnectorIcon(
+  item: ConnectorItem,
+  detail: Record<string, unknown>,
+  read: (path: string, maxBytes: number) => Promise<Buffer>,
+  notices: string[]
+): Promise<OfficialConnectorPayload['icon']> {
+  if (detail.iconUrl === undefined && item.iconUrl === undefined) return undefined
+  try {
+    const declaredIcon =
+      detail.iconUrl === undefined ? undefined : iconPath(detail.iconUrl, item.id)
+    const listIcon = item.iconUrl === undefined ? undefined : iconPath(item.iconUrl, item.id)
+    if (declaredIcon && listIcon && declaredIcon !== listIcon)
+      throw new Error('details do not match the catalog')
+    const path = declaredIcon ?? listIcon
+    if (!path) return undefined
+    const bytes = await read(path, MAX_ICON_BYTES)
+    if (bytes.length === 0) throw new Error('response is empty')
+    return { name: path.split('/').at(-1)!, bytes }
+  } catch (error) {
+    addNotice(notices, `Connector ${item.id} icon`, error)
+    return undefined
+  }
+}
+
+function addNotice(notices: string[], context: string, error: unknown): void {
+  notices.push(`${context}: ${errorMessage(error).slice(0, 180)}`)
+}
+
+function noValidConnectorError(notices: string[]): Error {
+  const detail = notices.length ? ` (${notices.join('; ').slice(0, 2000)})` : ''
+  return new Error(`The Phi Website Connector catalog contains no valid packages${detail}`)
 }
 
 export function parseCompleteOfficialConnectorManifest(
@@ -229,7 +272,6 @@ function parseItem(value: unknown): ConnectorItem {
     (value.iconUrl !== undefined && typeof value.iconUrl !== 'string')
   )
     throw new Error('Invalid Phi Website Connector catalog entry')
-  if (value.iconUrl !== undefined) iconPath(value.iconUrl, value.id)
   return {
     id: value.id,
     version: value.version,

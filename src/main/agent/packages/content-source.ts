@@ -13,6 +13,7 @@ import {
 } from './official-registry'
 import {
   isOfficialWebsiteRegistryDirectory,
+  prepareOfficialWebsitePackageInstall,
   readOfficialWebsiteRegistry,
   syncPreferredOfficialRegistry
 } from './official-website-registry'
@@ -44,6 +45,9 @@ export async function prepareContentPackageInstall(
   request: PackageRequest,
   options: OfficialRegistryOptions & Pick<InstallerOptions, 'appVersion'> = {}
 ): Promise<LocalRegistry> {
+  if (isOfficialWebsiteRegistryDirectory(registry.dir, options.agentDir)) {
+    return prepareOfficialWebsitePackageInstall(registry, request, options)
+  }
   return registry.id === OFFICIAL_REGISTRY_ID && registry.trust === 'official'
     ? prepareOfficialPackageInstall(registry, request, options)
     : registry

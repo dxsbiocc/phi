@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -41,6 +41,7 @@ function writeSkill(
     name?: string
     description?: string
     metadataVersion?: string
+    metadataCategory?: string
   } = {}
 ): string {
   const name = options.name ?? 'alpha-skill'
@@ -50,8 +51,14 @@ function writeSkill(
     name,
     description,
     phi: { environment: 'phi:python@1' },
-    ...(options.metadataVersion
-      ? { metadata: { version: options.metadataVersion, author: 'Phi tests' } }
+    ...(options.metadataVersion || options.metadataCategory
+      ? {
+          metadata: {
+            ...(options.metadataVersion ? { version: options.metadataVersion } : {}),
+            ...(options.metadataCategory ? { category: options.metadataCategory } : {}),
+            author: 'Phi tests'
+          }
+        }
       : {})
   }
   write(join(dir, 'SKILL.md'), `---\n${stringifyYaml(frontmatter)}---\n\n# ${name}\n`)
@@ -334,7 +341,7 @@ test('rejects every tracked run-leftover category', async (context) => {
 
 test('produces byte-identical archives and digests across builds', () => {
   const root = temporaryRepository()
-  writeSkill(root, { metadataVersion: '2.3.4' })
+  writeSkill(root, { metadataVersion: '2.3.4', metadataCategory: 'Scientific Analysis' })
   writePlugin(root)
   trackResources(root)
 
@@ -359,7 +366,7 @@ test('produces byte-identical archives and digests across builds', () => {
 
 test('writes sorted registry entries with required and propagated index fields', () => {
   const root = temporaryRepository()
-  writeSkill(root, { metadataVersion: '2.3.4' })
+  writeSkill(root, { metadataVersion: '2.3.4', metadataCategory: 'Scientific Analysis' })
   writePlugin(root)
   trackResources(root)
 
@@ -398,6 +405,7 @@ test('writes sorted registry entries with required and propagated index fields',
     }
   )
   assert.deepEqual(skill.dependsOn, [])
+  assert.equal(skill.category, 'Scientific Analysis')
   assert.equal(skill.archive, 'skill-alpha-skill-2.3.4.tar.gz')
   for (const entry of index.packages) {
     const archive = readFileSync(join(root, 'registry', entry.archive))
@@ -408,6 +416,131 @@ test('writes sorted registry entries with required and propagated index fields',
 
   const published = JSON.parse(readFileSync(join(root, 'registry', 'index.json'), 'utf8'))
   assert.deepEqual(published, index)
+})
+
+test('skip-invalid reports a broken package and still writes valid packages', () => {
+  const root = temporaryRepository()
+  writeSkill(root, { metadataVersion: '2.3.4' })
+  const pluginDir = writePlugin(root)
+  const manifestPath = join(pluginDir, 'phi-package.yaml')
+  write(
+    manifestPath,
+    readFileSync(manifestPath, 'utf8').replace('id: demo-plugin', 'id: wrong-plugin')
+  )
+  trackResources(root)
+
+  assert.throws(
+    () => build(root),
+    /package id 'wrong-plugin' must equal directory name 'demo-plugin'/
+  )
+
+  const { index, report } = buildRegistryWithReport({
+    repoRoot: root,
+    outDir: join(root, 'registry'),
+    generatedAt: '2026-10-02T00:00:00.000Z',
+    skipInvalid: true
+  })
+
+  assert.deepEqual(
+    index.packages.map((entry) => `${entry.type}:${entry.id}`),
+    ['skill:alpha-skill']
+  )
+  assert.deepEqual(report.skippedPackages, [
+    {
+      path: 'resources/plugins/demo-plugin',
+      reason: "package id 'wrong-plugin' must equal directory name 'demo-plugin'"
+    }
+  ])
+  assert.deepEqual(JSON.parse(readFileSync(join(root, 'registry', 'index.json'), 'utf8')), index)
+})
+
+test('skip-invalid drops one broken wrapper while retaining valid wrapper packages', () => {
+  const root = temporaryRepository()
+  writeModule(root, 'nf-core', 'samtools', 'sort')
+  const broken = writeModule(root, 'nf-core', 'broken', 'run')
+  write(join(broken, 'wrapper', 'wrapper.yaml'), 'not: a wrapper manifest\n')
+  trackResources(root)
+
+  assert.throws(() => build(root), /invalid wrapper adapter/)
+
+  const { index, report } = buildRegistryWithReport({
+    repoRoot: root,
+    outDir: join(root, 'registry'),
+    generatedAt: '2026-10-02T00:00:00.000Z',
+    skipInvalid: true
+  })
+
+  assert.deepEqual(
+    index.packages.map((entry) => entry.id),
+    ['module-nf-core-samtools-sort']
+  )
+  assert.equal(report.skippedPackages.length, 1)
+  assert.equal(report.skippedPackages[0].path, 'resources/wrappers/modules/nf-core/broken/run')
+  assert.match(report.skippedPackages[0].reason, /invalid wrapper adapter/)
+})
+
+test('skip-invalid isolates a wrapper whose generated package id is too long', () => {
+  const root = temporaryRepository()
+  writeModule(root, 'nf-core', 'samtools', 'sort')
+  const longFamily = 'family'.repeat(10)
+  const broken = writeModule(root, 'nf-core', longFamily, 'component')
+  writeWrapperAdapter(broken, 'nf-core/modules/long-name', {
+    name: 'Long path wrapper',
+    summary: 'Valid adapter whose generated package id is too long.'
+  })
+  trackResources(root)
+
+  assert.throws(() => build(root), /invalid generated wrapper package id/)
+
+  const { index, report } = buildRegistryWithReport({
+    repoRoot: root,
+    outDir: join(root, 'registry'),
+    generatedAt: '2026-10-02T00:00:00.000Z',
+    skipInvalid: true
+  })
+
+  assert.deepEqual(
+    index.packages.map((entry) => entry.id),
+    ['module-nf-core-samtools-sort']
+  )
+  assert.equal(report.skippedPackages.length, 1)
+  assert.equal(
+    report.skippedPackages[0].path,
+    `resources/wrappers/modules/nf-core/${longFamily}/component`
+  )
+  assert.match(report.skippedPackages[0].reason, /invalid generated wrapper package id/)
+})
+
+test('builder CLI accepts --skip-invalid and prints skipped packages', () => {
+  const root = temporaryRepository()
+  writeSkill(root)
+  const pluginDir = writePlugin(root)
+  const manifestPath = join(pluginDir, 'phi-package.yaml')
+  write(
+    manifestPath,
+    readFileSync(manifestPath, 'utf8').replace('id: demo-plugin', 'id: wrong-plugin')
+  )
+  trackResources(root)
+
+  const result = spawnSync(
+    'bun',
+    [
+      'run',
+      'registry:build',
+      '--',
+      '--source',
+      root,
+      '--out',
+      join(root, 'registry'),
+      '--skip-invalid'
+    ],
+    { cwd: process.cwd(), encoding: 'utf8' }
+  )
+
+  assert.equal(result.status, 0, result.stderr + result.stdout)
+  assert.match(result.stdout, /Built 1 packages/)
+  assert.match(result.stdout, /Skipped packages \(1\):/)
+  assert.match(result.stdout, /resources\/plugins\/demo-plugin: package id 'wrong-plugin'/)
 })
 
 test('packages individual modules and emits subworkflow and workflow tree packages', () => {
@@ -454,6 +587,14 @@ test('packages individual modules and emits subworkflow and workflow tree packag
     subworkflow: 1,
     workflow: 1,
     support: 0
+  })
+  assert.deepEqual(Object.fromEntries(index.packages.map((entry) => [entry.id, entry.category])), {
+    'module-local-differential-expression-deseq2': 'modules',
+    'module-nf-core-bcftools-query': 'modules',
+    'module-nf-core-samtools-index': 'modules',
+    'module-nf-core-samtools-sort': 'modules',
+    'subworkflow-nf-core-bam-sort': 'subworkflows',
+    'workflow-nf-core-rnaseq': 'workflows'
   })
   assert.deepEqual(report.unattributedSupportFiles, ['.nf-core.yml'])
 
@@ -545,6 +686,7 @@ test('creates a support package only when distinct packages reference the same s
 
   const index = build(root)
   const support = registryEntry(index, 'wrapper', 'support-local-shared-r')
+  assert.equal(support.category, 'support')
   assert.deepEqual(
     archiveEntries(root, 'registry', support).map((entry) => entry.path),
     ['files.json', 'images/shared-r/environment.yml', 'phi-package.yaml']

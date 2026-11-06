@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto'
 import {
   lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
   type Dirent
 } from 'node:fs'
@@ -22,6 +22,23 @@ import {
 import type { RegistryIconAsset } from '../../../../shared/resourceIconTypes'
 
 import { errorMessage } from '../../../../shared/errorCodes'
+import {
+  dropInvalidEntryDependents,
+  dropInvalidSourceDependents,
+  filterInvalidWrapperAdapters,
+  type InvalidWrapperPackageHandler
+} from './tolerance'
+import {
+  assertSafeArchivePath,
+  assertUnique,
+  compareRegistryEntries,
+  compareText,
+  isRunLeftover,
+  isTextLike,
+  normalizeTreePath,
+  packageId,
+  sha256
+} from './utils'
 export type WrapperPackageKind = 'module' | 'subworkflow' | 'workflow' | 'support'
 
 export interface WrapperPackageDependency {
@@ -42,6 +59,8 @@ export interface GeneratedWrapperPackageManifest {
 }
 
 export interface WrapperPackageSource {
+  /** POSIX path relative to the wrapper tree. */
+  root: string
   kind: WrapperPackageKind
   manifest: GeneratedWrapperPackageManifest
   /** Tree-relative source files plus the generated package manifest. */
@@ -69,6 +88,8 @@ export interface BuildWrapperPackageSourcesOptions {
   /** POSIX paths relative to wrappersRoot. Omit to walk the tree at runtime. */
   files?: string[]
   version?: string
+  /** Continue after package-local failures while preserving the default fail-fast behavior. */
+  onInvalidPackage?: InvalidWrapperPackageHandler
 }
 
 export interface BuildWrapperPackageSourcesResult {
@@ -139,7 +160,7 @@ export function buildWrapperPackageSources(
 ): BuildWrapperPackageSourcesResult {
   const wrappersRoot = resolve(options.wrappersRoot)
   const version = options.version ?? DEFAULT_VERSION
-  const files = (options.files ?? walkRegularFiles(wrappersRoot))
+  let files = (options.files ?? walkRegularFiles(wrappersRoot))
     .map(normalizeTreePath)
     .filter((path) => !LEGACY_ROOT_FILES.has(path))
     .sort(compareText)
@@ -147,9 +168,9 @@ export function buildWrapperPackageSources(
   for (const path of files) {
     if (isRunLeftover(path)) throw new Error(`run leftover is not allowed in wrapper tree: ${path}`)
   }
-  validateWrapperAdapters(wrappersRoot, files)
+  files = filterInvalidWrapperAdapters(wrappersRoot, files, options.onInvalidPackage)
 
-  const packages = discoverComponentPackages(wrappersRoot, files)
+  const packages = discoverComponentPackages(wrappersRoot, files, options.onInvalidPackage)
   const supportUnits = discoverSupportUnits(files)
   const unattributedSupportFiles: string[] = []
 
@@ -168,7 +189,14 @@ export function buildWrapperPackageSources(
 
     const providers = new Set(consumers.map((source) => source.provider))
     const provider = providers.size === 1 ? consumers[0].provider : 'shared'
-    const id = packageId('support', provider, support.name)
+    let id: string
+    try {
+      id = packageId('support', provider, support.name)
+    } catch (error) {
+      if (!options.onInvalidPackage) throw error
+      options.onInvalidPackage({ path: support.root, reason: errorMessage(error) })
+      continue
+    }
     const source: MutablePackage = {
       id,
       root: support.root,
@@ -190,7 +218,7 @@ export function buildWrapperPackageSources(
   )
   const ownerByFile = indexFileOwners(packages)
   const unattributedIncludes = attributeIncludeDependencies(packages, ownerByFile, wrappersRoot)
-  const sources = packages.map((source) => loadPackageSource(source, wrappersRoot, version))
+  const sources = loadWrapperSources(packages, wrappersRoot, version, options.onInvalidPackage)
 
   return {
     sources,
@@ -199,6 +227,29 @@ export function buildWrapperPackageSources(
       unattributedSupportFiles: unattributedSupportFiles.sort(compareText)
     }
   }
+}
+
+function loadWrapperSources(
+  packages: MutablePackage[],
+  wrappersRoot: string,
+  version: string,
+  onInvalidPackage?: InvalidWrapperPackageHandler
+): WrapperPackageSource[] {
+  const failedIds = new Set<string>()
+  const loadedSources: WrapperPackageSource[] = []
+  for (const source of packages) {
+    try {
+      loadedSources.push(loadPackageSource(source, wrappersRoot, version))
+    } catch (error) {
+      if (!onInvalidPackage) throw error
+      failedIds.add(source.id)
+      onInvalidPackage({
+        path: source.root,
+        reason: `invalid wrapper package '${source.id}': ${errorMessage(error)}`
+      })
+    }
+  }
+  return dropInvalidSourceDependents(loadedSources, failedIds, onInvalidPackage)
 }
 
 /** Write deterministic wrapper archives and an installer-compatible local registry. */
@@ -212,36 +263,53 @@ export function materializeWrapperRegistry(
   const outDir = resolve(options.outDir)
   mkdirSync(outDir, { recursive: true })
   const built = buildWrapperPackageSources(options)
-  const entries = built.sources
-    .filter((source) => options.includePackage?.(source) ?? true)
-    .map((source) => writeWrapperPackage(source, outDir))
-  entries.sort(compareRegistryEntries)
-  const index: WrapperRegistryIndex = { schemaVersion: 1, generatedAt, packages: entries }
+  const entries: WrapperRegistryEntry[] = []
+  const failedIds = new Set<string>()
+  for (const source of built.sources.filter(
+    (candidate) => options.includePackage?.(candidate) ?? true
+  )) {
+    try {
+      entries.push(writeWrapperPackage(source, outDir))
+    } catch (error) {
+      if (!options.onInvalidPackage) throw error
+      failedIds.add(source.manifest.id)
+      rmSync(join(outDir, `wrapper-${source.manifest.id}-${source.manifest.version}.tar.gz`), {
+        force: true
+      })
+      options.onInvalidPackage({
+        path: source.root,
+        reason: `invalid wrapper package '${source.manifest.id}': ${errorMessage(error)}`
+      })
+    }
+  }
+  const completeEntries = dropInvalidEntryDependents(
+    entries,
+    failedIds,
+    new Map(built.sources.map((source) => [source.manifest.id, source.root])),
+    options.onInvalidPackage
+  )
+  const completeIds = new Set(completeEntries.map((entry) => entry.id))
+  for (const entry of entries.filter((candidate) => !completeIds.has(candidate.id))) {
+    rmSync(join(outDir, entry.archive), { force: true })
+    if (entry.iconAsset) rmSync(join(outDir, entry.iconAsset.path), { force: true })
+  }
+  completeEntries.sort(compareRegistryEntries)
+  const index: WrapperRegistryIndex = {
+    schemaVersion: 1,
+    generatedAt,
+    packages: completeEntries
+  }
   if (options.writeIndex !== false) {
     writeFileSync(join(outDir, 'index.json'), `${JSON.stringify(index, null, 2)}\n`, 'utf8')
   }
   return { ...built, index }
 }
 
-function validateWrapperAdapters(wrappersRoot: string, files: string[]): void {
-  const ids = new Map<string, string>()
-  for (const path of files.filter((candidate) => candidate.endsWith('/wrapper/wrapper.yaml'))) {
-    try {
-      const manifest = parseWrapperCompositionManifest(
-        readFileSync(join(wrappersRoot, ...path.split('/')), 'utf8')
-      )
-      const previous = ids.get(manifest.id)
-      if (previous) {
-        throw new Error(`duplicate wrapper id '${manifest.id}' in '${previous}' and '${path}'`)
-      }
-      ids.set(manifest.id, path)
-    } catch (error) {
-      throw new Error(`invalid wrapper adapter '${path}': ${errorMessage(error)}`)
-    }
-  }
-}
-
-function discoverComponentPackages(wrappersRoot: string, files: string[]): MutablePackage[] {
+function discoverComponentPackages(
+  wrappersRoot: string,
+  files: string[],
+  onInvalidPackage?: InvalidWrapperPackageHandler
+): MutablePackage[] {
   const availableFiles = new Set(files)
   const roots = new Map<string, { provider: string; name: string }>()
   for (const path of files) {
@@ -253,20 +321,28 @@ function discoverComponentPackages(wrappersRoot: string, files: string[]): Mutab
     })
   }
 
-  const packages: MutablePackage[] = [...roots.entries()].map(([root, definition]) => {
-    const metadata = readAdapterMetadata(wrappersRoot, root)
-    return {
-      id: packageId('subworkflow', definition.provider, definition.name),
+  const packages: MutablePackage[] = []
+  for (const [root, definition] of roots) {
+    collectPackage(
       root,
-      kind: 'subworkflow',
-      provider: definition.provider,
-      title: metadata?.name ?? `${definition.provider}/${definition.name} subworkflow`,
-      summary:
-        metadata?.summary ?? `Vendored ${definition.provider}/${definition.name} subworkflow.`,
-      filePaths: new Set(files.filter((path) => path.startsWith(`${root}/`))),
-      dependencyIds: new Set()
-    }
-  })
+      onInvalidPackage,
+      () => {
+        const metadata = readAdapterMetadata(wrappersRoot, root)
+        return {
+          id: packageId('subworkflow', definition.provider, definition.name),
+          root,
+          kind: 'subworkflow',
+          provider: definition.provider,
+          title: metadata?.name ?? `${definition.provider}/${definition.name} subworkflow`,
+          summary:
+            metadata?.summary ?? `Vendored ${definition.provider}/${definition.name} subworkflow.`,
+          filePaths: new Set(files.filter((path) => path.startsWith(`${root}/`))),
+          dependencyIds: new Set()
+        }
+      },
+      (source) => packages.push(source)
+    )
+  }
 
   const modulePackages = new Map<string, MutablePackage>()
   const adapterSuffix = '/wrapper/wrapper.yaml'
@@ -282,17 +358,22 @@ function discoverComponentPackages(wrappersRoot: string, files: string[]): Mutab
     const familyIcon = PACKAGE_ICON_FILENAMES.map((name) => `${familyRoot}/${name}`).find((icon) =>
       availableFiles.has(icon)
     )
-    modulePackages.set(root, {
-      id: packageId('module', match[1], match[2].replaceAll('/', '-')),
+    collectPackage(
       root,
-      kind: 'module',
-      provider: match[1],
-      title: metadata.name,
-      summary: metadata.summary,
-      filePaths: new Set(),
-      dependencyIds: new Set(),
-      ...(familyIcon ? { iconPath: familyIcon } : {})
-    })
+      onInvalidPackage,
+      () => ({
+        id: packageId('module', match[1], match[2].replaceAll('/', '-')),
+        root,
+        kind: 'module',
+        provider: match[1],
+        title: metadata.name,
+        summary: metadata.summary,
+        filePaths: new Set(),
+        dependencyIds: new Set(),
+        ...(familyIcon ? { iconPath: familyIcon } : {})
+      }),
+      (source) => modulePackages.set(root, source)
+    )
   }
   // The closest adapter owns each module file, including nested adapter trees.
   // Family-level documentation without an adapter is deliberately not installed.
@@ -318,18 +399,37 @@ function discoverComponentPackages(wrappersRoot: string, files: string[]): Mutab
     if (!metadata) continue
     const idMatch = /^([^/]+)\/workflows\/(.+)$/.exec(metadata.id)
     if (!idMatch) continue
-    packages.push({
-      id: packageId('workflow', idMatch[1], idMatch[2]),
+    collectPackage(
       root,
-      kind: 'workflow',
-      provider: idMatch[1],
-      title: metadata.name,
-      summary: metadata.summary,
-      filePaths: new Set(files.filter((candidate) => candidate.startsWith(`${root}/`))),
-      dependencyIds: new Set()
-    })
+      onInvalidPackage,
+      () => ({
+        id: packageId('workflow', idMatch[1], idMatch[2]),
+        root,
+        kind: 'workflow',
+        provider: idMatch[1],
+        title: metadata.name,
+        summary: metadata.summary,
+        filePaths: new Set(files.filter((candidate) => candidate.startsWith(`${root}/`))),
+        dependencyIds: new Set()
+      }),
+      (source) => packages.push(source)
+    )
   }
   return packages
+}
+
+function collectPackage(
+  root: string,
+  onInvalidPackage: InvalidWrapperPackageHandler | undefined,
+  create: () => MutablePackage,
+  accept: (source: MutablePackage) => void
+): void {
+  try {
+    accept(create())
+  } catch (error) {
+    if (!onInvalidPackage) throw error
+    onInvalidPackage({ path: root, reason: errorMessage(error) })
+  }
 }
 
 function readAdapterMetadata(
@@ -490,6 +590,7 @@ function loadPackageSource(
     iconData = readFileSync(fullPath)
   }
   return {
+    root: source.root,
     kind: source.kind,
     manifest,
     files: fileMap,
@@ -548,71 +649,4 @@ function walkRegularFiles(root: string): string[] {
   }
   visit(root)
   return files.sort(compareText)
-}
-
-function packageId(kind: WrapperPackageKind, provider: string, name: string): string {
-  const id = `${kind}-${provider}-${name}`
-    .toLowerCase()
-    .replace(/_/g, '-')
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/-$/, '')
-  if (!/^[a-z][a-z0-9-]{1,63}$/.test(id))
-    throw new Error(`invalid generated wrapper package id '${id}'`)
-  return id
-}
-
-function normalizeTreePath(path: string): string {
-  const normalized = path.split(sep).join('/')
-  assertSafeArchivePath(normalized)
-  return normalized
-}
-
-function assertSafeArchivePath(path: string): void {
-  const parts = path.split('/')
-  if (
-    !path ||
-    isAbsolute(path) ||
-    path.includes('\\') ||
-    parts.some((part) => part === '' || part === '.' || part === '..')
-  ) {
-    throw new Error(`unsafe package path '${path}'`)
-  }
-}
-
-function assertUnique(values: string[], label: string): void {
-  const seen = new Set<string>()
-  for (const value of values) {
-    if (seen.has(value)) throw new Error(`duplicate ${label}: ${value}`)
-    seen.add(value)
-  }
-}
-
-function isTextLike(path: string): boolean {
-  return /(?:^|\/)(?:[^/]+\.(?:nf|config|ya?ml|json|md|txt|groovy|py|r|sh)|Dockerfile)$/i.test(path)
-}
-
-function isRunLeftover(path: string): boolean {
-  const parts = path.split('/')
-  const name = parts.at(-1) ?? ''
-  return (
-    parts.includes('.nextflow') ||
-    parts.includes('work') ||
-    parts.includes('results') ||
-    parts.includes('__pycache__') ||
-    name === '.DS_Store' ||
-    name.startsWith('.nextflow.log')
-  )
-}
-
-function compareRegistryEntries(left: WrapperRegistryEntry, right: WrapperRegistryEntry): number {
-  return compareText(left.id, right.id) || compareText(left.version, right.version)
-}
-
-function compareText(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
-}
-
-function sha256(value: Buffer): string {
-  return createHash('sha256').update(value).digest('hex')
 }

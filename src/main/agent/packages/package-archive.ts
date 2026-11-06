@@ -6,6 +6,10 @@ import {
   readOfficialPackageArchive,
   type OfficialRegistryOptions
 } from './official-registry'
+import {
+  isOfficialWebsiteRegistryDirectory,
+  readOfficialWebsitePackageArchive
+} from './official-website-registry'
 import { readRegistryAsset } from './registry-assets'
 
 /** The files of one package, from the installed tree or a verified archive. */
@@ -27,6 +31,9 @@ export function readPackageArchive(
   const agentDir = options.agentDir ?? getPhiAgentDir()
   if (isOfficialRegistryDirectory(registry.dir, agentDir)) {
     return readOfficialPackageArchive(registry, entry, options)
+  }
+  if (isOfficialWebsiteRegistryDirectory(registry.dir, agentDir)) {
+    return readOfficialWebsitePackageArchive(registry, entry, options)
   }
   return Promise.resolve(
     readRegistryAsset(registry.dir, {

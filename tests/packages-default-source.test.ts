@@ -118,7 +118,7 @@ function files(root: string): Map<string, Buffer> {
   return result
 }
 
-test('official catalog installs all four content types into authoritative paths without source resources', async () => {
+test('preferred website catalog installs all four content types into authoritative paths without source resources', async () => {
   const root = mkdtempSync(join(tmpdir(), 'phi-default-content-'))
   try {
     execFileSync('git', ['init', '--quiet'], { cwd: root })
@@ -203,7 +203,7 @@ test('official catalog installs all four content types into authoritative paths 
     const installed = listInstalledPackages({ agentDir })
     assert.equal(installed.length, 4)
     assert.ok(
-      installed.every((entry) => entry.registry === 'phi-packages' && entry.trust === 'official')
+      installed.every((entry) => entry.registry === 'phi-packages' && entry.trust === 'imported')
     )
     for (const entry of installed) {
       const expected =
@@ -237,7 +237,7 @@ test('official catalog installs all four content types into authoritative paths 
     assert.ok(cached)
     assert.equal(
       listConnectorCatalog({ agentDir, registries: [cached] })[0]?.registryDir,
-      registry.dir
+      cached.dir
     )
     assert.equal(
       listConnectorCatalog({ agentDir })[0]?.registryDir,

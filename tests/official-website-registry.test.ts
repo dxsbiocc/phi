@@ -4,588 +4,462 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import test from 'node:test'
 
-import {
-  createDeterministicTarGz,
-  parseTarGz,
-  type ArchiveFile
-} from '../src/main/agent/packages/archive'
-import {
-  readContentRegistry,
-  prepareContentPackageInstall
-} from '../src/main/agent/packages/content-source'
-import { installPackages } from '../src/main/agent/packages/installer'
+import { createDeterministicTarGz } from '../src/main/agent/packages/archive'
+import { prepareContentPackageInstall } from '../src/main/agent/packages/content-source'
 import { sha256 } from '../src/main/agent/packages/installer-utils'
-import { materializeRegistry } from '../src/main/agent/packages/materialize-registry'
-import { officialRegistryDirectory } from '../src/main/agent/packages/official-registry'
+import { readPackageArchive } from '../src/main/agent/packages/package-archive'
+import { OFFICIAL_REGISTRY_BASE_URL } from '../src/main/agent/packages/official-registry'
 import {
-  FAILED_SNAPSHOT_RETRY_MS,
-  isOfficialWebsiteRegistryDirectory,
   officialWebsiteRegistryDirectory,
-  readOfficialWebsiteRegistry,
   syncPreferredOfficialRegistry
 } from '../src/main/agent/packages/official-website-registry'
-import { planInstall } from '../src/main/agent/packages/planning'
-import { readKnownRegistries } from '../src/main/agent/packages/registries'
+import type { RegistryPackageEntry } from '../src/main/agent/packages/installer-types'
 import { registryKeyId, signRegistryIndex } from '../src/main/agent/packages/signature'
-import { skillVersionDir } from '../src/main/agent/packages/store'
 
 const roots: string[] = []
 test.after(() => roots.forEach((root) => rmSync(root, { recursive: true, force: true })))
-const oldCommit = 'a'.repeat(40)
-const newCommit = 'b'.repeat(40)
-const generatedAt = '2026-10-16T22:15:03.918Z'
 
-function skillFiles(id: string, version = '1.1'): ArchiveFile[] {
-  return [
-    {
-      path: `resources/skills/${id}/SKILL.md`,
-      data: Buffer.from(
-        `---\nname: ${id}\ndescription: Complete ${id} skill.\nmetadata:\n  version: '${version}'\nphi:\n  environment: phi:python@1\n---\n# Skill\nRead references/guide.md and scripts/helper.py.\n`
-      )
-    },
-    { path: `resources/skills/${id}/references/guide.md`, data: Buffer.from('Complete reference') },
-    {
-      path: `resources/skills/${id}/scripts/helper.py`,
-      data: Buffer.from('print("never execute on download")')
-    },
-    { path: `resources/skills/${id}/assets/example.json`, data: Buffer.from('{"complete":true}') }
-  ]
+const baseUrl = 'https://example.test/api/registry/'
+const generatedAt = '2026-11-06T00:00:00.000Z'
+
+interface WebsiteFixture {
+  agentDir: string
+  assets: Map<string, Buffer>
+  requests: string[]
+  entries: RegistryPackageEntry[]
+  options: NonNullable<Parameters<typeof syncPreferredOfficialRegistry>[0]>
+  setIndex: (entries: unknown[], nextGeneratedAt?: string) => void
 }
 
-function fixture(skillCount = 17): {
-  agentDir: string
-  requests: string[]
-  snapshots: Map<string, ArchiveFile[]>
-  catalog: {
-    commit: string
-    counts: { skills: number }
-    generatedAt: string
-    repo?: string
-    skillGroups?: Array<{ id: string; label: string; count: number }>
+function packageEntry(
+  id: string,
+  options: {
+    version?: string
+    dependsOn?: RegistryPackageEntry['dependsOn']
+    icon?: Buffer
+  } = {}
+): { entry: RegistryPackageEntry; assets: Map<string, Buffer> } {
+  const version = options.version ?? '1.0.0'
+  const archive = `skill-${id}-${version}.tar.gz`
+  const archiveBytes = createDeterministicTarGz([
+    {
+      path: 'SKILL.md',
+      data: Buffer.from(`---\nname: ${id}\ndescription: ${id} fixture\n---\n# ${id}\n`)
+    }
+  ])
+  const assets = new Map<string, Buffer>([[archive, archiveBytes]])
+  const iconAsset = options.icon
+    ? {
+        path: `icons/skill-${id}-${version}.svg`,
+        sha256: sha256(options.icon),
+        size: options.icon.length
+      }
+    : undefined
+  if (iconAsset && options.icon) assets.set(iconAsset.path, options.icon)
+  return {
+    entry: {
+      id,
+      type: 'skill',
+      version,
+      title: id,
+      summary: `${id} fixture`,
+      archive,
+      sha256: sha256(archiveBytes),
+      size: archiveBytes.length,
+      dependsOn: options.dependsOn ?? [],
+      ...(iconAsset ? { iconAsset } : {})
+    },
+    assets
   }
-  options: Parameters<typeof syncPreferredOfficialRegistry>[0]
-  setOffline: () => void
-} {
+}
+
+function connectorEntry(id: string): { entry: RegistryPackageEntry; assets: Map<string, Buffer> } {
+  const version = '1.0.0'
+  const manifest = Buffer.from(
+    `schemaVersion: 1\nid: ${id}\ntype: mcp\nversion: ${version}\ntitle: ${id}\nsummary: ${id} fixture\nconnector:\n  transport: http\n  publisher: Phi\n  category: 科研数据\n  homepage: https://example.test\n  url: https://example.test/mcp\n  auth: none\n`
+  )
+  const archive = `mcp-${id}-${version}.tar.gz`
+  const archiveBytes = createDeterministicTarGz([{ path: 'phi-package.yaml', data: manifest }])
+  const manifestAsset = {
+    path: `manifests/mcp-${id}-${version}.yaml`,
+    sha256: sha256(manifest),
+    size: manifest.length
+  }
+  return {
+    entry: {
+      id,
+      type: 'mcp',
+      version,
+      title: id,
+      summary: `${id} fixture`,
+      archive,
+      sha256: sha256(archiveBytes),
+      size: archiveBytes.length,
+      dependsOn: [],
+      manifestAsset
+    },
+    assets: new Map([
+      [archive, archiveBytes],
+      [manifestAsset.path, manifest]
+    ])
+  }
+}
+
+function fixture(packages: ReturnType<typeof packageEntry>[]): WebsiteFixture {
   const agentDir = mkdtempSync(join(tmpdir(), 'phi-website-registry-'))
   roots.push(agentDir)
   const requests: string[] = []
-  const catalog = { commit: oldCommit, counts: { skills: skillCount }, generatedAt }
-  const snapshots = new Map<string, ArchiveFile[]>([
-    [
-      oldCommit,
-      Array.from({ length: skillCount }, (_, index) => skillFiles(`skill-${index}`)).flat()
-    ]
-  ])
-  let offline = false
+  const assets = new Map(packages.flatMap((item) => [...item.assets]))
+  const entries = packages.map((item) => item.entry)
+  const setIndex = (nextEntries: unknown[], nextGeneratedAt = generatedAt): void => {
+    assets.set(
+      'index.json',
+      Buffer.from(
+        JSON.stringify({ schemaVersion: 1, generatedAt: nextGeneratedAt, packages: nextEntries })
+      )
+    )
+  }
+  setIndex(entries)
   const fetcher: typeof fetch = async (input, init) => {
     const url = String(input)
     requests.push(url)
     assert.equal(init?.redirect, 'error')
-    if (offline) throw new Error('offline')
-    if (url === 'https://phi.omicsagent.cn/api/catalog') return Response.json(catalog)
-    const match =
-      /^https:\/\/codeload.github.com\/dxsbiocc\/phi-packages\/tar.gz\/([a-f0-9]{40})$/.exec(url)
-    const files = match && snapshots.get(match[1])
-    if (files && match) {
-      const archive = createDeterministicTarGz(
-        files.map((file) => ({ ...file, path: `phi-packages-${match[1]}/${file.path}` }))
-      )
-      return new Response(new Uint8Array(archive))
+    if (url === 'https://phi.omicsagent.cn/api/catalog') {
+      return Response.json({
+        commit: 'a'.repeat(40),
+        generatedAt,
+        counts: { skills: entries.length }
+      })
+    }
+    const prefix = new URL(baseUrl).href
+    if (url.startsWith(prefix)) {
+      const bytes = assets.get(url.slice(prefix.length))
+      return bytes
+        ? new Response(new Uint8Array(bytes), { status: 200 })
+        : new Response(null, { status: 404 })
     }
     return new Response(null, { status: 404 })
   }
   return {
     agentDir,
+    assets,
     requests,
-    snapshots,
-    catalog,
-    options: { agentDir, fetch: fetcher, forceRefresh: true, timeoutMs: 1000 },
-    setOffline: () => {
-      offline = true
-    }
+    entries,
+    options: { agentDir, baseUrl, fetch: fetcher, forceRefresh: true, timeoutMs: 1000 },
+    setIndex
   }
 }
 
-test('website commit changes replace old 14-skill metadata with 17 complete installable skill packages', async () => {
-  const f = fixture(14)
-  const old = await syncPreferredOfficialRegistry(f.options)
-  assert.equal(old.packages.length, 14)
-  f.catalog.commit = newCommit
-  f.catalog.counts.skills = 17
-  f.catalog.repo = 'evil/repository'
-  f.snapshots.set(newCommit, [
-    ...Array.from({ length: 16 }, (_, index) => skillFiles(`skill-${index}`)).flat(),
-    ...skillFiles('create-workflow', '1.3')
-  ])
+test('website sync downloads the index and small assets without downloading archives', async () => {
+  const icon = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg"><rect width="8" height="8"/></svg>'
+  )
+  const f = fixture([packageEntry('visible-skill', { icon })])
+
   const registry = await syncPreferredOfficialRegistry(f.options)
-  assert.equal(registry.packages.length, 17)
-  assert.equal(registry.label, 'Phi 官网')
-  assert.equal(registry.kind, 'official')
+
+  assert.equal(registry.packages.length, 1)
   assert.equal(registry.trust, 'imported')
-  assert.equal(registry.id, 'phi-packages')
-  assert.equal(registry.source?.kind === 'github' ? registry.source.sha : undefined, newCommit)
-  assert.equal(
-    registry.source?.kind === 'github' ? registry.source.repo : undefined,
-    'dxsbiocc/phi-packages'
-  )
-  assert.notEqual(registry.dir, old.dir)
-  assert.equal(readOfficialWebsiteRegistry(old.dir, f.options).packages.length, 14)
-  const entry = registry.packages.find((item) => item.id === 'create-workflow')!
-  assert.equal(entry.version, '1.3.0')
-  const archive = readFileSync(join(registry.dir, entry.archive))
-  assert.equal(sha256(archive), entry.sha256)
-  assert.equal(archive.length, entry.size)
-  const files = parseTarGz(archive).filter((file) => file.type === 'file')
-  for (const path of [
-    'SKILL.md',
-    'references/guide.md',
-    'scripts/helper.py',
-    'assets/example.json',
-    'phi-package.yaml',
-    'files.json'
-  ]) {
-    assert.ok(
-      files.some((file) => file.path === path),
-      path
-    )
-  }
-  assert.ok(
-    f.requests.every(
-      (url) =>
-        url === 'https://phi.omicsagent.cn/api/catalog' ||
-        /^https:\/\/codeload.github.com\/dxsbiocc\/phi-packages\/tar.gz\/[a-f0-9]{40}$/.test(url)
-    )
+  assert.deepEqual(
+    f.requests.filter((url) => url.startsWith(baseUrl)),
+    [`${baseUrl}index.json`, `${baseUrl}icons/skill-visible-skill-1.0.0.svg`]
   )
   assert.equal(
-    (await prepareContentPackageInstall(registry, { type: 'skill', id: entry.id }, f.options)).dir,
-    registry.dir
+    f.requests.some((url) => url.endsWith('.tar.gz')),
+    false
   )
-  await installPackages(
-    planInstall(registry, { type: 'skill', id: entry.id }, f.options),
-    f.options
-  )
-  const installed = skillVersionDir(entry.id, '1.3.0', f.agentDir)
-  assert.equal(
-    readFileSync(join(installed, 'references', 'guide.md'), 'utf8'),
-    'Complete reference'
-  )
-  assert.equal(readFileSync(join(installed, 'assets', 'example.json'), 'utf8'), '{"complete":true}')
-  assert.equal(existsSync(join(installed, 'scripts', 'helper.py')), true)
 })
 
-test('official identifiers and old signed generation paths resolve preferred website content without adding user sources', async () => {
-  const f = fixture(1)
-  const registry = await readContentRegistry('phi-packages', f.options)
-  const reread = await readContentRegistry(registry.dir, f.options)
-  const legacy = await readContentRegistry(
-    join(officialRegistryDirectory(f.agentDir), 'generations', 'c'.repeat(64)),
-    f.options
+test('unchanged refresh reuses cached icons and manifests without downloading them again', async () => {
+  const icon = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg"><rect width="8" height="8"/></svg>'
   )
-  assert.equal(reread.dir, registry.dir)
-  assert.equal(legacy.dir, registry.dir)
-  assert.equal(isOfficialWebsiteRegistryDirectory(registry.dir, f.agentDir), true)
-  assert.equal(isOfficialWebsiteRegistryDirectory(join(registry.dir, 'nested'), f.agentDir), false)
-  assert.deepEqual(readKnownRegistries(f.agentDir).registries, [])
+  const skill = packageEntry('cached-icon', { icon })
+  const connector = connectorEntry('cached-manifest')
+  const f = fixture([skill, connector])
+  const first = await syncPreferredOfficialRegistry(f.options)
+  assert.deepEqual(
+    first.packages.map((entry) => entry.id),
+    ['cached-icon', 'cached-manifest']
+  )
+  f.requests.length = 0
+
+  await syncPreferredOfficialRegistry(f.options)
+
+  assert.deepEqual(
+    [...f.requests].sort(),
+    [`${baseUrl}index.json`, 'https://phi.omicsagent.cn/api/catalog'].sort()
+  )
 })
 
-test('offline requests use only a fully validated immutable website cache', async () => {
-  const f = fixture(1)
+test('install preparation downloads only the selected package and its dependency closure', async () => {
+  const dependency = packageEntry('dependency')
+  const selected = packageEntry('selected', {
+    dependsOn: [{ type: 'skill', id: dependency.entry.id, version: '^1.0.0' }]
+  })
+  const unused = packageEntry('unused')
+  const f = fixture([selected, dependency, unused])
+  const registry = await syncPreferredOfficialRegistry(f.options)
+  f.requests.length = 0
+
+  const prepared = await prepareContentPackageInstall(
+    registry,
+    { type: 'skill', id: selected.entry.id },
+    { ...f.options, appVersion: '1.0.0' }
+  )
+
+  assert.equal(prepared.dir, registry.dir)
+  assert.deepEqual(
+    f.requests.filter((url) => url.endsWith('.tar.gz')).sort(),
+    [`${baseUrl}${dependency.entry.archive}`, `${baseUrl}${selected.entry.archive}`].sort()
+  )
+  assert.equal(existsSync(join(registry.dir, selected.entry.archive)), true)
+  assert.equal(existsSync(join(registry.dir, dependency.entry.archive)), true)
+  assert.equal(existsSync(join(registry.dir, unused.entry.archive)), false)
+})
+
+test('concurrent package inspection downloads one missing website archive once', async () => {
+  const selected = packageEntry('inspectable')
+  const f = fixture([selected])
+  const registry = await syncPreferredOfficialRegistry(f.options)
+  f.requests.length = 0
+
+  const [first, second] = await Promise.all([
+    readPackageArchive(registry, selected.entry, f.options),
+    readPackageArchive(registry, selected.entry, f.options)
+  ])
+
+  assert.equal(sha256(first), selected.entry.sha256)
+  assert.deepEqual(second, first)
+  assert.deepEqual(f.requests, [`${baseUrl}${selected.entry.archive}`])
+})
+
+test('refresh carries unchanged archives forward and downloads only the changed version once', async () => {
+  const unchanged = packageEntry('unchanged')
+  const changedV1 = packageEntry('changed')
+  const f = fixture([unchanged, changedV1])
+  const first = await syncPreferredOfficialRegistry(f.options)
+  await prepareContentPackageInstall(
+    first,
+    { type: 'skill', id: unchanged.entry.id },
+    { ...f.options, appVersion: '1.0.0' }
+  )
+  await prepareContentPackageInstall(
+    first,
+    { type: 'skill', id: changedV1.entry.id },
+    { ...f.options, appVersion: '1.0.0' }
+  )
+
+  const changedV2 = packageEntry('changed', { version: '2.0.0' })
+  for (const [path, bytes] of changedV2.assets) f.assets.set(path, bytes)
+  f.setIndex([unchanged.entry, changedV2.entry], '2026-11-06T01:00:00.000Z')
+  const refreshed = await syncPreferredOfficialRegistry(f.options)
+  assert.notEqual(refreshed.dir, first.dir)
+  f.requests.length = 0
+
+  await prepareContentPackageInstall(
+    refreshed,
+    { type: 'skill', id: unchanged.entry.id },
+    { ...f.options, appVersion: '1.0.0' }
+  )
+  await prepareContentPackageInstall(
+    refreshed,
+    { type: 'skill', id: changedV2.entry.id },
+    { ...f.options, appVersion: '1.0.0' }
+  )
+  await prepareContentPackageInstall(
+    refreshed,
+    { type: 'skill', id: changedV2.entry.id },
+    { ...f.options, appVersion: '1.0.0' }
+  )
+
+  assert.deepEqual(f.requests, [`${baseUrl}${changedV2.entry.archive}`])
+})
+
+test('publish retains two generations and safely removes abandoned cache directories', async () => {
+  const selected = packageEntry('retained')
+  const f = fixture([selected])
+  const first = await syncPreferredOfficialRegistry(f.options)
+  f.setIndex([selected.entry], '2026-11-06T01:00:00.000Z')
+  const second = await syncPreferredOfficialRegistry(f.options)
+  const root = officialWebsiteRegistryDirectory(f.agentDir)
+  const abandonedStaging = join(root, 'staging-abandoned')
+  const abandonedCorrupt = join(root, 'corrupt-abandoned')
+  mkdirSync(abandonedStaging)
+  mkdirSync(abandonedCorrupt)
+
+  const outside = mkdtempSync(join(tmpdir(), 'phi-website-outside-'))
+  roots.push(outside)
+  const sentinel = join(outside, 'keep.txt')
+  writeFileSync(sentinel, 'keep')
+  symlinkSync(outside, join(root, 'staging-outside-link'))
+
+  f.setIndex([selected.entry], '2026-11-06T02:00:00.000Z')
+  const third = await syncPreferredOfficialRegistry(f.options)
+  const unrelatedGeneration = join(root, 'generations', 'd'.repeat(64))
+  mkdirSync(unrelatedGeneration)
+  utimesSync(unrelatedGeneration, new Date('2030-01-01'), new Date('2030-01-01'))
+  const unchanged = await syncPreferredOfficialRegistry(f.options)
+
+  assert.equal(unchanged.dir, third.dir)
+  assert.deepEqual(
+    readdirSync(join(root, 'generations')).sort(),
+    [basename(second.dir), basename(third.dir)].sort()
+  )
+  assert.equal(existsSync(first.dir), false)
+  assert.equal(existsSync(abandonedStaging), false)
+  assert.equal(existsSync(abandonedCorrupt), false)
+  assert.equal(existsSync(sentinel), true)
+})
+
+test('malformed entries and packages that depend on them are skipped with notices', async () => {
+  const valid = packageEntry('valid')
+  const dependent = packageEntry('dependent', {
+    dependsOn: [{ type: 'skill', id: 'broken-id', version: '^1.0.0' }]
+  })
+  const f = fixture([valid, dependent])
+  f.setIndex([
+    valid.entry,
+    { ...valid.entry, id: '../broken-id', archive: 'broken.tar.gz' },
+    dependent.entry
+  ])
+
+  const registry = await syncPreferredOfficialRegistry(f.options)
+
+  assert.deepEqual(
+    registry.packages.map((entry) => entry.id),
+    ['valid']
+  )
+  assert.match(registry.notice ?? '', /packages\[1\] skipped/)
+  assert.match(registry.notice ?? '', /skill:dependent@1\.0\.0 skipped: missing dependency/)
+})
+
+test('catalog classification failure does not prevent publishing the website registry', async () => {
+  const f = fixture([packageEntry('available')])
+  const transport = f.options.fetch!
+
+  const registry = await syncPreferredOfficialRegistry({
+    ...f.options,
+    fetch: async (input, init) =>
+      String(input) === 'https://phi.omicsagent.cn/api/catalog'
+        ? new Response(null, { status: 503 })
+        : transport(input, init)
+  })
+
+  assert.equal(registry.status, 'ready')
+  assert.equal(registry.label, 'Phi 官网')
+  assert.deepEqual(
+    registry.packages.map((entry) => entry.id),
+    ['available']
+  )
+})
+
+test('failed icons are removed individually while failed manifests remove only their package', async () => {
+  const icon = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg"><rect width="8" height="8"/></svg>'
+  )
+  const skill = packageEntry('no-icon', { icon })
+  const connector = connectorEntry('broken-manifest')
+  const f = fixture([skill, connector])
+  f.assets.delete(skill.entry.iconAsset!.path)
+  f.assets.delete(connector.entry.manifestAsset!.path)
+
+  const registry = await syncPreferredOfficialRegistry(f.options)
+
+  assert.deepEqual(
+    registry.packages.map((entry) => entry.id),
+    ['no-icon']
+  )
+  assert.equal(registry.packages[0].iconAsset, undefined)
+  assert.match(registry.notice ?? '', /no-icon.*icon skipped/)
+  assert.match(registry.notice ?? '', /broken-manifest.*manifest/)
+})
+
+test('invalid icon metadata is removed while MCP entries without manifests are skipped', async () => {
+  const skill = packageEntry('invalid-icon')
+  const connector = connectorEntry('missing-manifest')
+  const f = fixture([skill, connector])
+  f.setIndex([
+    {
+      ...skill.entry,
+      iconAsset: { path: 'icons/not-an-image.txt', sha256: 'bad', size: 1 }
+    },
+    { ...connector.entry, manifestAsset: undefined }
+  ])
+
+  const registry = await syncPreferredOfficialRegistry(f.options)
+
+  assert.deepEqual(
+    registry.packages.map((entry) => entry.id),
+    ['invalid-icon']
+  )
+  assert.equal(registry.packages[0].iconAsset, undefined)
+  assert.match(registry.notice ?? '', /invalid-icon.*icon skipped/)
+  assert.match(registry.notice ?? '', /missing-manifest.*manifest/)
+})
+
+test('index failure falls back to the website cache before the signed release', async () => {
+  const f = fixture([packageEntry('cached')])
   const original = await syncPreferredOfficialRegistry(f.options)
-  f.setOffline()
-  const cached = await syncPreferredOfficialRegistry(f.options)
-  assert.equal(cached.status, 'cached')
+
+  const cached = await syncPreferredOfficialRegistry({
+    ...f.options,
+    forceRefresh: true,
+    fetch: async () => {
+      throw new Error('offline')
+    }
+  })
+
   assert.equal(cached.dir, original.dir)
-  assert.equal(cached.trust, 'imported')
+  assert.equal(cached.status, 'cached')
   assert.match(cached.notice ?? '', /verified website cache/)
 })
 
-test('failed replacement leaves the previous pointer and complete generation unchanged', async () => {
-  const f = fixture(1)
-  const original = await syncPreferredOfficialRegistry(f.options)
-  const pointer = join(officialWebsiteRegistryDirectory(f.agentDir), 'current.json')
-  const before = readFileSync(pointer, 'utf8')
-  f.catalog.commit = newCommit
-  f.catalog.counts.skills = 2
-  f.snapshots.set(newCommit, skillFiles('only-one'))
-  const cached = await syncPreferredOfficialRegistry(f.options)
-  assert.equal(cached.dir, original.dir)
-  assert.equal(readFileSync(pointer, 'utf8'), before)
-  assert.match(cached.notice ?? '', /Skill count/)
-})
-
-test('a failed snapshot commit is not downloaded again until the retry window passes or a refresh is forced', async () => {
-  const f = fixture(1)
-  let clock = Date.parse('2026-11-06T12:00:00Z')
-  const options = { ...f.options, forceRefresh: false, now: () => new Date(clock) }
-  await syncPreferredOfficialRegistry({ ...options, forceRefresh: true })
-  f.catalog.commit = newCommit
-  f.catalog.counts.skills = 2
-  f.snapshots.set(newCommit, skillFiles('only-one'))
-  const archiveRequests = (): number =>
-    f.requests.filter((url) => url.endsWith(`/tar.gz/${newCommit}`)).length
-
-  clock += 6 * 60_000
-  const first = await syncPreferredOfficialRegistry(options)
-  assert.equal(first.status, 'cached')
-  assert.equal(archiveRequests(), 1)
-
-  clock += 6 * 60_000
-  const repeated = await syncPreferredOfficialRegistry(options)
-  assert.equal(repeated.status, 'cached')
-  assert.match(repeated.notice ?? '', /Skill count/)
-  assert.equal(archiveRequests(), 1)
-
-  await syncPreferredOfficialRegistry({ ...options, forceRefresh: true })
-  assert.equal(archiveRequests(), 2)
-
-  clock += FAILED_SNAPSHOT_RETRY_MS
-  await syncPreferredOfficialRegistry(options)
-  assert.equal(archiveRequests(), 3)
-})
-
-test('archive corruption and index symlinks are rejected before cached installation', async () => {
-  const f = fixture(1)
-  const registry = await syncPreferredOfficialRegistry(f.options)
-  const archive = join(registry.dir, registry.packages[0].archive)
-  writeFileSync(archive, 'corrupt')
-  assert.throws(() => readOfficialWebsiteRegistry(registry.dir, f.options), /mismatch/)
-  const repaired = await syncPreferredOfficialRegistry(f.options)
-  assert.equal(repaired.dir, registry.dir)
-  assert.equal(readOfficialWebsiteRegistry(repaired.dir, f.options).packages.length, 1)
-  const index = join(repaired.dir, 'index.json')
-  const outside = join(f.agentDir, 'outside.json')
-  writeFileSync(outside, readFileSync(index))
-  rmSync(index)
-  symlinkSync(outside, index)
-  assert.throws(() => readOfficialWebsiteRegistry(repaired.dir, f.options), /symlink/)
-})
-
-test('managed website directory symlinks never read or write outside the cache root', async () => {
-  const f = fixture(1)
-  const outside = join(f.agentDir, 'outside')
-  mkdirSync(outside)
-  const root = officialWebsiteRegistryDirectory(f.agentDir)
-  mkdirSync(join(root, '..'), { recursive: true })
-  symlinkSync(outside, root)
-  assert.throws(() => readOfficialWebsiteRegistry(root, f.options), /symbolic link/)
-  await assert.rejects(syncPreferredOfficialRegistry(f.options))
-  assert.equal(existsSync(join(outside, 'current.json')), false)
-})
-
-test('snapshot staging symlinks are rejected before any write outside the managed cache', async () => {
-  const f = fixture(1)
-  const root = officialWebsiteRegistryDirectory(f.agentDir)
-  const snapshots = join(root, 'snapshots')
-  const outside = join(f.agentDir, 'outside-staging')
-  mkdirSync(snapshots, { recursive: true })
-  mkdirSync(outside)
-  symlinkSync(outside, join(snapshots, '.staging'))
-  let externalWritesObserved = false
-  const fetcher = f.options?.fetch
-  assert.ok(fetcher)
-  await assert.rejects(
-    syncPreferredOfficialRegistry({
-      ...f.options,
-      fetch: async (input, init) => {
-        externalWritesObserved ||= readdirSync(outside).length > 0
-        return fetcher(input, init)
-      }
-    })
+test('index failure without a website cache falls back to the signed release source', async () => {
+  const keyPair = generateKeyPairSync('ed25519')
+  const privateKey = keyPair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
+  const publicKey = keyPair.publicKey.export({ type: 'spki', format: 'pem' }).toString()
+  const officialIndex = Buffer.from(JSON.stringify({ schemaVersion: 1, generatedAt, packages: [] }))
+  const officialSignature = Buffer.from(
+    JSON.stringify(signRegistryIndex(officialIndex, privateKey))
   )
-  assert.equal(externalWritesObserved, false)
-  assert.deepEqual(readdirSync(outside), [])
-  assert.equal(
-    f.requests.some((url) => url.includes('codeload.github.com')),
-    false
-  )
-  assert.equal(existsSync(join(root, 'current.json')), false)
-})
-
-test('invalid optional packages are isolated while all official skills remain available', async () => {
-  const f = fixture(1)
-  f.snapshots.get(oldCommit)!.push({
-    path: 'resources/plugins/broken-plugin/phi-package.yaml',
-    data: Buffer.from('not: a package')
-  })
-  const registry = await syncPreferredOfficialRegistry(f.options)
-  assert.equal(registry.packages.filter((entry) => entry.type === 'skill').length, 1)
-  assert.match(registry.notice ?? '', /broken-plugin/)
-  assert.equal(readOfficialWebsiteRegistry(registry.dir, f.options).notice, registry.notice)
-})
-
-test('unavailable classification API falls back to signature-verified release metadata with an explicit notice', async () => {
-  const f = fixture(1)
-  const key = generateKeyPairSync('ed25519')
-  const privateKey = key.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
-  const publicKey = key.publicKey.export({ type: 'spki', format: 'pem' }).toString()
-  const index = Buffer.from(JSON.stringify({ schemaVersion: 1, generatedAt, packages: [] }))
-  const signature = Buffer.from(JSON.stringify(signRegistryIndex(index, privateKey)))
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-website-fallback-'))
+  roots.push(agentDir)
   const requests: string[] = []
-  const registry = await syncPreferredOfficialRegistry({
-    ...f.options,
-    trustedKeys: [{ keyId: registryKeyId(publicKey), publicKey }],
-    fetch: async (input) => {
-      const url = String(input)
-      requests.push(url)
-      if (url === 'https://phi.omicsagent.cn/api/catalog')
-        return Response.json({
-          ...f.catalog,
-          skillGroups: [
-            { id: 'all', label: 'All', count: 1 },
-            { id: 'custom', label: 'Custom', count: 1 }
-          ]
-        })
-      if (url.includes('/api/skills?')) return new Response(null, { status: 503 })
-      if (url.endsWith('/index.json')) return new Response(new Uint8Array(index))
-      if (url.endsWith('/index.sig.json')) return new Response(new Uint8Array(signature))
-      return new Response(null, { status: 404 })
+  const websiteBase = 'https://fallback.test/api/registry/'
+  const fetcher: typeof fetch = async (input) => {
+    const url = String(input)
+    requests.push(url)
+    if (url === `${websiteBase}index.json`) return new Response('{broken')
+    if (url === `${OFFICIAL_REGISTRY_BASE_URL}index.json`) {
+      return new Response(new Uint8Array(officialIndex))
     }
+    if (url === `${OFFICIAL_REGISTRY_BASE_URL}index.sig.json`) {
+      return new Response(new Uint8Array(officialSignature))
+    }
+    return new Response(null, { status: 503 })
+  }
+
+  const registry = await syncPreferredOfficialRegistry({
+    agentDir,
+    baseUrl: websiteBase,
+    fetch: fetcher,
+    trustedKeys: [{ keyId: registryKeyId(publicKey), publicKey }],
+    forceRefresh: true,
+    timeoutMs: 1000
   })
+
   assert.equal(registry.trust, 'official')
   assert.match(registry.notice ?? '', /signed release catalog/)
-  assert.ok(
-    requests.some((url) =>
-      url.startsWith('https://github.com/dxsbiocc/phi-packages/releases/download/catalog-v1/')
-    )
-  )
-})
-
-test('invalid catalog commits never select an arbitrary repository or archive URL', async () => {
-  const f = fixture(1)
-  f.catalog.commit = '../evil'
-  await assert.rejects(syncPreferredOfficialRegistry(f.options))
-  assert.equal(
-    f.requests.some((url) => url.includes('codeload.github.com')),
-    false
-  )
-})
-
-test('existing skill package manifests retain their declared identity with short version normalization', async () => {
-  const f = fixture(1)
-  f.snapshots.get(oldCommit)!.push({
-    path: 'resources/skills/skill-0/phi-package.yaml',
-    data: Buffer.from(
-      'schemaVersion: 1\nid: skill-0\ntype: skill\nversion: 1.2\ntitle: Declared skill\nsummary: Declared summary\n'
-    )
-  })
-  const registry = await syncPreferredOfficialRegistry(f.options)
-  assert.equal(registry.packages[0].version, '1.2.0')
-  assert.equal(registry.packages[0].title, 'Declared skill')
-  const files = parseTarGz(readFileSync(join(registry.dir, registry.packages[0].archive)))
-  assert.match(
-    files.find((file) => file.path === 'phi-package.yaml')!.data.toString(),
-    /version: 1.2.0/
-  )
-})
-
-test('malformed or oversized website catalog metadata never publishes a partial current generation', async () => {
-  for (const response of [
-    Response.json({ commit: oldCommit, generatedAt, counts: { skills: -1 } }),
-    Response.json({ commit: oldCommit, generatedAt: 'invalid', counts: { skills: 1 } }),
-    new Response(' '.repeat(256 * 1024 + 1))
-  ]) {
-    const f = fixture(1)
-    await assert.rejects(
-      syncPreferredOfficialRegistry({
-        ...f.options,
-        fetch: async (input) =>
-          String(input) === 'https://phi.omicsagent.cn/api/catalog'
-            ? response
-            : new Response(null, { status: 404 })
-      })
-    )
-    assert.equal(
-      existsSync(join(officialWebsiteRegistryDirectory(f.agentDir), 'current.json')),
-      false
-    )
-  }
-})
-
-test('mixed grouped website skills keep leaf identities, category paths, and independent full resources', async () => {
-  const f = fixture(3)
-  const groupedFiles = skillFiles('grouped-skill').map((file) => ({
-    ...file,
-    path: file.path.replace('resources/skills/', 'resources/skills/analysis/rnaseq/')
-  }))
-  const explicitFiles = skillFiles('explicit-skill').map((file) => ({
-    ...file,
-    path: file.path.replace('resources/skills/', 'resources/skills/biology/'),
-    data: file.path.endsWith('/SKILL.md')
-      ? Buffer.from(
-          file.data.toString().replace('metadata:\n', 'metadata:\n  category: Curated RNA\n')
-        )
-      : file.data
-  }))
-  f.snapshots.set(oldCommit, [
-    ...skillFiles('flat-skill'),
-    ...groupedFiles,
-    ...explicitFiles,
-    { path: 'resources/skills/analysis/README.md', data: Buffer.from('Group documentation') },
-    {
-      path: 'resources/skills/analysis/rnaseq/grouped-skill/references/nested/SKILL.md',
-      data: Buffer.from(
-        '---\nname: embedded-example\ndescription: A resource, not a skill\n---\n# Reference\n'
-      )
-    }
-  ])
-  const registry = await syncPreferredOfficialRegistry(f.options)
-  assert.deepEqual(
-    registry.packages.map((entry) => [entry.id, entry.category]),
-    [
-      ['explicit-skill', 'Curated RNA'],
-      ['flat-skill', undefined],
-      ['grouped-skill', 'analysis/rnaseq']
-    ]
-  )
-  const grouped = registry.packages.find((entry) => entry.id === 'grouped-skill')!
-  const files = parseTarGz(readFileSync(join(registry.dir, grouped.archive)))
-  assert.equal(
-    files.some((file) => file.path === 'references/nested/SKILL.md'),
-    true
-  )
-  assert.equal(
-    files.some((file) => /flat-skill|explicit-skill/.test(file.path)),
-    false
-  )
-  assert.equal(
-    files.some((file) => file.path === 'README.md'),
-    false
-  )
-  await installPackages(
-    planInstall(registry, { type: 'skill', id: grouped.id }, f.options),
-    f.options
-  )
-  const installed = skillVersionDir(grouped.id, grouped.version, f.agentDir)
-  assert.equal(readFileSync(join(installed, 'references/guide.md'), 'utf8'), 'Complete reference')
-  assert.equal(existsSync(join(installed, 'references/nested/SKILL.md')), true)
-})
-
-test('duplicate grouped skill ids are rejected explicitly before any generation is published', async () => {
-  const f = fixture(2)
-  f.snapshots.set(
-    oldCommit,
-    ['first', 'second'].flatMap((group) =>
-      skillFiles('same-skill').map((file) => ({
-        ...file,
-        path: file.path.replace('resources/skills/', `resources/skills/${group}/`)
-      }))
-    )
-  )
-  await assert.rejects(syncPreferredOfficialRegistry(f.options))
-  assert.equal(
-    existsSync(join(officialWebsiteRegistryDirectory(f.agentDir), 'current.json')),
-    false
-  )
-})
-
-test('same-commit API skill grouping refreshes immutable metadata without downloading or changing archives', async () => {
-  const f = fixture(1)
-  const original = await syncPreferredOfficialRegistry(f.options)
-  const originalArchive = original.packages[0]
-  const transport = f.options!.fetch!
-  const options = {
-    ...f.options,
-    fetch: (async (input, init) => {
-      if (String(input).startsWith('https://phi.omicsagent.cn/api/skills?')) {
-        const selected = f.catalog.skillGroups!.find((group) => group.id === 'science')!
-        return Response.json({
-          items: [{ id: 'skill-0', group: selected.id, groupLabel: selected.label }],
-          total: 1,
-          page: 1,
-          pageSize: 100,
-          pageCount: 1,
-          groups: f.catalog.skillGroups!.filter((group) => group.id !== 'all')
-        })
-      }
-      return transport(input, init)
-    }) as typeof fetch
-  }
-  f.catalog.skillGroups = [
-    { id: 'all', label: '全部', count: 1 },
-    { id: 'science', label: '科学分析', count: 1 },
-    { id: 'empty', label: '空组', count: 0 }
-  ]
-  const grouped = await syncPreferredOfficialRegistry(options)
-  assert.equal(grouped.packages[0].group, 'science')
-  assert.equal(grouped.packages[0].groupLabel, '科学分析')
-  assert.equal(grouped.packages[0].groupOrder, 1)
-  assert.equal(grouped.packages[0].category, '科学分析')
-  assert.deepEqual(grouped.skillGroups, f.catalog.skillGroups)
-  assert.notEqual(grouped.dir, original.dir)
-  f.catalog.skillGroups = [
-    f.catalog.skillGroups[0],
-    f.catalog.skillGroups[2],
-    { ...f.catalog.skillGroups[1], label: '科学计算' }
-  ]
-  const renamed = await syncPreferredOfficialRegistry(options)
-  assert.equal(renamed.packages[0].groupLabel, '科学计算')
-  assert.equal(renamed.packages[0].groupOrder, 2)
-  assert.notEqual(renamed.dir, grouped.dir)
-  assert.equal(renamed.packages[0].sha256, originalArchive.sha256)
-  assert.equal(renamed.packages[0].size, originalArchive.size)
-  assert.equal(f.requests.filter((url) => url.includes('codeload.github.com')).length, 1)
-  const unchanged = await syncPreferredOfficialRegistry(options)
-  assert.equal(unchanged.dir, renamed.dir)
-  f.catalog.generatedAt = '2026-10-17T04:15:05.147Z'
-  const retimed = await syncPreferredOfficialRegistry(options)
-  assert.equal(retimed.generatedAt, f.catalog.generatedAt)
-  assert.notEqual(retimed.dir, renamed.dir)
-  assert.equal(retimed.packages[0].sha256, originalArchive.sha256)
-  assert.equal(f.requests.filter((url) => url.includes('codeload.github.com')).length, 1)
-  const invalid = await syncPreferredOfficialRegistry({
-    ...options,
-    fetch: async (input, init) =>
-      String(input).includes('/api/skills?')
-        ? Response.json({ items: [], groups: [], total: 1, page: 1, pageSize: 100, pageCount: 1 })
-        : transport(input, init)
-  })
-  assert.equal(invalid.dir, retimed.dir)
-  assert.equal(invalid.status, 'cached')
-  assert.match(invalid.notice ?? '', /Skill group/)
-  const offline = await syncPreferredOfficialRegistry({
-    ...options,
-    fetch: async (input, init) =>
-      String(input).includes('/api/skills?')
-        ? Promise.reject(new Error('group API offline'))
-        : transport(input, init)
-  })
-  assert.equal(offline.dir, retimed.dir)
-  assert.equal(offline.status, 'cached')
-  assert.equal(offline.packages[0].groupLabel, '科学计算')
-  assert.match(offline.notice ?? '', /verified website cache/)
-})
-
-test('general registry materialization requires explicit consent to include non-MCP types', () => {
-  const f = fixture(1)
-  const source = join(f.agentDir, 'source')
-  mkdirSync(source)
-  writeFileSync(
-    join(source, 'SKILL.md'),
-    '---\nname: skill-test\ndescription: fixture\n---\n# Test\n'
-  )
-  writeFileSync(
-    join(source, 'phi-package.yaml'),
-    'schemaVersion: 1\nid: skill-test\ntype: skill\nversion: 1.0.0\ntitle: Test\nsummary: fixture\n'
-  )
-  assert.throws(
-    () => materializeRegistry([source], join(f.agentDir, 'default'), { id: 'test' }),
-    /not an MCP package/
-  )
-  assert.equal(
-    materializeRegistry([source], join(f.agentDir, 'opt-in'), {
-      id: 'test',
-      allowedTypes: ['skill']
-    }).packages[0].type,
-    'skill'
-  )
+  assert.ok(requests.includes(`${OFFICIAL_REGISTRY_BASE_URL}index.sig.json`))
 })

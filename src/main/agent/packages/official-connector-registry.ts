@@ -26,7 +26,7 @@ export {
 } from './official-connector-cache'
 
 const REFRESH_WINDOW_MS = 5 * 60_000
-const refreshed = new Map<string, number>()
+const refreshed = new Map<string, { at: number; notice?: string }>()
 const synchronizations = new Map<string, Promise<LocalRegistry>>()
 
 /** Build complete HTTP connector packages directly from the official API, without a GitHub source. */
@@ -40,13 +40,14 @@ export async function syncOfficialConnectorRegistry(
   if (
     !options.forceRefresh &&
     previous !== undefined &&
-    now >= previous &&
-    now - previous < REFRESH_WINDOW_MS
+    now >= previous.at &&
+    now - previous.at < REFRESH_WINDOW_MS
   ) {
     try {
       return ready(
         readOfficialConnectorRegistry(root, { agentDir }),
-        new Date(previous).toISOString()
+        new Date(previous.at).toISOString(),
+        previous.notice
       )
     } catch {
       /* Repair damaged managed contents from the API before use. */
@@ -56,7 +57,8 @@ export async function syncOfficialConnectorRegistry(
   if (pending) return pending
   const task = synchronize({ ...options, agentDir })
     .then((registry) => {
-      if (registry.label === 'Phi 官网' && registry.status === 'ready') refreshed.set(root, now)
+      if (registry.label === 'Phi 官网' && registry.status === 'ready')
+        refreshed.set(root, { at: now, ...(registry.notice ? { notice: registry.notice } : {}) })
       return registry
     })
     .finally(() => synchronizations.delete(root))
@@ -70,7 +72,14 @@ async function synchronize(options: OfficialRegistryOptions): Promise<LocalRegis
   let staging: string | undefined
   try {
     safeRegistryDirectory(agentDir, root, true)
-    const payloads = await fetchOfficialConnectorPackages(options)
+    const catalog = await fetchOfficialConnectorPackages(options)
+    const payloads = catalog.packages
+    const notice = catalog.notices.length
+      ? `${catalog.notices.length} connectors in the Phi Website catalog are unavailable: ${catalog.notices.join('; ')}`.slice(
+          0,
+          2000
+        )
+      : undefined
     staging = join(root, `staging-${randomUUID()}`)
     safeRegistryDirectory(root, staging, true)
     const packageDirs = payloads.map((payload) => {
@@ -96,7 +105,7 @@ async function synchronize(options: OfficialRegistryOptions): Promise<LocalRegis
       directoryAuthBlocked: authBlocked.get(entry.id)!
     }))
     const result = publishOfficialConnectorRegistry(registry, { agentDir })
-    return ready(result, (options.now?.() ?? new Date()).toISOString())
+    return ready(result, (options.now?.() ?? new Date()).toISOString(), notice)
   } catch (error) {
     const reason = errorMessage(error).slice(0, 500)
     try {
@@ -118,6 +127,11 @@ async function synchronize(options: OfficialRegistryOptions): Promise<LocalRegis
   }
 }
 
-function ready(registry: LocalRegistry, refreshedAt: string): LocalRegistry {
-  return { ...registry, status: 'ready', refreshedAt }
+function ready(registry: LocalRegistry, refreshedAt: string, notice?: string): LocalRegistry {
+  return {
+    ...registry,
+    status: 'ready',
+    refreshedAt,
+    ...(notice ? { notice } : {})
+  }
 }

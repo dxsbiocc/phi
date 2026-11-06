@@ -11,6 +11,7 @@ import { stringify as stringifyYaml } from 'yaml'
 
 import { offendingResourcePaths } from '../check-resources.mjs'
 import { requirePackageSourceRoot } from '../content/source-roots.mjs'
+import { errorMessage } from '../../src/shared/errorCodes'
 import { parseSkillFile, validateSkill } from '../../src/main/agent/content/skill'
 import {
   discoverSkillSources,
@@ -74,6 +75,7 @@ export interface RegistryBuildReport {
   sizesByType: Record<string, number>
   wrapperCountsByKind: Record<WrapperPackageKind, number>
   largestPackages: Array<Pick<RegistryIndexEntry, 'id' | 'type' | 'size'>>
+  skippedPackages: Array<{ path: string; reason: string }>
   unattributedIncludes: UnattributedWrapperInclude[]
   unattributedSupportFiles: string[]
 }
@@ -89,6 +91,7 @@ export interface BuildRegistryOptions {
   generatedAt?: string
   signKey?: string
   wrapperVersion?: string
+  skipInvalid?: boolean
 }
 
 interface PackageSource {
@@ -130,24 +133,58 @@ export function buildRegistryWithReport(options: BuildRegistryOptions = {}): Reg
     )
   ].sort(compareText)
   const roots = packageRoots(repoRoot, tracked)
-  const sources = roots.map((root) => loadPackageSource(repoRoot, root, tracked))
+  const skippedPackages: RegistryBuildReport['skippedPackages'] = []
+  const sources: PackageSource[] = []
+  for (const root of roots) {
+    try {
+      sources.push(loadPackageSource(repoRoot, root, tracked))
+    } catch (error) {
+      if (!options.skipInvalid) throw error
+      skippedPackages.push({ path: root, reason: errorMessage(error) })
+    }
+  }
 
   mkdirSync(outDir, { recursive: true })
 
   const wrappersPrefix = 'resources/wrappers/'
+  const wrapperFiles = tracked
+    .filter((path) => path.startsWith(wrappersPrefix))
+    .map((path) => path.slice(wrappersPrefix.length))
   const wrapperResult = materializeWrapperRegistry({
     wrappersRoot: join(repoRoot, 'resources', 'wrappers'),
     outDir,
     generatedAt,
-    files: tracked
-      .filter((path) => path.startsWith(wrappersPrefix))
-      .map((path) => path.slice(wrappersPrefix.length)),
+    files: wrapperFiles,
     writeIndex: false,
-    version: options.wrapperVersion
+    version: options.wrapperVersion,
+    ...(options.skipInvalid
+      ? {
+          onInvalidPackage: (invalid: { path: string; reason: string }) =>
+            skippedPackages.push({
+              path: `resources/wrappers/${invalid.path}`,
+              reason: invalid.reason
+            })
+        }
+      : {})
   })
+  const wrapperKinds = new Map(
+    wrapperResult.sources.map((source) => [source.manifest.id, source.kind])
+  )
+  const packageEntries: RegistryIndexEntry[] = []
+  for (const source of sources) {
+    try {
+      packageEntries.push(writePackage(source, outDir))
+    } catch (error) {
+      if (!options.skipInvalid) throw error
+      skippedPackages.push({ path: source.root, reason: errorMessage(error) })
+    }
+  }
   const entries = [
-    ...sources.map((source) => writePackage(source, outDir)),
-    ...wrapperResult.index.packages
+    ...packageEntries,
+    ...wrapperResult.index.packages.map((entry) => ({
+      ...entry,
+      category: wrapperCategory(wrapperKinds.get(entry.id))
+    }))
   ].sort(compareRegistryEntries)
   const index: RegistryIndex = { schemaVersion: 1, generatedAt, packages: entries }
   const indexBytes = Buffer.from(`${JSON.stringify(index, null, 2)}\n`, 'utf8')
@@ -160,8 +197,20 @@ export function buildRegistryWithReport(options: BuildRegistryOptions = {}): Reg
   }
   return {
     index,
-    report: createBuildReport(index, wrapperResult.sources, wrapperResult.diagnostics)
+    report: createBuildReport(
+      index,
+      wrapperResult.sources,
+      wrapperResult.diagnostics,
+      skippedPackages
+    )
   }
+}
+
+function wrapperCategory(kind: WrapperPackageKind | undefined): string {
+  if (kind === 'module') return 'modules'
+  if (kind === 'subworkflow') return 'subworkflows'
+  if (kind === 'workflow') return 'workflows'
+  return 'support'
 }
 
 function createBuildReport(
@@ -170,7 +219,8 @@ function createBuildReport(
   diagnostics: {
     unattributedIncludes: UnattributedWrapperInclude[]
     unattributedSupportFiles: string[]
-  }
+  },
+  skippedPackages: RegistryBuildReport['skippedPackages']
 ): RegistryBuildReport {
   const countsByType: Record<string, number> = {}
   const sizesByType: Record<string, number> = {}
@@ -193,6 +243,7 @@ function createBuildReport(
       .sort((left, right) => right.size - left.size || compareRegistryEntries(left, right))
       .slice(0, 10)
       .map(({ id, type, size }) => ({ id, type, size })),
+    skippedPackages,
     unattributedIncludes: diagnostics.unattributedIncludes,
     unattributedSupportFiles: diagnostics.unattributedSupportFiles
   }
@@ -498,7 +549,14 @@ if (entryScript === fileURLToPath(import.meta.url)) {
     const signKey = parseOptionalArg(argv, '--sign-key')
     const repoRoot = parseOptionalArg(argv, '--source')
     const wrapperVersion = parseOptionalArg(argv, '--wrapper-version')
-    const { index, report } = buildRegistryWithReport({ outDir, signKey, repoRoot, wrapperVersion })
+    const skipInvalid = argv.includes('--skip-invalid')
+    const { index, report } = buildRegistryWithReport({
+      outDir,
+      signKey,
+      repoRoot,
+      wrapperVersion,
+      skipInvalid
+    })
     const totalSize = index.packages.reduce((sum, item) => sum + item.size, 0)
     console.log(`Built ${index.packages.length} packages (${totalSize} bytes).`)
     for (const type of Object.keys(report.countsByType).sort(compareText)) {
@@ -514,6 +572,12 @@ if (entryScript === fileURLToPath(import.meta.url)) {
     console.log('Largest packages:')
     for (const entry of report.largestPackages) {
       console.log(`  ${entry.type}:${entry.id} ${entry.size} bytes`)
+    }
+    if (report.skippedPackages.length > 0) {
+      console.log(`Skipped packages (${report.skippedPackages.length}):`)
+      for (const skipped of report.skippedPackages) {
+        console.log(`  ${skipped.path}: ${skipped.reason}`)
+      }
     }
     if (report.unattributedIncludes.length > 0) {
       console.log(`Unattributed includes (${report.unattributedIncludes.length}):`)

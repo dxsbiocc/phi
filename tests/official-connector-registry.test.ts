@@ -307,7 +307,7 @@ test('complete API pagination has bounded detail concurrency and does not select
   const transport = f.options!.fetch!
   let active = 0
   let peak = 0
-  const payloads = await fetchOfficialConnectorPackages({
+  const catalog = await fetchOfficialConnectorPackages({
     fetch: async (input, init) => {
       if (/\/api\/mcp\//.test(String(input))) {
         active++
@@ -323,19 +323,123 @@ test('complete API pagination has bounded detail concurrency and does not select
     },
     timeoutMs: 5000
   })
-  assert.equal(payloads.length, 101)
+  assert.equal(catalog.packages.length, 101)
   assert.ok(peak <= 4)
   assert.equal(f.requests.filter((url) => url.includes('/api/mcp?')).length, 2)
   assert.ok(f.requests.every((url) => url.startsWith('https://phi.omicsagent.cn/')))
 })
 
-test('invalid API list identity, pagination, categories, and external icon sources are rejected', async () => {
+test('one malformed API list item is skipped with a notice while valid connectors remain available', async () => {
+  const f = fixture(2)
+  f.items[0].id = '../escape'
+
+  const catalog = await fetchOfficialConnectorPackages(f.options)
+
+  assert.deepEqual(
+    catalog.packages.map((payload) => payload.manifest.id),
+    ['connector-1']
+  )
+  assert.equal(catalog.notices.length, 1)
+  assert.match(catalog.notices[0], /list item 1/i)
+})
+
+test('one failed connector detail request is skipped with a notice while valid details remain available', async () => {
+  const f = fixture(2)
+  f.details.delete('browser-use')
+
+  const catalog = await fetchOfficialConnectorPackages(f.options)
+
+  assert.deepEqual(
+    catalog.packages.map((payload) => payload.manifest.id),
+    ['connector-1']
+  )
+  assert.equal(catalog.notices.length, 1)
+  assert.match(catalog.notices[0], /browser-use.*request failed/i)
+})
+
+test('one invalid connector detail is skipped with a notice while valid details remain available', async () => {
+  const f = fixture(2)
+  ;(f.details.get('browser-use')!.package as Record<string, unknown>).version = '9.9.9'
+
+  const catalog = await fetchOfficialConnectorPackages(f.options)
+
+  assert.deepEqual(
+    catalog.packages.map((payload) => payload.manifest.id),
+    ['connector-1']
+  )
+  assert.equal(catalog.notices.length, 1)
+  assert.match(catalog.notices[0], /browser-use.*does not match/i)
+})
+
+test('one unsupported stdio connector is skipped with a notice while HTTP connectors remain available', async () => {
+  const f = fixture(2)
+  f.items[0].transport = 'stdio'
+
+  const catalog = await fetchOfficialConnectorPackages(f.options)
+
+  assert.deepEqual(
+    catalog.packages.map((payload) => payload.manifest.id),
+    ['connector-1']
+  )
+  assert.equal(catalog.notices.length, 1)
+  assert.match(catalog.notices[0], /browser-use.*stdio/i)
+})
+
+test('one failed connector icon is dropped with a notice without dropping its connector', async () => {
+  const f = fixture(2)
+  const transport = f.options!.fetch!
+
+  const catalog = await fetchOfficialConnectorPackages({
+    timeoutMs: 1000,
+    fetch: (input, init) =>
+      String(input).endsWith('/icon.png')
+        ? Promise.resolve(new Response(null, { status: 503 }))
+        : transport(input, init)
+  })
+
+  assert.deepEqual(
+    catalog.packages.map((payload) => payload.manifest.id),
+    ['browser-use', 'connector-1']
+  )
+  assert.equal(catalog.packages[0].icon, undefined)
+  assert.equal(catalog.notices.length, 1)
+  assert.match(catalog.notices[0], /browser-use.*icon.*request failed/i)
+})
+
+test('one invalid connector icon URL is dropped with a notice without dropping its connector', async () => {
+  const f = fixture()
+  f.items[0].iconUrl = 'https://evil.example/icon.png'
+
+  const catalog = await fetchOfficialConnectorPackages(f.options)
+
+  assert.equal(catalog.packages.length, 1)
+  assert.equal(catalog.packages[0].manifest.id, 'browser-use')
+  assert.equal(catalog.packages[0].icon, undefined)
+  assert.equal(catalog.notices.length, 1)
+  assert.match(catalog.notices[0], /browser-use.*icon.*same website/i)
+  assert.equal(
+    f.requests.some((url) => url.startsWith('https://evil')),
+    false
+  )
+})
+
+test('skipped connector notices are published on the usable local registry', async () => {
+  const f = fixture(2)
+  f.items[0].id = '../escape'
+
+  const registry = await syncOfficialConnectorRegistry(f.options)
+
+  assert.deepEqual(
+    registry.packages.map((entry) => entry.id),
+    ['connector-1']
+  )
+  assert.match(registry.notice ?? '', /1 connector.*unavailable.*list item 1/i)
+})
+
+test('catalogs with only invalid API list identities, versions, or categories are rejected', async () => {
   for (const mutate of [
     (f: ReturnType<typeof fixture>) => {
       f.items[0].id = '../escape'
-    },
-    (f: ReturnType<typeof fixture>) => {
-      f.items[0].iconUrl = 'https://evil.example/icon.png'
     },
     (f: ReturnType<typeof fixture>) => {
       f.items[0].version = 'not a version'
@@ -352,6 +456,9 @@ test('invalid API list identity, pagination, categories, and external icon sourc
       false
     )
   }
+})
+
+test('invalid API pagination or categories reject the complete list request', async () => {
   for (const value of [
     { items: [], total: 501, page: 1, pageSize: 100, pageCount: 6 },
     { items: [], total: 1, page: 2, pageSize: 100, pageCount: 1 }
@@ -406,7 +513,7 @@ test('unsupported stdio or dependency-bearing payloads explicitly fall back to t
   }
 })
 
-test('unresponsive transports and oversized JSON or icon downloads stay bounded', async () => {
+test('unresponsive transports and oversized JSON fail while oversized icons degrade safely', async () => {
   await assert.rejects(
     fetchOfficialConnectorPackages({
       timeoutMs: 5,
@@ -420,13 +527,13 @@ test('unresponsive transports and oversized JSON or icon downloads stay bounded'
   )
   const f = fixture()
   const transport = f.options!.fetch!
-  await assert.rejects(
-    fetchOfficialConnectorPackages({
-      fetch: async (input, init) =>
-        String(input).includes('/icon.png')
-          ? new Response(new Uint8Array(256 * 1024 + 1))
-          : transport(input, init)
-    }),
-    /size limit/
-  )
+  const catalog = await fetchOfficialConnectorPackages({
+    fetch: async (input, init) =>
+      String(input).includes('/icon.png')
+        ? new Response(new Uint8Array(256 * 1024 + 1))
+        : transport(input, init)
+  })
+  assert.equal(catalog.packages.length, 1)
+  assert.equal(catalog.packages[0].icon, undefined)
+  assert.match(catalog.notices[0], /icon.*size limit/i)
 })

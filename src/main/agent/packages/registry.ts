@@ -82,7 +82,7 @@ function errorCode(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error ? String(error.code) : undefined
 }
 
-function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry {
+export function parseRegistryEntry(value: unknown, index: number): RegistryPackageEntry {
   if (!isRecord(value)) throw new Error(`注册表 packages[${index}] 无效`)
   const entry = value as Record<string, unknown>
   if (
