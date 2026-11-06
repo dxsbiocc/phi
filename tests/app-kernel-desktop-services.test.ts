@@ -130,6 +130,76 @@ test('remote desktop MCP keeps its logical owner while binding the broker to the
   }
 })
 
+test('a remote session with no desktop MCP servers gets an empty catalog, not a failed session', async () => {
+  const kernelSessionId = 'kernel-session-no-mcp'
+  const handlers = new Map<
+    string,
+    (params: never, context: KernelHostRequestContext) => unknown | Promise<unknown>
+  >()
+  const client = {
+    registerHostCapability(
+      capability: string,
+      handler: (params: never, context: KernelHostRequestContext) => unknown | Promise<unknown>
+    ) {
+      handlers.set(capability, handler)
+      return () => handlers.delete(capability)
+    }
+  }
+  const services = new AppKernelDesktopServices(
+    { loadDesktopTools: async () => ({ tools: {} }) } as never,
+    { hostServices: { invoke: async () => undefined } } as never
+  )
+  const remove = services.configureClient(
+    client as never,
+    {
+      hostKey: 'ssh:remote',
+      resolveSession: (candidate) =>
+        candidate === kernelSessionId
+          ? {
+              logicalSessionId: 'logical-no-mcp',
+              kernelSessionId,
+              params: {
+                sessionId: 'logical-no-mcp',
+                phiSessionId: 'phi-remote',
+                agentDir: '/agent',
+                cwd: '/remote/project',
+                desktopMcp: { bindingId: 'desktop-binding' },
+                remoteProject: {
+                  phiSessionId: 'phi-remote',
+                  projectId: 'project-remote',
+                  location: {
+                    kind: 'ssh',
+                    hostProfileId: 'remote',
+                    canonicalRoot: '/remote/project'
+                  }
+                }
+              }
+            }
+          : undefined,
+      snapshotSession: () => undefined
+    } as never
+  )
+  try {
+    const list = handlers.get('mcp.desktop.list')
+    assert.ok(list)
+    const params = {
+      bindingId: 'desktop-binding',
+      cwd: '/remote/project',
+      registeredToolNames: ['read']
+    } as never
+    const context = { sessionId: kernelSessionId, signal: new AbortController().signal }
+    assert.deepEqual(await list(params, context), { tools: [], skipped: [] })
+    // A wrong binding is still refused rather than read as "no servers".
+    await assert.rejects(
+      Promise.resolve(list({ ...(params as object), bindingId: 'other' } as never, context)),
+      /Desktop MCP is unavailable/
+    )
+  } finally {
+    remove()
+    await services.close()
+  }
+})
+
 test(
   'real locally spawned kernel prompt keeps desktop MCP ownership logical while routing by kernel identity',
   { timeout: 30_000 },
