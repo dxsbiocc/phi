@@ -30,6 +30,7 @@ import {
   updateSessionManifest,
   type PhiSessionManifest
 } from '../agent/session/session-store'
+import { forkSourceBusy } from '../agent/session/fork-source-busy'
 import { isLegacyRemoteSession } from '../agent/session/legacy-remote-session'
 import {
   acknowledgeSession,
@@ -148,7 +149,7 @@ export interface SessionsIpcOptions {
   }
   status: {
     runnerGetActiveRun: (sessionId: string) => unknown
-    activePromptEntries: () => Array<[string, { phiSessionId: string }]>
+    activePromptEntries: () => Array<[string, { phiSessionId: string; cancelled?: boolean }]>
     stopPromptRun: (sessionKey: string, run: unknown) => Promise<void>
     getSessionStatusPayload: (sessionKey: string, path: string | undefined, cwd: string) => object
     notifySessionChanged: () => void
@@ -290,14 +291,7 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
     }
     const source = findPhiSessionById(sourceId)
     if (!source) throw new Error('来源会话不存在')
-    if (
-      source.status === 'running' ||
-      source.status === 'needs_approval' ||
-      source.status === 'needs_input' ||
-      status.runnerGetActiveRun(sourceId)
-    ) {
-      throw new Error('请等待来源会话运行结束后再分叉')
-    }
+    if (forkSourceBusy(source, status)) throw new Error('请等待来源会话运行结束后再分叉')
     const events = readSessionEvents(sourceId)
     const userMessages = events.filter((event) => event.type === 'user_message')
     const selectedIndex = userMessages.findIndex((event) => event.eventId === eventId)
