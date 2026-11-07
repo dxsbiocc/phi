@@ -47,9 +47,10 @@ export {
   officialWebsiteRegistryDirectory,
   readOfficialWebsiteRegistry
 } from './official-website-cache'
+import { OFFICIAL_WEBSITE_BASE_URL } from './official-website-transport'
 
-export const WEBSITE_REGISTRY_BASE_URL = 'https://phi.omicsagent.cn/api/registry/'
-const WEBSITE_CATALOG_URL = 'https://phi.omicsagent.cn/api/catalog'
+export const WEBSITE_REGISTRY_BASE_URL = new URL('/api/registry/', OFFICIAL_WEBSITE_BASE_URL).href
+const WEBSITE_CATALOG_URL = new URL('/api/catalog', OFFICIAL_WEBSITE_BASE_URL).href
 const MAX_INDEX_BYTES = 4 * 1024 * 1024
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 const MAX_INDEX_ENTRIES = 10_000

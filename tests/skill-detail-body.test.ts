@@ -6,7 +6,9 @@ import { createTheme, ThemeProvider } from '@mui/material/styles'
 
 import { SkillDetailBody } from '../src/renderer/src/features/skill/components/SkillDetailBody'
 import { SkillPackageDetailPage } from '../src/renderer/src/features/skill/components/SkillPackageDetailPage'
+import { OfficialSkillDetailPage } from '../src/renderer/src/features/skill/components/OfficialSkillDetailPage'
 import type { SkillCatalogPackage } from '../src/renderer/src/features/skill/lib/skillCatalogBrowser'
+import type { PhiSkillCatalogDetail } from '../src/shared/phiWebsiteCatalogTypes'
 
 const themed = (element: React.ReactElement): string =>
   renderToStaticMarkup(createElement(ThemeProvider, { theme: createTheme() }, element))
@@ -102,4 +104,41 @@ test('the catalog preview keeps identity and every chip in the content, not the 
   // Version, size and status chips sit together in one row.
   const chipRow = markup.slice(markup.indexOf('v1.0.0') - 400, markup.indexOf('Not installed') + 20)
   assert.ok(chipRow.includes('19 KB') && chipRow.includes('Phi Packages'))
+})
+
+test('the official skill detail renders website SKILL.md through the safe shared markdown body', () => {
+  const detail: PhiSkillCatalogDetail = {
+    kind: 'skill',
+    slug: 'scanpy',
+    title: 'Scanpy from website',
+    description: 'Website description',
+    path: 'resources/skills/scanpy',
+    version: '2.1.0',
+    sizeBytes: 2048,
+    sizeLabel: '2 KB',
+    source: 'Phi Packages',
+    markdown: '# Website SKILL.md\n\n<script>alert("unsafe")</script>',
+    frontmatter: { name: 'scanpy' }
+  }
+  const markup = themed(
+    createElement(OfficialSkillDetailPage, {
+      detail,
+      installed: false,
+      action: createElement('button', null, 'INSTALL-ACTION'),
+      onBack: () => undefined
+    })
+  )
+
+  for (const text of [
+    'Scanpy from website',
+    'Website description',
+    'v2.1.0',
+    '2 KB',
+    'Website SKILL.md',
+    'INSTALL-ACTION'
+  ]) {
+    assert.ok(markup.includes(text), `missing: ${text}`)
+  }
+  assert.doesNotMatch(markup, /<script>/)
+  assert.doesNotMatch(markup, /alert\(&quot;unsafe&quot;\)/)
 })

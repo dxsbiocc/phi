@@ -6,8 +6,10 @@ import type {
   PhiPluginDependencyManifest
 } from '../../../shared/phiPluginDetailTypes'
 import { isRecord } from '../../../shared/guards'
-import { WEBSITE_REGISTRY_BASE_URL } from './official-website-registry'
-import { fetchBytes, type RegistryDownloadOptions } from './registry-download'
+import {
+  fetchOfficialWebsiteJson,
+  type OfficialWebsiteRequestOptions
+} from './official-website-transport'
 
 const PLUGIN_ID = /^[a-z][a-z0-9-]{1,63}$/
 const MAX_RESPONSE_BYTES = 1024 * 1024
@@ -15,12 +17,6 @@ const MAX_TIMEOUT_MS = 15_000
 const MAX_ITEMS = 256
 const MAX_DEPENDENCIES = 2_048
 const MAX_TEXT_BYTES = 64 * 1024
-const WEBSITE_PLUGIN_DETAIL_BASE_URL = new URL('../plugins/', WEBSITE_REGISTRY_BASE_URL).href
-const endpoint = {
-  baseUrl: WEBSITE_PLUGIN_DETAIL_BASE_URL,
-  redirect: 'error' as const,
-  maxTimeoutMs: MAX_TIMEOUT_MS
-}
 
 const limits = {
   identifier: 128,
@@ -147,6 +143,11 @@ export function validateOfficialWebsitePluginDetail(
   } catch {
     throw new Error('plugin detail response is not valid JSON')
   }
+  return validatePluginDetailValue(value, requestedId)
+}
+
+function validatePluginDetailValue(value: unknown, requestedId: string): PhiPluginCatalogDetail {
+  if (!PLUGIN_ID.test(requestedId)) throw new Error('invalid plugin id')
   if (!isRecord(value)) throw new Error('plugin detail response must be an object')
   if (value.kind !== 'plugin') throw new Error('plugin detail kind is invalid')
   const id = requiredString(value.slug, 'slug', limits.identifier)
@@ -178,12 +179,16 @@ export function validateOfficialWebsitePluginDetail(
 /** Fetch one catalog detail. Every network or validation failure degrades to unavailable. */
 export async function getOfficialWebsitePluginDetail(
   id: string,
-  options: RegistryDownloadOptions = {}
+  options: OfficialWebsiteRequestOptions = {}
 ): Promise<PhiPluginCatalogDetailResult> {
   if (!PLUGIN_ID.test(id)) return { status: 'unavailable' }
   try {
-    const bytes = await fetchBytes(id, MAX_RESPONSE_BYTES, options, endpoint)
-    return { status: 'available', detail: validateOfficialWebsitePluginDetail(bytes, id) }
+    const value = await fetchOfficialWebsiteJson(
+      `/api/plugins/${encodeURIComponent(id)}`,
+      MAX_RESPONSE_BYTES,
+      { ...options, timeoutMs: options.timeoutMs ?? MAX_TIMEOUT_MS }
+    )
+    return { status: 'available', detail: validatePluginDetailValue(value, id) }
   } catch {
     return { status: 'unavailable' }
   }

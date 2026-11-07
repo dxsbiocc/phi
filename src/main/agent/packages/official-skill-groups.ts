@@ -2,6 +2,7 @@ import { readBoundedResponse } from './github-source'
 import type { LocalRegistry } from './installer-types'
 import { isRecord } from './installer-utils'
 import { skillPackageIds } from './official-catalog-api'
+import { OFFICIAL_WEBSITE_BASE_URL } from './official-website-transport'
 
 interface SkillGroup {
   id: string
@@ -162,7 +163,7 @@ function matchingPageGroups(value: unknown, categories: SkillGroup[]): boolean {
 }
 
 async function fetchPage(page: number, deadline: number, fetcher: typeof fetch): Promise<unknown> {
-  const url = `https://phi.omicsagent.cn/api/skills?page=${page}&pageSize=100`
+  const url = `${OFFICIAL_WEBSITE_BASE_URL}/api/skills?page=${page}&pageSize=100`
   const remaining = deadline - Date.now()
   if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 120_000)
     throw new Error('Invalid Phi Website Skill group request timeout')

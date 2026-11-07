@@ -134,6 +134,19 @@ import type {
   PhiPluginMutationResult
 } from '../shared/phiPluginTypes'
 import type { PhiPluginCatalogDetailResult } from '../shared/phiPluginDetailTypes'
+import type {
+  PhiSkillCatalogDetail,
+  PhiSkillGroupsPage,
+  PhiSkillGroupsQuery,
+  PhiSkillListPage,
+  PhiSkillListQuery,
+  PhiWebsiteCatalogResult,
+  PhiWrapperCatalogDetail,
+  PhiWrapperGroupsPage,
+  PhiWrapperGroupsQuery,
+  PhiWrapperToolsPage,
+  PhiWrapperToolsQuery
+} from '../shared/phiWebsiteCatalogTypes'
 import type { VisualizationTemplateCatalog } from '../shared/visualizationTemplateTypes'
 import type {
   KnownPackageRegistryView,
@@ -1243,6 +1256,24 @@ declare global {
       respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
       listPhiPlugins: () => Promise<PhiPluginListItem[]>
       getPhiPluginCatalogDetail: (id: string) => Promise<PhiPluginCatalogDetailResult>
+      listOfficialWrapperGroups: (
+        query?: PhiWrapperGroupsQuery
+      ) => Promise<PhiWebsiteCatalogResult<PhiWrapperGroupsPage>>
+      listOfficialWrapperTools: (
+        query: PhiWrapperToolsQuery
+      ) => Promise<PhiWebsiteCatalogResult<PhiWrapperToolsPage>>
+      getOfficialWrapperDetail: (
+        id: string
+      ) => Promise<PhiWebsiteCatalogResult<PhiWrapperCatalogDetail>>
+      listOfficialSkillGroups: (
+        query?: PhiSkillGroupsQuery
+      ) => Promise<PhiWebsiteCatalogResult<PhiSkillGroupsPage>>
+      listOfficialSkills: (
+        query: PhiSkillListQuery
+      ) => Promise<PhiWebsiteCatalogResult<PhiSkillListPage>>
+      getOfficialSkillDetail: (
+        slug: string
+      ) => Promise<PhiWebsiteCatalogResult<PhiSkillCatalogDetail>>
       listVisualizationTemplates: () => Promise<VisualizationTemplateCatalog>
       pickPhiPluginDirectory: () => Promise<string | null>
       previewPhiPluginDirectory: (path: string) => Promise<PhiPluginInstallPreview>

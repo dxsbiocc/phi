@@ -145,6 +145,19 @@ import type {
   PhiPluginMutationResult
 } from '../shared/phiPluginTypes'
 import type { PhiPluginCatalogDetailResult } from '../shared/phiPluginDetailTypes'
+import type {
+  PhiSkillCatalogDetail,
+  PhiSkillGroupsPage,
+  PhiSkillGroupsQuery,
+  PhiSkillListPage,
+  PhiSkillListQuery,
+  PhiWebsiteCatalogResult,
+  PhiWrapperCatalogDetail,
+  PhiWrapperGroupsPage,
+  PhiWrapperGroupsQuery,
+  PhiWrapperToolsPage,
+  PhiWrapperToolsQuery
+} from '../shared/phiWebsiteCatalogTypes'
 import type { VisualizationTemplateCatalog } from '../shared/visualizationTemplateTypes'
 import type {
   KnownPackageRegistryView,
@@ -1147,6 +1160,22 @@ type RendererAuthApi = PreloadApiBase & {
   showPendingRequests: () => Promise<void>
   listPhiPlugins: () => Promise<PhiPluginListItem[]>
   getPhiPluginCatalogDetail: (id: string) => Promise<PhiPluginCatalogDetailResult>
+  listOfficialWrapperGroups: (
+    query?: PhiWrapperGroupsQuery
+  ) => Promise<PhiWebsiteCatalogResult<PhiWrapperGroupsPage>>
+  listOfficialWrapperTools: (
+    query: PhiWrapperToolsQuery
+  ) => Promise<PhiWebsiteCatalogResult<PhiWrapperToolsPage>>
+  getOfficialWrapperDetail: (
+    id: string
+  ) => Promise<PhiWebsiteCatalogResult<PhiWrapperCatalogDetail>>
+  listOfficialSkillGroups: (
+    query?: PhiSkillGroupsQuery
+  ) => Promise<PhiWebsiteCatalogResult<PhiSkillGroupsPage>>
+  listOfficialSkills: (
+    query: PhiSkillListQuery
+  ) => Promise<PhiWebsiteCatalogResult<PhiSkillListPage>>
+  getOfficialSkillDetail: (slug: string) => Promise<PhiWebsiteCatalogResult<PhiSkillCatalogDetail>>
   listVisualizationTemplates: () => Promise<VisualizationTemplateCatalog>
   pickPhiPluginDirectory: () => Promise<string | null>
   previewPhiPluginDirectory: (path: string) => Promise<PhiPluginInstallPreview>
@@ -2045,6 +2074,28 @@ const api: RendererAuthApi = {
   listPhiPlugins: (): Promise<PhiPluginListItem[]> => ipcRenderer.invoke(IPC.phiPlugins.list),
   getPhiPluginCatalogDetail: (id: string): Promise<PhiPluginCatalogDetailResult> =>
     ipcRenderer.invoke(IPC.phiPlugins.catalogDetail, id),
+  listOfficialWrapperGroups: (
+    query: PhiWrapperGroupsQuery = {}
+  ): Promise<PhiWebsiteCatalogResult<PhiWrapperGroupsPage>> =>
+    ipcRenderer.invoke(IPC.wrappers.catalogGroups, query),
+  listOfficialWrapperTools: (
+    query: PhiWrapperToolsQuery
+  ): Promise<PhiWebsiteCatalogResult<PhiWrapperToolsPage>> =>
+    ipcRenderer.invoke(IPC.wrappers.catalogTools, query),
+  getOfficialWrapperDetail: (
+    id: string
+  ): Promise<PhiWebsiteCatalogResult<PhiWrapperCatalogDetail>> =>
+    ipcRenderer.invoke(IPC.wrappers.catalogDetail, id),
+  listOfficialSkillGroups: (
+    query: PhiSkillGroupsQuery = {}
+  ): Promise<PhiWebsiteCatalogResult<PhiSkillGroupsPage>> =>
+    ipcRenderer.invoke(IPC.skills.catalogGroups, query),
+  listOfficialSkills: (
+    query: PhiSkillListQuery
+  ): Promise<PhiWebsiteCatalogResult<PhiSkillListPage>> =>
+    ipcRenderer.invoke(IPC.skills.catalogList, query),
+  getOfficialSkillDetail: (slug: string): Promise<PhiWebsiteCatalogResult<PhiSkillCatalogDetail>> =>
+    ipcRenderer.invoke(IPC.skills.catalogDetail, slug),
   listVisualizationTemplates: (): Promise<VisualizationTemplateCatalog> =>
     ipcRenderer.invoke(IPC.phiPlugins.visualizationTemplates),
   pickPhiPluginDirectory: (): Promise<string | null> =>

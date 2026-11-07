@@ -10,6 +10,7 @@ import type {
 import { errorMessage } from '../../../../../shared/errorCodes'
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import type { SkillSummary } from '../../../types'
+import type { PhiSkillCatalogDetail } from '../../../../../shared/phiWebsiteCatalogTypes'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
 import { CatalogAddButton } from '../../../components/catalog/CatalogAddButton'
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
@@ -23,13 +24,16 @@ import {
 } from '../../../components/catalog/CatalogResultsTable'
 import { formatPackageSize } from '../../../components/catalog/packageSize'
 import { SkillPackageDetailPage } from './SkillPackageDetailPage'
+import { OfficialSkillDetailPage } from './OfficialSkillDetailPage'
+import { useOfficialSkillCatalog } from '../hooks/useOfficialSkillCatalog'
 import {
+  fallbackSkillCatalogGroups,
   filterSkillCatalogItems,
   initialSkillCatalogBrowserState,
   installedSkillPackageIds,
   knownSkillCatalogPackages,
+  registryPackageForOfficialSkill,
   skillCatalogBrowserReducer,
-  skillCatalogGroups,
   skillCatalogItems,
   type SkillCatalogPackage
 } from '../lib/skillCatalogBrowser'
@@ -85,10 +89,20 @@ export function SkillCatalogDialog({
   const [sourceError, setSourceError] = useState<string | null>(null)
   const [sourceNotice, setSourceNotice] = useState<string | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
+  const [websiteRevision, setWebsiteRevision] = useState(0)
+  const [websiteDetail, setWebsiteDetail] = useState<PhiSkillCatalogDetail | null>(null)
   const [browser, dispatchBrowser] = useReducer(
     skillCatalogBrowserReducer,
     initialSkillCatalogBrowserState
   )
+  const websiteCatalog = useOfficialSkillCatalog({
+    open,
+    revision: websiteRevision,
+    requestedGroupId: browser.groupId,
+    query: browser.query,
+    page: browser.page,
+    pageSize: browser.rowsPerPage
+  })
 
   useEffect(() => {
     if (!open) dispatchBrowser({ type: 'close' })
@@ -102,6 +116,7 @@ export function SkillCatalogDialog({
       if (!active) return
       const request = ++revision
       const current = (): boolean => active && request === revision
+      setWebsiteRevision((value) => value + 1)
       void Promise.resolve().then(() => {
         if (current()) setLoadingKnownRegistries(true)
       })
@@ -175,33 +190,37 @@ export function SkillCatalogDialog({
     }, []),
     afterRemoval
   )
-  const loading = loadingRegistry || loadingKnownRegistries || isRegistryLoading
-  const error = actionError ?? registryError ?? sourceError ?? removal.error
-  const items = useMemo(() => skillCatalogItems(loading ? [] : packages), [loading, packages])
-  const groupDefinitions =
-    knownRegistries.find((source) => source.kind === 'official')?.skillGroups ??
-    displayedRegistry?.skillGroups
-  const groups = useMemo(() => {
-    void uiLanguage // Invalidate localized presentation.
-    return skillCatalogGroups(items, groupDefinitions)
-  }, [items, groupDefinitions, uiLanguage])
-  const selectedGroupId = groups.some((group) => group.id === browser.groupId)
-    ? browser.groupId
-    : 'all'
-  const matchingItems = useMemo(() => {
-    void uiLanguage // Invalidate localized presentation.
-    return filterSkillCatalogItems(items, selectedGroupId, browser.query)
-  }, [items, selectedGroupId, browser.query, uiLanguage])
-  const { page, rows: visibleItems } = getCatalogPage(
-    matchingItems,
-    browser.page,
-    browser.rowsPerPage
+  const registryLoading = loadingRegistry || loadingKnownRegistries || isRegistryLoading
+  const websiteUnavailable = websiteCatalog.status === 'unavailable'
+  const error =
+    actionError ?? registryError ?? (websiteUnavailable ? null : sourceError) ?? removal.error
+  const fallbackItems = useMemo(
+    () => skillCatalogItems(registryLoading ? [] : packages),
+    [packages, registryLoading]
   )
+  const matchingFallbackItems = useMemo(() => {
+    void uiLanguage // Invalidate localized presentation.
+    return filterSkillCatalogItems(fallbackItems, 'all', browser.query)
+  }, [browser.query, fallbackItems, uiLanguage])
+  const fallbackPage = getCatalogPage(matchingFallbackItems, browser.page, browser.rowsPerPage)
+  const groups = websiteUnavailable
+    ? fallbackSkillCatalogGroups(fallbackItems.length)
+    : websiteCatalog.groups
+  const selectedGroupId = websiteUnavailable ? 'all' : websiteCatalog.selectedGroupId
+  const page = websiteUnavailable
+    ? fallbackPage.page
+    : Math.max(0, (websiteCatalog.page?.page ?? 1) - 1)
+  const visibleFallbackItems = websiteUnavailable ? fallbackPage.rows : []
+  const resultCount = websiteUnavailable
+    ? matchingFallbackItems.length
+    : (websiteCatalog.page?.total ?? 0)
+  const loading = websiteUnavailable ? registryLoading : websiteCatalog.isLoading
   useEffect(() => {
     if (!open) return
     dispatchBrowser({
       type: 'reconcile',
       groupIds: groups.map((group) => group.id),
+      fallbackGroupId: groups[0]?.id ?? 'all',
       ready: !loading && !isSkillsLoading && !registryError,
       page
     })
@@ -211,6 +230,7 @@ export function SkillCatalogDialog({
     dispatchBrowser({ type: 'close' })
     setActionError(null)
     setDetailId(null)
+    setWebsiteDetail(null)
     onClose()
   }
 
@@ -257,37 +277,42 @@ export function SkillCatalogDialog({
     }
   }
 
-  function renderAction(entry: SkillCatalogPackage): React.JSX.Element {
-    const installed = installedPackageIds.has(entry.id)
-    const updateAvailable = installed && updateIds.has(entry.id)
+  function renderAction(id: string, title: string, entry?: SkillCatalogPackage): React.JSX.Element {
+    const installed = installedPackageIds.has(id)
+    const updateAvailable = installed && updateIds.has(id)
     const removing = installed && !updateAvailable
-    const working = installing.has(entry.id) || removal.isRemoving(entry.id)
-    const label = installing.has(entry.id)
+    const working = installing.has(id) || removal.isRemoving(id)
+    const label = installing.has(id)
       ? updateAvailable
         ? resourceUi.updating
         : resourceUi.installing
-      : removal.isRemoving(entry.id)
+      : removal.isRemoving(id)
         ? skillCopy.uninstalling
         : updateAvailable
           ? resourceUi.update
           : installed
             ? resourceUi.uninstall
-            : resourceUi.install
+            : entry
+              ? resourceUi.install
+              : skillCopy.installSourceUnavailable
     return (
       <Button
         size="small"
         variant={removing ? 'outlined' : 'contained'}
         color={removing ? 'error' : 'primary'}
-        disabled={working || (!removing && (updateAvailable ? !onApplyUpdate : !onInstallPackage))}
-        onClick={() => void (removing ? removal.remove(entry.id) : install(entry))}
-        aria-label={`${updateAvailable ? resourceUi.update : installed ? resourceUi.uninstall : resourceUi.install} ${entry.title}`}
+        disabled={
+          working ||
+          (!removing && (!entry || (updateAvailable ? !onApplyUpdate : !onInstallPackage)))
+        }
+        onClick={() => void (removing ? removal.remove(id) : entry ? install(entry) : undefined)}
+        aria-label={`${updateAvailable ? resourceUi.update : installed ? resourceUi.uninstall : resourceUi.install} ${title}`}
       >
         {label}
       </Button>
     )
   }
 
-  const rows: CatalogResultRow[] = visibleItems.map(({ entry }) => ({
+  const fallbackRows: CatalogResultRow[] = visibleFallbackItems.map(({ entry }) => ({
     rowKey: `package:${entry.id}@${entry.version}`,
     id: entry.id,
     icon: <ResourceIcon icon={entry.icon} kind="skill" sx={{ color: 'primary.main' }} />,
@@ -295,9 +320,61 @@ export function SkillCatalogDialog({
     summary: entry.summary,
     metadata: resourceSourceLabel(entry.registryLabel ?? skillCopy.packagesGroup),
     details: `v${entry.version} · ${formatPackageSize(entry.size)}`,
-    action: renderAction(entry)
+    action: renderAction(entry.id, entry.title, entry)
   }))
-  const detailEntry = detailId ? items.find((item) => item.entry.id === detailId)?.entry : undefined
+  const websiteRows: CatalogResultRow[] = (websiteCatalog.page?.items ?? []).map((item) => {
+    const entry = registryPackageForOfficialSkill(item, packages)
+    return {
+      rowKey: `website:${item.id}@${item.version}`,
+      id: item.id,
+      icon: <ResourceIcon icon={entry?.icon} kind="skill" sx={{ color: 'primary.main' }} />,
+      title: item.title,
+      summary: item.description ?? '',
+      metadata: item.source,
+      details: `v${item.version} · ${item.sizeLabel ?? formatPackageSize(item.sizeBytes ?? 0)}`,
+      action: renderAction(item.id, item.title, entry)
+    }
+  })
+  const rows = websiteUnavailable ? fallbackRows : websiteRows
+  const detailEntry = detailId
+    ? fallbackItems.find((item) => item.entry.id === detailId)?.entry
+    : undefined
+  const websiteDetailItem =
+    !websiteUnavailable && detailId
+      ? websiteCatalog.page?.items.find((item) => item.id === detailId)
+      : undefined
+  const websiteDetailSlug = websiteDetailItem?.slug
+
+  useEffect(() => {
+    if (!open || websiteCatalog.status !== 'available' || !websiteDetailSlug) return undefined
+    let active = true
+    void Promise.resolve()
+      .then(() => {
+        setWebsiteDetail(null)
+        return window.api.getOfficialSkillDetail(websiteDetailSlug)
+      })
+      .then((result) => {
+        if (!active) return
+        if (result.status === 'unavailable') {
+          setDetailId(null)
+          websiteCatalog.markUnavailable()
+          return
+        }
+        setWebsiteDetail(result.data)
+      })
+      .catch(() => {
+        if (!active) return
+        setDetailId(null)
+        websiteCatalog.markUnavailable()
+      })
+    return () => {
+      active = false
+    }
+  }, [open, websiteCatalog.markUnavailable, websiteCatalog.status, websiteDetailSlug])
+
+  const officialDetailPackage = websiteDetailItem
+    ? registryPackageForOfficialSkill(websiteDetailItem, packages)
+    : undefined
 
   return (
     <Dialog
@@ -311,11 +388,21 @@ export function SkillCatalogDialog({
         }
       }}
     >
-      {detailEntry ? (
+      {websiteDetail && websiteDetail.slug === websiteDetailSlug ? (
+        <OfficialSkillDetailPage
+          detail={websiteDetail}
+          installed={installedPackageIds.has(websiteDetail.slug)}
+          action={renderAction(websiteDetail.slug, websiteDetail.title, officialDetailPackage)}
+          onBack={() => {
+            setDetailId(null)
+            setWebsiteDetail(null)
+          }}
+        />
+      ) : detailEntry && websiteUnavailable ? (
         <SkillPackageDetailPage
           entry={detailEntry}
           installed={installedPackageIds.has(detailEntry.id)}
-          action={renderAction(detailEntry)}
+          action={renderAction(detailEntry.id, detailEntry.title, detailEntry)}
           onBack={() => setDetailId(null)}
         />
       ) : (
@@ -341,7 +428,7 @@ export function SkillCatalogDialog({
           }
           footer={
             <CatalogPagination
-              count={matchingItems.length}
+              count={resultCount}
               page={page}
               rowsPerPage={browser.rowsPerPage}
               onPageChange={(nextPage) => dispatchBrowser({ type: 'page', page: nextPage })}
@@ -375,11 +462,15 @@ export function SkillCatalogDialog({
             <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 2 }}>
               <CircularProgress size={18} />
               <Typography variant="body2" color="text.secondary">
-                {skillCopy.loadingCatalog}
+                {websiteUnavailable ? skillCopy.loadingCatalog : skillCopy.loadingWebsiteCatalog}
               </Typography>
             </Stack>
           ) : null}
-          {sourceNotice ? (
+          {websiteUnavailable ? (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              {skillCopy.websiteUnavailableFallback}
+            </Alert>
+          ) : sourceNotice ? (
             <Alert severity="info" sx={{ mb: 2 }}>
               {sourceNotice}
             </Alert>
@@ -392,7 +483,7 @@ export function SkillCatalogDialog({
             rowAttribute="data-phi-skill-catalog-card"
             onOpen={setDetailId}
           />
-          {matchingItems.length === 0 && !loading && !(isSkillsLoading && skills.length === 0) ? (
+          {resultCount === 0 && !loading && !(isSkillsLoading && skills.length === 0) ? (
             <Typography variant="body2" color="text.secondary" sx={{ py: 3 }}>
               {browser.query.trim()
                 ? skillCopy.noMatches

@@ -41,6 +41,7 @@ const catalogHeaderCellSx = {
 export function CatalogResultsTable({
   label,
   nameLabel,
+  metadataLabel = resourceUi.source,
   detailsLabel,
   rows,
   rowAttribute,
@@ -48,6 +49,7 @@ export function CatalogResultsTable({
 }: {
   label: string
   nameLabel: string
+  metadataLabel?: string
   detailsLabel: string
   rows: readonly CatalogResultRow[]
   rowAttribute: string
@@ -86,7 +88,7 @@ export function CatalogResultsTable({
             <TableCell
               sx={{ ...catalogHeaderCellSx, width: 112, display: { xs: 'none', sm: 'table-cell' } }}
             >
-              {resourceUi.source}
+              {metadataLabel}
             </TableCell>
             <TableCell
               sx={{ ...catalogHeaderCellSx, width: 144, display: { xs: 'none', sm: 'table-cell' } }}

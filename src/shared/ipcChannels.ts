@@ -304,6 +304,9 @@ export const IPC = {
     webSearchUpdate: 'settings:webSearch:update'
   },
   skills: {
+    catalogDetail: 'skills:catalogDetail',
+    catalogGroups: 'skills:catalogGroups',
+    catalogList: 'skills:catalogList',
     delete: 'skills:delete',
     importHomeSkills: 'skills:importHomeSkills',
     list: 'skills:list',
@@ -408,6 +411,9 @@ export const IPC = {
   },
   wrappers: {
     addCustom: 'wrappers:addCustom',
+    catalogDetail: 'wrappers:catalogDetail',
+    catalogGroups: 'wrappers:catalogGroups',
+    catalogTools: 'wrappers:catalogTools',
     cancelPlan: 'wrappers:cancelPlan',
     cancelRun: 'wrappers:cancelRun',
     completeInputUpload: 'wrappers:completeInputUpload',

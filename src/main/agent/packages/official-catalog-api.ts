@@ -1,7 +1,13 @@
 import type { PackageType } from './manifest'
 
 import { isRecord } from '../../../shared/guards'
-export const OFFICIAL_CATALOG_BASE_URL = 'https://phi.omicsagent.cn'
+import {
+  fetchOfficialWebsiteJson,
+  OFFICIAL_WEBSITE_BASE_URL,
+  type OfficialWebsiteRequestOptions
+} from './official-website-transport'
+
+export const OFFICIAL_CATALOG_BASE_URL = OFFICIAL_WEBSITE_BASE_URL
 const ROUTES: Record<PackageType, string> = {
   skill: '/api/skills',
   mcp: '/api/mcp',
@@ -19,13 +25,7 @@ const WRAPPER_KINDS = {
   workflows: 'workflow'
 } as const
 
-export interface OfficialCatalogApiOptions {
-  /** Application transport; the model cannot supply an endpoint or install URL. */
-  fetch?: typeof fetch
-  /** Trusted configuration/test origin, without a path, credentials, query, or fragment. */
-  baseUrl?: string
-  timeoutMs?: number
-}
+export type OfficialCatalogApiOptions = Omit<OfficialWebsiteRequestOptions, 'signal'>
 
 export interface OfficialCatalogSearchResult {
   matches: Array<{ type: PackageType; id: string }>
@@ -52,7 +52,6 @@ export async function searchOfficialCatalog(
   let timedOut = false
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const origin = catalogOrigin(options.baseUrl ?? OFFICIAL_CATALOG_BASE_URL)
     if (query.length > 1000 || (type !== undefined && !Object.hasOwn(ROUTES, type))) {
       throw new Error('Invalid catalog search')
     }
@@ -66,9 +65,7 @@ export async function searchOfficialCatalog(
     }, timeoutMs)
     const types = type ? [type] : (Object.keys(ROUTES) as PackageType[])
     const results = await Promise.allSettled(
-      types.map((itemType) =>
-        searchType(query.trim(), itemType, origin, controller.signal, options.fetch ?? fetch)
-      )
+      types.map((itemType) => searchType(query.trim(), itemType, controller.signal, options))
     )
     signal?.throwIfAborted()
     const matches: OfficialCatalogSearchResult['matches'] = []
@@ -110,49 +107,26 @@ function unavailableNotice(timedOut: boolean): string {
     : 'The Phi Website catalog is unavailable. Using the app’s verified catalog.'
 }
 
-function catalogOrigin(baseUrl: string): string {
-  const url = new URL(baseUrl)
-  if (
-    url.protocol !== 'https:' ||
-    url.username ||
-    url.password ||
-    url.pathname !== '/' ||
-    url.search ||
-    url.hash
-  ) {
-    throw new Error('Invalid official catalog origin')
-  }
-  return url.origin
-}
-
 async function searchType(
   query: string,
   type: PackageType,
-  origin: string,
   signal: AbortSignal,
-  fetcher: typeof fetch
+  options: OfficialCatalogApiOptions
 ): Promise<{ ids: string[]; truncated: boolean }> {
   const ids = new Set<string>()
   for (let currentPage = 1; currentPage <= MAX_PAGES; currentPage += 1) {
     signal.throwIfAborted()
-    const url = new URL(ROUTES[type], origin)
-    url.searchParams.set('q', query)
-    url.searchParams.set('page', String(currentPage))
-    url.searchParams.set('pageSize', String(PAGE_SIZE))
-    const response = await abortable(
-      fetcher(url.href, {
-        method: 'GET',
-        headers: { accept: 'application/json' },
-        redirect: 'error',
-        signal
-      }),
-      signal
+    const params = new URLSearchParams({
+      q: query,
+      page: String(currentPage),
+      pageSize: String(PAGE_SIZE)
+    })
+    const value = await fetchOfficialWebsiteJson(
+      `${ROUTES[type]}?${params.toString()}`,
+      MAX_PAGE_BYTES,
+      { ...options, signal }
     )
-    if (!response.ok) throw new Error('Official catalog request failed')
-    if (response.url && new URL(response.url).origin !== origin) {
-      throw new Error('Unexpected catalog response origin')
-    }
-    const page = parsePage(await boundedJson(response, signal), currentPage)
+    const page = parsePage(value, currentPage)
     for (const item of page.items) {
       if (type === 'mcp' && item.catalogInstallable === false) continue
       const itemIds =
@@ -259,52 +233,4 @@ function wrapperId(kind: string, provider: string, names: string[]): string {
     .replace(/[^a-z0-9-]/g, '-')
     .replace(/-+/g, '-')
     .replace(/-$/, '')
-}
-
-async function boundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
-  const declaredSize = Number(response.headers.get('content-length'))
-  if (declaredSize > MAX_PAGE_BYTES || !response.body) {
-    void response.body?.cancel().catch(() => {})
-    throw new Error('Invalid official catalog response size')
-  }
-  const reader = response.body.getReader()
-  const cancel = (): void => {
-    void reader.cancel(signal.reason).catch(() => {})
-  }
-  signal.addEventListener('abort', cancel, { once: true })
-  const decoder = new TextDecoder('utf-8', { fatal: true })
-  let size = 0
-  let body = ''
-  try {
-    while (true) {
-      const chunk = await abortable(reader.read(), signal)
-      signal.throwIfAborted()
-      if (chunk.done) break
-      size += chunk.value.byteLength
-      if (size > MAX_PAGE_BYTES) {
-        void reader.cancel().catch(() => {})
-        throw new Error('Official catalog response is too large')
-      }
-      body += decoder.decode(chunk.value, { stream: true })
-    }
-    body += decoder.decode()
-    return JSON.parse(body)
-  } finally {
-    signal.removeEventListener('abort', cancel)
-    reader.releaseLock()
-  }
-}
-
-async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  signal.throwIfAborted()
-  let abort: (() => void) | undefined
-  const aborted = new Promise<never>((_resolve, reject) => {
-    abort = () => reject(signal.reason)
-    signal.addEventListener('abort', abort, { once: true })
-  })
-  try {
-    return await Promise.race([operation, aborted])
-  } finally {
-    if (abort) signal.removeEventListener('abort', abort)
-  }
 }

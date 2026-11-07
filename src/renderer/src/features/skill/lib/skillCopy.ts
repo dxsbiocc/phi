@@ -8,6 +8,7 @@ export const skillCopy = defineCopy(
     loadingSkills: 'Loading skills',
     loadingInstalled: 'Loading installed skills',
     loadingCatalog: 'Loading Phi Packages and local catalogs',
+    loadingWebsiteCatalog: 'Loading the Phi Website skill catalog',
     noSkills: 'No skills found',
     noDescription: 'No description provided for this skill.',
     remoteTrustManaged: 'Manage server project skill trust from the detail page',
@@ -60,6 +61,9 @@ export const skillCopy = defineCopy(
     emptySources: 'Known sources have no installable skill packages',
     readCatalogFailed: (reason: string): string => `Could not read the local catalog: ${reason}`,
     installFailed: (reason: string): string => `Could not install the skill package: ${reason}`,
+    installSourceUnavailable: 'Unavailable',
+    websiteUnavailableFallback:
+      'The Phi Website catalog is temporarily unavailable. Showing the flat package registry instead.',
     uninstalling: 'Uninstalling…'
   },
   {
@@ -69,6 +73,7 @@ export const skillCopy = defineCopy(
     loadingSkills: '正在加载技能',
     loadingInstalled: '正在加载已安装技能',
     loadingCatalog: '正在加载 Phi Packages 和本地目录',
+    loadingWebsiteCatalog: '正在加载 Phi 官网技能目录',
     noSkills: '未找到技能',
     noDescription: '此技能未提供说明。',
     remoteTrustManaged: '请在详情页管理服务器项目技能信任',
@@ -120,6 +125,8 @@ export const skillCopy = defineCopy(
     emptySources: '已知软件源中没有可安装的技能包',
     readCatalogFailed: (reason: string): string => `无法读取本地目录：${reason}`,
     installFailed: (reason: string): string => `无法安装技能包：${reason}`,
+    installSourceUnavailable: '暂不可用',
+    websiteUnavailableFallback: 'Phi 官网目录暂时不可用，现显示软件包注册表的平铺列表。',
     uninstalling: '正在卸载…'
   }
 )

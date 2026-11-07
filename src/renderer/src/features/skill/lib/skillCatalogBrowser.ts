@@ -13,6 +13,10 @@ import type {
 import { CATALOG_DEFAULT_PAGE_SIZE } from '../../../components/catalog/catalogPaging'
 import { catalogPackages } from '../../../lib/contentCatalog'
 import type { SkillSummary } from '../../../types'
+import type {
+  PhiSkillCatalogGroup,
+  PhiSkillCatalogItem
+} from '../../../../../shared/phiWebsiteCatalogTypes'
 
 export type SkillCatalogPackage = PackageRegistryEntryView & {
   registryDir?: string
@@ -25,6 +29,33 @@ export interface SkillCatalogGroup {
   id: string
   label: string
   count: number
+}
+
+/** Website purpose groups are presentation data: keep their declared order and labels unchanged. */
+export function officialSkillCatalogGroups(
+  groups: readonly PhiSkillCatalogGroup[]
+): SkillCatalogGroup[] {
+  return groups.map(({ id, label, count }) => ({ id, label, count }))
+}
+
+/** Registry fallback deliberately has no locally inferred purpose groups. */
+export function fallbackSkillCatalogGroups(count: number): SkillCatalogGroup[] {
+  return [{ id: 'all', label: skillCopy.allSkills, count }]
+}
+
+export function resolveSkillCatalogGroupId(
+  groups: readonly Pick<SkillCatalogGroup, 'id'>[],
+  requested: string
+): string {
+  return groups.some(({ id }) => id === requested) ? requested : (groups[0]?.id ?? 'all')
+}
+
+/** Browse metadata never becomes installation metadata; only an exact registry id match can install. */
+export function registryPackageForOfficialSkill(
+  item: Pick<PhiSkillCatalogItem, 'id'>,
+  packages: readonly SkillCatalogPackage[]
+): SkillCatalogPackage | undefined {
+  return packages.find((entry) => entry.id === item.id)
 }
 
 export function knownSkillCatalogPackages(
@@ -124,7 +155,13 @@ export interface SkillCatalogBrowserState {
 export type SkillCatalogBrowserAction =
   | { type: 'group'; groupId: string }
   | { type: 'query'; query: string }
-  | { type: 'reconcile'; groupIds: readonly string[]; ready: boolean; page: number }
+  | {
+      type: 'reconcile'
+      groupIds: readonly string[]
+      fallbackGroupId?: string
+      ready: boolean
+      page: number
+    }
   | { type: 'page'; page: number }
   | { type: 'page-size'; rowsPerPage: number }
   | { type: 'close' }
@@ -147,7 +184,8 @@ export function skillCatalogBrowserReducer(
       return { ...state, query: action.query, page: 0 }
     case 'reconcile':
       if (!action.ready) return state
-      if (!action.groupIds.includes(state.groupId)) return { ...state, groupId: 'all', page: 0 }
+      if (!action.groupIds.includes(state.groupId))
+        return { ...state, groupId: action.fallbackGroupId ?? 'all', page: 0 }
       return state.page === action.page ? state : { ...state, page: action.page }
     case 'page':
       return { ...state, page: action.page }

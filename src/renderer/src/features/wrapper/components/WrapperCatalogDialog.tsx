@@ -22,6 +22,7 @@ import {
 } from '../../../components/catalog/catalogPaging'
 import {
   filterWrapperCatalogChoices,
+  flatWrapperCatalogGroups,
   wrapperCatalogChoices,
   wrapperChoiceAction,
   wrapperChoiceIcon,
@@ -34,6 +35,7 @@ import { summarizeWrapperInstallPlan, type WrapperInstallSummary } from '../lib/
 import { useWrapperRemoval } from '../hooks/useWrapperRemoval'
 import type { SnackbarSeverity } from '../../../components/AppSnackbarCard'
 import { WrapperInstallConfirmDialog } from './WrapperInstallConfirmDialog'
+import { OfficialWrapperCatalog } from './OfficialWrapperCatalog'
 import { WrapperPackageDetailPage } from './WrapperPackageDetailPage'
 import { WrapperRemovalDialog } from './WrapperRemovalDialog'
 
@@ -57,6 +59,7 @@ export function WrapperCatalogDialog({
   onNotify
 }: WrapperCatalogDialogProps): React.JSX.Element {
   const language = useUiLanguage()
+  const websiteCatalogApi = typeof window === 'undefined' ? {} : window.api
   const [query, setQuery] = useState('')
   const [groupId, setGroupId] = useState('all')
   const [page, setPage] = useState(0)
@@ -67,6 +70,7 @@ export function WrapperCatalogDialog({
   const busy = useBusyKeys()
   const [error, setError] = useState<string | null>(null)
   const [sourceNotice, setSourceNotice] = useState<string | null>(null)
+  const [catalogMode, setCatalogMode] = useState<'official' | 'fallback'>('official')
   const [detailId, setDetailId] = useState<string | null>(null)
   const [pendingInstall, setPendingInstall] = useState<{
     choice: WrapperCatalogChoice
@@ -134,19 +138,37 @@ export function WrapperCatalogDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Copy proxy reads depend on the UI language.
     [choices, language]
   )
+  const fallbackGroups = useMemo(
+    () => flatWrapperCatalogGroups(choices),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Copy proxy reads depend on the UI language.
+    [choices, language]
+  )
   const selectedGroupId = groups.some((group) => group.id === groupId) ? groupId : 'all'
   if (groupId !== selectedGroupId) {
     setGroupId(selectedGroupId)
     setPage(0)
   }
   const filtered = useMemo(
-    () => filterWrapperCatalogChoices(choices, query, selectedGroupId),
-    [choices, query, selectedGroupId]
+    () =>
+      filterWrapperCatalogChoices(
+        choices,
+        query,
+        catalogMode === 'fallback' ? 'all' : selectedGroupId
+      ),
+    [catalogMode, choices, query, selectedGroupId]
   )
   const result = getCatalogPage(filtered, groupId === selectedGroupId ? page : 0, rowsPerPage)
   if (!loading && page !== result.page) setPage(result.page)
   const visibleChoices = result.rows
   const detailChoice = detailId ? choices.find((choice) => choice.id === detailId) : undefined
+
+  const showRegistryFallback = useCallback((): void => {
+    setCatalogMode('fallback')
+    setDetailId(null)
+    setGroupId('all')
+    setQuery('')
+    setPage(0)
+  }, [])
 
   async function add(choice: WrapperCatalogChoice, confirmed = false): Promise<void> {
     if (busy.has(choice.id)) return
@@ -197,12 +219,13 @@ export function WrapperCatalogDialog({
     const { label, kind } = wrapperChoiceAction(choice)
     const removing = kind === 'remove'
     const working = busy.has(choice.id) || removal.busyId === choice.id
+    const missingRegistryEntry = !choice.installed && !choice.registryEntry
     return (
       <Button
         size="small"
         variant="outlined"
         color={removing ? 'error' : 'primary'}
-        disabled={working}
+        disabled={working || missingRegistryEntry}
         onClick={() => void (removing ? removal.request(choice.id) : add(choice))}
         aria-label={`${label} ${choice.title}`}
       >
@@ -233,6 +256,7 @@ export function WrapperCatalogDialog({
     setPendingInstall(null)
     setLoading(true)
     setError(null)
+    setCatalogMode('official')
     setPage(0)
     setRowsPerPage(CATALOG_DEFAULT_PAGE_SIZE)
     setGroupId('all')
@@ -252,7 +276,44 @@ export function WrapperCatalogDialog({
         }
       }}
     >
-      {detailChoice ? (
+      {catalogMode === 'official' ? (
+        <OfficialWrapperCatalog
+          key={open ? 'open' : 'closed'}
+          open={open}
+          api={websiteCatalogApi}
+          registryChoices={choices}
+          registryLoading={loading}
+          busy={busy.any || removal.removing}
+          actions={
+            <CatalogAddButton
+              label={wrapperCopy.addDirectory}
+              disabled={busy.has(DIRECTORY_KEY)}
+              onClick={() => void chooseDirectory()}
+            />
+          }
+          feedback={
+            <>
+              {(error ?? (!onNotify ? removal.error : null)) ? (
+                <Alert
+                  severity="error"
+                  sx={{ mb: 2 }}
+                  onClose={error ? undefined : removal.clearError}
+                >
+                  {localizeWrapperMessage(error ?? removal.error ?? '')}
+                </Alert>
+              ) : null}
+              {sourceNotice ? (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  {sourceNotice}
+                </Alert>
+              ) : null}
+            </>
+          }
+          renderAction={renderAction}
+          onUnavailable={showRegistryFallback}
+          onClose={close}
+        />
+      ) : detailChoice ? (
         <WrapperPackageDetailPage
           choice={detailChoice}
           catalog={catalog}
@@ -263,12 +324,9 @@ export function WrapperCatalogDialog({
         <CatalogBrowseLayout
           title={resourceUi.wrappers}
           closeLabel={wrapperCopy.closeCatalog}
-          groups={groups}
-          selectedGroupId={selectedGroupId}
-          onGroupChange={(id) => {
-            setGroupId(id)
-            setPage(0)
-          }}
+          groups={fallbackGroups}
+          selectedGroupId="all"
+          onGroupChange={() => undefined}
           query={query}
           onQueryChange={(value) => {
             setQuery(value)
@@ -301,6 +359,9 @@ export function WrapperCatalogDialog({
             ) : null
           }
         >
+          <Alert severity="info" variant="outlined" sx={{ mb: 2 }}>
+            {wrapperCopy.websiteCatalogUnavailable}
+          </Alert>
           {(error ?? (!onNotify ? removal.error : null)) ? (
             <Alert severity="error" sx={{ mb: 2 }} onClose={error ? undefined : removal.clearError}>
               {localizeWrapperMessage(error ?? removal.error ?? '')}

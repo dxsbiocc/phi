@@ -5,11 +5,20 @@ import { dialog, type BrowserWindow, type IpcMain } from 'electron'
 
 import { errorMessage } from '../../shared/errorCodes'
 import { IPC } from '../../shared/ipcChannels'
+import type {
+  PhiWrapperGroupsQuery,
+  PhiWrapperToolsQuery
+} from '../../shared/phiWebsiteCatalogTypes'
 import { declaredExternalOutputRoot } from '../../shared/wrapperResultTypes'
 import type { WrapperRetargetRequest, WrapperSubmitConfirmation } from '../../shared/wrapperTypes'
 import { writeAppLog } from '../agent/app-logger'
 import { readAppSettings } from '../agent/app-settings'
 import type { EnvironmentBuilds } from '../agent/content/environment-builds'
+import {
+  getOfficialWebsiteWrapperDetail,
+  getOfficialWebsiteWrapperGroups,
+  getOfficialWebsiteWrapperTools
+} from '../agent/packages/official-website-catalog'
 import { listProjects } from '../agent/projects'
 import { isRemoteProjectAnchorPath } from '../agent/remote-project-anchor'
 import type { RemoteProjectUploadService } from '../agent/remote-project-upload'
@@ -257,6 +266,16 @@ function registerWrapperPlanCatalogIpc(context: WrapperPlanIpcContext): void {
   const ipcMain = context.ipcMain
   const AGENT_DIR = context.agentDir
   const logUnexpectedError = context.logUnexpectedError
+
+  ipcMain.handle(IPC.wrappers.catalogGroups, async (_, query: unknown) =>
+    getOfficialWebsiteWrapperGroups(query as PhiWrapperGroupsQuery)
+  )
+  ipcMain.handle(IPC.wrappers.catalogTools, async (_, query: unknown) =>
+    getOfficialWebsiteWrapperTools(query as PhiWrapperToolsQuery)
+  )
+  ipcMain.handle(IPC.wrappers.catalogDetail, async (_, id: unknown) =>
+    getOfficialWebsiteWrapperDetail(id as string)
+  )
 
   ipcMain.handle(IPC.wrappers.cancelPlan, async (_, planId: string) => {
     try {

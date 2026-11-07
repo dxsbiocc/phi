@@ -10,8 +10,9 @@ import {
   type HttpConnectorManifest,
   type McpPackageManifest
 } from './manifest'
+import { OFFICIAL_WEBSITE_BASE_URL } from './official-website-transport'
 
-export const OFFICIAL_CONNECTOR_ORIGIN = 'https://phi.omicsagent.cn'
+export const OFFICIAL_CONNECTOR_ORIGIN = OFFICIAL_WEBSITE_BASE_URL
 const MAX_ITEMS = 500
 const MAX_RESPONSE_BYTES = 512 * 1024
 const MAX_ICON_BYTES = 256 * 1024

@@ -58,6 +58,12 @@ export function hookHarness<State>(
   const sameDeps = (left: readonly unknown[], right: readonly unknown[]): boolean =>
     left.length === right.length && left.every((value, index) => Object.is(value, right[index]))
   const react = {
+    createContext<T>(value: T): { Provider: string; _currentValue: T } {
+      return { Provider: 'ContextProvider', _currentValue: value }
+    },
+    useContext<T>(context: { _currentValue: T }): T {
+      return context._currentValue
+    },
     useState<T>(initial: T | (() => T)): [T, (value: T | ((current: T) => T)) => void] {
       const index = cursor++
       if (!slots[index]) {

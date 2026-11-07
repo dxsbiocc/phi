@@ -4,6 +4,7 @@ import type { IpcMain } from 'electron'
 
 import type { EnablementScope } from '../../shared/enablementTypes'
 import { IPC } from '../../shared/ipcChannels'
+import type { PhiSkillGroupsQuery, PhiSkillListQuery } from '../../shared/phiWebsiteCatalogTypes'
 import {
   loadRemoteProjectSkillCatalog,
   readRemoteProjectSkillContent,
@@ -24,6 +25,11 @@ import {
   listHomeSkillImportCandidates,
   parseHomeSkillImportSelections
 } from '../agent/packages/home-skill-import'
+import {
+  getOfficialWebsiteSkillDetail,
+  getOfficialWebsiteSkillGroups,
+  getOfficialWebsiteSkills
+} from '../agent/packages/official-website-catalog'
 import {
   deleteSkill,
   listSkills,
@@ -122,6 +128,7 @@ function registerSkillResourcesIpc(context: SkillsIpcOptions): void {
   const remoteSkillProjectContext = context.workspace.remoteSkillProjectContext
   const listRemoteProjectSkills = context.workspace.listRemoteProjectSkills
   const invalidateAgentSession = context.lifecycle.invalidateAgentSession
+  registerOfficialSkillCatalogIpc(ipcMain)
   ipcMain.handle(IPC.skills.list, async (_, cwd?: string) =>
     isRemoteResourceScope(cwd)
       ? listRemoteProjectSkills(cwd)
@@ -191,4 +198,16 @@ function registerSkillResourcesIpc(context: SkillsIpcOptions): void {
     }
     return result
   })
+}
+
+function registerOfficialSkillCatalogIpc(ipcMain: SkillsIpcOptions['ipcMain']): void {
+  ipcMain.handle(IPC.skills.catalogGroups, async (_, query: unknown) =>
+    getOfficialWebsiteSkillGroups(query as PhiSkillGroupsQuery)
+  )
+  ipcMain.handle(IPC.skills.catalogList, async (_, query: unknown) =>
+    getOfficialWebsiteSkills(query as PhiSkillListQuery)
+  )
+  ipcMain.handle(IPC.skills.catalogDetail, async (_, slug: unknown) =>
+    getOfficialWebsiteSkillDetail(slug as string)
+  )
 }

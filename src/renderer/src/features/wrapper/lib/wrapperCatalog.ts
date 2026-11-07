@@ -162,3 +162,10 @@ export function wrapperCatalogGroups(
       }))
   ]
 }
+
+/** Registry fallback intentionally stays flat; website grouping is never reconstructed locally. */
+export function flatWrapperCatalogGroups(
+  choices: readonly WrapperCatalogChoice[]
+): CatalogBrowseGroup[] {
+  return [{ id: 'all', label: wrapperCopy.allWrappers, count: choices.length }]
+}

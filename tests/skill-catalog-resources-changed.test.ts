@@ -5,14 +5,22 @@ import type { SkillCatalogState } from '../src/renderer/src/features/skill/hooks
 import type { SkillCatalogDialogProps } from '../src/renderer/src/features/skill/components/SkillCatalogDialog'
 import type { PromptAgentSummary, SkillSummary } from '../src/renderer/src/types'
 import type { PackageRegistryView } from '../src/shared/packageManagerTypes'
+import type {
+  PhiSkillCatalogDetail,
+  PhiSkillCatalogItem,
+  PhiSkillGroupsPage,
+  PhiSkillListPage
+} from '../src/shared/phiWebsiteCatalogTypes'
 import { loadContentCatalog } from '../src/renderer/src/lib/contentCatalog'
 import * as resourceUi from '../src/renderer/src/lib/resourceUi'
 import { skillCopy } from '../src/renderer/src/features/skill/lib/skillCopy'
 import * as skillCatalogBrowser from '../src/renderer/src/features/skill/lib/skillCatalogBrowser'
+import type { OfficialSkillCatalogState } from '../src/renderer/src/features/skill/hooks/useOfficialSkillCatalog'
 import { getCatalogPage } from '../src/renderer/src/components/catalog/catalogPaging'
 import { deferred, flush, hookHarness, type Deferred } from './helpers/resourceCatalogHarness'
 
 const hookPath = 'src/renderer/src/features/skill/hooks/useSkillCatalog.ts'
+const officialHookPath = 'src/renderer/src/features/skill/hooks/useOfficialSkillCatalog.ts'
 const dialogPath = 'src/renderer/src/features/skill/components/SkillCatalogDialog.tsx'
 
 function installedSkill(id: string): SkillSummary {
@@ -199,7 +207,18 @@ function registry(count: number): PackageRegistryView {
   }
 }
 
-function dialogImports(): Record<string, unknown> {
+const unavailableOfficialCatalog: OfficialSkillCatalogState = {
+  status: 'unavailable',
+  groups: [],
+  selectedGroupId: 'science',
+  page: null,
+  isLoading: false,
+  markUnavailable: () => undefined
+}
+
+function dialogImports(
+  officialCatalog: OfficialSkillCatalogState = unavailableOfficialCatalog
+): Record<string, unknown> {
   const jsx = (type: string, props: Record<string, unknown>): View => ({ type, props })
   return {
     'react/jsx-runtime': { jsx, jsxs: jsx },
@@ -234,11 +253,254 @@ function dialogImports(): Record<string, unknown> {
     '../../../components/catalog/CatalogResultsTable': { CatalogResultsTable: 'Results' },
     '../../../components/catalog/packageSize': { formatPackageSize: () => '64 B' },
     './SkillPackageDetailPage': { SkillPackageDetailPage: 'Detail' },
+    './OfficialSkillDetailPage': { OfficialSkillDetailPage: 'OfficialDetail' },
+    '../hooks/useOfficialSkillCatalog': {
+      useOfficialSkillCatalog: () => officialCatalog
+    },
     '../lib/skillCatalogBrowser': skillCatalogBrowser,
     '../../../lib/resourceUi': resourceUi,
     '../lib/skillCopy': { skillCopy }
   }
 }
+
+const officialGroups: PhiSkillGroupsPage = {
+  view: 'groups',
+  items: [
+    { id: 'nextflow', label: '工作流', count: 12 },
+    { id: 'science', label: '科学分析', count: 18 }
+  ],
+  total: 2,
+  page: 1,
+  pageSize: 100,
+  pageCount: 1
+}
+
+function officialSkill(id: string, group: 'science' | 'nextflow' = 'science'): PhiSkillCatalogItem {
+  return {
+    id,
+    slug: id,
+    kind: 'skill',
+    title: `Website ${id}`,
+    description: `Website description for ${id}`,
+    path: `resources/skills/${id}`,
+    version: '2.0.0',
+    sizeBytes: 2048,
+    sizeLabel: '2 KB',
+    source: 'Phi Packages',
+    group,
+    groupLabel: group === 'science' ? '科学分析' : '工作流'
+  }
+}
+
+function officialPage(
+  item: PhiSkillCatalogItem,
+  overrides: Partial<PhiSkillListPage> = {}
+): PhiSkillListPage {
+  return {
+    view: 'group',
+    group: item.group,
+    groupLabel: item.groupLabel,
+    groups: officialGroups.items,
+    items: [item],
+    total: 1,
+    page: 1,
+    pageSize: 10,
+    pageCount: 1,
+    ...overrides
+  }
+}
+
+test('skill browsing uses website groups in API order and sends group, search and paging to the server', async () => {
+  const groupQueries: unknown[] = []
+  const listQueries: Array<Record<string, unknown>> = []
+  const args = [
+    {
+      open: true,
+      revision: 1,
+      requestedGroupId: 'missing',
+      query: '',
+      page: 0,
+      pageSize: 10
+    }
+  ]
+  const harness = hookHarness<OfficialSkillCatalogState>(
+    officialHookPath,
+    'useOfficialSkillCatalog',
+    {
+      listOfficialSkillGroups: async (query: unknown) => {
+        // Copy into this realm: the hook runs in a separate VM context.
+        groupQueries.push({ ...(query as object) })
+        return { status: 'available', data: officialGroups }
+      },
+      listOfficialSkills: async (query: Record<string, unknown>) => {
+        listQueries.push({ ...query })
+        const group = query.group as 'science' | 'nextflow'
+        return {
+          status: 'available',
+          data: officialPage(officialSkill(group === 'science' ? 'science-01' : 'workflow-01', group), {
+            total: 27,
+            page: Number(query.page),
+            pageSize: Number(query.pageSize),
+            pageCount: 3
+          })
+        }
+      }
+    },
+    args,
+    { '../lib/skillCatalogBrowser': skillCatalogBrowser }
+  )
+
+  harness.read()
+  await flush()
+  harness.read()
+  await flush()
+  let state = harness.read()
+  assert.deepEqual(groupQueries, [{ page: 1, pageSize: 100 }])
+  assert.deepEqual(listQueries[0], { group: 'nextflow', page: 1, pageSize: 10 })
+  assert.deepEqual(state.groups, officialGroups.items)
+
+  args[0] = { ...args[0], requestedGroupId: 'science', query: 'single cell' }
+  harness.read()
+  await flush()
+  state = harness.read()
+  assert.deepEqual(listQueries.at(-1), {
+    group: 'science',
+    q: 'single cell',
+    page: 1,
+    pageSize: 10
+  })
+  assert.equal(state.page?.items[0].title, 'Website science-01')
+  args[0] = { ...args[0], page: 1 }
+  harness.read()
+  await flush()
+  state = harness.read()
+  assert.deepEqual(listQueries.at(-1), {
+    group: 'science',
+    q: 'single cell',
+    page: 2,
+    pageSize: 10
+  })
+  assert.equal(state.page?.total, 27)
+  harness.unmount()
+
+  const websiteState: OfficialSkillCatalogState = {
+    status: 'available',
+    groups: officialGroups.items,
+    selectedGroupId: 'nextflow',
+    page: officialPage(officialSkill('workflow-01', 'nextflow'), { total: 27, pageCount: 3 }),
+    isLoading: false,
+    markUnavailable: () => undefined
+  }
+  const dialog = hookHarness<View>(
+    dialogPath,
+    'SkillCatalogDialog',
+    {
+      readOfficialContentCatalog: async () => registry(3),
+      listPackageRegistries: async () => [],
+      listPackageUpdates: async () => [],
+      listInstalledPackages: async () => []
+    },
+    [{ open: true, skills: [], onClose: () => undefined } satisfies SkillCatalogDialogProps],
+    dialogImports(websiteState)
+  )
+  const tree = dialog.read()
+  assert.deepEqual(view(tree, 'Browse').props.groups, officialGroups.items)
+  assert.equal(
+    (view(tree, 'Results').props.rows as Array<{ title: string }>)[0].title,
+    'Website workflow-01'
+  )
+  assert.equal(view(tree, 'Pagination').props.count, 27)
+  dialog.unmount()
+})
+
+test('an unavailable website skill catalog falls back to one quiet flat registry list', async () => {
+  const harness = hookHarness<View>(
+    dialogPath,
+    'SkillCatalogDialog',
+    {
+      listOfficialSkillGroups: async () => ({ status: 'unavailable' }),
+      listOfficialSkills: async () => {
+        throw new Error('A group list must not be requested after group discovery is unavailable')
+      },
+      readOfficialContentCatalog: async () => registry(2),
+      listPackageRegistries: async () => [],
+      listPackageUpdates: async () => [],
+      listInstalledPackages: async () => []
+    },
+    [{ open: true, skills: [], onClose: () => undefined } satisfies SkillCatalogDialogProps],
+    dialogImports()
+  )
+
+  harness.read()
+  await flush()
+  harness.read()
+  await flush()
+  const tree = harness.read()
+  assert.deepEqual(view(tree, 'Browse').props.groups, [
+    { id: 'all', label: 'All Skills', count: 2 }
+  ])
+  assert.deepEqual(
+    (view(tree, 'Results').props.rows as Array<{ title: string }>).map(({ title }) => title),
+    ['Science 01', 'Science 02']
+  )
+  assert.equal(
+    view(tree, 'Alert').props.children,
+    'The Phi Website catalog is temporarily unavailable. Showing the flat package registry instead.'
+  )
+  harness.unmount()
+})
+
+test('opening an official skill loads detail by slug from the website detail endpoint', async () => {
+  const detailCalls: string[] = []
+  const listItem = officialSkill('science-01', 'science')
+  const detail: PhiSkillCatalogDetail = {
+    kind: 'skill',
+    slug: listItem.slug,
+    title: 'Website detail title',
+    description: 'Detail description',
+    path: listItem.path,
+    version: '3.0.0',
+    sizeBytes: 4096,
+    sizeLabel: '4 KB',
+    source: 'Phi Packages',
+    markdown: '# Detail markdown',
+    frontmatter: { name: 'science-01' }
+  }
+  const websiteState: OfficialSkillCatalogState = {
+    status: 'available',
+    groups: [officialGroups.items[1]],
+    selectedGroupId: 'science',
+    page: officialPage(listItem),
+    isLoading: false,
+    markUnavailable: () => undefined
+  }
+  const harness = hookHarness<View>(
+    dialogPath,
+    'SkillCatalogDialog',
+    {
+      getOfficialSkillDetail: async (slug: string) => {
+        detailCalls.push(slug)
+        return { status: 'available', data: detail }
+      },
+      readOfficialContentCatalog: async () => registry(2),
+      listPackageRegistries: async () => [],
+      listPackageUpdates: async () => [],
+      listInstalledPackages: async () => []
+    },
+    [{ open: true, skills: [], onClose: () => undefined } satisfies SkillCatalogDialogProps],
+    dialogImports(websiteState)
+  )
+
+  harness.read()
+  let tree = harness.read()
+  ;(view(tree, 'Results').props.onOpen as (id: string) => void)('science-01')
+  harness.read()
+  await flush()
+  tree = harness.read()
+  assert.deepEqual(detailCalls, ['science-01'])
+  assert.deepEqual(view(tree, 'OfficialDetail').props.detail, detail)
+  harness.unmount()
+})
 
 test('the open skill catalog forces website refresh and updates installation state without resetting search, group or page', async () => {
   const events = resourceEvents()
@@ -277,7 +539,7 @@ test('the open skill catalog forces website refresh and updates installation sta
   await flush()
   let tree = harness.read()
   ;(view(tree, 'Browse').props.onQueryChange as (query: string) => void)('science')
-  ;(view(tree, 'Browse').props.onGroupChange as (group: string) => void)('category:分析')
+  ;(view(tree, 'Browse').props.onGroupChange as (group: string) => void)('all')
   tree = harness.read()
   ;(view(tree, 'Pagination').props.onPageChange as (page: number) => void)(1)
   tree = harness.read()
@@ -289,7 +551,7 @@ test('the open skill catalog forces website refresh and updates installation sta
   tree = harness.read()
   assert.deepEqual(forced, [true, true])
   assert.equal(view(tree, 'Browse').props.query, 'science')
-  assert.equal(view(tree, 'Browse').props.selectedGroupId, 'category:分析')
+  assert.equal(view(tree, 'Browse').props.selectedGroupId, 'all')
   assert.equal(view(tree, 'Browse').props.page, 1)
   assert.equal(view(tree, 'Pagination').props.count, 26)
   const rows = view(tree, 'Results').props.rows as Array<{ id: string; action: View }>
@@ -368,27 +630,24 @@ test('language switching retains the open skill catalog query, group, page and l
     harness.read()
     await flush()
     let tree = harness.read()
-    ;(view(tree, 'Browse').props.onQueryChange as (query: string) => void)('Scientific Analysis')
-    ;(view(tree, 'Browse').props.onGroupChange as (group: string) => void)('category:科学分析')
+    ;(view(tree, 'Browse').props.onQueryChange as (query: string) => void)('science')
+    ;(view(tree, 'Browse').props.onGroupChange as (group: string) => void)('all')
     tree = harness.read()
     ;(view(tree, 'Pagination').props.onPageChange as (page: number) => void)(1)
     tree = harness.read()
     const groups = view(tree, 'Browse').props.groups as Array<{ id: string; label: string }>
-    assert.equal(
-      groups.find((group) => group.id === 'category:科学分析')?.label,
-      'Scientific Analysis'
-    )
+    assert.equal(groups.find((group) => group.id === 'all')?.label, 'All Skills')
     for (const [language, label] of [
-      ['zh-CN', '科学分析'],
-      ['en', 'Scientific Analysis']
+      ['zh-CN', '全部技能'],
+      ['en', 'All Skills']
     ] as const) {
       setUiLanguage(language)
       tree = harness.read()
-      assert.equal(view(tree, 'Browse').props.query, 'Scientific Analysis')
-      assert.equal(view(tree, 'Browse').props.selectedGroupId, 'category:科学分析')
+      assert.equal(view(tree, 'Browse').props.query, 'science')
+      assert.equal(view(tree, 'Browse').props.selectedGroupId, 'all')
       assert.equal(view(tree, 'Browse').props.page, 1)
       const translated = view(tree, 'Browse').props.groups as Array<{ id: string; label: string }>
-      assert.equal(translated.find((group) => group.id === 'category:科学分析')?.label, label)
+      assert.equal(translated.find((group) => group.id === 'all')?.label, label)
       const rows = view(tree, 'Results').props.rows as Array<{ id: string }>
       assert.equal(rows[0].id, 'science-11')
       assert.equal(reads, 1, 'a language change must not refetch or reset the loaded catalog')
