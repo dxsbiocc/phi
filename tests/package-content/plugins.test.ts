@@ -45,8 +45,14 @@ test('the public Visualization plugin validates without errors', () => {
 test('visualization details attribute phi-r to its skill and agent', () => {
   const item = buildPhiPluginListItem(publicVisualization())
 
-  const environment = item.usedEnvironments?.[0]
-  assert.equal(environment?.ref, 'phi:r@1')
+  // create-template declares no environment and runs in the default Python runtime.
+  assert.deepEqual(
+    item.usedEnvironments?.map((entry) => entry.ref),
+    ['phi:python@1', 'phi:r@1']
+  )
+  const python = item.usedEnvironments?.find((entry) => entry.ref === 'phi:python@1')
+  assert.deepEqual(python?.skillNames, ['create-template'])
+  const environment = item.usedEnvironments?.find((entry) => entry.ref === 'phi:r@1')
   assert.equal(environment?.name, 'phi-r')
   assert.equal(environment?.scope, 'builtin')
   assert.deepEqual(environment?.skillNames, ['omics-visualization'])
