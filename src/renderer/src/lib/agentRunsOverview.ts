@@ -62,6 +62,19 @@ function latestWrapperRunId(item: AgentExecutionItem): string | undefined {
   return undefined
 }
 
+/**
+ * The agent card with this id. A card shares its id with the tool message of the call that
+ * started it, so a plain lookup by id can land on that tool message instead.
+ */
+export function agentExecutionItemById(
+  items: readonly ChatItem[],
+  id: string
+): AgentExecutionItem | undefined {
+  return items.find(
+    (item): item is AgentExecutionItem => item.id === id && item.role === 'agent_execution'
+  )
+}
+
 export function runningAgentRuns(
   items: readonly ChatItem[],
   lost: ReadonlySet<string>

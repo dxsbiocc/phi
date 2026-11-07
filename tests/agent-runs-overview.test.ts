@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  agentExecutionItemById,
   agentRunLostKey,
   agentRunOverviewLabel,
   centeredScrollTop,
@@ -45,6 +46,15 @@ const card = (overrides: Partial<AgentExecutionItem> = {}): AgentExecutionItem =
 })
 
 // ── which agents are running ─────────────────────────────────────────────
+
+test('opening a run finds its agent card, not the tool message that shares its call id', () => {
+  const messages: ChatItem[] = [
+    { id: 'call-1', role: 'tool', toolName: 'agent', status: 'running' } as unknown as ChatItem,
+    card({ id: 'call-1' })
+  ]
+  assert.equal(agentExecutionItemById(messages, 'call-1')?.role, 'agent_execution')
+  assert.equal(agentExecutionItemById(messages, 'call-9'), undefined)
+})
 
 setUiLanguage('zh-CN')
 

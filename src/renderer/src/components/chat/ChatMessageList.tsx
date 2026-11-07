@@ -25,7 +25,7 @@ import { PlanRunRecord } from '../../features/plan/PlanRunPanel'
 import { planReviewShownInTranscript } from '../../features/plan/lib/planReview'
 import { PhiIcons } from '../../icons'
 import { chatContentMaxWidth } from '../../layout'
-import { runningAgentRuns } from '../../lib/agentRunsOverview'
+import { agentExecutionItemById, runningAgentRuns } from '../../lib/agentRunsOverview'
 import {
   activeProcessingGroupIndex,
   groupMessages,
@@ -454,8 +454,8 @@ const ChatMessageList = memo(function ChatMessageList({
 
   const openAgentSession = useCallback(
     (itemId: string): void => {
-      const item = messages.find((message) => message.id === itemId)
-      if (item?.role === 'agent_execution') onOpenAgentSession?.(item)
+      const item = agentExecutionItemById(messages, itemId)
+      if (item) onOpenAgentSession?.(item)
     },
     [messages, onOpenAgentSession]
   )
