@@ -99,6 +99,21 @@ test('website plugin detail validation keeps only the bounded renderer contract'
   assert.equal('url' in detail.scriptTools[0], false)
 })
 
+test('an unfamiliar script tool approval or a missing owner skill keeps the rest of the detail', () => {
+  const value = payload()
+  value.scriptTools = [
+    { name: 'demo_net', description: 'Calls out.', approval: 'network' },
+    { name: 'demo_write', description: 'Writes.', approval: 'write', skill: 'demo-skill' }
+  ]
+  const detail = validateOfficialWebsitePluginDetail(bytes(value), 'demo-plugin')
+
+  assert.deepEqual(detail.scriptTools, [
+    { name: 'demo_net', description: 'Calls out.' },
+    { name: 'demo_write', description: 'Writes.', approval: 'write', skillName: 'demo-skill' }
+  ])
+  assert.equal(detail.agents.length, 1)
+})
+
 test('website plugin detail validation caps strings and arrays', () => {
   const value = payload()
   value.title = 't'.repeat(1_000)

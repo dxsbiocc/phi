@@ -119,14 +119,19 @@ function namedDescription(value: unknown, path: string): { name: string; descrip
 function scriptTool(value: unknown, index: number): PhiPluginCatalogDetail['scriptTools'][number] {
   const path = `scriptTools[${index}]`
   if (!isRecord(value)) throw new Error(`${path} must be an object`)
-  if (!['read', 'write'].includes(String(value.approval))) {
-    throw new Error(`${path}.approval is invalid`)
-  }
+  // Approval and owner skill are display hints: an unfamiliar value hides that hint only,
+  // so a new website field value never blanks the whole detail.
+  const approval =
+    value.approval === 'read' || value.approval === 'write' ? value.approval : undefined
+  const skillName =
+    typeof value.skill === 'string' && value.skill
+      ? requiredString(value.skill, `${path}.skill`, limits.identifier)
+      : undefined
   return {
     name: requiredString(value.name, `${path}.name`, limits.identifier),
     description: optionalString(value.description, `${path}.description`, limits.description) ?? '',
-    approval: value.approval as 'read' | 'write',
-    skillName: requiredString(value.skill, `${path}.skill`, limits.identifier)
+    ...(approval ? { approval } : {}),
+    ...(skillName ? { skillName } : {})
   }
 }
 

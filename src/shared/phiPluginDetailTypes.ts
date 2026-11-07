@@ -35,8 +35,8 @@ export interface PhiPluginCatalogDetail {
   scriptTools: Array<{
     name: string
     description: string
-    approval: 'read' | 'write'
-    skillName: string
+    approval?: 'read' | 'write'
+    skillName?: string
   }>
   environments: PhiPluginCatalogEnvironment[]
 }
