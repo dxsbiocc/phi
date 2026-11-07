@@ -51,3 +51,29 @@ test('kernel plan events project to the renderer plan-run event shape', () => {
     state
   })
 })
+
+test('a kernel agent-run finish is left to the agent-run host, so the notice is not shown twice', () => {
+  const projected: PhiAgentEvent[] = []
+  const binding = {
+    activeAgentRuns: 1,
+    sink: {
+      event: (value: PhiAgentEvent) => {
+        projected.push(value)
+      }
+    }
+  } as unknown as SessionBinding
+  const payload = { runId: 'run_1', agent: 'General', state: 'done' } as Record<string, JsonValue>
+  projectKernelEvent(
+    binding,
+    {
+      kind: 'event',
+      seq: 2,
+      type: 'agentRun.finished',
+      sessionId: 's',
+      payload
+    } as KernelEventFrame,
+    payload
+  )
+  assert.deepEqual(projected, [])
+  assert.equal(binding.activeAgentRuns, 0)
+})

@@ -40,10 +40,11 @@ export function projectKernelEvent(
     } as PhiAgentEvent)
     return
   }
+  // agentRun.finished is not forwarded: the agent-run host already records the finish on the
+  // conversation under the run's display name, and a second copy showed as a duplicate notice.
   const mapped: Record<string, string> = {
     'agentRun.started': 'agent_run_started',
     'agentRun.step': 'agent_run_step',
-    'agentRun.finished': 'agent_run_finished',
     'agentRun.reported': 'agent_run_reported',
     'interaction.cancelled': 'interaction_cancelled',
     'models.changed': 'model_changed'

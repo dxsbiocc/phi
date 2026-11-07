@@ -586,3 +586,43 @@ test('processing status text reports an interrupted run instead of completion', 
     '已中断，总共用时 59 秒'
   )
 })
+
+test('background finish notices fold with the run, not under the answer', () => {
+  const groups = groupMessages([
+    { id: 'user-1', role: 'user', content: '并行委派两个子智能体' },
+    { id: 'run-1', role: 'run', event: 'started', createdAt: '2026-11-07T05:18:50.000Z' },
+    {
+      id: 'tool-wait',
+      role: 'tool',
+      toolName: 'agent_wait',
+      argsPreview: '{}',
+      argsJson: '{}',
+      output: '',
+      status: 'done'
+    },
+    {
+      id: 'notice-1',
+      role: 'warning',
+      content: 'Omega 后台任务已完成',
+      backgroundJobNotice: { state: 'completed' }
+    },
+    {
+      id: 'notice-2',
+      role: 'warning',
+      content: 'Xi 后台任务已完成',
+      backgroundJobNotice: { state: 'completed' }
+    },
+    { id: 'answer-1', role: 'assistant', content: '两个都结束了。' },
+    { id: 'run-1-done', role: 'run', event: 'completed', createdAt: '2026-11-07T05:19:43.000Z' }
+  ])
+  const fold = groups.find((group) => group.kind === 'processing-group')
+  assert.deepEqual(fold?.kind === 'processing-group' ? fold.items.map((item) => item.id) : [], [
+    'tool-wait',
+    'notice-1',
+    'notice-2'
+  ])
+  assert.deepEqual(
+    groups.filter((group) => group.kind === 'single').map((group) => group.key),
+    ['user-1', 'answer-1']
+  )
+})
