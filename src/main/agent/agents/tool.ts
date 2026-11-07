@@ -139,9 +139,7 @@ export function agentDelegationToolDescription(
       ? ' Phi gives each run its own Greek-letter name (for example Gamma), returned with the run id.'
       : ''
   const role = definition.name === GENERAL_AGENT_NAME ? 'a general-purpose agent' : 'a specialist'
-  const routing =
-    'Routing: first decide whether delegation is needed; do small, direct work yourself. Delegate only substantial or independent work, or when parallel work helps. If delegation is needed, choose an existing specialist whose stated remit covers the task; otherwise use General. An explicit user request for a specific agent or for delegation overrides automatic routing.'
-  return `${definition.description}\n\n${routing}\n\nHands the task to the ${definition.name} agent, ${role} with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences.${naming} It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${images}${boundary}`
+  return `${definition.description}\n\nHands the task to the ${definition.name} agent, ${role} with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences.${naming} It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${images}${boundary}`
 }
 
 /**

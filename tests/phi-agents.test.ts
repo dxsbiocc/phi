@@ -887,10 +887,8 @@ test('the delegation tool is named after the agent, so the agent is the tool', (
   assert.equal(tool.name, 'Wrapper')
   assert.equal(tool.label, 'Wrapper')
   assert.match(tool.description, /Runs and creates Nextflow wrappers\./)
-  assert.match(tool.description, /first decide whether delegation is needed/i)
-  assert.match(tool.description, /small, direct work/i)
-  assert.match(tool.description, /stated remit.*otherwise use General/i)
-  assert.match(tool.description, /explicit user request.*overrides automatic routing/i)
+  // Routing order lives once in the leader prompt, not in every agent tool.
+  assert.doesNotMatch(tool.description, /Routing order|overrides automatic routing/i)
   assert.deepEqual((tool.parameters as { required: string[] }).required, ['task'])
   assert.equal(tool.approval, 'read')
   assert.equal((tool as { loadMode?: string }).loadMode, 'essential')
