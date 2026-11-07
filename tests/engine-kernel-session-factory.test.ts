@@ -5,7 +5,6 @@ import test from 'node:test'
 import {
   KernelSessionFactory,
   jsonSafeResourceSnapshot,
-  parseKernelEngineSwitch,
   type KernelSessionConnection
 } from '../src/main/agent/engine/kernel-session-factory'
 import { SessionRoutingEngine } from '../src/main/agent/engine/session-routing-engine'
@@ -20,18 +19,6 @@ import {
 } from '../src/main/agent/session/session-store'
 
 import { FakeKernelClient, legacyEngine, params } from './helpers/kernelSessionFactoryFake'
-
-test('kernel engine switch is captured from only the trusted documented values', () => {
-  assert.equal(parseKernelEngineSwitch(undefined), 'both')
-  assert.equal(parseKernelEngineSwitch(''), 'both')
-  assert.equal(parseKernelEngineSwitch('0'), 'off')
-  assert.equal(parseKernelEngineSwitch('off'), 'off')
-  assert.equal(parseKernelEngineSwitch('1'), 'both')
-  assert.equal(parseKernelEngineSwitch('local'), 'local')
-  assert.equal(parseKernelEngineSwitch('remote'), 'remote')
-  assert.equal(parseKernelEngineSwitch('both'), 'both')
-  assert.equal(parseKernelEngineSwitch('unexpected'), 'off')
-})
 
 test('trusted resource snapshots drop undefined recursively without changing the source', () => {
   const source = params('json-safe').phiAgents!
@@ -83,7 +70,6 @@ test('SessionRoutingEngine sends local sessions to one shared kernel and never p
     close: async () => undefined
   }
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => {
       launches += 1
       return connection
@@ -107,7 +93,6 @@ test('SessionRoutingEngine closes every routed session before stopping its kerne
   const client = new FakeKernelClient()
   let hostClosed = false
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => ({
       client,
       greeting: {
@@ -141,7 +126,6 @@ test('SessionRoutingEngine closes every routed session before stopping its kerne
 test('approval emitted immediately after create is delivered and uses trusted session identity', async () => {
   const client = new FakeKernelClient()
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => ({
       client,
       greeting: {
@@ -187,7 +171,6 @@ test('approval emitted immediately after create is delivered and uses trusted se
 test('kernel approval responses preserve denial reasons and ignore a late answer after cancellation', async () => {
   const client = new FakeKernelClient()
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => ({
       client,
       greeting: {
@@ -264,7 +247,6 @@ test('routed sessions advertise and invoke the engine decision evaluator', async
     }
   }
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => ({
       client,
       greeting: {
@@ -317,7 +299,6 @@ test('routed sessions advertise and invoke the engine decision evaluator', async
 test('persistent kernel history returns its journal path and reopens without model fallback', async () => {
   const client = new FakeKernelClient()
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => ({
       client,
       greeting: {
@@ -366,7 +347,6 @@ test('SessionRoutingEngine routes selected-turn fork to the local kernel and ret
   t.after(() => deletePhiSession(phi.sessionId))
   const client = new FakeKernelClient()
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => ({
       client,
       greeting: {
@@ -475,7 +455,6 @@ test('SessionRoutingEngine forks an attached remote kernel session on its server
   t.after(() => deletePhiSession(phi.sessionId))
   const client = new FakeKernelClient()
   const factory = new KernelSessionFactory({
-    mode: 'both',
     launchRemote: async () => ({
       client,
       greeting: {
@@ -515,7 +494,7 @@ test('SessionRoutingEngine forks an attached remote kernel session on its server
   // A desktop without this session attached cannot reach its server to fork it.
   const detached = new SessionRoutingEngine(
     legacyEngine(),
-    () => new KernelSessionFactory({ mode: 'both' })
+    () => new KernelSessionFactory({})
   )
   await assert.rejects(detached.history.fork(forkRequest), /远程会话尚未连接/)
 
@@ -523,7 +502,7 @@ test('SessionRoutingEngine forks an attached remote kernel session on its server
   // the source's remote project, not the local skill host.
   const forkHostParams: JsonValue[] = []
   factory.registerHostHandler('skills.scriptTools', (hostParams) => {
-    forkHostParams.push(hostParams)
+    forkHostParams.push(hostParams as JsonValue)
     return { tools: [] }
   })
   client.onFork = async (forkedSessionId) => {
@@ -570,7 +549,6 @@ test('factory stop rebinds host capabilities before same-client persistent reope
   let launches = 0
   let configurations = 0
   const factory = new KernelSessionFactory({
-    mode: 'local',
     hostCapabilities: ['modelAccess.credentials'],
     configureClient: (configured) => {
       configurations += 1
@@ -628,7 +606,6 @@ test('factory stop rebinds host capabilities before same-client persistent reope
 test('kernel host handlers receive session identity from the protocol context, not request params', async () => {
   const client = new FakeKernelClient()
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => ({
       client,
       greeting: {
@@ -665,7 +642,6 @@ test('kernel host handlers receive session identity from the protocol context, n
 test('a host capability registered after launch binds now and is advertised on the next hello', async () => {
   const client = new FakeKernelClient()
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => ({
       client,
       greeting: {
@@ -696,7 +672,6 @@ test('concurrent session.create calls cannot cross-wire trusted host identity', 
   const client = new FakeKernelClient()
   client.asyncCreate = true
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => ({
       client,
       greeting: {

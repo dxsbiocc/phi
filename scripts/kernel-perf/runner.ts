@@ -289,7 +289,6 @@ async function measureReady(input: {
   const once = async (record: boolean, index: number): Promise<void> => {
     let kernelReady = 0
     const factory = new KernelSessionFactory({
-      mode: 'local',
       launchLocal: async (_params, context) => {
         const started = performance.now()
         const launched = await launchLocalKernel({
@@ -359,7 +358,6 @@ async function measureWorkload(input: {
   let sampler: PeakTreeSampler | undefined
   let kernelPid: number | undefined
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async (_params, context) => {
       const launched = await launchLocalKernel({
         package: {

@@ -456,14 +456,10 @@ test('rejectsRoutedChange lets kernel sessions on either host change model and t
     runtimeRef: { kind: 'remote-omp' } as unknown as PhiSessionManifest['runtimeRef']
   })
 
-  assert.equal(rejectsRoutedChange('kernel-1', remoteKernel, owns, true), false)
-  assert.equal(rejectsRoutedChange('kernel-1', localKernel, owns, true), false)
-  assert.equal(rejectsRoutedChange('kernel-1', newRemote, owns, true), false)
-  assert.equal(rejectsRoutedChange('rpc-1', oldRpc, owns, true), true)
-  assert.equal(rejectsRoutedChange('rpc-1', newRemote, owns, false), true)
-  assert.equal(
-    rejectsRoutedChange('in-process', remoteKernel, () => false, false),
-    false
-  )
-  assert.equal(rejectsRoutedChange(undefined, oldRpc, owns, true), false)
+  assert.equal(rejectsRoutedChange('kernel-1', remoteKernel, owns), false)
+  assert.equal(rejectsRoutedChange('kernel-1', localKernel, owns), false)
+  assert.equal(rejectsRoutedChange('kernel-1', newRemote, owns), false)
+  assert.equal(rejectsRoutedChange('rpc-1', oldRpc, owns), true)
+  assert.equal(rejectsRoutedChange('in-process', remoteKernel, () => false), false)
+  assert.equal(rejectsRoutedChange(undefined, oldRpc, owns), false)
 })

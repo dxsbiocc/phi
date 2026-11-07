@@ -136,7 +136,6 @@ test('Node main launches a kernel-routed faux-provider run without loading the S
     {} as AppRemoteSessionRoutingDependencies
   )
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: launchers.launchLocal,
     hostCapabilities: launchers.hostCapabilities,
     configureClient: launchers.configureClient

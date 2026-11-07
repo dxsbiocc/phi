@@ -147,7 +147,6 @@ function sshEvidenceSteps(input: {
           '--out',
           join(input.attemptDirectory, `ssh-${scenario}.json`)
         ],
-        environment: { PHI_KERNEL_ENGINE: 'both' },
         deadlineMs: 50 * 60_000
       })
     ),
@@ -165,7 +164,6 @@ function sshEvidenceSteps(input: {
         '--candidate',
         input.candidateId
       ],
-      environment: { PHI_KERNEL_ENGINE: 'both' },
       deadlineMs: 120 * 60_000
     }
   ]
@@ -301,9 +299,9 @@ function leadCommands(input: {
   return [
     ...(['baseline', 'tools', 'plan', 'desktop-services', 'desktop-engine'] as const).map(
       (scenario) =>
-        `PHI_KERNEL_ENGINE=both bun scripts/kernel-e2e.ts --target ssh --host ${alias} --runtime-root ${input.runtimeRoot} --build-dir ${build} --scenario ${scenario} --deadline-min 45 < /dev/null`
+        `bun scripts/kernel-e2e.ts --target ssh --host ${alias} --runtime-root ${input.runtimeRoot} --build-dir ${build} --scenario ${scenario} --deadline-min 45 < /dev/null`
     ),
-    `PHI_KERNEL_ENGINE=both bun scripts/kernel-perf.ts --target ssh --host ${alias} --runtime-root ${input.runtimeRoot} --candidate ${input.candidateId} < /dev/null`,
+    `bun scripts/kernel-perf.ts --target ssh --host ${alias} --runtime-root ${input.runtimeRoot} --candidate ${input.candidateId} < /dev/null`,
     `bun run build:mac < /dev/null && bun scripts/check-kernel-package.ts --candidate ${input.candidateId} < /dev/null`
   ]
 }

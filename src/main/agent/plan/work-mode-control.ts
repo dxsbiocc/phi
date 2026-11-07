@@ -5,7 +5,6 @@ import {
   type SessionModeFields
 } from '../../../shared/sessionMode'
 import { validateSessionPermissionModeUpdate } from '../session/permission-mode-control'
-import { kernelEngineHandles, PHI_KERNEL_ENGINE_MODE } from '../engine/kernel-engine-switch'
 
 const SESSION_MODES = new Set<SessionMode>(['auto', 'ask', 'plan', 'plan_execute', 'full'])
 
@@ -24,20 +23,11 @@ export function validateSessionModeUpdate(
     phiSessionId?: string
     sessionGeneration: number
     projectLocation?: ProjectLocation
-  },
-  kernelHandlesRemote = kernelEngineHandles(PHI_KERNEL_ENGINE_MODE, true)
+  }
 ): SessionModeFields {
   const sessionMode = validateSessionMode(mode)
   const fields = fieldsFromMode(sessionMode)
   validateSessionPermissionModeUpdate(fields.permissionMode, target, current)
-  // Only the RPC rollback route lacks plan review on SSH; the kernel runs plans on either host.
-  if (
-    !kernelHandlesRemote &&
-    current.projectLocation?.kind === 'ssh' &&
-    (sessionMode === 'plan' || sessionMode === 'plan_execute')
-  ) {
-    throw new Error('远程项目暂不支持计划评审')
-  }
   return fields
 }
 

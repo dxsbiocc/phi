@@ -9,7 +9,6 @@ function routedKernelFactory(shape: 'local' | 'remote'): EngineFactory {
   return async (modelId): Promise<EngineFixture> => {
     const fixture = await createKernelFixture({ modelId })
     const factory = new KernelSessionFactory({
-      mode: shape,
       ...(shape === 'local'
         ? {
             launchLocal: async (_params, context) => {

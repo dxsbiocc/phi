@@ -4786,7 +4786,6 @@ async function harness(
     './agent/agents/remote-agent-request-context',
     './agent/agents/remote-agent-trust-request',
     './agent/content/remote-skill-trust-request',
-    './agent/engine/kernel-engine-switch',
     './agent/engine/kernel-client/local-package',
     './agent/engine/kernel-session-history',
     './agent/enablement-request',
@@ -4857,7 +4856,6 @@ async function harness(
     platform: process.platform,
     env: {
       PI_CODING_AGENT_DIR: '/isolated',
-      PHI_KERNEL_ENGINE: 'off',
       ELECTRON_RENDERER_URL: 'https://phi.internal'
     },
     versions: { node: '22.0.0', electron: '39.0.0' }

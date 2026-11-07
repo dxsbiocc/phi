@@ -42,8 +42,6 @@ import type {
 } from './agent-session-creation-contracts'
 import { createDefaultAgentSessionCreationServices } from './agent-session-creation-contracts'
 import { fieldsFromMode, modeFromFields } from '../../shared/sessionMode'
-import { kernelEngineHandles, PHI_KERNEL_ENGINE_MODE } from '../agent/engine/kernel-engine-switch'
-import { RuntimeReferenceError } from '../agent/session/runtime-reference'
 
 export type { AgentSessionCreationDeps } from './agent-session-creation-contracts'
 
@@ -77,20 +75,6 @@ class AgentSessionCreationService<
       ...ownership,
       dependencies: this.deps.context
     })
-  }
-
-  private readonly resolveSessionCreationRoute = (context: SessionCreationContext): boolean => {
-    const remote = context.remoteProject !== null
-    if (
-      context.sessionManifest?.kernelRuntimeRef &&
-      !kernelEngineHandles(PHI_KERNEL_ENGINE_MODE, remote)
-    ) {
-      throw new RuntimeReferenceError(
-        'REMOTE_OPERATION_REQUIRED',
-        '此会话由统一内核管理；请重新启用对应内核端或先执行回退。'
-      )
-    }
-    return remote && !kernelEngineHandles(PHI_KERNEL_ENGINE_MODE, true)
   }
 
   private readonly recordSessionCreationModelMigration = (
@@ -515,7 +499,7 @@ class AgentSessionCreationService<
     context.assertCurrent()
     await this.deps.state.lifecycles.waitForCleanup(context.snapshot)
     context.assertCurrent()
-    const useRpc = this.resolveSessionCreationRoute(context)
+    const useRpc = false
     const remoteContextFiles = context.remoteProject
       ? await this.deps.runtime.loadRemoteProjectInstructions(context.remoteProject.location)
       : null

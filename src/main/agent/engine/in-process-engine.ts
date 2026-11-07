@@ -144,10 +144,10 @@ const mirroredKernelHostHandlers = new Map<
 
 const routedFactory: RoutedSessionFactory = {
   handles(params) {
-    return Boolean(kernelFactory?.handles(params) || (params.remoteProject && remoteFactory))
+    return Boolean(kernelFactory || (params.remoteProject && remoteFactory))
   },
   create(params, signal, sink, control) {
-    if (kernelFactory?.handles(params)) return kernelFactory.create(params, signal, sink, control)
+    if (kernelFactory) return kernelFactory.create(params, signal, sink, control)
     if (params.remoteProject && remoteFactory) {
       return remoteFactory.create(params, signal, sink, control)
     }

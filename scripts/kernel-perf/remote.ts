@@ -237,7 +237,6 @@ export async function runRemoteKernelPerformance(input: {
       onLaunch: (launch: Awaited<ReturnType<typeof launchRemoteKernel>>) => void
     ): KernelSessionFactory => {
       const factory = new KernelSessionFactory({
-        mode: 'remote',
         launchRemote: async (_params, launchContext, signal) => {
           const launched = await launchRemoteKernel({
             session: ssh,

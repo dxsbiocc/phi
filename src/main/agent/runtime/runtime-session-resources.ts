@@ -1,15 +1,9 @@
 import type { CreateAgentSessionOptions, RuntimeResourceLoader } from './runtime-adapter'
-import { kernelEngineHandles, PHI_KERNEL_ENGINE_MODE } from '../engine/kernel-engine-switch'
 
 export function trustedKernelSessionIdentity(options: CreateAgentSessionOptions): {
   phiSessionId?: string
 } {
-  if (
-    !options.phiSessionId ||
-    !kernelEngineHandles(PHI_KERNEL_ENGINE_MODE, Boolean(options.remoteProject))
-  ) {
-    return {}
-  }
+  if (!options.phiSessionId) return {}
   return { phiSessionId: options.phiSessionId }
 }
 

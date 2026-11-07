@@ -25,14 +25,6 @@ import {
 import { phiOnlySessionPath } from '../session/sessions'
 import type { KernelHistoryPlan } from './kernel-history'
 
-export {
-  kernelEngineHandles,
-  parseKernelEngineSwitch,
-  PHI_KERNEL_ENGINE_MODE,
-  type KernelEngineMode
-} from './kernel-engine-switch'
-import type { KernelEngineMode } from './kernel-engine-switch'
-
 /** Normalize the trusted JSON boundary once, dropping optional `undefined` fields recursively. */
 export function jsonSafeResourceSnapshot<T>(value: T): T {
   if (value === undefined) return value
@@ -76,7 +68,6 @@ export type KernelSessionLauncher = (
 ) => Promise<KernelSessionConnection>
 
 export interface KernelSessionFactoryOptions {
-  readonly mode: Exclude<KernelEngineMode, 'off'>
   readonly launchLocal?: KernelSessionLauncher
   readonly launchRemote?: KernelSessionLauncher
   readonly onDiagnostic?: (error: Error) => void

@@ -5,16 +5,6 @@ import { homedir, tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Tests follow the kernel default. These oracles drive the old remote RPC route through a fake
-// host, which has no kernel build to deploy, and go away with that route in K5-2.
-if (
-  /[/\\]tests[/\\]helpers[/\\](facade\w*Oracle|t15RecoveryOracle|remoteR8LocalOracle|remoteStartupMeasurementOracle)\.ts$/.test(
-    process.argv[1] ?? ''
-  )
-) {
-  process.env.PHI_KERNEL_ENGINE ??= 'off'
-}
-
 // --- Test data isolation -------------------------------------------------------------
 // Tests must never write into the developer's real ~/.phi (logs, sessions, caches, MCP
 // credentials). Point the app's data dir at a per-process temp dir unless a test or the

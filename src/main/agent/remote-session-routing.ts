@@ -21,7 +21,6 @@ import {
   installKernelSessionRouting,
   installRemoteSessionRouting
 } from './engine/in-process-engine'
-import { PHI_KERNEL_ENGINE_MODE } from './engine/kernel-engine-switch'
 import { createAppKernelSessionLaunchers } from './app-kernel-session-launchers'
 import { facadeBindingHash, type SelectedFacadeRuntime } from './engine/rpc/facade-session-driver'
 import { rpcToolNameExposesCredentialSurface } from './engine/phi-extension/lib/rpc-execution-protocol'
@@ -544,11 +543,8 @@ export function installAppRemoteSessionRouting(
     }
   })
 
-  if (PHI_KERNEL_ENGINE_MODE === 'off') return removeLegacyRemote
-
   const kernelInstall = createAppKernelSessionLaunchers(options, dependencies)
   const removeKernel = installKernelSessionRouting({
-    mode: PHI_KERNEL_ENGINE_MODE,
     launchLocal: kernelInstall.launchLocal,
     launchRemote: kernelInstall.launchRemote,
     hostCapabilities: kernelInstall.hostCapabilities,
@@ -568,9 +564,8 @@ export function installAppRemoteSessionRouting(
         ]
       })
   })
-  if (PHI_KERNEL_ENGINE_MODE !== 'local') removeLegacyRemote()
+  removeLegacyRemote()
   return () => {
-    if (PHI_KERNEL_ENGINE_MODE === 'local') removeLegacyRemote()
     removeKernel()
     void kernelInstall.close()
   }

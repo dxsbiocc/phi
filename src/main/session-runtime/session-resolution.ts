@@ -5,7 +5,6 @@ import {
   type PermissionMode,
   type Project
 } from '../agent/projects'
-import { kernelEngineHandles, PHI_KERNEL_ENGINE_MODE } from '../agent/engine/kernel-engine-switch'
 import type { ThinkingLevel } from '../agent/runtime/model-thinking-levels'
 import type { SessionSnapshot } from '../agent/session/session-lifecycle'
 import { phiSessionIdFromPath } from '../agent/session/sessions'
@@ -80,12 +79,11 @@ type ProjectForSession = SessionResolution['projectForSession']
 export function rejectsRoutedChange(
   runtimeSessionId: string | undefined,
   manifest: PhiSessionManifest | null,
-  ownsRuntimeSession: (sessionId: string) => boolean,
-  kernelHandlesRemote = kernelEngineHandles(PHI_KERNEL_ENGINE_MODE, true)
+  ownsRuntimeSession: (sessionId: string) => boolean
 ): boolean {
   if (!runtimeSessionId || !ownsRuntimeSession(runtimeSessionId)) return false
   if (manifest?.kernelRuntimeRef) return false
-  return Boolean(manifest?.runtimeRef) || !kernelHandlesRemote
+  return Boolean(manifest?.runtimeRef)
 }
 
 export function createSessionResolution<TPromptRun extends PhiSessionPromptRun>(

@@ -142,7 +142,6 @@ test('A19 desktop route adopts all current history shapes, preserves originals a
 
   const client = new AdoptingKernelClient(agentDir)
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => ({
       client,
       greeting: {
@@ -260,7 +259,6 @@ test('A19 desktop route maps all RPC-era samples to adoption or reasoned read-on
   const plans = new Map<string, KernelHistoryPlan>()
   const client = new AdoptingKernelClient(remoteAgentDir)
   const factory = new KernelSessionFactory({
-    mode: 'remote',
     launchRemote: async () => ({
       client,
       greeting: {

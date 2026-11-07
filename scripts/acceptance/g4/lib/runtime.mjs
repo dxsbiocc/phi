@@ -148,8 +148,7 @@ export function launchPackagedApp(run, port) {
       cwd: run.runDir,
       env: {
         ...inherited,
-        HOME: run.home,
-        ...(process.env.G4_ENGINE ? { PHI_KERNEL_ENGINE: process.env.G4_ENGINE } : {})
+        HOME: run.home
       },
       stdin: 'ignore',
       stdout: 'ignore',

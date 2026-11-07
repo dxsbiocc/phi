@@ -51,7 +51,7 @@ test('work mode update reuses the session target guard', () => {
   assert.throws(() => validateSessionModeUpdate('full', undefined, current), /缺少会话目标/)
 })
 
-test('remote sessions offer plan modes on the kernel route and reject them on the RPC rollback', () => {
+test('remote sessions offer every work mode on the kernel route', () => {
   const remote = {
     ...current,
     projectLocation: {
@@ -62,14 +62,7 @@ test('remote sessions offer plan modes on the kernel route and reject them on th
     }
   }
   for (const mode of ['auto', 'ask', 'plan', 'plan_execute', 'full'])
-    assert.doesNotThrow(() => validateSessionModeUpdate(mode, target, remote, true), mode)
-  assert.throws(() => validateSessionModeUpdate('plan', target, remote, false), /暂不支持计划评审/)
-  assert.throws(
-    () => validateSessionModeUpdate('plan_execute', target, remote, false),
-    /暂不支持计划评审/
-  )
-  assert.doesNotThrow(() => validateSessionModeUpdate('auto', target, remote, false))
-  assert.doesNotThrow(() => validateSessionModeUpdate('full', target, remote, false))
+    assert.doesNotThrow(() => validateSessionModeUpdate(mode, target, remote), mode)
 })
 
 test('invalid session modes fail before persistence fields are produced', () => {

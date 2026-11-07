@@ -124,7 +124,7 @@ interface Owner {
   pending?: Promise<RoutedSessionDriver>
   retired: boolean
 }
-/** Routes owned sessions; every global delegate remains the genuine legacy implementation. */
+/** Routes main sessions through the kernel while retaining explicit auxiliary no-tools calls. */
 export class SessionRoutingEngine implements PhiEngine {
   private readonly owners = new Map<string, Owner>()
   private readonly eventsById = new Map<string, Set<(event: PhiAgentEvent) => void>>()
@@ -217,24 +217,16 @@ export class SessionRoutingEngine implements PhiEngine {
     }
     if (guarded) throw new RemoteSessionCapabilityError('history')
   }
-  private createLegacySession(
+  private createAuxiliarySession(
     params: PhiSessionCreateParams,
-    control: RuntimeSelectionControl | undefined,
-    manifest: ReturnType<typeof findPhiSessionById> | undefined
+    control: RuntimeSelectionControl | undefined
   ): ReturnType<PhiEngine['sessions']['create']> {
-    if (manifest?.runtimeRecoveryError) {
+    if (!params.noTools || params.phiSessionId || params.remoteProject) {
       throw new RuntimeReferenceError(
-        manifest.runtimeRecoveryError.code,
-        manifest.runtimeRecoveryError.message
+        'CAPABILITY_UNAVAILABLE',
+        'Desktop execution is limited to independent no-tools helpers.'
       )
     }
-    if (manifest?.runtimeRef) {
-      throw new RuntimeReferenceError(
-        'REMOTE_OPERATION_REQUIRED',
-        '远程会话需要显式启用已验证的远程恢复'
-      )
-    }
-    this.historyGuard(params.sessionManager.path, params.cwd)
     return this.legacy.sessions.create(params, control)
   }
 
@@ -321,12 +313,16 @@ export class SessionRoutingEngine implements PhiEngine {
           'STALE_GENERATION',
           '运行会话标识已被使用；恢复必须创建新的运行代次'
         )
-      const manifest = params.remoteProject
-        ? findPhiSessionById(params.remoteProject.phiSessionId)
-        : undefined
+      if (params.noTools && !params.phiSessionId && !params.remoteProject) {
+        return this.createAuxiliarySession(params, control)
+      }
       const factory = this.factory()
-      const routed = Boolean(factory && (factory.handles?.(params) ?? params.remoteProject))
-      if (!routed || !factory) return this.createLegacySession(params, control, manifest)
+      if (!factory) {
+        throw new RuntimeReferenceError(
+          'CAPABILITY_UNAVAILABLE',
+          'The Phi kernel session route is unavailable.'
+        )
+      }
       return this.createRoutedSession(params, control, factory)
     },
     prompt: async (params) =>

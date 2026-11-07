@@ -27,7 +27,6 @@ test('persistent Phi history records and reopens the same local kernel session i
   t.after(() => deletePhiSession(phi.sessionId))
   const client = new FakeKernelClient()
   const factory = new KernelSessionFactory({
-    mode: 'local',
     launchLocal: async () => ({
       client,
       greeting: {
@@ -110,7 +109,6 @@ test('RPC-era remote history adopts through the routed desktop factory and publi
 
   const client = new FakeKernelClient()
   const factory = new KernelSessionFactory({
-    mode: 'remote',
     launchRemote: async () => ({
       client,
       greeting: {

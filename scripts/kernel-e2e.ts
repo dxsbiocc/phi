@@ -537,7 +537,6 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
     if (options.scenario === 'desktop-engine') {
       let launchCount = 0
       const factory = new KernelSessionFactory({
-        mode: 'remote',
         launchRemote: async (_params, context, signal) => {
           signal.throwIfAborted()
           if (launchCount++ === 0) {

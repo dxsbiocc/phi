@@ -38,7 +38,6 @@ bun scripts/acceptance/g4/run.mjs [--remote-only | --local-only | --dry-run]
 | `G4_APPROVE` | `1` answers every tool approval with 批准 | off |
 | `G4_SUBAGENT_PROMPT` | Replaces the remote M5 prompt | lists the project root |
 | `G4_MODEL_TIMEOUT_MS` / `G4_STEP_TIMEOUT_MS` | Per-reply and per-step limits | 4 min / 13 min |
-| `G4_ENGINE` | Passed as `PHI_KERNEL_ENGINE` | app default |
 | `G4_RUNS_ROOT` | Where run folders go | `.phi-acceptance/g4-runs` |
 
 A run sends at most 20 prompts; one prompt can make several model requests (subagents,

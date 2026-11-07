@@ -38,7 +38,6 @@ import {
 import {
   KernelEngineError,
   engineError,
-  kernelEngineHandles,
   kernelSessionIdFromJournalPath,
   record,
   sessionCreateParams,
@@ -53,13 +52,9 @@ import {
 
 export {
   KernelEngineError,
-  PHI_KERNEL_ENGINE_MODE,
-  jsonSafeResourceSnapshot,
-  kernelEngineHandles,
-  parseKernelEngineSwitch
+  jsonSafeResourceSnapshot
 } from './kernel-session-support'
 export type {
-  KernelEngineMode,
   KernelSessionClient,
   KernelSessionConnection,
   KernelSessionFactoryOptions,
@@ -127,10 +122,6 @@ export class KernelSessionFactory implements RoutedSessionFactory {
 
   constructor(private readonly options: KernelSessionFactoryOptions) {}
 
-  handles(params: PhiSessionCreateParams): boolean {
-    return kernelEngineHandles(this.options.mode, Boolean(params.remoteProject))
-  }
-
   async historyOpen(params: {
     agentDir: string
     path: string
@@ -142,7 +133,6 @@ export class KernelSessionFactory implements RoutedSessionFactory {
     const manifest = findPhiSessionById(phiSessionId)
     if (!manifest) return undefined
     const remote = manifest.projectLocation?.kind === 'ssh'
-    if (!kernelEngineHandles(this.options.mode, remote)) return undefined
     if (remote && !manifest.kernelRuntimeRef && !manifest.runtimeRef) {
       throw new KernelEngineError(
         'CAPABILITY_UNAVAILABLE',
@@ -264,7 +254,6 @@ export class KernelSessionFactory implements RoutedSessionFactory {
     const manifest = findPhiSessionById(phiSessionId)
     const reference = manifest?.kernelRuntimeRef
     if (!manifest || !reference) return undefined
-    if (!kernelEngineHandles(this.options.mode, reference.host.kind === 'ssh')) return undefined
     return { phiSessionId, manifest, reference }
   }
 
@@ -420,7 +409,6 @@ export class KernelSessionFactory implements RoutedSessionFactory {
   ): Promise<RoutedSessionDriver> {
     control?.assertCurrent()
     signal.throwIfAborted()
-    if (!this.handles(params)) throw new Error('Kernel factory does not own this execution host.')
     if (!params.model) throw new KernelEngineError('MODEL_UNAVAILABLE', 'Select a model first.')
     const host = this.hostFor(params)
     const client = await host.client(params, signal)
