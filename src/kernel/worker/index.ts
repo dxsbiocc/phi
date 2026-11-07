@@ -168,7 +168,44 @@ export function createWorkerKernelAdapter(
     hostCapabilities: ReadonlySet<string> = new Set()
   ): Promise<PersistentSession> => {
     const loaded = durableSessions.get(sessionId)
-    if (loaded && sessionKinds.get(sessionId) === 'persistent') return loaded
+    if (loaded && sessionKinds.get(sessionId) === 'persistent') {
+      if (resources) {
+        const input = sessionCreateInputs.get(sessionId)
+        if (
+          typeof resources.resourceVersion === 'string' &&
+          resources.resourceVersion === input?.resourceVersion
+        ) {
+          return loaded
+        }
+        if (
+          activeRuns.has(sessionId) ||
+          admittingRuns.has(sessionId) ||
+          forkingSessions.has(sessionId) ||
+          plans.hasActiveWork(sessionId)
+        ) {
+          // Never refuse to reopen a busy session; the next open retries the refresh.
+          return loaded
+        }
+        const refreshed = await callWorker('resources.reload', {
+          ...resources,
+          agentDir: options.agentDir,
+          sessionId
+        })
+        const result =
+          refreshed && typeof refreshed === 'object' && !Array.isArray(refreshed)
+            ? (refreshed as Record<string, unknown>)
+            : undefined
+        const agents =
+          result?.agents && typeof result.agents === 'object' && !Array.isArray(result.agents)
+            ? (result.agents as Record<string, unknown>)
+            : undefined
+        // Agent changes that cannot be applied in place wait for a full session refresh;
+        // the session stays usable with its current agents meanwhile.
+        if (agents?.applied === false) return loaded
+        if (input) Object.assign(input, structuredClone(resources))
+      }
+      return loaded
+    }
     const pending = openingSessions.get(sessionId)
     if (pending) return pending
     const opening = (async () => {

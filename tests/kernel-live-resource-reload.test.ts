@@ -146,7 +146,24 @@ it('live resource prompt rebuild reads the latest loader snapshot on each turn',
   let beforeStart: ((event: { systemPrompt: string[] }) => unknown) | undefined
   const files = { agentsFiles: [{ path: '/project/AGENTS.md', content: 'first rules' }] }
   const skills = { skills: [{ name: 'first-skill' }], diagnostics: [] }
-  const snapshot = { personaMarkdown: 'first persona', skills: [...skills.skills] }
+  const phiAgents = [
+    {
+      name: 'Wrapper',
+      description: 'Wrapper specialist.',
+      tools: ['read'],
+      skills: [],
+      visibility: 'entry' as const,
+      warnings: [],
+      systemPrompt: 'Run Wrapper.',
+      source: 'phi' as const,
+      filePath: '/agents/Wrapper.md'
+    }
+  ]
+  const snapshot = {
+    personaMarkdown: 'first persona',
+    skills: [...skills.skills],
+    phiAgents
+  }
   const loader = {
     getSkills: () => skills,
     getAgentsFiles: () => files,
@@ -171,6 +188,13 @@ it('live resource prompt rebuild reads the latest loader snapshot on each turn',
   skills.skills = [{ name: 'second-skill' }]
   snapshot.skills = [...skills.skills]
   snapshot.personaMarkdown = 'second persona'
+  phiAgents.push({
+    ...phiAgents[0],
+    name: 'General',
+    description: 'General remote work.',
+    systemPrompt: 'Run General.',
+    filePath: '/agents/General.md'
+  })
   const second = beforeStart({
     systemPrompt: [...first.systemPrompt, 'CURRENT_POLICY_BLOCK']
   }) as { systemPrompt: string[] }
@@ -179,6 +203,7 @@ it('live resource prompt rebuild reads the latest loader snapshot on each turn',
   assert.match(JSON.stringify(second), /second persona/)
   assert.match(JSON.stringify(second), /second rules/)
   assert.match(JSON.stringify(second), /second-skill/)
+  assert.match(JSON.stringify(second), /Available agents:[\s\S]*General/)
   assert.match(JSON.stringify(second), /CURRENT_MEMORY_BLOCK/)
   assert.match(JSON.stringify(second), /CURRENT_POLICY_BLOCK/)
   assert.doesNotMatch(JSON.stringify(second), /first persona|first rules|first-skill/)
@@ -186,6 +211,7 @@ it('live resource prompt rebuild reads the latest loader snapshot on each turn',
     second.systemPrompt.filter((block) => block.startsWith('<phi_live_resource_snapshot>')).length,
     1
   )
+  assert.equal(JSON.stringify(second).match(/<phi_agents>/gu)?.length, 1)
 })
 
 it('live resource prompt keeps two session snapshots isolated without runtime actions', () => {

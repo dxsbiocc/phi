@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 
 import { KernelClientError } from '../src/main/agent/engine/kernel-client'
+import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
+import { agentDisplayNameFromCall } from '../src/shared/agentDisplayName'
 import { type JsonValue, type KernelEventFrame } from '../src/shared/kernel-protocol'
 import { eventually, messageText } from './engine-contract/basic-suite'
 import { createKernelFixture } from './engine-contract/kernel-factory'
@@ -391,6 +393,109 @@ test(
       tools.some((tool) => tool.function?.name === 'task'),
       false
     )
+  }
+)
+
+test(
+  'reopening a loaded kernel session refreshes the remote General roster, prompt and card name',
+  { timeout: 45_000 },
+  async (t) => {
+    const f = await createKernelFixture()
+    t.after(() => f.close())
+    const agents = discoverPhiAgents({
+      cwd: f.cwd,
+      agentDir: f.agentDir,
+      bundledDir: resolve('resources/agents'),
+      pluginAgentDirs: [],
+      homeDir: join(f.agentDir, '..', 'home')
+    }).agents
+    const general = agents.find((agent) => agent.name === 'General')
+    const wrapper = agents.find((agent) => agent.name === 'Wrapper')
+    assert.ok(general && wrapper)
+    const created = record(
+      await f.client.request('session.create', {
+        cwd: f.cwd,
+        model: { provider: f.model.provider, id: f.model.id },
+        resourceVersion: 'a'.repeat(64),
+        sessionManager: { kind: 'persistent' },
+        phiAgents: [wrapper] as unknown as JsonValue
+      })
+    )
+    const sessionId = String(created.sessionId)
+    await f.client.request('session.open', {
+      sessionId,
+      resources: {
+        resourceVersion: 'b'.repeat(64),
+        phiAgents: [general, wrapper] as unknown as JsonValue
+      }
+    })
+
+    f.provider.enqueue({ text: 'Delegation roster captured.' })
+    const rosterPrompt = record(
+      await f.client.request(
+        'session.prompt',
+        { text: 'Inspect the available delegation agents.' },
+        { sessionId }
+      )
+    )
+    await f.waitForRun(String(rosterPrompt.runId))
+
+    const request = f.provider.requests[0]!
+    const tools = (request.tools ?? []) as Array<{
+      function?: {
+        name?: string
+        parameters?: { required?: string[]; properties?: Record<string, unknown> }
+      }
+    }>
+    const names = tools.flatMap((tool) =>
+      typeof tool.function?.name === 'string' ? [tool.function.name] : []
+    )
+    assert.ok(names.includes('General'), JSON.stringify(names))
+    assert.ok(names.includes('Wrapper'), JSON.stringify(names))
+    const generalParameters = tools.find((tool) => tool.function?.name === 'General')?.function
+      ?.parameters
+    const generalRequired = generalParameters?.required ?? []
+    assert.equal(generalRequired.includes('name'), true)
+    assert.equal(generalRequired.includes('task'), true)
+    assert.equal(Object.hasOwn(generalParameters?.properties ?? {}, 'background'), true)
+
+    const prompt = JSON.stringify(request.messages)
+    assert.match(prompt, /<phi_agents>/u)
+    assert.match(prompt, /Available agents:[\s\S]*General/u)
+    assert.match(prompt, /Available agents:[\s\S]*Wrapper/u)
+
+    const sessionEvents: KernelEventFrame[] = []
+    const stop = f.client.onEvent((event) => {
+      if (event.type === 'session.event' && event.sessionId === sessionId) {
+        sessionEvents.push(event)
+      }
+    })
+    t.after(stop)
+    f.provider.enqueue(
+      {
+        tool: {
+          name: 'General',
+          id: 'remote-general',
+          args: { name: 'Host audit', task: 'Return a concise host audit.', background: true }
+        }
+      },
+      { text: 'Remote General completed.' },
+      { text: 'General delegation accepted.' }
+    )
+    const generalPrompt = record(
+      await f.client.request('session.prompt', { text: 'Delegate the host audit.' }, { sessionId })
+    )
+    await f.waitForRun(String(generalPrompt.runId))
+    const start = sessionEvents
+      .map((event) => record(event.payload))
+      .find(
+        (event) =>
+          event.type === 'tool_execution_start' &&
+          event.toolName === 'General' &&
+          record(event.args as JsonValue).name === 'Host audit'
+      )
+    assert.ok(start, JSON.stringify(sessionEvents))
+    assert.equal(agentDisplayNameFromCall(start.toolName, start.args), 'Host audit')
   }
 )
 

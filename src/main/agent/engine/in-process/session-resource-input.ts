@@ -1,5 +1,6 @@
 import type { PhiExtensionEnvironmentBinding } from '../phi-extension'
 import type { MCPServerConfig } from '../mcp/omp-mcp'
+import type { PhiAgentDefinition } from '../../agents/definition'
 
 import { isRecord } from './common'
 
@@ -22,6 +23,8 @@ export interface SessionResourceSnapshot {
   personaMarkdown: string
   contextFiles?: SessionContextFile[]
   skills?: unknown[]
+  /** The same mutable accepted list that owns the session's delegation tools. */
+  phiAgents?: PhiAgentDefinition[]
 }
 
 type HostRequest = (method: string, params: unknown) => Promise<unknown>

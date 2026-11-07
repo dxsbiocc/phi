@@ -126,10 +126,6 @@ export async function createSession(
       : undefined
   const noTools = record.noTools === 'all' || record.noTools === true
   if (!noTools) disableFeaturedApiKeyAutoDiscovery(agentDir)
-  const resourceSnapshot = {
-    personaMarkdown: stringValue(record.personaMarkdown).trim(),
-    contextFiles: sessionContextFiles(record.contextFiles)
-  }
   const mcpServers = sessionMcpServers(record.mcpServers)
   const desktopMcpBinding = isRecord(record.desktopMcp)
     ? stringValue(record.desktopMcp.bindingId)
@@ -151,6 +147,11 @@ export async function createSession(
   const phiAgents = Array.isArray(record.phiAgents)
     ? record.phiAgents.filter(isPhiAgentDefinition)
     : []
+  const resourceSnapshot = {
+    personaMarkdown: stringValue(record.personaMarkdown).trim(),
+    contextFiles: sessionContextFiles(record.contextFiles),
+    phiAgents
+  }
   // One registry per conversation: parallel and background delegations share its limits,
   // and the run tools and controlled-fallback policy below act on it.
   const agentRuns = new AgentRunRegistry({
