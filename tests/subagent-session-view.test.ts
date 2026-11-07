@@ -57,9 +57,14 @@ test('the temporary conversation uses the full assigned command as the user mess
 
 test('the parent card exposes only identity and status, never execution details or controls', () => {
   setUiLanguage('en')
-  const html = render({ finalReport: 'private report', error: 'private error' }, true)
+  const html = render(
+    { background: true, finalReport: 'private report', error: 'private error' },
+    true
+  )
   assert.match(html, /Researcher/)
-  assert.match(html, /Running/)
+  assert.match(html, /data-phi-agent-run-loader="true"/)
+  assert.match(html, /role="status" aria-label="Running in background"/)
+  assert.doesNotMatch(html, />Running in background</)
   assert.match(html, /aria-label="Open Researcher conversation"/)
   assert.doesNotMatch(html, /Full assigned command|Brief task preview|private report|private error/)
   assert.doesNotMatch(html, /aria-expanded|Stop agent|Additional instructions for agent/)
@@ -75,7 +80,20 @@ test('General run conversations show the Greek symbol with their named avatar', 
   assert.match(cardHtml, /aria-label="Open Gamma conversation"/)
   assert.doesNotMatch(cardHtml, /Delegated to.*Gamma/)
   assert.match(sessionHtml, /alt="Gamma"/)
-  assert.match(sessionHtml, />γ ·/)
+  assert.match(sessionHtml, /title="Gamma">γ <style/)
+})
+
+test('running headers expose the loader label without visible status text, while done headers do not', () => {
+  setUiLanguage('zh-CN')
+  const running = render({ background: true })
+  const done = render({ status: 'done', durationMs: 4_000 })
+
+  assert.match(running, /data-phi-agent-run-loader="true"/)
+  assert.match(running, /role="status" aria-label="后台运行中"/)
+  assert.doesNotMatch(running, />后台运行中</)
+  assert.match(done, /完成 · 4 秒/)
+  assert.doesNotMatch(done, /data-phi-agent-run-loader=/)
+  setUiLanguage('en')
 })
 
 test('completed and cancelled conversations preserve the report and remove run controls', () => {

@@ -10,6 +10,7 @@ import { useAgentRunStatus } from './hooks/useAgentRunStatus'
 import { chatCopy } from './lib/chatCopy'
 import { subagentSessionMessages, agentControlErrorText } from './lib/subagentSession'
 import { AgentAvatar } from '../../components/AgentAvatar'
+import { AgentRunLoader } from '../../components/AgentRunLoader'
 import { agentDisplayLabel } from '../../lib/agentAvatar'
 
 export type SubagentSessionViewProps = {
@@ -31,6 +32,7 @@ export default function SubagentSessionView({
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
   const [controlError, setControlError] = useState('')
+  const statusText = agentRunStatusText(item, { lost })
   const messages = useMemo(() => {
     void language // Output preview markers follow live interface-language changes.
     return subagentSessionMessages(item)
@@ -77,7 +79,16 @@ export default function SubagentSessionView({
           aria-live="polite"
           title={item.agentName}
         >
-          {agentDisplayLabel(item.agentName)} · {agentRunStatusText(item, { lost })} · {elapsed}
+          {agentDisplayLabel(item.agentName)}
+          {isRunning ? (
+            <>
+              {' '}
+              <AgentRunLoader label={statusText} sx={{ mx: 0.5 }} />
+              {elapsed}
+            </>
+          ) : (
+            ` · ${statusText} · ${elapsed}`
+          )}
           {' · '}
           {chatCopy.temporaryAgentSession}
         </Typography>

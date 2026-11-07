@@ -5,6 +5,7 @@ import type { AgentExecutionItem } from '../../../types'
 import { agentRunStatusText } from '../../../lib/agentExecutionControl'
 import { useUiLanguage } from '../../../lib/i18n'
 import { AgentAvatar } from '../../../components/AgentAvatar'
+import { AgentRunLoader } from '../../../components/AgentRunLoader'
 import { StatusIndicator } from '../../../components/ToolCallCard'
 import { agentDisplayLabel } from '../../../lib/agentAvatar'
 import { useAgentRunStatus } from '../hooks/useAgentRunStatus'
@@ -23,9 +24,10 @@ function AgentExecutionCard({
   useUiLanguage()
   const { lost, isRunning, elapsed } = useAgentRunStatus(item)
   const displayName = agentDisplayLabel(item.agentName)
+  const statusText = agentRunStatusText(item, { lost })
   const leadingIconKind = item.cancelled
     ? 'cancelled'
-    : lost || item.status !== 'done'
+    : lost || item.status === 'error'
       ? 'status'
       : 'type'
 
@@ -50,7 +52,6 @@ function AgentExecutionCard({
     >
       <Box
         data-phi-agent-leading-icon={leadingIconKind}
-        aria-live={isRunning ? 'polite' : undefined}
         sx={{
           width: 18,
           height: 18,
@@ -96,7 +97,14 @@ function AgentExecutionCard({
           {chatCopy.delegatedTo} {displayName}
         </Typography>
         <Typography component="div" variant="caption" noWrap>
-          {agentRunStatusText(item, { lost })} · {elapsed}
+          {isRunning ? (
+            <>
+              <AgentRunLoader label={statusText} sx={{ mr: 0.5 }} />
+              {elapsed}
+            </>
+          ) : (
+            `${statusText} · ${elapsed}`
+          )}
         </Typography>
       </Box>
       <ChevronRightIcon
