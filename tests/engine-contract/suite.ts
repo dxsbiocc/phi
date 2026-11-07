@@ -387,11 +387,11 @@ export function engineContract(name: string, factory: EngineFactory): void {
       )
       assert.equal(completedTool(observed, 'ContractSpecialist').isError, false)
       assert.equal(text(state.messages!.at(-1)), 'Main received child report.')
-      assert.equal(f.provider.requests.length, 5)
-      assert.match(JSON.stringify(f.provider.requests[1].messages), /Is this specialist suitable/)
-      assert.equal(f.provider.requests[1].tools, undefined)
+      // The main agent's choice starts the run directly: no extra suitability request.
+      assert.equal(f.provider.requests.length, 4)
+      assert.doesNotMatch(JSON.stringify(f.provider.requests), /Is this specialist suitable/)
       assert.ok(
-        f.provider.requests[3].messages.some(
+        f.provider.requests[2].messages.some(
           (item) => item.role === 'tool' && String(item.content).includes('child file evidence')
         )
       )
