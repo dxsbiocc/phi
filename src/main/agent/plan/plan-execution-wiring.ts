@@ -1,13 +1,10 @@
-import type { PlanRunFinishedEvent } from '../../../shared/planRunTypes'
-import { createPlanRunContinuation } from '../agents/run-continue'
-import type { AppLogEntry } from '../app-logger'
+import type { PlanRunState } from '../../../shared/planRunTypes'
+import type { RoutedPlanRunOperations } from '../engine/session-routing-engine'
 import type { PhiEngine } from '../engine/types'
-import { agentRunCompletions } from './execution/agent-run-completions'
 import {
   registerPlanReviewHostService,
   type PlanReviewHostServiceDeps
 } from './plan-review-host-service'
-import { createPlanRunService, type PlanRunService } from './plan-run-service'
 import type { WorkModeActivity } from './work-mode-control'
 import { registerWorkModeSelectionHost } from './work-mode-selection-host'
 
@@ -20,7 +17,7 @@ type TimelineEvent = Record<string, unknown> & { type: string }
  */
 export interface PlanExecutionAppDeps<StoredEvent extends Record<string, unknown>> extends Omit<
   PlanReviewHostServiceDeps<StoredEvent>,
-  'host' | 'planRuns' | 'appendSessionEvent'
+  'host' | 'appendSessionEvent'
 > {
   engine: PhiEngine
   /** Records plan review and plan run events alike in the session timeline. */
@@ -31,11 +28,6 @@ export interface PlanExecutionAppDeps<StoredEvent extends Record<string, unknown
       isLive: (runtimeSessionId: string) => boolean
     ): string | undefined
   }
-  automaticContinuationCount(phiSessionId: string): number
-  wakeConversation(phiSessionId: string, event: PlanRunFinishedEvent): void
-  writeAppLog(entry: AppLogEntry): void
-  broadcastRunEvent(phiSessionId: string, event: StoredEvent): void
-  logError(error: unknown): void
 }
 
 interface PlanExecutionSessionKeys {
@@ -45,14 +37,14 @@ interface PlanExecutionSessionKeys {
   ): string | undefined
 }
 
-export function requiresDurablePlanLaunch(
-  manifest: { projectLocation?: { kind: string } } | null | undefined,
+function routedPlanRunsForPhiSession(
+  engine: PhiEngine,
   phiSessionId: string
-): boolean {
-  if (!manifest) {
-    throw new Error(`Plan run session manifest is unavailable: ${phiSessionId}`)
+): RoutedPlanRunOperations | undefined {
+  const routed = engine as PhiEngine & {
+    planRunsForPhiSession?(sessionId: string): RoutedPlanRunOperations | undefined
   }
-  return manifest.projectLocation?.kind === 'ssh'
+  return routed.planRunsForPhiSession?.(phiSessionId)
 }
 
 function liveRuntimeSessionId(
@@ -73,11 +65,14 @@ function isActiveBackgroundAgentRun(value: unknown, runtimeSessionId: string): b
 
 export function createWorkModeActivity(deps: {
   engine: PhiEngine
-  planRuns: Pick<PlanRunService, 'hasActiveWork'>
   sessionKeys: PlanExecutionSessionKeys
 }): WorkModeActivity {
   return {
-    hasActivePlanWork: (phiSessionId) => deps.planRuns.hasActiveWork(phiSessionId),
+    hasActivePlanWork: async (phiSessionId) => {
+      const planRuns = routedPlanRunsForPhiSession(deps.engine, phiSessionId)
+      if (!planRuns) return false
+      return (await planRuns.list()).some(hasActivePlanWork)
+    },
     hasActiveAgentRuns: async (phiSessionId) => {
       const runtimeSessionId = liveRuntimeSessionId(deps.engine, deps.sessionKeys, phiSessionId)
       if (!runtimeSessionId) return false
@@ -90,54 +85,37 @@ export function createWorkModeActivity(deps: {
 }
 
 export interface PlanExecutionWiring {
-  planRuns: PlanRunService
   workModeActivity: WorkModeActivity
 }
 
-/** Creates the plan run service and registers the plan review host request that starts runs. */
+/** Plan-run IPC resolves exclusively through the live kernel session owner. */
+export function kernelPlanRunRouting(engine: () => PhiEngine): {
+  kernelPlanRuns(phiSessionId: string): RoutedPlanRunOperations | undefined
+} {
+  return {
+    kernelPlanRuns: (phiSessionId) => routedPlanRunsForPhiSession(engine(), phiSessionId)
+  }
+}
+
+function hasActivePlanWork(state: PlanRunState): boolean {
+  return (
+    state.status === 'running' ||
+    Object.values(state.steps).some(
+      (step) =>
+        step.status === 'running' || step.status === 'launching' || step.status === 'unknown'
+    )
+  )
+}
+
+/** Registers the desktop review UI and work-mode bridge for kernel-owned plan runs. */
 export function wirePlanExecution<StoredEvent extends Record<string, unknown>>(
   deps: PlanExecutionAppDeps<StoredEvent>
 ): PlanExecutionWiring {
-  const continueConversation = createPlanRunContinuation({
-    automaticCount: deps.automaticContinuationCount,
-    wakeConversation: deps.wakeConversation,
-    onLimit: (phiSessionId, runId) =>
-      deps.writeAppLog({
-        event: 'plan_run_continue_limit',
-        metadata: { phiSessionId, planRunId: runId }
-      })
-  })
-  const planRuns = createPlanRunService({
-    engine: deps.engine,
-    completions: agentRunCompletions,
-    // Only a runtime that is still running can take new plan steps.
-    resolveRuntimeSessionId: (phiSessionId) =>
-      liveRuntimeSessionId(deps.engine, deps.sessionKeys, phiSessionId) ?? null,
-    requiresDurableLaunch: (phiSessionId) =>
-      requiresDurablePlanLaunch(deps.findPhiSessionById(phiSessionId), phiSessionId),
-    enterReplanMode: (runtimeSessionId, replanRequestId) => {
-      if (deps.findActivePromptRunByRuntimeSessionId(runtimeSessionId)) {
-        throw new Error('Wait for the current conversation turn to finish before replanning.')
-      }
-      return deps.engine.sessions.enterPlanMode({
-        sessionId: runtimeSessionId,
-        execute: true,
-        replanRequestId
-      })
-    },
-    exitReplanMode: (runtimeSessionId, replanRequestId) =>
-      deps.engine.sessions.cancelPlanMode({ sessionId: runtimeSessionId, replanRequestId }),
-    timeline: { append: deps.appendSessionEvent, broadcast: deps.broadcastRunEvent },
-    continueConversation,
-    logError: deps.logError
-  })
-  registerPlanReviewHostService({ ...deps, host: deps.engine.host, planRuns })
+  registerPlanReviewHostService({ ...deps, host: deps.engine.host })
   registerWorkModeSelectionHost({ ...deps, host: deps.engine.host })
   return {
-    planRuns,
     workModeActivity: createWorkModeActivity({
       engine: deps.engine,
-      planRuns,
       sessionKeys: deps.sessionKeys
     })
   }

@@ -135,3 +135,14 @@ merely because they currently live under `engine/rpc/`.
 
 Actual added/deleted lines and final evidence will be recorded in
 `phi-kernel-implementation.md` and the K5-2 ledger rows after the deletion commits.
+
+## Continuation progress
+
+- Verified stopped commit `581df05a`: node/web/scripts typecheck passed; routed-history,
+  prompt-admission, and prompt-stop suites passed 11/11.
+- Replaced implicit desktop session fallbacks with a tracked `noTools` helper set. Unknown or
+  retired main-session identities can no longer prompt, start/control child runs, answer tool
+  approvals, or cancel shell jobs through the desktop worker.
+- Removed the desktop plan-run IPC/review owner. Plan controls and work-mode activity now resolve
+  through the live kernel driver; the shared plan service/store remain because the kernel
+  coordinator imports them.

@@ -243,9 +243,8 @@ import { createMissingToolPrompt } from './agent/host-requests/missing-tool-prom
 import { createMissingToolRuntime } from './agent/missing-tool-runtime'
 import { createDeliverablesPresentation } from './agent/host-requests/deliverables-presentation'
 import { createHostConfirmations } from './agent/host-requests/host-confirmations'
-import { wirePlanExecution } from './agent/plan/plan-execution-wiring'
+import { kernelPlanRunRouting, wirePlanExecution } from './agent/plan/plan-execution-wiring'
 import { registerPlanRunIpc } from './ipc/plan-run-ipc'
-import { kernelPlanRunRouting } from './agent/engine/session-routing-engine'
 import {
   createInMemoryRuntimeSessionManager,
   getBundledAgentsDir,
@@ -276,11 +275,7 @@ import {
   isFeaturedMcpApiKeyInstalled,
   readFeaturedMcpApiKey
 } from './agent/mcp-key-credentials'
-import {
-  listGlobalMcpServers,
-  listGlobalSkills,
-  listSkills
-} from './agent/resources'
+import { listGlobalMcpServers, listGlobalSkills, listSkills } from './agent/resources'
 import { migrateLegacyCustomWrappers, startLegacyBundledCleanup } from './agent/wrappers/catalog'
 import { resetWrapperCompositionCatalogCache } from './agent/wrappers/composition/discovery'
 import { wrapperJobHostHandlers } from './agent/wrappers/composition/job-host-handlers'
@@ -1485,13 +1480,7 @@ const planExecution = wirePlanExecution({
   createRunId,
   runnerRegistry,
   notifySessionChanged,
-  sessionKeys,
-  automaticContinuationCount: (phiSessionId) => automaticContinuations.get(phiSessionId) ?? 0,
-  wakeConversation,
-  writeAppLog,
-  broadcastRunEvent: (phiSessionId, event) =>
-    sendRunEventToWindow({ source: 'phi', ...event, phiSessionId }),
-  logError: logUnexpectedError
+  sessionKeys
 })
 getPhiEngine().host.register('deliverables.present', handlePresentFilesRequest)
 getPhiEngine().host.register('mcp.openAuthUrl', async (params) => {
@@ -3272,7 +3261,7 @@ function registerAgentIpc(): void {
   registerAgentPromptIpc(agentIpcOptions)
   registerWorkspaceChangesIpc({ ipcMain })
   registerAgentRunControlIpc(agentIpcOptions)
-  registerPlanRunIpc({ ipcMain, ...kernelPlanRunRouting(planExecution.planRuns, getPhiEngine) })
+  registerPlanRunIpc({ ipcMain, ...kernelPlanRunRouting(getPhiEngine) })
 }
 
 function registerApplicationAndModelIpc(): void {

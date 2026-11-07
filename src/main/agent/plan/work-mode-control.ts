@@ -49,7 +49,7 @@ interface WorkModeCurrent {
 }
 
 export interface WorkModeActivity {
-  hasActivePlanWork(sessionId: string): boolean
+  hasActivePlanWork(sessionId: string): Promise<boolean>
   hasActiveAgentRuns(sessionId: string): Promise<boolean>
 }
 
@@ -101,8 +101,7 @@ function hasImmediateActiveWork<TCurrent extends WorkModeCurrent, TRecord>(
 ): boolean {
   return Boolean(
     deps.status.runnerGetActiveRun(sessionId) ||
-    deps.status.activePromptEntries().some(([, run]) => run.phiSessionId === sessionId) ||
-    deps.activity.hasActivePlanWork(sessionId)
+    deps.status.activePromptEntries().some(([, run]) => run.phiSessionId === sessionId)
   )
 }
 
@@ -119,8 +118,10 @@ export function createWorkModeControl<TCurrent extends WorkModeCurrent, TRecord>
       if (workModeChanged) {
         if (
           hasImmediateActiveWork(deps, sessionId) ||
+          (await deps.activity.hasActivePlanWork(sessionId)) ||
           (await deps.activity.hasActiveAgentRuns(sessionId)) ||
-          hasImmediateActiveWork(deps, sessionId)
+          hasImmediateActiveWork(deps, sessionId) ||
+          (await deps.activity.hasActivePlanWork(sessionId))
         ) {
           throw new Error(ACTIVE_WORK_ERROR)
         }

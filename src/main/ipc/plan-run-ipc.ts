@@ -3,37 +3,15 @@ import type { IpcMain } from 'electron'
 import { IPC } from '../../shared/ipcChannels'
 import { isRecord } from '../../shared/guards'
 import type { RoutedPlanRunOperations } from '../agent/engine/session-routing-engine'
-import { planExecutionOwner } from '../agent/plan/plan-ownership'
-import type { KernelRuntimeRef } from '../agent/session/runtime-reference'
 import type {
   PlanRunIdInput,
-  PlanRunPendingReplan,
   PlanRunReplanCancelInput,
-  PlanRunReplanRequest,
   PlanRunSessionInput,
-  PlanRunState,
   PlanRunStepInput
 } from '../../shared/planRunTypes'
 
-type Awaitable<T> = T | Promise<T>
-
-export interface PlanRunIpcOperations {
-  list(phiSessionId: string): Awaitable<PlanRunState[]>
-  get(phiSessionId: string, runId: string): Awaitable<PlanRunState | null | undefined>
-  pendingReplanForRun(phiSessionId: string, runId: string): Awaitable<PlanRunPendingReplan | null>
-  pause(phiSessionId: string, runId: string): Awaitable<PlanRunState>
-  resume(phiSessionId: string, runId: string): Awaitable<PlanRunState>
-  stop(phiSessionId: string, runId: string): Awaitable<PlanRunState>
-  retryStep(phiSessionId: string, runId: string, stepId: string): Awaitable<PlanRunState>
-  skipStep(phiSessionId: string, runId: string, stepId: string): Awaitable<PlanRunState>
-  requestReplan(phiSessionId: string, runId: string): Awaitable<PlanRunReplanRequest>
-  cancelRequestedReplan(phiSessionId: string, runId: string, requestId: string): Awaitable<void>
-}
-
 export interface PlanRunIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
-  planRuns: PlanRunIpcOperations
-  findSessionById(phiSessionId: string): { kernelRuntimeRef?: KernelRuntimeRef } | null | undefined
   kernelPlanRuns(phiSessionId: string): RoutedPlanRunOperations | undefined
 }
 
@@ -43,21 +21,13 @@ const MAX_IDENTIFIER_LENGTH = 512
 const INVALID_REQUEST = '计划运行请求无效'
 const KERNEL_PLAN_NOT_LOADED = '内核计划会话当前未加载，请先打开该会话再重试'
 
-type PlanRunRoute =
-  | { kind: 'desktop'; operations: PlanRunIpcOperations }
-  | { kind: 'kernel'; operations: RoutedPlanRunOperations | undefined }
-
-function planRunRoute(options: PlanRunIpcOptions, phiSessionId: string): PlanRunRoute {
-  return planExecutionOwner(options.findSessionById(phiSessionId)) === 'kernel'
-    ? { kind: 'kernel', operations: options.kernelPlanRuns(phiSessionId) }
-    : { kind: 'desktop', operations: options.planRuns }
-}
-
 function loadedKernelPlanRuns(
-  route: Extract<PlanRunRoute, { kind: 'kernel' }>
+  options: PlanRunIpcOptions,
+  phiSessionId: string
 ): RoutedPlanRunOperations {
-  if (!route.operations) throw new Error(KERNEL_PLAN_NOT_LOADED)
-  return route.operations
+  const operations = options.kernelPlanRuns(phiSessionId)
+  if (!operations) throw new Error(KERNEL_PLAN_NOT_LOADED)
+  return operations
 }
 
 function hasControlCharacter(value: string): boolean {
@@ -128,83 +98,53 @@ export function registerPlanRunIpc(options: PlanRunIpcOptions): void {
   // Kernel mapping: list/get are direct coordinator reads; unloaded sessions return empty reads.
   ipcMain.handle(IPC.planRuns.list, async (_event, ...args: unknown[]) => {
     const input = readSessionInput(args)
-    const route = planRunRoute(options, input.phiSessionId)
-    return route.kind === 'desktop'
-      ? route.operations.list(input.phiSessionId)
-      : (route.operations?.list() ?? [])
+    return options.kernelPlanRuns(input.phiSessionId)?.list() ?? []
   })
   ipcMain.handle(IPC.planRuns.get, async (_event, ...args: unknown[]) => {
     const input = readRunInput(args)
-    const route = planRunRoute(options, input.phiSessionId)
-    const state =
-      route.kind === 'desktop'
-        ? await route.operations.get(input.phiSessionId, input.runId)
-        : await route.operations?.get(input.runId)
+    const state = await options.kernelPlanRuns(input.phiSessionId)?.get(input.runId)
     return state ?? null
   })
 
   // Kernel mapping: pending replan inspection has no protocol equivalent, so it is empty.
   ipcMain.handle(IPC.planRuns.getPendingReplan, async (_event, ...args: unknown[]) => {
-    const input = readRunInput(args)
-    const route = planRunRoute(options, input.phiSessionId)
-    if (route.kind === 'kernel') return null
-    const pending = await route.operations.pendingReplanForRun(input.phiSessionId, input.runId)
-    return pending?.runId === input.runId
-      ? { requestId: pending.requestId, runId: pending.runId }
-      : null
+    readRunInput(args)
+    return null
   })
 
   // Kernel mapping: pause/resume are unsupported rather than falling through to desktop state.
   ipcMain.handle(IPC.planRuns.pause, (_event, ...args: unknown[]) => {
-    const input = readRunInput(args)
-    const route = planRunRoute(options, input.phiSessionId)
-    if (route.kind === 'kernel') throw new Error('内核计划运行暂不支持暂停')
-    return route.operations.pause(input.phiSessionId, input.runId)
+    readRunInput(args)
+    throw new Error('内核计划运行暂不支持暂停')
   })
   ipcMain.handle(IPC.planRuns.resume, (_event, ...args: unknown[]) => {
-    const input = readRunInput(args)
-    const route = planRunRoute(options, input.phiSessionId)
-    if (route.kind === 'kernel') throw new Error('内核计划运行暂不支持恢复')
-    return route.operations.resume(input.phiSessionId, input.runId)
+    readRunInput(args)
+    throw new Error('内核计划运行暂不支持恢复')
   })
 
   // Kernel mapping: stop/retry/skip call the matching coordinator mutations.
   ipcMain.handle(IPC.planRuns.stop, (_event, ...args: unknown[]) => {
     const input = readRunInput(args)
-    const route = planRunRoute(options, input.phiSessionId)
-    return route.kind === 'desktop'
-      ? route.operations.stop(input.phiSessionId, input.runId)
-      : loadedKernelPlanRuns(route).stop(input.runId)
+    return loadedKernelPlanRuns(options, input.phiSessionId).stop(input.runId)
   })
   ipcMain.handle(IPC.planRuns.retryStep, (_event, ...args: unknown[]) => {
     const input = readStepInput(args)
-    const route = planRunRoute(options, input.phiSessionId)
-    return route.kind === 'desktop'
-      ? route.operations.retryStep(input.phiSessionId, input.runId, input.stepId)
-      : loadedKernelPlanRuns(route).retryStep(input.runId, input.stepId)
+    return loadedKernelPlanRuns(options, input.phiSessionId).retryStep(input.runId, input.stepId)
   })
   ipcMain.handle(IPC.planRuns.skipStep, (_event, ...args: unknown[]) => {
     const input = readStepInput(args)
-    const route = planRunRoute(options, input.phiSessionId)
-    return route.kind === 'desktop'
-      ? route.operations.skipStep(input.phiSessionId, input.runId, input.stepId)
-      : loadedKernelPlanRuns(route).skipStep(input.runId, input.stepId)
+    return loadedKernelPlanRuns(options, input.phiSessionId).skipStep(input.runId, input.stepId)
   })
 
   // Kernel mapping: requestReplan maps to planRuns.replan on the coordinator.
   ipcMain.handle(IPC.planRuns.requestReplan, (_event, ...args: unknown[]) => {
     const input = readRunInput(args)
-    const route = planRunRoute(options, input.phiSessionId)
-    return route.kind === 'desktop'
-      ? route.operations.requestReplan(input.phiSessionId, input.runId)
-      : loadedKernelPlanRuns(route).requestReplan(input.runId)
+    return loadedKernelPlanRuns(options, input.phiSessionId).requestReplan(input.runId)
   })
 
   // Kernel mapping: cancelling a requested replan has no safe coordinator equivalent.
   ipcMain.handle(IPC.planRuns.cancelReplan, (_event, ...args: unknown[]) => {
-    const input = readReplanCancelInput(args)
-    const route = planRunRoute(options, input.phiSessionId)
-    if (route.kind === 'kernel') throw new Error('内核计划运行暂不支持取消重新规划')
-    return route.operations.cancelRequestedReplan(input.phiSessionId, input.runId, input.requestId)
+    readReplanCancelInput(args)
+    throw new Error('内核计划运行暂不支持取消重新规划')
   })
 }

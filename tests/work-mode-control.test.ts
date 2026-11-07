@@ -133,7 +133,7 @@ function createControlHarness(options: ControlHarnessOptions = {}): ControlHarne
       notifySessionChanged: () => undefined
     },
     activity: {
-      hasActivePlanWork: () => {
+      hasActivePlanWork: async () => {
         planChecks += 1
         return options.activePlan ?? false
       },
@@ -211,6 +211,7 @@ test('work-mode changes recheck plans started during the asynchronous agent quer
   const harness = createControlHarness(options)
   const update = harness.control.update('plan', target)
 
+  await Promise.resolve()
   options.activePlan = true
   finishAgentCheck(false)
 

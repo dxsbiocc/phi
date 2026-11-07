@@ -25,7 +25,6 @@ export interface PlanReviewHostServiceDeps<StoredEvent> {
     'markNeedsInput' | 'markInputCancelled' | 'markInputAnswered'
   >
   notifySessionChanged: ReviewDeps<StoredEvent>['state']['notifySessionChanged']
-  planRuns?: ReviewDeps<StoredEvent>['planRuns']
 }
 
 export function registerPlanReviewHostService<StoredEvent>(
@@ -56,8 +55,7 @@ export function registerPlanReviewHostService<StoredEvent>(
       markInputAnswered: (sessionId, reviewId) =>
         deps.runnerRegistry.markInputAnswered(sessionId, reviewId),
       notifySessionChanged: deps.notifySessionChanged
-    },
-    ...(deps.planRuns ? { planRuns: deps.planRuns } : {})
+    }
   })
   return deps.host.register('planReview.request', handler)
 }

@@ -5,9 +5,6 @@ import type { AgentUserInteractionInput, waitForAgentUserInteraction } from '../
 import { isRecord } from '../../../shared/guards'
 import type { PlanSpec } from '../../../shared/planRunTypes'
 import { validatePlanSpec } from '../plan/model/plan-spec'
-import { planExecutionOwner, type PlanExecutionOwner } from '../plan/plan-ownership'
-import type { ApprovedPlanStartGuard } from '../plan/plan-run-service'
-import type { KernelRuntimeRef } from '../session/runtime-reference'
 
 export interface PlanReviewPromptRun {
   phiSessionId: string
@@ -26,7 +23,6 @@ interface PlanReviewProject {
 interface PlanReviewSession {
   projectLocation?: { kind: string }
   workMode?: string
-  kernelRuntimeRef?: KernelRuntimeRef
 }
 
 interface PlanReviewSubmittedEvent extends Record<string, unknown> {
@@ -90,29 +86,6 @@ export interface PlanReviewRequestDeps<StoredEvent> {
     markInputAnswered(sessionId: string, requestId: string): void
     notifySessionChanged(): void
   }
-  planRuns?: {
-    startFromApprovedPlan(
-      sessionId: string,
-      spec: PlanSpec,
-      guard?: ApprovedPlanStartGuard
-    ): Promise<{ id: string }>
-    pendingReplan(
-      phiSessionId: string,
-      runtimeSessionId: string
-    ): { requestId: string; runId: string } | null
-    validateReplanProposal(
-      phiSessionId: string,
-      requestId: string,
-      spec: unknown
-    ): Promise<{ ok: true; spec: PlanSpec } | { ok: false; errors: string[] }>
-    applyApprovedReplan(
-      phiSessionId: string,
-      runtimeSessionId: string,
-      requestId: string,
-      spec: PlanSpec
-    ): Promise<{ id: string }>
-    cancelReplan(phiSessionId: string, requestId: string): void
-  }
 }
 
 interface ValidPlanReviewRequest {
@@ -127,7 +100,6 @@ interface ValidPlanReviewRequest {
 interface PlanReviewTarget {
   run: PlanReviewPromptRun
   project: PlanReviewProject | undefined
-  planOwner: PlanExecutionOwner
   window: BrowserWindow | null
 }
 
@@ -203,7 +175,7 @@ function resolvePlanReviewTarget<StoredEvent>(
     throw new Error('远程项目暂不支持计划评审')
   }
   const window = deps.renderer.getActiveWindow()
-  return { run, project, planOwner: planExecutionOwner(manifest), window }
+  return { run, project, window }
 }
 
 function submitPlanReview<StoredEvent>(
@@ -296,36 +268,11 @@ export function createPlanReviewRequest<StoredEvent>(
 ): (
   params: unknown,
   context?: PhiHostRequestContext
-) => Promise<{ decision: PlanReviewDecision; note?: string; planRunId?: string }> {
+) => Promise<{ decision: PlanReviewDecision; note?: string }> {
   return async function handlePlanReviewRequest(params, context) {
     const request = readPlanReviewRequest(params, deps)
     const target = resolvePlanReviewTarget(request, context, deps)
-    const desktopPlanRuns = target.planOwner === 'desktop' ? deps.planRuns : undefined
-    const pending = desktopPlanRuns?.pendingReplan(
-      target.run.phiSessionId,
-      request.runtimeSessionId
-    )
-    if (request.replanRequestId) {
-      if (
-        target.planOwner === 'desktop' &&
-        (!pending || pending.requestId !== request.replanRequestId || !request.steps)
-      ) {
-        throw new Error('Plan replan request is no longer active')
-      }
-      if (desktopPlanRuns && request.steps) {
-        const validation = await desktopPlanRuns.validateReplanProposal(
-          target.run.phiSessionId,
-          request.replanRequestId,
-          request.steps
-        )
-        if (!validation.ok) throw new Error(validation.errors.join(' '))
-      }
-    } else if (pending) {
-      throw new Error('A plan replan request is already in progress')
-    }
     if (!planReviewRunIsCurrent(request, target, context, deps)) {
-      if (request.replanRequestId)
-        desktopPlanRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
       return { decision: 'cancel' }
     }
     const reviewId = deps.state.createId()
@@ -352,10 +299,7 @@ export function createPlanReviewRequest<StoredEvent>(
     )
     const decision = planReviewDecision(response)
     const note = planReviewNote(response)
-    let planRun: { id: string } | undefined
     if (!planReviewRunIsCurrent(request, target, context, deps)) {
-      if (request.replanRequestId)
-        desktopPlanRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
       recordPlanReviewDecision(
         target,
         reviewId,
@@ -364,45 +308,10 @@ export function createPlanReviewRequest<StoredEvent>(
       )
       return { decision: 'cancel' }
     }
-    if (decision === 'cancel' && request.replanRequestId) {
-      desktopPlanRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
-    }
-    if (decision === 'approve' && request.steps && target.planOwner === 'desktop') {
-      try {
-        if (!desktopPlanRuns) throw new Error('Plan execution service is unavailable')
-        planRun = request.replanRequestId
-          ? await desktopPlanRuns.applyApprovedReplan(
-              target.run.phiSessionId,
-              request.runtimeSessionId,
-              request.replanRequestId,
-              request.steps
-            )
-          : await desktopPlanRuns.startFromApprovedPlan(target.run.phiSessionId, request.steps, {
-              expectedRuntimeSessionId: request.runtimeSessionId,
-              assertCurrent: () => {
-                if (!planReviewRunIsCurrent(request, target, context, deps))
-                  throw new Error('Plan approval is no longer active for this conversation')
-              },
-              ...(context?.signal ? { signal: context.signal } : {})
-            })
-      } catch (error) {
-        if (request.replanRequestId)
-          desktopPlanRuns?.cancelReplan(target.run.phiSessionId, request.replanRequestId)
-        recordPlanReviewDecision(
-          target,
-          reviewId,
-          { decision: 'cancel', note: '', reason: 'plan_start_failed' },
-          deps
-        )
-        if (request.replanRequestId) return { decision: 'cancel' }
-        throw error
-      }
-    }
     recordPlanReviewDecision(target, reviewId, { decision, note }, deps)
     return {
       decision,
-      ...(note && decision === 'revise' ? { note } : {}),
-      ...(planRun ? { planRunId: planRun.id } : {})
+      ...(note && decision === 'revise' ? { note } : {})
     }
   }
 }

@@ -89,6 +89,68 @@ test('SessionRoutingEngine sends local sessions to one shared kernel and never p
   assert.equal(client.requests.filter((request) => request.method === 'session.prompt').length, 0)
 })
 
+test('SessionRoutingEngine limits desktop execution to tracked no-tools helpers', async () => {
+  const legacy = legacyEngine()
+  const calls: string[] = []
+  const state = { cwd: '/project', messages: [] }
+  legacy.sessions.create = async (input) => {
+    calls.push(`create:${input.sessionId}`)
+    return { sessionId: input.sessionId, state }
+  }
+  legacy.sessions.prompt = async (input) => {
+    calls.push(`prompt:${input.sessionId}`)
+    return state
+  }
+  legacy.sessions.dispose = async (input) => {
+    calls.push(`dispose:${input.sessionId}`)
+  }
+  legacy.sessions.has = (sessionId) => sessionId === 'auxiliary'
+  legacy.agentRuns.start = async (input) => {
+    calls.push(`agent-run:${input.sessionId}`)
+    return { runId: 'legacy-child' }
+  }
+  legacy.shellJobs.cancel = async (input) => {
+    calls.push(`shell-cancel:${input.sessionId}`)
+    return { ok: true }
+  }
+  legacy.events.respondToolApproval = async (requestId) => {
+    calls.push(`approval:${requestId}`)
+  }
+  const engine = new SessionRoutingEngine(legacy, () => undefined)
+
+  await assert.rejects(
+    engine.sessions.create(params('main')),
+    /kernel session route is unavailable/u
+  )
+  await assert.rejects(
+    engine.sessions.prompt({ sessionId: 'main', text: 'must not reach desktop' }),
+    /independent no-tools helpers/u
+  )
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      engine.agentRuns.start({ sessionId: 'main', task: 'must not reach desktop' })
+    ),
+    /agentRuns\.start/u
+  )
+  await assert.rejects(
+    engine.shellJobs.cancel({ sessionId: 'main', jobId: 'job-1' }),
+    /shellJobs\.cancel/u
+  )
+  await assert.rejects(
+    engine.events.respondToolApproval('unknown-approval', null),
+    /tool approval/u
+  )
+
+  const auxiliary = params('auxiliary')
+  auxiliary.noTools = 'all'
+  await engine.sessions.create(auxiliary)
+  await engine.sessions.prompt({ sessionId: auxiliary.sessionId, text: 'write a title' })
+  assert.equal(engine.sessions.has(auxiliary.sessionId), true)
+  await engine.sessions.dispose({ sessionId: auxiliary.sessionId })
+
+  assert.deepEqual(calls, ['create:auxiliary', 'prompt:auxiliary', 'dispose:auxiliary'])
+})
+
 test('SessionRoutingEngine closes every routed session before stopping its kernel host', async () => {
   const client = new FakeKernelClient()
   let hostClosed = false
@@ -492,10 +554,7 @@ test('SessionRoutingEngine forks an attached remote kernel session on its server
   const source = findPhiSessionById(phi.sessionId)?.kernelRuntimeRef
   assert.equal(source?.host.kind, 'ssh')
   // A desktop without this session attached cannot reach its server to fork it.
-  const detached = new SessionRoutingEngine(
-    legacyEngine(),
-    () => new KernelSessionFactory({})
-  )
+  const detached = new SessionRoutingEngine(legacyEngine(), () => new KernelSessionFactory({}))
   await assert.rejects(detached.history.fork(forkRequest), /远程会话尚未连接/)
 
   // The kernel creates the fork's runtime inside session.fork; its host requests must reach

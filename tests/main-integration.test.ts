@@ -3757,38 +3757,6 @@ async function harness(
     './agent/plan/model/plan-spec': {
       validatePlanSpec: (value: unknown) => ({ ok: true, spec: value })
     },
-    './agent/engine/session-routing-engine': {
-      // The integration engine is not a routing engine, so no session is kernel-routed.
-      kernelPlanRunRouting: (planRuns: unknown) => ({
-        planRuns,
-        findSessionById: () => undefined,
-        kernelPlanRuns: () => undefined
-      })
-    },
-    './agent/plan/plan-run-service': {
-      createPlanRunService: () => ({
-        startFromApprovedPlan: async () => ({ id: 'plan-run-1' }),
-        hasActiveWork: () => false,
-        list: async () => [],
-        get: async () => null,
-        pause: async () => undefined,
-        resume: async () => undefined,
-        stop: async () => undefined,
-        retryStep: async () => undefined,
-        skipStep: async () => undefined,
-        requestReplan: async () => ({ requestId: 'replan-1', runId: 'plan-run-1', prompt: '' }),
-        cancelRequestedReplan: async () => undefined,
-        pendingReplan: () => null,
-        pendingReplanForRun: () => null,
-        validateReplanProposal: async (_sessionId: string, _requestId: string, spec: unknown) => ({
-          ok: true,
-          spec
-        }),
-        applyApprovedReplan: async () => ({ id: 'plan-run-1' }),
-        cancelReplan: () => undefined,
-        recoverSession: async () => []
-      })
-    },
     './agent/wrappers/composition/discovery': {
       listWrapperCompositionCatalogStatus: (): unknown[] => [],
       resetWrapperCompositionCatalogCache: (): void => {}
@@ -8870,7 +8838,6 @@ test('main IPC: session handlers preserve current missing-target and invalid-tar
   assert.deepEqual(app.renamedSessions, [])
   await assert.rejects(app.invoke('sessions:export', 42), /会话编号无效/)
   await assert.rejects(app.invoke('sessions:autoCompactionSettings', null), /会话已切换/)
-
 })
 
 test('main IPC: current payload keeps its stable identity when the manifest is missing', async () => {
