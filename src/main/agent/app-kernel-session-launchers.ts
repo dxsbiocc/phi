@@ -3,7 +3,10 @@ import { homedir } from 'node:os'
 
 import { writeAppLog, type AppLogEntry } from './app-logger'
 import { getProject } from './projects'
-import { resolveRemoteWorkspaceHostBinding } from './remote-workspace-boundary'
+import {
+  remoteWorkspaceBindingHash,
+  resolveRemoteWorkspaceHostBinding
+} from './remote-workspace-boundary'
 import { openRemoteRuntimeWorkspace } from './remote-runtime/workspace'
 import { getPhiEngine, getPhiEngineBridge, type PhiEngineBridge } from './engine/in-process-engine'
 import type {
@@ -23,7 +26,6 @@ import {
   type DesktopModelAccessOwner
 } from './engine/kernel-host/desktop-model-access'
 import type { RemoteReverseTunnel } from './wrappers/remote-ssh-session'
-import { facadeBindingHash } from './engine/rpc/facade-session-driver'
 import { probeRemoteKernelHistory, readAndPlanKernelHistory } from './engine/kernel-history'
 import { getSessionDir } from './session/session-store'
 import { AppKernelDesktopServices } from './app-kernel-desktop-services'
@@ -336,7 +338,7 @@ function remoteHistoryPlan(
     phiSessionId,
     expectedRemoteScope: {
       hostProfileId: target.remote.location.hostProfileId,
-      bindingHash: facadeBindingHash(target.binding),
+      bindingHash: remoteWorkspaceBindingHash(target.binding),
       projectId: target.remote.projectId,
       projectRoot: target.remote.location.canonicalRoot,
       runtimeRoot: target.workspace.runtimeRoot

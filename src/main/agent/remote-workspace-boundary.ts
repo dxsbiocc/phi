@@ -1,4 +1,5 @@
 import { connectSharedSshSession } from './wrappers/shared-ssh-connection'
+import { createHash } from 'node:crypto'
 import { posix, resolve } from 'node:path'
 
 import { CodedError } from '../../shared/errorCodes'
@@ -91,6 +92,10 @@ export interface RemoteWorkspaceHostBinding {
     canonicalRoot: string
     connect: () => Promise<RemoteSshSession>
   }
+}
+
+export function remoteWorkspaceBindingHash(binding: RemoteWorkspaceHostBinding): string {
+  return createHash('sha256').update(binding.cacheKey).digest('hex')
 }
 
 export function validRemoteAbsolutePath(path: string): boolean {

@@ -9,7 +9,7 @@ import type {
 } from '../../../shared/runtimeRecoveryTypes'
 import { getAuthManager } from '../auth-manager'
 import { getPhiEngine, ownsRemoteRuntimeSession } from '../engine/in-process-engine'
-import { facadeBindingHash } from '../engine/rpc/facade-session-driver'
+import { remoteWorkspaceBindingHash } from '../remote-workspace-boundary'
 import { RemoteRecoveryError, describeRemoteRecoveryFailure } from '../engine/rpc/session-recovery'
 import type { ModelSelection, PermissionMode, Project } from '../projects'
 import { getProject } from '../projects'
@@ -258,14 +258,14 @@ async function captureRuntimeRecoveryScope(
       assertRuntimeReferenceProject(manifest, {
         ...reference,
         hostProfileId: currentProject.location.hostProfileId,
-        bindingHash: facadeBindingHash(selectedBinding),
+        bindingHash: remoteWorkspaceBindingHash(selectedBinding),
         projectId: currentProject.id,
         projectRoot: selectedBinding.canonicalRoot
       })
       assertRuntimeScope(reference, {
         ...reference,
         hostProfileId: currentProject.location.hostProfileId,
-        bindingHash: facadeBindingHash(selectedBinding),
+        bindingHash: remoteWorkspaceBindingHash(selectedBinding),
         projectId: currentProject.id,
         projectRoot: selectedBinding.canonicalRoot
       })

@@ -3,8 +3,6 @@ import { browserPresentationSessionId } from '../shared/browserSessionScope'
 import { registerRuntimeSessionOrigin } from './agent/session/runtime-origin-store'
 import { loadFreshDevRenderer } from './dev-renderer'
 import type { AgentRunFinishedEvent } from '../shared/agentRunNotice'
-import { readRuntimeRecoverySummarySeed } from './agent/session/recovery-summary'
-import { facadeBindingHash } from './agent/engine/rpc/facade-session-driver'
 import { selectionThinking } from './agent/engine/rpc/runtime-selection-control'
 import { isPhiEventType, isPhiMessageUpdateSummary } from './agent/engine/events'
 import type { WrapperRunFinishedEvent } from '../shared/wrapperRunNotice'
@@ -173,9 +171,6 @@ import {
   RemoteRuntimeController,
   controlRemoteRuntimeWorkspace
 } from './agent/remote-runtime/controller'
-import { createAppRemoteAgentResources } from './agent/remote-runtime/app-remote-agent-resources'
-import { createAppRemoteAgentEnvironment } from './agent/remote-runtime/app-remote-agent-environment'
-import { createAppRemotePromptContext } from './agent/remote-runtime/app-remote-prompt-context'
 import { createAppRemoteDesktopTools } from './agent/remote-runtime/app-remote-desktop-tools'
 import { createRemoteRuntimeDispatchControl } from './agent/remote-runtime/remote-runtime-dispatch-control'
 import { createProjectRuntimeRootContext } from './agent/remote-runtime/project-runtime-root-context'
@@ -199,7 +194,6 @@ import { RemoteProjectConnectionTracker } from './agent/remote-project-connectio
 import { RemoteProjectUploadService } from './agent/remote-project-upload'
 import { remoteTransferHostKey } from './agent/transfer'
 import { loadRemoteProjectInstructions } from './agent/remote-project-instructions'
-import { resolveRemoteRuntimePromptContext } from './agent/remote-runtime-context'
 import {
   createDesktopProjectMemoryAdapter,
   retireDesktopProjectMemoryAdapters
@@ -225,10 +219,7 @@ import { createEnvironmentBuilds } from './agent/content/environment-builds'
 import { buildEnvironment } from './agent/content/environment-refs'
 import { bindAgentSession } from './agent/content/environment-gate'
 import { createSkillHost } from './agent/content/skill-host'
-import {
-  loadRemoteProjectSkillCatalog,
-  readRemoteProjectSkillContent
-} from './agent/content/remote-project-skill-service'
+import { loadRemoteProjectSkillCatalog } from './agent/content/remote-project-skill-service'
 import { loadRemoteProjectMcpCatalog } from './agent/mcp/remote-project-mcp-service'
 import { getRuntimeRoot } from './agent/envs/runtime'
 import { capabilityApprovalSummary } from './agent/packages/capability-approval'
@@ -288,8 +279,7 @@ import {
 import {
   listGlobalMcpServers,
   listGlobalSkills,
-  listSkills,
-  readGlobalSkillContent
+  listSkills
 } from './agent/resources'
 import { migrateLegacyCustomWrappers, startLegacyBundledCleanup } from './agent/wrappers/catalog'
 import { resetWrapperCompositionCatalogCache } from './agent/wrappers/composition/discovery'
@@ -302,7 +292,6 @@ import { markInterruptedCompositionRuns } from './agent/wrappers/composition/run
 import { resolveProjectRemoteTarget } from './agent/wrappers/remote-connection-resolver'
 import { reconcileRemoteWrapperRuns } from './agent/wrappers/executor-slurm-reconcile'
 import { createWrapperResultReadControl } from './agent/wrappers/remote-result-read-control'
-import { loadRemoteAgentCatalog } from './agent/agents/remote-agent-service'
 import {
   BackgroundAgentApprovalTracker,
   createBackgroundApprovalRunOriginResolver
@@ -853,45 +842,10 @@ const backgroundAgentApprovals = new BackgroundAgentApprovalTracker({
     sendRunEventToWindow({ source: 'phi', ...event, phiSessionId: sessionId }),
   onChange: notifySessionChanged
 })
-// The RPC facade owns persistence; this observer reuses its records for sidebar attention.
-const rpcChildApprovals = new BackgroundAgentApprovalTracker({
-  resolveRunOrigin: resolveBackgroundAgentRunOrigin,
-  readManifest: (sessionId) => {
-    const manifest = findPhiSessionById(sessionId)
-    const active = runnerRegistry.getActiveRun(sessionId)
-    return manifest && active ? { ...manifest, status: 'running', unreadKind: null } : manifest
-  },
-  appendEvent: (sessionId, event) => {
-    const persisted = readSessionEvents(sessionId).findLast(
-      (stored) =>
-        stored.type === event.type &&
-        stored.approvalId === event.approvalId &&
-        stored.agentRunId === event.agentRunId
-    )
-    if (!persisted) throw new Error('RPC child approval notification has no durable record')
-    return persisted
-  },
-  updateManifest: (sessionId, patch) => {
-    const attention = { ...patch }
-    delete attention.lastRunOutcome
-    const active = runnerRegistry.getActiveRun(sessionId)
-    if (active) {
-      // The live runner owns its status; a finished parent's child cannot change a successor.
-      if (attention.unreadKind === 'approval' || active.status !== 'needs_approval')
-        updateSessionManifest(sessionId, { unreadKind: attention.unreadKind })
-      return
-    }
-    updateSessionManifest(sessionId, attention)
-  },
-  onEvent: (sessionId, event) =>
-    sendRunEventToWindow({ source: 'phi', ...event, phiSessionId: sessionId }),
-  onChange: notifySessionChanged
-})
 const runnerRegistry = new SessionRunnerRegistry({
   onSessionEvent: broadcastSessionTimelineEvent,
   onRunSettled: (sessionId) => {
     backgroundAgentApprovals.afterParentRunSettled(sessionId)
-    rpcChildApprovals.afterParentRunSettled(sessionId)
   }
 })
 const handleAgentInteractionRequest = createAgentInteractionRequest({
@@ -1008,42 +962,6 @@ const { remoteRuntimeDispatchControl, isRemoteRuntimeCancellation } =
         getPhiEngine().agentRuns.resourceOwner?.(runtimeSessionId, agentRunId)
     }
   })
-const loadAppRemoteAgentResources = createAppRemoteAgentResources({
-  agentDir: AGENT_DIR,
-  sessions: { findById: findPhiSessionById },
-  workspace: { resolveBinding: resolveRemoteWorkspaceHostBinding },
-  catalogs: {
-    loadProjectSkills: loadRemoteProjectSkillCatalog,
-    listGlobalSkills,
-    readProjectSkill: readRemoteProjectSkillContent,
-    readGlobalSkill: readGlobalSkillContent
-  }
-})
-const resolveAppRemoteAgentEnvironment = createAppRemoteAgentEnvironment({
-  sessions: { findById: findPhiSessionById },
-  workspace: {
-    resolveBinding: resolveRemoteWorkspaceHostBinding,
-    resolveTarget: directRemoteRuntimeTarget
-  },
-  runtime: {
-    describeReadyInWorkspace: (...args) =>
-      remoteRuntimeController.environments.describeReadyInWorkspace(...args)
-  },
-  projects: { require: requireProject },
-  facade: { bindingHash: facadeBindingHash }
-})
-const loadAppRemotePromptContext = createAppRemotePromptContext({
-  agentDir: AGENT_DIR,
-  sessions: { findById: findPhiSessionById, readEvents: readSessionEvents },
-  projects: { require: requireProject, runtimeRoot: projectRemoteRuntimeRoot },
-  workspace: { resolveBinding: resolveRemoteWorkspaceHostBinding },
-  context: {
-    loadProjectInstructions: loadRemoteProjectInstructions,
-    getPersonaMarkdown,
-    resolveRuntimePrompt: resolveRemoteRuntimePromptContext,
-    readRecoverySummary: readRuntimeRecoverySummarySeed
-  }
-})
 const loadAppRemoteDesktopTools = createAppRemoteDesktopTools({
   agentDir: AGENT_DIR,
   sessions: { findById: findPhiSessionById },
@@ -1133,16 +1051,6 @@ installAppRemoteSessionRouting({
       metadata: { status, totalMs, steps }
     })
   },
-  onRunTakeover: ({ sessionId, message }) => {
-    const stored = appendSessionEvent(sessionId, {
-      type: 'remote_run_stopped',
-      noticeLevel: 'warning',
-      noticeText: message
-    })
-    broadcastSessionTimelineEvent(sessionId, stored)
-  },
-  foregroundAgentNames: process.env.PHI_REMOTE_OMP_AGENTS,
-  agentDir: AGENT_DIR,
   runners: runnerRegistry,
   appPaths: () => ({
     appPath: app.getAppPath(),
@@ -1152,75 +1060,7 @@ installAppRemoteSessionRouting({
     userDataPath: app.getPath('userData')
   }),
   configuredRoot: (project) => projectRemoteRuntimeRoot(project).configured,
-  loadAgents: async (identity) =>
-    (
-      await loadRemoteAgentCatalog({
-        ...identity,
-        agentDir: AGENT_DIR,
-        bundledDir: getBundledAgentsDir()
-      })
-    ).agents,
-  loadDesktopTools: loadAppRemoteDesktopTools,
-  loadPromptContext: loadAppRemotePromptContext,
-  loadAgentResources: loadAppRemoteAgentResources,
-  resolveAgentEnvironment: resolveAppRemoteAgentEnvironment,
-  onChildApprovalEvent: (event) => {
-    if (!event.request.cwd) return
-    if (event.type === 'approval_requested') {
-      rpcChildApprovals.requested({
-        sessionId: event.sessionId,
-        agentRunId: event.runId,
-        approvalId: event.approvalId,
-        toolName: event.request.toolName,
-        summary: event.request.summary ?? event.request.toolName,
-        cwd: event.request.cwd
-      })
-    } else {
-      void rpcChildApprovals
-        .resolved(
-          event.approvalId,
-          event.type === 'approval_approved'
-            ? 'approved'
-            : event.type === 'approval_denied'
-              ? 'denied'
-              : 'cancelled'
-        )
-        .catch(logUnexpectedError)
-    }
-  },
-  onMemoryError: (identity) =>
-    writeAppLog({
-      level: 'error',
-      event: 'project_memory_ingestion_failed',
-      sessionId: identity.sessionId,
-      metadata: { projectId: identity.projectId, reason: 'ingestion_failed' }
-    }),
-  approval: {
-    shouldGate: (request) => {
-      const manifest = request.sessionId ? findPhiSessionById(request.sessionId) : null
-      if (!manifest) throw new Error('RPC approval session is unavailable')
-      return manifest.permissionMode === 'ask'
-    },
-    requestToolApproval: (request, signal) =>
-      requestRuntimeToolApproval(request, signal, () => {
-        const window = runtime.window.mainWindow
-        return window && !window.isDestroyed() ? window : null
-      }),
-    onEvent: (event) => {
-      const run = runnerRegistry.getActiveRun(event.sessionId)
-      if (!run || run.runId !== event.runId) return
-      if (event.type === 'approval_requested')
-        runnerRegistry.markNeedsApproval(event.sessionId, event.approvalId, {
-          toolName: event.request.toolName,
-          summary: event.request.summary
-        })
-      else if (event.type === 'approval_approved')
-        runnerRegistry.markApprovalApproved(event.sessionId, event.approvalId)
-      else if (event.type === 'approval_denied')
-        runnerRegistry.markApprovalDenied(event.sessionId, event.approvalId)
-      else runnerRegistry.markApprovalCancelled(event.sessionId, event.approvalId)
-    }
-  }
+  loadDesktopTools: loadAppRemoteDesktopTools
 })
 function syncPreventSleepBlocker(): void {
   const shouldBlock = readAppSettings().preventSleepDuringRuns && runnerRegistry.activeCount > 0

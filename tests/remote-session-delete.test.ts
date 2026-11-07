@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { facadeBindingHash } from '../src/main/agent/engine/rpc/facade-session-driver'
+import { remoteWorkspaceBindingHash } from '../src/main/agent/remote-workspace-boundary'
 import { deriveRemoteSessionPaths } from '../src/main/agent/engine/rpc/session-storage/paths'
 import { serializeRemoteSessionManifest } from '../src/main/agent/engine/rpc/session-storage/remote-manifest'
 import type { Project } from '../src/main/agent/projects'
@@ -85,7 +85,7 @@ async function fixture(
     })
     const scope = {
       hostProfileId,
-      bindingHash: facadeBindingHash(binding),
+      bindingHash: remoteWorkspaceBindingHash(binding),
       projectId,
       projectRoot,
       runtimeRoot: join(realpathSync(directory), 'remote-runtime')

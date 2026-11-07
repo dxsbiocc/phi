@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 
-import { facadeBindingHash } from '../engine/rpc/facade-session-driver'
+import { remoteWorkspaceBindingHash } from '../remote-workspace-boundary'
 import { deriveRemoteSessionPaths } from '../engine/rpc/session-storage/paths'
 import {
   STORAGE_REMOTE_FUNCTIONS,
@@ -272,7 +272,7 @@ async function prepareRpcRemotePhiDeletion(
   }
   const scope: RemoteSessionScope = {
     hostProfileId: project.location.hostProfileId,
-    bindingHash: facadeBindingHash(binding),
+    bindingHash: remoteWorkspaceBindingHash(binding),
     projectId: project.id,
     projectRoot: binding.canonicalRoot,
     runtimeRoot: reference.runtimeRoot,
@@ -315,7 +315,7 @@ async function prepareRpcRemotePhiDeletion(
         !latest?.runtimeRef ||
         JSON.stringify(latest.runtimeRef) !== JSON.stringify(manifest.runtimeRef) ||
         JSON.stringify(currentProject?.location) !== JSON.stringify(project.location) ||
-        facadeBindingHash(currentBinding) !== scope.bindingHash
+        remoteWorkspaceBindingHash(currentBinding) !== scope.bindingHash
       ) {
         throw new RuntimeReferenceError('STALE_GENERATION', '会话身份在删除期间改变，请刷新后重试')
       }

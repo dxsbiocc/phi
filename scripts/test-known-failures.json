@@ -41,62 +41,6 @@
   },
   "entries": [
     {
-      "file": "tests/t14production-child-controls.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-checkpoint.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-child-composition.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-child-resources.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-compaction.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-desktop-composition.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-maintenance-regressions.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-metadata.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-prompt-context.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-routing-composition.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-routing-regressions.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-selected-cleanup.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-facade-selection.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-cursor-child-recovery.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
       "file": "tests/engine-rpc-desktop-mcp-cli.test.ts",
       "profile": "rpc-launch"
     },
@@ -173,19 +117,7 @@
       "profile": "rpc-launch"
     },
     {
-      "file": "tests/engine-rpc-t15-recovery-integration.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
       "file": "tests/engine-rpc-xdev-host-tools.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/remote-r8.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/remote-startup-command-ceiling.test.ts",
       "profile": "rpc-launch"
     },
     {

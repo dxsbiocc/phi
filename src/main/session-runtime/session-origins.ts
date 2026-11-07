@@ -1,5 +1,5 @@
 import { getProject, type Project } from '../agent/projects'
-import { facadeBindingHash } from '../agent/engine/rpc/facade-session-driver'
+import { remoteWorkspaceBindingHash } from '../agent/remote-workspace-boundary'
 import { resolveRemoteWorkspaceHostBinding } from '../agent/remote-workspace-boundary'
 import { resolveRuntimeSessionOrigin } from '../agent/session/runtime-origin-store'
 import {
@@ -22,7 +22,7 @@ export interface SessionOriginServices {
   getProject: typeof getProject
   resolveRuntimeSessionOrigin: typeof resolveRuntimeSessionOrigin
   resolveRemoteWorkspaceHostBinding: typeof resolveRemoteWorkspaceHostBinding
-  facadeBindingHash: typeof facadeBindingHash
+  facadeBindingHash: typeof remoteWorkspaceBindingHash
 }
 
 const defaultServices: SessionOriginServices = {
@@ -30,7 +30,7 @@ const defaultServices: SessionOriginServices = {
   getProject,
   resolveRuntimeSessionOrigin,
   resolveRemoteWorkspaceHostBinding,
-  facadeBindingHash
+  facadeBindingHash: remoteWorkspaceBindingHash
 }
 
 export interface SessionOriginsDeps<TPromptRun extends OriginPromptRun> {
