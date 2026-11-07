@@ -30,6 +30,7 @@ import {
   clearRemoteKernelDeploymentProgress
 } from '../features/chat/lib/remoteKernelDeploymentProgress'
 
+import { stripAgentReportMetadata } from '../../../shared/agentReportText'
 import { isRecord } from '../../../shared/guards'
 export interface AgentEventReducerState {
   messages: ChatItem[]
@@ -442,8 +443,9 @@ function applyAgentExecutionCompleted(next: ChatItem[], event: AgentEventSummary
   const index = ensureAgentExecutionItem(next, event)
   const current = next[index]
   if (current.role !== 'agent_execution') return true
-  const finalReport =
+  const finalReport = stripAgentReportMetadata(
     typeof event.finalReport === 'string' ? event.finalReport : extractToolText(event.result)
+  )
   const completedAt = event.createdAt
   const durationMs = durationBetween(current.createdAt, event)
   const artifact = outputArtifactFrom(event.finalReportArtifact)

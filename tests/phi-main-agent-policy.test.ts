@@ -6,11 +6,7 @@ import {
   buildPhiRemoteProjectSystemPrompt,
   filterPersonaContextFile
 } from '../src/main/agent/main-system-prompt'
-import {
-  parseAgentReport,
-  requireDeclaredCompletion,
-  UNDECLARED_COMPLETION_NOTE
-} from '../src/main/agent/agents/report'
+import { parseAgentReport, requireDeclaredCompletion } from '../src/main/agent/agents/report'
 import {
   projectToolBoundaryDecision,
   remoteUrlGuardDecision
@@ -165,7 +161,7 @@ test('legacy specialist prose remains a completed report for compatibility', () 
 test('host-dispatched prose cannot pass as a declared completion', () => {
   const prose = requireDeclaredCompletion(parseAgentReport('Top-level listing not verified.'))
   assert.equal(prose.status, 'partial')
-  assert.equal(prose.text, `${UNDECLARED_COMPLETION_NOTE}\n\nTop-level listing not verified.`)
+  assert.equal(prose.text, 'Top-level listing not verified.')
 
   const blocked = parseAgentReport('Source unavailable.')
   assert.equal(requireDeclaredCompletion({ ...blocked, status: 'blocked' }).status, 'blocked')

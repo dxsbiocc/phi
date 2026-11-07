@@ -53,7 +53,8 @@ test('verified remote child completion reaches the originating plan run', async 
       startedAt: 10,
       completedAt: 20,
       toolCallId: 'persisted-request-id',
-      report: DECLARED_REPORT,
+      // The metadata block is for the host; the card and the subagent tab show prose only.
+      report: 'Finished plan step',
       reportStatus: 'completed',
       missingInputs: []
     }

@@ -1,5 +1,6 @@
 import type { ChatItem } from '../types'
 import type { AgentExecutionItem, AgentExecutionStep } from './agentExecutionTypes'
+import { stripAgentReportMetadata } from '../../../shared/agentReportText'
 
 function runIdField(runId?: unknown): { runId: string } | Record<string, never> {
   return typeof runId === 'string' && runId ? { runId } : {}
@@ -311,7 +312,9 @@ export function applyAgentCompletedTimelineEvent(
     agentName: message.agentName ?? current.agentName,
     status: message.isError ? 'error' : 'done',
     ...(message.cancelled === true ? { cancelled: true } : {}),
-    ...(typeof message.finalReport === 'string' ? { finalReport: message.finalReport } : {}),
+    ...(typeof message.finalReport === 'string'
+      ? { finalReport: stripAgentReportMetadata(message.finalReport) }
+      : {}),
     ...(typeof message.finalReportPath === 'string'
       ? { finalReportPath: message.finalReportPath }
       : {}),

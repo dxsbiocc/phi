@@ -6,6 +6,7 @@ import type { SessionRun } from '../../session/session-runner-registry'
 import type { PhiRuntimeRef } from '../../session/runtime-reference'
 import { recordChildRunRecovery } from '../../session/child-run-recovery'
 import { parseAgentReport, requireDeclaredCompletion } from '../../agents/report'
+import { stripAgentReportMetadata } from '../../../../shared/agentReportText'
 
 export function createFacadeChildObservers(input: {
   readonly reference: () => PhiRuntimeRef | undefined
@@ -94,7 +95,9 @@ export async function deliverFacadeChildCompletion(input: {
         startedAt: snapshot.startedAt,
         completedAt: snapshot.completedAt,
         toolCallId: snapshot.parentToolCallId,
-        ...(validReport ? { report } : { error: '专家任务未提供完整结果，请查看任务记录。' }),
+        ...(validReport
+          ? { report: stripAgentReportMetadata(report) }
+          : { error: '专家任务未提供完整结果，请查看任务记录。' }),
         ...(hostTask && validReport
           ? {
               reportStatus: requireDeclaredCompletion(parsed).status,

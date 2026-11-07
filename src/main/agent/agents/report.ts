@@ -67,20 +67,15 @@ export function parseAgentReport(value: string): AgentReport {
   }
 }
 
-export const UNDECLARED_COMPLETION_NOTE =
-  'Phi: this report has no valid <phi_agent_result> block, so the step is not treated as meeting its acceptance criteria.'
-
 /**
  * Host-dispatched work (plan steps) always asks for the report protocol, so prose
- * without valid metadata must not pass as a verified completion.
+ * without valid metadata must not pass as a verified completion. Only the status
+ * changes: the report text stays what the agent wrote, with nothing about the
+ * protocol added to it, because people read it.
  */
 export function requireDeclaredCompletion(report: AgentReport): AgentReport {
   if (report.structured || report.status !== 'completed') return report
-  return {
-    ...report,
-    status: 'partial',
-    text: [UNDECLARED_COMPLETION_NOTE, report.text].filter(Boolean).join('\n\n')
-  }
+  return { ...report, status: 'partial' }
 }
 
 export const AGENT_REPORT_PROTOCOL = `<phi_agent_reporting>
