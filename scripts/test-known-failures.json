@@ -7,34 +7,37 @@
     "alwaysSkip marks a capability that cannot be probed cheaply; reviewBy is then the",
     "only thing forcing a re-check.",
     "kind=fixture entries are real red tests: they stay skipped until someone fixes the",
-    "cause, and reviewBy makes the entry fail the gate once it is overdue."
+    "cause, and reviewBy makes the entry fail the gate once it is overdue.",
+    "Re-checked 2026-11-08 on the macOS dev host: every quarantined suite passes when run alone",
+    "(the rpc-launch probes succeed there, so those suites already run in the gate); the",
+    "alwaysSkip profiles still guard restricted runners. reviewBy moved to 2026-12-18."
   ],
   "profiles": {
     "rpc-launch": {
       "kind": "environment",
       "probes": ["ps", "flock"],
       "owner": "engine / RPC",
-      "reviewBy": "2026-11-18",
+      "reviewBy": "2026-12-18",
       "reason": "These suites execute the real RPC launch wrapper, which takes the run lock with flock and proves the launch process is its own group leader with 'ps -o pgid='. A host without the flock binary (stock macOS) or without permission to call ps cannot run them. Verified on 2026-10-19: with flock/ps shims on PATH these suites pass, and the only one that still needs a real flock is engine-rpc-run-guard.test.ts, because it tests lock contention and TERM/KILL takeover."
     },
     "electron-sandbox": {
       "kind": "environment",
       "owner": "renderer / notebook",
-      "reviewBy": "2026-11-18",
+      "reviewBy": "2026-12-18",
       "alwaysSkip": true,
       "reason": "The suite boots a real Electron BrowserWindow. Restricted runners reject it with 'sandbox initialization failed: Operation not permitted' before any assertion runs, so the failure says nothing about the editor code."
     },
     "real-ssh-server": {
       "kind": "environment",
       "owner": "engine / SSH",
-      "reviewBy": "2026-11-18",
+      "reviewBy": "2026-12-18",
       "alwaysSkip": true,
       "reason": "The suite connects to a real OpenSSH server to exercise host-key trust. Without a reachable server it fails in under 200ms with RemoteSshConnectionError/network_unreachable, never reaching the assertion under test."
     },
     "pty": {
       "kind": "environment",
       "owner": "terminal / remote",
-      "reviewBy": "2026-11-18",
+      "reviewBy": "2026-12-18",
       "alwaysSkip": true,
       "reason": "The suite allocates a real PTY through the terminal worker. Restricted runners reject it with 'failed to openpty: Operation not permitted' (EPERM) before the ssh argv and resize assertions run."
     }
