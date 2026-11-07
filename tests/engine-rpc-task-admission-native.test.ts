@@ -434,10 +434,9 @@ for (const extra of [undefined, { model: 'other/model' }, { unknownCapability: '
         content: unknown
       }>
       const system = firstMessages.find((message) => message.role === 'system')
-      assert.ok(
-        typeof system?.content === 'string' &&
-          system.content.includes('Phi delegation policy:') &&
-          system.content.includes(fixture.nativeName)
+      assert.equal(
+        typeof system?.content === 'string' && system.content.includes('Phi delegation policy:'),
+        false
       )
       const results = rootRequests[1].body.messages as Array<{
         role: string

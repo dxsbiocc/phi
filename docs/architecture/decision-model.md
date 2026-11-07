@@ -32,7 +32,7 @@ The `phi_decide` tool accepts bounded evidence, a question, a purpose, and a fix
 
 For Phi's local specialist tools, a suitability assessment runs before the specialist is launched. A clear `unsuitable` result prevents that launch, and a failed or cancelled assessment also starts no run. `suitable` and `uncertain` continue through the existing registry and execution checks. There is a further cancellation check after publishing the assessment, before a background run can detach.
 
-RPC sessions expose `phi_decide` to the **main agent only**. The desktop tool scope binds the invocation to its owning session and evaluates through the desktop engine, so desktop credentials stay local. RPC child agents do not inherit this tool. The automatic prelaunch assessment applies to Phi's local specialist-tool path; RPC-native OMP task launches retain their existing controls and can use the main agent's decision result as advice. This integration does not install a new automatic launch gate inside the remote OMP runtime.
+RPC sessions expose `phi_decide` to the **main agent only**. The desktop tool scope binds the invocation to its owning session and evaluates through the desktop engine, so desktop credentials stay local. RPC child agents do not inherit this tool. The automatic prelaunch assessment applies to Phi's named delegation-tool path. OMP's native `task` is not offered to the main model; the remote private child runtime retains its internal TaskTool dispatch only for Phi-owned agent execution.
 
 Approval policy, concurrency limits, task identity, launch/stop behavior, run-state transitions, and completion evidence remain owned by Phi's existing deterministic controls. A judgment cannot grant permission, ignore a stop, manufacture completion, or automatically execute a recovery action.
 
@@ -74,12 +74,12 @@ Local and remote sessions should not get two implementations of these points. Ju
 
 Where each point lands:
 
-| Point | Owner of the event                                    | Local                                            | Remote                                                                                                                                                                                                                                              |
-| ----- | ----------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1/D2 | Specialist launch: differs per runtime                | Adapter in `agents/tool.ts` (today's call site). | Adapter in the desktop handler that already answers the remote native `task` admission round-trip (`rpc-task-admission.ts` sends an approval envelope before the launch). The payload must carry agent, description and task; verify when building. |
-| D3    | Plan review: main process                             | Same code path; no adapter.                      | Same code path; no adapter.                                                                                                                                                                                                                         |
-| D4/D5 | Plan executor via the `StepRunner` port: main process | Same code path; no adapter.                      | Same code path; no adapter.                                                                                                                                                                                                                         |
-| D6    | Decision client: desktop                              | Shared.                                          | Shared.                                                                                                                                                                                                                                             |
+| Point | Owner of the event                                    | Local                                            | Remote                                                                                                                                                            |
+| ----- | ----------------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1/D2 | Specialist launch: differs per runtime                | Adapter in `agents/tool.ts` (today's call site). | Adapter in the remote Phi delegation handler before its private child-runtime dispatch. The payload must carry agent, description and task; verify when building. |
+| D3    | Plan review: main process                             | Same code path; no adapter.                      | Same code path; no adapter.                                                                                                                                       |
+| D4/D5 | Plan executor via the `StepRunner` port: main process | Same code path; no adapter.                      | Same code path; no adapter.                                                                                                                                       |
+| D6    | Decision client: desktop                              | Shared.                                          | Shared.                                                                                                                                                           |
 
 So only D1/D2 need a second adapter. D3–D6 are written once, because the plan executor and `StepRunner` already run in the main process for both runtimes. Remote plan runs are blocked today by one missing engine capability, not by decision code: `session-routing-engine.ts` throws `RemoteSessionCapabilityError('agentRuns.start')` for remote sessions. Adding that capability is plan-execute stage E5. Once it exists, D3–D5 apply to remote plans without changes.
 
@@ -97,7 +97,7 @@ D3 needs batching: `DecisionBatchRequest = { purpose, context, questions: Record
 
 ### D1 — Threshold gate for specialist prelaunch
 
-**Where:** the core policy in `src/main/agent/decisions/policies.ts`. Local adapter: `assessTaskRouting` result handling in `src/main/agent/agents/tool.ts:234-275`. Remote adapter: the desktop side of the native `task` admission (see Runtime placement).
+**Where:** the core policy in `src/main/agent/decisions/policies.ts`. Local adapter: `assessTaskRouting` result handling in `src/main/agent/agents/tool.ts`. Remote adapter: the desktop side of Phi's named delegation dispatch (see Runtime placement).
 
 | Answer                                                 | Behavior                                                                                 |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------- |

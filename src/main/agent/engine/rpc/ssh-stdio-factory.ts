@@ -126,13 +126,12 @@ function snapshotRuntimePreparation(value: unknown): Readonly<RpcRuntimePreparat
   const nativeTools = Array.isArray(raw.nativeTools) ? [...raw.nativeTools] : undefined
   const nativeTool = (name: unknown): name is RpcRuntimePreparationResult['nativeTools'][number] =>
     typeof name === 'string' &&
-    ['read', 'write', 'edit', 'bash', 'powershell', 'glob', 'grep', 'task'].includes(name)
+    ['read', 'write', 'edit', 'bash', 'powershell', 'glob', 'grep'].includes(name)
   if (
     !Array.isArray(nativeTools) ||
     !nativeTools.every(nativeTool) ||
     new Set(nativeTools).size !== nativeTools.length ||
-    (raw.childRuntimeRequired !== undefined && typeof raw.childRuntimeRequired !== 'boolean') ||
-    nativeTools.includes('task') !== (raw.childRuntimeRequired === true)
+    (raw.childRuntimeRequired !== undefined && typeof raw.childRuntimeRequired !== 'boolean')
   )
     return refused()
   for (const field of ['childBackgroundEnabled', 'childParallelEnabled'] as const)
@@ -684,6 +683,15 @@ export async function prepareSshRpcSessionTransport(
           }
         }
         await launch()
+        // The private child runtime dispatches through OMP's TaskTool implementation, but the
+        // composed runtime later activates only `nativeTools`. Keeping `task` launch-registered
+        // here therefore supports Phi-owned children without advertising it to the main model.
+        const launchTools = runtimePreparation
+          ? [
+              ...runtimePreparation.nativeTools,
+              ...(runtimePreparation.childRuntimeRequired === true ? ['task'] : [])
+            ]
+          : []
         const args = [
           '--cwd',
           params.cwd,
@@ -701,8 +709,8 @@ export async function prepareSshRpcSessionTransport(
           '--no-prewalk',
           '--no-pty',
           ...(runtimePreparation
-            ? runtimePreparation.nativeTools.length
-              ? ['--tools', runtimePreparation.nativeTools.join(',')]
+            ? launchTools.length
+              ? ['--tools', launchTools.join(',')]
               : ['--no-tools']
             : []),
           ...(storage ? ['--session-dir', storage.paths.journals] : ['--no-session'])

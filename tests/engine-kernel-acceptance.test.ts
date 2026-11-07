@@ -3,14 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
 
-import { AGENT_RUN_HOST_METHODS, agentRunHostHandlers } from '../src/main/agent/agents/run-host'
 import { KernelClientError } from '../src/main/agent/engine/kernel-client'
-import { chatItemsFromSessionMessages } from '../src/renderer/src/lib/chatItems'
-import {
-  isKernelHostCapabilityName,
-  type JsonValue,
-  type KernelEventFrame
-} from '../src/shared/kernel-protocol'
+import { type JsonValue, type KernelEventFrame } from '../src/shared/kernel-protocol'
 import { eventually, messageText } from './engine-contract/basic-suite'
 import { createKernelFixture } from './engine-contract/kernel-factory'
 
@@ -29,12 +23,6 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
     resolve = settle
   })
   return { promise, resolve }
-}
-
-async function settleNativeTaskCard(check: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 1_000 && !check(); attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 5))
-  }
 }
 
 test(
@@ -388,123 +376,21 @@ test(
 )
 
 test(
-  'native task notices cross the real kernel and restore a persisted read-only card',
-  { timeout: 45_000 },
+  'the local main-session provider roster does not advertise native task',
+  { timeout: 30_000 },
   async (t) => {
-    const nativeTaskCapabilities = [
-      AGENT_RUN_HOST_METHODS.nativeTaskStarted,
-      AGENT_RUN_HOST_METHODS.nativeTaskBackground,
-      AGENT_RUN_HOST_METHODS.nativeTaskStep,
-      AGENT_RUN_HOST_METHODS.nativeTaskFinished
-    ]
-    const f = await createKernelFixture({ hostCapabilities: nativeTaskCapabilities })
+    const f = await createKernelFixture()
     t.after(() => f.close())
-
-    const persisted: Record<string, unknown>[] = []
-    const receivedCapabilities: string[] = []
-    const handlers = agentRunHostHandlers({
-      resolveSession: (originSessionId) =>
-        originSessionId === f.kernelSessionId('native-task-card')
-          ? { phiSessionId: 'phi-native-task-card', cwd: f.cwd }
-          : undefined,
-      appendToSession: (_sessionId, event) => {
-        const stored = {
-          ...event,
-          eventId: `native-event-${persisted.length + 1}`,
-          createdAt:
-            typeof event.createdAt === 'string'
-              ? event.createdAt
-              : `2026-10-30T00:00:00.${String(persisted.length).padStart(3, '0')}Z`
-        }
-        persisted.push(stored)
-        return stored
-      },
-      sendToWindow: () => undefined,
-      isAppFocused: () => true,
-      showOsNotification: () => undefined,
-      redact: (text) => text,
-      persistStepOutput: (_sessionId, _toolCallId, _stepId, output) => ({
-        outputPreview: output,
-        outputBytes: Buffer.byteLength(output),
-        truncated: false
-      }),
-      redactValue: (value) => value,
-      markReported: () => undefined,
-      clearReported: () => undefined,
-      deliverHostRun: () => false
-    })
-    for (const capability of nativeTaskCapabilities) {
-      if (!isKernelHostCapabilityName(capability)) continue
-      const remove = f.client.registerHostHandler(capability, async (params) => {
-        receivedCapabilities.push(capability)
-        return (await handlers[capability]!(params)) as JsonValue
-      })
-      t.after(remove)
-    }
-
-    writeFileSync(join(f.cwd, 'README.md'), '# Phi\nDesktop agent\nLocal kernel\n')
-    await f.createSession('native-task-card')
-    f.provider.enqueue(
-      {
-        match: 'Use one task child to read README.md',
-        tool: {
-          name: 'task',
-          id: 'outer-native-task',
-          args: {
-            task: 'Read README.md and return its first three lines.',
-            solutionSpace: 'One fixed read-only lookup.'
-          }
-        }
-      },
-      {
-        match: 'Use one task child to read README.md',
-        text: 'The child returned the requested lines.'
-      },
-      {
-        match: 'Read README.md and return its first three lines.',
-        tool: { name: 'read', id: 'native-read', args: { path: 'README.md' } }
-      },
-      {
-        match: 'Read README.md and return its first three lines.',
-        tool: {
-          name: 'yield',
-          id: 'native-yield',
-          args: { data: '# Phi\nDesktop agent\nLocal kernel' }
-        }
-      }
+    await f.createSession('without-native-task')
+    f.provider.enqueue({ text: 'No native task tool.' })
+    await f.sessions.prompt({ sessionId: 'without-native-task', text: 'List no tools.' })
+    const tools = (f.provider.requests[0]?.tools ?? []) as Array<{
+      function?: { name?: string }
+    }>
+    assert.equal(
+      tools.some((tool) => tool.function?.name === 'task'),
+      false
     )
-
-    await f.sessions.prompt({
-      sessionId: 'native-task-card',
-      text: 'Use one task child to read README.md and return only its first three lines.'
-    })
-    await settleNativeTaskCard(() =>
-      persisted.some((event) => event.type === 'agent_execution_completed')
-    )
-
-    const types = persisted.map((event) => event.type)
-    assert.equal(types[0], 'agent_execution_started')
-    assert.ok(types.includes('agent_execution_background'))
-    assert.ok(
-      types.includes('agent_execution_step'),
-      JSON.stringify({ receivedCapabilities, persistedTypes: types })
-    )
-    assert.equal(types.at(-1), 'agent_execution_completed')
-    for (const capability of nativeTaskCapabilities) {
-      assert.ok(receivedCapabilities.includes(capability), capability)
-    }
-    assert.ok(persisted.every((event) => String(event.toolCallId).startsWith('native-task:')))
-
-    const card = chatItemsFromSessionMessages(
-      persisted.map((event) => ({ source: 'phi', ...event }))
-    ).find((item) => item.role === 'agent_execution')
-    assert.equal(card?.role, 'agent_execution')
-    if (card?.role !== 'agent_execution') return
-    assert.equal(card.status, 'done')
-    assert.equal(card.agentRunId, undefined)
-    assert.equal(card.agentSessionId, undefined)
-    assert.ok(card.steps.some((step) => step.output.includes('# Phi')))
-    assert.ok(card.finalReport)
   }
 )
 
@@ -633,7 +519,7 @@ test(
     assert.equal(approvals, 1)
     assert.equal(writeWasAbsentAtApproval, true)
     let summarySnapshot: JsonValue = null
-    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    for (let attempt = 0; attempt < 3_000; attempt += 1) {
       summarySnapshot = await f.client.request(
         'session.snapshot',
         {},

@@ -1,6 +1,7 @@
 import type { PhiTool } from '../engine/types'
 
 import {
+  agentRunDisplayName,
   isFinalAgentRunState,
   type AgentRunSnapshot,
   type AgentWaitOptions,
@@ -11,9 +12,6 @@ import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
 
 /** Public control surface shared by the synchronous local registry and the owned RPC adapter. */
-/** These tools track agent_run ids. Jobs started by `task` have their own tools. */
-const NATIVE_TASK_HINT =
-  'Jobs started by the task tool are not agent runs: their results arrive on their own; use wait to block on them or read proc://<id> to inspect one.'
 
 export interface AgentRunToolRegistry {
   get(id: string): AgentRunSnapshot | undefined | Promise<AgentRunSnapshot | undefined>
@@ -60,7 +58,7 @@ function oneLine(value: string, limit: number): string {
 
 function describeRun(run: AgentRunSnapshot, now: number): string {
   const lines = [
-    `- ${run.id} · ${run.agent} · ${run.state}${run.background ? ' (background)' : ''} · ${elapsed(run, now)}`,
+    `- ${run.id} · ${agentRunDisplayName(run)} · ${run.state}${run.background ? ' (background)' : ''} · ${elapsed(run, now)}`,
     `  task: ${oneLine(run.task, MAX_TASK_PREVIEW)}`
   ]
   if (run.state === 'running' && run.lastStep) lines.push(`  doing: ${run.lastStep}`)
@@ -139,13 +137,12 @@ export function buildAgentRunTools(registry: AgentRunToolRegistry): PhiTool[] {
       const id = stringParam(params, 'id')
       if (id) {
         const run = await registry.get(id)
-        if (!run) return errorResult(`Unknown run: ${id}. ${NATIVE_TASK_HINT}`)
+        if (!run) return errorResult(`Unknown run: ${id}.`)
         await registry.markReported(id)
         return text(withReport(run, now))
       }
       const runs = await registry.list()
-      if (runs.length === 0)
-        return text(`No agent runs in this conversation yet. ${NATIVE_TASK_HINT}`)
+      if (runs.length === 0) return text('No agent runs in this conversation yet.')
       return text(runs.map((run) => describeRun(run, now)).join('\n'))
     }
   )
@@ -233,10 +230,10 @@ export function buildAgentRunTools(registry: AgentRunToolRegistry): PhiTool[] {
       const id = stringParam(params, 'id')
       if (!id) return errorResult('Missing required parameter: id')
       const run = await registry.get(id)
-      if (!run) return errorResult(`Unknown run: ${id}. ${NATIVE_TASK_HINT}`)
+      if (!run) return errorResult(`Unknown run: ${id}.`)
       if (!(await registry.stop(id)))
         return errorResult(`Run ${id} has already finished (${run.state}).`)
-      return text(`Stopping ${id} (${run.agent}).`)
+      return text(`Stopping ${id} (${agentRunDisplayName(run)}).`)
     }
   )
 

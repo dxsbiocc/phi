@@ -1,4 +1,4 @@
-import { isFinalAgentRunState, type AgentRunRegistry } from './registry'
+import { agentRunDisplayName, isFinalAgentRunState, type AgentRunRegistry } from './registry'
 
 import { isRecord } from '../../../shared/guards'
 
@@ -34,7 +34,7 @@ export async function controlAgentRun(
   const run = registry.get(runId)
   if (!run) throw new Error(`Unknown run: ${runId}`)
   if (isFinalAgentRunState(run.state)) {
-    throw new Error(`Run ${runId} (${run.agent}) has already finished.`)
+    throw new Error(`Run ${runId} (${agentRunDisplayName(run)}) has already finished.`)
   }
   registry.stop(runId)
   return { ok: true }

@@ -120,6 +120,7 @@ function hasValidOptionalHostRunFields(value: Record<string, unknown>): boolean 
     validOptionalField(value, 'toolCalls', 'number') &&
     validOptionalField(value, 'report', 'string') &&
     validOptionalField(value, 'error', 'string') &&
+    validOptionalField(value, 'displayName', 'string') &&
     (value.reportStatus === undefined ||
       REPORT_STATUSES.has(value.reportStatus as AgentReportStatus)) &&
     validMissingInputs
@@ -147,9 +148,11 @@ function hostRunSnapshot(
   const missingInputs = Array.isArray(value.missingInputs)
     ? value.missingInputs.filter((item): item is string => typeof item === 'string')
     : undefined
+  const displayName = optionalString(value, 'displayName')
   return {
     id,
     agent: requireString(value, 'agent', 'run.agent'),
+    ...(displayName ? { displayName } : {}),
     task: requireString(value, 'task', 'run.task'),
     state,
     background: value.background as boolean,
@@ -186,6 +189,7 @@ function parseFinished(
   if (!isRecord(run)) throw new Error('Missing required parameter: run')
   const agentRunId = requireString(run, 'id', 'run.id')
   const agent = requireString(run, 'agent', 'run.agent')
+  const displayName = optionalString(run, 'displayName') ?? agent
   const state = run.state
   if (!isAgentRunEndState(state)) throw new Error(`Invalid run.state: ${String(state)}`)
 
@@ -198,7 +202,7 @@ function parseFinished(
     event: {
       type: 'agent_run_finished',
       agentRunId,
-      agent,
+      agent: displayName,
       state,
       task: redact((optionalString(run, 'task') ?? '').slice(0, MAX_TASK_LENGTH)),
       elapsedSeconds: seconds(run),
@@ -533,6 +537,7 @@ async function handleStep(deps: AgentRunHostDeps, params: unknown): Promise<unkn
   if (!isRecord(run)) throw new Error('Missing required parameter: run')
   const agentRunId = requireString(run, 'id', 'run.id')
   const agent = requireString(run, 'agent', 'run.agent')
+  const displayName = optionalString(run, 'displayName') ?? agent
   const step = root?.step
   if (!isRecord(step)) throw new Error('Missing required parameter: step')
   const stepId = requireString(step, 'id', 'step.id')
@@ -547,7 +552,7 @@ async function handleStep(deps: AgentRunHostDeps, params: unknown): Promise<unkn
       stepEvent(deps, origin.phiSessionId, {
         originSessionId,
         toolCallId,
-        agent,
+        agent: displayName,
         agentRunId,
         step,
         stepId

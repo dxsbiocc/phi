@@ -3,6 +3,7 @@ import { NOTEBOOK_TOOL_NAMES } from '../notebook/notebook-tools'
 
 const MAIN_SESSION_ONLY_TOOLS = new Set([
   'Wrapper',
+  'General',
   'capability_search',
   'capability_install',
   'find_skills',

@@ -1239,3 +1239,28 @@ test('live file delivery keeps artifact metadata', () => {
     })
   }
 })
+
+test('a General delegation card shows its per-task name from the moment it starts', () => {
+  const state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'tool_execution_start',
+    toolCallId: 'general-call-1',
+    toolName: 'General',
+    args: { name: '  依赖审计 ', task: 'Audit the dependencies' },
+    runId: 'run-1'
+  })
+  const card = state.messages.find((item) => item.id === 'general-call-1')
+  assert.equal(card?.role, 'agent_execution')
+  assert.equal(card?.role === 'agent_execution' ? card.agentName : undefined, '依赖审计')
+})
+
+test('a General card without a usable name falls back to the agent name', () => {
+  const state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'tool_execution_start',
+    toolCallId: 'general-call-2',
+    toolName: 'General',
+    args: { name: 'x', task: 'Audit the dependencies' },
+    runId: 'run-1'
+  })
+  const card = state.messages.find((item) => item.id === 'general-call-2')
+  assert.equal(card?.role === 'agent_execution' ? card.agentName : undefined, 'General')
+})

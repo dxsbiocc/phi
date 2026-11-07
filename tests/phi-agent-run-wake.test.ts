@@ -575,6 +575,27 @@ test('a finished run also completes its card with the report', async () => {
   )
 })
 
+test('a General run uses its display name for steps, completion, and the finish notice', async () => {
+  const { calls, handlers } = harness()
+  await handlers[AGENT_RUN_HOST_METHODS.step](
+    stepParams(
+      { id: 's1', toolName: 'read', status: 'running' },
+      { agent: 'General', displayName: '依赖审计' }
+    )
+  )
+  await handlers[AGENT_RUN_HOST_METHODS.finished](
+    finishedParams({ agent: 'General', displayName: '依赖审计', toolCallId: 'call-9' })
+  )
+  const cardEvents = calls.appended
+    .map((entry) => entry.event)
+    .filter((event) => typeof event.type === 'string' && event.type.startsWith('agent_execution_'))
+  assert.ok(cardEvents.length >= 2)
+  assert.ok(cardEvents.every((event) => event.agentName === '依赖审计'))
+  const notice = calls.appended.find((entry) => entry.event.type === 'agent_run_finished')
+    ?.event as unknown as AgentRunFinishedEvent
+  assert.equal(notice.agent, '依赖审计')
+})
+
 test('a failed run completes its card as an error with the reason', async () => {
   const { calls, handlers } = harness()
   await handlers[AGENT_RUN_HOST_METHODS.finished](

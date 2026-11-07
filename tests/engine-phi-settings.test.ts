@@ -36,7 +36,7 @@ import {
   cfgCompactionThresholdTokens, cfgCompactionMethodOrder
 } from '@oh-my-pi/pi-coding-agent/session/context-settings'
 import { cfgRetryFallbackChains } from '@oh-my-pi/pi-coding-agent/session/settings'
-import { cfgTaskStructured } from '@oh-my-pi/pi-coding-agent/task/settings'
+import { cfgTaskMaxRecursionDepth, cfgTaskStructured } from '@oh-my-pi/pi-coding-agent/task/settings'
 import { cfgMemoryBackend } from '@oh-my-pi/pi-coding-agent/memory-backend/settings'
 import { cfgExtensions } from '@oh-my-pi/pi-coding-agent/extensibility/settings'
 import { cfgSearxngToken, cfgSearxngBasicUsername, cfgSearxngBasicPassword } from '@oh-my-pi/pi-coding-agent/web/settings'
@@ -46,7 +46,7 @@ import {
   applyAutoCompactionOverrides,
   assertRpcCompactionPolicySupported,
   createPhiSettings,
-  ensureStructuredNativeTaskResults
+  disableNativeTaskTool
 } from ${JSON.stringify(PHI_SETTINGS_MODULE_URL)}
 
 const result = await (async () => {
@@ -208,26 +208,31 @@ return {
   })
 })
 
-test('Phi forces the native task yield contract without rewriting saved OMP settings', async (t) => {
+test('Phi disables the native task tool without rewriting saved OMP settings', async (t) => {
   const agentDir = temporarySettingsDirectory('phi-settings-native-task-')
   t.after(() => rmSync(agentDir, { recursive: true, force: true }))
   writeConfig(agentDir, 'task:\n  structured: false\n')
 
   const result = await runSettingsScenario<{
-    before: boolean
-    during: boolean
-    persisted: boolean
+    structuredBefore: boolean
+    depthBefore: number
+    depthDuring: number
+    depthPersisted: number
   }>(`
 const agentDir = ${JSON.stringify(agentDir)}
 const settings = await Settings.loadIsolated({ cwd: agentDir, agentDir })
-const before = cfgTaskStructured.get(settings)
-ensureStructuredNativeTaskResults(settings)
-const during = cfgTaskStructured.get(settings)
-const persisted = cfgTaskStructured.get(await Settings.loadReadOnly({ cwd: agentDir, agentDir }))
-return { before, during, persisted }
+const structuredBefore = cfgTaskStructured.get(settings)
+const depthBefore = cfgTaskMaxRecursionDepth.get(settings)
+disableNativeTaskTool(settings)
+const depthDuring = cfgTaskMaxRecursionDepth.get(settings)
+const depthPersisted = cfgTaskMaxRecursionDepth.get(await Settings.loadReadOnly({ cwd: agentDir, agentDir }))
+return { structuredBefore, depthBefore, depthDuring, depthPersisted }
 `)
 
-  assert.deepEqual(result, { before: false, during: true, persisted: false })
+  assert.equal(result.structuredBefore, false)
+  assert.ok(result.depthBefore > 0)
+  assert.equal(result.depthDuring, 0)
+  assert.equal(result.depthPersisted, result.depthBefore)
 })
 
 test('PhiSettings compaction overrides all keys and restores the original baseline', async (t) => {

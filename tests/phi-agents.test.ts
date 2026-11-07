@@ -470,7 +470,11 @@ test('discovery logs warnings without skipping the agent', () => {
 })
 
 test('the bundled agents validate with no errors and no warnings', () => {
-  const files = [join(REPO_AGENTS_DIR, 'Wrapper.md'), join(REPO_AGENTS_DIR, 'PlanStep.md')]
+  const files = [
+    join(REPO_AGENTS_DIR, 'General.md'),
+    join(REPO_AGENTS_DIR, 'Wrapper.md'),
+    join(REPO_AGENTS_DIR, 'PlanStep.md')
+  ]
   for (const file of files) {
     const result = validateAgent(file)
     assert.equal(
@@ -483,8 +487,32 @@ test('the bundled agents validate with no errors and no warnings', () => {
     assert.deepEqual(result.agent?.warnings, [])
     assert.equal(result.agent?.visibility, 'entry')
     if (file.endsWith('Wrapper.md')) assert.equal(result.agent?.delegationMode, 'required-first')
-    else assert.equal(result.agent?.invocation, 'host')
+    else if (file.endsWith('PlanStep.md')) assert.equal(result.agent?.invocation, 'host')
+    else assert.equal(result.agent?.invocation, undefined)
   }
+})
+
+test('the bundled General agent has common tools and no delegation surface', () => {
+  const { agents, diagnostics } = discoverPhiAgents({
+    cwd: '/nonexistent/cwd',
+    agentDir: '/nonexistent/agentdir',
+    bundledDir: REPO_AGENTS_DIR,
+    homeDir: '/nonexistent/home',
+    pluginAgentDirs: []
+  })
+  assert.deepEqual(diagnostics, [])
+  const general = agents.find((agent) => agent.name === 'General')
+  assert.ok(general)
+  assert.deepEqual(general.tools, ['read', 'glob', 'grep', 'find', 'bash', 'write', 'edit', 'todo'])
+  assert.equal(
+    general.tools.some((tool) => /^[A-Z]/u.test(tool)),
+    false
+  )
+  assert.equal(
+    general.tools.some((tool) => tool.startsWith('agent_')),
+    false
+  )
+  assert.match(general.systemPrompt, /Do not delegate to another agent/i)
 })
 
 test('selectAgentModel uses the first selector that resolves', async () => {
@@ -771,6 +799,7 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
     assert.match(prompt, /<\/phi_agents>$/)
     assert.match(prompt, /- Visualization: /)
     assert.match(prompt, /- Wrapper: /)
+    assert.match(prompt, /- General: /)
     assert.doesNotMatch(prompt, /PlanStep/)
     assert.match(prompt, /public biological database.*read/i)
     assert.match(prompt, /https:\/\/rest\.uniprot\.org\/uniprotkb\/P04637\.json/)
@@ -783,6 +812,9 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
     assert.match(prompt, /do not/i)
     assert.match(prompt, /required-first/i)
     assert.match(prompt, /only the requested subtask/i)
+    assert.match(prompt, /specialist-matching work.*before General/i)
+    assert.match(prompt, /Every General call.*task-specific `name`.*2–24/i)
+    assert.match(prompt, /several differently named General tasks/i)
     assert.match(prompt, /follow-up edit.*exact source, input, and prior output paths/i)
     assert.match(prompt, /controlled fallback/i)
     assert.match(prompt, /not_found/i)
@@ -828,6 +860,18 @@ const WRAPPER: PhiAgentDefinition = {
   warnings: []
 }
 
+const GENERAL: PhiAgentDefinition = {
+  name: 'General',
+  description: 'Handles self-contained work that no specialist covers.',
+  tools: ['read', 'glob', 'grep', 'find', 'bash', 'write', 'edit', 'todo'],
+  skills: [],
+  systemPrompt: 'Complete the delegated task and report the verified result.',
+  source: 'phi',
+  filePath: '/x/General.md',
+  visibility: 'entry',
+  warnings: []
+}
+
 test('the delegation tool is named after the agent, so the agent is the tool', () => {
   const tool = buildAgentTool(WRAPPER, async () => ({ text: 'x', toolCalls: 0 }))
   assert.equal(tool.name, 'Wrapper')
@@ -836,6 +880,50 @@ test('the delegation tool is named after the agent, so the agent is the tool', (
   assert.deepEqual((tool.parameters as { required: string[] }).required, ['task'])
   assert.equal(tool.approval, 'read')
   assert.equal((tool as { loadMode?: string }).loadMode, 'essential')
+})
+
+test('the General delegation tool requires a short task-specific display name', () => {
+  const tool = buildAgentTool(GENERAL, async () => ({ text: 'x', toolCalls: 0 }))
+  const parameters = tool.parameters as {
+    required: string[]
+    properties: Record<string, Record<string, unknown>>
+  }
+  assert.deepEqual(parameters.required, ['name', 'task'])
+  assert.deepEqual(parameters.properties.name, {
+    type: 'string',
+    description: 'Short task-specific display name for this General agent run (2-24 characters).',
+    minLength: 2,
+    maxLength: 24
+  })
+  assert.match(tool.description, /`name`.*concise task-specific/i)
+})
+
+test('General trims and propagates distinct display names while rejecting invalid names', async () => {
+  const seen: Array<{ displayName?: string; task: string }> = []
+  const tool = buildAgentTool(GENERAL, async (request) => {
+    seen.push({ displayName: request.displayName, task: request.task })
+    return { text: 'done', toolCalls: 0 }
+  })
+
+  for (const params of [
+    { task: 'audit' },
+    { name: '', task: 'audit' },
+    { name: 'x', task: 'audit' },
+    { name: 'line\nbreak', task: 'audit' },
+    { name: 'x'.repeat(25), task: 'audit' }
+  ]) {
+    const result = await executeTool(tool, 'invalid-name', params as never)
+    assert.equal(result.isError, true)
+  }
+
+  const first = await executeTool(tool, 'first', { name: '  依赖审计  ', task: 'audit' })
+  const second = await executeTool(tool, 'second', { name: 'Log triage', task: 'triage' })
+  assert.deepEqual(seen, [
+    { displayName: '依赖审计', task: 'audit' },
+    { displayName: 'Log triage', task: 'triage' }
+  ])
+  assert.equal((first.details as { agent?: string }).agent, '依赖审计')
+  assert.equal((second.details as { agent?: string }).agent, 'Log triage')
 })
 
 test('the tool passes the trimmed task to the runner and returns its report', async () => {

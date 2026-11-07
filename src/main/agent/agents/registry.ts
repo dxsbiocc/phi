@@ -25,7 +25,10 @@ export type AgentRunOrigin = 'tool' | 'host'
 
 export interface AgentRunSnapshot {
   id: string
+  /** Stable definition/tool identity used for routing and fallback policy. */
   agent: string
+  /** Per-run UI label; General supplies one while specialists keep `agent`. */
+  displayName?: string
   task: string
   state: AgentRunState
   /** Started with `background: true`: nobody was waiting on the tool call. */
@@ -82,6 +85,7 @@ export type AgentRunFn = (request: AgentRunRequest) => Promise<AgentRunResult>
 
 export interface AgentLaunchInput {
   agent: string
+  displayName?: string
   task: string
   images?: AgentImage[]
   runner: AgentRunFn
@@ -211,6 +215,7 @@ export class AgentRunRegistry {
       snapshot: {
         id,
         agent: input.agent,
+        ...(input.displayName ? { displayName: input.displayName } : {}),
         task: input.task,
         state: 'queued',
         background: input.background,
@@ -318,7 +323,7 @@ export class AgentRunRegistry {
       if (index >= 0) this.queue.splice(index, 1)
       this.finish(record, {
         state: 'cancelled',
-        error: new AgentCancelledError(record.snapshot.agent).message
+        error: new AgentCancelledError(agentRunDisplayName(record.snapshot)).message
       })
     } else {
       // The runner ends the session and rejects; finish() happens when it does.
@@ -394,6 +399,7 @@ export class AgentRunRegistry {
     try {
       const result = await input.runner({
         task: input.task,
+        ...(input.displayName ? { displayName: input.displayName } : {}),
         ...(input.images?.length ? { images: input.images } : {}),
         runId: record.snapshot.id,
         signal: record.controller.signal,
@@ -428,7 +434,7 @@ export class AgentRunRegistry {
         this.finish(record, {
           state: 'error',
           toolCalls: result.toolCalls,
-          error: `The ${input.agent} agent finished but produced no report. Try again with a more specific task.`
+          error: `The ${agentRunDisplayName(record.snapshot)} agent finished but produced no report. Try again with a more specific task.`
         })
       }
     } catch (error) {
@@ -438,7 +444,10 @@ export class AgentRunRegistry {
         this.finish(record, { state: 'error', error: error.message })
       } else {
         const reason = errorMessage(error)
-        this.finish(record, { state: 'error', error: `The ${input.agent} agent failed: ${reason}` })
+        this.finish(record, {
+          state: 'error',
+          error: `The ${agentRunDisplayName(record.snapshot)} agent failed: ${reason}`
+        })
       }
     }
   }
@@ -472,4 +481,8 @@ export class AgentRunRegistry {
       }
     }
   }
+}
+
+export function agentRunDisplayName(run: Pick<AgentRunSnapshot, 'agent' | 'displayName'>): string {
+  return run.displayName ?? run.agent
 }

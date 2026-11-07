@@ -26,6 +26,7 @@ import {
   cfgCompactionThresholdTokens
 } from '@oh-my-pi/pi-coding-agent/session/context-settings'
 import { cfgRetryFallbackChains } from '@oh-my-pi/pi-coding-agent/session/settings'
+import { cfgTaskMaxRecursionDepth } from '@oh-my-pi/pi-coding-agent/task/settings'
 import { isRegisteredSearchEngine } from '@oh-my-pi/pi-coding-agent/web/search/provider'
 import {
   cfgSearxngBasicPassword,
@@ -34,11 +35,7 @@ import {
   cfgSearxngEngines,
   cfgSearxngToken
 } from '@oh-my-pi/pi-coding-agent/web/settings'
-import {
-  DEFAULT_COMPACTION_METHOD_ORDER,
-  enforceStructuredNativeTaskResults,
-  resolveCompactionMethodOrder
-} from '../omp-internals'
+import { DEFAULT_COMPACTION_METHOD_ORDER, resolveCompactionMethodOrder } from '../omp-internals'
 import { SEARCH_PROVIDER_CHOICES } from '../omp-web-search'
 
 import type { PhiCompactionSettings, PhiSettings, PhiWebSearchProvider } from '../types'
@@ -250,14 +247,9 @@ export async function refreshForeignHomeSkillsPolicy(agentDir: string): Promise<
   )
 }
 
-/**
- * OMP's unstructured native task contract accepts only a non-empty final prose turn. A child
- * that completes through tools and then clean-stops without prose loses its useful result and
- * becomes SUBAGENT_WARNING_EMPTY_MESSAGE. Phi keeps the native task tool, but requires its
- * yield contract so completion is explicit and retryable on both desktop execution routes.
- */
-export function ensureStructuredNativeTaskResults(settings: Settings): void {
-  enforceStructuredNativeTaskResults(settings)
+/** Phi owns all model-initiated delegation, so the main local session cannot spawn OMP tasks. */
+export function disableNativeTaskTool(settings: Settings): void {
+  cfgTaskMaxRecursionDepth.override(settings, 0)
 }
 
 export function applyAutoCompactionOverrides(

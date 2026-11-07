@@ -554,8 +554,7 @@ export class RemoteSessionRuntime {
     })
     const registered = registeredHostTools(cursorSafeHostTools(options))
     const nativeTools = Object.freeze([
-      ...(options.nativeTools ?? (['read', 'write', 'edit', 'bash', 'glob', 'grep'] as const)),
-      ...(options.foregroundChildren ? (['task'] as const) : [])
+      ...(options.nativeTools ?? (['read', 'write', 'edit', 'bash', 'glob', 'grep'] as const))
     ])
     const tools = Object.freeze([...registered.values()].map(({ tool }) => tool))
     const roster: readonly RpcExecutionTool[] = executionRoster(
@@ -570,7 +569,7 @@ export class RemoteSessionRuntime {
           parameters: definition.parameters
         }))
       ],
-      { allowNativeTask: options.foregroundChildren !== undefined }
+      { allowNativeTask: false }
     ).tools
     if (!options.transport.preparePersistentStorage)
       throw new Error('Remote runtime requires registered persistent storage')
@@ -856,7 +855,7 @@ export class RemoteSessionRuntime {
             },
             capability: config.execution.capability,
             roster,
-            allowNativeTask: this.preparedChildren !== undefined,
+            allowNativeTask: false,
             signal
           })
         }

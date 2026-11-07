@@ -32,6 +32,7 @@ import {
 
 import { stripAgentReportMetadata } from '../../../shared/agentReportText'
 import { isRecord } from '../../../shared/guards'
+import { agentDisplayNameFromCall, isAgentToolName } from '../../../shared/agentDisplayName'
 export interface AgentEventReducerState {
   messages: ChatItem[]
   textBlockIds: Map<number, string>
@@ -157,10 +158,6 @@ function toolOutputMetadataFrom(
   }
 }
 
-function isAgentToolName(toolName: unknown): toolName is string {
-  return typeof toolName === 'string' && /^[A-Z][A-Za-z0-9]*$/.test(toolName)
-}
-
 function detailsFromToolResult(value: unknown): unknown {
   if (!isRecord(value)) return undefined
   return value.details
@@ -211,8 +208,7 @@ function agentTaskFromArgs(args: unknown): string | undefined {
 
 function agentExecutionItemFromStart(event: AgentEventSummary): AgentExecutionItem | null {
   const toolCallId = event.toolCallId
-  const agentName =
-    event.agentName ?? (isAgentToolName(event.toolName) ? event.toolName : undefined)
+  const agentName = event.agentName ?? agentDisplayNameFromCall(event.toolName, event.args)
   if (!toolCallId || !agentName) return null
   const task = typeof event.task === 'string' ? event.task : (agentTaskFromArgs(event.args) ?? '')
   const args = event.args ?? (task ? { task } : undefined)
@@ -313,7 +309,7 @@ function ensureAgentExecutionItem(next: ChatItem[], event: AgentEventSummary): n
     id,
     role: 'agent_execution',
     ...runIdField(event.runId),
-    agentName: event.agentName ?? (isAgentToolName(event.toolName) ? event.toolName : 'Agent'),
+    agentName: event.agentName ?? agentDisplayNameFromCall(event.toolName, event.args) ?? 'Agent',
     task: '',
     argsPreview: '',
     argsJson: '',

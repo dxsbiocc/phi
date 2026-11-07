@@ -27,7 +27,8 @@ uses a stable application-owned fallback rather than modifying the definition.
 ## 2. Fields
 
 Field names follow omp where omp has the field, and camelCase everywhere
-(runtime foundation §10), so a Phi agent file stays loadable by omp's `task`.
+(runtime foundation §10). Phi owns model-visible delegation; OMP's native `task`
+tool is not advertised to the main agent.
 
 ### 2.1 Fields shared with omp
 
@@ -53,7 +54,19 @@ Field names follow omp where omp has the field, and camelCase everywhere
 | `fallback`       | no       | `{ afterFailures: <positive integer>, tools: [<main-agent tool>…], match: [<token>…] }`: after that many consecutive failed, blocked, or not-found runs, the main agent may use `tools` for inputs containing one of the `match` tokens (case-insensitive) |
 | `outputSchema`   | no       | **reserved** for structured results. v1 rejects the field; a later minor version defines it                                                                                                                                                                |
 
-### 2.3 Other keys
+### 2.3 Built-in General agent
+
+Phi bundles `General` for self-contained delegable work that no specialist covers.
+Its delegation tool requires both `task` and a task-specific `name`. `name` is
+trimmed, must contain 2–24 characters and no newline, and becomes the display label
+on cards, the running-agent overview, the subagent tab and completion notices. The
+definition name `General` remains the execution identity, and runs remain addressed
+by their Phi run id. General has the common local working tools
+(`read`, `glob`, `grep`, `find`, `bash`, `write`, `edit`, `todo`); remote projects
+retain the corresponding supported subset. It receives no delegation or `agent_*`
+control tools and therefore cannot start another agent.
+
+### 2.4 Other keys
 
 Legacy snake_case spellings are read as aliases and reported as a **warning** naming
 the new spelling: `delegation_mode` → `delegationMode`, `fallback.after_failures` →
@@ -95,7 +108,7 @@ next agent. The protocol text belongs to the runtime, not to this contract.
 
 `validateAgent(filePath)` checks everything above and returns all problems, split
 into `errors` and `warnings`; an agent is valid when `errors` is empty. It runs in
-`npm run lint` for every agent in the repository, and when agents are scanned: an
+`bun run lint` for every agent in the repository, and when agents are scanned: an
 invalid agent is skipped with its errors in the log, and the others still load.
 
 ## 6. Compatibility mode

@@ -108,6 +108,7 @@ function launch(
   runner: AgentRunner,
   overrides: {
     background?: boolean
+    displayName?: string
     task?: string
     signal?: AbortSignal
     origin?: AgentRunOrigin
@@ -115,6 +116,7 @@ function launch(
 ): { id: string; done: Promise<AgentRunSnapshot> } {
   return registry.launch({
     agent: 'Wrapper',
+    ...(overrides.displayName ? { displayName: overrides.displayName } : {}),
     task: overrides.task ?? 'go',
     runner,
     background: overrides.background ?? false,
@@ -149,6 +151,52 @@ test('a launched run resolves to a done snapshot carrying the trimmed report', a
   assert.equal(snapshot.toolCalls, 4)
   assert.equal(snapshot.origin, 'tool')
   assert.ok(snapshot.completedAt !== undefined)
+})
+
+test('the registry keeps execution identity separate from the per-run display name', async () => {
+  const registry = new AgentRunRegistry()
+  const snapshot = await launch(
+    registry,
+    async (request) => {
+      assert.equal(request.displayName, '依赖审计')
+      return { text: 'done', toolCalls: 0 }
+    },
+    { displayName: '依赖审计' }
+  ).done
+  assert.equal(snapshot.agent, 'Wrapper')
+  assert.equal(snapshot.displayName, '依赖审计')
+  assert.equal(registry.get(snapshot.id)?.displayName, '依赖审计')
+})
+
+test('background step and finish notices carry the per-run display name', async () => {
+  const registry = new AgentRunRegistry()
+  const notices: Array<{ method: string; params: unknown }> = []
+  subscribeToAgentRunNotices({
+    registry,
+    sessionId: 'session-1',
+    requestHost: async (method, params) => {
+      notices.push({ method, params })
+    }
+  })
+  const run = launch(
+    registry,
+    async ({ onToolStep }) => {
+      onToolStep?.({ id: 'step', toolName: 'read', status: 'running' })
+      return { text: 'done', toolCalls: 1 }
+    },
+    { background: true, displayName: 'Log triage' }
+  )
+  await run.done
+  const step = notices.find((notice) => notice.method === 'agentRun.step')?.params as {
+    run: AgentRunSnapshot
+  }
+  const finished = notices.find((notice) => notice.method === 'agentRun.finished')?.params as {
+    run: AgentRunSnapshot
+  }
+  assert.equal(step.run.agent, 'Wrapper')
+  assert.equal(step.run.displayName, 'Log triage')
+  assert.equal(finished.run.agent, 'Wrapper')
+  assert.equal(finished.run.displayName, 'Log triage')
 })
 
 test('host origin is retained and suppresses progress/report notices but not completion', async () => {

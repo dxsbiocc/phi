@@ -11,7 +11,7 @@ import { adaptOmpSessionEvents } from '../events'
 import { type PhiAgentDefinition } from '../../agents/definition'
 import { selectAgentModel } from '../../agents/model-selection'
 import { controlAgentRun } from '../../agents/run-control'
-import type { AgentRunSnapshot } from '../../agents/registry'
+import { agentRunDisplayName, type AgentRunSnapshot } from '../../agents/registry'
 import { type AgentSessionLike } from '../../agents/runner'
 import { resolveAgentTools } from '../../agents/tool-resolution'
 import { installSpecialistToolCallExtensions } from './specialist-tool-call-extensions'
@@ -305,7 +305,7 @@ export async function listSessionAgentRuns(params?: unknown): Promise<unknown[]>
       .map((run) => ({
         agentSessionId,
         agentRunId: run.id,
-        agentName: run.agent,
+        agentName: agentRunDisplayName(run),
         task: run.task,
         state: run.state,
         background: run.background,

@@ -34,6 +34,8 @@ export interface AgentRunControl {
 
 export interface AgentRunRequest {
   task: string
+  /** User-facing run label. The selected Phi definition remains the execution identity. */
+  displayName?: string
   images?: AgentImage[]
   /** The registry's id for this run; carried into the usage record. */
   runId?: string

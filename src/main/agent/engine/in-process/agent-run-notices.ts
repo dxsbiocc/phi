@@ -1,5 +1,9 @@
 import { AGENT_RUN_HOST_METHODS } from '../../agents/run-host'
-import type { AgentRunRegistry, AgentRunSnapshot } from '../../agents/registry'
+import {
+  agentRunDisplayName,
+  type AgentRunRegistry,
+  type AgentRunSnapshot
+} from '../../agents/registry'
 import { isRecord } from '../../../../shared/guards'
 
 type HostRequester = (method: string, params: unknown) => Promise<unknown>
@@ -369,7 +373,12 @@ export function subscribeToAgentRunNotices(options: {
       void options
         .requestHost(AGENT_RUN_HOST_METHODS.step, {
           originSessionId: options.sessionId,
-          run: { id: run.id, agent: run.agent, toolCallId: run.toolCallId },
+          run: {
+            id: run.id,
+            agent: run.agent,
+            ...(run.displayName ? { displayName: agentRunDisplayName(run) } : {}),
+            toolCallId: run.toolCallId
+          },
           step
         })
         .catch(() => undefined)

@@ -85,7 +85,7 @@ test('remote specialist inventory excludes parent management and agent-specific 
   assert.deepEqual(wrapper.agent.tools, ['read', 'wrapper_run'])
 })
 
-test('remote-local discovery reads only global, remote Wrapper, and plugin agents in priority order', () => {
+test('remote-local discovery reads global, built-in General/Wrapper, and plugin agents in priority order', () => {
   const root = mkdtempSync(join(tmpdir(), 'phi-remote-agent-discovery-'))
   try {
     const cwd = join(root, 'project')
@@ -95,6 +95,7 @@ test('remote-local discovery reads only global, remote Wrapper, and plugin agent
     writeAgent(root, 'home/.phi/agents/Global.md', 'Global')
     writeAgent(root, 'home/.claude/agents/CompatGlobal.md', 'CompatGlobal')
     writeAgent(root, 'bundled/Wrapper.md', 'Wrapper')
+    writeAgent(root, 'bundled/General.md', 'General')
     writeAgent(root, 'plugin/PluginOnly.md', 'PluginOnly')
     writeAgent(root, 'plugin/Global.md', 'Global')
 
@@ -109,7 +110,7 @@ test('remote-local discovery reads only global, remote Wrapper, and plugin agent
 
     assert.deepEqual(
       result.agents.map((item) => item.name),
-      ['Global', 'Wrapper', 'PluginOnly']
+      ['Global', 'Wrapper', 'General', 'PluginOnly']
     )
     const wrapper = result.agents.find((item) => item.name === 'Wrapper')
     assert.match(wrapper?.description ?? '', /Remote-project Wrapper/)
@@ -118,6 +119,24 @@ test('remote-local discovery reads only global, remote Wrapper, and plugin agent
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('the real bundled General agent is available to remote projects with the supported subset', () => {
+  const result = discoverPhiAgents({
+    cwd: '/nonexistent/cwd',
+    agentDir: '/nonexistent/agentdir',
+    bundledDir: join(process.cwd(), 'resources', 'agents'),
+    homeDir: '/nonexistent/home',
+    pluginAgentDirs: [],
+    scope: 'remote-local'
+  })
+  const general = result.agents.find((item) => item.name === 'General')
+  assert.ok(general)
+  const resolved = resolveRemoteAgentTools(general, remoteAgentSupportedToolNames())
+  assert.equal(resolved.available, true)
+  assert.deepEqual(resolved.agent.tools, ['read', 'glob', 'grep', 'bash', 'write', 'edit'])
+  assert.ok(resolved.diagnostics.some((message) => message.includes('find')))
+  assert.ok(resolved.diagnostics.some((message) => message.includes('todo')))
 })
 
 test('remote agent static inventory comes from the RPC server/host roster and filters discovery', () => {

@@ -29,7 +29,7 @@ export interface PhiAgentDiscoveryOptions {
    */
   pluginAgentDirs?: readonly string[]
   homeDir?: string
-  /** Remote projects scan only machine-local global, remote Wrapper, and plugin agents. */
+  /** Remote projects scan only machine-local global, bundled General/remote Wrapper, and plugins. */
   scope?: 'local' | 'remote-local'
 }
 
@@ -151,6 +151,18 @@ function markdownFiles(dir: string): string[] {
   }
 }
 
+function scanRemoteBundledAgents(
+  root: Root,
+  agents: PhiAgentDefinition[],
+  diagnostics: PhiAgentDiagnostic[],
+  seen: Set<string>
+): void {
+  const wrapper = loadRemoteWrapperAgent(root.dir)
+  if (wrapper) appendAgent(wrapper, root, agents, seen)
+  const generalPath = join(root.dir, 'General.md')
+  if (existsSync(generalPath)) scanAgentFile(generalPath, root, agents, diagnostics, seen)
+}
+
 export function discoverPhiAgents(options: PhiAgentDiscoveryOptions): PhiAgentDiscoveryResult {
   const agents: PhiAgentDefinition[] = []
   const diagnostics: PhiAgentDiagnostic[] = []
@@ -158,8 +170,7 @@ export function discoverPhiAgents(options: PhiAgentDiscoveryOptions): PhiAgentDi
 
   for (const root of agentRoots(options)) {
     if (root.remoteWrapper) {
-      const wrapper = loadRemoteWrapperAgent(root.dir)
-      if (wrapper) appendAgent(wrapper, root, agents, seen)
+      scanRemoteBundledAgents(root, agents, diagnostics, seen)
       continue
     }
     for (const filePath of markdownFiles(root.dir)) {

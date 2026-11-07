@@ -17,7 +17,7 @@ import {
   applyAutoCompactionOverrides,
   applyForeignHomeSkillsPolicy,
   createPhiSettings,
-  ensureStructuredNativeTaskResults
+  disableNativeTaskTool
 } from './settings'
 import { normalizeProjectMemorySettings } from '../../../../shared/projectMemoryTypes'
 import { followSessionModelForSubagents } from './subagent-model-role'
@@ -107,7 +107,7 @@ export async function createSession(
   applyAutoCompactionOverrides(settings, autoCompactionOverrides(record.autoCompaction))
   allowApprovalWaits(settings)
   applyForeignHomeSkillsPolicy(settings)
-  ensureStructuredNativeTaskResults(settings)
+  disableNativeTaskTool(settings)
   const memoryPolicy = normalizeProjectMemorySettings(record.memory)
   const memoryTarget = memoryPolicy.enabled ? { agentDir, cwd } : undefined
   const desktopServices = record.desktopServices === true

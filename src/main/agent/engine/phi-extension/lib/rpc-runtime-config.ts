@@ -185,9 +185,7 @@ export function validateRpcRuntimeConfig(
     }
     return { name: tool.name, site: tool.site }
   })
-  const roster = executionRoster(tools, { allowNativeTask: value.childRuntimeRequired === true })
-  if (roster.tools.some((tool) => tool.name === 'task') !== (value.childRuntimeRequired === true))
-    throw new Error('Native task requires matching child runtime intent')
+  const roster = executionRoster(tools)
   if (
     !Array.isArray(value.activeTools) ||
     new Set(value.activeTools).size !== value.activeTools.length ||

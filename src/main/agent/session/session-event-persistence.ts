@@ -8,6 +8,7 @@ import {
 } from './assistant-message-event-persistence'
 import {
   agentNameFromDetails,
+  agentDisplayNameFromCall,
   agentResultDetails,
   agentRunRefFrom,
   agentTaskFromArgs,
@@ -337,7 +338,7 @@ function persistToolExecutionStart(
       type: 'agent_execution_started',
       runId: run.runId,
       toolCallId: summary.toolCallId,
-      agentName: typeof summary.toolName === 'string' ? summary.toolName : 'Agent',
+      agentName: agentDisplayNameFromCall(summary.toolName, summary.args) ?? 'Agent',
       task: redactSensitiveText(task),
       args: deps.shared.redactStructuredValue(summary.args),
       ...deps.shared.createdAtFromSummary(summary)

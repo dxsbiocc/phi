@@ -1,6 +1,9 @@
 import { isRecord } from '../../../shared/guards'
+import { agentDisplayNameFromCall, isAgentToolName } from '../../../shared/agentDisplayName'
 import type { RemoteOmpFailureCause, RemoteOmpFailureDetail } from '../../../shared/errorCodes'
 import type { SessionEventPersistenceRun } from './session-event-persistence'
+
+export { agentDisplayNameFromCall, isAgentToolName }
 
 const REMOTE_OMP_FAILURE_CAUSES = new Set<RemoteOmpFailureCause>([
   'http',
@@ -97,10 +100,6 @@ export function extractToolText(value: unknown): string {
   return value == null ? '' : String(value)
 }
 
-export function isAgentToolName(toolName: unknown): toolName is string {
-  return typeof toolName === 'string' && /^[A-Z][A-Za-z0-9]*$/.test(toolName)
-}
-
 export function detailsFromToolResult(result: unknown): unknown {
   if (!result || typeof result !== 'object') return undefined
   return (result as { details?: unknown }).details
@@ -123,6 +122,7 @@ export function agentTaskFromArgs(args: unknown): string | undefined {
   const task = args.task
   return typeof task === 'string' && task.trim() ? task.trim() : undefined
 }
+
 
 export function isAgentDelegationStart(summary: Record<string, unknown>): boolean {
   return (

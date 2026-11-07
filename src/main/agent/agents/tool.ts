@@ -18,6 +18,12 @@ import {
 } from './runner'
 
 import { isRecord } from '../../../shared/guards'
+import {
+  GENERAL_AGENT_NAME,
+  MAX_GENERAL_DISPLAY_NAME_LENGTH,
+  MIN_GENERAL_DISPLAY_NAME_LENGTH,
+  generalAgentDisplayName
+} from '../../../shared/agentDisplayName'
 
 const MAX_TASK_LENGTH = 20000
 const MAX_FORWARDED_IMAGE_BYTES = 20 * 1024 * 1024
@@ -133,7 +139,12 @@ export function agentDelegationToolDescription(
     local && cwd
       ? `\n\nProject output boundary: generated files must stay under the current project working directory (${cwd}). Paths outside it are read-only inputs. Return cwd-contained paths.`
       : ''
-  return `${definition.description}\n\nHands the task to the ${definition.name} agent, a specialist with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences. It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${images}${boundary}`
+  const naming =
+    definition.name === GENERAL_AGENT_NAME
+      ? ' Set `name` to a concise task-specific display name (2-24 characters), such as "依赖审计" or "Log triage"; never reuse a fixed generic label.'
+      : ''
+  const role = definition.name === GENERAL_AGENT_NAME ? 'a general-purpose agent' : 'a specialist'
+  return `${definition.description}\n\nHands the task to the ${definition.name} agent, ${role} with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences.${naming} It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${images}${boundary}`
 }
 
 /**
@@ -153,6 +164,7 @@ export function buildAgentTool(
   options: AgentToolOptions = {}
 ): PhiTool {
   const { name } = definition
+  const general = name === GENERAL_AGENT_NAME
   const local = options.remote !== true
   const cwd = options.cwd?.trim()
   return {
@@ -162,8 +174,19 @@ export function buildAgentTool(
     site: 'runtime',
     parameters: {
       type: 'object',
-      required: ['task'],
+      required: general ? ['name', 'task'] : ['task'],
       properties: {
+        ...(general
+          ? {
+              name: {
+                type: 'string',
+                description:
+                  'Short task-specific display name for this General agent run (2-24 characters).',
+                minLength: MIN_GENERAL_DISPLAY_NAME_LENGTH,
+                maxLength: MAX_GENERAL_DISPLAY_NAME_LENGTH
+              }
+            }
+          : {}),
         task: {
           type: 'string',
           description: `Self-contained instruction for the ${name} agent.`
@@ -204,6 +227,12 @@ export function buildAgentTool(
         )
       }
       const record = isRecord(params) ? params : {}
+      const displayName = general ? generalAgentDisplayName(record.name) : name
+      if (!displayName) {
+        return errorResult(
+          'Missing or invalid required parameter: name (use 2-24 characters with no newlines).'
+        )
+      }
       let images: AgentImage[] = []
       const notes: string[] = []
       if (local) {
@@ -229,6 +258,7 @@ export function buildAgentTool(
         }
       }
       const background = record.background === true
+      const launchLabel = general ? displayName : `the ${name} agent`
       const delegatedTask = executionContext(task, local ? cwd : undefined, notes)
 
       let decision: TaskRoutingDecision | undefined
@@ -280,6 +310,7 @@ export function buildAgentTool(
       try {
         handle = await registry.start({
           agent: name,
+          ...(general ? { displayName } : {}),
           task: delegatedTask,
           ...(images.length > 0 ? { images } : {}),
           runner,
@@ -293,12 +324,12 @@ export function buildAgentTool(
                 onProgress: (line: string, agentRunId: string) =>
                   onUpdate?.({
                     content: [{ type: 'text', text: line }],
-                    details: { kind: 'agent_progress', agent: name, agentRunId }
+                    details: { kind: 'agent_progress', agent: displayName, agentRunId }
                   }),
                 onToolStep: (step: AgentRunToolStep, agentRunId: string) =>
                   onUpdate?.({
                     content: [{ type: 'text', text: stepUpdateText(step) }],
-                    details: { kind: 'agent_step', agent: name, agentRunId, step }
+                    details: { kind: 'agent_step', agent: displayName, agentRunId, step }
                   })
               })
         })
@@ -312,12 +343,12 @@ export function buildAgentTool(
           content: [
             {
               type: 'text',
-              text: `Started the ${name} agent in the background as run ${handle.id}. It keeps working while you continue, and Phi sends you its report as a message when it finishes, so do not poll. Call agent_wait ids=["${handle.id}"] only if you cannot go on without the result; agent_status shows progress, agent_steer redirects it, agent_stop cancels it.`
+              text: `Started ${launchLabel} in the background as run ${handle.id}. It keeps working while you continue, and Phi sends you its report as a message when it finishes, so do not poll. Call agent_wait ids=["${handle.id}"] only if you cannot go on without the result; agent_status shows progress, agent_steer redirects it, agent_stop cancels it.`
             }
           ],
           details: {
             kind: 'agent_started',
-            agent: name,
+            agent: displayName,
             runId: handle.id,
             ...(decision ? { decision } : {})
           }
@@ -332,7 +363,7 @@ export function buildAgentTool(
         content: [{ type: 'text', text: reportForMain(run) }],
         details: {
           kind: 'agent_result',
-          agent: name,
+          agent: displayName,
           ...(decision ? { decision } : {}),
           status: run.reportStatus ?? 'completed',
           missingInputs: run.missingInputs ?? [],

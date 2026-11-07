@@ -343,6 +343,33 @@ test('tool execution starts persist ordinary tools and give delegation starts pr
   assert.equal(currentRun.agentToolCallIds.has('agent-1'), true)
 })
 
+test('General delegation starts persist each task-specific display name on its card', () => {
+  const f = harness()
+  const currentRun = run()
+  for (const [toolCallId, name, task] of [
+    ['general-1', '依赖审计', 'audit dependencies'],
+    ['general-2', 'Log triage', 'triage logs']
+  ]) {
+    persistSessionEvent(
+      currentRun,
+      phiEvent({
+        type: 'tool_execution_start',
+        toolCallId,
+        toolName: 'General',
+        args: { name, task }
+      }),
+      f.deps
+    )
+  }
+  assert.deepEqual(
+    f.appended.map(({ event }) => ({ type: event.type, agentName: event.agentName })),
+    [
+      { type: 'agent_execution_started', agentName: '依赖审计' },
+      { type: 'agent_execution_started', agentName: 'Log triage' }
+    ]
+  )
+})
+
 test('agent delegation updates persist their step output and forward the stored step event', () => {
   const f = harness()
   const currentRun = run({

@@ -74,10 +74,7 @@ export async function attestRpcRuntime(
       value.projectRoot !== expected.projectRoot ||
       value.generation !== control.generation ||
       value.ompSessionId !== ompSessionId ||
-      value.rosterHash !==
-        executionRoster(expected.execution.tools, {
-          allowNativeTask: expected.childRuntimeRequired === true
-        }).hash ||
+      value.rosterHash !== executionRoster(expected.execution.tools).hash ||
       value.configHash !== rpcRuntimeConfigDigest(expected) ||
       JSON.stringify(value.components) !==
         JSON.stringify(['execution', 'approval', 'host-result', 'verification', 'native-stream'])
