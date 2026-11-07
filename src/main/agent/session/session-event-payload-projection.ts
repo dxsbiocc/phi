@@ -144,7 +144,8 @@ export function isAgentDelegationUpdate(
   return (
     run.agentToolCallIds.has(summary.toolCallId) ||
     kind === 'agent_step' ||
-    kind === 'agent_progress'
+    kind === 'agent_progress' ||
+    kind === 'agent_named'
   )
 }
 

@@ -9,8 +9,29 @@ import {
   agentRunRefFrom,
   agentStepRecordFrom,
   agentToolStepId,
+  detailsKind,
   isAgentToolName
 } from './session-event-payload-projection'
+
+/** Phi names a General run after its call starts; the card takes the name from this event. */
+export function agentNamedEventFromSummary(
+  run: SessionEventPersistenceRun,
+  summary: Record<string, unknown>,
+  deps: SessionEventPersistenceDeps
+): SessionEventInput | null {
+  if (typeof summary.toolCallId !== 'string') return null
+  if (detailsKind(summary.partialResult) !== 'agent_named') return null
+  const agentName = agentNameFromDetails(summary.partialResult)
+  if (!agentName) return null
+  return {
+    type: 'agent_execution_named',
+    runId: run.runId,
+    toolCallId: summary.toolCallId,
+    agentName,
+    ...agentRunRefFrom(run, summary.partialResult),
+    ...deps.shared.createdAtFromSummary(summary)
+  }
+}
 
 function persistAgentStepOutput(
   run: SessionEventPersistenceRun,

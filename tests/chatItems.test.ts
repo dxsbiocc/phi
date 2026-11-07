@@ -1641,6 +1641,25 @@ test('a restored card keeps the user’s steering messages', () => {
   assert.deepEqual(card.steers, [{ text: 'use hg38', createdAt: '2026-09-20T10:01:00.000Z' }])
 })
 
+test('a restored General card shows the Greek-letter name Phi gave the run', () => {
+  const items = chatItemsFromSessionMessages([
+    ...RESTORED_AGENT_EVENTS,
+    {
+      source: 'phi',
+      type: 'agent_execution_named',
+      eventId: 'e6',
+      toolCallId: 'call-1',
+      agentName: 'Sigma',
+      agentRunId: 'run_3',
+      createdAt: '2026-09-20T10:00:30.000Z'
+    }
+  ])
+  const card = items.find((item) => item.role === 'agent_execution') as unknown as {
+    agentName: string
+  }
+  assert.equal(card.agentName, 'Sigma')
+})
+
 test('presented files keep a valid artifact and drop invalid artifact metadata', () => {
   const kept = presentedFilesItemFromPhiTimelineEvent({
     type: 'files_presented',

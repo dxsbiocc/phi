@@ -8,7 +8,12 @@ import {
   type TaskRoutingDecision
 } from '../decisions/policies'
 import type { PhiAgentDefinition } from './definition'
-import { AgentRunLimitError, AgentRunRegistry, type AgentRunSnapshot } from './registry'
+import {
+  AgentRunLimitError,
+  AgentRunRegistry,
+  agentRunDisplayName,
+  type AgentRunSnapshot
+} from './registry'
 import {
   describeToolStart,
   type AgentImage,
@@ -18,12 +23,7 @@ import {
 } from './runner'
 
 import { isRecord } from '../../../shared/guards'
-import {
-  GENERAL_AGENT_NAME,
-  MAX_GENERAL_DISPLAY_NAME_LENGTH,
-  MIN_GENERAL_DISPLAY_NAME_LENGTH,
-  generalAgentDisplayName
-} from '../../../shared/agentDisplayName'
+import { GENERAL_AGENT_NAME, pickGeneralRunName } from '../../../shared/agentDisplayName'
 
 const MAX_TASK_LENGTH = 20000
 const MAX_FORWARDED_IMAGE_BYTES = 20 * 1024 * 1024
@@ -43,6 +43,8 @@ export interface AgentToolOptions {
   remote?: boolean
   /** Advisory task matching only; the registry and runner retain execution authority. */
   assessTask?: TaskRoutingAssessor
+  /** Picks General run names; tests pass a fixed source. */
+  random?: () => number
 }
 
 function errorResult(
@@ -141,7 +143,7 @@ export function agentDelegationToolDescription(
       : ''
   const naming =
     definition.name === GENERAL_AGENT_NAME
-      ? ' Set `name` to a concise task-specific display name (2-24 characters), such as "依赖审计" or "Log triage"; never reuse a fixed generic label.'
+      ? ' Phi gives each run its own Greek-letter name (for example Gamma), returned with the run id.'
       : ''
   const role = definition.name === GENERAL_AGENT_NAME ? 'a general-purpose agent' : 'a specialist'
   return `${definition.description}\n\nHands the task to the ${definition.name} agent, ${role} with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences.${naming} It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${images}${boundary}`
@@ -174,19 +176,8 @@ export function buildAgentTool(
     site: 'runtime',
     parameters: {
       type: 'object',
-      required: general ? ['name', 'task'] : ['task'],
+      required: ['task'],
       properties: {
-        ...(general
-          ? {
-              name: {
-                type: 'string',
-                description:
-                  'Short task-specific display name for this General agent run (2-24 characters).',
-                minLength: MIN_GENERAL_DISPLAY_NAME_LENGTH,
-                maxLength: MAX_GENERAL_DISPLAY_NAME_LENGTH
-              }
-            }
-          : {}),
         task: {
           type: 'string',
           description: `Self-contained instruction for the ${name} agent.`
@@ -227,12 +218,6 @@ export function buildAgentTool(
         )
       }
       const record = isRecord(params) ? params : {}
-      const displayName = general ? generalAgentDisplayName(record.name) : name
-      if (!displayName) {
-        return errorResult(
-          'Missing or invalid required parameter: name (use 2-24 characters with no newlines).'
-        )
-      }
       let images: AgentImage[] = []
       const notes: string[] = []
       if (local) {
@@ -258,7 +243,6 @@ export function buildAgentTool(
         }
       }
       const background = record.background === true
-      const launchLabel = general ? displayName : `the ${name} agent`
       const delegatedTask = executionContext(task, local ? cwd : undefined, notes)
 
       let decision: TaskRoutingDecision | undefined
@@ -306,6 +290,11 @@ export function buildAgentTool(
         }
       }
 
+      // Picked and registered in the same tick, so parallel General calls never share a name.
+      const displayName = general
+        ? pickGeneralRunName(registry.list().map(agentRunDisplayName), options.random)
+        : name
+      const launchLabel = general ? `${displayName} (General)` : `the ${name} agent`
       let handle
       try {
         handle = await registry.start({
@@ -336,6 +325,13 @@ export function buildAgentTool(
       } catch (error) {
         if (error instanceof AgentRunLimitError) return errorResult(error.message)
         throw error
+      }
+      // The call's arguments carry no name, so the card learns it from this update.
+      if (general) {
+        onUpdate?.({
+          content: [{ type: 'text', text: `Started ${launchLabel} as run ${handle.id}.` }],
+          details: { kind: 'agent_named', agent: displayName, agentRunId: handle.id }
+        })
       }
 
       if (background) {

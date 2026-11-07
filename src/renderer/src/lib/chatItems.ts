@@ -15,6 +15,7 @@ import {
   agentExecutionIndex,
   applyAgentBackgroundTimelineEvent,
   applyAgentCompletedTimelineEvent,
+  applyAgentNamedTimelineEvent,
   applyAgentSteeredTimelineEvent,
   applyAgentStepTimelineEvent
 } from './agentExecutionRestore'
@@ -632,6 +633,9 @@ function applyPhiAgentExecutionEvent(items: ChatItem[], message: RestoredSession
     }
     case 'agent_execution_background':
       applyAgentBackgroundTimelineEvent(items, message)
+      return true
+    case 'agent_execution_named':
+      applyAgentNamedTimelineEvent(items, message)
       return true
     case 'agent_execution_steered':
       applyAgentSteeredTimelineEvent(items, message)

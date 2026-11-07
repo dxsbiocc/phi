@@ -38,6 +38,8 @@ import {
 } from '../src/main/agent/agents/runner'
 import { resolveAgentTools } from '../src/main/agent/agents/tool-resolution'
 import { buildAgentTool, type AgentRunner } from '../src/main/agent/agents/tool'
+import { AgentRunRegistry } from '../src/main/agent/agents/registry'
+import { GENERAL_RUN_NAMES, pickGeneralRunName } from '../src/shared/agentDisplayName'
 import { installPlugin, type LoadedPlugin } from '../src/main/agent/plugins/loader'
 
 const REPO_AGENTS_DIR = join(import.meta.dirname, '..', 'resources', 'agents')
@@ -813,8 +815,8 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
     assert.match(prompt, /required-first/i)
     assert.match(prompt, /only the requested subtask/i)
     assert.match(prompt, /specialist-matching work.*before General/i)
-    assert.match(prompt, /Every General call.*task-specific `name`.*2–24/i)
-    assert.match(prompt, /several differently named General tasks/i)
+    assert.match(prompt, /Phi gives each General run its own Greek-letter name/i)
+    assert.match(prompt, /several General tasks/i)
     assert.match(prompt, /follow-up edit.*exact source, input, and prior output paths/i)
     assert.match(prompt, /controlled fallback/i)
     assert.match(prompt, /not_found/i)
@@ -882,48 +884,67 @@ test('the delegation tool is named after the agent, so the agent is the tool', (
   assert.equal((tool as { loadMode?: string }).loadMode, 'essential')
 })
 
-test('the General delegation tool requires a short task-specific display name', () => {
+test('the General delegation tool takes only the task; Phi names the run', () => {
   const tool = buildAgentTool(GENERAL, async () => ({ text: 'x', toolCalls: 0 }))
   const parameters = tool.parameters as {
     required: string[]
     properties: Record<string, Record<string, unknown>>
   }
-  assert.deepEqual(parameters.required, ['name', 'task'])
-  assert.deepEqual(parameters.properties.name, {
-    type: 'string',
-    description: 'Short task-specific display name for this General agent run (2-24 characters).',
-    minLength: 2,
-    maxLength: 24
-  })
-  assert.match(tool.description, /`name`.*concise task-specific/i)
+  assert.deepEqual(parameters.required, ['task'])
+  assert.equal(parameters.properties.name, undefined)
+  assert.match(tool.description, /Greek-letter name/)
 })
 
-test('General trims and propagates distinct display names while rejecting invalid names', async () => {
+test('General runs get distinct Greek-letter names on the card, the runner and the result', async () => {
   const seen: Array<{ displayName?: string; task: string }> = []
-  const tool = buildAgentTool(GENERAL, async (request) => {
-    seen.push({ displayName: request.displayName, task: request.task })
-    return { text: 'done', toolCalls: 0 }
-  })
-
-  for (const params of [
-    { task: 'audit' },
-    { name: '', task: 'audit' },
-    { name: 'x', task: 'audit' },
-    { name: 'line\nbreak', task: 'audit' },
-    { name: 'x'.repeat(25), task: 'audit' }
-  ]) {
-    const result = await executeTool(tool, 'invalid-name', params as never)
-    assert.equal(result.isError, true)
+  const registry = new AgentRunRegistry()
+  const tool = buildAgentTool(
+    GENERAL,
+    async (request) => {
+      seen.push({ displayName: request.displayName, task: request.task })
+      return { text: 'done', toolCalls: 0 }
+    },
+    registry,
+    // Always the first free letter, so the second run cannot repeat the first.
+    { random: () => 0 }
+  )
+  const named: unknown[] = []
+  const onUpdate = (update: { details?: unknown }): void => {
+    const details = update.details as { kind?: string } | undefined
+    if (details?.kind === 'agent_named') named.push(details)
   }
-
-  const first = await executeTool(tool, 'first', { name: '  依赖审计  ', task: 'audit' })
-  const second = await executeTool(tool, 'second', { name: 'Log triage', task: 'triage' })
+  const first = await executeTool(tool, 'first', { task: 'audit' }, onUpdate as never)
+  const second = await executeTool(tool, 'second', { task: 'triage' }, onUpdate as never)
   assert.deepEqual(seen, [
-    { displayName: '依赖审计', task: 'audit' },
-    { displayName: 'Log triage', task: 'triage' }
+    { displayName: 'Alpha', task: 'audit' },
+    { displayName: 'Beta', task: 'triage' }
   ])
-  assert.equal((first.details as { agent?: string }).agent, '依赖审计')
-  assert.equal((second.details as { agent?: string }).agent, 'Log triage')
+  assert.deepEqual(named, [
+    { kind: 'agent_named', agent: 'Alpha', agentRunId: 'run_1' },
+    { kind: 'agent_named', agent: 'Beta', agentRunId: 'run_2' }
+  ])
+  assert.equal((first.details as { agent?: string }).agent, 'Alpha')
+  assert.equal((second.details as { agent?: string }).agent, 'Beta')
+})
+
+test('Greek run names are random among the free letters and number themselves once all are used', () => {
+  assert.equal(
+    pickGeneralRunName([], () => 0.999),
+    'Omega'
+  )
+  assert.equal(
+    pickGeneralRunName(['Alpha'], () => 0),
+    'Beta'
+  )
+  assert.equal(GENERAL_RUN_NAMES.includes('Phi' as never), false)
+  assert.equal(
+    pickGeneralRunName(GENERAL_RUN_NAMES, () => 0),
+    'Alpha 2'
+  )
+  assert.equal(
+    pickGeneralRunName([...GENERAL_RUN_NAMES, 'Alpha 2'], () => 0),
+    'Beta 2'
+  )
 })
 
 test('the tool passes the trimmed task to the runner and returns its report', async () => {

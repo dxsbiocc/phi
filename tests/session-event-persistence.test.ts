@@ -343,29 +343,41 @@ test('tool execution starts persist ordinary tools and give delegation starts pr
   assert.equal(currentRun.agentToolCallIds.has('agent-1'), true)
 })
 
-test('General delegation starts persist each task-specific display name on its card', () => {
+test('a General start persists under the agent name, then the Greek name Phi gives the run', () => {
   const f = harness()
   const currentRun = run()
-  for (const [toolCallId, name, task] of [
-    ['general-1', '依赖审计', 'audit dependencies'],
-    ['general-2', 'Log triage', 'triage logs']
-  ]) {
-    persistSessionEvent(
-      currentRun,
-      phiEvent({
-        type: 'tool_execution_start',
-        toolCallId,
-        toolName: 'General',
-        args: { name, task }
-      }),
-      f.deps
-    )
-  }
+  persistSessionEvent(
+    currentRun,
+    phiEvent({
+      type: 'tool_execution_start',
+      toolCallId: 'general-1',
+      toolName: 'General',
+      args: { task: 'audit dependencies' }
+    }),
+    f.deps
+  )
+  persistSessionEvent(
+    currentRun,
+    phiEvent({
+      type: 'tool_execution_update',
+      toolCallId: 'general-1',
+      toolName: 'General',
+      partialResult: {
+        content: [{ type: 'text', text: 'Started Gamma (General) as run run_3.' }],
+        details: { kind: 'agent_named', agent: 'Gamma', agentRunId: 'run_3' }
+      }
+    }),
+    f.deps
+  )
   assert.deepEqual(
-    f.appended.map(({ event }) => ({ type: event.type, agentName: event.agentName })),
+    f.appended.map(({ event }) => ({
+      type: event.type,
+      agentName: event.agentName,
+      agentRunId: event.agentRunId
+    })),
     [
-      { type: 'agent_execution_started', agentName: '依赖审计' },
-      { type: 'agent_execution_started', agentName: 'Log triage' }
+      { type: 'agent_execution_started', agentName: 'General', agentRunId: undefined },
+      { type: 'agent_execution_named', agentName: 'Gamma', agentRunId: 'run_3' }
     ]
   )
 })

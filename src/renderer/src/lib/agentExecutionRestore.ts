@@ -238,6 +238,23 @@ export function applyAgentBackgroundTimelineEvent(
   items[index] = { ...current, ...agentRunRefFields(message), background: true }
 }
 
+/** Phi names a General run after its call starts. */
+export function applyAgentNamedTimelineEvent(
+  items: ChatItem[],
+  message: {
+    runId?: string
+    toolCallId?: string
+    agentName?: string
+    createdAt?: string
+  } & AgentRunRefMessage
+): void {
+  if (!message.agentName) return
+  const index = ensureAgentExecution(items, message)
+  const current = items[index]
+  if (current.role !== 'agent_execution') return
+  items[index] = { ...current, ...agentRunRefFields(message), agentName: message.agentName }
+}
+
 export function applyAgentSteeredTimelineEvent(
   items: ChatItem[],
   message: {

@@ -5,7 +5,7 @@ import test from 'node:test'
 
 import { KernelClientError } from '../src/main/agent/engine/kernel-client'
 import { discoverPhiAgents } from '../src/main/agent/agents/discovery'
-import { agentDisplayNameFromCall } from '../src/shared/agentDisplayName'
+import { GENERAL_RUN_NAMES } from '../src/shared/agentDisplayName'
 import { type JsonValue, type KernelEventFrame } from '../src/shared/kernel-protocol'
 import { eventually, messageText } from './engine-contract/basic-suite'
 import { createKernelFixture } from './engine-contract/kernel-factory'
@@ -455,7 +455,7 @@ test(
     const generalParameters = tools.find((tool) => tool.function?.name === 'General')?.function
       ?.parameters
     const generalRequired = generalParameters?.required ?? []
-    assert.equal(generalRequired.includes('name'), true)
+    assert.equal(Object.hasOwn(generalParameters?.properties ?? {}, 'name'), false)
     assert.equal(generalRequired.includes('task'), true)
     assert.equal(Object.hasOwn(generalParameters?.properties ?? {}, 'background'), true)
 
@@ -476,7 +476,7 @@ test(
         tool: {
           name: 'General',
           id: 'remote-general',
-          args: { name: 'Host audit', task: 'Return a concise host audit.', background: true }
+          args: { task: 'Return a concise host audit.', background: true }
         }
       },
       { text: 'Remote General completed.' },
@@ -486,16 +486,18 @@ test(
       await f.client.request('session.prompt', { text: 'Delegate the host audit.' }, { sessionId })
     )
     await f.waitForRun(String(generalPrompt.runId))
-    const start = sessionEvents
+    const named = sessionEvents
       .map((event) => record(event.payload))
-      .find(
-        (event) =>
-          event.type === 'tool_execution_start' &&
-          event.toolName === 'General' &&
-          record(event.args as JsonValue).name === 'Host audit'
-      )
-    assert.ok(start, JSON.stringify(sessionEvents))
-    assert.equal(agentDisplayNameFromCall(start.toolName, start.args), 'Host audit')
+      .flatMap((event) => {
+        if (event.type !== 'tool_execution_update' || event.toolName !== 'General') return []
+        const details = record(record(event.partialResult as JsonValue).details as JsonValue)
+        return details.kind === 'agent_named' ? [details] : []
+      })
+    assert.equal(named.length, 1, JSON.stringify(sessionEvents))
+    assert.ok(
+      (GENERAL_RUN_NAMES as readonly string[]).includes(String(named[0].agent)),
+      JSON.stringify(named)
+    )
   }
 )
 

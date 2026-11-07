@@ -57,9 +57,11 @@ tool is not advertised to the main agent.
 ### 2.3 Built-in General agent
 
 Phi bundles `General` for self-contained delegable work that no specialist covers.
-Its delegation tool requires both `task` and a task-specific `name`. `name` is
-trimmed, must contain 2–24 characters and no newline, and becomes the display label
-on cards, the running-agent overview, the subagent tab and completion notices. The
+Its delegation tool takes `task` like any other agent. Phi names each run itself
+with a random Greek letter (Alpha … Omega, leaving out `Phi`) that no other run in
+the conversation uses, then `Alpha 2` and so on once all are taken. The name is
+returned to the main agent with the run id and is the label on cards, the
+running-agent overview, the subagent tab and completion notices. The
 definition name `General` remains the execution identity, and runs remain addressed
 by their Phi run id. General has the common local working tools
 (`read`, `glob`, `grep`, `find`, `bash`, `write`, `edit`, `todo`); remote projects

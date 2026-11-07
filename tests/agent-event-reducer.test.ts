@@ -1240,27 +1240,53 @@ test('live file delivery keeps artifact metadata', () => {
   }
 })
 
-test('a General delegation card shows its per-task name from the moment it starts', () => {
-  const state = reduceAgentEventState(createAgentEventReducerState(), {
+test('a General card takes the Greek-letter name Phi gives the run', () => {
+  const started = reduceAgentEventState(createAgentEventReducerState(), {
     type: 'tool_execution_start',
     toolCallId: 'general-call-1',
     toolName: 'General',
-    args: { name: '  依赖审计 ', task: 'Audit the dependencies' },
+    args: { task: 'Audit the dependencies' },
     runId: 'run-1'
   })
-  const card = state.messages.find((item) => item.id === 'general-call-1')
-  assert.equal(card?.role, 'agent_execution')
-  assert.equal(card?.role === 'agent_execution' ? card.agentName : undefined, '依赖审计')
+  const named = reduceAgentEventState(started, {
+    type: 'tool_execution_update',
+    toolCallId: 'general-call-1',
+    toolName: 'General',
+    partialResult: {
+      content: [{ type: 'text', text: 'Started Gamma (General) as run run_3.' }],
+      details: { kind: 'agent_named', agent: 'Gamma', agentRunId: 'run_3' }
+    },
+    runId: 'run-1'
+  })
+  const card = (state: typeof named): (typeof named.messages)[number] | undefined =>
+    state.messages.find((item) => item.id === 'general-call-1' && item.role === 'agent_execution')
+  const before = card(started)
+  const after = card(named)
+  assert.equal(before?.role === 'agent_execution' ? before.agentName : undefined, 'General')
+  assert.equal(after?.role === 'agent_execution' ? after.agentName : undefined, 'Gamma')
+  assert.equal(after?.role === 'agent_execution' ? after.agentRunId : undefined, 'run_3')
 })
 
-test('a General card without a usable name falls back to the agent name', () => {
-  const state = reduceAgentEventState(createAgentEventReducerState(), {
-    type: 'tool_execution_start',
-    toolCallId: 'general-call-2',
-    toolName: 'General',
-    args: { name: 'x', task: 'Audit the dependencies' },
-    runId: 'run-1'
-  })
+test('a restored General card takes its name from the persisted named event', () => {
+  const state = [
+    {
+      type: 'agent_execution_started',
+      toolCallId: 'general-call-2',
+      agentName: 'General',
+      task: 'Audit the dependencies',
+      runId: 'run-1'
+    },
+    {
+      type: 'agent_execution_named',
+      toolCallId: 'general-call-2',
+      agentName: 'Delta',
+      agentRunId: 'run_4',
+      runId: 'run-1'
+    }
+  ].reduce(
+    (current, event) => reduceAgentEventState(current, event),
+    createAgentEventReducerState()
+  )
   const card = state.messages.find((item) => item.id === 'general-call-2')
-  assert.equal(card?.role === 'agent_execution' ? card.agentName : undefined, 'General')
+  assert.equal(card?.role === 'agent_execution' ? card.agentName : undefined, 'Delta')
 })

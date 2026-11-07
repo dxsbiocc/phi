@@ -1,7 +1,10 @@
 import { isPhiEventType } from '../engine/events'
 import type { PhiAgentEvent } from '../engine/types'
 import { redactSensitiveText } from '../redaction'
-import { agentStepEventFromSummary } from './agent-delegation-event-persistence'
+import {
+  agentNamedEventFromSummary,
+  agentStepEventFromSummary
+} from './agent-delegation-event-persistence'
 import {
   persistAssistantContentInOrder,
   persistCompletedThinkingBlocks
@@ -338,7 +341,7 @@ function persistToolExecutionStart(
       type: 'agent_execution_started',
       runId: run.runId,
       toolCallId: summary.toolCallId,
-      agentName: agentDisplayNameFromCall(summary.toolName, summary.args) ?? 'Agent',
+      agentName: agentDisplayNameFromCall(summary.toolName) ?? 'Agent',
       task: redactSensitiveText(task),
       args: deps.shared.redactStructuredValue(summary.args),
       ...deps.shared.createdAtFromSummary(summary)
@@ -370,7 +373,8 @@ function persistAgentDelegationUpdate(
   deps: SessionEventPersistenceDeps
 ): HandlerResult {
   if (!isAgentDelegationUpdate(run, summary)) return undefined
-  const event = agentStepEventFromSummary(run, summary, deps)
+  const event =
+    agentNamedEventFromSummary(run, summary, deps) ?? agentStepEventFromSummary(run, summary, deps)
   if (event) {
     deps.storage.appendSessionEvent(run.phiSessionId, event)
     return event

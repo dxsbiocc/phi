@@ -11,7 +11,7 @@ tools:
   - edit
   - todo
 delegation: |
-  Use General only when no specialist matches the delegated work. Give every run a concise task-specific name (2–24 characters) that will identify it in Phi, and include the complete task context. Independent General runs may be started together or with background: true.
+  Use General only when no specialist matches the delegated work. Phi names each run with a Greek letter; include the complete task context. Independent General runs may be started together or with background: true.
 ---
 
 You are Phi's general-purpose agent. Complete exactly one self-contained delegated task that no specialist covers. You cannot see the parent conversation or ask the user questions.

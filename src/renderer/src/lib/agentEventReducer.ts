@@ -208,7 +208,7 @@ function agentTaskFromArgs(args: unknown): string | undefined {
 
 function agentExecutionItemFromStart(event: AgentEventSummary): AgentExecutionItem | null {
   const toolCallId = event.toolCallId
-  const agentName = event.agentName ?? agentDisplayNameFromCall(event.toolName, event.args)
+  const agentName = event.agentName ?? agentDisplayNameFromCall(event.toolName)
   if (!toolCallId || !agentName) return null
   const task = typeof event.task === 'string' ? event.task : (agentTaskFromArgs(event.args) ?? '')
   const args = event.args ?? (task ? { task } : undefined)
@@ -309,7 +309,7 @@ function ensureAgentExecutionItem(next: ChatItem[], event: AgentEventSummary): n
     id,
     role: 'agent_execution',
     ...runIdField(event.runId),
-    agentName: event.agentName ?? agentDisplayNameFromCall(event.toolName, event.args) ?? 'Agent',
+    agentName: event.agentName ?? agentDisplayNameFromCall(event.toolName) ?? 'Agent',
     task: '',
     argsPreview: '',
     argsJson: '',
@@ -378,6 +378,20 @@ function applyAgentExecutionBackground(next: ChatItem[], event: AgentEventSummar
   const current = next[index]
   if (current.role !== 'agent_execution') return true
   next[index] = { ...current, ...agentRunRefFields(event), background: true }
+  return true
+}
+
+/** Phi names a General run after its call starts: live as a tool update, restored as its own event. */
+function applyAgentExecutionNamed(next: ChatItem[], event: AgentEventSummary): boolean {
+  const live =
+    event.type === 'tool_execution_update' ? detailsFromToolResult(event.partialResult) : null
+  const details = isRecord(live) && live.kind === 'agent_named' ? live : null
+  if (event.type !== 'agent_execution_named' && !details) return false
+  const agentName = event.agentName ?? (typeof details?.agent === 'string' ? details.agent : '')
+  const index = agentName ? ensureAgentExecutionItem(next, event) : -1
+  const current = next[index]
+  if (current?.role !== 'agent_execution') return true
+  next[index] = { ...current, ...agentRunRefFields({ ...details, ...event }), agentName }
   return true
 }
 
@@ -619,6 +633,10 @@ export function reduceAgentEventState(
   }
 
   if (applyAgentExecutionBackground(next, event)) {
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
+  if (applyAgentExecutionNamed(next, event)) {
     return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
   }
 
