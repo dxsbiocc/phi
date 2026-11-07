@@ -12,10 +12,8 @@ import test from 'node:test'
 import {
   APP_RPC_NOTEBOOK_TOOL_NAMES,
   createAppRemoteSessionManager,
-  installAppRemoteSessionRouting,
   remoteStartupConnectionState,
-  selectAppForegroundAgents,
-  type AppRemoteSessionRoutingOptions
+  selectAppForegroundAgents
 } from '../src/main/agent/remote-session-routing'
 import type { PhiAgentDefinition } from '../src/main/agent/agents/definition'
 
@@ -63,25 +61,6 @@ test('application foreground selection never strips unsupported fields from a se
       () => selectAppForegroundAgents(['Checker'], [{ ...checker(), ...patch }]),
       /Unsupported RPC foreground agent profile/
     )
-})
-
-test('application routing validates its trusted configuration unconditionally', () => {
-  const unexpected = (): never => {
-    throw new Error('disabled routing touched a resource')
-  }
-  const options: AppRemoteSessionRoutingOptions = {
-    agentDir: '/unused',
-    runners: {} as AppRemoteSessionRoutingOptions['runners'],
-    appPaths: unexpected,
-    configuredRoot: unexpected,
-    loadAgents: unexpected,
-    foregroundAgentNames: 'invalid-renderer-name',
-    approval: { shouldGate: unexpected, requestToolApproval: unexpected }
-  }
-  assert.throws(
-    () => installAppRemoteSessionRouting(options),
-    /Invalid RPC foreground agent selection/
-  )
 })
 
 test('remote startup download progress enters and cleanly leaves the existing connection state', () => {

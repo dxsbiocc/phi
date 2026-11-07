@@ -3,10 +3,6 @@ import { randomUUID } from 'node:crypto'
 import { getOmpBridge, type OmpBridge } from './omp-bridge'
 import { createDecisionClient } from './decision-client'
 import { SessionRoutingEngine } from './session-routing-engine'
-import {
-  createFacadeSessionFactory,
-  type FacadeSessionFactoryOptions
-} from './rpc/facade-session-driver'
 import type { RoutedSessionFactory } from './session-routing-engine'
 import type { PhiEngine, ResolvedRuntimeCompactionPolicy } from './types'
 import type { AutoCompactionOverrides } from '../../../shared/contextUsageTypes'
@@ -133,9 +129,7 @@ export function createInProcessEngine(bridge: OmpBridge): PhiEngine {
 }
 
 let engine: SessionRoutingEngine | null = null
-let remoteFactory: RoutedSessionFactory | undefined
 let kernelFactory: KernelSessionFactory | undefined
-let e5SmokeAllowed: ((projectId: string) => boolean) | undefined
 
 const mirroredKernelHostHandlers = new Map<
   string,
@@ -143,15 +137,9 @@ const mirroredKernelHostHandlers = new Map<
 >()
 
 const routedFactory: RoutedSessionFactory = {
-  handles(params) {
-    return Boolean(kernelFactory || (params.remoteProject && remoteFactory))
-  },
   create(params, signal, sink, control) {
     if (kernelFactory) return kernelFactory.create(params, signal, sink, control)
-    if (params.remoteProject && remoteFactory) {
-      return remoteFactory.create(params, signal, sink, control)
-    }
-    throw new Error('No routed session factory owns this request.')
+    throw new Error('The Phi kernel session factory is unavailable.')
   },
   registerHostHandler(method, handler) {
     mirroredKernelHostHandlers.get(method)?.remove?.()
@@ -198,23 +186,6 @@ export function installKernelSessionRouting(options: KernelSessionFactoryOptions
   }
 }
 
-export function scopeE5RemoteFactory(
-  ordinary: RoutedSessionFactory,
-  createSmoke: () => RoutedSessionFactory,
-  allow: (projectId: string) => boolean
-): RoutedSessionFactory {
-  let smoke: RoutedSessionFactory | undefined
-  return {
-    create: (params, signal, sink, control) => {
-      if (params.remoteProject && allow(params.remoteProject.projectId)) {
-        smoke ??= createSmoke()
-        return smoke.create(params, signal, sink, control)
-      }
-      return ordinary.create(params, signal, sink, control)
-    }
-  }
-}
-
 /** Exact desktop baseline and overrides, resolved with the existing non-persistent settings policy. */
 export function readRpcCompactionPolicy(
   agentDir: string,
@@ -228,48 +199,6 @@ export function readRpcCompactionPolicy(
   })
 }
 
-/** Main-process opt-in only. Existing sessions retain their captured driver and authority. */
-export function installRemoteSessionRouting(
-  options: Omit<FacadeSessionFactoryOptions, 'bridge' | 'models'> & {
-    enabled: true
-    /** Scoped development acceptance run; never persisted as an application setting. */
-    e5SmokeProjectId?: string
-    e5SmokeProjectAllowed?: (projectId: string) => boolean
-  }
-): () => void {
-  if (options.enabled !== true) throw new Error('Remote session routing must be explicitly enabled')
-  const bridge = getOmpBridge()
-  const common = {
-    ...options,
-    bridge,
-    compactionPolicy: readRpcCompactionPolicy,
-    models: async (agentDir) => (await getPhiEngine().models.snapshot({ agentDir })).models
-  }
-  const ordinary = createFacadeSessionFactory({
-    ...common,
-    ...(options.e5SmokeProjectId
-      ? {
-          remotePlanExecutionEnabled: false,
-          remotePlanDraftEnabled: false,
-          remoteAutoPlanEnabled: false
-        }
-      : {})
-  })
-  const allowSmoke = (projectId: string): boolean =>
-    projectId === options.e5SmokeProjectId && options.e5SmokeProjectAllowed?.(projectId) === true
-  const factory = options.e5SmokeProjectId
-    ? scopeE5RemoteFactory(ordinary, () => createFacadeSessionFactory(common), allowSmoke)
-    : ordinary
-  remoteFactory = factory
-  e5SmokeAllowed = options.e5SmokeProjectId ? allowSmoke : undefined
-  return () => {
-    if (remoteFactory === factory) {
-      remoteFactory = undefined
-      e5SmokeAllowed = undefined
-    }
-  }
-}
-
 export function ownsRemoteRuntimeSession(sessionId: string): boolean {
   return engine?.owns(sessionId) ?? false
 }
@@ -277,10 +206,8 @@ export function ownsRemoteRuntimeSession(sessionId: string): boolean {
 export function getPhiEngine(): PhiEngine {
   engine ??= new SessionRoutingEngine(
     createInProcessEngine(getOmpBridge()),
-    () => (kernelFactory || remoteFactory ? routedFactory : undefined),
-    {
-      remotePlanExecutionEnabled: (projectId) => e5SmokeAllowed?.(projectId) === true
-    }
+    () => (kernelFactory ? routedFactory : undefined),
+    { remotePlanExecutionEnabled: true }
   )
   return engine
 }

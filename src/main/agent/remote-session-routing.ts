@@ -4,34 +4,22 @@ import type {
 } from './engine/rpc/subagents/types'
 import type { RemoteProjectConnectionState } from '../../shared/projectLocation'
 import { WRAPPER_COMPOSITION_TOOL_NAMES } from './wrappers/composition/tools'
-import { join } from 'node:path'
 import { realpathSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { NOTEBOOK_TOOL_NAMES } from './notebook/notebook-tools'
 import { LIBRARY_TOOL_NAMES } from './library/library-tools'
 import { createRuntimeSessionManager, type RuntimeSessionManager } from './runtime/runtime-adapter'
 import { phiOnlySessionPath } from './session/sessions'
 import type { PhiAgentDefinition } from './agents/definition'
-import { getProject, setRemoteProjectConnectionState, type Project } from './projects'
-import { findPhiSessionById } from './session/session-store'
+import type { Project } from './projects'
 import type { SessionRunnerRegistry } from './session/session-runner-registry'
 import { resolveRemoteWorkspaceHostBinding } from './remote-workspace-boundary'
 import { openRemoteRuntimeWorkspace } from './remote-runtime/workspace'
-import {
-  installKernelSessionRouting,
-  installRemoteSessionRouting
-} from './engine/in-process-engine'
+import { installKernelSessionRouting } from './engine/in-process-engine'
 import { createAppKernelSessionLaunchers } from './app-kernel-session-launchers'
-import { facadeBindingHash, type SelectedFacadeRuntime } from './engine/rpc/facade-session-driver'
+import type { SelectedFacadeRuntime } from './engine/rpc/facade-session-driver'
 import { rpcToolNameExposesCredentialSurface } from './engine/phi-extension/lib/rpc-execution-protocol'
-import {
-  createPhiExtensionBundle,
-  resolvePhiExtensionSourceRoot
-} from './engine/rpc/extension-deployment'
 import type { RemoteOmpDeploymentOptions } from './engine/rpc/runtime-deployment'
-import { REMOTE_OMP_MANIFEST } from './engine/rpc/runtime-deployment'
 import {
-  RemoteStartupDiagnostics,
   type RemoteStartupDiagnosticSink,
   type RemoteStartupProgressEvent
 } from './engine/rpc/remote-startup-diagnostics'
@@ -270,279 +258,10 @@ export function remoteStartupConnectionState(
   return undefined
 }
 
-function publishRemoteStartupProgress(projectId: string, event: RemoteStartupProgressEvent): void {
-  const project = getProject(projectId)
-  if (project?.location.kind !== 'ssh') return
-  const state = remoteStartupConnectionState(event, project.remoteConnection)
-  if (state) setRemoteProjectConnectionState(projectId, state)
-}
-
 export function installAppRemoteSessionRouting(
   options: AppRemoteSessionRoutingOptions,
   dependencies: AppRemoteSessionRoutingDependencies = {}
 ): () => void {
-  const smokeAllowed = (projectId: string): boolean =>
-    projectId === E5_SMOKE_PROJECT_ID &&
-    e5SmokeGate({
-      argv: process.argv,
-      devRendererUrl: process.env.ELECTRON_RENDERER_URL,
-      isDevelopment: process.env.NODE_ENV_ELECTRON_VITE === 'development',
-      isPackaged: options.appPaths().isPackaged,
-      agentDir: options.agentDir,
-      homeDir: process.env.HOME,
-      runtimeHomeDir: homedir(),
-      actualUserDataPath: options.appPaths().userDataPath,
-      project: getProject(projectId)
-    })
-  const names =
-    options.foregroundAgentNames
-      ?.split(',')
-      .map((name) => name.trim())
-      .filter(Boolean) ?? []
-  // Fail invalid main-owned selection before installing a route.
-  if (
-    names.length > 32 ||
-    new Set(names).size !== names.length ||
-    names.some((name) => !/^[A-Z][A-Za-z0-9]*$/.test(name))
-  )
-    throw new Error('Invalid RPC foreground agent selection')
-  const removeLegacyRemote = installRemoteSessionRouting({
-    enabled: true,
-    e5SmokeProjectId: E5_SMOKE_PROJECT_ID,
-    e5SmokeProjectAllowed: smokeAllowed,
-    remotePlanExecutionEnabled: true,
-    remotePlanDraftEnabled: true,
-    remoteAutoPlanEnabled: true,
-    runners: options.runners,
-    selected: async ({ runtimeSessionId, phiSessionId, projectId }, signal) => {
-      signal.throwIfAborted()
-      const startupDiagnostics = new RemoteStartupDiagnostics({
-        phiSessionId,
-        ...(options.startupDiagnostics ? { emit: options.startupDiagnostics } : {}),
-        emitProgress: (event) => publishRemoteStartupProgress(projectId, event)
-      })
-      const step = async <T>(name: string, operation: () => Promise<T>): Promise<T> => {
-        try {
-          return await (startupDiagnostics?.step(name, operation) ?? operation())
-        } catch (error) {
-          startupDiagnostics?.finish('failed')
-          throw error
-        }
-      }
-      const manifest = findPhiSessionById(phiSessionId)
-      const project = getProject(projectId)
-      if (
-        !manifest ||
-        !project ||
-        project.location.kind !== 'ssh' ||
-        manifest.projectId !== projectId
-      )
-        throw new Error('RPC runtime requires the selected Phi SSH project')
-      const resolvedBinding = (dependencies.resolveBinding ?? resolveRemoteWorkspaceHostBinding)({
-        sessionId: phiSessionId,
-        projectId
-      })
-      const binding = startupDiagnostics
-        ? {
-            ...resolvedBinding,
-            config: {
-              ...resolvedBinding.config,
-              connect: async () =>
-                startupDiagnostics.instrumentSession(await resolvedBinding.config.connect())
-            }
-          }
-        : resolvedBinding
-      const configuredRoot = options.configuredRoot(project)
-      const manifestBinding = JSON.stringify([
-        manifest.cwd,
-        manifest.projectLocation,
-        manifest.runtimeRef?.ompSessionId,
-        manifest.runtimeRef?.journalBasename
-      ])
-      const assertSelected = (): void => {
-        signal.throwIfAborted()
-        const latest = findPhiSessionById(phiSessionId)
-        const currentProject = getProject(projectId)
-        if (
-          !latest ||
-          !currentProject ||
-          latest.projectId !== projectId ||
-          JSON.stringify([
-            latest.cwd,
-            latest.projectLocation,
-            latest.runtimeRef?.ompSessionId,
-            latest.runtimeRef?.journalBasename
-          ]) !== manifestBinding ||
-          (dependencies.resolveBinding ?? resolveRemoteWorkspaceHostBinding)({
-            sessionId: phiSessionId,
-            projectId
-          }).cacheKey !== binding.cacheKey ||
-          options.configuredRoot(currentProject) !== configuredRoot
-        ) {
-          throw new Error('RPC selected project/host binding changed before runtime creation')
-        }
-      }
-      assertSelected()
-      const definitions = await step('desktop_agent_catalog', async () =>
-        names.length
-          ? selectAppForegroundAgents(
-              names,
-              await options.loadAgents({
-                sessionId: phiSessionId,
-                projectId,
-                cwd: manifest.cwd
-              }),
-              true
-            )
-          : []
-      )
-      assertSelected()
-      const bundle = await step('extension_bundle', () =>
-        createPhiExtensionBundle(resolvePhiExtensionSourceRoot(options.appPaths()))
-      )
-      assertSelected()
-      const workspace = await (dependencies.openWorkspace ?? openRemoteRuntimeWorkspace)(
-        {
-          runtimeSessionId,
-          sessionId: phiSessionId,
-          projectId,
-          configuredRoot
-        },
-        signal,
-        () => binding,
-        startupDiagnostics
-      )
-      let session: Awaited<ReturnType<typeof binding.config.connect>> | undefined
-      let resources: AppRemoteDesktopResources | undefined
-      try {
-        assertSelected()
-        const promptContext = await step(
-          'desktop_prompt_context',
-          () =>
-            options.loadPromptContext?.(
-              {
-                runtimeSessionId,
-                sessionId: phiSessionId,
-                projectId,
-                cwd: binding.canonicalRoot,
-                resourceCwd: manifest.cwd
-              },
-              signal
-            ) ?? Promise.resolve(undefined)
-        )
-        assertSelected()
-        const agentIdentity = {
-          runtimeSessionId,
-          sessionId: phiSessionId,
-          projectId,
-          cwd: binding.canonicalRoot,
-          resourceCwd: manifest.cwd
-        }
-        const agentResources = definitions.length
-          ? await step(
-              'desktop_agent_resources',
-              () =>
-                options.loadAgentResources?.(agentIdentity, definitions, signal) ??
-                Promise.resolve(undefined)
-            )
-          : undefined
-        assertSelected()
-        resources = await step(
-          'desktop_tool_resources',
-          () =>
-            options.loadDesktopTools?.(
-              {
-                runtimeSessionId,
-                sessionId: phiSessionId,
-                projectId,
-                cwd: binding.canonicalRoot,
-                resourceCwd: manifest.cwd
-              },
-              signal
-            ) ?? Promise.resolve(undefined)
-        )
-        assertSelected()
-        session = await step('ssh_session', () => binding.config.connect())
-        assertSelected()
-        if (
-          !session.openStdio ||
-          !session.openReverseTunnel ||
-          !session.execWithInput ||
-          !session.execBounded
-        )
-          throw new Error('Selected SSH transport lacks RPC process/tunnel support')
-        return {
-          hostProfileId: project.location.hostProfileId,
-          bindingHash: facadeBindingHash(binding),
-          projectId,
-          projectRoot: binding.canonicalRoot,
-          runtime: {
-            runtimeHost: workspace.runtimeHost,
-            runtimeRoot: workspace.runtimeRoot,
-            desktopVersion: REMOTE_OMP_MANIFEST.version,
-            cacheDir: join(options.agentDir, 'cache', 'omp'),
-            ...dependencies.deployment
-          },
-          session,
-          bundle,
-          recovery: manifest.runtimeRef ? 'resume' : 'new',
-          approval: { ...options.approval, projectName: project.name },
-          desktopToolNames: appRpcDesktopToolNames(resources?.tools),
-          desktopTools: resources?.tools,
-          memory: resources?.memory,
-          startupDiagnostics,
-          ...(options.onRunTakeover
-            ? {
-                onRunTakeover: ({ message }: { message: string }) =>
-                  options.onRunTakeover!({ sessionId: phiSessionId, message })
-              }
-            : {}),
-          onMemoryError: () => options.onMemoryError?.({ sessionId: phiSessionId, projectId }),
-          ...(promptContext ? { promptContext } : {}),
-          recentUserImages: () => [],
-          ...(definitions.length
-            ? { nativeTools: ['read', 'write', 'edit', 'bash', 'glob', 'grep'] as const }
-            : {}),
-          ...(definitions.length
-            ? {
-                foregroundChildren: {
-                  definitions,
-                  allowParallel: true,
-                  allowBackground: true,
-                  ...(agentResources ? { resources: agentResources } : {}),
-                  ...(options.resolveAgentEnvironment
-                    ? {
-                        resolveEnvironment: (
-                          agent: Parameters<
-                            NonNullable<CompileRpcAgentDefinitionsOptions['resolveEnvironment']>
-                          >[0]
-                        ) => {
-                          assertSelected()
-                          return options.resolveAgentEnvironment!(agentIdentity, agent, signal)
-                        }
-                      }
-                    : {}),
-                  onApprovalEvent: options.onChildApprovalEvent
-                }
-              }
-            : {}),
-          dispose: async () => {
-            await Promise.resolve()
-              .then(() => resources?.close?.())
-              .catch(() => undefined)
-            await Promise.allSettled([session!.close(), workspace.close?.()])
-          }
-        }
-      } catch (error) {
-        await Promise.resolve()
-          .then(() => resources?.close?.())
-          .catch(() => undefined)
-        await Promise.allSettled([session?.close(), workspace.close?.()])
-        throw error
-      }
-    }
-  })
-
   const kernelInstall = createAppKernelSessionLaunchers(options, dependencies)
   const removeKernel = installKernelSessionRouting({
     launchLocal: kernelInstall.launchLocal,
@@ -564,7 +283,6 @@ export function installAppRemoteSessionRouting(
         ]
       })
   })
-  removeLegacyRemote()
   return () => {
     removeKernel()
     void kernelInstall.close()

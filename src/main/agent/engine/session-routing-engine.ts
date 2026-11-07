@@ -223,7 +223,7 @@ export class SessionRoutingEngine implements PhiEngine {
   ): ReturnType<PhiEngine['sessions']['create']> {
     if (!params.noTools || params.phiSessionId || params.remoteProject) {
       throw new RuntimeReferenceError(
-        'CAPABILITY_UNAVAILABLE',
+        'REMOTE_OPERATION_REQUIRED',
         'Desktop execution is limited to independent no-tools helpers.'
       )
     }
@@ -319,7 +319,7 @@ export class SessionRoutingEngine implements PhiEngine {
       const factory = this.factory()
       if (!factory) {
         throw new RuntimeReferenceError(
-          'CAPABILITY_UNAVAILABLE',
+          'REMOTE_OPERATION_REQUIRED',
           'The Phi kernel session route is unavailable.'
         )
       }
