@@ -204,6 +204,7 @@ export const IPC = {
     skip: 'persona:skip'
   },
   phiPlugins: {
+    catalogDetail: 'phiPlugins:catalogDetail',
     installFromDirectory: 'phiPlugins:installFromDirectory',
     list: 'phiPlugins:list',
     pickDirectory: 'phiPlugins:pickDirectory',

@@ -144,6 +144,7 @@ import type {
   PhiPluginListItem,
   PhiPluginMutationResult
 } from '../shared/phiPluginTypes'
+import type { PhiPluginCatalogDetailResult } from '../shared/phiPluginDetailTypes'
 import type { VisualizationTemplateCatalog } from '../shared/visualizationTemplateTypes'
 import type {
   KnownPackageRegistryView,
@@ -1145,6 +1146,7 @@ type RendererAuthApi = PreloadApiBase & {
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   showPendingRequests: () => Promise<void>
   listPhiPlugins: () => Promise<PhiPluginListItem[]>
+  getPhiPluginCatalogDetail: (id: string) => Promise<PhiPluginCatalogDetailResult>
   listVisualizationTemplates: () => Promise<VisualizationTemplateCatalog>
   pickPhiPluginDirectory: () => Promise<string | null>
   previewPhiPluginDirectory: (path: string) => Promise<PhiPluginInstallPreview>
@@ -2041,6 +2043,8 @@ const api: RendererAuthApi = {
   ): Promise<void> =>
     ipcRenderer.invoke(IPC.agent.interactionResponse, requestId, response, cancelled),
   listPhiPlugins: (): Promise<PhiPluginListItem[]> => ipcRenderer.invoke(IPC.phiPlugins.list),
+  getPhiPluginCatalogDetail: (id: string): Promise<PhiPluginCatalogDetailResult> =>
+    ipcRenderer.invoke(IPC.phiPlugins.catalogDetail, id),
   listVisualizationTemplates: (): Promise<VisualizationTemplateCatalog> =>
     ipcRenderer.invoke(IPC.phiPlugins.visualizationTemplates),
   pickPhiPluginDirectory: (): Promise<string | null> =>

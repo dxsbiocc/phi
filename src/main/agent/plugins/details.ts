@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import type {
   PhiPluginAgentDetail,
   PhiPluginListItem,
@@ -6,12 +8,13 @@ import type {
   PhiPluginUsedEnvironment
 } from '../../../shared/phiPluginTypes'
 import type { PhiAgentDefinition } from '../agents/definition'
-import { resolveSkillEnvironment } from '../content/environment-refs'
+import { bundledEnvironmentsDir, resolveSkillEnvironment } from '../content/environment-refs'
 import { scriptToolName, type ValidatedSkill } from '../content/skill'
 import { parseEnvironmentRef } from '../envs'
 import type { LoadedPlugin } from './loader'
 import { resolveCuratedResourceIcon } from '../curated-icons'
 import { findResourceIcon } from '../resource-icons'
+import { readPhiPluginDependencyManifest } from './dependency-manifest'
 
 export const PLUGIN_DETAIL_IPC_STRING_LIMITS = {
   identifier: 128,
@@ -26,6 +29,7 @@ export const PLUGIN_DETAIL_IPC_STRING_LIMITS = {
 
 interface DetailOptions {
   isSkillEnabled?: (name: string) => boolean
+  bundledEnvironmentsDir?: string
 }
 
 interface MutableEnvironment {
@@ -36,6 +40,7 @@ interface MutableEnvironment {
   skillNames: Set<string>
   agentNames: Set<string>
   warnings: Set<string>
+  explicitManifest?: string
 }
 
 function bounded(value: string, limit: number): string {
@@ -144,10 +149,27 @@ function environmentEntry(
     ...environmentIdentity(plugin, ref, skill),
     skillNames: new Set(),
     agentNames: new Set(),
-    warnings: new Set()
+    warnings: new Set(),
+    ...environmentManifest(plugin, ref, skill)
   }
   environments.set(key, created)
   return created
+}
+
+function environmentManifest(
+  plugin: LoadedPlugin,
+  ref: string,
+  skill?: ValidatedSkill
+): Pick<MutableEnvironment, 'explicitManifest'> {
+  const parsed = parseEnvironmentRef(ref)
+  if (parsed.kind === 'path' && skill) {
+    return { explicitManifest: join(skill.dir, 'environment.yml') }
+  }
+  if (parsed.kind === 'plugin') {
+    const spec = plugin.environments[parsed.name]
+    return spec ? { explicitManifest: spec.specPath } : {}
+  }
+  return {}
 }
 
 function addPrivateEnvironments(
@@ -183,21 +205,35 @@ function addAgentEnvironments(
   }
 }
 
-function usedEnvironments(plugin: LoadedPlugin): PhiPluginUsedEnvironment[] {
+function usedEnvironments(
+  plugin: LoadedPlugin,
+  options: DetailOptions
+): PhiPluginUsedEnvironment[] {
   const environments = new Map<string, MutableEnvironment>()
   addPrivateEnvironments(environments, plugin)
   addSkillEnvironments(environments, plugin)
   addAgentEnvironments(environments, plugin)
+  const environmentsDir = options.bundledEnvironmentsDir ?? bundledEnvironmentsDir()
   return [...environments.values()]
-    .map((entry) => ({
-      ref: entry.ref,
-      name: entry.name,
-      ...(entry.description ? { description: entry.description } : {}),
-      scope: entry.scope,
-      skillNames: [...entry.skillNames].sort(),
-      agentNames: [...entry.agentNames].sort(),
-      ...(entry.warnings.size > 0 ? { warnings: [...entry.warnings].sort() } : {})
-    }))
+    .map((entry) => {
+      const parsed = readPhiPluginDependencyManifest({
+        pluginDir: plugin.dir,
+        environmentRef: entry.ref,
+        ...(entry.explicitManifest ? { explicitManifest: entry.explicitManifest } : {}),
+        bundledEnvironmentsDir: environmentsDir
+      })
+      return {
+        ref: entry.ref,
+        name: entry.name,
+        ...(entry.description ? { description: entry.description } : {}),
+        scope: entry.scope,
+        skillNames: [...entry.skillNames].sort(),
+        agentNames: [...entry.agentNames].sort(),
+        channels: parsed.channels,
+        dependencyManifest: parsed.dependencyManifest,
+        ...(entry.warnings.size > 0 ? { warnings: [...entry.warnings].sort() } : {})
+      }
+    })
     .sort((left, right) => left.ref.localeCompare(right.ref) || left.name.localeCompare(right.name))
 }
 
@@ -229,6 +265,6 @@ export function buildPhiPluginListItem(
     agentDetails: agents,
     skillDetails: skills,
     scriptToolDetails: tools,
-    usedEnvironments: usedEnvironments(plugin)
+    usedEnvironments: usedEnvironments(plugin, options)
   }
 }

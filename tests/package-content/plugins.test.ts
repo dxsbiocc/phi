@@ -45,15 +45,14 @@ test('the public Visualization plugin validates without errors', () => {
 test('visualization details attribute phi-r to its skill and agent', () => {
   const item = buildPhiPluginListItem(publicVisualization())
 
-  assert.deepEqual(item.usedEnvironments, [
-    {
-      ref: 'phi:r@1',
-      name: 'phi-r',
-      scope: 'builtin',
-      skillNames: ['omics-visualization'],
-      agentNames: ['Visualization']
-    }
-  ])
+  const environment = item.usedEnvironments?.[0]
+  assert.equal(environment?.ref, 'phi:r@1')
+  assert.equal(environment?.name, 'phi-r')
+  assert.equal(environment?.scope, 'builtin')
+  assert.deepEqual(environment?.skillNames, ['omics-visualization'])
+  assert.deepEqual(environment?.agentNames, ['Visualization'])
+  assert.deepEqual(environment?.channels, ['conda-forge', 'bioconda'])
+  assert.ok((environment?.dependencyManifest?.dependencies.length ?? 0) > 0)
   assert.match(item.agentDetails?.[0]?.description ?? '', /template-guided/)
   assert.equal(item.skillDetails?.[0]?.enabled, true)
 })

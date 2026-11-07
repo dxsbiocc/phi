@@ -1,3 +1,6 @@
+import type { PhiPluginDependencyManifest } from './phiPluginDetailTypes'
+import type { ResourceIconRef } from './resourceIconTypes'
+
 export interface PhiPluginListItem {
   icon?: ResourceIconRef
   id: string
@@ -48,6 +51,9 @@ export interface PhiPluginUsedEnvironment {
   scope: 'builtin' | 'private' | 'project' | 'skill'
   skillNames: string[]
   agentNames: string[]
+  channels?: string[]
+  sharedNote?: string
+  dependencyManifest?: PhiPluginDependencyManifest
   warnings?: string[]
 }
 
@@ -76,4 +82,3 @@ export interface PhiPluginInstallPreview {
   installedVersion?: string
   problems: PhiPluginProblemView[]
 }
-import type { ResourceIconRef } from './resourceIconTypes'

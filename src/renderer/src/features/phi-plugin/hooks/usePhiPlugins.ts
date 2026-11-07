@@ -15,6 +15,7 @@ import type {
   PhiPluginMutationResult,
   PhiPluginUsedEnvironment
 } from '../../../../../shared/phiPluginTypes'
+import type { PhiPluginDependencyManifest } from '../../../../../shared/phiPluginDetailTypes'
 import { errorMessage } from '../../../../../shared/errorCodes'
 import { formatPhiPluginProblems, phiPluginDisplayTitle } from '../lib/phiPlugins'
 
@@ -27,6 +28,9 @@ export type PhiPluginEnvironmentStatus = {
   scope: PhiPluginUsedEnvironment['scope']
   skillNames: string[]
   agentNames: string[]
+  channels?: string[]
+  sharedNote?: string
+  dependencyManifest?: PhiPluginDependencyManifest
   warnings: string[]
   envId?: string
   state?: ManagedEnvironmentState
@@ -127,6 +131,9 @@ function environmentStatus(
     scope: usage.scope,
     skillNames: usage.skillNames,
     agentNames: usage.agentNames,
+    channels: usage.channels ?? [],
+    ...(usage.sharedNote ? { sharedNote: usage.sharedNote } : {}),
+    ...(usage.dependencyManifest ? { dependencyManifest: usage.dependencyManifest } : {}),
     warnings: usage.warnings ?? [],
     ...(managed?.envId ? { envId: managed.envId } : {}),
     ...(managed?.state ? { state: managed.state } : {}),

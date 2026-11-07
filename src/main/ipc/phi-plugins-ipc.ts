@@ -6,6 +6,7 @@ import { dialog, type BrowserWindow, type IpcMain } from 'electron'
 
 import { errorMessage } from '../../shared/errorCodes'
 import { IPC } from '../../shared/ipcChannels'
+import type { PhiPluginCatalogDetailResult } from '../../shared/phiPluginDetailTypes'
 import type { PhiPluginInstallPreview } from '../../shared/phiPluginTypes'
 import { readAppSettings } from '../agent/app-settings'
 import type { EnvironmentBuilds } from '../agent/content/environment-builds'
@@ -23,6 +24,7 @@ import {
 import { validatePlugin } from '../agent/plugins/validate'
 import { visualizationTemplateCatalog } from '../agent/plugins/visualization-catalog'
 import { nativeUiCopy } from '../native-ui-copy'
+import { getOfficialWebsitePluginDetail } from '../agent/packages/official-website-plugin-detail'
 
 export interface PhiPluginIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
@@ -72,6 +74,13 @@ function registerPhiPluginBrowseIpc(context: PhiPluginIpcContext): void {
   const phiPluginProblemView = context.view.problem
   const phiPluginInstallPreview = context.view.installPreview
   ipcMain.handle(IPC.phiPlugins.list, async () => phiPluginListItems())
+  ipcMain.handle(
+    IPC.phiPlugins.catalogDetail,
+    async (_, id: unknown): Promise<PhiPluginCatalogDetailResult> => {
+      if (typeof id !== 'string') return { status: 'unavailable' }
+      return getOfficialWebsitePluginDetail(id)
+    }
+  )
   ipcMain.handle(IPC.phiPlugins.visualizationTemplates, () =>
     visualizationTemplateCatalog({ agentDir: context.AGENT_DIR })
   )

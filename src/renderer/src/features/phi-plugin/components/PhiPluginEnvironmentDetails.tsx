@@ -5,6 +5,7 @@ import { Alert, Box, Button, Chip, CircularProgress, Stack, Typography } from '@
 import type { ManagedEnvironmentState } from '../../../../../shared/environmentTypes'
 import type { PhiPluginEnvironmentStatus } from '../hooks/usePhiPlugins'
 import { phiPluginEnvironmentStateLabel } from '../lib/phiPlugins'
+import { PhiPluginEnvironmentSummary } from './PhiPluginEnvironmentSummary'
 
 export type PhiPluginEnvironmentBusyState = {
   envId: string
@@ -52,21 +53,6 @@ function environmentTitle(environment: PhiPluginEnvironmentStatus): string {
 
 function environmentScopeLabel(environment: PhiPluginEnvironmentStatus): string {
   return pluginCopy.environmentScopes[environment.scope]
-}
-
-function EnvironmentUsage({
-  label,
-  names
-}: {
-  label: string
-  names: readonly string[]
-}): React.JSX.Element | null {
-  if (names.length === 0) return null
-  return (
-    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
-      {label}: {names.join(', ')}
-    </Typography>
-  )
 }
 
 type EnvironmentCardProps = Pick<
@@ -133,24 +119,17 @@ function EnvironmentCardContent({
 
   return (
     <Box sx={{ flex: 1, minWidth: 0 }}>
-      <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap' }}>
-        <Typography sx={{ fontWeight: 650 }}>{environmentTitle(environment)}</Typography>
-        <Chip size="small" variant="outlined" label={environmentScopeLabel(environment)} />
-      </Stack>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ display: 'block', fontFamily: 'var(--font-mono)' }}
-      >
-        {environment.ref}
-      </Typography>
-      {environment.description ? (
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          {environment.description}
-        </Typography>
-      ) : null}
-      <EnvironmentUsage label={pluginCopy.usedBySkills} names={environment.skillNames} />
-      <EnvironmentUsage label={pluginCopy.usedByAgents} names={environment.agentNames} />
+      <PhiPluginEnvironmentSummary
+        title={environmentTitle(environment)}
+        id={environment.ref}
+        description={environment.description}
+        sharedNote={environment.sharedNote}
+        scopeLabel={environmentScopeLabel(environment)}
+        channels={environment.channels ?? []}
+        usedBySkills={environment.skillNames}
+        usedByAgents={environment.agentNames}
+        dependencyManifest={environment.dependencyManifest ?? { dependencies: [], lookedFor: [] }}
+      />
       <EnvironmentMessages environment={environment} building={building} />
     </Box>
   )

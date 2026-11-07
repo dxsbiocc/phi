@@ -133,6 +133,7 @@ import type {
   PhiPluginListItem,
   PhiPluginMutationResult
 } from '../shared/phiPluginTypes'
+import type { PhiPluginCatalogDetailResult } from '../shared/phiPluginDetailTypes'
 import type { VisualizationTemplateCatalog } from '../shared/visualizationTemplateTypes'
 import type {
   KnownPackageRegistryView,
@@ -1241,6 +1242,7 @@ declare global {
       onToolApprovalCancelled: (cb: (requestId?: string) => void) => () => void
       respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
       listPhiPlugins: () => Promise<PhiPluginListItem[]>
+      getPhiPluginCatalogDetail: (id: string) => Promise<PhiPluginCatalogDetailResult>
       listVisualizationTemplates: () => Promise<VisualizationTemplateCatalog>
       pickPhiPluginDirectory: () => Promise<string | null>
       previewPhiPluginDirectory: (path: string) => Promise<PhiPluginInstallPreview>

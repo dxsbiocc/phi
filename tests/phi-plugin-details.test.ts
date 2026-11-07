@@ -10,6 +10,7 @@ import {
 } from '../src/main/agent/plugins/details'
 import type { LoadedPlugin } from '../src/main/agent/plugins/loader'
 import { validatePlugin, type ValidatedPlugin } from '../src/main/agent/plugins/validate'
+import type { PhiPluginUsedEnvironment } from '../src/shared/phiPluginTypes'
 
 const REPO_ROOT = join(import.meta.dirname, '..')
 
@@ -103,6 +104,20 @@ function barePlugin(overrides: Partial<LoadedPlugin> = {}): LoadedPlugin {
   }
 }
 
+function environmentIdentities(
+  environments: PhiPluginUsedEnvironment[] | undefined
+): Array<Omit<PhiPluginUsedEnvironment, 'channels' | 'dependencyManifest' | 'sharedNote'>> {
+  return (environments ?? []).map((entry) => ({
+    ref: entry.ref,
+    name: entry.name,
+    ...(entry.description ? { description: entry.description } : {}),
+    scope: entry.scope,
+    skillNames: entry.skillNames,
+    agentNames: entry.agentNames,
+    ...(entry.warnings ? { warnings: entry.warnings } : {})
+  }))
+}
+
 test('office details expose five skills, six final tools and shared Python consumers', () => {
   const item = buildPhiPluginListItem(bundledPlugin('office'), {
     isSkillEnabled: (name) => name !== 'pdf'
@@ -133,7 +148,7 @@ test('office details expose five skills, six final tools and shared Python consu
       { name: 'officepy_render_pages', approval: 'write', skillName: 'pdf' }
     ]
   )
-  assert.deepEqual(item.usedEnvironments, [
+  assert.deepEqual(environmentIdentities(item.usedEnvironments), [
     {
       ref: 'phi:python@1',
       name: 'phi-python',
@@ -142,6 +157,12 @@ test('office details expose five skills, six final tools and shared Python consu
       agentNames: []
     }
   ])
+  assert.deepEqual(item.usedEnvironments?.[0]?.channels, ['conda-forge', 'bioconda'])
+  assert.ok(
+    item.usedEnvironments?.[0]?.dependencyManifest?.dependencies.some(
+      (entry) => entry.name === 'python' && entry.kind === 'conda'
+    )
+  )
 
   assert.deepEqual(item.skills, ['docx', 'office-workflow', 'pdf', 'pptx', 'xlsx'])
   assert.deepEqual(
@@ -158,7 +179,7 @@ test('details group agents and skills sharing the same declared environment', ()
   const item = buildPhiPluginListItem(
     barePlugin({ skills: [declared], agents: [agent('EnvironmentSpecialist', 'phi:r@1')] })
   )
-  assert.deepEqual(item.usedEnvironments, [
+  assert.deepEqual(environmentIdentities(item.usedEnvironments), [
     {
       ref: 'phi:r@1',
       name: 'phi-r',
@@ -205,7 +226,7 @@ test('fallback warnings, unused private declarations and empty references stay t
       environmentWarning: 'skill fallback declares no environment'
     }
   ])
-  assert.deepEqual(item.usedEnvironments, [
+  assert.deepEqual(environmentIdentities(item.usedEnvironments), [
     {
       ref: 'phi:python@1',
       name: 'phi-python',
@@ -225,7 +246,7 @@ test('fallback warnings, unused private declarations and empty references stay t
   ])
 
   const noReferences = buildPhiPluginListItem(barePlugin({ agents: [agent('Solo')] }))
-  assert.deepEqual(noReferences.usedEnvironments, [])
+  assert.deepEqual(environmentIdentities(noReferences.usedEnvironments), [])
 })
 
 test('details are stable, bounded and disabled with their plugin', () => {
@@ -260,7 +281,7 @@ test('skill-local environments with the same declared ref remain owner-specific'
     barePlugin({ skills: [localEnvironmentSkill('beta'), localEnvironmentSkill('alpha')] })
   )
 
-  assert.deepEqual(item.usedEnvironments, [
+  assert.deepEqual(environmentIdentities(item.usedEnvironments), [
     {
       ref: './environment.yml',
       name: 'alpha',

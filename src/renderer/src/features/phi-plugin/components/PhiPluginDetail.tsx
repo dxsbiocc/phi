@@ -22,7 +22,7 @@ import {
   Typography
 } from '@mui/material'
 import { alpha } from '@mui/material/styles'
-import { GoPlus, GoSync } from 'react-icons/go'
+import { GoSync } from 'react-icons/go'
 
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
@@ -33,11 +33,8 @@ import type { PhiPluginDisplayItem, PhiPluginEnvironmentStatus } from '../hooks/
 import { errorMessage } from '../../../../../shared/errorCodes'
 import { requestPhiPluginEnvironmentBuild } from '../lib/environmentBuild'
 import type { PhiPluginCatalogAction, PhiPluginCatalogEntry } from '../lib/phiPluginCatalog'
-import {
-  phiPluginDisplayTitle,
-  phiPluginDistributionLabel,
-  phiPluginEnabledLabel
-} from '../lib/phiPlugins'
+import { phiPluginDistributionLabel, phiPluginEnabledLabel } from '../lib/phiPlugins'
+import { PhiPluginCatalogPreview } from './PhiPluginCatalogPreview'
 import { PhiPluginComponentDetails } from './PhiPluginComponentDetails'
 import { PhiPluginEnvironmentDetails } from './PhiPluginEnvironmentDetails'
 
@@ -105,13 +102,6 @@ export function PhiPluginDetail({
       ? environmentErrorState.message
       : null
   const catalogPreview = plugin === null && catalogEntry !== null
-  const catalogTitle = catalogEntry
-    ? phiPluginDisplayTitle(catalogEntry)
-    : pluginCopy.fallbackPlugin
-  const installActionLabel =
-    catalogAction === 'update'
-      ? pluginCopy.updateNamed(catalogTitle)
-      : pluginCopy.installNamed(catalogTitle)
 
   async function confirmUninstall(): Promise<void> {
     if (!pendingUninstall) return
@@ -377,127 +367,12 @@ export function PhiPluginDetail({
               )}
             </>
           ) : catalogPreview && catalogEntry ? (
-            <>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                <Box
-                  sx={{
-                    width: 58,
-                    height: 58,
-                    flexShrink: 0,
-                    borderRadius: 2,
-                    display: 'grid',
-                    placeItems: 'center',
-                    color: 'primary.main',
-                    bgcolor: (theme) =>
-                      alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.09)
-                  }}
-                >
-                  <ResourceIcon
-                    icon={catalogEntry.icon}
-                    kind="plugin"
-                    size={58}
-                    fallbackSize={30}
-                  />
-                </Box>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography variant="h4" sx={{ fontWeight: 750 }}>
-                    {catalogTitle}
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ mt: 0.25, fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}
-                  >
-                    {catalogEntry.id} · v{catalogEntry.version}
-                  </Typography>
-                  <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25 }}>
-                    {catalogEntry.summary}
-                  </Typography>
-                  <Stack
-                    direction="row"
-                    spacing={0.75}
-                    useFlexGap
-                    sx={{ mt: 1.5, flexWrap: 'wrap' }}
-                  >
-                    {catalogEntry.registryLabel ? (
-                      <Chip size="small" variant="outlined" label={catalogEntry.registryLabel} />
-                    ) : null}
-                    <Chip
-                      size="small"
-                      variant="outlined"
-                      label={PACKAGE_TRUST_LABELS[catalogEntry.trust]}
-                      title={PACKAGE_TRUST_DESCRIPTIONS[catalogEntry.trust]}
-                    />
-                  </Stack>
-                </Box>
-                <Stack
-                  direction="row"
-                  spacing={1.5}
-                  sx={{ alignItems: 'center', alignSelf: 'flex-start' }}
-                >
-                  {installBusy ? (
-                    <Box
-                      role="status"
-                      aria-label={pluginCopy.processing}
-                      sx={{
-                        width: 34,
-                        height: 34,
-                        display: 'grid',
-                        placeItems: 'center',
-                        flexShrink: 0
-                      }}
-                    >
-                      <CircularProgress size={18} />
-                    </Box>
-                  ) : (
-                    <IconButton
-                      aria-label={installActionLabel}
-                      title={installActionLabel}
-                      size="small"
-                      disabled={!onInstall}
-                      onClick={onInstall}
-                      sx={{
-                        width: 34,
-                        height: 34,
-                        p: 0,
-                        display: 'grid',
-                        placeItems: 'center',
-                        flexShrink: 0,
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        borderRadius: 1.5
-                      }}
-                    >
-                      {catalogAction === 'update' ? (
-                        <GoSync size={18} aria-hidden="true" />
-                      ) : (
-                        <GoPlus size={18} aria-hidden="true" />
-                      )}
-                    </IconButton>
-                  )}
-                </Stack>
-              </Stack>
-
-              <Divider />
-              <Stack spacing={1}>
-                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                  {pluginCopy.components}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {pluginCopy.componentsAfterInstall}
-                </Typography>
-              </Stack>
-
-              <Divider />
-              <Stack spacing={1}>
-                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                  {pluginCopy.environments}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {pluginCopy.environmentsAfterInstall}
-                </Typography>
-              </Stack>
-            </>
+            <PhiPluginCatalogPreview
+              entry={catalogEntry}
+              action={catalogAction}
+              installBusy={installBusy}
+              onInstall={onInstall}
+            />
           ) : (
             <Stack spacing={1} sx={{ alignItems: 'center', textAlign: 'center', py: 12 }}>
               <PhiIcons.entity.plugin color="disabled" sx={{ fontSize: 42 }} />

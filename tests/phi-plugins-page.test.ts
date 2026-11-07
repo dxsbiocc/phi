@@ -386,7 +386,7 @@ test('plugin detail contains management, components, environment state and sourc
   assert.match(markup, /visualization · v1\.2\.0/)
   assert.match(markup, /Agents/)
   assert.match(markup, /Skills/)
-  assert.match(markup, /Script Tools \(Final Names\)/)
+  assert.match(markup, /Script Tools/)
   assert.match(markup, /viz_prepare/)
   assert.match(markup, /Approval: Read-only/)
   assert.match(markup, /Approval: Write/)
@@ -435,7 +435,7 @@ test('plugin detail renders descriptions, plugin status, approvals and legacy fa
   assert.equal(markup.match(/Enabled/g)?.length, 1)
   assert.doesNotMatch(markup, /Disabled|Unknown status/)
   assert.match(markup, /Approval: Execute/)
-  assert.match(markup, /Skill: omics-visualization/)
+  assert.match(markup, /Owning skill: omics-visualization/)
   assert.match(markup, /data-phi-description-truncated="true"/)
   assert.ok(!markup.includes(`aria-label="${longDescription}"`))
   assert.ok(!markup.includes(`title="${longDescription}"`))
@@ -1006,9 +1006,11 @@ test('catalog and installed plugin details reuse PhiPluginDetail with mode marke
   assert.match(catalogDetail, /data-phi-plugin-detail="true"/)
   assert.match(catalogDetail, /data-phi-plugin-detail-mode="catalog"/)
   assert.match(catalogDetail, /aria-label="Install 新插件"/)
-  assert.match(catalogDetail, />Components</)
-  assert.match(catalogDetail, /Install the plugin to view its agents, skills, and script tools\./)
-  assert.match(catalogDetail, /Install the plugin to view its environment requirements\./)
+  assert.match(catalogDetail, /aria-label="Loading plugin details…"/)
+  assert.doesNotMatch(
+    catalogDetail,
+    /Install the plugin to view its agents, skills, and script tools\./
+  )
   assert.doesNotMatch(catalogDetail, /Uninstall/)
 
   const catalogSource = readFileSync(

@@ -3078,6 +3078,26 @@ async function harness(
         }
       }
     },
+    './agent/packages/official-website-plugin-detail': {
+      getOfficialWebsitePluginDetail: async (id: string): Promise<unknown> =>
+        id === 'catalog-fixture'
+          ? {
+              status: 'available',
+              detail: {
+                id,
+                title: 'Catalog fixture',
+                summary: 'Fixture detail.',
+                version: '1.0.0',
+                source: 'Phi catalog',
+                official: true,
+                agents: [],
+                skills: [],
+                scriptTools: [],
+                environments: []
+              }
+            }
+          : { status: 'unavailable' }
+    },
     './agent/packages/official-connector-registry': {
       syncOfficialConnectorRegistry: async (options: {
         agentDir?: string
@@ -7701,6 +7721,7 @@ const expectedStartupRegistrationOrder = [
   'tool:show-pending',
   'agent:interaction-response',
   'phiPlugins:list',
+  'phiPlugins:catalogDetail',
   'phiPlugins:visualizationTemplates',
   'phiPlugins:pickDirectory',
   'phiPlugins:previewDirectory',
@@ -8348,6 +8369,18 @@ test('main IPC exposes additive plugin details with global skill enablement', as
 
   const plugins = (await app.invoke('phiPlugins:list')) as Array<Record<string, unknown>>
   assert.match(String((plugins[0]?.icon as { key?: unknown } | undefined)?.key), /^[0-9a-f]{64}$/)
+  const environment = (
+    plugins[0]?.usedEnvironments as Array<Record<string, unknown>> | undefined
+  )?.[0]
+  assert.deepEqual(environment?.channels, ['conda-forge', 'bioconda'])
+  assert.ok(
+    ((environment?.dependencyManifest as { dependencies?: unknown[] } | undefined)?.dependencies
+      ?.length ?? 0) > 0
+  )
+  if (environment) {
+    delete environment.channels
+    delete environment.dependencyManifest
+  }
   assert.deepEqual(plugins, [
     {
       id: 'detail-plugin',
@@ -8392,6 +8425,29 @@ test('main IPC exposes additive plugin details with global skill enablement', as
       ]
     }
   ])
+})
+
+test('main IPC returns the reduced catalog plugin detail result', async () => {
+  const app = await harness()
+
+  assert.deepEqual(await app.invoke('phiPlugins:catalogDetail', 'catalog-fixture'), {
+    status: 'available',
+    detail: {
+      id: 'catalog-fixture',
+      title: 'Catalog fixture',
+      summary: 'Fixture detail.',
+      version: '1.0.0',
+      source: 'Phi catalog',
+      official: true,
+      agents: [],
+      skills: [],
+      scriptTools: [],
+      environments: []
+    }
+  })
+  assert.deepEqual(await app.invoke('phiPlugins:catalogDetail', 42), {
+    status: 'unavailable'
+  })
 })
 
 test('main IPC validates and stores global and project enablement', async () => {
