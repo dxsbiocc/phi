@@ -343,7 +343,7 @@ test('tool execution starts persist ordinary tools and give delegation starts pr
   assert.equal(currentRun.agentToolCallIds.has('agent-1'), true)
 })
 
-test('a General start persists under the agent name, then the Greek name Phi gives the run', () => {
+test('a General start persists under a placeholder, not General, then the Greek name Phi gives the run', () => {
   const f = harness()
   const currentRun = run()
   persistSessionEvent(
@@ -376,7 +376,7 @@ test('a General start persists under the agent name, then the Greek name Phi giv
       agentRunId: event.agentRunId
     })),
     [
-      { type: 'agent_execution_started', agentName: 'General', agentRunId: undefined },
+      { type: 'agent_execution_started', agentName: 'Agent', agentRunId: undefined },
       { type: 'agent_execution_named', agentName: 'Gamma', agentRunId: 'run_3' }
     ]
   )

@@ -102,6 +102,10 @@ function isProcessingArtifact(message: ChatItem): boolean {
   )
 }
 
+function isBackgroundNotice(message: ChatItem): message is ChatMessage & { role: 'warning' } {
+  return message.role === 'warning' && Boolean(message.backgroundJobNotice)
+}
+
 function isTurnTailFileItem(
   message: ChatItem
 ): message is PresentedFilesItem | WorkspaceChangeSummaryItem {
@@ -257,11 +261,20 @@ export function groupMessages(
           .filter(
             (item): item is VisibleChatItem => isVisibleChatItem(item) && !isTurnTailFileItem(item)
           )
-    if (processingItems.length > 0 || runStartedAtMs !== undefined) {
+    // A background run's finish notice is part of the work, not of the answer: fold it with the run
+    // even when it lands after the last tool call (for example while agent_wait is still open).
+    const foldedNotices = keepStreamingTextInProcessing
+      ? []
+      : trailingItems.filter(isBackgroundNotice)
+    const answerItems = trailingItems.filter(
+      (item) => !foldedNotices.some((notice) => notice === item)
+    )
+    const foldedItems = [...processingItems, ...foldedNotices]
+    if (foldedItems.length > 0 || runStartedAtMs !== undefined) {
       groups.push({
         kind: 'processing-group',
         key: processingGroupKey(turnItems, processingItems),
-        items: processingItems,
+        items: foldedItems,
         ...(runFailed ? { failed: true } : {}),
         startedAtMs: runStartedAtMs ?? minTimestamp(processingItems),
         completedAtMs: runCompletedAtMs ?? maxTimestamp([...processingItems, ...trailingItems]),
@@ -270,7 +283,7 @@ export function groupMessages(
     }
 
     groups.push(
-      ...[...earlyPersistentItems, ...trailingItems, ...turnTailFiles].map((item) => ({
+      ...[...earlyPersistentItems, ...answerItems, ...turnTailFiles].map((item) => ({
         kind: 'single' as const,
         key: item.id,
         item

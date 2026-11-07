@@ -35,9 +35,13 @@ export function isAgentToolName(toolName: unknown): toolName is string {
   return typeof toolName === 'string' && AGENT_TOOL_NAME_PATTERN.test(toolName)
 }
 
+/** Shown on a General card until Phi names the run: General is a template, not an agent. */
+export const UNNAMED_AGENT_LABEL = 'Agent'
+
 /** The name a delegation call is shown under until Phi names the run; undefined when it is not an agent. */
 export function agentDisplayNameFromCall(toolName: unknown): string | undefined {
-  return isAgentToolName(toolName) ? toolName : undefined
+  if (!isAgentToolName(toolName)) return undefined
+  return toolName === GENERAL_AGENT_NAME ? UNNAMED_AGENT_LABEL : toolName
 }
 
 /**

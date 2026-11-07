@@ -1262,7 +1262,7 @@ test('a General card takes the Greek-letter name Phi gives the run', () => {
     state.messages.find((item) => item.id === 'general-call-1' && item.role === 'agent_execution')
   const before = card(started)
   const after = card(named)
-  assert.equal(before?.role === 'agent_execution' ? before.agentName : undefined, 'General')
+  assert.equal(before?.role === 'agent_execution' ? before.agentName : undefined, 'Agent')
   assert.equal(after?.role === 'agent_execution' ? after.agentName : undefined, 'Gamma')
   assert.equal(after?.role === 'agent_execution' ? after.agentRunId : undefined, 'run_3')
 })
