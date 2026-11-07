@@ -8,6 +8,10 @@ import {
   SkillCatalogDialog,
   type SkillCatalogDialogProps
 } from '../src/renderer/src/features/skill/components/SkillCatalogDialog'
+import {
+  OfficialSkillCatalogProvider,
+  type OfficialSkillCatalogState
+} from '../src/renderer/src/features/skill/hooks/useOfficialSkillCatalog'
 import { skillMarkdownBody } from '../src/renderer/src/features/skill/lib/skillMarkdown'
 import type { SkillSummary } from '../src/renderer/src/types'
 import type { PackageRegistryEntryView } from '../src/shared/packageManagerTypes'
@@ -77,9 +81,19 @@ function renderSkillSidebar(skillList: SkillSummary[] = skills): string {
   )
 }
 
+const unavailableWebsiteCatalog: OfficialSkillCatalogState = {
+  status: 'unavailable',
+  groups: [],
+  selectedGroupId: 'science',
+  page: null,
+  isLoading: false,
+  markUnavailable: () => undefined
+}
+
 function renderSkillCatalog(
   overrides: Partial<SkillCatalogDialogProps> = {},
-  observeRowKeys?: (keys: Array<string | null>) => void
+  observeRowKeys?: (keys: Array<string | null>) => void,
+  websiteCatalog: OfficialSkillCatalogState = unavailableWebsiteCatalog
 ): string {
   function ObservedTableBody({ children }: { children?: ReactNode }): React.ReactElement {
     const keys: Array<string | null> = []
@@ -101,13 +115,19 @@ function renderSkillCatalog(
     createElement(
       ThemeProvider,
       { theme },
-      createElement(SkillCatalogDialog, {
-        open: true,
-        skills: [],
-        onClose: () => undefined,
-        onInstallPackage: () => undefined,
-        ...overrides
-      })
+      // These cases cover the registry list, which the dialog shows when the website catalog
+      // API is unavailable; website-backed browsing is covered by skill-catalog-resources-changed.
+      createElement(
+        OfficialSkillCatalogProvider,
+        { value: websiteCatalog },
+        createElement(SkillCatalogDialog, {
+          open: true,
+          skills: [],
+          onClose: () => undefined,
+          onInstallPackage: () => undefined,
+          ...overrides
+        })
+      )
     )
   )
 }
@@ -131,30 +151,21 @@ function packageEntry(
 }
 
 test('skill discovery renders the website API groups in declared order including zero-count groups', () => {
-  const markup = renderSkillCatalog({
-    registry: {
-      id: 'phi-packages',
-      dir: '/website',
-      trust: 'imported',
-      kind: 'official',
-      schemaVersion: 1,
-      generatedAt: '2026-10-17',
-      skillGroups: [
-        { id: 'all', label: '全部', count: 2 },
-        { id: 'science', label: '科学分析', count: 1 },
-        { id: 'meta', label: '元能力', count: 1 },
-        { id: 'other', label: '其他', count: 0 }
-      ],
-      packages: [
-        packageEntry('find-skills', { group: 'meta', groupLabel: '元能力', groupOrder: 2 }),
-        packageEntry('scanpy', { group: 'science', groupLabel: '科学分析', groupOrder: 1 })
-      ]
-    }
+  const markup = renderSkillCatalog({}, undefined, {
+    status: 'available',
+    groups: [
+      { id: 'science', label: '科学分析', count: 1 },
+      { id: 'meta', label: '元能力', count: 1 },
+      { id: 'other', label: '其他', count: 0 }
+    ],
+    selectedGroupId: 'science',
+    page: null,
+    isLoading: false,
+    markUnavailable: () => undefined
   })
   assert.match(markup, /aria-label="Skill Catalog groups"/)
-  assert.ok(markup.indexOf('Scientific Analysis') < markup.indexOf('Meta Capabilities'))
-  assert.ok(markup.indexOf('Meta Capabilities') < markup.indexOf('Other'))
-  assert.match(markup, /Other/)
+  assert.ok(markup.indexOf('科学分析') < markup.indexOf('元能力'))
+  assert.ok(markup.indexOf('元能力') < markup.indexOf('其他'))
   assert.doesNotMatch(markup, />Packages</)
 })
 
@@ -419,12 +430,11 @@ test('skill catalog preserves official packages sharing bundled names and instal
     registryDir: '/explicit'
   })
 
-  assert.match(markup, /Imaging/)
-  assert.match(markup, /Packages/)
+  // The registry fallback lists packages flat; purpose groups come only from the website API.
+  assert.match(markup, /All Skills/)
   assert.match(markup, /Add/)
   assert.equal(markup.match(/>Uninstall</g)?.length, 1)
   assert.doesNotMatch(markup, />Installed</)
-  assert.match(markup, /Packages/)
   assert.match(markup, /v1\.0\.0 · 1 KB/)
   assert.doesNotMatch(markup, /Not installed/)
   assert.equal(markup.match(/data-phi-skill-catalog-card=/g)?.length, 3)

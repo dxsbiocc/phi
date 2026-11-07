@@ -3078,6 +3078,15 @@ async function harness(
         }
       }
     },
+    // The website catalog is offline in this harness: every request reports unavailable.
+    './agent/packages/official-website-catalog': {
+      getOfficialWebsiteWrapperGroups: async (): Promise<unknown> => ({ status: 'unavailable' }),
+      getOfficialWebsiteWrapperTools: async (): Promise<unknown> => ({ status: 'unavailable' }),
+      getOfficialWebsiteWrapperDetail: async (): Promise<unknown> => ({ status: 'unavailable' }),
+      getOfficialWebsiteSkillGroups: async (): Promise<unknown> => ({ status: 'unavailable' }),
+      getOfficialWebsiteSkills: async (): Promise<unknown> => ({ status: 'unavailable' }),
+      getOfficialWebsiteSkillDetail: async (): Promise<unknown> => ({ status: 'unavailable' })
+    },
     './agent/packages/official-website-plugin-detail': {
       getOfficialWebsitePluginDetail: async (id: string): Promise<unknown> =>
         id === 'catalog-fixture'
@@ -4487,7 +4496,7 @@ async function harness(
           allowExternalFileRead,
           preventSleepDuringRuns: false,
           nextActionSuggestionsEnabled: true,
-            fileOpenConversationLayout: 'sidebar',
+          fileOpenConversationLayout: 'sidebar',
           modelAvailability
         }
       }
@@ -7780,6 +7789,9 @@ const expectedStartupRegistrationOrder = [
   'teamPack:removeSource',
   'enablement:get',
   'enablement:set',
+  'skills:catalogGroups',
+  'skills:catalogList',
+  'skills:catalogDetail',
   'skills:list',
   'skills:read',
   'skills:setDisabled',
@@ -7820,6 +7832,9 @@ const expectedStartupRegistrationOrder = [
   'wrappers:getPlan',
   'wrappers:retargetPlan',
   'wrappers:submitPlan',
+  'wrappers:catalogGroups',
+  'wrappers:catalogTools',
+  'wrappers:catalogDetail',
   'wrappers:cancelPlan',
   'wrappers:listCatalog',
   'wrappers:listCompositionCatalog',
