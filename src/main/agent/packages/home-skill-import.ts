@@ -41,6 +41,13 @@ interface DiscoveredHomeSkill extends HomeSkillCandidate {
   dir: string
 }
 
+/** The renderer never sees local skill directories. */
+function publicCandidate(skill: DiscoveredHomeSkill): HomeSkillCandidate {
+  const copy: Partial<DiscoveredHomeSkill> = { ...skill }
+  delete copy.dir
+  return copy as HomeSkillCandidate
+}
+
 const SOURCE_ROOTS: ReadonlyArray<{
   source: HomeSkillSource
   relativeDirs: readonly string[]
@@ -56,7 +63,7 @@ export function listHomeSkillImportCandidates(
 ): HomeSkillImportCandidatesResult {
   const discovered = discoverHomeSkills(options)
   return {
-    candidates: discovered.candidates.map(({ dir: _dir, ...candidate }) => candidate),
+    candidates: discovered.candidates.map(publicCandidate),
     sources: discovered.sources,
     installedIds: discovered.installedIds
   }

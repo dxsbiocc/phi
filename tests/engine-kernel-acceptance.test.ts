@@ -579,6 +579,9 @@ test(
         }
       ]
     }
+    // Plan steps must declare completion; plain prose counts as partial (see requireDeclaredCompletion).
+    const declared = (text: string): string =>
+      `<phi_agent_result>{"status":"completed","missingInputs":[],"nextAgent":null,"fallbackReason":null}</phi_agent_result>\n${text}`
     f.provider.enqueue(
       {
         match: 'Plan this work and execute it.',
@@ -592,8 +595,8 @@ test(
         match: 'Plan this work and execute it.',
         tool: { name: 'propose_plan_steps', id: 'a06-propose', args: spec }
       },
-      { match: '## Current step: read-a: Read A', text: 'Completed approved plan work.' },
-      { match: '## Current step: read-b: Read B', text: 'Completed approved plan work.' },
+      { match: '## Current step: read-a: Read A', text: declared('Completed approved plan work.') },
+      { match: '## Current step: read-b: Read B', text: declared('Completed approved plan work.') },
       { match: 'Plan this work and execute it.', text: 'Plan execution was handed off.' },
       {
         match: '## Current step: write-c: Write C',
@@ -603,7 +606,10 @@ test(
           args: { path: target, content: 'planned result' }
         }
       },
-      { match: '## Current step: write-c: Write C', text: 'Write step completed.' },
+      {
+        match: '## Current step: write-c: Write C',
+        text: declared('Write step completed.')
+      },
       {
         match: 'The approved plan has finished.',
         text: 'The approved plan completed successfully.'

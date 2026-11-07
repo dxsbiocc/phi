@@ -77,15 +77,24 @@ export function ExternalSkillsImportDialog({
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<HomeSkillImportResult | null>(null)
 
+  // Reset while rendering the open transition (React's "adjust state when a prop changes"),
+  // so the effect below only sets state from its async callbacks.
+  const [openSeen, setOpenSeen] = useState(false)
+  if (open !== openSeen) {
+    setOpenSeen(open)
+    if (open) {
+      setLoading(true)
+      setError(null)
+      setResult(null)
+      setQuery('')
+      setPage(0)
+      setSelected(new Set())
+    }
+  }
+
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    setLoading(true)
-    setError(null)
-    setResult(null)
-    setQuery('')
-    setPage(0)
-    setSelected(new Set())
     void window.api
       .listHomeSkillImportCandidates()
       .then((response) => {
