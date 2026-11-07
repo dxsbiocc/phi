@@ -981,28 +981,27 @@ test('a finished background wrapper run shows up live as a visible timeline noti
   assert.match((state.messages[0] as { content: string }).content, /wrun_abc/)
 })
 
-test('a finished background agent run shows up live as a visible timeline notice', () => {
-  const state = reduceAgentEventState(
-    createAgentEventReducerState(),
-    agentEvent({
-      type: 'agent_run_finished',
-      eventId: 'event-agent-done',
-      agentRunId: 'run_1',
-      agent: 'Wrapper',
-      state: 'done',
-      task: 'align the reads',
-      elapsedSeconds: 60,
-      report: 'Aligned.'
-    })
-  )
+test('a finished background General run shows its symbol live without changing the event name', () => {
+  const event = agentEvent({
+    type: 'agent_run_finished',
+    eventId: 'event-agent-done',
+    agentRunId: 'run_1',
+    agent: 'Gamma',
+    state: 'done',
+    task: 'align the reads',
+    elapsedSeconds: 60,
+    report: 'Aligned.'
+  })
+  const state = reduceAgentEventState(createAgentEventReducerState(), event)
 
   assert.equal(state.messages.length, 1)
   assert.equal(state.messages[0].role, 'warning')
   const content = (state.messages[0] as { content: string }).content
-  assert.match(content, /^Wrapper 后台任务已完成/)
+  assert.match(content, /^γ 后台任务已完成/)
   assert.match(content, /align the reads/)
   assert.match(content, /run_1/)
   assert.doesNotMatch(content, /Aligned\./, 'the report is for the agent, not the notice')
+  assert.equal((event as { agent?: string }).agent, 'Gamma')
 })
 
 // ── agent cards: run refs, background runs ───────────────────────────────

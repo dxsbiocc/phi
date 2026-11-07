@@ -1,5 +1,6 @@
 import type { UiLanguage } from './uiLanguage'
 import { formatWrapperRunDuration } from './wrapperRunNotice'
+import { greekSymbolForRunName } from './agentAvatar'
 
 /**
  * The timeline event and the wording used when a background agent run ends.
@@ -46,6 +47,7 @@ export function agentRunNotice(
   event: AgentRunFinishedEvent,
   language: UiLanguage = 'zh-CN'
 ): { title: string; body: string } {
+  const displayName = greekSymbolForRunName(event.agent) ?? event.agent
   if (language === 'en') {
     const suffixes = {
       done: 'background task completed',
@@ -58,7 +60,7 @@ export function agentRunNotice(
     ]
     if (event.state === 'error' && event.error) lines.push(preview(event.error, ERROR_PREVIEW))
     lines.push(`Run ID: ${event.agentRunId}`)
-    return { title: `${event.agent} ${suffixes[event.state]}`, body: lines.join('\n') }
+    return { title: `${displayName} ${suffixes[event.state]}`, body: lines.join('\n') }
   }
   const lines = [
     `任务：${preview(event.task, TASK_PREVIEW)}`,
@@ -66,5 +68,5 @@ export function agentRunNotice(
   ]
   if (event.state === 'error' && event.error) lines.push(preview(event.error, ERROR_PREVIEW))
   lines.push(`运行编号：${event.agentRunId}`)
-  return { title: `${event.agent} ${TITLE_SUFFIX[event.state]}`, body: lines.join('\n') }
+  return { title: `${displayName} ${TITLE_SUFFIX[event.state]}`, body: lines.join('\n') }
 }

@@ -1483,21 +1483,20 @@ test('a failed background wrapper run is restored with its cause and a next step
   assert.match(content, /让 Wrapper 查看/)
 })
 
-test('chatItemsFromSessionMessages restores the notice for a finished background agent run', () => {
-  const items = chatItemsFromSessionMessages([
-    {
-      source: 'phi',
-      type: 'agent_run_finished',
-      eventId: 'event-agent-done',
-      createdAt: '2026-09-20T10:03:00.000Z',
-      agentRunId: 'run_2',
-      agent: 'Wrapper',
-      state: 'error',
-      task: 'look up TP53 in ClinVar',
-      elapsedSeconds: 125,
-      error: 'The Wrapper agent failed: runner offline'
-    }
-  ])
+test('chatItemsFromSessionMessages restores a numbered General run notice with its symbol', () => {
+  const event = {
+    source: 'phi',
+    type: 'agent_run_finished',
+    eventId: 'event-agent-done',
+    createdAt: '2026-09-20T10:03:00.000Z',
+    agentRunId: 'run_2',
+    agent: 'Alpha 2',
+    state: 'error',
+    task: 'look up TP53 in ClinVar',
+    elapsedSeconds: 125,
+    error: 'The agent failed: runner offline'
+  }
+  const items = chatItemsFromSessionMessages([event])
   assert.equal(items.length, 1)
   assert.equal(items[0].role, 'warning')
   assert.equal(items[0].id, 'event-agent-done')
@@ -1505,11 +1504,12 @@ test('chatItemsFromSessionMessages restores the notice for a finished background
     state: 'failed'
   })
   const content = (items[0] as { content: string }).content
-  assert.match(content, /^Wrapper 后台任务失败\n/)
+  assert.match(content, /^α2 后台任务失败\n/)
   assert.match(content, /TP53/)
   assert.match(content, /runner offline/)
   assert.match(content, /2 分 5 秒/)
   assert.match(content, /run_2/)
+  assert.equal(event.agent, 'Alpha 2')
 })
 
 // ── restoring agent cards: background runs ───────────────────────────────

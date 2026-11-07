@@ -2239,6 +2239,7 @@ test('subagent rows show one leading icon and a conversation navigation chevron'
   const cancelled = renderAgent({ status: 'done', cancelled: true })
 
   assert.match(done, /data-phi-agent-leading-icon="type"/)
+  assert.match(done, /alt="Visualization"/)
   assert.doesNotMatch(done, /Revise the boxplot|aria-expanded/)
   assert.match(done, /打开 Visualization 的会话/)
   assert.doesNotMatch(done, /aria-label="完成"/)

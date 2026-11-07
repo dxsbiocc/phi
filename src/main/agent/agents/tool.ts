@@ -19,6 +19,7 @@ import {
 
 import { isRecord } from '../../../shared/guards'
 import { GENERAL_AGENT_NAME, pickGeneralRunName } from '../../../shared/agentDisplayName'
+import { greekSymbolForRunName } from '../../../shared/agentAvatar'
 
 const MAX_TASK_LENGTH = 20000
 const MAX_FORWARDED_IMAGE_BYTES = 20 * 1024 * 1024
@@ -136,7 +137,7 @@ export function agentDelegationToolDescription(
       : ''
   const naming =
     definition.name === GENERAL_AGENT_NAME
-      ? ' Phi gives each run its own Greek-letter name (for example Gamma), returned with the run id.'
+      ? ' Phi gives each run its own Greek-letter name and symbol (for example Gamma and γ), returned with the run id; refer to the run by its symbol (for example γ) when speaking to the user.'
       : ''
   const role = definition.name === GENERAL_AGENT_NAME ? 'a general-purpose agent' : 'a specialist'
   return `${definition.description}\n\nHands the task to the ${definition.name} agent, ${role} with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences.${naming} It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${images}${boundary}`
@@ -247,7 +248,9 @@ export function buildAgentTool(
       const displayName = general
         ? pickGeneralRunName(registry.list().map(agentRunDisplayName), options.random)
         : name
-      const launchLabel = general ? `${displayName} (General)` : `the ${name} agent`
+      const launchLabel = general
+        ? `${greekSymbolForRunName(displayName) ?? displayName} (${displayName}, General)`
+        : `the ${name} agent`
       let handle
       try {
         handle = await registry.start({

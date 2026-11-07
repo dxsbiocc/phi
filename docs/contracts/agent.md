@@ -67,9 +67,11 @@ checks still apply.
 Phi bundles `General` for self-contained delegable work that no specialist covers.
 Its delegation tool takes `task` like any other agent. Phi names each run itself
 with a random Greek letter (Alpha … Omega, leaving out `Phi`) that no other run in
-the conversation uses, then `Alpha 2` and so on once all are taken. The name is
-returned to the main agent with the run id and is the label on cards, the
-running-agent overview, the subagent tab and completion notices. The
+the conversation uses, then `Alpha 2` and so on once all are taken. Stored events
+and `details.agent` keep that English name as the stable run label. User-facing
+surfaces convert it to the matching lowercase symbol (`Gamma` → `γ`, `Alpha 2`
+→ `α2`) on cards, the running-agent overview, the subagent tab and completion
+notices; the main agent also refers to the run by that symbol in replies. The
 definition name `General` remains the execution identity, and runs remain addressed
 by their Phi run id. General has the common local working tools
 (`read`, `glob`, `grep`, `find`, `bash`, `write`, `edit`, `todo`); remote projects

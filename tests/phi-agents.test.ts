@@ -824,6 +824,7 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
       /unless the user explicitly requested another route.*required-first specialist owns the first attempt/i
     )
     assert.match(prompt, /Phi gives each General run its own Greek-letter name/i)
+    assert.match(prompt, /refer to.*symbol.*γ/i)
     assert.match(prompt, /several General tasks/i)
     assert.match(prompt, /follow-up edit.*exact source, input, and prior output paths/i)
     assert.match(prompt, /controlled fallback/i)
@@ -903,6 +904,32 @@ test('the General delegation tool takes only the task; Phi names the run', () =>
   assert.deepEqual(parameters.required, ['task'])
   assert.equal(parameters.properties.name, undefined)
   assert.match(tool.description, /Greek-letter name/)
+  assert.match(tool.description, /refer to.*symbol.*γ/i)
+})
+
+test('General start prose uses the symbol while details keep the English run name', async () => {
+  const tool = buildAgentTool(
+    GENERAL,
+    async () => ({ text: 'done', toolCalls: 0 }),
+    new AgentRunRegistry(),
+    { random: () => 0 }
+  )
+  const updates: Array<{
+    content: Array<{ type: 'text'; text: string }>
+    details?: unknown
+  }> = []
+  const result = await executeTool(tool, 'call-general', { task: 'audit', background: true }, ((
+    update: (typeof updates)[number]
+  ) => updates.push(update)) as never)
+
+  assert.equal(updates[0]?.content[0]?.text, 'Started α (Alpha, General) as run run_1.')
+  assert.deepEqual(updates[0]?.details, {
+    kind: 'agent_named',
+    agent: 'Alpha',
+    agentRunId: 'run_1'
+  })
+  assert.match(JSON.stringify(result.content), /Started α \(Alpha, General\) in the background/)
+  assert.equal((result.details as { agent?: string }).agent, 'Alpha')
 })
 
 test('General runs get distinct Greek-letter names on the card, the runner and the result', async () => {

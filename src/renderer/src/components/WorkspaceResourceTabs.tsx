@@ -5,7 +5,9 @@ import { alpha } from '@mui/material/styles'
 import { VscLayoutSidebarLeftDock } from 'react-icons/vsc'
 import { PhiIcons } from '../icons'
 import { ResourceIcon, type ResourceIconProps } from './ResourceIcon'
+import { AgentAvatar } from './AgentAvatar'
 import { resourceCatalogCopy, resourceUi } from '../lib/resourceUi'
+import { agentDisplayLabel } from '../lib/agentAvatar'
 import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
 import type {
   WorkspaceFileWorkspaceTab,
@@ -79,6 +81,7 @@ export function WorkspaceResourceTabs({
         const contentKind = contentIconKinds[tab.kind]
         const title =
           tab.kind === 'plugins' && tab.itemId === 'installed' ? resourceUi.plugins : tab.title
+        const displayTitle = tab.kind === 'subagent' ? agentDisplayLabel(title) : title
         return (
           <Box
             key={tab.key}
@@ -87,7 +90,8 @@ export function WorkspaceResourceTabs({
             aria-selected={selected}
             data-phi-workspace-resource-tab={selected ? 'active' : 'inactive'}
             data-phi-workspace-resource-kind={tab.kind}
-            title={tab.subtitle ?? title}
+            title={tab.kind === 'subagent' ? title : (tab.subtitle ?? title)}
+            aria-label={tab.kind === 'subagent' ? title : undefined}
             onClick={() => {
               if (!selected) onSelect(tab)
             }}
@@ -143,7 +147,9 @@ export function WorkspaceResourceTabs({
               }
             }}
           >
-            {tab.kind === 'session' && onDockSessionTab ? (
+            {tab.kind === 'subagent' ? (
+              <AgentAvatar displayName={title} decorative />
+            ) : tab.kind === 'session' && onDockSessionTab ? (
               <Box
                 component="span"
                 sx={{ position: 'relative', width: 18, height: 18, flexShrink: 0 }}
@@ -225,7 +231,7 @@ export function WorkspaceResourceTabs({
                 lineHeight: '18px'
               }}
             >
-              {title}
+              {displayTitle}
             </Typography>
             {(tab.kind === 'file' || tab.kind === 'notebook') && tab.dirty && (
               <Box

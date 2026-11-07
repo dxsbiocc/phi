@@ -65,6 +65,19 @@ test('the parent card exposes only identity and status, never execution details 
   assert.doesNotMatch(html, /aria-expanded|Stop agent|Additional instructions for agent/)
 })
 
+test('General run conversations show the Greek symbol with their named avatar', () => {
+  setUiLanguage('en')
+  const cardHtml = render({ agentName: 'Gamma' }, true)
+  const sessionHtml = render({ agentName: 'Gamma' })
+
+  assert.match(cardHtml, /Delegated to.*γ/)
+  assert.match(cardHtml, /alt="Gamma"/)
+  assert.match(cardHtml, /aria-label="Open Gamma conversation"/)
+  assert.doesNotMatch(cardHtml, /Delegated to.*Gamma/)
+  assert.match(sessionHtml, /alt="Gamma"/)
+  assert.match(sessionHtml, />γ ·/)
+})
+
 test('completed and cancelled conversations preserve the report and remove run controls', () => {
   setUiLanguage('en')
   for (const cancelled of [false, true]) {

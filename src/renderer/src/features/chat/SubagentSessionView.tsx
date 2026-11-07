@@ -9,6 +9,8 @@ import { SavedFinalReportBlock } from './components/SavedFinalReportBlock'
 import { useAgentRunStatus } from './hooks/useAgentRunStatus'
 import { chatCopy } from './lib/chatCopy'
 import { subagentSessionMessages, agentControlErrorText } from './lib/subagentSession'
+import { AgentAvatar } from '../../components/AgentAvatar'
+import { agentDisplayLabel } from '../../lib/agentAvatar'
 
 export type SubagentSessionViewProps = {
   item: AgentExecutionItem
@@ -67,9 +69,15 @@ export default function SubagentSessionView({
       data-phi-subagent-session={item.id}
       sx={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}
     >
-      <Box sx={{ px: 4, pt: 1.5, pb: 0.5 }}>
-        <Typography variant="caption" color="text.secondary" aria-live="polite">
-          {item.agentName} · {agentRunStatusText(item, { lost })} · {elapsed}
+      <Box sx={{ px: 4, pt: 1.5, pb: 0.5, display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        <AgentAvatar displayName={item.agentName} decorative />
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          aria-live="polite"
+          title={item.agentName}
+        >
+          {agentDisplayLabel(item.agentName)} · {agentRunStatusText(item, { lost })} · {elapsed}
           {' · '}
           {chatCopy.temporaryAgentSession}
         </Typography>

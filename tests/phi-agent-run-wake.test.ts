@@ -48,6 +48,13 @@ test('the notice names the agent, the task, the time and the run id', () => {
   assert.match(notice.body, /run_1/)
 })
 
+test('the notice displays a General run by symbol without changing its event name', () => {
+  const event = { ...DONE, agent: 'Gamma' }
+  assert.equal(agentRunNotice(event).title, 'γ 后台任务已完成')
+  assert.equal(agentRunNotice(event, 'en').title, 'γ background task completed')
+  assert.equal(event.agent, 'Gamma')
+})
+
 test('the notice says why a run failed and titles a cancelled one as such', () => {
   const failed = agentRunNotice(FAILED)
   assert.equal(failed.title, 'Wrapper 后台任务失败')

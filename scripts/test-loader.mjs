@@ -134,6 +134,13 @@ registerHooks({
       const source = JSON.stringify(readFileSync(fileURLToPath(new URL(url)), 'utf8'))
       return { format: 'module', source: `export default ${source}`, shortCircuit: true }
     }
+    if (url.startsWith('file:') && /\.(?:avif|gif|jpe?g|png|webp)$/.test(url)) {
+      return {
+        format: 'module',
+        source: `export default ${JSON.stringify(fileURLToPath(new URL(url)))}`,
+        shortCircuit: true
+      }
+    }
     if (!url.startsWith('file:') || !/\.tsx?$/.test(url)) return nextLoad(url, context)
     return { format: 'module', source: transpile(fileURLToPath(url)), shortCircuit: true }
   }

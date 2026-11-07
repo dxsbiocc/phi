@@ -26,8 +26,9 @@ import { runProgressLabel, runStateLabel } from '../../features/wrapper/lib/wrap
 import { useLostAgentRunsStore } from '../../stores/lostAgentRunsStore'
 import { useHoverIntent } from './useHoverIntent'
 import { errorMessage } from '../../../../shared/errorCodes'
+import { AgentAvatar } from '../AgentAvatar'
+import { agentDisplayLabel } from '../../lib/agentAvatar'
 
-const AgentIcon = PhiIcons.entity.agent
 const StopIcon = PhiIcons.action.stop
 
 function errorText(error: unknown): string {
@@ -47,7 +48,12 @@ type AgentRunRowProps = {
   onOpenSession: (id: string) => void
 }
 
-function AgentRunRow({ run, wrapperRun, nowMs, onOpenSession }: AgentRunRowProps): ReactNode {
+export function AgentRunRow({
+  run,
+  wrapperRun,
+  nowMs,
+  onOpenSession
+}: AgentRunRowProps): ReactNode {
   useUiLanguage()
   const markLost = useLostAgentRunsStore((state) => state.markLost)
   const [stopping, setStopping] = useState(false)
@@ -79,6 +85,7 @@ function AgentRunRow({ run, wrapperRun, nowMs, onOpenSession }: AgentRunRowProps
         ...(wrapperRun ? [runProgressLabel(wrapperRun)].filter(Boolean) : [])
       ].join(' · ')
     : ''
+  const displayName = agentDisplayLabel(run.agentName)
 
   return (
     <Box component="li" sx={{ listStyle: 'none', minWidth: 0 }}>
@@ -100,11 +107,16 @@ function AgentRunRow({ run, wrapperRun, nowMs, onOpenSession }: AgentRunRowProps
             '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
           }}
         >
-          <AgentIcon sx={{ fontSize: 16, mt: '3px', flexShrink: 0, color: 'primary.main' }} />
+          <AgentAvatar displayName={run.agentName} decorative sx={{ mt: '1px' }} />
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
-              <Typography variant="body2" noWrap sx={{ fontWeight: 600, color: 'text.primary' }}>
-                {run.agentName}
+              <Typography
+                variant="body2"
+                noWrap
+                title={run.agentName}
+                sx={{ fontWeight: 600, color: 'text.primary' }}
+              >
+                {displayName}
               </Typography>
               {run.background ? (
                 <Chip

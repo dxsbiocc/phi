@@ -1,6 +1,10 @@
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { createTheme, ThemeProvider } from '@mui/material'
+import { AgentRunRow } from '../src/renderer/src/components/chat/AgentRunsOverview'
 
 import {
   agentExecutionItemById,
@@ -92,6 +96,26 @@ test('an entry carries what the overview shows and what steering needs', () => {
   assert.equal(entry.currentStep, 'wrapper_run')
   assert.equal(entry.startedAt, '2026-09-20T10:00:00.000Z')
   assert.deepEqual(entry.control, { agentRunId: 'run_1', agentSessionId: 'runtime-1' })
+})
+
+test('a General overview row shows its avatar and symbol with the English name retained', () => {
+  const [entry] = runningAgentRuns([card({ agentName: 'Gamma' })], new Set())
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(AgentRunRow, {
+        run: entry,
+        nowMs: Date.parse('2026-09-20T10:00:01.000Z'),
+        onOpenSession: () => undefined
+      })
+    )
+  )
+
+  assert.match(markup, /alt="Gamma"/)
+  assert.match(markup, /title="Gamma"/)
+  assert.match(markup, />γ</)
+  assert.doesNotMatch(markup, />Gamma</)
 })
 
 test('a wrapper agent entry carries the latest visible Nextflow run id', () => {
