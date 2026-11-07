@@ -2,11 +2,6 @@ import { readFileSync, statSync } from 'node:fs'
 import { extname, isAbsolute } from 'node:path'
 
 import type { PhiTool } from '../engine/types'
-import {
-  assessTaskRouting,
-  type TaskRoutingAssessor,
-  type TaskRoutingDecision
-} from '../decisions/policies'
 import type { PhiAgentDefinition } from './definition'
 import {
   AgentRunLimitError,
@@ -41,8 +36,6 @@ export interface AgentToolOptions {
   cwd?: string
   /** Remote projects keep today's delegation tool: no local execution context and no image forwarding. */
   remote?: boolean
-  /** Advisory task matching only; the registry and runner retain execution authority. */
-  assessTask?: TaskRoutingAssessor
   /** Picks General run names; tests pass a fixed source. */
   random?: () => number
 }
@@ -146,7 +139,9 @@ export function agentDelegationToolDescription(
       ? ' Phi gives each run its own Greek-letter name (for example Gamma), returned with the run id.'
       : ''
   const role = definition.name === GENERAL_AGENT_NAME ? 'a general-purpose agent' : 'a specialist'
-  return `${definition.description}\n\nHands the task to the ${definition.name} agent, ${role} with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences.${naming} It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${images}${boundary}`
+  const routing =
+    'Routing: first decide whether delegation is needed; do small, direct work yourself. Delegate only substantial or independent work, or when parallel work helps. If delegation is needed, choose an existing specialist whose stated remit covers the task; otherwise use General. An explicit user request for a specific agent or for delegation overrides automatic routing.'
+  return `${definition.description}\n\n${routing}\n\nHands the task to the ${definition.name} agent, ${role} with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences.${naming} It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${images}${boundary}`
 }
 
 /**
@@ -244,50 +239,10 @@ export function buildAgentTool(
       }
       const background = record.background === true
       const delegatedTask = executionContext(task, local ? cwd : undefined, notes)
-
-      let decision: TaskRoutingDecision | undefined
-      if (options.assessTask) {
-        try {
-          decision = await assessTaskRouting(
-            {
-              agent: name,
-              description: definition.description,
-              delegation: definition.delegation,
-              task
-            },
-            options.assessTask,
-            signal
-          )
-        } catch {
-          return errorResult(
-            signal?.aborted
-              ? 'Task routing assessment was cancelled; no specialist run was started.'
-              : 'Task routing assessment failed; no specialist run was started. Review the task and retry or select another specialist.'
-          )
-        }
-        const details = { kind: 'agent_decision', agent: name, purpose: 'task_routing', decision }
-        onUpdate?.({
-          content: [
-            {
-              type: 'text',
-              text: `Task routing assessment for ${name}: ${decision.choice} (${decision.source}).`
-            }
-          ],
-          details
-        })
-        // Updates may synchronously cancel the parent. Background runs detach only after this gate.
-        if (signal?.aborted) {
-          return errorResult(
-            'Task routing assessment was cancelled; no specialist run was started.',
-            details
-          )
-        }
-        if (decision.choice === 'unsuitable') {
-          return errorResult(
-            `The ${name} specialist was assessed as unsuitable for this task. Review its capabilities and choose an appropriate route. No specialist run was started.`,
-            details
-          )
-        }
+      if (signal?.aborted) {
+        return errorResult(
+          `The ${name} agent was not started because the delegation was cancelled.`
+        )
       }
 
       // Picked and registered in the same tick, so parallel General calls never share a name.
@@ -345,8 +300,7 @@ export function buildAgentTool(
           details: {
             kind: 'agent_started',
             agent: displayName,
-            runId: handle.id,
-            ...(decision ? { decision } : {})
+            runId: handle.id
           }
         }
       }
@@ -360,7 +314,6 @@ export function buildAgentTool(
         details: {
           kind: 'agent_result',
           agent: displayName,
-          ...(decision ? { decision } : {}),
           status: run.reportStatus ?? 'completed',
           missingInputs: run.missingInputs ?? [],
           ...(run.nextAgent ? { nextAgent: run.nextAgent } : {}),

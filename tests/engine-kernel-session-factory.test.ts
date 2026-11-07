@@ -258,7 +258,7 @@ test('routed sessions advertise and invoke the engine decision evaluator', async
   legacy.decisions.evaluate = async (input) => {
     evaluated = input
     return {
-      choice: 'suitable',
+      choice: 'inspect',
       source: 'model',
       model: { providerId: 'test', modelId: 'model' }
     }
@@ -285,12 +285,12 @@ test('routed sessions advertise and invoke the engine decision evaluator', async
   const decide = client.host.get('decisions.evaluate')
   assert.ok(decide)
   const request = {
-    purpose: 'task_routing' as const,
-    context: 'Agent: TestAgent',
-    question: 'Is this specialist suitable?',
+    purpose: 'recovery' as const,
+    context: 'The previous read was interrupted.',
+    question: 'How should the caller recover?',
     options: [
-      { id: 'suitable', description: 'Suitable' },
-      { id: 'uncertain', description: 'Uncertain' }
+      { id: 'inspect', description: 'Inspect current state' },
+      { id: 'retry', description: 'Retry the read' }
     ]
   }
   assert.equal(
@@ -304,7 +304,7 @@ test('routed sessions advertise and invoke the engine decision evaluator', async
         { sessionId: 'kernel-1', signal: new AbortController().signal }
       )) as { choice?: unknown }
     ).choice,
-    'suitable'
+    'inspect'
   )
   assert.deepEqual(evaluated, {
     agentDir: '/agent',

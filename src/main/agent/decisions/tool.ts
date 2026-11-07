@@ -16,13 +16,13 @@ export function buildDecisionTool(evaluate: DecisionEvaluator): PhiTool {
     approval: 'read',
     loadMode: 'essential',
     description:
-      'Assess a bounded task-routing, evidence-review or recovery question. Supply relevant evidence and user constraints, plus 2–12 choices with safe unique IDs including an uncertainty option. The result is advisory; it cannot certify success, authorize automatic recovery, launch tasks, grant approvals or stop runs.',
+      'Assess a bounded evidence-review or recovery question. Supply relevant evidence and user constraints, plus 2–12 choices with safe unique IDs including an uncertainty option. The result is advisory; it cannot certify success, authorize automatic recovery, launch tasks, grant approvals or stop runs.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       required: ['purpose', 'context', 'question', 'options'],
       properties: {
-        purpose: { type: 'string', enum: ['task_routing', 'evidence_review', 'recovery'] },
+        purpose: { type: 'string', enum: ['evidence_review', 'recovery'] },
         context: { type: 'string', maxLength: 32768 },
         question: { type: 'string', minLength: 1, maxLength: 4096 },
         options: {

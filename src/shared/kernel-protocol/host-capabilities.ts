@@ -369,7 +369,7 @@ const decisionModelSchema = z
   .strict()
 const decisionRequestSchema = z
   .object({
-    purpose: z.enum(['task_routing', 'evidence_review', 'recovery']),
+    purpose: z.enum(['evidence_review', 'recovery']),
     context: z.string().max(32 * 1024),
     question: nonEmptyStringSchema.max(4096),
     options: z

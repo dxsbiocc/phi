@@ -2,17 +2,7 @@ import type { PhiAgentDefinition } from '../../agents/definition'
 import { AgentRunRegistry, type AgentRunFn } from '../../agents/registry'
 import { buildAgentRunTools } from '../../agents/run-tools'
 import { buildAgentTool, type AgentToolOptions } from '../../agents/tool'
-import type { TaskRoutingAssessor } from '../../decisions/policies'
 import type { PhiTool } from '../types'
-
-export function sessionAgentAssessment(options: {
-  desktopServices: boolean
-  hostCapabilities: readonly string[]
-  assessTask: TaskRoutingAssessor
-}): TaskRoutingAssessor | undefined {
-  if (!options.desktopServices) return options.assessTask
-  return options.hostCapabilities.includes('decisions.evaluate') ? options.assessTask : undefined
-}
 
 export function supportsDelegationTool(definition: PhiAgentDefinition): boolean {
   return definition.invocation !== 'host'

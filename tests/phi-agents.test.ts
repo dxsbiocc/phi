@@ -814,7 +814,15 @@ test('the leader prompt lists agents by name and tells the main agent to delegat
     assert.match(prompt, /do not/i)
     assert.match(prompt, /required-first/i)
     assert.match(prompt, /only the requested subtask/i)
-    assert.match(prompt, /specialist-matching work.*before General/i)
+    assert.match(prompt, /First decide whether the task needs an agent/i)
+    assert.match(prompt, /answer.*quick read.*one command.*short edit/i)
+    assert.match(prompt, /substantial or independent.*parallel work helps/i)
+    assert.match(prompt, /stated remit covers the task.*otherwise use General/i)
+    assert.match(prompt, /explicit user request.*specific agent.*delegation.*overrides/i)
+    assert.match(
+      prompt,
+      /unless the user explicitly requested another route.*required-first specialist owns the first attempt/i
+    )
     assert.match(prompt, /Phi gives each General run its own Greek-letter name/i)
     assert.match(prompt, /several General tasks/i)
     assert.match(prompt, /follow-up edit.*exact source, input, and prior output paths/i)
@@ -879,6 +887,10 @@ test('the delegation tool is named after the agent, so the agent is the tool', (
   assert.equal(tool.name, 'Wrapper')
   assert.equal(tool.label, 'Wrapper')
   assert.match(tool.description, /Runs and creates Nextflow wrappers\./)
+  assert.match(tool.description, /first decide whether delegation is needed/i)
+  assert.match(tool.description, /small, direct work/i)
+  assert.match(tool.description, /stated remit.*otherwise use General/i)
+  assert.match(tool.description, /explicit user request.*overrides automatic routing/i)
   assert.deepEqual((tool.parameters as { required: string[] }).required, ['task'])
   assert.equal(tool.approval, 'read')
   assert.equal((tool as { loadMode?: string }).loadMode, 'essential')

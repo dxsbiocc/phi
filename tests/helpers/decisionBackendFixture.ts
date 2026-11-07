@@ -17,7 +17,7 @@ import type { DecisionRequest } from '../../src/shared/decisionTypes'
 const agentDir = process.env.PI_CODING_AGENT_DIR
 if (!agentDir || !process.env.PHI_DECISION_FIXTURE) throw new Error('Disposable profile required')
 const request: DecisionRequest = {
-  purpose: 'task_routing',
+  purpose: 'evidence_review',
   context: 'A supplied request that must only be classified.',
   question: 'Choose whether to proceed or defer.',
   options: [
@@ -81,7 +81,7 @@ const server = createServer(async (incoming, response) => {
     afterNativeResponse?.()
     return
   }
-  if (path === '/v1/chat/completions') {
+  if (path === '/v1/chat/completions' || path === '/session/v1/chat/completions') {
     onChatRequest?.()
     if (rejectChat) {
       response.writeHead(400, { 'content-type': 'application/json' })
@@ -148,6 +148,10 @@ await writeFile(
 )
 const ctx = await getContext(agentDir)
 assert.equal(ctx.modelRegistry.getError(), undefined)
+const registryChatModel = ctx.modelRegistry.find(chat.providerId, chat.modelId)
+assert.ok(registryChatModel)
+const sessionChatModel = { ...registryChatModel, baseUrl: `${baseUrl}/session/v1` }
+let sessionCredentialCalls = 0
 const authScopes: Array<{ method: 'key' | 'resolver'; sessionId: unknown }> = []
 const getApiKey = ctx.modelRegistry.getApiKey.bind(ctx.modelRegistry)
 let afterAuth: (() => void) | undefined
@@ -175,10 +179,15 @@ const ledger: Array<{
 const localSession = {
   result: {
     session: {
+      model: sessionChatModel,
       agent: {
         sessionId: providerSessionId,
+        getApiKey: (selected: unknown) => {
+          assert.equal(selected, sessionChatModel)
+          sessionCredentialCalls += 1
+          return 'session-bound-test-key'
+        },
         metadataForProvider: (provider: string) => {
-          assert.equal(authScopes.at(-1)?.sessionId, providerSessionId)
           metadataCalls.push(provider)
           return { user_id: JSON.stringify({ session_id: providerSessionId }) }
         }
@@ -192,7 +201,8 @@ const localSession = {
         }
       }
     }
-  }
+  },
+  context: ctx
 } as unknown as SessionEntry
 sessions.set(input.sessionId, localSession)
 let checks = 0
@@ -203,7 +213,7 @@ const check = (name: string): void => {
 const nativeCount = (): number =>
   providerRequests.filter((entry) => entry.path === '/v1/systemone').length
 const chatCount = (): number =>
-  providerRequests.filter((entry) => entry.path === '/v1/chat/completions').length
+  providerRequests.filter((entry) => entry.path.endsWith('/v1/chat/completions')).length
 try {
   const models = await listDecisionModels(agentDir)
   assert.ok(
@@ -255,8 +265,11 @@ try {
   assert.equal(ledger.length, 2)
   assert.equal(ledger[1].usage.input, 9)
   assert.equal(providerRequests.at(-1)?.body.model, chat.modelId)
+  assert.equal(providerRequests.at(-1)?.path, '/session/v1/chat/completions')
+  assert.equal(providerRequests.at(-1)?.key, 'Bearer session-bound-test-key')
   assert.equal(providerRequests.at(-1)?.configuredHeader, 'chat-header')
   assert.equal(providerRequests.at(-1)?.body.prompt_cache_key, providerSessionId)
+  assert.equal(sessionCredentialCalls, 1)
   assert.deepEqual(metadataCalls, [chat.providerId])
   check(
     'unconfigured judgments directly use the current chat model without synthetic confidence or double billing'

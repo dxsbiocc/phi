@@ -5,6 +5,7 @@ import { DecisionJobs } from '../src/main/agent/engine/decision-jobs'
 import { createDecisionClient } from '../src/main/agent/engine/decision-client'
 import { bindSessionDecisionEvaluator } from '../src/main/agent/engine/decision-evaluator'
 import { buildDecisionTool } from '../src/main/agent/decisions/tool'
+import { buildPhiMainSystemPrompt } from '../src/main/agent/main-system-prompt'
 import {
   validateDecisionRequest,
   validateDecisionResult
@@ -29,6 +30,23 @@ const answer: DecisionResult = {
   fallbackReason: 'not_configured'
 }
 const params = { agentDir: '/trusted/profile', sessionId: 'trusted-session', model, request }
+
+test('main prompt keeps evidence review and recovery decisions advisory', () => {
+  const prompt = buildPhiMainSystemPrompt([]).join('\n')
+  assert.match(prompt, /phi_decide.*consequential ambiguous choices/)
+  assert.match(prompt, /evidence_review.*recovery/)
+  assert.doesNotMatch(
+    prompt,
+    /task_routing|specialist suitability|unsuitable specialist assessment/
+  )
+  assert.match(prompt, /exact user constraints.*explicit uncertain option/)
+  assert.match(prompt, /Trivial deterministic steps do not need a judgment/)
+  assert.match(
+    prompt,
+    /cannot authorize actions, bypass approvals or task limits, override a stop request, or certify success/
+  )
+  assert.match(prompt, /never automatically resume a stopped or failed task/)
+})
 
 test('decision boundary rejects oversized, ambiguous and authority-bearing input and output', () => {
   assert.deepEqual(validateDecisionRequest(request), request)
@@ -217,6 +235,8 @@ test('generic decision tool publishes bounded advisory details through the norma
   assert.equal(tool.approval, 'read')
   assert.equal(tool.site, 'host')
   assert.equal(tool.loadMode, 'essential')
+  assert.match(tool.description, /evidence-review or recovery/)
+  assert.doesNotMatch(tool.description, /task-routing/)
   const result = await tool.execute('call', { ...request }, undefined, {
     cwd: '/project',
     recentUserImages: () => []

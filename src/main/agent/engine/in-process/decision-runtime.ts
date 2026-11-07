@@ -8,6 +8,7 @@ import {
 import { DecisionJobs } from '../decision-jobs'
 import { evaluateDecision, listDecisionModels } from './decision-backend'
 import { selectAutomaticDecisionModel } from './automatic-decision-model'
+import { sessions } from './state'
 import type { PhiEngine } from '../types'
 
 const jobs = new DecisionJobs()
@@ -30,7 +31,12 @@ export function evaluateDecisionRequest(
   return jobs.run(
     params.jobId ? jobIdentity(params.jobId) : randomUUID(),
     async (signal) => {
-      const judgeModel = await selectAutomaticDecisionModel(params.agentDir, availability, signal)
+      const judgeModel = await selectAutomaticDecisionModel(
+        params.agentDir,
+        availability,
+        signal,
+        sessions.get(params.sessionId)?.context
+      )
       const result = await evaluateDecision(
         {
           agentDir: params.agentDir,

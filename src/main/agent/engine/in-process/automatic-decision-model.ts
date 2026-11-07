@@ -3,7 +3,7 @@ import type { DecisionModelSelection } from '../../../../shared/decisionTypes'
 import type { ModelAvailabilitySettings } from '../../../../shared/modelAvailabilityTypes'
 import { isModelEnabled } from '../../model-availability'
 import { getContext } from './runtime-context'
-import type { RuntimeModel } from './common'
+import type { RuntimeContext, RuntimeModel } from './common'
 
 function priority(model: RuntimeModel): number {
   if (/(^|\/)jev-latest$/i.test(model.id)) return model.provider === 'typesafe' ? 0 : 1
@@ -15,10 +15,11 @@ function priority(model: RuntimeModel): number {
 export async function selectAutomaticDecisionModel(
   agentDir: string,
   availability: ModelAvailabilitySettings,
-  signal: AbortSignal
+  signal: AbortSignal,
+  context?: RuntimeContext
 ): Promise<DecisionModelSelection | null> {
   signal.throwIfAborted()
-  const { modelRegistry } = await getContext(agentDir)
+  const { modelRegistry } = context ?? (await getContext(agentDir))
   signal.throwIfAborted()
   const candidates = modelRegistry
     .getAvailable('judge')

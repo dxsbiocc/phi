@@ -10,7 +10,6 @@ import { buildPresentFilesTool } from '../../deliverables/present-tool'
 import { buildRenderBlocksTool } from '../../deliverables/render-blocks-tool'
 import { normalizeProjectMemorySettings } from '../../../../shared/projectMemoryTypes'
 import type { PresentedFile } from '../../../../shared/presentedFileTypes'
-import type { DecisionResult } from '../../../../shared/decisionTypes'
 import { buildHostLibraryCustomTools, buildLibraryCustomTools } from '../../library/library-tools'
 import { buildPaletteRecommendationTool } from '../../palettes/tools'
 import { buildProjectLearnTool } from '../../memory/learn-tool'
@@ -50,11 +49,7 @@ import { loadSkillScriptTools } from './tool-support'
 import { buildDecisionTool } from '../../decisions/tool'
 import { bindSessionDecisionEvaluator } from '../decision-evaluator'
 import { subscribeToAgentRunNotices } from './agent-run-notices'
-import {
-  buildSessionAgentDelegationTools,
-  sessionAgentAssessment,
-  supportsDelegationTool
-} from './session-agent-tools'
+import { buildSessionAgentDelegationTools, supportsDelegationTool } from './session-agent-tools'
 import type { PhiExtensionEnvironmentBinding } from '../phi-extension'
 import type { SessionResourceSnapshot } from './session-resource-input'
 
@@ -244,29 +239,10 @@ export async function createSessionToolRegistry(deps: {
     agentDir,
     sessionId,
     currentModel: () => parentRef.current?.session.model,
-    evaluate: desktopServices
-      ? async (params, signal) => {
-          signal?.throwIfAborted()
-          const result = await requestHost(
-            'decisions.evaluate',
-            {
-              runtimeSessionId: sessionId,
-              model: params.model,
-              request: params.request
-            },
-            { originSessionId: sessionId }
-          )
-          signal?.throwIfAborted()
-          return result as DecisionResult
-        }
-      : async (...args) => (await loadWorkerDecisionRuntime()).evaluateDecisionRequest(...args)
-  })
-  const assessTask = sessionAgentAssessment({
-    desktopServices,
-    hostCapabilities: Array.isArray(record.desktopHostCapabilities)
-      ? record.desktopHostCapabilities.filter((item): item is string => typeof item === 'string')
-      : [],
-    assessTask: decide
+    // Decisions must stay beside the owning OMP session so the text fallback uses the
+    // exact live model, provider identity and injected ModelAccess credential resolver.
+    evaluate: async (...args) =>
+      (await loadWorkerDecisionRuntime()).evaluateDecisionRequest(...args)
   })
   const agentRunners = new Map<string, AgentRunFn>()
   const inactiveAgents = new Set<string>()
@@ -307,7 +283,7 @@ export async function createSessionToolRegistry(deps: {
     definitions: phiAgents,
     runnerFor,
     registry: agentRuns,
-    toolOptions: { cwd, ...(assessTask ? { assessTask } : {}) }
+    toolOptions: { cwd }
   })
   // A background run outlives the tool call that started it, so its end is reported to the
   // main process, which owns the conversation: it notes it in the timeline and can wake the
@@ -443,7 +419,7 @@ export async function createSessionToolRegistry(deps: {
                 definitions: discovered,
                 runnerFor,
                 registry: agentRuns,
-                toolOptions: { cwd, ...(assessTask ? { assessTask } : {}) },
+                toolOptions: { cwd },
                 includeRunTools: !hadDelegationTools
               })
               const tools = [
@@ -551,7 +527,7 @@ export async function createSessionToolRegistry(deps: {
       definitions: additions,
       runnerFor,
       registry: agentRuns,
-      toolOptions: { cwd, ...(assessTask ? { assessTask } : {}) },
+      toolOptions: { cwd },
       includeRunTools: !phiAgents.some(supportsDelegationTool)
     })
     const registered = new Set(await capabilityRegistrar.register(addedTools))

@@ -49,12 +49,20 @@ tool is not advertised to the main agent. The only exception is the opt-in remot
 | `environment`    | no       | an environment reference (environment contract): `phi:<name>@<major>`, `plugin:<name>`, or `project:<name>`. See § 3                                                                                                                                       |
 | `visibility`     | no       | `entry` (default): the main agent gets a delegation tool for it. **`internal` is reserved** for orchestration and rejected in v1                                                                                                                           |
 | `invocation`     | no       | `host`: only trusted host orchestration can start the agent; it does not create a main-agent delegation tool. Absent: normal delegation-tool invocation                                                                                                    |
-| `delegationMode` | no       | `required-first` (matching work goes to this agent before generic tools), `preferred`, or `optional` (default)                                                                                                                                             |
+| `delegationMode` | no       | `required-first` (when delegation is needed, matching work goes to this agent before generic tools), `preferred`, or `optional` (default)                                                                                                                   |
 | `delegation`     | no       | guidance for the main agent on when and how to hand work over; added to the main agent's instructions                                                                                                                                                      |
 | `fallback`       | no       | `{ afterFailures: <positive integer>, tools: [<main-agent tool>…], match: [<token>…] }`: after that many consecutive failed, blocked, or not-found runs, the main agent may use `tools` for inputs containing one of the `match` tokens (case-insensitive) |
 | `outputSchema`   | no       | **reserved** for structured results. v1 rejects the field; a later minor version defines it                                                                                                                                                                |
 
 ### 2.3 Built-in General agent
+
+The main agent first decides whether the work needs an agent; it handles small,
+direct work itself. If delegation is warranted, it chooses an existing specialist
+whose stated remit covers the task, otherwise General. An explicit user request
+for a specific agent or for delegation overrides this automatic routing. Calling a
+named delegation tool starts that run without a second suitability assessment or
+decision-model veto; deterministic approval, limit, cancellation, and run-state
+checks still apply.
 
 Phi bundles `General` for self-contained delegable work that no specialist covers.
 Its delegation tool takes `task` like any other agent. Phi names each run itself

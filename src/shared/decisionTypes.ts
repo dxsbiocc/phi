@@ -4,7 +4,7 @@ export interface DecisionModelSelection {
   modelId: string
 }
 
-export type DecisionPurpose = 'task_routing' | 'evidence_review' | 'recovery'
+export type DecisionPurpose = 'evidence_review' | 'recovery'
 
 export interface DecisionRequest {
   purpose: DecisionPurpose

@@ -4,7 +4,7 @@ import type {
   DecisionResult
 } from '../../../shared/decisionTypes'
 
-const PURPOSES = new Set(['task_routing', 'evidence_review', 'recovery'])
+const PURPOSES = new Set(['evidence_review', 'recovery'])
 const SAFE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

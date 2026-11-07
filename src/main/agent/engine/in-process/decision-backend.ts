@@ -3,6 +3,7 @@ import {
   createNativeJudge,
   isJudgmentApi,
   TextJudge,
+  type ApiKey,
   type AssistantMessage,
   type ChoiceAnswer,
   type JudgmentRequest,
@@ -19,7 +20,7 @@ import type {
 } from '../../../../shared/decisionTypes'
 import { isRecord, type RuntimeContext, type RuntimeModel } from './common'
 import { getContext, modelBySelector } from './runtime-context'
-import { sessions } from './state'
+import { sessions, type WorkerAgentSession } from './state'
 
 const NATIVE_ATTEMPT_TIMEOUT_MS = 12_000
 
@@ -198,13 +199,55 @@ async function nativeDecision(
   }
 }
 
-async function modelDecision(
+async function decisionChatModel(
   ctx: RuntimeContext,
   params: BoundDecisionParams,
-  request: JudgmentRequest,
-  recordUsage: UsageRecorder,
+  signal: AbortSignal,
+  session?: WorkerAgentSession
+): Promise<RuntimeModel> {
+  const liveModel = session?.model
+  const model =
+    liveModel && matches(liveModel, params.model)
+      ? liveModel
+      : await withSignal(
+          modelBySelector(ctx, { provider: params.model.providerId, id: params.model.modelId }),
+          signal
+        )
+  if (!model || isJudgmentApi(model.api) || model.api === 'local-inference') {
+    throw new Error('Decision model unavailable')
+  }
+  return model
+}
+
+async function decisionChatApiKey(
+  ctx: RuntimeContext,
+  model: RuntimeModel,
+  params: BoundDecisionParams,
+  signal: AbortSignal,
+  session?: WorkerAgentSession
+): Promise<ApiKey> {
+  if (session?.agent.getApiKey) {
+    const key = await withSignal(Promise.resolve(session.agent.getApiKey(model)), signal)
+    if (key === undefined) throw new Error('Decision model unavailable')
+    return key
+  }
+  const key = await withSignal(
+    ctx.modelRegistry.getApiKey(model, params.providerSessionId, { signal }),
+    signal
+  )
+  if (key === undefined) throw new Error('Decision model unavailable')
+  return ctx.modelRegistry.resolver(model, params.providerSessionId)
+}
+
+async function modelDecision(input: {
+  ctx: RuntimeContext
+  params: BoundDecisionParams
+  request: JudgmentRequest
+  recordUsage: UsageRecorder
   signal: AbortSignal
-): Promise<DecisionResult> {
+  session?: WorkerAgentSession
+}): Promise<DecisionResult> {
+  const { ctx, params, request, recordUsage, signal, session } = input
   signal.throwIfAborted()
   if (
     params.availability &&
@@ -212,23 +255,12 @@ async function modelDecision(
   ) {
     throw new Error('Current model is disabled in Phi')
   }
-  const { modelRegistry } = ctx
-  const model = await withSignal(
-    modelBySelector(ctx, { provider: params.model.providerId, id: params.model.modelId }),
-    signal
-  )
-  if (!model || isJudgmentApi(model.api) || model.api === 'local-inference') {
-    throw new Error('Decision model unavailable')
-  }
-  const key = await withSignal(
-    modelRegistry.getApiKey(model, params.providerSessionId, { signal }),
-    signal
-  )
-  if (key === undefined) throw new Error('Decision model unavailable')
+  const model = await decisionChatModel(ctx, params, signal, session)
+  const key = await decisionChatApiKey(ctx, model, params, signal, session)
   const judge = new TextJudge(
     // The SDK stream resolves model.resolveHeaders on each attempt, including command-backed headers.
     chatTextBackend(model, {
-      apiKey: modelRegistry.resolver(model, params.providerSessionId),
+      apiKey: key,
       sessionId: params.providerSessionId,
       metadata: params.metadataForProvider?.(model.provider),
       // TextJudge's aggregate includes these attempts; never journal it again.
@@ -251,7 +283,8 @@ export async function evaluateDecision(
 ): Promise<DecisionResult> {
   signal.throwIfAborted()
   const request = judgmentRequest(params.request)
-  const session = sessions.get(params.sessionId)?.result.session
+  const sessionEntry = sessions.get(params.sessionId)
+  const session = sessionEntry?.result.session
   const manager = session?.sessionManager
   // Phi's registry ID, the SDK journal ID and the provider-facing ID are distinct.
   const bound: BoundDecisionParams = {
@@ -278,7 +311,7 @@ export async function evaluateDecision(
     )
   }
   try {
-    const ctx = await withSignal(getContext(params.agentDir), signal)
+    const ctx = sessionEntry?.context ?? (await withSignal(getContext(params.agentDir), signal))
     if (params.judgeModel) {
       try {
         return await withSignal(
@@ -296,7 +329,10 @@ export async function evaluateDecision(
         signal.throwIfAborted()
       }
     }
-    return await withSignal(modelDecision(ctx, bound, request, recordUsage, signal), signal)
+    return await withSignal(
+      modelDecision({ ctx, params: bound, request, recordUsage, signal, session }),
+      signal
+    )
   } catch {
     signal.throwIfAborted()
     // Provider exceptions may contain credentials, endpoint bodies or private context.
