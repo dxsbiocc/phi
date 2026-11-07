@@ -108,11 +108,11 @@ export function sessionStateKeyFromAgentUserInteraction(
 
 /**
  * These maps back many sessions' worth of bookkeeping (runtime status, pending
- * approvals, cached agent-event state) that the UI never renders directly — only
- * the "active session" slice of each lives in the reactive store state below.
+ * approvals, cached agent-event state) whose active-session slices live in the reactive store below. Child-run tabs
+ * can also subscribe to their owning session event cache.
  * Kept outside `set()` (a single app-lifetime module singleton, same lifetime the
  * old per-component refs had) so high-frequency agent events don't force a
- * store-wide notify for bookkeeping nothing subscribes to.
+ * store-wide notify for bookkeeping; event listeners are scoped to a session.
  */
 export const sessionRuntimeStates = new Map<string, SessionRuntimeState>()
 export const pendingApprovalsBySession = new Map<string, ToolApprovalRequest>()
@@ -160,6 +160,24 @@ export function clearPendingApprovals(): void {
 
 export const pendingUserInteractionsBySession = new Map<string, AgentUserInteractionRequest>()
 export const sessionAgentEventStates = new Map<string, AgentEventReducerState>()
+
+// Temporary child-run tabs subscribe to their owning session even when another chat is active.
+const sessionEventListeners = new Map<string, Set<() => void>>()
+
+export function subscribeSessionEvents(key: string, listener: () => void): () => void {
+  const listeners = sessionEventListeners.get(key) ?? new Set<() => void>()
+  listeners.add(listener)
+  sessionEventListeners.set(key, listeners)
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0) sessionEventListeners.delete(key)
+  }
+}
+
+export function cacheSessionAgentEventState(key: string, state: AgentEventReducerState): void {
+  sessionAgentEventStates.set(key, state)
+  sessionEventListeners.get(key)?.forEach((listener) => listener())
+}
 
 let sessionRefreshTimer: number | null = null
 const activeSessionAcknowledgementRequests = new Set<string>()
@@ -324,7 +342,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       const next = updater(state.agentEventState)
       const activeKey = state.activeAgentEventStateKey
       if (activeKey) {
-        sessionAgentEventStates.set(activeKey, next)
+        cacheSessionAgentEventState(activeKey, next)
       }
       return { agentEventState: next }
     })
@@ -433,7 +451,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       nextAgentEventState =
         sessionAgentEventStates.get(nextStateKey) ??
         (shouldCarryActiveState ? state.agentEventState : createAgentEventReducerState())
-      sessionAgentEventStates.set(nextStateKey, nextAgentEventState)
+      cacheSessionAgentEventState(nextStateKey, nextAgentEventState)
     }
 
     set({

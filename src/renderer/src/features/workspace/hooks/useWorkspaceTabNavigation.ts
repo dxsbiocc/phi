@@ -104,6 +104,10 @@ type SelectionContext = Pick<
 /** Applies the side effects of choosing a tab. */
 function applySelectTab(context: SelectionContext, tab: WorkspaceTab): void {
   context.setActiveWorkspaceTabKey(tab.key)
+  if (tab.kind === 'subagent') {
+    context.navigateToView('chat')
+    return
+  }
   if (tab.kind === 'session') {
     context.setSessionTabWasOpened(true)
     context.setClosedWorkspaceSessionTabKeys((keys) => {

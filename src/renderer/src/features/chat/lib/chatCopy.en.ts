@@ -293,6 +293,8 @@ export const chatEnglish = {
   fullReportSaved: 'Full report saved',
   collapseAgentExecution: 'Collapse agent execution',
   expandAgentExecution: 'Expand agent execution',
+  openAgentSession: (name: string) => `Open ${name} conversation`,
+  temporaryAgentSession: 'Temporary agent conversation',
   delegatedTo: 'Delegated to',
   duration: '· Duration',
   steps: '· Steps',

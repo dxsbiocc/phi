@@ -44,10 +44,10 @@ type AgentRunRowProps = {
   run: AgentRunOverviewEntry
   wrapperRun?: WrapperRun
   nowMs: number
-  onLocate: (id: string) => void
+  onOpenSession: (id: string) => void
 }
 
-function AgentRunRow({ run, wrapperRun, nowMs, onLocate }: AgentRunRowProps): ReactNode {
+function AgentRunRow({ run, wrapperRun, nowMs, onOpenSession }: AgentRunRowProps): ReactNode {
   useUiLanguage()
   const markLost = useLostAgentRunsStore((state) => state.markLost)
   const [stopping, setStopping] = useState(false)
@@ -84,8 +84,8 @@ function AgentRunRow({ run, wrapperRun, nowMs, onLocate }: AgentRunRowProps): Re
     <Box component="li" sx={{ listStyle: 'none', minWidth: 0 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
         <ButtonBase
-          onClick={() => onLocate(run.id)}
-          aria-label={chatCopy.viewValueInConversation(run.agentName)}
+          onClick={() => onOpenSession(run.id)}
+          aria-label={chatCopy.openAgentSession(run.agentName)}
           sx={{
             flex: 1,
             minWidth: 0,
@@ -172,8 +172,8 @@ function AgentRunRow({ run, wrapperRun, nowMs, onLocate }: AgentRunRowProps): Re
 
 type AgentRunsOverviewProps = {
   runs: AgentRunOverviewEntry[]
-  /** Scroll the conversation to this run's card. */
-  onLocate: (id: string) => void
+  /** Opens the temporary conversation for this run. */
+  onOpenSession: (id: string) => void
 }
 
 // Long enough that sweeping the pointer across the corner does not flash the list open, short
@@ -188,7 +188,7 @@ const WRAPPER_RUN_POLL_INTERVAL_MS = 2000
  * doing, a way to stop it, and a way to jump to its card in the conversation. Renders nothing
  * while no agent is running.
  */
-function AgentRunsOverview({ runs, onLocate }: AgentRunsOverviewProps): ReactNode {
+function AgentRunsOverview({ runs, onOpenSession }: AgentRunsOverviewProps): ReactNode {
   useUiLanguage()
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [pinned, setPinned] = useState(false)
@@ -276,6 +276,11 @@ function AgentRunsOverview({ runs, onLocate }: AgentRunsOverviewProps): ReactNod
           onMouseEnter={hover.onEnter}
           onMouseLeave={hover.onLeave}
           onClick={() => {
+            if (runs.length === 1) {
+              close()
+              onOpenSession(runs[0].id)
+              return
+            }
             if (pinned) {
               close()
               return
@@ -360,9 +365,9 @@ function AgentRunsOverview({ runs, onLocate }: AgentRunsOverviewProps): ReactNod
                   run={run}
                   wrapperRun={run.wrapperRunId ? wrapperRuns.get(run.wrapperRunId) : undefined}
                   nowMs={nowMs}
-                  onLocate={(id) => {
+                  onOpenSession={(id) => {
                     close()
-                    onLocate(id)
+                    onOpenSession(id)
                   }}
                 />
               ))}

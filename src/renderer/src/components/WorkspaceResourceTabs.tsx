@@ -18,6 +18,7 @@ type ResourceIconComponent = typeof PhiIcons.nav.runtime
 
 const resourceIcons: Record<WorkspaceTabKind, ResourceIconComponent> = {
   session: PhiIcons.nav.chat,
+  subagent: PhiIcons.entity.agent,
   file: PhiIcons.file.document,
   directory: PhiIcons.file.directory,
   notebook: PhiIcons.file.jupyter,

@@ -1,3 +1,5 @@
+import { subagentSessionTab } from './features/workspace/lib/subagentTabs'
+import type { AgentExecutionItem } from './lib/agentExecutionTypes'
 import { appCopy } from './lib/appCopy'
 import {
   browserPresentationSessionId,
@@ -144,7 +146,12 @@ import {
   useWorkspaceFileTabs,
   type WorkspaceFileTab
 } from './useWorkspaceFileTabs'
-import { useSessionStore, sessionStateKey, sessionAgentEventStates } from './stores/sessionStore'
+import {
+  useSessionStore,
+  sessionStateKey,
+  sessionAgentEventStates,
+  cacheSessionAgentEventState
+} from './stores/sessionStore'
 import { getRendererApi } from './lib/rendererApi'
 import { useWindowFullscreen } from './lib/useWindowFullscreen'
 import { WINDOW_TITLEBAR_HEIGHT, windowChromeLayout } from './lib/windowChromeLayout'
@@ -228,6 +235,11 @@ export type AppView =
 
 const activityBarWidth = 48
 const ChatView = lazy(() => import('./features/chat/ChatView'))
+const SubagentSessionTabPanel = lazy(() =>
+  import('./features/chat/components/SubagentSessionTabPanel').then((module) => ({
+    default: module.SubagentSessionTabPanel
+  }))
+)
 const AnalysisView = lazy(() => import('./features/analysis/AnalysisView'))
 const minNavigationPaneWidth = 240
 const maxNavigationPaneWidth = 520
@@ -1261,7 +1273,7 @@ function App(): React.JSX.Element {
             ...cachedState,
             messages: restoreRemoteRunStopNotices(cachedState.messages, persistedMessages)
           }
-          sessionAgentEventStates.set(targetStateKey, restoredState)
+          cacheSessionAgentEventState(targetStateKey, restoredState)
           setAgentEventState(restoredState)
         } else {
           replaceMessages(persistedMessages)
@@ -3021,6 +3033,7 @@ function App(): React.JSX.Element {
   ])
 
   const {
+    upsertTab: upsertWorkspaceTab,
     selectTab: selectWorkspaceTab,
     selectTabFromChrome: onSelectWorkspaceTab,
     closeTab: onCloseWorkspaceTab,
@@ -3052,6 +3065,58 @@ function App(): React.JSX.Element {
     closeWorkspaceSidebarPreview,
     activeSessionPath: activeSessionPath ?? null
   })
+
+  const onOpenAgentSession = useCallback(
+    (item: AgentExecutionItem): void => {
+      const parent = useSessionStore.getState()
+      const stateKey =
+        parent.activeAgentEventStateKey ??
+        sessionStateKey({
+          phiSessionId: parent.activePhiSessionId,
+          path: parent.activeSessionPath,
+          cwd: parent.activeCwd,
+          sessionGeneration: parent.activeSessionGeneration
+        })
+      const tab = subagentSessionTab(item, {
+        stateKey,
+        sessionPath: parent.activeSessionPath,
+        cwd: parent.activeDisplayCwd,
+        remoteFiles:
+          parent.activeProjectLocation?.kind === 'ssh'
+            ? {
+                sessionId: parent.activePhiSessionId ?? '',
+                projectId: parent.activeProjectId ?? '',
+                hostAlias: getActiveRemoteProject()?.hostAlias ?? '',
+                remoteRoot: parent.activeProjectLocation.remoteRoot,
+                canonicalRoot: parent.activeProjectLocation.canonicalRoot
+              }
+            : undefined
+      })
+      upsertWorkspaceTab(tab)
+      onSelectWorkspaceTab(tab)
+    },
+    [onSelectWorkspaceTab, upsertWorkspaceTab, getActiveRemoteProject]
+  )
+
+  const onOpenSubagentPath = useCallback(
+    (path: string, kind: LocalPathKind): void => {
+      if (activeWorkspaceTab?.kind !== 'subagent') return
+      const tab = activeWorkspaceTab
+      const open = async (): Promise<void> => {
+        // Path routing uses the active workspace; restore the owning context first.
+        const current = useSessionStore.getState()
+        if (tab.parentSessionPath && tab.parentSessionPath !== current.activeSessionPath) {
+          await onSelectSession(tab.parentSessionPath)
+          if (useSessionStore.getState().activeSessionPath !== tab.parentSessionPath) return
+        } else if (!tab.parentSessionPath && current.activeCwd !== tab.cwd) {
+          return
+        }
+        onOpenLocalPath(path, kind)
+      }
+      void open().catch((error: unknown) => showSnackbarError(error, appCopy.readChatFailed))
+    },
+    [activeWorkspaceTab, onSelectSession, onOpenLocalPath, showSnackbarError]
+  )
 
   const onSetSkillDisabled = useCallback(
     async (skill: SkillSummary, disabled: boolean): Promise<void> => {
@@ -3576,6 +3641,7 @@ function App(): React.JSX.Element {
         >
           <ChatView
             messages={messages}
+            onOpenAgentSession={onOpenAgentSession}
             legacyRemoteSession={activeLegacyRemoteSession}
             onCreateSessionInProject={
               activeProject ? () => void onStartProjectChat(activeProject) : undefined
@@ -3947,15 +4013,31 @@ function App(): React.JSX.Element {
     : null
 
   const activeWorkspaceTabContent =
-    activeWorkspaceTab?.kind === 'session'
-      ? chatWorkspaceContent
-      : isWorkspaceFileWorkspaceTab(activeWorkspaceTab)
-        ? activeWorkspaceFileTabContent
-        : activeWorkspaceResourceTab
-          ? activeWorkspaceResourceContent
-          : activeView === 'chat'
-            ? emptyWorkspaceContent
-            : activeWorkspaceResourceContent
+    activeWorkspaceTab?.kind === 'subagent' ? (
+      <Suspense
+        fallback={
+          <Typography role="status" sx={{ p: 3 }}>
+            {appCopy.loadingChat}
+          </Typography>
+        }
+      >
+        <SubagentSessionTabPanel
+          key={activeWorkspaceTab.key}
+          tab={activeWorkspaceTab}
+          onOpenLocalPath={onOpenSubagentPath}
+        />
+      </Suspense>
+    ) : activeWorkspaceTab?.kind === 'session' ? (
+      chatWorkspaceContent
+    ) : isWorkspaceFileWorkspaceTab(activeWorkspaceTab) ? (
+      activeWorkspaceFileTabContent
+    ) : activeWorkspaceResourceTab ? (
+      activeWorkspaceResourceContent
+    ) : activeView === 'chat' ? (
+      emptyWorkspaceContent
+    ) : (
+      activeWorkspaceResourceContent
+    )
 
   const onWorkspaceSidebarPreviewNavigate = useCallback((): void => {
     const dismiss =

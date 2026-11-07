@@ -56,6 +56,7 @@ import {
   suggestedNextActionToAccept
 } from '../../lib/suggestedNextAction'
 import type {
+  AgentExecutionItem,
   AgentUserInteractionRequest,
   AgentUserInteractionResponse,
   ChatItem,
@@ -85,6 +86,8 @@ type ViewProps = {
   scrollResetKey?: string
   scrollPositionStore?: Map<string, number>
   canSend: boolean
+  inputDisabled?: boolean
+  showStopControl?: boolean
   canQueue?: boolean
   isGenerating: boolean
   currentRunStartedAt?: string
@@ -119,6 +122,7 @@ type ViewProps = {
   onAcknowledgeActiveSession?: () => void
   onGoSettings: () => void
   onOpenBackgroundJobs: () => void
+  onOpenAgentSession?: (item: AgentExecutionItem) => void
   sessionMode: SessionMode
   onSelectSessionMode: (mode: SessionMode) => void
   disableSessionModeSelect?: boolean
@@ -158,6 +162,8 @@ function ChatView({
   scrollResetKey,
   scrollPositionStore,
   canSend,
+  inputDisabled = false,
+  showStopControl,
   canQueue = false,
   isGenerating,
   currentRunStartedAt,
@@ -187,6 +193,7 @@ function ChatView({
   onAcknowledgeActiveSession,
   onGoSettings,
   onOpenBackgroundJobs,
+  onOpenAgentSession,
   sessionMode,
   onSelectSessionMode,
   disableSessionModeSelect = false,
@@ -471,6 +478,7 @@ function ChatView({
               currentRunStartedAt={currentRunStartedAt}
               onGoSettings={onGoSettings}
               onOpenBackgroundJobs={onOpenBackgroundJobs}
+              onOpenAgentSession={onOpenAgentSession}
               onOpenLocalPath={onOpenLocalPath}
               onOpenWebUrl={onOpenWebUrl}
               onJumpToNotebookCell={onJumpToNotebookCell}
@@ -603,13 +611,14 @@ function ChatView({
               placeholder={inputPlaceholder}
               placeholderKind={suggestedNextAction ? 'suggested-next-action' : 'default'}
               ariaLabel={chatCopy.messageInput}
+              editorDisabled={inputDisabled}
               compact={compactComposerControls}
               dragActive={composerDragActive}
               fileDropTarget
               sendDisabled={
                 !canSend || (!input.trim() && images.length === 0) || isReadingPastedImage
               }
-              showStop={isGenerating || contextCompacting}
+              showStop={showStopControl ?? (isGenerating || contextCompacting)}
               onStop={() => {
                 void onStopGeneration()
               }}

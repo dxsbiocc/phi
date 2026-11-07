@@ -20,6 +20,7 @@ import {
   pendingUserInteractionsBySession,
   removePendingApproval,
   sessionAgentEventStates,
+  subscribeSessionEvents,
   sessionRuntimeStates,
   sessionStateKey,
   sessionStateKeyFromToolApproval
@@ -411,4 +412,56 @@ test('a delayed session notification cannot navigate away from the selected conv
   } as CurrentSession)
   assert.equal(h.appliedSession(), null)
   assert.deepEqual(h.writes, [])
+})
+
+test('child-run tabs receive live background progress only from their owning session', () => {
+  const h = harness()
+  const backgroundKey = sessionStateKey({
+    phiSessionId: 'phi-b',
+    path: '/b.jsonl',
+    cwd: '/b',
+    sessionGeneration: 4
+  })
+  let notifications = 0
+  const stopListening = subscribeSessionEvents(backgroundKey, () => {
+    notifications += 1
+  })
+  const event = (data: Partial<AgentEventSummary>): AgentEventSummary => ({
+    type: 'agent_execution_started',
+    phiSessionId: 'phi-b',
+    sessionPath: '/b.jsonl',
+    cwd: '/b',
+    sessionGeneration: 4,
+    toolCallId: 'child-call',
+    agentName: 'Reviewer',
+    ...data
+  })
+  try {
+    handleAgentEvent(h.deps, event({ task: 'Inspect files', args: { task: 'Inspect files' } }))
+    handleAgentEvent(
+      h.deps,
+      event({
+        type: 'agent_execution_step',
+        step: { id: 'read-1', toolName: 'read', status: 'running', args: { path: 'file.txt' } }
+      })
+    )
+    handleAgentEvent(
+      h.deps,
+      event({ type: 'agent_execution_completed', status: 'done', finalReport: 'Verified' })
+    )
+    assert.equal(notifications, 3)
+    const item = sessionAgentEventStates.get(backgroundKey)?.messages[0]
+    assert.equal(item?.role, 'agent_execution')
+    if (item?.role !== 'agent_execution') assert.fail('expected a child run')
+    assert.equal(item.status, 'done')
+    assert.equal(item.steps.length, 1)
+    assert.equal(item.finalReport, 'Verified')
+    assert.equal(h.state.agentEventState.messages.length, 0, 'parent selection is unchanged')
+    handleAgentEvent(h.deps, runStarted())
+    assert.equal(notifications, 3, 'unrelated session events do not notify this tab')
+  } finally {
+    stopListening()
+  }
+  handleAgentEvent(h.deps, event({ type: 'agent_execution_steered', text: 'extra' }))
+  assert.equal(notifications, 3, 'closing the view unsubscribes without stopping the run')
 })

@@ -214,11 +214,15 @@ test('workspace sessions and resources share the same tab strip', () => {
   assert.match(appSource, /activeWorkspaceFileTabContent/)
   assert.match(
     appSource,
-    /activeWorkspaceTab\?\.kind === 'session'[\s\S]{0,100}\? chatWorkspaceContent[\s\S]{0,150}\? activeWorkspaceFileTabContent[\s\S]{0,150}\? activeWorkspaceResourceContent/
+    /activeWorkspaceTab\?\.kind === 'subagent'[\s\S]{0,350}<SubagentSessionTabPanel/
+  )
+  assert.match(
+    appSource,
+    /activeWorkspaceTab\?\.kind === 'session'[\s\S]{0,100}\?\s*\(?\s*chatWorkspaceContent[\s\S]{0,150}\?\s*\(?\s*activeWorkspaceFileTabContent[\s\S]{0,150}\?\s*\(?\s*activeWorkspaceResourceContent/
   )
   assert.match(
     tabTypesSource,
-    /export type WorkspaceTab = WorkspaceSessionTab \| WorkspaceResourceTab/
+    /export type WorkspaceTab =\s*\|?\s*WorkspaceSessionTab\s*\| WorkspaceResourceTab/
   )
   assert.match(tabTypesSource, /WorkspaceFileWorkspaceTab/)
   assert.match(tabSource, /session: PhiIcons\.nav\.chat/)

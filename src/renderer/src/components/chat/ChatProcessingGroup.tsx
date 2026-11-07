@@ -21,7 +21,7 @@ import {
   processingStatusText,
   type ProcessingItem
 } from '../../lib/chatRenderGroups'
-import type { NotebookCellJumpTarget } from '../../types'
+import type { AgentExecutionItem, NotebookCellJumpTarget } from '../../types'
 import { ChatBubble } from './ChatBubble'
 import { TimelineRail } from './TimelineRail'
 import {
@@ -50,6 +50,7 @@ export type ChatProcessingGroupProps = {
   focusRequest?: ChatFocusRequest | null
   onGoSettings: () => void
   onOpenBackgroundJobs: () => void
+  onOpenAgentSession?: (item: AgentExecutionItem) => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onOpenWebUrl?: (url: string) => void
   onJumpToNotebookCell?: (target: NotebookCellJumpTarget) => void
@@ -78,6 +79,7 @@ function processingGroupPropsEqual(
     sameItemsByReference(prev.items, next.items) &&
     prev.focusRequest === next.focusRequest &&
     prev.onOpenBackgroundJobs === next.onOpenBackgroundJobs &&
+    prev.onOpenAgentSession === next.onOpenAgentSession &&
     prev.onOpenLocalPath === next.onOpenLocalPath &&
     prev.onOpenWebUrl === next.onOpenWebUrl &&
     prev.cwd === next.cwd &&
@@ -95,6 +97,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   focusRequest = null,
   onGoSettings,
   onOpenBackgroundJobs,
+  onOpenAgentSession,
   onOpenLocalPath,
   onOpenWebUrl,
   onJumpToNotebookCell,
@@ -233,6 +236,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
                     items={group.items}
                     onGoSettings={onGoSettings}
                     onOpenBackgroundJobs={onOpenBackgroundJobs}
+                    onOpenAgentSession={onOpenAgentSession}
                     onOpenLocalPath={onOpenLocalPath}
                     onOpenWebUrl={onOpenWebUrl}
                     onJumpToNotebookCell={onJumpToNotebookCell}
@@ -262,9 +266,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
                   <AgentExecutionCard
                     key={group.key}
                     item={group.item}
-                    cwd={cwd}
-                    onOpenLocalPath={onOpenLocalPath}
-                    onContentResize={onContentResize}
+                    onOpen={(item) => onOpenAgentSession?.(item)}
                   />
                 )
               }

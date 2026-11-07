@@ -284,6 +284,8 @@ export const chatChinese: LocalizedCopy<typeof chatEnglish> = {
   fullReportSaved: '完整报告已保存',
   collapseAgentExecution: '折叠 Agent 执行',
   expandAgentExecution: '展开 Agent 执行',
+  openAgentSession: (name: string) => `打开 ${name} 的会话`,
+  temporaryAgentSession: 'Agent 临时会话',
   delegatedTo: '委派给',
   duration: '· 耗时',
   steps: '· 步骤',

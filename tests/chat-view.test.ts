@@ -2200,16 +2200,16 @@ test('manual context compaction offers the existing stop control while no chat r
   assert.doesNotMatch(markup, /data-phi-composer-action="send"/)
 })
 
-test('agent execution details scroll instead of flattening every child step into the chat flow', () => {
-  const source = readFileSync('src/renderer/src/components/AgentExecutionCard.tsx', 'utf8')
-
-  assert.match(source, /data-phi-agent-execution-scroll="true"/)
-  assert.match(source, /maxHeight: AGENT_EXECUTION_DETAIL_MAX_HEIGHT/)
-  assert.match(source, /overflowY: 'auto'/)
-  assert.match(source, /aria-label=\{chatCopy.collapseAgentExecution\}[\s\S]*<ExpandLessIcon/)
+test('subagent execution details live in the temporary conversation, not in the parent card', () => {
+  const source = readFileSync(
+    'src/renderer/src/features/chat/components/AgentExecutionCard.tsx',
+    'utf8'
+  )
+  assert.doesNotMatch(source, /<Collapse|AgentStepRow|item\.argsJson|item\.finalReport|item\.task/)
+  assert.match(source, /onClick=\{\(\) => onOpen\(item\)\}/)
 })
 
-test('subagent rows show one leading icon and keep the fold chevron on the right', () => {
+test('subagent rows show one leading icon and a conversation navigation chevron', () => {
   const base: AgentExecutionItem = {
     id: 'agent-1',
     role: 'agent_execution',
@@ -2226,7 +2226,10 @@ test('subagent rows show one leading icon and keep the fold chevron on the right
       createElement(
         ThemeProvider,
         { theme: createTheme() },
-        createElement(AgentExecutionCard, { item: { ...base, ...overrides } })
+        createElement(AgentExecutionCard, {
+          item: { ...base, ...overrides },
+          onOpen: () => undefined
+        })
       )
     )
 
@@ -2236,6 +2239,8 @@ test('subagent rows show one leading icon and keep the fold chevron on the right
   const cancelled = renderAgent({ status: 'done', cancelled: true })
 
   assert.match(done, /data-phi-agent-leading-icon="type"/)
+  assert.doesNotMatch(done, /Revise the boxplot|aria-expanded/)
+  assert.match(done, /打开 Visualization 的会话/)
   assert.doesNotMatch(done, /aria-label="完成"/)
   assert.ok(done.indexOf('委派给') < done.indexOf('data-phi-agent-chevron="true"'))
   assert.match(running, /data-phi-agent-leading-icon="status"/)

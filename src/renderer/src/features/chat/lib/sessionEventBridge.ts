@@ -17,6 +17,7 @@ import {
   pendingUserInteractionsBySession,
   removePendingApproval,
   sessionAgentEventStates,
+  cacheSessionAgentEventState,
   sessionRuntimeStates,
   sessionStateKeyFromAgentEvent,
   sessionStateKeyFromAgentUserInteraction,
@@ -153,7 +154,7 @@ export function handleAgentEvent(deps: SessionEventBridgeDeps, event: AgentEvent
       sessionAgentEventStates.get(eventStateKey) ??
       (belongsToActiveSession ? state.agentEventState : createAgentEventReducerState())
     const nextState = reduceAgentEventState(baseState, event)
-    sessionAgentEventStates.set(eventStateKey, nextState)
+    cacheSessionAgentEventState(eventStateKey, nextState)
     if (belongsToActiveSession) {
       deps.store.setState({
         activeAgentEventStateKey: eventStateKey,

@@ -1,3 +1,5 @@
+import type { RemoteProjectFileContextValue } from './remoteProjectFileContext'
+import type { AgentExecutionItem } from './agentExecutionTypes'
 import { navigationCopy } from './navigationCopy'
 import type { WorkspaceSidebarMode } from './workspaceSidebar'
 import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
@@ -5,7 +7,7 @@ import { resourceUi } from './resourceUi'
 
 export type WorkspaceResourceKind = 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
 export type WorkspaceFileTabKind = 'file' | 'directory' | 'notebook'
-export type WorkspaceTabKind = 'session' | WorkspaceResourceKind | WorkspaceFileTabKind
+export type WorkspaceTabKind = 'session' | 'subagent' | WorkspaceResourceKind | WorkspaceFileTabKind
 
 export type WorkspaceSessionTab = {
   key: string
@@ -44,7 +46,26 @@ export type WorkspaceFileWorkspaceTab = {
   dirty?: boolean
 }
 
-export type WorkspaceTab = WorkspaceSessionTab | WorkspaceResourceTab | WorkspaceFileWorkspaceTab
+/** An in-memory view of a child run; never a persisted Phi session. */
+export type WorkspaceSubagentTab = {
+  key: string
+  kind: 'subagent'
+  itemId: string
+  title: string
+  subtitle?: string
+  remoteFiles?: Omit<RemoteProjectFileContextValue, 'openPath'>
+  parentStateKey: string
+  parentSessionPath: string | null
+  cwd: string
+  initialItem: AgentExecutionItem
+}
+
+export type WorkspaceTab =
+  WorkspaceSessionTab | WorkspaceResourceTab | WorkspaceFileWorkspaceTab | WorkspaceSubagentTab
+
+export function workspaceSubagentTabKey(parentStateKey: string, itemId: string): string {
+  return `subagent:${JSON.stringify([parentStateKey, itemId])}`
+}
 
 export function isWorkspaceFileWorkspaceTab(
   tab: WorkspaceTab | null | undefined
@@ -71,6 +92,9 @@ const resourceLabels: Record<WorkspaceResourceKind, string> = {
 }
 
 const tabLabels: Record<WorkspaceTabKind, string> = {
+  get subagent() {
+    return navigationCopy.conversation
+  },
   get session() {
     return navigationCopy.conversation
   },

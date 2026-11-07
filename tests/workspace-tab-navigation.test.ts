@@ -347,3 +347,36 @@ test('docking an inactive conversation keeps the selected file and opens its com
   dock({ key: 'session:/old' })
   assert.deepEqual(state, { file: '/project/notes.ipynb', docks: 1, previewCloses: 1 })
 })
+
+test('temporary child-run tabs navigate without switching or acknowledging a real session', () => {
+  const tab: WorkspaceTab = {
+    key: 'subagent:parent:call',
+    kind: 'subagent',
+    itemId: 'call',
+    title: 'Reviewer',
+    parentStateKey: 'parent',
+    parentSessionPath: '/parent.jsonl',
+    cwd: '/project',
+    initialItem: {
+      id: 'call',
+      role: 'agent_execution',
+      agentName: 'Reviewer',
+      task: 'Check',
+      argsJson: '{}',
+      argsPreview: '',
+      status: 'running',
+      steps: []
+    }
+  }
+  const { actions, state } = harness({ visibleTabs: [tab], activeKey: tab.key })
+  actions.selectTabFromChrome(tab)
+  assert.equal(state.key, tab.key)
+  assert.equal(state.view, 'chat')
+  assert.equal(state.selectedSession, null)
+  assert.equal(state.acknowledged, 0)
+  assert.equal(state.sessionOpened, null)
+  actions.closeTab(tab)
+  assert.deepEqual(state.storedTabs, [])
+  assert.equal(state.key, null)
+  assert.deepEqual(state.closedKeys, [])
+})
