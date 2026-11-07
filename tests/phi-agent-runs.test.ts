@@ -134,7 +134,7 @@ test('host-origin prose is partial while tool-origin prose stays completed', asy
   const host = await launch(registry, prose, { origin: 'host', background: true }).done
   const tool = await launch(registry, prose).done
   assert.equal(host.reportStatus, 'partial')
-  assert.match(host.report ?? '', /not treated as meeting its acceptance criteria/)
+  assert.equal(host.report, 'The glob result does not meet the listing criterion.')
   assert.equal(tool.reportStatus, 'completed')
 })
 
