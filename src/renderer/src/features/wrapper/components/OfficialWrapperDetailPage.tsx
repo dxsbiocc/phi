@@ -8,6 +8,7 @@ import {
 } from '../lib/officialWrapperCatalog'
 import { wrapperChoiceIcon, type WrapperCatalogChoice } from '../lib/wrapperCatalog'
 import { wrapperCopy } from '../lib/wrapperCopy'
+import { parseWrapperCompositionId, wrapperTierLabel } from '../lib/wrapperView'
 import { WrapperDetailBody } from './WrapperDetailBody'
 
 export function OfficialWrapperDetailPage({
@@ -24,6 +25,10 @@ export function OfficialWrapperDetailPage({
   useUiLanguage()
   const manifest = officialWrapperDetailManifest(detail)
   const graph = officialWrapperDetailGraph(detail)
+  // The identity block already shows the tier (Module, Subworkflow…); repeat the website
+  // category only when it says something different.
+  const tierLabel = wrapperTierLabel(parseWrapperCompositionId(manifest.id).tier)
+  const showCategory = Boolean(detail.categoryLabel) && detail.categoryLabel !== tierLabel
   return (
     <CatalogDetailFrame
       entryId={detail.id}
@@ -43,7 +48,9 @@ export function OfficialWrapperDetailPage({
             moduleDetails={undefined}
             extraChips={
               <>
-                <Chip size="small" variant="outlined" label={detail.categoryLabel} />
+                {showCategory ? (
+                  <Chip size="small" variant="outlined" label={detail.categoryLabel} />
+                ) : null}
                 <Chip size="small" variant="outlined" label={`v${detail.version}`} />
                 <Chip size="small" variant="outlined" label={detail.source} />
               </>

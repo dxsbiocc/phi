@@ -285,6 +285,20 @@ test('group tools and selected detail render website metadata through existing W
   assert.match(detailMarkup, />Outputs</)
 })
 
+test('the wrapper detail shows the module tier once when the website category matches it', () => {
+  setUiLanguage('zh-CN')
+  const choice = officialWrapperToolChoices([tool()], [registryChoice()])
+  const markup = themed(
+    createElement(OfficialWrapperDetailPage, {
+      detail: detail(),
+      choice: choice[0]!.choice,
+      action: createElement('span', null, 'Install'),
+      onBack: () => undefined
+    })
+  )
+  assert.equal(markup.match(/>模块</g)?.length, 1)
+})
+
 test('new Chinese Wrapper catalog copy includes the required group and tool wording', () => {
   setUiLanguage('zh-CN')
   const groupsMarkup = themed(
