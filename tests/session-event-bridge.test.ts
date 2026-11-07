@@ -447,7 +447,7 @@ test('child-run tabs receive live background progress only from their owning ses
     )
     handleAgentEvent(
       h.deps,
-      event({ type: 'agent_execution_completed', status: 'done', finalReport: 'Verified' })
+      event({ type: 'agent_execution_completed', finalReport: 'Verified' })
     )
     assert.equal(notifications, 3)
     const item = sessionAgentEventStates.get(backgroundKey)?.messages[0]
