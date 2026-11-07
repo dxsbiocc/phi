@@ -812,6 +812,21 @@ export function createRpcTaskAdmissionExtension(options: RpcTaskAdmissionOptions
     cancelHostChild: (request, ctx) => hostDispatch.cancel(request, ctx),
     extension: (pi) => {
       api = pi
+      const instruction =
+        'Phi delegation policy: use native task only with an explicit agent from ' +
+        JSON.stringify(options.config.profiles.map((profile) => profile.definition.nativeName)) +
+        '. Each agent uses its immutable declared tools, skills, managed environment, model and foreground/background mode. At most four experts may execute at once, including previously accepted background jobs; wait or stop one before requesting more. ' +
+        'The default task agent and other bundled agents are unavailable. Do not request background, models, tools, effort, isolation, schemas or nested agents in task arguments.'
+      pi.on('before_agent_start', (_event, ctx) =>
+        ctx.agent.kind === 'main'
+          ? {
+              systemPrompt: [
+                ...ctx.getSystemPrompt().filter((part) => part !== instruction),
+                instruction
+              ]
+            }
+          : undefined
+      )
       pi.on('session_start', (_event, ctx) => {
         if (ctx.agent.kind === 'main') install(ctx)
       })

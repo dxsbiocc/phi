@@ -26,7 +26,6 @@ import {
   cfgCompactionThresholdTokens
 } from '@oh-my-pi/pi-coding-agent/session/context-settings'
 import { cfgRetryFallbackChains } from '@oh-my-pi/pi-coding-agent/session/settings'
-import { cfgTaskMaxRecursionDepth } from '@oh-my-pi/pi-coding-agent/task/settings'
 import { isRegisteredSearchEngine } from '@oh-my-pi/pi-coding-agent/web/search/provider'
 import {
   cfgSearxngBasicPassword,
@@ -35,7 +34,11 @@ import {
   cfgSearxngEngines,
   cfgSearxngToken
 } from '@oh-my-pi/pi-coding-agent/web/settings'
-import { DEFAULT_COMPACTION_METHOD_ORDER, resolveCompactionMethodOrder } from '../omp-internals'
+import {
+  DEFAULT_COMPACTION_METHOD_ORDER,
+  disableNativeTaskTool as disableOmpNativeTaskTool,
+  resolveCompactionMethodOrder
+} from '../omp-internals'
 import { SEARCH_PROVIDER_CHOICES } from '../omp-web-search'
 
 import type { PhiCompactionSettings, PhiSettings, PhiWebSearchProvider } from '../types'
@@ -249,7 +252,7 @@ export async function refreshForeignHomeSkillsPolicy(agentDir: string): Promise<
 
 /** Phi owns all model-initiated delegation, so the main local session cannot spawn OMP tasks. */
 export function disableNativeTaskTool(settings: Settings): void {
-  cfgTaskMaxRecursionDepth.override(settings, 0)
+  disableOmpNativeTaskTool(settings)
 }
 
 export function applyAutoCompactionOverrides(

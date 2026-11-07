@@ -467,11 +467,14 @@ const rpcExtension: ExtensionFactory = async (pi) => {
       },
       capability: runtime.execution.capability,
       roster: runtime.execution.tools,
-      allowNativeTask: false,
+      allowNativeTask: childConfig !== undefined,
+      admitTask: taskAdmission?.preflight,
       childPreflight
     })
     planReadiness = execution.readiness
-    const roster = executionRoster(runtime.execution.tools)
+    const roster = executionRoster(runtime.execution.tools, {
+      allowNativeTask: childConfig !== undefined
+    })
     const hostNames = new Set(
       roster.tools.filter((tool) => tool.site === 'host').map((tool) => tool.name)
     )

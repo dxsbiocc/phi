@@ -28,7 +28,7 @@ uses a stable application-owned fallback rather than modifying the definition.
 
 Field names follow omp where omp has the field, and camelCase everywhere
 (runtime foundation §10). Phi owns model-visible delegation; OMP's native `task`
-tool is not advertised to the main agent.
+tool is not advertised to the main agent. The only exception is the opt-in remote foreground-child path (`PHI_REMOTE_OMP_AGENTS`), which still hands the remote main model `task` for its compiled Phi agents; it is off by default.
 
 ### 2.1 Fields shared with omp
 

@@ -305,7 +305,7 @@ test('foreground child opt-in writes explicit backend and per-compiled-name poli
   t.after(fixture.cleanup)
   const name = `phi_${'a'.repeat(24)}_0_fg`
   const names = [name]
-  const nativeTools: Array<'read' | 'bash'> = ['read']
+  const nativeTools: Array<'read' | 'task' | 'bash'> = ['read', 'task']
   const transfer = fixture.host.transfer!
   const upload = transfer.uploadFile.bind(transfer)
   transfer.uploadFile = async (source, destination, options) => {
@@ -354,20 +354,20 @@ test('foreground native name preparation is strict and paired, while disabled po
   t.after(fixture.cleanup)
   const name = `phi_${'a'.repeat(24)}_0_fg`
   const invalid = [
-    { nativeTools: ['read'], childRuntimeRequired: true },
-    { nativeTools: ['read'], childRuntimeRequired: true, foregroundChildNativeNames: [] },
+    { nativeTools: ['read', 'task'], childRuntimeRequired: true },
+    { nativeTools: ['read', 'task'], childRuntimeRequired: true, foregroundChildNativeNames: [] },
     {
-      nativeTools: ['read'],
+      nativeTools: ['read', 'task'],
       childRuntimeRequired: true,
       foregroundChildNativeNames: [name, name]
     },
     {
-      nativeTools: ['read'],
+      nativeTools: ['read', 'task'],
       childRuntimeRequired: true,
       foregroundChildNativeNames: ['remote-markdown-name']
     },
     {
-      nativeTools: ['read'],
+      nativeTools: ['read', 'task'],
       childRuntimeRequired: true,
       foregroundChildNativeNames: Array.from(
         { length: 33 },

@@ -30,6 +30,7 @@ import {
   DEFAULT_COMPACTION_METHOD_ORDER as OMP_DEFAULT_COMPACTION_METHOD_ORDER,
   resolveCompactionMethodOrder as ompResolveCompactionMethodOrder
 } from '@oh-my-pi/pi-coding-agent/session/compaction-methods'
+import { cfgTaskMaxRecursionDepth as ompTaskMaxRecursionDepth } from '@oh-my-pi/pi-coding-agent/task/settings'
 import { getAgentDbPath as ompGetAgentDbPath, logger as ompLogger } from '@oh-my-pi/pi-utils'
 
 import type { PhiCompactionMethod } from './types'
@@ -170,6 +171,11 @@ export const DEFAULT_COMPACTION_METHOD_ORDER: readonly PhiCompactionMethod[] =
 
 export function resolveCompactionMethodOrder(value: unknown): PhiCompactionMethod[] {
   return ompResolveCompactionMethodOrder(value)
+}
+
+/** OMP offers its native task tool only above recursion depth 0; Phi runs every subagent itself. */
+export function disableNativeTaskTool(settings: OmpSettings): void {
+  ompTaskMaxRecursionDepth.override(settings, 0)
 }
 
 export interface PhiModel {

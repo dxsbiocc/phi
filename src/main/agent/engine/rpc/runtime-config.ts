@@ -25,7 +25,11 @@ export async function publishRpcRuntimeConfig(options: {
   storage.lease.assertActive()
   if (config.childRuntimeRequired !== undefined && typeof config.childRuntimeRequired !== 'boolean')
     throw new Error('Invalid child runtime intent')
-  executionRoster(config.execution.tools)
+  const roster = executionRoster(config.execution.tools, {
+    allowNativeTask: config.childRuntimeRequired === true
+  })
+  if (roster.tools.some((tool) => tool.name === 'task') !== (config.childRuntimeRequired === true))
+    throw new Error('Native task requires matching private child runtime intent')
   if (
     config.nonce !== context.bootstrap.nonce ||
     config.phiSessionId !== context.params.sessionId ||
