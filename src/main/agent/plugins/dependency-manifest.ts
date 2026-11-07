@@ -63,24 +63,23 @@ function displayPath(path: string, pluginDir: string, environmentsDir: string): 
   return basename(path)
 }
 
-function environmentDirectoryName(ref: string): string {
+/** Only Phi's own shared runtimes live in the bundled environments directory. */
+function bundledEnvironmentDirectoryName(ref: string): string | undefined {
   const parsed = parseEnvironmentRef(ref)
-  if (parsed.kind === 'phi') return `phi-${parsed.name.replace(/_/g, '-')}`
-  if (parsed.kind === 'plugin' || parsed.kind === 'project') return parsed.name.replace(/_/g, '-')
-  return 'phi-r'
+  return parsed.kind === 'phi' ? `phi-${parsed.name.replace(/_/g, '-')}` : undefined
 }
 
 function candidates(input: PhiPluginDependencyManifestInput): string[] {
   const paths = ROOT_MANIFESTS.map((name) => resolve(input.pluginDir, name))
   if (input.explicitManifest) paths.unshift(resolve(input.explicitManifest))
-  const environmentDir = resolve(
-    input.bundledEnvironmentsDir,
-    environmentDirectoryName(input.environmentRef)
-  )
-  paths.push(
-    resolve(environmentDir, 'environment.yml'),
-    resolve(environmentDir, 'environment.yaml')
-  )
+  const bundledName = bundledEnvironmentDirectoryName(input.environmentRef)
+  if (bundledName) {
+    const environmentDir = resolve(input.bundledEnvironmentsDir, bundledName)
+    paths.push(
+      resolve(environmentDir, 'environment.yml'),
+      resolve(environmentDir, 'environment.yaml')
+    )
+  }
   return [...new Set(paths)]
 }
 

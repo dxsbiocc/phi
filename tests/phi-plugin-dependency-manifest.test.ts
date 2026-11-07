@@ -156,6 +156,17 @@ test('explicit declarations precede package-root manifests and shared runtime co
   )
 })
 
+test('a skill-local environment never borrows a bundled runtime manifest', () => {
+  const state = fixture()
+  mkdirSync(join(state.environments, 'phi-r'), { recursive: true })
+  writeFileSync(join(state.environments, 'phi-r', 'environment.yml'), 'dependencies:\n  - r-base\n')
+
+  const manifest = read(state, './environment.yml').dependencyManifest
+  assert.deepEqual(manifest.dependencies, [])
+  assert.equal(manifest.sourceFile, undefined)
+  assert.ok(manifest.lookedFor.every((path) => !path.includes('phi-r')))
+})
+
 test('manifest fields distinguish package, shared-runtime, empty-manifest and missing states', () => {
   const packages = fixture()
   writeFileSync(join(packages.plugin, 'environment.yml'), 'dependencies:\n  - python\n')
