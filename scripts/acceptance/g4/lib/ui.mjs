@@ -263,8 +263,16 @@ export class PhiUi {
       })()
     `)
     await dispatchSelectAllAndInsert(this.client, text)
+    // CodeMirror renders each line as its own .cm-line element, so textContent drops the
+    // newlines; rebuild the document text line by line before comparing.
     await this.client.waitForValue(
-      `(() => (document.querySelector(${q(SELECTORS.composerContent)})?.textContent || '').includes(${q(text)}))()`,
+      `(() => {
+        const editor = document.querySelector(${q(SELECTORS.composerContent)});
+        if (!editor) return false;
+        const lines = [...editor.querySelectorAll('.cm-line')].map((line) => line.textContent || '');
+        const value = lines.length ? lines.join('\\n') : editor.textContent || '';
+        return value.includes(${q(text.replace(/\r\n?/g, '\n'))});
+      })()`,
       { timeoutMs: 5_000, description: 'composer text insertion' }
     )
   }
