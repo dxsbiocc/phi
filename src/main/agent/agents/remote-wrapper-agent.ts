@@ -16,7 +16,7 @@ export function loadRemoteWrapperAgent(bundledAgentsDir: string): PhiAgentDefini
   return {
     ...definition,
     description:
-      'Remote-project Wrapper specialist: inspect and run installed wrappers on the project SSH server, and work with its files and commands.',
+      'Remote-project Wrapper specialist: find, inspect and run installed Nextflow wrappers on the project SSH server. Plain shell commands and file work on the server go to General.',
     tools: [
       'read',
       'glob',

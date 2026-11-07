@@ -63,6 +63,7 @@ import * as notebookExecutionMetadata from '../src/shared/notebookExecutionMetad
 import * as sessionTitle from '../src/shared/sessionTitle'
 import * as sessionMode from '../src/shared/sessionMode'
 import * as sessionTitleGeneration from '../src/main/agent/session/session-title-generation'
+import * as agentDisplayName from '../src/shared/agentDisplayName'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
 import * as phiPluginProblems from '../src/shared/phiPluginProblems'
 import * as sharedGuards from '../src/shared/guards'
@@ -1677,6 +1678,7 @@ async function harness(
     },
     './file-preview-media': { hoverMediaPreviewType, mediaPreviewType },
     '../shared/wrapperResultTypes': { declaredExternalOutputRoot },
+    '../shared/agentDisplayName': agentDisplayName,
     '../shared/htmlReportPreview': htmlReportPreview,
     '../shared/phiPluginProblems': phiPluginProblems,
     '../shared/projectMemoryTypes': projectMemoryTypes,
