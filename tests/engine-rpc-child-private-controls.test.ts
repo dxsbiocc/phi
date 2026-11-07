@@ -21,7 +21,18 @@ type AgentSession = Parameters<typeof acknowledgeOwnedRpcChildDelivery>[0]
 type ExtensionContext = Parameters<typeof acknowledgeOwnedRpcChildDelivery>[1]
 type ExtensionFactory = ReturnType<typeof createRpcChildControlExtension>
 
-function rootScope(scope: RpcChildScope) {
+function rootScope(
+  scope: RpcChildScope
+): Pick<
+  RpcChildScope,
+  | 'phiSessionId'
+  | 'projectId'
+  | 'cwd'
+  | 'generation'
+  | 'rootAgentId'
+  | 'rootOmpSessionId'
+  | 'rootSessionFile'
+> {
   return {
     phiSessionId: scope.phiSessionId,
     projectId: scope.projectId,
