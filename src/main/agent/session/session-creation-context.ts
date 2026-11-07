@@ -1,4 +1,3 @@
-import type { RuntimeRecoveryModelSelection } from '../../../shared/runtimeRecoveryTypes'
 import type { ProjectMemorySettings } from '../../../shared/projectMemoryTypes'
 import { resolve } from 'node:path'
 import type { RuntimeSelectionControl } from '../engine/types'
@@ -109,7 +108,6 @@ export interface SessionCreationContextInput extends SessionCreationOwnership {
   generation: number
   lifecycle: SessionCreationLifecycle
   control?: RuntimeSelectionControl
-  remoteRecovery?: { replacementModel?: RuntimeRecoveryModelSelection }
   dependencies: SessionCreationContextDependencies
 }
 
@@ -122,7 +120,6 @@ export class SessionCreationContext {
   readonly sessionManifest: PhiSessionManifest | null
   readonly project: Project | undefined
   readonly remoteProject: RemoteSessionProject | null
-  readonly remoteRecovery: { replacementModel?: RuntimeRecoveryModelSelection } | undefined
   private readonly dependencies: SessionCreationContextDependencies
   private readonly initialPromptGeneration: number
   private readonly initialRun: SessionCreationRun | undefined
@@ -139,7 +136,6 @@ export class SessionCreationContext {
     this.sessionManifest = input.sessionManifest
     this.project = input.project
     this.remoteProject = input.remoteProject
-    this.remoteRecovery = input.remoteRecovery
     this.dependencies = input.dependencies
     this.initialPromptGeneration = input.dependencies.getPromptGeneration(input.sessionKey)
     this.initialRun = input.dependencies.getActiveRun(input.sessionKey)

@@ -5,10 +5,6 @@ export interface PhiSessionTable<T> {
   delete(phiSessionId: string): boolean
 }
 
-export interface PhiSessionValuesTable<T> extends PhiSessionTable<T> {
-  values(): IterableIterator<T>
-}
-
 export interface PhiSessionSetTable {
   has(phiSessionId: string): boolean
   add(phiSessionId: string): void
@@ -26,13 +22,6 @@ function createPhiSessionTable<T>(values: Map<string, T>): PhiSessionTable<T> {
   }
 }
 
-function createPhiSessionValuesTable<T>(values: Map<string, T>): PhiSessionValuesTable<T> {
-  return {
-    ...createPhiSessionTable(values),
-    values: () => values.values()
-  }
-}
-
 function createPhiSessionSetTable(values: Set<string>): PhiSessionSetTable {
   return {
     has: (phiSessionId) => values.has(phiSessionId),
@@ -41,11 +30,6 @@ function createPhiSessionSetTable(values: Set<string>): PhiSessionSetTable {
     },
     delete: (phiSessionId) => values.delete(phiSessionId)
   }
-}
-
-interface RuntimeRecoveryOperation {
-  controller: AbortController
-  done: Promise<void>
 }
 
 interface ManualCompactionOperation {
@@ -58,13 +42,9 @@ export class PromptRunRegistry<TPromptRun = unknown> {
   private readonly promptQueues = new Map<string, Promise<void>>()
   private readonly promptGenerations = new Map<string, number>()
   private readonly activePromptRuns = new Map<string, TPromptRun>()
-  private readonly recoveryOperations = new Map<string, RuntimeRecoveryOperation>()
-  private readonly recoveryFailures = new Map<string, RuntimeRecoveryIssue>()
   private readonly compactionIds = new Set<string>()
   private readonly compactionOperations = new Map<string, ManualCompactionOperation>()
 
-  readonly runtimeRecoveryOperations = createPhiSessionValuesTable(this.recoveryOperations)
-  readonly runtimeRecoveryFailures = createPhiSessionTable(this.recoveryFailures)
   readonly manualCompactionIds = createPhiSessionSetTable(this.compactionIds)
   readonly manualCompactionOperations = createPhiSessionTable(this.compactionOperations)
 
@@ -120,5 +100,4 @@ export class PromptRunRegistry<TPromptRun = unknown> {
     return [...this.activePromptRuns.entries()]
   }
 }
-import type { RuntimeRecoveryIssue } from '../../shared/runtimeRecoveryTypes'
 import type { RuntimeAgentSession } from '../agent/runtime/runtime-adapter'

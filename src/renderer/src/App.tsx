@@ -45,11 +45,6 @@ import type { WrapperCompositionCatalogItem } from '../../shared/wrapperComposit
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
 import { modeFromFields } from '../../shared/sessionMode'
-import type {
-  RuntimeRecoveryState,
-  RuntimeRecoveryTarget,
-  RuntimeSummaryContinuation
-} from '../../shared/runtimeRecoveryTypes'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import { sidebarStateForFileOpenConversationLayout } from './features/chat/lib/fileOpenConversationLayout'
 import { titlebarTrailingToggleChromeReserve } from './components/app-shell/WorkspaceTitlebar'
@@ -82,13 +77,6 @@ import { restoreRemoteRunStopNotices } from './features/chat/lib/restoreRemoteRu
 import type { HomeProjectSelection } from './features/home/hooks/useHomePrompt'
 import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
-import { RuntimeRecoveryBanner } from './features/chat/components/RuntimeRecoveryBanner'
-import {
-  remoteModelControlsBlocked,
-  remoteRecoveryTargetForSession,
-  sameRuntimeRecoveryTarget,
-  shouldAutoConnectRemoteSession
-} from './features/chat/lib/runtimeRecoveryState'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
 import { BackgroundJobsPanel, LATEST_JUPYTER_JOB_KEY } from './features/jobs/BackgroundJobsPanel'
 import { jupyterProjectJobRequestKey } from './features/jobs/lib/requestedBackgroundJob'
@@ -400,7 +388,6 @@ function App(): React.JSX.Element {
   const isSendingRef = useRef(false)
   const currentSessionIsBusyRef = useRef(false)
   const sessionRequestRef = useRef(0)
-  const recoveryRefreshRef = useRef(0)
   const getModelSelectionSessionKey = useCallback(() => {
     if (!sessionTabWasOpened) return `new-session:${homeProjectSelection?.key ?? 0}`
     const state = useSessionStore.getState()
@@ -1834,7 +1821,6 @@ function App(): React.JSX.Element {
     compactingSessions,
     isCompactingKey,
     contextUsageRefreshKey,
-    refreshContextUsage,
     activeQueuedPrompts,
     queuePromptText,
     removeQueuedPrompt,
@@ -2488,83 +2474,6 @@ function App(): React.JSX.Element {
     },
     [onSelectSession, refreshSessions, rendererApi, showSnackbarError]
   )
-  const onRuntimeRecovered = useCallback(
-    async (state: RuntimeRecoveryState): Promise<void> => {
-      if (state.phase !== 'connected') return
-      const target = state.target
-      const current = useSessionStore.getState()
-      if (
-        current.activePhiSessionId !== target.sessionId ||
-        current.activeProjectId !== target.projectId ||
-        current.activeSessionPath !== target.sessionPath ||
-        current.activeSessionGeneration !== target.sessionGeneration
-      )
-        return
-      // A background refresh must not cancel a switch or a new conversation the user started,
-      // so it takes its own counter and gives way to any session request made meanwhile.
-      const request = sessionRequestRef.current
-      const refresh = ++recoveryRefreshRef.current
-      // Recovery already keeps this conversation selected. Read its updated local payload
-      // instead of switching it a second time and replaying sidebar/browser navigation.
-      const result = await rendererApi.getCurrentSession()
-      const latest = useSessionStore.getState()
-      if (
-        !result ||
-        request !== sessionRequestRef.current ||
-        refresh !== recoveryRefreshRef.current ||
-        result.path !== target.sessionPath ||
-        result.phiSessionId !== target.sessionId ||
-        result.projectId !== target.projectId ||
-        result.sessionGeneration !== target.sessionGeneration ||
-        latest.activePhiSessionId !== target.sessionId ||
-        latest.activeProjectId !== target.projectId ||
-        latest.activeSessionPath !== target.sessionPath ||
-        latest.activeSessionGeneration !== target.sessionGeneration
-      )
-        return
-      applyCurrentSession(result, undefined, {
-        onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
-      })
-      // A resume keeps the live timeline in memory. The persisted events for the interrupted
-      // turn stop at run_failed, so replacing the list would silently drop the assistant text
-      // and tool cards the user just watched. Only load from disk when nothing is loaded yet.
-      if (useSessionStore.getState().agentEventState.messages.length === 0) {
-        replaceMessages(chatItemsFromSessionMessages(result.messages ?? []))
-      } else {
-        const persistedMessages = chatItemsFromSessionMessages(result.messages ?? [])
-        updateMessages((cached) => restoreRemoteRunStopNotices(cached, persistedMessages))
-      }
-      refreshContextUsage()
-      void refreshCurrentModelControls(request)
-      void refreshSessions()
-    },
-    [
-      applyCurrentSession,
-      refreshContextUsage,
-      refreshCurrentModelControls,
-      refreshSessions,
-      rendererApi,
-      replaceMessages,
-      resetAnalysisJupyterRuntimeForCwdChange,
-      updateMessages
-    ]
-  )
-  const onRuntimeSummaryCreated = useCallback(
-    async (result: RuntimeSummaryContinuation): Promise<void> => {
-      const current = useSessionStore.getState()
-      if (
-        current.activePhiSessionId !== result.sourceSessionId &&
-        current.activePhiSessionId !== result.phiSessionId
-      ) {
-        void refreshSessions()
-        return
-      }
-      await onSelectSession(result.path)
-      await refreshSessions()
-      showSnackbar(appCopy.summaryChatCreated, 'info')
-    },
-    [onSelectSession, refreshSessions, showSnackbar]
-  )
   useQueuedPromptDrain({
     queue: { activeQueuedPrompts, dequeueQueuedPrompt },
     session: {
@@ -2758,48 +2667,12 @@ function App(): React.JSX.Element {
     },
     [filePreviewCache, filePreviewRequestRef, loadFilePreview, setFilePreview]
   )
-
-  const autoConnectingSessionIdsRef = useRef<Set<string>>(new Set())
-  const [autoConnectingSessionId, setAutoConnectingSessionId] = useState<string | null>(null)
   const onOpenSessionFromSidebar = useCallback(
     async (path: string): Promise<void> => {
       await onSelectSession(path)
       navigateToView('chat')
-      const target = remoteRecoveryTargetForSession(useSessionStore.getState())
-      if (!target || target.sessionPath !== path) return
-      if (autoConnectingSessionIdsRef.current.has(target.sessionId)) return
-      autoConnectingSessionIdsRef.current.add(target.sessionId)
-      let startedConnection = false
-      try {
-        const state = await rendererApi.getRuntimeRecoveryState(target)
-        if (
-          !state ||
-          !sameRuntimeRecoveryTarget(
-            remoteRecoveryTargetForSession(useSessionStore.getState()),
-            target
-          ) ||
-          !shouldAutoConnectRemoteSession(state)
-        )
-          return
-        startedConnection = true
-        setAutoConnectingSessionId(target.sessionId)
-        const recovered = await rendererApi.resumeRuntimeSession(target)
-        if (recovered) await onRuntimeRecovered(recovered)
-      } catch (error) {
-        if (
-          sameRuntimeRecoveryTarget(
-            remoteRecoveryTargetForSession(useSessionStore.getState()),
-            target
-          )
-        )
-          showSnackbarError(error, appCopy.reconnectFailed)
-      } finally {
-        autoConnectingSessionIdsRef.current.delete(target.sessionId)
-        if (startedConnection)
-          setAutoConnectingSessionId((current) => (current === target.sessionId ? null : current))
-      }
     },
-    [navigateToView, onRuntimeRecovered, onSelectSession, rendererApi, showSnackbarError]
+    [navigateToView, onSelectSession]
   )
 
   const [pendingNotebookTab, setPendingNotebookTab] = useState<{
@@ -3553,29 +3426,8 @@ function App(): React.JSX.Element {
       onOpenMcpServerTab
     ]
   )
-
-  const runtimeRecoveryTarget = useMemo<RuntimeRecoveryTarget | null>(
-    () =>
-      remoteRecoveryTargetForSession({
-        activeProjectLocation,
-        activePhiSessionId,
-        activeProjectId,
-        activeSessionPath,
-        activeSessionGeneration
-      }),
-    [
-      activeProjectLocation,
-      activePhiSessionId,
-      activeProjectId,
-      activeSessionPath,
-      activeSessionGeneration
-    ]
-  )
-  const [remoteRecoverySelectionState, setRemoteRecoverySelectionState] =
-    useState<RuntimeRecoveryState | null>(null)
   const remoteControlsUnavailable =
-    remoteModelControlsBlocked(runtimeRecoveryTarget, remoteRecoverySelectionState) ||
-    (activeProjectLocation?.kind === 'ssh' && currentSessionIsBusy)
+    activeProjectLocation?.kind === 'ssh' && currentSessionIsBusy
   const canRunChatBash =
     Boolean(activePhiSessionId && activeDisplayCwd) &&
     !isSessionChanging &&
@@ -3645,22 +3497,6 @@ function App(): React.JSX.Element {
             legacyRemoteSession={activeLegacyRemoteSession}
             onCreateSessionInProject={
               activeProject ? () => void onStartProjectChat(activeProject) : undefined
-            }
-            recoveryNotice={
-              <RuntimeRecoveryBanner
-                api={rendererApi}
-                target={runtimeRecoveryTarget}
-                connecting={autoConnectingSessionId === runtimeRecoveryTarget?.sessionId}
-                models={availableModels}
-                onRecovered={onRuntimeRecovered}
-                onStateChange={setRemoteRecoverySelectionState}
-                refreshKey={JSON.stringify([
-                  currentSessionIsBusy,
-                  activeSession?.status,
-                  activeSessionRuntimeState.currentRunStartedAt
-                ])}
-                onSummaryCreated={onRuntimeSummaryCreated}
-              />
             }
             input={input}
             images={inputImages}

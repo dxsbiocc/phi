@@ -52,7 +52,6 @@ import type {
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { SessionDeleteResult } from '../shared/sessionDeleteTypes'
-import type { RuntimeRecoveryApi } from '../shared/runtimeRecoveryTypes'
 import type {
   BackgroundAgentJob,
   BackgroundShellJob,
@@ -960,9 +959,6 @@ type RendererAuthApi = PreloadApiBase & {
     target: ManualCompactionTarget
   ) => Promise<CurrentSession>
   createSession: () => Promise<CurrentSession>
-  getRuntimeRecoveryState: RuntimeRecoveryApi['getRuntimeRecoveryState']
-  resumeRuntimeSession: RuntimeRecoveryApi['resumeRuntimeSession']
-  continueRuntimeFromSummary: RuntimeRecoveryApi['continueRuntimeFromSummary']
   forkSession: (
     sourceId: string,
     eventId: string
@@ -1659,11 +1655,6 @@ const api: RendererAuthApi = {
     target: ManualCompactionTarget
   ): Promise<CurrentSession> => ipcRenderer.invoke(IPC.sessions.updateMode, mode, target),
   createSession: (): Promise<CurrentSession> => ipcRenderer.invoke(IPC.sessions.create),
-  getRuntimeRecoveryState: (target) => ipcRenderer.invoke(IPC.sessions.runtimeRecovery, target),
-  resumeRuntimeSession: (target, replacementModel) =>
-    ipcRenderer.invoke(IPC.sessions.resumeRuntime, target, replacementModel),
-  continueRuntimeFromSummary: (target, sha256) =>
-    ipcRenderer.invoke(IPC.sessions.continueRuntimeSummary, target, sha256),
   forkSession: (
     sourceId: string,
     eventId: string

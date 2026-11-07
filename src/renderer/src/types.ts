@@ -71,7 +71,6 @@ export type { McpServerSummary } from './features/mcp/lib/mcpTypes'
 import type { AgentEventSummary } from './features/chat/lib/agentEventTypes'
 import type { SessionExportResult } from '../../shared/sessionExportTypes'
 import type { SessionDeleteResult } from '../../shared/sessionDeleteTypes'
-import type { RuntimeRecoveryApi } from '../../shared/runtimeRecoveryTypes'
 import type { HomeActivitySummary } from '../../shared/homeActivityTypes'
 import type { NotebookAiGenerationJob } from '../../shared/notebookAiJobTypes'
 export type {
@@ -504,7 +503,6 @@ export type LocalPathStat = {
 export interface RendererApi
   extends
     AutoCompactionApi,
-    RuntimeRecoveryApi,
     ManagedEnvironmentRendererApi,
     McpRendererApi,
     RemoteProjectUploadRendererApi,

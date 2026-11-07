@@ -53,9 +53,6 @@ export interface PromptRunAdmissionDeps<TResult> {
   }
   runs: {
     hasActiveRun(sessionKey: string): boolean
-    runtimeRecoveryOperations: {
-      has(phiSessionId: string): boolean
-    }
     manualCompactionIds: {
       has(phiSessionId: string): boolean
     }
@@ -107,8 +104,6 @@ function admitPromptRun<TResult>(
   const workMode =
     manifest?.workMode ??
     fieldsFromMode(modeFromFields({ permissionMode: target.runSnapshot.permissionMode })).workMode
-  if (deps.runs.runtimeRecoveryOperations.has(phiSessionId))
-    throw new Error('会话正在恢复，请等待恢复操作结束')
   if (deps.runs.manualCompactionIds.has(phiSessionId)) {
     throw new Error('上下文压缩正在进行，请稍后发送消息')
   }

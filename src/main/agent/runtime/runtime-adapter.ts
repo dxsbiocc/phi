@@ -309,7 +309,6 @@ export type CreateAgentSessionOptions = {
   environment?: { ref: string; pluginId?: string }
   /** Phi-managed user persona, injected explicitly into the main system prompt. */
   personaMarkdown?: string
-  remoteRecovery?: { replacementModel?: { providerId: string; modelId: string } }
 }
 
 function dedupePaths(paths: string[]): string[] {
@@ -1075,7 +1074,6 @@ export async function createRuntimeAgentSession(
     desktopMcp: options.desktopMcp,
     environment: options.environment,
     personaMarkdown: options.personaMarkdown,
-    remoteRecovery: options.remoteRecovery
   }
   control?.assertCurrent()
   control?.signal?.throwIfAborted()

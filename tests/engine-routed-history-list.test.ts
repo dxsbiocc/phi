@@ -75,7 +75,7 @@ test('an SSH manifest cannot create or resume a desktop in-process session', asy
       enableToolApproval: false
     }
 
-    await assert.rejects(engine.sessions.create(base), /远程会话.*history/)
+    await assert.rejects(engine.sessions.create(base), /kernel session route is unavailable/)
     await assert.rejects(
       engine.sessions.create({
         ...base,
@@ -87,7 +87,7 @@ test('an SSH manifest cannot create or resume a desktop in-process session', asy
           path: `phi-session:${session.sessionId}`
         }
       }),
-      /远程会话.*history/
+      /kernel session route is unavailable/
     )
     await assert.rejects(
       engine.history.open({
@@ -105,7 +105,7 @@ test('an SSH manifest cannot create or resume a desktop in-process session', asy
     const recoveryRequired = findPhiSessionById(session.sessionId)
     assert.equal(recoveryRequired?.runtimeRef, undefined)
     assert.ok(recoveryRequired?.runtimeRecoveryError)
-    assert.equal(isLegacyRemoteSession(recoveryRequired), false)
+    assert.equal(isLegacyRemoteSession(recoveryRequired), true)
     await assert.rejects(
       engine.sessions.create({
         ...base,
@@ -117,7 +117,7 @@ test('an SSH manifest cannot create or resume a desktop in-process session', asy
           path: `phi-session:${session.sessionId}`
         }
       }),
-      /远程会话.*history/
+      /kernel session route is unavailable/
     )
     assert.equal(legacyCalls, 0)
   })

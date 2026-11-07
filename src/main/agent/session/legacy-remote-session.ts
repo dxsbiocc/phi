@@ -9,17 +9,17 @@ type LegacyRemoteSessionManifest = Pick<
 >
 
 /**
- * Old SSH histories have no RPC reference or explicit pending-RPC marker.
- * A recovery diagnostic is different: manifest loading removed an invalid RPC reference, so the
- * session remains on the explicit RPC recovery/read-only path instead of becoming legacy-local.
+ * A fresh SSH draft carries the pending-RPC marker until the kernel records its own reference.
+ * Every other pre-kernel SSH manifest is history-only after K5-2, including RPC-era references
+ * and invalid-reference diagnostics.
  */
 export function isLegacyRemoteSession(manifest: LegacyRemoteSessionManifest | null): boolean {
   return Boolean(
     manifest?.projectLocation?.kind === 'ssh' &&
-    !manifest.runtimeRef &&
     !manifest.kernelRuntimeRef &&
-    !manifest.runtimeRecoveryError &&
-    manifest.remoteRuntime !== 'rpc'
+    (Boolean(manifest.runtimeRef) ||
+      Boolean(manifest.runtimeRecoveryError) ||
+      manifest.remoteRuntime !== 'rpc')
   )
 }
 

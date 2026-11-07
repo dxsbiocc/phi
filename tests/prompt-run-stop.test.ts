@@ -14,16 +14,9 @@ function createDeps(calls: string[]): {
   deps: PromptRunStopDeps<TestRun, TestSession>
   runs: TestRun[]
   entries: Array<[string, TestRun]>
-  recovery: { controller: AbortController; done: Promise<void> }
-  resolveRecovery: () => void
 } {
   const runs: TestRun[] = []
   const entries: Array<[string, TestRun]> = []
-  let recoveryResolve: () => void = () => undefined
-  const recoveryDone = new Promise<void>((resolve) => {
-    recoveryResolve = resolve
-  })
-  const recovery = { controller: new AbortController(), done: recoveryDone }
   const deps: PromptRunStopDeps<TestRun, TestSession> = {
     runs: {
       advanceGeneration: (key) => {
@@ -31,10 +24,7 @@ function createDeps(calls: string[]): {
         return 1
       },
       activeRuns: () => runs,
-      activeEntries: () => entries,
-      runtimeRecoveryOperations: {
-        values: () => [recovery].values()
-      }
+      activeEntries: () => entries
     },
     browser: {
       cancel: (run) => calls.push(`browser-cancel:${run.runId}`),
@@ -56,7 +46,7 @@ function createDeps(calls: string[]): {
       }
     }
   }
-  return { deps, runs, entries, recovery, resolveRecovery: recoveryResolve }
+  return { deps, runs, entries }
 }
 
 test('stopPromptRun invalidates, cancels every owner, and waits for cleanup and abort', async () => {
@@ -109,9 +99,9 @@ test('stopPromptRun can preserve the generation and skips abort without a sessio
   ])
 })
 
-test('stopAllPromptRuns aborts recoveries, every run, and returns both cleanup barriers', async () => {
+test('stopAllPromptRuns aborts every run and returns both cleanup barriers', async () => {
   const calls: string[] = []
-  const { deps, runs, entries, recovery, resolveRecovery } = createDeps(calls)
+  const { deps, runs, entries } = createDeps(calls)
   const first: TestRun = {
     sessionKey: 'first-key',
     phiSessionId: 'first-phi',
@@ -134,7 +124,6 @@ test('stopAllPromptRuns aborts recoveries, every run, and returns both cleanup b
 
   const shutdown = createPromptRunStop(deps).stopAllPromptRuns()
   await shutdown.browserCleanup
-  assert.equal(recovery.controller.signal.aborted, true)
   assert.equal(first.cancelled, true)
   assert.equal(second.cancelled, true)
   assert.deepEqual(calls, [
@@ -151,13 +140,5 @@ test('stopAllPromptRuns aborts recoveries, every run, and returns both cleanup b
   ])
   assert.ok(!calls.includes('abort:second'))
 
-  let runtimeSettled = false
-  void shutdown.runtimeAbort.then(() => {
-    runtimeSettled = true
-  })
-  await Promise.resolve()
-  assert.equal(runtimeSettled, false)
-  resolveRecovery()
   await shutdown.runtimeAbort
-  assert.equal(runtimeSettled, true)
 })

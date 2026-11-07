@@ -51,11 +51,6 @@ import {
 } from '../agent/session/session-title-generation'
 import type { CreateAgentSessionResult } from '../agent/runtime/runtime-adapter'
 import { nativeUiCopy } from '../native-ui-copy'
-import {
-  createMainRuntimeRecoveryController,
-  type RuntimeRecoveryControlOptions
-} from '../agent/session/runtime-recovery-control'
-import { runtimeRecoveryTarget } from '../agent/session/runtime-recovery-ipc'
 import type { SessionPreferenceTable } from '../app-state/session-preferences'
 
 interface CurrentSessionPayload {
@@ -97,7 +92,6 @@ export interface SessionsIpcOptions {
     getCurrentSessionPayloadWithMessages: () => Promise<unknown>
     getCurrentContextUsage: () => Promise<unknown>
   }
-  recovery: RuntimeRecoveryControlOptions
   compaction: {
     getSettings: (target: unknown) => Promise<CurrentAutoCompactionSettings>
     setSettings: (target: unknown, patch: unknown) => Promise<CurrentAutoCompactionSettings>
@@ -178,15 +172,6 @@ export interface SessionsIpcOptions {
   }
 }
 
-async function quietSupersededRecovery<T>(operation: () => Promise<T>): Promise<T | null> {
-  try {
-    return await operation()
-  } catch (error) {
-    if (isStaleSessionError(error)) return null
-    throw error
-  }
-}
-
 /* eslint-disable complexity, max-lines-per-function -- Preserves the contiguous session handlers verbatim. */
 export function registerSessionsIpc(options: SessionsIpcOptions): void {
   const ipcMain = options.ipcMain
@@ -196,7 +181,6 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
   const lifecycle = options.lifecycle
   const status = options.status
   const getActiveWindow = options.windows.getActiveWindow
-  const runtimeRecoveryController = createMainRuntimeRecoveryController(options.recovery)
   const workModeControl = createWorkModeControl({
     state,
     reads,
@@ -211,20 +195,6 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
   ipcMain.handle(IPC.sessions.homeActivity, async () => getHomeActivity())
   ipcMain.handle(IPC.sessions.current, async () => reads.getCurrentSessionPayloadWithMessages())
   ipcMain.handle(IPC.sessions.contextUsage, async () => reads.getCurrentContextUsage())
-  ipcMain.handle(IPC.sessions.runtimeRecovery, async (_, target: unknown) =>
-    quietSupersededRecovery(() => runtimeRecoveryController.getState(target))
-  )
-  ipcMain.handle(IPC.sessions.resumeRuntime, async (_, value: unknown, replacement?: unknown) => {
-    const target = runtimeRecoveryTarget(value)
-    return quietSupersededRecovery(() =>
-      options.remote.observeRemote(target.projectId, () =>
-        runtimeRecoveryController.resume(target, replacement)
-      )
-    )
-  })
-  ipcMain.handle(IPC.sessions.continueRuntimeSummary, async (_, target: unknown, sha256: unknown) =>
-    runtimeRecoveryController.continueFromSummary(target, sha256)
-  )
   ipcMain.handle(IPC.sessions.autoCompactionSettings, async (_, target: unknown) =>
     options.compaction.getSettings(target)
   )

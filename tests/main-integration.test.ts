@@ -4,8 +4,6 @@
 // merging.
 import { parseModelAvailabilityChange } from '../src/main/agent/model-availability'
 import type { ModelAvailabilitySettings } from '../src/shared/modelAvailabilityTypes'
-import * as runtimeRecoveryIpc from '../src/main/agent/session/runtime-recovery-ipc'
-import * as recoverySummary from '../src/main/agent/session/recovery-summary'
 import * as recoveryFailures from '../src/main/agent/engine/rpc/session-recovery'
 import * as runtimeReference from '../src/main/agent/session/runtime-reference'
 import * as forkSourceBusy from '../src/main/agent/session/fork-source-busy'
@@ -2844,8 +2842,6 @@ async function harness(
     './agent/engine/events': engineEvents,
     './agent/engine/rpc/runtime-selection-control': runtimeSelection,
     './agent/engine/rpc/runtime-metadata-control': { RemoteMetadataBusyError },
-    './agent/session/runtime-recovery-ipc': runtimeRecoveryIpc,
-    './agent/session/recovery-summary': recoverySummary,
     './agent/engine/rpc/session-recovery': recoveryFailures,
     './agent/session/runtime-reference': runtimeReference,
     './agent/session/fork-source-busy': forkSourceBusy,
@@ -4831,7 +4827,6 @@ async function harness(
     './agent/session/model-selection-target',
     './agent/session/prompt-run-execution',
     './agent/session/prompt-target-control',
-    './agent/session/runtime-recovery-control',
     './agent/session/approval-display-cwd',
     './agent/session/session-creation-approvals',
     './agent/session/session-creation-context',
@@ -7649,9 +7644,6 @@ const expectedStartupRegistrationOrder = [
   'sessions:homeActivity',
   'sessions:current',
   'sessions:contextUsage',
-  'sessions:runtimeRecovery',
-  'sessions:resumeRuntime',
-  'sessions:continueRuntimeSummary',
   'sessions:autoCompactionSettings',
   'sessions:autoCompactionSettings:set',
   'sessions:compact',
@@ -8879,12 +8871,6 @@ test('main IPC: session handlers preserve current missing-target and invalid-tar
   await assert.rejects(app.invoke('sessions:export', 42), /会话编号无效/)
   await assert.rejects(app.invoke('sessions:autoCompactionSettings', null), /会话已切换/)
 
-  await assert.rejects(app.invoke('sessions:runtimeRecovery', null), /恢复目标无效/)
-  await assert.rejects(app.invoke('sessions:resumeRuntime', null), /恢复目标无效/)
-  await assert.rejects(
-    app.invoke('sessions:continueRuntimeSummary', null, 'a'.repeat(64)),
-    /恢复目标无效/
-  )
 })
 
 test('main IPC: current payload keeps its stable identity when the manifest is missing', async () => {

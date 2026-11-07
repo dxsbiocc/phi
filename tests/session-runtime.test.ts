@@ -278,23 +278,8 @@ test('PromptRunRegistry Phi-id tables are narrow and do not canonicalize keys', 
   const registry = new PromptRunRegistry<{ id: string }>((key) =>
     key === 'alias' ? 'canonical' : key
   )
-  const recovery = { controller: new AbortController(), done: Promise.resolve() }
-  const failure = 'disconnected'
   const compaction = { cancelled: false, done: Promise.resolve() }
 
-  assert.deepEqual(Object.keys(registry.runtimeRecoveryOperations).sort(), [
-    'delete',
-    'get',
-    'has',
-    'set',
-    'values'
-  ])
-  assert.deepEqual(Object.keys(registry.runtimeRecoveryFailures).sort(), [
-    'delete',
-    'get',
-    'has',
-    'set'
-  ])
   assert.deepEqual(Object.keys(registry.manualCompactionIds).sort(), ['add', 'delete', 'has'])
   assert.deepEqual(Object.keys(registry.manualCompactionOperations).sort(), [
     'delete',
@@ -303,16 +288,9 @@ test('PromptRunRegistry Phi-id tables are narrow and do not canonicalize keys', 
     'set'
   ])
 
-  registry.runtimeRecoveryOperations.set('alias', recovery)
-  registry.runtimeRecoveryFailures.set('alias', failure)
   registry.manualCompactionIds.add('alias')
   registry.manualCompactionOperations.set('alias', compaction)
 
-  assert.equal(registry.runtimeRecoveryOperations.get('alias'), recovery)
-  assert.equal(registry.runtimeRecoveryOperations.get('canonical'), undefined)
-  assert.deepEqual([...registry.runtimeRecoveryOperations.values()], [recovery])
-  assert.equal(registry.runtimeRecoveryFailures.get('alias'), failure)
-  assert.equal(registry.runtimeRecoveryFailures.get('canonical'), undefined)
   assert.equal(registry.manualCompactionIds.has('alias'), true)
   assert.equal(registry.manualCompactionIds.has('canonical'), false)
   assert.equal(registry.manualCompactionOperations.get('alias'), compaction)

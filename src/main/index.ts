@@ -2078,7 +2078,6 @@ const { resolveTarget: resolvePromptRunTarget, admit: admitPromptRun } =
     sessions: { findById: findPhiSessionById },
     runs: {
       hasActiveRun: (key) => promptRuns.hasActiveRun(key),
-      runtimeRecoveryOperations: promptRuns.runtimeRecoveryOperations,
       manualCompactionIds: promptRuns.manualCompactionIds
     },
     paths: {
@@ -2515,8 +2514,7 @@ function scheduleAutomaticSessionTitle(sessionId: string): void {
         latest.title !== manifest.title ||
         latest.runtimeRecoveryError ||
         manualTitleRequests.has(path) ||
-        runnerRegistry.getActiveRun(sessionId) ||
-        promptRuns.runtimeRecoveryOperations.has(sessionId)
+        runnerRegistry.getActiveRun(sessionId)
       )
         return
       await renameConversation(path, title, 'auto')
@@ -2682,8 +2680,7 @@ const { stopPromptRun, stopAllPromptRuns } = createPromptRunStop<PromptRun, Agen
   runs: {
     advanceGeneration: (key) => promptRuns.advanceGeneration(key),
     activeRuns: () => promptRuns.activeRuns(),
-    activeEntries: () => promptRuns.activeEntries(),
-    runtimeRecoveryOperations: promptRuns.runtimeRecoveryOperations
+    activeEntries: () => promptRuns.activeEntries()
   },
   browser: { cancel: cancelBrowserRun, cleanup: cleanupBrowserRunTabs },
   agents: {
@@ -3247,8 +3244,6 @@ function registerAgentIpc(): void {
       advancePromptGeneration: promptRuns.advanceGeneration.bind(promptRuns),
       getActivePromptRun: promptRuns.activeRun.bind(promptRuns),
       getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
-      getRuntimeRecoveryOperation: (sessionId) =>
-        promptRuns.runtimeRecoveryOperations.get(sessionId),
       getManualCompactionOperation: (sessionId) =>
         promptRuns.manualCompactionOperations.get(sessionId),
       stopPromptRun: (sessionKey, run, invalidateGeneration) =>
@@ -3410,39 +3405,6 @@ function createSessionCompactionControlOptions(): SessionCompactionControlOption
 }
 
 type SessionsIpcOptions = Parameters<typeof registerSessionsIpc>[0]
-function createSessionRecoveryIpcOptions(): SessionsIpcOptions['recovery'] {
-  return {
-    state: {
-      getCurrentPayload: getCurrentSessionPayload,
-      getCurrentSessionKey: () => sessionState.sessionKey,
-      getCurrentSessionPath: () => sessionState.sessionPath,
-      getCurrentCwd: () => sessionState.cwd,
-      getCurrentPermissionMode: () => sessionState.permissionMode,
-      runtimeRecoveryOperations: promptRuns.runtimeRecoveryOperations,
-      runtimeRecoveryFailures: promptRuns.runtimeRecoveryFailures,
-      manualCompactionIds: promptRuns.manualCompactionIds,
-      sessionModelSelections: preferences.modelSelections,
-      sessionThinkingLevels: preferences.thinkingLevels
-    },
-    identity: {
-      resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
-      sameCanonicalSessionKey: sessionKeys.sameCanonical.bind(sessionKeys),
-      getPromptGeneration: promptRuns.generationFor.bind(promptRuns),
-      advancePromptGeneration: promptRuns.advanceGeneration.bind(promptRuns)
-    },
-    lifecycle: {
-      getLifecycleForKey: lifecycles.forKey.bind(lifecycles),
-      hasActivePromptRun: promptRuns.hasActiveRun.bind(promptRuns),
-      runnerGetActiveRun: (sessionId) => runnerRegistry.getActiveRun(sessionId),
-      cleanupSessionRecord,
-      getAgentSession
-    },
-    projects: { projectRemoteRuntimeRoot },
-    models: { resolveRuntimeModelSelection },
-    sessions: { createRemoteManagedSession, disposeAndSwitchSession },
-    events: { notifySessionChanged }
-  }
-}
 function createSessionsIpcOptions(
   currentContextUsageOptions: CurrentContextUsageOptions,
   currentSessionPayloadMessagesOptions: CurrentSessionPayloadMessagesOptions,
@@ -3468,7 +3430,6 @@ function createSessionsIpcOptions(
         getCurrentSessionPayloadWithMessages(currentSessionPayloadMessagesOptions),
       getCurrentContextUsage: () => getCurrentContextUsage(currentContextUsageOptions)
     },
-    recovery: createSessionRecoveryIpcOptions(),
     compaction: {
       getSettings: (target) =>
         getCurrentAutoCompactionSettings(target, sessionCompactionControlOptions),

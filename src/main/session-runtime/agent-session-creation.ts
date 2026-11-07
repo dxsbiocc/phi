@@ -138,19 +138,12 @@ class AgentSessionCreationService<
     useRpc: boolean,
     modelRuntime: ModelRuntime
   ): SessionCreationModelPhase => {
-    const modelSelection =
-      context.remoteRecovery?.replacementModel ??
-      this.deps.sessions.resolution.resolveSessionModelSelection(
-        context.sessionKey,
-        context.snapshot
-      )
+    const modelSelection = this.deps.sessions.resolution.resolveSessionModelSelection(
+      context.sessionKey,
+      context.snapshot
+    )
     const resolution = resolveSessionCreationModel(
       {
-        useRpc,
-        remoteRecovery: Boolean(context.remoteRecovery),
-        hasRuntimeRef: Boolean(
-          context.sessionManifest?.runtimeRef ?? context.sessionManifest?.kernelRuntimeRef
-        ),
         modelRuntime,
         modelSelection
       },
@@ -346,7 +339,6 @@ class AgentSessionCreationService<
       modelPhase.runtime.thinkingLevel
     )
     return this.services.buildOptions({
-      remoteRecovery: context.remoteRecovery,
       modelRuntime: modelPhase.resolution.modelRuntime,
       model: modelPhase.resolution.model,
       thinkingLevel: modelPhase.runtime.thinkingLevel,
@@ -474,8 +466,7 @@ class AgentSessionCreationService<
       snapshot,
       generation,
       lifecycle: request.lifecycle,
-      control: request.control,
-      remoteRecovery: request.remoteRecovery
+      control: request.control
     })
 
   private readonly createPreparedAgentSession = (
@@ -573,11 +564,10 @@ class AgentSessionCreationService<
       cwd: this.deps.state.sessionState.cwd,
       permissionMode: this.deps.state.sessionState.permissionMode
     },
-    control,
-    remoteRecovery
+    control
   ) => {
     const lifecycle = this.deps.state.lifecycles.forKey(sessionKey)
-    const creationRequest = { sessionKey, lifecycle, control, remoteRecovery }
+    const creationRequest = { sessionKey, lifecycle, control }
     const record = lifecycle.getOrCreate(
       snapshot,
       (creationSnapshot, generation) =>

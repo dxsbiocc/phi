@@ -29,7 +29,6 @@ function createDeps(
     project?: Project | undefined
     lifecycle?: SessionLifecycle<Result>
     hasActiveRun?: boolean
-    recovering?: boolean
     compacting?: boolean
     ensurePhiSessionId?: PromptRunAdmissionDeps<Result>['linking']['ensurePhiSessionId']
     manifest?: PhiSessionManifest | null
@@ -62,7 +61,6 @@ function createDeps(
     sessions: { findById: () => overrides.manifest ?? null },
     runs: {
       hasActiveRun: () => overrides.hasActiveRun ?? false,
-      runtimeRecoveryOperations: { has: () => overrides.recovering ?? false },
       manualCompactionIds: { has: () => overrides.compacting ?? false }
     },
     paths: {
@@ -131,13 +129,9 @@ test('legacy plan flags are accepted for compatibility but ignored in favor of s
   assert.equal(admitted.workMode, 'auto')
 })
 
-test('admitPromptRun binds the Phi identity and rejects recovery, compaction, or an active run', () => {
+test('admitPromptRun binds the Phi identity and rejects compaction or an active run', () => {
   const target = createPromptRunAdmission(createDeps().deps).resolveTarget(input())
 
-  assert.throws(
-    () => createPromptRunAdmission(createDeps({ recovering: true }).deps).admit(target),
-    /会话正在恢复/
-  )
   assert.throws(
     () => createPromptRunAdmission(createDeps({ compacting: true }).deps).admit(target),
     /上下文压缩正在进行/
@@ -166,7 +160,7 @@ test('admitPromptRun uses the image fallback title only when text is empty', () 
   assert.deepEqual(calls, ['ensure:图片'])
 })
 
-test('admitPromptRun rejects every prompt path for legacy SSH history but permits pending RPC sessions', () => {
+test('admitPromptRun rejects pre-kernel SSH history but permits a fresh pending kernel draft', () => {
   const remote = {
     projectLocation: {
       kind: 'ssh',
@@ -200,4 +194,18 @@ test('admitPromptRun rejects every prompt path for legacy SSH history but permit
     createDeps({ manifest: { ...remote, remoteRuntime: 'rpc' } }).deps
   )
   assert.equal(pendingRpc.admit(pendingRpc.resolveTarget(input())).phiSessionId, 'phi-1')
+
+  const rpcHistory = createPromptRunAdmission(
+    createDeps({
+      manifest: {
+        ...remote,
+        remoteRuntime: 'rpc',
+        runtimeRef: { kind: 'remote-omp' }
+      } as PhiSessionManifest
+    }).deps
+  )
+  assert.throws(
+    () => rpcHistory.admit(rpcHistory.resolveTarget(input())),
+    /LEGACY_REMOTE_SESSION_READ_ONLY/
+  )
 })

@@ -1,4 +1,3 @@
-import type { RuntimeRecoveryModelSelection } from '../../shared/runtimeRecoveryTypes'
 import type { RuntimeSelectionControl } from '../agent/engine/types'
 import type { ModelSelection, Project } from '../agent/projects'
 import type {
@@ -78,14 +77,12 @@ export interface BeginSessionCreationInput<TResult> {
   generation: number
   lifecycle: SessionLifecycle<TResult>
   control?: RuntimeSelectionControl
-  remoteRecovery?: { replacementModel?: RuntimeRecoveryModelSelection }
 }
 
 export interface AgentSessionCreationRequest<TResult> {
   sessionKey: string
   lifecycle: SessionLifecycle<TResult>
   control?: RuntimeSelectionControl
-  remoteRecovery?: { replacementModel?: RuntimeRecoveryModelSelection }
 }
 
 export interface AgentSessionCreationServices {
@@ -244,7 +241,6 @@ export interface AgentSessionCreation<TResult> {
   getAgentSession(
     sessionKey?: string,
     snapshot?: SessionSnapshot,
-    control?: RuntimeSelectionControl,
-    remoteRecovery?: { replacementModel?: RuntimeRecoveryModelSelection }
+    control?: RuntimeSelectionControl
   ): Promise<TResult>
 }

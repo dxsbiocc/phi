@@ -18,9 +18,6 @@ export interface PromptRunStopDeps<
     advanceGeneration(sessionKey: string): number
     activeRuns(): TRun[]
     activeEntries(): Array<[string, TRun]>
-    runtimeRecoveryOperations: {
-      values(): IterableIterator<{ controller: AbortController; done: Promise<void> }>
-    }
   }
   browser: {
     cancel(run: TRun): void
@@ -80,8 +77,6 @@ function stopAllPromptRuns<
   browserCleanup: Promise<void>
   runtimeAbort: Promise<void>
 } {
-  const recoveries = [...deps.runs.runtimeRecoveryOperations.values()]
-  for (const recovery of recoveries) recovery.controller.abort()
   const runs = deps.runs.activeRuns()
   for (const [sessionKey, run] of deps.runs.activeEntries()) {
     deps.runs.advanceGeneration(sessionKey)
@@ -91,13 +86,12 @@ function stopAllPromptRuns<
   const browserCleanup = Promise.all(runs.map((run) => deps.browser.cleanup(run)))
   deps.agents.stopAll()
   deps.waits.cancel()
-  const runtimeAbort = Promise.all([
-    ...recoveries.map((recovery) => recovery.done),
-    ...runs.map(async (run) => {
+  const runtimeAbort = Promise.all(
+    runs.map(async (run) => {
       if (!run.session) return
       await deps.sessions.abort(run.session)
     })
-  ]).then(() => undefined)
+  ).then(() => undefined)
   return { browserCleanup: browserCleanup.then(() => undefined), runtimeAbort }
 }
 

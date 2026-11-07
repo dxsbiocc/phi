@@ -11,7 +11,6 @@ export type SessionCreationOptions = CreateAgentSessionOptions & {
 }
 
 export interface SessionCreationOptionsInput {
-  remoteRecovery: CreateAgentSessionOptions['remoteRecovery']
   modelRuntime: CreateAgentSessionOptions['modelRuntime']
   model: CreateAgentSessionOptions['model']
   thinkingLevel: CreateAgentSessionOptions['thinkingLevel']
@@ -37,7 +36,6 @@ export function buildSessionCreationOptions(
 ): SessionCreationOptions {
   const options: SessionCreationOptions = {}
   if (input.phiSessionId) options.phiSessionId = input.phiSessionId
-  if (input.remoteRecovery) options.remoteRecovery = input.remoteRecovery
   options.modelRuntime = input.modelRuntime
   options.thinkingLevel = input.thinkingLevel
   if (input.autoCompaction) options.autoCompaction = input.autoCompaction

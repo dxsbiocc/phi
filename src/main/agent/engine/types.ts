@@ -421,10 +421,6 @@ export type PhiSessionCreateParams = {
   /** Optional managed environment bound to the main session. */
   environment?: { ref: string; pluginId?: string }
   personaMarkdown?: string
-  /** Explicit main-owned restore intent; never inferred from a replacement model. */
-  remoteRecovery?: {
-    replacementModel?: { providerId: string; modelId: string }
-  }
 }
 
 export type PhiHistoryForkParams = {

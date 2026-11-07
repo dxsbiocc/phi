@@ -278,7 +278,6 @@ export const IPC = {
     changed: 'sessions:changed',
     compact: 'sessions:compact',
     contextUsage: 'sessions:contextUsage',
-    continueRuntimeSummary: 'sessions:continueRuntimeSummary',
     create: 'sessions:create',
     current: 'sessions:current',
     delete: 'sessions:delete',
@@ -288,8 +287,6 @@ export const IPC = {
     homeActivity: 'sessions:homeActivity',
     list: 'sessions:list',
     rename: 'sessions:rename',
-    resumeRuntime: 'sessions:resumeRuntime',
-    runtimeRecovery: 'sessions:runtimeRecovery',
     switch: 'sessions:switch',
     updateMode: 'sessions:updateMode',
     updatePermissionMode: 'sessions:updatePermissionMode'
