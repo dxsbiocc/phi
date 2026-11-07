@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { parseAgentReport, type AgentReport } from '../src/main/agent/agents/report'
+import {
+  parseAgentReport,
+  requireDeclaredCompletion,
+  type AgentReport
+} from '../src/main/agent/agents/report'
 import {
   createPlanExecutor,
   type PlanExecutor,
@@ -663,4 +667,34 @@ test('ambiguous remote start is UNKNOWN instead of an automatic retry', async ()
   assert.equal(state.steps.a.attempts, 1)
   assert.equal(state.pause?.reason, 'unknown')
   assert.equal(runner.runs.length, 0)
+})
+
+test('an undeclared completion is retried with its previous report, not from scratch', async () => {
+  const app = fixture()
+  await app.executor.start(spec([step('a')]), 'session-1')
+  assert.doesNotMatch(app.runner.runs[0]!.input.task, /## Previous attempt/)
+  app.runner.runs[0]!.result.resolve({
+    ok: true,
+    report: requireDeclaredCompletion(parseAgentReport('Listed 4 entries in /data.'))
+  })
+  await waitFor(() => app.runner.runs.length === 2)
+  const retryTask = app.runner.runs[1]!.input.task
+  assert.match(retryTask, /## Previous attempt/)
+  assert.match(retryTask, /Reported status: partial/)
+  assert.match(retryTask, /Listed 4 entries in \/data\./)
+  assert.match(retryTask, /Do not redo work that is already done/)
+  assert.doesNotMatch(retryTask, /phi_agent_result>[^<]*Listed 4 entries/)
+  succeed(
+    app.runner.runs[1]!,
+    '<phi_agent_result>{"status":"completed","missingInputs":[]}</phi_agent_result>\nVerified the 4 entries.'
+  )
+  await waitFor(() => app.executor.get('plan-1')?.status === 'completed')
+})
+
+test('a step that failed with an error is retried with that error', async () => {
+  const app = fixture()
+  await app.executor.start(spec([step('a')]), 'session-1')
+  fail(app.runner.runs[0]!, 'read timed out')
+  await waitFor(() => app.runner.runs.length === 2)
+  assert.match(app.runner.runs[1]!.input.task, /## Previous attempt[\s\S]*Error: read timed out/)
 })

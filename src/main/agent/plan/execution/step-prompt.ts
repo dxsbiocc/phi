@@ -56,6 +56,29 @@ function dependencySteps(state: PlanRunState, step: PlanStep): PlanStep[] {
     .filter((candidate): candidate is PlanStep => candidate !== undefined)
 }
 
+const PREVIOUS_ATTEMPT_MAX_BYTES = 2 * 1024
+const PREVIOUS_ATTEMPT_RULE =
+  'Do not redo work that is already done. Check what the previous attempt produced against the acceptance criteria, finish only what is missing, and end with the required report block below. A report without that block is not accepted.'
+
+/** A retried step learns why its last attempt was not accepted instead of starting blind. */
+function previousAttempt(state: PlanRunState, step: PlanStep): string[] {
+  const current = state.steps[step.id]
+  if (!current || current.attempts < 1 || (!current.report && !current.error)) return []
+  const lines = ['## Previous attempt', 'This step already ran and its result was not accepted.']
+  if (current.report) {
+    lines.push(`Reported status: ${current.report.status}`)
+    if (current.report.text.trim())
+      lines.push(
+        'Previous report:',
+        truncateReport(current.report.text, PREVIOUS_ATTEMPT_MAX_BYTES)
+      )
+  }
+  if (current.error)
+    lines.push(`Error: ${truncateReport(current.error, PREVIOUS_ATTEMPT_MAX_BYTES)}`)
+  lines.push(PREVIOUS_ATTEMPT_RULE)
+  return [lines.join('\n')]
+}
+
 function promptParts(state: PlanRunState, step: PlanStep, upstream: string): string[] {
   return [
     '## Overall goal',
@@ -69,6 +92,7 @@ function promptParts(state: PlanRunState, step: PlanStep, upstream: string): str
     step.acceptance,
     '## Upstream reports',
     upstream,
+    ...previousAttempt(state, step),
     '## Required final report protocol',
     AGENT_REPORT_PROTOCOL,
     STEP_STATUS_RULE
