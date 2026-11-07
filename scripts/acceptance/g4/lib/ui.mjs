@@ -146,7 +146,12 @@ export class PhiUi {
   }
 
   async navigateProjects() {
-    await this.clickSelector(SELECTORS.projectsNavigation)
+    // Clicking the active Projects rail button collapses the sidebar, so click only when the
+    // project list is not already showing (a cloned profile may open on it).
+    const showing = await this.client.evaluate(
+      `Boolean(document.querySelector(${q(SELECTORS.projectRow)}))`
+    )
+    if (!showing) await this.clickSelector(SELECTORS.projectsNavigation)
     await this.client.waitForValue(`Boolean(document.querySelector(${q(SELECTORS.projectRow)}))`, {
       timeoutMs: 20_000,
       description: 'project rows'
