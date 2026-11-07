@@ -180,7 +180,6 @@ import {
   remoteRequestProjectId
 } from './agent/remote-runtime/remote-project-requests'
 import { createRemoteProjectSkills } from './agent/remote-runtime/remote-project-skills'
-import { createDesktopWebSearchAdapter } from './agent/engine/rpc/desktop-websearch-adapter'
 import { createSkippedMcpNotifier } from './agent/mcp/skipped-notice'
 import { createDesktopMcpAdapter } from './agent/engine/rpc/desktop-mcp-adapter'
 import { RemoteLibraryService } from './agent/engine/rpc/remote-library-service'
@@ -194,10 +193,6 @@ import { RemoteProjectConnectionTracker } from './agent/remote-project-connectio
 import { RemoteProjectUploadService } from './agent/remote-project-upload'
 import { remoteTransferHostKey } from './agent/transfer'
 import { loadRemoteProjectInstructions } from './agent/remote-project-instructions'
-import {
-  createDesktopProjectMemoryAdapter,
-  retireDesktopProjectMemoryAdapters
-} from './agent/engine/rpc/desktop-project-memory-adapter'
 import {
   resolveAuthorizedRemoteConnectionConfig,
   resolveRemoteWorkspaceHostBinding
@@ -960,25 +955,12 @@ const { remoteRuntimeDispatchControl, isRemoteRuntimeCancellation } =
 const loadAppRemoteDesktopTools = createAppRemoteDesktopTools({
   agentDir: AGENT_DIR,
   sessions: { findById: findPhiSessionById },
-  projects: { getById: getProject },
   workspace: { resolveBinding: resolveRemoteWorkspaceHostBinding },
   catalogs: {
-    listGlobalSkills,
-    loadProjectSkills: loadRemoteProjectSkillCatalog,
     listGlobalMcpServers,
     loadProjectMcp: loadRemoteProjectMcpCatalog
   },
-  runtime: {
-    scriptTools: (identity) => remoteRuntimeController.scriptTools(identity),
-    approvalFor: (name, input, control) =>
-      remoteRuntimeController.approvalFor(name, input, control),
-    dispatchControl: remoteRuntimeDispatchControl
-  },
-  adapters: {
-    createWebSearch: createDesktopWebSearchAdapter,
-    createMcp: createDesktopMcpAdapter,
-    createMemory: createDesktopProjectMemoryAdapter
-  },
+  adapters: { createMcp: createDesktopMcpAdapter },
   skippedMcp: { notify: (sessionId, skipped) => skippedMcpNotifier.notify(sessionId, skipped) }
 })
 const { getSessionStatusPayload, getCurrentSessionPayload } = createCurrentSessionPayload({
@@ -3519,8 +3501,7 @@ function registerProjectAndAnalysisIpc(): void {
   registerMemoryIpc({
     ipcMain,
     workspace: { agentDir: AGENT_DIR },
-    projects: { requireProject },
-    memory: { retireProjectAdapters: retireDesktopProjectMemoryAdapters }
+    projects: { requireProject }
   })
   registerProjectsRemoteHostsIpc(projectsIpcOptions)
   registerRemoteIpc({ ipcMain })

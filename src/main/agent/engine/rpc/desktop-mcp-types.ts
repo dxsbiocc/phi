@@ -2,10 +2,17 @@ import type { OmpBridge } from '../omp-bridge'
 import type { PhiTool, PhiToolApproval } from '../types'
 import type { RemoteProjectMcpRuntimeServer } from '../../../../shared/remoteProjectMcpTypes'
 import type { SkippedMcpServerNotice } from '../../../../shared/mcpSkippedServers'
-import type { RpcDesktopToolIdentity } from './desktop-tool-scope'
+
+export interface DesktopMcpIdentity {
+  readonly runtimeSessionId: string
+  readonly sessionId: string
+  readonly projectId: string
+  /** Canonical server project cwd, never a desktop project anchor. */
+  readonly cwd: string
+}
 
 export interface DesktopMcpOptions {
-  readonly identity: RpcDesktopToolIdentity
+  readonly identity: DesktopMcpIdentity
   readonly agentDir: string
   readonly resourceCwd: string
   /** Enabled server names from the trusted main-process resource catalog. */
@@ -24,7 +31,7 @@ export interface DesktopMcpOptions {
   readonly bridge?: OmpBridge
 }
 export interface DesktopMcpAdapter {
-  readonly identity: Readonly<RpcDesktopToolIdentity>
+  readonly identity: Readonly<DesktopMcpIdentity>
   readonly tools: readonly PhiTool[]
   /** Validated discovery metadata, including the signature bound to each tool call. */
   readonly catalog: readonly DesktopMcpToolMetadata[]

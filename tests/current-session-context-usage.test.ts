@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { RemoteMetadataBusyError } from '../src/main/agent/engine/rpc/runtime-metadata-control'
 import {
   getCurrentContextUsage,
   type CurrentContextUsageOptions,
@@ -80,20 +79,7 @@ test('a running remote conversation reports unavailable usage without querying m
   assert.equal(resolutions, 0)
 })
 
-test('a remote metadata admission race is unavailable usage, while real failures still surface', async () => {
-  let resolutions = 0
-  for (const owner of ['Phi session', 'runtime'] as const) {
-    const busy = remoteUsageOptions(
-      'idle',
-      async () => {
-        throw new RemoteMetadataBusyError(owner)
-      },
-      () => resolutions++
-    )
-    assert.equal((await getCurrentContextUsage(busy)).usage, null)
-  }
-  assert.equal(resolutions, 2)
-
+test('remote context-usage failures surface to the caller', async () => {
   const broken = remoteUsageOptions(
     'idle',
     async () => {

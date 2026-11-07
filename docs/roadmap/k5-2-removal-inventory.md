@@ -146,3 +146,7 @@ Actual added/deleted lines and final evidence will be recorded in
 - Removed the desktop plan-run IPC/review owner. Plan controls and work-mode activity now resolve
   through the live kernel driver; the shared plan service/store remain because the kernel
   coordinator imports them.
+- Deleted the remaining RPC main-session closure (`RemoteSessionRuntime`, `RpcSessionBackend`,
+  SSH stdio factory, facade-era child/approval/tool/deployment wiring) and its owner-only tests.
+  The remote desktop resource loader now retains only the MCP broker used by the kernel; project
+  memory uses the dedicated kernel host service and its packaged worker remains in the bundle.

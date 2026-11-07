@@ -2,7 +2,6 @@ import type { CurrentContextUsage } from '../../../shared/contextUsageTypes'
 import type { ProjectLocation } from '../../../shared/projectLocation'
 import type { WorkMode } from '../../../shared/sessionMode'
 import type { PermissionMode } from '../projects'
-import { RemoteMetadataBusyError } from '../engine/rpc/runtime-metadata-control'
 import type { CreateAgentSessionResult } from '../runtime/runtime-adapter'
 import type { PhiSessionManifest } from './session-store'
 import {
@@ -129,13 +128,7 @@ export async function getCurrentContextUsage(
     ? await getCurrentResolvedSessionIfReady(options.getCurrentLifecycle)
     : await options.getAgentSession(sessionKey, snapshot)
   if (!result) return { ...identity, usage: null }
-  let usage: CurrentContextUsage['usage']
-  try {
-    usage = await result.session.getContextUsage()
-  } catch (error) {
-    if (remote && error instanceof RemoteMetadataBusyError) return { ...identity, usage: null }
-    throw error
-  }
+  const usage = await result.session.getContextUsage()
   const latest = options.getCurrentPayload()
   if (
     latest.path !== identity.sessionPath ||

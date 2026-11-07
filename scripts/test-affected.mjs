@@ -114,13 +114,7 @@ export function selectShard(files, spec) {
 export const SERIAL_SUITES = [
   'tests/engine-kernel-acceptance.test.ts',
   'tests/engine-kernel-routing-contract.test.ts',
-  'tests/engine-rpc-compaction-contract.test.ts',
   'tests/engine-rpc-contract.test.ts',
-  'tests/engine-rpc-cursor-stream-recovery.test.ts',
-  'tests/engine-rpc-desktop-websearch-privacy.test.ts',
-  'tests/engine-rpc-model-proxy-shell.test.ts',
-  'tests/engine-rpc-runtime-composition-security.test.ts',
-  'tests/engine-rpc-ssh-stdio-factory.test.ts',
   'tests/notebook-markdown-editor-interactions.test.ts'
 ]
 

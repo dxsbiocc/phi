@@ -4,7 +4,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync
@@ -15,8 +14,6 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 import { remoteWorkspaceBindingHash } from '../src/main/agent/remote-workspace-boundary'
-import { deriveRemoteSessionPaths } from '../src/main/agent/engine/rpc/session-storage/paths'
-import { serializeRemoteSessionManifest } from '../src/main/agent/engine/rpc/session-storage/remote-manifest'
 import type { Project } from '../src/main/agent/projects'
 import type { RemoteWorkspaceHostBinding } from '../src/main/agent/remote-workspace-boundary'
 import {
@@ -165,99 +162,6 @@ test('kernel deletion verifies first and removes only its validated persistent s
   assert.match(remove, /mv --/u)
   assert.match(remove, /rm -rf --/u)
   assert.doesNotMatch(remove, /\bkill\b/u)
-})
-
-test('server command deletes only its exact scoped session directory', async () => {
-  await fixture(async ({ sessionId }) => {
-    const reference = findPhiSessionById(sessionId)?.runtimeRef
-    assert.ok(reference)
-    const scope = {
-      hostProfileId: reference.hostProfileId,
-      bindingHash: reference.bindingHash,
-      projectId: reference.projectId,
-      projectRoot: reference.projectRoot,
-      runtimeRoot: reference.runtimeRoot,
-      phiSessionId: sessionId
-    }
-    const paths = deriveRemoteSessionPaths(scope)
-    for (const path of [
-      scope.projectRoot,
-      scope.runtimeRoot,
-      join(scope.runtimeRoot, 'omp-sessions'),
-      join(scope.runtimeRoot, 'omp-sessions', paths.scopeHash),
-      paths.directory,
-      paths.journals,
-      paths.data,
-      join(paths.data, 'omp'),
-      paths.blobs
-    ])
-      mkdirSync(path, { recursive: true, mode: 0o700 })
-    const serverReference = {
-      ...scope,
-      kind: reference.kind,
-      version: reference.version,
-      durableSessionKey: reference.durableSessionKey,
-      ompVersion: reference.ompVersion,
-      ompSessionId: reference.ompSessionId,
-      journalBasename: reference.journalBasename
-    }
-    const preparation = {
-      scope,
-      paths,
-      lease: {
-        signal: new AbortController().signal,
-        lost: new Promise<never>(() => undefined),
-        assertActive: () => undefined,
-        release: async () => undefined
-      }
-    }
-    writeFileSync(paths.manifest, serializeRemoteSessionManifest(preparation, serverReference), {
-      mode: 0o600
-    })
-    writeFileSync(paths.lock, '', { mode: 0o600 })
-    writeFileSync(paths.runLock, '', { mode: 0o600 })
-    const journal = join(paths.journals, reference.journalBasename)
-    const validHeader = `${JSON.stringify({
-      type: 'session',
-      version: 3,
-      id: reference.ompSessionId,
-      cwd: scope.projectRoot,
-      timestamp: '2026-10-21T00:00:00.000Z'
-    })}\n`
-    writeFileSync(journal, validHeader, { mode: 0o600 })
-    const sibling = join(scope.runtimeRoot, 'omp-sessions', paths.scopeHash, 'unrelated')
-    mkdirSync(sibling, { mode: 0o700 })
-    writeFileSync(join(sibling, 'keep.txt'), 'keep', { mode: 0o600 })
-    const sharedNatives = join(scope.runtimeRoot, 'omp-natives', reference.ompVersion)
-    mkdirSync(sharedNatives, { recursive: true, mode: 0o700 })
-    writeFileSync(join(sharedNatives, 'pi_natives.node'), 'shared', { mode: 0o700 })
-    const bin = join(scope.runtimeRoot, 'test-bin')
-    mkdirSync(bin, { mode: 0o700 })
-    const flock = join(bin, 'flock')
-    writeFileSync(flock, '#!/bin/sh\nexit 0\n', { mode: 0o700 })
-    chmodSync(flock, 0o700)
-    const run = (mode: 'verify' | 'delete'): string =>
-      execFileSync('/bin/sh', ['-c', buildRemoteSessionDeleteCommand(scope, reference, mode)], {
-        cwd: scope.runtimeRoot,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` }
-      })
-    assert.equal(run('verify'), 'PHI_STORAGE_SESSION_VERIFIED\n')
-    assert.ok(existsSync(paths.directory))
-    const staleTombstone = `${paths.directory}.deleting-stale`
-    mkdirSync(staleTombstone, { mode: 0o700 })
-    assert.throws(() => run('verify'), /Command failed/)
-    rmSync(staleTombstone, { recursive: true })
-    writeFileSync(journal, validHeader.replace(reference.ompSessionId, 'different-session'))
-    assert.throws(() => run('delete'), /Command failed/)
-    assert.ok(existsSync(paths.directory), 'a changed journal cannot be removed')
-    writeFileSync(journal, validHeader)
-    assert.equal(run('delete'), 'PHI_STORAGE_SESSION_DELETED\n')
-    assert.equal(existsSync(paths.directory), false)
-    assert.equal(readFileSync(join(sibling, 'keep.txt'), 'utf8'), 'keep')
-    assert.equal(readFileSync(join(sharedNatives, 'pi_natives.node'), 'utf8'), 'shared')
-  })
 })
 
 test('remote deletion keeps local history when the server is offline or rejects identity', async () => {

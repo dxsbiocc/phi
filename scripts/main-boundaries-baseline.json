@@ -14,7 +14,6 @@
   "oversized": {
     "lineLimit": 1000,
     "files": {
-      "src/main/agent/engine/rpc/remote-session-runtime.ts": 1375,
       "src/main/agent/runtime/runtime-adapter.ts": 1158,
       "src/main/index.ts": 3985
     }

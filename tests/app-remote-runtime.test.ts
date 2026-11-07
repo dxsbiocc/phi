@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
-  createRemoteRuntimeDispatchControl,
-  type RemoteRuntimeDispatchControlDeps
-} from '../src/main/agent/remote-runtime/remote-runtime-dispatch-control'
+import type { DesktopMcpOptions } from '../src/main/agent/engine/rpc/desktop-mcp-types'
 import {
   createAppRemoteDesktopTools,
   type AppRemoteDesktopToolsDeps
 } from '../src/main/agent/remote-runtime/app-remote-desktop-tools'
+import {
+  createRemoteRuntimeDispatchControl,
+  type RemoteRuntimeDispatchControlDeps
+} from '../src/main/agent/remote-runtime/remote-runtime-dispatch-control'
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T | PromiseLike<T>): void } {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -167,299 +168,124 @@ test('remote cancellation validates the runtime owner but not the project field'
   )
 })
 
-function desktopFixture(): {
-  deps: AppRemoteDesktopToolsDeps
-  calls: string[]
-  skipped: Array<{ sessionId: string; notices: readonly unknown[] }>
-  search: { retire(): void; close(): Promise<void>; tool: { name: string } }
-  mcp: {
-    retire(): void
-    close(): Promise<void>
-    tools: never[]
-    skipped: Array<{ name: string; reason: string }>
-  }
-  memoryAdapter: { retire(): void; close(): Promise<void> }
-  setMemory(value: { enabled: boolean; learn: boolean }): void
-  setBinding(value: string): void
-} {
-  const calls: string[] = []
-  let memory = { enabled: false, learn: false }
-  let binding = 'binding-1'
-  const skipped: Array<{ sessionId: string; notices: readonly unknown[] }> = []
-  const search = {
-    retire: () => {
-      calls.push('search.retire')
-    },
-    close: async () => {
-      calls.push('search.close')
-    },
-    tool: { name: 'web_search' }
-  }
-  const mcp = {
-    retire: () => {
-      calls.push('mcp.retire')
-    },
-    close: async () => {
-      calls.push('mcp.close')
-    },
-    tools: [],
-    skipped: [{ name: 'unavailable', reason: 'unavailable' }]
-  }
-  const memoryAdapter = {
-    retire: () => {
-      calls.push('memory.retire')
-    },
-    close: async () => {
-      calls.push('memory.close')
-    }
-  }
-  const deps: AppRemoteDesktopToolsDeps = {
-    agentDir: '/agent',
-    sessions: {
-      findById: () => ({
-        cwd: '/anchor',
-        model: { providerId: 'openai', modelId: 'gpt-test' }
-      })
-    },
-    projects: { getById: () => ({ memory }) },
-    workspace: { resolveBinding: () => ({ cacheKey: binding }) },
-    catalogs: {
-      listGlobalSkills: async () =>
-        [
-          { name: 'project-skill', description: 'shadowed', enabled: true },
-          { name: 'global-skill', description: 'global', enabled: true },
-          { name: 'disabled-skill', description: 'disabled', enabled: false }
-        ] as never,
-      loadProjectSkills: async () =>
-        ({
-          summaries: [{ name: 'project-skill', description: 'project' }],
-          sources: [{ name: 'project-skill' }]
-        }) as never,
-      listGlobalMcpServers: async () => [],
-      loadProjectMcp: async () => ({ summaries: [], runtimeServers: [] })
-    },
-    runtime: {
-      scriptTools: async () => ({ tools: [{ name: 'project_script' }], problems: [] }) as never,
-      approvalFor: () => 'read',
-      dispatchControl: () => ({ beforeDispatch: () => {} })
-    },
-    adapters: {
-      createWebSearch: async () => search as never,
-      createMcp: async () => mcp as never,
-      createMemory: async () => memoryAdapter as never
-    },
-    skippedMcp: {
-      notify: (sessionId, notices) => skipped.push({ sessionId, notices })
-    }
-  }
-  return {
-    deps,
-    calls,
-    skipped,
-    search,
-    mcp,
-    memoryAdapter,
-    setMemory: (value: typeof memory) => {
-      memory = value
-    },
-    setBinding: (value: string) => {
-      binding = value
-    }
-  }
-}
-
 const desktopIdentity = {
   runtimeSessionId: 'runtime-1',
   sessionId: 'phi-1',
   projectId: 'project-1',
   cwd: '/remote/project',
-  resourceCwd: '/anchor'
+  resourceCwd: '/resource/project'
 }
 
-test('desktop tools merge selected skills and skip disabled memory and empty MCP', async () => {
+function desktopFixture(): {
+  deps: AppRemoteDesktopToolsDeps
+  calls: string[]
+  setBinding(value: string): void
+  setSessionCwd(value: string): void
+  setServers(global: unknown[], project: unknown[]): void
+  mcp: NonNullable<
+    Awaited<ReturnType<ReturnType<typeof createAppRemoteDesktopTools>>>['desktopMcp']
+  >
+  options(): DesktopMcpOptions | undefined
+} {
+  const calls: string[] = []
+  let binding = 'binding-1'
+  let sessionCwd = desktopIdentity.resourceCwd
+  let globalServers: unknown[] = []
+  let projectServers: unknown[] = []
+  let options: DesktopMcpOptions | undefined
+  const mcp = {
+    identity: desktopIdentity,
+    tools: [],
+    catalog: [],
+    skipped: [],
+    approvalFor: () => 'write' as const,
+    retire: () => calls.push('mcp.retire'),
+    close: async () => {
+      calls.push('mcp.close')
+    }
+  }
+  const deps: AppRemoteDesktopToolsDeps = {
+    agentDir: '/agent',
+    sessions: { findById: () => ({ cwd: sessionCwd }) },
+    workspace: { resolveBinding: () => ({ cacheKey: binding }) },
+    catalogs: {
+      listGlobalMcpServers: async () => globalServers as never,
+      loadProjectMcp: async () => ({ summaries: [], runtimeServers: projectServers as never })
+    },
+    adapters: {
+      createMcp: async (input) => {
+        options = input
+        calls.push('mcp.create')
+        return mcp
+      }
+    },
+    skippedMcp: { notify: () => calls.push('mcp.notify') }
+  }
+  return {
+    deps,
+    calls,
+    setBinding: (value) => {
+      binding = value
+    },
+    setSessionCwd: (value) => {
+      sessionCwd = value
+    },
+    setServers: (global, project) => {
+      globalServers = global
+      projectServers = project
+    },
+    mcp,
+    options: () => options
+  }
+}
+
+test('desktop host resource loading is empty when no MCP server is selected', async () => {
   const fixture = desktopFixture()
   const resources = await createAppRemoteDesktopTools(fixture.deps)(
     desktopIdentity,
     new AbortController().signal
   )
 
-  assert.deepEqual(resources.tools.allowedSkills, ['project-skill', 'global-skill'])
-  assert.deepEqual(resources.tools.skillCatalog, [
-    { name: 'project-skill', description: 'project' },
-    { name: 'global-skill', description: 'global' }
-  ])
-  assert.equal(resources.tools.desktopWebSearch, fixture.search)
-  assert.equal(resources.tools.desktopMcp, undefined)
-  assert.equal(resources.memory, undefined)
-  assert.deepEqual(fixture.skipped, [{ sessionId: 'phi-1', notices: [] }])
-
-  fixture.calls.length = 0
-  await resources.close?.()
-  assert.deepEqual(fixture.calls, ['search.retire', 'search.close'])
+  assert.deepEqual(resources, {})
+  assert.deepEqual(fixture.calls, ['mcp.notify'])
 })
 
-test('desktop tools preserve memory, MCP, child approval and cleanup branches', async () => {
+test('desktop host resource loading retains only the kernel MCP broker', async () => {
   const fixture = desktopFixture()
-  fixture.setMemory({ enabled: true, learn: true })
-  fixture.deps.catalogs.listGlobalMcpServers = async () =>
+  fixture.setServers(
     [
       { name: 'shared', enabled: true },
       { name: 'disabled', enabled: false }
-    ] as never
-  fixture.deps.catalogs.loadProjectMcp = async () =>
-    ({
-      summaries: [],
-      runtimeServers: [{ name: 'shared' }, { name: 'remote' }]
-    }) as never
-  let searchOptions:
-    Parameters<AppRemoteDesktopToolsDeps['adapters']['createWebSearch']>[0] | undefined
-  let memoryOptions:
-    Parameters<AppRemoteDesktopToolsDeps['adapters']['createMemory']>[0] | undefined
-  let mcpOptions: Parameters<AppRemoteDesktopToolsDeps['adapters']['createMcp']>[0] | undefined
-  fixture.deps.adapters.createWebSearch = async (options) => {
-    searchOptions = options
-    return fixture.search as never
-  }
-  fixture.deps.adapters.createMemory = async (options) => {
-    memoryOptions = options
-    return fixture.memoryAdapter as never
-  }
-  fixture.deps.adapters.createMcp = async (options) => {
-    mcpOptions = options
-    return fixture.mcp as never
-  }
-  const dispatches: Array<{ params: unknown; context: unknown }> = []
-  const childControl = { beforeDispatch: () => {} }
-  fixture.deps.runtime.dispatchControl = (params, context) => {
-    dispatches.push({ params, context })
-    return childControl
-  }
-  const approvals: Array<{ name: string; input: unknown; control: unknown }> = []
-  fixture.deps.runtime.approvalFor = (name, input, control) => {
-    approvals.push({ name, input, control })
-    return 'write'
-  }
-  const signal = new AbortController().signal
-  const resources = await createAppRemoteDesktopTools(fixture.deps)(desktopIdentity, signal)
-
-  assert.equal(resources.memory, fixture.memoryAdapter)
-  assert.equal(resources.tools.desktopMcp, fixture.mcp)
-  assert.equal(searchOptions?.agentDir, '/agent')
-  assert.equal(searchOptions?.resourceCwd, '/anchor')
-  assert.deepEqual(searchOptions?.identity, {
-    runtimeSessionId: 'runtime-1',
-    sessionId: 'phi-1',
-    projectId: 'project-1',
-    cwd: '/remote/project'
-  })
-  assert.deepEqual(memoryOptions?.settings, { enabled: true, learn: true })
-  assert.equal(typeof memoryOptions?.beforeDispatch, 'function')
-  assert.deepEqual(mcpOptions?.serverNames, ['shared', 'remote'])
-  assert.deepEqual(mcpOptions?.remoteProjectMcpServers, [{ name: 'shared' }, { name: 'remote' }])
-  assert.equal(mcpOptions?.approvalFor('anything', {}), 'write')
-  assert.deepEqual(fixture.skipped, [
-    { sessionId: 'phi-1', notices: [{ name: 'unavailable', reason: 'unavailable' }] }
-  ])
-
-  const scriptApprovalFor = resources.tools.scriptApprovalFor
-  assert.ok(scriptApprovalFor)
-  assert.equal(scriptApprovalFor('project_script', { value: 1 }), 'write')
-  assert.equal(dispatches.length, 0)
-  assert.equal(scriptApprovalFor('project_script', { value: 2 }, 'child-1'), 'write')
-  assert.deepEqual(dispatches, [
-    {
-      params: {
-        runtimeSessionId: 'runtime-1',
-        remoteSessionId: 'phi-1',
-        projectId: 'project-1'
-      },
-      context: {
-        originSessionId: 'runtime-1',
-        agentRunId: 'child-1',
-        signal
-      }
-    }
-  ])
-  assert.deepEqual(approvals, [
-    { name: 'project_script', input: { value: 1 }, control: undefined },
-    { name: 'project_script', input: { value: 2 }, control: childControl }
-  ])
-
-  fixture.setMemory({ enabled: false, learn: false })
-  assert.throws(() => memoryOptions?.beforeDispatch?.(), /记忆策略已改变/)
-  fixture.setMemory({ enabled: true, learn: true })
-  fixture.setBinding('binding-2')
-  assert.throws(() => mcpOptions?.beforeDispatch?.(), /项目绑定已改变/)
-
-  fixture.calls.length = 0
-  await resources.close?.()
-  assert.deepEqual(fixture.calls, [
-    'search.retire',
-    'mcp.retire',
-    'memory.retire',
-    'search.close',
-    'mcp.close',
-    'memory.close'
-  ])
-})
-
-test('desktop tool construction retires partial adapters and preserves the original failure', async () => {
-  const fixture = desktopFixture()
-  fixture.setMemory({ enabled: true, learn: true })
-  fixture.deps.catalogs.listGlobalMcpServers = async () =>
-    [{ name: 'configured', enabled: true }] as never
-  const failure = new Error('MCP construction failed')
-  fixture.deps.adapters.createMcp = async () => {
-    throw failure
-  }
-  fixture.memoryAdapter.close = async () => {
-    fixture.calls.push('memory.close')
-    throw new Error('secondary close failure')
-  }
-
-  await assert.rejects(
-    createAppRemoteDesktopTools(fixture.deps)(desktopIdentity, new AbortController().signal),
-    (error) => error === failure
+    ],
+    [{ name: 'shared' }, { name: 'remote' }]
   )
-  assert.deepEqual(fixture.calls, [
-    'search.retire',
-    'memory.retire',
-    'search.close',
-    'memory.close'
-  ])
+  const resources = await createAppRemoteDesktopTools(fixture.deps)(
+    desktopIdentity,
+    new AbortController().signal
+  )
+
+  assert.equal(resources.desktopMcp, fixture.mcp)
+  assert.deepEqual(fixture.options()?.serverNames, ['shared', 'remote'])
+  assert.equal(fixture.options()?.approvalFor('tool', {}), 'write')
+  assert.deepEqual(fixture.calls, ['mcp.create', 'mcp.notify'])
+
+  fixture.setBinding('binding-2')
+  assert.throws(() => fixture.options()?.beforeDispatch?.(), /项目绑定已改变/)
+  await resources.close?.()
+  assert.deepEqual(fixture.calls, ['mcp.create', 'mcp.notify', 'mcp.retire', 'mcp.close'])
 })
 
-for (const checkpoint of ['catalogs', 'scripts'] as const)
-  test(`desktop tools recheck the binding after loading ${checkpoint}`, async () => {
-    const fixture = desktopFixture()
-    const gate = deferred<void>()
-    let scriptsStarted = false
-    let searchStarted = false
-    if (checkpoint === 'catalogs') {
-      fixture.deps.catalogs.loadProjectMcp = async () => {
-        await gate.promise
-        return { summaries: [], runtimeServers: [] }
-      }
-    } else {
-      fixture.deps.runtime.scriptTools = async () => {
-        scriptsStarted = true
-        await gate.promise
-        return { tools: [] }
-      }
-    }
-    fixture.deps.adapters.createWebSearch = async () => {
-      searchStarted = true
-      return fixture.search as never
-    }
-    const loading = createAppRemoteDesktopTools(fixture.deps)(
-      desktopIdentity,
-      new AbortController().signal
-    )
-    const rejected = assert.rejects(loading, /项目绑定已改变/)
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    fixture.setBinding('binding-2')
-    gate.resolve()
-    await rejected
-    assert.equal(searchStarted, false)
-    assert.equal(scriptsStarted, checkpoint === 'scripts')
-  })
+test('desktop MCP loading rechecks session identity after catalog reads', async () => {
+  const fixture = desktopFixture()
+  const catalog = deferred<never[]>()
+  fixture.deps.catalogs.listGlobalMcpServers = () => catalog.promise
+  const loading = createAppRemoteDesktopTools(fixture.deps)(
+    desktopIdentity,
+    new AbortController().signal
+  )
+  fixture.setSessionCwd('/changed')
+  catalog.resolve([])
+
+  await assert.rejects(loading, /项目绑定已改变/)
+  assert.deepEqual(fixture.calls, [])
+})

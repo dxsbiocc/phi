@@ -16,7 +16,7 @@ import type { LocalShellSession } from './helpers/localShellSession'
 import { buildRealHelperBinary, type RealHelperBinary } from './helpers/realHelperBinary'
 
 // Opens the REAL production opener (not a fixture host) and asks the runtime host for the
-// managed helper that RPC startup requires (ssh-stdio-factory.ts).
+// managed helper that kernel startup requires.
 
 const linuxProbe = `${FAST_PROBE_START_SENTINEL}\nplatform.os=Linux\nplatform.arch=x86_64\nprobe.fast_complete=1\n${FAST_PROBE_END_SENTINEL}`
 const LINUX_SERVER_STAND_IN = process.platform === 'linux'

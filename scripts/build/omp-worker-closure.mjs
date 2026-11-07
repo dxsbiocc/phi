@@ -16,7 +16,6 @@ import ts from 'typescript'
 export const OMP_WORKER_ENTRY = 'src/main/agent/engine/in-process/main.ts'
 export const OMP_WORKER_ENTRIES = Object.freeze([
   OMP_WORKER_ENTRY,
-  'src/main/agent/engine/rpc/desktop-websearch-worker.ts',
   'src/main/agent/engine/rpc/desktop-project-memory-sdk-worker.ts'
 ])
 

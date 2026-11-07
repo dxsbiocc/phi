@@ -69,7 +69,7 @@ test('remote desktop MCP keeps its logical owner while binding the broker to the
     {
       loadDesktopTools: async (identity: { runtimeSessionId: string }) => {
         loadedRuntimeSessionId = identity.runtimeSessionId
-        return { tools: { desktopMcp: adapter } }
+        return { desktopMcp: adapter }
       }
     } as never,
     { hostServices: { invoke: async () => undefined } } as never
@@ -146,7 +146,7 @@ test('a remote session with no desktop MCP servers gets an empty catalog, not a 
     }
   }
   const services = new AppKernelDesktopServices(
-    { loadDesktopTools: async () => ({ tools: {} }) } as never,
+    { loadDesktopTools: async () => ({}) } as never,
     { hostServices: { invoke: async () => undefined } } as never
   )
   const remove = services.configureClient(
@@ -223,7 +223,7 @@ test(
       {
         loadDesktopTools: async (identity: { runtimeSessionId: string }) => {
           loadedRuntimeSessionId = identity.runtimeSessionId
-          return { tools: { desktopMcp: adapter } }
+          return { desktopMcp: adapter }
         }
       } as never,
       { hostServices: { invoke: async () => undefined } } as never

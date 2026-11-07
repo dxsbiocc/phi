@@ -7,7 +7,6 @@ import ts from 'typescript'
 export const BUN_CHILD_ENTRY_ALLOWLIST = Object.freeze([
   'agent/engine/in-process/main.ts',
   'agent/engine/rpc/desktop-project-memory-sdk-worker.ts',
-  'agent/engine/rpc/desktop-websearch-worker.ts',
   'terminal/terminal-supervisor.ts',
   'terminal/terminal-worker.ts'
 ])

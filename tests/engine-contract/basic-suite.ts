@@ -2,22 +2,27 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type {
   PhiAgentEvent,
+  PhiSessionCreateParams,
   WorkerCreateSessionResult,
   WorkerSessionState
 } from '../../src/main/agent/engine/types'
-import type { RpcSessionCreateParams } from '../../src/main/agent/engine/rpc/rpc-session-backend'
 import type { startLoopbackModel } from './loopback-model'
+
+type BasicSessionCreateParams = Pick<
+  PhiSessionCreateParams,
+  'sessionId' | 'cwd' | 'agentDir' | 'model'
+>
 
 export interface BasicEngineFixture {
   sessions: {
-    create(params: RpcSessionCreateParams): Promise<WorkerCreateSessionResult>
+    create(params: BasicSessionCreateParams): Promise<WorkerCreateSessionResult>
     prompt(params: { sessionId: string; text: string }): Promise<WorkerSessionState>
     abort(params: { sessionId: string }): Promise<WorkerSessionState>
     dispose(params: { sessionId: string }): Promise<unknown>
     has(sessionId: string): boolean
   }
   onSessionEvent(sessionId: string, listener: (event: PhiAgentEvent) => void): () => void
-  params(sessionId: string): RpcSessionCreateParams
+  params(sessionId: string): BasicSessionCreateParams
   provider: Awaited<ReturnType<typeof startLoopbackModel>>
   close(): Promise<void>
 }

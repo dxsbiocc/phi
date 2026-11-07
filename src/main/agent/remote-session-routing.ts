@@ -3,27 +3,14 @@ import type { SessionRunnerRegistry } from './session/session-runner-registry'
 import { createRuntimeSessionManager, type RuntimeSessionManager } from './runtime/runtime-adapter'
 import { phiOnlySessionPath } from './session/sessions'
 import { installKernelSessionRouting } from './engine/in-process-engine'
-import type { RpcDesktopToolScopeOptions } from './engine/rpc/desktop-tool-scope'
-import type { DesktopProjectMemoryAdapter } from './engine/rpc/desktop-project-memory-adapter'
+import type { DesktopMcpAdapter } from './engine/rpc/desktop-mcp-types'
 import type { RemoteStartupDiagnosticSink } from './engine/rpc/remote-startup-diagnostics'
 import { resolveRemoteWorkspaceHostBinding } from './remote-workspace-boundary'
 import { openRemoteRuntimeWorkspace } from './remote-runtime/workspace'
 import { createAppKernelSessionLaunchers } from './app-kernel-session-launchers'
 
 export interface AppRemoteDesktopResources {
-  readonly tools: Pick<
-    RpcDesktopToolScopeOptions,
-    | 'allowedSkills'
-    | 'skillCatalog'
-    | 'scriptTools'
-    | 'assertBinding'
-    | 'scriptApprovalFor'
-    | 'paletteCatalogPath'
-    | 'remoteLibrary'
-    | 'desktopWebSearch'
-    | 'desktopMcp'
-  >
-  readonly memory?: DesktopProjectMemoryAdapter
+  readonly desktopMcp?: DesktopMcpAdapter
   close?(): void | Promise<void>
 }
 

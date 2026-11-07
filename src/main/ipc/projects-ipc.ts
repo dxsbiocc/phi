@@ -8,7 +8,6 @@ import { writeAppLog } from '../agent/app-logger'
 import { readAppSettings } from '../agent/app-settings'
 import { getAuthManager } from '../agent/auth-manager'
 import { getPhiEngine } from '../agent/engine/in-process-engine'
-import { retireDesktopProjectMemoryAdapters } from '../agent/engine/rpc/desktop-project-memory-adapter'
 import { createProjectMemoryAccess } from '../agent/memory/project-memory-access'
 import {
   assertProjectPathAvailable,
@@ -154,7 +153,6 @@ export function registerProjectsIpc(options: ProjectsIpcOptions): void {
       })
     await disposeRemoteNotebookBackend(id)
     const project = getProject(id)
-    await retireDesktopProjectMemoryAdapters(id)
     if (project?.memory) {
       // Memory lives under Phi's own directory, so it would outlive the project otherwise.
       await getPhiEngine()
@@ -221,10 +219,11 @@ export function registerProjectsIpc(options: ProjectsIpcOptions): void {
     const binding = currentBinding()
     projectMemoryPolicyUpdates.add(id)
     try {
-      if (previous.enabled !== next.enabled || previous.learn !== next.learn) {
-        await retireDesktopProjectMemoryAdapters(id)
-        if (currentBinding() !== binding) throw new StaleSessionError()
-      }
+      if (
+        (previous.enabled !== next.enabled || previous.learn !== next.learn) &&
+        currentBinding() !== binding
+      )
+        throw new StaleSessionError()
       return updateProjectMemory(id, next)
     } finally {
       projectMemoryPolicyUpdates.delete(id)

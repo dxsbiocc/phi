@@ -316,7 +316,7 @@ export class AppKernelDesktopServices {
       )
       this.mcpResources.set(input.kernelSessionId, resources)
     }
-    const adapter = resources.tools.desktopMcp
+    const adapter = resources.desktopMcp
     if (!adapter) return NO_DESKTOP_MCP_SERVERS
     // The adapter keeps the logical Phi owner used by desktop dispatch guards; only the
     // kernel-facing broker binding uses the kernel protocol's session identity.

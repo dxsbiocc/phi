@@ -13,15 +13,11 @@ export interface MemoryIpcOptions {
   projects: {
     requireProject: (id: string) => Project
   }
-  memory: {
-    retireProjectAdapters: (projectId: string) => Promise<void>
-  }
 }
 
 export function registerMemoryIpc(options: MemoryIpcOptions): void {
   const ipcMain = options.ipcMain
   const requireProject = options.projects.requireProject
-  const retireDesktopProjectMemoryAdapters = options.memory.retireProjectAdapters
   const { projectMemoryTarget, projectMemorySnapshot } = createProjectMemoryAccess({
     agentDir: options.workspace.agentDir,
     requireProject
@@ -30,7 +26,6 @@ export function registerMemoryIpc(options: MemoryIpcOptions): void {
   ipcMain.handle(IPC.memory.snapshot, async (_, id: string) => projectMemorySnapshot(id))
   ipcMain.handle(IPC.memory.deleteLesson, async (_, id: string, index: unknown, text: unknown) => {
     const project = requireProject(id)
-    await retireDesktopProjectMemoryAdapters(id)
     await getPhiEngine().memory.deleteLesson({
       ...projectMemoryTarget(project),
       index,
@@ -40,7 +35,6 @@ export function registerMemoryIpc(options: MemoryIpcOptions): void {
   })
   ipcMain.handle(IPC.memory.clear, async (_, id: string) => {
     const project = requireProject(id)
-    await retireDesktopProjectMemoryAdapters(id)
     await getPhiEngine().memory.clear(projectMemoryTarget(project))
     return projectMemorySnapshot(id)
   })

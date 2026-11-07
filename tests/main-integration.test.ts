@@ -4,7 +4,6 @@
 // merging.
 import { parseModelAvailabilityChange } from '../src/main/agent/model-availability'
 import type { ModelAvailabilitySettings } from '../src/shared/modelAvailabilityTypes'
-import * as recoveryFailures from '../src/main/agent/engine/rpc/session-recovery'
 import * as runtimeReference from '../src/main/agent/session/runtime-reference'
 import * as forkSourceBusy from '../src/main/agent/session/fork-source-busy'
 import { createWrapperJobHostScope } from '../src/main/agent/wrappers/composition/job-host-handlers'
@@ -16,8 +15,6 @@ import { IPC } from '../src/shared/ipcChannels'
 import * as browserSessionScope from '../src/shared/browserSessionScope'
 import { systemUiLanguage } from '../src/shared/uiLanguage'
 import * as runtimeSelection from '../src/main/agent/engine/rpc/runtime-selection-control'
-import { RemoteMetadataBusyError } from '../src/main/agent/engine/rpc/runtime-metadata-control'
-import * as desktopWebSearch from '../src/main/agent/engine/rpc/desktop-websearch-adapter'
 import * as skippedMcpNotice from '../src/main/agent/mcp/skipped-notice'
 import * as desktopMcp from '../src/main/agent/engine/rpc/desktop-mcp-adapter'
 import * as remoteLibrary from '../src/main/agent/engine/rpc/remote-library-service'
@@ -472,8 +469,6 @@ type HarnessOptions = {
   remoteMemorySettings?: { enabled: boolean; learn: boolean }
   personaRead?: () => string
   remoteInstructionsRead?: () => Promise<Array<{ path: string; content: string }>>
-  projectMemoryRetire?: (projectId: string) => Promise<void>
-  projectMemoryAdapterCreate?: (options: Record<string, unknown>) => Promise<unknown>
   remoteResourceScripts?: () => Promise<{ tools: unknown[]; problems: string[] }>
   coldRuntimeOrigin?: (id: string) => { phiSessionId: string; cwd: string } | undefined
   remoteRuntimeWorkspace?: () => Promise<unknown>
@@ -2841,8 +2836,6 @@ async function harness(
     },
     './agent/engine/events': engineEvents,
     './agent/engine/rpc/runtime-selection-control': runtimeSelection,
-    './agent/engine/rpc/runtime-metadata-control': { RemoteMetadataBusyError },
-    './agent/engine/rpc/session-recovery': recoveryFailures,
     './agent/session/runtime-reference': runtimeReference,
     './agent/session/fork-source-busy': forkSourceBusy,
     './agent/session/child-run-recovery': {
@@ -2862,17 +2855,9 @@ async function harness(
         })
     },
     './agent/mcp/skipped-notice': skippedMcpNotice,
-    './agent/engine/rpc/desktop-websearch-adapter': {
-      ...desktopWebSearch,
-      createDesktopWebSearchAdapter: options.projectMemoryAdapterCreate
-        ? async () => ({ retire: noop, close: async () => undefined })
-        : desktopWebSearch.createDesktopWebSearchAdapter
-    },
     './agent/engine/rpc/desktop-mcp-adapter': {
       ...desktopMcp,
-      createDesktopMcpAdapter: options.projectMemoryAdapterCreate
-        ? async () => ({ tools: [], retire: noop, close: async () => undefined })
-        : desktopMcp.createDesktopMcpAdapter
+      createDesktopMcpAdapter: desktopMcp.createDesktopMcpAdapter
     },
     './agent/engine/rpc/remote-library-service': remoteLibrary,
     './agent/notebook/notebook-code-generation': notebookCodeGeneration,
@@ -3995,15 +3980,6 @@ async function harness(
         ripgrepStatus: 'not-installed'
       })
     },
-    './agent/engine/rpc/desktop-project-memory-adapter': {
-      createDesktopProjectMemoryAdapter: async (adapterOptions: Record<string, unknown>) => {
-        if (options.projectMemoryAdapterCreate)
-          return options.projectMemoryAdapterCreate(adapterOptions)
-        throw new Error('Memory adapter fixture must be explicitly supplied')
-      },
-      retireDesktopProjectMemoryAdapters: async (id: string): Promise<void> =>
-        options.projectMemoryRetire?.(id)
-    },
     './agent/remote-project-instructions': {
       loadRemoteProjectInstructions: async (): Promise<unknown[]> =>
         options.remoteInstructionsRead?.() ??
@@ -4771,7 +4747,6 @@ async function harness(
     './agent/persona-generation',
     './agent/packages/content-package-runtime',
     './agent/plan/plan-execution-wiring',
-    './agent/plan/plan-ownership',
     './agent/plan/plan-review-host-service',
     './agent/plan/work-mode-control',
     './agent/plan/work-mode-selection-host',

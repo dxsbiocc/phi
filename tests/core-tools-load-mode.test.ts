@@ -4,7 +4,6 @@ import test from 'node:test'
 import { buildEnvRequestTool } from '../src/main/agent/content/env-request-tool'
 import { buildSkillRunTool } from '../src/main/agent/content/skill-tools'
 import { toOmpCustomTool } from '../src/main/agent/engine/tool-adapter'
-import { registeredHostTools } from '../src/main/agent/engine/rpc/host-tool-validation'
 import type { PhiTool } from '../src/main/agent/engine/types'
 import { buildNotebookCustomTools } from '../src/main/agent/notebook/notebook-tools'
 import { buildWrapperCompositionTools } from '../src/main/agent/wrappers/composition/tools'
@@ -21,7 +20,7 @@ function coreTools(): PhiTool[] {
   ]
 }
 
-test('core research tools are essential in the in-process and RPC host registries', () => {
+test('core research tools are essential in the shared kernel runtime', () => {
   const tools = coreTools()
   const names = tools.map((tool) => tool.name)
   for (const expected of [
@@ -40,18 +39,14 @@ test('core research tools are essential in the in-process and RPC host registrie
   ])
     assert.ok(names.includes(expected), `missing ${expected}`)
 
-  const registered = registeredHostTools(tools)
   for (const tool of tools) {
     assert.equal(tool.loadMode, 'essential', `${tool.name} must be essential`)
     assert.equal(toOmpCustomTool(tool).loadMode, 'essential', `${tool.name} in-process`)
-    assert.equal(registered.get(tool.name)?.definition.loadMode, 'essential', `${tool.name} rpc`)
   }
 })
 
-test('MCP and web search adapters keep their tools discoverable', () => {
-  for (const file of ['desktop-mcp-adapter.ts', 'desktop-websearch-adapter.ts']) {
-    const source = readFileSync(`src/main/agent/engine/rpc/${file}`, 'utf8')
-    assert.match(source, /loadMode: 'discoverable'/, file)
-    assert.doesNotMatch(source, /loadMode: 'essential'/, file)
-  }
+test('the retained MCP host adapter keeps its tools discoverable', () => {
+  const source = readFileSync('src/main/agent/engine/rpc/desktop-mcp-adapter.ts', 'utf8')
+  assert.match(source, /loadMode: 'discoverable'/)
+  assert.doesNotMatch(source, /loadMode: 'essential'/)
 })
