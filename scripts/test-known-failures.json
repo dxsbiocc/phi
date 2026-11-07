@@ -41,79 +41,7 @@
   },
   "entries": [
     {
-      "file": "tests/engine-rpc-desktop-mcp-cli.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-desktop-tools-composition.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-desktop-websearch-composition.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-metadata-projection.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-native-wire-composition.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-persistent-launcher.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
       "file": "tests/engine-rpc-real-world-shapes.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-remote-library-composition.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-run-guard.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-runtime-composition-effects.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-runtime-composition-generation.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-runtime-composition-host-fatal.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-runtime-composition-host-policy.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-runtime-composition-image.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-runtime-composition-native.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-runtime-composition-security.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-runtime-composition-shake.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-runtime-composition.test.ts",
-      "profile": "rpc-launch"
-    },
-    {
-      "file": "tests/engine-rpc-runtime-host-policy-terminal.test.ts",
       "profile": "rpc-launch"
     },
     {
