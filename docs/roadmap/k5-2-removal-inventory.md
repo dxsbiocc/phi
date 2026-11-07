@@ -156,3 +156,5 @@ Actual added/deleted lines and final evidence will be recorded in
 - `tests/engine-rpc-runtime-composition-image.test.ts` remains deleted because it covered only the legacy runtime image-resume route.
 - `tests/engine-rpc-runtime-composition-shake.test.ts` remains deleted because it covered only the legacy runtime/session-verification shake-resume route.
 - `tests/engine-rpc-native-wire-composition.test.ts` remains deleted because its only case required the removed runtime-composition owner.
+
+- `tests/runtime-session-recovery.test.ts`: removed four cases that created main sessions on the in-process worker and checked worker-death recreation; main sessions now only run through the kernel. The two auxiliary-session cases remain.

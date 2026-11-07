@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -9,7 +9,6 @@ import { getOmpBridge } from '../src/main/agent/engine/omp-bridge'
 import { agentRunCompletions } from '../src/main/agent/plan/execution/agent-run-completions'
 import {
   createRuntimeAgentSession,
-  createRuntimeResourceLoader,
   createRuntimeSessionManager
 } from '../src/main/agent/runtime/runtime-adapter'
 
@@ -41,75 +40,12 @@ async function withFakeWorker<T>(run: (dir: string) => Promise<T>): Promise<T> {
 }
 
 test(
-  'a prompt after the worker died recreates the session instead of failing "Unknown session"',
-  { skip: !hasBun },
-  async () => {
-    await withFakeWorker(async (dir) => {
-      const { session } = await createRuntimeAgentSession({
-        cwd: dir,
-        sessionManager: createRuntimeSessionManager(dir)
-      })
-      await session.prompt('first')
-      const bridge = getOmpBridge()
-      assert.equal(bridge.hasSession(session.runtimeSessionId), true)
-
-      await assert.rejects(bridge.request('crash'))
-      assert.equal(bridge.hasSession(session.runtimeSessionId), false)
-
-      await session.prompt('second')
-      assert.equal(bridge.hasSession(session.runtimeSessionId), true)
-    })
-  }
-)
-
-test(
-  'recovery reopens the session file so the conversation carries over',
-  { skip: !hasBun },
-  async () => {
-    await withFakeWorker(async (dir) => {
-      const file = join(dir, 'session.jsonl')
-      writeFileSync(file, '{}\n')
-      const { session } = await createRuntimeAgentSession({
-        cwd: dir,
-        sessionManager: createRuntimeSessionManager(dir)
-      })
-      session.sessionFile = file
-      const bridge = getOmpBridge()
-      await assert.rejects(bridge.request('crash'))
-
-      await session.prompt('resume')
-      const inspected = await bridge.request<{
-        sessions: Record<string, { manager?: { kind: string; path?: string } }>
-      }>('inspect')
-      assert.deepEqual(inspected.sessions[session.runtimeSessionId].manager, {
-        kind: 'open',
-        cwd: dir,
-        path: file
-      })
-    })
-  }
-)
-
-test('concurrent calls on a lost session share one recreation', { skip: !hasBun }, async () => {
-  await withFakeWorker(async (dir) => {
-    const { session } = await createRuntimeAgentSession({
-      cwd: dir,
-      sessionManager: createRuntimeSessionManager(dir)
-    })
-    const bridge = getOmpBridge()
-    await assert.rejects(bridge.request('crash'))
-
-    await Promise.all([session.prompt('a'), session.prompt('b')])
-    assert.equal(bridge.hasSession(session.runtimeSessionId), true)
-  })
-})
-
-test(
   'aborting or disposing a session the worker lost is a no-op, not an error',
   { skip: !hasBun },
   async () => {
     await withFakeWorker(async (dir) => {
       const { session } = await createRuntimeAgentSession({
+        noTools: true,
         cwd: dir,
         sessionManager: createRuntimeSessionManager(dir)
       })
@@ -122,57 +58,12 @@ test(
 )
 
 test(
-  'internal model-recovery abort keeps future approval requests usable',
-  { skip: !hasBun },
-  async () => {
-    await withFakeWorker(async (dir) => {
-      const approvalSignals: boolean[] = []
-      const resourceLoader = createRuntimeResourceLoader({
-        cwd: dir,
-        extensionFactories: [
-          (api) => {
-            api.on('tool_call', (_event, context) => {
-              const signal = (context as { signal: AbortSignal }).signal
-              approvalSignals.push(signal.aborted)
-              return { block: signal.aborted }
-            })
-          }
-        ]
-      })
-      const { session } = await createRuntimeAgentSession({
-        cwd: dir,
-        sessionManager: createRuntimeSessionManager(dir),
-        resourceLoader
-      })
-      const bridge = getOmpBridge()
-      const requestApproval = async (): Promise<void> => {
-        bridge.emit(`session:${session.runtimeSessionId}:toolApproval`, {
-          requestId: `approval-${approvalSignals.length}`,
-          toolName: 'write',
-          input: { path: 'result.txt', content: 'done' }
-        })
-        await new Promise<void>((resolve) => setImmediate(resolve))
-      }
-
-      await session.abort({ preserveApprovals: true })
-      await session.prompt('continue with the fallback model')
-      await requestApproval()
-      assert.deepEqual(approvalSignals, [false])
-
-      await session.abort()
-      await requestApproval()
-      assert.deepEqual(approvalSignals, [false, true])
-      await session.dispose()
-    })
-  }
-)
-
-test(
   'disposing a runtime session abandons pending host-run completions',
   { skip: !hasBun },
   async () => {
     await withFakeWorker(async (dir) => {
       const { session } = await createRuntimeAgentSession({
+        noTools: true,
         cwd: dir,
         sessionManager: createRuntimeSessionManager(dir)
       })
