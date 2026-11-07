@@ -25,7 +25,7 @@ G4_SOURCE_HOME=/path/to/home-copy \
 G4_SOURCE_USERDATA=/path/to/userdata-copy \
 G4_APP=/path/to/Phi.app/Contents/MacOS/Phi \
 G4_APPROVE=1 \
-bun scripts/acceptance/g4/run.mjs [--remote-only | --local-only | --dry-run]
+bun scripts/acceptance/g4/run.mjs [--smoke] [--remote-only | --local-only | --dry-run]
 ```
 
 | Variable | Meaning | Default |
@@ -45,3 +45,5 @@ retries), so count requests against any budget, not prompts. A remote run upload
 kernel runtime (about 250 MB) the first time a new build reaches a server.
 
 `--dry-run` sends nothing and only checks that the home screen and composer selectors exist.
+
+`--smoke` runs only S1 (one local reply), F5 and M4: three prompts, for a low-cost check of a candidate build. A first remote run on a new build uploads the kernel runtime; set `G4_MODEL_TIMEOUT_MS=600000` for it.

@@ -3,12 +3,7 @@
 import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { parseArguments } from './lib/args.mjs'
-import {
-  CdpClient,
-  ConsoleEvidence,
-  discoverPageTarget,
-  redactConsoleText
-} from './lib/cdp.mjs'
+import { CdpClient, ConsoleEvidence, discoverPageTarget, redactConsoleText } from './lib/cdp.mjs'
 import {
   launchPackagedApp,
   prepareRun,
@@ -20,6 +15,7 @@ import { PhiUi, SELECTORS } from './lib/ui.mjs'
 
 const {
   dryRun: DRY_RUN,
+  smoke: SMOKE,
   remoteOnly: REMOTE_ONLY,
   localOnly: LOCAL_ONLY
 } = parseArguments(process.argv)
@@ -27,12 +23,10 @@ const WHOLE_RUN_TIMEOUT_MS = 45 * 60_000
 const DRY_RUN_TIMEOUT_MS = 3 * 60_000
 const MODEL_TIMEOUT_MS = Number(process.env.G4_MODEL_TIMEOUT_MS) || 4 * 60_000
 const STEP_TIMEOUT_MS = Number(process.env.G4_STEP_TIMEOUT_MS) || 13 * 60_000
-const LOCAL_STEP_IDS = ['F1', 'F2', 'F3', 'F4', 'F6', 'M1', 'M2', 'M3']
-const REMOTE_STEP_IDS = ['F5', 'M4', 'M5']
-const STEP_IDS = [
-  ...(REMOTE_ONLY ? [] : LOCAL_STEP_IDS),
-  ...(LOCAL_ONLY ? [] : REMOTE_STEP_IDS)
-]
+// --smoke: one local reply plus the remote fork and reply, for a low-cost check of a candidate.
+const LOCAL_STEP_IDS = SMOKE ? ['S1'] : ['F1', 'F2', 'F3', 'F4', 'F6', 'M1', 'M2', 'M3']
+const REMOTE_STEP_IDS = SMOKE ? ['F5', 'M4'] : ['F5', 'M4', 'M5']
+const STEP_IDS = [...(REMOTE_ONLY ? [] : LOCAL_STEP_IDS), ...(LOCAL_ONLY ? [] : REMOTE_STEP_IDS)]
 // The remote project the acceptance data copy already contains, by SSH host alias and name.
 const REMOTE_HOST = process.env.G4_REMOTE_HOST || 'GPU'
 const REMOTE_PROJECT = process.env.G4_REMOTE_PROJECT || 'software'
@@ -58,7 +52,9 @@ function relativeRunPath(target) {
 }
 
 function oneLine(value) {
-  return String(value ?? '').replace(/\s+/g, ' ').trim()
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function markdownCell(value) {
@@ -78,7 +74,9 @@ function assert(condition, message) {
 
 async function writeResults() {
   if (!run) return
-  await writeFile(run.resultsPath, `${JSON.stringify(redactEvidence(results), null, 2)}\n`, { mode: 0o600 })
+  await writeFile(run.resultsPath, `${JSON.stringify(redactEvidence(results), null, 2)}\n`, {
+    mode: 0o600
+  })
 }
 
 async function writeSummary(extra = '') {
@@ -230,7 +228,8 @@ async function recordStep(ui, id, operation, options = {}) {
   const expectedErrors = options.expectedErrors ?? []
   const transientErrors = (probe.events ?? []).filter(
     (event) =>
-      event.severity === 'error' && !expectedErrors.some((text) => String(event.text).includes(text))
+      event.severity === 'error' &&
+      !expectedErrors.some((text) => String(event.text).includes(text))
   )
   const assistantErrors = probe.newAssistantErrors ?? []
   const allowRemoteConnectionBlock =
@@ -295,10 +294,9 @@ async function runDry(ui, projectName) {
   const report = await ui.verifyDryRunSelectors(projectName)
   const sessionShot = path.join(run.shots, 'dry-run-session.png')
   await client.screenshot(sessionShot)
-  const failures = [
-    ...Object.entries(report.home),
-    ...Object.entries(report.session)
-  ].filter(([, exists]) => !exists)
+  const failures = [...Object.entries(report.home), ...Object.entries(report.session)].filter(
+    ([, exists]) => !exists
+  )
   const dryReport = {
     mode: 'dry-run',
     createdAt: new Date().toISOString(),
@@ -307,9 +305,13 @@ async function runDry(ui, projectName) {
     selectors: report,
     failures: failures.map(([name]) => name)
   }
-  await writeFile(path.join(run.runDir, 'dry-run.json'), `${JSON.stringify(dryReport, null, 2)}\n`, {
-    mode: 0o600
-  })
+  await writeFile(
+    path.join(run.runDir, 'dry-run.json'),
+    `${JSON.stringify(dryReport, null, 2)}\n`,
+    {
+      mode: 0o600
+    }
+  )
   results = [
     {
       id: 'DRY',
@@ -332,7 +334,7 @@ async function runDry(ui, projectName) {
 async function runFull(ui, projectName) {
   if (!REMOTE_ONLY) {
     await ui.openNewProjectSession(projectName)
-    await runLocal(ui)
+    await (SMOKE ? runLocalSmoke(ui) : runLocal(ui))
   }
   if (!LOCAL_ONLY) await runRemote(ui)
   const seen = new Set(results.map((item) => item.id))
@@ -341,12 +343,16 @@ async function runFull(ui, projectName) {
   }
 }
 
+async function runLocalSmoke(ui) {
+  await recordStep(ui, 'S1', async () => {
+    const sent = await sendPrompt(ui, '回复 ok 即可')
+    assert(sent.assistantText, 'Local smoke returned no assistant text')
+    return { reason: '本地会话获得正常助手回复', evidence: { assistantText: sent.assistantText } }
+  })
+}
+
 async function runLocal(ui) {
-  const forkPrompts = [
-    '第1轮：请只回答“一”。',
-    '第2轮：请只回答“二”。',
-    '第3轮：请只回答“三”。'
-  ]
+  const forkPrompts = ['第1轮：请只回答“一”。', '第2轮：请只回答“二”。', '第3轮：请只回答“三”。']
   const forkReplies = []
   let sourceTitle = ''
   let sourceId = ''
@@ -366,7 +372,10 @@ async function runLocal(ui) {
       sourceTitle = beforeFork.activeSessionTitle
       sourceId = await ui.currentSessionId()
       assert(sourceTitle && sourceId, 'Source session title or id is empty')
-      assert(beforeFork.forkButtonCount >= 3, `Expected 3 fork controls, got ${beforeFork.forkButtonCount}`)
+      assert(
+        beforeFork.forkButtonCount >= 3,
+        `Expected 3 fork controls, got ${beforeFork.forkButtonCount}`
+      )
       await ui.forkMessage(1)
       const forked = await client.waitForValue(
         `
@@ -389,17 +398,35 @@ async function runLocal(ui) {
 
   await recordStep(ui, 'F2', async () => {
     const snapshot = await ui.snapshot()
-    assert(snapshot.users.length === 2, `Fork contains ${snapshot.users.length} user messages, expected 2`)
+    assert(
+      snapshot.users.length === 2,
+      `Fork contains ${snapshot.users.length} user messages, expected 2`
+    )
     assert(snapshot.users[0].includes(forkPrompts[0]), 'Fork is missing the first user message')
     assert(snapshot.users[1].includes(forkPrompts[1]), 'Fork is missing the second user message')
-    assert(!snapshot.users.some((text) => text.includes(forkPrompts[2])), 'Fork contains the third user message')
+    assert(
+      !snapshot.users.some((text) => text.includes(forkPrompts[2])),
+      'Fork contains the third user message'
+    )
     const assistantTexts = snapshot.session.assistants
       .map((item) => item.content.trim())
       .filter(Boolean)
-    assert(assistantTexts.length === 2, `Fork contains ${assistantTexts.length} assistant replies, expected 2`)
-    assert(oneLine(assistantTexts[0]) === oneLine(forkReplies[0]), 'Fork is missing the first assistant reply')
-    assert(oneLine(assistantTexts[1]) === oneLine(forkReplies[1]), 'Fork is missing the second assistant reply')
-    assert(!assistantTexts.some((text) => oneLine(text) === oneLine(forkReplies[2])), 'Fork contains the third assistant reply')
+    assert(
+      assistantTexts.length === 2,
+      `Fork contains ${assistantTexts.length} assistant replies, expected 2`
+    )
+    assert(
+      oneLine(assistantTexts[0]) === oneLine(forkReplies[0]),
+      'Fork is missing the first assistant reply'
+    )
+    assert(
+      oneLine(assistantTexts[1]) === oneLine(forkReplies[1]),
+      'Fork is missing the second assistant reply'
+    )
+    assert(
+      !assistantTexts.some((text) => oneLine(text) === oneLine(forkReplies[2])),
+      'Fork contains the third assistant reply'
+    )
     return {
       reason: '分叉仅保留前两轮用户消息；未出现第三轮',
       evidence: {
@@ -420,9 +447,15 @@ async function runLocal(ui) {
 
   await recordStep(ui, 'F4', async () => {
     const snapshot = await ui.openSessionById(sourceId)
-    assert(snapshot.users.length === 3, `Source contains ${snapshot.users.length} user messages, expected 3`)
+    assert(
+      snapshot.users.length === 3,
+      `Source contains ${snapshot.users.length} user messages, expected 3`
+    )
     for (const prompt of forkPrompts) {
-      assert(snapshot.users.some((text) => text.includes(prompt)), `Source is missing ${prompt}`)
+      assert(
+        snapshot.users.some((text) => text.includes(prompt)),
+        `Source is missing ${prompt}`
+      )
     }
     return {
       reason: '来源会话仍完整保留三轮用户消息',
@@ -430,33 +463,41 @@ async function runLocal(ui) {
     }
   })
 
-  await recordStep(ui, 'F6', async () => {
-    const before = await ui.snapshot()
-    const prompt = '请写一篇至少 1200 字的长说明，分成十段，逐段解释如何保持大型软件项目可维护。'
-    usePromptBudget()
-    const started = await ui.startPromptAndForkWhileStreaming(prompt, before.forkButtonCount - 1)
-    f6StreamingObserved = started.streamingObserved
-    if (!started.outcome.triggered) {
+  await recordStep(
+    ui,
+    'F6',
+    async () => {
+      const before = await ui.snapshot()
+      const prompt = '请写一篇至少 1200 字的长说明，分成十段，逐段解释如何保持大型软件项目可维护。'
+      usePromptBudget()
+      const started = await ui.startPromptAndForkWhileStreaming(prompt, before.forkButtonCount - 1)
+      f6StreamingObserved = started.streamingObserved
+      if (!started.outcome.triggered) {
+        return {
+          status: 'FAIL',
+          reason: '发送长回答前，本地来源消息没有可用的分叉控件',
+          evidence: {
+            triggerMethod: 'captured fork UI handler after streaming begins',
+            trigger: started.outcome
+          }
+        }
+      }
+      const notice = await ui.findNoticeContainingOrNull('请等待来源会话运行结束后再分叉', 20_000)
+      const snapshot = await ui.snapshot()
       return {
-        status: 'FAIL',
-        reason: '发送长回答前，本地来源消息没有可用的分叉控件',
-        evidence: { triggerMethod: 'captured fork UI handler after streaming begins', trigger: started.outcome }
+        status: notice ? 'PASS' : 'FAIL',
+        reason: notice ? '运行中的来源会话拒绝分叉并显示预期提示' : '未观察到运行中分叉的预期提示',
+        evidence: {
+          triggerMethod: '发送后观察到停止按钮，再调用发送前捕获的分叉 UI 处理器',
+          trigger: started.outcome,
+          expectedNotice: '请等待来源会话运行结束后再分叉',
+          observedNotice: notice,
+          activeSessionTitle: snapshot.activeSessionTitle
+        }
       }
-    }
-    const notice = await ui.findNoticeContainingOrNull('请等待来源会话运行结束后再分叉', 20_000)
-    const snapshot = await ui.snapshot()
-    return {
-      status: notice ? 'PASS' : 'FAIL',
-      reason: notice ? '运行中的来源会话拒绝分叉并显示预期提示' : '未观察到运行中分叉的预期提示',
-      evidence: {
-        triggerMethod: '发送后观察到停止按钮，再调用发送前捕获的分叉 UI 处理器',
-        trigger: started.outcome,
-        expectedNotice: '请等待来源会话运行结束后再分叉',
-        observedNotice: notice,
-        activeSessionTitle: snapshot.activeSessionTitle
-      }
-    }
-  }, { expectedErrors: ['请等待来源会话运行结束后再分叉'] })
+    },
+    { expectedErrors: ['请等待来源会话运行结束后再分叉'] }
+  )
   if (f6StreamingObserved) await ui.waitForGenerationToFinish(MODEL_TIMEOUT_MS, true)
   if (sourceId) await ui.openSessionById(sourceId)
 
@@ -466,7 +507,10 @@ async function runLocal(ui) {
     })
     const childAppeared = sent.observed[SELECTORS.childRun]
     assert(childAppeared, 'No child-run UI element appeared')
-    assert(sent.assistantText.includes(run.marker), 'Final assistant output does not contain the README marker')
+    assert(
+      sent.assistantText.includes(run.marker),
+      'Final assistant output does not contain the README marker'
+    )
     return {
       reason: '子智能体卡片出现，且最终助手文本包含运行时 README 标记',
       evidence: {
@@ -484,12 +528,23 @@ async function runLocal(ui) {
     const growthTopics = ['测试、发布和回滚', '代码评审与重构', '监控、告警和故障复盘']
     let grownBy = 0
     while (compaction.notNeeded) {
-      assert(grownBy < growthTopics.length, 'Still too short to compact after growing the conversation')
+      assert(
+        grownBy < growthTopics.length,
+        'Still too short to compact after growing the conversation'
+      )
       const topic = growthTopics[grownBy]
       grownBy += 1
-      const grown = await sendPrompt(ui, `请写一篇至少 3000 字的长文，分成十五段，逐段解释软件项目里${topic}的做法。`)
-      assert(grown.assistantText, 'No assistant reply while growing the conversation for compaction')
-      compaction = await ui.inspectContextAndCompact('M2', { allowNotNeeded: grownBy < growthTopics.length })
+      const grown = await sendPrompt(
+        ui,
+        `请写一篇至少 3000 字的长文，分成十五段，逐段解释软件项目里${topic}的做法。`
+      )
+      assert(
+        grown.assistantText,
+        'No assistant reply while growing the conversation for compaction'
+      )
+      compaction = await ui.inspectContextAndCompact('M2', {
+        allowNotNeeded: grownBy < growthTopics.length
+      })
     }
     const sent = await sendPrompt(ui, '继续，用一句话总结我们之前在做什么')
     assert(sent.assistantText, 'No assistant reply after manual compaction')
@@ -511,10 +566,13 @@ async function runLocal(ui) {
     usePromptBudget()
     await ui.typePrompt(prompt)
     await ui.clickSelector(SELECTORS.send)
-    await client.waitForValue(`Boolean(document.querySelector(${JSON.stringify(SELECTORS.stop)}))`, {
-      timeoutMs: 20_000,
-      description: 'M3 streaming state'
-    })
+    await client.waitForValue(
+      `Boolean(document.querySelector(${JSON.stringify(SELECTORS.stop)}))`,
+      {
+        timeoutMs: 20_000,
+        description: 'M3 streaming state'
+      }
+    )
     const switchResult = await ui.switchToDifferentModel()
     await ui.waitForGenerationToFinish(MODEL_TIMEOUT_MS, true)
     const streamed = await ui.snapshot()
@@ -528,12 +586,18 @@ async function runLocal(ui) {
         evidence: { switchResult, streamingAssistantText: streamedText }
       }
     }
-    assert(switchResult.selected?.includes('/') && switchResult.changed, 'A different model was not selected')
+    assert(
+      switchResult.selected?.includes('/') && switchResult.changed,
+      'A different model was not selected'
+    )
     assert(
       switchResult.available.length > 1 && switchResult.after,
       'Model switch did not expose a distinct selected model'
     )
-    assert(switchResult.streamingAtSelection, 'Model selection occurred after streaming had finished')
+    assert(
+      switchResult.streamingAtSelection,
+      'Model selection occurred after streaming had finished'
+    )
     assert(streamedText, 'Streaming reply did not finish with assistant text')
     const hello = await sendPrompt(ui, '你好')
     assert(hello.assistantText, 'Post-switch “你好” returned no assistant text')
@@ -548,7 +612,6 @@ async function runLocal(ui) {
       }
     }
   })
-
 }
 
 async function runRemote(ui) {
@@ -633,7 +696,10 @@ async function runRemote(ui) {
       { timeoutMs: 120_000, description: 'remote fork session title' }
     )
     const forked = await ui.snapshot()
-    assert(forked.users.length === 1, `Remote fork contains ${forked.users.length} user messages, expected 1`)
+    assert(
+      forked.users.length === 1,
+      `Remote fork contains ${forked.users.length} user messages, expected 1`
+    )
     remoteReady = true
     return {
       reason: '远程会话从消息分叉成功，新会话保留来源消息',
@@ -656,22 +722,26 @@ async function runRemote(ui) {
       return { reason: '远程会话获得正常助手回复', evidence: { assistantText: sent.assistantText } }
     })
 
-    await recordStep(ui, 'M5', async () => {
-      const sent = await sendPrompt(ui, process.env.G4_SUBAGENT_PROMPT || REMOTE_SUBAGENT_PROMPT, {
-        observeSelectors: [SELECTORS.childRun]
-      })
-      assert(sent.assistantText, 'Remote M5 returned no assistant text')
-      assert(sent.observed[SELECTORS.childRun], 'No remote child-run UI element appeared')
-      return {
-        reason: '远程子智能体请求获得无错误回复；内容留给复核者判断',
-        evidence: {
-          childRunAppeared: sent.observed[SELECTORS.childRun],
-          assistantText: sent.assistantText
+    if (!SMOKE)
+      await recordStep(ui, 'M5', async () => {
+        const sent = await sendPrompt(
+          ui,
+          process.env.G4_SUBAGENT_PROMPT || REMOTE_SUBAGENT_PROMPT,
+          {
+            observeSelectors: [SELECTORS.childRun]
+          }
+        )
+        assert(sent.assistantText, 'Remote M5 returned no assistant text')
+        assert(sent.observed[SELECTORS.childRun], 'No remote child-run UI element appeared')
+        return {
+          reason: '远程子智能体请求获得无错误回复；内容留给复核者判断',
+          evidence: {
+            childRunAppeared: sent.observed[SELECTORS.childRun],
+            assistantText: sent.assistantText
+          }
         }
-      }
-    })
+      })
   }
-
 }
 
 async function executeConnected(port) {
@@ -704,13 +774,23 @@ async function executeConnected(port) {
 
 async function execute() {
   run = await prepareRun()
-  if (runAbortController.signal.aborted) throw new Error('Acceptance workflow aborted during run preparation')
+  if (runAbortController.signal.aborted)
+    throw new Error('Acceptance workflow aborted during run preparation')
   await Promise.all([writeResults(), writeSummary(), consoleEvidence.flush(run.consolePath)])
   const port = await reserveFreePort()
-  if (runAbortController.signal.aborted) throw new Error('Acceptance workflow aborted before app launch')
+  if (runAbortController.signal.aborted)
+    throw new Error('Acceptance workflow aborted before app launch')
   appProcess = launchPackagedApp(run, port)
   await writeRunMetadata(run, {
-    mode: DRY_RUN ? 'dry-run' : REMOTE_ONLY ? 'remote-only' : LOCAL_ONLY ? 'local-only' : 'full',
+    mode: DRY_RUN
+      ? 'dry-run'
+      : SMOKE
+        ? 'smoke'
+        : REMOTE_ONLY
+          ? 'remote-only'
+          : LOCAL_ONLY
+            ? 'local-only'
+            : 'full',
     cdpPort: port,
     appProcessId: appProcess.pid
   })
@@ -732,11 +812,8 @@ async function main() {
   const timeoutMs = DRY_RUN ? DRY_RUN_TIMEOUT_MS : WHOLE_RUN_TIMEOUT_MS
   let succeeded = false
   try {
-    succeeded = await withTimeout(
-      execute(),
-      timeoutMs,
-      DRY_RUN ? 'dry-run' : 'whole run',
-      () => runAbortController.abort()
+    succeeded = await withTimeout(execute(), timeoutMs, DRY_RUN ? 'dry-run' : 'whole run', () =>
+      runAbortController.abort()
     )
   } catch (error) {
     runAbortController.abort()

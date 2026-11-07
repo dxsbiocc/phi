@@ -1,4 +1,4 @@
-const KNOWN = new Set(['--dry-run', '--remote-only', '--local-only'])
+const KNOWN = new Set(['--dry-run', '--smoke', '--remote-only', '--local-only'])
 
 export function parseArguments(argv) {
   const args = argv.slice(2)
@@ -7,5 +7,10 @@ export function parseArguments(argv) {
   const remoteOnly = args.includes('--remote-only')
   const localOnly = args.includes('--local-only')
   if (remoteOnly && localOnly) throw new Error('--remote-only and --local-only exclude each other')
-  return { dryRun: args.includes('--dry-run'), remoteOnly, localOnly }
+  return {
+    dryRun: args.includes('--dry-run'),
+    smoke: args.includes('--smoke'),
+    remoteOnly,
+    localOnly
+  }
 }
