@@ -1,9 +1,10 @@
-import { Box, Button, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Box, IconButton, Paper, Stack, TextField, Typography } from '@mui/material'
 import { useState } from 'react'
 
 import type { AgentUserInteractionRequest, AgentUserInteractionResponse } from '../../../types'
 import { useUiLanguage } from '../../../lib/i18n'
 import MarkdownContent from '../../../components/MarkdownContent'
+import { PhiIcons } from '../../../icons'
 import { planCopy } from '../lib/planCopy'
 import { planReviewResponse } from '../lib/planReview'
 import { PlanReviewSteps } from './PlanReviewSteps'
@@ -69,22 +70,25 @@ function ReviewActions({
         slotProps={{ htmlInput: { maxLength: 2000, 'aria-label': planCopy.planRevisionNotes } }}
       />
       <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
-        <Button
-          variant="outlined"
+        <IconButton
+          size="small"
           disabled={!note.trim()}
           onClick={() => onRespond('revise')}
           aria-label={planCopy.revisePlan}
+          sx={{ border: '1px solid', borderColor: 'divider' }}
         >
-          {planCopy.revisePlan}
-        </Button>
-        <Button
+          <PhiIcons.action.revise size={16} aria-hidden />
+        </IconButton>
+        <IconButton
           data-testid="gui-e2e-plan-review-approve"
-          variant="contained"
+          size="small"
+          color="success"
           onClick={() => onRespond('approve')}
           aria-label={planCopy.approveAndStartExecution}
+          sx={{ border: '1px solid', borderColor: 'success.main' }}
         >
-          {planCopy.approveAndStartExecution}
-        </Button>
+          <PhiIcons.action.accept size={16} aria-hidden />
+        </IconButton>
       </Stack>
     </>
   )

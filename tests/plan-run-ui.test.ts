@@ -3,6 +3,7 @@ import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createTheme, ThemeProvider } from '@mui/material'
+import { GoCircleSlash, GoIssueDraft, GoPlay, GoRocket, GoSkip, GoUnverified } from 'react-icons/go'
 
 import type { PlanRunTimelineSnapshot } from '../src/shared/planRunTypes'
 import { PLAN_MAX_REPLANS } from '../src/shared/planRunTypes'
@@ -107,6 +108,10 @@ test('plan run panel renders progress, pause reason and recovery actions', () =>
   assert.match(markup, /1\/2 完成/)
   assert.match(markup, /第 2 步失败/)
   assert.match(markup, /Implement panel/)
+  const titleAt = markup.indexOf('Implement panel')
+  const accessAt = markup.indexOf('aria-label="写"', titleAt)
+  const attemptsAt = markup.indexOf('尝试 2 次', titleAt)
+  assert.ok(titleAt >= 0 && accessAt > titleAt && attemptsAt > accessAt)
   assert.match(markup, /尝试 2 次/)
   assert.match(markup, /data-phi-step-mark="failed"/)
   assert.match(markup, /aria-label="失败"/)
@@ -115,6 +120,85 @@ test('plan run panel renders progress, pause reason and recovery actions', () =>
   assert.match(markup, /aria-label="跳过"/)
   assert.match(markup, /aria-label="停止"/)
   assert.doesNotMatch(markup, />已完成</)
+})
+
+test('a running plan uses the pause icon instead of a text label', () => {
+  setUiLanguage('zh-CN')
+  const running = {
+    ...run,
+    status: 'running' as const,
+    pause: undefined,
+    steps: run.steps.map((step) =>
+      step.id === 'write' ? { ...step, status: 'running' as const } : step
+    )
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, {
+        controller: { ...controller(), run: running },
+        cwd: '/workspace'
+      })
+    )
+  )
+  assert.match(markup, /aria-label="暂停"/)
+  assert.doesNotMatch(markup, />暂停</)
+})
+
+test('a step that has not started uses the draft icon', () => {
+  setUiLanguage('zh-CN')
+  const pending = {
+    ...run,
+    status: 'running' as const,
+    pause: undefined,
+    steps: run.steps.map((step) =>
+      step.id === 'write' ? { ...step, status: 'pending' as const, attempts: 0 } : step
+    )
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, {
+        controller: { ...controller(), run: pending },
+        cwd: '/workspace'
+      })
+    )
+  )
+  const draftPath = renderToStaticMarkup(createElement(GoIssueDraft)).match(
+    /<path d="([^"]+)"/
+  )?.[1]
+  assert.match(markup, /data-phi-step-mark="pending"/)
+  assert.ok(draftPath && markup.includes(draftPath))
+  assert.match(markup, /aria-label="待执行"/)
+  assert.doesNotMatch(markup, />待执行</)
+})
+
+test('a user-paused plan resumes with the play icon', () => {
+  setUiLanguage('zh-CN')
+  const paused = {
+    ...run,
+    status: 'paused' as const,
+    pause: { reason: 'user' as const },
+    steps: run.steps.map((step) =>
+      step.id === 'write' ? { ...step, status: 'pending' as const, attempts: 0 } : step
+    )
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, {
+        controller: { ...controller(), run: paused },
+        cwd: '/workspace'
+      })
+    )
+  )
+  const playPath = renderToStaticMarkup(createElement(GoPlay)).match(/<path d="([^"]+)"/)?.[1]
+  assert.match(markup, /aria-label="继续"/)
+  assert.doesNotMatch(markup, />继续</)
+  assert.ok(playPath && markup.includes(playPath))
 })
 
 test('restart interruption shows recovery actions and workspace check', () => {
@@ -209,6 +293,8 @@ test('launching and unknown have distinct Chinese statuses', () => {
   )
   assert.match(markup, /aria-label="正在启动智能体"/)
   assert.doesNotMatch(markup, />正在启动智能体</)
+  const rocketPath = renderToStaticMarkup(createElement(GoRocket)).match(/<path d="([^"]+)"/)?.[1]
+  assert.ok(rocketPath && markup.includes(rocketPath))
   assert.doesNotMatch(markup, /aria-label="停止"/)
   const unknown = {
     ...run,
@@ -226,7 +312,42 @@ test('launching and unknown have distinct Chinese statuses', () => {
   )
   assert.match(unknownMarkup, /aria-label="启动状态未确认"/)
   assert.doesNotMatch(unknownMarkup, />启动状态未确认</)
+  const unverifiedPath = renderToStaticMarkup(createElement(GoUnverified)).match(
+    /<path d="([^"]+)"/
+  )?.[1]
+  assert.ok(unverifiedPath && unknownMarkup.includes(unverifiedPath))
   assert.match(unknownMarkup, /确认安全前，不能重试、跳过、重新规划或停止/)
+})
+
+test('skipped and cancelled steps use different icons', () => {
+  setUiLanguage('zh-CN')
+  const mixed = {
+    ...run,
+    steps: [
+      { ...run.steps[0]!, status: 'skipped' as const },
+      { ...run.steps[1]!, status: 'cancelled' as const }
+    ]
+  }
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(PlanRunPanel, {
+        controller: { ...controller(), run: mixed },
+        cwd: '/workspace'
+      })
+    )
+  )
+  const skipPath = renderToStaticMarkup(createElement(GoSkip)).match(/<path d="([^"]+)"/)?.[1]
+  const cancelPath = renderToStaticMarkup(createElement(GoCircleSlash)).match(
+    /<path d="([^"]+)"/
+  )?.[1]
+  assert.ok(skipPath && cancelPath && skipPath !== cancelPath)
+  assert.ok(markup.includes(skipPath) && markup.includes(cancelPath))
+  assert.match(markup, /aria-label="已跳过"/)
+  assert.match(markup, /aria-label="已取消"/)
+  assert.doesNotMatch(markup, />已跳过</)
+  assert.doesNotMatch(markup, />已取消</)
 })
 
 test('an unknown parallel launch holds controls even when an earlier step failed', () => {

@@ -1,8 +1,8 @@
-import { Box, Chip, Stack, Typography } from '@mui/material'
+import { Box, Stack, Typography } from '@mui/material'
 
 import type { PlanSpec, PlanStep } from '../../../../../shared/planRunTypes'
-import { PhiIcons } from '../../../icons'
 import { planCopy } from '../lib/planCopy'
+import { PlanAccessMark } from './PlanAccessMark'
 import { PlanTimelineStep } from './PlanTimeline'
 
 function PlanReviewStep({
@@ -18,18 +18,16 @@ function PlanReviewStep({
 }): React.JSX.Element {
   // Step ids are for the model; people read the plan by its numbering.
   const dependencies = step.dependsOn.map((id) => String(stepNumbers.get(id) ?? id))
-  const AccessIcon = step.access === 'read' ? PhiIcons.tool.read : PhiIcons.tool.edit
   return (
     <Box component="li" sx={{ listStyle: 'none' }}>
       <PlanTimelineStep
         isLast={isLast}
-        tone="neutral"
+        tone="pending"
         index={index}
-        icon={<AccessIcon size={14} />}
         title={`${index + 1}. ${step.title}`}
+        titleEnd={<PlanAccessMark access={step.access} />}
         meta={
           <Stack direction="row" spacing={0.75} useFlexGap sx={{ alignItems: 'center' }}>
-            <Chip size="small" variant="outlined" label={planCopy[step.access]} />
             {dependencies.length > 0 ? (
               <Typography variant="caption" color="text.secondary">
                 {planCopy.dependencies(dependencies.join(', '))}

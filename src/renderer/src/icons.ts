@@ -133,7 +133,6 @@ import {
   FiSend,
   FiSettings,
   FiShield,
-  FiSkipForward,
   FiSquare,
   FiTerminal,
   FiTool,
@@ -143,7 +142,20 @@ import {
   FiXCircle,
   FiZap
 } from 'react-icons/fi'
-import { GoOrganization, GoSync, GoVerified } from 'react-icons/go'
+import {
+  GoCheck,
+  GoCircleSlash,
+  GoIssueDraft,
+  GoOrganization,
+  GoPencil,
+  GoPlay,
+  GoRocket,
+  GoSkip,
+  GoStop,
+  GoSync,
+  GoUnverified,
+  GoVerified
+} from 'react-icons/go'
 import type { IconType } from 'react-icons'
 import {
   TbBrain,
@@ -717,6 +729,7 @@ export const PhiIcons = {
   action: {
     add: createPhiIcon('Add', FiPlus),
     addSession: createPhiIcon('AddSession', FiMessageSquare),
+    accept: createPhiIcon('Accept', GoCheck, { defaultStrokeWidth: null }),
     approve: createPhiIcon('Approve', FiCheckCircle),
     back: createPhiIcon('Back', FiChevronRight),
     cancel: createPhiIcon('Cancel', FiXCircle),
@@ -734,11 +747,14 @@ export const PhiIcons = {
     more: createPhiIcon('More', FiMoreHorizontal),
     openDefault: createPhiIcon('OpenDefault', FiExternalLink),
     openExternal: createPhiIcon('OpenExternal', FiExternalLink),
+    pause: createPhiIcon('Pause', GoStop, { defaultStrokeWidth: null }),
+    play: createPhiIcon('Play', GoPlay, { defaultStrokeWidth: null }),
     quick: createPhiIcon('Quick', FiZap),
     run: createPhiIcon('Run', FiPlay),
     refresh: createPhiIcon('Refresh', GoSync, { defaultStrokeWidth: null }),
     replan: createPhiIcon('Replan', FiLayers),
-    skip: createPhiIcon('Skip', FiSkipForward),
+    revise: createPhiIcon('Revise', GoPencil, { defaultStrokeWidth: null }),
+    skip: createPhiIcon('Skip', GoSkip, { defaultStrokeWidth: null }),
     save: createPhiIcon('Save', FiSave),
     saveKey: createPhiIcon('SaveKey', FiKey),
     search: createPhiIcon('Search', FiSearch),
@@ -850,16 +866,21 @@ export const PhiIcons = {
     ask: createPhiIcon('Ask', FiLock),
     auto: createPhiIcon('Auto', TbGauge, { scale: 1.16 }),
     blocked: createPhiIcon('Blocked', FiAlertCircle),
+    cancelled: createPhiIcon('Cancelled', GoCircleSlash, { defaultStrokeWidth: null }),
     check: createPhiIcon('Check', FiCheck),
     denied: createPhiIcon('Denied', FiXCircle),
     done: createPhiIcon('Done', FiCheckCircle),
+    draft: createPhiIcon('IssueDraft', GoIssueDraft, { defaultStrokeWidth: null }),
     full: createPhiIcon('FullAccess', FiUnlock),
     failed: createPhiIcon('Failed', FiXCircle),
     inProgress: createPhiIcon('InProgress', FiLoader),
     interrupted: createPhiIcon('Interrupted', FiPauseCircle),
+    launching: createPhiIcon('Launching', GoRocket, { defaultStrokeWidth: null }),
     pending: createPhiIcon('Pending', FiCircle),
+    skipped: createPhiIcon('Skipped', GoSkip, { defaultStrokeWidth: null }),
     info: createPhiIcon('Info', FiInfo),
     thinking: createPhiIcon('Thinking', TbBrain),
+    unverified: createPhiIcon('Unverified', GoUnverified, { defaultStrokeWidth: null }),
     verified: createPhiIcon('Verified', GoVerified),
     warning: createPhiIcon('Warning', FiAlertTriangle)
   },

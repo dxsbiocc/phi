@@ -64,7 +64,7 @@ export function PlanTimelineIcon({
           : tone === 'warning'
             ? PhiIcons.state.interrupted
             : tone === 'pending'
-              ? PhiIcons.state.pending
+              ? PhiIcons.state.draft
               : PhiIcons.state.thinking
   return (
     <Box
@@ -124,6 +124,7 @@ function PlanTimelineConnector(): React.JSX.Element {
 
 function PlanTimelineStepTitle({
   title,
+  titleEnd,
   meta,
   interactive,
   expanded,
@@ -131,6 +132,7 @@ function PlanTimelineStepTitle({
   toggleLabel
 }: {
   title: string
+  titleEnd?: ReactNode
   meta?: ReactNode
   interactive: boolean
   expanded?: boolean
@@ -167,9 +169,12 @@ function PlanTimelineStepTitle({
         '&:hover': interactive ? { bgcolor: 'action.hover' } : undefined
       }}
     >
-      <Typography variant="body2" noWrap sx={{ minWidth: 0, flex: 1, fontWeight: 650 }}>
-        {title}
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, flex: 1 }}>
+        <Typography variant="body2" noWrap sx={{ minWidth: 0, fontWeight: 650 }}>
+          {title}
+        </Typography>
+        {titleEnd ? <Box sx={{ flex: 'none', display: 'inline-flex' }}>{titleEnd}</Box> : null}
+      </Box>
       <Box sx={{ flex: 'none', display: 'flex', alignItems: 'center' }}>{meta}</Box>
       {interactive ? <ToggleIcon size={16} aria-hidden /> : null}
     </Box>
@@ -185,6 +190,7 @@ export function PlanTimelineStep({
   iconLabel,
   mark,
   title,
+  titleEnd,
   meta,
   expanded,
   onToggle,
@@ -199,6 +205,7 @@ export function PlanTimelineStep({
   iconLabel?: string
   mark?: string
   title: string
+  titleEnd?: ReactNode
   meta?: ReactNode
   expanded?: boolean
   onToggle?: () => void
@@ -234,6 +241,7 @@ export function PlanTimelineStep({
         <Box sx={{ flex: 1, minWidth: 0, pb: isLast ? 0 : 2 }}>
           <PlanTimelineStepTitle
             title={title}
+            titleEnd={titleEnd}
             meta={meta}
             interactive={interactive}
             expanded={expanded}

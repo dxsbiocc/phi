@@ -12,6 +12,7 @@ import { PhiIcons } from '../../../icons'
 import { formatAgentDuration } from '../../../lib/agentRunsOverview'
 import { planCopy } from '../lib/planCopy'
 import { planStepActions, planStepDurationMs } from '../lib/planRunView'
+import { PlanAccessMark } from './PlanAccessMark'
 import { PlanFailureActions } from './PlanFailureActions'
 import { PlanTimelineStep, type PlanTimelineTone } from './PlanTimeline'
 
@@ -68,30 +69,26 @@ function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.
       >
         {durationLabel}
       </Typography>
-      <Box
-        component="span"
-        aria-label={step.access === 'read' ? planCopy.accessRead : planCopy.accessWrite}
-        sx={{
-          width: 22,
-          height: 22,
-          flex: 'none',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRadius: '50%',
-          border: '1px solid',
-          borderColor: step.access === 'write' ? 'warning.main' : 'info.main',
-          color: step.access === 'write' ? 'warning.main' : 'info.main'
-        }}
-      >
-        {step.access === 'read' ? (
-          <PhiIcons.tool.read size={12} aria-hidden />
-        ) : (
-          <PhiIcons.tool.edit size={12} aria-hidden />
-        )}
-      </Box>
     </Stack>
   )
+}
+
+function stepMarker(status: PlanStepStatus): React.JSX.Element | undefined {
+  const icon =
+    status === 'failed'
+      ? PhiIcons.state.failed
+      : status === 'launching'
+        ? PhiIcons.state.launching
+        : status === 'skipped'
+          ? PhiIcons.state.skipped
+          : status === 'cancelled'
+            ? PhiIcons.state.cancelled
+            : status === 'unknown'
+              ? PhiIcons.state.unverified
+              : undefined
+  if (!icon) return undefined
+  const Icon = icon
+  return <Icon size={14} aria-hidden />
 }
 
 function StepReport({
@@ -235,12 +232,11 @@ export function PlanStepRow({
         tone={tone}
         index={index}
         dimmed={tone === 'pending'}
-        icon={
-          step.status === 'failed' ? <PhiIcons.state.failed size={14} aria-hidden /> : undefined
-        }
+        icon={stepMarker(step.status)}
         iconLabel={planCopy.stepStatus(step.status)}
         mark={step.status}
         title={`${index + 1}. ${step.title}`}
+        titleEnd={<PlanAccessMark access={step.access} />}
         meta={<StepHeader step={step} />}
         expanded={expansion.expanded}
         toggleLabel={
