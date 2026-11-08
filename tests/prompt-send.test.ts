@@ -340,6 +340,21 @@ test('a current null receipt reports that the prompt was not accepted', async ()
   assert.equal(await sending, false)
 })
 
+test('a current null receipt notifies that the run was cancelled', async () => {
+  const h = harness()
+  let cancelled = 0
+  const sending = sendPrompt(h.deps, 'replan', target, {
+    appendUserMessage: false,
+    suppressUserMessageEvent: true,
+    onRunCancelled: () => {
+      cancelled += 1
+    }
+  })
+  h.applyReceipt(null)
+  assert.equal(await sending, false)
+  assert.equal(cancelled, 1)
+})
+
 test('a receipt-side UI failure does not roll back a prompt accepted by the runtime', async () => {
   const h = harness()
   h.deps.actions.refreshSessions = () => {

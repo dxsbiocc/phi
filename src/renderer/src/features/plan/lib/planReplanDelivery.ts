@@ -1,6 +1,9 @@
 import type { PlanRunReplanRequest } from '../../../../../shared/planRunTypes'
 
-export type OnReplanPrompt = (phiSessionId: string, prompt: string) => Promise<boolean>
+export type OnReplanPrompt = (
+  phiSessionId: string,
+  prompt: string
+) => Promise<boolean | 'stopped'>
 
 export type PendingReplanCancellation = {
   phiSessionId: string
@@ -37,7 +40,7 @@ export async function deliverPlanReplanPrompt({
   isCurrent: () => boolean
   send: OnReplanPrompt
   cancel: (requestId: string) => Promise<unknown>
-}): Promise<boolean> {
+}): Promise<boolean | 'stopped'> {
   const cancelRequest = async (): Promise<void> => {
     try {
       await cancel(request.requestId)
@@ -55,7 +58,12 @@ export async function deliverPlanReplanPrompt({
   }
 
   try {
-    if (await send(phiSessionId, request.prompt)) return true
+    const sent = await send(phiSessionId, request.prompt)
+    if (sent === 'stopped') {
+      await cancelRequest()
+      return 'stopped'
+    }
+    if (sent) return true
   } catch (cause) {
     await cancelRequest()
     throw cause

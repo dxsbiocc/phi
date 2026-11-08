@@ -288,7 +288,11 @@ export async function sendPrompt(
             ...(images.length ? { images } : {})
           }
     )
-    if (!result) return !isCurrentRequest(deps, receipt.sendRequest)
+    if (!result) {
+      if (!isCurrentRequest(deps, receipt.sendRequest)) return true
+      options.onRunCancelled?.()
+      return false
+    }
     acceptedByRuntime = true
     if (!isCurrentReply(deps, receipt, result)) return true
     await applySendReceipt(deps, result, target, optimisticUserMessageId)

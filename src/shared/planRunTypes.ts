@@ -177,6 +177,7 @@ export type PlanRunEvent =
   | { type: 'step_launch_requested'; stepId: string; requestId: string; at: string }
   | { type: 'step_launch_unknown'; stepId: string; requestId: string; at: string }
   | { type: 'step_launch_quiescent'; stepId: string; requestId: string; at: string }
+  | { type: 'step_interrupted'; stepId: string; at: string }
   | { type: 'step_launched'; stepId: string; agentRunId: string; at: string }
   | { type: 'step_succeeded'; stepId: string; report: PlanStepReportSummary; at: string }
   | {

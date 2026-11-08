@@ -373,6 +373,7 @@ function usePlanReplanActions(
         send: onReplanPrompt,
         cancel: (requestId) => api.cancelPlanRunReplan(actionSession, actionRun, requestId)
       })
+      if (accepted === 'stopped') return
       if (!accepted) {
         throw new Error(planCopy.replanSendFailed)
       }

@@ -426,3 +426,47 @@ test('kernel plan skip and stop controls settle only their targeted run', async 
     rmSync(agentDir, { recursive: true, force: true })
   }
 })
+
+test('reopening releases unknown launches whose requests are settled and keeps the rest', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-kernel-plan-'))
+  const sessionId = 'kernel-plan-restart'
+  const at = '2026-11-08T00:00:00.000Z'
+  let state = createPlanRunState({ id: 'run-restart', sessionId, spec: plan(), now: at })
+  state = reducePlanRun(state, {
+    type: 'step_launch_requested',
+    stepId: 'read-a',
+    requestId: 'settled-request',
+    at
+  })
+  state = reducePlanRun(state, {
+    type: 'step_launch_requested',
+    stepId: 'read-b',
+    requestId: 'live-request',
+    at
+  })
+  writePlanRun(state, agentDir)
+  const starts: string[] = []
+  const coordinator = new KernelPlanCoordinator(
+    agentDir,
+    async (method) => {
+      if (method === 'agentRun.start') {
+        starts.push(method)
+        return { runId: `child-${starts.length}` }
+      }
+      return {}
+    },
+    () => undefined,
+    (session, requestId) => session === sessionId && requestId === 'settled-request'
+  )
+  try {
+    await coordinator.openSession(sessionId)
+    const [recovered] = await coordinator.list(sessionId)
+    assert.equal(recovered.steps['read-a']?.status, 'interrupted')
+    assert.equal(recovered.steps['read-b']?.status, 'unknown')
+    assert.equal(recovered.status, 'paused')
+    assert.deepEqual(starts, [], 'nothing is relaunched on reopen')
+  } finally {
+    coordinator.closeSession(sessionId)
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})

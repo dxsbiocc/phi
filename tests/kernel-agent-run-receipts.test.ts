@@ -177,3 +177,24 @@ test('cancellation after durable registration records exactly one cancelled term
     rmSync(f.root, { recursive: true, force: true })
   }
 })
+
+test('a request is settled when never accepted or terminal, not while it is open', async () => {
+  const f = fixture()
+  const first = new KernelAgentRunReceiptStore(f.agentDir)
+  const second = new KernelAgentRunReceiptStore(f.agentDir)
+  try {
+    assert.equal(first.requestSettled('session-1', 'anything'), false, 'unopened session')
+    await first.openSession('session-1', f.sessionDir)
+    await first.accept('session-1', 'run_1', input('request-open'))
+    assert.equal(first.requestSettled('session-1', 'request-open'), false)
+    assert.equal(first.requestSettled('session-1', 'request-never-accepted'), true)
+    await first.closeSession('session-1')
+
+    await second.openSession('session-1', f.sessionDir)
+    assert.equal(second.requestSettled('session-1', 'request-open'), true, 'reopen settles it')
+  } finally {
+    await first.closeSession('session-1')
+    await second.closeSession('session-1')
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})

@@ -507,6 +507,12 @@ export class KernelAgentRunReceiptStore {
     )
   }
 
+  /** A request is settled when this journal never accepted it or holds its terminal state. */
+  requestSettled(sessionId: string, requestId: string): boolean {
+    const state = this.sessions.get(sessionId)?.requests.get(requestId)
+    return this.sessions.has(sessionId) && (!state || Boolean(state.terminal))
+  }
+
   hasUnfinished(sessionId: string): boolean {
     return [...this.require(sessionId).requests.values()].some((state) => !state.terminal)
   }

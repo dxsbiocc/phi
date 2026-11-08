@@ -90,6 +90,13 @@ export interface PlanRunService {
   ): Promise<PlanRunState>
   cancelReplan(phiSessionId: string, requestId: string): void
   recoverSession(phiSessionId: string): Promise<PlanRunState[]>
+  /** Prevents new launches while the session runtime is shutting down. */
+  suspendSession(phiSessionId: string): Promise<void>
+  /** After recovery, releases unknown launches whose request is proven settled. */
+  releaseSettledLaunches(
+    phiSessionId: string,
+    settled: (requestId: string) => boolean
+  ): Promise<void>
 }
 
 export type { TimelineEvent }

@@ -313,6 +313,20 @@ test('concurrent done callbacks are serialized without losing either update', as
   assert.equal(app.executor.get('plan-1')?.steps.b.status, 'done')
 })
 
+test('a suspended session records a cancelled child as interrupted without retrying', async () => {
+  const app = fixture()
+  await app.executor.start(spec([step('a'), step('b', { dependsOn: ['a'] })]), 'session-1')
+  await app.executor.suspendSession('session-1')
+  fail(app.runner.runs[0]!, 'cancelled at quit')
+  await waitFor(() => app.executor.get('plan-1')?.steps.a.status === 'interrupted')
+  const state = app.executor.get('plan-1')!
+  assert.equal(state.status, 'paused')
+  assert.equal(state.steps.a.attempts, 1)
+  assert.equal(state.steps.b.status, 'pending')
+  assert.deepEqual(state.pause, { reason: 'interrupted', stepId: 'a' })
+  assert.equal(app.runner.runs.length, 1)
+})
+
 test('restart recovery interrupts running work and can retry it', async () => {
   const app = fixture()
   const initial = createPlanRunState({
