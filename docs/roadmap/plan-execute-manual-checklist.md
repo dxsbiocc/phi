@@ -1,6 +1,6 @@
 # Plan-execute manual acceptance
 
-Status: pending desktop and SSH validation. Automated tests do not prove model behavior or remote process cleanup.
+Status: accepted 2026-11-08. E4 (local, packaged app) and E5 (remote, GPU) checks below all pass; the feature is complete for the internal beta. Automated tests alone do not prove model behavior or remote process cleanup, so rerun these checks after changes to plan execution, agent runs, or the remote kernel.
 
 2026-10-24 local desktop observation: In the existing `localhost:5173` development window, a new ordinary Kimi K2.6 conversation stayed selected beyond 35 seconds, produced a two-step read-only review card, accepted approval, ran both steps, and received a final agent summary. The first step verified `/Users/dengxsh/.phi/workspace`. The second step was recorded as done by the runner, but the final agent correctly reported that its `glob` result did not meet the top-level listing criterion; this remains an acceptance-quality gap. The live page revealed duplicate full plan lists during review and execution. After the fix and a development-window restart, the history card displayed a meaningful title and status with details collapsed by default; clicking “查看计划详情” revealed both original steps, and collapsing it hid them again. This post-change UI check passed.
 
