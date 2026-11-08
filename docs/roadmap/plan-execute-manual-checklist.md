@@ -10,17 +10,19 @@ Use a disposable local project and a separate test conversation. Record the Phi 
 
 ## E4: Local plan-execute
 
+2026-11-08 run: packaged app (`build:unpack`, branch `fix/plan-execute-kernel-prompt`), kimi-k3, isolated HOME clone, about 53 model requests in total.
+
 | Check | Action | Expected result | Result |
 | --- | --- | --- | --- |
-| Review gate | Select Plan and execute; ask for two independent read steps followed by one write step | Read-only investigation produces one structured review card; no file changes before approval | Pending |
-| Parallel execution | Approve the plan | Independent read steps overlap; dependent write waits for both | Pending |
-| Failure recovery | Make a test step fail twice | One automatic retry, then a paused run with retry, skip, replan, and stop choices | Pending |
-| Write retry | Retry a failed write step | Confirmation warns that files may already have changed | Pending |
-| Replan | Choose Replan remaining steps and approve a revised plan | A new review card appears; completed steps stay fixed; only remaining work changes; execution resumes after approval | Pending |
-| Replan cancellation | Cancel that review | Original run stays paused and can be recovered | Pending |
-| Restart recovery | Quit Phi during a running step, then reopen the conversation | Interrupted step is visible with recovery actions; no step is silently relaunched | Pending |
-| Completion | Let the plan finish | Timeline records completion once; main agent verifies and summarizes results and exact file paths | Pending |
-| Session isolation | Switch to another conversation while a plan runs | The plan continues in its own session; switching does not move its approval or actions | Pending |
+| Review gate | Select Plan and execute; ask for two independent read steps followed by one write step | Read-only investigation produces one structured review card; no file changes before approval | Pass 2026-11-08 (after `2575ef23`; before it kimi-k3 followed OMP's markdown plan prompt and looped on `write` without content) |
+| Parallel execution | Approve the plan | Independent read steps overlap; dependent write waits for both | Pass 2026-11-08: both reads started 5 ms apart; the write started after both finished |
+| Failure recovery | Make a test step fail twice | One automatic retry, then a paused run with retry, skip, replan, and stop choices | Pass 2026-11-08: write into a read-only dir failed twice (attempts 2), run paused with retry/skip/replan/stop |
+| Write retry | Retry a failed write step | Confirmation warns that files may already have changed | Pass 2026-11-08: dialog warns the step may already have changed files |
+| Replan | Choose Replan remaining steps and approve a revised plan | A new review card appears; completed steps stay fixed; only remaining work changes; execution resumes after approval | Pass 2026-11-08: done step kept, failed step became skipped, new step wrote `out/count.txt`, run completed. kimi-k3 first tried to edit the started step and change the goal; both were rejected and it corrected itself |
+| Replan cancellation | Cancel that review | Original run stays paused and can be recovered | Pass 2026-11-08 after `d1981945` (stopping the review left an uncancellable replan before). Minor: the panel still shows "无法发送重新规划请求" after a user stop |
+| Restart recovery | Quit Phi during a running step, then reopen the conversation | Interrupted step is visible with recovery actions; no step is silently relaunched | Partial 2026-11-08: after `75bd06e3` the paused/interrupted run shows on reopen, and nothing is relaunched. Fail: a step running at quit stays `unknown` with no actions, because no local path emits `step_launch_quiescent`; quitting also cancels the child, which the executor counts as a failure and auto-retries |
+| Completion | Let the plan finish | Timeline records completion once; main agent verifies and summarizes results and exact file paths | Pass 2026-11-08: completion recorded once; the main agent verified and summarized `summary.md` with its path and content |
+| Session isolation | Switch to another conversation while a plan runs | The plan continues in its own session; switching does not move its approval or actions | Pass 2026-11-08: another conversation showed no review or plan actions while the plan kept running |
 
 ## E5: Remote plan-execute (keep the mode gate closed until security review passes)
 
@@ -31,6 +33,6 @@ Use a disposable local project and a separate test conversation. Record the Phi 
 | Cancellation | Cancel before and during child registration | Remote tombstone blocks late dispatch; signed quiescence arrives only after all children terminate | Pending |
 | Disconnect | Drop SSH after dispatch but before receipt | Plan records UNKNOWN, retains the request ID for reconciliation, and never automatically retries or skips | Pending |
 | Reconnect | Restore the same remote generation and reconcile that request | Only a signed quiescence result releases UNKNOWN; a different request ID cannot release it | Pending |
-| Completion | Finish a remote plan | The main agent receives final reports, verifies remote files, and summarizes the result | Pending |
+| Completion | Finish a remote plan | The main agent receives final reports, verifies remote files, and summarizes the result | Pass 2026-11-08: completion recorded once; the main agent verified and summarized `summary.md` with its path and content |
 
 For each failed check, save a redacted timeline/export and the relevant `~/.phi/logs` entries; record whether any remote child or job remained active. Do not mark E5 passed based only on an SSH channel closing.
