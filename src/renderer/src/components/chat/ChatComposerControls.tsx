@@ -135,7 +135,7 @@ export function ModelSelectorControl({
             data-phi-model-thinking={showThinking ? 'true' : undefined}
             sx={{
               ...compactComposerIconButtonSx,
-              ...(showThinking ? { width: 'auto', px: 0.75, gap: 0.25 } : {}),
+              ...(showThinking ? { width: 'auto', px: 0.75, gap: 0.75 } : {}),
               color: 'text.secondary',
               '&.Mui-focusVisible': {
                 outline: '2px solid',
