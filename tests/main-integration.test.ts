@@ -3742,6 +3742,7 @@ async function harness(
     './agent/plan/model/plan-spec': {
       validatePlanSpec: (value: unknown) => ({ ok: true, spec: value })
     },
+    './agent/plan/persistence/plan-run-store': { listUnfinishedPlanRuns: (): unknown[] => [] },
     './agent/wrappers/composition/discovery': {
       listWrapperCompositionCatalogStatus: (): unknown[] => [],
       resetWrapperCompositionCatalogCache: (): void => {}
@@ -4748,6 +4749,7 @@ async function harness(
     './agent/packages/content-package-runtime',
     './agent/plan/plan-execution-wiring',
     './agent/plan/plan-review-host-service',
+    './agent/plan/plan-session-loader',
     './agent/plan/work-mode-control',
     './agent/plan/work-mode-selection-host',
     './agent/plugins/installed-plugin-namespace',

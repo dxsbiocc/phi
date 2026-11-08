@@ -13,6 +13,8 @@ import type {
 export interface PlanRunIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
   kernelPlanRuns(phiSessionId: string): RoutedPlanRunOperations | undefined
+  /** Loads the open conversation's kernel session when it has an unfinished plan run. */
+  loadPlanSession?(phiSessionId: string): Promise<boolean>
 }
 
 export type KernelPlanRunIpcOperations = RoutedPlanRunOperations
@@ -96,14 +98,24 @@ function readReplanCancelInput(args: unknown[]): PlanRunReplanCancelInput {
 export function registerPlanRunIpc(options: PlanRunIpcOptions): void {
   const { ipcMain } = options
 
-  // Kernel mapping: list/get are direct coordinator reads; unloaded sessions return empty reads.
+  // Kernel mapping: list/get are direct coordinator reads. An unloaded session is loaded
+  // first only when it has an unfinished plan run; otherwise the reads stay empty.
+  const readablePlanRuns = async (
+    phiSessionId: string
+  ): Promise<RoutedPlanRunOperations | undefined> => {
+    const loaded = options.kernelPlanRuns(phiSessionId)
+    if (loaded || !options.loadPlanSession) return loaded
+    return (await options.loadPlanSession(phiSessionId))
+      ? options.kernelPlanRuns(phiSessionId)
+      : undefined
+  }
   ipcMain.handle(IPC.planRuns.list, async (_event, ...args: unknown[]) => {
     const input = readSessionInput(args)
-    return options.kernelPlanRuns(input.phiSessionId)?.list() ?? []
+    return (await readablePlanRuns(input.phiSessionId))?.list() ?? []
   })
   ipcMain.handle(IPC.planRuns.get, async (_event, ...args: unknown[]) => {
     const input = readRunInput(args)
-    const state = await options.kernelPlanRuns(input.phiSessionId)?.get(input.runId)
+    const state = await (await readablePlanRuns(input.phiSessionId))?.get(input.runId)
     return state ?? null
   })
 

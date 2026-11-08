@@ -265,3 +265,28 @@ test('plan run preload API uses structured payloads and is spread into the globa
   assert.match(preloadSource, /\.\.\.planRunApi/u)
   assert.match(preloadTypes, /PlanRunRendererApi/u)
 })
+
+test('listing an unloaded session with an unfinished plan loads it once, then reads it', async () => {
+  const handlers = new Map<string, RegisteredHandler>()
+  let loaded = false
+  const loadRequests: string[] = []
+  const operations = {
+    list: async () => [{ ...planRun, sessionId: 'restarted' }]
+  } as unknown as KernelPlanRunIpcOperations
+  registerPlanRunIpc({
+    ipcMain: { handle: (channel, listener) => void handlers.set(channel, listener) },
+    kernelPlanRuns: () => (loaded ? operations : undefined),
+    loadPlanSession: async (phiSessionId) => {
+      loadRequests.push(phiSessionId)
+      loaded = phiSessionId === 'restarted'
+      return loaded
+    }
+  })
+  assert.deepEqual(await invoke(handlers, IPC.planRuns.list, { phiSessionId: 'other' }), [])
+  const listed = (await invoke(handlers, IPC.planRuns.list, {
+    phiSessionId: 'restarted'
+  })) as PlanRunState[]
+  assert.equal(listed[0]?.id, planRun.id)
+  await invoke(handlers, IPC.planRuns.list, { phiSessionId: 'restarted' })
+  assert.deepEqual(loadRequests, ['other', 'restarted'])
+})

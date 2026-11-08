@@ -240,6 +240,7 @@ import { createDeliverablesPresentation } from './agent/host-requests/deliverabl
 import { createHostConfirmations } from './agent/host-requests/host-confirmations'
 import { kernelPlanRunRouting, wirePlanExecution } from './agent/plan/plan-execution-wiring'
 import { registerPlanRunIpc } from './ipc/plan-run-ipc'
+import { createLocalPlanSessionLoader } from './agent/plan/plan-session-loader'
 import {
   createInMemoryRuntimeSessionManager,
   getBundledAgentsDir,
@@ -3243,7 +3244,22 @@ function registerAgentIpc(): void {
   registerAgentPromptIpc(agentIpcOptions)
   registerWorkspaceChangesIpc({ ipcMain })
   registerAgentRunControlIpc(agentIpcOptions)
-  registerPlanRunIpc({ ipcMain, ...kernelPlanRunRouting(getPhiEngine) })
+  registerPlanRunIpcWithRestartRecovery()
+}
+
+function registerPlanRunIpcWithRestartRecovery(): void {
+  registerPlanRunIpc({
+    ipcMain,
+    ...kernelPlanRunRouting(getPhiEngine),
+    loadPlanSession: createLocalPlanSessionLoader({
+      currentPhiSessionId: () => getCurrentSessionPayload().phiSessionId,
+      kernelRuntimeRef: (phiSessionId) => findPhiSessionById(phiSessionId)?.kernelRuntimeRef,
+      loadCurrentSession: async () => {
+        const { sessionKey, sessionPath: path, cwd, permissionMode } = sessionState
+        await getAgentSession(sessionKey, { path, cwd, permissionMode })
+      }
+    })
+  })
 }
 
 function registerApplicationAndModelIpc(): void {
