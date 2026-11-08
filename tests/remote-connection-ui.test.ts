@@ -50,7 +50,7 @@ test('remote connection notice gives recovery guidance without hiding saved work
   assert.match(markup('offline'), /对话历史和草稿仍可查看/)
   assert.match(markup('offline'), /先在服务器核对/)
   assert.match(markup('identity_failed'), /处理建议/)
-  assert.match(markup('identity_failed'), /重新连接/)
+  assert.match(markup('identity_failed'), /aria-label="重连"/)
   assert.match(markup('identity_failed'), /设置 → 远程/)
   assert.match(markup('authentication_failed'), /设置 → 远程/)
   assert.match(markup('configuration_failed'), /设置 → 远程/)

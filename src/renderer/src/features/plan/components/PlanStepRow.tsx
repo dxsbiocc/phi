@@ -1,4 +1,4 @@
-import { Box, Chip, Stack, Typography } from '@mui/material'
+import { Box, Stack, Typography } from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
 
 import type {
@@ -8,6 +8,7 @@ import type {
   PlanStepStatus
 } from '../../../../../shared/planRunTypes'
 import MarkdownContent from '../../../components/MarkdownContent'
+import { PhiIcons } from '../../../icons'
 import { formatAgentDuration } from '../../../lib/agentRunsOverview'
 import { planCopy } from '../lib/planCopy'
 import { planStepActions, planStepDurationMs } from '../lib/planRunView'
@@ -70,12 +71,8 @@ function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.
       <Typography
         variant="caption"
         component="span"
-        title={durationLabel || undefined}
         sx={{
-          display: 'block',
-          width: '4.75em',
           flex: 'none',
-          textAlign: 'right',
           whiteSpace: 'nowrap',
           fontVariantNumeric: 'tabular-nums',
           color: 'text.secondary'
@@ -83,12 +80,28 @@ function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.
       >
         {durationLabel}
       </Typography>
-      <Chip
-        size="small"
-        variant="outlined"
-        label={step.access === 'read' ? planCopy.accessRead : planCopy.accessWrite}
-        sx={{ width: 64, flex: 'none', justifyContent: 'center' }}
-      />
+      <Box
+        component="span"
+        aria-label={step.access === 'read' ? planCopy.accessRead : planCopy.accessWrite}
+        sx={{
+          width: 22,
+          height: 22,
+          flex: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: '50%',
+          border: '1px solid',
+          borderColor: step.access === 'write' ? 'warning.main' : 'info.main',
+          color: step.access === 'write' ? 'warning.main' : 'info.main'
+        }}
+      >
+        {step.access === 'read' ? (
+          <PhiIcons.tool.read size={12} aria-hidden />
+        ) : (
+          <PhiIcons.tool.edit size={12} aria-hidden />
+        )}
+      </Box>
     </Stack>
   )
 }

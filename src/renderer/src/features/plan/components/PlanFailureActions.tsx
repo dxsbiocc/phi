@@ -1,8 +1,16 @@
-import { Button, Stack, Typography } from '@mui/material'
+import { IconButton, Stack, Typography } from '@mui/material'
 
 import type { PlanRunPause } from '../../../../../shared/planRunTypes'
+import { PhiIcons } from '../../../icons'
 
 import { planCopy } from '../lib/planCopy'
+
+const roundActionSx = {
+  width: 28,
+  height: 28,
+  border: '1px solid',
+  borderColor: 'currentColor'
+} as const
 
 export function PlanFailureActions({
   disabled,
@@ -28,45 +36,54 @@ export function PlanFailureActions({
             ? planCopy.interruptedRecovery
             : planCopy.failedRecovery}
       </Typography>
-      <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap' }}>
-        <Button
+      <Stack
+        direction="row"
+        spacing={0.75}
+        useFlexGap
+        sx={{ flexWrap: 'wrap', alignItems: 'center' }}
+      >
+        <IconButton
           size="small"
-          variant="outlined"
+          color="primary"
           disabled={disabled}
           onClick={onRetry}
           aria-label={planCopy.retry}
+          sx={roundActionSx}
         >
-          {planCopy.retry}
-        </Button>
-        <Button
+          <PhiIcons.action.refresh size={15} aria-hidden />
+        </IconButton>
+        <IconButton
           size="small"
-          variant="outlined"
+          color="primary"
           disabled={disabled}
           onClick={onSkip}
           aria-label={planCopy.skip}
+          sx={roundActionSx}
         >
-          {planCopy.skip}
-        </Button>
+          <PhiIcons.action.skip size={15} aria-hidden />
+        </IconButton>
         {onReplan ? (
-          <Button
+          <IconButton
             size="small"
-            variant="outlined"
+            color="primary"
             disabled={disabled}
             onClick={onReplan}
             aria-label={planCopy.replanRemaining}
+            sx={roundActionSx}
           >
-            {planCopy.replanRemaining}
-          </Button>
+            <PhiIcons.action.replan size={15} aria-hidden />
+          </IconButton>
         ) : null}
-        <Button
+        <IconButton
           size="small"
           color="error"
           disabled={disabled}
           onClick={onStop}
           aria-label={planCopy.stop}
+          sx={roundActionSx}
         >
-          {planCopy.stop}
-        </Button>
+          <PhiIcons.action.stop size={14} aria-hidden />
+        </IconButton>
       </Stack>
       {onReplan ? (
         <Typography variant="caption" color="text.secondary">

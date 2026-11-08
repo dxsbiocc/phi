@@ -1,3 +1,4 @@
+import { PhiIcons } from '../../../icons'
 import { filePreviewCopy } from '../lib/filePreviewUiCopy'
 import { useUiLanguage } from '../../../lib/i18n'
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -373,9 +374,13 @@ export function TextFilePreview({
           sx={{ m: 1.5, mb: 0 }}
           action={
             fileActions?.onReloadFile ? (
-              <Button color="inherit" size="small" onClick={() => setConfirmDiscard(true)}>
-                {filePreviewCopy.reload}
-              </Button>
+              <IconButton
+                size="small"
+                aria-label={filePreviewCopy.reload}
+                onClick={() => setConfirmDiscard(true)}
+              >
+                <PhiIcons.action.refresh size={16} aria-hidden />
+              </IconButton>
             ) : undefined
           }
         >

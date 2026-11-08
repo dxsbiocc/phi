@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Checkbox,
+  IconButton,
   Chip,
   FormControlLabel,
   MobileStepper,
@@ -222,9 +223,9 @@ function UserInteractionPanel({
               {chatCopy.selectionNeeded}
             </Typography>
           </Box>
-          <Button color="inherit" size="small" onClick={cancel} sx={{ minHeight: 30 }}>
-            {chatCopy.cancel}
-          </Button>
+          <IconButton size="small" aria-label={chatCopy.cancel} onClick={cancel}>
+            <PhiIcons.action.close size={16} aria-hidden />
+          </IconButton>
         </Box>
 
         <Stack spacing={0.75}>

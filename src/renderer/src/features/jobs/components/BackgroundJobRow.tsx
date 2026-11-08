@@ -1,6 +1,6 @@
 import { jobsCopy } from '../lib/jobsCopy'
 import { useUiLanguage } from '../../../lib/i18n'
-import { Box, Button, IconButton, LinearProgress, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, IconButton, LinearProgress, Stack, Typography } from '@mui/material'
 
 import { PhiIcons } from '../../../icons'
 import type { UnifiedBackgroundJob } from '../lib/backgroundJobs'
@@ -13,7 +13,6 @@ import {
   jobSubtitle,
   jobTitle,
   stopAriaLabel,
-  stopTooltip,
   JOB_TONE_COLOR
 } from '../lib/backgroundJobLabels'
 
@@ -141,33 +140,30 @@ export function BackgroundJobRow({
           }}
         >
           {onRetry && item.kind !== 'history' && (
-            <Button
+            <IconButton
               size="small"
+              aria-label={jobsCopy.retry}
               disabled={busy}
               onClick={(event) => {
                 event.stopPropagation()
                 onRetry(item)
               }}
             >
-              {jobsCopy.retry}
-            </Button>
+              <PhiIcons.action.refresh size={15} aria-hidden />
+            </IconButton>
           )}
           {canStop && (
-            <Tooltip title={stopTooltip(item)}>
-              <span>
-                <IconButton
-                  size="small"
-                  aria-label={stopAriaLabel(item)}
-                  disabled={busy}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onStop(item)
-                  }}
-                >
-                  <StopIcon size={15} />
-                </IconButton>
-              </span>
-            </Tooltip>
+            <IconButton
+              size="small"
+              aria-label={stopAriaLabel(item)}
+              disabled={busy}
+              onClick={(event) => {
+                event.stopPropagation()
+                onStop(item)
+              }}
+            >
+              <StopIcon size={15} aria-hidden />
+            </IconButton>
           )}
         </Stack>
       )}

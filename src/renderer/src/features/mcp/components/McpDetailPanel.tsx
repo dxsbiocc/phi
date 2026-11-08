@@ -2,7 +2,7 @@ import { useUiLanguage } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
 import { connectorCopy } from '../lib/connectorCopy'
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, Chip, Divider, IconButton, Stack, Typography } from '@mui/material'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 import { errorMessage as sharedErrorMessage } from '../../../../../shared/errorCodes'
 import { PhiIcons } from '../../../icons'
@@ -332,9 +332,14 @@ export function McpDetailPanel({
                   sx={{ mt: 2 }}
                   action={
                     <Stack direction="row" spacing={1}>
-                      <Button disabled={busy} onClick={() => setRemoveConfirmationServerId(null)}>
-                        {resourceUi.cancel}
-                      </Button>
+                      <IconButton
+                        size="small"
+                        aria-label={resourceUi.cancel}
+                        disabled={busy}
+                        onClick={() => setRemoveConfirmationServerId(null)}
+                      >
+                        <PhiIcons.action.close size={16} aria-hidden />
+                      </IconButton>
                       <Button color="error" disabled={busy} onClick={() => void remove()}>
                         {connectorCopy.confirmRemove}
                       </Button>

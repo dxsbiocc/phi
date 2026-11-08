@@ -84,7 +84,7 @@ export const projectCopy = defineCopy(
     downloadingRemoteRuntimeWithoutTotal: (attempt: number) =>
       `正在下载远程运行时 · 第 ${attempt} 次尝试`,
     connectionNotChecked: '连接尚未检查',
-    reconnect: '重新连接',
+    reconnect: '重连',
     settingsRemote: '设置 → 远程',
     historyAndDraftsRemainAvailableVerifyUncertainFileChangesOr:
       '对话历史和草稿仍可查看；写入或命令结果未知时先在服务器核对。',

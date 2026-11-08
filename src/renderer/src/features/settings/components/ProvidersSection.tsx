@@ -100,7 +100,15 @@ export function ProvidersSection({
       {state.loadError && (
         <Alert
           severity="error"
-          action={<Button onClick={() => void controller.refresh()}>{copy.retry}</Button>}
+          action={
+            <IconButton
+              size="small"
+              aria-label={copy.retry}
+              onClick={() => void controller.refresh()}
+            >
+              <PhiIcons.action.refresh size={16} aria-hidden />
+            </IconButton>
+          }
         >
           {copy.loadFailed}: {state.loadError}
         </Alert>

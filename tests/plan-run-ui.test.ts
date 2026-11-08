@@ -297,7 +297,8 @@ test('replan is offered for a paused problem only when supported and under the l
       })
     )
   )
-  assert.match(cleanupPending, /Retry cancellation/)
+  assert.match(cleanupPending, /aria-label="Retry"/)
+  assert.doesNotMatch(cleanupPending, /Retry cancellation/)
   assert.doesNotMatch(cleanupPending, /aria-label="Replan remaining steps"/)
 })
 

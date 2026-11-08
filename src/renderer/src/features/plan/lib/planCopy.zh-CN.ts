@@ -63,7 +63,6 @@ export const planChinese = {
   replanSendFailed: '无法发送重新规划请求。请在当前会话中重试。',
   replanCancelFailed:
     '无法清除待处理的重新规划请求。如果请求已出现在聊天中，请在那里继续；否则请重试取消，再重新规划。',
-  retryCancellation: '重试取消',
   failedRecovery: '请先查看结果，再决定重试或跳过这一步。',
   needsInputRecovery: '重试仍使用原有步骤说明，不会提交缺少的信息。',
   interruptedRecovery: '应用在这一步执行期间重启。重试前请检查工作区是否已有改动。',

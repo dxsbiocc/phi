@@ -1,9 +1,11 @@
+import { PhiIcons } from '../../../icons'
 import { chatCopy } from '../lib/chatCopy'
 import { getUiLocale, useUiLanguage } from '../../../lib/i18n'
 import {
   Box,
   Button,
   CircularProgress,
+  IconButton,
   FormControl,
   FormControlLabel,
   InputLabel,
@@ -201,15 +203,16 @@ export function AutoCompactionSettingsSection({
             {error}
           </Typography>
           {!settings && (
-            <Button
+            <IconButton
               size="small"
+              aria-label={chatCopy.retry}
               onClick={() => {
                 setErrorState(null)
                 setRetryKey((value) => value + 1)
               }}
             >
-              {chatCopy.retry}
-            </Button>
+              <PhiIcons.action.refresh size={16} aria-hidden />
+            </IconButton>
           )}
         </Box>
       )}

@@ -150,7 +150,7 @@ test('custom connector detail exposes safe configuration, controls, and removal 
 
   assert.match(
     render(componentTree(() => McpCustomConnectorDetail({ ...props, confirmingRemove: true }))),
-    /Remove this local stdio Connector?[\s\S]*Cancel[\s\S]*Confirm removal/
+    /Remove this local stdio Connector\?[\s\S]*aria-label="Cancel"[\s\S]*Confirm/
   )
 })
 

@@ -266,14 +266,25 @@ export function BackgroundJobDetail({
             </Button>
           )}
           {onRetry && item.kind !== 'connector' && item.kind !== 'history' && (
-            <Button size="small" disabled={busy} onClick={() => onRetry(item)}>
-              {jobsCopy.retry}
-            </Button>
+            <IconButton
+              size="small"
+              aria-label={jobsCopy.retry}
+              disabled={busy}
+              onClick={() => onRetry(item)}
+            >
+              <PhiIcons.action.refresh size={16} aria-hidden />
+            </IconButton>
           )}
           {canStop && (
-            <Button size="small" color="error" disabled={busy} onClick={() => onStop(item)}>
-              {stopTooltip(item)}
-            </Button>
+            <IconButton
+              size="small"
+              color="error"
+              aria-label={stopTooltip(item)}
+              disabled={busy}
+              onClick={() => onStop(item)}
+            >
+              <PhiIcons.action.stop size={16} aria-hidden />
+            </IconButton>
           )}
         </Stack>
       )}

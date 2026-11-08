@@ -52,7 +52,7 @@ const connectorCopyEn = {
   needsSetup: 'Setup required',
   viewProgress: 'View progress',
   commandNotConfigured: 'No command configured',
-  confirmRemove: 'Confirm removal',
+  confirmRemove: 'Confirm',
   removeLocalConfirm: 'Remove this local stdio Connector?',
   removeRemoteConfirm: 'Remove this remote HTTPS Connector?',
   mcpUrl: 'MCP URL',

@@ -1,6 +1,7 @@
 import { projectCopy } from '../lib/projectCopy'
 import { useUiLanguage } from '../../../lib/i18n'
-import { Alert, Box, Button, CircularProgress, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, CircularProgress, IconButton, Stack, Typography } from '@mui/material'
+import { PhiIcons } from '../../../icons'
 
 import type { RemoteProjectConnectionState } from '../../../../../shared/projectLocation'
 
@@ -99,9 +100,9 @@ export function RemoteConnectionNotice({
       sx={{ mx: compact ? 1 : 2, my: compact ? 1 : 1.5, flexShrink: 0 }}
       action={
         <Stack direction={compact ? 'column' : 'row'} spacing={0.5}>
-          <Button size="small" onClick={onRetry}>
-            {projectCopy.reconnect}
-          </Button>
+          <IconButton size="small" aria-label={projectCopy.reconnect} onClick={onRetry}>
+            <PhiIcons.action.refresh size={16} aria-hidden />
+          </IconButton>
           {settingsRelevant && onOpenRemoteSettings ? (
             <Button size="small" onClick={onOpenRemoteSettings}>
               {projectCopy.settingsRemote}

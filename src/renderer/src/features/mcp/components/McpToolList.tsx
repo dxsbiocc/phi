@@ -2,7 +2,17 @@ import { useUiLanguage } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
 import { connectorCopy } from '../lib/connectorCopy'
 import { useState } from 'react'
-import { Alert, Box, Button, Chip, CircularProgress, Stack, Typography } from '@mui/material'
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  IconButton,
+  Stack,
+  Typography
+} from '@mui/material'
+import { PhiIcons } from '../../../icons'
 
 const COLLAPSED_TOOL_COUNT = 9
 
@@ -53,7 +63,11 @@ export function McpToolList({
       ) : error ? (
         <Alert
           severity="warning"
-          action={<Button onClick={onRetry}>{resourceUi.retry}</Button>}
+          action={
+            <IconButton size="small" aria-label={resourceUi.retry} onClick={onRetry}>
+              <PhiIcons.action.refresh size={16} aria-hidden />
+            </IconButton>
+          }
           sx={{ mb: 4 }}
         >
           {connectorCopy.readToolsFailure(error)}

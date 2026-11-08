@@ -82,7 +82,7 @@ export const filePreviewCopy = defineCopy(
     closeSearch: 'Close search',
     searchTruncated: 'Only the loaded file portion is searched.',
     searchLimited: 'Too many matches. Narrow your search.',
-    reload: 'Reload',
+    reload: 'Retry',
     textEditingLimit:
       'Text files up to 320 KB can be edited. This file is available for reading and search.',
     markdownDocument: 'Markdown document',
@@ -219,7 +219,7 @@ export const filePreviewCopy = defineCopy(
     closeSearch: '关闭搜索',
     searchTruncated: '仅搜索已加载的文件片段。',
     searchLimited: '匹配过多，请缩小搜索范围。',
-    reload: '重新读取',
+    reload: '重试',
     textEditingLimit: '当前支持编辑 320 KB 以内的文本文件，此文件可阅读和搜索。',
     markdownDocument: 'Markdown 文档',
     confirmDiscard: '放弃未保存的修改？',

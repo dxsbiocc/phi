@@ -8,6 +8,7 @@ import {
   DialogContent,
   DialogTitle,
   Button,
+  IconButton,
   useMediaQuery
 } from '@mui/material'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -18,6 +19,7 @@ import {
   type PlanRunTimelineSnapshot,
   type PlanRunTimelineStepSnapshot
 } from '../../../../shared/planRunTypes'
+import { PhiIcons } from '../../icons'
 import { useUiLanguage } from '../../lib/i18n'
 import type { RendererApi } from '../../types'
 import { usePlanRuns, type OnReplanPrompt, type PlanRunsController } from './hooks/usePlanRuns'
@@ -298,13 +300,14 @@ export function PlanRunPanel({
           severity="error"
           sx={{ mx: 2, mt: 1 }}
           action={
-            <Button
+            <IconButton
               size="small"
+              aria-label={planCopy.retry}
               disabled={controller.pendingAction !== null}
               onClick={() => void controller.retryCancellation?.()}
             >
-              {planCopy.retryCancellation}
-            </Button>
+              <PhiIcons.action.refresh size={16} aria-hidden />
+            </IconButton>
           }
         >
           {planCopy.replanCancelFailed}

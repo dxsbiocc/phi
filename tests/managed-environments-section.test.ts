@@ -165,7 +165,7 @@ test('managed environments render as openable branded cards', () => {
   assert.equal(markup.match(/data-phi-environment-slot="actions"/g)?.length, 2)
   assert.doesNotMatch(markup, /data-phi-managed-environment-card="orphaned:/)
   assert.match(markup, /发现 1 个旧版遗留环境/)
-  assert.match(markup, /清理遗留环境/)
+  assert.match(markup, />清理</)
   assert.match(markup, /查看估算并构建/)
   assert.doesNotMatch(markup, /无引用，可安全移除/)
   assert.match(markup, /MuiCardActionArea-focusHighlight\{display:none;/)

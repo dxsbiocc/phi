@@ -16,7 +16,7 @@ export const chatChinese: LocalizedCopy<typeof chatEnglish> = {
   runningClickToStopGenerating: '运行中，点击停止生成',
   thisSessionWasCreatedByTheLegacyRemoteRuntimeAndCannotContinue:
     '此会话由旧版远程运行时创建，无法继续。',
-  startANewSessionInThisProject: '在此项目新建会话',
+  startANewSessionInThisProject: '新建会话',
   viewDetails: '查看详情',
   noFurtherDetails: '没有更多详情。',
   contextCompaction: '上下文压缩',

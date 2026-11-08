@@ -66,7 +66,6 @@ export const planEnglish = {
   replanSendFailed: 'Could not send the replan request. Try again from this session.',
   replanCancelFailed:
     'The pending replan request could not be cleared. If it already appears in chat, continue there; otherwise retry cancellation before replanning.',
-  retryCancellation: 'Retry cancellation',
   failedRecovery: 'Review the result before retrying or skipping this step.',
   needsInputRecovery:
     'Retry uses the same step instructions; it does not provide the missing information.',

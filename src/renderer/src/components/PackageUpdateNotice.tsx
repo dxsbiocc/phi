@@ -1,7 +1,8 @@
 import { settingsUi } from '../features/settings/lib/settingsUi'
 import { useUiLanguage } from '../lib/i18n'
 import { useCallback, useEffect, useState } from 'react'
-import { Button, Snackbar } from '@mui/material'
+import { IconButton, Snackbar } from '@mui/material'
+import { PhiIcons } from '../icons'
 import type { PackageUpdateView } from '../../../shared/packageManagerTypes'
 import { errorMessage } from '../../../shared/errorCodes'
 import { PackageUpdatesDialog } from './PackageUpdatesDialog'
@@ -80,16 +81,16 @@ export function PackageUpdateNotice(): React.JSX.Element {
         }}
         message={settingsUi.valueContentPackageUpdatesAvailable(updates.length)}
         action={
-          <Button
-            color="primary"
+          <IconButton
             size="small"
+            aria-label={settingsUi.view}
             onClick={() => {
               setNoticeOpen(false)
               setDialogOpen(true)
             }}
           >
-            {settingsUi.view}
-          </Button>
+            <PhiIcons.action.view size={16} aria-hidden />
+          </IconButton>
         }
       />
       <PackageUpdatesDialog

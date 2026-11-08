@@ -45,7 +45,7 @@ export const connectorCopyZh = {
   needsSetup: '需要配置',
   viewProgress: '查看进度',
   commandNotConfigured: '尚未配置命令',
-  confirmRemove: '确认移除',
+  confirmRemove: '确认',
   removeLocalConfirm: '移除此本地 stdio 连接器？',
   removeRemoteConfirm: '移除此远程 HTTPS 连接器？',
   mcpUrl: 'MCP URL',
