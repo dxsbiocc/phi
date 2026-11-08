@@ -1,4 +1,3 @@
-import { PhiIcons } from '../../../icons'
 import { filePreviewCopy } from '../lib/filePreviewUiCopy'
 import { useUiLanguage } from '../../../lib/i18n'
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
