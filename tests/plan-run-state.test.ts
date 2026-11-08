@@ -105,6 +105,23 @@ test('launches and completes steps immutably, then seals the run', () => {
   expectCode(() => reducePlanRun(completed, { type: 'stop', at: at(3) }), 'RUN_FINISHED')
 })
 
+test('step_interrupted interrupts a running step without consuming an attempt', () => {
+  const running = launch(state([step('a')]), 'a', 1)
+  const interrupted = reducePlanRun(running, {
+    type: 'step_interrupted',
+    stepId: 'a',
+    at: at(2)
+  })
+  assert.equal(interrupted.steps.a.status, 'interrupted')
+  assert.equal(interrupted.steps.a.finishedAt, at(2))
+  assert.equal(interrupted.steps.a.attempts, 1)
+  assert.deepEqual(interrupted.pause, { reason: 'interrupted', stepId: 'a' })
+  expectCode(
+    () => reducePlanRun(state(), { type: 'step_interrupted', stepId: 'a', at: at(2) }),
+    'INVALID_STEP_TRANSITION'
+  )
+})
+
 test('automatically retries once, pauses after a second failure, and accepts manual retry', () => {
   const firstFailure = fail(launch(state(), 'a', 1), 'a', 2)
   assert.equal(firstFailure.status, 'running')

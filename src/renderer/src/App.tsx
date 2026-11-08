@@ -1908,7 +1908,7 @@ function App(): React.JSX.Element {
   }
 
   const onReplanPrompt = useCallback(
-    async (phiSessionId: string, prompt: string): Promise<boolean> => {
+    async (phiSessionId: string, prompt: string): Promise<boolean | 'stopped'> => {
       const current = useSessionStore.getState()
       if (
         current.activePhiSessionId !== phiSessionId ||
@@ -1918,7 +1918,8 @@ function App(): React.JSX.Element {
       ) {
         return false
       }
-      return sendPromptText(
+      let stopped = false
+      const sent = await sendPromptText(
         prompt,
         {
           path: current.activeSessionPath,
@@ -1926,8 +1927,15 @@ function App(): React.JSX.Element {
           cwd: current.activeCwd,
           sessionGeneration: current.activeSessionGeneration
         },
-        { appendUserMessage: false, suppressUserMessageEvent: true }
+        {
+          appendUserMessage: false,
+          suppressUserMessageEvent: true,
+          onRunCancelled: () => {
+            stopped = true
+          }
+        }
       )
+      return sent === false && stopped ? 'stopped' : sent
     },
     [sendPromptText]
   )

@@ -585,6 +585,10 @@ class PlanRunServiceImplementation<
     }
   }
 
+  async suspendSession(phiSessionId: string): Promise<void> {
+    await this.executor.suspendSession(phiSessionId)
+  }
+
   async releaseSettledLaunches(
     phiSessionId: string,
     settled: (requestId: string) => boolean

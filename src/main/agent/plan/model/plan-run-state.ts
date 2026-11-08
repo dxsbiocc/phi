@@ -178,6 +178,19 @@ function reduceLaunchQuiescent(
     event.at
   )
 }
+function reduceStepInterrupted(
+  state: PlanRunState,
+  event: Extract<PlanRunEvent, { type: 'step_interrupted' }>
+): PlanRunState {
+  const current = requireStep(state, event.stepId)
+  requireStepStatus(event.stepId, current, ['running'])
+  return withStep(
+    state,
+    event.stepId,
+    { ...current, status: 'interrupted', finishedAt: event.at },
+    event.at
+  )
+}
 function reduceStepSucceeded(
   state: PlanRunState,
   event: Extract<PlanRunEvent, { type: 'step_succeeded' }>
@@ -377,6 +390,9 @@ export function reducePlanRun(state: PlanRunState, event: PlanRunEvent): PlanRun
   switch (event.type) {
     case 'step_launched':
       next = reduceStepLaunched(state, event)
+      break
+    case 'step_interrupted':
+      next = reduceStepInterrupted(state, event)
       break
     case 'step_succeeded':
       next = reduceStepSucceeded(state, event)

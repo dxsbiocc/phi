@@ -19,6 +19,7 @@ export type SendPromptOptions = {
   retryUserMessageId?: string
   suppressUserMessageEvent?: boolean
   images?: PromptImageInput[]
+  onRunCancelled?: () => void
 }
 
 export type QueuedPrompt = {

@@ -51,6 +51,8 @@ export interface PlanExecutor {
   skipStep(runId: string, stepId: string): Promise<PlanRunState>
   replaceRemainingSteps(runId: string, spec: PlanSpec): Promise<PlanRunState>
   recover(state: PlanRunState): Promise<PlanRunState>
+  /** Stops launches for a session whose runtime is shutting down. */
+  suspendSession(sessionId: string): Promise<void>
   /** Records that an unknown launch provably has no live child, making it interrupted. */
   confirmLaunchQuiescent(runId: string, stepId: string, requestId: string): Promise<PlanRunState>
   get(runId: string): PlanRunState | undefined
@@ -103,6 +105,7 @@ function requireState(runtime: Runtime, runId: string): PlanRunState {
 
 class PlanExecutorImplementation implements PlanExecutor {
   private readonly runtime: Runtime = { states: new Map(), queues: new Map(), active: new Map() }
+  private readonly suspendedSessions = new Set<string>()
 
   constructor(private readonly deps: PlanExecutorDependencies) {}
 
@@ -162,6 +165,13 @@ class PlanExecutorImplementation implements PlanExecutor {
         if (!active || active.agentRunId !== agentRunId || !state) return state
         this.runtime.active.get(runId)?.delete(stepId)
         if (state.status === 'stopped' || state.steps[stepId]?.status !== 'running') return state
+        if (this.suspendedSessions.has(state.sessionId)) {
+          return this.apply(
+            runId,
+            { type: 'step_interrupted', stepId, at: clockNow(this.deps.clock) },
+            false
+          )
+        }
         return this.apply(runId, eventForOutcome(stepId, outcome, clockNow(this.deps.clock)))
       }).catch((error: unknown) => this.emitExecutorError(runId, error))
     } catch (error) {
@@ -255,6 +265,7 @@ class PlanExecutorImplementation implements PlanExecutor {
   private async scheduleRun(runId: string): Promise<void> {
     try {
       const state = requireState(this.runtime, runId)
+      if (this.suspendedSessions.has(state.sessionId)) return
       const selected = selectLaunchableSteps(state, { maxConcurrent: this.deps.maxConcurrent })
       for (const stepId of selected) {
         const current = requireState(this.runtime, runId)
@@ -338,11 +349,16 @@ class PlanExecutorImplementation implements PlanExecutor {
 
   async recover(state: PlanRunState): Promise<PlanRunState> {
     if (this.runtime.states.has(state.id)) throw new Error(`Plan run already exists: ${state.id}`)
+    this.suspendedSessions.delete(state.sessionId)
     this.runtime.states.set(state.id, state)
     this.runtime.active.set(state.id, new Map())
     return this.enqueue(state.id, () =>
       this.apply(state.id, { type: 'recover_after_restart', at: clockNow(this.deps.clock) })
     )
+  }
+
+  async suspendSession(sessionId: string): Promise<void> {
+    this.suspendedSessions.add(sessionId)
   }
 
   confirmLaunchQuiescent(runId: string, stepId: string, requestId: string): Promise<PlanRunState> {

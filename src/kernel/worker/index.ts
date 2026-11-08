@@ -591,6 +591,9 @@ export function createWorkerKernelAdapter(
         const failures: unknown[] = []
         await Promise.all(
           [...sessionKinds].map(async ([sessionId, kind]) => {
+            await plans.suspendSession(sessionId).catch((error: unknown) => {
+              failures.push(error)
+            })
             const activeRunId = activeRuns.get(sessionId)
             if (activeRunId) {
               cancelledRuns.add(activeRunId)
