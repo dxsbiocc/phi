@@ -3743,6 +3743,10 @@ async function harness(
       validatePlanSpec: (value: unknown) => ({ ok: true, spec: value })
     },
     './agent/plan/persistence/plan-run-store': { listUnfinishedPlanRuns: (): unknown[] => [] },
+    './agent/plan/plan-run-service': { planRunTimelineSnapshot: (state: unknown) => state },
+    './agent/plan/kernel-plan-run-completion': {
+      createKernelPlanRunCompletion: () => ({ handleFinished: () => false })
+    },
     './agent/wrappers/composition/discovery': {
       listWrapperCompositionCatalogStatus: (): unknown[] => [],
       resetWrapperCompositionCatalogCache: (): void => {}
