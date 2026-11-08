@@ -1,4 +1,4 @@
-import { Button, Stack } from '@mui/material'
+import { Stack } from '@mui/material'
 
 import type { PlanRunTimelineSnapshot } from '../../../../../shared/planRunTypes'
 import { LabeledIconButton } from '../../../components/LabeledIconButton'
@@ -23,15 +23,19 @@ export function PlanRunControls({
   if (!canPause && !canResume) return null
   return (
     <Stack direction="row" spacing={0.75} sx={{ flexShrink: 0 }}>
-      <Button
+      <LabeledIconButton
+        label={canPause ? planCopy.pause : planCopy.resume}
         size="small"
-        variant="outlined"
+        color="primary"
         disabled={disabled}
         onClick={canPause ? onPause : onResume}
-        aria-label={canPause ? planCopy.pause : planCopy.resume}
       >
-        {canPause ? planCopy.pause : planCopy.resume}
-      </Button>
+        {canPause ? (
+          <PhiIcons.action.pause size={16} aria-hidden />
+        ) : (
+          <PhiIcons.action.play size={16} aria-hidden />
+        )}
+      </LabeledIconButton>
       <LabeledIconButton
         label={planCopy.stop}
         size="small"

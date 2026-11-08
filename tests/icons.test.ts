@@ -5,7 +5,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { IconType } from 'react-icons'
 import { FiExternalLink } from 'react-icons/fi'
-import { GoOrganization, GoSync } from 'react-icons/go'
+import { GoIssueDraft, GoOrganization, GoPlay, GoStop, GoSync } from 'react-icons/go'
 import { SiJupyter } from 'react-icons/si'
 import { TbFolderOpen, TbListTree } from 'react-icons/tb'
 import {
@@ -297,6 +297,30 @@ test('refresh icon keeps the native GoSync stroke weight', () => {
 
   assert.match(refresh, /stroke-width="0"/)
   assert.equal(refresh.match(/<path d="([^"]+)"/)?.[1], native.match(/<path d="([^"]+)"/)?.[1])
+})
+
+test('draft icon keeps the native GoIssueDraft glyph', () => {
+  const native = renderToStaticMarkup(createElement(GoIssueDraft))
+  const draft = renderToStaticMarkup(createElement(PhiIcons.state.draft))
+
+  assert.match(draft, /stroke-width="0"/)
+  assert.equal(draft.match(/<path d="([^"]+)"/)?.[1], native.match(/<path d="([^"]+)"/)?.[1])
+})
+
+test('play icon keeps the native GoPlay glyph', () => {
+  const native = renderToStaticMarkup(createElement(GoPlay))
+  const play = renderToStaticMarkup(createElement(PhiIcons.action.play))
+
+  assert.match(play, /stroke-width="0"/)
+  assert.equal(play.match(/<path d="([^"]+)"/)?.[1], native.match(/<path d="([^"]+)"/)?.[1])
+})
+
+test('pause icon keeps the native GoStop glyph', () => {
+  const native = renderToStaticMarkup(createElement(GoStop))
+  const pause = renderToStaticMarkup(createElement(PhiIcons.action.pause))
+
+  assert.match(pause, /stroke-width="0"/)
+  assert.equal(pause.match(/<path d="([^"]+)"/)?.[1], native.match(/<path d="([^"]+)"/)?.[1])
 })
 
 test('language file icon kinds render non-empty icons', () => {

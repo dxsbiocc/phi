@@ -1,4 +1,4 @@
-import { Box, Stack, Tooltip, Typography } from '@mui/material'
+import { Box, Stack, Typography } from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
 
 import type {
@@ -12,6 +12,7 @@ import { PhiIcons } from '../../../icons'
 import { formatAgentDuration } from '../../../lib/agentRunsOverview'
 import { planCopy } from '../lib/planCopy'
 import { planStepActions, planStepDurationMs } from '../lib/planRunView'
+import { PlanAccessMark } from './PlanAccessMark'
 import { PlanFailureActions } from './PlanFailureActions'
 import { PlanTimelineStep, type PlanTimelineTone } from './PlanTimeline'
 
@@ -33,7 +34,8 @@ type PlanStepRowProps = {
 function stepTone(status: PlanStepStatus): PlanTimelineTone {
   if (status === 'done') return 'success'
   if (status === 'running' || status === 'launching') return 'active'
-  if (status === 'failed' || status === 'unknown' || status === 'interrupted') return 'error'
+  if (status === 'interrupted') return 'warning'
+  if (status === 'failed' || status === 'unknown') return 'error'
   if (status === 'cancelled' || status === 'skipped') return 'neutral'
   return 'pending'
 }
@@ -41,33 +43,19 @@ function stepTone(status: PlanStepStatus): PlanTimelineTone {
 function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.Element {
   const duration = planStepDurationMs(step)
   const durationLabel = duration !== null ? formatAgentDuration(duration) : ''
-  const statusLabel = step.status === 'done' ? '' : planCopy.stepStatus(step.status)
   const attemptsLabel = step.attempts > 1 ? planCopy.attempts(step.attempts) : ''
-  const accessLabel = step.access === 'read' ? planCopy.accessRead : planCopy.accessWrite
   return (
     <Stack
       direction="row"
       sx={{ alignItems: 'center', flex: 'none', gap: 1, position: 'relative' }}
     >
-      {statusLabel || attemptsLabel ? (
-        <Stack
-          direction="row"
-          spacing={0.75}
-          sx={{
-            position: 'absolute',
-            right: '100%',
-            mr: 1,
-            whiteSpace: 'nowrap',
-            alignItems: 'center'
-          }}
+      {attemptsLabel ? (
+        <Typography
+          variant="caption"
+          sx={{ position: 'absolute', right: '100%', mr: 1, whiteSpace: 'nowrap' }}
         >
-          {statusLabel ? (
-            <Typography variant="caption" color="text.secondary">
-              {statusLabel}
-            </Typography>
-          ) : null}
-          {attemptsLabel ? <Typography variant="caption">{attemptsLabel}</Typography> : null}
-        </Stack>
+          {attemptsLabel}
+        </Typography>
       ) : null}
       <Typography
         variant="caption"
@@ -84,33 +72,26 @@ function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.
       >
         {durationLabel}
       </Typography>
-      <Tooltip title={accessLabel} enterDelay={500}>
-        <Box
-          component="span"
-          role="img"
-          aria-label={accessLabel}
-          sx={{
-            width: 22,
-            height: 22,
-            flex: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRadius: '50%',
-            border: '1px solid',
-            borderColor: step.access === 'write' ? 'warning.main' : 'info.main',
-            color: step.access === 'write' ? 'warning.main' : 'info.main'
-          }}
-        >
-          {step.access === 'read' ? (
-            <PhiIcons.tool.read size={12} aria-hidden />
-          ) : (
-            <PhiIcons.tool.edit size={12} aria-hidden />
-          )}
-        </Box>
-      </Tooltip>
     </Stack>
   )
+}
+
+function stepMarker(status: PlanStepStatus): React.JSX.Element | undefined {
+  const icon =
+    status === 'failed'
+      ? PhiIcons.state.failed
+      : status === 'launching'
+        ? PhiIcons.state.launching
+        : status === 'skipped'
+          ? PhiIcons.state.skipped
+          : status === 'cancelled'
+            ? PhiIcons.state.cancelled
+            : status === 'unknown'
+              ? PhiIcons.state.unverified
+              : undefined
+  if (!icon) return undefined
+  const Icon = icon
+  return <Icon size={14} aria-hidden />
 }
 
 function StepReport({
@@ -254,7 +235,11 @@ export function PlanStepRow({
         tone={tone}
         index={index}
         dimmed={tone === 'pending'}
+        icon={stepMarker(step.status)}
+        iconLabel={planCopy.stepStatus(step.status)}
+        mark={step.status}
         title={`${index + 1}. ${step.title}`}
+        titleEnd={<PlanAccessMark access={step.access} />}
         meta={<StepHeader step={step} />}
         expanded={expansion.expanded}
         toggleLabel={
