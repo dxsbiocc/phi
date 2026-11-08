@@ -4,7 +4,9 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 
-import type { PlanSpec } from '../src/shared/planRunTypes'
+import type { PlanRunState, PlanSpec } from '../src/shared/planRunTypes'
+import type { JsonValue } from '../src/shared/kernel-protocol'
+import type { KernelProtocolCore } from '../src/kernel/protocol'
 import { KernelPlanCoordinator } from '../src/kernel/plans/coordinator'
 import { agentRunCompletions } from '../src/main/agent/plan/execution/agent-run-completions'
 import { createPlanRunState, reducePlanRun } from '../src/main/agent/plan/model/plan-run-state'
@@ -56,11 +58,12 @@ function plan(): PlanSpec {
   }
 }
 
-test('kernel plan coordinator schedules dependencies and asks the main session for the final summary', async () => {
+test('kernel plan coordinator schedules dependencies and broadcasts the full finished run for the host continuation', async () => {
   const agentDir = mkdtempSync(join(tmpdir(), 'phi-kernel-plan-'))
   const sessionId = 'kernel-plan-session'
   const starts: Array<{ runId: string; requestId?: string; task: string }> = []
-  const summaryPrompts: string[] = []
+  const broadcasts: Array<{ type: string; payload: Record<string, unknown> }> = []
+  let prompts = 0
   let sequence = 0
   const coordinator = new KernelPlanCoordinator(
     agentDir,
@@ -76,7 +79,7 @@ test('kernel plan coordinator schedules dependencies and asks the main session f
         return { runId }
       }
       if (method === 'session.prompt') {
-        summaryPrompts.push(String(input.text))
+        prompts += 1
         return {}
       }
       if (method === 'agentRun.stop') return { ok: true }
@@ -86,6 +89,12 @@ test('kernel plan coordinator schedules dependencies and asks the main session f
     },
     () => undefined
   )
+  coordinator.bind({
+    emitEvent: (type: string, payload: JsonValue) => {
+      broadcasts.push({ type, payload: payload as unknown as Record<string, unknown> })
+      return undefined
+    }
+  } as unknown as KernelProtocolCore)
   try {
     await coordinator.openSession(sessionId)
     await coordinator.approved(sessionId, plan())
@@ -114,14 +123,22 @@ test('kernel plan coordinator schedules dependencies and asks the main session f
       reportStatus: 'completed',
       missingInputs: []
     })
-    await eventually(() => summaryPrompts.length === 1, 'final summary turn')
+    await eventually(
+      () => broadcasts.some((event) => event.payload.event === 'plan_run_finished'),
+      'finished plan broadcast'
+    )
     const [state] = await coordinator.list(sessionId)
     assert.equal(state.status, 'completed')
     assert.deepEqual(
       state.spec.steps.map((step) => state.steps[step.id]?.status),
       ['done', 'done', 'done']
     )
-    assert.match(summaryPrompts[0], /Summarize the outcome/)
+    const finished = broadcasts.find((event) => event.payload.event === 'plan_run_finished')
+    assert.ok(finished)
+    const fullState = finished.payload.fullState as unknown as PlanRunState
+    assert.equal(fullState.status, 'completed')
+    assert.equal(fullState.steps['write-c']?.report?.text, 'write complete')
+    assert.equal(prompts, 0, 'the kernel does not start its own summary turn')
   } finally {
     coordinator.closeSession(sessionId)
     rmSync(agentDir, { recursive: true, force: true })

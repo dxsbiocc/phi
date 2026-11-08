@@ -77,3 +77,60 @@ test('a kernel agent-run finish is left to the agent-run host, so the notice is 
   assert.deepEqual(projected, [])
   assert.equal(binding.activeAgentRuns, 0)
 })
+
+test('a finished kernel plan hands the host the full run but forwards only the bounded snapshot', () => {
+  const projected: PhiAgentEvent[] = []
+  const finished: Array<{ phiSessionId: string; runId: string; status: string }> = []
+  const fullState: PlanRunState = {
+    ...state,
+    status: 'completed',
+    steps: {},
+    spec: {
+      version: 1,
+      goal: 'Finish the kernel plan',
+      steps: [
+        {
+          id: 'write',
+          title: 'Write the report',
+          instructions: 'Write it.',
+          acceptance: 'It exists.',
+          dependsOn: [],
+          access: 'write'
+        }
+      ]
+    }
+  }
+  const binding = {
+    logicalSessionId: 'logical-session-1',
+    params: { remoteProject: { phiSessionId: 'phi-remote-1' } },
+    sink: {
+      event: (value: PhiAgentEvent) => {
+        projected.push(value)
+      }
+    }
+  } as unknown as SessionBinding
+  const payload = {
+    event: 'plan_run_finished',
+    state,
+    fullState
+  } as unknown as Record<string, JsonValue>
+
+  projectKernelEvent(
+    binding,
+    {
+      kind: 'event',
+      seq: 3,
+      type: 'planRun.updated',
+      sessionId: 'kernel-session-1',
+      payload
+    } as KernelEventFrame,
+    payload,
+    (phiSessionId, event) =>
+      finished.push({ phiSessionId, runId: event.runId, status: event.state.status })
+  )
+
+  assert.deepEqual(finished, [
+    { phiSessionId: 'phi-remote-1', runId: 'plan-1', status: 'completed' }
+  ])
+  assert.deepEqual(projected, [{ type: 'plan_run_finished', state }])
+})

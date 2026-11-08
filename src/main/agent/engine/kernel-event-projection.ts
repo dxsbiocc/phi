@@ -1,4 +1,5 @@
 import type { JsonValue, KernelEventFrame } from '../../../shared/kernel-protocol'
+import type { PlanRunFinishedEvent, PlanRunState } from '../../../shared/planRunTypes'
 import { phiEventFromWire } from './events'
 import type { PhiAgentEvent } from './types'
 import {
@@ -8,10 +9,42 @@ import {
   type SessionBinding
 } from './kernel-session-support'
 
+function phiSessionIdForBinding(binding: SessionBinding): string {
+  return (
+    binding.params.remoteProject?.phiSessionId ??
+    binding.params.phiSessionId ??
+    binding.logicalSessionId
+  )
+}
+
+function planRunFinishedEvent(state: JsonValue | undefined): PlanRunFinishedEvent | null {
+  if (state === undefined || state === null || typeof state !== 'object' || Array.isArray(state)) {
+    return null
+  }
+  const runId = (state as { id?: unknown }).id
+  if (typeof runId !== 'string' || !runId) return null
+  return { type: 'plan_run_finished', runId, state: state as unknown as PlanRunState }
+}
+
+function projectPlanRunEvent(
+  binding: SessionBinding,
+  payload: Record<string, JsonValue>,
+  onPlanRunFinished?: (phiSessionId: string, event: PlanRunFinishedEvent) => void
+): void {
+  const { event: planEvent, fullState, ...rendererPayload } = payload
+  const type = stringValue(planEvent) ?? 'plan_run_updated'
+  if (type === 'plan_run_finished' && onPlanRunFinished) {
+    const finished = planRunFinishedEvent(fullState)
+    if (finished) onPlanRunFinished(phiSessionIdForBinding(binding), finished)
+  }
+  binding.sink.event({ type, ...rendererPayload } as PhiAgentEvent)
+}
+
 export function projectKernelEvent(
   binding: SessionBinding,
   event: KernelEventFrame,
-  payload: Record<string, JsonValue> | undefined
+  payload: Record<string, JsonValue> | undefined,
+  onPlanRunFinished?: (phiSessionId: string, event: PlanRunFinishedEvent) => void
 ): void {
   if (event.type === 'session.event') {
     const projected = phiEventFromWire(event.payload)
@@ -33,11 +66,7 @@ export function projectKernelEvent(
     binding.activeAgentRuns = Math.max(0, binding.activeAgentRuns - 1)
   }
   if (event.type === 'planRun.updated' && payload) {
-    const { event: planEvent, ...rendererPayload } = payload
-    binding.sink.event({
-      type: stringValue(planEvent) ?? 'plan_run_updated',
-      ...rendererPayload
-    } as PhiAgentEvent)
+    projectPlanRunEvent(binding, payload, onPlanRunFinished)
     return
   }
   // agentRun.finished is not forwarded: the agent-run host already records the finish on the

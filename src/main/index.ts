@@ -293,9 +293,13 @@ import {
 } from './agent/session/session-creation-approvals'
 import {
   continuationPrompt,
+  createPlanRunContinuation,
   shouldContinueAfterAgentRun,
   type ContinuationEvent
 } from './agent/agents/run-continue'
+import type { PlanRunFinishedEvent } from '../shared/planRunTypes'
+import { planRunTimelineSnapshot } from './agent/plan/plan-run-service'
+import { createKernelPlanRunCompletion } from './agent/plan/kernel-plan-run-completion'
 import { agentRunHostHandlers } from './agent/agents/run-host'
 import { customMcpAuthUrl } from './agent/mcp/custom-auth-url'
 import { agentRunCompletions } from './agent/plan/execution/agent-run-completions'
@@ -1038,6 +1042,7 @@ installAppRemoteSessionRouting({
     userDataPath: app.getPath('userData')
   }),
   configuredRoot: (project) => projectRemoteRuntimeRoot(project).configured,
+  onPlanRunFinished: handleKernelPlanRunFinished,
   loadDesktopTools: loadAppRemoteDesktopTools
 })
 function syncPreventSleepBlocker(): void {
@@ -1925,6 +1930,14 @@ function hasAgentRunBeenReported(phiSessionId: string, agentRunId: string): bool
   return reportedAgentRuns.get(phiSessionId)?.has(agentRunId) === true
 }
 
+/**
+ * A kernel plan finished. Persist the completed card once, then let the normal automatic
+ * continuation start the follow-up turn through submitPromptRun so it is stored like any run.
+ */
+function handleKernelPlanRunFinished(phiSessionId: string, event: PlanRunFinishedEvent): void {
+  kernelPlanRunCompletion.handleFinished(phiSessionId, event)
+}
+
 function startAutomaticContinuation(
   phiSessionId: string,
   events: readonly ContinuationEvent[]
@@ -2018,6 +2031,31 @@ function wakeConversation(phiSessionId: string, event: ContinuationEvent): void 
   }
   startAutomaticContinuation(phiSessionId, [event])
 }
+
+const continueCompletedPlanRun = createPlanRunContinuation({
+  automaticCount: (phiSessionId) => automaticContinuations.get(phiSessionId) ?? 0,
+  wakeConversation,
+  onLimit: (phiSessionId, runId) => {
+    writeAppLog({
+      event: 'plan_run_continue_limit',
+      metadata: { phiSessionId, runId }
+    })
+  }
+})
+
+const kernelPlanRunCompletion = createKernelPlanRunCompletion({
+  timeline: { read: readSessionEvents, append: appendSessionEvent },
+  snapshot: planRunTimelineSnapshot,
+  continueConversation: continueCompletedPlanRun,
+  onPersistError: (error, phiSessionId, event) => {
+    logUnexpectedError(error)
+    writeAppLog({
+      level: 'error',
+      event: 'plan_run_timeline_persist_failed',
+      metadata: { phiSessionId, runId: event.runId, error: errorMessage(error) }
+    })
+  }
+})
 
 /** A prompt run just ended: deliver what came in meanwhile, unless the user stopped that run. */
 function flushPendingContinuations(phiSessionId: string, runWasCancelled: boolean): void {

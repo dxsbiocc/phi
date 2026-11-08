@@ -502,7 +502,7 @@ test(
 )
 
 test(
-  'A06 kernel approves dependency plan, gates its write, and summarizes in the main session',
+  'A06 kernel approves dependency plan, gates its write, and hands the finished run to the desktop',
   { timeout: 60_000 },
   async (t) => {
     const f = await createKernelFixture({
@@ -602,10 +602,6 @@ test(
       {
         match: '## Current step: write-c: Write C',
         text: declared('Write step completed.')
-      },
-      {
-        match: 'The approved plan has finished.',
-        text: 'The approved plan completed successfully.'
       }
     )
     await f.sessions.prompt({ sessionId: 'a06-plan', text: 'Plan this work and execute it.' })
@@ -625,17 +621,19 @@ test(
     assert.equal(readFileSync(target, 'utf8'), 'planned result')
     assert.equal(approvals, 1)
     assert.equal(writeWasAbsentAtApproval, true)
-    let summarySnapshot: JsonValue = null
-    for (let attempt = 0; attempt < 3_000; attempt += 1) {
-      summarySnapshot = await f.client.request(
-        'session.snapshot',
-        {},
-        { sessionId: kernelSessionId }
-      )
-      if (JSON.stringify(summarySnapshot).includes('approved plan completed successfully')) break
-      await new Promise((resolve) => setTimeout(resolve, 10))
+    // The kernel no longer starts the summary turn itself: the desktop persists the finished
+    // card and wakes the conversation through its normal prompt-run path. The finish event
+    // therefore carries the full run state for that continuation prompt.
+    let finished: KernelEventFrame | undefined
+    for (let attempt = 0; attempt < 1_000 && !finished; attempt += 1) {
+      finished = planEvents.find((event) => record(event.payload).event === 'plan_run_finished')
+      if (!finished) await new Promise((resolve) => setTimeout(resolve, 10))
     }
-    assert.match(JSON.stringify(summarySnapshot), /approved plan completed successfully/i)
+    assert.ok(finished)
+    const fullState = record(record(finished.payload).fullState)
+    assert.equal(fullState.status, 'completed')
+    const snapshot = await f.client.request('session.snapshot', {}, { sessionId: kernelSessionId })
+    assert.doesNotMatch(JSON.stringify(snapshot), /The approved plan has finished/)
     assert.ok(planEvents.length >= 2)
     const states = planEvents.map((event) => record(event.payload).state).map(record)
     // Plan state keeps the desktop plan service's shape: `steps` is an ordered array.

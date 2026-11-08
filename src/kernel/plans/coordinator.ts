@@ -1,9 +1,4 @@
-import type {
-  PlanRunFinishedEvent,
-  PlanRunReplanRequest,
-  PlanRunState,
-  PlanSpec
-} from '../../shared/planRunTypes'
+import type { PlanRunReplanRequest, PlanRunState, PlanSpec } from '../../shared/planRunTypes'
 import { KERNEL_EVENT_PLAN_RUN_UPDATED, type JsonValue } from '../../shared/kernel-protocol'
 import type { KernelPlanRuntime } from '../../main/agent/engine/in-process/kernel-services'
 import {
@@ -22,26 +17,6 @@ import { kernelSessionMigrationPaths } from '../sessions/paths'
 import type { KernelProtocolCore } from '../protocol'
 
 type WorkerCall = (method: string, params: unknown) => Promise<unknown>
-
-function summaryPrompt(event: PlanRunFinishedEvent): string {
-  const completed = event.state.spec.steps.filter(
-    (step) => event.state.steps[step.id]?.status === 'done'
-  )
-  const other = event.state.spec.steps.filter(
-    (step) => event.state.steps[step.id]?.status !== 'done'
-  )
-  return [
-    'The approved plan has finished. Summarize the outcome for the user now.',
-    `Goal: ${event.state.spec.goal}`,
-    `Completed steps: ${completed.map((step) => step.title).join('; ') || 'none'}`,
-    `Other steps: ${
-      other
-        .map((step) => `${step.title} (${event.state.steps[step.id]?.status ?? 'unknown'})`)
-        .join('; ') || 'none'
-    }`,
-    'Use the specialist reports already present in the conversation and do not start more work.'
-  ].join('\n')
-}
 
 export class KernelPlanCoordinator implements KernelPlanRuntime {
   private readonly loaded = new Set<string>()
@@ -81,25 +56,27 @@ export class KernelPlanCoordinator implements KernelPlanRuntime {
         (await this.callWorker('session.plan.cancel', { sessionId, replanRequestId })) === true,
       timeline: {
         append: (_sessionId, event) => event,
-        broadcast: (sessionId, event) => {
+        broadcast: (sessionId, event, finishedState) => {
           if (event.type !== 'plan_run_updated' && event.type !== 'plan_run_finished') return
-          const state = event.state as unknown as PlanRunState
           this.core?.emitEvent(
             KERNEL_EVENT_PLAN_RUN_UPDATED,
-            { event: event.type, state: state as unknown as JsonValue },
+            {
+              event: event.type,
+              state: event.state as unknown as JsonValue,
+              // The terminal event also carries the full run so the desktop can build the
+              // continuation prompt from the step reports; the renderer keeps the snapshot.
+              ...(event.type === 'plan_run_finished' && finishedState
+                ? // Stored run state can hold undefined optionals the frame encoder rejects.
+                  { fullState: JSON.parse(JSON.stringify(finishedState)) as JsonValue }
+                : {})
+            },
             { sessionId }
           )
         }
       },
-      continueConversation: (sessionId, event) => {
-        void this.callWorker('session.prompt', {
-          sessionId,
-          text: summaryPrompt(event),
-          options: { synthetic: true, userInitiated: false }
-        }).catch((error: unknown) => {
-          this.diagnostic(`Plan ${event.runId} summary turn failed: ${String(error)}`)
-        })
-      },
+      // The desktop host starts the automatic continuation after it persists the finish
+      // event, so that follow-up turn goes through the normal prompt-run persistence path.
+      continueConversation: () => undefined,
       logError: (error, metadata) => {
         this.diagnostic(`Plan ${metadata.runId} ${metadata.source} failed: ${String(error)}`)
       },

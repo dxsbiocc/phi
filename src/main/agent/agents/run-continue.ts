@@ -47,6 +47,8 @@ export function createPlanRunContinuation(deps: {
 }): (phiSessionId: string, event: PlanRunFinishedEvent) => void {
   const receipts = new Set<string>()
   return (phiSessionId, event) => {
+    // A stopped plan still gets its transcript card, but there is nothing new to summarize.
+    if (event.state.status !== 'completed') return
     const receipt = `${phiSessionId}\0${event.runId}`
     if (receipts.has(receipt)) return
     receipts.add(receipt)

@@ -1,3 +1,4 @@
+import type { PlanRunFinishedEvent } from '../../shared/planRunTypes'
 import type { Project } from './projects'
 import type { SessionRunnerRegistry } from './session/session-runner-registry'
 import { createRuntimeSessionManager, type RuntimeSessionManager } from './runtime/runtime-adapter'
@@ -39,6 +40,7 @@ export interface AppRemoteSessionRoutingOptions {
     userDataPath?: string
   }
   configuredRoot(project: Project): string
+  onPlanRunFinished?(phiSessionId: string, event: PlanRunFinishedEvent): void
   loadDesktopTools?(
     identity: {
       runtimeSessionId: string
@@ -67,6 +69,7 @@ export function installAppRemoteSessionRouting(
     launchRemote: kernelInstall.launchRemote,
     hostCapabilities: kernelInstall.hostCapabilities,
     configureClient: kernelInstall.configureClient,
+    ...(options.onPlanRunFinished ? { onPlanRunFinished: options.onPlanRunFinished } : {}),
     onDiagnostic: (error) =>
       options.startupDiagnostics?.({
         phiSessionId: 'kernel-host',

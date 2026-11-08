@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { PlanRunFinishedEvent } from '../../../shared/planRunTypes'
 import { isAbsolute, relative, sep } from 'node:path'
 
 import type {
@@ -71,6 +72,8 @@ export interface KernelSessionFactoryOptions {
   readonly launchLocal?: KernelSessionLauncher
   readonly launchRemote?: KernelSessionLauncher
   readonly onDiagnostic?: (error: Error) => void
+  /** A kernel plan finished; the desktop persists its card and wakes the conversation. */
+  readonly onPlanRunFinished?: (phiSessionId: string, event: PlanRunFinishedEvent) => void
   readonly hostCapabilities?: readonly string[]
   readonly configureClient?: (
     client: KernelSessionClient,

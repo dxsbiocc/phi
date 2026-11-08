@@ -36,7 +36,7 @@ export interface PlanRunServiceDependencies<StoredEvent extends Record<string, u
   exitReplanMode?(runtimeSessionId: string, requestId: string): Promise<boolean>
   timeline: {
     append(sessionId: string, event: TimelineEvent): StoredEvent
-    broadcast(sessionId: string, event: StoredEvent): void
+    broadcast(sessionId: string, event: StoredEvent, state: PlanRunState): void
   }
   continueConversation(sessionId: string, event: PlanRunFinishedEvent): void
   logError(error: unknown, metadata: { runId: string; source: string }): void

@@ -451,7 +451,12 @@ export const agentRunsStopParamsSchema = z.object({ runId: nonEmptyIdSchema }).s
 export const agentRunsStopResultSchema = z.object({ ok: z.boolean() }).strict()
 
 export const planRunUpdatedPayloadSchema = z
-  .object({ event: z.enum(['plan_run_updated', 'plan_run_finished']), state: planRunStateSchema })
+  .object({
+    event: z.enum(['plan_run_updated', 'plan_run_finished']),
+    state: planRunStateSchema,
+    /** Full state is sent only when a run finishes, so the desktop can wake the conversation. */
+    fullState: planRunStateSchema.optional()
+  })
   .strict()
 export const agentRunStartedPayloadSchema = agentRunSnapshotSchema
 export const agentRunStepPayloadSchema = z

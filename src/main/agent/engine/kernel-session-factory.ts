@@ -50,10 +50,7 @@ import {
   type SessionBinding
 } from './kernel-session-support'
 
-export {
-  KernelEngineError,
-  jsonSafeResourceSnapshot
-} from './kernel-session-support'
+export { KernelEngineError, jsonSafeResourceSnapshot } from './kernel-session-support'
 export type {
   KernelSessionClient,
   KernelSessionConnection,
@@ -737,7 +734,7 @@ export class KernelSessionFactory implements RoutedSessionFactory {
       return
     }
     if (binding.hostKey !== host.key || binding.disposed) return
-    projectKernelEvent(binding, event, payload)
+    projectKernelEvent(binding, event, payload, this.options.onPlanRunFinished)
   }
 
   private hostFor(params: PhiSessionCreateParams): KernelExecutionHost {

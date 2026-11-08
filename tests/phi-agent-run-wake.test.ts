@@ -102,10 +102,15 @@ test('a completed plan run wakes at most once per conversation and run id', () =
     wakeConversation: (sessionId, event) => woken.push(`${sessionId}/${event.runId}`),
     onLimit: (sessionId, runId) => limited.push(`${sessionId}/${runId}`)
   })
-  const event = { type: 'plan_run_finished', runId: 'plan-1', state: {} } as PlanRunFinishedEvent
+  const event = {
+    type: 'plan_run_finished',
+    runId: 'plan-1',
+    state: { status: 'completed' }
+  } as PlanRunFinishedEvent
   continuePlan('phi-1', event)
   continuePlan('phi-1', event)
   continuePlan('phi-2', event)
+  continuePlan('phi-3', { ...event, state: { status: 'stopped' } } as PlanRunFinishedEvent)
   assert.deepEqual(woken, ['phi-1/plan-1', 'phi-2/plan-1'])
   assert.deepEqual(limited, [])
 })

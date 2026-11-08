@@ -107,7 +107,7 @@ function timelineStepSnapshot(state: PlanRunState, step: PlanStep): PlanRunTimel
   }
 }
 
-function timelineSnapshot(state: PlanRunState): PlanRunTimelineSnapshot {
+export function planRunTimelineSnapshot(state: PlanRunState): PlanRunTimelineSnapshot {
   return {
     id: state.id,
     status: state.status,
@@ -144,7 +144,7 @@ function eventBytes(event: TimelineEvent): number {
 }
 
 function snapshotEvent(type: string, state: PlanRunState): TimelineEvent {
-  const snapshot = timelineSnapshot(state)
+  const snapshot = planRunTimelineSnapshot(state)
   const event = { type, runId: state.id, state: snapshot }
   if (eventBytes(event) <= TIMELINE_PAYLOAD_MAX_BYTES) return event
   for (const limit of TIMELINE_STEP_COMPACTION_LIMITS) {
@@ -163,7 +163,7 @@ function emitTimeline<StoredEvent extends Record<string, unknown>>(
   state: PlanRunState
 ): void {
   const stored = deps.timeline.append(state.sessionId, snapshotEvent(type, state))
-  deps.timeline.broadcast(state.sessionId, stored)
+  deps.timeline.broadcast(state.sessionId, stored, state)
 }
 
 function reportServiceError<StoredEvent extends Record<string, unknown>>(
