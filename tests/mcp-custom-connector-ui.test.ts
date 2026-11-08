@@ -148,10 +148,34 @@ test('custom connector detail exposes safe configuration, controls, and removal 
   ;(remove.props as { onClick: () => void }).onClick()
   assert.equal(removeRequested, 1)
 
-  assert.match(
-    render(componentTree(() => McpCustomConnectorDetail({ ...props, confirmingRemove: true }))),
-    /Remove this local stdio Connector\?[\s\S]*aria-label="Cancel"[\s\S]*Confirm/
+  const confirming = componentTree(() =>
+    McpCustomConnectorDetail({ ...props, confirmingRemove: true })
   )
+  const alert = findElement(
+    confirming,
+    (element) => (element.props as { severity?: string }).severity === 'warning'
+  )
+  assert.ok(alert)
+  const actions = (alert.props as { action: ReactNode }).action
+  const cancel = findElement(
+    actions,
+    (element) => (element.props as { children?: ReactNode }).children === 'Cancel'
+  )
+  const confirm = findElement(
+    actions,
+    (element) => (element.props as { children?: ReactNode }).children === 'Confirm'
+  )
+  assert.ok(cancel)
+  assert.ok(confirm)
+  for (const button of [cancel, confirm]) {
+    assert.equal((button.props as { size?: string }).size, 'small')
+    assert.equal((button.props as { variant?: string }).variant, 'text')
+  }
+  assert.equal((confirm.props as { color?: string }).color, 'error')
+
+  const confirmingMarkup = render(confirming)
+  assert.match(confirmingMarkup, /Remove this local stdio Connector\?[\s\S]*Cancel[\s\S]*Confirm/)
+  assert.doesNotMatch(confirmingMarkup, /aria-label="Cancel"/)
 })
 
 test('job cards wire View progress to the matching setup job', () => {

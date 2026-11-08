@@ -127,7 +127,9 @@ function resolveLocalAgents(
       ...resolved.diagnostics,
       ...(resolved.unavailableReason ? [resolved.unavailableReason] : [])
     ]
-    summaries.push(localSummary(definition, resolved.available, messages))
+    if (definition.invocation !== 'host') {
+      summaries.push(localSummary(definition, resolved.available, messages))
+    }
     if (resolved.available) runnable.push(resolved.agent)
   }
   return runnable
@@ -149,18 +151,13 @@ export async function discoverRemoteAgentCatalog(
     Promise.resolve(discoverPhiAgents(localDiscoveryOptions(options)))
   ])
   const visibleProjectEntries = project.entries.filter((entry) => entry.invocation !== 'host')
-  const visibleProjectAgents = project.agents.filter((agent) => agent.invocation !== 'host')
-  const visibleLocalAgents = local.agents.filter((agent) => agent.invocation !== 'host')
   const summaries = visibleProjectEntries.map(remoteSummary)
   const claimed = new Set<string>()
-  const trustedEntries = visibleProjectEntries.filter((entry) => entry.trustState === 'trusted')
-  const projectAgents = resolveProjectAgents(
-    visibleProjectAgents,
-    trustedEntries,
-    summaries,
-    claimed
-  )
-  const localAgents = resolveLocalAgents(visibleLocalAgents, summaries, claimed)
+  // Every trusted definition is runnable by the host, including host-only orchestration agents
+  // such as PlanStep. Host-only agents are still excluded from summaries and delegation tools.
+  const trustedEntries = project.entries.filter((entry) => entry.trustState === 'trusted')
+  const projectAgents = resolveProjectAgents(project.agents, trustedEntries, summaries, claimed)
+  const localAgents = resolveLocalAgents(local.agents, summaries, claimed)
   return {
     agents: [...projectAgents, ...localAgents],
     entries: summaries.sort(compareSummaries),

@@ -29,7 +29,10 @@ export interface PhiAgentDiscoveryOptions {
    */
   pluginAgentDirs?: readonly string[]
   homeDir?: string
-  /** Remote projects scan only machine-local global, bundled General/remote Wrapper, and plugins. */
+  /**
+   * Remote projects scan only machine-local global, bundled General/remote Wrapper plus
+   * host-invocation agents, and plugins.
+   */
   scope?: 'local' | 'remote-local'
 }
 
@@ -107,18 +110,19 @@ function appendAgent(
   agents.push(root.pluginId ? { ...agent, pluginId: root.pluginId } : agent)
 }
 
-function scanAgentFile(
-  filePath: string,
-  root: Root,
-  agents: PhiAgentDefinition[],
-  diagnostics: PhiAgentDiagnostic[],
+interface AgentScan {
+  agents: PhiAgentDefinition[]
+  diagnostics: PhiAgentDiagnostic[]
   seen: Set<string>
-): void {
+  accept?: (agent: PhiAgentDefinition) => boolean
+}
+
+function scanAgentFile(filePath: string, root: Root, scan: AgentScan): void {
   let content: string
   try {
     content = readFileSync(filePath, 'utf-8')
   } catch (error) {
-    diagnostics.push({
+    scan.diagnostics.push({
       filePath,
       level: 'error',
       message: errorMessage(error)
@@ -128,15 +132,16 @@ function scanAgentFile(
   const result = validateAgentFile(filePath, content, root.source)
   if (!result.ok || !result.agent) {
     for (const error of result.errors) {
-      diagnostics.push({ filePath, level: 'error', message: error.message })
+      scan.diagnostics.push({ filePath, level: 'error', message: error.message })
     }
     return
   }
+  if (scan.accept && !scan.accept(result.agent)) return
   // Warnings stay on the agent and in the scan log; they do not skip the file.
   for (const warning of result.warnings) {
-    diagnostics.push({ filePath, level: 'warning', message: warning.message })
+    scan.diagnostics.push({ filePath, level: 'warning', message: warning.message })
   }
-  appendAgent(result.agent, root, agents, seen)
+  appendAgent(result.agent, root, scan.agents, scan.seen)
 }
 
 function markdownFiles(dir: string): string[] {
@@ -151,31 +156,28 @@ function markdownFiles(dir: string): string[] {
   }
 }
 
-function scanRemoteBundledAgents(
-  root: Root,
-  agents: PhiAgentDefinition[],
-  diagnostics: PhiAgentDiagnostic[],
-  seen: Set<string>
-): void {
+function scanRemoteBundledAgents(root: Root, scan: AgentScan): void {
   const wrapper = loadRemoteWrapperAgent(root.dir)
-  if (wrapper) appendAgent(wrapper, root, agents, seen)
-  const generalPath = join(root.dir, 'General.md')
-  if (existsSync(generalPath)) scanAgentFile(generalPath, root, agents, diagnostics, seen)
+  if (wrapper) appendAgent(wrapper, root, scan.agents, scan.seen)
+  for (const filePath of markdownFiles(root.dir)) scanAgentFile(filePath, root, scan)
 }
 
 export function discoverPhiAgents(options: PhiAgentDiscoveryOptions): PhiAgentDiscoveryResult {
   const agents: PhiAgentDefinition[] = []
   const diagnostics: PhiAgentDiagnostic[] = []
-  const seen = new Set<string>()
+  const scan: AgentScan = { agents, diagnostics, seen: new Set<string>() }
 
   for (const root of agentRoots(options)) {
     if (root.remoteWrapper) {
-      scanRemoteBundledAgents(root, agents, diagnostics, seen)
+      // Remote sessions get General plus every host-invocation agent (PlanStep). Host agents
+      // are runnable by the plan executor but stay out of the model-visible delegation catalog.
+      scanRemoteBundledAgents(root, {
+        ...scan,
+        accept: (agent) => agent.name === 'General' || agent.invocation === 'host'
+      })
       continue
     }
-    for (const filePath of markdownFiles(root.dir)) {
-      scanAgentFile(filePath, root, agents, diagnostics, seen)
-    }
+    for (const filePath of markdownFiles(root.dir)) scanAgentFile(filePath, root, scan)
   }
   return { agents, diagnostics }
 }

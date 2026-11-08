@@ -432,8 +432,11 @@ export function TextFilePreview({
           <DialogContentText>{filePreviewCopy.discardExplanation}</DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmDiscard(false)}>{filePreviewCopy.cancel}</Button>
+          <Button size="small" variant="text" onClick={() => setConfirmDiscard(false)}>
+            {filePreviewCopy.cancel}
+          </Button>
           <Button
+            size="small"
             color="error"
             variant="contained"
             onClick={() => {

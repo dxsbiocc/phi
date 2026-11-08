@@ -3,6 +3,7 @@ import type { AgentReport } from '../../agents/report'
 import type { PlanRunState, PlanSpec, PlanStepReportSummary } from '../../../../shared/planRunTypes'
 import { createPlanRunState, reducePlanRun, type PlanRunEvent } from '../model/plan-run-state'
 import { validatePlanSpec } from '../model/plan-spec'
+import { planStepAgent } from '../model/plan-step-agent'
 import { selectLaunchableSteps } from '../model/plan-scheduler'
 import { truncateUtf8 } from '../model/utf8-truncate'
 import { buildStepPrompt } from './step-prompt'
@@ -231,7 +232,7 @@ class PlanExecutorImplementation implements PlanExecutor {
     try {
       handle = await this.deps.runner.start({
         sessionId: state.sessionId,
-        ...(step.agent ? { agent: step.agent } : {}),
+        agent: planStepAgent(step),
         ...(requestId ? { requestId } : {}),
         task: buildStepPrompt(state, stepId),
         signal: controller.signal

@@ -135,6 +135,14 @@ function fail(run: FakeRun, error = 'failed'): void {
   run.result.resolve({ ok: false, error })
 }
 
+test('an omitted step agent launches the shared PlanStep default', async () => {
+  const app = fixture()
+  await app.executor.start(spec([step('a')]), 'session-1')
+  assert.equal(app.runner.runs[0]?.input.agent, 'PlanStep')
+  succeed(app.runner.runs[0]!)
+  await waitFor(() => app.executor.get('plan-1')?.status === 'completed')
+})
+
 test('diamond dependencies run read branches in parallel and finish once', async () => {
   const app = fixture()
   const state = await app.executor.start(

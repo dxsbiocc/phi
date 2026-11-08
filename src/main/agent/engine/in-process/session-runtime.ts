@@ -19,6 +19,7 @@ import {
 } from '../../plan/plan-review-mode'
 import { planReviewContent } from '../../plan/plan-review-content'
 import { validatePlanSpec } from '../../plan/model/plan-spec'
+import { unavailablePlanAgents } from '../../plan/model/plan-step-agent'
 import type { PlanSpec } from '../../../../shared/planRunTypes'
 import {
   AutoCompactionDefaults,
@@ -259,17 +260,6 @@ export async function compactSession(params: unknown): Promise<{
     },
     state: serializeSessionState(entry)
   }
-}
-
-function unavailablePlanAgents(
-  spec: PlanSpec,
-  available: ReadonlyMap<string, unknown> | undefined
-): string[] {
-  const names = new Set(available?.keys() ?? [])
-  return spec.steps.flatMap((step) => {
-    const agent = step.agent ?? 'PlanStep'
-    return names.has(agent) ? [] : [`step "${step.id}".agent "${agent}" is not available.`]
-  })
 }
 
 function reviewTitle(goal: string): string {
