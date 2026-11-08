@@ -18,8 +18,12 @@ function sessionId(value: string | undefined): string {
   return value
 }
 
-function json(value: unknown): JsonValue {
-  return value as JsonValue
+/**
+ * Plan states carry optional fields as `undefined` (for example `pause` after a stop), which
+ * the frame encoder rejects. A JSON round trip drops them the same way the plan store does.
+ */
+export function json(value: unknown): JsonValue {
+  return value === undefined ? null : (JSON.parse(JSON.stringify(value)) as JsonValue)
 }
 
 /** Additive K3-1 handlers kept out of the already-large worker composition root. */

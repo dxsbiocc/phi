@@ -3554,9 +3554,7 @@ function App(): React.JSX.Element {
             planRunPanel={
               <SessionPlanRunPanel
                 api={rendererApi}
-                sessionId={
-                  activeProjectLocation?.kind === 'ssh' ? null : (activePhiSessionId ?? null)
-                }
+                sessionId={activePhiSessionId ?? null}
                 cwd={activeCwd}
                 onReplanPrompt={onReplanPrompt}
               />
