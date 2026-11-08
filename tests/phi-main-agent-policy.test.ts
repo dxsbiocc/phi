@@ -79,6 +79,18 @@ test('automatic work mode alone receives routing criteria and preserves user rev
   }
 })
 
+test('plan-and-execute mode alone directs the model to the structured plan tool', () => {
+  const structured = buildPhiMainSystemPrompt([], { workMode: 'plan_execute' }).join('\n')
+  assert.match(structured, /propose_plan_steps/)
+  assert.match(structured, /instead of writing a markdown plan file/i)
+  for (const workMode of ['direct', 'plan', 'auto'] as const) {
+    assert.doesNotMatch(
+      buildPhiMainSystemPrompt([], { workMode }).join('\n'),
+      /<phi_plan_execute_mode>/
+    )
+  }
+})
+
 test('the Phi-managed persona file is removed from generic context after explicit injection', () => {
   const result = filterPersonaContextFile(
     {
