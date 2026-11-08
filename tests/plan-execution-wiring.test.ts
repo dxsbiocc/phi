@@ -43,7 +43,8 @@ function driver(runs: unknown[], planActive: boolean): RoutedSessionDriver {
       stop: async () => planRun,
       retryStep: async () => planRun,
       skipStep: async () => planRun,
-      requestReplan: async () => ({ requestId: 'request-1', runId: planRun.id, prompt: '' })
+      requestReplan: async () => ({ requestId: 'request-1', runId: planRun.id, prompt: '' }),
+      cancelReplan: async () => true
     }
   }
 }
