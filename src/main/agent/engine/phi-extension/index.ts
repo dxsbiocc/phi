@@ -37,7 +37,7 @@ export {
 export type { EnvironmentBinding, ToolCallRewrite } from './lib/environment'
 export { evaluateSpecialistFallback } from './lib/fallback'
 export type { SpecialistFallbackDecision, SpecialistToolCall } from './lib/fallback'
-export { planModeToolDecision } from './lib/plan-mode'
+export { planModeToolDecision, suppressPlanExecutePromptContext } from './lib/plan-mode'
 export { projectToolBoundaryDecision } from './lib/project-boundary'
 export { resolveInsideProject } from './lib/project-path'
 export {

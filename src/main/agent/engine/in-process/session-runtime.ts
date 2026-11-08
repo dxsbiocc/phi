@@ -272,9 +272,9 @@ async function reviewStructuredPlan(
 ): Promise<
   { ok: false; errors: string[] } | { ok: true; spec: PlanSpec; choice: PlanReviewChoice }
 > {
-  const validated = validatePlanSpec(input)
-  if (!validated.ok) return validated
   const entry = sessions.get(runtimeSessionId)
+  const validated = validatePlanSpec(input, entry?.result.session.sessionManager.getCwd())
+  if (!validated.ok) return validated
   const agentErrors = unavailablePlanAgents(validated.spec, entry?.agentRunners)
   if (agentErrors.length > 0) return { ok: false, errors: agentErrors }
   const replanRequestId = (

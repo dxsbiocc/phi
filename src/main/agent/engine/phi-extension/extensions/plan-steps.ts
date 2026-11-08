@@ -10,7 +10,7 @@ export const PLAN_MAX_STEP_TITLE_LENGTH = 80
 export const PLAN_MAX_STEP_INSTRUCTIONS_LENGTH = 4_000
 export const PLAN_MAX_STEP_ACCEPTANCE_LENGTH = 1_000
 
-const stepSchema = {
+const baseStepSchema = {
   type: 'object',
   additionalProperties: false,
   required: ['id', 'title', 'instructions', 'acceptance', 'dependsOn', 'access'],
@@ -34,29 +34,63 @@ const stepSchema = {
     },
     dependsOn: { type: 'array', items: { type: 'string' }, uniqueItems: true },
     access: { type: 'string', enum: ['read', 'write'] },
-    writes: { type: 'array', items: { type: 'string' }, uniqueItems: true },
-    agent: { type: 'string', minLength: 1 }
+    writes: {
+      type: 'array',
+      items: { type: 'string' },
+      uniqueItems: true,
+      description:
+        'Project-relative paths this step writes. Absolute paths inside the project are accepted and stored relative.'
+    },
+    agent: {
+      type: 'string',
+      minLength: 1,
+      description: 'Optional; normally omit it because Phi chooses the plan step agent.'
+    }
   }
 }
 
-const parameters = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['version', 'goal', 'steps'],
-  properties: {
-    version: { type: 'integer', const: PLAN_SPEC_VERSION },
-    goal: { type: 'string', minLength: 1 },
-    steps: { type: 'array', minItems: 1, maxItems: PLAN_MAX_STEPS, items: stepSchema }
-  }
-} as ToolDefinition['parameters']
+function planParameters(availableAgents: readonly string[]): ToolDefinition['parameters'] {
+  const agentDescription =
+    availableAgents.length > 0
+      ? `Optional; normally omit it because Phi chooses the plan step agent. If set, use one of: ${availableAgents.join(', ')}.`
+      : 'Optional; normally omit it because Phi chooses the plan step agent.'
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['version', 'goal', 'steps'],
+    properties: {
+      version: { type: 'integer', const: PLAN_SPEC_VERSION },
+      goal: { type: 'string', minLength: 1 },
+      steps: {
+        type: 'array',
+        minItems: 1,
+        maxItems: PLAN_MAX_STEPS,
+        items: {
+          ...baseStepSchema,
+          properties: {
+            ...baseStepSchema.properties,
+            agent: { ...baseStepSchema.properties.agent, description: agentDescription }
+          }
+        }
+      }
+    }
+  } as ToolDefinition['parameters']
+}
 
-export function createPlanStepsExtension(host: PhiExtensionHost): ExtensionFactory {
+export function createPlanStepsExtension(
+  host: PhiExtensionHost,
+  options: { availableAgents?: readonly string[] } = {}
+): ExtensionFactory {
+  const availableAgents = [
+    ...new Set((options.availableAgents ?? []).filter((name) => name.trim()))
+  ].sort((left, right) => left.localeCompare(right))
+  const parameters = planParameters(availableAgents)
   return (pi) => {
     const definition: ToolDefinition & { lenientArgValidation: true } = {
       name: PLAN_STEPS_TOOL_NAME,
       label: 'Propose plan steps',
       description:
-        'Submit the complete structured execution plan for user review. Use this exactly once the read-only investigation is sufficient. If validation fails, correct every reported error and submit again.',
+        'Submit the complete structured execution plan for user review. Use this exactly once the read-only investigation is sufficient. The agent field is optional and should normally be omitted because Phi picks the plan step agent. Writes are project-relative paths. If validation fails, correct every reported error and submit again.',
       parameters,
       defaultInactive: true,
       loadMode: 'essential',

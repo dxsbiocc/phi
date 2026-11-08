@@ -6,7 +6,11 @@ import {
   enterPlanReviewMode,
   type PlanReviewSession
 } from '../src/main/agent/plan/plan-review-mode'
-import { planModeToolDecision } from '../src/main/agent/engine/phi-extension'
+import {
+  planModeToolDecision,
+  suppressPlanExecutePromptContext
+} from '../src/main/agent/engine/phi-extension'
+import { buildPhiMainSystemPrompt } from '../src/main/agent/main-system-prompt'
 import { planReviewContent } from '../src/main/agent/plan/plan-review-content'
 import type { PlanSpec } from '../src/shared/planRunTypes'
 
@@ -188,6 +192,60 @@ test('plan tool guard blocks workspace mutations and hidden device calls', () =>
     assert.equal(planModeToolDecision(true, name, input).allowed, false)
   }
   assert.equal(planModeToolDecision(false, 'bash', { command: 'npm test' }).allowed, true)
+})
+
+test('structured plan mode admits reads and propose_plan_steps only', () => {
+  assert.equal(planModeToolDecision(true, 'propose_plan_steps', { steps: [] }, true).allowed, true)
+  assert.equal(planModeToolDecision(true, 'read', { path: 'src/index.ts' }, true).allowed, true)
+  for (const [name, input] of [
+    ['write', { path: 'local://PLAN.md' }],
+    ['write', { path: 'xd://propose' }],
+    ['edit', { path: 'local://PLAN.md' }],
+    ['bash', { command: 'git status' }]
+  ] as const) {
+    const decision = planModeToolDecision(true, name, input, true)
+    assert.equal(decision.allowed, false)
+    assert.match(decision.reason ?? '', /propose_plan_steps/)
+  }
+})
+
+test('plan_execute replaces OMP plan-mode context and its xd://propose reminder', () => {
+  const planContext = {
+    role: 'custom',
+    customType: 'plan-mode-context',
+    content: 'Write local://demo-plan.md, then write the slug to xd://propose.',
+    display: false,
+    timestamp: 1
+  }
+  const reminder = {
+    role: 'developer',
+    content: [
+      {
+        type: 'text',
+        text: '<system-reminder>\nPlan mode turn ended without a required tool call.\nWrite the plan to local://demo-plan.md and submit it through xd://propose.\n</system-reminder>'
+      }
+    ],
+    timestamp: 2
+  }
+  const user = { role: 'user', content: [{ type: 'text', text: 'keep me' }], timestamp: 3 }
+  const filtered = suppressPlanExecutePromptContext([planContext, reminder, user])
+  assert.ok(filtered)
+  assert.equal(filtered.length, 2)
+  const serialized = JSON.stringify(filtered)
+  assert.doesNotMatch(serialized, /xd:\/\/propose/)
+  assert.doesNotMatch(serialized, /local:\/\//)
+  assert.match(serialized, /propose_plan_steps/)
+  assert.match(serialized, /keep me/)
+  assert.equal(suppressPlanExecutePromptContext([user]), undefined)
+})
+
+test('plan_execute system prompt names only propose_plan_steps', () => {
+  const prompt = buildPhiMainSystemPrompt(['base instructions'], {
+    workMode: 'plan_execute'
+  }).join('\n')
+  assert.match(prompt, /propose_plan_steps/)
+  assert.doesNotMatch(prompt, /xd:\/\/propose/)
+  assert.doesNotMatch(prompt, /local:\/\//)
 })
 
 test('structured review content stays within the host payload limit', () => {

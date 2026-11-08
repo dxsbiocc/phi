@@ -124,10 +124,14 @@ test('remote mode guidance appears only with the matching authenticated host too
     rpcWorkModePrompt('plan', ['propose_plan_markdown'], ['propose_plan_markdown'])!,
     /local:\/\/PLAN\.md/
   )
-  assert.match(
-    rpcWorkModePrompt('plan_execute', ['propose_plan_steps'], ['propose_plan_steps'])!,
-    /propose_plan_steps/
-  )
+  const planExecute = rpcWorkModePrompt(
+    'plan_execute',
+    ['propose_plan_steps'],
+    ['propose_plan_steps']
+  )!
+  assert.match(planExecute, /propose_plan_steps/)
+  assert.doesNotMatch(planExecute, /xd:\/\/propose/)
+  assert.doesNotMatch(planExecute, /local:\/\//)
 })
 
 test('remote structured planning cannot write a draft or dispatch a child', () => {

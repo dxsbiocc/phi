@@ -272,3 +272,36 @@ test('planExecute validates, reviews, executes a diamond and wakes the main agen
   )
   assert.equal(timeline.filter((type) => type === 'plan_run_finished').length, 1)
 })
+
+test('propose_plan_steps documents optional agents and project-relative writes', async () => {
+  let definition: Record<string, unknown> | undefined
+  await createPlanStepsExtension({ planExecuteModeActive: () => false } as PhiExtensionHost, {
+    availableAgents: ['PlanStep', 'Wrapper', 'scout']
+  })({
+    registerTool: (tool: Record<string, unknown>) => {
+      definition = tool
+    }
+  } as never)
+  assert.ok(definition)
+  const description = String(definition.description)
+  assert.match(description, /agent field is optional/)
+  assert.match(description, /project-relative/i)
+  const parameters = definition.parameters as {
+    properties: {
+      steps: {
+        items: {
+          properties: {
+            agent: { description: string }
+            writes: { description: string }
+          }
+        }
+      }
+    }
+  }
+  const agentDescription = parameters.properties.steps.items.properties.agent.description
+  assert.match(agentDescription, /normally omit/i)
+  for (const name of ['PlanStep', 'Wrapper', 'scout']) {
+    assert.match(agentDescription, new RegExp(name))
+  }
+  assert.match(parameters.properties.steps.items.properties.writes.description, /project-relative/i)
+})

@@ -73,10 +73,73 @@ test('collects field, identity, reference, and write-path errors together', () =
   assert.match(errors, /step "Bad Id"\.dependsOn\[1\]/)
   assert.match(errors, /step "Bad Id"\.dependsOn references missing step "missing"/)
   assert.match(errors, /step "Bad Id"\.writes is only allowed/)
-  assert.match(errors, /unsafe relative path "\.\.\/secret"/)
-  assert.match(errors, /unsafe relative path "\/absolute"/)
-  assert.match(errors, /unsafe relative path "C:\\absolute"/)
+  assert.match(
+    errors,
+    /step "Bad Id"\.writes must be a path inside the project, relative to the project root \("\.\.\/secret" is outside it\)\./
+  )
+  assert.match(
+    errors,
+    /step "Bad Id"\.writes must be a path inside the project, relative to the project root \("\/absolute" is outside it\)\./
+  )
+  assert.match(
+    errors,
+    /step "Bad Id"\.writes must be a path inside the project, relative to the project root \("C:\\absolute" is outside it\)\./
+  )
   assert.match(errors, /step "same"\.id must be unique/)
+})
+
+test('accepts absolute writes inside the project root and keeps relative writes unchanged', () => {
+  const projectRoot = '/data2/project'
+  const result = validatePlanSpec(
+    spec([
+      step('write', {
+        access: 'write',
+        writes: [
+          '/data2/project/shortest_path.py',
+          '/data2/project/src/network/graph.py',
+          '/data2/project\\src\\windows-style.py',
+          './src/relative.py',
+          'reports/result.md'
+        ]
+      })
+    ]),
+    projectRoot
+  )
+  assert.equal(result.ok, true)
+  if (!result.ok) return
+  assert.deepEqual(result.spec.steps[0]?.writes, [
+    'shortest_path.py',
+    'src/network/graph.py',
+    'src/windows-style.py',
+    './src/relative.py',
+    'reports/result.md'
+  ])
+})
+
+test('rejects absolute writes outside the project root and any parent escape', () => {
+  const projectRoot = '/data2/project'
+  for (const [write, expected] of [
+    [
+      '/data2/other/secret.py',
+      'step "write".writes must be a path inside the project, relative to the project root ("/data2/other/secret.py" is outside it).'
+    ],
+    [
+      '../secret.py',
+      'step "write".writes must be a path inside the project, relative to the project root ("../secret.py" is outside it).'
+    ],
+    [
+      'src/../../secret.py',
+      'step "write".writes must be a path inside the project, relative to the project root ("src/../../secret.py" is outside it).'
+    ]
+  ] as const) {
+    const result = validatePlanSpec(
+      spec([step('write', { access: 'write', writes: [write] })]),
+      projectRoot
+    )
+    assert.equal(result.ok, false)
+    if (result.ok) continue
+    assert.ok(result.errors.includes(expected), result.errors.join('\n'))
+  }
 })
 
 test('reports exactly the ids participating in dependency cycles', () => {
@@ -134,4 +197,26 @@ test('rejects malformed top-level and step collection values', () => {
   if (!noSteps.ok) assert.match(noSteps.errors.join('\n'), /steps must be an array/)
   const empty = validatePlanSpec(spec([]))
   assert.equal(empty.ok, false)
+})
+
+test('the project root itself is not a write target', () => {
+  const result = validatePlanSpec(
+    {
+      version: 1,
+      goal: 'Root write',
+      steps: [
+        {
+          id: 'one',
+          title: 'Write everything',
+          instructions: 'Write',
+          acceptance: 'Done',
+          dependsOn: [],
+          access: 'write',
+          writes: ['/srv/project/']
+        }
+      ]
+    },
+    '/srv/project'
+  )
+  assert.equal(result.ok, false)
 })

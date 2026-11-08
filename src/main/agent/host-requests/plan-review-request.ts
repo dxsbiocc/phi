@@ -103,9 +103,9 @@ interface PlanReviewTarget {
   window: BrowserWindow | null
 }
 
-function readPlanSteps(value: unknown): PlanSpec | undefined {
+function readPlanSteps(value: unknown, projectRoot: string | undefined): PlanSpec | undefined {
   if (value === undefined) return undefined
-  const validated = validatePlanSpec(value)
+  const validated = validatePlanSpec(value, projectRoot)
   if (!validated.ok) throw new Error('Invalid plan review request')
   return validated.spec
 }
@@ -119,7 +119,10 @@ function readPlanReviewRequest<StoredEvent>(
   const title = deps.fields.optionalStringField(record, 'title')?.trim()
   const content = deps.fields.optionalStringField(record, 'planContent')
   const planFilePath = deps.fields.optionalStringField(record, 'planFilePath')
-  const steps = readPlanSteps(record.steps)
+  const steps = readPlanSteps(
+    record.steps,
+    runtimeSessionId ? deps.runs.findByRuntimeSessionId(runtimeSessionId)?.cwd : undefined
+  )
   const replanRequestId = deps.fields.optionalStringField(record, 'replanRequestId')
   if (
     !runtimeSessionId ||

@@ -203,7 +203,9 @@ export async function createSession(
       includeSkills: !noTools
     }),
     ...createMainSessionExtensions(extensionConfig, extensionHost),
-    createPlanStepsExtension(extensionHost),
+    createPlanStepsExtension(extensionHost, {
+      availableAgents: phiAgents.map((agent) => agent.name)
+    }),
     // Keep a policy guard even when a later approved plugin supplies the first specialist.
     ...(agentPolicies.length === 0
       ? [createSpecialistFallbackExtension(agentPolicies, extensionHost)]

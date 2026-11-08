@@ -26,10 +26,10 @@ const AUTO_WORK_MODE_INSTRUCTION = `<phi_auto_work_mode>
 Choose the lightest suitable way to handle each request. Answer questions and make small, clear changes directly. When requirements are unclear, the impact is broad, or the work is risky, call enter_plan_mode alone with execute=false before further investigation. When the work can be split into multiple relatively independent tasks, call enter_plan_mode alone with execute=true. Never call enter_plan_mode alongside another tool in the same response. Entering either planning path starts read-only investigation and still requires explicit user review of the resulting plan; you cannot skip or approve that review.
 </phi_auto_work_mode>`
 
-// The kernel/in-process route has no per-turn RPC prompt, and OMP's own plan-mode context
-// asks for a markdown plan file; this keeps plan-and-execute on the structured tool.
+// The kernel/in-process route has no per-turn RPC prompt. OMP's markdown plan-mode
+// context is filtered in plan_execute, so this is the only planning instruction.
 const PLAN_EXECUTE_WORK_MODE_INSTRUCTION = `<phi_plan_execute_mode>
-Structured planning and execution mode is active. Investigate with read-only tools, then call propose_plan_steps once with the complete structured plan for user review, instead of writing a markdown plan file or writing to xd://propose. Do not edit files or start the work before the review approves the plan.
+Structured planning and execution mode is active. Investigate with read-only tools, then call propose_plan_steps once with the complete structured plan for user review. Do not write a markdown plan file, submit a generic approval write, edit files, or start the work before the review approves the plan.
 </phi_plan_execute_mode>`
 
 export type RemoteRuntimePromptContext = {

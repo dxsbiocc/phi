@@ -1,3 +1,5 @@
+import { posix } from 'node:path'
+
 import { isRecord } from '../../../../shared/guards'
 import {
   PLAN_MAX_STEPS,
@@ -54,34 +56,76 @@ function readStringArray(value: unknown, field: string, errors: string[]): strin
   return [...new Set(strings)]
 }
 
-function isUnsafeWritePath(value: string): boolean {
-  const segments = value.split(/[\\/]+/)
-  return (
-    value.startsWith('/') ||
-    value.startsWith('\\') ||
-    WINDOWS_ABSOLUTE_PATTERN.test(value) ||
-    segments.includes('..')
-  )
+function toPosixPath(value: string): string {
+  return value.replaceAll('\\', '/')
+}
+
+function normalizeAbsolutePath(value: string): string {
+  const normalized = posix.normalize(toPosixPath(value))
+  return normalized.length > 1 && normalized.endsWith('/') ? normalized.slice(0, -1) : normalized
+}
+
+function comparableAbsolutePath(value: string): string {
+  const normalized = normalizeAbsolutePath(value)
+  return WINDOWS_ABSOLUTE_PATTERN.test(normalized) ? normalized.toLowerCase() : normalized
+}
+
+/** Return the root-relative form of an absolute path inside the project, or undefined. */
+function relativeToProjectRoot(value: string, projectRoot: string): string | undefined {
+  const root = normalizeAbsolutePath(projectRoot)
+  if (!root.startsWith('/') && !WINDOWS_ABSOLUTE_PATTERN.test(root)) return undefined
+  const candidate = normalizeAbsolutePath(value)
+  const rootKey = comparableAbsolutePath(root)
+  const candidateKey = comparableAbsolutePath(candidate)
+  if (candidateKey === rootKey) return undefined
+  const rootPrefix = rootKey.endsWith('/') ? rootKey : `${rootKey}/`
+  return candidateKey.startsWith(rootPrefix) ? candidate.slice(rootPrefix.length) : undefined
+}
+
+function isAbsoluteWritePath(value: string): boolean {
+  return value.startsWith('/') || value.startsWith('\\') || WINDOWS_ABSOLUTE_PATTERN.test(value)
+}
+
+/**
+ * Absolute write paths are accepted only when they resolve inside the project and are
+ * stored root-relative, so the plan runs correctly on local and SSH projects alike.
+ */
+function normalizeWritePath(value: string, projectRoot: string | undefined): string | undefined {
+  if (value.split(/[\\/]+/).includes('..')) return undefined
+  if (!isAbsoluteWritePath(value)) return value
+  return projectRoot ? relativeToProjectRoot(value, projectRoot) : undefined
 }
 
 function readWrites(
   value: unknown,
   access: PlanStepAccess,
   label: string,
-  errors: string[]
+  errors: string[],
+  projectRoot: string | undefined
 ): string[] | undefined {
   if (value === undefined) return undefined
   const writes = readStringArray(value, `${label}.writes`, errors)
   if (access === 'read') errors.push(`${label}.writes is only allowed when access is "write".`)
+  const normalized: string[] = []
   for (const path of writes) {
-    if (isUnsafeWritePath(path)) {
-      errors.push(`${label}.writes contains unsafe relative path "${path}".`)
+    const relative = normalizeWritePath(path, projectRoot)
+    if (relative === undefined) {
+      errors.push(
+        `${label}.writes must be a path inside the project, relative to the project root ("${path}" is outside it).`
+      )
+      continue
     }
+    normalized.push(relative)
   }
-  return writes
+  return [...new Set(normalized)]
 }
 
-function readStep(value: unknown, index: number, errors: string[]): PlanStep | null {
+function readStep(
+  value: unknown,
+  index: number,
+  errors: string[],
+  projectRoot: string | undefined
+): PlanStep | null {
   const fallback = `steps[${index}]`
   if (!isRecord(value)) {
     errors.push(`${fallback} must be an object.`)
@@ -113,7 +157,7 @@ function readStep(value: unknown, index: number, errors: string[]): PlanStep | n
     dependsOn: readStringArray(value.dependsOn, `${label}.dependsOn`, errors),
     access: access ?? 'read'
   }
-  const writes = readWrites(value.writes, step.access, label, errors)
+  const writes = readWrites(value.writes, step.access, label, errors, projectRoot)
   const agent =
     value.agent === undefined
       ? undefined
@@ -161,7 +205,7 @@ function findCycleIds(steps: PlanStep[]): string[] {
   return [...cycles]
 }
 
-export function validatePlanSpec(value: unknown): PlanSpecValidationResult {
+export function validatePlanSpec(value: unknown, projectRoot?: string): PlanSpecValidationResult {
   const errors: string[] = []
   if (!isRecord(value)) return { ok: false, errors: ['Plan spec must be an object.'] }
   if (value.version !== PLAN_SPEC_VERSION) {
@@ -176,7 +220,7 @@ export function validatePlanSpec(value: unknown): PlanSpecValidationResult {
     errors.push(`steps must contain between 1 and ${PLAN_MAX_STEPS} steps.`)
   }
   const steps = value.steps
-    .map((step, index) => readStep(step, index, errors))
+    .map((step, index) => readStep(step, index, errors, projectRoot))
     .filter((step): step is PlanStep => step !== null)
   validateStepReferences(steps, errors)
   const cycleIds = findCycleIds(steps)
