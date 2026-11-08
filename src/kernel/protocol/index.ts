@@ -483,7 +483,7 @@ export class KernelProtocolCore {
   ): boolean {
     if (method !== 'approval.respond') return true
     const approvalId = (request.params as { approvalId: string }).approvalId
-    const reservation = this.approvals.reserveAnswer(approvalId)
+    const reservation = this.approvals.reserveAnswer(approvalId, request.sessionId)
     if ('code' in reservation) {
       this.sendError(state, request.id, reservation)
       return false

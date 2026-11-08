@@ -22,7 +22,7 @@ export class KernelApprovalTracker {
     this.pending.set(approvalId, { event, generation })
   }
 
-  reserveAnswer(approvalId: string): PendingApproval | ProtocolError {
+  reserveAnswer(approvalId: string, sessionId?: string): PendingApproval | ProtocolError {
     const pending = this.pending.get(approvalId)
     if (!pending) {
       const state = this.tombstones.get(approvalId)
@@ -33,6 +33,11 @@ export class KernelApprovalTracker {
         return makeProtocolError('DUPLICATE_REQUEST', 'The approval request was already answered.')
       }
       return makeProtocolError('INVALID_PARAMS', 'The approval request is unknown.')
+    }
+    // A caller that names a session may only answer that session's approval. Leave the
+    // pending entry intact so the owning session can still decide it.
+    if (sessionId !== undefined && pending.event.sessionId !== sessionId) {
+      return makeProtocolError('INVALID_PARAMS', 'The approval request belongs to another session.')
     }
     this.pending.delete(approvalId)
     this.remember(approvalId, 'answered')
