@@ -585,6 +585,18 @@ class PlanRunServiceImplementation<
     }
   }
 
+  async releaseSettledLaunches(
+    phiSessionId: string,
+    settled: (requestId: string) => boolean
+  ): Promise<void> {
+    for (const state of await this.recoverSession(phiSessionId)) {
+      for (const [stepId, step] of Object.entries(state.steps)) {
+        if (step.status !== 'unknown' || !step.requestId || !settled(step.requestId)) continue
+        await this.executor.confirmLaunchQuiescent(state.id, stepId, step.requestId)
+      }
+    }
+  }
+
   private async recover(phiSessionId: string): Promise<PlanRunState[]> {
     const recovered: PlanRunState[] = []
     for (const state of this.store.listUnfinished(phiSessionId)) {

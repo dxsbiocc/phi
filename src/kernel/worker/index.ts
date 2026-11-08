@@ -101,7 +101,9 @@ export function createWorkerKernelAdapter(
     options.callWorker ??
     ((method, params) => callKernelRuntime(method, params, options.modelAccess, kernelServices))
   const agentRuns = new KernelAgentRunCoordinator(options.agentDir, callWorker, diagnostic)
-  const plans = new KernelPlanCoordinator(options.agentDir, callWorker, diagnostic)
+  const plans = new KernelPlanCoordinator(options.agentDir, callWorker, diagnostic, (id, request) =>
+    agentRuns.launchSettled(id, request)
+  )
   kernelServices.agentRuns = agentRuns
   kernelServices.plans = plans
   const diagnosedEvents = new Set<string>()

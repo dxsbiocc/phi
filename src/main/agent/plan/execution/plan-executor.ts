@@ -51,6 +51,8 @@ export interface PlanExecutor {
   skipStep(runId: string, stepId: string): Promise<PlanRunState>
   replaceRemainingSteps(runId: string, spec: PlanSpec): Promise<PlanRunState>
   recover(state: PlanRunState): Promise<PlanRunState>
+  /** Records that an unknown launch provably has no live child, making it interrupted. */
+  confirmLaunchQuiescent(runId: string, stepId: string, requestId: string): Promise<PlanRunState>
   get(runId: string): PlanRunState | undefined
 }
 
@@ -341,6 +343,15 @@ class PlanExecutorImplementation implements PlanExecutor {
     return this.enqueue(state.id, () =>
       this.apply(state.id, { type: 'recover_after_restart', at: clockNow(this.deps.clock) })
     )
+  }
+
+  confirmLaunchQuiescent(runId: string, stepId: string, requestId: string): Promise<PlanRunState> {
+    return this.transition(runId, {
+      type: 'step_launch_quiescent',
+      stepId,
+      requestId,
+      at: clockNow(this.deps.clock)
+    })
   }
 
   pause(runId: string): Promise<PlanRunState> {

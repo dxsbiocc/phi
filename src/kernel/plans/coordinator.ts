@@ -51,7 +51,9 @@ export class KernelPlanCoordinator implements KernelPlanRuntime {
   constructor(
     private readonly agentDir: string,
     private readonly callWorker: WorkerCall,
-    private readonly diagnostic: (message: string) => void
+    private readonly diagnostic: (message: string) => void,
+    /** True when the agent-run journal proves a launch request has no live child. */
+    private readonly launchSettled: (sessionId: string, requestId: string) => boolean = () => false
   ) {
     const store: PlanRunServiceStore = {
       write: (state) => writePlanRun(state, this.agentDir),
@@ -113,6 +115,11 @@ export class KernelPlanCoordinator implements KernelPlanRuntime {
     await this.importAdoptedRuns(sessionId)
     this.loaded.add(sessionId)
     await this.service.recoverSession(sessionId)
+    // Agent-run receipts open first and settle every request the previous kernel left
+    // open, so an unknown plan launch whose request is settled cannot still be running.
+    await this.service.releaseSettledLaunches(sessionId, (requestId) =>
+      this.launchSettled(sessionId, requestId)
+    )
   }
 
   closeSession(sessionId: string): void {

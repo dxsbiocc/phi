@@ -168,6 +168,10 @@ export class KernelAgentRunCoordinator implements KernelAgentRunRuntime {
     }
   }
 
+  launchSettled(sessionId: string, requestId: string): boolean {
+    return this.receipts.requestSettled(sessionId, requestId)
+  }
+
   async hasActive(sessionId: string): Promise<boolean> {
     if (!this.receipts.hasUnfinished(sessionId)) return false
     return (await this.list(sessionId)).some((run) =>
