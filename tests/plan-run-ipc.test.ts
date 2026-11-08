@@ -57,6 +57,10 @@ function createHarness(): {
     requestReplan: async (runId) => {
       kernelCalls.push(`replan:${runId}`)
       return { requestId: 'kernel-request-1', runId, prompt: 'Replan in the kernel' }
+    },
+    cancelReplan: async (requestId) => {
+      kernelCalls.push(`cancel-replan:${requestId}`)
+      return requestId === 'kernel-request-1'
     }
   }
   registerPlanRunIpc({
@@ -163,13 +167,20 @@ test('plan run IPC registers its full surface and routes only to the kernel coor
     }),
     { requestId: 'kernel-request-1', runId: 'run-1', prompt: 'Replan in the kernel' }
   )
+  // A cancelled replan review must be clearable, or the paused run can never replan again.
+  await invoke(handlers, IPC.planRuns.cancelReplan, {
+    phiSessionId: 'kernel-session',
+    runId: 'run-1',
+    requestId: 'kernel-request-1'
+  })
+  assert.ok(kernelCalls.includes('cancel-replan:kernel-request-1'))
   await assert.rejects(
     invoke(handlers, IPC.planRuns.cancelReplan, {
       phiSessionId: 'kernel-session',
       runId: 'run-1',
-      requestId: 'kernel-request-1'
+      requestId: 'busy-request'
     }),
-    /内核计划运行暂不支持取消重新规划/u
+    /仍在处理/u
   )
 
   assert.deepEqual(
@@ -197,7 +208,9 @@ test('plan run IPC registers its full surface and routes only to the kernel coor
     'stop:run-1',
     'retry:run-1:step-a',
     'skip:run-1:step-a',
-    'replan:run-1'
+    'replan:run-1',
+    'cancel-replan:kernel-request-1',
+    'cancel-replan:busy-request'
   ])
 })
 

@@ -377,9 +377,12 @@ export async function cancelSessionPlanMode(params: unknown): Promise<boolean> {
   const replanRequestId = stringValue(record.replanRequestId)
   const entry = sessions.get(runtimeSessionId)
   if (!entry || entry.result.session.isStreaming) return false
-  return replanRequestId
-    ? cancelPlanReviewReplanMode(entry.result.session, replanRequestId)
-    : cancelPlanReviewMode(entry.result.session)
+  if (!replanRequestId) return cancelPlanReviewMode(entry.result.session)
+  // A review interrupted by stopping the turn reaches neither approve nor cancel, so the
+  // plan service still holds the request; clearing it is idempotent.
+  await cancelPlanReviewReplanMode(entry.result.session, replanRequestId)
+  entry.kernelPlanRuntime?.cancelled(runtimeSessionId, replanRequestId)
+  return true
 }
 
 export function listSessionShellJobs(): unknown[] {

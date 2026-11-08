@@ -245,7 +245,8 @@ export class KernelRoutedSessionDriver implements RoutedSessionDriver {
     skipStep: async (runId: string, stepId: string): Promise<PlanRunState> =>
       (await this.request('planRuns.skipStep', { runId, stepId })) as unknown as PlanRunState,
     requestReplan: async (runId: string): Promise<PlanRunReplanRequest> =>
-      (await this.request('planRuns.replan', { runId })) as unknown as PlanRunReplanRequest
+      (await this.request('planRuns.replan', { runId })) as unknown as PlanRunReplanRequest,
+    cancelReplan: (requestId: string): Promise<boolean> => this.cancelPlanMode(requestId)
   }
 
   readonly shellJobs = {

@@ -20,6 +20,7 @@ export type KernelPlanRunIpcOperations = RoutedPlanRunOperations
 const MAX_IDENTIFIER_LENGTH = 512
 const INVALID_REQUEST = '计划运行请求无效'
 const KERNEL_PLAN_NOT_LOADED = '内核计划会话当前未加载，请先打开该会话再重试'
+const REPLAN_CANCEL_BUSY = '对话仍在处理，请等它停下后再重试取消'
 
 function loadedKernelPlanRuns(
   options: PlanRunIpcOptions,
@@ -142,9 +143,13 @@ export function registerPlanRunIpc(options: PlanRunIpcOptions): void {
     return loadedKernelPlanRuns(options, input.phiSessionId).requestReplan(input.runId)
   })
 
-  // Kernel mapping: cancelling a requested replan has no safe coordinator equivalent.
-  ipcMain.handle(IPC.planRuns.cancelReplan, (_event, ...args: unknown[]) => {
-    readReplanCancelInput(args)
-    throw new Error('内核计划运行暂不支持取消重新规划')
+  // Kernel mapping: session.plan.cancel with the replan request id; it refuses while the
+  // conversation turn is still running, so the renderer keeps its retry affordance.
+  ipcMain.handle(IPC.planRuns.cancelReplan, async (_event, ...args: unknown[]) => {
+    const input = readReplanCancelInput(args)
+    const cleared = await loadedKernelPlanRuns(options, input.phiSessionId).cancelReplan(
+      input.requestId
+    )
+    if (!cleared) throw new Error(REPLAN_CANCEL_BUSY)
   })
 }

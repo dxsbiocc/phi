@@ -41,6 +41,8 @@ export interface RoutedPlanRunOperations {
   retryStep(runId: string, stepId: string): Promise<PlanRunState>
   skipStep(runId: string, stepId: string): Promise<PlanRunState>
   requestReplan(runId: string): Promise<PlanRunReplanRequest>
+  /** Clear a pending replan request; false while the conversation turn is still running. */
+  cancelReplan(requestId: string): Promise<boolean>
 }
 
 export interface RoutedSessionDriver {
