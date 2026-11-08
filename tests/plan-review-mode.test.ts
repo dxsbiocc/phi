@@ -205,3 +205,21 @@ test('structured review content stays within the host payload limit', () => {
   }
   assert.ok(Buffer.byteLength(planReviewContent(spec), 'utf8') < 64 * 1024)
 })
+
+test('structured review shows the shared default agent for a step that omits one', () => {
+  const content = planReviewContent({
+    version: 1,
+    goal: 'Finish the plan',
+    steps: [
+      {
+        id: 's1',
+        title: 'First step',
+        instructions: 'Do the first step',
+        acceptance: 'The first step is done',
+        dependsOn: [],
+        access: 'read'
+      }
+    ]
+  })
+  assert.match(content, /agent: PlanStep/)
+})

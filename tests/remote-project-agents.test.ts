@@ -10,6 +10,10 @@ import {
 } from '../src/main/agent/agents/remote-project-agent-discovery'
 import { discoverRemoteAgentCatalog } from '../src/main/agent/agents/remote-agent-catalog'
 import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
+import { AgentRunRegistry, type AgentRunFn } from '../src/main/agent/agents/registry'
+import { buildSessionAgentDelegationTools } from '../src/main/agent/engine/in-process/session-agent-tools'
+import { unavailablePlanAgents } from '../src/main/agent/plan/model/plan-step-agent'
+import type { PlanSpec, PlanStep } from '../src/shared/planRunTypes'
 import {
   revokeRemoteProjectAgentTrust,
   trustRemoteProjectAgent
@@ -27,7 +31,23 @@ Use only the remote project tools.
 `
 }
 
-test('host-only agents stay out of the remote runnable and visible catalogs', async () => {
+function planStep(id: string, overrides: Partial<PlanStep> = {}): PlanStep {
+  return {
+    id,
+    title: `Step ${id}`,
+    instructions: `Do ${id}`,
+    acceptance: `Verify ${id}`,
+    dependsOn: [],
+    access: 'read',
+    ...overrides
+  }
+}
+
+function planSpec(steps: PlanStep[]): PlanSpec {
+  return { version: 1, goal: 'Finish the plan', steps }
+}
+
+test('host-only agents stay runnable by the host but out of the visible remote catalog', async () => {
   const fixture = createRemoteRuntimeFixture()
   const agentDir = join(fixture.root, 'local-phi')
   try {
@@ -51,8 +71,112 @@ test('host-only agents stay out of the remote runnable and visible catalogs', as
       pluginAgentDirs: []
     })
 
-    assert.deepEqual(result.agents, [])
+    assert.deepEqual(
+      result.agents.map((agent) => agent.name),
+      ['LocalHost']
+    )
     assert.deepEqual(result.entries, [])
+    assert.doesNotMatch(buildAgentLeaderPrompt(result.agents), /LocalHost|ProjectHost/)
+  } finally {
+    await fixture.workspace.projectHost.close?.()
+    fixture.cleanup()
+  }
+})
+
+test('trusted project host agents are runnable without disturbing visible project agents', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  const agentDir = join(fixture.root, 'local-phi')
+  try {
+    mkdirSync(join(fixture.projectRoot, '.phi', 'agents'), { recursive: true })
+    writeFileSync(
+      join(fixture.projectRoot, '.phi', 'agents', 'ProjectHost.md'),
+      agentMarkdown('ProjectHost', ['read'], 'host')
+    )
+    writeFileSync(
+      join(fixture.projectRoot, '.phi', 'agents', 'ProjectReviewer.md'),
+      agentMarkdown('ProjectReviewer')
+    )
+    const scan = await discoverRemoteProjectAgents({
+      host: fixture.workspace.projectHost,
+      projectRoot: fixture.projectRoot,
+      hostAlias: 'fake-lab',
+      agentDir
+    })
+    for (const entry of scan.entries) {
+      trustRemoteProjectAgent(
+        {
+          hostAlias: 'fake-lab',
+          projectRoot: fixture.projectRoot,
+          relativePath: entry.relativePath,
+          contentHash: entry.contentHash
+        },
+        agentDir
+      )
+    }
+
+    const result = await discoverRemoteAgentCatalog({
+      host: fixture.workspace.projectHost,
+      projectRoot: fixture.projectRoot,
+      hostAlias: 'fake-lab',
+      agentDir,
+      cwd: fixture.localAnchor,
+      pluginAgentDirs: []
+    })
+
+    assert.deepEqual(result.agents.map((agent) => agent.name).sort(), [
+      'ProjectHost',
+      'ProjectReviewer'
+    ])
+    assert.deepEqual(
+      result.entries.map((entry) => entry.name),
+      ['ProjectReviewer']
+    )
+    assert.doesNotMatch(buildAgentLeaderPrompt(result.agents), /ProjectHost/)
+  } finally {
+    await fixture.workspace.projectHost.close?.()
+    fixture.cleanup()
+  }
+})
+
+test('bundled PlanStep is runnable by the remote host but hidden from the model', async () => {
+  const fixture = createRemoteRuntimeFixture()
+  const agentDir = join(fixture.root, 'local-phi')
+  const run: AgentRunFn = async () => ({ text: 'step complete', toolCalls: 0 })
+  try {
+    const result = await discoverRemoteAgentCatalog({
+      host: fixture.workspace.projectHost,
+      projectRoot: fixture.projectRoot,
+      hostAlias: 'fake-lab',
+      agentDir,
+      cwd: fixture.localAnchor,
+      bundledDir: join(process.cwd(), 'resources', 'agents'),
+      pluginAgentDirs: []
+    })
+
+    const planStepAgent = result.agents.find((agent) => agent.name === 'PlanStep')
+    assert.ok(planStepAgent)
+    assert.equal(planStepAgent.invocation, 'host')
+    assert.equal(
+      result.entries.some((entry) => entry.name === 'PlanStep'),
+      false
+    )
+    assert.doesNotMatch(buildAgentLeaderPrompt(result.agents), /PlanStep/)
+    assert.equal(
+      buildSessionAgentDelegationTools({
+        definitions: result.agents,
+        runnerFor: () => run,
+        registry: new AgentRunRegistry(),
+        toolOptions: {}
+      }).some((tool) => tool.name === 'PlanStep'),
+      false
+    )
+
+    const available = new Map(result.agents.map((agent) => [agent.name, agent] as const))
+    assert.deepEqual(unavailablePlanAgents(planSpec([planStep('s1')]), available), [])
+    assert.deepEqual(
+      unavailablePlanAgents(planSpec([planStep('s1', { agent: 'Ghost' })]), available),
+      ['step "s1".agent "Ghost" is not available. Available agents: General, PlanStep, Wrapper.']
+    )
   } finally {
     await fixture.workspace.projectHost.close?.()
     fixture.cleanup()

@@ -1,4 +1,5 @@
 export const PLAN_SPEC_VERSION = 1 as const
+export const PLAN_DEFAULT_STEP_AGENT = 'PlanStep'
 export const PLAN_MAX_STEPS = 20
 export const PLAN_MAX_STEP_ID_LENGTH = 40
 export const PLAN_MAX_STEP_TITLE_LENGTH = 80

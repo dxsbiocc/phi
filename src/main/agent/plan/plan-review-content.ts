@@ -1,4 +1,5 @@
 import type { PlanSpec, PlanStep } from '../../../shared/planRunTypes'
+import { planStepAgent } from './model/plan-step-agent'
 import { truncateUtf8 } from './model/utf8-truncate'
 
 const MAX_STEP_REVIEW_BYTES = 2_000
@@ -8,7 +9,7 @@ function stepReview(step: PlanStep, index: number): string {
   const metadata = [
     `access: ${step.access}`,
     `depends on: ${step.dependsOn.join(', ') || 'none'}`,
-    `agent: ${step.agent ?? 'PlanStep'}`
+    `agent: ${planStepAgent(step)}`
   ].join(' · ')
   const body = truncateUtf8(
     `${step.instructions}\n\nAcceptance: ${step.acceptance}`,

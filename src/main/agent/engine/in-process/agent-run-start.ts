@@ -1,9 +1,10 @@
 import { AgentRunLimitError } from '../../agents/registry'
 import { isRecord } from '../../../../shared/guards'
+import { PLAN_DEFAULT_STEP_AGENT } from '../../../../shared/planRunTypes'
 import { sessions } from './state'
 
 export const MAX_HOST_AGENT_TASK_BYTES = 32 * 1024
-export const DEFAULT_HOST_AGENT = 'PlanStep'
+export const DEFAULT_HOST_AGENT = PLAN_DEFAULT_STEP_AGENT
 
 function startInput(params: unknown): {
   sessionId: string
