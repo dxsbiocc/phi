@@ -126,6 +126,10 @@ function rendererHarness<State>(
       if (specifier === 'react/jsx-runtime') return jsxRuntime
       if (specifier === '@mui/material') return new Proxy({}, { get: (_, key) => key })
       if (specifier.endsWith('/rendererApi')) return { getRendererApi: () => api }
+      if (specifier.endsWith('/icons'))
+        return { PhiIcons: new Proxy({}, { get: (_, key) => String(key) }) }
+      if (specifier.endsWith('/LabeledIconButton'))
+        return { LabeledIconButton: 'LabeledIconButton' }
       throw new Error(`Unexpected runtime import ${specifier}`)
     },
     window: { setInterval: () => 1, clearInterval: () => {} },
