@@ -127,13 +127,20 @@ function phiOnlySummary(manifest: PhiSessionManifest): SessionSummary {
   }
 }
 
+function isEmptyUnnamedManifest(manifest: PhiSessionManifest): boolean {
+  if (manifest.messageCount > 0) return false
+  if (manifest.title?.trim()) return false
+  if (manifest.status !== 'idle' || manifest.unreadKind !== null) return false
+  if (manifest.currentRunId) return false
+  if (manifest.lastRunOutcome) return false
+  if (manifest.runtimeRecoveryError) return false
+  return true
+}
+
 function isEmptyUnnamedSession(info: SessionInfo, manifest?: PhiSessionManifest): boolean {
   if (info.messageCount > 0) return false
   if (info.name?.trim()) return false
-  if (manifest?.title?.trim()) return false
-  if (manifest && (manifest.status !== 'idle' || manifest.unreadKind !== null)) return false
-  if (manifest?.currentRunId) return false
-  return true
+  return !manifest || isEmptyUnnamedManifest(manifest)
 }
 
 function runtimeManifestGroups(
@@ -232,7 +239,8 @@ export function mergePhiSessionState(
       (manifest) =>
         manifest.cwd === cwd &&
         (!manifest.runtimeSessionPath || manifest.runtimeRef || manifest.runtimeRecoveryError) &&
-        !runtimeManifestIds.has(manifest.sessionId)
+        !runtimeManifestIds.has(manifest.sessionId) &&
+        !isEmptyUnnamedManifest(manifest)
     )
     .map(phiOnlySummary)
 

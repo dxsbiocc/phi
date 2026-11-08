@@ -109,6 +109,17 @@ function manifest(
   }
 }
 
+function phiOnlyManifest(
+  sessionId: string,
+  overrides: Partial<PhiSessionManifest> = {}
+): PhiSessionManifest {
+  return {
+    ...manifest(sessionId, undefined, 'idle', null, '2026-09-05T10:00:00.000Z'),
+    messageCount: 0,
+    ...overrides
+  }
+}
+
 test('mergePhiSessionState overlays Phi status without auto-sorting by activity', () => {
   const sessions = mergePhiSessionState(
     [
@@ -298,6 +309,51 @@ test('mergePhiSessionState keeps empty sessions with active Phi state visible', 
   assert.deepEqual(
     sessions.map((session) => session.path),
     [phiOnlySessionPath('phi-running-empty'), phiOnlySessionPath('phi-failed-empty')]
+  )
+})
+
+test('mergePhiSessionState hides empty unnamed idle Phi-only manifests', () => {
+  const sessions = mergePhiSessionState(
+    [],
+    [
+      phiOnlyManifest('phi-empty-no-runtime'),
+      phiOnlyManifest('phi-empty-runtime-ref', {
+        runtimeRef: remoteReference('phi-empty-runtime-ref')
+      }),
+      phiOnlyManifest('phi-empty-kernel', {
+        kernelRuntimeRef: {
+          kind: 'phi-kernel',
+          version: 1,
+          kernelSessionId: 'kernel-empty',
+          host: { kind: 'local', agentDir: '/tmp/phi-agent' }
+        }
+      })
+    ],
+    '/workspace'
+  )
+
+  assert.deepEqual(sessions, [])
+})
+
+test('mergePhiSessionState keeps non-empty or active Phi-only manifests', () => {
+  const kept = [
+    phiOnlyManifest('phi-title', { title: '  named  ' }),
+    phiOnlyManifest('phi-messages', { messageCount: 1 }),
+    phiOnlyManifest('phi-running', { status: 'running' }),
+    phiOnlyManifest('phi-failed', { status: 'failed', unreadKind: 'failed' }),
+    phiOnlyManifest('phi-unread', { unreadKind: 'completed' }),
+    phiOnlyManifest('phi-current-run', { currentRunId: 'run-1' }),
+    phiOnlyManifest('phi-last-outcome', { lastRunOutcome: 'interrupted' }),
+    phiOnlyManifest('phi-recovery', {
+      runtimeRecoveryError: { code: 'REMOTE_OPERATION_REQUIRED', message: 'offline' }
+    })
+  ]
+
+  const sessions = mergePhiSessionState([], kept, '/workspace')
+
+  assert.deepEqual(
+    sessions.map((session) => session.path).sort(),
+    kept.map((entry) => phiOnlySessionPath(entry.sessionId)).sort()
   )
 })
 
