@@ -74,6 +74,8 @@ export interface PlanStepState {
   error?: string
   startedAt?: string
   finishedAt?: string
+  /** Last time the run durably knew this step was alive; used to stop interrupted durations. */
+  lastSeenAt?: string
 }
 
 export interface PlanRunPause {

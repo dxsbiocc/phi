@@ -115,6 +115,24 @@ function withStep(
 ): PlanRunState {
   return { ...state, steps: { ...state.steps, [stepId]: step }, updatedAt: at }
 }
+function lastAliveAt(state: PlanRunState, step: PlanStepState, at: string): string {
+  const upperMs = Date.parse(at)
+  if (!Number.isFinite(upperMs)) return at
+  const startedAt = step.startedAt
+  const lowerMs = startedAt ? Date.parse(startedAt) : Number.NaN
+  const candidate = step.lastSeenAt ?? state.updatedAt
+  const candidateMs = Date.parse(candidate)
+  const baseMs = Number.isFinite(candidateMs)
+    ? candidateMs
+    : Number.isFinite(lowerMs)
+      ? lowerMs
+      : upperMs
+  const lowerBound = Number.isFinite(lowerMs) ? lowerMs : baseMs
+  const clamped = Math.min(upperMs, Math.max(lowerBound, baseMs))
+  if (Number.isFinite(candidateMs) && clamped === candidateMs) return candidate
+  if (Number.isFinite(lowerMs) && clamped === lowerMs && startedAt) return startedAt
+  return at
+}
 function reduceStepLaunched(
   state: PlanRunState,
   event: Extract<PlanRunEvent, { type: 'step_launched' }>
@@ -161,7 +179,12 @@ function reduceLaunchUnknown(
   requireStepStatus(event.stepId, current, ['launching', 'running'])
   if (!current.requestId || current.requestId !== event.requestId)
     transitionError('INVALID_STEP_TRANSITION', 'Launch request ID does not match.')
-  return withStep(state, event.stepId, { ...current, status: 'unknown' }, event.at)
+  return withStep(
+    state,
+    event.stepId,
+    { ...current, status: 'unknown', lastSeenAt: event.at },
+    event.at
+  )
 }
 function reduceLaunchQuiescent(
   state: PlanRunState,
@@ -171,10 +194,12 @@ function reduceLaunchQuiescent(
   requireStepStatus(event.stepId, current, ['unknown'])
   if (!current.requestId || current.requestId !== event.requestId)
     transitionError('INVALID_STEP_TRANSITION', 'Launch request ID does not match.')
+  // The release happens after restart, so the event time is not when the step died.
+  const finishedAt = lastAliveAt(state, current, event.at)
   return withStep(
     state,
     event.stepId,
-    { ...current, status: 'interrupted', finishedAt: event.at },
+    { ...current, status: 'interrupted', finishedAt, lastSeenAt: finishedAt },
     event.at
   )
 }
@@ -184,10 +209,13 @@ function reduceStepInterrupted(
 ): PlanRunState {
   const current = requireStep(state, event.stepId)
   requireStepStatus(event.stepId, current, ['running'])
+  // At quit, the event time is the last moment the step was alive; a recorded
+  // last-seen timestamp wins when it exists.
+  const finishedAt = current.lastSeenAt ? lastAliveAt(state, current, event.at) : event.at
   return withStep(
     state,
     event.stepId,
-    { ...current, status: 'interrupted', finishedAt: event.at },
+    { ...current, status: 'interrupted', finishedAt, lastSeenAt: finishedAt },
     event.at
   )
 }
@@ -348,15 +376,19 @@ function reduceReplacement(state: PlanRunState, spec: PlanSpec, at: string): Pla
   }
 }
 function reduceRecovery(state: PlanRunState, at: string): PlanRunState {
-  const runningIds = Object.keys(state.steps).filter(
-    (id) => state.steps[id]?.status === 'running' || state.steps[id]?.status === 'launching'
-  )
   const steps = { ...state.steps }
-  for (const id of runningIds) {
-    steps[id] = steps[id].requestId
-      ? { ...steps[id], status: 'unknown' }
-      : { ...steps[id], status: 'interrupted', finishedAt: at }
+  for (const [id, step] of Object.entries(state.steps)) {
+    if (step.status === 'unknown') {
+      steps[id] = { ...step, lastSeenAt: lastAliveAt(state, step, at) }
+      continue
+    }
+    if (step.status !== 'running' && step.status !== 'launching') continue
+    const lastAlive = lastAliveAt(state, step, at)
+    steps[id] = step.requestId
+      ? { ...step, status: 'unknown', lastSeenAt: lastAlive }
+      : { ...step, status: 'interrupted', finishedAt: lastAlive, lastSeenAt: lastAlive }
   }
+  // Recovery itself is a new durable update, but it does not make the step live longer.
   return { ...state, steps, updatedAt: at }
 }
 type LaunchEvent = Extract<
@@ -438,7 +470,7 @@ function validStepFields(fields: Array<string | null | undefined>): boolean {
 }
 type ParsedStepFields = Pick<
   PlanStepState,
-  'agentRunId' | 'requestId' | 'report' | 'error' | 'startedAt' | 'finishedAt'
+  'agentRunId' | 'requestId' | 'report' | 'error' | 'startedAt' | 'finishedAt' | 'lastSeenAt'
 >
 function parseStepFields(value: Record<string, unknown>): ParsedStepFields | null {
   const agentRunId = optionalString(value, 'agentRunId')
@@ -446,7 +478,11 @@ function parseStepFields(value: Record<string, unknown>): ParsedStepFields | nul
   const error = optionalString(value, 'error')
   const startedAt = optionalString(value, 'startedAt')
   const finishedAt = optionalString(value, 'finishedAt')
-  if (!validStepFields([agentRunId, error, startedAt, finishedAt]) || requestId === null)
+  const lastSeenAt = optionalString(value, 'lastSeenAt')
+  if (
+    !validStepFields([agentRunId, error, startedAt, finishedAt, lastSeenAt]) ||
+    requestId === null
+  )
     return null
   const report = 'report' in value ? validatePlanStepReport(value.report) : undefined
   if (report === null) return null
@@ -456,7 +492,8 @@ function parseStepFields(value: Record<string, unknown>): ParsedStepFields | nul
     ...(report ? { report } : {}),
     ...(error ? { error } : {}),
     ...(startedAt ? { startedAt } : {}),
-    ...(finishedAt ? { finishedAt } : {})
+    ...(finishedAt ? { finishedAt } : {}),
+    ...(lastSeenAt ? { lastSeenAt } : {})
   }
 }
 function parseStepState(value: unknown): PlanStepState | null {

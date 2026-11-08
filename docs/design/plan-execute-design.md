@@ -48,7 +48,7 @@ interface PlanSpec { version: 1; goal: string; steps: PlanStep[] }  // 1–20 �
   - `status` 取值：`running | paused | completed | stopped`。
   - `steps` 是 `Record<stepId, StepState>`。
   - `pause?` 记录暂停原因：`user | step_failed | interrupted | needs_input`，以及相关步骤 id。
-- `StepState`：`status`、`attempts`、`agentRunId?`、`report?`、`error?`、`startedAt?`、`finishedAt?`。
+- `StepState`：`status`、`attempts`、`agentRunId?`、`report?`、`error?`、`startedAt?`、`finishedAt?`、`lastSeenAt?`。`lastSeenAt?` 记录运行中最后一次已知存活时间；恢复时中止步骤的 `finishedAt` 取该时间（回退到运行状态的 `updatedAt`），而不是重新打开会话的时间。
   - `status` 取值：`pending | running | done | failed | skipped | cancelled | interrupted`。
   - `report?` 是结构化报告的状态、正文摘要（≤ 8 KB）和 `missingInputs`。
 - `reducePlanRun(state, event) → state`。永远返回新对象；非法转换抛 `PlanRunTransitionError`。事件：

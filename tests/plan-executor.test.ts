@@ -359,6 +359,71 @@ test('restart recovery interrupts running work and can retry it', async () => {
   await waitFor(() => app.executor.get('plan-1')?.status === 'completed')
 })
 
+test('restart recovery records the last persisted alive time for running work', async () => {
+  const app = fixture()
+  const initial = createPlanRunState({
+    id: 'plan-1',
+    sessionId: 'session-1',
+    spec: spec([step('a')]),
+    now: '2025-12-31T23:00:00.000Z'
+  })
+  const running = reducePlanRun(initial, {
+    type: 'step_launched',
+    stepId: 'a',
+    agentRunId: 'lost-run',
+    at: '2025-12-31T23:00:01.000Z'
+  })
+  const lastAlive = '2025-12-31T23:59:00.000Z'
+  const recovered = await app.executor.recover({ ...running, updatedAt: lastAlive })
+  assert.equal(recovered.steps.a.finishedAt, lastAlive)
+  assert.equal(recovered.steps.a.lastSeenAt, lastAlive)
+  assert.equal(recovered.updatedAt, '2026-01-01T00:00:00.000Z')
+})
+
+test('quiescent release uses the last alive time after restart, not the release time', async () => {
+  let now = '2026-01-01T00:00:00.000Z'
+  const runner = new FakeRunner()
+  const writes: PlanRunState[] = []
+  const executor = createPlanExecutor({
+    runner,
+    store: {
+      write: (state) => {
+        writes.push(structuredClone(state))
+      }
+    },
+    events: { emit: () => undefined },
+    clock: () => now,
+    ids: () => 'plan-1',
+    requiresDurableLaunch: () => true
+  })
+  await executor.start(spec([step('a')]), 'session-1')
+  const requestId = runner.runs[0]?.input.requestId
+  assert.ok(requestId)
+  const launching = writes.find((state) => state.steps.a.status === 'launching')
+  assert.ok(launching)
+
+  now = '2026-01-02T00:00:00.000Z'
+  const recoveredRunner = new FakeRunner()
+  const recovered = createPlanExecutor({
+    runner: recoveredRunner,
+    store: { write: () => undefined },
+    events: { emit: () => undefined },
+    clock: () => now,
+    ids: () => 'unused',
+    requiresDurableLaunch: () => true
+  })
+  const state = await recovered.recover({ ...launching, updatedAt: '2026-01-01T00:05:00.000Z' })
+  assert.equal(state.steps.a.status, 'unknown')
+  assert.equal(state.steps.a.lastSeenAt, '2026-01-01T00:05:00.000Z')
+
+  now = '2026-01-03T00:00:00.000Z'
+  const released = await recovered.confirmLaunchQuiescent('plan-1', 'a', requestId)
+  assert.equal(released.steps.a.status, 'interrupted')
+  assert.equal(released.steps.a.finishedAt, '2026-01-01T00:05:00.000Z')
+  assert.equal(released.updatedAt, '2026-01-03T00:00:00.000Z')
+  assert.equal(recoveredRunner.runs.length, 0)
+})
+
 test('restart recovery schedules a running plan with no running steps', async () => {
   const app = fixture()
   const initial = createPlanRunState({

@@ -193,6 +193,97 @@ test('restart recovery interrupts running steps and pauses the run', () => {
   assert.equal(running.steps.a.status, 'running')
 })
 
+test('restart recovery stops an interrupted step at the last persisted alive time', () => {
+  const running = launch(state([step('a')]), 'a', 1)
+  const lastAlive = at(5)
+  const reopened = at(12 * 60 * 60)
+  const recovered = reducePlanRun(
+    { ...running, updatedAt: lastAlive },
+    { type: 'recover_after_restart', at: reopened }
+  )
+  assert.equal(recovered.steps.a.status, 'interrupted')
+  assert.equal(recovered.steps.a.finishedAt, lastAlive)
+  assert.equal(recovered.steps.a.lastSeenAt, lastAlive)
+  assert.equal(recovered.updatedAt, reopened)
+  assert.equal(
+    Date.parse(recovered.steps.a.finishedAt!) - Date.parse(recovered.steps.a.startedAt!),
+    4_000
+  )
+})
+
+test('restart recovery clamps last alive between the step start and recovery time', () => {
+  const running = launch(state([step('a')]), 'a', 10)
+  const early = reducePlanRun(
+    { ...running, updatedAt: at(5) },
+    { type: 'recover_after_restart', at: at(20) }
+  )
+  assert.equal(early.steps.a.finishedAt, at(10))
+
+  const late = reducePlanRun(
+    { ...running, updatedAt: at(500) },
+    { type: 'recover_after_restart', at: at(20) }
+  )
+  assert.equal(late.steps.a.finishedAt, at(20))
+
+  const futureStart = launch(state([step('a')]), 'a', 500)
+  const afterStart = reducePlanRun(futureStart, { type: 'recover_after_restart', at: at(20) })
+  assert.equal(afterStart.steps.a.finishedAt, at(20))
+})
+
+test('quiescent launch release keeps the last alive time, not the release time', () => {
+  const launching = reducePlanRun(state([step('a')]), {
+    type: 'step_launch_requested',
+    stepId: 'a',
+    requestId: 'request-1',
+    at: at(1)
+  })
+  const recovered = reducePlanRun(
+    { ...launching, updatedAt: at(5) },
+    { type: 'recover_after_restart', at: at(1_000) }
+  )
+  assert.equal(recovered.steps.a.status, 'unknown')
+  assert.equal(recovered.steps.a.lastSeenAt, at(5))
+
+  const quiescent = reducePlanRun(recovered, {
+    type: 'step_launch_quiescent',
+    stepId: 'a',
+    requestId: 'request-1',
+    at: at(10_000)
+  })
+  assert.equal(quiescent.steps.a.status, 'interrupted')
+  assert.equal(quiescent.steps.a.finishedAt, at(5))
+  assert.equal(quiescent.updatedAt, at(10_000))
+})
+
+test('an already unknown step keeps the time it was last seen across recovery', () => {
+  const launching = reducePlanRun(state([step('a')]), {
+    type: 'step_launch_requested',
+    stepId: 'a',
+    requestId: 'request-1',
+    at: at(1)
+  })
+  const unknown = reducePlanRun(launching, {
+    type: 'step_launch_unknown',
+    stepId: 'a',
+    requestId: 'request-1',
+    at: at(5)
+  })
+  assert.equal(unknown.steps.a.lastSeenAt, at(5))
+
+  const recovered = reducePlanRun(unknown, {
+    type: 'recover_after_restart',
+    at: at(1_000)
+  })
+  assert.equal(recovered.steps.a.lastSeenAt, at(5))
+  const quiescent = reducePlanRun(recovered, {
+    type: 'step_launch_quiescent',
+    stepId: 'a',
+    requestId: 'request-1',
+    at: at(10_000)
+  })
+  assert.equal(quiescent.steps.a.finishedAt, at(5))
+})
+
 test('restart recovery stays paused until every interrupted step is retried', () => {
   const initial = state([step('a'), step('b')])
   const running = launch(launch(initial, 'a', 1), 'b', 2)
