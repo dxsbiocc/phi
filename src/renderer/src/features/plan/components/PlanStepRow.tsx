@@ -62,7 +62,9 @@ function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.
         component="span"
         sx={{
           display: 'block',
-          width: '4.75em',
+          // A minimum keeps short durations aligned; longer ones ("4 分钟 20 秒") grow leftwards
+          // instead of overflowing onto the expand toggle.
+          minWidth: '4.75em',
           flex: 'none',
           textAlign: 'right',
           whiteSpace: 'nowrap',
