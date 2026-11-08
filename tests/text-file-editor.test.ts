@@ -16,7 +16,12 @@ setUiLanguage('zh-CN')
 
 function renderFile(
   name: string,
-  options: { readonly?: boolean; truncated?: boolean; bytes?: number } = {}
+  options: {
+    readonly?: boolean
+    truncated?: boolean
+    bytes?: number
+    invalidUtf8?: boolean
+  } = {}
 ): string {
   const content = name.endsWith('.csv')
     ? 'Gene,Value\nTP53,2.4\n'
@@ -33,6 +38,7 @@ function renderFile(
     bytes: options.bytes ?? content.length,
     previewBytes: content.length,
     truncated: options.truncated ?? false,
+    invalidUtf8: options.invalidUtf8 ?? false,
     ...(name.endsWith('.html')
       ? { kind: 'html', mimeType: 'text/html' }
       : { kind: 'text', mimeType: 'text/plain' })
@@ -89,6 +95,14 @@ test('incomplete, large and unbound text previews keep search while disabling ed
     assert.match(markup, /aria-label="搜索文件内容"/)
     assert.doesNotMatch(markup, /aria-label="保存文件"|role="status"|value="edit"/)
   }
+})
+
+test('invalid UTF-8 text previews stay read-only and explain why', () => {
+  const markup = renderFile('notes.txt', { invalidUtf8: true })
+  assert.match(markup, /data-phi-invalid-utf8="true"/)
+  assert.match(markup, /不是有效的 UTF-8 文本/)
+  assert.match(markup, /aria-label="搜索文件内容"/)
+  assert.doesNotMatch(markup, /aria-label="保存文件"|data-phi-text-source-editor="codemirror"/)
 })
 
 test('generic drafts keep source edits across navigation and protect external-change baselines', () => {

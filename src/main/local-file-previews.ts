@@ -16,6 +16,16 @@ const FILE_HOVER_TEXT_BYTES_LIMIT = 32 * 1024
 const FILE_HOVER_IMAGE_BYTES_LIMIT = 2 * 1024 * 1024
 const FILE_HOVER_SNIFF_BYTES_LIMIT = 512
 
+/** A truncated preview may end in the middle of a UTF-8 code point; that is not invalid data. */
+function isValidUtf8(bytes: Uint8Array, truncated: boolean): boolean {
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes, { stream: truncated })
+    return true
+  } catch {
+    return false
+  }
+}
+
 type FilePreviewBasePayload = {
   path: string
   name: string
@@ -33,11 +43,13 @@ type FilePreviewPayload = FilePreviewBasePayload &
         kind: 'text'
         mimeType: 'text/plain'
         content: string
+        invalidUtf8: boolean
       }
     | {
         kind: 'html'
         mimeType: 'text/html'
         content: string
+        invalidUtf8: boolean
       }
     | {
         kind: 'image'
@@ -201,6 +213,7 @@ class LocalFilePreviewReader {
         kind: 'html',
         mimeType: 'text/html',
         content: htmlBytes.toString('utf8'),
+        invalidUtf8: !isValidUtf8(htmlBytes, false),
         previewBytes: htmlBytes.byteLength,
         truncated: false
       }
@@ -211,6 +224,7 @@ class LocalFilePreviewReader {
       kind: 'text',
       mimeType: 'text/plain',
       content: previewBytes.toString('utf8'),
+      invalidUtf8: !isValidUtf8(previewBytes, truncated),
       truncated
     }
   }

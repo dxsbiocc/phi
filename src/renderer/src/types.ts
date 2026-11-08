@@ -390,6 +390,8 @@ interface FilePreviewBase {
   bytes: number
   previewBytes: number
   truncated: boolean
+  /** The loaded bytes are not valid UTF-8 text; text editing must stay disabled. */
+  invalidUtf8?: boolean
 }
 
 export type FilePreview = FilePreviewBase &

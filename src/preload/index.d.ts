@@ -318,6 +318,7 @@ type PreloadFilePreview = {
   bytes: number
   previewBytes: number
   truncated: boolean
+  invalidUtf8?: boolean
 } & (
   | {
       kind: 'text'

@@ -85,6 +85,8 @@ export const filePreviewCopy = defineCopy(
     reload: 'Reload',
     textEditingLimit:
       'Text files up to 320 KB can be edited. This file is available for reading and search.',
+    invalidUtf8Text:
+      'This file is not valid UTF-8 text. Editing is disabled; the file is shown read-only.',
     markdownDocument: 'Markdown document',
     confirmDiscard: 'Discard unsaved changes?',
     discardExplanation: 'Unsaved changes will be discarded and the file will be reloaded.',
@@ -221,6 +223,7 @@ export const filePreviewCopy = defineCopy(
     searchLimited: '匹配过多，请缩小搜索范围。',
     reload: '重新读取',
     textEditingLimit: '当前支持编辑 320 KB 以内的文本文件，此文件可阅读和搜索。',
+    invalidUtf8Text: '此文件不是有效的 UTF-8 文本，已禁用编辑，仅以只读方式显示。',
     markdownDocument: 'Markdown 文档',
     confirmDiscard: '放弃未保存的修改？',
     discardExplanation: '将放弃未保存的修改，并重新读取文件内容。',

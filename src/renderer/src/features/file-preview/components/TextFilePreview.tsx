@@ -78,6 +78,7 @@ export function TextFilePreview({
     fileActions?.onSaveTextFile ?? (markdown ? fileActions?.onSaveMarkdownFile : undefined)
   const onDirtyChange = fileActions?.onTextDirtyChange ?? fileActions?.onMarkdownDirtyChange
   const editable =
+    !file.invalidUtf8 &&
     !file.truncated &&
     file.bytes <= WORKSPACE_TEXT_MAX_BYTES &&
     Boolean(onSave) &&
@@ -390,6 +391,11 @@ export function TextFilePreview({
       {persistenceError && (
         <Alert severity="warning" sx={{ m: 1.5, mb: 0 }}>
           {persistenceError}
+        </Alert>
+      )}
+      {file.invalidUtf8 && (
+        <Alert severity="info" data-phi-invalid-utf8="true" sx={{ m: 1.5, mb: 0 }}>
+          {filePreviewCopy.invalidUtf8Text}
         </Alert>
       )}
       {file.bytes > WORKSPACE_TEXT_MAX_BYTES && !file.truncated && (
