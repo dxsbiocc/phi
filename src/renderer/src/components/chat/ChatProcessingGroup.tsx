@@ -134,7 +134,9 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   const runningThinkingId = isActive && items.at(-1)?.role === 'thinking' ? items.at(-1)?.id : null
   const status = processingGroupStatus(items, isActive)
   const isProcessingActive = status === 'running'
-  const failed = !isProcessingActive && (runFailed || items.some((item) => item.role === 'error'))
+  // The turn lifecycle decides failure. An error card inside the fold (for example a denied
+  // approval) is a per-tool-call result and must not relabel a completed run as interrupted.
+  const failed = !isProcessingActive && runFailed
   const summary = processingStatusText({
     items,
     isActive: isProcessingActive,

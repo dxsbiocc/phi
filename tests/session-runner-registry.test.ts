@@ -450,6 +450,13 @@ test('runner records approval approval and denial decisions', async () => {
     })
 
     await tick()
+    const deniedWhileRunning = listPhiSessions().find(
+      (manifest) => manifest.sessionId === deniedSessionId
+    )
+    assert.equal(deniedWhileRunning?.status, 'running')
+    assert.equal(deniedWhileRunning?.unreadKind, null)
+    assert.notEqual(deniedWhileRunning?.lastRunOutcome, 'failed')
+
     approvedGate.resolve()
     deniedGate.resolve()
     await Promise.all([approved.done, denied.done])
@@ -465,6 +472,10 @@ test('runner records approval approval and denial decisions', async () => {
     assert.deepEqual(
       readSessionEvents(deniedSessionId).map((event) => event.type),
       ['run_started', 'approval_requested', 'approval_denied', 'run_failed']
+    )
+    assert.equal(
+      listPhiSessions().find((manifest) => manifest.sessionId === deniedSessionId)?.status,
+      'failed'
     )
   })
 })

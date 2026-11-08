@@ -104,6 +104,74 @@ test('a stopped turn reports the fold as interrupted too', () => {
   )
 })
 
+test('a denied approval inside a completed run does not mark the turn failed', () => {
+  const groups = groupMessages([
+    { id: 'user-1', role: 'user', content: '检查项目外的文件' },
+    { id: 'run-1', role: 'run', event: 'started', createdAt: '2026-09-29T00:00:00.000Z' },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'glob',
+      argsPreview: '{"path":"../outside"}',
+      argsJson: '{"path":"../outside"}',
+      output: 'User denied tool execution',
+      status: 'error',
+      createdAt: '2026-09-29T00:00:01.000Z',
+      completedAt: '2026-09-29T00:00:02.000Z'
+    },
+    {
+      id: 'approval-1',
+      role: 'error',
+      content: '已拒绝 glob',
+      approval: {
+        status: 'denied',
+        approvalId: 'approval-1',
+        toolName: 'glob',
+        summary: '../outside'
+      },
+      runId: 'run-1',
+      createdAt: '2026-09-29T00:00:02.000Z',
+      completedAt: '2026-09-29T00:00:02.000Z'
+    },
+    {
+      id: 'tool-2',
+      role: 'tool',
+      toolName: 'read',
+      argsPreview: '{"path":"README.md"}',
+      argsJson: '{"path":"README.md"}',
+      output: 'contents',
+      status: 'done',
+      createdAt: '2026-09-29T00:00:03.000Z',
+      completedAt: '2026-09-29T00:00:04.000Z'
+    },
+    { id: 'assistant-1', role: 'assistant', content: '计划已经提交。' },
+    {
+      id: 'run-1-end',
+      role: 'run',
+      event: 'completed',
+      runId: 'run-1',
+      createdAt: '2026-09-29T00:00:59.000Z',
+      durationMs: 59_000
+    }
+  ])
+
+  const group = groups.find((candidate) => candidate.kind === 'processing-group')
+  assert.equal(group?.kind, 'processing-group')
+  assert.equal(group?.kind === 'processing-group' && group.failed === true, false)
+  assert.equal(
+    group?.kind === 'processing-group' &&
+      processingStatusText({
+        items: group.items,
+        isActive: false,
+        failed: group.failed,
+        nowMs: 0,
+        fallbackStartedAtMs: 0,
+        durationMs: group.durationMs
+      }),
+    '已完成，总共用时 59 秒'
+  )
+})
+
 test('chat render groups leave wrapper plans as persistent artifacts', () => {
   const messages: ChatItem[] = [
     { id: 'user-1', role: 'user', content: 'run wrapper' },

@@ -137,7 +137,11 @@ export function reduceSessionRuntimeState(
     }
   }
 
-  if (event.type === 'approval_approved' || event.type === 'run_resumed') {
+  if (
+    event.type === 'approval_approved' ||
+    event.type === 'approval_denied' ||
+    event.type === 'run_resumed'
+  ) {
     return {
       ...previous,
       status: 'running',
@@ -157,7 +161,7 @@ export function reduceSessionRuntimeState(
     }
   }
 
-  if (event.type === 'run_failed' || event.type === 'approval_denied') {
+  if (event.type === 'run_failed') {
     return {
       status: 'failed',
       unreadKind: 'failed',

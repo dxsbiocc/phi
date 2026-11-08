@@ -100,6 +100,34 @@ test('runtime reducer marks run start and completion as distinct states', () => 
   assert.equal(sessionRuntimeStatesEqual(running, completed), false)
 })
 
+test('a denied approval does not fail a run that later completes', () => {
+  const started = reduceSessionRuntimeState(idleSessionRuntimeState(), {
+    type: 'run_started',
+    runId: 'run-1',
+    createdAt: '2026-09-07T00:00:00.000Z'
+  })
+  const denied = reduceSessionRuntimeState(started, {
+    type: 'approval_denied',
+    runId: 'run-1',
+    createdAt: '2026-09-07T00:01:00.000Z'
+  })
+
+  assert.equal(denied.status, 'running')
+  assert.equal(denied.unreadKind, null)
+  assert.notEqual(denied.lastRunOutcome, 'failed')
+
+  const completed = reduceSessionRuntimeState(denied, {
+    type: 'run_completed',
+    runId: 'run-1',
+    createdAt: '2026-09-07T00:02:00.000Z'
+  })
+
+  assert.equal(completed.status, 'completed_unread')
+  assert.equal(completed.unreadKind, 'completed')
+  assert.equal(completed.lastRunOutcome, 'completed')
+  assert.equal(sessionRuntimeStatePausesQueue(completed), false)
+})
+
 test('runtime acknowledgement is only needed for terminal unread states', () => {
   assert.equal(sessionRuntimeStateNeedsAcknowledgement(null), false)
   assert.equal(sessionRuntimeStateNeedsAcknowledgement({ unreadKind: null }), false)

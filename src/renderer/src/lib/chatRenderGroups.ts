@@ -48,6 +48,32 @@ function isRunLifecycleItem(message: ChatItem): message is RunLifecycleItem {
   return message.role === 'run'
 }
 
+function isTerminalRunLifecycleItem(message: ChatItem): message is RunLifecycleItem {
+  return isRunLifecycleItem(message) && message.event !== 'started'
+}
+
+function isApprovalNotice(message: ChatItem): boolean {
+  return message.role !== 'run' && 'approval' in message && Boolean(message.approval)
+}
+
+function isTerminalRunFailureItem(message: ChatItem): boolean {
+  return (
+    isRunLifecycleItem(message) && (message.event === 'failed' || message.event === 'interrupted')
+  )
+}
+
+/**
+ * A run that ends with `run_completed` stays successful even when the turn contains an error card,
+ * such as a denied tool approval. Without a completed terminal event, an error card still means the
+ * run was lost mid-flight.
+ */
+function turnItemsIndicateRunFailure(items: ChatItem[]): boolean {
+  if (items.some(isTerminalRunFailureItem)) return true
+  const hasRunErrorCard = items.some((item) => item.role === 'error' && !isApprovalNotice(item))
+  if (!hasRunErrorCard) return false
+  return !items.some((item) => isTerminalRunLifecycleItem(item) && item.event === 'completed')
+}
+
 function isVisibleChatItem(message: ChatItem): message is VisibleChatItem {
   return !isRunLifecycleItem(message)
 }
@@ -206,11 +232,8 @@ export function groupMessages(
     const runDurationMs = lastRunTerminalDurationMs(turnItems)
     // A run that failed or was interrupted never produced a result, so the fold must not claim
     // completion. The terminal lifecycle item and the error card both render outside the fold.
-    const runFailed = turnItems.some(
-      (item) =>
-        item.role === 'error' ||
-        (item.role === 'run' && (item.event === 'failed' || item.event === 'interrupted'))
-    )
+    // A denied approval is only a per-tool-call error and must not fail a run that later completes.
+    const runFailed = turnItemsIndicateRunFailure(turnItems)
     const lastProcessingIndex = turnItems.findLastIndex(isProcessingArtifact)
     if (lastProcessingIndex < 0) {
       if (runStartedAtMs !== undefined) {
