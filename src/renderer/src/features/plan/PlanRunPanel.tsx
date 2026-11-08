@@ -141,10 +141,11 @@ function ConfirmationDialog({
             : planCopy.confirmSkipBody}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onCancel} aria-label={planCopy.cancel}>
+        <Button size="small" variant="text" onClick={onCancel} aria-label={planCopy.cancel}>
           {planCopy.cancel}
         </Button>
         <Button
+          size="small"
           color="error"
           variant="contained"
           disabled={disabled}

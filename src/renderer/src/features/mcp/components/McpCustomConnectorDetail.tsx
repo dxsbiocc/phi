@@ -2,8 +2,6 @@ import { useUiLanguage } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
 import { connectorCopy } from '../lib/connectorCopy'
 import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/material'
-import { PhiIcons } from '../../../icons'
-import { LabeledIconButton } from '../../../components/LabeledIconButton'
 import type { CustomConnectorServerEntry } from '../lib/customConnectorGroup'
 import { ConnectorIcon } from './ConnectorIcon'
 
@@ -57,15 +55,16 @@ export function McpCustomConnectorDetail({
           sx={{ mt: 2 }}
           action={
             <Stack direction="row" spacing={1}>
-              <LabeledIconButton
-                label={resourceUi.cancel}
+              <Button size="small" variant="text" disabled={busy} onClick={onCancelRemove}>
+                {resourceUi.cancel}
+              </Button>
+              <Button
                 size="small"
+                color="error"
+                variant="text"
                 disabled={busy}
-                onClick={onCancelRemove}
+                onClick={onConfirmRemove}
               >
-                <PhiIcons.action.close size={16} aria-hidden />
-              </LabeledIconButton>
-              <Button color="error" disabled={busy} onClick={onConfirmRemove}>
                 {connectorCopy.confirmRemove}
               </Button>
             </Stack>

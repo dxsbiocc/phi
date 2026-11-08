@@ -6,7 +6,6 @@ import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/mater
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 import { errorMessage as sharedErrorMessage } from '../../../../../shared/errorCodes'
 import { PhiIcons } from '../../../icons'
-import { LabeledIconButton } from '../../../components/LabeledIconButton'
 import type { McpServerSummary } from '../../../types'
 import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
 import {
@@ -333,15 +332,21 @@ export function McpDetailPanel({
                   sx={{ mt: 2 }}
                   action={
                     <Stack direction="row" spacing={1}>
-                      <LabeledIconButton
-                        label={resourceUi.cancel}
+                      <Button
                         size="small"
+                        variant="text"
                         disabled={busy}
                         onClick={() => setRemoveConfirmationServerId(null)}
                       >
-                        <PhiIcons.action.close size={16} aria-hidden />
-                      </LabeledIconButton>
-                      <Button color="error" disabled={busy} onClick={() => void remove()}>
+                        {resourceUi.cancel}
+                      </Button>
+                      <Button
+                        size="small"
+                        color="error"
+                        variant="text"
+                        disabled={busy}
+                        onClick={() => void remove()}
+                      >
                         {connectorCopy.confirmRemove}
                       </Button>
                     </Stack>
