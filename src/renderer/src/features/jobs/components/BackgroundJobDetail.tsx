@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
 import { PhiIcons } from '../../../icons'
+import { LabeledIconButton } from '../../../components/LabeledIconButton'
 import { workspacePanelText } from '../../../layout'
 import type { UnifiedBackgroundJob } from '../lib/backgroundJobs'
 import {
@@ -266,25 +267,25 @@ export function BackgroundJobDetail({
             </Button>
           )}
           {onRetry && item.kind !== 'connector' && item.kind !== 'history' && (
-            <IconButton
+            <LabeledIconButton
+              label={jobsCopy.retry}
               size="small"
-              aria-label={jobsCopy.retry}
               disabled={busy}
               onClick={() => onRetry(item)}
             >
               <PhiIcons.action.refresh size={16} aria-hidden />
-            </IconButton>
+            </LabeledIconButton>
           )}
           {canStop && (
-            <IconButton
+            <LabeledIconButton
+              label={stopTooltip(item)}
               size="small"
               color="error"
-              aria-label={stopTooltip(item)}
               disabled={busy}
               onClick={() => onStop(item)}
             >
               <PhiIcons.action.stop size={16} aria-hidden />
-            </IconButton>
+            </LabeledIconButton>
           )}
         </Stack>
       )}

@@ -1,4 +1,4 @@
-import { Box, Stack, Typography } from '@mui/material'
+import { Box, Stack, Tooltip, Typography } from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
 
 import type {
@@ -43,6 +43,7 @@ function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.
   const durationLabel = duration !== null ? formatAgentDuration(duration) : ''
   const statusLabel = step.status === 'done' ? '' : planCopy.stepStatus(step.status)
   const attemptsLabel = step.attempts > 1 ? planCopy.attempts(step.attempts) : ''
+  const accessLabel = step.access === 'read' ? planCopy.accessRead : planCopy.accessWrite
   return (
     <Stack
       direction="row"
@@ -72,7 +73,10 @@ function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.
         variant="caption"
         component="span"
         sx={{
+          display: 'block',
+          width: '4.75em',
           flex: 'none',
+          textAlign: 'right',
           whiteSpace: 'nowrap',
           fontVariantNumeric: 'tabular-nums',
           color: 'text.secondary'
@@ -80,28 +84,31 @@ function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.
       >
         {durationLabel}
       </Typography>
-      <Box
-        component="span"
-        aria-label={step.access === 'read' ? planCopy.accessRead : planCopy.accessWrite}
-        sx={{
-          width: 22,
-          height: 22,
-          flex: 'none',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRadius: '50%',
-          border: '1px solid',
-          borderColor: step.access === 'write' ? 'warning.main' : 'info.main',
-          color: step.access === 'write' ? 'warning.main' : 'info.main'
-        }}
-      >
-        {step.access === 'read' ? (
-          <PhiIcons.tool.read size={12} aria-hidden />
-        ) : (
-          <PhiIcons.tool.edit size={12} aria-hidden />
-        )}
-      </Box>
+      <Tooltip title={accessLabel} enterDelay={500}>
+        <Box
+          component="span"
+          role="img"
+          aria-label={accessLabel}
+          sx={{
+            width: 22,
+            height: 22,
+            flex: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: '50%',
+            border: '1px solid',
+            borderColor: step.access === 'write' ? 'warning.main' : 'info.main',
+            color: step.access === 'write' ? 'warning.main' : 'info.main'
+          }}
+        >
+          {step.access === 'read' ? (
+            <PhiIcons.tool.read size={12} aria-hidden />
+          ) : (
+            <PhiIcons.tool.edit size={12} aria-hidden />
+          )}
+        </Box>
+      </Tooltip>
     </Stack>
   )
 }

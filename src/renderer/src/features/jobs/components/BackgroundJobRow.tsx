@@ -1,8 +1,9 @@
 import { jobsCopy } from '../lib/jobsCopy'
 import { useUiLanguage } from '../../../lib/i18n'
-import { Box, IconButton, LinearProgress, Stack, Typography } from '@mui/material'
+import { Box, IconButton, LinearProgress, Stack, Tooltip, Typography } from '@mui/material'
 
 import { PhiIcons } from '../../../icons'
+import { LabeledIconButton } from '../../../components/LabeledIconButton'
 import type { UnifiedBackgroundJob } from '../lib/backgroundJobs'
 import { BackgroundJobIcon } from './BackgroundJobIcon'
 import {
@@ -13,6 +14,7 @@ import {
   jobSubtitle,
   jobTitle,
   stopAriaLabel,
+  stopTooltip,
   JOB_TONE_COLOR
 } from '../lib/backgroundJobLabels'
 
@@ -140,9 +142,9 @@ export function BackgroundJobRow({
           }}
         >
           {onRetry && item.kind !== 'history' && (
-            <IconButton
+            <LabeledIconButton
+              label={jobsCopy.retry}
               size="small"
-              aria-label={jobsCopy.retry}
               disabled={busy}
               onClick={(event) => {
                 event.stopPropagation()
@@ -150,20 +152,24 @@ export function BackgroundJobRow({
               }}
             >
               <PhiIcons.action.refresh size={15} aria-hidden />
-            </IconButton>
+            </LabeledIconButton>
           )}
           {canStop && (
-            <IconButton
-              size="small"
-              aria-label={stopAriaLabel(item)}
-              disabled={busy}
-              onClick={(event) => {
-                event.stopPropagation()
-                onStop(item)
-              }}
-            >
-              <StopIcon size={15} aria-hidden />
-            </IconButton>
+            <Tooltip title={stopTooltip(item)}>
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label={stopAriaLabel(item)}
+                  disabled={busy}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onStop(item)
+                  }}
+                >
+                  <StopIcon size={15} />
+                </IconButton>
+              </span>
+            </Tooltip>
           )}
         </Stack>
       )}

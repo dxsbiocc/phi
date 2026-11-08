@@ -19,6 +19,7 @@ import type {
   WebSearchSettingsPatch
 } from '../../../../shared/webSearchSettingsTypes'
 import { errorMessage } from '../../../../shared/errorCodes'
+import { LabeledIconButton } from '../../components/LabeledIconButton'
 import { PhiIcons } from '../../icons'
 import { SearxngEnginePicker } from './components/SearxngEnginePicker'
 import { SearxngInstanceDialog } from './components/SearxngInstanceDialog'
@@ -326,9 +327,9 @@ export function WebSearchSettingsPanel({
       <Alert
         severity="error"
         action={
-          <IconButton size="small" aria-label={settingsUi.retry} onClick={() => void load()}>
+          <LabeledIconButton label={settingsUi.retry} size="small" onClick={() => void load()}>
             <PhiIcons.action.refresh size={16} aria-hidden />
-          </IconButton>
+          </LabeledIconButton>
         }
       >
         {error ?? settingsUi.unableToLoadWebSearchSettings}

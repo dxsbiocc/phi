@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Checkbox,
-  IconButton,
   Chip,
   FormControlLabel,
   MobileStepper,
@@ -18,6 +17,7 @@ import { useMemo, useState } from 'react'
 import { PhiIcons } from '../icons'
 import { PlanReviewPanel } from '../features/plan/components/PlanReviewPanel'
 import { MissingToolPromptCard } from '../features/chat/components/MissingToolPromptCard'
+import { LabeledIconButton } from './LabeledIconButton'
 import type {
   AgentUserInteractionAnswer,
   AgentUserInteractionRequest,
@@ -223,9 +223,9 @@ function UserInteractionPanel({
               {chatCopy.selectionNeeded}
             </Typography>
           </Box>
-          <IconButton size="small" aria-label={chatCopy.cancel} onClick={cancel}>
+          <LabeledIconButton label={chatCopy.cancel} size="small" onClick={cancel}>
             <PhiIcons.action.close size={16} aria-hidden />
-          </IconButton>
+          </LabeledIconButton>
         </Box>
 
         <Stack spacing={0.75}>

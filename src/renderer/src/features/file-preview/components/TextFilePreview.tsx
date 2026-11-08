@@ -19,6 +19,7 @@ import {
   Typography
 } from '@mui/material'
 import { PhiIcons } from '../../../icons'
+import { LabeledIconButton } from '../../../components/LabeledIconButton'
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import type { FilePreview } from '../../../types'
 import type { FileTreeActions } from '../lib/fileTreeActions'
@@ -373,13 +374,13 @@ export function TextFilePreview({
           sx={{ m: 1.5, mb: 0 }}
           action={
             fileActions?.onReloadFile ? (
-              <IconButton
+              <LabeledIconButton
+                label={filePreviewCopy.reload}
                 size="small"
-                aria-label={filePreviewCopy.reload}
                 onClick={() => setConfirmDiscard(true)}
               >
                 <PhiIcons.action.refresh size={16} aria-hidden />
-              </IconButton>
+              </LabeledIconButton>
             ) : undefined
           }
         >

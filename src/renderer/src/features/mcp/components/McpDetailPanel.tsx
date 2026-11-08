@@ -2,10 +2,11 @@ import { useUiLanguage } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
 import { connectorCopy } from '../lib/connectorCopy'
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Box, Button, Chip, Divider, IconButton, Stack, Typography } from '@mui/material'
+import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/material'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
 import { errorMessage as sharedErrorMessage } from '../../../../../shared/errorCodes'
 import { PhiIcons } from '../../../icons'
+import { LabeledIconButton } from '../../../components/LabeledIconButton'
 import type { McpServerSummary } from '../../../types'
 import { featuredAuthFailureNotice, featuredOAuthStatusFromError } from '../lib/featuredAuthStatus'
 import {
@@ -332,14 +333,14 @@ export function McpDetailPanel({
                   sx={{ mt: 2 }}
                   action={
                     <Stack direction="row" spacing={1}>
-                      <IconButton
+                      <LabeledIconButton
+                        label={resourceUi.cancel}
                         size="small"
-                        aria-label={resourceUi.cancel}
                         disabled={busy}
                         onClick={() => setRemoveConfirmationServerId(null)}
                       >
                         <PhiIcons.action.close size={16} aria-hidden />
-                      </IconButton>
+                      </LabeledIconButton>
                       <Button color="error" disabled={busy} onClick={() => void remove()}>
                         {connectorCopy.confirmRemove}
                       </Button>

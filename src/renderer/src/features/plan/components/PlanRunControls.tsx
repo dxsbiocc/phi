@@ -1,6 +1,7 @@
-import { Button, IconButton, Stack } from '@mui/material'
+import { Button, Stack } from '@mui/material'
 
 import type { PlanRunTimelineSnapshot } from '../../../../../shared/planRunTypes'
+import { LabeledIconButton } from '../../../components/LabeledIconButton'
 import { PhiIcons } from '../../../icons'
 import { planCopy } from '../lib/planCopy'
 
@@ -31,15 +32,15 @@ export function PlanRunControls({
       >
         {canPause ? planCopy.pause : planCopy.resume}
       </Button>
-      <IconButton
+      <LabeledIconButton
+        label={planCopy.stop}
         size="small"
         color="error"
         disabled={disabled}
         onClick={onStop}
-        aria-label={planCopy.stop}
       >
         <PhiIcons.action.stop size={16} aria-hidden />
-      </IconButton>
+      </LabeledIconButton>
     </Stack>
   )
 }

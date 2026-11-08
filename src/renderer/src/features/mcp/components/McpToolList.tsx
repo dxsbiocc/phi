@@ -8,11 +8,11 @@ import {
   Button,
   Chip,
   CircularProgress,
-  IconButton,
   Stack,
   Typography
 } from '@mui/material'
 import { PhiIcons } from '../../../icons'
+import { LabeledIconButton } from '../../../components/LabeledIconButton'
 
 const COLLAPSED_TOOL_COUNT = 9
 
@@ -64,9 +64,9 @@ export function McpToolList({
         <Alert
           severity="warning"
           action={
-            <IconButton size="small" aria-label={resourceUi.retry} onClick={onRetry}>
+            <LabeledIconButton label={resourceUi.retry} size="small" onClick={onRetry}>
               <PhiIcons.action.refresh size={16} aria-hidden />
-            </IconButton>
+            </LabeledIconButton>
           }
           sx={{ mb: 4 }}
         >

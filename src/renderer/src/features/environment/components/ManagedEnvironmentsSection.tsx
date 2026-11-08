@@ -3,7 +3,6 @@ import { useUiLanguage } from '../../../lib/i18n'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
-import IconButton from '@mui/material/IconButton'
 import Card from '@mui/material/Card'
 import CardActionArea from '@mui/material/CardActionArea'
 import CardActions from '@mui/material/CardActions'
@@ -14,6 +13,7 @@ import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 
 import { PhiIcons } from '../../../icons'
+import { LabeledIconButton } from '../../../components/LabeledIconButton'
 import type {
   EnvironmentSnapshot,
   ManagedEnvironmentEntry
@@ -338,9 +338,9 @@ export function ManagedEnvironmentsSection({
           severity="error"
           variant="outlined"
           action={
-            <IconButton size="small" aria-label={environmentUi.retry} onClick={onRetry}>
+            <LabeledIconButton label={environmentUi.retry} size="small" onClick={onRetry}>
               <PhiIcons.action.refresh size={16} aria-hidden />
-            </IconButton>
+            </LabeledIconButton>
           }
         >
           {error}

@@ -5,7 +5,6 @@ import {
   Box,
   Button,
   CircularProgress,
-  IconButton,
   FormControl,
   FormControlLabel,
   InputLabel,
@@ -15,6 +14,7 @@ import {
   Typography
 } from '@mui/material'
 import { useEffect, useId, useRef, useState } from 'react'
+import { LabeledIconButton } from '../../../components/LabeledIconButton'
 import type {
   AutoCompactionSettingsPatch,
   CurrentAutoCompactionSettings,
@@ -203,16 +203,16 @@ export function AutoCompactionSettingsSection({
             {error}
           </Typography>
           {!settings && (
-            <IconButton
+            <LabeledIconButton
+              label={chatCopy.retry}
               size="small"
-              aria-label={chatCopy.retry}
               onClick={() => {
                 setErrorState(null)
                 setRetryKey((value) => value + 1)
               }}
             >
               <PhiIcons.action.refresh size={16} aria-hidden />
-            </IconButton>
+            </LabeledIconButton>
           )}
         </Box>
       )}

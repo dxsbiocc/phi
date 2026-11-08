@@ -3,6 +3,7 @@ import { Alert, Box, Button, IconButton, Paper, Stack, Tooltip, Typography } fro
 import { GoPlus, GoSync } from 'react-icons/go'
 import { errorMessage } from '../../../../../shared/errorCodes'
 import type { ProviderAuthStatus } from '../../../types'
+import { LabeledIconButton } from '../../../components/LabeledIconButton'
 import { PhiIcons } from '../../../icons'
 import { useUiLanguage } from '../../../lib/i18n'
 import { settingsUi } from '../lib/settingsUi'
@@ -101,13 +102,13 @@ export function ProvidersSection({
         <Alert
           severity="error"
           action={
-            <IconButton
+            <LabeledIconButton
+              label={copy.retry}
               size="small"
-              aria-label={copy.retry}
               onClick={() => void controller.refresh()}
             >
               <PhiIcons.action.refresh size={16} aria-hidden />
-            </IconButton>
+            </LabeledIconButton>
           }
         >
           {copy.loadFailed}: {state.loadError}
