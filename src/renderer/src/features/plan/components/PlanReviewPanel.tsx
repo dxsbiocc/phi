@@ -61,7 +61,7 @@ function ReviewActions({
       <TextField
         size="small"
         multiline
-        minRows={2}
+        minRows={1}
         maxRows={4}
         value={note}
         onChange={(event) => onNote(event.target.value)}

@@ -33,7 +33,8 @@ type PlanStepRowProps = {
 function stepTone(status: PlanStepStatus): PlanTimelineTone {
   if (status === 'done') return 'success'
   if (status === 'running' || status === 'launching') return 'active'
-  if (status === 'failed' || status === 'unknown' || status === 'interrupted') return 'error'
+  if (status === 'interrupted') return 'warning'
+  if (status === 'failed' || status === 'unknown') return 'error'
   if (status === 'cancelled' || status === 'skipped') return 'neutral'
   return 'pending'
 }
@@ -41,32 +42,19 @@ function stepTone(status: PlanStepStatus): PlanTimelineTone {
 function StepHeader({ step }: { step: PlanRunTimelineStepSnapshot }): React.JSX.Element {
   const duration = planStepDurationMs(step)
   const durationLabel = duration !== null ? formatAgentDuration(duration) : ''
-  const statusLabel = step.status === 'done' ? '' : planCopy.stepStatus(step.status)
   const attemptsLabel = step.attempts > 1 ? planCopy.attempts(step.attempts) : ''
   return (
     <Stack
       direction="row"
       sx={{ alignItems: 'center', flex: 'none', gap: 1, position: 'relative' }}
     >
-      {statusLabel || attemptsLabel ? (
-        <Stack
-          direction="row"
-          spacing={0.75}
-          sx={{
-            position: 'absolute',
-            right: '100%',
-            mr: 1,
-            whiteSpace: 'nowrap',
-            alignItems: 'center'
-          }}
+      {attemptsLabel ? (
+        <Typography
+          variant="caption"
+          sx={{ position: 'absolute', right: '100%', mr: 1, whiteSpace: 'nowrap' }}
         >
-          {statusLabel ? (
-            <Typography variant="caption" color="text.secondary">
-              {statusLabel}
-            </Typography>
-          ) : null}
-          {attemptsLabel ? <Typography variant="caption">{attemptsLabel}</Typography> : null}
-        </Stack>
+          {attemptsLabel}
+        </Typography>
       ) : null}
       <Typography
         variant="caption"
@@ -247,6 +235,11 @@ export function PlanStepRow({
         tone={tone}
         index={index}
         dimmed={tone === 'pending'}
+        icon={
+          step.status === 'failed' ? <PhiIcons.state.failed size={14} aria-hidden /> : undefined
+        }
+        iconLabel={planCopy.stepStatus(step.status)}
+        mark={step.status}
         title={`${index + 1}. ${step.title}`}
         meta={<StepHeader step={step} />}
         expanded={expansion.expanded}

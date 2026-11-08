@@ -5,7 +5,7 @@ import type { ReactNode } from 'react'
 
 import { PhiIcons } from '../../../icons'
 
-export type PlanTimelineTone = 'success' | 'active' | 'error' | 'pending' | 'neutral'
+export type PlanTimelineTone = 'success' | 'active' | 'error' | 'warning' | 'pending' | 'neutral'
 
 const SPIN = 'phi-plan-spin 0.9s linear infinite'
 const ENTER = 'phi-plan-step-in 0.45s ease both'
@@ -29,6 +29,12 @@ function toneColors(theme: Theme, tone: PlanTimelineTone): { background: string;
       color: theme.palette.error.main
     }
   }
+  if (tone === 'warning') {
+    return {
+      background: alpha(theme.palette.warning.main, 0.16),
+      color: theme.palette.warning.main
+    }
+  }
   if (tone === 'pending') {
     return { background: theme.palette.action.hover, color: theme.palette.text.disabled }
   }
@@ -38,11 +44,15 @@ function toneColors(theme: Theme, tone: PlanTimelineTone): { background: string;
 export function PlanTimelineIcon({
   tone,
   spinning = false,
-  icon
+  icon,
+  label,
+  mark
 }: {
   tone: PlanTimelineTone
   spinning?: boolean
   icon?: ReactNode
+  label?: string
+  mark?: string
 }): React.JSX.Element {
   const Icon =
     tone === 'success'
@@ -51,12 +61,17 @@ export function PlanTimelineIcon({
         ? PhiIcons.state.inProgress
         : tone === 'error'
           ? PhiIcons.state.warning
-          : tone === 'pending'
-            ? PhiIcons.state.pending
-            : PhiIcons.state.thinking
+          : tone === 'warning'
+            ? PhiIcons.state.interrupted
+            : tone === 'pending'
+              ? PhiIcons.state.pending
+              : PhiIcons.state.thinking
   return (
     <Box
-      aria-hidden
+      aria-hidden={label ? undefined : true}
+      role={label ? 'img' : undefined}
+      aria-label={label}
+      data-phi-step-mark={mark}
       sx={(theme) => {
         const colors = toneColors(theme, tone)
         return {
@@ -83,7 +98,9 @@ export function PlanTimelineIcon({
         }
       }}
     >
-      {icon ?? <Icon className={spinning ? 'phi-plan-spin-icon' : undefined} size={14} />}
+      {icon ?? (
+        <Icon aria-hidden className={spinning ? 'phi-plan-spin-icon' : undefined} size={14} />
+      )}
     </Box>
   )
 }
@@ -165,6 +182,8 @@ export function PlanTimelineStep({
   index,
   dimmed = false,
   icon,
+  iconLabel,
+  mark,
   title,
   meta,
   expanded,
@@ -177,6 +196,8 @@ export function PlanTimelineStep({
   index: number
   dimmed?: boolean
   icon?: ReactNode
+  iconLabel?: string
+  mark?: string
   title: string
   meta?: ReactNode
   expanded?: boolean
@@ -203,7 +224,13 @@ export function PlanTimelineStep({
         }}
       >
         {isLast ? null : <PlanTimelineConnector />}
-        <PlanTimelineIcon tone={tone} spinning={tone === 'active' && !icon} icon={icon} />
+        <PlanTimelineIcon
+          tone={tone}
+          spinning={tone === 'active' && !icon}
+          icon={icon}
+          label={iconLabel}
+          mark={mark}
+        />
         <Box sx={{ flex: 1, minWidth: 0, pb: isLast ? 0 : 2 }}>
           <PlanTimelineStepTitle
             title={title}
