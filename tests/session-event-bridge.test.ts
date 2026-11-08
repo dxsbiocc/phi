@@ -29,6 +29,7 @@ import type {
   AgentEventSummary,
   AgentUserInteractionRequest,
   CurrentSession,
+  Project,
   ToolApprovalRequest
 } from '../src/renderer/src/types'
 
@@ -176,6 +177,17 @@ const messageEnd = (sessionPath: string): AgentEventSummary => ({
   sessionPath,
   cwd: '/project',
   message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] }
+})
+
+const currentSession = (overrides: Partial<CurrentSession> = {}): CurrentSession => ({
+  path: '/a.jsonl',
+  phiSessionId: 'phi-a',
+  cwd: '/project',
+  sessionGeneration: 3,
+  permissionMode: 'auto',
+  status: 'idle',
+  unreadKind: null,
+  ...overrides
 })
 
 const approval = (overrides: Partial<ToolApprovalRequest> = {}): ToolApprovalRequest => ({
@@ -390,8 +402,8 @@ test('an auth prompt publishes through the overlay and reveals settings without 
   void h.overlays[0].onCancel?.()
 })
 
-test('a session change applies the session and refreshes projects only in project mode', () => {
-  const session = { path: '/a.jsonl' } as CurrentSession
+test('a metadata-only session change applies the session without refreshing projects', () => {
+  const session = currentSession()
   const conversations = harness()
   handleSessionChanged(conversations.deps, session)
   assert.equal(conversations.appliedSession(), session)
@@ -401,7 +413,26 @@ test('a session change applies the session and refreshes projects only in projec
   const projects = harness({}, false)
   projects.deps.workspaceSidebarMode = 'projects'
   handleSessionChanged(projects.deps, session)
-  assert.equal(projects.refreshProjects(), 1)
+  assert.equal(projects.appliedSession(), session)
+  assert.ok(projects.writes.includes('projectKey'))
+  assert.equal(projects.refreshProjects(), 0)
+})
+
+test('a notification for another session neither applies it nor refreshes projects', () => {
+  const h = harness({}, false)
+  h.deps.workspaceSidebarMode = 'projects'
+  handleSessionChanged(h.deps, currentSession({ path: '/b.jsonl', phiSessionId: 'phi-b' }))
+  assert.equal(h.appliedSession(), null)
+  assert.equal(h.refreshProjects(), 0)
+})
+
+test('a run finishing refreshes project Git status', () => {
+  const h = harness()
+  h.deps.projectsRef.current = [
+    { workingDirectory: '/project', location: { kind: 'local' } } as Project
+  ]
+  handleAgentEvent(h.deps, runStarted({ type: 'run_completed' }))
+  assert.equal(h.refreshProjects(), 1)
 })
 
 test('a delayed session notification cannot navigate away from the selected conversation', () => {
@@ -445,10 +476,7 @@ test('child-run tabs receive live background progress only from their owning ses
         step: { id: 'read-1', toolName: 'read', status: 'running', args: { path: 'file.txt' } }
       })
     )
-    handleAgentEvent(
-      h.deps,
-      event({ type: 'agent_execution_completed', finalReport: 'Verified' })
-    )
+    handleAgentEvent(h.deps, event({ type: 'agent_execution_completed', finalReport: 'Verified' }))
     assert.equal(notifications, 3)
     const item = sessionAgentEventStates.get(backgroundKey)?.messages[0]
     assert.equal(item?.role, 'agent_execution')

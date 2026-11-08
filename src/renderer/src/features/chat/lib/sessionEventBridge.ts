@@ -312,7 +312,6 @@ export function handleSessionChanged(deps: SessionEventBridgeDeps, session: Curr
     onCwdChanged: deps.resetJupyterRuntimeForCwdChange
   })
   state.setProjectSessionRefreshKey((key) => key + 1)
-  if (deps.workspaceSidebarMode === 'projects') {
-    void deps.refreshProjects()
-  }
+  // Git status refreshes only on project enter/switch (App cwd effect), run completion and
+  // manual refresh; metadata updates must not rerun git.
 }
