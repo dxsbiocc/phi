@@ -305,3 +305,28 @@ test('propose_plan_steps documents optional agents and project-relative writes',
   }
   assert.match(parameters.properties.steps.items.properties.writes.description, /project-relative/i)
 })
+
+test('propose_plan_steps acceptance documents a check method, not unverified values', async () => {
+  let definition: Record<string, unknown> | undefined
+  await createPlanStepsExtension({ planExecuteModeActive: () => false } as PhiExtensionHost)({
+    registerTool: (tool: Record<string, unknown>) => {
+      definition = tool
+    }
+  } as never)
+  assert.ok(definition)
+  const parameters = definition.parameters as {
+    properties: {
+      steps: {
+        items: {
+          properties: {
+            acceptance: { description?: string }
+          }
+        }
+      }
+    }
+  }
+  const acceptanceDescription = parameters.properties.steps.items.properties.acceptance.description
+  assert.ok(acceptanceDescription, 'acceptance schema should document how to check a step')
+  assert.match(acceptanceDescription, /check/i)
+  assert.match(acceptanceDescription, /not .*(computed|verified)/i)
+})
