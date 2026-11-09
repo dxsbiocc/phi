@@ -100,6 +100,8 @@ const english = {
   chooseInputFirst: 'Select a local file or directory first.',
   confirmUpload: (count: number, gib: string) =>
     `Upload ${count} file${count === 1 ? '' : 's'} (${gib} GiB)?`,
+  confirmUploadTitle: 'Confirm upload',
+  confirmUploadAction: 'Upload',
   inputTitle: (inputId: string) => `Select local input for ${inputId}`,
   uploadHelp:
     'Select a file or directory, or drop it here. SSH projects upload and verify inputs before the Wrapper can be submitted.',
@@ -337,6 +339,8 @@ const chinese: LocalizedCopy<typeof english> = {
   emptyTier: (tier: string) => `${tier}中暂无 Wrapper`,
   sidebarSummary: (count: number, enabled: number) => `${count} 个工具 · 已启用 ${enabled} 个`,
   confirmUpload: (count: number, gib: string) => `上传 ${count} 个文件（${gib} GiB）？`,
+  confirmUploadTitle: '确认上传',
+  confirmUploadAction: '上传',
   inputTitle: (inputId: string) => `为 ${inputId} 选择本地输入`,
   uploadDestination: (directory: string) =>
     `目标位置：${directory ? `Project/${directory}` : '远程项目根目录'}`,

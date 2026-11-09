@@ -111,6 +111,7 @@ import { useMcpServerCatalog } from './features/mcp/hooks/useMcpServerCatalog'
 import { useLocalConnectorNotices } from './features/mcp/hooks/useLocalConnectorNotices'
 import { type SettingsCategory } from './components/SettingsDialog'
 import AppDialogs, { type SnackbarNotice } from './AppDialogs'
+import { useConfirmation } from './components/useConfirmation'
 import AppActivityBar from './AppActivityBar'
 import AppWorkspaceSidebar, { type WorkspaceSidebarDataProps } from './AppWorkspaceSidebar'
 import FilePreviewPanel, {
@@ -327,6 +328,7 @@ function App(): React.JSX.Element {
     isExportingSession,
     setIsExportingSession
   } = useAppDialogs()
+  const { confirm, confirmationDialog } = useConfirmation()
   const homeCreateSelectRef = useRef(false)
   const [homeProjectSelection, setHomeProjectSelection] = useState<HomeProjectSelection | null>(
     null
@@ -2188,9 +2190,14 @@ function App(): React.JSX.Element {
         })
         let confirmed = !job.requiresConfirmation
         if (job.requiresConfirmation) {
-          confirmed = window.confirm(
-            appCopy.confirmUpload(job.totalFiles, (job.totalBytes / 1024 ** 3).toFixed(2))
-          )
+          confirmed = await confirm({
+            title: appCopy.confirmUploadTitle,
+            description: appCopy.confirmUpload(
+              job.totalFiles,
+              (job.totalBytes / 1024 ** 3).toFixed(2)
+            ),
+            confirmLabel: appCopy.confirmUploadAction
+          })
         }
         if (!confirmed) {
           await rendererApi.cancelRemoteProjectUpload(job.id)
@@ -2202,7 +2209,7 @@ function App(): React.JSX.Element {
         showSnackbarError(error, appCopy.uploadFailed)
       }
     },
-    [activeProjectId, activeRemoteFileScope, rendererApi, showSnackbar, showSnackbarError]
+    [activeProjectId, activeRemoteFileScope, confirm, rendererApi, showSnackbar, showSnackbarError]
   )
 
   const onDeletedActiveFileRef = useRef<(remainingTabs: typeof workspaceFileTabs) => void>(() => {})
@@ -4458,6 +4465,7 @@ function App(): React.JSX.Element {
           onExport={() => void confirmExportSession()}
         />
         <PackageUpdateNotice />
+        {confirmationDialog}
       </Box>
     </ThemeProvider>
   )

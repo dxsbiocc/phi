@@ -4,7 +4,9 @@ import { useState, type MouseEvent, type ReactNode } from 'react'
 import { Box, Divider, IconButton, Menu, MenuItem, Tooltip, Typography } from '@mui/material'
 
 import type { TerminalSnapshot } from '../../../../../shared/terminalTypes'
+import { useConfirmation } from '../../../components/useConfirmation'
 import { PhiIcons } from '../../../icons'
+import { runTerminalEndAction } from '../lib/terminalEndAction'
 import {
   workspacePanelActionSize,
   workspacePanelHeaderHeight,
@@ -76,6 +78,7 @@ export interface TerminalTitleBarProps {
 
 export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Element {
   useUiLanguage()
+  const { confirm, confirmationDialog } = useConfirmation()
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
   const activeTerminal =
     props.terminals.find((terminal) => terminal.terminalId === props.activeTerminalId) ?? null
@@ -89,14 +92,16 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
     setMenuAnchor(event.currentTarget)
   }
   const closeMenu = (): void => setMenuAnchor(null)
-  const endActive = (): void => {
+  const endActive = async (): Promise<void> => {
     closeMenu()
-    if (
-      activeTerminal &&
-      window.confirm(terminalUi.closingThisTerminalWillTerminateItsRunningPrograms)
-    ) {
-      props.onEnd(activeTerminal.terminalId)
-    }
+    if (!activeTerminal) return
+    await runTerminalEndAction({
+      intent: { kind: 'terminal', terminalId: activeTerminal.terminalId },
+      terminalCount: props.terminals.length,
+      confirm,
+      onEnd: props.onEnd,
+      onEndAll: props.onEndAll
+    })
   }
   const openAssist = (): void => {
     closeMenu()
@@ -106,15 +111,15 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
     closeMenu()
     props.onExplainSelection()
   }
-  const endAll = (): void => {
+  const endAll = async (): Promise<void> => {
     closeMenu()
-    const count = props.terminals.length
-    if (
-      count > 0 &&
-      window.confirm(terminalUi.closeAllValueTerminalsInThisWorkspaceRunning(count))
-    ) {
-      props.onEndAll()
-    }
+    await runTerminalEndAction({
+      intent: { kind: 'all' },
+      terminalCount: props.terminals.length,
+      confirm,
+      onEnd: props.onEnd,
+      onEndAll: props.onEndAll
+    })
   }
 
   return (
@@ -226,14 +231,18 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
           {terminalUi.askAgentToExplain}
         </MenuItem>
         <Divider />
-        <MenuItem disabled={!activeTerminal || props.busy} onClick={endActive}>
+        <MenuItem disabled={!activeTerminal || props.busy} onClick={() => void endActive()}>
           {terminalUi.closeTerminal}
         </MenuItem>
         <Divider />
-        <MenuItem disabled={props.terminals.length === 0 || props.busy} onClick={endAll}>
+        <MenuItem
+          disabled={props.terminals.length === 0 || props.busy}
+          onClick={() => void endAll()}
+        >
           {terminalUi.closeAllTerminals}
         </MenuItem>
       </Menu>
+      {confirmationDialog}
     </Box>
   )
 }

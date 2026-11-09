@@ -1,5 +1,6 @@
 import { useUiLanguage } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
+import { useConfirmation } from '../../../components/useConfirmation'
 import { localizeWrapperMessage, wrapperCopy } from '../lib/wrapperCopy'
 import {
   Alert,
@@ -36,6 +37,7 @@ export function WrapperInputUploadDialog({
   onUploaded: (plan: WrapperRunPlan) => void
 }): React.JSX.Element {
   useUiLanguage()
+  const { confirm, confirmationDialog } = useConfirmation()
   const [sourcePaths, setSourcePaths] = useState<string[]>([])
   const [job, setJob] = useState<RemoteProjectUploadJob | null>(null)
   const [busy, setBusy] = useState(false)
@@ -107,12 +109,14 @@ export function WrapperInputUploadDialog({
       setJob(prepared)
       let confirmed = !prepared.requiresConfirmation
       if (prepared.requiresConfirmation) {
-        confirmed = window.confirm(
-          wrapperCopy.confirmUpload(
+        confirmed = await confirm({
+          title: wrapperCopy.confirmUploadTitle,
+          description: wrapperCopy.confirmUpload(
             prepared.totalFiles,
             (prepared.totalBytes / 1024 ** 3).toFixed(2)
-          )
-        )
+          ),
+          confirmLabel: wrapperCopy.confirmUploadAction
+        })
       }
       if (!confirmed) {
         await window.api.cancelRemoteProjectUpload(prepared.id)
@@ -183,6 +187,7 @@ export function WrapperInputUploadDialog({
           {busy ? wrapperCopy.uploading : wrapperCopy.uploadAndBind}
         </Button>
       </DialogActions>
+      {confirmationDialog}
     </Dialog>
   )
 }

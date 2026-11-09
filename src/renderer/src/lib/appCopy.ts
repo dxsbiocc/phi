@@ -61,6 +61,8 @@ const english = {
   uploadFailed: 'Could not upload files',
   confirmUpload: (count: number, size: string) =>
     `Upload ${count} file${count === 1 ? '' : 's'} (${size} GiB)?`,
+  confirmUploadTitle: 'Confirm upload',
+  confirmUploadAction: 'Upload',
   uploadQueued: 'Upload added to Background Jobs',
   uploadRenamed: (count: number, names: string) =>
     `Upload completed; ${count} duplicate file${count === 1 ? ' was' : 's were'} renamed${names ? `: ${names}` : ''}`,
@@ -152,6 +154,8 @@ const chinese: LocalizedCopy<typeof english> = {
   uploadDestinationOutsideProject: '上传落点不属于当前远程项目',
   uploadFailed: '无法上传文件',
   confirmUpload: (count, size) => `将上传 ${count} 个文件（${size} GiB），是否继续？`,
+  confirmUploadTitle: '确认上传',
+  confirmUploadAction: '上传',
   uploadQueued: '上传已进入后台任务',
   uploadRenamed: (count, names) =>
     `上传完成；${count} 个同名文件已改名${names ? `：${names}` : ''}`,

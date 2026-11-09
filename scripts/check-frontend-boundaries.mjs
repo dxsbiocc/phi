@@ -122,9 +122,31 @@ function checkFileSizes() {
   }
 }
 
+function checkNativeDialogs() {
+  const files = listFiles(rendererRoot)
+    .filter((filePath) => /\.(ts|tsx)$/.test(filePath))
+    .filter((filePath) => statSync(filePath).isFile())
+    .filter((filePath) => !/[\\/](?:__tests__)[\\/]/.test(filePath))
+    .filter((filePath) => !/\.(?:test|spec)\.(?:ts|tsx)$/.test(filePath))
+
+  for (const filePath of files) {
+    const contents = readFileSync(filePath, 'utf8')
+    const match = contents.match(/\bwindow\.(?:confirm|alert|prompt)\s*\(/)
+
+    if (!match) {
+      continue
+    }
+
+    failures.push(
+      `${relativePath(filePath)} uses the native ${match[0].replace(/\s*\($/, '')} dialog. Use the shared ConfirmationDialog, useConfirmation hook, or a feature dialog instead.`
+    )
+  }
+}
+
 checkSharedComponentViews()
 checkFeatureEntries()
 checkFileSizes()
+checkNativeDialogs()
 
 for (const warning of warnings) {
   console.warn(`frontend-boundaries warning: ${warning}`)
