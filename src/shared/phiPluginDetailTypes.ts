@@ -41,5 +41,12 @@ export interface PhiPluginCatalogDetail {
   environments: PhiPluginCatalogEnvironment[]
 }
 
+/**
+ * `not-found` means the official website has no such plugin (for example a local-only plugin).
+ * `failed` means the request or its response could not be trusted, so retrying may help.
+ */
+export type PhiPluginCatalogDetailReason = 'not-found' | 'failed'
+
 export type PhiPluginCatalogDetailResult =
-  { status: 'available'; detail: PhiPluginCatalogDetail } | { status: 'unavailable' }
+  | { status: 'available'; detail: PhiPluginCatalogDetail }
+  | { status: 'unavailable'; reason: PhiPluginCatalogDetailReason }

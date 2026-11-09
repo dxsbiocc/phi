@@ -8,7 +8,6 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   CircularProgress,
   DialogActions,
   DialogContent,
@@ -26,14 +25,12 @@ import { GoSync } from 'react-icons/go'
 
 import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import { EnvironmentBuildConfirmDialog } from '../../../components/EnvironmentBuildConfirmDialog'
-import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
 import { PhiIcons } from '../../../icons'
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import type { PhiPluginDisplayItem, PhiPluginEnvironmentStatus } from '../hooks/usePhiPlugins'
 import { errorMessage } from '../../../../../shared/errorCodes'
 import { requestPhiPluginEnvironmentBuild } from '../lib/environmentBuild'
 import type { PhiPluginCatalogAction, PhiPluginCatalogEntry } from '../lib/phiPluginCatalog'
-import { phiPluginDistributionLabel, phiPluginEnabledLabel } from '../lib/phiPlugins'
 import { PhiPluginCatalogPreview } from './PhiPluginCatalogPreview'
 import { PhiPluginComponentDetails } from './PhiPluginComponentDetails'
 import { PhiPluginEnvironmentDetails } from './PhiPluginEnvironmentDetails'
@@ -216,119 +213,100 @@ export function PhiPluginDetail({
                   <ResourceIcon icon={plugin.icon} kind="plugin" size={58} fallbackSize={30} />
                 </Box>
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography variant="h4" sx={{ fontWeight: 750 }}>
-                    {plugin.title}
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ mt: 0.25, fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}
+                  <Stack
+                    direction={{ xs: 'column', md: 'row' }}
+                    spacing={2}
+                    sx={{ alignItems: { md: 'flex-start' } }}
                   >
-                    {plugin.id} · v{plugin.version}
-                  </Typography>
-                  <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25 }}>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="h4" sx={{ fontWeight: 750 }}>
+                        {plugin.title}
+                      </Typography>
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{ mt: 0.25, fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}
+                      >
+                        {plugin.id} · v{plugin.version}
+                      </Typography>
+                    </Box>
+                    <Stack
+                      direction="row"
+                      spacing={1.5}
+                      sx={{ alignItems: 'center', alignSelf: 'flex-start' }}
+                    >
+                      {plugin.id === 'visualization' ? (
+                        <>
+                          <VisualizationViewSwitch segment={segment} onChange={setSegment} />
+                          <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
+                        </>
+                      ) : null}
+                      {catalogAction === 'update' && onInstall ? (
+                        <IconButton
+                          aria-label={pluginCopy.updateNamed(plugin.title)}
+                          title={pluginCopy.updateNamed(plugin.title)}
+                          size="small"
+                          disabled={installBusy || busyPluginId !== null}
+                          onClick={onInstall}
+                          sx={{
+                            width: 34,
+                            height: 34,
+                            p: 0,
+                            display: 'grid',
+                            placeItems: 'center',
+                            flexShrink: 0,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 1.5
+                          }}
+                        >
+                          {installBusy ? (
+                            <CircularProgress size={18} />
+                          ) : (
+                            <GoSync size={18} aria-hidden="true" />
+                          )}
+                        </IconButton>
+                      ) : null}
+                      <Typography variant="body2" color="text.secondary">
+                        {resourceUi.enable}
+                      </Typography>
+                      <Tooltip
+                        title={plugin.enabled ? pluginCopy.disablePlugin : pluginCopy.enablePlugin}
+                      >
+                        <span>
+                          <Switch
+                            checked={plugin.enabled}
+                            disabled={busyPluginId !== null}
+                            slotProps={{
+                              input: {
+                                'aria-label': `${plugin.enabled ? resourceUi.disable : resourceUi.enable} ${plugin.title}`
+                              }
+                            }}
+                            onChange={(_event, checked) => void onSetEnabled(plugin, checked)}
+                          />
+                        </span>
+                      </Tooltip>
+                      <Button
+                        color="error"
+                        variant="text"
+                        disabled={busyPluginId !== null}
+                        startIcon={
+                          busy ? (
+                            <CircularProgress size={14} color="inherit" />
+                          ) : (
+                            <PhiIcons.action.delete size={16} />
+                          )
+                        }
+                        onClick={() => setPendingUninstall(plugin)}
+                      >
+                        {resourceUi.uninstall}
+                      </Button>
+                    </Stack>
+                  </Stack>
+                  <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25, pr: 2 }}>
                     {plugin.summary}
                   </Typography>
-                  <Stack
-                    direction="row"
-                    spacing={0.75}
-                    useFlexGap
-                    sx={{ mt: 1.5, flexWrap: 'wrap' }}
-                  >
-                    <Chip
-                      size="small"
-                      variant="outlined"
-                      label={phiPluginDistributionLabel(plugin.distribution)}
-                    />
-                    {/* A bundled plugin's trust tier is also Built-in; show the tier only when it adds information. */}
-                    {PACKAGE_TRUST_LABELS[plugin.trust] !==
-                    phiPluginDistributionLabel(plugin.distribution) ? (
-                      <Chip
-                        size="small"
-                        variant="outlined"
-                        label={PACKAGE_TRUST_LABELS[plugin.trust]}
-                        title={PACKAGE_TRUST_DESCRIPTIONS[plugin.trust]}
-                      />
-                    ) : null}
-                    <Chip
-                      size="small"
-                      color={plugin.enabled ? 'success' : 'default'}
-                      label={phiPluginEnabledLabel(plugin.enabled)}
-                    />
-                  </Stack>
                 </Box>
-                <Stack
-                  direction="row"
-                  spacing={1.5}
-                  sx={{ alignItems: 'center', alignSelf: 'flex-start' }}
-                >
-                  {plugin.id === 'visualization' ? (
-                    <>
-                      <VisualizationViewSwitch segment={segment} onChange={setSegment} />
-                      <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
-                    </>
-                  ) : null}
-                  {catalogAction === 'update' && onInstall ? (
-                    <IconButton
-                      aria-label={pluginCopy.updateNamed(plugin.title)}
-                      title={pluginCopy.updateNamed(plugin.title)}
-                      size="small"
-                      disabled={installBusy || busyPluginId !== null}
-                      onClick={onInstall}
-                      sx={{
-                        width: 34,
-                        height: 34,
-                        p: 0,
-                        display: 'grid',
-                        placeItems: 'center',
-                        flexShrink: 0,
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        borderRadius: 1.5
-                      }}
-                    >
-                      {installBusy ? (
-                        <CircularProgress size={18} />
-                      ) : (
-                        <GoSync size={18} aria-hidden="true" />
-                      )}
-                    </IconButton>
-                  ) : null}
-                  <Typography variant="body2" color="text.secondary">
-                    {resourceUi.enable}
-                  </Typography>
-                  <Tooltip
-                    title={plugin.enabled ? pluginCopy.disablePlugin : pluginCopy.enablePlugin}
-                  >
-                    <span>
-                      <Switch
-                        checked={plugin.enabled}
-                        disabled={busyPluginId !== null}
-                        slotProps={{
-                          input: {
-                            'aria-label': `${plugin.enabled ? resourceUi.disable : resourceUi.enable} ${plugin.title}`
-                          }
-                        }}
-                        onChange={(_event, checked) => void onSetEnabled(plugin, checked)}
-                      />
-                    </span>
-                  </Tooltip>
-                  <Button
-                    color="error"
-                    variant="text"
-                    disabled={busyPluginId !== null}
-                    startIcon={
-                      busy ? (
-                        <CircularProgress size={14} color="inherit" />
-                      ) : (
-                        <PhiIcons.action.delete size={16} />
-                      )
-                    }
-                    onClick={() => setPendingUninstall(plugin)}
-                  >
-                    {resourceUi.uninstall}
-                  </Button>
-                </Stack>
               </Stack>
 
               {showTemplates ? null : (

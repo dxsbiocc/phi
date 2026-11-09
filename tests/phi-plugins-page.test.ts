@@ -432,7 +432,8 @@ test('plugin detail renders descriptions, plugin status, approvals and legacy fa
   )
 
   assert.match(markup, /No dedicated agents \(the main agent uses the plugin skills\)/)
-  assert.equal(markup.match(/Enabled/g)?.length, 1)
+  // The header switch carries the plugin state; no status chip or skill row repeats it.
+  assert.equal(markup.match(/Enabled/g)?.length ?? 0, 0)
   assert.doesNotMatch(markup, /Disabled|Unknown status/)
   assert.match(markup, /Approval: Execute/)
   assert.match(markup, /Owning skill: omics-visualization/)

@@ -9,7 +9,10 @@ import type {
   PhiPluginDependencyManifest
 } from '../src/shared/phiPluginDetailTypes'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
-import { PhiPluginCatalogDetailSections } from '../src/renderer/src/features/phi-plugin/components/PhiPluginCatalogPreview'
+import {
+  PhiPluginCatalogDetailSections,
+  PhiPluginCatalogUnavailableSections
+} from '../src/renderer/src/features/phi-plugin/components/PhiPluginCatalogPreview'
 import { PhiPluginDependencySummary } from '../src/renderer/src/features/phi-plugin/components/PhiPluginEnvironmentSummary'
 
 function themed(element: React.ReactElement): string {
@@ -152,6 +155,50 @@ test('new plugin detail labels switch to the required Simplified Chinese copy', 
     ]) {
       assert.match(markup, new RegExp(label))
     }
+  } finally {
+    setUiLanguage('en')
+  }
+})
+
+test('failed catalog detail renders a retry action instead of the install hints', () => {
+  const markup = themed(
+    createElement(PhiPluginCatalogUnavailableSections, {
+      reason: 'failed',
+      onRetry: () => undefined
+    })
+  )
+
+  assert.match(markup, /data-phi-plugin-catalog-sections="failed"/)
+  assert.match(markup, /Unable to load plugin details\. Check your network and try again\./)
+  assert.match(markup, /<button[^>]*type="button"[^>]*>Retry<\/button>/)
+  assert.doesNotMatch(markup, /Install the plugin to view/)
+  assert.doesNotMatch(markup, /安装插件后可查看/)
+})
+
+test('not-found catalog detail keeps the install hints and offers no retry', () => {
+  const markup = themed(
+    createElement(PhiPluginCatalogUnavailableSections, {
+      reason: 'not-found',
+      onRetry: () => undefined
+    })
+  )
+
+  assert.match(markup, /Install the plugin to view its agents, skills, and script tools\./)
+  assert.match(markup, /Install the plugin to view its environment requirements\./)
+  assert.doesNotMatch(markup, />Retry</)
+})
+
+test('failed catalog detail copy switches to Simplified Chinese', () => {
+  try {
+    setUiLanguage('zh-CN')
+    const markup = themed(
+      createElement(PhiPluginCatalogUnavailableSections, {
+        reason: 'failed',
+        onRetry: () => undefined
+      })
+    )
+    assert.match(markup, /暂时无法获取插件详情，请检查网络后重试。/)
+    assert.match(markup, />重试</)
   } finally {
     setUiLanguage('en')
   }
