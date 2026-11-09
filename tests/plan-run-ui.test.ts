@@ -559,3 +559,13 @@ test('a finished record shows each step report when the run details are loaded',
   assert.doesNotMatch(markup, /正在加载/)
   assert.doesNotMatch(markup, />已完成</)
 })
+
+test('plan scroll boxes hand wheel scrolling to the page at their edges', async () => {
+  const { readFileSync } = await import('node:fs')
+  for (const file of [
+    'src/renderer/src/features/plan/PlanRunPanel.tsx',
+    'src/renderer/src/features/plan/components/PlanStepRow.tsx'
+  ]) {
+    assert.doesNotMatch(readFileSync(file, 'utf8'), /overscrollBehavior/, file)
+  }
+})

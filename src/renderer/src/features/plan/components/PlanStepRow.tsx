@@ -254,8 +254,7 @@ export function PlanStepRow({
             minWidth: 0,
             maxWidth: '100%',
             maxHeight: 'min(36vh, 320px)',
-            overflow: 'auto',
-            overscrollBehavior: 'contain'
+            overflow: 'auto'
           }}
         >
           <StepReport step={step} details={details} loading={expansion.loading} cwd={cwd} />

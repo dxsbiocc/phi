@@ -190,8 +190,7 @@ function PlanRunBody({
           ? {
               maxHeight: 'min(42vh, 420px)',
               overflowY: 'auto',
-              scrollbarGutter: 'stable',
-              overscrollBehavior: 'contain'
+              scrollbarGutter: 'stable'
             }
           : null)
       }}
