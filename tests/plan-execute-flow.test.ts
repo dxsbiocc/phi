@@ -319,6 +319,7 @@ test('propose_plan_steps acceptance documents a check method, not unverified val
       steps: {
         items: {
           properties: {
+            instructions: { description?: string }
             acceptance: { description?: string }
           }
         }
@@ -329,4 +330,10 @@ test('propose_plan_steps acceptance documents a check method, not unverified val
   assert.ok(acceptanceDescription, 'acceptance schema should document how to check a step')
   assert.match(acceptanceDescription, /check/i)
   assert.match(acceptanceDescription, /not .*(computed|verified)/i)
+  assert.match(acceptanceDescription, /command/i)
+  assert.match(acceptanceDescription, /(confirm|verified|exist)/i)
+  const instructionsDescription = parameters.properties.steps.items.properties.instructions.description
+  assert.ok(instructionsDescription, 'instructions schema should document how to run a step')
+  assert.match(instructionsDescription, /command/i)
+  assert.match(instructionsDescription, /(confirm|verified|exist)/i)
 })
