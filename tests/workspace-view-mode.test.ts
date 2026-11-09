@@ -60,3 +60,11 @@ test('an empty chat view shows the placement screen', () => {
 test('a project session placeholder keeps the chat surface', () => {
   assert.equal(workspaceViewModeFor({ ...base, chatSelected: false }), 'chat')
 })
+
+test('the workspace tab body clips instead of hiding overflow so focus cannot scroll it sideways', async () => {
+  const { readFileSync } = await import('node:fs')
+  const source = readFileSync('src/renderer/src/features/workspace/WorkspaceView.tsx', 'utf8')
+  const tabBody = source.slice(source.indexOf("mode === 'tabs'"), source.indexOf('{content.tabs}'))
+  assert.match(tabBody, /overflow: 'clip'/)
+  assert.doesNotMatch(tabBody, /overflow: 'hidden'/)
+})

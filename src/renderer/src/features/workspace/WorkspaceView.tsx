@@ -147,7 +147,9 @@ function WorkspaceColumnBody({
           minHeight: 0,
           display: 'flex',
           flexDirection: 'column',
-          overflow: 'hidden'
+          // clip, not hidden: a hidden box can still be scrolled by focus or scrollIntoView,
+          // which shifted the whole chat column under the sidebar.
+          overflow: 'clip'
         }}
       >
         {content.tabs}
