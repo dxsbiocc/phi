@@ -1,13 +1,17 @@
 import type {
   PhiPluginCatalogDetail,
+  PhiPluginCatalogDetailReason,
   PhiPluginCatalogDetailResult,
   PhiPluginCatalogEnvironment,
   PhiPluginDependency,
   PhiPluginDependencyManifest
 } from '../../../shared/phiPluginDetailTypes'
+import { errorMessage } from '../../../shared/errorCodes'
 import { isRecord } from '../../../shared/guards'
+import { writeAppLog } from '../app-logger'
 import {
   fetchOfficialWebsiteJson,
+  OfficialWebsiteHttpError,
   type OfficialWebsiteRequestOptions
 } from './official-website-transport'
 
@@ -17,6 +21,7 @@ const MAX_TIMEOUT_MS = 15_000
 const MAX_ITEMS = 256
 const MAX_DEPENDENCIES = 2_048
 const MAX_TEXT_BYTES = 64 * 1024
+const MAX_ERROR_MESSAGE_LENGTH = 300
 
 const limits = {
   identifier: 128,
@@ -176,20 +181,85 @@ function validatePluginDetailValue(value: unknown, requestedId: string): PhiPlug
   }
 }
 
-/** Fetch one catalog detail. Every network or validation failure degrades to unavailable. */
+/**
+ * A transport failure is retryable only when it is not a definitive HTTP answer and the caller
+ * did not cancel the request. Validation happens after a successful response and never retries.
+ */
+function isRetryableTransportError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return false
+  if (error instanceof OfficialWebsiteHttpError) return false
+  if (error instanceof SyntaxError) return false
+  return true
+}
+
+function failureReason(error: unknown): PhiPluginCatalogDetailReason {
+  return error instanceof OfficialWebsiteHttpError && error.status === 404 ? 'not-found' : 'failed'
+}
+
+/** undici reports every transport problem as "fetch failed"; the cause names the real one. */
+function describeFailure(error: unknown): string {
+  const cause = error instanceof Error ? error.cause : undefined
+  if (!(cause instanceof Error)) return errorMessage(error)
+  const code = Reflect.get(cause, 'code')
+  return `${errorMessage(error)}: ${typeof code === 'string' ? `${code} ` : ''}${cause.message}`
+}
+
+function logCatalogDetailFailure(
+  id: string,
+  reason: PhiPluginCatalogDetailReason,
+  error: unknown
+): void {
+  // A 404 is a definitive answer, not a failure: local-only plugins legitimately reach it.
+  if (reason !== 'failed') return
+  writeAppLog({
+    level: 'warn',
+    event: 'plugin_catalog_detail_failed',
+    metadata: {
+      pluginId: id,
+      reason,
+      error: describeFailure(error).slice(0, MAX_ERROR_MESSAGE_LENGTH)
+    }
+  })
+}
+
+/**
+ * Fetch one catalog detail. A transient network error or timeout is retried once; a 404, an
+ * HTTP error, or a malformed/invalid payload is final. Every final failure is logged with the
+ * plugin id and a bounded error message, never request credentials.
+ */
 export async function getOfficialWebsitePluginDetail(
   id: string,
   options: OfficialWebsiteRequestOptions = {}
 ): Promise<PhiPluginCatalogDetailResult> {
-  if (!PLUGIN_ID.test(id)) return { status: 'unavailable' }
-  try {
-    const value = await fetchOfficialWebsiteJson(
-      `/api/plugins/${encodeURIComponent(id)}`,
-      MAX_RESPONSE_BYTES,
-      { ...options, timeoutMs: options.timeoutMs ?? MAX_TIMEOUT_MS }
-    )
-    return { status: 'available', detail: validatePluginDetailValue(value, id) }
-  } catch {
-    return { status: 'unavailable' }
+  if (!PLUGIN_ID.test(id)) return { status: 'unavailable', reason: 'not-found' }
+  const requestOptions: OfficialWebsiteRequestOptions = {
+    ...options,
+    timeoutMs: options.timeoutMs ?? MAX_TIMEOUT_MS
   }
+  let lastError: unknown
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let value: unknown
+    try {
+      value = await fetchOfficialWebsiteJson(
+        `/api/plugins/${encodeURIComponent(id)}`,
+        MAX_RESPONSE_BYTES,
+        requestOptions
+      )
+    } catch (error) {
+      lastError = error
+      if (attempt === 0 && isRetryableTransportError(error, options.signal)) continue
+      break
+    }
+    try {
+      return { status: 'available', detail: validatePluginDetailValue(value, id) }
+    } catch (error) {
+      lastError = error
+      break
+    }
+  }
+
+  const reason = failureReason(lastError)
+  logCatalogDetailFailure(id, reason, lastError)
+  return { status: 'unavailable', reason }
 }

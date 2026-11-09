@@ -3087,7 +3087,7 @@ async function harness(
                 environments: []
               }
             }
-          : { status: 'unavailable' }
+          : { status: 'unavailable', reason: 'not-found' }
     },
     './agent/packages/official-connector-registry': {
       syncOfficialConnectorRegistry: async (options: {
@@ -8398,7 +8398,8 @@ test('main IPC returns the reduced catalog plugin detail result', async () => {
     }
   })
   assert.deepEqual(await app.invoke('phiPlugins:catalogDetail', 42), {
-    status: 'unavailable'
+    status: 'unavailable',
+    reason: 'failed'
   })
 })
 

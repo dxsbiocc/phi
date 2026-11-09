@@ -1,14 +1,22 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
-import type { PhiPluginCatalogDetail } from '../../../../../shared/phiPluginDetailTypes'
+import type {
+  PhiPluginCatalogDetail,
+  PhiPluginCatalogDetailReason
+} from '../../../../../shared/phiPluginDetailTypes'
 
-export type PhiPluginCatalogDetailState =
+export type PhiPluginCatalogDetailStatus =
   | { id: string; status: 'loading' }
   | { id: string; status: 'available'; detail: PhiPluginCatalogDetail }
-  | { id: string; status: 'unavailable' }
+  | { id: string; status: 'unavailable'; reason: PhiPluginCatalogDetailReason }
+
+export type PhiPluginCatalogDetailState = PhiPluginCatalogDetailStatus & {
+  retry: () => void
+}
 
 export function usePhiPluginCatalogDetail(id: string): PhiPluginCatalogDetailState {
-  const [state, setState] = useState<PhiPluginCatalogDetailState>({ id, status: 'loading' })
+  const [state, setState] = useState<PhiPluginCatalogDetailStatus>({ id, status: 'loading' })
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -19,17 +27,25 @@ export function usePhiPluginCatalogDetail(id: string): PhiPluginCatalogDetailSta
         setState(
           result.status === 'available'
             ? { id, status: 'available', detail: result.detail }
-            : { id, status: 'unavailable' }
+            : { id, status: 'unavailable', reason: result.reason }
         )
       })
       .catch(() => {
-        if (active) setState({ id, status: 'unavailable' })
+        // An IPC rejection carries no trustworthy catalog answer, so it behaves like a
+        // failed request rather than like a 404 from the official website.
+        if (active) setState({ id, status: 'unavailable', reason: 'failed' })
       })
 
     return () => {
       active = false
     }
+  }, [id, attempt])
+
+  const retry = useCallback(() => {
+    setState({ id, status: 'loading' })
+    setAttempt((current) => current + 1)
   }, [id])
 
-  return state.id === id ? state : { id, status: 'loading' }
+  const current: PhiPluginCatalogDetailStatus = state.id === id ? state : { id, status: 'loading' }
+  return { ...current, retry }
 }

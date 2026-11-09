@@ -3,6 +3,17 @@ export const OFFICIAL_WEBSITE_BASE_URL = 'https://phi.omicsagent.cn'
 const DEFAULT_TIMEOUT_MS = 10_000
 const MAX_TIMEOUT_MS = 60_000
 
+/** HTTP status carried by a non-ok website response; callers can distinguish 404 from failures. */
+export class OfficialWebsiteHttpError extends Error {
+  readonly status: number
+
+  constructor(status: number, pathname: string) {
+    super(`official website request failed: ${pathname}`)
+    this.name = 'OfficialWebsiteHttpError'
+    this.status = status
+  }
+}
+
 export interface OfficialWebsiteRequestOptions {
   /** Application transport; callers cannot select an arbitrary endpoint. */
   fetch?: typeof fetch
@@ -66,7 +77,7 @@ export async function fetchOfficialWebsiteJson(
 }
 
 function validateResponse(response: Response, url: URL, origin: string, maxBytes: number): void {
-  if (!response.ok) throw new Error(`official website request failed: ${url.pathname}`)
+  if (!response.ok) throw new OfficialWebsiteHttpError(response.status, url.pathname)
   if (response.url && new URL(response.url).origin !== origin) {
     throw new Error('unexpected official website response origin')
   }

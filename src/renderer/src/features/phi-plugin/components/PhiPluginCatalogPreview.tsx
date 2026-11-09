@@ -1,6 +1,6 @@
 import {
   Box,
-  Chip,
+  Button,
   CircularProgress,
   Divider,
   IconButton,
@@ -13,8 +13,10 @@ import { GoPlus, GoSync } from 'react-icons/go'
 
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import { useUiLanguage } from '../../../lib/i18n'
-import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
-import type { PhiPluginCatalogDetail } from '../../../../../shared/phiPluginDetailTypes'
+import type {
+  PhiPluginCatalogDetail,
+  PhiPluginCatalogDetailReason
+} from '../../../../../shared/phiPluginDetailTypes'
 import type { PhiPluginCatalogAction, PhiPluginCatalogEntry } from '../lib/phiPluginCatalog'
 import { phiPluginDisplayTitle } from '../lib/phiPlugins'
 import { pluginCopy } from '../lib/pluginCopy'
@@ -108,8 +110,32 @@ export function PhiPluginCatalogDetailSections({
   )
 }
 
-function UnavailableCatalogSections(): React.JSX.Element {
+export function PhiPluginCatalogUnavailableSections({
+  reason,
+  onRetry
+}: {
+  reason: PhiPluginCatalogDetailReason
+  onRetry: () => void
+}): React.JSX.Element {
   useUiLanguage()
+
+  if (reason === 'failed') {
+    return (
+      <Stack
+        spacing={1.5}
+        sx={{ alignItems: 'flex-start' }}
+        data-phi-plugin-catalog-sections="failed"
+      >
+        <Typography variant="body2" color="text.secondary">
+          {pluginCopy.catalogDetailFailed}
+        </Typography>
+        <Button size="small" variant="outlined" onClick={onRetry}>
+          {pluginCopy.retry}
+        </Button>
+      </Stack>
+    )
+  }
+
   return (
     <>
       <Stack spacing={1}>
@@ -185,70 +211,41 @@ export function PhiPluginCatalogPreview({
 function CatalogDetailBody({ state }: { state: PhiPluginCatalogDetailState }): React.JSX.Element {
   if (state.status === 'loading') return <CatalogDetailLoading />
   if (state.status === 'available') return <PhiPluginCatalogDetailSections detail={state.detail} />
-  return <UnavailableCatalogSections />
-}
-
-function CatalogPreviewChips({
-  entry,
-  detail
-}: {
-  entry: PhiPluginCatalogEntry
-  detail: PhiPluginCatalogDetail | null
-}): React.JSX.Element {
-  useUiLanguage()
-
-  if (detail) {
-    return (
-      <>
-        <Chip size="small" variant="outlined" label={detail.source} />
-        {detail.official ? (
-          <Chip size="small" variant="outlined" label={pluginCopy.official} />
-        ) : null}
-      </>
-    )
-  }
-  return (
-    <>
-      {entry.registryLabel ? (
-        <Chip size="small" variant="outlined" label={entry.registryLabel} />
-      ) : null}
-      <Chip
-        size="small"
-        variant="outlined"
-        label={PACKAGE_TRUST_LABELS[entry.trust]}
-        title={PACKAGE_TRUST_DESCRIPTIONS[entry.trust]}
-      />
-    </>
-  )
+  return <PhiPluginCatalogUnavailableSections reason={state.reason} onRetry={state.retry} />
 }
 
 function CatalogPreviewMetadata({
   entry,
   detail,
-  title
+  title,
+  action
 }: {
   entry: PhiPluginCatalogEntry
   detail: PhiPluginCatalogDetail | null
   title: string
+  action: React.ReactNode
 }): React.JSX.Element {
   return (
     <Box sx={{ flex: 1, minWidth: 0 }}>
-      <Typography variant="h4" sx={{ fontWeight: 750 }}>
-        {title}
-      </Typography>
-      <Typography
-        variant="body2"
-        color="text.secondary"
-        sx={{ mt: 0.25, fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}
-      >
-        {entry.id} · v{detail?.version || entry.version}
-      </Typography>
-      <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25 }}>
+      <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="h4" sx={{ fontWeight: 750 }}>
+            {title}
+          </Typography>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mt: 0.25, fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}
+          >
+            {entry.id} · v{detail?.version || entry.version}
+          </Typography>
+        </Box>
+        {action}
+      </Stack>
+      {/* The summary uses the full width under the title row, inset slightly from the divider. */}
+      <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25, pr: 2 }}>
         {detail?.summary || entry.summary}
       </Typography>
-      <Stack direction="row" spacing={0.75} useFlexGap sx={{ mt: 1.5, flexWrap: 'wrap' }}>
-        <CatalogPreviewChips entry={entry} detail={detail} />
-      </Stack>
     </Box>
   )
 }
@@ -338,15 +335,19 @@ function CatalogPreviewHeader({
       >
         <ResourceIcon icon={entry.icon} kind="plugin" size={58} fallbackSize={30} />
       </Box>
-      <CatalogPreviewMetadata entry={entry} detail={detail} title={title} />
-      <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', alignSelf: 'flex-start' }}>
-        <CatalogPreviewAction
-          title={title}
-          action={action}
-          installBusy={installBusy}
-          onInstall={onInstall}
-        />
-      </Stack>
+      <CatalogPreviewMetadata
+        entry={entry}
+        detail={detail}
+        title={title}
+        action={
+          <CatalogPreviewAction
+            title={title}
+            action={action}
+            installBusy={installBusy}
+            onInstall={onInstall}
+          />
+        }
+      />
     </Stack>
   )
 }

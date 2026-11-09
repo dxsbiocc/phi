@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 
+import { getPhiLogDir } from '../src/main/agent/app-logger'
 import {
   getOfficialWebsitePluginDetail,
   validateOfficialWebsitePluginDetail
 } from '../src/main/agent/packages/official-website-plugin-detail'
+
+// Keep the failure logging these cases trigger out of the user's real Phi data directory.
+const testAgentDir = mkdtempSync(join(tmpdir(), 'phi-plugin-detail-test-'))
+process.env.PI_CODING_AGENT_DIR = testAgentDir
+test.after(() => rmSync(testAgentDir, { recursive: true, force: true }))
 
 function payload(): Record<string, unknown> {
   return {
@@ -160,14 +169,73 @@ test('website plugin detail fetch returns unavailable for failures and oversized
     fetch: async () => new Response(null, { status: 503 }),
     timeoutMs: 50
   })
-  assert.deepEqual(failed, { status: 'unavailable' })
+  assert.deepEqual(failed, { status: 'unavailable', reason: 'failed' })
 
   const oversized = await getOfficialWebsitePluginDetail('demo-plugin', {
     fetch: async () =>
       new Response('{}', { status: 200, headers: { 'content-length': String(2 * 1024 * 1024) } }),
     timeoutMs: 50
   })
-  assert.deepEqual(oversized, { status: 'unavailable' })
+  assert.deepEqual(oversized, { status: 'unavailable', reason: 'failed' })
+})
+
+test('a 404 is reported as not-found and is never retried', async () => {
+  let requests = 0
+  const result = await getOfficialWebsitePluginDetail('local-plugin', {
+    fetch: async () => {
+      requests += 1
+      return new Response(null, { status: 404 })
+    },
+    timeoutMs: 50
+  })
+
+  assert.deepEqual(result, { status: 'unavailable', reason: 'not-found' })
+  assert.equal(requests, 1)
+})
+
+test('a transient network failure is retried once and can recover', async () => {
+  let requests = 0
+  const result = await getOfficialWebsitePluginDetail('demo-plugin', {
+    fetch: async () => {
+      requests += 1
+      if (requests === 1) throw new TypeError('network unavailable')
+      return new Response(JSON.stringify(payload()), { status: 200 })
+    },
+    timeoutMs: 50
+  })
+
+  assert.equal(result.status, 'available')
+  assert.equal(requests, 2)
+})
+
+test('two failed attempts are reported as failed', async () => {
+  let requests = 0
+  const result = await getOfficialWebsitePluginDetail('demo-plugin', {
+    fetch: async () => {
+      requests += 1
+      throw new TypeError('network unavailable')
+    },
+    timeoutMs: 50
+  })
+
+  assert.deepEqual(result, { status: 'unavailable', reason: 'failed' })
+  assert.equal(requests, 2)
+})
+
+test('a validation failure is reported as failed and is never retried', async () => {
+  let requests = 0
+  const invalid = payload()
+  delete invalid.version
+  const result = await getOfficialWebsitePluginDetail('demo-plugin', {
+    fetch: async () => {
+      requests += 1
+      return new Response(JSON.stringify(invalid), { status: 200 })
+    },
+    timeoutMs: 50
+  })
+
+  assert.deepEqual(result, { status: 'unavailable', reason: 'failed' })
+  assert.equal(requests, 1)
 })
 
 test('website plugin detail fetch uses the derived endpoint and times out without network', async () => {
@@ -187,5 +255,40 @@ test('website plugin detail fetch uses the derived endpoint and times out withou
     fetch: async () => new Promise<Response>(() => {}),
     timeoutMs: 5
   })
-  assert.deepEqual(timedOut, { status: 'unavailable' })
+  assert.deepEqual(timedOut, { status: 'unavailable', reason: 'failed' })
+})
+
+test('a final failure writes a bounded warning log without credentials', async () => {
+  await getOfficialWebsitePluginDetail('log-test-plugin', {
+    fetch: async () => {
+      throw new TypeError(`network unavailable ${'x'.repeat(400)}`)
+    },
+    timeoutMs: 50
+  })
+
+  const entries = readdirSync(getPhiLogDir())
+    .filter((name) => name.endsWith('.jsonl'))
+    .flatMap((name) =>
+      readFileSync(join(getPhiLogDir(), name), 'utf8')
+        .trim()
+        .split('\n')
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              level: string
+              event: string
+              metadata?: Record<string, unknown>
+            }
+        )
+    )
+  const entry = entries.find(
+    (candidate) =>
+      candidate.event === 'plugin_catalog_detail_failed' &&
+      candidate.metadata?.pluginId === 'log-test-plugin'
+  )
+
+  assert.ok(entry)
+  assert.equal(entry.level, 'warn')
+  assert.equal(entry.metadata?.reason, 'failed')
+  assert.equal(String(entry.metadata?.error).length, 300)
 })

@@ -77,7 +77,7 @@ function registerPhiPluginBrowseIpc(context: PhiPluginIpcContext): void {
   ipcMain.handle(
     IPC.phiPlugins.catalogDetail,
     async (_, id: unknown): Promise<PhiPluginCatalogDetailResult> => {
-      if (typeof id !== 'string') return { status: 'unavailable' }
+      if (typeof id !== 'string') return { status: 'unavailable', reason: 'failed' }
       return getOfficialWebsitePluginDetail(id)
     }
   )
