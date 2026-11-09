@@ -38,6 +38,7 @@ import {
 import {
   KernelEngineError,
   engineError,
+  errorFrom,
   kernelSessionIdFromJournalPath,
   record,
   sessionCreateParams,
@@ -484,10 +485,8 @@ export class KernelSessionFactory implements RoutedSessionFactory {
   ): Promise<{ sessionId: string; sessionFile?: string }> {
     const manifest = params.phiSessionId ? findPhiSessionById(params.phiSessionId) : null
     const existing = manifest?.kernelRuntimeRef
-    if (existing && this.runtimeReferenceMatches(params, host, existing)) {
-      await this.openKernelSession(client, existing.kernelSessionId, resources)
-      return { sessionId: existing.kernelSessionId }
-    }
+    const recorded = await this.openRecordedKernelSession(params, host, client, existing, resources)
+    if (recorded) return { sessionId: recorded }
 
     const direct = this.directKernelSession(params, host)
     if (direct) {
@@ -517,6 +516,34 @@ export class KernelSessionFactory implements RoutedSessionFactory {
       throw new TypeError('Persistent kernel create result omitted sessionFile.')
     }
     return { sessionId: createdId, ...(sessionFile ? { sessionFile } : {}) }
+  }
+
+  /** Opens the session the manifest recorded; undefined when there is none to reattach. */
+  private async openRecordedKernelSession(
+    params: PhiSessionCreateParams,
+    host: KernelExecutionHost,
+    client: KernelSessionClient,
+    reference: KernelRuntimeRef | undefined,
+    resources: JsonValue
+  ): Promise<string | undefined> {
+    if (!reference) return undefined
+    if (this.runtimeReferenceMatches(params, host, reference)) {
+      await this.openKernelSession(client, reference.kernelSessionId, resources)
+      return reference.kernelSessionId
+    }
+    // A local data directory that moved keeps its kernel sessions under the new agent
+    // directory: reattach by id, and never fall back to adopting or starting empty.
+    if (params.remoteProject || reference.host.kind !== 'local') return undefined
+    try {
+      await this.openKernelSession(client, reference.kernelSessionId, resources)
+    } catch (error) {
+      throw new KernelEngineError(
+        'CAPABILITY_UNAVAILABLE',
+        `The conversation's kernel history was not found in the current data directory (it was recorded under ${reference.host.agentDir}). ${errorFrom(error).message}`,
+        { reason: 'kernel_history_missing', action: 'reopen' }
+      )
+    }
+    return reference.kernelSessionId
   }
 
   private directKernelSession(

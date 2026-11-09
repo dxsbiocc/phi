@@ -498,6 +498,152 @@ test('SessionRoutingEngine routes selected-turn fork to the local kernel and ret
   )
 })
 
+test('a moved local agent directory reattaches the recorded kernel session', async (t) => {
+  const phi = createPhiSession({
+    kind: 'ordinary',
+    cwd: '/project',
+    cwdRealPath: '/project',
+    permissionMode: 'auto',
+    model: { providerId: 'test', modelId: 'model' }
+  })
+  t.after(() => deletePhiSession(phi.sessionId))
+  const firstClient = new FakeKernelClient()
+  const firstFactory = new KernelSessionFactory({
+    launchLocal: async () => ({
+      client: firstClient,
+      greeting: {
+        protocol: { major: 1, minor: 0 },
+        kernel: { version: 'test', ompVersion: 'test' },
+        kernelInstanceId: 'kernel-instance',
+        controllerGeneration: 1,
+        capabilities: [],
+        lastSeq: 0,
+        runtime: { home: '/home/test', agentDir: '/agent' }
+      },
+      close: async () => undefined
+    })
+  })
+  const firstEngine = new SessionRoutingEngine(legacyEngine(), () => firstFactory)
+  await firstEngine.sessions.create({ ...params('moved-before'), phiSessionId: phi.sessionId })
+  await firstEngine.sessions.dispose({ sessionId: 'moved-before' })
+
+  const secondClient = new FakeKernelClient()
+  const secondFactory = new KernelSessionFactory({
+    launchLocal: async () => ({
+      client: secondClient,
+      greeting: {
+        protocol: { major: 1, minor: 0 },
+        kernel: { version: 'test', ompVersion: 'test' },
+        kernelInstanceId: 'kernel-instance',
+        controllerGeneration: 1,
+        capabilities: [],
+        lastSeq: 0,
+        runtime: { home: '/home/test', agentDir: '/moved-agent' }
+      },
+      close: async () => undefined
+    })
+  })
+  const secondEngine = new SessionRoutingEngine(legacyEngine(), () => secondFactory)
+  await secondEngine.sessions.create({
+    ...params('moved-after'),
+    agentDir: '/moved-agent',
+    phiSessionId: phi.sessionId,
+    sessionManager: { kind: 'open', cwd: '/project', path: `phi-session:${phi.sessionId}` }
+  })
+
+  assert.equal(
+    secondClient.requests.filter((request) => request.method === 'session.create').length,
+    0
+  )
+  assert.equal(
+    secondClient.requests.filter((request) => request.method === 'session.adopt').length,
+    0
+  )
+  const opened = secondClient.requests.findLast((request) => request.method === 'session.open')
+  assert.equal((opened?.params as { sessionId?: unknown }).sessionId, 'kernel-1')
+  assert.deepEqual(findPhiSessionById(phi.sessionId)?.kernelRuntimeRef, {
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId: 'kernel-1',
+    host: { kind: 'local', agentDir: '/moved-agent' }
+  })
+})
+
+test('a moved local agent directory without the kernel session surfaces an error instead of starting empty', async (t) => {
+  const phi = createPhiSession({
+    kind: 'ordinary',
+    cwd: '/project',
+    cwdRealPath: '/project',
+    permissionMode: 'auto',
+    model: { providerId: 'test', modelId: 'model' }
+  })
+  t.after(() => deletePhiSession(phi.sessionId))
+  const firstClient = new FakeKernelClient()
+  const firstFactory = new KernelSessionFactory({
+    launchLocal: async () => ({
+      client: firstClient,
+      greeting: {
+        protocol: { major: 1, minor: 0 },
+        kernel: { version: 'test', ompVersion: 'test' },
+        kernelInstanceId: 'kernel-instance',
+        controllerGeneration: 1,
+        capabilities: [],
+        lastSeq: 0,
+        runtime: { home: '/home/test', agentDir: '/agent' }
+      },
+      close: async () => undefined
+    })
+  })
+  const firstEngine = new SessionRoutingEngine(legacyEngine(), () => firstFactory)
+  await firstEngine.sessions.create({ ...params('missing-before'), phiSessionId: phi.sessionId })
+  await firstEngine.sessions.dispose({ sessionId: 'missing-before' })
+
+  const secondClient = new FakeKernelClient()
+  secondClient.onOpen = () => {
+    throw new Error('session not found')
+  }
+  const secondFactory = new KernelSessionFactory({
+    launchLocal: async () => ({
+      client: secondClient,
+      greeting: {
+        protocol: { major: 1, minor: 0 },
+        kernel: { version: 'test', ompVersion: 'test' },
+        kernelInstanceId: 'kernel-instance',
+        controllerGeneration: 1,
+        capabilities: [],
+        lastSeq: 0,
+        runtime: { home: '/home/test', agentDir: '/moved-agent' }
+      },
+      close: async () => undefined
+    })
+  })
+  const secondEngine = new SessionRoutingEngine(legacyEngine(), () => secondFactory)
+
+  await assert.rejects(
+    secondEngine.sessions.create({
+      ...params('missing-after'),
+      agentDir: '/moved-agent',
+      phiSessionId: phi.sessionId,
+      sessionManager: { kind: 'open', cwd: '/project', path: `phi-session:${phi.sessionId}` }
+    }),
+    /kernel_history_missing|history was not found/i
+  )
+  assert.equal(
+    secondClient.requests.filter((request) => request.method === 'session.create').length,
+    0
+  )
+  assert.equal(
+    secondClient.requests.filter((request) => request.method === 'session.adopt').length,
+    0
+  )
+  assert.deepEqual(findPhiSessionById(phi.sessionId)?.kernelRuntimeRef, {
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId: 'kernel-1',
+    host: { kind: 'local', agentDir: '/agent' }
+  })
+})
+
 test('SessionRoutingEngine forks an attached remote kernel session on its server', async (t) => {
   const location = {
     kind: 'ssh' as const,
