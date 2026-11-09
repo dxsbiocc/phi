@@ -130,7 +130,7 @@ export function planRunContinuationPrompt(events: readonly PlanRunFinishedEvent[
   ].join('\n')
   const details = events.flatMap((event) => describePlanRun(event.state)).join('\n')
   const closing = [
-    'Verify the reported results and any claimed files, then summarize the outcome for the user.',
+    'Each step was already checked against its own completion criteria before it finished, so summarize from the step reports. Spot-check at most one or two key results the user directly asked about, such as a final number or the main output file; do not re-verify every file or rerun the analysis. If a spot check disagrees with a report, say so plainly.',
     'Call out failed or skipped steps clearly. Do not silently rerun the plan.',
     'Reply in the language the user has been using.',
     '</phi_plan_run_finished>'
