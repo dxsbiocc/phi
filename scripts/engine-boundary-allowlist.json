@@ -74,6 +74,12 @@
       "plan": "keep"
     },
     {
+      "file": "src/main/agent/engine/phi-extension/lib/check-environment.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/exec/bash-executor"],
+      "purpose": "Read the shell environment through the same rc snapshot and direnv path that plan-step bash uses, so check_environment sees what the steps will see",
+      "plan": "keep"
+    },
+    {
       "file": "src/main/agent/engine/in-process/specialist-tool-call-extensions.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent",
