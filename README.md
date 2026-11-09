@@ -166,7 +166,7 @@ Phi is not offline. Model requests go to the provider you configure, and an enab
 
 Phi is an **internal beta**. macOS on Apple Silicon is the primary target. Linux x64 packaging is configured but has not passed clean-machine acceptance, and Windows is not validated. Updates are manual: Settings → General → Check for updates tells you when a newer release exists.
 
-Builds are not yet signed or notarized. Preview builds, when published, appear on the [Releases](https://github.com/dxsbiocc/phi/releases) page. Upgrades keep your data in `~/.phi`.
+Builds are not yet signed or notarized. Download the release marked **Latest** from the [Releases](https://github.com/dxsbiocc/phi/releases) page. Upgrades keep your data in `~/.phi`.
 
 - **macOS** (`.dmg`, `.zip`): drag Phi to Applications. macOS blocks the first launch with "Apple could not verify Phi". Open **System Settings → Privacy & Security** and click **Open Anyway**; you do this once per installed version.
 - **Linux** (`.AppImage`, `.deb`): run `sudo apt install ./phi_*.deb`, or `chmod +x Phi-*.AppImage` and run the AppImage.
