@@ -62,6 +62,7 @@ import * as agentDisplayName from '../src/shared/agentDisplayName'
 import * as htmlReportPreview from '../src/shared/htmlReportPreview'
 import * as phiPluginProblems from '../src/shared/phiPluginProblems'
 import * as sharedGuards from '../src/shared/guards'
+import * as streamErrorText from '../src/shared/streamErrorText'
 import * as sharedErrorCodes from '../src/shared/errorCodes'
 import * as projectMemoryTypes from '../src/shared/projectMemoryTypes'
 import * as remoteJupyterStartJobs from '../src/main/agent/notebook/remote-jupyter-start-jobs'
@@ -1681,6 +1682,7 @@ async function harness(
     './agent/plugins/details': phiPluginDetails,
     '../shared/presentedFileTypes': { MAX_PRESENTED_FILES: 4 },
     '../shared/guards': sharedGuards,
+    '../shared/streamErrorText': streamErrorText,
     '../shared/errorCodes': sharedErrorCodes,
     '../shared/remoteHostProfile': { sshConfigHostId: (alias: string) => `ssh-config:${alias}` },
     './molecule-renderer': {
@@ -12898,7 +12900,8 @@ test('main IPC: assistant error message ends are restored after switching sessio
           role: 'assistant',
           stopReason: 'error',
           errorMessage:
-            '429 Your account org-930ebedfe4d54cf998034940e3c937c1<ak-fch4ix7rq6wi11c3z111> request reached organization max RPM: 3'
+            '429 Your account org-930ebedfe4d54cf998034940e3c937c1<ak-fch4ix7rq6wi11c3z111> request reached organization max RPM: 3',
+          content: [{ type: 'text', text: 'Partial answer before the failure.' }]
         }
       }
     ]
@@ -12910,6 +12913,7 @@ test('main IPC: assistant error message ends are restored after switching sessio
   const restored = (await app.invoke('sessions:switch', 'fresh.jsonl')) as { messages: unknown[] }
 
   assert.match(JSON.stringify(restored.messages), /run_failed/)
+  assert.match(JSON.stringify(restored.messages), /Partial answer before the failure\./)
   assert.match(JSON.stringify(restored.messages), /request reached organization max RPM/)
   assert.doesNotMatch(JSON.stringify(restored.messages), /org-930/)
   assert.doesNotMatch(JSON.stringify(restored.messages), /ak-fch/)

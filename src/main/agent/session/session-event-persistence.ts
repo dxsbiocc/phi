@@ -7,7 +7,8 @@ import {
 } from './agent-delegation-event-persistence'
 import {
   persistAssistantContentInOrder,
-  persistCompletedThinkingBlocks
+  persistCompletedThinkingBlocks,
+  persistStreamedTextBeforeError
 } from './assistant-message-event-persistence'
 import {
   agentNameFromDetails,
@@ -210,6 +211,12 @@ function persistAssistantMessageEnd(
         ? redactSensitiveText(assistantMessage.errorMessage)
         : '请求失败'
     persistCompletedThinkingBlocks(run, summary, deps)
+    persistStreamedTextBeforeError(
+      run,
+      summary,
+      deps,
+      typeof assistantMessage.errorMessage === 'string' ? assistantMessage.errorMessage : undefined
+    )
     const cursorStreamFailure =
       assistantMessage.api === 'cursor-agent' && isCursorStreamEndError(errorMessage)
     if (

@@ -397,6 +397,117 @@ test('assistant message errors become visible chat content', () => {
   ])
 })
 
+test('assistant stream errors keep finished answer text and add the error separately', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'message_start',
+    message: { role: 'assistant' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '正常回答' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    runId: 'run-1',
+    createdAt: '2026-09-07T00:00:10.000Z',
+    message: {
+      role: 'assistant',
+      stopReason: 'error',
+      errorMessage: 'stream ended'
+    }
+  })
+
+  assert.deepEqual(state.messages, [
+    {
+      id: 'assistant-0-0',
+      role: 'assistant',
+      content: '正常回答'
+    },
+    {
+      id: 'error-1-0',
+      role: 'error',
+      runId: 'run-1',
+      content: 'stream ended',
+      createdAt: '2026-09-07T00:00:10.000Z'
+    }
+  ])
+})
+
+test('assistant stream errors keep converting matching answer text into one error', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'message_start',
+    message: { role: 'assistant' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'stream ended' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      stopReason: 'error',
+      errorMessage: 'stream ended'
+    }
+  })
+
+  assert.deepEqual(state.messages, [
+    {
+      id: 'assistant-0-0',
+      role: 'error',
+      content: 'stream ended'
+    }
+  ])
+})
+
+test('assistant stream errors without an error message keep converting the answer into an error', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'message_start',
+    message: { role: 'assistant' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '正常回答' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    message: { role: 'assistant', stopReason: 'error' }
+  })
+
+  assert.equal(state.messages.length, 1)
+  assert.equal(state.messages[0]?.role, 'error')
+  assert.equal(state.messages[0]?.content, '正常回答')
+})
+
+test('a later run failure does not duplicate an assistant stream error', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'message_start',
+    message: { role: 'assistant' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '正常回答' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    runId: 'run-1',
+    message: { role: 'assistant', stopReason: 'error', errorMessage: 'stream ended' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'run_failed',
+    eventId: 'event-failed',
+    runId: 'run-1',
+    errorMessage: 'stream ended'
+  })
+
+  assert.equal(state.messages.filter((item) => item.role === 'error').length, 1)
+  assert.equal(state.messages.filter((item) => item.role === 'assistant').length, 1)
+})
+
 test('project parallel warning becomes an informational chat item', () => {
   const state = reduceAgentEventState(
     createAgentEventReducerState(),

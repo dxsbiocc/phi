@@ -263,6 +263,82 @@ test('assistant message events persist thinking and text before forwarding the f
   })
 })
 
+test('error-ended assistant messages persist the answer text that streamed before the failure', () => {
+  const f = harness()
+  const currentRun = run()
+  const forwarded = persistSessionEvent(
+    currentRun,
+    phiEvent({
+      type: 'message_end',
+      createdAt: '2026-10-20T00:00:05.000Z',
+      message: {
+        role: 'assistant',
+        stopReason: 'error',
+        errorMessage: 'stream ended',
+        content: [{ type: 'text', text: '正常回答' }]
+      }
+    }),
+    f.deps
+  )
+
+  assert.deepEqual(
+    f.appended.map(({ event }) => event),
+    [
+      {
+        type: 'assistant_message_finalized',
+        runId: 'run-1',
+        content: '正常回答',
+        createdAt: '2026-10-20T00:00:05.000Z'
+      }
+    ]
+  )
+  assert.equal(currentRun.recordedFailureMessage, 'stream ended')
+  assert.equal(forwarded.runId, 'run-1')
+})
+
+test('error-ended assistant messages do not persist streamed error text as an answer', () => {
+  const f = harness()
+  const currentRun = run()
+  persistSessionEvent(
+    currentRun,
+    phiEvent({
+      type: 'message_end',
+      createdAt: '2026-10-20T00:00:05.000Z',
+      message: {
+        role: 'assistant',
+        stopReason: 'error',
+        errorMessage: 'stream ended',
+        content: [{ type: 'text', text: 'stream ended' }]
+      }
+    }),
+    f.deps
+  )
+
+  assert.deepEqual(f.appended, [])
+  assert.equal(currentRun.recordedFailureMessage, 'stream ended')
+})
+
+test('error-ended assistant messages without an error message do not persist answer text', () => {
+  const f = harness()
+  const currentRun = run()
+  persistSessionEvent(
+    currentRun,
+    phiEvent({
+      type: 'message_end',
+      createdAt: '2026-10-20T00:00:05.000Z',
+      message: {
+        role: 'assistant',
+        stopReason: 'error',
+        content: [{ type: 'text', text: '正常回答' }]
+      }
+    }),
+    f.deps
+  )
+
+  assert.deepEqual(f.appended, [])
+  assert.equal(currentRun.recordedFailureMessage, '请求失败')
+})
+
 test('tool-result message_end reaches the provider tool family after the assistant family declines it', () => {
   const f = harness()
   const currentRun = run({

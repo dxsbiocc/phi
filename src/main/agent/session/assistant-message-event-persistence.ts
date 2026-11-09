@@ -1,4 +1,5 @@
 import { isRecord } from '../../../shared/guards'
+import { isStreamedErrorText } from '../../../shared/streamErrorText'
 import type {
   SessionEventPersistenceDeps,
   SessionEventPersistenceRun
@@ -39,6 +40,45 @@ export function persistCompletedThinkingBlocks(
     })
   }
   run.thinkingBlockStartedAtMs.clear()
+}
+
+/**
+ * An error-ended assistant message can still contain answer text the model finished before the
+ * stream failed. Persist that text so reopening the session matches the live timeline, but skip
+ * providers that stream their error message as the assistant text.
+ */
+export function persistStreamedTextBeforeError(
+  run: SessionEventPersistenceRun,
+  summary: Record<string, unknown>,
+  deps: SessionEventPersistenceDeps,
+  errorMessage: string | undefined
+): void {
+  if (!errorMessage?.trim()) return
+  const message = summary.message as { content?: unknown }
+  const contentParts = Array.isArray(message.content) ? message.content : []
+  let sawTextPart = false
+  for (const part of contentParts) {
+    if (!isRecord(part) || part.type !== 'text' || typeof part.text !== 'string' || !part.text) {
+      continue
+    }
+    sawTextPart = true
+    if (isStreamedErrorText(part.text, errorMessage)) continue
+    deps.storage.appendSessionEvent(run.phiSessionId, {
+      type: 'assistant_message_finalized',
+      runId: run.runId,
+      content: part.text,
+      ...deps.shared.createdAtFromSummary(summary)
+    })
+  }
+  if (sawTextPart) return
+  const content = deps.shared.extractAssistantText(summary.message)
+  if (!content || isStreamedErrorText(content, errorMessage)) return
+  deps.storage.appendSessionEvent(run.phiSessionId, {
+    type: 'assistant_message_finalized',
+    runId: run.runId,
+    content,
+    ...deps.shared.createdAtFromSummary(summary)
+  })
 }
 
 interface AssistantContentPart {

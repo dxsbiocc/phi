@@ -33,6 +33,7 @@ import {
 import { stripAgentReportMetadata } from '../../../shared/agentReportText'
 import { isRecord } from '../../../shared/guards'
 import { agentDisplayNameFromCall, isAgentToolName } from '../../../shared/agentDisplayName'
+import { applyAssistantMessageError } from './assistantMessageError'
 export interface AgentEventReducerState {
   messages: ChatItem[]
   textBlockIds: Map<number, string>
@@ -901,47 +902,10 @@ export function reduceAgentEventState(
 
   if (event.type === 'message_end' && event.message?.role === 'assistant') {
     const isError = event.message.stopReason === 'error'
-    const errorText = isError ? event.message.errorMessage || chatEventCopy.requestFailed : ''
     const textIds = [...textBlockIds.values()]
 
     if (isError) {
-      const lastTextId = textIds[textIds.length - 1]
-      const index = lastTextId ? next.findIndex((item) => item.id === lastTextId) : -1
-      const current = index >= 0 ? next[index] : null
-      const content =
-        current && current.role === 'assistant' ? current.content || errorText : errorText
-      const duplicateExists = content
-        ? hasEquivalentErrorMessage(next, content, {
-            runId: event.runId,
-            exceptId: current?.id
-          })
-        : false
-      if (current && current.role === 'assistant') {
-        if (duplicateExists) {
-          next.splice(index, 1)
-        } else {
-          next[index] = {
-            ...current,
-            role: 'error',
-            get content() {
-              return current.content || event.message?.errorMessage || chatEventCopy.requestFailed
-            },
-            ...(typeof event.runId === 'string' ? { runId: event.runId } : {}),
-            ...completedAtField(event.createdAt)
-          }
-        }
-      } else if (errorText && !duplicateExists) {
-        next.push({
-          id: createBlockId('error', 0, nextId),
-          role: 'error',
-          get content() {
-            return event.message?.errorMessage || chatEventCopy.requestFailed
-          },
-          ...(typeof event.runId === 'string' ? { runId: event.runId } : {}),
-          ...createdAtField(event.createdAt)
-        })
-        nextId += 1
-      }
+      nextId = applyAssistantMessageError(next, event, textBlockIds, nextId)
     } else if (textIds.length === 0) {
       const finalMessage = extractTextFromMessage(event.message)
       if (isDisplayableAssistantText(finalMessage)) {
