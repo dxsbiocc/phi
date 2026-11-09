@@ -20,6 +20,22 @@ export type {
   PhiPlanStepsToolResult,
   PhiExtensionToolApprovalRequest
 } from './host'
+export {
+  createCheckEnvironmentExtension,
+  CHECK_ENVIRONMENT_TOOL_NAME
+} from './extensions/check-environment'
+export type {
+  CheckEnvironmentDetails,
+  CheckEnvironmentRequest,
+  CommandProbeResult,
+  ModuleProbeResult,
+  ProbeResult,
+  ProbeRunOptions,
+  ProbeRunner,
+  PythonProbeResult,
+  RPackageProbeResult,
+  RProbeResult
+} from './lib/check-environment'
 export { createEnvironmentBindingExtension } from './extensions/environment-binding'
 export { createNextActionInstructionExtension } from './extensions/next-action'
 export { createPlanReviewToolGuardExtension } from './extensions/plan-review'

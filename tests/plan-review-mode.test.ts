@@ -61,7 +61,15 @@ test('plan review limits tools until approval and restores them after approval',
   )
   assert.equal(entered, true)
   assert.equal(session.getPlanModeState()?.enabled, true)
-  assert.deepEqual(session.activeTools, ['read', 'glob', 'grep', 'write', 'edit', 'todo'])
+  assert.deepEqual(session.activeTools, [
+    'read',
+    'glob',
+    'grep',
+    'write',
+    'edit',
+    'todo',
+    'check_environment'
+  ])
   assert.ok(session.handler)
   const result = await session.handler('analysis-plan')
   assert.match(JSON.stringify(result), /Plan approved/)
@@ -89,7 +97,15 @@ test('revision keeps plan mode active and cancellation exits without execution',
   assert.match(JSON.stringify(revised), /Add tests/)
   assert.equal(session.getPlanModeState()?.enabled, true)
   assert.equal(session.getPlanModeState()?.planFilePath, proposal.planFilePath)
-  assert.deepEqual(session.activeTools, ['read', 'glob', 'grep', 'write', 'edit', 'todo'])
+  assert.deepEqual(session.activeTools, [
+    'read',
+    'glob',
+    'grep',
+    'write',
+    'edit',
+    'todo',
+    'check_environment'
+  ])
   decision = 'cancel'
   const cancelled = await session.handler('analysis-plan')
   assert.match(JSON.stringify(cancelled), /Do not implement/)
@@ -194,9 +210,13 @@ test('plan tool guard blocks workspace mutations and hidden device calls', () =>
   assert.equal(planModeToolDecision(false, 'bash', { command: 'npm test' }).allowed, true)
 })
 
-test('structured plan mode admits reads and propose_plan_steps only', () => {
+test('structured plan mode admits reads and planning tools only', () => {
   assert.equal(planModeToolDecision(true, 'propose_plan_steps', { steps: [] }, true).allowed, true)
   assert.equal(planModeToolDecision(true, 'read', { path: 'src/index.ts' }, true).allowed, true)
+  assert.equal(
+    planModeToolDecision(true, 'check_environment', { commands: ['python3'] }, true).allowed,
+    true
+  )
   for (const [name, input] of [
     ['write', { path: 'local://PLAN.md' }],
     ['write', { path: 'xd://propose' }],
@@ -239,11 +259,13 @@ test('plan_execute replaces OMP plan-mode context and its xd://propose reminder'
   assert.equal(suppressPlanExecutePromptContext([user]), undefined)
 })
 
-test('plan_execute system prompt names only propose_plan_steps', () => {
+test('plan_execute system prompt points at structured planning tools', () => {
   const prompt = buildPhiMainSystemPrompt(['base instructions'], {
     workMode: 'plan_execute'
   }).join('\n')
   assert.match(prompt, /propose_plan_steps/)
+  assert.match(prompt, /check_environment/)
+  assert.match(prompt, /no shell \(bash\) while planning/)
   assert.doesNotMatch(prompt, /xd:\/\/propose/)
   assert.doesNotMatch(prompt, /local:\/\//)
 })

@@ -27,14 +27,14 @@ const baseStepSchema = {
       minLength: 1,
       maxLength: PLAN_MAX_STEP_INSTRUCTIONS_LENGTH,
       description:
-        'The commands, interpreters, and tools used here must be confirmed to exist in the environment during investigation.'
+        'The commands, interpreters, and tools used here must be confirmed to exist in the environment during investigation (use check_environment).'
     },
     acceptance: {
       type: 'string',
       minLength: 1,
       maxLength: PLAN_MAX_STEP_ACCEPTANCE_LENGTH,
       description:
-        'Describe how to check this step is done: name the file, command, or observable result and the rule it must satisfy (for example: file exists, has 30 lines, each line is the sum of the two before it, the script exits 0). Do not include values you have not computed and verified during investigation, such as counts, sums, or sequence terms worked out in your head; the step computes them. Any command, interpreter, or tool you name (for example python and python3) must be confirmed to exist in that environment during investigation; when unsure, state the result to check (file contents, a successful exit) instead of a specific command name.'
+        'Describe how to check this step is done: name the file, command, or observable result and the rule it must satisfy (for example: file exists, has 30 lines, each line is the sum of the two before it, the script exits 0). Do not include values you have not computed and verified during investigation, such as counts, sums, or sequence terms worked out in your head; the step computes them. Any command, interpreter, or tool you name (for example python and python3) must be confirmed to exist in that environment during investigation (use check_environment); when unsure, state the result to check (file contents, a successful exit) instead of a specific command name.'
     },
     dependsOn: { type: 'array', items: { type: 'string' }, uniqueItems: true },
     access: { type: 'string', enum: ['read', 'write'] },

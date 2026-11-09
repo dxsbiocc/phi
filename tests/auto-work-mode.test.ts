@@ -121,7 +121,15 @@ async function enterFromTool(execute: boolean): Promise<{
 
 test('enter_plan_mode switches the current turn to plan review and records its reason', async () => {
   const result = await enterFromTool(false)
-  assert.deepEqual(result.activeTools, ['read', 'glob', 'grep', 'write', 'edit', 'todo'])
+  assert.deepEqual(result.activeTools, [
+    'read',
+    'glob',
+    'grep',
+    'write',
+    'edit',
+    'todo',
+    'check_environment'
+  ])
   assert.equal(result.state?.execute, undefined)
   assert.deepEqual(result.selected, [{ execute: false, reason: '任务范围较大' }])
   assert.match(JSON.stringify(result.result), /xd:\/\/propose/)
@@ -136,7 +144,8 @@ test('automatic plan execution activates propose_plan_steps in the next model ca
     'write',
     'edit',
     'todo',
-    'propose_plan_steps'
+    'propose_plan_steps',
+    'check_environment'
   ])
   assert.equal(result.state?.execute, true)
   assert.match(JSON.stringify(result.result), /propose_plan_steps/)

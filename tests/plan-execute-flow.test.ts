@@ -8,6 +8,7 @@ import {
 } from '../src/main/agent/engine/phi-extension'
 import { createPlanReviewRequest } from '../src/main/agent/host-requests/plan-review-request'
 import {
+  CHECK_ENVIRONMENT_TOOL_NAME,
   enterPlanReviewMode,
   PLAN_STEPS_TOOL_NAME,
   type PlanReviewSession,
@@ -230,6 +231,7 @@ test('planExecute validates, reviews, executes a diamond and wakes the main agen
 
   assert.equal(session.getPlanModeState()?.execute, true)
   assert.ok(session.activeTools.includes(PLAN_STEPS_TOOL_NAME))
+  assert.ok(session.activeTools.includes(CHECK_ENVIRONMENT_TOOL_NAME))
   assert.ok(executePlanTool)
   const invalid = await executePlanTool('invalid-plan', { version: 1, goal: 'bad', steps: [] })
   assert.equal(invalid.isError, true)
@@ -238,6 +240,7 @@ test('planExecute validates, reviews, executes a diamond and wakes the main agen
   const approved = await executePlanTool('approved-plan', diamondPlan())
   assert.match(approved.content[0]?.text ?? '', /handed to Phi/)
   assert.equal(session.getPlanModeState(), undefined)
+  assert.equal(session.activeTools.includes(CHECK_ENVIRONMENT_TOOL_NAME), false)
   await until(() => started.length === 1)
   assert.deepEqual(started, ['agent-1'])
 
@@ -332,7 +335,8 @@ test('propose_plan_steps acceptance documents a check method, not unverified val
   assert.match(acceptanceDescription, /not .*(computed|verified)/i)
   assert.match(acceptanceDescription, /command/i)
   assert.match(acceptanceDescription, /(confirm|verified|exist)/i)
-  const instructionsDescription = parameters.properties.steps.items.properties.instructions.description
+  const instructionsDescription =
+    parameters.properties.steps.items.properties.instructions.description
   assert.ok(instructionsDescription, 'instructions schema should document how to run a step')
   assert.match(instructionsDescription, /command/i)
   assert.match(instructionsDescription, /(confirm|verified|exist)/i)

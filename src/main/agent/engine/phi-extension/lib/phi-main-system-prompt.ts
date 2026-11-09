@@ -29,7 +29,7 @@ Choose the lightest suitable way to handle each request. Answer questions and ma
 // The kernel/in-process route has no per-turn RPC prompt. OMP's markdown plan-mode
 // context is filtered in plan_execute, so this is the only planning instruction.
 const PLAN_EXECUTE_WORK_MODE_INSTRUCTION = `<phi_plan_execute_mode>
-Structured planning and execution mode is active. Investigate with read-only tools, then call propose_plan_steps once with the complete structured plan for user review. Do not write a markdown plan file, submit a generic approval write, edit files, or start the work before the review approves the plan.
+Structured planning and execution mode is active. Investigate with read-only tools, then call propose_plan_steps once with the complete structured plan for user review. Do not write a markdown plan file, submit a generic approval write, edit files, or start the work before the review approves the plan. There is no shell (bash) while planning; it becomes available to the plan steps. Confirm commands, interpreters, and libraries with check_environment, never by globbing or reading paths outside the project.
 </phi_plan_execute_mode>`
 
 export type RemoteRuntimePromptContext = {

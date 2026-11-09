@@ -5,6 +5,7 @@ import {
   type SessionManager
 } from '@oh-my-pi/pi-coding-agent'
 import {
+  createCheckEnvironmentExtension,
   createMainSessionExtensions,
   createPlanStepsExtension,
   type PhiExtensionConfig
@@ -206,6 +207,7 @@ export async function createSession(
     createPlanStepsExtension(extensionHost, {
       availableAgents: phiAgents.map((agent) => agent.name)
     }),
+    createCheckEnvironmentExtension(extensionHost, { cwd }),
     // Keep a policy guard even when a later approved plugin supplies the first specialist.
     ...(agentPolicies.length === 0
       ? [createSpecialistFallbackExtension(agentPolicies, extensionHost)]

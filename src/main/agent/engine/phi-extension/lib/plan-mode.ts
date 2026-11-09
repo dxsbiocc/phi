@@ -9,6 +9,7 @@ const READ_ONLY_TOOLS = new Set([
   'ask_user_question',
   'capability_search',
   'find_skills',
+  'check_environment',
   'propose_plan_steps'
 ])
 

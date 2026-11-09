@@ -63,6 +63,7 @@ export type PlanReviewSession = {
 }
 
 export const PLAN_STEPS_TOOL_NAME = 'propose_plan_steps'
+export const CHECK_ENVIRONMENT_TOOL_NAME = 'check_environment'
 const planModeRestorations = new WeakMap<
   PlanReviewSession,
   { requestId?: string; previousTools: string[]; options: PlanExecuteModeOptions }
@@ -75,6 +76,7 @@ const PLAN_TOOLS = new Set([
   'edit',
   'todo',
   'ask_user_question',
+  CHECK_ENVIRONMENT_TOOL_NAME,
   PLAN_STEPS_TOOL_NAME
 ])
 
@@ -264,7 +266,8 @@ export async function enterPlanReviewMode(
     ...new Set([
       ...previousTools.filter((name) => PLAN_TOOLS.has(name)),
       'write',
-      ...(options.execute ? [PLAN_STEPS_TOOL_NAME] : [])
+      ...(options.execute ? [PLAN_STEPS_TOOL_NAME] : []),
+      CHECK_ENVIRONMENT_TOOL_NAME
     ])
   ]
   const previousState = session.getPlanModeState()
