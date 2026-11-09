@@ -626,7 +626,7 @@ test('a moved local agent directory without the kernel session surfaces an error
       phiSessionId: phi.sessionId,
       sessionManager: { kind: 'open', cwd: '/project', path: `phi-session:${phi.sessionId}` }
     }),
-    /kernel_history_missing|history was not found/i
+    /history was not found[\s\S]*\[reason:kernel_history_missing\]/i
   )
   assert.equal(
     secondClient.requests.filter((request) => request.method === 'session.create').length,

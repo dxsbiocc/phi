@@ -539,7 +539,7 @@ export class KernelSessionFactory implements RoutedSessionFactory {
     } catch (error) {
       throw new KernelEngineError(
         'CAPABILITY_UNAVAILABLE',
-        `The conversation's kernel history was not found in the current data directory (it was recorded under ${reference.host.agentDir}). ${errorFrom(error).message}`,
+        `The conversation's kernel history was not found in the current data directory (it was recorded under ${reference.host.agentDir}). ${errorFrom(error).message} [reason:kernel_history_missing] [recorded:${encodeURIComponent(reference.host.agentDir)}]`,
         { reason: 'kernel_history_missing', action: 'reopen' }
       )
     }
