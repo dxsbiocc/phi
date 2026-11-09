@@ -1,4 +1,5 @@
 import { chatCopy } from '../../features/chat/lib/chatCopy'
+import { ThinkingOrb } from '../../features/chat/components/ThinkingOrb'
 import { nestedFoldChevronRevealSx } from '../../features/chat/lib/nestedFoldChevronStyles'
 import { useUiLanguage } from '../../lib/i18n'
 import { Box, Collapse, Tooltip, Typography } from '@mui/material'
@@ -11,7 +12,6 @@ import {
 import { TimelineRail } from './TimelineRail'
 
 const ChevronRightIcon = PhiIcons.action.back
-const PsychologyIcon = PhiIcons.state.thinking
 
 function formatThinkingDuration(durationMs?: number): string {
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return chatCopy.thinking
@@ -141,17 +141,10 @@ function ThinkingIcon({
           flexShrink: 0,
           display: 'inline-flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          color: active ? 'primary.main' : 'text.secondary',
-          animation: active ? 'phi-thinking-pulse 1.6s ease-in-out infinite' : 'none',
-          '@keyframes phi-thinking-pulse': {
-            '0%, 100%': { opacity: 0.5 },
-            '50%': { opacity: 1 }
-          },
-          '@media (prefers-reduced-motion: reduce)': { animation: 'none' }
+          justifyContent: 'center'
         }}
       >
-        <PsychologyIcon sx={{ fontSize: size }} />
+        <ThinkingOrb size={size} active={active} />
       </Box>
     </Tooltip>
   )

@@ -1,9 +1,12 @@
 import { Box, Collapse, IconButton, Typography } from '@mui/material'
-import { alpha, type Theme } from '@mui/material/styles'
+import { alpha, useTheme, type Theme } from '@mui/material/styles'
 import { useMediaQuery } from '@mui/material'
 import type { ReactNode } from 'react'
 
 import { PhiIcons } from '../../../icons'
+import { useUiLanguage } from '../../../lib/i18n'
+import { planCopy } from '../lib/planCopy'
+import { FacetBloomLoader } from './FacetBloomLoader'
 
 export type PlanTimelineTone = 'success' | 'active' | 'error' | 'warning' | 'pending' | 'neutral'
 
@@ -271,6 +274,31 @@ export function PlanTimelineStep({
   )
 }
 
+function PlanTimelineHeaderIcon({ tone }: { tone: PlanTimelineTone }): React.JSX.Element {
+  const theme = useTheme()
+  useUiLanguage()
+  if (tone !== 'active') return <PlanTimelineIcon tone={tone} />
+  return (
+    <Box
+      sx={{
+        flex: 'none',
+        width: 24,
+        height: 24,
+        mt: 0.25,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}
+    >
+      <FacetBloomLoader
+        size={24}
+        accent={theme.palette.primary.main}
+        label={planCopy.runStatus('running')}
+      />
+    </Box>
+  )
+}
+
 export function PlanTimelineHeader({
   tone,
   title,
@@ -304,7 +332,7 @@ export function PlanTimelineHeader({
         '&:hover': onToggle ? { bgcolor: 'action.hover' } : undefined
       }}
     >
-      <PlanTimelineIcon tone={tone} spinning={tone === 'active'} />
+      <PlanTimelineHeaderIcon tone={tone} />
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography variant="subtitle2" noWrap title={title} sx={{ fontWeight: 700 }}>
           {title}
