@@ -28,14 +28,18 @@ export type {
   CheckEnvironmentDetails,
   CheckEnvironmentRequest,
   CommandProbeResult,
+  EnvironmentSelection,
+  EnvironmentSource,
   ModuleProbeResult,
   ProbeResult,
   ProbeRunOptions,
   ProbeRunner,
   PythonProbeResult,
   RPackageProbeResult,
-  RProbeResult
+  RProbeResult,
+  ShellEnvironment
 } from './lib/check-environment'
+export { parseShellEnvironment } from './lib/check-environment'
 export { createEnvironmentBindingExtension } from './extensions/environment-binding'
 export { createNextActionInstructionExtension } from './extensions/next-action'
 export { createPlanReviewToolGuardExtension } from './extensions/plan-review'

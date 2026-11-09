@@ -7,6 +7,14 @@ import type { PhiExtensionHost } from '../host'
 
 const PROBE_TIMEOUT_MS = 20_000
 const PROBE_MAX_BUFFER = 256 * 1024
+const SHELL_ENVIRONMENT_TIMEOUT_MS = 10_000
+
+/**
+ * `executeBash` sanitizes control characters out of its result, so a raw
+ * `env -0` stream would lose every NUL separator. Encode the NUL-separated
+ * bytes as base64 inside the fixed pipeline, then decode and parse here.
+ */
+const SHELL_ENVIRONMENT_COMMAND = 'command env -0 | command base64'
 
 /** Minimal execFile contract so tests can observe and stub process probes. */
 export interface ProbeRunOptions {
@@ -68,7 +76,23 @@ export interface CheckEnvironmentDetails {
   commands: CommandProbeResult[]
   python?: PythonProbeResult
   r?: RProbeResult
+  /** Where the probe environment came from, so a surprising answer is explainable. */
+  environmentSource?: EnvironmentSource
+  /** Human-readable description of the environment source. */
+  environmentNote?: string
 }
+
+/** The environment plan-step bash would see, plus where it came from. */
+export interface EnvironmentSelection {
+  environment: NodeJS.ProcessEnv
+  source: EnvironmentSource
+  note: string
+}
+
+export type EnvironmentSource = 'binding' | 'shell' | 'process'
+
+/** Reads the environment an interactive/login shell would export for a directory. */
+export type ShellEnvironment = (cwd: string) => Promise<Record<string, string>>
 
 export interface CheckEnvironmentRequest {
   commands: readonly string[]
@@ -86,6 +110,12 @@ import importlib.metadata
 import importlib.util
 import json
 
+packages_distributions = getattr(importlib.metadata, "packages_distributions", None)
+try:
+    distributions = packages_distributions() if packages_distributions else {}
+except Exception:
+    distributions = {}
+
 def probe(name):
     try:
         found = importlib.util.find_spec(name) is not None
@@ -93,10 +123,14 @@ def probe(name):
         found = False
     version = None
     if found:
-        try:
-            version = importlib.metadata.version(name.split('.')[0])
-        except Exception:
-            version = None
+        top = name.split('.')[0]
+        candidates = list(distributions.get(top, [])) + [top]
+        for candidate in candidates:
+            try:
+                version = importlib.metadata.version(candidate)
+                break
+            except Exception:
+                continue
     return {"found": found, "version": version}
 
 print(json.dumps({
@@ -134,9 +168,80 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export function selectedEnvironment(host: PhiExtensionHost): NodeJS.ProcessEnv {
+/**
+ * Parse NUL-separated `NAME=value` pairs from `env -0`.
+ *
+ * A missing NUL separator means the output was sanitized or otherwise mangled;
+ * reject it rather than treating the concatenated pairs as one value.
+ */
+export function parseShellEnvironment(output: string): Record<string, string> {
+  if (!output.includes('\0')) throw new Error('output has no NUL separators')
+  const environment: Record<string, string> = {}
+  for (const entry of output.split('\0')) {
+    if (entry.length === 0) continue
+    const separator = entry.indexOf('=')
+    if (separator <= 0) throw new Error('unexpected environment entry')
+    environment[entry.slice(0, separator)] = entry.slice(separator + 1)
+  }
+  if (Object.keys(environment).length === 0) throw new Error('output is empty')
+  return environment
+}
+
+function shellEnvironmentFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return (message || 'unknown error').replace(/\s+/g, ' ').trim()
+}
+
+function base64ShellEnvironment(output: string): Record<string, string> {
+  const encoded = output.replace(/\s+/g, '')
+  if (encoded.length === 0) throw new Error('output is empty')
+  return parseShellEnvironment(Buffer.from(encoded, 'base64').toString('utf8'))
+}
+
+/** The default reads the same rc snapshot + direnv env that plan-step bash uses. */
+export async function defaultShellEnvironment(cwd: string): Promise<Record<string, string>> {
+  const { executeBash } = await import('@oh-my-pi/pi-coding-agent/exec/bash-executor')
+  const result = await executeBash(SHELL_ENVIRONMENT_COMMAND, {
+    cwd,
+    timeout: SHELL_ENVIRONMENT_TIMEOUT_MS,
+    sessionKey: 'phi-check-environment'
+  })
+  if (result.timedOut || result.cancelled) throw new Error('shell command was cancelled')
+  if (result.exitCode !== 0) {
+    throw new Error(`shell command exited with code ${result.exitCode ?? 'unknown'}`)
+  }
+  if (result.truncated) throw new Error('shell output was truncated')
+  return base64ShellEnvironment(result.output)
+}
+
+export async function selectedEnvironment(
+  host: PhiExtensionHost,
+  cwd: string,
+  shellEnvironment: ShellEnvironment = defaultShellEnvironment
+): Promise<EnvironmentSelection> {
   const binding = host.environmentBinding()
-  return { ...(binding ? binding.variables : host.hostEnvironment()) }
+  if (binding) {
+    return {
+      environment: { ...binding.variables },
+      source: 'binding',
+      note: `environment: bound environment ${binding.ref}`
+    }
+  }
+  try {
+    const environment = await shellEnvironment(cwd)
+    if (!pathValue(environment)) throw new Error('login shell did not report PATH')
+    return {
+      environment: { ...environment },
+      source: 'shell',
+      note: 'environment: login shell'
+    }
+  } catch (error) {
+    return {
+      environment: { ...host.hostEnvironment() },
+      source: 'process',
+      note: `environment: process (shell snapshot failed: ${shellEnvironmentFailure(error)})`
+    }
+  }
 }
 
 export function pathValue(environment: NodeJS.ProcessEnv): string | undefined {
@@ -318,7 +423,8 @@ export async function runCheckEnvironment(
   request: CheckEnvironmentRequest,
   environment: NodeJS.ProcessEnv,
   cwd: string,
-  runner: ProbeRunner
+  runner: ProbeRunner,
+  selection?: Pick<EnvironmentSelection, 'source' | 'note'>
 ): Promise<CheckEnvironmentDetails> {
   const path = pathValue(environment)
   const commands = await Promise.all(
@@ -365,12 +471,14 @@ export async function runCheckEnvironment(
   return {
     commands,
     ...(python ? { python } : {}),
-    ...(r ? { r } : {})
+    ...(r ? { r } : {}),
+    ...(selection ? { environmentSource: selection.source, environmentNote: selection.note } : {})
   }
 }
 
 export function formatResult(details: CheckEnvironmentDetails): string {
   const lines: string[] = []
+  if (details.environmentNote) lines.push(details.environmentNote)
   for (const command of details.commands) {
     lines.push(`${command.name}: ${command.path ?? 'not found'}`)
   }

@@ -4,11 +4,13 @@ import type { ExtensionFactory, ToolDefinition } from '@oh-my-pi/pi-coding-agent
 import type { PhiExtensionHost } from '../host'
 import {
   defaultProbeRunner,
+  defaultShellEnvironment,
   formatResult,
   runCheckEnvironment,
   selectedEnvironment,
   type CheckEnvironmentDetails,
-  type ProbeRunner
+  type ProbeRunner,
+  type ShellEnvironment
 } from '../lib/check-environment'
 
 export const CHECK_ENVIRONMENT_TOOL_NAME = 'check_environment'
@@ -115,10 +117,11 @@ function parseInput(
 
 export function createCheckEnvironmentExtension(
   host: PhiExtensionHost,
-  options: { runner?: ProbeRunner; cwd?: string } = {}
+  options: { runner?: ProbeRunner; cwd?: string; shellEnvironment?: ShellEnvironment } = {}
 ): ExtensionFactory {
   const runner = options.runner ?? defaultProbeRunner
   const cwd = options.cwd ?? tmpdir()
+  const shellEnvironment = options.shellEnvironment ?? defaultShellEnvironment
   return (pi) => {
     const definition: ToolDefinition<typeof parameters, CheckEnvironmentDetails> & {
       lenientArgValidation: true
@@ -147,11 +150,13 @@ export function createCheckEnvironmentExtension(
             isError: true
           }
         }
+        const selection = await selectedEnvironment(host, cwd, shellEnvironment)
         const details = await runCheckEnvironment(
           parsed.input,
-          selectedEnvironment(host),
+          selection.environment,
           cwd,
-          runner
+          runner,
+          selection
         )
         return { content: [{ type: 'text', text: formatResult(details) }], details }
       }

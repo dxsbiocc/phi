@@ -46,6 +46,11 @@ test('Phi owns the main system identity while retaining OMP runtime instructions
   assert.match(rendered, /otherwise use Markdown/i)
   assert.match(rendered, /A parent directory alone is not a file list/)
   assert.match(rendered, /delivery card supplements the closing reply/)
+  assert.match(rendered, /In plan review and planning modes `bash` is withheld/)
+  assert.match(
+    rendered,
+    /confirm commands, interpreters and libraries with `check_environment` instead of searching paths outside the project/
+  )
   assert.doesNotMatch(rendered, /assistant for load-bearing changes in Oh My Pi/i)
   assert.ok(rendered.indexOf('Phi') < rendered.indexOf('名字叫星河'))
 })

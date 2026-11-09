@@ -6,12 +6,19 @@ import test from 'node:test'
 
 import {
   createCheckEnvironmentExtension,
+  parseShellEnvironment,
   type CheckEnvironmentDetails,
   type ProbeResult,
   type ProbeRunner,
-  type ProbeRunOptions
+  type ProbeRunOptions,
+  type ShellEnvironment
 } from '../src/main/agent/engine/phi-extension'
 import type { PhiExtensionHost } from '../src/main/agent/engine/phi-extension'
+import {
+  defaultProbeRunner,
+  probePython,
+  resolveCommand
+} from '../src/main/agent/engine/phi-extension/lib/check-environment'
 
 interface ToolResult {
   content: Array<{ type: 'text'; text: string }>
@@ -47,15 +54,23 @@ function host(overrides: Partial<PhiExtensionHost> = {}): PhiExtensionHost {
   }
 }
 
+function hostEnvironmentRecord(extensionHost: PhiExtensionHost): Record<string, string> {
+  const environment: Record<string, string> = {}
+  for (const [name, value] of Object.entries(extensionHost.hostEnvironment())) {
+    if (value !== undefined) environment[name] = value
+  }
+  return environment
+}
+
 async function register(
   extensionHost: PhiExtensionHost,
-  options: { runner?: ProbeRunner; cwd?: string } = {}
+  options: { runner?: ProbeRunner; cwd?: string; shellEnvironment?: ShellEnvironment } = {}
 ): Promise<RegisteredTool> {
   let tool: RegisteredTool | undefined
-  await createCheckEnvironmentExtension(
-    extensionHost,
-    options
-  )({
+  await createCheckEnvironmentExtension(extensionHost, {
+    ...options,
+    shellEnvironment: options.shellEnvironment ?? (async () => hostEnvironmentRecord(extensionHost))
+  })({
     registerTool: (definition: RegisteredTool) => {
       tool = definition
     }
@@ -144,13 +159,100 @@ test('a bound environment PATH wins over the host environment', async () => {
           variables: { PATH: boundDirectory, PHI_BOUND: 'yes' }
         }),
         hostEnvironment: () => ({ PATH: hostDirectory, PHI_HOST: 'no' })
-      })
+      }),
+      {
+        shellEnvironment: async () => {
+          assert.fail('a bound environment must not read the login shell')
+        }
+      }
     )
     const result = await tool.execute('call-1', { commands: ['phi-bound'] })
     assert.deepEqual(result.details?.commands, [{ name: 'phi-bound', path: bound }])
+    assert.equal(result.details?.environmentSource, 'binding')
+    assert.match(text(result), /environment: bound environment binding-1/)
   } finally {
     await rm(hostDirectory, { recursive: true, force: true })
     await rm(boundDirectory, { recursive: true, force: true })
+  }
+})
+
+test('the login shell environment wins over the host environment', async () => {
+  const hostDirectory = await tempDir()
+  const shellDirectory = await tempDir()
+  const shellCommand = await executable(shellDirectory, 'phi-shell')
+  let requestedCwd: string | undefined
+  try {
+    const tool = await register(
+      host({
+        hostEnvironment: () => ({ PATH: hostDirectory, PHI_HOST: 'no' })
+      }),
+      {
+        shellEnvironment: async (cwd) => {
+          requestedCwd = cwd
+          return { PATH: shellDirectory, PHI_SHELL: 'yes' }
+        }
+      }
+    )
+    const result = await tool.execute('call-1', { commands: ['phi-shell'] })
+    assert.equal(requestedCwd, tmpdir())
+    assert.deepEqual(result.details?.commands, [{ name: 'phi-shell', path: shellCommand }])
+    assert.equal(result.details?.environmentSource, 'shell')
+    assert.match(text(result), /environment: login shell/)
+  } finally {
+    await rm(hostDirectory, { recursive: true, force: true })
+    await rm(shellDirectory, { recursive: true, force: true })
+  }
+})
+
+test('a failed login shell read falls back to the process environment', async () => {
+  const directory = await tempDir()
+  const present = await executable(directory, 'phi-present')
+  try {
+    const tool = await register(host({ hostEnvironment: () => ({ PATH: directory }) }), {
+      shellEnvironment: async () => {
+        throw new Error('login shell unavailable')
+      }
+    })
+    const result = await tool.execute('call-1', { commands: ['phi-present'] })
+    assert.deepEqual(result.details?.commands, [{ name: 'phi-present', path: present }])
+    assert.equal(result.details?.environmentSource, 'process')
+    assert.match(
+      text(result),
+      /environment: process \(shell snapshot failed: login shell unavailable\)/
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('env -0 output parses NUL-separated pairs, including "=" and newlines', () => {
+  assert.deepEqual(
+    parseShellEnvironment('PATH=/one:/two\0WEIRD=a=b=c\0MULTILINE=first\nsecond\0EMPTY=\0'),
+    {
+      PATH: '/one:/two',
+      WEIRD: 'a=b=c',
+      MULTILINE: 'first\nsecond',
+      EMPTY: ''
+    }
+  )
+  assert.throws(() => parseShellEnvironment(''), /no NUL separators/)
+  assert.throws(() => parseShellEnvironment('PATH=/one'), /no NUL separators/)
+  assert.throws(() => parseShellEnvironment('NOEQUALS\0'), /unexpected environment entry/)
+})
+
+test('a login shell without PATH falls back to the process environment', async () => {
+  const directory = await tempDir()
+  const present = await executable(directory, 'phi-present')
+  try {
+    const tool = await register(host({ hostEnvironment: () => ({ PATH: directory }) }), {
+      shellEnvironment: async () => ({ HOME: directory })
+    })
+    const result = await tool.execute('call-1', { commands: ['phi-present'] })
+    assert.deepEqual(result.details?.commands, [{ name: 'phi-present', path: present }])
+    assert.equal(result.details?.environmentSource, 'process')
+    assert.match(text(result), /did not report PATH/)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
   }
 })
 
@@ -197,6 +299,7 @@ test('python and R probes use the stub runner and parse its output', async () =>
     assert.equal(pythonCall.args[0], '-c')
     assert.match(String(pythonCall.args[1]), /del sys\.path\[0\]/)
     assert.match(String(pythonCall.args[1]), /importlib\.util\.find_spec/)
+    assert.match(String(pythonCall.args[1]), /packages_distributions/)
     assert.match(String(pythonCall.args[1]), /importlib\.metadata\.version/)
     assert.deepEqual(pythonCall.args.slice(2), ['numpy', 'statsmodels'])
     assert.equal(pythonCall.options.shell, false)
@@ -303,4 +406,17 @@ test('probe timeouts and bad output become readable per-section messages', async
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
+})
+
+test('the real Python probe reports a stdlib module when python3 exists', async (t) => {
+  const python = await resolveCommand('python3', process.env.PATH)
+  if (!python) {
+    t.skip('python3 is not installed')
+    return
+  }
+  const result = await probePython(python, ['json'], process.env, process.cwd(), defaultProbeRunner)
+  assert.equal(result.checked, true)
+  assert.equal(result.modules[0]?.name, 'json')
+  assert.equal(result.modules[0]?.found, true)
+  assert.ok(result.modules[0]?.version == null || typeof result.modules[0].version === 'string')
 })
