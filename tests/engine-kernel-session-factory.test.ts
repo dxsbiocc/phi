@@ -15,7 +15,8 @@ import {
   createPhiSession,
   deletePhiSession,
   findPhiSessionById,
-  forkPhiSession
+  forkPhiSession,
+  recordKernelRuntimeReference
 } from '../src/main/agent/session/session-store'
 
 import { FakeKernelClient, legacyEngine, params } from './helpers/kernelSessionFactoryFake'
@@ -626,7 +627,7 @@ test('a moved local agent directory without the kernel session surfaces an error
       phiSessionId: phi.sessionId,
       sessionManager: { kind: 'open', cwd: '/project', path: `phi-session:${phi.sessionId}` }
     }),
-    /kernel_history_missing|history was not found/i
+    /history was not found[\s\S]*\[reason:kernel_history_missing\]/i
   )
   assert.equal(
     secondClient.requests.filter((request) => request.method === 'session.create').length,
@@ -642,6 +643,117 @@ test('a moved local agent directory without the kernel session surfaces an error
     kernelSessionId: 'kernel-1',
     host: { kind: 'local', agentDir: '/agent' }
   })
+})
+
+function movedLocalForkFactory(client: FakeKernelClient, launches: string[]): KernelSessionFactory {
+  return new KernelSessionFactory({
+    localAgentDir: () => '/moved-agent',
+    launchLocal: async (launchParams) => {
+      launches.push(launchParams.agentDir)
+      return {
+        client,
+        greeting: {
+          protocol: { major: 1, minor: 1 },
+          kernel: { version: 'test', ompVersion: 'test' },
+          kernelInstanceId: 'moved-kernel-instance',
+          controllerGeneration: 1,
+          capabilities: [],
+          lastSeq: 0,
+          runtime: { home: '/home/test', agentDir: '/moved-agent' }
+        },
+        close: async () => undefined
+      }
+    }
+  })
+}
+
+function recordMovedLocalKernelSession(phiSessionId: string): void {
+  recordKernelRuntimeReference(phiSessionId, {
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId: 'kernel-source',
+    host: { kind: 'local', agentDir: '/agent' }
+  })
+}
+
+test('a moved local agent directory forks from the recorded kernel session on the current host', async (t) => {
+  const phi = createPhiSession({
+    kind: 'ordinary',
+    cwd: '/project',
+    cwdRealPath: '/project',
+    permissionMode: 'auto',
+    model: { providerId: 'test', modelId: 'model' }
+  })
+  t.after(() => deletePhiSession(phi.sessionId))
+  recordMovedLocalKernelSession(phi.sessionId)
+  const client = new FakeKernelClient()
+  client.localAgentDir = '/moved-agent'
+  const launches: string[] = []
+  const factory = movedLocalForkFactory(client, launches)
+  const engine = new SessionRoutingEngine(legacyEngine(), () => factory)
+
+  const result = await engine.history.fork({
+    path: `phi-session:${phi.sessionId}`,
+    cwd: '/project',
+    userMessages: ['first', 'second'],
+    selectedIndex: 0
+  })
+
+  assert.deepEqual(launches, ['/moved-agent'])
+  assert.deepEqual(
+    client.requests.filter((request) => request.method === 'session.fork'),
+    [
+      {
+        method: 'session.fork',
+        params: { cut: { userMessages: ['first', 'second'], selectedIndex: 0 } },
+        context: { sessionId: 'kernel-source' }
+      }
+    ]
+  )
+  assert.deepEqual(result.kernelRuntimeRef, {
+    kind: 'phi-kernel',
+    version: 1,
+    kernelSessionId: 'kernel-1',
+    host: { kind: 'local', agentDir: '/moved-agent' }
+  })
+  assert.equal(result.path, '/moved-agent/phi-kernel/sessions/kernel-1/journal.jsonl')
+})
+
+test('discarding a fork after a local agent directory move closes it on the current host', async (t) => {
+  const phi = createPhiSession({
+    kind: 'ordinary',
+    cwd: '/project',
+    cwdRealPath: '/project',
+    permissionMode: 'auto',
+    model: { providerId: 'test', modelId: 'model' }
+  })
+  t.after(() => deletePhiSession(phi.sessionId))
+  recordMovedLocalKernelSession(phi.sessionId)
+  const client = new FakeKernelClient()
+  client.localAgentDir = '/moved-agent'
+  const launches: string[] = []
+  const factory = movedLocalForkFactory(client, launches)
+  const engine = new SessionRoutingEngine(legacyEngine(), () => factory)
+
+  const result = await engine.history.fork({
+    path: `phi-session:${phi.sessionId}`,
+    cwd: '/project',
+    userMessages: ['first'],
+    selectedIndex: 0
+  })
+  await engine.history.discardFork?.(result)
+
+  assert.deepEqual(launches, ['/moved-agent'])
+  assert.deepEqual(
+    client.requests.filter((request) => request.method === 'session.close'),
+    [
+      {
+        method: 'session.close',
+        params: {},
+        context: { sessionId: 'kernel-1' }
+      }
+    ]
+  )
 })
 
 test('SessionRoutingEngine forks an attached remote kernel session on its server', async (t) => {

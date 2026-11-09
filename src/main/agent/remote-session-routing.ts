@@ -9,6 +9,7 @@ import type { RemoteStartupDiagnosticSink } from './engine/rpc/remote-startup-di
 import { resolveRemoteWorkspaceHostBinding } from './remote-workspace-boundary'
 import { openRemoteRuntimeWorkspace } from './remote-runtime/workspace'
 import { createAppKernelSessionLaunchers } from './app-kernel-session-launchers'
+import { getPhiAgentDir } from './runtime-paths'
 
 export interface AppRemoteDesktopResources {
   readonly desktopMcp?: DesktopMcpAdapter
@@ -67,6 +68,7 @@ export function installAppRemoteSessionRouting(
   const removeKernel = installKernelSessionRouting({
     launchLocal: kernelInstall.launchLocal,
     launchRemote: kernelInstall.launchRemote,
+    localAgentDir: getPhiAgentDir,
     hostCapabilities: kernelInstall.hostCapabilities,
     configureClient: kernelInstall.configureClient,
     ...(options.onPlanRunFinished ? { onPlanRunFinished: options.onPlanRunFinished } : {}),

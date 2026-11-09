@@ -71,6 +71,8 @@ export type KernelSessionLauncher = (
 export interface KernelSessionFactoryOptions {
   readonly launchLocal?: KernelSessionLauncher
   readonly launchRemote?: KernelSessionLauncher
+  /** The app's current local agent directory; manifests may still record a moved one. */
+  readonly localAgentDir?: () => string
   readonly onDiagnostic?: (error: Error) => void
   /** A kernel plan finished; the desktop persists its card and wakes the conversation. */
   readonly onPlanRunFinished?: (phiSessionId: string, event: PlanRunFinishedEvent) => void

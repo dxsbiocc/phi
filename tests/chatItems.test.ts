@@ -896,6 +896,44 @@ test('chatItemsFromSessionMessages deduplicates equivalent run failure errors', 
   assert.equal(items.filter((item) => item.role === 'run').length, 2)
 })
 
+test('moved data-directory kernel history failures are localized on the timeline path', () => {
+  setUiLanguage('en')
+  try {
+    const history = chatItemsFromSessionMessages([
+      {
+        source: 'phi',
+        type: 'run_failed',
+        eventId: 'event-history-missing',
+        runId: 'run-1',
+        errorMessage:
+          "[PHI_KERNEL:CAPABILITY_UNAVAILABLE] The conversation's kernel history was not found in the current data directory (it was recorded under /old/path). The requested session was not found. [reason:kernel_history_missing] [recorded:%2Fold%2Fpath]"
+      }
+    ])
+    const historyItem = history[0]
+    assert.ok(historyItem?.role === 'error')
+    assert.equal(
+      historyItem.content,
+      "This conversation's history was not found in the current data directory. It was recorded under /old/path."
+    )
+
+    const raw = '[PHI_KERNEL:CAPABILITY_UNAVAILABLE] The requested session was not found.'
+    const unrelated = chatItemsFromSessionMessages([
+      {
+        source: 'phi',
+        type: 'run_failed',
+        eventId: 'event-unrelated',
+        runId: 'run-2',
+        errorMessage: raw
+      }
+    ])
+    const unrelatedItem = unrelated[0]
+    assert.ok(unrelatedItem?.role === 'error')
+    assert.equal(unrelatedItem.content, raw)
+  } finally {
+    setUiLanguage('zh-CN')
+  }
+})
+
 test('chatItemsFromSessionMessages keeps equivalent errors from different runs', () => {
   const items = chatItemsFromSessionMessages([
     {

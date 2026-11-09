@@ -1,3 +1,4 @@
+import { getPhiAgentDir } from '../runtime-paths'
 import { listUnfinishedPlanRuns } from './persistence/plan-run-store'
 
 /**
@@ -9,12 +10,14 @@ import { listUnfinishedPlanRuns } from './persistence/plan-run-store'
 
 interface PlanSessionRuntimeRef {
   kernelSessionId: string
-  host: { kind: string; agentDir?: string }
+  host: { kind: string }
 }
 
 export interface PlanSessionLoaderDeps {
   currentPhiSessionId(): string | null | undefined
   kernelRuntimeRef(phiSessionId: string): PlanSessionRuntimeRef | null | undefined
+  /** Local plan runs live under the current data directory, never the recorded one. */
+  currentAgentDir(): string
   unfinishedPlanRunCount(kernelSessionId: string, agentDir: string): number
   /** Creates the open conversation's runtime the same way its next prompt would. */
   loadCurrentSession(): Promise<void>
@@ -28,8 +31,8 @@ export function createPlanSessionLoader(
     if (deps.currentPhiSessionId() !== phiSessionId) return false
     const ref = deps.kernelRuntimeRef(phiSessionId)
     // Remote kernels keep plan runs on the server; loading them here would open SSH.
-    if (!ref || ref.host.kind !== 'local' || !ref.host.agentDir) return false
-    if (deps.unfinishedPlanRunCount(ref.kernelSessionId, ref.host.agentDir) === 0) return false
+    if (!ref || ref.host.kind !== 'local') return false
+    if (deps.unfinishedPlanRunCount(ref.kernelSessionId, deps.currentAgentDir()) === 0) return false
     await deps.loadCurrentSession()
     return true
   }
@@ -44,10 +47,13 @@ export function createPlanSessionLoader(
 
 /** The loader over the on-disk plan-run store. */
 export function createLocalPlanSessionLoader(
-  deps: Omit<PlanSessionLoaderDeps, 'unfinishedPlanRunCount'>
+  deps: Omit<PlanSessionLoaderDeps, 'unfinishedPlanRunCount' | 'currentAgentDir'> & {
+    currentAgentDir?: PlanSessionLoaderDeps['currentAgentDir']
+  }
 ): (phiSessionId: string) => Promise<boolean> {
   return createPlanSessionLoader({
     ...deps,
+    currentAgentDir: deps.currentAgentDir ?? getPhiAgentDir,
     unfinishedPlanRunCount: (id, agentDir) => listUnfinishedPlanRuns(id, agentDir).length
   })
 }

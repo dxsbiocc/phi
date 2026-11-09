@@ -14,6 +14,7 @@ function harness(
     current?: string
     ref?: unknown
     unfinished?: number
+    currentAgentDir?: string
   } = {}
 ): { load: (id: string) => Promise<boolean>; loads: string[]; lookups: string[] } {
   const loads: string[] = []
@@ -23,6 +24,7 @@ function harness(
     kernelRuntimeRef: (id) =>
       (id === 'phi-1' ? (overrides.ref === undefined ? localRef : overrides.ref) : undefined) as
         typeof localRef | undefined,
+    currentAgentDir: () => overrides.currentAgentDir ?? '/current-agent',
     unfinishedPlanRunCount: (kernelSessionId, agentDir) => {
       lookups.push(`${kernelSessionId}@${agentDir}`)
       return overrides.unfinished ?? 1
@@ -38,7 +40,26 @@ test('an open conversation with an unfinished local plan loads its kernel sessio
   const { load, loads, lookups } = harness()
   assert.equal(await load('phi-1'), true)
   assert.deepEqual(loads, ['load'])
-  assert.deepEqual(lookups, ['kernel-1@/agent'])
+  assert.deepEqual(lookups, ['kernel-1@/current-agent'])
+})
+
+test('a moved recorded agent directory counts plan runs in the current agent directory', async () => {
+  const { load, loads, lookups } = harness({
+    ref: { ...localRef, host: { kind: 'local', agentDir: '/recorded-old-agent' } },
+    currentAgentDir: '/current-new-agent'
+  })
+  assert.equal(await load('phi-1'), true)
+  assert.deepEqual(loads, ['load'])
+  assert.deepEqual(lookups, ['kernel-1@/current-new-agent'])
+})
+
+test('a local ref without a recorded agent directory still looks in the current one', async () => {
+  const { load, lookups } = harness({
+    ref: { ...localRef, host: { kind: 'local' } },
+    currentAgentDir: '/current-new-agent'
+  })
+  assert.equal(await load('phi-1'), true)
+  assert.deepEqual(lookups, ['kernel-1@/current-new-agent'])
 })
 
 test('no load without an unfinished plan, for another conversation, or for remote hosts', async () => {

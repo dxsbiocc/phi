@@ -104,6 +104,34 @@ const remoteModelUnavailableCopy = defineCopy(
   }
 )
 
+const historyMissingCopy = defineCopy(
+  {
+    message: (recordedUnder: string) =>
+      `This conversation's history was not found in the current data directory. It was recorded under ${recordedUnder}.`
+  },
+  {
+    message: (recordedUnder: string) =>
+      `在当前数据目录中找不到这段对话的历史记录（原记录位于 ${recordedUnder}）。`
+  }
+)
+
+// The main process appends this machine token because IPC carries only the error message.
+const historyMissingMarker = /\[reason:kernel_history_missing\](?: \[recorded:([^\]\s]+)\])?/u
+
+/** Dedicated copy for a local kernel history recorded under a different data directory. */
+export function localizeKernelHistoryMissingMessage(message: string): string | undefined {
+  const match = historyMissingMarker.exec(message)
+  const encodedRecordedUnder = match?.[1]
+  if (!encodedRecordedUnder) return undefined
+  let recordedUnder: string
+  try {
+    recordedUnder = decodeURIComponent(encodedRecordedUnder)
+  } catch {
+    return undefined
+  }
+  return historyMissingCopy.message(recordedUnder)
+}
+
 export function kernelErrorPresentationFromCode(
   code: unknown
 ): KernelErrorPresentation | undefined {
@@ -124,9 +152,11 @@ export function kernelErrorPresentation(error: unknown): KernelErrorPresentation
 }
 
 export function localizeKernelError(error: unknown): unknown {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  const historyMissing = localizeKernelHistoryMissingMessage(message)
+  if (historyMissing) return new Error(historyMissing)
   const presentation = kernelErrorPresentation(error)
   if (presentation) return new Error(`${presentation.message} ${presentation.actionLabel}`)
-  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
   return message.endsWith(remoteModelUnavailableDetail)
     ? new Error(remoteModelUnavailableCopy.message)
     : error

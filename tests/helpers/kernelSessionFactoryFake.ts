@@ -38,6 +38,8 @@ export class FakeKernelClient implements KernelSessionClient {
   asyncCreate = false
   approvalResponseError?: ConstructorParameters<typeof KernelClientError>[0]
   snapshotModel: JsonValue | undefined = { provider: 'test', id: 'model' }
+  /** The agent directory this kernel considers its own; fork/create journals live beneath it. */
+  localAgentDir = '/agent'
 
   request(
     method: string,
@@ -51,7 +53,9 @@ export class FakeKernelClient implements KernelSessionClient {
         sessionId,
         ...((params as { sessionManager?: { kind?: unknown } }).sessionManager?.kind ===
         'persistent'
-          ? { sessionFile: `/agent/phi-kernel/sessions/${sessionId}/journal.jsonl` }
+          ? {
+              sessionFile: `${this.localAgentDir}/phi-kernel/sessions/${sessionId}/journal.jsonl`
+            }
           : {})
       }
       if (this.asyncCreate) {
@@ -78,7 +82,7 @@ export class FakeKernelClient implements KernelSessionClient {
       const sessionId = `kernel-${++this.nextSession}`
       return Promise.resolve(this.onFork?.(sessionId)).then(() => ({
         sessionId,
-        sessionFile: `/agent/phi-kernel/sessions/${sessionId}/journal.jsonl`
+        sessionFile: `${this.localAgentDir}/phi-kernel/sessions/${sessionId}/journal.jsonl`
       }))
     }
     if (method === 'session.snapshot') {

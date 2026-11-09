@@ -357,20 +357,16 @@ export function deleteSession(path: string): void {
     if (manifest?.runtimeSessionPath && existsSync(manifest.runtimeSessionPath)) {
       unlinkSync(manifest.runtimeSessionPath)
     }
-    // Only this app's agent directory holds kernel sessions it may delete.
-    if (
-      manifest?.kernelRuntimeRef?.host.kind === 'local' &&
-      manifest.kernelRuntimeRef.host.agentDir === getPhiAgentDir()
-    ) {
-      rmSync(
-        join(
-          manifest.kernelRuntimeRef.host.agentDir,
-          'phi-kernel',
-          'sessions',
-          manifest.kernelRuntimeRef.kernelSessionId
-        ),
-        { recursive: true, force: true }
-      )
+    // Current local kernel history belongs to the current agent directory. The recorded
+    // agentDir may be stale after a moved data directory and must never be deleted.
+    if (manifest?.kernelRuntimeRef?.host.kind === 'local') {
+      const kernelSessionId = manifest.kernelRuntimeRef.kernelSessionId
+      if (/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(kernelSessionId)) {
+        rmSync(join(getPhiAgentDir(), 'phi-kernel', 'sessions', kernelSessionId), {
+          recursive: true,
+          force: true
+        })
+      }
     }
     remoteWorkspaceHosts.releaseSession(phiSessionId)
     deletePhiSession(phiSessionId)

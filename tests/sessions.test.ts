@@ -654,6 +654,49 @@ test('a session on the local kernel is deleted locally, kernel history included'
   })
 })
 
+test('a moved local kernel session is deleted from the current agent directory only', () => {
+  withPhiDir(() => {
+    const currentAgentDir = realpathSync(process.env.PI_CODING_AGENT_DIR!)
+    process.env.PI_CODING_AGENT_DIR = currentAgentDir
+    const recordedAgentDir = realpathSync(mkdtempSync(join(tmpdir(), 'phi-recorded-agent-')))
+    try {
+      const session = createPhiSession({
+        kind: 'ordinary',
+        cwd: '/workspace',
+        cwdRealPath: '/workspace',
+        permissionMode: 'ask'
+      })
+      recordKernelRuntimeReference(session.sessionId, {
+        kind: 'phi-kernel',
+        version: 1,
+        kernelSessionId: 'kernel-session-moved',
+        host: { kind: 'local', agentDir: recordedAgentDir }
+      })
+      const currentKernel = join(currentAgentDir, 'phi-kernel', 'sessions', 'kernel-session-moved')
+      const recordedKernel = join(
+        recordedAgentDir,
+        'phi-kernel',
+        'sessions',
+        'kernel-session-moved'
+      )
+      const siblingKernel = join(currentAgentDir, 'phi-kernel', 'sessions', 'kernel-other')
+      for (const directory of [currentKernel, recordedKernel, siblingKernel]) {
+        mkdirSync(directory, { recursive: true })
+        writeFileSync(join(directory, 'journal.jsonl'), '{}\n')
+      }
+
+      deleteSession(phiOnlySessionPath(session.sessionId))
+
+      assert.equal(findPhiSessionById(session.sessionId), null)
+      assert.equal(existsSync(currentKernel), false)
+      assert.equal(existsSync(recordedKernel), true)
+      assert.equal(existsSync(siblingKernel), true)
+    } finally {
+      rmSync(recordedAgentDir, { recursive: true, force: true })
+    }
+  })
+})
+
 test('legacy SSH-project desktop SDK history keeps local listing and deletion behavior', () => {
   withPhiDir(() => {
     const session = createPhiSession({
