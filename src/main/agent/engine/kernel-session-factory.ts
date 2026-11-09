@@ -252,7 +252,26 @@ export class KernelSessionFactory implements RoutedSessionFactory {
     const manifest = findPhiSessionById(phiSessionId)
     const reference = manifest?.kernelRuntimeRef
     if (!manifest || !reference) return undefined
-    return { phiSessionId, manifest, reference }
+    return {
+      phiSessionId,
+      manifest,
+      reference: this.currentLocalReference(phiSessionId, reference)
+    }
+  }
+
+  /**
+   * A moved local data directory keeps its kernel sessions under the current agent directory,
+   * so a fork must address that host rather than the one the manifest recorded.
+   */
+  private currentLocalReference(
+    phiSessionId: string,
+    reference: KernelRuntimeRef
+  ): KernelRuntimeRef {
+    if (reference.host.kind !== 'local') return reference
+    const binding = this.bindingForPhiSession(phiSessionId, reference.kernelSessionId)
+    const agentDir =
+      binding?.params.agentDir ?? this.options.localAgentDir?.() ?? reference.host.agentDir
+    return { ...reference, host: { kind: 'local', agentDir } }
   }
 
   async discardHistoryFork(result: PhiHistoryForkResult): Promise<boolean> {
@@ -269,13 +288,17 @@ export class KernelSessionFactory implements RoutedSessionFactory {
       return true
     }
     if (!reference || reference.host.kind !== 'local') return false
-    if (
-      kernelSessionIdFromJournalPath(result.path, reference.host.agentDir) !==
-      reference.kernelSessionId
-    ) {
+    const recordedDir = reference.host.agentDir
+    const currentDir = this.options.localAgentDir?.() ?? recordedDir
+    // The fork result already carries the current directory; tolerate a stale recorded one.
+    const agentDir =
+      kernelSessionIdFromJournalPath(result.path, currentDir) === reference.kernelSessionId
+        ? currentDir
+        : recordedDir
+    if (kernelSessionIdFromJournalPath(result.path, agentDir) !== reference.kernelSessionId) {
       return false
     }
-    const host = this.hosts.get(`local:${reference.host.agentDir}`)
+    const host = this.hosts.get(`local:${agentDir}`)
     await host
       ?.currentConnection()
       ?.client.request('session.close', {}, { sessionId: reference.kernelSessionId })
