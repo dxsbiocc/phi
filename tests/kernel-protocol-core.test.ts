@@ -497,6 +497,45 @@ test('an unavailable capability keeps its cause and reason in the log, not on th
   assert.equal(errors[0]?.reason, 'session_binding_unavailable')
 })
 
+test('an over-limit response logs the encode failure without the payload', async () => {
+  const transport = new MemoryTransport()
+  const errors: Array<{
+    message: string
+    details?: Readonly<Record<string, JsonValue>>
+  }> = []
+  const payload = 'x'.repeat(MAX_FRAME_BYTES + 1024)
+  const core = new KernelProtocolCore({
+    kernelVersion: '1.2.3-test',
+    ompVersion: '18.10.3-test',
+    handlers: {
+      'session.snapshot': (_params, _context, frame) => ({
+        sessionId: frame.sessionId ?? 'missing',
+        cwd: '/tmp/phi-kernel-test',
+        messages: [{ role: 'assistant', content: [{ type: 'text', text: payload }] }]
+      })
+    },
+    log: {
+      error: (message, details) => errors.push({ message, ...(details ? { details } : {}) })
+    }
+  })
+  core.attachTransport(transport, { trusted: true })
+  const generation = generationFrom(await hello(transport))
+
+  const response = await sendRequest(
+    transport,
+    request('oversized', 'session.snapshot', generation, {}, { sessionId: 'session-1' })
+  )
+
+  assert.equal(responseError(response).code, 'INTERNAL')
+  assert.equal(responseError(response).message, 'Kernel produced an invalid response.')
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0]?.message, 'Kernel response could not be encoded.')
+  assert.equal(errors[0]?.details?.method, 'session.snapshot')
+  assert.equal(errors[0]?.details?.code, 'FRAME_TOO_LARGE')
+  assert.ok((errors[0]?.details?.message as string).includes('Frame exceeds'))
+  assert.equal(JSON.stringify(errors[0]?.details).includes('xxxxxxxx'), false)
+})
+
 test('a pending handler does not block later requests on the same connection', async () => {
   const createResult = deferred<JsonValue>()
   const transport = new MemoryTransport()

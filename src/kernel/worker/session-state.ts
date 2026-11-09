@@ -3,6 +3,7 @@ import type { SessionCreateParams } from '../../shared/kernel-protocol'
 import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { makeProtocolError } from '../protocol/errors'
+import { SNAPSHOT_MESSAGE_BUDGET_BYTES, boundSnapshotMessages } from './session-snapshot-budget'
 
 const thinkingLevels = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 
@@ -45,7 +46,9 @@ export function projectSessionState(
 ): JsonValue {
   const state = record(value) ?? {}
   const model = record(state.model)
-  const messages = Array.isArray(state.messages) ? (state.messages as JsonValue[]) : []
+  const messages = Array.isArray(state.messages)
+    ? boundSnapshotMessages(state.messages as JsonValue[], SNAPSHOT_MESSAGE_BUDGET_BYTES)
+    : []
   const cwd = typeof state.cwd === 'string' && state.cwd ? state.cwd : undefined
   if (!cwd) throw new TypeError('Worker session state omitted cwd')
   return {

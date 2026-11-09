@@ -16,6 +16,7 @@ import {
   type KernelResponseFrame,
   type ProtocolError
 } from '../../shared/kernel-protocol'
+import { ProtocolEncodeError } from '../../shared/kernel-protocol/errors'
 import {
   KernelApprovalTracker,
   approvalCancellationPayload,
@@ -507,7 +508,7 @@ export class KernelProtocolCore {
     if (method === 'session.close' && request.sessionId) {
       this.cancelSessionInteractions(request.sessionId, 'session closed')
     }
-    this.sendSuccess(state, request.id, parsedResult.data as JsonValue)
+    this.sendSuccess(state, request.id, parsedResult.data as JsonValue, method)
   }
 
   private handleHello(state: ConnectionState, request: KernelRequestFrame): void {
@@ -566,18 +567,23 @@ export class KernelProtocolCore {
       (method): method is KernelBusinessMethod =>
         method !== 'kernel.hello' && typeof this.handlers[method] === 'function'
     )
-    this.sendSuccess(state, request.id, {
-      protocol: {
-        major: PHI_KERNEL_PROTOCOL_VERSION.major,
-        minor: Math.min(params.protocol.minor, PHI_KERNEL_PROTOCOL_VERSION.minor)
+    this.sendSuccess(
+      state,
+      request.id,
+      {
+        protocol: {
+          major: PHI_KERNEL_PROTOCOL_VERSION.major,
+          minor: Math.min(params.protocol.minor, PHI_KERNEL_PROTOCOL_VERSION.minor)
+        },
+        kernel: { version: this.options.kernelVersion, ompVersion: this.options.ompVersion },
+        kernelInstanceId: this.kernelInstanceId,
+        controllerGeneration: this.controllerGeneration,
+        capabilities,
+        lastSeq: this.lastSeq,
+        runtime: this.options.runtimeIdentity ?? { home: '', agentDir: '' }
       },
-      kernel: { version: this.options.kernelVersion, ompVersion: this.options.ompVersion },
-      kernelInstanceId: this.kernelInstanceId,
-      controllerGeneration: this.controllerGeneration,
-      capabilities,
-      lastSeq: this.lastSeq,
-      runtime: this.options.runtimeIdentity ?? { home: '', agentDir: '' }
-    })
+      'kernel.hello'
+    )
     if (this.disconnectPolicy === 'wait-for-reconnect') {
       this.hostRequests.resume({
         connection: state,
@@ -618,7 +624,7 @@ export class KernelProtocolCore {
     }
 
     const lastSeq = this.lastSeq
-    this.sendSuccess(state, request.id, { subscribed: true, lastSeq })
+    this.sendSuccess(state, request.id, { subscribed: true, lastSeq }, 'events.subscribe')
     for (const event of this.replay) {
       if (event.seq > afterSeq && event.seq <= lastSeq) {
         this.sendEncoded(state, encodeFrame(event))
@@ -676,7 +682,7 @@ export class KernelProtocolCore {
       }
 
       this.activeRuns.set(sessionId, { phase: 'running', runId: result.runId })
-      this.sendSuccess(state, request.id, { accepted: true, runId: result.runId })
+      this.sendSuccess(state, request.id, { accepted: true, runId: result.runId }, 'session.prompt')
       void Promise.resolve(result.completion).then(
         (completion) => {
           const status = typeof completion === 'string' ? completion : completion.status
@@ -992,11 +998,24 @@ export class KernelProtocolCore {
     }
   }
 
-  private sendSuccess(state: ConnectionState, id: string, result: JsonValue): void {
+  private sendSuccess(
+    state: ConnectionState,
+    id: string,
+    result: JsonValue,
+    method?: string
+  ): void {
     const response: KernelResponseFrame = { kind: 'response', id, ok: true, result }
     try {
       this.sendEncoded(state, encodeFrame(response))
-    } catch {
+    } catch (error) {
+      const encodeError = error instanceof ProtocolEncodeError ? error : undefined
+      const message =
+        encodeError?.message ?? (error instanceof Error ? error.message : String(error))
+      this.log.error?.('Kernel response could not be encoded.', {
+        ...(method ? { method } : {}),
+        code: encodeError?.code ?? 'UNKNOWN',
+        message: message.slice(0, 1024)
+      })
       this.sendError(
         state,
         id,
