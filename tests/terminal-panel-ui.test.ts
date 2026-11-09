@@ -25,6 +25,7 @@ import { TerminalTitleBar } from '../src/renderer/src/features/terminal/componen
 import type { TerminalDraftState } from '../src/renderer/src/features/terminal/hooks/useTerminalDraft'
 import { useTerminalWorkspaceRestoration } from '../src/renderer/src/features/terminal/hooks/useTerminalWorkspaceRestoration'
 import { disposeTerminalController } from '../src/renderer/src/features/terminal/lib/terminalController'
+import { terminalUi } from '../src/renderer/src/features/terminal/lib/terminalUi'
 import {
   EMPTY_TERMINAL_LINE_INPUT,
   isTerminalLineDirty,
@@ -136,7 +137,7 @@ test('terminal title bar matches the compact single-terminal control surface', (
   const markup = titleBarMarkup()
 
   assert.match(markup, /data-phi-terminal-title-bar="true"/)
-  assert.match(markup, />Terminal</)
+  assert.match(markup, />终端</)
   assert.doesNotMatch(markup, /aria-label="选择终端"/)
   assert.match(markup, /aria-label="新建终端"/)
   assert.match(markup, /aria-label="更多终端操作"/)
@@ -151,6 +152,24 @@ test('terminal title bar matches the compact single-terminal control surface', (
   for (const label of ['新建终端', '更多终端操作', '工作台槽操作']) {
     assert.equal(markup.match(new RegExp(`aria-label="${label}"`, 'gu'))?.length, 1)
   }
+})
+
+test('terminal title copy is localized without renaming terminal instances', () => {
+  assert.equal(terminalUi.terminalTitle, '终端')
+  const chinese = titleBarMarkup()
+  assert.match(chinese, />终端</)
+  assert.doesNotMatch(chinese, />Terminal</)
+
+  setUiLanguage('en')
+  try {
+    assert.equal(terminalUi.terminalTitle, 'Terminal')
+    assert.match(titleBarMarkup(), />Terminal</)
+  } finally {
+    setUiLanguage('zh-CN')
+  }
+
+  // Instance titles such as "Terminal 1" remain data identifiers in both languages.
+  assert.equal(terminal().title, 'Terminal 1')
 })
 
 test('terminal title bar uses the shared height without an extra divider', () => {

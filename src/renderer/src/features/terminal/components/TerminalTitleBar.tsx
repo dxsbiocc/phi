@@ -180,7 +180,9 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
             variant="subtitle2"
             sx={{ ...workspacePanelText.heading, px: 0.5 }}
           >
-            {activeTerminal?.host === 'ssh' ? terminalDisplayTitle(activeTerminal) : 'Terminal'}
+            {activeTerminal?.host === 'ssh'
+              ? terminalDisplayTitle(activeTerminal)
+              : terminalUi.terminalTitle}
           </Typography>
         )}
       </Box>

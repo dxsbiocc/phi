@@ -541,6 +541,18 @@ test('hidden controller drains 10k events and never ACKs more than xterm accepte
   controller.dispose()
 })
 
+test('terminal creation preserves selections on right-click', async () => {
+  const bridge = new FakeBridge()
+  const existing = snapshot('terminal-alpha')
+  bridge.listResults.set('alpha', [existing])
+  bridge.attachResults.set(existing.terminalId, [attachment(existing, 1)])
+  const { controller } = harness(bridge)
+  await controller.ensureWorkspace(project('alpha'))
+
+  assert.equal(FakeTerminal.instances[0].options.rightClickSelectsWord, false)
+  controller.dispose()
+})
+
 test('theme updates avoid reassigning constructor-only xterm options', async () => {
   const bridge = new FakeBridge()
   const existing = snapshot('terminal-alpha')

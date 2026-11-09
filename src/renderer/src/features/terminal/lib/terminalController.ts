@@ -295,6 +295,8 @@ class RendererTerminalController implements TerminalController {
       fontFamily: TERMINAL_FONT_FAMILY,
       fontSize: 13,
       lineHeight: 1.25,
+      // macOS defaults this to true, which replaces the user's selection on right-click.
+      rightClickSelectsWord: false,
       scrollback: 5_000,
       theme: createTerminalTheme('dark')
     })
