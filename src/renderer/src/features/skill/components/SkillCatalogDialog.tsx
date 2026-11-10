@@ -1,6 +1,6 @@
 import { useUiLanguage } from '../../../lib/i18n'
 import { skillCopy } from '../lib/skillCopy'
-import { resourceUi, resourceSourceLabel } from '../../../lib/resourceUi'
+import { resourceUi, resourceSourceLabel, websiteSourceLabel } from '../../../lib/resourceUi'
 import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import { Alert, Button, CircularProgress, Dialog, Stack, Typography } from '@mui/material'
 import type {
@@ -330,7 +330,7 @@ export function SkillCatalogDialog({
       icon: <ResourceIcon icon={entry?.icon} kind="skill" sx={{ color: 'primary.main' }} />,
       title: item.title,
       summary: item.description ?? '',
-      metadata: item.source,
+      metadata: websiteSourceLabel(item.source),
       details: `v${item.version} · ${item.sizeLabel ?? formatPackageSize(item.sizeBytes ?? 0)}`,
       action: renderAction(item.id, item.title, entry)
     }

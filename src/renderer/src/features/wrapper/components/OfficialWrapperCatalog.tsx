@@ -24,6 +24,7 @@ import { CatalogResultsTable } from '../../../components/catalog/CatalogResultsT
 import { CATALOG_DEFAULT_PAGE_SIZE } from '../../../components/catalog/catalogPaging'
 import { PhiIcons } from '../../../icons'
 import { useUiLanguage } from '../../../lib/i18n'
+import { websiteSourceLabel } from '../../../lib/resourceUi'
 import {
   loadOfficialWrapperDetail,
   loadOfficialWrapperGroups,
@@ -253,7 +254,7 @@ export function OfficialWrapperSuiteView({
                   ),
                   title: tool.name,
                   summary: tool.summary ?? '',
-                  metadata: tool.source,
+                  metadata: websiteSourceLabel(tool.source),
                   details: `${tool.categoryLabel} · v${tool.version}`,
                   action: renderAction(choice)
                 }))}

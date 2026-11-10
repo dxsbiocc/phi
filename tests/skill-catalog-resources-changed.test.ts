@@ -405,10 +405,12 @@ test('skill browsing uses website groups in API order and sends group, search an
   )
   const tree = dialog.read()
   assert.deepEqual(view(tree, 'Browse').props.groups, officialGroups.items)
-  assert.equal(
-    (view(tree, 'Results').props.rows as Array<{ title: string }>)[0].title,
-    'Website workflow-01'
-  )
+  const [websiteRow] = view(tree, 'Results').props.rows as Array<{
+    title: string
+    metadata: string
+  }>
+  assert.equal(websiteRow.title, 'Website workflow-01')
+  assert.equal(websiteRow.metadata, 'Phi Website')
   assert.equal(view(tree, 'Pagination').props.count, 27)
   dialog.unmount()
 })
@@ -440,8 +442,13 @@ test('an unavailable website skill catalog falls back to one quiet flat registry
     { id: 'all', label: 'All Skills', count: 2 }
   ])
   assert.deepEqual(
-    (view(tree, 'Results').props.rows as Array<{ title: string }>).map(({ title }) => title),
-    ['Science 01', 'Science 02']
+    (view(tree, 'Results').props.rows as Array<{ title: string; metadata: string }>).map(
+      ({ title, metadata }) => ({ title, metadata })
+    ),
+    [
+      { title: 'Science 01', metadata: 'Phi Packages' },
+      { title: 'Science 02', metadata: 'Phi Packages' }
+    ]
   )
   assert.equal(
     view(tree, 'Alert').props.children,

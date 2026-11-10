@@ -2,6 +2,7 @@ import { Box, Chip } from '@mui/material'
 import type { PhiWrapperCatalogDetail } from '../../../../../shared/phiWebsiteCatalogTypes'
 import { CatalogDetailFrame } from '../../../components/catalog/CatalogDetailFrame'
 import { useUiLanguage } from '../../../lib/i18n'
+import { websiteSourceLabel } from '../../../lib/resourceUi'
 import {
   officialWrapperDetailGraph,
   officialWrapperDetailManifest
@@ -52,7 +53,7 @@ export function OfficialWrapperDetailPage({
                   <Chip size="small" variant="outlined" label={detail.categoryLabel} />
                 ) : null}
                 <Chip size="small" variant="outlined" label={`v${detail.version}`} />
-                <Chip size="small" variant="outlined" label={detail.source} />
+                <Chip size="small" variant="outlined" label={websiteSourceLabel(detail.source)} />
               </>
             }
           />

@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import { afterEach, test } from 'node:test'
 
-import { resourceCategoryLabel, resourceSourceLabel } from '../src/renderer/src/lib/resourceUi'
+import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+import {
+  resourceCategoryLabel,
+  resourceSourceLabel,
+  websiteSourceLabel
+} from '../src/renderer/src/lib/resourceUi'
+
+afterEach(() => setUiLanguage('en'))
 
 test('unknown author labels are preserved even when they match object prototype names', () => {
   for (const label of ['自定义实验分组', '__proto__', 'constructor', 'toString', '']) {
@@ -20,4 +27,17 @@ test('display translations leave catalog identifiers and author content unchange
   const before = { ...entry }
   assert.equal(resourceCategoryLabel(entry.groupLabel), 'Scientific Analysis')
   assert.deepEqual(entry, before)
+})
+
+test('website source labels distinguish website rows from registry fallback rows', () => {
+  for (const source of ['', 'Phi Packages', '  Phi Packages  ']) {
+    assert.equal(websiteSourceLabel(source), 'Phi Website')
+  }
+  assert.equal(websiteSourceLabel('Mirror source'), 'Phi Website · Mirror source')
+
+  setUiLanguage('zh-CN')
+  for (const source of ['', 'Phi Packages']) {
+    assert.equal(websiteSourceLabel(source), 'Phi 官网')
+  }
+  assert.equal(websiteSourceLabel('Mirror source'), 'Phi 官网 · Mirror source')
 })

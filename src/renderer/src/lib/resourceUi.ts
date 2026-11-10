@@ -217,6 +217,13 @@ export function resourceSourceLabel(value: string): string {
   return Object.hasOwn(sourceLabels, value) ? sourceLabels[value] : value
 }
 
+/** Distinguish website-backed catalog rows from registry fallback rows with the same source. */
+export function websiteSourceLabel(source: string): string {
+  const label = resourceUi.officialWebsite
+  const origin = source.trim()
+  return !origin || origin === 'Phi Packages' ? label : `${label} · ${origin}`
+}
+
 function labelSearchTerms(value: string, labels: Readonly<Record<string, string>>): string[] {
   const english = Object.hasOwn(labels, value) ? labels[value] : value
   const originals = Object.entries(labels)

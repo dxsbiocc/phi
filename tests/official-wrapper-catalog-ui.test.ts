@@ -263,6 +263,8 @@ test('group tools and selected detail render website metadata through existing W
   )
   assert.match(suiteMarkup, /data-phi-wrapper-catalog-tool="nf-core\/modules\/samtools-sort"/)
   assert.match(suiteMarkup, /Sort a BAM file/)
+  assert.match(suiteMarkup, /Phi Website/)
+  assert.doesNotMatch(suiteMarkup, /Phi Packages/)
   assert.match(suiteMarkup, /data-registry-action="true"/)
   assert.match(suiteMarkup, /Search tools/)
 
@@ -280,6 +282,8 @@ test('group tools and selected detail render website metadata through existing W
   )
   assert.match(detailMarkup, /data-phi-official-wrapper-detail="nf-core\/modules\/samtools-sort"/)
   assert.match(detailMarkup, /SAMtools sort/)
+  assert.match(detailMarkup, /Phi Website/)
+  assert.doesNotMatch(detailMarkup, /Phi Packages/)
   assert.match(detailMarkup, /Input BAM/)
   assert.match(detailMarkup, />Inputs</)
   assert.match(detailMarkup, />Outputs</)

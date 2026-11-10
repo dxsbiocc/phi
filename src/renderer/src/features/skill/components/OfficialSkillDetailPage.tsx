@@ -4,7 +4,7 @@ import type { PhiSkillCatalogDetail } from '../../../../../shared/phiWebsiteCata
 import { CatalogDetailFrame } from '../../../components/catalog/CatalogDetailFrame'
 import { formatPackageSize } from '../../../components/catalog/packageSize'
 import { useUiLanguage } from '../../../lib/i18n'
-import { resourceUi } from '../../../lib/resourceUi'
+import { resourceUi, websiteSourceLabel } from '../../../lib/resourceUi'
 import { skillCopy } from '../lib/skillCopy'
 import { SkillDetailBody } from './SkillDetailBody'
 
@@ -23,6 +23,7 @@ export function OfficialSkillDetailPage({
   useUiLanguage()
 
   const size = detail.sizeLabel ?? formatPackageSize(detail.sizeBytes ?? 0)
+  const source = websiteSourceLabel(detail.source)
   return (
     <CatalogDetailFrame
       entryId={detail.slug}
@@ -33,10 +34,10 @@ export function OfficialSkillDetailPage({
       <SkillDetailBody
         name={detail.title}
         enabled
-        sourceLabel={detail.source}
+        sourceLabel={source}
         chips={
           <>
-            <Chip size="small" variant="outlined" label={detail.source} />
+            <Chip size="small" variant="outlined" label={source} />
             <Chip size="small" variant="outlined" label={`v${detail.version}`} />
             <Chip size="small" variant="outlined" label={size} />
             <Chip
@@ -47,7 +48,7 @@ export function OfficialSkillDetailPage({
           </>
         }
         description={detail.description ?? ''}
-        sourceText={`${detail.source} · v${detail.version}`}
+        sourceText={`${source} · v${detail.version}`}
         markdown={{ content: detail.markdown, isLoading: false, error: null }}
       />
     </CatalogDetailFrame>
