@@ -2,6 +2,7 @@ import { defineCopy, type LocalizedCopy } from './i18n'
 
 const english = {
   backgroundJobs: 'Background Jobs',
+  messages: 'Messages',
   jobsRunning: (count: number) => `Background Jobs · ${count} running`,
   refreshFiles: 'Refresh file tree',
   terminal: 'Terminal',
@@ -100,6 +101,7 @@ const english = {
 
 const chinese: LocalizedCopy<typeof english> = {
   backgroundJobs: '后台任务',
+  messages: '消息',
   jobsRunning: (count) => `后台任务 · ${count} 个运行中`,
   refreshFiles: '刷新文件树',
   terminal: '终端',

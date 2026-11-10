@@ -1,7 +1,7 @@
-import { Box } from '@mui/material'
 import { GoPackage, GoTerminal, GoUpload } from 'react-icons/go'
 
 import { PhiIcons } from '../../../icons'
+import { SidePanelIconTile } from '../../../components/SidePanelIconTile'
 import type { LiveBackgroundJob } from '../lib/backgroundJobs'
 
 type JobKind = LiveBackgroundJob['kind']
@@ -42,21 +42,12 @@ function JobSymbol({ kind }: { kind: JobKind }): React.JSX.Element {
 
 export function BackgroundJobIcon({ kind }: { kind: JobKind }): React.JSX.Element {
   return (
-    <Box
-      aria-hidden
+    <SidePanelIconTile
       data-phi-background-job-icon={kind}
-      sx={{
-        width: 36,
-        height: 36,
-        borderRadius: 1.5,
-        display: 'grid',
-        placeItems: 'center',
-        flexShrink: 0,
-        bgcolor: iconColors[kind],
-        color: kind === 'jupyter' || kind === 'notebook-ai' ? 'text.primary' : '#fff'
-      }}
+      backgroundColor={iconColors[kind]}
+      foregroundColor={kind === 'jupyter' || kind === 'notebook-ai' ? 'text.primary' : '#fff'}
     >
       <JobSymbol kind={kind} />
-    </Box>
+    </SidePanelIconTile>
   )
 }

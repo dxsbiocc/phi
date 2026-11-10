@@ -1,12 +1,15 @@
 import { Box, ButtonBase, Collapse, Stack, Typography } from '@mui/material'
 
-import { PhiIcons } from '../../../icons'
-import { workspacePanelText } from '../../../layout'
+import { PhiIcons } from '../icons'
+import { workspacePanelText } from '../layout'
 
 const ExpandIcon = PhiIcons.action.expand
 const CollapseIcon = PhiIcons.action.collapse
 
-/** A titled, collapsible section of the jobs list. */
+/**
+ * A titled, collapsible section of a side-panel list. Background Jobs and
+ * Messages share it; the data attribute keeps the jobs list addressable.
+ */
 export function BackgroundJobGroup({
   id,
   title,
@@ -54,7 +57,7 @@ export function BackgroundJobGroup({
             px: 0.5,
             py: 0.5,
             borderRadius: 1,
-            '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main' }
+            '&.Mui-focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
           }}
         >
           {expanded ? <CollapseIcon size={16} /> : <ExpandIcon size={16} />}

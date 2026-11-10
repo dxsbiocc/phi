@@ -3,6 +3,7 @@ import type { IpcMain } from 'electron'
 import { IPC } from '../../shared/ipcChannels'
 import { checkForAppUpdate, RELEASES_PAGE_URL, RELEASES_REPOSITORY } from '../app-update-check'
 import { browserPolicyContext, externalBrowserUrl } from '../browser/browser-policy'
+import { desktopFetch } from '../agent/desktop-fetch'
 
 export interface AppIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
@@ -14,7 +15,10 @@ export function registerAppIpc(options: AppIpcOptions): void {
   const { ipcMain } = options
   const app = { getVersion: options.getVersion }
   const shell = { openExternal: options.openExternal }
-  ipcMain.handle(IPC.app.checkForUpdates, async () => checkForAppUpdate(app.getVersion()))
+  ipcMain.handle(IPC.app.checkForUpdates, async () =>
+    // Chromium networking, so the system proxy applies to the startup check too.
+    checkForAppUpdate(app.getVersion(), desktopFetch())
+  )
   ipcMain.handle(IPC.app.openReleasesPage, async (_, url: unknown) => {
     // Only Phi's own release pages; anything else falls back to the latest release.
     const target =

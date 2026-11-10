@@ -1,4 +1,4 @@
-export type WorkspaceSidePanelMode = 'jobs' | 'terminal' | 'browser'
+export type WorkspaceSidePanelMode = 'jobs' | 'messages' | 'terminal' | 'browser'
 
 export interface WorkspaceSidePanelState {
   slots: WorkspaceSidePanelMode[]

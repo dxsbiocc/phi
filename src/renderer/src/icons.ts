@@ -98,6 +98,7 @@ import materialZigSvg from '../../../node_modules/material-icon-theme/icons/zig.
 import {
   FiAlertCircle,
   FiAlertTriangle,
+  FiBell,
   FiInfo,
   FiCheck,
   FiCheckCircle,
@@ -732,6 +733,7 @@ export const PhiIcons = {
     accept: createPhiIcon('Accept', GoCheck, { defaultStrokeWidth: null }),
     approve: createPhiIcon('Approve', FiCheckCircle),
     back: createPhiIcon('Back', FiChevronRight),
+    bell: createPhiIcon('Bell', FiBell),
     cancel: createPhiIcon('Cancel', FiXCircle),
     close: createPhiIcon('Close', FiX),
     collapse: createPhiIcon('Collapse', FiChevronUp),
@@ -920,6 +922,7 @@ export const PHI_ICON_META = {
   'action.addSession': localizedIconMeta('action.addSession', PhiIcons.action.addSession),
   'action.approve': localizedIconMeta('action.approve', PhiIcons.action.approve, 'success.main'),
   'action.back': localizedIconMeta('action.back', PhiIcons.action.back),
+  'action.bell': localizedIconMeta('action.bell', PhiIcons.action.bell),
   'action.cancel': localizedIconMeta('action.cancel', PhiIcons.action.cancel, 'error.main'),
   'action.close': localizedIconMeta('action.close', PhiIcons.action.close),
   'action.copy': localizedIconMeta('action.copy', PhiIcons.action.copy),

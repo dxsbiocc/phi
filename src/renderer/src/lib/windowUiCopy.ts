@@ -8,7 +8,12 @@ export const windowUiCopy = defineCopy(
     collapseSidebar: 'Collapse sidebar',
     expandSidebar: 'Expand sidebar',
     searchChats: 'Find chats',
-    panels: { jobs: 'Background Jobs', terminal: 'Terminal', browser: 'Browser' },
+    panels: {
+      jobs: 'Background Jobs',
+      messages: 'Messages',
+      terminal: 'Terminal',
+      browser: 'Browser'
+    },
     restorePanels: 'Restore split panels',
     expandPanel: (label: string) => `Expand ${label} in the workspace`,
     refreshJobs: 'Refresh Background Jobs',
@@ -35,7 +40,12 @@ export const windowUiCopy = defineCopy(
     collapseSidebar: '收起侧边栏',
     expandSidebar: '展开侧边栏',
     searchChats: '查找会话',
-    panels: { jobs: '后台任务', terminal: '终端', browser: '浏览器' },
+    panels: {
+      jobs: '后台任务',
+      messages: '消息',
+      terminal: '终端',
+      browser: '浏览器'
+    },
     restorePanels: '还原分屏',
     expandPanel: (label) => `在右侧工作区展开${label}`,
     refreshJobs: '刷新后台任务',

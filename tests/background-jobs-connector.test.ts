@@ -99,6 +99,7 @@ test('background jobs panel wires connector polling, events, cancel, retry, and 
   const panel = readFileSync('src/renderer/src/features/jobs/BackgroundJobsPanel.tsx', 'utf8')
   const data = readFileSync('src/renderer/src/features/jobs/hooks/useBackgroundJobsData.ts', 'utf8')
   const row = readFileSync('src/renderer/src/features/jobs/components/BackgroundJobRow.tsx', 'utf8')
+  const card = readFileSync('src/renderer/src/components/SidePanelCard.tsx', 'utf8')
   const labels = readFileSync('src/renderer/src/features/jobs/lib/backgroundJobLabels.ts', 'utf8')
   assert.match(data, /listLocalConnectorJobs/)
   assert.match(data, /onMcpConnectorSetupChanged/)
@@ -120,8 +121,8 @@ test('background jobs panel wires connector polling, events, cancel, retry, and 
   assert.match(row, /aria-label=\{jobsCopy.viewDetailsForValue\(title\)\}/)
   assert.match(row, /event\.stopPropagation\(\)/)
   // Rows stay one fixed-height line; long titles truncate and keep the full text as a tooltip.
-  assert.match(row, /height: compact \? 44 : 68/)
-  assert.match(row, /noWrap[\s\S]*?title=\{title\}/)
+  assert.match(card, /height: compact \? 44 : 68/)
+  assert.match(card, /noWrap[\s\S]*?title=\{title\}/)
   // A connector that needs setup says so in its status; the setup guide lives in the detail.
   assert.match(labels, /failureKind === 'needs-setup'[\s\S]*?connectorJobCopy\.needsSetup/)
 })

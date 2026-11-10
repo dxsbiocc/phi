@@ -120,7 +120,7 @@ import FilePreviewPanel, {
 } from './features/file-preview/FilePreviewPanel'
 import type { AnalysisWorkspaceFileTab } from './features/analysis/AnalysisView'
 import { WorkspaceSidePanel } from './components/WorkspaceSidePanel'
-import { PackageUpdateNotice } from './components/PackageUpdateNotice'
+import { MessagesPanel } from './features/messages/MessagesPanel'
 import { useAnalysisNotebookRuntime } from './features/analysis/hooks/useAnalysisNotebookRuntime'
 import { analysisCopy } from './features/analysis/lib/analysisUiCopy'
 import { createPaletteTheme } from './theme'
@@ -4286,6 +4286,9 @@ function App(): React.JSX.Element {
                       />
                     )
                   }
+                  if (mode === 'messages') {
+                    return <MessagesPanel />
+                  }
                   if (mode === 'browser') {
                     return (
                       <BrowserPanel
@@ -4462,7 +4465,6 @@ function App(): React.JSX.Element {
           onClose={() => setExportTarget(null)}
           onExport={() => void confirmExportSession()}
         />
-        <PackageUpdateNotice />
         {confirmationDialog}
       </Box>
     </ThemeProvider>
