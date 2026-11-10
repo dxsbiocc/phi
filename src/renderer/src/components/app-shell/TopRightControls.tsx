@@ -3,6 +3,8 @@ import { alpha, type SxProps, type Theme } from '@mui/material/styles'
 import { GoGlobe, GoStack, GoSync, GoTerminal } from 'react-icons/go'
 
 import { useActiveBackgroundJobCount } from '../../features/jobs/hooks/useBackgroundJobsData'
+import { useUnreadMessageCount } from '../../features/messages/hooks/useMessages'
+import { PhiIcons } from '../../icons'
 import { appCopy } from '../../lib/appCopy'
 import { useUiLanguage } from '../../lib/i18n'
 import type { WorkspaceSidePanelMode } from '../../lib/workspaceSidePanelMode'
@@ -28,6 +30,7 @@ export function TopRightControls({
 }): React.JSX.Element | null {
   useUiLanguage()
   const runningBackgroundJobs = useActiveBackgroundJobCount()
+  const unreadMessages = useUnreadMessageCount()
   const backgroundJobsLabel =
     runningBackgroundJobs > 0 ? appCopy.jobsRunning(runningBackgroundJobs) : appCopy.backgroundJobs
   if (!showSidePanelRefresh && !showSidePanelButtons) return null
@@ -93,6 +96,45 @@ export function TopRightControls({
               <RefreshIcon size={19} />
             </IconButton>
           </span>
+        </Tooltip>
+      ) : null}
+      {showSidePanelButtons ? (
+        <Tooltip title={appCopy.messages}>
+          <IconButton
+            data-phi-messages-toggle-button="true"
+            data-phi-messages-unread-count={unreadMessages}
+            data-phi-workspace-panel-toggle="messages"
+            size="small"
+            aria-label={appCopy.messages}
+            aria-pressed={activePanels.includes('messages')}
+            onClick={() => onTogglePanel('messages')}
+            sx={panelButtonSx(activePanels.includes('messages'))}
+          >
+            <Badge
+              aria-hidden="true"
+              badgeContent={unreadMessages}
+              max={99}
+              color="error"
+              invisible={unreadMessages === 0}
+              sx={{
+                '& .MuiBadge-badge': {
+                  height: 16,
+                  minWidth: 16,
+                  px: 0.4,
+                  border: '2px solid',
+                  borderColor: 'background.paper',
+                  fontSize: '0.6rem',
+                  fontWeight: 700,
+                  transform: 'translate(40%, -40%)'
+                },
+                '& .MuiBadge-invisible': {
+                  transform: 'scale(0) translate(40%, -40%)'
+                }
+              }}
+            >
+              <PhiIcons.action.bell aria-hidden size={20} />
+            </Badge>
+          </IconButton>
         </Tooltip>
       ) : null}
       {showSidePanelButtons ? (
