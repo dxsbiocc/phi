@@ -41,6 +41,8 @@ export function BackgroundJobRow({
   useUiLanguage()
   const title = jobTitle(item)
   const status = jobStatus(item)
+  // A recovered run may have no task text; leave out the separator rather than end on "·".
+  const sourceLine = [jobSource(item), jobSubtitle(item)].filter(Boolean).join(' · ')
   const percent = jobPercent(item)
   const canStop = canStopJob(item)
   const canRetryJob = Boolean(onRetry && item.kind !== 'history')
@@ -113,10 +115,10 @@ export function BackgroundJobRow({
               variant="caption"
               color="text.secondary"
               component="div"
-              title={`${jobSource(item)} · ${jobSubtitle(item)}`}
+              title={sourceLine}
               noWrap
             >
-              {jobSource(item)} · {jobSubtitle(item)}
+              {sourceLine}
             </Typography>
           )}
         </Box>
