@@ -1,7 +1,7 @@
 import { useUiLanguage } from '../../../lib/i18n'
-import { resourceSourceLabel } from '../../../lib/resourceUi'
 import { Chip, Stack } from '@mui/material'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
+import { connectorSourceLabel } from '../lib/connectorSourceLabel'
 
 export function McpConnectorSourceBadges({
   connector
@@ -20,7 +20,7 @@ export function McpConnectorSourceBadges({
       <Chip
         size="small"
         variant="outlined"
-        label={resourceSourceLabel(connector.source.label)}
+        label={connectorSourceLabel(connector)}
         sx={{ flexShrink: 0 }}
       />
     </Stack>

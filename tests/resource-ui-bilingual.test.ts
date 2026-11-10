@@ -94,9 +94,9 @@ const connector: FeaturedMcpConnector = {
 
 test('Connector presentation changes language without changing authorization or source trust', () => {
   const before = structuredClone(connector)
-  for (const [language, status, action, source, unsigned] of [
-    ['en', 'Sign-in required', 'Sign in to 作者的连接器', 'Phi Website', 'Unsigned'],
-    ['zh-CN', '需要登录', '登录 作者的连接器', 'Phi 官网', '未签名']
+  for (const [language, status, action, sourceChip, unsigned] of [
+    ['en', 'Sign-in required', 'Sign in to 作者的连接器', 'Author Website', 'Unsigned'],
+    ['zh-CN', '需要登录', '登录 作者的连接器', 'Author 官网', '未签名']
   ] as const) {
     setUiLanguage(language)
     const markup = render(
@@ -110,7 +110,7 @@ test('Connector presentation changes language without changing authorization or 
         onAuthorize: () => undefined
       })
     )
-    for (const text of [connector.name, connector.description, status, source])
+    for (const text of [connector.name, connector.description, status, sourceChip])
       assert.ok(markup.includes(text), text)
     assert.ok(!markup.includes(unsigned), `no ${unsigned} badge`)
     assert.ok(markup.includes(`aria-label="${action}"`))

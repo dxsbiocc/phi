@@ -120,6 +120,7 @@ const connectorCopyEn = {
   toolsAfterKey: 'Verify the API key to read server tools.',
   toolsAfterSignIn: 'Sign in to read server tools.',
   publisher: 'Publisher',
+  publisherWebsite: (publisher: string) => `${publisher} Website`,
   launchCommand: 'Launch command',
   category: 'Category',
   signIn: 'Sign-in',

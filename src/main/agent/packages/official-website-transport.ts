@@ -1,6 +1,7 @@
 import { desktopFetch } from '../desktop-fetch'
+import { OFFICIAL_WEBSITE_BASE_URL } from '../../../shared/officialWebsite'
 
-export const OFFICIAL_WEBSITE_BASE_URL = 'https://phi.omicsagent.cn'
+export { OFFICIAL_WEBSITE_BASE_URL }
 
 const DEFAULT_TIMEOUT_MS = 10_000
 const MAX_TIMEOUT_MS = 60_000
