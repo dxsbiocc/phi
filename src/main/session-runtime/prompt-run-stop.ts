@@ -1,3 +1,5 @@
+import type { AgentRunCancelReason } from '../agent/plan/execution/agent-run-completions'
+
 export interface StoppablePromptRun<TSession> {
   sessionKey: string
   phiSessionId: string
@@ -7,7 +9,7 @@ export interface StoppablePromptRun<TSession> {
 }
 
 interface StoppableSession {
-  abort(options?: { preserveApprovals?: boolean }): Promise<void>
+  abort(options?: { preserveApprovals?: boolean; reason?: AgentRunCancelReason }): Promise<void>
 }
 
 export interface PromptRunStopDeps<
@@ -31,7 +33,7 @@ export interface PromptRunStopDeps<
     cancel(scope?: { sessionId: string; runId: string }): void
   }
   sessions: {
-    abort(session: TSession): Promise<void>
+    abort(session: TSession, reason?: AgentRunCancelReason): Promise<void>
   }
 }
 
@@ -89,7 +91,9 @@ function stopAllPromptRuns<
   const runtimeAbort = Promise.all(
     runs.map(async (run) => {
       if (!run.session) return
-      await deps.sessions.abort(run.session)
+      // This path only runs during app quit: the plan step under the prompt is interrupted,
+      // not a failed attempt.
+      await deps.sessions.abort(run.session, 'session_disposed')
     })
   ).then(() => undefined)
   return { browserCleanup: browserCleanup.then(() => undefined), runtimeAbort }

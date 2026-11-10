@@ -7,7 +7,9 @@ import {
   type StoppablePromptRun
 } from '../src/main/session-runtime/prompt-run-stop'
 
-type TestSession = { abort(options?: { preserveApprovals?: boolean }): Promise<void> }
+type TestSession = {
+  abort(options?: { preserveApprovals?: boolean; reason?: 'session_disposed' }): Promise<void>
+}
 type TestRun = StoppablePromptRun<TestSession>
 
 function createDeps(calls: string[]): {
@@ -40,9 +42,12 @@ function createDeps(calls: string[]): {
       cancel: (scope) => calls.push(scope ? `wait-cancel:${scope.runId}` : 'wait-cancel-all')
     },
     sessions: {
-      abort: async (session) => {
-        calls.push('session-abort')
-        await session.abort({ preserveApprovals: true })
+      abort: async (session, reason) => {
+        calls.push(reason ? `session-abort:${reason}` : 'session-abort')
+        await session.abort({
+          preserveApprovals: true,
+          ...(reason ? { reason } : {})
+        })
       }
     }
   }
@@ -135,7 +140,7 @@ test('stopAllPromptRuns aborts every run and returns both cleanup barriers', asy
     'browser-cleanup:second-run',
     'agent-stop-all',
     'wait-cancel-all',
-    'session-abort',
+    'session-abort:session_disposed',
     'abort:first'
   ])
   assert.ok(!calls.includes('abort:second'))

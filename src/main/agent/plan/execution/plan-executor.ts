@@ -91,6 +91,9 @@ function reportSummary(report: AgentReport): PlanStepReportSummary {
 }
 
 function eventForOutcome(stepId: string, outcome: StepOutcome, at: string): PlanRunEvent {
+  if (!outcome.ok && outcome.interrupted) {
+    return { type: 'step_interrupted', stepId, at }
+  }
   if (!outcome.ok) return { type: 'step_failed', stepId, error: outcome.error, at }
   const report = reportSummary(outcome.report)
   if (report.missingInputs.length) return { type: 'step_needs_input', stepId, report, at }

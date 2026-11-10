@@ -31,7 +31,8 @@ function completionOutcome(run: AgentRunCompletion): StepOutcome {
   if (run.state === 'done') return { ok: true, report: completionReport(run) }
   return {
     ok: false,
-    error: run.error ?? `Agent run ${run.id} ended with state ${run.state}.`
+    error: run.error ?? `Agent run ${run.id} ended with state ${run.state}.`,
+    ...(run.cancelReason ? { interrupted: run.cancelReason } : {})
   }
 }
 

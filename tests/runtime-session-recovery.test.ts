@@ -58,6 +58,31 @@ test(
 )
 
 test(
+  'aborting a runtime session for disposal names the cancellation reason',
+  { skip: !hasBun },
+  async () => {
+    await withFakeWorker(async (dir) => {
+      const { session } = await createRuntimeAgentSession({
+        noTools: true,
+        cwd: dir,
+        sessionManager: createRuntimeSessionManager(dir)
+      })
+      const completion = agentRunCompletions.expect(session.runtimeSessionId, 'plan-step-run')
+
+      await session.abort({ preserveApprovals: true, reason: 'session_disposed' })
+
+      assert.deepEqual(await completion, {
+        id: 'plan-step-run',
+        state: 'cancelled',
+        origin: 'host',
+        error: 'Runtime session disposed',
+        cancelReason: 'session_disposed'
+      })
+    })
+  }
+)
+
+test(
   'disposing a runtime session abandons pending host-run completions',
   { skip: !hasBun },
   async () => {
@@ -75,7 +100,8 @@ test(
         id: 'plan-step-run',
         state: 'cancelled',
         origin: 'host',
-        error: 'Runtime session disposed'
+        error: 'Runtime session disposed',
+        cancelReason: 'session_disposed'
       })
     })
   }

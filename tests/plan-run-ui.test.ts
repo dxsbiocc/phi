@@ -430,6 +430,27 @@ test('replan is offered for a paused problem only when supported and under the l
   assert.doesNotMatch(cleanupPending, /aria-label="Replan remaining steps"/)
 })
 
+test('a stopped replan turn leaves no stale review notice behind', () => {
+  setUiLanguage('en')
+  const render = (replanPending: boolean): string =>
+    renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(PlanRunPanel, {
+          controller: {
+            ...controller(),
+            replanPending,
+            replan: async () => undefined
+          }
+        })
+      )
+    )
+  // The pending-replan banner is an info alert; it must go once the replan turn is stopped.
+  assert.doesNotMatch(render(false), /MuiAlert-colorInfo/)
+  assert.match(render(true), /MuiAlert-colorInfo/)
+})
+
 test('pending replan keeps the timeline visible but disables old-run recovery controls', () => {
   setUiLanguage('en')
   const markup = renderToStaticMarkup(

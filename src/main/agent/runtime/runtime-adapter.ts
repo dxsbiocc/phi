@@ -1,5 +1,8 @@
 import { RuntimeReferenceError } from '../session/runtime-reference'
-import { agentRunCompletions } from '../plan/execution/agent-run-completions'
+import {
+  agentRunCompletions,
+  type AgentRunCancelReason
+} from '../plan/execution/agent-run-completions'
 import { OmpModelRuntimeFacade } from './model-runtime-facade'
 import type { PhiAgentDefinition } from '../agents/definition'
 import type { ProjectMemorySettings } from '../../../shared/projectMemoryTypes'
@@ -256,7 +259,7 @@ export interface RuntimeAgentSession {
   getAutoCompactionSettings?(
     control?: RuntimeSelectionControl
   ): Promise<RuntimeAutoCompactionReceipt | undefined>
-  abort(options?: { preserveApprovals?: boolean }): Promise<void>
+  abort(options?: { preserveApprovals?: boolean; reason?: AgentRunCancelReason }): Promise<void>
   dispose(): Promise<void>
   setModel(model: RuntimeModel, control?: RuntimeSelectionControl): Promise<void>
   setThinkingLevel(
@@ -905,8 +908,20 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     return result
   }
 
-  async abort(options?: { preserveApprovals?: boolean }): Promise<void> {
+  async abort(options?: {
+    preserveApprovals?: boolean
+    reason?: AgentRunCancelReason
+  }): Promise<void> {
     if (!options?.preserveApprovals) this.approvalAbortController.abort()
+    // Shutdown disposes a session under the running plan step. Name that cause before the
+    // engine aborts child runs, so the plan can record an interruption rather than a failure.
+    if (options?.reason) {
+      agentRunCompletions.abandonSession(
+        this.runtimeSessionId,
+        'Runtime session disposed',
+        options.reason
+      )
+    }
     // A session the worker no longer holds has nothing running to abort.
     if (
       this.recreate &&
@@ -920,7 +935,11 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     applySessionState(this, state)
   }
   async dispose(): Promise<void> {
-    agentRunCompletions.abandonSession(this.runtimeSessionId, 'Runtime session disposed')
+    agentRunCompletions.abandonSession(
+      this.runtimeSessionId,
+      'Runtime session disposed',
+      'session_disposed'
+    )
     this.approvalAbortController.abort()
     for (const cleanup of this.cleanupFns.splice(0)) {
       cleanup()
@@ -1073,7 +1092,7 @@ export async function createRuntimeAgentSession(
     mcpServers: trustedMcpServers(options),
     desktopMcp: options.desktopMcp,
     environment: options.environment,
-    personaMarkdown: options.personaMarkdown,
+    personaMarkdown: options.personaMarkdown
   }
   control?.assertCurrent()
   control?.signal?.throwIfAborted()

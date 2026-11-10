@@ -1,12 +1,21 @@
 import type { AgentRunSnapshot } from '../../agents/registry'
 
+export type AgentRunCancelReason = 'session_disposed'
+
 export type AgentRunCompletion = Pick<AgentRunSnapshot, 'id' | 'state'> &
-  Partial<Omit<AgentRunSnapshot, 'id' | 'state'>>
+  Partial<Omit<AgentRunSnapshot, 'id' | 'state'>> & {
+    /** Why a run was cancelled, when the canceller knows more than 'cancelled'. */
+    cancelReason?: AgentRunCancelReason
+  }
 
 export interface AgentRunCompletions {
   expect(runtimeSessionId: string, runId: string): Promise<AgentRunCompletion>
   deliver(runtimeSessionId: string, run: AgentRunCompletion): boolean
-  abandonSession(runtimeSessionId: string, reason: string): void
+  abandonSession(
+    runtimeSessionId: string,
+    reason: string,
+    cancelReason?: AgentRunCancelReason
+  ): void
 }
 
 export interface AgentRunCompletionOptions {
@@ -85,12 +94,18 @@ export function createAgentRunCompletions(
       prune()
       return false
     },
-    abandonSession(runtimeSessionId, reason) {
+    abandonSession(runtimeSessionId, reason, cancelReason) {
       for (const [key, waiter] of waiters) {
         if (sessionFromKey(key) !== runtimeSessionId) continue
         waiters.delete(key)
         const runId = key.slice(key.indexOf('\0') + 1)
-        waiter.resolve({ id: runId, state: 'cancelled', origin: 'host', error: reason })
+        waiter.resolve({
+          id: runId,
+          state: 'cancelled',
+          origin: 'host',
+          error: reason,
+          ...(cancelReason ? { cancelReason } : {})
+        })
       }
       for (const key of cached.keys()) {
         if (sessionFromKey(key) === runtimeSessionId) cached.delete(key)

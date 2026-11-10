@@ -1,9 +1,6 @@
 import type { PlanRunReplanRequest } from '../../../../../shared/planRunTypes'
 
-export type OnReplanPrompt = (
-  phiSessionId: string,
-  prompt: string
-) => Promise<boolean | 'stopped'>
+export type OnReplanPrompt = (phiSessionId: string, prompt: string) => Promise<boolean | 'stopped'>
 
 export type PendingReplanCancellation = {
   phiSessionId: string
@@ -60,7 +57,9 @@ export async function deliverPlanReplanPrompt({
   try {
     const sent = await send(phiSessionId, request.prompt)
     if (sent === 'stopped') {
-      await cancelRequest()
+      // The turn is already stopped. A failed cleanup must not turn that user action into an
+      // error on the paused run; the server binding is gone with the stopped turn.
+      await cancelRequest().catch(() => undefined)
       return 'stopped'
     }
     if (sent) return true

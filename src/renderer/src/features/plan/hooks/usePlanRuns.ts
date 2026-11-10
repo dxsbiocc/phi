@@ -84,6 +84,14 @@ function eventBelongsToSession(event: AgentEventSummary, sessionId: string): boo
   return !event.phiSessionId || event.phiSessionId === sessionId
 }
 
+function runIsStopped(
+  latest: MutableRefObject<PlanRunTimelineSnapshot | null>,
+  runId: string
+): boolean {
+  const run = latest.current
+  return run?.id === runId && run.status === 'stopped'
+}
+
 function withoutRunDetails(
   details: Record<string, PlanRunState>,
   runId: string
@@ -238,6 +246,7 @@ type ReplanActionContext = {
   setPending: Dispatch<SetStateAction<PendingAction>>
   setError: PlanRunFeed['setError']
   currentSession: MutableRefObject<string | null>
+  latestRun: MutableRefObject<PlanRunTimelineSnapshot | null>
 }
 
 function useRetryReplanCancellation(
@@ -245,7 +254,7 @@ function useRetryReplanCancellation(
   rollback: PendingReplanCancellation | undefined,
   cancellationKey: string | null
 ): () => Promise<void> {
-  const { api, currentSession, pendingAction, setError, setPending } = context
+  const { api, currentSession, latestRun, pendingAction, setError, setPending } = context
   return useCallback(async (): Promise<void> => {
     if (!rollback || !cancellationKey || pendingAction !== null) return
     const key = `cancel-replan:${rollback.requestId}`
@@ -255,7 +264,12 @@ function useRetryReplanCancellation(
       planReplanRecoveryStore.delete(cancellationKey)
       if (currentSession.current === rollback.phiSessionId) setError(null)
     } catch {
-      if (currentSession.current === rollback.phiSessionId) setError(planCopy.replanCancelFailed)
+      if (
+        currentSession.current === rollback.phiSessionId &&
+        !runIsStopped(latestRun, rollback.runId)
+      ) {
+        setError(planCopy.replanCancelFailed)
+      }
     } finally {
       setPending((current) =>
         current?.sessionId === rollback.phiSessionId && current.key === key ? null : current
@@ -265,6 +279,7 @@ function useRetryReplanCancellation(
     api.cancelPlanRunReplan,
     cancellationKey,
     currentSession,
+    latestRun,
     pendingAction,
     rollback,
     setError,
@@ -277,7 +292,7 @@ function useServerPendingReplan(
   sessionId: string | null,
   runId: string | undefined,
   setError: PlanRunFeed['setError']
-): { pending: boolean; markPending: () => void } {
+): { pending: boolean; markPending: () => void; markCleared: () => void } {
   const [serverReplan, setServerReplan] = useState<{ key: string; pending: boolean } | null>(null)
   const replanRevision = useRef(0)
   useEffect(() => {
@@ -310,13 +325,20 @@ function useServerPendingReplan(
     }
   }, [api, runId, sessionId, setError])
   const key = sessionId && runId ? `${sessionId}:${runId}` : null
+  const markPending = useCallback(() => {
+    if (!key) return
+    replanRevision.current += 1
+    setServerReplan({ key, pending: true })
+  }, [key])
+  const markCleared = useCallback(() => {
+    if (!key) return
+    replanRevision.current += 1
+    setServerReplan({ key, pending: false })
+  }, [key])
   return {
     pending: Boolean(key && (serverReplan?.key !== key || serverReplan.pending)),
-    markPending: () => {
-      if (!key) return
-      replanRevision.current += 1
-      setServerReplan({ key, pending: true })
-    }
+    markPending,
+    markCleared
   }
 }
 
@@ -329,9 +351,12 @@ function usePendingRollback(key: string | null): PendingReplanCancellation | und
   return key ? planReplanRecoveryStore.get(key) : undefined
 }
 
-function usePlanReplanActions(
-  context: ReplanActionContext
-): Pick<PlanRunActions, 'replan' | 'rollbackPending' | 'replanPending' | 'retryCancellation'> {
+type PlanReplanActions = Pick<
+  PlanRunActions,
+  'replan' | 'rollbackPending' | 'replanPending' | 'retryCancellation'
+> & { clearAfterStop: () => void }
+
+function usePlanReplanActions(context: ReplanActionContext): PlanReplanActions {
   const {
     api,
     sessionId,
@@ -340,7 +365,8 @@ function usePlanReplanActions(
     pendingAction,
     setPending,
     setError,
-    currentSession
+    currentSession,
+    latestRun
   } = context
   const cancellationKey = sessionId && run ? `${sessionId}:${run.id}` : null
   const rollback = usePendingRollback(cancellationKey)
@@ -356,6 +382,11 @@ function usePlanReplanActions(
     pendingAction?.startsWith('cancel-replan:') ||
     serverReplan.pending
   )
+  const clearAfterStop = useCallback((): void => {
+    if (cancellationKey) planReplanRecoveryStore.delete(cancellationKey)
+    serverReplan.markCleared()
+    setError(null)
+  }, [cancellationKey, serverReplan, setError])
   const replan = useCallback(async (): Promise<void> => {
     if (!sessionId || !run || !onReplanPrompt || pendingAction !== null || replanPending) return
     const actionSession = sessionId
@@ -373,7 +404,10 @@ function usePlanReplanActions(
         send: onReplanPrompt,
         cancel: (requestId) => api.cancelPlanRunReplan(actionSession, actionRun, requestId)
       })
-      if (accepted === 'stopped') return
+      if (accepted === 'stopped') {
+        clearAfterStop()
+        return
+      }
       if (!accepted) {
         throw new Error(planCopy.replanSendFailed)
       }
@@ -382,7 +416,7 @@ function usePlanReplanActions(
         const key = `${cause.pending.phiSessionId}:${cause.pending.runId}`
         planReplanRecoveryStore.set(key, cause.pending)
       }
-      if (currentSession.current === actionSession) {
+      if (currentSession.current === actionSession && !runIsStopped(latestRun, actionRun)) {
         setError(
           cause instanceof PlanReplanCancellationError
             ? planCopy.replanCancelFailed
@@ -396,7 +430,9 @@ function usePlanReplanActions(
     }
   }, [
     api,
+    clearAfterStop,
     currentSession,
+    latestRun,
     onReplanPrompt,
     pendingAction,
     replanPending,
@@ -411,6 +447,7 @@ function usePlanReplanActions(
     rollbackPending: Boolean(rollback),
     replanPending,
     retryCancellation,
+    clearAfterStop,
     ...(onReplanPrompt ? { replan } : {})
   }
 }
@@ -424,6 +461,10 @@ function usePlanRunActions(
   const [pending, setPending] = useState<PendingAction>(null)
   const { run, remember, setError } = feed
   const currentSession = useCurrentSession(sessionId)
+  const latestRun = useRef(run)
+  useLayoutEffect(() => {
+    latestRun.current = run
+  }, [run])
   const loadDetails = usePlanRunDetails(api, sessionId, feed, currentSession)
   const pendingAction = pending?.sessionId === sessionId ? pending.key : null
   const replanActions = usePlanReplanActions({
@@ -434,19 +475,26 @@ function usePlanRunActions(
     pendingAction,
     setPending,
     setError,
-    currentSession
+    currentSession,
+    latestRun
   })
+  const { clearAfterStop, ...publicReplanActions } = replanActions
   const perform = useCallback(
-    async (key: string, action: (session: string, runId: string) => Promise<PlanRunState>) => {
-      if (!sessionId || !run) return
+    async (
+      key: string,
+      action: (session: string, runId: string) => Promise<PlanRunState>
+    ): Promise<PlanRunState | null> => {
+      if (!sessionId || !run) return null
       const actionSession = sessionId
       setPending({ sessionId: actionSession, key })
       setError(null)
       try {
         const state = await action(actionSession, run.id)
         if (currentSession.current === actionSession) remember(state)
+        return state
       } catch (cause) {
         if (currentSession.current === actionSession) setError(errorText(cause))
+        return null
       } finally {
         setPending((current) =>
           current?.sessionId === actionSession && current.key === key ? null : current
@@ -455,17 +503,27 @@ function usePlanRunActions(
     },
     [currentSession, remember, run, sessionId, setError]
   )
+  const stop = useCallback(async (): Promise<void> => {
+    const state = await perform('stop', api.stopPlanRun)
+    if (state?.status === 'stopped') clearAfterStop()
+  }, [api.stopPlanRun, clearAfterStop, perform])
+  const settle = async (
+    key: string,
+    action: (session: string, runId: string) => Promise<PlanRunState>
+  ): Promise<void> => {
+    await perform(key, action)
+  }
   return {
     pendingAction,
     loadDetails,
-    pause: () => perform('pause', api.pausePlanRun),
-    resume: () => perform('resume', api.resumePlanRun),
-    stop: () => perform('stop', api.stopPlanRun),
+    pause: () => settle('pause', api.pausePlanRun),
+    resume: () => settle('resume', api.resumePlanRun),
+    stop,
     retryStep: (stepId) =>
-      perform(`retry:${stepId}`, (session, runId) => api.retryPlanRunStep(session, runId, stepId)),
+      settle(`retry:${stepId}`, (session, runId) => api.retryPlanRunStep(session, runId, stepId)),
     skipStep: (stepId) =>
-      perform(`skip:${stepId}`, (session, runId) => api.skipPlanRunStep(session, runId, stepId)),
-    ...replanActions
+      settle(`skip:${stepId}`, (session, runId) => api.skipPlanRunStep(session, runId, stepId)),
+    ...publicReplanActions
   }
 }
 

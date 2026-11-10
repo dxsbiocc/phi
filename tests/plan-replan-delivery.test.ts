@@ -57,6 +57,19 @@ test('a stopped run cancels the request and reports stopped', async () => {
   assert.deepEqual(cancelled, ['request-1'])
 })
 
+test('a stopped run ignores a cancellation failure instead of raising it', async () => {
+  const result = await deliverPlanReplanPrompt({
+    request,
+    phiSessionId: 'session-1',
+    isCurrent: () => true,
+    send: async () => 'stopped',
+    cancel: async () => {
+      throw new Error('conversation is still stopping')
+    }
+  })
+  assert.equal(result, 'stopped')
+})
+
 test('send error cancels the request while preserving the original error', async () => {
   const cancelled: string[] = []
   await assert.rejects(
