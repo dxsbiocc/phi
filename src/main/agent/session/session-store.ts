@@ -80,6 +80,8 @@ export interface PhiSessionManifest {
   lastEventType?: string
   messageCount: number
   currentRunStartedAt?: string
+  /** Tool calls whose agent executions have started but not completed in this session. */
+  openAgentExecutions?: string[]
   createdAt: string
   updatedAt: string
   lastActivityAt: string
@@ -370,6 +372,22 @@ export function beginRuntimeReferenceAdoption(
   )
 }
 
+function nextOpenAgentExecutions(
+  current: string[] | undefined,
+  event: SessionEventInput
+): string[] | undefined {
+  const toolCallId = typeof event.toolCallId === 'string' ? event.toolCallId : undefined
+  if (!toolCallId) return current
+  if (event.type === 'agent_execution_started') {
+    const open = current ?? []
+    return open.includes(toolCallId) ? open : [...open, toolCallId]
+  }
+  if (event.type === 'agent_execution_completed' && current !== undefined) {
+    return current.filter((id) => id !== toolCallId)
+  }
+  return current
+}
+
 export function appendSessionEvent(
   sessionId: string,
   event: SessionEventInput
@@ -383,10 +401,12 @@ export function appendSessionEvent(
     sessionId,
     createdAt: eventTimestamp
   }
+  const openAgentExecutions = nextOpenAgentExecutions(manifest.openAgentExecutions, event)
 
   appendFileSync(getMessagesPath(sessionId), `${JSON.stringify(stored)}\n`, 'utf-8')
   writeManifest({
     ...manifest,
+    ...(openAgentExecutions !== undefined ? { openAgentExecutions } : {}),
     messageCount: manifest.messageCount + 1,
     lastEventType: event.type,
     updatedAt: writeTimestamp,
@@ -551,17 +571,71 @@ export function forkPhiSession(
   }
 }
 
-function recoverInterruptedManifest(manifest: PhiSessionManifest): PhiSessionManifest {
-  const wasActive =
-    manifest.status === 'running' ||
-    manifest.status === 'needs_approval' ||
-    manifest.status === 'needs_input' ||
-    manifest.currentRunId !== undefined ||
-    manifest.currentRunStartedAt !== undefined
-  if (!wasActive) return manifest
+interface RestartedAgentExecution {
+  toolCallId: string
+  runId?: string
+  agentName?: string
+}
 
-  const pendingReviews = new Map<string, StoredSessionEvent>()
+function openAgentExecutionsToClose(manifest: PhiSessionManifest): RestartedAgentExecution[] {
+  if (manifest.openAgentExecutions !== undefined) {
+    return manifest.openAgentExecutions
+      .filter((toolCallId): toolCallId is string => typeof toolCallId === 'string')
+      .map((toolCallId) => ({ toolCallId }))
+  }
+
+  // Legacy manifests have no open set: derive it from history. The recovered manifest
+  // records an empty set, so this scan runs at most once per session.
+  const started = new Map<string, StoredSessionEvent>()
+  const completed = new Set<string>()
   for (const event of readSessionEvents(manifest.sessionId)) {
+    if (typeof event.toolCallId !== 'string') continue
+    if (event.type === 'agent_execution_started') {
+      started.set(event.toolCallId, event)
+    } else if (event.type === 'agent_execution_completed') {
+      completed.add(event.toolCallId)
+    }
+  }
+  return [...started]
+    .filter(([toolCallId]) => !completed.has(toolCallId))
+    .map(([toolCallId, startedEvent]) => ({
+      toolCallId,
+      ...(typeof startedEvent.runId === 'string' ? { runId: startedEvent.runId } : {}),
+      ...(typeof startedEvent.agentName === 'string' ? { agentName: startedEvent.agentName } : {})
+    }))
+}
+
+// No agent run from a previous process survives a restart, even in an idle session.
+// The closing events carry the session's last activity time, so a repaired old session keeps
+// its place in the session list instead of jumping to the top.
+function closeRestartedAgentExecutions(manifest: PhiSessionManifest): number {
+  const open = openAgentExecutionsToClose(manifest)
+  for (const execution of open) {
+    appendSessionEvent(manifest.sessionId, {
+      type: 'agent_execution_completed',
+      createdAt: manifest.lastActivityAt,
+      toolCallId: execution.toolCallId,
+      ...(execution.runId ? { runId: execution.runId } : {}),
+      ...(execution.agentName ? { agentName: execution.agentName } : {}),
+      isError: true,
+      cancelled: true,
+      error: 'app_restarted'
+    })
+  }
+  return open.length
+}
+
+/** Record the empty open set without touching updatedAt, so session ordering is unchanged. */
+function markNoOpenAgentExecutions(sessionId: string): PhiSessionManifest {
+  const current = readManifest(sessionId)
+  const updated = { ...current, openAgentExecutions: [] }
+  writeManifest(updated)
+  return updated
+}
+
+function recoverPendingPlanReviews(sessionId: string): void {
+  const pendingReviews = new Map<string, StoredSessionEvent>()
+  for (const event of readSessionEvents(sessionId)) {
     if (event.type === 'plan_review_submitted' && typeof event.reviewId === 'string') {
       pendingReviews.set(event.reviewId, event)
     }
@@ -570,7 +644,7 @@ function recoverInterruptedManifest(manifest: PhiSessionManifest): PhiSessionMan
     }
   }
   for (const [reviewId, event] of pendingReviews) {
-    appendSessionEvent(manifest.sessionId, {
+    appendSessionEvent(sessionId, {
       type: 'plan_review_decided',
       reviewId,
       ...(event.runId ? { runId: event.runId } : {}),
@@ -578,7 +652,24 @@ function recoverInterruptedManifest(manifest: PhiSessionManifest): PhiSessionMan
       reason: 'app_restarted'
     })
   }
+}
 
+function recoverInterruptedManifest(manifest: PhiSessionManifest): PhiSessionManifest {
+  const wasActive =
+    manifest.status === 'running' ||
+    manifest.status === 'needs_approval' ||
+    manifest.status === 'needs_input' ||
+    manifest.currentRunId !== undefined ||
+    manifest.currentRunStartedAt !== undefined
+
+  const closed = closeRestartedAgentExecutions(manifest)
+  if (!wasActive) {
+    // Most sessions have nothing open: leave their files untouched on every startup.
+    if (closed === 0 && manifest.openAgentExecutions?.length === 0) return manifest
+    return markNoOpenAgentExecutions(manifest.sessionId)
+  }
+
+  recoverPendingPlanReviews(manifest.sessionId)
   appendSessionEvent(manifest.sessionId, {
     type: 'run_interrupted',
     ...(manifest.currentRunId ? { runId: manifest.currentRunId } : {}),
@@ -589,7 +680,8 @@ function recoverInterruptedManifest(manifest: PhiSessionManifest): PhiSessionMan
     unreadKind: null,
     currentRunId: undefined,
     currentRunStartedAt: undefined,
-    lastRunOutcome: 'interrupted'
+    lastRunOutcome: 'interrupted',
+    openAgentExecutions: []
   })
 }
 
