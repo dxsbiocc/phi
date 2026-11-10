@@ -80,7 +80,9 @@ export function OfficialWrapperSuiteSplitView({
       }
     >
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        {feedback ? <Box sx={{ px: 3, pt: 2, pb: 2 }}>{feedback}</Box> : null}
+        {feedback ? (
+          <Box sx={{ px: 3, py: 2, '&:empty': { display: 'none' } }}>{feedback}</Box>
+        ) : null}
         <Box
           sx={{
             flex: 1,
