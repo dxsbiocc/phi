@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ThemeProvider, createTheme } from '@mui/material/styles'
 import test from 'node:test'
 import { McpToolList } from '../src/renderer/src/features/mcp/components/McpToolList'
+import { mcpToolFailureText } from '../src/shared/mcpToolFailureText'
 
 function render(props: {
   requiresSignIn: boolean
@@ -51,4 +52,30 @@ test('tool list distinguishes an unread server from an empty server', () => {
   const empty = render({ requiresSignIn: false, loading: false, names: [], error: null })
   assert.match(unread, /Server tools have not been loaded/)
   assert.match(empty, /The server currently exposes no tools/)
+})
+
+test('an HTML HTTP error is reduced to a short status without markup', () => {
+  const html = `<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>${'missing '.repeat(200)}</h1></body></html>`
+  const text = mcpToolFailureText(new Error(`HTTP 404: ${html}`))
+  assert.equal(text, 'HTTP 404')
+  assert.doesNotMatch(text, /</)
+
+  const markup = render({
+    requiresSignIn: false,
+    loading: false,
+    names: null,
+    error: `HTTP 404: ${html}`
+  })
+  assert.match(markup, /HTTP 404/)
+  const errorText = /Could not read the current tool list: ([^<]*)</.exec(markup)?.[1]?.trim()
+  assert.equal(errorText, 'HTTP 404')
+  assert.doesNotMatch(errorText ?? '', /</)
+  assert.doesNotMatch(markup, /<!DOCTYPE|<html|<body|<h1|missing missing/)
+})
+
+test('a plain HTTP error body is capped at 200 characters', () => {
+  const text = mcpToolFailureText(new Error(`HTTP 500: ${'x'.repeat(500)}`))
+  assert.match(text, /^HTTP 500: /)
+  assert.ok(text.length <= 'HTTP 500: '.length + 200)
+  assert.doesNotMatch(text, /x{200}/)
 })

@@ -52,7 +52,7 @@ test('renderer pre-validation mirrors the strict GitHub URL policy', () => {
   }
 })
 
-test('GitHub catalog cards show the pinned source and unsigned trust', () => {
+test('GitHub catalog cards show the pinned source without an unsigned badge', () => {
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
@@ -69,7 +69,7 @@ test('GitHub catalog cards show the pinned source and unsigned trust', () => {
     )
   )
   assert.match(markup, /GitHub · acme\/connectors@abcdef0/)
-  assert.match(markup, /Unsigned/)
+  assert.doesNotMatch(markup, /Unsigned|未签名/)
 })
 
 test('imported install confirmation exposes exact local launch data and HTTP URL', () => {

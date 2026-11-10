@@ -168,15 +168,27 @@ export function McpFeaturedConnectorDetails({
       >
         <ConnectorIcon icon={server?.icon ?? connector.icon} size={iconSize} />
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography variant="h4" sx={{ fontWeight: 700 }}>
-            {connector.name}
-          </Typography>
+          <Stack
+            direction="row"
+            spacing={1}
+            data-phi-connector-title-row="true"
+            sx={{ alignItems: 'center', minWidth: 0 }}
+          >
+            <Typography
+              variant="h4"
+              noWrap
+              title={connector.name}
+              sx={{ fontWeight: 700, minWidth: 0 }}
+            >
+              {connector.name}
+            </Typography>
+            {connector.source && (
+              <Box sx={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                <McpConnectorSourceBadges connector={connector} />
+              </Box>
+            )}
+          </Stack>
           <Typography color="text.secondary">{connector.description}</Typography>
-          {connector.source && (
-            <Box sx={{ mt: 1 }}>
-              <McpConnectorSourceBadges connector={connector} />
-            </Box>
-          )}
           {server && (
             <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
               <Chip size="small" variant="outlined" label={connectorCopy.configured} />

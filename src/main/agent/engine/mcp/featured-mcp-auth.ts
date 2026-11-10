@@ -15,6 +15,8 @@ import {
   featuredApiKeyMcpConfig
 } from '../../mcp-key-credentials'
 import type { RemoteMcpConnectorOptions } from '../../../../shared/mcpConnectorCatalog'
+import { mcpToolFailureText } from '../../../../shared/mcpToolFailureText'
+import { writeAppLog } from '../../app-logger'
 import type { PhiAuth } from '../types'
 
 const FEATURED_MCP_AUTH_TIMEOUT_MS = 2 * 60_000
@@ -137,16 +139,29 @@ export async function listFeaturedMcpTools(
       throw new Error('This Connector requires a saved API key and the official URL')
     }
   }
-  const manager = new MCPManager(process.cwd())
-  if (authStorage) manager.setAuthStorage(authStorage)
-  const config = await manager.prepareConfig(
-    apiKey ? featuredApiKeyMcpConfig(name, apiKey) : { type: 'http', url, timeout: 10_000 }
-  )
-  const signal = AbortSignal.timeout(12_000)
-  const connection = await connectToServer(name, config, { signal })
   try {
-    return (await listTools(connection, { signal })).map((tool) => tool.name)
-  } finally {
-    await disconnectServer(connection).catch(() => undefined)
+    const manager = new MCPManager(process.cwd())
+    if (authStorage) manager.setAuthStorage(authStorage)
+    const config = await manager.prepareConfig(
+      apiKey ? featuredApiKeyMcpConfig(name, apiKey) : { type: 'http', url, timeout: 10_000 }
+    )
+    const signal = AbortSignal.timeout(12_000)
+    const connection = await connectToServer(name, config, { signal })
+    try {
+      return (await listTools(connection, { signal })).map((tool) => tool.name)
+    } finally {
+      await disconnectServer(connection).catch(() => undefined)
+    }
+  } catch (cause) {
+    // The transport error can embed the whole HTTP response body. Keep it in the log only.
+    writeAppLog({
+      level: 'warn',
+      event: 'connector_tools_read_failed',
+      metadata: {
+        connectorId: name,
+        detail: cause instanceof Error ? cause.message : String(cause)
+      }
+    })
+    throw new Error(mcpToolFailureText(cause))
   }
 }
