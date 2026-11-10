@@ -49,6 +49,7 @@ export const resourceUi = defineCopy(
     all: 'All',
     other: 'Other',
     officialWebsite: 'Phi Website',
+    officialSource: 'Phi',
     unsigned: 'Unsigned',
     officialVerified: 'Official · Verified',
     userImported: 'User import',
@@ -219,7 +220,7 @@ export function resourceSourceLabel(value: string): string {
 
 /** Distinguish website-backed catalog rows from registry fallback rows with the same source. */
 export function websiteSourceLabel(source: string): string {
-  const label = resourceUi.officialWebsite
+  const label = resourceUi.officialSource
   const origin = source.trim()
   return !origin || origin === 'Phi Packages' ? label : `${label} · ${origin}`
 }

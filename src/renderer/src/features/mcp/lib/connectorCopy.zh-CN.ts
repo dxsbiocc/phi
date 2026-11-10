@@ -106,7 +106,6 @@ export const connectorCopyZh = {
   toolsAfterKey: '验证 API 密钥后可读取服务工具。',
   toolsAfterSignIn: '登录后可读取服务工具。',
   publisher: '发布者',
-  publisherWebsite: (publisher: string) => `${publisher} 官网`,
   launchCommand: '启动命令',
   category: '分类',
   signIn: '登录',

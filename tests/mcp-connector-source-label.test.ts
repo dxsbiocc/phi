@@ -31,27 +31,27 @@ function labelIn(language: 'en' | 'zh-CN', value: FeaturedMcpConnector): string 
 
 test.afterEach(() => setUiLanguage('en'))
 
-test('official connectors hosted by Phi keep the Phi website label', () => {
+test('official connectors hosted by Phi use the short Phi source label', () => {
   const value = connector({
     url: new URL('/api/connectors/biorender/mcp', OFFICIAL_WEBSITE_BASE_URL).href
   })
-  assert.equal(labelIn('en', value), 'Phi Website')
-  assert.equal(labelIn('zh-CN', value), 'Phi 官网')
+  assert.equal(labelIn('en', value), 'Phi')
+  assert.equal(labelIn('zh-CN', value), 'Phi')
 })
 
 test('official connectors hosted by a vendor name the connector publisher', () => {
   const value = connector({ publisher: 'BioRender' })
-  assert.equal(labelIn('en', value), 'BioRender Website')
-  assert.equal(labelIn('zh-CN', value), 'BioRender 官网')
+  assert.equal(labelIn('en', value), 'BioRender')
+  assert.equal(labelIn('zh-CN', value), 'BioRender')
 })
 
 test('a missing publisher falls back to the MCP URL host name', () => {
   const value = connector({ publisher: '' })
-  assert.equal(labelIn('en', value), 'mcp.biorender.com Website')
-  assert.equal(labelIn('zh-CN', value), 'mcp.biorender.com 官网')
+  assert.equal(labelIn('en', value), 'mcp.biorender.com')
+  assert.equal(labelIn('zh-CN', value), 'mcp.biorender.com')
 })
 
-test('official stdio connectors without a URL keep the current source label', () => {
+test('official stdio connectors without a URL use the short Phi source label', () => {
   const value = connector({
     publisher: 'GenomOncology',
     transport: 'stdio',
@@ -60,8 +60,8 @@ test('official stdio connectors without a URL keep the current source label', ()
     command: 'biomcp',
     args: ['serve']
   })
-  assert.equal(labelIn('en', value), 'Phi Website')
-  assert.equal(labelIn('zh-CN', value), 'Phi 官网')
+  assert.equal(labelIn('en', value), 'Phi')
+  assert.equal(labelIn('zh-CN', value), 'Phi')
 })
 
 test('non-official source kinds keep their existing source label', () => {

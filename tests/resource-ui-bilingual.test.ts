@@ -95,8 +95,8 @@ const connector: FeaturedMcpConnector = {
 test('Connector presentation changes language without changing authorization or source trust', () => {
   const before = structuredClone(connector)
   for (const [language, status, action, sourceChip, unsigned] of [
-    ['en', 'Sign-in required', 'Sign in to 作者的连接器', 'Author Website', 'Unsigned'],
-    ['zh-CN', '需要登录', '登录 作者的连接器', 'Author 官网', '未签名']
+    ['en', 'Sign-in required', 'Sign in to 作者的连接器', 'Author', 'Unsigned'],
+    ['zh-CN', '需要登录', '登录 作者的连接器', 'Author', '未签名']
   ] as const) {
     setUiLanguage(language)
     const markup = render(

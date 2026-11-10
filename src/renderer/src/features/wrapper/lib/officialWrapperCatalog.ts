@@ -29,6 +29,9 @@ export interface OfficialWrapperCatalogApi {
 
 export type OfficialWrapperLoad<T> = { source: 'official'; data: T } | { source: 'fallback' }
 
+/** Suites are small; one generous page usually holds every tool, and extra pages are still read. */
+export const OFFICIAL_WRAPPER_SUITE_PAGE_SIZE = 200
+
 async function loadOfficial<T>(
   request: (() => Promise<PhiWebsiteCatalogResult<T>>) | undefined
 ): Promise<OfficialWrapperLoad<T>> {
@@ -67,6 +70,55 @@ export function loadOfficialWrapperDetail(
 ): Promise<OfficialWrapperLoad<PhiWrapperCatalogDetail>> {
   return loadOfficial(
     api.getOfficialWrapperDetail ? () => api.getOfficialWrapperDetail!(id) : undefined
+  )
+}
+
+/** The split view lists every tool in a suite, so follow the service's pages when it has more. */
+export async function loadOfficialWrapperSuiteTools(
+  api: OfficialWrapperCatalogApi,
+  suite: string
+): Promise<OfficialWrapperLoad<PhiWrapperCatalogTool[]>> {
+  const first = await loadOfficialWrapperTools(
+    api,
+    officialWrapperToolsQuery(suite, '', 0, OFFICIAL_WRAPPER_SUITE_PAGE_SIZE)
+  )
+  if (first.source === 'fallback') return first
+  const tools = [...first.data.items]
+  const pageCount = Math.max(1, first.data.pageCount)
+  for (let page = 1; page < pageCount; page += 1) {
+    const next = await loadOfficialWrapperTools(
+      api,
+      officialWrapperToolsQuery(suite, '', page, OFFICIAL_WRAPPER_SUITE_PAGE_SIZE)
+    )
+    if (next.source === 'fallback') return next
+    tools.push(...next.data.items)
+  }
+  return { source: 'official', data: tools }
+}
+
+export function officialWrapperDefaultToolId(
+  tools: readonly Pick<PhiWrapperCatalogTool, 'id'>[],
+  current?: string
+): string | undefined {
+  return current && tools.some((tool) => tool.id === current) ? current : tools[0]?.id
+}
+
+/** Short list labels drop the redundant suite prefix ("SAMtools sort" → "sort"). */
+export function officialWrapperToolShortName(suite: string, name: string): string {
+  const prefix = `${suite} `
+  return name.toLowerCase().startsWith(prefix.toLowerCase()) && name.length > prefix.length
+    ? name.slice(prefix.length)
+    : name
+}
+
+export function filterOfficialWrapperTools(
+  tools: readonly PhiWrapperCatalogTool[],
+  query: string
+): PhiWrapperCatalogTool[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return [...tools]
+  return tools.filter((tool) =>
+    [tool.name, tool.id, tool.summary ?? ''].some((value) => value.toLowerCase().includes(needle))
   )
 }
 

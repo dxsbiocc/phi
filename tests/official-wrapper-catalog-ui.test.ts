@@ -12,13 +12,17 @@ import type {
 import type { PackageRegistryEntryView } from '../src/shared/packageManagerTypes'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import {
+  filterOfficialWrapperTools,
   loadOfficialWrapperDetail,
   loadOfficialWrapperGroups,
+  loadOfficialWrapperSuiteTools,
   officialWrapperCategoryGroups,
+  officialWrapperDefaultToolId,
   officialWrapperDetailManifest,
   officialWrapperGroupsQuery,
   officialWrapperRegistryId,
   officialWrapperToolChoices,
+  officialWrapperToolShortName,
   officialWrapperToolsQuery,
   type OfficialWrapperCatalogApi
 } from '../src/renderer/src/features/wrapper/lib/officialWrapperCatalog'
@@ -57,7 +61,7 @@ function groupsPage(): PhiWrapperGroupsPage {
   }
 }
 
-function tool(): PhiWrapperCatalogTool {
+function tool(overrides: Partial<PhiWrapperCatalogTool> = {}): PhiWrapperCatalogTool {
   return {
     id: 'nf-core/modules/samtools-sort',
     name: 'SAMtools sort',
@@ -67,8 +71,18 @@ function tool(): PhiWrapperCatalogTool {
     path: 'resources/wrappers/modules/nf-core/samtools/sort/wrapper',
     version: '1.2.0',
     source: 'Phi Packages',
-    suite: 'samtools'
+    suite: 'samtools',
+    ...overrides
   }
+}
+
+function splitTool(): PhiWrapperCatalogTool {
+  return tool({
+    id: 'nf-core/modules/samtools-split',
+    name: 'SAMtools split',
+    summary: 'Split a BAM file by read group.',
+    path: 'resources/wrappers/modules/nf-core/samtools/split/wrapper'
+  })
 }
 
 function toolsPage(): PhiWrapperToolsPage {
@@ -85,26 +99,30 @@ function toolsPage(): PhiWrapperToolsPage {
   }
 }
 
-function detail(): PhiWrapperCatalogDetail {
+function detailFor(current: PhiWrapperCatalogTool = tool()): PhiWrapperCatalogDetail {
   return {
     kind: 'wrapper',
-    id: tool().id,
-    name: tool().name,
-    summary: tool().summary,
-    category: 'modules',
-    categoryLabel: '模块',
-    path: tool().path,
-    version: tool().version,
-    source: tool().source,
-    suite: 'samtools',
+    id: current.id,
+    name: current.name,
+    summary: current.summary,
+    category: current.category,
+    categoryLabel: current.categoryLabel,
+    path: current.path,
+    version: current.version,
+    source: current.source,
+    suite: current.suite,
     inputs: [
       { name: 'bam', kind: 'input', type: 'file', required: true, description: 'Input BAM.' },
       { name: 'threads', kind: 'option', type: 'integer', required: false }
     ],
     outputs: [{ name: 'sorted_bam', kind: 'output', type: 'file', required: true }],
-    structure: { inputs: ['bam', 'threads'], process: 'SAMtools sort', outputs: ['sorted_bam'] },
-    siblings: [{ id: tool().id, name: tool().name, tool: 'sort' }]
+    structure: { inputs: ['bam', 'threads'], process: current.name, outputs: ['sorted_bam'] },
+    siblings: [{ id: current.id, name: current.name, tool: 'sort' }]
   }
+}
+
+function detail(): PhiWrapperCatalogDetail {
+  return detailFor()
 }
 
 function registryEntry(): PackageRegistryEntryView {
@@ -241,32 +259,80 @@ test('suite rows render API category data and group tool counts', () => {
   assert.match(markup, /Search Wrapper groups/)
 })
 
-test('group tools and selected detail render website metadata through existing Wrapper patterns', () => {
+test('suite tools default to the first item and list short labels filter by name', () => {
+  const split = splitTool()
+  assert.equal(officialWrapperDefaultToolId([tool(), split]), tool().id)
+  assert.equal(officialWrapperDefaultToolId([tool(), split], split.id), split.id)
+  assert.equal(officialWrapperDefaultToolId([], tool().id), undefined)
+  assert.equal(officialWrapperToolShortName('samtools', 'SAMtools sort'), 'sort')
+  assert.equal(officialWrapperToolShortName('samtools', 'Split reads'), 'Split reads')
+  assert.deepEqual(
+    filterOfficialWrapperTools([tool(), split], 'split').map((entry) => entry.id),
+    [split.id]
+  )
+})
+
+test('suite tools load every service page for the split list', async () => {
+  const queries: Array<{ group: string; page?: number; pageSize?: number }> = []
+  const api: OfficialWrapperCatalogApi = {
+    listOfficialWrapperTools: async (query) => {
+      queries.push(query)
+      const page = query.page ?? 1
+      return {
+        status: 'available',
+        data: {
+          ...toolsPage(),
+          items: page === 1 ? [tool()] : [splitTool()],
+          total: 2,
+          page,
+          pageSize: 200,
+          pageCount: 2
+        }
+      }
+    }
+  }
+  const result = await loadOfficialWrapperSuiteTools(api, 'samtools')
+  assert.equal(result.source, 'official')
+  if (result.source === 'official')
+    assert.deepEqual(
+      result.data.map((item) => item.id),
+      [tool().id, splitTool().id]
+    )
+  assert.deepEqual(queries, [
+    { group: 'samtools', page: 1, pageSize: 200 },
+    { group: 'samtools', page: 2, pageSize: 200 }
+  ])
+})
+
+test('suite split view renders the tool list and the first tool detail', () => {
   const choice = officialWrapperToolChoices([tool()], [registryChoice()])
   const suiteMarkup = themed(
     createElement(OfficialWrapperSuiteView, {
       suite: 'samtools',
-      page: toolsPage(),
       choices: choice,
-      query: 'sort',
+      selectedToolId: tool().id,
+      detail: detail(),
+      query: '',
       loading: false,
+      detailLoading: false,
       busy: false,
-      rowsPerPage: 10,
       renderAction: () => createElement('span', { 'data-registry-action': 'true' }, 'Install'),
       onQueryChange: () => undefined,
-      onPageChange: () => undefined,
-      onRowsPerPageChange: () => undefined,
-      onOpen: () => undefined,
+      onSelect: () => undefined,
       onBack: () => undefined,
       onClose: () => undefined
     })
   )
   assert.match(suiteMarkup, /data-phi-wrapper-catalog-tool="nf-core\/modules\/samtools-sort"/)
+  assert.match(suiteMarkup, />sort</)
+  assert.match(suiteMarkup, /data-phi-official-wrapper-detail="nf-core\/modules\/samtools-sort"/)
   assert.match(suiteMarkup, /Sort a BAM file/)
-  assert.match(suiteMarkup, /Phi Website/)
+  assert.match(suiteMarkup, />Phi</)
+  assert.doesNotMatch(suiteMarkup, /Phi Website/)
   assert.doesNotMatch(suiteMarkup, /Phi Packages/)
   assert.match(suiteMarkup, /data-registry-action="true"/)
   assert.match(suiteMarkup, /Search tools/)
+  assert.match(suiteMarkup, /1 tool/)
 
   const manifest = officialWrapperDetailManifest(detail())
   assert.equal(manifest.params.bam?.kind, 'input')
@@ -282,11 +348,59 @@ test('group tools and selected detail render website metadata through existing W
   )
   assert.match(detailMarkup, /data-phi-official-wrapper-detail="nf-core\/modules\/samtools-sort"/)
   assert.match(detailMarkup, /SAMtools sort/)
-  assert.match(detailMarkup, /Phi Website/)
+  assert.match(detailMarkup, />Phi</)
+  assert.doesNotMatch(detailMarkup, /Phi Website/)
   assert.doesNotMatch(detailMarkup, /Phi Packages/)
   assert.match(detailMarkup, /Input BAM/)
   assert.match(detailMarkup, />Inputs</)
   assert.match(detailMarkup, />Outputs</)
+})
+
+test('suite search filters the list and selecting another tool renders its detail', () => {
+  const sort = tool()
+  const split = splitTool()
+  const choices = officialWrapperToolChoices([sort, split], [])
+  const renderSuite = (
+    query: string,
+    selectedToolId: string,
+    selectedDetail: PhiWrapperCatalogDetail
+  ): string =>
+    themed(
+      createElement(OfficialWrapperSuiteView, {
+        suite: 'samtools',
+        choices,
+        selectedToolId,
+        detail: selectedDetail,
+        query,
+        loading: false,
+        detailLoading: false,
+        busy: false,
+        renderAction: () => createElement('span', null, 'Install'),
+        onQueryChange: () => undefined,
+        onSelect: () => undefined,
+        onBack: () => undefined,
+        onClose: () => undefined
+      })
+    )
+
+  const filtered = renderSuite('split', split.id, detailFor(split))
+  assert.doesNotMatch(filtered, /data-phi-wrapper-catalog-tool="nf-core\/modules\/samtools-sort"/)
+  assert.match(filtered, /data-phi-wrapper-catalog-tool="nf-core\/modules\/samtools-split"/)
+  assert.match(filtered, />split</)
+  assert.match(filtered, /data-phi-official-wrapper-detail="nf-core\/modules\/samtools-split"/)
+  assert.doesNotMatch(
+    filtered,
+    /data-phi-official-wrapper-detail="nf-core\/modules\/samtools-sort"/
+  )
+
+  const selected = renderSuite('', split.id, detailFor(split))
+  assert.match(selected, /data-phi-wrapper-catalog-tool="nf-core\/modules\/samtools-sort"/)
+  assert.match(selected, /data-phi-wrapper-catalog-tool="nf-core\/modules\/samtools-split"/)
+  assert.match(selected, /data-phi-official-wrapper-detail="nf-core\/modules\/samtools-split"/)
+  assert.doesNotMatch(
+    selected,
+    /data-phi-official-wrapper-detail="nf-core\/modules\/samtools-sort"/
+  )
 })
 
 test('the wrapper detail shows the module tier once when the website category matches it', () => {
@@ -327,20 +441,20 @@ test('new Chinese Wrapper catalog copy includes the required group and tool word
   const toolsMarkup = themed(
     createElement(OfficialWrapperSuiteView, {
       suite: 'samtools',
-      page: toolsPage(),
       choices: officialWrapperToolChoices([tool()], [registryChoice()]),
+      selectedToolId: tool().id,
+      detail: detail(),
       query: '',
       loading: false,
+      detailLoading: false,
       busy: false,
-      rowsPerPage: 10,
       renderAction: () => null,
       onQueryChange: () => undefined,
-      onPageChange: () => undefined,
-      onRowsPerPageChange: () => undefined,
-      onOpen: () => undefined,
+      onSelect: () => undefined,
       onBack: () => undefined,
       onClose: () => undefined
     })
   )
   assert.match(toolsMarkup, /搜索工具/)
+  assert.match(toolsMarkup, /1 个工具/)
 })

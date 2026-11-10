@@ -1,45 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  Box,
-  Button,
-  CircularProgress,
-  IconButton,
-  InputAdornment,
-  Stack,
-  TextField,
-  Typography
-} from '@mui/material'
+import { useEffect, useMemo, useState } from 'react'
+import { Box, Button, CircularProgress, Typography } from '@mui/material'
 import type {
   PhiWrapperCatalogDetail,
   PhiWrapperCatalogGroup,
   PhiWrapperCatalogTool,
-  PhiWrapperGroupsPage,
-  PhiWrapperToolsPage
+  PhiWrapperGroupsPage
 } from '../../../../../shared/phiWebsiteCatalogTypes'
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
-import { CatalogDetailFrame } from '../../../components/catalog/CatalogDetailFrame'
 import { CatalogPagination } from '../../../components/catalog/CatalogPagination'
 import { CatalogResultsTable } from '../../../components/catalog/CatalogResultsTable'
 import { CATALOG_DEFAULT_PAGE_SIZE } from '../../../components/catalog/catalogPaging'
-import { PhiIcons } from '../../../icons'
 import { useUiLanguage } from '../../../lib/i18n'
-import { websiteSourceLabel } from '../../../lib/resourceUi'
 import {
   loadOfficialWrapperDetail,
   loadOfficialWrapperGroups,
-  loadOfficialWrapperTools,
+  loadOfficialWrapperSuiteTools,
   officialWrapperCategoryGroups,
+  officialWrapperDefaultToolId,
   officialWrapperGroupRowDetails,
   officialWrapperGroupsQuery,
   officialWrapperToolChoices,
-  officialWrapperToolsQuery,
-  type OfficialWrapperCatalogApi,
-  type OfficialWrapperToolChoice
+  type OfficialWrapperCatalogApi
 } from '../lib/officialWrapperCatalog'
-import { wrapperChoiceIcon, type WrapperCatalogChoice } from '../lib/wrapperCatalog'
+import type { WrapperCatalogChoice } from '../lib/wrapperCatalog'
 import { wrapperCopy } from '../lib/wrapperCopy'
-import { OfficialWrapperDetailPage } from './OfficialWrapperDetailPage'
+import { OfficialWrapperSuiteSplitView } from './OfficialWrapperSuiteSplitView'
+
+export { OfficialWrapperSuiteSplitView as OfficialWrapperSuiteView }
 
 function LoadingRows(): React.JSX.Element {
   return (
@@ -155,134 +143,6 @@ export function OfficialWrapperGroupsView({
   )
 }
 
-export function OfficialWrapperSuiteView({
-  suite,
-  page,
-  choices,
-  query,
-  loading,
-  busy,
-  rowsPerPage,
-  feedback,
-  renderAction,
-  onQueryChange,
-  onPageChange,
-  onRowsPerPageChange,
-  onOpen,
-  onBack,
-  onClose
-}: {
-  suite: string
-  page?: PhiWrapperToolsPage
-  choices: readonly OfficialWrapperToolChoice[]
-  query: string
-  loading: boolean
-  busy: boolean
-  rowsPerPage: number
-  feedback?: React.ReactNode
-  renderAction: (choice: WrapperCatalogChoice) => React.ReactNode
-  onQueryChange: (value: string) => void
-  onPageChange: (page: number) => void
-  onRowsPerPageChange: (size: number) => void
-  onOpen: (id: string) => void
-  onBack: () => void
-  onClose: () => void
-}): React.JSX.Element {
-  useUiLanguage()
-  return (
-    <CatalogDetailFrame
-      entryId={`group:${suite}`}
-      backLabel={wrapperCopy.backToWrapperGroups}
-      onBack={onBack}
-      action={
-        <IconButton aria-label={wrapperCopy.closeCatalog} disabled={busy} onClick={onClose}>
-          <PhiIcons.action.close size={20} />
-        </IconButton>
-      }
-    >
-      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <Stack direction="row" sx={{ alignItems: 'baseline', px: 3, pt: 2.5, pb: 2 }} spacing={1}>
-          <Typography variant="h5" sx={{ fontWeight: 700 }}>
-            {suite}
-          </Typography>
-          {page ? (
-            <Typography variant="body2" color="text.secondary">
-              {wrapperCopy.toolCount(page.total)}
-            </Typography>
-          ) : null}
-        </Stack>
-        <Box sx={{ px: 3, pb: 2 }}>
-          <TextField
-            fullWidth
-            size="small"
-            value={query}
-            placeholder={wrapperCopy.searchTools}
-            onChange={(event) => onQueryChange(event.target.value)}
-            slotProps={{
-              htmlInput: { 'aria-label': wrapperCopy.searchTools },
-              input: {
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <PhiIcons.action.search size={16} />
-                  </InputAdornment>
-                )
-              }
-            }}
-          />
-        </Box>
-        <Box sx={{ flex: 1, minHeight: 0, px: 3, pb: 2, display: 'flex', flexDirection: 'column' }}>
-          {feedback}
-          {loading ? (
-            <LoadingRows />
-          ) : (
-            <>
-              <CatalogResultsTable
-                label={wrapperCopy.wrapperToolList}
-                nameLabel={wrapperCopy.tools}
-                detailsLabel={wrapperCopy.categoryVersion}
-                rowAttribute="data-phi-wrapper-catalog-tool"
-                onOpen={onOpen}
-                rows={choices.map(({ tool, choice }) => ({
-                  rowKey: tool.id,
-                  id: tool.id,
-                  icon: (
-                    <ResourceIcon
-                      icon={wrapperChoiceIcon(choice)}
-                      kind="wrapper"
-                      sx={{ color: 'primary.main' }}
-                    />
-                  ),
-                  title: tool.name,
-                  summary: tool.summary ?? '',
-                  metadata: websiteSourceLabel(tool.source),
-                  details: `${tool.categoryLabel} · v${tool.version}`,
-                  action: renderAction(choice)
-                }))}
-              />
-              {choices.length === 0 ? (
-                <Typography color="text.secondary" sx={{ py: 4 }}>
-                  {wrapperCopy.noSuiteTools}
-                </Typography>
-              ) : null}
-            </>
-          )}
-        </Box>
-        {page ? (
-          <Box sx={{ px: 3, py: 1.5 }}>
-            <CatalogPagination
-              count={page.total}
-              page={Math.max(0, page.page - 1)}
-              rowsPerPage={rowsPerPage}
-              onPageChange={onPageChange}
-              onRowsPerPageChange={onRowsPerPageChange}
-            />
-          </Box>
-        ) : null}
-      </Box>
-    </CatalogDetailFrame>
-  )
-}
-
 export function OfficialWrapperCatalog({
   open,
   api,
@@ -312,17 +172,13 @@ export function OfficialWrapperCatalog({
   const [groupPage, setGroupPage] = useState(0)
   const [groupPageSize, setGroupPageSize] = useState(CATALOG_DEFAULT_PAGE_SIZE)
   const [selectedSuite, setSelectedSuite] = useState<string>()
-  const [toolsPage, setToolsPage] = useState<PhiWrapperToolsPage>()
+  const [suiteTools, setSuiteTools] = useState<PhiWrapperCatalogTool[]>()
   const [toolQuery, setToolQuery] = useState('')
-  const [toolPage, setToolPage] = useState(0)
-  const [toolPageSize, setToolPageSize] = useState(CATALOG_DEFAULT_PAGE_SIZE)
+  const [selectedToolId, setSelectedToolId] = useState<string>()
+  const [suiteDetail, setSuiteDetail] = useState<PhiWrapperCatalogDetail>()
   const [groupsLoading, setGroupsLoading] = useState(true)
   const [toolsLoading, setToolsLoading] = useState(false)
-  const [detailSelection, setDetailSelection] = useState<{
-    detail: PhiWrapperCatalogDetail
-    tool: PhiWrapperCatalogTool
-  }>()
-  const detailSequence = useRef(0)
+  const [detailLoading, setDetailLoading] = useState(false)
 
   useEffect(() => {
     if (!open || selectedSuite) return undefined
@@ -344,83 +200,73 @@ export function OfficialWrapperCatalog({
   useEffect(() => {
     if (!open || !selectedSuite) return undefined
     let active = true
-    void loadOfficialWrapperTools(
-      api,
-      officialWrapperToolsQuery(selectedSuite, toolQuery, toolPage, toolPageSize)
-    ).then((result) => {
+    void loadOfficialWrapperSuiteTools(api, selectedSuite).then((result) => {
       if (!active) return
       if (result.source === 'fallback') return onUnavailable()
-      setToolsPage(result.data)
+      const firstToolId = officialWrapperDefaultToolId(result.data)
+      setSuiteTools(result.data)
       setToolsLoading(false)
+      setSuiteDetail(undefined)
+      setSelectedToolId(firstToolId)
+      setDetailLoading(Boolean(firstToolId))
     })
     return () => {
       active = false
     }
-  }, [api, onUnavailable, open, selectedSuite, toolPage, toolPageSize, toolQuery])
+  }, [api, onUnavailable, open, selectedSuite])
+
+  useEffect(() => {
+    if (!open || !selectedSuite || !selectedToolId) return undefined
+    let active = true
+    void loadOfficialWrapperDetail(api, selectedToolId).then((result) => {
+      if (!active) return
+      if (result.source === 'fallback') return onUnavailable()
+      setSuiteDetail(result.data)
+      setDetailLoading(false)
+    })
+    return () => {
+      active = false
+    }
+  }, [api, onUnavailable, open, selectedSuite, selectedToolId])
 
   const toolChoices = useMemo(
-    () => officialWrapperToolChoices(toolsPage?.items ?? [], registryChoices),
-    [registryChoices, toolsPage]
+    () => officialWrapperToolChoices(suiteTools ?? [], registryChoices),
+    [registryChoices, suiteTools]
   )
 
-  async function openDetail(id: string): Promise<void> {
-    const selected = toolChoices.find(({ tool }) => tool.id === id)
-    if (!selected) return
-    const sequence = ++detailSequence.current
-    const result = await loadOfficialWrapperDetail(api, id)
-    if (sequence !== detailSequence.current) return
-    if (result.source === 'fallback') return onUnavailable()
-    setDetailSelection({ detail: result.data, tool: selected.tool })
+  function resetSuite(): void {
+    setSelectedSuite(undefined)
+    setSuiteTools(undefined)
+    setSelectedToolId(undefined)
+    setSuiteDetail(undefined)
+    setToolQuery('')
+    setToolsLoading(false)
+    setDetailLoading(false)
   }
 
-  if (detailSelection) {
-    const currentChoice = officialWrapperToolChoices([detailSelection.tool], registryChoices)[0]!
-      .choice
-    return (
-      <OfficialWrapperDetailPage
-        detail={detailSelection.detail}
-        choice={currentChoice}
-        action={renderAction(currentChoice)}
-        onBack={() => setDetailSelection(undefined)}
-      />
-    )
-  }
   if (selectedSuite) {
     return (
-      <OfficialWrapperSuiteView
+      <OfficialWrapperSuiteSplitView
         suite={selectedSuite}
-        page={toolsPage}
         choices={toolChoices}
+        selectedToolId={selectedToolId}
+        detail={suiteDetail}
         query={toolQuery}
         loading={registryLoading || toolsLoading}
+        detailLoading={detailLoading}
         busy={busy}
-        rowsPerPage={toolPageSize}
         feedback={feedback}
         renderAction={renderAction}
-        onQueryChange={(value) => {
-          setToolsLoading(true)
-          setToolQuery(value)
-          setToolPage(0)
+        onQueryChange={setToolQuery}
+        onSelect={(id) => {
+          if (id === selectedToolId) return
+          setSuiteDetail(undefined)
+          setDetailLoading(true)
+          setSelectedToolId(id)
         }}
-        onPageChange={(nextPage) => {
-          setToolsLoading(true)
-          setToolPage(nextPage)
-        }}
-        onRowsPerPageChange={(size) => {
-          setToolsLoading(true)
-          setToolPageSize(size)
-          setToolPage(0)
-        }}
-        onOpen={(id) => void openDetail(id)}
-        onBack={() => {
-          detailSequence.current += 1
-          setSelectedSuite(undefined)
-          setToolsPage(undefined)
-          setToolQuery('')
-          setToolPage(0)
-        }}
+        onBack={resetSuite}
         onClose={() => {
-          detailSequence.current += 1
+          resetSuite()
           onClose()
         }}
       />
@@ -456,14 +302,16 @@ export function OfficialWrapperCatalog({
         setGroupPage(0)
       }}
       onOpen={(group) => {
+        setSuiteTools(undefined)
+        setSelectedToolId(undefined)
+        setSuiteDetail(undefined)
+        setToolQuery('')
+        setDetailLoading(false)
         setToolsLoading(true)
         setSelectedSuite(group.suite)
-        setToolsPage(undefined)
-        setToolQuery('')
-        setToolPage(0)
       }}
       onClose={() => {
-        detailSequence.current += 1
+        resetSuite()
         onClose()
       }}
     />

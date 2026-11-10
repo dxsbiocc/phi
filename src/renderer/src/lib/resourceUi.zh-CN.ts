@@ -38,6 +38,7 @@ export const resourceUiZh = {
   all: '全部',
   other: '其他',
   officialWebsite: 'Phi 官网',
+  officialSource: 'Phi',
   unsigned: '未签名',
   officialVerified: '官方 · 已验证',
   userImported: '用户导入',

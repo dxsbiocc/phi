@@ -410,7 +410,7 @@ test('skill browsing uses website groups in API order and sends group, search an
     metadata: string
   }>
   assert.equal(websiteRow.title, 'Website workflow-01')
-  assert.equal(websiteRow.metadata, 'Phi Website')
+  assert.equal(websiteRow.metadata, 'Phi')
   assert.equal(view(tree, 'Pagination').props.count, 27)
   dialog.unmount()
 })

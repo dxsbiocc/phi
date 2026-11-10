@@ -141,6 +141,7 @@ test('the official skill detail renders website SKILL.md through the safe shared
   }
   assert.doesNotMatch(markup, /<script>/)
   assert.doesNotMatch(markup, /alert\(&quot;unsafe&quot;\)/)
-  assert.match(markup, /Phi Website/)
+  assert.match(markup, />Phi</)
+  assert.doesNotMatch(markup, /Phi Website/)
   assert.doesNotMatch(markup, /Phi Packages/)
 })

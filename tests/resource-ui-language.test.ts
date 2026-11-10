@@ -31,13 +31,13 @@ test('display translations leave catalog identifiers and author content unchange
 
 test('website source labels distinguish website rows from registry fallback rows', () => {
   for (const source of ['', 'Phi Packages', '  Phi Packages  ']) {
-    assert.equal(websiteSourceLabel(source), 'Phi Website')
+    assert.equal(websiteSourceLabel(source), 'Phi')
   }
-  assert.equal(websiteSourceLabel('Mirror source'), 'Phi Website · Mirror source')
+  assert.equal(websiteSourceLabel('Mirror source'), 'Phi · Mirror source')
 
   setUiLanguage('zh-CN')
   for (const source of ['', 'Phi Packages']) {
-    assert.equal(websiteSourceLabel(source), 'Phi 官网')
+    assert.equal(websiteSourceLabel(source), 'Phi')
   }
-  assert.equal(websiteSourceLabel('Mirror source'), 'Phi 官网 · Mirror source')
+  assert.equal(websiteSourceLabel('Mirror source'), 'Phi · Mirror source')
 })
