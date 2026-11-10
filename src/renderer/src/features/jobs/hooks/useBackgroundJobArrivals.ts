@@ -35,14 +35,25 @@ export function backgroundJobPhase(
   return 'running'
 }
 
-/** A history entry is never a new task. The first loaded snapshot only establishes a baseline. */
-export function newlyObservedJobs<T extends { key: string }>(
+/**
+ * A history entry is never a new task. The first loaded snapshot only establishes a baseline.
+ * A job that first appears already finished before `sinceMs` (for example the plan steps of a
+ * session that was just reopened) is old work being loaded, not a new task.
+ */
+export function newlyObservedJobs<T extends { key: string; active?: boolean; timestamp?: string }>(
   jobs: readonly T[],
-  known: Set<string>
+  known: Set<string>,
+  sinceMs?: number
 ): T[] {
-  const added = jobs.filter((job) => !known.has(job.key))
+  const added = jobs.filter((job) => !known.has(job.key) && !finishedBefore(job, sinceMs))
   for (const job of jobs) known.add(job.key)
   return added
+}
+
+function finishedBefore(job: { active?: boolean; timestamp?: string }, sinceMs?: number): boolean {
+  if (sinceMs === undefined || job.active !== false || !job.timestamp) return false
+  const finishedMs = Date.parse(job.timestamp)
+  return Number.isFinite(finishedMs) && finishedMs < sinceMs
 }
 
 export function useBackgroundJobArrivals(): {
@@ -51,6 +62,7 @@ export function useBackgroundJobArrivals(): {
 } {
   const { jobs, loaded } = useBackgroundJobsData()
   const known = useRef<Set<string> | null>(null)
+  const baselineMs = useRef(0)
   const phases = useRef(new Map<string, ReturnType<typeof workflowPhase>>())
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const [arrivals, setArrivals] = useState<BackgroundJobArrival[]>([])
@@ -63,10 +75,11 @@ export function useBackgroundJobArrivals(): {
     const display = groupBackgroundJobs(live)
     if (known.current === null) {
       known.current = new Set(display.map((job) => job.key))
+      baselineMs.current = Date.now()
       for (const item of display) phases.current.set(item.key, backgroundJobPhase(item))
       return
     }
-    const added = newlyObservedJobs(display, known.current)
+    const added = newlyObservedJobs(display, known.current, baselineMs.current)
     const addedKeys = new Set(added.map((item) => item.key))
     const notices: BackgroundJobArrival[] = added.map((item) => ({ item, phase: 'added' }))
     for (const item of display) {

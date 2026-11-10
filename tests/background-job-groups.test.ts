@@ -127,3 +127,19 @@ test('a retried or repeated step counts once, by its latest attempt', () => {
   })
   assert.deepEqual(workflowStepCounts(jobs), { completed: 4, failed: 0 })
 })
+
+test('a job that first appears already finished before the baseline is not announced as new', () => {
+  const since = Date.parse('2026-11-11T10:00:00.000Z')
+  const known = new Set<string>()
+  const jobs = [
+    { key: 'agent:old', active: false, timestamp: '2026-11-11T09:00:00.000Z' },
+    { key: 'agent:quick', active: false, timestamp: '2026-11-11T10:00:05.000Z' },
+    { key: 'agent:running', active: true, timestamp: '2026-11-11T09:30:00.000Z' }
+  ]
+  assert.deepEqual(
+    newlyObservedJobs(jobs, known, since).map((job) => job.key),
+    ['agent:quick', 'agent:running']
+  )
+  assert.ok(known.has('agent:old'))
+  assert.deepEqual(newlyObservedJobs(jobs, known, since), [])
+})
