@@ -3,7 +3,7 @@ import { useSyncExternalStore } from 'react'
 import type { AppUpdateCheck } from '../../../../../shared/appUpdateTypes'
 import type { PackageUpdateView } from '../../../../../shared/packageManagerTypes'
 import {
-  markMessagesRead,
+  markMessageRead,
   readMessageReadIds,
   unreadMessageCount,
   writeMessageReadIds
@@ -46,13 +46,13 @@ class MessagesStore {
     }
   }
 
-  /** Opening the panel marks every message that currently exists as read. */
-  markAllRead = (): void => {
+  /**
+   * A message becomes read only when the user opens it. The stored ids are
+   * pruned to the messages that still exist on every write.
+   */
+  markRead = (messageId: string): void => {
     const messageIds = messageIdsForContent(this.state.packageUpdates, this.state.appUpdate)
-    if (messageIds.length === 0) return
-    if (messageIds.every((id) => this.state.readIds.has(id))) return
-    // Only current messages are kept, so the stored list never grows past a few ids.
-    const readIds = markMessagesRead(new Set(), messageIds)
+    const readIds = markMessageRead(this.state.readIds, messageIds, messageId)
     this.state = { ...this.state, readIds }
     writeMessageReadIds(readIds)
     this.emit()
@@ -137,14 +137,14 @@ export function useUnreadMessageCount(): number {
 }
 
 export function useMessages(): MessagesSnapshot & {
-  markAllRead: () => void
+  markRead: (messageId: string) => void
   refreshPackageUpdates: () => Promise<void>
 } {
   const store = messagesStore()
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   return {
     ...snapshot,
-    markAllRead: store.markAllRead,
+    markRead: store.markRead,
     refreshPackageUpdates: store.refreshPackageUpdates
   }
 }

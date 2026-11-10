@@ -37,12 +37,24 @@ export function writeMessageReadIds(
   }
 }
 
-export function markMessagesRead(
+/**
+ * Marks one message read while dropping ids that no longer match a message.
+ *
+ * The just-read id is always kept, even if the caller's current message list is
+ * stale, so a click is never lost. Everything else must still exist, which keeps
+ * the stored list bounded to the messages the user can actually see.
+ */
+export function markMessageRead(
   readIds: ReadonlySet<string>,
-  messageIds: Iterable<string>
+  messageIds: Iterable<string>,
+  messageId: string
 ): Set<string> {
-  const next = new Set(readIds)
-  for (const id of messageIds) next.add(id)
+  const current = new Set(messageIds)
+  const next = new Set<string>()
+  for (const id of readIds) {
+    if (current.has(id)) next.add(id)
+  }
+  next.add(messageId)
   return next
 }
 

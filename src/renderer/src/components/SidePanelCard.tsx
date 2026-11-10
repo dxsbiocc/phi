@@ -14,6 +14,8 @@ export function SidePanelCard({
   status,
   statusColor = 'text.secondary',
   subtitle,
+  statusPlacement = 'title',
+  titleEmphasis = 'strong',
   compact = false,
   reserveActionSpace = false,
   footer,
@@ -26,6 +28,13 @@ export function SidePanelCard({
   status: string
   statusColor?: string
   subtitle: string
+  /**
+   * `title` keeps the status beside the first line. `center` puts it on the
+   * right, vertically centered against the whole card.
+   */
+  statusPlacement?: 'title' | 'center'
+  /** Messages dim read titles; jobs and other cards stay at full emphasis. */
+  titleEmphasis?: 'strong' | 'muted'
   /** Workflow steps use the shorter single-line card. */
   compact?: boolean
   /** Leaves room for absolutely positioned actions on the right. */
@@ -35,36 +44,55 @@ export function SidePanelCard({
   /** Absolutely positioned controls, such as stop and retry. */
   actions?: ReactNode
 }): React.JSX.Element {
+  const centeredStatus = statusPlacement === 'center'
+  const titleSx =
+    titleEmphasis === 'muted' ? { fontWeight: 600, color: 'text.secondary' } : { fontWeight: 700 }
+  const subtitleNode = compact ? null : (
+    <Typography variant="caption" color="text.secondary" component="div" title={subtitle} noWrap>
+      {subtitle}
+    </Typography>
+  )
   return (
     <Box {...boxProps} sx={[cardSx(compact), ...(Array.isArray(sx) ? sx : sx ? [sx] : [])]}>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', minWidth: 0, width: '100%' }}>
         {icon}
         <Box sx={{ minWidth: 0, flex: 1, pr: reserveActionSpace ? 3.5 : 0 }}>
-          <Stack direction="row" spacing={0.75} sx={{ alignItems: 'baseline', minWidth: 0 }}>
-            <Typography
-              variant="body2"
-              noWrap
-              sx={{ minWidth: 0, flex: 1, fontWeight: 700, fontSize: '0.92rem' }}
-              title={title}
-            >
-              {title}
-            </Typography>
-            <Typography variant="caption" noWrap sx={{ flexShrink: 0, color: statusColor }}>
-              {status}
-            </Typography>
-          </Stack>
-          {compact ? null : (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              component="div"
-              title={subtitle}
-              noWrap
-            >
-              {subtitle}
-            </Typography>
+          {centeredStatus ? (
+            <>
+              <Typography
+                variant="body2"
+                noWrap
+                sx={[{ minWidth: 0, fontSize: '0.92rem' }, titleSx]}
+                title={title}
+              >
+                {title}
+              </Typography>
+              {subtitleNode}
+            </>
+          ) : (
+            <>
+              <Stack direction="row" spacing={0.75} sx={{ alignItems: 'baseline', minWidth: 0 }}>
+                <Typography
+                  variant="body2"
+                  noWrap
+                  sx={[{ minWidth: 0, flex: 1, fontSize: '0.92rem' }, titleSx]}
+                  title={title}
+                >
+                  {title}
+                </Typography>
+                <Typography variant="caption" noWrap sx={{ flexShrink: 0, color: statusColor }}>
+                  {status}
+                </Typography>
+              </Stack>
+              {subtitleNode}
+            </>
           )}
         </Box>
+        {centeredStatus ? (
+          <Typography variant="caption" noWrap sx={{ flexShrink: 0, color: statusColor }}>
+            {status}
+          </Typography>
+        ) : null}
       </Stack>
       {footer}
       {actions}

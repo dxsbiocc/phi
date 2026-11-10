@@ -267,6 +267,7 @@ export const settingsUi = defineCopy(
       `${value0} content package updates available`,
     view: 'View',
     contentPackageUpdates: 'Content package updates',
+    contentPackageUpdate: 'Content package update',
     updatesAreInstalledOnlyAfterYourConfirmation:
       'Updates are installed only after your confirmation.',
     updatingAll: 'Updating all…',
@@ -531,6 +532,7 @@ export const settingsUi = defineCopy(
     valueContentPackageUpdatesAvailable: (value0: unknown) => `有 ${value0} 个内容包可更新`,
     view: '查看',
     contentPackageUpdates: '内容包更新',
+    contentPackageUpdate: '内容包更新',
     updatesAreInstalledOnlyAfterYourConfirmation: '更新只会在你确认后安装，不会自动执行。',
     updatingAll: '正在全部更新…',
     updateAll: '全部更新',
