@@ -487,3 +487,124 @@ test('reopening releases unknown launches whose requests are settled and keeps t
     rmSync(agentDir, { recursive: true, force: true })
   }
 })
+
+test('a cancelled child after session interruption is ignored instead of retried', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-kernel-plan-interrupt-'))
+  const sessionId = 'kernel-interrupt-session'
+  const starts: Array<{ runId: string }> = []
+  let sequence = 0
+  const coordinator = new KernelPlanCoordinator(
+    agentDir,
+    async (method) => {
+      if (method === 'agentRun.start') {
+        const runId = `interrupt-child-${++sequence}`
+        starts.push({ runId })
+        return { runId }
+      }
+      if (method === 'agentRun.stop') return { ok: true }
+      return {}
+    },
+    () => undefined
+  )
+  const single: PlanSpec = {
+    version: 1,
+    goal: 'Run one step',
+    steps: [
+      {
+        id: 'only',
+        title: 'Only step',
+        instructions: 'Run.',
+        acceptance: 'Done.',
+        dependsOn: [],
+        access: 'read'
+      }
+    ]
+  }
+  try {
+    await coordinator.openSession(sessionId)
+    const run = await coordinator.approved(sessionId, single)
+    assert.equal(starts.length, 1)
+    assert.equal(run.steps.only?.status, 'running')
+
+    await coordinator.interruptRunningSteps(sessionId)
+    agentRunCompletions.deliver(sessionId, {
+      id: starts[0]!.runId,
+      state: 'cancelled',
+      error: 'The PlanStep agent was cancelled.'
+    })
+    await tick()
+    await tick()
+
+    const interrupted = await coordinator.get(sessionId, run.id)
+    assert.equal(interrupted?.status, 'paused')
+    assert.equal(interrupted?.steps.only?.status, 'interrupted')
+    assert.equal(interrupted?.steps.only?.attempts, 1)
+    assert.deepEqual(interrupted?.pause, { reason: 'interrupted', stepId: 'only' })
+    assert.equal(starts.length, 1, 'the cancellation completion must not launch a retry')
+  } finally {
+    coordinator.closeSession(sessionId)
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
+test('a genuine step failure still retries exactly once', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-kernel-plan-failure-'))
+  const sessionId = 'kernel-failure-session'
+  const starts: Array<{ runId: string }> = []
+  let sequence = 0
+  const coordinator = new KernelPlanCoordinator(
+    agentDir,
+    async (method) => {
+      if (method === 'agentRun.start') {
+        const runId = `failure-child-${++sequence}`
+        starts.push({ runId })
+        return { runId }
+      }
+      if (method === 'agentRun.stop') return { ok: true }
+      return {}
+    },
+    () => undefined
+  )
+  const single: PlanSpec = {
+    version: 1,
+    goal: 'Run one step',
+    steps: [
+      {
+        id: 'only',
+        title: 'Only step',
+        instructions: 'Run.',
+        acceptance: 'Done.',
+        dependsOn: [],
+        access: 'read'
+      }
+    ]
+  }
+  try {
+    await coordinator.openSession(sessionId)
+    const run = await coordinator.approved(sessionId, single)
+    agentRunCompletions.deliver(sessionId, {
+      id: starts[0]!.runId,
+      state: 'error',
+      error: 'genuine failure'
+    })
+    await eventually(() => starts.length === 2, 'automatic retry after a real failure')
+    agentRunCompletions.deliver(sessionId, {
+      id: starts[1]!.runId,
+      state: 'error',
+      error: 'genuine retry failure'
+    })
+    let state = await coordinator.get(sessionId, run.id)
+    for (let attempt = 0; state?.status !== 'paused' && attempt < 100; attempt += 1) {
+      await tick()
+      state = await coordinator.get(sessionId, run.id)
+    }
+    assert.equal(state?.status, 'paused')
+    assert.equal(state?.steps.only?.status, 'failed')
+    assert.equal(state?.steps.only?.attempts, 2)
+    assert.deepEqual(state?.pause, { reason: 'step_failed', stepId: 'only' })
+    assert.equal(starts.length, 2)
+  } finally {
+    coordinator.closeSession(sessionId)
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})

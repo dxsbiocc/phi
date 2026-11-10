@@ -56,16 +56,3 @@ test('abandonSession cancels only matching waiters without rejecting', async () 
   completions.deliver('runtime-2', completed('run-2'))
   assert.equal((await second).state, 'done')
 })
-
-test('abandonSession carries an explicit disposal reason for plan cancellation', async () => {
-  const completions = createAgentRunCompletions()
-  const pending = completions.expect('runtime-1', 'run-1')
-  completions.abandonSession('runtime-1', 'disposed', 'session_disposed')
-  assert.deepEqual(await pending, {
-    id: 'run-1',
-    state: 'cancelled',
-    origin: 'host',
-    error: 'disposed',
-    cancelReason: 'session_disposed'
-  })
-})

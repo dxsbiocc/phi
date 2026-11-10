@@ -1,14 +1,6 @@
 import type { AgentReport } from '../../agents/report'
-import type { AgentRunCancelReason } from './agent-run-completions'
 
-export type StepOutcome =
-  | { ok: true; report: AgentReport }
-  | {
-      ok: false
-      error: string
-      /** Set when the run was cancelled by app shutdown or session disposal, not failure. */
-      interrupted?: AgentRunCancelReason
-    }
+export type StepOutcome = { ok: true; report: AgentReport } | { ok: false; error: string }
 
 export interface StepRunHandle {
   runId: string

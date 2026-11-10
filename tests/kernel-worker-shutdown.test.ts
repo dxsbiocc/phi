@@ -7,6 +7,9 @@ import test from 'node:test'
 import type { KernelRequestFrame } from '../src/shared/kernel-protocol'
 import type { KernelCallContext, KernelMethodHandler } from '../src/kernel/protocol'
 import { createWorkerKernelAdapter } from '../src/kernel/worker'
+import type { PlanRunState, PlanSpec } from '../src/shared/planRunTypes'
+import { createPlanRunState, reducePlanRun } from '../src/main/agent/plan/model/plan-run-state'
+import { readPlanRun, writePlanRun } from '../src/main/agent/plan/persistence/plan-run-store'
 
 const context: KernelCallContext = {
   controllerGeneration: 1,
@@ -215,6 +218,177 @@ test('closeAll disposes loaded sessions, terminalizes active receipts, and relea
     assert.equal(existsSync(join(directory, 'writer.lock')), false)
     assert.equal(calls.filter((method) => method === 'session.abort').length, 1)
     assert.equal(calls.filter((method) => method === 'session.dispose').length, 1)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+const planSpec: PlanSpec = {
+  version: 1,
+  goal: 'Run one slow step',
+  steps: [
+    {
+      id: 'slow',
+      title: 'Slow step',
+      instructions: 'Run slowly.',
+      acceptance: 'Finished.',
+      dependsOn: [],
+      access: 'read'
+    }
+  ]
+}
+
+/** A paused plan whose single step already failed twice, ready for an explicit retry. */
+function retryablePlan(sessionId: string, runId: string): PlanRunState {
+  const at = '2026-11-20T00:00:00.000Z'
+  let state = createPlanRunState({ id: runId, sessionId, spec: planSpec, now: at })
+  for (const attempt of [1, 2]) {
+    state = reducePlanRun(state, {
+      type: 'step_launched',
+      stepId: 'slow',
+      agentRunId: `prior-${attempt}`,
+      at
+    })
+    state = reducePlanRun(state, {
+      type: 'step_failed',
+      stepId: 'slow',
+      error: `prior failure ${attempt}`,
+      at
+    })
+  }
+  return state
+}
+
+async function startRetriedPlan(
+  adapter: ReturnType<typeof createWorkerKernelAdapter>,
+  sessionId: string,
+  runId: string
+): Promise<PlanRunState> {
+  const started = await handler(adapter.handlers, 'planRuns.retryStep')(
+    { runId, stepId: 'slow' },
+    context,
+    request('planRuns.retryStep', sessionId)
+  )
+  return started as unknown as PlanRunState
+}
+
+test('session.abort interrupts a running plan step instead of retrying it', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-kernel-plan-abort-'))
+  const cwd = join(root, 'project')
+  const agentDir = join(root, 'agent')
+  mkdirSync(cwd)
+  const planRunId = 'abort-plan'
+  const starts: string[] = []
+  const adapter = createWorkerKernelAdapter({
+    agentDir,
+    acquireSessionLockGuard: acquireTestGuard,
+    callWorker: async (method, params) => {
+      const input = params as Record<string, unknown>
+      if (method === 'session.create') {
+        writePlanRun(retryablePlan(String(input.sessionId), planRunId), agentDir)
+        return undefined
+      }
+      if (method === 'agentRun.start') {
+        const runId = `plan-child-${starts.length + 1}`
+        starts.push(runId)
+        return { runId }
+      }
+      return undefined
+    }
+  })
+  try {
+    const created = (await handler(adapter.handlers, 'session.create')(
+      {
+        cwd,
+        model: { provider: 'provider', id: 'model' },
+        sessionManager: { kind: 'memory' }
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+
+    const running = await startRetriedPlan(adapter, created.sessionId, planRunId)
+    assert.equal(running.status, 'running')
+    assert.equal(running.steps.slow?.status, 'running')
+    assert.equal(starts.length, 1)
+
+    await handler(adapter.handlers, 'session.abort')(
+      {},
+      context,
+      request('session.abort', created.sessionId)
+    )
+
+    const aborted = (await handler(adapter.handlers, 'planRuns.get')(
+      { runId: planRunId },
+      context,
+      request('planRuns.get', created.sessionId)
+    )) as unknown as PlanRunState
+    assert.equal(aborted.status, 'paused')
+    assert.equal(aborted.steps.slow?.status, 'interrupted')
+    assert.equal(aborted.steps.slow?.attempts, 3, 'cancellation is not another attempt')
+    assert.deepEqual(aborted.pause, { reason: 'interrupted', stepId: 'slow' })
+    assert.equal(starts.length, 1, 'no automatic retry after session.abort')
+  } finally {
+    await adapter.closeAll().catch(() => undefined)
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('closeAll interrupts a running plan step and keeps the session suspended', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-kernel-plan-close-all-'))
+  const cwd = join(root, 'project')
+  const agentDir = join(root, 'agent')
+  mkdirSync(cwd)
+  const planRunId = 'close-plan'
+  const starts: string[] = []
+  const atDispose: { state: PlanRunState | null } = { state: null }
+  const adapter = createWorkerKernelAdapter({
+    agentDir,
+    acquireSessionLockGuard: acquireTestGuard,
+    callWorker: async (method, params) => {
+      const input = params as Record<string, unknown>
+      if (method === 'session.create') {
+        writePlanRun(retryablePlan(String(input.sessionId), planRunId), agentDir)
+        return undefined
+      }
+      if (method === 'agentRun.start') {
+        const runId = `plan-child-${starts.length + 1}`
+        starts.push(runId)
+        return { runId }
+      }
+      if (method === 'session.dispose') {
+        // Disposal runs after stopAll, so the interruption must already be recorded.
+        atDispose.state = readPlanRun(String(input.sessionId), planRunId, agentDir)
+      }
+      return undefined
+    }
+  })
+  try {
+    const created = (await handler(adapter.handlers, 'session.create')(
+      {
+        cwd,
+        model: { provider: 'provider', id: 'model' },
+        sessionManager: { kind: 'memory' }
+      },
+      context,
+      request('session.create')
+    )) as { sessionId: string }
+
+    const running = await startRetriedPlan(adapter, created.sessionId, planRunId)
+    assert.equal(running.steps.slow?.status, 'running')
+    assert.equal(starts.length, 1)
+
+    await adapter.closeAll()
+
+    assert.equal(atDispose.state?.status, 'paused')
+    assert.equal(atDispose.state?.steps.slow?.status, 'interrupted')
+    assert.equal(atDispose.state?.steps.slow?.attempts, 3)
+    const closed = readPlanRun(created.sessionId, planRunId, agentDir)
+    assert.equal(closed?.status, 'paused')
+    assert.equal(closed?.steps.slow?.status, 'interrupted')
+    assert.equal(closed?.steps.slow?.attempts, 3)
+    assert.deepEqual(closed?.pause, { reason: 'interrupted', stepId: 'slow' })
+    assert.equal(starts.length, 1, 'no automatic retry during shutdown')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

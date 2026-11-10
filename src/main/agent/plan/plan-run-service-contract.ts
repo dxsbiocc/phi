@@ -92,6 +92,8 @@ export interface PlanRunService {
   recoverSession(phiSessionId: string): Promise<PlanRunState[]>
   /** Prevents new launches while the session runtime is shutting down. */
   suspendSession(phiSessionId: string): Promise<void>
+  /** Marks running/launching steps interrupted before their children are cancelled. */
+  interruptRunningSteps(phiSessionId: string): Promise<void>
   /** After recovery, releases unknown launches whose request is proven settled. */
   releaseSettledLaunches(
     phiSessionId: string,

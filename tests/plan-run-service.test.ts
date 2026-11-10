@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
-  createAgentRunCompletions,
-  type AgentRunCompletion
-} from '../src/main/agent/plan/execution/agent-run-completions'
+import type { AgentRunCompletion } from '../src/main/agent/plan/execution/agent-run-completions'
 import { createPlanRunState, reducePlanRun } from '../src/main/agent/plan/model/plan-run-state'
 import { createPlanRunService } from '../src/main/agent/plan/plan-run-service'
 import type {
@@ -386,49 +383,6 @@ test('later steps never fall back to a disposed runtime session', async () => {
     state?.steps['step-b']?.error,
     'The conversation runtime is not running; open the conversation to continue the plan.'
   )
-})
-
-test('a session-disposal cancellation interrupts the running step without a retry', async () => {
-  const states = new Map<string, PlanRunState>()
-  const completions = createAgentRunCompletions()
-  let starts = 0
-  const service = createPlanRunService({
-    engine: {
-      agentRuns: {
-        start: async () => {
-          starts += 1
-          return { runId: `agent-${starts}` }
-        },
-        stop: async () => undefined
-      }
-    },
-    completions,
-    resolveRuntimeSessionId: () => 'runtime-1',
-    store: {
-      write: (state) => {
-        states.set(state.id, state)
-      },
-      read: (_sessionId, runId) => states.get(runId) ?? null,
-      list: () => [...states.values()],
-      listUnfinished: () => []
-    },
-    timeline: { append: (_sessionId, event) => event, broadcast: () => undefined },
-    continueConversation: () => assert.fail('an interrupted plan must not wake the conversation'),
-    logError: (error) => assert.fail(String(error)),
-    clock: () => '2026-10-23T00:00:00.000Z',
-    ids: () => 'plan-disposed'
-  })
-
-  await service.startFromApprovedPlan('phi-1', spec)
-  assert.equal(starts, 1)
-  completions.abandonSession('runtime-1', 'Runtime session disposed', 'session_disposed')
-  await until(() => states.get('plan-disposed')?.status === 'paused')
-
-  const state = states.get('plan-disposed')
-  assert.equal(starts, 1)
-  assert.equal(state?.steps['step-a']?.status, 'interrupted')
-  assert.equal(state?.steps['step-a']?.attempts, 1)
-  assert.deepEqual(state?.pause, { reason: 'interrupted', stepId: 'step-a' })
 })
 
 test('start fails clearly when the conversation runtime is not alive', async () => {

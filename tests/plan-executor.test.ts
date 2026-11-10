@@ -335,6 +335,24 @@ test('a suspended session records a cancelled child as interrupted without retry
   assert.equal(app.runner.runs.length, 1)
 })
 
+test('interrupting a session ignores the cancelled child completion without retrying', async () => {
+  const app = fixture()
+  await app.executor.start(spec([step('a'), step('b', { dependsOn: ['a'] })]), 'session-1')
+  await app.executor.interruptRunningSteps('session-1')
+  const interrupted = app.executor.get('plan-1')!
+  assert.equal(interrupted.status, 'paused')
+  assert.equal(interrupted.steps.a.status, 'interrupted')
+  assert.equal(interrupted.steps.a.attempts, 1)
+  assert.equal(interrupted.steps.b.status, 'pending')
+  assert.deepEqual(interrupted.pause, { reason: 'interrupted', stepId: 'a' })
+
+  fail(app.runner.runs[0]!, 'cancelled at quit')
+  await waitFor(() => app.executor.get('plan-1')?.status === 'paused')
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.equal(app.runner.runs.length, 1, 'a cancellation completion must not retry')
+  assert.equal(app.executor.get('plan-1')?.steps.a.status, 'interrupted')
+})
+
 test('restart recovery interrupts running work and can retry it', async () => {
   const app = fixture()
   const initial = createPlanRunState({

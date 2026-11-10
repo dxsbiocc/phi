@@ -208,7 +208,7 @@ function reduceStepInterrupted(
   event: Extract<PlanRunEvent, { type: 'step_interrupted' }>
 ): PlanRunState {
   const current = requireStep(state, event.stepId)
-  requireStepStatus(event.stepId, current, ['running'])
+  requireStepStatus(event.stepId, current, ['running', 'launching'])
   // At quit, the event time is the last moment the step was alive; a recorded
   // last-seen timestamp wins when it exists.
   const finishedAt = current.lastSeenAt ? lastAliveAt(state, current, event.at) : event.at

@@ -54,6 +54,11 @@ export interface PlanExecutor {
   recover(state: PlanRunState): Promise<PlanRunState>
   /** Stops launches for a session whose runtime is shutting down. */
   suspendSession(sessionId: string): Promise<void>
+  /**
+   * Marks the session's running and launching steps interrupted without counting an attempt,
+   * pauses their runs, and ignores the cancellation completions that follow.
+   */
+  interruptRunningSteps(sessionId: string): Promise<void>
   /** Records that an unknown launch provably has no live child, making it interrupted. */
   confirmLaunchQuiescent(runId: string, stepId: string, requestId: string): Promise<PlanRunState>
   get(runId: string): PlanRunState | undefined
@@ -91,9 +96,6 @@ function reportSummary(report: AgentReport): PlanStepReportSummary {
 }
 
 function eventForOutcome(stepId: string, outcome: StepOutcome, at: string): PlanRunEvent {
-  if (!outcome.ok && outcome.interrupted) {
-    return { type: 'step_interrupted', stepId, at }
-  }
   if (!outcome.ok) return { type: 'step_failed', stepId, error: outcome.error, at }
   const report = reportSummary(outcome.report)
   if (report.missingInputs.length) return { type: 'step_needs_input', stepId, report, at }
@@ -110,6 +112,7 @@ function requireState(runtime: Runtime, runId: string): PlanRunState {
 class PlanExecutorImplementation implements PlanExecutor {
   private readonly runtime: Runtime = { states: new Map(), queues: new Map(), active: new Map() }
   private readonly suspendedSessions = new Set<string>()
+  private readonly interruptingSessions = new Set<string>()
 
   constructor(private readonly deps: PlanExecutorDependencies) {}
 
@@ -241,6 +244,16 @@ class PlanExecutorImplementation implements PlanExecutor {
         signal: controller.signal
       })
     } catch (error) {
+      const current = this.runtime.states.get(runId)
+      const stepStatus = current?.steps[stepId]?.status
+      if (
+        !current ||
+        current.status !== 'running' ||
+        (stepStatus !== 'launching' && stepStatus !== 'pending')
+      ) {
+        // Interrupted while starting: this failure is not an attempt.
+        return
+      }
       if (requestId) {
         await this.apply(
           runId,
@@ -257,6 +270,18 @@ class PlanExecutorImplementation implements PlanExecutor {
       }
       return
     }
+    const current = this.runtime.states.get(runId)
+    if (
+      !current ||
+      current.status !== 'running' ||
+      (current.steps[stepId]?.status !== 'pending' && current.steps[stepId]?.status !== 'launching')
+    ) {
+      // The session was interrupted while the launch was in flight; do not leave an orphan.
+      await Promise.resolve(this.deps.runner.stop(state.sessionId, handle.runId)).catch(
+        () => undefined
+      )
+      return
+    }
     this.runtime.active.get(runId)?.set(stepId, { agentRunId: handle.runId, controller })
     this.watch(runId, stepId, handle)
     await this.apply(
@@ -269,11 +294,15 @@ class PlanExecutorImplementation implements PlanExecutor {
   private async scheduleRun(runId: string): Promise<void> {
     try {
       const state = requireState(this.runtime, runId)
-      if (this.suspendedSessions.has(state.sessionId)) return
+      if (
+        this.suspendedSessions.has(state.sessionId) ||
+        this.interruptingSessions.has(state.sessionId)
+      )
+        return
       const selected = selectLaunchableSteps(state, { maxConcurrent: this.deps.maxConcurrent })
       for (const stepId of selected) {
         const current = requireState(this.runtime, runId)
-        if (current.status !== 'running') break
+        if (current.status !== 'running' || this.interruptingSessions.has(current.sessionId)) break
         if (current.steps[stepId]?.status === 'pending') await this.launch(runId, stepId)
       }
       if (selected.length && requireState(this.runtime, runId).status === 'running') {
@@ -363,6 +392,37 @@ class PlanExecutorImplementation implements PlanExecutor {
 
   async suspendSession(sessionId: string): Promise<void> {
     this.suspendedSessions.add(sessionId)
+  }
+
+  async interruptRunningSteps(sessionId: string): Promise<void> {
+    // Block scheduling immediately, including a schedule pass already in progress.
+    this.interruptingSessions.add(sessionId)
+    try {
+      const runIds = [...this.runtime.states.values()]
+        .filter((state) => state.sessionId === sessionId)
+        .map((state) => state.id)
+      await Promise.all(
+        runIds.map((runId) =>
+          this.enqueue(runId, async () => {
+            const state = this.runtime.states.get(runId)
+            if (!state || state.status === 'stopped' || state.status === 'completed') return
+            for (const stepId of Object.keys(state.steps)) {
+              const step = this.runtime.states.get(runId)?.steps[stepId]
+              if (!step || (step.status !== 'running' && step.status !== 'launching')) continue
+              await this.apply(
+                runId,
+                { type: 'step_interrupted', stepId, at: clockNow(this.deps.clock) },
+                false
+              )
+              // The cancelled child completion must not settle an interrupted step.
+              this.runtime.active.get(runId)?.delete(stepId)
+            }
+          })
+        )
+      )
+    } finally {
+      this.interruptingSessions.delete(sessionId)
+    }
   }
 
   confirmLaunchQuiescent(runId: string, stepId: string, requestId: string): Promise<PlanRunState> {

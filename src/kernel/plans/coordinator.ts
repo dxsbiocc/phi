@@ -107,6 +107,10 @@ export class KernelPlanCoordinator implements KernelPlanRuntime {
     await this.service.suspendSession(sessionId)
   }
 
+  async interruptRunningSteps(sessionId: string): Promise<void> {
+    await this.service.interruptRunningSteps(sessionId)
+  }
+
   private async importAdoptedRuns(sessionId: string): Promise<void> {
     const migration = await readMigration(
       kernelSessionMigrationPaths(this.agentDir, sessionId).migration

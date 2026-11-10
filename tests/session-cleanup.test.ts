@@ -86,11 +86,11 @@ test('abortAndDisposeSession always aborts before disposal and preserves approva
   const cleanup = createSessionCleanup({
     lifecycles: inertLifecycles(),
     sessions: {
-      abortSession: async (_session, reason) => {
-        log.push(`abort:cancel:${reason}`)
+      abortSession: async () => {
+        log.push('abort:cancel')
       },
-      abortSessionWithoutCancellingApprovals: async (_session, reason) => {
-        log.push(`abort:preserve:${reason}`)
+      abortSessionWithoutCancellingApprovals: async () => {
+        log.push('abort:preserve')
       }
     },
     errors: inertErrors()
@@ -99,12 +99,7 @@ test('abortAndDisposeSession always aborts before disposal and preserves approva
   await cleanup.abortAndDisposeSession(session, { cancelApprovals: false })
   await cleanup.abortAndDisposeSession(session, { cancelApprovals: true })
 
-  assert.deepEqual(log, [
-    'abort:preserve:session_disposed',
-    'session.dispose',
-    'abort:cancel:session_disposed',
-    'session.dispose'
-  ])
+  assert.deepEqual(log, ['abort:preserve', 'session.dispose', 'abort:cancel', 'session.dispose'])
 })
 
 interface TestSession {

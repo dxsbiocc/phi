@@ -495,6 +495,10 @@ export function createWorkerKernelAdapter(
           ? request.runId
           : activeRuns.get(sessionId)
       if (activeRunId) cancelledRuns.add(activeRunId)
+      // Plan children are kernel-owned. Mark their steps interrupted before stopAll
+      // cancels them, or the executor will treat cancellation as a failed attempt.
+      // A bookkeeping failure must not block the stop itself.
+      await plans.interruptRunningSteps(sessionId).catch(() => undefined)
       const [childAbort, mainAbort] = await Promise.allSettled([
         agentRuns.stopAll(sessionId),
         callWorker('session.abort', { sessionId })
@@ -591,6 +595,9 @@ export function createWorkerKernelAdapter(
         const failures: unknown[] = []
         await Promise.all(
           [...sessionKinds].map(async ([sessionId, kind]) => {
+            await plans.interruptRunningSteps(sessionId).catch((error: unknown) => {
+              failures.push(error)
+            })
             await plans.suspendSession(sessionId).catch((error: unknown) => {
               failures.push(error)
             })

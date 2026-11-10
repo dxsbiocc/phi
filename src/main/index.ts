@@ -2624,19 +2624,15 @@ function cancelPendingRunWaits(scope?: { sessionId: string; runId: string }): vo
   cancelPendingAgentUserInteractions()
 }
 
-async function abortSession(
-  session: AgentSessionInstance,
-  reason?: 'session_disposed'
-): Promise<void> {
+async function abortSession(session: AgentSessionInstance): Promise<void> {
   cancelPendingRunWaits()
-  await session.abort(reason ? { reason } : undefined)
+  await session.abort()
 }
 
 async function abortSessionWithoutCancellingApprovals(
-  session: AgentSessionInstance,
-  reason?: 'session_disposed'
+  session: AgentSessionInstance
 ): Promise<void> {
-  await session.abort({ preserveApprovals: true, ...(reason ? { reason } : {}) })
+  await session.abort({ preserveApprovals: true })
 }
 
 const { capture: captureSessionControlTarget } = createSessionControlTarget<AgentSessionResult>({

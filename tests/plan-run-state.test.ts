@@ -183,6 +183,27 @@ test('skip satisfies completion and resolves a failure pause', () => {
   assert.equal(skipped.pause, undefined)
 })
 
+test('step_interrupted can settle a launching step without consuming its attempt', () => {
+  const launching = reducePlanRun(state([step('a')]), {
+    type: 'step_launch_requested',
+    stepId: 'a',
+    requestId: 'request-a',
+    at: at(1)
+  })
+  assert.equal(launching.steps.a.status, 'launching')
+  assert.equal(launching.steps.a.attempts, 1)
+
+  const interrupted = reducePlanRun(launching, {
+    type: 'step_interrupted',
+    stepId: 'a',
+    at: at(2)
+  })
+  assert.equal(interrupted.steps.a.status, 'interrupted')
+  assert.equal(interrupted.steps.a.attempts, 1)
+  assert.equal(interrupted.steps.a.requestId, 'request-a')
+  assert.deepEqual(interrupted.pause, { reason: 'interrupted', stepId: 'a' })
+})
+
 test('restart recovery interrupts running steps and pauses the run', () => {
   const running = launch(state(), 'a', 1)
   const recovered = reducePlanRun(running, { type: 'recover_after_restart', at: at(2) })

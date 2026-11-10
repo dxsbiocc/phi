@@ -1,5 +1,4 @@
 import type { SessionLifecycleRegistry } from '../app-state/session-lifecycle-registry'
-import type { AgentRunCancelReason } from '../agent/plan/execution/agent-run-completions'
 import { errorMessage } from '../../shared/errorCodes'
 import {
   isStaleSessionError,
@@ -9,7 +8,7 @@ import {
 
 export interface CleanupSession {
   sessionFile?: string
-  abort(options?: { preserveApprovals?: boolean; reason?: AgentRunCancelReason }): Promise<void>
+  abort(options?: { preserveApprovals?: boolean }): Promise<void>
   dispose(): Promise<void>
 }
 
@@ -32,11 +31,8 @@ export interface SessionCleanupDeps<
     | 'releaseUnknownPathCleanup'
   >
   sessions: {
-    abortSession(session: TSession, reason?: AgentRunCancelReason): Promise<void>
-    abortSessionWithoutCancellingApprovals(
-      session: TSession,
-      reason?: AgentRunCancelReason
-    ): Promise<void>
+    abortSession(session: TSession): Promise<void>
+    abortSessionWithoutCancellingApprovals(session: TSession): Promise<void>
   }
   errors: {
     isCleanupStarted(): boolean
@@ -71,9 +67,9 @@ export function createSessionCleanup<
     options: { cancelApprovals: boolean }
   ): Promise<void> => {
     if (options.cancelApprovals) {
-      await deps.sessions.abortSession(session, 'session_disposed')
+      await deps.sessions.abortSession(session)
     } else {
-      await deps.sessions.abortSessionWithoutCancellingApprovals(session, 'session_disposed')
+      await deps.sessions.abortSessionWithoutCancellingApprovals(session)
     }
     await session.dispose()
   }
