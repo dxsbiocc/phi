@@ -32,8 +32,8 @@ import { OverlayScroll } from './OverlayScroll'
 
 const ExpandIcon = PhiIcons.action.expand
 const CloseIcon = PhiIcons.action.close
-/** The version list scrolls inside its own frame; the dialog itself stays put. */
-const CHANGELOG_MAX_HEIGHT = 'min(56vh, 560px)'
+/** Each open version scrolls its own notes; its row and the dialog stay put. */
+const VERSION_NOTES_MAX_HEIGHT = 'min(48vh, 480px)'
 const COLLAPSED_NOTE_LINES = 8
 const COLLAPSED_NOTE_MAX_LENGTH = 640
 
@@ -122,7 +122,8 @@ function ChangeRow({ change }: { change: PackageChangelogChange }): React.JSX.El
       component="li"
       direction="row"
       spacing={1}
-      sx={{ alignItems: 'flex-start', minWidth: 0 }}
+      // Baseline alignment puts the chip label on the first line of the text.
+      sx={{ alignItems: 'baseline', minWidth: 0 }}
     >
       <Chip
         size="small"
@@ -130,7 +131,7 @@ function ChangeRow({ change }: { change: PackageChangelogChange }): React.JSX.El
         label={changeTypeLabel(change.type)}
         sx={{ flexShrink: 0 }}
       />
-      <Box sx={{ minWidth: 0, flex: 1, fontSize: '0.875rem', lineHeight: 1.5, pt: '2px' }}>
+      <Box sx={{ minWidth: 0, flex: 1, fontSize: '0.875rem', lineHeight: 1.5 }}>
         <MarkdownContent text={change.text} inline />
       </Box>
     </Stack>
@@ -200,26 +201,34 @@ function VersionAccordion({
           ) : null}
         </Stack>
       </AccordionSummary>
-      <AccordionDetails sx={{ px: 1.5, pt: 0, pb: 1.5 }}>
-        {parsed.changes.length > 0 ? (
-          <>
-            <Stack component="ul" spacing={0.75} sx={{ listStyle: 'none', m: 0, p: 0 }}>
-              {parsed.changes.map((item, index) => (
-                <ChangeRow key={`${change.version}:${index}`} change={item} />
-              ))}
-            </Stack>
-            {parsed.otherNotes ? (
-              <Box sx={{ mt: 1.5 }}>
-                <NotesBody
-                  notes={parsed.otherNotes}
-                  detailsLabel={settingsUi.otherReleaseDetails}
-                />
-              </Box>
-            ) : null}
-          </>
-        ) : (
-          <NotesBody notes={change.notes} />
-        )}
+      {/* The version row stays fixed; only its notes scroll, below a divider. */}
+      <AccordionDetails sx={{ p: 0, borderTop: 1, borderColor: 'divider' }}>
+        <OverlayScroll
+          sx={{ maxHeight: VERSION_NOTES_MAX_HEIGHT }}
+          contentSx={{ overscrollBehavior: 'contain' }}
+        >
+          <Box sx={{ px: 1.5, pt: 1.5, pb: 1.5 }}>
+            {parsed.changes.length > 0 ? (
+              <>
+                <Stack component="ul" spacing={0.75} sx={{ listStyle: 'none', m: 0, p: 0 }}>
+                  {parsed.changes.map((item, index) => (
+                    <ChangeRow key={`${change.version}:${index}`} change={item} />
+                  ))}
+                </Stack>
+                {parsed.otherNotes ? (
+                  <Box sx={{ mt: 1.5 }}>
+                    <NotesBody
+                      notes={parsed.otherNotes}
+                      detailsLabel={settingsUi.otherReleaseDetails}
+                    />
+                  </Box>
+                ) : null}
+              </>
+            ) : (
+              <NotesBody notes={change.notes} />
+            )}
+          </Box>
+        </OverlayScroll>
       </AccordionDetails>
     </Accordion>
   )
@@ -243,31 +252,20 @@ function PackageChangelogList({
   }
 
   return (
-    // Overlay scrollbar: it takes no width, so row hover reaches the frame on both sides.
-    <OverlayScroll
+    <Box
       data-phi-package-changelog="true"
-      sx={{
-        border: 1,
-        borderColor: 'divider',
-        borderRadius: 2,
-        overflow: 'hidden',
-        maxHeight: CHANGELOG_MAX_HEIGHT
-      }}
-      contentSx={{ overscrollBehavior: 'contain' }}
+      sx={{ border: 1, borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}
     >
-      {/* One child, so the scrollbar follows the list as versions open and close. */}
-      <Box>
-        {changes.map((change, index) => (
-          <VersionAccordion
-            key={`${change.version}:${index}`}
-            change={change}
-            latest={index === 0}
-            expanded={expanded.has(index)}
-            onExpandedChange={(isExpanded) => setVersionExpanded(index, isExpanded)}
-          />
-        ))}
-      </Box>
-    </OverlayScroll>
+      {changes.map((change, index) => (
+        <VersionAccordion
+          key={`${change.version}:${index}`}
+          change={change}
+          latest={index === 0}
+          expanded={expanded.has(index)}
+          onExpandedChange={(isExpanded) => setVersionExpanded(index, isExpanded)}
+        />
+      ))}
+    </Box>
   )
 }
 
