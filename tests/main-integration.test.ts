@@ -2844,6 +2844,9 @@ async function harness(
       readColdChildRuns: (input: { phiSessionId: string }) =>
         options.coldChildRuns?.(input.phiSessionId) ?? []
     },
+    './agent/session/kernel-child-run-recovery': {
+      readColdKernelChildRuns: () => []
+    },
     './agent/session/runtime-origin-store': {
       registerRuntimeSessionOrigin: () => undefined,
       resolveRuntimeSessionOrigin: (id: string) => options.coldRuntimeOrigin?.(id)
@@ -4742,6 +4745,7 @@ async function harness(
     './agent/jobs/background-agent-job-listing',
     './agent/jobs/background-job-operations',
     './agent/jobs/background-shell-job-operations',
+    './agent/session/kernel-child-run-recovery',
     './agent/mcp/featured-api-key-verification',
     './agent/mcp/remote-mcp-trust-request',
     './agent/memory/project-memory-access',

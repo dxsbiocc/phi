@@ -4,7 +4,13 @@ import { messageContentTitleText } from '../../../shared/sessionTitle'
 import { writeAppLog } from '../app-logger'
 import { getPhiEngine } from '../engine/in-process-engine'
 import { readColdChildRuns } from '../session/child-run-recovery'
-import { parseRuntimeReference, type RemoteOmpScope } from '../session/runtime-reference'
+import { readColdKernelChildRuns } from '../session/kernel-child-run-recovery'
+import {
+  parseRuntimeReference,
+  type KernelLocalRuntimeRef,
+  type KernelRuntimeRef,
+  type RemoteOmpScope
+} from '../session/runtime-reference'
 import {
   findPhiSessionById,
   listPhiSessions,
@@ -22,9 +28,36 @@ export interface BackgroundAgentJobListingOptions {
   resolveRecoverableJobOrigin: (originSessionId: string | undefined) => JobOrigin | undefined
   currentRuntimeOriginScope: (manifest: PhiSessionManifest) => RemoteOmpScope | undefined
   optionalStringField: (record: Record<string, unknown>, key: string) => string | undefined
+  /** Test seam; production reads the routed engine. */
+  listAgentRuns?: () => Promise<readonly unknown[]>
 }
 
 const loggedUnavailableChildRecoveryMetadata = new Set<string>()
+
+/** Kernel DTOs use runId/agent/started for their pre-terminal lifecycle. */
+function liveAgentJobState(value: unknown): BackgroundAgentJob['state'] | undefined {
+  if (value === 'accepted') return 'queued'
+  if (value === 'started') return 'running'
+  if (value === 'unknown') return 'interrupted'
+  return value === 'queued' ||
+    value === 'running' ||
+    value === 'done' ||
+    value === 'error' ||
+    value === 'cancelled' ||
+    value === 'interrupted'
+    ? value
+    : undefined
+}
+
+function liveStartedAt(value: Record<string, unknown>): number | undefined {
+  if (typeof value.startedAt === 'number' && Number.isFinite(value.startedAt)) {
+    return value.startedAt
+  }
+  const acceptedAt = value.acceptedAt
+  if (typeof acceptedAt !== 'string') return undefined
+  const parsed = Date.parse(acceptedAt)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
 
 // eslint-disable-next-line complexity -- Preserves the existing strict worker-record validation.
 function liveBackgroundAgentJob(
@@ -33,23 +66,13 @@ function liveBackgroundAgentJob(
 ): BackgroundAgentJob[] {
   if (!isRecord(value)) return []
   const agentSessionId = options.optionalStringField(value, 'agentSessionId')
-  const agentRunId = options.optionalStringField(value, 'agentRunId')
-  const agentName = options.optionalStringField(value, 'agentName')
-  const state = value.state
-  const startedAt = value.startedAt
-  if (
-    !agentSessionId ||
-    !agentRunId ||
-    !agentName ||
-    (state !== 'queued' &&
-      state !== 'running' &&
-      state !== 'done' &&
-      state !== 'error' &&
-      state !== 'cancelled') ||
-    typeof startedAt !== 'number' ||
-    !Number.isFinite(startedAt)
-  )
-    return []
+  const agentRunId =
+    options.optionalStringField(value, 'agentRunId') ?? options.optionalStringField(value, 'runId')
+  const agentName =
+    options.optionalStringField(value, 'agentName') ?? options.optionalStringField(value, 'agent')
+  const state = liveAgentJobState(value.state)
+  const startedAt = liveStartedAt(value)
+  if (!agentSessionId || !agentRunId || !agentName || !state || startedAt === undefined) return []
   const origin = options.resolveRecoverableJobOrigin(agentSessionId)
   if (!origin) return []
   const manifest = findPhiSessionById(origin.phiSessionId)
@@ -82,65 +105,120 @@ function liveBackgroundAgentJob(
   ]
 }
 
+interface ColdRun {
+  readonly id: string
+  readonly agent: string
+  readonly background: boolean
+  readonly status: 'queued' | 'running' | 'completed' | 'failed' | 'aborted' | 'interrupted'
+  readonly startedAt: number
+  readonly completedAt?: number
+}
+
+function coldBackgroundAgentJob(
+  manifest: PhiSessionManifest,
+  run: ColdRun,
+  liveIds: ReadonlySet<string>
+): BackgroundAgentJob[] {
+  if (!run.background || liveIds.has(`${manifest.sessionId}:${run.id}`)) return []
+  return [
+    {
+      agentSessionId: '',
+      agentRunId: run.id,
+      sessionId: manifest.sessionId,
+      sessionPath: phiOnlySessionPath(manifest.sessionId),
+      sessionTitle: messageContentTitleText(manifest.title) || '新对话',
+      agentName: run.agent,
+      task: '',
+      state:
+        run.status === 'completed'
+          ? 'done'
+          : run.status === 'failed'
+            ? 'error'
+            : run.status === 'aborted'
+              ? 'cancelled'
+              : 'interrupted',
+      background: true,
+      canControl: false,
+      historyAvailable: false,
+      startedAt: new Date(run.startedAt).toISOString(),
+      ...(run.completedAt !== undefined
+        ? { completedAt: new Date(run.completedAt).toISOString() }
+        : {})
+    }
+  ]
+}
+
+function logUnavailableChildRecovery(manifest: PhiSessionManifest): void {
+  if (loggedUnavailableChildRecoveryMetadata.has(manifest.sessionId)) return
+  loggedUnavailableChildRecoveryMetadata.add(manifest.sessionId)
+  writeAppLog({
+    level: 'warn',
+    event: 'child_recovery_metadata_unavailable',
+    sessionId: manifest.sessionId
+  })
+}
+
+function coldLegacyBackgroundAgentJobsForManifest(
+  manifest: PhiSessionManifest,
+  liveIds: ReadonlySet<string>,
+  options: BackgroundAgentJobListingOptions
+): BackgroundAgentJob[] {
+  const runtimeRef = manifest.runtimeRef
+  if (!runtimeRef) return []
+  try {
+    const scope = options.currentRuntimeOriginScope(manifest)
+    if (!scope) return []
+    const reference = parseRuntimeReference(runtimeRef, manifest.sessionId)
+    return readColdChildRuns(
+      { phiSessionId: manifest.sessionId, reference },
+      options.agentDir
+    ).flatMap((run) => coldBackgroundAgentJob(manifest, run, liveIds))
+  } catch {
+    logUnavailableChildRecovery(manifest)
+    return []
+  }
+}
+
+function isLocalKernelReference(reference: KernelRuntimeRef): reference is KernelLocalRuntimeRef {
+  return reference.host.kind === 'local'
+}
+
+function coldKernelBackgroundAgentJobsForManifest(
+  manifest: PhiSessionManifest,
+  liveIds: ReadonlySet<string>
+): BackgroundAgentJob[] {
+  const reference = manifest.kernelRuntimeRef
+  if (!reference) return []
+  // A remote kernel journal lives on its host; the desktop cannot read it cold.
+  if (!isLocalKernelReference(reference)) return []
+  try {
+    return readColdKernelChildRuns(reference).flatMap((run) =>
+      coldBackgroundAgentJob(manifest, run, liveIds)
+    )
+  } catch {
+    logUnavailableChildRecovery(manifest)
+    return []
+  }
+}
+
 function coldBackgroundAgentJobsForManifest(
   manifest: PhiSessionManifest,
   liveIds: ReadonlySet<string>,
   options: BackgroundAgentJobListingOptions
 ): BackgroundAgentJob[] {
-  if (!manifest.runtimeRef) return []
-  try {
-    const scope = options.currentRuntimeOriginScope(manifest)
-    if (!scope) return []
-    const reference = parseRuntimeReference(manifest.runtimeRef, manifest.sessionId)
-    return readColdChildRuns(
-      { phiSessionId: manifest.sessionId, reference },
-      options.agentDir
-    ).flatMap((run): BackgroundAgentJob[] => {
-      if (!run.background || liveIds.has(`${manifest.sessionId}:${run.id}`)) return []
-      return [
-        {
-          agentSessionId: '',
-          agentRunId: run.id,
-          sessionId: manifest.sessionId,
-          sessionPath: phiOnlySessionPath(manifest.sessionId),
-          sessionTitle: messageContentTitleText(manifest.title) || '新对话',
-          agentName: run.agent,
-          task: '',
-          state:
-            run.status === 'completed'
-              ? 'done'
-              : run.status === 'failed'
-                ? 'error'
-                : run.status === 'aborted'
-                  ? 'cancelled'
-                  : 'interrupted',
-          background: true,
-          canControl: false,
-          historyAvailable: false,
-          startedAt: new Date(run.startedAt).toISOString(),
-          ...(run.completedAt !== undefined
-            ? { completedAt: new Date(run.completedAt).toISOString() }
-            : {})
-        }
-      ]
-    })
-  } catch {
-    if (!loggedUnavailableChildRecoveryMetadata.has(manifest.sessionId)) {
-      loggedUnavailableChildRecoveryMetadata.add(manifest.sessionId)
-      writeAppLog({
-        level: 'warn',
-        event: 'child_recovery_metadata_unavailable',
-        sessionId: manifest.sessionId
-      })
-    }
-    return []
+  if (manifest.runtimeRef) {
+    return coldLegacyBackgroundAgentJobsForManifest(manifest, liveIds, options)
   }
+  if (manifest.kernelRuntimeRef) {
+    return coldKernelBackgroundAgentJobsForManifest(manifest, liveIds)
+  }
+  return []
 }
 
 export async function listBackgroundAgentJobs(
   options: BackgroundAgentJobListingOptions
 ): Promise<BackgroundAgentJob[]> {
-  const raw = await getPhiEngine().agentRuns.list({})
+  const raw = await (options.listAgentRuns?.() ?? getPhiEngine().agentRuns.list({}))
   if (!Array.isArray(raw)) throw new Error('后台 Agent 状态暂时不可用')
   const live = raw.flatMap((value) => liveBackgroundAgentJob(value, options))
   // Only a successful live listing establishes absence. Persisted records never grant control.
