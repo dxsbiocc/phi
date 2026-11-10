@@ -230,14 +230,15 @@ export function McpFeaturedConnectorDetails({
           {connectorCopy.composioAuthHint}
         </Alert>
       )}
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
-          {connectorCopy.serviceOverview}
-        </Typography>
-        <Typography color="text.secondary">
-          {connector.overview ?? connector.description}
-        </Typography>
-      </Box>
+      {/* The summary already sits under the name; only a distinct overview earns its own section. */}
+      {connector.overview?.trim() && connector.overview.trim() !== connector.description.trim() ? (
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
+            {connectorCopy.serviceOverview}
+          </Typography>
+          <Typography color="text.secondary">{connector.overview}</Typography>
+        </Box>
+      ) : null}
       {connector.apiKey && (
         <Alert severity="info" sx={{ mb: 3 }}>
           {authStatus === 'authenticated'

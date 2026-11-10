@@ -175,3 +175,25 @@ test('the catalog card source chip sits in the title row and leaves the auth lin
   assert.equal((title.props as { noWrap?: boolean }).noWrap, true)
   assert.equal((title.props as { sx?: { minWidth?: number } }).sx?.minWidth, 0)
 })
+
+test('connector details show the summary once and an overview only when it adds something', () => {
+  setUiLanguage('en')
+  const count = (markup: string, text: string): number => markup.split(text).length - 1
+  const plain = renderDetails({ ...importedConnector, description: 'One summary line' })
+  assert.equal(count(plain, 'One summary line'), 1)
+  assert.doesNotMatch(plain, /Service overview/)
+  const same = renderDetails({
+    ...importedConnector,
+    description: 'One summary line',
+    overview: 'One summary line'
+  })
+  assert.equal(count(same, 'One summary line'), 1)
+  assert.doesNotMatch(same, /Service overview/)
+  const distinct = renderDetails({
+    ...importedConnector,
+    description: 'One summary line',
+    overview: 'A longer overview'
+  })
+  assert.match(distinct, /Service overview/)
+  assert.match(distinct, /A longer overview/)
+})
