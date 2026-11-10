@@ -242,10 +242,6 @@ function CatalogPreviewMetadata({
         </Box>
         {action}
       </Stack>
-      {/* The summary uses the full width under the title row, inset slightly from the divider. */}
-      <Typography variant="body1" color="text.secondary" sx={{ mt: 1.25, pr: 2 }}>
-        {detail?.summary || entry.summary}
-      </Typography>
     </Box>
   )
 }
@@ -319,35 +315,48 @@ function CatalogPreviewHeader({
   onInstall?: () => void
 }): React.JSX.Element {
   return (
-    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-      <Box
-        sx={{
-          width: 58,
-          height: 58,
-          flexShrink: 0,
-          borderRadius: 2,
-          display: 'grid',
-          placeItems: 'center',
-          color: 'primary.main',
-          bgcolor: (theme) =>
-            alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.09)
-        }}
-      >
-        <ResourceIcon icon={entry.icon} kind="plugin" size={58} fallbackSize={30} />
-      </Box>
-      <CatalogPreviewMetadata
-        entry={entry}
-        detail={detail}
-        title={title}
-        action={
-          <CatalogPreviewAction
-            title={title}
-            action={action}
-            installBusy={installBusy}
-            onInstall={onInstall}
-          />
-        }
-      />
-    </Stack>
+    <Box>
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+        <Box
+          sx={{
+            width: 58,
+            height: 58,
+            flexShrink: 0,
+            borderRadius: 2,
+            display: 'grid',
+            placeItems: 'center',
+            color: 'primary.main',
+            bgcolor: (theme) =>
+              alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.09)
+          }}
+        >
+          <ResourceIcon icon={entry.icon} kind="plugin" size={58} fallbackSize={30} />
+        </Box>
+        <CatalogPreviewMetadata
+          entry={entry}
+          detail={detail}
+          title={title}
+          action={
+            <CatalogPreviewAction
+              title={title}
+              action={action}
+              installBusy={installBusy}
+              onInstall={onInstall}
+            />
+          }
+        />
+      </Stack>
+      <PluginSummary text={detail?.summary || entry.summary} />
+    </Box>
+  )
+}
+
+/** The summary spans the header under the icon, inset slightly from the divider below it. */
+export function PluginSummary({ text }: { text: string }): React.JSX.Element | null {
+  if (!text) return null
+  return (
+    <Typography variant="body1" color="text.secondary" sx={{ mt: 2, px: 1.5 }}>
+      {text}
+    </Typography>
   )
 }
