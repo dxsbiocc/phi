@@ -203,6 +203,9 @@ export const IPC = {
     setMarkdown: 'persona:setMarkdown',
     skip: 'persona:skip'
   },
+  pluginInstallJobs: {
+    list: 'pluginInstallJobs:list'
+  },
   phiPlugins: {
     catalogDetail: 'phiPlugins:catalogDetail',
     installFromDirectory: 'phiPlugins:installFromDirectory',

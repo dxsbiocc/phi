@@ -3441,8 +3441,7 @@ function App(): React.JSX.Element {
       onOpenMcpServerTab
     ]
   )
-  const remoteControlsUnavailable =
-    activeProjectLocation?.kind === 'ssh' && currentSessionIsBusy
+  const remoteControlsUnavailable = activeProjectLocation?.kind === 'ssh' && currentSessionIsBusy
   const canRunChatBash =
     Boolean(activePhiSessionId && activeDisplayCwd) &&
     !isSessionChanging &&
@@ -4184,7 +4183,6 @@ function App(): React.JSX.Element {
         <PhiPluginCatalogDialog
           open={isPhiPluginCatalogOpen}
           plugins={phiPluginsState.plugins}
-          installWorking={phiPluginsState.busyPluginId === '__install__'}
           feedbackError={phiPluginsState.error}
           feedbackNotice={phiPluginsState.notice}
           onClose={() => setIsPhiPluginCatalogOpen(false)}

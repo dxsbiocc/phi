@@ -982,7 +982,8 @@ test('catalog shows installed, update and install states plus local-directory ac
       onUninstall: async () => true
     })
   )
-  assert.match(busyMarkup, /aria-label="Working…"/)
+  assert.match(busyMarkup, /aria-label="Installing…"/)
+  assert.match(busyMarkup, />Installing…</)
   assert.ok((busyMarkup.match(/disabled=""/g)?.length ?? 0) >= 2)
 })
 

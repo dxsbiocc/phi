@@ -24,6 +24,17 @@ export function workflowPhase(item: BackgroundJobDisplayItem): 'running' | 'comp
   return 'running'
 }
 
+/** A plugin install reports its terminal transition; other single jobs only report arrival. */
+export function backgroundJobPhase(
+  item: BackgroundJobDisplayItem
+): 'running' | 'completed' | 'failed' {
+  if (item.kind === 'workflow') return workflowPhase(item)
+  if (item.kind === 'job' && item.job.kind === 'plugin' && !item.job.active) {
+    return item.job.install.state === 'succeeded' ? 'completed' : 'failed'
+  }
+  return 'running'
+}
+
 /** A history entry is never a new task. The first loaded snapshot only establishes a baseline. */
 export function newlyObservedJobs<T extends { key: string }>(
   jobs: readonly T[],
@@ -52,18 +63,18 @@ export function useBackgroundJobArrivals(): {
     const display = groupBackgroundJobs(live)
     if (known.current === null) {
       known.current = new Set(display.map((job) => job.key))
-      for (const item of display) phases.current.set(item.key, workflowPhase(item))
+      for (const item of display) phases.current.set(item.key, backgroundJobPhase(item))
       return
     }
     const added = newlyObservedJobs(display, known.current)
     const addedKeys = new Set(added.map((item) => item.key))
     const notices: BackgroundJobArrival[] = added.map((item) => ({ item, phase: 'added' }))
     for (const item of display) {
-      const phase = workflowPhase(item)
+      const phase = backgroundJobPhase(item)
       const previous = phases.current.get(item.key)
       if (
-        item.kind === 'workflow' &&
         !addedKeys.has(item.key) &&
+        previous !== undefined &&
         previous !== phase &&
         (phase === 'completed' || phase === 'failed')
       )

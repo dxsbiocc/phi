@@ -33,6 +33,10 @@ import {
 } from '../../../components/catalog/CatalogBrowseLayout'
 import { catalogDialogPaperSx } from '../../../components/catalog/catalogPaging'
 import { ResourceIcon } from '../../../components/ResourceIcon'
+import {
+  refreshBackgroundJobs,
+  useActivePluginInstalls
+} from '../../jobs/hooks/useBackgroundJobsData'
 import { PACKAGE_TRUST_DESCRIPTIONS, PACKAGE_TRUST_LABELS } from '../../../lib/packageTrust'
 import {
   catalogPackages,
@@ -176,6 +180,7 @@ function CatalogCard({
         </Typography>
         <Stack direction="row" spacing={0.75} useFlexGap sx={{ mt: 1, flexWrap: 'wrap' }}>
           <Chip size="small" label={`v${version}`} />
+          {busy ? <Chip size="small" color="info" label={pluginCopy.installing} /> : null}
           {source ? (
             <Chip size="small" variant="outlined" label={resourceSourceLabel(source)} />
           ) : null}
@@ -192,7 +197,8 @@ function CatalogCard({
       {busy ? (
         <Box
           role="status"
-          aria-label={pluginCopy.processing}
+          aria-label={pluginCopy.installing}
+          title={pluginCopy.installing}
           sx={{ width: 34, height: 34, display: 'grid', placeItems: 'center', flexShrink: 0 }}
         >
           <CircularProgress size={18} />
@@ -232,12 +238,18 @@ function CatalogCard({
   )
 }
 
+const EMPTY_INSTALLING_IDS: ReadonlySet<string> = new Set()
+
 export type PhiPluginCatalogContentProps = {
   plugins: readonly PhiPluginDisplayItem[]
   entries: readonly PhiPluginCatalogEntry[]
   updates: readonly PackageUpdateView[]
   loading: boolean
   busyId: string | null
+  /** Plugin IDs with a main-process install/upgrade still running. */
+  installingIds?: ReadonlySet<string>
+  /** Only the native directory picker may block closing the catalog. */
+  pickingDirectory?: boolean
   error?: string | null
   notice?: string | null
   sourceNotice?: string | null
@@ -258,6 +270,8 @@ export function PhiPluginCatalogContent({
   updates,
   loading,
   busyId,
+  installingIds = EMPTY_INSTALLING_IDS,
+  pickingDirectory = false,
   error,
   notice,
   sourceNotice,
@@ -278,6 +292,11 @@ export function PhiPluginCatalogContent({
   const [page, setPage] = useState<'list' | 'detail'>('list')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const installedIds = useMemo(() => new Set(plugins.map((plugin) => plugin.id)), [plugins])
+  const anyInstalling = busyId !== null || installingIds.size > 0
+  const isInstalling = (id: string | null): boolean =>
+    id !== null && (busyId === id || installingIds.has(id))
+  const representativeBusyId =
+    busyId ?? [...installingIds][0] ?? (pickingDirectory ? '__directory__' : null)
   const catalog = useMemo(() => {
     void uiLanguage // Invalidate localized presentation.
     return buildPhiPluginCatalog(plugins, entries)
@@ -369,12 +388,12 @@ export function PhiPluginCatalogContent({
       }
       scrollContent={!showingDetail}
       onClose={onClose}
-      busy={busyId !== null}
+      busy={pickingDirectory}
       actions={
         showingDetail ? undefined : (
           <CatalogAddButton
             label={pluginCopy.installDirectory}
-            disabled={busyId !== null}
+            disabled={anyInstalling || pickingDirectory}
             onClick={onChooseDirectory}
           />
         )
@@ -384,7 +403,7 @@ export function PhiPluginCatalogContent({
         <Box sx={{ flex: 1, minHeight: 0, height: '100%', overflow: 'hidden' }}>
           <PhiPluginDetail
             plugin={selectedPlugin}
-            busyPluginId={busyId}
+            busyPluginId={representativeBusyId}
             error={error ?? null}
             notice={notice ?? null}
             onClearError={onClearError}
@@ -394,7 +413,7 @@ export function PhiPluginCatalogContent({
             onUninstall={onUninstall}
             catalogEntry={selectedPlugin ? null : selectedEntry}
             catalogAction={selectedAction}
-            installBusy={busyId !== null && busyId === selectedId}
+            installBusy={isInstalling(selectedId)}
             onInstall={
               selectedEntry
                 ? () => onInstall(selectedEntry, selectedAction === 'update')
@@ -445,7 +464,7 @@ export function PhiPluginCatalogContent({
                       trust={plugin.trust}
                       source={phiPluginDistributionLabel(plugin.distribution)}
                       action="installed"
-                      busy={false}
+                      busy={isInstalling(plugin.id)}
                       disabled
                       onOpen={() => openDetail(plugin.id)}
                     />
@@ -465,8 +484,8 @@ export function PhiPluginCatalogContent({
                         trust={item.trust}
                         source={item.source}
                         action={action}
-                        busy={busyId === item.id}
-                        disabled={busyId !== null}
+                        busy={isInstalling(item.id)}
+                        disabled={anyInstalling || pickingDirectory}
                         onOpen={() => openDetail(item.id)}
                         onAction={entry ? () => onInstall(entry, action === 'update') : undefined}
                       />
@@ -494,7 +513,6 @@ export function PhiPluginCatalogContent({
 export type PhiPluginCatalogDialogProps = {
   open: boolean
   plugins: readonly PhiPluginDisplayItem[]
-  installWorking: boolean
   feedbackError: string | null
   feedbackNotice: string | null
   onClose: () => void
@@ -509,7 +527,6 @@ export type PhiPluginCatalogDialogProps = {
 export function PhiPluginCatalogDialog({
   open,
   plugins,
-  installWorking,
   feedbackError,
   feedbackNotice,
   onClose,
@@ -522,6 +539,8 @@ export function PhiPluginCatalogDialog({
 }: PhiPluginCatalogDialogProps): React.JSX.Element {
   useUiLanguage()
 
+  const installing = useActivePluginInstalls()
+  const installingIds = useMemo(() => new Set(installing.keys()), [installing])
   const [entries, setEntries] = useState<PhiPluginCatalogEntry[]>([])
   const [updates, setUpdates] = useState<PackageUpdateView[]>([])
   const [loading, setLoading] = useState(true)
@@ -580,7 +599,7 @@ export function PhiPluginCatalogDialog({
   }, [fetchCatalog, open])
 
   async function install(entry: PhiPluginCatalogEntry, update: boolean): Promise<void> {
-    if (busyId || installWorking || pickingDirectory) return
+    if (busyId || installingIds.size > 0 || pickingDirectory) return
     setBusyId(entry.id)
     setError(null)
     try {
@@ -596,11 +615,12 @@ export function PhiPluginCatalogDialog({
       setError(errorMessage(cause))
     } finally {
       setBusyId(null)
+      void refreshBackgroundJobs().catch(() => undefined)
     }
   }
 
   async function choosePluginDirectory(): Promise<void> {
-    if (busyId || installWorking || pickingDirectory) return
+    if (busyId || installingIds.size > 0 || pickingDirectory) return
     setPickingDirectory(true)
     setError(null)
     onClearFeedback()
@@ -625,17 +645,25 @@ export function PhiPluginCatalogDialog({
   }
 
   async function confirmInstall(): Promise<void> {
-    if (!pendingInstall) return
-    const upgrade = installIsUpgrade(pendingInstall)
-    const succeeded = await onInstallFromDirectory(
-      pendingInstall.path,
-      upgrade ? pluginCopy.upgradeAction : pluginCopy.installAction
-    )
-    if (succeeded) setPendingInstall(null)
+    const preview = pendingInstall
+    if (!preview) return
+    const upgrade = installIsUpgrade(preview)
+    setPendingInstall(null)
+    setBusyId(preview.id?.trim() || '__install__')
+    setError(null)
+    try {
+      await onInstallFromDirectory(
+        preview.path,
+        upgrade ? pluginCopy.upgradeAction : pluginCopy.installAction
+      )
+    } finally {
+      setBusyId(null)
+      void refreshBackgroundJobs().catch(() => undefined)
+    }
   }
 
   function close(): void {
-    if (busyId || installWorking || pickingDirectory) return
+    if (pickingDirectory) return
     setLoading(true)
     setPendingInstall(null)
     onClose()
@@ -657,7 +685,9 @@ export function PhiPluginCatalogDialog({
         entries={entries}
         updates={updates}
         loading={loading}
-        busyId={busyId ?? (installWorking || pickingDirectory ? '__directory__' : null)}
+        busyId={busyId}
+        installingIds={installingIds}
+        pickingDirectory={pickingDirectory}
         error={error ?? feedbackError}
         notice={feedbackNotice}
         sourceNotice={sourceNotice}
@@ -677,10 +707,7 @@ export function PhiPluginCatalogDialog({
         onUninstall={onUninstall}
       />
 
-      <ConfirmationDialog
-        open={pendingInstall !== null}
-        onClose={installWorking ? undefined : () => setPendingInstall(null)}
-      >
+      <ConfirmationDialog open={pendingInstall !== null} onClose={() => setPendingInstall(null)}>
         <DialogTitle>
           {pendingInstall && installIsUpgrade(pendingInstall)
             ? pluginCopy.upgradeTitle
@@ -728,19 +755,11 @@ export function PhiPluginCatalogDialog({
           ) : null}
         </DialogContent>
         <DialogActions>
-          <Button disabled={installWorking} onClick={() => setPendingInstall(null)}>
-            {resourceUi.cancel}
-          </Button>
-          <Button
-            variant="contained"
-            disabled={installWorking}
-            onClick={() => void confirmInstall()}
-          >
-            {installWorking
-              ? pluginCopy.processing
-              : pendingInstall && installIsUpgrade(pendingInstall)
-                ? pluginCopy.confirmUpgrade
-                : pluginCopy.confirmInstall}
+          <Button onClick={() => setPendingInstall(null)}>{resourceUi.cancel}</Button>
+          <Button variant="contained" onClick={() => void confirmInstall()}>
+            {pendingInstall && installIsUpgrade(pendingInstall)
+              ? pluginCopy.confirmUpgrade
+              : pluginCopy.confirmInstall}
           </Button>
         </DialogActions>
       </ConfirmationDialog>

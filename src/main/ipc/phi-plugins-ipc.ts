@@ -9,9 +9,11 @@ import { IPC } from '../../shared/ipcChannels'
 import type { PhiPluginCatalogDetailResult } from '../../shared/phiPluginDetailTypes'
 import type { PhiPluginInstallPreview } from '../../shared/phiPluginTypes'
 import { readAppSettings } from '../agent/app-settings'
+import { writeAppLog } from '../agent/app-logger'
 import type { EnvironmentBuilds } from '../agent/content/environment-builds'
 import { getRuntimeRoot } from '../agent/envs/runtime'
 import { createPhiPluginManagementView } from '../agent/plugins/phi-plugin-management-view'
+import type { PluginInstallJobs } from '../agent/plugins/plugin-install-jobs'
 import {
   installPlugin as installPhiPlugin,
   listInstalledPlugins,
@@ -38,6 +40,7 @@ export interface PhiPluginIpcOptions {
   plugins: {
     installedPluginNamespace: (projectDir?: string) => Promise<PluginNamespace>
     environmentBuilds: Pick<EnvironmentBuilds, 'start'>
+    installJobs: Pick<PluginInstallJobs, 'begin'>
   }
   windows: {
     getActiveWindow: () => BrowserWindow | null
@@ -137,12 +140,14 @@ function registerPhiPluginInstallIpc(context: PhiPluginIpcContext): void {
   const logUnexpectedError = options.lifecycle.logUnexpectedError
   const installedPluginNamespace = options.plugins.installedPluginNamespace
   const environmentBuilds = options.plugins.environmentBuilds
+  const installJobs = options.plugins.installJobs
   const phiPluginMutation = view.mutation
   const failedPhiPluginMutation = view.failedMutation
   ipcMain.handle(IPC.phiPlugins.installFromDirectory, async (_, path: unknown) => {
     if (typeof path !== 'string' || path.trim().length === 0) {
       return failedPhiPluginMutation('path', 'Select a valid Plugin directory')
     }
+    let tracked: ReturnType<PluginInstallJobs['begin']>
     try {
       const validation = validatePlugin(path)
       if (!validation.ok || !validation.plugin) {
@@ -152,9 +157,30 @@ function registerPhiPluginInstallIpc(context: PhiPluginIpcContext): void {
           warnings: validation.warnings
         })
       }
+      const manifest = validation.plugin.manifest
       const existing = listInstalledPlugins({ agentDir: AGENT_DIR }).find(
-        (plugin) => plugin.id === validation.plugin?.manifest.id
+        (plugin) => plugin.id === manifest.id
       )
+      if (existing && !semver.gt(manifest.version, existing.version)) {
+        return failedPhiPluginMutation(
+          'version',
+          `${existing.id} ${existing.version} is already installed. Select a newer version to upgrade.`
+        )
+      }
+      const action = existing ? 'upgrade' : 'install'
+      const job = installJobs.begin({
+        pluginId: manifest.id,
+        title: manifest.title,
+        version: manifest.version,
+        action
+      })
+      if (!job) {
+        return failedPhiPluginMutation(
+          'install',
+          `${manifest.title} is already being ${action === 'upgrade' ? 'upgraded' : 'installed'}.`
+        )
+      }
+      tracked = job
       const names = await installedPluginNamespace()
       let result: PluginLifecycleResult
       if (!existing) {
@@ -164,7 +190,7 @@ function registerPhiPluginInstallIpc(context: PhiPluginIpcContext): void {
           names,
           source: 'local'
         })
-      } else if (semver.gt(validation.plugin.manifest.version, existing.version)) {
+      } else {
         result = await upgradePlugin(path, {
           agentDir: AGENT_DIR,
           runtimeRoot: getRuntimeRoot(),
@@ -172,15 +198,24 @@ function registerPhiPluginInstallIpc(context: PhiPluginIpcContext): void {
           source: 'local',
           build: (descriptor, options) => environmentBuilds.start(descriptor, options)
         })
-      } else {
-        return failedPhiPluginMutation(
-          'version',
-          `${existing.id} ${existing.version} is already installed. Select a newer version to upgrade.`
-        )
       }
-      if (result.ok) await invalidateAgentSession()
+      if (result.ok) {
+        job.succeed()
+        await invalidateAgentSession()
+      } else {
+        job.fail(action === 'upgrade' ? 'upgrade-failed' : 'install-failed')
+        writeAppLog({
+          level: 'error',
+          event: action === 'upgrade' ? 'plugin_upgrade_failed' : 'plugin_install_failed',
+          metadata: {
+            pluginId: manifest.id,
+            errors: result.errors.map((problem) => problem.message).join('; ')
+          }
+        })
+      }
       return phiPluginMutation(result)
     } catch (error) {
+      tracked?.fail(tracked.job.action === 'upgrade' ? 'upgrade-failed' : 'install-failed')
       logUnexpectedError(error)
       return failedPhiPluginMutation(
         'install',

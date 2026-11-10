@@ -21,7 +21,8 @@ const KINDS = new Set([
   'connector',
   'upload',
   'jupyter',
-  'notebook-ai'
+  'notebook-ai',
+  'plugin'
 ])
 const DETAIL_LABELS = new Set([
   '对话',
@@ -42,6 +43,10 @@ const DETAIL_LABELS = new Set([
   'Notebook',
   '模型',
   '生成单元',
+  '插件',
+  '版本',
+  '操作',
+  '失败原因',
   'Conversation',
   'Status',
   'Started',
@@ -57,7 +62,11 @@ const DETAIL_LABELS = new Set([
   'Server',
   'Scheduler',
   'Model',
-  'Generated cells'
+  'Generated cells',
+  'Plugin',
+  'Version',
+  'Action',
+  'Failure'
 ])
 
 export interface JobHistorySnapshot {
@@ -191,10 +200,12 @@ function snapshotOf(item: LiveBackgroundJob): JobHistorySnapshot | undefined {
   )
   if (!fields.some((field) => field.label === jobsCopy.status))
     fields.push({ label: jobsCopy.status, value: status.label })
-  fields.push({
-    label: jobsCopy.finished,
-    value: new Date(item.timestamp).toLocaleString(getUiLocale())
-  })
+  if (!fields.some((field) => field.label === jobsCopy.finished)) {
+    fields.push({
+      label: jobsCopy.finished,
+      value: new Date(item.timestamp).toLocaleString(getUiLocale())
+    })
+  }
   return checkedSnapshot({
     key: item.key,
     sourceKind: item.kind,

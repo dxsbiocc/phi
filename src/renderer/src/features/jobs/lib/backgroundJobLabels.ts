@@ -35,6 +35,17 @@ export const JOB_TONE_COLOR: Record<JobTone, string> = {
 
 export type JobDetailField = { label: string; value: string; mono?: boolean; scroll?: boolean }
 
+type PluginInstall = Extract<UnifiedBackgroundJob, { kind: 'plugin' }>['install']
+
+function pluginActionLabel(install: PluginInstall): string {
+  return install.action === 'upgrade' ? jobsCopy.pluginUpgradeAction : jobsCopy.pluginInstallAction
+}
+
+/** A short, understandable sentence; raw failure detail stays in the main-process log. */
+export function pluginInstallError(install: PluginInstall): string {
+  return install.action === 'upgrade' ? jobsCopy.pluginUpgradeFailed : jobsCopy.pluginInstallFailed
+}
+
 type RemoteJupyterPhase = Pick<RemoteJupyterStartJob, 'phase'> & {
   phaseCode?: string
   phaseParams?: RemoteJupyterStartJobTextParams
@@ -243,6 +254,7 @@ export function jobTitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'upload') return uploadTitle(item.upload)
   if (item.kind === 'jupyter') return jobsCopy.startJupyterServerValue(item.job.projectName)
   if (item.kind === 'notebook-ai') return jobsCopy.aIGenerationValue(item.job.notebookName)
+  if (item.kind === 'plugin') return item.install.title
   if (item.kind === 'agent') return item.run.agentName
   if (item.kind === 'shell') return item.run.command
   return (
@@ -261,6 +273,7 @@ export function jobSource(item: UnifiedBackgroundJob): string {
   if (item.kind === 'wrapper') return 'Wrapper'
   if (item.kind === 'jupyter') return jobsCopy.remoteJupyter
   if (item.kind === 'notebook-ai') return 'Notebook AI'
+  if (item.kind === 'plugin') return jobsCopy.plugin
   return item.run.sessionTitle
 }
 
@@ -271,6 +284,7 @@ export function jobSubtitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'upload') return item.upload.destinationDirectory || jobsCopy.projectRoot
   if (item.kind === 'jupyter') return item.job.serverLabel
   if (item.kind === 'notebook-ai') return item.job.projectCwd
+  if (item.kind === 'plugin') return item.install.pluginId
   if (item.kind === 'agent') return item.run.task
   if (item.kind === 'shell') return jobsCopy.backgroundCommand
   return item.run.runId
@@ -293,6 +307,20 @@ export function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
   if (item.kind === 'connector') return connectorJobDetail(item.setup, nowMs)
   if (item.kind === 'environment') return environmentBuildDetail(item.build)
   if (item.kind === 'upload') return uploadDetail(item.upload)
+  if (item.kind === 'plugin') {
+    return [
+      pluginActionLabel(item.install),
+      item.install.version ? `v${item.install.version}` : undefined,
+      item.install.state === 'running'
+        ? jobsCopy.inProgress
+        : item.install.state === 'succeeded'
+          ? jobsCopy.completed
+          : jobsCopy.failed,
+      item.install.state === 'failed' ? pluginInstallError(item.install) : undefined
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  }
   if (item.kind === 'notebook-ai') {
     return [
       NOTEBOOK_AI_PHASE_LABELS[item.job.phase],
@@ -382,6 +410,8 @@ export function jobStatus(item: UnifiedBackgroundJob): { label: string; tone: Jo
           ? connectorJobCopy.needsSetup
           : connectorJobCopy.failed
       )
+    case 'plugin':
+      return item.install.state === 'succeeded' ? done(jobsCopy.completed) : failed(jobsCopy.failed)
   }
 }
 
@@ -392,6 +422,8 @@ export function canStopJob(item: UnifiedBackgroundJob): boolean {
   // A Jupyter start is stopped from the runtime card, which owns the project binding.
   if (item.kind === 'jupyter') return false
   if (item.kind === 'notebook-ai') return false
+  // Plugin installs cannot be cancelled; the main process owns the attempt.
+  if (item.kind === 'plugin') return false
   return item.active
 }
 
@@ -549,6 +581,24 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
           { label: jobsCopy.started, value: timeLabel(item.upload.createdAt) },
           item.upload.error
             ? { label: jobsCopy.error, value: item.upload.error, mono: true }
+            : undefined
+        ]
+      case 'plugin':
+        return [
+          { label: jobsCopy.plugin, value: item.install.title },
+          { label: jobsCopy.pluginVersion, value: item.install.version },
+          { label: jobsCopy.pluginJobAction, value: pluginActionLabel(item.install) },
+          { label: jobsCopy.status, value: status },
+          { label: jobsCopy.started, value: timeLabel(item.install.startedAt) },
+          {
+            label: jobsCopy.duration,
+            value: elapsed(item.install.startedAt, item.install.finishedAt, nowMs)
+          },
+          item.install.finishedAt
+            ? { label: jobsCopy.finished, value: timeLabel(item.install.finishedAt) }
+            : undefined,
+          item.install.state === 'failed'
+            ? { label: jobsCopy.pluginFailureLabel, value: pluginInstallError(item.install) }
             : undefined
         ]
       case 'jupyter':

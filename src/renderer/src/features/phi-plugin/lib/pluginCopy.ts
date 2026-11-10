@@ -113,6 +113,7 @@ export const pluginCopy = defineCopy(
     noCatalogMatches: 'No plugins match your search',
     noCategoryPlugins: 'No plugins in this group',
     processing: 'Working…',
+    installing: 'Installing…',
     fallbackPlugin: 'this plugin',
     invalidDirectory: (detail: string) => `Plugin directory validation failed: ${detail}`,
     newerDirectoryRequired: (version?: string) =>
@@ -243,6 +244,7 @@ export const pluginCopy = defineCopy(
     noCatalogMatches: '没有符合搜索条件的插件',
     noCategoryPlugins: '此分组中没有插件',
     processing: '正在处理…',
+    installing: '安装中…',
     fallbackPlugin: '此插件',
     invalidDirectory: (detail: string) => `插件目录验证失败：${detail}`,
     newerDirectoryRequired: (version?: string) =>

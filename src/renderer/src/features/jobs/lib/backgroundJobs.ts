@@ -13,6 +13,7 @@ import type { WrapperRun } from '../../../../../shared/wrapperTypes'
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
 import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJobTypes'
+import type { PluginInstallJob } from '../../../../../shared/pluginInstallJobTypes'
 import { canCancelBackgroundRun, resolveWrapperCancelTarget } from '../../wrapper/lib/wrapperView'
 import type { RetainedBackgroundJob } from './backgroundJobHistory'
 
@@ -48,6 +49,13 @@ export type LiveBackgroundJob =
       active: boolean
       timestamp: string
       job: NotebookAiGenerationJob
+    }
+  | {
+      kind: 'plugin'
+      key: string
+      active: boolean
+      timestamp: string
+      install: PluginInstallJob
     }
 
 export type UnifiedBackgroundJob = LiveBackgroundJob | RetainedBackgroundJob
@@ -222,7 +230,8 @@ export function selectBackgroundJobs(
   connectors: readonly McpConnectorSetupProgress[] = [],
   uploads: readonly RemoteProjectUploadJob[] = [],
   jupyterJobs: readonly RemoteJupyterStartJob[] = [],
-  notebookAiJobs: readonly NotebookAiGenerationJob[] = []
+  notebookAiJobs: readonly NotebookAiGenerationJob[] = [],
+  pluginInstalls: readonly PluginInstallJob[] = []
 ): { active: LiveBackgroundJob[]; recent: LiveBackgroundJob[] } {
   const maxRecent = query.maxRecent ?? 50
   const items: LiveBackgroundJob[] = [
@@ -285,7 +294,14 @@ export function selectBackgroundJobs(
       timestamp: job.finishedAt ?? job.startedAt,
       job
     })),
-    ...notebookAiJobs.map(notebookAiBackgroundJob)
+    ...notebookAiJobs.map(notebookAiBackgroundJob),
+    ...pluginInstalls.map((install): LiveBackgroundJob => ({
+      kind: 'plugin',
+      key: `plugin:${install.pluginId}`,
+      active: install.state === 'running',
+      timestamp: install.finishedAt ?? install.startedAt,
+      install
+    }))
   ]
   const newestFirst = (left: UnifiedBackgroundJob, right: UnifiedBackgroundJob): number =>
     right.timestamp.localeCompare(left.timestamp)
@@ -313,7 +329,9 @@ function belongsInFinishedTray(item: LiveBackgroundJob, query: BackgroundJobQuer
             ? item.job.finishedAt
             : item.kind === 'notebook-ai'
               ? item.job.completedAt
-              : item.run.completedAt
+              : item.kind === 'plugin'
+                ? item.install.finishedAt
+                : item.run.completedAt
   return Boolean(endedAt && endedAt >= query.finishedAfter)
 }
 

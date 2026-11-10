@@ -83,6 +83,14 @@ export const jobsCopy = defineCopy(
     environment: 'Environment',
     upload: 'Upload',
     remoteJupyter: 'Remote Jupyter',
+    plugin: 'Plugin',
+    pluginInstallAction: 'Install',
+    pluginUpgradeAction: 'Upgrade',
+    pluginVersion: 'Version',
+    pluginJobAction: 'Action',
+    pluginFailureLabel: 'Failure',
+    pluginInstallFailed: 'Plugin installation failed. Check the Phi log for details.',
+    pluginUpgradeFailed: 'Plugin upgrade failed. Check the Phi log for details.',
     remoteJupyterPreparing: 'Preparing to start',
     remoteJupyterConnecting: (serverLabel?: string) =>
       serverLabel
@@ -250,6 +258,14 @@ export const jobsCopy = defineCopy(
     environment: '环境',
     upload: '上传',
     remoteJupyter: '远程 Jupyter',
+    plugin: '插件',
+    pluginInstallAction: '安装',
+    pluginUpgradeAction: '升级',
+    pluginVersion: '版本',
+    pluginJobAction: '操作',
+    pluginFailureLabel: '失败原因',
+    pluginInstallFailed: '插件安装失败，详情请查看 Phi 日志。',
+    pluginUpgradeFailed: '插件升级失败，详情请查看 Phi 日志。',
     remoteJupyterPreparing: '准备启动',
     remoteJupyterConnecting: (serverLabel?: string) =>
       serverLabel

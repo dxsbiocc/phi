@@ -35,6 +35,7 @@ import { readSkillPackageDetail } from '../agent/packages/skill-detail'
 import { syncPreferredOfficialRegistry } from '../agent/packages/official-website-registry'
 import { readWrapperPackageDetail } from '../agent/packages/wrapper-detail'
 import type { PluginNamespace } from '../agent/plugins/loader'
+import type { PluginInstallJobs } from '../agent/plugins/plugin-install-jobs'
 import { readResourceIcon } from '../agent/resource-icons'
 import { resetWrapperCompositionCatalogCache } from '../agent/wrappers/composition/discovery'
 import { nativeUiCopy } from '../native-ui-copy'
@@ -62,6 +63,7 @@ export interface PackagesIpcOptions {
   plugins: {
     installedPluginNamespace: (projectDir?: string) => Promise<PluginNamespace>
     environmentBuilds: Pick<EnvironmentBuilds, 'start'>
+    installJobs: Pick<PluginInstallJobs, 'begin'>
   }
   packages: {
     officialContentSourceOptions: () => OfficialContentSourceOptions
@@ -246,6 +248,7 @@ function registerPackageInstallIpc(context: PackagesIpcContext): void {
   const invalidateAgentSession = options.lifecycle.invalidateAgentSession
   const AGENT_DIR = options.workspace.agentDir
   const environmentBuilds = options.plugins.environmentBuilds
+  const installJobs = options.plugins.installJobs
   const installedPluginNamespace = options.plugins.installedPluginNamespace
   const officialContentSourceOptions = options.packages.officialContentSourceOptions
   ipcMain.handle(
@@ -267,42 +270,70 @@ function registerPackageInstallIpc(context: PackagesIpcContext): void {
           const installedBefore = new Set(
             listRegistryPackages({ agentDir: AGENT_DIR }).map((item) => `${item.type}:${item.id}`)
           )
-          await prepareContentPackageInstall(
-            registry,
-            { type, id, ...(version ? { version } : {}) },
-            officialContentSourceOptions()
+          const entry = registry.packages.find(
+            (candidate) => candidate.type === type && candidate.id === id
           )
-          const plan = planRegistryInstall(
-            registry,
-            { type, id, ...(version ? { version } : {}) },
-            { agentDir: AGENT_DIR, appVersion: app.getVersion() }
-          )
-          const result = await installRegistryPackages(plan, {
-            agentDir: AGENT_DIR,
-            runtimeRoot: getRuntimeRoot(),
-            names: await installedPluginNamespace(),
-            build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
-          })
-          for (const installed of result) {
-            if (
-              installed.type === 'skill' &&
-              !installedBefore.has(`${installed.type}:${installed.id}`)
-            ) {
-              setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
-            }
-            if (
-              installed.type === 'mcp' &&
-              !installedBefore.has(`${installed.type}:${installed.id}`)
-            ) {
-              setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
-              setMcpPackageEnabled(installed.id, true, AGENT_DIR)
-            }
+          const job =
+            type === 'plugin'
+              ? installJobs.begin({
+                  pluginId: id,
+                  title: entry?.title ?? id,
+                  version: version ?? entry?.version ?? '',
+                  action: installedBefore.has(`plugin:${id}`) ? 'upgrade' : 'install'
+                })
+              : undefined
+          if (type === 'plugin' && !job) {
+            throw new Error('This Plugin is already being installed or upgraded.')
           }
-          if (result.some((installed) => installed.type === 'wrapper')) {
-            resetWrapperCompositionCatalogCache()
+          try {
+            await prepareContentPackageInstall(
+              registry,
+              { type, id, ...(version ? { version } : {}) },
+              officialContentSourceOptions()
+            )
+            const plan = planRegistryInstall(
+              registry,
+              { type, id, ...(version ? { version } : {}) },
+              { agentDir: AGENT_DIR, appVersion: app.getVersion() }
+            )
+            const result = await installRegistryPackages(plan, {
+              agentDir: AGENT_DIR,
+              runtimeRoot: getRuntimeRoot(),
+              names: await installedPluginNamespace(),
+              build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
+            })
+            for (const installed of result) {
+              if (
+                installed.type === 'skill' &&
+                !installedBefore.has(`${installed.type}:${installed.id}`)
+              ) {
+                setEnabled(`skill:${installed.id}`, true, { agentDir: AGENT_DIR })
+              }
+              if (
+                installed.type === 'mcp' &&
+                !installedBefore.has(`${installed.type}:${installed.id}`)
+              ) {
+                setEnabled(`mcp:${installed.id}`, true, { agentDir: AGENT_DIR })
+                setMcpPackageEnabled(installed.id, true, AGENT_DIR)
+              }
+            }
+            if (result.some((installed) => installed.type === 'wrapper')) {
+              resetWrapperCompositionCatalogCache()
+            }
+            job?.succeed()
+            await invalidateAgentSession()
+            return result
+          } catch (error) {
+            if (job) {
+              job.fail(job.job.action === 'upgrade' ? 'upgrade-failed' : 'install-failed')
+              writeAppLog({
+                level: 'error',
+                event: 'plugin_install_failed',
+                metadata: { pluginId: id, error: errorMessage(error) }
+              })
+            }
+            throw error
           }
-          await invalidateAgentSession()
-          return result
         } catch (error) {
           throw new Error(`Package installation failed: ${errorMessage(error)}`)
         }
@@ -459,6 +490,7 @@ function registerPackageUpdateIpc(context: PackagesIpcContext): void {
   const invalidateAgentSession = options.lifecycle.invalidateAgentSession
   const AGENT_DIR = options.workspace.agentDir
   const environmentBuilds = options.plugins.environmentBuilds
+  const installJobs = options.plugins.installJobs
   const installedPluginNamespace = options.plugins.installedPluginNamespace
   const officialContentSourceOptions = options.packages.officialContentSourceOptions
   const loadPackageRegistries = options.packages.loadPackageRegistries
@@ -485,25 +517,50 @@ function registerPackageUpdateIpc(context: PackagesIpcContext): void {
       })
       const update = updates.find((candidate) => candidate.type === type && candidate.id === id)
       if (!update) throw new Error(`No update available: ${type}:${id}`)
-      const result = await applyPackageUpdate(update, loaded.registries, {
-        preparePackage: async (registry, request) => {
-          await prepareContentPackageInstall(registry, request, officialContentSourceOptions())
-        },
-        agentDir: AGENT_DIR,
-        appVersion: app.getVersion(),
-        runtimeRoot: getRuntimeRoot(),
-        names: await installedPluginNamespace(),
-        build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
-      })
-      if (type === 'wrapper') resetWrapperCompositionCatalogCache()
-      replaceCachedPackageUpdates(
-        listPackageUpdates(loaded.registries, {
+      const job =
+        type === 'plugin'
+          ? installJobs.begin({
+              pluginId: id,
+              title: update.title,
+              version: update.newVersion,
+              action: 'upgrade'
+            })
+          : undefined
+      if (type === 'plugin' && !job) {
+        throw new Error('This Plugin is already being installed or upgraded.')
+      }
+      try {
+        const result = await applyPackageUpdate(update, loaded.registries, {
+          preparePackage: async (registry, request) => {
+            await prepareContentPackageInstall(registry, request, officialContentSourceOptions())
+          },
           agentDir: AGENT_DIR,
-          appVersion: app.getVersion()
+          appVersion: app.getVersion(),
+          runtimeRoot: getRuntimeRoot(),
+          names: await installedPluginNamespace(),
+          build: (descriptor, buildOptions) => environmentBuilds.start(descriptor, buildOptions)
         })
-      )
-      await invalidateAgentSession()
-      return result
+        if (type === 'wrapper') resetWrapperCompositionCatalogCache()
+        replaceCachedPackageUpdates(
+          listPackageUpdates(loaded.registries, {
+            agentDir: AGENT_DIR,
+            appVersion: app.getVersion()
+          })
+        )
+        job?.succeed()
+        await invalidateAgentSession()
+        return result
+      } catch (error) {
+        if (job) {
+          job.fail('upgrade-failed')
+          writeAppLog({
+            level: 'error',
+            event: 'plugin_upgrade_failed',
+            metadata: { pluginId: id, error: errorMessage(error) }
+          })
+        }
+        throw error
+      }
     })
   )
 }

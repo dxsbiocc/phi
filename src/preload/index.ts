@@ -138,6 +138,7 @@ import type {
   EnvironmentToolId
 } from '../shared/environmentTypes'
 import type { EnvironmentBuild } from '../shared/environmentBuildTypes'
+import type { PluginInstallJob } from '../shared/pluginInstallJobTypes'
 import type {
   PhiPluginInstallPreview,
   PhiPluginListItem,
@@ -1156,6 +1157,7 @@ type RendererAuthApi = PreloadApiBase & {
   respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
   showPendingRequests: () => Promise<void>
   listPhiPlugins: () => Promise<PhiPluginListItem[]>
+  listPluginInstallJobs: () => Promise<PluginInstallJob[]>
   getPhiPluginCatalogDetail: (id: string) => Promise<PhiPluginCatalogDetailResult>
   listOfficialWrapperGroups: (
     query?: PhiWrapperGroupsQuery
@@ -2064,6 +2066,8 @@ const api: RendererAuthApi = {
   ): Promise<void> =>
     ipcRenderer.invoke(IPC.agent.interactionResponse, requestId, response, cancelled),
   listPhiPlugins: (): Promise<PhiPluginListItem[]> => ipcRenderer.invoke(IPC.phiPlugins.list),
+  listPluginInstallJobs: (): Promise<PluginInstallJob[]> =>
+    ipcRenderer.invoke(IPC.pluginInstallJobs.list),
   getPhiPluginCatalogDetail: (id: string): Promise<PhiPluginCatalogDetailResult> =>
     ipcRenderer.invoke(IPC.phiPlugins.catalogDetail, id),
   listOfficialWrapperGroups: (

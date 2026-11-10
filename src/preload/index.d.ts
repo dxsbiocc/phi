@@ -127,6 +127,7 @@ import type {
   EnvironmentToolId
 } from '../shared/environmentTypes'
 import type { EnvironmentBuild } from '../shared/environmentBuildTypes'
+import type { PluginInstallJob } from '../shared/pluginInstallJobTypes'
 import type {
   PhiPluginInstallPreview,
   PhiPluginListItem,
@@ -1252,6 +1253,7 @@ declare global {
       onToolApprovalCancelled: (cb: (requestId?: string) => void) => () => void
       respondToolApproval: (requestId: string, approved: boolean) => Promise<void>
       listPhiPlugins: () => Promise<PhiPluginListItem[]>
+      listPluginInstallJobs: () => Promise<PluginInstallJob[]>
       getPhiPluginCatalogDetail: (id: string) => Promise<PhiPluginCatalogDetailResult>
       listOfficialWrapperGroups: (
         query?: PhiWrapperGroupsQuery

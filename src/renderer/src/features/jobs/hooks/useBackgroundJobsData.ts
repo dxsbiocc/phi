@@ -9,6 +9,7 @@ import type { EnvironmentBuild } from '../../../../../shared/environmentBuildTyp
 import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnectorCatalog'
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
 import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJobTypes'
+import type { PluginInstallJob } from '../../../../../shared/pluginInstallJobTypes'
 import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProjectUploadTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
 import { BackgroundJobHistory, backgroundJobHistoryStorage } from '../lib/backgroundJobHistory'
@@ -26,6 +27,7 @@ export type BackgroundJobsData = {
   uploadJobs: RemoteProjectUploadJob[]
   jupyterJobs: RemoteJupyterStartJob[]
   notebookAiJobs: NotebookAiGenerationJob[]
+  pluginInstallJobs: PluginInstallJob[]
 }
 
 type JobLists = { active: UnifiedBackgroundJob[]; recent: UnifiedBackgroundJob[] }
@@ -45,7 +47,8 @@ const EMPTY: BackgroundJobsData = {
   connectorJobs: [],
   uploadJobs: [],
   jupyterJobs: [],
-  notebookAiJobs: []
+  notebookAiJobs: [],
+  pluginInstallJobs: []
 }
 
 function upsertBy<T>(current: readonly T[], next: T, same: (item: T) => boolean): T[] {
@@ -70,7 +73,8 @@ function liveJobs(data: BackgroundJobsData): ReturnType<typeof selectBackgroundJ
     data.connectorJobs,
     data.uploadJobs,
     data.jupyterJobs,
-    data.notebookAiJobs
+    data.notebookAiJobs,
+    data.pluginInstallJobs
   )
 }
 
@@ -159,10 +163,12 @@ class BackgroundJobsStore {
         listOrEmpty(api.listLocalConnectorJobs),
         listOrEmpty(api.listRemoteProjectUploads),
         listOrEmpty(api.listRemoteJupyterJobs),
-        listOrEmpty(api.listNotebookAiGenerationJobs)
+        listOrEmpty(api.listNotebookAiGenerationJobs),
+        listOrEmpty(api.listPluginInstallJobs)
       ] as const)
       if (generation !== this.generation) return
-      const [agents, shells, wrappers, builds, connectors, uploads, jupyter, notebookAi] = results
+      const [agents, shells, wrappers, builds, connectors, uploads, jupyter, notebookAi, plugins] =
+        results
       const current = this.state.data
       this.state = {
         ...this.state,
@@ -180,7 +186,9 @@ class BackgroundJobsStore {
         uploadJobs: uploads.status === 'fulfilled' ? uploads.value : current.uploadJobs,
         jupyterJobs: jupyter.status === 'fulfilled' ? jupyter.value : current.jupyterJobs,
         notebookAiJobs:
-          notebookAi.status === 'fulfilled' ? notebookAi.value : current.notebookAiJobs
+          notebookAi.status === 'fulfilled' ? notebookAi.value : current.notebookAiJobs,
+        pluginInstallJobs:
+          plugins.status === 'fulfilled' ? plugins.value : current.pluginInstallJobs
       })
     } finally {
       this.refreshing = false
@@ -318,6 +326,40 @@ export function useJupyterStartupOverview(): JupyterStartupOverview {
 /** Keeps terminal snapshots up to date without subscribing the application to polling renders. */
 export function useBackgroundJobRetention(): void {
   useEffect(() => jobsStore().retain(), [])
+}
+
+const EMPTY_PLUGIN_INSTALLS: ReadonlyMap<string, PluginInstallJob> = new Map()
+
+let activePluginInstallsSnapshot: {
+  signature: string
+  installs: ReadonlyMap<string, PluginInstallJob>
+} = { signature: '', installs: EMPTY_PLUGIN_INSTALLS }
+
+function currentActivePluginInstalls(): ReadonlyMap<string, PluginInstallJob> {
+  const running = jobsStore()
+    .getSnapshot()
+    .data.pluginInstallJobs.filter((install) => install.state === 'running')
+  const signature = running.map((install) => `${install.id}:${install.pluginId}`).join('|')
+  if (signature !== activePluginInstallsSnapshot.signature) {
+    activePluginInstallsSnapshot = {
+      signature,
+      installs: new Map(running.map((install) => [install.pluginId, install]))
+    }
+  }
+  return activePluginInstallsSnapshot.installs
+}
+
+/**
+ * Running plugin installs keyed by plugin ID. The snapshot stays stable between
+ * polls so a plugin catalog dialog only re-renders when an attempt starts or ends.
+ */
+export function useActivePluginInstalls(): ReadonlyMap<string, PluginInstallJob> {
+  const store = jobsStore()
+  return useSyncExternalStore(
+    store.subscribe,
+    currentActivePluginInstalls,
+    () => EMPTY_PLUGIN_INSTALLS
+  )
 }
 
 /** Uses the same shared poller as the panel without subscribing the app shell. */

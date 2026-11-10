@@ -28,6 +28,7 @@ import { registerPhiPluginIpc } from './ipc/phi-plugins-ipc'
 import { registerSkillsIpc } from './ipc/skills-ipc'
 import { registerMcpIpc, type PendingCustomMcpAuthorization } from './ipc/mcp-ipc'
 import { registerEnvironmentBuildsIpc } from './ipc/environment-builds-ipc'
+import { registerPluginInstallJobsIpc } from './ipc/plugin-install-jobs-ipc'
 import { registerJobsIpc } from './ipc/jobs-ipc'
 import {
   registerWrapperInputUploadIpc,
@@ -253,6 +254,7 @@ import {
   selectableRuntimeModels
 } from './agent/runtime/runtime-model-selection'
 import { loadedPlugins } from './agent/plugins/loader'
+import { createPluginInstallJobs } from './agent/plugins/plugin-install-jobs'
 import { createInstalledPluginNamespace } from './agent/plugins/installed-plugin-namespace'
 import { migrateEnablementFromHistory } from './agent/enablement'
 import { cleanupStalePackageStaging } from './agent/packages/installer'
@@ -1060,6 +1062,7 @@ function syncPreventSleepBlocker(): void {
   }
 }
 const backgroundEnvironment = createBackgroundEnvironment({ agentDir: AGENT_DIR })
+const pluginInstallJobs = createPluginInstallJobs()
 const environmentBuilds = createEnvironmentBuilds({
   root: getRuntimeRoot(),
   build: (root, descriptor, options) =>
@@ -3596,11 +3599,12 @@ function registerProjectAndAnalysisIpc(): void {
 }
 
 function registerPluginAndPackageIpc(): void {
+  registerPluginInstallJobsIpc({ ipcMain, pluginInstallJobs })
   registerPhiPluginIpc({
     ipcMain,
     lifecycle: { invalidateAgentSession, logUnexpectedError },
     workspace: { agentDir: AGENT_DIR },
-    plugins: { installedPluginNamespace, environmentBuilds },
+    plugins: { installedPluginNamespace, environmentBuilds, installJobs: pluginInstallJobs },
     windows: { getActiveWindow }
   })
   const packagesIpcOptions = {
@@ -3608,7 +3612,7 @@ function registerPluginAndPackageIpc(): void {
     lifecycle: { getAppVersion: () => app.getVersion(), invalidateAgentSession },
     workspace: { agentDir: AGENT_DIR },
     windows: { getActiveWindow },
-    plugins: { installedPluginNamespace, environmentBuilds },
+    plugins: { installedPluginNamespace, environmentBuilds, installJobs: pluginInstallJobs },
     packages: {
       officialContentSourceOptions,
       knownContentSourceOptions,
