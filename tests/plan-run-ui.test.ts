@@ -590,3 +590,31 @@ test('plan scroll boxes hand wheel scrolling to the page at their edges', async 
     assert.doesNotMatch(readFileSync(file, 'utf8'), /overscrollBehavior/, file)
   }
 })
+
+test('a stopped or user-paused plan header shows its own symbol, not the thinking brain', async () => {
+  const { PhiIcons } = await import('../src/renderer/src/icons')
+  const svgPath = (icon: React.JSX.Element): string =>
+    /<path[^>]*d="([^"]+)"/.exec(renderToStaticMarkup(icon))?.[1] ?? ''
+  const brain = svgPath(createElement(PhiIcons.state.thinking, { size: 14 }))
+  const render = (snapshot: PlanRunTimelineSnapshot): string =>
+    renderToStaticMarkup(
+      createElement(
+        ThemeProvider,
+        { theme: createTheme() },
+        createElement(PlanRunPanel, {
+          archived: true,
+          controller: { ...controller(), run: snapshot }
+        })
+      )
+    )
+  const stopped = render({ ...run, status: 'stopped', pause: undefined })
+  const paused = render({ ...run, status: 'paused', pause: { reason: 'user' } })
+  assert.ok(brain)
+  assert.doesNotMatch(
+    stopped,
+    new RegExp(brain.slice(0, 24).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  )
+  assert.doesNotMatch(paused, new RegExp(brain.slice(0, 24).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  assert.ok(stopped.includes(svgPath(createElement(PhiIcons.action.stop, { size: 13 }))))
+  assert.ok(paused.includes(svgPath(createElement(PhiIcons.state.interrupted, { size: 14 }))))
+})

@@ -65,6 +65,15 @@ function runTone(run: PlanRunTimelineSnapshot): PlanTimelineTone {
   return 'neutral'
 }
 
+/** Stopped and user-paused runs say so with their own symbol, not a generic one. */
+function runIcon(run: PlanRunTimelineSnapshot): React.JSX.Element | undefined {
+  if (run.status === 'stopped') return <PhiIcons.action.stop size={13} aria-hidden />
+  if (run.status === 'paused' && run.pause?.reason === 'user') {
+    return <PhiIcons.state.interrupted size={14} aria-hidden />
+  }
+  return undefined
+}
+
 function PlanRunHeader({
   run,
   expanded,
@@ -91,6 +100,7 @@ function PlanRunHeader({
   return (
     <PlanTimelineHeader
       tone={runTone(run)}
+      icon={runIcon(run)}
       title={run.goal}
       subtitle={`${planCopy.progress(progress.completed, progress.total)} · ${planCopy.runStatus(run.status)}`}
       expanded={expanded}

@@ -68,7 +68,7 @@ export function PlanTimelineIcon({
             ? PhiIcons.state.interrupted
             : tone === 'pending'
               ? PhiIcons.state.draft
-              : PhiIcons.state.thinking
+              : PhiIcons.state.pending
   return (
     <Box
       aria-hidden={label ? undefined : true}
@@ -274,10 +274,16 @@ export function PlanTimelineStep({
   )
 }
 
-function PlanTimelineHeaderIcon({ tone }: { tone: PlanTimelineTone }): React.JSX.Element {
+function PlanTimelineHeaderIcon({
+  tone,
+  icon
+}: {
+  tone: PlanTimelineTone
+  icon?: ReactNode
+}): React.JSX.Element {
   const theme = useTheme()
   useUiLanguage()
-  if (tone !== 'active') return <PlanTimelineIcon tone={tone} />
+  if (tone !== 'active') return <PlanTimelineIcon tone={tone} icon={icon} />
   return (
     <Box
       sx={{
@@ -306,9 +312,12 @@ export function PlanTimelineHeader({
   expanded,
   expandLabel,
   onToggle,
-  trailing
+  trailing,
+  icon
 }: {
   tone: PlanTimelineTone
+  /** Overrides the tone's default symbol, e.g. a stop square for a stopped run. */
+  icon?: ReactNode
   title: string
   subtitle?: ReactNode
   expanded?: boolean
@@ -332,7 +341,7 @@ export function PlanTimelineHeader({
         '&:hover': onToggle ? { bgcolor: 'action.hover' } : undefined
       }}
     >
-      <PlanTimelineHeaderIcon tone={tone} />
+      <PlanTimelineHeaderIcon tone={tone} icon={icon} />
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography variant="subtitle2" noWrap title={title} sx={{ fontWeight: 700 }}>
           {title}
