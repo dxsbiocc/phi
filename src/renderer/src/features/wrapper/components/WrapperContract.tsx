@@ -20,12 +20,15 @@ export function WrapperIdentity({
   manifest,
   icon,
   extraChips,
+  headerAction,
   children
 }: {
   manifest: WrapperCompositionManifest
   icon?: ResourceIconRef
   /** More chips in the same row as the provider and tier, e.g. the package version. */
   extraChips?: React.ReactNode
+  /** Controls at the right end of the identity row, top-aligned with the name. */
+  headerAction?: React.ReactNode
   /** Extra controls shown under the chips. */
   children?: React.ReactNode
 }): React.JSX.Element {
@@ -71,6 +74,7 @@ export function WrapperIdentity({
         </Stack>
         {children ? <Box sx={{ mt: 1.5 }}>{children}</Box> : null}
       </Box>
+      {headerAction ? <Box sx={{ flexShrink: 0 }}>{headerAction}</Box> : null}
     </Stack>
   )
 }

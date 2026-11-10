@@ -13,10 +13,13 @@ import { WrapperDetailBody } from './WrapperDetailBody'
 /** The official Wrapper detail body without the page shell, shared by the page and suite split view. */
 export function OfficialWrapperDetailContent({
   detail,
-  choice
+  choice,
+  headerAction
 }: {
   detail: PhiWrapperCatalogDetail
   choice: WrapperCatalogChoice
+  /** Controls at the right end of the identity row, e.g. install / uninstall. */
+  headerAction?: React.ReactNode
 }): React.JSX.Element {
   useUiLanguage()
   const manifest = officialWrapperDetailManifest(detail)
@@ -33,6 +36,7 @@ export function OfficialWrapperDetailContent({
           icon={wrapperChoiceIcon(choice)}
           graph={graph}
           moduleDetails={undefined}
+          headerAction={headerAction}
           extraChips={
             <>
               {showCategory ? (

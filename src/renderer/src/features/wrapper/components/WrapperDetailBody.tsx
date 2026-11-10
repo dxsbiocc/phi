@@ -63,6 +63,7 @@ export function WrapperDetailBody({
   graph,
   moduleDetails,
   extraChips,
+  headerAction,
   identityExtras,
   afterIdentity,
   children
@@ -73,6 +74,8 @@ export function WrapperDetailBody({
   moduleDetails: WrapperModuleDetails | undefined
   /** More chips in the identity chip row. */
   extraChips?: React.ReactNode
+  /** Controls at the right end of the identity row, e.g. install / uninstall. */
+  headerAction?: React.ReactNode
   /** Controls under the identity chips. */
   identityExtras?: React.ReactNode
   /** Content right below the identity block. */
@@ -83,7 +86,12 @@ export function WrapperDetailBody({
   useUiLanguage()
   return (
     <>
-      <WrapperIdentity manifest={manifest} icon={icon} extraChips={extraChips}>
+      <WrapperIdentity
+        manifest={manifest}
+        icon={icon}
+        extraChips={extraChips}
+        headerAction={headerAction}
+      >
         {identityExtras}
       </WrapperIdentity>
       {afterIdentity}

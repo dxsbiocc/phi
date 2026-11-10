@@ -11,6 +11,7 @@ import type {
 } from '../src/shared/phiWebsiteCatalogTypes'
 import type { PackageRegistryEntryView } from '../src/shared/packageManagerTypes'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
+import { CatalogDetailFrame } from '../src/renderer/src/components/catalog/CatalogDetailFrame'
 import {
   filterOfficialWrapperTools,
   loadOfficialWrapperDetail,
@@ -330,9 +331,21 @@ test('suite split view renders the tool list and the first tool detail', () => {
   assert.match(suiteMarkup, />Phi</)
   assert.doesNotMatch(suiteMarkup, /Phi Website/)
   assert.doesNotMatch(suiteMarkup, /Phi Packages/)
-  assert.match(suiteMarkup, /data-registry-action="true"/)
   assert.match(suiteMarkup, /Search tools/)
   assert.match(suiteMarkup, /1 tool/)
+  assert.match(suiteMarkup, /data-phi-catalog-detail-title="true"/)
+  const detailStart = suiteMarkup.indexOf('data-phi-official-wrapper-suite-detail')
+  const actionStart = suiteMarkup.indexOf('data-registry-action="true"')
+  assert.ok(detailStart >= 0 && actionStart > detailStart, 'action renders inside the detail')
+  assert.ok(
+    actionStart < suiteMarkup.indexOf('>Inputs<'),
+    'action renders in the identity header before the content sections'
+  )
+  assert.doesNotMatch(
+    suiteMarkup.slice(0, detailStart),
+    /data-registry-action="true"/,
+    'the top bar keeps only the close action'
+  )
 
   const manifest = officialWrapperDetailManifest(detail())
   assert.equal(manifest.params.bam?.kind, 'input')
@@ -354,6 +367,33 @@ test('suite split view renders the tool list and the first tool detail', () => {
   assert.match(detailMarkup, /Input BAM/)
   assert.match(detailMarkup, />Inputs</)
   assert.match(detailMarkup, />Outputs</)
+})
+
+test('CatalogDetailFrame renders an optional title but no title element without one', () => {
+  const frame = (title?: React.ReactNode): string =>
+    themed(
+      createElement(CatalogDetailFrame, {
+        entryId: 'suite',
+        backLabel: 'Back to list',
+        title,
+        action: createElement('span', { 'data-frame-action': 'true' }, 'Action'),
+        onBack: () => undefined,
+        children: createElement('div', null, 'Content')
+      })
+    )
+
+  const withoutTitle = frame()
+  assert.doesNotMatch(withoutTitle, /data-phi-catalog-detail-title/)
+  assert.match(withoutTitle, /data-frame-action="true"/)
+  assert.match(withoutTitle, /Content/)
+
+  const withTitle = frame(createElement('span', null, 'TITLE-TEXT'))
+  assert.match(withTitle, /data-phi-catalog-detail-title="true"/)
+  assert.match(withTitle, /TITLE-TEXT/)
+  assert.ok(
+    withTitle.indexOf('TITLE-TEXT') < withTitle.indexOf('data-frame-action="true"'),
+    'the title renders before the action'
+  )
 })
 
 test('suite search filters the list and selecting another tool renders its detail', () => {

@@ -5,18 +5,21 @@ import { PhiIcons } from '../../icons'
 import { resourceCatalogCopy } from '../../lib/resourceUi'
 
 /**
- * The shared shell of a catalog entry's detail page. The top bar only carries navigation and the
- * entry's install/uninstall control; its name and chips belong to the content.
+ * The shared shell of a catalog entry's detail page. The top bar carries navigation, an optional
+ * heading and the entry's install/uninstall control; identity chips belong to the content.
  */
 export function CatalogDetailFrame({
   entryId,
   backLabel,
+  title,
   action,
   onBack,
   children
 }: {
   entryId: string
   backLabel: string
+  /** Optional entry heading shown in the top bar, right after the back button. */
+  title?: React.ReactNode
   /** The install / uninstall controls of the entry. */
   action: React.ReactNode
   onBack: () => void
@@ -32,7 +35,12 @@ export function CatalogDetailFrame({
       <Stack
         direction="row"
         spacing={1.5}
-        sx={{ alignItems: 'center', justifyContent: 'space-between', px: 3, py: 2 }}
+        sx={{
+          alignItems: 'center',
+          justifyContent: title ? 'flex-start' : 'space-between',
+          px: 3,
+          py: 2
+        }}
       >
         <Button
           size="small"
@@ -42,6 +50,12 @@ export function CatalogDetailFrame({
         >
           {resourceCatalogCopy.back}
         </Button>
+        {title ? (
+          <>
+            <Box data-phi-catalog-detail-title="true">{title}</Box>
+            <Box sx={{ flex: 1 }} />
+          </>
+        ) : null}
         {action}
       </Stack>
       <Box sx={{ flex: 1, minHeight: 0, display: 'flex', borderTop: 1, borderColor: 'divider' }}>

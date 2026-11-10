@@ -1,4 +1,4 @@
-import { Box, CircularProgress, IconButton, Stack, Typography } from '@mui/material'
+import { Box, CircularProgress, IconButton, Typography } from '@mui/material'
 import type { PhiWrapperCatalogDetail } from '../../../../../shared/phiWebsiteCatalogTypes'
 import { CatalogDetailFrame } from '../../../components/catalog/CatalogDetailFrame'
 import { PhiIcons } from '../../../icons'
@@ -54,41 +54,39 @@ export function OfficialWrapperSuiteSplitView({
   useUiLanguage()
   const selected = choices.find(({ tool }) => tool.id === selectedToolId)
   const selectedDetail = detail?.id === selectedToolId ? detail : undefined
+  const title = (
+    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, minWidth: 0 }}>
+      <Typography variant="h6" noWrap sx={{ fontWeight: 700 }}>
+        {suite}
+      </Typography>
+      {loading ? null : (
+        <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>
+          {wrapperCopy.toolCount(choices.length)}
+        </Typography>
+      )}
+    </Box>
+  )
 
   return (
     <CatalogDetailFrame
       entryId={`group:${suite}`}
       backLabel={wrapperCopy.backToWrapperGroups}
+      title={title}
       onBack={onBack}
       action={
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          {selected ? renderAction(selected.choice) : null}
-          <IconButton aria-label={wrapperCopy.closeCatalog} disabled={busy} onClick={onClose}>
-            <PhiIcons.action.close size={20} />
-          </IconButton>
-        </Stack>
+        <IconButton aria-label={wrapperCopy.closeCatalog} disabled={busy} onClick={onClose}>
+          <PhiIcons.action.close size={20} />
+        </IconButton>
       }
     >
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <Stack direction="row" sx={{ alignItems: 'baseline', px: 3, pt: 2.5, pb: 2 }} spacing={1}>
-          <Typography variant="h5" sx={{ fontWeight: 700 }}>
-            {suite}
-          </Typography>
-          {loading ? null : (
-            <Typography variant="body2" color="text.secondary">
-              {wrapperCopy.toolCount(choices.length)}
-            </Typography>
-          )}
-        </Stack>
-        {feedback ? <Box sx={{ px: 3, pb: 2 }}>{feedback}</Box> : null}
+        {feedback ? <Box sx={{ px: 3, pt: 2, pb: 2 }}>{feedback}</Box> : null}
         <Box
           sx={{
             flex: 1,
             minHeight: 0,
             display: 'flex',
-            flexDirection: { xs: 'column', md: 'row' },
-            borderTop: 1,
-            borderColor: 'divider'
+            flexDirection: { xs: 'column', md: 'row' }
           }}
         >
           <Box
@@ -97,11 +95,14 @@ export function OfficialWrapperSuiteSplitView({
               flex: { xs: '0 0 auto', md: '0 0 260px' },
               maxHeight: { xs: '44%', md: 'none' },
               minHeight: 0,
-              p: 1.5,
+              px: 2,
+              py: 3,
               display: 'flex',
               flexDirection: 'column',
-              borderRight: { xs: 0, md: 1 },
-              borderBottom: { xs: 1, md: 0 },
+              borderRightWidth: { xs: 0, md: 1 },
+              borderRightStyle: 'solid',
+              borderBottomWidth: { xs: 1, md: 0 },
+              borderBottomStyle: 'solid',
               borderColor: 'divider'
             }}
           >
@@ -120,7 +121,11 @@ export function OfficialWrapperSuiteSplitView({
             sx={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto' }}
           >
             {selected && selectedDetail ? (
-              <OfficialWrapperDetailContent detail={selectedDetail} choice={selected.choice} />
+              <OfficialWrapperDetailContent
+                detail={selectedDetail}
+                choice={selected.choice}
+                headerAction={renderAction(selected.choice)}
+              />
             ) : detailLoading || (selectedToolId && !selectedDetail) ? (
               <DetailLoading />
             ) : (
