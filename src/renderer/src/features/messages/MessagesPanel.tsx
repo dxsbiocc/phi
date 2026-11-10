@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Box, Typography } from '@mui/material'
 
-import { PackageUpdatesDialog } from '../../components/PackageUpdatesDialog'
+import { PackageUpdateDialog } from '../../components/PackageUpdateDialog'
 import { SidePanelCard } from '../../components/SidePanelCard'
 import { useUiLanguage } from '../../lib/i18n'
 import { workspacePanelText } from '../../layout'
@@ -10,56 +10,45 @@ import { errorMessage } from '../../../../shared/errorCodes'
 import { MessageIcon } from './components/MessageIcon'
 import { useMessages } from './hooks/useMessages'
 import { messagesCopy } from './lib/messagesCopy'
-import { buildMessages, type Message } from './lib/messages'
+import { buildMessages, orderMessagesByReadState, type Message } from './lib/messages'
 
 export function MessagesPanel(): React.JSX.Element {
   useUiLanguage()
-  const { packageUpdates, appUpdate, loaded, markAllRead, refreshPackageUpdates } =
+  const { packageUpdates, appUpdate, loaded, readIds, markRead, refreshPackageUpdates } =
     useMessages()
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [selectedUpdate, setSelectedUpdate] = useState<PackageUpdateView | null>(null)
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const messages = buildMessages({ updates: packageUpdates, appUpdate })
-
-  useEffect(() => {
-    markAllRead()
-  }, [markAllRead, packageUpdates, appUpdate])
+  const messages = orderMessagesByReadState(
+    buildMessages({ updates: packageUpdates, appUpdate }),
+    readIds
+  )
 
   const refresh = async (): Promise<void> => {
     await refreshPackageUpdates()
   }
 
   async function apply(update: PackageUpdateView): Promise<void> {
-    setBusyKey(`${update.type}:${update.id}`)
+    setBusy(true)
     setError(null)
     try {
       await window.api.applyPackageUpdate(update.type, update.id)
       await refresh()
+      // The update is gone from the refreshed list, so its message disappears too.
+      setSelectedUpdate(null)
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
-      setBusyKey(null)
-    }
-  }
-
-  async function applyAll(): Promise<void> {
-    setBusyKey('all')
-    setError(null)
-    try {
-      await window.api.applyAllPackageUpdates()
-      await refresh()
-    } catch (cause) {
-      setError(errorMessage(cause))
-    } finally {
-      setBusyKey(null)
+      setBusy(false)
     }
   }
 
   function openMessage(message: Message): void {
-    if (message.kind === 'package-updates') {
+    markRead(message.id)
+    if (message.kind === 'package-update' && message.packageUpdate) {
       setError(null)
-      setDialogOpen(true)
+      setSelectedUpdate(message.packageUpdate)
       return
     }
     if (!message.releasesUrl) return
@@ -70,27 +59,33 @@ export function MessagesPanel(): React.JSX.Element {
     }
   }
 
-  const renderMessage = (message: Message): React.JSX.Element => (
-    <SidePanelCard
-      key={message.id}
-      role="button"
-      tabIndex={0}
-      aria-label={messagesCopy.openMessage(message.title)}
-      data-phi-message={message.id}
-      onClick={() => openMessage(message)}
-      onKeyDown={(event) => {
-        if (event.currentTarget !== event.target) return
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          openMessage(message)
-        }
-      }}
-      icon={<MessageIcon kind={message.kind} />}
-      title={message.title}
-      status={message.status}
-      subtitle={message.subtitle}
-    />
-  )
+  const renderMessage = (message: Message): React.JSX.Element => {
+    const read = readIds.has(message.id)
+    return (
+      <SidePanelCard
+        key={message.id}
+        role="button"
+        tabIndex={0}
+        aria-label={messagesCopy.openMessage(message.title)}
+        data-phi-message={message.id}
+        data-phi-message-read={read}
+        onClick={() => openMessage(message)}
+        onKeyDown={(event) => {
+          if (event.currentTarget !== event.target) return
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            openMessage(message)
+          }
+        }}
+        icon={<MessageIcon kind={message.kind} packageType={message.packageType} unread={!read} />}
+        title={message.title}
+        titleEmphasis={read ? 'muted' : 'strong'}
+        status={message.status}
+        statusPlacement="center"
+        subtitle={message.subtitle}
+      />
+    )
+  }
 
   return (
     <Box
@@ -144,17 +139,18 @@ export function MessagesPanel(): React.JSX.Element {
             {messagesCopy.noMessages}
           </Typography>
         )}
-        {/* Opening the panel marks everything read, so one plain list is enough. */}
+        {/* One list, unread first; opening the panel alone never marks anything read. */}
         <Box sx={{ pt: 0.75, px: 0.5 }}>{messages.map(renderMessage)}</Box>
       </Box>
-      <PackageUpdatesDialog
-        open={dialogOpen}
-        updates={packageUpdates}
-        busyKey={busyKey}
+      <PackageUpdateDialog
+        open={selectedUpdate !== null}
+        update={selectedUpdate}
+        busy={busy}
         error={error}
-        onClose={() => setDialogOpen(false)}
+        onClose={() => {
+          if (!busy) setSelectedUpdate(null)
+        }}
         onApply={(update) => void apply(update)}
-        onApplyAll={() => void applyAll()}
       />
     </Box>
   )

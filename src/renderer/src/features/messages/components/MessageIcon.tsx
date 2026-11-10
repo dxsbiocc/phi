@@ -1,20 +1,62 @@
+import { Badge } from '@mui/material'
+
 import { PhiIcons } from '../../../icons'
 import { SidePanelIconTile } from '../../../components/SidePanelIconTile'
+import type { PackageManagerType } from '../../../../../shared/packageManagerTypes'
 import type { MessageKind } from '../lib/messages'
 
-const messageIconColors: Record<MessageKind, string> = {
-  'package-updates': '#4C8F5B',
-  'app-update': '#7958D4'
+const packageIconColors: Record<PackageManagerType, string> = {
+  plugin: '#4C8F5B',
+  skill: '#5A8FBF',
+  wrapper: '#00A98A',
+  mcp: '#3C80BC'
 }
 
-export function MessageIcon({ kind }: { kind: MessageKind }): React.JSX.Element {
+const appUpdateColor = '#7958D4'
+
+function PackageTypeIcon({ type }: { type: PackageManagerType }): React.JSX.Element {
+  switch (type) {
+    case 'plugin':
+      return <PhiIcons.entity.plugin size={22} />
+    case 'skill':
+      return <PhiIcons.entity.skill size={22} />
+    case 'wrapper':
+      return <PhiIcons.entity.wrapper size={22} />
+    case 'mcp':
+      return <PhiIcons.entity.mcp size={22} />
+  }
+}
+
+/** The package-type mark is shared with the jobs and catalog surfaces. */
+export function MessageIcon({
+  kind,
+  packageType,
+  unread
+}: {
+  kind: MessageKind
+  packageType?: PackageManagerType
+  unread: boolean
+}): React.JSX.Element {
+  const type = packageType ?? 'skill'
   return (
-    <SidePanelIconTile data-phi-message-icon={kind} backgroundColor={messageIconColors[kind]}>
-      {kind === 'package-updates' ? (
-        <PhiIcons.entity.plugin size={22} />
-      ) : (
-        <PhiIcons.state.launching size={22} />
-      )}
-    </SidePanelIconTile>
+    <Badge
+      variant="dot"
+      color="error"
+      overlap="circular"
+      invisible={!unread}
+      aria-hidden
+      sx={{ display: 'flex' }}
+    >
+      <SidePanelIconTile
+        data-phi-message-icon={kind === 'package-update' ? `package-${type}` : kind}
+        backgroundColor={kind === 'package-update' ? packageIconColors[type] : appUpdateColor}
+      >
+        {kind === 'package-update' ? (
+          <PackageTypeIcon type={type} />
+        ) : (
+          <PhiIcons.state.launching size={22} />
+        )}
+      </SidePanelIconTile>
+    </Badge>
   )
 }

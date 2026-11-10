@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import type { AppUpdateCheck } from '../src/shared/appUpdateTypes'
@@ -7,11 +8,12 @@ import {
   appUpdateMessageId,
   buildMessages,
   messageIdsForContent,
-  packageUpdatesMessageId
+  orderMessagesByReadState,
+  packageUpdateMessageId
 } from '../src/renderer/src/features/messages/lib/messages'
 import {
   MESSAGE_READ_STORAGE_KEY,
-  markMessagesRead,
+  markMessageRead,
   readMessageReadIds,
   unreadMessageCount,
   writeMessageReadIds,
@@ -58,54 +60,68 @@ function appUpdate(overrides: Partial<AppUpdateCheck> = {}): AppUpdateCheck {
 
 test.afterEach(() => setUiLanguage('en'))
 
-test('package updates become one message with sorted stable keys in both languages', () => {
+test('each content package update becomes its own localized message', () => {
   const updates = [
-    update({ id: 'z-skill', type: 'skill', title: 'Zeta', newVersion: '2.0.0' }),
-    update({ id: 'a-plugin', type: 'plugin', title: 'Alpha', newVersion: '3.0.0' })
+    update({
+      id: 'visualization',
+      type: 'plugin',
+      title: '科研绘图',
+      currentVersion: '0.6.0',
+      newVersion: '0.7.0'
+    }),
+    update({ id: 'z-skill', type: 'skill', title: 'Zeta', newVersion: '2.0.0' })
   ]
 
   setUiLanguage('zh-CN')
-  const [chinese] = buildMessages({ updates, appUpdate: null })
-  assert.ok(chinese)
-  assert.equal(chinese.id, packageUpdatesMessageId(updates))
-  assert.equal(chinese.id, ['plugin:a-plugin@3.0.0', 'skill:z-skill@2.0.0'].sort().join('|'))
-  assert.equal(chinese.title, '有 2 个内容包可更新')
-  assert.equal(chinese.subtitle, 'Zeta、Alpha')
-  assert.equal(chinese.status, '可更新')
-  assert.equal(chinese.kind, 'package-updates')
+  const chinese = buildMessages({ updates, appUpdate: null })
+  assert.equal(chinese.length, 2)
+
+  const [plugin, skill] = chinese
+  assert.ok(plugin)
+  assert.equal(plugin.id, 'package:plugin:visualization@0.7.0')
+  assert.equal(plugin.kind, 'package-update')
+  assert.equal(plugin.title, 'Visualization')
+  assert.equal(plugin.subtitle, '0.6.0 → 0.7.0')
+  assert.equal(plugin.status, '可更新')
+  assert.equal(plugin.packageType, 'plugin')
+  assert.equal(plugin.packageUpdate?.id, 'visualization')
+
+  assert.ok(skill)
+  assert.equal(skill.id, 'package:skill:z-skill@2.0.0')
+  assert.equal(skill.title, 'Zeta')
+  assert.equal(skill.subtitle, '1.0.0 → 2.0.0')
+  assert.equal(skill.status, '可更新')
+  assert.equal(skill.packageType, 'skill')
 
   setUiLanguage('en')
-  const [english] = buildMessages({ updates, appUpdate: null })
-  assert.ok(english)
-  assert.equal(english.id, chinese.id)
-  assert.equal(english.title, '2 content package updates available')
-  assert.equal(english.subtitle, 'Zeta, Alpha')
-  assert.equal(english.status, 'Update available')
+  const english = buildMessages({ updates, appUpdate: null })
+  assert.deepEqual(
+    english.map((message) => message.id),
+    chinese.map((message) => message.id)
+  )
+  assert.equal(english[0]?.title, 'Visualization')
+  assert.equal(english[0]?.status, 'Update available')
+  assert.equal(english[1]?.subtitle, '1.0.0 → 2.0.0')
 })
 
-test('plugin update names use the shared plugin display title', () => {
-  setUiLanguage('en')
-  const [message] = buildMessages({
-    updates: [update({ id: 'visualization', type: 'plugin', title: '科研绘图' })],
-    appUpdate: null
-  })
-  assert.ok(message)
-  assert.equal(message.subtitle, 'Visualization')
-})
-
-test('message ids change when the update content changes', () => {
+test('package and app message ids stay stable and versioned', () => {
   const first = [update()]
   const second = [update({ newVersion: '1.2.0' })]
-  assert.notEqual(packageUpdatesMessageId(first), packageUpdatesMessageId(second))
-  assert.deepEqual(messageIdsForContent(first, null), [packageUpdatesMessageId(first)])
-  assert.deepEqual(messageIdsForContent([], appUpdate()), [appUpdateMessageId('0.2.0')])
+  assert.equal(packageUpdateMessageId(first[0]!), 'package:skill:demo-skill@1.1.0')
+  assert.notEqual(packageUpdateMessageId(first[0]!), packageUpdateMessageId(second[0]!))
+  assert.deepEqual(messageIdsForContent(first, appUpdate()), [
+    'package:skill:demo-skill@1.1.0',
+    appUpdateMessageId('0.2.0')
+  ])
+  assert.deepEqual(messageIdsForContent([], appUpdate()), ['app@0.2.0'])
 })
 
-test('an available app update becomes one localized message', () => {
+test('an available app update stays one localized message', () => {
   setUiLanguage('zh-CN')
   const [chinese] = buildMessages({ updates: [], appUpdate: appUpdate() })
   assert.ok(chinese)
   assert.equal(chinese.id, 'app@0.2.0')
+  assert.equal(chinese.kind, 'app-update')
   assert.equal(chinese.title, 'Phi 0.2.0 可用')
   assert.equal(chinese.subtitle, '当前版本 0.1.6')
   assert.equal(chinese.status, '可用')
@@ -119,7 +135,7 @@ test('an available app update becomes one localized message', () => {
   assert.equal(english.status, 'Available')
 })
 
-test('up-to-date and failed update checks produce no message', () => {
+test('up-to-date and failed update checks produce no app message', () => {
   for (const status of ['up-to-date', 'error'] as const) {
     assert.deepEqual(
       buildMessages({ updates: [], appUpdate: appUpdate({ status, latestVersion: '0.2.0' }) }),
@@ -128,35 +144,64 @@ test('up-to-date and failed update checks produce no message', () => {
   }
 })
 
-test('read state counts unread messages and mark-all-read clears the badge', () => {
+test('unread messages stay first, then read messages in their stable order', () => {
   const messages = buildMessages({
-    updates: [update()],
+    updates: [update({ id: 'alpha' }), update({ id: 'beta' })],
+    appUpdate: appUpdate()
+  })
+  const read = new Set([messages[1]!.id])
+  assert.deepEqual(
+    orderMessagesByReadState(messages, read).map((message) => message.id),
+    [messages[0]!.id, messages[2]!.id, messages[1]!.id]
+  )
+})
+
+test('opening the panel does not mark read; reading one leaves the others unread', () => {
+  const messages = buildMessages({
+    updates: [update({ id: 'alpha' }), update({ id: 'beta' })],
     appUpdate: appUpdate()
   })
   const ids = messages.map((message) => message.id)
-  assert.equal(unreadMessageCount(ids, new Set()), 2)
 
-  const partlyRead = markMessagesRead(new Set(), [ids[0]!])
-  assert.equal(unreadMessageCount(ids, partlyRead), 1)
+  // Nothing is written just by building the list the panel renders.
+  const unopened = new Set<string>()
+  assert.equal(unreadMessageCount(ids, unopened), 3)
 
-  const allRead = markMessagesRead(partlyRead, ids)
-  assert.equal(unreadMessageCount(ids, allRead), 0)
-  assert.deepEqual([...allRead].sort(), [...ids].sort())
+  const afterOneClick = markMessageRead(unopened, ids, ids[0]!)
+  assert.equal(unreadMessageCount(ids, afterOneClick), 2)
+  assert.ok(afterOneClick.has(ids[0]!))
+  assert.ok(!afterOneClick.has(ids[1]!))
+
+  const panel = readFileSync('src/renderer/src/features/messages/MessagesPanel.tsx', 'utf8')
+  assert.doesNotMatch(panel, /markAllRead|markAllMessagesRead/)
+  assert.match(panel, /markRead\(message\.id\)/)
+  assert.match(panel, /orderMessagesByReadState/)
+  assert.match(panel, /statusPlacement="center"/)
+  assert.doesNotMatch(panel, /PackageUpdatesDialog|applyAllPackageUpdates|onApplyAll/)
 })
 
-test('a changed message id makes an otherwise read message unread again', () => {
-  const readIds = markMessagesRead(new Set(), messageIdsForContent([update()], appUpdate()))
-  const changedContent = messageIdsForContent([update({ newVersion: '9.0.0' })], appUpdate())
-  assert.equal(unreadMessageCount(changedContent, readIds), 1)
+test('a newer package version makes the message unread again', () => {
+  const oldIds = messageIdsForContent([update({ newVersion: '1.1.0' })], null)
+  const readIds = markMessageRead(new Set(), oldIds, oldIds[0]!)
+  const newerIds = messageIdsForContent([update({ newVersion: '1.2.0' })], null)
+
+  assert.equal(unreadMessageCount(newerIds, readIds), 1)
+  const next = markMessageRead(readIds, newerIds, newerIds[0]!)
+  assert.deepEqual([...next].sort(), [newerIds[0]!].sort())
 })
 
-test('read ids persist under one versioned key', () => {
+test('read ids persist under one versioned key and prune vanished messages', () => {
   const storage = new MemoryStorage()
-  const readIds = new Set(['app@0.2.0', 'plugin:demo@2.0.0'])
+  const ids = messageIdsForContent([update()], appUpdate())
+  const stale = 'package:skill:removed@9.9.9'
+  const previous = new Set([stale, ids[0]!])
+
+  const readIds = markMessageRead(previous, ids, ids[0]!)
   writeMessageReadIds(readIds, storage)
 
   assert.equal(MESSAGE_READ_STORAGE_KEY, 'phi.messages-read.v1')
-  assert.deepEqual([...readMessageReadIds(storage)].sort(), [...readIds].sort())
+  assert.deepEqual([...readMessageReadIds(storage)].sort(), [ids[0]!].sort())
+  assert.ok(!readMessageReadIds(storage).has(stale))
 })
 
 test('malformed and throwing storage leaves messages unread without breaking the app', () => {
@@ -174,4 +219,5 @@ test('malformed and throwing storage leaves messages unread without breaking the
   }
   assert.deepEqual(readMessageReadIds(throwing), new Set())
   assert.doesNotThrow(() => writeMessageReadIds(['app@0.2.0'], throwing))
+  assert.doesNotThrow(() => markMessageRead(new Set(['app@0.2.0']), ['app@0.2.0'], 'app@0.2.0'))
 })
