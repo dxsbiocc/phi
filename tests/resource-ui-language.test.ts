@@ -41,3 +41,10 @@ test('website source labels distinguish website rows from registry fallback rows
   }
   assert.equal(websiteSourceLabel('Mirror source'), 'Phi · Mirror source')
 })
+
+test('the official source chip reads just Phi in both languages', () => {
+  for (const language of ['en', 'zh-CN'] as const) {
+    setUiLanguage(language)
+    for (const value of ['Phi 官网', 'Phi Website']) assert.equal(resourceSourceLabel(value), 'Phi')
+  }
+})

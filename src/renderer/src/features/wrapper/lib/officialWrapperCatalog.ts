@@ -29,8 +29,8 @@ export interface OfficialWrapperCatalogApi {
 
 export type OfficialWrapperLoad<T> = { source: 'official'; data: T } | { source: 'fallback' }
 
-/** Suites are small; one generous page usually holds every tool, and extra pages are still read. */
-export const OFFICIAL_WRAPPER_SUITE_PAGE_SIZE = 200
+/** The website client accepts at most 100 items per page; larger suites read further pages. */
+export const OFFICIAL_WRAPPER_SUITE_PAGE_SIZE = 100
 
 async function loadOfficial<T>(
   request: (() => Promise<PhiWebsiteCatalogResult<T>>) | undefined

@@ -285,7 +285,7 @@ test('suite tools load every service page for the split list', async () => {
           items: page === 1 ? [tool()] : [splitTool()],
           total: 2,
           page,
-          pageSize: 200,
+          pageSize: 100,
           pageCount: 2
         }
       }
@@ -299,8 +299,8 @@ test('suite tools load every service page for the split list', async () => {
       [tool().id, splitTool().id]
     )
   assert.deepEqual(queries, [
-    { group: 'samtools', page: 1, pageSize: 200 },
-    { group: 'samtools', page: 2, pageSize: 200 }
+    { group: 'samtools', page: 1, pageSize: 100 },
+    { group: 'samtools', page: 2, pageSize: 100 }
   ])
 })
 

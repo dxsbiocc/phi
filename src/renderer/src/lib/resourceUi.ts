@@ -212,6 +212,8 @@ const sourceLabels: Readonly<Record<string, string>> = {
 }
 
 export function resourceSourceLabel(value: string): string {
+  // Chips name the provider, not the website: the official source reads just "Phi".
+  if (value === 'Phi 官网' || value === 'Phi Website') return resourceUi.officialSource
   if (getUiLanguage() === 'zh-CN') {
     return Object.entries(sourceLabels).find(([, english]) => english === value)?.[0] ?? value
   }
