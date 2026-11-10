@@ -238,7 +238,15 @@ export function McpFeaturedConnectorDetails({
           <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
             {connectorCopy.serviceOverview}
           </Typography>
-          <Box sx={{ color: 'text.secondary', textAlign: 'justify', textJustify: 'inter-character' }}>
+          {/* The body sits about two and a half characters in from the heading on both sides. */}
+          <Box
+            sx={{
+              px: '2.5em',
+              color: 'text.secondary',
+              textAlign: 'justify',
+              textJustify: 'inter-character'
+            }}
+          >
             <MarkdownContent text={connector.overview} />
           </Box>
         </Box>
