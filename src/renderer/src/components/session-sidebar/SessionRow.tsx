@@ -421,10 +421,9 @@ export const SessionRow = memo(function SessionRow({
               pr: 1,
               position: 'relative',
               overflow: 'hidden',
+              // The selected row is marked by its fill alone; the transparent border keeps rows the same height.
               border: 1,
-              borderColor: isActive
-                ? (theme: Theme) => alpha(theme.palette.primary.main, 0.5)
-                : 'transparent',
+              borderColor: 'transparent',
               borderRadius: isActive ? '999px' : 1.5,
               bgcolor: isActive
                 ? (theme: Theme) =>
