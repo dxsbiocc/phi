@@ -93,7 +93,7 @@ test('user GitHub sources retain their real upstream provenance', () => {
   assert.equal(entry.source?.trust, 'imported')
 })
 
-test('API entries with restricted authorization remain visible with their restriction after cache reads', () => {
+test('API entries whose authorization is blocked are hidden from the catalog unless configured', () => {
   const f = fixture()
   const registry = f.registry('1.0.1')
   const indexFile = join(registry.dir, 'index.json')
@@ -111,8 +111,5 @@ test('API entries with restricted authorization remain visible with their restri
     appVersion: '0.1.0',
     registries: [api]
   })
-  assert.equal(entries.length, 1)
-  assert.match(entries[0].unavailableReason ?? '', /Authorization/)
-  assert.equal(entries[0].unavailableKind, 'authorization')
-  assert.equal(entries[0].source?.kind, 'official')
+  assert.equal(entries.length, 0)
 })

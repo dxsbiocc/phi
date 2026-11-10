@@ -216,6 +216,9 @@ export function listConnectorCatalog(
   }
 
   return [...selected.values()]
+    // Connectors whose authorization cannot be completed are hidden unless already configured,
+    // so a configured one can still be inspected and removed.
+    .filter(({ manifest, directoryAuthBlocked }) => !directoryAuthBlocked || manifest.id in servers)
     .map(
       ({ manifest, registryDir, packageDir, iconAsset, source, notice, directoryAuthBlocked }) => {
         const connector = manifest.connector
