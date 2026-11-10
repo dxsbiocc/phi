@@ -18,7 +18,7 @@ import type {
   PhiPluginCatalogDetailReason
 } from '../../../../../shared/phiPluginDetailTypes'
 import type { PhiPluginCatalogAction, PhiPluginCatalogEntry } from '../lib/phiPluginCatalog'
-import { phiPluginDisplayTitle } from '../lib/phiPlugins'
+import { phiPluginCatalogTitle } from '../lib/phiPlugins'
 import { pluginCopy } from '../lib/pluginCopy'
 import {
   usePhiPluginCatalogDetail,
@@ -190,7 +190,7 @@ export function PhiPluginCatalogPreview({
 
   const currentState = usePhiPluginCatalogDetail(entry.id)
   const detail = currentState.status === 'available' ? currentState.detail : null
-  const title = detail?.title || phiPluginDisplayTitle(entry)
+  const title = phiPluginCatalogTitle(entry, detail?.title)
 
   return (
     <>
@@ -355,7 +355,11 @@ function CatalogPreviewHeader({
 export function PluginSummary({ text }: { text: string }): React.JSX.Element | null {
   if (!text) return null
   return (
-    <Typography variant="body1" color="text.secondary" sx={{ mt: 2, px: 1.5 }}>
+    <Typography
+      variant="body1"
+      color="text.secondary"
+      sx={{ mt: 2, px: 1.5, textAlign: 'justify' }}
+    >
       {text}
     </Typography>
   )

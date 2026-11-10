@@ -208,3 +208,23 @@ test('duplicate remote versions select the newest entry and retain its update ac
     'update'
   )
 })
+
+test('the catalog preview header names visualization by its plugin name, not the website title', async () => {
+  const { phiPluginCatalogTitle } =
+    await import('../src/renderer/src/features/phi-plugin/lib/phiPlugins')
+  assert.equal(
+    phiPluginCatalogTitle({ id: 'visualization', title: '科研绘图' }, '科研绘图'),
+    'Visualization'
+  )
+  assert.equal(
+    phiPluginCatalogTitle({ id: 'visualization', title: 'Visualization' }),
+    'Visualization'
+  )
+  assert.equal(
+    phiPluginCatalogTitle(
+      { id: 'literature-library', title: 'Literature Library' },
+      'Literature Library'
+    ),
+    'Literature Library'
+  )
+})

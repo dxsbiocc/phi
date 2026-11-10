@@ -79,7 +79,9 @@ function ComponentItemBody({
               overflow: descriptionLines ? 'hidden' : undefined,
               textOverflow: descriptionLines ? 'ellipsis' : undefined,
               WebkitLineClamp: descriptionLines ?? undefined,
-              WebkitBoxOrient: descriptionLines ? 'vertical' : undefined
+              WebkitBoxOrient: descriptionLines ? 'vertical' : undefined,
+              // Full-length text is justified; clamped card snippets are too narrow for it.
+              textAlign: descriptionLines ? undefined : 'justify'
             }}
           >
             {component.description}

@@ -20,6 +20,17 @@ export function phiPluginDisplayTitle(plugin: { id: string; title: string }): st
     : plugin.title
 }
 
+/**
+ * The catalog preview header names the plugin. The website detail title is a localized display
+ * name (科研绘图 for visualization), so it goes through the same display rule as the list.
+ */
+export function phiPluginCatalogTitle(
+  entry: { id: string; title: string },
+  detailTitle?: string
+): string {
+  return phiPluginDisplayTitle({ id: entry.id, title: detailTitle || entry.title })
+}
+
 export type PhiPluginSourceCategory = 'bundled' | 'registry' | 'local'
 
 export const phiPluginSourceCategoryOrder: readonly PhiPluginSourceCategory[] = [
