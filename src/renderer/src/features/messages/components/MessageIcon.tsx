@@ -1,4 +1,3 @@
-import { Badge } from '@mui/material'
 
 import { PhiIcons } from '../../../icons'
 import { SidePanelIconTile } from '../../../components/SidePanelIconTile'
@@ -30,33 +29,22 @@ function PackageTypeIcon({ type }: { type: PackageManagerType }): React.JSX.Elem
 /** The package-type mark is shared with the jobs and catalog surfaces. */
 export function MessageIcon({
   kind,
-  packageType,
-  unread
+  packageType
 }: {
   kind: MessageKind
   packageType?: PackageManagerType
-  unread: boolean
 }): React.JSX.Element {
   const type = packageType ?? 'skill'
   return (
-    <Badge
-      variant="dot"
-      color="error"
-      overlap="circular"
-      invisible={!unread}
-      aria-hidden
-      sx={{ display: 'flex' }}
+    <SidePanelIconTile
+      data-phi-message-icon={kind === 'package-update' ? `package-${type}` : kind}
+      backgroundColor={kind === 'package-update' ? packageIconColors[type] : appUpdateColor}
     >
-      <SidePanelIconTile
-        data-phi-message-icon={kind === 'package-update' ? `package-${type}` : kind}
-        backgroundColor={kind === 'package-update' ? packageIconColors[type] : appUpdateColor}
-      >
-        {kind === 'package-update' ? (
-          <PackageTypeIcon type={type} />
-        ) : (
-          <PhiIcons.state.launching size={22} />
-        )}
-      </SidePanelIconTile>
-    </Badge>
+      {kind === 'package-update' ? (
+        <PackageTypeIcon type={type} />
+      ) : (
+        <PhiIcons.state.launching size={22} />
+      )}
+    </SidePanelIconTile>
   )
 }

@@ -2,6 +2,7 @@ import { defineCopy } from '../../../lib/i18n'
 
 const english = {
   messages: 'Messages',
+  unreadMessage: 'Unread',
   loadingMessages: 'Loading messages…',
   noMessages: 'No messages',
   packageUpdateStatus: 'Update available',
@@ -14,6 +15,7 @@ const english = {
 
 export const messagesCopy = defineCopy(english, {
   messages: '消息',
+  unreadMessage: '未读',
   loadingMessages: '正在读取消息…',
   noMessages: '暂无消息',
   packageUpdateStatus: '可更新',

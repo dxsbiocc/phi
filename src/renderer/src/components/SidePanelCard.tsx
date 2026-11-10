@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 import { Box, Stack, Typography, type BoxProps, type SxProps, type Theme } from '@mui/material'
 
+import { RUNNING_BEACON_SIZE_PX } from '../lib/sessionBeacon'
+
 /**
  * The visual card shared by Background Jobs rows and the Messages panel.
  *
@@ -15,7 +17,8 @@ export function SidePanelCard({
   statusColor = 'text.secondary',
   subtitle,
   statusPlacement = 'title',
-  titleEmphasis = 'strong',
+  unread,
+  unreadLabel,
   compact = false,
   reserveActionSpace = false,
   footer,
@@ -33,8 +36,13 @@ export function SidePanelCard({
    * right, vertically centered against the whole card.
    */
   statusPlacement?: 'title' | 'center'
-  /** Messages dim read titles; jobs and other cards stay at full emphasis. */
-  titleEmphasis?: 'strong' | 'muted'
+  /**
+   * Read state, drawn the way unread sessions are: a dot in a left gutter and a
+   * heavier title. Leave undefined for cards without read state (jobs).
+   */
+  unread?: boolean
+  /** Accessible name of the unread dot. */
+  unreadLabel?: string
   /** Workflow steps use the shorter single-line card. */
   compact?: boolean
   /** Leaves room for absolutely positioned actions on the right. */
@@ -45,15 +53,44 @@ export function SidePanelCard({
   actions?: ReactNode
 }): React.JSX.Element {
   const centeredStatus = statusPlacement === 'center'
-  const titleSx =
-    titleEmphasis === 'muted' ? { fontWeight: 600, color: 'text.secondary' } : { fontWeight: 700 }
+  const hasReadState = unread !== undefined
+  // Same weights as session rows: unread stands out, read is ordinary text, never greyed.
+  const titleSx = hasReadState && !unread ? { fontWeight: 500 } : { fontWeight: 700 }
   const subtitleNode = compact ? null : (
     <Typography variant="caption" color="text.secondary" component="div" title={subtitle} noWrap>
       {subtitle}
     </Typography>
   )
   return (
-    <Box {...boxProps} sx={[cardSx(compact), ...(Array.isArray(sx) ? sx : sx ? [sx] : [])]}>
+    <Box
+      {...boxProps}
+      sx={[
+        cardSx(compact),
+        // Read and unread cards share one gutter so their icons stay aligned.
+        hasReadState ? { pl: 2.25 } : {},
+        ...(Array.isArray(sx) ? sx : sx ? [sx] : [])
+      ]}
+    >
+      {unread ? (
+        <Box
+          component="span"
+          role="img"
+          aria-label={unreadLabel}
+          title={unreadLabel}
+          data-phi-slot="side-panel-card-unread"
+          sx={{
+            position: 'absolute',
+            left: 6,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            width: RUNNING_BEACON_SIZE_PX,
+            height: RUNNING_BEACON_SIZE_PX,
+            borderRadius: '50%',
+            bgcolor: 'success.main',
+            opacity: 0.95
+          }}
+        />
+      ) : null}
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', minWidth: 0, width: '100%' }}>
         {icon}
         <Box sx={{ minWidth: 0, flex: 1, pr: reserveActionSpace ? 3.5 : 0 }}>

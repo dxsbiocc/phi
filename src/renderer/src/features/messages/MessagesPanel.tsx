@@ -77,9 +77,10 @@ export function MessagesPanel(): React.JSX.Element {
             openMessage(message)
           }
         }}
-        icon={<MessageIcon kind={message.kind} packageType={message.packageType} unread={!read} />}
+        icon={<MessageIcon kind={message.kind} packageType={message.packageType} />}
         title={message.title}
-        titleEmphasis={read ? 'muted' : 'strong'}
+        unread={!read}
+        unreadLabel={messagesCopy.unreadMessage}
         status={message.status}
         statusPlacement="center"
         subtitle={message.subtitle}
