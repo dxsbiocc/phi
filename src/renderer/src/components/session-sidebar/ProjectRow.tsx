@@ -433,7 +433,8 @@ function ProjectRowImpl({
         </MenuItem>
       </Menu>
 
-      <Collapse in={expanded} unmountOnExit>
+      {/* A small gap keeps the first session's fill from touching the project row. */}
+      <Collapse in={expanded} unmountOnExit sx={{ '& .MuiCollapse-wrapperInner': { pt: 0.75 } }}>
         {!sessionsReady && (
           <Typography
             variant="body2"
