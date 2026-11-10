@@ -1,3 +1,5 @@
+import { desktopFetch } from '../desktop-fetch'
+
 export const OFFICIAL_WEBSITE_BASE_URL = 'https://phi.omicsagent.cn'
 
 const DEFAULT_TIMEOUT_MS = 10_000
@@ -15,7 +17,10 @@ export class OfficialWebsiteHttpError extends Error {
 }
 
 export interface OfficialWebsiteRequestOptions {
-  /** Application transport; callers cannot select an arbitrary endpoint. */
+  /**
+   * Application transport; callers cannot select an arbitrary endpoint. The default is
+   * Chromium networking in the desktop, so the system proxy and DNS apply as in a browser.
+   */
   fetch?: typeof fetch
   /** Trusted configuration/test origin, without a path, credentials, query, or fragment. */
   baseUrl?: string
@@ -50,7 +55,7 @@ export async function fetchOfficialWebsiteJson(
   try {
     options.signal?.throwIfAborted()
     const response = await Promise.race([
-      (options.fetch ?? fetch)(url.href, {
+      desktopFetch(options.fetch)(url.href, {
         method: 'GET',
         headers: { Accept: 'application/json' },
         redirect: 'error',
