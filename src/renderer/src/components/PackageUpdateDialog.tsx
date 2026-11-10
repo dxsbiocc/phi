@@ -140,15 +140,12 @@ function VersionAccordion({
   change,
   latest,
   expanded,
-  onExpandedChange,
-  action
+  onExpandedChange
 }: {
   change: PackageChangelogEntry
   latest: boolean
   expanded: boolean
   onExpandedChange: (expanded: boolean) => void
-  /** Shown at the right of the summary row, before the chevron. */
-  action?: React.ReactNode
 }): React.JSX.Element {
   const parsed = useMemo(() => parsePackageChangelogNotes(change.notes), [change.notes])
   const date = formatPackageChangelogDate(change.date, getUiLocale())
@@ -201,16 +198,6 @@ function VersionAccordion({
             </Typography>
           ) : null}
         </Stack>
-        {action ? (
-          // Clicking the action must not also open or close the version.
-          <Box
-            onClick={(event) => event.stopPropagation()}
-            onFocus={(event) => event.stopPropagation()}
-            sx={{ flexShrink: 0 }}
-          >
-            {action}
-          </Box>
-        ) : null}
       </AccordionSummary>
       <AccordionDetails sx={{ px: 1.5, pt: 0, pb: 1.5 }}>
         {parsed.changes.length > 0 ? (
@@ -239,12 +226,9 @@ function VersionAccordion({
 
 /** Newest release open by default; the rest can be opened independently. */
 function PackageChangelogList({
-  changes,
-  action
+  changes
 }: {
   changes: readonly PackageChangelogEntry[]
-  /** The update button, placed in the newest version's row. */
-  action?: React.ReactNode
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set([0]))
 
@@ -276,7 +260,6 @@ function PackageChangelogList({
           latest={index === 0}
           expanded={expanded.has(index)}
           onExpandedChange={(isExpanded) => setVersionExpanded(index, isExpanded)}
-          action={index === 0 ? action : undefined}
         />
       ))}
     </Box>
@@ -304,10 +287,9 @@ export function PackageUpdateDialog({
   const updateButton = update ? (
     <Button
       variant="contained"
-      size="small"
       disabled={busy}
       onClick={() => onApply(update)}
-      sx={{ minWidth: 72 }}
+      sx={{ minWidth: 88, flexShrink: 0 }}
     >
       {busy ? <CircularProgress size={14} color="inherit" /> : settingsUi.update}
     </Button>
@@ -336,11 +318,17 @@ export function PackageUpdateDialog({
           >
             <CloseIcon fontSize="small" />
           </IconButton>
-          <Box sx={{ pr: 5 }}>
+          <Box>
             <Typography variant="overline" color="text.secondary">
               {settingsUi.contentPackageUpdate}
             </Typography>
-            <Typography variant="h5">{title}</Typography>
+            {/* The update covers every listed version, so it belongs to the package title. */}
+            <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
+              <Typography variant="h5" sx={{ flex: 1, minWidth: 0 }}>
+                {title}
+              </Typography>
+              {updateButton}
+            </Stack>
             <Typography variant="body2" color="text.secondary">
               {update.currentVersion} → {update.newVersion}
             </Typography>
@@ -373,7 +361,6 @@ export function PackageUpdateDialog({
                 <PackageChangelogList
                   key={`${update.id}:${update.currentVersion}:${update.newVersion}`}
                   changes={changes}
-                  action={updateButton}
                 />
               ) : (
                 <Stack
@@ -398,7 +385,6 @@ export function PackageUpdateDialog({
                       </Typography>
                     ) : null}
                   </Box>
-                  {updateButton}
                 </Stack>
               )}
             </Box>
