@@ -13,6 +13,7 @@ import {
   CircularProgress,
   Dialog,
   Divider,
+  IconButton,
   Stack,
   Typography
 } from '@mui/material'
@@ -29,6 +30,9 @@ import {
 import { PhiIcons } from '../icons'
 
 const ExpandIcon = PhiIcons.action.expand
+const CloseIcon = PhiIcons.action.close
+/** The version list scrolls inside its own frame; the dialog itself stays put. */
+const CHANGELOG_MAX_HEIGHT = 'min(56vh, 560px)'
 const COLLAPSED_NOTE_LINES = 8
 const COLLAPSED_NOTE_MAX_LENGTH = 640
 
@@ -136,12 +140,15 @@ function VersionAccordion({
   change,
   latest,
   expanded,
-  onExpandedChange
+  onExpandedChange,
+  action
 }: {
   change: PackageChangelogEntry
   latest: boolean
   expanded: boolean
   onExpandedChange: (expanded: boolean) => void
+  /** Shown at the right of the summary row, before the chevron. */
+  action?: React.ReactNode
 }): React.JSX.Element {
   const parsed = useMemo(() => parsePackageChangelogNotes(change.notes), [change.notes])
   const date = formatPackageChangelogDate(change.date, getUiLocale())
@@ -155,10 +162,10 @@ function VersionAccordion({
       slotProps={{ transition: { timeout: { enter: 200, exit: 120 } } }}
       sx={{
         bgcolor: 'transparent',
+        // The list frame draws the outer border; items only divide from each other.
+        border: 0,
         borderRadius: 0,
-        borderBottom: 1,
-        borderColor: 'divider',
-        '&:last-of-type': { borderBottom: 0 },
+        '& + &': { borderTop: 1, borderColor: 'divider' },
         '&::before': { display: 'none' },
         '&.Mui-expanded': { my: 0 }
       }}
@@ -166,17 +173,17 @@ function VersionAccordion({
       <AccordionSummary
         expandIcon={<ExpandIcon fontSize="small" />}
         sx={{
-          px: 0.5,
+          px: 1.5,
           py: 0.25,
           minHeight: 44,
-          '& .MuiAccordionSummary-content': { alignItems: 'center', my: 0.5, minWidth: 0 }
+          '& .MuiAccordionSummary-content': { alignItems: 'center', my: 0.5, minWidth: 0, gap: 1 }
         }}
       >
         <Stack
           direction="row"
           spacing={1}
           useFlexGap
-          sx={{ alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}
+          sx={{ alignItems: 'center', flexWrap: 'wrap', minWidth: 0, flex: 1 }}
         >
           <Typography
             component="span"
@@ -194,8 +201,18 @@ function VersionAccordion({
             </Typography>
           ) : null}
         </Stack>
+        {action ? (
+          // Clicking the action must not also open or close the version.
+          <Box
+            onClick={(event) => event.stopPropagation()}
+            onFocus={(event) => event.stopPropagation()}
+            sx={{ flexShrink: 0 }}
+          >
+            {action}
+          </Box>
+        ) : null}
       </AccordionSummary>
-      <AccordionDetails sx={{ px: 0.5, pt: 0, pb: 1.5 }}>
+      <AccordionDetails sx={{ px: 1.5, pt: 0, pb: 1.5 }}>
         {parsed.changes.length > 0 ? (
           <>
             <Stack component="ul" spacing={0.75} sx={{ listStyle: 'none', m: 0, p: 0 }}>
@@ -222,9 +239,12 @@ function VersionAccordion({
 
 /** Newest release open by default; the rest can be opened independently. */
 function PackageChangelogList({
-  changes
+  changes,
+  action
 }: {
   changes: readonly PackageChangelogEntry[]
+  /** The update button, placed in the newest version's row. */
+  action?: React.ReactNode
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set([0]))
 
@@ -238,7 +258,17 @@ function PackageChangelogList({
   }
 
   return (
-    <Box>
+    <Box
+      data-phi-package-changelog="true"
+      sx={{
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 2,
+        maxHeight: CHANGELOG_MAX_HEIGHT,
+        overflowY: 'auto',
+        overscrollBehavior: 'contain'
+      }}
+    >
       {changes.map((change, index) => (
         <VersionAccordion
           key={`${change.version}:${index}`}
@@ -246,6 +276,7 @@ function PackageChangelogList({
           latest={index === 0}
           expanded={expanded.has(index)}
           onExpandedChange={(isExpanded) => setVersionExpanded(index, isExpanded)}
+          action={index === 0 ? action : undefined}
         />
       ))}
     </Box>
@@ -270,6 +301,17 @@ export function PackageUpdateDialog({
 }): React.JSX.Element {
   useUiLanguage()
   const changes = update?.changes ?? []
+  const updateButton = update ? (
+    <Button
+      variant="contained"
+      size="small"
+      disabled={busy}
+      onClick={() => onApply(update)}
+      sx={{ minWidth: 72 }}
+    >
+      {busy ? <CircularProgress size={14} color="inherit" /> : settingsUi.update}
+    </Button>
+  ) : null
   const title =
     update === null
       ? ''
@@ -284,8 +326,17 @@ export function PackageUpdateDialog({
       fullWidth
     >
       {update ? (
-        <Stack spacing={2} sx={{ p: 3 }}>
-          <Box>
+        <Stack spacing={2} sx={{ p: 3, position: 'relative' }}>
+          <IconButton
+            size="small"
+            aria-label={settingsUi.close}
+            disabled={busy}
+            onClick={onClose}
+            sx={{ position: 'absolute', top: 12, right: 12 }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+          <Box sx={{ pr: 5 }}>
             <Typography variant="overline" color="text.secondary">
               {settingsUi.contentPackageUpdate}
             </Typography>
@@ -299,50 +350,59 @@ export function PackageUpdateDialog({
           </Box>
           <Divider />
           {error ? <Alert severity="error">{error}</Alert> : null}
-          <Box>
-            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.5 }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                {settingsUi.whatsNew}
-              </Typography>
-              {update.trust !== 'imported' && (
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  label={PACKAGE_TRUST_LABELS[update.trust]}
-                  title={PACKAGE_TRUST_DESCRIPTIONS[update.trust]}
-                />
-              )}
-              <Box sx={{ flex: 1 }} />
-              <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
-                {settingsUi.releasesCount(changes.length)}
-              </Typography>
-            </Stack>
-            {changes.length > 0 ? (
-              <PackageChangelogList
-                key={`${update.id}:${update.currentVersion}:${update.newVersion}`}
-                changes={changes}
-              />
-            ) : (
-              <>
-                <Typography variant="body2" color="text.secondary">
-                  {settingsUi.noReleaseNotesForThisVersion}
+          <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.5 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                  {settingsUi.whatsNew}
                 </Typography>
-                {update.summary ? (
-                  <Typography variant="body2" color="text.secondary">
-                    {update.summary}
-                  </Typography>
-                ) : null}
-              </>
-            )}
-          </Box>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
-            <Button disabled={busy} onClick={onClose}>
-              {settingsUi.close}
-            </Button>
-            <Button variant="contained" disabled={busy} onClick={() => onApply(update)}>
-              {busy ? <CircularProgress size={16} color="inherit" /> : settingsUi.update}
-            </Button>
-          </Box>
+                {update.trust !== 'imported' && (
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={PACKAGE_TRUST_LABELS[update.trust]}
+                    title={PACKAGE_TRUST_DESCRIPTIONS[update.trust]}
+                  />
+                )}
+                <Box sx={{ flex: 1 }} />
+                <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                  {settingsUi.releasesCount(changes.length)}
+                </Typography>
+              </Stack>
+              {changes.length > 0 ? (
+                <PackageChangelogList
+                  key={`${update.id}:${update.currentVersion}:${update.newVersion}`}
+                  changes={changes}
+                  action={updateButton}
+                />
+              ) : (
+                <Stack
+                  direction="row"
+                  spacing={2}
+                  sx={{
+                    alignItems: 'center',
+                    border: 1,
+                    borderColor: 'divider',
+                    borderRadius: 2,
+                    px: 1.5,
+                    py: 1.25
+                  }}
+                >
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      {settingsUi.noReleaseNotesForThisVersion}
+                    </Typography>
+                    {update.summary ? (
+                      <Typography variant="body2" color="text.secondary">
+                        {update.summary}
+                      </Typography>
+                    ) : null}
+                  </Box>
+                  {updateButton}
+                </Stack>
+              )}
+            </Box>
+          </Stack>
         </Stack>
       ) : null}
     </Dialog>
