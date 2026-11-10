@@ -14,6 +14,7 @@ import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJo
 import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProjectUploadTypes'
 import { formatAgentDuration } from '../../../lib/agentRunsOverview'
 import { runProgressLabel, runStateLabel } from '../../wrapper/lib/wrapperView'
+import { phiPluginDisplayTitle } from '../../phi-plugin/lib/phiPlugins'
 import {
   canStopUnifiedWrapperRun,
   connectorJobDetail,
@@ -36,6 +37,18 @@ export const JOB_TONE_COLOR: Record<JobTone, string> = {
 export type JobDetailField = { label: string; value: string; mono?: boolean; scroll?: boolean }
 
 type PluginInstall = Extract<UnifiedBackgroundJob, { kind: 'plugin' }>['install']
+
+/** Name a plugin the same way the plugin list does, so 科研绘图 shows as Visualization. */
+function pluginTitle(install: PluginInstall): string {
+  return phiPluginDisplayTitle({ id: install.pluginId, title: install.title })
+}
+
+/** History saved before display names were applied still holds the raw registry title. */
+function historyPluginTitle(key: string, title: string): string {
+  return key.startsWith('plugin:')
+    ? phiPluginDisplayTitle({ id: key.slice('plugin:'.length), title })
+    : title
+}
 
 function pluginActionLabel(install: PluginInstall): string {
   return install.action === 'upgrade' ? jobsCopy.pluginUpgradeAction : jobsCopy.pluginInstallAction
@@ -248,13 +261,13 @@ export function jobPercent(item: UnifiedBackgroundJob): number | undefined {
 }
 
 export function jobTitle(item: UnifiedBackgroundJob): string {
-  if (item.kind === 'history') return item.snapshot.title
+  if (item.kind === 'history') return historyPluginTitle(item.snapshot.key, item.snapshot.title)
   if (item.kind === 'connector') return item.setup.title ?? item.setup.id
   if (item.kind === 'environment') return environmentBuildTitle(item.build)
   if (item.kind === 'upload') return uploadTitle(item.upload)
   if (item.kind === 'jupyter') return jobsCopy.startJupyterServerValue(item.job.projectName)
   if (item.kind === 'notebook-ai') return jobsCopy.aIGenerationValue(item.job.notebookName)
-  if (item.kind === 'plugin') return item.install.title
+  if (item.kind === 'plugin') return pluginTitle(item.install)
   if (item.kind === 'agent') return item.run.agentName
   if (item.kind === 'shell') return item.run.command
   return (
@@ -452,7 +465,12 @@ function timeLabel(value: string | number | undefined): string {
 
 /** Fields of the in-panel detail view. Connector and Jupyter jobs add their own sections. */
 export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobDetailField[] {
-  if (item.kind === 'history') return item.snapshot.fields
+  if (item.kind === 'history') {
+    return item.snapshot.fields.map((field) => ({
+      ...field,
+      value: historyPluginTitle(item.snapshot.key, field.value)
+    }))
+  }
   const status = jobStatus(item).label
   const fields: Array<JobDetailField | undefined> = (() => {
     switch (item.kind) {
@@ -585,7 +603,7 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
         ]
       case 'plugin':
         return [
-          { label: jobsCopy.plugin, value: item.install.title },
+          { label: jobsCopy.plugin, value: pluginTitle(item.install) },
           { label: jobsCopy.pluginVersion, value: item.install.version },
           { label: jobsCopy.pluginJobAction, value: pluginActionLabel(item.install) },
           { label: jobsCopy.status, value: status },

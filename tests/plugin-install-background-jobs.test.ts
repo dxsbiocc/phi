@@ -215,3 +215,37 @@ test('English plugin labels and the failure summary follow the active language',
     setUiLanguage('zh-CN')
   }
 })
+
+test('plugin jobs use the plugin list display name, live and from saved history', () => {
+  setUiLanguage('en')
+  const raw = install({ pluginId: 'visualization', title: '科研绘图', state: 'succeeded', finishedAt })
+  const live = livePlugin([raw])
+  assert.equal(jobTitle(live), 'Visualization')
+  assert.ok(jobDetailFields(live, Date.now()).some((field) => field.value === 'Visualization'))
+
+  // A record written before this fix still stores 科研绘图.
+  const storage = new MemoryStorage()
+  storage.value = JSON.stringify({
+    schema: 1,
+    records: [
+      {
+        key: 'plugin:visualization',
+        sourceKind: 'plugin',
+        timestamp: finishedAt,
+        title: '科研绘图',
+        source: 'Plugin',
+        status: { label: 'Completed', tone: 'success' },
+        fields: [{ label: 'Plugin', value: '科研绘图' }]
+      }
+    ],
+    clearedBefore: null,
+    dismissed: {}
+  })
+  const [item] = new BackgroundJobHistory(storage).select(empty()).recent
+  assert.ok(item)
+  assert.equal(jobTitle(item), 'Visualization')
+  assert.deepEqual(
+    jobDetailFields(item, Date.now()).map((field) => field.value),
+    ['Visualization']
+  )
+})
