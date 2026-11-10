@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { kernelMethodResultSchemas } from '../src/shared/kernel-protocol/methods'
 
 import type {
   PlanRunState,
@@ -120,6 +121,14 @@ test('step_interrupted interrupts a running step without consuming an attempt', 
     () => reducePlanRun(state(), { type: 'step_interrupted', stepId: 'a', at: at(2) }),
     'INVALID_STEP_TRANSITION'
   )
+})
+
+test('an interrupted run still passes the kernel planRuns.list result schema', () => {
+  const running = launch(state([step('a')]), 'a', 1)
+  const interrupted = reducePlanRun(running, { type: 'step_interrupted', stepId: 'a', at: at(2) })
+  assert.ok(interrupted.steps.a.lastSeenAt)
+  const parsed = kernelMethodResultSchemas['planRuns.list'].safeParse([interrupted])
+  assert.equal(parsed.success, true, parsed.success ? '' : JSON.stringify(parsed.error.issues))
 })
 
 test('automatically retries once, pauses after a second failure, and accepts manual retry', () => {

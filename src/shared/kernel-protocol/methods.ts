@@ -328,7 +328,9 @@ const planStepStateSchema = z
     report: planStepReportSchema.optional(),
     error: z.string().optional(),
     startedAt: z.string().min(1).optional(),
-    finishedAt: z.string().min(1).optional()
+    finishedAt: z.string().min(1).optional(),
+    /** Last time a running step was seen alive; an interrupted step ends here. */
+    lastSeenAt: z.string().min(1).optional()
   })
   .strict()
 
