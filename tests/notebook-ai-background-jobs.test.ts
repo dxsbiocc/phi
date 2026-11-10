@@ -17,6 +17,7 @@ import {
   jobDetailFields,
   jobPercent,
   jobSource,
+  jobSubtitle,
   jobStatus,
   jobTitle
 } from '../src/renderer/src/features/jobs/lib/backgroundJobLabels'
@@ -89,7 +90,8 @@ test('Notebook generation attempts join active and completed tasks independently
 test('Notebook tasks show readable phases, elapsed time and real completion or error details', () => {
   const [active] = select([job()]).active
   assert.ok(active)
-  assert.equal(jobTitle(active), 'AI 生成 · analysis.ipynb')
+  assert.equal(jobTitle(active), 'analysis.ipynb')
+  assert.equal(jobSubtitle(active), 'AI 生成 Notebook 代码')
   assert.equal(jobSource(active), 'Notebook AI')
   assert.equal(jobStatus(active).tone, 'running')
   assert.equal(canStopJob(active), false)
@@ -148,7 +150,7 @@ test('Notebook rows open details without stop, retry, a made-up progress bar or 
       onOpenSession: () => undefined
     })
   )
-  assert.match(row, /查看 AI 生成 · analysis.ipynb 详情/)
+  assert.match(row, /查看 analysis.ipynb 详情/)
   assert.match(detail, /等待模型响应/)
   assert.match(detail, /import pandas as pd/)
   assert.doesNotMatch(row + detail, /打开对话|停止这个|aria-label="停止|role="progressbar"|>重试</)

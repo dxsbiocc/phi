@@ -79,6 +79,7 @@ import { homeResourceIcons } from './features/home/lib/homeOverview'
 import { SessionExportDialog } from './features/chat/components/SessionExportDialog'
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
 import { BackgroundJobsPanel, LATEST_JUPYTER_JOB_KEY } from './features/jobs/BackgroundJobsPanel'
+import { usePublishPluginJobIcons } from './features/jobs/hooks/pluginJobIcons'
 import { jupyterProjectJobRequestKey } from './features/jobs/lib/requestedBackgroundJob'
 import {
   useBackgroundJobRetention,
@@ -447,6 +448,7 @@ function App(): React.JSX.Element {
   const getActiveProjectId = useCallback(() => useSessionStore.getState().activeProjectId, [])
 
   const phiPluginsState = usePhiPlugins()
+  usePublishPluginJobIcons(phiPluginsState.plugins)
   const refreshPhiPluginsForNavigation = phiPluginsState.refreshForNavigation
   const {
     skills,

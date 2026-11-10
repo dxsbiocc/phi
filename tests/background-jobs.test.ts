@@ -37,7 +37,6 @@ import {
   resetBackgroundJobTray,
   environmentBuildDetail,
   environmentBuildPercent,
-  environmentBuildTitle,
   selectBackgroundJobs
 } from '../src/renderer/src/features/jobs/lib/backgroundJobs'
 
@@ -361,7 +360,6 @@ test('environment builds sort with agent and wrapper jobs and stay out of the ac
 })
 
 test('environment build copy names the ref, phase, package count, and byte progress', () => {
-  assert.equal(environmentBuildTitle(environment()), '构建环境 phi-python')
   const phases: Array<[string, string]> = [
     ['check', '检查'],
     ['wait', '等待包缓存'],

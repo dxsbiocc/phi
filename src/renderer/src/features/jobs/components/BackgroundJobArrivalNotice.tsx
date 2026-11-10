@@ -5,9 +5,10 @@ import { useUiLanguage } from '../../../lib/i18n'
 import { useBackgroundJobArrivals } from '../hooks/useBackgroundJobArrivals'
 import type { BackgroundJobArrival } from '../hooks/useBackgroundJobArrivals'
 import type { BackgroundJobDisplayItem } from '../lib/backgroundJobGroups'
-import { jobSource, jobTitle } from '../lib/backgroundJobLabels'
+import { jobOperation, jobTitle } from '../lib/backgroundJobLabels'
 import { jobsCopy } from '../lib/jobsCopy'
 import { BackgroundJobIcon } from './BackgroundJobIcon'
+import { usePluginJobIcon } from '../hooks/pluginJobIcons'
 
 function ArrivalCard({
   item,
@@ -19,7 +20,8 @@ function ArrivalCard({
   onOpen: () => void
 }): React.JSX.Element {
   const title = item.kind === 'workflow' ? item.title : jobTitle(item.job)
-  const source = item.kind === 'workflow' ? jobsCopy.workflow : jobSource(item.job)
+  const source = item.kind === 'workflow' ? jobsCopy.workflow : jobOperation(item.job)
+  const pluginIcon = usePluginJobIcon(item.kind === 'workflow' ? '' : item.job.key)
   const status =
     phase === 'completed'
       ? jobsCopy.completed
@@ -45,6 +47,7 @@ function ArrivalCard({
                 ? item.job.snapshot.sourceKind
                 : item.job.kind
           }
+          icon={pluginIcon}
         />
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap title={title}>

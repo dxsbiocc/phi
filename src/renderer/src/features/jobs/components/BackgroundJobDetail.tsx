@@ -12,6 +12,7 @@ import {
   canStopJob,
   jobDetailFields,
   jobStatus,
+  jobOperation,
   jobTitle,
   remoteJupyterEntryLabel,
   stopTooltip,
@@ -94,10 +95,15 @@ function JupyterStartLog({ job }: { job: RemoteJupyterStartJob }): React.JSX.Ele
   )
 }
 
+/** The detail page stands alone, so its heading names the operation too: "安装插件 · Visualization". */
+function detailHeading(item: UnifiedBackgroundJob): string {
+  return `${jobOperation(item)} · ${jobTitle(item)}`
+}
+
 function detailText(item: UnifiedBackgroundJob, nowMs: number): string {
   if (item.kind === 'connector') return buildConnectorJobDetailText(item.setup, nowMs)
   const lines = [
-    jobTitle(item),
+    detailHeading(item),
     ...jobDetailFields(item, nowMs).map((field) => `${field.label}：${field.value}`)
   ]
   if (item.kind === 'jupyter') {
@@ -150,7 +156,7 @@ export function BackgroundJobDetail({
   const [copied, setCopied] = useState(false)
   const status = jobStatus(item)
   const canStop = canStopJob(item)
-  const title = jobTitle(item)
+  const title = detailHeading(item)
   const sessionPath =
     item.kind === 'agent' || item.kind === 'shell'
       ? item.run.sessionPath

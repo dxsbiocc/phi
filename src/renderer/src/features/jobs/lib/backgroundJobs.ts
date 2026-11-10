@@ -136,10 +136,6 @@ export function canStopUnifiedWrapperRun(run: WrapperRun): boolean {
   return resolveWrapperCancelTarget({ planId: run.planId, state: 'submitted' }, run)?.kind === 'run'
 }
 
-export function environmentBuildTitle(build: EnvironmentBuild): string {
-  return jobsCopy.buildEnvironmentValue(build.ref)
-}
-
 export function environmentBuildDetail(build: EnvironmentBuild): string {
   const bytes = knownByteProgress(build)
   return [

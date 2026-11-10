@@ -77,7 +77,7 @@ test('a running plugin install joins the active tray with plugin identity and la
   assert.equal(item.key, 'plugin:phi-demo')
   assert.equal(jobTitle(item), 'Demo Plugin')
   assert.equal(jobSource(item), '插件')
-  assert.equal(jobSubtitle(item), 'phi-demo')
+  assert.equal(jobSubtitle(item), '安装插件 · 1.2.3')
   assert.deepEqual(jobStatus(item), { label: '进行中', tone: 'running' })
   assert.equal(jobDetail(item, Date.parse(startedAt)), '安装 · v1.2.3 · 进行中')
 })
@@ -203,6 +203,7 @@ test('English plugin labels and the failure summary follow the active language',
   try {
     const item = livePlugin([install({ action: 'upgrade', state: 'failed', finishedAt })])
     assert.equal(jobSource(item), 'Plugin')
+    assert.equal(jobSubtitle(item), 'Update plugin · 1.2.3')
     assert.equal(
       pluginInstallError(install({ action: 'upgrade' })),
       'Plugin upgrade failed. Check the Phi log for details.'
@@ -218,7 +219,12 @@ test('English plugin labels and the failure summary follow the active language',
 
 test('plugin jobs use the plugin list display name, live and from saved history', () => {
   setUiLanguage('en')
-  const raw = install({ pluginId: 'visualization', title: '科研绘图', state: 'succeeded', finishedAt })
+  const raw = install({
+    pluginId: 'visualization',
+    title: '科研绘图',
+    state: 'succeeded',
+    finishedAt
+  })
   const live = livePlugin([raw])
   assert.equal(jobTitle(live), 'Visualization')
   assert.ok(jobDetailFields(live, Date.now()).some((field) => field.value === 'Visualization'))
@@ -244,8 +250,44 @@ test('plugin jobs use the plugin list display name, live and from saved history'
   const [item] = new BackgroundJobHistory(storage).select(empty()).recent
   assert.ok(item)
   assert.equal(jobTitle(item), 'Visualization')
+  assert.equal(jobSubtitle(item), 'Install plugin')
   assert.deepEqual(
     jobDetailFields(item, Date.now()).map((field) => field.value),
     ['Visualization']
+  )
+})
+
+test('saved cards drop the operation from old titles and show it on the second line', () => {
+  setUiLanguage('zh-CN')
+  const storage = new MemoryStorage()
+  const record = (kind: string, title: string): Record<string, unknown> => ({
+    key: `${kind}:old`,
+    sourceKind: kind,
+    timestamp: finishedAt,
+    title,
+    source: 'x',
+    status: { label: '已完成', tone: 'success' },
+    fields: []
+  })
+  storage.value = JSON.stringify({
+    schema: 1,
+    records: [
+      record('jupyter', '启动 Jupyter Server · phi-demo'),
+      record('environment', '构建环境 phi-python'),
+      record('agent', 'General')
+    ],
+    clearedBefore: null,
+    dismissed: {}
+  })
+  const cards = new BackgroundJobHistory(storage)
+    .select(empty())
+    .recent.map((item) => [jobTitle(item), jobSubtitle(item)])
+  assert.deepEqual(
+    cards.sort((a, b) => a[0].localeCompare(b[0])),
+    [
+      ['General', '派发子智能体'],
+      ['phi-demo', '启动 Jupyter Server'],
+      ['phi-python', '构建环境']
+    ]
   )
 })

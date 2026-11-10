@@ -21,9 +21,10 @@ import {
   isCancelledConnectorJob,
   environmentBuildDetail,
   environmentBuildPercent,
-  environmentBuildTitle,
+  type LiveBackgroundJob,
   type UnifiedBackgroundJob
 } from './backgroundJobs'
+import type { JobHistorySnapshot } from './backgroundJobHistory'
 
 export type JobTone = 'running' | 'success' | 'error' | 'neutral'
 
@@ -260,13 +261,33 @@ export function jobPercent(item: UnifiedBackgroundJob): number | undefined {
   return undefined
 }
 
+/**
+ * History saved before the card showed its operation on the second line kept
+ * the operation in the title ("启动 Jupyter Server · demo"); drop it so the
+ * card does not say it twice.
+ */
+const LEGACY_TITLE_PREFIXES: Partial<Record<LiveBackgroundJob['kind'], readonly string[]>> = {
+  jupyter: ['Start Jupyter Server · ', '启动 Jupyter Server · '],
+  'notebook-ai': ['AI generation · ', 'AI 生成 · '],
+  environment: ['Build environment ', '构建环境 ']
+}
+
+function historyTitle(snapshot: JobHistorySnapshot): string {
+  const prefix = LEGACY_TITLE_PREFIXES[snapshot.sourceKind]?.find(
+    (candidate) => snapshot.title.startsWith(candidate) && snapshot.title.length > candidate.length
+  )
+  return prefix
+    ? snapshot.title.slice(prefix.length)
+    : historyPluginTitle(snapshot.key, snapshot.title)
+}
+
 export function jobTitle(item: UnifiedBackgroundJob): string {
-  if (item.kind === 'history') return historyPluginTitle(item.snapshot.key, item.snapshot.title)
+  if (item.kind === 'history') return historyTitle(item.snapshot)
   if (item.kind === 'connector') return item.setup.title ?? item.setup.id
-  if (item.kind === 'environment') return environmentBuildTitle(item.build)
+  if (item.kind === 'environment') return item.build.ref
   if (item.kind === 'upload') return uploadTitle(item.upload)
-  if (item.kind === 'jupyter') return jobsCopy.startJupyterServerValue(item.job.projectName)
-  if (item.kind === 'notebook-ai') return jobsCopy.aIGenerationValue(item.job.notebookName)
+  if (item.kind === 'jupyter') return item.job.projectName
+  if (item.kind === 'notebook-ai') return item.job.notebookName
   if (item.kind === 'plugin') return pluginTitle(item.install)
   if (item.kind === 'agent') return item.run.agentName
   if (item.kind === 'shell') return item.run.command
@@ -290,17 +311,55 @@ export function jobSource(item: UnifiedBackgroundJob): string {
   return item.run.sessionTitle
 }
 
-export function jobSubtitle(item: UnifiedBackgroundJob): string {
-  if (item.kind === 'history') return jobsCopy.history
-  if (item.kind === 'connector') return item.setup.summary ?? item.setup.id
-  if (item.kind === 'environment') return item.build.envId
+const OPERATION_LABELS: Record<Exclude<LiveBackgroundJob['kind'], 'plugin'>, () => string> = {
+  agent: () => jobsCopy.operationDispatchSubagent,
+  shell: () => jobsCopy.operationRunCommand,
+  wrapper: () => jobsCopy.operationRunWrapper,
+  environment: () => jobsCopy.operationBuildEnvironment,
+  connector: () => jobsCopy.operationSetUpConnector,
+  upload: () => jobsCopy.operationUploadFiles,
+  jupyter: () => jobsCopy.operationStartJupyter,
+  'notebook-ai': () => jobsCopy.operationGenerateNotebookCode
+}
+
+/** Saved plugin jobs keep the action as a detail field ("操作: 升级"), in either UI language. */
+const UPGRADE_ACTION_VALUES = new Set(['Upgrade', '升级'])
+const VERSION_FIELD_LABELS = new Set(['Version', '版本'])
+
+function historyField(snapshot: JobHistorySnapshot, labels: Set<string>): string | undefined {
+  return snapshot.fields.find((field) => labels.has(field.label))?.value || undefined
+}
+
+function pluginOperation(action: PluginInstall['action']): string {
+  return action === 'upgrade' ? jobsCopy.operationUpgradePlugin : jobsCopy.operationInstallPlugin
+}
+
+/** What the job does, such as 安装插件 or 派发子智能体. */
+export function jobOperation(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'plugin') return pluginOperation(item.install.action)
+  if (item.kind !== 'history') return OPERATION_LABELS[item.kind]()
+  const { snapshot } = item
+  if (snapshot.sourceKind !== 'plugin') return OPERATION_LABELS[snapshot.sourceKind]()
+  const upgraded = snapshot.fields.some((field) => UPGRADE_ACTION_VALUES.has(field.value))
+  return pluginOperation(upgraded ? 'upgrade' : 'install')
+}
+
+/** The object the operation acted on, when the title does not already name it. */
+function operationTarget(item: UnifiedBackgroundJob): string | undefined {
+  if (item.kind === 'history')
+    return item.snapshot.sourceKind === 'plugin'
+      ? historyField(item.snapshot, VERSION_FIELD_LABELS)
+      : undefined
+  if (item.kind === 'plugin') return item.install.version || undefined
+  if (item.kind === 'agent') return item.run.task || undefined
   if (item.kind === 'upload') return item.upload.destinationDirectory || jobsCopy.projectRoot
-  if (item.kind === 'jupyter') return item.job.serverLabel
-  if (item.kind === 'notebook-ai') return item.job.projectCwd
-  if (item.kind === 'plugin') return item.install.pluginId
-  if (item.kind === 'agent') return item.run.task
-  if (item.kind === 'shell') return jobsCopy.backgroundCommand
-  return item.run.runId
+  if (item.kind === 'jupyter') return item.job.serverLabel || undefined
+  return undefined
+}
+
+/** Second line of a job card: the operation, then its target, e.g. "安装插件 · 0.7.0". */
+export function jobSubtitle(item: UnifiedBackgroundJob): string {
+  return [jobOperation(item), operationTarget(item)].filter(Boolean).join(' · ')
 }
 
 function elapsed(

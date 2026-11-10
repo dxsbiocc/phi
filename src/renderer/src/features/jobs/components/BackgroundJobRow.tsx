@@ -7,10 +7,10 @@ import { LabeledIconButton } from '../../../components/LabeledIconButton'
 import { SidePanelCard } from '../../../components/SidePanelCard'
 import type { UnifiedBackgroundJob } from '../lib/backgroundJobs'
 import { BackgroundJobIcon } from './BackgroundJobIcon'
+import { usePluginJobIcon } from '../hooks/pluginJobIcons'
 import {
   canStopJob,
   jobPercent,
-  jobSource,
   jobStatus,
   jobSubtitle,
   jobTitle,
@@ -42,8 +42,8 @@ export function BackgroundJobRow({
   useUiLanguage()
   const title = jobTitle(item)
   const status = jobStatus(item)
-  // A recovered run may have no task text; leave out the separator rather than end on "·".
-  const sourceLine = [jobSource(item), jobSubtitle(item)].filter(Boolean).join(' · ')
+  const subtitle = jobSubtitle(item)
+  const pluginIcon = usePluginJobIcon(item.key)
   const percent = jobPercent(item)
   const canStop = canStopJob(item)
   const canRetryJob = Boolean(onRetry && item.kind !== 'history')
@@ -62,11 +62,11 @@ export function BackgroundJobRow({
           onOpen(item)
         }
       }}
-      icon={<BackgroundJobIcon kind={kind} />}
+      icon={<BackgroundJobIcon kind={kind} icon={pluginIcon} />}
       title={title}
       status={status.label}
       statusColor={JOB_TONE_COLOR[status.tone]}
-      subtitle={sourceLine}
+      subtitle={subtitle}
       compact={compact}
       reserveActionSpace={canStop || canRetryJob}
       footer={

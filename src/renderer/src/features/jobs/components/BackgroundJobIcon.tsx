@@ -1,6 +1,8 @@
 import { GoPackage, GoTerminal, GoUpload } from 'react-icons/go'
 
+import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
 import { PhiIcons } from '../../../icons'
+import { ResourceIcon } from '../../../components/ResourceIcon'
 import { SidePanelIconTile } from '../../../components/SidePanelIconTile'
 import type { LiveBackgroundJob } from '../lib/backgroundJobs'
 
@@ -40,7 +42,25 @@ function JobSymbol({ kind }: { kind: JobKind }): React.JSX.Element {
   }
 }
 
-export function BackgroundJobIcon({ kind }: { kind: JobKind }): React.JSX.Element {
+/** A plugin job with its own icon shows that icon; every other job shows its kind's symbol. */
+export function BackgroundJobIcon({
+  kind,
+  icon
+}: {
+  kind: JobKind
+  icon?: ResourceIconRef
+}): React.JSX.Element {
+  if (kind === 'plugin' && icon) {
+    return (
+      <SidePanelIconTile
+        data-phi-background-job-icon={kind}
+        backgroundColor={iconColors.plugin}
+        sx={{ overflow: 'hidden' }}
+      >
+        <ResourceIcon icon={icon} kind="plugin" size={36} fallbackSize={22} />
+      </SidePanelIconTile>
+    )
+  }
   return (
     <SidePanelIconTile
       data-phi-background-job-icon={kind}
