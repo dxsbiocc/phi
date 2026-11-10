@@ -14,7 +14,8 @@ const iconColors: Record<JobKind, string> = {
   connector: '#3C80BC',
   upload: '#3288E8',
   jupyter: '#FFF1E5',
-  'notebook-ai': '#FFF1E5'
+  'notebook-ai': '#FFF1E5',
+  plugin: '#4C8F5B'
 }
 
 function JobSymbol({ kind }: { kind: JobKind }): React.JSX.Element {
@@ -32,6 +33,8 @@ function JobSymbol({ kind }: { kind: JobKind }): React.JSX.Element {
       return <GoUpload size={22} />
     case 'connector':
       return <PhiIcons.entity.mcp size={22} />
+    case 'plugin':
+      return <PhiIcons.entity.plugin size={22} />
     case 'environment':
       return <GoPackage size={22} />
   }

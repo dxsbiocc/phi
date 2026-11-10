@@ -136,6 +136,7 @@ export function BackgroundJobsPanel({
           return api.cancelLocalConnectorAdd(item.setup.id)
         case 'jupyter':
         case 'notebook-ai':
+        case 'plugin':
         case 'history':
           return Promise.resolve()
       }

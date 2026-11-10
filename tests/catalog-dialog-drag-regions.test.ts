@@ -28,7 +28,6 @@ const dialogs = [
     createElement(PhiPluginCatalogDialog, {
       open: true,
       plugins: [],
-      installWorking: false,
       feedbackError: null,
       feedbackNotice: null,
       onClose: () => undefined,
