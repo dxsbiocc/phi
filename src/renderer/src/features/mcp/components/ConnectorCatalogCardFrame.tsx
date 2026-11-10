@@ -1,4 +1,4 @@
-import { Box, Typography } from '@mui/material'
+import { Box, Stack, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { GoCheck } from 'react-icons/go'
 
@@ -21,6 +21,7 @@ export function ConnectorCatalogCardFrame({
   icon,
   title,
   description,
+  titleAccessory,
   children,
   trailing,
   onOpen,
@@ -29,6 +30,7 @@ export function ConnectorCatalogCardFrame({
   icon: React.ReactNode
   title: string
   description: string
+  titleAccessory?: React.ReactNode
   children?: React.ReactNode
   trailing?: React.ReactNode
   onOpen?: () => void
@@ -59,9 +61,21 @@ export function ConnectorCatalogCardFrame({
     >
       {icon}
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography noWrap title={title} sx={{ fontWeight: 700 }}>
-          {title}
-        </Typography>
+        <Stack
+          direction="row"
+          spacing={0.75}
+          data-phi-connector-title-row="true"
+          sx={{ alignItems: 'center', minWidth: 0 }}
+        >
+          <Typography noWrap title={title} sx={{ fontWeight: 700, minWidth: 0 }}>
+            {title}
+          </Typography>
+          {titleAccessory ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+              {titleAccessory}
+            </Box>
+          ) : null}
+        </Stack>
         <Typography
           noWrap
           title={description}

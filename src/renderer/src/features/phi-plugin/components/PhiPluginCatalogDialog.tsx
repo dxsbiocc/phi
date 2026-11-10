@@ -124,6 +124,8 @@ function CatalogCard({
       : action === 'installed'
         ? pluginCopy.installedNamed(title)
         : pluginCopy.installNamed(title)
+  const showTrustChip =
+    trust !== 'imported' && resourceSourceLabel(source ?? '') !== PACKAGE_TRUST_LABELS[trust]
 
   return (
     <Box
@@ -177,7 +179,7 @@ function CatalogCard({
           {source ? (
             <Chip size="small" variant="outlined" label={resourceSourceLabel(source)} />
           ) : null}
-          {resourceSourceLabel(source ?? '') !== PACKAGE_TRUST_LABELS[trust] ? (
+          {showTrustChip ? (
             <Chip
               size="small"
               variant="outlined"

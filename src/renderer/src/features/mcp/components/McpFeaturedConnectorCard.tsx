@@ -100,6 +100,9 @@ export function McpFeaturedConnectorCard({
       icon={<ConnectorIcon icon={connector.icon} />}
       title={connector.name}
       description={connector.description}
+      titleAccessory={
+        connector.source ? <McpConnectorSourceBadges connector={connector} /> : undefined
+      }
       onOpen={onOpen}
       configured={installed}
       trailing={
@@ -257,11 +260,6 @@ export function McpFeaturedConnectorCard({
           <Chip size="small" variant="outlined" label={connectorCopy.environmentNotBuilt} />
         )}
       </Stack>
-      {connector.source && (
-        <Box sx={{ mt: 0.75 }}>
-          <McpConnectorSourceBadges connector={connector} />
-        </Box>
-      )}
     </ConnectorCatalogCardFrame>
   )
 }

@@ -84,12 +84,14 @@ export function PackageUpdatesDialog({
                       {update.registryPath}
                     </Typography>
                   </Box>
-                  <Chip
-                    size="small"
-                    variant="outlined"
-                    label={PACKAGE_TRUST_LABELS[update.trust]}
-                    title={PACKAGE_TRUST_DESCRIPTIONS[update.trust]}
-                  />
+                  {update.trust !== 'imported' && (
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={PACKAGE_TRUST_LABELS[update.trust]}
+                      title={PACKAGE_TRUST_DESCRIPTIONS[update.trust]}
+                    />
+                  )}
                   <Button
                     variant="contained"
                     disabled={busyKey !== null}

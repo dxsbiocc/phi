@@ -123,6 +123,15 @@ test('all and category counts include installed-only plugins without duplicating
   assert.match(category, /科研绘图/)
 })
 
+test('imported plugin catalog rows do not show an unsigned trust chip', () => {
+  const markup = render({
+    plugins: [],
+    entries: [{ ...available('alpha', 'Alpha plugin'), trust: 'imported' }]
+  })
+  assert.match(markup, /Alpha plugin/)
+  assert.doesNotMatch(markup, /Unsigned|未签名/)
+})
+
 test('search and category filtering use the same union as catalog counts', () => {
   const catalog = buildPhiPluginCatalog(plugins, [
     available('visualization', '科研绘图', '科研'),
