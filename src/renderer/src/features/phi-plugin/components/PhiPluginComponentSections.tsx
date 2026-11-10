@@ -178,7 +178,7 @@ export function PhiPluginComponentSections({
             component="section"
             sx={{
               display: 'grid',
-              gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: '160px minmax(0, 1fr)' },
+              gridTemplateColumns: { xs: 'minmax(0, 1fr)', sm: '104px minmax(0, 1fr)' },
               columnGap: 2,
               rowGap: 0.75,
               alignItems: 'start'
