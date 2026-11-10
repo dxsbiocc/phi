@@ -161,7 +161,8 @@ export function McpFeaturedConnectorDetails({
   }
 
   return (
-    <>
+    // A small inset on both sides keeps the detail clear of the catalog divider.
+    <Box sx={{ px: 2 }}>
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
         spacing={2}
@@ -237,16 +238,7 @@ export function McpFeaturedConnectorDetails({
           <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
             {connectorCopy.serviceOverview}
           </Typography>
-          {/* Inset under the heading and cap the line length so long introductions stay readable. */}
-          <Box
-            sx={{
-              color: 'text.secondary',
-              px: 2,
-              maxWidth: 760,
-              textAlign: 'justify',
-              textJustify: 'inter-character'
-            }}
-          >
+          <Box sx={{ color: 'text.secondary', textAlign: 'justify', textJustify: 'inter-character' }}>
             <MarkdownContent text={connector.overview} />
           </Box>
         </Box>
@@ -361,6 +353,6 @@ export function McpFeaturedConnectorDetails({
           </Box>
         )}
       </Box>
-    </>
+    </Box>
   )
 }
