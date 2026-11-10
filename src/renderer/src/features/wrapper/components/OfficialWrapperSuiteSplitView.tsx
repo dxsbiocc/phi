@@ -1,4 +1,4 @@
-import { Box, CircularProgress, IconButton, Typography } from '@mui/material'
+import { Box, CircularProgress, Divider, IconButton, Typography } from '@mui/material'
 import type { PhiWrapperCatalogDetail } from '../../../../../shared/phiWebsiteCatalogTypes'
 import { CatalogDetailFrame } from '../../../components/catalog/CatalogDetailFrame'
 import { PhiIcons } from '../../../icons'
@@ -18,7 +18,8 @@ function DetailLoading(): React.JSX.Element {
 
 /**
  * A suite's tools stay visible in a fixed rail while the selected tool's full official Wrapper
- * detail renders beside it. Below 900px the rail stacks above the detail.
+ * detail renders beside it. The group action installs/updates/removes the whole suite. Below
+ * 900px the rail stacks above the detail.
  */
 export function OfficialWrapperSuiteSplitView({
   suite,
@@ -30,7 +31,7 @@ export function OfficialWrapperSuiteSplitView({
   detailLoading,
   busy,
   feedback,
-  renderAction,
+  renderSuiteAction,
   onQueryChange,
   onSelect,
   onBack,
@@ -45,7 +46,10 @@ export function OfficialWrapperSuiteSplitView({
   detailLoading: boolean
   busy: boolean
   feedback?: React.ReactNode
-  renderAction: (choice: OfficialWrapperToolChoice['choice']) => React.ReactNode
+  renderSuiteAction: (
+    suite: string,
+    choices: readonly OfficialWrapperToolChoice[]
+  ) => React.ReactNode
   onQueryChange: (value: string) => void
   onSelect: (id: string) => void
   onBack: () => void
@@ -54,24 +58,12 @@ export function OfficialWrapperSuiteSplitView({
   useUiLanguage()
   const selected = choices.find(({ tool }) => tool.id === selectedToolId)
   const selectedDetail = detail?.id === selectedToolId ? detail : undefined
-  const title = (
-    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, minWidth: 0 }}>
-      <Typography variant="h6" noWrap sx={{ fontWeight: 700 }}>
-        {suite}
-      </Typography>
-      {loading ? null : (
-        <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>
-          {wrapperCopy.toolCount(choices.length)}
-        </Typography>
-      )}
-    </Box>
-  )
 
   return (
     <CatalogDetailFrame
       entryId={`group:${suite}`}
       backLabel={wrapperCopy.backToWrapperGroups}
-      title={title}
+      headerDivider={false}
       onBack={onBack}
       action={
         <IconButton aria-label={wrapperCopy.closeCatalog} disabled={busy} onClick={onClose}>
@@ -80,9 +72,28 @@ export function OfficialWrapperSuiteSplitView({
       }
     >
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        {feedback ? (
-          <Box sx={{ px: 3, py: 2, '&:empty': { display: 'none' } }}>{feedback}</Box>
-        ) : null}
+        <Box
+          data-phi-wrapper-suite-header="true"
+          sx={{ px: 3, pt: 0.5, pb: 2, display: 'flex', alignItems: 'center', gap: 2 }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, minWidth: 0, flex: 1 }}>
+            <Typography variant="h5" noWrap sx={{ fontWeight: 700 }}>
+              {suite}
+            </Typography>
+            {loading ? null : (
+              <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>
+                {wrapperCopy.toolCount(choices.length)}
+              </Typography>
+            )}
+          </Box>
+          <Box
+            data-phi-wrapper-suite-header-action="true"
+            sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}
+          >
+            {loading || choices.length === 0 ? null : renderSuiteAction(suite, choices)}
+          </Box>
+        </Box>
+        <Divider data-phi-wrapper-suite-divider="true" />
         <Box
           sx={{
             flex: 1,
@@ -98,7 +109,7 @@ export function OfficialWrapperSuiteSplitView({
               maxHeight: { xs: '44%', md: 'none' },
               minHeight: 0,
               px: 2,
-              py: 3,
+              pt: 2,
               display: 'flex',
               flexDirection: 'column',
               borderRightWidth: { xs: 0, md: 1 },
@@ -120,20 +131,15 @@ export function OfficialWrapperSuiteSplitView({
           </Box>
           <Box
             data-phi-official-wrapper-suite-detail={selectedToolId ?? ''}
-            sx={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto' }}
+            sx={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', px: 3, pt: 2.5 }}
           >
+            {feedback ? <Box sx={{ mb: 2, '&:empty': { display: 'none' } }}>{feedback}</Box> : null}
             {selected && selectedDetail ? (
-              <OfficialWrapperDetailContent
-                detail={selectedDetail}
-                choice={selected.choice}
-                headerAction={renderAction(selected.choice)}
-              />
+              <OfficialWrapperDetailContent detail={selectedDetail} choice={selected.choice} />
             ) : detailLoading || (selectedToolId && !selectedDetail) ? (
               <DetailLoading />
             ) : (
-              <Typography color="text.secondary" sx={{ p: 3 }}>
-                {wrapperCopy.noSuiteTools}
-              </Typography>
+              <Typography color="text.secondary">{wrapperCopy.noSuiteTools}</Typography>
             )}
           </Box>
         </Box>

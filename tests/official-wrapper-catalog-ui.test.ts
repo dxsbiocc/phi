@@ -317,7 +317,7 @@ test('suite split view renders the tool list and the first tool detail', () => {
       loading: false,
       detailLoading: false,
       busy: false,
-      renderAction: () => createElement('span', { 'data-registry-action': 'true' }, 'Install'),
+      renderSuiteAction: () => createElement('button', { 'data-suite-action': 'true' }, 'Install'),
       onQueryChange: () => undefined,
       onSelect: () => undefined,
       onBack: () => undefined,
@@ -333,18 +333,17 @@ test('suite split view renders the tool list and the first tool detail', () => {
   assert.doesNotMatch(suiteMarkup, /Phi Packages/)
   assert.match(suiteMarkup, /Search tools/)
   assert.match(suiteMarkup, /1 tool/)
-  assert.match(suiteMarkup, /data-phi-catalog-detail-title="true"/)
+  assert.doesNotMatch(suiteMarkup, /data-phi-catalog-detail-title/)
   const detailStart = suiteMarkup.indexOf('data-phi-official-wrapper-suite-detail')
-  const actionStart = suiteMarkup.indexOf('data-registry-action="true"')
-  assert.ok(detailStart >= 0 && actionStart > detailStart, 'action renders inside the detail')
+  const actionStart = suiteMarkup.indexOf('data-suite-action="true"')
   assert.ok(
-    actionStart < suiteMarkup.indexOf('>Inputs<'),
-    'action renders in the identity header before the content sections'
+    actionStart >= 0 && actionStart < detailStart,
+    'the group action renders in the header, not inside the tool detail'
   )
   assert.doesNotMatch(
-    suiteMarkup.slice(0, detailStart),
-    /data-registry-action="true"/,
-    'the top bar keeps only the close action'
+    suiteMarkup.slice(detailStart),
+    /data-suite-action="true"/,
+    'the tool detail has no per-tool action'
   )
 
   const manifest = officialWrapperDetailManifest(detail())
@@ -369,31 +368,63 @@ test('suite split view renders the tool list and the first tool detail', () => {
   assert.match(detailMarkup, />Outputs</)
 })
 
-test('CatalogDetailFrame renders an optional title but no title element without one', () => {
-  const frame = (title?: React.ReactNode): string =>
+test('suite header shows the group name, tool count and exactly one group action', () => {
+  const choices = officialWrapperToolChoices([tool(), splitTool()], [])
+  const markup = themed(
+    createElement(OfficialWrapperSuiteView, {
+      suite: 'samtools',
+      choices,
+      selectedToolId: tool().id,
+      detail: detail(),
+      query: '',
+      loading: false,
+      detailLoading: false,
+      busy: false,
+      renderSuiteAction: (suite, current) =>
+        createElement('button', { 'data-suite-action': `${suite}:${current.length}` }, 'Install'),
+      onQueryChange: () => undefined,
+      onSelect: () => undefined,
+      onBack: () => undefined,
+      onClose: () => undefined
+    })
+  )
+  assert.match(markup, /data-phi-wrapper-suite-header="true"/)
+  assert.match(markup, />samtools</)
+  assert.match(markup, />2 tools</)
+  assert.equal(markup.match(/data-suite-action="/g)?.length, 1)
+  assert.doesNotMatch(markup, /data-phi-catalog-detail-divider/)
+  assert.equal(markup.match(/data-phi-wrapper-suite-divider="true"/g)?.length, 1)
+  const headerStart = markup.indexOf('data-phi-wrapper-suite-header="true"')
+  const actionStart = markup.indexOf('data-suite-action="')
+  const detailStart = markup.indexOf('data-phi-official-wrapper-suite-detail')
+  assert.ok(actionStart > headerStart && actionStart < detailStart)
+  assert.doesNotMatch(markup.slice(detailStart), /data-suite-action="/)
+})
+
+test('CatalogDetailFrame renders its header divider by default and can omit it', () => {
+  const frame = (headerDivider?: boolean): string =>
     themed(
-      createElement(CatalogDetailFrame, {
-        entryId: 'suite',
-        backLabel: 'Back to list',
-        title,
-        action: createElement('span', { 'data-frame-action': 'true' }, 'Action'),
-        onBack: () => undefined,
-        children: createElement('div', null, 'Content')
-      })
+      createElement(
+        CatalogDetailFrame,
+        {
+          entryId: 'suite',
+          backLabel: 'Back to list',
+          action: createElement('span', { 'data-frame-action': 'true' }, 'Action'),
+          headerDivider,
+          onBack: () => undefined
+        },
+        createElement('div', null, 'Content')
+      )
     )
 
-  const withoutTitle = frame()
-  assert.doesNotMatch(withoutTitle, /data-phi-catalog-detail-title/)
-  assert.match(withoutTitle, /data-frame-action="true"/)
-  assert.match(withoutTitle, /Content/)
+  const defaultFrame = frame()
+  assert.match(defaultFrame, /data-phi-catalog-detail-divider="true"/)
+  assert.match(defaultFrame, /data-frame-action="true"/)
+  assert.match(defaultFrame, /Content/)
 
-  const withTitle = frame(createElement('span', null, 'TITLE-TEXT'))
-  assert.match(withTitle, /data-phi-catalog-detail-title="true"/)
-  assert.match(withTitle, /TITLE-TEXT/)
-  assert.ok(
-    withTitle.indexOf('TITLE-TEXT') < withTitle.indexOf('data-frame-action="true"'),
-    'the title renders before the action'
-  )
+  const noDivider = frame(false)
+  assert.doesNotMatch(noDivider, /data-phi-catalog-detail-divider/)
+  assert.match(noDivider, /Content/)
 })
 
 test('suite search filters the list and selecting another tool renders its detail', () => {
@@ -415,7 +446,7 @@ test('suite search filters the list and selecting another tool renders its detai
         loading: false,
         detailLoading: false,
         busy: false,
-        renderAction: () => createElement('span', null, 'Install'),
+        renderSuiteAction: () => createElement('span', null, 'Install'),
         onQueryChange: () => undefined,
         onSelect: () => undefined,
         onBack: () => undefined,
@@ -488,7 +519,7 @@ test('new Chinese Wrapper catalog copy includes the required group and tool word
       loading: false,
       detailLoading: false,
       busy: false,
-      renderAction: () => null,
+      renderSuiteAction: () => null,
       onQueryChange: () => undefined,
       onSelect: () => undefined,
       onBack: () => undefined,

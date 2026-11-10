@@ -21,7 +21,8 @@ import {
   officialWrapperGroupRowDetails,
   officialWrapperGroupsQuery,
   officialWrapperToolChoices,
-  type OfficialWrapperCatalogApi
+  type OfficialWrapperCatalogApi,
+  type OfficialWrapperToolChoice
 } from '../lib/officialWrapperCatalog'
 import type { WrapperCatalogChoice } from '../lib/wrapperCatalog'
 import { wrapperCopy } from '../lib/wrapperCopy'
@@ -151,7 +152,7 @@ export function OfficialWrapperCatalog({
   busy,
   actions,
   feedback,
-  renderAction,
+  renderSuiteAction,
   onUnavailable,
   onClose
 }: {
@@ -162,7 +163,10 @@ export function OfficialWrapperCatalog({
   busy: boolean
   actions?: React.ReactNode
   feedback?: React.ReactNode
-  renderAction: (choice: WrapperCatalogChoice) => React.ReactNode
+  renderSuiteAction: (
+    suite: string,
+    choices: readonly OfficialWrapperToolChoice[]
+  ) => React.ReactNode
   onUnavailable: () => void
   onClose: () => void
 }): React.JSX.Element {
@@ -256,7 +260,7 @@ export function OfficialWrapperCatalog({
         detailLoading={detailLoading}
         busy={busy}
         feedback={feedback}
-        renderAction={renderAction}
+        renderSuiteAction={renderSuiteAction}
         onQueryChange={setToolQuery}
         onSelect={(id) => {
           if (id === selectedToolId) return

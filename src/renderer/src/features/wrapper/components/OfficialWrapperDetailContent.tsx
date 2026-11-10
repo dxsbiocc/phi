@@ -13,13 +13,10 @@ import { WrapperDetailBody } from './WrapperDetailBody'
 /** The official Wrapper detail body without the page shell, shared by the page and suite split view. */
 export function OfficialWrapperDetailContent({
   detail,
-  choice,
-  headerAction
+  choice
 }: {
   detail: PhiWrapperCatalogDetail
   choice: WrapperCatalogChoice
-  /** Controls at the right end of the identity row, e.g. install / uninstall. */
-  headerAction?: React.ReactNode
 }): React.JSX.Element {
   useUiLanguage()
   const manifest = officialWrapperDetailManifest(detail)
@@ -29,14 +26,13 @@ export function OfficialWrapperDetailContent({
   const tierLabel = wrapperTierLabel(parseWrapperCompositionId(manifest.id).tier)
   const showCategory = Boolean(detail.categoryLabel) && detail.categoryLabel !== tierLabel
   return (
-    <Box data-phi-official-wrapper-detail={detail.id} sx={{ minWidth: 0, p: 3 }}>
+    <Box data-phi-official-wrapper-detail={detail.id} sx={{ minWidth: 0 }}>
       <Box sx={{ maxWidth: 860, mx: 'auto' }}>
         <WrapperDetailBody
           manifest={manifest}
           icon={wrapperChoiceIcon(choice)}
           graph={graph}
           moduleDetails={undefined}
-          headerAction={headerAction}
           extraChips={
             <>
               {showCategory ? (

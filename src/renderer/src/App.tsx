@@ -3382,7 +3382,7 @@ function App(): React.JSX.Element {
         onExportReproducibility={(runId) => void exportWrapperReproducibility(runId)}
         onCancelRun={(runId) => void cancelWrapperRun(runId)}
         packageEnablementBusy={packageEnablementBusy}
-        onSetPackageEnabled={(packageId, enabled) => void setPackageEnabled(packageId, enabled)}
+        onSetPackageEnabled={setPackageEnabled}
         project={activeProject ?? undefined}
         updatingRemoteProjectId={updatingRemoteProjectId}
         onUpdateProjectRemoteConnection={onUpdateProjectRemoteConnection}

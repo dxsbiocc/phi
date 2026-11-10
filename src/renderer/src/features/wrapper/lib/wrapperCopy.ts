@@ -52,6 +52,13 @@ const english = {
   installTitle: (title: string) => `Install ${title}`,
   installDependencies: (count: number, size: string) =>
     `This also installs ${count} required Wrapper package${count === 1 ? '' : 's'} (${size} total).`,
+  installSuiteTitle: (suite: string) => `Install all tools in ${suite}`,
+  installSuiteSummary: (toolCount: number, dependencyCount: number, size: string) =>
+    `This installs ${toolCount} tool${toolCount === 1 ? '' : 's'}${
+      dependencyCount > 0
+        ? ` and ${dependencyCount} required Wrapper package${dependencyCount === 1 ? '' : 's'}`
+        : ''
+    } (${size} total).`,
   packagesToInstall: 'Packages to install together',
   installAll: 'Install all',
   add: 'Add',
@@ -81,8 +88,11 @@ const english = {
   updatingWrapper: 'Updating Wrapper',
   customAlwaysAvailable: 'User-defined Wrappers are always available',
   removePackageTitle: (name: string) => `Remove the ${name} Wrapper package?`,
+  removeSuiteTitle: (suite: string) => `Remove all tools in ${suite}?`,
   removePackageInstalled: (name: string) =>
     `This deletes every file and folder owned by the ${name} Wrapper package installed from the content catalog, including its Nextflow module definitions. The tool binary, container image and runtime environment cache are not part of this package and stay. This cannot be undone.`,
+  removeSuiteInstalled: (suite: string, count: number) =>
+    `This deletes every file and folder owned by the ${count} installed tool${count === 1 ? '' : 's'} in ${suite}, including their Nextflow module definitions. Tool binaries, container images and runtime environment caches are not part of these packages and stay. This cannot be undone.`,
   removePackageDependents: (names: readonly string[]) =>
     `These enabled packages depend on it and will be switched off: ${names.join(', ')}.`,
   removePackageFilesWarning:
@@ -91,6 +101,7 @@ const english = {
   removePackageRemoving: 'Removing…',
   removePackagePreviewFailed: 'Could not prepare the removal.',
   removedPackage: (name: string) => `Removed ${name}.`,
+  removedSuite: (suite: string) => `Removed the ${suite} tool group.`,
   searchWrappers: 'Search Wrappers',
   sidebarSummary: (count: number, enabled: number) =>
     `${count} tool${count === 1 ? '' : 's'} · ${enabled} enabled`,
@@ -246,6 +257,11 @@ const chinese: LocalizedCopy<typeof english> = {
   requiredSuffix: '，必填',
   primarySuffix: '（主要）',
   packagesToInstall: '一并安装的软件包',
+  installSuiteTitle: (suite: string) => `安装 ${suite} 的全部工具`,
+  installSuiteSummary: (toolCount: number, dependencyCount: number, size: string) =>
+    `将安装 ${toolCount} 个工具${
+      dependencyCount > 0 ? `及其 ${dependencyCount} 个必需的 Wrapper 软件包` : ''
+    }（共 ${size}）。`,
   installAll: '全部安装',
   add: '添加',
   allWrappers: '全部 Wrapper',
@@ -265,8 +281,11 @@ const chinese: LocalizedCopy<typeof english> = {
   updatingWrapper: '正在更新 Wrapper',
   customAlwaysAvailable: '用户自建的 Wrapper 始终可用',
   removePackageTitle: (name: string) => `移除 Wrapper 包「${name}」？`,
+  removeSuiteTitle: (suite: string) => `移除 ${suite} 的全部工具？`,
   removePackageInstalled: (name: string) =>
     `将删除从内容目录安装的 ${name} 包及其拥有的全部文件与文件夹（包括 Nextflow 模块定义）。工具本体、容器镜像和运行环境缓存不属于这个包，不会被删除。此操作无法撤销。`,
+  removeSuiteInstalled: (suite: string, count: number) =>
+    `将删除 ${suite} 中 ${count} 个已安装工具及其拥有的全部文件与文件夹（包括 Nextflow 模块定义）。工具本体、容器镜像和运行环境缓存不属于这些包，不会被删除。此操作无法撤销。`,
   removePackageDependents: (names: readonly string[]) =>
     `以下已启用的软件包依赖它，将被一并停用：${names.join('、')}。`,
   removePackageFilesWarning:
@@ -275,6 +294,7 @@ const chinese: LocalizedCopy<typeof english> = {
   removePackageRemoving: '正在移除…',
   removePackagePreviewFailed: '无法准备移除操作。',
   removedPackage: (name: string) => `已移除 ${name}。`,
+  removedSuite: (suite: string) => `已移除 ${suite} 工具组。`,
   searchWrappers: '搜索 Wrapper',
   noWrappers: '尚未添加 Wrapper。选择“发现”浏览目录。',
   chooseOneInput: '为每个 Wrapper 输入选择或拖入一个文件或目录。',

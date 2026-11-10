@@ -25,7 +25,7 @@ export function OfficialWrapperDetailPage({
       action={action}
       onBack={onBack}
     >
-      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+      <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto', p: 3 }}>
         <OfficialWrapperDetailContent detail={detail} choice={choice} />
       </Box>
     </CatalogDetailFrame>

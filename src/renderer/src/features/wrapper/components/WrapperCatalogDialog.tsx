@@ -5,7 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Alert, Box, Button, CircularProgress, Dialog, Typography } from '@mui/material'
 import type {
   InstalledPackageView,
-  PackageRegistryView
+  PackageRegistryView,
+  PackageUpdateView
 } from '../../../../../shared/packageManagerTypes'
 import { errorMessage } from '../../../../../shared/errorCodes'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
@@ -32,12 +33,21 @@ import {
 } from '../lib/wrapperCatalog'
 import { installCatalogPackage, loadContentCatalog } from '../../../lib/contentCatalog'
 import { summarizeWrapperInstallPlan, type WrapperInstallSummary } from '../lib/wrapperInstallPlan'
+import type { OfficialWrapperToolChoice } from '../lib/officialWrapperCatalog'
+import {
+  wrapperSuiteAction,
+  wrapperSuiteBusyKey,
+  wrapperSuiteUpdateIds
+} from '../lib/wrapperSuiteAction'
 import { useWrapperRemoval } from '../hooks/useWrapperRemoval'
+import { useWrapperSuiteActions } from '../hooks/useWrapperSuiteActions'
 import type { SnackbarSeverity } from '../../../components/AppSnackbarCard'
 import { WrapperInstallConfirmDialog } from './WrapperInstallConfirmDialog'
+import { WrapperSuiteInstallConfirmDialog } from './WrapperSuiteInstallConfirmDialog'
 import { OfficialWrapperCatalog } from './OfficialWrapperCatalog'
 import { WrapperPackageDetailPage } from './WrapperPackageDetailPage'
 import { WrapperRemovalDialog } from './WrapperRemovalDialog'
+import { WrapperSuiteRemovalDialog } from './WrapperSuiteRemovalDialog'
 
 const DIRECTORY_KEY = '__directory__'
 
@@ -48,6 +58,14 @@ export interface WrapperCatalogDialogProps {
   onRefresh: () => Promise<void> | void
   onSetPackageEnabled?: (id: string, enabled: boolean) => Promise<boolean | void> | void
   onNotify?: (message: string, severity?: SnackbarSeverity) => void
+}
+
+interface CatalogSnapshot {
+  registries: PackageRegistryView[]
+  installed: InstalledPackageView[]
+  updates: PackageUpdateView[]
+  error: string | null
+  notice: string | null
 }
 
 export function WrapperCatalogDialog({
@@ -66,6 +84,7 @@ export function WrapperCatalogDialog({
   const [rowsPerPage, setRowsPerPage] = useState(CATALOG_DEFAULT_PAGE_SIZE)
   const [registries, setRegistries] = useState<PackageRegistryView[]>([])
   const [installedPackages, setInstalledPackages] = useState<InstalledPackageView[]>([])
+  const [updates, setUpdates] = useState<PackageUpdateView[]>([])
   const [loading, setLoading] = useState(true)
   const busy = useBusyKeys()
   const [error, setError] = useState<string | null>(null)
@@ -77,12 +96,21 @@ export function WrapperCatalogDialog({
     summary: WrapperInstallSummary
   } | null>(null)
 
-  const readCatalog = useCallback(async (): Promise<{
-    registries: PackageRegistryView[]
-    installed: InstalledPackageView[]
-    error: string | null
-    notice: string | null
-  }> => {
+  const applySnapshot = useCallback((snapshot: CatalogSnapshot): void => {
+    setRegistries(snapshot.registries)
+    setInstalledPackages(snapshot.installed)
+    setUpdates(snapshot.updates)
+    setError(snapshot.error)
+    setSourceNotice(snapshot.notice)
+  }, [])
+
+  const readCatalog = useCallback(async (): Promise<CatalogSnapshot> => {
+    const packageUpdates = window.api.listPackageUpdates
+      ? window.api
+          .listPackageUpdates()
+          .then((result) => result.filter((update) => update.type === 'wrapper'))
+          .catch(() => [] as PackageUpdateView[])
+      : Promise.resolve([] as PackageUpdateView[])
     const [sources, installed] = await Promise.all([
       loadContentCatalog(window.api),
       window.api.listInstalledPackages()
@@ -90,20 +118,18 @@ export function WrapperCatalogDialog({
     return {
       registries: sources.registries,
       installed,
+      updates: await packageUpdates,
       error: sources.errors.join('\n') || null,
       notice: sources.notices.join('\n') || null
     }
   }, [])
 
-  const refreshAfterRemoval = useCallback(async (): Promise<void> => {
+  /** Group actions refresh the wrapper catalog once after all sequential work finishes. */
+  const refreshCatalog = useCallback(async (): Promise<void> => {
     await onRefresh()
-    const refreshed = await readCatalog()
-    setRegistries(refreshed.registries)
-    setInstalledPackages(refreshed.installed)
-    setError(refreshed.error)
-    setSourceNotice(refreshed.notice)
-  }, [onRefresh, readCatalog])
-  const removal = useWrapperRemoval(refreshAfterRemoval, onNotify)
+    applySnapshot(await readCatalog())
+  }, [applySnapshot, onRefresh, readCatalog])
+  const removal = useWrapperRemoval(refreshCatalog, onNotify)
   useEffect(() => {
     if (!open) return undefined
     let active = true
@@ -112,11 +138,7 @@ export function WrapperCatalogDialog({
     })
     void readCatalog()
       .then((data) => {
-        if (!active) return
-        setRegistries(data.registries)
-        setInstalledPackages(data.installed)
-        setError(data.error)
-        setSourceNotice(data.notice)
+        if (active) applySnapshot(data)
       })
       .catch((cause) => {
         if (active) setError(errorMessage(cause))
@@ -127,12 +149,22 @@ export function WrapperCatalogDialog({
     return () => {
       active = false
     }
-  }, [open, readCatalog])
+  }, [applySnapshot, open, readCatalog])
 
   const choices = useMemo(
     () => wrapperCatalogChoices(catalog, registries, installedPackages),
     [catalog, registries, installedPackages]
   )
+  const updateIds = useMemo(() => wrapperSuiteUpdateIds(updates), [updates])
+  const suiteActions = useWrapperSuiteActions({
+    busy,
+    updateIds,
+    refresh: refreshCatalog,
+    clearError: () => setError(null),
+    onError: setError,
+    onSetPackageEnabled,
+    onNotify
+  })
   const groups = useMemo(
     () => wrapperCatalogGroups(choices),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Copy proxy reads depend on the UI language.
@@ -170,6 +202,16 @@ export function WrapperCatalogDialog({
     setPage(0)
   }, [])
 
+  async function enableChoice(choice: WrapperCatalogChoice, refresh: boolean): Promise<void> {
+    if (onSetPackageEnabled) {
+      if ((await onSetPackageEnabled(choice.id, true)) === false)
+        throw new Error(wrapperCopy.enableFailed)
+      return
+    }
+    await window.api.setEnablement(`wrapper:${choice.id}`, true, { type: 'global' })
+    if (refresh) await onRefresh()
+  }
+
   async function add(choice: WrapperCatalogChoice, confirmed = false): Promise<void> {
     if (busy.has(choice.id)) return
     busy.start(choice.id)
@@ -196,18 +238,8 @@ export function WrapperCatalogDialog({
         )
         setInstalledPackages(installed)
       }
-      if (onSetPackageEnabled) {
-        if ((await onSetPackageEnabled(choice.id, true)) === false)
-          throw new Error(wrapperCopy.enableFailed)
-      } else {
-        await window.api.setEnablement(`wrapper:${choice.id}`, true, { type: 'global' })
-        await onRefresh()
-      }
-      const refreshed = await readCatalog()
-      setRegistries(refreshed.registries)
-      setInstalledPackages(refreshed.installed)
-      setError(refreshed.error)
-      setSourceNotice(refreshed.notice)
+      await enableChoice(choice, true)
+      applySnapshot(await readCatalog())
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -234,6 +266,40 @@ export function WrapperCatalogDialog({
     )
   }
 
+  function renderSuiteAction(
+    suite: string,
+    choices: readonly OfficialWrapperToolChoice[]
+  ): React.JSX.Element {
+    const action = wrapperSuiteAction(choices, updateIds)
+    const working = busy.has(wrapperSuiteBusyKey(suite))
+    const missingRegistryEntry =
+      action.kind === 'install' &&
+      choices.some(
+        ({ choice }) =>
+          wrapperChoiceNeedsRegistryInstall(choice) &&
+          (!choice.registryPath || !choice.registryEntry)
+      )
+    const onClick =
+      action.kind === 'uninstall'
+        ? () => void suiteActions.requestRemoval(suite, choices)
+        : action.kind === 'update'
+          ? () => void suiteActions.update(suite, choices)
+          : () => void suiteActions.install(suite, choices)
+    return (
+      <Button
+        size="small"
+        variant={action.kind === 'uninstall' ? 'outlined' : 'contained'}
+        color={action.kind === 'uninstall' ? 'error' : 'primary'}
+        disabled={working || missingRegistryEntry}
+        onClick={onClick}
+        aria-label={`${action.label} ${suite}`}
+        data-phi-wrapper-suite-action="true"
+      >
+        {working ? <CircularProgress size={16} /> : action.label}
+      </Button>
+    )
+  }
+
   async function chooseDirectory(): Promise<void> {
     if (busy.has(DIRECTORY_KEY)) return
     busy.start(DIRECTORY_KEY)
@@ -254,6 +320,8 @@ export function WrapperCatalogDialog({
     if (busy.any) return
     setDetailId(null)
     setPendingInstall(null)
+    suiteActions.cancelInstall()
+    suiteActions.cancelRemoval()
     setLoading(true)
     setError(null)
     setCatalogMode('official')
@@ -309,7 +377,7 @@ export function WrapperCatalogDialog({
               ) : null}
             </>
           }
-          renderAction={renderAction}
+          renderSuiteAction={renderSuiteAction}
           onUnavailable={showRegistryFallback}
           onClose={close}
         />
@@ -427,6 +495,21 @@ export function WrapperCatalogDialog({
           setPendingInstall(null)
           if (target) void add(target, true)
         }}
+      />
+      <WrapperSuiteInstallConfirmDialog
+        suite={suiteActions.pendingInstall?.suite ?? null}
+        summary={suiteActions.pendingInstall?.summary ?? null}
+        onCancel={suiteActions.cancelInstall}
+        onConfirm={() => void suiteActions.confirmInstall()}
+      />
+      <WrapperSuiteRemovalDialog
+        suite={suiteActions.pendingRemoval?.suite ?? null}
+        targets={suiteActions.pendingRemoval?.previews ?? []}
+        removing={busy.has(
+          suiteActions.pendingRemoval ? wrapperSuiteBusyKey(suiteActions.pendingRemoval.suite) : ''
+        )}
+        onClose={suiteActions.cancelRemoval}
+        onConfirm={() => void suiteActions.confirmRemoval()}
       />
     </Dialog>
   )

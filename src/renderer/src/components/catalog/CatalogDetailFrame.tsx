@@ -1,27 +1,28 @@
 import { useUiLanguage } from '../../lib/i18n'
-import { Box, Button, Stack } from '@mui/material'
+import { Box, Button, Divider, Stack } from '@mui/material'
 
 import { PhiIcons } from '../../icons'
 import { resourceCatalogCopy } from '../../lib/resourceUi'
 
 /**
- * The shared shell of a catalog entry's detail page. The top bar carries navigation, an optional
- * heading and the entry's install/uninstall control; identity chips belong to the content.
+ * The shared shell of a catalog entry's detail page. The top bar carries navigation and the
+ * entry's install/uninstall control; identity chips belong to the content. A caller that renders
+ * its own header below the bar can turn the default divider off with `headerDivider={false}`.
  */
 export function CatalogDetailFrame({
   entryId,
   backLabel,
-  title,
   action,
+  headerDivider = true,
   onBack,
   children
 }: {
   entryId: string
   backLabel: string
-  /** Optional entry heading shown in the top bar, right after the back button. */
-  title?: React.ReactNode
   /** The install / uninstall controls of the entry. */
   action: React.ReactNode
+  /** The divider under the top bar belongs to the default shell. */
+  headerDivider?: boolean
   onBack: () => void
   children: React.ReactNode
 }): React.JSX.Element {
@@ -35,12 +36,7 @@ export function CatalogDetailFrame({
       <Stack
         direction="row"
         spacing={1.5}
-        sx={{
-          alignItems: 'center',
-          justifyContent: title ? 'flex-start' : 'space-between',
-          px: 3,
-          py: 2
-        }}
+        sx={{ alignItems: 'center', justifyContent: 'space-between', px: 3, py: 2 }}
       >
         <Button
           size="small"
@@ -50,17 +46,10 @@ export function CatalogDetailFrame({
         >
           {resourceCatalogCopy.back}
         </Button>
-        {title ? (
-          <>
-            <Box data-phi-catalog-detail-title="true">{title}</Box>
-            <Box sx={{ flex: 1 }} />
-          </>
-        ) : null}
         {action}
       </Stack>
-      <Box sx={{ flex: 1, minHeight: 0, display: 'flex', borderTop: 1, borderColor: 'divider' }}>
-        {children}
-      </Box>
+      {headerDivider ? <Divider data-phi-catalog-detail-divider="true" /> : null}
+      <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>{children}</Box>
     </Box>
   )
 }
