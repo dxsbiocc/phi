@@ -272,7 +272,11 @@ export const settingsUi = defineCopy(
     updatingAll: 'Updating all…',
     updateAll: 'Update all',
     noUpdatesAvailable: 'No updates available.',
-    update: 'Update'
+    update: 'Update',
+    whatsNew: "What's new",
+    noReleaseNotesForThisVersion: 'No release notes for this version',
+    showMore: 'Show more',
+    showLess: 'Show less'
   },
   {
     interfaceLanguage: '界面语言',
@@ -531,6 +535,10 @@ export const settingsUi = defineCopy(
     updatingAll: '正在全部更新…',
     updateAll: '全部更新',
     noUpdatesAvailable: '当前没有可用更新。',
-    update: '更新'
+    update: '更新',
+    whatsNew: '更新内容',
+    noReleaseNotesForThisVersion: '此版本没有提供更新说明',
+    showMore: '展开',
+    showLess: '收起'
   }
 )

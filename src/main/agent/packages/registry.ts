@@ -10,7 +10,12 @@ import { parseRegistrySignature, verifyRegistryIndex, type TrustedRegistryKey } 
 import { TRUSTED_REGISTRY_KEYS } from './trusted-keys'
 import { parseRegistryIconAsset } from './icon-assets'
 import { parseRegistryManifestAsset } from './manifest-assets'
-import type { CatalogSkillGroup } from '../../../shared/packageManagerTypes'
+import type { CatalogSkillGroup, PackageChangelogEntry } from '../../../shared/packageManagerTypes'
+import {
+  PACKAGE_CHANGELOG_MAX_SECTIONS,
+  PACKAGE_CHANGELOG_NOTES_MAX_LENGTH,
+  PACKAGE_CHANGELOG_TOTAL_MAX_LENGTH
+} from '../../../shared/packageManagerTypes'
 import { MCP_CONNECTOR_OVERVIEW_MAX_LENGTH } from '../../../shared/mcpConnectorCatalog'
 
 export interface ReadRegistryOptions {
@@ -136,6 +141,7 @@ export function parseRegistryEntry(value: unknown, index: number): RegistryPacka
   }
   const group = parseSkillGroupEntry(entry)
   const overview = parseConnectorOverview(entry, index)
+  const changelog = parseChangelog(entry.changelog)
   return {
     id: entry.id,
     type: entry.type,
@@ -156,8 +162,30 @@ export function parseRegistryEntry(value: unknown, index: number): RegistryPacka
     ...group,
     ...(typeof entry.preview === 'string' ? { preview: entry.preview } : {}),
     ...(iconAsset ? { iconAsset } : {}),
-    ...(manifestAsset ? { manifestAsset } : {})
+    ...(manifestAsset ? { manifestAsset } : {}),
+    ...(changelog ? { changelog } : {})
   }
+}
+
+/**
+ * Release notes are optional and versioned data, so a malformed item is dropped instead of
+ * rejecting the whole registry entry. A changelog with no valid sections is omitted entirely.
+ */
+function parseChangelog(value: unknown): PackageChangelogEntry[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const entries: PackageChangelogEntry[] = []
+  let total = 0
+  for (const item of value) {
+    if (entries.length >= PACKAGE_CHANGELOG_MAX_SECTIONS) break
+    if (!isRecord(item)) continue
+    if (typeof item.version !== 'string' || !semver.valid(item.version)) continue
+    if (typeof item.notes !== 'string' || item.notes.trim().length === 0) continue
+    if (item.notes.length > PACKAGE_CHANGELOG_NOTES_MAX_LENGTH) continue
+    if (total + item.notes.length > PACKAGE_CHANGELOG_TOTAL_MAX_LENGTH) continue
+    entries.push({ version: item.version, notes: item.notes })
+    total += item.notes.length
+  }
+  return entries.length > 0 ? entries : undefined
 }
 
 function parseConnectorOverview(entry: Record<string, unknown>, index: number): string | undefined {

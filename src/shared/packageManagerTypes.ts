@@ -98,6 +98,15 @@ export interface KnownPackageRegistryView {
   error?: string
 }
 
+export interface PackageChangelogEntry {
+  version: string
+  notes: string
+}
+
+export const PACKAGE_CHANGELOG_MAX_SECTIONS = 5
+export const PACKAGE_CHANGELOG_NOTES_MAX_LENGTH = 4000
+export const PACKAGE_CHANGELOG_TOTAL_MAX_LENGTH = 12000
+
 export interface PackageUpdateView {
   id: string
   type: PackageManagerType
@@ -107,6 +116,9 @@ export interface PackageUpdateView {
   registryId: string
   registryPath: string
   trust: PackageTrust
+  summary?: string
+  /** Changelog sections for the skipped versions, newest first. */
+  changes?: PackageChangelogEntry[]
 }
 
 export interface OfflinePackageImportPreview {

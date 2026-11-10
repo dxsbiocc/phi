@@ -37,6 +37,12 @@ import { safeRegistryDirectory } from '../../src/main/agent/packages/registry-as
 import { findPackageIcon, writeRegistryIconAsset } from '../../src/main/agent/packages/icon-assets'
 import type { RegistryIconAsset } from '../../src/shared/resourceIconTypes'
 import {
+  PACKAGE_CHANGELOG_MAX_SECTIONS,
+  PACKAGE_CHANGELOG_NOTES_MAX_LENGTH,
+  PACKAGE_CHANGELOG_TOTAL_MAX_LENGTH,
+  type PackageChangelogEntry
+} from '../../src/shared/packageManagerTypes'
+import {
   writeRegistryManifestAsset,
   type RegistryManifestAsset
 } from '../../src/main/agent/packages/manifest-assets'
@@ -62,6 +68,7 @@ export interface RegistryIndexEntry {
   preview?: string
   iconAsset?: RegistryIconAsset
   manifestAsset?: RegistryManifestAsset
+  changelog?: PackageChangelogEntry[]
 }
 
 export interface RegistryIndex {
@@ -355,6 +362,71 @@ function generatedSkillManifest(skillDir: string): PackageManifest {
   }
 }
 
+/**
+ * Extracts release notes from a package's root CHANGELOG.md. Only level-two headings whose
+ * text is a semver version count; sections newer than the manifest version are ignored.
+ */
+export function parseChangelogSections(
+  text: string,
+  manifestVersion: string
+): PackageChangelogEntry[] {
+  if (!semver.valid(manifestVersion)) return []
+  const sections: Array<{ version: string; notes: string }> = []
+  let current: { version: string; lines: string[] } | undefined
+
+  const finish = (): void => {
+    if (!current) return
+    const notes = current.lines.join('\n').trim()
+    if (notes) sections.push({ version: current.version, notes })
+    current = undefined
+  }
+
+  for (const line of text.split(/\r?\n/)) {
+    const heading = /^##(?!#)\s+(.+?)\s*$/.exec(line)
+    if (heading) {
+      finish()
+      const version = parseChangelogHeading(heading[1] ?? '')
+      if (version) current = { version, lines: [] }
+      continue
+    }
+    current?.lines.push(line)
+  }
+  finish()
+
+  const entries: PackageChangelogEntry[] = []
+  let total = 0
+  for (const section of sections
+    .filter((candidate) => semver.lte(candidate.version, manifestVersion))
+    .sort((left, right) => semver.rcompare(left.version, right.version))
+    .slice(0, PACKAGE_CHANGELOG_MAX_SECTIONS)) {
+    const notes = capChangelogNotes(section.notes, PACKAGE_CHANGELOG_NOTES_MAX_LENGTH)
+    if (!notes) continue
+    if (total + notes.length > PACKAGE_CHANGELOG_TOTAL_MAX_LENGTH) break
+    entries.push({ version: section.version, notes })
+    total += notes.length
+  }
+  return entries
+}
+
+function parseChangelogHeading(text: string): string | undefined {
+  const heading = text.replace(/\s+#+\s*$/, '').trim()
+  const match = /^\[?([^\s\]]+)\]?(.*)$/.exec(heading)
+  if (!match) return undefined
+  const suffix = match[2] ?? ''
+  if (suffix.trim() && !/^\s*(?:-|–|—|\()/.test(suffix)) return undefined
+  return semver.valid(match[1] ?? '') ?? undefined
+}
+
+function capChangelogNotes(notes: string, limit: number): string {
+  if (notes.length <= limit) return notes
+  const available = Math.max(0, limit - 1)
+  let cut = notes.slice(0, available)
+  const newline = cut.lastIndexOf('\n')
+  if (newline >= 0) cut = cut.slice(0, newline)
+  cut = cut.trimEnd()
+  return cut ? `${cut}…` : '…'
+}
+
 function writePackage(source: PackageSource, outDir: string): RegistryIndexEntry {
   const fileList = [...source.files.entries()]
     .sort(([left], [right]) => compareText(left, right))
@@ -383,6 +455,14 @@ function writePackage(source: PackageSource, outDir: string): RegistryIndexEntry
   if (source.manifest.minAppVersion) entry.minAppVersion = source.manifest.minAppVersion
   if (source.manifest.requires) entry.requires = source.manifest.requires
   if (source.category) entry.category = source.category
+  const changelogFile = source.files.get('CHANGELOG.md')
+  if (changelogFile) {
+    const changelog = parseChangelogSections(
+      changelogFile.toString('utf8'),
+      source.manifest.version
+    )
+    if (changelog.length > 0) entry.changelog = changelog
+  }
   const iconAsset = writeRegistryIconAsset(
     entry,
     findPackageIcon(source.files),

@@ -13,6 +13,7 @@ import { compareText, packageKey } from './installer-utils'
 import { upgradePackage } from './lifecycle'
 import type { PackageType } from './manifest'
 import { checkPackageCompatibility, readAppVersion } from './planning'
+import type { PackageChangelogEntry } from '../../../shared/packageManagerTypes'
 
 export interface PackageUpdate {
   id: string
@@ -23,6 +24,8 @@ export interface PackageUpdate {
   registryId: string
   registryPath: string
   trust: RegistryTrustTier
+  summary?: string
+  changes?: PackageChangelogEntry[]
 }
 
 export interface PackageUpdateOptions extends Pick<InstallerOptions, 'agentDir' | 'appVersion'> {
@@ -148,6 +151,7 @@ function toPackageUpdate(
   registry: LocalRegistry,
   entry: RegistryPackageEntry
 ): PackageUpdate {
+  const changes = selectedChanges(entry.changelog, installed.version, entry.version)
   return {
     id: installed.id,
     type: installed.type,
@@ -156,8 +160,29 @@ function toPackageUpdate(
     newVersion: entry.version,
     registryId: registry.id,
     registryPath: registry.dir,
-    trust: registry.trust
+    trust: registry.trust,
+    summary: entry.summary,
+    ...(changes ? { changes } : {})
   }
+}
+
+/** Every skipped release, newest first, so an update spanning versions shows each step. */
+function selectedChanges(
+  changelog: readonly PackageChangelogEntry[] | undefined,
+  currentVersion: string,
+  newVersion: string
+): PackageChangelogEntry[] | undefined {
+  if (!changelog || changelog.length === 0) return undefined
+  if (!semver.valid(currentVersion) || !semver.valid(newVersion)) return undefined
+  const changes = changelog
+    .filter(
+      (change) =>
+        semver.valid(change.version) &&
+        semver.gt(change.version, currentVersion) &&
+        semver.lte(change.version, newVersion)
+    )
+    .sort((left, right) => semver.rcompare(left.version, right.version))
+  return changes.length > 0 ? changes : undefined
 }
 
 function findUpdateRegistry(

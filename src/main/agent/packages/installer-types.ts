@@ -5,7 +5,7 @@ import type { RegistryIconAsset } from '../../../shared/resourceIconTypes'
 import type { RegistryManifestAsset } from './manifest-assets'
 import type { EnvironmentDescriptor } from '../content/environment-refs'
 import type { EnvHandle } from '../envs/execution'
-import type { CatalogSkillGroup } from '../../../shared/packageManagerTypes'
+import type { CatalogSkillGroup, PackageChangelogEntry } from '../../../shared/packageManagerTypes'
 
 export type RegistryTrust = 'builtin' | 'official' | 'imported'
 export type RegistryTrustTier = RegistryTrust
@@ -53,6 +53,8 @@ export interface RegistryPackageEntry {
   preview?: string
   iconAsset?: RegistryIconAsset
   manifestAsset?: RegistryManifestAsset
+  /** Release notes parsed from the package CHANGELOG.md, newest first. */
+  changelog?: PackageChangelogEntry[]
 }
 
 export interface LocalRegistry {
