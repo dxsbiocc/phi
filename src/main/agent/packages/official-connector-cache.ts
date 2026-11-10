@@ -8,6 +8,7 @@ import { isRecord, sha256 } from './installer-utils'
 import { readRegistryManifestAsset } from './manifest-assets'
 import {
   OFFICIAL_CONNECTOR_ORIGIN,
+  normalizeConnectorOverview,
   parseCompleteOfficialConnectorManifest
 } from './official-connector-client'
 import { OFFICIAL_REGISTRY_ID } from './official-registry'
@@ -84,9 +85,11 @@ export function readOfficialConnectorRegistry(
     if (
       entry.size > 512 * 1024 ||
       !entry.manifestAsset ||
-      typeof entry.directoryAuthBlocked !== 'boolean'
+      typeof entry.directoryAuthBlocked !== 'boolean' ||
+      (entry.overview !== undefined &&
+        normalizeConnectorOverview(entry.overview) !== entry.overview)
     )
-      throw new Error('Invalid Connector API package size or manifest')
+      throw new Error('Invalid Connector API package metadata')
     readRegistryAsset(target, { path: entry.archive, size: entry.size, sha256: entry.sha256 })
     if (entry.iconAsset) readRegistryAsset(target, entry.iconAsset)
     const manifest = readRegistryManifestAsset(target, entry)

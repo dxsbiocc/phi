@@ -1,6 +1,7 @@
 import semver from 'semver'
 import { stringify as stringifyYaml } from 'yaml'
 
+import { MCP_CONNECTOR_OVERVIEW_MAX_LENGTH } from '../../../shared/mcpConnectorCatalog'
 import { readBoundedResponse } from './github-source'
 import { PACKAGE_ICON_FILENAMES } from './icon-assets'
 import { errorMessage, isRecord } from './installer-utils'
@@ -33,7 +34,15 @@ export interface OfficialConnectorPayload {
   manifest: McpPackageManifest
   yaml: string
   directoryAuthBlocked: boolean
+  overview?: string
   icon?: { name: string; bytes: Buffer }
+}
+
+/** Older website versions omit `overview`; it must never invalidate an otherwise usable connector. */
+export function normalizeConnectorOverview(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const overview = value.trim().slice(0, MCP_CONNECTOR_OVERVIEW_MAX_LENGTH)
+  return overview || undefined
 }
 
 export interface OfficialConnectorCatalog {
@@ -160,11 +169,13 @@ export async function fetchOfficialConnectorPackages(
             manifest.connector.auth !== item.auth
           )
             throw new Error(`Phi Website Connector package does not match the catalog: ${item.id}`)
+          const overview = normalizeConnectorOverview(detail.overview)
           const icon = await fetchConnectorIcon(item, detail, read, notices)
           const payload: OfficialConnectorPayload = {
             manifest,
             yaml,
             directoryAuthBlocked: item.directoryAuthBlocked,
+            ...(overview ? { overview } : {}),
             ...(icon ? { icon } : {})
           }
           result.push(payload)

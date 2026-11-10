@@ -139,6 +139,7 @@ interface CatalogSource {
   iconAsset?: RegistryIconAsset
   source?: FeaturedMcpConnector['source']
   notice?: string
+  overview?: string
   directoryAuthBlocked?: boolean
 }
 
@@ -220,7 +221,16 @@ export function listConnectorCatalog(
     // so a configured one can still be inspected and removed.
     .filter(({ manifest, directoryAuthBlocked }) => !directoryAuthBlocked || manifest.id in servers)
     .map(
-      ({ manifest, registryDir, packageDir, iconAsset, source, notice, directoryAuthBlocked }) => {
+      ({
+        manifest,
+        registryDir,
+        packageDir,
+        iconAsset,
+        source,
+        notice,
+        overview,
+        directoryAuthBlocked
+      }) => {
         const connector = manifest.connector
         const entry = servers[manifest.id]
         const marker = readManagedMarker(entry)
@@ -266,6 +276,7 @@ export function listConnectorCatalog(
           added: entry !== undefined,
           unavailableReason,
           unavailableKind,
+          ...(overview ? { overview } : {}),
           ...(source ? { source } : {}),
           ...(notice ? { notice } : {})
         }
@@ -658,6 +669,7 @@ function catalogSourcesFromRegistryIndex(registry: LocalRegistry): CatalogSource
       registryDir: registry.dir,
       directoryAuthBlocked: entry.directoryAuthBlocked,
       source,
+      ...(official && entry.overview ? { overview: entry.overview } : {}),
       ...(entry.iconAsset ? { iconAsset: entry.iconAsset } : {})
     }))
 }

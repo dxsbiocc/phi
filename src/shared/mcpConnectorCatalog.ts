@@ -71,6 +71,9 @@ export interface McpConnectorCatalogSource {
   sha?: string
 }
 
+/** Website connector detail copy is optional, trimmed, and capped at this many characters. */
+export const MCP_CONNECTOR_OVERVIEW_MAX_LENGTH = 6000
+
 export interface FeaturedMcpConnector {
   icon?: ResourceIconRef
   id: string

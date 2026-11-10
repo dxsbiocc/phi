@@ -6,9 +6,11 @@ import test from 'node:test'
 import { stringify } from 'yaml'
 
 import { listConnectorCatalog } from '../src/main/agent/mcp-connectors'
+import { fetchOfficialConnectorPackages } from '../src/main/agent/packages/official-connector-client'
 import { materializeRegistry } from '../src/main/agent/packages/materialize-registry'
 import type { LocalRegistry } from '../src/main/agent/packages/installer-types'
 import { readRegistry } from '../src/main/agent/packages/registry'
+import { MCP_CONNECTOR_OVERVIEW_MAX_LENGTH } from '../src/shared/mcpConnectorCatalog'
 
 const roots: string[] = []
 test.after(() => roots.forEach((root) => rmSync(root, { recursive: true, force: true })))
@@ -112,4 +114,109 @@ test('API entries whose authorization is blocked are hidden from the catalog unl
     registries: [api]
   })
   assert.equal(entries.length, 0)
+})
+
+test('official website catalog entries carry the overview while other sources do not', () => {
+  const f = fixture()
+  const overview = '### 服务概览\n\n- 使用 **浏览器** 完成任务'
+  const registry = f.registry('1.0.1')
+  const official = {
+    ...registry,
+    id: 'phi-packages',
+    kind: 'official' as const,
+    label: 'Phi 官网',
+    packages: registry.packages.map((entry) => ({ ...entry, overview }))
+  }
+  const [websiteEntry] = listConnectorCatalog({
+    agentDir: f.agentDir,
+    appVersion: '0.1.0',
+    registries: [official]
+  })
+  assert.equal(websiteEntry.overview, overview)
+
+  const imported = f.registry('1.0.0')
+  const [importedEntry] = listConnectorCatalog({
+    agentDir: f.agentDir,
+    appVersion: '0.1.0',
+    registries: [
+      { ...imported, packages: imported.packages.map((entry) => ({ ...entry, overview })) }
+    ]
+  })
+  assert.equal(importedEntry.overview, undefined)
+})
+
+function connectorApi(overview?: unknown): ReturnType<typeof fetchOfficialConnectorPackages> {
+  const origin = 'https://phi.omicsagent.cn'
+  const item = {
+    id: 'browser-use',
+    version: '1.0.1',
+    category: '科研数据',
+    auth: 'header',
+    transport: 'http',
+    catalogInstallable: true,
+    directoryAuthBlocked: false
+  }
+  const detail = {
+    kind: 'mcp',
+    slug: item.id,
+    version: item.version,
+    category: item.category,
+    auth: item.auth,
+    transport: item.transport,
+    catalogInstallable: true,
+    directoryAuthBlocked: false,
+    package: {
+      schemaVersion: 1,
+      id: item.id,
+      type: 'mcp',
+      version: item.version,
+      title: 'Browser Use',
+      summary: 'Run browser tasks',
+      connector: {
+        transport: 'http',
+        publisher: 'Fixture',
+        category: item.category,
+        url: 'https://browser-use.example/mcp',
+        auth: 'header'
+      }
+    },
+    ...(overview !== undefined ? { overview } : {})
+  }
+  return fetchOfficialConnectorPackages({
+    timeoutMs: 1000,
+    fetch: async (input) => {
+      const url = String(input)
+      if (url.startsWith(`${origin}/api/mcp?`))
+        return Response.json({
+          items: [item],
+          total: 1,
+          page: 1,
+          pageSize: 100,
+          pageCount: 1,
+          categories: [{ name: '科研数据', count: 1 }],
+          meta: { connectors: 1, stdioServers: 0 }
+        })
+      if (url === `${origin}/api/mcp/${item.id}`) return Response.json(detail)
+      return new Response(null, { status: 404 })
+    }
+  })
+}
+
+test('official website overview is optional, string-only, trimmed, and capped', async () => {
+  const present = await connectorApi('  ### 服务概览\n\n- 使用 **浏览器** 完成任务\n')
+  assert.equal(present.packages.length, 1)
+  assert.equal(present.packages[0].overview, '### 服务概览\n\n- 使用 **浏览器** 完成任务')
+  assert.equal(present.notices.length, 0)
+
+  for (const value of [undefined, null, 42, { text: 'not a string' }]) {
+    const absent = await connectorApi(value)
+    assert.equal(absent.packages.length, 1)
+    assert.equal(absent.packages[0].overview, undefined)
+    assert.equal(absent.notices.length, 0)
+  }
+
+  const overCap = await connectorApi('概'.repeat(MCP_CONNECTOR_OVERVIEW_MAX_LENGTH + 1))
+  assert.equal(overCap.packages.length, 1)
+  assert.equal(overCap.packages[0].overview, '概'.repeat(MCP_CONNECTOR_OVERVIEW_MAX_LENGTH))
+  assert.equal(overCap.notices.length, 0)
 })

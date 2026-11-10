@@ -97,13 +97,15 @@ async function synchronize(options: OfficialRegistryOptions): Promise<LocalRegis
       trust: 'imported',
       generatedAt: new Date(0).toISOString()
     })
-    const authBlocked = new Map(
-      payloads.map((payload) => [payload.manifest.id, payload.directoryAuthBlocked])
-    )
-    registry.packages = registry.packages.map((entry) => ({
-      ...entry,
-      directoryAuthBlocked: authBlocked.get(entry.id)!
-    }))
+    const payloadById = new Map(payloads.map((payload) => [payload.manifest.id, payload]))
+    registry.packages = registry.packages.map((entry) => {
+      const payload = payloadById.get(entry.id)!
+      return {
+        ...entry,
+        directoryAuthBlocked: payload.directoryAuthBlocked,
+        ...(payload.overview ? { overview: payload.overview } : {})
+      }
+    })
     const result = publishOfficialConnectorRegistry(registry, { agentDir })
     return ready(result, (options.now?.() ?? new Date()).toISOString(), notice)
   } catch (error) {

@@ -44,6 +44,8 @@ export interface RegistryPackageEntry {
   dependsOn: PackageDependency[]
   requires?: PackageRequirements
   category?: string
+  /** Website/official API presentation copy; absent in older caches and other registries. */
+  overview?: string
   directoryAuthBlocked?: boolean
   group?: string
   groupLabel?: string

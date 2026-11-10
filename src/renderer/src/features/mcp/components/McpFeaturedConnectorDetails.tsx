@@ -1,6 +1,7 @@
 import { useUiLanguage } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
 import { resourceCategoryLabel } from '../../../lib/resourceUi'
+import MarkdownContent from '../../../components/MarkdownContent'
 import { connectorCopy, connectorSignInLabel } from '../lib/connectorCopy'
 import { Alert, Box, Button, Chip, Divider, Stack, Typography } from '@mui/material'
 import type { FeaturedMcpConnector } from '../../../../../shared/mcpConnectorCatalog'
@@ -236,7 +237,9 @@ export function McpFeaturedConnectorDetails({
           <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
             {connectorCopy.serviceOverview}
           </Typography>
-          <Typography color="text.secondary">{connector.overview}</Typography>
+          <Box sx={{ color: 'text.secondary' }}>
+            <MarkdownContent text={connector.overview} />
+          </Box>
         </Box>
       ) : null}
       {connector.apiKey && (

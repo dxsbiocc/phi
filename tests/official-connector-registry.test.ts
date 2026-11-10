@@ -138,6 +138,7 @@ test('cold connector API cache installs version 1.0.1 using only official metada
   assert.equal(registry.id, 'phi-packages')
   assert.equal(registry.source, undefined)
   assert.equal(registry.packages[0].version, '1.0.1')
+  assert.equal(registry.packages[0].overview, undefined)
   assert.equal(isOfficialConnectorRegistryDirectory(registry.dir, f.agentDir), true)
   assert.ok(registry.packages[0].iconAsset)
   assert.deepEqual(
@@ -163,6 +164,25 @@ test('cold connector API cache installs version 1.0.1 using only official metada
   assert.ok(isRecord(server))
   assert.equal(server.url, 'https://browser-use.example/mcp')
   assert.equal(server.enabled, false)
+})
+
+test('website connector overview is cached and survives an offline restart', async () => {
+  const f = fixture()
+  const overview = '### 服务概览\n\n- 使用 **浏览器** 完成任务'
+  f.details.get('browser-use')!.overview = overview
+
+  const first = await syncOfficialConnectorRegistry(f.options)
+  assert.equal(first.packages[0].overview, overview)
+  assert.equal(
+    readOfficialConnectorRegistry(first.dir, { agentDir: f.agentDir }).packages[0].overview,
+    overview
+  )
+
+  f.setOffline()
+  const offline = await syncOfficialConnectorRegistry(f.options)
+  assert.equal(offline.status, 'cached')
+  assert.equal(offline.dir, first.dir)
+  assert.equal(offline.packages[0].overview, overview)
 })
 
 test('repeated identical API contents keep the same immutable index hash and memo avoids requests', async () => {

@@ -11,6 +11,7 @@ import { TRUSTED_REGISTRY_KEYS } from './trusted-keys'
 import { parseRegistryIconAsset } from './icon-assets'
 import { parseRegistryManifestAsset } from './manifest-assets'
 import type { CatalogSkillGroup } from '../../../shared/packageManagerTypes'
+import { MCP_CONNECTOR_OVERVIEW_MAX_LENGTH } from '../../../shared/mcpConnectorCatalog'
 
 export interface ReadRegistryOptions {
   builtin?: boolean
@@ -134,6 +135,7 @@ export function parseRegistryEntry(value: unknown, index: number): RegistryPacka
     throw new Error(`注册表 packages[${index}].manifestAsset 只适用于 connector`)
   }
   const group = parseSkillGroupEntry(entry)
+  const overview = parseConnectorOverview(entry, index)
   return {
     id: entry.id,
     type: entry.type,
@@ -147,6 +149,7 @@ export function parseRegistryEntry(value: unknown, index: number): RegistryPacka
     ...(typeof entry.minAppVersion === 'string' ? { minAppVersion: entry.minAppVersion } : {}),
     ...(requires ? { requires } : {}),
     ...(typeof entry.category === 'string' ? { category: entry.category } : {}),
+    ...(overview ? { overview } : {}),
     ...(typeof entry.directoryAuthBlocked === 'boolean'
       ? { directoryAuthBlocked: entry.directoryAuthBlocked }
       : {}),
@@ -155,6 +158,20 @@ export function parseRegistryEntry(value: unknown, index: number): RegistryPacka
     ...(iconAsset ? { iconAsset } : {}),
     ...(manifestAsset ? { manifestAsset } : {})
   }
+}
+
+function parseConnectorOverview(entry: Record<string, unknown>, index: number): string | undefined {
+  if (entry.overview === undefined) return undefined
+  if (
+    entry.type !== 'mcp' ||
+    typeof entry.overview !== 'string' ||
+    entry.overview.length < 1 ||
+    entry.overview.length > MCP_CONNECTOR_OVERVIEW_MAX_LENGTH ||
+    entry.overview.trim() !== entry.overview
+  ) {
+    throw new Error(`注册表 packages[${index}].overview 无效`)
+  }
+  return entry.overview
 }
 
 function validGroupLabel(value: unknown): value is string {

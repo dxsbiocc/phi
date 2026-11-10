@@ -196,4 +196,13 @@ test('connector details show the summary once and an overview only when it adds 
   })
   assert.match(distinct, /Service overview/)
   assert.match(distinct, /A longer overview/)
+  const markdown = renderDetails({
+    ...importedConnector,
+    description: 'One summary line',
+    overview: '### 服务概览\n\n- **重点** [官网](https://example.com/docs)'
+  })
+  assert.match(markdown, /<h3[^>]*>服务概览<\/h3>/)
+  assert.match(markdown, /<strong[^>]*>重点<\/strong>/)
+  assert.match(markdown, /href="https:\/\/example\.com\/docs"/)
+  assert.match(markdown, /target="_blank"/)
 })
