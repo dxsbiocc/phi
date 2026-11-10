@@ -2249,6 +2249,10 @@ async function harness(
         }
       })
     },
+    './agent/desktop-fetch': {
+      desktopFetch: (override?: typeof globalThis.fetch): typeof globalThis.fetch =>
+        override ?? globalThis.fetch
+    },
     './agent/connection-logging': {
       logServerConnections: (): void => undefined,
       logProjectConnectionState: (): void => undefined
@@ -4706,6 +4710,7 @@ async function harness(
   ]
   const explicitlyLoadedSourceModules = new Set([
     './agent/mcp/custom-auth-url',
+    './agent/plugins/plugin-install-jobs',
     './app-state/app-caches',
     './app-state/main-runtime-context',
     './app-state/main-window-state',
@@ -7670,6 +7675,7 @@ const expectedStartupRegistrationOrder = [
   'tool:approval-response',
   'tool:show-pending',
   'agent:interaction-response',
+  'pluginInstallJobs:list',
   'phiPlugins:list',
   'phiPlugins:catalogDetail',
   'phiPlugins:visualizationTemplates',
