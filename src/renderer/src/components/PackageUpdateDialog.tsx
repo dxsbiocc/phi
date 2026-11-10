@@ -28,6 +28,7 @@ import {
   type PackageChangelogChange
 } from '../lib/packageChangelog'
 import { PhiIcons } from '../icons'
+import { OverlayScroll } from './OverlayScroll'
 
 const ExpandIcon = PhiIcons.action.expand
 const CloseIcon = PhiIcons.action.close
@@ -242,27 +243,31 @@ function PackageChangelogList({
   }
 
   return (
-    <Box
+    // Overlay scrollbar: it takes no width, so row hover reaches the frame on both sides.
+    <OverlayScroll
       data-phi-package-changelog="true"
       sx={{
         border: 1,
         borderColor: 'divider',
         borderRadius: 2,
-        maxHeight: CHANGELOG_MAX_HEIGHT,
-        overflowY: 'auto',
-        overscrollBehavior: 'contain'
+        overflow: 'hidden',
+        maxHeight: CHANGELOG_MAX_HEIGHT
       }}
+      contentSx={{ overscrollBehavior: 'contain' }}
     >
-      {changes.map((change, index) => (
-        <VersionAccordion
-          key={`${change.version}:${index}`}
-          change={change}
-          latest={index === 0}
-          expanded={expanded.has(index)}
-          onExpandedChange={(isExpanded) => setVersionExpanded(index, isExpanded)}
-        />
-      ))}
-    </Box>
+      {/* One child, so the scrollbar follows the list as versions open and close. */}
+      <Box>
+        {changes.map((change, index) => (
+          <VersionAccordion
+            key={`${change.version}:${index}`}
+            change={change}
+            latest={index === 0}
+            expanded={expanded.has(index)}
+            onExpandedChange={(isExpanded) => setVersionExpanded(index, isExpanded)}
+          />
+        ))}
+      </Box>
+    </OverlayScroll>
   )
 }
 

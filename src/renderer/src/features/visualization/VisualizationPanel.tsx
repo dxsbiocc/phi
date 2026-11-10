@@ -5,7 +5,7 @@ import {
   selectedVisualizationGroupId,
   visibleVisualizationTemplates
 } from './lib/visualizationTemplates'
-import { OverlayScroll } from './components/OverlayScroll'
+import { OverlayScroll } from '../../components/OverlayScroll'
 import { useVisualizationTemplates } from './hooks/useVisualizationTemplates'
 import { useState } from 'react'
 import { Alert, Box, CircularProgress, TextField, Typography } from '@mui/material'

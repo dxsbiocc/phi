@@ -1,4 +1,4 @@
-import { OverlayScroll } from './OverlayScroll'
+import { OverlayScroll } from '../../../components/OverlayScroll'
 import { useUiLanguage } from '../../../lib/i18n'
 import { visualizationCopy, visualizationGroupLabel } from '../lib/visualizationCopy'
 import { ButtonBase, Typography } from '@mui/material'
