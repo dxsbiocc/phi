@@ -150,7 +150,7 @@ function addStringQueryParam(
   const value = query[key]
   if (value === undefined || value === '') return
   if (typeof value !== 'string' || value.length > 1_000) throw new Error(`invalid ${key}`)
-  if ((key === 'group' || key === 'category') && !safeSegment(value)) {
+  if (key === 'category' ? !safeSegment(value) : key === 'group' && !safeWrapperId(value)) {
     throw new Error(`invalid ${key}`)
   }
   params.set(key, value)
@@ -181,7 +181,7 @@ function wrapperGroupsPage(value: unknown): PhiWrapperGroupsPage {
 }
 
 function wrapperToolsPage(value: unknown, query: PhiWrapperToolsQuery): PhiWrapperToolsPage {
-  if (!isRecord(query) || !safeSegment(query.group)) throw new Error('invalid wrapper group')
+  if (!isRecord(query) || !safeWrapperId(query.group)) throw new Error('invalid wrapper group')
   const row = record(value, 'wrapper tools')
   if (row.view !== 'tools' || row.group !== query.group || row.suite !== query.group) {
     throw new Error('wrapper group does not match request')
@@ -199,7 +199,7 @@ function wrapperGroup(value: unknown, index: number): PhiWrapperCatalogGroup {
   const row = record(value, `items[${index}]`)
   const categories = categoryCounts(row.categories, `items[${index}].categories`)
   return {
-    suite: segment(row.suite, `items[${index}].suite`),
+    suite: wrapperId(row.suite, `items[${index}].suite`),
     count: count(row.count, `items[${index}].count`),
     category: segment(row.category, `items[${index}].category`),
     categories,
@@ -220,7 +220,7 @@ function wrapperTool(value: unknown, index: number): PhiWrapperCatalogTool {
     path: text(row.path, `items[${index}].path`, limit.path),
     version: text(row.version, `items[${index}].version`, limit.version),
     source: text(row.source, `items[${index}].source`, limit.source),
-    suite: segment(row.suite, `items[${index}].suite`)
+    suite: wrapperId(row.suite, `items[${index}].suite`)
   }
 }
 
@@ -228,7 +228,7 @@ function wrapperDetail(value: unknown, requestedId: string): PhiWrapperCatalogDe
   const row = record(value, 'wrapper detail')
   if (row.kind !== 'wrapper' || row.id !== requestedId) throw new Error('wrapper detail mismatch')
   const summary = optionalText(row.summary, 'summary', limit.summary)
-  const suite = optionalSegment(row.suite, 'suite')
+  const suite = row.suite === undefined ? undefined : wrapperId(row.suite, 'suite')
   const structure = record(row.structure, 'structure')
   return {
     kind: 'wrapper',
@@ -360,8 +360,12 @@ function page<T>(
     throw new Error('invalid catalog pagination')
   }
   const items = array(row.items, 'items', MAX_PAGE_ITEMS)
+  // A page past the end (for example after the filter narrowed the list) is an empty answer.
+  if (currentPage > pageCount) {
+    if (items.length !== 0) throw new Error('catalog page item count is inconsistent')
+    return { items: [], total, page: currentPage, pageSize, pageCount }
+  }
   if (
-    currentPage > pageCount ||
     items.length > pageSize ||
     items.length > total ||
     (total === 0 && items.length !== 0) ||
@@ -483,10 +487,6 @@ function safeSegment(value: unknown): value is string {
 function segment(value: unknown, path: string): string {
   if (!safeSegment(value)) throw new Error(`${path} is invalid`)
   return value
-}
-
-function optionalSegment(value: unknown, path: string): string | undefined {
-  return value === undefined ? undefined : segment(value, path)
 }
 
 function safeWrapperId(value: unknown): value is string {

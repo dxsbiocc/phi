@@ -350,3 +350,41 @@ test('catalog failures, timeouts, oversized responses, invalid inputs, and incon
   inconsistent.page = 2
   await unavailable(getOfficialWebsiteWrapperGroups({}, options(inconsistent)))
 })
+
+test('wrapper groups named by a path (nf-core/rnaseq) list and open; unsafe paths do not', async () => {
+  const groups = wrapperGroups()
+  const [item] = groups.items as Record<string, unknown>[]
+  Object.assign(item, { suite: 'nf-core/rnaseq', category: 'workflows', categories: { workflows: 1 } })
+  groups.categories = [{ id: 'workflows', label: '工作流', count: 1 }]
+  const listed = await data(
+    getOfficialWebsiteWrapperGroups({ category: 'workflows' }, options(groups))
+  )
+  assert.equal(listed.items[0].suite, 'nf-core/rnaseq')
+
+  const requested: URL[] = []
+  const tools = { ...wrapperTools(), group: 'nf-core/rnaseq', suite: 'nf-core/rnaseq' }
+  ;(tools.items as Record<string, unknown>[])[0].suite = 'nf-core/rnaseq'
+  await data(
+    getOfficialWebsiteWrapperTools(
+      { group: 'nf-core/rnaseq' },
+      {
+        fetch: async (input) => {
+          requested.push(new URL(String(input)))
+          return Response.json(tools)
+        }
+      }
+    )
+  )
+  assert.equal(requested[0].searchParams.get('group'), 'nf-core/rnaseq')
+
+  for (const group of ['../escape', 'nf-core//rnaseq', '/rnaseq']) {
+    await unavailable(getOfficialWebsiteWrapperTools({ group }, options(tools)))
+  }
+})
+
+test('a wrapper groups page past the end is an empty page, not an outage', async () => {
+  const past = { ...wrapperGroups(), items: [], page: 16 }
+  const empty = await data(getOfficialWebsiteWrapperGroups({ page: 16 }, options(past)))
+  assert.deepEqual(empty.items, [])
+  assert.equal(empty.pageCount, 1)
+})
