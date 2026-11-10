@@ -238,7 +238,15 @@ export function McpFeaturedConnectorDetails({
             {connectorCopy.serviceOverview}
           </Typography>
           {/* Inset under the heading and cap the line length so long introductions stay readable. */}
-          <Box sx={{ color: 'text.secondary', px: 2, maxWidth: 760 }}>
+          <Box
+            sx={{
+              color: 'text.secondary',
+              px: 2,
+              maxWidth: 760,
+              textAlign: 'justify',
+              textJustify: 'inter-character'
+            }}
+          >
             <MarkdownContent text={connector.overview} />
           </Box>
         </Box>
