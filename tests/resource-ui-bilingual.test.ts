@@ -110,8 +110,9 @@ test('Connector presentation changes language without changing authorization or 
         onAuthorize: () => undefined
       })
     )
-    for (const text of [connector.name, connector.description, status, source, unsigned])
+    for (const text of [connector.name, connector.description, status, source])
       assert.ok(markup.includes(text), text)
+    assert.ok(!markup.includes(unsigned), `no ${unsigned} badge`)
     assert.ok(markup.includes(`aria-label="${action}"`))
     assert.match(markup, /data-phi-connector-configured="false"/)
     assert.doesNotMatch(markup, /data-phi-connector-state="added"/)

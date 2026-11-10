@@ -93,10 +93,6 @@ export const connectorCopyZh = {
   reauthorize: '重新授权',
   authorizeSignIn: '授权登录',
   signInUnavailable: '登录暂不可用',
-  gmailAuthUnavailable:
-    'Gmail MCP 需要在 Google Cloud 启用服务并为 Phi 配置 OAuth 客户端。Phi 尚未提供此配置，因此暂时无法从目录授权或添加此连接器。',
-  slackAuthUnavailable:
-    'Slack MCP 需要注册 Slack 应用并配置 OAuth 客户端。Phi 尚未提供此配置，因此暂时无法从目录授权或添加此连接器。',
   oauthUnavailable: '此服务需要 OAuth 登录。Phi 尚未支持其授权流程，因此暂时无法从目录添加。',
   composioAuthHint: '登录 Composio 后可按需授权各个应用。第三方账号由 Composio 管理。',
   serviceOverview: '服务概览',

@@ -100,10 +100,6 @@ const connectorCopyEn = {
   reauthorize: 'Authorize again',
   authorizeSignIn: 'Sign in',
   signInUnavailable: 'Sign-in unavailable',
-  gmailAuthUnavailable:
-    'Gmail MCP requires the service to be enabled in Google Cloud and an OAuth client configured for Phi. This setup is not available in Phi yet, so the Connector cannot be authorized or added from the catalog.',
-  slackAuthUnavailable:
-    'Slack MCP requires a registered Slack app and an OAuth client. This setup is not available in Phi yet, so the Connector cannot be authorized or added from the catalog.',
   oauthUnavailable:
     'This service requires OAuth sign-in. Phi does not support its authorization flow yet, so it cannot be added from the catalog.',
   composioAuthHint:

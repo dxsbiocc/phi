@@ -104,7 +104,7 @@ export function McpConnectorCatalogDialog({
   const [updates, setUpdates] = useState<PackageUpdateView[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
   const [group, setGroup] = useState<CatalogGroup>('生产力')
-  const [selectedId, setSelectedId] = useState('google-drive')
+  const [selectedId, setSelectedId] = useState('')
   const [query, setQuery] = useState('')
   const [signInFilter, setSignInFilter] = useState<ConnectorSignInFilter>('all')
   const [installFilter, setInstallFilter] = useState<ConnectorInstallFilter>('all')

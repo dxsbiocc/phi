@@ -222,11 +222,7 @@ export function McpFeaturedConnectorDetails({
       </Stack>
       {connector.signIn === '需要登录' && !connector.oauthAuthorizationOrigin && (
         <Alert severity="warning" sx={{ mb: 3 }}>
-          {connector.id === 'gmail'
-            ? connectorCopy.gmailAuthUnavailable
-            : connector.id === 'slack'
-              ? connectorCopy.slackAuthUnavailable
-              : connectorCopy.oauthUnavailable}
+          {connectorCopy.oauthUnavailable}
         </Alert>
       )}
       {connector.id === 'composio' && (
