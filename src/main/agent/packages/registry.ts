@@ -14,7 +14,8 @@ import type { CatalogSkillGroup, PackageChangelogEntry } from '../../../shared/p
 import {
   PACKAGE_CHANGELOG_MAX_SECTIONS,
   PACKAGE_CHANGELOG_NOTES_MAX_LENGTH,
-  PACKAGE_CHANGELOG_TOTAL_MAX_LENGTH
+  PACKAGE_CHANGELOG_TOTAL_MAX_LENGTH,
+  isValidPackageChangelogDate
 } from '../../../shared/packageManagerTypes'
 import { MCP_CONNECTOR_OVERVIEW_MAX_LENGTH } from '../../../shared/mcpConnectorCatalog'
 
@@ -182,7 +183,13 @@ function parseChangelog(value: unknown): PackageChangelogEntry[] | undefined {
     if (typeof item.notes !== 'string' || item.notes.trim().length === 0) continue
     if (item.notes.length > PACKAGE_CHANGELOG_NOTES_MAX_LENGTH) continue
     if (total + item.notes.length > PACKAGE_CHANGELOG_TOTAL_MAX_LENGTH) continue
-    entries.push({ version: item.version, notes: item.notes })
+    entries.push({
+      version: item.version,
+      notes: item.notes,
+      ...(typeof item.date === 'string' && isValidPackageChangelogDate(item.date)
+        ? { date: item.date }
+        : {})
+    })
     total += item.notes.length
   }
   return entries.length > 0 ? entries : undefined

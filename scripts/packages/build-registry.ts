@@ -40,6 +40,7 @@ import {
   PACKAGE_CHANGELOG_MAX_SECTIONS,
   PACKAGE_CHANGELOG_NOTES_MAX_LENGTH,
   PACKAGE_CHANGELOG_TOTAL_MAX_LENGTH,
+  isValidPackageChangelogDate,
   type PackageChangelogEntry
 } from '../../src/shared/packageManagerTypes'
 import {
@@ -371,13 +372,19 @@ export function parseChangelogSections(
   manifestVersion: string
 ): PackageChangelogEntry[] {
   if (!semver.valid(manifestVersion)) return []
-  const sections: Array<{ version: string; notes: string }> = []
-  let current: { version: string; lines: string[] } | undefined
+  const sections: Array<{ version: string; date?: string; notes: string }> = []
+  let current: { version: string; date?: string; lines: string[] } | undefined
 
   const finish = (): void => {
     if (!current) return
     const notes = current.lines.join('\n').trim()
-    if (notes) sections.push({ version: current.version, notes })
+    if (notes) {
+      sections.push({
+        version: current.version,
+        ...(current.date ? { date: current.date } : {}),
+        notes
+      })
+    }
     current = undefined
   }
 
@@ -385,8 +392,13 @@ export function parseChangelogSections(
     const heading = /^##(?!#)\s+(.+?)\s*$/.exec(line)
     if (heading) {
       finish()
-      const version = parseChangelogHeading(heading[1] ?? '')
-      if (version) current = { version, lines: [] }
+      const parsed = parseChangelogHeading(heading[1] ?? '')
+      if (parsed)
+        current = {
+          version: parsed.version,
+          ...(parsed.date ? { date: parsed.date } : {}),
+          lines: []
+        }
       continue
     }
     current?.lines.push(line)
@@ -402,19 +414,32 @@ export function parseChangelogSections(
     const notes = capChangelogNotes(section.notes, PACKAGE_CHANGELOG_NOTES_MAX_LENGTH)
     if (!notes) continue
     if (total + notes.length > PACKAGE_CHANGELOG_TOTAL_MAX_LENGTH) break
-    entries.push({ version: section.version, notes })
+    entries.push({
+      version: section.version,
+      ...(section.date ? { date: section.date } : {}),
+      notes
+    })
     total += notes.length
   }
   return entries
 }
 
-function parseChangelogHeading(text: string): string | undefined {
+function parseChangelogHeading(text: string): { version: string; date?: string } | undefined {
   const heading = text.replace(/\s+#+\s*$/, '').trim()
   const match = /^\[?([^\s\]]+)\]?(.*)$/.exec(heading)
   if (!match) return undefined
   const suffix = match[2] ?? ''
   if (suffix.trim() && !/^\s*(?:-|–|—|\()/.test(suffix)) return undefined
-  return semver.valid(match[1] ?? '') ?? undefined
+  const version = semver.valid(match[1] ?? '') ?? undefined
+  if (!version) return undefined
+  const date = parseChangelogDate(suffix)
+  return { version, ...(date ? { date } : {}) }
+}
+
+function parseChangelogDate(text: string): string | undefined {
+  const match = /(?:^|[^\d])(\d{4}-\d{2}-\d{2})(?!\d)/.exec(text)
+  const date = match?.[1]
+  return date && isValidPackageChangelogDate(date) ? date : undefined
 }
 
 function capChangelogNotes(notes: string, limit: number): string {

@@ -546,6 +546,8 @@ type MarkdownContentProps = {
   enableMath?: boolean // off by default -- see markdownMathPlugins.ts for why
   showColorPalettes?: boolean
   allowCodeActions?: boolean
+  /** Render one inline sentence, e.g. a changelog bullet, without block wrappers. */
+  inline?: boolean
 }
 
 function MarkdownContentImpl({
@@ -555,7 +557,8 @@ function MarkdownContentImpl({
   onOpenWebUrl,
   enableMath = false,
   showColorPalettes = false,
-  allowCodeActions = false
+  allowCodeActions = false,
+  inline = false
 }: MarkdownContentProps): React.JSX.Element {
   useUiLanguage()
   const inheritedOpenWebUrl = useContext(WebLinkOpenContext)
@@ -810,7 +813,22 @@ function MarkdownContentImpl({
         <Box component="td">
           {renderInlineChildren(children, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
         </Box>
-      )
+      ),
+      ...(inline
+        ? {
+            p: ({ children }: { children?: ReactNode }) => (
+              <>
+                {renderInlineChildren(
+                  children,
+                  cwd,
+                  localPathKinds,
+                  onOpenLocalPath,
+                  remoteProject
+                )}
+              </>
+            )
+          }
+        : {})
     }),
     [
       cwd,
@@ -819,13 +837,16 @@ function MarkdownContentImpl({
       webLinkOpener,
       remoteProject,
       showColorPalettes,
-      resourceMentions
+      resourceMentions,
+      inline
     ]
   )
 
   return (
     <Box
+      component={inline ? 'span' : 'div'}
       sx={{
+        display: inline ? 'inline' : undefined,
         fontSize: '0.95rem',
         lineHeight: 1.7,
         minWidth: 0,
@@ -876,7 +897,8 @@ function markdownContentPropsEqual(
     prev.onOpenWebUrl === next.onOpenWebUrl &&
     prev.enableMath === next.enableMath &&
     prev.allowCodeActions === next.allowCodeActions &&
-    prev.showColorPalettes === next.showColorPalettes
+    prev.showColorPalettes === next.showColorPalettes &&
+    prev.inline === next.inline
   )
 }
 

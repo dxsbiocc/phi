@@ -79,7 +79,35 @@ First release.
         version: '0.7.0',
         notes: 'Second release.\n\n### Details\nStill part of the second release.'
       },
-      { version: '0.6.0', notes: 'First release.' }
+      { version: '0.6.0', date: '2025-01-01', notes: 'First release.' }
+    ]
+  )
+})
+
+test('keeps valid release dates from heading variants and drops invalid ones', () => {
+  assert.deepEqual(
+    parseChangelogSections(
+      `# Changelog
+
+## [0.7.0] (2026-11-03)
+Bracketed date.
+
+## 0.6.0 - 2026-02-30
+Impossible calendar date.
+
+## 0.5.0 - 2026-1-2
+Not a canonical date.
+
+## 0.4.0
+No date at all.
+`,
+      '0.7.0'
+    ),
+    [
+      { version: '0.7.0', date: '2026-11-03', notes: 'Bracketed date.' },
+      { version: '0.6.0', notes: 'Impossible calendar date.' },
+      { version: '0.5.0', notes: 'Not a canonical date.' },
+      { version: '0.4.0', notes: 'No date at all.' }
     ]
   )
 })
@@ -134,7 +162,7 @@ test('omits changelog when the package has no changelog file or no usable sectio
       root,
       `# Changelog
 
-## 1.2.0
+## 1.2.0 - 2026-10-01
 Current release notes.
 
 ## 1.1.0
@@ -142,7 +170,7 @@ Older release notes.
 `
     )
     assert.deepEqual(build(root).changelog, [
-      { version: '1.2.0', notes: 'Current release notes.' },
+      { version: '1.2.0', date: '2026-10-01', notes: 'Current release notes.' },
       { version: '1.1.0', notes: 'Older release notes.' }
     ])
   } finally {
@@ -168,18 +196,22 @@ test('drops invalid changelog items without rejecting the registry entry', () =>
       {
         ...base,
         changelog: [
-          { version: '1.5.0', notes: 'Valid notes.' },
+          { version: '1.5.0', date: '2026-11-03', notes: 'Valid notes.' },
           { version: 'not-semver', notes: 'Bad version.' },
           { version: '1.4.0', notes: '' },
           { version: '1.3.0', notes: 42 },
           { version: '1.2.0', notes: 'x'.repeat(4001) },
+          { version: '1.1.0', date: '2026-02-30', notes: 'Invalid date is dropped.' },
+          { version: '1.0.5', date: 42, notes: 'Non-string date is dropped.' },
           { version: '1.1.0', notes: 'Another valid section.' }
         ]
       },
       0
     ).changelog,
     [
-      { version: '1.5.0', notes: 'Valid notes.' },
+      { version: '1.5.0', date: '2026-11-03', notes: 'Valid notes.' },
+      { version: '1.1.0', notes: 'Invalid date is dropped.' },
+      { version: '1.0.5', notes: 'Non-string date is dropped.' },
       { version: '1.1.0', notes: 'Another valid section.' }
     ]
   )

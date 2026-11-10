@@ -87,6 +87,52 @@ test('plugin updates use the display title and render every changelog version', 
   assert.doesNotMatch(markup, /全部更新/)
 })
 
+test('renders typed changelog changes as release accordions with chips and dates', () => {
+  const markup = renderDialog({
+    id: 'literature-library',
+    type: 'plugin',
+    title: '文献库',
+    currentVersion: '0.6.0',
+    newVersion: '0.7.0',
+    registryId: '0123456789abcdef',
+    registryPath: '/registries/alpha',
+    trust: 'official',
+    changes: [
+      {
+        version: '0.7.0',
+        date: '2026-11-03',
+        notes: `Intro for 0.7.0.
+
+### Added
+
+- Added **PubMed** search support.
+
+### Removed
+
+- Removed the legacy flag.`
+      },
+      {
+        version: '0.6.5',
+        notes: `### Fixed
+
+- Fixed a crash.`
+      }
+    ]
+  })
+
+  assert.match(markup, /更新内容/)
+  assert.match(markup, /2 个版本/)
+  assert.match(markup, /最新/)
+  assert.match(markup, /不兼容/)
+  assert.match(markup, /新增/)
+  assert.match(markup, /修复/)
+  assert.match(markup, /其他说明/)
+  assert.match(markup, /PubMed/)
+  assert.match(markup, /2026/)
+  assert.match(markup, /0\.7\.0/)
+  assert.match(markup, /0\.6\.5/)
+})
+
 test('imported updates do not show an unsigned trust chip', () => {
   const markup = renderDialog({
     id: 'alpha-skill',
