@@ -100,7 +100,11 @@ import type { BrowserTrustedOverlayRequest } from './features/browser/lib/browse
 import { useEnvironmentBuildNotices } from './features/jobs/hooks/useEnvironmentBuildNotices'
 import type { LocalPathKind } from './components/MarkdownContent'
 import PhiPluginsView, { PhiPluginCatalogDialog } from './features/phi-plugin/PhiPluginsView'
-import { usePhiPlugins } from './features/phi-plugin/hooks/usePhiPlugins'
+import {
+  usePhiPlugins,
+  type PhiPluginDisplayItem
+} from './features/phi-plugin/hooks/usePhiPlugins'
+import { pluginCopy } from './features/phi-plugin/lib/pluginCopy'
 import { WrapperDetail } from './features/wrapper/WrapperView'
 import { useWrapperCatalog } from './features/wrapper/hooks/useWrapperCatalog'
 import { wrapperResultBelongsToProject } from './features/wrapper/lib/resultFiles'
@@ -3092,35 +3096,60 @@ function App(): React.JSX.Element {
     [refreshSkills, rendererApi, showSnackbar]
   )
 
+  /**
+   * An uninstalled or removed resource no longer has anything to show, so its tab closes
+   * the same way as the tab's own close button. There is one resource tab per kind.
+   */
+  const closeRemovedResourceTab = useCallback(
+    (kind: WorkspaceResourceKind, itemId: string): void => {
+      const tab = workspaceTabs.find(
+        (candidate) => candidate.kind === kind && candidate.itemId === itemId
+      )
+      if (tab) onCloseWorkspaceTab(tab)
+    },
+    [onCloseWorkspaceTab, workspaceTabs]
+  )
+
+  // Wrapper packages are removed from inside the wrapper views. The catalog keeps disabled
+  // wrappers, so a wrapper that drops out of a loaded catalog was removed: close its tab.
+  const loadedWrapperIdsRef = useRef<ReadonlySet<string> | null>(null)
+  useEffect(() => {
+    if (isLoadingWrappers || wrapperError) return
+    const ids = new Set(wrapperCatalog.map((entry) => entry.id))
+    const previous = loadedWrapperIdsRef.current
+    loadedWrapperIdsRef.current = ids
+    if (!previous) return
+    for (const id of previous) {
+      if (!ids.has(id)) closeRemovedResourceTab('wrappers', id)
+    }
+  }, [closeRemovedResourceTab, isLoadingWrappers, wrapperCatalog, wrapperError])
+
+  const onUninstallPhiPlugin = useCallback(
+    async (plugin: PhiPluginDisplayItem): Promise<boolean> => {
+      const uninstalled = await phiPluginsState.uninstall(plugin)
+      if (uninstalled) {
+        closeRemovedResourceTab('plugins', plugin.id)
+        // The in-page notice would vanish with the tab; confirm in the app snackbar instead.
+        phiPluginsState.clearNotice()
+        showSnackbar(pluginCopy.uninstallCompleted(plugin.title), 'success')
+      }
+      return uninstalled
+    },
+    [closeRemovedResourceTab, phiPluginsState, showSnackbar]
+  )
+
   const onDeleteSkill = useCallback(
     async (skill: SkillSummary): Promise<void> => {
       try {
-        const nextSkills = await deleteSkill(skill)
+        await deleteSkill(skill)
         showSnackbar(resourceActionMessages.skillUninstalled, 'success')
-        if (
-          activeWorkspaceResourceTab?.kind === 'skills' &&
-          activeWorkspaceResourceTab.itemId === skill.id
-        ) {
-          const nextSkill = nextSkills[0] ?? null
-          if (nextSkill) {
-            onOpenSkillTab(nextSkill)
-          } else {
-            setActiveSkillId(null)
-          }
-        }
+        closeRemovedResourceTab('skills', skill.id)
       } catch (error) {
         showSnackbarError(error, resourceActionMessages.skillUninstallFailed)
         throw error
       }
     },
-    [
-      activeWorkspaceResourceTab,
-      deleteSkill,
-      onOpenSkillTab,
-      setActiveSkillId,
-      showSnackbar,
-      showSnackbarError
-    ]
+    [closeRemovedResourceTab, deleteSkill, showSnackbar, showSnackbarError]
   )
 
   const onOpenMcpServerTab = useCallback(
@@ -3183,14 +3212,9 @@ function App(): React.JSX.Element {
       }
       await refreshMcpServers()
       showSnackbar(resourceActionMessages.connectorRemoved, 'success')
-      if (
-        activeWorkspaceResourceTab?.kind === 'mcp' &&
-        activeWorkspaceResourceTab.itemId === server.id
-      ) {
-        onCloseWorkspaceTab(activeWorkspaceResourceTab)
-      }
+      closeRemovedResourceTab('mcp', server.id)
     },
-    [activeWorkspaceResourceTab, onCloseWorkspaceTab, refreshMcpServers, showSnackbar]
+    [closeRemovedResourceTab, refreshMcpServers, showSnackbar]
   )
 
   const onStartSidebarResize = useCallback(
@@ -3347,7 +3371,7 @@ function App(): React.JSX.Element {
         onClearNotice={phiPluginsState.clearNotice}
         onRefresh={phiPluginsState.refresh}
         onSetEnabled={phiPluginsState.setEnabled}
-        onUninstall={phiPluginsState.uninstall}
+        onUninstall={onUninstallPhiPlugin}
       />
     ) : activeWorkspaceResourceTab.kind === 'skills' ? (
       <SkillDetail
@@ -4194,7 +4218,7 @@ function App(): React.JSX.Element {
           onShowError={phiPluginsState.showError}
           onInstallFromDirectory={phiPluginsState.installFromDirectory}
           onSetEnabled={phiPluginsState.setEnabled}
-          onUninstall={phiPluginsState.uninstall}
+          onUninstall={onUninstallPhiPlugin}
         />
 
         <WorkspaceView
