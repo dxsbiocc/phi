@@ -92,7 +92,7 @@ const english = {
   removePackageInstalled: (name: string) =>
     `This deletes every file and folder owned by the ${name} Wrapper package installed from the content catalog, including its Nextflow module definitions. The tool binary, container image and runtime environment cache are not part of this package and stay. This cannot be undone.`,
   removeSuiteInstalled: (suite: string, count: number) =>
-    `This deletes every file and folder owned by the ${count} installed tool${count === 1 ? '' : 's'} in ${suite}, including their Nextflow module definitions. Tool binaries, container images and runtime environment caches are not part of these packages and stay. This cannot be undone.`,
+    `This removes the ${count} installed tool${count === 1 ? '' : 's'} in ${suite}, including their Nextflow module definitions. This cannot be undone.`,
   removePackageDependents: (names: readonly string[]) =>
     `These enabled packages depend on it and will be switched off: ${names.join(', ')}.`,
   removePackageFilesWarning:
@@ -285,7 +285,7 @@ const chinese: LocalizedCopy<typeof english> = {
   removePackageInstalled: (name: string) =>
     `将删除从内容目录安装的 ${name} 包及其拥有的全部文件与文件夹（包括 Nextflow 模块定义）。工具本体、容器镜像和运行环境缓存不属于这个包，不会被删除。此操作无法撤销。`,
   removeSuiteInstalled: (suite: string, count: number) =>
-    `将删除 ${suite} 中 ${count} 个已安装工具及其拥有的全部文件与文件夹（包括 Nextflow 模块定义）。工具本体、容器镜像和运行环境缓存不属于这些包，不会被删除。此操作无法撤销。`,
+    `将删除 ${suite} 中 ${count} 个已安装工具（包括 Nextflow 模块定义）。此操作无法撤销。`,
   removePackageDependents: (names: readonly string[]) =>
     `以下已启用的软件包依赖它，将被一并停用：${names.join('、')}。`,
   removePackageFilesWarning:
