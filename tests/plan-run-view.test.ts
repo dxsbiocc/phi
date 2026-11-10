@@ -7,7 +7,6 @@ import {
   planStepDurationMs,
   planStepActions,
   planStepRetryNeedsConfirmation,
-  planRunPauseReason,
   planRunProgress,
   planRunSnapshotFromUnknown,
   upsertPlanRun
@@ -46,43 +45,6 @@ function runSnapshot(): PlanRunTimelineSnapshot {
 
 test('planRunProgress reports completed and total steps', () => {
   assert.deepEqual(planRunProgress(runSnapshot()), { completed: 1, total: 2 })
-})
-
-test('planRunPauseReason names the blocked step and missing inputs', () => {
-  const run = runSnapshot()
-  run.status = 'paused'
-  run.pause = { reason: 'needs_input', stepId: 'write' }
-  run.steps[1]!.missingInputs = ['output format', 'target audience']
-
-  assert.equal(
-    planRunPauseReason(run, {
-      user: '用户暂停',
-      interrupted: '中断（应用重启）',
-      unknown: (step) => `第 ${step} 步状态未知`,
-      failed: (step) => `第 ${step} 步失败`,
-      needsInput: (step, inputs) => `第 ${step} 步需要补充信息：${inputs.join('、')}`
-    }),
-    '第 2 步需要补充信息：output format、target audience'
-  )
-})
-
-test('planRunPauseReason distinguishes user, failure and restart pauses', () => {
-  const copy = {
-    user: '用户暂停',
-    interrupted: '中断（应用重启）',
-    unknown: (step: number) => `第 ${step} 步状态未知`,
-    failed: (step: number) => `第 ${step} 步失败`,
-    needsInput: (step: number, inputs: string[]) => `第 ${step} 步：${inputs.join('、')}`
-  }
-  const run = runSnapshot()
-  run.pause = { reason: 'user' }
-  assert.equal(planRunPauseReason(run, copy), '用户暂停')
-  run.pause = { reason: 'step_failed', stepId: 'write' }
-  assert.equal(planRunPauseReason(run, copy), '第 2 步失败')
-  run.pause = { reason: 'interrupted' }
-  assert.equal(planRunPauseReason(run, copy), '中断（应用重启）')
-  run.pause = { reason: 'unknown', stepId: 'write' }
-  assert.equal(planRunPauseReason(run, copy), '第 2 步状态未知')
 })
 
 test('planStepActions only exposes recovery actions on the paused problem step', () => {

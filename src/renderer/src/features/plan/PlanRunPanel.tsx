@@ -24,18 +24,21 @@ import { useUiLanguage } from '../../lib/i18n'
 import type { RendererApi } from '../../types'
 import { usePlanRuns, type OnReplanPrompt, type PlanRunsController } from './hooks/usePlanRuns'
 import { planCopy } from './lib/planCopy'
-import {
-  planRunPauseReason,
-  planRunProgress,
-  planStepRetryNeedsConfirmation
-} from './lib/planRunView'
+import { stopPlan } from './lib/stopPlan'
+import { planRunProgress, planStepRetryNeedsConfirmation } from './lib/planRunView'
 import { PlanRunControls } from './components/PlanRunControls'
 import { PlanStepRow } from './components/PlanStepRow'
 import { PlanTimelineHeader, type PlanTimelineTone } from './components/PlanTimeline'
 
 type Confirmation =
   { kind: 'stop' } | { kind: 'skip'; stepId: string } | { kind: 'retry'; stepId: string }
-type PlanRunPanelProps = { controller: PlanRunsController; cwd?: string; archived?: boolean }
+type PlanRunPanelProps = {
+  controller: PlanRunsController
+  cwd?: string
+  archived?: boolean
+  /** Ends the conversation turn that is drafting a replan, so stopping the plan stops it too. */
+  onStopTurn?: () => Promise<void>
+}
 type PlanPanelState = {
   reduceMotion: boolean
   expanded: boolean
@@ -44,16 +47,6 @@ type PlanPanelState = {
   setConfirmation: React.Dispatch<React.SetStateAction<Confirmation | null>>
   confirm: () => void
   retry: (step: PlanRunTimelineStepSnapshot) => void
-}
-
-function pauseReason(run: PlanRunTimelineSnapshot): string | null {
-  return planRunPauseReason(run, {
-    user: planCopy.pauseUser,
-    interrupted: planCopy.pauseInterrupted,
-    unknown: (step) => planCopy.pauseUnknown(String(step)),
-    failed: (step) => planCopy.pauseFailed(String(step)),
-    needsInput: (step, inputs) => planCopy.pauseNeedsInput(String(step), inputs.join(', '))
-  })
 }
 
 function runTone(run: PlanRunTimelineSnapshot): PlanTimelineTone {
@@ -186,8 +179,7 @@ function PlanRunBody({
 }): React.JSX.Element | null {
   const run = controller.run
   if (!run) return null
-  const reason = pauseReason(run)
-  const hasUnknown = run.steps.some((step) => step.status === 'unknown')
+  const replanning = Boolean(controller.replanPending)
   return (
     <Box
       sx={{
@@ -205,16 +197,6 @@ function PlanRunBody({
           : null)
       }}
     >
-      {reason ? (
-        <Alert severity={run.pause?.reason === 'user' ? 'info' : 'warning'} sx={{ mb: 1 }}>
-          {reason}
-        </Alert>
-      ) : null}
-      {hasUnknown && run.pause?.reason !== 'unknown' ? (
-        <Alert severity="warning" sx={{ mb: 1 }}>
-          {planCopy.unknownRunHold}
-        </Alert>
-      ) : null}
       <Box>
         {run.steps.map((step, index) => (
           <PlanStepRow
@@ -224,7 +206,11 @@ function PlanRunBody({
             index={index}
             isLast={index === run.steps.length - 1}
             details={controller.details}
-            disabled={controller.pendingAction !== null || Boolean(controller.replanPending)}
+            disabled={controller.pendingAction !== null || replanning}
+            stopDisabled={
+              controller.pendingAction !== null &&
+              !(replanning && controller.pendingAction.startsWith('replan:'))
+            }
             cwd={cwd}
             loadDetails={controller.loadDetails}
             onRetry={onRetry}
@@ -251,7 +237,8 @@ function PlanRunBody({
 function usePlanPanelState(
   run: PlanRunTimelineSnapshot | null,
   controller: PlanRunsController,
-  archived: boolean
+  archived: boolean,
+  onStopTurn?: () => Promise<void>
 ): PlanPanelState {
   const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const expansionKey = run ? `${run.id}:${run.status}` : 'none'
@@ -261,13 +248,17 @@ function usePlanPanelState(
   const expanded = expansion.key === expansionKey ? expansion.expanded : defaultExpanded
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const confirm = (): void => {
+    if (confirmation?.kind === 'stop') {
+      setConfirmation(null)
+      void stopPlan(controller, onStopTurn)
+      return
+    }
     if (controller.replanPending || run?.steps.some((step) => step.status === 'unknown')) {
       setConfirmation(null)
       return
     }
     if (confirmation?.kind === 'skip') void controller.skipStep(confirmation.stepId)
     if (confirmation?.kind === 'retry') void controller.retryStep(confirmation.stepId)
-    if (confirmation?.kind === 'stop') void controller.stop()
     setConfirmation(null)
   }
   const toggleExpanded = (): void => setExpansion({ key: expansionKey, expanded: !expanded })
@@ -282,11 +273,12 @@ function usePlanPanelState(
 export function PlanRunPanel({
   controller,
   cwd = '',
-  archived = false
+  archived = false,
+  onStopTurn
 }: PlanRunPanelProps): React.JSX.Element | null {
   useUiLanguage()
   const run = controller.run
-  const panel = usePlanPanelState(run, controller, archived)
+  const panel = usePlanPanelState(run, controller, archived, onStopTurn)
   if (!run || (!archived && (run.status === 'completed' || run.status === 'stopped'))) return null
   const hasUnknown = run.steps.some((step) => step.status === 'unknown')
   return (
@@ -323,11 +315,6 @@ export function PlanRunPanel({
           {planCopy.replanCancelFailed}
         </Alert>
       ) : null}
-      {controller.replanPending && !controller.rollbackPending ? (
-        <Alert severity="info" sx={{ mx: 2, mt: 1 }}>
-          {planCopy.replanReviewNotice}
-        </Alert>
-      ) : null}
       <Collapse in={panel.expanded} timeout={panel.reduceMotion ? 0 : 'auto'}>
         <PlanRunBody
           controller={controller}
@@ -345,7 +332,9 @@ export function PlanRunPanel({
       </Collapse>
       <ConfirmationDialog
         confirmation={panel.confirmation}
-        disabled={hasUnknown || Boolean(controller.replanPending)}
+        disabled={
+          panel.confirmation?.kind !== 'stop' && (hasUnknown || Boolean(controller.replanPending))
+        }
         onCancel={() => panel.setConfirmation(null)}
         onConfirm={panel.confirm}
       />
@@ -357,16 +346,23 @@ export function SessionPlanRunPanel({
   api,
   sessionId,
   cwd,
-  onReplanPrompt
+  onReplanPrompt,
+  onStopTurn
 }: {
   api: RendererApi
   sessionId: string | null
   cwd: string
   onReplanPrompt?: OnReplanPrompt
+  onStopTurn?: () => Promise<void>
 }): React.JSX.Element | null {
   const controller = usePlanRuns(api, sessionId, onReplanPrompt)
   return (
-    <PlanRunPanel key={controller.run?.id ?? 'no-plan-run'} controller={controller} cwd={cwd} />
+    <PlanRunPanel
+      key={controller.run?.id ?? 'no-plan-run'}
+      controller={controller}
+      cwd={cwd}
+      onStopTurn={onStopTurn}
+    />
   )
 }
 

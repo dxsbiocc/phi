@@ -41,17 +41,10 @@ export const planEnglish = {
       cancelled: 'Cancelled',
       interrupted: 'Interrupted'
     })[status],
-  pauseUser: 'Paused by user',
-  pauseInterrupted: 'Interrupted by app restart',
-  pauseUnknown: (step: string) =>
-    `Step ${step} may have started, but its launch could not be confirmed. Wait for the executor to verify it before taking recovery action.`,
   unknownStepExplanation:
     'The agent may still be running. Retry, skip, replan, and stop are unavailable until its launch is safely resolved.',
-  unknownRunHold:
-    'Another step has an unconfirmed launch. Recovery actions are unavailable until its status is verified.',
-  pauseFailed: (step: string) => `Step ${step} failed`,
-  pauseNeedsInput: (step: string, inputs: string) =>
-    `Step ${step} needs more information: ${inputs}`,
+  missingInputs: (inputs: string) => `Needs: ${inputs}`,
+  listSeparator: ', ',
   accessRead: 'Read',
   accessWrite: 'Write',
   attempts: (count: number) => `${count} attempts`,
@@ -61,17 +54,10 @@ export const planEnglish = {
   retry: 'Retry',
   skip: 'Skip',
   replanRemaining: 'Replan remaining steps',
-  replanReviewNotice:
-    'The agent will draft revised steps for your review before execution resumes.',
   replanSendFailed: 'Could not send the replan request. Try again from this session.',
   replanCancelFailed:
     'The pending replan request could not be cleared. If it already appears in chat, continue there; otherwise retry cancellation before replanning.',
   retryCancellation: 'Retry cancellation',
-  failedRecovery: 'Review the result before retrying or skipping this step.',
-  needsInputRecovery:
-    'Retry uses the same step instructions; it does not provide the missing information.',
-  interruptedRecovery:
-    'The app restarted during this step. Check any workspace changes before retrying.',
   confirmStopTitle: 'Stop this plan?',
   confirmStopBody: 'Stopping the entire plan cannot be undone.',
   confirmSkipTitle: 'Skip this step?',

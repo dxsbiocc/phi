@@ -22,6 +22,7 @@ type PlanStepRowProps = {
   index: number
   details: PlanRunState | null
   disabled: boolean
+  stopDisabled?: boolean
   cwd: string
   loadDetails: (runId: string, updatedAt: string) => Promise<PlanRunState | null>
   onRetry: (step: PlanRunTimelineStepSnapshot) => void
@@ -117,13 +118,27 @@ function StepReport({
       </Typography>
     )
   }
-  if (loading) return <Typography variant="body2">{planCopy.loading}</Typography>
-  if (report) return <MarkdownContent text={report} cwd={cwd} />
-  if (error)
-    return (
-      <Typography variant="body2" color="error.main" sx={{ whiteSpace: 'pre-wrap' }}>
-        {error}
+  const missing =
+    step.missingInputs.length > 0 ? (
+      <Typography variant="body2" color="warning.main">
+        {planCopy.missingInputs(step.missingInputs.join(planCopy.listSeparator))}
       </Typography>
+    ) : null
+  const body = loading ? (
+    <Typography variant="body2">{planCopy.loading}</Typography>
+  ) : report ? (
+    <MarkdownContent text={report} cwd={cwd} />
+  ) : error ? (
+    <Typography variant="body2" color="error.main" sx={{ whiteSpace: 'pre-wrap' }}>
+      {error}
+    </Typography>
+  ) : null
+  if (body || missing)
+    return (
+      <>
+        {body}
+        {missing}
+      </>
     )
   return (
     <Typography variant="body2" color="text.secondary">
@@ -134,25 +149,27 @@ function StepReport({
 
 function StepActions({
   visible,
-  reason,
   disabled,
+  stopDisabled,
   onRetry,
   onSkip,
   onReplan,
   onStop
 }: Omit<
-  Pick<PlanStepRowProps, 'disabled' | 'onRetry' | 'onSkip' | 'onReplan' | 'onStop'>,
+  Pick<
+    PlanStepRowProps,
+    'disabled' | 'stopDisabled' | 'onRetry' | 'onSkip' | 'onReplan' | 'onStop'
+  >,
   'onRetry'
 > & {
   visible: boolean
-  reason: NonNullable<PlanRunTimelineSnapshot['pause']>['reason']
   onRetry: () => void
 }): React.JSX.Element | null {
   if (!visible) return null
   return (
     <PlanFailureActions
       disabled={disabled}
-      reason={reason}
+      stopDisabled={stopDisabled}
       onRetry={onRetry}
       onSkip={onSkip}
       onReplan={onReplan}
@@ -218,6 +235,7 @@ export function PlanStepRow({
   index,
   details,
   disabled,
+  stopDisabled,
   cwd,
   loadDetails,
   onRetry,
@@ -261,8 +279,8 @@ export function PlanStepRow({
         </Box>
         <StepActions
           visible={actions.length > 0}
-          reason={run.pause?.reason ?? 'step_failed'}
           disabled={disabled}
+          stopDisabled={stopDisabled}
           onRetry={() => onRetry(step)}
           onSkip={onSkip}
           onReplan={onReplan}

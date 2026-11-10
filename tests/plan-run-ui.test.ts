@@ -8,6 +8,7 @@ import { GoCircleSlash, GoIssueDraft, GoPlay, GoRocket, GoSkip, GoUnverified } f
 import type { PlanRunTimelineSnapshot } from '../src/shared/planRunTypes'
 import { PLAN_MAX_REPLANS } from '../src/shared/planRunTypes'
 import { PlanRunPanel, PlanRunRecord } from '../src/renderer/src/features/plan/PlanRunPanel'
+import { stopPlan } from '../src/renderer/src/features/plan/lib/stopPlan'
 import { PlanReviewCard } from '../src/renderer/src/features/plan/components/PlanReviewCard'
 import type { PlanRunsController } from '../src/renderer/src/features/plan/hooks/usePlanRuns'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
@@ -95,7 +96,7 @@ test('approved review and active run show each step only in the run panel', () =
   assert.equal(markup.match(/>2\. Implement panel</g)?.length, 1)
 })
 
-test('plan run panel renders progress, pause reason and recovery actions', () => {
+test('plan run panel renders progress and recovery actions without a hint banner', () => {
   setUiLanguage('zh-CN')
   const markup = renderToStaticMarkup(
     createElement(
@@ -106,7 +107,7 @@ test('plan run panel renders progress, pause reason and recovery actions', () =>
   )
   assert.match(markup, /Ship the renderer loop/)
   assert.match(markup, /1\/2 完成/)
-  assert.match(markup, /第 2 步失败/)
+  assert.doesNotMatch(markup, /MuiAlert/)
   assert.match(markup, /Implement panel/)
   const titleAt = markup.indexOf('Implement panel')
   const accessAt = markup.indexOf('aria-label="写"', titleAt)
@@ -201,7 +202,7 @@ test('a user-paused plan resumes with the play icon', () => {
   assert.ok(playPath && markup.includes(playPath))
 })
 
-test('restart interruption shows recovery actions and workspace check', () => {
+test('restart interruption shows recovery actions without hint text', () => {
   setUiLanguage('en')
   const interrupted = {
     ...run,
@@ -217,16 +218,17 @@ test('restart interruption shows recovery actions and workspace check', () => {
       createElement(PlanRunPanel, { controller: { ...controller(), run: interrupted } })
     )
   )
-  assert.match(markup, /Interrupted by app restart/)
+  assert.doesNotMatch(markup, /MuiAlert/)
+  assert.doesNotMatch(markup, /app restart/)
   assert.match(markup, /data-phi-step-mark="interrupted"/)
   assert.match(markup, /aria-label="Interrupted"/)
   assert.doesNotMatch(markup, />Interrupted</)
-  assert.match(markup, /Check any workspace changes before retrying/)
+  assert.doesNotMatch(markup, /workspace changes/)
   assert.match(markup, /aria-label="Retry"/)
   assert.match(markup, /aria-label="Skip"/)
 })
 
-test('missing inputs remain visible without promising retry supplies them', () => {
+test('missing inputs stay visible on the step without a hint banner', () => {
   setUiLanguage('zh-CN')
   const needsInput = {
     ...run,
@@ -244,7 +246,7 @@ test('missing inputs remain visible without promising retry supplies them', () =
   )
   assert.match(markup, /目标受众/)
   assert.match(markup, /输出格式/)
-  assert.match(markup, /重试仍使用原有步骤说明，不会提交缺少的信息/)
+  assert.doesNotMatch(markup, /MuiAlert/)
 })
 
 test('unknown launch explains the safety hold in English and hides all recovery controls', () => {
@@ -266,7 +268,6 @@ test('unknown launch explains the safety hold in English and hides all recovery 
     )
   )
   assert.match(markup, /Launch unconfirmed/)
-  assert.match(markup, /may have started, but its launch could not be confirmed/)
   assert.match(markup, /Retry, skip, replan, and stop are unavailable/)
   assert.doesNotMatch(markup, /aria-label="Retry"/)
   assert.doesNotMatch(markup, /aria-label="Skip"/)
@@ -373,8 +374,7 @@ test('an unknown parallel launch holds controls even when an earlier step failed
       })
     )
   )
-  assert.match(markup, /Step 2 failed/)
-  assert.match(markup, /Another step has an unconfirmed launch/)
+  assert.doesNotMatch(markup, /MuiAlert/)
   assert.doesNotMatch(markup, /aria-label="Retry"/)
   assert.doesNotMatch(markup, /aria-label="Skip"/)
   assert.doesNotMatch(markup, /aria-label="Stop"/)
@@ -395,9 +395,9 @@ test('replan is offered for a paused problem only when supported and under the l
     render(run, async () => undefined),
     /aria-label="Replan remaining steps"/
   )
-  assert.match(
+  assert.doesNotMatch(
     render(run, async () => undefined),
-    /draft revised steps for your review/
+    /draft revised steps/
   )
   assert.doesNotMatch(render(run), /aria-label="Replan remaining steps"/)
   assert.doesNotMatch(
@@ -446,30 +446,39 @@ test('a stopped replan turn leaves no stale review notice behind', () => {
         })
       )
     )
-  // The pending-replan banner is an info alert; it must go once the replan turn is stopped.
-  assert.doesNotMatch(render(false), /MuiAlert-colorInfo/)
-  assert.match(render(true), /MuiAlert-colorInfo/)
+  // No pending-replan banner at all, so none can be left behind when the replan turn stops.
+  assert.doesNotMatch(render(false), /MuiAlert/)
+  assert.doesNotMatch(render(true), /MuiAlert/)
 })
 
-test('pending replan keeps the timeline visible but disables old-run recovery controls', () => {
+test('pending replan disables retry and skip but keeps stop usable', () => {
   setUiLanguage('en')
   const markup = renderToStaticMarkup(
     createElement(
       ThemeProvider,
       { theme: createTheme() },
       createElement(PlanRunPanel, {
-        controller: { ...controller(), replanPending: true, replan: async () => undefined }
+        controller: {
+          ...controller(),
+          pendingAction: 'replan:run-1',
+          replanPending: true,
+          replan: async () => undefined
+        }
       })
     )
   )
   assert.match(markup, /Ship the renderer loop/)
-  assert.match(markup, /draft revised steps for your review/)
+  assert.doesNotMatch(markup, /draft revised steps/)
   assert.doesNotMatch(markup, /aria-label="Replan remaining steps"/)
-  for (const label of ['Retry', 'Skip', 'Stop']) {
-    const button = markup.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`, 'u'))?.[0]
-    assert.ok(button, `${label} action remains visible`)
-    assert.match(button, /\bdisabled\b/u)
+  const button = (label: string): string => {
+    const found = markup.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`, 'u'))?.[0]
+    assert.ok(found, `${label} action remains visible`)
+    return found
   }
+  assert.match(button('Retry'), /\bdisabled\b/u)
+  assert.match(button('Skip'), /\bdisabled\b/u)
+  // pendingAction is the replan itself, so stopping is still allowed and ends that request.
+  assert.doesNotMatch(button('Stop'), /\bdisabled\b/u)
 })
 
 test('finished plan has only its timeline record, without a second composer panel', () => {
@@ -617,4 +626,28 @@ test('a stopped or user-paused plan header shows its own symbol, not the thinkin
   assert.doesNotMatch(paused, new RegExp(brain.slice(0, 24).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   assert.ok(stopped.includes(svgPath(createElement(PhiIcons.action.stop, { size: 13 }))))
   assert.ok(paused.includes(svgPath(createElement(PhiIcons.state.interrupted, { size: 14 }))))
+})
+
+test('stopping a plan during a replan ends the replan turn first, then stops the plan', async () => {
+  const calls: string[] = []
+  const base = {
+    ...controller(),
+    stop: async () => {
+      calls.push('plan')
+    }
+  }
+  const stopTurn = async (): Promise<void> => {
+    calls.push('turn')
+  }
+  await stopPlan({ ...base, replanPending: true }, stopTurn)
+  assert.deepEqual(calls, ['turn', 'plan'])
+  calls.length = 0
+  await stopPlan({ ...base, replanPending: true }, async () => {
+    calls.push('turn')
+    throw new Error('already stopped')
+  })
+  assert.deepEqual(calls, ['turn', 'plan'])
+  calls.length = 0
+  await stopPlan({ ...base, replanPending: false }, stopTurn)
+  assert.deepEqual(calls, ['plan'])
 })

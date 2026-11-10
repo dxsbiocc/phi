@@ -3589,6 +3589,7 @@ function App(): React.JSX.Element {
                 sessionId={activePhiSessionId ?? null}
                 cwd={activeCwd}
                 onReplanPrompt={onReplanPrompt}
+                onStopTurn={onStopGeneration}
               />
             }
             onStopGeneration={onStopGeneration}
