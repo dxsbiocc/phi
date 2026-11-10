@@ -465,7 +465,8 @@ function applyAgentExecutionCompleted(next: ChatItem[], event: AgentEventSummary
     agentName:
       event.agentName ?? (typeof details?.agent === 'string' ? details.agent : current.agentName),
     status: event.isError ? 'error' : 'done',
-    ...(event.cancelled === true ? { cancelled: true } : {}),
+    // A stopped run is not a failure: do not surface the reason as an error.
+    ...(event.cancelled === true ? { cancelled: true, error: undefined } : {}),
     ...(finalReport ? { finalReport } : {}),
     ...(typeof event.finalReportPath === 'string'
       ? { finalReportPath: event.finalReportPath }
@@ -480,7 +481,9 @@ function applyAgentExecutionCompleted(next: ChatItem[], event: AgentEventSummary
       : typeof details?.toolCalls === 'number'
         ? { toolCalls: details.toolCalls }
         : {}),
-    ...(event.isError && (event.error || finalReport) ? { error: event.error || finalReport } : {}),
+    ...(event.cancelled !== true && event.isError && (event.error || finalReport)
+      ? { error: event.error || finalReport }
+      : {}),
     ...completedAtField(completedAt),
     ...(durationMs !== undefined ? { durationMs } : {})
   }

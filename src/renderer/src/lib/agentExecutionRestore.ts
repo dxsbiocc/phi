@@ -328,7 +328,8 @@ export function applyAgentCompletedTimelineEvent(
     ...current,
     agentName: message.agentName ?? current.agentName,
     status: message.isError ? 'error' : 'done',
-    ...(message.cancelled === true ? { cancelled: true } : {}),
+    // A stopped run is not a failure: do not surface the recovery reason as an error.
+    ...(message.cancelled === true ? { cancelled: true, error: undefined } : {}),
     ...(typeof message.finalReport === 'string'
       ? { finalReport: stripAgentReportMetadata(message.finalReport) }
       : {}),
@@ -341,7 +342,9 @@ export function applyAgentCompletedTimelineEvent(
     ...(message.finalReportTruncated === true ? { finalReportTruncated: true } : {}),
     ...(finalReportArtifact ? { finalReportArtifact } : {}),
     ...(typeof message.toolCalls === 'number' ? { toolCalls: message.toolCalls } : {}),
-    ...(typeof message.error === 'string' && message.error ? { error: message.error } : {}),
+    ...(message.cancelled !== true && typeof message.error === 'string' && message.error
+      ? { error: message.error }
+      : {}),
     ...completedAtField(message.createdAt),
     ...(durationMs !== undefined ? { durationMs } : {})
   }
