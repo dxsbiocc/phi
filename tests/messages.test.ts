@@ -68,10 +68,7 @@ test('package updates become one message with sorted stable keys in both languag
   const [chinese] = buildMessages({ updates, appUpdate: null })
   assert.ok(chinese)
   assert.equal(chinese.id, packageUpdatesMessageId(updates))
-  assert.equal(
-    chinese.id,
-    ['plugin:a-plugin@3.0.0', 'skill:z-skill@2.0.0'].sort().join('|')
-  )
+  assert.equal(chinese.id, ['plugin:a-plugin@3.0.0', 'skill:z-skill@2.0.0'].sort().join('|'))
   assert.equal(chinese.title, '有 2 个内容包可更新')
   assert.equal(chinese.subtitle, 'Zeta、Alpha')
   assert.equal(chinese.status, '可更新')
@@ -84,6 +81,16 @@ test('package updates become one message with sorted stable keys in both languag
   assert.equal(english.title, '2 content package updates available')
   assert.equal(english.subtitle, 'Zeta, Alpha')
   assert.equal(english.status, 'Update available')
+})
+
+test('plugin update names use the shared plugin display title', () => {
+  setUiLanguage('en')
+  const [message] = buildMessages({
+    updates: [update({ id: 'visualization', type: 'plugin', title: '科研绘图' })],
+    appUpdate: null
+  })
+  assert.ok(message)
+  assert.equal(message.subtitle, 'Visualization')
 })
 
 test('message ids change when the update content changes', () => {

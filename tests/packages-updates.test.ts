@@ -26,6 +26,7 @@ interface EntryOptions {
   dependsOn?: RegistryPackageEntry['dependsOn']
   minAppVersion?: string
   coreTools?: string[]
+  changelog?: RegistryPackageEntry['changelog']
 }
 
 function sandbox(): { root: string; agentDir: string } {
@@ -103,7 +104,8 @@ function skillEntry(
     size: archive.length,
     dependsOn: options.dependsOn ?? [],
     ...(options.minAppVersion ? { minAppVersion: options.minAppVersion } : {}),
-    ...(options.coreTools ? { requires: { coreTools: options.coreTools } } : {})
+    ...(options.coreTools ? { requires: { coreTools: options.coreTools } } : {}),
+    ...(options.changelog ? { changelog: options.changelog } : {})
   }
 }
 
@@ -127,6 +129,37 @@ function installed(
     trust
   }
 }
+
+test('carries every changelog section between the installed and new version', () => {
+  const { root } = sandbox()
+  try {
+    const source = registry(root, 'source', 'official', [])
+    source.packages.push(
+      skillEntry(source.dir, 'alpha-skill', '2.0.0', {
+        changelog: [
+          { version: '2.1.0', notes: 'Newer than the candidate.' },
+          { version: '2.0.0', notes: 'Newest notes.' },
+          { version: '1.5.0', notes: 'Middle notes.' },
+          { version: '1.0.0', notes: 'The installed version.' },
+          { version: '0.9.0', notes: 'Older notes.' }
+        ]
+      })
+    )
+    const [update] = computePackageUpdates(
+      [installed('alpha-skill', 'skill', 'official')],
+      [source],
+      { appVersion: '1.0.0' }
+    )
+    assert.ok(update)
+    assert.equal(update.summary, 'alpha-skill update fixture.')
+    assert.deepEqual(update.changes, [
+      { version: '2.0.0', notes: 'Newest notes.' },
+      { version: '1.5.0', notes: 'Middle notes.' }
+    ])
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test('discovers the highest eligible update at an equal-or-higher trust tier', () => {
   const { root } = sandbox()

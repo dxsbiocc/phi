@@ -1,5 +1,6 @@
 import type { AppUpdateCheck } from '../../../../../shared/appUpdateTypes'
 import type { PackageUpdateView } from '../../../../../shared/packageManagerTypes'
+import { phiPluginDisplayTitle } from '../../phi-plugin/lib/phiPlugins'
 import { settingsUi } from '../../settings/lib/settingsUi'
 import { messagesCopy } from './messagesCopy'
 
@@ -59,7 +60,13 @@ export function buildMessages({
       id: packageUpdatesMessageId(updates),
       kind: 'package-updates',
       title: settingsUi.valueContentPackageUpdatesAvailable(updates.length),
-      subtitle: messagesCopy.packageNames(updates.map((update) => update.title)),
+      subtitle: messagesCopy.packageNames(
+        updates.map((update) =>
+          update.type === 'plugin'
+            ? phiPluginDisplayTitle({ id: update.id, title: update.title })
+            : update.title
+        )
+      ),
       status: messagesCopy.packageUpdatesStatus,
       packageUpdates: updates
     })
