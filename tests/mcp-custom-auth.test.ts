@@ -6,12 +6,14 @@ import { join, resolve } from 'node:path'
 import test from 'node:test'
 import ts from 'typescript'
 import type { RemoteMcpConnectorOptions } from '../src/shared/mcpConnectorCatalog'
+import { mcpToolFailureText } from '../src/shared/mcpToolFailureText'
 import { IPC } from '../src/shared/ipcChannels'
 import { createPlanRunApi } from '../src/preload/plan-run-api'
 import {
   addRemoteMcpConnector,
   readCustomRemoteMcpConnector
 } from '../src/main/agent/mcp-connectors'
+import { mcpToolFailureText } from '../src/shared/mcpToolFailureText'
 
 type FlowConfig = {
   authorizationUrl: string
@@ -97,6 +99,8 @@ test('saved client fields reach the installed SDK authorization and token exchan
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/client') return {}
     if (specifier === '@oh-my-pi/pi-coding-agent/mcp/manager') return {}
     if (specifier === '../../mcp-key-credentials') return { API_KEY_CONNECTOR_IDS: [] }
+    if (specifier === '../../../../shared/mcpToolFailureText') return { mcpToolFailureText }
+    if (specifier === '../../app-logger') return { writeAppLog: () => undefined }
     throw new Error(`Unexpected auth dependency: ${specifier}`)
   })
   const authorize = module.authorizeFeaturedMcp as (

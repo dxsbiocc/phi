@@ -96,7 +96,7 @@ test('joins wrapped bullet lines but keeps nested lists and tables out of typed 
     { type: 'new', text: '*Another* top-level item' }
   ])
   assert.match(parsed.otherNotes, /- A nested detail/)
-  assert.match(parsed.otherNotes, /  - Another nested detail/)
+  assert.match(parsed.otherNotes, / {2}- Another nested detail/)
   assert.equal(parsed.breaking, false)
 })
 

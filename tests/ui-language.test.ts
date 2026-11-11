@@ -56,11 +56,12 @@ test('resource presentation follows the language while source values and custom 
   setUiLanguage('zh-CN')
   assert.equal(resourceUi.connectors, '连接器')
   assert.equal(resourceCategoryLabel(raw.category), '生产力')
-  assert.equal(resourceSourceLabel(raw.source), 'Phi 官网')
+  // The official source chip names the provider, not the website.
+  assert.equal(resourceSourceLabel(raw.source), 'Phi')
   setUiLanguage('en')
   assert.equal(resourceUi.connectors, 'Connectors')
   assert.equal(resourceCategoryLabel(raw.category), 'Productivity')
-  assert.equal(resourceSourceLabel(raw.source), 'Phi Website')
+  assert.equal(resourceSourceLabel(raw.source), 'Phi')
   for (const language of ['en', 'zh-CN'] as const) {
     setUiLanguage(language)
     assert.equal(resourceCategoryLabel(raw.name), raw.name)
