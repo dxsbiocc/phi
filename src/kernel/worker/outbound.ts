@@ -158,7 +158,10 @@ export function bindWorkerOutbound(options: BindWorkerOutboundOptions): () => vo
             : typeof record.sessionId === 'string'
               ? record.sessionId
               : undefined)
-      const runId = sessionId ? options.activeRunId(sessionId) : undefined
+      // A host-origin plan step (or a background run that outlived its prompt) has no
+      // active prompt run, so fall back to the child's own run id as the run binding.
+      // Children of a live prompt keep that prompt's binding for approvals and cancellation.
+      const runId = (sessionId ? options.activeRunId(sessionId) : undefined) ?? context?.agentRunId
       return options.core
         .requestHost(
           method,

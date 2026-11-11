@@ -18,6 +18,7 @@ import { installSpecialistToolCallExtensions } from './specialist-tool-call-exte
 import { AGENT_REPORT_PROTOCOL } from '../../agents/report'
 import { buildEnvRequestTool } from '../../content/env-request-tool'
 import { buildScriptTools, buildSkillRunTool } from '../../content/skill-tools'
+import { specialistSkillFiles } from './specialist-skills'
 import { ScriptToolDescriptor } from '../../content/skill-tool-types'
 import { selectDeclaredSpecialistSkills } from '../../enablement'
 import { RuntimeContext, isRecord, stringValue } from './common'
@@ -49,17 +50,22 @@ export async function bindSpecialistEnvironment(
   deps: {
     sessionId: string
     cwd: string
+    agentRunId?: string
   }
 ): Promise<{ ref: string; variables: Record<string, string>; pluginId?: string } | undefined> {
   const ref = definition.environment
   if (!ref) return undefined
-  const result = await requestHost('environments.bindSession', {
-    runtimeSessionId: deps.sessionId,
-    ref,
-    agent: definition.name,
-    cwd: deps.cwd,
-    ...(definition.pluginId ? { pluginId: definition.pluginId } : {})
-  })
+  const result = await requestHost(
+    'environments.bindSession',
+    {
+      runtimeSessionId: deps.sessionId,
+      ref,
+      agent: definition.name,
+      cwd: deps.cwd,
+      ...(definition.pluginId ? { pluginId: definition.pluginId } : {})
+    },
+    deps.agentRunId ? { agentRunId: deps.agentRunId } : undefined
+  )
   if (!isRecord(result)) throw new Error('environments.bindSession returned an unexpected result')
   if (isRecord(result.notReady)) {
     const message = result.notReady.message
@@ -82,7 +88,7 @@ export async function bindSpecialistEnvironment(
 
 export async function resolveSpecialistEnvironmentBinding(
   definition: PhiAgentDefinition,
-  deps: { sessionId: string; cwd: string },
+  deps: { sessionId: string; cwd: string; agentRunId?: string },
   parent?: PhiExtensionEnvironmentBinding
 ): Promise<PhiExtensionEnvironmentBinding | undefined> {
   return definition.environment ? bindSpecialistEnvironment(definition, deps) : parent
@@ -154,13 +160,16 @@ export async function createPhiAgentSession(
   // Order matters: guards and approval see the model input; the live environment
   // binding is last so its rewrite is the input that executes.
   const toolCallFactories = createSpecialistExtensions(extensionConfig, extensionHost)
-  const skillHost = holder
-    ? {
-        runtimeSessionId: sessionId,
-        environmentBinding: holder,
-        ...(holder.pluginId ? { pluginId: holder.pluginId } : {})
-      }
-    : sessionId
+  const skillHost = {
+    runtimeSessionId: sessionId,
+    ...(deps.agentRunId ? { agentRunId: deps.agentRunId } : {}),
+    ...(holder
+      ? {
+          environmentBinding: holder,
+          ...(holder.pluginId ? { pluginId: holder.pluginId } : {})
+        }
+      : {})
+  }
   const settings = (await Settings.init({ cwd: sessionCwd, agentDir })).overlay()
   // OMP 18.10 gives every specialist an async manager. Automatic backgrounding
   // would turn ordinary calls into disposable job shells, losing the persistent
@@ -171,9 +180,10 @@ export async function createPhiAgentSession(
   const loader = isRecord(deps.resourceOptions)
     ? new DefaultResourceLoader({
         ...resourceOptions({
-          ...(isRecord(deps.resourceOptions) ? deps.resourceOptions : {}),
+          ...deps.resourceOptions,
           cwd: sessionCwd,
-          agentDir
+          agentDir,
+          additionalSkillFiles: specialistSkillFiles(deps.resourceOptions, agentDir, sessionCwd)
         }),
         settingsManager: settings,
         extensionFactories: toolCallFactories
@@ -188,7 +198,7 @@ export async function createPhiAgentSession(
     ...(deps.skillTools
       ? {
           skillRun: buildSkillRunTool(requestHost, {
-            ...(typeof skillHost === 'string' ? { runtimeSessionId: skillHost } : skillHost),
+            ...skillHost,
             allowedSkills: runtimeDefinition.skills
           })
         }
@@ -208,6 +218,7 @@ export async function createPhiAgentSession(
   if (holder) {
     const envRequest = buildEnvRequestTool(requestHost, {
       runtimeSessionId: sessionId,
+      ...(deps.agentRunId ? { agentRunId: deps.agentRunId } : {}),
       binding: holder,
       agent: runtimeDefinition.name
     })

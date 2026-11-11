@@ -15,8 +15,15 @@ export const PHI_SKILL_RUN_DESCRIPTION =
 
 export type { ScriptToolDescriptor } from './skill-tool-types'
 
+/** Trusted run identity for a host call made by a specialist session. */
+export type SkillHostRequestContext = { agentRunId?: string }
+
 /** Host call used by the agent worker. `skills.cancel` is sent when the tool call aborts. */
-export type SkillHostRequest = (method: string, params: unknown) => Promise<unknown>
+export type SkillHostRequest = (
+  method: string,
+  params: unknown,
+  context?: SkillHostRequestContext
+) => Promise<unknown>
 
 type ToolResult = {
   content: Array<{ type: 'text'; text: string }>
@@ -73,6 +80,8 @@ const STRICT_FORBIDDEN = new Set([
 
 export interface SkillToolHostOptions {
   runtimeSessionId?: string
+  /** Agent run that owns this specialist session; binds run-scoped host requests. */
+  agentRunId?: string
   /** Skills this session may execute through the generic skill_run tool. */
   allowedSkills?: readonly string[]
   /** Plugin that owns the bound specialist session. */
@@ -182,7 +191,7 @@ async function runSkillTool(
   }
 
   try {
-    const result = await callHost(request, 'skills.run', body, signal)
+    const result = await callHost(request, 'skills.run', body, signal, skillHostContext(options))
     if (isNotReady(result)) {
       return {
         content: [{ type: 'text', text: result.notReady.message }],
@@ -234,7 +243,8 @@ async function runScriptToolCall(
           : {}),
         ...(toolCallId ? { toolCallId } : {})
       },
-      signal
+      signal,
+      skillHostContext(options)
     )
     if (isScriptSuccess(result)) {
       return {
@@ -255,30 +265,39 @@ async function runScriptToolCall(
   }
 }
 
+function skillHostContext(options: SkillToolHostOptions): SkillHostRequestContext | undefined {
+  return options.agentRunId ? { agentRunId: options.agentRunId } : undefined
+}
+
 async function callHost(
   request: SkillHostRequest,
   method: string,
   params: Record<string, unknown>,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  context?: SkillHostRequestContext
 ): Promise<unknown> {
   const requestId = params.requestId
   const cancel = (): void => {
     if (typeof requestId !== 'string') return
-    void request('skills.cancel', {
-      requestId,
-      ...(typeof params.runtimeSessionId === 'string'
-        ? { runtimeSessionId: params.runtimeSessionId }
-        : {}),
-      ...(typeof params.remoteSessionId === 'string'
-        ? { remoteSessionId: params.remoteSessionId }
-        : {}),
-      ...(typeof params.projectId === 'string' ? { projectId: params.projectId } : {})
-    }).catch(() => undefined)
+    void request(
+      'skills.cancel',
+      {
+        requestId,
+        ...(typeof params.runtimeSessionId === 'string'
+          ? { runtimeSessionId: params.runtimeSessionId }
+          : {}),
+        ...(typeof params.remoteSessionId === 'string'
+          ? { remoteSessionId: params.remoteSessionId }
+          : {}),
+        ...(typeof params.projectId === 'string' ? { projectId: params.projectId } : {})
+      },
+      context
+    ).catch(() => undefined)
   }
   if (signal?.aborted) cancel()
   else signal?.addEventListener('abort', cancel, { once: true })
   try {
-    return await request(method, params)
+    return await request(method, params, context)
   } finally {
     signal?.removeEventListener('abort', cancel)
   }
