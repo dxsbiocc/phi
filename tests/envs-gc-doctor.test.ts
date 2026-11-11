@@ -287,7 +287,7 @@ test('collectGarbage removes unreferenced environments, orphans, and old logs', 
 
     const indexFile = join(root, 'state', 'environments.json')
     const before = readFileSync(indexFile, 'utf8')
-    const dry = collectGarbage(root, { dryRun: true, now })
+    const dry = collectGarbage(root, { dryRun: true, now, includeShared: true })
     assert.equal(readFileSync(indexFile, 'utf8'), before)
     assert.equal(existsSync(join(free, 'marker.txt')), true)
     assert.equal(existsSync(join(orphan, 'marker.txt')), true)
@@ -308,7 +308,7 @@ test('collectGarbage removes unreferenced environments, orphans, and old logs', 
       'phi-lock-ffffffffffff:locked'
     ])
 
-    const live = collectGarbage(root, { now })
+    const live = collectGarbage(root, { now, includeShared: true })
     assert.deepEqual(live.removed, dry.removed)
     assert.deepEqual(live.orphans, dry.orphans)
     assert.equal(live.logsRemoved, dry.logsRemoved)
@@ -347,6 +347,30 @@ test('collectGarbage removes unreferenced environments, orphans, and old logs', 
     ) as { pid: number }
     assert.equal(held.pid, process.pid)
     assert.equal(existsSync(join(root, 'state', 'locks', 'phi-stale-333333333333.lock')), false)
+  })
+})
+
+test('automatic collection keeps an unreferenced shared phi environment for later cleanup', async () => {
+  await withTemp('collect-shared', (root) => {
+    const envId = 'phi-r-0123456789ab'
+    const prefix = seed(root, envId, 'ready')
+    const orphanId = 'phi-python-abcdef012345'
+    const orphan = join(root, 'envs', orphanId)
+    mkdirSync(orphan, { recursive: true })
+    writeFileSync(join(orphan, 'marker.txt'), 'orphan')
+
+    const automatic = collectGarbage(root)
+    assert.deepEqual(automatic.removed, [])
+    assert.deepEqual(automatic.orphans, [])
+    assert.equal(existsSync(join(prefix, 'marker.txt')), true)
+    assert.equal(existsSync(join(orphan, 'marker.txt')), true)
+    assert.deepEqual(readEnvironmentIndex(root).environments[envId]?.referrers, [])
+
+    const explicit = collectGarbage(root, { includeShared: true })
+    assert.deepEqual(explicit.removed, [envId])
+    assert.deepEqual(explicit.orphans, [orphanId])
+    assert.equal(existsSync(prefix), false)
+    assert.equal(existsSync(orphan), false)
   })
 })
 
@@ -475,7 +499,7 @@ describe(
         'plugin:visualization@1.0.0'
       ])
       removeReferrer(root, envId, 'plugin:visualization@1.0.0')
-      const collected = collectGarbage(root)
+      const collected = collectGarbage(root, { includeShared: true })
       assert.equal(collected.removed.includes(envId), true)
       assert.equal(existsSync(prefix), false)
       assert.equal(readEnvironmentIndex(root).environments[envId], undefined)

@@ -848,7 +848,29 @@ const runnerRegistry = new SessionRunnerRegistry({
 })
 const handleAgentInteractionRequest = createAgentInteractionRequest({
   fields: { optionalStringField },
-  runs: { findByRuntimeSessionId: findActivePromptRunByRuntimeSessionId },
+  runs: {
+    findByRuntimeSessionId: findActivePromptRunByRuntimeSessionId,
+    // Plan execution starts host-origin agent runs after the prompt turn has
+    // settled, so there is no active PromptRun. Resolve the owning conversation
+    // from the runtime-session origin and route the question there, exactly as
+    // host-origin approvals are routed.
+    findDetachedByRuntimeSessionId: (runtimeSessionId) => {
+      const origin = sessionKeys.originFor(runtimeSessionId)
+      if (!origin) return null
+      const phiSessionId = sessionKeys.phiSessionIdFor(origin.sessionKey)
+      const manifest = phiSessionId ? findPhiSessionById(phiSessionId) : null
+      if (!manifest) return null
+      return {
+        phiSessionId: manifest.sessionId,
+        runId: manifest.currentRunId ?? 'host-run',
+        cwd: origin.cwd,
+        ...(manifest.projectId ? { projectId: manifest.projectId } : {}),
+        sessionGeneration: lifecycles.forKey(origin.sessionKey).currentGeneration,
+        cancelled: false,
+        detached: true
+      }
+    }
+  },
   projects: {
     getById: (projectId) => getProject(projectId) ?? undefined,
     getByCwd: (cwd) => getProjectByCwd(cwd) ?? undefined

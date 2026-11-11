@@ -30,6 +30,13 @@ interface GarbageCollectionOptions {
   now?: Date
   logRetentionDays?: number
   processAlive?: (pid: number) => boolean
+  /**
+   * Remove shared `phi:*` environments that have no package referrer. Only an
+   * explicit user cleanup sets this; package lifecycle collection must keep
+   * shared environments for installed agents whose declarations are not
+   * registered as referrers (including indexes written before this guard).
+   */
+  includeShared?: boolean
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -39,6 +46,11 @@ function errorCode(error: unknown): string | undefined {
 
 function isRemovable(entry: EnvironmentIndexEntry): boolean {
   return entry.referrers.length === 0 && REMOVABLE_STATUSES.has(entry.status)
+}
+
+/** Official `phi:*` specs use the `phi-` envId prefix (see computeEnvId). */
+function isSharedEnvironmentId(envId: string): boolean {
+  return envId.startsWith('phi-')
 }
 
 function stillRemovable(root: string, envId: string): EnvironmentIndexEntry | undefined {
@@ -93,6 +105,7 @@ export function collectGarbage(
   options: GarbageCollectionOptions = {}
 ): GarbageCollectionResult {
   const dryRun = options.dryRun === true
+  const includeShared = options.includeShared === true
   const now = options.now ?? new Date()
   const logRetentionDays = options.logRetentionDays ?? 30
   const environmentsDirectory = ownedRuntimeDirectory(root, 'envs')
@@ -110,6 +123,7 @@ export function collectGarbage(
       continue
     }
     if (!isRemovable(entry)) continue
+    if (!includeShared && isSharedEnvironmentId(envId)) continue
     ownedEnvironmentPrefix(root, envId, entry.prefix)
     ownedRuntimeDirectory(root, 'cache', envId)
     if (
@@ -159,6 +173,7 @@ export function collectGarbage(
   const indexed = new Set(Object.keys(readEnvironmentIndex(root).environments))
   for (const name of listNames(environmentsDirectory)) {
     if (indexed.has(name)) continue
+    if (!includeShared && isSharedEnvironmentId(name)) continue
     const directory = join(root, 'envs', name)
     if (!isRealDirectory(directory)) continue
     ownedEnvironmentPrefix(root, name, directory)

@@ -17,6 +17,12 @@ export interface AgentInteractionPromptRun {
   projectId?: string
   sessionGeneration: number
   cancelled: boolean
+  /**
+   * A host-origin run owned by a live conversation but not by an active prompt
+   * run (plan execution starts steps after the prompt turn settles). It is
+   * resolved from the runtime-session origin rather than the prompt registry.
+   */
+  detached?: boolean
 }
 
 interface AgentInteractionProject {
@@ -38,6 +44,8 @@ export interface AgentInteractionRequestDeps<Window = unknown> {
   }
   runs: {
     findByRuntimeSessionId(runtimeSessionId: string): AgentInteractionPromptRun | null
+    /** Plan steps and other host-origin runs that outlive their prompt turn. */
+    findDetachedByRuntimeSessionId?(runtimeSessionId: string): AgentInteractionPromptRun | null
   }
   projects: {
     getById(projectId: string): AgentInteractionProject | undefined
@@ -234,7 +242,10 @@ function activeInteractionRun<Window>(
   context: PhiHostRequestContext | undefined,
   deps: AgentInteractionRequestDeps<Window>
 ): AgentInteractionPromptRun {
-  const run = deps.runs.findByRuntimeSessionId(runtimeSessionId)
+  const run =
+    deps.runs.findByRuntimeSessionId(runtimeSessionId) ??
+    deps.runs.findDetachedByRuntimeSessionId?.(runtimeSessionId) ??
+    null
   if (
     !run ||
     run.cancelled ||
@@ -275,11 +286,11 @@ function interactionBecameStale<Window>(
   context: PhiHostRequestContext | undefined,
   deps: AgentInteractionRequestDeps<Window>
 ): boolean {
-  return Boolean(
-    context?.signal?.aborted ||
-    run.cancelled ||
-    deps.runs.findByRuntimeSessionId(runtimeSessionId) !== run
-  )
+  if (context?.signal?.aborted || run.cancelled) return true
+  // A detached host run has no prompt-registry entry to be replaced. Its
+  // cancellation signal and run state are the lifecycle it was resolved from.
+  if (run.detached) return false
+  return deps.runs.findByRuntimeSessionId(runtimeSessionId) !== run
 }
 
 function recordInteractionResponse<Window>(

@@ -26,7 +26,7 @@ import { acquireEnvironmentLease, hasLiveEnvironmentLeases } from '../src/main/a
 import { tryAcquireEnvironmentLock } from '../src/main/agent/envs/lock'
 import { currentPlatform } from '../src/main/agent/envs/platform'
 
-const ENV_ID = 'phi-lease-fixture-0123456789ab'
+const ENV_ID = 'plugin-lease-fixture-0123456789ab'
 const DIGEST = 'a'.repeat(64)
 
 function fixture(t: TestContext): {

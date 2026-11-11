@@ -21,6 +21,10 @@ import {
   type PlanReviewPromptRun,
   type PlanReviewRequestDeps
 } from '../src/main/agent/host-requests/plan-review-request'
+import {
+  BUILD_NOW,
+  confirmedEnvironmentBuild
+} from '../src/main/agent/content/environment-build-prompt'
 
 function optionalStringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key]
@@ -577,6 +581,21 @@ test('agent interaction cancels every stale run condition after the renderer rou
   }
 })
 
+test('agent interaction routes a host-origin plan step without an active prompt run', async () => {
+  const fixture = interactionFixture()
+  fixture.setRun(null)
+  fixture.deps.runs.findDetachedByRuntimeSessionId = (runtimeSessionId) =>
+    runtimeSessionId === 'runtime-1'
+      ? { ...interactionRun(), runId: 'host-run-1', detached: true }
+      : null
+  fixture.setResponse({ answers: [{ question: 'Which scope?', answer: 'Project' }] })
+
+  const result = await createAgentInteractionRequest(fixture.deps)(validInteractionRequest)
+
+  assert.deepEqual(result, { answers: [{ question: 'Which scope?', answer: 'Project' }] })
+  assert.deepEqual(fixture.calls, ['requested', 'wait:/workspace', 'answered', 'notified'])
+})
+
 test('agent interaction uses the remote project root in the renderer request', async () => {
   const fixture = interactionFixture()
   fixture.deps.projects.getById = () => ({
@@ -949,6 +968,40 @@ test('environment build and request confirmations map answers and renderer failu
     }),
     false
   )
+})
+
+test('a plan-step build confirmation is not reported as declined without a prompt run', async () => {
+  const interaction = interactionFixture()
+  interaction.setRun(null)
+  interaction.deps.runs.findDetachedByRuntimeSessionId = () => ({
+    ...interactionRun(),
+    runId: 'host-run-1',
+    detached: true
+  })
+  interaction.setResponse({
+    answers: [{ question: 'Build this environment?', answer: BUILD_NOW }]
+  })
+  const request = createAgentInteractionRequest(interaction.deps)
+  const confirmations = createHostConfirmations({
+    ...confirmationFixture().deps,
+    interactions: {
+      request: (params) => request(params),
+      buildQuestion: () => 'Build this environment?',
+      buildConfirmed: confirmedEnvironmentBuild,
+      requestConfirmed: () => false
+    }
+  })
+
+  assert.equal(
+    await confirmations.confirmEnvironmentBuild({
+      runtimeSessionId: 'runtime-1',
+      ref: 'phi:r@1',
+      agent: 'Visualization',
+      estimate: { packages: 1, cachedPackages: 0 }
+    }),
+    true
+  )
+  assert.deepEqual(interaction.calls, ['requested', 'wait:/workspace', 'answered', 'notified'])
 })
 
 test('host tool approval returns false without a run, signal, or tool call', async () => {

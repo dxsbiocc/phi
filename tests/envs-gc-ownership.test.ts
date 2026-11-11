@@ -7,7 +7,7 @@ import { collectGarbage } from '../src/main/agent/envs/gc'
 import { updateEnvironmentEntry } from '../src/main/agent/envs/index-store'
 import { currentPlatform } from '../src/main/agent/envs/platform'
 
-const ID = 'phi-owned-0123456789ab'
+const ID = 'plugin-owned-0123456789ab'
 function record(root: string, prefix: string): void {
   updateEnvironmentEntry(root, ID, {
     name: 'owned',

@@ -350,7 +350,9 @@ export function createManagedEnvironmentActions(
     }
     let result: ReturnType<typeof collectGarbage>
     try {
-      result = collect(dependencies.root)
+      // The environment panel's explicit cleanup keeps its historical behavior of
+      // removing unreferenced shared environments too.
+      result = collect(dependencies.root, { includeShared: true })
     } finally {
       for (const envId of guarded) {
         removeReferrer(dependencies.root, envId, CLEAN_BUILD_GUARD_REFERRER)

@@ -16,7 +16,12 @@ import test from 'node:test'
 
 import { stringify as stringifyYaml } from 'yaml'
 
-import { computeEnvId, readEnvironmentIndex, updateEnvironmentEntry } from '../src/main/agent/envs'
+import {
+  computeEnvId,
+  lockSha256,
+  readEnvironmentIndex,
+  updateEnvironmentEntry
+} from '../src/main/agent/envs'
 import { installBundledPlugins } from '../src/main/agent/plugins/bundled-install'
 import {
   installPlugin,
@@ -371,6 +376,42 @@ test('upgrade to a plugin without environments drops the old referrer and garbag
     assert.deepEqual(upgraded.plugin?.environments, {})
     assert.equal(readEnvironmentIndex(runtimeRoot).environments[oldEnvId], undefined)
     assert.equal(existsSync(oldPrefix), false)
+  })
+})
+
+test('upgrade keeps a built shared phi environment that the plugin agents need', async () => {
+  await withSandbox(async (root, agentDir, runtimeRoot) => {
+    const options = { agentDir, runtimeRoot, platform: PLATFORM }
+    const environmentsDir = join(process.cwd(), 'resources', 'runtime', 'environments')
+    const descriptor = describeEnvironment('phi:python@1', {
+      environmentsDir,
+      platform: PLATFORM
+    })
+    const envId = installReady(runtimeRoot, descriptor, { python: '#!/bin/sh\necho ok\n' })
+    const prefix = join(runtimeRoot, 'envs', envId)
+    updateEnvironmentEntry(runtimeRoot, envId, {
+      name: descriptor.spec.name,
+      kind: descriptor.kind,
+      platform: descriptor.platform,
+      prefix,
+      status: 'ready',
+      lockSha256: lockSha256(descriptor.lockText),
+      referrers: []
+    })
+
+    // The plugin's agent declares phi:python@1; the shared environment has no
+    // package referrer (the pre-fix index looked exactly like this).
+    assert.equal(installPlugin(writePlugin(root, { withEnvironment: false }), options).ok, true)
+    assert.deepEqual(readEnvironmentIndex(runtimeRoot).environments[envId]?.referrers, [])
+
+    const upgraded = await upgradePlugin(
+      writePlugin(root, { version: '1.1.0', withEnvironment: false }),
+      options
+    )
+
+    assert.equal(upgraded.ok, true, JSON.stringify(upgraded.errors))
+    assert.deepEqual(readEnvironmentIndex(runtimeRoot).environments[envId]?.referrers, [])
+    assert.equal(existsSync(prefix), true)
   })
 })
 
