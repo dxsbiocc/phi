@@ -169,6 +169,7 @@ export async function createSession(
   const agentPolicies = phiExtensionAgents(phiAgents)
   const extensionConfig: PhiExtensionConfig = {
     cwd,
+    agentDir,
     projectBound: Boolean(record.projectBound),
     enableToolApproval: Boolean(record.enableToolApproval),
     sessionId,

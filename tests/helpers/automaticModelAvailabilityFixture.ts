@@ -355,6 +355,7 @@ try {
     ctx,
     resourceOptions: undefined,
     enableToolApproval: false,
+    projectBound: false,
     parent: () => live
   }
   toggle(chatProvider, false, 'enabled')

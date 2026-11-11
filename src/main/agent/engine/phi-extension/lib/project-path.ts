@@ -13,17 +13,24 @@ function nearestExisting(path: string): string {
   return current
 }
 
-export function resolveInsideProject(cwd: string, requested: string, what: string): ProjectPath {
-  const target = resolve(cwd, requested)
-  const realCwd = realpathSync(cwd)
+/** Resolve `requested` against `root` and decide from real paths, so `..` and symlinks cannot escape. */
+export function resolveInsideDirectory(root: string, requested: string, what: string): ProjectPath {
+  const target = resolve(root, requested)
+  const realRoot = realpathSync(root)
   const anchor = nearestExisting(target)
   const realTarget = join(realpathSync(anchor), relative(anchor, target))
-  const inside = relative(realCwd, realTarget)
+  const inside = relative(realRoot, realTarget)
   if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
-    return {
-      ok: false,
-      error: `${what} must be inside the project directory (${cwd}); got ${requested}.`
-    }
+    return { ok: false, error: `${what} must be inside ${root}; got ${requested}.` }
   }
   return { ok: true, path: target }
+}
+
+export function resolveInsideProject(cwd: string, requested: string, what: string): ProjectPath {
+  const resolved = resolveInsideDirectory(cwd, requested, what)
+  if (resolved.ok) return resolved
+  return {
+    ok: false,
+    error: `${what} must be inside the project directory (${cwd}); got ${requested}.`
+  }
 }

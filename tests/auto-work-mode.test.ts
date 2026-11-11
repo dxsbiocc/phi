@@ -154,6 +154,7 @@ test('automatic plan execution activates propose_plan_steps in the next model ca
 test('enter_plan_mode is mounted only for automatic main sessions', async () => {
   const config = (workMode: PhiExtensionConfig['workMode']): PhiExtensionConfig => ({
     cwd: '/work',
+    agentDir: '/agent',
     projectBound: false,
     enableToolApproval: false,
     sessionId: 'session-1',

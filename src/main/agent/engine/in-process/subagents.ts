@@ -120,6 +120,7 @@ export async function createPhiAgentSession(
     ctx: RuntimeContext
     resourceOptions: unknown
     enableToolApproval: boolean
+    projectBound: boolean
     agentRunId?: string
     parentEnvironmentBinding?: PhiExtensionEnvironmentBinding
     skillTools?: ScriptToolDescriptor[]
@@ -144,7 +145,8 @@ export async function createPhiAgentSession(
     : undefined
   const extensionConfig: PhiExtensionConfig = {
     cwd: sessionCwd,
-    projectBound: false,
+    agentDir,
+    projectBound: deps.projectBound,
     enableToolApproval: deps.enableToolApproval,
     sessionId,
     ...(deps.agentRunId ? { agentRunId: deps.agentRunId } : {}),

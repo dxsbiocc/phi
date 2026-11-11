@@ -20,6 +20,8 @@ export interface PhiExtensionEnvironmentBinding {
 /** Plain per-session data that can be uploaded with the extension package. */
 export interface PhiExtensionConfig {
   cwd: string
+  /** Phi's per-install data root; installed packages live under its `packages` directory. */
+  agentDir: string
   projectBound: boolean
   enableToolApproval: boolean
   sessionId: string
