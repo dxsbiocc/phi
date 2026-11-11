@@ -72,7 +72,6 @@ export const planEnglish = {
   error: 'Error',
   loading: 'Loading…',
   loadFailed: 'Unable to load plan details.',
-  runUnavailable: 'This plan run is no longer available. Open the conversation again and retry.',
   planRunCompleted: (goal: string) => `Plan completed: ${goal}`,
   planRunStopped: (goal: string) => `Plan stopped: ${goal}`,
   expandStep: (title: string) => `Expand step ${title}`,

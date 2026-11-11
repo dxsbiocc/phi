@@ -70,7 +70,6 @@ export const planChinese = {
   error: '错误',
   loading: '正在加载…',
   loadFailed: '无法加载计划详情。',
-  runUnavailable: '这个计划运行已不可用。请重新打开该会话后再重试。',
   planRunCompleted: (goal: string) => `计划已完成：${goal}`,
   planRunStopped: (goal: string) => `计划已停止：${goal}`,
   expandStep: (title: string) => `展开步骤“${title}”`,
