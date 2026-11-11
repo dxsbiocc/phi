@@ -103,6 +103,11 @@ export interface AgentLaunchInput {
 }
 
 export interface AgentRunAdmission {
+  /**
+   * Allocates an id that is unique for this conversation's durable history.
+   * Kernel sessions supply it so a process restart cannot reuse a persisted id.
+   */
+  nextRunId?: () => string
   /** Must durably accept the request before the child can become visible or execute. */
   accept(runId: string, input: AgentLaunchInput): Promise<void>
   /** Must durably bind the accepted request to its child id before execution begins. */
@@ -206,7 +211,7 @@ export class AgentRunRegistry {
     // delegation loops consume the per-conversation maxRuns allowance.
     if (origin === 'tool') this.toolRuns += 1
 
-    const id = `run_${++this.sequence}`
+    const id = this.admission?.nextRunId?.() ?? `run_${++this.sequence}`
     let settle!: (snapshot: AgentRunSnapshot) => void
     const done = new Promise<AgentRunSnapshot>((resolve) => {
       settle = resolve

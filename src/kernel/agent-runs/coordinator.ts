@@ -49,6 +49,7 @@ export class KernelAgentRunCoordinator implements KernelAgentRunRuntime {
 
   admission(sessionId: string): AgentRunAdmission {
     return {
+      nextRunId: () => this.receipts.nextRunId(sessionId),
       accept: (runId, input) => this.receipts.accept(sessionId, runId, input),
       started: async (runId, snapshot) => {
         await this.receipts.started(sessionId, runId, snapshot)

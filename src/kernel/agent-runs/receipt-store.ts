@@ -69,6 +69,8 @@ type SessionReceipts = {
   requests: Map<string, ReceiptState>
   runs: Map<string, ReceiptState>
   assigned: Map<string, string>
+  usedRunIds: Set<string>
+  sequence: number
   tail: Promise<void>
 }
 
@@ -152,10 +154,29 @@ function parseReceipt(value: unknown): AgentRunReceipt | undefined {
   return state === 'terminal' ? parseTerminal(input, base) : undefined
 }
 
+function receiptRunId(receipt: AgentRunReceipt): string | undefined {
+  return receipt.state === 'accepted' ? undefined : receipt.runId
+}
+
+function runIdSequence(runId: string): number | undefined {
+  const match = /^run_(\d+)$/.exec(runId)
+  if (!match) return undefined
+  const sequence = Number(match[1])
+  return Number.isSafeInteger(sequence) ? sequence : undefined
+}
+
 function indexReceipts(receipts: readonly AgentRunReceipt[]): SessionReceipts {
   const requests = new Map<string, ReceiptState>()
   const runs = new Map<string, ReceiptState>()
+  const usedRunIds = new Set<string>()
+  let sequence = 0
   for (const receipt of receipts) {
+    const runId = receiptRunId(receipt)
+    if (runId) {
+      usedRunIds.add(runId)
+      const candidate = runIdSequence(runId)
+      if (candidate !== undefined && candidate > sequence) sequence = candidate
+    }
     if (receipt.state === 'accepted') {
       if (requests.has(receipt.requestId)) throw new Error('agent-run receipt repeats requestId')
       requests.set(receipt.requestId, { accepted: receipt })
@@ -164,7 +185,9 @@ function indexReceipts(receipts: readonly AgentRunReceipt[]): SessionReceipts {
     const state = requests.get(receipt.requestId)
     if (!state) throw new Error('agent-run receipt has no accepted request')
     if (receipt.state === 'started') {
-      if (state.started || state.terminal || runs.has(receipt.runId)) {
+      // A pre-fix journal may reuse run_1 after a restart under a different request.
+      // Keep accepting it; the run index points at the latest start for that id.
+      if (state.started || state.terminal) {
         throw new Error('agent-run receipt repeats a child start')
       }
       state.started = receipt
@@ -179,7 +202,14 @@ function indexReceipts(receipts: readonly AgentRunReceipt[]): SessionReceipts {
       state.reported = receipt
     }
   }
-  return { requests, runs, assigned: new Map(), tail: Promise.resolve() }
+  return {
+    requests,
+    runs,
+    assigned: new Map(),
+    usedRunIds,
+    sequence,
+    tail: Promise.resolve()
+  }
 }
 
 async function append(path: string, receipt: AgentRunReceipt): Promise<void> {
@@ -374,6 +404,17 @@ export class KernelAgentRunReceiptStore {
     }
   }
 
+  /** Continues this session's run_N sequence past every id already in its journal. */
+  nextRunId(sessionId: string): string {
+    const session = this.require(sessionId)
+    let runId: string
+    do {
+      runId = `run_${++session.sequence}`
+    } while (session.usedRunIds.has(runId))
+    session.usedRunIds.add(runId)
+    return runId
+  }
+
   private require(sessionId: string): SessionReceipts {
     const session = this.sessions.get(sessionId)
     if (!session) throw new Error(`Agent-run receipts are unavailable for session ${sessionId}`)
@@ -413,6 +454,7 @@ export class KernelAgentRunReceiptStore {
     await this.append(session, receipt)
     session.requests.set(requestId, { accepted: receipt })
     session.assigned.set(runId, requestId)
+    session.usedRunIds.add(runId)
     pauseKernelTestPoint('agent-accepted', this.agentDir)
   }
 
@@ -432,6 +474,7 @@ export class KernelAgentRunReceiptStore {
     await this.append(session, receipt)
     state.started = receipt
     session.runs.set(runId, state)
+    session.usedRunIds.add(runId)
     pauseKernelTestPoint('agent-started', this.agentDir)
   }
 

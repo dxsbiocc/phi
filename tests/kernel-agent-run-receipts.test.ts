@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
@@ -8,6 +8,7 @@ import { AgentCancelledError, type AgentRunRequest } from '../src/main/agent/age
 import {
   AgentRunRegistry,
   type AgentLaunchInput,
+  type AgentRunAdmission,
   type AgentRunSnapshot
 } from '../src/main/agent/agents/registry'
 import { KernelAgentRunReceiptStore } from '../src/kernel/agent-runs/receipt-store'
@@ -37,6 +38,25 @@ function lines(sessionDir: string): Array<Record<string, unknown>> {
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+function writeReceipts(sessionDir: string, receipts: readonly Record<string, unknown>[]): void {
+  writeFileSync(
+    join(sessionDir, 'agent-runs.jsonl'),
+    `${receipts.map((receipt) => JSON.stringify(receipt)).join('\n')}\n`
+  )
+}
+
+function admissionFor(
+  store: KernelAgentRunReceiptStore,
+  sessionId = 'session-1'
+): AgentRunAdmission {
+  return {
+    nextRunId: () => store.nextRunId(sessionId),
+    accept: (runId, launch) => store.accept(sessionId, runId, launch),
+    started: (runId, snapshot) => store.started(sessionId, runId, snapshot),
+    unknown: (runId, error) => store.unknown(sessionId, runId, error)
+  }
 }
 
 test('agent-run admission fsyncs accepted, started and terminal receipts in order', async () => {
@@ -172,6 +192,153 @@ test('cancellation after durable registration records exactly one cancelled term
 
     assert.equal(finished.state, 'cancelled')
     assert.equal(lines(f.sessionDir).filter((receipt) => receipt.state === 'terminal').length, 1)
+  } finally {
+    await store.closeSession('session-1')
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
+test('a restarted session continues its persisted run_N sequence', async () => {
+  const f = fixture()
+  const first = new KernelAgentRunReceiptStore(f.agentDir)
+  const second = new KernelAgentRunReceiptStore(f.agentDir)
+  try {
+    await first.openSession('session-1', f.sessionDir)
+    const firstRegistry = new AgentRunRegistry({ admission: admissionFor(first) })
+    const firstRun = await firstRegistry.start(input('request-1'))
+    assert.equal(firstRun.id, 'run_1')
+    await first.finish('session-1', await firstRun.done)
+    await first.closeSession('session-1')
+
+    await second.openSession('session-1', f.sessionDir)
+    const secondRegistry = new AgentRunRegistry({ admission: admissionFor(second) })
+    const secondRun = await secondRegistry.start(input('request-2'))
+    assert.equal(secondRun.id, 'run_2')
+    await second.finish('session-1', await secondRun.done)
+
+    assert.deepEqual(
+      lines(f.sessionDir)
+        .map((receipt) => receipt.runId)
+        .filter((runId): runId is string => typeof runId === 'string'),
+      ['run_1', 'run_1', 'run_2', 'run_2']
+    )
+  } finally {
+    await first.closeSession('session-1')
+    await second.closeSession('session-1')
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
+test('a journal that reused a run id across requests still opens', async () => {
+  const f = fixture()
+  const store = new KernelAgentRunReceiptStore(f.agentDir)
+  const at = '2026-11-11T00:00:00.000Z'
+  writeReceipts(f.sessionDir, [
+    {
+      state: 'accepted',
+      requestId: 'request-plan',
+      agent: 'PlanStep',
+      task: 'Plan the work.',
+      origin: 'tool',
+      background: false,
+      at
+    },
+    { state: 'started', requestId: 'request-plan', runId: 'run_1', startedAt: 1, at },
+    { state: 'terminal', requestId: 'request-plan', runId: 'run_1', status: 'done', at },
+    {
+      state: 'accepted',
+      requestId: 'request-visualization',
+      agent: 'Visualization',
+      task: 'Draw the result.',
+      origin: 'tool',
+      background: false,
+      at
+    },
+    {
+      state: 'started',
+      requestId: 'request-visualization',
+      runId: 'run_2',
+      startedAt: 2,
+      at
+    },
+    {
+      state: 'terminal',
+      requestId: 'request-visualization',
+      runId: 'run_2',
+      status: 'cancelled',
+      at
+    },
+    {
+      state: 'accepted',
+      requestId: 'request-visualization-retry',
+      agent: 'Visualization',
+      task: 'Draw the result again.',
+      origin: 'tool',
+      background: false,
+      at
+    },
+    {
+      state: 'started',
+      requestId: 'request-visualization-retry',
+      runId: 'run_1',
+      startedAt: 3,
+      at
+    },
+    {
+      state: 'terminal',
+      requestId: 'request-visualization-retry',
+      runId: 'run_1',
+      status: 'error',
+      at
+    }
+  ])
+  try {
+    await store.openSession('session-1', f.sessionDir)
+
+    assert.deepEqual(
+      store.list('session-1').map((run) => [run.requestId, run.state]),
+      [
+        ['request-plan', 'done'],
+        ['request-visualization', 'cancelled'],
+        ['request-visualization-retry', 'error']
+      ]
+    )
+    // The run index follows the latest start when an old journal reused an id.
+    assert.equal(store.getByRun('session-1', 'run_1')?.requestId, 'request-visualization-retry')
+    assert.equal(store.getByRun('session-1', 'run_2')?.requestId, 'request-visualization')
+
+    const registry = new AgentRunRegistry({ admission: admissionFor(store) })
+    const next = await registry.start(input('request-next'))
+    assert.equal(next.id, 'run_3')
+    await store.finish('session-1', await next.done)
+  } finally {
+    await store.closeSession('session-1')
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
+test('repeating a child start for the same request is still rejected', async () => {
+  const f = fixture()
+  const store = new KernelAgentRunReceiptStore(f.agentDir)
+  const at = '2026-11-11T00:00:00.000Z'
+  writeReceipts(f.sessionDir, [
+    {
+      state: 'accepted',
+      requestId: 'request-1',
+      agent: 'PlanStep',
+      task: 'Plan the work.',
+      origin: 'tool',
+      background: false,
+      at
+    },
+    { state: 'started', requestId: 'request-1', runId: 'run_1', startedAt: 1, at },
+    { state: 'started', requestId: 'request-1', runId: 'run_2', startedAt: 2, at }
+  ])
+  try {
+    await assert.rejects(
+      store.openSession('session-1', f.sessionDir),
+      /agent-run receipt repeats a child start/
+    )
   } finally {
     await store.closeSession('session-1')
     rmSync(f.root, { recursive: true, force: true })
