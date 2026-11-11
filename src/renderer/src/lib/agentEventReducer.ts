@@ -33,7 +33,11 @@ import {
 import { stripAgentReportMetadata } from '../../../shared/agentReportText'
 import { isRecord } from '../../../shared/guards'
 import { agentDisplayNameFromCall, isAgentToolName } from '../../../shared/agentDisplayName'
-import { applyAssistantMessageError } from './assistantMessageError'
+import {
+  applyAssistantMessageError,
+  assistantMessageWasRecovered,
+  removeRetryErrorItems
+} from './assistantMessageError'
 export interface AgentEventReducerState {
   messages: ChatItem[]
   textBlockIds: Map<number, string>
@@ -603,6 +607,13 @@ export function reduceAgentEventState(
     return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
   }
 
+  if (event.type === 'auto_retry_end') {
+    // The retry succeeded, so the failed attempt no longer belongs in the finished turn. Its error
+    // item was added when that attempt's `message_end` arrived; drop it now.
+    if (event.success === true) removeRetryErrorItems(next, event.runId)
+    return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+  }
+
   if (event.type === 'auto_compaction_end') {
     if (event.skipped) {
       return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
@@ -905,10 +916,17 @@ export function reduceAgentEventState(
 
   if (event.type === 'message_end' && event.message?.role === 'assistant') {
     const isError = event.message.stopReason === 'error'
+    const recovered = isError && assistantMessageWasRecovered(event.message)
     const textIds = [...textBlockIds.values()]
 
     if (isError) {
-      nextId = applyAssistantMessageError(next, event, textBlockIds, nextId)
+      if (recovered) {
+        // Replaying a failed attempt that a retry recovered must not resurrect its error. Live,
+        // the `auto_retry_end` may already have removed it; either way it stays gone.
+        removeRetryErrorItems(next, event.runId)
+      } else {
+        nextId = applyAssistantMessageError(next, event, textBlockIds, nextId)
+      }
     } else if (textIds.length === 0) {
       const finalMessage = extractTextFromMessage(event.message)
       if (isDisplayableAssistantText(finalMessage)) {

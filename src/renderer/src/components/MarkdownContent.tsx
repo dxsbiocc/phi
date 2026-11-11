@@ -3,6 +3,7 @@ import { useUiLanguage } from '../lib/i18n'
 import { Box, Divider, Typography } from '@mui/material'
 import {
   cloneElement,
+  createContext,
   Fragment,
   isValidElement,
   memo,
@@ -69,6 +70,31 @@ import { createResourceMentionRemarkPlugin } from '../lib/markdownResourceMentio
 import { textFromNode } from '../lib/markdownText'
 
 export type { LocalPathKind } from '../lib/markdownLocalPathReferences'
+
+/**
+ * Visible text of the paragraph or list item currently being rendered. A local image path is only
+ * expanded into a block preview when it is the whole content of that block; a path mentioned inside
+ * a sentence stays an inline file chip so its name and the surrounding text remain readable.
+ * `null` means there is no owning block (headings, table cells, inline fragments): keep chips inline.
+ */
+const MarkdownBlockTextContext = createContext<string | null>(null)
+
+const STANDALONE_PUNCTUATION_EDGE = /^[\s\p{P}]+/u
+const STANDALONE_PUNCTUATION_END = /[\s\p{P}]+$/u
+
+function stripStandalonePunctuation(value: string): string {
+  return value
+    .trim()
+    .replace(STANDALONE_PUNCTUATION_EDGE, '')
+    .replace(STANDALONE_PUNCTUATION_END, '')
+    .trim()
+}
+
+function isStandalonePathReference(blockText: string | null, referenceText: string): boolean {
+  if (blockText === null) return false
+  const reference = stripStandalonePunctuation(referenceText)
+  return reference.length > 0 && stripStandalonePunctuation(blockText) === reference
+}
 
 function omitHexColorNodes(node: ReactNode): ReactNode {
   if (typeof node === 'string') {
@@ -321,7 +347,14 @@ function LocalPathReference({
   onOpenLocalPath?: (absolutePath: string, pathKind: LocalPathKind) => void
 }): React.JSX.Element {
   const remoteProject = useRemoteProjectFileContext()
-  if (!remoteProject && pathKind === 'file' && isInlinePreviewImagePath(absolutePath)) {
+  const blockText = useContext(MarkdownBlockTextContext)
+  const isStandalone = isStandalonePathReference(blockText, text)
+  if (
+    !remoteProject &&
+    pathKind === 'file' &&
+    isStandalone &&
+    isInlinePreviewImagePath(absolutePath)
+  ) {
     return (
       <MarkdownImage
         src={absolutePath}
@@ -596,10 +629,12 @@ function MarkdownContentImpl({
         const colors = showColorPalettes ? paletteColorsFromText(textFromNode(children)) : []
         const content = colors.length > 0 ? omitHexColorNodes(children) : children
         return (
-          <Typography variant="body1" sx={{ my: 1, fontSize: 'inherit', lineHeight: 'inherit' }}>
-            {renderInlineChildren(content, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
-            {colors.length > 0 && renderPaletteLine(colors)}
-          </Typography>
+          <MarkdownBlockTextContext.Provider value={textFromNode(content)}>
+            <Typography variant="body1" sx={{ my: 1, fontSize: 'inherit', lineHeight: 'inherit' }}>
+              {renderInlineChildren(content, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
+              {colors.length > 0 && renderPaletteLine(colors)}
+            </Typography>
+          </MarkdownBlockTextContext.Provider>
         )
       },
       h1: ({ children }) => (
@@ -645,10 +680,12 @@ function MarkdownContentImpl({
           showColorPalettes && ownsPalette ? paletteColorsFromText(textFromNode(children)) : []
         const content = colors.length > 0 ? omitHexColorNodes(children) : children
         return (
-          <Typography component="li" sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>
-            {renderInlineChildren(content, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
-            {colors.length > 0 && renderPaletteLine(colors)}
-          </Typography>
+          <MarkdownBlockTextContext.Provider value={textFromNode(content)}>
+            <Typography component="li" sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>
+              {renderInlineChildren(content, cwd, localPathKinds, onOpenLocalPath, remoteProject)}
+              {colors.length > 0 && renderPaletteLine(colors)}
+            </Typography>
+          </MarkdownBlockTextContext.Provider>
         )
       },
       strong: ({ children }) => (
@@ -817,15 +854,17 @@ function MarkdownContentImpl({
       ...(inline
         ? {
             p: ({ children }: { children?: ReactNode }) => (
-              <>
-                {renderInlineChildren(
-                  children,
-                  cwd,
-                  localPathKinds,
-                  onOpenLocalPath,
-                  remoteProject
-                )}
-              </>
+              <MarkdownBlockTextContext.Provider value={textFromNode(children)}>
+                <>
+                  {renderInlineChildren(
+                    children,
+                    cwd,
+                    localPathKinds,
+                    onOpenLocalPath,
+                    remoteProject
+                  )}
+                </>
+              </MarkdownBlockTextContext.Provider>
             )
           }
         : {})

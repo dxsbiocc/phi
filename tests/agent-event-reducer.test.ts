@@ -508,6 +508,152 @@ test('a later run failure does not duplicate an assistant stream error', () => {
   assert.equal(state.messages.filter((item) => item.role === 'assistant').length, 1)
 })
 
+test('a replayed recovered auto-retry error message adds no error item', () => {
+  const state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'message_end',
+    runId: 'run-1',
+    message: {
+      role: 'assistant',
+      stopReason: 'error',
+      errorMessage: 'stream closed before a terminal response event: …',
+      retryRecovery: {
+        kind: 'auto-retry',
+        status: 'recovered',
+        attempt: 1,
+        recoveredAt: '2026-09-07T00:00:12.000Z',
+        recovery: 'plain',
+        note: 'Retried automatically'
+      }
+    }
+  })
+
+  assert.deepEqual(state.messages, [])
+})
+
+test('a replayed recovered auto-retry error keeps text it streamed before failing', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'message_start',
+    message: { role: 'assistant' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '部分回答' }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    runId: 'run-1',
+    message: {
+      role: 'assistant',
+      stopReason: 'error',
+      errorMessage: 'stream closed before a terminal response event: …',
+      retryRecovery: {
+        kind: 'auto-retry',
+        status: 'recovered',
+        attempt: 1,
+        recoveredAt: '2026-09-07T00:00:12.000Z',
+        recovery: 'plain',
+        note: 'Retried automatically'
+      }
+    }
+  })
+
+  assert.deepEqual(
+    state.messages.map((item) => ({ role: item.role, content: item.content })),
+    [{ role: 'assistant', content: '部分回答' }]
+  )
+})
+
+test('an unrecovered auto-retry error still shows its error item', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'message_end',
+    runId: 'run-1',
+    message: {
+      role: 'assistant',
+      stopReason: 'error',
+      errorMessage: 'stream closed before a terminal response event: …'
+    }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'auto_retry_end',
+    runId: 'run-1',
+    success: false,
+    attempt: 2,
+    finalError: 'stream closed before a terminal response event: …'
+  })
+
+  assert.deepEqual(
+    state.messages.map((item) => ({ role: item.role, runId: item.runId, content: item.content })),
+    [
+      {
+        role: 'error',
+        runId: 'run-1',
+        content: 'stream closed before a terminal response event: …'
+      }
+    ]
+  )
+})
+
+test('a successful live auto-retry removes only the failed attempt error item', () => {
+  let state = createAgentEventReducerState([
+    { id: 'error-other-run', role: 'error', runId: 'run-0', content: 'older failure' }
+  ])
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    runId: 'run-1',
+    message: {
+      role: 'assistant',
+      stopReason: 'error',
+      errorMessage: 'stream closed before a terminal response event: …'
+    }
+  })
+  assert.deepEqual(
+    state.messages.filter((item) => item.role === 'error').map((item) => item.runId),
+    ['run-0', 'run-1']
+  )
+
+  state = reduceAgentEventState(state, {
+    type: 'auto_retry_end',
+    runId: 'run-1',
+    success: true,
+    attempt: 1
+  })
+
+  assert.deepEqual(
+    state.messages.filter((item) => item.role === 'error').map((item) => item.runId),
+    ['run-0']
+  )
+})
+
+test('a recovered marker arriving after the live error removes that error item', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'message_end',
+    runId: 'run-1',
+    message: { role: 'assistant', stopReason: 'error', errorMessage: 'stream ended' }
+  })
+  assert.equal(state.messages.filter((item) => item.role === 'error').length, 1)
+
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    runId: 'run-1',
+    message: {
+      role: 'assistant',
+      stopReason: 'error',
+      errorMessage: 'stream ended',
+      retryRecovery: {
+        kind: 'auto-retry',
+        status: 'recovered',
+        attempt: 1,
+        recoveredAt: '2026-09-07T00:00:12.000Z',
+        recovery: 'plain',
+        note: 'Retried automatically'
+      }
+    }
+  })
+
+  assert.equal(state.messages.filter((item) => item.role === 'error').length, 0)
+})
+
 test('project parallel warning becomes an informational chat item', () => {
   const state = reduceAgentEventState(
     createAgentEventReducerState(),

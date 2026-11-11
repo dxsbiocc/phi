@@ -1,7 +1,14 @@
+import type { AssistantRetryRecovery } from '@oh-my-pi/pi-ai'
+
 export interface AgentMessage {
   role?: string
   stopReason?: string
   errorMessage?: string
+  /**
+   * Present on a failed assistant attempt that an automatic retry later superseded. `recovered`
+   * means the retry succeeded, so replaying this message must not add a visible error item.
+   */
+  retryRecovery?: AssistantRetryRecovery
   summary?: string
   shortSummary?: string
   tokensBefore?: number
@@ -82,6 +89,12 @@ export interface AgentEventSummary {
   aborted?: boolean
   willRetry?: boolean
   skipped?: boolean
+  /** `auto_retry_end` outcome: true when the retry recovered the failed attempt. */
+  success?: boolean
+  attempt?: number
+  maxAttempts?: number
+  delayMs?: number
+  finalError?: string
   errorMessage?: string
   errorCode?: string
   errorDetail?: unknown

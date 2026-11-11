@@ -30,6 +30,16 @@ function renderMarkdown(
   )
 }
 
+function renderMarkdownInProject(text: string): string {
+  return renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(MarkdownContent, { text, cwd: '/Users/example/project' })
+    )
+  )
+}
+
 test('only HTTP(S) links are eligible for in-app opening', () => {
   assert.equal(isHttpWebUrl('https://example.com/docs'), true)
   assert.equal(isHttpWebUrl('http://example.com/docs'), true)
@@ -402,16 +412,9 @@ test('markdown latex colorbox output becomes a swatch palette instead of raw con
   assert.doesNotMatch(markup, /\\quad/)
 })
 
-test('markdown image file references in content render as previews', () => {
-  const markup = renderToStaticMarkup(
-    createElement(
-      ThemeProvider,
-      { theme: createTheme() },
-      createElement(MarkdownContent, {
-        text: 'Saved ./photo.jpg, ./scan.jpeg, ./anim.gif, and ./plate.webp next to ./notes.md.',
-        cwd: '/Users/example/project'
-      })
-    )
+test('markdown image file references alone in a list item render as previews', () => {
+  const markup = renderMarkdownInProject(
+    '- ./photo.jpg\n- ./scan.jpeg\n- ./anim.gif\n- ./plate.webp\n- ./notes.md'
   )
 
   for (const name of ['photo.jpg', 'scan.jpeg', 'anim.gif', 'plate.webp']) {
@@ -422,11 +425,58 @@ test('markdown image file references in content render as previews', () => {
       )
     )
   }
+  assert.equal(markup.match(/data-phi-slot="local-markdown-image"/g)?.length ?? 0, 4)
+  assert.match(
+    markup,
+    /data-phi-slot="local-file-link"[^>]*data-phi-path="\/Users\/example\/project\/notes\.md"/
+  )
   assert.doesNotMatch(
     markup,
     /data-phi-slot="local-markdown-image"[^>]*data-phi-path="\/Users\/example\/project\/notes\.md"/
   )
-  assert.match(markup, /data-phi-path="\/Users\/example\/project\/notes\.md"/)
+})
+
+test('markdown image paths mentioned inside a sentence stay inline file chips', () => {
+  const markup = renderMarkdownInProject(
+    [
+      '新文件：',
+      '- `figures/genera_circular_phylogeny.png`：220 mm 方形，300 dpi，2598×2598，白底。',
+      '- `figures/plot.R`：实际渲染用的脚本。'
+    ].join('\n')
+  )
+
+  assert.doesNotMatch(markup, /data-phi-slot="local-markdown-image"/)
+  assert.match(
+    markup,
+    /data-phi-slot="local-file-link"[^>]*data-phi-path="\/Users\/example\/project\/figures\/genera_circular_phylogeny\.png"/
+  )
+  assert.match(
+    markup,
+    /data-phi-slot="local-file-link"[^>]*data-phi-path="\/Users\/example\/project\/figures\/plot\.R"/
+  )
+  assert.match(markup, />genera_circular_phylogeny\.png<\/span><\/button>/)
+  assert.match(markup, />plot\.R<\/span><\/button>/)
+  assert.ok(markup.indexOf('genera_circular_phylogeny.png') < markup.indexOf('220 mm 方形'))
+  assert.match(markup, /220 mm 方形/)
+  assert.match(markup, /实际渲染用的脚本/)
+})
+
+test('markdown image path alone in a list item keeps the block preview with punctuation', () => {
+  const markup = renderMarkdownInProject('- ./figures/plot.png。')
+
+  assert.match(
+    markup,
+    /data-phi-slot="local-markdown-image"[^>]*data-phi-path="\/Users\/example\/project\/figures\/plot\.png"/
+  )
+})
+
+test('explicit markdown image syntax renders an image for a local path', () => {
+  const markup = renderMarkdownInProject('![Volcano plot](./figures/volcano.png)')
+
+  assert.match(
+    markup,
+    /data-phi-slot="local-markdown-image"[^>]*data-phi-path="\/Users\/example\/project\/figures\/volcano\.png"/
+  )
 })
 
 test('markdown paragraphs render local paths as file links with path tooltips', () => {
@@ -466,14 +516,10 @@ test('markdown file links show paths instead of rich hover previews', () => {
     )
   )
   assert.equal(markup.match(/data-phi-slot="local-file-link"/g)?.length ?? 0, 2)
-  assert.equal(markup.match(/data-phi-slot="local-markdown-image"/g)?.length ?? 0, 1)
+  assert.equal(markup.match(/data-phi-slot="local-markdown-image"/g)?.length ?? 0, 0)
   assert.match(
     markup,
-    /data-phi-slot="local-markdown-image"[^>]*data-phi-path="\/Users\/example\/project\/stacked_bar\.png"/
-  )
-  assert.doesNotMatch(
-    markup,
-    /data-phi-slot="local-markdown-image"[^>]*data-phi-path="\/Users\/example\/project\/report\.pdf"/
+    /data-phi-slot="local-file-link"[^>]*data-phi-path="\/Users\/example\/project\/stacked_bar\.png"/
   )
   assert.match(markup, /title="\/Users\/example\/project\/stacked_bar\.png"/)
   assert.match(markup, /title="\/Users\/example\/project\/report\.pdf"/)
@@ -498,7 +544,7 @@ test('markdown relative workspace paths expose their resolved full path on hover
 
   const absolutePath = '/Users/example/project/omics_viz/THRSP_network_omics.png'
   assert.equal(markup.match(/data-phi-slot="local-file-link"/g)?.length ?? 0, 3)
-  assert.equal(markup.match(/data-phi-slot="local-markdown-image"/g)?.length ?? 0, 3)
+  assert.equal(markup.match(/data-phi-slot="local-markdown-image"/g)?.length ?? 0, 0)
   assert.match(markup, new RegExp(`data-phi-path="${absolutePath}"`))
   assert.equal(
     markup.match(/title="\/Users\/example\/project\/omics_viz\/THRSP_network_omics\.png"/g)
@@ -523,7 +569,7 @@ test('markdown exposes project-external absolute files with full path tooltips',
   )
 
   assert.equal(markup.match(/data-phi-slot="local-file-link"/g)?.length ?? 0, 3)
-  assert.equal(markup.match(/data-phi-slot="local-markdown-image"/g)?.length ?? 0, 3)
+  assert.equal(markup.match(/data-phi-slot="local-markdown-image"/g)?.length ?? 0, 0)
   assert.equal(markup.match(/title="\/Users\/example\/data\/plots\/volcano\.png"/g)?.length ?? 0, 3)
   assert.match(markup, /data-phi-path="\/Users\/example\/data\/plots\/volcano\.png"/)
   assert.match(markup, /打开文件 \/Users\/example\/data\/plots\/volcano\.png/)

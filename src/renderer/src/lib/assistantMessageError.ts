@@ -15,6 +15,28 @@ function completedAtField(completedAt?: string): { completedAt: string } | Recor
   return typeof completedAt === 'string' ? { completedAt } : {}
 }
 
+/** True when the failed attempt this message represents was superseded by a successful retry. */
+export function assistantMessageWasRecovered(
+  message: AgentEventSummary['message'] | undefined
+): boolean {
+  return message?.retryRecovery?.status === 'recovered'
+}
+
+/**
+ * A recovered retry erases the failed attempt from the turn: any error item that attempt added
+ * (live from `message_end`, or from an earlier replay) must go away, while unrelated runs keep
+ * their errors.
+ */
+export function removeRetryErrorItems(next: ChatItem[], runId?: string): void {
+  // Without a run id there is no way to tell this attempt's error from other runs' errors.
+  if (typeof runId !== 'string') return
+  for (let index = next.length - 1; index >= 0; index -= 1) {
+    const item = next[index]
+    if (item.role !== 'error' || item.runId !== runId) continue
+    next.splice(index, 1)
+  }
+}
+
 function appendErrorItem(next: ChatItem[], event: AgentEventSummary, nextId: number): number {
   next.push({
     id: createBlockId('error', 0, nextId),
