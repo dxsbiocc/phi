@@ -6,7 +6,6 @@ import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
-  Alert,
   Box,
   Button,
   Chip,
@@ -274,14 +273,12 @@ export function PackageUpdateDialog({
   open,
   update,
   busy,
-  error,
   onClose,
   onApply
 }: {
   open: boolean
   update: PackageUpdateView | null
   busy: boolean
-  error: string | null
   onClose: () => void
   onApply: (update: PackageUpdateView) => void
 }): React.JSX.Element {
@@ -304,18 +301,12 @@ export function PackageUpdateDialog({
         ? phiPluginDisplayTitle({ id: update.id, title: update.title })
         : update.title
   return (
-    <Dialog
-      open={open && update !== null}
-      onClose={busy ? undefined : onClose}
-      maxWidth="md"
-      fullWidth
-    >
+    <Dialog open={open && update !== null} onClose={onClose} maxWidth="md" fullWidth>
       {update ? (
         <Stack spacing={2} sx={{ p: 3, position: 'relative' }}>
           <IconButton
             size="small"
             aria-label={settingsUi.close}
-            disabled={busy}
             onClick={onClose}
             sx={{ position: 'absolute', top: 12, right: 12 }}
           >
@@ -340,7 +331,6 @@ export function PackageUpdateDialog({
             </Typography>
           </Box>
           <Divider />
-          {error ? <Alert severity="error">{error}</Alert> : null}
           <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 0.5 }}>

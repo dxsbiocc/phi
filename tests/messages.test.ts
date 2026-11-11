@@ -180,6 +180,28 @@ test('opening the panel does not mark read; reading one leaves the others unread
   assert.doesNotMatch(panel, /PackageUpdatesDialog|applyAllPackageUpdates|onApplyAll/)
 })
 
+test('starting a package update closes the dialog before the background update finishes', () => {
+  const panel = readFileSync('src/renderer/src/features/messages/MessagesPanel.tsx', 'utf8')
+  const apply = panel
+    .split('function apply(update: PackageUpdateView): void {')[1]
+    ?.split('function openMessage(')[0]
+  assert.ok(apply)
+
+  const close = apply.indexOf('setSelectedUpdate(null)')
+  const start = apply.indexOf('void (async')
+  const run = apply.indexOf('await window.api.applyPackageUpdate')
+  assert.ok(close >= 0)
+  assert.ok(start > close)
+  assert.ok(run > start)
+  assert.match(apply, /await refresh\(\)/)
+  assert.match(apply, /if \(updatingKeysRef\.current\.has\(key\)\) return/)
+
+  // Busy belongs to the package, so reopening the same message disables only Update.
+  assert.match(panel, /busy=\{selectedUpdateBusy\}/)
+  assert.match(panel, /onClose=\{\(\) => setSelectedUpdate\(null\)\}/)
+  assert.doesNotMatch(panel, /if \(!busy\)|setError|errorMessage/)
+})
+
 test('a newer package version makes the message unread again', () => {
   const oldIds = messageIdsForContent([update({ newVersion: '1.1.0' })], null)
   const readIds = markMessageRead(new Set(), oldIds, oldIds[0]!)

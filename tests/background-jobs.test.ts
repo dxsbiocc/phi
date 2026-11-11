@@ -3,9 +3,11 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
-import { createElement, type ComponentProps } from 'react'
+import { createElement, isValidElement, type ComponentProps } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { createTheme, ThemeProvider } from '@mui/material'
+import { ButtonBase, IconButton, createTheme, ThemeProvider } from '@mui/material'
+import { componentTree } from './helpers/renderComponentTree'
 import {
   AnimatedList,
   AnimatedListItem
@@ -22,8 +24,12 @@ import { BackgroundJobGroup } from '../src/renderer/src/components/BackgroundJob
 import { BackgroundJobRow } from '../src/renderer/src/features/jobs/components/BackgroundJobRow'
 import { BackgroundWorkflowRow } from '../src/renderer/src/features/jobs/components/BackgroundWorkflowRow'
 import { BackgroundJobIcon } from '../src/renderer/src/features/jobs/components/BackgroundJobIcon'
-import { BackgroundJobArrivalNotice } from '../src/renderer/src/features/jobs/components/BackgroundJobArrivalNotice'
+import {
+  BackgroundJobArrivalNotice,
+  ArrivalCard
+} from '../src/renderer/src/features/jobs/components/BackgroundJobArrivalNotice'
 import { newlyObservedJobs } from '../src/renderer/src/features/jobs/hooks/useBackgroundJobArrivals'
+import { jobsCopy } from '../src/renderer/src/features/jobs/lib/jobsCopy'
 import { groupBackgroundJobs } from '../src/renderer/src/features/jobs/lib/backgroundJobGroups'
 import {
   remoteJupyterEntryLabel,
@@ -836,6 +842,12 @@ test('animated list starts new cards at the reference zero scale', () => {
   assert.match(markup, /opacity:0;transform:scale\(0\)/)
 })
 
+function descendants(node: ReactNode): ReactElement[] {
+  if (Array.isArray(node)) return node.flatMap(descendants)
+  if (!isValidElement(node)) return []
+  return [node, ...descendants((node.props as { children?: ReactNode }).children)]
+}
+
 test('arrival animation host stays mounted before the first new task', () => {
   const markup = render(
     createElement(BackgroundJobArrivalNotice, {
@@ -843,6 +855,40 @@ test('arrival animation host stays mounted before the first new task', () => {
     })
   )
   assert.match(markup, /data-phi-background-job-arrivals="floating"/)
+})
+
+test('an arrival card dismisses from its close button without opening the task', () => {
+  const item = groupBackgroundJobs(selectBackgroundJobs([agent], []).active)[0]
+  assert.ok(item)
+  let opened = 0
+  let dismissed = 0
+  const tree = componentTree(() =>
+    ArrivalCard({
+      item,
+      phase: 'added',
+      onOpen: () => {
+        opened += 1
+      },
+      onDismiss: () => {
+        dismissed += 1
+      }
+    })
+  )
+  const elements = descendants(tree)
+  const close = elements.find(
+    (element) =>
+      element.type === IconButton &&
+      (element.props as { 'aria-label'?: string })['aria-label'] === jobsCopy.close
+  )
+  const openButton = elements.find((element) => element.type === ButtonBase)
+  assert.ok(close)
+  assert.ok(openButton)
+  // The close action must not be nested inside the card-wide button.
+  assert.ok(!descendants(openButton).includes(close))
+
+  ;(close.props as { onClick: () => void }).onClick()
+  assert.equal(dismissed, 1)
+  assert.equal(opened, 0)
 })
 
 test('starting remote Jupyter does not open the jobs panel automatically', () => {

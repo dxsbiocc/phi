@@ -14,7 +14,7 @@ import { createTheme, ThemeProvider } from '@mui/material'
 import { PackageUpdateDialog } from '../src/renderer/src/components/PackageUpdateDialog'
 import type { PackageUpdateView } from '../src/shared/packageManagerTypes'
 
-function renderDialog(update: PackageUpdateView | null): string {
+function renderDialog(update: PackageUpdateView | null, options: { busy?: boolean } = {}): string {
   return renderToStaticMarkup(
     createElement(
       ThemeProvider,
@@ -26,8 +26,7 @@ function renderDialog(update: PackageUpdateView | null): string {
       createElement(PackageUpdateDialog, {
         open: true,
         update,
-        busy: false,
-        error: null,
+        busy: options.busy ?? false,
         onClose: () => undefined,
         onApply: () => undefined
       })
@@ -152,4 +151,26 @@ test('imported updates do not show an unsigned trust chip', () => {
 test('a closed dialog without a selected package renders no update action', () => {
   const markup = renderDialog(null)
   assert.doesNotMatch(markup, />更新<\/button>/)
+})
+
+test('a busy update only disables the update action and stays closable', () => {
+  const markup = renderDialog(
+    {
+      id: 'alpha-skill',
+      type: 'skill',
+      title: 'Alpha skill',
+      currentVersion: '1.0.0',
+      newVersion: '1.1.0',
+      registryId: '0123456789abcdef',
+      registryPath: '/registries/alpha',
+      trust: 'official'
+    },
+    { busy: true }
+  )
+
+  const closeButton = /<button[^>]*aria-label="关闭"[^>]*>/.exec(markup)
+  assert.ok(closeButton)
+  assert.doesNotMatch(closeButton[0], /disabled=""/)
+  assert.equal((markup.match(/disabled=""/g) ?? []).length, 1)
+  assert.match(markup, /MuiCircularProgress-root/)
 })

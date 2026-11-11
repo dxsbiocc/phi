@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Box, Typography } from '@mui/material'
 
 import { PackageUpdateDialog } from '../../components/PackageUpdateDialog'
@@ -6,48 +6,59 @@ import { SidePanelCard } from '../../components/SidePanelCard'
 import { useUiLanguage } from '../../lib/i18n'
 import { workspacePanelText } from '../../layout'
 import type { PackageUpdateView } from '../../../../shared/packageManagerTypes'
-import { errorMessage } from '../../../../shared/errorCodes'
 import { MessageIcon } from './components/MessageIcon'
 import { useMessages } from './hooks/useMessages'
 import { messagesCopy } from './lib/messagesCopy'
 import { buildMessages, orderMessagesByReadState, type Message } from './lib/messages'
+
+/** Busy state is per package, not per dialog: reopening the same message stays disabled. */
+function packageUpdateKey(update: PackageUpdateView): string {
+  return `${update.type}:${update.id}`
+}
 
 export function MessagesPanel(): React.JSX.Element {
   useUiLanguage()
   const { packageUpdates, appUpdate, loaded, readIds, markRead, refreshPackageUpdates } =
     useMessages()
   const [selectedUpdate, setSelectedUpdate] = useState<PackageUpdateView | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [updatingKeys, setUpdatingKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const updatingKeysRef = useRef(new Set<string>())
 
   const messages = orderMessagesByReadState(
     buildMessages({ updates: packageUpdates, appUpdate }),
     readIds
   )
+  const selectedUpdateBusy =
+    selectedUpdate !== null && updatingKeys.has(packageUpdateKey(selectedUpdate))
 
   const refresh = async (): Promise<void> => {
     await refreshPackageUpdates()
   }
 
-  async function apply(update: PackageUpdateView): Promise<void> {
-    setBusy(true)
-    setError(null)
-    try {
-      await window.api.applyPackageUpdate(update.type, update.id)
-      await refresh()
-      // The update is gone from the refreshed list, so its message disappears too.
-      setSelectedUpdate(null)
-    } catch (cause) {
-      setError(errorMessage(cause))
-    } finally {
-      setBusy(false)
-    }
+  function apply(update: PackageUpdateView): void {
+    const key = packageUpdateKey(update)
+    if (updatingKeysRef.current.has(key)) return
+    // Closing first lets the main process finish the update as a background job.
+    setSelectedUpdate(null)
+    updatingKeysRef.current.add(key)
+    setUpdatingKeys(new Set(updatingKeysRef.current))
+    void (async () => {
+      try {
+        await window.api.applyPackageUpdate(update.type, update.id)
+        await refresh()
+        // The update is gone from the refreshed list, so its message disappears too.
+      } catch {
+        // The background jobs list reports update failures; keep the message for a retry.
+      } finally {
+        updatingKeysRef.current.delete(key)
+        setUpdatingKeys(new Set(updatingKeysRef.current))
+      }
+    })()
   }
 
   function openMessage(message: Message): void {
     markRead(message.id)
     if (message.kind === 'package-update' && message.packageUpdate) {
-      setError(null)
       setSelectedUpdate(message.packageUpdate)
       return
     }
@@ -103,15 +114,6 @@ export function MessagesPanel(): React.JSX.Element {
         bgcolor: 'background.paper'
       }}
     >
-      {error && (
-        <Typography
-          variant="caption"
-          color="error.main"
-          sx={{ ...workspacePanelText.body, px: 1.5, mb: 0.5 }}
-        >
-          {error}
-        </Typography>
-      )}
       <Box
         sx={{
           flex: 1,
@@ -146,12 +148,9 @@ export function MessagesPanel(): React.JSX.Element {
       <PackageUpdateDialog
         open={selectedUpdate !== null}
         update={selectedUpdate}
-        busy={busy}
-        error={error}
-        onClose={() => {
-          if (!busy) setSelectedUpdate(null)
-        }}
-        onApply={(update) => void apply(update)}
+        busy={selectedUpdateBusy}
+        onClose={() => setSelectedUpdate(null)}
+        onApply={apply}
       />
     </Box>
   )
