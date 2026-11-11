@@ -2300,7 +2300,10 @@ const { submitPromptRun } = createPromptRunQueue({
   runs: {
     queueFor: (sessionKey) => promptRuns.queueFor(sessionKey),
     generationFor: (sessionKey) => promptRuns.generationFor(sessionKey),
-    setQueue: (sessionKey, queue) => promptRuns.setQueue(sessionKey, queue)
+    setQueue: (sessionKey, queue) => promptRuns.setQueue(sessionKey, queue),
+    beginSubmission: (sessionKey) => promptRuns.beginPromptSubmission(sessionKey),
+    endSubmission: (sessionKey, submission) =>
+      promptRuns.endPromptSubmission(sessionKey, submission)
   },
   execution: {
     runner: runnerRegistry,
@@ -2732,7 +2735,9 @@ const { stopPromptRun, stopAllPromptRuns } = createPromptRunStop<PromptRun, Agen
   runs: {
     advanceGeneration: (key) => promptRuns.advanceGeneration(key),
     activeRuns: () => promptRuns.activeRuns(),
-    activeEntries: () => promptRuns.activeEntries()
+    activeEntries: () => promptRuns.activeEntries(),
+    cancelPendingSubmissions: (key) => promptRuns.cancelPendingPromptSubmissions(key),
+    cancelAllPendingSubmissions: () => promptRuns.cancelAllPendingPromptSubmissions()
   },
   browser: { cancel: cancelBrowserRun, cleanup: cleanupBrowserRunTabs },
   agents: {
@@ -3301,6 +3306,7 @@ function registerAgentIpc(): void {
     },
     stop: {
       advancePromptGeneration: promptRuns.advanceGeneration.bind(promptRuns),
+      cancelPendingPromptSubmissions: promptRuns.cancelPendingPromptSubmissions.bind(promptRuns),
       getActivePromptRun: promptRuns.activeRun.bind(promptRuns),
       getPhiSessionIdForKey: sessionKeys.phiSessionIdFor.bind(sessionKeys),
       getManualCompactionOperation: (sessionId) =>

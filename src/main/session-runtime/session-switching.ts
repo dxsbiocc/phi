@@ -99,8 +99,8 @@ export interface SessionSwitching<TSessionResult> {
   }
   getCurrentResolvedSession: () => Promise<TSessionResult | null>
   invalidateAgentSession: () => Promise<void>
-  /** Applies an invalidation that was deferred by running background work, when it is now safe. */
-  flushPendingInvalidation: (sessionKey?: string) => Promise<void>
+  /** Applies a deferred invalidation, or returns undefined when there is nothing to replay. */
+  flushPendingInvalidation: (sessionKey?: string) => Promise<void> | void
   clearPendingInvalidation: (phiSessionId: string | undefined) => void
   clearPendingInvalidations: () => void
   disposeAndSwitchSession: (
@@ -266,9 +266,9 @@ export function createSessionSwitching<TSessionResult, TPromptRun extends Switch
     await applyInvalidation(sessionKey)
   }
 
-  const flushPendingInvalidation = async (
+  const flushPendingInvalidation = (
     sessionKey = deps.state.sessionState.sessionKey
-  ): Promise<void> => {
+  ): Promise<void> | void => {
     const phiSessionId = deps.state.sessionKeys.phiSessionIdFor(sessionKey)
     if (!phiSessionId || !pendingInvalidations.has(phiSessionId)) return
     // A prompt may race the previous flush; both must replay the same invalidation once.

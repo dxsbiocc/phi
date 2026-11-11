@@ -24,7 +24,9 @@ function createDeps(calls: string[]): {
         return 1
       },
       activeRuns: () => runs,
-      activeEntries: () => entries
+      activeEntries: () => entries,
+      cancelPendingSubmissions: () => undefined,
+      cancelAllPendingSubmissions: () => undefined
     },
     browser: {
       cancel: (run) => calls.push(`browser-cancel:${run.runId}`),

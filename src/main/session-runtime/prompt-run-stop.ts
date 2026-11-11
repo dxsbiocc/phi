@@ -18,6 +18,8 @@ export interface PromptRunStopDeps<
     advanceGeneration(sessionKey: string): number
     activeRuns(): TRun[]
     activeEntries(): Array<[string, TRun]>
+    cancelPendingSubmissions(sessionKey: string): void
+    cancelAllPendingSubmissions(): void
   }
   browser: {
     cancel(run: TRun): void
@@ -56,6 +58,8 @@ async function stopPromptRun<
   invalidateGeneration = true
 ): Promise<void> {
   if (invalidateGeneration) deps.runs.advanceGeneration(sessionKey)
+  // A prompt that is still replaying a deferred invalidation has no active run yet.
+  deps.runs.cancelPendingSubmissions(sessionKey)
   run.cancelled = true
   deps.browser.cancel(run)
   const browserCleanup = deps.browser.cleanup(run)
@@ -78,6 +82,7 @@ function stopAllPromptRuns<
   runtimeAbort: Promise<void>
 } {
   const runs = deps.runs.activeRuns()
+  deps.runs.cancelAllPendingSubmissions()
   for (const [sessionKey, run] of deps.runs.activeEntries()) {
     deps.runs.advanceGeneration(sessionKey)
     run.cancelled = true

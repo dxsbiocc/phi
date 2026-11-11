@@ -37,6 +37,9 @@ export interface PromptRunQueueDeps {
     queueFor(sessionKey: string): Promise<void>
     generationFor(sessionKey: string): number
     setQueue(sessionKey: string, queue: Promise<void>): void
+    /** Registers a prompt before admission so stop can cancel it while invalidation replays. */
+    beginSubmission(sessionKey: string): { cancelled: boolean }
+    endSubmission(sessionKey: string, submission: { cancelled: boolean }): void
   }
   execution: {
     runner: {
@@ -61,7 +64,7 @@ export interface PromptRunQueueDeps {
   }
   invalidation: {
     /** Replays a deferred resource invalidation before this prompt acquires its session. */
-    flushPending(sessionKey: string): Promise<void>
+    flushPending(sessionKey: string): Promise<void> | void
   }
   events: {
     notifySessionChanged(): void
@@ -194,16 +197,26 @@ async function submitPromptRun(
 ): Promise<PromptRunResult> {
   // A plugin/skill invalidation deferred by running background work must land before the
   // next prompt acquires the old runtime session; otherwise the prompt starts on stale resources.
-  await deps.invalidation.flushPending(input.sessionKey)
-  const target = deps.admission.resolve(input)
-  const admission = deps.admission.admit(target)
-  const context = deps.start.allocate(admission)
-  deps.start.prepare(context)
-  // Serialize prompts per session: duplicate/overlapping IPC invokes must
-  // never run session.prompt() concurrently within the same conversation.
-  const run = deps.runs.queueFor(context.runSessionKey).then(() => runQueuedPrompt(deps, context))
-  trackPromptRunSettlement(deps, context, run)
-  return run
+  // With no deferred invalidation this is a synchronous fast path, so a stop that arrives right
+  // after the prompt request still invalidates the generation before admission. While a replay
+  // is awaited, the submission token lets stop cancel this prompt before it is admitted.
+  const submission = deps.runs.beginSubmission(input.sessionKey)
+  try {
+    const pendingInvalidation = deps.invalidation.flushPending(input.sessionKey)
+    if (pendingInvalidation) await pendingInvalidation
+    if (submission.cancelled) return null
+    const target = deps.admission.resolve(input)
+    const admission = deps.admission.admit(target)
+    const context = deps.start.allocate(admission)
+    deps.start.prepare(context)
+    // Serialize prompts per session: duplicate/overlapping IPC invokes must
+    // never run session.prompt() concurrently within the same conversation.
+    const run = deps.runs.queueFor(context.runSessionKey).then(() => runQueuedPrompt(deps, context))
+    trackPromptRunSettlement(deps, context, run)
+    return run
+  } finally {
+    deps.runs.endSubmission(input.sessionKey, submission)
+  }
 }
 
 export interface PromptRunQueue {

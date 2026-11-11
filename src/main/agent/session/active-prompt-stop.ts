@@ -7,6 +7,7 @@ interface ManualCompactionOperation {
 export interface ActivePromptStopOptions {
   getCurrentSessionKey: () => string
   advancePromptGeneration: (sessionKey: string) => number
+  cancelPendingPromptSubmissions: (sessionKey: string) => void
   getActivePromptRun: (sessionKey: string) => unknown
   getPhiSessionIdForKey: (sessionKey: string) => string | undefined
   getManualCompactionOperation: (sessionId: string) => ManualCompactionOperation | undefined
@@ -16,6 +17,8 @@ export interface ActivePromptStopOptions {
 export async function stopActivePrompt(options: ActivePromptStopOptions): Promise<void> {
   // Invalidate queued work even before its queue callback sets activePromptRun.
   options.advancePromptGeneration(options.getCurrentSessionKey())
+  // A prompt that is still replaying a deferred invalidation has no active run to find.
+  options.cancelPendingPromptSubmissions(options.getCurrentSessionKey())
   const run = options.getActivePromptRun(options.getCurrentSessionKey())
   if (!run) {
     const phiSessionId = options.getPhiSessionIdForKey(options.getCurrentSessionKey())

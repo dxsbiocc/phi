@@ -503,7 +503,7 @@ test(
         hasLiveEnvironmentLeases(params.environment.root, params.entry.phiManaged.envId),
         true
       )
-      assert.deepEqual(collectGarbage(params.environment.root).skipped, [
+      assert.deepEqual(collectGarbage(params.environment.root, { includeShared: true }).skipped, [
         { envId: params.entry.phiManaged.envId, reason: 'in-use' }
       ])
       const upgradedEnvId = 'phi-upgrade-aaaaaaaaaaaa'
@@ -670,9 +670,10 @@ for (const mode of ['timeout', 'init-error', 'list-timeout', 'list-error']) {
             hasLiveEnvironmentLeases(params.environment.root, params.entry.phiManaged.envId),
             true
           )
-          assert.deepEqual(collectGarbage(params.environment.root).skipped, [
-            { envId: params.entry.phiManaged.envId, reason: 'in-use' }
-          ])
+          assert.deepEqual(
+            collectGarbage(params.environment.root, { includeShared: true }).skipped,
+            [{ envId: params.entry.phiManaged.envId, reason: 'in-use' }]
+          )
         }
         await assert.rejects(
           discovery,
