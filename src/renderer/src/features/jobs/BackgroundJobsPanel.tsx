@@ -1,4 +1,5 @@
 import { jobsCopy } from './lib/jobsCopy'
+import { OverlayScroll } from '../../components/OverlayScroll'
 import { useUiLanguage } from '../../lib/i18n'
 import { AnimatedList, AnimatedListItem } from './components/AnimatedList'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
@@ -237,16 +238,7 @@ export function BackgroundJobsPanel({
           {...(onOpenSetupTerminal ? { onOpenSetupTerminal } : {})}
         />
       ) : (
-        <Box
-          sx={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: 0,
-            overflowX: 'hidden',
-            overflowY: 'auto',
-            scrollbarGutter: 'stable both-edges'
-          }}
-        >
+        <OverlayScroll sx={{ flex: 1 }}>
           {!loaded && (
             <Typography
               variant="body2"
@@ -256,16 +248,8 @@ export function BackgroundJobsPanel({
               {jobsCopy.loadingJobs}
             </Typography>
           )}
-          {loaded && all.length === 0 && (
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              sx={{ ...workspacePanelText.body, py: 1 }}
-            >
-              {jobsCopy.noJobs}
-            </Typography>
-          )}
-          {loaded && all.length > 0 && (
+          {/* Both groups stay visible when empty, e.g. right after clearing finished jobs. */}
+          {loaded && (
             <>
               <BackgroundJobGroup
                 id="running"
@@ -320,7 +304,7 @@ export function BackgroundJobsPanel({
               </BackgroundJobGroup>
             </>
           )}
-        </Box>
+        </OverlayScroll>
       )}
     </Box>
   )
