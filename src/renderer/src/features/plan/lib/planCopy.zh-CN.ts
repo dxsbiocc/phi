@@ -87,7 +87,6 @@ export const planChinese = {
   revisionNotes: '修改意见：',
   planAwaitingReview: '计划等待评审',
   planAwaitingReviewTitle: '计划等待评审 ·',
-  approvalBoundary: '确认前，本轮 Agent 只能探索和修改计划，不能通过本轮工具改动工作区。',
   revisionPlaceholder: '需要修改时，写下调整意见',
   planRevisionNotes: '计划修改意见',
   revisePlan: '修改',

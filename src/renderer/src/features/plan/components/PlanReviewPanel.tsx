@@ -24,14 +24,9 @@ function ReviewHeading({ title }: { title: string }): React.JSX.Element {
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
       <PlanTimelineIcon tone="active" spinning />
-      <Box sx={{ minWidth: 0 }}>
-        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-          {planCopy.planAwaitingReviewTitle} {title}
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          {planCopy.approvalBoundary}
-        </Typography>
-      </Box>
+      <Typography variant="subtitle2" sx={{ minWidth: 0, fontWeight: 700 }}>
+        {planCopy.planAwaitingReviewTitle} {title}
+      </Typography>
     </Box>
   )
 }

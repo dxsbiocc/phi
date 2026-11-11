@@ -89,8 +89,6 @@ export const planEnglish = {
   revisionNotes: 'Revision notes:',
   planAwaitingReview: 'Plan awaiting review',
   planAwaitingReviewTitle: 'Plan awaiting review ·',
-  approvalBoundary:
-    'Until you approve, the agent can only explore and revise the plan; this run’s tools cannot modify the workspace.',
   revisionPlaceholder: 'Enter revision notes if changes are needed',
   planRevisionNotes: 'Plan revision notes',
   revisePlan: 'Revise',

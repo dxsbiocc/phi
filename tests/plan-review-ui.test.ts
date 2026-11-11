@@ -66,7 +66,7 @@ test('plan review panel renders the proposal and both decisions', () => {
   assert.doesNotMatch(markup, />批准</)
   assert.doesNotMatch(markup, />修改</)
   assert.doesNotMatch(markup, /批准并开始执行/)
-  assert.match(markup, /工作区/)
+  assert.doesNotMatch(markup, /只能探索和修改计划/)
   assert.doesNotMatch(markup, /data-phi-plan-steps/)
 })
 
