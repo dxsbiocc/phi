@@ -10,11 +10,12 @@ export type OutsideProjectApproval = (
 
 export function createProjectToolBoundaryExtension(
   cwd: string,
-  approveOutsideProject?: OutsideProjectApproval
+  approveOutsideProject?: OutsideProjectApproval,
+  agentDir?: string
 ): ExtensionFactory {
   return (pi) => {
     pi.on('tool_call', async (event) => {
-      const decision = projectToolBoundaryDecision(cwd, event.toolName, event.input)
+      const decision = projectToolBoundaryDecision(cwd, event.toolName, event.input, agentDir)
       if (decision.allowed) return undefined
       if (!decision.approvable || !approveOutsideProject)
         return { block: true, reason: decision.reason }

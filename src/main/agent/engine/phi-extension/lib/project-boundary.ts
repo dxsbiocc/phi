@@ -1,5 +1,9 @@
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
+
 import { isRecord } from './common'
-import { resolveInsideProject } from './project-path'
+import { resolveInsideDirectory, resolveInsideProject } from './project-path'
 import { isXdevDevicePath } from './rpc-xdev'
 import { protectedShellWrite } from './shell-protected-paths'
 
@@ -60,6 +64,27 @@ function toolPaths(toolName: string, input: unknown): string[] {
 }
 
 const WRITE_TOOLS = new Set(['write', 'edit', 'ast_edit'])
+const READ_ONLY_FILE_TOOLS = new Set(['read', 'glob', 'grep', 'ast_grep'])
+const PACKAGES_DIRECTORY = 'packages'
+
+function expandHome(requested: string): string {
+  if (requested === '~') return homedir()
+  return requested.startsWith('~/') ? join(homedir(), requested.slice(2)) : requested
+}
+
+/** Reads of Phi's installed packages are safe; only file tools, never shell or writes. */
+function isInstalledPackageRead(
+  cwd: string,
+  agentDir: string,
+  toolName: string,
+  requested: string
+): boolean {
+  if (!agentDir || !READ_ONLY_FILE_TOOLS.has(toolName)) return false
+  const root = join(agentDir, PACKAGES_DIRECTORY)
+  if (!existsSync(root)) return false
+  const target = resolve(cwd, expandHome(requested))
+  return resolveInsideDirectory(root, target, 'Package path').ok
+}
 
 export type ProjectToolBoundaryDecision =
   | { allowed: true }
@@ -83,11 +108,15 @@ export function protectedHomeWriteDecision(
   }
 }
 
-/** Reading or searching outside the project needs approval; writing there is never allowed. */
+/**
+ * Reading or searching outside the project needs approval; writing there is never allowed.
+ * Read-only file tools may read Phi's installed package tree without asking.
+ */
 export function projectToolBoundaryDecision(
   cwd: string,
   toolName: string,
-  input: unknown
+  input: unknown,
+  agentDir?: string
 ): ProjectToolBoundaryDecision {
   const protectedWrite = protectedHomeWriteDecision(toolName, input)
   if (!protectedWrite.allowed) return protectedWrite
@@ -99,6 +128,7 @@ export function projectToolBoundaryDecision(
           return resolved.ok ? undefined : resolved.error
         })()
     if (!reason) continue
+    if (agentDir && isInstalledPackageRead(cwd, agentDir, toolName, path)) continue
     const approvable = !WRITE_TOOLS.has(toolName)
     return {
       allowed: false,

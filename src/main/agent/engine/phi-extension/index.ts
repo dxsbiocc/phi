@@ -74,18 +74,22 @@ function createOutsideProjectBoundary(
   host: PhiExtensionHost,
   approvedCalls: Set<string>
 ): ExtensionFactory {
-  return createProjectToolBoundaryExtension(config.cwd, async (event, outsidePath) => {
-    const result = await host.requestToolApproval({
-      sessionId: config.sessionId,
-      ...(config.agentRunId ? { agentRunId: config.agentRunId } : {}),
-      toolCallId: event.toolCallId,
-      toolName: event.toolName,
-      input: event.input,
-      outsideProject: outsidePath
-    })
-    if (result === null || result === undefined) approvedCalls.add(event.toolCallId)
-    return result
-  })
+  return createProjectToolBoundaryExtension(
+    config.cwd,
+    async (event, outsidePath) => {
+      const result = await host.requestToolApproval({
+        sessionId: config.sessionId,
+        ...(config.agentRunId ? { agentRunId: config.agentRunId } : {}),
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        input: event.input,
+        outsideProject: outsidePath
+      })
+      if (result === null || result === undefined) approvedCalls.add(event.toolCallId)
+      return result
+    },
+    config.agentDir
+  )
 }
 
 export function createMainSessionExtensions(
@@ -115,10 +119,18 @@ export function createSpecialistExtensions(
   config: PhiExtensionConfig,
   host: PhiExtensionHost
 ): ExtensionFactory[] {
+  // A specialist is a child of its project-bound conversation, so it gets the
+  // same boundary; the child run id routes approvals back to that conversation.
+  const approvedOutsideProject = new Set<string>()
   return [
     createRemoteUrlGuardExtension(),
     createPlanReviewToolGuardExtension(host),
-    ...(config.enableToolApproval ? [createBridgeToolApprovalExtension(config, host)] : []),
+    ...(config.projectBound
+      ? [createOutsideProjectBoundary(config, host, approvedOutsideProject)]
+      : []),
+    ...(config.enableToolApproval
+      ? [createBridgeToolApprovalExtension(config, host, approvedOutsideProject)]
+      : []),
     ...(config.environmentBinding ? [createEnvironmentBindingExtension(host)] : [])
   ]
 }

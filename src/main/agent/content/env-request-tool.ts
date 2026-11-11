@@ -19,6 +19,8 @@ export interface EnvRequestBinding {
 
 export interface EnvRequestToolOptions {
   runtimeSessionId: string
+  /** Agent run that owns this specialist session; binds run-scoped host requests. */
+  agentRunId?: string
   /** Bound specialist session. `environment` defaults to `binding.ref`. */
   binding?: EnvRequestBinding
   /** Agent name sent to `environments.bindSession` after a bound request succeeds. */
@@ -100,6 +102,8 @@ async function runEnvRequest(
 
   try {
     const requestId = options.remoteProject ? randomUUID() : undefined
+    const scopedRequest: SkillHostRequest = (method, params) =>
+      request(method, params, options.agentRunId ? { agentRunId: options.agentRunId } : undefined)
     const body = {
       runtimeSessionId: options.runtimeSessionId,
       cwd,
@@ -117,8 +121,8 @@ async function runEnvRequest(
       ...(options.binding?.pluginId ? { pluginId: options.binding.pluginId } : {})
     }
     const result = requestId
-      ? await callCancellable(request, 'environments.request', body, requestId, signal)
-      : await request('environments.request', body)
+      ? await callCancellable(scopedRequest, 'environments.request', body, requestId, signal)
+      : await scopedRequest('environments.request', body)
     if (isDeclined(result)) {
       return {
         content: [{ type: 'text', text: '\u7528\u6237\u53d6\u6d88\u4e86\u6dfb\u52a0' }],
@@ -129,7 +133,7 @@ async function runEnvRequest(
     if (isFailure(result)) return errorResult(result.error, result)
     if (!isSuccess(result)) return errorResult('environments.request returned an unexpected result')
     if (options.binding) {
-      const rebound = await rebind(request, options, result.ref, cwd)
+      const rebound = await rebind(scopedRequest, options, result.ref, cwd)
       if (rebound) return rebound
     }
     return {

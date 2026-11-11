@@ -36,6 +36,7 @@ async function main(): Promise<void> {
     const settings = await Settings.init({ cwd: root, agentDir: root })
     const config: PhiExtensionConfig = {
       cwd: root,
+      agentDir: root,
       projectBound: false,
       enableToolApproval: true,
       sessionId: 'parent-session',

@@ -1253,7 +1253,41 @@ test('worker outbound maps legacy events and host requests onto the protocol cor
       {
         capability: 'desktop.example',
         params: { value: 1 },
-        context: { sessionId: 'session-1', agentRunId: 'run-1' }
+        context: { sessionId: 'session-1', runId: 'run-1', agentRunId: 'run-1' }
+      }
+    ])
+  } finally {
+    unbind()
+  }
+})
+
+test('host-origin child host requests bind the child agent run as runId', async () => {
+  const host: Array<{ capability: string; context: unknown }> = []
+  const adapter = createWorkerKernelAdapter({
+    agentDir: '/trusted/agent',
+    callWorker: async () => undefined
+  })
+  const unbind = adapter.bind({
+    emitEvent() {
+      return undefined
+    },
+    async requestHost(capability: string, _params: JsonValue, context: unknown) {
+      host.push({ capability, context })
+      return { ok: true, output: {}, warnings: [] }
+    }
+  } as never)
+  try {
+    // A plan step starts the child through agentRuns.start, so the conversation has no
+    // prompt run for activeRunId(); the child's own run binding must fill that gap.
+    await requestHost(
+      'skills.scriptTool',
+      { requestId: 'request-1', cwd: '/project', tool: 'viz_catalog', args: {} },
+      { originSessionId: 'session-1', agentRunId: 'run_1' }
+    )
+    assert.deepEqual(host, [
+      {
+        capability: 'skills.scriptTool',
+        context: { sessionId: 'session-1', runId: 'run_1', agentRunId: 'run_1' }
       }
     ])
   } finally {
@@ -1286,11 +1320,11 @@ test('Wrapper non-run-scoped host calls retain session and child identity', asyn
     assert.deepEqual(host, [
       {
         capability: 'wrapperJob.status',
-        context: { sessionId: 'session-1', agentRunId: 'child-1' }
+        context: { sessionId: 'session-1', runId: 'child-1', agentRunId: 'child-1' }
       },
       {
         capability: 'wrapperJob.cancel',
-        context: { sessionId: 'session-1', agentRunId: 'child-1' }
+        context: { sessionId: 'session-1', runId: 'child-1', agentRunId: 'child-1' }
       }
     ])
   } finally {

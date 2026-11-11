@@ -305,3 +305,24 @@ test('script tools send toolCallId and list presented artifacts after the JSON',
     `${output}\n\nartifacts:\n- Volcano plot: figures/plot.png\n\nwarnings:\n- figures/missing.png: file does not exist`
   )
 })
+
+test('script tools bind the owning agent run on host requests', async () => {
+  const calls: Array<{
+    method: string
+    params: Record<string, unknown>
+    context?: { agentRunId?: string }
+  }> = []
+  const request = (async (method: string, params: unknown, context?: { agentRunId?: string }) => {
+    calls.push({ method, params: params as Record<string, unknown>, context })
+    return { ok: true, output: {}, warnings: [] }
+  }) as SkillHostRequest
+  const tool = buildScriptTools([descriptor()], request, {
+    runtimeSessionId: 'runtime-1',
+    agentRunId: 'run_1'
+  })[0] as PhiTool
+
+  await execute(tool, { message: 'hi' })
+
+  assert.equal(calls[0]?.method, 'skills.scriptTool')
+  assert.deepEqual(calls[0]?.context, { agentRunId: 'run_1' })
+})
