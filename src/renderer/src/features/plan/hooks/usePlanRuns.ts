@@ -66,6 +66,8 @@ export type PlanRunsController = {
 }
 
 type PlanRunFeed = Pick<PlanRunsController, 'run' | 'details' | 'loading' | 'error'> & {
+  /** The session the shown run was loaded for, not necessarily the current prop. */
+  sessionId: string | null
   setError: Dispatch<SetStateAction<string | null>>
   remember: (state: PlanRunState) => boolean
 }
@@ -84,12 +86,17 @@ function eventBelongsToSession(event: AgentEventSummary, sessionId: string): boo
   return !event.phiSessionId || event.phiSessionId === sessionId
 }
 
-function runIsStopped(
-  latest: MutableRefObject<PlanRunTimelineSnapshot | null>,
-  runId: string
-): boolean {
-  const run = latest.current
+function runIsStopped(run: PlanRunTimelineSnapshot | null, runId: string): boolean {
   return run?.id === runId && run.status === 'stopped'
+}
+
+function reportUnavailableRun(
+  currentSession: MutableRefObject<string | null>,
+  sessionId: string | null,
+  setError: PlanRunFeed['setError']
+): null {
+  if (currentSession.current === sessionId) setError(planCopy.runUnavailable)
+  return null
 }
 
 function withoutRunDetails(
@@ -194,7 +201,15 @@ function usePlanRunFeed(api: PlanRunApi, sessionId: string | null): PlanRunFeed 
     [freshness]
   )
 
-  return { run, details, loading, error, setError, remember }
+  return {
+    run,
+    details,
+    loading,
+    error,
+    sessionId: run ? loadedSessionId : null,
+    setError,
+    remember
+  }
 }
 
 function useCurrentSession(sessionId: string | null): MutableRefObject<string | null> {
@@ -246,7 +261,10 @@ type ReplanActionContext = {
   setPending: Dispatch<SetStateAction<PendingAction>>
   setError: PlanRunFeed['setError']
   currentSession: MutableRefObject<string | null>
-  latestRun: MutableRefObject<PlanRunTimelineSnapshot | null>
+  actionTarget: MutableRefObject<{
+    sessionId: string | null
+    run: PlanRunTimelineSnapshot | null
+  }>
 }
 
 function useRetryReplanCancellation(
@@ -254,7 +272,7 @@ function useRetryReplanCancellation(
   rollback: PendingReplanCancellation | undefined,
   cancellationKey: string | null
 ): () => Promise<void> {
-  const { api, currentSession, latestRun, pendingAction, setError, setPending } = context
+  const { api, currentSession, actionTarget, pendingAction, setError, setPending } = context
   return useCallback(async (): Promise<void> => {
     if (!rollback || !cancellationKey || pendingAction !== null) return
     const key = `cancel-replan:${rollback.requestId}`
@@ -266,7 +284,7 @@ function useRetryReplanCancellation(
     } catch {
       if (
         currentSession.current === rollback.phiSessionId &&
-        !runIsStopped(latestRun, rollback.runId)
+        !runIsStopped(actionTarget.current.run, rollback.runId)
       ) {
         setError(planCopy.replanCancelFailed)
       }
@@ -276,10 +294,10 @@ function useRetryReplanCancellation(
       )
     }
   }, [
+    actionTarget,
     api.cancelPlanRunReplan,
     cancellationKey,
     currentSession,
-    latestRun,
     pendingAction,
     rollback,
     setError,
@@ -366,7 +384,7 @@ function usePlanReplanActions(context: ReplanActionContext): PlanReplanActions {
     setPending,
     setError,
     currentSession,
-    latestRun
+    actionTarget
   } = context
   const cancellationKey = sessionId && run ? `${sessionId}:${run.id}` : null
   const rollback = usePendingRollback(cancellationKey)
@@ -388,9 +406,14 @@ function usePlanReplanActions(context: ReplanActionContext): PlanReplanActions {
     setError(null)
   }, [cancellationKey, serverReplan, setError])
   const replan = useCallback(async (): Promise<void> => {
-    if (!sessionId || !run || !onReplanPrompt || pendingAction !== null || replanPending) return
-    const actionSession = sessionId
-    const actionRun = run.id
+    const target = actionTarget.current
+    if (!target.sessionId || !target.run) {
+      reportUnavailableRun(currentSession, sessionId, setError)
+      return
+    }
+    if (!onReplanPrompt || pendingAction !== null || replanPending) return
+    const actionSession = target.sessionId
+    const actionRun = target.run.id
     const key = `replan:${actionRun}`
     setPending({ sessionId: actionSession, key })
     setError(null)
@@ -416,7 +439,10 @@ function usePlanReplanActions(context: ReplanActionContext): PlanReplanActions {
         const key = `${cause.pending.phiSessionId}:${cause.pending.runId}`
         planReplanRecoveryStore.set(key, cause.pending)
       }
-      if (currentSession.current === actionSession && !runIsStopped(latestRun, actionRun)) {
+      if (
+        currentSession.current === actionSession &&
+        !runIsStopped(actionTarget.current.run, actionRun)
+      ) {
         setError(
           cause instanceof PlanReplanCancellationError
             ? planCopy.replanCancelFailed
@@ -429,15 +455,14 @@ function usePlanReplanActions(context: ReplanActionContext): PlanReplanActions {
       )
     }
   }, [
+    actionTarget,
     api,
     clearAfterStop,
     currentSession,
-    latestRun,
     onReplanPrompt,
     pendingAction,
     replanPending,
     serverReplan,
-    run,
     sessionId,
     setError,
     setPending
@@ -452,6 +477,18 @@ function usePlanReplanActions(context: ReplanActionContext): PlanReplanActions {
   }
 }
 
+/** Actions must use the restored run that is shown, not the target from an earlier render. */
+function usePlanActionTarget(
+  sessionId: string | null,
+  run: PlanRunTimelineSnapshot | null
+): MutableRefObject<{ sessionId: string | null; run: PlanRunTimelineSnapshot | null }> {
+  const target = useRef({ sessionId, run })
+  useLayoutEffect(() => {
+    target.current = { sessionId, run }
+  }, [run, sessionId])
+  return target
+}
+
 function usePlanRunActions(
   api: PlanRunApi,
   sessionId: string | null,
@@ -459,49 +496,50 @@ function usePlanRunActions(
   onReplanPrompt?: OnReplanPrompt
 ): PlanRunActions {
   const [pending, setPending] = useState<PendingAction>(null)
-  const { run, remember, setError } = feed
+  const { run, sessionId: actionSession, remember, setError } = feed
   const currentSession = useCurrentSession(sessionId)
-  const latestRun = useRef(run)
-  useLayoutEffect(() => {
-    latestRun.current = run
-  }, [run])
-  const loadDetails = usePlanRunDetails(api, sessionId, feed, currentSession)
-  const pendingAction = pending?.sessionId === sessionId ? pending.key : null
+  const actionTarget = usePlanActionTarget(actionSession, run)
+  const loadDetails = usePlanRunDetails(api, actionSession, feed, currentSession)
+  const pendingAction = pending?.sessionId === actionSession ? pending.key : null
   const replanActions = usePlanReplanActions({
     api,
-    sessionId,
+    sessionId: actionSession,
     run,
     onReplanPrompt,
     pendingAction,
     setPending,
     setError,
     currentSession,
-    latestRun
+    actionTarget
   })
   const { clearAfterStop, ...publicReplanActions } = replanActions
+
   const perform = useCallback(
     async (
       key: string,
       action: (session: string, runId: string) => Promise<PlanRunState>
     ): Promise<PlanRunState | null> => {
-      if (!sessionId || !run) return null
-      const actionSession = sessionId
-      setPending({ sessionId: actionSession, key })
+      const target = actionTarget.current
+      if (!target.sessionId || !target.run)
+        return reportUnavailableRun(currentSession, sessionId, setError)
+      const actionSessionId = target.sessionId
+      const runId = target.run.id
+      setPending({ sessionId: actionSessionId, key })
       setError(null)
       try {
-        const state = await action(actionSession, run.id)
-        if (currentSession.current === actionSession) remember(state)
+        const state = await action(actionSessionId, runId)
+        if (currentSession.current === actionSessionId) remember(state)
         return state
       } catch (cause) {
-        if (currentSession.current === actionSession) setError(errorText(cause))
+        if (currentSession.current === actionSessionId) setError(errorText(cause))
         return null
       } finally {
         setPending((current) =>
-          current?.sessionId === actionSession && current.key === key ? null : current
+          current?.sessionId === actionSessionId && current.key === key ? null : current
         )
       }
     },
-    [currentSession, remember, run, sessionId, setError]
+    [actionTarget, currentSession, remember, sessionId, setError]
   )
   const stop = useCallback(async (): Promise<void> => {
     const state = await perform('stop', api.stopPlanRun)
