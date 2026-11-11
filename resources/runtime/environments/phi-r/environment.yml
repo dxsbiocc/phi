@@ -25,7 +25,9 @@ dependencies:
   # bioconda is only for bioconductor packages; everything else is conda-forge.
   # r-ggplot2 stays unpinned so the ggideogram patch in common.R can target 4.x.
   - bioconductor-complexheatmap # ComplexHeatmap, 11
+  - bioconductor-ggtree # 2 (tree templates)
   - r-ade4 # ggcor
+  - r-ape # 2 (tree templates)
   - r-aplot # 2
   - r-circlize # 12
   - r-cli # 1 (ggideogram patch); also ggmagnify
@@ -73,6 +75,7 @@ dependencies:
   - r-tibble # ggcor, linkET
   - r-tidygraph # 18; also ggcor
   - r-tidyr # ggsankey
+  - r-tidytree # 1 (tree templates)
   - r-vctrs # gground
   - r-vegan # ggcor
   - r-yaml # 1, layouts/validate_layouts.R
