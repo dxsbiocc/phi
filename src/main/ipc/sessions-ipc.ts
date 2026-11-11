@@ -131,6 +131,7 @@ export interface SessionsIpcOptions {
       record: SessionLifecycleRecord<CreateAgentSessionResult> | null,
       options?: { cancelApprovals: boolean }
     ) => Promise<void>
+    clearPendingInvalidation?: (phiSessionId: string) => void
     getAgentSession: (
       sessionKey: string,
       snapshot: { path: string; cwd: string; permissionMode: PermissionMode }
@@ -488,7 +489,10 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
         else {
           deleteSession(path)
         }
-        if (manifest) state.loadedSkillNamesBySession.delete(manifest.sessionId)
+        if (manifest) {
+          state.loadedSkillNamesBySession.delete(manifest.sessionId)
+          lifecycle.clearPendingInvalidation?.(manifest.sessionId)
+        }
         return { status: 'deleted' }
       } catch (error) {
         if (

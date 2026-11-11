@@ -31,7 +31,10 @@ function completionOutcome(run: AgentRunCompletion): StepOutcome {
   if (run.state === 'done') return { ok: true, report: completionReport(run) }
   return {
     ok: false,
-    error: run.error ?? `Agent run ${run.id} ended with state ${run.state}.`
+    error: run.error ?? `Agent run ${run.id} ended with state ${run.state}.`,
+    // A cancelled child is an interruption, not a failed attempt. Rebuilding the session
+    // can cancel a background plan step without the executor's interrupt bookkeeping.
+    ...(run.state === 'cancelled' ? { cancelled: true as const } : {})
   }
 }
 
