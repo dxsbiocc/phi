@@ -294,7 +294,6 @@ test('pending replan blocks old run mutations until exact cancellation completes
   for (const operation of [
     () => service.pause('phi-1', 'plan-1'),
     () => service.resume('phi-1', 'plan-1'),
-    () => service.stop('phi-1', 'plan-1'),
     () => service.retryStep('phi-1', 'plan-1', 'first'),
     () => service.skipStep('phi-1', 'plan-1', 'first')
   ]) {
@@ -456,4 +455,24 @@ test('repeated replacement write failures leave old plan intact and launch nothi
     assert.equal(states.get('plan-1')?.status, 'paused')
     assert.equal(launched.length, 0)
   }
+})
+
+test('stopping a plan drops its pending replan and exits replan mode', async () => {
+  const { service, exited, launched } = harness()
+  const request = await service.requestReplan('phi-1', 'plan-1')
+  const stopped = await service.stop('phi-1', 'plan-1')
+  assert.equal(stopped.status, 'stopped')
+  assert.deepEqual(exited, [{ runtimeSessionId: 'runtime-1', requestId: request.requestId }])
+  assert.equal(service.pendingReplanForRun('phi-1', 'plan-1'), null)
+  const late = await service.validateReplanProposal('phi-1', request.requestId, spec)
+  assert.equal(late.ok, false)
+  assert.equal(launched.length, 0)
+})
+
+test('stopping a plan still drops the replan when replan mode cannot be exited', async () => {
+  const { service } = harness(undefined, async () => false)
+  await service.requestReplan('phi-1', 'plan-1')
+  const stopped = await service.stop('phi-1', 'plan-1')
+  assert.equal(stopped.status, 'stopped')
+  assert.equal(service.pendingReplanForRun('phi-1', 'plan-1'), null)
 })

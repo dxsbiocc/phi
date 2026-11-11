@@ -331,8 +331,27 @@ class PlanRunServiceImplementation<
     return this.mutateRun(phiSessionId, runId, () => this.executor.resume(runId))
   }
 
-  stop(phiSessionId: string, runId: string): Promise<PlanRunState> {
+  async stop(phiSessionId: string, runId: string): Promise<PlanRunState> {
+    await this.dropReplanForStop(phiSessionId, runId)
     return this.mutateRun(phiSessionId, runId, () => this.executor.stop(runId))
+  }
+
+  /**
+   * Stopping a plan ends any replan still being drafted for it. The request is dropped even if
+   * the conversation cannot leave replan mode, since a proposal for a stopped run fails anyway.
+   */
+  private async dropReplanForStop(phiSessionId: string, runId: string): Promise<void> {
+    const request = this.replanRequests.get(phiSessionId)
+    if (!request || request.runId !== runId) return
+    if (request.applying) throw new Error('Approved plan replacement is already in progress.')
+    if (
+      request.entered &&
+      this.deps.exitReplanMode &&
+      this.deps.resolveRuntimeSessionId(phiSessionId) === request.runtimeSessionId
+    ) {
+      await this.deps.exitReplanMode(request.runtimeSessionId, request.requestId).catch(() => false)
+    }
+    if (this.replanRequests.get(phiSessionId) === request) this.replanRequests.delete(phiSessionId)
   }
 
   retryStep(phiSessionId: string, runId: string, stepId: string): Promise<PlanRunState> {
