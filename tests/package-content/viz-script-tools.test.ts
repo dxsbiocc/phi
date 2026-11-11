@@ -46,7 +46,7 @@ test('the distributed visualization skill yields four viz script tools for Visua
   const declared = scriptToolsOf(validated.skill, { prefix: 'viz' })
   assert.deepEqual(
     declared.map((tool) => tool.name),
-    ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']
+    ['viz_catalog', 'viz_profile', 'viz_prepare', 'viz_render']
   )
   assert.deepEqual(
     declared.map((tool) => tool.approval),
@@ -56,9 +56,9 @@ test('the distributed visualization skill yields four viz script tools for Visua
     declared.map((tool) => tool.timeoutSeconds),
     [120, 120, 120, 900]
   )
-  const routeArgs = declared[1]?.args.properties as {
+  const profileArgs = declared[1]?.args.properties as {
     data_path?: { format?: string }
-    sidecar_dir?: { format?: string }
+    tables?: { items?: { format?: string } }
   }
   const prepareArgs = declared[2]?.args.properties as { workdir?: { format?: string } }
   const renderArgs = declared[3]?.args.properties as {
@@ -66,8 +66,8 @@ test('the distributed visualization skill yields four viz script tools for Visua
     inputs?: { items?: { format?: string } }
     output?: { format?: string }
   }
-  assert.equal(routeArgs.data_path?.format, 'input-path')
-  assert.equal(routeArgs.sidecar_dir?.format, 'input-path')
+  assert.equal(profileArgs.data_path?.format, 'input-path')
+  assert.equal(profileArgs.tables?.items?.format, 'input-path')
   assert.equal(prepareArgs.workdir?.format, 'project-path')
   assert.equal(renderArgs.script?.format, 'input-path')
   assert.equal(renderArgs.inputs?.items?.format, 'input-path')
@@ -138,7 +138,7 @@ test('the distributed visualization skill yields four viz script tools for Visua
     assert.deepEqual(listed.problems, [])
     assert.deepEqual(
       listed.tools.map((tool) => tool.name),
-      ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']
+      ['viz_catalog', 'viz_profile', 'viz_prepare', 'viz_render']
     )
     for (const tool of listed.tools) {
       assert.deepEqual(tool.attachTo, ['Visualization'])
@@ -172,7 +172,7 @@ function integrationSkip(): string | false {
 }
 
 test(
-  'integration: viz_route, viz_prepare, and viz_render present one figure',
+  'integration: viz_catalog, viz_prepare, and viz_render present one figure',
   { timeout: 1_200_000, skip: integrationSkip() },
   async () => {
     const root = realpathSync(createTestRuntimeRoot('viz-script-tools'))
@@ -203,19 +203,17 @@ test(
       const listed = await host.scriptTools({ cwd: project })
       assert.deepEqual(listed.problems, [])
       const routed = await host.scriptTool({
-        requestId: 'route',
+        requestId: 'catalog',
         cwd: project,
-        tool: 'viz_route',
+        tool: 'viz_catalog',
         args: {
-          data_path: join(project, 'data', 'example.tsv'),
-          purpose: 'volcano plot of differential expression',
-          top: 1
+          alias: '火山图'
         }
       })
       assert.equal('ok' in routed && routed.ok, true, JSON.stringify(routed))
       if (!('ok' in routed) || !routed.ok) return
-      const candidates = routed.output.candidates as Array<{ template_id: string }>
-      assert.equal(candidates[0]?.template_id, 'scatter-volcano')
+      const templates = routed.output.templates as Array<{ template_id: string }>
+      assert.equal(templates[0]?.template_id, 'scatter-volcano')
       const prepared = await host.scriptTool({
         requestId: 'prepare',
         cwd: project,

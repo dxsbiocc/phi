@@ -73,13 +73,13 @@ test('the rules that keep figures honest and project-bound are still in SKILL.md
 })
 
 test('SKILL.md tells the agent to use the visualization tools, and keeps the manual commands as a fallback', () => {
-  for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render'])
+  for (const tool of ['viz_catalog', 'viz_profile', 'viz_prepare', 'viz_render'])
     assert.match(SKILL, new RegExp(tool))
   assert.match(SKILL, /existing\s+`preview\.png`/)
   assert.match(SKILL, /Do not\s+create\s+simulated data/)
   assert.match(SKILL, /^## Revise an existing figure/m)
   assert.match(SKILL, /^## Match a reference image/m)
-  assert.match(SKILL, /do not.*`viz_route`.*`viz_prepare`/i)
+  assert.match(SKILL, /do not.*`viz_catalog`.*`viz_prepare`/i)
   const revision = readFileSync(join(SKILL_DIR, 'references', 'revision-workflow.md'), 'utf-8')
   assert.match(revision, /For a color-only request/)
   assert.match(revision, /Edit the smallest relevant lines/)
@@ -124,7 +124,7 @@ test('the moved multi-panel workflow links still resolve from its new home', () 
   }
 })
 
-test('the Visualization agent is given example, route, prepare and render tools', () => {
+test('the Visualization agent is given catalog, profile, prepare and render tools', () => {
   const root = mkdtempSync(join(tmpdir(), 'phi-viz-skill-agent-'))
   const agentDir = join(root, 'agent')
   try {
@@ -144,12 +144,12 @@ test('the Visualization agent is given example, route, prepare and render tools'
     assert.ok(visualization)
     assert.equal(visualization.environment, 'phi:r@1')
     assert.equal(visualization.pluginId, 'visualization')
-    for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']) {
+    for (const tool of ['viz_catalog', 'viz_profile', 'viz_prepare', 'viz_render']) {
       assert.equal(visualization.tools.includes(tool), false)
       assert.match(visualization.systemPrompt, new RegExp(tool))
     }
     assert.ok(
-      Buffer.byteLength(visualization.systemPrompt) <= 7_200,
+      Buffer.byteLength(visualization.systemPrompt) <= 12_000,
       `the Visualization prompt is ${Buffer.byteLength(visualization.systemPrompt)} bytes`
     )
   } finally {

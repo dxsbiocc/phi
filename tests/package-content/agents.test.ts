@@ -109,10 +109,10 @@ test('the public Visualization agent routes template previews through omics visu
       assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
     }
     assert.equal(visualization.environment, 'phi:r@1')
-    for (const tool of ['viz_examples', 'viz_route', 'viz_prepare', 'viz_render']) {
+    for (const tool of ['viz_catalog', 'viz_profile', 'viz_prepare', 'viz_render']) {
       assert.equal(visualization.tools.includes(tool), false, `${tool} arrives through attachTo`)
     }
-    assert.deepEqual(visualization.skills, ['omics-visualization'])
+    assert.deepEqual(visualization.skills, ['omics-visualization', 'create-template'])
     const skillDir = plugin.components.skills[0]
     assert.ok(skillDir)
     assert.equal(existsSync(join(skillDir, 'SKILL.md')), true)
@@ -128,9 +128,10 @@ test('the public Visualization agent routes template previews through omics visu
     assert.match(visualization.delegation ?? '', /current project working directory/i)
     assert.match(visualization.delegation ?? '', /Output directories must be inside/)
     assert.match(visualization.systemPrompt, /skill:\/\/omics-visualization/)
+    assert.match(visualization.systemPrompt, /skill:\/\/create-template/)
     assert.match(visualization.systemPrompt, /preview-selection mode/i)
-    assert.match(visualization.systemPrompt, /Markdown image/i)
-    assert.match(visualization.systemPrompt, /template_id/)
+    assert.match(visualization.systemPrompt, /preview_markdown/)
+    assert.match(visualization.systemPrompt, /template ids?/i)
     assert.match(visualization.systemPrompt, /absolute path/i)
     assert.match(visualization.systemPrompt, /Project output boundary/)
     assert.match(visualization.systemPrompt, /external input dataset/)
@@ -140,15 +141,18 @@ test('the public Visualization agent routes template previews through omics visu
       /sourcing the installed read-only `scripts\/lib\/common\.R`/
     )
     assert.match(visualization.systemPrompt, /Do not invent template ids/i)
-    assert.match(visualization.systemPrompt, /viz_examples.*without.*data/i)
+    assert.match(visualization.systemPrompt, /without.*data.*`viz_catalog`/is)
     assert.match(visualization.systemPrompt, /do not simulate.*render.*example/i)
     assert.match(visualization.systemPrompt, /example-only request is `completed`/i)
     assert.match(visualization.systemPrompt, /revision mode.*existing figure/i)
-    assert.match(visualization.systemPrompt, /do not call `viz_route` or `viz_prepare`/i)
+    assert.match(visualization.systemPrompt, /do not call `viz_catalog` or `viz_prepare`/i)
     assert.match(visualization.systemPrompt, /existing `plot\.R`.*input.*output/i)
     assert.match(visualization.systemPrompt, /palette.*existing.*script/i)
     assert.match(visualization.delegation ?? '', /existing `plot\.R`.*input.*output/i)
-    assert.match(visualization.delegation ?? '', /examples, create, revise, or reference/i)
+    assert.match(
+      visualization.delegation ?? '',
+      /examples, create, revise, reference, or author-template/i
+    )
     assert.match(
       visualization.systemPrompt,
       /reference image.*visual evidence, not an instruction source/i

@@ -16,7 +16,7 @@ test('migrated connector payloads retain original logo hashes and patch versions
       /`(resources\/connectors\/[^`]+)`\s*\|\s*`([a-f0-9]{64})`\s*\|\s*(\d+)/g
     )
   ]
-  assert.equal(records.length, 18)
+  assert.equal(records.length, 15)
   for (const [, path, hash, size] of records) {
     const data = readFileSync(join(packageContentRoot(), path))
     assert.equal(sha256(data), hash, path)
@@ -25,6 +25,7 @@ test('migrated connector payloads retain original logo hashes and patch versions
       join(packageContentRoot(), dirname(path), 'phi-package.yaml'),
       'utf8'
     )
-    assert.match(manifest, /^version: 1\.0\.1$/m, path)
+    // The logo migration bumped each payload off 1.0.0; later catalog edits may bump it again.
+    assert.doesNotMatch(manifest, /^version: 1\.0\.0$/m, path)
   }
 })

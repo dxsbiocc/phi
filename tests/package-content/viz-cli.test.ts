@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -14,7 +13,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, sep } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { deflateSync } from 'node:zlib'
 import { describe, test } from 'node:test'
 
@@ -32,6 +31,7 @@ const SKILL_ROOT = realpathSync(
   packageContentPath('plugins', 'visualization', 'skills', 'omics-visualization')
 )
 const VIZ = join(SKILL_ROOT, 'scripts', 'viz.py')
+const VIZ_TEMPLATES = join(SKILL_ROOT, 'scripts', 'viz_templates.py')
 const VOLCANO_DATA = join(SKILL_ROOT, 'scripts', 'scatter', 'volcano', 'example.tsv')
 const ARTIFACT_SCHEMA = JSON.parse(
   readFileSync(join(process.cwd(), 'docs', 'contracts', 'artifact.schema.json'), 'utf8')
@@ -57,8 +57,8 @@ function validator(name: string): ValidateFunction {
 }
 
 const schemas = {
-  examples: validator('viz-examples.json'),
-  route: validator('viz-route.json'),
+  catalog: validator('viz-catalog.json'),
+  profile: validator('viz-profile.json'),
   prepare: validator('viz-prepare.json'),
   render: validator('viz-render.json')
 }
@@ -246,12 +246,10 @@ describe('viz.py', { skip: skipPython }, () => {
       const cases: Array<[string[], RegExp]> = [
         [[], /required|command/i],
         [['nope'], /invalid choice|invalid/i],
-        [['examples'], /purpose/],
-        [['examples', '--purpose'], /expected one argument|purpose/],
-        [['examples', '--purpose', 'volcano', '--top', 'nope'], /invalid int/i],
-        [['examples', '--help'], /unrecognized arguments/],
-        [['route', '--purpose', 'x'], /data_path/],
-        [['route', '--data_path', '/tmp/x', '--purpose', 'x', '--mode', 'draft'], /invalid choice/],
+        [['catalog', '--family', 'scatter', '--alias', '火山图'], /at most one/],
+        [['catalog', '--help'], /unrecognized arguments/],
+        [['profile'], /data_path|required/],
+        [['profile', '--data_path'], /expected one argument|data_path/],
         [['prepare'], /template_id|required/],
         [['render', '--script', 'a', '--output', 'b.png'], /inputs/],
         [
@@ -277,22 +275,48 @@ describe('viz.py', { skip: skipPython }, () => {
     }
   })
 
-  test('examples returns installed preview images and writes nothing', () => {
+  test('catalog index lists every family and template and writes nothing', () => {
+    const box = sandbox()
+    try {
+      const body = ok<{
+        mode: string
+        template_count: number
+        families: Array<{ family: string; templates: Array<{ template_id: string }> }>
+      }>(runViz(['catalog'], box.cwd), schemas.catalog, 'catalog index')
+      assert.equal(body.mode, 'index')
+      assert.ok(body.template_count > 0)
+      assert.ok(body.families.length > 0)
+      const ids = body.families.flatMap((family) =>
+        family.templates.map((template) => template.template_id)
+      )
+      assert.equal(ids.length, body.template_count)
+      assert.equal(new Set(ids).size, ids.length)
+      assert.deepEqual(readdirSync(box.cwd), [])
+    } finally {
+      box.cleanup()
+    }
+  })
+
+  test('catalog ids returns installed preview images and writes nothing', () => {
     const box = sandbox()
     try {
       const preview = realpathSync(join(SKILL_ROOT, 'scripts', 'scatter', 'volcano', 'preview.png'))
       const original = readFileSync(preview)
       const body = ok<{
-        purpose: string
-        dataFitted: boolean
-        candidates: Array<{ template_id: string; preview: string; preview_markdown: string }>
-      }>(runViz(['examples', '--purpose', ' volcano plot '], box.cwd), schemas.examples, 'examples')
-      assert.equal(body.purpose, 'volcano plot')
-      assert.equal(body.dataFitted, false)
-      const volcano = body.candidates.find((item) => item.template_id === 'scatter-volcano')
+        mode: string
+        templates: Array<{
+          template_id: string
+          preview: string
+          preview_markdown: string
+          roles: { required: string[]; optional: string[] }
+        }>
+      }>(runViz(['catalog', '--ids', 'scatter-volcano'], box.cwd), schemas.catalog, 'catalog ids')
+      assert.equal(body.mode, 'ids')
+      const volcano = body.templates.find((item) => item.template_id === 'scatter-volcano')
       assert.ok(volcano)
       assert.equal(volcano.preview, preview)
       assert.equal(volcano.preview_markdown, `![scatter-volcano](${preview})`)
+      assert.ok(volcano.roles.required.includes('effect_size'))
       assert.deepEqual(readFileSync(preview), original)
       assert.deepEqual(readdirSync(box.cwd), [])
     } finally {
@@ -300,39 +324,62 @@ describe('viz.py', { skip: skipPython }, () => {
     }
   })
 
-  test('examples recognizes a Chinese request and clamps the shortlist to four', () => {
+  test('catalog alias resolves a Chinese request exactly and reports no match', () => {
     const box = sandbox()
     try {
       const body = ok<{
-        dataFitted: boolean
-        candidates: Array<{ template_id: string; preview: string }>
-      }>(
-        runViz(['examples', '--purpose', '给我看几个火山图示例', '--top', '99'], box.cwd),
-        schemas.examples,
-        'chinese examples'
+        mode: string
+        alias: string
+        templates: Array<{ template_id: string; preview: string }>
+      }>(runViz(['catalog', '--alias', '火山图'], box.cwd), schemas.catalog, 'chinese alias')
+      assert.equal(body.mode, 'alias')
+      assert.equal(body.alias, '火山图')
+      assert.equal(body.templates[0]?.template_id, 'scatter-volcano')
+      assert.ok(body.templates.every((item) => existsSync(item.preview)))
+      assert.ok(body.templates.every((item) => item.preview.endsWith(`${sep}preview.png`)))
+      const none = ok<{ templates: unknown[] }>(
+        runViz(['catalog', '--alias', 'zzzz-no-such-figure-family'], box.cwd),
+        schemas.catalog,
+        'no match'
       )
-      assert.equal(body.dataFitted, false)
-      assert.ok(body.candidates.some((item) => item.template_id === 'scatter-volcano'))
-      assert.ok(body.candidates.length <= 4)
-      assert.ok(body.candidates.every((item) => existsSync(item.preview)))
-      assert.ok(body.candidates.every((item) => item.preview.endsWith(`${sep}preview.png`)))
+      assert.deepEqual(none.templates, [])
+      assert.deepEqual(readdirSync(box.cwd), [])
     } finally {
       box.cleanup()
     }
   })
 
   test('every catalog preview is an installed template image', () => {
-    const catalog = JSON.parse(
-      readFileSync(join(SKILL_ROOT, 'references', 'template_contracts.json'), 'utf8')
-    ) as { templates: Array<{ id: string; preview: string }> }
-    assert.ok(catalog.templates.length > 0)
-    for (const template of catalog.templates) {
-      const parts = template.preview.split('/')
-      assert.equal(parts.length, 4, template.id)
-      assert.equal(parts[0], 'scripts', template.id)
-      assert.equal(parts[3], 'preview.png', template.id)
-      const preview = join(SKILL_ROOT, template.preview)
-      assert.equal(existsSync(preview), true, template.id)
+    const box = sandbox()
+    try {
+      const index = ok<{
+        families: Array<{ templates: Array<{ template_id: string }> }>
+      }>(runViz(['catalog'], box.cwd), schemas.catalog, 'catalog index')
+      const ids = index.families.flatMap((family) =>
+        family.templates.map((template) => template.template_id)
+      )
+      const body = ok<{
+        templates: Array<{ template_id: string; preview: string; preview_markdown: string }>
+      }>(
+        runViz(['catalog', ...ids.flatMap((id) => ['--ids', id])], box.cwd),
+        schemas.catalog,
+        'every catalog entry'
+      )
+      assert.equal(body.templates.length, ids.length)
+      for (const template of body.templates) {
+        const parts = relative(SKILL_ROOT, template.preview).split(sep)
+        assert.equal(parts.length, 4, template.template_id)
+        assert.equal(parts[0], 'scripts', template.template_id)
+        assert.equal(parts[3], 'preview.png', template.template_id)
+        assert.equal(existsSync(template.preview), true, template.template_id)
+        assert.equal(
+          template.preview_markdown,
+          `![${template.template_id}](${template.preview})`,
+          template.template_id
+        )
+      }
+    } finally {
+      box.cleanup()
     }
   })
 
@@ -343,8 +390,9 @@ describe('viz.py', { skip: skipPython }, () => {
       [
         '-c',
         [
-          'import importlib.util, json, sys',
-          'spec = importlib.util.spec_from_file_location("vizmod", sys.argv[1])',
+          'import importlib.util, json, os, sys',
+          'sys.path.insert(0, os.path.dirname(sys.argv[1]))',
+          'spec = importlib.util.spec_from_file_location("viztemplates", sys.argv[1])',
           'mod = importlib.util.module_from_spec(spec)',
           'spec.loader.exec_module(mod)',
           'print(json.dumps({',
@@ -353,7 +401,7 @@ describe('viz.py', { skip: skipPython }, () => {
           '  "other": mod.is_installed_preview("/tmp/other/preview.png"),',
           '}))'
         ].join('\n'),
-        VIZ,
+        VIZ_TEMPLATES,
         preview,
         VOLCANO_DATA
       ],
@@ -366,131 +414,96 @@ describe('viz.py', { skip: skipPython }, () => {
     assert.equal(report.other, false)
   })
 
-  test('examples reports no match and writes nothing', () => {
+  test('catalog names an unknown template or family without writing', () => {
     const box = sandbox()
     try {
-      const body = ok<{ candidates: unknown[]; totalMatches: number }>(
-        runViz(['examples', '--purpose', 'zzzz-no-such-figure-family'], box.cwd),
-        schemas.examples,
-        'no match'
+      const error = failed(
+        runViz(['catalog', '--ids', 'scatter-volcanoo'], box.cwd),
+        /scatter-volcanoo/
       )
-      assert.deepEqual(body.candidates, [])
-      assert.equal(body.totalMatches, 0)
+      assert.match(error, /scatter-volcano\b/)
+      assert.match(error, /viz_catalog/)
+      const family = failed(runViz(['catalog', '--family', 'nope'], box.cwd), /no family/i)
+      assert.match(family, /scatter/)
       assert.deepEqual(readdirSync(box.cwd), [])
     } finally {
       box.cleanup()
     }
   })
 
-  test('route puts the volcano template first and clamps the shortlist', () => {
+  test('profile counts the volcano input table and writes nothing', () => {
     const box = sandbox()
     try {
-      const purpose = 'volcano plot of differential expression'
-      const base = ['route', '--data_path', VOLCANO_DATA, '--purpose', purpose]
       const body = ok<{
-        input: { rows: number; columns: Array<{ name: string; type: string }> }
-        candidates: Array<{ template_id: string; why: string[]; preview: string; score: number }>
-      }>(runViz([...base, '--top', '4'], box.cwd), schemas.route, 'route')
-      assert.equal(body.candidates[0]?.template_id, 'scatter-volcano')
-      assert.equal(body.candidates.length, 4)
-      assert.ok(body.candidates.every((item) => item.why.length <= 3 && item.why.length > 0))
-      assert.equal(body.input.columns.find((column) => column.name === 'log2FC')?.type, 'number')
-      assert.ok(body.input.rows > 0)
-      assert.equal(existsSync(body.candidates[0].preview), true)
-      const one = ok<{ candidates: unknown[] }>(
-        runViz([...base, '--top', '1'], box.cwd),
-        schemas.route,
-        'top 1'
-      )
-      assert.equal(one.candidates.length, 1)
-      const clamped = ok<{ candidates: unknown[] }>(
-        runViz([...base, '--top', '99'], box.cwd),
-        schemas.route,
-        'top 99'
-      )
-      assert.equal(clamped.candidates.length, 6)
-      const def = ok<{ candidates: unknown[] }>(runViz(base, box.cwd), schemas.route, 'default top')
-      assert.equal(def.candidates.length, 4)
-      const zero = ok<{ candidates: unknown[] }>(
-        runViz([...base, '--top', '0'], box.cwd),
-        schemas.route,
-        'top 0'
-      )
-      assert.equal(zero.candidates.length, 1)
+        tables: Array<{
+          name: string
+          rows: number
+          columns: Array<{ name: string; type: string; missing: number }>
+        }>
+      }>(runViz(['profile', '--data_path', VOLCANO_DATA], box.cwd), schemas.profile, 'profile')
+      const table = body.tables[0]
+      assert.ok(table)
+      assert.equal(table.name, 'example.tsv')
+      assert.ok(table.rows > 0)
+      assert.equal(table.columns.find((column) => column.name === 'log2FC')?.type, 'number')
+      assert.equal(table.columns.find((column) => column.name === 'qvalue')?.type, 'number')
+      assert.equal(table.columns.find((column) => column.name === 'symbol')?.type, 'text')
+      assert.deepEqual(readdirSync(box.cwd), [])
     } finally {
       box.cleanup()
     }
   })
 
-  test('publication mode names the extra review, and a sidecar directory is reported', () => {
+  test('profile reports companion tables and identifier overlap', () => {
     const box = sandbox()
     try {
-      const published = ok<{ candidates: Array<{ risks: string[] }> }>(
-        runViz(
-          [
-            'route',
-            '--data_path',
-            VOLCANO_DATA,
-            '--purpose',
-            'volcano plot of differential expression',
-            '--mode',
-            'publication',
-            '--top',
-            '1'
-          ],
-          box.cwd
-        ),
-        schemas.route,
-        'publication'
-      )
-      assert.match(published.candidates[0].risks.join('\n'), /publication mode/i)
       const nodes = join(SKILL_ROOT, 'scripts', 'graph', 'force', 'nodes.tsv')
-      const sided = ok<{ input: { sidecars?: string[]; sidecar_alignment?: string } }>(
+      const links = join(SKILL_ROOT, 'scripts', 'graph', 'force', 'links.tsv')
+      const body = ok<{
+        tables: Array<{ name: string; rows: number }>
+        joins: Array<{ join: string; shared: number; left_only: number; right_only: number }>
+      }>(
         runViz(
           [
-            'route',
+            'profile',
             '--data_path',
             nodes,
-            '--purpose',
-            'network graph of nodes and links',
-            '--sidecar_dir',
-            join(SKILL_ROOT, 'scripts', 'graph', 'force'),
-            '--top',
-            '2'
+            '--tables',
+            links,
+            '--joins',
+            'links.tsv:source=nodes.tsv:id'
           ],
           box.cwd
         ),
-        schemas.route,
-        'sidecars'
+        schemas.profile,
+        'profile companion tables'
       )
-      assert.ok(sided.input.sidecars?.includes('links.tsv'))
-      assert.equal(typeof sided.input.sidecar_alignment, 'string')
+      assert.deepEqual(
+        body.tables.map((table) => table.name),
+        ['nodes.tsv', 'links.tsv']
+      )
+      assert.ok(body.tables.every((table) => table.rows > 0))
+      const overlap = body.joins[0]
+      assert.ok(overlap)
+      assert.equal(overlap.join, 'links.tsv:source=nodes.tsv:id')
+      assert.ok(overlap.shared > 0)
+      assert.ok(overlap.left_only >= 0 && overlap.right_only >= 0)
     } finally {
       box.cleanup()
     }
   })
 
-  test('route explains a missing table and a router failure', () => {
+  test('profile explains a missing table and a malformed join', () => {
     const box = sandbox()
     try {
       const missing = join(box.outside, 'no.tsv')
-      const error = failed(
-        runViz(['route', '--data_path', missing, '--purpose', 'x'], box.cwd),
-        /not found/
-      )
+      const error = failed(runViz(['profile', '--data_path', missing], box.cwd), /not found/)
       assert.match(error, /no\.tsv/)
-      const blocked = join(box.outside, 'secret.tsv')
-      writeFileSync(blocked, 'a\tb\n1\t2\n')
-      chmodSync(blocked, 0o000)
-      try {
-        const denied = failed(
-          runViz(['route', '--data_path', blocked, '--purpose', 'x'], box.cwd),
-          /template router failed/
-        )
-        assert.ok(denied.length < 2000, `${denied.length} chars`)
-      } finally {
-        chmodSync(blocked, 0o644)
-      }
+      const malformed = failed(
+        runViz(['profile', '--data_path', VOLCANO_DATA, '--joins', 'bad'], box.cwd),
+        /join must look like/
+      )
+      assert.ok(malformed.length < 2000, `${malformed.length} chars`)
     } finally {
       box.cleanup()
     }
@@ -727,7 +740,7 @@ describe('viz.py', { skip: skipPython }, () => {
         /scatter-volcanoo/
       )
       assert.match(error, /scatter-volcano\b/)
-      assert.match(error, /viz_route/)
+      assert.match(error, /viz_catalog/)
       assert.equal(existsSync(join(box.cwd, 'p')), false)
       failed(
         runViz(['prepare', '--template_id', ' ', '--workdir', 'p'], box.cwd),
@@ -1352,7 +1365,7 @@ function integrationSkip(): string | false {
 }
 
 test(
-  'integration: phi-r runs viz route, prepare, and render',
+  'integration: phi-r runs viz catalog, prepare, and render',
   { timeout: 1_200_000, skip: integrationSkip() },
   async () => {
     const root = createTestRuntimeRoot('viz-cli')
@@ -1362,24 +1375,16 @@ test(
     try {
       const descriptor = describeEnvironment('phi:r@1', { platform: currentPlatform() })
       const env = await buildEnvironment(runtimeRoot, descriptor)
-      const routed = await runInEnvironment(
+      const cataloged = await runInEnvironment(
         env,
-        [
-          'python',
-          VIZ,
-          'route',
-          '--data_path',
-          VOLCANO_DATA,
-          '--purpose',
-          'volcano plot of differential expression',
-          '--top',
-          '1'
-        ],
+        ['python', VIZ, 'catalog', '--alias', '火山图'],
         { cwd: project, timeoutMs: 120_000 }
       )
-      assert.equal(routed.exitCode, 0, routed.stderr)
-      const routeBody = JSON.parse(routed.stdout) as { candidates: Array<{ template_id: string }> }
-      assert.equal(routeBody.candidates[0]?.template_id, 'scatter-volcano')
+      assert.equal(cataloged.exitCode, 0, cataloged.stderr)
+      const catalogBody = JSON.parse(cataloged.stdout) as {
+        templates: Array<{ template_id: string }>
+      }
+      assert.equal(catalogBody.templates[0]?.template_id, 'scatter-volcano')
       const workdir = join(project, 'visualizations', 'volcano')
       const prepared = await runInEnvironment(
         env,
