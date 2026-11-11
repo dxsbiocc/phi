@@ -240,6 +240,7 @@ import { createMissingToolRuntime } from './agent/missing-tool-runtime'
 import { createDeliverablesPresentation } from './agent/host-requests/deliverables-presentation'
 import { createHostConfirmations } from './agent/host-requests/host-confirmations'
 import { kernelPlanRunRouting, wirePlanExecution } from './agent/plan/plan-execution-wiring'
+import type { WorkModeActivity } from './agent/plan/work-mode-control'
 import { registerPlanRunIpc } from './ipc/plan-run-ipc'
 import { createLocalPlanSessionLoader } from './agent/plan/plan-session-loader'
 import {
@@ -978,6 +979,8 @@ const { getSessionStatusPayload, getCurrentSessionPayload } = createCurrentSessi
   runners: runnerRegistry,
   sessionResolution
 })
+/** Filled by wirePlanExecution below; invalidation only runs after app startup. */
+const planWorkActivity: { current?: WorkModeActivity } = {}
 const { getSessionControllerKey, abortAndDisposeSession, cleanupSessionRecord } =
   createSessionCleanup({
     lifecycles,
@@ -995,6 +998,9 @@ const {
   createRemoteManagedSession,
   getCurrentResolvedSession,
   invalidateAgentSession,
+  flushPendingInvalidation,
+  clearPendingInvalidation,
+  clearPendingInvalidations,
   disposeAndSwitchSession
 } = createSessionSwitching({
   state: {
@@ -1019,6 +1025,13 @@ const {
     cancelBrowserRun,
     cleanupBrowserRunTabs,
     cancelPendingRunWaits,
+    hasActiveBackgroundWork: async (phiSessionId) =>
+      Boolean(
+        planWorkActivity.current &&
+        ((await planWorkActivity.current.hasActivePlanWork(phiSessionId)) ||
+          (await planWorkActivity.current.hasActiveAgentRuns(phiSessionId)))
+      ),
+    isCleanupStarted: () => runtime.window.cleanupStarted,
     cleanupSessionRecord
   },
   browser: {
@@ -1473,6 +1486,7 @@ const planExecution = wirePlanExecution({
   notifySessionChanged,
   sessionKeys
 })
+planWorkActivity.current = planExecution.workModeActivity
 getPhiEngine().host.register('deliverables.present', handlePresentFilesRequest)
 getPhiEngine().host.register('mcp.openAuthUrl', async (params) => {
   const request = params as { id?: unknown; url?: unknown } | null
@@ -2271,6 +2285,9 @@ const { submitPromptRun } = createPromptRunQueue({
     execute: (context, signal, setResult) =>
       executePromptRunWithDeps(context, promptRunExecutionDeps, signal, setResult)
   },
+  invalidation: {
+    flushPending: (sessionKey) => flushPendingInvalidation(sessionKey)
+  },
   skills: {
     get: (phiSessionId) => loadedSkillNamesBySession.get(phiSessionId),
     set: (phiSessionId, names) => loadedSkillNamesBySession.set(phiSessionId, names),
@@ -2751,7 +2768,14 @@ function cleanupMainWindowRuntime(): Promise<void> {
         safeCleanupStep('remote_jupyter_cleanup_failed', disposeRemoteNotebookBackends),
         safeCleanupStep('remote_upload_cleanup_failed', () => remoteProjectUploads.dispose()),
         safeCleanupStep('chat_shell_cleanup_failed', backgroundJobOperations.dispose),
-        safeCleanupStep('agent_session_cleanup_failed', () => invalidateAgentSession()),
+        safeCleanupStep('agent_session_cleanup_failed', async () => {
+          try {
+            await invalidateAgentSession()
+          } finally {
+            // Pending replays are scoped to this app process.
+            clearPendingInvalidations()
+          }
+        }),
         safeCleanupStep('cursor_bridge_cleanup_failed', () => cursorH2Bridge.close())
       ])
       await Promise.allSettled([cleanupBrowserWorkspaceRegistry()])
@@ -3482,6 +3506,7 @@ function createSessionsIpcOptions(
       getLifecycleForKey: lifecycles.forKey.bind(lifecycles),
       getAgentSession,
       cleanupSessionRecord,
+      clearPendingInvalidation,
       waitForSessionCleanup: lifecycles.waitForCleanup.bind(lifecycles)
     },
     status: {

@@ -1,6 +1,7 @@
 import type { AgentReport } from '../../agents/report'
 
-export type StepOutcome = { ok: true; report: AgentReport } | { ok: false; error: string }
+export type StepOutcome =
+  { ok: true; report: AgentReport } | { ok: false; error: string; cancelled?: true }
 
 export interface StepRunHandle {
   runId: string

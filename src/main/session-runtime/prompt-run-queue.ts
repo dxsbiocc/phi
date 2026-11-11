@@ -59,6 +59,10 @@ export interface PromptRunQueueDeps {
     logUnexpected(error: unknown): void
     logSkillLookupFailure(phiSessionId: string, error: unknown): void
   }
+  invalidation: {
+    /** Replays a deferred resource invalidation before this prompt acquires its session. */
+    flushPending(sessionKey: string): Promise<void>
+  }
   events: {
     notifySessionChanged(): void
     flushContinuations(phiSessionId: string, cancelled: boolean): void
@@ -188,6 +192,9 @@ async function submitPromptRun(
   deps: PromptRunQueueDeps,
   input: SubmitPromptInput
 ): Promise<PromptRunResult> {
+  // A plugin/skill invalidation deferred by running background work must land before the
+  // next prompt acquires the old runtime session; otherwise the prompt starts on stale resources.
+  await deps.invalidation.flushPending(input.sessionKey)
   const target = deps.admission.resolve(input)
   const admission = deps.admission.admit(target)
   const context = deps.start.allocate(admission)

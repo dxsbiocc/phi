@@ -66,6 +66,10 @@ export interface SessionSwitchingDeps<TSessionResult, TPromptRun extends Switchi
     cancelBrowserRun: (run: TPromptRun) => void
     cleanupBrowserRunTabs: (run: TPromptRun) => Promise<void>
     cancelPendingRunWaits: (scope?: { sessionId: string; runId: string }) => void
+    /** True while a plan step or background agent still owns the old runtime session. */
+    hasActiveBackgroundWork?: (phiSessionId: string) => Promise<boolean>
+    /** Shutdown still aborts everything, so it never defers cleanup. */
+    isCleanupStarted?: () => boolean
     cleanupSessionRecord: (record: SessionLifecycleRecord<TSessionResult> | null) => Promise<void>
   }
   browser: {
@@ -95,6 +99,10 @@ export interface SessionSwitching<TSessionResult> {
   }
   getCurrentResolvedSession: () => Promise<TSessionResult | null>
   invalidateAgentSession: () => Promise<void>
+  /** Applies an invalidation that was deferred by running background work, when it is now safe. */
+  flushPendingInvalidation: (sessionKey?: string) => Promise<void>
+  clearPendingInvalidation: (phiSessionId: string | undefined) => void
+  clearPendingInvalidations: () => void
   disposeAndSwitchSession: (
     path: string | undefined,
     cwd?: string,
@@ -174,6 +182,20 @@ function createSessionCreationOperations<TSessionResult, TPromptRun extends Swit
   return { createPhiManagedSession, createRemoteManagedSession }
 }
 
+async function hasActiveBackgroundWork<TSessionResult, TPromptRun extends SwitchingPromptRun>(
+  deps: SessionSwitchingDeps<TSessionResult, TPromptRun>,
+  phiSessionId: string
+): Promise<boolean> {
+  // Shutdown must still abort everything, so it never defers cleanup.
+  if (deps.invalidation.isCleanupStarted?.() === true) return false
+  try {
+    return (await deps.invalidation.hasActiveBackgroundWork?.(phiSessionId)) === true
+  } catch {
+    // Protect running work when the activity probe cannot answer.
+    return true
+  }
+}
+
 export function createSessionSwitching<TSessionResult, TPromptRun extends SwitchingPromptRun>(
   deps: SessionSwitchingDeps<TSessionResult, TPromptRun>
 ): SessionSwitching<TSessionResult> {
@@ -196,13 +218,25 @@ export function createSessionSwitching<TSessionResult, TPromptRun extends Switch
     }
   }
 
-  const invalidateAgentSession = async (): Promise<void> => {
-    const phiSessionId = deps.state.sessionKeys.phiSessionIdFor(deps.state.sessionState.sessionKey)
-    if (phiSessionId) deps.invalidation.loadedSkillNamesBySession.delete(phiSessionId)
-    const lifecycle = deps.state.lifecycles.forKey(deps.state.sessionState.sessionKey)
+  // A skip must survive until the background work it protected has settled. Keyed by
+  // phiSessionId so repeated invalidations of one session coalesce into a single replay.
+  const pendingInvalidations = new Set<string>()
+  const pendingFlushes = new Map<string, Promise<void>>()
+
+  const clearPendingInvalidation = (phiSessionId: string | undefined): void => {
+    if (phiSessionId) pendingInvalidations.delete(phiSessionId)
+  }
+
+  const applyInvalidation = async (sessionKey: string): Promise<void> => {
+    const phiSessionId = deps.state.sessionKeys.phiSessionIdFor(sessionKey)
+    if (phiSessionId) {
+      pendingInvalidations.delete(phiSessionId)
+      deps.invalidation.loadedSkillNamesBySession.delete(phiSessionId)
+    }
+    const lifecycle = deps.state.lifecycles.forKey(sessionKey)
     const previous = lifecycle.advance()
-    deps.state.promptRuns.advanceGeneration(deps.state.sessionState.sessionKey)
-    const activePromptRun = deps.state.promptRuns.activeRun(deps.state.sessionState.sessionKey)
+    deps.state.promptRuns.advanceGeneration(sessionKey)
+    const activePromptRun = deps.state.promptRuns.activeRun(sessionKey)
     if (activePromptRun) {
       activePromptRun.cancelled = true
       deps.invalidation.cancelBrowserRun(activePromptRun)
@@ -217,6 +251,43 @@ export function createSessionSwitching<TSessionResult, TPromptRun extends Switch
     void deps.invalidation.cleanupSessionRecord(previous)
   }
 
+  const invalidateAgentSession = async (): Promise<void> => {
+    const sessionKey = deps.state.sessionState.sessionKey
+    const phiSessionId = deps.state.sessionKeys.phiSessionIdFor(sessionKey)
+    if (phiSessionId) {
+      // Rebuilding the runtime session aborts/disposes the old one, which cancels kernel-owned
+      // plan steps and background agents. Keep them on their current record and replay the
+      // invalidation before the next prompt instead of dropping it.
+      if (await hasActiveBackgroundWork(deps, phiSessionId)) {
+        pendingInvalidations.add(phiSessionId)
+        return
+      }
+    }
+    await applyInvalidation(sessionKey)
+  }
+
+  const flushPendingInvalidation = async (
+    sessionKey = deps.state.sessionState.sessionKey
+  ): Promise<void> => {
+    const phiSessionId = deps.state.sessionKeys.phiSessionIdFor(sessionKey)
+    if (!phiSessionId || !pendingInvalidations.has(phiSessionId)) return
+    // A prompt may race the previous flush; both must replay the same invalidation once.
+    const inFlight = pendingFlushes.get(phiSessionId)
+    if (inFlight) return inFlight
+    const flush = (async () => {
+      if (await hasActiveBackgroundWork(deps, phiSessionId)) return
+      if (!pendingInvalidations.has(phiSessionId)) return
+      await applyInvalidation(sessionKey)
+    })().finally(() => pendingFlushes.delete(phiSessionId))
+    pendingFlushes.set(phiSessionId, flush)
+    return flush
+  }
+
+  const clearPendingInvalidations = (): void => {
+    pendingInvalidations.clear()
+    pendingFlushes.clear()
+  }
+
   // A user-visible conversation switch points future getAgentSession() calls at a
   // different file/cwd/permission mode. It deliberately does not abort the old
   // session: switching conversations is navigation, not stop.
@@ -227,6 +298,8 @@ export function createSessionSwitching<TSessionResult, TPromptRun extends Switch
       permissionMode = 'auto',
       options = {}
     ) => {
+      // A deferred invalidation stays pending across switches: it is keyed by session and
+      // replays before that session's next prompt, whichever conversation is current.
       deps.state.sessionState.switchTo(path, cwd, permissionMode, {
         createSessionKey: deps.state.sessionKeys.createKey.bind(deps.state.sessionKeys),
         resolveSessionPermissionMode: deps.sessions.resolveSessionPermissionMode,
@@ -254,6 +327,9 @@ export function createSessionSwitching<TSessionResult, TPromptRun extends Switch
     ...sessionCreation,
     getCurrentResolvedSession,
     invalidateAgentSession,
+    flushPendingInvalidation,
+    clearPendingInvalidation,
+    clearPendingInvalidations,
     disposeAndSwitchSession
   }
 }

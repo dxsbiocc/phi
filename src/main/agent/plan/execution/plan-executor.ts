@@ -96,6 +96,8 @@ function reportSummary(report: AgentReport): PlanStepReportSummary {
 }
 
 function eventForOutcome(stepId: string, outcome: StepOutcome, at: string): PlanRunEvent {
+  // Cancellation is not a failed attempt: pause for the user instead of retrying it.
+  if (!outcome.ok && outcome.cancelled) return { type: 'step_interrupted', stepId, at }
   if (!outcome.ok) return { type: 'step_failed', stepId, error: outcome.error, at }
   const report = reportSummary(outcome.report)
   if (report.missingInputs.length) return { type: 'step_needs_input', stepId, report, at }
@@ -171,7 +173,14 @@ class PlanExecutorImplementation implements PlanExecutor {
         const state = this.runtime.states.get(runId)
         if (!active || active.agentRunId !== agentRunId || !state) return state
         this.runtime.active.get(runId)?.delete(stepId)
-        if (state.status === 'stopped' || state.steps[stepId]?.status !== 'running') return state
+        const stepStatus = state.steps[stepId]?.status
+        if (
+          state.status === 'stopped' ||
+          !stepStatus ||
+          (stepStatus !== 'running' &&
+            !(stepStatus === 'launching' && !outcome.ok && outcome.cancelled))
+        )
+          return state
         if (this.suspendedSessions.has(state.sessionId)) {
           return this.apply(
             runId,

@@ -29,6 +29,7 @@ interface SwitchingHarness {
   setProjectByCwd(value: Record<string, unknown> | undefined): void
   setProjectById(value: Record<string, unknown> | undefined): void
   setActivePromptRun(value: TestPromptRun | undefined): void
+  setActiveBackgroundWork(value: boolean): void
   setCurrentRecord(value: Record<string, unknown> | null, isCurrent?: boolean): void
   setBrowserRegistry(value: TestBrowserRegistry): void
 }
@@ -45,6 +46,7 @@ function createSwitchingHarness(): SwitchingHarness {
   let projectByCwd: Record<string, unknown> | undefined
   let projectById: Record<string, unknown> | undefined
   let activePromptRun: TestPromptRun | undefined
+  let backgroundWorkActive = false
   let currentRecord: Record<string, unknown> | null = null
   let recordIsCurrent = true
   let browserRegistry: TestBrowserRegistry = {
@@ -134,6 +136,7 @@ function createSwitchingHarness(): SwitchingHarness {
         calls.push('browser:cleanup')
       },
       cancelPendingRunWaits: (scope) => calls.push(`waits:${JSON.stringify(scope)}`),
+      hasActiveBackgroundWork: async () => backgroundWorkActive,
       cleanupSessionRecord: async (record) => {
         calls.push(`cleanup:${record ? 'record' : 'null'}`)
       }
@@ -176,6 +179,9 @@ function createSwitchingHarness(): SwitchingHarness {
     },
     setActivePromptRun(value: TestPromptRun | undefined) {
       activePromptRun = value
+    },
+    setActiveBackgroundWork(value: boolean) {
+      backgroundWorkActive = value
     },
     setCurrentRecord(value: Record<string, unknown> | null, isCurrent = true) {
       currentRecord = value
@@ -359,6 +365,96 @@ test('invalidateAgentSession preserves generation, cancellation, notification, a
     'notify',
     'cleanup:record'
   ])
+})
+
+test('invalidateAgentSession leaves a runtime with running background work untouched', async () => {
+  const harness = createSwitchingHarness()
+  const record = { promise: Promise.resolve({}) }
+  const run = { phiSessionId: 'phi-current', runId: 'run-1', cancelled: false }
+  harness.loadedSkills.set('phi-current', ['skill'])
+  harness.setCurrentRecord(record)
+  harness.setActivePromptRun(run)
+  harness.setActiveBackgroundWork(true)
+
+  await harness.switching.invalidateAgentSession()
+
+  assert.equal(run.cancelled, false)
+  assert.equal(harness.loadedSkills.has('phi-current'), true)
+  assert.deepEqual(harness.calls, [], 'the old record must keep running for plan steps')
+})
+
+test('a skipped invalidation is replayed once before the next prompt', async () => {
+  const harness = createSwitchingHarness()
+  const record = { promise: Promise.resolve({}) }
+  harness.loadedSkills.set('phi-current', ['old-skill'])
+  harness.setCurrentRecord(record)
+  harness.setActiveBackgroundWork(true)
+
+  await harness.switching.invalidateAgentSession()
+  await harness.switching.invalidateAgentSession()
+  assert.deepEqual(harness.calls, [], 'skip must not rebuild the old session')
+  assert.equal(harness.loadedSkills.has('phi-current'), true)
+
+  harness.setActiveBackgroundWork(false)
+  await harness.switching.flushPendingInvalidation()
+
+  assert.equal(harness.loadedSkills.has('phi-current'), false)
+  assert.deepEqual(harness.calls, [
+    'lifecycle:advance',
+    'prompt:generation',
+    'waits:undefined',
+    'notify',
+    'cleanup:record'
+  ])
+
+  // The coalesced skip is consumed: another prompt must not rebuild again.
+  await harness.switching.flushPendingInvalidation()
+  assert.deepEqual(harness.calls, [
+    'lifecycle:advance',
+    'prompt:generation',
+    'waits:undefined',
+    'notify',
+    'cleanup:record'
+  ])
+})
+
+test('a pending invalidation keeps waiting while background work is still running', async () => {
+  const harness = createSwitchingHarness()
+  harness.loadedSkills.set('phi-current', ['old-skill'])
+  harness.setCurrentRecord({ promise: Promise.resolve({}) })
+  harness.setActiveBackgroundWork(true)
+
+  await harness.switching.invalidateAgentSession()
+  await harness.switching.flushPendingInvalidation()
+
+  assert.deepEqual(harness.calls, [])
+  assert.equal(harness.loadedSkills.has('phi-current'), true)
+
+  harness.setActiveBackgroundWork(false)
+  await harness.switching.flushPendingInvalidation()
+  assert.equal(harness.loadedSkills.has('phi-current'), false)
+  assert.equal(
+    harness.calls.filter((call) => call === 'cleanup:record').length,
+    1,
+    'the deferred invalidation must be applied exactly once'
+  )
+})
+
+test('a pending invalidation survives a conversation switch and replays on its next prompt', async () => {
+  const harness = createSwitchingHarness()
+  harness.setCurrentRecord({ promise: Promise.resolve({}) })
+  harness.setActiveBackgroundWork(true)
+  await harness.switching.invalidateAgentSession()
+
+  await harness.switching.disposeAndSwitchSession('/other.jsonl', '/other', 'auto')
+  harness.setActiveBackgroundWork(false)
+  await harness.switching.flushPendingInvalidation()
+
+  assert.equal(
+    harness.calls.filter((call) => call === 'cleanup:record').length,
+    1,
+    'switching is navigation; the deferred invalidation must still be applied once'
+  )
 })
 
 test('getCurrentResolvedSession returns only the current record and suppresses stale errors', async () => {

@@ -608,3 +608,120 @@ test('a genuine step failure still retries exactly once', async () => {
     rmSync(agentDir, { recursive: true, force: true })
   }
 })
+
+test('a cancelled child is settled as interrupted even when it bypasses session interruption', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-kernel-plan-cancel-'))
+  const sessionId = 'kernel-cancel-session'
+  const starts: Array<{ runId: string }> = []
+  let sequence = 0
+  const coordinator = new KernelPlanCoordinator(
+    agentDir,
+    async (method) => {
+      if (method === 'agentRun.start') {
+        const runId = `cancel-child-${++sequence}`
+        starts.push({ runId })
+        return { runId }
+      }
+      if (method === 'agentRun.stop') return { ok: true }
+      return {}
+    },
+    () => undefined
+  )
+  const single: PlanSpec = {
+    version: 1,
+    goal: 'Run one step',
+    steps: [
+      {
+        id: 'only',
+        title: 'Only step',
+        instructions: 'Run.',
+        acceptance: 'Done.',
+        dependsOn: [],
+        access: 'read'
+      }
+    ]
+  }
+  try {
+    await coordinator.openSession(sessionId)
+    const run = await coordinator.approved(sessionId, single)
+    assert.equal(starts.length, 1)
+
+    // A cancellation can arrive after its session was cleaned up, without a preceding
+    // interruptRunningSteps call. It must still settle the step and pause the plan.
+    agentRunCompletions.deliver(sessionId, {
+      id: starts[0]!.runId,
+      state: 'cancelled',
+      error: 'The Visualization agent was cancelled.'
+    })
+
+    let state = await coordinator.get(sessionId, run.id)
+    for (let attempt = 0; state?.status !== 'paused' && attempt < 100; attempt += 1) {
+      await tick()
+      state = await coordinator.get(sessionId, run.id)
+    }
+    assert.equal(state?.status, 'paused')
+    assert.equal(state?.steps.only?.status, 'interrupted')
+    assert.equal(state?.steps.only?.attempts, 1)
+    assert.deepEqual(state?.pause, { reason: 'interrupted', stepId: 'only' })
+    assert.equal(starts.length, 1, 'a cancellation must not be retried as a failure')
+  } finally {
+    coordinator.closeSession(sessionId)
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
+
+test('a session cleanup that abandons a running child pauses the plan instead of retrying', async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-kernel-plan-abandon-'))
+  const sessionId = 'kernel-abandon-session'
+  const starts: Array<{ runId: string }> = []
+  let sequence = 0
+  const coordinator = new KernelPlanCoordinator(
+    agentDir,
+    async (method) => {
+      if (method === 'agentRun.start') {
+        const runId = `abandon-child-${++sequence}`
+        starts.push({ runId })
+        return { runId }
+      }
+      if (method === 'agentRun.stop') return { ok: true }
+      return {}
+    },
+    () => undefined
+  )
+  const single: PlanSpec = {
+    version: 1,
+    goal: 'Run one step',
+    steps: [
+      {
+        id: 'only',
+        title: 'Only step',
+        instructions: 'Run.',
+        acceptance: 'Done.',
+        dependsOn: [],
+        access: 'read'
+      }
+    ]
+  }
+  try {
+    await coordinator.openSession(sessionId)
+    const run = await coordinator.approved(sessionId, single)
+    assert.equal(starts.length, 1)
+
+    // Session cleanup resolves pending waiters as cancelled instead of delivering a run.
+    agentRunCompletions.abandonSession(sessionId, 'Kernel session closed.')
+
+    let state = await coordinator.get(sessionId, run.id)
+    for (let attempt = 0; state?.status !== 'paused' && attempt < 100; attempt += 1) {
+      await tick()
+      state = await coordinator.get(sessionId, run.id)
+    }
+    assert.equal(state?.status, 'paused')
+    assert.equal(state?.steps.only?.status, 'interrupted')
+    assert.equal(state?.steps.only?.attempts, 1)
+    assert.deepEqual(state?.pause, { reason: 'interrupted', stepId: 'only' })
+    assert.equal(starts.length, 1, 'an abandoned child must not be retried')
+  } finally {
+    coordinator.closeSession(sessionId)
+    rmSync(agentDir, { recursive: true, force: true })
+  }
+})
