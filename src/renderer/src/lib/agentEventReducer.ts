@@ -608,9 +608,10 @@ export function reduceAgentEventState(
   }
 
   if (event.type === 'auto_retry_end') {
-    // The retry succeeded, so the failed attempt no longer belongs in the finished turn. Its error
-    // item was added when that attempt's `message_end` arrived; drop it now.
-    if (event.success === true) removeRetryErrorItems(next, event.runId)
+    // The retry succeeded, so the failed attempts no longer belong in the finished turn. Drop the
+    // request errors this recovery superseded and keep independent approval/compaction/run failures.
+    if (event.success === true)
+      removeRetryErrorItems(next, event.runId, undefined, event.retryErrors)
     return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
   }
 
@@ -922,8 +923,9 @@ export function reduceAgentEventState(
     if (isError) {
       if (recovered) {
         // Replaying a failed attempt that a retry recovered must not resurrect its error. Live,
-        // the `auto_retry_end` may already have removed it; either way it stays gone.
-        removeRetryErrorItems(next, event.runId)
+        // the `auto_retry_end` may already have removed it; either way it stays gone. Pass the
+        // message so removal is scoped to that attempt rather than every error in the run.
+        removeRetryErrorItems(next, event.runId, event.message)
       } else {
         nextId = applyAssistantMessageError(next, event, textBlockIds, nextId)
       }

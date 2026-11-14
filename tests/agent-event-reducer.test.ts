@@ -6,13 +6,41 @@ import {
   reduceAgentEventState
 } from '../src/renderer/src/lib/agentEventReducer'
 import { INLINE_OUTPUT_PREVIEW_CHARS } from '../src/renderer/src/lib/toolOutputPresentation'
-import type { AgentEventSummary } from '../src/renderer/src/types'
+import type { AgentEventSummary, ChatItem, ChatMessage } from '../src/renderer/src/types'
 
 // Existing Chinese timeline assertions select their locale explicitly.
 setUiLanguage('zh-CN')
 
 function agentEvent<T extends AgentEventSummary>(event: T): T {
   return event
+}
+
+function errorMessages(items: readonly ChatItem[]): ChatMessage[] {
+  return items.filter((item): item is ChatMessage => item.role === 'error')
+}
+
+function assistantError(
+  errorMessage: string,
+  options: { timestamp?: number; recovered?: boolean } = {}
+): NonNullable<AgentEventSummary['message']> {
+  return {
+    role: 'assistant',
+    stopReason: 'error',
+    errorMessage,
+    ...(options.timestamp !== undefined ? { timestamp: options.timestamp } : {}),
+    ...(options.recovered
+      ? {
+          retryRecovery: {
+            kind: 'auto-retry' as const,
+            status: 'recovered' as const,
+            attempt: 1,
+            recoveredAt: '2026-09-07T00:00:12.000Z',
+            recovery: 'plain' as const,
+            note: 'Retried automatically'
+          }
+        }
+      : {})
+  }
 }
 
 test('plan run updates stay out of chat while a finished run adds one concise record', () => {
@@ -392,7 +420,8 @@ test('assistant message errors become visible chat content', () => {
     {
       id: 'error-0-0',
       role: 'error',
-      content: '404 Not found the model kimi-k2.5 or Permission denied'
+      content: '404 Not found the model kimi-k2.5 or Permission denied',
+      errorSource: 'assistant-request'
     }
   ])
 })
@@ -429,6 +458,7 @@ test('assistant stream errors keep finished answer text and add the error separa
       role: 'error',
       runId: 'run-1',
       content: 'stream ended',
+      errorSource: 'assistant-request',
       createdAt: '2026-09-07T00:00:10.000Z'
     }
   ])
@@ -457,7 +487,8 @@ test('assistant stream errors keep converting matching answer text into one erro
     {
       id: 'assistant-0-0',
       role: 'error',
-      content: 'stream ended'
+      content: 'stream ended',
+      errorSource: 'assistant-request'
     }
   ])
 })
@@ -559,7 +590,10 @@ test('a replayed recovered auto-retry error keeps text it streamed before failin
   })
 
   assert.deepEqual(
-    state.messages.map((item) => ({ role: item.role, content: item.content })),
+    state.messages.map((item) => {
+      assert.ok('content' in item)
+      return { role: item.role, content: item.content }
+    }),
     [{ role: 'assistant', content: '部分回答' }]
   )
 })
@@ -583,7 +617,10 @@ test('an unrecovered auto-retry error still shows its error item', () => {
   })
 
   assert.deepEqual(
-    state.messages.map((item) => ({ role: item.role, runId: item.runId, content: item.content })),
+    state.messages.map((item) => {
+      assert.ok('content' in item)
+      return { role: item.role, runId: item.runId, content: item.content }
+    }),
     [
       {
         role: 'error',
@@ -652,6 +689,156 @@ test('a recovered marker arriving after the live error removes that error item',
   })
 
   assert.equal(state.messages.filter((item) => item.role === 'error').length, 0)
+})
+
+test('a successful retry removes only the assistant request error and keeps the approval denial', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'approval_requested',
+    eventId: 'approval-requested',
+    approvalId: 'approval-1',
+    runId: 'run-1',
+    toolName: 'bash',
+    summary: 'rm -rf build'
+  })
+  state = reduceAgentEventState(state, {
+    type: 'approval_denied',
+    eventId: 'approval-denied',
+    approvalId: 'approval-1',
+    runId: 'run-1',
+    toolName: 'bash',
+    summary: 'rm -rf build'
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    runId: 'run-1',
+    message: assistantError('provider unavailable', { timestamp: 100 })
+  })
+  assert.equal(state.messages.filter((item) => item.role === 'error').length, 2)
+
+  state = reduceAgentEventState(state, {
+    type: 'auto_retry_end',
+    runId: 'run-1',
+    success: true,
+    attempt: 1
+  })
+
+  const errors = errorMessages(state.messages)
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0]?.content.includes('bash'), true)
+  assert.equal(errors[0]?.approval?.status, 'denied')
+})
+
+test('a replayed recovered message keeps the approval denial and removes its own error', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'approval_denied',
+    eventId: 'approval-denied',
+    approvalId: 'approval-1',
+    runId: 'run-1',
+    toolName: 'bash',
+    summary: 'rm -rf build'
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    runId: 'run-1',
+    message: assistantError('provider unavailable', { timestamp: 100 })
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    runId: 'run-1',
+    message: assistantError('provider unavailable', { timestamp: 100, recovered: true })
+  })
+
+  const errors = errorMessages(state.messages)
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0]?.approval?.status, 'denied')
+})
+
+test('a successful retry keeps independent compaction, run failure, and other-run errors', () => {
+  let state = createAgentEventReducerState([
+    { id: 'error-other-run', role: 'error', runId: 'run-0', content: 'older failure' }
+  ])
+  state = reduceAgentEventState(state, {
+    type: 'context_compaction_failed',
+    eventId: 'compaction-failed',
+    runId: 'run-1',
+    action: 'compact',
+    errorMessage: 'compaction broke'
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    runId: 'run-1',
+    message: assistantError('provider unavailable', { timestamp: 100 })
+  })
+  state = reduceAgentEventState(state, {
+    type: 'run_failed',
+    eventId: 'run-failed',
+    runId: 'run-1',
+    errorMessage: 'run halted'
+  })
+  state = reduceAgentEventState(state, {
+    type: 'auto_retry_end',
+    runId: 'run-1',
+    success: true,
+    attempt: 1
+  })
+
+  const errors = errorMessages(state.messages)
+  assert.equal(
+    errors.some((item) => item.content === 'provider unavailable'),
+    false
+  )
+  assert.equal(
+    errors.some((item) => item.content === 'older failure'),
+    true
+  )
+  assert.equal(
+    errors.some((item) => item.content === 'run halted'),
+    true
+  )
+  assert.equal(
+    errors.some((item) => item.contextCompaction !== undefined),
+    true
+  )
+})
+
+test('an assistant request error without a run id is never removed by a retry', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'message_end',
+    message: assistantError('provider unavailable', { timestamp: 100 })
+  })
+  state = reduceAgentEventState(state, {
+    type: 'auto_retry_end',
+    success: true,
+    attempt: 1
+  })
+
+  assert.deepEqual(
+    errorMessages(state.messages).map((item) => ({ role: item.role, content: item.content })),
+    [{ role: 'error', content: 'provider unavailable' }]
+  )
+})
+
+test('a late recovered message does not clear a later different assistant failure', () => {
+  let state = reduceAgentEventState(createAgentEventReducerState(), {
+    type: 'message_end',
+    runId: 'run-1',
+    message: assistantError('first failure', { timestamp: 100 })
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    runId: 'run-1',
+    message: assistantError('later failure', { timestamp: 200 })
+  })
+  state = reduceAgentEventState(state, {
+    type: 'message_end',
+    runId: 'run-1',
+    message: assistantError('first failure', { timestamp: 100, recovered: true })
+  })
+
+  assert.deepEqual(
+    errorMessages(state.messages).map((item) => item.content),
+    ['later failure']
+  )
 })
 
 test('project parallel warning becomes an informational chat item', () => {
@@ -745,6 +932,7 @@ test('assistant message error and run failure with the same content render one v
         role: 'error',
         runId: 'run-1',
         content: '404 Not found the model kimi-k2.5 or Permission denied',
+        errorSource: 'assistant-request',
         createdAt: '2026-09-07T00:00:10.000Z'
       }
     ]

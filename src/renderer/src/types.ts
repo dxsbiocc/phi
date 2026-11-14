@@ -225,6 +225,10 @@ export interface ChatMessage {
   id: string
   role: Role
   content: string
+  /** Only assistant request errors are removed when a successful retry supersedes them. */
+  errorSource?: 'assistant-request'
+  /** The failed assistant message timestamp, used to identify the exact retried attempt. */
+  assistantMessageTimestamp?: number
   backgroundJobNotice?: { state: 'completed' | 'failed' | 'cancelled' }
   shellJob?: import('./features/chat/lib/chatShellTimeline').ChatShellJob
   /** Stable identifier of an app-generated notice; the title is localized from it at render time. */

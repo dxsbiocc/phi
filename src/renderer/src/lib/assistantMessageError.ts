@@ -1,4 +1,4 @@
-import type { AgentEventSummary, ChatItem } from '../types'
+import type { AgentEventSummary, ChatItem, ChatMessage } from '../types'
 import { chatEventCopy } from '../features/chat/lib/chatEventCopy'
 import { hasEquivalentErrorMessage } from './chatItems'
 import { isStreamedErrorText } from '../../../shared/streamErrorText'
@@ -22,19 +22,121 @@ export function assistantMessageWasRecovered(
   return message?.retryRecovery?.status === 'recovered'
 }
 
-/**
- * A recovered retry erases the failed attempt from the turn: any error item that attempt added
- * (live from `message_end`, or from an earlier replay) must go away, while unrelated runs keep
- * their errors.
- */
-export function removeRetryErrorItems(next: ChatItem[], runId?: string): void {
-  // Without a run id there is no way to tell this attempt's error from other runs' errors.
-  if (typeof runId !== 'string') return
+function assistantRequestErrorFields(
+  event: AgentEventSummary
+): Pick<ChatMessage, 'errorSource' | 'assistantMessageTimestamp'> {
+  return {
+    errorSource: 'assistant-request',
+    ...(typeof event.message?.timestamp === 'number'
+      ? { assistantMessageTimestamp: event.message.timestamp }
+      : {})
+  }
+}
+
+function removeLatestAssistantRequestErrors(next: ChatItem[], runId: string, count: number): void {
+  let remaining = count
+  for (let index = next.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const item = next[index]
+    if (item.role === 'error' && item.runId === runId && item.errorSource === 'assistant-request') {
+      next.splice(index, 1)
+      remaining -= 1
+    }
+  }
+}
+
+function removeAssistantRequestErrors(next: ChatItem[], runId: string): void {
   for (let index = next.length - 1; index >= 0; index -= 1) {
     const item = next[index]
-    if (item.role !== 'error' || item.runId !== runId) continue
-    next.splice(index, 1)
+    if (item.role === 'error' && item.runId === runId && item.errorSource === 'assistant-request') {
+      next.splice(index, 1)
+    }
   }
+}
+
+function removeRecoveredAssistantRequestError(
+  next: ChatItem[],
+  runId: string,
+  recoveredMessage: NonNullable<AgentEventSummary['message']>
+): void {
+  const recoveredTimestamp =
+    typeof recoveredMessage.timestamp === 'number' ? recoveredMessage.timestamp : undefined
+  if (recoveredTimestamp !== undefined) {
+    const exact = next.findIndex(
+      (item) =>
+        item.role === 'error' &&
+        item.runId === runId &&
+        item.errorSource === 'assistant-request' &&
+        item.assistantMessageTimestamp === recoveredTimestamp
+    )
+    if (exact >= 0) {
+      next.splice(exact, 1)
+      return
+    }
+  }
+
+  const errorMessage =
+    typeof recoveredMessage.errorMessage === 'string' ? recoveredMessage.errorMessage.trim() : ''
+  if (!errorMessage) return
+  const matches: number[] = []
+  for (let index = 0; index < next.length; index += 1) {
+    const item = next[index]
+    if (
+      item.role === 'error' &&
+      item.runId === runId &&
+      item.errorSource === 'assistant-request' &&
+      // Text fallback is only for legacy records without an attempt timestamp. Two known but
+      // different timestamps are different attempts, even when the provider text is identical.
+      (recoveredTimestamp === undefined ||
+        typeof item.assistantMessageTimestamp !== 'number' ||
+        item.assistantMessageTimestamp === recoveredTimestamp) &&
+      item.content === errorMessage
+    )
+      matches.push(index)
+  }
+  // Only an unambiguous match is attributable; otherwise keep the evidence.
+  if (matches.length === 1) next.splice(matches[0], 1)
+}
+
+function recoveredRetryErrorCount(retryErrors: AgentEventSummary['retryErrors']): number {
+  let count = 0
+  for (const error of retryErrors ?? []) {
+    if (error.retryRecovery?.status === 'recovered') count += 1
+  }
+  return count
+}
+
+/**
+ * A recovered retry erases the assistant request errors it superseded. Other errors in the same run
+ * (approval denials, compaction/run failures) and later different failures stay visible. A recovered
+ * `message_end` carries its attempt timestamp; older/replayed records fall back to an unambiguous
+ * matching error message rather than deleting every error in the run.
+ */
+export function removeRetryErrorItems(
+  next: ChatItem[],
+  runId?: string,
+  recoveredMessage?: AgentEventSummary['message'],
+  retryErrors?: AgentEventSummary['retryErrors']
+): void {
+  // Without a run id there is no way to tell this attempt's error from other runs' errors.
+  if (typeof runId !== 'string') return
+  if (recoveredMessage === undefined) {
+    if (retryErrors === undefined) {
+      // Original events carried no per-attempt count. Every failed request that continued to a
+      // successful retry belongs to this recovery, so clear all marked assistant-request errors
+      // in the run while leaving approval/compaction/run-failure evidence untouched.
+      removeAssistantRequestErrors(next, runId)
+      return
+    }
+    // One auto_retry_end closes the whole saga. OMP accumulates every recovered attempt in
+    // `retryErrors`; remove exactly that many latest marked request errors.
+    removeLatestAssistantRequestErrors(
+      next,
+      runId,
+      Math.max(1, recoveredRetryErrorCount(retryErrors))
+    )
+    return
+  }
+  removeRecoveredAssistantRequestError(next, runId, recoveredMessage)
 }
 
 function appendErrorItem(next: ChatItem[], event: AgentEventSummary, nextId: number): number {
@@ -44,6 +146,7 @@ function appendErrorItem(next: ChatItem[], event: AgentEventSummary, nextId: num
     get content() {
       return event.message?.errorMessage || chatEventCopy.requestFailed
     },
+    ...assistantRequestErrorFields(event),
     ...(typeof event.runId === 'string' ? { runId: event.runId } : {}),
     ...createdAtField(event.createdAt)
   })
@@ -84,6 +187,7 @@ function applyConvertedTextError(
     get content() {
       return current.content || event.message?.errorMessage || chatEventCopy.requestFailed
     },
+    ...assistantRequestErrorFields(event),
     ...(typeof event.runId === 'string' ? { runId: event.runId } : {}),
     ...completedAtField(event.createdAt)
   }

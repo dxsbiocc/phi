@@ -9,6 +9,8 @@ export interface AgentMessage {
    * means the retry succeeded, so replaying this message must not add a visible error item.
    */
   retryRecovery?: AssistantRetryRecovery
+  /** Assistant message timestamp; identifies the attempt a recovered retry superseded. */
+  timestamp?: number
   summary?: string
   shortSummary?: string
   tokensBefore?: number
@@ -91,6 +93,8 @@ export interface AgentEventSummary {
   skipped?: boolean
   /** `auto_retry_end` outcome: true when the retry recovered the failed attempt. */
   success?: boolean
+  /** Assistant attempts a retry saga recovered; one `auto_retry_end` can carry several. */
+  retryErrors?: Array<{ retryRecovery?: AssistantRetryRecovery }>
   attempt?: number
   maxAttempts?: number
   delayMs?: number
