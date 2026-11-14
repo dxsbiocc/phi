@@ -1,4 +1,4 @@
-import type { AssistantRetryRecovery } from '@oh-my-pi/pi-ai'
+import type { AssistantRetryRecovery } from '../../../../../shared/assistantRetryRecoveryTypes'
 
 export interface AgentMessage {
   role?: string
