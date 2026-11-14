@@ -362,7 +362,11 @@ test('wrapper groups named by a path (nf-core/rnaseq) list and open; unsafe path
   assert.equal(listed.items[0].suite, 'nf-core/rnaseq')
 
   const requested: URL[] = []
-  const tools = { ...wrapperTools(), group: 'nf-core/rnaseq', suite: 'nf-core/rnaseq' }
+  const tools: Record<string, unknown> = {
+    ...wrapperTools(),
+    group: 'nf-core/rnaseq',
+    suite: 'nf-core/rnaseq'
+  }
   ;(tools.items as Record<string, unknown>[])[0].suite = 'nf-core/rnaseq'
   await data(
     getOfficialWebsiteWrapperTools(

@@ -402,20 +402,17 @@ test('suite header shows the group name, tool count and exactly one group action
 })
 
 test('CatalogDetailFrame renders its header divider by default and can omit it', () => {
-  const frame = (headerDivider?: boolean): string =>
-    themed(
-      createElement(
-        CatalogDetailFrame,
-        {
-          entryId: 'suite',
-          backLabel: 'Back to list',
-          action: createElement('span', { 'data-frame-action': 'true' }, 'Action'),
-          headerDivider,
-          onBack: () => undefined
-        },
-        createElement('div', null, 'Content')
-      )
-    )
+  const frame = (headerDivider?: boolean): string => {
+    const props: React.ComponentProps<typeof CatalogDetailFrame> = {
+      entryId: 'suite',
+      backLabel: 'Back to list',
+      action: createElement('span', { 'data-frame-action': 'true' }, 'Action'),
+      headerDivider,
+      onBack: () => undefined,
+      children: createElement('div', null, 'Content')
+    }
+    return themed(createElement(CatalogDetailFrame, props))
+  }
 
   const defaultFrame = frame()
   assert.match(defaultFrame, /data-phi-catalog-detail-divider="true"/)

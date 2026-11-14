@@ -13,7 +13,6 @@ import {
   addRemoteMcpConnector,
   readCustomRemoteMcpConnector
 } from '../src/main/agent/mcp-connectors'
-import { mcpToolFailureText } from '../src/shared/mcpToolFailureText'
 
 type FlowConfig = {
   authorizationUrl: string
