@@ -19,6 +19,11 @@ import {
   selectBackgroundJobs,
   type LiveBackgroundJob
 } from '../src/renderer/src/features/jobs/lib/backgroundJobs'
+import {
+  groupBackgroundJobs,
+  workflowStepCounts
+} from '../src/renderer/src/features/jobs/lib/backgroundJobGroups'
+import { workflowPhase } from '../src/renderer/src/features/jobs/hooks/useBackgroundJobArrivals'
 import { canStopJob, jobTitle } from '../src/renderer/src/features/jobs/lib/backgroundJobLabels'
 import { BackgroundJobRow } from '../src/renderer/src/features/jobs/components/BackgroundJobRow'
 import { BackgroundJobDetail } from '../src/renderer/src/features/jobs/components/BackgroundJobDetail'
@@ -162,6 +167,42 @@ function terminalJobs(): LiveBackgroundJob[] {
     [jupyter]
   ).recent
 }
+function workflowRun(options: {
+  runId: string
+  state: WrapperRun['state']
+  step?: string
+  createdAt: string
+  totalSteps?: number | null
+}): WrapperRun {
+  const totalSteps = options.totalSteps === undefined ? 4 : options.totalSteps
+  return {
+    runId: options.runId,
+    state: options.state,
+    actor: 'user',
+    planId: '',
+    revision: 1,
+    wrapper: {
+      canonicalId: 'phi/rna/fastp',
+      namespace: 'phi/rna',
+      shortId: 'fastp',
+      version: '1'
+    },
+    trustTier: 'bundled',
+    executor: 'slurm',
+    profile: 'slurm',
+    cwd: '/project',
+    outDir: '/project/results',
+    createdAt: options.createdAt,
+    updatedAt: options.createdAt,
+    ...(options.state === 'completed' ? { completedAt: options.createdAt } : {}),
+    workflow: {
+      id: 'rna-1',
+      name: 'RNA-seq',
+      ...(options.step ? { step: options.step } : {}),
+      ...(totalSteps === null ? {} : { totalSteps })
+    }
+  }
+}
 function empty(): { active: LiveBackgroundJob[]; recent: LiveBackgroundJob[] } {
   return { active: [], recent: [] }
 }
@@ -251,6 +292,167 @@ test('clearing finished jobs preserves completed steps in an unfinished workflow
     visible.recent.map((item) => item.key),
     ['wrapper:wrun-qc']
   )
+})
+
+test('clearing finished jobs keeps a retried unfinished workflow even when attempts reach the expected count', () => {
+  const runs = [
+    workflowRun({
+      runId: 'wrun_qc_failed',
+      state: 'failed',
+      step: 'QC',
+      createdAt: '2026-10-15T10:00:01.000Z'
+    }),
+    workflowRun({
+      runId: 'wrun_qc_retry',
+      state: 'completed',
+      step: 'QC',
+      createdAt: '2026-10-15T10:00:02.000Z'
+    }),
+    workflowRun({
+      runId: 'wrun_align_failed',
+      state: 'failed',
+      step: 'Alignment',
+      createdAt: '2026-10-15T10:00:03.000Z'
+    }),
+    workflowRun({
+      runId: 'wrun_align_retry',
+      state: 'completed',
+      step: 'Alignment',
+      createdAt: '2026-10-15T10:00:04.000Z'
+    })
+  ]
+  const live = selectBackgroundJobs([], runs)
+  assert.deepEqual(live.active, [])
+  const history = new BackgroundJobHistory(new MemoryStorage())
+  history.clearCompleted(live.recent, '2026-10-15T10:02:00.000Z')
+  const visible = history.select(live)
+  assert.deepEqual(visible.active, [])
+  const [workflow] = groupBackgroundJobs([...visible.recent])
+  assert.equal(workflow?.kind, 'workflow')
+  if (workflow?.kind !== 'workflow') return
+  assert.equal(workflow.active, true)
+  assert.equal(workflow.expectedSteps, 4)
+  assert.equal(workflow.totalSteps, 4)
+  assert.equal(workflowPhase(workflow), 'running')
+  assert.deepEqual(workflowStepCounts(workflow.jobs), { completed: 2, failed: 0 })
+  const keys = visible.recent.map((item) => item.key)
+  assert.ok(keys.includes('wrapper:wrun_qc_retry'))
+  assert.ok(keys.includes('wrapper:wrun_align_retry'))
+
+  const reversed = {
+    active: [...live.active].reverse(),
+    recent: [...live.recent].reverse()
+  }
+  const reversedHistory = new BackgroundJobHistory(new MemoryStorage())
+  reversedHistory.clearCompleted(reversed.recent, '2026-10-15T10:02:00.000Z')
+  assert.deepEqual(
+    reversedHistory.select(reversed).recent.map((item) => item.key),
+    keys
+  )
+})
+
+test('clearing hides a fully completed workflow despite superseded failures', () => {
+  const runs = [
+    workflowRun({
+      runId: 'wrun_qc_failed',
+      state: 'failed',
+      step: 'QC',
+      createdAt: '2026-10-15T10:00:01.000Z'
+    }),
+    workflowRun({
+      runId: 'wrun_qc_retry',
+      state: 'completed',
+      step: 'QC',
+      createdAt: '2026-10-15T10:00:02.000Z'
+    }),
+    workflowRun({
+      runId: 'wrun_align',
+      state: 'completed',
+      step: 'Alignment',
+      createdAt: '2026-10-15T10:00:03.000Z'
+    }),
+    workflowRun({
+      runId: 'wrun_quant',
+      state: 'completed',
+      step: 'Quantification',
+      createdAt: '2026-10-15T10:00:04.000Z'
+    }),
+    workflowRun({
+      runId: 'wrun_report',
+      state: 'completed',
+      step: 'Report',
+      createdAt: '2026-10-15T10:00:05.000Z'
+    })
+  ]
+  const live = selectBackgroundJobs([], runs)
+  const history = new BackgroundJobHistory(new MemoryStorage())
+  history.clearCompleted(live.recent, '2026-10-15T10:02:00.000Z')
+  assert.deepEqual(history.select(live).recent, [])
+})
+
+test('clearing hides a cancelled workflow without a failure or completion notice', () => {
+  const runs = [
+    workflowRun({
+      runId: 'wrun_qc',
+      state: 'completed',
+      step: 'QC',
+      createdAt: '2026-10-15T10:00:01.000Z'
+    }),
+    workflowRun({
+      runId: 'wrun_cancelled',
+      state: 'cancelled',
+      step: 'Alignment',
+      createdAt: '2026-10-15T10:00:02.000Z'
+    })
+  ]
+  const live = selectBackgroundJobs([], runs)
+  const [workflow] = groupBackgroundJobs(live.recent)
+  assert.equal(workflow?.kind, 'workflow')
+  if (workflow?.kind !== 'workflow') return
+  assert.equal(workflow.active, false)
+  assert.equal(workflowPhase(workflow), 'running')
+
+  const history = new BackgroundJobHistory(new MemoryStorage())
+  history.clearCompleted(live.recent, '2026-10-15T10:02:00.000Z')
+  assert.deepEqual(history.select(live).recent, [])
+})
+
+test('clearing keeps an actually active earlier attempt while the latest attempt is terminal', () => {
+  const runs = [
+    workflowRun({
+      runId: 'wrun_qc_active',
+      state: 'running',
+      step: 'QC',
+      createdAt: '2026-10-15T10:00:01.000Z'
+    }),
+    workflowRun({
+      runId: 'wrun_qc_failed',
+      state: 'failed',
+      step: 'QC',
+      createdAt: '2026-10-15T10:00:02.000Z'
+    }),
+    workflowRun({
+      runId: 'wrun_align',
+      state: 'completed',
+      step: 'Alignment',
+      createdAt: '2026-10-15T10:00:03.000Z'
+    })
+  ]
+  const live = selectBackgroundJobs([], runs)
+  const [workflow] = groupBackgroundJobs([...live.active, ...live.recent])
+  assert.equal(workflow?.kind, 'workflow')
+  if (workflow?.kind !== 'workflow') return
+  assert.equal(workflow.active, true)
+  assert.equal(workflowPhase(workflow), 'failed')
+
+  const history = new BackgroundJobHistory(new MemoryStorage())
+  history.clearCompleted(live.recent, '2026-10-15T10:02:00.000Z')
+  const visible = history.select(live)
+  assert.deepEqual(
+    visible.active.map((item) => item.key),
+    ['wrapper:wrun_qc_active']
+  )
+  assert.ok(!visible.recent.some((item) => item.key === 'wrapper:wrun_qc_active'))
 })
 
 test('live source jobs replace retained snapshots and running attempts are never restored', () => {

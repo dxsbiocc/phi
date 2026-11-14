@@ -21,23 +21,67 @@ export type BackgroundJobDisplayItem =
 
 type WrapperJob = Extract<UnifiedBackgroundJob, { kind: 'wrapper' }>
 
+export interface WorkflowStepSummary {
+  /** One job per step: its latest attempt. */
+  latest: WrapperJob[]
+  completed: number
+  failed: number
+  cancelled: number
+}
+
+function latestAttemptKey(job: WrapperJob): string {
+  return job.run.workflow?.step ?? job.run.runId
+}
+
+function compareAttempts(left: WrapperJob, right: WrapperJob): number {
+  const byCreatedAt = left.run.createdAt.localeCompare(right.run.createdAt)
+  return byCreatedAt !== 0 ? byCreatedAt : left.run.runId.localeCompare(right.run.runId)
+}
+
+/**
+ * Every workflow decision uses one latest attempt per step. A repeated step must not inflate the
+ * total, and a historical failure must not outlive the attempt that later succeeded. Runs without
+ * a step keep their run id as the step identity so independent runs stay distinct.
+ */
+export function workflowStepSummary(jobs: readonly WrapperJob[]): WorkflowStepSummary {
+  const latestByStep = new Map<string, WrapperJob>()
+  for (const job of jobs) {
+    const step = latestAttemptKey(job)
+    const previous = latestByStep.get(step)
+    if (!previous || compareAttempts(previous, job) < 0) latestByStep.set(step, job)
+  }
+  const latest = [...latestByStep.values()].sort(compareAttempts)
+  const states = latest.map((job) => job.run.state)
+  return {
+    latest,
+    completed: states.filter((state) => state === 'completed').length,
+    failed: states.filter((state) => state === 'failed' || state === 'lost').length,
+    cancelled: states.filter((state) => state === 'cancelled').length
+  }
+}
+
 /** A step that was retried or repeated counts once, by its latest attempt. */
 export function workflowStepCounts(jobs: readonly WrapperJob[]): {
   completed: number
   failed: number
 } {
-  const latest = new Map<string, WrapperJob>()
-  for (const job of jobs) {
-    const step = job.run.workflow?.step ?? job.run.runId
-    const previous = latest.get(step)
-    if (!previous || job.run.createdAt.localeCompare(previous.run.createdAt) >= 0)
-      latest.set(step, job)
-  }
-  const states = [...latest.values()].map((job) => job.run.state)
-  return {
-    completed: states.filter((state) => state === 'completed').length,
-    failed: states.filter((state) => state === 'failed' || state === 'lost').length
-  }
+  const summary = workflowStepSummary(jobs)
+  return { completed: summary.completed, failed: summary.failed }
+}
+
+function applyWorkflowProgress(
+  group: Extract<BackgroundJobDisplayItem, { kind: 'workflow' }>
+): void {
+  group.jobs.sort(compareAttempts)
+  const summary = workflowStepSummary(group.jobs)
+  group.totalSteps = Math.max(group.expectedSteps ?? 0, summary.latest.length)
+  if (
+    group.expectedSteps !== undefined &&
+    summary.latest.length < group.expectedSteps &&
+    summary.failed === 0 &&
+    summary.cancelled === 0
+  )
+    group.active = true
 }
 
 /** Only an explicit, persisted workflow identity can join independent runs. */
@@ -69,19 +113,10 @@ export function groupBackgroundJobs(
     group.jobs.push(job)
     group.active ||= job.active
     if (job.timestamp > group.timestamp) group.timestamp = job.timestamp
-    group.totalSteps = Math.max(group.totalSteps, workflow.totalSteps ?? 0, group.jobs.length)
     if (workflow.totalSteps !== undefined)
       group.expectedSteps = Math.max(group.expectedSteps ?? 0, workflow.totalSteps)
   }
-  for (const group of groups.values()) {
-    group.jobs.sort((left, right) => left.run.createdAt.localeCompare(right.run.createdAt))
-    if (
-      group.expectedSteps !== undefined &&
-      group.jobs.length < group.expectedSteps &&
-      !group.jobs.some((job) => ['failed', 'lost', 'cancelled'].includes(job.run.state))
-    )
-      group.active = true
-  }
+  for (const group of groups.values()) applyWorkflowProgress(group)
   return [...groups.values(), ...singles].sort((left, right) =>
     right.timestamp.localeCompare(left.timestamp)
   )

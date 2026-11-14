@@ -1,6 +1,7 @@
 import { getUiLocale } from '../../../lib/i18n'
 import { jobsCopy } from './jobsCopy'
 import type { LiveBackgroundJob, UnifiedBackgroundJob } from './backgroundJobs'
+import { workflowStepSummary } from './backgroundJobGroups'
 import {
   jobDetailFields,
   jobSource,
@@ -328,24 +329,33 @@ export class BackgroundJobHistory {
   } {
     const workflows = new Map<
       string,
-      { active: boolean; failed: boolean; count: number; expected: number }
+      {
+        active: boolean
+        expected: number
+        jobs: Extract<LiveBackgroundJob, { kind: 'wrapper' }>[]
+      }
     >()
     for (const item of [...live.active, ...live.recent]) {
       if (item.kind !== 'wrapper' || !item.run.workflow) continue
       const { id, totalSteps } = item.run.workflow
-      const current = workflows.get(id) ?? { active: false, failed: false, count: 0, expected: 0 }
+      const current = workflows.get(id) ?? { active: false, expected: 0, jobs: [] }
       current.active ||= item.active
-      current.failed ||= ['failed', 'lost', 'cancelled'].includes(item.run.state)
-      current.count += 1
+      current.jobs.push(item)
       current.expected = Math.max(current.expected, totalSteps ?? 0)
       workflows.set(id, current)
     }
     const unfinishedWorkflows = new Set(
       [...workflows.entries()]
-        .filter(
-          ([, workflow]) =>
-            workflow.active || (workflow.count < workflow.expected && !workflow.failed)
-        )
+        .filter(([, workflow]) => {
+          if (workflow.active) return true
+          if (workflow.expected === 0) return false
+          const summary = workflowStepSummary(workflow.jobs)
+          return (
+            summary.latest.length < workflow.expected &&
+            summary.failed === 0 &&
+            summary.cancelled === 0
+          )
+        })
         .map(([id]) => id)
     )
     const liveKeys = new Set([...live.active, ...live.recent].map((item) => item.key))

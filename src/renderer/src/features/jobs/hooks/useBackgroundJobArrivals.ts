@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type { LiveBackgroundJob } from '../lib/backgroundJobs'
-import { groupBackgroundJobs, type BackgroundJobDisplayItem } from '../lib/backgroundJobGroups'
+import {
+  groupBackgroundJobs,
+  workflowStepSummary,
+  type BackgroundJobDisplayItem
+} from '../lib/backgroundJobGroups'
 import { useBackgroundJobsData } from './useBackgroundJobsData'
 
 const NOTICE_MS = 5000
@@ -14,14 +18,19 @@ export type BackgroundJobArrival = {
 
 export function workflowPhase(item: BackgroundJobDisplayItem): 'running' | 'completed' | 'failed' {
   if (item.kind !== 'workflow') return 'running'
-  if (item.jobs.some((job) => ['failed', 'lost'].includes(job.run.state))) return 'failed'
-  if (
-    item.expectedSteps !== undefined &&
-    item.jobs.length >= item.expectedSteps &&
-    item.jobs.every((job) => job.run.state === 'completed')
-  )
-    return 'completed'
-  return 'running'
+  const summary = workflowStepSummary(item.jobs)
+  // Only a latest failed/lost step is a failure notice. Cancellation has no notice type, and the
+  // internal `running` value here means "no terminal notice" rather than a live run.
+  if (summary.failed > 0) return 'failed'
+  if (summary.cancelled > 0) return 'running'
+  // Never announce completion while a real attempt is still active, even an older one.
+  if (item.jobs.some((job) => job.active)) return 'running'
+  if (summary.latest.length === 0) return 'running'
+  if (summary.latest.some((job) => job.run.state !== 'completed')) return 'running'
+  // Without an expected count or authoritative terminal event, further steps may still be created.
+  if (item.expectedSteps === undefined || summary.latest.length < item.expectedSteps)
+    return 'running'
+  return 'completed'
 }
 
 /** A plugin install reports its terminal transition; other single jobs only report arrival. */
