@@ -96,6 +96,16 @@ type JupyterServerRecord = {
   pid?: number
   port: number
   endpoint?: JupyterEndpoint
+  /** Startup URL metadata; it is never a ready endpoint until the HTTP probe succeeds. */
+  candidateEndpoint?: JupyterEndpoint
+  /** False once stop/error/exit/ready makes further readiness probing invalid. */
+  probeEligible: boolean
+  /** True only while one bounded probe round is actually running. */
+  readyProbeActive: boolean
+  /** A valid banner asked for confirmation; coalesces repeated banners. */
+  bannerProbeRequested: boolean
+  /** The one post-exhaustion banner round has been used. */
+  bannerProbeRoundUsed: boolean
   message?: string
   messageCode?: JupyterServerMessageCode
   messageParams?: JupyterServerMessageParams
@@ -317,6 +327,10 @@ export class JupyterServerRegistry {
         projectCwd,
         port: this.port ?? jupyterPortForProject(projectCwd),
         state: 'stopped',
+        probeEligible: false,
+        readyProbeActive: false,
+        bannerProbeRequested: false,
+        bannerProbeRoundUsed: false,
         logs: [],
         pendingOutput: '',
         runtimeId: ''
@@ -351,6 +365,10 @@ export class JupyterServerRegistry {
       startedAt: this.now().toISOString(),
       message: 'Starting Jupyter Server',
       messageCode: 'starting',
+      probeEligible: true,
+      readyProbeActive: false,
+      bannerProbeRequested: false,
+      bannerProbeRoundUsed: false,
       logs: [],
       pendingOutput: '',
       runtimeId: randomUUID()
@@ -374,6 +392,7 @@ export class JupyterServerRegistry {
       return this.status(projectCwd)
     }
 
+    this.disableProbes(record)
     if (record.process && !record.process.killed) {
       record.process.kill('SIGTERM')
     }
@@ -385,6 +404,7 @@ export class JupyterServerRegistry {
 
   disposeAll(): void {
     for (const record of this.records.values()) {
+      this.disableProbes(record)
       if (record.process && !record.process.killed) {
         record.process.kill('SIGTERM')
       }
@@ -451,16 +471,42 @@ export class JupyterServerRegistry {
       if (latest) setRecordMessage(record, latest)
     }
 
-    // markReady (which sets a clean, sanitized status message) must run last
-    // so it wins over the raw log line set above.
-    if (record.state !== 'starting') return
+    // A startup URL is only a candidate endpoint until the HTTP health probe
+    // confirms that the server is actually listening on the expected port.
+    if (record.state !== 'starting' || !record.probeEligible) return
     const endpoint = extractJupyterEndpoint(completeText, record.port)
     if (endpoint) {
-      this.markReady(record, endpoint)
+      const candidate = this.validatedCandidateEndpoint(record, endpoint)
+      if (candidate) {
+        record.candidateEndpoint = candidate
+        this.requestReadyProbe(record)
+      }
+    }
+  }
+
+  private validatedCandidateEndpoint(
+    record: JupyterServerRecord,
+    endpoint: JupyterEndpoint
+  ): JupyterEndpoint | null {
+    if (endpoint.port !== record.port) return null
+    try {
+      const url = new URL(endpoint.url)
+      // extractJupyterEndpoint normalizes localhost to 127.0.0.1; reject any
+      // other host so banner metadata can never redirect the connection.
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+      if (url.hostname !== '127.0.0.1') return null
+      return {
+        url: url.toString(),
+        port: record.port,
+        ...(endpoint.token ? { token: endpoint.token } : {})
+      }
+    } catch {
+      return null
     }
   }
 
   private markReady(record: JupyterServerRecord, endpoint: JupyterEndpoint): void {
+    this.disableProbes(record)
     record.endpoint = {
       ...endpoint,
       runtimeId: record.runtimeId
@@ -470,28 +516,80 @@ export class JupyterServerRegistry {
     setRecordMessage(record, 'Jupyter Server is ready', 'ready')
   }
 
+  private disableProbes(record: JupyterServerRecord): void {
+    record.probeEligible = false
+    record.readyProbeActive = false
+    record.bannerProbeRequested = false
+  }
+
+  private canStartProbe(record: JupyterServerRecord): boolean {
+    return (
+      this.records.get(record.projectCwd) === record &&
+      record.state === 'starting' &&
+      record.probeEligible &&
+      !record.process?.killed
+    )
+  }
+
+  private canCompleteReadyProbe(record: JupyterServerRecord): boolean {
+    return this.canStartProbe(record) && record.readyProbeActive
+  }
+
   private scheduleReadyProbe(record: JupyterServerRecord): void {
+    this.startProbeRound(record)
+  }
+
+  private startProbeRound(record: JupyterServerRecord): void {
+    if (!this.canStartProbe(record) || record.readyProbeActive) return
+    record.readyProbeActive = true
     void this.probeUntilReady(record)
   }
 
-  private async probeUntilReady(record: JupyterServerRecord): Promise<void> {
-    for (let attempt = 0; attempt < this.readyProbeAttempts; attempt += 1) {
-      await delay(this.readyProbeIntervalMs)
-      if (record.state !== 'starting' || record.process?.killed) return
+  private requestReadyProbe(record: JupyterServerRecord): void {
+    if (!this.canStartProbe(record)) return
+    record.bannerProbeRequested = true
+    if (record.readyProbeActive) return
+    this.startBannerProbeRound(record)
+  }
 
-      const url = `http://127.0.0.1:${record.port}/`
-      if (await this.readyProbe(url)) {
-        if (record.state !== 'starting' || record.process?.killed) return
-        this.markReady(record, {
-          url,
-          port: record.port
-        })
+  private startBannerProbeRound(record: JupyterServerRecord): void {
+    if (!record.bannerProbeRequested || record.bannerProbeRoundUsed) return
+    if (!this.canStartProbe(record) || record.readyProbeActive) return
+    record.bannerProbeRoundUsed = true
+    this.startProbeRound(record)
+  }
+
+  private async probeUntilReady(record: JupyterServerRecord): Promise<void> {
+    try {
+      for (let attempt = 0; attempt < this.readyProbeAttempts; attempt += 1) {
+        await delay(this.readyProbeIntervalMs)
+        if (!this.canCompleteReadyProbe(record)) return
+
+        const url = `http://127.0.0.1:${record.port}/`
+        const ready = await this.readyProbe(url)
+        if (!ready) continue
+        if (!this.canCompleteReadyProbe(record)) return
+        const candidate =
+          record.candidateEndpoint?.port === record.port ? record.candidateEndpoint : undefined
+        this.markReady(
+          record,
+          candidate ?? {
+            url,
+            port: record.port
+          }
+        )
         return
       }
+    } finally {
+      record.readyProbeActive = false
+      // A banner that arrived during the final pending probe still gets one
+      // bounded follow-up round; repeated banners coalesce via the request flag.
+      this.startBannerProbeRound(record)
     }
   }
 
   private markError(record: JupyterServerRecord, error: unknown): void {
+    this.disableProbes(record)
     record.state = 'error'
     setRecordMessage(record, sanitizeMessage(errorMessage(error)))
     record.exitedAt = this.now().toISOString()
@@ -502,8 +600,9 @@ export class JupyterServerRegistry {
     code: number | null,
     signal: NodeJS.Signals | null
   ): void {
-    if (record.state === 'stopped') return
-    if (code !== 0) {
+    if (record.state === 'stopped' || record.state === 'error' || record.state === 'exited') return
+    this.disableProbes(record)
+    if (code !== 0 && record.state === 'starting') {
       // The process we just spawned can die immediately because our fixed
       // port is already held by a Jupyter Server left running from a prior
       // Phi session (spawned processes are intentionally unref()'d, so they
@@ -525,7 +624,16 @@ export class JupyterServerRegistry {
   ): Promise<void> {
     const url = `http://127.0.0.1:${record.port}/`
     const isJupyterServer = await this.identityProbe(url)
-    if (record.state === 'stopped') return
+    // Stop/error/replacement may win while the identity probe is in flight.
+    if (
+      this.records.get(record.projectCwd) !== record ||
+      record.state !== 'starting' ||
+      record.probeEligible ||
+      record.readyProbeActive ||
+      record.process?.killed
+    ) {
+      return
+    }
     if (isJupyterServer) {
       this.markReady(record, { url, port: record.port })
       return

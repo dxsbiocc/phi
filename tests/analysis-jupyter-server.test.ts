@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, writeFileSync } from 'node:fs'
+import { createServer as createHttpServer } from 'node:http'
+import { createServer as createTcpServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -43,6 +45,28 @@ function projectDir(): string {
 
 async function tick(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('timed out waiting for readiness condition')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+function freeLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createTcpServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      server.close((error) => {
+        if (error) reject(error)
+        else resolve(typeof address === 'object' && address ? address.port : 0)
+      })
+    })
+  })
 }
 
 test('extractJupyterEndpoint keeps token internal and returns a sanitized local URL', () => {
@@ -159,12 +183,18 @@ test('JupyterServerRegistry marks server ready from localhost health probe', asy
   assert.deepEqual(probedUrls, [`http://127.0.0.1:${PHI_JUPYTER_PORT}/`])
 })
 
-test('JupyterServerRegistry marks server ready from local Jupyter output without exposing tokens', () => {
+test('JupyterServerRegistry marks server ready from local Jupyter output only after the health probe succeeds', async () => {
   let process!: FakeJupyterProcess
+  let probeCalls = 0
   const project = projectDir()
   const registry = new JupyterServerRegistry({
     port: 8899,
-    readyProbeAttempts: 0,
+    readyProbeAttempts: 1,
+    readyProbeIntervalMs: 0,
+    readyProbe: async () => {
+      probeCalls += 1
+      return true
+    },
     createProcess: () => {
       process = new FakeJupyterProcess(5678)
       return process
@@ -173,21 +203,40 @@ test('JupyterServerRegistry marks server ready from local Jupyter output without
 
   registry.start(project)
   process.stderr.write('    http://localhost:8899/tree?token=top-secret\n')
+  assert.equal(registry.status(project).state, 'starting')
+  assert.equal(registry.connection(project), null)
+
+  await waitFor(() => registry.status(project).state === 'ready')
   const status = registry.status(project)
+  const connection = registry.connection(project)
 
   assert.equal(status.state, 'ready')
   assert.equal(status.hasEndpoint, true)
   assert.equal(status.pid, 5678)
   assert.equal(status.port, 8899)
+  assert.equal(probeCalls, 1)
+  assert.equal(connection?.url, 'http://127.0.0.1:8899/tree')
+  assert.equal(connection?.token, 'top-secret')
+  assert.ok(connection?.runtimeId)
   assert.doesNotMatch(JSON.stringify(status), /top-secret/)
   assert.doesNotMatch(JSON.stringify(status), /token=/)
 })
 
-test('JupyterServerRegistry ignores unrelated and partial URLs and connects to its bound IPv4 port', () => {
+test('JupyterServerRegistry ignores unrelated hosts and ports and keeps banner metadata only as a candidate', async () => {
   let process!: FakeJupyterProcess
+  let resolveProbe!: (ready: boolean) => void
+  let probeCalls = 0
+  const probeGate = new Promise<boolean>((resolve) => {
+    resolveProbe = resolve
+  })
   const project = projectDir()
   const registry = new JupyterServerRegistry({
-    readyProbeAttempts: 0,
+    readyProbeAttempts: 2,
+    readyProbeIntervalMs: 0,
+    readyProbe: async () => {
+      probeCalls += 1
+      return probeGate
+    },
     createProcess: () => (process = new FakeJupyterProcess(5680))
   })
 
@@ -195,20 +244,34 @@ test('JupyterServerRegistry ignores unrelated and partial URLs and connects to i
   process.stderr.write('extension endpoint http://localhost:9000/docs\n')
   assert.equal(registry.status(project).state, 'starting')
   assert.equal(registry.connection(project), null)
+  process.stderr.write(`http://evil.example:${PHI_JUPYTER_PORT}/tree?token=evil\n`)
+  assert.equal(registry.connection(project), null)
   process.stderr.write(`http://localhost:${PHI_JUPYTER_PORT}/tree?token=split-`)
   assert.equal(registry.connection(project), null)
   process.stderr.write('token\n')
+  assert.equal(registry.status(project).state, 'starting')
+  assert.equal(registry.connection(project), null)
+
+  resolveProbe(true)
+  await waitFor(() => registry.status(project).state === 'ready')
   const connection = registry.connection(project)
   assert.equal(connection?.url, `http://127.0.0.1:${PHI_JUPYTER_PORT}/tree`)
   assert.equal(connection?.token, 'split-token')
+  assert.equal(probeCalls, 1)
 })
 
-test('JupyterServerRegistry marks server ready even when the URL banner is split across stdout chunks', () => {
+test('JupyterServerRegistry recognizes a split URL banner but does not become ready before the probe', async () => {
   let process!: FakeJupyterProcess
+  let resolveProbe!: (ready: boolean) => void
+  const probeGate = new Promise<boolean>((resolve) => {
+    resolveProbe = resolve
+  })
   const project = projectDir()
   const registry = new JupyterServerRegistry({
     port: 8899,
-    readyProbeAttempts: 0,
+    readyProbeAttempts: 1,
+    readyProbeIntervalMs: 0,
+    readyProbe: async () => probeGate,
     createProcess: () => {
       process = new FakeJupyterProcess(5679)
       return process
@@ -222,11 +285,250 @@ test('JupyterServerRegistry marks server ready even when the URL banner is split
   process.stderr.write('    http://local')
   assert.equal(registry.status(project).state, 'starting')
   process.stderr.write('host:8899/tree?token=top-secret\n')
+  assert.equal(registry.status(project).state, 'starting')
+  assert.equal(registry.connection(project), null)
+
+  resolveProbe(true)
+  await waitFor(() => registry.status(project).state === 'ready')
   const status = registry.status(project)
 
   assert.equal(status.state, 'ready')
   assert.equal(status.hasEndpoint, true)
   assert.equal(status.port, 8899)
+})
+
+test('JupyterServerRegistry retries a false health probe before marking the banner candidate ready', async () => {
+  let process!: FakeJupyterProcess
+  const pendingProbes: Array<(ready: boolean) => void> = []
+  let probeCalls = 0
+  const project = projectDir()
+  const registry = new JupyterServerRegistry({
+    readyProbeAttempts: 3,
+    readyProbeIntervalMs: 0,
+    readyProbe: () =>
+      new Promise((resolve) => {
+        probeCalls += 1
+        pendingProbes.push(resolve)
+      }),
+    createProcess: () => (process = new FakeJupyterProcess(5681))
+  })
+
+  registry.start(project)
+  process.stderr.write(`http://127.0.0.1:${PHI_JUPYTER_PORT}/lab?token=probe-token\n`)
+  await waitFor(() => pendingProbes.length === 1)
+  assert.equal(registry.status(project).state, 'starting')
+  assert.equal(registry.connection(project), null)
+
+  const firstProbe = pendingProbes.shift()
+  assert.ok(firstProbe)
+  firstProbe(false)
+  await waitFor(() => pendingProbes.length === 1)
+  assert.equal(registry.status(project).state, 'starting')
+  assert.equal(registry.connection(project), null)
+
+  const secondProbe = pendingProbes.shift()
+  assert.ok(secondProbe)
+  secondProbe(true)
+  await waitFor(() => registry.status(project).state === 'ready')
+  const connection = registry.connection(project)
+  assert.equal(connection?.url, `http://127.0.0.1:${PHI_JUPYTER_PORT}/lab`)
+  assert.equal(connection?.token, 'probe-token')
+  assert.equal(probeCalls, 2)
+})
+
+test('JupyterServerRegistry starts a bounded probe round when a valid banner arrives after probe exhaustion', async () => {
+  let process!: FakeJupyterProcess
+  const pendingProbes: Array<(ready: boolean) => void> = []
+  let probeCalls = 0
+  const project = projectDir()
+  const registry = new JupyterServerRegistry({
+    readyProbeAttempts: 1,
+    readyProbeIntervalMs: 0,
+    readyProbe: () =>
+      new Promise((resolve) => {
+        probeCalls += 1
+        pendingProbes.push(resolve)
+      }),
+    createProcess: () => (process = new FakeJupyterProcess(5685))
+  })
+
+  registry.start(project)
+  await waitFor(() => pendingProbes.length === 1)
+  const exhaustedProbe = pendingProbes.shift()
+  assert.ok(exhaustedProbe)
+  exhaustedProbe(false)
+  await tick()
+  assert.equal(pendingProbes.length, 0)
+  assert.equal(probeCalls, 1)
+  assert.equal(registry.status(project).state, 'starting')
+  assert.equal(registry.connection(project), null)
+
+  process.stderr.write(`http://127.0.0.1:${PHI_JUPYTER_PORT}/lab?token=late-banner-token\n`)
+  await waitFor(() => pendingProbes.length === 1)
+  assert.equal(probeCalls, 2)
+
+  const lateProbe = pendingProbes.shift()
+  assert.ok(lateProbe)
+  lateProbe(true)
+  await waitFor(() => registry.status(project).state === 'ready')
+  const connection = registry.connection(project)
+  assert.equal(connection?.url, `http://127.0.0.1:${PHI_JUPYTER_PORT}/lab`)
+  assert.equal(connection?.token, 'late-banner-token')
+})
+
+test('JupyterServerRegistry does not lose a repeated banner arriving while the final probe is pending', async () => {
+  let process!: FakeJupyterProcess
+  const pendingProbes: Array<(ready: boolean) => void> = []
+  let probeCalls = 0
+  const project = projectDir()
+  const registry = new JupyterServerRegistry({
+    readyProbeAttempts: 1,
+    readyProbeIntervalMs: 0,
+    readyProbe: () =>
+      new Promise((resolve) => {
+        probeCalls += 1
+        pendingProbes.push(resolve)
+      }),
+    createProcess: () => (process = new FakeJupyterProcess(5686))
+  })
+
+  registry.start(project)
+  await waitFor(() => pendingProbes.length === 1)
+  process.stderr.write(`http://127.0.0.1:${PHI_JUPYTER_PORT}/lab?token=last-probe-token\n`)
+  process.stderr.write(`http://127.0.0.1:${PHI_JUPYTER_PORT}/lab?token=last-probe-token\n`)
+  assert.equal(probeCalls, 1)
+
+  const finalProbe = pendingProbes.shift()
+  assert.ok(finalProbe)
+  finalProbe(false)
+  await waitFor(() => pendingProbes.length === 1)
+  assert.equal(probeCalls, 2)
+
+  const followUpProbe = pendingProbes.shift()
+  assert.ok(followUpProbe)
+  followUpProbe(true)
+  await waitFor(() => registry.status(project).state === 'ready')
+  assert.equal(registry.connection(project)?.token, 'last-probe-token')
+})
+
+test('JupyterServerRegistry ignores a late successful probe after stop', async () => {
+  let process!: FakeJupyterProcess
+  let resolveProbe!: (ready: boolean) => void
+  let probeCalls = 0
+  const probeGate = new Promise<boolean>((resolve) => {
+    resolveProbe = resolve
+  })
+  const project = projectDir()
+  const registry = new JupyterServerRegistry({
+    readyProbeAttempts: 3,
+    readyProbeIntervalMs: 0,
+    readyProbe: async () => {
+      probeCalls += 1
+      return probeGate
+    },
+    createProcess: () => (process = new FakeJupyterProcess(5682))
+  })
+
+  registry.start(project)
+  process.stderr.write(`http://127.0.0.1:${PHI_JUPYTER_PORT}/lab?token=late-token\n`)
+  await waitFor(() => probeCalls === 1)
+  registry.stop(project)
+  assert.equal(registry.status(project).state, 'stopped')
+
+  resolveProbe(true)
+  await tick()
+  assert.equal(registry.status(project).state, 'stopped')
+  assert.equal(registry.status(project).hasEndpoint, false)
+  assert.equal(registry.connection(project), null)
+})
+
+test('JupyterServerRegistry does not revive an abnormally exited process from a late ready probe', async () => {
+  let process!: FakeJupyterProcess
+  let resolveReady!: (ready: boolean) => void
+  let resolveIdentity!: (isJupyter: boolean) => void
+  let readyCalls = 0
+  const readyGate = new Promise<boolean>((resolve) => {
+    resolveReady = resolve
+  })
+  const identityGate = new Promise<boolean>((resolve) => {
+    resolveIdentity = resolve
+  })
+  const project = projectDir()
+  const registry = new JupyterServerRegistry({
+    readyProbeAttempts: 3,
+    readyProbeIntervalMs: 0,
+    readyProbe: async () => {
+      readyCalls += 1
+      return readyGate
+    },
+    identityProbe: async () => identityGate,
+    createProcess: () => (process = new FakeJupyterProcess(5683))
+  })
+
+  registry.start(project)
+  process.stderr.write(`http://127.0.0.1:${PHI_JUPYTER_PORT}/lab?token=late-token\n`)
+  await waitFor(() => readyCalls === 1)
+  process.emit('exit', 1, null)
+  resolveReady(true)
+  await tick()
+
+  assert.notEqual(registry.status(project).state, 'ready')
+  assert.equal(registry.connection(project), null)
+
+  resolveIdentity(false)
+  await waitFor(() => registry.status(project).state === 'error')
+  assert.equal(registry.connection(project), null)
+})
+
+test('JupyterServerRegistry waits for a late real loopback HTTP health check after a banner', async (t) => {
+  const port = await freeLoopbackPort()
+  let process!: FakeJupyterProcess
+  const project = projectDir()
+  const registry = new JupyterServerRegistry({
+    port,
+    readyProbeAttempts: 1_000,
+    readyProbeIntervalMs: 5,
+    createProcess: () => (process = new FakeJupyterProcess(5684))
+  })
+  const httpServer = createHttpServer((request, response) => {
+    if (request.url === '/api/status') {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ started: new Date().toISOString() }))
+      return
+    }
+    response.writeHead(404)
+    response.end()
+  })
+
+  try {
+    registry.start(project)
+    process.stderr.write(`http://127.0.0.1:${port}/lab?token=real-token\n`)
+    assert.equal(registry.status(project).state, 'starting')
+    assert.equal(registry.connection(project), null)
+
+    const listenError = await new Promise<Error | null>((resolve) => {
+      httpServer.once('error', resolve)
+      httpServer.listen(port, '127.0.0.1', () => resolve(null))
+    })
+    if (listenError) {
+      const code = (listenError as NodeJS.ErrnoException).code
+      if (code === 'EACCES' || code === 'EPERM') {
+        t.skip(`loopback listen not permitted: ${listenError.message}`)
+        return
+      }
+      throw listenError
+    }
+
+    await waitFor(() => registry.status(project).state === 'ready')
+    const connection = registry.connection(project)
+    assert.equal(connection?.url, `http://127.0.0.1:${port}/lab`)
+    assert.equal(connection?.token, 'real-token')
+  } finally {
+    if (httpServer.listening) {
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()))
+    }
+    registry.disposeAll()
+  }
 })
 
 test('JupyterServerRegistry stops a running project server', () => {
