@@ -1,6 +1,6 @@
 {
   "name": "phi",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "A local desktop workbench for scientific AI workflows",
   "type": "module",
   "main": "./out/main/index.mjs",
