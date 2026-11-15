@@ -1281,7 +1281,7 @@ function fakeSession(
 
 test('the specialist runner sends reference images with the delegated prompt', async () => {
   const session = fakeSession()
-  let createdWith: unknown
+  let createdWith: { runId?: string; signal?: AbortSignal } | undefined
   const runner = createAgentRunner({
     agent: 'Visualization',
     createSession: async (request) => {
@@ -1291,7 +1291,9 @@ test('the specialist runner sends reference images with the delegated prompt', a
   })
   const images = [{ type: 'image' as const, data: 'aGVsbG8=', mimeType: 'image/png' }]
   await runner({ task: 'Use the reference image.', images })
-  assert.deepEqual(createdWith, {})
+  assert.ok(createdWith?.signal instanceof AbortSignal)
+  assert.equal(createdWith.signal.aborted, false)
+  assert.equal(createdWith.runId, undefined)
   assert.deepEqual((session as typeof session & { promptOptions: unknown[] }).promptOptions, [
     { images }
   ])

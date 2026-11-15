@@ -16,6 +16,15 @@
       "plan": "remove"
     },
     {
+      "file": "scripts/kernel-e2e/cursor-native-abort.ts",
+      "specifiers": [
+        "@oh-my-pi/pi-coding-agent/cursor",
+        "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim"
+      ],
+      "purpose": "Exercise the real pinned Cursor native piBash bridge and BashTool in an offline abort/process-isolation regression; fake session tools do not cover this SDK path",
+      "plan": "keep"
+    },
+    {
       "file": "scripts/terminal-host-smoke.ts",
       "specifiers": ["@oh-my-pi/pi-natives"],
       "purpose": "Native Process API for terminal host smoke checks",

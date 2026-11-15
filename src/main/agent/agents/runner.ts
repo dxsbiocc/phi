@@ -165,7 +165,7 @@ function optionalCreatedAt(
 export function createAgentRunner(deps: {
   /** Agent name, used in error messages. */
   agent: string
-  createSession: (request: { runId?: string }) => Promise<AgentSessionLike>
+  createSession: (request: { runId?: string; signal?: AbortSignal }) => Promise<AgentSessionLike>
   timeoutMs?: number
   /**
    * The current time as an ISO string. The SDK's events carry none, so a step is timed here:
@@ -190,9 +190,20 @@ export function createAgentRunner(deps: {
       ...(deps.clock ? { clock: deps.clock } : {})
     })
 
+    const timeoutController = new AbortController()
+    const sessionSignal = signal
+      ? AbortSignal.any([signal, timeoutController.signal])
+      : timeoutController.signal
     const session = await deps.createSession({
-      ...(runId ? { runId } : {})
+      ...(runId ? { runId } : {}),
+      signal: sessionSignal
     })
+    if (signal?.aborted) {
+      await Promise.resolve()
+        .then(() => session.dispose())
+        .catch(() => undefined)
+      throw new AgentCancelledError(deps.agent)
+    }
     onControl?.({
       steer: async (text) => {
         if (!session.steer) throw new Error(`The ${deps.agent} agent cannot be steered.`)
@@ -278,12 +289,16 @@ export function createAgentRunner(deps: {
     signal?.addEventListener('abort', onAbort, { once: true })
     const timer = setTimeout(() => {
       timedOut = true
+      timeoutController.abort()
       stop()
     }, timeoutMs)
 
     let status: AgentRunStatus = 'failed'
     let reportText = ''
     try {
+      // Control/subscription hooks can synchronously cancel before the listener is attached.
+      if (signal?.aborted && !cancelled) onAbort()
+      if (cancelled) throw new AgentCancelledError(deps.agent)
       await session.prompt(task, images?.length ? { images } : undefined)
       if (cancelled) throw new AgentCancelledError(deps.agent)
       if (timedOut) throw new AgentTimeoutError(deps.agent, timeoutMs)

@@ -32,6 +32,7 @@ import { createAgentSession, DefaultResourceLoader } from './session-factory'
 import { sessions } from './state'
 import type { RuntimeThinkingLevel } from './state'
 import { createSessionModelAvailability } from './session-model-availability'
+import { injectNativeToolAbortSignal } from './native-tool-abort'
 import { phiToolFunctions } from './tool-support'
 
 /**
@@ -122,6 +123,7 @@ export async function createPhiAgentSession(
     enableToolApproval: boolean
     projectBound: boolean
     agentRunId?: string
+    signal?: AbortSignal
     parentEnvironmentBinding?: PhiExtensionEnvironmentBinding
     skillTools?: ScriptToolDescriptor[]
     parent: () => CreateAgentSessionResult | undefined
@@ -292,6 +294,7 @@ export async function createPhiAgentSession(
     enableLsp: false
   })
 
+  injectNativeToolAbortSignal(result.session, deps.signal)
   // The installer disposes the session and rethrows when the guards cannot be installed.
   await installSpecialistToolCallExtensions(result.session, toolCallFactories, sessionCwd)
   return adaptOmpSessionEvents(result.session)

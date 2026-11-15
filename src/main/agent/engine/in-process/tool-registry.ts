@@ -253,7 +253,7 @@ export async function createSessionToolRegistry(deps: {
       agent: definition.name,
       // What each delegation cost, for judging prompt and tool changes; see agents/usage.ts.
       onUsage: (record) => appendAgentUsageRecord(agentDir, { ...record, sessionId }),
-      createSession: ({ runId }) =>
+      createSession: ({ runId, signal }) =>
         createPhiAgentSession(definition, {
           sessionId,
           cwd,
@@ -263,6 +263,7 @@ export async function createSessionToolRegistry(deps: {
           enableToolApproval: Boolean(record.enableToolApproval),
           projectBound: Boolean(record.projectBound),
           ...(runId ? { agentRunId: runId } : {}),
+          ...(signal ? { signal } : {}),
           ...(environmentBinding ? { parentEnvironmentBinding: environmentBinding } : {}),
           ...(skillTools ? { skillTools } : {}),
           parent: () => parentRef.current

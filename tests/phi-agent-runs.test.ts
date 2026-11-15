@@ -712,6 +712,75 @@ function steerableSession(): AgentSessionLike & { steered: string[] } {
   }
 }
 
+test('cancellation during specialist session creation disposes it without prompting', async () => {
+  const controller = new AbortController()
+  const ready = deferred<AgentSessionLike>()
+  const entered = deferred<void>()
+  let prompts = 0
+  let disposed = 0
+  const session = steerableSession()
+  session.prompt = async () => {
+    prompts += 1
+  }
+  session.dispose = async () => {
+    disposed += 1
+  }
+  const running = createAgentRunner({
+    agent: 'Wrapper',
+    createSession: async () => {
+      entered.resolve()
+      return ready.promise
+    }
+  })({ task: 'go', signal: controller.signal })
+  const rejected = assert.rejects(running, AgentCancelledError)
+  await entered.promise
+  controller.abort()
+  ready.resolve(session)
+  await rejected
+  assert.equal(prompts, 0)
+  assert.equal(disposed, 1)
+})
+
+test('cancellation from the control hook never starts a specialist prompt', async () => {
+  const controller = new AbortController()
+  let prompts = 0
+  let disposed = 0
+  const session = steerableSession()
+  session.prompt = async () => {
+    prompts += 1
+  }
+  session.dispose = async () => {
+    disposed += 1
+  }
+  await assert.rejects(
+    createAgentRunner({ agent: 'Wrapper', createSession: async () => session })({
+      task: 'go',
+      signal: controller.signal,
+      onControl: () => controller.abort()
+    }),
+    AgentCancelledError
+  )
+  assert.equal(prompts, 0)
+  assert.equal(disposed, 1)
+})
+
+test('the runner gives specialist session creation the agent-run abort signal', async () => {
+  const controller = new AbortController()
+  const session = steerableSession()
+  let received: AbortSignal | undefined
+  await createAgentRunner({
+    agent: 'Wrapper',
+    createSession: async (request) => {
+      received = request.signal
+      return session
+    }
+  })({ task: 'go', signal: controller.signal })
+  assert.ok(received)
+  assert.equal(received.aborted, false)
+  controller.abort()
+  assert.equal(received.aborted, true)
+})
+
 test('the runner hands its session’s steer to the caller once the session exists', async () => {
   const session = steerableSession()
   const controls: Array<{ steer: (text: string) => Promise<void> }> = []
