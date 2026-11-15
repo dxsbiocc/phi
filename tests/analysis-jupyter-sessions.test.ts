@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, posix } from 'node:path'
 import test from 'node:test'
 import { parseNotebook, type NotebookDocument } from '../src/shared/notebookDocument'
 import {
@@ -109,6 +112,72 @@ test('AnalysisNotebookSessionRegistry creates one session for a notebook kernel'
   assert.doesNotMatch(JSON.stringify(status), /secret-token/)
   assert.doesNotMatch(JSON.stringify(status), /127\.0\.0\.1/)
 })
+
+test('notebook paths behind a symlinked project stay inside the Jupyter root', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-jupyter-path-'))
+  const real = join(root, 'real')
+  const alias = join(root, 'alias')
+  try {
+    mkdirSync(join(real, 'notebooks'), { recursive: true })
+    writeFileSync(join(real, 'notebooks', 'demo.ipynb'), '{}\n')
+    symlinkSync(real, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const client = new FakeJupyterSessionClient()
+    const registry = new AnalysisNotebookSessionRegistry({
+      client,
+      getConnection: () => ({ url: 'http://127.0.0.1:8888/lab' })
+    })
+    const document = notebook({
+      kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' }
+    })
+    await registry.ensureSession({
+      projectCwd: alias,
+      notebookPath: join(real, 'notebooks', 'demo.ipynb'),
+      document,
+      kernels: kernels()
+    })
+    assert.equal(client.created[0].notebookRelativePath, 'notebooks/demo.ipynb')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test(
+  'remote SSH session paths use POSIX lexical paths, not the desktop filesystem',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'phi-remote-path-'))
+    const real = join(root, 'real')
+    const alias = join(root, 'alias')
+    try {
+      mkdirSync(join(real, 'notebooks'), { recursive: true })
+      writeFileSync(join(real, 'notebooks', 'demo.ipynb'), '{}\n')
+      symlinkSync(real, alias, 'dir')
+      const client = new FakeJupyterSessionClient()
+      const registry = new AnalysisNotebookSessionRegistry({
+        client,
+        runtimeBackend: {
+          kind: 'ssh',
+          connection: () => ({ url: 'http://127.0.0.1:8888/lab' })
+        }
+      })
+      const document = notebook({
+        kernelspec: { display_name: 'Python 3', language: 'python', name: 'python3' }
+      })
+      await registry.ensureSession({
+        projectCwd: '/',
+        notebookPath: join(alias, 'notebooks', 'demo.ipynb'),
+        document,
+        kernels: kernels()
+      })
+      assert.equal(
+        client.created[0].notebookRelativePath,
+        posix.join(posix.relative('/', alias), 'notebooks', 'demo.ipynb')
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+)
 
 test('AnalysisNotebookSessionRegistry recreates the session once it is marked errored/disconnected', async () => {
   const client = new FakeJupyterSessionClient()

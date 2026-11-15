@@ -1,4 +1,5 @@
-import { basename, isAbsolute, relative, resolve, sep } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path'
 import type { NotebookDocument, JsonObject } from '../../../shared/notebookDocument'
 import type {
   AnalysisKernelDiagnostics,
@@ -11,7 +12,8 @@ import {
   jupyterAuthorizationHeader,
   jupyterConnectionIdentity,
   sanitizeJupyterConnectionError,
-  type JupyterRuntimeBackend
+  type JupyterRuntimeBackend,
+  type JupyterRuntimeKind
 } from './jupyter-runtime-backend'
 
 import { errorMessage } from '../../../shared/errorCodes'
@@ -190,11 +192,37 @@ function notBuiltMessage(kernel: AnalysisKernelSummary): string {
   return `environment ${ref} is not ready; the user must build it first`
 }
 
-function notebookRelativePath(projectCwd: string, notebookPath: string): string {
-  const absolutePath = isAbsolute(notebookPath)
-    ? resolve(notebookPath)
-    : resolve(projectCwd, notebookPath)
-  return relative(projectCwd, absolutePath).split(sep).join('/')
+/** Resolve the nearest existing ancestor so a symlinked project and a real file compare alike. */
+function canonicalPath(path: string): string {
+  let current = resolve(path)
+  const suffix: string[] = []
+  for (;;) {
+    try {
+      return join(realpathSync(current), ...suffix)
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return resolve(path)
+      suffix.unshift(basename(current))
+      current = parent
+    }
+  }
+}
+
+function notebookRelativePath(
+  projectCwd: string,
+  notebookPath: string,
+  runtimeKind: JupyterRuntimeKind = 'local'
+): string {
+  if (runtimeKind === 'ssh') {
+    const project = posix.resolve(projectCwd)
+    const target = posix.resolve(project, notebookPath)
+    return posix.relative(project, target)
+  }
+  const project = canonicalPath(projectCwd)
+  const absolutePath = canonicalPath(
+    isAbsolute(notebookPath) ? notebookPath : resolve(projectCwd, notebookPath)
+  )
+  return relative(project, absolutePath).split(sep).join('/')
 }
 
 function sessionState(executionState: JupyterKernelExecutionState): AnalysisNotebookKernelState {
@@ -377,14 +405,14 @@ export class AnalysisNotebookSessionRegistry {
   private readonly runtimeBackend?: Pick<
     JupyterRuntimeBackend,
     'claimKernel' | 'releaseKernel' | 'touchActivity'
-  >
+  > & { readonly kind?: JupyterRuntimeKind }
 
   constructor(options: {
     getConnection?: (projectCwd: string) => JupyterServerConnection | null
     runtimeBackend?: Pick<
       JupyterRuntimeBackend,
       'connection' | 'claimKernel' | 'releaseKernel' | 'touchActivity'
-    >
+    > & { readonly kind?: JupyterRuntimeKind }
     client?: JupyterSessionClient
     now?: () => Date
     prepareKernel?: PrepareNotebookKernel
@@ -717,7 +745,11 @@ export class AnalysisNotebookSessionRegistry {
     const created = await this.client.createSession(connection, {
       projectCwd: input.projectCwd,
       notebookPath: input.notebookPath,
-      notebookRelativePath: notebookRelativePath(input.projectCwd, input.notebookPath),
+      notebookRelativePath: notebookRelativePath(
+        input.projectCwd,
+        input.notebookPath,
+        this.runtimeBackend?.kind
+      ),
       notebookName: basename(input.notebookPath),
       kernelName: kernel.name
     })

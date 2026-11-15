@@ -80,6 +80,10 @@ function emitSessionState(
   )
 }
 
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
 function emitApproval(
   options: BindWorkerOutboundOptions,
   sessionId: string | undefined,
@@ -88,26 +92,26 @@ function emitApproval(
 ): void {
   if (!sessionId) throw new Error('toolApproval event omitted sessionId')
   if (!isRecord(payload)) throw new Error('toolApproval event payload is invalid')
-  const approvalId =
-    typeof payload.requestId === 'string' && payload.requestId ? payload.requestId : undefined
+  const approvalId = nonEmptyString(payload.requestId)
   if (!approvalId) throw new Error('toolApproval event omitted requestId')
-  const toolCallId =
-    typeof payload.toolCallId === 'string' && payload.toolCallId ? payload.toolCallId : approvalId
+  const agentRunId = nonEmptyString(payload.agentRunId)
+  const outsideProject = nonEmptyString(payload.outsideProject)
+  const toolCallId = nonEmptyString(payload.toolCallId) ?? approvalId
+  // A child agent run owns its approval lifecycle. Binding the frame to the parent
+  // prompt's active run makes a normal parent completion cancel the child's pending
+  // approval (recordTerminalRun -> cancelRunInteractions).
+  const approvalRunId = agentRunId ?? runId
   options.core.emitEvent(
     KERNEL_EVENT_APPROVAL_REQUESTED,
     {
       approvalId,
       toolCallId,
-      toolName: typeof payload.toolName === 'string' ? payload.toolName : '',
+      toolName: nonEmptyString(payload.toolName) ?? '',
       input: (isRecord(payload.input) ? payload.input : {}) as JsonValue,
-      ...(typeof payload.agentRunId === 'string' && payload.agentRunId
-        ? { agentRunId: payload.agentRunId }
-        : {}),
-      ...(typeof payload.outsideProject === 'string' && payload.outsideProject
-        ? { outsideProject: payload.outsideProject }
-        : {})
+      ...(agentRunId ? { agentRunId } : {}),
+      ...(outsideProject ? { outsideProject } : {})
     },
-    { sessionId, runId }
+    { sessionId, ...(approvalRunId ? { runId: approvalRunId } : {}) }
   )
 }
 

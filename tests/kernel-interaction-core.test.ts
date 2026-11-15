@@ -756,6 +756,103 @@ test('cancelling one session plan review leaves the other session review answera
   )
 })
 
+test('session.close cancels only approvals in the closed session', async () => {
+  const decisions: ApprovalDecision[] = []
+  const core = makeCore({
+    'approval.respond': (params) => {
+      decisions.push(params as ApprovalDecision)
+      return { accepted: true }
+    },
+    'session.close': () => ({ closed: true })
+  })
+  const transport = new MemoryTransport()
+  core.attachTransport(transport, { trusted: true })
+  const generation = generationFrom(await hello(transport))
+  for (const sessionId of ['session-1', 'session-2']) {
+    core.emitEvent(
+      'approval.requested',
+      {
+        approvalId: `approval-${sessionId}`,
+        toolCallId: `tool-${sessionId}`,
+        toolName: 'write',
+        input: {}
+      },
+      { sessionId, runId: 'run-1' }
+    )
+  }
+
+  const closed = await sendRequest(
+    transport,
+    request('close-session-1', 'session.close', generation, {}, { sessionId: 'session-1' })
+  )
+  assert.equal(closed.ok, true)
+  await waitUntil(() => decisions.length === 1)
+  assert.deepEqual(decisions, [
+    { approvalId: 'approval-session-1', decision: 'denied', reason: 'session closed' }
+  ])
+
+  const other = await sendRequest(
+    transport,
+    request('answer-session-2', 'approval.respond', generation, {
+      approvalId: 'approval-session-2',
+      decision: 'approved'
+    })
+  )
+  assert.equal(other.ok, true)
+  assert.deepEqual(decisions[1], {
+    approvalId: 'approval-session-2',
+    decision: 'approved'
+  })
+})
+
+test('terminal run cancellation is isolated by session when run ids collide', async () => {
+  const decisions: ApprovalDecision[] = []
+  const core = makeCore({
+    'approval.respond': (params) => {
+      decisions.push(params as ApprovalDecision)
+      return { accepted: true }
+    }
+  })
+  const transport = new MemoryTransport()
+  core.attachTransport(transport, { trusted: true })
+  const generation = generationFrom(await hello(transport))
+  for (const sessionId of ['session-1', 'session-2']) {
+    core.emitEvent(
+      'approval.requested',
+      {
+        approvalId: `approval-${sessionId}`,
+        toolCallId: `tool-${sessionId}`,
+        toolName: 'write',
+        input: {}
+      },
+      { sessionId, runId: 'run_1' }
+    )
+  }
+
+  core.emitEvent(
+    'run.completed',
+    { runId: 'run_1', status: 'completed' },
+    { sessionId: 'session-1', runId: 'run_1' }
+  )
+  await waitUntil(() => decisions.length === 1)
+  assert.deepEqual(decisions, [
+    { approvalId: 'approval-session-1', decision: 'denied', reason: 'run ended' }
+  ])
+
+  const other = await sendRequest(
+    transport,
+    request('answer-other-session', 'approval.respond', generation, {
+      approvalId: 'approval-session-2',
+      decision: 'approved'
+    })
+  )
+  assert.equal(other.ok, true)
+  assert.deepEqual(decisions[1], {
+    approvalId: 'approval-session-2',
+    decision: 'approved'
+  })
+})
+
 test('a late response to a cancelled approval rejects with CANCELLED', async () => {
   const interaction = await createBoundInteraction()
   const cancelled = assertBoundInteractionCancelled(interaction, 'run ended')
