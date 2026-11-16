@@ -303,8 +303,10 @@ export async function createStartupSplashWindow(
   createWindow: StartupSplashFactory,
   iconDataUrl: string,
   now: () => number = Date.now,
-  language: UiLanguage = DEFAULT_UI_LANGUAGE
+  language: UiLanguage = DEFAULT_UI_LANGUAGE,
+  isQuitting: () => boolean = () => false
 ): Promise<StartupSplashWindow | null> {
+  if (isQuitting()) return null
   const window = createWindow({
     width: 360,
     height: 300,
@@ -329,7 +331,7 @@ export async function createStartupSplashWindow(
   })
   let shown = false
   const show = (): void => {
-    if (shown || window.isDestroyed()) return
+    if (isQuitting() || shown || window.isDestroyed()) return
     shown = true
     splashShownAt.set(window, now())
     window.show()
@@ -351,10 +353,11 @@ export function dismissStartupSplashWindow(
   splash: StartupSplashWindow | null,
   mainWindow: StartupMainWindow,
   schedule: Schedule = (callback, delayMs) => setTimeout(callback, delayMs),
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  isQuitting: () => boolean = () => false
 ): void {
   const revealMain = (): void => {
-    if (mainWindow.isDestroyed()) return
+    if (isQuitting() || mainWindow.isDestroyed()) return
     if (mainWindow.isVisible?.() !== true) mainWindow.show()
     mainWindow.focus?.()
   }
@@ -375,6 +378,7 @@ export function dismissStartupSplashWindow(
     }
     let index = 0
     const step = (): void => {
+      if (isQuitting()) return
       if (splash.isDestroyed()) {
         revealMain()
         return
@@ -397,6 +401,7 @@ export function dismissStartupSplashWindow(
   }
 
   const beginFinish = (): void => {
+    if (isQuitting()) return
     try {
       const finishAnimation = splash.webContents?.executeJavaScript(
         "document.documentElement.classList.add('is-finishing')"

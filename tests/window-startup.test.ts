@@ -22,6 +22,7 @@ function createMainWindowFixture(): FakeWindow {
   ).outputText
   const bindings = {
     createMainWindowStartup,
+    mainWindowRetention: { isQuitting: () => false },
     mainWindowStartups: new WeakMap(),
     writeAppLog: () => undefined,
     dialog: { showMessageBox: async () => ({ response: 1 }) },

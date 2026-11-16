@@ -71,6 +71,55 @@ class FakeSplashWindow implements StartupSplashWindow {
   }
 }
 
+test('a splash finishing its load after quit never shows', async () => {
+  const splash = new FakeSplashWindow()
+  let quitting = false
+  let loaded!: () => void
+  splash.loadURL = () =>
+    new Promise<void>((resolve) => {
+      loaded = resolve
+    })
+  const pending = createStartupSplashWindow(
+    () => splash,
+    ICON_DATA_URL,
+    Date.now,
+    'en',
+    () => quitting
+  )
+  quitting = true
+  splash.readyListener?.()
+  loaded()
+  await pending
+  assert.equal(splash.shown, 0)
+})
+
+test('an already scheduled splash fade cannot reveal the main window after quit', () => {
+  const splash = new FakeSplashWindow()
+  const queued: Array<() => void> = []
+  const mainEvents: string[] = []
+  let quitting = false
+  dismissStartupSplashWindow(
+    splash,
+    {
+      isDestroyed: () => false,
+      show: () => mainEvents.push('show'),
+      focus: () => mainEvents.push('focus')
+    },
+    (callback) => {
+      queued.push(callback)
+    },
+    Date.now,
+    () => quitting
+  )
+  quitting = true
+  for (let count = 0; queued.length > 0; count += 1) {
+    assert.ok(count < 30, 'shutdown must stop scheduling animation work')
+    queued.shift()?.()
+  }
+  assert.deepEqual(mainEvents, [])
+  assert.deepEqual(splash.opacities, [])
+})
+
 test('startup splash markup embeds only a validated icon and accessible progress copy', () => {
   const markup = startupSplashHtml(ICON_DATA_URL)
 

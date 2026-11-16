@@ -415,6 +415,7 @@ const mainWindowStartups = new WeakMap<BrowserWindow, ReturnType<typeof createMa
 const mainWindowRetention = createMainWindowRetention(process.platform)
 
 function showMainWindowFromMenuBar(): void {
+  if (mainWindowRetention.isQuitting()) return
   const mainWindow = runtime.window.mainWindow
   if (!mainWindow || mainWindow.isDestroyed()) createWindow()
   const window = runtime.window.mainWindow
@@ -449,11 +450,17 @@ function requireMainWindowRenderer(event: IpcMainInvokeEvent): BrowserWindow {
 
 function finishStartupSplash(window: BrowserWindow | null): void {
   const splash = runtime.window.takeStartupSplashWindow()
+  // A startup/load callback can outlive the quit request. Never reveal or create a
+  // window after the app has started quitting; just release the splash.
+  if (mainWindowRetention.isQuitting()) {
+    if (splash && !splash.isDestroyed()) splash.close()
+    return
+  }
   if (!window) {
     if (splash && !splash.isDestroyed()) splash.close()
     return
   }
-  dismissStartupSplashWindow(splash, window)
+  dismissStartupSplashWindow(splash, window, undefined, undefined, mainWindowRetention.isQuitting)
 }
 
 function sendMainWindowFullscreenState(window: BrowserWindow, fullscreen: boolean): void {
@@ -2883,6 +2890,7 @@ function createMainWindowStartupCoordinator(
   const startup = createMainWindowStartup(
     window,
     (reason) => {
+      if (mainWindowRetention.isQuitting()) return
       finishStartupSplash(window)
       writeAppLog({ level: 'error', event: 'window_startup_failed', metadata: { reason } })
       const dialogCopy = nativeUiCopy(readAppSettings().uiLanguage)
@@ -2898,7 +2906,7 @@ function createMainWindowStartupCoordinator(
           noLink: true
         })
         .then(({ response }) => {
-          if (window.isDestroyed()) return
+          if (mainWindowRetention.isQuitting() || window.isDestroyed()) return
           if (response === 0) {
             if (startup.retry()) window.webContents.reload()
           } else {
@@ -3003,6 +3011,9 @@ function loadMainWindow(
 }
 
 function createWindow(): void {
+  // A pending activation/menu callback must not create a window during quit, and
+  // must not reset the cleanup state that before-quit already began.
+  if (mainWindowRetention.isQuitting()) return
   runtime.window.resetCleanup()
   const window = createMainBrowserWindow()
   const startup = createMainWindowStartupCoordinator(window)
@@ -3046,7 +3057,8 @@ function openStartupSplash(): ReturnType<typeof createStartupSplashWindow> {
     (options) => new BrowserWindow(options),
     appIcon.isEmpty() ? '' : appIcon.toDataURL(),
     Date.now,
-    readAppSettings().uiLanguage
+    readAppSettings().uiLanguage,
+    mainWindowRetention.isQuitting
   )
 }
 
@@ -3786,12 +3798,14 @@ function registerWrapperJobsAndPersonaIpc(
 }
 
 function openInitialWindow(): void {
+  if (mainWindowRetention.isQuitting()) return
   createWindow()
   scheduleStartupPackageUpdateCheck()
 }
 
 function registerAppActivationHandler(): void {
   app.on('activate', function () {
+    if (mainWindowRetention.isQuitting()) return
     applyDockIcon()
 
     // macOS only hides a closed main window (main-window-retention.ts): bring that one back.
@@ -3802,8 +3816,17 @@ function registerAppActivationHandler(): void {
 }
 
 app.whenReady().then(async () => {
+  if (mainWindowRetention.isQuitting()) return
   prepareStartupInterface()
   const startupSplashWindow = await openStartupSplash()
+  // The quit request may have arrived while the splash was loading. The local
+  // splash is not registered in runtime.window yet, so before-quit could not close
+  // it. Abort the rest of startup and release it here rather than creating the
+  // main window during shutdown.
+  if (mainWindowRetention.isQuitting()) {
+    if (startupSplashWindow && !startupSplashWindow.isDestroyed()) startupSplashWindow.close()
+    return
+  }
   runtime.window.setStartupSplashWindow(startupSplashWindow)
   runStartupMaintenance()
   migrateStartupPluginEnablement()

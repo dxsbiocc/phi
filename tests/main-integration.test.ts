@@ -7483,8 +7483,17 @@ test('main startup callback delegates its named phases in order', () => {
   assert.equal(
     source.slice(callbackStart, callbackEnd),
     `app.whenReady().then(async () => {
+  if (mainWindowRetention.isQuitting()) return
   prepareStartupInterface()
   const startupSplashWindow = await openStartupSplash()
+  // The quit request may have arrived while the splash was loading. The local
+  // splash is not registered in runtime.window yet, so before-quit could not close
+  // it. Abort the rest of startup and release it here rather than creating the
+  // main window during shutdown.
+  if (mainWindowRetention.isQuitting()) {
+    if (startupSplashWindow && !startupSplashWindow.isDestroyed()) startupSplashWindow.close()
+    return
+  }
   runtime.window.setStartupSplashWindow(startupSplashWindow)
   runStartupMaintenance()
   migrateStartupPluginEnablement()
