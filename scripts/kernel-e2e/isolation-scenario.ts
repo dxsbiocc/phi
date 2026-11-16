@@ -176,6 +176,44 @@ async function eventually(check: () => boolean | Promise<boolean>, label: string
   }
 }
 
+/**
+ * Bounded child-turn wait with failure evidence.
+ *
+ * The previous code did `await provider.waitForGate(...)` with no timeout, so when the
+ * child model turn never arrived the scenario blocked for the whole E2E deadline and
+ * recorded nothing. A task-tool schema error, a mis-routed model request, and a genuine
+ * child-dispatch defect were therefore indistinguishable in the report. This helper races
+ * the gate against a deadline and, on timeout, reports the task tool result and the model
+ * request lanes observed after the parent turn already completed.
+ */
+export async function awaitChildModelTurn(options: {
+  waitForGate: () => Promise<void>
+  inspect: () => Promise<{ taskResult?: string; taskIsError?: boolean }>
+  lanes: () => string[]
+  timeoutMs: number
+}): Promise<void> {
+  let timer: NodeJS.Timeout | undefined
+  const expired = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), options.timeoutMs)
+  })
+  try {
+    const outcome = await Promise.race([options.waitForGate().then(() => 'gate' as const), expired])
+    if (outcome === 'gate') return
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+  const seen = await options
+    .inspect()
+    .catch(() => ({}) as { taskResult?: string; taskIsError?: boolean })
+  const lanes = [...new Set(options.lanes())].join(',') || 'none'
+  throw new Error(
+    `Parent turn completed but no child model turn started within ${options.timeoutMs}ms; ` +
+      `task result: ${seen.taskResult ?? '<task tool never returned>'}; ` +
+      `task isError=${String(seen.taskIsError ?? 'unknown')}; ` +
+      `observed model-request lanes: ${lanes}`
+  )
+}
+
 function tool(name: string, id: string, args: Record<string, unknown>, match: string): ModelReply {
   return { match, tool: { name, id, args } }
 }
@@ -276,9 +314,25 @@ export async function runIsolationScenario(options: {
     { match: tags.aChild, gate: aChildGate, text: `${tags.aChild}-GATE-RELEASED` }
   )
   await options.step('session A spawned a live task child', async () => {
+    // Arm the gate wait before prompting so a child that starts quickly is never missed;
+    // the bounded race below then only covers the post-prompt window.
+    const gateWait = options.provider.waitForGate(aChildGate)
     const completion = await options.client.prompt(sessionA, tags.aRoot)
     assert.equal(completion.status, 'completed', completion.detail)
-    await options.provider.waitForGate(aChildGate)
+    await awaitChildModelTurn({
+      waitForGate: () => gateWait,
+      inspect: async () => {
+        const spawn = toolCalls(await options.client.snapshot(sessionA)).find(
+          (entry) => entry.id === 'iso-a-spawn'
+        )
+        return {
+          ...(spawn?.result !== undefined ? { taskResult: spawn.result } : {}),
+          ...(spawn ? { taskIsError: spawn.isError === true } : {})
+        }
+      },
+      lanes: () => options.provider.requests.map((request) => requestLane(request, tags)),
+      timeoutMs: 45_000
+    })
   })
   let snapshotA = await options.client.snapshot(sessionA)
   let toolsA = toolCalls(snapshotA)

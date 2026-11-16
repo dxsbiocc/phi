@@ -23,6 +23,7 @@ import {
   startLoopbackProvider
 } from './harness'
 import { eventually, KERNEL_E2E_HOST_CAPABILITIES, shellLiteral } from './lifecycle-scenarios'
+import { configureModelProxy } from './model-proxy-scenario'
 
 type Scenario = 'reconnect' | 'grace-expiry' | 'wrong-token'
 
@@ -310,6 +311,7 @@ async function main(): Promise<void> {
       return
     }
 
+    await configureModelProxy(attachment.client, { remotePort: provider.port }, token)
     const sessionId = await scenario!.create(project, false)
     provider.enqueue(
       {
@@ -360,6 +362,7 @@ async function main(): Promise<void> {
       }
     })
     assert.deepEqual(attachment.status, { state: 'attached' })
+    await configureModelProxy(attachment.client, { remotePort: provider.port }, token)
     assert.equal(attachment.greeting.kernelInstanceId, result.kernelInstanceId)
     try {
       await attachment.client.subscribe(lastSeen)

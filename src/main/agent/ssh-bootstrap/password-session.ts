@@ -115,6 +115,10 @@ function closeArgs(target: SshBootstrapTarget, controlPath: string): string[] {
   return ['-F', '/dev/null', '-S', controlPath, '-O', 'exit', ...connectionArgs(target)]
 }
 
+function checkArgs(target: SshBootstrapTarget, controlPath: string): string[] {
+  return ['-F', '/dev/null', '-S', controlPath, '-O', 'check', ...connectionArgs(target)]
+}
+
 export function createSshPasswordSessionAuthenticator(
   dependencies: SshPasswordSessionDependencies
 ): {
@@ -154,18 +158,37 @@ export function createSshPasswordSessionAuthenticator(
         return { status: 'rejected', errorCode: 'unexpected' }
       }
       const controlPath = join(directory, 'master')
+      // Only this session's explicitly named control socket is ever closed; no host-wide
+      // process or socket cleanup is attempted.
+      const closeOwnedMaster = async (): Promise<void> => {
+        await dependencies
+          .runCommand({ command: 'ssh', args: closeArgs(target, controlPath) })
+          .catch(() => undefined)
+      }
       let opened
       try {
         opened = await withSshAskpass(password, dependencies.askpassFiles, ({ env }) =>
-          dependencies.runCommand({ command: 'ssh', args: openArgs(target, controlPath), env })
+          dependencies.runCommand({
+            command: 'ssh',
+            args: openArgs(target, controlPath),
+            env,
+            // `ssh -M -N -f` daemonizes its master: the direct process exits 0 while the
+            // detached master keeps the inherited pipes, so completion cannot wait for close.
+            background: true
+          })
         )
       } catch {
+        await closeOwnedMaster()
         await dependencies.sessionFiles.remove(directory).catch(() => undefined)
         finishAttempt('neutral')
         return { status: 'rejected', errorCode: 'unexpected' }
       }
       if (opened.exitCode !== 0) {
-        await dependencies.sessionFiles.remove(directory)
+        if (opened.exitCode === null) {
+          // A deadline killed the direct process; it may already have forked this master.
+          await closeOwnedMaster()
+        }
+        await dependencies.sessionFiles.remove(directory).catch(() => undefined)
         if (!isSshPasswordAuthenticationFailure(opened.stderr)) {
           finishAttempt('neutral')
           return { status: 'rejected', errorCode: 'unexpected' }
@@ -184,12 +207,20 @@ export function createSshPasswordSessionAuthenticator(
           errorCode: failures >= 3 ? 'password_attempts_exhausted' : 'authentication_failed'
         }
       }
+      // The open command reports success when `ssh -f` forks, so confirm that the exact
+      // control socket we named is actually usable before handing out a session.
+      const confirmed = await dependencies
+        .runCommand({ command: 'ssh', args: checkArgs(target, controlPath) })
+        .catch(() => undefined)
+      if (!confirmed || confirmed.exitCode !== 0) {
+        await closeOwnedMaster()
+        await dependencies.sessionFiles.remove(directory).catch(() => undefined)
+        finishAttempt('neutral')
+        return { status: 'rejected', errorCode: 'unexpected' }
+      }
       if (publicKeyAuthenticationIsDisabled(opened.stderr)) {
-        await dependencies.runCommand({
-          command: 'ssh',
-          args: closeArgs(target, controlPath)
-        })
-        await dependencies.sessionFiles.remove(directory)
+        await closeOwnedMaster()
+        await dependencies.sessionFiles.remove(directory).catch(() => undefined)
         finishAttempt('success')
         return { status: 'rejected', errorCode: 'pubkey_auth_disabled' }
       }
@@ -216,12 +247,7 @@ export function createSshPasswordSessionAuthenticator(
           async close() {
             if (closed) return
             closed = true
-            await dependencies
-              .runCommand({
-                command: 'ssh',
-                args: closeArgs(target, controlPath)
-              })
-              .catch(() => undefined)
+            await closeOwnedMaster()
             await dependencies.sessionFiles.remove(directory)
           }
         }

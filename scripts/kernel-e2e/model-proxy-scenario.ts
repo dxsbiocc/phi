@@ -25,13 +25,13 @@ interface ModelProxyReportProjection {
 
 type Step = <T>(name: string, action: () => Promise<T>) => Promise<T>
 
-function endpoint(tunnel: RemoteReverseTunnel): string {
+function endpoint(tunnel: Pick<RemoteReverseTunnel, 'remotePort'>): string {
   return `http://127.0.0.1:${tunnel.remotePort}/v1/pi/stream`
 }
 
 export async function configureModelProxy(
   client: KernelProtocolClient,
-  tunnel: RemoteReverseTunnel,
+  tunnel: Pick<RemoteReverseTunnel, 'remotePort'>,
   bearerToken: string
 ): Promise<void> {
   await bounded(

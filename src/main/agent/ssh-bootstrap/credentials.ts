@@ -8,6 +8,12 @@ export interface SshBootstrapSecretCommandRequest {
   args: string[]
   stdin?: string
   env?: Readonly<Record<string, string>>
+  /**
+   * Narrow opt-in for commands that intentionally daemonize (`ssh -M -N -f`): success means the
+   * direct process exited while the detached service keeps the inherited pipes. Ordinary
+   * commands must leave this unset so their trailing output is never truncated.
+   */
+  background?: boolean
 }
 
 export interface SshBootstrapSecretCommandResult {

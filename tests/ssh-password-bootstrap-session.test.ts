@@ -59,8 +59,8 @@ test('password authentication installs the public key through the same one-use S
   )
   await authenticated.session.close()
 
-  assert.equal(requests.length, 3)
-  const [open, install, close] = requests
+  assert.equal(requests.length, 4)
+  const [open, check, install, close] = requests
   assert.ok(open.args.includes('-M'))
   assert.ok(open.args.includes('-N'))
   assert.ok(open.args.includes('-f'))
@@ -72,6 +72,11 @@ test('password authentication installs the public key through the same one-use S
   assert.equal(open.args.includes('one-use-password'), false)
   assert.equal(open.env?.PHI_SSH_ASKPASS_SECRET, undefined)
   assert.equal(open.env?.PHI_SSH_ASKPASS_PIPE, '/tmp/askpass/secret.pipe')
+  // The daemonizing open is confirmed against the exact control socket it named.
+  assert.equal(open.background, true)
+  assert.ok(check.args.includes('-O'))
+  assert.ok(check.args.includes('check'))
+  assert.equal(check.args[check.args.indexOf('-S') + 1], open.args[open.args.indexOf('-S') + 1])
   assert.ok(install.args.includes('-S'))
   assert.equal(install.env?.PHI_SSH_ASKPASS_SECRET, undefined)
   assert.equal(install.stdin, 'ssh-ed25519 AAAA-new-key phi@test\n')

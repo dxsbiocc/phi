@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, posix, resolve } from 'node:path'
 
 import { launchLocalKernel, type LocalKernelLauncher } from '../src/main/agent/engine/kernel-client'
+import { localKernelExecutableName } from '../src/main/agent/engine/kernel-client/local-package'
 import {
   launchRemoteKernel,
   probeRemoteKernelHostProfile,
@@ -479,12 +480,15 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
       report.timingsMs.ready = remoteLaunch.readyMs
       report.cleanup.deployedKernelRemovalCommand = `rm -rf -- ${shellQuote(posix.dirname(remoteLaunch.deployment.executablePath))}`
     } else {
-      const executable = join(options.buildDirectory, 'phi-kernel')
+      const executable = join(
+        options.buildDirectory,
+        localKernelExecutableName(options.localTarget)
+      )
       localLaunch = await step('local compiled kernel launched', () =>
         launchLocalKernel({
           package: {
             directory: options.buildDirectory,
-            target: 'darwin-arm64',
+            target: options.localTarget,
             phiVersion: packageVersion
           },
           hello: { hostCapabilities: [...KERNEL_E2E_HOST_CAPABILITIES] },

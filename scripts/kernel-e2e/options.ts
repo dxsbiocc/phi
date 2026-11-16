@@ -1,5 +1,10 @@
 import { isAbsolute, join, posix, resolve } from 'node:path'
 
+import {
+  localKernelBuildTarget,
+  type LocalKernelPackageTarget
+} from '../../src/main/agent/engine/kernel-client/local-package'
+
 export type KernelE2eTarget = 'local' | 'ssh'
 export type KernelE2eScenario =
   | 'baseline'
@@ -15,6 +20,7 @@ export type KernelE2eScenario =
 
 export interface KernelE2eCliOptions {
   target: KernelE2eTarget
+  localTarget: LocalKernelPackageTarget
   runtimeRoot: string
   host?: string
   buildDirectory: string
@@ -112,9 +118,13 @@ export function parseKernelE2eArgs(argv: string[], packageVersion: string): Kern
   if (!Number.isFinite(deadlineMinutes) || deadlineMinutes <= 0) {
     throw new Error('--deadline-min must be a positive number')
   }
-  const defaultTarget = target === 'ssh' ? 'linux-x64' : 'darwin-arm64'
+  // Local mode packages whatever this host can run; SSH mode keeps the deployed Linux x64 package.
+  const localTarget: LocalKernelPackageTarget =
+    target === 'local' ? localKernelBuildTarget(process.platform, process.arch) : 'linux-x64'
+  const defaultTarget = localTarget
   return {
     target,
+    localTarget,
     scenario,
     runtimeRoot: target === 'ssh' ? posix.normalize(runtimeRoot) : resolve(runtimeRoot),
     ...(host ? { host } : {}),
