@@ -56,7 +56,7 @@ import {
   DESKTOP_SERVICES_E2E_HOST_CAPABILITIES,
   runDesktopServicesScenario
 } from './kernel-e2e/desktop-services-scenario'
-import { shutdownSshScenarioKernel } from './kernel-e2e/ssh-kernel-cleanup'
+import { remoteProcessAlive, shutdownSshScenarioKernel } from './kernel-e2e/ssh-kernel-cleanup'
 import { runDesktopEngineScenario } from './kernel-e2e/desktop-engine-scenario'
 import {
   agentConfig,
@@ -138,6 +138,8 @@ interface E2eReport {
     planReviewCount?: number
     agentRunState?: string
     planApprovalTools?: string[]
+    planStateBeforeReplan?: Record<string, unknown>
+    planStateAfterReplan?: Record<string, unknown>
     isolation?: IsolationScenarioEvidence
     fork?: ForkScenarioEvidence
   }
@@ -145,6 +147,7 @@ interface E2eReport {
   cleanup: {
     temporaryProjectsRemoved: boolean
     deployedKernelRemovalCommand?: string
+    kernelShutdown?: 'graceful' | 'term' | 'kill'
   }
   failure?: string
 }
@@ -300,7 +303,7 @@ function remoteFiles(session: RemoteSshSession, runtimeRoot: string): TargetFile
       return (await session.exec(`test -e ${shellQuote(path)}`)).code === 0
     },
     async processAlive(pid) {
-      return (await session.exec(`kill -0 ${pid} 2>/dev/null`)).code === 0
+      return remoteProcessAlive(session, pid)
     },
     async sampleRss(pid) {
       const stdout = await run(`ps -o rss= -p ${pid}`)
@@ -925,7 +928,8 @@ async function runScenario(options: KernelE2eCliOptions): Promise<E2eReport> {
         'remote kernel shutdown cleanup',
         90_000
       )
-        .then(() => {
+        .then((mode) => {
+          report.cleanup.kernelShutdown = mode
           report.steps.push({
             name: 'remote kernel shut down and socket files removed',
             passed: true,

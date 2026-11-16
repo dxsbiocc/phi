@@ -12,6 +12,8 @@ interface PlanScenarioReport {
     planReviewCount?: number
     agentRunState?: string
     planApprovalTools?: string[]
+    planStateBeforeReplan?: Record<string, unknown>
+    planStateAfterReplan?: Record<string, unknown>
   }
 }
 
@@ -78,8 +80,21 @@ function replacementPlan(): PlanSpec {
 const INJECTED_STEP_FAILURE =
   '<phi_agent_result>{"status":"failed","missingInputs":[],"nextAgent":null,"fallbackReason":null}</phi_agent_result>Injected write failure.'
 
-function tool(name: string, id: string, args: Record<string, unknown>): ModelReply {
-  return { tool: { name, id, args } }
+const INITIAL_REQUEST = 'Plan and execute the G3 scenario.'
+const REPLAN_REQUEST = 'G3_REPLAN_REQUEST'
+const HOST_TASK = 'Inspect the G3 scenario before plan execution.'
+
+function completed(match: string, text: string): ModelReply {
+  return {
+    match,
+    text:
+      '<phi_agent_result>{"status":"completed","missingInputs":[],"nextAgent":null,"fallbackReason":null}</phi_agent_result>' +
+      text
+  }
+}
+
+function tool(match: string, name: string, id: string, args: Record<string, unknown>): ModelReply {
+  return { match, tool: { name, id, args } }
 }
 
 function planState(value: unknown): Record<string, unknown> {
@@ -129,6 +144,7 @@ export async function runPlanScenario(options: {
   } finally {
     stopApprovals()
     options.report.evidence.planApprovalTools = approvalTools
+    options.report.evidence.planReviewCount = reviewCount
   }
 }
 
@@ -141,7 +157,7 @@ async function runPlanFlow(
     options.client.create(options.projectRoot, true, { workMode: 'auto' })
   )
 
-  options.provider.enqueue({ text: 'Host-started sub-task complete.' })
+  options.provider.enqueue(completed(HOST_TASK, 'Host-started sub-task complete.'))
   const child = record(
     await options.step('host sub-task durably started', () =>
       protocol.request(
@@ -149,7 +165,7 @@ async function runPlanFlow(
         {
           requestId: 'g3-host-subtask-1',
           agent: 'PlanStep',
-          task: 'Inspect the G3 scenario before plan execution.'
+          task: HOST_TASK
         },
         { sessionId }
       )
@@ -171,29 +187,43 @@ async function runPlanFlow(
 
   const initial = originalPlan()
   options.provider.enqueue(
-    tool('enter_plan_mode', 'g3-enter-plan', {
+    tool(INITIAL_REQUEST, 'enter_plan_mode', 'g3-enter-plan', {
       execute: true,
       reason: 'Run the G3 dependency plan'
     }),
-    tool('propose_plan_steps', 'g3-propose-plan', initial as unknown as Record<string, unknown>),
-    // The main turn ends first; the two parallel reads follow, then the write step fails
-    // on its first attempt and on the executor's one automatic retry.
-    { text: 'Plan review accepted.' },
-    { text: 'Completed one approved action.' },
-    { text: 'Completed one approved action.' },
-    { text: INJECTED_STEP_FAILURE },
-    { text: INJECTED_STEP_FAILURE }
+    tool(
+      INITIAL_REQUEST,
+      'propose_plan_steps',
+      'g3-propose-plan',
+      initial as unknown as Record<string, unknown>
+    ),
+    // Match the current step, not its title in the shared plan overview. Concurrent
+    // reads and the main conversation must not consume each other's replies.
+    { match: INITIAL_REQUEST, text: 'Plan review accepted.' },
+    completed('## Current step: read-a:', 'Completed one approved action.'),
+    completed('## Current step: read-b:', 'Completed one approved action.'),
+    { match: '## Current step: write-result:', text: INJECTED_STEP_FAILURE },
+    { match: '## Current step: write-result:', text: INJECTED_STEP_FAILURE }
   )
   await options.step('three-step plan approved and injected failure observed', async () => {
-    const completion = await options.client.prompt(sessionId, 'Plan and execute the G3 scenario.')
+    const completion = await options.client.prompt(sessionId, INITIAL_REQUEST)
     assert.equal(completion.status, 'completed')
     await eventually(async () => {
       const state = planState(await protocol.request('planRuns.list', {}, { sessionId }))
+      options.report.evidence.planStateBeforeReplan = state
       return state.status === 'paused'
     }, 'failed plan pause')
   })
 
   const before = planState(await protocol.request('planRuns.list', {}, { sessionId }))
+  options.report.evidence.planStateBeforeReplan = before
+  const originalSteps = record(before.steps)
+  for (const id of ['read-a', 'read-b']) {
+    assert.equal(record(originalSteps[id]).status, 'done', `${id} must complete before replan`)
+    assert.equal(record(originalSteps[id]).attempts, 1, `${id} must run exactly once`)
+  }
+  assert.equal(record(originalSteps['write-result']).status, 'failed')
+  assert.equal(record(originalSteps['write-result']).attempts, 2)
   assert.equal(typeof before.id, 'string')
   options.report.evidence.planRunId = String(before.id)
   const replan = record(
@@ -206,22 +236,28 @@ async function runPlanFlow(
   const replacement = replacementPlan()
   options.provider.enqueue(
     tool(
+      REPLAN_REQUEST,
       'propose_plan_steps',
       'g3-propose-replacement',
       replacement as unknown as Record<string, unknown>
     ),
-    { text: 'Replacement accepted.' },
-    { text: 'Verification complete.' },
-    { text: 'The approved plan is complete and summarized.' }
+    { match: REPLAN_REQUEST, text: 'Replacement accepted.' },
+    completed('## Current step: verify-result:', 'Verification complete.'),
+    { match: REPLAN_REQUEST, text: 'The approved plan is complete and summarized.' }
   )
   await options.step('replan completed without replaying finished reads', async () => {
-    const completion = await options.client.prompt(sessionId, String(replan.prompt))
+    const completion = await options.client.prompt(
+      sessionId,
+      `${String(replan.prompt)}\n\n${REPLAN_REQUEST}`
+    )
     assert.equal(completion.status, 'completed')
     await eventually(async () => {
       const state = planState(await protocol.request('planRuns.list', {}, { sessionId }))
+      options.report.evidence.planStateAfterReplan = state
       return state.status === 'completed'
     }, 'replanned plan completion')
     const state = planState(await protocol.request('planRuns.list', {}, { sessionId }))
+    options.report.evidence.planStateAfterReplan = state
     const steps = record(state.steps)
     assert.equal(record(steps['read-a']).attempts, 1)
     assert.equal(record(steps['read-b']).attempts, 1)

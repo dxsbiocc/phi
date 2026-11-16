@@ -222,6 +222,15 @@ test('local packaging scripts never publish, even on CI', () => {
   }
 })
 
+test('release verify runs the full test suite before packaging', () => {
+  const verify = workflow.jobs?.verify
+  const testStep = verify?.steps?.find((step) => step.run === 'bun run test')
+  assert.ok(testStep, 'full test suite must run in the verify job')
+  const packageJob = workflow.jobs?.package
+  const needs = Array.isArray(packageJob?.needs) ? packageJob.needs : [packageJob?.needs]
+  assert.ok(needs.includes('verify'), 'packaging must depend on the verified test gate')
+})
+
 test('the app build gets enough heap for the macOS runners', () => {
   const build = workflow.jobs?.package?.steps?.find((step) => step.name === 'Build app')
   assert.equal(build?.env?.NODE_OPTIONS, '--max-old-space-size=4096')

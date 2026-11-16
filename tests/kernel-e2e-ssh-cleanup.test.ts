@@ -1,9 +1,24 @@
 import assert from 'node:assert/strict'
+import { deriveKernelSocketPaths } from '../src/kernel/lifecycle/paths'
+import { kernelSocketIdentity } from '../src/main/agent/engine/kernel-client/remote/launcher'
 import { PassThrough } from 'node:stream'
+import { spawnSync } from 'node:child_process'
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  symlinkSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 
 import {
   buildSshKernelShutdownCommand,
+  remoteProcessAlive,
   shutdownSshScenarioKernel
 } from '../scripts/kernel-e2e/ssh-kernel-cleanup'
 import type { LaunchedRemoteKernel } from '../src/main/agent/engine/kernel-client/remote'
@@ -52,6 +67,8 @@ function helperProcess(
 function launch(close: () => Promise<void>): LaunchedRemoteKernel {
   return {
     close,
+    homePath: '/srv/home',
+    agentDir: '/srv/agent',
     deployment: {
       phiVersion: '0.1.0',
       kernelSha256: 'ab'.repeat(32),
@@ -93,7 +110,13 @@ test('SSH scenario cleanup closes the controller before helper process and socke
           assert.match(command[2], /kill -TERM \$phi_kernel_live/)
           assert.match(command[2], /kill -KILL \$phi_kernel_live/)
           assert.match(command[2], /rm -f -- "\$phi_kernel_socket" "\$phi_kernel_token"/)
-          return { stdout: '', stderr: '', code: 0, signal: null, truncated: false }
+          return {
+            stdout: 'PHI_KERNEL_CLEANUP=graceful\n',
+            stderr: '',
+            code: 0,
+            signal: null,
+            truncated: false
+          }
         })
       }
     }
@@ -115,7 +138,13 @@ test('SSH scenario cleanup still runs the helper fallback when controller close 
       async openStdio() {
         return helperProcess((request) => {
           command = ((request.params as Record<string, unknown>).command as string[])[2]
-          return { stdout: '', stderr: '', code: 0, signal: null, truncated: false }
+          return {
+            stdout: 'PHI_KERNEL_CLEANUP=graceful\n',
+            stderr: '',
+            code: 0,
+            signal: null,
+            truncated: false
+          }
         })
       }
     }
@@ -143,4 +172,146 @@ test('SSH scenario cleanup reports helper termination failures', async () => {
     }),
     /Remote kernel cleanup failed: permission denied/
   )
+})
+
+test('SSH cleanup addresses the exact home-scoped socket used by the launcher', () => {
+  const launched = launch(async () => undefined)
+  const expected = deriveKernelSocketPaths(
+    launched.deployment.runtimeRoot,
+    kernelSocketIdentity(launched.deployment, {
+      home: launched.homePath,
+      agentDir: launched.agentDir
+    }),
+    0
+  )
+  assert.ok(buildSshKernelShutdownCommand(launched).includes(`phi_kernel_stem='${expected.stem}'`))
+})
+
+test('SSH cleanup reports whether termination needed a signal and rejects missing evidence', async () => {
+  for (const mode of ['graceful', 'term', 'kill']) {
+    const result = await shutdownSshScenarioKernel({
+      launch: launch(async () => undefined),
+      session: {
+        async openStdio() {
+          return helperProcess(() => ({
+            stdout: `PHI_KERNEL_CLEANUP=${mode}\n`,
+            stderr: '',
+            code: 0,
+            signal: null,
+            truncated: false
+          }))
+        }
+      }
+    })
+    assert.equal(result, mode)
+  }
+  await assert.rejects(
+    shutdownSshScenarioKernel({
+      launch: launch(async () => undefined),
+      session: {
+        async openStdio() {
+          return helperProcess(() => ({
+            stdout: '',
+            stderr: '',
+            code: 0,
+            signal: null,
+            truncated: false
+          }))
+        }
+      }
+    }),
+    /cleanup evidence/
+  )
+})
+
+test('SSH process absence requires a successful explicit remote observation', async () => {
+  for (const [stdout, alive] of [
+    ['alive', true],
+    ['absent', false]
+  ] as const) {
+    assert.equal(
+      await remoteProcessAlive(
+        { exec: async () => ({ stdout, stderr: '', code: 0, signal: null }) },
+        123
+      ),
+      alive
+    )
+  }
+  for (const result of [
+    { stdout: '', stderr: 'connection lost', code: 255, signal: null },
+    { stdout: '', stderr: 'inspection denied', code: 1, signal: null },
+    { stdout: '', stderr: '', code: 0, signal: null },
+    { stdout: 'absent', stderr: '', code: 0, signal: 'SIGTERM' }
+  ]) {
+    await assert.rejects(remoteProcessAlive({ exec: async () => result }, 123), /inspection failed/)
+  }
+})
+
+test('generated cleanup verifies translated process ownership and fails closed on inspection errors', () => {
+  for (const kind of ['translated', 'unknown-exe', 'foreign-argv', 'ps-error']) {
+    const root = mkdtempSync(join(tmpdir(), 'phi-cleanup-shell-'))
+    try {
+      const proc = join(root, 'proc', '1234')
+      const bin = join(root, 'bin')
+      mkdirSync(proc, { recursive: true })
+      mkdirSync(bin)
+      const launched = launch(async () => undefined)
+      const identity = kernelSocketIdentity(launched.deployment, {
+        home: launched.homePath,
+        agentDir: launched.agentDir
+      })
+      const { stem } = deriveKernelSocketPaths(launched.deployment.runtimeRoot, identity, 0)
+      const socketDir = join(root, 'sockets-0')
+      mkdirSync(socketDir)
+      const socket = join(socketDir, `${stem}.sock`)
+      const token = join(socketDir, `${stem}.token`)
+      writeFileSync(socket, '')
+      writeFileSync(token, '')
+      const args = [
+        kind === 'foreign-argv' ? '/unrelated/program' : launched.deployment.executablePath,
+        '--listen',
+        socket,
+        '--token-file',
+        token
+      ]
+      writeFileSync(join(proc, 'cmdline'), args.join('\0') + '\0')
+      symlinkSync(
+        kind === 'unknown-exe' ? '/unknown/translator' : '/run/rosetta/rosetta',
+        join(proc, 'exe')
+      )
+      writeFileSync(
+        join(bin, 'ps'),
+        `#!/bin/sh\n${kind === 'ps-error' ? 'exit 77' : `if [ -d '${proc}' ]; then printf '1234\\n'; fi`}\n`,
+        { mode: 0o755 }
+      )
+      const command = buildSshKernelShutdownCommand(launched)
+        .replace('/proc/$phi_pid', `${root}/proc/$phi_pid`)
+        .replace('/tmp/phi-k-', `${root}/sockets-`)
+      const result = spawnSync(
+        '/bin/sh',
+        [
+          '-c',
+          `id() { printf 0; }; sleep() { :; }; kill() { printf '%s\\n' "$*" >> '${root}/signals'; rm -rf '${proc}'; };\n${command}`
+        ],
+        {
+          env: { PATH: `${bin}:/usr/bin:/bin` },
+          encoding: 'utf8',
+          timeout: 10_000
+        }
+      )
+      if (kind === 'translated') {
+        assert.equal(result.status, 0, result.stderr)
+        assert.equal(result.stdout, 'PHI_KERNEL_CLEANUP=term\n')
+        assert.equal(readFileSync(join(root, 'signals'), 'utf8'), '-TERM 1234\n')
+        assert.equal(existsSync(socket), false)
+      } else {
+        assert.notEqual(result.status, 0)
+        assert.equal(existsSync(join(root, 'signals')), false)
+        assert.equal(existsSync(socket), true)
+        assert.equal(result.stdout.includes('PHI_KERNEL_CLEANUP='), false)
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
 })

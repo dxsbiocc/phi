@@ -13,6 +13,7 @@ test('Linux packaging workflow is manual, least-privilege, and uploads checked x
       package?: {
         'runs-on'?: string
         steps?: Array<{
+          name?: string
           uses?: string
           run?: string
           with?: Record<string, string>
@@ -27,6 +28,17 @@ test('Linux packaging workflow is manual, least-privilege, and uploads checked x
   const job = workflow.jobs?.package
   assert.equal(job?.['runs-on'], 'ubuntu-22.04')
   const steps = job?.steps ?? []
+  const named = (name: string): NonNullable<(typeof steps)[number]> => {
+    const step = steps.find((candidate) => candidate.name === name)
+    assert.ok(step, `missing workflow step: ${name}`)
+    return step
+  }
+  const byUse = (prefix: string): NonNullable<(typeof steps)[number]> => {
+    const step = steps.find((candidate) => candidate.uses?.startsWith(prefix))
+    assert.ok(step, `missing workflow action: ${prefix}`)
+    return step
+  }
+
   assert.deepEqual(
     steps.filter((step) => step.uses).map((step) => step.uses),
     [
@@ -36,26 +48,43 @@ test('Linux packaging workflow is manual, least-privilege, and uploads checked x
       'actions/upload-artifact@v4.6.2'
     ]
   )
-  assert.equal(steps[1]?.with?.['bun-version'], '1.3.14')
-  assert.equal(steps[2]?.with?.['node-version'], '22.15.0')
-  assert.deepEqual(
-    steps.filter((step) => step.run).map((step) => step.run),
-    [
-      'bun install --frozen-lockfile',
-      'bun run typecheck',
-      'bun run build:linux',
-      'node scripts/smoke-packaged-worker.mjs --resources dist/linux-unpacked/resources\n' +
-        `test -x "$(find dist/linux-unpacked/resources/kernel -path '*linux-x64/phi-kernel' -print -quit)"\n`,
-      steps[7]?.run
-    ]
-  )
-  assert.match(steps[7]?.run ?? '', /dist\/\*\.AppImage/u)
-  assert.match(steps[7]?.run ?? '', /dist\/\*\.deb/u)
-  assert.match(steps[7]?.run ?? '', /sha256sum/u)
-  assert.equal(steps[8]?.with?.['if-no-files-found'], 'error')
-  assert.equal(steps[8]?.with?.path, 'dist/*.AppImage\ndist/*.deb\n')
+  assert.equal(byUse('oven-sh/setup-bun@').with?.['bun-version'], '1.3.14')
+  assert.equal(byUse('actions/setup-node@').with?.['node-version'], '22.15.0')
+  assert.equal(named('Install dependencies').run, 'bun install --frozen-lockfile')
+  assert.equal(named('Typecheck').run, 'bun run typecheck')
 
-  for (const forbidden of ['pull_request:', 'push:', 'bun run lint', 'publish', 'release']) {
+  const build = named('Build Linux packages')
+  const workerSmoke = named('Smoke-test the packaged worker without system bun')
+  const kernelCheck = named('Check packaged kernels')
+  const artifactCheck = named('Check package artifacts')
+  const upload = named('Upload Linux packages')
+
+  assert.match(build.run ?? '', /bun run build:linux/u)
+  assert.match(
+    workerSmoke.run ?? '',
+    /smoke-packaged-worker\.mjs --resources dist\/linux-unpacked\/resources/u
+  )
+  assert.match(
+    kernelCheck.run ?? '',
+    /check-release-kernel\.ts --resources dist\/linux-unpacked\/resources/u
+  )
+  assert.match(artifactCheck.run ?? '', /dist\/\*\.AppImage/u)
+  assert.match(artifactCheck.run ?? '', /dist\/\*\.deb/u)
+  assert.match(artifactCheck.run ?? '', /sha256sum/u)
+  assert.equal(upload.with?.['if-no-files-found'], 'error')
+  assert.equal(upload.with?.path, 'dist/*.AppImage\ndist/*.deb\n')
+
+  const order = [build, workerSmoke, kernelCheck, artifactCheck, upload].map((step) =>
+    steps.indexOf(step)
+  )
+  assert.deepEqual(
+    order,
+    [...order].sort((left, right) => left - right)
+  )
+  assert.ok(order.every((index) => index >= 0))
+
+  // The checker's own name contains "release"; only workflow/publish behavior is forbidden.
+  for (const forbidden of ['pull_request:', 'push:', 'bun run lint', 'publish', 'gh release']) {
     assert.equal(
       workflowText.includes(forbidden),
       false,
