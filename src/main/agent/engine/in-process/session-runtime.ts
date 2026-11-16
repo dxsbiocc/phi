@@ -36,6 +36,7 @@ import { disconnectLeasedMcpManager } from './mcp-profile'
 import { getContext, modelBySelector, runtimeThinkingLevel } from './runtime-context'
 import { WorkerAgentSession, mcpUsageCache, sessions, type SessionEntry } from './state'
 import { serializeSessionState } from './tool-support'
+import { injectNativeToolAbortSignal } from './native-tool-abort'
 import { promptWithAutomaticModelFallback } from '../../session/automatic-model-fallback'
 
 export function getSession(sessionId: unknown): CreateAgentSessionResult {
@@ -66,73 +67,92 @@ export function promptOptions(value: unknown): WorkerPromptOptions | undefined {
   return Object.keys(options).length > 0 ? options : undefined
 }
 
+/** Reject before touching the admitted prompt's scope, native tools, or run binding. */
+function assertPromptAdmission(entry: SessionEntry, sessionId: string): void {
+  // An aborted-but-unsettled prompt still owns its cleanup.
+  if (entry.disposing) throw new Error(`Session is being disposed: ${sessionId}`)
+  if (entry.activePromptAbort)
+    throw new Error(`Session is already processing a prompt: ${sessionId}`)
+}
+
 export async function promptSession(params: unknown): Promise<unknown> {
   const record = isRecord(params) ? params : {}
   const sessionId = stringValue(record.sessionId)
   const entry = sessions.get(sessionId)
   if (!entry) throw new Error(`Unknown session: ${sessionId}`)
+  assertPromptAdmission(entry, sessionId)
   const rawHostRunId = isRecord(record.options) ? stringValue(record.options.hostRunId) : ''
   const hostRunId = rawHostRunId && rawHostRunId.length <= 200 ? rawHostRunId : undefined
-  entry.activeHostRunId = hostRunId
   const automatic = isRecord(record.options) && record.options.modelSelection === 'automatic'
   const options = promptOptions(record.options)
-  let fallbackFailureBoundary = entry.result.session.messages.length
-  const recordedFallbackFailure = (): string | undefined => {
-    const messages = entry.result.session.messages.slice(fallbackFailureBoundary)
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index]
-      if (
-        isRecord(message) &&
-        message.role === 'assistant' &&
-        message.stopReason === 'error' &&
-        typeof message.errorMessage === 'string'
-      ) {
-        return message.errorMessage
-      }
-    }
-    return undefined
-  }
-  const prompt = async (): Promise<void> => {
-    if (automatic) {
-      await promptWithAutomaticModelFallback({
-        session: entry.result.session,
-        text: stringValue(record.text),
-        options: options ?? {},
-        automatic: true,
-        isCurrent: () => sessions.get(sessionId) === entry && !entry.disposing,
-        recordedFailure: recordedFallbackFailure,
-        clearFailure: () => {
-          fallbackFailureBoundary = entry.result.session.messages.length
-        },
-        candidates: async () => entry.context?.modelRegistry.getAvailable() ?? [],
-        onSwitch: (from, to) => {
-          sendEvent(
-            'sessionEvent',
-            {
-              type: 'model_fallback',
-              fromProviderId: from.provider,
-              fromModelId: from.id,
-              toProviderId: to.provider,
-              toModelId: to.id,
-              toModelName: to.name,
-              errorMessage: 'Model request failed; automatic fallback selected another model.'
-            },
-            { sessionId }
-          )
-        }
-      })
-      return
-    }
-    await entry.result.session.prompt(stringValue(record.text), options)
-  }
+  const promptAbort = new AbortController()
   try {
+    // One fresh scope per admitted prompt; Cursor omits the tool signal, so this
+    // owner scope is what cancels native shell work.
+    entry.activePromptAbort = promptAbort
+    entry.activeHostRunId = hostRunId
+    injectNativeToolAbortSignal(entry.result.session, promptAbort.signal)
+    const isCurrent = (): boolean =>
+      sessions.get(sessionId) === entry && !entry.disposing && !promptAbort.signal.aborted
+    let fallbackFailureBoundary = entry.result.session.messages.length
+    const recordedFallbackFailure = (): string | undefined => {
+      const messages = entry.result.session.messages.slice(fallbackFailureBoundary)
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index]
+        if (
+          isRecord(message) &&
+          message.role === 'assistant' &&
+          message.stopReason === 'error' &&
+          typeof message.errorMessage === 'string'
+        ) {
+          return message.errorMessage
+        }
+      }
+      return undefined
+    }
+    const prompt = async (): Promise<void> => {
+      if (automatic) {
+        await promptWithAutomaticModelFallback({
+          session: entry.result.session,
+          text: stringValue(record.text),
+          options: options ?? {},
+          automatic: true,
+          isCurrent,
+          recordedFailure: recordedFallbackFailure,
+          clearFailure: () => {
+            fallbackFailureBoundary = entry.result.session.messages.length
+          },
+          candidates: async () => entry.context?.modelRegistry.getAvailable() ?? [],
+          onSwitch: (from, to) => {
+            sendEvent(
+              'sessionEvent',
+              {
+                type: 'model_fallback',
+                fromProviderId: from.provider,
+                fromModelId: from.id,
+                toProviderId: to.provider,
+                toModelId: to.id,
+                toModelName: to.name,
+                errorMessage: 'Model request failed; automatic fallback selected another model.'
+              },
+              { sessionId }
+            )
+          }
+        })
+        return
+      }
+      await entry.result.session.prompt(stringValue(record.text), options)
+    }
     if (entry.browserTextVault) {
       await withBrowserTextVaultCleanup(entry.browserTextVault, prompt)
     } else {
       await prompt()
     }
   } finally {
-    if (entry.activeHostRunId === hostRunId) entry.activeHostRunId = undefined
+    if (entry.activePromptAbort === promptAbort) {
+      entry.activePromptAbort = undefined
+      if (entry.activeHostRunId === hostRunId) entry.activeHostRunId = undefined
+    }
   }
   return serializeSessionState(entry.result)
 }
@@ -411,6 +431,9 @@ export async function abortSession(params: unknown): Promise<unknown> {
   const entry = sessions.get(sessionId)
   if (!entry) throw new Error(`Unknown session: ${sessionId}`)
   try {
+    // Kill owner-scoped native work first; the SDK abort below cannot reach Cursor's
+    // signal-less exec bridge. Both paths stay active for ordinary SDK tools.
+    entry.activePromptAbort?.abort()
     await entry.result.session.abort()
     return serializeSessionState(entry.result)
   } finally {
@@ -421,6 +444,7 @@ export async function abortSession(params: unknown): Promise<unknown> {
 function stopSessionOwnedWork(entry: SessionEntry | undefined): void {
   if (!entry) return
   entry.disposing = true
+  entry.activePromptAbort?.abort()
   entry.stopAgentRunNotices?.()
   entry.stopNativeTaskRunNotices?.()
   entry.stopKernelAgentRunNotices?.()

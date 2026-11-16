@@ -5,10 +5,15 @@
  * Run on the host with Bun:
  *   bun scripts/kernel-e2e/cursor-native-abort.ts
  *
- * It intentionally exercises both modes:
+ * It intentionally exercises both specialist modes:
  * - old: raw native BashTool passed to CursorExecHandlers (no injected signal)
  * - fixed: the same tool after injectNativeToolAbortSignal with the owner signal
  * and proves late-file/process behavior plus independent task isolation.
+ *
+ * It also drives the ordinary session lifecycle through the real Phi
+ * promptSession/abortSession/disposeSession functions with the real Cursor
+ * bridge and BashTool. Only the SDK prompt/abort transport is a local fixture:
+ * there is no provider or network call.
  */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -18,6 +23,12 @@ import { join } from 'node:path'
 
 import { CursorExecHandlers } from '@oh-my-pi/pi-coding-agent/cursor'
 import { createBashTool } from '@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim'
+import {
+  abortSession,
+  disposeSession,
+  promptSession
+} from '../../src/main/agent/engine/in-process/session-runtime'
+import { sessions, type SessionEntry } from '../../src/main/agent/engine/in-process/state'
 import { injectNativeToolAbortSignal } from '../../src/main/agent/engine/in-process/native-tool-abort'
 
 const SCRIPT = `#!/bin/bash
@@ -27,12 +38,27 @@ sleep 2
 echo late > late.txt
 `
 
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // Only "no such process" proves absence. Permission/unknown errors are
+    // inconclusive and must fail the probe rather than masquerade as cleanup.
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+    throw error
+  }
+}
+
 function alive(pid: number): boolean {
   try {
     const stat = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim()
     return stat.length > 0 && !stat.startsWith('Z')
   } catch {
-    return false
+    // Some hosts and sandboxes deny ps even though liveness is still observable.
+    // Signal 0 is an independent existence check; a zombie may count as alive, so
+    // keep the late-file assertion as the user-visible signal.
+    return processExists(pid)
   }
 }
 
@@ -187,28 +213,256 @@ async function runIsolation(): Promise<{ independentLate: boolean; abortedLate: 
   return { independentLate, abortedLate }
 }
 
+type OrdinaryFixture = {
+  id: string
+  dir: string
+  script: string
+  signals: Array<AbortSignal | undefined>
+  prompts: number
+  sdkAbortCalls: number
+  disposeCalls: number
+}
+
+/**
+ * A local stand-in for the Cursor-driven SDK transport. The prompt executes the
+ * real CursorExecHandlers -> real BashTool path exactly as a Cursor tool frame
+ * would; abort/dispose only record the SDK calls so the test can prove Phi's
+ * owner scope does the process cancellation, not the stubbed transport.
+ */
+function createOrdinarySession(label: string): OrdinaryFixture {
+  const task = setupTask(label)
+  const bash = createBashTool(task.dir)
+  const handlers = new CursorExecHandlers({
+    cwd: task.dir,
+    tools: new Map([['bash', bash as never]])
+  })
+  const signals: Array<AbortSignal | undefined> = []
+  const originalExecute = bash.execute.bind(bash)
+  bash.execute = ((toolCallId, args, signal, onUpdate, context) => {
+    signals.push(signal)
+    return originalExecute(toolCallId, args, signal, onUpdate, context)
+  }) as typeof bash.execute
+  const fixture: OrdinaryFixture = {
+    id: `ordinary-${label}`,
+    dir: task.dir,
+    script: task.script,
+    signals,
+    prompts: 0,
+    sdkAbortCalls: 0,
+    disposeCalls: 0
+  }
+  const session = {
+    sessionFile: undefined,
+    messages: [] as unknown[],
+    thinkingLevel: 'high',
+    model: { provider: 'fixture', id: 'cursor-fixture', name: 'Cursor fixture', input: ['text'] },
+    sessionManager: { getCwd: () => task.dir },
+    getToolByName: (name: string) => (name === 'bash' ? bash : undefined),
+    prompt: async (text: string) => {
+      fixture.prompts += 1
+      await handlers.piBash({
+        toolCallId: `${fixture.id}-${fixture.prompts}`,
+        args: { command: text, timeout: 30 }
+      } as never)
+    },
+    abort: async () => {
+      fixture.sdkAbortCalls += 1
+    },
+    dispose: async () => {
+      fixture.disposeCalls += 1
+    }
+  }
+  sessions.set(fixture.id, {
+    result: { session },
+    agentDir: task.dir
+  } as unknown as SessionEntry)
+  return fixture
+}
+
+function startedPid(dir: string): number {
+  return Number(readFileSync(join(dir, 'started.txt'), 'utf8').trim().split(/\s+/)[0])
+}
+
+async function settle(running: Promise<unknown>): Promise<void> {
+  await Promise.race([running.catch(() => null), wait(3_000)])
+}
+
+function releaseOrdinary(fixture: OrdinaryFixture, pid?: number): void {
+  sessions.delete(fixture.id)
+  if (pid) cleanupGroup(pid)
+  rmSync(fixture.dir, { recursive: true, force: true })
+}
+
+async function runOrdinaryAbortScenario(): Promise<{
+  sdkAbortCalls: number
+  lateFile: boolean
+  processStopped: boolean
+  firstSignalAborted: boolean
+  nextPromptWorked: boolean
+  nextSignalFresh: boolean
+}> {
+  const fixture = createOrdinarySession('abort')
+  let pid: number | undefined
+  const running = promptSession({
+    sessionId: fixture.id,
+    text: `/bin/bash ${fixture.script}`
+  }) as Promise<unknown>
+  try {
+    await waitForFile(join(fixture.dir, 'started.txt'))
+    pid = startedPid(fixture.dir)
+    await abortSession({ sessionId: fixture.id })
+    await wait(500)
+    const firstSignalAborted = fixture.signals[0]?.aborted === true
+    const processStopped = !alive(pid)
+    await settle(running)
+    await wait(2_200)
+    const lateFile = existsSync(join(fixture.dir, 'late.txt'))
+    const fastTarget = join(fixture.dir, 'fast.txt')
+    await promptSession({
+      sessionId: fixture.id,
+      text: `printf fast > ${JSON.stringify(fastTarget)}`
+    })
+    const nextSignal = fixture.signals[1]
+    return {
+      sdkAbortCalls: fixture.sdkAbortCalls,
+      lateFile,
+      processStopped,
+      firstSignalAborted,
+      nextPromptWorked: existsSync(fastTarget),
+      nextSignalFresh:
+        nextSignal !== undefined && nextSignal !== fixture.signals[0] && !nextSignal.aborted
+    }
+  } finally {
+    releaseOrdinary(fixture, pid)
+  }
+}
+
+async function runOrdinaryDisposeScenario(): Promise<{
+  disposeCalls: number
+  lateFile: boolean
+  signalAborted: boolean
+}> {
+  const fixture = createOrdinarySession('dispose')
+  let pid: number | undefined
+  const running = promptSession({
+    sessionId: fixture.id,
+    text: `/bin/bash ${fixture.script}`
+  }) as Promise<unknown>
+  try {
+    await waitForFile(join(fixture.dir, 'started.txt'))
+    pid = startedPid(fixture.dir)
+    await disposeSession({ sessionId: fixture.id })
+    await settle(running)
+    await wait(500)
+    const signalAborted = fixture.signals[0]?.aborted === true
+    await wait(2_200)
+    return {
+      disposeCalls: fixture.disposeCalls,
+      lateFile: existsSync(join(fixture.dir, 'late.txt')),
+      signalAborted
+    }
+  } finally {
+    releaseOrdinary(fixture, pid)
+  }
+}
+
+async function runOrdinaryIsolationScenario(): Promise<{
+  abortedLate: boolean
+  independentLate: boolean
+  abortedSignal: boolean
+  independentSignal: boolean
+}> {
+  const aborted = createOrdinarySession('isolation-a')
+  const independent = createOrdinarySession('isolation-b')
+  let abortedPid: number | undefined
+  let independentPid: number | undefined
+  const runAborted = promptSession({
+    sessionId: aborted.id,
+    text: `/bin/bash ${aborted.script}`
+  }) as Promise<unknown>
+  const runIndependent = promptSession({
+    sessionId: independent.id,
+    text: `/bin/bash ${independent.script}`
+  }) as Promise<unknown>
+  try {
+    await Promise.all([
+      waitForFile(join(aborted.dir, 'started.txt')),
+      waitForFile(join(independent.dir, 'started.txt'))
+    ])
+    abortedPid = startedPid(aborted.dir)
+    independentPid = startedPid(independent.dir)
+    await abortSession({ sessionId: aborted.id })
+    await wait(2_300)
+    return {
+      abortedLate: existsSync(join(aborted.dir, 'late.txt')),
+      independentLate: existsSync(join(independent.dir, 'late.txt')),
+      abortedSignal: aborted.signals[0]?.aborted === true,
+      independentSignal: independent.signals[0]?.aborted === true
+    }
+  } finally {
+    await Promise.all([settle(runAborted), settle(runIndependent)])
+    releaseOrdinary(aborted, abortedPid)
+    releaseOrdinary(independent, independentPid)
+  }
+}
+
 async function main(): Promise<void> {
   if (!existsSync(join(process.cwd(), 'src/main/agent/engine/in-process/native-tool-abort.ts')))
     throw new Error('run from the Phi worktree root')
   const old = await runMode('old')
   const fixed = await runMode('fixed')
   const isolation = await runIsolation()
+  const ordinaryAbort = await runOrdinaryAbortScenario()
+  const ordinaryDispose = await runOrdinaryDisposeScenario()
+  const ordinaryIsolation = await runOrdinaryIsolationScenario()
   const checks = {
     oldProcessStayedAlive: old.aliveAfterAbort === true,
     oldLateFile: old.lateFile === true,
     fixedProcessStopped: fixed.aliveAfterAbort === false,
     fixedNoLateFile: fixed.lateFile === false,
     independentTaskCompleted: isolation.independentLate === true,
-    abortedTaskNoLateFile: isolation.abortedLate === false
+    abortedTaskNoLateFile: isolation.abortedLate === false,
+    ordinarySdkAbortCalled: ordinaryAbort.sdkAbortCalls === 1,
+    ordinaryProcessStopped: ordinaryAbort.processStopped === true,
+    ordinaryNoLateFile: ordinaryAbort.lateFile === false,
+    ordinaryFirstSignalAborted: ordinaryAbort.firstSignalAborted === true,
+    ordinaryNextPromptWorked: ordinaryAbort.nextPromptWorked === true,
+    ordinaryNextSignalFresh: ordinaryAbort.nextSignalFresh === true,
+    ordinaryDisposeCalled: ordinaryDispose.disposeCalls === 1,
+    ordinaryDisposeNoLateFile: ordinaryDispose.lateFile === false,
+    ordinaryDisposeSignalAborted: ordinaryDispose.signalAborted === true,
+    ordinaryIsolationAbortedNoLateFile: ordinaryIsolation.abortedLate === false,
+    ordinaryIsolationOtherCompleted: ordinaryIsolation.independentLate === true,
+    ordinaryIsolationAbortedSignal: ordinaryIsolation.abortedSignal === true,
+    ordinaryIsolationOtherSignalFresh: ordinaryIsolation.independentSignal === false
   }
-  console.log(JSON.stringify({ old, fixed, isolation, checks }, null, 2))
+  console.log(
+    JSON.stringify(
+      { old, fixed, isolation, ordinaryAbort, ordinaryDispose, ordinaryIsolation, checks },
+      null,
+      2
+    )
+  )
   assert.deepEqual(checks, {
     oldProcessStayedAlive: true,
     oldLateFile: true,
     fixedProcessStopped: true,
     fixedNoLateFile: true,
     independentTaskCompleted: true,
-    abortedTaskNoLateFile: true
+    abortedTaskNoLateFile: true,
+    ordinarySdkAbortCalled: true,
+    ordinaryProcessStopped: true,
+    ordinaryNoLateFile: true,
+    ordinaryFirstSignalAborted: true,
+    ordinaryNextPromptWorked: true,
+    ordinaryNextSignalFresh: true,
+    ordinaryDisposeCalled: true,
+    ordinaryDisposeNoLateFile: true,
+    ordinaryDisposeSignalAborted: true,
+    ordinaryIsolationAbortedNoLateFile: true,
+    ordinaryIsolationOtherCompleted: true,
+    ordinaryIsolationAbortedSignal: true,
+    ordinaryIsolationOtherSignalFresh: true
   })
 }
 

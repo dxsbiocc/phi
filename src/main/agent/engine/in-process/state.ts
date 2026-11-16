@@ -39,6 +39,8 @@ export type SessionEntry = {
   /** Kernel-owned plan service used after the host supplies only the review decision. */
   kernelPlanRuntime?: KernelPlanRuntime
   browserTextVault?: BrowserTextVault
+  /** Cancellation scope of the prompt currently running in this ordinary session. */
+  activePromptAbort?: AbortController
   activeHostRunId?: string
   mcpLeases?: Map<string, EnvironmentLease>
   ownedMcpManager?: MCPManager

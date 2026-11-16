@@ -63,6 +63,50 @@ test('owner and caller signals are both effective', () => {
   assert.equal(second.signal.aborted, false)
 })
 
+test('a later install replaces the owner signal without nesting an aborted prompt scope', () => {
+  const first = new AbortController()
+  const second = new AbortController()
+  let seen: AbortSignal | undefined
+  const bash = nativeBash((signal) => {
+    seen = signal
+  })
+  const session = { getToolByName: (name: string) => (name === 'bash' ? bash : undefined) }
+  injectNativeToolAbortSignal(session, first.signal)
+  bash.execute('call', {}, undefined)
+  assert.equal(seen, first.signal)
+  first.abort()
+  assert.equal(seen?.aborted, true)
+
+  injectNativeToolAbortSignal(session, second.signal)
+  bash.execute('call', {}, undefined)
+  assert.equal(seen, second.signal)
+  assert.equal(seen?.aborted, false)
+  second.abort()
+  assert.equal(seen?.aborted, true)
+})
+
+test('a replacement tool object is wrapped by the next prompt install', () => {
+  const first = new AbortController()
+  const second = new AbortController()
+  let seen: AbortSignal | undefined
+  const firstBash = nativeBash((signal) => {
+    seen = signal
+  })
+  const secondBash = nativeBash((signal) => {
+    seen = signal
+  })
+  let current = firstBash
+  const session = { getToolByName: (name: string) => (name === 'bash' ? current : undefined) }
+  injectNativeToolAbortSignal(session, first.signal)
+  firstBash.execute('call', {}, undefined)
+  assert.equal(seen, first.signal)
+  current = secondBash
+  injectNativeToolAbortSignal(session, second.signal)
+  secondBash.execute('call', {}, undefined)
+  assert.equal(seen, second.signal)
+  assert.equal(seen?.aborted, false)
+})
+
 test('repeated installs wrap once; already-aborted signal is preserved', () => {
   const owner = new AbortController()
   owner.abort()
