@@ -16,6 +16,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fileSha256, lookupBunPlatform } from '../runtime/fetch-bun.mjs'
 import { lookupMicromambaPlatform, micromambaFileName } from '../runtime/fetch-micromamba.mjs'
+import { lookupVcRuntime, sidecarProblems } from '../runtime/windows-micromamba-runtime.mjs'
 import { collectOmpWorkerPackageAssets } from './omp-worker-closure.mjs'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -73,6 +74,23 @@ export function assertBundledWindowsRuntimes(
       micromambaFileName(platform)
     )
     assertBundledDigest(micromamba, lookupMicromambaPlatform(manifest, platform)?.sha256)
+  }
+  assertBundledWindowsSidecars(resourcesDir, manifest)
+}
+
+// The Windows micromamba imports MSVCP140/VCRUNTIME140/VCRUNTIME140_1, which are
+// not OS components. Without them the shipped exe cannot start at all
+// (0xC0000135), so packaging fails rather than shipping a dead runtime.
+export function assertBundledWindowsSidecars(resourcesDir, manifest) {
+  const runtime = lookupVcRuntime(manifest, 'win32-x64')
+  if (!runtime) throw new Error('afterPack: manifest has no vcRuntime entry for win32-x64')
+  const directory = path.join(resourcesDir, 'runtime', 'micromamba', 'win32-x64')
+  const problems = sidecarProblems(directory, runtime)
+  if (problems.length > 0) {
+    throw new Error(
+      `afterPack: Windows micromamba runtime incomplete at ${directory}: ${problems.join(', ')}; ` +
+        'run bun run runtime:fetch:win'
+    )
   }
 }
 

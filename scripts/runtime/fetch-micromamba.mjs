@@ -5,6 +5,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } fr
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { ensureWindowsRuntimeSidecars } from './windows-micromamba-runtime.mjs'
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 // Phi ids are `${process.platform}-${process.arch}` for the platforms we ship.
@@ -106,6 +108,67 @@ function selectedPlatforms(argv) {
   return [current]
 }
 
+function downloadVcRuntime(manifest, platformId) {
+  const runtime = manifest?.micromamba?.platforms?.[platformId]?.vcRuntime
+  if (!runtime?.archive?.url) {
+    fail(
+      `fetch-micromamba: resources/runtime/manifest.json has no vcRuntime archive for ${platformId}`
+    )
+  }
+  return (destination) => {
+    const errors = []
+    const urls = [runtime.archive.url].concat(
+      (runtime.archive.mirrorPrefixes ?? []).map((prefix) => `${prefix}${runtime.archive.url}`)
+    )
+    for (const url of urls) {
+      try {
+        execFileSync(
+          'curl',
+          [
+            '-fsSL',
+            '--retry',
+            '2',
+            '--retry-all-errors',
+            '--connect-timeout',
+            '20',
+            '--max-time',
+            '120',
+            '-o',
+            destination,
+            url
+          ],
+          { encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'] }
+        )
+        return
+      } catch (error) {
+        rmSync(destination, { force: true })
+        errors.push(`${url}: ${errorText(error)}`)
+      }
+    }
+    throw new Error(
+      `fetch-micromamba: vcRuntime download failed for ${platformId}: ${errors.join('; ')}`
+    )
+  }
+}
+
+function ensureSidecars(manifest, platformId) {
+  try {
+    const result = ensureWindowsRuntimeSidecars({
+      repoRoot,
+      manifest,
+      platformId,
+      download: downloadVcRuntime(manifest, platformId)
+    })
+    if (result.repaired) {
+      console.log(
+        `fetch-micromamba: repaired ${platformId} MSVC sidecars (${result.written.join(', ')})`
+      )
+    }
+  } catch (error) {
+    fail(`fetch-micromamba: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 function fetchPlatform(manifest, platformId) {
   const release = lookupMicromambaPlatform(manifest, platformId)
   if (!release) {
@@ -122,7 +185,13 @@ function fetchPlatform(manifest, platformId) {
     platformId,
     micromambaFileName(platformId)
   )
-  if (existsSync(target) && fileSha256(target) === release.sha256) return
+  // A cached micromamba.exe never short-circuits on Windows: the app-local MSVC
+  // sidecars are verified (and repaired) independently, because a matching exe
+  // with missing/corrupt DLLs still fails at load with 0xC0000135.
+  if (existsSync(target) && fileSha256(target) === release.sha256) {
+    if (platformId === 'win32-x64') ensureSidecars(manifest, platformId)
+    return
+  }
 
   const directory = path.dirname(target)
   mkdirSync(directory, { recursive: true })
@@ -172,6 +241,7 @@ function fetchPlatform(manifest, platformId) {
   }
   chmodSync(partial, 0o755)
   renameSync(partial, target)
+  if (platformId === 'win32-x64') ensureSidecars(manifest, platformId)
   const version =
     typeof manifest.micromamba?.version === 'string' ? manifest.micromamba.version : 'unknown'
   console.log(`fetch-micromamba: downloaded ${platformId} (${version})`)

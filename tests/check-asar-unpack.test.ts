@@ -166,7 +166,23 @@ test('Windows packaging requires unchanged native and WSL runtime binaries', (t)
     },
     micromamba: {
       platforms: {
-        'win32-x64': { url: '', sha256: digest },
+        'win32-x64': {
+          url: '',
+          sha256: digest,
+          vcRuntime: {
+            archive: { url: 'https://example.test/vc.conda', sha256: digest },
+            files: ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'].map((name) => ({
+              name,
+              member: `Library/bin/${name}`,
+              sha256: digest
+            })),
+            licenses: ['LICENSE.TXT', 'LICENSE.RTF', 'LICENSE.DOCX'].map((name) => ({
+              name,
+              member: `info/licenses/${name}`,
+              sha256: digest
+            }))
+          }
+        },
         'linux-x64': { url: '', sha256: digest }
       }
     }
@@ -185,6 +201,11 @@ test('Windows packaging requires unchanged native and WSL runtime binaries', (t)
   )
   mkdirSync(path.dirname(wsl), { recursive: true })
   writeFileSync(wsl, 'verified')
+  assert.throws(() => assertBundledWindowsRuntimes(root, manifest), /runtime incomplete.*msvcp140/u)
+  const vcRuntime = manifest.micromamba.platforms['win32-x64'].vcRuntime
+  for (const file of [...vcRuntime.files, ...vcRuntime.licenses]) {
+    writeFileSync(path.join(root, 'runtime', 'micromamba', 'win32-x64', file.name), 'verified')
+  }
   assert.doesNotThrow(() => assertBundledWindowsRuntimes(root, manifest))
   writeFileSync(wsl, 'changed')
   assert.throws(() => assertBundledWindowsRuntimes(root, manifest), /checksum mismatch.*linux-x64/u)

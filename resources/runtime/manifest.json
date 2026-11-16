@@ -28,7 +28,56 @@
         "url": "https://github.com/mamba-org/micromamba-releases/releases/download/2.9.0-0/micromamba-win-64",
         "mirrorPrefixes": ["https://gh-proxy.com/", "https://ghfast.top/"],
         "sha256": "a6d804394b2418991c4e29562853eaace2f2ce9d9da661a98e74e02e8dbb44b0",
-        "size": 11454464
+        "size": 11454464,
+        "vcRuntime": {
+          "version": "14.51.36247",
+          "archive": {
+            "url": "https://conda.anaconda.org/conda-forge/win-64/vc14_runtime-14.51.36247-habf1de7_42.conda",
+            "sha256": "8dfbfd68ebf53249d11e528cbb80ad5a2460b0c5b4636eed82ee0d3950827a3d",
+            "size": 767099,
+            "format": "conda"
+          },
+          "files": [
+            {
+              "name": "msvcp140.dll",
+              "member": "Library/bin/msvcp140.dll",
+              "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca",
+              "size": 643512
+            },
+            {
+              "name": "vcruntime140.dll",
+              "member": "Library/bin/vcruntime140.dll",
+              "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7",
+              "size": 178616
+            },
+            {
+              "name": "vcruntime140_1.dll",
+              "member": "Library/bin/vcruntime140_1.dll",
+              "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e",
+              "size": 50112
+            }
+          ],
+          "licenses": [
+            {
+              "name": "LICENSE.TXT",
+              "member": "info/licenses/LICENSE.TXT",
+              "sha256": "cf89b37107c22cf8ce21043da1da143087b86ce7fd4556f91c25bc429533807e",
+              "size": 7590
+            },
+            {
+              "name": "LICENSE.RTF",
+              "member": "info/licenses/LICENSE.RTF",
+              "sha256": "9020a331682370e8359e02c5e51762d375896d62f42e33aef331be83255036bc",
+              "size": 45
+            },
+            {
+              "name": "LICENSE.DOCX",
+              "member": "info/licenses/LICENSE.DOCX",
+              "sha256": "08651651a7602fc7c0e2763de0fde1ff9f868df2780597cd1775ee9d6441c783",
+              "size": 39553
+            }
+          ]
+        }
       }
     }
   },
