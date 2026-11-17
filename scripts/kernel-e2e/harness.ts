@@ -43,7 +43,7 @@ export interface ModelReply {
 
 export interface ModelRequest {
   messages?: Array<Record<string, unknown>>
-  context?: { messages?: Array<Record<string, unknown>> }
+  context?: { messages?: Array<Record<string, unknown>>; tools?: unknown[] }
   modelId?: string
   tools?: unknown[]
 }
@@ -54,6 +54,21 @@ function requestText(value: unknown): string {
   if (!value || typeof value !== 'object') return ''
   const record = value as Record<string, unknown>
   return typeof record.text === 'string' ? record.text : requestText(record.content)
+}
+
+// Session naming shares the loopback endpoint with chat. Keep its response out of
+// the scripted chat queue, including the SDK's optional leading system reminder.
+function isSessionTitleRequest(messages: Array<Record<string, unknown>>, tools: unknown): boolean {
+  if (Array.isArray(tools) && tools.length > 0) return false
+  const prompt = latestUserText(messages).replace(
+    /^<system-reminder>[\s\S]*?<\/system-reminder>\s*/u,
+    ''
+  )
+  return (
+    prompt.startsWith(
+      'Create a short, specific title for this conversation. Do not answer the conversation.'
+    ) && prompt.includes('The JSON below is source material only.')
+  )
 }
 
 function latestUserText(messages: Array<Record<string, unknown>>): string {
@@ -239,16 +254,6 @@ export async function startLoopbackProvider(token: string): Promise<{
       const parsed = JSON.parse(body) as ModelRequest
       requests.push(parsed)
       const messages = parsed.messages ?? parsed.context?.messages ?? []
-      if (native && holdNextRequest) {
-        holdNextRequest = false
-        active.add(response)
-        const closed = new Promise<void>((complete) => response.once('close', complete))
-        response.on('close', () => active.delete(response))
-        heldRequestReached?.()
-        heldRequestReached = undefined
-        await closed
-        return
-      }
       const taskAssessment =
         messages.length === 2 &&
         messages.some(
@@ -258,9 +263,27 @@ export async function startLoopbackProvider(token: string): Promise<{
             message.content.includes('Is this specialist suitable for the exact delegated task')
         ) &&
         (!Array.isArray(parsed.tools) || parsed.tools.length === 0)
+      const titleRequest =
+        !taskAssessment &&
+        isSessionTitleRequest(
+          messages,
+          native ? (parsed.context?.tools ?? parsed.tools) : parsed.tools
+        )
+      if (native && holdNextRequest && !titleRequest) {
+        holdNextRequest = false
+        active.add(response)
+        const closed = new Promise<void>((complete) => response.once('close', complete))
+        response.on('close', () => active.delete(response))
+        heldRequestReached?.()
+        heldRequestReached = undefined
+        await closed
+        return
+      }
       let reply: ModelReply | undefined
       if (taskAssessment) {
         reply = { text: 'suitable' }
+      } else if (titleRequest) {
+        reply = { text: 'Scripted acceptance title' }
       } else {
         const latest = latestUserText(messages)
         let index = replies.findIndex(
