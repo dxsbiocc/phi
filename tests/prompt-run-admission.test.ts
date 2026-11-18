@@ -6,6 +6,8 @@ import { SessionLifecycle } from '../src/main/agent/session/session-lifecycle'
 import type { PhiSessionManifest } from '../src/main/agent/session/session-store'
 import {
   createPromptRunAdmission,
+  PromptRunDeferredError,
+  PromptRunTargetChangedError,
   type PromptRunAdmissionDeps,
   type SubmitPromptInput
 } from '../src/main/session-runtime/prompt-run-admission'
@@ -158,6 +160,50 @@ test('admitPromptRun uses the image fallback title only when text is empty', () 
 
   admission.admit(admission.resolveTarget(withImage))
   assert.deepEqual(calls, ['ensure:图片'])
+})
+
+test('durable admission reuses the bound manifest and addresses the saved attempt and work mode', () => {
+  const saved = {
+    sessionId: 'bound-session',
+    cwd: '/work',
+    projectId: project.id,
+    permissionMode: 'ask',
+    workMode: 'direct'
+  } as const
+  const submission = input({
+    durable: {
+      sessionId: saved.sessionId,
+      submissionId: 'submission',
+      attemptId: 'attempt',
+      workMode: 'plan_execute',
+      revalidate: () => undefined
+    }
+  })
+  const fixture = (manifest: typeof saved | null): ReturnType<typeof createDeps> =>
+    createDeps({ project, manifest: manifest as PhiSessionManifest | null })
+
+  const { deps, calls } = fixture(saved)
+  const admission = createPromptRunAdmission(deps)
+  const admitted = admission.admit(admission.resolveTarget(submission))
+
+  assert.equal(admitted.phiSessionId, saved.sessionId)
+  assert.equal(admitted.runId, 'attempt')
+  assert.equal(admitted.workMode, 'plan_execute')
+  assert.deepEqual(calls, [])
+
+  const removed = fixture(null)
+  const removedAdmission = createPromptRunAdmission(removed.deps)
+  assert.throws(
+    () => removedAdmission.admit(removedAdmission.resolveTarget(submission)),
+    PromptRunTargetChangedError
+  )
+  assert.deepEqual(removed.calls, [])
+
+  const changed = input({
+    ...submission,
+    snapshot: { ...submission.snapshot, permissionMode: 'full' }
+  })
+  assert.throws(() => admission.admit(admission.resolveTarget(changed)), PromptRunDeferredError)
 })
 
 test('admitPromptRun rejects pre-kernel SSH history but permits a fresh pending kernel draft', () => {

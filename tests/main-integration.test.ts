@@ -1666,6 +1666,16 @@ async function harness(
     'node:path': path,
     semver: { gt: (left: string, right: string): boolean => left > right },
     './agent-env': {},
+    './session-runtime/main-chat-queue': {
+      createMainChatQueue: () => ({
+        start: async () => undefined,
+        activate: () => undefined,
+        pause: () => noop,
+        removeConversation: async () => undefined,
+        beginShutdown: () => undefined,
+        shutdown: async () => undefined
+      })
+    },
     './app-quit': { createBeforeQuitHandler },
     './main-window-retention': {
       createMainWindowRetention: () =>
@@ -7498,6 +7508,8 @@ test('main startup callback delegates its named phases in order', () => {
     return
   }
   runtime.window.setStartupSplashWindow(startupSplashWindow)
+  await durableChat.start()
+  if (mainWindowRetention.isQuitting()) return
   runStartupMaintenance()
   migrateStartupPluginEnablement()
   recoverStartupState()
@@ -7512,6 +7524,7 @@ test('main startup callback delegates its named phases in order', () => {
   startTeamPackDesktop({ requireMainWindowRenderer, getActiveWindow, sendToAllWindows })
   registerSkillAgentAndMcpIpc(wrappersIpcOptions)
   registerWrapperJobsAndPersonaIpc(wrappersIpcOptions)
+  durableChat.activate()
   openInitialWindow()
   registerAppActivationHandler()
 })`
@@ -7565,6 +7578,9 @@ const expectedStartupRegistrationOrder = [
   'molecules:renderSvg',
   'agent:prompt',
   'agent:readPromptImage',
+  'agent:submitQueuedPrompt',
+  'agent:listQueuedPrompts',
+  'agent:cancelQueuedPrompt',
   'workspaceChanges:readDiff',
   'agent:stop',
   'agent:steerRun',
@@ -9045,6 +9061,15 @@ test('main IPC: foreign windows cannot submit chat prompts or read their images'
   const app = await harness()
   await assert.rejects(app.invokeFromForeign('agent:prompt', 'not authorized'), /authorized/)
   await assert.rejects(app.invokeFromForeign('agent:readPromptImage', {}), /authorized/)
+  await assert.rejects(
+    app.invokeFromForeign('agent:submitQueuedPrompt', 'forbidden', {}),
+    /authorized/
+  )
+  await assert.rejects(app.invokeFromForeign('agent:listQueuedPrompts', 'phi-1'), /authorized/)
+  await assert.rejects(
+    app.invokeFromForeign('agent:cancelQueuedPrompt', 'phi-1', 'item-1'),
+    /authorized/
+  )
   assert.equal(app.createdPhiSessions.length, 0)
 })
 

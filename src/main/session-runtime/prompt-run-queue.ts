@@ -8,10 +8,12 @@ import {
 } from '../agent/session/workspace-changes'
 import { persistWorkspaceDiff } from '../agent/session/workspace-diffs'
 import type { WorkspaceChangeSummary } from '../../shared/workspaceChangeTypes'
-import type {
-  AdmittedPromptRun,
-  ResolvedPromptRunTarget,
-  SubmitPromptInput
+import {
+  PromptRunDeferredError,
+  PromptRunTargetChangedError,
+  type AdmittedPromptRun,
+  type ResolvedPromptRunTarget,
+  type SubmitPromptInput
 } from './prompt-run-admission'
 import type { PromptRunContext, PromptRunState } from './prompt-run-start'
 
@@ -31,7 +33,7 @@ export interface PromptRunQueueDeps {
   }
   start: {
     allocate(admission: AdmittedPromptRun<CreateAgentSessionResult>): PromptRunContext
-    prepare(context: PromptRunContext): void
+    prepare(context: PromptRunContext): StoredSessionEvent | undefined
   }
   runs: {
     queueFor(sessionKey: string): Promise<void>
@@ -98,18 +100,23 @@ function persistWorkspaceChanges(
   }
 }
 
+function isCurrentPromptRun(deps: PromptRunQueueDeps, context: PromptRunContext): boolean {
+  if (context.promptRun.cancelled) return false
+  const matches =
+    context.promptRun.generation === deps.runs.generationFor(context.runSessionKey) &&
+    context.runLifecycle.isCurrentGeneration(context.promptRun.sessionGeneration)
+  // A resource invalidation can replace a lifecycle without a user stop. The
+  // durable attempt can retry from the new lifecycle while no start is recorded.
+  if (!matches && context.input.durable) throw new PromptRunDeferredError()
+  return matches
+}
+
 async function runQueuedPrompt(
   deps: PromptRunQueueDeps,
   context: PromptRunContext
 ): Promise<PromptRunResult> {
   let promptResult: PromptRunResult = null
-  if (
-    context.promptRun.cancelled ||
-    context.promptRun.generation !== deps.runs.generationFor(context.runSessionKey) ||
-    !context.runLifecycle.isCurrentGeneration(context.promptRun.sessionGeneration)
-  ) {
-    return null
-  }
+  if (!isCurrentPromptRun(deps, context)) return null
 
   const changeBaseline =
     context.project?.location?.kind === 'ssh'
@@ -127,9 +134,18 @@ async function runQueuedPrompt(
       loadedSkills = []
       deps.timeline.logSkillLookupFailure(context.phiSessionId, error)
     }
+    if (context.input.durable && !isCurrentPromptRun(deps, context)) return null
     deps.skills.set(context.phiSessionId, loadedSkills)
   }
 
+  // The durable claim may wait behind skill loading and workspace capture. Keep this
+  // checkpoint synchronous through startRun so revalidation precedes all run writes.
+  let userEvent: StoredSessionEvent | undefined
+  if (context.input.durable) {
+    if (!isCurrentPromptRun(deps, context)) return null
+    context.input.durable.revalidate()
+    userEvent = deps.start.prepare(context)
+  }
   const registryRun = deps.execution.runner.startRun({
     sessionId: context.phiSessionId,
     runId: context.runId,
@@ -140,6 +156,13 @@ async function runQueuedPrompt(
         promptResult = result
       })
   })
+  if (userEvent) {
+    try {
+      deps.timeline.broadcast(context.phiSessionId, userEvent)
+    } catch (error) {
+      deps.timeline.logUnexpected(error)
+    }
+  }
   deps.sleep.sync()
   void registryRun.done.then(deps.sleep.sync, deps.sleep.sync)
   try {
@@ -177,10 +200,14 @@ function trackPromptRunSettlement(
           deps.events.scheduleTitle(context.phiSessionId)
         }
       },
-      () => {
+      (error: unknown) => {
         deps.cleanup.deleteActiveRun(context.runSessionKey, context.promptRun)
         deps.events.notifySessionChanged()
-        deps.events.flushContinuations(context.phiSessionId, context.promptRun.cancelled)
+        if (!(
+          error instanceof PromptRunDeferredError || error instanceof PromptRunTargetChangedError
+        )) {
+          deps.events.flushContinuations(context.phiSessionId, context.promptRun.cancelled)
+        }
       }
     )
   )
@@ -205,10 +232,11 @@ async function submitPromptRun(
     const pendingInvalidation = deps.invalidation.flushPending(input.sessionKey)
     if (pendingInvalidation) await pendingInvalidation
     if (submission.cancelled) return null
+    input.durable?.revalidate()
     const target = deps.admission.resolve(input)
     const admission = deps.admission.admit(target)
     const context = deps.start.allocate(admission)
-    deps.start.prepare(context)
+    if (!input.durable) deps.start.prepare(context)
     // Serialize prompts per session: duplicate/overlapping IPC invokes must
     // never run session.prompt() concurrently within the same conversation.
     const run = deps.runs.queueFor(context.runSessionKey).then(() => runQueuedPrompt(deps, context))

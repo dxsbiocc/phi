@@ -1,7 +1,24 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { sessionDraftKey, updateSessionDraft } from '../src/renderer/src/lib/sessionDrafts'
+import {
+  moveSessionDraft,
+  sessionDraftKey,
+  updateSessionDraft
+} from '../src/renderer/src/lib/sessionDrafts'
+
+test('same-directory fresh drafts use opaque identities and keep separate contents', () => {
+  const input = { path: null, cwd: '/workspace', sessionGeneration: 1 }
+  const first = sessionDraftKey({ ...input, draftId: 'one' })
+  const second = sessionDraftKey({ ...input, draftId: 'two' })
+  const drafts = { [first]: 'first draft', [second]: 'second draft' }
+  assert.notEqual(first, second)
+  assert.deepEqual(moveSessionDraft(drafts, first, 'phi:saved'), {
+    [second]: 'second draft',
+    'phi:saved': 'first draft'
+  })
+  assert.equal(moveSessionDraft(drafts, first, second), drafts)
+})
 
 test('sessionDraftKey scopes persisted sessions by runtime path', () => {
   assert.equal(

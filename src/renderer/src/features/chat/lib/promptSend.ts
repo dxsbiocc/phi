@@ -56,7 +56,7 @@ export type PromptSendActions = {
   setClosedWorkspaceSessionTabKeys: (updater: (keys: Set<string>) => Set<string>) => void
   setActiveWorkspaceTabKey: (updater: (key: string | null) => string | null) => void
   setSelectedModel: (updater: (previous: ModelOption | null) => ModelOption | null) => void
-  moveQueuedPromptsToSession: (key: string, target: PromptTarget) => void
+  moveQueuedPromptsToSession?: (key: string, target: PromptTarget) => void
   refreshSessions: () => Promise<void> | void
   showSnackbarError: (error: unknown, fallback: string) => void
 }
@@ -181,7 +181,7 @@ async function applySendReceipt(
       sessionGeneration: result.sessionGeneration
     })
     if (materializedQueueKey !== deps.activeDraftKey) {
-      deps.actions.moveQueuedPromptsToSession(materializedQueueKey, {
+      deps.actions.moveQueuedPromptsToSession?.(materializedQueueKey, {
         path: result.path,
         phiSessionId: result.phiSessionId,
         cwd: target.cwd,

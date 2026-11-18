@@ -18,6 +18,29 @@ export interface SubmitPromptInput {
   automatic?: boolean
   planMode?: boolean
   planExecute?: boolean
+  durable?: {
+    sessionId: string
+    submissionId: string
+    attemptId: string
+    workMode: WorkMode
+    revalidate(): void
+  }
+}
+
+/** A preflight that can be retried because the prompt has not changed durable run state. */
+export class PromptRunDeferredError extends Error {
+  constructor(message = 'Prompt cannot start yet') {
+    super(message)
+    this.name = 'PromptRunDeferredError'
+  }
+}
+
+/** A queued prompt must never recreate its session or change its workspace. */
+export class PromptRunTargetChangedError extends Error {
+  constructor(message = 'Prompt target no longer matches its saved session') {
+    super(message)
+    this.name = 'PromptRunTargetChangedError'
+  }
 }
 
 export interface ResolvedPromptRunTarget<TResult> {
@@ -90,27 +113,55 @@ function resolvePromptRunTarget<TResult>(
   }
 }
 
+function validateDurablePromptTarget<TResult>(
+  target: ResolvedPromptRunTarget<TResult>,
+  manifest: PhiSessionManifest | null
+): void {
+  const { durable } = target.input
+  if (!durable) return
+  if (
+    !manifest ||
+    manifest.sessionId !== durable.sessionId ||
+    manifest.cwd !== target.runSnapshot.cwd ||
+    manifest.projectId !== (target.project?.id ?? null)
+  ) {
+    throw new PromptRunTargetChangedError()
+  }
+  if (manifest.permissionMode !== target.runSnapshot.permissionMode) {
+    throw new PromptRunDeferredError()
+  }
+}
+
+function promptRunUnavailable(durable: SubmitPromptInput['durable'], reason: string): Error {
+  return durable ? new PromptRunDeferredError(reason) : new Error(reason)
+}
+
 function admitPromptRun<TResult>(
   deps: PromptRunAdmissionDeps<TResult>,
   target: ResolvedPromptRunTarget<TResult>
 ): AdmittedPromptRun<TResult> {
-  const phiSessionId = deps.linking.ensurePhiSessionId(
-    target.runSessionKey,
-    target.runSnapshot,
-    target.normalizedText || (target.input.images?.length ? '图片' : undefined)
-  )
+  const { durable } = target.input
+  const phiSessionId =
+    durable?.sessionId ??
+    deps.linking.ensurePhiSessionId(
+      target.runSessionKey,
+      target.runSnapshot,
+      target.normalizedText || (target.input.images?.length ? '图片' : undefined)
+    )
   const manifest = deps.sessions.findById(phiSessionId)
+  validateDurablePromptTarget(target, manifest)
   assertLegacyRemoteSessionCanPrompt(manifest)
   const workMode =
+    durable?.workMode ??
     manifest?.workMode ??
     fieldsFromMode(modeFromFields({ permissionMode: target.runSnapshot.permissionMode })).workMode
   if (deps.runs.manualCompactionIds.has(phiSessionId)) {
-    throw new Error('上下文压缩正在进行，请稍后发送消息')
+    throw promptRunUnavailable(durable, '上下文压缩正在进行，请稍后发送消息')
   }
   const stableSessionPath = deps.paths.phiOnlySessionPath(phiSessionId)
-  const runId = deps.createRunId()
+  const runId = durable?.attemptId ?? deps.createRunId()
   if (deps.runs.hasActiveRun(target.runSessionKey)) {
-    throw new Error('会话正在运行')
+    throw promptRunUnavailable(durable, '会话正在运行')
   }
   return { ...target, phiSessionId, stableSessionPath, runId, workMode }
 }

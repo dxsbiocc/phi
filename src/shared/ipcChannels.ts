@@ -1,14 +1,18 @@
 export const IPC = {
   agent: {
+    cancelQueuedPrompt: 'agent:cancelQueuedPrompt',
     event: 'agent:event',
     interactionCancelled: 'agent:interaction-cancelled',
     interactionRequested: 'agent:interaction-request',
     interactionResponse: 'agent:interaction-response',
+    listQueuedPrompts: 'agent:listQueuedPrompts',
     prompt: 'agent:prompt',
+    queuedPromptsChanged: 'agent:queuedPromptsChanged',
     readPromptImage: 'agent:readPromptImage',
     steerRun: 'agent:steerRun',
     stop: 'agent:stop',
-    stopRun: 'agent:stopRun'
+    stopRun: 'agent:stopRun',
+    submitQueuedPrompt: 'agent:submitQueuedPrompt'
   },
   agents: {
     list: 'agents:list',

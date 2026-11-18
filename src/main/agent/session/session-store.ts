@@ -670,6 +670,33 @@ function recoverInterruptedManifest(manifest: PhiSessionManifest): PhiSessionMan
   }
 
   recoverPendingPlanReviews(manifest.sessionId)
+  const terminal = manifest.currentRunId
+    ? readSessionEvents(manifest.sessionId).findLast(
+        (event) =>
+          event.runId === manifest.currentRunId &&
+          (event.type === 'run_completed' ||
+            event.type === 'run_failed' ||
+            event.type === 'run_interrupted')
+      )
+    : undefined
+  if (terminal) {
+    const completed = terminal.type === 'run_completed'
+    const failed = terminal.type === 'run_failed'
+    return updateSessionManifest(manifest.sessionId, {
+      status: completed ? 'completed_unread' : failed ? 'failed' : 'idle',
+      unreadKind: completed ? 'completed' : failed ? 'failed' : null,
+      currentRunId: undefined,
+      currentRunStartedAt: undefined,
+      lastRunOutcome: completed
+        ? 'completed'
+        : failed
+          ? 'failed'
+          : terminal.reason === 'app_restarted'
+            ? 'interrupted'
+            : 'stopped',
+      openAgentExecutions: []
+    })
+  }
   appendSessionEvent(manifest.sessionId, {
     type: 'run_interrupted',
     ...(manifest.currentRunId ? { runId: manifest.currentRunId } : {}),

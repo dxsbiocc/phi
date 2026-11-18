@@ -14,7 +14,7 @@ import {
   sessionRuntimeStateNeedsAcknowledgement,
   sessionRuntimeStatesEqual
 } from '../lib/sessionRuntimeState'
-import { sessionDraftKey } from '../lib/sessionDrafts'
+import { moveSessionDraft, sessionDraftKey } from '../lib/sessionDrafts'
 import { orderSessionsForDisplay } from '../lib/sessionOrder'
 import { getRendererApi } from '../lib/rendererApi'
 import { messageContentTitleText } from '../../../shared/sessionTitle'
@@ -32,6 +32,7 @@ import type {
 
 export function sessionStateKey(input: {
   phiSessionId?: string | null
+  draftId?: string | null
   path: string | null
   cwd: string
   sessionGeneration: number
@@ -186,6 +187,7 @@ type SessionStoreState = {
   sessions: SessionSummary[]
   activeSessionPath: string | null
   activePhiSessionId: string | null
+  activeDraftId: string | null
   /** Title from the live session payload. Project chats are absent from `sessions`. */
   activeSessionName: string | null
   activeCwd: string
@@ -257,6 +259,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
   sessions: [],
   activeSessionPath: null,
   activePhiSessionId: null,
+  activeDraftId: null,
   activeSessionName: null,
   activeCwd: '',
   activeDisplayCwd: '',
@@ -360,10 +363,13 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
     const state = get()
     const previousPath = state.activeSessionPath
     const previousPhiSessionId = state.activePhiSessionId
+    const previousDraftId = state.activeDraftId
     const previousCwd = state.activeCwd
     const previousGeneration = state.activeSessionGeneration
     const previousStateKey = state.activeAgentEventStateKey
     const currentPhiSessionId = current.phiSessionId ?? null
+    const currentDraftId =
+      current.path === null && currentPhiSessionId === null ? (current.draftId ?? null) : null
     const matchesPreviousPhi =
       currentPhiSessionId !== null && currentPhiSessionId === previousPhiSessionId
     const matchesPreviousPath = current.path !== null && current.path === previousPath
@@ -371,7 +377,8 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       currentPhiSessionId === null &&
       current.path === null &&
       previousPhiSessionId === null &&
-      previousPath === null
+      previousPath === null &&
+      currentDraftId === previousDraftId
     const isSameTarget =
       current.cwd === previousCwd &&
       (matchesPreviousPhi || matchesPreviousPath || matchesFreshTarget)
@@ -379,6 +386,7 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
 
     const nextStateKey = sessionStateKey({
       phiSessionId: currentPhiSessionId,
+      draftId: currentDraftId,
       path: current.path,
       cwd: current.cwd,
       sessionGeneration: current.sessionGeneration
@@ -413,18 +421,22 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       if (previousRuntimeState && !sessionRuntimeStates.has(nextStateKey)) {
         sessionRuntimeStates.set(nextStateKey, previousRuntimeState)
       }
-      set((s) => {
-        if (
-          s.draftInputs[nextStateKey] !== undefined ||
-          s.draftInputs[previousStateKey] === undefined
-        ) {
-          return s
-        }
-        const next = { ...s.draftInputs, [nextStateKey]: s.draftInputs[previousStateKey] }
-        delete next[previousStateKey]
-        return { draftInputs: next }
-      })
     }
+    const previousDraftKey = sessionDraftKey({
+      phiSessionId: previousPhiSessionId,
+      draftId: previousDraftId,
+      path: previousPath,
+      cwd: previousCwd,
+      sessionGeneration: previousGeneration
+    })
+    const nextDraftKey = sessionDraftKey({
+      phiSessionId: currentPhiSessionId,
+      draftId: currentDraftId,
+      path: current.path,
+      cwd: current.cwd,
+      sessionGeneration: current.sessionGeneration
+    })
+    const materializesDraft = shouldCarryActiveState && previousDraftKey !== nextDraftKey
 
     if (current.cwd !== previousCwd) {
       callbacks.onCwdChanged?.()
@@ -454,10 +466,11 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       cacheSessionAgentEventState(nextStateKey, nextAgentEventState)
     }
 
-    set({
+    set((latest) => ({
       activeSessionGeneration: current.sessionGeneration,
       activeSessionPath: current.path,
       activePhiSessionId: currentPhiSessionId,
+      activeDraftId: currentDraftId,
       activeSessionName: nextSessionName,
       sessions,
       activeCwd: current.cwd,
@@ -474,8 +487,11 @@ export const useSessionStore = create<SessionStoreState>()((set, get) => ({
       activeSessionRuntimeState: nextRuntimeState,
       pendingApproval: pendingApprovalsBySession.get(nextStateKey) ?? null,
       pendingUserInteraction: pendingUserInteractionsBySession.get(nextStateKey) ?? null,
-      agentEventState: nextAgentEventState
-    })
+      agentEventState: nextAgentEventState,
+      draftInputs: materializesDraft
+        ? moveSessionDraft(latest.draftInputs, previousDraftKey, nextDraftKey)
+        : latest.draftInputs
+    }))
 
     if (options.resetSending || generationChanged || targetChanged) {
       callbacks.onResetSending?.()

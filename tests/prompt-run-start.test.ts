@@ -206,6 +206,73 @@ test('preparePromptRunForQueue captures the durable user message id for the rend
   assert.equal(context.userMessageEventId, 'event-1')
 })
 
+test('durable allocation defers history attachments and writes submission identity at the start boundary', () => {
+  const { deps, calls } = createDeps()
+  const start = createPromptRunStart(deps)
+  const retry: PromptTargetInput = {
+    path: '/phi/phi-1',
+    cwd: '/work',
+    suppressUserMessageEvent: true,
+    retryUserMessageId: 'user-1'
+  }
+  for (const target of [null, retry]) {
+    calls.length = 0
+    const initial = admitted({ promptTarget: target, normalizedText: '' })
+    const context = start.allocate({
+      ...initial,
+      input: {
+        ...initial.input,
+        text: '',
+        promptTarget: target,
+        images: [{ mimeType: 'image/png', data: 'AAAA' }],
+        durable: {
+          sessionId: 'phi-1',
+          submissionId: 'submission',
+          attemptId: 'run-1',
+          workMode: 'direct',
+          revalidate: () => undefined
+        }
+      }
+    })
+    assert.deepEqual(calls, ['advance:/canonical', 'set-active:/canonical:run-1'])
+    assert.deepEqual(context.storedImages, [])
+
+    const event = start.prepare(context)
+    assert.equal(event?.submissionId, 'submission')
+    assert.equal(event?.runId, 'run-1')
+    assert.equal(event?.type, target ? 'user_message_retry' : 'user_message')
+    assert.deepEqual(event?.images, [{ sessionId: 'phi-1', id: 'image-0', mimeType: 'image/png' }])
+    assert.equal(event?.userMessageId, target ? 'user-1' : undefined)
+  }
+})
+
+test('a durable archive failure leaves no user event and releases the prompt run slot', () => {
+  const { deps, calls } = createDeps()
+  deps.images.persist = () => {
+    throw new Error('archive sync failed')
+  }
+  const start = createPromptRunStart(deps)
+  const initial = admitted()
+  const context = start.allocate({
+    ...initial,
+    input: {
+      ...initial.input,
+      images: [{ mimeType: 'image/png', data: 'AAAA' }],
+      durable: {
+        sessionId: 'phi-1',
+        submissionId: 'submission',
+        attemptId: 'run-1',
+        workMode: 'direct',
+        revalidate: () => undefined
+      }
+    }
+  })
+
+  assert.throws(() => start.prepare(context), /archive sync failed/)
+  assert.ok(calls.includes('delete-active:/canonical:run-1'))
+  assert.ok(!calls.some((call) => call.startsWith('append:')))
+})
+
 test('a failed user-message append removes the active run and rethrows', () => {
   const { deps, calls } = createDeps()
   deps.events.append = () => {

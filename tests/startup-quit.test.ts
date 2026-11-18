@@ -39,10 +39,15 @@ function declaredFunction(name: string): string {
   return declaration.getText(source)
 }
 
-function harness(initiallyQuitting = false): {
+function harness(
+  initiallyQuitting = false,
+  waitForInbox = false
+): {
   start: () => Promise<void>
   stop: () => void
   releaseSplash: () => void
+  releaseInbox: () => void
+  rejectInbox: (error: Error) => void
   calls: string[]
   splash: { closed: number }
   invoke: (name: string) => void
@@ -60,6 +65,8 @@ function harness(initiallyQuitting = false): {
   const pendingSplash = new Promise<typeof splash>((resolve) => {
     releaseSplash = () => resolve(splash)
   })
+  const inbox = Promise.withResolvers<void>()
+  if (!waitForInbox) inbox.resolve()
   const context: Record<string, unknown> = {
     mainWindowRetention: { isQuitting: () => quitting },
     runtime: {
@@ -71,6 +78,13 @@ function harness(initiallyQuitting = false): {
     openStartupSplash: () => {
       calls.push('open-splash')
       return pendingSplash
+    },
+    durableChat: {
+      start: () => {
+        calls.push('acquire-inbox')
+        return inbox.promise
+      },
+      activate: () => calls.push('activate-inbox')
     },
     startTeamPackDesktop: () => calls.push('team'),
     requireMainWindowRenderer: () => undefined,
@@ -110,6 +124,8 @@ function harness(initiallyQuitting = false): {
       quitting = true
     },
     releaseSplash,
+    releaseInbox: inbox.resolve,
+    rejectInbox: inbox.reject,
     calls,
     splash,
     invoke: (name) => {
@@ -144,7 +160,37 @@ test('ordinary startup still registers services and opens the initial window', a
   assert.ok(state.calls.includes('register-splash'))
   assert.ok(state.calls.includes('registerProjectAndAnalysisIpc'))
   assert.ok(state.calls.includes('openInitialWindow'))
+  assert.ok(state.calls.indexOf('acquire-inbox') < state.calls.indexOf('recoverStartupState'))
+  assert.ok(state.calls.indexOf('recoverStartupState') < state.calls.indexOf('activate-inbox'))
   assert.equal(state.splash.closed, 0)
+})
+
+test('a second writer cannot recover histories or start services', async () => {
+  const state = harness(false, true)
+  const pending = state.start()
+  state.releaseSplash()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  state.rejectInbox(new Error('Inbox owned by another process'))
+  await assert.rejects(pending, /Inbox owned/)
+  assert.deepEqual(state.calls, [
+    'prepareStartupInterface',
+    'open-splash',
+    'register-splash',
+    'acquire-inbox'
+  ])
+})
+
+test('quit while the inbox is opening prevents recovery and an initial window', async () => {
+  const state = harness(false, true)
+  const pending = state.start()
+  state.releaseSplash()
+  await new Promise<void>((resolve) => setImmediate(resolve))
+  assert.ok(state.calls.includes('acquire-inbox'))
+  state.stop()
+  state.releaseInbox()
+  await pending
+  assert.ok(!state.calls.includes('recoverStartupState'))
+  assert.ok(!state.calls.includes('openInitialWindow'))
 })
 
 test('late window callbacks do not reset cleanup or schedule new work after quit', () => {

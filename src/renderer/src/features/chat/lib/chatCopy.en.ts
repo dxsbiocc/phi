@@ -3,10 +3,10 @@ export const chatEnglish = {
   messageEnterToQueueShiftEnterForANewLine: 'Message, Enter to queue, Shift+Enter for a new line',
   messageEnterToSendShiftEnterForANewLine: 'Message, Enter to send, Shift+Enter for a new line',
   messageQueue: 'Message queue',
-  valuePausedResumesAfterANewMessageIsSent: (value0: string | number) =>
-    `${value0} paused · resumes after a new message is sent`,
   valueQueued: (value0: string | number) => `${value0} queued`,
   removeQueuedMessage: 'Remove queued message',
+  queuedMessageFailed: 'Failed',
+  queuedMessageInterrupted: 'Interrupted',
   messageInput: 'Message input',
   sendMessage: 'Send message',
   stopGenerating: 'Stop generating',

@@ -98,6 +98,10 @@ export interface SessionsIpcOptions {
     compact: (target: unknown) => Promise<ManualCompactionOutcome>
   }
   workModeActivity: WorkModeActivity
+  chatQueue?: {
+    pause(sessionId: string): () => void
+    removeConversation(sessionId: string): Promise<void>
+  }
   identity: {
     createSessionKey: (path: string | undefined, cwd: string) => string
     resolveSessionKeyAlias: (sessionKey: string) => string
@@ -442,6 +446,7 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
         return { status: 'confirmation-required' }
       if (manifest && deletesOnServer(manifest) && !phiSessionId)
         throw new Error('远程会话必须使用 Phi 会话标识删除')
+      const resumeQueue = manifest && options.chatQueue?.pause(manifest.sessionId)
       let remoteDeletion: Awaited<ReturnType<typeof prepareRemotePhiDeletion>> | undefined
       try {
         remoteDeletion =
@@ -449,6 +454,7 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
             ? await prepareRemotePhiDeletion(phiSessionId)
             : undefined
       } catch (error) {
+        resumeQueue?.()
         if (error instanceof RemoteSessionDeleteUnavailableError)
           return { status: 'connection-required' }
         throw error
@@ -492,6 +498,11 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
         if (manifest) {
           state.loadedSkillNamesBySession.delete(manifest.sessionId)
           lifecycle.clearPendingInvalidation?.(manifest.sessionId)
+          try {
+            await options.chatQueue?.removeConversation(manifest.sessionId)
+          } catch {
+            writeAppLog({ level: 'error', event: 'assistant_inbox_session_cleanup_failed' })
+          }
         }
         return { status: 'deleted' }
       } catch (error) {
@@ -510,6 +521,7 @@ export function registerSessionsIpc(options: SessionsIpcOptions): void {
           return { status: 'connection-required' }
         throw error
       } finally {
+        resumeQueue?.()
         try {
           await remoteDeletion?.close()
         } catch {

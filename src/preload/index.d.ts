@@ -62,6 +62,7 @@ import type {
   RemoteDirectoryListing
 } from '../shared/remoteDirectoryBrowser'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
+import type { ChatQueueItem, ChatQueueReceipt, ChatQueueTarget } from '../shared/chatQueueTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { SessionDeleteResult } from '../shared/sessionDeleteTypes'
 import type {
@@ -760,6 +761,14 @@ declare global {
         text: string,
         target?: PreloadPromptTarget
       ) => Promise<PreloadPromptResult | null>
+      submitQueuedPrompt: (
+        text: string,
+        target: ChatQueueTarget,
+        requestId: string
+      ) => Promise<ChatQueueReceipt>
+      listQueuedPrompts: (sessionId: string) => Promise<ChatQueueItem[]>
+      cancelQueuedPrompt: (sessionId: string, id: string) => Promise<boolean>
+      onQueuedPromptsChanged: (cb: (sessionId: string) => void) => () => void
       readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
       readWorkspaceDiff: (ref: WorkspaceDiffReference) => Promise<string>
       onAgentEvent: (cb: (event: Record<string, unknown>) => void) => () => void
@@ -945,6 +954,7 @@ declare global {
       getCurrentSession: () => Promise<{
         path: string | null
         phiSessionId?: string
+        draftId?: string
         cwd: string
         displayCwd?: string
         projectId?: string
@@ -970,6 +980,7 @@ declare global {
       ) => Promise<{
         path: string | null
         phiSessionId?: string
+        draftId?: string
         cwd: string
         displayCwd?: string
         projectId?: string
@@ -985,6 +996,7 @@ declare global {
       ) => Promise<{
         path: string | null
         phiSessionId?: string
+        draftId?: string
         cwd: string
         displayCwd?: string
         projectId?: string
@@ -997,6 +1009,7 @@ declare global {
       createSession: () => Promise<{
         path: string | null
         phiSessionId?: string
+        draftId?: string
         cwd: string
         displayCwd?: string
         projectId?: string
@@ -1243,6 +1256,7 @@ declare global {
         cb: (session: {
           path: string | null
           phiSessionId?: string
+          draftId?: string
           cwd: string
           sessionGeneration: number
           permissionMode: PreloadPermissionMode

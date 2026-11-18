@@ -178,6 +178,7 @@ export type ChatComposerProps = {
   markHomeSend?: boolean
   sendDisabled?: boolean
   showStop?: boolean
+  sendWhileRunning?: boolean
   onStop?: () => void
   sessionMode: SessionMode
   onSelectSessionMode: (mode: SessionMode) => void
@@ -228,6 +229,7 @@ export function ChatComposer({
   markHomeSend = false,
   sendDisabled = false,
   showStop = false,
+  sendWhileRunning = false,
   onStop,
   sessionMode,
   onSelectSessionMode,
@@ -389,6 +391,17 @@ export function ChatComposer({
               }
             />
             {accessory}
+            {showStop && sendWhileRunning && !sendDisabled && (
+              <ComposerSubmitButton
+                showStop={false}
+                compact={compact}
+                sendDisabled={false}
+                sendLabel={sendLabel}
+                stopLabel={stopLabel}
+                stopTitle={stopTitle}
+                markHomeSend={false}
+              />
+            )}
             <ComposerSubmitButton
               showStop={showStop}
               compact={compact}

@@ -50,6 +50,7 @@ import type {
   RemoteDirectoryListing
 } from '../shared/remoteDirectoryBrowser'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
+import type { ChatQueueItem, ChatQueueReceipt, ChatQueueTarget } from '../shared/chatQueueTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { SessionDeleteResult } from '../shared/sessionDeleteTypes'
 import type {
@@ -324,6 +325,7 @@ type SessionSwitchResult = SessionRuntimeState & {
 type CurrentSession = SessionRuntimeState & {
   path: string | null
   phiSessionId?: string
+  draftId?: string
   name?: string
   cwd: string
   displayCwd?: string
@@ -875,6 +877,14 @@ type RendererAuthApi = PreloadApiBase & {
   ) => Unsubscribe
   renderMoleculeSvg: (value: string, width: number, height: number) => Promise<string>
   sendPrompt: (text: string, target?: PromptTarget) => Promise<PromptResult | null>
+  submitQueuedPrompt: (
+    text: string,
+    target: ChatQueueTarget,
+    requestId: string
+  ) => Promise<ChatQueueReceipt>
+  listQueuedPrompts: (sessionId: string) => Promise<ChatQueueItem[]>
+  cancelQueuedPrompt: (sessionId: string, id: string) => Promise<boolean>
+  onQueuedPromptsChanged: (cb: (sessionId: string) => void) => Unsubscribe
   readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
   readWorkspaceDiff: (ref: WorkspaceDiffReference) => Promise<string>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => Unsubscribe
@@ -1519,6 +1529,21 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke(IPC.molecules.renderSvg, value, width, height),
   sendPrompt: (text: string, target?: PromptTarget): Promise<PromptResult | null> =>
     ipcRenderer.invoke(IPC.agent.prompt, text, target),
+  submitQueuedPrompt: (
+    text: string,
+    target: ChatQueueTarget,
+    requestId: string
+  ): Promise<ChatQueueReceipt> =>
+    ipcRenderer.invoke(IPC.agent.submitQueuedPrompt, text, target, requestId),
+  listQueuedPrompts: (sessionId: string): Promise<ChatQueueItem[]> =>
+    ipcRenderer.invoke(IPC.agent.listQueuedPrompts, sessionId),
+  cancelQueuedPrompt: (sessionId: string, id: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.agent.cancelQueuedPrompt, sessionId, id),
+  onQueuedPromptsChanged: (cb: (sessionId: string) => void): Unsubscribe => {
+    const handler = (_: unknown, sessionId: string): void => cb(sessionId)
+    ipcRenderer.on(IPC.agent.queuedPromptsChanged, handler)
+    return () => ipcRenderer.removeListener(IPC.agent.queuedPromptsChanged, handler)
+  },
   readPromptImage: (ref: StoredPromptImage): Promise<PromptImageInput> =>
     ipcRenderer.invoke(IPC.agent.readPromptImage, ref),
   readWorkspaceDiff: (ref: WorkspaceDiffReference): Promise<string> =>

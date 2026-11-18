@@ -45,6 +45,7 @@ export interface CurrentSessionPayloadDeps<
     SessionResolution,
     'findPhiManifestForSession' | 'resolveSessionPermissionMode'
   >
+  getDraftId?: () => string
   stores?: CurrentSessionPayloadStores
 }
 
@@ -155,6 +156,7 @@ export function createCurrentSessionPayload<
     return {
       path,
       ...(phiSessionId ? { phiSessionId } : {}),
+      ...(path === null && deps.getDraftId ? { draftId: deps.getDraftId() } : {}),
       ...(name ? { name } : {}),
       cwd: deps.sessionState.cwd,
       displayCwd:

@@ -3,7 +3,7 @@ import type {
   RuntimeAgentSession
 } from '../agent/runtime/runtime-adapter'
 import type { PromptRunResult } from '../agent/session/prompt-run-execution'
-import type { SessionEventInput } from '../agent/session/session-store'
+import type { SessionEventInput, StoredSessionEvent } from '../agent/session/session-store'
 import type { PromptImageInput, StoredPromptImage } from '../../shared/promptImageTypes'
 import type { AdmittedPromptRun } from './prompt-run-admission'
 
@@ -52,7 +52,7 @@ export interface PromptRunStartDeps {
     persist(phiSessionId: string, images: readonly PromptImageInput[]): StoredPromptImage[]
   }
   events: {
-    append(phiSessionId: string, event: SessionEventInput): { eventId: string }
+    append(phiSessionId: string, event: SessionEventInput): StoredSessionEvent
   }
   cleanup: {
     deleteActiveRun(sessionKey: string, run: PromptRunState): void
@@ -73,10 +73,10 @@ function allocatePromptRun(
 ): PromptRunContext {
   const runGeneration = deps.runs.advanceGeneration(admission.runSessionKey)
   // A real user message starts the automatic wake-up count over only after preflight succeeds.
-  if (!admission.input.automatic) deps.continuations.delete(admission.phiSessionId)
-  const storedImages = admission.input.images?.length
-    ? deps.images.persist(admission.phiSessionId, admission.input.images)
-    : []
+  const { input, phiSessionId } = admission
+  if (!input.automatic && !input.durable) deps.continuations.delete(phiSessionId)
+  const storedImages =
+    !input.durable && input.images?.length ? deps.images.persist(phiSessionId, input.images) : []
   const projectId = admission.project?.id
   const otherActiveProjectRuns = projectId
     ? deps.runs
@@ -107,30 +107,41 @@ function allocatePromptRun(
   return { ...admission, runGeneration, storedImages, otherActiveProjectRuns, promptRun }
 }
 
-function preparePromptRunForQueue(deps: PromptRunStartDeps, context: PromptRunContext): void {
-  const { input, phiSessionId, runId, normalizedText, promptTarget, storedImages, promptRun } =
-    context
+function preparePromptRunForQueue(
+  deps: PromptRunStartDeps,
+  context: PromptRunContext
+): StoredSessionEvent | undefined {
+  const { input, phiSessionId, runId, normalizedText, promptTarget, promptRun } = context
+  const { durable } = input
+  let userEvent: StoredSessionEvent | undefined
   try {
+    if (durable && input.images?.length) {
+      context.storedImages = deps.images.persist(phiSessionId, input.images)
+    }
+    if (durable && !input.automatic) deps.continuations.delete(phiSessionId)
+    const images = context.storedImages
+    const userFields = {
+      runId,
+      content: normalizedText,
+      ...(durable ? { submissionId: durable.submissionId } : {}),
+      ...(images.length ? { images } : {})
+    }
     if (input.automatic) {
       // Phi's own message to the agent, not the user's words: nothing to show as a user bubble.
     } else if (promptTarget?.suppressUserMessageEvent === true) {
-      deps.events.append(phiSessionId, {
+      userEvent = deps.events.append(phiSessionId, {
         type: 'user_message_retry',
-        runId,
-        content: normalizedText,
-        ...(storedImages.length ? { images: storedImages } : {}),
+        ...userFields,
         ...(promptTarget.retryUserMessageId
           ? { userMessageId: promptTarget.retryUserMessageId }
           : {})
       })
     } else {
-      const stored = deps.events.append(phiSessionId, {
+      userEvent = deps.events.append(phiSessionId, {
         type: 'user_message',
-        runId,
-        content: normalizedText,
-        ...(storedImages.length ? { images: storedImages } : {})
+        ...userFields
       })
-      context.userMessageEventId = stored.eventId
+      context.userMessageEventId = userEvent.eventId
     }
   } catch (error) {
     deps.cleanup.deleteActiveRun(context.runSessionKey, promptRun)
@@ -144,11 +155,12 @@ function preparePromptRunForQueue(deps: PromptRunStartDeps, context: PromptRunCo
       context.otherActiveProjectRuns
     )
   }
+  return userEvent
 }
 
 export interface PromptRunStart {
   allocate(admission: AdmittedPromptRun<CreateAgentSessionResult>): PromptRunContext
-  prepare(context: PromptRunContext): void
+  prepare(context: PromptRunContext): StoredSessionEvent | undefined
 }
 
 export function createPromptRunStart(deps: PromptRunStartDeps): PromptRunStart {

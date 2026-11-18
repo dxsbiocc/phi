@@ -14,6 +14,7 @@ import type {
   PromptRunDestination,
   PromptTargetInput
 } from '../agent/session/prompt-target-control'
+import type { DurableChat } from '../session-runtime/durable-chat'
 
 interface PromptRunInput extends PromptRunDestination {
   text: string
@@ -36,6 +37,7 @@ export interface AgentIpcOptions {
     ) => PromptRunDestination | Promise<PromptRunDestination>
     submit: (input: PromptRunInput) => Promise<unknown>
   }
+  durableChat: Pick<DurableChat, 'submit' | 'list' | 'cancel'>
   stop: Omit<ActivePromptStopOptions, 'getCurrentSessionKey'>
   agentRuns: {
     control: Parameters<typeof requestAgentRunControl>[0]
@@ -83,6 +85,18 @@ export function registerAgentPromptIpc(options: AgentIpcOptions): void {
   ipcMain.handle(IPC.agent.readPromptImage, async (event, ref: unknown) => {
     options.prompt.requireMainWindowRenderer(event)
     return readPromptImage(ref)
+  })
+  ipcMain.handle(IPC.agent.submitQueuedPrompt, (event, text, target, requestId) => {
+    options.prompt.requireMainWindowRenderer(event)
+    return options.durableChat.submit(text, target, requestId)
+  })
+  ipcMain.handle(IPC.agent.listQueuedPrompts, (event, sessionId) => {
+    options.prompt.requireMainWindowRenderer(event)
+    return options.durableChat.list(sessionId)
+  })
+  ipcMain.handle(IPC.agent.cancelQueuedPrompt, (event, sessionId, itemId) => {
+    options.prompt.requireMainWindowRenderer(event)
+    return options.durableChat.cancel(sessionId, itemId)
   })
 }
 

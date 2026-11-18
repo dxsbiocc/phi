@@ -123,6 +123,10 @@ export class SessionRunnerRegistry {
     return this.activeRuns.size
   }
 
+  get availableSlots(): number {
+    return this.maxActiveRuns - this.activeRuns.size
+  }
+
   getActiveRun(sessionId: string): SessionRun | null {
     return this.activeRuns.get(sessionId) ?? null
   }

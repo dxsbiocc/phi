@@ -358,6 +358,45 @@ test('claims in order, fences each attempt and cancels only the specified queued
   assert.equal((await inbox.list(peer))[0]?.status, 'running')
 })
 
+test('deleting a conversation frees its receipts and preserves shared blobs for another chat', async (t) => {
+  const { directory } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const other = { conversationId: 'other', projectId: scope.projectId }
+  const shared = gif('shared')
+  await inbox.submit(scope, 'deleted', 'discard', { images: [shared, gif('unshared')] })
+  const preserved = await inbox.submit(other, 'preserved', '', { images: [shared] })
+  const directoryEntries = (): Promise<string[]> => readdir(join(directory, 'attachments'))
+  assert.equal((await directoryEntries()).length, 2)
+  await inbox.removeConversation(scope.conversationId)
+  assert.deepEqual(await inbox.list(scope), [])
+  assert.equal((await directoryEntries()).length, 1)
+  const attemptId = randomUUID()
+  await inbox.claim(other, attemptId)
+  assert.deepEqual(await inbox.loadImages(other, preserved.id, attemptId), [shared])
+})
+
+test('receipt retention keeps recent tombstones and expires failed attachment payloads', async (t) => {
+  const { directory } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const old = Date.now() - 8 * 24 * 60 * 60 * 1000
+  const time = t.mock.method(Date, 'now', () => old)
+  const images = [gif('expired failure')]
+  const entry = await inbox.submit(scope, 'expired', 'old', { images })
+  const attemptId = randomUUID()
+  await inbox.claim(scope, attemptId)
+  assert.equal(await inbox.settle(scope, entry.id, attemptId, 'failed'), true)
+  time.mock.restore()
+  const pending = await inbox.submit(scope, 'pending', 'newer')
+  assert.deepEqual(await inbox.list(scope), [pending])
+  assert.deepEqual(await readdir(join(directory, 'attachments')), [])
+  const receipt = await inbox.submit(peer, 'recent', 'known text')
+  await inbox.cancel(peer, receipt.id)
+  const duplicate = await inbox.submit(peer, 'recent', 'known text')
+  assert.equal(duplicate.id, receipt.id)
+  assert.equal(duplicate.text, '')
+  await assert.rejects(inbox.submit(peer, 'recent', 'different text'), /request conflict/)
+})
+
 test('after reopening, only an explicit recovery interrupts claims and preserves pending input', async (t) => {
   const { directory } = await fixture(t)
   const original = createAssistantInbox(directory)

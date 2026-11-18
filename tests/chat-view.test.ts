@@ -71,7 +71,11 @@ function renderChat(
     images?: Array<{ mimeType: 'image/png'; data: string }>
     canQueue?: boolean
     pendingUserInteraction?: AgentUserInteractionRequest | null
-    queuedPrompts?: Array<{ id: string; text: string }>
+    queuedPrompts?: Array<{
+      id: string
+      text: string
+      status?: 'queued' | 'failed' | 'interrupted'
+    }>
     skills?: SkillSummary[]
     resourceMentions?: readonly ChatResourceMention[]
     promptAgents?: PromptAgentSummary[]
@@ -2437,10 +2441,25 @@ test('chat view shows queued prompts above the composer while a session is busy'
   assert.match(markup, /data-phi-placeholder-kind="default"/)
   assert.doesNotMatch(markup, /aria-label="加入队列"/)
   assert.match(markup, /aria-label="停止生成"/)
+  assert.match(markup, /data-phi-composer-action="send"/)
   assert.match(markup, /消息队列/)
   assert.match(markup, /排队中 1 条/)
   assert.match(markup, /排队的下一条问题/)
   assert.match(markup, /aria-label="移除排队消息"/)
+})
+
+test('failed and interrupted durable submissions stay visible without queue cancellation', () => {
+  const markup = renderChat([], {
+    queuedPrompts: [
+      { id: 'failed-1', text: '无法开始的消息', status: 'failed' },
+      { id: 'interrupted-1', text: '重启前正在运行的消息', status: 'interrupted' }
+    ]
+  })
+  assert.match(markup, /无法开始的消息/)
+  assert.match(markup, /重启前正在运行的消息/)
+  assert.match(markup, />失败<\/span>/)
+  assert.match(markup, />已中断<\/span>/)
+  assert.doesNotMatch(markup, /移除排队消息|排队中 0 条/)
 })
 
 test('chat view shows a preparing placeholder for a wrapper plan tool call with no planId yet', () => {

@@ -58,6 +58,7 @@ import type {
 export type SessionEventStoreState = {
   activePhiSessionId: string | null
   activeSessionPath: string | null
+  activeDraftId?: string | null
   activeCwd: string
   activeSessionGeneration: number
   activeAgentEventStateKey: string | null
@@ -308,6 +309,9 @@ export function handleSessionChanged(deps: SessionEventBridgeDeps, session: Curr
       : null
   const samePath = state.activeSessionPath === session.path
   if (samePhiSession === false || (samePhiSession === null && !samePath)) return
+  if (session.path === null && state.activeDraftId && session.draftId !== state.activeDraftId) {
+    return
+  }
   state.applyCurrentSession(session, undefined, {
     onCwdChanged: deps.resetJupyterRuntimeForCwdChange
   })

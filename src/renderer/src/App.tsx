@@ -44,6 +44,7 @@ import {
 import type { WrapperCompositionCatalogItem } from '../../shared/wrapperCompositionManifestTypes'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
 import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptImageTypes'
+import type { ChatQueueTarget } from '../../shared/chatQueueTypes'
 import { modeFromFields } from '../../shared/sessionMode'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import { sidebarStateForFileOpenConversationLayout } from './features/chat/lib/fileOpenConversationLayout'
@@ -66,8 +67,9 @@ import { useChatShellRun } from './features/chat/hooks/useChatShellRun'
 import { ChatShellConfirmation } from './features/chat/components/ChatShellConfirmation'
 import { useSessionEventBridge } from './features/chat/hooks/useSessionEventBridge'
 import { usePromptSend } from './features/chat/hooks/usePromptSend'
-import { useQueuedPromptDrain } from './features/chat/hooks/useQueuedPromptDrain'
-import type { SendPromptOptions } from './features/chat/lib/promptQueue'
+import { useDurableChatSubmission } from './features/chat/hooks/useDurableChatSubmission'
+import { useDurablePromptQueue } from './features/chat/hooks/useDurablePromptQueue'
+import { localizePromptSendError } from './features/chat/lib/promptSend'
 import { SessionPlanRunPanel } from './features/plan/PlanRunPanel'
 import { useSessionMode } from './features/plan/hooks/useSessionMode'
 import { HomeView } from './features/home/HomeView'
@@ -101,10 +103,7 @@ import type { BrowserTrustedOverlayRequest } from './features/browser/lib/browse
 import { useEnvironmentBuildNotices } from './features/jobs/hooks/useEnvironmentBuildNotices'
 import type { LocalPathKind } from './components/MarkdownContent'
 import PhiPluginsView, { PhiPluginCatalogDialog } from './features/phi-plugin/PhiPluginsView'
-import {
-  usePhiPlugins,
-  type PhiPluginDisplayItem
-} from './features/phi-plugin/hooks/usePhiPlugins'
+import { usePhiPlugins, type PhiPluginDisplayItem } from './features/phi-plugin/hooks/usePhiPlugins'
 import { pluginCopy } from './features/phi-plugin/lib/pluginCopy'
 import { WrapperDetail } from './features/wrapper/WrapperView'
 import { useWrapperCatalog } from './features/wrapper/hooks/useWrapperCatalog'
@@ -173,7 +172,6 @@ import { chatItemsFromSessionMessages } from './lib/chatItems'
 import { readableErrorMessage } from './lib/sessionNotifications'
 import { localizeKernelError } from './features/chat/lib/kernelErrorCopy'
 import { sessionDraftKey, updateSessionDraft } from './lib/sessionDrafts'
-import { sendHomePrompt } from './features/home/lib/homePromptSend'
 import {
   isPointerWithinWorkspaceSidebarPreview,
   isWorkspaceSidebarPreviewDialogActive
@@ -182,6 +180,7 @@ import { workspaceConversationTitle } from './lib/sessionTitles'
 import { orderProjectsForSessionSelection } from './lib/projectSidebar'
 import { workspaceScopeLabelForCwd } from './lib/workspaceScope'
 import {
+  activeTabKeyAfterPrompt,
   isWorkspaceFileWorkspaceTab,
   isWorkspaceResourceKind,
   resolveWorkspaceResourceTabIcons,
@@ -198,11 +197,7 @@ import { workspaceSidebarModeIsExpanded, type WorkspaceSidebarMode } from './lib
 import type { ChatResourceMention } from './lib/chatResourceMentions'
 import type { WorkspaceSidePanelMode } from './lib/workspaceSidePanelMode'
 import { useWorkspaceSidePanel } from './lib/app-shell/useWorkspaceSidePanel'
-import {
-  sessionRuntimeStateIsBusy,
-  sessionRuntimeStatePausesQueue,
-  sessionStatusIsBusy
-} from './lib/sessionRuntimeState'
+import { sessionRuntimeStateIsBusy, sessionStatusIsBusy } from './lib/sessionRuntimeState'
 import { navigationPaneWidth } from './layout'
 import type { UserMessageRetryTarget } from './components/chat/ChatUserMessage'
 import type {
@@ -216,13 +211,26 @@ import type {
   PhiAppSettings,
   PhiAppSettingsPatch,
   PermissionMode,
-  PromptTarget,
   Project,
   SessionSummary,
   SkillSummary
 } from './types'
 
 const isMac = typeof window !== 'undefined' && window.platform === 'darwin'
+
+function chatQueueTarget(current: ReturnType<typeof useSessionStore.getState>): ChatQueueTarget & {
+  sessionGeneration: number
+} {
+  return {
+    path: current.activeSessionPath,
+    phiSessionId: current.activePhiSessionId ?? undefined,
+    draftId: current.activeDraftId ?? undefined,
+    cwd: current.activeCwd,
+    sessionGeneration: current.activeSessionGeneration,
+    planMode: current.currentWorkMode === 'plan',
+    planExecute: current.currentWorkMode === 'plan_execute'
+  }
+}
 
 export type AppView =
   'chat' | 'projects' | 'analysis' | 'runtime' | 'plugins' | 'skills' | 'mcp' | 'wrappers'
@@ -268,6 +276,7 @@ function App(): React.JSX.Element {
     setActiveSessionPath,
     activeSessionName,
     activePhiSessionId,
+    activeDraftId,
     setActivePhiSessionId,
     activeCwd,
     activeDisplayCwd,
@@ -710,10 +719,6 @@ function App(): React.JSX.Element {
     getModelSelectionSessionKey,
     getModelSelectionScope
   )
-  const modelStateReadyRef = useRef(isModelStateReady)
-  useLayoutEffect(() => {
-    modelStateReadyRef.current = isModelStateReady
-  }, [isModelStateReady])
   const {
     projects,
     setProjects,
@@ -1165,6 +1170,7 @@ function App(): React.JSX.Element {
         if (initialInput) {
           const createdDraftKey = sessionDraftKey({
             phiSessionId: current.phiSessionId,
+            draftId: current.draftId,
             path: current.path,
             cwd: current.cwd,
             sessionGeneration: current.sessionGeneration
@@ -1759,6 +1765,7 @@ function App(): React.JSX.Element {
 
   const activeDraftKey = sessionDraftKey({
     phiSessionId: activePhiSessionId,
+    draftId: activeDraftId,
     path: activeSessionPath,
     cwd: activeCwd,
     sessionGeneration: activeSessionGeneration
@@ -1787,18 +1794,56 @@ function App(): React.JSX.Element {
   const [draftImagesBySession, setDraftImagesBySession] = useState<
     Record<string, PromptImageInput[]>
   >({})
+  const onChatQueueError = useCallback(
+    (error: unknown): void => {
+      showSnackbarError(localizePromptSendError(error), appCopy.sendMessageFailed)
+    },
+    [showSnackbarError]
+  )
+  const onMaterializedChat = useCallback(
+    (session: CurrentSession): void => {
+      const tabKey = workspaceSessionTabKey(session.path, session.sessionGeneration)
+      setSessionTabWasOpened(true)
+      setClosedWorkspaceSessionTabKeys((keys) => {
+        if (!keys.has(tabKey)) return keys
+        const next = new Set(keys)
+        next.delete(tabKey)
+        return next
+      })
+      setActiveWorkspaceTabKey((current) => activeTabKeyAfterPrompt(current, tabKey))
+    },
+    [setSessionTabWasOpened, setClosedWorkspaceSessionTabKeys, setActiveWorkspaceTabKey]
+  )
+  const {
+    submit: submitDurablePrompt,
+    draftEdited,
+    restoreHomeDraft
+  } = useDurableChatSubmission({
+    api: rendererApi,
+    navigationRequest: sessionRequestRef,
+    setDraftImages: setDraftImagesBySession,
+    onMaterialized: onMaterializedChat,
+    onError: onChatQueueError
+  })
+  const { activeQueuedPrompts, removeQueuedPrompt } = useDurablePromptQueue(
+    rendererApi,
+    activePhiSessionId,
+    onChatQueueError
+  )
   const inputImages = draftImagesBySession[activeDraftKey] ?? []
   const addInputImages = useCallback(
     (images: PromptImageInput[]): void => {
+      draftEdited(activeDraftKey)
       setDraftImagesBySession((prev) => ({
         ...prev,
         [activeDraftKey]: [...(prev[activeDraftKey] ?? []), ...images].slice(0, MAX_PROMPT_IMAGES)
       }))
     },
-    [activeDraftKey]
+    [activeDraftKey, draftEdited]
   )
   const removeInputImage = useCallback(
     (index: number): void => {
+      draftEdited(activeDraftKey)
       setDraftImagesBySession((prev) => {
         const next = (prev[activeDraftKey] ?? []).filter((_, imageIndex) => imageIndex !== index)
         const updated = { ...prev }
@@ -1807,46 +1852,26 @@ function App(): React.JSX.Element {
         return updated
       })
     },
-    [activeDraftKey]
+    [activeDraftKey, draftEdited]
   )
-  const clearInputImages = useCallback((): void => {
-    setDraftImagesBySession((prev) => {
-      if (!prev[activeDraftKey]) return prev
-      const updated = { ...prev }
-      delete updated[activeDraftKey]
-      return updated
-    })
-  }, [activeDraftKey])
   const setActiveInput = useCallback(
     (value: string): void => {
+      if (value === (useSessionStore.getState().draftInputs[activeDraftKey] ?? '')) return
+      draftEdited(activeDraftKey)
       setDraftInputs((prev) => updateSessionDraft(prev, activeDraftKey, value))
     },
-    [activeDraftKey, setDraftInputs]
+    [activeDraftKey, draftEdited, setDraftInputs]
   )
-  // Run control (queue, stop, compaction) has one owner. The shell keeps the wiring:
-  // the send pipeline, readiness inputs, and the effect that drains the queue.
-  const {
-    compactingSessions,
-    isCompactingKey,
-    contextUsageRefreshKey,
-    activeQueuedPrompts,
-    queuePromptText,
-    removeQueuedPrompt,
-    dequeueQueuedPrompt,
-    moveQueuedPromptsToSession,
-    onStopGeneration,
-    onCompactContext
-  } = useChatRunControl({
-    activeDraftKey,
-    rendererApi,
-    sendRequestRef,
-    isSendingRef,
-    setIsSendingMessage,
-    setActiveInput,
-    clearPendingInteractions,
-    showSnackbar,
-    showSnackbarError
-  })
+  const { compactingSessions, contextUsageRefreshKey, onStopGeneration, onCompactContext } =
+    useChatRunControl({
+      rendererApi,
+      sendRequestRef,
+      isSendingRef,
+      setIsSendingMessage,
+      clearPendingInteractions,
+      showSnackbar,
+      showSnackbarError
+    })
 
   const sendPromptText = usePromptSend({
     rendererApi,
@@ -1868,7 +1893,6 @@ function App(): React.JSX.Element {
       setClosedWorkspaceSessionTabKeys,
       setActiveWorkspaceTabKey,
       setSelectedModel,
-      moveQueuedPromptsToSession,
       refreshSessions,
       showSnackbarError
     },
@@ -1881,38 +1905,17 @@ function App(): React.JSX.Element {
   const onChatSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
     const current = useSessionStore.getState()
-    if (
-      isCompactingKey(
-        JSON.stringify([
-          current.activePhiSessionId ?? null,
-          current.activeSessionPath,
-          current.activeSessionGeneration
-        ])
-      )
-    ) {
-      return
-    }
-    const text = input.trim()
+    if (current.isSessionChanging || current.activeLegacyRemoteSession) return
+    const target = chatQueueTarget(current)
+    if (activeDraftKey !== sessionDraftKey(target)) return
+    const text = current.draftInputs[activeDraftKey] ?? ''
     const images = inputImages
-    if (!text && images.length === 0) return
+    if (!text.trim() && images.length === 0) return
     if (images.length && selectedModel?.supportsImages === false) {
       showSnackbarError(new Error(appCopy.imagesUnsupported), appCopy.sendImagesFailed)
       return
     }
-    const target: PromptTarget = {
-      path: useSessionStore.getState().activeSessionPath,
-      phiSessionId: useSessionStore.getState().activePhiSessionId ?? undefined,
-      cwd: useSessionStore.getState().activeCwd,
-      sessionGeneration: useSessionStore.getState().activeSessionGeneration
-    }
-    if (currentSessionIsBusy || isSendingRef.current) {
-      queuePromptText(text, target, { images })
-      clearInputImages()
-      return
-    }
-    setActiveInput('')
-    clearInputImages()
-    await sendPromptText(text, target, { images })
+    await submitDurablePrompt(text, { ...target, images }, { key: activeDraftKey, images })
   }
 
   const onReplanPrompt = useCallback(
@@ -1979,38 +1982,33 @@ function App(): React.JSX.Element {
     }
     // The home box is gone from here on, so an unsent message goes to the new conversation's composer.
     let target: CurrentSession = created
-    await sendHomePrompt({
-      isModelStateReady: () => modelStateReadyRef.current,
-      send: async () => {
-        target = await rendererApi.updateCurrentSessionMode(request.mode, {
-          sessionPath: created.path,
-          phiSessionId: created.phiSessionId ?? null,
-          sessionGeneration: created.sessionGeneration
-        })
+    const navigation = sessionRequestRef.current
+    try {
+      target = await rendererApi.updateCurrentSessionMode(request.mode, {
+        sessionPath: created.path,
+        phiSessionId: created.phiSessionId ?? null,
+        sessionGeneration: created.sessionGeneration
+      })
+      if (sessionRequestRef.current === navigation) {
         applyCurrentSession(target, undefined, {
           onCwdChanged: resetAnalysisJupyterRuntimeForCwdChange
         })
-        return sendPromptText(text, {
-          path: target.path,
-          phiSessionId: target.phiSessionId,
-          cwd: target.cwd,
-          sessionGeneration: target.sessionGeneration
-        })
-      },
-      keepUnsentText: () => {
-        const draftKey = sessionDraftKey({
-          phiSessionId: target.phiSessionId,
-          path: target.path,
-          cwd: target.cwd,
-          sessionGeneration: target.sessionGeneration
-        })
-        setDraftInputs((previous) => updateSessionDraft(previous, draftKey, text))
-      },
-      reportUnsent: () => {
-        const error = new Error(appCopy.homePromptNotSent)
-        showSnackbarError(error, appCopy.homePromptNotSent)
       }
-    })
+      const queued = await submitDurablePrompt(text, {
+        path: target.path,
+        phiSessionId: target.phiSessionId,
+        draftId: target.draftId,
+        cwd: target.cwd,
+        sessionGeneration: target.sessionGeneration,
+        planMode: request.mode === 'plan',
+        planExecute: request.mode === 'plan_execute'
+      })
+      if (queued) return
+    } catch {
+      // Keep the home text under its original conversation if mode selection changed.
+    }
+    restoreHomeDraft(text, target)
+    showSnackbarError(new Error(appCopy.homePromptNotSent), appCopy.homePromptNotSent)
   }
 
   // Path routing: which surface opens a file, a directory, a notebook, or a
@@ -2427,7 +2425,6 @@ function App(): React.JSX.Element {
   const activeSessionHasWork =
     sessionStatusIsBusy(activeSession) || sessionRuntimeStateIsBusy(activeSessionRuntimeState)
   const currentSessionIsBusy = isSendingMessage || activeSessionHasWork
-  const queuedPromptsPaused = sessionRuntimeStatePausesQueue(activeSessionRuntimeState)
   const activeContextCompactionKey = JSON.stringify([
     activePhiSessionId ?? null,
     activeSessionPath,
@@ -2439,6 +2436,10 @@ function App(): React.JSX.Element {
   }, [currentSessionIsBusy, currentSessionIsCompacting])
   const onRetryUserMessage = useCallback(
     async (message: UserMessageRetryTarget): Promise<void> => {
+      // Reading the saved images can outlast navigation. Bind the retry before that read.
+      const state = useSessionStore.getState()
+      if (state.isSessionChanging || state.activeLegacyRemoteSession) return
+      const target = chatQueueTarget(state)
       const text = message.content.trim()
       let images: PromptImageInput[]
       try {
@@ -2452,26 +2453,13 @@ function App(): React.JSX.Element {
         return
       }
       if (!text && images.length === 0) return
-      const state = useSessionStore.getState()
-      const target: PromptTarget = {
-        path: state.activeSessionPath,
-        phiSessionId: state.activePhiSessionId ?? undefined,
-        cwd: state.activeCwd,
-        sessionGeneration: state.activeSessionGeneration
-      }
-      const sendOptions: SendPromptOptions = {
-        appendUserMessage: false,
+      await submitDurablePrompt(text, {
+        ...target,
         retryUserMessageId: message.id,
-        suppressUserMessageEvent: true,
         images
-      }
-      if (currentSessionIsBusyRef.current || isSendingRef.current) {
-        queuePromptText(text, target, sendOptions)
-        return
-      }
-      await sendPromptText(text, target, sendOptions)
+      })
     },
-    [queuePromptText, rendererApi, sendPromptText, showSnackbarError]
+    [rendererApi, submitDurablePrompt, showSnackbarError]
   )
   const forkInProgressRef = useRef(false)
   const onForkUserMessage = useCallback(
@@ -2495,19 +2483,6 @@ function App(): React.JSX.Element {
     },
     [onSelectSession, refreshSessions, rendererApi, showSnackbarError]
   )
-  useQueuedPromptDrain({
-    queue: { activeQueuedPrompts, dequeueQueuedPrompt },
-    session: {
-      currentSessionIsBusy,
-      currentSessionIsCompacting,
-      queuedPromptsPaused,
-      isSessionChanging,
-      isBusy
-    },
-    readiness: { modelStateReady: isModelStateReady, providers: providerStatuses, availableModels },
-    isSendingRef,
-    sendPromptText
-  })
   const activeWorkspaceTitle = useMemo(() => {
     void uiLanguage // Localized fallback titles are read through the shared copy proxy.
     if (showProjectSessionPlaceholder) return appCopy.projectChat
@@ -3548,7 +3523,7 @@ function App(): React.JSX.Element {
               !isSessionChanging && !currentSessionIsBusy && !currentSessionIsCompacting && !isBusy
             }
             canQueue={
-              !isSessionChanging && currentSessionIsBusy && !currentSessionIsCompacting && !isBusy
+              !isSessionChanging && (currentSessionIsBusy || currentSessionIsCompacting) && !isBusy
             }
             isGenerating={currentSessionIsBusy}
             currentRunStartedAt={activeSessionRuntimeState.currentRunStartedAt}
@@ -3613,9 +3588,9 @@ function App(): React.JSX.Element {
             pendingUserInteraction={pendingUserInteraction}
             queuedPrompts={activeQueuedPrompts.map((item) => ({
               id: item.id,
-              text: item.text || appCopy.imageCount(item.sendOptions?.images?.length ?? 0)
+              text: item.text || appCopy.imageCount(item.imageCount),
+              status: item.status
             }))}
-            queuedPromptsPaused={queuedPromptsPaused}
             onRespondApproval={onRespondToolApproval}
             onRespondUserInteraction={onRespondAgentUserInteraction}
             onRemoveQueuedPrompt={removeQueuedPrompt}

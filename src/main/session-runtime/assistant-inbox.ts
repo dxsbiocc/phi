@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, readdir, unlink, type FileHandle } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -25,7 +25,9 @@ const SNAPSHOT_TEMP =
   /^assistant-inbox\.json\.tmp\.\d+\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/
 const MAX_IDENTIFIER_BYTES = 200
 const MAX_TEXT_BYTES = 64 * 1024
-const MAX_ENTRIES = 256
+const MAX_PENDING = 256
+const MAX_ENTRIES = 2048
+const RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_FILE_BYTES = 8 * 1024 * 1024
 const MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024
 // A queued entry can grow by an attempt UUID and the longest terminal status.
@@ -43,14 +45,15 @@ const scopeSchema = z.strictObject({
   conversationId: identifier,
   projectId: identifier.nullable()
 })
-const settledStatuses = ['succeeded', 'failed', 'cancelled'] as const
+const settledStatuses = ['succeeded', 'failed', 'cancelled', 'interrupted'] as const
 const uuid = z.uuid().refine((value) => value === value.toLowerCase())
 const attachmentSchema = z.strictObject({
   digest: z.string().regex(/^[0-9a-f]{64}$/),
   mimeType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']),
   bytes: z.int().positive().max(MAX_PROMPT_IMAGE_BYTES)
 })
-const modeSchema = z.enum(['plan', 'plan-execute'])
+const modeSchema = z.enum(['auto', 'direct', 'plan', 'plan-execute'])
+const digestSchema = z.string().regex(/^[0-9a-f]{64}$/)
 const entrySchema = z
   .strictObject({
     id: uuid,
@@ -58,17 +61,22 @@ const entrySchema = z
     scope: scopeSchema,
     text: promptText,
     order: z.int().nonnegative(),
-    status: z.enum(['queued', 'running', 'interrupted', ...settledStatuses]),
+    status: z.enum(['queued', 'running', ...settledStatuses]),
     attemptId: uuid.optional(),
+    deferredAttemptId: uuid.optional(),
+    settledAt: z.int().nonnegative().optional(),
+    textHash: digestSchema.optional(),
+    binding: digestSchema.optional(),
+    retryUserMessageId: identifier.optional(),
     attachments: z.array(attachmentSchema).min(1).max(MAX_PROMPT_IMAGES).optional(),
     mode: modeSchema.optional()
   })
-  .refine((entry) => Boolean(entry.text.trim() || entry.attachments?.length))
+  .refine((entry) => Boolean(entry.text.trim() || entry.attachments?.length || entry.textHash))
 const snapshotSchema = z.strictObject({
   version: z.literal(1),
   entries: z.array(entrySchema).max(MAX_ENTRIES)
 })
-const settleSchema = z.enum(settledStatuses)
+const settleSchema = z.enum([...settledStatuses, 'defer'])
 
 export type AssistantInboxScope = Readonly<z.infer<typeof scopeSchema>>
 export type AssistantInboxEntry = Readonly<
@@ -77,14 +85,16 @@ export type AssistantInboxEntry = Readonly<
     attachments?: readonly AssistantInboxAttachment[]
   }
 >
-type ClaimedEntry = AssistantInboxEntry & { status: 'running'; attemptId: string }
-type SettleResult = z.infer<typeof settleSchema>
+export type ClaimedEntry = AssistantInboxEntry & { status: 'running'; attemptId: string }
+export type SettleResult = z.infer<typeof settleSchema>
 type SubmissionOptions = {
   images?: readonly PromptImageInput[]
   mode?: z.infer<typeof modeSchema>
+  binding?: string
+  retryUserMessageId?: string
 }
 
-interface AssistantInbox {
+export interface AssistantInbox {
   submit(
     scope: AssistantInboxScope,
     requestId: string,
@@ -92,7 +102,12 @@ interface AssistantInbox {
     options?: SubmissionOptions
   ): Promise<AssistantInboxEntry>
   list(scope: AssistantInboxScope): Promise<readonly AssistantInboxEntry[]>
-  claim(scope: AssistantInboxScope, attemptId: string): Promise<ClaimedEntry | null>
+  queued(): Promise<readonly AssistantInboxEntry[]>
+  claim(
+    scope: AssistantInboxScope,
+    attemptId: string,
+    expectedEntryId?: string
+  ): Promise<ClaimedEntry | null>
   loadImages(scope: AssistantInboxScope, id: string, attemptId: string): Promise<PromptImageInput[]>
   settle(
     scope: AssistantInboxScope,
@@ -101,7 +116,10 @@ interface AssistantInbox {
     result: SettleResult
   ): Promise<boolean>
   cancel(scope: AssistantInboxScope, id: string): Promise<boolean>
-  recover(): Promise<number>
+  removeConversation(sessionId: string): Promise<void>
+  recover(
+    outcome?: (entry: ClaimedEntry) => Promise<Exclude<SettleResult, 'defer'>>
+  ): Promise<number>
 }
 
 function validateScope(value: AssistantInboxScope): AssistantInboxScope {
@@ -120,6 +138,39 @@ function invalidSnapshot(): Error {
 
 function retainsAttachments(entry: AssistantInboxEntry): boolean {
   return entry.status !== 'succeeded' && entry.status !== 'cancelled'
+}
+
+function isPending(entry: AssistantInboxEntry): boolean {
+  return entry.status === 'queued' || entry.status === 'running'
+}
+
+function textFingerprint(text: string): string {
+  return createHash('sha256').update(JSON.stringify(text)).digest('hex')
+}
+
+function terminalEntry(
+  entry: AssistantInboxEntry,
+  status: (typeof settledStatuses)[number],
+  settledAt = Date.now()
+): AssistantInboxEntry {
+  const finished = { ...entry, status, settledAt }
+  delete finished.deferredAttemptId
+  return retainsAttachments(finished)
+    ? finished
+    : { ...finished, textHash: textFingerprint(entry.text), text: '' }
+}
+
+function retainedEntries(entries: AssistantInboxEntry[], now: number): AssistantInboxEntry[] {
+  const retained = entries.filter(
+    (entry) =>
+      isPending(entry) ||
+      entry.settledAt === undefined ||
+      now - entry.settledAt < RECEIPT_RETENTION_MS
+  )
+  const terminalToDrop = Math.max(0, retained.length - (MAX_ENTRIES - 1))
+  if (!terminalToDrop) return retained
+  let dropped = 0
+  return retained.filter((entry) => isPending(entry) || ++dropped > terminalToDrop)
 }
 
 function attachmentSizes(entries: readonly AssistantInboxEntry[]): Map<string, number> {
@@ -185,6 +236,10 @@ function parseSnapshot(bytes: Uint8Array): AssistantInboxEntry[] {
       throw invalidSnapshot()
     }
     previousOrder = entry.order
+    if (isPending(entry) && (entry.textHash || entry.settledAt !== undefined))
+      throw invalidSnapshot()
+    if (entry.textHash && (retainsAttachments(entry) || entry.text !== '')) throw invalidSnapshot()
+    if (entry.deferredAttemptId && entry.status !== 'queued') throw invalidSnapshot()
     ids.add(entry.id)
     requests.add(requestKey)
 
@@ -311,13 +366,21 @@ class FileAssistantInbox implements AssistantInbox {
     entry: AssistantInboxEntry,
     images: ReturnType<typeof prepareAssistantInboxAttachments>
   ): Promise<void> {
-    const next = [...entries, entry]
-    if (images.length === 0) return this.persist(next, true)
+    const retained = retainedEntries(entries, Date.now())
+    const next = [...retained, entry]
+    const expired = retained.length !== entries.length
+    if (images.length === 0) {
+      await this.persist(next, true)
+      if (expired) await this.sweepAttachments(next).catch(() => undefined)
+      return
+    }
     if (totalAttachmentBytes(attachmentSizes(next)) > MAX_ATTACHMENT_BYTES) {
       throw new Error('Assistant inbox attachment storage is full.')
     }
     this.checkCapacity(next, next.length * RESERVED_TRANSITION_BYTES)
-    await this.sweepAttachments(entries)
+    // Publish expiry before deleting blobs that the current snapshot still references.
+    if (expired) await this.persist(retained)
+    await this.sweepAttachments(retained)
     try {
       await this.attachments.stage(images)
       await this.persist(next, true)
@@ -337,6 +400,8 @@ class FileAssistantInbox implements AssistantInbox {
   ): Promise<AssistantInboxEntry> {
     const target = validateScope(scope)
     const mode = modeSchema.optional().safeParse(options.mode)
+    const binding = digestSchema.optional().parse(options.binding)
+    const retryUserMessageId = identifier.optional().parse(options.retryUserMessageId)
     if (
       !identifier.safeParse(requestId).success ||
       !promptText.safeParse(text).success ||
@@ -354,8 +419,12 @@ class FileAssistantInbox implements AssistantInbox {
       )
       if (previous) {
         if (
-          previous.text !== text ||
+          (previous.textHash
+            ? previous.textHash !== textFingerprint(text)
+            : previous.text !== text) ||
           previous.mode !== mode.data ||
+          previous.binding !== binding ||
+          previous.retryUserMessageId !== retryUserMessageId ||
           !sameAttachments(previous.attachments, refs)
         ) {
           throw new Error('Assistant inbox request conflict.')
@@ -364,12 +433,16 @@ class FileAssistantInbox implements AssistantInbox {
         return previous
       }
       const order = (entries.at(-1)?.order ?? -1) + 1
-      if (!Number.isSafeInteger(order)) throw new Error('Assistant inbox is full.')
+      if (!Number.isSafeInteger(order) || entries.filter(isPending).length >= MAX_PENDING) {
+        throw new Error('Assistant inbox is full.')
+      }
       const entry = {
         id: randomUUID(),
         requestId,
         scope: target,
         text,
+        ...(binding ? { binding } : {}),
+        ...(retryUserMessageId ? { retryUserMessageId } : {}),
         ...(refs.length ? { attachments: refs } : {}),
         ...(mode.data ? { mode: mode.data } : {}),
         order,
@@ -385,22 +458,34 @@ class FileAssistantInbox implements AssistantInbox {
     return this.withSnapshot((entries) => entries.filter((entry) => sameScope(entry.scope, target)))
   }
 
-  async claim(scope: AssistantInboxScope, attemptId: string): Promise<ClaimedEntry | null> {
+  queued(): Promise<readonly AssistantInboxEntry[]> {
+    return this.withSnapshot((entries) => entries.filter((entry) => entry.status === 'queued'))
+  }
+
+  async claim(
+    scope: AssistantInboxScope,
+    attemptId: string,
+    expectedEntryId?: string
+  ): Promise<ClaimedEntry | null> {
     const target = validateScope(scope)
     if (!uuid.safeParse(attemptId).success) throw new Error('Invalid inbox attempt ID.')
     return this.withSnapshot(async (entries) => {
       // The caller retries the same attempt ID when persistence fails after rename.
       const previous = entries.find((entry) => entry.attemptId === attemptId)
       if (previous) {
-        return previous.status === 'running' && sameScope(previous.scope, target)
+        return previous.status === 'running' &&
+          sameScope(previous.scope, target) &&
+          (expectedEntryId === undefined || expectedEntryId === previous.id)
           ? { ...previous, status: 'running', attemptId }
           : null
       }
       const scoped = entries.filter((entry) => sameScope(entry.scope, target))
       if (scoped.some((entry) => entry.status === 'running')) return null
       const next = scoped.find((entry) => entry.status === 'queued')
-      if (!next) return null
-      const claimed = { ...next, status: 'running', attemptId } as const
+      if (!next || (expectedEntryId !== undefined && expectedEntryId !== next.id)) return null
+      if (next.deferredAttemptId === attemptId) return null
+      const claimed = { ...next, status: 'running' as const, attemptId }
+      delete claimed.deferredAttemptId
       await this.persist(entries.map((entry) => (entry.id === next.id ? claimed : entry)))
       return claimed
     })
@@ -434,16 +519,24 @@ class FileAssistantInbox implements AssistantInbox {
     const target = validateScope(scope)
     if (!uuid.safeParse(attemptId).success || !settleSchema.safeParse(result).success) return false
     return this.withSnapshot(async (entries) => {
-      const index = entries.findIndex(
-        (entry) =>
-          entry.id === id && entry.attemptId === attemptId && sameScope(entry.scope, target)
-      )
+      const index = entries.findIndex((entry) => entry.id === id && sameScope(entry.scope, target))
       const current = entries[index]
-      if (!current || (current.status !== 'running' && current.status !== result)) return false
+      if (!current) return false
+      if (result === 'defer' && current.status === 'queued') {
+        return current.deferredAttemptId === attemptId
+      }
+      if (current.attemptId !== attemptId) return false
       if (current.status === result) return true
-      entries[index] = { ...current, status: result }
+      if (current.status !== 'running') return false
+      if (result === 'defer') {
+        const pending = { ...current, status: 'queued' as const, deferredAttemptId: attemptId }
+        delete pending.attemptId
+        entries[index] = pending
+      } else {
+        entries[index] = terminalEntry(current, result)
+      }
       await this.persist(entries)
-      if (result !== 'failed' && current.attachments) {
+      if (!retainsAttachments(entries[index]) && current.attachments) {
         await this.sweepAttachments(entries).catch(() => undefined)
       }
       return true
@@ -458,20 +551,50 @@ class FileAssistantInbox implements AssistantInbox {
       )
       const current = entries[index]
       if (!current) return false
-      entries[index] = { ...current, status: 'cancelled' }
+      entries[index] = terminalEntry(current, 'cancelled')
       await this.persist(entries)
       if (current.attachments) await this.sweepAttachments(entries).catch(() => undefined)
       return true
     })
   }
 
-  recover(): Promise<number> {
+  removeConversation(sessionId: string): Promise<void> {
     return this.withSnapshot(async (entries) => {
-      const next = entries.map((entry) =>
-        entry.status === 'running' ? { ...entry, status: 'interrupted' as const } : entry
+      const next = entries.filter((entry) => entry.scope.conversationId !== sessionId)
+      if (next.length === entries.length) return
+      await this.persist(next)
+      await this.sweepAttachments(next)
+    })
+  }
+
+  recover(
+    outcome?: (entry: ClaimedEntry) => Promise<Exclude<SettleResult, 'defer'>>
+  ): Promise<number> {
+    return this.withSnapshot(async (entries) => {
+      const now = Date.now()
+      const next = await Promise.all(
+        retainedEntries(entries, now).map(async (entry) => {
+          if (entry.status === 'queued') return entry
+          if (entry.status === 'running') {
+            if (!entry.attemptId) throw invalidSnapshot()
+            const status = await outcome?.({
+              ...entry,
+              status: 'running',
+              attemptId: entry.attemptId
+            })
+            return terminalEntry(entry, status ?? 'interrupted', now)
+          }
+          return entry.settledAt === undefined ? terminalEntry(entry, entry.status, now) : entry
+        })
       )
       const count = entries.filter((entry) => entry.status === 'running').length
-      if (count) await this.persist(next)
+      if (
+        count ||
+        entries.length !== next.length ||
+        entries.some((entry, index) => entry !== next[index])
+      ) {
+        await this.persist(next)
+      }
       await this.sweepAttachments(next)
       await this.sweepSnapshotTemps()
       return count

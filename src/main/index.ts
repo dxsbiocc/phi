@@ -86,7 +86,7 @@ import { createStartupSplashWindow, dismissStartupSplashWindow } from './startup
 import { createMacMenuBar } from './menu-bar'
 import type { MenuBarAction } from '../shared/menuBarTypes'
 import type { IpcMainInvokeEvent } from 'electron'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, realpathSync, statSync } from 'node:fs'
 import {
   app,
@@ -126,6 +126,7 @@ import {
   resolvePromptRunDestination,
   type PromptTargetControlOptions
 } from './agent/session/prompt-target-control'
+import { createMainChatQueue } from './session-runtime/main-chat-queue'
 import {
   getCurrentContextUsage,
   getCurrentSessionPayloadWithMessages,
@@ -399,6 +400,11 @@ const DEFAULT_WINDOW_HEIGHT = 820
 const MIN_WINDOW_WIDTH = 860
 const MIN_WINDOW_HEIGHT = 560
 const appIcon = nativeImage.createFromPath(icon)
+const chatDraftEpoch = randomUUID()
+
+function currentChatDraftId(): string {
+  return `${chatDraftEpoch}:${sessionState.freshSessionCounter}`
+}
 
 // Set by agent-env.ts before this module's own top-level code runs.
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
@@ -795,7 +801,7 @@ const sessionResolution = createSessionResolution({
   modelSelections: preferences.modelSelections,
   thinkingLevels: preferences.thinkingLevels,
   permissionModes: preferences.permissionModes,
-  getSelectedModel: () => sessionState.selectedModel,
+  getSelectedModel: () => sessionState.selectedModel ?? null,
   getDefaultThinkingLevel: () => selectedThinkingLevel
 })
 const { projectRemoteRuntimeRoot } = createProjectRuntimeRootContext({ agentDir: AGENT_DIR })
@@ -1000,7 +1006,8 @@ const { getSessionStatusPayload, getCurrentSessionPayload } = createCurrentSessi
   lifecycles,
   promptRuns,
   runners: runnerRegistry,
-  sessionResolution
+  sessionResolution,
+  getDraftId: currentChatDraftId
 })
 /** Filled by wirePlanExecution below; invalidation only runs after app startup. */
 const planWorkActivity: { current?: WorkModeActivity } = {}
@@ -3271,26 +3278,50 @@ function registerRemoteFileAndWrapperIpc(
   return wrappersIpcOptions
 }
 
-function registerAgentIpc(): void {
-  const promptTargetControlOptions: PromptTargetControlOptions = {
-    getCurrentDestination: () => ({
-      sessionKey: sessionKeys.canonicalize(sessionState.sessionKey),
-      snapshot: {
-        path: sessionState.sessionPath,
-        cwd: sessionState.cwd,
-        permissionMode: sessionState.permissionMode
-      }
-    }),
-    identity: {
-      createPhiSessionKey: sessionKeys.createPhiKey.bind(sessionKeys),
-      createSessionKey: sessionKeys.createKey.bind(sessionKeys),
-      linkPhiManagedSessionKey: sessionKeyLinking.linkPhiManagedSessionKey,
-      resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys)
+const promptTargetControlOptions: PromptTargetControlOptions = {
+  getCurrentDestination: () => ({
+    sessionKey: sessionKeys.canonicalize(sessionState.sessionKey),
+    snapshot: {
+      path: sessionState.sessionPath,
+      cwd: sessionState.cwd,
+      permissionMode: sessionState.permissionMode
+    }
+  }),
+  identity: {
+    createPhiSessionKey: sessionKeys.createPhiKey.bind(sessionKeys),
+    createSessionKey: sessionKeys.createKey.bind(sessionKeys),
+    linkPhiManagedSessionKey: sessionKeyLinking.linkPhiManagedSessionKey,
+    resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys)
+  },
+  getSessionGeneration: (key) => lifecycles.forKey(key).currentGeneration,
+  openRuntimeSessionManager,
+  resolveSessionPermissionMode: sessionResolution.resolveSessionPermissionMode
+}
+
+const durableChat = createMainChatQueue({
+  directory: join(AGENT_DIR, 'assistant-inbox'),
+  identity: {
+    sessionKey: (session) => {
+      const key = sessionKeys.createPhiKey(session.sessionId, session.cwd)
+      sessionKeyLinking.linkPhiManagedSessionKey(key, session.cwd, session.sessionId)
+      return sessionKeys.canonicalize(key)
     },
-    getSessionGeneration: (key) => lifecycles.forKey(key).currentGeneration,
-    openRuntimeSessionManager,
-    resolveSessionPermissionMode: sessionResolution.resolveSessionPermissionMode
-  }
+    generation: (key) => lifecycles.forKey(key).currentGeneration,
+    draftId: () => (sessionState.sessionPath === undefined ? currentChatDraftId() : undefined),
+    resolve: (target) => resolvePromptRunDestination(target, promptTargetControlOptions),
+    materialize: ({ sessionKey, snapshot }, title) =>
+      sessionKeyLinking.ensurePhiSessionId(sessionKey, snapshot, title)
+  },
+  resolution: sessionResolution,
+  runner: runnerRegistry,
+  activeAttempt: (key) => promptRuns.activeRun(key)?.runId,
+  compacting: (id) => promptRuns.manualCompactionIds.has(id),
+  submit: submitPromptRun,
+  changed: (sessionId) => sendToAllWindows(IPC.agent.queuedPromptsChanged, sessionId),
+  log: logUnexpectedError
+})
+
+function registerAgentIpc(): void {
   const agentIpcOptions: AgentIpcOptions = {
     ipcMain,
     state: {
@@ -3303,6 +3334,7 @@ function registerAgentIpc(): void {
         resolvePromptRunDestination(target, promptTargetControlOptions),
       submit: submitPromptRun
     },
+    durableChat,
     stop: {
       advancePromptGeneration: promptRuns.advanceGeneration.bind(promptRuns),
       cancelPendingPromptSubmissions: promptRuns.cancelPendingPromptSubmissions.bind(promptRuns),
@@ -3517,6 +3549,7 @@ function createSessionsIpcOptions(
       compact: (target) => compactCurrentSession(target, sessionCompactionControlOptions)
     },
     workModeActivity: planExecution.workModeActivity,
+    chatQueue: durableChat,
     identity: {
       createSessionKey: sessionKeys.createKey.bind(sessionKeys),
       resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
@@ -3813,6 +3846,8 @@ export const startup = app.whenReady().then(async () => {
     return
   }
   runtime.window.setStartupSplashWindow(startupSplashWindow)
+  await durableChat.start()
+  if (mainWindowRetention.isQuitting()) return
   runStartupMaintenance()
   migrateStartupPluginEnablement()
   recoverStartupState()
@@ -3827,6 +3862,7 @@ export const startup = app.whenReady().then(async () => {
   startTeamPackDesktop({ requireMainWindowRenderer, getActiveWindow, sendToAllWindows })
   registerSkillAgentAndMcpIpc(wrappersIpcOptions)
   registerWrapperJobsAndPersonaIpc(wrappersIpcOptions)
+  durableChat.activate()
   openInitialWindow()
   registerAppActivationHandler()
 })
@@ -3842,6 +3878,7 @@ app.on(
   'before-quit',
   createBeforeQuitHandler({
     beginShutdown: () => {
+      durableChat.beginShutdown()
       finishStartupSplash(null)
       runtime.window.destroyMenuBarController()
       // Stop local wrapper runs; detach remote runs so the next app launch can resume watching them.
@@ -3863,6 +3900,7 @@ app.on(
     cleanup: async () => {
       await Promise.all([
         cleanupMainWindowRuntime(),
+        safeCleanupStep('assistant_inbox_shutdown_failed', durableChat.shutdown),
         safeCleanupStep('environment_scan_cleanup_failed', () => backgroundEnvironment.dispose()),
         safeCleanupStep('team_source_service_cleanup_failed', closeTeamPackDesktop)
       ])

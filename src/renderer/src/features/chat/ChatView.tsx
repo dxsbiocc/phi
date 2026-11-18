@@ -131,8 +131,11 @@ type ViewProps = {
   placement?: ChatPlacement
   pendingApproval: ToolApprovalRequest | null
   pendingUserInteraction: AgentUserInteractionRequest | null
-  queuedPrompts?: Array<{ id: string; text: string }>
-  queuedPromptsPaused?: boolean
+  queuedPrompts?: Array<{
+    id: string
+    text: string
+    status?: 'queued' | 'failed' | 'interrupted'
+  }>
   onRespondApproval: (requestId: string, approved: boolean) => void
   onRespondUserInteraction: (
     requestId: string,
@@ -203,7 +206,6 @@ function ChatView({
   pendingApproval,
   pendingUserInteraction,
   queuedPrompts = [],
-  queuedPromptsPaused = false,
   onRespondApproval,
   onRespondUserInteraction,
   onRemoveQueuedPrompt,
@@ -245,6 +247,9 @@ function ChatView({
     () => (!isGenerating ? suggestedNextActionPlaceholderFromMessages(messages) : null),
     [isGenerating, messages]
   )
+  const queuedCount = queuedPrompts.filter(
+    (item) => !item.status || item.status === 'queued'
+  ).length
   const defaultInputPlaceholder = compactComposerControls
     ? chatCopy.message
     : isGenerating && canQueue
@@ -540,11 +545,11 @@ function ChatView({
                 sx={{ width: '100%', mb: 1, borderRadius: 2, p: 1.25 }}
               >
                 <Stack spacing={0.75}>
-                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
-                    {queuedPromptsPaused
-                      ? chatCopy.valuePausedResumesAfterANewMessageIsSent(queuedPrompts.length)
-                      : chatCopy.valueQueued(queuedPrompts.length)}
-                  </Typography>
+                  {queuedCount > 0 && (
+                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+                      {chatCopy.valueQueued(queuedCount)}
+                    </Typography>
+                  )}
                   {queuedPrompts.map((item) => (
                     <Box
                       key={item.id}
@@ -572,14 +577,22 @@ function ChatView({
                       >
                         {item.text}
                       </Typography>
-                      {onRemoveQueuedPrompt && (
-                        <IconButton
-                          size="small"
-                          aria-label={chatCopy.removeQueuedMessage}
-                          onClick={() => onRemoveQueuedPrompt(item.id)}
-                        >
-                          <CloseIcon fontSize="small" />
-                        </IconButton>
+                      {item.status === 'failed' || item.status === 'interrupted' ? (
+                        <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
+                          {item.status === 'failed'
+                            ? chatCopy.queuedMessageFailed
+                            : chatCopy.queuedMessageInterrupted}
+                        </Typography>
+                      ) : (
+                        onRemoveQueuedPrompt && (
+                          <IconButton
+                            size="small"
+                            aria-label={chatCopy.removeQueuedMessage}
+                            onClick={() => onRemoveQueuedPrompt(item.id)}
+                          >
+                            <CloseIcon fontSize="small" />
+                          </IconButton>
+                        )
                       )}
                     </Box>
                   ))}
@@ -616,9 +629,12 @@ function ChatView({
               dragActive={composerDragActive}
               fileDropTarget
               sendDisabled={
-                !canSend || (!input.trim() && images.length === 0) || isReadingPastedImage
+                !(canSend || canQueue) ||
+                (!input.trim() && images.length === 0) ||
+                isReadingPastedImage
               }
               showStop={showStopControl ?? (isGenerating || contextCompacting)}
+              sendWhileRunning={canQueue}
               onStop={() => {
                 void onStopGeneration()
               }}

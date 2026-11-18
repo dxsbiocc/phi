@@ -6,10 +6,10 @@ export const chatChinese: LocalizedCopy<typeof chatEnglish> = {
   messageEnterToQueueShiftEnterForANewLine: '输入消息，Enter 加入队列，Shift+Enter 换行',
   messageEnterToSendShiftEnterForANewLine: '输入消息，Enter 发送，Shift+Enter 换行',
   messageQueue: '消息队列',
-  valuePausedResumesAfterANewMessageIsSent: (value0: string | number) =>
-    `已暂停 ${value0} 条 · 发送新消息成功后继续`,
   valueQueued: (value0: string | number) => `排队中 ${value0} 条`,
   removeQueuedMessage: '移除排队消息',
+  queuedMessageFailed: '失败',
+  queuedMessageInterrupted: '已中断',
   messageInput: '消息输入框',
   sendMessage: '发送消息',
   stopGenerating: '停止生成',

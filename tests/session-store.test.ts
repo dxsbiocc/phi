@@ -492,3 +492,25 @@ test('recovery closes an unanswered plan review instead of leaving its card pend
     assert.equal(readSessionEvents(session.sessionId).length, 3)
   })
 })
+
+test('restart preserves a recorded completion when the manifest still claims the run is active', () => {
+  withPhiDir(() => {
+    const session = createPhiSession({
+      kind: 'ordinary',
+      cwd: '/workspace',
+      cwdRealPath: '/workspace',
+      permissionMode: 'auto'
+    })
+    const runId = createRunId()
+    updateSessionManifest(session.sessionId, { status: 'running', currentRunId: runId })
+    appendSessionEvent(session.sessionId, { type: 'run_completed', runId })
+    const [recovered] = recoverInterruptedPhiSessions()
+    assert.equal(recovered.lastRunOutcome, 'completed')
+    assert.equal(recovered.status, 'completed_unread')
+    assert.equal(recovered.currentRunId, undefined)
+    assert.deepEqual(
+      readSessionEvents(session.sessionId).map((event) => event.type),
+      ['run_completed']
+    )
+  })
+})
