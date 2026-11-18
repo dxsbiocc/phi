@@ -39,7 +39,7 @@ export function offendingResourcePaths(paths) {
 
 // Distributable sources belong to phi-packages. These are the only source
 // roots retained in Phi; Office's licensed plugin is a private exception.
-const PHI_RESOURCE_FILES = new Set(['resources/README.md', 'resources/icon.png'])
+const PHI_RESOURCE_FILES = new Set(['resources/README.md'])
 const PHI_RESOURCE_PARENTS = new Set(['resources/skills', 'resources/plugins'])
 const PHI_RESOURCE_ROOTS = [
   'resources/agents',

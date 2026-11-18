@@ -17,15 +17,13 @@ test('application icon sources use the Minimal palette and one phi stroke', () =
   assert.equal(svg.match(/<path\b/g)?.length, 1)
 })
 
-test('runtime and packaged PNG icons are the same 1024px image', () => {
-  const runtime = readFileSync('resources/icon.png')
-  const packaged = readFileSync('build/icon.png')
+test('the shared app icon is a lightweight 1024px PNG', () => {
+  const image = readFileSync('build/icon.png')
 
-  assert.deepEqual(runtime, packaged)
-  assert.equal(runtime.toString('ascii', 1, 4), 'PNG')
-  assert.equal(runtime.readUInt32BE(16), 1024)
-  assert.equal(runtime.readUInt32BE(20), 1024)
-  assert.ok(runtime.byteLength < 512 * 1024, 'startup icon data URL should stay lightweight')
+  assert.equal(image.toString('ascii', 1, 4), 'PNG')
+  assert.equal(image.readUInt32BE(16), 1024)
+  assert.equal(image.readUInt32BE(20), 1024)
+  assert.ok(image.byteLength < 512 * 1024, 'startup icon data URL should stay lightweight')
 })
 
 test('macOS and Windows icon containers are present and valid', () => {

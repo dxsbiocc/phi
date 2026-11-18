@@ -20,4 +20,4 @@ Phi is a local desktop AI workbench for project-bound agent sessions, approvals,
 
 ## Notes
 
-The existing app icon files are intentionally untouched. If this direction is approved, replace `resources/icon.png`, `build/icon.png`, and regenerate `build/icon.icns` / `build/icon.ico` from `phi-app-icon-v2.svg`.
+If this direction is approved, use `phi-app-icon-v2.svg` to update the shared `build/icon.png` and regenerate the macOS and Windows icon formats.

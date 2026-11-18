@@ -15,7 +15,8 @@ import { DEFAULT_UI_LANGUAGE, systemUiLanguage, type UiLanguage } from '../src/s
 function launchFixture(
   context: TestContext,
   main: (ready: Promise<void>, stopAfterFailure: () => void) => unknown,
-  dialogFailure = false
+  dialogFailure = false,
+  runtime: { platform: NodeJS.Platform; defaultApp?: boolean } = { platform: 'darwin' }
 ): {
   loaded: Promise<void>
   ready: () => void
@@ -50,12 +51,14 @@ function launchFixture(
   })
   const loaded = runInNewContext(`(async () => { ${outputText}\n })()`, {
     exports: {},
+    process: runtime,
     console: { error: (message: string) => logs.push(message) },
     require(specifier: string): unknown {
       switch (specifier) {
         case 'electron':
           return {
             app: {
+              setActivationPolicy: (policy: string) => calls.push(`policy ${policy}`),
               whenReady: () => readiness,
               getPreferredSystemLanguages: () => ['en-US'],
               exit: (code: number) => {
@@ -92,6 +95,28 @@ function launchFixture(
   }) as Promise<void>
   return { loaded, ready, stopped, calls, boxes, logs }
 }
+
+test('the macOS SDK does not advertise an app entry in the Dock', async (t) => {
+  for (const [runtime, policies] of [
+    [{ platform: 'darwin', defaultApp: true }, ['policy accessory']],
+    [{ platform: 'darwin' }, []],
+    [{ platform: 'linux', defaultApp: true }, []]
+  ] as const) {
+    const fixture = launchFixture(
+      t,
+      (ready) => {
+        assert.deepEqual(fixture.calls, policies)
+        return { startup: ready }
+      },
+      false,
+      runtime
+    )
+    await fixture.loaded
+    fixture.ready()
+    assert.deepEqual(fixture.calls, policies)
+    assert.deepEqual(fixture.logs, [])
+  }
+})
 
 test(
   'a main import failure opens the localized Phi dialog after ready and exits',
