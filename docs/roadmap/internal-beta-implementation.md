@@ -216,6 +216,8 @@ decision records remain as rationale, not as current product behavior.
 
 ## After Internal Beta: Group Chat And Mobile Companion
 
+The [event-driven assistant major-update plan](event-driven-assistant-implementation.md) tracks durable submission, task routing and background outcomes on a separate development branch. Beta acceptance gates still apply to platform releases.
+
 2026-10-24 scope clarification: the current [kernel plan](phi-kernel-implementation.md) delivers one execution mode for local and remote sessions with UI decoupling. [Personal/laboratory editions, membership, shared resources and communication](phi-personal-lab-roadmap.md) belong to the **next major version**. Current work only preserves [compatible design boundaries](phi-kernel-implementation.md#collaboration-compatibility); it does not implement personal identity storage or a multi-user foundation. Laboratory collaboration precedes personal friend networking within that future version. This note does not authorize coding or expand current-beta scope.
 
 Decided 2026-10-23. Design: [phi-mobile-companion-design.md](../design/phi-mobile-companion-design.md) (中文). None of this enters the beta.
