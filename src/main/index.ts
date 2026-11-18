@@ -3815,7 +3815,7 @@ function registerAppActivationHandler(): void {
   })
 }
 
-app.whenReady().then(async () => {
+export const startup = app.whenReady().then(async () => {
   if (mainWindowRetention.isQuitting()) return
   prepareStartupInterface()
   const startupSplashWindow = await openStartupSplash()
@@ -3845,6 +3845,12 @@ app.whenReady().then(async () => {
   openInitialWindow()
   registerAppActivationHandler()
 })
+
+let startupFailed = false
+export function stopAfterStartupFailure(): void {
+  startupFailed = true
+  app.quit()
+}
 
 app.on('before-quit', () => mainWindowRetention.markQuitting()) // before cleanup: close, not hide
 app.on(
@@ -3876,7 +3882,7 @@ app.on(
         safeCleanupStep('team_source_service_cleanup_failed', closeTeamPackDesktop)
       ])
     },
-    quit: () => app.quit(),
+    quit: () => (startupFailed ? app.exit(1) : app.quit()),
     timeoutMs: APP_QUIT_CLEANUP_TIMEOUT_MS
   })
 )

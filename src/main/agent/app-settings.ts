@@ -98,6 +98,14 @@ export function readAppSettings(agentDir = getPhiAgentDir()): PhiAppSettings {
   return appSettingsFromRaw(readRawSettings(agentDir, { strict: false }), agentDir)
 }
 
+/** Startup diagnostics must still work when a separate settings store is unreadable. */
+export function readAppUiLanguage(
+  fallback = defaultUiLanguage,
+  agentDir = getPhiAgentDir()
+): PhiAppSettings['uiLanguage'] {
+  return normalizeUiLanguage(readRawSettings(agentDir, { strict: false }).uiLanguage, fallback)
+}
+
 export function readLastSelectedModel(
   agentDir = getPhiAgentDir()
 ): ModelSelection | null | undefined {
