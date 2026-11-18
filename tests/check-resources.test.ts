@@ -72,7 +72,6 @@ test('Phi resources retain core assets and the private Office plugin', () => {
   assert.deepEqual(
     misplacedPhiResourcePaths([
       'resources/README.md',
-      'resources/icon.png',
       'resources/icons/catalog.json',
       'resources/icons/agent/gentle-fox.webp',
       'resources/agents/Wrapper.md',
@@ -96,6 +95,7 @@ test('Phi resources reject retired and distributable source roots even when empt
     'resources/wrappers',
     'resources/skills/nextflow/SKILL.md',
     'resources/plugins/visualization',
+    'resources/icon.png',
     'resources\\plugins\\future-plugin\\phi-plugin.yaml',
     'resources/unknown'
   ]

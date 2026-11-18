@@ -4689,7 +4689,7 @@ async function harness(
     './agent/session/permission-mode-control': permissionModeControl,
     './workspace-file-ipc': workspaceFileIpc,
     './agent/local-file-access': localFileAccess,
-    '../../resources/icon.png?asset': { default: '/icon.png' }
+    '../../build/icon.png?asset': { default: '/icon.png' }
   }
   // index.ts imports requireProject from ./agent/projects; mirror its production body over this
   // harness's getProject so lookups keep the same not-found error.
