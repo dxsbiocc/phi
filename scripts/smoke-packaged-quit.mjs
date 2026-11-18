@@ -5,8 +5,7 @@
 //
 // Copies the app to a temp dir outside the repo and launches it with an isolated
 // HOME and --user-data-dir, so real user data is untouched. It signals only the
-// PID it started: the packaged app shares bundle id cn.phiscience.phi with the dev
-// Electron app, so quitting by bundle id could hit a running dev instance.
+// PID it started: an installed Phi app can have the same bundle id as the copy.
 // The app-quit case asks AppKit to terminate that PID (NSRunningApplication), which
 // goes through applicationShouldTerminate: like the Cmd+Q menu item, without
 // needing Accessibility/System Events permission.

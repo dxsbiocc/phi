@@ -1,6 +1,9 @@
 import { normalizeUiLanguage, type UiLanguage } from '../shared/uiLanguage'
 
 const english = {
+  launchFailed: 'Phi could not start',
+  launchRecovery:
+    'Close this dialog and reopen Phi. If the problem persists, check the local logs.',
   startupFailed: 'Phi could not finish loading the interface',
   startupRecovery: 'Reload the window, or close it and start Phi again.',
   reload: 'Reload',
@@ -35,6 +38,8 @@ const english = {
 type NativeUiCopy = { readonly [Key in keyof typeof english]: string }
 
 const chinese: NativeUiCopy = {
+  launchFailed: 'Phi 启动失败',
+  launchRecovery: '关闭此窗口后重新打开 Phi。如果问题持续，请查看本地日志。',
   startupFailed: 'Phi 界面未能完成加载',
   startupRecovery: '可以重新加载窗口，或关闭后再次启动。',
   reload: '重新加载',

@@ -12,6 +12,12 @@ for (const hook of ['predev', 'prestart']) {
   })
 }
 
+test('development launch and installation keep the upstream Electron bundle intact', () => {
+  for (const hook of ['predev', 'prestart', 'postinstall']) {
+    assert.doesNotMatch(scripts[hook] ?? '', /sync:electron-icon|sync-electron-dev-icon/)
+  }
+})
+
 test('release packaging still prepares both remote-helper targets', () => {
   assert.match(scripts.build, /build:helper/)
 })

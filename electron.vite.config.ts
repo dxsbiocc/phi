@@ -2,8 +2,20 @@ import { copyFileSync, cpSync, mkdirSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
-import type { Plugin } from 'vite'
+import { normalizePath, type Plugin } from 'vite'
 import { copyOmpWorkerClosure } from './scripts/build/omp-worker-closure.mjs'
+
+const mainBootstrap = normalizePath(resolve('src/main/bootstrap.ts'))
+
+function bootstrapDependencies(
+  getModuleInfo: (id: string) => { importedIds: readonly string[] } | null
+): Set<string> {
+  const pending = new Set([mainBootstrap])
+  for (const id of pending) {
+    for (const dependency of getModuleInfo(id)?.importedIds ?? []) pending.add(dependency)
+  }
+  return pending
+}
 
 /**
  * `engine/in-process/main.ts` runs as a standalone script (omp-bridge.ts spawns
@@ -68,16 +80,20 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve('src/main/index.ts'),
+          index: mainBootstrap,
           'environment-worker': resolve('src/main/agent/environment/scan-worker.ts')
         },
         output: {
           format: 'es',
           entryFileNames: '[name].mjs',
           chunkFileNames: '[name].mjs',
-          // Both entry points use the runtime barrel. Keep its mutually dependent
-          // modules together so exported bindings initialize in the same chunk.
-          manualChunks(id): string | undefined {
+          manualChunks(id, { getModuleInfo }): string | undefined {
+            // Keep shared logging and preferences out of the workbench runtime's
+            // static imports so that bootstrap can catch failures loading that runtime.
+            if (id !== mainBootstrap && bootstrapDependencies(getModuleInfo).has(id)) {
+              return 'startup-support'
+            }
+            // Keep the mutually dependent environment modules in the same chunk.
             if (id.includes('/src/main/agent/envs/')) return 'environment-runtime'
             return undefined
           }
