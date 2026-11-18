@@ -3,6 +3,7 @@
 Date: 2026-09-05
 Updated: 2026-09-29 — content distribution (see [content-distribution decisions](../decisions/content-distribution.md)).
 Updated: 2026-10-23 — remote runtime status; post-beta order for group chat and the mobile companion.
+Updated: 2026-11-15 — scientific trust work items (see [scientific-trust-implementation.md](scientific-trust-implementation.md)); P1 addition, not a scope change.
 
 This roadmap turns the internal beta decisions into implementation phases. The beta success criterion is a reliable local desktop workbench for heavy Pi/OMX users: project-bound sessions, multiple concurrent runs, understandable approvals, visible resources, and recoverable local history.
 
@@ -138,6 +139,25 @@ Foundation (confirmed 2026-09-29): [phi-runtime-foundation.md](../design/phi-run
 - Plugins (step 6), content distribution (step 7), and remote / HPC runtime (step 8) follow after the beta, except the local skill catalog and enablement, which may land in the beta if time allows.
 - Status (2026-10-23): SSH projects now use the remote OMP RPC runtime exclusively; the rollback flag and desktop-side remote agent tools are removed. Legacy SSH sessions remain readable but cannot continue. First-use asset delivery remains release-verification work and does not change the internal beta's local workbench scope.
 - Windows x64 acceptance: install the NSIS preview on a clean Windows account and verify local chat and restart without system Bun, Conda, or WSL. The native CI smoke builds the official Python and Jupyter locks and runs a Notebook cell. Verify the separate WSL2 routes with a Linux distribution for R, Python packages such as `pysam`, and a Conda-profile Nextflow job.
+
+## P1: Scientific Trust (completion, accuracy, reproducibility)
+
+Goal: make a finished run carry evidence that it did what it reported, so a scientific result can be inspected and re-run rather than trusted on the agent's word.
+
+Plan: [scientific-trust-implementation.md](scientific-trust-implementation.md). Items T1–T8, ordered by correctness gain over change size. This is an addition inside the existing P1 wrapper reliability and P2 polish scope, not a new product surface.
+
+- T1: one primary-output verdict for every run path. A local single-wrapper run currently reports `completed` on `exitCode === 0` without checking declared primary outputs, while the composition path already fails on a missing one. Share the existing validator.
+- T2: snapshot the manifest into the run directory at creation, so upgrading a wrapper cannot retroactively change what an old run records.
+- T3: write the executing managed `envId` and lock digest into saved notebook metadata, so a `.ipynb` identifies its own environment.
+- T4: capture Nextflow version, container runtime and image digest, host OS/arch and environment digest at run time; write `unknown` with a reason rather than omitting a field.
+- T5: reject invalid samplesheet inputs consistently and report duplicate mates, ambiguous lanes, and missing mates for explicitly paired-end input before submission.
+- T6: optional closed-list machine verification on plan steps (`file_exists`, `json_path`, `tsv_columns`, `command_exit_zero`), so a self-reported `completed` can be downgraded by an objective check.
+- T7: optional `expect` assertions on manifest outputs (non-empty, minimum rows, required columns, parse-as), so an empty or truncated output is not reported as usable.
+- T8: declared QC metric extraction for a small initial wrapper set, so downstream steps receive objective numbers instead of a model's reading of a log.
+
+Sequencing: T1, T2 and T3 ship first as separate commits, none changing a shared contract. T4 follows T2; T5 is independent; T6 follows T1 and T2; T7 follows T4; T8 follows T7. T6 and T7 change shared contracts and need their renderer and Phi Packages counterparts in the same change.
+
+Does not include: provenance signing, remote attestation, deterministic bit-identical replay, a generic verification framework, or any change to the run state machine, approval model, or kernel protocol.
 
 ## P1: In-App Terminal (local, manual)
 
