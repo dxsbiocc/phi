@@ -1,21 +1,284 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import fs, { chmod, link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import fs, {
+  chmod,
+  link,
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+  unlink,
+  writeFile
+} from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test, { type TestContext } from 'node:test'
 
+import {
+  MAX_PROMPT_IMAGE_BYTES,
+  MAX_PROMPT_IMAGES,
+  type PromptImageInput
+} from '../src/shared/promptImageTypes'
 import { createAssistantInbox } from '../src/main/session-runtime/assistant-inbox'
 
 const scope = { conversationId: 'chat', projectId: 'project-a' }
 const peer = { conversationId: 'chat', projectId: 'project-b' }
+const gif = (suffix: string): PromptImageInput => ({
+  mimeType: 'image/gif',
+  data: Buffer.from(`GIF89a${suffix}`).toString('base64')
+})
 
 async function fixture(t: TestContext): Promise<{ directory: string; path: string }> {
   const directory = await mkdtemp(join(tmpdir(), 'phi-assistant-inbox-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   return { directory, path: join(directory, 'assistant-inbox.json') }
 }
+
+function restoreFsMocks(t: TestContext): void {
+  t.mock.restoreAll()
+  syncBuiltinESMExports()
+}
+
+test('reopened inbox preserves image-only prompts, ordering, mode and request identity', async (t) => {
+  const { directory, path } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const images = [gif('first'), gif('next'), gif('first')]
+  const accepted = await inbox.submit(scope, 'multimodal', '', { images, mode: 'plan' })
+  assert.equal(accepted.mode, 'plan')
+  assert.equal((await readdir(join(directory, 'attachments'))).length, 2)
+  assert.equal((await readFile(path, 'utf8')).includes(images[0].data), false)
+  await assert.rejects(inbox.submit(scope, 'multimodal', '', { images }), /request conflict/)
+  await assert.rejects(
+    inbox.submit(scope, 'multimodal', '', { images: images.slice(1), mode: 'plan' }),
+    /request conflict/
+  )
+  await assert.rejects(
+    inbox.submit(scope, 'invalid', '', { images: [{ ...images[0], data: 'AAAA' }] })
+  )
+  await assert.rejects(inbox.submit(scope, 'sparse', '', { images: new Array(1) }))
+  const recovered = createAssistantInbox(directory)
+  await recovered.recover()
+  assert.deepEqual(
+    await recovered.submit(scope, 'multimodal', '', { images, mode: 'plan' }),
+    accepted
+  )
+  const attemptId = randomUUID()
+  assert.equal((await recovered.claim(scope, attemptId))?.id, accepted.id)
+  await assert.rejects(recovered.loadImages(peer, accepted.id, attemptId), /no longer active/)
+  await assert.rejects(recovered.loadImages(scope, accepted.id, randomUUID()), /no longer active/)
+  assert.deepEqual(await recovered.loadImages(scope, accepted.id, attemptId), images)
+  await recovered.settle(scope, accepted.id, attemptId, 'succeeded')
+  await assert.rejects(recovered.loadImages(scope, accepted.id, attemptId), /no longer active/)
+})
+
+test('attachment integrity fails closed on replacement, missing files and links', async (t) => {
+  const { directory } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const image = gif('first')
+  const entry = await inbox.submit(scope, 'image', 'inspect', { images: [image] })
+  const attemptId = randomUUID()
+  await inbox.claim(scope, attemptId)
+  const path = join(directory, 'attachments', `${entry.attachments?.[0].digest}.image`)
+  await writeFile(path, Buffer.from('GIF89aother'))
+  await assert.rejects(inbox.loadImages(scope, entry.id, attemptId), /integrity/)
+  await unlink(path)
+  await assert.rejects(inbox.loadImages(scope, entry.id, attemptId), /ENOENT/)
+  if (process.platform === 'win32') return
+  const original = join(directory, 'unrelated')
+  await writeFile(original, Buffer.from(image.data, 'base64'), { mode: 0o600 })
+  await symlink(original, path, 'file')
+  await assert.rejects(inbox.loadImages(scope, entry.id, attemptId), /Invalid/)
+  await unlink(path)
+  await link(original, path)
+  await assert.rejects(inbox.loadImages(scope, entry.id, attemptId), /Invalid/)
+  assert.deepEqual(await readFile(original), Buffer.from(image.data, 'base64'))
+})
+
+test('the inbox captures attachment identity before a caller can change its draft', async (t) => {
+  const { directory } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const original = gif('original')
+  const image = { ...original }
+  const images = [image]
+  const submitted = inbox.submit(scope, 'mutable-draft', '', { images })
+  image.data = gif('changed').data
+  images.push(gif('added'))
+  const entry = await submitted
+  const attemptId = randomUUID()
+  await inbox.claim(scope, attemptId)
+  assert.deepEqual(await inbox.loadImages(scope, entry.id, attemptId), [original])
+})
+
+test('cancel and success release unused blobs without invalidating duplicate receipts', async (t) => {
+  const { directory } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const attachments = join(directory, 'attachments')
+  const images = [gif('shared')]
+  const first = await inbox.submit(scope, 'one', '', { images })
+  const second = await inbox.submit(peer, 'two', '', { images })
+  const uncertain = await inbox.submit(scope, 'three', '', { images: [gif('pending evidence')] })
+  assert.equal((await readdir(attachments)).length, 2)
+  assert.equal(await inbox.cancel(scope, first.id), true)
+  assert.equal((await readdir(attachments)).length, 2)
+  const attemptId = randomUUID()
+  assert.equal((await inbox.claim(peer, attemptId))?.id, second.id)
+  assert.equal(await inbox.settle(peer, second.id, attemptId, 'succeeded'), true)
+  assert.equal(await inbox.settle(peer, second.id, attemptId, 'succeeded'), true)
+  assert.equal(await inbox.settle(peer, second.id, attemptId, 'failed'), false)
+  assert.equal((await inbox.submit(peer, 'two', '', { images })).status, 'succeeded')
+  assert.equal((await inbox.submit(scope, 'one', '', { images })).status, 'cancelled')
+  await assert.rejects(inbox.submit(peer, 'two', '', { images: [gif('different')] }), /conflict/)
+  assert.deepEqual(await readdir(attachments), [`${uncertain.attachments?.[0].digest}.image`])
+})
+
+test(
+  'attachment directory sync failure prevents acknowledging or publishing a snapshot',
+  {
+    skip: process.platform === 'win32' && 'directory sync is unavailable'
+  },
+  async (t) => {
+    const { directory, path } = await fixture(t)
+    const attachments = join(directory, 'attachments')
+    const inbox = createAssistantInbox(directory)
+    const originalOpen = fs.open
+    let syncRequested = false
+    t.after(() => restoreFsMocks(t))
+    t.mock.method(fs, 'open', async (...args: Parameters<typeof fs.open>) => {
+      if (args[0] === attachments) {
+        syncRequested = true
+        throw new Error('attachment sync failed')
+      }
+      return originalOpen(...args)
+    })
+    syncBuiltinESMExports()
+    await assert.rejects(
+      inbox.submit(scope, 'image', '', { images: [gif('first')] }),
+      /sync failed/
+    )
+    assert.equal(syncRequested, true)
+    await assert.rejects(readFile(path), /ENOENT/)
+    restoreFsMocks(t)
+    await inbox.recover()
+    assert.deepEqual(await readdir(attachments), [])
+  }
+)
+
+test('snapshot publication failure cleans only unpublished attachments', async (t) => {
+  const { directory, path } = await fixture(t)
+  const originalRename = fs.rename
+  const attachments = join(directory, 'attachments')
+  const inbox = createAssistantInbox(directory)
+  const kept = await inbox.submit(scope, 'kept', '', { images: [gif('first')] })
+  const file = `${kept.attachments?.[0].digest}.image`
+  let failed = false
+  t.after(() => restoreFsMocks(t))
+  t.mock.method(fs, 'rename', async (...args: Parameters<typeof fs.rename>) => {
+    if (args[1] === path) {
+      failed = true
+      throw new Error('snapshot publish failed')
+    }
+    return originalRename(...args)
+  })
+  syncBuiltinESMExports()
+  await assert.rejects(
+    inbox.submit(scope, 'new', '', { images: [gif('second')] }),
+    /Could not persist/
+  )
+  assert.equal(failed, true)
+  restoreFsMocks(t)
+  assert.deepEqual(await readdir(attachments), [file])
+  assert.deepEqual(await inbox.list(scope), [kept])
+})
+
+test('recovery preserves attachments after uncertain snapshot publication and removes known orphans', async (t) => {
+  const { directory, path } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const attachments = join(directory, 'attachments')
+  const images = [gif('verify')]
+  const originalRename = fs.rename
+  let published = false
+  t.after(() => restoreFsMocks(t))
+  t.mock.method(fs, 'rename', async (...args: Parameters<typeof fs.rename>) => {
+    await originalRename(...args)
+    if (args[1] === path) {
+      published = true
+      throw new Error('snapshot publish unconfirmed')
+    }
+  })
+  syncBuiltinESMExports()
+  await assert.rejects(inbox.submit(scope, 'uncertain', '', { images }), /Could not persist/)
+  assert.equal(published, true)
+  restoreFsMocks(t)
+  const attachmentOrphan = `${'0'.repeat(64)}.image`
+  const attachmentTemp = `.tmp.${randomUUID()}`
+  const snapshotTemp = `assistant-inbox.json.tmp.${process.pid}.${randomUUID()}`
+  for (const [dir, name] of [
+    [attachments, attachmentOrphan],
+    [attachments, attachmentTemp],
+    [directory, snapshotTemp]
+  ]) {
+    await writeFile(join(dir, name), 'orphan bytes', { mode: 0o600 })
+  }
+  await writeFile(join(attachments, 'keep-this-file'), 'unrelated', { mode: 0o600 })
+  const recovered = createAssistantInbox(directory)
+  await recovered.recover()
+  const [entry] = await recovered.list(scope)
+  const attemptId = randomUUID()
+  assert.equal((await recovered.claim(scope, attemptId))?.id, entry.id)
+  assert.deepEqual(await recovered.loadImages(scope, entry.id, attemptId), images)
+  assert.deepEqual((await readdir(attachments)).sort(), [
+    `${entry.attachments?.[0].digest}.image`,
+    'keep-this-file'
+  ])
+  await assert.rejects(readFile(join(directory, snapshotTemp)), /ENOENT/)
+  assert.deepEqual(
+    await recovered.submit(scope, 'uncertain', '', { images }),
+    await recovered.claim(scope, attemptId)
+  )
+})
+
+test('recovery leaves attachment data untouched if the snapshot cannot be verified', async (t) => {
+  const { directory, path } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const entry = await inbox.submit(scope, 'accepted', '', { images: [gif('retain')] })
+  const stored = join(directory, 'attachments', `${entry.attachments?.[0].digest}.image`)
+  await writeFile(path, '{truncated')
+  await assert.rejects(inbox.recover(), /Invalid or inaccessible/)
+  assert.equal(await readFile(stored, 'utf8'), 'GIF89aretain')
+})
+
+test('the attachment budget blocks new blobs and allows existing submissions to be cancelled', async (t) => {
+  const { directory, path } = await fixture(t)
+  // A metadata-only fixture reaches 256 MiB without creating large image files.
+  const entries = Array.from({ length: 8 }, (_, order) => ({
+    id: randomUUID(),
+    requestId: String(order),
+    scope,
+    text: '',
+    order,
+    status: 'queued',
+    attachments: Array.from({ length: MAX_PROMPT_IMAGES }, (_, i) => ({
+      digest: (order * MAX_PROMPT_IMAGES + i).toString(16).padStart(64, '0'),
+      mimeType: 'image/png',
+      bytes: MAX_PROMPT_IMAGE_BYTES
+    }))
+  }))
+  await writeFile(path, JSON.stringify({ version: 1, entries }), { mode: 0o600 })
+  const inbox = createAssistantInbox(directory)
+  await assert.rejects(
+    inbox.submit(scope, 'overflow', '', { images: [gif('one')] }),
+    /storage is full/
+  )
+  assert.deepEqual(await inbox.list(scope), entries)
+  assert.equal(await inbox.cancel(scope, entries[0].id), true)
+  assert.equal(
+    (await inbox.submit(scope, 'overflow', '', { images: [gif('one')] })).status,
+    'queued'
+  )
+})
 
 function injectDirectorySyncFailure(t: TestContext, directory: string): () => void {
   const originalOpen = fs.open

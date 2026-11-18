@@ -62,7 +62,7 @@ export function validatePromptImages(value: unknown): PromptImageInput[] {
   if (!Array.isArray(value) || value.length > MAX_PROMPT_IMAGES) {
     throw new Error(`一次最多发送 ${MAX_PROMPT_IMAGES} 张图片`)
   }
-  return value.map((image) => {
+  return Array.from(value, (image) => {
     const decoded = decodeImage(image)
     return { mimeType: decoded.mimeType, data: decoded.bytes.toString('base64') }
   })
