@@ -3,7 +3,6 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { IPC } from '../../shared/ipcChannels'
 import type { AgentUserInteractionResponse } from '../../shared/agentInteractionTypes'
 import type { PromptImageInput } from '../../shared/promptImageTypes'
-import type { PermissionMode } from '../agent/projects'
 import {
   MAX_AGENT_STEER_LENGTH,
   recordAgentSteer,
@@ -11,15 +10,12 @@ import {
 } from '../agent/agents/agent-run-control-request'
 import { stopActivePrompt, type ActivePromptStopOptions } from '../agent/session/active-prompt-stop'
 import { readPromptImage, validatePromptImages } from '../agent/session/prompt-images'
-import type { PromptTargetInput } from '../agent/session/prompt-target-control'
+import type {
+  PromptRunDestination,
+  PromptTargetInput
+} from '../agent/session/prompt-target-control'
 
-interface PromptRunInput {
-  sessionKey: string
-  snapshot: {
-    path: string | undefined
-    cwd: string
-    permissionMode: PermissionMode
-  }
+interface PromptRunInput extends PromptRunDestination {
   text: string
   images?: PromptImageInput[]
   promptTarget: PromptTargetInput | null
@@ -31,15 +27,13 @@ export interface AgentIpcOptions {
   ipcMain: Pick<IpcMain, 'handle'>
   state: {
     getCurrentSessionKey: () => string
-    getCurrentSessionPath: () => string | undefined
-    getCurrentCwd: () => string
-    getCurrentPermissionMode: () => PermissionMode
-    resolveSessionKeyAlias: (key: string) => string
-    runtimeSessionPath: (path: string | undefined) => string | undefined
   }
   prompt: {
+    requireMainWindowRenderer: (event: IpcMainInvokeEvent) => BrowserWindow
     parseTarget: (input: unknown) => PromptTargetInput | null
-    alignCurrentSessionToTarget: (input: unknown) => Promise<void>
+    resolveDestination: (
+      target: PromptTargetInput | null
+    ) => PromptRunDestination | Promise<PromptRunDestination>
     submit: (input: PromptRunInput) => Promise<unknown>
   }
   stop: Omit<ActivePromptStopOptions, 'getCurrentSessionKey'>
@@ -63,7 +57,8 @@ export interface AgentInteractionIpcOptions {
 export function registerAgentPromptIpc(options: AgentIpcOptions): void {
   const ipcMain = options.ipcMain
 
-  ipcMain.handle(IPC.agent.prompt, async (_, text: string, targetInput?: unknown) => {
+  ipcMain.handle(IPC.agent.prompt, async (event, text: string, targetInput?: unknown) => {
+    options.prompt.requireMainWindowRenderer(event)
     const normalizedText = typeof text === 'string' ? text.trim() : ''
     const images = validatePromptImages(
       targetInput && typeof targetInput === 'object'
@@ -72,17 +67,11 @@ export function registerAgentPromptIpc(options: AgentIpcOptions): void {
     )
     if (!normalizedText && images.length === 0) return null
     const promptTarget = options.prompt.parseTarget(targetInput)
-    if (targetInput !== undefined) {
-      await options.prompt.alignCurrentSessionToTarget(targetInput)
-    }
+    const destination = options.prompt.resolveDestination(promptTarget)
+    const bound = destination instanceof Promise ? await destination : destination
 
     return options.prompt.submit({
-      sessionKey: options.state.resolveSessionKeyAlias(options.state.getCurrentSessionKey()),
-      snapshot: {
-        path: options.state.runtimeSessionPath(options.state.getCurrentSessionPath()),
-        cwd: options.state.getCurrentCwd(),
-        permissionMode: options.state.getCurrentPermissionMode()
-      },
+      ...bound,
       text: normalizedText,
       images,
       promptTarget,
@@ -91,7 +80,10 @@ export function registerAgentPromptIpc(options: AgentIpcOptions): void {
     })
   })
 
-  ipcMain.handle(IPC.agent.readPromptImage, async (_, ref: unknown) => readPromptImage(ref))
+  ipcMain.handle(IPC.agent.readPromptImage, async (event, ref: unknown) => {
+    options.prompt.requireMainWindowRenderer(event)
+    return readPromptImage(ref)
+  })
 }
 
 export function registerAgentRunControlIpc(options: AgentIpcOptions): void {

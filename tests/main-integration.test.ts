@@ -488,6 +488,7 @@ type HarnessOptions = {
     options: Record<string, unknown>,
     control?: { signal?: AbortSignal; assertCurrent(): void }
   ) => Promise<void>
+  beforeRuntimeSessionOpen?: (file: string) => void | Promise<void>
   historyFork?: (params: {
     path: string
     cwd: string
@@ -2010,9 +2011,11 @@ async function harness(
         file: 'in-memory',
         cwd
       }),
-      openRuntimeSessionManager: (file: string): { getCwd: () => string } => ({
-        getCwd: () => runtimeSessionCwds.get(file) ?? `/projects/${file}`
-      })
+      openRuntimeSessionManager: async (file: string): Promise<{ getCwd: () => string }> => {
+        const pending = harnessOptions.beforeRuntimeSessionOpen?.(file)
+        if (pending) await pending
+        return { getCwd: () => runtimeSessionCwds.get(file) ?? `/projects/${file}` }
+      }
     },
     './agent/session/session-title-generation': {
       ...sessionTitleGeneration,
@@ -8986,6 +8989,63 @@ test('main IPC: prompt target controls the write destination even after another 
   assert.equal(otherSession?.promptTexts.length, 0)
   assert.equal(app.createdPhiSessions.at(-1)?.runtimeSessionPath, 'selected.jsonl')
   assert.equal(app.appendedSessionEvents.at(-1)?.event.content, 'write to selected')
+})
+
+test('main IPC: resolving a journal prompt does not override intervening navigation', async () => {
+  const readStarted = deferred<void>()
+  const releaseRead = deferred<void>()
+  let pause = false
+  const app = await harness(undefined, {
+    beforeRuntimeSessionOpen: (file) => {
+      if (!pause || file !== 'origin.jsonl') return
+      readStarted.resolve()
+      return releaseRead.promise
+    }
+  })
+  const target = await app.invoke('sessions:switch', 'origin.jsonl')
+  await app.invoke('sessions:switch', 'intermediate.jsonl')
+  pause = true
+
+  const submitted = app.invoke('agent:prompt', 'keep the original destination', target)
+  await readStarted.promise
+  await app.invoke('sessions:switch', 'newly-selected.jsonl')
+  releaseRead.resolve()
+  await submitted
+
+  const current = (await app.invoke('sessions:current')) as { path?: string }
+  assert.equal(current.path, 'newly-selected.jsonl')
+  const original = app.sessions.find((session) => session.sessionFile === 'origin.jsonl')
+  const selected = app.sessions.find((session) => session.sessionFile === 'newly-selected.jsonl')
+  assert.deepEqual(original?.promptTexts, ['keep the original destination'])
+  assert.deepEqual(selected?.promptTexts, [])
+})
+
+test('main IPC: a concurrent selection cannot retarget a saved conversation prompt', async () => {
+  const app = await harness()
+  await app.invoke('sessions:switch', 'origin.jsonl')
+  const origin = (await app.invoke('agent:prompt', 'start origin')) as { path: string }
+  await app.invoke('sessions:switch', 'other.jsonl')
+  const other = (await app.invoke('agent:prompt', 'start other')) as { path: string }
+  const originTarget = await app.invoke('sessions:switch', origin.path)
+  await app.invoke('sessions:switch', other.path)
+
+  const submitted = app.invoke('agent:prompt', 'bound to origin', originTarget)
+  const navigation = app.invoke('sessions:switch', other.path)
+  await Promise.all([submitted, navigation])
+
+  const current = (await app.invoke('sessions:current')) as { path?: string }
+  assert.equal(current.path, other.path)
+  const original = app.sessions.find((session) => session.sessionFile === 'origin.jsonl')
+  const selected = app.sessions.find((session) => session.sessionFile === 'other.jsonl')
+  assert.deepEqual(original?.promptTexts, ['start origin', 'bound to origin'])
+  assert.deepEqual(selected?.promptTexts, ['start other'])
+})
+
+test('main IPC: foreign windows cannot submit chat prompts or read their images', async () => {
+  const app = await harness()
+  await assert.rejects(app.invokeFromForeign('agent:prompt', 'not authorized'), /authorized/)
+  await assert.rejects(app.invokeFromForeign('agent:readPromptImage', {}), /authorized/)
+  assert.equal(app.createdPhiSessions.length, 0)
 })
 
 test('main IPC: context usage follows the selected session and preserves unavailable capacity', async () => {

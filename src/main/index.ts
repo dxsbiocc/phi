@@ -122,8 +122,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { createAgentSession } from './agent/session/session-manager'
 import type { ThinkingLevel } from './agent/runtime/model-thinking-levels'
 import {
-  alignCurrentSessionToPromptTarget,
   parsePromptTarget,
+  resolvePromptRunDestination,
   type PromptTargetControlOptions
 } from './agent/session/prompt-target-control'
 import {
@@ -3280,40 +3280,34 @@ function registerRemoteFileAndWrapperIpc(
 
 function registerAgentIpc(): void {
   const promptTargetControlOptions: PromptTargetControlOptions = {
-    state: {
-      getCurrentSessionPath: () => sessionState.sessionPath,
-      getCurrentCwd: () => sessionState.cwd,
-      sessionPermissionModes: preferences.permissionModes
-    },
+    getCurrentDestination: () => ({
+      sessionKey: sessionKeys.canonicalize(sessionState.sessionKey),
+      snapshot: {
+        path: sessionState.sessionPath,
+        cwd: sessionState.cwd,
+        permissionMode: sessionState.permissionMode
+      }
+    }),
     identity: {
       createPhiSessionKey: sessionKeys.createPhiKey.bind(sessionKeys),
       createSessionKey: sessionKeys.createKey.bind(sessionKeys),
       linkPhiManagedSessionKey: sessionKeyLinking.linkPhiManagedSessionKey,
-      setPhiSessionIdForKey: sessionKeys.setPhiSessionId.bind(sessionKeys),
       resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys)
     },
-    lifecycle: {
-      getLifecycleForKey: lifecycles.forKey.bind(lifecycles),
-      getCurrentLifecycle: () => lifecycles.forKey(sessionState.sessionKey),
-      disposeAndSwitchSession,
-      openRuntimeSessionManager,
-      resolveSessionPermissionMode: sessionResolution.resolveSessionPermissionMode
-    }
+    getSessionGeneration: (key) => lifecycles.forKey(key).currentGeneration,
+    openRuntimeSessionManager,
+    resolveSessionPermissionMode: sessionResolution.resolveSessionPermissionMode
   }
   const agentIpcOptions: AgentIpcOptions = {
     ipcMain,
     state: {
-      getCurrentSessionKey: () => sessionState.sessionKey,
-      getCurrentSessionPath: () => sessionState.sessionPath,
-      getCurrentCwd: () => sessionState.cwd,
-      getCurrentPermissionMode: () => sessionState.permissionMode,
-      resolveSessionKeyAlias: sessionKeys.canonicalize.bind(sessionKeys),
-      runtimeSessionPath: sessionKeyLinking.runtimeSessionPath
+      getCurrentSessionKey: () => sessionState.sessionKey
     },
     prompt: {
+      requireMainWindowRenderer,
       parseTarget: (input) => parsePromptTarget(input, () => sessionState.cwd),
-      alignCurrentSessionToTarget: (input) =>
-        alignCurrentSessionToPromptTarget(input, promptTargetControlOptions),
+      resolveDestination: (target) =>
+        resolvePromptRunDestination(target, promptTargetControlOptions),
       submit: submitPromptRun
     },
     stop: {
