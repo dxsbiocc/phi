@@ -1,0 +1,269 @@
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import fs, { chmod, link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test, { type TestContext } from 'node:test'
+
+import { createAssistantInbox } from '../src/main/session-runtime/assistant-inbox'
+
+const scope = { conversationId: 'chat', projectId: 'project-a' }
+const peer = { conversationId: 'chat', projectId: 'project-b' }
+
+async function fixture(t: TestContext): Promise<{ directory: string; path: string }> {
+  const directory = await mkdtemp(join(tmpdir(), 'phi-assistant-inbox-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  return { directory, path: join(directory, 'assistant-inbox.json') }
+}
+
+function injectDirectorySyncFailure(t: TestContext, directory: string): () => void {
+  const originalOpen = fs.open
+  let directoryOpens = 0
+  t.mock.method(fs, 'open', async (...args: Parameters<typeof fs.open>) => {
+    if (args[0] === directory && ++directoryOpens > 1) {
+      throw new Error('injected directory sync failure')
+    }
+    return originalOpen(...args)
+  })
+  syncBuiltinESMExports()
+  return () => {
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  }
+}
+
+test('concurrent submissions deduplicate by scope and retain their exact text and order', async (t) => {
+  const { directory } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const [first, duplicate, second, separate] = await Promise.all([
+    inbox.submit(scope, 'request-1', '  first  '),
+    inbox.submit(scope, 'request-1', '  first  '),
+    inbox.submit(scope, 'request-2', 'second'),
+    inbox.submit(peer, 'request-1', 'different scope')
+  ])
+  assert.deepEqual(duplicate, first)
+  assert.equal(first.text, '  first  ')
+  assert.notEqual(separate.id, first.id)
+  assert.ok(second.order > first.order)
+  await assert.rejects(inbox.submit(scope, 'request-1', 'first'))
+  await assert.rejects(inbox.submit(scope, 'blank', '  '))
+  const reopened = createAssistantInbox(directory)
+  assert.deepEqual(await reopened.list(scope), [first, second])
+  assert.deepEqual(await reopened.list(peer), [separate])
+})
+
+test('claims in order, fences each attempt and cancels only the specified queued entry', async (t) => {
+  const { directory } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const first = await inbox.submit(scope, '1', 'first')
+  const second = await inbox.submit(scope, '2', 'second')
+  const third = await inbox.submit(scope, '3', 'third')
+  const separate = await inbox.submit(peer, '1', 'peer')
+  const [claim, overlap, other] = await Promise.all([
+    inbox.claim(scope, randomUUID()),
+    inbox.claim(scope, randomUUID()),
+    inbox.claim(peer, randomUUID())
+  ])
+  assert.ok(claim)
+  assert.equal(claim.id, first.id)
+  assert.equal(claim.status, 'running')
+  assert.ok(claim.attemptId)
+  assert.equal(overlap, null)
+  assert.equal(other?.id, separate.id)
+  assert.equal(await inbox.cancel(scope, first.id), false)
+  assert.equal(await inbox.cancel(peer, second.id), false)
+  assert.equal(await inbox.cancel(scope, second.id), true)
+  assert.equal(await inbox.cancel(scope, second.id), false)
+  assert.equal(await inbox.settle(peer, first.id, claim.attemptId, 'succeeded'), false)
+  assert.equal(await inbox.settle(scope, first.id, randomUUID(), 'succeeded'), false)
+  assert.equal(await inbox.settle(scope, first.id, claim.attemptId, 'succeeded'), true)
+  assert.equal(await inbox.settle(scope, first.id, claim.attemptId, 'failed'), false)
+  assert.equal(await inbox.claim(scope, claim.attemptId), null)
+  const later = await inbox.claim(scope, randomUUID())
+  assert.ok(later)
+  assert.equal(later.id, third.id)
+  assert.ok(later.attemptId)
+  assert.equal(await inbox.settle(scope, third.id, later.attemptId, 'failed'), true)
+  assert.deepEqual(
+    (await inbox.list(scope)).map((entry) => entry.status),
+    ['succeeded', 'cancelled', 'failed']
+  )
+  const duplicate = await inbox.submit(scope, '1', 'first')
+  assert.equal(duplicate.id, first.id)
+  assert.equal(duplicate.status, 'succeeded')
+  assert.equal((await inbox.list(peer))[0]?.status, 'running')
+})
+
+test('after reopening, only an explicit recovery interrupts claims and preserves pending input', async (t) => {
+  const { directory } = await fixture(t)
+  const original = createAssistantInbox(directory)
+  const first = await original.submit(scope, 'old', 'might have external effects')
+  const next = await original.submit(scope, 'next', 'never executed')
+  const claimed = await original.claim(scope, randomUUID())
+  assert.ok(claimed?.attemptId)
+
+  const reopened = createAssistantInbox(directory)
+  assert.equal(await reopened.claim(scope, randomUUID()), null)
+  await reopened.recover()
+  await reopened.recover()
+  assert.equal(await reopened.settle(scope, first.id, claimed.attemptId, 'succeeded'), false)
+  assert.equal(await reopened.claim(scope, claimed.attemptId), null)
+  assert.equal((await reopened.claim(scope, randomUUID()))?.id, next.id)
+  assert.deepEqual(
+    (await reopened.list(scope)).map((entry) => entry.status),
+    ['interrupted', 'running']
+  )
+})
+
+test('an invalid snapshot is never replaced and recovery of storage unblocks the same instance', async (t) => {
+  const { directory, path } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const corrupted = '{"version":2,"entries":["private prompt marker"]}'
+  await writeFile(path, corrupted, { mode: 0o600 })
+  await assert.rejects(inbox.submit(scope, 'request', 'new'), (error: unknown) => {
+    assert.ok(error instanceof Error)
+    assert.doesNotMatch(error.message, /private prompt marker/)
+    return true
+  })
+  await assert.rejects(inbox.recover())
+  assert.equal(await readFile(path, 'utf8'), corrupted)
+  await writeFile(path, JSON.stringify({ version: 1, entries: [] }))
+  assert.equal((await inbox.submit(scope, 'request', 'new')).status, 'queued')
+})
+
+test('duplicate receipts in a syntactically valid snapshot fail closed', async (t) => {
+  const { directory, path } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const entry = await inbox.submit(scope, 'same', 'first')
+  const duplicate = { ...entry, id: randomUUID(), order: entry.order + 1 }
+  const corrupted = JSON.stringify({ version: 1, entries: [entry, duplicate] })
+  await writeFile(path, corrupted)
+  await assert.rejects(inbox.list(scope))
+  await assert.rejects(inbox.claim(scope, randomUUID()))
+  assert.equal(await readFile(path, 'utf8'), corrupted)
+})
+
+test('capacity blocks new admissions while existing tasks can be claimed and settled', async (t) => {
+  const { directory, path } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const first = await inbox.submit(scope, 'first', 'first')
+  const entries = [
+    first,
+    ...Array.from({ length: 255 }, (_, index) => ({
+      ...first,
+      id: randomUUID(),
+      requestId: `request-${index}`,
+      order: index + 1
+    }))
+  ]
+  await writeFile(path, JSON.stringify({ version: 1, entries }))
+  await assert.rejects(inbox.submit(scope, 'overflow', 'one too many'), /full/)
+  assert.equal((await inbox.submit(scope, 'first', 'first')).id, first.id)
+  const claimed = await inbox.claim(scope, randomUUID())
+  assert.ok(claimed)
+  assert.equal(claimed.id, first.id)
+  assert.equal(await inbox.settle(scope, first.id, claimed.attemptId, 'succeeded'), true)
+  assert.equal(await inbox.cancel(scope, entries[1].id), true)
+  assert.equal((await inbox.list(scope)).length, entries.length)
+})
+
+test('oversized submissions fail without retaining their text or consuming a request ID', async (t) => {
+  const { directory } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const text = 'private prompt marker'.repeat(256 * 1024)
+  await assert.rejects(inbox.submit(scope, 'request', text), (error: unknown) => {
+    assert.ok(error instanceof Error)
+    assert.doesNotMatch(error.message, /private prompt marker/)
+    return true
+  })
+  assert.deepEqual(await inbox.list(scope), [])
+  assert.equal((await inbox.submit(scope, 'request', 'new attempt')).text, 'new attempt')
+})
+
+test('a rejected write creates no receipt and does not poison the writer', async (t) => {
+  const { directory } = await fixture(t)
+  const missingDirectory = join(directory, 'missing')
+  const inbox = createAssistantInbox(missingDirectory)
+  await assert.rejects(inbox.submit(scope, 'request', 'prior attempt'))
+  await mkdir(missingDirectory, { mode: 0o700 })
+  assert.deepEqual(await inbox.list(scope), [])
+  assert.equal((await inbox.submit(scope, 'request', 'new attempt')).text, 'new attempt')
+})
+
+test(
+  'a failure after rename rejects the receipt until directory sync confirms the original entry',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const { directory, path } = await fixture(t)
+    const inbox = createAssistantInbox(directory)
+    const restore = injectDirectorySyncFailure(t, directory)
+    let originalId: string
+    try {
+      await assert.rejects(inbox.submit(scope, 'request', 'original text'), /persist/)
+      const stored = JSON.parse(await readFile(path, 'utf8')) as { entries: { id: string }[] }
+      assert.ok(stored.entries[0])
+      originalId = stored.entries[0].id
+      await assert.rejects(inbox.submit(scope, 'request', 'original text'), /snapshot/)
+    } finally {
+      restore()
+    }
+    assert.equal((await inbox.submit(scope, 'request', 'original text')).id, originalId)
+    assert.equal((await inbox.list(scope)).length, 1)
+  }
+)
+
+test(
+  'a claim can retry its original attempt after rename without interrupting a running peer',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const { directory } = await fixture(t)
+    const inbox = createAssistantInbox(directory)
+    const queued = await inbox.submit(scope, 'request', 'first')
+    await inbox.submit(scope, 'next', 'next')
+    const peerEntry = await inbox.submit(peer, 'other', 'peer')
+    const peerAttempt = await inbox.claim(peer, randomUUID())
+    const attemptId = randomUUID()
+    const restore = injectDirectorySyncFailure(t, directory)
+    try {
+      await assert.rejects(inbox.claim(scope, attemptId), /persist/)
+      await assert.rejects(inbox.claim(scope, attemptId), /snapshot/)
+    } finally {
+      restore()
+    }
+    assert.equal(await inbox.claim(scope, randomUUID()), null)
+    assert.equal(await inbox.claim(peer, attemptId), null)
+    const received = await inbox.claim(scope, attemptId)
+    assert.equal(received?.id, queued.id)
+    assert.equal(received?.attemptId, attemptId)
+    assert.equal(await inbox.settle(scope, queued.id, attemptId, 'succeeded'), true)
+    assert.deepEqual(await inbox.list(peer), [peerAttempt])
+    assert.equal(peerAttempt?.id, peerEntry.id)
+    assert.equal((await inbox.claim(scope, randomUUID()))?.requestId, 'next')
+  }
+)
+
+test(
+  'the snapshot rejects linked files and group-readable permissions',
+  {
+    skip: process.platform === 'win32'
+  },
+  async (t) => {
+    const { directory, path } = await fixture(t)
+    const alternate = join(directory, 'alternate.json')
+    const empty = JSON.stringify({ version: 1, entries: [] })
+    await writeFile(alternate, empty, { mode: 0o600 })
+    await symlink(alternate, path)
+    const inbox = createAssistantInbox(directory)
+    await assert.rejects(inbox.submit(scope, 'request', 'hidden'))
+    assert.equal(await readFile(alternate, 'utf8'), empty)
+    await rm(path)
+    await link(alternate, path)
+    await assert.rejects(inbox.list(scope))
+    await rm(path)
+    await writeFile(path, empty, { mode: 0o600 })
+    await chmod(path, 0o640)
+    await assert.rejects(inbox.list(scope))
+    assert.equal(await readFile(path, 'utf8'), empty)
+  }
+)
