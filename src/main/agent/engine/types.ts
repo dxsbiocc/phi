@@ -379,6 +379,8 @@ export type PhiHostRequestContext = {
    * SSH. The kernel owns plan state there, so the RPC-era remote proofs above do not apply.
    */
   readonly kernelOrigin?: true
+  /** Execution site resolved by the desktop broker, independent of the request cancellation signal. */
+  readonly kernelExecutionHost?: 'local' | 'ssh'
 }
 
 export type PhiHostRequestHandler = (

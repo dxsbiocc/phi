@@ -115,6 +115,7 @@ type ServiceContext = {
   binding: KernelDesktopServiceBinding
   host: KernelHostRequestContext
   legacy: {
+    kernelExecutionHost: KernelDesktopServiceBinding['executionHost']
     signal: AbortSignal
     originSessionId: string
     agentRunId?: string
@@ -155,6 +156,7 @@ async function serviceContext(
     binding,
     host: context,
     legacy: {
+      kernelExecutionHost: binding.executionHost,
       signal: context.signal,
       originSessionId: binding.runtimeSessionId,
       ...(context.agentRunId ? { agentRunId: context.agentRunId } : {}),
