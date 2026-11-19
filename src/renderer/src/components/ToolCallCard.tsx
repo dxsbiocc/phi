@@ -69,8 +69,10 @@ function ToolCallCard({
     notifyContentResize()
   }
   const action = toolActionKind(item.toolName, item.argsPreview, item.argsJson)
-  const headline =
-    webToolSummary(item.toolName, item.argsJson)?.headline ?? foldedToolHeadline(item, action)
+  const waitingForResource = item.status === 'running' && item.waitingForResource === true
+  const headline = waitingForResource
+    ? chatCopy.waitingForToolResource
+    : (webToolSummary(item.toolName, item.argsJson)?.headline ?? foldedToolHeadline(item, action))
   const showToolName = action !== 'command' && action !== 'python' && action !== 'notebook'
   const jumpTarget = notebookJumpTarget(item.notebook)
 
@@ -80,6 +82,7 @@ function ToolCallCard({
         data-testid="gui-e2e-tool-call"
         data-phi-tool-call-name={item.toolName}
         data-phi-tool-call-status={item.status}
+        data-phi-tool-resource-wait={waitingForResource || undefined}
         role="button"
         tabIndex={0}
         onClick={toggle}

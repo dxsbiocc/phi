@@ -1690,6 +1690,35 @@ test('only the latest thinking step in an active processing group is running', (
   assert.match(markup, /正在分析。/)
 })
 
+test('a folded processing group shows why a running shell is queued', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ChatProcessingGroup, {
+        items: [
+          {
+            id: 'shell-wait',
+            role: 'tool',
+            toolName: 'bash',
+            argsPreview: 'command',
+            argsJson: '{}',
+            output: '',
+            status: 'running',
+            waitingForResource: true
+          }
+        ],
+        isActive: true,
+        onGoSettings: () => undefined,
+        onOpenBackgroundJobs: () => undefined
+      })
+    )
+  )
+  assert.match(markup, /aria-expanded="false"/)
+  assert.match(markup, /data-phi-processing-resource-wait="true"/)
+  assert.match(markup, /等待另一条本地命令结束/)
+})
+
 test('outer processing chevron follows its summary while nested chevrons reveal on hover', () => {
   const outer = renderToStaticMarkup(
     createElement(

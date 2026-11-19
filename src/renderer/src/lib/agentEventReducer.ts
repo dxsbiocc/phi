@@ -13,7 +13,8 @@ import {
   isTodoToolName,
   isWrapperToolName,
   runLifecycleItemFromPhiTimelineEvent,
-  toolArgsPreview
+  toolArgsPreview,
+  toolTimelineId
 } from './chatItems'
 import { workspaceChangesItemFromPhiTimelineEvent } from '../features/chat/lib/workspaceChanges'
 import { presentedFilesItemFromPhiTimelineEvent } from '../features/chat/lib/presentedFiles'
@@ -669,7 +670,8 @@ export function reduceAgentEventState(
   }
 
   if (event.type === 'provider_tool_call_completed' && typeof event.toolCallId === 'string') {
-    const existingIndex = next.findIndex((item) => item.id === event.toolCallId)
+    const id = toolTimelineId(event.toolCallId, event.runId)
+    const existingIndex = next.findIndex((item) => item.id === id)
     const existing = existingIndex >= 0 ? next[existingIndex] : null
     if (existing?.role === 'tool') {
       next[existingIndex] = {
@@ -690,7 +692,7 @@ export function reduceAgentEventState(
         argsJson = ''
       }
       next.push({
-        id: event.toolCallId,
+        id,
         role: 'tool',
         ...runIdField(event.runId),
         toolName: typeof event.toolName === 'string' ? event.toolName : 'tool',
@@ -711,14 +713,15 @@ export function reduceAgentEventState(
 
   if (event.type === 'tool_execution_start' && typeof event.toolCallId === 'string') {
     const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool'
-    const existingIndex = next.findIndex((item) => item.id === event.toolCallId)
+    const id = toolTimelineId(event.toolCallId, event.runId)
+    const existingIndex = next.findIndex((item) => item.id === id)
     if (existingIndex >= 0 && next[existingIndex].role === 'tool') {
       next[existingIndex] = { ...next[existingIndex], status: 'running' }
       return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
     }
     if (isWrapperToolName(toolName)) {
       next.push({
-        id: event.toolCallId,
+        id,
         role: 'wrapper_plan',
         ...runIdField(event.runId),
         toolName,
@@ -735,7 +738,7 @@ export function reduceAgentEventState(
       argsJson = ''
     }
     next.push({
-      id: event.toolCallId,
+      id,
       role: 'tool',
       ...runIdField(event.runId),
       toolName,
@@ -752,7 +755,8 @@ export function reduceAgentEventState(
     (event.type === 'tool_execution_update' || event.type === 'tool_execution_end') &&
     typeof event.toolCallId === 'string'
   ) {
-    const index = next.findIndex((item) => item.id === event.toolCallId)
+    const id = toolTimelineId(event.toolCallId, event.runId)
+    const index = next.findIndex((item) => item.id === id)
     const current = index >= 0 ? next[index] : null
     if (current && current.role === 'wrapper_plan') {
       if (event.type === 'tool_execution_end') {
@@ -771,10 +775,22 @@ export function reduceAgentEventState(
     }
     if (current && current.role === 'tool') {
       if (event.type === 'tool_execution_update') {
-        const partial = extractToolText(event.partialResult)
-        next[index] = {
-          ...current,
-          output: partial ? outputPreviewText({ output: partial }) : current.output
+        if (current.status !== 'running')
+          return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+        const details = detailsFromToolResult(event.partialResult)
+        if (
+          current.toolName === 'bash' &&
+          isRecord(details) &&
+          details.kind === 'phi_local_resource_wait' &&
+          typeof details.waiting === 'boolean'
+        ) {
+          next[index] = { ...current, waitingForResource: details.waiting }
+        } else {
+          const partial = extractToolText(event.partialResult)
+          next[index] = {
+            ...current,
+            output: partial ? outputPreviewText({ output: partial }) : current.output
+          }
         }
       } else {
         const output = extractToolText(event.result)

@@ -259,6 +259,7 @@ export interface ToolCallItem {
   argsJson: string
   output: string
   status: 'running' | 'done' | 'error'
+  waitingForResource?: boolean
   createdAt?: string
   completedAt?: string
   durationMs?: number

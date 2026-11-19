@@ -137,16 +137,21 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   // The turn lifecycle decides failure. An error card inside the fold (for example a denied
   // approval) is a per-tool-call result and must not relabel a completed run as interrupted.
   const failed = !isProcessingActive && runFailed
-  const summary = processingStatusText({
-    items,
-    isActive: isProcessingActive,
-    failed,
-    nowMs,
-    fallbackStartedAtMs,
-    startedAtMs,
-    completedAtMs,
-    durationMs
-  })
+  const waitingForResource = items.some(
+    (item) => item.role === 'tool' && item.status === 'running' && item.waitingForResource
+  )
+  const summary = waitingForResource
+    ? chatCopy.waitingForToolResource
+    : processingStatusText({
+        items,
+        isActive: isProcessingActive,
+        failed,
+        nowMs,
+        fallbackStartedAtMs,
+        startedAtMs,
+        completedAtMs,
+        durationMs
+      })
 
   useEffect(() => {
     if (!isProcessingActive) return undefined
@@ -167,6 +172,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
           }
         }}
         aria-expanded={expanded}
+        data-phi-processing-resource-wait={waitingForResource || undefined}
         aria-label={
           expanded ? chatCopy.collapseProcessingDetails : chatCopy.expandProcessingDetails
         }

@@ -531,7 +531,7 @@ test('chatItemsFromSessionMessages finalizes restored running tools on interrupt
     items.filter((item) => item.role === 'tool'),
     [
       {
-        id: 'call-1',
+        id: '["run-1","call-1"]',
         role: 'tool',
         runId: 'run-1',
         toolName: 'bash',

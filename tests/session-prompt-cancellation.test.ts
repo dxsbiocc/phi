@@ -61,6 +61,7 @@ function fakeSession(
     },
     sessionManager: { getCwd: () => '/tmp' },
     getToolByName: (name: string) => (name === 'bash' ? bash : undefined),
+    getAllToolInfos: () => [],
     prompt: async () => {
       state.prompts += 1
       if (options.prompt) return await options.prompt()

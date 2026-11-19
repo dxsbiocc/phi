@@ -292,6 +292,7 @@ export const chatChinese: LocalizedCopy<typeof chatEnglish> = {
   currentValue2: (value0: string | number) => ` · 当前：${value0}`,
   stopAgent: '停止 Agent',
   delegatedTaskArguments: '委派任务参数',
+  waitingForToolResource: '等待另一条本地命令结束',
   waitingForInternalToolSteps: '等待内部工具步骤。',
   thisAgentIsNoLongerRunningPhiMayHaveRestarted:
     '这个 Agent 已不在运行（可能 Phi 重启过），没有更多进展会显示。',

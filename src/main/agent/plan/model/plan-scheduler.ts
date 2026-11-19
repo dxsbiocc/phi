@@ -3,6 +3,7 @@ import {
   type PlanRunState,
   type PlanStep
 } from '../../../../shared/planRunTypes'
+import { resourcesConflict, type ExecutionResource } from '../../resource-admission'
 
 export interface PlanSchedulerOptions {
   maxConcurrent?: number
@@ -12,22 +13,15 @@ function normalizePrefix(prefix: string): string {
   return prefix.replace(/^(?:\.\/)+/, '').replace(/\/+$/, '')
 }
 
-function declaredWrites(step: PlanStep): string[] | null {
-  if (step.access !== 'write' || !step.writes?.length) return null
-  const prefixes = step.writes.map(normalizePrefix).filter(Boolean)
-  return prefixes.length ? prefixes : null
-}
-
-function prefixesOverlap(left: string, right: string): boolean {
-  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`)
-}
-
-function writesConflict(left: PlanStep, right: PlanStep): boolean {
-  if (left.access !== 'write' || right.access !== 'write') return false
-  const leftWrites = declaredWrites(left)
-  const rightWrites = declaredWrites(right)
-  if (!leftWrites || !rightWrites) return true
-  return leftWrites.some((a) => rightWrites.some((b) => prefixesOverlap(a, b)))
+/** Plan paths are advisory and do not grant permission to access a resource. */
+function declaredWrites(step: PlanStep): ExecutionResource[] {
+  if (step.access !== 'write') return []
+  const paths = (step.writes ?? []).map(normalizePrefix).filter(Boolean)
+  return (paths.length ? paths.map((path) => path.split('/')) : [[]]).map((segments) => ({
+    namespace: 'plan-files',
+    segments,
+    access: 'exclusive'
+  }))
 }
 
 function dependenciesSatisfied(state: PlanRunState, step: PlanStep): boolean {
@@ -56,17 +50,18 @@ export function selectLaunchableSteps(
   const available = concurrencyLimit(options.maxConcurrent) - runningIds.length
   if (available <= 0) return []
 
-  const byId = new Map(state.spec.steps.map((step) => [step.id, step]))
-  const activeWrites = runningIds
-    .map((id) => byId.get(id))
-    .filter((step): step is PlanStep => step?.access === 'write')
-  const selected: PlanStep[] = []
+  const running = new Set(runningIds)
+  const reservedWrites = state.spec.steps
+    .filter((step) => running.has(step.id))
+    .flatMap(declaredWrites)
+  const selected: string[] = []
   for (const step of state.spec.steps) {
     if (selected.length >= available) break
     if (state.steps[step.id]?.status !== 'pending' || !dependenciesSatisfied(state, step)) continue
-    if (activeWrites.some((active) => writesConflict(step, active))) continue
-    if (selected.some((active) => writesConflict(step, active))) continue
-    selected.push(step)
+    const writes = declaredWrites(step)
+    if (resourcesConflict(writes, reservedWrites)) continue
+    reservedWrites.push(...writes)
+    selected.push(step.id)
   }
-  return selected.map((step) => step.id)
+  return selected
 }

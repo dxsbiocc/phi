@@ -5,6 +5,7 @@ import {
   createAgentEventReducerState,
   reduceAgentEventState
 } from '../src/renderer/src/lib/agentEventReducer'
+import { chatItemsFromSessionMessages, toolTimelineId } from '../src/renderer/src/lib/chatItems'
 import { INLINE_OUTPUT_PREVIEW_CHARS } from '../src/renderer/src/lib/toolOutputPresentation'
 import type { AgentEventSummary, ChatItem, ChatMessage } from '../src/renderer/src/types'
 
@@ -88,7 +89,7 @@ test('provider-managed tool result appears as a completed tool card', () => {
   })
   assert.equal(state.messages.length, 1)
   assert.deepEqual(state.messages[0], {
-    id: 'provider-call-1',
+    id: toolTimelineId('provider-call-1', 'run-1'),
     role: 'tool',
     runId: 'run-1',
     toolName: 'web_fetch',
@@ -1050,7 +1051,7 @@ test('run interruption finalizes still-running tool items for that run', () => {
     interrupted.messages.filter((item) => item.role === 'tool'),
     [
       {
-        id: 'tool-1',
+        id: toolTimelineId('tool-1', 'run-1'),
         role: 'tool',
         runId: 'run-1',
         toolName: 'bash',
@@ -1733,4 +1734,80 @@ test('a restored General card takes its name from the persisted named event', ()
   )
   const card = state.messages.find((item) => item.id === 'general-call-2')
   assert.equal(card?.role === 'agent_execution' ? card.agentName : undefined, 'Delta')
+})
+
+test('a resource wait and a late tool result affect only the run owning the reused provider call ID', () => {
+  let state = createAgentEventReducerState()
+  for (const runId of ['run-a', 'run-b']) {
+    state = reduceAgentEventState(state, {
+      type: 'tool_execution_start',
+      runId,
+      toolCallId: 'call-0',
+      toolName: 'bash',
+      args: { command: runId }
+    })
+  }
+  state = reduceAgentEventState(state, {
+    type: 'tool_execution_update',
+    runId: 'run-b',
+    toolCallId: 'call-0',
+    toolName: 'bash',
+    partialResult: { content: [], details: { kind: 'phi_local_resource_wait', waiting: true } }
+  })
+  state = reduceAgentEventState(state, {
+    type: 'tool_execution_end',
+    runId: 'run-a',
+    toolCallId: 'call-0',
+    toolName: 'bash',
+    result: { content: [{ type: 'text', text: 'A finished' }] }
+  })
+  const cards = state.messages.filter((item) => item.role === 'tool')
+  assert.deepEqual(
+    cards.map(({ runId, status, output, waitingForResource }) => [
+      runId,
+      status,
+      output,
+      waitingForResource
+    ]),
+    [
+      ['run-a', 'done', 'A finished', undefined],
+      ['run-b', 'running', '', true]
+    ]
+  )
+  assert.notEqual(cards[0].id, cards[1].id)
+})
+
+test('rehydration with repeated provider call IDs keeps late tool results on their original run', () => {
+  const messages = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'tool_call_started',
+      runId: 'run-a',
+      toolCallId: 'call-0',
+      toolName: 'bash'
+    },
+    {
+      source: 'phi',
+      type: 'tool_call_started',
+      runId: 'run-b',
+      toolCallId: 'call-0',
+      toolName: 'bash'
+    },
+    {
+      source: 'phi',
+      type: 'tool_call_completed',
+      runId: 'run-a',
+      toolCallId: 'call-0',
+      output: 'A finished'
+    }
+  ])
+  const cards = messages.filter((item) => item.role === 'tool')
+  assert.deepEqual(
+    cards.map(({ runId, output }) => [runId, output]),
+    [
+      ['run-a', 'A finished'],
+      ['run-b', '']
+    ]
+  )
+  assert.notEqual(cards[0].id, cards[1].id)
 })

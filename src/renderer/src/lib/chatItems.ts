@@ -651,11 +651,17 @@ function applyPhiAgentExecutionEvent(items: ChatItem[], message: RestoredSession
   }
 }
 
+/** Providers can reuse call IDs in different runs of the same conversation. */
+export function toolTimelineId(callId: string, runId: unknown): string {
+  return typeof runId === 'string' && runId ? JSON.stringify([runId, callId]) : callId
+}
+
 function appendPhiToolCallStarted(state: RestoreState, message: RestoredSessionMessage): boolean {
   if (typeof message.toolCallId !== 'string') return false
-  state.toolCallIndexById.set(message.toolCallId, state.items.length)
+  const id = toolTimelineId(message.toolCallId, message.runId)
+  state.toolCallIndexById.set(id, state.items.length)
   state.items.push({
-    id: message.toolCallId,
+    id,
     role: 'tool',
     ...runIdField(message.runId),
     toolName: typeof message.toolName === 'string' ? message.toolName : 'tool',
@@ -670,7 +676,7 @@ function appendPhiToolCallStarted(state: RestoreState, message: RestoredSessionM
 
 function applyPhiToolCallCompleted(state: RestoreState, message: RestoredSessionMessage): boolean {
   if (typeof message.toolCallId !== 'string') return false
-  const index = state.toolCallIndexById.get(message.toolCallId)
+  const index = state.toolCallIndexById.get(toolTimelineId(message.toolCallId, message.runId))
   if (index !== undefined) {
     const current = state.items[index]
     if (current.role === 'tool') {

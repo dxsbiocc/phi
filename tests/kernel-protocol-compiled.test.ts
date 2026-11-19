@@ -525,3 +525,93 @@ test(
     assert.equal(kernel.diagnostics.join(''), '')
   }
 )
+
+test(
+  'compiled kernel keeps auto-backgrounded shell ownership across three simultaneous sessions',
+  { timeout: 70_000, skip: process.platform !== 'darwin' || process.arch !== 'arm64' },
+  async () => {
+    const provider = await startLoopbackModel()
+    const layout = prepareRuntime('native-shell-contention', provider.url)
+    const configPath = path.join(layout.agentDir, 'config.yml')
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        ...JSON.parse(readFileSync(configPath, 'utf8')),
+        bash: { autoBackground: { enabled: true, thresholdMs: 1500 } }
+      })
+    )
+    for (const [label, command] of [
+      ['Lease-A', 'touch a-start; while [ ! -f release-a ]; do sleep 0.05; done; touch a-end'],
+      ['Lease-B', 'test -f a-end && touch b-end'],
+      ['Lease-C', 'touch c-end']
+    ] as const) {
+      provider.enqueue(
+        { match: label, tool: { name: 'bash', id: 'same-tool-id', args: { command } } },
+        { match: label, text: `${label} result` }
+      )
+    }
+    const kernel = launchCompiled(layout)
+    const waits = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>()
+    const completed = new Map<string, ReturnType<typeof Promise.withResolvers<string>>>()
+    const aEnded = Promise.withResolvers<void>()
+    let ownerSessionId: string | undefined
+    const stopEvents = kernel.client.onEvent((event) => {
+      if (!event.sessionId) return
+      const payload = record(event.payload)
+      if (event.type === 'run.completed') {
+        completed.get(event.sessionId)?.resolve(String(payload.status))
+      } else if (
+        event.type === 'session.event' &&
+        payload.type === 'tool_execution_update' &&
+        payload.toolCallId === 'same-tool-id' &&
+        JSON.stringify(payload.partialResult ?? null).includes('"waiting":true')
+      ) {
+        waits.get(event.sessionId)?.resolve()
+      } else if (
+        event.type === 'session.event' &&
+        payload.type === 'tool_execution_end' &&
+        event.sessionId === ownerSessionId &&
+        payload.toolCallId === 'same-tool-id' &&
+        existsSync(path.join(layout.project, 'a-start')) &&
+        !existsSync(path.join(layout.project, 'a-end'))
+      ) {
+        aEnded.resolve()
+      }
+    })
+    try {
+      await kernel.client.hello({})
+      await kernel.client.subscribe(0)
+      const [a, b, c] = await Promise.all(
+        Array.from({ length: 3 }, () => createSession(kernel.client, layout, true))
+      )
+      ownerSessionId = a
+      for (const session of [a, b, c]) {
+        waits.set(session, Promise.withResolvers<void>())
+        completed.set(session, Promise.withResolvers<string>())
+      }
+      const prompt = (sessionId: string, text: string): Promise<JsonValue> =>
+        kernel.client.request('session.prompt', { text }, { sessionId })
+      await prompt(a, 'Lease-A')
+      await withTimeout(aEnded.promise, 'the real Bash tool did not return while still running')
+      await Promise.all([prompt(b, 'Lease-B'), prompt(c, 'Lease-C')])
+      await withTimeout(
+        Promise.all([waits.get(b)?.promise, waits.get(c)?.promise]),
+        'queued tool update did not arrive in both owning sessions'
+      )
+      assert.equal(existsSync(path.join(layout.project, 'b-end')), false)
+      assert.equal(existsSync(path.join(layout.project, 'c-end')), false)
+      await kernel.client.request('session.abort', {}, { sessionId: c })
+      assert.equal(await withTimeout(completed.get(c)!.promise, 'C did not settle'), 'cancelled')
+      writeFileSync(path.join(layout.project, 'release-a'), '')
+      assert.equal(await withTimeout(completed.get(b)!.promise, 'B did not settle'), 'completed')
+      assert.equal(existsSync(path.join(layout.project, 'a-end')), true)
+      assert.equal(existsSync(path.join(layout.project, 'b-end')), true)
+      assert.equal(existsSync(path.join(layout.project, 'c-end')), false)
+    } finally {
+      writeFileSync(path.join(layout.project, 'release-a'), '')
+      stopEvents()
+      await kernel.close()
+      await provider.close()
+    }
+  }
+)
