@@ -85,6 +85,38 @@ test('Only whole reads of cited tables or logs from this user turn reuse the spe
   )
 })
 
+test('Shell output protection recognizes direct preview stages and leaves unrelated file work alone', async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), 'phi-research-preview-'))
+  t.after(() => rmSync(cwd, { recursive: true, force: true }))
+  const data = 'paired/results/deseq2_differential/treated_vs_control.deseq2.results.tsv'
+  const registry = {
+    researchFindings: () => [
+      { answer: findings, interpretation: 'Use the assessed contrast.', evidence: [data, artifact] }
+    ]
+  }
+  const inspect = (command: string, branch: unknown[] = [user, result]): string | undefined =>
+    researchReadNotice(cwd, command, branch, registry, cwd)
+  for (const command of [
+    `head -4 "${data}" | cut -c1-160; wc -l paired/results/deseq2_differential/*.tsv`,
+    'cat paired/enrichment.tsv',
+    'Get-Content -Path "paired/enrichment.tsv"',
+    'cmd /c type paired/enrichment.tsv',
+    'cd paired && head enrichment.tsv',
+    'head -4 paired/*.tsv'
+  ])
+    assert.match(inspect(command) ?? '', /specialist already reported/)
+  for (const command of [
+    'wc -l paired/*.tsv',
+    'cat other.tsv; wc -l paired/enrichment.tsv',
+    'cat paired/enrichment.tsv > paired/archive.tsv',
+    'cat other.tsv > paired/enrichment.tsv',
+    'cat other.tsv 2> paired/run.log',
+    'echo "cat paired/enrichment.tsv"'
+  ])
+    assert.equal(inspect(command), undefined)
+  assert.equal(inspect('cat paired/enrichment.tsv', [user, result, user]), undefined)
+})
+
 test(
   'real kernel keeps specialist-cited rows out of primary model traffic and history, and allows a later explicit read',
   { timeout: 45_000 },
@@ -97,6 +129,9 @@ test(
     for (const name of ['run.log', 'notes.md']) writeFileSync(join(f.cwd, 'paired', name), 'ok\n')
     const id = 'main-research-read'
     await f.createSession(id, { persistent: true, phiAgents: true })
+    const liveEvents: unknown[] = []
+    const off = f.onSessionEvent(id, (event) => liveEvents.push(event))
+    t.after(off)
     f.provider.enqueue(
       {
         tool: {
@@ -107,11 +142,44 @@ test(
       },
       { text: report },
       { tool: { name: 'read', id: 'read-private', args: { path: artifact } } },
+      {
+        tool: {
+          name: 'bash',
+          id: 'shell-preview',
+          args: {
+            command:
+              'head -4 paired/enrichment.tsv | cut -c1-160; wc -l paired/*.tsv; printf done > preview-ran.txt'
+          }
+        }
+      },
+      { tool: { name: 'bash', id: 'cat-preview', args: { command: 'cat paired/enrichment.tsv' } } },
+      {
+        tool: { name: 'bash', id: 'count-only', args: { command: 'wc -l < paired/enrichment.tsv' } }
+      },
+      {
+        tool: {
+          name: 'bash',
+          id: 'failed-preview',
+          args: { command: 'cat paired/enrichment.tsv; exit 17' }
+        }
+      },
       { text: 'The comparison supports enrichment.' }
     )
     const completed = await f.sessions.prompt({ sessionId: id, text: question })
     assert.match(JSON.stringify(completed.messages), /specialist already reported/)
     assert.match(JSON.stringify(completed.messages), /read-private/)
+    assert.match(JSON.stringify(completed.messages), /The shell command ran/)
+    const failed = completed.messages?.find(
+      (m) => (m as { toolCallId?: string }).toolCallId === 'failed-preview'
+    )
+    assert.match(JSON.stringify(failed), /The shell command failed \(exit 17\)/)
+    assert.equal((failed as { isError?: boolean }).isError, true)
+    const count = completed.messages?.find(
+      (m) => (m as { toolCallId?: string }).toolCallId === 'count-only'
+    )
+    assert.doesNotMatch(JSON.stringify(count), /specialist already reported/)
+    assert.equal(readFileSync(join(f.cwd, 'preview-ran.txt'), 'utf8'), 'done')
+    assert.doesNotMatch(JSON.stringify(liveEvents), new RegExp(marker))
     assert.doesNotMatch(JSON.stringify(completed.messages), new RegExp(marker))
     assert.doesNotMatch(JSON.stringify(f.provider.requests), new RegExp(marker))
     const journal = readFileSync(
@@ -122,12 +190,18 @@ test(
     assert.doesNotMatch(journal, new RegExp(marker))
     f.provider.enqueue(
       { tool: { name: 'read', id: 'read-requested', args: { path: artifact } } },
+      {
+        tool: { name: 'bash', id: 'cat-requested', args: { command: 'cat paired/enrichment.tsv' } }
+      },
       { text: 'The requested file was opened.' }
     )
     const later = await f.sessions.prompt({
       sessionId: id,
       text: 'Please open the entire enrichment file for inspection.'
     })
-    assert.match(JSON.stringify(later.messages), new RegExp(marker))
+    const cat = later.messages?.find(
+      (message) => (message as { toolCallId?: string }).toolCallId === 'cat-requested'
+    )
+    assert.match(JSON.stringify(cat), new RegExp(marker))
   }
 )
