@@ -158,15 +158,14 @@ export class KernelAgentRunCoordinator implements KernelAgentRunRuntime {
 
   async stopAll(sessionId: string): Promise<void> {
     if (!this.receipts.hasUnfinished(sessionId)) return
-    const runs = await this.list(sessionId)
-    const active = runs.filter(
-      (run) => run.runId && ['started', 'queued', 'running'].includes(run.state)
-    )
-    await Promise.all(active.map((run) => this.stop(sessionId, run.runId!)))
-    const settled = await Promise.all(active.map((run) => this.wait(sessionId, run.runId!, 30_000)))
-    if (settled.some((result) => result.timedOut)) {
+    const result = (await this.callWorker('agentRuns.stopAll', { sessionId })) as {
+      runs?: unknown
+      timedOut?: boolean
+    }
+    if (result?.timedOut !== false || !Array.isArray(result.runs)) {
       throw new Error('An agent run did not reach a proven terminal state after cancellation.')
     }
+    await Promise.all(snapshots(result.runs).map((run) => this.receipts.finish(sessionId, run)))
   }
 
   launchSettled(sessionId: string, requestId: string): boolean {
@@ -175,8 +174,12 @@ export class KernelAgentRunCoordinator implements KernelAgentRunRuntime {
 
   async hasActive(sessionId: string): Promise<boolean> {
     if (!this.receipts.hasUnfinished(sessionId)) return false
-    return (await this.list(sessionId)).some((run) =>
-      ['accepted', 'started', 'queued', 'running'].includes(run.state)
+    const live = snapshots(await this.callWorker('agentRuns.list', { sessionId }))
+    return (
+      live.some((run) => run.state === 'queued' || run.state === 'running') ||
+      this.receipts
+        .list(sessionId)
+        .some((run) => run.state === 'accepted' || run.state === 'started')
     )
   }
 

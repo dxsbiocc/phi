@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
@@ -11,6 +19,7 @@ import {
   type AgentRunAdmission,
   type AgentRunSnapshot
 } from '../src/main/agent/agents/registry'
+import { KernelAgentRunCoordinator } from '../src/kernel/agent-runs/coordinator'
 import { KernelAgentRunReceiptStore } from '../src/kernel/agent-runs/receipt-store'
 
 function fixture(): { root: string; agentDir: string; sessionDir: string } {
@@ -46,6 +55,16 @@ function writeReceipts(sessionDir: string, receipts: readonly Record<string, unk
     `${receipts.map((receipt) => JSON.stringify(receipt)).join('\n')}\n`
   )
 }
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
+const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
 
 function admissionFor(
   store: KernelAgentRunReceiptStore,
@@ -362,6 +381,267 @@ test('a request is settled when never accepted or terminal, not while it is open
   } finally {
     await first.closeSession('session-1')
     await second.closeSession('session-1')
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
+test('a run paused in started never executes while another ready run pumps', async () => {
+  const f = fixture()
+  const store = new KernelAgentRunReceiptStore(f.agentDir)
+  const gate = deferred<void>()
+  const startedA = deferred<void>()
+  let runnerA = 0
+  let runnerB = 0
+  try {
+    await store.openSession('session-1', f.sessionDir)
+    const base = admissionFor(store)
+    const registry = new AgentRunRegistry({
+      limits: { maxConcurrent: 1 },
+      admission: {
+        ...base,
+        started: async (runId, snapshot) => {
+          await base.started(runId, snapshot)
+          if (runId === 'run_1') {
+            startedA.resolve()
+            await gate.promise
+          }
+        }
+      }
+    })
+    const launchA = input('request-a')
+    launchA.runner = async () => {
+      runnerA += 1
+      return { text: 'completed', toolCalls: 0 }
+    }
+    const launchB = input('request-b')
+    launchB.runner = async () => {
+      runnerB += 1
+      return { text: 'completed', toolCalls: 0 }
+    }
+
+    const pendingA = registry.start(launchA)
+    await startedA.promise
+    assert.equal(runnerA, 0, 'A must not execute before its own started completes')
+
+    const handleB = await registry.start(launchB)
+    assert.equal(handleB.id, 'run_2')
+    assert.equal((await handleB.done).state, 'done', 'B runs while A is paused')
+    await store.finish('session-1', await handleB.done)
+    assert.equal(runnerB, 1)
+    assert.equal(runnerA, 0, "B's finish pump must not pick up the unadmitted A")
+    assert.equal(registry.get('run_1')?.state, 'queued')
+
+    gate.resolve()
+    const handleA = await pendingA
+    assert.equal((await handleA.done).state, 'done')
+    await store.finish('session-1', await handleA.done)
+    assert.equal(runnerA, 1)
+    assert.deepEqual(
+      lines(f.sessionDir).map((receipt) => receipt.state),
+      ['accepted', 'started', 'accepted', 'started', 'terminal', 'terminal']
+    )
+  } finally {
+    gate.resolve()
+    await store.closeSession('session-1')
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
+test('concurrent accepts of one requestId persist exactly one acceptance', async () => {
+  const f = fixture()
+  const store = new KernelAgentRunReceiptStore(f.agentDir)
+  const second = new KernelAgentRunReceiptStore(f.agentDir)
+  try {
+    await store.openSession('session-1', f.sessionDir)
+    const first = store.accept('session-1', 'run_1', input('request-dup'))
+    assert.equal(store.getByRequest('session-1', 'request-dup'), undefined)
+    assert.equal(store.requestSettled('session-1', 'request-dup'), false)
+    const results = await Promise.allSettled([
+      first,
+      store.accept('session-1', 'run_2', input('request-dup'))
+    ])
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
+    const rejected = results.find((result) => result.status === 'rejected')
+    assert.ok(rejected?.status === 'rejected')
+    assert.equal((rejected.reason as { code?: string }).code, 'DUPLICATE_REQUEST')
+    assert.equal(
+      lines(f.sessionDir).filter(
+        (receipt) => receipt.state === 'accepted' && receipt.requestId === 'request-dup'
+      ).length,
+      1
+    )
+
+    await second.openSession('session-1', f.sessionDir)
+    assert.equal(second.getByRequest('session-1', 'request-dup')?.state, 'unknown')
+  } finally {
+    await store.closeSession('session-1')
+    await second.closeSession('session-1')
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
+test('an unconfirmed append reserves its request without publishing a receipt', async () => {
+  const f = fixture()
+  const store = new KernelAgentRunReceiptStore(f.agentDir)
+  const second = new KernelAgentRunReceiptStore(f.agentDir)
+  const journal = join(f.sessionDir, 'agent-runs.jsonl')
+  try {
+    await store.openSession('session-1', f.sessionDir)
+    renameSync(journal, journal + '.backup')
+    mkdirSync(journal)
+    await assert.rejects(store.accept('session-1', 'run_1', input('request-fail')))
+    rmSync(journal, { recursive: true })
+    renameSync(journal + '.backup', journal)
+    await assert.rejects(
+      store.accept('session-1', 'run_2', input('request-fail')),
+      (error: unknown) => {
+        const duplicate = error as { code?: string; detail?: { state?: string } }
+        assert.equal(duplicate.code, 'DUPLICATE_REQUEST')
+        assert.equal(duplicate.detail, undefined)
+        return true
+      }
+    )
+    assert.equal(store.getByRequest('session-1', 'request-fail'), undefined)
+    assert.equal(store.requestSettled('session-1', 'request-fail'), false)
+    assert.equal(store.hasUnfinished('session-1'), false)
+    await assert.rejects(
+      store.accept('session-1', 'run_3', input('another-request')),
+      /must be reopened/
+    )
+    assert.equal(lines(f.sessionDir).length, 0, 'nothing was persisted')
+
+    // A new process derives truth from the journal, not from the reservation.
+    await second.openSession('session-1', f.sessionDir)
+    assert.equal(second.requestSettled('session-1', 'request-fail'), true)
+    await second.accept('session-1', 'run_1', input('request-fail'))
+    assert.equal(second.getByRequest('session-1', 'request-fail')?.state, 'accepted')
+  } finally {
+    await store.closeSession('session-1')
+    await second.closeSession('session-1')
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
+test('stopping during admission persists a cancellation after the child start and never executes it', async () => {
+  const f = fixture()
+  const store = new KernelAgentRunReceiptStore(f.agentDir)
+  const gate = deferred<void>()
+  const accepting = deferred<void>()
+  const notifications: string[] = []
+  let runnerCalls = 0
+  try {
+    await store.openSession('session-1', f.sessionDir)
+    const base = admissionFor(store)
+    const registry = new AgentRunRegistry({
+      admission: {
+        ...base,
+        started: async (id, snapshot) => {
+          accepting.resolve()
+          await gate.promise
+          await base.started(id, snapshot)
+        }
+      }
+    })
+    registry.subscribe({
+      onFinish(run) {
+        notifications.push(store.getByRun('session-1', run.id)?.state ?? 'receipt missing')
+      }
+    })
+    const launch = input('request-stop')
+    launch.runner = async () => {
+      runnerCalls += 1
+      return { text: 'completed', toolCalls: 0 }
+    }
+    const pending = registry.start(launch)
+    await accepting.promise
+    registry.stopAll()
+    assert.deepEqual(notifications, [])
+    assert.equal(runnerCalls, 0)
+    assert.deepEqual(
+      lines(f.sessionDir).map((line) => line.state),
+      ['accepted']
+    )
+
+    gate.resolve()
+    const handle = await pending
+    const terminal = await handle.done
+    await store.finish('session-1', terminal)
+    assert.equal(terminal.state, 'cancelled')
+    assert.equal(runnerCalls, 0)
+    assert.deepEqual(notifications, ['started'])
+    assert.deepEqual(
+      lines(f.sessionDir).map((line) => line.state),
+      ['accepted', 'started', 'terminal']
+    )
+    assert.equal(lines(f.sessionDir)[2].status, 'cancelled')
+  } finally {
+    gate.resolve()
+    await store.closeSession('session-1')
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
+test('the kernel coordinator stops and joins a child before its started receipt is available', async () => {
+  const f = fixture()
+  const blocked = deferred<void>()
+  const writing = deferred<void>()
+  const stopping = deferred<void>()
+  let runnerCalls = 0
+  let registry: AgentRunRegistry
+  const coordinator = new KernelAgentRunCoordinator(
+    f.agentDir,
+    async (method, params) => {
+      assert.deepEqual(params, { sessionId: 'session-1' })
+      if (method === 'agentRuns.list') return registry.list()
+      assert.equal(method, 'agentRuns.stopAll')
+      const ids = registry.list().map((run) => run.id)
+      registry.stopAll()
+      stopping.resolve()
+      return registry.wait(ids, { timeoutMs: 1000 })
+    },
+    () => undefined
+  )
+  try {
+    await coordinator.openSession('session-1', f.sessionDir)
+    const admission = coordinator.admission('session-1')
+    registry = new AgentRunRegistry({
+      admission: {
+        ...admission,
+        started: async (id, snapshot) => {
+          writing.resolve()
+          await blocked.promise
+          await admission.started(id, snapshot)
+        }
+      }
+    })
+    const pending = registry.start({
+      ...input('request-stop-before-start'),
+      runner: async () => {
+        runnerCalls += 1
+        return { text: 'not expected', toolCalls: 0 }
+      }
+    })
+    await writing.promise
+    assert.equal(await coordinator.hasActive('session-1'), true)
+    assert.deepEqual(
+      lines(f.sessionDir).map((line) => line.state),
+      ['accepted']
+    )
+    let finished = false
+    const stop = coordinator.stopAll('session-1').then(() => {
+      finished = true
+    })
+    await stopping.promise
+    assert.equal(finished, false)
+    blocked.resolve()
+    await stop
+    assert.equal((await (await pending).done).state, 'cancelled')
+    assert.equal(runnerCalls, 0)
+    assert.equal(await coordinator.hasActive('session-1'), false)
+    assert.equal(lines(f.sessionDir).at(-1)?.status, 'cancelled')
+  } finally {
+    blocked.resolve()
+    await coordinator.closeSession('session-1')
     rmSync(f.root, { recursive: true, force: true })
   }
 })

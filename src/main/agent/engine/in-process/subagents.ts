@@ -11,7 +11,11 @@ import { adaptOmpSessionEvents } from '../events'
 import { type PhiAgentDefinition } from '../../agents/definition'
 import { selectAgentModel } from '../../agents/model-selection'
 import { controlAgentRun } from '../../agents/run-control'
-import { agentRunDisplayName, type AgentRunSnapshot } from '../../agents/registry'
+import {
+  agentRunDisplayName,
+  type AgentRunSnapshot,
+  type AgentWaitResult
+} from '../../agents/registry'
 import { type AgentSessionLike } from '../../agents/runner'
 import { resolveAgentTools } from '../../agents/tool-resolution'
 import { installSpecialistToolCallExtensions } from './specialist-tool-call-extensions'
@@ -337,6 +341,19 @@ export async function listSessionAgentRuns(params?: unknown): Promise<unknown[]>
         ...(run.toolCallId ? { toolCallId: run.toolCallId } : {})
       }))
   )
+}
+
+/** Kernel lifecycle only. Capture registry handles before waiting for admission. */
+export async function stopSessionAgentRuns(params: unknown): Promise<AgentWaitResult> {
+  const record = isRecord(params) ? params : {}
+  const registry = sessions.get(stringValue(record.sessionId))?.agentRuns
+  if (!registry) return { runs: [], timedOut: false }
+  const ids = registry
+    .list()
+    .filter((run) => run.state === 'queued' || run.state === 'running')
+    .map((run) => run.id)
+  registry.stopAll()
+  return registry.wait(ids, { timeoutMs: 30_000 })
 }
 
 export async function waitSessionAgentRun(params: unknown): Promise<{

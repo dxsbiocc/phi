@@ -18,6 +18,7 @@ const AGENT_RUN_METHODS = new Set([
   'agentRun.steer',
   'agentRun.stop',
   'agentRuns.list',
+  'agentRuns.stopAll',
   'agentRuns.wait'
 ])
 
@@ -46,6 +47,7 @@ async function callAgentRunRuntime(method: string, params: unknown): Promise<unk
     return runtime.controlSessionAgentRun(method === 'agentRun.steer' ? 'steer' : 'stop', params)
   }
   if (method === 'agentRuns.list') return runtime.listSessionAgentRuns(params)
+  if (method === 'agentRuns.stopAll') return runtime.stopSessionAgentRuns(params)
   return runtime.waitSessionAgentRun(params)
 }
 

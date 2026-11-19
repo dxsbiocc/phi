@@ -69,9 +69,12 @@ type SessionReceipts = {
   requests: Map<string, ReceiptState>
   runs: Map<string, ReceiptState>
   assigned: Map<string, string>
+  accepting: Map<string, Promise<void>>
+  unconfirmedAcceptance: Set<string>
   usedRunIds: Set<string>
   sequence: number
   tail: Promise<void>
+  appendFailure?: { cause: unknown }
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -206,6 +209,8 @@ function indexReceipts(receipts: readonly AgentRunReceipt[]): SessionReceipts {
     requests,
     runs,
     assigned: new Map(),
+    accepting: new Map(),
+    unconfirmedAcceptance: new Set(),
     usedRunIds,
     sequence,
     tail: Promise.resolve()
@@ -423,7 +428,23 @@ export class KernelAgentRunReceiptStore {
 
   private async append(session: SessionReceipts, receipt: AgentRunReceipt): Promise<void> {
     if (!session.path) return
-    const operation = session.tail.then(() => append(session.path!, receipt))
+    const file = session.path
+    const operation = session.tail.then(async () => {
+      if (session.appendFailure) {
+        throw new Error(
+          'Agent-run journal must be reopened after a write failure.',
+          session.appendFailure
+        )
+      }
+      try {
+        await append(file, receipt)
+      } catch (cause) {
+        // A partial tail is recoverable on open. A later append could turn it
+        // into a malformed complete record, so stop writing to this handle.
+        session.appendFailure = { cause }
+        throw cause
+      }
+    })
     session.tail = operation.catch(() => undefined)
     await operation
   }
@@ -434,6 +455,10 @@ export class KernelAgentRunReceiptStore {
     if (Buffer.byteLength(requestId, 'utf8') > MAX_REQUEST_ID_BYTES) {
       throw makeProtocolError('INVALID_PARAMS', 'agentRuns.start requestId is too long.')
     }
+    // Duplicates that arrive during fsync see the owner's resolved receipt,
+    // never an acceptance that exists only in memory.
+    const accepting = session.accepting.get(requestId)
+    if (accepting) await accepting.catch(() => undefined)
     const duplicate = session.requests.get(requestId)
     if (duplicate) {
       throw makeProtocolError(
@@ -441,6 +466,9 @@ export class KernelAgentRunReceiptStore {
         'The agent-run request was already accepted.',
         view(duplicate)
       )
+    }
+    if (session.unconfirmedAcceptance.has(requestId)) {
+      throw makeProtocolError('DUPLICATE_REQUEST', 'The request acceptance could not be confirmed.')
     }
     const receipt: AcceptedReceipt = {
       state: 'accepted',
@@ -451,10 +479,25 @@ export class KernelAgentRunReceiptStore {
       background: input.background,
       at: new Date().toISOString()
     }
-    await this.append(session, receipt)
-    session.requests.set(requestId, { accepted: receipt })
-    session.assigned.set(runId, requestId)
-    session.usedRunIds.add(runId)
+    const operation = this.append(session, receipt).then(
+      () => {
+        session.requests.set(requestId, { accepted: receipt })
+        session.assigned.set(runId, requestId)
+        session.usedRunIds.add(runId)
+      },
+      (error: unknown) => {
+        // The append may have succeeded before reporting a failure. Only
+        // reopening the durable journal can disambiguate this request.
+        session.unconfirmedAcceptance.add(requestId)
+        throw error
+      }
+    )
+    session.accepting.set(requestId, operation)
+    try {
+      await operation
+    } finally {
+      session.accepting.delete(requestId)
+    }
     pauseKernelTestPoint('agent-accepted', this.agentDir)
   }
 
@@ -552,12 +595,23 @@ export class KernelAgentRunReceiptStore {
 
   /** A request is settled when this journal never accepted it or holds its terminal state. */
   requestSettled(sessionId: string, requestId: string): boolean {
-    const state = this.sessions.get(sessionId)?.requests.get(requestId)
-    return this.sessions.has(sessionId) && (!state || Boolean(state.terminal))
+    const session = this.sessions.get(sessionId)
+    if (
+      !session ||
+      session.accepting.has(requestId) ||
+      session.unconfirmedAcceptance.has(requestId)
+    ) {
+      return false
+    }
+    const state = session.requests.get(requestId)
+    return !state || Boolean(state.terminal)
   }
 
   hasUnfinished(sessionId: string): boolean {
-    return [...this.require(sessionId).requests.values()].some((state) => !state.terminal)
+    const session = this.require(sessionId)
+    return (
+      session.accepting.size > 0 || [...session.requests.values()].some((state) => !state.terminal)
+    )
   }
 
   async closeSession(sessionId: string): Promise<void> {

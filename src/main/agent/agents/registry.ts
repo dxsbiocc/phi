@@ -143,6 +143,7 @@ interface RunRecord {
   done: Promise<AgentRunSnapshot>
   settle: (snapshot: AgentRunSnapshot) => void
   detachSignal?: () => void
+  admitted: boolean
 }
 
 export function isFinalAgentRunState(state: unknown): state is FinalAgentRunState {
@@ -176,33 +177,47 @@ export class AgentRunRegistry {
     if (this.admission) {
       throw new Error('Durable agent runs must be started through AgentRunRegistry.start().')
     }
-    return this.prepare(input, true)
+    const record = this.prepare(input)
+    this.enqueue(record)
+    return { id: record.snapshot.id, done: record.done }
   }
 
   async start(input: AgentLaunchInput): Promise<AgentRunHandle> {
     if (!this.admission) return this.launch(input)
-    const handle = this.prepare(input, false)
+    const record = this.prepare(input)
+    const id = record.snapshot.id
     try {
-      await this.admission.accept(handle.id, input)
-      const snapshot = this.get(handle.id)
-      if (!snapshot) throw new Error(`Agent run disappeared during admission: ${handle.id}`)
-      await this.admission.started(handle.id, snapshot)
-      this.pump()
-      return handle
+      await this.admission.accept(id, input)
+      await this.admission.started(id, { ...record.snapshot })
     } catch (error) {
-      const record = this.runs.get(handle.id)
-      if (record && record.snapshot.state === 'queued') {
-        const index = this.queue.indexOf(record)
-        if (index >= 0) this.queue.splice(index, 1)
-        this.runs.delete(handle.id)
-        if ((input.origin ?? 'tool') === 'tool') this.toolRuns -= 1
+      this.runs.delete(id)
+      record.detachSignal?.()
+      if (record.snapshot.origin === 'tool') this.toolRuns -= 1
+      // A waiter which captured the pending record still needs to settle.
+      // No completion is published for an execution that was never admitted.
+      record.snapshot = {
+        ...record.snapshot,
+        state: 'error',
+        error: errorMessage(error),
+        completedAt: this.now()
       }
-      await this.admission.unknown(handle.id, error).catch(() => undefined)
+      record.settle({ ...record.snapshot })
+      await this.admission.unknown(id, error).catch(() => undefined)
       throw error
     }
+    record.admitted = true
+    if (record.controller.signal.aborted) this.stop(id)
+    else this.enqueue(record)
+    return { id, done: record.done }
   }
 
-  private prepare(input: AgentLaunchInput, pump: boolean): AgentRunHandle {
+  private enqueue(record: RunRecord): void {
+    if (record.snapshot.state !== 'queued') return
+    this.queue.push(record)
+    this.pump()
+  }
+
+  private prepare(input: AgentLaunchInput): RunRecord {
     const origin = input.origin ?? 'tool'
     if (origin === 'tool' && this.toolRuns >= this.limits.maxRuns) {
       throw new AgentRunLimitError(this.limits.maxRuns)
@@ -231,10 +246,10 @@ export class AgentRunRegistry {
       input,
       controller: new AbortController(),
       done,
-      settle
+      settle,
+      admitted: !this.admission
     }
     this.runs.set(id, record)
-    this.queue.push(record)
 
     if (input.signal && !input.background) {
       const { signal } = input
@@ -249,8 +264,7 @@ export class AgentRunRegistry {
       }
     }
 
-    if (pump) this.pump()
-    return { id, done }
+    return record
   }
 
   get(id: string): AgentRunSnapshot | undefined {
@@ -323,6 +337,11 @@ export class AgentRunRegistry {
     const record = this.runs.get(id)
     if (!record || isFinalAgentRunState(record.snapshot.state)) return false
 
+    // Remember the stop without publishing a terminal ahead of its durable start.
+    if (!record.admitted) {
+      record.controller.abort()
+      return true
+    }
     if (record.snapshot.state === 'queued') {
       const index = this.queue.indexOf(record)
       if (index >= 0) this.queue.splice(index, 1)
