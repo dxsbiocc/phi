@@ -426,6 +426,7 @@ export class AgentRunRegistry {
           question === undefined
             ? input.task
             : `${input.task}\n\n${RESEARCH_HANDOFF_PROTOCOL}\nOriginal research question: ${JSON.stringify(question)}`,
+        ...(question !== undefined ? { researchQuestion: question } : {}),
         ...(input.displayName ? { displayName: input.displayName } : {}),
         ...(input.images?.length ? { images: input.images } : {}),
         runId: record.snapshot.id,

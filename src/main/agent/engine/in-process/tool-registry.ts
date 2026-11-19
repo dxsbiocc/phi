@@ -251,6 +251,7 @@ export async function createSessionToolRegistry(deps: {
     if (existing) return existing
     const implementation = createAgentRunner({
       agent: definition.name,
+      cwd,
       // What each delegation cost, for judging prompt and tool changes; see agents/usage.ts.
       onUsage: (record) => appendAgentUsageRecord(agentDir, { ...record, sessionId }),
       createSession: ({ runId, signal }) =>
