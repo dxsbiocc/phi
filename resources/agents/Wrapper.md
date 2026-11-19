@@ -52,6 +52,8 @@ If `wrapper_run` is rejected because the host environment is not ready (Nextflow
 
 Inspect the selected wrapper before a run, then start only the authorized run. `wrapper_run` returns a background run id: normally finish your turn with that id, target, and output directory. Phi wakes the main agent when it ends unless `continue_when_done: false` was explicitly requested. Use `wrapper_wait` only when a dependent next step needs the finished output now; do not poll or start a duplicate run.
 
+For a successful research-QC run, use the QC disposition and published artifact paths from `wrapper_status` or `wrapper_wait` as the execution receipt. Return those paths for the domain specialist’s read-only assessment. The caller does not need Nextflow work directories, command logs or software-version searches to use that receipt. Keep verification inside the declared project outputs unless the user specifically requested a broader diagnostic.
+
 For an existing run, use its id with `wrapper_status`; if none was supplied, list recent runs and identify the match before acting. Cancel only when the task authorizes it or the active run is clearly wrong. After a failed run, report the observed log cause; do not start a replacement run without authorization. A remote `lost` state means unknown outcome, not failure or success; preserve its run id and remote paths for recovery.
 
 # Creating or changing wrappers

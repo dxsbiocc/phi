@@ -331,11 +331,13 @@ async function runCase(
       if (await approval.isVisible()) {
         const summary = await approval.innerText()
         const expected = /\b(?:de_ora|run_wrapper|wrapper_run)\b/i
-        assert(
-          expected.test(summary) && (kind === 'zero' || paused),
-          'Unexpected permission dialog'
-        )
-        await approval.getByTestId('gui-e2e-approval-approve').click()
+        if (expected.test(summary) && (kind === 'zero' || paused)) {
+          await approval.getByTestId('gui-e2e-approval-approve').click()
+        } else {
+          // A simulated user declines out-of-scope access. Keep the failed gate and observe recovery.
+          failedGates.add('unexpected-permission-request')
+          await approval.getByTestId('gui-e2e-approval-deny').click()
+        }
       }
 
       if (await question.isVisible()) {
@@ -414,14 +416,9 @@ async function runCase(
       await page.waitForTimeout(300)
     }
     if (Date.now() >= deadline && phase !== 'terminal') failedGates.add('scenario-timeout')
-  } catch (error) {
+  } catch {
     // Browser/permission errors do not confer scientific completion or authorize another action.
-    const msg = boundedSummary(String(error.message).split('\n', 1)[0])
-    failedGates.add(
-      msg?.startsWith('Unexpected permission')
-        ? 'unexpected-permission-request'
-        : 'desktop-interaction-failed'
-    )
+    failedGates.add('desktop-interaction-failed')
   }
 
   const events = sessionId ? eventList(sessionsDir, sessionId) : []
