@@ -71,7 +71,9 @@ function ToolCallCard({
   const action = toolActionKind(item.toolName, item.argsPreview, item.argsJson)
   const waitingForResource = item.status === 'running' && item.waitingForResource === true
   const headline = waitingForResource
-    ? chatCopy.waitingForToolResource
+    ? item.toolName === 'write'
+      ? chatCopy.waitingForFileWrite
+      : chatCopy.waitingForToolResource
     : (webToolSummary(item.toolName, item.argsJson)?.headline ?? foldedToolHeadline(item, action))
   const showToolName = action !== 'command' && action !== 'python' && action !== 'notebook'
   const jumpTarget = notebookJumpTarget(item.notebook)

@@ -37,6 +37,7 @@ import { getContext, modelBySelector, runtimeThinkingLevel } from './runtime-con
 import { WorkerAgentSession, mcpUsageCache, sessions, type SessionEntry } from './state'
 import { serializeSessionState } from './tool-support'
 import { injectNativeToolAbortSignal } from './native-tool-abort'
+import { installNativeFileWriteResources } from './native-file-write-resources'
 import { installNativeShellResources } from './native-shell-resources'
 import { promptWithAutomaticModelFallback } from '../../session/automatic-model-fallback'
 
@@ -92,6 +93,7 @@ export async function promptSession(params: unknown): Promise<unknown> {
     // owner scope is what cancels native shell work.
     entry.activePromptAbort = promptAbort
     entry.activeHostRunId = hostRunId
+    installNativeFileWriteResources(entry.result.session)
     installNativeShellResources(entry.result.session)
     injectNativeToolAbortSignal(entry.result.session, promptAbort.signal)
     const isCurrent = (): boolean =>

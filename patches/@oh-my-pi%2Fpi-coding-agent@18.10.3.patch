@@ -343,3 +343,423 @@ index 43b3bcd1620afdb93e07c9cbacdadf57d85f3d65..cb0b02d955a8b611954fe383907396ea
  			candidate = `${id}-${n}`;
  		}
  		this.#taken.add(candidate);
+diff --git a/src/tools/write.ts b/src/tools/write.ts
+--- a/src/tools/write.ts
++++ b/src/tools/write.ts
+@@ -382,6 +382,13 @@
+ // ═══════════════════════════════════════════════════════════════════════════
+ 
+ type WriteParams = WriteToolInput;
++
++type PhiFileWriteAdmission = <T>(
++	absolutePath: string,
++	signal: AbortSignal | undefined,
++	runWrite: () => Promise<T>,
++	reportWait: (waiting: boolean) => void,
++) => Promise<T>;
+ 
+ interface ResolvedArchiveWritePath {
+ 	absolutePath: string;
+@@ -493,19 +500,25 @@
+ 	}
+ 
+ 	readonly #deferredDiagnostics: DeferredDiagnostics | undefined;
++	#phiFileWriteAdmission?: PhiFileWriteAdmission;
++
++	setPhiFileWriteAdmission(admit: PhiFileWriteAdmission): void {
++		this.#phiFileWriteAdmission = admit;
++	}
+ 
+ 	constructor(private readonly session: ToolSession) {
+ 		this.#deferredDiagnostics = session.queueDeferredDiagnostics ? new DeferredDiagnostics(session) : undefined;
+ 	}
+ 
+ 	/** Resolves the LSP writethrough from the current `lsp.*` settings so changes apply to the next write. */
+-	#lspWritethrough(): { writethrough: WritethroughCallback; deferred: DeferredDiagnostics | undefined } {
++	#lspWritethrough(joinFileWrites: boolean): { writethrough: WritethroughCallback; deferred: DeferredDiagnostics | undefined } {
+ 		if (!(this.session.enableLsp ?? true)) return { writethrough: writethroughNoop, deferred: undefined };
+ 		const { settings } = this.session;
+ 		const enableDiagnostics = cfgLspDiagnosticsOnWrite.get(settings);
+ 		const dedup = enableDiagnostics && cfgLspDiagnosticsDeduplicate.get(settings);
+ 		const writethrough = createLspWritethrough(this.session.cwd, {
+ 			enableFormat: cfgLspFormatOnWrite.get(settings),
++			joinFileWrites,
+ 			enableDiagnostics,
+ 			transformDiagnostics: dedup
+ 				? (path, result) => getDiagnosticsLedger(this.session).reduce(path, result)
+@@ -910,45 +923,83 @@
+ 			await assertNotReadSelectorMisfire(path, cleanContent, this.session.cwd);
+ 			await enforcePlanModeWrite(this.session, path, { op: "create", signal });
+ 			const absolutePath = await resolvePlanPath(this.session, path, signal);
+-			// A located URL write keeps its URL identity in progress, results, and the hashline header.
+-			const displayPath = target ? path : formatPathRelativeToCwd(absolutePath, this.session.cwd);
+-			const batchRequest = getLspBatchRequest(context?.toolCall);
+-
+-			const existing = await fs.stat(absolutePath).catch(() => undefined);
+-			if (target && existing?.isDirectory()) {
+-				throw new ToolError(`${target.url.protocol}// URL must resolve to a file: ${path}`);
+-			}
+-			const kind = existing && specialFileKind(existing);
+-			if (kind) {
+-				throw new ToolError(`Cannot write '${path}': it is a ${kind}, not a regular file or directory.`);
+-			}
+-			// Check if file exists and is auto-generated before overwriting.
+-			if (existing) {
+-				await assertEditableFile(absolutePath, path, this.session.settings);
+-			}
+-			await assertNotTruncatedFileReadProjection(
+-				this.session,
+-				path,
+-				absolutePath,
+-				displayPath,
+-				content,
+-				cleanContent,
+-			);
+-
+-			emitWriteProgress(onUpdate, cleanBytes, displayPath, absolutePath);
+-
+-			// Try ACP bridge first for editor-visible filesystem paths. Internal
+-			// artifacts such as local:// plans are owned by OMP, not the editor.
+-			const bridgeWrite = await routeWriteThroughBridge(this.session, path, absolutePath, cleanContent, signal);
+-			if (bridgeWrite) {
+-				// `write` always replaces the whole file, so (unlike hashline's
+-				// hunk-scoped diff) there's no size cost to keying the header/
+-				// executable-bit check on the verified post-write content —
+-				// use it so a drifted write (e.g. client format-on-save) still
+-				// hands back a tag that matches what's actually on disk.
+-				const madeExecutable = await maybeMarkExecutableForShebang(absolutePath, bridgeWrite.text);
+-				const header = maybeWriteSnapshotHeader(this.session, absolutePath, bridgeWrite.text, displayPath);
+-				const writeLine = `Successfully wrote ${cleanBytes} bytes to ${displayPath}`;
++			const call = context?.toolCall?.toolCalls[context.toolCall.index];
++			const admission =
++				!target && call?.id === _toolCallId && call.name === this.name &&
++				!this.session.getClientBridge?.()?.capabilities.writeTextFile
++					? this.#phiFileWriteAdmission
++					: undefined;
++			const runWrite = async (): Promise<AgentToolResult<WriteToolDetails>> => {
++				if (admission) await enforcePlanModeWrite(this.session, path, { op: "create", signal });
++				// A located URL write keeps its URL identity in progress, results, and the hashline header.
++				const displayPath = target ? path : formatPathRelativeToCwd(absolutePath, this.session.cwd);
++				// A batch can rewrite earlier paths in its final flush with no lease for
++				// those paths. Format admitted files inside their own operation instead.
++				const batchRequest = this.#phiFileWriteAdmission ? undefined : getLspBatchRequest(context?.toolCall);
++
++				const existing = await fs.stat(absolutePath).catch(() => undefined);
++				if (target && existing?.isDirectory()) {
++					throw new ToolError(`${target.url.protocol}// URL must resolve to a file: ${path}`);
++				}
++				const kind = existing && specialFileKind(existing);
++				if (kind) {
++					throw new ToolError(`Cannot write '${path}': it is a ${kind}, not a regular file or directory.`);
++				}
++				// Check if file exists and is auto-generated before overwriting.
++				if (existing) {
++					await assertEditableFile(absolutePath, path, this.session.settings);
++				}
++				await assertNotTruncatedFileReadProjection(
++					this.session,
++					path,
++					absolutePath,
++					displayPath,
++					content,
++					cleanContent,
++				);
++
++				emitWriteProgress(onUpdate, cleanBytes, displayPath, absolutePath);
++
++				// Try ACP bridge first for editor-visible filesystem paths. Internal
++				// artifacts such as local:// plans are owned by OMP, not the editor.
++				const bridgeWrite = await routeWriteThroughBridge(this.session, path, absolutePath, cleanContent, signal);
++				if (bridgeWrite) {
++					// `write` always replaces the whole file, so (unlike hashline's
++					// hunk-scoped diff) there's no size cost to keying the header/
++					// executable-bit check on the verified post-write content —
++					// use it so a drifted write (e.g. client format-on-save) still
++					// hands back a tag that matches what's actually on disk.
++					const madeExecutable = await maybeMarkExecutableForShebang(absolutePath, bridgeWrite.text);
++					const header = maybeWriteSnapshotHeader(this.session, absolutePath, bridgeWrite.text, displayPath);
++					const writeLine = `Successfully wrote ${cleanBytes} bytes to ${displayPath}`;
++					let resultText = header ? `${header}\n${writeLine}` : writeLine;
++					if (stripped) {
++						resultText += `\nNote: auto-stripped hashline display prefixes from content before writing.`;
++					}
++					if (madeExecutable) {
++						resultText += `\n${EXECUTABLE_NOTICE}`;
++					}
++					return {
++						content: [{ type: "text", text: resultText }],
++						details: { resolvedPath: absolutePath, madeExecutable: madeExecutable || undefined },
++					};
++				}
++
++				if (admission) signal?.throwIfAborted();
++				const { writethrough, deferred } = this.#lspWritethrough(admission !== undefined);
++				const diagnostics = await writethrough(absolutePath, cleanContent, signal, undefined, batchRequest, dst =>
++					deferred?.begin(dst),
++				);
++				invalidateFsScanAfterWrite(absolutePath);
++				if (!deferred || batchRequest?.flush === false) {
++					this.session.bumpFileMutationVersion?.(absolutePath);
++				}
++				const finalContent = diagnostics.finalContent;
++				const madeExecutable = await maybeMarkExecutableForShebang(absolutePath, finalContent);
++
++				const header = maybeWriteSnapshotHeader(this.session, absolutePath, finalContent, displayPath);
++				const finalBytes = finalContent === cleanContent ? cleanBytes : Buffer.byteLength(finalContent, "utf8");
++				const writeLine = `Successfully wrote ${finalBytes} bytes to ${displayPath}`;
+ 				let resultText = header ? `${header}\n${writeLine}` : writeLine;
+ 				if (stripped) {
+ 					resultText += `\nNote: auto-stripped hashline display prefixes from content before writing.`;
+@@ -956,51 +1007,31 @@
+ 				if (madeExecutable) {
+ 					resultText += `\n${EXECUTABLE_NOTICE}`;
+ 				}
++				if (!diagnostics.diagnostics) {
++					return {
++						content: [{ type: "text", text: resultText }],
++						details: { resolvedPath: absolutePath, madeExecutable: madeExecutable || undefined },
++					};
++				}
++
+ 				return {
+ 					content: [{ type: "text", text: resultText }],
+-					details: { resolvedPath: absolutePath, madeExecutable: madeExecutable || undefined },
++					details: {
++						resolvedPath: absolutePath,
++						diagnostics: diagnostics.diagnostics,
++						madeExecutable: madeExecutable || undefined,
++						meta: outputMeta()
++							.diagnostics(diagnostics.diagnostics.summary, diagnostics.diagnostics.messages ?? [])
++							.get(),
++					},
+ 				};
+-			}
+-
+-			const { writethrough, deferred } = this.#lspWritethrough();
+-			const diagnostics = await writethrough(absolutePath, cleanContent, signal, undefined, batchRequest, dst =>
+-				deferred?.begin(dst),
+-			);
+-			invalidateFsScanAfterWrite(absolutePath);
+-			if (!deferred || batchRequest?.flush === false) {
+-				this.session.bumpFileMutationVersion?.(absolutePath);
+-			}
+-			const finalContent = diagnostics.finalContent;
+-			const madeExecutable = await maybeMarkExecutableForShebang(absolutePath, finalContent);
+-
+-			const header = maybeWriteSnapshotHeader(this.session, absolutePath, finalContent, displayPath);
+-			const finalBytes = finalContent === cleanContent ? cleanBytes : Buffer.byteLength(finalContent, "utf8");
+-			const writeLine = `Successfully wrote ${finalBytes} bytes to ${displayPath}`;
+-			let resultText = header ? `${header}\n${writeLine}` : writeLine;
+-			if (stripped) {
+-				resultText += `\nNote: auto-stripped hashline display prefixes from content before writing.`;
+-			}
+-			if (madeExecutable) {
+-				resultText += `\n${EXECUTABLE_NOTICE}`;
+-			}
+-			if (!diagnostics.diagnostics) {
+-				return {
+-					content: [{ type: "text", text: resultText }],
+-					details: { resolvedPath: absolutePath, madeExecutable: madeExecutable || undefined },
+-				};
+-			}
+-
+-			return {
+-				content: [{ type: "text", text: resultText }],
+-				details: {
+-					resolvedPath: absolutePath,
+-					diagnostics: diagnostics.diagnostics,
+-					madeExecutable: madeExecutable || undefined,
+-					meta: outputMeta()
+-						.diagnostics(diagnostics.diagnostics.summary, diagnostics.diagnostics.messages ?? [])
+-						.get(),
+-				},
+ 			};
++			if (!admission) return runWrite();
++			// This callback sits inside untilAborted. The caller may already have
++			// received an abort error; the resource remains owned until runWrite settles.
++			return admission(absolutePath, signal, runWrite, waiting => {
++				onUpdate?.({ content: [], details: { kind: "phi_local_resource_wait", waiting } as WriteToolDetails });
++			});
+ 		});
+ 	}
+ }
+diff --git a/src/lsp/writethrough.ts b/src/lsp/writethrough.ts
+--- a/src/lsp/writethrough.ts
++++ b/src/lsp/writethrough.ts
+@@ -83,6 +83,8 @@
+ 
+ /** Options for creating the LSP writethrough callback */
+ export interface WritethroughOptions {
++	/** An owning file lease requires an actual join after a cancellation or LSP timeout. */
++	joinFileWrites?: boolean;
+ 	/** Whether to format the file using LSP after writing */
+ 	enableFormat?: boolean;
+ 	/** Whether to get LSP diagnostics after writing */
+@@ -97,6 +99,7 @@
+ 
+ /** Internal resolved form of {@link WritethroughOptions} that the writethrough machinery operates on. */
+ type ResolvedWritethroughOptions = {
++	joinFileWrites?: boolean;
+ 	enableFormat: boolean;
+ 	enableDiagnostics: boolean;
+ 	transformDiagnostics?: (absPath: string, result: FileDiagnosticsResult) => FileDiagnosticsResult;
+@@ -377,6 +380,7 @@
+ 	// there (the caller already wrote `content` when `contentAlreadyWritten`).
+ 	let diskContent = contentAlreadyWritten ? content : undefined;
+ 	const writeContent = async (value: string) => {
++		if (options.joinFileWrites) signal?.throwIfAborted();
+ 		await writeFileWithFallback(dst, value, file);
+ 		diskContent = value;
+ 	};
+@@ -430,6 +434,7 @@
+ 	let timedOut = false;
+ 	let synced = false;
+ 	let operationSignal: AbortSignal | undefined;
++	let processing: Promise<void> | undefined;
+ 	// The overlay leads disk from the first sync below until the write commits;
+ 	// bar disk-reconciliation for the file so a concurrent semantic query cannot
+ 	// revert the server to pre-write content.
+@@ -444,7 +449,7 @@
+ 			{ once: true },
+ 		);
+ 		operationSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+-		await untilAborted(operationSignal, async () => {
++		const processWrite = async () => {
+ 			if (useCustomFormatter) {
+ 				// Custom linters operate on on-disk input; the shared pre-write also
+ 				// supports implementations that inspect the file before formatting.
+@@ -514,9 +519,21 @@
+ 
+ 			// 5. Notify saved to LSP servers
+ 			await notifyFileSaved(dst, cwd, lspServers, operationSignal, !useCustomFormatter || enableDiagnostics);
++		};
++		await untilAborted(operationSignal, () => {
++			const work = processWrite();
++			if (options.joinFileWrites) processing = work;
++			return work;
+ 		});
+ 		synced = true;
+ 	} catch {
++		// The raced callback can still be inside a disk write or external
++		// formatter. Join it before fallback, releasing the caller's lease,
++		// or observing the cancellation.
++		if (options.joinFileWrites) {
++			await processing?.catch(() => {});
++			signal?.throwIfAborted();
++		}
+ 		if (timedOut) {
+ 			formatter = undefined;
+ 			diagnostics = undefined;
+@@ -629,6 +646,7 @@
+ /** Create a writethrough callback for LSP aware write operations */
+ export function createLspWritethrough(cwd: string, options?: WritethroughOptions): WritethroughCallback {
+ 	const resolvedOptions: ResolvedWritethroughOptions = {
++		joinFileWrites: options?.joinFileWrites,
+ 		enableFormat: options?.enableFormat ?? false,
+ 		enableDiagnostics: options?.enableDiagnostics ?? false,
+ 		transformDiagnostics: options?.transformDiagnostics,
+diff --git a/src/edit/index.ts b/src/edit/index.ts
+--- a/src/edit/index.ts
++++ b/src/edit/index.ts
+@@ -327,6 +327,11 @@
+ 
+ 	readonly #editMode?: EditMode;
+ 	readonly #deferredDiagnostics: DeferredDiagnostics;
++	#phiSeparateWrites = false;
++
++	separatePhiFileWritesFromEditBatches(): void {
++		this.#phiSeparateWrites = true;
++	}
+ 	readonly #sessions = new Map<string, OpenEditSession>();
+ 	readonly #streamedArgs = new Map<string, string>();
+ 
+@@ -484,7 +489,7 @@
+ 			open.native.finish();
+ 		}
+ 		const editSession = open.native;
+-		const batch = getLspBatchRequest(context?.toolCall);
++		const batch = getLspBatchRequest(context?.toolCall, this.#phiSeparateWrites);
+ 		let outcome;
+ 		try {
+ 			outcome = await editSession.apply(
+diff --git a/src/lsp/batch.ts b/src/lsp/batch.ts
+--- a/src/lsp/batch.ts
++++ b/src/lsp/batch.ts
+@@ -9,16 +9,18 @@
+ }
+ 
+ /** Resolve batching for edit/write calls sharing one model response. */
+-export function getLspBatchRequest(toolCall: ToolCallContext | undefined): LspBatchRequest | undefined {
++export function getLspBatchRequest(toolCall: ToolCallContext | undefined, separateWrites = false): LspBatchRequest | undefined {
+ 	if (!toolCall) {
+ 		return undefined;
+ 	}
++	// The Phi write tool holds a per-file lease and processes its own formatting.
++	const isBatchTool = (name: string) => LSP_BATCH_TOOLS.has(name) && (!separateWrites || name !== "write");
+ 	const hasOtherWrites = toolCall.toolCalls.some(
+-		(call, index) => index !== toolCall.index && LSP_BATCH_TOOLS.has(call.name),
++		(call, index) => index !== toolCall.index && isBatchTool(call.name),
+ 	);
+ 	if (!hasOtherWrites) {
+ 		return undefined;
+ 	}
+-	const hasLaterWrites = toolCall.toolCalls.slice(toolCall.index + 1).some(call => LSP_BATCH_TOOLS.has(call.name));
++	const hasLaterWrites = toolCall.toolCalls.slice(toolCall.index + 1).some(call => isBatchTool(call.name));
+ 	return { id: toolCall.batchId, flush: !hasLaterWrites };
+ }
+diff --git a/src/lsp/types.ts b/src/lsp/types.ts
+--- a/src/lsp/types.ts
++++ b/src/lsp/types.ts
+@@ -303,7 +303,7 @@
+  */
+ export interface LinterClient {
+ 	/** Format file content. Returns formatted content. */
+-	format(filePath: string, content: string): Promise<string>;
++	format(filePath: string, content: string, signal?: AbortSignal): Promise<string>;
+ 
+ 	/** Get diagnostics for a file. Content should already be written to disk. */
+ 	lint(filePath: string, signal?: AbortSignal): Promise<Diagnostic[]>;
+diff --git a/src/lsp/diagnostics.ts b/src/lsp/diagnostics.ts
+--- a/src/lsp/diagnostics.ts
++++ b/src/lsp/diagnostics.ts
+@@ -583,7 +583,7 @@
+ 			// Use custom linter client if configured
+ 			if (serverConfig.createClient) {
+ 				const linterClient = getLinterClient(serverName, serverConfig, cwd);
+-				const formattedContent = await linterClient.format(absolutePath, content);
++				const formattedContent = await linterClient.format(absolutePath, content, signal);
+ 				return { content: formattedContent, failed: false, unsupported: false };
+ 			}
+ 
+diff --git a/src/lsp/clients/biome-client.ts b/src/lsp/clients/biome-client.ts
+--- a/src/lsp/clients/biome-client.ts
++++ b/src/lsp/clients/biome-client.ts
+@@ -74,7 +74,10 @@
+ 			signal,
+ 		});
+ 
+-		const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
++		const [stdout, stderr] = await Promise.all([
++			new Response(proc.stdout).text(),
++			new Response(proc.stderr).text(),
++		]).finally(() => proc.exited);
+ 		const exitCode = await proc.exited;
+ 		signal?.throwIfAborted();
+ 
+@@ -114,12 +117,14 @@
+ 		private readonly cwd: string,
+ 	) {}
+ 
+-	async format(filePath: string, content: string): Promise<string> {
++	async format(filePath: string, content: string, signal?: AbortSignal): Promise<string> {
++		signal?.throwIfAborted();
+ 		// Keep the standalone LinterClient contract: callers supply the content to
+ 		// format, regardless of what is currently on disk.
+ 		await Bun.write(filePath, content);
+ 
+-		const result = await runBiome(["format", "--write", filePath], this.cwd, this.config.resolvedCommand);
++		signal?.throwIfAborted();
++		const result = await runBiome(["format", "--write", filePath], this.cwd, this.config.resolvedCommand, signal);
+ 
+ 		if (result.success) {
+ 			return await Bun.file(filePath).text();

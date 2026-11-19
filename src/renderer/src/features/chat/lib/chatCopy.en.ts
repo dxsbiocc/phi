@@ -302,6 +302,7 @@ export const chatEnglish = {
   stopAgent: 'Stop agent',
   delegatedTaskArguments: 'Delegated task arguments',
   waitingForToolResource: 'Waiting for another local command to finish',
+  waitingForFileWrite: 'Waiting for another local file write to finish',
   waitingForInternalToolSteps: 'Waiting for internal tool steps.',
   thisAgentIsNoLongerRunningPhiMayHaveRestarted:
     'This agent is no longer running (Phi may have restarted). No further progress will appear.',

@@ -779,7 +779,7 @@ export function reduceAgentEventState(
           return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
         const details = detailsFromToolResult(event.partialResult)
         if (
-          current.toolName === 'bash' &&
+          (current.toolName === 'bash' || current.toolName === 'write') &&
           isRecord(details) &&
           details.kind === 'phi_local_resource_wait' &&
           typeof details.waiting === 'boolean'

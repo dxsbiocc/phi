@@ -33,6 +33,7 @@ import { sessions } from './state'
 import type { RuntimeThinkingLevel } from './state'
 import { createSessionModelAvailability } from './session-model-availability'
 import { injectNativeToolAbortSignal } from './native-tool-abort'
+import { installNativeFileWriteResources } from './native-file-write-resources'
 import { installNativeShellResources } from './native-shell-resources'
 import { phiToolFunctions } from './tool-support'
 
@@ -295,6 +296,7 @@ export async function createPhiAgentSession(
     enableLsp: false
   })
 
+  installNativeFileWriteResources(result.session)
   installNativeShellResources(result.session)
   injectNativeToolAbortSignal(result.session, deps.signal)
   // The installer disposes the session and rethrows when the guards cannot be installed.
