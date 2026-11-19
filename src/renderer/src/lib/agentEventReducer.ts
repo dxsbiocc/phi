@@ -1,6 +1,6 @@
 import { chatCopy } from '../features/chat/lib/chatCopy'
 import { chatEventCopy } from '../features/chat/lib/chatEventCopy'
-import type { AgentEventSummary, AgentExecutionItem, AgentExecutionStep, ChatItem } from '../types'
+import type { AgentEventSummary, AgentExecutionStep, ChatItem } from '../types'
 import {
   chatItemFromPhiTimelineEvent,
   extractNotebookToolSummary,
@@ -32,7 +32,8 @@ import {
 
 import { stripAgentReportMetadata } from '../../../shared/agentReportText'
 import { isRecord } from '../../../shared/guards'
-import { agentDisplayNameFromCall, isAgentToolName } from '../../../shared/agentDisplayName'
+import { agentTaskFromArgs, ensureAgentExecution } from './agentExecutionRestore'
+import { isAgentToolName } from '../../../shared/agentDisplayName'
 import {
   applyAssistantMessageError,
   assistantMessageWasRecovered,
@@ -206,32 +207,6 @@ function argsJsonFrom(value: unknown): string {
   }
 }
 
-function agentTaskFromArgs(args: unknown): string | undefined {
-  if (!isRecord(args)) return undefined
-  return typeof args.task === 'string' && args.task.trim() ? args.task.trim() : undefined
-}
-
-function agentExecutionItemFromStart(event: AgentEventSummary): AgentExecutionItem | null {
-  const toolCallId = event.toolCallId
-  const agentName = event.agentName ?? agentDisplayNameFromCall(event.toolName)
-  if (!toolCallId || !agentName) return null
-  const task = typeof event.task === 'string' ? event.task : (agentTaskFromArgs(event.args) ?? '')
-  const args = event.args ?? (task ? { task } : undefined)
-  const argsJson = argsJsonFrom(args)
-  return {
-    id: toolCallId,
-    role: 'agent_execution',
-    ...runIdField(event.runId),
-    agentName,
-    task,
-    argsPreview: task || toolArgsPreview(args),
-    argsJson,
-    status: 'running',
-    steps: [],
-    ...createdAtField(event.createdAt)
-  }
-}
-
 type AgentExecutionStepUpdate = Partial<AgentExecutionStep> &
   Pick<AgentExecutionStep, 'id' | 'toolName' | 'status'>
 
@@ -296,35 +271,6 @@ function agentStepUpdateFromEvent(event: AgentEventSummary): AgentExecutionStepU
   }
 }
 
-function findAgentExecutionIndex(next: ChatItem[], toolCallId: string | undefined): number {
-  if (!toolCallId) return -1
-  return next.findIndex((item) => item.role === 'agent_execution' && item.id === toolCallId)
-}
-
-function ensureAgentExecutionItem(next: ChatItem[], event: AgentEventSummary): number {
-  const existingIndex = findAgentExecutionIndex(next, event.toolCallId)
-  if (existingIndex >= 0) return existingIndex
-  const started = agentExecutionItemFromStart(event)
-  if (started) {
-    next.push(started)
-    return next.length - 1
-  }
-  const id = event.toolCallId ?? `agent-${event.runId ?? next.length}`
-  next.push({
-    id,
-    role: 'agent_execution',
-    ...runIdField(event.runId),
-    agentName: event.agentName ?? agentDisplayNameFromCall(event.toolName) ?? 'Agent',
-    task: '',
-    argsPreview: '',
-    argsJson: '',
-    status: 'running',
-    steps: [],
-    ...createdAtField(event.createdAt)
-  })
-  return next.length - 1
-}
-
 function mergeAgentStep(
   current: AgentExecutionStep | undefined,
   incoming: AgentExecutionStepUpdate
@@ -379,7 +325,7 @@ function agentRunRefFields(event: AgentEventSummary): {
 
 function applyAgentExecutionBackground(next: ChatItem[], event: AgentEventSummary): boolean {
   if (event.type !== 'agent_execution_background') return false
-  const index = ensureAgentExecutionItem(next, event)
+  const index = ensureAgentExecution(next, event)
   const current = next[index]
   if (current.role !== 'agent_execution') return true
   next[index] = { ...current, ...agentRunRefFields(event), background: true }
@@ -393,7 +339,7 @@ function applyAgentExecutionNamed(next: ChatItem[], event: AgentEventSummary): b
   const details = isRecord(live) && live.kind === 'agent_named' ? live : null
   if (event.type !== 'agent_execution_named' && !details) return false
   const agentName = event.agentName ?? (typeof details?.agent === 'string' ? details.agent : '')
-  const index = agentName ? ensureAgentExecutionItem(next, event) : -1
+  const index = agentName ? ensureAgentExecution(next, event) : -1
   const current = next[index]
   if (current?.role !== 'agent_execution') return true
   next[index] = { ...current, ...agentRunRefFields({ ...details, ...event }), agentName }
@@ -404,7 +350,7 @@ function applyAgentExecutionSteered(next: ChatItem[], event: AgentEventSummary):
   if (event.type !== 'agent_execution_steered') return false
   const text = typeof event.text === 'string' ? event.text.trim() : ''
   if (!text) return true
-  const index = ensureAgentExecutionItem(next, event)
+  const index = ensureAgentExecution(next, event)
   const current = next[index]
   if (current.role !== 'agent_execution') return true
   next[index] = {
@@ -423,7 +369,7 @@ function applyAgentExecutionStep(next: ChatItem[], event: AgentEventSummary): bo
   }
   const incoming = agentStepUpdateFromEvent(event)
   if (!incoming) return false
-  const index = ensureAgentExecutionItem(next, event)
+  const index = ensureAgentExecution(next, event)
   const current = next[index]
   if (current.role !== 'agent_execution') return true
   const stepIndex = current.steps.findIndex((step) => step.id === incoming.id)
@@ -436,13 +382,7 @@ function applyAgentExecutionStep(next: ChatItem[], event: AgentEventSummary): bo
   next[index] = {
     ...current,
     ...agentRunRefFields(event),
-    steps,
-    status:
-      incoming.status === 'error'
-        ? 'running'
-        : current.status === 'done' || current.status === 'error'
-          ? current.status
-          : 'running'
+    steps
   }
   return true
 }
@@ -455,7 +395,7 @@ function applyAgentExecutionCompleted(next: ChatItem[], event: AgentEventSummary
   ) {
     return false
   }
-  const index = ensureAgentExecutionItem(next, event)
+  const index = ensureAgentExecution(next, event)
   const current = next[index]
   if (current.role !== 'agent_execution') return true
   const finalReport = stripAgentReportMetadata(
@@ -641,10 +581,7 @@ export function reduceAgentEventState(
       isAgentToolName(event.toolName) &&
       agentTaskFromArgs(event.args) !== undefined)
   ) {
-    const item = agentExecutionItemFromStart(event)
-    if (item && !next.some((current) => current.id === item.id)) {
-      next.push(item)
-    }
+    if (event.toolCallId) ensureAgentExecution(next, event)
     return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
   }
 
@@ -712,6 +649,9 @@ export function reduceAgentEventState(
   if (event.type === 'tool_execution_start' && typeof event.toolCallId === 'string') {
     const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool'
     const existingIndex = next.findIndex((item) => item.id === event.toolCallId)
+    if (existingIndex >= 0 && next[existingIndex].role === 'agent_execution') {
+      return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
+    }
     if (existingIndex >= 0 && next[existingIndex].role === 'tool') {
       next[existingIndex] = { ...next[existingIndex], status: 'running' }
       return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
@@ -825,7 +765,8 @@ export function reduceAgentEventState(
         const toolName = call.name ?? 'tool'
         if (
           isWrapperToolName(toolName) ||
-          (isAgentToolName(toolName) && agentTaskFromArgs(call.arguments) !== undefined)
+          (isAgentToolName(toolName) &&
+            (ame.type === 'toolcall_start' || agentTaskFromArgs(call.arguments) !== undefined))
         ) {
           return { messages: next, textBlockIds, thinkingBlockIds, thinkingStartedAtMs, nextId }
         }

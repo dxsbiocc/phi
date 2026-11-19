@@ -7,7 +7,7 @@ import { ConnectorIcon } from '../../features/mcp/components/ConnectorIcon'
 import { directoryIconForPath, fileIconForPath, PhiIcons } from '../../icons'
 import { appCopy } from '../../lib/appCopy'
 import { useUiLanguage } from '../../lib/i18n'
-import { WINDOW_TITLEBAR_HEIGHT } from '../../lib/windowChromeLayout'
+import { WINDOW_TITLEBAR_HEIGHT, workspaceTitlebarEndInset } from '../../lib/windowChromeLayout'
 import type {
   WorkspaceFileWorkspaceTab,
   WorkspaceSessionTab,
@@ -15,12 +15,7 @@ import type {
 } from '../../lib/workspaceResourceTabs'
 import type { WorkspaceFileTab } from '../../useWorkspaceFileTabs'
 import { WorkspaceResourceTabs } from '../WorkspaceResourceTabs'
-
-/**
- * Shared with App.tsx so the trailing titlebar toggles keep their reserved
- * space in sync with the controls that actually paint them.
- */
-export const titlebarTrailingToggleChromeReserve = '120px'
+import { useActiveTabScroll } from './useActiveTabScroll'
 
 const titlebarHeaderSx = {
   height: WINDOW_TITLEBAR_HEIGHT,
@@ -28,18 +23,9 @@ const titlebarHeaderSx = {
   display: 'flex',
   alignItems: 'center',
   gap: 1,
-  WebkitAppRegion: 'drag'
+  WebkitAppRegion: 'drag',
+  pr: workspaceTitlebarEndInset
 } as const
-
-function titlebarHeaderPadding(
-  leadingChromeInset: number,
-  reserveTrailingChromeSpace: boolean
-): { pl: string | number; pr: string | number } {
-  return {
-    pl: leadingChromeInset > 0 ? `${leadingChromeInset}px` : 1.5,
-    pr: reserveTrailingChromeSpace ? titlebarTrailingToggleChromeReserve : 1.5
-  }
-}
 
 function fileTabSx(selected: boolean): SxProps<Theme> {
   return {
@@ -56,9 +42,8 @@ function fileTabSx(selected: boolean): SxProps<Theme> {
     display: 'flex',
     alignItems: 'center',
     gap: 0.4,
-    flex: '0 0 156px',
-    width: 156,
-    minWidth: 118,
+    flex: '0 0 min(156px, 100%)',
+    minWidth: 0,
     maxWidth: 156,
     height: 32,
     px: 0.6,
@@ -197,8 +182,10 @@ function WorkspaceFileTabs({
   onClose: (tab: WorkspaceFileTab) => void
 }): React.JSX.Element {
   useUiLanguage()
+  const stripRef = useActiveTabScroll(activeId, tabs.length)
   return (
     <Box
+      ref={stripRef}
       role="tablist"
       aria-label={appCopy.openFiles}
       data-phi-workspace-file-tabs="true"
@@ -234,22 +221,20 @@ export function WorkspaceFileHeader({
   activeId,
   onSelect,
   onClose,
-  leadingChromeInset = 0,
-  reserveTrailingChromeSpace = false
+  leadingChromeInset = 0
 }: {
   tabs: WorkspaceFileTab[]
   activeId: string | null
   onSelect: (tab: WorkspaceFileTab) => void
   onClose: (tab: WorkspaceFileTab) => void
   leadingChromeInset?: number
-  reserveTrailingChromeSpace?: boolean
 }): React.JSX.Element {
   return (
     <Box
       data-phi-workspace-file-header="true"
       sx={{
         ...titlebarHeaderSx,
-        ...titlebarHeaderPadding(leadingChromeInset, reserveTrailingChromeSpace)
+        pl: leadingChromeInset > 0 ? `${leadingChromeInset}px` : 1.5
       }}
     >
       <WorkspaceFileTabs tabs={tabs} activeId={activeId} onSelect={onSelect} onClose={onClose} />
@@ -275,8 +260,7 @@ export function WorkspaceResourceHeader({
   onClose,
   onDockSessionTab,
   actions,
-  leadingChromeInset = 0,
-  reserveTrailingChromeSpace = false
+  leadingChromeInset = 0
 }: {
   tabs: WorkspaceTab[]
   activeKey: string | null
@@ -285,14 +269,13 @@ export function WorkspaceResourceHeader({
   onDockSessionTab?: (tab: WorkspaceSessionTab) => void
   actions?: React.ReactNode
   leadingChromeInset?: number
-  reserveTrailingChromeSpace?: boolean
 }): React.JSX.Element {
   return (
     <Box
       data-phi-workspace-resource-header="true"
       sx={{
         ...titlebarHeaderSx,
-        ...titlebarHeaderPadding(leadingChromeInset, reserveTrailingChromeSpace)
+        pl: leadingChromeInset > 0 ? `${leadingChromeInset}px` : 1.5
       }}
     >
       <WorkspaceResourceTabs

@@ -5,7 +5,11 @@ import {
   WorkspaceFileHeader,
   WorkspaceResourceHeader
 } from '../../components/app-shell/WorkspaceTitlebar'
-import { WINDOW_TITLEBAR_HEIGHT, type WindowChromeLayout } from '../../lib/windowChromeLayout'
+import {
+  WINDOW_TITLEBAR_HEIGHT,
+  workspaceTitlebarEndInset,
+  type WindowChromeLayout
+} from '../../lib/windowChromeLayout'
 import type { WorkspaceSessionTab, WorkspaceTab } from '../../lib/workspaceResourceTabs'
 import type { WorkspaceFileTab } from '../../useWorkspaceFileTabs'
 
@@ -75,7 +79,8 @@ function WorkspaceTitlebarStrip({
           muiTheme.palette.mode === 'dark' ? muiTheme.palette.background.default : '#FFFFFF',
         WebkitAppRegion: 'drag',
         zIndex: 7,
-        pl: `${chromeLayout.mainColumnTitlebarInset}px`
+        pl: `${chromeLayout.mainColumnTitlebarInset}px`,
+        pr: workspaceTitlebarEndInset
       }}
     >
       <Box
@@ -114,14 +119,12 @@ function WorkspaceTitlebarStrip({
 function WorkspaceColumnBody({
   mode,
   chromeLayout,
-  sidePanelCollapsed,
   resourceStrip,
   fileStrip,
   content
 }: {
   mode: WorkspaceViewMode
   chromeLayout: WindowChromeLayout
-  sidePanelCollapsed: boolean
   resourceStrip: WorkspaceResourceStrip
   fileStrip: WorkspaceFileStrip
   content: WorkspaceViewContent
@@ -138,7 +141,6 @@ function WorkspaceColumnBody({
         onClose={resourceStrip.onClose}
         onDockSessionTab={resourceStrip.onDockSessionTab}
         leadingChromeInset={chromeLayout.mainColumnTitlebarInset}
-        reserveTrailingChromeSpace={sidePanelCollapsed}
       />
       <Box
         sx={{
@@ -163,7 +165,6 @@ function WorkspaceColumnBody({
         onSelect={fileStrip.onSelect}
         onClose={fileStrip.onClose}
         leadingChromeInset={chromeLayout.mainColumnTitlebarInset}
-        reserveTrailingChromeSpace={sidePanelCollapsed}
       />
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>{content.filePreview}</Box>
     </Box>
@@ -178,7 +179,6 @@ export function WorkspaceView({
   showTitlebar,
   hideTitle,
   titlebarTrailing,
-  sidePanelCollapsed,
   resourceStrip,
   fileStrip,
   content
@@ -193,8 +193,6 @@ export function WorkspaceView({
   hideTitle: boolean
   /** Optional trailing titlebar content, e.g. the open file's title tab. */
   titlebarTrailing: ReactNode
-  /** When the side panel is closed the tabs must keep clear of the chrome toggles. */
-  sidePanelCollapsed: boolean
   resourceStrip: WorkspaceResourceStrip
   fileStrip: WorkspaceFileStrip
   content: WorkspaceViewContent
@@ -225,7 +223,6 @@ export function WorkspaceView({
         <WorkspaceColumnBody
           mode={mode}
           chromeLayout={chromeLayout}
-          sidePanelCollapsed={sidePanelCollapsed}
           resourceStrip={resourceStrip}
           fileStrip={fileStrip}
           content={content}

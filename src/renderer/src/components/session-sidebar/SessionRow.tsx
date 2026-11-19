@@ -407,6 +407,7 @@ export const SessionRow = memo(function SessionRow({
           <ListItemButton
             selected={isActive}
             data-phi-session-row={isActive ? 'active' : 'inactive'}
+            data-phi-session-id={session.phiSessionId}
             aria-label={fullTitle}
             onClick={() => {
               setHoverDetailsOpen(false)

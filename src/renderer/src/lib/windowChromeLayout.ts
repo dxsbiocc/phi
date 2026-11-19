@@ -1,5 +1,9 @@
 export const WINDOW_TITLEBAR_HEIGHT = 44
 
+// The desktop chrome publishes its measured clearance on the shared window layout.
+export const TITLEBAR_TRAILING_SPACE = '--phi-titlebar-trailing-space'
+export const workspaceTitlebarEndInset = `var(${TITLEBAR_TRAILING_SPACE}, 12px)`
+
 const activityBarWidth = 48
 const macChromeHorizontalInset = 14
 const macWindowedChromeGap = 18

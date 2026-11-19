@@ -7,9 +7,9 @@ import { createTheme, ThemeProvider } from '@mui/material'
 import { AppResizeSeparator } from '../src/renderer/src/components/app-shell/AppResizeSeparator'
 import {
   WorkspaceFileHeader,
-  WorkspaceResourceHeader,
-  titlebarTrailingToggleChromeReserve
+  WorkspaceResourceHeader
 } from '../src/renderer/src/components/app-shell/WorkspaceTitlebar'
+import { workspaceTitlebarEndInset } from '../src/renderer/src/lib/windowChromeLayout'
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import type { WorkspaceFileTab } from '../src/renderer/src/useWorkspaceFileTabs'
 import type { WorkspaceTab } from '../src/renderer/src/lib/workspaceResourceTabs'
@@ -56,8 +56,7 @@ test('workspace file header keeps its tab strip and trailing chrome reserve', ()
       activeId: 'file-2',
       onSelect: () => undefined,
       onClose: () => undefined,
-      leadingChromeInset: 50,
-      reserveTrailingChromeSpace: true
+      leadingChromeInset: 50
     })
   )
 
@@ -71,10 +70,10 @@ test('workspace file header keeps its tab strip and trailing chrome reserve', ()
   assert.match(markup, /aria-label="关闭 main.ts"/)
   assert.match(markup, /border-radius:999px/)
   assert.match(markup, /padding-left:50px/)
-  assert.match(markup, new RegExp(`padding-right:${titlebarTrailingToggleChromeReserve}`))
+  assert.ok(markup.includes(`padding-right:${workspaceTitlebarEndInset}`))
 })
 
-test('workspace file header collapses to a plain content inset without window chrome', () => {
+test('workspace titlebars fall back to a content inset outside the app window', () => {
   const markup = render(
     createElement(WorkspaceFileHeader, {
       tabs: [fileTab()],
@@ -85,8 +84,7 @@ test('workspace file header collapses to a plain content inset without window ch
   )
 
   assert.match(markup, /padding-left:12px/)
-  assert.match(markup, /padding-right:12px/)
-  assert.doesNotMatch(markup, new RegExp(`padding-right:${titlebarTrailingToggleChromeReserve}`))
+  assert.match(markup, /padding-right:var\(--phi-titlebar-trailing-space,\s*12px\)/)
 })
 
 test('workspace file header selects one scoped notebook when two hosts use the same path', () => {
@@ -121,6 +119,8 @@ test('workspace resource header renders resource tabs plus its trailing actions'
 
   assert.match(markup, /data-phi-workspace-resource-header="true"/)
   assert.match(markup, /data-phi-workspace-resource-tabs="true"/)
+  assert.ok(markup.includes(`padding-right:${workspaceTitlebarEndInset}`))
+  assert.match(markup, /data-phi-workspace-resource-key="resource:plugins"/)
   assert.match(markup, /data-testid="header-actions"/)
   // Session docking is optional: no dock affordance without the callback.
   assert.doesNotMatch(markup, /data-phi-workspace-resource-tab-dock/)

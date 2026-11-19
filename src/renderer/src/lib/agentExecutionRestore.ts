@@ -1,5 +1,6 @@
 import type { ChatItem } from '../types'
 import type { AgentExecutionItem, AgentExecutionStep } from './agentExecutionTypes'
+import { agentDisplayNameFromCall } from '../../../shared/agentDisplayName'
 import { stripAgentReportMetadata } from '../../../shared/agentReportText'
 
 function runIdField(runId?: unknown): { runId: string } | Record<string, never> {
@@ -63,61 +64,54 @@ function toolOutputArtifactFrom(value: unknown):
   return { kind: 'tool_output', path: artifact.path, bytes: artifact.bytes }
 }
 
-export function agentExecutionIndex(items: ChatItem[], toolCallId: string | undefined): number {
-  if (!toolCallId) return -1
-  return items.findIndex((item) => item.role === 'agent_execution' && item.id === toolCallId)
-}
-
-export function agentExecutionFromTimelineEvent(message: {
+type AgentRowEvent = {
+  type?: string
   runId?: string
   toolCallId?: string
+  toolName?: string
   agentName?: string
   task?: string
   args?: unknown
   createdAt?: string
-}): AgentExecutionItem | null {
-  if (!message.toolCallId || !message.agentName) return null
-  const args = message.args ?? (message.task ? { task: message.task } : undefined)
-  const argsJson = argsJsonFrom(args)
-  return {
-    id: message.toolCallId,
-    role: 'agent_execution',
-    ...runIdField(message.runId),
-    agentName: message.agentName,
-    task: message.task ?? '',
-    argsPreview: message.task || toolArgsPreview(args),
-    argsJson,
-    status: 'running',
-    steps: [],
-    ...createdAtField(message.createdAt)
-  }
 }
 
-function ensureAgentExecution(
-  items: ChatItem[],
-  message: {
-    runId?: string
-    toolCallId?: string
-    agentName?: string
-    createdAt?: string
-  }
-): number {
-  const existingIndex = agentExecutionIndex(items, message.toolCallId)
-  if (existingIndex >= 0) return existingIndex
-  const id = message.toolCallId ?? `agent-${items.length}`
-  items.push({
+export function agentTaskFromArgs(args: unknown): string | undefined {
+  if (!args || typeof args !== 'object' || !('task' in args)) return undefined
+  return typeof args.task === 'string' && args.task.trim() ? args.task.trim() : undefined
+}
+
+/** The streaming tool preview and the executed delegation share one timeline position. */
+export function ensureAgentExecution(items: ChatItem[], event: AgentRowEvent): number {
+  const id = event.toolCallId ?? `agent-${event.runId ?? items.length}`
+  const index = items.findLastIndex(
+    (item) =>
+      (item.role === 'agent_execution' || item.role === 'tool') &&
+      item.id === id &&
+      (!item.runId || !event.runId || item.runId === event.runId)
+  )
+  const previous = items[index]
+  if (previous?.role === 'agent_execution') return index
+  const preview = previous?.role === 'tool' ? previous : undefined
+  const task = event.task ?? agentTaskFromArgs(event.args) ?? ''
+  const args = event.args ?? (task ? { task } : undefined)
+  const isStart = event.type === 'agent_execution_started' || event.type === 'tool_execution_start'
+  const createdAt = (isStart ? event.createdAt : undefined) ?? preview?.createdAt ?? event.createdAt
+  const card: AgentExecutionItem = {
     id,
     role: 'agent_execution',
-    ...runIdField(message.runId),
-    agentName: message.agentName ?? 'Agent',
-    task: '',
-    argsPreview: '',
-    argsJson: '',
+    ...runIdField(event.runId ?? preview?.runId),
+    agentName:
+      event.agentName ?? agentDisplayNameFromCall(event.toolName ?? preview?.toolName) ?? 'Agent',
+    task,
+    argsPreview: task || toolArgsPreview(args) || preview?.argsPreview || '',
+    argsJson: argsJsonFrom(args) || preview?.argsJson || '',
     status: 'running',
     steps: [],
-    ...createdAtField(message.createdAt)
-  })
-  return items.length - 1
+    ...createdAtField(createdAt)
+  }
+  if (index < 0) return items.push(card) - 1
+  items[index] = card
+  return index
 }
 
 function agentStepFromTimelineEvent(message: {
