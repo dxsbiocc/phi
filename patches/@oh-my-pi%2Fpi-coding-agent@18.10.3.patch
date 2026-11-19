@@ -1018,3 +1018,577 @@ diff --git a/src/edit/auto-repair.ts b/src/edit/auto-repair.ts
  	await writethrough(snapshot.path, repair.content, options.signal, Bun.file(snapshot.path));
  	invalidateFsScanAfterWrite(snapshot.path);
  	logger.debug("Edit auto-repair applied", {
+diff --git a/src/internal-urls/xd-protocol.ts b/src/internal-urls/xd-protocol.ts
+--- a/src/internal-urls/xd-protocol.ts
++++ b/src/internal-urls/xd-protocol.ts
+@@ -86,7 +86,14 @@
+ 			return { content: result.content, details: { xdev }, isError: result.isError, useless: result.useless };
+ 		}
+ 		if (name && isResolutionDeviceName(name)) {
+-			const { result, xdev } = await dispatchResolutionDevice(session, name, content);
++			const { result, xdev } = await dispatchResolutionDevice(session, name, content, {
++				signal: context.signal,
++				onWait: waiting =>
++					context.toolCall?.onUpdate?.({
++						content: [],
++						details: { kind: "phi_local_resource_wait", waiting },
++					}),
++			});
+ 			return { content: result.content, details: { xdev }, isError: result.isError, useless: result.useless };
+ 		}
+ 		const xdev = session.xdev;
+diff --git a/src/session/agent-session.ts b/src/session/agent-session.ts
+--- a/src/session/agent-session.ts
++++ b/src/session/agent-session.ts
+@@ -238,6 +238,7 @@
+ 	buildResolveReminderMessage,
+ 	isPreviewResolutionToolCall,
+ 	isProposeToolCall,
++	type PendingResolveInvoker,
+ 	type PlanProposalHandler,
+ 	writeDeviceDispatch,
+ } from "../tools/resolve";
+@@ -2719,7 +2720,7 @@
+ 	}
+ 
+ 	/** Peek the head non-forcing pending preview invoker, for the preview-resolution dispatch. */
+-	peekPendingInvoker(): ((input: unknown) => Promise<unknown> | unknown) | undefined {
++	peekPendingInvoker(): PendingResolveInvoker | undefined {
+ 		return this.#toolChoiceQueue.peekPendingInvoker();
+ 	}
+ 
+diff --git a/src/session/tool-choice-queue.ts b/src/session/tool-choice-queue.ts
+--- a/src/session/tool-choice-queue.ts
++++ b/src/session/tool-choice-queue.ts
+@@ -1,4 +1,5 @@
+ import type { ToolChoice } from "@oh-my-pi/pi-ai";
++import type { PendingResolveInvoker } from "../tools/resolve";
+ 
+ // ── Callback types ──────────────────────────────────────────────────────────
+ 
+@@ -78,7 +79,8 @@
+ 	id: string;
+ 	/** Source tool that staged the preview (e.g. "ast_edit"), for the reminder. */
+ 	sourceToolName: string;
+-	onInvoked: (input: unknown) => Promise<unknown> | unknown;
++	onInvoked: PendingResolveInvoker;
++	onRemove?: () => void;
+ }
+ 
+ // ── Queue ───────────────────────────────────────────────────────────────────
+@@ -235,21 +237,26 @@
+ 	registerPendingInvoker(
+ 		id: string,
+ 		sourceToolName: string,
+-		onInvoked: (input: unknown) => Promise<unknown> | unknown,
++		onInvoked: PendingResolveInvoker,
++		onRemove?: () => void,
+ 	): void {
+ 		this.removePendingInvoker(id);
+-		this.#pendingInvokers.push({ id, sourceToolName, onInvoked });
++		this.#pendingInvokers.push({ id, sourceToolName, onInvoked, onRemove });
+ 	}
+ 
+ 	/** Drop the pending invoker with this id (e.g. after it resolves). */
+ 	removePendingInvoker(id: string): void {
+-		this.#pendingInvokers = this.#pendingInvokers.filter(p => p.id !== id);
++		const index = this.#pendingInvokers.findIndex(entry => entry.id === id);
++		if (index < 0) return;
++		const [entry] = this.#pendingInvokers.splice(index, 1);
++		entry?.onRemove?.();
+ 	}
+ 
+ 	/** Drop every pending preview invoker without touching hard tool-choice directives. */
+ 	clearPendingInvokers(): void {
+-		if (this.#pendingInvokers.length === 0) return;
++		const removed = this.#pendingInvokers;
+ 		this.#pendingInvokers = [];
++		for (const entry of removed) entry.onRemove?.();
+ 	}
+ 
+ 	/** True when at least one non-forcing pending preview is registered. */
+@@ -258,7 +265,7 @@
+ 	}
+ 
+ 	/** The head (most-recently registered) pending invoker's handler, for resolve dispatch. */
+-	peekPendingInvoker(): ((input: unknown) => Promise<unknown> | unknown) | undefined {
++	peekPendingInvoker(): PendingResolveInvoker | undefined {
+ 		return this.#pendingInvokers.at(-1)?.onInvoked;
+ 	}
+ 
+@@ -285,7 +292,7 @@
+ 			this.reject("cleared");
+ 		}
+ 		this.#queue = [];
+-		this.#pendingInvokers = [];
++		this.clearPendingInvokers();
+ 		this.#lastResolvedLabel = undefined;
+ 	}
+ 
+diff --git a/src/tools/ast-edit.ts b/src/tools/ast-edit.ts
+--- a/src/tools/ast-edit.ts
++++ b/src/tools/ast-edit.ts
+@@ -1,3 +1,4 @@
++import { isAbsolute } from "node:path";
+ import type { AstEditToolDetails } from "@oh-my-pi/pi-tui/tools/ast-edit";
+ import { type } from "@oh-my-pi/omptype";
+ import type {
+@@ -14,7 +15,7 @@
+ import { getEditStore } from "../edit/store";
+ import { normalizeToLF } from "../edit/normalize";
+ import { InternalUrlRouter, sessionResolveContext } from "../internal-urls";
+-import { InternalUrlFilesystem } from "../internal-urls/url-filesystem";
++import { InternalUrlFilesystem, isUrlPath } from "../internal-urls/url-filesystem";
+ import { formatHashlineHeader } from "@oh-my-pi/pi-tui/tools/hashline-format";
+ 
+ import astEditDescription from "../prompts/tools/ast-edit.md" with { type: "text" };
+@@ -37,6 +38,7 @@
+ import { PREVIEW_PENDING_NOTICE, queueResolveHandler } from "./resolve";
+ import { ToolError } from "@oh-my-pi/pi-tui/tools/tool-errors";
+ import { toolResult } from "./tool-result";
++import type { PhiFileWriteAdmission, PhiFileWriteTarget } from "./write";
+ 
+ const astEditOpSchema = type({
+ 	pat: type("string").describe("ast pattern"),
+@@ -58,6 +60,9 @@
+ 	maxFiles: number;
+ 	failOnParseError: boolean;
+ 	signal?: AbortSignal;
++	/** Cooperative cancellation checked only BETWEEN targets; the native rewrite
++	 *  itself never sees it, so a started mutation always settles on its own. */
++	cancelSignal?: AbortSignal;
+ 	filesystem: ShellFilesystem;
+ }
+ 
+@@ -87,6 +92,7 @@
+ 	let limitReached = false;
+ 	let applied = !options.dryRun;
+ 	for (const target of targets) {
++		options.cancelSignal?.throwIfAborted();
+ 		const targetResult = await astEdit({
+ 			rewrites: options.rewrites,
+ 			path: target.basePath,
+@@ -153,6 +159,29 @@
+ 
+ type AstEditSchemaInfer = typeof astEditSchema.infer;
+ 
++/**
++ * Claim the scope the native pass will scan, including files absent from the preview.
++ * Native discovery trims Unicode whitespace and can follow a path to a directory.
++ * An exact path therefore needs the scheduler's existing-file identity recheck.
++ */
++function astEditApplyWriteTargets(
++	multiTargets: Array<{ basePath: string; glob?: string }> | undefined,
++	path: string,
++	globFilter: string | undefined,
++): PhiFileWriteTarget[] {
++	if (
++		multiTargets ||
++		globFilter !== undefined ||
++		process.platform === "win32" ||
++		!isAbsolute(path) ||
++		isUrlPath(path) ||
++		/\p{White_Space}$/u.test(path)
++	) {
++		return [];
++	}
++	return [{ path, mustExist: true }];
++}
++
+ export class AstEditTool implements AgentTool<typeof astEditSchema, AstEditToolDetails> {
+ 	readonly name = "ast_edit";
+ 	/** Strictest write decision ({@link strictestApproval}) over every path; "write" when none is given. */
+@@ -237,6 +266,15 @@
+ 	];
+ 	readonly deferrable = true;
+ 	readonly loadMode = "discoverable";
++
++	#phiFileWriteAdmission?: PhiFileWriteAdmission;
++
++	/** Shared local-file-write admission (same instance as write/edit); installed
++	 *  by installNativeFileWriteResources. Gates the APPROVED apply only. */
++	setPhiFileWriteAdmission(admit: PhiFileWriteAdmission): void {
++		this.#phiFileWriteAdmission = admit;
++	}
++
+ 	constructor(private readonly session: ToolSession) {
+ 		this.description = prompt.render(astEditDescription);
+ 	}
+@@ -433,99 +471,117 @@
+ 				outputLines.push("", grammarNote);
+ 			}
+ 
++			signal?.throwIfAborted();
+ 			// Register pending action so `resolve` can apply or discard these previewed changes
+ 			if (!result.applied && result.totalReplacements > 0) {
+ 				const previewReplacementPlural = result.totalReplacements !== 1 ? "s" : "";
+ 				const previewFilePlural = result.filesTouched !== 1 ? "s" : "";
+-				queueResolveHandler(this.session, {
+-					label: `AST Edit: ${result.totalReplacements} replacement${previewReplacementPlural} in ${result.filesTouched} file${previewFilePlural}`,
+-					sourceToolName: this.name,
+-					apply: async (_reason: string) => {
+-						// The apply outlives the preview call: its filesystem carries no signal.
+-						const applyContext = sessionResolveContext(this.session);
+-						const applyResult = await runAstEditOnce(multiTargets, resolvedSearchPath, globFilter, {
+-							rewrites: normalizedRewrites,
+-							dryRun: false,
+-							maxFiles,
+-							failOnParseError: false,
+-							filesystem: new InternalUrlFilesystem({ context: applyContext, tier }).shellFilesystem(),
+-						});
+-						const { errors: cappedApplyParseErrors, total: applyParseErrorsTotal } = capParseErrors(
+-							applyResult.parseErrors,
++				const applyWriteTargets = astEditApplyWriteTargets(multiTargets, resolvedSearchPath, globFilter);
++				const runApply = async (cancelSignal?: AbortSignal): Promise<AgentToolResult<AstEditToolDetails>> => {
++					cancelSignal?.throwIfAborted();
++					const applyContext = sessionResolveContext(this.session);
++					// Native cancellation can reject before the actual writer returns. Join
++					// each started pass without a native signal; check it between targets.
++					const applyResult = await runAstEditOnce(multiTargets, resolvedSearchPath, globFilter, {
++						rewrites: normalizedRewrites,
++						dryRun: false,
++						maxFiles,
++						failOnParseError: false,
++						cancelSignal,
++						filesystem: new InternalUrlFilesystem({ context: applyContext, tier }).shellFilesystem(),
++					});
++					cancelSignal?.throwIfAborted();
++					const { errors: cappedApplyParseErrors, total: applyParseErrorsTotal } = capParseErrors(
++						applyResult.parseErrors,
++					);
++					const { record: recordAppliedFile, list: appliedFileList } = createFileRecorder();
++					const appliedFileReplacementCounts = new Map<string, number>();
++					for (const fileChange of applyResult.fileChanges) {
++						const relativePath = formatPath(fileChange.path);
++						recordAppliedFile(relativePath);
++						appliedFileReplacementCounts.set(
++							relativePath,
++							(appliedFileReplacementCounts.get(relativePath) ?? 0) + fileChange.count,
+ 						);
+-						const { record: recordAppliedFile, list: appliedFileList } = createFileRecorder();
+-						const appliedFileReplacementCounts = new Map<string, number>();
+-						for (const fileChange of applyResult.fileChanges) {
+-							const relativePath = formatPath(fileChange.path);
+-							recordAppliedFile(relativePath);
+-							appliedFileReplacementCounts.set(
+-								relativePath,
+-								(appliedFileReplacementCounts.get(relativePath) ?? 0) + fileChange.count,
+-							);
+-						}
+-						for (const change of applyResult.changes) {
+-							recordAppliedFile(formatPath(change.path));
+-						}
+-						// The preview minted tags from pre-apply content; the rewrite just
+-						// invalidated them. Re-record post-apply snapshots (canonical keys)
+-						// so the model's next hashline edit anchors against fresh tags.
+-						const freshTagLines: string[] = [];
+-						if (useHashLines) {
+-							const snapshotStore = getEditStore(this.session);
+-							for (const relativePath of appliedFileList) {
+-								const appliedPath = await resultSnapshotPath(relativePath, this.session.cwd, applyContext);
+-								if (appliedPath === undefined) continue;
+-								try {
+-									const fullText = normalizeToLF(await Bun.file(appliedPath).text());
+-									const freshTag = snapshotStore.recordSnapshot(appliedPath, fullText);
+-									freshTagLines.push(formatHashlineHeader(relativePath, freshTag));
+-								} catch {
+-									// File disappeared between apply and re-read; skip its tag.
+-								}
++					}
++					for (const change of applyResult.changes) {
++						recordAppliedFile(formatPath(change.path));
++					}
++					// The preview minted tags from pre-apply content; the rewrite just
++					// invalidated them. Re-record post-apply snapshots (canonical keys)
++					// so the model's next hashline edit anchors against fresh tags.
++					const freshTagLines: string[] = [];
++					if (useHashLines) {
++						const snapshotStore = getEditStore(this.session);
++						for (const relativePath of appliedFileList) {
++							const appliedPath = await resultSnapshotPath(relativePath, this.session.cwd, applyContext);
++							if (appliedPath === undefined) continue;
++							try {
++								const fullText = normalizeToLF(await Bun.file(appliedPath).text());
++								const freshTag = snapshotStore.recordSnapshot(appliedPath, fullText);
++								freshTagLines.push(formatHashlineHeader(relativePath, freshTag));
++							} catch {
++								// File disappeared between apply and re-read; skip its tag.
+ 							}
+ 						}
+-						const appliedFileReplacements = appliedFileList.map(filePath => ({
+-							path: filePath,
+-							count: appliedFileReplacementCounts.get(filePath) ?? 0,
+-						}));
+-						const appliedDetails: AstEditToolDetails = {
+-							totalReplacements: applyResult.totalReplacements,
+-							filesTouched: applyResult.filesTouched,
+-							filesSearched: applyResult.filesSearched,
+-							applied: applyResult.applied,
+-							limitReached: applyResult.limitReached,
+-							...(cappedApplyParseErrors.length > 0
+-								? { parseErrors: cappedApplyParseErrors, parseErrorsTotal: applyParseErrorsTotal }
+-								: {}),
+-							scopePath,
+-							files: appliedFileList,
+-							fileReplacements: appliedFileReplacements,
+-						};
+-						const stalePreview =
+-							applyResult.totalReplacements !== result.totalReplacements ||
+-							applyResult.filesTouched !== result.filesTouched ||
+-							fileList.some(
+-								filePath => appliedFileReplacementCounts.get(filePath) !== fileReplacementCounts.get(filePath),
+-							) ||
+-							appliedFileList.some(
+-								filePath => fileReplacementCounts.get(filePath) !== appliedFileReplacementCounts.get(filePath),
+-							);
+-						if (stalePreview) {
+-							const staleText =
+-								applyResult.totalReplacements === 0
+-									? `Preview is stale / no longer matches; no replacements were applied. Preview expected ${result.totalReplacements} replacement${previewReplacementPlural} in ${result.filesTouched} file${previewFilePlural}.`
+-									: applyResult.totalReplacements < result.totalReplacements
+-										? `Preview is stale / no longer matches; only ${applyResult.totalReplacements} of ${result.totalReplacements} replacements were applied in ${applyResult.filesTouched} of ${result.filesTouched} files.`
+-										: `Preview is stale / no longer matches; applied ${applyResult.totalReplacements} replacements but preview expected ${result.totalReplacements}.`;
+-							const staleWithTags =
+-								freshTagLines.length > 0 ? `${staleText}\n${freshTagLines.join("\n")}` : staleText;
+-							return { ...toolResult(appliedDetails).text(staleWithTags).done(), isError: true };
+-						}
+-						const appliedReplacementPlural = applyResult.totalReplacements !== 1 ? "s" : "";
+-						const appliedFilePlural = applyResult.filesTouched !== 1 ? "s" : "";
+-						const appliedText = `Applied ${applyResult.totalReplacements} replacement${appliedReplacementPlural} in ${applyResult.filesTouched} file${appliedFilePlural}.`;
+-						const text = freshTagLines.length > 0 ? `${appliedText}\n${freshTagLines.join("\n")}` : appliedText;
+-						return toolResult(appliedDetails).text(text).done();
++					}
++					const appliedFileReplacements = appliedFileList.map(filePath => ({
++						path: filePath,
++						count: appliedFileReplacementCounts.get(filePath) ?? 0,
++					}));
++					const appliedDetails: AstEditToolDetails = {
++						totalReplacements: applyResult.totalReplacements,
++						filesTouched: applyResult.filesTouched,
++						filesSearched: applyResult.filesSearched,
++						applied: applyResult.applied,
++						limitReached: applyResult.limitReached,
++						...(cappedApplyParseErrors.length > 0
++							? { parseErrors: cappedApplyParseErrors, parseErrorsTotal: applyParseErrorsTotal }
++							: {}),
++						scopePath,
++						files: appliedFileList,
++						fileReplacements: appliedFileReplacements,
++					};
++					const stalePreview =
++						applyResult.totalReplacements !== result.totalReplacements ||
++						applyResult.filesTouched !== result.filesTouched ||
++						fileList.some(
++							filePath => appliedFileReplacementCounts.get(filePath) !== fileReplacementCounts.get(filePath),
++						) ||
++						appliedFileList.some(
++							filePath => fileReplacementCounts.get(filePath) !== appliedFileReplacementCounts.get(filePath),
++						);
++					if (stalePreview) {
++						const staleText =
++							applyResult.totalReplacements === 0
++								? `Preview is stale / no longer matches; no replacements were applied. Preview expected ${result.totalReplacements} replacement${previewReplacementPlural} in ${result.filesTouched} file${previewFilePlural}.`
++								: applyResult.totalReplacements < result.totalReplacements
++									? `Preview is stale / no longer matches; only ${applyResult.totalReplacements} of ${result.totalReplacements} replacements were applied in ${applyResult.filesTouched} of ${result.filesTouched} files.`
++									: `Preview is stale / no longer matches; applied ${applyResult.totalReplacements} replacements but preview expected ${result.totalReplacements}.`;
++						const staleWithTags =
++							freshTagLines.length > 0 ? `${staleText}\n${freshTagLines.join("\n")}` : staleText;
++						return { ...toolResult(appliedDetails).text(staleWithTags).done(), isError: true };
++					}
++					const appliedReplacementPlural = applyResult.totalReplacements !== 1 ? "s" : "";
++					const appliedFilePlural = applyResult.filesTouched !== 1 ? "s" : "";
++					const appliedText = `Applied ${applyResult.totalReplacements} replacement${appliedReplacementPlural} in ${applyResult.filesTouched} file${appliedFilePlural}.`;
++					const text = freshTagLines.length > 0 ? `${appliedText}\n${freshTagLines.join("\n")}` : appliedText;
++					return toolResult(appliedDetails).text(text).done();
++				};
++				queueResolveHandler(this.session, {
++					label: `AST Edit: ${result.totalReplacements} replacement${previewReplacementPlural} in ${result.filesTouched} file${previewFilePlural}`,
++					sourceToolName: this.name,
++					previewLifetime: { signal },
++					apply: (_reason, runtime) => {
++						const admit = this.#phiFileWriteAdmission;
++						return admit
++							? admit(
++									applyWriteTargets,
++									runtime?.signal,
++									() => runApply(runtime?.signal),
++									waiting => runtime?.onWait?.(waiting),
++								)
++							: runApply(runtime?.signal);
+ 					},
+ 				});
+ 				// The renderer's ⟨proposed⟩ badge is TUI-only; this line is the model's
+diff --git a/src/tools/index.ts b/src/tools/index.ts
+--- a/src/tools/index.ts
++++ b/src/tools/index.ts
+@@ -68,7 +68,7 @@
+ import { MemoryRetainTool } from "./memory-retain";
+ import { wrapToolWithMetaNotice } from "./output-meta";
+ import { ReadTool } from "./read";
+-import type { PlanProposalHandler } from "./resolve";
++import type { PendingResolveInvoker, PlanProposalHandler } from "./resolve";
+ import { SecurityScanTool } from "./security-scan";
+ import { supportsExternalThinking, ThinkTool } from "./think";
+ import { type TodoPhase } from "@oh-my-pi/pi-tui/tools/todo";
+@@ -493,7 +493,7 @@
+ 	 *  `xd://resolve` or `xd://reject` dispatches to it so a staged preview resolves
+ 	 *  WITHOUT forcing tool_choice — the agent-loop's SoftToolRequirement lifecycle owns
+ 	 *  reminder injection and escalation. */
+-	peekPendingInvoker?(): ((input: unknown) => Promise<unknown> | unknown) | undefined;
++	peekPendingInvoker?(): PendingResolveInvoker | undefined;
+ 	/** Clear stale pending preview markers when a resolution dispatch cannot run them. */
+ 	clearPendingInvokers?(): void;
+ 	/** Peek the plan-proposal handler installed by plan mode. `xd://propose` dispatches the
+diff --git a/src/tools/resolve.ts b/src/tools/resolve.ts
+--- a/src/tools/resolve.ts
++++ b/src/tools/resolve.ts
+@@ -106,6 +106,14 @@
+ /** Handler installed by plan mode; `xd://propose` dispatches the written plan title to it. */
+ export type PlanProposalHandler = (title: string) => Promise<AgentToolResult<unknown>>;
+ 
++/** In-memory execution context supplied by the resolving write. */
++export interface PendingResolveRuntime {
++	signal?: AbortSignal;
++	onWait?: (waiting: boolean) => void;
++}
++
++export type PendingResolveInvoker = (input: unknown, runtime?: PendingResolveRuntime) => Promise<unknown> | unknown;
++
+ /** Parse a completed `write` dispatch targeting `xd://resolve` or `xd://reject`. */
+ export function resolveDispatchDetails(toolName: string, result: unknown): ResolveDetails | undefined {
+ 	const dispatch = writeDeviceDispatch(toolName, result);
+@@ -149,39 +157,57 @@
+ 	options: {
+ 		label: string;
+ 		sourceToolName: string;
+-		apply(reason: string): Promise<AgentToolResult<unknown>>;
++		previewLifetime?: { signal?: AbortSignal };
++		apply(reason: string, runtime?: PendingResolveRuntime): Promise<AgentToolResult<unknown>>;
+ 		reject?(reason: string): Promise<AgentToolResult<unknown> | undefined>;
+ 	},
+ ): void {
+ 	const queue = session.getToolChoiceQueue?.();
+-	if (!queue) return;
++	const previewSignal = options.previewLifetime?.signal;
++	if (!queue || previewSignal?.aborted) return;
+ 
+-	// Unique per preview: stacked/sequential previews each get their own entry.
++	// Keep the original registration during apply. A retryable failure leaves it
++	// at the same position, and cannot recreate an entry the session cleared.
+ 	const id = `pending-action:${options.sourceToolName}:${pendingPreviewSeq++}`;
++	let resolving = false;
++	let retired = false;
++	const lifetime = options.previewLifetime ? new AbortController() : undefined;
++	const remove = (): void => queue.removePendingInvoker(id);
+ 
+-	const onInvoked = async (input: unknown): Promise<AgentToolResult<unknown>> => {
+-		const result = await runResolveInvocation(input as ResolveInvocation, {
+-			sourceToolName: options.sourceToolName,
+-			label: options.label,
+-			apply: options.apply,
+-			reject: options.reject,
+-			onApplyError: () => {
+-				// Apply threw (e.g. ast_edit overlapping replacements). Keep the preview
+-				// pending under the SAME id so the model can reject or fix-and-retry;
+-				// runResolveInvocation rethrows, so the success-path removal below is skipped.
+-				queue.registerPendingInvoker(id, options.sourceToolName, onInvoked);
+-			},
+-		});
+-		// Resolved (apply succeeded, or discard): consume the staged action exactly once.
+-		queue.removePendingInvoker(id);
+-		return result;
++	const onInvoked: PendingResolveInvoker = async (input, runtime): Promise<AgentToolResult<unknown>> => {
++		if (retired) throw new ToolError("This pending action is no longer available.");
++		if (resolving) throw new ToolError("Resolution already in progress for this pending action.");
++
++		const resolveSignal = runtime?.signal;
++		const signal =
++			lifetime && resolveSignal
++				? AbortSignal.any([lifetime.signal, resolveSignal])
++				: (resolveSignal ?? lifetime?.signal);
++		resolving = true;
++		try {
++			signal?.throwIfAborted();
++			const result = await runResolveInvocation(input as ResolveInvocation, {
++				sourceToolName: options.sourceToolName,
++				label: options.label,
++				apply: reason => options.apply(reason, { signal, onWait: runtime?.onWait }),
++				reject: options.reject,
++			});
++			remove();
++			return result;
++		} catch (error) {
++			if (lifetime && signal?.aborted) remove();
++			throw error;
++		} finally {
++			resolving = false;
++		}
+ 	};
+ 
+-	// NON-FORCING: register so a resolution-device write can dispatch here WITHOUT
+-	// changing tool_choice. The agent-loop injects the reminder (from the
+-	// SoftToolRequirement the session builds) and forces a `write` turn only on
+-	// non-compliance.
+-	queue.registerPendingInvoker(id, options.sourceToolName, onInvoked);
++	queue.registerPendingInvoker(id, options.sourceToolName, onInvoked, () => {
++		retired = true;
++		previewSignal?.removeEventListener("abort", remove);
++		lifetime?.abort(previewSignal?.reason);
++	});
++	previewSignal?.addEventListener("abort", remove, { once: true });
+ }
+ 
+ /**
+@@ -215,11 +241,6 @@
+ 		label: string;
+ 		apply(reason: string): Promise<AgentToolResult<unknown>>;
+ 		reject?(reason: string): Promise<AgentToolResult<unknown> | undefined>;
+-		/** Invoked synchronously when `apply()` throws, before the error is rethrown.
+-		 *  The queued caller uses this to re-push the pending invoker so the
+-		 *  pending preview survives a failed apply (e.g. overlapping ast_edit
+-		 *  replacements) and the model can reject or fix-and-retry. */
+-		onApplyError?(error: unknown): void;
+ 	},
+ ): Promise<AgentToolResult<ResolveDetails>> {
+ 	const baseDetails: ResolveDetails = {
+@@ -233,11 +254,6 @@
+ 		try {
+ 			result = await options.apply(params.reason);
+ 		} catch (error) {
+-			try {
+-				options.onApplyError?.(error);
+-			} catch {
+-				// Requeue hook must not mask the original apply failure.
+-			}
+ 			if (error instanceof ToolError) throw error;
+ 			const message = error instanceof Error ? error.message : String(error);
+ 			throw new ToolError(`Apply failed: ${message}`);
+@@ -279,6 +295,7 @@
+ 	session: ToolSession,
+ 	device: ResolutionDeviceName,
+ 	text: string,
++	runtime?: PendingResolveRuntime,
+ ): Promise<{ result: AgentToolResult<unknown>; xdev: XdevDispatch }> {
+ 	const body = text.trim();
+ 	if (device === PROPOSE_DEVICE_NAME) {
+@@ -294,8 +311,9 @@
+ 
+ 	const action: ResolveAction = device === RESOLVE_DEVICE_NAME ? "apply" : "discard";
+ 	const xdevBase: XdevDispatch = { tool: device, mode: "execute", args: { reason: body } };
+-	const invoker = session.peekQueueInvoker?.() ?? session.peekPendingInvoker?.();
+-	if (!invoker) {
++	const inFlight = session.peekQueueInvoker?.();
++	const pending = inFlight ? undefined : session.peekPendingInvoker?.();
++	if (!inFlight && !pending) {
+ 		session.clearPendingInvokers?.();
+ 		const proposeHint = session.peekPlanProposalHandler?.()
+ 			? ` To submit the plan for approval, write its title to ${PROPOSE_DEVICE_PATH} instead.`
+@@ -318,6 +336,7 @@
+ 		);
+ 	}
+ 	const invocation: ResolveInvocation = { action, reason: body };
+-	const result = (await invoker(invocation)) as AgentToolResult<ResolveDetails>;
++	const result = (await (inFlight ? inFlight(invocation) : pending?.(invocation, runtime))) as
++		AgentToolResult<ResolveDetails>;
+ 	return { result, xdev: { ...xdevBase, inner: result.details } };
+ }

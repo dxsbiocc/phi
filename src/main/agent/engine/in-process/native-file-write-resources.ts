@@ -212,7 +212,7 @@ const admitFileWrite = createFileWriteAdmission()
 export function installNativeFileWriteResources(
   session: Pick<AgentSession, 'getToolByName'>
 ): void {
-  for (const name of ['write', 'edit']) {
+  for (const name of ['write', 'edit', 'ast_edit']) {
     const tool = session.getToolByName(name) as
       { setPhiFileWriteAdmission?: (admit: FileWriteAdmission) => void } | undefined
     if (typeof tool?.setPhiFileWriteAdmission === 'function') {
