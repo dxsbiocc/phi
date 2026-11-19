@@ -13,36 +13,44 @@ function sessionBranch(context: unknown): unknown[] {
   return Array.isArray(branch) ? branch : []
 }
 
-function containsUserQuestion(context: unknown, question: string): boolean {
-  return sessionBranch(context).some((entry) => {
-    if (!isRecord(entry) || entry.type !== 'message' || !isRecord(entry.message)) return false
-    if (
-      entry.message.role !== 'user' ||
-      entry.message.synthetic === true ||
-      entry.message.attribution === 'agent'
-    )
-      return false
-    const content = entry.message.content
-    const text =
-      typeof content === 'string'
+/** Synthetic wake-ups can quote earlier reports and do not start a new user request. */
+export function authoredUserText(message: unknown): string | undefined {
+  if (
+    !isRecord(message) ||
+    message.role !== 'user' ||
+    message.synthetic === true ||
+    message.attribution === 'agent'
+  )
+    return undefined
+  const content = message.content
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
         ? content
-        : Array.isArray(content)
-          ? content
-              .filter(
-                (part) => isRecord(part) && part.type === 'text' && typeof part.text === 'string'
-              )
-              .map((part) => part.text)
-              .join('\n')
-          : ''
-    // Older wake-ups and replan prompts use the user role and may quote child reports.
-    return (
-      !/^\s*<phi_(?:(?:agent_run|plan_run|wrapper_run|shell_jobs)_finished|research_plan_paused)>/.test(
-        text
-      ) &&
-      !text.startsWith('Replan the remaining steps of paused plan run ') &&
-      text.includes(question)
-    )
-  })
+            .filter(
+              (part) => isRecord(part) && part.type === 'text' && typeof part.text === 'string'
+            )
+            .map((part) => part.text)
+            .join('\n')
+        : ''
+  if (
+    /^\s*<phi_(?:(?:agent_run|plan_run|wrapper_run|shell_jobs)_finished|research_plan_paused)>/.test(
+      text
+    ) ||
+    text.startsWith('Replan the remaining steps of paused plan run ')
+  )
+    return undefined
+  return text
+}
+
+function containsUserQuestion(context: unknown, question: string): boolean {
+  return sessionBranch(context).some(
+    (entry) =>
+      isRecord(entry) &&
+      entry.type === 'message' &&
+      authoredUserText(entry.message)?.includes(question)
+  )
 }
 
 export function createPhiToolContext(cwd: string, context: unknown): PhiToolContext {

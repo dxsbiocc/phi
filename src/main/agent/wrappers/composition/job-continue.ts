@@ -106,7 +106,7 @@ export function wrapperRunContinuationPrompt(input: readonly WrapperRunFinishedE
       : []),
     ...(anySkip
       ? [
-          'A skip disposition means no genes passed the thresholds. Skip candidate-list enrichment (ORA). Deliver the zero-hit result if it answers the question. Ask a specific question only if an unresolved aim needs a new method or input.'
+          'A skip disposition means no genes passed the thresholds. Skip candidate-list enrichment (ORA). Use the domain specialist’s read-only assessment of the matching result table and QC certificate to confirm the zero. Deliver the zero-hit result if it answers the question. Ask a specific question only if an unresolved aim needs a new method or input.'
         ]
       : []),
     ...(anyNeedsInput

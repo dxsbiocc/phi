@@ -19,6 +19,7 @@ import { parseAgentReport, requireDeclaredCompletion, type AgentReportStatus } f
 import {
   failedResearchReport,
   isResearchQuestion,
+  readScientificHandoff,
   RESEARCH_HANDOFF_PROTOCOL
 } from './research-handoff'
 
@@ -278,6 +279,32 @@ export class AgentRunRegistry {
 
   list(): AgentRunSnapshot[] {
     return [...this.runs.values()].map((record) => ({ ...record.snapshot }))
+  }
+
+  /** Only registered scientific delegations from the caller's active branch can supply findings. */
+  researchFindings(
+    toolCallIds: ReadonlySet<string>
+  ): Array<{ evidence: string[]; answer: string; interpretation: string }> {
+    const findings: Array<{ evidence: string[]; answer: string; interpretation: string }> = []
+    for (const { input, snapshot } of this.runs.values()) {
+      if (
+        !input.researchQuestion ||
+        !snapshot.toolCallId ||
+        !toolCallIds.has(snapshot.toolCallId) ||
+        snapshot.state !== 'done' ||
+        !snapshot.report
+      )
+        continue
+      const report = readScientificHandoff(
+        snapshot.report,
+        input.researchQuestion,
+        snapshot.reportStatus
+      )
+      if (!report.structured) continue
+      const { evidence, answer, interpretation } = JSON.parse(report.text)
+      findings.push({ evidence, answer, interpretation })
+    }
+    return findings.reverse()
   }
 
   fallbackReadiness(

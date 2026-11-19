@@ -57,6 +57,7 @@ import { sessions } from './state'
 import { createSessionToolRegistry } from './tool-registry'
 import { serializeSessionState } from './tool-support'
 import { installAutoWorkModeBatchGuard } from './auto-work-mode-guard'
+import { createResearchReadExtension } from './research-read-extension'
 import { createLiveResourcePromptExtension } from './live-resource-prompt'
 import {
   bindSessionEnvironment,
@@ -205,6 +206,7 @@ export async function createSession(
       includeSkills: !noTools
     }),
     ...createMainSessionExtensions(extensionConfig, extensionHost),
+    createResearchReadExtension(agentRuns),
     createPlanStepsExtension(extensionHost, {
       availableAgents: phiAgents.map((agent) => agent.name)
     }),
