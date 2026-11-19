@@ -72,7 +72,9 @@ export function createChatQueueSessionSelector(
   return (items) => {
     if (!sessionId || items === source) return selected
     source = items
-    const next = items.filter((item) => item.sessionId === sessionId && item.status !== 'running')
+    const next = items.filter(
+      (item) => item.sessionId === sessionId && !item.independent && item.status !== 'running'
+    )
     if (
       next.length === selected.length &&
       next.every((item, index) => {
@@ -91,7 +93,7 @@ export function createChatQueueSessionSelector(
   }
 }
 
-function chatQueueBackgroundJob(job: ChatQueueJob): LiveChatQueueJob {
+export function chatQueueBackgroundJob(job: ChatQueueJob): LiveChatQueueJob {
   return {
     kind: 'chat-queue',
     key: `chat-queue:${job.id}`,

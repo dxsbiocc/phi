@@ -1,5 +1,6 @@
 import type { BackgroundAgentJob } from '../../../shared/backgroundJobTypes'
 import { isRecord } from '../../../shared/guards'
+import { INDEPENDENT_TASK_AGENT } from '../../../shared/independentTask'
 import { messageContentTitleText } from '../../../shared/sessionTitle'
 import { writeAppLog } from '../app-logger'
 import { getPhiEngine } from '../engine/in-process-engine'
@@ -70,6 +71,7 @@ function liveBackgroundAgentJob(
     options.optionalStringField(value, 'agentRunId') ?? options.optionalStringField(value, 'runId')
   const agentName =
     options.optionalStringField(value, 'agentName') ?? options.optionalStringField(value, 'agent')
+  if (value.agent === INDEPENDENT_TASK_AGENT) return []
   const state = liveAgentJobState(value.state)
   const startedAt = liveStartedAt(value)
   if (!agentSessionId || !agentRunId || !agentName || !state || startedAt === undefined) return []
@@ -119,7 +121,12 @@ function coldBackgroundAgentJob(
   run: ColdRun,
   liveIds: ReadonlySet<string>
 ): BackgroundAgentJob[] {
-  if (!run.background || liveIds.has(`${manifest.sessionId}:${run.id}`)) return []
+  if (
+    !run.background ||
+    run.agent === INDEPENDENT_TASK_AGENT ||
+    liveIds.has(`${manifest.sessionId}:${run.id}`)
+  )
+    return []
   return [
     {
       agentSessionId: '',

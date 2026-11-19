@@ -64,6 +64,8 @@ test('malformed and multiline controls clarify without taking an action', () => 
   for (const message of [
     '/task',
     '/tasks extra',
+    '/task run',
+    '/task run\nmake a report',
     '/task add abcdef01',
     '/task cancel abcd',
     '/task cancel abcdef012',
@@ -78,6 +80,14 @@ test('malformed and multiline controls clarify without taking an action', () => 
   ]) {
     assert.deepEqual(parseTaskEvent(message), { kind: 'clarify' }, message)
   }
+})
+
+test('only the explicit independent command separates task text from the ordinary chat', () => {
+  assert.deepEqual(parseTaskEvent('/task run Make a report\ninclude the output'), {
+    kind: 'independent-run',
+    text: 'Make a report\ninclude the output'
+  })
+  assert.deepEqual(parseTaskEvent('Run two unrelated tasks in parallel'), { kind: 'new-task' })
 })
 
 test('prefix matches preserve collisions and resolve a canonical exact ID case-insensitively', () => {

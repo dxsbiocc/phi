@@ -26,12 +26,17 @@ const SNAPSHOT_TEMP =
 const MAX_IDENTIFIER_BYTES = 200
 const MAX_TEXT_BYTES = 64 * 1024
 const MAX_PENDING = 256
+import { chatQueuePreview } from './task-preview'
+
 const MAX_ENTRIES = 2048
 const RECEIPT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_FILE_BYTES = 8 * 1024 * 1024
 const MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024
-// A queued entry can grow by an attempt UUID and the longest terminal status.
-const RESERVED_TRANSITION_BYTES = 128
+// A queued entry can grow by an attempt UUID, the longest terminal status and,
+// for independent tasks, a child run binding plus a cancellation intent.
+const RESERVED_TRANSITION_BYTES = 256
+const MAX_RESULT_BYTES = 4096
+const INDEPENDENT_RESULT_RESERVE = (MAX_RESULT_BYTES + 160) * 6 + 128
 
 const identifier = z
   .string()
@@ -53,6 +58,7 @@ const attachmentSchema = z.strictObject({
   bytes: z.int().positive().max(MAX_PROMPT_IMAGE_BYTES)
 })
 const modeSchema = z.enum(['auto', 'direct', 'plan', 'plan-execute'])
+const childRunIdSchema = z.string().regex(/^run_[0-9]{1,12}$/)
 const digestSchema = z.string().regex(/^[0-9a-f]{64}$/)
 const entrySchema = z
   .strictObject({
@@ -71,7 +77,16 @@ const entrySchema = z
     retryUserMessageId: identifier.optional(),
     supplementTo: uuid.optional(),
     attachments: z.array(attachmentSchema).min(1).max(MAX_PROMPT_IMAGES).optional(),
-    mode: modeSchema.optional()
+    mode: modeSchema.optional(),
+    independent: z.literal(true).optional(),
+    kernelSessionId: identifier.optional(),
+    childRunId: childRunIdSchema.optional(),
+    taskPreview: z.string().max(160).optional(),
+    cancelRequested: z.literal(true).optional(),
+    result: z
+      .string()
+      .refine((text) => Buffer.byteLength(text) <= MAX_RESULT_BYTES)
+      .optional()
   })
   .refine((entry) => Boolean(entry.text.trim() || entry.attachments?.length || entry.textHash))
 const snapshotSchema = z.strictObject({
@@ -102,6 +117,8 @@ type SubmissionOptions = {
   binding?: string
   retryUserMessageId?: string
   supplementTo?: string
+  independent?: boolean
+  kernelSessionId?: string
 }
 
 export interface AssistantInbox {
@@ -120,12 +137,25 @@ export interface AssistantInbox {
     attemptId: string,
     expectedEntryId?: string
   ): Promise<ClaimedEntry | null>
+  claimIndependent(
+    scope: AssistantInboxScope,
+    attemptId: string,
+    expectedEntryId?: string
+  ): Promise<ClaimedEntry | null>
+  bindChild(
+    scope: AssistantInboxScope,
+    id: string,
+    attemptId: string,
+    childRunId: string
+  ): Promise<boolean>
+  requestCancel(scope: AssistantInboxScope, id: string, attemptId: string): Promise<boolean>
   loadImages(scope: AssistantInboxScope, id: string, attemptId: string): Promise<PromptImageInput[]>
   settle(
     scope: AssistantInboxScope,
     id: string,
     attemptId: string,
-    result: SettleResult
+    result: SettleResult,
+    resultText?: string
   ): Promise<boolean>
   cancel(scope: AssistantInboxScope, id: string): Promise<boolean>
   removeConversation(sessionId: string): Promise<void>
@@ -167,9 +197,18 @@ function terminalEntry(
 ): AssistantInboxEntry {
   const finished = { ...entry, status, settledAt }
   delete finished.deferredAttemptId
+  delete finished.cancelRequested
+  if (entry.independent) finished.taskPreview = chatQueuePreview(entry.text)
   return retainsAttachments(finished)
     ? finished
     : { ...finished, textHash: textFingerprint(entry.text), text: '' }
+}
+
+function boundedResult(text: string): string {
+  const bytes = Buffer.from(text, 'utf8')
+  if (bytes.length <= MAX_RESULT_BYTES) return text
+  const decoder = new TextDecoder()
+  return decoder.decode(bytes.subarray(0, MAX_RESULT_BYTES), { stream: true })
 }
 
 function retainedEntries(
@@ -277,7 +316,25 @@ function parseSnapshot(bytes: Uint8Array): AssistantInboxEntry[] {
       if (attempts.has(entry.attemptId)) throw invalidSnapshot()
       attempts.add(entry.attemptId)
     }
-    if (entry.status === 'running') {
+    if (
+      entry.kernelSessionId ||
+      entry.childRunId ||
+      entry.taskPreview ||
+      entry.cancelRequested ||
+      entry.result
+    ) {
+      if (!entry.independent) throw invalidSnapshot()
+    }
+    if (
+      entry.independent &&
+      (!entry.kernelSessionId || entry.supplementTo || entry.attachments?.length)
+    ) {
+      throw invalidSnapshot()
+    }
+    if (entry.cancelRequested && entry.status !== 'running') throw invalidSnapshot()
+    if (entry.childRunId && entry.status === 'queued') throw invalidSnapshot()
+    if ((entry.result || entry.taskPreview) && isPending(entry)) throw invalidSnapshot()
+    if (entry.status === 'running' && !entry.independent) {
       if (runningScopes.has(scopeKey)) throw invalidSnapshot()
       runningScopes.add(scopeKey)
     }
@@ -386,13 +443,23 @@ class FileAssistantInbox implements AssistantInbox {
   }
 
   private async persist(entries: AssistantInboxEntry[], admission = false): Promise<void> {
-    this.checkCapacity(entries, admission ? entries.length * RESERVED_TRANSITION_BYTES : 0)
+    const reserve = admission ? this.transitionReserve(entries) : 0
+    this.checkCapacity(entries, reserve)
     try {
       await writeJsonAtomic(this.path, { version: 1, entries })
     } catch {
       throw new Error('Could not persist assistant inbox.')
     }
     this.revisionNumber += 1
+  }
+
+  private transitionReserve(entries: readonly AssistantInboxEntry[]): number {
+    return entries.reduce((bytes, entry) => {
+      if (!isPending(entry)) return bytes
+      return (
+        bytes + RESERVED_TRANSITION_BYTES + (entry.independent ? INDEPENDENT_RESULT_RESERVE : 0)
+      )
+    }, 0)
   }
 
   private async persistSubmission(
@@ -411,7 +478,7 @@ class FileAssistantInbox implements AssistantInbox {
     if (totalAttachmentBytes(attachmentSizes(next)) > MAX_ATTACHMENT_BYTES) {
       throw new Error('Assistant inbox attachment storage is full.')
     }
-    this.checkCapacity(next, next.length * RESERVED_TRANSITION_BYTES)
+    this.checkCapacity(next, this.transitionReserve(next))
     // Publish expiry before deleting blobs that the current snapshot still references.
     if (expired) await this.persist(retained)
     await this.sweepAttachments(retained)
@@ -437,10 +504,15 @@ class FileAssistantInbox implements AssistantInbox {
     const binding = digestSchema.optional().parse(options.binding)
     const retryUserMessageId = identifier.optional().parse(options.retryUserMessageId)
     const supplementTo = uuid.optional().parse(options.supplementTo)
+    const kernelSessionId = identifier.optional().parse(options.kernelSessionId)
+    const independent = options.independent === true
     if (
       !identifier.safeParse(requestId).success ||
       !promptText.safeParse(text).success ||
-      !mode.success
+      !mode.success ||
+      independent !== Boolean(kernelSessionId) ||
+      (independent &&
+        (supplementTo !== undefined || retryUserMessageId !== undefined || options.images?.length))
     ) {
       throw new Error('Invalid assistant inbox submission.')
     }
@@ -469,6 +541,8 @@ class FileAssistantInbox implements AssistantInbox {
           previous.binding !== binding ||
           previous.retryUserMessageId !== retryUserMessageId ||
           previous.supplementTo !== supplementTo ||
+          (previous.independent === true) !== independent ||
+          previous.kernelSessionId !== kernelSessionId ||
           !sameAttachments(previous.attachments, refs)
         ) {
           throw new Error('Assistant inbox request conflict.')
@@ -501,6 +575,7 @@ class FileAssistantInbox implements AssistantInbox {
         ...(supplementTo ? { supplementTo } : {}),
         ...(refs.length ? { attachments: refs } : {}),
         ...(mode.data ? { mode: mode.data } : {}),
+        ...(independent ? { independent: true as const, kernelSessionId } : {}),
         order,
         submittedAt: Date.now(),
         status: 'queued'
@@ -537,14 +612,93 @@ class FileAssistantInbox implements AssistantInbox {
           : null
       }
       const scoped = entries.filter((entry) => sameScope(entry.scope, target))
-      if (scoped.some((entry) => entry.status === 'running')) return null
-      const next = scoped.find((entry) => entry.status === 'queued')
+      if (scoped.some((entry) => entry.status === 'running' && !entry.independent)) return null
+      const next = scoped.find((entry) => entry.status === 'queued' && !entry.independent)
       if (!next || (expectedEntryId !== undefined && expectedEntryId !== next.id)) return null
       if (next.deferredAttemptId === attemptId) return null
       const claimed = { ...next, status: 'running' as const, attemptId }
       delete claimed.deferredAttemptId
       await this.persist(entries.map((entry) => (entry.id === next.id ? claimed : entry)))
       return claimed
+    })
+  }
+
+  async claimIndependent(
+    scope: AssistantInboxScope,
+    attemptId: string,
+    expectedEntryId?: string
+  ): Promise<ClaimedEntry | null> {
+    const target = validateScope(scope)
+    if (!uuid.safeParse(attemptId).success) throw new Error('Invalid inbox attempt ID.')
+    return this.withSnapshot(async (entries) => {
+      const previous = entries.find((entry) => entry.attemptId === attemptId)
+      if (previous) {
+        return previous.status === 'running' &&
+          previous.independent === true &&
+          sameScope(previous.scope, target) &&
+          (expectedEntryId === undefined || expectedEntryId === previous.id)
+          ? { ...previous, status: 'running', attemptId }
+          : null
+      }
+      // Independent tasks keep their own lane: the conversation's single-writer
+      // rule and other running independent tasks do not block this claim.
+      const next = entries.find(
+        (entry) =>
+          entry.status === 'queued' && entry.independent === true && sameScope(entry.scope, target)
+      )
+      if (!next || (expectedEntryId !== undefined && expectedEntryId !== next.id)) return null
+      if (next.deferredAttemptId === attemptId) return null
+      const claimed = { ...next, status: 'running' as const, attemptId }
+      delete claimed.deferredAttemptId
+      await this.persist(entries.map((entry) => (entry.id === next.id ? claimed : entry)))
+      return claimed
+    })
+  }
+
+  async bindChild(
+    scope: AssistantInboxScope,
+    id: string,
+    attemptId: string,
+    childRunId: string
+  ): Promise<boolean> {
+    const target = validateScope(scope)
+    if (!childRunIdSchema.safeParse(childRunId).success) return false
+    return this.withSnapshot(async (entries) => {
+      const index = entries.findIndex(
+        (entry) =>
+          entry.id === id &&
+          entry.status === 'running' &&
+          entry.independent === true &&
+          entry.attemptId === attemptId &&
+          sameScope(entry.scope, target)
+      )
+      const current = entries[index]
+      if (!current) return false
+      if (current.childRunId) return current.childRunId === childRunId
+      entries[index] = { ...current, childRunId }
+      await this.persist(entries)
+      return true
+    })
+  }
+
+  async requestCancel(scope: AssistantInboxScope, id: string, attemptId: string): Promise<boolean> {
+    const target = validateScope(scope)
+    return this.withSnapshot(async (entries) => {
+      const index = entries.findIndex(
+        (entry) =>
+          entry.id === id &&
+          entry.status === 'running' &&
+          entry.independent === true &&
+          entry.attemptId === attemptId &&
+          sameScope(entry.scope, target)
+      )
+      const current = entries[index]
+      if (!current) return false
+      if (!current.cancelRequested) {
+        entries[index] = { ...current, cancelRequested: true }
+        await this.persist(entries)
+      }
+      return true
     })
   }
 
@@ -571,7 +725,8 @@ class FileAssistantInbox implements AssistantInbox {
     scope: AssistantInboxScope,
     id: string,
     attemptId: string,
-    result: SettleResult
+    result: SettleResult,
+    resultText?: string
   ): Promise<boolean> {
     const target = validateScope(scope)
     if (!uuid.safeParse(attemptId).success || !settleSchema.safeParse(result).success) return false
@@ -586,11 +741,16 @@ class FileAssistantInbox implements AssistantInbox {
       if (current.status === result) return true
       if (current.status !== 'running') return false
       if (result === 'defer') {
+        if (current.childRunId || current.cancelRequested) return false
         const pending = { ...current, status: 'queued' as const, deferredAttemptId: attemptId }
         delete pending.attemptId
         entries[index] = pending
       } else {
-        entries[index] = terminalEntry(current, result)
+        const settled = terminalEntry(current, result)
+        entries[index] =
+          current.independent && resultText
+            ? { ...settled, result: boundedResult(resultText) }
+            : settled
       }
       await this.persist(entries)
       if (!retainsAttachments(entries[index]) && current.attachments) {
@@ -634,6 +794,9 @@ class FileAssistantInbox implements AssistantInbox {
           if (entry.status === 'queued') return entry
           if (entry.status === 'running') {
             if (!entry.attemptId) throw invalidSnapshot()
+            // Independent tasks settle only against their own child receipts;
+            // startup reconciliation happens in the independent-task lane.
+            if (entry.independent) return entry
             const status = await outcome?.({
               ...entry,
               status: 'running',
@@ -644,7 +807,9 @@ class FileAssistantInbox implements AssistantInbox {
           return entry.settledAt === undefined ? terminalEntry(entry, entry.status, now) : entry
         })
       )
-      const count = entries.filter((entry) => entry.status === 'running').length
+      const count = entries.filter(
+        (entry) => entry.status === 'running' && !entry.independent
+      ).length
       if (
         count ||
         entries.length !== next.length ||

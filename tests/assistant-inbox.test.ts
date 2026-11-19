@@ -37,6 +37,55 @@ async function fixture(t: TestContext): Promise<{ directory: string; path: strin
   return { directory, path: join(directory, 'assistant-inbox.json') }
 }
 
+test('independent task claims and cancellation remain separate after reopening one chat', async (t) => {
+  const { directory } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const independent = { independent: true, kernelSessionId: 'kernel-session' }
+  const a = await inbox.submit(scope, 'a', 'Independent A', independent)
+  const b = await inbox.submit(scope, 'b', 'Independent B', independent)
+  const foreground = await inbox.submit(scope, 'ordinary', 'Ordinary')
+  const aAttempt = randomUUID()
+  const bAttempt = randomUUID()
+  const foregroundAttempt = randomUUID()
+  assert.equal((await inbox.claim(scope, foregroundAttempt))?.id, foreground.id)
+  assert.equal((await inbox.claimIndependent(scope, aAttempt, a.id))?.id, a.id)
+  assert.equal((await inbox.claimIndependent(scope, bAttempt, b.id))?.id, b.id)
+  assert.equal(await inbox.bindChild(scope, a.id, bAttempt, 'run_2'), false)
+  assert.equal(await inbox.bindChild(scope, a.id, aAttempt, 'run_1'), true)
+  assert.equal(await inbox.bindChild(scope, b.id, bAttempt, 'run_2'), true)
+  assert.equal(await inbox.requestCancel(scope, a.id, aAttempt), true)
+  assert.equal(await inbox.settle(scope, a.id, aAttempt, 'defer'), false)
+
+  const recovered = createAssistantInbox(directory)
+  await recovered.recover(() => 'interrupted')
+  assert.deepEqual(
+    (await recovered.list(scope)).map(({ id, status, childRunId, cancelRequested }) => ({
+      id,
+      status,
+      childRunId,
+      cancelRequested
+    })),
+    [
+      { id: a.id, status: 'running', childRunId: 'run_1', cancelRequested: true },
+      { id: b.id, status: 'running', childRunId: 'run_2', cancelRequested: undefined },
+      {
+        id: foreground.id,
+        status: 'interrupted',
+        childRunId: undefined,
+        cancelRequested: undefined
+      }
+    ]
+  )
+  assert.equal(await recovered.settle(scope, b.id, aAttempt, 'succeeded', 'wrong'), false)
+  const result = '结果'.repeat(1_000)
+  assert.equal(await recovered.settle(scope, b.id, bAttempt, 'succeeded', result), true)
+  const completed = (await recovered.list(scope)).find(({ id }) => id === b.id)
+  assert.equal(completed?.status, 'succeeded')
+  assert.ok(completed.result && Buffer.byteLength(completed.result) <= 4096)
+  assert.ok(result.startsWith(completed.result))
+  assert.equal((await recovered.list(scope)).find(({ id }) => id === a.id)?.status, 'running')
+})
+
 function restoreFsMocks(t: TestContext): void {
   t.mock.restoreAll()
   syncBuiltinESMExports()

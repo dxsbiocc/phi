@@ -1,5 +1,6 @@
 export type TaskEventIntent =
   | { kind: 'new-task' }
+  | { kind: 'independent-run'; text: string }
   | { kind: 'list' }
   | { kind: 'status' | 'cancel' | 'approve' | 'deny'; target?: string; approvalId?: string }
   | { kind: 'supplement'; target?: string; text: string }
@@ -97,6 +98,11 @@ function parseTaskActions(argumentText: string): TaskEventIntent {
   }
 
   if (action === 'add') return parseAddAction(actionArguments)
+
+  if (action === 'run') {
+    const text = actionArguments.trim()
+    return text === '' ? { kind: 'clarify' } : { kind: 'independent-run', text }
+  }
 
   return { kind: 'clarify' }
 }

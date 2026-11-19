@@ -63,7 +63,7 @@ interface CreateApprovalExtensionOptions {
 interface PendingApproval {
   request: ToolApprovalRequest
   /** Only the window showing the request may answer it; null while no window shows it. */
-  responder: unknown
+  responder: ApprovalWindow['webContents'] | null
   detachWindow: () => void
   settle: (decision: ApprovalDecision) => void
 }
@@ -293,7 +293,15 @@ function waitForApproval(
         settle({ approved: false, cancelled: true })
         return
       }
-      const onAbort = (): void => settle({ approved: false, cancelled: true })
+      const onAbort = (): void => {
+        const responder = pending.responder
+        settle({ approved: false, cancelled: true })
+        try {
+          responder?.send(IPC.tool.approvalCancelled, request.requestId)
+        } catch {
+          // The renderer can close while its request is being retired.
+        }
+      }
       signal.addEventListener('abort', onAbort, { once: true })
       cleanupFns.push(() => signal.removeEventListener('abort', onAbort))
     }

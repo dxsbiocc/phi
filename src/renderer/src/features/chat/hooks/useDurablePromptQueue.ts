@@ -7,7 +7,7 @@ import {
 } from '../../jobs/hooks/useBackgroundJobsData'
 import { jobsCopy } from '../../jobs/lib/jobsCopy'
 
-type ComposerJob = ChatQueueJob & { status: Exclude<ChatQueueJob['status'], 'running'> }
+type ComposerJob = ChatQueueJob & { status: 'queued' | 'failed' | 'interrupted' }
 
 export function useDurablePromptQueue(
   api: Pick<RendererApi, 'cancelQueuedPrompt'>,
@@ -19,7 +19,10 @@ export function useDurablePromptQueue(
 } {
   const items = useChatQueueJobsForSession(sessionId)
   const activeQueuedPrompts = useMemo(() => {
-    const visible = items.filter((item): item is ComposerJob => item.status !== 'running')
+    const visible = items.filter(
+      (item): item is ComposerJob =>
+        item.status === 'queued' || item.status === 'failed' || item.status === 'interrupted'
+    )
     const queued = visible.filter((item) => item.status === 'queued')
     const failures = visible.filter((item) => item.status !== 'queued').slice(-5)
     return [...failures, ...queued]

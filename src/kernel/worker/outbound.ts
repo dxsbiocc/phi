@@ -13,6 +13,7 @@ type BindWorkerOutboundOptions = {
   agentDir: string
   core: KernelProtocolCore
   activeRunId(sessionId: string): string | undefined
+  isHostAgentRun?(sessionId: string, runId: string): boolean
   persistentSession(sessionId: string): PersistentSession | undefined
   projectSessionState(
     sessionId: string,
@@ -46,6 +47,14 @@ function maybePauseAfterWriteResult(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function requestSessionId(params: unknown): string | undefined {
+  if (!isRecord(params)) return undefined
+  for (const value of [params.runtimeSessionId, params.originSessionId, params.sessionId]) {
+    if (typeof value === 'string') return value
+  }
+  return undefined
 }
 
 function hostRequestError(error: unknown): Error {
@@ -152,20 +161,13 @@ export function bindWorkerOutbound(options: BindWorkerOutboundOptions): () => vo
     },
     event: (name, payload, extra) => routeEvent(options, name, payload, extra),
     hostRequest(method, params, context, onProgress) {
-      const record = isRecord(params) ? params : {}
-      const sessionId =
-        context?.originSessionId ??
-        (typeof record.runtimeSessionId === 'string'
-          ? record.runtimeSessionId
-          : typeof record.originSessionId === 'string'
-            ? record.originSessionId
-            : typeof record.sessionId === 'string'
-              ? record.sessionId
-              : undefined)
-      // A host-origin plan step (or a background run that outlived its prompt) has no
-      // active prompt run, so fall back to the child's own run id as the run binding.
-      // Children of a live prompt keep that prompt's binding for approvals and cancellation.
-      const runId = (sessionId ? options.activeRunId(sessionId) : undefined) ?? context?.agentRunId
+      const sessionId = context?.originSessionId ?? requestSessionId(params)
+      const childId = context?.agentRunId
+      // A host-launched child owns its lifetime even if another prompt is running.
+      const runId =
+        sessionId && childId && options.isHostAgentRun?.(sessionId, childId)
+          ? childId
+          : ((sessionId ? options.activeRunId(sessionId) : undefined) ?? childId)
       return options.core
         .requestHost(
           method,
@@ -173,7 +175,7 @@ export function bindWorkerOutbound(options: BindWorkerOutboundOptions): () => vo
           {
             ...(sessionId ? { sessionId } : {}),
             ...(runId ? { runId } : {}),
-            ...(context?.agentRunId ? { agentRunId: context.agentRunId } : {})
+            ...(childId ? { agentRunId: childId } : {})
           },
           onProgress as ((progress: JsonValue) => void) | undefined
         )

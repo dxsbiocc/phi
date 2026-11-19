@@ -9,6 +9,8 @@ export interface TaskEventTask {
   title?: string
   preview: string
   status: TaskStatus
+  result?: string
+  independent?: true
   supplementTo?: string
 }
 

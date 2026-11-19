@@ -1,6 +1,13 @@
 import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJobTypes'
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
-import { notebookAiBackgroundJob, type UnifiedBackgroundJob } from './backgroundJobs'
+import type { ChatQueueJob } from '../../../../../shared/chatQueueTypes'
+import {
+  chatQueueBackgroundJob,
+  notebookAiBackgroundJob,
+  type UnifiedBackgroundJob
+} from './backgroundJobs'
+
+export const BACKGROUND_JOBS_LIST_KEY = 'jobs:list'
 
 /** Asks the panel to open the newest Jupyter startup job, whichever project it belongs to. */
 export const LATEST_JUPYTER_JOB_KEY = 'jupyter:latest'
@@ -16,15 +23,20 @@ export function notebookAiJobRequestKey(requestId: string): string {
   return `${NOTEBOOK_AI_REQUEST_PREFIX}${requestId}`
 }
 
-/** Explicitly opening a live Notebook attempt does not restore a cleared history row. */
+/** Explicitly opening a durable task or live Notebook attempt keeps the history list as-is. */
 export function resolveSelectedBackgroundJob(
   selectedKey: string | null,
   visibleJobs: readonly UnifiedBackgroundJob[],
-  notebookAiJobs: readonly NotebookAiGenerationJob[]
+  notebookAiJobs: readonly NotebookAiGenerationJob[],
+  chatQueueJobs: readonly ChatQueueJob[] = []
 ): UnifiedBackgroundJob | undefined {
   if (!selectedKey) return undefined
   const visible = visibleJobs.find((item) => item.key === selectedKey)
   if (visible) return visible
+  if (selectedKey.startsWith('chat-queue:')) {
+    const chatJob = chatQueueJobs.find((job) => `chat-queue:${job.id}` === selectedKey)
+    return chatJob ? chatQueueBackgroundJob(chatJob) : undefined
+  }
   const notebookJob = notebookAiJobs.find((job) => `notebook-ai:${job.id}` === selectedKey)
   return notebookJob ? notebookAiBackgroundJob(notebookJob) : undefined
 }

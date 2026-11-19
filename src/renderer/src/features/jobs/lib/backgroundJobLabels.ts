@@ -293,7 +293,11 @@ function chatQueuePreview(item: LiveChatQueueJob): string {
 
 export function jobTitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'history') return historyTitle(item.snapshot)
-  if (item.kind === 'chat-queue') return item.job.title || jobsCopy.chatMessage
+  if (item.kind === 'chat-queue') {
+    return item.job.independent
+      ? item.job.preview || jobsCopy.independentTask
+      : item.job.title || jobsCopy.chatMessage
+  }
   if (item.kind === 'connector') return item.setup.title ?? item.setup.id
   if (item.kind === 'environment') return item.build.ref
   if (item.kind === 'upload') return uploadTitle(item.upload)
@@ -349,6 +353,7 @@ function pluginOperation(action: PluginInstall['action']): string {
 
 /** What the job does, such as 安装插件 or 派发子智能体. */
 export function jobOperation(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'chat-queue' && item.job.independent) return jobsCopy.independentTask
   if (item.kind === 'plugin') return pluginOperation(item.install.action)
   if (item.kind !== 'history') return OPERATION_LABELS[item.kind]()
   const { snapshot } = item
@@ -373,6 +378,7 @@ function operationTarget(item: UnifiedBackgroundJob): string | undefined {
 /** Second line of a job card: the operation, then its target, e.g. "安装插件 · 0.7.0". */
 export function jobSubtitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'chat-queue') {
+    if (item.job.independent) return jobSource(item)
     const preview = chatQueuePreview(item)
     return preview && preview !== item.job.title ? preview : jobsCopy.chatMessage
   }
@@ -455,7 +461,13 @@ export function jobStatus(item: UnifiedBackgroundJob): { label: string; tone: Jo
   if (item.kind === 'history') return item.snapshot.status
   if (item.kind === 'chat-queue') {
     const status = item.job.status
-    const tone = status === 'running' ? 'running' : status === 'queued' ? 'neutral' : 'error'
+    if (status === 'succeeded') return { label: jobsCopy.completed, tone: 'success' }
+    const tone =
+      status === 'running'
+        ? 'running'
+        : status === 'queued' || status === 'cancelled'
+          ? 'neutral'
+          : 'error'
     return { label: jobsCopy[status], tone }
   }
   if (item.active) {
@@ -524,7 +536,9 @@ export function canStopJob(item: UnifiedBackgroundJob): boolean {
 }
 
 export function stopTooltip(item: UnifiedBackgroundJob): string {
-  if (item.kind === 'chat-queue') return jobsCopy.cancelQueuedMessage
+  if (item.kind === 'chat-queue') {
+    return item.job.independent ? jobsCopy.cancelQueuedTask : jobsCopy.cancelQueuedMessage
+  }
   if (item.kind === 'connector') return connectorJobCopy.cancelAdd
   if (item.kind === 'environment') return jobsCopy.cancelBuild
   if (item.kind === 'upload') return jobsCopy.cancelUpload
@@ -534,7 +548,7 @@ export function stopTooltip(item: UnifiedBackgroundJob): string {
 }
 
 export function stopAriaLabel(item: UnifiedBackgroundJob): string {
-  if (item.kind === 'chat-queue') return jobsCopy.cancelQueuedMessage
+  if (item.kind === 'chat-queue') return stopTooltip(item)
   const title = jobTitle(item)
   if (item.kind === 'environment') return jobsCopy.cancelBuild
   if (item.kind === 'upload') return jobsCopy.cancelUploadValue(title)
@@ -562,10 +576,15 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
       case 'chat-queue':
         return [
           { label: jobsCopy.conversation, value: item.job.title ?? '' },
-          { label: jobsCopy.chatMessagePreview, value: chatQueuePreview(item) },
+          item.job.independent
+            ? undefined
+            : { label: jobsCopy.chatMessagePreview, value: chatQueuePreview(item) },
           { label: jobsCopy.chatTaskId, value: item.job.id },
           { label: jobsCopy.status, value: status },
-          { label: jobsCopy.chatJobTime, value: timeLabel(item.timestamp) }
+          { label: jobsCopy.chatJobTime, value: timeLabel(item.timestamp) },
+          item.job.result
+            ? { label: jobsCopy.response, value: item.job.result, mono: true, scroll: true }
+            : undefined
         ]
       case 'notebook-ai':
         return [

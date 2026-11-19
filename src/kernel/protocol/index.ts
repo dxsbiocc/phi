@@ -14,7 +14,8 @@ import {
   type KernelEventFrame,
   type KernelRequestFrame,
   type KernelResponseFrame,
-  type ProtocolError
+  type ProtocolError,
+  type SessionAbortParams
 } from '../../shared/kernel-protocol'
 import { ProtocolEncodeError } from '../../shared/kernel-protocol/errors'
 import {
@@ -387,7 +388,11 @@ export class KernelProtocolCore {
 
     const affectedRunId = this.affectedRunId(request)
     if (!this.reserveApprovalResponse(state, request, method)) return
-    if (method === 'session.abort' && request.sessionId) {
+    if (
+      method === 'session.abort' &&
+      request.sessionId &&
+      !(request.params as SessionAbortParams).foregroundOnly
+    ) {
       if (affectedRunId) this.cancelRunInteractions(request.sessionId, affectedRunId, 'run ended')
       else this.cancelSessionInteractions(request.sessionId, 'session aborted')
     }
@@ -883,7 +888,8 @@ export class KernelProtocolCore {
     this.reannouncePendingApprovals(approvalIds)
   }
 
-  private cancelRunInteractions(sessionId: string, runId: string, reason: string): void {
+  /** Cancel interactions for an already verified foreground run. */
+  cancelRunInteractions(sessionId: string, runId: string, reason: string): void {
     this.hostRequests.cancelRun(sessionId, runId, reason)
     this.cancelApprovals(this.approvals.cancelRun(sessionId, runId), reason)
   }
@@ -958,7 +964,8 @@ export class KernelProtocolCore {
     }
     try {
       const result = await abort(params, context, request)
-      if (!kernelMethodResultSchemas['session.abort'].safeParse(result).success) {
+      const parsed = kernelMethodResultSchemas['session.abort'].safeParse(result)
+      if (!parsed.success || !parsed.data.cancelled) {
         throw new TypeError('Grace expiry abort handler returned an invalid result')
       }
       return 'cancelled'

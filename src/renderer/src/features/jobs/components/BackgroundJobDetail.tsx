@@ -270,7 +270,7 @@ export function BackgroundJobDetail({
             <Button
               size="small"
               title={
-                item.kind === 'chat-queue' && item.job.status === 'running'
+                item.kind === 'chat-queue' && item.job.status === 'running' && !item.job.independent
                   ? jobsCopy.openConversationToStop
                   : undefined
               }

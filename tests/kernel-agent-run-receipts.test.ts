@@ -64,8 +64,6 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   return { promise, resolve }
 }
 
-const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
-
 function admissionFor(
   store: KernelAgentRunReceiptStore,
   sessionId = 'session-1'
@@ -178,6 +176,39 @@ test('reopen records started-without-terminal as UNKNOWN and retains its child i
   } finally {
     await first.closeSession('session-1')
     await second.closeSession('session-1')
+    rmSync(f.root, { recursive: true, force: true })
+  }
+})
+
+test('waiting on an existing child result after reopen does not require a live worker run', async () => {
+  const f = fixture()
+  const sessionId = 'session-1'
+  const store = new KernelAgentRunReceiptStore(f.agentDir)
+  let liveWaits = 0
+  const coordinator = new KernelAgentRunCoordinator(
+    f.agentDir,
+    async () => {
+      liveWaits += 1
+      throw new Error('Unknown worker run')
+    },
+    () => undefined
+  )
+  try {
+    await store.openSession(sessionId, f.sessionDir)
+    const registry = new AgentRunRegistry({ admission: admissionFor(store) })
+    const handle = await registry.start(input('completed-before-restart'))
+    await store.finish(sessionId, await handle.done)
+    await store.closeSession(sessionId)
+
+    await coordinator.openSession(sessionId, f.sessionDir)
+    const result = await coordinator.wait(sessionId, handle.id)
+    assert.equal(result.run.requestId, 'completed-before-restart')
+    assert.equal(result.run.state, 'done')
+    assert.equal(result.timedOut, false)
+    assert.equal(liveWaits, 0)
+  } finally {
+    await store.closeSession(sessionId)
+    await coordinator.closeSession(sessionId)
     rmSync(f.root, { recursive: true, force: true })
   }
 })

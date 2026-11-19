@@ -4,8 +4,20 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import type { KernelRequestFrame } from '../src/shared/kernel-protocol'
-import type { KernelCallContext, KernelMethodHandler } from '../src/kernel/protocol'
+import {
+  PHI_KERNEL_PROTOCOL_VERSION,
+  encodeFrame,
+  parseFrame,
+  type JsonValue,
+  type KernelRequestFrame,
+  type KernelResponseFrame,
+  type ParsedFrame
+} from '../src/shared/kernel-protocol'
+import {
+  KernelProtocolCore,
+  type KernelCallContext,
+  type KernelMethodHandler
+} from '../src/kernel/protocol'
 import { createWorkerKernelAdapter } from '../src/kernel/worker'
 import type { PlanRunState, PlanSpec } from '../src/shared/planRunTypes'
 import { createPlanRunState, reducePlanRun } from '../src/main/agent/plan/model/plan-run-state'
@@ -330,6 +342,185 @@ test('session.abort interrupts a running plan step instead of retrying it', asyn
     assert.equal(starts.length, 1, 'no automatic retry after session.abort')
   } finally {
     await adapter.closeAll().catch(() => undefined)
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('foreground-only abort verifies the prompt and leaves child work and approvals alone', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-kernel-foreground-abort-'))
+  const cwd = join(root, 'project')
+  const agentDir = join(root, 'agent')
+  mkdirSync(cwd)
+  const planRunId = 'independent-plan'
+  const prompt = Promise.withResolvers<void>()
+  const abort = Promise.withResolvers<void>()
+  const approvalResults: unknown[] = []
+  let workerAborts = 0
+  const adapter = createWorkerKernelAdapter({
+    agentDir,
+    callWorker: async (method, params) => {
+      if (method === 'session.create') {
+        const { sessionId } = params as { sessionId: string }
+        writePlanRun(retryablePlan(sessionId, planRunId), agentDir)
+      } else if (method === 'agentRun.start') {
+        return { runId: 'plan-child' }
+      } else if (method === 'session.prompt' && (params as { text: string }).text === 'held') {
+        await prompt.promise
+      } else if (method === 'session.abort') {
+        workerAborts++
+        prompt.resolve()
+        await abort.promise
+      } else if (method === 'toolApproval.result') {
+        approvalResults.push((params as { requestId: string }).requestId)
+        return true
+      }
+      return undefined
+    }
+  })
+  const core = new KernelProtocolCore({
+    kernelVersion: 'test',
+    ompVersion: 'test',
+    handlers: adapter.handlers
+  })
+  const frames: ParsedFrame[] = []
+  let receive!: (line: string) => void
+  core.attachTransport(
+    {
+      send(line) {
+        const frame = parseFrame(line)
+        assert.ok('kind' in frame)
+        frames.push(frame)
+      },
+      onLine(callback) {
+        receive = callback
+      },
+      onClose: () => undefined
+    },
+    { trusted: true }
+  )
+  const unbind = adapter.bind(core)
+  async function waitFor(predicate: (frame: ParsedFrame) => boolean): Promise<ParsedFrame> {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const frame = frames.find(predicate)
+      if (frame) return frame
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    }
+    assert.fail('Timed out waiting for a kernel frame')
+  }
+  let generation = 0
+  async function send(
+    id: string,
+    method: string,
+    params: JsonValue,
+    sessionId?: string
+  ): Promise<KernelResponseFrame> {
+    receive(encodeFrame({ ...request(method, sessionId), id, generation, params }))
+    const frame = await waitFor((frame) => frame.kind === 'response' && frame.id === id)
+    assert.equal(frame.kind, 'response')
+    return frame
+  }
+  async function result(
+    id: string,
+    method: string,
+    params: JsonValue,
+    sessionId?: string
+  ): Promise<JsonValue> {
+    const response = await send(id, method, params, sessionId)
+    assert.equal(response.ok, true)
+    return response.result
+  }
+  try {
+    const hello = (await result('hello', 'kernel.hello', {
+      protocol: PHI_KERNEL_PROTOCOL_VERSION,
+      client: { name: 'foreground-test', version: '1.0.0' }
+    })) as { controllerGeneration: number }
+    generation = hello.controllerGeneration
+    await result('subscribe', 'events.subscribe', { afterSeq: 0 })
+    const { sessionId } = (await result('create', 'session.create', {
+      cwd,
+      model: { provider: 'provider', id: 'model' },
+      sessionManager: { kind: 'memory' }
+    })) as { sessionId: string }
+    await startRetriedPlan(adapter, sessionId, planRunId)
+    const earlier = (await result(
+      'earlier',
+      'session.prompt',
+      { text: 'earlier', clientRunKey: 'earlier-key' },
+      sessionId
+    )) as { runId: string }
+    await waitFor(
+      (frame) =>
+        frame.kind === 'event' && frame.type === 'run.completed' && frame.runId === earlier.runId
+    )
+    const current = (await result(
+      'held',
+      'session.prompt',
+      { text: 'held', clientRunKey: 'held-key' },
+      sessionId
+    )) as { runId: string }
+    for (const [approvalId, runId] of [
+      ['foreground-approval', current.runId],
+      ['child-approval', 'plan-child']
+    ]) {
+      core.emitEvent(
+        'approval.requested',
+        { approvalId, toolCallId: 'same-tool-call-id', toolName: 'write', input: {} },
+        { sessionId, runId }
+      )
+    }
+    assert.deepEqual(
+      await result(
+        'stale-abort',
+        'session.abort',
+        { foregroundOnly: true, clientRunKey: 'earlier-key' },
+        sessionId
+      ),
+      { cancelled: false }
+    )
+    assert.equal(workerAborts, 0)
+    assert.deepEqual(approvalResults, [])
+    assert.equal(
+      frames.some((frame) => frame.kind === 'event' && frame.type === 'interaction.cancelled'),
+      false
+    )
+
+    const stopping = result(
+      'current-abort',
+      'session.abort',
+      { foregroundOnly: true, clientRunKey: 'held-key' },
+      sessionId
+    )
+    await waitFor(
+      (frame) =>
+        frame.kind === 'event' && frame.type === 'run.completed' && frame.runId === current.runId
+    )
+    const replacement = await send(
+      'replacement',
+      'session.prompt',
+      { text: 'replacement', clientRunKey: 'replacement-key' },
+      sessionId
+    )
+    assert.equal(replacement.ok, false)
+    assert.equal(replacement.error.code, 'SESSION_BUSY')
+    abort.resolve()
+    assert.deepEqual(await stopping, { cancelled: true })
+    assert.equal(workerAborts, 1)
+    assert.deepEqual(approvalResults, ['foreground-approval'])
+    assert.equal(readPlanRun(sessionId, planRunId, agentDir)?.steps.slow?.status, 'running')
+    assert.deepEqual(
+      await result(
+        'answer-child',
+        'approval.respond',
+        { approvalId: 'child-approval', decision: 'approved' },
+        sessionId
+      ),
+      { accepted: true }
+    )
+  } finally {
+    prompt.resolve()
+    abort.resolve()
+    await adapter.closeAll().catch(() => undefined)
+    unbind()
     rmSync(root, { recursive: true, force: true })
   }
 })

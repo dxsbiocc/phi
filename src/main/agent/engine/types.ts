@@ -1,4 +1,5 @@
 import type { PhiAgentEvent } from './event-types'
+import type { SessionAbortParams } from '../../../shared/kernel-protocol'
 export type {
   PhiAgentEvent,
   PhiKnownAgentEvent,
@@ -347,6 +348,8 @@ export type WorkerSessionState = {
   cwd?: string
 }
 
+export type RuntimeSessionAbortOptions = SessionAbortParams & { preserveApprovals?: boolean }
+
 export type WorkerCreateSessionResult = {
   sessionId: string
   state: WorkerSessionState
@@ -460,7 +463,7 @@ export interface PhiEngine {
       text: string
       options?: Record<string, unknown>
     }): Promise<WorkerSessionState>
-    abort(params: { sessionId: string }): Promise<WorkerSessionState>
+    abort(params: { sessionId: string } & SessionAbortParams): Promise<WorkerSessionState>
     dispose(params: { sessionId: string }): Promise<unknown>
     setModel(
       params: {
@@ -611,6 +614,7 @@ export interface PhiEngine {
       requestId?: string
     }): Promise<{ runId: string }>
     list(params: Record<string, never>): Promise<unknown>
+    listForSession?(sessionId: string): Promise<unknown>
     /** Desktop-only lookup of a currently verified child; never serialized as a capability. */
     resourceOwner?(
       sessionId: string,

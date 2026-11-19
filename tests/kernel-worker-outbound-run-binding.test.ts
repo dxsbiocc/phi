@@ -6,7 +6,10 @@ import { KernelProtocolCore } from '../src/kernel/protocol'
 import { bindWorkerOutbound } from '../src/kernel/worker/outbound'
 import { requestHost, sendEvent } from '../src/main/agent/engine/in-process/ipc'
 
-function bindWithActiveRun(activeRun: string | undefined): {
+function bindWithActiveRun(
+  activeRun: string | undefined,
+  hostChild?: string
+): {
   contexts: unknown[]
   unbind: () => void
 } {
@@ -20,6 +23,7 @@ function bindWithActiveRun(activeRun: string | undefined): {
       }
     } as never,
     activeRunId: () => activeRun,
+    isHostAgentRun: (sessionId, runId) => sessionId === 'session-1' && runId === hostChild,
     persistentSession: () => undefined,
     projectSessionState: () => null,
     diagnoseDroppedEvent: () => undefined,
@@ -27,6 +31,22 @@ function bindWithActiveRun(activeRun: string | undefined): {
   })
   return { contexts, unbind }
 }
+
+test('a host child keeps its own binding even while an ordinary prompt runs', async () => {
+  const { contexts, unbind } = bindWithActiveRun('prompt-run', 'child-run')
+  try {
+    await requestHost(
+      'skills.scriptTool',
+      { tool: 'fixture' },
+      { originSessionId: 'session-1', agentRunId: 'child-run' }
+    )
+    assert.deepEqual(contexts, [
+      { sessionId: 'session-1', runId: 'child-run', agentRunId: 'child-run' }
+    ])
+  } finally {
+    unbind()
+  }
+})
 
 test('a child of a live prompt keeps the prompt run binding', async () => {
   const { contexts, unbind } = bindWithActiveRun('prompt-run')

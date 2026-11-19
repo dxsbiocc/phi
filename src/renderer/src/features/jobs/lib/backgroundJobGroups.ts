@@ -31,8 +31,10 @@ export function summarizeBackgroundJobs(
 ): BackgroundJobSummary {
   const summary = { queued: 0, running: 0, failed: 0, interrupted: 0 }
   for (const row of display) {
-    if (row.kind === 'job' && row.job.kind === 'chat-queue') summary[row.job.job.status] += 1
-    else if (row.active) summary.running += 1
+    if (row.kind === 'job' && row.job.kind === 'chat-queue') {
+      const status = row.job.job.status
+      if (status !== 'succeeded' && status !== 'cancelled') summary[status] += 1
+    } else if (row.active) summary.running += 1
   }
   return summary
 }

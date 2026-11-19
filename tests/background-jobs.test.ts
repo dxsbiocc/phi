@@ -40,9 +40,12 @@ import {
 } from '../src/renderer/src/features/jobs/lib/backgroundJobGroups'
 import { BackgroundJobHistory } from '../src/renderer/src/features/jobs/lib/backgroundJobHistory'
 import {
+  jobSubtitle,
+  jobTitle,
   remoteJupyterEntryLabel,
   remoteJupyterPhaseLabel
 } from '../src/renderer/src/features/jobs/lib/backgroundJobLabels'
+import { resolveSelectedBackgroundJob } from '../src/renderer/src/features/jobs/lib/requestedBackgroundJob'
 import type { RemoteJupyterStartJob } from '../src/shared/remoteJupyterJobTypes'
 import {
   canStopUnifiedWrapperRun,
@@ -191,6 +194,38 @@ test('a composer ignores peer queue updates and renders only changed rows for it
   assert.deepEqual(interrupted, [updated])
   assert.notEqual(interrupted, selected)
   assert.deepEqual(select([]), [])
+})
+
+test('task details resolve an exact independent job with its own title and conversation context', () => {
+  const job = chatQueueJob('succeeded', {
+    id: 'research-task',
+    independent: true,
+    preview: 'Compare instrument readings',
+    result: 'Independent result\n  with formatting'
+  })
+  const taskKey = 'chat-queue:research-task'
+  const item = resolveSelectedBackgroundJob(taskKey, [], [], [job])
+  assert.ok(item)
+  assert.equal(item.key, taskKey)
+  assert.equal(resolveSelectedBackgroundJob('chat-queue:research', [], [], [job]), undefined)
+  assert.equal(jobTitle(item), 'Compare instrument readings')
+  assert.equal(jobSubtitle(item), 'Original conversation')
+  assert.match(
+    render(
+      createElement(BackgroundJobDetail, {
+        item,
+        nowMs: 0,
+        busy: false,
+        onBack: () => undefined,
+        onStop: () => undefined,
+        onOpenSession: () => undefined
+      })
+    ),
+    /Independent result\n {2}with formatting/
+  )
+  const untitled = resolveSelectedBackgroundJob(taskKey, [], [], [{ ...job, preview: '' }])
+  assert.ok(untitled)
+  assert.equal(jobTitle(untitled), '独立任务')
 })
 
 test('durable rows offer queued cancellation and open the owner chat for every status', () => {

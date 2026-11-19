@@ -84,7 +84,10 @@ import { SessionExportDialog } from './features/chat/components/SessionExportDia
 import { SessionSearchPanel } from './features/session-search/SessionSearchPanel'
 import { BackgroundJobsPanel, LATEST_JUPYTER_JOB_KEY } from './features/jobs/BackgroundJobsPanel'
 import { usePublishPluginJobIcons } from './features/jobs/hooks/pluginJobIcons'
-import { jupyterProjectJobRequestKey } from './features/jobs/lib/requestedBackgroundJob'
+import {
+  BACKGROUND_JOBS_LIST_KEY,
+  jupyterProjectJobRequestKey
+} from './features/jobs/lib/requestedBackgroundJob'
 import {
   useBackgroundJobRetention,
   useJupyterStartupOverview,
@@ -1816,7 +1819,27 @@ function App(): React.JSX.Element {
     },
     [setSessionTabWasOpened, setClosedWorkspaceSessionTabKeys, setActiveWorkspaceTabKey]
   )
-  const taskEvents = useTaskEventReplies(rendererApi, onChatQueueError)
+  const onOpenTaskJobs = useCallback(
+    (taskId?: string): void => {
+      requestBackgroundJob(taskId ? `chat-queue:${taskId}` : BACKGROUND_JOBS_LIST_KEY)
+      onOpenBackgroundJobs()
+      void refreshBackgroundJobs()
+    },
+    [onOpenBackgroundJobs, requestBackgroundJob]
+  )
+  const taskEvents = useTaskEventReplies(
+    rendererApi,
+    onChatQueueError,
+    onOpenTaskJobs,
+    showSnackbar
+  )
+  const taskEventReply = taskEvents.reply && (
+    <TaskEventResults
+      reply={taskEvents.reply}
+      onDismiss={taskEvents.dismiss}
+      onDecide={taskEvents.decide}
+    />
+  )
   const {
     submit: submitDurablePrompt,
     draftEdited,
@@ -3593,13 +3616,6 @@ function App(): React.JSX.Element {
               isSessionChanging || currentSessionIsCompacting || remoteControlsUnavailable
             }
             pendingApproval={pendingApproval}
-            taskEventReplies={
-              <TaskEventResults
-                replies={taskEvents.replies}
-                onDismiss={taskEvents.dismiss}
-                onDecide={taskEvents.decide}
-              />
-            }
             pendingUserInteraction={pendingUserInteraction}
             queuedPrompts={activeQueuedPrompts.map((item) => ({
               id: item.id,
@@ -4298,6 +4314,7 @@ function App(): React.JSX.Element {
                         onRequestedConnectorJobHandled={consumeConnectorJob}
                         requestedJobKey={requestedBackgroundJobKey}
                         onRequestedJobHandled={consumeBackgroundJob}
+                        taskReply={taskEventReply}
                         onOpenSetupAgent={onOpenConnectorSetupAgent}
                         onOpenSetupTerminal={onOpenConnectorSetupTerminal}
                       />

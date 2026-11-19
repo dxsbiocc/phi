@@ -2,6 +2,7 @@ import type { ChatQueueJobsVersion } from '../../shared/chatQueueTypes'
 import type { PromptImageInput } from '../../shared/promptImageTypes'
 import type { WorkMode } from '../../shared/sessionMode'
 import { getAuthManager } from '../agent/auth-manager'
+import { getPhiEngine } from '../agent/engine/in-process-engine'
 import { getProject } from '../agent/projects'
 import { resolveRemoteWorkspaceHostBinding } from '../agent/remote-workspace-boundary'
 import {
@@ -17,6 +18,7 @@ import {
 import type { AssistantInboxEntry, ClaimedEntry, SettleResult } from './assistant-inbox'
 import { createChatQueueTargets, type ChatQueueTargetOptions } from './chat-queue-target'
 import { createDurableChat, type BoundChatQueueTarget, type DurableChat } from './durable-chat'
+import { createIndependentTaskRuns } from './independent-tasks'
 import { PromptRunDeferredError, PromptRunTargetChangedError } from './prompt-run-admission'
 import type { PromptRunQueue } from './prompt-run-queue'
 import type { SessionResolution } from './session-resolution'
@@ -33,6 +35,7 @@ export interface MainChatQueueOptions {
   activeAttempt(sessionKey: string): string | undefined
   compacting(sessionId: string): boolean
   submit: PromptRunQueue['submitPromptRun']
+  independentRuntime(target: BoundChatQueueTarget): Promise<string>
   changed(sessionId: string): void
   jobsChanged(version: ChatQueueJobsVersion): void
   log(error: unknown): void
@@ -64,6 +67,44 @@ export function createMainChatQueue(options: MainChatQueueOptions): DurableChat 
     const project = options.resolution.projectForSession(target.sessionKey, target.snapshot)
     return (project?.id ?? null) === entry.scope.projectId ? target : null
   }
+
+  function independentTarget(entry: AssistantInboxEntry): BoundChatQueueTarget | undefined {
+    const target = getQueuedPromptTarget(entry)
+    return target?.kernelSessionId && target.kernelSessionId === entry.kernelSessionId
+      ? target
+      : undefined
+  }
+
+  const independent = createIndependentTaskRuns({
+    engine: {
+      start: (input) => getPhiEngine().agentRuns.start(input),
+      list: async (id) => {
+        const runs = getPhiEngine().agentRuns
+        if (!runs.listForSession)
+          throw new Error('The local kernel has no child receipt connection.')
+        return runs.listForSession(id)
+      },
+      wait: async (input) => {
+        const runs = getPhiEngine().agentRuns
+        if (!runs.wait) throw new Error('The local kernel has no child wait connection.')
+        return runs.wait(input)
+      },
+      stop: (input) => getPhiEngine().agentRuns.stop(input)
+    },
+    isBound: (entry) => Boolean(independentTarget(entry)),
+    async runtimeSession(entry) {
+      const target = independentTarget(entry)
+      if (!target || durableChat.isPaused(entry.scope.conversationId)) return undefined
+      const id = await options.independentRuntime(target)
+      const current = independentTarget(entry)
+      return !durableChat.isPaused(entry.scope.conversationId) &&
+        current?.sessionKey === target.sessionKey &&
+        current.snapshot.permissionMode === target.snapshot.permissionMode
+        ? id
+        : undefined
+    },
+    log: options.log
+  })
 
   function queuedPromptCanStart(target: BoundChatQueueTarget, attemptId?: string): boolean {
     const active = options.activeAttempt(target.sessionKey)
@@ -191,10 +232,19 @@ export function createMainChatQueue(options: MainChatQueueOptions): DurableChat 
     prepare: prepareQueuedPrompt,
     capacity: () => options.runner.availableSlots + options.runner.activeCount,
     execute: executeQueuedPrompt,
+    independent: { channel: independent, capacity: () => 4 },
     recoverOutcome: queuedPromptOutcome,
     changed: options.changed,
     jobsChanged: options.jobsChanged,
     log: options.log
   })
   return durableChat
+}
+
+export function independentApprovalRun(entry: AssistantInboxEntry): string | undefined {
+  const reference = findPhiSessionById(entry.scope.conversationId)?.kernelRuntimeRef
+  if (reference?.host.kind !== 'local' || reference.kernelSessionId !== entry.kernelSessionId) {
+    return undefined
+  }
+  return entry.childRunId
 }

@@ -27,6 +27,16 @@ function snapshots(value: unknown): AgentRunSnapshot[] {
     : []
 }
 
+function isTerminal(run: AgentRunSnapshotDto | undefined): run is AgentRunSnapshotDto {
+  return (
+    run !== undefined &&
+    (run.state === 'done' ||
+      run.state === 'error' ||
+      run.state === 'cancelled' ||
+      run.state === 'unknown')
+  )
+}
+
 export class KernelAgentRunCoordinator implements KernelAgentRunRuntime {
   private readonly receipts: KernelAgentRunReceiptStore
   private core?: KernelProtocolCore
@@ -131,17 +141,24 @@ export class KernelAgentRunCoordinator implements KernelAgentRunRuntime {
     runId: string,
     timeoutMs = 120_000
   ): Promise<{ run: AgentRunSnapshotDto; timedOut: boolean }> {
+    const stored = this.receipts.getByRun(sessionId, runId)
+    if (isTerminal(stored)) return { run: stored, timedOut: false }
+
     const result = (await this.callWorker('agentRuns.wait', {
       sessionId,
       runId,
       timeoutMs
+    }).catch((error: unknown) => {
+      // The registry may evict a finished handle while the wait is sent to the worker.
+      if (isTerminal(this.receipts.getByRun(sessionId, runId))) return {}
+      throw error
     })) as { run?: AgentRunSnapshot; timedOut?: boolean }
     if (result.run && ['done', 'error', 'cancelled'].includes(result.run.state)) {
       await this.receipts.finish(sessionId, result.run)
     }
     const state = this.receipts.getByRun(sessionId, runId, result.run)
     if (!state) throw new Error(`Unknown agent run: ${runId}`)
-    return { run: state, timedOut: result.timedOut === true }
+    return { run: state, timedOut: !isTerminal(state) && result.timedOut === true }
   }
 
   async steer(sessionId: string, runId: string, message: string): Promise<{ ok: true }> {
@@ -170,6 +187,10 @@ export class KernelAgentRunCoordinator implements KernelAgentRunRuntime {
 
   launchSettled(sessionId: string, requestId: string): boolean {
     return this.receipts.requestSettled(sessionId, requestId)
+  }
+
+  isHostAgentRun(sessionId: string, runId: string): boolean {
+    return this.receipts.isHostRun(sessionId, runId)
   }
 
   async hasActive(sessionId: string): Promise<boolean> {

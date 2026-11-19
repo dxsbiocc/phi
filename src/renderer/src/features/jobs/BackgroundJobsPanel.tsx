@@ -3,7 +3,7 @@ import { OverlayScroll } from '../../components/OverlayScroll'
 import { useUiLanguage } from '../../lib/i18n'
 import { AnimatedList, AnimatedListItem } from './components/AnimatedList'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import { PhiIcons } from '../../icons'
 import { workspacePanelText } from '../../layout'
@@ -15,6 +15,7 @@ import { useBackgroundJobsData } from './hooks/useBackgroundJobsData'
 import type { UnifiedBackgroundJob } from './lib/backgroundJobs'
 import type { BackgroundJobDisplayItem } from './lib/backgroundJobGroups'
 import {
+  BACKGROUND_JOBS_LIST_KEY,
   resolveRequestedBackgroundJobKey,
   resolveSelectedBackgroundJob
 } from './lib/requestedBackgroundJob'
@@ -37,6 +38,7 @@ export function BackgroundJobsPanel({
   onRequestedConnectorJobHandled,
   requestedJobKey,
   onRequestedJobHandled,
+  taskReply,
   onOpenSetupAgent,
   onOpenSetupTerminal
 }: {
@@ -47,6 +49,7 @@ export function BackgroundJobsPanel({
   /** A job key, `LATEST_JUPYTER_JOB_KEY`, or a key from `notebookAiJobRequestKey`. */
   requestedJobKey?: string | null
   onRequestedJobHandled?: (key: string) => void
+  taskReply?: ReactNode
   onOpenSetupAgent?: (prompt: string) => void
   onOpenSetupTerminal?: (command: string) => void
 }): React.JSX.Element {
@@ -72,7 +75,12 @@ export function BackgroundJobsPanel({
   const all = [...jobs.active, ...jobs.recent]
   const activeDisplay = display.filter((item) => item.active)
   const recentDisplay = display.filter((item) => !item.active)
-  const selected = resolveSelectedBackgroundJob(selectedKey, all, data.notebookAiJobs)
+  const selected = resolveSelectedBackgroundJob(
+    selectedKey,
+    all,
+    data.notebookAiJobs,
+    data.chatQueueJobs
+  )
   const hasChatAttention = summary.failed + summary.interrupted > 0
   const expandedFinished = finishedExpanded ?? hasChatAttention
   const visibleError =
@@ -95,6 +103,15 @@ export function BackgroundJobsPanel({
 
   useEffect(() => {
     if (!requestedJobKey || !loaded) return
+    if (requestedJobKey === BACKGROUND_JOBS_LIST_KEY) {
+      const timer = window.setTimeout(() => {
+        setSelectedKey(null)
+        setRunningExpanded(true)
+        setFinishedExpanded(true)
+        onRequestedJobHandled?.(requestedJobKey)
+      }, 0)
+      return () => window.clearTimeout(timer)
+    }
     if (requestedJobKey.startsWith('workflow:')) {
       const workflow = display.find((item) => item.key === requestedJobKey)
       if (!workflow) return
@@ -253,6 +270,7 @@ export function BackgroundJobsPanel({
           {visibleError}
         </Typography>
       )}
+      {taskReply}
       {selected ? (
         <BackgroundJobDetail
           item={selected}

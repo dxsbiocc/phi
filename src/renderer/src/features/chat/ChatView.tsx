@@ -118,7 +118,6 @@ type ViewProps = {
   onListInputDirectory?: (path: string) => Promise<DirectoryListing>
   onChatSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>
   planRunPanel?: ReactNode
-  taskEventReplies?: ReactNode
   onStopGeneration: () => Promise<void>
   onAcknowledgeActiveSession?: () => void
   onGoSettings: () => void
@@ -206,7 +205,6 @@ function ChatView({
   placement = 'tab',
   pendingApproval,
   pendingUserInteraction,
-  taskEventReplies,
   queuedPrompts = [],
   onRespondApproval,
   onRespondUserInteraction,
@@ -535,7 +533,6 @@ function ChatView({
             onSubmit={handleChatSubmit}
             sx={{ maxWidth: 'var(--phi-chat-content-max-width)', mx: 'auto' }}
           >
-            {taskEventReplies}
             <ToolApprovalDialog request={pendingApproval} onRespond={onRespondApproval} />
             <UserInteractionPanel
               request={pendingUserInteraction}

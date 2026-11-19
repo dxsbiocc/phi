@@ -9,6 +9,7 @@ import { buildProjectDownloadTool } from '../../download/project-download-tool'
 import { buildPresentFilesTool } from '../../deliverables/present-tool'
 import { buildRenderBlocksTool } from '../../deliverables/render-blocks-tool'
 import { normalizeProjectMemorySettings } from '../../../../shared/projectMemoryTypes'
+import { INDEPENDENT_TASK_AGENT } from '../../../../shared/independentTask'
 import type { PresentedFile } from '../../../../shared/presentedFileTypes'
 import { buildHostLibraryCustomTools, buildLibraryCustomTools } from '../../library/library-tools'
 import { buildPaletteRecommendationTool } from '../../palettes/tools'
@@ -52,6 +53,20 @@ import { subscribeToAgentRunNotices } from './agent-run-notices'
 import { buildSessionAgentDelegationTools, supportsDelegationTool } from './session-agent-tools'
 import type { PhiExtensionEnvironmentBinding } from '../phi-extension'
 import type { SessionResourceSnapshot } from './session-resource-input'
+
+const independentTaskDefinition: PhiAgentDefinition = {
+  name: INDEPENDENT_TASK_AGENT,
+  description: 'Executes one task explicitly submitted for independent execution.',
+  tools: ['read', 'glob', 'grep', 'find', 'write', 'edit'],
+  skills: [],
+  invocation: 'host',
+  visibility: 'entry',
+  warnings: [],
+  systemPrompt:
+    'Complete the self-contained task supplied by the user. You have a separate context from the main chat. Keep changes within the task and preserve unrelated changes. Verify your work and report any blockers in the user’s language.',
+  source: 'phi',
+  filePath: ''
+}
 
 export async function createSessionToolRegistry(deps: {
   record: UnknownRecord
@@ -264,7 +279,9 @@ export async function createSessionToolRegistry(deps: {
           projectBound: Boolean(record.projectBound),
           ...(runId ? { agentRunId: runId } : {}),
           ...(signal ? { signal } : {}),
-          ...(environmentBinding ? { parentEnvironmentBinding: environmentBinding } : {}),
+          ...(environmentBinding && definition !== independentTaskDefinition
+            ? { parentEnvironmentBinding: environmentBinding }
+            : {}),
           ...(skillTools ? { skillTools } : {}),
           parent: () => parentRef.current
         })
@@ -281,6 +298,7 @@ export async function createSessionToolRegistry(deps: {
     return runner
   }
   for (const definition of phiAgents) runnerFor(definition)
+  if (desktopServices && record.noTools !== true) runnerFor(independentTaskDefinition)
   const agentTools = buildSessionAgentDelegationTools({
     definitions: phiAgents,
     runnerFor,

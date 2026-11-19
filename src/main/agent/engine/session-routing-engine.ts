@@ -1,4 +1,5 @@
 import type { ContextUsageSnapshot } from '../../../shared/contextUsageTypes'
+import type { SessionAbortParams } from '../../../shared/kernel-protocol'
 import type { PlanRunReplanRequest, PlanRunState } from '../../../shared/planRunTypes'
 import type {
   AutoCompactionDefaults,
@@ -90,7 +91,7 @@ export interface RoutedSessionDriver {
   enterPlanMode?(execute?: boolean): Promise<unknown>
   cancelPlanMode?(replanRequestId?: string): Promise<boolean>
   respondToolApproval?(requestId: string, result: unknown): Promise<void>
-  abort(): Promise<WorkerSessionState>
+  abort(params?: SessionAbortParams): Promise<WorkerSessionState>
   dispose(): Promise<void>
 }
 export interface RoutedSessionSink {
@@ -346,18 +347,22 @@ export class SessionRoutingEngine implements PhiEngine {
         return this.driver(params.sessionId).prompt(params.text, params.options)
       return this.auxiliarySession(params.sessionId).sessions.prompt(params)
     },
-    abort: async (params) => {
-      const owner = this.owned(params.sessionId)
+    abort: async ({ sessionId, ...params }) => {
+      const owner = this.owned(sessionId)
       if (!owner) {
-        return this.auxiliarySession(params.sessionId).sessions.abort(params)
+        if (params.foregroundOnly) throw new RemoteSessionCapabilityError('foreground abort')
+        return this.auxiliarySession(sessionId).sessions.abort({ sessionId })
       }
       if (!owner.driver) {
+        if (params.foregroundOnly) {
+          throw new RuntimeReferenceError('CANCELLED', '前台运行尚未绑定')
+        }
         owner.retired = true
         owner.controller.abort(new Error('Remote initialization stopped'))
         await owner.pending?.catch(() => undefined)
         throw new RuntimeReferenceError('CANCELLED', '远程初始化已停止')
       }
-      return owner.driver.abort()
+      return owner.driver.abort(params)
     },
     dispose: async (params) => {
       const owner = this.owned(params.sessionId)
@@ -608,6 +613,11 @@ export class SessionRoutingEngine implements PhiEngine {
         )
       ).flat()
       return routed
+    },
+    listForSession: async (sessionId) => {
+      const driver = this.agentRunDriver(sessionId)
+      if (!driver?.agentRuns) throw new RemoteSessionCapabilityError('child receipts')
+      return driver.agentRuns.list()
     },
     resourceOwner: (sessionId, runId) => {
       const driver = this.agentRunDriver(sessionId)

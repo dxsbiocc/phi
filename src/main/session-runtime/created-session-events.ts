@@ -47,7 +47,10 @@ export interface CreatedSessionEventsDeps<
   }
   runtime: {
     redactSensitiveText(message: string): string
-    abortSessionWithoutCancellingApprovals(session: TSession): Promise<void>
+    abortSessionWithoutCancellingApprovals(
+      session: TSession,
+      scope: { sessionId: string; runId: string }
+    ): Promise<void>
     phiOnlySessionPath(sessionId: string): string
   }
   events: {
@@ -186,9 +189,14 @@ class CreatedSessionEventsService<
     ) {
       run.stoppingPermanentProviderError = true
       run.recordedFailureMessage = this.deps.runtime.redactSensitiveText(summary.errorMessage)
-      void this.deps.runtime.abortSessionWithoutCancellingApprovals(session).catch((error) => {
-        this.deps.events.logUnexpectedError(error)
-      })
+      void this.deps.runtime
+        .abortSessionWithoutCancellingApprovals(session, {
+          sessionId: run.phiSessionId,
+          runId: run.runId
+        })
+        .catch((error) => {
+          this.deps.events.logUnexpectedError(error)
+        })
     }
   }
 

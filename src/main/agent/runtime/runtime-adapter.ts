@@ -25,13 +25,13 @@ import type {
   RuntimeCredential,
   RuntimeModel,
   RuntimeSelectionControl,
+  RuntimeSessionAbortOptions,
   RuntimeAutoCompactionReceipt,
   RuntimeProvider,
   RuntimeProviderAuthStatus,
   RuntimeResourceBundle,
   Skill,
   ThinkingLevel,
-  ToolApprovalRequest,
   WorkerSessionState
 } from '../engine/types'
 import { listActiveSkillPackages } from '../packages/store'
@@ -50,7 +50,7 @@ import {
   trustedMcpServers
 } from './runtime-session-resources'
 
-import { errorMessage } from '../../../shared/errorCodes'
+import { subscribeRuntimeApprovals, type ToolCallHandler } from './runtime-approval-requests'
 import { pickSessionManager } from './runtime-session-manager-selection'
 export const AGENT_RUNTIME_ID = 'omp-sdk'
 export const AGENT_RUNTIME_PACKAGE = '@oh-my-pi/pi-coding-agent'
@@ -145,24 +145,6 @@ export type RuntimePromptOptions = {
   userInitiated?: boolean
   skipCompactionCheck?: boolean
 }
-type ToolCallEvent = {
-  type?: 'tool_call'
-  toolCallId?: string
-  toolName: string
-  input: Record<string, unknown>
-  agentRunId?: string
-  outsideProject?: string
-}
-
-type ToolCallContext = {
-  signal?: AbortSignal
-}
-
-type ToolCallHandler = (
-  event: ToolCallEvent,
-  context: ToolCallContext
-) => Promise<unknown> | unknown
-
 type ExtensionApiLike = {
   on(eventName: string, handler: ToolCallHandler | ((...args: unknown[]) => unknown)): void
 }
@@ -256,7 +238,7 @@ export interface RuntimeAgentSession {
   getAutoCompactionSettings?(
     control?: RuntimeSelectionControl
   ): Promise<RuntimeAutoCompactionReceipt | undefined>
-  abort(options?: { preserveApprovals?: boolean }): Promise<void>
+  abort(options?: RuntimeSessionAbortOptions): Promise<void>
   dispose(): Promise<void>
   setModel(model: RuntimeModel, control?: RuntimeSelectionControl): Promise<void>
   setThinkingLevel(
@@ -758,7 +740,7 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     private readonly sessionId: string,
     sessionManager: RuntimeSessionManager,
     state: WorkerSessionState,
-    private readonly toolCallHandlers: ToolCallHandler[],
+    toolCallHandlers: ToolCallHandler[],
     private readonly recreate?: (current: RuntimeAgentSessionProxy) => Promise<WorkerSessionState>
   ) {
     this.runtimeSessionId = sessionId
@@ -777,9 +759,12 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
       })
     )
     this.cleanupFns.push(
-      engine.events.onToolApproval(sessionId, (request) => {
-        void this.resolveToolApproval(request as ToolApprovalRequest)
-      })
+      subscribeRuntimeApprovals(
+        engine.events,
+        sessionId,
+        toolCallHandlers,
+        this.approvalAbortController.signal
+      )
     )
   }
 
@@ -905,8 +890,9 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     return result
   }
 
-  async abort(options?: { preserveApprovals?: boolean }): Promise<void> {
-    if (!options?.preserveApprovals) this.approvalAbortController.abort()
+  async abort(options?: RuntimeSessionAbortOptions): Promise<void> {
+    const { preserveApprovals, ...params } = options ?? {}
+    if (!preserveApprovals && !params.foregroundOnly) this.approvalAbortController.abort()
     // A session the worker no longer holds has nothing running to abort.
     if (
       this.recreate &&
@@ -914,9 +900,7 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
       !ownsRemoteRuntimeSession(this.sessionId)
     )
       return
-    const state = await this.engine.sessions.abort({
-      sessionId: this.sessionId
-    })
+    const state = await this.engine.sessions.abort({ sessionId: this.sessionId, ...params })
     applySessionState(this, state)
   }
   async dispose(): Promise<void> {
@@ -965,37 +949,6 @@ class RuntimeAgentSessionProxy implements RuntimeAgentSession {
     )
     control?.assertCurrent()
     applySessionState(this, state)
-  }
-
-  private async resolveToolApproval(request: ToolApprovalRequest): Promise<void> {
-    const event: ToolCallEvent = {
-      type: 'tool_call',
-      toolCallId: request.toolCallId ?? request.requestId,
-      toolName: request.toolName ?? '',
-      input: request.input ?? {},
-      ...(request.agentRunId ? { agentRunId: request.agentRunId } : {}),
-      ...(request.outsideProject ? { outsideProject: request.outsideProject } : {})
-    }
-    const context: ToolCallContext = {
-      signal: this.approvalAbortController.signal
-    }
-
-    let result: unknown
-    try {
-      for (const handler of this.toolCallHandlers) {
-        const next = await handler(event, context)
-        if (next !== undefined) {
-          result = next
-        }
-      }
-    } catch (error) {
-      result = {
-        block: true,
-        reason: errorMessage(error)
-      }
-    }
-
-    await this.engine.events.respondToolApproval(request.requestId, result)
   }
 }
 

@@ -4,6 +4,7 @@ import {
   KERNEL_EVENT_MODELS_CHANGED,
   type ApprovalRespondParams,
   type JsonValue,
+  type SessionAbortParams,
   type SessionCreateParams,
   type SessionOpenParams,
   type SessionPolicyParams
@@ -348,6 +349,34 @@ export function createWorkerKernelAdapter(
     }
   }
 
+  const abortForegroundRun = async (
+    sessionId: string,
+    clientRunKey: string
+  ): Promise<{ cancelled: boolean }> => {
+    const runId = activeRuns.get(sessionId)
+    const persistent = durableSessions.get(sessionId)
+    const target = persistent
+      ? durableSessions.findDuplicate(persistent, clientRunKey)
+      : memoryClientRuns.get(sessionId)?.get(clientRunKey)
+    if (!runId || target?.runId !== runId || target.status !== 'running') {
+      return { cancelled: false }
+    }
+
+    // Keep a replacement out while the worker's session-scoped abort is settling.
+    admittingRuns.add(sessionId)
+    cancelledRuns.add(runId)
+    try {
+      boundCore?.cancelRunInteractions(sessionId, runId, 'run ended')
+      await callWorker('session.abort', { sessionId })
+      return { cancelled: true }
+    } catch (error) {
+      cancelledRuns.delete(runId)
+      throw error
+    } finally {
+      admittingRuns.delete(sessionId)
+    }
+  }
+
   const diagnoseDroppedEvent = (name: string, reason: string): void => {
     if (diagnosedEvents.has(name)) return
     diagnosedEvents.add(name)
@@ -484,11 +513,15 @@ export function createWorkerKernelAdapter(
     'sessions.list'() {
       return durableSessions.list()
     },
-    async 'session.abort'(_params, callContext, request) {
+    async 'session.abort'(params, callContext, request) {
       const sessionId = requiredSessionId(request.sessionId)
       requireLoadedSession(sessionId)
       if (admittingRuns.has(sessionId)) {
         throw makeProtocolError('SESSION_BUSY', 'The session is admitting a run.')
+      }
+      const abort = params as SessionAbortParams
+      if (abort.foregroundOnly) {
+        return withAdmission(() => abortForegroundRun(sessionId, abort.clientRunKey))
       }
       const activeRunId =
         callContext.connectionId === 'kernel-lifecycle' && request.runId
@@ -654,6 +687,7 @@ export function createWorkerKernelAdapter(
         agentDir: options.agentDir,
         core,
         activeRunId: (sessionId) => activeRuns.get(sessionId),
+        isHostAgentRun: (sessionId, runId) => agentRuns.isHostAgentRun(sessionId, runId),
         persistentSession: (sessionId) => durableSessions.get(sessionId),
         projectSessionState,
         diagnoseDroppedEvent,

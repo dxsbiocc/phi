@@ -7,7 +7,8 @@ import type {
 } from '../../shared/taskEventTypes'
 import type { ToolApprovalRequest } from '../agent/tool-approval'
 import type { AssistantInboxEntry } from './assistant-inbox'
-import { chatQueuePreview, type ChatQueueJobOwner } from './chat-queue-jobs'
+import type { ChatQueueJobOwner } from './chat-queue-jobs'
+import { chatQueuePreview } from './task-preview'
 import type { DurableChat } from './durable-chat'
 import { parseTaskEvent, resolveTaskTargets } from './task-event-router'
 
@@ -20,9 +21,11 @@ interface TaskEventSender {
 }
 
 interface RouteOptions<TRun> {
-  queue: Pick<DurableChat, 'submit' | 'supplement' | 'taskEntries' | 'cancel'>
+  queue: Pick<DurableChat, 'submit' | 'supplement' | 'taskEntries' | 'cancel'> &
+    Partial<Pick<DurableChat, 'submitIndependent' | 'cancelIndependentTask'>>
   owner(sessionId: string): ChatQueueJobOwner | null
   activeRun(entry: AssistantInboxEntry): TRun | undefined
+  independentApprovalRun?(entry: AssistantInboxEntry): string | undefined
   stop(run: TRun): Promise<void>
   approvals(
     sessionId: string,
@@ -52,8 +55,13 @@ function approvalRequests<TRun>(
   entry: AssistantInboxEntry,
   sender: TaskEventSender
 ): readonly Readonly<ToolApprovalRequest>[] {
-  if (entry.status !== 'running' || !entry.attemptId || !options.activeRun(entry)) return []
-  return options.approvals(entry.scope.conversationId, entry.attemptId, sender.responder)
+  if (entry.status !== 'running' || !entry.attemptId || entry.cancelRequested) return []
+  const runId = entry.independent
+    ? options.independentApprovalRun?.(entry)
+    : options.activeRun(entry)
+      ? entry.attemptId
+      : undefined
+  return runId ? options.approvals(entry.scope.conversationId, runId, sender.responder) : []
 }
 
 function taskDetails<TRun>(
@@ -66,8 +74,9 @@ function taskDetails<TRun>(
     id: entry.id,
     sessionId: entry.scope.conversationId,
     ...(title ? { title } : {}),
-    preview: chatQueuePreview(entry.text),
+    preview: entry.taskPreview ?? chatQueuePreview(entry.text),
     status: approvalRequests(options, entry, sender).length ? 'needs_approval' : entry.status,
+    ...(entry.independent ? { independent: true as const } : {}),
     ...(entry.supplementTo ? { supplementTo: entry.supplementTo } : {})
   }
 }
@@ -110,6 +119,13 @@ export function createTaskEventService<TRun>(options: RouteOptions<TRun>): TaskE
   }
 
   async function cancel(entry: AssistantInboxEntry, task: TaskEventTask): Promise<TaskEventNotice> {
+    if (entry.independent) {
+      if (!(await options.queue.cancelIndependentTask?.(entry.scope.conversationId, entry.id))) {
+        return { kind: 'unavailable', task }
+      }
+      // A pending task can be claimed while the cancellation reaches the queue.
+      return { kind: 'stopping', task }
+    }
     if (
       entry.status === 'queued' &&
       (await options.queue.cancel(entry.scope.conversationId, entry.id))
@@ -140,6 +156,13 @@ export function createTaskEventService<TRun>(options: RouteOptions<TRun>): TaskE
         (!Array.isArray(images) || images.length)
       ) {
         return clarification('attachments')
+      }
+      if (intent.kind === 'independent-run') {
+        if (!options.queue.submitIndependent) return clarification('syntax')
+        return {
+          kind: 'submitted',
+          receipt: await options.queue.submitIndependent(intent.text, target, id, sender.authorize)
+        }
       }
 
       const tasks = await readTasks()
@@ -183,7 +206,9 @@ export function createTaskEventService<TRun>(options: RouteOptions<TRun>): TaskE
       const [match] = matches
       const { entry } = match
       const task = taskDetails(options, match, sender)
-      if (intent.kind === 'status') return { kind: 'status', task }
+      if (intent.kind === 'status') {
+        return { kind: 'status', task: entry.result ? { ...task, result: entry.result } : task }
+      }
       if (intent.kind === 'cancel') return cancel(entry, task)
       if (intent.kind === 'supplement') {
         const receipt = await options.queue.supplement(

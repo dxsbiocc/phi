@@ -1,6 +1,6 @@
-import type { ChatQueueJob, ChatQueueJobStatus } from '../../shared/chatQueueTypes'
+import type { ChatQueueJob } from '../../shared/chatQueueTypes'
 import { messageContentTitleText } from '../../shared/sessionTitle'
-import { redactSensitiveText } from '../agent/redaction'
+import { chatQueuePreview } from './task-preview'
 import { phiOnlySessionPath } from '../agent/session/sessions'
 import type { AssistantInboxEntry } from './assistant-inbox'
 
@@ -10,20 +10,23 @@ export interface ChatQueueJobOwner {
   createdAt?: string
 }
 
-const QUOTED_SECRET =
-  /((?:["']|\b)(?:api[-_]?key|access[-_]?token|auth[-_]?token|token|secret|password|passphrase|authorization)(?:["']|\b)\s*[:=]\s*)(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/giu
-
-export function chatQueuePreview(text: string): string {
-  return redactSensitiveText(text.replace(QUOTED_SECRET, '$1"[redacted]"'))
-    .replace(/\s+/gu, ' ')
-    .trim()
-    .slice(0, 160)
+function visibleStatus(entry: AssistantInboxEntry): boolean {
+  const { status } = entry
+  return (
+    entry.independent ||
+    status === 'queued' ||
+    status === 'running' ||
+    status === 'failed' ||
+    status === 'interrupted'
+  )
 }
 
-function visibleStatus(status: AssistantInboxEntry['status']): status is ChatQueueJobStatus {
-  return (
-    status === 'queued' || status === 'running' || status === 'failed' || status === 'interrupted'
-  )
+function jobDetails(entry: AssistantInboxEntry, title: string): Partial<ChatQueueJob> {
+  return {
+    ...(title ? { title } : {}),
+    ...(entry.independent ? { independent: true as const } : {}),
+    ...(entry.result ? { result: entry.result } : {})
+  }
 }
 
 export function projectChatQueueJobs(
@@ -33,7 +36,7 @@ export function projectChatQueueJobs(
   const owners = new Map<string, ChatQueueJobOwner | null>()
   const items: ChatQueueJob[] = []
   for (const entry of entries) {
-    if (!visibleStatus(entry.status)) continue
+    if (!visibleStatus(entry)) continue
     const sessionId = entry.scope.conversationId
     if (!owners.has(sessionId)) owners.set(sessionId, resolveOwner(sessionId))
     const owner = owners.get(sessionId)
@@ -45,8 +48,8 @@ export function projectChatQueueJobs(
       id: entry.id,
       sessionId,
       sessionPath: phiOnlySessionPath(sessionId),
-      ...(title ? { title } : {}),
-      preview: chatQueuePreview(entry.text),
+      ...jobDetails(entry, title),
+      preview: entry.taskPreview ?? chatQueuePreview(entry.text),
       imageCount: entry.attachments?.length ?? 0,
       status: entry.status,
       timestamp: Number.isFinite(date.valueOf()) ? date.toISOString() : new Date(0).toISOString()

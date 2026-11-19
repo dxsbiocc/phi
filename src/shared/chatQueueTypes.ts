@@ -26,7 +26,7 @@ export interface ChatQueueItem {
   imageCount: number
 }
 
-export type ChatQueueJobStatus = 'queued' | 'running' | 'failed' | 'interrupted'
+export type ChatQueueJobStatus = ChatQueueItem['status']
 
 export interface ChatQueueJob {
   id: string
@@ -35,6 +35,8 @@ export interface ChatQueueJob {
   title?: string
   preview: string
   status: ChatQueueJobStatus
+  result?: string
+  independent?: true
   imageCount: number
   timestamp: string
 }

@@ -1,4 +1,6 @@
 import type { JsonValue, KernelEventFrame } from '../../../shared/kernel-protocol'
+import { INDEPENDENT_TASK_AGENT } from '../../../shared/independentTask'
+import { isRecord } from '../../../shared/guards'
 import type { PlanRunFinishedEvent, PlanRunState } from '../../../shared/planRunTypes'
 import { phiEventFromWire } from './events'
 import type { PhiAgentEvent } from './types'
@@ -40,6 +42,22 @@ function projectPlanRunEvent(
   binding.sink.event({ type, ...rendererPayload } as PhiAgentEvent)
 }
 
+function projectChildActivity(
+  binding: SessionBinding,
+  type: string,
+  payload: Record<string, JsonValue> | undefined
+): boolean {
+  if (type === 'agentRun.started') {
+    binding.activeAgentRuns += 1
+    return payload?.agent !== INDEPENDENT_TASK_AGENT
+  }
+  if (type === 'agentRun.finished') {
+    binding.activeAgentRuns = Math.max(0, binding.activeAgentRuns - 1)
+  }
+  const run = payload?.run
+  return type !== 'agentRun.step' || !isRecord(run) || run.agent !== INDEPENDENT_TASK_AGENT
+}
+
 export function projectKernelEvent(
   binding: SessionBinding,
   event: KernelEventFrame,
@@ -61,10 +79,7 @@ export function projectKernelEvent(
     if (approval) binding.sink.approval?.(approval)
     return
   }
-  if (event.type === 'agentRun.started') binding.activeAgentRuns += 1
-  if (event.type === 'agentRun.finished') {
-    binding.activeAgentRuns = Math.max(0, binding.activeAgentRuns - 1)
-  }
+  if (!projectChildActivity(binding, event.type, payload)) return
   if (event.type === 'planRun.updated' && payload) {
     projectPlanRunEvent(binding, payload, onPlanRunFinished)
     return

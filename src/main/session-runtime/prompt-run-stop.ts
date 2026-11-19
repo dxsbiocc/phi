@@ -33,7 +33,7 @@ export interface PromptRunStopDeps<
     cancel(scope?: { sessionId: string; runId: string }): void
   }
   sessions: {
-    abort(session: TSession): Promise<void>
+    abort(session: TSession, scope?: { sessionId: string; runId: string }): Promise<void>
   }
 }
 
@@ -66,7 +66,10 @@ async function stopPromptRun<
   deps.agents.stop(run.phiSessionId)
   deps.waits.cancel({ sessionId: run.phiSessionId, runId: run.runId })
   if (run.session) {
-    await Promise.all([browserCleanup, deps.sessions.abort(run.session)])
+    await Promise.all([
+      browserCleanup,
+      deps.sessions.abort(run.session, { sessionId: run.phiSessionId, runId: run.runId })
+    ])
   } else {
     await browserCleanup
   }
@@ -109,4 +112,29 @@ export function createPromptRunStop<
       stopPromptRun(deps, sessionKey, run, invalidateGeneration),
     stopAllPromptRuns: () => stopAllPromptRuns(deps)
   }
+}
+import { getProject } from '../agent/projects'
+import type { RuntimeAgentSession } from '../agent/runtime/runtime-adapter'
+import { findPhiSessionById } from '../agent/session/session-store'
+
+export async function abortSessionWithoutCancellingApprovals(
+  session: RuntimeAgentSession,
+  scope?: { sessionId: string; runId: string }
+): Promise<void> {
+  const manifest = scope && findPhiSessionById(scope.sessionId)
+  const project = manifest?.projectId ? getProject(manifest.projectId) : undefined
+  if (
+    scope &&
+    manifest &&
+    project?.location?.kind !== 'ssh' &&
+    manifest.projectLocation?.kind !== 'ssh'
+  ) {
+    await session.abort({
+      preserveApprovals: true,
+      foregroundOnly: true,
+      clientRunKey: scope.runId
+    })
+    return
+  }
+  await session.abort({ preserveApprovals: true })
 }

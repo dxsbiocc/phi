@@ -2,50 +2,77 @@ import { useCallback, useEffect, useState } from 'react'
 import type { TaskEventNotice } from '../../../../../shared/taskEventTypes'
 import type { RendererApi } from '../../../types'
 import type { TaskEventReply } from '../components/TaskEventResults'
+import { taskEventFeedback } from '../lib/taskEventCopy'
+
+function removeApproval(reply: TaskEventReply | null, requestId?: string): TaskEventReply | null {
+  if (reply?.notice.kind !== 'approval' || !reply.notice.requests.length) return reply
+  if (!requestId) return null
+  const requests = reply.notice.requests.filter((request) => request.id !== requestId)
+  if (requests.length === reply.notice.requests.length) return reply
+  return requests.length ? { ...reply, notice: { ...reply.notice, requests } } : null
+}
 
 export function useTaskEventReplies(
   api: Pick<RendererApi, 'routeTaskEvent' | 'onToolApprovalCancelled'>,
-  onError: (error: unknown) => void
+  onError: (error: unknown) => void,
+  openJobs: (taskId?: string) => void,
+  notify: (message: string, severity: 'info' | 'success' | 'warning') => void
 ): {
-  replies: readonly TaskEventReply[]
+  reply: TaskEventReply | null
   show(notice: TaskEventNotice): void
   dismiss(key: string): void
   decide(key: string, taskId: string, approvalId: string, action: 'approve' | 'deny'): void
 } {
-  const [replies, setReplies] = useState<TaskEventReply[]>([])
+  const [reply, setReply] = useState<TaskEventReply | null>(null)
   const dismiss = useCallback((key: string): void => {
-    setReplies((previous) => previous.filter((reply) => reply.key !== key))
+    setReply((previous) => (previous?.key === key ? null : previous))
   }, [])
+
   useEffect(
     () =>
       api.onToolApprovalCancelled((requestId) => {
-        setReplies((previous) =>
-          previous.flatMap((reply) => {
-            if (reply.notice.kind !== 'approval' || !reply.notice.requests.length) return [reply]
-            if (!requestId) return []
-            const requests = reply.notice.requests.filter((request) => request.id !== requestId)
-            if (requests.length === reply.notice.requests.length) return [reply]
-            return requests.length ? [{ ...reply, notice: { ...reply.notice, requests } }] : []
-          })
-        )
+        setReply((previous) => removeApproval(previous, requestId))
       }),
     [api]
   )
-  const show = useCallback((notice: TaskEventNotice): void => {
-    const key = crypto.randomUUID()
-    setReplies((previous) => [{ key, notice }, ...previous].slice(0, 5))
-  }, [])
+
+  const show = useCallback(
+    (notice: TaskEventNotice): void => {
+      if (notice.kind === 'status' || notice.kind === 'list') {
+        setReply(null)
+        openJobs(notice.kind === 'status' ? notice.task.id : undefined)
+      } else if (
+        notice.kind === 'approval' ||
+        (notice.kind === 'clarify' && notice.reason !== 'attachments')
+      ) {
+        setReply({ key: crypto.randomUUID(), notice })
+        openJobs(notice.kind === 'approval' ? notice.task.id : undefined)
+      } else {
+        if (notice.kind === 'decided') {
+          setReply((previous) => removeApproval(previous, notice.approvalId))
+        }
+        const feedback = taskEventFeedback(notice)
+        if (feedback) notify(feedback.message, feedback.severity)
+      }
+    },
+    [notify, openJobs]
+  )
+
   const decide = useCallback(
     (key: string, taskId: string, approvalId: string, action: 'approve' | 'deny'): void => {
       void api
         .routeTaskEvent(`/task ${action} ${taskId} ${approvalId}`, null, crypto.randomUUID())
         .then((result) => {
-          if (result.kind === 'unavailable') dismiss(key)
-          if (result.kind !== 'submitted') show(result)
+          if (result.kind !== 'decided' && result.kind !== 'unavailable') return
+          setReply((previous) =>
+            previous?.key === key ? removeApproval(previous, approvalId) : previous
+          )
+          const feedback = taskEventFeedback(result)
+          if (feedback) notify(feedback.message, feedback.severity)
         })
         .catch(onError)
     },
-    [api, dismiss, onError, show]
+    [api, notify, onError]
   )
-  return { replies, show, dismiss, decide }
+  return { reply, show, dismiss, decide }
 }

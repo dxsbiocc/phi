@@ -64,7 +64,10 @@ export interface PromptRunExecutionDeps<TContext extends PromptRunExecutionConte
       session: RuntimeAgentSession,
       scope: { sessionId: string; runId: string }
     ): Promise<void>
-    abortSessionWithoutCancellingApprovals(session: RuntimeAgentSession): Promise<void>
+    abortSessionWithoutCancellingApprovals(
+      session: RuntimeAgentSession,
+      scope: { sessionId: string; runId: string }
+    ): Promise<void>
     linkRuntimeSessionPath(context: TContext, session: RuntimeAgentSession): void
     recordMaterialization(context: TContext): void
   }
@@ -139,10 +142,15 @@ function promptRunFallbackInput<TContext extends PromptRunExecutionContext>(
               deps.lifecycle.getPromptGeneration(context.runSessionKey) ||
             !context.runLifecycle.isCurrentGeneration(context.promptRun.sessionGeneration))
         ) {
-          void deps.session.abortSessionWithoutCancellingApprovals(session).catch((error) => {
-            deps.timeline.logUnexpectedError(error)
-            console.error('Failed to abort stale prompt:', error)
-          })
+          void deps.session
+            .abortSessionWithoutCancellingApprovals(session, {
+              sessionId: context.phiSessionId,
+              runId: context.runId
+            })
+            .catch((error) => {
+              deps.timeline.logUnexpectedError(error)
+              console.error('Failed to abort stale prompt:', error)
+            })
           throw new StaleSessionError()
         }
       }

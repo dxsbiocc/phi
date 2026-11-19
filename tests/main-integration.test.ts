@@ -4726,6 +4726,7 @@ async function harness(
     './ipc/skills-ipc'
   ]
   const explicitlyLoadedSourceModules = new Set([
+    '../shared/independentTask',
     './agent/mcp/custom-auth-url',
     './agent/plugins/plugin-install-jobs',
     './app-state/app-caches',

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { mkdir, open } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { phiSessionIdFromPath } from '../agent/session/sessions'
 import { z } from 'zod'
 
 import type {
@@ -31,6 +32,11 @@ import {
   type ClaimedEntry,
   type SettleResult
 } from './assistant-inbox'
+import type { IndependentTaskChannel } from './independent-tasks'
+import {
+  createIndependentInboxDispatch,
+  independentTaskStoreOps
+} from './assistant-inbox-independent-dispatch'
 
 const RESCAN_MS = 2_000
 const requestIdSchema = z.uuidv4()
@@ -51,6 +57,7 @@ export interface BoundChatQueueTarget extends PromptRunDestination {
   path: string
   binding: string
   sessionGeneration: number
+  kernelSessionId?: string
   workMode: WorkMode
 }
 
@@ -72,6 +79,10 @@ export interface DurableChatOptions {
   changed(sessionId: string): void
   jobsChanged?(version: ChatQueueJobsVersion): void
   log(error: unknown): void
+  independent?: {
+    channel: IndependentTaskChannel
+    capacity(): number
+  }
 }
 
 export interface DurableChat {
@@ -83,6 +94,12 @@ export interface DurableChat {
   isPaused(sessionId: string): boolean
   removeConversation(sessionId: string): Promise<void>
   submit(text: unknown, target: unknown, id: unknown): Promise<ChatQueueReceipt>
+  submitIndependent(
+    text: unknown,
+    target: unknown,
+    id: unknown,
+    authorize: () => void
+  ): Promise<ChatQueueReceipt>
   supplement(
     parent: AssistantInboxEntry,
     text: string,
@@ -94,6 +111,7 @@ export interface DurableChat {
   list(sessionId: unknown): Promise<ChatQueueItem[]>
   listJobs(): Promise<ChatQueueJobsSnapshot>
   cancel(sessionId: unknown, itemId: unknown): Promise<boolean>
+  cancelIndependentTask(sessionId: unknown, itemId: unknown): Promise<boolean>
 }
 
 function requireIdentifier(id: unknown): string {
@@ -123,6 +141,7 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
   let lease: NonNullable<ReturnType<typeof tryAcquireAssistantInboxWriter>> | undefined
   let inbox: AssistantInbox | undefined
   let dispatch: AssistantInboxDispatch | undefined
+  let independentDispatch: AssistantInboxDispatch | undefined
   let timer: ReturnType<typeof setInterval> | undefined
   let opening: Promise<void> | undefined
   let closing = false
@@ -165,6 +184,22 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
     }
   }
 
+  async function openIndependentDispatch(
+    store: AssistantInbox,
+    queued: () => Promise<readonly AssistantInboxEntry[]>
+  ): Promise<AssistantInboxDispatch | undefined> {
+    if (!options.independent) return undefined
+    return createIndependentInboxDispatch({
+      ...options.independent,
+      store,
+      initialEntries: (await store.snapshot()).entries,
+      queued,
+      paused: (sessionId) => paused.has(sessionId),
+      changed,
+      log: options.log
+    })
+  }
+
   async function openInbox(): Promise<void> {
     try {
       await mkdir(options.directory, { recursive: true, mode: 0o700 })
@@ -181,13 +216,18 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
         return (await confirmCompleted(entry, status)) === 'succeeded' ? 'succeeded' : 'interrupted'
       })
       if (closing) return
+      const refreshPendingQueue = async (): Promise<readonly AssistantInboxEntry[]> => {
+        const queued = await store.queued()
+        const { entries } = await store.snapshot()
+        pendingQueue =
+          queued.length > 0 ||
+          entries.some((entry) => entry.status === 'running' && entry.independent === true)
+        return queued
+      }
       dispatch = createAssistantInboxDispatch({
         inbox: {
-          queued: async () => {
-            const queued = await store.queued()
-            pendingQueue = queued.length > 0
-            return queued
-          },
+          queued: async () =>
+            (await refreshPendingQueue()).filter((entry) => entry.independent !== true),
           claim: (...args) => store.claim(...args),
           settle: async (...args) => {
             const settled = await store.settle(...args)
@@ -223,6 +263,7 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
         changed,
         log: options.log
       })
+      independentDispatch = await openIndependentDispatch(store, refreshPendingQueue)
       inbox = store
     } catch (error) {
       lease?.release()
@@ -264,7 +305,12 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
     requestId: string,
     message: string,
     images: PromptImageInput[],
-    optionsForSubmission: { retryUserMessageId?: string; supplementTo?: string }
+    optionsForSubmission: {
+      retryUserMessageId?: string
+      supplementTo?: string
+      independent?: boolean
+    },
+    authorize?: () => void
   ): Promise<ChatQueueReceipt> {
     const sessionId = destination.scope.conversationId
     await confirmSessionFile(join(options.sessionDirectory(sessionId), 'manifest.json'))
@@ -274,15 +320,21 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
     ) {
       throw new Error('会话已删除或正在删除')
     }
+    authorize?.()
     const entry = await store.submit(destination.scope, requestId, message, {
-      images,
-      mode: destination.workMode === 'plan_execute' ? 'plan-execute' : destination.workMode,
+      ...(optionsForSubmission.independent
+        ? { kernelSessionId: destination.kernelSessionId }
+        : {
+            images,
+            mode: destination.workMode === 'plan_execute' ? 'plan-execute' : destination.workMode
+          }),
       binding: destination.binding,
       ...optionsForSubmission
     })
     pendingQueue = true
     changed(sessionId)
     dispatch?.wake()
+    independentDispatch?.wake()
     return {
       id: entry.id,
       sessionId,
@@ -295,6 +347,7 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
     closing = true
     clearInterval(timer)
     dispatch?.stop()
+    independentDispatch?.stop()
   }
 
   return {
@@ -302,8 +355,12 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
     activate() {
       if (closing || !dispatch || timer) return
       dispatch.wake()
+      independentDispatch?.wake()
       timer = setInterval(() => {
-        if (pendingQueue) dispatch?.wake()
+        if (pendingQueue) {
+          dispatch?.wake()
+          independentDispatch?.wake()
+        }
       }, RESCAN_MS)
       timer.unref()
     },
@@ -311,7 +368,11 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
     async shutdown() {
       beginShutdown()
       await opening?.catch(() => undefined)
-      await Promise.all([dispatch?.drained(), Promise.allSettled(pending)])
+      await Promise.all([
+        dispatch?.drained(),
+        independentDispatch?.drained(),
+        Promise.allSettled(pending)
+      ])
       lease?.release()
       lease = undefined
     },
@@ -359,9 +420,44 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
           })
         })
       }),
+    submitIndependent: (text, target, id, authorize) =>
+      tracked((store) => {
+        const requestId = requestIdSchema.parse(id)
+        const message = typeof text === 'string' ? text.trim() : ''
+        const parsed = targetSchema.parse(target)
+        if (
+          !options.independent ||
+          !message ||
+          Buffer.byteLength(message) > 32 * 1024 ||
+          (!parsed.phiSessionId && !(parsed.path && phiSessionIdFromPath(parsed.path))) ||
+          parsed.retryUserMessageId ||
+          validatePromptImages(parsed.images).length
+        ) {
+          throw new Error('Independent tasks use text in an existing local chat.')
+        }
+        return confirmInOrder(async () => {
+          authorize()
+          const destination = await options.bind({ ...parsed, images: undefined }, message)
+          if (!destination.kernelSessionId) {
+            throw new Error('Independent tasks need a local chat with an established runtime.')
+          }
+          return acceptSubmission(
+            store,
+            destination,
+            requestId,
+            message,
+            [],
+            {
+              independent: true
+            },
+            authorize
+          )
+        })
+      }),
     supplement: (parent, text, imageInput, id, authorize) =>
       tracked((store) =>
         confirmInOrder(async () => {
+          if (parent.independent) return null
           const requestId = requestIdSchema.parse(id)
           const images = validatePromptImages(imageInput)
           if (!text.trim() || Buffer.byteLength(text) > 64 * 1024) {
@@ -397,12 +493,14 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
     list: (id) =>
       tracked(async (store) => {
         const scope = options.scope(requireIdentifier(id))
-        return (scope ? await store.list(scope) : []).map((entry) => ({
-          id: entry.id,
-          text: entry.text,
-          status: entry.status,
-          imageCount: entry.attachments?.length ?? 0
-        }))
+        return (scope ? await store.list(scope) : [])
+          .filter((entry) => !entry.independent)
+          .map((entry) => ({
+            id: entry.id,
+            text: entry.text,
+            status: entry.status,
+            imageCount: entry.attachments?.length ?? 0
+          }))
       }),
     listJobs: () =>
       tracked(async (store) => {
@@ -425,8 +523,34 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
         if (cancelled) {
           changed(id)
           dispatch?.wake()
+          independentDispatch?.wake()
         }
         return cancelled
+      }),
+    cancelIndependentTask: (sessionId, itemId) =>
+      tracked(async (store) => {
+        const independent = options.independent
+        if (!independent) return false
+        const id = requireIdentifier(sessionId)
+        const scope = options.scope(id)
+        if (!scope) return false
+        const entryId = requireIdentifier(itemId)
+        const ops = independentTaskStoreOps(store, scope)
+        let entry = await ops.read(entryId)
+        if (!entry?.independent) return false
+        if (entry.status === 'queued') {
+          if (await store.cancel(scope, entryId)) {
+            changed(id)
+            independentDispatch?.wake()
+            return true
+          }
+          // The dispatcher can claim it between the read and queued cancellation.
+          entry = await ops.read(entryId)
+        }
+        if (!entry || !(await independent.channel.cancel(entry, ops))) return false
+        changed(id)
+        independentDispatch?.wake()
+        return true
       })
   }
 }

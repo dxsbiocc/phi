@@ -1,5 +1,6 @@
 import { cfgBashAutoBackgroundEnabled } from '@oh-my-pi/pi-coding-agent/exec/settings'
 import { randomUUID } from 'node:crypto'
+import { INDEPENDENT_TASK_AGENT } from '../../../../shared/independentTask'
 import { SessionManager, Settings, type CreateAgentSessionResult } from '@oh-my-pi/pi-coding-agent'
 import {
   createSpecialistExtensions,
@@ -164,7 +165,9 @@ export async function createPhiAgentSession(
   }
   const extensionHost = createInProcessExtensionHost({
     cwd: sessionCwd,
-    planModeActive: () => deps.parent()?.session.getPlanModeState()?.enabled === true,
+    planModeActive: () =>
+      definition.name !== INDEPENDENT_TASK_AGENT &&
+      deps.parent()?.session.getPlanModeState()?.enabled === true,
     environmentBinding: () => holder
   })
   // Order matters: guards and approval see the model input; the live environment

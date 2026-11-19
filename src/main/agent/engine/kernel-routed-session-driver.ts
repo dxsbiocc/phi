@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { JsonValue } from '../../../shared/kernel-protocol'
+import type { JsonValue, SessionAbortParams } from '../../../shared/kernel-protocol'
 import type { PlanRunReplanRequest, PlanRunState } from '../../../shared/planRunTypes'
 import type { RoutedPlanRunOperations, RoutedSessionDriver } from './session-routing-engine'
 import type {
@@ -279,8 +279,8 @@ export class KernelRoutedSessionDriver implements RoutedSessionDriver {
     }
   }
 
-  async abort(): Promise<WorkerSessionState> {
-    await this.request('session.abort', {})
+  async abort(params: SessionAbortParams = {}): Promise<WorkerSessionState> {
+    await this.request('session.abort', params.foregroundOnly ? params : {})
     return this.refreshState()
   }
 

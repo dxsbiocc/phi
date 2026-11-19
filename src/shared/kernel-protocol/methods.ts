@@ -554,9 +554,16 @@ export const shellJobsListResultSchema = z.array(shellJobSchema)
 export const shellJobsCancelParamsSchema = z.object({ jobId: nonEmptyIdSchema }).strict()
 export const shellJobsCancelResultSchema = z.object({ ok: z.boolean() }).strict()
 
-/** Run targeting remains in the request correlation fields until K1-2 wires worker cancellation. */
-export const sessionAbortParamsSchema = z.object({}).strict()
-export const sessionAbortResultSchema = z.object({ cancelled: z.literal(true) }).strict()
+export const sessionAbortParamsSchema = z.union([
+  z.object({ foregroundOnly: z.literal(false).optional() }).strict(),
+  z
+    .object({
+      foregroundOnly: z.literal(true),
+      clientRunKey: z.string().min(1).max(MAX_CLIENT_RUN_KEY_LENGTH)
+    })
+    .strict()
+])
+export const sessionAbortResultSchema = z.object({ cancelled: z.boolean() }).strict()
 
 export const projectMemorySnapshotSchema = z
   .object({

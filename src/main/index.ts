@@ -126,7 +126,7 @@ import {
   resolvePromptRunDestination,
   type PromptTargetControlOptions
 } from './agent/session/prompt-target-control'
-import { createMainChatQueue } from './session-runtime/main-chat-queue'
+import { createMainChatQueue, independentApprovalRun } from './session-runtime/main-chat-queue'
 import { createTaskEventService } from './session-runtime/task-event-service'
 import {
   getCurrentContextUsage,
@@ -381,7 +381,10 @@ import { createSessionCleanup } from './session-runtime/session-cleanup'
 import { createCreatedSessionEvents } from './session-runtime/created-session-events'
 import { createAgentSessionCreation } from './session-runtime/agent-session-creation'
 import { createSessionControlTarget } from './session-runtime/session-control-target'
-import { createPromptRunStop } from './session-runtime/prompt-run-stop'
+import {
+  abortSessionWithoutCancellingApprovals,
+  createPromptRunStop
+} from './session-runtime/prompt-run-stop'
 import { createPromptRunAdmission } from './session-runtime/prompt-run-admission'
 import {
   createPromptRunStart,
@@ -2685,14 +2688,8 @@ async function abortSession(
   scope?: { sessionId: string; runId: string }
 ): Promise<void> {
   cancelPendingRunWaits(scope)
-  if (scope) await abortSessionWithoutCancellingApprovals(session)
+  if (scope) await abortSessionWithoutCancellingApprovals(session, scope)
   else await session.abort()
-}
-
-async function abortSessionWithoutCancellingApprovals(
-  session: AgentSessionInstance
-): Promise<void> {
-  await session.abort({ preserveApprovals: true })
 }
 
 const { capture: captureSessionControlTarget } = createSessionControlTarget<AgentSessionResult>({
@@ -3327,6 +3324,8 @@ const durableChat = createMainChatQueue({
   activeAttempt: (key) => promptRuns.activeRun(key)?.runId,
   compacting: (id) => promptRuns.manualCompactionIds.has(id),
   submit: submitPromptRun,
+  independentRuntime: async (target) =>
+    (await getAgentSession(target.sessionKey, target.snapshot)).session.runtimeSessionId,
   changed: (sessionId) => sendToAllWindows(IPC.agent.queuedPromptsChanged, sessionId),
   jobsChanged: (version) => sendToAllWindows(IPC.agent.chatQueueJobsChanged, version),
   log: logUnexpectedError
@@ -3360,6 +3359,7 @@ const taskEvents = createTaskEventService({
         lifecycles.forKey(run.sessionKey).isCurrentGeneration(run.sessionGeneration)
     ),
   stop: (run) => stopPromptRun(run.sessionKey, run),
+  independentApprovalRun,
   approvals: pendingToolApprovalsForRun,
   respond: resolveAndNotifyToolApproval
 })

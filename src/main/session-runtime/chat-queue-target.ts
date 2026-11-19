@@ -75,6 +75,9 @@ export function createChatQueueTargets(options: ChatQueueTargetOptions): ChatQue
       scope: { conversationId: sessionId, projectId: manifest.projectId },
       path: phiOnlySessionPath(sessionId),
       binding,
+      ...(manifest.kernelRuntimeRef?.host.kind === 'local' && locationIsLocal(manifest, options)
+        ? { kernelSessionId: manifest.kernelRuntimeRef.kernelSessionId }
+        : {}),
       sessionGeneration: options.generation(sessionKey),
       workMode: manifest.workMode ?? fieldsFromMode(modeFromFields(manifest)).workMode
     }
@@ -118,4 +121,9 @@ export function createChatQueueTargets(options: ChatQueueTargetOptions): ChatQue
       return requireTarget(options.materialize(resolved, title))
     }
   }
+}
+
+function locationIsLocal(manifest: PhiSessionManifest, options: ChatQueueTargetOptions): boolean {
+  const project = manifest.projectId ? options.getProject(manifest.projectId) : undefined
+  return project?.location?.kind !== 'ssh' && manifest.projectLocation?.kind !== 'ssh'
 }

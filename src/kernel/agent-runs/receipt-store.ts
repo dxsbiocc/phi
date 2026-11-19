@@ -585,6 +585,10 @@ export class KernelAgentRunReceiptStore {
     return state ? view(state, live) : undefined
   }
 
+  isHostRun(sessionId: string, runId: string): boolean {
+    return this.sessions.get(sessionId)?.runs.get(runId)?.accepted.origin === 'host'
+  }
+
   list(sessionId: string, live: readonly AgentRunSnapshot[] = []): AgentRunSnapshotDto[] {
     const session = this.require(sessionId)
     const liveRuns = new Map(live.map((run) => [run.id, run]))

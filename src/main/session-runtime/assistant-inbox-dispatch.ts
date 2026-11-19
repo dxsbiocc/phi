@@ -6,13 +6,20 @@ import type {
   SettleResult
 } from './assistant-inbox'
 
+export interface SettleDetail {
+  status: SettleResult
+  result?: string
+}
+
 export interface AssistantInboxDispatchDeps {
   inbox: Pick<AssistantInbox, 'queued' | 'claim' | 'settle'>
   prepare(entry: AssistantInboxEntry): Promise<'ready' | 'wait' | 'invalid'>
   capacity(): number
-  execute(entry: ClaimedEntry): Promise<SettleResult>
+  execute(entry: ClaimedEntry): Promise<SettleResult | SettleDetail | undefined>
   changed(sessionId: string): void
   log(error: unknown): void
+  /** Lanes serialize per key; the default lane is one writer per conversation. */
+  laneKey?(entry: AssistantInboxEntry): string
 }
 
 export interface AssistantInboxDispatch {
@@ -57,26 +64,33 @@ export function createAssistantInboxDispatch(
 
   async function finish(entry: ClaimedEntry, verdict: 'ready' | 'invalid'): Promise<void> {
     const { conversationId } = entry.scope
-    let result: SettleResult = verdict === 'invalid' ? 'failed' : 'defer'
+    const lane = deps.laneKey?.(entry) ?? conversationId
+    let outcome: SettleDetail = { status: verdict === 'invalid' ? 'failed' : 'defer' }
     if (verdict === 'ready' && !stopped) {
       try {
-        result = await deps.execute(entry)
+        const executed = await deps.execute(entry)
+        if (!executed) {
+          active.delete(lane)
+          return
+        }
+        outcome = typeof executed === 'string' ? { status: executed } : executed
       } catch (error) {
         report(error)
-        result = 'interrupted'
+        outcome = { status: 'interrupted' }
       }
     }
+    const result = outcome.status
     try {
       const settled = await retryWrite(() =>
-        deps.inbox.settle(entry.scope, entry.id, entry.attemptId, result)
+        deps.inbox.settle(entry.scope, entry.id, entry.attemptId, result, outcome.result)
       )
       if (!settled) throw new Error('Assistant inbox attempt lost ownership before settlement.')
       notify(conversationId)
     } catch (error) {
-      blocked.add(conversationId)
+      blocked.add(lane)
       report(error)
     } finally {
-      active.delete(conversationId)
+      active.delete(lane)
     }
     // Deferrals rely on the next state change or periodic wake, not a tight retry loop.
     if (result !== 'defer') wake()
@@ -87,10 +101,11 @@ export function createAssistantInboxDispatch(
     for (const entry of await deps.inbox.queued()) {
       if (stopped || active.size >= deps.capacity()) return
       const { conversationId } = entry.scope
-      if (seen.has(conversationId) || active.has(conversationId) || blocked.has(conversationId)) {
+      const lane = deps.laneKey?.(entry) ?? conversationId
+      if (seen.has(lane) || active.has(lane) || blocked.has(lane)) {
         continue
       }
-      seen.add(conversationId)
+      seen.add(lane)
       let verdict: Awaited<ReturnType<AssistantInboxDispatchDeps['prepare']>>
       try {
         verdict = await deps.prepare(entry)
@@ -105,10 +120,10 @@ export function createAssistantInboxDispatch(
         const claimed = await retryWrite(() => deps.inbox.claim(entry.scope, attemptId, entry.id))
         if (!claimed) continue
         notify(conversationId)
-        active.set(conversationId, finish(claimed, verdict))
+        active.set(lane, finish(claimed, verdict))
       } catch (error) {
-        // This claim may have reached disk. Refuse another attempt in its conversation.
-        blocked.add(conversationId)
+        // This claim may have reached disk. Refuse another attempt in its lane.
+        blocked.add(lane)
         report(error)
       }
     }
