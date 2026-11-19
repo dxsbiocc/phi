@@ -180,17 +180,43 @@ export function resolveOutputPaths(
   return resolved
 }
 
+export interface PrimaryOutputRecord {
+  id: string
+  path: string
+  primary?: boolean
+  /** `false` when the path is absent on disk or could not be resolved at all. */
+  exists: boolean
+}
+
+/**
+ * The single primary-output verdict shared by local runs and composition:
+ * a primary output is missing when its path does not exist (or could not be
+ * resolved); optional outputs never count. Labels are `id (path)`.
+ */
+export function missingPrimaryOutputs(records: readonly PrimaryOutputRecord[]): string[] {
+  return records
+    .filter((record) => record.primary && !record.exists)
+    .map((record) => `${record.id} (${record.path})`)
+}
+
 /**
  * After a successful run, lists each `primary: true` output whose resolved
- * path does not exist, formatted as `name (path)`. Outputs whose path
- * cannot be resolved from the params are skipped rather than reported.
+ * path does not exist, formatted as `name (path)`. A primary output whose
+ * path cannot be resolved from the params counts as missing (reported with
+ * its declared template); unresolvable optional outputs are skipped.
  */
 export function findMissingPrimaryOutputs(
   manifest: WrapperCompositionManifest,
   params: Record<string, unknown>,
   componentDir: string
 ): string[] {
-  return resolveOutputPaths(manifest, params, componentDir)
-    .filter((output) => output.primary && !existsSync(output.absolutePath))
-    .map((output) => `${output.id} (${output.path})`)
+  const records: PrimaryOutputRecord[] = Object.entries(manifest.outputs).map(([id, output]) => {
+    const path = interpolate(output.path, params)
+    if (path === undefined) {
+      return { id, path: output.path, primary: output.primary, exists: false }
+    }
+    const absolutePath = isAbsolute(path) ? path : resolve(componentDir, path)
+    return { id, path, primary: output.primary, exists: existsSync(absolutePath) }
+  })
+  return missingPrimaryOutputs(records)
 }

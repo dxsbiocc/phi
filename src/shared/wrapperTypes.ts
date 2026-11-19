@@ -325,6 +325,7 @@ export interface WrapperRun {
   completedAt?: string
   exitCode?: number
   outputs?: WrapperOutputRecord[]
+  missingOutputs?: string[]
   /** Keyed by manifest `steps[].id`. Absent/empty when the wrapper declared no steps or nothing has run yet. */
   stepStates?: Record<string, WrapperStepState>
 }
