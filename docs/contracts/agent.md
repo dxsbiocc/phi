@@ -144,6 +144,13 @@ oversized scientific reports yield an insufficient-evidence summary. The runtime
 checks the handoff's structure; the specialist is responsible for the methods
 and reported measurements.
 
+For a blocked or partial handoff with missing inputs, the specialist may include
+`research.question` with `header`, `question` and two to four options. Each option
+has a `label` and a `description`. Phi passes valid choices to the main agent on
+initial delivery and replay. For example, when a paired design lacks a donor
+mapping, offer to supply the mapping or finish with a descriptive summary.
+The parent uses `ask_user_question` before dispatching dependent inference.
+
 The main agent matches that answer to the user's question and approved scope.
 It delivers a supported result, proceeds with an approved applicable action, or
 asks a concrete question when the next decision belongs to the user. A zero-hit

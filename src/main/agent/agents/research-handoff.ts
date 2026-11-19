@@ -40,6 +40,39 @@ function stringList(
   return Array.isArray(value) && value.length <= 4 && value.every(validate)
 }
 
+// Bounds and reserved labels mirror the ask_user_question contract. An
+// ineligible or invalid question is omitted, never allowed to fail or leak
+// into an otherwise valid handoff.
+const RESERVED_QUESTION_LABELS = new Set(['Other', 'Type something.', 'Next'])
+
+export type ResearchUserQuestion = {
+  header: string
+  question: string
+  options: Array<{ label: string; description: string }>
+}
+
+export function researchUserQuestion(value: unknown): ResearchUserQuestion | undefined {
+  if (!isRecord(value) || !isNarrative(value.header, 16) || !isNarrative(value.question, 320))
+    return undefined
+  if (!Array.isArray(value.options) || value.options.length < 2 || value.options.length > 4)
+    return undefined
+  const labels = new Set<string>()
+  const options: ResearchUserQuestion['options'] = []
+  for (const option of value.options) {
+    if (
+      !isRecord(option) ||
+      !isNarrative(option.label, 60) ||
+      !isNarrative(option.description, 320) ||
+      RESERVED_QUESTION_LABELS.has(option.label) ||
+      labels.has(option.label)
+    )
+      return undefined
+    labels.add(option.label)
+    options.push({ label: option.label, description: option.description })
+  }
+  return { header: value.header, question: value.question, options }
+}
+
 function unavailableResearchReport(originalQuestion: string): AgentReport {
   return {
     status: 'partial',
@@ -86,7 +119,11 @@ export function scientificReport(
     return unavailableResearchReport(originalQuestion)
   }
 
-  const text = JSON.stringify({
+  const userQuestion =
+    (status === 'blocked' || status === 'partial') && missing.length > 0
+      ? researchUserQuestion(research.question)
+      : undefined
+  const handoff = {
     originalQuestion,
     status,
     subquestion: research.subquestion,
@@ -95,8 +132,11 @@ export function scientificReport(
     rationale: research.rationale,
     evidence: research.evidence,
     missingInputs: missing
-  })
+  }
+  let text = JSON.stringify(userQuestion ? { ...handoff, question: userQuestion } : handoff)
   // Match the plan's stored report allowance, including multibyte responses.
+  if (userQuestion && Buffer.byteLength(text, 'utf8') > PLAN_MAX_REPORT_SUMMARY_BYTES)
+    text = JSON.stringify(handoff)
   if (Buffer.byteLength(text, 'utf8') > PLAN_MAX_REPORT_SUMMARY_BYTES)
     return unavailableResearchReport(originalQuestion)
   return { status, text, missingInputs: missing, structured: true }
@@ -142,4 +182,4 @@ export function readScientificHandoff(
 
 export const RESEARCH_HANDOFF_PROTOCOL = `For this scientific delegation, include "research" inside the existing <phi_agent_result> JSON. Return:
 {"status":"completed|partial|not_found|blocked|failed","missingInputs":[],"research":{"subquestion":"the specific question you investigated","answer":"the direct finding, including a valid zero or missing evidence","interpretation":"what it supports and where the evidence stops","rationale":"why this branch can end or what an additional analysis could resolve","evidence":["exact result file path or source identifier"]}}.
-Use one short plain-text line per field (subquestion, interpretation and rationale up to 320 characters each; answer up to 480). Cite up to four evidence references (256 characters each); a completed finding requires a reference. List only necessary missing inputs (up to four, 160 characters each). Keep the complete handoff including the original question within 8 KiB. Keep tables, logs and full data in the workspace and give references so the parent can inspect them. Distinguish the result of this subtask from the whole research question. The main agent decides the next action from the original user request, approved scope and these findings.`
+Use one short plain-text line per field (subquestion, interpretation and rationale up to 320 characters each; answer up to 480). Cite up to four evidence references (256 characters each); a completed finding requires a reference. List only necessary missing inputs (up to four, 160 characters each). When status is "blocked" or "partial" and missingInputs is non-empty, you may add "question" inside research: {"header":"chip up to 16 characters","question":"the single user decision needed, up to 320 characters","options":[{"label":"choice up to 60 characters","description":"its consequence or trade-off, up to 320 characters"}]}. Offer 2-4 distinct choices in the user's language, one plain-text line per field, and never the reserved labels "Other", "Type something." or "Next" because a custom answer is always available. Request only inputs the user must supply, such as donor identity or experimental design; the parent relays this question with ask_user_question before dependent analysis. Invalid or ineligible questions are ignored. Keep the complete handoff including the original question within 8 KiB. Keep tables, logs and full data in the workspace and give references so the parent can inspect them. Distinguish the result of this subtask from the whole research question. The main agent decides the next action from the original user request, approved scope and these findings.`

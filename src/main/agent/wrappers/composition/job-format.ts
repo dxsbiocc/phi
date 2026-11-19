@@ -1,4 +1,5 @@
-import type { WrapperJobStatus, WrapperJobSummary } from './job-types'
+import { TERMINAL_RUN_STATES, type WrapperJobStatus, type WrapperJobSummary } from './job-types'
+import { isResearchQcGated, researchQcSummaryLine } from '../../../../shared/wrapperResearchQcTypes'
 
 const LOG_TAIL_IN_REPORT = 1500
 
@@ -14,6 +15,24 @@ function progressLine(status: WrapperJobStatus): string {
   if (started === 0) return 'Progress: no process has started yet'
   const counted = total ? `${started} of ${total}` : `${started}`
   return `Progress: ${counted} processes started${current ? ` (current: ${current})` : ''}`
+}
+
+function researchQcLines(status: WrapperJobStatus): string[] {
+  if (status.researchQc) {
+    const lines = [researchQcSummaryLine(status.researchQc)]
+    if (status.researchQc.disposition === 'eligible' || status.researchQc.disposition === 'skip')
+      lines.push(
+        'Ask the domain specialist to verify the published evidence before interpretation. Continue only an applicable step already approved by the user.'
+      )
+    return lines
+  }
+  if (!status.researchQcExpected) return []
+  if (status.remote) {
+    return ['Research QC: declared by the wrapper but not verified by Phi (remote run).']
+  }
+  return TERMINAL_RUN_STATES.includes(status.state)
+    ? ['Research QC: not verified for this run; do not use its results.']
+    : ['Research QC: verification pending until the run ends.']
 }
 
 /** A compact report of one run for the agent: enough to act on, never the whole log. */
@@ -39,7 +58,9 @@ export function formatJobStatus(status: WrapperJobStatus): string {
   if (status.missingOutputs && status.missingOutputs.length > 0) {
     lines.push(`Missing primary outputs: ${status.missingOutputs.join(', ')}`)
   }
-  const tail = status.logTail.trim()
+  lines.push(...researchQcLines(status))
+  // QC-gated runs never surface the raw log: the verified summary is the report.
+  const tail = isResearchQcGated(status) ? '' : status.logTail.trim()
   if (tail) {
     lines.push(
       'Log tail:',

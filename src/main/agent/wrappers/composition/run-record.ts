@@ -23,6 +23,8 @@ import type { WrapperCompositionEntry } from './discovery'
 import type { RemoteJobSnapshot } from './remote-job'
 import { resolveRemoteOutputRoot } from '../remote-result-paths'
 import { resolveOutputPaths } from './validate'
+import { declaresResearchQc } from './research-qc'
+import type { WrapperResearchQc } from '../../../../shared/wrapperResearchQcTypes'
 
 /**
  * Persists composition-layer runs (`wrapper_run`) into the same run store the
@@ -169,6 +171,7 @@ export function startCompositionRun(input: {
     ...(input.originSessionId ? { originSessionId: input.originSessionId } : {}),
     ...(input.workflow ? { workflow: input.workflow } : {}),
     ...(input.continueWhenDone === false ? { continueWhenDone: false } : {}),
+    ...(declaresResearchQc(entry.manifest) ? { researchQcExpected: true as const } : {}),
     createdAt: now,
     updatedAt: now,
     startedAt: now
@@ -232,12 +235,16 @@ export function finishCompositionRun(input: {
   progress?: WrapperRunProgress
   /** Outputs already collected elsewhere (a remote run); otherwise they are looked up on the local disk. */
   outputs?: WrapperOutputRecord[]
+  /** Host-verified research QC verdict for a QC-gated local run; a small sanitized summary, never rows. */
+  researchQc?: WrapperResearchQc
   agentDir?: string
 }): WrapperRun {
   const { run, entry, params, outcome } = input
   const agentDir = input.agentDir ?? getPhiAgentDir()
   const outputs = input.outputs ?? outputRecords(entry, params)
   const completedAt = new Date().toISOString()
+  // A QC-gated run's report is the verified summary; its raw log is not persisted as the report.
+  const logTail = run.researchQcExpected || input.researchQc ? '' : input.output
 
   writeRunFile(run.runId, agentDir, 'outputs.json', outputs)
   writeRunFile(run.runId, agentDir, 'summary.json', {
@@ -245,7 +252,8 @@ export function finishCompositionRun(input: {
     state: outcome,
     exitCode: input.exitCode,
     missingOutputs: input.missingOutputs,
-    logTail: input.output,
+    logTail,
+    ...(input.researchQc ? { researchQc: input.researchQc } : {}),
     // The composition manifest as it was when the run started (the legacy
     // export path only knows the older package manifest).
     manifest: entry.manifest,
@@ -255,6 +263,8 @@ export function finishCompositionRun(input: {
     completedAt,
     exitCode: input.exitCode,
     outputs,
+    missingOutputs: input.missingOutputs,
+    ...(input.researchQc ? { researchQc: input.researchQc } : {}),
     ...(input.progress ? { progress: input.progress } : {})
   })
 }
