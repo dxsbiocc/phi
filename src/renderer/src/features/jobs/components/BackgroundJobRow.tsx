@@ -54,6 +54,7 @@ export function BackgroundJobRow({
       tabIndex={0}
       aria-label={jobsCopy.viewDetailsForValue(title)}
       data-phi-background-job={item.key}
+      data-phi-chat-queue-status={item.kind === 'chat-queue' ? item.job.status : undefined}
       onClick={() => onOpen(item)}
       onKeyDown={(event) => {
         if (event.currentTarget !== event.target) return

@@ -64,6 +64,7 @@ const entrySchema = z
     status: z.enum(['queued', 'running', ...settledStatuses]),
     attemptId: uuid.optional(),
     deferredAttemptId: uuid.optional(),
+    submittedAt: z.int().nonnegative().optional(),
     settledAt: z.int().nonnegative().optional(),
     textHash: digestSchema.optional(),
     binding: digestSchema.optional(),
@@ -95,6 +96,8 @@ type SubmissionOptions = {
 }
 
 export interface AssistantInbox {
+  readonly revision: number
+  snapshot(): Promise<{ revision: number; entries: readonly AssistantInboxEntry[] }>
   submit(
     scope: AssistantInboxScope,
     requestId: string,
@@ -315,10 +318,19 @@ class FileAssistantInbox implements AssistantInbox {
   private readonly path: string
   private readonly attachments: ReturnType<typeof createAssistantInboxAttachments>
   private tail: Promise<void> = Promise.resolve()
+  private revisionNumber = 0
 
   constructor(private readonly root: string) {
     this.path = join(root, SNAPSHOT_FILE)
     this.attachments = createAssistantInboxAttachments(root)
+  }
+
+  get revision(): number {
+    return this.revisionNumber
+  }
+
+  snapshot(): Promise<{ revision: number; entries: readonly AssistantInboxEntry[] }> {
+    return this.withSnapshot((entries) => ({ revision: this.revision, entries }))
   }
 
   private withSnapshot<T>(
@@ -359,6 +371,7 @@ class FileAssistantInbox implements AssistantInbox {
     } catch {
       throw new Error('Could not persist assistant inbox.')
     }
+    this.revisionNumber += 1
   }
 
   private async persistSubmission(
@@ -446,6 +459,7 @@ class FileAssistantInbox implements AssistantInbox {
         ...(refs.length ? { attachments: refs } : {}),
         ...(mode.data ? { mode: mode.data } : {}),
         order,
+        submittedAt: Date.now(),
         status: 'queued'
       } as const
       await this.persistSubmission(entries, entry, prepared)

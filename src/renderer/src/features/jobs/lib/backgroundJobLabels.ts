@@ -22,6 +22,7 @@ import {
   environmentBuildDetail,
   environmentBuildPercent,
   type LiveBackgroundJob,
+  type LiveChatQueueJob,
   type UnifiedBackgroundJob
 } from './backgroundJobs'
 import type { JobHistorySnapshot } from './backgroundJobHistory'
@@ -281,8 +282,18 @@ function historyTitle(snapshot: JobHistorySnapshot): string {
     : historyPluginTitle(snapshot.key, snapshot.title)
 }
 
+function chatQueuePreview(item: LiveChatQueueJob): string {
+  return [
+    item.job.preview,
+    item.job.imageCount > 0 ? jobsCopy.chatImageCount(item.job.imageCount) : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
 export function jobTitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'history') return historyTitle(item.snapshot)
+  if (item.kind === 'chat-queue') return item.job.title || jobsCopy.chatMessage
   if (item.kind === 'connector') return item.setup.title ?? item.setup.id
   if (item.kind === 'environment') return item.build.ref
   if (item.kind === 'upload') return uploadTitle(item.upload)
@@ -301,6 +312,7 @@ export function jobTitle(item: UnifiedBackgroundJob): string {
 
 export function jobSource(item: UnifiedBackgroundJob): string {
   if (item.kind === 'history') return item.snapshot.source
+  if (item.kind === 'chat-queue') return item.job.title || jobsCopy.conversation
   if (item.kind === 'connector') return resourceUi.connector
   if (item.kind === 'environment') return jobsCopy.environment
   if (item.kind === 'upload') return jobsCopy.upload
@@ -312,6 +324,7 @@ export function jobSource(item: UnifiedBackgroundJob): string {
 }
 
 const OPERATION_LABELS: Record<Exclude<LiveBackgroundJob['kind'], 'plugin'>, () => string> = {
+  'chat-queue': () => jobsCopy.chatMessage,
   agent: () => jobsCopy.operationDispatchSubagent,
   shell: () => jobsCopy.operationRunCommand,
   wrapper: () => jobsCopy.operationRunWrapper,
@@ -359,6 +372,10 @@ function operationTarget(item: UnifiedBackgroundJob): string | undefined {
 
 /** Second line of a job card: the operation, then its target, e.g. "安装插件 · 0.7.0". */
 export function jobSubtitle(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'chat-queue') {
+    const preview = chatQueuePreview(item)
+    return preview && preview !== item.job.title ? preview : jobsCopy.chatMessage
+  }
   return [jobOperation(item), operationTarget(item)].filter(Boolean).join(' · ')
 }
 
@@ -376,6 +393,7 @@ function elapsed(
 /** One line for the list row. */
 export function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
   if (item.kind === 'history') return item.snapshot.status.label
+  if (item.kind === 'chat-queue') return chatQueuePreview(item)
   if (item.kind === 'connector') return connectorJobDetail(item.setup, nowMs)
   if (item.kind === 'environment') return environmentBuildDetail(item.build)
   if (item.kind === 'upload') return uploadDetail(item.upload)
@@ -435,6 +453,11 @@ export function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
 
 export function jobStatus(item: UnifiedBackgroundJob): { label: string; tone: JobTone } {
   if (item.kind === 'history') return item.snapshot.status
+  if (item.kind === 'chat-queue') {
+    const status = item.job.status
+    const tone = status === 'running' ? 'running' : status === 'queued' ? 'neutral' : 'error'
+    return { label: jobsCopy[status], tone }
+  }
   if (item.active) {
     if (item.kind === 'jupyter') return { label: JUPYTER_STATE_LABELS.running, tone: 'running' }
     if (item.kind === 'connector') return { label: connectorJobCopy.inProgress, tone: 'running' }
@@ -489,6 +512,7 @@ export function jobStatus(item: UnifiedBackgroundJob): { label: string; tone: Jo
 
 export function canStopJob(item: UnifiedBackgroundJob): boolean {
   if (item.kind === 'history') return false
+  if (item.kind === 'chat-queue') return item.job.status === 'queued'
   if (item.kind === 'agent' && item.run.canControl === false) return false
   if (item.kind === 'wrapper') return canStopUnifiedWrapperRun(item.run)
   // A Jupyter start is stopped from the runtime card, which owns the project binding.
@@ -500,6 +524,7 @@ export function canStopJob(item: UnifiedBackgroundJob): boolean {
 }
 
 export function stopTooltip(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'chat-queue') return jobsCopy.cancelQueuedMessage
   if (item.kind === 'connector') return connectorJobCopy.cancelAdd
   if (item.kind === 'environment') return jobsCopy.cancelBuild
   if (item.kind === 'upload') return jobsCopy.cancelUpload
@@ -509,6 +534,7 @@ export function stopTooltip(item: UnifiedBackgroundJob): string {
 }
 
 export function stopAriaLabel(item: UnifiedBackgroundJob): string {
+  if (item.kind === 'chat-queue') return jobsCopy.cancelQueuedMessage
   const title = jobTitle(item)
   if (item.kind === 'environment') return jobsCopy.cancelBuild
   if (item.kind === 'upload') return jobsCopy.cancelUploadValue(title)
@@ -533,6 +559,13 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
   const status = jobStatus(item).label
   const fields: Array<JobDetailField | undefined> = (() => {
     switch (item.kind) {
+      case 'chat-queue':
+        return [
+          { label: jobsCopy.conversation, value: item.job.title ?? '' },
+          { label: jobsCopy.chatMessagePreview, value: chatQueuePreview(item) },
+          { label: jobsCopy.status, value: status },
+          { label: jobsCopy.chatJobTime, value: timeLabel(item.timestamp) }
+        ]
       case 'notebook-ai':
         return [
           { label: 'Notebook', value: item.job.notebookPath || item.job.notebookName },

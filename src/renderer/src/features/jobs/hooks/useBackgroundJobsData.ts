@@ -1,5 +1,5 @@
 import { jobsCopy } from '../lib/jobsCopy'
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
 
 import type {
   BackgroundAgentJob,
@@ -12,13 +12,32 @@ import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJo
 import type { PluginInstallJob } from '../../../../../shared/pluginInstallJobTypes'
 import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProjectUploadTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
+import type { ChatQueueJob } from '../../../../../shared/chatQueueTypes'
 import { BackgroundJobHistory, backgroundJobHistoryStorage } from '../lib/backgroundJobHistory'
-import { selectBackgroundJobs, type UnifiedBackgroundJob } from '../lib/backgroundJobs'
-import { groupBackgroundJobs } from '../lib/backgroundJobGroups'
+import {
+  createChatQueueSessionSelector,
+  EMPTY_CHAT_QUEUE,
+  selectBackgroundJobs,
+  type UnifiedBackgroundJob
+} from '../lib/backgroundJobs'
+import {
+  groupBackgroundJobs,
+  summarizeBackgroundJobs,
+  type BackgroundJobDisplayItem,
+  type BackgroundJobSummary
+} from '../lib/backgroundJobGroups'
+import { createChatQueueJobsSync } from '../lib/chatQueueJobsSync'
 
 const REFRESH_MS = 2000
+const EMPTY_SUMMARY: BackgroundJobSummary = {
+  queued: 0,
+  running: 0,
+  failed: 0,
+  interrupted: 0
+}
 
 export type BackgroundJobsData = {
+  chatQueueJobs: readonly ChatQueueJob[]
   agentJobs: BackgroundAgentJob[]
   shellJobs: BackgroundShellJob[]
   wrapperRuns: WrapperRun[]
@@ -34,12 +53,16 @@ type JobLists = { active: UnifiedBackgroundJob[]; recent: UnifiedBackgroundJob[]
 type Snapshot = {
   data: BackgroundJobsData
   jobs: JobLists
+  display: BackgroundJobDisplayItem[]
+  summary: BackgroundJobSummary
   loaded: boolean
   error: string
+  chatQueueUnavailable: boolean
   nowMs: number
 }
 
 const EMPTY: BackgroundJobsData = {
+  chatQueueJobs: EMPTY_CHAT_QUEUE,
   agentJobs: [],
   shellJobs: [],
   wrapperRuns: [],
@@ -74,7 +97,17 @@ function liveJobs(data: BackgroundJobsData): ReturnType<typeof selectBackgroundJ
     data.uploadJobs,
     data.jupyterJobs,
     data.notebookAiJobs,
-    data.pluginInstallJobs
+    data.pluginInstallJobs,
+    data.chatQueueJobs
+  )
+}
+
+function sameSummary(left: BackgroundJobSummary, right: BackgroundJobSummary): boolean {
+  return (
+    left.queued === right.queued &&
+    left.running === right.running &&
+    left.failed === right.failed &&
+    left.interrupted === right.interrupted
   )
 }
 
@@ -89,8 +122,11 @@ class BackgroundJobsStore {
   private state: Snapshot = {
     data: EMPTY,
     jobs: this.history.select({ active: [], recent: [] }),
+    display: [],
+    summary: EMPTY_SUMMARY,
     loaded: false,
     error: '',
+    chatQueueUnavailable: false,
     nowMs: Date.now()
   }
   private readonly listeners = new Set<() => void>()
@@ -99,6 +135,8 @@ class BackgroundJobsStore {
   private refreshing = false
   private generation = 0
   private unsubscribes: Array<(() => void) | undefined> | undefined
+  private chatQueueSync: ReturnType<typeof createChatQueueJobsSync> | undefined
+  private releaseChatQueue: (() => void) | undefined
 
   getSnapshot = (): Snapshot => this.state
 
@@ -106,8 +144,9 @@ class BackgroundJobsStore {
     this.references += 1
     if (this.references === 1) {
       this.generation += 1
-      void this.refresh()
-      this.timer = window.setInterval(() => void this.refresh(), REFRESH_MS)
+      this.attachChatQueue()
+      void this.refreshLegacy()
+      this.timer = window.setInterval(() => void this.refresh(false), REFRESH_MS)
     }
     let released = false
     return () => {
@@ -118,6 +157,9 @@ class BackgroundJobsStore {
       this.generation += 1
       window.clearInterval(this.timer)
       this.timer = undefined
+      this.releaseChatQueue?.()
+      this.releaseChatQueue = undefined
+      this.chatQueueSync = undefined
       for (const unsubscribe of this.unsubscribes ?? []) unsubscribe?.()
       this.unsubscribes = undefined
     }
@@ -142,12 +184,18 @@ class BackgroundJobsStore {
     this.publish(this.state.data)
   }
 
-  refresh = async (): Promise<void> => {
+  refresh = async (followInFlight = true): Promise<void> => {
+    this.attachChatQueue()
+    await Promise.all([this.chatQueueSync?.refresh(followInFlight), this.refreshLegacy()])
+  }
+
+  private refreshLegacy = async (): Promise<void> => {
     if (this.refreshing) return
     this.refreshing = true
     const generation = this.generation
     try {
       await this.hydrateHistory()
+      if (generation !== this.generation) return
       const api = window.api
       if (typeof api?.listAgentJobs !== 'function') {
         this.state = { ...this.state, error: jobsCopy.restartPhiToViewBackgroundJobs, loaded: true }
@@ -178,6 +226,7 @@ class BackgroundJobsStore {
           : ''
       }
       this.publish({
+        chatQueueJobs: current.chatQueueJobs,
         agentJobs: agents.status === 'fulfilled' ? agents.value : current.agentJobs,
         shellJobs: shells.status === 'fulfilled' ? shells.value : current.shellJobs,
         wrapperRuns: wrappers.status === 'fulfilled' ? wrappers.value : current.wrapperRuns,
@@ -192,7 +241,7 @@ class BackgroundJobsStore {
       })
     } finally {
       this.refreshing = false
-      if (generation !== this.generation && this.references > 0) void this.refresh()
+      if (generation !== this.generation && this.references > 0) void this.refreshLegacy()
     }
   }
 
@@ -200,8 +249,18 @@ class BackgroundJobsStore {
     const live = liveJobs(data)
     this.history.observe([...live.active, ...live.recent])
     this.persistHistory()
-    this.state = { ...this.state, data, jobs: this.history.select(live), nowMs: Date.now() }
+    this.state = { ...this.state, ...this.projection(live), data, nowMs: Date.now() }
     this.emit()
+  }
+
+  private projection(
+    live: ReturnType<typeof liveJobs>
+  ): Pick<Snapshot, 'jobs' | 'display' | 'summary'> {
+    const jobs = this.history.select(live)
+    const display = groupBackgroundJobs([...jobs.active, ...jobs.recent])
+    const nextSummary = summarizeBackgroundJobs(display)
+    const summary = sameSummary(this.state.summary, nextSummary) ? this.state.summary : nextSummary
+    return { jobs, display, summary }
   }
 
   private hydrateHistory(): Promise<void> {
@@ -218,7 +277,7 @@ class BackgroundJobsStore {
       this.historyReady = true
       this.state = {
         ...this.state,
-        jobs: this.history.select(liveJobs(this.state.data))
+        ...this.projection(liveJobs(this.state.data))
       }
       this.emit()
       this.persistHistory()
@@ -245,6 +304,37 @@ class BackgroundJobsStore {
 
   private emit(): void {
     for (const listener of this.listeners) listener()
+  }
+
+  private setChatQueueUnavailable(value: boolean): void {
+    if (value === this.state.chatQueueUnavailable) return
+    this.state = { ...this.state, chatQueueUnavailable: value }
+    this.emit()
+  }
+
+  private attachChatQueue(): void {
+    if (this.chatQueueSync || this.references === 0) return
+    const api = window.api
+    if (
+      typeof api?.listChatQueueJobs !== 'function' ||
+      typeof api.onChatQueueJobsChanged !== 'function'
+    )
+      return
+    const generation = this.generation
+    this.chatQueueSync = createChatQueueJobsSync({
+      read: () => api.listChatQueueJobs(),
+      listen: (listener) => api.onChatQueueJobsChanged(listener),
+      publish: (snapshot) => {
+        if (generation === this.generation) {
+          this.state = { ...this.state, chatQueueUnavailable: false }
+          this.publish({ ...this.state.data, chatQueueJobs: snapshot.items })
+        }
+      },
+      onError: () => {
+        if (generation === this.generation) this.setChatQueueUnavailable(true)
+      }
+    })
+    this.releaseChatQueue = this.chatQueueSync.start()
   }
 
   private attachEvents(api: Window['api']): void {
@@ -367,17 +457,24 @@ export function refreshBackgroundJobs(): Promise<void> {
   return jobsStore().refresh()
 }
 
-/** Subscribe the toolbar only to count changes, rather than every polling timestamp. */
-export function useActiveBackgroundJobCount(): number {
+/** Subscribe the toolbar only to the counts in the visible, grouped job snapshot. */
+export function useBackgroundJobSummary(): BackgroundJobSummary {
   const store = jobsStore()
   return useSyncExternalStore(
     store.subscribe,
-    () => {
-      const { active, recent } = store.getSnapshot().jobs
-      return groupBackgroundJobs([...active, ...recent]).filter((item) => item.active).length
-    },
-    () => 0
+    () => store.getSnapshot().summary,
+    () => EMPTY_SUMMARY
   )
+}
+
+/** The composer shares the authoritative queue feed without subscribing to peer chat changes. */
+export function useChatQueueJobsForSession(sessionId: string | null): readonly ChatQueueJob[] {
+  const store = jobsStore()
+  const select = useMemo(() => {
+    const selectSession = createChatQueueSessionSelector(sessionId)
+    return (): readonly ChatQueueJob[] => selectSession(store.getSnapshot().data.chatQueueJobs)
+  }, [sessionId, store])
+  return useSyncExternalStore(store.subscribe, select, () => EMPTY_CHAT_QUEUE)
 }
 
 export function useBackgroundJobsData(): Snapshot & {

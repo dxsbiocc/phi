@@ -9,6 +9,7 @@ import type { LiveBackgroundJob } from '../lib/backgroundJobs'
 type JobKind = LiveBackgroundJob['kind']
 
 const iconColors: Record<JobKind, string> = {
+  'chat-queue': '#456F9F',
   agent: '#7958D4',
   shell: '#607D98',
   wrapper: '#00A98A',
@@ -22,6 +23,8 @@ const iconColors: Record<JobKind, string> = {
 
 function JobSymbol({ kind }: { kind: JobKind }): React.JSX.Element {
   switch (kind) {
+    case 'chat-queue':
+      return <PhiIcons.nav.chat size={22} />
     case 'jupyter':
     case 'notebook-ai':
       return <PhiIcons.file.jupyter size={25} />

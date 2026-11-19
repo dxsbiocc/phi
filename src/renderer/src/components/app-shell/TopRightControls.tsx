@@ -2,7 +2,8 @@ import { Badge, Box, IconButton, Tooltip } from '@mui/material'
 import { alpha, type SxProps, type Theme } from '@mui/material/styles'
 import { GoGlobe, GoStack, GoSync, GoTerminal } from 'react-icons/go'
 
-import { useActiveBackgroundJobCount } from '../../features/jobs/hooks/useBackgroundJobsData'
+import { useBackgroundJobSummary } from '../../features/jobs/hooks/useBackgroundJobsData'
+import { backgroundJobsSummaryLabel } from '../../features/jobs/lib/jobsCopy'
 import { useUnreadMessageCount } from '../../features/messages/hooks/useMessages'
 import { PhiIcons } from '../../icons'
 import { appCopy } from '../../lib/appCopy'
@@ -29,10 +30,12 @@ export function TopRightControls({
   onTogglePanel: (mode: WorkspaceSidePanelMode) => void
 }): React.JSX.Element | null {
   useUiLanguage()
-  const runningBackgroundJobs = useActiveBackgroundJobCount()
+  const backgroundJobs = useBackgroundJobSummary()
   const unreadMessages = useUnreadMessageCount()
-  const backgroundJobsLabel =
-    runningBackgroundJobs > 0 ? appCopy.jobsRunning(runningBackgroundJobs) : appCopy.backgroundJobs
+  const backgroundJobsLabel = backgroundJobsSummaryLabel(backgroundJobs)
+  const attentionJobs = backgroundJobs.failed + backgroundJobs.interrupted
+  const backgroundJobBadgeCount = backgroundJobs.running + backgroundJobs.queued + attentionJobs
+  const jobsBadgeColor = attentionJobs > 0 ? 'error' : 'info'
   if (!showSidePanelRefresh && !showSidePanelButtons) return null
 
   const buttonSx = {
@@ -59,13 +62,13 @@ export function TopRightControls({
     },
     '& svg': { color: 'inherit', display: 'block' }
   })
-  const runningJobsButtonSx: SxProps<Theme> = {
+  const activeJobsButtonSx: SxProps<Theme> = {
     ...buttonSx,
-    color: 'info.main',
-    bgcolor: (theme) => alpha(theme.palette.info.main, 0.12),
+    color: `${jobsBadgeColor}.main`,
+    bgcolor: (theme) => alpha(theme.palette[jobsBadgeColor].main, 0.12),
     '&:hover': {
-      color: 'info.main',
-      bgcolor: (theme) => alpha(theme.palette.info.main, 0.2)
+      color: `${jobsBadgeColor}.main`,
+      bgcolor: (theme) => alpha(theme.palette[jobsBadgeColor].main, 0.2)
     },
     '& svg': { color: 'inherit', display: 'block' }
   }
@@ -141,24 +144,27 @@ export function TopRightControls({
         <Tooltip title={backgroundJobsLabel}>
           <IconButton
             data-phi-background-jobs-toggle-button="true"
-            data-phi-background-jobs-running-count={runningBackgroundJobs}
+            data-phi-background-jobs-queued-count={backgroundJobs.queued}
+            data-phi-background-jobs-running-count={backgroundJobs.running}
+            data-phi-background-jobs-failed-count={backgroundJobs.failed}
+            data-phi-background-jobs-interrupted-count={backgroundJobs.interrupted}
             data-phi-workspace-panel-toggle="jobs"
             size="small"
             aria-label={backgroundJobsLabel}
             aria-pressed={activePanels.includes('jobs')}
             onClick={() => onTogglePanel('jobs')}
             sx={
-              runningBackgroundJobs > 0
-                ? runningJobsButtonSx
+              backgroundJobBadgeCount > 0
+                ? activeJobsButtonSx
                 : panelButtonSx(activePanels.includes('jobs'))
             }
           >
             <Badge
               aria-hidden="true"
-              badgeContent={runningBackgroundJobs}
+              badgeContent={backgroundJobBadgeCount}
               max={99}
-              color="info"
-              invisible={runningBackgroundJobs === 0}
+              color={jobsBadgeColor}
+              invisible={backgroundJobBadgeCount === 0}
               sx={{
                 '& .MuiBadge-badge': {
                   height: 16,

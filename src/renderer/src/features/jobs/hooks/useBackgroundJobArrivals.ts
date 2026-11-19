@@ -79,7 +79,7 @@ export function useBackgroundJobArrivals(): {
   useEffect(() => {
     if (!loaded) return
     const live = [...jobs.active, ...jobs.recent].filter(
-      (job): job is LiveBackgroundJob => job.kind !== 'history'
+      (job): job is LiveBackgroundJob => job.kind !== 'history' && job.kind !== 'chat-queue'
     )
     const display = groupBackgroundJobs(live)
     if (known.current === null) {

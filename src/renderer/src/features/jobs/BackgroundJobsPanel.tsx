@@ -3,7 +3,7 @@ import { OverlayScroll } from '../../components/OverlayScroll'
 import { useUiLanguage } from '../../lib/i18n'
 import { AnimatedList, AnimatedListItem } from './components/AnimatedList'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { PhiIcons } from '../../icons'
 import { workspacePanelText } from '../../layout'
@@ -13,7 +13,7 @@ import { BackgroundJobRow } from './components/BackgroundJobRow'
 import { BackgroundWorkflowRow } from './components/BackgroundWorkflowRow'
 import { useBackgroundJobsData } from './hooks/useBackgroundJobsData'
 import type { UnifiedBackgroundJob } from './lib/backgroundJobs'
-import { groupBackgroundJobs, type BackgroundJobDisplayItem } from './lib/backgroundJobGroups'
+import type { BackgroundJobDisplayItem } from './lib/backgroundJobGroups'
 import {
   resolveRequestedBackgroundJobKey,
   resolveSelectedBackgroundJob
@@ -51,21 +51,35 @@ export function BackgroundJobsPanel({
   onOpenSetupTerminal?: (command: string) => void
 }): React.JSX.Element {
   useUiLanguage()
-  const { data, jobs, loaded, error, nowMs, refresh, setError, clearCompleted } =
-    useBackgroundJobsData()
+  const {
+    data,
+    jobs,
+    display,
+    summary,
+    loaded,
+    error,
+    chatQueueUnavailable,
+    nowMs,
+    refresh,
+    setError,
+    clearCompleted
+  } = useBackgroundJobsData()
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [runningExpanded, setRunningExpanded] = useState(true)
-  const [finishedExpanded, setFinishedExpanded] = useState(false)
+  const [finishedExpanded, setFinishedExpanded] = useState<boolean | null>(null)
   const [expandedWorkflows, setExpandedWorkflows] = useState<Set<string>>(() => new Set())
   const all = [...jobs.active, ...jobs.recent]
-  const display = useMemo(
-    () => groupBackgroundJobs([...jobs.active, ...jobs.recent]),
-    [jobs.active, jobs.recent]
-  )
   const activeDisplay = display.filter((item) => item.active)
   const recentDisplay = display.filter((item) => !item.active)
   const selected = resolveSelectedBackgroundJob(selectedKey, all, data.notebookAiJobs)
+  const hasChatAttention = summary.failed + summary.interrupted > 0
+  const expandedFinished = finishedExpanded ?? hasChatAttention
+  const visibleError =
+    error ||
+    (chatQueueUnavailable
+      ? jobsCopy.someJobStatusesAreTemporarilyUnavailableTheyWillRetryAutomatically
+      : '')
 
   useEffect(() => {
     if (!requestedConnectorJobId || !loaded) return
@@ -113,6 +127,7 @@ export function BackgroundJobsPanel({
       await action()
       await refresh()
     } catch (cause) {
+      if (item.kind === 'chat-queue') await refresh().catch(() => undefined)
       setError(cause instanceof Error ? cause.message : failure)
     } finally {
       setBusyKey(null)
@@ -121,6 +136,20 @@ export function BackgroundJobsPanel({
 
   const stopJob = (item: UnifiedBackgroundJob): void => {
     const api = window.api
+    if (item.kind === 'chat-queue') {
+      if (item.job.status === 'queued') {
+        void run(
+          item,
+          async () => {
+            if (!(await api.cancelQueuedPrompt(item.job.sessionId, item.job.id))) {
+              throw new Error(jobsCopy.unableToCancelQueuedMessage)
+            }
+          },
+          jobsCopy.unableToCancelQueuedMessage
+        )
+      }
+      return
+    }
     const action = (): Promise<unknown> => {
       switch (item.kind) {
         case 'agent':
@@ -215,13 +244,13 @@ export function BackgroundJobsPanel({
         bgcolor: 'background.paper'
       }}
     >
-      {error && (
+      {visibleError && (
         <Typography
           variant="caption"
           color="error.main"
           sx={{ ...workspacePanelText.body, px: 1.5, mb: 0.5 }}
         >
-          {error}
+          {visibleError}
         </Typography>
       )}
       {selected ? (
@@ -239,7 +268,7 @@ export function BackgroundJobsPanel({
         />
       ) : (
         <OverlayScroll sx={{ flex: 1 }}>
-          {!loaded && (
+          {!loaded && display.length === 0 && (
             <Typography
               variant="body2"
               color="text.secondary"
@@ -249,11 +278,11 @@ export function BackgroundJobsPanel({
             </Typography>
           )}
           {/* Both groups stay visible when empty, e.g. right after clearing finished jobs. */}
-          {loaded && (
+          {(loaded || display.length > 0) && (
             <>
               <BackgroundJobGroup
                 id="running"
-                title={jobsCopy.running}
+                title={summary.queued > 0 ? jobsCopy.activeJobs : jobsCopy.running}
                 count={activeDisplay.length}
                 expanded={runningExpanded}
                 onToggle={() => setRunningExpanded((value) => !value)}
@@ -272,10 +301,10 @@ export function BackgroundJobsPanel({
               </BackgroundJobGroup>
               <BackgroundJobGroup
                 id="finished"
-                title={jobsCopy.completed}
+                title={jobsCopy.finishedJobs}
                 count={recentDisplay.length}
-                expanded={finishedExpanded}
-                onToggle={() => setFinishedExpanded((value) => !value)}
+                expanded={expandedFinished}
+                onToggle={() => setFinishedExpanded(!expandedFinished)}
                 action={
                   recentDisplay.length > 0 ? (
                     <Tooltip title={jobsCopy.clearCompletedHistoryRunningJobsAreUnaffected}>

@@ -19,6 +19,24 @@ export type BackgroundJobDisplayItem =
       jobs: Extract<UnifiedBackgroundJob, { kind: 'wrapper' }>[]
     }
 
+export type BackgroundJobSummary = Readonly<{
+  queued: number
+  running: number
+  failed: number
+  interrupted: number
+}>
+
+export function summarizeBackgroundJobs(
+  display: readonly BackgroundJobDisplayItem[]
+): BackgroundJobSummary {
+  const summary = { queued: 0, running: 0, failed: 0, interrupted: 0 }
+  for (const row of display) {
+    if (row.kind === 'job' && row.job.kind === 'chat-queue') summary[row.job.job.status] += 1
+    else if (row.active) summary.running += 1
+  }
+  return summary
+}
+
 type WrapperJob = Extract<UnifiedBackgroundJob, { kind: 'wrapper' }>
 
 export interface WorkflowStepSummary {

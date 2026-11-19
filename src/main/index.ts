@@ -3318,6 +3318,7 @@ const durableChat = createMainChatQueue({
   compacting: (id) => promptRuns.manualCompactionIds.has(id),
   submit: submitPromptRun,
   changed: (sessionId) => sendToAllWindows(IPC.agent.queuedPromptsChanged, sessionId),
+  jobsChanged: (version) => sendToAllWindows(IPC.agent.chatQueueJobsChanged, version),
   log: logUnexpectedError
 })
 

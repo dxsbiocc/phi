@@ -14,10 +14,12 @@ import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnect
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
 import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJobTypes'
 import type { PluginInstallJob } from '../../../../../shared/pluginInstallJobTypes'
+import type { ChatQueueJob } from '../../../../../shared/chatQueueTypes'
 import { canCancelBackgroundRun, resolveWrapperCancelTarget } from '../../wrapper/lib/wrapperView'
 import type { RetainedBackgroundJob } from './backgroundJobHistory'
 
 export type LiveBackgroundJob =
+  | { kind: 'chat-queue'; key: string; active: boolean; timestamp: string; job: ChatQueueJob }
   | { kind: 'agent'; key: string; active: boolean; timestamp: string; run: BackgroundAgentJob }
   | {
       kind: 'upload'
@@ -59,6 +61,45 @@ export type LiveBackgroundJob =
     }
 
 export type UnifiedBackgroundJob = LiveBackgroundJob | RetainedBackgroundJob
+export type LiveChatQueueJob = Extract<LiveBackgroundJob, { kind: 'chat-queue' }>
+export const EMPTY_CHAT_QUEUE: readonly ChatQueueJob[] = []
+
+export function createChatQueueSessionSelector(
+  sessionId: string | null
+): (items: readonly ChatQueueJob[]) => readonly ChatQueueJob[] {
+  let source = EMPTY_CHAT_QUEUE
+  let selected = EMPTY_CHAT_QUEUE
+  return (items) => {
+    if (!sessionId || items === source) return selected
+    source = items
+    const next = items.filter((item) => item.sessionId === sessionId && item.status !== 'running')
+    if (
+      next.length === selected.length &&
+      next.every((item, index) => {
+        const old = selected[index]
+        return (
+          item.id === old.id &&
+          item.status === old.status &&
+          item.preview === old.preview &&
+          item.imageCount === old.imageCount
+        )
+      })
+    )
+      return selected
+    selected = next
+    return selected
+  }
+}
+
+function chatQueueBackgroundJob(job: ChatQueueJob): LiveChatQueueJob {
+  return {
+    kind: 'chat-queue',
+    key: `chat-queue:${job.id}`,
+    active: job.status === 'queued' || job.status === 'running',
+    timestamp: job.timestamp,
+    job
+  }
+}
 
 export function notebookAiBackgroundJob(
   job: NotebookAiGenerationJob
@@ -227,10 +268,12 @@ export function selectBackgroundJobs(
   uploads: readonly RemoteProjectUploadJob[] = [],
   jupyterJobs: readonly RemoteJupyterStartJob[] = [],
   notebookAiJobs: readonly NotebookAiGenerationJob[] = [],
-  pluginInstalls: readonly PluginInstallJob[] = []
+  pluginInstalls: readonly PluginInstallJob[] = [],
+  chatQueueJobs: readonly ChatQueueJob[] = []
 ): { active: LiveBackgroundJob[]; recent: LiveBackgroundJob[] } {
   const maxRecent = query.maxRecent ?? 50
   const items: LiveBackgroundJob[] = [
+    ...chatQueueJobs.map(chatQueueBackgroundJob),
     ...agents
       .filter((run) => run.background)
       .map((run): LiveBackgroundJob => ({
@@ -319,7 +362,7 @@ function belongsInFinishedTray(item: LiveBackgroundJob, query: BackgroundJobQuer
       ? item.build.finishedAt
       : item.kind === 'connector'
         ? item.setup.updatedAt
-        : item.kind === 'upload'
+        : item.kind === 'upload' || item.kind === 'chat-queue'
           ? item.timestamp
           : item.kind === 'jupyter'
             ? item.job.finishedAt

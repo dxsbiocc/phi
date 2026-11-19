@@ -1,4 +1,5 @@
 import { defineCopy } from '../../../lib/i18n'
+import type { BackgroundJobSummary } from './backgroundJobGroups'
 
 export const jobsCopy = defineCopy(
   {
@@ -18,6 +19,8 @@ export const jobsCopy = defineCopy(
     addedToBackgroundJobs: 'Added to background jobs',
     loadingJobs: 'Loading jobs…',
     noJobs: 'No jobs',
+    activeJobs: 'Active',
+    finishedJobs: 'Finished',
     running: 'Running',
     noRunningJobs: 'No running jobs',
     completed: 'Completed',
@@ -57,6 +60,17 @@ export const jobsCopy = defineCopy(
     status: 'Status',
     finished: 'Finished',
     backgroundCommand: 'Background command',
+    chatMessage: 'Chat message',
+    chatMessagePreview: 'Message preview',
+    chatImageCount: (count: number) => `${count} ${count === 1 ? 'image' : 'images'}`,
+    chatJobTime: 'Time',
+    cancelQueuedMessage: 'Cancel queued message',
+    unableToCancelQueuedMessage: 'Unable to cancel queued message',
+    openConversationToStop: 'Open the conversation to stop the current message',
+    jobsQueuedCount: (count: number) => `${count} queued`,
+    jobsRunningCount: (count: number) => `${count} running`,
+    jobsFailedCount: (count: number) => `${count} failed`,
+    jobsInterruptedCount: (count: number) => `${count} interrupted`,
     queued: 'Queued',
     failed: 'Failed',
     stopped: 'Stopped',
@@ -203,6 +217,8 @@ export const jobsCopy = defineCopy(
     addedToBackgroundJobs: '已添加到后台任务',
     loadingJobs: '正在读取任务…',
     noJobs: '暂无任务',
+    activeJobs: '进行中',
+    finishedJobs: '已结束',
     running: '运行中',
     noRunningJobs: '没有运行中的任务',
     completed: '已完成',
@@ -241,6 +257,17 @@ export const jobsCopy = defineCopy(
     status: '状态',
     finished: '结束时间',
     backgroundCommand: '后台命令',
+    chatMessage: '对话消息',
+    chatMessagePreview: '消息预览',
+    chatImageCount: (count: number) => `${count} 张图片`,
+    chatJobTime: '时间',
+    cancelQueuedMessage: '取消排队消息',
+    unableToCancelQueuedMessage: '无法取消排队消息',
+    openConversationToStop: '打开原对话停止当前消息',
+    jobsQueuedCount: (count: number) => `${count} 项排队中`,
+    jobsRunningCount: (count: number) => `${count} 项运行中`,
+    jobsFailedCount: (count: number) => `${count} 项失败`,
+    jobsInterruptedCount: (count: number) => `${count} 项已中断`,
     queued: '排队中',
     failed: '失败',
     stopped: '已停止',
@@ -366,3 +393,15 @@ export const jobsCopy = defineCopy(
       `环境 ${value0} 构建失败：${value1}`
   }
 )
+
+export function backgroundJobsSummaryLabel(summary: BackgroundJobSummary): string {
+  return [
+    jobsCopy.backgroundJobs,
+    summary.queued > 0 ? jobsCopy.jobsQueuedCount(summary.queued) : '',
+    summary.running > 0 ? jobsCopy.jobsRunningCount(summary.running) : '',
+    summary.failed > 0 ? jobsCopy.jobsFailedCount(summary.failed) : '',
+    summary.interrupted > 0 ? jobsCopy.jobsInterruptedCount(summary.interrupted) : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}

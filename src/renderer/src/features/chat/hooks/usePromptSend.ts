@@ -2,16 +2,13 @@ import { useCallback, useLayoutEffect, useRef } from 'react'
 
 import type { PromptTarget } from '../../../lib/sessionTypes'
 import { useSessionStore } from '../../../stores/sessionStore'
-import type { SendPromptOptions } from '../lib/promptQueue'
-import { sendPrompt, type PromptSendDeps } from '../lib/promptSend'
+import { sendPrompt, type PromptSendDeps, type SendPromptOptions } from '../lib/promptSend'
 
 /**
  * Binds the prompt send pipeline to the composer's shell state.
  *
- * The shell owns the values (readiness, draft, setters) and re-renders often; the
- * returned sender must keep one identity so the queue drain effect does not
- * cancel its own microtask on every render. A latest-value ref gives both: the
- * send reads the current state, the callback itself never changes.
+ * The shell owns the state and re-renders often. A latest-value ref keeps the
+ * callback stable while each send reads the current values.
  *
  * The generation and Phi id are read at reply time rather than captured, so a
  * late reply is compared with the session that is active when it lands.

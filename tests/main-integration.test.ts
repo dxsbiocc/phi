@@ -7580,6 +7580,7 @@ const expectedStartupRegistrationOrder = [
   'agent:readPromptImage',
   'agent:submitQueuedPrompt',
   'agent:listQueuedPrompts',
+  'agent:listChatQueueJobs',
   'agent:cancelQueuedPrompt',
   'workspaceChanges:readDiff',
   'agent:stop',
@@ -9066,6 +9067,7 @@ test('main IPC: foreign windows cannot submit chat prompts or read their images'
     /authorized/
   )
   await assert.rejects(app.invokeFromForeign('agent:listQueuedPrompts', 'phi-1'), /authorized/)
+  await assert.rejects(app.invokeFromForeign('agent:listChatQueueJobs'), /authorized/)
   await assert.rejects(
     app.invokeFromForeign('agent:cancelQueuedPrompt', 'phi-1', 'item-1'),
     /authorized/

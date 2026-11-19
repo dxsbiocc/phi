@@ -62,7 +62,13 @@ import type {
   RemoteDirectoryListing
 } from '../shared/remoteDirectoryBrowser'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
-import type { ChatQueueItem, ChatQueueReceipt, ChatQueueTarget } from '../shared/chatQueueTypes'
+import type {
+  ChatQueueItem,
+  ChatQueueJobsSnapshot,
+  ChatQueueJobsVersion,
+  ChatQueueReceipt,
+  ChatQueueTarget
+} from '../shared/chatQueueTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { SessionDeleteResult } from '../shared/sessionDeleteTypes'
 import type {
@@ -767,6 +773,8 @@ declare global {
         requestId: string
       ) => Promise<ChatQueueReceipt>
       listQueuedPrompts: (sessionId: string) => Promise<ChatQueueItem[]>
+      listChatQueueJobs: () => Promise<ChatQueueJobsSnapshot>
+      onChatQueueJobsChanged: (cb: (version: ChatQueueJobsVersion) => void) => () => void
       cancelQueuedPrompt: (sessionId: string, id: string) => Promise<boolean>
       onQueuedPromptsChanged: (cb: (sessionId: string) => void) => () => void
       readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>

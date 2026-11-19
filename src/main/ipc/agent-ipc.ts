@@ -37,7 +37,7 @@ export interface AgentIpcOptions {
     ) => PromptRunDestination | Promise<PromptRunDestination>
     submit: (input: PromptRunInput) => Promise<unknown>
   }
-  durableChat: Pick<DurableChat, 'submit' | 'list' | 'cancel'>
+  durableChat: Pick<DurableChat, 'submit' | 'list' | 'listJobs' | 'cancel'>
   stop: Omit<ActivePromptStopOptions, 'getCurrentSessionKey'>
   agentRuns: {
     control: Parameters<typeof requestAgentRunControl>[0]
@@ -93,6 +93,10 @@ export function registerAgentPromptIpc(options: AgentIpcOptions): void {
   ipcMain.handle(IPC.agent.listQueuedPrompts, (event, sessionId) => {
     options.prompt.requireMainWindowRenderer(event)
     return options.durableChat.list(sessionId)
+  })
+  ipcMain.handle(IPC.agent.listChatQueueJobs, (event) => {
+    options.prompt.requireMainWindowRenderer(event)
+    return options.durableChat.listJobs()
   })
   ipcMain.handle(IPC.agent.cancelQueuedPrompt, (event, sessionId, itemId) => {
     options.prompt.requireMainWindowRenderer(event)

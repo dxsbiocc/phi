@@ -25,6 +25,8 @@ const KINDS = new Set([
   'notebook-ai',
   'plugin'
 ])
+const DISMISSIBLE_KINDS = new Set([...KINDS, 'chat-queue'])
+type HistorySource = Exclude<LiveBackgroundJob['kind'], 'chat-queue'>
 const DETAIL_LABELS = new Set([
   '对话',
   '状态',
@@ -72,7 +74,7 @@ const DETAIL_LABELS = new Set([
 
 export interface JobHistorySnapshot {
   key: string
-  sourceKind: LiveBackgroundJob['kind']
+  sourceKind: HistorySource
   timestamp: string
   title: string
   source: string
@@ -177,7 +179,7 @@ function checkedSnapshot(value: unknown): JobHistorySnapshot | undefined {
   const wrapperId = safeWrapperId(value.wrapperId)
   return {
     key: value.key,
-    sourceKind: value.sourceKind as LiveBackgroundJob['kind'],
+    sourceKind: value.sourceKind as HistorySource,
     timestamp: at,
     title,
     source,
@@ -193,7 +195,8 @@ function checkedSnapshot(value: unknown): JobHistorySnapshot | undefined {
 
 /** Only display metadata is retained: never commands, task prompts, logs, errors or configs. */
 function snapshotOf(item: LiveBackgroundJob): JobHistorySnapshot | undefined {
-  if (item.active) return undefined
+  // The inbox is authoritative. A retained row could leak content or outlive deletion.
+  if (item.active || item.kind === 'chat-queue') return undefined
   const status = jobStatus(item)
   if (status.tone === 'running') return undefined
   const fields = jobDetailFields(item, Date.parse(item.timestamp)).filter((field) =>
@@ -250,7 +253,8 @@ function readState(storage: StorageLike | undefined): HistoryState {
         MAX_RETAINED_BACKGROUND_JOBS
       )) {
         const endedAt = timestamp(at)
-        if (key.length <= 512 && KINDS.has(key.split(':')[0]) && endedAt) dismissed[key] = endedAt
+        if (key.length <= 512 && DISMISSIBLE_KINDS.has(key.split(':')[0]) && endedAt)
+          dismissed[key] = endedAt
       }
     return {
       schema: 1,
@@ -368,20 +372,23 @@ export class BackgroundJobHistory {
         timestamp: snapshot.timestamp,
         snapshot
       }))
+    const recent = live.recent.filter(
+      (item) =>
+        this.visible(item) ||
+        (item.kind === 'wrapper' &&
+          item.run.workflow &&
+          unfinishedWorkflows.has(item.run.workflow.id))
+    )
+    const retained = [...recent.filter((item) => item.kind !== 'chat-queue'), ...restored]
+      .sort(newestFirst)
+      .slice(0, MAX_RETAINED_BACKGROUND_JOBS)
+    const chatQueue = recent
+      .filter((item) => item.kind === 'chat-queue')
+      .sort(newestFirst)
+      .slice(0, MAX_RETAINED_BACKGROUND_JOBS)
     return {
       active: [...live.active],
-      recent: [
-        ...live.recent.filter(
-          (item) =>
-            this.visible(item) ||
-            (item.kind === 'wrapper' &&
-              item.run.workflow &&
-              unfinishedWorkflows.has(item.run.workflow.id))
-        ),
-        ...restored
-      ]
-        .sort(newestFirst)
-        .slice(0, MAX_RETAINED_BACKGROUND_JOBS)
+      recent: [...chatQueue, ...retained].sort(newestFirst)
     }
   }
 

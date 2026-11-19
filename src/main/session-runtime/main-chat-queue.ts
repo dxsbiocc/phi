@@ -1,3 +1,4 @@
+import type { ChatQueueJobsVersion } from '../../shared/chatQueueTypes'
 import type { PromptImageInput } from '../../shared/promptImageTypes'
 import type { WorkMode } from '../../shared/sessionMode'
 import { getAuthManager } from '../agent/auth-manager'
@@ -32,6 +33,7 @@ export interface MainChatQueueOptions {
   compacting(sessionId: string): boolean
   submit: PromptRunQueue['submitPromptRun']
   changed(sessionId: string): void
+  jobsChanged(version: ChatQueueJobsVersion): void
   log(error: unknown): void
 }
 
@@ -177,11 +179,13 @@ export function createMainChatQueue(options: MainChatQueueOptions): DurableChat 
       const manifest = findPhiSessionById(sessionId)
       return manifest ? { conversationId: sessionId, projectId: manifest.projectId } : null
     },
+    jobOwner: findPhiSessionById,
     prepare: prepareQueuedPrompt,
     capacity: () => options.runner.availableSlots + options.runner.activeCount,
     execute: executeQueuedPrompt,
     recoverOutcome: queuedPromptOutcome,
     changed: options.changed,
+    jobsChanged: options.jobsChanged,
     log: options.log
   })
   return durableChat

@@ -25,3 +25,25 @@ export interface ChatQueueItem {
   status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
   imageCount: number
 }
+
+export type ChatQueueJobStatus = 'queued' | 'running' | 'failed' | 'interrupted'
+
+export interface ChatQueueJob {
+  id: string
+  sessionId: string
+  sessionPath: string
+  title?: string
+  preview: string
+  status: ChatQueueJobStatus
+  imageCount: number
+  timestamp: string
+}
+
+export interface ChatQueueJobsVersion {
+  epoch: string
+  revision: number
+}
+
+export interface ChatQueueJobsSnapshot extends ChatQueueJobsVersion {
+  items: readonly ChatQueueJob[]
+}

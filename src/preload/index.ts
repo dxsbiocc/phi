@@ -50,7 +50,13 @@ import type {
   RemoteDirectoryListing
 } from '../shared/remoteDirectoryBrowser'
 import type { PromptImageInput, StoredPromptImage } from '../shared/promptImageTypes'
-import type { ChatQueueItem, ChatQueueReceipt, ChatQueueTarget } from '../shared/chatQueueTypes'
+import type {
+  ChatQueueItem,
+  ChatQueueJobsSnapshot,
+  ChatQueueJobsVersion,
+  ChatQueueReceipt,
+  ChatQueueTarget
+} from '../shared/chatQueueTypes'
 import type { SessionExportResult } from '../shared/sessionExportTypes'
 import type { SessionDeleteResult } from '../shared/sessionDeleteTypes'
 import type {
@@ -883,6 +889,8 @@ type RendererAuthApi = PreloadApiBase & {
     requestId: string
   ) => Promise<ChatQueueReceipt>
   listQueuedPrompts: (sessionId: string) => Promise<ChatQueueItem[]>
+  listChatQueueJobs: () => Promise<ChatQueueJobsSnapshot>
+  onChatQueueJobsChanged: (cb: (version: ChatQueueJobsVersion) => void) => Unsubscribe
   cancelQueuedPrompt: (sessionId: string, id: string) => Promise<boolean>
   onQueuedPromptsChanged: (cb: (sessionId: string) => void) => Unsubscribe
   readPromptImage: (ref: StoredPromptImage) => Promise<PromptImageInput>
@@ -1537,6 +1545,14 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke(IPC.agent.submitQueuedPrompt, text, target, requestId),
   listQueuedPrompts: (sessionId: string): Promise<ChatQueueItem[]> =>
     ipcRenderer.invoke(IPC.agent.listQueuedPrompts, sessionId),
+  listChatQueueJobs: (): Promise<ChatQueueJobsSnapshot> =>
+    ipcRenderer.invoke(IPC.agent.listChatQueueJobs),
+  onChatQueueJobsChanged: (cb: (version: ChatQueueJobsVersion) => void): Unsubscribe => {
+    const handler = (_: Electron.IpcRendererEvent, version: ChatQueueJobsVersion): void =>
+      cb(version)
+    ipcRenderer.on(IPC.agent.chatQueueJobsChanged, handler)
+    return () => ipcRenderer.removeListener(IPC.agent.chatQueueJobsChanged, handler)
+  },
   cancelQueuedPrompt: (sessionId: string, id: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.agent.cancelQueuedPrompt, sessionId, id),
   onQueuedPromptsChanged: (cb: (sessionId: string) => void): Unsubscribe => {

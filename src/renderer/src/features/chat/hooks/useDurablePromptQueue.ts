@@ -1,76 +1,48 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { ChatQueueItem } from '../../../../../shared/chatQueueTypes'
+import { useCallback, useMemo } from 'react'
+import type { ChatQueueJob } from '../../../../../shared/chatQueueTypes'
 import type { RendererApi } from '../../../types'
+import {
+  refreshBackgroundJobs,
+  useChatQueueJobsForSession
+} from '../../jobs/hooks/useBackgroundJobsData'
+import { jobsCopy } from '../../jobs/lib/jobsCopy'
 
-export type VisibleChatQueueItem = ChatQueueItem & {
-  status: 'queued' | 'failed' | 'interrupted'
-}
-
-type QueueApi = Pick<
-  RendererApi,
-  'listQueuedPrompts' | 'cancelQueuedPrompt' | 'onQueuedPromptsChanged'
->
-
-function visibleItem(item: ChatQueueItem): item is VisibleChatQueueItem {
-  return item.status === 'queued' || item.status === 'failed' || item.status === 'interrupted'
-}
+type ComposerJob = ChatQueueJob & { status: Exclude<ChatQueueJob['status'], 'running'> }
 
 export function useDurablePromptQueue(
-  api: QueueApi,
+  api: Pick<RendererApi, 'cancelQueuedPrompt'>,
   sessionId: string | null,
   onError: (error: unknown) => void
 ): {
-  activeQueuedPrompts: VisibleChatQueueItem[]
+  activeQueuedPrompts: ComposerJob[]
   removeQueuedPrompt: (itemId: string) => void
 } {
-  const [snapshot, setSnapshot] = useState<{
-    sessionId: string
-    items: VisibleChatQueueItem[]
-  } | null>(null)
-  const [refresh, setRefresh] = useState(0)
-
-  useEffect(() => {
-    if (!sessionId) return
-    let previousRequest = 0
-    let disposed = false
-    const pull = (): void => {
-      const request = ++previousRequest
-      void api.listQueuedPrompts(sessionId).then(
-        (items) => {
-          if (disposed || request !== previousRequest) return
-          const visible = items.filter(visibleItem)
-          const queued = visible.filter((item) => item.status === 'queued')
-          const failures = visible.filter((item) => item.status !== 'queued').slice(-5)
-          setSnapshot({ sessionId, items: [...failures, ...queued] })
-        },
-        () => {
-          // Preserve the last known same-session snapshot if a refresh failed.
-        }
-      )
-    }
-    const unsubscribe = api.onQueuedPromptsChanged((changed) => {
-      if (changed === sessionId) pull()
-    })
-    pull()
-    return () => {
-      disposed = true
-      unsubscribe()
-    }
-  }, [api, refresh, sessionId])
+  const items = useChatQueueJobsForSession(sessionId)
+  const activeQueuedPrompts = useMemo(() => {
+    const visible = items.filter((item): item is ComposerJob => item.status !== 'running')
+    const queued = visible.filter((item) => item.status === 'queued')
+    const failures = visible.filter((item) => item.status !== 'queued').slice(-5)
+    return [...failures, ...queued]
+  }, [items])
 
   const removeQueuedPrompt = useCallback(
     (itemId: string): void => {
       if (!sessionId) return
       void api
         .cancelQueuedPrompt(sessionId, itemId)
+        .then((cancelled) => {
+          if (!cancelled) throw new Error(jobsCopy.unableToCancelQueuedMessage)
+        })
         .catch(onError)
-        .finally(() => setRefresh((value) => value + 1))
+        .finally(() => {
+          void refreshBackgroundJobs()
+        })
     },
     [api, onError, sessionId]
   )
 
   return {
-    activeQueuedPrompts: snapshot && snapshot.sessionId === sessionId ? snapshot.items : [],
+    activeQueuedPrompts,
     removeQueuedPrompt
   }
 }

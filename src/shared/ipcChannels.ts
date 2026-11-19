@@ -1,11 +1,13 @@
 export const IPC = {
   agent: {
+    chatQueueJobsChanged: 'agent:chatQueueJobsChanged',
     cancelQueuedPrompt: 'agent:cancelQueuedPrompt',
     event: 'agent:event',
     interactionCancelled: 'agent:interaction-cancelled',
     interactionRequested: 'agent:interaction-request',
     interactionResponse: 'agent:interaction-response',
     listQueuedPrompts: 'agent:listQueuedPrompts',
+    listChatQueueJobs: 'agent:listChatQueueJobs',
     prompt: 'agent:prompt',
     queuedPromptsChanged: 'agent:queuedPromptsChanged',
     readPromptImage: 'agent:readPromptImage',

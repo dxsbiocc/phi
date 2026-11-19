@@ -1,9 +1,16 @@
+import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { mkdir, open } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 
-import type { ChatQueueItem, ChatQueueReceipt, ChatQueueTarget } from '../../shared/chatQueueTypes'
+import type {
+  ChatQueueItem,
+  ChatQueueJobsSnapshot,
+  ChatQueueJobsVersion,
+  ChatQueueReceipt,
+  ChatQueueTarget
+} from '../../shared/chatQueueTypes'
 import type { PromptImageInput } from '../../shared/promptImageTypes'
 import type { WorkMode } from '../../shared/sessionMode'
 import { validatePromptImages } from '../agent/session/prompt-images'
@@ -14,6 +21,7 @@ import {
   type AssistantInboxDispatch
 } from './assistant-inbox-dispatch'
 import { tryAcquireAssistantInboxWriter } from './assistant-inbox-writer'
+import { projectChatQueueJobs, type ChatQueueJobOwner } from './chat-queue-jobs'
 import {
   createAssistantInbox,
   type AssistantInbox,
@@ -50,11 +58,13 @@ export interface DurableChatOptions {
   bind(target: ChatQueueTarget, title: string): BoundChatQueueTarget | Promise<BoundChatQueueTarget>
   sessionDirectory(sessionId: string): string
   scope(sessionId: string): AssistantInboxScope | null
+  jobOwner?(sessionId: string): ChatQueueJobOwner | null
   prepare(entry: AssistantInboxEntry): Promise<'ready' | 'wait' | 'invalid'>
   capacity(): number
   execute(entry: ClaimedEntry, images: PromptImageInput[]): Promise<SettleResult>
   recoverOutcome(entry: ClaimedEntry): Exclude<SettleResult, 'defer'>
   changed(sessionId: string): void
+  jobsChanged?(version: ChatQueueJobsVersion): void
   log(error: unknown): void
 }
 
@@ -68,6 +78,7 @@ export interface DurableChat {
   removeConversation(sessionId: string): Promise<void>
   submit(text: unknown, target: unknown, id: unknown): Promise<ChatQueueReceipt>
   list(sessionId: unknown): Promise<ChatQueueItem[]>
+  listJobs(): Promise<ChatQueueJobsSnapshot>
   cancel(sessionId: unknown, itemId: unknown): Promise<boolean>
 }
 
@@ -105,10 +116,20 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
   let acceptances = Promise.resolve()
   const pending = new Set<Promise<unknown>>()
   const paused = new Map<string, number>()
+  const epoch = randomUUID()
+  let notifiedRevision = -1
 
   function changed(sessionId: string): void {
     try {
       options.changed(sessionId)
+    } catch (error) {
+      options.log(error)
+    }
+    const revision = inbox?.revision
+    if (revision === undefined || revision <= notifiedRevision) return
+    notifiedRevision = revision
+    try {
+      options.jobsChanged?.({ epoch, revision })
     } catch (error) {
       options.log(error)
     }
@@ -301,6 +322,12 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
           status: entry.status,
           imageCount: entry.attachments?.length ?? 0
         }))
+      }),
+    listJobs: () =>
+      tracked(async (store) => {
+        const { revision, entries } = await store.snapshot()
+        const owner = options.jobOwner ?? ((id: string) => options.scope(id))
+        return { epoch, revision, items: projectChatQueueJobs(entries, owner) }
       }),
     cancel: (sessionId, itemId) =>
       tracked(async (store) => {

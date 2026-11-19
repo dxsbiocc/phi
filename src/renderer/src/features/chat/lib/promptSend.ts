@@ -4,7 +4,6 @@ import { messagesForUserRetry } from '../../../lib/chatRetry'
 import { getPromptReadiness } from '../../../lib/promptReadiness'
 import { sessionDraftKey, updateSessionDraft } from '../../../lib/sessionDrafts'
 import { activeTabKeyAfterPrompt, workspaceSessionTabKey } from '../../../lib/workspaceResourceTabs'
-import type { SendPromptOptions } from './promptQueue'
 import { modelOptionFromSelection } from '../../../useModelSelection'
 import type {
   ChatItem,
@@ -19,6 +18,14 @@ import { readableErrorMessage } from '../../../lib/sessionNotifications'
 import { LEGACY_REMOTE_SESSION_PROMPT_ERROR_CODE } from '../../../../../shared/errorCodes'
 import { chatCopy } from './chatCopy'
 import { localizeKernelError } from './kernelErrorCopy'
+
+export type SendPromptOptions = {
+  appendUserMessage?: boolean
+  retryUserMessageId?: string
+  suppressUserMessageEvent?: boolean
+  images?: PromptImageInput[]
+  onRunCancelled?: () => void
+}
 
 /**
  * The prompt send pipeline.

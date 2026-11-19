@@ -3588,7 +3588,7 @@ function App(): React.JSX.Element {
             pendingUserInteraction={pendingUserInteraction}
             queuedPrompts={activeQueuedPrompts.map((item) => ({
               id: item.id,
-              text: item.text || appCopy.imageCount(item.imageCount),
+              text: item.preview || appCopy.imageCount(item.imageCount),
               status: item.status
             }))}
             onRespondApproval={onRespondToolApproval}

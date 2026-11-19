@@ -97,7 +97,9 @@ function JupyterStartLog({ job }: { job: RemoteJupyterStartJob }): React.JSX.Ele
 
 /** The detail page stands alone, so its heading names the operation too: "安装插件 · Visualization". */
 function detailHeading(item: UnifiedBackgroundJob): string {
-  return `${jobOperation(item)} · ${jobTitle(item)}`
+  const operation = jobOperation(item)
+  const title = jobTitle(item)
+  return operation === title ? title : `${operation} · ${title}`
 }
 
 function detailText(item: UnifiedBackgroundJob, nowMs: number): string {
@@ -158,11 +160,13 @@ export function BackgroundJobDetail({
   const canStop = canStopJob(item)
   const title = detailHeading(item)
   const sessionPath =
-    item.kind === 'agent' || item.kind === 'shell'
-      ? item.run.sessionPath
-      : item.kind === 'history'
-        ? item.snapshot.sessionPath
-        : undefined
+    item.kind === 'chat-queue'
+      ? item.job.sessionPath
+      : item.kind === 'agent' || item.kind === 'shell'
+        ? item.run.sessionPath
+        : item.kind === 'history'
+          ? item.snapshot.sessionPath
+          : undefined
   const wrapperId =
     item.kind === 'wrapper'
       ? item.run.wrapper.canonicalId
@@ -263,7 +267,15 @@ export function BackgroundJobDetail({
           sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider', flexWrap: 'wrap' }}
         >
           {sessionPath && (
-            <Button size="small" onClick={() => onOpenSession(sessionPath)}>
+            <Button
+              size="small"
+              title={
+                item.kind === 'chat-queue' && item.job.status === 'running'
+                  ? jobsCopy.openConversationToStop
+                  : undefined
+              }
+              onClick={() => onOpenSession(sessionPath)}
+            >
               {jobsCopy.openConversation}
             </Button>
           )}

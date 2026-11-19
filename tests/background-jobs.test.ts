@@ -6,7 +6,7 @@ import test from 'node:test'
 import { createElement, isValidElement, type ComponentProps } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ButtonBase, IconButton, createTheme, ThemeProvider } from '@mui/material'
+import { Button, ButtonBase, IconButton, createTheme, ThemeProvider } from '@mui/material'
 import { componentTree } from './helpers/renderComponentTree'
 import {
   AnimatedList,
@@ -14,6 +14,7 @@ import {
 } from '../src/renderer/src/features/jobs/components/AnimatedList'
 
 import type { BackgroundAgentJob, BackgroundShellJob } from '../src/shared/backgroundJobTypes'
+import type { ChatQueueJob } from '../src/shared/chatQueueTypes'
 import type { EnvironmentBuild } from '../src/shared/environmentBuildTypes'
 import type { RemoteProjectUploadJob } from '../src/shared/remoteProjectUploadTypes'
 import type { WrapperRun } from '../src/shared/wrapperTypes'
@@ -29,8 +30,15 @@ import {
   ArrivalCard
 } from '../src/renderer/src/features/jobs/components/BackgroundJobArrivalNotice'
 import { newlyObservedJobs } from '../src/renderer/src/features/jobs/hooks/useBackgroundJobArrivals'
-import { jobsCopy } from '../src/renderer/src/features/jobs/lib/jobsCopy'
-import { groupBackgroundJobs } from '../src/renderer/src/features/jobs/lib/backgroundJobGroups'
+import {
+  backgroundJobsSummaryLabel,
+  jobsCopy
+} from '../src/renderer/src/features/jobs/lib/jobsCopy'
+import {
+  groupBackgroundJobs,
+  summarizeBackgroundJobs
+} from '../src/renderer/src/features/jobs/lib/backgroundJobGroups'
+import { BackgroundJobHistory } from '../src/renderer/src/features/jobs/lib/backgroundJobHistory'
 import {
   remoteJupyterEntryLabel,
   remoteJupyterPhaseLabel
@@ -38,6 +46,7 @@ import {
 import type { RemoteJupyterStartJob } from '../src/shared/remoteJupyterJobTypes'
 import {
   canStopUnifiedWrapperRun,
+  createChatQueueSessionSelector,
   dismissBackgroundJobs,
   dismissedBackgroundJobKeys,
   resetBackgroundJobTray,
@@ -86,6 +95,153 @@ function wrapper(overrides: Partial<WrapperRun> = {}): WrapperRun {
 
 // Keep the existing Chinese behavior assertions explicit; English switching has dedicated coverage.
 setUiLanguage('zh-CN')
+
+function chatQueueJob(
+  status: ChatQueueJob['status'],
+  overrides: Partial<ChatQueueJob> = {}
+): ChatQueueJob {
+  return {
+    id: status,
+    sessionId: 'origin',
+    sessionPath: 'phi-session:origin',
+    title: 'Original conversation',
+    preview: 'Private prompt preview',
+    status,
+    imageCount: 0,
+    timestamp: '2026-11-19T02:10:00.000Z',
+    ...overrides
+  }
+}
+
+function liveChatQueueJobs(
+  items: readonly ChatQueueJob[],
+  wrappers: readonly WrapperRun[] = []
+): ReturnType<typeof selectBackgroundJobs> {
+  return selectBackgroundJobs([], wrappers, {}, [], [], [], [], [], [], [], items)
+}
+
+test('queue summary counts visible chat states and preserves the legacy workflow count', () => {
+  const workflow = { id: 'workflow-1', name: 'Workflow', totalSteps: 3 }
+  const jobs = liveChatQueueJobs(
+    [
+      chatQueueJob('queued'),
+      chatQueueJob('running'),
+      chatQueueJob('failed'),
+      chatQueueJob('interrupted')
+    ],
+    [
+      wrapper({ runId: 'run-1', workflow: { ...workflow, step: 'first' } }),
+      wrapper({ runId: 'run-2', workflow: { ...workflow, step: 'second' } })
+    ]
+  )
+  const grouped = groupBackgroundJobs([...jobs.active, ...jobs.recent])
+  const summary = summarizeBackgroundJobs(grouped)
+  assert.deepEqual(summary, { queued: 1, running: 2, failed: 1, interrupted: 1 })
+  assert.equal(
+    backgroundJobsSummaryLabel(summary),
+    '后台任务 · 1 项排队中 · 2 项运行中 · 1 项失败 · 1 项已中断'
+  )
+  try {
+    setUiLanguage('en')
+    assert.equal(
+      backgroundJobsSummaryLabel(summary),
+      'Background jobs · 1 queued · 2 running · 1 failed · 1 interrupted'
+    )
+  } finally {
+    setUiLanguage('zh-CN')
+  }
+})
+
+test('removed conversations leave no retained task or prompt preview in display history', () => {
+  const history = new BackgroundJobHistory()
+  const live = liveChatQueueJobs([chatQueueJob('failed'), chatQueueJob('interrupted')])
+  history.observe(live.recent)
+  assert.match(history.serialize(), /"records":\[\]/)
+  assert.doesNotMatch(
+    history.serialize(),
+    /Private prompt preview|Original conversation|phi-session:/
+  )
+  assert.deepEqual(
+    history.select(live).recent.map((item) => item.kind),
+    ['chat-queue', 'chat-queue']
+  )
+  assert.deepEqual(history.select(liveChatQueueJobs([])).recent, [])
+
+  history.clearCompleted(live.recent, '2026-11-19T02:05:00.000Z')
+  const restored = new BackgroundJobHistory()
+  restored.mergeSerialized(history.serialize())
+  assert.deepEqual(restored.select(live).recent, [], 'clear retains only dismissal metadata')
+  const subsequent = liveChatQueueJobs([
+    chatQueueJob('failed', { id: 'newer', timestamp: '2026-11-19T02:11:00.000Z' })
+  ])
+  assert.equal(restored.select(subsequent).recent[0]?.key, 'chat-queue:newer')
+})
+
+test('a composer ignores peer queue updates and renders only changed rows for its conversation', () => {
+  const select = createChatQueueSessionSelector('origin')
+  const own = chatQueueJob('queued')
+  const peer = chatQueueJob('running', { sessionId: 'peer' })
+  const selected = select([own, peer])
+  assert.deepEqual(selected, [own])
+  assert.equal(select([{ ...own }, { ...peer, status: 'failed' }]), selected)
+  assert.equal(select([own, chatQueueJob('running')]), selected)
+
+  const updated = { ...own, status: 'interrupted' as const }
+  const interrupted = select([updated])
+  assert.deepEqual(interrupted, [updated])
+  assert.notEqual(interrupted, selected)
+  assert.deepEqual(select([]), [])
+})
+
+test('durable rows offer queued cancellation and open the owner chat for every status', () => {
+  const live = liveChatQueueJobs([
+    chatQueueJob('queued', { preview: '', imageCount: 1 }),
+    chatQueueJob('running'),
+    chatQueueJob('failed'),
+    chatQueueJob('interrupted')
+  ])
+  const opened: string[] = []
+  for (const item of [...live.active, ...live.recent]) {
+    assert.equal(item.kind, 'chat-queue')
+    if (item.kind !== 'chat-queue') continue
+    const status = item.job.status
+    const row = render(
+      createElement(BackgroundJobRow, {
+        item,
+        nowMs: 0,
+        busy: false,
+        onOpen: () => undefined,
+        onStop: () => undefined
+      })
+    )
+    assert.match(row, new RegExp(`data-phi-chat-queue-status="${status}"`))
+    assert.equal(row.includes('aria-label="取消排队消息"'), status === 'queued')
+    if (status === 'queued') assert.match(row, /1 张图片/)
+    const tree = componentTree(() =>
+      BackgroundJobDetail({
+        item,
+        nowMs: 0,
+        busy: false,
+        onBack: () => undefined,
+        onStop: () => undefined,
+        onOpenSession: (path) => {
+          opened.push(path)
+        }
+      })
+    )
+    const button = descendants(tree).find(
+      (element) =>
+        element.type === Button &&
+        (element.props as { children?: ReactNode }).children === jobsCopy.openConversation
+    )
+    assert.ok(button)
+    ;(button.props as { onClick: () => void }).onClick()
+  }
+  assert.deepEqual(
+    opened,
+    Array.from({ length: 4 }, () => 'phi-session:origin')
+  )
+})
 
 test('arrival detection reports a task only once across status refreshes', () => {
   const first = selectBackgroundJobs([agent], []).active

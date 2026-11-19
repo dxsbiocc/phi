@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import type { ChatQueueJobsVersion } from '../src/shared/chatQueueTypes'
 import {
   createDurableChat,
   type BoundChatQueueTarget
@@ -27,6 +28,7 @@ test('durable chat captures destinations immediately and acknowledges concurrent
     workMode: 'auto'
   }
   const firstTarget = Promise.withResolvers<BoundChatQueueTarget>()
+  const notifications: ChatQueueJobsVersion[] = []
   const captured: string[] = []
   const confirmed: string[] = []
   const chat = createDurableChat({
@@ -45,12 +47,16 @@ test('durable chat captures destinations immediately and acknowledges concurrent
     execute: async () => 'succeeded',
     recoverOutcome: () => 'interrupted',
     changed: () => undefined,
+    jobsChanged: (version) => notifications.push(version),
     log: () => undefined
   })
   await chat.start()
   try {
+    const empty = await chat.listJobs()
+    assert.deepEqual(empty.items, [])
     const target = { path: destination.path, cwd: directory }
-    const first = chat.submit('first', target, randomUUID())
+    const firstRequestId = randomUUID()
+    const first = chat.submit('first', target, firstRequestId)
     const second = chat.submit('second', target, randomUUID())
     assert.deepEqual(captured, ['first', 'second'])
     await new Promise<void>((resolve) => setImmediate(resolve))
@@ -65,6 +71,31 @@ test('durable chat captures destinations immediately and acknowledges concurrent
         [accepted[1].id, 'second']
       ]
     )
+    const snapshot = await chat.listJobs()
+    assert.equal(snapshot.epoch, empty.epoch)
+    assert.deepEqual(
+      snapshot.items.map(({ id, sessionId, status }) => ({ id, sessionId, status })),
+      [
+        { id: accepted[0].id, sessionId: scope.conversationId, status: 'queued' },
+        { id: accepted[1].id, sessionId: scope.conversationId, status: 'queued' }
+      ]
+    )
+    assert.ok(notifications[0].revision > empty.revision)
+    assert.ok(notifications[1].revision > notifications[0].revision)
+    assert.equal(notifications[1].revision, snapshot.revision)
+    assert.deepEqual(await chat.submit('first', target, firstRequestId), accepted[0])
+    assert.equal(notifications.length, 2)
+    assert.ok(await chat.cancel(scope.conversationId, accepted[0].id))
+    const afterCancel = await chat.listJobs()
+    assert.ok(afterCancel.revision > snapshot.revision)
+    assert.deepEqual(
+      afterCancel.items.map((item) => item.id),
+      [accepted[1].id]
+    )
+    await chat.removeConversation(scope.conversationId)
+    const afterRemoval = await chat.listJobs()
+    assert.ok(afterRemoval.revision > afterCancel.revision)
+    assert.deepEqual(afterRemoval.items, [])
   } finally {
     firstTarget.resolve(destination)
     await chat.shutdown()
