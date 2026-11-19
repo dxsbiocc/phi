@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { focusDesktopSession } from './desktop-layout.mjs'
 import { readJsonlFile } from '../../gui-e2e/jsonl.ts'
 import { openProjectHome } from '../../gui-e2e/ui.ts'
 import { redactSensitiveText } from '../../../src/main/agent/redaction.ts'
@@ -235,8 +236,8 @@ async function runCase(
   const priorRuns = new Set(listWrapperRuns(profile.agentDir).map((run) => run.runId))
   const newRuns = () => listWrapperRuns(profile.agentDir).filter((run) => !priorRuns.has(run.runId))
   const sessionsDir = join(profile.agentDir, 'sessions')
-  const chat = page.locator(CHAT).last()
-  const question = chat.getByRole('alert').filter({ has: page.getByRole('radio') })
+  let chat = page.locator(CHAT).last()
+  const sessionFocusChanges = []
   const prompt = desktopPrompt(kind)
   const save = (name, object) =>
     writeFileSync(join(evidenceDir, `${kind}-${name}.json`), JSON.stringify(object, null, 2) + '\n')
@@ -252,7 +253,14 @@ async function runCase(
       .locator('body')
       .innerText({ timeout: 2000 })
       .catch(() => '')
-    if (!leaks.size && boundedSummary(body)) screenshots.set(name, await page.screenshot())
+    if (
+      sessionId &&
+      (await chat.getAttribute('data-phi-chat-session-id', { timeout: 1000 }).catch(() => null)) ===
+        sessionId &&
+      !leaks.size &&
+      boundedSummary(body)
+    )
+      screenshots.set(name, await page.screenshot())
   }
   const observe = (events, visible) => {
     observeDesktopLeaks(leaks, events, visible)
@@ -305,7 +313,13 @@ async function runCase(
       const welcome = welcomeButton(page)
       if (await welcome.isVisible()) await welcome.dispatchEvent('click')
       sessionId ??= findSession(sessionsDir, prompt)
-      const events = sessionId ? eventList(sessionsDir, sessionId) : []
+      if (!sessionId) {
+        await page.waitForTimeout(100)
+        continue
+      }
+      chat = await focusDesktopSession(page, project, sessionId, sessionFocusChanges)
+      const question = chat.getByRole('alert').filter({ has: page.getByRole('radio') })
+      const events = eventList(sessionsDir, sessionId)
       const visible = await chat.innerText()
       observe(events, visible)
       const failed = events.findLast((e) => e.type === 'run_failed' || e.type === 'run_interrupted')
@@ -358,7 +372,7 @@ async function runCase(
           observedWaitingMs: Date.now() - waiting,
           wrapperRunsWhileWaiting: waitingRuns
         }
-        await onQuestion?.({ page, question, paused, profile })
+        await onQuestion?.({ page, question, paused, profile, sessionId })
         metadata = profile.supplyMapping()
         const response = `已补齐供体映射。请使用 ${relative(profile.project, metadata)}，供体列为 donor，按原研究问题继续。`
         await question.getByRole('radio', { name: DONOR }).first().check()
@@ -413,6 +427,16 @@ async function runCase(
   const events = sessionId ? eventList(sessionsDir, sessionId) : []
   const runs = newRuns()
   const assistant = events.findLast((e) => e.type === 'assistant_message_finalized')
+  if (sessionId) {
+    try {
+      chat = await focusDesktopSession(page, project, sessionId, sessionFocusChanges)
+    } catch {
+      failedGates.add('correct-chat-not-visible')
+    }
+  }
+  chat = page
+    .locator(`[data-phi-chat-session-id=${JSON.stringify(sessionId ?? '')}]:visible`)
+    .last()
   const visible = await chat.innerText({ timeout: 1500 }).catch(() => '')
   observe(events, visible)
   const parts = assistant ? await renderedAnswerParts(chat, assistant.content).catch(() => []) : []
@@ -502,6 +526,7 @@ async function runCase(
     ...verified,
     failedGates: [...failedGates],
     leaks: [...leaks.values()],
+    sessionFocusChanges,
     rawContentDetected: Boolean(leaks.size),
     hasVisibleDelivery,
     historyHasAssistantReply: Boolean(assistant),

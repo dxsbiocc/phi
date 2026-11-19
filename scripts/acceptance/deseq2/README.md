@@ -56,3 +56,10 @@ case, and zero of 1,400 with an explanation and zero enrichment calls for the se
 Add `paired` or `zero` as a final argument to run one case. The runner prints the report and
 screenshot directory. Set `PHI_DESKTOP_EVIDENCE` to a fresh directory to retain the evidence
 elsewhere. Full workflow tables and logs stay in the isolated project and job directories.
+
+Set `PHI_DESKTOP_LAYOUT=1` with the regression driver to also check the running parent conversation,
+completed specialist cards and workspace tabs in the native Electron window. Include the paired
+case to exercise the question card. The layout report includes window widths, tab and toolbar
+bounds, button hit tests and screenshots. Each conversation is checked against its session ID.
+A data leak marks its case failed while the driver continues observing the other scientific
+decisions. Reports identify the leaking event and tool and omit raw rows.

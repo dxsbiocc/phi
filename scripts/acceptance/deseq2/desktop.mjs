@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import electron from 'electron'
 import { launchPackagedExecutable } from '../../gui-e2e/app-launcher.ts'
 import { prepareDesktopProfile } from './desktop-profile.mjs'
-import { runDesktopCases } from './desktop-ui.mjs'
+import { auditDesktopText, runDesktopCases } from './desktop-ui.mjs'
 
 const mode = process.env.PHI_DESKTOP_DRIVER ?? 'regression'
 assert(['model', 'regression', 'moonshot'].includes(mode), 'Choose regression, model or moonshot')
@@ -151,7 +151,19 @@ try {
     ]
   })
   console.log('Desktop ready:', app.mode)
+  const checkLayout = process.env.PHI_DESKTOP_LAYOUT === '1'
+  if (checkLayout) assert(fixture, 'The layout fixture runs only in local regression mode')
+  const layout = checkLayout
+    ? (await import('./desktop-layout.mjs')).desktopLayoutCheck({
+        page: app.page,
+        profile,
+        evidenceDir,
+        resizeContent: app.resizeContent,
+        auditText: auditDesktopText
+      })
+    : undefined
   report.cases = await runDesktopCases({
+    onQuestion: layout?.onQuestion,
     page: app.page,
     profile,
     model: modelId,
@@ -159,10 +171,11 @@ try {
     timeoutMs: mode === 'model' ? 45 * 60_000 : 15 * 60_000,
     evidenceDir,
     ...(cases.length ? { cases } : {}),
-    onCase: (name, result) => {
+    onCase: async (name, result) => {
       report.cases[name] = result
       save()
       console.log('Finished:', name, result.status ?? '')
+      await layout?.onCase(name, result)
     }
   })
   report.status = 'passed'
