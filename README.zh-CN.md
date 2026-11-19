@@ -183,7 +183,7 @@ bun run dev
 
 先在设置中配置模型提供方，再选择项目。
 
-在 macOS 上，从“应用程序”打开 `Phi.app` 即可使用 Dock 入口。`bun run dev` 从源码打开同一个工作台，开发窗口可通过菜单栏的 Phi 图标找回。
+在 macOS 上，`bun run dev` 会生成并注册 checkout 专属的 `.phi-build/source-app/Phi Dev.app`，使用与打包版相同的图标、编译入口和启动界面；把它留在 Dock 中即可唤回窗口，退出后也会重新打开这个源码入口。`bun run dev:app` 可从终端打开同一个容器，未构建时会显示 Phi 诊断。开发版使用独立 bundle ID，但保留 Phi 的现有数据目录。直接调用裸 Electron 时仍使用 accessory 隐藏策略。
 
 如果要按 CI 的方式检查源码，还需要安装 Node.js 24：
 

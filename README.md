@@ -183,7 +183,7 @@ bun run dev
 
 Configure a model provider in Settings, then choose a project.
 
-On macOS, open `Phi.app` from Applications to use its Dock entry. `bun run dev` opens the same workbench from source. Use the Phi status item in the menu bar to reopen the development window.
+On macOS, `bun run dev` creates and registers the checkout-specific `.phi-build/source-app/Phi Dev.app`, using the same icon, compiled entry, and startup interface as a packaged build. Keep it in the Dock to reveal the source window or reopen the same entry after quitting. `bun run dev:app` opens that container from the terminal and shows a Phi diagnostic if the app has not been built. The development bundle ID is independent of an installed Phi, while the existing Phi data directory is retained. A directly launched raw Electron SDK remains hidden with the accessory policy.
 
 To check a source checkout the way CI does, also install Node.js 24:
 
