@@ -62,15 +62,17 @@ if (
   process.env.PHI_DESKTOP_DRIVER === 'moonshot'
 ) {
   let stage = 20
+  let context
   try {
+    globalThis.fetch = () => {
+      throw new Error('Offline credential preparation')
+    }
     const { Database } = await import('bun:sqlite')
-    const { AuthStorage, SqliteAuthCredentialStore } = await import('@oh-my-pi/pi-ai')
-    const { ModelRegistry } = await import('@oh-my-pi/pi-coding-agent')
+    const { getContext, modelBySelector } =
+      await import('../../../src/main/agent/engine/in-process/runtime-context.ts')
     const dir = process.env.PI_CODING_AGENT_DIR
-    const database = join(dir, 'agent.db')
-    const schema = await SqliteAuthCredentialStore.open(database)
-    schema.close()
-    const db = new Database(database)
+    context = await getContext(dir)
+    const db = new Database(join(dir, 'agent.db'))
     try {
       stage = 21
       db.query('ATTACH DATABASE ? AS original').run(
@@ -91,21 +93,13 @@ if (
       db.close()
     }
     stage = 23
-    const auth = await AuthStorage.create(database)
-    try {
-      await auth.credentials.reload()
-      const registry = new ModelRegistry(auth, join(dir, 'models.yml'), {
-        fetch: () => {
-          throw new Error('Offline credential preparation')
-        }
-      })
-      const model = registry.find('moonshot', 'kimi-k3')
-      assert.equal(model?.api, 'openai-completions')
-      assert(await registry.getApiKey(model), 'Built-in Moonshot model must resolve its API key')
-    } finally {
-      auth.close()
-    }
+    await context.authStorage.credentials.reload()
+    const model = await modelBySelector(context, { provider: 'moonshot', id: 'kimi-k3' })
+    assert.equal(model?.api, 'openai-completions')
+    assert.equal(context.auth.credentialStatus('moonshot').origin, 'stored')
   } catch {
     process.exitCode = stage
+  } finally {
+    context?.authStorage.close()
   }
 }
