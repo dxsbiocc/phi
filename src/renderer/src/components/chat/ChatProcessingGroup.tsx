@@ -142,9 +142,9 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
   )
   const waitingForResource = waitingTool?.role === 'tool'
   const summary = waitingForResource
-    ? waitingTool.toolName === 'write'
-      ? chatCopy.waitingForFileWrite
-      : chatCopy.waitingForToolResource
+    ? waitingTool.toolName === 'bash'
+      ? chatCopy.waitingForToolResource
+      : chatCopy.waitingForFileWrite
     : processingStatusText({
         items,
         isActive: isProcessingActive,

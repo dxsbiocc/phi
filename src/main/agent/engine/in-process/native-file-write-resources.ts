@@ -7,6 +7,7 @@ import { createResourceScheduler } from '../../resource-scheduler'
 
 const namespace = 'local-file-write'
 const maxIdentityChecks = 3
+const maxBatchFiles = 32
 const claim = (segments: readonly string[]): ExecutionResource => ({
   namespace,
   segments,
@@ -14,15 +15,18 @@ const claim = (segments: readonly string[]): ExecutionResource => ({
 })
 const unknownClaims = [claim([])]
 
+type FileWriteTarget = string | { path: string; mustExist: true }
+
 export type FileWriteAdmission = <T>(
-  absolutePath: string,
+  paths: string | readonly FileWriteTarget[],
   signal: AbortSignal | undefined,
-  runWrite: () => Promise<T>,
+  runWrite: (usesCommonClaim: boolean) => Promise<T>,
   onWait?: (waiting: boolean) => void
 ) => Promise<T>
 
 interface FileIdentity {
   path: string
+  linkPath?: string
   inode?: string
 }
 
@@ -84,8 +88,15 @@ async function observeFile(
 
     const canonical = await realpath(current)
     const target = entry.isSymbolicLink() ? await lstat(canonical, { bigint: true }) : entry
+    const identity = fileIdentity(canonical, target, missing.reverse())
+    if (identity && entry.isSymbolicLink() && missing.length === 0) {
+      // A delete or move can unlink the leaf itself while another tool follows it.
+      identity.linkPath = join(await realpath(dirname(current)), basename(current))
+        .normalize('NFC')
+        .toLowerCase()
+    }
     signal?.throwIfAborted()
-    return fileIdentity(canonical, target, missing.reverse())
+    return identity
   } catch {
     signal?.throwIfAborted()
     // Dangling links, inaccessible ancestors and ambiguous paths share one claim.
@@ -93,12 +104,71 @@ async function observeFile(
   }
 }
 
+async function observeBatch(
+  targets: readonly FileWriteTarget[],
+  signal: AbortSignal | undefined
+): Promise<FileIdentity[] | undefined> {
+  if (targets.length === 0) return undefined
+  const identities: FileIdentity[] = []
+  for (const target of targets) {
+    signal?.throwIfAborted()
+    const path = typeof target === 'string' ? target : target.path
+    const identity = await observeFile(path, signal)
+    if (!identity) return undefined
+    // An absent edit source may be rebound by the native editor to another file.
+    if (typeof target !== 'string' && target.mustExist && !identity.inode) return undefined
+    identities.push(identity)
+  }
+  return identities
+}
+
+function claimsForBatch(identities: readonly FileIdentity[]): ExecutionResource[] {
+  const paths = new Set<string>()
+  const inodes = new Set<string>()
+  for (const { path, linkPath, inode } of identities) {
+    paths.add(path)
+    if (linkPath) paths.add(linkPath)
+    if (inode) inodes.add(inode)
+  }
+  return [
+    ...Array.from(paths, (path) => claim(['path', ...path.split(sep).filter(Boolean)])),
+    ...Array.from(inodes, (inode) => claim(['inode', inode]))
+  ]
+}
+
+function sameBatch(before: readonly FileIdentity[], after: readonly FileIdentity[]): boolean {
+  return before.every((identity, index) => {
+    const current = after[index]
+    return (
+      identity.path === current.path &&
+      identity.linkPath === current.linkPath &&
+      identity.inode === current.inode
+    )
+  })
+}
+
+function snapshotTargets(paths: string | readonly FileWriteTarget[]): FileWriteTarget[] {
+  if (typeof paths === 'string') return [paths]
+  if (paths.length > maxBatchFiles) return []
+  const targets = new Map<string, FileWriteTarget>()
+  for (const target of paths) {
+    if (typeof target === 'string') {
+      if (!targets.has(target)) targets.set(target, target)
+    } else {
+      targets.set(target.path, { ...target })
+    }
+  }
+  return [...targets.values()]
+}
+
 export function createFileWriteAdmission(): FileWriteAdmission {
   const scheduler = createResourceScheduler()
 
-  return async (absolutePath, signal, runWrite, onWait) => {
+  return async (paths, signal, runWrite, onWait) => {
+    signal?.throwIfAborted()
+    const targets = snapshotTargets(paths)
     let waiting = false
-    let identity = await observeFile(absolutePath, signal)
+    let identities = await observeBatch(targets, signal)
 
     const report = (value: boolean): void => {
       if (waiting === value) return
@@ -111,31 +181,27 @@ export function createFileWriteAdmission(): FileWriteAdmission {
     }
 
     for (let attempt = 0; ; attempt++) {
-      if (attempt >= maxIdentityChecks) identity = undefined
-      const expected = identity
-      const claims = expected
-        ? [claim(['path', ...expected.path.split(sep).filter(Boolean)])]
-        : unknownClaims
-      if (expected?.inode) claims.push(claim(['inode', expected.inode]))
+      const expected = attempt < maxIdentityChecks ? identities : undefined
+      const claims = expected ? claimsForBatch(expected) : unknownClaims
       const outcome = await scheduler.run(
         claims,
         signal,
         async () => {
           if (expected) {
-            const current = await observeFile(absolutePath, signal)
-            if (current?.path !== expected.path || current?.inode !== expected.inode) {
+            const current = await observeBatch(targets, signal)
+            if (!current || !sameBatch(expected, current)) {
               return { kind: 'retry' as const, identity: current }
             }
           }
           report(false)
           signal?.throwIfAborted()
-          return { kind: 'written' as const, value: await runWrite() }
+          return { kind: 'written' as const, value: await runWrite(!expected) }
         },
         () => report(true)
       )
       if (outcome.kind === 'written') return outcome.value
       // Let the scheduler release the stale claim before queueing another one.
-      identity = outcome.identity
+      identities = outcome.identity
     }
   }
 }
@@ -146,13 +212,11 @@ const admitFileWrite = createFileWriteAdmission()
 export function installNativeFileWriteResources(
   session: Pick<AgentSession, 'getToolByName'>
 ): void {
-  const write = session.getToolByName('write') as
-    { setPhiFileWriteAdmission?: (admit: FileWriteAdmission) => void } | undefined
-  const edit = session.getToolByName('edit') as
-    { separatePhiFileWritesFromEditBatches?: () => void } | undefined
-  if (typeof write?.setPhiFileWriteAdmission !== 'function') return
-  write.setPhiFileWriteAdmission(admitFileWrite)
-  if (typeof edit?.separatePhiFileWritesFromEditBatches === 'function') {
-    edit.separatePhiFileWritesFromEditBatches()
+  for (const name of ['write', 'edit']) {
+    const tool = session.getToolByName(name) as
+      { setPhiFileWriteAdmission?: (admit: FileWriteAdmission) => void } | undefined
+    if (typeof tool?.setPhiFileWriteAdmission === 'function') {
+      tool.setPhiFileWriteAdmission(admitFileWrite)
+    }
   }
 }
