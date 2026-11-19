@@ -4,6 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { pathToFileURL } from 'node:url'
+import {
+  relatedPublicationFiles,
+  verifiedWrapperPublication
+} from '../src/main/agent/agents/research-publication'
+import type { WrapperJobStatus } from '../src/main/agent/wrappers/composition/job-types'
 import { AgentRunRegistry } from '../src/main/agent/agents/registry'
 import { researchReadNotice } from '../src/main/agent/engine/in-process/research-read-extension'
 import { createKernelFixture } from './engine-contract/kernel-factory'
@@ -203,5 +208,184 @@ test(
       (message) => (message as { toolCallId?: string }).toolCallId === 'cat-requested'
     )
     assert.match(JSON.stringify(cat), new RegExp(marker))
+  }
+)
+
+test('Only an unambiguous verified primary binds declared local regular files', () => {
+  const file = {
+    id: 'primary',
+    path: join(tmpdir(), 'primary.tsv'),
+    bytes: 40,
+    exists: true,
+    primary: true,
+    location: 'local' as const
+  }
+  const sibling = {
+    ...file,
+    id: 'sibling',
+    path: join(tmpdir(), 'empty.tsv'),
+    bytes: 0,
+    primary: false
+  }
+  const status: WrapperJobStatus = {
+    runId: 'fixture',
+    wrapperId: 'test',
+    state: 'completed',
+    profile: 'native',
+    outDir: tmpdir(),
+    elapsedSeconds: 1,
+    logTail: '',
+    progress: { started: 1 },
+    researchQc: {
+      schemaVersion: 1,
+      disposition: 'skip',
+      contrast: 'test',
+      geneIdColumn: 'id',
+      padjThreshold: 0.05,
+      log2fcThreshold: 1,
+      evaluated: 1,
+      hits: 0,
+      resultMd5: '1'.repeat(32),
+      integrityVerified: true
+    },
+    outputs: [
+      file,
+      sibling,
+      { ...sibling, id: 'absent', exists: false },
+      { ...sibling, id: 'dir', bytes: undefined },
+      { ...sibling, id: 'remote', location: 'remote' }
+    ]
+  }
+  const first = verifiedWrapperPublication(status)
+  assert.deepEqual(first, { primary: [file.path], files: [file.path, sibling.path] })
+  for (const changed of [
+    { ...status, remote: { host: 'elsewhere', runDir: '/tmp' } },
+    { ...status, state: 'running' as const },
+    { ...status, researchQc: undefined },
+    { ...status, researchQc: { disposition: 'invalid' as const, reason: 'malformed' as const } }
+  ])
+    assert.equal(verifiedWrapperPublication(changed), undefined)
+  const canonical = (path: string): string => path
+  assert.deepEqual(relatedPublicationFiles([sibling.path], [first], canonical), [])
+  assert.deepEqual(relatedPublicationFiles([file.path], [first, first], canonical), [])
+  assert.deepEqual(relatedPublicationFiles([file.path], [first], canonical), [
+    file.path,
+    sibling.path
+  ])
+})
+
+test(
+  'real kernel protects a verified wrapper’s published header-only sibling, while leaving a neighboring table readable',
+  { timeout: 45_000 },
+  async (t) => {
+    const f = await createKernelFixture({ hostCapabilities: ['wrapperJob.wait'] })
+    t.after(() => f.close())
+    const runId = 'wrun_4fc8b14d-a909-4a43-a0db-a2b31aa77b59'
+    const primary = 'study/comparison.tsv'
+    const sibling = 'study/output-with-no-rows.tsv'
+    const other = 'study/independent.tsv'
+    const header = 'PRIVATE_PUBLISHED_HEADER'
+    const unrelated = 'UNRELATED_READ_SUCCEEDED'
+    mkdirSync(join(f.cwd, 'study'))
+    writeFileSync(join(f.cwd, primary), 'id\tvalue\nA\t1\n')
+    writeFileSync(join(f.cwd, sibling), header + '\n')
+    writeFileSync(join(f.cwd, other), unrelated + '\n')
+    let observed = 0
+    f.client.registerHostCapability('wrapperJob.wait', (input) => {
+      assert.equal(input.runId, runId)
+      observed++
+      return {
+        runId,
+        wrapperId: 'local/fixture',
+        state: 'completed',
+        profile: 'local',
+        outDir: join(f.cwd, 'study'),
+        exitCode: 0,
+        elapsedSeconds: 1,
+        progress: { started: 1, total: 1 },
+        logTail: '',
+        researchQcExpected: true,
+        researchQc: {
+          disposition: 'eligible',
+          schemaVersion: 1,
+          contrast: 'test',
+          geneIdColumn: 'id',
+          padjThreshold: 0.05,
+          log2fcThreshold: 1,
+          evaluated: 1,
+          hits: 1,
+          resultMd5: '1'.repeat(32),
+          integrityVerified: true
+        },
+        outputs: [
+          {
+            id: 'primary',
+            path: join(f.cwd, primary),
+            location: 'local',
+            exists: true,
+            bytes: 13,
+            primary: true
+          },
+          {
+            id: 'ancillary',
+            path: join(f.cwd, sibling),
+            location: 'local',
+            exists: true,
+            primary: false,
+            bytes: header.length + 1
+          }
+        ]
+      }
+    })
+    const id = 'verified-wrapper-publication'
+    await f.createSession(id, { persistent: true, phiAgents: true })
+    f.provider.enqueue(
+      {
+        tool: {
+          name: 'Wrapper',
+          id: 'wrapper-child',
+          args: { task: 'Check the run using wrapper_wait.', research_question: question }
+        }
+      },
+      { tool: { name: 'wrapper_wait', id: 'trusted-status', args: { run_id: runId } } },
+      {
+        text: report.replace(
+          JSON.stringify([artifact, 'paired/run.log', 'paired/notes.md']),
+          JSON.stringify([runId])
+        )
+      },
+      {
+        tool: {
+          name: 'General',
+          id: 'analysis-child',
+          args: {
+            task: 'Report the result from the published primary.',
+            research_question: question
+          }
+        }
+      },
+      {
+        text: report.replace(
+          JSON.stringify([artifact, 'paired/run.log', 'paired/notes.md']),
+          JSON.stringify([primary])
+        )
+      },
+      { tool: { name: 'read', id: 'sibling-read', args: { path: sibling } } },
+      { tool: { name: 'bash', id: 'sibling-preview', args: { command: 'head -4 ' + sibling } } },
+      { tool: { name: 'read', id: 'ordinary-neighbor', args: { path: other } } },
+      { text: 'Summary delivered.' }
+    )
+    const completed = await f.sessions.prompt({ sessionId: id, text: question })
+    assert.equal(observed, 1, 'The real Wrapper specialist must receive the trusted host response')
+    assert.doesNotMatch(JSON.stringify(completed.messages), new RegExp(header))
+    assert.match(JSON.stringify(completed.messages), new RegExp(unrelated))
+    assert.match(JSON.stringify(completed.messages), /already reported this artifact/)
+    assert.doesNotMatch(JSON.stringify(f.provider.requests), new RegExp(header))
+    const journal = readFileSync(
+      join(f.agentDir, 'phi-kernel', 'sessions', f.kernelSessionId(id)!, 'journal.jsonl'),
+      'utf8'
+    )
+    assert.doesNotMatch(journal, new RegExp(header))
+    assert.match(journal, new RegExp(unrelated))
   }
 )

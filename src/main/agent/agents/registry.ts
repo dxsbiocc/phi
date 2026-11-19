@@ -6,6 +6,12 @@
  * with fakes — see tests/phi-agent-runs.test.ts.
  */
 import {
+  verifiedWrapperPublication,
+  relatedPublicationFiles,
+  type WrapperPublication
+} from './research-publication'
+import type { WrapperJobStatus } from '../wrappers/composition/job-types'
+import {
   AgentCancelledError,
   AgentTimeoutError,
   describeToolStart,
@@ -144,6 +150,8 @@ export interface AgentWaitResult {
 }
 
 interface RunRecord {
+  /** Host status only. Never exposed in receipts, reports, tool results or parent history. */
+  publications?: Map<string, WrapperPublication>
   snapshot: AgentRunSnapshot
   input: AgentLaunchInput
   controller: AbortController
@@ -281,28 +289,46 @@ export class AgentRunRegistry {
     return [...this.runs.values()].map((record) => ({ ...record.snapshot }))
   }
 
+  recordWrapperPublication(childId: string, status: WrapperJobStatus): void {
+    const child = this.runs.get(childId)
+    if (!child || child.input.agent !== 'Wrapper' || child.snapshot.state !== 'running') return
+    const publication = verifiedWrapperPublication(status)
+    if (!publication) return
+    child.publications ??= new Map()
+    child.publications.set(status.runId, publication)
+  }
+
   /** Only registered scientific delegations from the caller's active branch can supply findings. */
   researchFindings(
-    toolCallIds: ReadonlySet<string>
+    toolCallIds: ReadonlySet<string>,
+    canonicalPath?: (reference: string) => string | undefined
   ): Array<{ evidence: string[]; answer: string; interpretation: string }> {
     const findings: Array<{ evidence: string[]; answer: string; interpretation: string }> = []
-    for (const { input, snapshot } of this.runs.values()) {
-      if (
-        !input.researchQuestion ||
-        !snapshot.toolCallId ||
-        !toolCallIds.has(snapshot.toolCallId) ||
-        snapshot.state !== 'done' ||
-        !snapshot.report
-      )
-        continue
+    const publications = new Map<string, WrapperPublication>()
+    const visible = [...this.runs.values()].filter(
+      ({ snapshot }) => snapshot.toolCallId && toolCallIds.has(snapshot.toolCallId)
+    )
+    for (const child of visible)
+      for (const [id, output] of child.publications ?? []) publications.set(id, output)
+    for (const { input, snapshot } of visible) {
+      if (!input.researchQuestion || snapshot.state !== 'done' || !snapshot.report) continue
       const report = readScientificHandoff(
         snapshot.report,
         input.researchQuestion,
         snapshot.reportStatus
       )
       if (!report.structured) continue
-      const { evidence, answer, interpretation } = JSON.parse(report.text)
-      findings.push({ evidence, answer, interpretation })
+      const { evidence, answer, interpretation } = JSON.parse(report.text) as {
+        evidence: string[]
+        answer: string
+        interpretation: string
+      }
+      // Require one unambiguous published primary; an output directory or shared filename is insufficient.
+      const related =
+        canonicalPath && publications.size && report.status === 'completed'
+          ? relatedPublicationFiles(evidence, [...publications.values()], canonicalPath)
+          : []
+      findings.push({ evidence: [...new Set([...evidence, ...related])], answer, interpretation })
     }
     return findings.reverse()
   }

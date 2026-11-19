@@ -141,7 +141,7 @@ export function researchReadNotice(
 ): string | undefined {
   const calls = delegationCallsSinceUser(branch)
   if (!calls.size) return undefined
-  const findings = registry.researchFindings(calls)
+  const findings = registry.researchFindings(calls, (ref) => canonical(cwd, ref))
   if (!findings.length) return undefined
   const shellReads = shellDirectory ? shellPreviewPaths(shellDirectory, requested) : undefined
   const reads = shellReads
