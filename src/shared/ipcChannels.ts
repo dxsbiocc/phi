@@ -11,6 +11,7 @@ export const IPC = {
     prompt: 'agent:prompt',
     queuedPromptsChanged: 'agent:queuedPromptsChanged',
     readPromptImage: 'agent:readPromptImage',
+    routeTaskEvent: 'agent:routeTaskEvent',
     steerRun: 'agent:steerRun',
     stop: 'agent:stop',
     stopRun: 'agent:stopRun',

@@ -127,6 +127,7 @@ import {
   type PromptTargetControlOptions
 } from './agent/session/prompt-target-control'
 import { createMainChatQueue } from './session-runtime/main-chat-queue'
+import { createTaskEventService } from './session-runtime/task-event-service'
 import {
   getCurrentContextUsage,
   getCurrentSessionPayloadWithMessages,
@@ -207,6 +208,7 @@ import {
 } from './agent/remote-project-anchor'
 import {
   cancelToolApprovals,
+  pendingToolApprovalsForRun,
   requestToolApproval,
   requestRuntimeToolApproval,
   resolveToolApproval,
@@ -2664,19 +2666,27 @@ function cancelPendingToolApprovals(scope?: { sessionId: string; runId: string }
   }
 }
 
-function cancelPendingAgentUserInteractions(): void {
-  cancelAgentUserInteractions()
-  notifyAgentUserInteractionsCancelled()
+function cancelPendingAgentUserInteractions(scope?: { sessionId: string; runId: string }): void {
+  const cancelled = cancelAgentUserInteractions(scope) ?? []
+  if (!scope) {
+    notifyAgentUserInteractionsCancelled()
+    return
+  }
+  for (const requestId of cancelled) sendToAllWindows(IPC.agent.interactionCancelled, requestId)
 }
 
 function cancelPendingRunWaits(scope?: { sessionId: string; runId: string }): void {
   cancelPendingToolApprovals(scope)
-  cancelPendingAgentUserInteractions()
+  cancelPendingAgentUserInteractions(scope)
 }
 
-async function abortSession(session: AgentSessionInstance): Promise<void> {
-  cancelPendingRunWaits()
-  await session.abort()
+async function abortSession(
+  session: AgentSessionInstance,
+  scope?: { sessionId: string; runId: string }
+): Promise<void> {
+  cancelPendingRunWaits(scope)
+  if (scope) await abortSessionWithoutCancellingApprovals(session)
+  else await session.abort()
 }
 
 async function abortSessionWithoutCancellingApprovals(
@@ -3322,6 +3332,38 @@ const durableChat = createMainChatQueue({
   log: logUnexpectedError
 })
 
+function resolveAndNotifyToolApproval(
+  requestId: string,
+  approved: boolean,
+  responder: unknown
+): boolean {
+  if (!resolveToolApproval(requestId, approved, responder)) return false
+  try {
+    sendToAllWindows(IPC.tool.approvalCancelled, requestId)
+  } catch (error) {
+    logUnexpectedError(error)
+  }
+  return true
+}
+
+const taskEvents = createTaskEventService({
+  queue: durableChat,
+  owner: findPhiSessionById,
+  activeRun: (entry) =>
+    promptRuns.findActiveRun(
+      (run) =>
+        run.runId === entry.attemptId &&
+        run.phiSessionId === entry.scope.conversationId &&
+        (run.projectId ?? null) === entry.scope.projectId &&
+        !run.cancelled &&
+        run.generation === promptRuns.generationFor(run.sessionKey) &&
+        lifecycles.forKey(run.sessionKey).isCurrentGeneration(run.sessionGeneration)
+    ),
+  stop: (run) => stopPromptRun(run.sessionKey, run),
+  approvals: pendingToolApprovalsForRun,
+  respond: resolveAndNotifyToolApproval
+})
+
 function registerAgentIpc(): void {
   const agentIpcOptions: AgentIpcOptions = {
     ipcMain,
@@ -3336,6 +3378,7 @@ function registerAgentIpc(): void {
       submit: submitPromptRun
     },
     durableChat,
+    taskEvents,
     stop: {
       advancePromptGeneration: promptRuns.advanceGeneration.bind(promptRuns),
       cancelPendingPromptSubmissions: promptRuns.cancelPendingPromptSubmissions.bind(promptRuns),
@@ -3670,7 +3713,7 @@ function registerProjectAndAnalysisIpc(): void {
   })
   registerToolIpc({
     ipcMain,
-    resolveToolApproval,
+    resolveToolApproval: resolveAndNotifyToolApproval,
     requireMainWindowRenderer,
     showPendingRequests: (window) => {
       showPendingApprovals(window)

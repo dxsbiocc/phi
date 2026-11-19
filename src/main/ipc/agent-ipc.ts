@@ -15,6 +15,7 @@ import type {
   PromptTargetInput
 } from '../agent/session/prompt-target-control'
 import type { DurableChat } from '../session-runtime/durable-chat'
+import type { TaskEventService } from '../session-runtime/task-event-service'
 
 interface PromptRunInput extends PromptRunDestination {
   text: string
@@ -38,6 +39,7 @@ export interface AgentIpcOptions {
     submit: (input: PromptRunInput) => Promise<unknown>
   }
   durableChat: Pick<DurableChat, 'submit' | 'list' | 'listJobs' | 'cancel'>
+  taskEvents: TaskEventService
   stop: Omit<ActivePromptStopOptions, 'getCurrentSessionKey'>
   agentRuns: {
     control: Parameters<typeof requestAgentRunControl>[0]
@@ -89,6 +91,13 @@ export function registerAgentPromptIpc(options: AgentIpcOptions): void {
   ipcMain.handle(IPC.agent.submitQueuedPrompt, (event, text, target, requestId) => {
     options.prompt.requireMainWindowRenderer(event)
     return options.durableChat.submit(text, target, requestId)
+  })
+  ipcMain.handle(IPC.agent.routeTaskEvent, (event, text, target, requestId) => {
+    const window = options.prompt.requireMainWindowRenderer(event)
+    return options.taskEvents.route(text, target, requestId, {
+      responder: window.webContents,
+      authorize: () => options.prompt.requireMainWindowRenderer(event)
+    })
   })
   ipcMain.handle(IPC.agent.listQueuedPrompts, (event, sessionId) => {
     options.prompt.requireMainWindowRenderer(event)

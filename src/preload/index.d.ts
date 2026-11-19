@@ -1,3 +1,4 @@
+import type { TaskEventResult } from '../shared/taskEventTypes'
 import type {
   ModelAvailabilityChange,
   ModelAvailabilitySnapshot
@@ -772,6 +773,11 @@ declare global {
         target: ChatQueueTarget,
         requestId: string
       ) => Promise<ChatQueueReceipt>
+      routeTaskEvent: (
+        text: string,
+        target: ChatQueueTarget | null,
+        requestId: string
+      ) => Promise<TaskEventResult>
       listQueuedPrompts: (sessionId: string) => Promise<ChatQueueItem[]>
       listChatQueueJobs: () => Promise<ChatQueueJobsSnapshot>
       onChatQueueJobsChanged: (cb: (version: ChatQueueJobsVersion) => void) => () => void
@@ -783,7 +789,7 @@ declare global {
       onAgentUserInteractionRequest: (
         cb: (event: AgentUserInteractionRequest) => void
       ) => () => void
-      onAgentUserInteractionCancelled: (cb: () => void) => () => void
+      onAgentUserInteractionCancelled: (cb: (requestId?: string) => void) => () => void
       respondAgentUserInteraction: (
         requestId: string,
         response: AgentUserInteractionResponse,

@@ -198,6 +198,22 @@ export function resolveToolApproval(
   return true
 }
 
+/** The typed task command may only see requests owned by its live run and renderer. */
+export function pendingToolApprovalsForRun(
+  sessionId: string,
+  runId: string,
+  responder: unknown
+): Readonly<ToolApprovalRequest>[] {
+  return [...pendingApprovals.values()]
+    .filter(
+      (pending) =>
+        pending.responder === responder &&
+        pending.request.sessionId === sessionId &&
+        pending.request.runId === runId
+    )
+    .map((pending) => pending.request)
+}
+
 export function cancelToolApprovals(scope?: {
   sessionId?: string
   runId?: string

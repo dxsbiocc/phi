@@ -26,6 +26,7 @@ import { createInProcessEngine } from '../src/main/agent/engine/in-process-engin
 import * as engineEvents from '../src/main/agent/engine/events'
 import type { OmpBridge } from '../src/main/agent/engine/omp-bridge'
 import * as windowStartup from '../src/main/window-startup'
+import * as taskEventService from '../src/main/session-runtime/task-event-service'
 import { loadRemoteWrapperAgent } from '../src/main/agent/agents/remote-wrapper-agent'
 import {
   BackgroundAgentApprovalTracker,
@@ -1666,11 +1667,13 @@ async function harness(
     'node:path': path,
     semver: { gt: (left: string, right: string): boolean => left > right },
     './agent-env': {},
+    './session-runtime/task-event-service': taskEventService,
     './session-runtime/main-chat-queue': {
       createMainChatQueue: () => ({
         start: async () => undefined,
         activate: () => undefined,
         pause: () => noop,
+        taskEntries: async (): Promise<[]> => [],
         removeConversation: async () => undefined,
         beginShutdown: () => undefined,
         shutdown: async () => undefined
@@ -2973,6 +2976,7 @@ async function harness(
       writeApprovalDigest: fakeWriteApprovalDigest,
       editApprovalDigest: fakeEditApprovalDigest,
       cancelToolApprovals: (): unknown[] => [],
+      pendingToolApprovalsForRun: (): [] => [],
       requestToolApproval: async (): Promise<'cancelled'> => 'cancelled',
       resolveToolApproval: (requestId: string, approved: boolean, responder: unknown): boolean => {
         const trusted = responder === Window.getAllWindows()[0]?.webContents
@@ -7579,6 +7583,7 @@ const expectedStartupRegistrationOrder = [
   'agent:prompt',
   'agent:readPromptImage',
   'agent:submitQueuedPrompt',
+  'agent:routeTaskEvent',
   'agent:listQueuedPrompts',
   'agent:listChatQueueJobs',
   'agent:cancelQueuedPrompt',
@@ -9058,6 +9063,16 @@ test('main IPC: a concurrent selection cannot retarget a saved conversation prom
   assert.deepEqual(selected?.promptTexts, ['start other'])
 })
 
+test('main IPC: task listing uses the trusted chat event entry point without opening a session', async () => {
+  const app = await harness()
+  assert.deepEqual(await app.invoke('agent:routeTaskEvent', '/tasks', null, randomUUID()), {
+    kind: 'list',
+    tasks: [],
+    more: false
+  })
+  assert.equal(app.createdPhiSessions.length, 0)
+})
+
 test('main IPC: foreign windows cannot submit chat prompts or read their images', async () => {
   const app = await harness()
   await assert.rejects(app.invokeFromForeign('agent:prompt', 'not authorized'), /authorized/)
@@ -9066,6 +9081,7 @@ test('main IPC: foreign windows cannot submit chat prompts or read their images'
     app.invokeFromForeign('agent:submitQueuedPrompt', 'forbidden', {}),
     /authorized/
   )
+  await assert.rejects(app.invokeFromForeign('agent:routeTaskEvent', '/tasks', null), /authorized/)
   await assert.rejects(app.invokeFromForeign('agent:listQueuedPrompts', 'phi-1'), /authorized/)
   await assert.rejects(app.invokeFromForeign('agent:listChatQueueJobs'), /authorized/)
   await assert.rejects(

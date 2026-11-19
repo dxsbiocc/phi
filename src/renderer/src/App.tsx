@@ -68,6 +68,8 @@ import { ChatShellConfirmation } from './features/chat/components/ChatShellConfi
 import { useSessionEventBridge } from './features/chat/hooks/useSessionEventBridge'
 import { usePromptSend } from './features/chat/hooks/usePromptSend'
 import { useDurableChatSubmission } from './features/chat/hooks/useDurableChatSubmission'
+import { TaskEventResults } from './features/chat/components/TaskEventResults'
+import { useTaskEventReplies } from './features/chat/hooks/useTaskEventReplies'
 import { useDurablePromptQueue } from './features/chat/hooks/useDurablePromptQueue'
 import { localizePromptSendError } from './features/chat/lib/promptSend'
 import { SessionPlanRunPanel } from './features/plan/PlanRunPanel'
@@ -1814,6 +1816,7 @@ function App(): React.JSX.Element {
     },
     [setSessionTabWasOpened, setClosedWorkspaceSessionTabKeys, setActiveWorkspaceTabKey]
   )
+  const taskEvents = useTaskEventReplies(rendererApi, onChatQueueError)
   const {
     submit: submitDurablePrompt,
     draftEdited,
@@ -1823,6 +1826,7 @@ function App(): React.JSX.Element {
     navigationRequest: sessionRequestRef,
     setDraftImages: setDraftImagesBySession,
     onMaterialized: onMaterializedChat,
+    onTaskEvent: taskEvents.show,
     onError: onChatQueueError
   })
   const { activeQueuedPrompts, removeQueuedPrompt } = useDurablePromptQueue(
@@ -2003,6 +2007,10 @@ function App(): React.JSX.Element {
         planMode: request.mode === 'plan',
         planExecute: request.mode === 'plan_execute'
       })
+      if (queued === 'editable') {
+        restoreHomeDraft(text, target)
+        return
+      }
       if (queued) return
     } catch {
       // Keep the home text under its original conversation if mode selection changed.
@@ -3585,6 +3593,13 @@ function App(): React.JSX.Element {
               isSessionChanging || currentSessionIsCompacting || remoteControlsUnavailable
             }
             pendingApproval={pendingApproval}
+            taskEventReplies={
+              <TaskEventResults
+                replies={taskEvents.replies}
+                onDismiss={taskEvents.dismiss}
+                onDecide={taskEvents.decide}
+              />
+            }
             pendingUserInteraction={pendingUserInteraction}
             queuedPrompts={activeQueuedPrompts.map((item) => ({
               id: item.id,

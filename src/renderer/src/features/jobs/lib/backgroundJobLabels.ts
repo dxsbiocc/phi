@@ -563,6 +563,7 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
         return [
           { label: jobsCopy.conversation, value: item.job.title ?? '' },
           { label: jobsCopy.chatMessagePreview, value: chatQueuePreview(item) },
+          { label: jobsCopy.chatTaskId, value: item.job.id },
           { label: jobsCopy.status, value: status },
           { label: jobsCopy.chatJobTime, value: timeLabel(item.timestamp) }
         ]

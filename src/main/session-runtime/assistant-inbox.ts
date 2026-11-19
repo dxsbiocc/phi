@@ -69,6 +69,7 @@ const entrySchema = z
     textHash: digestSchema.optional(),
     binding: digestSchema.optional(),
     retryUserMessageId: identifier.optional(),
+    supplementTo: uuid.optional(),
     attachments: z.array(attachmentSchema).min(1).max(MAX_PROMPT_IMAGES).optional(),
     mode: modeSchema.optional()
   })
@@ -88,11 +89,19 @@ export type AssistantInboxEntry = Readonly<
 >
 export type ClaimedEntry = AssistantInboxEntry & { status: 'running'; attemptId: string }
 export type SettleResult = z.infer<typeof settleSchema>
+export class InboxSupplementTargetError extends Error {
+  constructor() {
+    super('The task can no longer receive a supplement.')
+    this.name = 'InboxSupplementTargetError'
+  }
+}
+
 type SubmissionOptions = {
   images?: readonly PromptImageInput[]
   mode?: z.infer<typeof modeSchema>
   binding?: string
   retryUserMessageId?: string
+  supplementTo?: string
 }
 
 export interface AssistantInbox {
@@ -163,17 +172,23 @@ function terminalEntry(
     : { ...finished, textHash: textFingerprint(entry.text), text: '' }
 }
 
-function retainedEntries(entries: AssistantInboxEntry[], now: number): AssistantInboxEntry[] {
+function retainedEntries(
+  entries: AssistantInboxEntry[],
+  now: number,
+  newParent?: string
+): AssistantInboxEntry[] {
+  const parents = new Set(entries.filter(isPending).map((entry) => entry.supplementTo))
+  parents.add(newParent)
+  const keep = (entry: AssistantInboxEntry): boolean => isPending(entry) || parents.has(entry.id)
   const retained = entries.filter(
     (entry) =>
-      isPending(entry) ||
-      entry.settledAt === undefined ||
-      now - entry.settledAt < RECEIPT_RETENTION_MS
+      keep(entry) || entry.settledAt === undefined || now - entry.settledAt < RECEIPT_RETENTION_MS
   )
   const terminalToDrop = Math.max(0, retained.length - (MAX_ENTRIES - 1))
-  if (!terminalToDrop) return retained
   let dropped = 0
-  return retained.filter((entry) => isPending(entry) || ++dropped > terminalToDrop)
+  return terminalToDrop
+    ? retained.filter((entry) => keep(entry) || ++dropped > terminalToDrop)
+    : retained
 }
 
 function attachmentSizes(entries: readonly AssistantInboxEntry[]): Map<string, number> {
@@ -227,7 +242,7 @@ function parseSnapshot(bytes: Uint8Array): AssistantInboxEntry[] {
   if (totalAttachmentBytes(attachmentSizes(snapshot.entries)) > MAX_ATTACHMENT_BYTES) {
     throw invalidSnapshot()
   }
-  const ids = new Set<string>()
+  const ids = new Map<string, AssistantInboxEntry>()
   const requests = new Set<string>()
   const attempts = new Set<string>()
   const runningScopes = new Set<string>()
@@ -243,7 +258,13 @@ function parseSnapshot(bytes: Uint8Array): AssistantInboxEntry[] {
       throw invalidSnapshot()
     if (entry.textHash && (retainsAttachments(entry) || entry.text !== '')) throw invalidSnapshot()
     if (entry.deferredAttemptId && entry.status !== 'queued') throw invalidSnapshot()
-    ids.add(entry.id)
+    if (isPending(entry) && entry.supplementTo) {
+      const parent = ids.get(entry.supplementTo)
+      if (!parent || !sameScope(parent.scope, entry.scope) || parent.binding !== entry.binding) {
+        throw invalidSnapshot()
+      }
+    }
+    ids.set(entry.id, entry)
     requests.add(requestKey)
 
     // Only cancellation can be recorded either before or after a claim.
@@ -379,7 +400,7 @@ class FileAssistantInbox implements AssistantInbox {
     entry: AssistantInboxEntry,
     images: ReturnType<typeof prepareAssistantInboxAttachments>
   ): Promise<void> {
-    const retained = retainedEntries(entries, Date.now())
+    const retained = retainedEntries(entries, Date.now(), entry.supplementTo)
     const next = [...retained, entry]
     const expired = retained.length !== entries.length
     if (images.length === 0) {
@@ -415,6 +436,7 @@ class FileAssistantInbox implements AssistantInbox {
     const mode = modeSchema.optional().safeParse(options.mode)
     const binding = digestSchema.optional().parse(options.binding)
     const retryUserMessageId = identifier.optional().parse(options.retryUserMessageId)
+    const supplementTo = uuid.optional().parse(options.supplementTo)
     if (
       !identifier.safeParse(requestId).success ||
       !promptText.safeParse(text).success ||
@@ -428,9 +450,17 @@ class FileAssistantInbox implements AssistantInbox {
       const refs = prepared.map((image) => image.ref)
       if (!text.trim() && refs.length === 0) throw new Error('Invalid assistant inbox submission.')
       const previous = entries.find(
-        (entry) => entry.requestId === requestId && sameScope(entry.scope, target)
+        (entry) =>
+          entry.requestId === requestId &&
+          (sameScope(entry.scope, target) || Boolean(supplementTo && entry.supplementTo))
       )
       if (previous) {
+        if (
+          supplementTo &&
+          (!sameScope(previous.scope, target) || previous.supplementTo !== supplementTo)
+        ) {
+          throw new InboxSupplementTargetError()
+        }
         if (
           (previous.textHash
             ? previous.textHash !== textFingerprint(text)
@@ -438,12 +468,24 @@ class FileAssistantInbox implements AssistantInbox {
           previous.mode !== mode.data ||
           previous.binding !== binding ||
           previous.retryUserMessageId !== retryUserMessageId ||
+          previous.supplementTo !== supplementTo ||
           !sameAttachments(previous.attachments, refs)
         ) {
           throw new Error('Assistant inbox request conflict.')
         }
         if (prepared.length && retainsAttachments(previous)) await this.attachments.stage(prepared)
         return previous
+      }
+      if (supplementTo) {
+        const parent = entries.find((entry) => entry.id === supplementTo)
+        if (
+          !parent ||
+          !sameScope(parent.scope, target) ||
+          parent.binding !== binding ||
+          (!isPending(parent) && parent.status !== 'succeeded')
+        ) {
+          throw new InboxSupplementTargetError()
+        }
       }
       const order = (entries.at(-1)?.order ?? -1) + 1
       if (!Number.isSafeInteger(order) || entries.filter(isPending).length >= MAX_PENDING) {
@@ -456,6 +498,7 @@ class FileAssistantInbox implements AssistantInbox {
         text,
         ...(binding ? { binding } : {}),
         ...(retryUserMessageId ? { retryUserMessageId } : {}),
+        ...(supplementTo ? { supplementTo } : {}),
         ...(refs.length ? { attachments: refs } : {}),
         ...(mode.data ? { mode: mode.data } : {}),
         order,

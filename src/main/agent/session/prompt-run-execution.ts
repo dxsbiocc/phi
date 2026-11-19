@@ -31,6 +31,7 @@ export interface PromptRunExecutionContext {
     images?: Array<{ data: string; mimeType: string }>
     planMode?: boolean
     planExecute?: boolean
+    durable?: { providerText?: string }
   }
   normalizedText: string
   runSessionKey: string
@@ -59,7 +60,10 @@ export interface PromptRunExecutionDeps<TContext extends PromptRunExecutionConte
       sessionKey: string,
       snapshot: SessionSnapshot
     ): Promise<void>
-    abortSession(session: RuntimeAgentSession): Promise<void>
+    abortSession(
+      session: RuntimeAgentSession,
+      scope: { sessionId: string; runId: string }
+    ): Promise<void>
     abortSessionWithoutCancellingApprovals(session: RuntimeAgentSession): Promise<void>
     linkRuntimeSessionPath(context: TContext, session: RuntimeAgentSession): void
     recordMaterialization(context: TContext): void
@@ -89,7 +93,7 @@ function promptRunFallbackInput<TContext extends PromptRunExecutionContext>(
   const { context, deps, signal, session, automatic, automaticCandidates } = execution
   return {
     session,
-    text: context.normalizedText,
+    text: context.input.durable?.providerText ?? context.normalizedText,
     automatic,
     isCurrent: () =>
       !signal.aborted &&
@@ -233,7 +237,10 @@ async function configurePromptRunSession<TContext extends PromptRunExecutionCont
     context.promptRun.generation !== deps.lifecycle.getPromptGeneration(context.runSessionKey) ||
     !context.runLifecycle.isCurrentGeneration(context.promptRun.sessionGeneration)
   ) {
-    await deps.session.abortSession(session)
+    await deps.session.abortSession(session, {
+      sessionId: context.phiSessionId,
+      runId: context.runId
+    })
     return
   }
   return promptAgentForRun(execution)

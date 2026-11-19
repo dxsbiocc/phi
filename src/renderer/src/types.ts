@@ -1,3 +1,4 @@
+import type { TaskEventResult } from '../../shared/taskEventTypes'
 import type { NotebookDocument } from '../../shared/notebookDocument'
 import type {
   ModelAvailabilityChange,
@@ -563,6 +564,11 @@ export interface RendererApi
     target: ChatQueueTarget,
     requestId: string
   ) => Promise<ChatQueueReceipt>
+  routeTaskEvent: (
+    text: string,
+    target: ChatQueueTarget | null,
+    requestId: string
+  ) => Promise<TaskEventResult>
   listQueuedPrompts: (sessionId: string) => Promise<ChatQueueItem[]>
   listChatQueueJobs: () => Promise<ChatQueueJobsSnapshot>
   onChatQueueJobsChanged: (cb: (version: ChatQueueJobsVersion) => void) => () => void
@@ -573,7 +579,7 @@ export interface RendererApi
   readWorkspaceDiff: (ref: WorkspaceDiffReference) => Promise<string>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => () => void
   onAgentUserInteractionRequest: (cb: (event: AgentUserInteractionRequest) => void) => () => void
-  onAgentUserInteractionCancelled: (cb: () => void) => () => void
+  onAgentUserInteractionCancelled: (cb: (requestId?: string) => void) => () => void
   respondAgentUserInteraction: (
     requestId: string,
     response: AgentUserInteractionResponse,

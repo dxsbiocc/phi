@@ -13,7 +13,7 @@ export interface ChatQueueJobOwner {
 const QUOTED_SECRET =
   /((?:["']|\b)(?:api[-_]?key|access[-_]?token|auth[-_]?token|token|secret|password|passphrase|authorization)(?:["']|\b)\s*[:=]\s*)(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/giu
 
-function displayText(text: string): string {
+export function chatQueuePreview(text: string): string {
   return redactSensitiveText(text.replace(QUOTED_SECRET, '$1"[redacted]"'))
     .replace(/\s+/gu, ' ')
     .trim()
@@ -38,7 +38,7 @@ export function projectChatQueueJobs(
     if (!owners.has(sessionId)) owners.set(sessionId, resolveOwner(sessionId))
     const owner = owners.get(sessionId)
     if (!owner || owner.projectId !== entry.scope.projectId) continue
-    const title = displayText(messageContentTitleText(owner.title))
+    const title = chatQueuePreview(messageContentTitleText(owner.title))
     const timestamp = entry.settledAt ?? entry.submittedAt ?? Date.parse(owner.createdAt ?? '')
     const date = new Date(timestamp)
     items.push({
@@ -46,7 +46,7 @@ export function projectChatQueueJobs(
       sessionId,
       sessionPath: phiOnlySessionPath(sessionId),
       ...(title ? { title } : {}),
-      preview: displayText(entry.text),
+      preview: chatQueuePreview(entry.text),
       imageCount: entry.attachments?.length ?? 0,
       status: entry.status,
       timestamp: Number.isFinite(date.valueOf()) ? date.toISOString() : new Date(0).toISOString()

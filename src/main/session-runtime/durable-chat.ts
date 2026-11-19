@@ -24,6 +24,7 @@ import { tryAcquireAssistantInboxWriter } from './assistant-inbox-writer'
 import { projectChatQueueJobs, type ChatQueueJobOwner } from './chat-queue-jobs'
 import {
   createAssistantInbox,
+  InboxSupplementTargetError,
   type AssistantInbox,
   type AssistantInboxEntry,
   type AssistantInboxScope,
@@ -59,9 +60,14 @@ export interface DurableChatOptions {
   sessionDirectory(sessionId: string): string
   scope(sessionId: string): AssistantInboxScope | null
   jobOwner?(sessionId: string): ChatQueueJobOwner | null
+  supplementTarget?(entry: AssistantInboxEntry): BoundChatQueueTarget | null
   prepare(entry: AssistantInboxEntry): Promise<'ready' | 'wait' | 'invalid'>
   capacity(): number
-  execute(entry: ClaimedEntry, images: PromptImageInput[]): Promise<SettleResult>
+  execute(
+    entry: ClaimedEntry,
+    images: PromptImageInput[],
+    parent?: AssistantInboxEntry
+  ): Promise<SettleResult>
   recoverOutcome(entry: ClaimedEntry): Exclude<SettleResult, 'defer'>
   changed(sessionId: string): void
   jobsChanged?(version: ChatQueueJobsVersion): void
@@ -77,6 +83,14 @@ export interface DurableChat {
   isPaused(sessionId: string): boolean
   removeConversation(sessionId: string): Promise<void>
   submit(text: unknown, target: unknown, id: unknown): Promise<ChatQueueReceipt>
+  supplement(
+    parent: AssistantInboxEntry,
+    text: string,
+    images: unknown,
+    requestId: unknown,
+    authorize: () => void
+  ): Promise<ChatQueueReceipt | null>
+  taskEntries(): Promise<readonly AssistantInboxEntry[]>
   list(sessionId: unknown): Promise<ChatQueueItem[]>
   listJobs(): Promise<ChatQueueJobsSnapshot>
   cancel(sessionId: unknown, itemId: unknown): Promise<boolean>
@@ -181,8 +195,14 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
             return settled
           }
         },
-        prepare: (entry) =>
-          paused.has(entry.scope.conversationId) ? Promise.resolve('wait') : options.prepare(entry),
+        prepare: async (entry) => {
+          if (paused.has(entry.scope.conversationId)) return 'wait'
+          if (entry.supplementTo) {
+            const parent = await supplementParent(store, entry)
+            if (parent?.status !== 'succeeded') return 'invalid'
+          }
+          return options.prepare(entry)
+        },
         capacity: options.capacity,
         execute: async (entry) => {
           let images: PromptImageInput[]
@@ -195,7 +215,10 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
             return 'failed'
           }
           if (closing || paused.has(entry.scope.conversationId)) return 'defer'
-          return confirmCompleted(entry, await options.execute(entry, images))
+          const parent = entry.supplementTo ? await supplementParent(store, entry) : undefined
+          if (closing || paused.has(entry.scope.conversationId)) return 'defer'
+          if (entry.supplementTo && parent?.status !== 'succeeded') return 'failed'
+          return confirmCompleted(entry, await options.execute(entry, images, parent))
         },
         changed,
         log: options.log
@@ -217,6 +240,55 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
       () => pending.delete(result)
     )
     return result
+  }
+
+  async function supplementParent(
+    store: AssistantInbox,
+    entry: AssistantInboxEntry
+  ): Promise<AssistantInboxEntry | undefined> {
+    return (await store.list(entry.scope)).find((candidate) => candidate.id === entry.supplementTo)
+  }
+
+  function confirmInOrder<T>(work: () => Promise<T>): Promise<T> {
+    const accepted = acceptances.then(work)
+    acceptances = accepted.then(
+      () => undefined,
+      () => undefined
+    )
+    return accepted
+  }
+
+  async function acceptSubmission(
+    store: AssistantInbox,
+    destination: BoundChatQueueTarget,
+    requestId: string,
+    message: string,
+    images: PromptImageInput[],
+    optionsForSubmission: { retryUserMessageId?: string; supplementTo?: string }
+  ): Promise<ChatQueueReceipt> {
+    const sessionId = destination.scope.conversationId
+    await confirmSessionFile(join(options.sessionDirectory(sessionId), 'manifest.json'))
+    if (
+      paused.has(sessionId) ||
+      options.scope(sessionId)?.projectId !== destination.scope.projectId
+    ) {
+      throw new Error('会话已删除或正在删除')
+    }
+    const entry = await store.submit(destination.scope, requestId, message, {
+      images,
+      mode: destination.workMode === 'plan_execute' ? 'plan-execute' : destination.workMode,
+      binding: destination.binding,
+      ...optionsForSubmission
+    })
+    pendingQueue = true
+    changed(sessionId)
+    dispatch?.wake()
+    return {
+      id: entry.id,
+      sessionId,
+      path: destination.path,
+      sessionGeneration: destination.sessionGeneration
+    }
   }
 
   function beginShutdown(): void {
@@ -279,39 +351,48 @@ export function createDurableChat(options: DurableChatOptions): DurableChat {
           (destination) => ({ ok: true, destination }) as const,
           (error: unknown) => ({ ok: false, error }) as const
         )
-        const accepted = acceptances.then(async () => {
+        return confirmInOrder(async () => {
           const resolved = await bound
           if (!resolved.ok) throw resolved.error
-          const { destination } = resolved
-          const sessionId = destination.scope.conversationId
-          await confirmSessionFile(join(options.sessionDirectory(sessionId), 'manifest.json'))
-          if (
-            paused.has(sessionId) ||
-            options.scope(sessionId)?.projectId !== destination.scope.projectId
-          ) {
-            throw new Error('会话已删除或正在删除')
-          }
-          const entry = await store.submit(destination.scope, requestId, message, {
-            images,
-            mode: destination.workMode === 'plan_execute' ? 'plan-execute' : destination.workMode,
-            binding: destination.binding,
+          return acceptSubmission(store, resolved.destination, requestId, message, images, {
             retryUserMessageId: parsed.retryUserMessageId
           })
-          pendingQueue = true
-          changed(sessionId)
-          dispatch?.wake()
-          return {
-            id: entry.id,
-            sessionId,
-            path: destination.path,
-            sessionGeneration: destination.sessionGeneration
+        })
+      }),
+    supplement: (parent, text, imageInput, id, authorize) =>
+      tracked((store) =>
+        confirmInOrder(async () => {
+          const requestId = requestIdSchema.parse(id)
+          const images = validatePromptImages(imageInput)
+          if (!text.trim() || Buffer.byteLength(text) > 64 * 1024) {
+            throw new Error('Invalid assistant inbox submission.')
+          }
+          const destination = options.supplementTarget?.(parent)
+          if (!destination || paused.has(parent.scope.conversationId)) return null
+          const workMode =
+            parent.mode === 'plan-execute' ? 'plan_execute' : (parent.mode ?? destination.workMode)
+          authorize()
+          try {
+            return await acceptSubmission(
+              store,
+              { ...destination, workMode },
+              requestId,
+              text,
+              images,
+              {
+                supplementTo: parent.id
+              }
+            )
+          } catch (error) {
+            if (error instanceof InboxSupplementTargetError) return null
+            throw error
           }
         })
-        acceptances = accepted.then(
-          () => undefined,
-          () => undefined
-        )
-        return accepted
+      ),
+    taskEntries: () =>
+      tracked(async (store) => {
+        const { entries } = await store.snapshot()
+        return entries
       }),
     list: (id) =>
       tracked(async (store) => {

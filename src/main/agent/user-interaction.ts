@@ -71,10 +71,22 @@ export function resolveAgentUserInteraction(
   pending.settle({ ...response, requestId, cancelled })
 }
 
-export function cancelAgentUserInteractions(): void {
+export function cancelAgentUserInteractions(scope?: {
+  sessionId: string
+  runId: string
+}): string[] {
+  const cancelled: string[] = []
   for (const [requestId, pending] of [...pendingInteractions.entries()]) {
+    if (
+      scope &&
+      (pending.request.sessionId !== scope.sessionId || pending.request.runId !== scope.runId)
+    ) {
+      continue
+    }
     pending.settle({ requestId, answers: [], cancelled: true })
+    cancelled.push(requestId)
   }
+  return cancelled
 }
 
 /**

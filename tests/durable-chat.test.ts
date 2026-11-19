@@ -101,3 +101,68 @@ test('durable chat captures destinations immediately and acknowledges concurrent
     await chat.shutdown()
   }
 })
+
+test('a cancelled predecessor never releases its supplemental prompt to the executor', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'phi-durable-supplement-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const scope = { conversationId: randomUUID(), projectId: null }
+  await writeFile(join(directory, 'manifest.json'), '{}', { mode: 0o600 })
+  const destination: BoundChatQueueTarget = {
+    scope,
+    sessionKey: scope.conversationId,
+    path: `phi-session:${scope.conversationId}`,
+    snapshot: { path: undefined, cwd: directory, permissionMode: 'auto' },
+    binding: 'a'.repeat(64),
+    sessionGeneration: 0,
+    workMode: 'auto'
+  }
+  const execution: string[] = []
+  const invalid = Promise.withResolvers<void>()
+  let supplementId: string | undefined
+  let capacity = 0
+  const chat = createDurableChat({
+    directory: join(directory, 'inbox'),
+    bind: () => destination,
+    supplementTarget: () => destination,
+    sessionDirectory: () => directory,
+    scope: () => scope,
+    prepare: async () => 'ready',
+    capacity: () => capacity,
+    async execute(entry) {
+      execution.push(entry.id)
+      return 'failed'
+    },
+    recoverOutcome: () => 'interrupted',
+    changed() {
+      if (!supplementId) return
+      void chat.list(scope.conversationId).then((items) => {
+        if (items.some((item) => item.id === supplementId && item.status === 'failed')) {
+          invalid.resolve()
+        }
+      }, invalid.reject)
+    },
+    log: invalid.reject
+  })
+  await chat.start()
+  try {
+    const target = { path: destination.path, cwd: directory }
+    const { id: parentId } = await chat.submit('original', target, randomUUID())
+    const [parent] = await chat.taskEntries()
+    const supplement = await chat.supplement(
+      parent,
+      'more details',
+      undefined,
+      randomUUID(),
+      () => undefined
+    )
+    assert.ok(supplement)
+    supplementId = supplement.id
+    assert.equal(await chat.cancel(scope.conversationId, parentId), true)
+    capacity = 1
+    chat.activate()
+    await invalid.promise
+    assert.deepEqual(execution, [])
+  } finally {
+    await chat.shutdown()
+  }
+})

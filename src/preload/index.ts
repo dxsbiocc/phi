@@ -1,3 +1,4 @@
+import type { TaskEventResult } from '../shared/taskEventTypes'
 import type {
   ModelAvailabilityChange,
   ModelAvailabilitySnapshot
@@ -888,6 +889,11 @@ type RendererAuthApi = PreloadApiBase & {
     target: ChatQueueTarget,
     requestId: string
   ) => Promise<ChatQueueReceipt>
+  routeTaskEvent: (
+    text: string,
+    target: ChatQueueTarget | null,
+    requestId: string
+  ) => Promise<TaskEventResult>
   listQueuedPrompts: (sessionId: string) => Promise<ChatQueueItem[]>
   listChatQueueJobs: () => Promise<ChatQueueJobsSnapshot>
   onChatQueueJobsChanged: (cb: (version: ChatQueueJobsVersion) => void) => Unsubscribe
@@ -897,7 +903,7 @@ type RendererAuthApi = PreloadApiBase & {
   readWorkspaceDiff: (ref: WorkspaceDiffReference) => Promise<string>
   onAgentEvent: (cb: (event: AgentEventSummary) => void) => Unsubscribe
   onAgentUserInteractionRequest: (cb: (event: AgentUserInteractionRequest) => void) => Unsubscribe
-  onAgentUserInteractionCancelled: (cb: () => void) => Unsubscribe
+  onAgentUserInteractionCancelled: (cb: (requestId?: string) => void) => Unsubscribe
   respondAgentUserInteraction: (
     requestId: string,
     response: AgentUserInteractionResponse,
@@ -1543,6 +1549,12 @@ const api: RendererAuthApi = {
     requestId: string
   ): Promise<ChatQueueReceipt> =>
     ipcRenderer.invoke(IPC.agent.submitQueuedPrompt, text, target, requestId),
+  routeTaskEvent: (
+    text: string,
+    target: ChatQueueTarget | null,
+    requestId: string
+  ): Promise<TaskEventResult> =>
+    ipcRenderer.invoke(IPC.agent.routeTaskEvent, text, target, requestId),
   listQueuedPrompts: (sessionId: string): Promise<ChatQueueItem[]> =>
     ipcRenderer.invoke(IPC.agent.listQueuedPrompts, sessionId),
   listChatQueueJobs: (): Promise<ChatQueueJobsSnapshot> =>
@@ -2089,9 +2101,9 @@ const api: RendererAuthApi = {
       ipcRenderer.removeListener(IPC.agent.interactionRequested, handler)
     }
   },
-  onAgentUserInteractionCancelled: (cb: () => void): Unsubscribe => {
-    const handler = (): void => {
-      cb()
+  onAgentUserInteractionCancelled: (cb: (requestId?: string) => void): Unsubscribe => {
+    const handler = (_: unknown, requestId?: string): void => {
+      cb(requestId)
     }
 
     ipcRenderer.on(IPC.agent.interactionCancelled, handler)

@@ -72,8 +72,8 @@ export function useSessionEventBridge(deps: Omit<SessionEventBridgeDeps, 'store'
       rendererApi.onAgentUserInteractionRequest((event) =>
         handleAgentUserInteractionRequest(bridge, event)
       ),
-      rendererApi.onAgentUserInteractionCancelled(() =>
-        handleAgentUserInteractionCancelled(bridge)
+      rendererApi.onAgentUserInteractionCancelled((requestId) =>
+        handleAgentUserInteractionCancelled(bridge, requestId)
       ),
       rendererApi.onAnalysisNotebookDraftChanged(handleNotebookDraftChanged),
       rendererApi.onAnalysisNotebookFileChanged(handleNotebookFileChangedEvent),

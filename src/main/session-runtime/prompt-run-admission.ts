@@ -23,6 +23,8 @@ export interface SubmitPromptInput {
     submissionId: string
     attemptId: string
     workMode: WorkMode
+    supplementTo?: string
+    providerText?: string
     revalidate(): void
   }
 }

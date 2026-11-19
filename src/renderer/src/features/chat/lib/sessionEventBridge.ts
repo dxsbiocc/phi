@@ -64,6 +64,7 @@ export type SessionEventStoreState = {
   activeAgentEventStateKey: string | null
   agentEventState: AgentEventReducerState
   pendingApproval: ToolApprovalRequest | null
+  pendingUserInteraction: AgentUserInteractionRequest | null
   setAgentEventState: (state: AgentEventReducerState) => void
   setActiveSessionRuntimeState: (state: SessionRuntimeState) => void
   setVisibleAgentEventState: (
@@ -290,11 +291,21 @@ export function handleAgentUserInteractionRequest(
   })
 }
 
-export function handleAgentUserInteractionCancelled(deps: SessionEventBridgeDeps): void {
-  deps.cancelTrustedOverlay('interaction')
-  pendingUserInteractionsBySession.clear()
+export function handleAgentUserInteractionCancelled(
+  deps: SessionEventBridgeDeps,
+  requestId?: string
+): void {
+  deps.cancelTrustedOverlay('interaction', requestId)
   const state = deps.store.getState()
-  state.setPendingUserInteraction(null)
+  if (requestId) {
+    for (const [key, request] of pendingUserInteractionsBySession) {
+      if (request.requestId === requestId) pendingUserInteractionsBySession.delete(key)
+    }
+    if (state.pendingUserInteraction?.requestId === requestId) state.setPendingUserInteraction(null)
+  } else {
+    pendingUserInteractionsBySession.clear()
+    state.setPendingUserInteraction(null)
+  }
   state.scheduleSessionRefresh()
 }
 

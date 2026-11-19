@@ -1,5 +1,6 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from 'react'
 import type { ChatQueueReceipt, ChatQueueTarget } from '../../../../../shared/chatQueueTypes'
+import type { TaskEventNotice } from '../../../../../shared/taskEventTypes'
 import type { PromptImageInput } from '../../../../../shared/promptImageTypes'
 import { moveSessionDraft, sessionDraftKey, updateSessionDraft } from '../../../lib/sessionDrafts'
 import { useSessionStore } from '../../../stores/sessionStore'
@@ -7,10 +8,11 @@ import type { CurrentSession, RendererApi } from '../../../types'
 import { createChatPromptRequests } from '../lib/chatPromptRequests'
 
 interface DurableChatSubmissionOptions {
-  api: Pick<RendererApi, 'submitQueuedPrompt' | 'getCurrentSession'>
+  api: Pick<RendererApi, 'submitQueuedPrompt' | 'routeTaskEvent' | 'getCurrentSession'>
   navigationRequest: { current: number }
   setDraftImages: Dispatch<SetStateAction<Record<string, PromptImageInput[]>>>
   onMaterialized: (session: CurrentSession) => void
+  onTaskEvent: (notice: TaskEventNotice) => void
   onError: (error: unknown) => void
 }
 
@@ -41,11 +43,16 @@ export function useDurableChatSubmission({
   navigationRequest,
   setDraftImages,
   onMaterialized,
+  onTaskEvent,
   onError
 }: DurableChatSubmissionOptions): {
   draftEdited: (key: string) => void
   restoreHomeDraft: (text: string, target: CurrentSession) => void
-  submit: (text: string, target: ChatQueueTarget, draft?: DraftSubmission) => Promise<boolean>
+  submit: (
+    text: string,
+    target: ChatQueueTarget,
+    draft?: DraftSubmission
+  ) => Promise<boolean | 'editable'>
 } {
   const [requests] = useState(createChatPromptRequests)
 
@@ -78,7 +85,11 @@ export function useDurableChatSubmission({
   )
 
   const submit = useCallback(
-    async (text: string, target: ChatQueueTarget, draft?: DraftSubmission): Promise<boolean> => {
+    async (
+      text: string,
+      target: ChatQueueTarget,
+      draft?: DraftSubmission
+    ): Promise<boolean | 'editable'> => {
       const owner = sessionDraftKey({ ...target, sessionGeneration: target.sessionGeneration ?? 0 })
       const requestKey = target.retryUserMessageId
         ? `retry:${owner}:${target.retryUserMessageId}`
@@ -86,9 +97,20 @@ export function useDurableChatSubmission({
       const attempt = requests.begin(draft?.key ?? requestKey)
       if (!attempt) return true
       const navigation = navigationRequest.current
-      let receipt: ChatQueueReceipt
+      let receipt: ChatQueueReceipt | undefined
+      let keepDraft = false
       try {
-        receipt = await api.submitQueuedPrompt(text.trim(), target, attempt.requestId)
+        if (target.retryUserMessageId) {
+          receipt = await api.submitQueuedPrompt(text.trim(), target, attempt.requestId)
+        } else {
+          const result = await api.routeTaskEvent(text.trim(), target, attempt.requestId)
+          if (result.kind === 'submitted') {
+            receipt = result.receipt
+          } else {
+            onTaskEvent(result)
+            keepDraft = result.kind === 'clarify' || result.kind === 'unavailable'
+          }
+        }
       } catch (error) {
         attempt.finish(false)
         if (draft || target.retryUserMessageId) onError(error)
@@ -96,7 +118,7 @@ export function useDurableChatSubmission({
       }
 
       const key = attempt.finish(true)
-      if (draft && key) {
+      if (draft && key && !keepDraft) {
         useSessionStore
           .getState()
           .setDraftInputs((previous) =>
@@ -113,10 +135,10 @@ export function useDurableChatSubmission({
       }
       useSessionStore.getState().scheduleSessionRefresh()
       // The acceptance is already durable even if the adoption fetch fails or the user navigates.
-      void materialize(target, receipt, navigation).catch(onError)
-      return true
+      if (receipt) void materialize(target, receipt, navigation).catch(onError)
+      return keepDraft && !draft ? 'editable' : true
     },
-    [api, materialize, navigationRequest, onError, requests, setDraftImages]
+    [api, materialize, navigationRequest, onError, onTaskEvent, requests, setDraftImages]
   )
 
   const restoreHomeDraft = useCallback(

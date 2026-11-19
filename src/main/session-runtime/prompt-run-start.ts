@@ -124,6 +124,7 @@ function preparePromptRunForQueue(
       runId,
       content: normalizedText,
       ...(durable ? { submissionId: durable.submissionId } : {}),
+      ...(durable?.supplementTo ? { supplementTo: durable.supplementTo } : {}),
       ...(images.length ? { images } : {})
     }
     if (input.automatic) {

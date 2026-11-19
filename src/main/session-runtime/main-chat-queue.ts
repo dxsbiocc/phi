@@ -20,6 +20,7 @@ import { createDurableChat, type BoundChatQueueTarget, type DurableChat } from '
 import { PromptRunDeferredError, PromptRunTargetChangedError } from './prompt-run-admission'
 import type { PromptRunQueue } from './prompt-run-queue'
 import type { SessionResolution } from './session-resolution'
+import { taskSupplementPrompt } from './task-supplement-prompt'
 
 export interface MainChatQueueOptions {
   directory: string
@@ -119,7 +120,8 @@ export function createMainChatQueue(options: MainChatQueueOptions): DurableChat 
 
   async function executeQueuedPrompt(
     entry: ClaimedEntry,
-    images: PromptImageInput[]
+    images: PromptImageInput[],
+    parent?: AssistantInboxEntry
   ): Promise<SettleResult> {
     const target = getQueuedPromptTarget(entry)
     if (!target) return 'failed'
@@ -128,6 +130,10 @@ export function createMainChatQueue(options: MainChatQueueOptions): DurableChat 
     const workMode: WorkMode =
       entry.mode === 'plan-execute' ? 'plan_execute' : (entry.mode ?? target.workMode)
     try {
+      const providerText = parent
+        ? taskSupplementPrompt(parent, entry.text, readSessionEvents(conversationId))
+        : undefined
+      if (parent && !providerText) return 'failed'
       await options.submit({
         sessionKey: target.sessionKey,
         snapshot: target.snapshot,
@@ -149,6 +155,7 @@ export function createMainChatQueue(options: MainChatQueueOptions): DurableChat 
           submissionId: entry.id,
           attemptId: entry.attemptId,
           workMode,
+          ...(parent ? { supplementTo: parent.id, providerText } : {}),
           revalidate() {
             const current = getQueuedPromptTarget(entry)
             if (!current || current.sessionKey !== target.sessionKey) {
@@ -175,6 +182,7 @@ export function createMainChatQueue(options: MainChatQueueOptions): DurableChat 
     directory: options.directory,
     bind: chatQueueTargets.bind,
     sessionDirectory: getSessionDir,
+    supplementTarget: getQueuedPromptTarget,
     scope: (sessionId) => {
       const manifest = findPhiSessionById(sessionId)
       return manifest ? { conversationId: sessionId, projectId: manifest.projectId } : null

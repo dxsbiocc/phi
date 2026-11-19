@@ -75,6 +75,7 @@ function harness(
     activeAgentEventStateKey: activeKey,
     agentEventState: createAgentEventReducerState(),
     pendingApproval: null,
+    pendingUserInteraction: null,
     setAgentEventState: (next) => {
       state.agentEventState = next
       writes.push('agentEventState')
@@ -88,7 +89,10 @@ function harness(
       state.pendingApproval = approval
       writes.push('pendingApproval')
     },
-    setPendingUserInteraction: () => writes.push('pendingInteraction'),
+    setPendingUserInteraction: (request) => {
+      state.pendingUserInteraction = request
+      writes.push('pendingInteraction')
+    },
     storeSessionRuntimeState: (key, next) => {
       sessionRuntimeStates.set(key, next)
       writes.push('runtime')
@@ -384,6 +388,36 @@ test('a cancelled user interaction clears the pending prompt and schedules a ref
   assert.deepEqual(h.cancels, [['interaction', undefined]])
   assert.ok(h.writes.includes('pendingInteraction'))
   assert.ok(h.writes.includes('scheduleRefresh'))
+})
+
+test('a scoped cancellation preserves the other chat’s pending question', () => {
+  const h = harness()
+  const request: AgentUserInteractionRequest = {
+    requestId: 'interaction-a',
+    questions: [{ question: 'Continue?', header: 'Confirm', options: [] }],
+    sessionId: 'phi-a',
+    sessionPath: '/a.jsonl',
+    sessionGeneration: 3,
+    runId: 'run-a'
+  }
+  handleAgentUserInteractionRequest(h.deps, request)
+  handleAgentUserInteractionRequest(h.deps, {
+    ...request,
+    requestId: 'interaction-b',
+    sessionId: 'phi-b',
+    sessionPath: '/b.jsonl',
+    runId: 'run-b'
+  })
+  h.overlays.forEach((overlay) => overlay.publish())
+
+  handleAgentUserInteractionCancelled(h.deps, 'interaction-b')
+  assert.equal(h.state.pendingUserInteraction?.requestId, 'interaction-a')
+  assert.deepEqual([...pendingUserInteractionsBySession.values()], [request])
+  assert.deepEqual(h.cancels, [['interaction', 'interaction-b']])
+
+  handleAgentUserInteractionCancelled(h.deps, 'interaction-a')
+  assert.equal(h.state.pendingUserInteraction, null)
+  assert.equal(pendingUserInteractionsBySession.size, 0)
 })
 
 test('an auth prompt publishes through the overlay and reveals settings without the browser gate', () => {

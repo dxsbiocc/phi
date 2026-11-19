@@ -569,3 +569,49 @@ test(
     assert.equal(await readFile(path, 'utf8'), empty)
   }
 )
+
+test('a concurrent supplement retry is atomically bound to only one conversation and parent', async (t) => {
+  const { directory } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const left = await inbox.submit(scope, 'source-left', 'left')
+  const right = await inbox.submit(peer, 'source-right', 'right')
+  const request = randomUUID()
+  const results = await Promise.allSettled([
+    inbox.submit(scope, request, 'supplement', { supplementTo: left.id }),
+    inbox.submit(peer, request, 'supplement', { supplementTo: right.id })
+  ])
+  assert.equal(results[0].status, 'fulfilled')
+  assert.equal(results[1].status, 'rejected')
+  const only = (await inbox.snapshot()).entries.filter((entry) => entry.requestId === request)
+  assert.equal(only.length, 1)
+  assert.equal(only[0].supplementTo, left.id)
+  assert.deepEqual(
+    await inbox.submit(scope, request, 'supplement', { supplementTo: left.id }),
+    only[0]
+  )
+  await assert.rejects(
+    inbox.submit(peer, randomUUID(), 'supplement', { supplementTo: left.id }),
+    /no longer receive/
+  )
+})
+
+test('recovery preserves an expired successful parent while a dependent supplement is queued', async (t) => {
+  const { directory } = await fixture(t)
+  const inbox = createAssistantInbox(directory)
+  const source = await inbox.submit(scope, 'source', 'original')
+  const attempt = randomUUID()
+  await inbox.claim(scope, attempt, source.id)
+  await inbox.settle(scope, source.id, attempt, 'succeeded')
+  const supplement = await inbox.submit(scope, 'follow-up', 'more details', {
+    supplementTo: source.id
+  })
+  t.mock.method(Date, 'now', () => 4_000_000_000_000)
+  const recovered = createAssistantInbox(directory)
+  await recovered.recover()
+  assert.equal((await recovered.list(scope))[0].id, source.id)
+  const nextAttempt = randomUUID()
+  assert.equal((await recovered.claim(scope, nextAttempt))?.id, supplement.id)
+  await recovered.settle(scope, supplement.id, nextAttempt, 'succeeded')
+  await recovered.submit(scope, 'new', 'elsewhere')
+  assert.ok(!(await recovered.list(scope)).some((entry) => entry.id === source.id))
+})
