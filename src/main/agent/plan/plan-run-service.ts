@@ -9,7 +9,7 @@ import type {
   PlanSpec,
   PlanStep
 } from '../../../shared/planRunTypes'
-import { PLAN_MAX_REPLANS } from '../../../shared/planRunTypes'
+import { isResearchPause, PLAN_MAX_REPLANS } from '../../../shared/planRunTypes'
 import { agentRunCompletions } from './execution/agent-run-completions'
 import { createEngineStepRunner } from './execution/engine-step-runner'
 import {
@@ -601,6 +601,15 @@ class PlanRunServiceImplementation<
       return states
     } finally {
       this.recoveries.delete(phiSessionId)
+    }
+  }
+
+  async replayResearchPauses(phiSessionId: string): Promise<void> {
+    // Recovery primes change fingerprints; a waiting question is still actionable even
+    // when the step did not change. The desktop tracks actual prompt admission receipts.
+    for (const saved of await this.recoverSession(phiSessionId)) {
+      const state = this.executor.get(saved.id) ?? saved
+      if (isResearchPause(state)) emitTimeline(this.deps, 'plan_run_updated', state)
     }
   }
 

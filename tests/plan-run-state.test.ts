@@ -571,3 +571,28 @@ test('persisted ambiguous launch requires a request ID', () => {
     null
   )
 })
+
+test('plan recovery preserves the approved question and a replan cannot remove or redirect it', () => {
+  const researchQuestion = 'Which genes passed the agreed threshold?'
+  const approved = { ...spec([step('a'), step('b')]), researchQuestion }
+  const run = createPlanRunState({ id: 'run', sessionId: 'session', spec: approved, now: start })
+  const parsed = kernelMethodResultSchemas['planRuns.get'].parse(JSON.parse(JSON.stringify(run)))
+  assert.deepEqual(validatePlanRunState(parsed)?.spec, approved)
+  const paused = reducePlanRun(run, { type: 'pause', at: at(1) })
+  for (const changed of [undefined, 'Should we explore another pathway?']) {
+    expectCode(
+      () =>
+        reducePlanRun(paused, {
+          type: 'replace_remaining_steps',
+          spec: { ...approved, researchQuestion: changed },
+          at: at(2)
+        }),
+      'INVALID_REPLACEMENT'
+    )
+  }
+  assert.equal(
+    reducePlanRun(paused, { type: 'replace_remaining_steps', spec: approved, at: at(2) }).spec
+      .researchQuestion,
+    researchQuestion
+  )
+})

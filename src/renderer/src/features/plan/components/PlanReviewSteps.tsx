@@ -72,16 +72,23 @@ function PlanReviewStep({
 export function PlanReviewSteps({ plan }: { plan: PlanSpec }): React.JSX.Element {
   const stepNumbers = new Map(plan.steps.map((step, index) => [step.id, index + 1]))
   return (
-    <Box component="ol" data-phi-plan-steps sx={{ m: 0, p: 0, listStyle: 'none' }}>
-      {plan.steps.map((step, index) => (
-        <PlanReviewStep
-          key={step.id}
-          step={step}
-          index={index}
-          isLast={index === plan.steps.length - 1}
-          stepNumbers={stepNumbers}
-        />
-      ))}
-    </Box>
+    <>
+      {plan.researchQuestion ? (
+        <Typography variant="body2" component="p" sx={{ mb: 1, whiteSpace: 'pre-wrap' }}>
+          <strong>{planCopy.researchQuestion}</strong> {plan.researchQuestion}
+        </Typography>
+      ) : null}
+      <Box component="ol" data-phi-plan-steps sx={{ m: 0, p: 0, listStyle: 'none' }}>
+        {plan.steps.map((step, index) => (
+          <PlanReviewStep
+            key={step.id}
+            step={step}
+            index={index}
+            isLast={index === plan.steps.length - 1}
+            stepNumbers={stepNumbers}
+          />
+        ))}
+      </Box>
+    </>
   )
 }

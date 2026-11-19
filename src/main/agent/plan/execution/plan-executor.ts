@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import type { AgentReport } from '../../agents/report'
-import type { PlanRunState, PlanSpec, PlanStepReportSummary } from '../../../../shared/planRunTypes'
+import {
+  PLAN_MAX_REPORT_SUMMARY_BYTES,
+  type PlanRunState,
+  type PlanSpec,
+  type PlanStepReportSummary
+} from '../../../../shared/planRunTypes'
 import { createPlanRunState, reducePlanRun, type PlanRunEvent } from '../model/plan-run-state'
 import { validatePlanSpec } from '../model/plan-spec'
 import { planStepAgent } from '../model/plan-step-agent'
@@ -90,7 +95,7 @@ function errorText(error: unknown): string {
 function reportSummary(report: AgentReport): PlanStepReportSummary {
   return {
     status: report.status,
-    text: truncateUtf8(report.text, 8 * 1024),
+    text: truncateUtf8(report.text, PLAN_MAX_REPORT_SUMMARY_BYTES),
     missingInputs: [...report.missingInputs]
   }
 }
@@ -250,6 +255,7 @@ class PlanExecutorImplementation implements PlanExecutor {
         agent: planStepAgent(step),
         ...(requestId ? { requestId } : {}),
         task: buildStepPrompt(state, stepId),
+        ...(state.spec.researchQuestion ? { researchQuestion: state.spec.researchQuestion } : {}),
         signal: controller.signal
       })
     } catch (error) {

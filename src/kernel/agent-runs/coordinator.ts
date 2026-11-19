@@ -110,7 +110,7 @@ export class KernelAgentRunCoordinator implements KernelAgentRunRuntime {
 
   async start(
     sessionId: string,
-    input: { requestId: string; agent?: string; task: string }
+    input: { requestId: string; agent?: string; task: string; researchQuestion?: string }
   ): Promise<AgentRunSnapshotDto> {
     const started = (await this.callWorker('agentRun.start', { sessionId, ...input })) as {
       runId?: unknown

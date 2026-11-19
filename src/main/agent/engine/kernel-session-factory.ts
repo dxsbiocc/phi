@@ -784,7 +784,13 @@ export class KernelSessionFactory implements RoutedSessionFactory {
       return
     }
     if (binding.hostKey !== host.key || binding.disposed) return
-    projectKernelEvent(binding, event, payload, this.options.onPlanRunFinished)
+    projectKernelEvent(
+      binding,
+      event,
+      payload,
+      this.options.onPlanRunFinished,
+      this.options.onResearchPlanUpdate
+    )
   }
 
   private hostFor(params: PhiSessionCreateParams): KernelExecutionHost {

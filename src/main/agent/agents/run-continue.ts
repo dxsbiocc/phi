@@ -1,6 +1,14 @@
+import { RESEARCH_RESULT_REVIEW } from './leader-prompt'
+import { isResearchQuestion, readScientificHandoff } from './research-handoff'
+import { researchPlanPausePrompt } from '../plan/research-plan-pause'
 import type { AgentRunEndState, AgentRunFinishedEvent } from '../../../shared/agentRunNotice'
 import type { WrapperRunFinishedEvent } from '../../../shared/wrapperRunNotice'
-import type { PlanRunFinishedEvent, PlanRunState } from '../../../shared/planRunTypes'
+import type {
+  PlanRunFinishedEvent,
+  PlanRunState,
+  PlanStepState,
+  ResearchPlanPausedEvent
+} from '../../../shared/planRunTypes'
 import type { ShellJobFinishedEvent } from '../../../shared/backgroundJobTypes'
 import {
   MAX_AUTOMATIC_CONTINUATIONS,
@@ -16,7 +24,11 @@ import {
  */
 
 export type ContinuationEvent =
-  WrapperRunFinishedEvent | AgentRunFinishedEvent | PlanRunFinishedEvent | ShellJobFinishedEvent
+  | WrapperRunFinishedEvent
+  | AgentRunFinishedEvent
+  | PlanRunFinishedEvent
+  | ResearchPlanPausedEvent
+  | ShellJobFinishedEvent
 
 export type AgentContinueDecision =
   { continue: true } | { continue: false; reason: 'cancelled' | 'limit' }
@@ -97,6 +109,7 @@ export function agentRunContinuationPrompt(events: readonly AgentRunFinishedEven
     } you started ${events.length === 1 ? 'has' : 'have'} ended:`,
     ...events.map(describe),
     'Continue with what the user asked for, using these results.',
+    RESEARCH_RESULT_REVIEW,
     'If a completed report produced files, the closing reply must name the new or modified files with exact paths and purposes. A project directory or a delivery card alone is not enough; do not claim an output exists unless the report or a file check confirms it.',
     ...(anyFailed
       ? [
@@ -124,23 +137,148 @@ function describePlanRun(state: PlanRunState): string[] {
 }
 
 export function planRunContinuationPrompt(events: readonly PlanRunFinishedEvent[]): string {
+  const research = events.some(({ state }) => state.spec.researchQuestion !== undefined)
   const header = [
     '<phi_plan_run_finished>',
     'This message is from Phi, not from the user. Approved plan execution has finished:'
   ].join('\n')
-  const details = events.flatMap((event) => describePlanRun(event.state)).join('\n')
   const closing = [
-    'Each step was already checked against its own completion criteria before it finished, so summarize from the step reports. Spot-check at most one or two key results the user directly asked about, such as a final number or the main output file; do not re-verify every file or rerun the analysis. If a spot check disagrees with a report, say so plainly.',
+    research
+      ? 'Read the recorded step statuses and evidence. A completed subtask or skipped analysis is not proof that the research question has been answered.'
+      : 'Each step was already checked against its own completion criteria before it finished, so summarize from the step reports. Spot-check at most one or two key results the user directly asked about, such as a final number or the main output file; do not re-verify every file or rerun the analysis. If a spot check disagrees with a report, say so plainly.',
     'Call out failed or skipped steps clearly. Do not silently rerun the plan.',
+    ...(research
+      ? [
+          RESEARCH_RESULT_REVIEW,
+          'Where a step summary is omitted or marked insufficient evidence, report that gap and use the run/step reference or evidence path to inspect the stored record; never guess the missing finding.'
+        ]
+      : []),
     'Reply in the language the user has been using.',
     '</phi_plan_run_finished>'
   ].join('\n')
+  if (research) {
+    const detailLimit = MAX_PLAN_CONTINUATION_LENGTH - header.length - closing.length - 2
+    return `${header}\n${boundedPlanDetails(events, detailLimit)}\n${closing}`
+  }
+  const details = events.flatMap((event) => describePlanRun(event.state)).join('\n')
   const text = `${header}\n${details}\n${closing}`
   if (text.length <= MAX_PLAN_CONTINUATION_LENGTH) return text
   const marker = '\n… (plan summary truncated)\n'
   const detailLimit =
     MAX_PLAN_CONTINUATION_LENGTH - header.length - closing.length - marker.length - 1
   return `${header}\n${details.slice(0, Math.max(0, detailLimit))}${marker}${closing}`
+}
+
+// Reserved so the final omission marker always fits, even after the budget is spent.
+const PLAN_WAKE_OMISSION_RESERVE = 512
+const PLAN_WAKE_GOAL_LENGTH = 400
+const PLAN_WAKE_LEGACY_SUMMARY_LENGTH = 2000
+
+function singleLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+function researchStepBody(
+  runId: string,
+  stepId: string,
+  question: string,
+  result: PlanStepState | undefined
+): string {
+  if (result?.report) {
+    const handoff = readScientificHandoff(result.report.text, question, result.report.status)
+    if (handoff.structured) return `  ${handoff.text}`
+  }
+  if (result?.report || result?.error) {
+    return `  (insufficient evidence: this step has no valid scientific handoff; inspect plan run ${runId} step ${stepId})`
+  }
+  return ''
+}
+
+function legacyStepBody(result: PlanStepState | undefined): string {
+  const summary = result?.report?.text ?? result?.error
+  if (!summary) return ''
+  const flat = singleLine(summary)
+  return `  ${
+    flat.length > PLAN_WAKE_LEGACY_SUMMARY_LENGTH
+      ? `${flat.slice(0, PLAN_WAKE_LEGACY_SUMMARY_LENGTH)}… (truncated)`
+      : flat
+  }`
+}
+
+/**
+ * Scientific summaries are claims, so they go in whole or not at all. Status
+ * lines are placed first, then summaries fill the remaining budget; a step
+ * that does not fit keeps its status line and gets a run/step lookup hint.
+ */
+function boundedPlanDetails(events: readonly PlanRunFinishedEvent[], limit: number): string {
+  const budget = Math.max(0, limit - PLAN_WAKE_OMISSION_RESERVE)
+  const lines: string[] = []
+  const omitted: string[] = []
+  let used = 0
+  const fits = (line: string): boolean => used + line.length + 1 <= budget
+  const add = (line: string): boolean => {
+    if (!fits(line)) return false
+    lines.push(line)
+    used += line.length + 1
+    return true
+  }
+  const slots: Array<{ index: number; body: string; hint: string; ref: string }> = []
+  for (const event of events) {
+    const { state } = event
+    const runId = event.runId.slice(0, 64)
+    const question = state.spec.researchQuestion
+    if (question !== undefined) {
+      add(
+        isResearchQuestion(question)
+          ? `Research question (the user's original request): ${singleLine(question)}`
+          : 'Research question: not readable in the plan record; recover it from the conversation.'
+      )
+    }
+    const goalLine = `Plan run ${runId} · goal: ${singleLine(state.spec.goal).slice(0, PLAN_WAKE_GOAL_LENGTH)}`
+    if (!add(goalLine)) omitted.push(runId)
+    for (const step of state.spec.steps) {
+      const result = state.steps[step.id]
+      const stepId = step.id.slice(0, 64)
+      const head = `- ${stepId} · ${singleLine(step.title).slice(0, 120)} · ${result?.status ?? 'unknown'}`
+      const ref = `${runId}/${stepId}`
+      if (!add(head)) {
+        omitted.push(ref)
+        continue
+      }
+      const body =
+        question !== undefined
+          ? researchStepBody(runId, stepId, question, result)
+          : legacyStepBody(result)
+      if (body) {
+        slots.push({
+          index: lines.length - 1,
+          body,
+          hint: `  (summary omitted: wake-up budget; inspect plan run ${runId} step ${stepId})`,
+          ref
+        })
+      }
+    }
+  }
+  let shift = 0
+  for (const { index, body, hint, ref } of slots) {
+    const chosen = fits(body) ? body : fits(hint) ? hint : null
+    if (!chosen) {
+      omitted.push(ref)
+      continue
+    }
+    lines.splice(index + 1 + shift, 0, chosen)
+    used += chosen.length + 1
+    shift += 1
+  }
+  if (omitted.length > 0) {
+    const shown = omitted.slice(0, 3).join(', ')
+    lines.push(
+      `… (omitted for budget: ${shown}${
+        omitted.length > 3 ? ` and ${omitted.length - 3} more` : ''
+      }; inspect the stored plan records)`
+    )
+  }
+  return lines.join('\n')
 }
 
 function shellJobContinuationPrompt(events: readonly ShellJobFinishedEvent[]): string {
@@ -185,6 +323,9 @@ export function continuationPrompt(events: readonly ContinuationEvent[]): string
     ...(wrapperEvents.length > 0 ? [wrapperRunContinuationPrompt(wrapperEvents)] : []),
     ...(agentEvents.length > 0 ? [agentRunContinuationPrompt(agentEvents)] : []),
     ...(planEvents.length > 0 ? [planRunContinuationPrompt(planEvents)] : []),
+    ...events
+      .filter((event): event is ResearchPlanPausedEvent => event.type === 'research_plan_paused')
+      .map(researchPlanPausePrompt),
     ...(shellEvents.length > 0 ? [shellJobContinuationPrompt(shellEvents)] : [])
   ].join('\n\n')
 }

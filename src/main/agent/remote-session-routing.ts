@@ -1,4 +1,4 @@
-import type { PlanRunFinishedEvent } from '../../shared/planRunTypes'
+import type { PlanRunFinishedEvent, ResearchPlanPausedEvent } from '../../shared/planRunTypes'
 import type { Project } from './projects'
 import type { SessionRunnerRegistry } from './session/session-runner-registry'
 import { createRuntimeSessionManager, type RuntimeSessionManager } from './runtime/runtime-adapter'
@@ -42,6 +42,7 @@ export interface AppRemoteSessionRoutingOptions {
   }
   configuredRoot(project: Project): string
   onPlanRunFinished?(phiSessionId: string, event: PlanRunFinishedEvent): void
+  onResearchPlanUpdate?(phiSessionId: string, runId: string, pause?: ResearchPlanPausedEvent): void
   loadDesktopTools?(
     identity: {
       runtimeSessionId: string
@@ -72,6 +73,7 @@ export function installAppRemoteSessionRouting(
     hostCapabilities: kernelInstall.hostCapabilities,
     configureClient: kernelInstall.configureClient,
     ...(options.onPlanRunFinished ? { onPlanRunFinished: options.onPlanRunFinished } : {}),
+    onResearchPlanUpdate: options.onResearchPlanUpdate,
     onDiagnostic: (error) =>
       options.startupDiagnostics?.({
         phiSessionId: 'kernel-host',

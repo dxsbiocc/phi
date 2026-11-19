@@ -51,6 +51,8 @@ export interface PlanStep {
 
 export interface PlanSpec {
   version: typeof PLAN_SPEC_VERSION
+  /** User-confirmed question shared by scientific step handoffs. */
+  researchQuestion?: string
   goal: string
   steps: PlanStep[]
 }
@@ -120,6 +122,27 @@ export interface PlanRunTimelineSnapshot {
   updatedAt: string
   goal: string
   steps: PlanRunTimelineStepSnapshot[]
+}
+
+export interface ResearchPlanPausedEvent {
+  type: 'research_plan_paused'
+  runId: string
+  stepId: string
+  attempt: number
+  reason: 'needs_input' | 'step_failed'
+  originalQuestion: string
+  report?: string
+}
+
+/** Identifies one paused attempt without persisting its scientific evidence a second time. */
+export type ResearchPauseIdentity = Pick<ResearchPlanPausedEvent, 'runId' | 'stepId' | 'attempt'>
+
+export function isResearchPause(state: PlanRunState): boolean {
+  return Boolean(
+    state.spec.researchQuestion &&
+    state.status === 'paused' &&
+    (state.pause?.reason === 'needs_input' || state.pause?.reason === 'step_failed')
+  )
 }
 
 export interface PlanRunFinishedEvent {

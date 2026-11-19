@@ -78,14 +78,15 @@ test('a stop during a deferred invalidation replay cancels the submission before
     sessionKey: 'session-a',
     snapshot: { path: '/a.jsonl', cwd: '/workspace', permissionMode: 'auto' },
     text: 'continue',
-    promptTarget: null
+    promptTarget: null,
+    automatic: true,
+    onCancelledBeforeStart: () => calls.push('wake:dismissed')
   })
 
   await stopActivePrompt({
     getCurrentSessionKey: () => 'session-a',
     advancePromptGeneration: (sessionKey) => runs.advanceGeneration(sessionKey),
-    cancelPendingPromptSubmissions: (sessionKey) =>
-      runs.cancelPendingPromptSubmissions(sessionKey),
+    cancelPendingPromptSubmissions: (sessionKey) => runs.cancelPendingPromptSubmissions(sessionKey),
     getActivePromptRun: (sessionKey) => runs.activeRun(sessionKey),
     getPhiSessionIdForKey: () => undefined,
     getManualCompactionOperation: () => undefined,
@@ -94,5 +95,5 @@ test('a stop during a deferred invalidation replay cancels the submission before
   releaseFlush()
 
   assert.equal(await prompt, null)
-  assert.deepEqual(calls, ['invalidation:flush:session-a'])
+  assert.deepEqual(calls, ['invalidation:flush:session-a', 'wake:dismissed'])
 })

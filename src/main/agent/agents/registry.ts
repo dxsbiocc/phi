@@ -16,6 +16,11 @@ import {
   type AgentRunToolStep
 } from './runner'
 import { parseAgentReport, requireDeclaredCompletion, type AgentReportStatus } from './report'
+import {
+  failedResearchReport,
+  isResearchQuestion,
+  RESEARCH_HANDOFF_PROTOCOL
+} from './research-handoff'
 
 import { errorMessage } from '../../../shared/errorCodes'
 
@@ -87,6 +92,8 @@ export interface AgentLaunchInput {
   agent: string
   displayName?: string
   task: string
+  /** Opt-in to a bounded scientific report for this caller-owned question. */
+  researchQuestion?: string
   images?: AgentImage[]
   runner: AgentRunFn
   background: boolean
@@ -149,6 +156,12 @@ export function isFinalAgentRunState(state: unknown): state is FinalAgentRunStat
   return state === 'done' || state === 'error' || state === 'cancelled'
 }
 
+function taskForParent(input: AgentLaunchInput): string {
+  if (input.researchQuestion === undefined) return input.task
+  if (isResearchQuestion(input.researchQuestion)) return input.researchQuestion
+  throw new Error('A research handoff needs a concise, non-empty original research question.')
+}
+
 export class AgentRunRegistry {
   private readonly limits: AgentRunLimits
   private readonly now: () => number
@@ -183,7 +196,11 @@ export class AgentRunRegistry {
     if (!this.admission) return this.launch(input)
     const handle = this.prepare(input, false)
     try {
-      await this.admission.accept(handle.id, input)
+      // Receipts can later be replayed into the parent. The child alone needs
+      // the complete step instructions (which can contain upstream output).
+      const admissionInput =
+        input.researchQuestion === undefined ? input : { ...input, task: input.researchQuestion }
+      await this.admission.accept(handle.id, admissionInput)
       const snapshot = this.get(handle.id)
       if (!snapshot) throw new Error(`Agent run disappeared during admission: ${handle.id}`)
       await this.admission.started(handle.id, snapshot)
@@ -203,6 +220,7 @@ export class AgentRunRegistry {
   }
 
   private prepare(input: AgentLaunchInput, pump: boolean): AgentRunHandle {
+    const task = taskForParent(input)
     const origin = input.origin ?? 'tool'
     if (origin === 'tool' && this.toolRuns >= this.limits.maxRuns) {
       throw new AgentRunLimitError(this.limits.maxRuns)
@@ -221,7 +239,7 @@ export class AgentRunRegistry {
         id,
         agent: input.agent,
         ...(input.displayName ? { displayName: input.displayName } : {}),
-        task: input.task,
+        task,
         state: 'queued',
         background: input.background,
         origin,
@@ -401,18 +419,27 @@ export class AgentRunRegistry {
 
   private async execute(record: RunRecord): Promise<void> {
     const { input } = record
+    const question = input.researchQuestion
     try {
       const result = await input.runner({
-        task: input.task,
+        task:
+          question === undefined
+            ? input.task
+            : `${input.task}\n\n${RESEARCH_HANDOFF_PROTOCOL}\nOriginal research question: ${JSON.stringify(question)}`,
         ...(input.displayName ? { displayName: input.displayName } : {}),
         ...(input.images?.length ? { images: input.images } : {}),
         runId: record.snapshot.id,
         signal: record.controller.signal,
         onProgress: (line) => {
+          if (question !== undefined) return
           this.patch(record, { lastStep: line })
           input.onProgress?.(line, record.snapshot.id)
         },
-        onToolStep: (step) => {
+        onToolStep: (rawStep) => {
+          const step: AgentRunToolStep =
+            question === undefined
+              ? rawStep
+              : { id: rawStep.id, toolName: rawStep.toolName, status: rawStep.status }
           if (step.status === 'running' && step.args !== undefined) {
             this.patch(record, { lastStep: describeToolStart(step.toolName, step.args) })
           }
@@ -423,7 +450,7 @@ export class AgentRunRegistry {
           record.control = control
         }
       })
-      const parsed = parseAgentReport(result.text)
+      const parsed = parseAgentReport(result.text, question)
       const report = record.snapshot.origin === 'host' ? requireDeclaredCompletion(parsed) : parsed
       if (report.text) {
         this.finish(record, {
@@ -448,7 +475,8 @@ export class AgentRunRegistry {
       } else if (error instanceof AgentTimeoutError) {
         this.finish(record, { state: 'error', error: error.message })
       } else {
-        const reason = errorMessage(error)
+        const reason =
+          question === undefined ? errorMessage(error) : 'No scientific result was produced.'
         this.finish(record, {
           state: 'error',
           error: `The ${agentRunDisplayName(record.snapshot)} agent failed: ${reason}`
@@ -468,6 +496,13 @@ export class AgentRunRegistry {
     if (isFinalAgentRunState(record.snapshot.state)) return
     const wasRunning = record.snapshot.state === 'running'
     record.input.images = undefined
+    const question = record.input.researchQuestion
+    if (question !== undefined && (outcome.state === 'error' || outcome.state === 'cancelled')) {
+      // Error strings (including tool stderr) never enter scientific handoffs.
+      // Foreground failure consumers read error; background consumers may read only report.
+      const unavailable = failedResearchReport(question, outcome.state === 'cancelled').text
+      outcome = { ...outcome, report: unavailable, error: unavailable, reportStatus: 'failed' }
+    }
     record.snapshot = { ...record.snapshot, ...outcome, completedAt: this.now() }
     record.detachSignal?.()
     if (wasRunning) this.active -= 1

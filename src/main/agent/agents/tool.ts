@@ -3,6 +3,7 @@ import { extname, isAbsolute } from 'node:path'
 
 import type { PhiTool } from '../engine/types'
 import type { PhiAgentDefinition } from './definition'
+import { isResearchQuestion, MAX_RESEARCH_QUESTION_LENGTH } from './research-handoff'
 import {
   AgentRunLimitError,
   AgentRunRegistry,
@@ -176,6 +177,13 @@ export function buildAgentTool(
           type: 'string',
           description: `Self-contained instruction for the ${name} agent.`
         },
+        research_question: {
+          type: 'string',
+          minLength: 1,
+          maxLength: MAX_RESEARCH_QUESTION_LENGTH,
+          description:
+            'For scientific analysis, quote the relevant research question verbatim from a user message. Put clarifications, the delegated subquestion and file paths in task. This selects a concise evidence handoff.'
+        },
         ...(local
           ? {
               image_paths: {
@@ -212,6 +220,16 @@ export function buildAgentTool(
         )
       }
       const record = isRecord(params) ? params : {}
+      let researchQuestion: string | undefined
+      if (record.research_question !== undefined) {
+        const quote = record.research_question
+        if (!isResearchQuestion(quote) || !ctx?.containsUserQuestion?.(quote.trim())) {
+          return errorResult(
+            'For research_question, quote a concise passage from the user’s original or clarified research request. Include the delegated instructions separately in task.'
+          )
+        }
+        researchQuestion = quote.trim()
+      }
       let images: AgentImage[] = []
       const notes: string[] = []
       if (local) {
@@ -257,13 +275,14 @@ export function buildAgentTool(
           agent: name,
           ...(general ? { displayName } : {}),
           task: delegatedTask,
+          ...(researchQuestion ? { researchQuestion } : {}),
           ...(images.length > 0 ? { images } : {}),
           runner,
           background,
           ...(signal ? { signal } : {}),
           ...(typeof toolCallId === 'string' && toolCallId ? { toolCallId } : {}),
-          // A background run outlives this tool call, so it must not report through it.
-          ...(background
+          // Scientific handoffs keep intermediate traces at the child; background runs outlive this tool call.
+          ...(background || researchQuestion
             ? {}
             : {
                 onProgress: (line: string, agentRunId: string) =>

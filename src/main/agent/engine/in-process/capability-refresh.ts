@@ -6,7 +6,7 @@ import type {
   ToolDefinition
 } from '@oh-my-pi/pi-coding-agent'
 import type { PhiTool, PhiToolUpdate } from '../types'
-import { recentUserImages } from '../tool-adapter'
+import { createPhiToolContext } from '../tool-adapter'
 import { pickDeclaredToolInput } from '../../remote-workspace-tool-input'
 import { listActiveSkillPackages } from '../../packages/store'
 import { loadedPlugins } from '../../plugins/loader'
@@ -115,7 +115,7 @@ function capabilityExtensionTool(tool: PhiTool): ToolDefinition {
         id,
         pickDeclaredToolInput(input, tool.parameters),
         onUpdate as PhiToolUpdate | undefined,
-        { cwd: ctx.sessionManager.getCwd(), recentUserImages: () => recentUserImages(ctx) },
+        createPhiToolContext(ctx.sessionManager.getCwd(), ctx),
         signal
       )
   }

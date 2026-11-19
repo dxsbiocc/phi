@@ -4,6 +4,7 @@ import {
   type PlanStep
 } from '../../../../shared/planRunTypes'
 import { AGENT_REPORT_PROTOCOL } from '../../agents/report'
+import { scientificStepEvidence } from '../model/scientific-step-evidence'
 import { truncateUtf8 } from '../model/utf8-truncate'
 
 const UPSTREAM_REPORT_MAX_BYTES = 4 * 1024
@@ -64,17 +65,20 @@ const PREVIOUS_ATTEMPT_RULE =
 function previousAttempt(state: PlanRunState, step: PlanStep): string[] {
   const current = state.steps[step.id]
   if (!current || current.attempts < 1 || (!current.report && !current.error)) return []
+  const evidence = state.spec.researchQuestion
+    ? scientificStepEvidence(current, state.spec.researchQuestion, PREVIOUS_ATTEMPT_MAX_BYTES)
+    : current
   const lines = ['## Previous attempt', 'This step already ran and its result was not accepted.']
-  if (current.report) {
-    lines.push(`Reported status: ${current.report.status}`)
-    if (current.report.text.trim())
+  if (evidence.report) {
+    lines.push(`Reported status: ${evidence.report.status}`)
+    if (evidence.report.text.trim())
       lines.push(
         'Previous report:',
-        truncateReport(current.report.text, PREVIOUS_ATTEMPT_MAX_BYTES)
+        truncateReport(evidence.report.text, PREVIOUS_ATTEMPT_MAX_BYTES)
       )
   }
-  if (current.error)
-    lines.push(`Error: ${truncateReport(current.error, PREVIOUS_ATTEMPT_MAX_BYTES)}`)
+  if (evidence.error)
+    lines.push(`Error: ${truncateReport(evidence.error, PREVIOUS_ATTEMPT_MAX_BYTES)}`)
   lines.push(PREVIOUS_ATTEMPT_RULE)
   return [lines.join('\n')]
 }
@@ -93,6 +97,11 @@ function promptParts(state: PlanRunState, step: PlanStep, upstream: string): str
     '## Upstream reports',
     upstream,
     ...previousAttempt(state, step),
+    ...(state.spec.researchQuestion
+      ? [
+          'This is one independent scientific subquestion. Report the result and limitations to the main agent. Any further analysis that depends on this result waits for parent review.'
+        ]
+      : []),
     '## Required final report protocol',
     AGENT_REPORT_PROTOCOL,
     STEP_STATUS_RULE
@@ -114,6 +123,9 @@ export function buildStepPrompt(state: PlanRunState, stepId: string): string {
   const step = state.spec.steps.find((candidate) => candidate.id === stepId)
   if (!step) throw new Error(`Unknown plan step: ${stepId}`)
   const dependencies = dependencySteps(state, step)
+  if (state.spec.researchQuestion && step.dependsOn.length) {
+    throw new Error('Research dependencies require main-agent review before a new stage.')
+  }
   if (!dependencies.length) return requirePromptBudget(assemblePrompt(state, step, 'None.'))
 
   const reports = dependencies.filter((candidate) => state.steps[candidate.id]?.report)

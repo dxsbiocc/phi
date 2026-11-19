@@ -21,6 +21,7 @@ function stepReview(step: PlanStep, index: number): string {
 export function planReviewContent(spec: PlanSpec): string {
   return [
     `# ${truncateUtf8(spec.goal, MAX_GOAL_REVIEW_BYTES)}`,
+    ...(spec.researchQuestion ? [`Research question: ${spec.researchQuestion}`] : []),
     ...spec.steps.map(stepReview)
   ].join('\n\n')
 }

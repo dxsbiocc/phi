@@ -19,6 +19,7 @@ import {
   resolvePlanStepFailure,
   validatePlanStepReport
 } from './failure-policy'
+import { scientificStepEvidence } from './scientific-step-evidence'
 import { validatePlanSpec } from './plan-spec'
 
 export type { PlanRunEvent, PlanRunTransitionErrorCode } from '../../../../shared/planRunTypes'
@@ -42,7 +43,7 @@ function cloneStep(step: PlanStep): PlanStep {
   }
 }
 function cloneSpec(spec: PlanSpec): PlanSpec {
-  return { version: 1, goal: spec.goal, steps: spec.steps.map(cloneStep) }
+  return { ...spec, steps: spec.steps.map(cloneStep) }
 }
 function pendingStep(): PlanStepState {
   return { status: 'pending', attempts: 0 }
@@ -323,6 +324,12 @@ function validateReplacement(state: PlanRunState, spec: PlanSpec): PlanSpec {
   if (result.spec.goal !== state.spec.goal) {
     throw new PlanRunTransitionError('INVALID_REPLACEMENT', 'Replacement cannot change plan goal.')
   }
+  if (state.spec.researchQuestion !== result.spec.researchQuestion) {
+    throw new PlanRunTransitionError(
+      'INVALID_REPLACEMENT',
+      'Replacement cannot change the approved research question.'
+    )
+  }
   const replacements = new Map(result.spec.steps.map((step) => [step.id, step]))
   for (const step of state.spec.steps) {
     const started =
@@ -496,10 +503,17 @@ function parseStepFields(value: Record<string, unknown>): ParsedStepFields | nul
     ...(lastSeenAt ? { lastSeenAt } : {})
   }
 }
-function parseStepState(value: unknown): PlanStepState | null {
+function parseStepState(value: unknown, researchQuestion?: string): PlanStepState | null {
   if (!isRecord(value) || !PLAN_STEP_STATUSES.includes(value.status as PlanStepStatus)) return null
   if (!Number.isInteger(value.attempts) || (value.attempts as number) < 0) return null
-  const fields = parseStepFields(value)
+  const fields = parseStepFields(
+    researchQuestion
+      ? {
+          ...value,
+          ...scientificStepEvidence({ report: value.report, error: value.error }, researchQuestion)
+        }
+      : value
+  )
   if (!fields) return null
   const unresolved = value.status === 'launching' || value.status === 'unknown'
   if (unresolved && (!fields.requestId || value.attempts === 0)) return null
@@ -524,11 +538,15 @@ function validRunHeader(value: Record<string, unknown>): boolean {
     (value.replans as number) <= PLAN_MAX_REPLANS
   )
 }
-function parseRunSteps(value: unknown, ids: string[]): Record<string, PlanStepState> | null {
+function parseRunSteps(
+  value: unknown,
+  ids: string[],
+  researchQuestion?: string
+): Record<string, PlanStepState> | null {
   if (!isRecord(value)) return null
   const keys = Object.keys(value)
   if (keys.length !== ids.length || keys.some((id) => !ids.includes(id))) return null
-  const entries = ids.map((id) => [id, parseStepState(value[id])] as const)
+  const entries = ids.map((id) => [id, parseStepState(value[id], researchQuestion)] as const)
   if (entries.some(([, step]) => !step)) return null
   return Object.fromEntries(entries) as Record<string, PlanStepState>
 }
@@ -547,7 +565,8 @@ export function validatePlanRunState(value: unknown): PlanRunState | null {
   if (!spec.ok) return null
   const steps = parseRunSteps(
     value.steps,
-    spec.spec.steps.map((step) => step.id)
+    spec.spec.steps.map((step) => step.id),
+    spec.spec.researchQuestion
   )
   if (!steps) return null
   const pause = value.pause === undefined ? undefined : parsePause(value.pause)

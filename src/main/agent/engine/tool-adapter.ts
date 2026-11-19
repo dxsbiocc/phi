@@ -4,12 +4,57 @@ import { pickDeclaredToolInput } from '../remote-workspace-tool-input'
 import type { PhiTool, PhiToolContext, PhiToolImage, PhiToolResult, PhiToolUpdate } from './types'
 
 import { isRecord } from '../../../shared/guards'
-export function recentUserImages(context: unknown): PhiToolImage[] {
+
+function sessionBranch(context: unknown): unknown[] {
   if (!isRecord(context) || !isRecord(context.sessionManager)) return []
   const getBranch = context.sessionManager.getBranch
   if (typeof getBranch !== 'function') return []
   const branch: unknown = getBranch.call(context.sessionManager)
-  if (!Array.isArray(branch)) return []
+  return Array.isArray(branch) ? branch : []
+}
+
+function containsUserQuestion(context: unknown, question: string): boolean {
+  return sessionBranch(context).some((entry) => {
+    if (!isRecord(entry) || entry.type !== 'message' || !isRecord(entry.message)) return false
+    if (
+      entry.message.role !== 'user' ||
+      entry.message.synthetic === true ||
+      entry.message.attribution === 'agent'
+    )
+      return false
+    const content = entry.message.content
+    const text =
+      typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content
+              .filter(
+                (part) => isRecord(part) && part.type === 'text' && typeof part.text === 'string'
+              )
+              .map((part) => part.text)
+              .join('\n')
+          : ''
+    // Older wake-ups and replan prompts use the user role and may quote child reports.
+    return (
+      !/^\s*<phi_(?:(?:agent_run|plan_run|wrapper_run|shell_jobs)_finished|research_plan_paused)>/.test(
+        text
+      ) &&
+      !text.startsWith('Replan the remaining steps of paused plan run ') &&
+      text.includes(question)
+    )
+  })
+}
+
+export function createPhiToolContext(cwd: string, context: unknown): PhiToolContext {
+  return {
+    cwd,
+    recentUserImages: () => recentUserImages(context),
+    containsUserQuestion: (question) => containsUserQuestion(context, question)
+  }
+}
+
+export function recentUserImages(context: unknown): PhiToolImage[] {
+  const branch = sessionBranch(context)
   let userMessages = 0
   for (let index = branch.length - 1; index >= 0 && userMessages < 3; index -= 1) {
     const entry = branch[index]
@@ -48,15 +93,11 @@ export function toOmpCustomTool(tool: PhiTool): CustomTool {
       ? {}
       : { lenientArgValidation: tool.lenientArgValidation }),
     async execute(toolCallId, params, onUpdate, ctx, signal) {
-      const phiContext: PhiToolContext = {
-        cwd: ctx.sessionManager.getCwd(),
-        recentUserImages: () => recentUserImages(ctx)
-      }
       return tool.execute(
         toolCallId,
         pickDeclaredToolInput(params, tool.parameters),
         onUpdate as PhiToolUpdate | undefined,
-        phiContext,
+        createPhiToolContext(ctx.sessionManager.getCwd(), ctx),
         signal
       ) as Promise<PhiToolResult>
     }

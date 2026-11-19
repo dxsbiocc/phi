@@ -2,6 +2,7 @@ import type { Project } from '../agent/projects'
 import type { PromptTargetInput } from '../agent/session/prompt-target-control'
 import type { SessionLifecycle, SessionSnapshot } from '../agent/session/session-lifecycle'
 import type { PromptImageInput } from '../../shared/promptImageTypes'
+import type { ResearchPauseIdentity } from '../../shared/planRunTypes'
 import type { SessionKeyLinking } from './session-key-linking'
 import type { SessionResolution } from './session-resolution'
 import type { PhiSessionManifest } from '../agent/session/session-store'
@@ -16,6 +17,8 @@ export interface SubmitPromptInput {
   promptTarget: PromptTargetInput | null
   /** A prompt Phi sends on its own (e.g. a background run ended), not the user's words. */
   automatic?: boolean
+  researchPauses?: readonly ResearchPauseIdentity[]
+  onCancelledBeforeStart?: () => void
   planMode?: boolean
   planExecute?: boolean
 }
