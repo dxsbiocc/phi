@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { auditDesktopText, observeDesktopCases, observeDesktopLeaks } from './desktop-ui.mjs'
+import {
+  auditDesktopText,
+  observeDesktopCases,
+  observeDesktopLeaks,
+  desktopObserverReason,
+  stopAfterObservation
+} from './desktop-ui.mjs'
 
 test('a gene citation or local artifact link is compact scientific evidence', () => {
   for (const text of [
@@ -68,4 +74,70 @@ test('a failed case cannot skip the other scenario or turn the suite green', asy
     ['paired', 'failed'],
     ['zero', 'passed']
   ])
+})
+
+test('a closing Electron page cannot replace already recorded case diagnostics', async () => {
+  const closed = new Error(
+    'locator.isVisible: Target page, context or browser has been closed. Sensitive text'
+  )
+  for (const action of ['probe', 'click']) {
+    const stop = {
+      isVisible: async () => {
+        if (action === 'probe') throw closed
+        return true
+      },
+      click: async () => {
+        throw closed
+      }
+    }
+    const chat = { locator: () => ({ last: () => stop }) }
+    await assert.doesNotReject(stopAfterObservation(chat))
+  }
+})
+
+test('safe observer reasons separate a closed page from timeout and selector failure', () => {
+  assert.equal(
+    desktopObserverReason(
+      new Error('locator.click: Target page, context or browser has been closed. leaked-body')
+    ),
+    'desktop-target-closed'
+  )
+  assert.equal(
+    desktopObserverReason(new Error('locator.click: Timeout 30000ms exceeded. leaked-body')),
+    'desktop-action-timeout'
+  )
+  assert.equal(
+    desktopObserverReason(new Error('locator.click: strict mode violation. leaked-body')),
+    'desktop-selector-failed'
+  )
+  assert.equal(
+    desktopObserverReason(new Error('unclassified exception with leaked-body')),
+    'desktop-interaction-failed'
+  )
+  assert.equal(
+    desktopObserverReason(new Error('timeout 3000ms exceeded'), true),
+    'desktop-target-closed'
+  )
+})
+
+test('closed window during startup attributes an interruption independently to each case', async () => {
+  const results = []
+  await assert.rejects(
+    observeDesktopCases(
+      ['paired', 'zero'],
+      async () => {
+        throw new Error('Target closed - sensitive context')
+      },
+      (_, result) => results.push(result)
+    ),
+    /failed for paired, zero/
+  )
+  assert.deepEqual(
+    results.map((r) => [r.kind, r.status, r.observation, r.interruptionReason]),
+    [
+      ['paired', 'failed', 'interrupted', 'desktop-target-closed'],
+      ['zero', 'failed', 'interrupted', 'desktop-target-closed']
+    ]
+  )
+  assert(!JSON.stringify(results).includes('sensitive'))
 })

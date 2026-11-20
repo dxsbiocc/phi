@@ -187,6 +187,7 @@ function checkRun(run, kind, fixture, metadata, agentDir) {
   assert.match(read(run.outputs.find((item) => item.id === 'model').path), /donor/)
   const qc = run.researchQc
   assert.equal(qc?.integrityVerified, true)
+  assert.equal(qc.contrast, 'treated vs control')
   assert.equal(qc.evaluated, 1400)
   assert.equal(qc.hits, kind === 'paired' ? 50 : 0)
   assert.equal(qc.disposition, kind === 'paired' ? 'eligible' : 'skip')
@@ -205,6 +206,7 @@ function checkRun(run, kind, fixture, metadata, agentDir) {
   return {
     runId: run.runId,
     disposition: qc.disposition,
+    contrast: qc.contrast,
     hits: qc.hits,
     evaluated: qc.evaluated,
     fits,
@@ -219,6 +221,36 @@ function welcomeButton(page) {
       name: /^(知道了|Got it|跳过.*默认.*|Skip.*defaults.*)$/i
     })
     .last()
+}
+
+// Playwright errors include the selector, DOM and call log. Only return stable diagnostic codes.
+export function desktopObserverReason(error, pageClosed = false) {
+  const message = String(error?.message ?? '')
+  if (
+    pageClosed ||
+    /target (?:page, context or browser has been closed|closed)|browser has been closed|page (?:has been closed|closed)|session closed/i.test(
+      message
+    )
+  )
+    return 'desktop-target-closed'
+  if (error?.name === 'TimeoutError' || /timeout .*exceeded|timed out/i.test(message))
+    return 'desktop-action-timeout'
+  if (
+    /strict mode violation|locator\.|selector|element (?:was |is )?(?:detached|not attached)|model missing from desktop picker|expected model must be selected/i.test(
+      message
+    )
+  )
+    return 'desktop-selector-failed'
+  return 'desktop-interaction-failed'
+}
+
+export async function stopAfterObservation(chat) {
+  try {
+    const stop = chat.locator('[data-phi-composer-action="stop"]:visible').last()
+    if (await stop.isVisible()) await stop.click({ timeout: 3000 })
+  } catch {
+    // Closing the Electron window can race either the visibility probe or the click.
+  }
 }
 
 async function runCase(
@@ -273,6 +305,11 @@ async function runCase(
   let paused
   let metadata = fixture.metadata
   let phase = 'submitting'
+  let interruptionReason
+  const interrupt = (reason) => {
+    interruptionReason ??= reason
+    failedGates.add(reason)
+  }
   let idleSince = 0
   try {
     await openProjectHome(page, project)
@@ -324,14 +361,15 @@ async function runCase(
       observe(events, visible)
       const failed = events.findLast((e) => e.type === 'run_failed' || e.type === 'run_interrupted')
       if (failed) {
-        failedGates.add(failed.type)
+        if (failed.type === 'run_interrupted') interrupt('run_interrupted')
+        else failedGates.add(failed.type)
         break
       }
       const approval = chat.getByTestId('gui-e2e-tool-approval')
       if (await approval.isVisible()) {
-        const summary = await approval.innerText()
-        const expected = /\b(?:de_ora|run_wrapper|wrapper_run)\b/i
-        if (expected.test(summary) && (kind === 'zero' || paused)) {
+        const tool = await approval.getAttribute('data-phi-approval-tool')
+        const allowed = tool === 'wrapper_run' || (kind === 'paired' && tool === 'de_ora')
+        if (allowed && (kind === 'zero' || paused)) {
           await approval.getByTestId('gui-e2e-approval-approve').click()
         } else {
           // A simulated user declines out-of-scope access. Keep the failed gate and observe recovery.
@@ -415,22 +453,24 @@ async function runCase(
       } else idleSince = 0
       await page.waitForTimeout(300)
     }
-    if (Date.now() >= deadline && phase !== 'terminal') failedGates.add('scenario-timeout')
-  } catch {
-    // Browser/permission errors do not confer scientific completion or authorize another action.
-    failedGates.add('desktop-interaction-failed')
+    if (Date.now() >= deadline && phase !== 'terminal') interrupt('scenario-timeout')
+  } catch (error) {
+    interrupt(desktopObserverReason(error, page.isClosed()))
   }
 
+  // If the browser closed during the first submission, recover the new session's durable events.
+  sessionId ??= findSession(sessionsDir, prompt)
   const events = sessionId ? eventList(sessionsDir, sessionId) : []
   const runs = newRuns()
   const assistant = events.findLast((e) => e.type === 'assistant_message_finalized')
-  if (sessionId) {
+  if (sessionId && !page.isClosed()) {
     try {
       chat = await focusDesktopSession(page, project, sessionId, sessionFocusChanges)
-    } catch {
+    } catch (error) {
+      interrupt(desktopObserverReason(error, page.isClosed()))
       failedGates.add('correct-chat-not-visible')
     }
-  }
+  } else if (page.isClosed()) interrupt('desktop-target-closed')
   chat = page
     .locator(`[data-phi-chat-session-id=${JSON.stringify(sessionId ?? '')}]:visible`)
     .last()
@@ -519,6 +559,8 @@ async function runCase(
     kind,
     status,
     phase,
+    observation: interruptionReason ? 'interrupted' : 'completed',
+    ...(interruptionReason ? { interruptionReason } : {}),
     sessionId,
     ...verified,
     failedGates: [...failedGates],
@@ -560,9 +602,8 @@ async function runCase(
   }
   save(status === 'passed' ? 'delivered' : 'failure', result)
   if (status === 'failed' && phase !== 'terminal') {
-    // An unexpected question or timeout must not leave a running conversation behind the next one.
-    const stop = chat.locator('[data-phi-composer-action="stop"]:visible').last()
-    if (await stop.isVisible()) await stop.click({ timeout: 3000 }).catch(() => {})
+    // Cleanup occurs after the report is saved. A disconnected page cannot invalidate that evidence.
+    await stopAfterObservation(chat)
   }
   return result
 }
@@ -582,11 +623,18 @@ export async function runDesktopCases({
   // First launch may finish asynchronous capability discovery after the first prompt was sent.
   // Close only the two optional bootstrap dialogs, even if they arrive during a composer click.
   const bootstrap = welcomeButton(page)
-  await page.addLocatorHandler(bootstrap, (button) => button.click(), { noWaitAfter: true })
+  let bootstrapHandlerReady = false
   return observeDesktopCases(
     cases,
-    (kind) =>
-      runCase({ page, profile, model, providerId, evidenceDir, timeoutMs, onQuestion }, kind),
+    async (kind) => {
+      // Startup can race a closed page. Attribute any installation failure to this case and keep
+      // observing the other case independently.
+      if (!bootstrapHandlerReady) {
+        await page.addLocatorHandler(bootstrap, (button) => button.click(), { noWaitAfter: true })
+        bootstrapHandlerReady = true
+      }
+      return runCase({ page, profile, model, providerId, evidenceDir, timeoutMs, onQuestion }, kind)
+    },
     onCase
   )
 }
@@ -596,9 +644,15 @@ export async function observeDesktopCases(cases, observeCase, onCase) {
   for (const kind of cases) {
     try {
       results[kind] = await observeCase(kind)
-    } catch {
-      // Infrastructure errors can contain prompt/body text. Keep the case attribution only.
-      results[kind] = { kind, status: 'failed', failedGates: ['case-observer-failed'] }
+    } catch (error) {
+      const interruptionReason = desktopObserverReason(error)
+      results[kind] = {
+        kind,
+        status: 'failed',
+        observation: 'interrupted',
+        interruptionReason,
+        failedGates: [interruptionReason]
+      }
     }
     await onCase?.(kind, results[kind])
   }
