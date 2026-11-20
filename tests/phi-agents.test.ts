@@ -222,6 +222,7 @@ test('isPhiAgentDefinition guards the worker boundary', () => {
   assert.equal(
     isPhiAgentDefinition({
       ...good,
+      handoff: 'research',
       environment: 'phi:python@1',
       model: ['openai/gpt'],
       thinkingLevel: 'low',
@@ -230,6 +231,8 @@ test('isPhiAgentDefinition guards the worker boundary', () => {
     }),
     true
   )
+  assert.equal(isPhiAgentDefinition({ ...good, handoff: 'other' }), false)
+  assert.equal(isPhiAgentDefinition({ ...good, source: 'compat', handoff: 'research' }), false)
   assert.equal(isPhiAgentDefinition({ ...good, tools: 'read' }), false)
   assert.equal(isPhiAgentDefinition({ ...good, name: 'alpha' }), false)
   assert.equal(isPhiAgentDefinition({ ...good, thinkingLevel: 'max' }), false)
@@ -248,7 +251,7 @@ description: Does alpha things.
 tools: [read, bash]`
 
 test('contract v1 accepts each field and rejects each broken rule', () => {
-  assert.equal(AGENT_CONTRACT_VERSION, '1.0.0')
+  assert.equal(AGENT_CONTRACT_VERSION, '1.1.0')
 
   const passing = validateAgentFile(
     '/x/Alpha.md',
@@ -265,6 +268,7 @@ thinkingLevel: high
 visibility: entry
 invocation: host
 delegationMode: preferred
+handoff: research
 delegation: Hand over alpha work.
 fallback:
   afterFailures: 2
@@ -282,6 +286,7 @@ fallback:
   assert.equal(passing.agent?.thinkingLevel, 'high')
   assert.equal(passing.agent?.visibility, 'entry')
   assert.equal(passing.agent?.invocation, 'host')
+  assert.equal(passing.agent?.handoff, 'research')
   assert.equal(passing.agent?.delegationMode, 'preferred')
   assert.equal(passing.agent?.fallback?.afterFailures, 2)
 
@@ -326,6 +331,7 @@ fallback:
   assert.equal(omitted.environment, undefined)
   assert.equal(omitted.model, undefined)
   assert.equal(omitted.thinkingLevel, undefined)
+  assert.equal(omitted.handoff, undefined)
   assert.deepEqual(omitted.warnings, [])
 
   const failures: Array<[string, RegExp]> = [
@@ -342,6 +348,8 @@ fallback:
     [`${PHI_FRONTMATTER}\nenvironment: ./environment.yml`, /environment/],
     [`${PHI_FRONTMATTER}\nvisibility: internal`, /reserved/],
     [`${PHI_FRONTMATTER}\nvisibility: hidden`, /entry/],
+    [`${PHI_FRONTMATTER}\nhandoff: false`, /handoff/],
+    [`${PHI_FRONTMATTER}\nhandoff: raw`, /handoff/],
     [`${PHI_FRONTMATTER}\ninvocation: tool`, /invocation/],
     [`${PHI_FRONTMATTER}\ndelegationMode: sometimes`, /delegationMode/],
     [`${PHI_FRONTMATTER}\ndelegation: 1`, /delegation/],
@@ -420,6 +428,7 @@ outputSchema:
   type: object
 visibility: internal
 delegation_mode: not-a-mode
+handoff: research
 skills: 12
 fallback: nope
 thinkingLevel: max
@@ -435,6 +444,7 @@ model: openai/gpt-4
   assert.equal(result.agent?.name, 'CodeReviewer')
   assert.deepEqual(result.agent?.tools, ['read', 'bash'])
   assert.equal(result.agent?.environment, undefined)
+  assert.equal(result.agent?.handoff, undefined)
   assert.equal(result.agent?.delegationMode, undefined)
   assert.equal(result.agent?.visibility, 'entry')
   assert.deepEqual(result.agent?.skills, [])

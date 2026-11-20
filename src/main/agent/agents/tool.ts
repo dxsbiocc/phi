@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { extname, isAbsolute } from 'node:path'
 
-import type { PhiTool } from '../engine/types'
+import type { PhiTool, PhiToolContext } from '../engine/types'
 import type { PhiAgentDefinition } from './definition'
 import { isResearchQuestion, MAX_RESEARCH_QUESTION_LENGTH } from './research-handoff'
 import {
@@ -144,6 +144,40 @@ export function agentDelegationToolDescription(
   return `${definition.description}\n\nHands the task to the ${definition.name} agent, ${role} with its own tools and its own session. It cannot see this conversation and cannot ask the user questions, so write \`task\` as a complete, self-contained request: absolute file paths, where outputs should go, and any user preferences.${naming} It returns a short report. Independent tasks can be delegated in the same turn and run in parallel; set \`background\` to carry on while it works.${images}${boundary}`
 }
 
+type QuestionBinding = { question?: string; error?: string }
+
+function bindCurrentRequest(request: string | undefined, quote: unknown): QuestionBinding {
+  const text = request?.trim()
+  if (quote !== undefined && (!isResearchQuestion(quote) || !text?.includes(quote.trim()))) {
+    return { error: 'Quote the current user research request verbatim in research_question.' }
+  }
+  // Preserve the qualifiers in a short request; never truncate a longer one.
+  if (isResearchQuestion(text)) return { question: text }
+  if (isResearchQuestion(quote)) return { question: quote.trim() }
+  return {
+    error:
+      'This specialist needs a concise verbatim passage from the current user request in research_question.'
+  }
+}
+
+function boundResearchQuestion(
+  quote: unknown,
+  required: boolean,
+  context: PhiToolContext | undefined,
+  registry: AgentRunRegistry
+): QuestionBinding {
+  const turn = context?.currentUserTurn?.()
+  const inherited = turn?.request ? registry.questionForCalls(turn.toolCallIds) : undefined
+  if (required || inherited) return bindCurrentRequest(inherited ?? turn?.request, quote)
+  if (quote === undefined) return {}
+  if (isResearchQuestion(quote) && context?.containsUserQuestion?.(quote.trim()))
+    return { question: quote.trim() }
+  return {
+    error:
+      'For research_question, quote a concise passage from the user’s original or clarified research request. Include the delegated instructions separately in task.'
+  }
+}
+
 /**
  * The delegation tool for one scanned agent. The tool IS the agent: it is
  * named exactly `definition.name` (e.g. `Wrapper`), so the main agent hands
@@ -182,7 +216,9 @@ export function buildAgentTool(
           minLength: 1,
           maxLength: MAX_RESEARCH_QUESTION_LENGTH,
           description:
-            'For scientific analysis, quote the relevant research question verbatim from a user message. Put clarifications, the delegated subquestion and file paths in task. This selects a concise evidence handoff.'
+            definition.handoff === 'research'
+              ? 'This specialist always returns a scientific handoff. For a long user request, quote its relevant research question verbatim. Put the approved design, subquestion and paths in task.'
+              : 'For scientific analysis, quote the relevant research question verbatim from a user message. Put clarifications, the delegated subquestion and file paths in task. This selects a concise evidence handoff.'
         },
         ...(local
           ? {
@@ -220,16 +256,14 @@ export function buildAgentTool(
         )
       }
       const record = isRecord(params) ? params : {}
-      let researchQuestion: string | undefined
-      if (record.research_question !== undefined) {
-        const quote = record.research_question
-        if (!isResearchQuestion(quote) || !ctx?.containsUserQuestion?.(quote.trim())) {
-          return errorResult(
-            'For research_question, quote a concise passage from the user’s original or clarified research request. Include the delegated instructions separately in task.'
-          )
-        }
-        researchQuestion = quote.trim()
-      }
+      const binding = boundResearchQuestion(
+        record.research_question,
+        definition.handoff === 'research',
+        ctx,
+        registry
+      )
+      if (binding.error) return errorResult(binding.error)
+      const researchQuestion = binding.question
       let images: AgentImage[] = []
       const notes: string[] = []
       if (local) {

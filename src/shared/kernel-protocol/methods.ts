@@ -50,6 +50,7 @@ const phiAgentDefinitionSchema = z
     model: z.array(z.string().min(1)).optional(),
     thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
     delegation: z.string().optional(),
+    handoff: z.literal('research').optional(),
     delegationMode: z.enum(['required-first', 'preferred', 'optional']).optional(),
     fallback: z
       .object({
@@ -67,6 +68,10 @@ const phiAgentDefinitionSchema = z
     filePath: z.string().min(1)
   })
   .strict()
+  .refine((agent) => agent.handoff === undefined || agent.source === 'phi', {
+    message: 'Only Phi agent definitions may declare a research handoff',
+    path: ['handoff']
+  })
 
 const phiAgentSnapshotSchema = z
   .array(phiAgentDefinitionSchema)

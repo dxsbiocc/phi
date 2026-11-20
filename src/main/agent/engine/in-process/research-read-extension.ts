@@ -7,22 +7,9 @@ import type { ExtensionFactory } from '@oh-my-pi/pi-coding-agent'
 import { isPathInsideRoot } from '../../local-file-access'
 import { isRecord } from '../../../../shared/guards'
 import type { AgentRunRegistry } from '../../agents/registry'
-import { authoredUserText } from '../tool-adapter'
+import { currentUserTurn } from '../tool-adapter'
 
 const TABLE_OR_LOG = /\.(?:tsv|csv|tab|jsonl|ndjson|log|stderr|stdout)(?:\.gz)?$/i
-
-function delegationCallsSinceUser(branch: readonly unknown[]): Set<string> {
-  const ids = new Set<string>()
-  for (let index = branch.length - 1; index >= 0; index--) {
-    const entry = branch[index]
-    if (!isRecord(entry) || entry.type !== 'message' || !isRecord(entry.message)) continue
-    const message = entry.message
-    if (authoredUserText(message) !== undefined) break
-    if (message.role === 'toolResult' && typeof message.toolCallId === 'string')
-      ids.add(message.toolCallId)
-  }
-  return ids
-}
 
 function localPath(cwd: string, reference: string): string | undefined {
   try {
@@ -139,7 +126,7 @@ export function researchReadNotice(
   registry: Pick<AgentRunRegistry, 'researchFindings'>,
   shellDirectory?: string
 ): string | undefined {
-  const calls = delegationCallsSinceUser(branch)
+  const { toolCallIds: calls } = currentUserTurn(branch)
   if (!calls.size) return undefined
   const findings = registry.researchFindings(calls, (ref) => canonical(cwd, ref))
   if (!findings.length) return undefined

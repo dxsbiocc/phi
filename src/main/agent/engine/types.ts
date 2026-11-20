@@ -132,6 +132,8 @@ export interface PhiToolContext {
   readonly cwd: string
   /** Whether a quoted research question occurs in a user message on this session branch. */
   containsUserQuestion?(question: string): boolean
+  /** Genuine request and completed tool calls on the current branch since that user turn. */
+  currentUserTurn?(): { request?: string; toolCallIds: ReadonlySet<string> }
   /**
    * Images the user attached most recently in this session, read at call time.
    * Same rules as the current `latestUserImages` in `agents/tool.ts`: look back at

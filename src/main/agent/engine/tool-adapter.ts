@@ -44,6 +44,23 @@ export function authoredUserText(message: unknown): string | undefined {
   return text
 }
 
+export function currentUserTurn(branch: readonly unknown[]): {
+  request?: string
+  toolCallIds: Set<string>
+} {
+  const toolCallIds = new Set<string>()
+  for (let index = branch.length - 1; index >= 0; index--) {
+    const entry = branch[index]
+    if (!isRecord(entry) || entry.type !== 'message' || !isRecord(entry.message)) continue
+    const message = entry.message
+    const request = authoredUserText(message)
+    if (request !== undefined) return { request, toolCallIds }
+    if (message.role === 'toolResult' && typeof message.toolCallId === 'string')
+      toolCallIds.add(message.toolCallId)
+  }
+  return { toolCallIds }
+}
+
 function containsUserQuestion(context: unknown, question: string): boolean {
   return sessionBranch(context).some(
     (entry) =>
@@ -57,6 +74,7 @@ export function createPhiToolContext(cwd: string, context: unknown): PhiToolCont
   return {
     cwd,
     recentUserImages: () => recentUserImages(context),
+    currentUserTurn: () => currentUserTurn(sessionBranch(context)),
     containsUserQuestion: (question) => containsUserQuestion(context, question)
   }
 }

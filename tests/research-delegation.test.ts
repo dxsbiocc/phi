@@ -124,3 +124,22 @@ test('the scientific leader checks coverage and authorization before delivery, c
   assert.match(prompt, /continue an already approved, applicable step/)
   assert.match(prompt, /ask_user_question with concrete choices/)
 })
+
+test('an opted-in specialist requires an actual bounded quote from a long current request', async () => {
+  const request = '研究背景。'.repeat(250) + question
+  const context = conversation({ role: 'user', content: request })
+  const questions: Array<string | undefined> = []
+  const tool = buildAgentTool({ ...specialist, handoff: 'research' }, async (delegation) => {
+    questions.push(delegation.researchQuestion)
+    return {
+      text: `<phi_agent_result>${JSON.stringify({ status: 'completed', research })}</phi_agent_result>`,
+      toolCalls: 1
+    }
+  })
+  for (const params of [{ task }, { task, research_question: 'A different question?' }]) {
+    assert.equal((await tool.execute('invalid', params, undefined, context)).isError, true)
+  }
+  assert.deepEqual(questions, [])
+  await tool.execute('valid', { task, research_question: question }, undefined, context)
+  assert.deepEqual(questions, [question])
+})

@@ -168,7 +168,11 @@ function leader(profile, users, calls, invoke) {
     ?.trim()
   assert(question, 'The desktop research question could not be bound to the actual user prompt')
   function delegate(agent, task) {
-    return invoke(agent, { research_question: question, task: taskPrefix + JSON.stringify(task) })
+    // Exercise the trusted turn binding when a model omits the optional quote, as observed live.
+    return invoke(agent, {
+      ...(key === 'zero' ? { research_question: question } : {}),
+      task: taskPrefix + JSON.stringify(task)
+    })
   }
   const preflight = (metadata) =>
     delegate('DifferentialExpression', {
@@ -192,6 +196,10 @@ function leader(profile, users, calls, invoke) {
     return { text: '请提供补齐供体列的样本表路径，以继续配对分析。' }
   }
   const report = jsonResult(last.output)
+  assert(
+    report.originalQuestion?.includes(question),
+    'The handoff lost the user’s research question'
+  )
   if (report.question && report.status === 'blocked')
     return invoke('ask_user_question', { questions: [report.question] })
   assert.equal(report.status, 'completed', 'Specialist produced no verified handoff')

@@ -1,6 +1,6 @@
 # Agent-definition contract
 
-contractVersion: 1.0.0
+contractVersion: 1.1.0
 
 This contract defines a Phi agent: a specialist the main agent delegates to. It
 covers the file, its frontmatter, and what the runtime does with each field. It
@@ -49,6 +49,7 @@ tool is not advertised to the main agent. The only exception is the opt-in remot
 | `environment`    | no       | an environment reference (environment contract): `phi:<name>@<major>`, `plugin:<name>`, or `project:<name>`. See § 3                                                                                                                                       |
 | `visibility`     | no       | `entry` (default): the main agent gets a delegation tool for it. **`internal` is reserved** for orchestration and rejected in v1                                                                                                                           |
 | `invocation`     | no       | `host`: only trusted host orchestration can start the agent; it does not create a main-agent delegation tool. Absent: normal delegation-tool invocation                                                                                                    |
+| `handoff`        | no       | `research` binds the user's research question to the specialist's compact report. See § 4.                                                                                                                                                                 |
 | `delegationMode` | no       | `required-first` (when delegation is needed, matching work goes to this agent before generic tools), `preferred`, or `optional` (default)                                                                                                                  |
 | `delegation`     | no       | guidance for the main agent on when and how to hand work over; added to the main agent's instructions                                                                                                                                                      |
 | `fallback`       | no       | `{ afterFailures: <positive integer>, tools: [<main-agent tool>…], match: [<token>…] }`: after that many consecutive failed, blocked, or not-found runs, the main agent may use `tools` for inputs containing one of the `match` tokens (case-insensitive) |
@@ -115,9 +116,15 @@ Phi reads the specialist's final `<phi_agent_result>` metadata. Its status is
 `completed`, `partial`, `not_found`, `blocked`, or `failed`. Ordinary delegations
 can include a written report, missing inputs and a suggested follow-up agent.
 
-For a scientific delegation the main agent supplies `research_question`, a
-short quote from the user's request or clarification, alongside the narrower
-`task`. A reviewed scientific plan can bind `researchQuestion` for a single
+A specialist can declare `handoff: research` in its Phi frontmatter to use
+scientific reporting on every delegation. Supply the narrower `task` alongside
+the user's original research question. Phi binds the user request even when
+the model omits `research_question`; for a request longer than 1,000 characters,
+supply a short verbatim passage. Related delegations in the same user turn
+inherit that question. Other specialists can opt into a scientific handoff for
+an individual call by supplying a verbatim `research_question`.
+
+A reviewed scientific plan can bind `researchQuestion` for a single
 stage of independent investigations. Return the stage's results to the main
 agent before planning work that depends on their interpretation.
 

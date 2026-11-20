@@ -298,6 +298,15 @@ export class AgentRunRegistry {
     child.publications.set(status.runId, publication)
   }
 
+  /** Only a real delegation on the current user branch can carry its question to the next child. */
+  questionForCalls(toolCallIds: ReadonlySet<string>): string | undefined {
+    for (const { snapshot, input } of [...this.runs.values()].reverse()) {
+      if (input.researchQuestion && snapshot.toolCallId && toolCallIds.has(snapshot.toolCallId))
+        return input.researchQuestion
+    }
+    return undefined
+  }
+
   /** Only registered scientific delegations from the caller's active branch can supply findings. */
   researchFindings(
     toolCallIds: ReadonlySet<string>,
