@@ -1,4 +1,5 @@
 import type { PhiHostRequestContext } from '../../engine/types'
+import { hasRemoteSessionOrigin, isRemoteProjectAnchorPath } from '../../remote-project-anchor'
 import type { Project } from '../../projects'
 import type { RemoteWorkspaceHostBinding } from '../../remote-workspace-boundary'
 import type { PhiSessionManifest } from '../../session/session-store'
@@ -102,6 +103,42 @@ export function resolveWrapperJobHostScope(
   const resolvedOrigin = wrapperScopeOrigin(context, dependencies)
   if (!resolvedOrigin) return undefined
   const { originSessionId, origin, manifest } = resolvedOrigin
+  if (context?.kernelExecutionHost === 'local') {
+    const assertCurrent = (): void => {
+      const current = dependencies.findSession(origin.phiSessionId)
+      const project = manifest.projectId ? dependencies.getProject(manifest.projectId) : undefined
+      if (
+        !current ||
+        dependencies.resolveOrigin(originSessionId)?.phiSessionId !== origin.phiSessionId ||
+        current.projectId !== manifest.projectId ||
+        current.cwd !== manifest.cwd ||
+        current.cwdRealPath !== manifest.cwdRealPath ||
+        hasRemoteSessionOrigin(current) ||
+        isRemoteProjectAnchorPath(current.cwdRealPath) ||
+        (current.projectLocation?.kind === 'local' &&
+          current.projectLocation.realPath !== manifest.cwdRealPath) ||
+        (manifest.projectId &&
+          (project?.location.kind !== 'local' ||
+            project.location.realPath !== manifest.cwdRealPath))
+      ) {
+        throw new Error('Local Wrapper session or project binding changed')
+      }
+    }
+    assertCurrent()
+    return {
+      executionHost: 'local',
+      originSessionId,
+      signal: context.signal,
+      assertCurrent,
+      ownsRun: (runId) => {
+        const run = dependencies.readRun(runId)
+        return (
+          run?.origin === 'composition' &&
+          dependencies.resolveOrigin(run.originSessionId)?.phiSessionId === origin.phiSessionId
+        )
+      }
+    }
+  }
   const project = wrapperScopeProject(context, manifest, dependencies)
   if (!project) return undefined
   if (dependencies.ownsRemoteRuntimeSession(originSessionId) && !context?.signal) {

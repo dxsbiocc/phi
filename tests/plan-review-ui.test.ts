@@ -98,6 +98,24 @@ test('plan review panel shows structured steps with folded details', () => {
   assert.doesNotMatch(markup, /<details[^>]*\sopen(?:=|\s|>)/)
 })
 
+test('research review displays the bound question before approving its independent stage', () => {
+  const researchQuestion = '哪些基因达到预设阈值？'
+  const markup = renderToStaticMarkup(
+    createElement(UserInteractionPanel, {
+      request: {
+        requestId: 'review-scientific',
+        questions: [],
+        planReview: {
+          ...proposal,
+          steps: { ...structuredPlan, researchQuestion, steps: [structuredPlan.steps[0]] }
+        }
+      },
+      onRespond: () => undefined
+    })
+  )
+  assert.ok(markup.includes(researchQuestion))
+})
+
 test('plan review responses keep approval and requested changes distinct', () => {
   assert.deepEqual(planReviewResponse('review-1', 'approve'), {
     requestId: 'review-1',

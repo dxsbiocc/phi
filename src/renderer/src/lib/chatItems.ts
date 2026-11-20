@@ -11,8 +11,7 @@ import {
 import { applyPlanReviewDecision, planReviewItemFromEvent } from '../features/plan/lib/planReview'
 import type { TodoPhaseSnapshot, TodoSnapshot, TodoTaskSnapshot } from './todoTypes'
 import {
-  agentExecutionFromTimelineEvent,
-  agentExecutionIndex,
+  ensureAgentExecution,
   applyAgentBackgroundTimelineEvent,
   applyAgentCompletedTimelineEvent,
   applyAgentNamedTimelineEvent,
@@ -536,7 +535,9 @@ function collectPhiTimelineCoverage(messages: unknown[]): {
       duplicateTextCounts.set(message.content, (duplicateTextCounts.get(message.content) ?? 0) + 1)
     }
     if (
-      (message.type === 'tool_call_started' || message.type === 'tool_call_completed') &&
+      (message.type === 'tool_call_started' ||
+        message.type === 'tool_call_completed' ||
+        message.type?.startsWith('agent_execution_')) &&
       typeof message.toolCallId === 'string'
     ) {
       phiToolCallIds.add(message.toolCallId)
@@ -624,13 +625,16 @@ function appendPhiRunLifecycle(items: ChatItem[], message: RestoredSessionMessag
   items.push(lifecycleItem)
 }
 
-function applyPhiAgentExecutionEvent(items: ChatItem[], message: RestoredSessionMessage): boolean {
+function applyPhiAgentExecutionEvent(
+  state: RestoreState,
+  message: RestoredSessionMessage
+): boolean {
+  const { items } = state
   switch (message.type) {
-    case 'agent_execution_started': {
-      const item = agentExecutionFromTimelineEvent(message)
-      if (item && agentExecutionIndex(items, item.id) < 0) items.push(item)
+    case 'agent_execution_started':
+      if (message.agentName && message.toolCallId)
+        state.toolCallIndexById.set(message.toolCallId, ensureAgentExecution(items, message))
       return true
-    }
     case 'agent_execution_background':
       applyAgentBackgroundTimelineEvent(items, message)
       return true
@@ -653,6 +657,12 @@ function applyPhiAgentExecutionEvent(items: ChatItem[], message: RestoredSession
 
 function appendPhiToolCallStarted(state: RestoreState, message: RestoredSessionMessage): boolean {
   if (typeof message.toolCallId !== 'string') return false
+  const existing = state.items[state.toolCallIndexById.get(message.toolCallId) ?? -1]
+  if (
+    existing?.role === 'agent_execution' &&
+    (!existing.runId || !message.runId || existing.runId === message.runId)
+  )
+    return true
   state.toolCallIndexById.set(message.toolCallId, state.items.length)
   state.items.push({
     id: message.toolCallId,
@@ -799,7 +809,7 @@ function appendPhiTimelineMessage(state: RestoreState, message: RestoredSessionM
   if (applyRemoteKernelDeploymentProgress(state.items, message)) return
   if (applyPrimaryPhiTimelineEvent(state.items, message)) return
   appendPhiRunLifecycle(state.items, message)
-  if (applyPhiAgentExecutionEvent(state.items, message)) return
+  if (applyPhiAgentExecutionEvent(state, message)) return
   if (applyTypedPhiTimelineEvent(state, message)) return
   appendGenericPhiTimelineItem(state.items, message)
 }

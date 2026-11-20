@@ -15,6 +15,7 @@ export const planEnglish = {
   agentSelectedPlan: (execute: boolean, reason: string) =>
     `Agent selected: ${execute ? 'Plan and execute' : 'Plan'} — ${reason}`,
   goal: 'Goal',
+  researchQuestion: 'Research question',
   progress: (completed: number, total: number) => `${completed}/${total} completed`,
   runStatus: (status: 'running' | 'paused' | 'completed' | 'stopped') =>
     ({ running: 'Running', paused: 'Paused', completed: 'Completed', stopped: 'Stopped' })[status],

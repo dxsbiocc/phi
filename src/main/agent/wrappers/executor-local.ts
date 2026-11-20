@@ -6,6 +6,7 @@ import { getPhiAgentDir } from '../runtime-paths'
 import { toWslPath, wslProcessEnvironment } from '../envs/wsl'
 import { findWrapperCatalogEntry } from './catalog'
 import { prepareNextflowProfile } from './composition/conda-profile'
+import { missingPrimaryOutputs } from './composition/validate'
 import {
   nextflowLaunchRecord,
   resolveNextflowLaunch,
@@ -292,18 +293,37 @@ export async function runLocalWrapperExecution(
 
   const collecting = transition(running, agentDir, 'collecting')
   const outputs = collectOutputs(manifest, absoluteOutDir)
+  const missingOutputs = missingPrimaryOutputs(outputs)
   writeFileSync(
     join(runDir, 'outputs.json'),
     `${JSON.stringify({ runId: run.runId, outputs }, null, 2)}\n`
   )
   writeFileSync(
     join(runDir, 'summary.json'),
-    `${JSON.stringify({ runId: run.runId, state: 'completed', outputs }, null, 2)}\n`
+    `${JSON.stringify(
+      {
+        runId: run.runId,
+        state: missingOutputs.length > 0 ? 'failed' : 'completed',
+        outputs,
+        missingOutputs
+      },
+      null,
+      2
+    )}\n`
   )
+
+  if (missingOutputs.length > 0) {
+    return failRun(collecting, agentDir, `Missing primary outputs: ${missingOutputs.join(', ')}`, {
+      exitCode,
+      outputs,
+      missingOutputs
+    })
+  }
 
   return transition(collecting, agentDir, 'completed', {
     completedAt: new Date().toISOString(),
     exitCode,
-    outputs
+    outputs,
+    missingOutputs
   })
 }

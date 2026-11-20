@@ -7,6 +7,7 @@ interface EngineAgentRuns {
     sessionId: string
     agent?: string
     task: string
+    researchQuestion?: string
     requestId?: string
   }): Promise<{ runId: string }>
   stop(params: { sessionId: string; runId: string }): Promise<unknown>
@@ -67,6 +68,7 @@ class EngineStepRunner implements StepRunner {
       sessionId: runtimeSessionId,
       ...(input.agent ? { agent: input.agent } : {}),
       ...(input.requestId ? { requestId: input.requestId } : {}),
+      ...(input.researchQuestion ? { researchQuestion: input.researchQuestion } : {}),
       task: input.task
     })
     const stop = (): void => {

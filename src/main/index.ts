@@ -298,9 +298,11 @@ import {
   continuationPrompt,
   createPlanRunContinuation,
   shouldContinueAfterAgentRun,
+  shouldContinueAfterPlanRun,
   type ContinuationEvent
 } from './agent/agents/run-continue'
-import type { PlanRunFinishedEvent } from '../shared/planRunTypes'
+import type { PlanRunFinishedEvent, ResearchPlanPausedEvent } from '../shared/planRunTypes'
+import { sameResearchPause } from './agent/plan/research-plan-pause'
 import { planRunTimelineSnapshot } from './agent/plan/plan-run-service'
 import { createKernelPlanRunCompletion } from './agent/plan/kernel-plan-run-completion'
 import { agentRunHostHandlers } from './agent/agents/run-host'
@@ -1081,6 +1083,7 @@ installAppRemoteSessionRouting({
   }),
   configuredRoot: (project) => projectRemoteRuntimeRoot(project).configured,
   onPlanRunFinished: handleKernelPlanRunFinished,
+  onResearchPlanUpdate: handleResearchPlanUpdate,
   loadDesktopTools: loadAppRemoteDesktopTools
 })
 function syncPreventSleepBlocker(): void {
@@ -1978,6 +1981,38 @@ function handleKernelPlanRunFinished(phiSessionId: string, event: PlanRunFinishe
   kernelPlanRunCompletion.handleFinished(phiSessionId, event)
 }
 
+function handleResearchPlanUpdate(
+  phiSessionId: string,
+  runId: string,
+  pause?: ResearchPlanPausedEvent
+): void {
+  // If an answer was already supplied or the plan was stopped while this chat was busy,
+  // drop that pending question before it reaches the next conversation turn.
+  const queued = pendingContinuations.get(phiSessionId)
+  if (queued) {
+    const current = queued.filter(
+      (event) =>
+        event.type !== 'research_plan_paused' ||
+        event.runId !== runId ||
+        (pause && sameResearchPause(event, pause))
+    )
+    if (current.length) pendingContinuations.set(phiSessionId, current)
+    else pendingContinuations.delete(phiSessionId)
+  }
+  if (!pause) return
+  if (
+    queued?.some(
+      (event) => event.type === 'research_plan_paused' && sameResearchPause(event, pause)
+    )
+  )
+    return
+  if (!shouldContinueAfterPlanRun(automaticContinuations.get(phiSessionId) ?? 0).continue) {
+    writeAppLog({ event: 'plan_run_continue_limit', metadata: { phiSessionId, runId } })
+    return
+  }
+  wakeConversation(phiSessionId, pause)
+}
+
 function startAutomaticContinuation(
   phiSessionId: string,
   events: readonly ContinuationEvent[]
@@ -1987,7 +2022,13 @@ function startAutomaticContinuation(
   const sessionKey = sessionKeys.createPhiKey(manifest.sessionId, manifest.cwd)
   sessionKeyLinking.linkPhiManagedSessionKey(sessionKey, manifest.cwd, manifest.sessionId)
   preferences.permissionModes.set(sessionKeys.canonicalize(sessionKey), manifest.permissionMode)
-  automaticContinuations.set(phiSessionId, (automaticContinuations.get(phiSessionId) ?? 0) + 1)
+  const deliverable = events.filter(
+    (event) =>
+      event.type !== 'research_plan_paused' ||
+      kernelPlanRunCompletion.claimResearchPause(phiSessionId, event)
+  )
+  if (!deliverable.length) return
+  const researchPauses = deliverable.filter((event) => event.type === 'research_plan_paused')
 
   void submitPromptRun({
     sessionKey,
@@ -1996,20 +2037,37 @@ function startAutomaticContinuation(
       cwd: manifest.cwd,
       permissionMode: manifest.permissionMode
     },
-    text: continuationPrompt(events),
+    text: continuationPrompt(deliverable),
     promptTarget: null,
-    automatic: true
-  }).catch((error: unknown) => {
-    logUnexpectedError(error)
-    writeAppLog({
-      level: 'error',
-      event: 'wrapper_run_continue_failed',
-      metadata: {
-        phiSessionId,
-        error: errorMessage(error)
+    automatic: true,
+    ...(researchPauses.length
+      ? {
+          researchPauses: researchPauses.map(({ runId, stepId, attempt }) => ({
+            runId,
+            stepId,
+            attempt
+          })),
+          onCancelledBeforeStart: () => {
+            for (const pause of researchPauses) {
+              kernelPlanRunCompletion.dismissResearchPause(phiSessionId, pause)
+            }
+          }
+        }
+      : {})
+  })
+    .catch((error: unknown) => {
+      logUnexpectedError(error)
+      writeAppLog({
+        level: 'error',
+        event: 'wrapper_run_continue_failed',
+        metadata: { phiSessionId, error: errorMessage(error) }
+      })
+    })
+    .finally(() => {
+      for (const pause of researchPauses) {
+        kernelPlanRunCompletion.releaseResearchPause(phiSessionId, pause)
       }
     })
-  })
 }
 
 function continueConversationAfterWrapperRun(
@@ -2108,7 +2166,14 @@ function flushPendingContinuations(phiSessionId: string, runWasCancelled: boolea
       ? !hasAgentRunBeenReported(phiSessionId, event.agentRunId)
       : event.type !== 'wrapper_run_finished' || !wrapperJobs.hasBeenReported(event.wrapperRunId)
   )
-  if (runWasCancelled || events.length === 0) return
+  if (runWasCancelled) {
+    for (const event of events) {
+      if (event.type === 'research_plan_paused')
+        kernelPlanRunCompletion.dismissResearchPause(phiSessionId, event)
+    }
+    return
+  }
+  if (events.length === 0) return
   try {
     startAutomaticContinuation(phiSessionId, events)
   } catch (error) {
@@ -2333,6 +2398,8 @@ const { submitPromptRun } = createPromptRunQueue({
       })
   },
   events: {
+    automaticPromptStarted: (id) =>
+      automaticContinuations.set(id, (automaticContinuations.get(id) ?? 0) + 1),
     notifySessionChanged: () => notifySessionChanged(),
     flushContinuations: (phiSessionId, cancelled) =>
       flushPendingContinuations(phiSessionId, cancelled),

@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { isResearchQuestion } from './research-question'
+
 import { jsonValueSchema, type JsonValue } from './json'
 
 const nonEmptyStringSchema = z.string().min(1)
@@ -142,6 +144,7 @@ const planSpecSchema = z
   .object({
     version: z.literal(1),
     goal: nonEmptyStringSchema,
+    researchQuestion: z.string().refine(isResearchQuestion).optional(),
     steps: z.array(planStepSchema).min(1).max(20)
   })
   .strict()

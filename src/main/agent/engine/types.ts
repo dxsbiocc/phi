@@ -130,6 +130,10 @@ export type PhiToolImage = { type: 'image'; data: string; mimeType: string }
 export interface PhiToolContext {
   /** Working directory of the calling session. */
   readonly cwd: string
+  /** Whether a quoted research question occurs in a user message on this session branch. */
+  containsUserQuestion?(question: string): boolean
+  /** Genuine request and completed tool calls on the current branch since that user turn. */
+  currentUserTurn?(): { request?: string; toolCallIds: ReadonlySet<string> }
   /**
    * Images the user attached most recently in this session, read at call time.
    * Same rules as the current `latestUserImages` in `agents/tool.ts`: look back at
@@ -377,6 +381,8 @@ export type PhiHostRequestContext = {
    * SSH. The kernel owns plan state there, so the RPC-era remote proofs above do not apply.
    */
   readonly kernelOrigin?: true
+  /** Execution site resolved by the desktop broker, independent of the request cancellation signal. */
+  readonly kernelExecutionHost?: 'local' | 'ssh'
 }
 
 export type PhiHostRequestHandler = (
@@ -608,6 +614,7 @@ export interface PhiEngine {
       sessionId: string
       agent?: string
       task: string
+      researchQuestion?: string
       requestId?: string
     }): Promise<{ runId: string }>
     list(params: Record<string, never>): Promise<unknown>

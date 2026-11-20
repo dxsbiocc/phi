@@ -7,6 +7,7 @@ import test from 'node:test'
 import type { WrapperCompositionManifest } from '../src/main/agent/wrappers/composition/manifest'
 import {
   findMissingPrimaryOutputs,
+  missingPrimaryOutputs,
   validateWrapperParams
 } from '../src/main/agent/wrappers/composition/validate'
 
@@ -151,6 +152,27 @@ test('findMissingPrimaryOutputs honours an absolute outdir override', () => {
     mkdirSync(join(outdir, 'toy'), { recursive: true })
     assert.deepEqual(findMissingPrimaryOutputs(manifest, { outdir }, dir), [])
   })
+})
+
+test('findMissingPrimaryOutputs counts unresolved primary paths as missing, optional ones not', () => {
+  withDir((dir) => {
+    assert.deepEqual(findMissingPrimaryOutputs(manifest, {}, dir), ['report (${outdir}/toy)'])
+    assert.deepEqual(findMissingPrimaryOutputs(manifest, { outdir: null }, dir), [
+      'report (${outdir}/toy)'
+    ])
+  })
+})
+
+test('missingPrimaryOutputs only reports absent primary records, never optional ones', () => {
+  assert.deepEqual(
+    missingPrimaryOutputs([
+      { id: 'kept', path: 'out/kept', primary: true, exists: true },
+      { id: 'gone', path: 'out/gone', primary: true, exists: false },
+      { id: 'extra', path: 'out/extra', primary: false, exists: false },
+      { id: 'undeclared', path: 'out/undeclared', exists: false }
+    ]),
+    ['gone (out/gone)']
+  )
 })
 
 test('a paired-reads glob that picks samples with braces or brackets before the last * is rejected', () => {

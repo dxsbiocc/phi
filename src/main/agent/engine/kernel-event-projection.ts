@@ -1,5 +1,11 @@
 import type { JsonValue, KernelEventFrame } from '../../../shared/kernel-protocol'
-import type { PlanRunFinishedEvent, PlanRunState } from '../../../shared/planRunTypes'
+import type {
+  PlanRunFinishedEvent,
+  PlanRunState,
+  ResearchPlanPausedEvent
+} from '../../../shared/planRunTypes'
+import { validatePlanRunState } from '../plan/model/plan-run-state'
+import { researchPlanPause } from '../plan/research-plan-pause'
 import { phiEventFromWire } from './events'
 import type { PhiAgentEvent } from './types'
 import {
@@ -29,10 +35,32 @@ function planRunFinishedEvent(state: JsonValue | undefined): PlanRunFinishedEven
 function projectPlanRunEvent(
   binding: SessionBinding,
   payload: Record<string, JsonValue>,
-  onPlanRunFinished?: (phiSessionId: string, event: PlanRunFinishedEvent) => void
+  onPlanRunFinished?: (phiSessionId: string, event: PlanRunFinishedEvent) => void,
+  onResearchPlanUpdate?: (
+    phiSessionId: string,
+    runId: string,
+    pause?: ResearchPlanPausedEvent
+  ) => void
 ): void {
   const { event: planEvent, fullState, ...rendererPayload } = payload
   const type = stringValue(planEvent) ?? 'plan_run_updated'
+  if (type === 'plan_run_updated' && onResearchPlanUpdate) {
+    const snapshot = rendererPayload.state
+    const runId =
+      snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+        ? stringValue(snapshot.id)
+        : undefined
+    if (runId) {
+      const full = fullState ? validatePlanRunState(fullState) : null
+      onResearchPlanUpdate(
+        phiSessionIdForBinding(binding),
+        runId,
+        full?.id === runId && full.sessionId === binding.kernelSessionId
+          ? researchPlanPause(full)
+          : undefined
+      )
+    }
+  }
   if (type === 'plan_run_finished' && onPlanRunFinished) {
     const finished = planRunFinishedEvent(fullState)
     if (finished) onPlanRunFinished(phiSessionIdForBinding(binding), finished)
@@ -44,7 +72,12 @@ export function projectKernelEvent(
   binding: SessionBinding,
   event: KernelEventFrame,
   payload: Record<string, JsonValue> | undefined,
-  onPlanRunFinished?: (phiSessionId: string, event: PlanRunFinishedEvent) => void
+  onPlanRunFinished?: (phiSessionId: string, event: PlanRunFinishedEvent) => void,
+  onResearchPlanUpdate?: (
+    phiSessionId: string,
+    runId: string,
+    pause?: ResearchPlanPausedEvent
+  ) => void
 ): void {
   if (event.type === 'session.event') {
     const projected = phiEventFromWire(event.payload)
@@ -66,7 +99,7 @@ export function projectKernelEvent(
     binding.activeAgentRuns = Math.max(0, binding.activeAgentRuns - 1)
   }
   if (event.type === 'planRun.updated' && payload) {
-    projectPlanRunEvent(binding, payload, onPlanRunFinished)
+    projectPlanRunEvent(binding, payload, onPlanRunFinished, onResearchPlanUpdate)
     return
   }
   // agentRun.finished is not forwarded: the agent-run host already records the finish on the

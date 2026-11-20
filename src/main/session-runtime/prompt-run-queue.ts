@@ -67,6 +67,7 @@ export interface PromptRunQueueDeps {
     flushPending(sessionKey: string): Promise<void> | void
   }
   events: {
+    automaticPromptStarted?(phiSessionId: string): void
     notifySessionChanged(): void
     flushContinuations(phiSessionId: string, cancelled: boolean): void
     scheduleTitle(phiSessionId: string): void
@@ -108,6 +109,7 @@ async function runQueuedPrompt(
     context.promptRun.generation !== deps.runs.generationFor(context.runSessionKey) ||
     !context.runLifecycle.isCurrentGeneration(context.promptRun.sessionGeneration)
   ) {
+    if (context.promptRun.cancelled) context.input.onCancelledBeforeStart?.()
     return null
   }
 
@@ -134,12 +136,16 @@ async function runQueuedPrompt(
     sessionId: context.phiSessionId,
     runId: context.runId,
     loadedSkills,
+    ...(context.input.researchPauses?.length
+      ? { researchPauses: context.input.researchPauses }
+      : {}),
     getRecordedFailure: () => context.promptRun.recordedFailureMessage,
     execute: ({ signal }) =>
       deps.execution.execute(context, signal, (result) => {
         promptResult = result
       })
   })
+  if (context.input.automatic) deps.events.automaticPromptStarted?.(context.phiSessionId)
   deps.sleep.sync()
   void registryRun.done.then(deps.sleep.sync, deps.sleep.sync)
   try {
@@ -215,6 +221,7 @@ async function submitPromptRun(
     trackPromptRunSettlement(deps, context, run)
     return run
   } finally {
+    if (submission.cancelled) input.onCancelledBeforeStart?.()
     deps.runs.endSubmission(input.sessionKey, submission)
   }
 }

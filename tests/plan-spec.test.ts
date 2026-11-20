@@ -220,3 +220,20 @@ test('the project root itself is not a write target', () => {
   )
   assert.equal(result.ok, false)
 })
+
+test('accepts a bounded user research question only when explicitly provided', () => {
+  const input = spec([step('study'), step('qc')])
+  const question = '哪些基因达到预设阈值？'
+  const result = validatePlanSpec({ ...input, researchQuestion: question })
+  assert.ok(result.ok)
+  assert.equal(result.spec.researchQuestion, question)
+  assert.equal(result.spec.steps.length, 2)
+  const directed = spec([step('study'), step('followup', { dependsOn: ['study'] })])
+  assert.equal(validatePlanSpec(directed).ok, true)
+  const blocked = validatePlanSpec({ ...directed, researchQuestion: question })
+  assert.ok(!blocked.ok)
+  assert.match(blocked.errors.join(' '), /each step must be independent/i)
+  for (const value of [null, '', '   ', 'x'.repeat(1001), 4]) {
+    assert.equal(validatePlanSpec({ ...input, researchQuestion: value }).ok, false)
+  }
+})

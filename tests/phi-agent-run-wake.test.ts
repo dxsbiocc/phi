@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
+import { AgentRunRegistry } from '../src/main/agent/agents/registry'
+import { buildAgentRunTools } from '../src/main/agent/agents/run-tools'
 
 import {
   AGENT_RUN_HOST_METHODS,
@@ -287,6 +292,64 @@ const finishedParams = (overrides: Record<string, unknown> = {}): unknown => ({
     toolCalls: 3,
     report: 'Aligned. Output in /data/bam.',
     ...overrides
+  }
+})
+
+test('waiting and background wake both return the zero-DEG handoff without the child table or log', async (t) => {
+  const workspace = await mkdtemp(join(tmpdir(), 'phi-scientific-handoff-'))
+  t.after(() => rm(workspace, { recursive: true, force: true }))
+  const { calls, handlers } = harness()
+  const registry = new AgentRunRegistry()
+  const question = 'Which genes passed the prespecified thresholds?'
+  const table =
+    'gene_id\tpadj\tlog2FoldChange\nG1\t0.05\t2\nG2\t0.04\t0.8\nG3\t0.2\t-1.5\nG4\tNA\t1.4'
+  await writeFile(join(workspace, 'differential.tsv'), table)
+  const eligible = (await readFile(join(workspace, 'differential.tsv'), 'utf8'))
+    .split('\n')
+    .slice(1)
+    .map((line) => line.split('\t'))
+    .filter(([, padj, fc]) => Number.isFinite(Number(padj)) && Number.isFinite(Number(fc)))
+  const hitCount = eligible.filter(
+    ([, padj, fc]) => Number(padj) < 0.05 && Math.abs(Number(fc)) >= 1
+  ).length
+  const marker = 'PHI_SYNTHETIC_VERBOSE_LOG'
+  const research = {
+    subquestion: 'Apply the prespecified differential-expression filter.',
+    answer: `${hitCount} of ${eligible.length} evaluable genes met the thresholds.`,
+    interpretation: 'No candidate list for over-representation analysis.',
+    rationale:
+      'Deliver the requested gene list. A ranked pathway test answers a separate question.',
+    evidence: ['differential.tsv']
+  }
+  const handle = await registry.start({
+    agent: 'Statistics',
+    researchQuestion: question,
+    task: 'Inspect the differential-expression result.',
+    background: true,
+    runner: async () => ({
+      text: `<phi_agent_result>${JSON.stringify({ status: 'completed', research })}</phi_agent_result>\n${table}\n${marker.repeat(1000)}`,
+      toolCalls: 1
+    })
+  })
+  const run = await handle.done
+
+  await handlers[AGENT_RUN_HOST_METHODS.finished]({ originSessionId: 'runtime-1', run })
+  assert.equal(calls.continued.length, 1)
+  const evidence = JSON.parse(calls.continued[0].event.report!).evidence[0]
+  assert.equal(evidence, 'differential.tsv')
+  assert.equal(await readFile(join(workspace, evidence), 'utf8'), table)
+  const wake = continuationPrompt(calls.continued.map(({ event }) => event))
+  const waitTool = buildAgentRunTools(registry).find((tool) => tool.name === 'agent_wait')!
+  const waited = await waitTool.execute('wait', { ids: [run.id] }, undefined, {
+    cwd: '/projects/x',
+    recentUserImages: () => []
+  })
+  for (const delivered of [wake, JSON.stringify(waited), JSON.stringify(calls.appended)]) {
+    assert.ok(delivered.includes(question))
+    assert.ok(delivered.includes('0 of 3 evaluable genes'))
+    assert.ok(delivered.includes(evidence))
+    assert.ok(!delivered.includes(marker))
+    assert.ok(!delivered.includes('log2FoldChange'))
   }
 })
 

@@ -65,6 +65,13 @@ function planParameters(availableAgents: readonly string[]): ToolDefinition['par
     properties: {
       version: { type: 'integer', const: PLAN_SPEC_VERSION },
       goal: { type: 'string', minLength: 1 },
+      researchQuestion: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 1000,
+        description:
+          'For a scientific analysis, quote the original question from the user or their confirmed clarification. A scientific plan covers one review stage. Include only independent, already justified subquestions with empty dependsOn. Return evidence to the parent before choosing a later analysis that relies on the results; do not hide such analyses inside an independent step. Omit for ordinary plans.'
+      },
       steps: {
         type: 'array',
         minItems: 1,

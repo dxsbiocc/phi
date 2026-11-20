@@ -61,6 +61,12 @@
       "plan": "keep"
     },
     {
+      "file": "src/main/agent/engine/in-process/research-read-extension.ts",
+      "specifiers": ["@oh-my-pi/pi-coding-agent/tools/shell-tokenize"],
+      "purpose": "Recognize quoted shell preview arguments and command segments using the same pinned lexer as the native Bash tool before publishing a research artifact preview.",
+      "plan": "keep"
+    },
+    {
       "file": "src/main/agent/engine/in-process/settings.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent/config/registry",

@@ -86,7 +86,7 @@ export function createPlanAgentHandlers(options: Options): KernelMethodHandlers 
     async 'agentRuns.start'(params, _context, request) {
       return options.agentRuns.start(
         loaded(request.sessionId),
-        params as { requestId: string; agent?: string; task: string }
+        params as { requestId: string; agent?: string; task: string; researchQuestion?: string }
       )
     },
     async 'agentRuns.list'(_params, _context, request) {

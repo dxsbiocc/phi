@@ -1,7 +1,8 @@
 import type {
   PlanRunFinishedEvent,
   PlanRunState,
-  PlanRunTimelineSnapshot
+  PlanRunTimelineSnapshot,
+  ResearchPlanPausedEvent
 } from '../../../shared/planRunTypes'
 import type { SessionEventInput, StoredSessionEvent } from '../session/session-store'
 
@@ -20,6 +21,8 @@ export interface PlanRunTimelineStore {
    * finish again after a reconnect, so the persisted run id, not the broadcast, is the receipt.
    */
   appendFinished(sessionId: string, event: PlanRunFinishedEvent): boolean
+  hasResearchPauseReceipt(sessionId: string, event: ResearchPlanPausedEvent): boolean
+  dismissResearchPause(sessionId: string, event: ResearchPlanPausedEvent): void
 }
 
 function eventRunId(event: StoredSessionEvent): string | undefined {
@@ -32,7 +35,41 @@ function eventRunId(event: StoredSessionEvent): string | undefined {
 }
 
 export function createPlanRunTimelineStore(deps: PlanRunTimelineStoreDeps): PlanRunTimelineStore {
+  function hasResearchPauseReceipt(sessionId: string, event: ResearchPlanPausedEvent): boolean {
+    function matches(value: unknown): boolean {
+      if (!value || typeof value !== 'object') return false
+      const identity = value as Partial<ResearchPlanPausedEvent>
+      return (
+        identity.runId === event.runId &&
+        identity.stepId === event.stepId &&
+        identity.attempt === event.attempt
+      )
+    }
+    return deps.timeline
+      .read(sessionId)
+      .some(
+        (stored) =>
+          eventRunId(stored) === event.runId ||
+          (stored.type === 'research_plan_paused' && matches(stored)) ||
+          (stored.type === 'run_started' &&
+            Array.isArray(stored.researchPauses) &&
+            stored.researchPauses.some(matches))
+      )
+  }
   return {
+    hasResearchPauseReceipt,
+    dismissResearchPause(sessionId, event) {
+      const { runId, stepId, attempt } = event
+      if (!hasResearchPauseReceipt(sessionId, event)) {
+        deps.timeline.append(sessionId, {
+          type: 'research_plan_paused',
+          runId,
+          stepId,
+          attempt,
+          dismissed: true
+        })
+      }
+    },
     appendFinished(sessionId, event) {
       const runId = event.runId || event.state.id
       if (!runId) return false

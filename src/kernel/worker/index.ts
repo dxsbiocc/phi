@@ -463,7 +463,11 @@ export function createWorkerKernelAdapter(
           )
         }
         try {
+          const wasLoaded = sessionKinds.get(sessionId) === 'persistent'
           await openPersistentSession(sessionId, resources, callContext.hostCapabilities)
+          // A warm kernel already recovered the plan; the reconnecting desktop may
+          // still be waiting for a question which its previous process never sent.
+          if (wasLoaded) await plans.replayResearchPauses(sessionId)
           return { sessionId }
         } catch (error) {
           if (error instanceof SessionWriterBusyError) {

@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { isResearchQuestion } from './research-question'
+
 import { MAX_CLIENT_RUN_KEY_LENGTH, type KernelV1Method } from './constants'
 import { sessionAdoptParamsSchema, sessionAdoptResultSchema } from './history'
 import { jsonValueSchema } from './json'
@@ -48,6 +50,7 @@ const phiAgentDefinitionSchema = z
     model: z.array(z.string().min(1)).optional(),
     thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
     delegation: z.string().optional(),
+    handoff: z.literal('research').optional(),
     delegationMode: z.enum(['required-first', 'preferred', 'optional']).optional(),
     fallback: z
       .object({
@@ -65,6 +68,10 @@ const phiAgentDefinitionSchema = z
     filePath: z.string().min(1)
   })
   .strict()
+  .refine((agent) => agent.handoff === undefined || agent.source === 'phi', {
+    message: 'Only Phi agent definitions may declare a research handoff',
+    path: ['handoff']
+  })
 
 const phiAgentSnapshotSchema = z
   .array(phiAgentDefinitionSchema)
@@ -297,6 +304,7 @@ const planSpecSchema = z
   .object({
     version: z.literal(1),
     goal: z.string().min(1).max(4_000),
+    researchQuestion: z.string().refine(isResearchQuestion).optional(),
     steps: z.array(planStepSchema).min(1).max(20)
   })
   .strict()
@@ -416,6 +424,7 @@ export const agentRunsStartParamsSchema = z
   .object({
     requestId: nonEmptyIdSchema.max(MAX_CLIENT_RUN_KEY_LENGTH),
     agent: z.string().min(1).max(128).optional(),
+    researchQuestion: z.string().refine(isResearchQuestion).optional(),
     task: z
       .string()
       .min(1)
@@ -456,7 +465,7 @@ export const planRunUpdatedPayloadSchema = z
   .object({
     event: z.enum(['plan_run_updated', 'plan_run_finished']),
     state: planRunStateSchema,
-    /** Full state is sent only when a run finishes, so the desktop can wake the conversation. */
+    /** Includes evidence for a finished plan or an actionable scientific pause. */
     fullState: planRunStateSchema.optional()
   })
   .strict()

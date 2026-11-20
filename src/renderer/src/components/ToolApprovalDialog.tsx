@@ -44,6 +44,7 @@ function ToolApprovalDialog({ request, onRespond }: ToolApprovalDialogProps): Re
     <Paper
       variant="outlined"
       data-testid="gui-e2e-tool-approval"
+      data-phi-approval-tool={request.toolName}
       role="alert"
       aria-label={
         resourceApproval ? resourceCatalogCopy.permissionApproval : chatCopy.permissionApproval

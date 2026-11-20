@@ -6,6 +6,7 @@
 
 import { isPhiEventType } from '../engine/events'
 import type { PhiAgentEvent } from '../engine/types'
+import { checkScientificCompletion } from './research-evidence'
 import { AgentUsageCollector, type AgentRunStatus, type AgentRunUsageRecord } from './usage'
 import { isRecord } from '../../../shared/guards'
 
@@ -34,6 +35,7 @@ export interface AgentRunControl {
 
 export interface AgentRunRequest {
   task: string
+  researchQuestion?: string
   /** User-facing run label. The selected Phi definition remains the execution identity. */
   displayName?: string
   images?: AgentImage[]
@@ -165,6 +167,8 @@ function optionalCreatedAt(
 export function createAgentRunner(deps: {
   /** Agent name, used in error messages. */
   agent: string
+  /** Canonical workspace on this execution host. */
+  cwd?: string
   createSession: (request: { runId?: string; signal?: AbortSignal }) => Promise<AgentSessionLike>
   timeoutMs?: number
   /**
@@ -180,7 +184,16 @@ export function createAgentRunner(deps: {
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const now = deps.now ?? ((): string => new Date().toISOString())
 
-  return async ({ task, images, runId, signal, onProgress, onToolStep, onControl }) => {
+  return async ({
+    task,
+    researchQuestion,
+    images,
+    runId,
+    signal,
+    onProgress,
+    onToolStep,
+    onControl
+  }) => {
     if (signal?.aborted) throw new AgentCancelledError(deps.agent)
 
     const usage = new AgentUsageCollector({
@@ -211,6 +224,8 @@ export function createAgentRunner(deps: {
       }
     })
     let toolCalls = 0
+    let sawToolEvent = false
+    let successfulTool = false
     let cancelled = false
     let timedOut = false
     const startedAtByToolCallId = new Map<string, string | undefined>()
@@ -242,6 +257,7 @@ export function createAgentRunner(deps: {
       }
 
       if (isPhiEventType(event, 'tool_execution_update')) {
+        sawToolEvent = true
         const toolName = String(event.toolName ?? 'tool')
         const id = eventToolCallId(event, `${toolName}-${toolCalls + 1}`)
         const output = extractToolText(event.partialResult)
@@ -261,6 +277,8 @@ export function createAgentRunner(deps: {
         const id = eventToolCallId(event, `${toolName}-${toolCalls + 1}`)
         const output = extractToolText(event.result)
         const isError = event.isError === true
+        sawToolEvent = true
+        if (!isError) successfulTool = true
         const completedAt = eventString(event.createdAt) ?? now()
         usage.toolEnded(id, {
           resultChars: output.length,
@@ -299,15 +317,29 @@ export function createAgentRunner(deps: {
       // Control/subscription hooks can synchronously cancel before the listener is attached.
       if (signal?.aborted && !cancelled) onAbort()
       if (cancelled) throw new AgentCancelledError(deps.agent)
-      await session.prompt(task, images?.length ? { images } : undefined)
-      if (cancelled) throw new AgentCancelledError(deps.agent)
-      if (timedOut) throw new AgentTimeoutError(deps.agent, timeoutMs)
-
-      const message = session.getLastAssistantMessage()
-      if (message?.stopReason === 'error') {
-        throw new Error(message.errorMessage || 'The agent stopped with a model error.')
+      const prompt = async (text: string, options?: { images: AgentImage[] }): Promise<string> => {
+        sessionSignal.throwIfAborted()
+        await session.prompt(text, options)
+        sessionSignal.throwIfAborted()
+        const message = session.getLastAssistantMessage()
+        if (message?.stopReason === 'error') {
+          throw new Error(message.errorMessage || 'The agent stopped with a model error.')
+        }
+        return extractAssistantText(message)
       }
-      reportText = extractAssistantText(message)
+      reportText = await prompt(task, images?.length ? { images } : undefined)
+      if (researchQuestion && deps.cwd) {
+        reportText = await checkScientificCompletion({
+          cwd: deps.cwd,
+          question: researchQuestion,
+          text: reportText,
+          signal: sessionSignal,
+          toolActivity: () => toolCalls > 0 || sawToolEvent,
+          successfulTool: () => successfulTool,
+          correct: prompt
+        })
+        sessionSignal.throwIfAborted()
+      }
       status = 'completed'
       return { text: reportText, toolCalls }
     } catch (error) {

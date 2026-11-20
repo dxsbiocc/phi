@@ -1,7 +1,12 @@
 import { Box } from '@mui/material'
+import { useLayoutEffect, useRef, type RefObject } from 'react'
 import type { SxProps, Theme } from '@mui/material/styles'
 
-import { WINDOW_TITLEBAR_HEIGHT, type WindowChromeLayout } from '../../lib/windowChromeLayout'
+import {
+  TITLEBAR_TRAILING_SPACE,
+  WINDOW_TITLEBAR_HEIGHT,
+  type WindowChromeLayout
+} from '../../lib/windowChromeLayout'
 import type { WorkspaceSidePanelMode } from '../../lib/workspaceSidePanelMode'
 import MacWindowControls from '../MacWindowControls'
 import WindowNavigationControls from '../WindowNavigationControls'
@@ -59,6 +64,31 @@ function topRightChromeSx({
   }
 }
 
+function useTrailingChromeReserve(overlayWidth: number): RefObject<HTMLDivElement | null> {
+  const controlsRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const controls = controlsRef.current
+    const windowLayout = controls?.parentElement
+    if (!controls || !windowLayout) return
+    // Docked panels already narrow the workspace column. Floating panels cover it.
+    const reserveSpace = (): void => {
+      const width = controls.getBoundingClientRect().width
+      windowLayout.style.setProperty(
+        TITLEBAR_TRAILING_SPACE,
+        `calc(${width + overlayWidth}px + ${titlebarChromeHorizontalInset} + 8px)`
+      )
+    }
+    reserveSpace()
+    const observer = new ResizeObserver(reserveSpace)
+    observer.observe(controls)
+    return () => {
+      observer.disconnect()
+      windowLayout.style.removeProperty(TITLEBAR_TRAILING_SPACE)
+    }
+  }, [overlayWidth])
+  return controlsRef
+}
+
 export function AppWindowChrome({
   isMac,
   chromeLayout,
@@ -86,13 +116,16 @@ export function AppWindowChrome({
   activePanels: readonly WorkspaceSidePanelMode[]
   /** Rendered width of the docked/floating side panel. */
   sidePanelWidth: number
-  /** When the panel floats, it no longer pushes the toggles inward. */
+  /** A floating panel overlays the main column without consuming a dock separator. */
   sidePanelOverlay: boolean
   onRefreshSidePanel: () => void
   onTogglePanel: (mode: WorkspaceSidePanelMode) => void
   onOpenBackgroundJob: (key: string) => void
 }): React.JSX.Element {
   const sidePanelOpen = activePanels.length > 0
+  const controlsRef = useTrailingChromeReserve(
+    sidePanelOpen && sidePanelOverlay ? sidePanelWidth : 0
+  )
   return (
     <>
       {isMac && (
@@ -112,6 +145,7 @@ export function AppWindowChrome({
         </Box>
       )}
       <Box
+        ref={controlsRef}
         data-phi-workspace-top-right-chrome="true"
         sx={topRightChromeSx({ sidePanelOpen, sidePanelWidth, sidePanelOverlay })}
       >

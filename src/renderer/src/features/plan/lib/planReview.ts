@@ -1,5 +1,6 @@
 import type { AgentUserInteractionResponse, ChatItem, PlanReviewItem } from '../../../types'
 import { isRecord } from '../../../../../shared/guards'
+import { isResearchQuestion } from '../../../../../shared/kernel-protocol/research-question'
 import type { PlanSpec, PlanStep } from '../../../../../shared/planRunTypes'
 
 function planStepFromUnknown(value: unknown): PlanStep | null {
@@ -34,7 +35,14 @@ function planSpecFromUnknown(value: unknown): PlanSpec | undefined {
   if (!Array.isArray(value.steps) || value.steps.length === 0) return undefined
   const steps = value.steps.map(planStepFromUnknown)
   if (steps.some((step) => step === null)) return undefined
-  return { version: 1, goal: value.goal, steps: steps.filter((step) => step !== null) }
+  const researchQuestion = value.researchQuestion
+  if (researchQuestion !== undefined && !isResearchQuestion(researchQuestion)) return undefined
+  return {
+    version: 1,
+    goal: value.goal,
+    ...(researchQuestion ? { researchQuestion } : {}),
+    steps: steps.filter((step) => step !== null)
+  }
 }
 
 export function planReviewResponse(

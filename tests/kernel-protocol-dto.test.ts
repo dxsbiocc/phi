@@ -737,6 +737,21 @@ describe('kernel protocol DTOs', () => {
     }
 
     assert.equal(sessionCreateParamsSchema.safeParse(resources).success, true)
+    const research = { ...resources.phiAgents[0], handoff: 'research' }
+    assert.equal(
+      sessionCreateParamsSchema.parse({ ...resources, phiAgents: [research] }).phiAgents?.[0]
+        .handoff,
+      'research'
+    )
+    for (const invalid of [
+      { ...research, handoff: 'unknown' },
+      { ...research, source: 'compat' }
+    ]) {
+      assert.equal(
+        sessionCreateParamsSchema.safeParse({ ...resources, phiAgents: [invalid] }).success,
+        false
+      )
+    }
     assert.equal(
       sessionOpenParamsSchema.safeParse({
         sessionId: 'persistent-session',

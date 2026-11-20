@@ -6,6 +6,7 @@ import { VscLayoutSidebarLeftDock } from 'react-icons/vsc'
 import { PhiIcons } from '../icons'
 import { ResourceIcon, type ResourceIconProps } from './ResourceIcon'
 import { AgentAvatar } from './AgentAvatar'
+import { useActiveTabScroll } from './app-shell/useActiveTabScroll'
 import { resourceCatalogCopy, resourceUi } from '../lib/resourceUi'
 import { agentDisplayLabel } from '../lib/agentAvatar'
 import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
@@ -56,8 +57,10 @@ export function WorkspaceResourceTabs({
   fileIcon?: (tab: WorkspaceFileWorkspaceTab) => React.ReactNode
 }): React.JSX.Element {
   useUiLanguage()
+  const stripRef = useActiveTabScroll(activeKey, tabs.length)
   return (
     <Box
+      ref={stripRef}
       role="tablist"
       aria-label={navigationCopy.openResources}
       data-phi-workspace-resource-tabs="true"
@@ -90,6 +93,7 @@ export function WorkspaceResourceTabs({
             aria-selected={selected}
             data-phi-workspace-resource-tab={selected ? 'active' : 'inactive'}
             data-phi-workspace-resource-kind={tab.kind}
+            data-phi-workspace-resource-key={tab.key}
             title={tab.kind === 'subagent' ? title : (tab.subtitle ?? title)}
             aria-label={tab.kind === 'subagent' ? title : undefined}
             onClick={() => {
@@ -115,9 +119,8 @@ export function WorkspaceResourceTabs({
               display: 'flex',
               alignItems: 'center',
               gap: 0.4,
-              flex: '0 0 156px',
-              width: 156,
-              minWidth: 118,
+              flex: '0 0 min(156px, 100%)',
+              minWidth: 0,
               maxWidth: 156,
               height: 32,
               px: 0.6,

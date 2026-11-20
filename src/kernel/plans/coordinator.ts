@@ -1,4 +1,9 @@
-import type { PlanRunReplanRequest, PlanRunState, PlanSpec } from '../../shared/planRunTypes'
+import {
+  isResearchPause,
+  type PlanRunReplanRequest,
+  type PlanRunState,
+  type PlanSpec
+} from '../../shared/planRunTypes'
 import { KERNEL_EVENT_PLAN_RUN_UPDATED, type JsonValue } from '../../shared/kernel-protocol'
 import type { KernelPlanRuntime } from '../../main/agent/engine/in-process/kernel-services'
 import {
@@ -63,9 +68,9 @@ export class KernelPlanCoordinator implements KernelPlanRuntime {
             {
               event: event.type,
               state: event.state as unknown as JsonValue,
-              // The terminal event also carries the full run so the desktop can build the
-              // continuation prompt from the step reports; the renderer keeps the snapshot.
-              ...(event.type === 'plan_run_finished' && finishedState
+              // Only the desktop projection receives the evidence needed for a completion or actionable pause.
+              ...(finishedState &&
+              (event.type === 'plan_run_finished' || isResearchPause(finishedState))
                 ? // Stored run state can hold undefined optionals the frame encoder rejects.
                   { fullState: JSON.parse(JSON.stringify(finishedState)) as JsonValue }
                 : {})
@@ -97,6 +102,11 @@ export class KernelPlanCoordinator implements KernelPlanRuntime {
     await this.service.releaseSettledLaunches(sessionId, (requestId) =>
       this.launchSettled(sessionId, requestId)
     )
+    await this.replayResearchPauses(sessionId)
+  }
+
+  replayResearchPauses(sessionId: string): Promise<void> {
+    return this.service.replayResearchPauses(sessionId)
   }
 
   closeSession(sessionId: string): void {

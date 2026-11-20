@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import type { WrapperRun } from '../src/main/agent/wrappers/types'
+import { wrapperJobHostHandlers } from '../src/main/agent/wrappers/composition/job-host-handlers'
+import type { WrapperJobClient } from '../src/main/agent/wrappers/composition/job-types'
+import { remoteProjectAnchorPath } from '../src/main/agent/remote-project-anchor'
 import type { Project } from '../src/main/agent/projects'
 import type { PhiSessionManifest } from '../src/main/agent/session/session-store'
 import {
@@ -246,6 +250,7 @@ test('Wrapper scope snapshots the remote identity and rechecks each binding comp
     stable.dependencies
   )
   assert.ok(scope)
+  assert.equal(scope.executionHost, 'ssh')
   assert.equal(scope.originSessionId, 'runtime-session')
   assert.equal(scope.signal, stable.controller.signal)
   const assertStableScopeCurrent = scope.assertCurrent
@@ -275,5 +280,130 @@ test('Wrapper scope snapshots the remote identity and rechecks each binding comp
     assert.ok(assertChangedScopeCurrent)
     change(changed)
     assert.throws(assertChangedScopeCurrent, /selected project\/host binding changed/)
+  }
+})
+
+const localManifest: PhiSessionManifest = {
+  ...remoteManifest,
+  kind: 'project',
+  projectLocation: localProject.location,
+  cwd: '/local/project',
+  cwdRealPath: '/local/project'
+}
+const ordinaryManifest: PhiSessionManifest = {
+  ...localManifest,
+  kind: 'ordinary',
+  projectId: null,
+  projectLocation: undefined,
+  cwd: '/local/workspace',
+  cwdRealPath: '/local/workspace'
+}
+
+function localFixture(manifest: PhiSessionManifest): ReturnType<typeof fixture> & {
+  context: { originSessionId: string; kernelExecutionHost: 'local'; signal: AbortSignal }
+} {
+  const f = fixture()
+  f.setProject(manifest.projectId ? localProject : undefined)
+  f.setOrigin({ phiSessionId: manifest.sessionId, cwd: manifest.cwd })
+  f.setManifest(manifest)
+  return {
+    ...f,
+    context: {
+      originSessionId: 'runtime-session',
+      kernelExecutionHost: 'local' as const,
+      signal: f.controller.signal
+    }
+  }
+}
+
+for (const manifest of [localManifest, ordinaryManifest]) {
+  test(`Local kernel Wrapper starts for ${manifest.kind} sessions with its trusted origin and signal`, async () => {
+    const f = localFixture(manifest)
+    const requests: Parameters<WrapperJobClient['start']>[] = []
+    const client: WrapperJobClient = {
+      start: async (...args) => {
+        requests.push(args)
+        return { ok: false, error: 'fixture stops before launch' }
+      },
+      status: async () => undefined,
+      list: async () => [],
+      cancel: async () => ({ ok: false, error: 'unused' }),
+      wait: async () => undefined
+    }
+    const handlers = wrapperJobHostHandlers(client, {
+      scopeFor: (ctx) => resolveWrapperJobHostScope(ctx, f.dependencies)
+    })
+    const input = { id: 'wrapper', target: 'local', originSessionId: 'other-runtime' }
+    await handlers['wrapperJob.start'](input, f.context)
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0][0].target, 'local')
+    assert.equal(requests[0][0].originSessionId, 'runtime-session')
+    assert.equal(requests[0][1]?.signal, f.controller.signal)
+    assert(!f.calls.some((call) => call.startsWith('target:') || call.startsWith('binding:')))
+    f.controller.abort(new Error('chat stopped'))
+    await assert.rejects(async () => handlers['wrapperJob.start'](input, f.context), /chat stopped/)
+    assert.equal(requests.length, 1)
+  })
+}
+
+test('Local kernel scope can control only its composition jobs with resolvable session ownership', () => {
+  const f = localFixture(localManifest)
+  const { resolveOrigin } = f.dependencies
+  f.dependencies.resolveOrigin = (id) =>
+    id === 'runtime-session'
+      ? resolveOrigin(id)
+      : id === 'peer'
+        ? { phiSessionId: 'other-session', cwd: localManifest.cwd }
+        : undefined
+  const owner = { origin: 'composition', originSessionId: 'runtime-session' } as WrapperRun
+  const records = new Map<string, WrapperRun>([
+    ['owned', owner],
+    ['peer', { ...owner, originSessionId: 'peer' }],
+    ['expired', { ...owner, originSessionId: 'expired' }],
+    ['plan', { ...owner, origin: undefined }]
+  ])
+  f.dependencies.readRun = (id) => records.get(id)
+  const scope = resolveWrapperJobHostScope(f.context, f.dependencies)
+  assert.equal(scope?.executionHost, 'local')
+  for (const id of ['owned', 'peer', 'expired', 'plan', 'missing']) {
+    assert.equal(scope.ownsRun(id), id === 'owned', id)
+  }
+})
+
+test('Local kernel scope rejects stale SSH bindings and a moved project or ordinary workspace', () => {
+  const alias = localFixture({
+    ...ordinaryManifest,
+    cwd: '/alias-to-ssh-anchor',
+    cwdRealPath: remoteProjectAnchorPath('remote-project')
+  })
+  assert.throws(
+    () => resolveWrapperJobHostScope(alias.context, alias.dependencies),
+    /binding changed/i
+  )
+  const f = localFixture(localManifest)
+  f.setManifest(remoteManifest)
+  assert.throws(() => resolveWrapperJobHostScope(f.context, f.dependencies))
+  f.setManifest(localManifest)
+  f.setProject(remoteProject)
+  assert.throws(() => resolveWrapperJobHostScope(f.context, f.dependencies))
+
+  for (const manifest of [localManifest, ordinaryManifest]) {
+    const local = localFixture(manifest)
+    const scope = resolveWrapperJobHostScope(local.context, local.dependencies)
+    assert.ok(scope?.assertCurrent)
+    local.setManifest({ ...manifest, remoteRuntime: 'rpc' })
+    assert.throws(scope.assertCurrent, /binding changed/i, 'stale SSH runtime on local manifest')
+    local.setManifest({
+      ...manifest,
+      cwd: '/moved',
+      cwdRealPath: '/moved',
+      ...(manifest.projectId
+        ? { projectLocation: { kind: 'local', path: '/moved', realPath: '/moved' } }
+        : {})
+    })
+    assert.throws(scope.assertCurrent, /binding changed/i, 'local directory changed during request')
+    local.setManifest(manifest)
+    local.setOrigin({ phiSessionId: 'other-session', cwd: manifest.cwd })
+    assert.throws(scope.assertCurrent, /binding changed/i, 'origin changed during request')
   }
 })

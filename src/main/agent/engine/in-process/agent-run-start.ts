@@ -1,6 +1,7 @@
 import { AgentRunLimitError } from '../../agents/registry'
 import { isRecord } from '../../../../shared/guards'
 import { PLAN_DEFAULT_STEP_AGENT } from '../../../../shared/planRunTypes'
+import { isResearchQuestion } from '../../../../shared/kernel-protocol/research-question'
 import { sessions } from './state'
 
 export const MAX_HOST_AGENT_TASK_BYTES = 32 * 1024
@@ -10,6 +11,7 @@ function startInput(params: unknown): {
   sessionId: string
   agent: string
   task: string
+  researchQuestion?: string
   requestId?: string
 } {
   const record = isRecord(params) ? params : {}
@@ -25,7 +27,17 @@ function startInput(params: unknown): {
     throw new Error(`agentRun.start task exceeds the ${MAX_HOST_AGENT_TASK_BYTES}-byte limit`)
   }
   const requestId = typeof record.requestId === 'string' ? record.requestId.trim() : ''
-  return { sessionId, agent: agent.trim(), task, ...(requestId ? { requestId } : {}) }
+  const researchQuestion = record.researchQuestion
+  if (researchQuestion !== undefined && !isResearchQuestion(researchQuestion)) {
+    throw new Error('agentRun.start researchQuestion is invalid')
+  }
+  return {
+    sessionId,
+    agent: agent.trim(),
+    task,
+    ...(researchQuestion ? { researchQuestion } : {}),
+    ...(requestId ? { requestId } : {})
+  }
 }
 
 export async function startSessionAgentRun(params: unknown): Promise<{ runId: string }> {
@@ -40,6 +52,7 @@ export async function startSessionAgentRun(params: unknown): Promise<{ runId: st
     const handle = await session.agentRuns.start({
       agent: input.agent,
       task: input.task,
+      ...(input.researchQuestion ? { researchQuestion: input.researchQuestion } : {}),
       ...(input.requestId ? { requestId: input.requestId } : {}),
       runner,
       background: true,

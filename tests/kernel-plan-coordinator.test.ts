@@ -6,6 +6,10 @@ import test from 'node:test'
 
 import type { PlanRunState, PlanSpec } from '../src/shared/planRunTypes'
 import type { JsonValue } from '../src/shared/kernel-protocol'
+import { AgentRunRegistry, type AgentRunFn } from '../src/main/agent/agents/registry'
+import { startSessionAgentRun } from '../src/main/agent/engine/in-process/agent-run-start'
+import { sessions, type SessionEntry } from '../src/main/agent/engine/in-process/state'
+import { planRunContinuationPrompt } from '../src/main/agent/agents/run-continue'
 import type { KernelProtocolCore } from '../src/kernel/protocol'
 import { KernelPlanCoordinator } from '../src/kernel/plans/coordinator'
 import { agentRunCompletions } from '../src/main/agent/plan/execution/agent-run-completions'
@@ -724,4 +728,125 @@ test('a session cleanup that abandons a running child pauses the plan instead of
     coordinator.closeSession(sessionId)
     rmSync(agentDir, { recursive: true, force: true })
   }
+})
+
+test('approved research steps retain their original question through dispatch, persistence, and main-agent continuation', async (t) => {
+  const agentDir = mkdtempSync(join(tmpdir(), 'phi-research-plan-'))
+  const sessionId = 'research-plan-session'
+  const question = 'Which genes met our prespecified threshold?'
+  const marker = 'PRIVATE-INTERMEDIATE-DE-TABLE'
+  const taskPrompts: string[] = []
+  let blocked = false
+  const specialist: AgentRunFn = async ({ task }) => {
+    taskPrompts.push(task)
+    const research = {
+      subquestion: 'How many genes met the threshold?',
+      answer: 'Zero of three evaluable genes met the threshold.',
+      interpretation: 'There is no candidate list for ORA.',
+      rationale: 'The requested screening is complete.',
+      evidence: ['de/results.tsv']
+    }
+    return {
+      text: `<phi_agent_result>${JSON.stringify({ status: blocked ? 'blocked' : 'completed', missingInputs: blocked ? ['donor mapping'] : [], research })}</phi_agent_result>\n${marker}`,
+      toolCalls: 1
+    }
+  }
+  const registry = new AgentRunRegistry()
+  registry.subscribe({
+    onFinish: (run) => {
+      agentRunCompletions.deliver(sessionId, run)
+    }
+  })
+  sessions.set(sessionId, {
+    agentRuns: registry,
+    agentRunners: new Map([['PlanStep', specialist]]),
+    agentDir,
+    result: {} as SessionEntry['result']
+  })
+  const coordinator = new KernelPlanCoordinator(
+    agentDir,
+    async (method, params) => {
+      assert.equal(method, 'agentRun.start')
+      return startSessionAgentRun(params)
+    },
+    () => undefined
+  )
+  const broadcastPauses: Record<string, unknown>[] = []
+  coordinator.bind({
+    emitEvent: (_type: string, payload: Record<string, unknown>) => {
+      if (
+        payload.event === 'plan_run_updated' &&
+        (payload.fullState as PlanRunState | undefined)?.status === 'paused'
+      ) {
+        broadcastPauses.push(payload)
+      }
+    }
+  } as unknown as KernelProtocolCore)
+  t.after(() => {
+    coordinator.closeSession(sessionId)
+    sessions.delete(sessionId)
+    rmSync(agentDir, { recursive: true, force: true })
+  })
+  await coordinator.openSession(sessionId)
+  const stage: PlanSpec = {
+    version: 1,
+    researchQuestion: question,
+    goal: 'Evaluate the prespecified gene screen',
+    steps: [
+      {
+        id: 'screen',
+        title: 'Gene screen',
+        instructions: 'Read the DE results.',
+        acceptance: 'A count with evidence.',
+        dependsOn: [],
+        access: 'read'
+      }
+    ]
+  }
+  await assert.rejects(
+    coordinator.approved(sessionId, {
+      ...stage,
+      steps: [
+        ...stage.steps,
+        {
+          id: 'ora',
+          title: 'Check enrichment',
+          instructions: 'Run ORA given a list of significant genes.',
+          acceptance: 'Evidence for enriched pathways.',
+          dependsOn: ['screen'],
+          access: 'read'
+        }
+      ]
+    }),
+    /one review stage/
+  )
+  assert.equal(taskPrompts.length, 0)
+  assert.deepEqual(await coordinator.list(sessionId), [])
+  const initial = await coordinator.approved(sessionId, stage)
+  await eventually(
+    () => readPlanRun(sessionId, initial.id, agentDir)?.status === 'completed',
+    'stored research plan'
+  )
+  const saved = readPlanRun(sessionId, initial.id, agentDir)!
+  assert.equal(saved.spec.researchQuestion, question)
+  assert.equal(taskPrompts.length, 1)
+  assert.ok(taskPrompts[0].includes(question))
+  assert.match(taskPrompts[0], /waits for parent review/)
+  const prompt = planRunContinuationPrompt([
+    { type: 'plan_run_finished', runId: saved.id, state: saved }
+  ])
+  assert.ok(prompt.includes(question))
+  assert.match(prompt, /Zero of three evaluable genes/)
+  assert.match(prompt, /de\/results\.tsv/)
+  assert.ok(!JSON.stringify(saved).includes(marker))
+  assert.ok(!prompt.includes(marker))
+
+  blocked = true
+  const stalled = await coordinator.approved(sessionId, stage)
+  await eventually(() => broadcastPauses.length > 0, 'actionable research pause broadcast')
+  const paused = broadcastPauses[0].fullState as PlanRunState
+  assert.equal(paused.id, stalled.id)
+  assert.deepEqual(paused.pause, { reason: 'needs_input', stepId: 'screen' })
+  assert.equal(paused.steps.screen.attempts, 1)
+  assert.ok(!JSON.stringify(broadcastPauses).includes(marker))
 })

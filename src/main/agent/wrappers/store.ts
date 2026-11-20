@@ -1,3 +1,4 @@
+import { restoreResearchQc } from './composition/research-qc'
 import {
   appendFileSync,
   existsSync,
@@ -127,7 +128,15 @@ export function writeWrapperRun(run: WrapperRun, agentDir = getPhiAgentDir()): W
 }
 
 export function readWrapperRun(runId: string, agentDir = getPhiAgentDir()): WrapperRun | undefined {
-  return readJson<WrapperRun>(join(getRunDir(runId, agentDir), 'run.json'))
+  const run = readJson<WrapperRun>(join(getRunDir(runId, agentDir), 'run.json'))
+  if (!run || run.researchQc === undefined) return run
+  const researchQc = restoreResearchQc(run.researchQc)
+  const state =
+    run.state === 'completed' &&
+    (researchQc.disposition === 'invalid' || researchQc.disposition === 'needs_input')
+      ? 'failed'
+      : run.state
+  return { ...run, researchQc, state }
 }
 
 export function listWrapperRunIds(agentDir = getPhiAgentDir()): string[] {

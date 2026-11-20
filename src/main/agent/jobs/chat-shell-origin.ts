@@ -2,7 +2,7 @@ import { realpathSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { messageContentTitleText } from '../../../shared/sessionTitle'
 import { getProject } from '../projects'
-import { isRemoteProjectAnchorPath } from '../remote-project-anchor'
+import { hasRemoteSessionOrigin, isRemoteProjectAnchorPath } from '../remote-project-anchor'
 import { resolveRemoteWorkspaceHostBinding } from '../remote-workspace-boundary'
 import { findPhiSessionById, type PhiSessionManifest } from '../session/session-store'
 import { phiOnlySessionPath } from '../session/sessions'
@@ -21,20 +21,10 @@ function shellEnvironment(): NodeJS.ProcessEnv {
   return environment
 }
 
-function isRemoteOrigin(session: PhiSessionManifest): boolean {
-  return Boolean(
-    session.projectLocation?.kind === 'ssh' ||
-    session.remoteRuntime ||
-    session.runtimeRef ||
-    session.kernelRuntimeRef?.host.kind === 'ssh' ||
-    isRemoteProjectAnchorPath(session.cwd)
-  )
-}
-
 function shellTarget(session: PhiSessionManifest): ChatShellOrigin['run'] {
   const { sessionId } = session
   const project = session.projectId ? getProject(session.projectId) : undefined
-  if (isRemoteOrigin(session) || project?.location.kind === 'ssh') {
+  if (hasRemoteSessionOrigin(session) || project?.location.kind === 'ssh') {
     if (!session.projectId) throw new Error('The SSH project is unavailable')
     const identity = { sessionId, projectId: session.projectId }
     const binding = resolveRemoteWorkspaceHostBinding(identity)
@@ -66,7 +56,7 @@ function shellTarget(session: PhiSessionManifest): ChatShellOrigin['run'] {
       !current ||
       current.cwd !== session.cwd ||
       current.projectId !== session.projectId ||
-      isRemoteOrigin(current) ||
+      hasRemoteSessionOrigin(current) ||
       isRemoteProjectAnchorPath(cwd) ||
       realpathSync(current.cwd) !== cwd
     ) {

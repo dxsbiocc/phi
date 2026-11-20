@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
@@ -63,8 +63,18 @@ import {
   writeCompositionRemoteSnapshot,
   type CompositionRunOutcome
 } from './run-record'
+import {
+  elapsedSeconds,
+  readTail,
+  readStoredJobStatus,
+  remoteField,
+  LOG_FILE,
+  LOG_TAIL_CHARS
+} from './stored-job-status'
 import { findMissingPrimaryOutputs, validateWrapperParams } from './validate'
 import { parseWrapperWorkflow } from './workflow-identity'
+import { declaresResearchQc, localResearchOutcome, researchQcLaunchBlock } from './research-qc'
+import { isResearchQcGated } from '../../../../shared/wrapperResearchQcTypes'
 
 import { errorMessage } from '../../../../shared/errorCodes'
 /**
@@ -77,8 +87,6 @@ import { errorMessage } from '../../../../shared/errorCodes'
  * status can be answered from disk after a restart.
  */
 
-const LOG_FILE = 'nextflow.log'
-const LOG_TAIL_CHARS = 4000
 const DEFAULT_MAX_CONCURRENT = 3
 const DEFAULT_MAX_REMOTE_CONCURRENT = 10
 const DEFAULT_PROGRESS_THROTTLE_MS = 2000
@@ -142,31 +150,6 @@ interface LiveJob {
   finished: Promise<WrapperJobStatus>
 }
 
-function elapsedSeconds(run: WrapperRun, now = Date.now()): number {
-  const start = Date.parse(run.startedAt ?? run.createdAt)
-  const end = run.completedAt ? Date.parse(run.completedAt) : now
-  return Math.max(0, Math.round((end - start) / 1000))
-}
-
-function readTail(path: string, maxChars: number): string {
-  try {
-    const text = readFileSync(path, 'utf-8')
-    return text.length > maxChars ? text.slice(-maxChars) : text
-  } catch {
-    return ''
-  }
-}
-
-function readSummary(runsDir: string, runId: string): { missingOutputs?: string[] } {
-  try {
-    return JSON.parse(readFileSync(join(runsDir, runId, 'summary.json'), 'utf-8')) as {
-      missingOutputs?: string[]
-    }
-  } catch {
-    return {}
-  }
-}
-
 /** The head process as a Slurm job is `slurm-controller`; on the login node it is `slurm` or `remote-background`. */
 function remoteExecutorName(hpc: RemoteHpcSettings | undefined): WrapperExecutor {
   if (hpc?.controller === 'sbatch') return 'slurm-controller'
@@ -209,10 +192,6 @@ function remoteEnvironmentCheckError(error: unknown): string {
   return error instanceof WrapperEnvironmentBlockedError
     ? error.message
     : `远程环境检查失败：${errorMessage(error)}`
-}
-
-function remoteField(run: WrapperRun): { remote?: { host: string; runDir: string } } {
-  return run.remote ? { remote: { host: run.remote.host, runDir: run.remote.runDir } } : {}
 }
 
 export class WrapperJobManager implements WrapperJobClient {
@@ -518,6 +497,31 @@ export class WrapperJobManager implements WrapperJobClient {
     control?.assertCurrent?.()
     const agentDir = this.agentDir()
     const params = mapped.params
+    // Local research runs: refuse stale QC artifacts and duplicate destinations before any
+    // persistence or mutation, so a new launch can never reuse or overwrite earlier results.
+    if (!resolved) {
+      try {
+        const block = researchQcLaunchBlock({
+          manifest: entry.manifest,
+          params,
+          componentDir: entry.componentDir,
+          live: [...this.live.values()]
+            .filter((job) => !job.remote)
+            .map((job) => ({
+              manifest: job.entry.manifest,
+              params: job.params,
+              componentDir: job.entry.componentDir
+            }))
+        })
+        if (block) return { ok: false, error: block }
+      } catch {
+        return {
+          ok: false,
+          error:
+            'Unable to verify the local research output destination. Choose a fresh output directory.'
+        }
+      }
+    }
     let run: WrapperRun
     try {
       run = startCompositionRun({
@@ -609,7 +613,15 @@ export class WrapperJobManager implements WrapperJobClient {
       return { ok: false, error: `Could not start Nextflow: ${message}` }
     }
 
-    const started = this.trackJob({ run, entry, params, proc, remote, tracker, logPath })
+    const started = this.trackJob({
+      run,
+      entry,
+      params,
+      proc,
+      remote,
+      tracker,
+      logPath
+    })
     jobRef.current = started
     this.emit(run.runId)
     return { ok: true, status: this.liveStatus(started) }
@@ -755,9 +767,10 @@ export class WrapperJobManager implements WrapperJobClient {
     }
   }
 
-  private finalize(job: LiveJob, result: WrapperRunResult): WrapperJobStatus {
+  private async finalize(job: LiveJob, result: WrapperRunResult): Promise<WrapperJobStatus> {
     const runId = job.run.runId
     if (job.finalized) return this.statusSync(runId) as WrapperJobStatus
+    // Set before any await: a second finalize (or shutdown) must never run the gate twice.
     job.finalized = true
     // Phi let go of a remote run that carries on remotely; its record stays `running` so the
     // next start can pick it up again.
@@ -771,13 +784,28 @@ export class WrapperJobManager implements WrapperJobClient {
       : result.success
         ? findMissingPrimaryOutputs(job.entry.manifest, job.params, job.entry.componentDir)
         : []
-    const outcome: CompositionRunOutcome = result.cancelled
+    let outcome: CompositionRunOutcome = result.cancelled
       ? 'cancelled'
       : result.lost
         ? 'lost'
         : result.success && missing.length === 0
           ? 'completed'
           : 'failed'
+    let researchQc
+    if (!job.remote && declaresResearchQc(job.entry.manifest)) {
+      researchQc = await localResearchOutcome(
+        job.entry,
+        job.params,
+        job.run.outDir,
+        outcome,
+        result.exitCode,
+        missing
+      )
+      if (job.cancelRequested) {
+        outcome = 'cancelled'
+        researchQc = undefined
+      } else if (researchQc?.disposition === 'invalid') outcome = 'failed'
+    }
     try {
       finishCompositionRun({
         run: job.run,
@@ -788,6 +816,7 @@ export class WrapperJobManager implements WrapperJobClient {
         output: result.output || job.tracker.tail(),
         missingOutputs: missing,
         progress: job.tracker.snapshot(),
+        ...(researchQc ? { researchQc } : {}),
         // A remote run's outputs are on the cluster, out of reach of a local existsSync.
         ...(result.remote ? { outputs: result.remote.outputs } : job.remote ? { outputs: [] } : {}),
         agentDir: this.agentDir()
@@ -812,7 +841,9 @@ export class WrapperJobManager implements WrapperJobClient {
       startedAt: job.run.startedAt,
       elapsedSeconds: Math.max(0, Math.round((Date.now() - job.startedMs) / 1000)),
       progress: job.tracker.snapshot(),
-      logTail: job.tracker.tail(LOG_TAIL_CHARS),
+      logTail: isResearchQcGated(job.run) ? '' : job.tracker.tail(LOG_TAIL_CHARS),
+      ...(job.run.researchQc ? { researchQc: job.run.researchQc } : {}),
+      ...(job.run.researchQcExpected ? { researchQcExpected: true } : {}),
       ...remoteField(job.run)
     }
   }
@@ -822,29 +853,7 @@ export class WrapperJobManager implements WrapperJobClient {
     const job = this.live.get(runId)
     if (job) return this.liveStatus(job)
 
-    const agentDir = this.agentDir()
-    const run = readWrapperRun(runId, agentDir)
-    if (!run) return undefined
-    const runsDir = getWrapperRunsDir(agentDir)
-    return {
-      runId: run.runId,
-      wrapperId: run.wrapper.canonicalId,
-      state: run.state,
-      profile: run.profile,
-      ...(run.targetReason ? { targetReason: run.targetReason } : {}),
-      outDir: run.outDir,
-      ...(run.startedAt ? { startedAt: run.startedAt } : {}),
-      ...(run.completedAt ? { completedAt: run.completedAt } : {}),
-      elapsedSeconds: elapsedSeconds(run),
-      ...(run.exitCode !== undefined ? { exitCode: run.exitCode } : {}),
-      progress: run.progress ?? { started: 0 },
-      logTail: readTail(join(runsDir, run.runId, LOG_FILE), LOG_TAIL_CHARS),
-      ...(run.outputs ? { outputs: run.outputs } : {}),
-      ...(TERMINAL_RUN_STATES.includes(run.state)
-        ? { missingOutputs: readSummary(runsDir, run.runId).missingOutputs ?? [] }
-        : {}),
-      ...remoteField(run)
-    }
+    return readStoredJobStatus(runId, this.agentDir())
   }
 
   async status(runId: string): Promise<WrapperJobStatus | undefined> {

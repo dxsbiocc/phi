@@ -4,7 +4,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import type { PlanRunFinishedEvent, PlanRunState } from '../src/shared/planRunTypes'
+import type {
+  PlanRunFinishedEvent,
+  PlanRunState,
+  ResearchPlanPausedEvent
+} from '../src/shared/planRunTypes'
+import { projectKernelEvent } from '../src/main/agent/engine/kernel-event-projection'
+import type { SessionBinding } from '../src/main/agent/engine/kernel-session-support'
+import type { JsonValue, KernelEventFrame } from '../src/shared/kernel-protocol'
+import { scientificReport } from '../src/main/agent/agents/research-handoff'
+import { continuationPrompt } from '../src/main/agent/agents/run-continue'
 import { planRunTimelineSnapshot } from '../src/main/agent/plan/plan-run-service'
 import { createKernelPlanRunCompletion } from '../src/main/agent/plan/kernel-plan-run-completion'
 import {
@@ -270,5 +279,154 @@ test('a stopped plan is kept in the transcript without waking the agent', async 
     assert.equal(continued, 0)
     const items = timelineItems(sessionId, cwd)
     assert.equal(items.filter((item) => item.role === 'plan_run').length, 1)
+  })
+})
+
+test('a paused research stage asks for a missing donor map once across replay and desktop restart', async () => {
+  await withPhiDir(async () => {
+    const { sessionId } = remoteSession()
+    const question = 'Which genes changed across donors?'
+    const state = finishedPlan('kernel-session-1').state
+    state.spec = { ...state.spec, researchQuestion: question, steps: [state.spec.steps[0]] }
+    state.status = 'paused'
+    state.pause = { reason: 'needs_input', stepId: 'read-graph' }
+    const report = scientificReport(question, 'blocked', {
+      missingInputs: ['donor-to-sample mapping'],
+      research: {
+        subquestion: 'Can we estimate the planned contrast?',
+        answer: 'The donor column is missing.',
+        interpretation: 'Independent biological replicates cannot be determined.',
+        rationale: 'Complete the sample mapping before inference.',
+        evidence: ['qc/sample_inventory.tsv']
+      }
+    })
+    assert.ok(report.structured)
+    state.steps = { 'read-graph': { status: 'failed', attempts: 1, report } }
+    const prompts: string[] = []
+    const bind = (): ReturnType<typeof createKernelPlanRunCompletion> =>
+      createKernelPlanRunCompletion({
+        timeline: { read: readSessionEvents, append: appendSessionEvent },
+        snapshot: planRunTimelineSnapshot,
+        continueConversation: () => assert.fail('A paused plan has not finished')
+      })
+    const binding = {
+      params: { phiSessionId: sessionId },
+      logicalSessionId: 'kernel-session-1',
+      kernelSessionId: state.sessionId,
+      sink: { event: () => undefined }
+    } as unknown as SessionBinding
+    function deliver(completion: ReturnType<typeof bind>): void {
+      const payload = JSON.parse(
+        JSON.stringify({
+          event: 'plan_run_updated',
+          fullState: state,
+          state: planRunTimelineSnapshot(state)
+        })
+      ) as Record<string, JsonValue>
+      const frame: KernelEventFrame = {
+        kind: 'event',
+        seq: 1,
+        type: 'planRun.updated',
+        sessionId: state.sessionId,
+        payload
+      }
+      projectKernelEvent(binding, frame, payload, undefined, (target, _, pause) => {
+        assert.equal(target, sessionId)
+        if (pause && completion.claimResearchPause(target, pause)) {
+          const { runId, stepId, attempt } = pause
+          appendSessionEvent(target, {
+            type: 'run_started',
+            runId: 'continuation-' + attempt,
+            researchPauses: [{ runId, stepId, attempt }]
+          })
+          prompts.push(continuationPrompt([pause]))
+          completion.releaseResearchPause(target, pause)
+        }
+      })
+    }
+    const completion = bind()
+    deliver(completion)
+    deliver(completion)
+    deliver(bind())
+    assert.equal(prompts.length, 1)
+    assert.ok(prompts[0].includes(question))
+    assert.match(prompts[0], /donor-to-sample mapping/)
+    assert.match(prompts[0], /qc\/sample_inventory\.tsv/)
+    assert.match(prompts[0], /ask a focused question/)
+    assert.equal(readSessionEvents(sessionId).filter((e) => e.type === 'run_started').length, 1)
+    state.pause = { reason: 'user' }
+    deliver(completion)
+    delete state.spec.researchQuestion
+    state.pause = { reason: 'step_failed', stepId: 'read-graph' }
+    deliver(completion)
+    assert.equal(prompts.length, 1)
+    state.spec.researchQuestion = question
+    state.steps['read-graph'] = {
+      status: 'failed',
+      attempts: 2,
+      error: 'PRIVATE-INTERMEDIATE-FAILURE-LOG'
+    }
+    deliver(completion)
+    deliver(bind())
+    assert.equal(prompts.length, 2)
+    assert.match(prompts[1], /No verified scientific handoff/)
+    assert.doesNotMatch(prompts[1], /PRIVATE-INTERMEDIATE/)
+  })
+})
+
+test('a failed research wake admission can replay; admitted or explicitly dismissed attempts cannot', async () => {
+  await withPhiDir(async () => {
+    const { sessionId } = remoteSession()
+    const busy = remoteSession().sessionId
+    const paused: ResearchPlanPausedEvent = {
+      type: 'research_plan_paused',
+      runId: 'research-7',
+      stepId: 'de',
+      attempt: 1,
+      reason: 'needs_input',
+      originalQuestion: 'Which genes changed?'
+    }
+    const bind = (): ReturnType<typeof createKernelPlanRunCompletion> =>
+      createKernelPlanRunCompletion({
+        timeline: { read: readSessionEvents, append: appendSessionEvent },
+        snapshot: planRunTimelineSnapshot,
+        continueConversation: () => assert.fail('not a finished plan')
+      })
+    const registry = new SessionRunnerRegistry({ maxActiveRuns: 1 })
+    const block = Promise.withResolvers<void>()
+    const occupied = registry.startRun({
+      sessionId: busy,
+      runId: 'occupied',
+      execute: () => block.promise
+    })
+    const delivery = {
+      sessionId,
+      runId: 'wake',
+      researchPauses: [{ runId: paused.runId, stepId: paused.stepId, attempt: paused.attempt }],
+      execute: async () => undefined
+    }
+    const original = bind()
+    assert.equal(original.claimResearchPause(sessionId, paused), true)
+    assert.equal(original.claimResearchPause(sessionId, paused), false)
+    assert.throws(() => registry.startRun(delivery), /上限/)
+    original.releaseResearchPause(sessionId, paused)
+    assert.equal(readSessionEvents(sessionId).length, 0)
+    block.resolve()
+    await occupied.done
+
+    const restarted = bind()
+    assert.equal(restarted.claimResearchPause(sessionId, paused), true)
+    await registry.startRun(delivery).done
+    restarted.releaseResearchPause(sessionId, paused)
+    assert.equal(bind().claimResearchPause(sessionId, paused), false)
+    const differentAttempt = { ...paused, attempt: 2 }
+    assert.equal(restarted.claimResearchPause(sessionId, differentAttempt), true)
+    restarted.dismissResearchPause(sessionId, differentAttempt)
+    restarted.releaseResearchPause(sessionId, differentAttempt)
+    assert.equal(bind().claimResearchPause(sessionId, differentAttempt), false)
+    assert.equal(
+      readSessionEvents(sessionId).filter((event) => event.type === 'run_started').length,
+      1
+    )
   })
 })
