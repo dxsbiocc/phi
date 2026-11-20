@@ -41,7 +41,7 @@ import {
   type ChatVirtualViewport
 } from '../../lib/chatVirtualization'
 import { useLostAgentRunsStore } from '../../stores/lostAgentRunsStore'
-import { latestTodoSnapshot } from '../../lib/todoPanel'
+import { latestTodoSnapshot, todoProgress } from '../../lib/todoPanel'
 import type { AgentExecutionItem, ChatItem, ChatMessage, NotebookCellJumpTarget } from '../../types'
 import AgentRunsOverview from './AgentRunsOverview'
 import { ChatBubble } from './ChatBubble'
@@ -260,6 +260,7 @@ const ChatMessageList = memo(function ChatMessageList({
     [messages, lostAgentRuns]
   )
   const todoSnapshot = useMemo(() => latestTodoSnapshot(messages), [messages])
+  const hasVisibleTodo = !!todoSnapshot && todoProgress(todoSnapshot).total > 0
   const virtualRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map())
   const pendingRowHeightsRef = useRef<Record<string, number>>({})
   const rowHeightFrameRef = useRef<number | null>(null)
@@ -769,9 +770,10 @@ const ChatMessageList = memo(function ChatMessageList({
           onClick={handleJumpToLatest}
           sx={{
             position: 'absolute',
-            left: '50%',
+            left: hasVisibleTodo ? 'auto' : '50%',
+            right: hasVisibleTodo ? 16 : 'auto',
             bottom: 12,
-            transform: 'translateX(-50%)',
+            transform: hasVisibleTodo ? 'none' : 'translateX(-50%)',
             width: 36,
             height: 36,
             zIndex: 2,

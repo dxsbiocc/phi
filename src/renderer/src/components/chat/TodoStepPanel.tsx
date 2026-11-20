@@ -133,9 +133,9 @@ type TodoStepPanelProps = {
 }
 
 /**
- * A small pill over the chat's top-right corner (below AgentRunsOverview) showing progress
- * through the main agent's current todo list. Resting the pointer on it, or clicking it, opens
- * the full checklist grouped by phase. Renders nothing while there is no todo list yet.
+ * A small pill centered above the composer showing progress through the main agent's current
+ * todo list. Resting the pointer on it, or clicking it, opens the full checklist above the pill,
+ * grouped by phase. Renders nothing while there is no todo list yet.
  */
 function TodoStepPanel({ snapshot }: TodoStepPanelProps): ReactNode {
   useUiLanguage()
@@ -186,8 +186,9 @@ function TodoStepPanel({ snapshot }: TodoStepPanelProps): ReactNode {
           aria-label={chatCopy.taskListValueCompletedViewDetails(pillLabel(progress))}
           sx={{
             position: 'absolute',
-            top: 52,
-            right: 16,
+            bottom: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
             zIndex: 3,
             display: 'flex',
             alignItems: 'center',
@@ -220,9 +221,9 @@ function TodoStepPanel({ snapshot }: TodoStepPanelProps): ReactNode {
         <Popper
           open={open}
           anchorEl={anchor}
-          placement="bottom-end"
+          placement="top"
           disablePortal
-          modifiers={[{ name: 'offset', options: { offset: [0, 4] } }]}
+          modifiers={[{ name: 'offset', options: { offset: [0, 8] } }]}
           sx={{ zIndex: 4 }}
         >
           <Paper
