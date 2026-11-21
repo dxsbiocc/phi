@@ -41,7 +41,8 @@ import {
   type ChatVirtualViewport
 } from '../../lib/chatVirtualization'
 import { useLostAgentRunsStore } from '../../stores/lostAgentRunsStore'
-import { latestTodoSnapshot } from '../../lib/todoPanel'
+import { latestTodoSnapshot, todoProgress } from '../../lib/todoPanel'
+import { forkUserMessageIdByAssistant } from '../../lib/chatFork'
 import type { AgentExecutionItem, ChatItem, ChatMessage, NotebookCellJumpTarget } from '../../types'
 import AgentRunsOverview from './AgentRunsOverview'
 import { ChatBubble } from './ChatBubble'
@@ -181,8 +182,8 @@ export type ChatMessageListProps = {
   scrollPositionStore?: Map<string, number>
   isGenerating: boolean
   currentRunStartedAt?: string
-  onEditUserMessage?: (content: string) => void
-  onRetryUserMessage?: (message: UserMessageRetryTarget) => void
+  onEditUserMessage?: (message: UserMessageRetryTarget) => Promise<void> | void
+  onRetryUserMessage?: (message: UserMessageRetryTarget) => Promise<void> | void
   onForkUserMessage?: (messageId: string) => void
   onGoSettings: () => void
   onOpenBackgroundJobs: () => void
@@ -260,6 +261,7 @@ const ChatMessageList = memo(function ChatMessageList({
     [messages, lostAgentRuns]
   )
   const todoSnapshot = useMemo(() => latestTodoSnapshot(messages), [messages])
+  const hasVisibleTodo = !!todoSnapshot && todoProgress(todoSnapshot).total > 0
   const virtualRowObserversRef = useRef<Map<string, ResizeObserver>>(new Map())
   const pendingRowHeightsRef = useRef<Record<string, number>>({})
   const rowHeightFrameRef = useRef<number | null>(null)
@@ -303,6 +305,10 @@ const ChatMessageList = memo(function ChatMessageList({
     [isGenerating, renderGroups]
   )
   const userMessageStates = useMemo(() => failedUserMessageStates(messages), [messages])
+  const assistantForkAnchors = useMemo(
+    () => forkUserMessageIdByAssistant(transcriptMessages),
+    [transcriptMessages]
+  )
   const virtualItems = useMemo<ChatGroupVirtualItem[]>(
     () => renderGroups.map((group) => ({ id: group.key, group })),
     [renderGroups]
@@ -667,6 +673,9 @@ const ChatMessageList = memo(function ChatMessageList({
           userMessageState={
             group.item.role === 'user' ? userMessageStates.get(group.item.id) : undefined
           }
+          forkUserMessageId={
+            group.item.role === 'assistant' ? assistantForkAnchors.get(group.item.id) : undefined
+          }
           onEditUserMessage={onEditUserMessage}
           onRetryUserMessage={onRetryUserMessage}
           onForkUserMessage={onForkUserMessage}
@@ -694,6 +703,7 @@ const ChatMessageList = memo(function ChatMessageList({
       onOpenWebUrl,
       onRetryUserMessage,
       onForkUserMessage,
+      assistantForkAnchors,
       userMessageStates
     ]
   )
@@ -769,9 +779,10 @@ const ChatMessageList = memo(function ChatMessageList({
           onClick={handleJumpToLatest}
           sx={{
             position: 'absolute',
-            left: '50%',
+            left: hasVisibleTodo ? 'auto' : '50%',
+            right: hasVisibleTodo ? 16 : 'auto',
             bottom: 12,
-            transform: 'translateX(-50%)',
+            transform: hasVisibleTodo ? 'none' : 'translateX(-50%)',
             width: 36,
             height: 36,
             zIndex: 2,

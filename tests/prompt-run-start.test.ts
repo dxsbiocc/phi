@@ -206,6 +206,26 @@ test('preparePromptRunForQueue captures the durable user message id for the rend
   assert.equal(context.userMessageEventId, 'event-1')
 })
 
+test('a follow-up records against the existing run without replacing or cleaning it up', () => {
+  const { deps, calls } = createDeps()
+  const start = createPromptRunStart(deps)
+  const active = existingRun('project-1', '/canonical')
+  active.phiSessionId = 'phi-1'
+  active.runId = 'run-original'
+  active.sessionGeneration = 3
+  const context = start.allocateFollowUp(admitted({ runId: 'run-original' }), active)
+
+  start.prepareFollowUp(context)
+
+  assert.equal(context.promptRun, active)
+  assert.equal(context.runGeneration, active.generation)
+  assert.equal(context.userMessageEventId, 'event-1')
+  assert.ok(calls.includes('append:phi-1:user_message'))
+  assert.ok(!calls.some((call) => call.startsWith('advance:')))
+  assert.ok(!calls.some((call) => call.startsWith('set-active:')))
+  assert.ok(!calls.some((call) => call.startsWith('delete-active:')))
+})
+
 test('a failed user-message append removes the active run and rethrows', () => {
   const { deps, calls } = createDeps()
   deps.events.append = () => {

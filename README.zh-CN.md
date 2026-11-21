@@ -183,7 +183,7 @@ bun run dev
 
 先在设置中配置模型提供方，再选择项目。
 
-在 macOS 上，从“应用程序”打开 `Phi.app` 即可使用 Dock 入口。`bun run dev` 从源码打开同一个工作台，开发窗口可通过菜单栏的 Phi 图标找回。
+在 macOS 上，`bun run dev` 和打包后的 `Phi.app` 运行时都会在 Dock 显示 Phi 图标。开发窗口可通过 Dock 或菜单栏的 Phi 图标找回。
 
 如果要按 CI 的方式检查源码，还需要安装 Node.js 24：
 

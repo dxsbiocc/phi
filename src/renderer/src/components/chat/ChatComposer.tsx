@@ -326,7 +326,7 @@ export function ChatComposer({
         data-phi-file-drop-target={fileDropTarget ? 'chat-composer' : undefined}
         sx={composerSurfaceSx({ compact, dragActive, highestEffort })}
       >
-        <PromptBarSparkles active={highestEffort} value={value} />
+        <PromptBarSparkles active={highestEffort} />
         {aboveEditor}
         <Box sx={editorMinHeight ? { minHeight: editorMinHeight } : undefined}>
           <ComposerTextEditor

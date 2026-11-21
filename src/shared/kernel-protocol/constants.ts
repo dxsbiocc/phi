@@ -15,6 +15,7 @@ export const KERNEL_V1_METHODS = [
   'session.adopt',
   'sessions.list',
   'session.prompt',
+  'session.followUp',
   // K3-1 kernel-owned planning and specialist-run control.
   'session.plan.enter',
   'session.plan.cancel',

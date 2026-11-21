@@ -94,8 +94,15 @@ function isCurrentRequest(deps: PromptSendDeps, sendRequest: number): boolean {
   return sendRequest === deps.sendRequestRef.current
 }
 
-function canSend(deps: PromptSendDeps, text: string, images: PromptImageInput[]): boolean {
-  if ((!text.trim() && images.length === 0) || deps.isSendingRef.current) return false
+function canSend(
+  deps: PromptSendDeps,
+  text: string,
+  images: PromptImageInput[],
+  followUp: boolean
+): boolean {
+  if ((!text.trim() && images.length === 0) || (deps.isSendingRef.current && !followUp)) {
+    return false
+  }
   if (images.length && deps.readiness.selectedModel?.supportsImages === false) {
     deps.actions.showSnackbarError(new Error(appCopy.imagesUnsupported), appCopy.sendImagesFailed)
     return false
@@ -120,7 +127,7 @@ function appendOptimisticUserMessage(
 ): string | undefined {
   if (options.retryUserMessageId) {
     deps.actions.updateMessages((prev) =>
-      messagesForUserRetry(prev, options.retryUserMessageId as string)
+      messagesForUserRetry(prev, options.retryUserMessageId as string, text)
     )
     return undefined
   }
@@ -138,22 +145,11 @@ function appendOptimisticUserMessage(
   return optimisticUserMessageId
 }
 
-function removeMaterializedDuplicateOfOptimisticMessage(
-  deps: PromptSendDeps,
-  optimisticUserMessageId?: string
-): void {
+function removeOptimisticUserMessage(deps: PromptSendDeps, optimisticUserMessageId?: string): void {
   if (!optimisticUserMessageId) return
-  deps.actions.updateMessages((previous) => {
-    const optimisticIndex = previous.findIndex((message) => message.id === optimisticUserMessageId)
-    const optimistic = previous[optimisticIndex]
-    if (!optimistic || optimistic.role !== 'user') return previous
-    const hasMaterializedDuplicate = previous
-      .slice(optimisticIndex + 1)
-      .some((message) => message.role === 'user' && message.content === optimistic.content)
-    return hasMaterializedDuplicate
-      ? previous.filter((message) => message.id !== optimisticUserMessageId)
-      : previous
-  })
+  deps.actions.updateMessages((previous) =>
+    previous.filter((message) => message.id !== optimisticUserMessageId)
+  )
 }
 
 async function applySendReceipt(
@@ -221,10 +217,17 @@ async function applySendReceipt(
   }
 }
 
-function isCurrentReply(deps: PromptSendDeps, receipt: SendReceipt, result: PromptResult): boolean {
+function isCurrentReply(
+  deps: PromptSendDeps,
+  receipt: SendReceipt,
+  result: PromptResult,
+  followUp: boolean
+): boolean {
+  const session = deps.getSession()
   return (
-    isCurrentRequest(deps, receipt.sendRequest) &&
-    result.sessionGeneration === deps.getSession().activeSessionGeneration
+    (followUp || isCurrentRequest(deps, receipt.sendRequest)) &&
+    result.sessionGeneration === session.activeSessionGeneration &&
+    (!followUp || result.phiSessionId === session.activePhiSessionId)
   )
 }
 
@@ -234,12 +237,15 @@ function restoreFailedDraft(
   images: PromptImageInput[],
   options: SendPromptOptions
 ): void {
-  if (images.length && options.appendUserMessage !== false) {
+  if (options.appendUserMessage === false || options.restoreDraftOnFailure === false) return
+  if (images.length) {
     deps.actions.setDraftImagesBySession((prev) =>
       prev[deps.activeDraftKey]?.length ? prev : { ...prev, [deps.activeDraftKey]: images }
     )
-    deps.actions.setDraftInputs((prev) => updateSessionDraft(prev, deps.activeDraftKey, text))
   }
+  deps.actions.setDraftInputs((prev) =>
+    prev[deps.activeDraftKey]?.length ? prev : updateSessionDraft(prev, deps.activeDraftKey, text)
+  )
 }
 
 function settleSend(deps: PromptSendDeps, receipt: SendReceipt): void {
@@ -260,15 +266,18 @@ export async function sendPrompt(
   options: SendPromptOptions = {}
 ): Promise<boolean> {
   const images = options.images ?? []
-  if (!canSend(deps, text, images)) return false
+  const followUp = options.followUp === true
+  if (!canSend(deps, text, images, followUp)) return false
 
-  deps.isSendingRef.current = true
+  const ownsSendingState = !followUp || !deps.isSendingRef.current
+  if (ownsSendingState) deps.isSendingRef.current = true
+  options.onSendStarted?.()
   const receipt: SendReceipt = {
     submitGeneration: target.sessionGeneration,
-    sendRequest: ++deps.sendRequestRef.current
+    sendRequest: ownsSendingState ? ++deps.sendRequestRef.current : deps.sendRequestRef.current
   }
   const optimisticUserMessageId = appendOptimisticUserMessage(deps, text, images, options)
-  deps.actions.setIsSendingMessage(true)
+  if (ownsSendingState) deps.actions.setIsSendingMessage(true)
 
   let acceptedByRuntime = false
   try {
@@ -278,6 +287,7 @@ export async function sendPrompt(
         ? {
             ...target,
             ...(images.length ? { images } : {}),
+            ...(followUp ? { followUp: true } : {}),
             suppressUserMessageEvent: true,
             ...(options.retryUserMessageId
               ? { retryUserMessageId: options.retryUserMessageId }
@@ -285,31 +295,33 @@ export async function sendPrompt(
           }
         : {
             ...target,
-            ...(images.length ? { images } : {})
+            ...(images.length ? { images } : {}),
+            ...(followUp ? { followUp: true } : {})
           }
     )
     if (!result) {
-      if (!isCurrentRequest(deps, receipt.sendRequest)) return true
+      if (!followUp && !isCurrentRequest(deps, receipt.sendRequest)) return true
       options.onRunCancelled?.()
       return false
     }
     acceptedByRuntime = true
-    if (!isCurrentReply(deps, receipt, result)) return true
+    if (!isCurrentReply(deps, receipt, result, followUp)) return true
     await applySendReceipt(deps, result, target, optimisticUserMessageId)
     return true
   } catch (error) {
     if (
-      !isCurrentRequest(deps, receipt.sendRequest) ||
-      !sameGeneration(deps, receipt.submitGeneration)
+      !followUp &&
+      (!isCurrentRequest(deps, receipt.sendRequest) ||
+        !sameGeneration(deps, receipt.submitGeneration))
     ) {
       return true
     }
-    removeMaterializedDuplicateOfOptimisticMessage(deps, optimisticUserMessageId)
+    removeOptimisticUserMessage(deps, optimisticUserMessageId)
     deps.actions.showSnackbarError(localizePromptSendError(error), appCopy.sendMessageFailed)
     if (acceptedByRuntime) return true
     restoreFailedDraft(deps, text, images, options)
     return false
   } finally {
-    settleSend(deps, receipt)
+    if (ownsSendingState) settleSend(deps, receipt)
   }
 }

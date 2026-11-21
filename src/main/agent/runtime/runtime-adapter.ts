@@ -139,6 +139,7 @@ export type AgentSessionEvent = PhiAgentEvent
 export type RuntimePromptOptions = {
   preflightResult?: (accepted: boolean) => void
   hostRunId?: string
+  streamingBehavior?: 'followUp'
   images?: Array<{ type: 'image'; data: string; mimeType: string }>
   expandPromptTemplates?: boolean
   synthetic?: boolean
@@ -611,6 +612,7 @@ function runtimePromptOptionsForWorker(
   if (!options) return undefined
   const promptOptions = {
     ...(typeof options.hostRunId === 'string' ? { hostRunId: options.hostRunId } : {}),
+    ...(options.streamingBehavior === 'followUp' ? { streamingBehavior: 'followUp' } : {}),
     ...(options.images?.length ? { images: options.images } : {}),
     ...(typeof options.expandPromptTemplates === 'boolean'
       ? { expandPromptTemplates: options.expandPromptTemplates }

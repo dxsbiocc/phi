@@ -31,10 +31,34 @@ test('messagesForUserRetry clears failed output after the retried user message',
   )
 })
 
+test('messagesForUserRetry updates the original bubble and truncates later output', () => {
+  const messages: ChatItem[] = [
+    { id: 'user-1', role: 'user', content: 'before' },
+    { id: 'assistant-1', role: 'assistant', content: 'old answer' },
+    { id: 'user-2', role: 'user', content: 'later' }
+  ]
+
+  const next = messagesForUserRetry(messages, 'user-1', 'after')
+
+  assert.deepEqual(next, [{ id: 'user-1', role: 'user', content: 'after' }])
+  assert.deepEqual(messages[0], { id: 'user-1', role: 'user', content: 'before' })
+})
+
 test('messagesForUserRetry leaves messages unchanged when the user message is missing', () => {
   const messages: ChatItem[] = [{ id: 'user-1', role: 'user', content: 'first' }]
 
   assert.equal(messagesForUserRetry(messages, 'missing'), messages)
+})
+
+test('messagesForUserRetryTarget restores edited content by user message id', () => {
+  const messages: ChatItem[] = [
+    { id: 'user-1', role: 'user', content: 'before' },
+    { id: 'assistant-1', role: 'assistant', content: 'old answer' }
+  ]
+
+  assert.deepEqual(messagesForUserRetryTarget(messages, { id: 'user-1', content: 'after' }), [
+    { id: 'user-1', role: 'user', content: 'after' }
+  ])
 })
 
 test('messagesForUserRetryTarget can retry restored messages by content', () => {
