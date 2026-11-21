@@ -26,6 +26,19 @@ test('the shared app icon is a lightweight 1024px PNG', () => {
   assert.ok(image.byteLength < 512 * 1024, 'startup icon data URL should stay lightweight')
 })
 
+test('macOS startup and activation apply the shared Phi icon to the Dock', () => {
+  const bootstrap = readFileSync('src/main/bootstrap.ts', 'utf8')
+  const main = readFileSync('src/main/index.ts', 'utf8')
+  const startup = main.indexOf('function prepareStartupInterface')
+  const activation = main.indexOf('function registerAppActivationHandler')
+
+  assert.doesNotMatch(bootstrap, /setActivationPolicy\(['"]accessory['"]\)/)
+  assert.match(main, /app\.dock\?\.setIcon\(appIcon\)/)
+  assert.ok(startup >= 0 && activation > startup)
+  assert.ok(main.slice(startup, activation).includes('applyDockIcon()'))
+  assert.ok(main.slice(activation).includes('applyDockIcon()'))
+})
+
 test('macOS and Windows icon containers are present and valid', () => {
   const icns = readFileSync('build/icon.icns')
   const ico = readFileSync('build/icon.ico')

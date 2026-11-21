@@ -405,6 +405,12 @@ const AGENT_DIR = process.env.PI_CODING_AGENT_DIR as string
 
 app.setName(APP_NAME)
 
+function applyDockIcon(): void {
+  if (process.platform === 'darwin' && !appIcon.isEmpty()) {
+    app.dock?.setIcon(appIcon)
+  }
+}
+
 const mainWindowStartups = new WeakMap<BrowserWindow, ReturnType<typeof createMainWindowStartup>>()
 const mainWindowRetention = createMainWindowRetention(process.platform)
 
@@ -3030,6 +3036,7 @@ function prepareStartupInterface(): void {
     configureSystemUiLanguage([])
   }
   installNotebookOutputProtocol()
+  applyDockIcon()
   runtime.window.setMenuBarController(
     createMacMenuBar({
       getUiLanguage: () => readAppSettings().uiLanguage,
@@ -3799,6 +3806,7 @@ function openInitialWindow(): void {
 function registerAppActivationHandler(): void {
   app.on('activate', function () {
     if (mainWindowRetention.isQuitting()) return
+    applyDockIcon()
     // macOS only hides a closed main window (main-window-retention.ts): bring that one back.
     const mainWindow = runtime.window.mainWindow
     if (mainWindow && !mainWindow.isDestroyed()) showMainWindowFromMenuBar()
