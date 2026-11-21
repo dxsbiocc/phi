@@ -42,6 +42,7 @@ import {
 } from '../../lib/chatVirtualization'
 import { useLostAgentRunsStore } from '../../stores/lostAgentRunsStore'
 import { latestTodoSnapshot, todoProgress } from '../../lib/todoPanel'
+import { forkUserMessageIdByAssistant } from '../../lib/chatFork'
 import type { AgentExecutionItem, ChatItem, ChatMessage, NotebookCellJumpTarget } from '../../types'
 import AgentRunsOverview from './AgentRunsOverview'
 import { ChatBubble } from './ChatBubble'
@@ -181,8 +182,8 @@ export type ChatMessageListProps = {
   scrollPositionStore?: Map<string, number>
   isGenerating: boolean
   currentRunStartedAt?: string
-  onEditUserMessage?: (content: string) => void
-  onRetryUserMessage?: (message: UserMessageRetryTarget) => void
+  onEditUserMessage?: (message: UserMessageRetryTarget) => Promise<void> | void
+  onRetryUserMessage?: (message: UserMessageRetryTarget) => Promise<void> | void
   onForkUserMessage?: (messageId: string) => void
   onGoSettings: () => void
   onOpenBackgroundJobs: () => void
@@ -304,6 +305,10 @@ const ChatMessageList = memo(function ChatMessageList({
     [isGenerating, renderGroups]
   )
   const userMessageStates = useMemo(() => failedUserMessageStates(messages), [messages])
+  const assistantForkAnchors = useMemo(
+    () => forkUserMessageIdByAssistant(transcriptMessages),
+    [transcriptMessages]
+  )
   const virtualItems = useMemo<ChatGroupVirtualItem[]>(
     () => renderGroups.map((group) => ({ id: group.key, group })),
     [renderGroups]
@@ -668,6 +673,9 @@ const ChatMessageList = memo(function ChatMessageList({
           userMessageState={
             group.item.role === 'user' ? userMessageStates.get(group.item.id) : undefined
           }
+          forkUserMessageId={
+            group.item.role === 'assistant' ? assistantForkAnchors.get(group.item.id) : undefined
+          }
           onEditUserMessage={onEditUserMessage}
           onRetryUserMessage={onRetryUserMessage}
           onForkUserMessage={onForkUserMessage}
@@ -695,6 +703,7 @@ const ChatMessageList = memo(function ChatMessageList({
       onOpenWebUrl,
       onRetryUserMessage,
       onForkUserMessage,
+      assistantForkAnchors,
       userMessageStates
     ]
   )

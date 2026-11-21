@@ -1,43 +1,75 @@
 import { chatCopy } from '../../features/chat/lib/chatCopy'
 import { useUiLanguage } from '../../lib/i18n'
-import { Box, IconButton, Typography } from '@mui/material'
+import { Box, Button, IconButton, Paper, TextField, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
+import { useEffect, useRef, useState } from 'react'
 import { PhiIcons } from '../../icons'
 import { parseInputFileReferences } from '../../lib/inputReferences'
 import type { ChatMessage } from '../../types'
 import { FileReferenceCards } from './FileReferenceCards'
 import { ChatUserImage } from '../../features/chat/components/ChatUserImage'
 import { ResourceMentionText } from '../ResourceMention'
+import { composerSurfaceSx } from './composerControlStyles'
 
 const CopyIcon = PhiIcons.action.copy
+const CopiedIcon = PhiIcons.state.check
 const EditIcon = PhiIcons.action.edit
 const RetryIcon = PhiIcons.action.refresh
-const ForkIcon = PhiIcons.action.fork
 
 export type UserMessageState = 'normal' | 'failed'
 export type UserMessageRetryTarget = Pick<ChatMessage, 'id' | 'content' | 'images'>
-
-function copyMessageContent(content: string): void {
-  if (typeof navigator === 'undefined' || !navigator.clipboard) return
-  void navigator.clipboard.writeText(content)
-}
 
 export function ChatUserMessage({
   message,
   state = 'normal',
   onEdit,
-  onRetry,
-  onFork
+  onRetry
 }: {
   message: ChatMessage
   state?: UserMessageState
-  onEdit?: (content: string) => void
-  onRetry?: (message: UserMessageRetryTarget) => void
-  onFork?: (messageId: string) => void
+  onEdit?: (message: UserMessageRetryTarget) => Promise<void> | void
+  onRetry?: (message: UserMessageRetryTarget) => Promise<void> | void
 }): React.JSX.Element {
   useUiLanguage()
+  const [copied, setCopied] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(message.content)
+  const [saving, setSaving] = useState(false)
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const parsedMessage = parseInputFileReferences(message.content)
   const failed = state === 'failed'
+
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+    },
+    []
+  )
+
+  const copyMessage = async (): Promise<void> => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard) return
+    try {
+      await navigator.clipboard.writeText(message.content)
+      setCopied(true)
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+      copiedTimerRef.current = setTimeout(() => setCopied(false), 1200)
+    } catch {
+      setCopied(false)
+    }
+  }
+  const saveEdit = async (): Promise<void> => {
+    const content = draft.trim()
+    if (!content || saving || !onEdit) return
+    setSaving(true)
+    try {
+      await onEdit({ id: message.id, content, images: message.images })
+      setEditing(false)
+    } catch {
+      return
+    } finally {
+      setSaving(false)
+    }
+  }
   const actionButtonSx = {
     width: 28,
     height: 28,
@@ -48,6 +80,70 @@ export function ChatUserMessage({
       color: failed ? 'primary.contrastText' : 'text.primary'
     }
   } as const
+
+  if (editing) {
+    return (
+      <>
+        <FileReferenceCards paths={parsedMessage.references} variant="message" />
+        <Box data-phi-user-message-editor sx={{ alignSelf: 'stretch', width: '100%', minWidth: 0 }}>
+          <Paper variant="outlined" sx={composerSurfaceSx({ compact: false, dragActive: false })}>
+            <TextField
+              autoFocus
+              fullWidth
+              multiline
+              rows={4}
+              variant="standard"
+              value={draft}
+              disabled={saving}
+              slotProps={{
+                htmlInput: { 'aria-label': chatCopy.editMessage },
+                input: { disableUnderline: true }
+              }}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  setEditing(false)
+                } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault()
+                  void saveEdit()
+                }
+              }}
+              sx={{
+                '& .MuiInputBase-root': { p: 0 },
+                '& textarea': {
+                  boxSizing: 'border-box',
+                  p: '9px 9px 0 0',
+                  fontSize: '0.95rem',
+                  lineHeight: 1.6,
+                  resize: 'none'
+                }
+              }}
+            />
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 1 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                disabled={saving}
+                onClick={() => setEditing(false)}
+              >
+                {chatCopy.cancelMessageEdit}
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                disabled={!draft.trim() || saving}
+                onClick={() => void saveEdit()}
+              >
+                {chatCopy.saveMessageEdit}
+              </Button>
+            </Box>
+          </Paper>
+        </Box>
+      </>
+    )
+  }
 
   return (
     <>
@@ -111,7 +207,7 @@ export function ChatUserMessage({
               </Typography>
             )}
           </Box>
-          {(failed || parsedMessage.body || !message.images?.length || onFork) && (
+          {(failed || parsedMessage.body || !message.images?.length) && (
             <Box
               data-phi-user-message-actions="true"
               sx={{
@@ -128,7 +224,11 @@ export function ChatUserMessage({
                   aria-label={chatCopy.retryMessage}
                   title={chatCopy.retryMessage}
                   onClick={() =>
-                    onRetry?.({ id: message.id, content: message.content, images: message.images })
+                    onRetry?.({
+                      id: message.id,
+                      content: message.content,
+                      images: message.images
+                    })
                   }
                   sx={actionButtonSx}
                 >
@@ -140,37 +240,27 @@ export function ChatUserMessage({
                     <IconButton
                       type="button"
                       size="small"
-                      aria-label={chatCopy.copyMessage}
-                      title={chatCopy.copyMessage}
-                      onClick={() => copyMessageContent(message.content)}
+                      aria-label={copied ? chatCopy.messageCopied : chatCopy.copyMessage}
+                      title={copied ? chatCopy.messageCopied : chatCopy.copyMessage}
+                      onClick={() => void copyMessage()}
                       sx={actionButtonSx}
                     >
-                      <CopyIcon size={14} />
+                      {copied ? <CopiedIcon size={14} /> : <CopyIcon size={14} />}
                     </IconButton>
                   )}
-                  {!message.images?.length && (
+                  {!message.images?.length && onEdit && (
                     <IconButton
                       type="button"
                       size="small"
                       aria-label={chatCopy.editMessage}
                       title={chatCopy.editMessage}
-                      onClick={() => onEdit?.(message.content)}
+                      onClick={() => {
+                        setDraft(message.content)
+                        setEditing(true)
+                      }}
                       sx={actionButtonSx}
                     >
                       <EditIcon size={14} />
-                    </IconButton>
-                  )}
-                  {onFork && (
-                    <IconButton
-                      type="button"
-                      size="small"
-                      data-testid="gui-e2e-fork-message"
-                      aria-label={chatCopy.forkConversationFromThisMessage}
-                      title={chatCopy.forkConversationFromThisMessage}
-                      onClick={() => onFork(message.id)}
-                      sx={actionButtonSx}
-                    >
-                      <ForkIcon size={14} />
                     </IconButton>
                   )}
                 </>

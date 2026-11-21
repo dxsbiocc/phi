@@ -873,7 +873,7 @@ test('chat view shows copy and edit hover actions for normal user messages', () 
   assert.doesNotMatch(markup, /aria-label="重试消息"/)
 })
 
-test('chat view offers a fork action for a completed image-only user message', () => {
+test('chat view keeps fork actions off user messages', () => {
   const markup = renderChat(
     [
       {
@@ -885,6 +885,19 @@ test('chat view offers a fork action for a completed image-only user message', (
     ],
     { onForkUserMessage: () => undefined }
   )
+  assert.doesNotMatch(markup, /aria-label="从此消息分叉会话"/)
+})
+
+test('chat view shows copy and fork actions for agent replies', () => {
+  const markup = renderChat(
+    [
+      { id: 'user-1', role: 'user', content: 'question' },
+      { id: 'assistant-1', role: 'assistant', content: 'answer' }
+    ],
+    { onForkUserMessage: () => undefined }
+  )
+
+  assert.match(markup, /aria-label="复制消息"/)
   assert.match(markup, /aria-label="从此消息分叉会话"/)
 })
 

@@ -120,7 +120,7 @@ function appendOptimisticUserMessage(
 ): string | undefined {
   if (options.retryUserMessageId) {
     deps.actions.updateMessages((prev) =>
-      messagesForUserRetry(prev, options.retryUserMessageId as string)
+      messagesForUserRetry(prev, options.retryUserMessageId as string, text)
     )
     return undefined
   }

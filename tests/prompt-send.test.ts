@@ -59,12 +59,13 @@ function harness(
     activeDraftKey?: string
     generation?: number
     activePhiSessionId?: string | null
+    initialMessages?: ChatItem[]
   } = {}
 ): Harness {
   const events: string[] = []
   const errors: unknown[] = []
   const sent: Array<{ text: string; target: unknown }> = []
-  let messages: ChatItem[] = []
+  let messages: ChatItem[] = options.initialMessages ?? []
   let drafts: Record<string, string> = {}
   let draftImages: Record<string, unknown> = {}
   let closedKeys = new Set(['session:phi-a:3'])
@@ -493,6 +494,22 @@ test('retry and suppressed-user-message sends keep their shapes', async () => {
     suppressUserMessageEvent: true
   })
   suppressed.applyReceipt({})
+  await sending
+})
+
+test('retry optimistically replaces the edited user message and removes later output', async () => {
+  const h = harness({
+    initialMessages: [
+      { id: 'user-1', role: 'user', content: 'before' },
+      { id: 'assistant-1', role: 'assistant', content: 'old answer' }
+    ]
+  })
+
+  const sending = sendPrompt(h.deps, 'after', target, { retryUserMessageId: 'user-1' })
+
+  assert.deepEqual(h.messages(), [{ id: 'user-1', role: 'user', content: 'after' }])
+  assert.equal(h.sent[0]?.text, 'after')
+  h.applyReceipt({})
   await sending
 })
 

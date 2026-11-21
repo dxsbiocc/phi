@@ -1,9 +1,13 @@
 import type { ChatItem } from '../types'
 
-export function messagesForUserRetry(messages: ChatItem[], userMessageId: string): ChatItem[] {
+export function messagesForUserRetry(
+  messages: ChatItem[],
+  userMessageId: string,
+  content?: string
+): ChatItem[] {
   const userMessageIndex = userRetryIndex(messages, { id: userMessageId })
   if (userMessageIndex < 0) return messages
-  return messages.slice(0, userMessageIndex + 1)
+  return retryMessagesAtIndex(messages, userMessageIndex, content)
 }
 
 export function messagesForUserRetryTarget(
@@ -12,7 +16,20 @@ export function messagesForUserRetryTarget(
 ): ChatItem[] {
   const userMessageIndex = userRetryIndex(messages, target)
   if (userMessageIndex < 0) return messages
-  return messages.slice(0, userMessageIndex + 1)
+  return retryMessagesAtIndex(messages, userMessageIndex, target.content)
+}
+
+function retryMessagesAtIndex(
+  messages: ChatItem[],
+  userMessageIndex: number,
+  content?: string
+): ChatItem[] {
+  const next = messages.slice(0, userMessageIndex + 1)
+  const target = next[userMessageIndex]
+  if (content !== undefined && target?.role === 'user') {
+    next[userMessageIndex] = { ...target, content }
+  }
+  return next
 }
 
 function userRetryIndex(

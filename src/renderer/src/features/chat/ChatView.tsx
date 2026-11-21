@@ -403,7 +403,7 @@ function ChatView({
     },
     [composerFileReferences, composerInputText, onInputChange, resetPromptHistoryNavigation]
   )
-  const editUserMessage = useCallback(
+  const editQueuedPrompt = useCallback(
     (content: string): void => {
       resetPromptHistoryNavigation()
       promptHistoryDraftRef.current = content
@@ -419,8 +419,8 @@ function ChatView({
     [editableComposerTextFromInput, onInputChange, resetPromptHistoryNavigation]
   )
   const retryUserMessage = useCallback(
-    (message: UserMessageRetryTarget): void => {
-      void onRetryUserMessage?.(message)
+    async (message: UserMessageRetryTarget): Promise<void> => {
+      await onRetryUserMessage?.(message)
     },
     [onRetryUserMessage]
   )
@@ -489,7 +489,7 @@ function ChatView({
               onOpenLocalPath={onOpenLocalPath}
               onOpenWebUrl={onOpenWebUrl}
               onJumpToNotebookCell={onJumpToNotebookCell}
-              onEditUserMessage={editUserMessage}
+              onEditUserMessage={retryUserMessage}
               onRetryUserMessage={retryUserMessage}
               onForkUserMessage={onForkUserMessage}
               cwd={cwd}
@@ -603,7 +603,7 @@ function ChatView({
                           disabled={input.length > 0 || images.length > 0}
                           onClick={() => {
                             const content = onEditQueuedPrompt(item.id)
-                            if (content !== undefined) editUserMessage(content)
+                            if (content !== undefined) editQueuedPrompt(content)
                           }}
                         >
                           <EditIcon fontSize="small" />

@@ -860,6 +860,33 @@ test('chatItemsFromSessionMessages clears failed output after a persisted retry 
   )
 })
 
+test('chatItemsFromSessionMessages restores inline edits from a persisted retry marker', () => {
+  const items = chatItemsFromSessionMessages([
+    {
+      source: 'phi',
+      type: 'user_message',
+      eventId: 'event-user',
+      content: 'before'
+    },
+    {
+      source: 'phi',
+      type: 'assistant_message',
+      eventId: 'event-old-answer',
+      content: 'old answer'
+    },
+    {
+      source: 'phi',
+      type: 'user_message_retry',
+      eventId: 'event-retry',
+      runId: 'run-2',
+      userMessageId: 'event-user',
+      content: 'after'
+    }
+  ])
+
+  assert.deepEqual(items, [{ id: 'event-user', role: 'user', content: 'after' }])
+})
+
 test('chatItemsFromSessionMessages deduplicates equivalent run failure errors', () => {
   const items = chatItemsFromSessionMessages([
     {
