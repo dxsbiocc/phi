@@ -9,6 +9,9 @@ export const chatChinese: LocalizedCopy<typeof chatEnglish> = {
   valuePausedResumesAfterANewMessageIsSent: (value0: string | number) =>
     `已暂停 ${value0} 条 · 发送新消息成功后继续`,
   valueQueued: (value0: string | number) => `排队中 ${value0} 条`,
+  sendQueuedMessageNow: '立即发送排队消息',
+  editQueuedMessage: '编辑排队消息',
+  clearComposerToEditQueuedMessage: '请先清空输入框，再编辑这条排队消息',
   removeQueuedMessage: '移除排队消息',
   messageInput: '消息输入框',
   sendMessage: '发送消息',

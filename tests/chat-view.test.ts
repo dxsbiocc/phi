@@ -143,6 +143,8 @@ function renderChat(
         queuedPrompts: options.queuedPrompts ?? [],
         onRespondApproval: () => undefined,
         onRespondUserInteraction: () => undefined,
+        onSendQueuedPrompt: () => undefined,
+        onEditQueuedPrompt: () => '',
         onRemoveQueuedPrompt: () => undefined,
         compactComposerControls: options.compactComposerControls ?? false
       })
@@ -603,6 +605,28 @@ test('chat view resolves @ file reference queries in prompt input', () => {
     ).map((entry) => entry.displayPath),
     ['src']
   )
+})
+
+test('queued messages offer send, edit and remove actions with a composer-draft guard', () => {
+  setUiLanguage('zh-CN')
+  const queuedPrompts = [{ id: 'queued-1', text: '稍后发送' }]
+  const chinese = renderChat([], { queuedPrompts })
+  assert.match(chinese, /aria-label="立即发送排队消息"/)
+  assert.match(chinese, /aria-label="编辑排队消息"/)
+  assert.match(chinese, /aria-label="移除排队消息"/)
+
+  const blocked = renderChat([], { queuedPrompts, input: '不能覆盖的草稿' })
+  const editButton = blocked.match(/<button\b[^>]*aria-label="编辑排队消息"[^>]*>/)?.[0]
+  assert.ok(editButton)
+  assert.match(editButton, /disabled/)
+  assert.match(editButton, /title="请先清空输入框，再编辑这条排队消息"/)
+
+  setUiLanguage('en')
+  const english = renderChat([], { queuedPrompts })
+  assert.match(english, /aria-label="Send queued message now"/)
+  assert.match(english, /aria-label="Edit queued message"/)
+  assert.match(english, /aria-label="Remove queued message"/)
+  setUiLanguage('zh-CN')
 })
 
 test('chat composer input references preserve editable body spaces', () => {

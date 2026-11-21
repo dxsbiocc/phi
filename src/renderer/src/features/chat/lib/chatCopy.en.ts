@@ -6,6 +6,9 @@ export const chatEnglish = {
   valuePausedResumesAfterANewMessageIsSent: (value0: string | number) =>
     `${value0} paused · resumes after a new message is sent`,
   valueQueued: (value0: string | number) => `${value0} queued`,
+  sendQueuedMessageNow: 'Send queued message now',
+  editQueuedMessage: 'Edit queued message',
+  clearComposerToEditQueuedMessage: 'Clear the composer to edit this queued message',
   removeQueuedMessage: 'Remove queued message',
   messageInput: 'Message input',
   sendMessage: 'Send message',

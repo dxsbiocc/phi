@@ -1832,6 +1832,7 @@ function App(): React.JSX.Element {
     activeQueuedPrompts,
     queuePromptText,
     removeQueuedPrompt,
+    restoreQueuedPrompt,
     dequeueQueuedPrompt,
     moveQueuedPromptsToSession,
     onStopGeneration,
@@ -1847,6 +1848,12 @@ function App(): React.JSX.Element {
     showSnackbar,
     showSnackbarError
   })
+
+  const queuedPromptSendRef = useRef<string | null>(null)
+  const activeQueuedPromptsRef = useRef(activeQueuedPrompts)
+  useLayoutEffect(() => {
+    activeQueuedPromptsRef.current = activeQueuedPrompts
+  }, [activeQueuedPrompts])
 
   const sendPromptText = usePromptSend({
     rendererApi,
@@ -2473,6 +2480,97 @@ function App(): React.JSX.Element {
     },
     [queuePromptText, rendererApi, sendPromptText, showSnackbarError]
   )
+  const onSendQueuedPrompt = useCallback(
+    async (id: string): Promise<void> => {
+      if (
+        queuedPromptSendRef.current !== null ||
+        isSessionChanging ||
+        isCompactingKey(activeContextCompactionKey)
+      ) {
+        return
+      }
+      const promptIndex = activeQueuedPrompts.findIndex((item) => item.id === id)
+      if (promptIndex < 0) return
+      const prompt = activeQueuedPrompts[promptIndex]
+      let sendStarted = false
+      let runCancelled = false
+
+      // Claim before stopping: the stop can make the idle drain eligible immediately.
+      queuedPromptSendRef.current = id
+      try {
+        if (currentSessionIsBusyRef.current || isSendingRef.current) {
+          await onStopGeneration()
+        }
+        const current = useSessionStore.getState()
+        const currentDraftKey = sessionDraftKey({
+          phiSessionId: current.activePhiSessionId,
+          path: current.activeSessionPath,
+          cwd: current.activeCwd,
+          sessionGeneration: current.activeSessionGeneration
+        })
+        if (
+          currentDraftKey !== activeDraftKey ||
+          current.activeSessionGeneration !== prompt.target.sessionGeneration ||
+          current.activeSessionPath !== prompt.target.path ||
+          (current.activePhiSessionId ?? undefined) !== prompt.target.phiSessionId ||
+          current.activeCwd !== prompt.target.cwd ||
+          isCompactingKey(activeContextCompactionKey) ||
+          !activeQueuedPromptsRef.current.some((item) => item.id === id)
+        ) {
+          return
+        }
+        const sent = await sendPromptText(prompt.text, prompt.target, {
+          ...prompt.sendOptions,
+          restoreDraftOnFailure: false,
+          // Admission failures leave the prompt queued. After dispatch starts, this
+          // handler owns failure recovery so a newer composer draft stays untouched.
+          onSendStarted: () => {
+            sendStarted = true
+            removeQueuedPrompt(id)
+          },
+          onRunCancelled: () => {
+            runCancelled = true
+            prompt.sendOptions?.onRunCancelled?.()
+          }
+        })
+        if (sendStarted && !sent && !runCancelled) restoreQueuedPrompt(prompt, promptIndex)
+      } catch (error) {
+        if (sendStarted && !runCancelled) restoreQueuedPrompt(prompt, promptIndex)
+        showSnackbarError(error, appCopy.sendMessageFailed)
+      } finally {
+        if (queuedPromptSendRef.current === id) queuedPromptSendRef.current = null
+      }
+    },
+    [
+      activeContextCompactionKey,
+      activeDraftKey,
+      activeQueuedPrompts,
+      isCompactingKey,
+      isSessionChanging,
+      onStopGeneration,
+      removeQueuedPrompt,
+      restoreQueuedPrompt,
+      sendPromptText,
+      showSnackbarError
+    ]
+  )
+  const onEditQueuedPrompt = useCallback(
+    (id: string): string | undefined => {
+      if (input.length > 0 || inputImages.length > 0) return undefined
+      const prompt = activeQueuedPrompts.find((item) => item.id === id)
+      if (!prompt) return undefined
+      const images = prompt.sendOptions?.images ?? []
+      if (images.length > 0) {
+        setDraftImagesBySession((previous) => ({
+          ...previous,
+          [activeDraftKey]: images
+        }))
+      }
+      removeQueuedPrompt(id)
+      return prompt.text
+    },
+    [activeDraftKey, activeQueuedPrompts, input, inputImages, removeQueuedPrompt]
+  )
   const forkInProgressRef = useRef(false)
   const onForkUserMessage = useCallback(
     async (eventId: string): Promise<void> => {
@@ -2506,6 +2604,7 @@ function App(): React.JSX.Element {
     },
     readiness: { modelStateReady: isModelStateReady, providers: providerStatuses, availableModels },
     isSendingRef,
+    queuedPromptSendRef,
     sendPromptText
   })
   const activeWorkspaceTitle = useMemo(() => {
@@ -3618,6 +3717,8 @@ function App(): React.JSX.Element {
             queuedPromptsPaused={queuedPromptsPaused}
             onRespondApproval={onRespondToolApproval}
             onRespondUserInteraction={onRespondAgentUserInteraction}
+            onSendQueuedPrompt={onSendQueuedPrompt}
+            onEditQueuedPrompt={onEditQueuedPrompt}
             onRemoveQueuedPrompt={removeQueuedPrompt}
             onOpenLocalPath={onOpenLocalPath}
             onOpenWebUrl={onOpenWebUrl}

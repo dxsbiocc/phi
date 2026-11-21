@@ -19,6 +19,10 @@ export type SendPromptOptions = {
   retryUserMessageId?: string
   suppressUserMessageEvent?: boolean
   images?: PromptImageInput[]
+  /** Set false when a failed send is restored to its queue instead of the composer. */
+  restoreDraftOnFailure?: boolean
+  /** Runs after local admission succeeds, before the optimistic message and dispatch. */
+  onSendStarted?: () => void
   onRunCancelled?: () => void
 }
 
@@ -53,6 +57,22 @@ export function dropQueuedPrompt(
   if (next.length > 0) updated[key] = next
   else delete updated[key]
   return updated
+}
+
+/** Restores a removed prompt at its former position without duplicating it. */
+export function restoreQueuedPrompt(
+  queue: QueuedPromptsBySession,
+  key: string,
+  prompt: QueuedPrompt,
+  index: number
+): QueuedPromptsBySession {
+  const current = queue[key] ?? []
+  if (current.some((item) => item.id === prompt.id)) return queue
+  const insertionIndex = Math.max(0, Math.min(index, current.length))
+  return {
+    ...queue,
+    [key]: [...current.slice(0, insertionIndex), prompt, ...current.slice(insertionIndex)]
+  }
 }
 
 /**

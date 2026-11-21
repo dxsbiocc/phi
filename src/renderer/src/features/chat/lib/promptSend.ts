@@ -234,12 +234,15 @@ function restoreFailedDraft(
   images: PromptImageInput[],
   options: SendPromptOptions
 ): void {
-  if (images.length && options.appendUserMessage !== false) {
+  if (options.appendUserMessage === false || options.restoreDraftOnFailure === false) return
+  if (images.length) {
     deps.actions.setDraftImagesBySession((prev) =>
       prev[deps.activeDraftKey]?.length ? prev : { ...prev, [deps.activeDraftKey]: images }
     )
-    deps.actions.setDraftInputs((prev) => updateSessionDraft(prev, deps.activeDraftKey, text))
   }
+  deps.actions.setDraftInputs((prev) =>
+    prev[deps.activeDraftKey]?.length ? prev : updateSessionDraft(prev, deps.activeDraftKey, text)
+  )
 }
 
 function settleSend(deps: PromptSendDeps, receipt: SendReceipt): void {
@@ -263,6 +266,7 @@ export async function sendPrompt(
   if (!canSend(deps, text, images)) return false
 
   deps.isSendingRef.current = true
+  options.onSendStarted?.()
   const receipt: SendReceipt = {
     submitGeneration: target.sessionGeneration,
     sendRequest: ++deps.sendRequestRef.current

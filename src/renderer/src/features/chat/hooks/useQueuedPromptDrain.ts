@@ -32,6 +32,8 @@ export type QueuedPromptDrainInput = {
     availableModels: ModelOption[]
   }
   isSendingRef: { current: boolean }
+  /** Shared with manual queue sends so only one path can claim a prompt. */
+  queuedPromptSendRef: { current: string | null }
   sendPromptText: (
     text: string,
     target: PromptTarget,
@@ -49,7 +51,7 @@ export function useQueuedPromptDrain(input: QueuedPromptDrainInput): void {
     isBusy
   } = input.session
   const { modelStateReady, providers, availableModels } = input.readiness
-  const { isSendingRef, sendPromptText } = input
+  const { isSendingRef, queuedPromptSendRef, sendPromptText } = input
 
   useEffect(() => {
     if (
@@ -58,7 +60,8 @@ export function useQueuedPromptDrain(input: QueuedPromptDrainInput): void {
       currentSessionIsCompacting ||
       isSessionChanging ||
       isBusy ||
-      isSendingRef.current
+      isSendingRef.current ||
+      queuedPromptSendRef.current !== null
     ) {
       return
     }
@@ -73,9 +76,16 @@ export function useQueuedPromptDrain(input: QueuedPromptDrainInput): void {
 
     let cancelled = false
     queueMicrotask(() => {
-      if (cancelled) return
+      if (cancelled || isSendingRef.current || queuedPromptSendRef.current !== null) return
+      queuedPromptSendRef.current = nextPrompt.id
       dequeueQueuedPrompt(nextPrompt.id)
-      void sendPromptText(nextPrompt.text, nextPrompt.target, nextPrompt.sendOptions)
+      void sendPromptText(nextPrompt.text, nextPrompt.target, nextPrompt.sendOptions).finally(
+        () => {
+          if (queuedPromptSendRef.current === nextPrompt.id) {
+            queuedPromptSendRef.current = null
+          }
+        }
+      )
     })
     return () => {
       cancelled = true
@@ -91,6 +101,7 @@ export function useQueuedPromptDrain(input: QueuedPromptDrainInput): void {
     isSessionChanging,
     modelStateReady,
     providers,
+    queuedPromptSendRef,
     queuedPromptsPaused,
     sendPromptText
   ])

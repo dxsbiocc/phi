@@ -330,6 +330,82 @@ test('a current failure reports the error and gives the draft and images back', 
   assert.ok(h.events.includes('sending:false'))
 })
 
+test('a queued manual dispatch failure does not write the composer draft or images', async () => {
+  const h = harness()
+  const sending = sendPrompt(h.deps, 'queued text', target, {
+    images: [{ dataUrl: 'data:', name: 'a' } as never],
+    restoreDraftOnFailure: false
+  })
+  h.failWith(new Error('boom'))
+  assert.equal(await sending, false)
+  assert.deepEqual(h.drafts(), {})
+  assert.deepEqual(h.draftImages(), {})
+  assert.equal(h.events.includes('restoreDraft'), false)
+  assert.equal(h.events.includes('restoreImages'), false)
+})
+
+test('a queued manual null receipt does not write the composer draft or images', async () => {
+  const h = harness()
+  let cancelled = 0
+  const sending = sendPrompt(h.deps, 'queued text', target, {
+    images: [{ dataUrl: 'data:', name: 'a' } as never],
+    restoreDraftOnFailure: false,
+    onRunCancelled: () => {
+      cancelled += 1
+    }
+  })
+  h.applyReceipt(null)
+  assert.equal(await sending, false)
+  assert.equal(cancelled, 1)
+  assert.deepEqual(h.drafts(), {})
+  assert.deepEqual(h.draftImages(), {})
+  assert.equal(h.events.includes('restoreDraft'), false)
+  assert.equal(h.events.includes('restoreImages'), false)
+})
+
+test('a current null receipt leaves the composer empty and reports cancellation', async () => {
+  const h = harness()
+  let cancelled = 0
+  const sending = sendPrompt(h.deps, 'draft text', target, {
+    images: [{ dataUrl: 'data:', name: 'a' } as never],
+    onRunCancelled: () => {
+      cancelled += 1
+    }
+  })
+  h.applyReceipt(null)
+  assert.equal(await sending, false)
+  assert.equal(cancelled, 1)
+  assert.deepEqual(h.drafts(), {})
+  assert.deepEqual(h.draftImages(), {})
+  assert.equal(h.events.includes('restoreDraft'), false)
+  assert.equal(h.events.includes('restoreImages'), false)
+})
+
+test('a text-only failure restores an empty composer and starts removal only after admission', async () => {
+  let sendStarted = 0
+  const blocked = harness({ configured: false })
+  assert.equal(
+    await sendPrompt(blocked.deps, 'keep queued', target, {
+      onSendStarted: () => {
+        sendStarted += 1
+      }
+    }),
+    false
+  )
+  assert.equal(sendStarted, 0)
+
+  const h = harness()
+  const sending = sendPrompt(h.deps, 'draft text', target, {
+    onSendStarted: () => {
+      sendStarted += 1
+    }
+  })
+  assert.equal(sendStarted, 1)
+  h.failWith(new Error('boom'))
+  assert.equal(await sending, false)
+  assert.equal(h.drafts()['draft-a'], 'draft text')
+})
+
 test('a current null receipt reports that the prompt was not accepted', async () => {
   const h = harness()
   const sending = sendPrompt(h.deps, 'replan', target, {
