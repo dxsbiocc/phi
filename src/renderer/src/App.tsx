@@ -2473,7 +2473,14 @@ function App(): React.JSX.Element {
         queuePromptText(text, target, sendOptions)
         return
       }
-      await sendPromptText(text, target, sendOptions)
+      // The editor closes once the send starts; awaiting the full run would keep
+      // the message in edit mode until the reply finishes.
+      await new Promise<void>((resolve) => {
+        void sendPromptText(text, target, { ...sendOptions, onSendStarted: resolve }).then(
+          () => resolve(),
+          () => resolve()
+        )
+      })
     },
     [queuePromptText, rendererApi, sendPromptText, showSnackbarError]
   )
