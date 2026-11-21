@@ -34,7 +34,7 @@ export interface AnalysisKernelSummary {
   /** Managed kernels whose environment is not built are listed as `not-built`. */
   status?: 'ready' | 'not-built'
   /** The environment a managed kernel runs in. */
-  environment?: { ref: string; envId?: string }
+  environment?: { ref: string; envId?: string; pluginId?: string }
   /** The host kernelspec name of a host kernel (its listed name is `host-<name>`). */
   hostName?: string
 }
@@ -248,7 +248,8 @@ function managedKernelSummary(state: ManagedKernelState): AnalysisKernelSummary 
     status: state.status,
     environment: {
       ref: definition.ref,
-      ...(state.envId ? { envId: state.envId } : {})
+      ...(state.envId ? { envId: state.envId } : {}),
+      ...(definition.pluginId ? { pluginId: definition.pluginId } : {})
     }
   }
   if (state.status === 'ready') {

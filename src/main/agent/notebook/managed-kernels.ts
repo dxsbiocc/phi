@@ -23,27 +23,31 @@ import {
   type EnvironmentDescriptor
 } from '../content/environment-refs'
 import {
+  condaSpecOf,
   environmentVariables,
   prefixExecutable,
   toLinuxPath,
   usesWslEnvironment,
   type EnvHandle,
+  type EnvironmentSpec,
   type PhiPlatform
 } from '../envs'
+import { listInstalledPlugins } from '../plugins/loader'
 
 import { errorMessage } from '../../../shared/errorCodes'
 import { wslKernelArgv } from './wsl-kernel-launch'
 export const HOST_KERNEL_LABEL = 'host (unmanaged)'
 export const NOT_BUILT_KERNEL_LABEL = 'not built'
 export const HOST_KERNEL_PREFIX = 'host-'
-
-export type ManagedKernelName = 'phi-python' | 'phi-r' | 'phi-python-wsl'
+export const PLUGIN_KERNEL_PREFIX = 'plugin-'
 
 export interface ManagedKernelDefinition {
-  name: ManagedKernelName
+  name: string
   ref: string
   displayName: string
   language: string
+  /** Set for kernels from a plugin's private environment; resolves `plugin:<name>`. */
+  pluginId?: string
 }
 
 /** Order is the default order: `phi-python` is the default kernel. */
@@ -75,6 +79,10 @@ export interface ManagedEnvironmentContext {
   baseEnv?: NodeJS.ProcessEnv
   /** Host platform for the locale default (defaults to `process.platform`). */
   hostPlatform?: NodeJS.Platform
+  /** Phi agent directory override used to find installed plugins and their environments. */
+  agentDir?: string
+  /** Owning plugin when resolving a `plugin:<name>` reference. */
+  pluginId?: string
 }
 
 export interface KernelSpecFile {
@@ -168,7 +176,9 @@ export function describeManagedEnvironment(
 ): EnvironmentDescriptor {
   return describeEnvironment(ref, {
     ...(ctx.environmentsDir ? { environmentsDir: ctx.environmentsDir } : {}),
-    ...(ctx.platform ? { platform: ctx.platform } : {})
+    ...(ctx.platform ? { platform: ctx.platform } : {}),
+    ...(ctx.agentDir ? { agentDir: ctx.agentDir } : {}),
+    ...(ctx.pluginId ? { pluginId: ctx.pluginId } : {})
   })
 }
 
@@ -323,11 +333,76 @@ export function syncManagedKernels(ctx: ManagedEnvironmentContext): ManagedKerne
   const dir = managedKernelsDir(ctx.root)
   mkdirSync(dir, { recursive: true })
   const hostPlatform = ctx.hostPlatform ?? process.platform
-  const definitions =
-    hostPlatform === 'win32' ? [...MANAGED_KERNELS, WSL_PYTHON_KERNEL] : MANAGED_KERNELS
-  return definitions.map((definition) =>
+  const definitions = [
+    ...MANAGED_KERNELS,
+    ...pluginKernelDefinitions(ctx),
+    ...(hostPlatform === 'win32' ? [WSL_PYTHON_KERNEL] : [])
+  ]
+  const states = definitions.map((definition) =>
     syncManagedKernel(definition, dir, { ...ctx, hostPlatform })
   )
+  const live = new Set(definitions.map((definition) => definition.name))
+  for (const entry of readdirSync(dir)) {
+    if (entry.startsWith(PLUGIN_KERNEL_PREFIX) && !live.has(entry)) {
+      rmSync(join(dir, entry), { recursive: true, force: true })
+    }
+  }
+  return states
+}
+
+function condaDependencyNames(spec: EnvironmentSpec): string[] {
+  return condaSpecOf(spec).dependencies.flatMap((dependency) =>
+    typeof dependency === 'string' ? [dependency.split(/[=<>!\s]/, 1)[0]] : []
+  )
+}
+
+function pinnedVersion(spec: EnvironmentSpec, name: string): string | undefined {
+  const dependency = condaSpecOf(spec).dependencies.find(
+    (item): item is string => typeof item === 'string' && item.startsWith(`${name}=`)
+  )
+  return dependency?.slice(name.length + 1)
+}
+
+/**
+ * Kernels from installed plugins' private environments: an environment that ships IRkernel
+ * or ipykernel gets a managed kernelspec named `plugin-<plugin id>-<environment name>`, so
+ * a plugin's notebooks run in the same environment as its script tools. Disabled plugins
+ * and environments without a kernel package contribute nothing.
+ */
+function pluginKernelDefinitions(ctx: ManagedEnvironmentContext): ManagedKernelDefinition[] {
+  const definitions: ManagedKernelDefinition[] = []
+  const options = ctx.agentDir ? { agentDir: ctx.agentDir } : {}
+  for (const plugin of listInstalledPlugins(options)) {
+    if (!plugin.enabled) continue
+    for (const name of Object.keys(plugin.manifest.environments ?? {})) {
+      const ref = `plugin:${name}`
+      let descriptor: EnvironmentDescriptor
+      try {
+        descriptor = describeEnvironment(ref, { ...options, pluginId: plugin.id, platform: ctx.platform })
+      } catch {
+        // Not describable on this platform (missing lock or spec): no kernel to offer.
+        continue
+      }
+      const packages = condaDependencyNames(descriptor.spec)
+      const language = packages.includes('r-irkernel')
+        ? 'R'
+        : packages.includes('ipykernel')
+          ? 'python'
+          : undefined
+      if (!language) continue
+      const interpreter = language === 'R' ? 'r-base' : 'python'
+      const version = pinnedVersion(descriptor.spec, interpreter)
+      const label = language === 'R' ? 'R' : 'Python'
+      definitions.push({
+        name: `${PLUGIN_KERNEL_PREFIX}${plugin.id}-${name}`,
+        ref,
+        pluginId: plugin.id,
+        displayName: `${label}${version ? ` ${version}` : ''} (${plugin.id}:${name})`,
+        language
+      })
+    }
+  }
+  return definitions.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
 }
 
 function syncManagedKernel(
@@ -340,7 +415,7 @@ function syncManagedKernel(
     rmSync(resourceDir, { recursive: true, force: true })
     return { definition, status: 'not-built', ...info }
   }
-  const state = managedEnvironmentState(definition.ref, ctx)
+  const state = managedEnvironmentState(definition.ref, { ...ctx, pluginId: definition.pluginId })
   if ('notBuilt' in state) return removeSpec(state.notBuilt)
   const { handle } = state
   let spec: KernelSpecFile
