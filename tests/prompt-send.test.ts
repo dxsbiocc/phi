@@ -46,6 +46,7 @@ type Harness = {
   applyReceipt: (receipt: Partial<PromptResult> | null) => void
   failWith: (error: Error) => void
   bumpSendRequest: () => void
+  switchPhiSession: (id: string) => void
 }
 
 function harness(
@@ -180,6 +181,9 @@ function harness(
     failWith: (error) => pending?.reject(error),
     bumpSendRequest: () => {
       deps.sendRequestRef.current += 1
+    },
+    switchPhiSession: (id) => {
+      options.activePhiSessionId = id
     }
   }
 }
@@ -196,6 +200,70 @@ test('a prompt is refused while another send is in flight', async () => {
   h.deps.isSendingRef.current = true
   assert.equal(await sendPrompt(h.deps, 'hello', target), false)
   assert.equal(h.sent.length, 0)
+})
+
+test('a follow-up shares the active send token without settling the original send', async () => {
+  const h = harness()
+  h.deps.isSendingRef.current = true
+  h.deps.sendRequestRef.current = 7
+
+  const sending = sendPrompt(h.deps, 'inserted', target, { followUp: true })
+  h.applyReceipt({ userMessageEventId: 'user-follow-up' })
+
+  assert.equal(await sending, true)
+  assert.deepEqual(h.sent[0]?.target, { ...target, followUp: true })
+  assert.equal(h.deps.sendRequestRef.current, 7)
+  assert.equal(h.deps.isSendingRef.current, true)
+  assert.ok(!h.events.includes('sending:false'))
+  assert.ok(h.messages().some((message) => message.id === 'user-follow-up'))
+})
+
+test('a late follow-up failure stays a failure and removes its optimistic bubble', async () => {
+  const h = harness()
+  h.deps.isSendingRef.current = true
+  h.deps.sendRequestRef.current = 7
+  const sending = sendPrompt(h.deps, 'inserted', target, { followUp: true })
+
+  h.bumpSendRequest()
+  h.failWith(new Error('original run already settled'))
+
+  assert.equal(await sending, false)
+  assert.equal(h.errors().length, 1)
+  assert.deepEqual(h.messages(), [])
+  assert.equal(h.deps.isSendingRef.current, true)
+})
+
+test('a late follow-up receipt still replaces its optimistic bubble', async () => {
+  const h = harness()
+  h.deps.isSendingRef.current = true
+  h.deps.sendRequestRef.current = 7
+  const sending = sendPrompt(h.deps, 'inserted', target, { followUp: true })
+
+  h.bumpSendRequest()
+  h.applyReceipt({ userMessageEventId: 'user-follow-up' })
+
+  assert.equal(await sending, true)
+  assert.deepEqual(
+    h.messages().map((message) => message.id),
+    ['user-follow-up']
+  )
+  assert.equal(h.deps.isSendingRef.current, true)
+})
+
+test('a late follow-up receipt cannot mutate another session with the same generation', async () => {
+  const h = harness()
+  h.deps.isSendingRef.current = true
+  h.deps.sendRequestRef.current = 7
+  const sending = sendPrompt(h.deps, 'inserted', target, { followUp: true })
+
+  h.switchPhiSession('phi-b')
+  h.applyReceipt({ userMessageEventId: 'user-follow-up' })
+
+  assert.equal(await sending, true)
+  assert.ok(!h.events.includes('activePhi:phi-a'))
+  assert.ok(!h.events.some((event) => event.startsWith('tabKey:')))
+  assert.ok(!h.events.includes('closedTabs'))
+  assert.ok(!h.events.includes('refreshSessions'))
 })
 
 test('unsupported images and provider readiness block the send before dispatch', async () => {
@@ -328,6 +396,7 @@ test('a current failure reports the error and gives the draft and images back', 
   assert.ok(h.events.includes('error'))
   assert.equal(h.drafts()['draft-a'], 'draft text')
   assert.deepEqual(h.draftImages()['draft-a'], [{ dataUrl: 'data:', name: 'a' }])
+  assert.deepEqual(h.messages(), [])
   assert.ok(h.events.includes('sending:false'))
 })
 

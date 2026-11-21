@@ -92,7 +92,8 @@ function resolvePromptRunTarget<TResult>(
 
 function admitPromptRun<TResult>(
   deps: PromptRunAdmissionDeps<TResult>,
-  target: ResolvedPromptRunTarget<TResult>
+  target: ResolvedPromptRunTarget<TResult>,
+  existingRunId?: string
 ): AdmittedPromptRun<TResult> {
   const phiSessionId = deps.linking.ensurePhiSessionId(
     target.runSessionKey,
@@ -108,8 +109,8 @@ function admitPromptRun<TResult>(
     throw new Error('上下文压缩正在进行，请稍后发送消息')
   }
   const stableSessionPath = deps.paths.phiOnlySessionPath(phiSessionId)
-  const runId = deps.createRunId()
-  if (deps.runs.hasActiveRun(target.runSessionKey)) {
+  const runId = existingRunId ?? deps.createRunId()
+  if (!existingRunId && deps.runs.hasActiveRun(target.runSessionKey)) {
     throw new Error('会话正在运行')
   }
   return { ...target, phiSessionId, stableSessionPath, runId, workMode }
@@ -117,7 +118,10 @@ function admitPromptRun<TResult>(
 
 export interface PromptRunAdmission<TResult> {
   resolveTarget(input: SubmitPromptInput): ResolvedPromptRunTarget<TResult>
-  admit(target: ResolvedPromptRunTarget<TResult>): AdmittedPromptRun<TResult>
+  admit(
+    target: ResolvedPromptRunTarget<TResult>,
+    existingRunId?: string
+  ): AdmittedPromptRun<TResult>
 }
 
 export function createPromptRunAdmission<TResult>(
@@ -125,6 +129,6 @@ export function createPromptRunAdmission<TResult>(
 ): PromptRunAdmission<TResult> {
   return {
     resolveTarget: (input) => resolvePromptRunTarget(deps, input),
-    admit: (target) => admitPromptRun(deps, target)
+    admit: (target, existingRunId) => admitPromptRun(deps, target, existingRunId)
   }
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { SessionPromptParams } from '../../shared/kernel-protocol'
+import type { SessionFollowUpParams, SessionPromptParams } from '../../shared/kernel-protocol'
 import { makeProtocolError, sanitizedRunFailureDetail } from '../protocol/errors'
 import type { KernelMethodHandlers, RunCompletionStatus, SessionPromptRun } from '../protocol'
 import type { DuplicateRun, KernelSessionRepository, PersistentSession } from '../sessions'
@@ -34,6 +34,7 @@ function workerOptions(prompt: SessionPromptParams): Record<string, unknown> | u
   const publicOptions = prompt.options
   const images = publicOptions?.images ?? prompt.images
   const options = {
+    ...(prompt.clientRunKey ? { hostRunId: prompt.clientRunKey } : {}),
     ...(images ? { images } : {}),
     ...(publicOptions?.expandPromptTemplates !== undefined
       ? { expandPromptTemplates: publicOptions.expandPromptTemplates }
@@ -139,6 +140,38 @@ export function createPromptHandlers(options: PromptHandlerOptions): KernelMetho
           }
         )
         return { runId, completion }
+      })
+    },
+    async 'session.followUp'(params, _callContext, request) {
+      return options.withAdmission(async () => {
+        const sessionId = requiredSessionId(request.sessionId)
+        const prompt = params as SessionFollowUpParams
+        const kind = options.requireLoadedSession(sessionId)
+        const persistent = kind === 'persistent' ? options.repository.get(sessionId) : undefined
+        if (kind === 'persistent' && !persistent) throw options.sessionNotFound()
+        const activeRunId = options.activeRuns.get(sessionId)
+        const owner = persistent
+          ? options.repository.findDuplicate(persistent, prompt.clientRunKey)
+          : options.memoryClientRuns.get(sessionId)?.get(prompt.clientRunKey)
+        if (
+          options.admittingRuns.has(sessionId) ||
+          options.forkingSessions.has(sessionId) ||
+          !activeRunId ||
+          options.cancelledRuns.has(activeRunId) ||
+          owner?.runId !== activeRunId ||
+          owner.status !== 'running'
+        ) {
+          throw makeProtocolError('SESSION_BUSY', 'The session has no active prompt to follow up.')
+        }
+        await options.callWorker('session.prompt', {
+          sessionId,
+          text: prompt.text,
+          options: {
+            ...workerOptions(prompt),
+            streamingBehavior: 'followUp'
+          }
+        })
+        return { accepted: true as const }
       })
     }
   }

@@ -288,6 +288,8 @@ function fakeEditApprovalDigest(input: Record<string, unknown>): string {
 
 type PromptOptions = {
   preflightResult?: (accepted: boolean) => void
+  hostRunId?: string
+  streamingBehavior?: 'followUp'
   images?: Array<{ type: 'image'; data: string; mimeType: string }>
   expandPromptTemplates?: boolean
   synthetic?: boolean
@@ -305,6 +307,8 @@ class FakeSession {
   readonly log: string[] = []
   readonly promptTexts: string[] = []
   readonly promptOptions: PromptOptions[] = []
+  readonly followUpTexts: string[] = []
+  readonly followUpOptions: PromptOptions[] = []
   readonly sessionNameCalls: string[] = []
   hasActiveAgentRuns?: () => boolean
   readonly sessionManager = {
@@ -330,6 +334,7 @@ class FakeSession {
   disposed = false
   skipFinalAssistantMessage = false
   promptError?: Error
+  followUpError?: Error
   materializedSessionFile?: string
   contextUsage: ContextUsageSnapshot | null = null
   contextUsageGate = Promise.resolve()
@@ -350,6 +355,10 @@ class FakeSession {
     return () => undefined
   }
   async prompt(text: string, options?: PromptOptions): Promise<void> {
+    if (options?.streamingBehavior === 'followUp') {
+      await this.followUp(text, options)
+      return
+    }
     this.promptTexts.push(text)
     this.promptOptions.push(options ?? {})
     await this.preflight
@@ -366,6 +375,11 @@ class FakeSession {
       this.messages.push({ role: 'assistant', content: [{ type: 'text', text: 'done' }] })
     }
     this.log.push('saved')
+  }
+  async followUp(text: string, options?: PromptOptions): Promise<void> {
+    this.followUpTexts.push(text)
+    this.followUpOptions.push(options ?? {})
+    if (this.followUpError) throw this.followUpError
   }
   async abort(): Promise<void> {
     this.log.push('abort')
@@ -9434,6 +9448,86 @@ test('main IPC: delayed runtime path materialization is linked to the Phi sessio
     app.updatedSessionManifests.filter((entry) => 'runtimeSessionPath' in entry.patch),
     [{ sessionId: 'phi-1', patch: { runtimeSessionPath: 'fresh.jsonl' } }]
   )
+})
+
+test('main IPC: a follow-up appends to the active run without interrupting or replacing it', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  const running = app.invoke('agent:prompt', 'first message')
+  await waitUntil(() => session.started)
+
+  const appended = await app.invoke('agent:prompt', 'inserted message', {
+    path: 'phi-session:phi-1',
+    phiSessionId: 'phi-1',
+    cwd: '/workspace',
+    sessionGeneration: 0,
+    followUp: true
+  })
+
+  assert.deepEqual(appended, {
+    path: 'phi-session:phi-1',
+    phiSessionId: 'phi-1',
+    sessionGeneration: 0,
+    userMessageEventId: 'event-2'
+  })
+  assert.deepEqual(session.promptTexts, ['first message'])
+  assert.deepEqual(session.followUpTexts, ['inserted message'])
+  assert.equal(session.followUpOptions[0]?.hostRunId, 'run-2')
+  assert.equal(session.log.includes('abort'), false)
+  assert.equal(app.runStartInputs.length, 1)
+  const userEvents = app.appendedSessionEvents.filter(
+    (entry) => entry.event.type === 'user_message'
+  )
+  assert.deepEqual(
+    userEvents.map((entry) => [entry.event.content, entry.event.runId]),
+    [
+      ['first message', 'run-2'],
+      ['inserted message', 'run-2']
+    ]
+  )
+  assert.equal(
+    app.appendedSessionEvents.some((entry) => entry.event.type === 'run_interrupted'),
+    false
+  )
+
+  session.finish.resolve()
+  assert.deepEqual(await running, {
+    path: 'phi-session:phi-1',
+    phiSessionId: 'phi-1',
+    sessionGeneration: 0,
+    userMessageEventId: 'event-1'
+  })
+})
+
+test('main IPC: a rejected follow-up leaves no durable duplicate behind', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  session.followUpError = new Error('original run already settled')
+  const app = await harness(async () => session)
+  const running = app.invoke('agent:prompt', 'first message')
+  await waitUntil(() => session.started)
+
+  await assert.rejects(
+    app.invoke('agent:prompt', 'inserted message', {
+      path: 'phi-session:phi-1',
+      phiSessionId: 'phi-1',
+      cwd: '/workspace',
+      sessionGeneration: 0,
+      followUp: true
+    }),
+    /original run already settled/
+  )
+
+  assert.deepEqual(
+    app.appendedSessionEvents
+      .filter((entry) => entry.event.type === 'user_message')
+      .map((entry) => entry.event.content),
+    ['first message']
+  )
+  assert.equal(session.log.includes('abort'), false)
+  session.finish.resolve()
+  await running
 })
 
 test('main IPC: continuing a freshly materialized conversation reuses its Phi session', async () => {

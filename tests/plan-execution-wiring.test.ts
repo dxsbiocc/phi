@@ -26,6 +26,7 @@ function driver(runs: unknown[], planActive: boolean): RoutedSessionDriver {
     isLive: true,
     state: () => state,
     prompt: async () => state,
+    followUp: async () => state,
     contextUsage: async () => null,
     rename: async () => state,
     abort: async () => state,

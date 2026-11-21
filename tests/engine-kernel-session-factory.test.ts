@@ -90,6 +90,46 @@ test('SessionRoutingEngine sends local sessions to one shared kernel and never p
   assert.equal(client.requests.filter((request) => request.method === 'session.prompt').length, 0)
 })
 
+test('an accepted kernel follow-up does not depend on a later snapshot refresh', async () => {
+  const client = new FakeKernelClient()
+  const factory = new KernelSessionFactory({
+    launchLocal: async () => ({
+      client,
+      greeting: {
+        protocol: { major: 1, minor: 0 },
+        kernel: { version: 'test', ompVersion: 'test' },
+        kernelInstanceId: 'kernel-instance',
+        controllerGeneration: 1,
+        capabilities: [],
+        lastSeq: 0,
+        runtime: { home: '/home/test', agentDir: '/agent' }
+      },
+      close: async () => undefined
+    })
+  })
+  const engine = new SessionRoutingEngine(legacyEngine(), () => factory)
+  await engine.sessions.create(params('follow-up-snapshot'))
+  const request = client.request.bind(client)
+  let acceptedFollowUps = 0
+  client.request = async (method, requestParams, context = {}) => {
+    if (method === 'session.followUp') {
+      acceptedFollowUps += 1
+      return { accepted: true }
+    }
+    if (method === 'session.snapshot') throw new Error('connection closed after acceptance')
+    return request(method, requestParams, context)
+  }
+
+  await assert.doesNotReject(
+    engine.sessions.prompt({
+      sessionId: 'follow-up-snapshot',
+      text: 'inserted',
+      options: { streamingBehavior: 'followUp', hostRunId: 'run-original' }
+    })
+  )
+  assert.equal(acceptedFollowUps, 1)
+})
+
 test('SessionRoutingEngine limits desktop execution to tracked no-tools helpers', async () => {
   const legacy = legacyEngine()
   const calls: string[] = []

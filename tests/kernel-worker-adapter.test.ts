@@ -177,7 +177,13 @@ test('worker adapter owns model, thinking, context and compaction controls durin
     } as unknown as KernelModelAccess,
     callWorker: async (method, params) => {
       calls.push({ method, params })
-      if (method === 'session.prompt') await promptBlocked
+      if (
+        method === 'session.prompt' &&
+        (params as { options?: { streamingBehavior?: string } }).options?.streamingBehavior !==
+          'followUp'
+      ) {
+        await promptBlocked
+      }
       if (method === 'session.setModel') {
         state = { ...state, model: (params as { model: typeof state.model }).model }
       }
@@ -217,14 +223,42 @@ test('worker adapter owns model, thinking, context and compaction controls durin
     )) as { sessionId: string }
     const sessionId = created.sessionId
     const run = (await handler(adapter.handlers, 'session.prompt')(
-      { text: 'hold', modelSelection: 'automatic', synthetic: false, userInitiated: true },
+      {
+        text: 'hold',
+        clientRunKey: 'run-original',
+        modelSelection: 'automatic',
+        synthetic: false,
+        userInitiated: true
+      },
       context,
       request('session.prompt', sessionId)
     )) as unknown as { completion: PromiseLike<string> }
     assert.deepEqual((calls.at(-1)?.params as { options?: unknown }).options, {
+      hostRunId: 'run-original',
       modelSelection: 'automatic',
       synthetic: false,
       userInitiated: true
+    })
+    await assert.rejects(
+      async () =>
+        handler(adapter.handlers, 'session.followUp')(
+          { text: 'wrong run', clientRunKey: 'run-replacement' },
+          context,
+          request('session.followUp', sessionId)
+        ),
+      (error: { code?: string }) => error.code === 'SESSION_BUSY'
+    )
+    assert.deepEqual(
+      await handler(adapter.handlers, 'session.followUp')(
+        { text: 'inserted', clientRunKey: 'run-original' },
+        context,
+        request('session.followUp', sessionId)
+      ),
+      { accepted: true }
+    )
+    assert.deepEqual((calls.at(-1)?.params as { options?: unknown }).options, {
+      hostRunId: 'run-original',
+      streamingBehavior: 'followUp'
     })
 
     const selected = await handler(adapter.handlers, 'session.setModel')(
@@ -361,11 +395,21 @@ test('worker adapter returns prompt acceptance immediately and maps abort to can
     finishPrompt = resolve
   })
   const calls: string[] = []
+  let followUps = 0
   const adapter = createWorkerKernelAdapter({
     agentDir: '/trusted/agent',
-    callWorker: async (method) => {
+    callWorker: async (method, params) => {
       calls.push(method)
-      if (method === 'session.prompt') await promptFinished
+      if (method === 'session.prompt') {
+        if (
+          (params as { options?: { streamingBehavior?: string } }).options?.streamingBehavior ===
+          'followUp'
+        ) {
+          followUps += 1
+        } else {
+          await promptFinished
+        }
+      }
       return undefined
     }
   })
@@ -381,7 +425,7 @@ test('worker adapter returns prompt acceptance immediately and maps abort to can
       request('session.create')
     )) as { sessionId: string }
     const started = await handler(adapter.handlers, 'session.prompt')(
-      { text: 'hello' },
+      { text: 'hello', clientRunKey: 'run-original' },
       context,
       request('session.prompt', created.sessionId)
     )
@@ -394,6 +438,16 @@ test('worker adapter returns prompt acceptance immediately and maps abort to can
       request('session.abort', created.sessionId)
     )
     assert.deepEqual(aborted, { cancelled: true })
+    await assert.rejects(
+      async () =>
+        handler(adapter.handlers, 'session.followUp')(
+          { text: 'after stop', clientRunKey: 'run-original' },
+          context,
+          request('session.followUp', created.sessionId)
+        ),
+      (error: { code?: string }) => error.code === 'SESSION_BUSY'
+    )
+    assert.equal(followUps, 0, 'a cancelled run cannot accept a follow-up while it settles')
     finishPrompt()
     assert.equal(
       await (started as unknown as { completion: PromiseLike<string> }).completion,

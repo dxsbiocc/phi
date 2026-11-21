@@ -18,6 +18,7 @@ export type SendPromptOptions = {
   appendUserMessage?: boolean
   retryUserMessageId?: string
   suppressUserMessageEvent?: boolean
+  followUp?: boolean
   images?: PromptImageInput[]
   /** Set false when a failed send is restored to its queue instead of the composer. */
   restoreDraftOnFailure?: boolean

@@ -74,6 +74,17 @@ export class KernelRoutedSessionDriver implements RoutedSessionDriver {
     return this.refreshState()
   }
 
+  async followUp(text: string, raw?: Record<string, unknown>): Promise<WorkerSessionState> {
+    const clientRunKey = stringValue(raw?.hostRunId)
+    if (!clientRunKey) throw new Error('A follow-up requires its active run identifier.')
+    await this.request('session.followUp', {
+      text,
+      clientRunKey,
+      options: promptWireOptions(raw)
+    })
+    return this.state()
+  }
+
   private async acceptPrompt(
     payload: Record<string, JsonValue>
   ): Promise<{ runId: string; knownStatus?: RunCompletion['status'] }> {

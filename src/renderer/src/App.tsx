@@ -101,10 +101,7 @@ import type { BrowserTrustedOverlayRequest } from './features/browser/lib/browse
 import { useEnvironmentBuildNotices } from './features/jobs/hooks/useEnvironmentBuildNotices'
 import type { LocalPathKind } from './components/MarkdownContent'
 import PhiPluginsView, { PhiPluginCatalogDialog } from './features/phi-plugin/PhiPluginsView'
-import {
-  usePhiPlugins,
-  type PhiPluginDisplayItem
-} from './features/phi-plugin/hooks/usePhiPlugins'
+import { usePhiPlugins, type PhiPluginDisplayItem } from './features/phi-plugin/hooks/usePhiPlugins'
 import { pluginCopy } from './features/phi-plugin/lib/pluginCopy'
 import { WrapperDetail } from './features/wrapper/WrapperView'
 import { useWrapperCatalog } from './features/wrapper/hooks/useWrapperCatalog'
@@ -2495,12 +2492,8 @@ function App(): React.JSX.Element {
       let sendStarted = false
       let runCancelled = false
 
-      // Claim before stopping: the stop can make the idle drain eligible immediately.
       queuedPromptSendRef.current = id
       try {
-        if (currentSessionIsBusyRef.current || isSendingRef.current) {
-          await onStopGeneration()
-        }
         const current = useSessionStore.getState()
         const currentDraftKey = sessionDraftKey({
           phiSessionId: current.activePhiSessionId,
@@ -2521,6 +2514,7 @@ function App(): React.JSX.Element {
         }
         const sent = await sendPromptText(prompt.text, prompt.target, {
           ...prompt.sendOptions,
+          ...(currentSessionIsBusyRef.current || isSendingRef.current ? { followUp: true } : {}),
           restoreDraftOnFailure: false,
           // Admission failures leave the prompt queued. After dispatch starts, this
           // handler owns failure recovery so a newer composer draft stays untouched.
@@ -2547,7 +2541,6 @@ function App(): React.JSX.Element {
       activeQueuedPrompts,
       isCompactingKey,
       isSessionChanging,
-      onStopGeneration,
       removeQueuedPrompt,
       restoreQueuedPrompt,
       sendPromptText,

@@ -64,6 +64,7 @@ function driver(): { value: RoutedSessionDriver; counts: { dispose: number; prom
         counts.prompt++
         return state
       },
+      followUp: async () => state,
       contextUsage: async () => null,
       rename: async () => state,
       abort: async () => state,

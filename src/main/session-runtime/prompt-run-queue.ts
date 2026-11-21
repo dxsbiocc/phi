@@ -26,14 +26,21 @@ export interface PromptRunQueueDeps {
   admission: {
     resolve(input: SubmitPromptInput): ResolvedPromptRunTarget<CreateAgentSessionResult>
     admit(
-      target: ResolvedPromptRunTarget<CreateAgentSessionResult>
+      target: ResolvedPromptRunTarget<CreateAgentSessionResult>,
+      existingRunId?: string
     ): AdmittedPromptRun<CreateAgentSessionResult>
   }
   start: {
     allocate(admission: AdmittedPromptRun<CreateAgentSessionResult>): PromptRunContext
+    allocateFollowUp(
+      admission: AdmittedPromptRun<CreateAgentSessionResult>,
+      promptRun: PromptRunState
+    ): PromptRunContext
     prepare(context: PromptRunContext): void
+    prepareFollowUp(context: PromptRunContext): void
   }
   runs: {
+    activeRun(sessionKey: string): PromptRunState | undefined
     queueFor(sessionKey: string): Promise<void>
     generationFor(sessionKey: string): number
     setQueue(sessionKey: string, queue: Promise<void>): void
@@ -186,6 +193,50 @@ function trackPromptRunSettlement(
   )
 }
 
+async function submitFollowUpRun(
+  deps: PromptRunQueueDeps,
+  input: SubmitPromptInput
+): Promise<PromptRunResult> {
+  const target = deps.admission.resolve(input)
+  const promptRun = deps.runs.activeRun(target.runSessionKey)
+  if (
+    !promptRun ||
+    promptRun.cancelled ||
+    promptRun.sessionGeneration !== target.runSessionGeneration ||
+    !target.runLifecycle.isCurrentGeneration(promptRun.sessionGeneration)
+  ) {
+    throw new Error('当前运行已结束，请稍后重试')
+  }
+  const session = promptRun.session
+  if (!session) throw new Error('当前运行正在启动，请稍后重试')
+  const admission = deps.admission.admit(target, promptRun.runId)
+  const context = deps.start.allocateFollowUp(admission, promptRun)
+  await session.prompt(context.normalizedText, {
+    hostRunId: context.runId,
+    streamingBehavior: 'followUp',
+    ...(context.input.images?.length
+      ? {
+          images: context.input.images.map((image) => ({
+            type: 'image' as const,
+            data: image.data,
+            mimeType: image.mimeType
+          }))
+        }
+      : {})
+  })
+  try {
+    deps.start.prepareFollowUp(context)
+  } catch (error) {
+    deps.timeline.logUnexpected(error)
+  }
+  return {
+    path: context.stableSessionPath,
+    phiSessionId: context.phiSessionId,
+    sessionGeneration: context.promptRun.sessionGeneration,
+    ...(context.userMessageEventId ? { userMessageEventId: context.userMessageEventId } : {})
+  }
+}
+
 /**
  * Runs one prompt in the conversation `sessionKey`. It does not depend on which
  * conversation is on screen, so it also serves prompts for a conversation in the
@@ -195,6 +246,7 @@ async function submitPromptRun(
   deps: PromptRunQueueDeps,
   input: SubmitPromptInput
 ): Promise<PromptRunResult> {
+  if (input.promptTarget?.followUp === true) return submitFollowUpRun(deps, input)
   // A plugin/skill invalidation deferred by running background work must land before the
   // next prompt acquires the old runtime session; otherwise the prompt starts on stale resources.
   // With no deferred invalidation this is a synchronous fast path, so a stop that arrives right

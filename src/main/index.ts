@@ -2303,8 +2303,14 @@ const promptRunExecutionDeps: PromptRunExecutionDeps<PromptRunContext> = {
 
 const { submitPromptRun } = createPromptRunQueue({
   admission: { resolve: resolvePromptRunTarget, admit: admitPromptRun },
-  start: { allocate: promptRunStart.allocate, prepare: promptRunStart.prepare },
+  start: {
+    allocate: promptRunStart.allocate,
+    allocateFollowUp: promptRunStart.allocateFollowUp,
+    prepare: promptRunStart.prepare,
+    prepareFollowUp: promptRunStart.prepareFollowUp
+  },
   runs: {
+    activeRun: (sessionKey) => promptRuns.activeRun(sessionKey),
     queueFor: (sessionKey) => promptRuns.queueFor(sessionKey),
     generationFor: (sessionKey) => promptRuns.generationFor(sessionKey),
     setQueue: (sessionKey, queue) => promptRuns.setQueue(sessionKey, queue),

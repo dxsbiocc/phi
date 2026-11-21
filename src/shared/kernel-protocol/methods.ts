@@ -279,6 +279,15 @@ export const sessionPromptParamsSchema = z
 export const sessionPromptResultSchema = z
   .object({ accepted: z.literal(true), runId: nonEmptyIdSchema })
   .strict()
+export const sessionFollowUpParamsSchema = z
+  .object({
+    text: z.string(),
+    clientRunKey: z.string().min(1).max(MAX_CLIENT_RUN_KEY_LENGTH),
+    options: sessionPromptOptionsV1Schema.optional(),
+    images: z.array(imageSchema).optional()
+  })
+  .strict()
+export const sessionFollowUpResultSchema = z.object({ accepted: z.literal(true) }).strict()
 
 const planStepSchema = z
   .object({
@@ -771,6 +780,8 @@ export type SessionsListResult = z.infer<typeof sessionsListResultSchema>
 export type SessionPromptParams = z.infer<typeof sessionPromptParamsSchema>
 export type SessionPromptOptionsV1 = z.infer<typeof sessionPromptOptionsV1Schema>
 export type SessionPromptResult = z.infer<typeof sessionPromptResultSchema>
+export type SessionFollowUpParams = z.infer<typeof sessionFollowUpParamsSchema>
+export type SessionFollowUpResult = z.infer<typeof sessionFollowUpResultSchema>
 export type PlanRunStateDto = z.infer<typeof planRunStateSchema>
 export type AgentRunSnapshotDto = z.infer<typeof agentRunSnapshotSchema>
 export type SessionForkCut = z.infer<typeof sessionForkCutSchema>
@@ -825,6 +836,7 @@ export const kernelMethodParamsSchemas = {
   'session.adopt': sessionAdoptParamsSchema,
   'sessions.list': sessionsListParamsSchema,
   'session.prompt': sessionPromptParamsSchema,
+  'session.followUp': sessionFollowUpParamsSchema,
   'session.plan.enter': sessionPlanEnterParamsSchema,
   'session.plan.cancel': sessionPlanCancelParamsSchema,
   'planRuns.list': planRunsListParamsSchema,
@@ -867,6 +879,7 @@ export const kernelMethodResultSchemas = {
   'session.adopt': sessionAdoptResultSchema,
   'sessions.list': sessionsListResultSchema,
   'session.prompt': sessionPromptResultSchema,
+  'session.followUp': sessionFollowUpResultSchema,
   'session.plan.enter': sessionPlanEnterResultSchema,
   'session.plan.cancel': sessionPlanCancelResultSchema,
   'planRuns.list': planRunsListResultSchema,
