@@ -1,6 +1,6 @@
 import { chatCopy } from '../../features/chat/lib/chatCopy'
 import { useUiLanguage } from '../../lib/i18n'
-import { Box, Button, IconButton, Paper, TextField, Typography } from '@mui/material'
+import { Box, Button, IconButton, Paper, Typography } from '@mui/material'
 import { alpha } from '@mui/material/styles'
 import { useEffect, useRef, useState } from 'react'
 import { PhiIcons } from '../../icons'
@@ -9,7 +9,8 @@ import type { ChatMessage } from '../../types'
 import { FileReferenceCards } from './FileReferenceCards'
 import { ChatUserImage } from '../../features/chat/components/ChatUserImage'
 import { ResourceMentionText } from '../ResourceMention'
-import { composerSurfaceSx } from './composerControlStyles'
+import { composerSurfaceSx, REGULAR_COMPOSER_ACTION_SIZE } from './composerControlStyles'
+import { ComposerTextEditor, type ComposerTextEditorHandle } from './ComposerTextEditor'
 
 const CopyIcon = PhiIcons.action.copy
 const CopiedIcon = PhiIcons.state.check
@@ -36,6 +37,7 @@ export function ChatUserMessage({
   const [draft, setDraft] = useState(message.content)
   const [saving, setSaving] = useState(false)
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const editorRef = useRef<ComposerTextEditorHandle | null>(null)
   const parsedMessage = parseInputFileReferences(message.content)
   const failed = state === 'failed'
 
@@ -87,40 +89,39 @@ export function ChatUserMessage({
         <FileReferenceCards paths={parsedMessage.references} variant="message" />
         <Box data-phi-user-message-editor sx={{ alignSelf: 'stretch', width: '100%', minWidth: 0 }}>
           <Paper variant="outlined" sx={composerSurfaceSx({ compact: false, dragActive: false })}>
-            <TextField
-              autoFocus
-              fullWidth
-              multiline
-              rows={4}
-              variant="standard"
+            <ComposerTextEditor
+              inputRef={editorRef}
               value={draft}
+              resources={[]}
               disabled={saving}
-              slotProps={{
-                htmlInput: { 'aria-label': chatCopy.editMessage },
-                input: { disableUnderline: true }
-              }}
-              onChange={(event) => setDraft(event.target.value)}
+              ariaLabel={chatCopy.editMessage}
+              focusKey="message-edit"
+              autoFocus
+              onChange={(value) => setDraft(value)}
               onKeyDown={(event) => {
                 if (event.key === 'Escape') {
                   event.preventDefault()
                   setEditing(false)
-                } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                  return true
+                }
+                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
                   event.preventDefault()
                   void saveEdit()
+                  return true
                 }
-              }}
-              sx={{
-                '& .MuiInputBase-root': { p: 0 },
-                '& textarea': {
-                  boxSizing: 'border-box',
-                  p: '9px 9px 0 0',
-                  fontSize: '0.95rem',
-                  lineHeight: 1.6,
-                  resize: 'none'
-                }
+                return false
               }}
             />
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 1 }}>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                gap: 1,
+                minHeight: REGULAR_COMPOSER_ACTION_SIZE,
+                mt: 1
+              }}
+            >
               <Button
                 size="small"
                 variant="outlined"
