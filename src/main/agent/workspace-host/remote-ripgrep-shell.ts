@@ -236,22 +236,42 @@ export function buildActivateRipgrepPrefixScript(
 ): string {
   const marker = posix.join(finalPrefix, REMOTE_RIPGREP_COMPLETE_MARKER)
   const executable = posix.join(finalPrefix, 'bin', 'rg')
+  const lock = `${finalPrefix}.lock`
   const validateExisting = [
     `test -d ${shellQuote(finalPrefix)} && test ! -L ${shellQuote(finalPrefix)} || exit 18`,
     `test "$(cat ${shellQuote(marker)} 2>/dev/null)" = ${shellQuote(version)} || exit 18`,
     `test -x ${shellQuote(executable)} && test ! -L ${shellQuote(executable)} || exit 18`
   ]
+  const reuseExisting = [
+    `if test -e ${shellQuote(finalPrefix)} || test -L ${shellQuote(finalPrefix)}; then`,
+    ...validateExisting.map((line) => `  ${line}`),
+    '  exit 17',
+    'fi'
+  ]
   return [
-    `if test -e ${shellQuote(finalPrefix)} || test -L ${shellQuote(finalPrefix)}; then`,
-    ...validateExisting.map((line) => `  ${line}`),
-    '  exit 17',
-    'fi',
+    ...reuseExisting,
     `if mv -T -- ${shellQuote(temporaryPrefix)} ${shellQuote(finalPrefix)} 2>/dev/null; then exit 0; fi`,
-    `if test -e ${shellQuote(finalPrefix)} || test -L ${shellQuote(finalPrefix)}; then`,
-    ...validateExisting.map((line) => `  ${line}`),
-    '  exit 17',
+    ...reuseExisting,
+    // BSD mv has no -T, and a bare `mv temp final` nests temp inside an existing
+    // final directory. Serialize the fallback through an atomic mkdir lock so the
+    // loser waits for the winner and reuses it instead of racing the rename.
+    // The lock path lives in a variable: interpolating a quoted path into the
+    // trap string would break single-quote escaping on adversarial paths.
+    `lock=${shellQuote(lock)}`,
+    `if mkdir "$lock" 2>/dev/null; then`,
+    `  trap 'rmdir "$lock" 2>/dev/null' EXIT`,
+    ...reuseExisting.map((line) => `  ${line}`),
+    `  mv -- ${shellQuote(temporaryPrefix)} ${shellQuote(finalPrefix)} || exit 18`,
+    '  exit 0',
     'fi',
-    `mv ${shellQuote(temporaryPrefix)} ${shellQuote(finalPrefix)}`
+    'attempts=0',
+    'while test -d "$lock"; do',
+    '  attempts=$((attempts + 1))',
+    '  test "$attempts" -gt 100 && exit 18',
+    '  sleep 0.1',
+    'done',
+    ...reuseExisting,
+    'exit 18'
   ].join('\n')
 }
 
