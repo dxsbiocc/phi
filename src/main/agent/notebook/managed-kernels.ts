@@ -378,7 +378,11 @@ function pluginKernelDefinitions(ctx: ManagedEnvironmentContext): ManagedKernelD
       const ref = `plugin:${name}`
       let descriptor: EnvironmentDescriptor
       try {
-        descriptor = describeEnvironment(ref, { ...options, pluginId: plugin.id, platform: ctx.platform })
+        descriptor = describeEnvironment(ref, {
+          ...options,
+          pluginId: plugin.id,
+          platform: ctx.platform
+        })
       } catch {
         // Not describable on this platform (missing lock or spec): no kernel to offer.
         continue
@@ -402,7 +406,9 @@ function pluginKernelDefinitions(ctx: ManagedEnvironmentContext): ManagedKernelD
       })
     }
   }
-  return definitions.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+  return definitions.sort((left, right) =>
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+  )
 }
 
 function syncManagedKernel(

@@ -15,11 +15,7 @@ import { stringify as stringifyYaml } from 'yaml'
 
 import { describeEnvironment } from '../src/main/agent/content/environment-refs'
 import { removeTree, type PhiPlatform } from '../src/main/agent/envs'
-import {
-  installPlugin,
-  setPluginEnabled,
-  uninstallPlugin
-} from '../src/main/agent/plugins/loader'
+import { installPlugin, setPluginEnabled, uninstallPlugin } from '../src/main/agent/plugins/loader'
 import {
   DEFAULT_KERNEL_NAME,
   listAnalysisKernels,
@@ -652,7 +648,11 @@ Use this fixture skill.
   const environmentDir = join(dir, 'environments', envName)
   copyMinimal(environmentDir, envName)
   const extra =
-    kernel === 'r' ? '  - r-base=4.5\n  - r-irkernel\n' : kernel === 'python' ? '  - ipykernel\n' : ''
+    kernel === 'r'
+      ? '  - r-base=4.5\n  - r-irkernel\n'
+      : kernel === 'python'
+        ? '  - ipykernel\n'
+        : ''
   if (extra) {
     const specPath = join(environmentDir, 'environment.yml')
     writeFileSync(specPath, `${readFileSync(specPath, 'utf8').trimEnd()}\n${extra}`)
@@ -720,7 +720,10 @@ test(
       state?.status === 'not-built' ? state.message : '',
       'environment plugin:seurat is not ready; the user must build it first'
     )
-    assert.equal(existsSync(join(managedKernelsDir(fixture.root), 'plugin-alpha-plugin-seurat')), false)
+    assert.equal(
+      existsSync(join(managedKernelsDir(fixture.root), 'plugin-alpha-plugin-seurat')),
+      false
+    )
   })
 )
 
@@ -741,16 +744,25 @@ test(
 
     setPluginEnabled(plugin.pluginId, false, { agentDir: plugin.agentDir })
     let states = syncManagedKernels(options)
-    assert.equal(states.some((item) => item.definition.name === 'plugin-alpha-plugin-seurat'), false)
+    assert.equal(
+      states.some((item) => item.definition.name === 'plugin-alpha-plugin-seurat'),
+      false
+    )
     assert.equal(existsSync(specDir), false)
 
     setPluginEnabled(plugin.pluginId, true, { agentDir: plugin.agentDir })
     states = syncManagedKernels(options)
-    assert.equal(states.some((item) => item.definition.name === 'plugin-alpha-plugin-seurat'), true)
+    assert.equal(
+      states.some((item) => item.definition.name === 'plugin-alpha-plugin-seurat'),
+      true
+    )
 
     uninstallPlugin(plugin.pluginId, { agentDir: plugin.agentDir, runtimeRoot: fixture.root })
     states = syncManagedKernels(options)
-    assert.equal(states.some((item) => item.definition.name === 'plugin-alpha-plugin-seurat'), false)
+    assert.equal(
+      states.some((item) => item.definition.name === 'plugin-alpha-plugin-seurat'),
+      false
+    )
     assert.equal(existsSync(specDir), false)
   })
 )
