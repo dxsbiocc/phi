@@ -96,9 +96,9 @@ function launchFixture(
   return { loaded, ready, stopped, calls, boxes, logs }
 }
 
-test('the macOS SDK does not advertise an app entry in the Dock', async (t) => {
+test('a macOS source launch keeps its Dock entry visible', async (t) => {
   for (const [runtime, policies] of [
-    [{ platform: 'darwin', defaultApp: true }, ['policy accessory']],
+    [{ platform: 'darwin', defaultApp: true }, []],
     [{ platform: 'darwin' }, []],
     [{ platform: 'linux', defaultApp: true }, []]
   ] as const) {

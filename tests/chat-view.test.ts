@@ -143,6 +143,8 @@ function renderChat(
         queuedPrompts: options.queuedPrompts ?? [],
         onRespondApproval: () => undefined,
         onRespondUserInteraction: () => undefined,
+        onSendQueuedPrompt: () => undefined,
+        onEditQueuedPrompt: () => '',
         onRemoveQueuedPrompt: () => undefined,
         compactComposerControls: options.compactComposerControls ?? false
       })
@@ -605,6 +607,28 @@ test('chat view resolves @ file reference queries in prompt input', () => {
   )
 })
 
+test('queued messages offer send, edit and remove actions with a composer-draft guard', () => {
+  setUiLanguage('zh-CN')
+  const queuedPrompts = [{ id: 'queued-1', text: '稍后发送' }]
+  const chinese = renderChat([], { queuedPrompts })
+  assert.match(chinese, /aria-label="立即发送排队消息"/)
+  assert.match(chinese, /aria-label="编辑排队消息"/)
+  assert.match(chinese, /aria-label="移除排队消息"/)
+
+  const blocked = renderChat([], { queuedPrompts, input: '不能覆盖的草稿' })
+  const editButton = blocked.match(/<button\b[^>]*aria-label="编辑排队消息"[^>]*>/)?.[0]
+  assert.ok(editButton)
+  assert.match(editButton, /disabled/)
+  assert.match(editButton, /title="请先清空输入框，再编辑这条排队消息"/)
+
+  setUiLanguage('en')
+  const english = renderChat([], { queuedPrompts })
+  assert.match(english, /aria-label="Send queued message now"/)
+  assert.match(english, /aria-label="Edit queued message"/)
+  assert.match(english, /aria-label="Remove queued message"/)
+  setUiLanguage('zh-CN')
+})
+
 test('chat composer input references preserve editable body spaces', () => {
   assert.deepEqual(parseInputFileReferences('hello '), {
     references: [],
@@ -849,7 +873,7 @@ test('chat view shows copy and edit hover actions for normal user messages', () 
   assert.doesNotMatch(markup, /aria-label="重试消息"/)
 })
 
-test('chat view offers a fork action for a completed image-only user message', () => {
+test('chat view keeps fork actions off user messages', () => {
   const markup = renderChat(
     [
       {
@@ -861,6 +885,19 @@ test('chat view offers a fork action for a completed image-only user message', (
     ],
     { onForkUserMessage: () => undefined }
   )
+  assert.doesNotMatch(markup, /aria-label="从此消息分叉会话"/)
+})
+
+test('chat view shows copy and fork actions for agent replies', () => {
+  const markup = renderChat(
+    [
+      { id: 'user-1', role: 'user', content: 'question' },
+      { id: 'assistant-1', role: 'assistant', content: 'answer' }
+    ],
+    { onForkUserMessage: () => undefined }
+  )
+
+  assert.match(markup, /aria-label="复制消息"/)
   assert.match(markup, /aria-label="从此消息分叉会话"/)
 })
 

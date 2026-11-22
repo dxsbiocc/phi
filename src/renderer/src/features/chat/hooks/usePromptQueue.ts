@@ -4,6 +4,7 @@ import type { PromptTarget } from '../../../lib/sessionTypes'
 import {
   appendQueuedPrompt,
   dropQueuedPrompt,
+  restoreQueuedPrompt as restoreQueuedPromptAtIndex,
   retargetQueuedPrompts,
   shiftQueuedPrompt,
   type QueuedPrompt,
@@ -26,6 +27,7 @@ export type PromptQueue = {
   activeQueuedPrompts: QueuedPrompt[]
   queuePromptText: (text: string, target: PromptTarget, sendOptions?: SendPromptOptions) => void
   removeQueuedPrompt: (id: string) => void
+  restoreQueuedPrompt: (prompt: QueuedPrompt, index: number) => void
   /** Removes the head prompt only if it is still `id`; the drain races the session. */
   dequeueQueuedPrompt: (id: string) => void
   moveQueuedPromptsToSession: (targetKey: string, target: PromptTarget) => void
@@ -45,6 +47,15 @@ export function usePromptQueue(
   const removeQueuedPrompt = useCallback(
     (id: string): void => {
       setQueuedPromptsBySession((queue) => dropQueuedPrompt(queue, activeDraftKey, id))
+    },
+    [activeDraftKey]
+  )
+
+  const restoreQueuedPrompt = useCallback(
+    (prompt: QueuedPrompt, index: number): void => {
+      setQueuedPromptsBySession((queue) =>
+        restoreQueuedPromptAtIndex(queue, activeDraftKey, prompt, index)
+      )
     },
     [activeDraftKey]
   )
@@ -84,6 +95,7 @@ export function usePromptQueue(
     activeQueuedPrompts,
     queuePromptText,
     removeQueuedPrompt,
+    restoreQueuedPrompt,
     dequeueQueuedPrompt,
     moveQueuedPromptsToSession
   }

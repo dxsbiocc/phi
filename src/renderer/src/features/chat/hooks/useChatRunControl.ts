@@ -60,6 +60,7 @@ export type ChatRunControl = {
   activeQueuedPrompts: QueuedPrompt[]
   queuePromptText: (text: string, target: PromptTarget, sendOptions?: SendPromptOptions) => void
   removeQueuedPrompt: (id: string) => void
+  restoreQueuedPrompt: (prompt: QueuedPrompt, index: number) => void
   dequeueQueuedPrompt: (id: string) => void
   moveQueuedPromptsToSession: (targetKey: string, target: PromptTarget) => void
   onStopGeneration: () => Promise<void>
@@ -122,6 +123,7 @@ export function useChatRunControl(deps: ChatRunControlDeps): ChatRunControl {
     activeQueuedPrompts: queue.activeQueuedPrompts,
     queuePromptText: queue.queuePromptText,
     removeQueuedPrompt: queue.removeQueuedPrompt,
+    restoreQueuedPrompt: queue.restoreQueuedPrompt,
     dequeueQueuedPrompt: queue.dequeueQueuedPrompt,
     moveQueuedPromptsToSession: queue.moveQueuedPromptsToSession,
     onStopGeneration,

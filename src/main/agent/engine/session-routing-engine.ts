@@ -85,6 +85,7 @@ export interface RoutedSessionDriver {
   interruption?(): Error | undefined
   state(): WorkerSessionState
   prompt(text: string, options?: Record<string, unknown>): Promise<WorkerSessionState>
+  followUp(text: string, options?: Record<string, unknown>): Promise<WorkerSessionState>
   contextUsage(): Promise<ContextUsageSnapshot | null>
   rename(name: string, control?: RuntimeSelectionControl): Promise<WorkerSessionState>
   setModel?(model: RuntimeModel, control?: RuntimeSelectionControl): Promise<WorkerSessionState>
@@ -347,8 +348,13 @@ export class SessionRoutingEngine implements PhiEngine {
       return this.createRoutedSession(params, control, factory)
     },
     prompt: async (params) => {
-      if (this.owns(params.sessionId))
-        return this.driver(params.sessionId).prompt(params.text, params.options)
+      if (this.owns(params.sessionId)) {
+        const driver = this.driver(params.sessionId)
+        if (params.options?.streamingBehavior === 'followUp') {
+          return driver.followUp(params.text, params.options)
+        }
+        return driver.prompt(params.text, params.options)
+      }
       return this.auxiliarySession(params.sessionId).sessions.prompt(params)
     },
     abort: async (params) => {

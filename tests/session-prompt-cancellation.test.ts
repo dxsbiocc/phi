@@ -13,6 +13,7 @@ const MARKER = 'phi-prompt-cancellation:ok'
 
 type Scenario =
   | 'abort'
+  | 'follow-up'
   | 'fallback'
   | 'fallback-switch'
   | 'reentry'
@@ -46,7 +47,7 @@ function fakeBash(
 
 function fakeSession(
   bash: FakeBash,
-  state: { prompts: number; aborts: number; disposes: number },
+  state: { prompts: number; aborts: number; disposes: number; followUps?: string[] },
   options: { prompt?: () => Promise<void>; model?: Record<string, unknown> } = {}
 ): Record<string, unknown> {
   const session: Record<string, unknown> = {
@@ -65,6 +66,10 @@ function fakeSession(
       state.prompts += 1
       if (options.prompt) return await options.prompt()
       await bash.execute(`call-${state.prompts}`, {}, undefined)
+    },
+    followUp: async (text: string) => {
+      const followUps = (state.followUps ??= [])
+      followUps.push(text)
     },
     abort: async () => {
       state.aborts += 1
@@ -87,6 +92,60 @@ async function runScenario(scenario: Scenario): Promise<void> {
     hostRequest: async () => undefined
   } as never)
 
+  if (scenario === 'follow-up') {
+    const signals: Array<AbortSignal | undefined> = []
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let started!: () => void
+    const waiting = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const state = { prompts: 0, aborts: 0, disposes: 0, followUps: [] as string[] }
+    const session = fakeSession(fakeBash(signals, started, released), state)
+    sessions.set('prompt-follow-up', { result: { session }, agentDir: '/tmp' } as never)
+    const running = promptSession({
+      sessionId: 'prompt-follow-up',
+      text: 'first',
+      options: { hostRunId: 'run-original' }
+    })
+    try {
+      await waiting
+      await assert.rejects(
+        promptSession({
+          sessionId: 'prompt-follow-up',
+          text: 'wrong run',
+          options: { streamingBehavior: 'followUp', hostRunId: 'run-replacement' }
+        }),
+        /not processing/,
+        'a follow-up cannot cross into another run'
+      )
+      await promptSession({
+        sessionId: 'prompt-follow-up',
+        text: 'inserted',
+        options: { streamingBehavior: 'followUp', hostRunId: 'run-original' }
+      })
+      assert.equal(state.prompts, 1, 'follow-up does not start a replacement prompt')
+      assert.deepEqual(state.followUps, ['inserted'])
+      assert.equal(signals[0]?.aborted, false, 'follow-up leaves the original scope running')
+      assert.equal(sessions.get('prompt-follow-up')?.activeHostRunId, 'run-original')
+    } finally {
+      release()
+      await running
+    }
+    await assert.rejects(
+      promptSession({
+        sessionId: 'prompt-follow-up',
+        text: 'too late',
+        options: { streamingBehavior: 'followUp' }
+      }),
+      /not processing/
+    )
+    sessions.delete('prompt-follow-up')
+    return
+  }
+
   if (scenario === 'abort') {
     const signals: Array<AbortSignal | undefined> = []
     let release!: () => void
@@ -97,7 +156,12 @@ async function runScenario(scenario: Scenario): Promise<void> {
     const waiting = new Promise<void>((resolve) => {
       started = resolve
     })
-    const state = { prompts: 0, aborts: 0, disposes: 0 }
+    const state = {
+      prompts: 0,
+      aborts: 0,
+      disposes: 0,
+      followUps: undefined as string[] | undefined
+    }
     const session = fakeSession(fakeBash(signals, started, released), state)
     sessions.set('cancel-abort', { result: { session }, agentDir: '/tmp' } as never)
     try {
@@ -109,6 +173,16 @@ async function runScenario(scenario: Scenario): Promise<void> {
       await abortSession({ sessionId: 'cancel-abort' })
       assert.equal(state.aborts, 1, 'SDK abort still runs')
       assert.equal(firstSignal.aborted, true, 'abort cancels the prompt scope')
+      await assert.rejects(
+        promptSession({
+          sessionId: 'cancel-abort',
+          text: 'after stop',
+          options: { streamingBehavior: 'followUp' }
+        }),
+        /not processing/,
+        'an aborted prompt cannot accept a follow-up while it settles'
+      )
+      assert.equal(state.followUps, undefined)
       await assert.rejects(
         promptSession({ sessionId: 'cancel-abort', text: 'too early' }),
         /already processing/,
@@ -470,6 +544,7 @@ if (process.env.PHI_PROMPT_CANCEL_SCENARIO) {
 
 for (const scenario of [
   'abort',
+  'follow-up',
   'fallback',
   'fallback-switch',
   'reentry',

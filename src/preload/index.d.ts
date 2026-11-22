@@ -211,6 +211,7 @@ type PreloadPromptTarget = {
   sessionGeneration: number
   suppressUserMessageEvent?: boolean
   retryUserMessageId?: string
+  followUp?: boolean
   images?: PromptImageInput[]
 }
 

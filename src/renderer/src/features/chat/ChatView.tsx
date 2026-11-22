@@ -72,6 +72,8 @@ import type {
 export { ThinkingBlock } from '../../components/chat/ThinkingBlock'
 
 const CloseIcon = PhiIcons.action.close
+const EditIcon = PhiIcons.action.edit
+const SendIcon = PhiIcons.action.send
 
 type ViewProps = {
   sessionId?: string
@@ -140,6 +142,9 @@ type ViewProps = {
     response: AgentUserInteractionResponse,
     cancelled?: boolean
   ) => void
+  onSendQueuedPrompt?: (id: string) => Promise<void> | void
+  /** Returns the original text after App removes the prompt and restores its images. */
+  onEditQueuedPrompt?: (id: string) => string | undefined
   onRemoveQueuedPrompt?: (id: string) => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onOpenWebUrl?: (url: string) => void
@@ -208,6 +213,8 @@ function ChatView({
   queuedPromptsPaused = false,
   onRespondApproval,
   onRespondUserInteraction,
+  onSendQueuedPrompt,
+  onEditQueuedPrompt,
   onRemoveQueuedPrompt,
   onOpenLocalPath,
   onOpenWebUrl,
@@ -398,7 +405,7 @@ function ChatView({
     },
     [composerFileReferences, composerInputText, onInputChange, resetPromptHistoryNavigation]
   )
-  const editUserMessage = useCallback(
+  const editQueuedPrompt = useCallback(
     (content: string): void => {
       resetPromptHistoryNavigation()
       promptHistoryDraftRef.current = content
@@ -414,8 +421,8 @@ function ChatView({
     [editableComposerTextFromInput, onInputChange, resetPromptHistoryNavigation]
   )
   const retryUserMessage = useCallback(
-    (message: UserMessageRetryTarget): void => {
-      void onRetryUserMessage?.(message)
+    async (message: UserMessageRetryTarget): Promise<void> => {
+      await onRetryUserMessage?.(message)
     },
     [onRetryUserMessage]
   )
@@ -485,7 +492,7 @@ function ChatView({
               onOpenLocalPath={onOpenLocalPath}
               onOpenWebUrl={onOpenWebUrl}
               onJumpToNotebookCell={onJumpToNotebookCell}
-              onEditUserMessage={editUserMessage}
+              onEditUserMessage={retryUserMessage}
               onRetryUserMessage={retryUserMessage}
               onForkUserMessage={onForkUserMessage}
               cwd={cwd}
@@ -575,10 +582,41 @@ function ChatView({
                       >
                         {item.text}
                       </Typography>
+                      {onSendQueuedPrompt && (
+                        <IconButton
+                          size="small"
+                          aria-label={chatCopy.sendQueuedMessageNow}
+                          title={chatCopy.sendQueuedMessageNow}
+                          onClick={() => {
+                            void onSendQueuedPrompt(item.id)
+                          }}
+                        >
+                          <SendIcon fontSize="small" />
+                        </IconButton>
+                      )}
+                      {onEditQueuedPrompt && (
+                        <IconButton
+                          size="small"
+                          aria-label={chatCopy.editQueuedMessage}
+                          title={
+                            input.length > 0 || images.length > 0
+                              ? chatCopy.clearComposerToEditQueuedMessage
+                              : chatCopy.editQueuedMessage
+                          }
+                          disabled={input.length > 0 || images.length > 0}
+                          onClick={() => {
+                            const content = onEditQueuedPrompt(item.id)
+                            if (content !== undefined) editQueuedPrompt(content)
+                          }}
+                        >
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      )}
                       {onRemoveQueuedPrompt && (
                         <IconButton
                           size="small"
                           aria-label={chatCopy.removeQueuedMessage}
+                          title={chatCopy.removeQueuedMessage}
                           onClick={() => onRemoveQueuedPrompt(item.id)}
                         >
                           <CloseIcon fontSize="small" />

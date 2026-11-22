@@ -100,10 +100,7 @@ import type { BrowserTrustedOverlayRequest } from './features/browser/lib/browse
 import { useEnvironmentBuildNotices } from './features/jobs/hooks/useEnvironmentBuildNotices'
 import type { LocalPathKind } from './components/MarkdownContent'
 import PhiPluginsView, { PhiPluginCatalogDialog } from './features/phi-plugin/PhiPluginsView'
-import {
-  usePhiPlugins,
-  type PhiPluginDisplayItem
-} from './features/phi-plugin/hooks/usePhiPlugins'
+import { usePhiPlugins, type PhiPluginDisplayItem } from './features/phi-plugin/hooks/usePhiPlugins'
 import { pluginCopy } from './features/phi-plugin/lib/pluginCopy'
 import { WrapperDetail } from './features/wrapper/WrapperView'
 import { useWrapperCatalog } from './features/wrapper/hooks/useWrapperCatalog'
@@ -1830,6 +1827,7 @@ function App(): React.JSX.Element {
     activeQueuedPrompts,
     queuePromptText,
     removeQueuedPrompt,
+    restoreQueuedPrompt,
     dequeueQueuedPrompt,
     moveQueuedPromptsToSession,
     onStopGeneration,
@@ -1845,6 +1843,12 @@ function App(): React.JSX.Element {
     showSnackbar,
     showSnackbarError
   })
+
+  const queuedPromptSendRef = useRef<string | null>(null)
+  const activeQueuedPromptsRef = useRef(activeQueuedPrompts)
+  useLayoutEffect(() => {
+    activeQueuedPromptsRef.current = activeQueuedPrompts
+  }, [activeQueuedPrompts])
 
   const sendPromptText = usePromptSend({
     rendererApi,
@@ -2467,9 +2471,103 @@ function App(): React.JSX.Element {
         queuePromptText(text, target, sendOptions)
         return
       }
-      await sendPromptText(text, target, sendOptions)
+      // The editor closes once the send starts; awaiting the full run would keep
+      // the message in edit mode until the reply finishes.
+      await new Promise<void>((resolve) => {
+        void sendPromptText(text, target, { ...sendOptions, onSendStarted: resolve }).then(
+          () => resolve(),
+          () => resolve()
+        )
+      })
     },
     [queuePromptText, rendererApi, sendPromptText, showSnackbarError]
+  )
+  const onSendQueuedPrompt = useCallback(
+    async (id: string): Promise<void> => {
+      if (
+        queuedPromptSendRef.current !== null ||
+        isSessionChanging ||
+        isCompactingKey(activeContextCompactionKey)
+      ) {
+        return
+      }
+      const promptIndex = activeQueuedPrompts.findIndex((item) => item.id === id)
+      if (promptIndex < 0) return
+      const prompt = activeQueuedPrompts[promptIndex]
+      let sendStarted = false
+      let runCancelled = false
+
+      queuedPromptSendRef.current = id
+      try {
+        const current = useSessionStore.getState()
+        const currentDraftKey = sessionDraftKey({
+          phiSessionId: current.activePhiSessionId,
+          path: current.activeSessionPath,
+          cwd: current.activeCwd,
+          sessionGeneration: current.activeSessionGeneration
+        })
+        if (
+          currentDraftKey !== activeDraftKey ||
+          current.activeSessionGeneration !== prompt.target.sessionGeneration ||
+          current.activeSessionPath !== prompt.target.path ||
+          (current.activePhiSessionId ?? undefined) !== prompt.target.phiSessionId ||
+          current.activeCwd !== prompt.target.cwd ||
+          isCompactingKey(activeContextCompactionKey) ||
+          !activeQueuedPromptsRef.current.some((item) => item.id === id)
+        ) {
+          return
+        }
+        const sent = await sendPromptText(prompt.text, prompt.target, {
+          ...prompt.sendOptions,
+          ...(currentSessionIsBusyRef.current || isSendingRef.current ? { followUp: true } : {}),
+          restoreDraftOnFailure: false,
+          // Admission failures leave the prompt queued. After dispatch starts, this
+          // handler owns failure recovery so a newer composer draft stays untouched.
+          onSendStarted: () => {
+            sendStarted = true
+            removeQueuedPrompt(id)
+          },
+          onRunCancelled: () => {
+            runCancelled = true
+            prompt.sendOptions?.onRunCancelled?.()
+          }
+        })
+        if (sendStarted && !sent && !runCancelled) restoreQueuedPrompt(prompt, promptIndex)
+      } catch (error) {
+        if (sendStarted && !runCancelled) restoreQueuedPrompt(prompt, promptIndex)
+        showSnackbarError(error, appCopy.sendMessageFailed)
+      } finally {
+        if (queuedPromptSendRef.current === id) queuedPromptSendRef.current = null
+      }
+    },
+    [
+      activeContextCompactionKey,
+      activeDraftKey,
+      activeQueuedPrompts,
+      isCompactingKey,
+      isSessionChanging,
+      removeQueuedPrompt,
+      restoreQueuedPrompt,
+      sendPromptText,
+      showSnackbarError
+    ]
+  )
+  const onEditQueuedPrompt = useCallback(
+    (id: string): string | undefined => {
+      if (input.length > 0 || inputImages.length > 0) return undefined
+      const prompt = activeQueuedPrompts.find((item) => item.id === id)
+      if (!prompt) return undefined
+      const images = prompt.sendOptions?.images ?? []
+      if (images.length > 0) {
+        setDraftImagesBySession((previous) => ({
+          ...previous,
+          [activeDraftKey]: images
+        }))
+      }
+      removeQueuedPrompt(id)
+      return prompt.text
+    },
+    [activeDraftKey, activeQueuedPrompts, input, inputImages, removeQueuedPrompt]
   )
   const forkInProgressRef = useRef(false)
   const onForkUserMessage = useCallback(
@@ -2504,6 +2602,7 @@ function App(): React.JSX.Element {
     },
     readiness: { modelStateReady: isModelStateReady, providers: providerStatuses, availableModels },
     isSendingRef,
+    queuedPromptSendRef,
     sendPromptText
   })
   const activeWorkspaceTitle = useMemo(() => {
@@ -3617,6 +3716,8 @@ function App(): React.JSX.Element {
             queuedPromptsPaused={queuedPromptsPaused}
             onRespondApproval={onRespondToolApproval}
             onRespondUserInteraction={onRespondAgentUserInteraction}
+            onSendQueuedPrompt={onSendQueuedPrompt}
+            onEditQueuedPrompt={onEditQueuedPrompt}
             onRemoveQueuedPrompt={removeQueuedPrompt}
             onOpenLocalPath={onOpenLocalPath}
             onOpenWebUrl={onOpenWebUrl}

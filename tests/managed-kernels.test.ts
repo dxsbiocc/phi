@@ -11,8 +11,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
+import { stringify as stringifyYaml } from 'yaml'
+
 import { describeEnvironment } from '../src/main/agent/content/environment-refs'
 import { removeTree, type PhiPlatform } from '../src/main/agent/envs'
+import { installPlugin, setPluginEnabled, uninstallPlugin } from '../src/main/agent/plugins/loader'
 import {
   DEFAULT_KERNEL_NAME,
   listAnalysisKernels,
@@ -574,3 +577,204 @@ test('selecting a not-built kernel goes through prepareKernel, never straight to
     removeTree(project)
   }
 })
+
+interface PluginKernelFixture {
+  agentDir: string
+  pluginId: string
+  envName: string
+}
+
+function installKernelPlugin(
+  fixture: Fixture,
+  options: { kernel?: 'r' | 'python' | 'none'; id?: string; envName?: string } = {}
+): PluginKernelFixture {
+  const base = join(fixture.root, '..')
+  const agentDir = join(base, 'agent')
+  const pluginId = options.id ?? 'alpha-plugin'
+  const envName = options.envName ?? 'seurat'
+  const kernel = options.kernel ?? 'r'
+  const dir = join(base, `source-${pluginId}-${Math.random().toString(16).slice(2)}`)
+  const skillDir = join(dir, 'skills', 'alpha-skill')
+  mkdirSync(join(dir, 'agents'), { recursive: true })
+  mkdirSync(join(skillDir, 'scripts'), { recursive: true })
+  writeFileSync(
+    join(dir, 'phi-package.yaml'),
+    stringifyYaml({
+      schemaVersion: 1,
+      id: pluginId,
+      type: 'plugin',
+      version: '1.0.0',
+      title: 'Alpha plugin',
+      summary: 'Kernel fixture.',
+      toolPrefix: 'alph',
+      components: { agents: ['agents/Alpha.md'], skills: ['skills/alpha-skill'] },
+      environments: { [envName]: { spec: `environments/${envName}/environment.yml` } }
+    })
+  )
+  writeFileSync(
+    join(dir, 'agents', 'Alpha.md'),
+    `---
+name: Alpha
+description: Kernel fixture agent.
+tools: [bash]
+skills: [alpha-skill]
+environment: plugin:${envName}
+---
+Run the fixture skill.
+`
+  )
+  writeFileSync(
+    join(skillDir, 'SKILL.md'),
+    `---
+name: alpha-skill
+description: Kernel fixture skill.
+phi:
+  environment: plugin:${envName}
+  attachTo: [Alpha]
+  scripts:
+    - name: run
+      description: Run the fixture.
+      run: [python, ./scripts/run.py]
+      args:
+        type: object
+        additionalProperties: false
+        properties: {}
+      approval: read
+---
+Use this fixture skill.
+`
+  )
+  writeFileSync(join(skillDir, 'scripts', 'run.py'), 'print({"ok": True})\n')
+  const environmentDir = join(dir, 'environments', envName)
+  copyMinimal(environmentDir, envName)
+  const extra =
+    kernel === 'r'
+      ? '  - r-base=4.5\n  - r-irkernel\n'
+      : kernel === 'python'
+        ? '  - ipykernel\n'
+        : ''
+  if (extra) {
+    const specPath = join(environmentDir, 'environment.yml')
+    writeFileSync(specPath, `${readFileSync(specPath, 'utf8').trimEnd()}\n${extra}`)
+  }
+  const installed = installPlugin(dir, { agentDir, runtimeRoot: fixture.root, platform: PLATFORM })
+  assert.equal(installed.ok, true, JSON.stringify(installed.errors))
+  return { agentDir, pluginId, envName }
+}
+
+test(
+  'a plugin environment with IRkernel gets a managed kernel in its own prefix',
+  withFixture((fixture) => {
+    const plugin = installKernelPlugin(fixture)
+    const descriptor = describeEnvironment(`plugin:${plugin.envName}`, {
+      pluginId: plugin.pluginId,
+      agentDir: plugin.agentDir,
+      platform: PLATFORM
+    })
+    const envId = installReady(fixture.root, descriptor, {})
+    const prefix = join(fixture.root, 'envs', envId)
+
+    const states = syncManagedKernels({ ...ctx(fixture), agentDir: plugin.agentDir })
+    const state = states.find((item) => item.definition.name === 'plugin-alpha-plugin-seurat')
+    assert.equal(state?.status, 'ready')
+    const spec = readSpec(fixture, 'plugin-alpha-plugin-seurat')
+    assert.deepEqual(spec.argv, [
+      join(prefix, 'bin', 'R'),
+      '--slave',
+      '-e',
+      'IRkernel::main()',
+      '--args',
+      '{connection_file}'
+    ])
+    assert.equal(spec.language, 'R')
+    assert.equal(spec.display_name, 'R 4.5 (alpha-plugin:seurat)')
+    assert.equal(spec.env?.PHI_ENV_ID, envId)
+    assert.deepEqual(spec.metadata?.phi, { managed: true, ref: 'plugin:seurat', envId })
+
+    const diagnostics = listAnalysisKernels({
+      ...ctx(fixture),
+      agentDir: plugin.agentDir,
+      hostJupyterCommand: null
+    })
+    assert.deepEqual(
+      diagnostics.kernels.map((kernel) => kernel.name),
+      ['phi-python', 'phi-r', 'plugin-alpha-plugin-seurat']
+    )
+    const summary = diagnostics.kernels[2]
+    assert.deepEqual(summary.environment, { ref: 'plugin:seurat', envId, pluginId: 'alpha-plugin' })
+    assert.equal(
+      selectNotebookKernel(notebook({ name: 'plugin-alpha-plugin-seurat' }), diagnostics)?.name,
+      'plugin-alpha-plugin-seurat'
+    )
+  })
+)
+
+test(
+  'a plugin kernel whose environment is not built is listed without a spec',
+  withFixture((fixture) => {
+    const plugin = installKernelPlugin(fixture)
+    const states = syncManagedKernels({ ...ctx(fixture), agentDir: plugin.agentDir })
+    const state = states.find((item) => item.definition.name === 'plugin-alpha-plugin-seurat')
+    assert.equal(state?.status, 'not-built')
+    assert.equal(
+      state?.status === 'not-built' ? state.message : '',
+      'environment plugin:seurat is not ready; the user must build it first'
+    )
+    assert.equal(
+      existsSync(join(managedKernelsDir(fixture.root), 'plugin-alpha-plugin-seurat')),
+      false
+    )
+  })
+)
+
+test(
+  'disabling or uninstalling a plugin removes its kernel and stale specs',
+  withFixture((fixture) => {
+    const plugin = installKernelPlugin(fixture)
+    const descriptor = describeEnvironment(`plugin:${plugin.envName}`, {
+      pluginId: plugin.pluginId,
+      agentDir: plugin.agentDir,
+      platform: PLATFORM
+    })
+    installReady(fixture.root, descriptor, {})
+    const options = { ...ctx(fixture), agentDir: plugin.agentDir }
+    const specDir = join(managedKernelsDir(fixture.root), 'plugin-alpha-plugin-seurat')
+    syncManagedKernels(options)
+    assert.equal(existsSync(specDir), true)
+
+    setPluginEnabled(plugin.pluginId, false, { agentDir: plugin.agentDir })
+    let states = syncManagedKernels(options)
+    assert.equal(
+      states.some((item) => item.definition.name === 'plugin-alpha-plugin-seurat'),
+      false
+    )
+    assert.equal(existsSync(specDir), false)
+
+    setPluginEnabled(plugin.pluginId, true, { agentDir: plugin.agentDir })
+    states = syncManagedKernels(options)
+    assert.equal(
+      states.some((item) => item.definition.name === 'plugin-alpha-plugin-seurat'),
+      true
+    )
+
+    uninstallPlugin(plugin.pluginId, { agentDir: plugin.agentDir, runtimeRoot: fixture.root })
+    states = syncManagedKernels(options)
+    assert.equal(
+      states.some((item) => item.definition.name === 'plugin-alpha-plugin-seurat'),
+      false
+    )
+    assert.equal(existsSync(specDir), false)
+  })
+)
+
+test(
+  'plugin environments without a kernel package contribute no kernel',
+  withFixture((fixture) => {
+    const plugin = installKernelPlugin(fixture, { kernel: 'none' })
+    const states = syncManagedKernels({ ...ctx(fixture), agentDir: plugin.agentDir })
+    assert.deepEqual(
+      states.map((item) => item.definition.name),
+      ['phi-python', 'phi-r']
+    )
+  })
+)

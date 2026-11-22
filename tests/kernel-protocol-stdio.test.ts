@@ -171,6 +171,7 @@ test('the headless Bun entry negotiates, exposes worker capabilities, and exits 
       'session.open',
       'sessions.list',
       'session.prompt',
+      'session.followUp',
       'session.plan.enter',
       'session.plan.cancel',
       'planRuns.list',

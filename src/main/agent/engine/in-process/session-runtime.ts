@@ -80,11 +80,24 @@ export async function promptSession(params: unknown): Promise<unknown> {
   const sessionId = stringValue(record.sessionId)
   const entry = sessions.get(sessionId)
   if (!entry) throw new Error(`Unknown session: ${sessionId}`)
+  const options = promptOptions(record.options)
+  if (isRecord(record.options) && record.options.streamingBehavior === 'followUp') {
+    if (entry.disposing) throw new Error(`Session is being disposed: ${sessionId}`)
+    const expectedHostRunId = stringValue(record.options.hostRunId)
+    if (
+      !entry.activePromptAbort ||
+      entry.activePromptAbort.signal.aborted ||
+      (expectedHostRunId && entry.activeHostRunId !== expectedHostRunId)
+    ) {
+      throw new Error(`Session is not processing prompt run ${expectedHostRunId}: ${sessionId}`)
+    }
+    await entry.result.session.followUp(stringValue(record.text), options?.images, options)
+    return serializeSessionState(entry.result)
+  }
   assertPromptAdmission(entry, sessionId)
   const rawHostRunId = isRecord(record.options) ? stringValue(record.options.hostRunId) : ''
   const hostRunId = rawHostRunId && rawHostRunId.length <= 200 ? rawHostRunId : undefined
   const automatic = isRecord(record.options) && record.options.modelSelection === 'automatic'
-  const options = promptOptions(record.options)
   const promptAbort = new AbortController()
   try {
     // One fresh scope per admitted prompt; Cursor omits the tool signal, so this

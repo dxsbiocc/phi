@@ -51,11 +51,6 @@ async function reportStartupFailure(
 }
 
 try {
-  // The SDK bundle is launchable from the Dock without the Phi entry point.
-  // When running from source, keep that SDK bundle out of the Dock.
-  if (process.platform === 'darwin' && process.defaultApp === true) {
-    app.setActivationPolicy('accessory')
-  }
   // The packaged entry must finish evaluating before Electron emits ready.
   // Wait for pre-ready registration in the main module, then observe startup separately.
   const { startup, stopAfterStartupFailure } = await import('./index')

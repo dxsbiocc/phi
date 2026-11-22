@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   appendQueuedPrompt,
   dropQueuedPrompt,
+  restoreQueuedPrompt,
   retargetQueuedPrompts,
   shiftQueuedPrompt,
   type QueuedPrompt,
@@ -63,6 +64,43 @@ test('drop keeps a sibling prompt and drops the session key only when it empties
   assert.deepEqual(
     next.alpha.map((item) => item.id),
     ['two']
+  )
+})
+
+test('restore reinserts a failed prompt at its original position without moving other sessions', () => {
+  const beta = [prompt('beta-1')]
+  const queue: QueuedPromptsBySession = {
+    alpha: [prompt('one'), prompt('three')],
+    beta
+  }
+  const next = restoreQueuedPrompt(queue, 'alpha', prompt('two'), 1)
+  assert.deepEqual(
+    next.alpha.map((item) => item.id),
+    ['one', 'two', 'three']
+  )
+  assert.equal(next.beta, beta)
+  assert.deepEqual(
+    queue.alpha.map((item) => item.id),
+    ['one', 'three']
+  )
+})
+
+test('restore clamps the former index to the current queue bounds', () => {
+  const queue: QueuedPromptsBySession = { alpha: [prompt('two')] }
+  const first = restoreQueuedPrompt(queue, 'alpha', prompt('one'), -10)
+  const last = restoreQueuedPrompt(first, 'alpha', prompt('three'), 10)
+  assert.deepEqual(
+    last.alpha.map((item) => item.id),
+    ['one', 'two', 'three']
+  )
+})
+
+test('restore is a no-op when the prompt is already queued', () => {
+  const queue: QueuedPromptsBySession = { alpha: [prompt('one'), prompt('two')] }
+  assert.equal(restoreQueuedPrompt(queue, 'alpha', prompt('one'), 1), queue)
+  assert.deepEqual(
+    queue.alpha.map((item) => item.id),
+    ['one', 'two']
   )
 })
 

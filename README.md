@@ -183,7 +183,7 @@ bun run dev
 
 Configure a model provider in Settings, then choose a project.
 
-On macOS, open `Phi.app` from Applications to use its Dock entry. `bun run dev` opens the same workbench from source. Use the Phi status item in the menu bar to reopen the development window.
+On macOS, both `bun run dev` and the packaged `Phi.app` show the Phi icon in the Dock while running. Use the Dock or the Phi status item in the menu bar to reopen the development window.
 
 To check a source checkout the way CI does, also install Node.js 24:
 

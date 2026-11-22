@@ -107,36 +107,55 @@ function allocatePromptRun(
   return { ...admission, runGeneration, storedImages, otherActiveProjectRuns, promptRun }
 }
 
+function allocateFollowUpPromptRun(
+  deps: PromptRunStartDeps,
+  admission: AdmittedPromptRun<CreateAgentSessionResult>,
+  promptRun: PromptRunState
+): PromptRunContext {
+  if (!admission.input.automatic) deps.continuations.delete(admission.phiSessionId)
+  const storedImages = admission.input.images?.length
+    ? deps.images.persist(admission.phiSessionId, admission.input.images)
+    : []
+  return {
+    ...admission,
+    runGeneration: promptRun.generation,
+    storedImages,
+    otherActiveProjectRuns: 0,
+    promptRun
+  }
+}
+
+function recordPromptUserMessage(context: PromptRunContext, deps: PromptRunStartDeps): void {
+  const { input, phiSessionId, runId, normalizedText, promptTarget, storedImages } = context
+  if (input.automatic) {
+    // Phi's own message to the agent, not the user's words: nothing to show as a user bubble.
+  } else if (promptTarget?.suppressUserMessageEvent === true) {
+    deps.events.append(phiSessionId, {
+      type: 'user_message_retry',
+      runId,
+      content: normalizedText,
+      ...(storedImages.length ? { images: storedImages } : {}),
+      ...(promptTarget.retryUserMessageId ? { userMessageId: promptTarget.retryUserMessageId } : {})
+    })
+  } else {
+    const stored = deps.events.append(phiSessionId, {
+      type: 'user_message',
+      runId,
+      content: normalizedText,
+      ...(storedImages.length ? { images: storedImages } : {})
+    })
+    context.userMessageEventId = stored.eventId
+  }
+}
+
 function preparePromptRunForQueue(deps: PromptRunStartDeps, context: PromptRunContext): void {
-  const { input, phiSessionId, runId, normalizedText, promptTarget, storedImages, promptRun } =
-    context
   try {
-    if (input.automatic) {
-      // Phi's own message to the agent, not the user's words: nothing to show as a user bubble.
-    } else if (promptTarget?.suppressUserMessageEvent === true) {
-      deps.events.append(phiSessionId, {
-        type: 'user_message_retry',
-        runId,
-        content: normalizedText,
-        ...(storedImages.length ? { images: storedImages } : {}),
-        ...(promptTarget.retryUserMessageId
-          ? { userMessageId: promptTarget.retryUserMessageId }
-          : {})
-      })
-    } else {
-      const stored = deps.events.append(phiSessionId, {
-        type: 'user_message',
-        runId,
-        content: normalizedText,
-        ...(storedImages.length ? { images: storedImages } : {})
-      })
-      context.userMessageEventId = stored.eventId
-    }
+    recordPromptUserMessage(context, deps)
   } catch (error) {
-    deps.cleanup.deleteActiveRun(context.runSessionKey, promptRun)
+    deps.cleanup.deleteActiveRun(context.runSessionKey, context.promptRun)
     throw error
   }
-  if (context.otherActiveProjectRuns > 0 && !input.automatic) {
+  if (context.otherActiveProjectRuns > 0 && !context.input.automatic) {
     deps.notify.parallelRun(
       context.runSessionGeneration,
       context.stableSessionPath,
@@ -148,12 +167,20 @@ function preparePromptRunForQueue(deps: PromptRunStartDeps, context: PromptRunCo
 
 export interface PromptRunStart {
   allocate(admission: AdmittedPromptRun<CreateAgentSessionResult>): PromptRunContext
+  allocateFollowUp(
+    admission: AdmittedPromptRun<CreateAgentSessionResult>,
+    promptRun: PromptRunState
+  ): PromptRunContext
   prepare(context: PromptRunContext): void
+  prepareFollowUp(context: PromptRunContext): void
 }
 
 export function createPromptRunStart(deps: PromptRunStartDeps): PromptRunStart {
   return {
     allocate: (admission) => allocatePromptRun(deps, admission),
-    prepare: (context) => preparePromptRunForQueue(deps, context)
+    allocateFollowUp: (admission, promptRun) =>
+      allocateFollowUpPromptRun(deps, admission, promptRun),
+    prepare: (context) => preparePromptRunForQueue(deps, context),
+    prepareFollowUp: (context) => recordPromptUserMessage(context, deps)
   }
 }

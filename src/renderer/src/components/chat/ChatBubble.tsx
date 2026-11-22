@@ -4,6 +4,7 @@ import { useUiLanguage } from '../../lib/i18n'
 import { Box, Button, Typography } from '@mui/material'
 import { memo, type ReactNode } from 'react'
 import MarkdownContent, { type LocalPathKind } from '../MarkdownContent'
+import { ChatAssistantMessage } from './ChatAssistantMessage'
 import { getProviderErrorDisplay } from '../../lib/providerErrors'
 import { PhiIcons } from '../../icons'
 import type { ChatMessage } from '../../types'
@@ -36,8 +37,9 @@ function NoticeBody({ text }: { text: string }): ReactNode {
 export type ChatBubbleProps = {
   message: ChatMessage
   userMessageState?: UserMessageState
-  onEditUserMessage?: (content: string) => void
-  onRetryUserMessage?: (message: UserMessageRetryTarget) => void
+  forkUserMessageId?: string
+  onEditUserMessage?: (message: UserMessageRetryTarget) => Promise<void> | void
+  onRetryUserMessage?: (message: UserMessageRetryTarget) => Promise<void> | void
   onForkUserMessage?: (messageId: string) => void
   onGoSettings: () => void
   onOpenBackgroundJobs: () => void
@@ -58,6 +60,7 @@ function chatBubblePropsEqual(prev: ChatBubbleProps, next: ChatBubbleProps): boo
     prev.message === next.message &&
     prev.cwd === next.cwd &&
     prev.userMessageState === next.userMessageState &&
+    prev.forkUserMessageId === next.forkUserMessageId &&
     prev.onEditUserMessage === next.onEditUserMessage &&
     prev.onRetryUserMessage === next.onRetryUserMessage &&
     prev.onForkUserMessage === next.onForkUserMessage &&
@@ -70,6 +73,7 @@ function chatBubblePropsEqual(prev: ChatBubbleProps, next: ChatBubbleProps): boo
 export const ChatBubble = memo(function ChatBubble({
   message,
   userMessageState,
+  forkUserMessageId,
   onEditUserMessage,
   onRetryUserMessage,
   onForkUserMessage,
@@ -232,7 +236,19 @@ export const ChatBubble = memo(function ChatBubble({
         state={userMessageState}
         onEdit={onEditUserMessage}
         onRetry={onRetryUserMessage}
+      />
+    )
+  }
+
+  if (message.role === 'assistant') {
+    return (
+      <ChatAssistantMessage
+        message={message}
+        forkUserMessageId={forkUserMessageId}
         onFork={onForkUserMessage}
+        onOpenLocalPath={onOpenLocalPath}
+        onOpenWebUrl={onOpenWebUrl}
+        cwd={cwd}
       />
     )
   }

@@ -151,6 +151,7 @@ const methodParams = {
     synthetic: false,
     userInitiated: true
   },
+  'session.followUp': { text: 'Continue with this too.', clientRunKey: 'client-run-1' },
   'session.plan.enter': { execute: true },
   'session.plan.cancel': { replanRequestId: 'replan-1' },
   'planRuns.list': {},
@@ -251,6 +252,7 @@ const methodResults = {
     ]
   },
   'session.prompt': { accepted: true, runId: 'run-1' },
+  'session.followUp': { accepted: true },
   'session.plan.enter': { enabled: true },
   'session.plan.cancel': { cancelled: true },
   'planRuns.list': [planState],
