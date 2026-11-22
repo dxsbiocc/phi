@@ -72,6 +72,16 @@ async function frame(): Promise<void> {
   })
 }
 
+// Focus transfers and CSS transitions land a frame or more late on loaded CI
+// runners; poll for the end state instead of racing it with a fixed sleep.
+async function waitFor(condition: () => boolean, message: string, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(message)
+    await frame()
+  }
+}
+
 async function select(view: EditorView, start: number, end = start): Promise<void> {
   await act(async () => {
     view.focus()
@@ -334,7 +344,10 @@ async function run(): Promise<object> {
         new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
       )
     })
-    check(view.hasFocus, 'ArrowDown at the end of a formula must focus the paragraph below')
+    await waitFor(
+      () => view.hasFocus,
+      'ArrowDown at the end of a formula must focus the paragraph below'
+    )
     const deleteFormulaButton = host.querySelector<HTMLButtonElement>(
       'button[aria-label="Delete formula"]'
     )
@@ -676,8 +689,10 @@ async function run(): Promise<object> {
     editCodeView.focus()
     const codeActions = host.querySelector<HTMLElement>('.phi-notebook-code-actions')
     check(codeActions, 'The code block actions must be mounted')
-    await new Promise((resolve) => setTimeout(resolve, 150))
-    check(getComputedStyle(codeActions).opacity === '1', 'Focused code actions must be visible')
+    await waitFor(
+      () => getComputedStyle(codeActions).opacity === '1',
+      'Focused code actions must be visible'
+    )
     check(emptyCodeHeight <= 84, 'An empty code block must not reserve extra input height')
     const firstCodeInput = host.querySelector<HTMLElement>('[data-phi-notebook-code-input]')
     check(firstCodeInput, 'The code input must remain mounted')
@@ -746,7 +761,6 @@ async function run(): Promise<object> {
     await act(async () => resetOption.click())
     if (!host.querySelector('[data-phi-notebook-code-highlight] [data-phi-syntax-token]'))
       regressions.push('The editable code block has no syntax-highlighted layer')
-    const afterLanguageInput = codeInputView(host)
     check(
       !host.querySelector('[data-phi-notebook-markdown-footer]'),
       'A code block must not leave a clickable blank footer'
@@ -763,14 +777,18 @@ async function run(): Promise<object> {
       })
     )
     check(draft === codeSource, 'Clicking below a code block must not insert a line')
+    const exitCodeView = codeInputView(host)
     await act(async () => {
-      afterLanguageInput.focus()
-      afterLanguageInput.dispatch({ selection: { anchor: afterLanguageInput.state.doc.length } })
-      afterLanguageInput.contentDOM.dispatchEvent(
+      exitCodeView.focus()
+      exitCodeView.dispatch({ selection: { anchor: exitCodeView.state.doc.length } })
+      exitCodeView.contentDOM.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })
       )
     })
-    check(view.hasFocus, 'ArrowDown at the end of code must focus the paragraph below')
+    await waitFor(
+      () => view.hasFocus,
+      'ArrowDown at the end of code must focus the paragraph below'
+    )
     const paragraph = view.state.selection.main.head
     await act(async () => view.dispatch({ changes: { from: paragraph, insert: 'after' } }))
     check(draft === '```r\nx <- 1\n```\n\n\nafter', 'Text after code must remain outside the fence')
