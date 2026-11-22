@@ -13,7 +13,10 @@ const OUTPUT_TAIL_BYTES = 4 * 1024 * 1024
 /**
  * Runs node with its output going to a file and forwards that file as it grows. `--test-force-exit`
  * ends the runner with process.exit(), which on a pipe drops whatever has not been taken yet and
- * can cost the end of the report. Writes to a file are synchronous, so nothing is left to drop.
+ * can cost the end of the report. Writes to a file are synchronous, so the runner's own output is
+ * safe — but force-exit can still fire before the runner drains its test children's pipes, so the
+ * tail (results, even totals) may never reach the file. The gate treats a missing summary as
+ * unproven and reruns the lane instead of trusting a truncated report.
  */
 export function runWithReportFile(args, { cwd, onOutput }) {
   const directory = mkdtempSync(path.join(tmpdir(), 'phi-test-report-'))
