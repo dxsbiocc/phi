@@ -496,43 +496,14 @@ test('workspace files are available from the left sidebar activity item', () => 
   assert.doesNotMatch(appSource, /onRefreshWorkspaceFiles=\{onRefreshWorkspaceSidePanel\}/)
 })
 
-test('workspace file titlebars reserve trailing app chrome only at the window edge', () => {
-  const appSource = readFileSync(resolve(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
-  const titlebarSource = readFileSync(
-    resolve(process.cwd(), 'src/renderer/src/components/app-shell/WorkspaceTitlebar.tsx'),
-    'utf8'
-  )
-
-  assert.match(appSource, /FilePreviewTitleTab,/)
-  assert.match(titlebarSource, /export const titlebarTrailingToggleChromeReserve = '120px'/)
-  assert.match(
-    appSource,
-    /import \{[\s\S]{0,120}titlebarTrailingToggleChromeReserve[\s\S]{0,120}\} from '\.\/components\/app-shell\/WorkspaceTitlebar'/
-  )
-  assert.match(
-    appSource,
-    /filePreview && !showProjectSessionPlaceholder \? \([\s\S]{0,220}<FilePreviewTitleTab/
-  )
-  assert.match(
-    appSource,
-    /titlebarInsetEnd=\{\s*workspaceSidePanelCollapsed \? titlebarTrailingToggleChromeReserve : 1\.25\s*\}/
-  )
-  assert.match(appSource, /onClose=\{onCloseCurrentFilePreview\}/)
-  assert.match(titlebarSource, /leadingChromeInset\?: number/)
-  assert.match(titlebarSource, /pl: leadingChromeInset > 0 \? `\$\{leadingChromeInset\}px` : 1\.5/)
-  assert.match(titlebarSource, /reserveTrailingChromeSpace\?: boolean/)
-  assert.match(
-    titlebarSource,
-    /pr: reserveTrailingChromeSpace \? titlebarTrailingToggleChromeReserve : 1\.5/
-  )
-  assert.match(
-    readFileSync(
-      resolve(process.cwd(), 'src/renderer/src/features/workspace/WorkspaceView.tsx'),
-      'utf8'
-    ),
-    /leadingChromeInset=\{chromeLayout\.mainColumnTitlebarInset\}/
-  )
-  assert.match(appSource, /sidePanelCollapsed=\{workspaceSidePanelCollapsed\}/)
+test('workspace titles and tabs reserve the measured controls in docked and floating layouts', () => {
+  const view = readFileSync('src/renderer/src/features/workspace/WorkspaceView.tsx', 'utf8')
+  const chrome = readFileSync('src/renderer/src/components/app-shell/AppWindowChrome.tsx', 'utf8')
+  assert.match(view, /pr: workspaceTitlebarEndInset/)
+  assert.doesNotMatch(view, /reserveTrailingChromeSpace=\{sidePanelCollapsed\}/)
+  assert.match(chrome, /controls\.getBoundingClientRect\(\)\.width/)
+  assert.match(chrome, /sidePanelOpen && sidePanelOverlay \? sidePanelWidth : 0/)
+  assert.match(chrome, /observer\.observe\(controls\)/)
 })
 
 test('collapsed-sidebar workspace titlebars keep their leading reserve with any workbench layout', () => {

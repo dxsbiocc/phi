@@ -34,6 +34,9 @@ function AgentExecutionCard({
   return (
     <ButtonBase
       data-agent-card-id={item.id}
+      data-agent-status={
+        item.cancelled ? 'cancelled' : lost && item.status === 'running' ? 'lost' : item.status
+      }
       onClick={() => onOpen(item)}
       aria-label={chatCopy.openAgentSession(item.agentName)}
       sx={{

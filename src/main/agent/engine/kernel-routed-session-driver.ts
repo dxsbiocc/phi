@@ -205,11 +205,17 @@ export class KernelRoutedSessionDriver implements RoutedSessionDriver {
   }
 
   readonly agentRuns = {
-    start: async (params: { agent?: string; task: string; requestId: string }) => {
+    start: async (params: {
+      agent?: string
+      task: string
+      researchQuestion?: string
+      requestId: string
+    }) => {
       const result = record(
         await this.request('agentRuns.start', {
           requestId: params.requestId,
           ...(params.agent ? { agent: params.agent } : {}),
+          ...(params.researchQuestion ? { researchQuestion: params.researchQuestion } : {}),
           task: params.task
         })
       )

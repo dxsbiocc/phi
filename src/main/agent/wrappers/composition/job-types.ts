@@ -1,6 +1,7 @@
 import type { WrapperOutputRecord, WrapperRunState, WrapperWorkflow } from '../types'
 import type { PhiToolResult } from '../../engine/types'
 import type { RunProgress } from './progress'
+import type { WrapperResearchQc } from '../../../../shared/wrapperResearchQcTypes'
 
 /**
  * Background wrapper jobs. The job manager lives in the main process (a job
@@ -29,6 +30,10 @@ export interface WrapperJobStatus {
   missingOutputs?: string[]
   /** Set for a run on a remote host; `outDir` and output paths are then paths on that host. */
   remote?: { host: string; runDir: string }
+  /** Set when the wrapper declares a `research_qc` output: this run is QC-gated. */
+  researchQcExpected?: true
+  /** Host-verified research QC verdict; absent means no local verification happened. */
+  researchQc?: WrapperResearchQc
 }
 
 export interface WrapperJobSummary {

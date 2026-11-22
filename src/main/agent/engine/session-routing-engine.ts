@@ -48,7 +48,12 @@ export interface RoutedPlanRunOperations {
 export interface RoutedSessionDriver {
   hasActiveAgentRuns?(): boolean
   readonly agentRuns?: {
-    start?(params: { agent?: string; task: string; requestId: string }): Promise<{ runId: string }>
+    start?(params: {
+      agent?: string
+      task: string
+      researchQuestion?: string
+      requestId: string
+    }): Promise<{ runId: string }>
     list(): readonly Record<string, unknown>[] | Promise<readonly Record<string, unknown>[]>
     resourceOwner(runId: string): {
       readonly toolOwner: string
@@ -592,6 +597,7 @@ export class SessionRoutingEngine implements PhiEngine {
         if (!driver.agentRuns?.start) throw new RemoteSessionCapabilityError('agentRuns.start')
         return driver.agentRuns.start({
           ...(params.agent ? { agent: params.agent } : {}),
+          ...(params.researchQuestion ? { researchQuestion: params.researchQuestion } : {}),
           task: params.task,
           requestId: params.requestId
         })

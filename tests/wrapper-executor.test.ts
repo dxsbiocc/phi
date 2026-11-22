@@ -158,6 +158,7 @@ test('a successful fake Nextflow run collects declared outputs and completes', a
 
     assert.equal(result.state, 'completed')
     assert.equal(result.exitCode, 0)
+    assert.deepEqual(result.missingOutputs, [])
     const report = result.outputs?.find((output) => output.id === 'report')
     assert.equal(report?.exists, true)
     const metrics = result.outputs?.find((output) => output.id === 'metrics')
@@ -165,12 +166,18 @@ test('a successful fake Nextflow run collects declared outputs and completes', a
 
     const persisted = readWrapperRun(run.runId, agentDir)
     assert.equal(persisted?.state, 'completed')
+    assert.deepEqual(persisted?.missingOutputs, [])
 
     const runDir = join(agentDir, 'wrappers', 'runs', run.runId)
     assert.ok(existsSync(join(runDir, 'params.json')))
     assert.ok(existsSync(join(runDir, 'outputs.json')))
     assert.ok(existsSync(join(runDir, 'summary.json')))
     assert.ok(existsSync(join(runDir, 'logs', 'stdout.log')))
+
+    const summary = JSON.parse(readFileSync(join(runDir, 'summary.json'), 'utf-8'))
+    assert.equal(summary.state, 'completed')
+    assert.deepEqual(summary.missingOutputs, [])
+    assert.deepEqual(summary.outputs, persisted?.outputs)
 
     const paramsJson = JSON.parse(readFileSync(join(runDir, 'params.json'), 'utf-8'))
     assert.equal(paramsJson.outdir, absoluteOutDir)
@@ -200,6 +207,41 @@ test('a non-zero Nextflow exit code marks the run failed without collecting outp
     assert.equal(result.state, 'failed')
     assert.equal(result.exitCode, 1)
     assert.equal(result.outputs, undefined)
+  })
+})
+
+test('a zero-exit run with an absent primary output fails but keeps outputs and missingOutputs', async () => {
+  await withHarness(async ({ agentDir, projectDir, nextflowLaunch }) => {
+    const plan = await createSubmittablePlan(agentDir, projectDir)
+    const run = runFromPlan(plan)
+    const absoluteOutDir = join(projectDir, plan.outputDir)
+
+    const result = await runLocalWrapperExecution(run, plan, {
+      agentDir,
+      nextflowLaunch,
+      doctorImpl: OK_DOCTOR,
+      spawnImpl: fakeSpawn(0)
+    })
+
+    assert.equal(result.state, 'failed')
+    assert.equal(result.exitCode, 0)
+    const reportPath = join(absoluteOutDir, 'results', 'multiqc_report.html')
+    assert.deepEqual(result.missingOutputs, [`report (${reportPath})`])
+    const report = result.outputs?.find((output) => output.id === 'report')
+    assert.equal(report?.exists, false)
+    assert.equal(report?.path, reportPath)
+
+    const persisted = readWrapperRun(run.runId, agentDir)
+    assert.equal(persisted?.state, 'failed')
+    assert.deepEqual(persisted?.missingOutputs, [`report (${reportPath})`])
+    assert.equal(persisted?.outputs?.find((output) => output.id === 'report')?.exists, false)
+
+    const runDir = join(agentDir, 'wrappers', 'runs', run.runId)
+    const summary = JSON.parse(readFileSync(join(runDir, 'summary.json'), 'utf-8'))
+    assert.equal(summary.state, 'failed')
+    assert.deepEqual(summary.missingOutputs, [`report (${reportPath})`])
+    assert.deepEqual(summary.outputs, persisted?.outputs)
+    assert.ok(existsSync(join(runDir, 'outputs.json')))
   })
 })
 
@@ -242,6 +284,7 @@ test('an explicit supported host nextflow is used and an old one is rejected', a
   await withHarness(async ({ root, agentDir, projectDir, runtimeRoot }) => {
     const acceptedPlan = await createSubmittablePlan(agentDir, projectDir)
     const acceptedRun = runFromPlan(acceptedPlan)
+    const acceptedOutDir = join(projectDir, acceptedPlan.outputDir)
     let command: string | undefined
     const accepted = await runLocalWrapperExecution(acceptedRun, acceptedPlan, {
       agentDir,
@@ -254,6 +297,8 @@ test('an explicit supported host nextflow is used and an old one is rejected', a
       },
       spawnImpl: fakeSpawn(0, (observation) => {
         command = observation.command
+        mkdirSync(join(acceptedOutDir, 'results'), { recursive: true })
+        writeFileSync(join(acceptedOutDir, 'results', 'multiqc_report.html'), '<html></html>')
       })
     })
     assert.equal(accepted.state, 'completed')
@@ -318,6 +363,7 @@ test('the plan runner applies the shared conda-profile config and environment', 
     const original = await createSubmittablePlan(agentDir, projectDir)
     const plan = { ...original, nextflowProfile: 'conda' }
     const run = runFromPlan(plan)
+    const absoluteOutDir = join(projectDir, plan.outputDir)
     let spawned: SpawnObservation | undefined
     const result = await runLocalWrapperExecution(run, plan, {
       agentDir,
@@ -326,6 +372,8 @@ test('the plan runner applies the shared conda-profile config and environment', 
       doctorImpl: OK_DOCTOR,
       spawnImpl: fakeSpawn(0, (observation) => {
         spawned = observation
+        mkdirSync(join(absoluteOutDir, 'results'), { recursive: true })
+        writeFileSync(join(absoluteOutDir, 'results', 'multiqc_report.html'), '<html></html>')
       })
     })
     assert.equal(result.state, 'completed')

@@ -1,3 +1,4 @@
+import { declaresResearchQc } from './research-qc'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, dirname, join, relative } from 'node:path'
@@ -338,9 +339,12 @@ export function readWrapperDefaultParams(wrapperDir: string): Record<string, unk
  */
 export function wrapperRunDefaults(entry: WrapperCompositionEntry): Record<string, unknown> {
   const params = entry.manifest.params
+  const research = declaresResearchQc(entry.manifest)
   return Object.fromEntries(
     Object.entries(readWrapperDefaultParams(entry.wrapperDir)).filter(
-      ([key]) => params[key]?.kind !== 'input'
+      ([key]) =>
+        params[key]?.kind !== 'input' &&
+        !(research && params[key]?.kind === 'option' && params[key]?.required)
     )
   )
 }

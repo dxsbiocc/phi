@@ -9,6 +9,7 @@ import {
   type StoredSessionEvent
 } from './session-store'
 import { writeAppLog } from '../app-logger'
+import type { ResearchPauseIdentity } from '../../../shared/planRunTypes'
 import { redactSensitiveText } from '../redaction'
 import {
   errorCodeOf,
@@ -28,6 +29,7 @@ export interface StartSessionRunInput {
   sessionId: string
   runId: string
   loadedSkills?: readonly string[]
+  researchPauses?: readonly ResearchPauseIdentity[]
   execute: (context: SessionRunContext) => Promise<void>
   getRecordedFailure?: () => string | null | undefined
 }
@@ -200,6 +202,7 @@ export class SessionRunnerRegistry {
       type: 'run_started',
       runId: input.runId,
       ...(input.loadedSkills ? { loadedSkills: [...input.loadedSkills] } : {}),
+      ...(input.researchPauses?.length ? { researchPauses: input.researchPauses } : {}),
       createdAt: startedAt
     })
     writeAppLog({

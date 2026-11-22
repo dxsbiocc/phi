@@ -47,7 +47,6 @@ import { MAX_PROMPT_IMAGES, type PromptImageInput } from '../../shared/promptIma
 import { modeFromFields } from '../../shared/sessionMode'
 import type { PackageRegistryEntryView } from '../../shared/packageManagerTypes'
 import { sidebarStateForFileOpenConversationLayout } from './features/chat/lib/fileOpenConversationLayout'
-import { titlebarTrailingToggleChromeReserve } from './components/app-shell/WorkspaceTitlebar'
 import { AppResizeSeparator } from './components/app-shell/AppResizeSeparator'
 import { AppWindowChrome } from './components/app-shell/AppWindowChrome'
 import { WorkspaceView } from './features/workspace/WorkspaceView'
@@ -881,7 +880,6 @@ function App(): React.JSX.Element {
   const {
     slots: workspaceSidePanelSlots,
     state: workspaceSidePanelState,
-    collapsed: workspaceSidePanelCollapsed,
     canSplit: workspaceSidePanelCanSplit,
     overlay: workspaceSidePanelOverlay,
     activeWidth: activeWorkspaceSidePanelWidth,
@@ -3631,6 +3629,7 @@ function App(): React.JSX.Element {
           }
         >
           <ChatView
+            sessionId={isSessionChanging ? undefined : (activePhiSessionId ?? undefined)}
             messages={messages}
             onOpenAgentSession={onOpenAgentSession}
             legacyRemoteSession={activeLegacyRemoteSession}
@@ -4332,14 +4331,10 @@ function App(): React.JSX.Element {
           workspaceTitle={activeWorkspaceTitle}
           showTitlebar={showWorkspaceTitlebar}
           hideTitle={showHomeWorkspace}
-          sidePanelCollapsed={workspaceSidePanelCollapsed}
           titlebarTrailing={
             filePreview && !showProjectSessionPlaceholder ? (
               <FilePreviewTitleTab
                 state={filePreview}
-                titlebarInsetEnd={
-                  workspaceSidePanelCollapsed ? titlebarTrailingToggleChromeReserve : 1.25
-                }
                 onClose={onCloseCurrentFilePreview}
               />
             ) : null

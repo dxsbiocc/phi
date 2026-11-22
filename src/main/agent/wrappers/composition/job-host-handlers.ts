@@ -12,6 +12,7 @@ import { parseWrapperWorkflow } from './workflow-identity'
 
 import { isRecord } from '../../../../shared/guards'
 export interface WrapperJobHostScope extends WrapperJobControl {
+  executionHost: 'local' | 'ssh'
   originSessionId: string
   ownsRun(runId: string): boolean
 }
@@ -41,6 +42,7 @@ export function createWrapperJobHostScope(options: {
   resolveOrigin(originSessionId: string | undefined): { phiSessionId: string } | undefined
 }): WrapperJobHostScope {
   return {
+    executionHost: 'ssh',
     originSessionId: options.originSessionId,
     signal: options.signal,
     assertCurrent: options.assertCurrent,
@@ -143,7 +145,7 @@ export function wrapperJobHostHandlers(
     ...catalogHostHandlers(scopeFor, options),
     [WRAPPER_JOB_HOST_METHODS.start]: (params, context) => {
       const scope = scopeFor(context)
-      if (scope && isRecord(params) && params.target === 'local')
+      if (scope?.executionHost === 'ssh' && isRecord(params) && params.target === 'local')
         throw new Error('An SSH project cannot run a wrapper on the desktop')
       const overrides = isRecord(params) && isRecord(params.overrides) ? params.overrides : {}
       const origin =
@@ -159,7 +161,9 @@ export function wrapperJobHostHandlers(
           ...(isRecord(params) && typeof params.profile === 'string' && params.profile
             ? { profile: params.profile }
             : {}),
-          ...(isRecord(params) && params.target === 'remote' ? { target: 'remote' as const } : {}),
+          ...(isRecord(params) && (params.target === 'local' || params.target === 'remote')
+            ? { target: params.target }
+            : {}),
           ...(typeof origin === 'string' && origin ? { originSessionId: origin } : {}),
           ...(isRecord(params) && params.continueWhenDone === false
             ? { continueWhenDone: false }

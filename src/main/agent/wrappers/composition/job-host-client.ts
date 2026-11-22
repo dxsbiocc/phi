@@ -19,7 +19,11 @@ export function createHostJobClient(
     params: unknown,
     context?: { originSessionId?: string; agentRunId?: string }
   ) => Promise<unknown>,
-  options: { originSessionId?: string; agentRunId?: string } = {}
+  options: {
+    originSessionId?: string
+    agentRunId?: string
+    observeStatus?: (status: WrapperJobStatus) => void
+  } = {}
 ): WrapperHostClient {
   const context = {
     ...(options.originSessionId ? { originSessionId: options.originSessionId } : {}),
@@ -27,20 +31,25 @@ export function createHostJobClient(
   }
   const call = (method: string, params: unknown): Promise<unknown> =>
     request(method, params, context)
+  const observedStatus = async (
+    runId: string,
+    pending: Promise<unknown>
+  ): Promise<WrapperJobStatus | undefined> => {
+    const status = (await pending) as WrapperJobStatus | undefined
+    if (status?.runId === runId) options.observeStatus?.(status)
+    return status
+  }
   return {
     start: (input) =>
       call(WRAPPER_JOB_HOST_METHODS.start, {
         ...input,
         ...(options.originSessionId ? { originSessionId: options.originSessionId } : {})
       }) as Promise<StartJobResult>,
-    status: (runId) =>
-      call(WRAPPER_JOB_HOST_METHODS.status, { runId }) as Promise<WrapperJobStatus | undefined>,
+    status: (runId) => observedStatus(runId, call(WRAPPER_JOB_HOST_METHODS.status, { runId })),
     list: (limit) => call(WRAPPER_JOB_HOST_METHODS.list, { limit }) as Promise<WrapperJobSummary[]>,
     cancel: (runId) => call(WRAPPER_JOB_HOST_METHODS.cancel, { runId }) as Promise<CancelJobResult>,
     wait: (runId, timeoutMs) =>
-      call(WRAPPER_JOB_HOST_METHODS.wait, { runId, timeoutMs }) as Promise<
-        WrapperJobStatus | undefined
-      >,
+      observedStatus(runId, call(WRAPPER_JOB_HOST_METHODS.wait, { runId, timeoutMs })),
     search: (query) =>
       call(WRAPPER_CATALOG_HOST_METHODS.search, { query }) as ReturnType<
         WrapperHostClient['search']

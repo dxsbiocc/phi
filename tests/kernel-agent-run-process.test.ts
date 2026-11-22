@@ -81,3 +81,58 @@ for (const point of ['agent-accepted', 'agent-started'] as const) {
     }
   )
 }
+
+test(
+  'real kernel declines a specialist that twice reports a missing artifact without using tools',
+  { timeout: 45_000 },
+  async (t) => {
+    const fixture = await createKernelFixture()
+    t.after(() => fixture.close())
+    await fixture.createSession('research-evidence', { persistent: true, phiAgents: true })
+    const sessionId = fixture.kernelSessionId('research-evidence')!
+    const original = 'Which genes changed in the comparison?'
+    const fabricated =
+      '<phi_agent_result>' +
+      JSON.stringify({
+        status: 'completed',
+        research: {
+          subquestion: original,
+          answer: 'UNVERIFIED_123_45',
+          interpretation: 'Invented result',
+          rationale: 'Invented rationale',
+          evidence: ['results/de.tsv']
+        }
+      }) +
+      '</phi_agent_result>'
+    fixture.provider.enqueue({ text: fabricated })
+    fixture.provider.enqueue({ text: fabricated })
+    const started = (await fixture.client.request(
+      'agentRuns.start',
+      {
+        requestId: 'unverified-evidence',
+        agent: 'PlanStep',
+        task: 'Perform the comparison.',
+        researchQuestion: original
+      },
+      { sessionId }
+    )) as { runId: string }
+    const waited = await fixture.client.request(
+      'agentRuns.wait',
+      {
+        runId: started.runId,
+        timeoutMs: 20_000
+      },
+      { sessionId }
+    )
+    assert.equal(fixture.provider.requests.length, 2, 'Exactly one in-child correction was issued')
+    assert.match(JSON.stringify(fixture.provider.requests[1].messages), /actual authorized tools/)
+    assert.match(JSON.stringify(waited), /Insufficient evidence/)
+    assert.doesNotMatch(JSON.stringify(waited), /UNVERIFIED_123_45/)
+    const receipts = readFileSync(
+      join(fixture.agentDir, 'phi-kernel', 'sessions', sessionId, 'agent-runs.jsonl'),
+      'utf8'
+    )
+    assert.match(receipts, /Insufficient evidence/)
+    assert.doesNotMatch(receipts, /UNVERIFIED_123_45/)
+  }
+)

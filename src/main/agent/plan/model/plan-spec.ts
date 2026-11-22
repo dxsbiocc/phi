@@ -2,6 +2,10 @@ import { posix } from 'node:path'
 
 import { isRecord } from '../../../../shared/guards'
 import {
+  isResearchQuestion,
+  MAX_RESEARCH_QUESTION_LENGTH
+} from '../../../../shared/kernel-protocol/research-question'
+import {
   PLAN_MAX_STEPS,
   PLAN_MAX_STEP_ACCEPTANCE_LENGTH,
   PLAN_MAX_STEP_ID_LENGTH,
@@ -212,6 +216,14 @@ export function validatePlanSpec(value: unknown, projectRoot?: string): PlanSpec
     errors.push(`version must be ${PLAN_SPEC_VERSION}.`)
   }
   const goal = readRequiredString(value.goal, 'goal', undefined, errors)
+  const researchQuestion = isResearchQuestion(value.researchQuestion)
+    ? value.researchQuestion
+    : undefined
+  if (value.researchQuestion !== undefined && researchQuestion === undefined) {
+    errors.push(
+      `researchQuestion must be a non-empty question of at most ${MAX_RESEARCH_QUESTION_LENGTH} characters.`
+    )
+  }
   if (!Array.isArray(value.steps)) {
     errors.push('steps must be an array.')
     return { ok: false, errors }
@@ -222,6 +234,11 @@ export function validatePlanSpec(value: unknown, projectRoot?: string): PlanSpec
   const steps = value.steps
     .map((step, index) => readStep(step, index, errors, projectRoot))
     .filter((step): step is PlanStep => step !== null)
+  if (researchQuestion && steps.some((step) => step.dependsOn.length > 0)) {
+    errors.push(
+      'A research plan is one review stage. Each step must be independent with an empty dependsOn. Return the current results to the main agent before proposing an analysis that depends on them.'
+    )
+  }
   validateStepReferences(steps, errors)
   const cycleIds = findCycleIds(steps)
   if (cycleIds.length > 0) {
@@ -229,5 +246,13 @@ export function validatePlanSpec(value: unknown, projectRoot?: string): PlanSpec
   }
   return errors.length > 0
     ? { ok: false, errors }
-    : { ok: true, spec: { version: PLAN_SPEC_VERSION, goal, steps } }
+    : {
+        ok: true,
+        spec: {
+          version: PLAN_SPEC_VERSION,
+          goal,
+          ...(researchQuestion ? { researchQuestion } : {}),
+          steps
+        }
+      }
 }

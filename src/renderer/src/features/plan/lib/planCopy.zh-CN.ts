@@ -16,6 +16,7 @@ export const planChinese = {
   agentSelectedPlan: (execute: boolean, reason: string) =>
     `智能体选择了：${execute ? '规划并执行' : '计划'} — ${reason}`,
   goal: '目标',
+  researchQuestion: '研究问题',
   progress: (completed: number, total: number) => `${completed}/${total} 完成`,
   runStatus: (status: 'running' | 'paused' | 'completed' | 'stopped') =>
     ({ running: '运行中', paused: '已暂停', completed: '已完成', stopped: '已停止' })[status],

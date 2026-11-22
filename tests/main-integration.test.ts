@@ -37,6 +37,9 @@ import { deliverWrapperRunFinished } from '../src/main/agent/wrappers/compositio
 import { buildAgentLeaderPrompt } from '../src/main/agent/agents/leader-prompt'
 import { isSecretMetadataKey } from '../src/main/agent/redaction'
 import * as agentRunContinue from '../src/main/agent/agents/run-continue'
+import { sameResearchPause } from '../src/main/agent/plan/research-plan-pause'
+import { createKernelPlanRunCompletion } from '../src/main/agent/plan/kernel-plan-run-completion'
+import type { ResearchPlanPausedEvent } from '../src/shared/planRunTypes'
 import { ChatShellJobs } from '../src/main/agent/jobs/chat-shell-jobs'
 import * as chatShellHistory from '../src/main/agent/jobs/chat-shell-history'
 import { agentRunHostHandlers } from '../src/main/agent/agents/run-host'
@@ -998,11 +1001,18 @@ async function harness(
       sessionId: string
       runId: string
       loadedSkills?: readonly string[]
+      researchPauses?: readonly Pick<ResearchPlanPausedEvent, 'runId' | 'stepId' | 'attempt'>[]
       execute: (context: { signal: AbortSignal }) => Promise<void>
       getRecordedFailure?: () => string | null | undefined
     }): { done: Promise<void> } {
       if (this.runs.has(input.sessionId)) throw new Error('会话正在运行')
       if (this.runs.size >= this.maxActiveRuns) throw new Error('运行中的会话已达上限')
+      if (input.researchPauses) {
+        appendedSessionEvents.push({
+          sessionId: input.sessionId,
+          event: { type: 'run_started', runId: input.runId, researchPauses: input.researchPauses }
+        })
+      }
       const controller = new AbortController()
       runStartInputs.push({
         sessionId: input.sessionId,
@@ -3757,6 +3767,7 @@ async function harness(
     },
     './agent/agents/leader-prompt': { buildAgentLeaderPrompt },
     './agent/agents/run-continue': agentRunContinue,
+    './agent/plan/research-plan-pause': { sameResearchPause },
     './agent/jobs/chat-shell-jobs': { ChatShellJobs },
     './agent/jobs/chat-shell-history': chatShellHistory,
     './agent/jobs/chat-shell-origin': {},
@@ -3768,7 +3779,7 @@ async function harness(
     './agent/plan/persistence/plan-run-store': { listUnfinishedPlanRuns: (): unknown[] => [] },
     './agent/plan/plan-run-service': { planRunTimelineSnapshot: (state: unknown) => state },
     './agent/plan/kernel-plan-run-completion': {
-      createKernelPlanRunCompletion: () => ({ handleFinished: () => false })
+      createKernelPlanRunCompletion
     },
     './agent/wrappers/composition/discovery': {
       listWrapperCompositionCatalogStatus: (): unknown[] => [],
@@ -14754,6 +14765,43 @@ const agentRunFinished = (
     }
   })
 }
+
+test('main IPC: a busy chat asks once for a still-paused research step and drops a resolved question', async () => {
+  const session = new FakeSession('fresh.jsonl')
+  session.hold = true
+  const app = await harness(async () => session)
+  await app.invoke('projects:newSession', '/projects/research-check', 'ask')
+  const first = app.invoke('agent:prompt', 'Compare the paired samples')
+  await tick()
+  const update = app.remoteRoutingOptions[0].onResearchPlanUpdate as (
+    sessionId: string,
+    runId: string,
+    pause?: ResearchPlanPausedEvent
+  ) => void
+  const paused: ResearchPlanPausedEvent = {
+    type: 'research_plan_paused',
+    runId: 'research-1',
+    stepId: 'compare',
+    attempt: 1,
+    reason: 'needs_input',
+    originalQuestion: 'Compare the paired samples'
+  }
+  const resolved = { ...paused, runId: 'already-resolved' }
+  update('phi-1', resolved.runId, resolved)
+  update('phi-1', resolved.runId)
+  update('phi-1', paused.runId, paused)
+  update('phi-1', paused.runId, paused)
+  assert.equal(session.promptTexts.length, 1)
+  session.finish.resolve()
+  await first
+  await waitUntil(() => session.promptTexts.length === 2)
+  assert.match(session.promptTexts[1], /<phi_research_plan_paused>/)
+  assert.match(session.promptTexts[1], /Compare the paired samples/)
+  assert.doesNotMatch(session.promptTexts[1], /already-resolved/)
+  update('phi-1', paused.runId, paused)
+  await tick()
+  assert.equal(session.promptTexts.length, 2)
+})
 
 test('main IPC: a background agent run that ends is noted in the conversation and wakes it with its report', async () => {
   const { app, session } = await idleConversation()

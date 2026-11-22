@@ -1,4 +1,6 @@
 import { isRecord } from '../../../shared/guards'
+import { PLAN_MAX_REPORT_SUMMARY_BYTES } from '../../../shared/planRunTypes'
+import { scientificReport } from './research-handoff'
 
 export type AgentReportStatus = 'completed' | 'partial' | 'not_found' | 'blocked' | 'failed'
 
@@ -36,10 +38,15 @@ function optionalString(value: unknown): string | undefined {
  * Reads optional machine metadata from an agent's final response. Plain prose
  * remains a completed report so installed/compat agents keep working.
  */
-export function parseAgentReport(value: string): AgentReport {
+export function parseAgentReport(value: string, researchQuestion?: string): AgentReport {
   const raw = value.trim()
   const match = raw.match(RESULT_PATTERN)
-  if (!match) {
+  if (
+    !match ||
+    (researchQuestion !== undefined &&
+      (match.index !== 0 || Buffer.byteLength(match[1], 'utf8') > PLAN_MAX_REPORT_SUMMARY_BYTES))
+  ) {
+    if (researchQuestion !== undefined) return scientificReport(researchQuestion, 'partial')
     return { status: 'completed', text: raw, missingInputs: [], structured: false }
   }
 
@@ -47,10 +54,14 @@ export function parseAgentReport(value: string): AgentReport {
   try {
     metadata = JSON.parse(match[1])
   } catch {
-    return { status: 'completed', text: raw, missingInputs: [], structured: false }
+    metadata = null
   }
   if (!isRecord(metadata) || !STATUSES.has(metadata.status as AgentReportStatus)) {
+    if (researchQuestion !== undefined) return scientificReport(researchQuestion, 'partial')
     return { status: 'completed', text: raw, missingInputs: [], structured: false }
+  }
+  if (researchQuestion !== undefined) {
+    return scientificReport(researchQuestion, metadata.status as AgentReportStatus, metadata)
   }
 
   const body = raw.replace(match[0], '').trim()

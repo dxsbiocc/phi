@@ -1,5 +1,6 @@
 import type { WrapperManifestInput, WrapperManifestStep } from './wrapperManifestTypes'
 import type { ProjectLocation } from './projectLocation'
+import type { WrapperResearchQc } from './wrapperResearchQcTypes'
 
 // Phi Wrapper core types.
 //
@@ -319,12 +320,17 @@ export interface WrapperRun {
   continueWhenDone?: boolean
   /** Latest known progress of a run in flight; the final value is kept once it ends. */
   progress?: WrapperRunProgress
+  /** Set at launch when the wrapper declares a `research_qc` output: this run is QC-gated. */
+  researchQcExpected?: true
+  /** Host-verified research QC verdict (local runs only); a small sanitized summary, never rows. */
+  researchQc?: WrapperResearchQc
   createdAt: string
   updatedAt: string
   startedAt?: string
   completedAt?: string
   exitCode?: number
   outputs?: WrapperOutputRecord[]
+  missingOutputs?: string[]
   /** Keyed by manifest `steps[].id`. Absent/empty when the wrapper declared no steps or nothing has run yet. */
   stepStates?: Record<string, WrapperStepState>
 }

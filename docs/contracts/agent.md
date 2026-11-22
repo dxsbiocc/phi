@@ -1,6 +1,6 @@
 # Agent-definition contract
 
-contractVersion: 1.0.0
+contractVersion: 1.1.0
 
 This contract defines a Phi agent: a specialist the main agent delegates to. It
 covers the file, its frontmatter, and what the runtime does with each field. It
@@ -49,7 +49,8 @@ tool is not advertised to the main agent. The only exception is the opt-in remot
 | `environment`    | no       | an environment reference (environment contract): `phi:<name>@<major>`, `plugin:<name>`, or `project:<name>`. See § 3                                                                                                                                       |
 | `visibility`     | no       | `entry` (default): the main agent gets a delegation tool for it. **`internal` is reserved** for orchestration and rejected in v1                                                                                                                           |
 | `invocation`     | no       | `host`: only trusted host orchestration can start the agent; it does not create a main-agent delegation tool. Absent: normal delegation-tool invocation                                                                                                    |
-| `delegationMode` | no       | `required-first` (when delegation is needed, matching work goes to this agent before generic tools), `preferred`, or `optional` (default)                                                                                                                   |
+| `handoff`        | no       | `research` binds the user's research question to the specialist's compact report. See § 4.                                                                                                                                                                 |
+| `delegationMode` | no       | `required-first` (when delegation is needed, matching work goes to this agent before generic tools), `preferred`, or `optional` (default)                                                                                                                  |
 | `delegation`     | no       | guidance for the main agent on when and how to hand work over; added to the main agent's instructions                                                                                                                                                      |
 | `fallback`       | no       | `{ afterFailures: <positive integer>, tools: [<main-agent tool>…], match: [<token>…] }`: after that many consecutive failed, blocked, or not-found runs, the main agent may use `tools` for inputs containing one of the `match` tokens (case-insensitive) |
 | `outputSchema`   | no       | **reserved** for structured results. v1 rejects the field; a later minor version defines it                                                                                                                                                                |
@@ -111,10 +112,59 @@ Without `environment`, the agent's `bash` uses the host, like the main agent.
 
 ## 4. Results
 
-The agent's final message is its report to the main agent. The runtime appends
-Phi's report protocol to the system prompt: the report ends with a status
-(`done`, `blocked`, `not-found`, or `failed`) and may name missing inputs or a
-next agent. The protocol text belongs to the runtime, not to this contract.
+Phi reads the specialist's final `<phi_agent_result>` metadata. Its status is
+`completed`, `partial`, `not_found`, `blocked`, or `failed`. Ordinary delegations
+can include a written report, missing inputs and a suggested follow-up agent.
+
+A specialist can declare `handoff: research` in its Phi frontmatter to use
+scientific reporting on every delegation. Supply the narrower `task` alongside
+the user's original research question. Phi binds the user request even when
+the model omits `research_question`; for a request longer than 1,000 characters,
+supply a short verbatim passage. Related delegations in the same user turn
+inherit that question. Other specialists can opt into a scientific handoff for
+an individual call by supplying a verbatim `research_question`.
+
+A reviewed scientific plan can bind `researchQuestion` for a single
+stage of independent investigations. Return the stage's results to the main
+agent before planning work that depends on their interpretation.
+
+The specialist puts a `research` object in its result metadata:
+
+```json
+{
+  "status": "completed",
+  "research": {
+    "subquestion": "Which genes met the prespecified cutoff?",
+    "answer": "Zero of three evaluable genes met it.",
+    "interpretation": "The candidate list is empty. This screen did not test pathway-wide shifts.",
+    "rationale": "Return the gene screen. A ranked gene-set test would address the pathway question if that analysis is in scope.",
+    "evidence": ["results/differential.tsv"]
+  }
+}
+```
+
+Use short, single-line statements and up to four evidence references. A completed
+result requires a reference. Write supporting tables and any logs worth
+preserving to files in the workspace and return their paths. The parent receives
+the bound question, status, selected fields and missing inputs. Invalid or
+oversized scientific reports yield an insufficient-evidence summary. The runtime
+checks the handoff's structure; the specialist is responsible for the methods
+and reported measurements.
+
+For a blocked or partial handoff with missing inputs, the specialist may include
+`research.question` with `header`, `question` and two to four options. Each option
+has a `label` and a `description`. Phi passes valid choices to the main agent on
+initial delivery and replay. For example, when a paired design lacks a donor
+mapping, offer to supply the mapping or finish with a descriptive summary.
+The parent uses `ask_user_question` before dispatching dependent inference.
+
+The main agent matches that answer to the user's question and approved scope.
+It delivers a supported result, proceeds with an approved applicable action, or
+asks a concrete question when the next decision belongs to the user. A zero-hit
+finding can fully answer a gene-screening question while leaving a pathway
+question unresolved. When a research stage pauses for missing inputs, Phi sends
+the main agent the question and the bounded handoff for that attempt. Reopening
+the session can bring back a pending question.
 
 ## 5. Validation
 

@@ -9,7 +9,7 @@ import { buildWrapperCompositionTools } from '../../wrappers/composition/tools'
 import { UnknownRecord, isRecord, stringValue } from './common'
 import { requestHost, sendEvent } from './ipc'
 import { serializeModel } from './runtime-context'
-import { pendingToolApprovals } from './state'
+import { pendingToolApprovals, sessions } from './state'
 
 import { errorMessage } from '../../../../shared/errorCodes'
 export function requestToolApproval(
@@ -124,6 +124,12 @@ export function phiToolFunctions(
     // Each run is stamped with the session that started it, so its end can be reported there.
     const jobs = createHostJobClient(requestHost, {
       originSessionId,
+      observeStatus: (status) => {
+        if (options.agentRunId)
+          sessions
+            .get(originSessionId)
+            ?.agentRuns?.recordWrapperPublication(options.agentRunId, status)
+      },
       ...(options.agentRunId ? { agentRunId: options.agentRunId } : {})
     })
     wrapperTools = [...buildWrapperCompositionTools(jobs, { agentDir, projectDir: cwd })]

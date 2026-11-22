@@ -90,6 +90,7 @@ export interface PlanRunService {
   ): Promise<PlanRunState>
   cancelReplan(phiSessionId: string, requestId: string): void
   recoverSession(phiSessionId: string): Promise<PlanRunState[]>
+  replayResearchPauses(phiSessionId: string): Promise<void>
   /** Prevents new launches while the session runtime is shutting down. */
   suspendSession(phiSessionId: string): Promise<void>
   /** Marks running/launching steps interrupted before their children are cancelled. */

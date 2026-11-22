@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, realpathSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
+import type { PhiSessionManifest } from './session/session-store'
 import { getPhiAgentDir } from './runtime-paths'
 
 const ANCHORS_DIR = 'remote-project-anchors'
@@ -19,6 +20,16 @@ export function isRemoteProjectAnchorPath(path: string, agentDir = getPhiAgentDi
   const anchors = resolve(agentDir, ANCHORS_DIR)
   const nested = relative(anchors, resolve(path))
   return nested === '' || (nested !== '..' && !nested.startsWith(`..${sep}`) && !isAbsolute(nested))
+}
+
+export function hasRemoteSessionOrigin(session: PhiSessionManifest): boolean {
+  return Boolean(
+    session.projectLocation?.kind === 'ssh' ||
+    session.remoteRuntime ||
+    session.runtimeRef ||
+    session.kernelRuntimeRef?.host.kind === 'ssh' ||
+    isRemoteProjectAnchorPath(session.cwd)
+  )
 }
 
 /** Stable, Phi-private SDK cwd. It never contains a copy of remote project files. */

@@ -76,6 +76,7 @@ const EditIcon = PhiIcons.action.edit
 const SendIcon = PhiIcons.action.send
 
 type ViewProps = {
+  sessionId?: string
   messages: ChatItem[]
   recoveryNotice?: ReactNode
   legacyRemoteSession?: boolean
@@ -155,6 +156,7 @@ type ViewProps = {
 }
 
 function ChatView({
+  sessionId,
   messages,
   recoveryNotice,
   legacyRemoteSession = false,
@@ -459,6 +461,7 @@ function ChatView({
   return (
     <Box
       data-phi-chat-placement={placement}
+      data-phi-chat-session-id={sessionId}
       onPointerDownCapture={onAcknowledgeActiveSession}
       onFocusCapture={onAcknowledgeActiveSession}
       sx={{

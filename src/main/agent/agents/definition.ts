@@ -17,7 +17,7 @@ import { errorMessage } from '../../../shared/errorCodes'
  *
  * Field rules are agent-definition contract v1 (`docs/contracts/agent.md`).
  */
-export const AGENT_CONTRACT_VERSION = '1.0.0'
+export const AGENT_CONTRACT_VERSION = '1.1.0'
 
 export type PhiAgentSource = 'phi' | 'compat'
 export type PhiAgentDelegationMode = 'required-first' | 'preferred' | 'optional'
@@ -51,6 +51,8 @@ export interface PhiAgentDefinition {
   thinkingLevel?: PhiAgentThinkingLevel
   /** Guidance for the delegating (main) agent: when and how to hand work over. */
   delegation?: string
+  /** Bind each delegation to the user's scientific question and return compact findings. */
+  handoff?: 'research'
   /** Whether this specialist must get the first attempt for matching work. */
   delegationMode?: PhiAgentDelegationMode
   /** Controlled generic-tool fallback after specialist failure. */
@@ -107,6 +109,7 @@ const KNOWN_KEYS = new Set([
   'visibility',
   'delegationMode',
   'delegation_mode',
+  'handoff',
   'delegation',
   'fallback',
   'outputSchema'
@@ -371,6 +374,8 @@ function readPhiAgent(
 
   if ('spawns' in fm) fail(collected, 'spawns', 'spawns is reserved')
   if ('outputSchema' in fm) fail(collected, 'outputSchema', 'outputSchema is reserved')
+  if (fm.handoff !== undefined && fm.handoff !== 'research')
+    fail(collected, 'handoff', "handoff must be 'research'")
 
   const parsedModel = modelSelectors(fm.model)
   if (!parsedModel.ok) {
@@ -450,6 +455,7 @@ function readPhiAgent(
     ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(delegation ? { delegation } : {}),
     ...(delegationMode ? { delegationMode } : {}),
+    ...(fm.handoff === 'research' ? { handoff: fm.handoff } : {}),
     ...(fallback ? { fallback } : {}),
     ...(invocation ? { invocation } : {}),
     visibility: 'entry',
@@ -595,6 +601,7 @@ export function isPhiAgentDefinition(value: unknown): value is PhiAgentDefinitio
     strings(value.warnings) &&
     (value.delegation === undefined || typeof value.delegation === 'string') &&
     (value.delegationMode === undefined || isDelegationMode(value.delegationMode)) &&
+    (value.handoff === undefined || (value.source === 'phi' && value.handoff === 'research')) &&
     (value.invocation === undefined || value.invocation === 'host') &&
     (value.environment === undefined || typeof value.environment === 'string') &&
     (value.pluginId === undefined || typeof value.pluginId === 'string') &&

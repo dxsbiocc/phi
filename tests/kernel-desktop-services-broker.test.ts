@@ -96,10 +96,14 @@ test('A14/A15 desktop broker preserves host, cwd, references, and Wrapper owners
       ]
     }
   })
+  const observedWrapperSites: string[] = []
   services.register('wrapperJob.start', (params, context) => {
     const request = params as Record<string, unknown>
     assert.equal(request.target, 'remote')
-    const runId = 'wrapper-a'
+    assert(context.signal instanceof AbortSignal)
+    assert.equal(request.originSessionId, context.originSessionId)
+    observedWrapperSites.push(String(context.kernelExecutionHost))
+    const runId = 'wrapper-' + String(context.originSessionId).slice(-1)
     owners.set(runId, String(context.originSessionId))
     return {
       ok: true,
@@ -165,7 +169,15 @@ test('A14/A15 desktop broker preserves host, cwd, references, and Wrapper owners
 
   const broker = registerKernelDesktopServicesBroker(client, {
     services,
-    resolveSession: (sessionId) => binding(sessionId),
+    resolveSession: (sessionId) =>
+      sessionId === 'kernel-l'
+        ? {
+            kernelSessionId: sessionId,
+            runtimeSessionId: 'runtime-l',
+            cwd: '/local',
+            executionHost: 'local'
+          }
+        : binding(sessionId),
     evaluateDecision: async (_binding, model) => ({
       choice: 'uncertain',
       source: 'model',
@@ -231,6 +243,27 @@ test('A14/A15 desktop broker preserves host, cwd, references, and Wrapper owners
     const status = started.status as Record<string, JsonValue>
     assert.equal(status.runId, 'wrapper-a')
     assert.equal(owners.get('wrapper-a'), 'runtime-a')
+    // Both payloads request the same target. Only the desktop's session binding selects the host.
+    await core.requestHost(
+      'wrapperJob.start',
+      { id: 'demo', overrides: {}, target: 'remote' },
+      { sessionId: 'kernel-l', runId: 'run-l' }
+    )
+    assert.equal(owners.get('wrapper-l'), 'runtime-l')
+    assert.deepEqual(observedWrapperSites, ['ssh', 'local'])
+    await assert.rejects(
+      core.requestHost(
+        'wrapperJob.start',
+        { id: 'demo', overrides: {}, originSessionId: 'kernel-a' },
+        { sessionId: 'kernel-l', runId: 'run-l' }
+      ),
+      (error: unknown) => {
+        assert.deepEqual(protocolError(error).detail, { reason: 'session_binding_mismatch' })
+        return true
+      }
+    )
+    assert.equal(observedWrapperSites.length, 2)
+
     assert.equal(
       (
         (await core.requestHost(

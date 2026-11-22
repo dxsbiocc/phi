@@ -50,6 +50,30 @@ Defaults live **only** in `wrapper/params.json`. `wrapper.yaml` has no `default`
 `entrypoint`, `paramsFile`, environment, or agent hints. Unknown keys are errors.
 `primary: true` outputs must exist after a successful run.
 
+### Local differential-expression quality control
+
+An installed DESeq2 adapter declares primary outputs `results` and `research_qc`.
+The latter has type `research_qc` and suffix `.deseq2.qc.tsv`. Version 1 contains
+a UTF-8 tab-separated header and a single record, with these columns in order:
+
+```text
+schemaVersion  disposition  contrast  geneIdColumn  padjThreshold  log2fcThreshold  evaluated  hits  resultMd5
+```
+
+The package computes the verdict from the published TSV. A valid screen with hits
+is `eligible`, a valid screen with zero hits is `skip`, and an unevaluable screen
+is `invalid`. Phi checks the declared artifacts, the counts and their relationship,
+the supplied parameters and the checksum of the results file. A missing, corrupt
+or inconsistent result fails the local run. The parent receives a compact verdict
+and references. The plugin independently checks the result bytes and counts again
+before ORA. A positive result makes ORA applicable when the user has approved
+it and supplied an appropriate gene-set collection. Valid zero hits end
+candidate-list ORA. The comparison, thresholds and design remain part of the
+record for that run. A paired preflight can publish a version 1 `research_input`
+question before stopping. Phi validates the two to four options and relays them to
+the parent. An answer must be supplied before the dependent analysis can start.
+Remote runs carry an explicit unverified state.
+
 ## 3. Wrapper packages
 
 A wrapper package (`type: wrapper`, package contract § 1) contains:

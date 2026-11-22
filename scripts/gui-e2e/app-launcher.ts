@@ -14,6 +14,7 @@ import {
 export interface AppHandle {
   page: Page
   mode: 'electron' | 'cdp'
+  resizeContent?(width: number, height: number): Promise<void>
   sampleMemory?(): Promise<Array<{ type: string; workingSetKiB: number; privateKiB?: number }>>
   close(): Promise<void>
 }
@@ -127,6 +128,17 @@ async function launchElectron(
     return {
       page,
       mode: 'electron',
+      async resizeContent(width, height) {
+        const window = await app.browserWindow(page)
+        try {
+          await window.evaluate((win, size) => win.setContentSize(size.width, size.height), {
+            width,
+            height
+          })
+        } finally {
+          await window.dispose()
+        }
+      },
       sampleMemory: () =>
         app.evaluate(({ app }) =>
           app.getAppMetrics().map(({ type, memory }) => ({
