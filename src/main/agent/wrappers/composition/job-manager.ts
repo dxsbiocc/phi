@@ -1,8 +1,6 @@
 import { appendFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
-import type { WrapperManifestEngineProfile } from '../../../../shared/wrapperManifestTypes'
 import type { Project } from '../../projects'
 import { getPhiAgentDir } from '../../runtime-paths'
 import { wrapperTreeDir } from '../../packages/wrapper-tree'
@@ -17,7 +15,14 @@ import {
   writeWrapperRun,
   writeWrapperRuntimeProvenance
 } from '../store'
-import type { WrapperExecutor, WrapperRun } from '../types'
+import type { WrapperRun } from '../types'
+import {
+  checkedRemoteDoctor,
+  compositionProfiles,
+  remoteEnvironmentCheckError,
+  remoteExecutorName,
+  requireLaunch
+} from './job-helpers'
 import {
   findWrapperCompositionEntry,
   readWrapperCompositionDag,
@@ -161,49 +166,7 @@ interface LiveJob {
   finished: Promise<WrapperJobStatus>
 }
 
-/** The head process as a Slurm job is `slurm-controller`; on the login node it is `slurm` or `remote-background`. */
-function remoteExecutorName(hpc: RemoteHpcSettings | undefined): WrapperExecutor {
-  if (hpc?.controller === 'sbatch') return 'slurm-controller'
-  return hpc?.scheduler === 'slurm' ? 'slurm' : 'remote-background'
-}
 
-function compositionProfiles(
-  remote: boolean,
-  hpc?: RemoteHpcSettings
-): WrapperManifestEngineProfile[] {
-  return WRAPPER_EXECUTION_PROFILES.map((runtime) => ({
-    id: runtime,
-    executor: remote ? 'remote' : 'local',
-    ...(remote
-      ? {
-          scheduler: hpc?.scheduler === 'slurm' ? ('slurm' as const) : ('none' as const),
-          controller:
-            hpc?.controller === 'sbatch' ? ('sbatch' as const) : ('detached_ssh' as const),
-          containerRuntime: runtime
-        }
-      : {})
-  }))
-}
-
-function requireLaunch(launch: NextflowLaunch | undefined): NextflowLaunch {
-  if (!launch) throw new Error('Nextflow was not resolved for a local run')
-  return launch
-}
-
-class WrapperEnvironmentBlockedError extends Error {}
-
-function checkedRemoteDoctor(
-  value: WrapperTargetDoctorSnapshot | { blocked: string }
-): WrapperTargetDoctorSnapshot {
-  if ('blocked' in value) throw new WrapperEnvironmentBlockedError(value.blocked)
-  return value
-}
-
-function remoteEnvironmentCheckError(error: unknown): string {
-  return error instanceof WrapperEnvironmentBlockedError
-    ? error.message
-    : `远程环境检查失败：${errorMessage(error)}`
-}
 
 export class WrapperJobManager implements WrapperJobClient {
   private readonly live = new Map<string, LiveJob>()
