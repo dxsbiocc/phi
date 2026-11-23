@@ -2664,8 +2664,20 @@ function scheduleAutomaticSessionTitle(sessionId: string): void {
   automaticTitleJobs.set(sessionId, job)
 }
 
+function usableMainFrame(window: BrowserWindow | null) {
+  if (!window || window.isDestroyed()) return null
+  const contents = window.webContents
+  if (contents.isDestroyed() || contents.isCrashed()) return null
+  try {
+    const frame = contents.mainFrame
+    return frame && !frame.isDestroyed() ? frame : null
+  } catch {
+    return null
+  }
+}
+
 function isUsableWindow(window: BrowserWindow | null): window is BrowserWindow {
-  return Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed())
+  return usableMainFrame(window) !== null
 }
 
 function isDisposedFrameSendError(error: unknown): boolean {
@@ -2677,9 +2689,10 @@ function isDisposedFrameSendError(error: unknown): boolean {
 }
 
 function sendToWindow(window: BrowserWindow | null, channel: string, ...args: unknown[]): boolean {
-  if (!isUsableWindow(window)) return false
+  const frame = usableMainFrame(window)
+  if (!frame) return false
   try {
-    window.webContents.send(channel, ...args)
+    frame.send(channel, ...args)
     return true
   } catch (error) {
     if (isDisposedFrameSendError(error)) return false
