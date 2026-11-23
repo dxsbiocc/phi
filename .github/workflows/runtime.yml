@@ -11,7 +11,7 @@ name: Runtime conformance
 on:
   push:
     branches:
-      - '**'
+      - main
     paths:
       - 'src/main/agent/envs/**'
       - 'src/main/agent/content/environment-*.ts'
