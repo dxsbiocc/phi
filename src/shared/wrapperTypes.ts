@@ -371,6 +371,21 @@ export interface WrapperRuntimeProvenance {
   }
 }
 
+export type WrapperQcTool = 'fastqc' | 'fastp' | 'salmon' | 'featurecounts' | 'star'
+
+export interface WrapperStepQcMetrics {
+  tool: WrapperQcTool
+  sourcePath: string
+  sample?: string
+  metrics: Record<string, number | string>
+  flags?: Record<string, 'PASS' | 'WARN' | 'FAIL'>
+}
+
+export interface WrapperStepQcSummary {
+  capturedAt: string
+  entries: WrapperStepQcMetrics[]
+}
+
 export type WrapperEventType =
   | 'plan_requested'
   | 'plan_validated'

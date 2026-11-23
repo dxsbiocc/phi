@@ -17,7 +17,8 @@ import type {
   WrapperEvent,
   WrapperRun,
   WrapperRunPlan,
-  WrapperRuntimeProvenance
+  WrapperRuntimeProvenance,
+  WrapperStepQcSummary
 } from './types'
 
 const WRAPPERS_DIR_NAME = 'wrappers'
@@ -215,6 +216,24 @@ export function readWrapperRuntimeProvenance(
   return readJson<WrapperRuntimeProvenance>(
     join(getRunDir(runId, agentDir), RUNTIME_PROVENANCE_FILE)
   )
+}
+
+const QC_SUMMARY_FILE = 'qc.json'
+
+export function writeWrapperQcSummary(
+  runId: string,
+  qc: WrapperStepQcSummary,
+  agentDir = getPhiAgentDir()
+): WrapperStepQcSummary {
+  writeJson(join(getRunDir(runId, agentDir), QC_SUMMARY_FILE), qc)
+  return qc
+}
+
+export function readWrapperQcSummary(
+  runId: string,
+  agentDir = getPhiAgentDir()
+): WrapperStepQcSummary | undefined {
+  return readJson<WrapperStepQcSummary>(join(getRunDir(runId, agentDir), QC_SUMMARY_FILE))
 }
 
 // --- Append-only run events --------------------------------------------------
