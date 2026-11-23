@@ -337,6 +337,40 @@ export interface WrapperRun {
   stepStates?: Record<string, WrapperStepState>
 }
 
+export interface WrapperContainerImageProvenance {
+  /** Declared container image reference (Docker image or Singularity URL/path). */
+  ref: string
+  /** Verified immutable digest (e.g. `sha256:...` or RepoDigest), omitted when unavailable. */
+  digest?: string
+  status: 'verified' | 'unknown'
+}
+
+/**
+ * Immutable run-time provenance captured when a Wrapper run executes, persisted
+ * to `runs/<runId>/runtime.json` and included in reproducibility bundles.
+ */
+export interface WrapperRuntimeProvenance {
+  capturedAt: string
+  host: {
+    platform: string
+    arch: string
+    release: string
+  }
+  nextflow: {
+    source: 'managed' | 'host' | 'remote'
+    version?: string
+    ref?: string
+    envId?: string
+    lockSha256?: string
+    resolvedCommand?: string
+  }
+  containerRuntime?: {
+    engine: 'docker' | 'singularity' | 'conda' | 'unknown'
+    version?: string
+    images: WrapperContainerImageProvenance[]
+  }
+}
+
 export type WrapperEventType =
   | 'plan_requested'
   | 'plan_validated'

@@ -12,7 +12,13 @@ import { dirname, join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
 import { appendAuditLine } from './audit'
-import type { WrapperAuditEvent, WrapperEvent, WrapperRun, WrapperRunPlan } from './types'
+import type {
+  WrapperAuditEvent,
+  WrapperEvent,
+  WrapperRun,
+  WrapperRunPlan,
+  WrapperRuntimeProvenance
+} from './types'
 
 const WRAPPERS_DIR_NAME = 'wrappers'
 const GLOBAL_AUDIT_FILE = 'audit.jsonl'
@@ -189,6 +195,26 @@ export function readWrapperManifestSnapshot(
   agentDir = getPhiAgentDir()
 ): WrapperManifestSnapshot | undefined {
   return readJson<WrapperManifestSnapshot>(join(getRunDir(runId, agentDir), MANIFEST_SNAPSHOT_FILE))
+}
+
+const RUNTIME_PROVENANCE_FILE = 'runtime.json'
+
+export function writeWrapperRuntimeProvenance(
+  runId: string,
+  provenance: WrapperRuntimeProvenance,
+  agentDir = getPhiAgentDir()
+): WrapperRuntimeProvenance {
+  writeJson(join(getRunDir(runId, agentDir), RUNTIME_PROVENANCE_FILE), provenance)
+  return provenance
+}
+
+export function readWrapperRuntimeProvenance(
+  runId: string,
+  agentDir = getPhiAgentDir()
+): WrapperRuntimeProvenance | undefined {
+  return readJson<WrapperRuntimeProvenance>(
+    join(getRunDir(runId, agentDir), RUNTIME_PROVENANCE_FILE)
+  )
 }
 
 // --- Append-only run events --------------------------------------------------

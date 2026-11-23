@@ -9,7 +9,14 @@ import { wrapperTreeDir } from '../../packages/wrapper-tree'
 import { resolveCompositionInputParams } from '../path-mapping'
 import type { ResolvedRemoteTarget } from '../remote-connection-resolver'
 import { chooseWrapperTarget, type WrapperTargetDoctorSnapshot } from '../target-policy'
-import { getWrapperRunsDir, listWrapperRuns, readWrapperRun, writeWrapperRun } from '../store'
+import { captureLocalRuntimeProvenance } from '../runtime-provenance'
+import {
+  getWrapperRunsDir,
+  listWrapperRuns,
+  readWrapperRun,
+  writeWrapperRun,
+  writeWrapperRuntimeProvenance
+} from '../store'
 import type { WrapperExecutor, WrapperRun } from '../types'
 import {
   findWrapperCompositionEntry,
@@ -557,6 +564,18 @@ export class WrapperJobManager implements WrapperJobClient {
       }
     }
 
+    if (launch) {
+      try {
+        const runtime = await captureLocalRuntimeProvenance({
+          launch,
+          profile,
+          wrapperMainNf: join(entry.wrapperDir, 'main.nf')
+        })
+        writeWrapperRuntimeProvenance(run.runId, runtime, agentDir)
+      } catch {
+        // Runtime provenance is best-effort and must never block execution.
+      }
+    }
     const logPath = join(getWrapperRunsDir(agentDir), run.runId, LOG_FILE)
     writeFileSync(logPath, '')
     const tracker = createProgressTracker({

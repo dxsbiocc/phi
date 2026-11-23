@@ -9,10 +9,11 @@ import {
   readWrapperManifestSnapshot,
   readWrapperPlan,
   readWrapperRun,
-  readWrapperRunEvents
+  readWrapperRunEvents,
+  readWrapperRuntimeProvenance
 } from './store'
 import type { WrapperManifest } from './manifest-types'
-import type { WrapperEvent, WrapperRun, WrapperRunPlan } from './types'
+import type { WrapperEvent, WrapperRun, WrapperRunPlan, WrapperRuntimeProvenance } from './types'
 
 export type WrapperManifestSource = 'snapshot' | 'summary' | 'catalog'
 
@@ -24,6 +25,8 @@ export interface WrapperReproducibilityBundle {
   manifest?: WrapperManifest | WrapperCompositionManifest
   manifestSource?: WrapperManifestSource
   manifestSha256?: string
+  nextflow?: unknown
+  runtime?: WrapperRuntimeProvenance
   events: WrapperEvent[]
   params?: unknown
   outputs?: unknown
@@ -90,6 +93,9 @@ export function buildWrapperReproducibilityBundle(
     }
   }
 
+  const nextflow = readJsonIfExists(join(runDir, 'nextflow.json'))
+  const runtime = readWrapperRuntimeProvenance(runId, agentDir)
+
   return {
     exportedAt: new Date().toISOString(),
     run,
@@ -97,6 +103,8 @@ export function buildWrapperReproducibilityBundle(
     manifest,
     ...(manifestSource ? { manifestSource } : {}),
     ...(manifestSha256 ? { manifestSha256 } : {}),
+    ...(nextflow !== undefined ? { nextflow } : {}),
+    ...(runtime ? { runtime } : {}),
     events,
     params: readJsonIfExists(join(runDir, 'params.json')),
     outputs: readJsonIfExists(join(runDir, 'outputs.json')),

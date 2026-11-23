@@ -19,11 +19,13 @@ import {
 } from './composition/nextflow-wsl'
 import { checkLocalDoctor } from './doctor'
 import { buildNextflowInvocation } from './executor-nextflow'
+import { captureLocalRuntimeProvenance } from './runtime-provenance'
 import {
   appendWrapperAuditEvent,
   appendWrapperRunEvent,
   getWrapperRunsDir,
-  writeWrapperRun
+  writeWrapperRun,
+  writeWrapperRuntimeProvenance
 } from './store'
 import { startWeblogListener, type WeblogListenerHandle } from './weblog-listener'
 import type { WrapperManifest } from './manifest-types'
@@ -222,6 +224,16 @@ export async function runLocalWrapperExecution(
     `${JSON.stringify(nextflowLaunchRecord(launch), null, 2)}\n`,
     'utf-8'
   )
+  try {
+    const runtime = await captureLocalRuntimeProvenance({
+      launch,
+      profile: nextflowProfile,
+      wrapperMainNf: join(entry.installedPath, manifest.engine.entrypoint)
+    })
+    writeWrapperRuntimeProvenance(run.runId, runtime, agentDir)
+  } catch {
+    // Runtime provenance is best-effort and must never block execution.
+  }
 
   if (preparedProfile.config) {
     const configPath = join(runDir, 'conda.config')
