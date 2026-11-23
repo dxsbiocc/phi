@@ -3,6 +3,7 @@ import type { MatrixValueSemantics } from './scientificContextTypes'
 export const PLAN_SPEC_VERSION = 1 as const
 export const PLAN_DEFAULT_STEP_AGENT = 'PlanStep'
 export const PLAN_MAX_STEPS = 20
+export const PLAN_MAX_HYPOTHESES = 10
 export const PLAN_MAX_STEP_ID_LENGTH = 40
 export const PLAN_MAX_STEP_TITLE_LENGTH = 80
 export const PLAN_MAX_STEP_INSTRUCTIONS_LENGTH = 4_000
@@ -85,6 +86,27 @@ export type PlanStepPreflightResult =
   | { status: 'needs_input'; missingInputs: string[]; summary: string }
   | { status: 'incompatible'; reasons: string[] }
 
+export interface PlanLiteratureReviewDecision {
+  /** Whether the agent determined prior literature/research retrieval was needed for this task. */
+  needed: boolean
+  /** Concise reason why literature retrieval was performed or skipped. */
+  rationale: string
+  /** Key citations, PMIDs, DOIs, or URLs retrieved when needed is true. */
+  references?: string[]
+}
+
+export interface PlanHypothesis {
+  id: string
+  /** Concrete, testable hypothesis statement. */
+  statement: string
+  /** Why this hypothesis is plausible given the task, data, or literature. */
+  rationale?: string
+  /** Whether the user selected this hypothesis for verification in the plan. */
+  selected: boolean
+  /** Observable evidence criteria that would support or refute the hypothesis. */
+  testCriteria?: string
+}
+
 export interface PlanStep {
   id: string
   title: string
@@ -95,6 +117,8 @@ export interface PlanStep {
   writes?: string[]
   checks?: PlanStepVerificationCheck[]
   inputContracts?: PlanStepInputContract[]
+  /** Hypothesis IDs from PlanSpec.hypotheses that this step tests or verifies. */
+  hypothesisIds?: string[]
   agent?: string
 }
 
@@ -103,6 +127,10 @@ export interface PlanSpec {
   /** User-confirmed question shared by scientific step handoffs. */
   researchQuestion?: string
   goal: string
+  /** Agent decision on whether prior literature retrieval was needed before hypothesis generation. */
+  literatureReview?: PlanLiteratureReviewDecision
+  /** Candidate hypotheses generated before planning, marking which ones the user selected. */
+  hypotheses?: PlanHypothesis[]
   steps: PlanStep[]
 }
 

@@ -45,6 +45,13 @@ const baseStepSchema = {
       description:
         'Project-relative paths this step writes. Absolute paths inside the project are accepted and stored relative.'
     },
+    hypothesisIds: {
+      type: 'array',
+      items: { type: 'string', minLength: 1, maxLength: PLAN_MAX_STEP_ID_LENGTH },
+      uniqueItems: true,
+      description:
+        'IDs of selected hypotheses from top-level hypotheses[] that this step directly tests or verifies.'
+    },
     agent: {
       type: 'string',
       minLength: 1,
@@ -71,6 +78,46 @@ function planParameters(availableAgents: readonly string[]): ToolDefinition['par
         maxLength: 1000,
         description:
           'For a scientific analysis, quote the original question from the user or their confirmed clarification. A scientific plan covers one review stage. Include only independent, already justified subquestions with empty dependsOn. Return evidence to the parent before choosing a later analysis that relies on the results; do not hide such analyses inside an independent step. Omit for ordinary plans.'
+      },
+      literatureReview: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['needed', 'rationale'],
+        description:
+          'Record whether prior literature/research retrieval was needed before generating hypotheses, and briefly explain why it was performed or skipped.',
+        properties: {
+          needed: { type: 'boolean' },
+          rationale: { type: 'string', minLength: 1, maxLength: 400 },
+          references: {
+            type: 'array',
+            maxItems: 10,
+            items: { type: 'string', minLength: 1 }
+          }
+        }
+      },
+      hypotheses: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 10,
+        description:
+          'Candidate hypotheses generated before planning, with selected=true on the hypothesis(es) chosen by the user for verification.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['id', 'statement', 'selected'],
+          properties: {
+            id: {
+              type: 'string',
+              minLength: 1,
+              maxLength: PLAN_MAX_STEP_ID_LENGTH,
+              pattern: '^[a-z0-9-]+$'
+            },
+            statement: { type: 'string', minLength: 1, maxLength: 400 },
+            rationale: { type: 'string', minLength: 1, maxLength: 400 },
+            selected: { type: 'boolean' },
+            testCriteria: { type: 'string', minLength: 1, maxLength: 400 }
+          }
+        }
       },
       steps: {
         type: 'array',

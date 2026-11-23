@@ -16,8 +16,8 @@ const parameters = {
 
 function planModeResult(execute: boolean): string {
   return execute
-    ? 'Planning and execution mode is now active. Use only read-only investigation, then submit the complete structured plan through propose_plan_steps for user review.'
-    : 'Plan review mode is now active. Use only read-only investigation, then write the plan under local:// and submit it through xd://propose for user review.'
+    ? 'Planning and execution mode is now active. Investigate read-only, decide whether prior literature retrieval is needed, generate candidate hypotheses and ask the user to select via ask_user_question, then submit the hypothesis-aligned structured plan through propose_plan_steps for user review.'
+    : 'Plan review mode is now active. Investigate read-only, decide whether prior literature retrieval is needed, generate candidate hypotheses and ask the user to select via ask_user_question, then write the plan under local:// and submit it through xd://propose for user review.'
 }
 
 /**

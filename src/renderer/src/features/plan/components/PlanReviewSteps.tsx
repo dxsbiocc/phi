@@ -77,6 +77,15 @@ function PlanReviewStep({
                 {planCopy.dependencies(dependencies.join(', '))}
               </Typography>
             ) : null}
+            {step.hypothesisIds?.length ? (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                data-phi-plan-step-hypotheses={step.id}
+              >
+                {planCopy.testsHypotheses(step.hypothesisIds.join(', '))}
+              </Typography>
+            ) : null}
             {step.agent ? (
               <Typography variant="caption" color="text.secondary">
                 {planCopy.agent(step.agent)}
@@ -157,6 +166,44 @@ export function PlanReviewSteps({ plan }: { plan: PlanSpec }): React.JSX.Element
         <Typography variant="body2" component="p" sx={{ mb: 1, whiteSpace: 'pre-wrap' }}>
           <strong>{planCopy.researchQuestion}</strong> {plan.researchQuestion}
         </Typography>
+      ) : null}
+      {plan.literatureReview ? (
+        <Typography
+          variant="body2"
+          component="p"
+          data-phi-plan-literature-review
+          sx={{ mb: 1, whiteSpace: 'pre-wrap' }}
+        >
+          <strong>
+            {plan.literatureReview.needed
+              ? planCopy.literatureReviewPerformed
+              : planCopy.literatureReviewSkipped}
+          </strong>{' '}
+          {plan.literatureReview.rationale}
+          {plan.literatureReview.references?.length
+            ? ` (${plan.literatureReview.references.join('; ')})`
+            : ''}
+        </Typography>
+      ) : null}
+      {plan.hypotheses?.length ? (
+        <Box data-phi-plan-hypotheses sx={{ mb: 1.25 }}>
+          <Typography variant="caption" sx={{ fontWeight: 700, display: 'block', mb: 0.25 }}>
+            {planCopy.hypotheses}
+          </Typography>
+          <Box component="ul" sx={{ m: 0, pl: 2, typography: 'body2' }}>
+            {plan.hypotheses.map((hypothesis) => (
+              <li key={hypothesis.id}>
+                <strong>
+                  [{hypothesis.selected ? planCopy.hypothesisSelected : planCopy.hypothesisCandidate}]
+                </strong>{' '}
+                {hypothesis.id}: {hypothesis.statement}
+                {hypothesis.testCriteria
+                  ? ` — ${planCopy.hypothesisTestCriteria(hypothesis.testCriteria)}`
+                  : ''}
+              </li>
+            ))}
+          </Box>
+        </Box>
       ) : null}
       <Box component="ol" data-phi-plan-steps sx={{ m: 0, p: 0, listStyle: 'none' }}>
         {plan.steps.map((step, index) => (

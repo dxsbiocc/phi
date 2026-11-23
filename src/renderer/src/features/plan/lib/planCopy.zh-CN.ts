@@ -110,5 +110,12 @@ export const planChinese = {
   contractMatchReference: (peer: string) => `参考基因组与 ${peer} 一致`,
   contractMatrixSemantics: (semantics: string) => `矩阵语义 ∈ [${semantics}]`,
   contractMatchSamples: (peer: string) => `样本集合与 ${peer} 一致`,
-  contractDonorMapping: '需要供体映射'
+  contractDonorMapping: '需要供体映射',
+  literatureReviewPerformed: '文献调研（已执行）',
+  literatureReviewSkipped: '文献调研（已跳过）',
+  hypotheses: '研究假设',
+  hypothesisSelected: '已选定',
+  hypothesisCandidate: '候选',
+  hypothesisTestCriteria: (criteria: string) => `验证标准：${criteria}`,
+  testsHypotheses: (ids: string) => `验证假设：${ids}`
 } satisfies typeof planEnglish

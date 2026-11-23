@@ -112,5 +112,12 @@ export const planEnglish = {
   contractMatchReference: (peer: string) => `reference matches ${peer}`,
   contractMatrixSemantics: (semantics: string) => `matrix in [${semantics}]`,
   contractMatchSamples: (peer: string) => `samples match ${peer}`,
-  contractDonorMapping: 'requires donor mapping'
+  contractDonorMapping: 'requires donor mapping',
+  literatureReviewPerformed: 'Literature review (performed)',
+  literatureReviewSkipped: 'Literature review (skipped)',
+  hypotheses: 'Hypotheses',
+  hypothesisSelected: 'Selected',
+  hypothesisCandidate: 'Candidate',
+  hypothesisTestCriteria: (criteria: string) => `Test criteria: ${criteria}`,
+  testsHypotheses: (ids: string) => `Tests: ${ids}`
 }

@@ -39,11 +39,26 @@ function cloneStep(step: PlanStep): PlanStep {
   return {
     ...step,
     dependsOn: [...step.dependsOn],
-    ...(step.writes ? { writes: [...step.writes] } : {})
+    ...(step.writes ? { writes: [...step.writes] } : {}),
+    ...(step.hypothesisIds ? { hypothesisIds: [...step.hypothesisIds] } : {})
   }
 }
 function cloneSpec(spec: PlanSpec): PlanSpec {
-  return { ...spec, steps: spec.steps.map(cloneStep) }
+  return {
+    ...spec,
+    ...(spec.literatureReview
+      ? {
+          literatureReview: {
+            ...spec.literatureReview,
+            ...(spec.literatureReview.references
+              ? { references: [...spec.literatureReview.references] }
+              : {})
+          }
+        }
+      : {}),
+    ...(spec.hypotheses ? { hypotheses: spec.hypotheses.map((item) => ({ ...item })) } : {}),
+    steps: spec.steps.map(cloneStep)
+  }
 }
 function pendingStep(): PlanStepState {
   return { status: 'pending', attempts: 0 }
@@ -329,6 +344,7 @@ function comparableStep(step: PlanStep): unknown[] {
     step.dependsOn,
     step.access,
     step.writes,
+    step.hypothesisIds,
     step.agent
   ]
 }

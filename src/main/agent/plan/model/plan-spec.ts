@@ -6,6 +6,7 @@ import {
   MAX_RESEARCH_QUESTION_LENGTH
 } from '../../../../shared/kernel-protocol/research-question'
 import {
+  PLAN_MAX_HYPOTHESES,
   PLAN_MAX_STEPS,
   PLAN_MAX_STEP_ACCEPTANCE_LENGTH,
   PLAN_MAX_STEP_ID_LENGTH,
@@ -13,6 +14,8 @@ import {
   PLAN_MAX_STEP_TITLE_LENGTH,
   PLAN_SPEC_VERSION,
   PLAN_STEP_CHECK_KINDS,
+  type PlanHypothesis,
+  type PlanLiteratureReviewDecision,
   type PlanSpec,
   type PlanStep,
   type PlanStepAccess,
@@ -236,6 +239,10 @@ function readStep(
   const inputContracts = Array.isArray(value.inputContracts)
     ? (value.inputContracts as PlanStep['inputContracts'])
     : undefined
+  const hypothesisIds =
+    value.hypothesisIds === undefined
+      ? undefined
+      : readStringArray(value.hypothesisIds, `${label}.hypothesisIds`, errors)
   const agent =
     value.agent === undefined
       ? undefined
@@ -245,7 +252,122 @@ function readStep(
     ...(writes ? { writes } : {}),
     ...(checks?.length ? { checks } : {}),
     ...(inputContracts?.length ? { inputContracts } : {}),
+    ...(hypothesisIds?.length ? { hypothesisIds } : {}),
     ...(agent ? { agent } : {})
+  }
+}
+
+const MAX_HYPOTHESIS_TEXT_LENGTH = 400
+const MAX_LITERATURE_REFERENCES = 10
+
+function readLiteratureReview(
+  value: unknown,
+  errors: string[]
+): PlanLiteratureReviewDecision | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value)) {
+    errors.push('literatureReview must be an object.')
+    return undefined
+  }
+  if (typeof value.needed !== 'boolean') {
+    errors.push('literatureReview.needed must be a boolean.')
+  }
+  const rationale = readRequiredString(
+    value.rationale,
+    'literatureReview.rationale',
+    MAX_HYPOTHESIS_TEXT_LENGTH,
+    errors
+  )
+  const references =
+    value.references === undefined
+      ? undefined
+      : readStringArray(value.references, 'literatureReview.references', errors)
+  if (references && references.length > MAX_LITERATURE_REFERENCES) {
+    errors.push(`literatureReview.references must contain at most ${MAX_LITERATURE_REFERENCES} items.`)
+  }
+  return {
+    needed: value.needed === true,
+    rationale,
+    ...(references?.length ? { references } : {})
+  }
+}
+
+function readHypotheses(value: unknown, errors: string[]): PlanHypothesis[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) {
+    errors.push('hypotheses must be an array.')
+    return undefined
+  }
+  if (value.length < 1 || value.length > PLAN_MAX_HYPOTHESES) {
+    errors.push(`hypotheses must contain between 1 and ${PLAN_MAX_HYPOTHESES} items.`)
+    return undefined
+  }
+  const ids = new Set<string>()
+  const hypotheses: PlanHypothesis[] = []
+  value.forEach((raw, index) => {
+    const fallback = `hypotheses[${index}]`
+    if (!isRecord(raw)) {
+      errors.push(`${fallback} must be an object.`)
+      return
+    }
+    const id = readRequiredString(raw.id, `${fallback}.id`, PLAN_MAX_STEP_ID_LENGTH, errors)
+    if (id && !STEP_ID_PATTERN.test(id)) {
+      errors.push(`${fallback}.id must match [a-z0-9-]{1,${PLAN_MAX_STEP_ID_LENGTH}}.`)
+    }
+    if (id && ids.has(id)) {
+      errors.push(`hypothesis \"${id}\".id must be unique within the plan.`)
+    }
+    if (id) ids.add(id)
+    const statement = readRequiredString(
+      raw.statement,
+      `${fallback}.statement`,
+      MAX_HYPOTHESIS_TEXT_LENGTH,
+      errors
+    )
+    if (typeof raw.selected !== 'boolean') {
+      errors.push(`${fallback}.selected must be a boolean.`)
+    }
+    const rationale =
+      raw.rationale === undefined
+        ? undefined
+        : readRequiredString(raw.rationale, `${fallback}.rationale`, MAX_HYPOTHESIS_TEXT_LENGTH, errors)
+    const testCriteria =
+      raw.testCriteria === undefined
+        ? undefined
+        : readRequiredString(
+            raw.testCriteria,
+            `${fallback}.testCriteria`,
+            MAX_HYPOTHESIS_TEXT_LENGTH,
+            errors
+          )
+    hypotheses.push({
+      id,
+      statement,
+      selected: raw.selected === true,
+      ...(rationale ? { rationale } : {}),
+      ...(testCriteria ? { testCriteria } : {})
+    })
+  })
+  if (hypotheses.length > 0 && !hypotheses.some((item) => item.selected)) {
+    errors.push('hypotheses must mark at least one hypothesis as selected.')
+  }
+  return hypotheses
+}
+
+function validateStepHypothesisReferences(
+  steps: PlanStep[],
+  hypotheses: PlanHypothesis[] | undefined,
+  errors: string[]
+): void {
+  const knownIds = new Set((hypotheses ?? []).map((item) => item.id))
+  for (const step of steps) {
+    for (const hypothesisId of step.hypothesisIds ?? []) {
+      if (!knownIds.has(hypothesisId)) {
+        errors.push(
+          `step \"${step.id}\".hypothesisIds references missing hypothesis \"${hypothesisId}\".`
+        )
+      }
+    }
   }
 }
 
@@ -319,7 +441,10 @@ export function validatePlanSpec(value: unknown, projectRoot?: string): PlanSpec
       'A research plan is one review stage. Each step must be independent with an empty dependsOn. Return the current results to the main agent before proposing an analysis that depends on them.'
     )
   }
+  const literatureReview = readLiteratureReview(value.literatureReview, errors)
+  const hypotheses = readHypotheses(value.hypotheses, errors)
   validateStepReferences(steps, errors)
+  validateStepHypothesisReferences(steps, hypotheses, errors)
   const cycleIds = findCycleIds(steps)
   if (cycleIds.length > 0) {
     errors.push(`dependsOn contains a cycle involving step ids: ${cycleIds.join(', ')}.`)
@@ -332,6 +457,8 @@ export function validatePlanSpec(value: unknown, projectRoot?: string): PlanSpec
           version: PLAN_SPEC_VERSION,
           goal,
           ...(researchQuestion ? { researchQuestion } : {}),
+          ...(literatureReview ? { literatureReview } : {}),
+          ...(hypotheses ? { hypotheses } : {}),
           steps
         }
       }
