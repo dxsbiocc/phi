@@ -233,6 +233,9 @@ function readStep(
   }
   const writes = readWrites(value.writes, step.access, label, errors, projectRoot)
   const checks = readChecks(value.checks, label, errors, projectRoot)
+  const inputContracts = Array.isArray(value.inputContracts)
+    ? (value.inputContracts as PlanStep['inputContracts'])
+    : undefined
   const agent =
     value.agent === undefined
       ? undefined
@@ -241,6 +244,7 @@ function readStep(
     ...step,
     ...(writes ? { writes } : {}),
     ...(checks?.length ? { checks } : {}),
+    ...(inputContracts?.length ? { inputContracts } : {}),
     ...(agent ? { agent } : {})
   }
 }

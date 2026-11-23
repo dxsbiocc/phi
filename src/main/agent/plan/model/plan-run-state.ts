@@ -251,6 +251,25 @@ function reduceFailure(
   })
   return withStep(state, event.stepId, next, event.at)
 }
+function reducePreflightBlocked(
+  state: PlanRunState,
+  event: Extract<PlanRunEvent, { type: 'step_preflight_blocked' }>
+): PlanRunState {
+  const current = requireStep(state, event.stepId)
+  requireStepStatus(event.stepId, current, ['pending'])
+  const nextStep: PlanStepState = {
+    ...current,
+    status: 'failed',
+    ...(event.report ? { report: normalizePlanStepReport(event.report) } : {}),
+    ...(event.error ? { error: event.error } : {}),
+    finishedAt: event.at
+  }
+  return {
+    ...withStep(state, event.stepId, nextStep, event.at),
+    status: 'paused',
+    pause: { reason: event.reason, stepId: event.stepId }
+  }
+}
 function reducePause(state: PlanRunState, at: string): PlanRunState {
   if (state.status !== 'running')
     transitionError('INVALID_RUN_STATUS', 'Only a running plan can be paused.')
@@ -442,6 +461,8 @@ export function reducePlanRun(state: PlanRunState, event: PlanRunEvent): PlanRun
     case 'step_needs_input':
       next = reduceFailure(state, event)
       break
+    case 'step_preflight_blocked':
+      return reducePreflightBlocked(state, event)
     case 'pause':
       next = reducePause(state, event.at)
       break

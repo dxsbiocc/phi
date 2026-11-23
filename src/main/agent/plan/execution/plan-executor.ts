@@ -5,6 +5,7 @@ import {
   type PlanRunState,
   type PlanSpec,
   type PlanStep,
+  type PlanStepPreflightResult,
   type PlanStepReportSummary,
   type PlanStepVerificationResult
 } from '../../../../shared/planRunTypes'
@@ -55,6 +56,13 @@ export interface PlanExecutorDependencies {
     step: PlanStep
     report: PlanStepReportSummary
   }): Awaitable<PlanStepVerificationResult>
+  /** Optional cross-step scientific compatibility check run before `runner.start()` (R14). */
+  preflightStep?(input: {
+    sessionId: string
+    runId: string
+    step: PlanStep
+    state: PlanRunState
+  }): Awaitable<PlanStepPreflightResult>
 }
 
 export interface PlanExecutor {
@@ -274,6 +282,55 @@ class PlanExecutorImplementation implements PlanExecutor {
   private async launch(runId: string, stepId: string): Promise<void> {
     const state = requireState(this.runtime, runId)
     const step = state.spec.steps.find((candidate) => candidate.id === stepId)!
+    if (this.deps.preflightStep) {
+      const at = clockNow(this.deps.clock)
+      let verdict: PlanStepPreflightResult
+      try {
+        verdict = await this.deps.preflightStep({
+          sessionId: state.sessionId,
+          runId,
+          step,
+          state
+        })
+      } catch (error) {
+        verdict = {
+          status: 'incompatible',
+          reasons: [`Preflight check error: ${errorText(error)}`]
+        }
+      }
+      if (verdict.status === 'needs_input') {
+        await this.apply(
+          runId,
+          {
+            type: 'step_preflight_blocked',
+            stepId,
+            reason: 'needs_input',
+            report: {
+              status: 'blocked',
+              text: verdict.summary,
+              missingInputs: verdict.missingInputs
+            },
+            at
+          },
+          false
+        )
+        return
+      }
+      if (verdict.status === 'incompatible') {
+        await this.apply(
+          runId,
+          {
+            type: 'step_preflight_blocked',
+            stepId,
+            reason: 'step_failed',
+            error: `Cross-step scientific incompatibility: ${verdict.reasons.join('; ')}`,
+            at
+          },
+          false
+        )
+        return
+      }
+    }
     const controller = new AbortController()
     const requestId = this.deps.requiresDurableLaunch?.(state.sessionId) ? randomUUID() : undefined
     if (requestId) {

@@ -1,3 +1,5 @@
+import type { MatrixValueSemantics } from './scientificContextTypes'
+
 export const PLAN_SPEC_VERSION = 1 as const
 export const PLAN_DEFAULT_STEP_AGENT = 'PlanStep'
 export const PLAN_MAX_STEPS = 20
@@ -66,6 +68,23 @@ export interface PlanStepVerificationResult {
   failures: string[]
 }
 
+export interface PlanStepInputContract {
+  /** Project-relative path to an upstream artifact whose scientific context must be checked before launch (R14). */
+  path: string
+  expectedReferenceAssembly?: string
+  /** Project-relative path to another artifact whose reference assembly must match this one. */
+  mustMatchReferenceWith?: string
+  requiredMatrixSemantics?: MatrixValueSemantics[]
+  /** Project-relative path to another artifact whose sample IDs must match this one. */
+  requireSampleMatchWith?: string
+  requireDonorMapping?: boolean
+}
+
+export type PlanStepPreflightResult =
+  | { status: 'compatible' }
+  | { status: 'needs_input'; missingInputs: string[]; summary: string }
+  | { status: 'incompatible'; reasons: string[] }
+
 export interface PlanStep {
   id: string
   title: string
@@ -75,6 +94,7 @@ export interface PlanStep {
   access: PlanStepAccess
   writes?: string[]
   checks?: PlanStepVerificationCheck[]
+  inputContracts?: PlanStepInputContract[]
   agent?: string
 }
 
@@ -243,6 +263,14 @@ export type PlanRunEvent =
       at: string
     }
   | { type: 'step_needs_input'; stepId: string; report: PlanStepReportSummary; at: string }
+  | {
+      type: 'step_preflight_blocked'
+      stepId: string
+      reason: 'needs_input' | 'step_failed'
+      report?: PlanStepReportSummary
+      error?: string
+      at: string
+    }
   | { type: 'pause'; at: string }
   | { type: 'resume'; at: string }
   | { type: 'retry_step'; stepId: string; at: string }
