@@ -8,7 +8,7 @@ the manifest fields every package shares, the file list, the archive, the regist
 index, and the installer. Type-specific rules live in the type's own contract (for
 plugins, [plugin contract](plugin.md)); wrapper and connector packages are defined
 by later contracts and are rejected by v1 installers. See
-[content distribution design](../design/phi-content-distribution-design.md) §5–§6.
+content distribution design §5–§6.
 
 ## 1. `phi-package.yaml` (shared fields)
 

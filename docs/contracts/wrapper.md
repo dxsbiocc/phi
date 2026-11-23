@@ -9,7 +9,7 @@ wrapper **packages** — the tool-family unit Phi distributes — and the tree i
 packages are assembled into (§ 3–5). It builds on the [package contract](package.md)
 (`type: wrapper`, added here as package contract 1.1.0) and the
 [enablement contract](enablement.md) (`wrapper:` items, enablement 1.1.0). See
-[content distribution design](../design/phi-content-distribution-design.md) §8.2 and
+content distribution design §8.2 and
 [bundled wrapper agent composition guide](../../resources/skills/create-wrapper/references/guide.md) §3–§4.
 
 ## 1. Adapter layout

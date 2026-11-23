@@ -330,7 +330,7 @@ exists" and "results are ordinary files in the folder you chose".
 
 - Sits inside [internal beta implementation](internal-beta-implementation.md) P1
   wrapper reliability and P2 polish. Does not pull forward any deferred item.
-- Depends on nothing from [phi-kernel-implementation.md](phi-kernel-implementation.md);
+- Depends on nothing from the completed unified kernel migration;
   T1, T2, T3, T5 are desktop-side and path-independent. T6 touches plan types that the
   kernel also consumes, so if kernel work lands first, re-check the shared type in the
   same change.

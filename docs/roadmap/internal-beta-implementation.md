@@ -127,7 +127,7 @@ Goal: avoid exposing a global legacy package manager as if it were a project cap
 
 Goal: give Phi its own managed runtime so skills, specialist agents, notebooks, and wrappers stop depending on the host, then make content installable on top of it. Built inside-out; no public distribution in the beta.
 
-Foundation (confirmed 2026-09-29): [phi-runtime-foundation.md](../design/phi-runtime-foundation.md). Distribution design: [phi-content-distribution-design.md](../design/phi-content-distribution-design.md). Decisions: [content-distribution.md](../decisions/content-distribution.md). **Step-by-step plan: [content-distribution-implementation.md](content-distribution-implementation.md)** (中文: [zh-CN](content-distribution-implementation.zh-CN.md)).
+Foundation (confirmed 2026-09-29): [phi-runtime-foundation.md](../design/phi-runtime-foundation.md). Decisions: [content-distribution.md](../decisions/content-distribution.md). (Historical distribution design and step-by-step plan archived in Git history.)
 
 - Step 0 — preparation: clean `resources/` leftovers and block new ones; delete the `create-database-connector` skill; commit `scripts/eval/`; dependency inventory for all script content.
 - Step 1 — runtime and environment model: bundled micromamba isolated from the user's conda; `~/.phi/runtime`; environments built from explicit locks, read-only, reference-counted.
@@ -163,7 +163,7 @@ Does not include: provenance signing, remote attestation, deterministic bit-iden
 
 Goal: replace the terminal placeholder in the workspace side panel with a real local shell the user owns, and let the agent draft commands without ever running them.
 
-Plan: [phi-terminal-v1-implementation-plan.md](../design/phi-terminal-v1-implementation-plan.md) (中文). Milestones T0–T5; T1–T3 form the minimum internally usable terminal, T4–T5 complete V1.
+Milestones T0–T5 (historical V1 plan archived in Git history); T1–T3 form the minimum internally usable terminal, T4–T5 complete V1.
 
 Status (2026-10-06): merged into `main` and rendered inside the two-slot workbench; pending human checks in [terminal-v1-manual-checklist.md](../design/terminal-v1-manual-checklist.md), chiefly Chinese IME, real-model drafts/explanations, and drag resize.
 
@@ -216,7 +216,7 @@ decision records remain as rationale, not as current product behavior.
 
 ## After Internal Beta: Group Chat And Mobile Companion
 
-2026-10-24 scope clarification: the current [kernel plan](phi-kernel-implementation.md) delivers one execution mode for local and remote sessions with UI decoupling. [Personal/laboratory editions, membership, shared resources and communication](phi-personal-lab-roadmap.md) belong to the **next major version**. Current work only preserves [compatible design boundaries](phi-kernel-implementation.md#collaboration-compatibility); it does not implement personal identity storage or a multi-user foundation. Laboratory collaboration precedes personal friend networking within that future version. This note does not authorize coding or expand current-beta scope.
+2026-10-24 scope clarification: the current kernel plan delivers one execution mode for local and remote sessions with UI decoupling. [Personal/laboratory editions, membership, shared resources and communication](phi-personal-lab-roadmap.md) belong to the **next major version**. Current work only preserves compatible design boundaries; it does not implement personal identity storage or a multi-user foundation. Laboratory collaboration precedes personal friend networking within that future version. This note does not authorize coding or expand current-beta scope.
 
 Decided 2026-10-23. Design: [phi-mobile-companion-design.md](../design/phi-mobile-companion-design.md) (中文). None of this enters the beta.
 

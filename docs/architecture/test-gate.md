@@ -216,7 +216,7 @@ Linux 服务器(远端运行时的真实目标)两者都自带。
 
 ## 与整洁度方案的关系
 
-`docs/architecture/clean-code-optimization-plan.md` 的全部切片都以 `test:gate` + `typecheck` + `lint` 作为回归门。
+全部代码重构切片均以 `test:gate` + `typecheck` + `lint` 作为回归门。
 在这套门落地之前,机械迁移没有可信信号,这是先治理验证门、再继续批量重构的原因。
 
 `bun run typecheck:tests` 目前在干净检出上有约 450 个既有错误(测试 tsconfig 与 `AgentEventSummary` 等类型不同步),

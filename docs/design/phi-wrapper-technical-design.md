@@ -2,9 +2,9 @@
 
 Date: 2026-09-09
 
-> Historical design record: runtime integration paths below describe the original P1 implementation. The current OMP boundary lives under `src/main/agent/engine/`; use the [current engine plan](../roadmap/omp-decoupling-upgrade-plan.md) and source code for implementation work. The Wrapper manifest and execution decisions here remain background context.
+> Historical design record: runtime integration paths below describe the original P1 implementation. The current OMP boundary lives under `src/main/agent/engine/`; use the current engine plan and source code for implementation work. The Wrapper manifest and execution decisions here remain background context.
 
-This document defines the technical shape of Phi Wrapper after the clarification sequence. The design's long-term target is remote-first, Nextflow-first, verified-by-default, and compatible with the current Phi desktop architecture. Delivery is phased (see the PRD's [Phased Scope](./phi-wrapper-product-prd.md#phased-scope)): Phase 1 builds only the local-only slice of everything below — this document still specifies the full target shape (types, manifest fields, storage layout, trust tiers) so Phase 1 code doesn't need breaking changes later, but each section calls out what Phase 1 actually implements versus what is deferred to Phase 2 (remote execution) or Phase 3 (registry/signing/trust).
+This document defines the technical shape of Phi Wrapper after the clarification sequence. The design's long-term target is remote-first, Nextflow-first, verified-by-default, and compatible with the current Phi desktop architecture. Delivery is phased (see the PRD's Phased Scope): Phase 1 builds only the local-only slice of everything below — this document still specifies the full target shape (types, manifest fields, storage layout, trust tiers) so Phase 1 code doesn't need breaking changes later, but each section calls out what Phase 1 actually implements versus what is deferred to Phase 2 (remote execution) or Phase 3 (registry/signing/trust).
 
 ### Integration With The Existing Runtime (Confirmed By Milestone P1.0)
 

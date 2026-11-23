@@ -6,7 +6,7 @@ Installing content and **using** it are separate. Only enabled items reach the m
 agent, which keeps its prompt and tool routing small (the original goal of content
 distribution). This contract defines the enablement state, how it is resolved, and
 what "enabled" means for each kind of item. See
-[content distribution design](../design/phi-content-distribution-design.md) §7 and
+content distribution design §7 and
 the [package contract](package.md).
 
 ## 1. Items

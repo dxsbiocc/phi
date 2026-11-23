@@ -3,7 +3,7 @@
 日期：2026-09-29
 更新：2026-11-19 — 已启用插件的私有环境若自带 kernel 包，会同步出受管理的 notebook 内核（`plugin-<pluginId>-<envName>`）。
 英文版：[phi-runtime-foundation.md](phi-runtime-foundation.md)。
-状态：**已确认（2026-09-29，§9 的 6 条决策全部确认）。** 本文先于 [内容分发设计](phi-content-distribution-design.zh-CN.md) 和 [实施计划](../roadmap/content-distribution-implementation.zh-CN.md)：那两份文档里凡是涉及环境、执行、插件结构的内容，都以本文为准。
+状态：**已确认（2026-09-29，§9 的 6 条决策全部确认）。** 本文先于 内容分发设计 和 实施计划：那两份文档里凡是涉及环境、执行、插件结构的内容，都以本文为准。
 
 ## 0. 为什么先写这份文档
 
@@ -357,4 +357,4 @@ agent 本身不"管理"环境，它只**声明**要用哪个环境；创建、�
 | 用户目录                     | `~/.phi/runtime/`（micromamba 根、环境、包缓存）、`~/.phi/packages/<type>/<id>/<version>/`（所有包，含插件）、`~/.phi/state/`（启用状态等）                                                                                            |                                                                                              |
 | 仓库目录                     | `resources/runtime/environments/<环境名>/`、`resources/plugins/<插件 id>/`                                                                                                                                                             | `resources/runtime/environments/phi-python/`                                                 |
 
-实施计划按 §8 编排：[内容分发实施计划](../roadmap/content-distribution-implementation.zh-CN.md)。内容分发设计中环境（§9）和插件结构（§11）两章以本文为准。
+实施计划按 §8 编排：内容分发实施计划。内容分发设计中环境（§9）和插件结构（§11）两章以本文为准。
