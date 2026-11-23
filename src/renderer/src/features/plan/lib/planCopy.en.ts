@@ -100,5 +100,17 @@ export const planEnglish = {
   stepDetails: 'Instructions and acceptance criteria',
   expandStepDetails: (title: string) => `Expand instructions and acceptance criteria for ${title}`,
   instructions: 'Instructions',
-  acceptanceCriteria: 'Acceptance criteria'
+  acceptanceCriteria: 'Acceptance criteria',
+  objectiveChecks: 'Objective checks',
+  inputContracts: 'Scientific input contracts',
+  checkFileExists: (path: string) => `File exists: ${path}`,
+  checkNonEmptyFile: (path: string) => `Non-empty file: ${path}`,
+  checkJsonValid: (path: string) => `Valid JSON: ${path}`,
+  checkTableSchema: (path: string, details: string) =>
+    details ? `Table schema (${details}): ${path}` : `Table schema: ${path}`,
+  contractExpectedReference: (assembly: string) => `reference = ${assembly}`,
+  contractMatchReference: (peer: string) => `reference matches ${peer}`,
+  contractMatrixSemantics: (semantics: string) => `matrix in [${semantics}]`,
+  contractMatchSamples: (peer: string) => `samples match ${peer}`,
+  contractDonorMapping: 'requires donor mapping'
 }

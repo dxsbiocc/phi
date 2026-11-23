@@ -1,9 +1,53 @@
 import { Box, Stack, Typography } from '@mui/material'
 
-import type { PlanSpec, PlanStep } from '../../../../../shared/planRunTypes'
+import type {
+  PlanSpec,
+  PlanStep,
+  PlanStepInputContract,
+  PlanStepVerificationCheck
+} from '../../../../../shared/planRunTypes'
 import { planCopy } from '../lib/planCopy'
 import { PlanAccessMark } from './PlanAccessMark'
 import { PlanTimelineStep } from './PlanTimeline'
+
+function formatObjectiveCheck(check: PlanStepVerificationCheck): string {
+  switch (check.kind) {
+    case 'file_exists':
+      return planCopy.checkFileExists(check.path)
+    case 'non_empty_file':
+      return planCopy.checkNonEmptyFile(check.path)
+    case 'json_valid':
+      return planCopy.checkJsonValid(check.path)
+    case 'table_schema': {
+      const parts: string[] = []
+      if (check.format) parts.push(check.format.toUpperCase())
+      if (check.minDataRows !== undefined) parts.push(`>=${check.minDataRows} rows`)
+      if (check.minColumns !== undefined) parts.push(`>=${check.minColumns} cols`)
+      if (check.requiredColumns?.length) parts.push(check.requiredColumns.join(', '))
+      return planCopy.checkTableSchema(check.path, parts.join('; '))
+    }
+  }
+}
+
+function formatInputContract(contract: PlanStepInputContract): string {
+  const rules: string[] = []
+  if (contract.expectedReferenceAssembly) {
+    rules.push(planCopy.contractExpectedReference(contract.expectedReferenceAssembly))
+  }
+  if (contract.mustMatchReferenceWith) {
+    rules.push(planCopy.contractMatchReference(contract.mustMatchReferenceWith))
+  }
+  if (contract.requiredMatrixSemantics?.length) {
+    rules.push(planCopy.contractMatrixSemantics(contract.requiredMatrixSemantics.join(', ')))
+  }
+  if (contract.requireSampleMatchWith) {
+    rules.push(planCopy.contractMatchSamples(contract.requireSampleMatchWith))
+  }
+  if (contract.requireDonorMapping) {
+    rules.push(planCopy.contractDonorMapping)
+  }
+  return rules.length > 0 ? `${contract.path} (${rules.join('; ')})` : contract.path
+}
 
 function PlanReviewStep({
   step,
@@ -62,6 +106,42 @@ function PlanReviewStep({
             <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
               {step.acceptance}
             </Typography>
+            {step.checks?.length ? (
+              <>
+                <Typography variant="caption" sx={{ pt: 0.5, fontWeight: 700 }}>
+                  {planCopy.objectiveChecks}
+                </Typography>
+                <Box
+                  component="ul"
+                  data-phi-plan-step-checks={step.id}
+                  sx={{ m: 0, pl: 2, typography: 'body2' }}
+                >
+                  {step.checks.map((check, checkIndex) => (
+                    <li key={`${check.kind}:${check.path}:${checkIndex}`}>
+                      {formatObjectiveCheck(check)}
+                    </li>
+                  ))}
+                </Box>
+              </>
+            ) : null}
+            {step.inputContracts?.length ? (
+              <>
+                <Typography variant="caption" sx={{ pt: 0.5, fontWeight: 700 }}>
+                  {planCopy.inputContracts}
+                </Typography>
+                <Box
+                  component="ul"
+                  data-phi-plan-step-input-contracts={step.id}
+                  sx={{ m: 0, pl: 2, typography: 'body2' }}
+                >
+                  {step.inputContracts.map((contract, contractIndex) => (
+                    <li key={`${contract.path}:${contractIndex}`}>
+                      {formatInputContract(contract)}
+                    </li>
+                  ))}
+                </Box>
+              </>
+            ) : null}
           </Stack>
         </Box>
       </PlanTimelineStep>

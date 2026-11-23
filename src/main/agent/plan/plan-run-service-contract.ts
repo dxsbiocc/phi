@@ -31,6 +31,8 @@ export interface PlanRunServiceDependencies<StoredEvent extends Record<string, u
     }
   }
   resolveRuntimeSessionId(phiSessionId: string): string | null
+  resolveProjectRoot?(phiSessionId: string): string | null | undefined
+  enableCrossStepContextChecks?: boolean
   requiresDurableLaunch?(phiSessionId: string): boolean
   enterReplanMode?(runtimeSessionId: string, requestId: string): Promise<unknown>
   exitReplanMode?(runtimeSessionId: string, requestId: string): Promise<boolean>

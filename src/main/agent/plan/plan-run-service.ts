@@ -17,6 +17,8 @@ import {
   type PlanExecutor,
   type PlanExecutorEvent
 } from './execution/plan-executor'
+import { verifyPlanStepChecks } from './execution/step-verification'
+import { evaluateStepScientificCompatibility } from '../scientific-context/compatibility'
 import { reducePlanRun } from './model/plan-run-state'
 import { validatePlanSpec, type PlanSpecValidationResult } from './model/plan-spec'
 import type {
@@ -670,6 +672,24 @@ export function createPlanRunService<StoredEvent extends Record<string, unknown>
     clock: deps.clock ?? (() => new Date().toISOString()),
     ids: deps.ids ?? randomUUID,
     ...(deps.requiresDurableLaunch ? { requiresDurableLaunch: deps.requiresDurableLaunch } : {}),
+    ...(deps.resolveProjectRoot
+      ? {
+          verifyStep: ({ sessionId, step }) => {
+            const root = deps.resolveProjectRoot?.(sessionId)
+            return root ? verifyPlanStepChecks(step, root) : { ok: true, failures: [] }
+          },
+          ...(deps.enableCrossStepContextChecks === false
+            ? {}
+            : {
+                preflightStep: ({ sessionId, step }) => {
+                  const root = deps.resolveProjectRoot?.(sessionId)
+                  return root
+                    ? evaluateStepScientificCompatibility(step, root)
+                    : { status: 'compatible' as const }
+                }
+              })
+        }
+      : {}),
     ...(deps.maxConcurrent === undefined ? {} : { maxConcurrent: deps.maxConcurrent })
   })
   return new PlanRunServiceImplementation(executor, deps, store, events.prime)

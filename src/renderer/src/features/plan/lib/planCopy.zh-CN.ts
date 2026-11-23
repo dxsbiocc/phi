@@ -98,5 +98,17 @@ export const planChinese = {
   stepDetails: '说明与完成标准',
   expandStepDetails: (title: string) => `展开“${title}”的说明与完成标准`,
   instructions: '说明',
-  acceptanceCriteria: '完成标准'
+  acceptanceCriteria: '完成标准',
+  objectiveChecks: '客观验收项',
+  inputContracts: '科学输入合同',
+  checkFileExists: (path: string) => `文件存在：${path}`,
+  checkNonEmptyFile: (path: string) => `非空文件：${path}`,
+  checkJsonValid: (path: string) => `合法 JSON：${path}`,
+  checkTableSchema: (path: string, details: string) =>
+    details ? `表格结构（${details}）：${path}` : `表格结构：${path}`,
+  contractExpectedReference: (assembly: string) => `参考基因组 = ${assembly}`,
+  contractMatchReference: (peer: string) => `参考基因组与 ${peer} 一致`,
+  contractMatrixSemantics: (semantics: string) => `矩阵语义 ∈ [${semantics}]`,
+  contractMatchSamples: (peer: string) => `样本集合与 ${peer} 一致`,
+  contractDonorMapping: '需要供体映射'
 } satisfies typeof planEnglish
