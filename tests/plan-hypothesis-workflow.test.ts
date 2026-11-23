@@ -15,16 +15,26 @@ function sampleHypothesisPlan(): PlanSpec {
     version: 1,
     goal: 'Test candidate biological hypotheses with workspace tools',
     literatureReview: {
-      needed: false,
-      rationale: 'Standard QC and count-matrix comparison can be evaluated directly from local data.'
+      needed: true,
+      rationale: 'Prior mechanism and confounder evidence informs competing hypotheses.',
+      scope: 'Pathway X regulation under Condition A vs. batch artifacts',
+      databases: ['PubMed', 'bioRxiv'],
+      synthesis:
+        'Peer-reviewed studies report pathway X activation, while preprint reports highlight batch confounding.',
+      references: ['PMID:12345678', 'https://doi.org/10.1000/example']
     },
     hypotheses: [
       {
         id: 'h1',
         statement: 'Condition A upregulates pathway X relative to control.',
+        mechanism: 'Ligand activation drives downstream TF phosphorylation of pathway X targets.',
         rationale: 'Prior pilot signal suggested pathway X shift.',
         selected: true,
-        testCriteria: 'Adjusted p < 0.05 and positive log2FoldChange in pathway X genes'
+        prediction: 'Pathway X core genes show positive log2FoldChange > 1.0 after donor adjustment.',
+        testCriteria: 'Adjusted p < 0.05 and positive log2FoldChange in pathway X genes',
+        falsificationCriteria:
+          'No significant enrichment (padj >= 0.05) or reversed fold-change after controlling for donor',
+        confounders: ['donor_id', 'sequencing_batch']
       },
       {
         id: 'h2',
@@ -48,12 +58,16 @@ function sampleHypothesisPlan(): PlanSpec {
   }
 }
 
-test('validatePlanSpec validates literatureReview, hypotheses, and step.hypothesisIds', () => {
+test('validatePlanSpec validates enriched literatureReview, competing hypotheses, and step.hypothesisIds', () => {
   const valid = validatePlanSpec(sampleHypothesisPlan())
   assert.equal(valid.ok, true)
   if (valid.ok) {
-    assert.equal(valid.spec.literatureReview?.needed, false)
+    assert.equal(valid.spec.literatureReview?.needed, true)
+    assert.deepEqual(valid.spec.literatureReview?.databases, ['PubMed', 'bioRxiv'])
+    assert.ok(valid.spec.literatureReview?.synthesis)
     assert.equal(valid.spec.hypotheses?.length, 2)
+    assert.equal(valid.spec.hypotheses?.[0]?.falsificationCriteria?.includes('padj >= 0.05'), true)
+    assert.deepEqual(valid.spec.hypotheses?.[0]?.confounders, ['donor_id', 'sequencing_batch'])
     assert.deepEqual(valid.spec.steps[0]?.hypothesisIds, ['h1'])
   }
 
@@ -85,7 +99,7 @@ test('validatePlanSpec validates literatureReview, hypotheses, and step.hypothes
   }
 })
 
-test('buildStepPrompt, planReviewContent, and replanPrompt propagate literatureReview and linked hypotheses', () => {
+test('buildStepPrompt, planReviewContent, and replanPrompt propagate synthesis, falsification, and confounders', () => {
   const spec = sampleHypothesisPlan()
   const state = createPlanRunState({
     id: 'run-hyp-1',
@@ -97,25 +111,35 @@ test('buildStepPrompt, planReviewContent, and replanPrompt propagate literatureR
   const stepPrompt = buildStepPrompt(state, 'verify-h1')
   assert.match(stepPrompt, /## Hypotheses under test/u)
   assert.match(stepPrompt, /\[h1\] Condition A upregulates pathway X/u)
-  assert.match(stepPrompt, /Adjusted p < 0\.05/u)
+  assert.match(stepPrompt, /Mechanism: Ligand activation/u)
+  assert.match(stepPrompt, /Prediction: Pathway X core genes/u)
+  assert.match(stepPrompt, /Falsification: No significant enrichment/u)
+  assert.match(stepPrompt, /Confounders\/controls: donor_id, sequencing_batch/u)
+  assert.match(stepPrompt, /avoid pseudoreplication/u)
   assert.doesNotMatch(stepPrompt, /\[h2\]/u)
 
   const reviewMd = planReviewContent(spec)
-  assert.match(reviewMd, /Literature review \(skipped\)/u)
+  assert.match(reviewMd, /Literature review \(performed\)/u)
+  assert.match(reviewMd, /Sources: PubMed, bioRxiv/u)
+  assert.match(reviewMd, /Synthesis: Peer-reviewed studies/u)
   assert.match(reviewMd, /\[selected\] h1:/u)
+  assert.match(reviewMd, /falsification: No significant enrichment/u)
   assert.match(reviewMd, /hypotheses: h1/u)
 
   const replan = replanPrompt(state)
   assert.match(replan, /"literatureReview"/u)
-  assert.match(replan, /"hypotheses"/u)
+  assert.match(replan, /"falsificationCriteria"/u)
 })
 
-test('system and RPC work-mode prompts enforce adaptive literature decision and pre-plan hypothesis selection', () => {
+test('system and RPC work-mode prompts enforce adaptive thematic literature review and falsifiable competing hypotheses', () => {
   const autoBlocks = buildPhiMainSystemPrompt([], { workMode: 'auto' }).join('\n')
   assert.match(autoBlocks, /always plan and generate candidate hypotheses/iu)
 
   const planExecuteBlocks = buildPhiMainSystemPrompt([], { workMode: 'plan_execute' }).join('\n')
   assert.match(planExecuteBlocks, /Do NOT run literature retrieval blindly/u)
+  assert.match(planExecuteBlocks, /synthesize findings thematically/u)
+  assert.match(planExecuteBlocks, /falsification criteria/iu)
+  assert.match(planExecuteBlocks, /pseudoreplication/iu)
   assert.match(planExecuteBlocks, /ask_user_question/u)
   assert.match(planExecuteBlocks, /hypothesisIds/u)
 
@@ -124,7 +148,8 @@ test('system and RPC work-mode prompts enforce adaptive literature decision and 
 
   const rpcPlanExec =
     rpcWorkModePrompt('plan_execute', ['propose_plan_steps'], ['propose_plan_steps']) ?? ''
-  assert.match(rpcPlanExec, /literatureReview/u)
+  assert.match(rpcPlanExec, /synthesize thematically/u)
+  assert.match(rpcPlanExec, /falsificationCriteria/u)
   assert.match(rpcPlanExec, /ask_user_question/u)
   assert.match(rpcPlanExec, /hypothesisIds/u)
 })

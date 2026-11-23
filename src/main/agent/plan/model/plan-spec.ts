@@ -258,7 +258,10 @@ function readStep(
 }
 
 const MAX_HYPOTHESIS_TEXT_LENGTH = 400
+const MAX_LITERATURE_SYNTHESIS_LENGTH = 1_000
 const MAX_LITERATURE_REFERENCES = 10
+const MAX_LITERATURE_DATABASES = 10
+const MAX_HYPOTHESIS_CONFOUNDERS = 8
 
 function readLiteratureReview(
   value: unknown,
@@ -278,6 +281,26 @@ function readLiteratureReview(
     MAX_HYPOTHESIS_TEXT_LENGTH,
     errors
   )
+  const scope =
+    value.scope === undefined
+      ? undefined
+      : readRequiredString(value.scope, 'literatureReview.scope', MAX_HYPOTHESIS_TEXT_LENGTH, errors)
+  const databases =
+    value.databases === undefined
+      ? undefined
+      : readStringArray(value.databases, 'literatureReview.databases', errors)
+  if (databases && databases.length > MAX_LITERATURE_DATABASES) {
+    errors.push(`literatureReview.databases must contain at most ${MAX_LITERATURE_DATABASES} items.`)
+  }
+  const synthesis =
+    value.synthesis === undefined
+      ? undefined
+      : readRequiredString(
+          value.synthesis,
+          'literatureReview.synthesis',
+          MAX_LITERATURE_SYNTHESIS_LENGTH,
+          errors
+        )
   const references =
     value.references === undefined
       ? undefined
@@ -288,6 +311,9 @@ function readLiteratureReview(
   return {
     needed: value.needed === true,
     rationale,
+    ...(scope ? { scope } : {}),
+    ...(databases?.length ? { databases } : {}),
+    ...(synthesis ? { synthesis } : {}),
     ...(references?.length ? { references } : {})
   }
 }
@@ -315,7 +341,7 @@ function readHypotheses(value: unknown, errors: string[]): PlanHypothesis[] | un
       errors.push(`${fallback}.id must match [a-z0-9-]{1,${PLAN_MAX_STEP_ID_LENGTH}}.`)
     }
     if (id && ids.has(id)) {
-      errors.push(`hypothesis \"${id}\".id must be unique within the plan.`)
+      errors.push(`hypothesis "${id}".id must be unique within the plan.`)
     }
     if (id) ids.add(id)
     const statement = readRequiredString(
@@ -327,10 +353,18 @@ function readHypotheses(value: unknown, errors: string[]): PlanHypothesis[] | un
     if (typeof raw.selected !== 'boolean') {
       errors.push(`${fallback}.selected must be a boolean.`)
     }
+    const mechanism =
+      raw.mechanism === undefined
+        ? undefined
+        : readRequiredString(raw.mechanism, `${fallback}.mechanism`, MAX_HYPOTHESIS_TEXT_LENGTH, errors)
     const rationale =
       raw.rationale === undefined
         ? undefined
         : readRequiredString(raw.rationale, `${fallback}.rationale`, MAX_HYPOTHESIS_TEXT_LENGTH, errors)
+    const prediction =
+      raw.prediction === undefined
+        ? undefined
+        : readRequiredString(raw.prediction, `${fallback}.prediction`, MAX_HYPOTHESIS_TEXT_LENGTH, errors)
     const testCriteria =
       raw.testCriteria === undefined
         ? undefined
@@ -340,12 +374,32 @@ function readHypotheses(value: unknown, errors: string[]): PlanHypothesis[] | un
             MAX_HYPOTHESIS_TEXT_LENGTH,
             errors
           )
+    const falsificationCriteria =
+      raw.falsificationCriteria === undefined
+        ? undefined
+        : readRequiredString(
+            raw.falsificationCriteria,
+            `${fallback}.falsificationCriteria`,
+            MAX_HYPOTHESIS_TEXT_LENGTH,
+            errors
+          )
+    const confounders =
+      raw.confounders === undefined
+        ? undefined
+        : readStringArray(raw.confounders, `${fallback}.confounders`, errors)
+    if (confounders && confounders.length > MAX_HYPOTHESIS_CONFOUNDERS) {
+      errors.push(`${fallback}.confounders must contain at most ${MAX_HYPOTHESIS_CONFOUNDERS} items.`)
+    }
     hypotheses.push({
       id,
       statement,
       selected: raw.selected === true,
+      ...(mechanism ? { mechanism } : {}),
       ...(rationale ? { rationale } : {}),
-      ...(testCriteria ? { testCriteria } : {})
+      ...(prediction ? { prediction } : {}),
+      ...(testCriteria ? { testCriteria } : {}),
+      ...(falsificationCriteria ? { falsificationCriteria } : {}),
+      ...(confounders?.length ? { confounders } : {})
     })
   })
   if (hypotheses.length > 0 && !hypotheses.some((item) => item.selected)) {
@@ -364,7 +418,7 @@ function validateStepHypothesisReferences(
     for (const hypothesisId of step.hypothesisIds ?? []) {
       if (!knownIds.has(hypothesisId)) {
         errors.push(
-          `step \"${step.id}\".hypothesisIds references missing hypothesis \"${hypothesisId}\".`
+          `step "${step.id}".hypothesisIds references missing hypothesis "${hypothesisId}".`
         )
       }
     }

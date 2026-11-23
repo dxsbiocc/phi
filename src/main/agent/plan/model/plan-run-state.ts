@@ -50,13 +50,23 @@ function cloneSpec(spec: PlanSpec): PlanSpec {
       ? {
           literatureReview: {
             ...spec.literatureReview,
+            ...(spec.literatureReview.databases
+              ? { databases: [...spec.literatureReview.databases] }
+              : {}),
             ...(spec.literatureReview.references
               ? { references: [...spec.literatureReview.references] }
               : {})
           }
         }
       : {}),
-    ...(spec.hypotheses ? { hypotheses: spec.hypotheses.map((item) => ({ ...item })) } : {}),
+    ...(spec.hypotheses
+      ? {
+          hypotheses: spec.hypotheses.map((item) => ({
+            ...item,
+            ...(item.confounders ? { confounders: [...item.confounders] } : {})
+          }))
+        }
+      : {}),
     steps: spec.steps.map(cloneStep)
   }
 }

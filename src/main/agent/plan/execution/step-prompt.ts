@@ -92,16 +92,22 @@ function hypothesisContext(state: PlanRunState, step: PlanStep): string[] {
         .filter((item): item is NonNullable<typeof item> => item !== undefined)
     : state.spec.hypotheses.filter((item) => item.selected)
   if (!linked.length) return []
-  const lines = linked.map((item) =>
-    item.testCriteria
-      ? `- [${item.id}] ${item.statement} (Test criteria: ${item.testCriteria})`
+  const lines = linked.map((item) => {
+    const details: string[] = []
+    if (item.mechanism) details.push(`Mechanism: ${item.mechanism}`)
+    if (item.prediction) details.push(`Prediction: ${item.prediction}`)
+    if (item.testCriteria) details.push(`Test criteria: ${item.testCriteria}`)
+    if (item.falsificationCriteria) details.push(`Falsification: ${item.falsificationCriteria}`)
+    if (item.confounders?.length) details.push(`Confounders/controls: ${item.confounders.join(', ')}`)
+    return details.length > 0
+      ? `- [${item.id}] ${item.statement} (${details.join('; ')})`
       : `- [${item.id}] ${item.statement}`
-  )
+  })
   return [
     '## Hypotheses under test',
     [
       ...lines,
-      'Evaluate these hypotheses with actual tool outputs and report whether the evidence supports, refutes, or leaves each hypothesis inconclusive.'
+      'Evaluate these hypotheses with actual tool outputs. Separate observed data from interpretation, account for listed confounders/replication level (avoid pseudoreplication), and report clearly whether verified evidence supports, refutes, or leaves each hypothesis inconclusive.'
     ].join('\n')
   ]
 }

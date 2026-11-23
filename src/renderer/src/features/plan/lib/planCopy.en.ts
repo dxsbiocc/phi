@@ -115,9 +115,15 @@ export const planEnglish = {
   contractDonorMapping: 'requires donor mapping',
   literatureReviewPerformed: 'Literature review (performed)',
   literatureReviewSkipped: 'Literature review (skipped)',
+  literatureSources: (sources: string) => `Sources: ${sources}`,
+  literatureSynthesis: (synthesis: string) => `Synthesis: ${synthesis}`,
   hypotheses: 'Hypotheses',
   hypothesisSelected: 'Selected',
   hypothesisCandidate: 'Candidate',
+  hypothesisMechanism: (mechanism: string) => `Mechanism: ${mechanism}`,
+  hypothesisPrediction: (prediction: string) => `Prediction: ${prediction}`,
   hypothesisTestCriteria: (criteria: string) => `Test criteria: ${criteria}`,
+  hypothesisFalsification: (criteria: string) => `Falsification: ${criteria}`,
+  hypothesisConfounders: (confounders: string) => `Confounders/controls: ${confounders}`,
   testsHypotheses: (ids: string) => `Tests: ${ids}`
 }

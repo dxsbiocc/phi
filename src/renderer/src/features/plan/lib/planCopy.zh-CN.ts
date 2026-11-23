@@ -113,9 +113,15 @@ export const planChinese = {
   contractDonorMapping: '需要供体映射',
   literatureReviewPerformed: '文献调研（已执行）',
   literatureReviewSkipped: '文献调研（已跳过）',
+  literatureSources: (sources: string) => `检索来源：${sources}`,
+  literatureSynthesis: (synthesis: string) => `主题综合：${synthesis}`,
   hypotheses: '研究假设',
   hypothesisSelected: '已选定',
   hypothesisCandidate: '候选',
+  hypothesisMechanism: (mechanism: string) => `机制：${mechanism}`,
+  hypothesisPrediction: (prediction: string) => `预测：${prediction}`,
   hypothesisTestCriteria: (criteria: string) => `验证标准：${criteria}`,
+  hypothesisFalsification: (criteria: string) => `证伪标准：${criteria}`,
+  hypothesisConfounders: (confounders: string) => `混杂/控制：${confounders}`,
   testsHypotheses: (ids: string) => `验证假设：${ids}`
 } satisfies typeof planEnglish

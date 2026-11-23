@@ -91,7 +91,13 @@ export interface PlanLiteratureReviewDecision {
   needed: boolean
   /** Concise reason why literature retrieval was performed or skipped. */
   rationale: string
-  /** Key citations, PMIDs, DOIs, or URLs retrieved when needed is true. */
+  /** Optional concise search scope or framing (e.g. PICO / key concepts) when needed is true. */
+  scope?: string
+  /** Databases or search sources actually consulted (e.g. PubMed, bioRxiv, Semantic Scholar). */
+  databases?: string[]
+  /** Thematic synthesis of consensus, conflicts, and research gaps motivating hypotheses. */
+  synthesis?: string
+  /** Verified citations, DOIs, PMIDs, or URLs retrieved when needed is true. */
   references?: string[]
 }
 
@@ -99,12 +105,20 @@ export interface PlanHypothesis {
   id: string
   /** Concrete, testable hypothesis statement. */
   statement: string
-  /** Why this hypothesis is plausible given the task, data, or literature. */
+  /** Mechanistic explanation (how/why) rather than pure correlation. */
+  mechanism?: string
+  /** Why this hypothesis is plausible given the task, data, or literature synthesis. */
   rationale?: string
   /** Whether the user selected this hypothesis for verification in the plan. */
   selected: boolean
+  /** Specific directional or quantitative prediction expected if the hypothesis holds. */
+  prediction?: string
   /** Observable evidence criteria that would support or refute the hypothesis. */
   testCriteria?: string
+  /** Explicit observable evidence that would disprove/falsify this hypothesis. */
+  falsificationCriteria?: string
+  /** Key confounders, batch/donor nesting, or alternative explanations to control during testing. */
+  confounders?: string[]
 }
 
 export interface PlanStep {

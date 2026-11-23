@@ -84,10 +84,17 @@ function planParameters(availableAgents: readonly string[]): ToolDefinition['par
         additionalProperties: false,
         required: ['needed', 'rationale'],
         description:
-          'Record whether prior literature/research retrieval was needed before generating hypotheses, and briefly explain why it was performed or skipped.',
+          'Record whether prior literature/research retrieval was needed before generating hypotheses, explain why it was performed or skipped, and when performed include thematic synthesis (consensus, conflicts, gaps) and verified references.',
         properties: {
           needed: { type: 'boolean' },
           rationale: { type: 'string', minLength: 1, maxLength: 400 },
+          scope: { type: 'string', minLength: 1, maxLength: 400 },
+          databases: {
+            type: 'array',
+            maxItems: 10,
+            items: { type: 'string', minLength: 1 }
+          },
+          synthesis: { type: 'string', minLength: 1, maxLength: 1000 },
           references: {
             type: 'array',
             maxItems: 10,
@@ -100,7 +107,7 @@ function planParameters(availableAgents: readonly string[]): ToolDefinition['par
         minItems: 1,
         maxItems: 10,
         description:
-          'Candidate hypotheses generated before planning, with selected=true on the hypothesis(es) chosen by the user for verification.',
+          'Competing, testable candidate hypotheses generated before planning, with selected=true on the hypothesis(es) chosen by the user for verification. Include mechanism, specific prediction, falsification criteria, and key confounders/controls.',
         items: {
           type: 'object',
           additionalProperties: false,
@@ -113,9 +120,17 @@ function planParameters(availableAgents: readonly string[]): ToolDefinition['par
               pattern: '^[a-z0-9-]+$'
             },
             statement: { type: 'string', minLength: 1, maxLength: 400 },
+            mechanism: { type: 'string', minLength: 1, maxLength: 400 },
             rationale: { type: 'string', minLength: 1, maxLength: 400 },
             selected: { type: 'boolean' },
-            testCriteria: { type: 'string', minLength: 1, maxLength: 400 }
+            prediction: { type: 'string', minLength: 1, maxLength: 400 },
+            testCriteria: { type: 'string', minLength: 1, maxLength: 400 },
+            falsificationCriteria: { type: 'string', minLength: 1, maxLength: 400 },
+            confounders: {
+              type: 'array',
+              maxItems: 8,
+              items: { type: 'string', minLength: 1 }
+            }
           }
         }
       },

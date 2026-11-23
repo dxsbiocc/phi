@@ -22,18 +22,32 @@ function stepReview(step: PlanStep, index: number): string {
 function literatureReviewSummary(spec: PlanSpec): string[] {
   if (!spec.literatureReview) return []
   const status = spec.literatureReview.needed ? 'performed' : 'skipped'
-  const refs = spec.literatureReview.references?.length
-    ? ` (${spec.literatureReview.references.join('; ')})`
-    : ''
-  return [`Literature review (${status}): ${spec.literatureReview.rationale}${refs}`]
+  const parts = [`Literature review (${status}): ${spec.literatureReview.rationale}`]
+  if (spec.literatureReview.databases?.length) {
+    parts.push(`Sources: ${spec.literatureReview.databases.join(', ')}`)
+  }
+  if (spec.literatureReview.synthesis) {
+    parts.push(`Synthesis: ${spec.literatureReview.synthesis}`)
+  }
+  if (spec.literatureReview.references?.length) {
+    parts.push(`References: ${spec.literatureReview.references.join('; ')}`)
+  }
+  return [parts.join(' | ')]
 }
 
 function hypothesesSummary(spec: PlanSpec): string[] {
   if (!spec.hypotheses?.length) return []
   const lines = spec.hypotheses.map((item) => {
     const marker = item.selected ? '[selected]' : '[unselected]'
-    const criteria = item.testCriteria ? ` — test: ${item.testCriteria}` : ''
-    return `- ${marker} ${item.id}: ${item.statement}${criteria}`
+    const details: string[] = []
+    if (item.mechanism) details.push(`mechanism: ${item.mechanism}`)
+    if (item.prediction) details.push(`prediction: ${item.prediction}`)
+    if (item.testCriteria) details.push(`test: ${item.testCriteria}`)
+    if (item.falsificationCriteria) details.push(`falsification: ${item.falsificationCriteria}`)
+    if (item.confounders?.length) details.push(`confounders: ${item.confounders.join(', ')}`)
+    return details.length > 0
+      ? `- ${marker} ${item.id}: ${item.statement} — ${details.join('; ')}`
+      : `- ${marker} ${item.id}: ${item.statement}`
   })
   return [`## Hypotheses\n\n${lines.join('\n')}`]
 }

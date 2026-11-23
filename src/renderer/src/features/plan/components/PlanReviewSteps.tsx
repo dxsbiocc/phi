@@ -168,22 +168,29 @@ export function PlanReviewSteps({ plan }: { plan: PlanSpec }): React.JSX.Element
         </Typography>
       ) : null}
       {plan.literatureReview ? (
-        <Typography
-          variant="body2"
-          component="p"
-          data-phi-plan-literature-review
-          sx={{ mb: 1, whiteSpace: 'pre-wrap' }}
-        >
-          <strong>
-            {plan.literatureReview.needed
-              ? planCopy.literatureReviewPerformed
-              : planCopy.literatureReviewSkipped}
-          </strong>{' '}
-          {plan.literatureReview.rationale}
-          {plan.literatureReview.references?.length
-            ? ` (${plan.literatureReview.references.join('; ')})`
-            : ''}
-        </Typography>
+        <Box data-phi-plan-literature-review sx={{ mb: 1 }}>
+          <Typography variant="body2" component="p" sx={{ m: 0, whiteSpace: 'pre-wrap' }}>
+            <strong>
+              {plan.literatureReview.needed
+                ? planCopy.literatureReviewPerformed
+                : planCopy.literatureReviewSkipped}
+            </strong>{' '}
+            {plan.literatureReview.rationale}
+            {plan.literatureReview.references?.length
+              ? ` (${plan.literatureReview.references.join('; ')})`
+              : ''}
+          </Typography>
+          {plan.literatureReview.databases?.length ? (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+              {planCopy.literatureSources(plan.literatureReview.databases.join(', '))}
+            </Typography>
+          ) : null}
+          {plan.literatureReview.synthesis ? (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', whiteSpace: 'pre-wrap' }}>
+              {planCopy.literatureSynthesis(plan.literatureReview.synthesis)}
+            </Typography>
+          ) : null}
+        </Box>
       ) : null}
       {plan.hypotheses?.length ? (
         <Box data-phi-plan-hypotheses sx={{ mb: 1.25 }}>
@@ -191,17 +198,29 @@ export function PlanReviewSteps({ plan }: { plan: PlanSpec }): React.JSX.Element
             {planCopy.hypotheses}
           </Typography>
           <Box component="ul" sx={{ m: 0, pl: 2, typography: 'body2' }}>
-            {plan.hypotheses.map((hypothesis) => (
-              <li key={hypothesis.id}>
-                <strong>
-                  [{hypothesis.selected ? planCopy.hypothesisSelected : planCopy.hypothesisCandidate}]
-                </strong>{' '}
-                {hypothesis.id}: {hypothesis.statement}
-                {hypothesis.testCriteria
-                  ? ` — ${planCopy.hypothesisTestCriteria(hypothesis.testCriteria)}`
-                  : ''}
-              </li>
-            ))}
+            {plan.hypotheses.map((hypothesis) => {
+              const details: string[] = []
+              if (hypothesis.mechanism) details.push(planCopy.hypothesisMechanism(hypothesis.mechanism))
+              if (hypothesis.prediction) details.push(planCopy.hypothesisPrediction(hypothesis.prediction))
+              if (hypothesis.testCriteria) {
+                details.push(planCopy.hypothesisTestCriteria(hypothesis.testCriteria))
+              }
+              if (hypothesis.falsificationCriteria) {
+                details.push(planCopy.hypothesisFalsification(hypothesis.falsificationCriteria))
+              }
+              if (hypothesis.confounders?.length) {
+                details.push(planCopy.hypothesisConfounders(hypothesis.confounders.join(', ')))
+              }
+              return (
+                <li key={hypothesis.id}>
+                  <strong>
+                    [{hypothesis.selected ? planCopy.hypothesisSelected : planCopy.hypothesisCandidate}]
+                  </strong>{' '}
+                  {hypothesis.id}: {hypothesis.statement}
+                  {details.length > 0 ? ` — ${details.join('; ')}` : ''}
+                </li>
+              )
+            })}
           </Box>
         </Box>
       ) : null}
