@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { PILOT_VISIBLE_TASKS } from '../scripts/eval/scientific/pilot-tasks'
+import {
+  EVAL_CONTRACT_VERSION,
+  type VisibleEvalTaskCard
+} from '../scripts/eval/scientific/contract'
 import { isPathContainedInTrial } from '../scripts/eval/scientific/isolation'
 import {
   REQUIRED_PRODUCTION_SERVICES,
@@ -12,6 +15,43 @@ import {
   validateProductionAssembly,
   type ProductionAssemblyManifest
 } from '../scripts/eval/scientific/production-harness'
+
+const SYNTHETIC_TASK: VisibleEvalTaskCard = {
+  contractVersion: EVAL_CONTRACT_VERSION,
+  taskId: 'SYNTH_HARNESS_01',
+  taskVersion: '1.0.0',
+  title: 'Synthetic differential table check',
+  studyId: 'synthetic_study_v1',
+  datasetId: 'synthetic_dataset_v1',
+  relatedTaskIds: [],
+  split: 'dev',
+  readiness: 'ready',
+  prompt: 'Compute a synthetic summary table and write results/summary.tsv.',
+  inputSource: {
+    accession: 'SYNTH_ACC_01',
+    version: '2026-01-01',
+    summary: 'Synthetic fixture table',
+    acquisitionSteps: ['Stage synthetic fixture']
+  },
+  referenceVersion: 'SYNTH_REF_v1',
+  tools: ['wrapper', 'notebook'],
+  visibleOutputs: [
+    {
+      id: 'summary_results',
+      path: 'results/summary.tsv',
+      format: 'tsv',
+      description: 'Synthetic summary table',
+      requiredColumns: ['gene_id', 'log2FoldChange', 'padj'],
+      minDataRows: 1
+    }
+  ],
+  budget: {
+    maxWallSeconds: 300,
+    maxModelCalls: 20,
+    maxCostUsd: 2
+  },
+  scoringVersion: '1.0.0'
+}
 
 function buildAssembly(
   mode: ProductionAssemblyManifest['mode'],
@@ -67,21 +107,21 @@ test('runEvaluatedTrial integrates R01 contract, R03 canary isolation, R02 assem
     const hiddenDir = join(root, 'hidden-ref')
     const artifactsDir = join(root, 'artifacts')
     mkdirSync(hiddenDir, { recursive: true })
-    const refPath = join(hiddenDir, 'de.tsv')
-    writeFileSync(refPath, 'gene_id\tlog2FoldChange\tpadj\nENSG1\t2.0\t0.001\nENSG2\t-1.5\t0.02\n')
+    const refPath = join(hiddenDir, 'summary.tsv')
+    writeFileSync(refPath, 'gene_id\tlog2FoldChange\tpadj\nG1\t2.0\t0.001\nG2\t-1.5\t0.02\n')
 
     const result = await runEvaluatedTrial({
       trialId: 'trial_calib_001',
       arm: 'phi_full',
-      task: PILOT_VISIBLE_TASKS[3],
+      task: SYNTHETIC_TASK,
       assembly: buildAssembly('engineering_calibration', 'controlled_mock'),
       artifactsBaseDir: artifactsDir,
       hiddenReferenceDir: hiddenDir,
       baseTempDir: root,
       scoringRules: [
         {
-          artifactId: 'de_results',
-          candidatePath: 'results/deseq2_results.tsv',
+          artifactId: 'summary_results',
+          candidatePath: 'results/summary.tsv',
           referencePath: refPath,
           format: 'tsv',
           idColumn: 'gene_id',
@@ -99,8 +139,8 @@ test('runEvaluatedTrial integrates R01 contract, R03 canary isolation, R02 assem
       execute: async ({ sandbox }) => {
         mkdirSync(join(sandbox.cwd, 'results'), { recursive: true })
         writeFileSync(
-          join(sandbox.cwd, 'results', 'deseq2_results.tsv'),
-          'gene_id\tlog2FoldChange\tpadj\nENSG2\t-1.5\t0.02\nENSG1\t2.0\t0.001\n'
+          join(sandbox.cwd, 'results', 'summary.tsv'),
+          'gene_id\tlog2FoldChange\tpadj\nG2\t-1.5\t0.02\nG1\t2.0\t0.001\n'
         )
         return {
           outcome: 'completed',

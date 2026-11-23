@@ -10,7 +10,41 @@ import {
   runEvalBatch,
   type EvalArmConfig
 } from '../scripts/eval/scientific/batch-runner'
-import { PILOT_VISIBLE_TASKS } from '../scripts/eval/scientific/pilot-tasks'
+import {
+  EVAL_CONTRACT_VERSION,
+  type VisibleEvalTaskCard
+} from '../scripts/eval/scientific/contract'
+
+const SYNTHETIC_TASKS: VisibleEvalTaskCard[] = Array.from({ length: 6 }, (_, index) => ({
+  contractVersion: EVAL_CONTRACT_VERSION,
+  taskId: `SYNTH_BATCH_${index + 1}`,
+  taskVersion: '1.0.0',
+  title: `Synthetic batch task ${index + 1}`,
+  studyId: 'synthetic_batch_study',
+  datasetId: 'synthetic_batch_dataset',
+  relatedTaskIds: [],
+  split: 'dev',
+  readiness: 'ready',
+  prompt: `Run synthetic task ${index + 1}`,
+  inputSource: {
+    accession: `SYNTH_ACC_${index + 1}`,
+    version: '2026-01-01',
+    summary: 'Synthetic batch input',
+    acquisitionSteps: ['Stage synthetic fixture']
+  },
+  referenceVersion: 'SYNTH_REF_v1',
+  tools: ['wrapper', 'notebook'],
+  visibleOutputs: [
+    {
+      id: 'out',
+      path: 'results/out.tsv',
+      format: 'tsv',
+      description: 'Synthetic output'
+    }
+  ],
+  budget: { maxWallSeconds: 300, maxModelCalls: 20, maxCostUsd: 2 },
+  scoringVersion: '1.0.0'
+}))
 
 const PHI_FULL: EvalArmConfig = {
   armId: 'phi_full',
@@ -39,15 +73,15 @@ test('assertCoreAblationParity verifies only enableCrossStepContextChecks differ
 
 test('buildBatchSchedule produces 36 deterministic interleaved trials for 6 tasks x 2 arms x 3 reps', () => {
   const s1 = buildBatchSchedule({
-    studyId: 'pilot',
-    tasks: PILOT_VISIBLE_TASKS,
+    studyId: 'synthetic_batch',
+    tasks: SYNTHETIC_TASKS,
     arms: [PHI_FULL, PHI_NO_CTX],
     reps: 3,
     seed: 20261123
   })
   const s2 = buildBatchSchedule({
-    studyId: 'pilot',
-    tasks: PILOT_VISIBLE_TASKS,
+    studyId: 'synthetic_batch',
+    tasks: SYNTHETIC_TASKS,
     arms: [PHI_FULL, PHI_NO_CTX],
     reps: 3,
     seed: 20261123
@@ -61,8 +95,8 @@ test('runEvalBatch resumes without rerunning terminal trials and separates compl
   const dir = mkdtempSync(join(tmpdir(), 'phi-batch-'))
   try {
     const schedule = buildBatchSchedule({
-      studyId: 'pilot',
-      tasks: PILOT_VISIBLE_TASKS.slice(0, 2),
+      studyId: 'synthetic_batch',
+      tasks: SYNTHETIC_TASKS.slice(0, 2),
       arms: [PHI_FULL, PHI_NO_CTX],
       reps: 1,
       seed: 42
@@ -72,7 +106,7 @@ test('runEvalBatch resumes without rerunning terminal trials and separates compl
 
     const first = await runEvalBatch({
       batchId: 'b1',
-      studyId: 'pilot',
+      studyId: 'synthetic_batch',
       mode: 'dry_run',
       batchDir: dir,
       schedule,
@@ -110,7 +144,7 @@ test('runEvalBatch resumes without rerunning terminal trials and separates compl
     const executedSecond: string[] = []
     const second = await runEvalBatch({
       batchId: 'b1',
-      studyId: 'pilot',
+      studyId: 'synthetic_batch',
       mode: 'dry_run',
       batchDir: dir,
       schedule,
