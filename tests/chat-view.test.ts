@@ -2563,7 +2563,7 @@ test('chat view shows an error state for a failed wrapper plan tool call, with n
   assert.doesNotMatch(markup, /fastq-qc|multiqc|nextflow/i)
 })
 
-test('Tab on an empty input accepts the suggested next action as real text', () => {
+test('Tab or ArrowRight on an empty input accepts the suggested next action as real text', () => {
   const tab = {
     key: 'Tab',
     shiftKey: false,
@@ -2572,14 +2572,23 @@ test('Tab on an empty input accepts the suggested next action as real text', () 
     ctrlKey: false,
     isComposing: false
   }
+  const arrowRight = { ...tab, key: 'ArrowRight' }
   assert.equal(
     suggestedNextActionToAccept(tab, '', '列出当前可用的 wrappers'),
     '列出当前可用的 wrappers'
   )
-  // Only when there is a suggestion and nothing typed yet, and only for a plain Tab.
+  assert.equal(
+    suggestedNextActionToAccept(arrowRight, '', '列出当前可用的 wrappers'),
+    '列出当前可用的 wrappers'
+  )
+  // Only when there is a suggestion and nothing typed yet, and only for plain Tab or ArrowRight.
   assert.equal(suggestedNextActionToAccept(tab, '', null), null)
+  assert.equal(suggestedNextActionToAccept(arrowRight, '', null), null)
   assert.equal(suggestedNextActionToAccept(tab, 'draft', '列出当前可用的 wrappers'), null)
+  assert.equal(suggestedNextActionToAccept(arrowRight, 'draft', '列出当前可用的 wrappers'), null)
   assert.equal(suggestedNextActionToAccept({ ...tab, key: 'Enter' }, '', 'x'), null)
   assert.equal(suggestedNextActionToAccept({ ...tab, shiftKey: true }, '', 'x'), null)
+  assert.equal(suggestedNextActionToAccept({ ...arrowRight, shiftKey: true }, '', 'x'), null)
   assert.equal(suggestedNextActionToAccept({ ...tab, isComposing: true }, '', 'x'), null)
+  assert.equal(suggestedNextActionToAccept({ ...arrowRight, isComposing: true }, '', 'x'), null)
 })

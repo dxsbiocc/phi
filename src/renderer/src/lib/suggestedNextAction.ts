@@ -133,8 +133,9 @@ type SuggestionKeyEvent = {
 
 /**
  * The suggested next action is shown as the input's placeholder, which the browser
- * neither selects nor copies. Tab on an empty input turns it into real, editable
- * text; returns that text, or null when the key should keep its normal behaviour.
+ * neither selects nor copies. Tab or ArrowRight on an empty input turns it into
+ * real, editable text; returns that text, or null when the key should keep its
+ * normal behaviour.
  */
 export function suggestedNextActionToAccept(
   event: SuggestionKeyEvent,
@@ -142,7 +143,7 @@ export function suggestedNextActionToAccept(
   suggestion: string | null
 ): string | null {
   if (!suggestion || input !== '') return null
-  if (event.key !== 'Tab' || event.isComposing) return null
+  if ((event.key !== 'Tab' && event.key !== 'ArrowRight') || event.isComposing) return null
   if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return null
   return suggestion
 }

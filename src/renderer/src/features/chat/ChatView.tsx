@@ -714,6 +714,14 @@ function ChatView({
                 if (acceptedSuggestion) {
                   event.preventDefault()
                   onInputChange(acceptedSuggestion)
+                  window.requestAnimationFrame(() => {
+                    const inputElement = inputRef.current
+                    inputElement?.focus({ preventScroll: true })
+                    inputElement?.setSelectionRange(
+                      acceptedSuggestion.length,
+                      acceptedSuggestion.length
+                    )
+                  })
                   return true
                 }
 
