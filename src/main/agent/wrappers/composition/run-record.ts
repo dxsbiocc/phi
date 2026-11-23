@@ -22,7 +22,7 @@ import type { WrapperRunResources } from './resources'
 import type { WrapperCompositionEntry } from './discovery'
 import type { RemoteJobSnapshot } from './remote-job'
 import { resolveRemoteOutputRoot } from '../remote-result-paths'
-import { resolveOutputPaths } from './validate'
+import { inspectOutputPaths } from './validate'
 import { declaresResearchQc } from './research-qc'
 import type { WrapperResearchQc } from '../../../../shared/wrapperResearchQcTypes'
 
@@ -203,7 +203,20 @@ function outputRecords(
   entry: WrapperCompositionEntry,
   params: Record<string, unknown>
 ): WrapperOutputRecord[] {
-  return resolveOutputPaths(entry.manifest, params, entry.componentDir).map((output) => {
+  const records: WrapperOutputRecord[] = []
+  for (const output of inspectOutputPaths(entry.manifest, params, entry.componentDir)) {
+    if (!output.resolved) {
+      if (output.primary) {
+        records.push({
+          id: output.id,
+          path: output.path,
+          exists: false,
+          primary: true,
+          location: 'local'
+        })
+      }
+      continue
+    }
     const exists = existsSync(output.absolutePath)
     let bytes: number | undefined
     try {
@@ -212,15 +225,16 @@ function outputRecords(
     } catch {
       bytes = undefined
     }
-    return {
+    records.push({
       id: output.id,
       path: output.absolutePath,
       exists,
       ...(bytes !== undefined ? { bytes } : {}),
       primary: output.primary,
       location: 'local'
-    }
-  })
+    })
+  }
+  return records
 }
 
 /** Moves a started run to its terminal state and stores its outputs, summary and log tail. */

@@ -43,7 +43,7 @@ import {
   resolveRemoteOutDir,
   type RemoteRunLayout
 } from './remote-config'
-import { resolveOutputPaths } from './validate'
+import { inspectOutputPaths, missingPrimaryOutputs, type PrimaryOutputRecord } from './validate'
 import {
   readCapabilityProfile,
   readLatestCapabilityProfileForHost
@@ -345,8 +345,26 @@ async function collectOutputs(
   componentDir: string
 ): Promise<{ outputs: WrapperOutputRecord[]; missingOutputs: string[] }> {
   const outputs: WrapperOutputRecord[] = []
-  const missingOutputs: string[] = []
-  for (const output of resolveOutputPaths(entry.manifest, params, componentDir)) {
+  const verdictRecords: PrimaryOutputRecord[] = []
+  for (const output of inspectOutputPaths(entry.manifest, params, componentDir)) {
+    if (!output.resolved) {
+      if (output.primary) {
+        outputs.push({
+          id: output.id,
+          path: output.path,
+          exists: false,
+          primary: true,
+          location: 'remote'
+        })
+      }
+      verdictRecords.push({
+        id: output.id,
+        path: output.path,
+        primary: output.primary,
+        exists: false
+      })
+      continue
+    }
     const exists = await session.exists(output.absolutePath)
     outputs.push({
       id: output.id,
@@ -355,9 +373,14 @@ async function collectOutputs(
       primary: output.primary,
       location: 'remote'
     })
-    if (output.primary && !exists) missingOutputs.push(`${output.id} (${output.path})`)
+    verdictRecords.push({
+      id: output.id,
+      path: output.path,
+      primary: output.primary,
+      exists
+    })
   }
-  return { outputs, missingOutputs }
+  return { outputs, missingOutputs: missingPrimaryOutputs(verdictRecords) }
 }
 
 async function readStderrTail(session: RemoteSshSession, runDir: string): Promise<string> {

@@ -56,6 +56,9 @@ function ensureDir(path: string): void {
 
 function collectOutputs(manifest: WrapperManifest, absoluteOutDir: string): WrapperOutputRecord[] {
   return manifest.outputs.map((output) => {
+    if (output.path.trim() === '') {
+      return { id: output.id, path: output.path, exists: false, primary: output.primary, location: 'local' }
+    }
     const path = join(absoluteOutDir, output.path)
     const exists = existsSync(path)
     let bytes: number | undefined
@@ -133,8 +136,7 @@ function readStream(stream: NodeJS.ReadableStream | null, onChunk: (chunk: Buffe
  * Drives one local run from `created` through `running` to a terminal
  * state, spawning the wrapper's fixed Nextflow entrypoint as a real child
  * process. `spawnImpl` is injectable so CI can fake Nextflow's behavior —
- * a real local Nextflow smoke run is a manual step (Milestone P1.9), not a
- * CI dependency (see docs/design/phi-wrapper-v1-implementation-plan.md).
+ * a real local Nextflow smoke run is a manual step, not a CI dependency.
  */
 export async function runLocalWrapperExecution(
   run: WrapperRun,
