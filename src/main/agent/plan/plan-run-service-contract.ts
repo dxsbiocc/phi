@@ -2,6 +2,10 @@ import type { AgentRunCompletions } from './execution/agent-run-completions'
 import type { PlanExecutorClock, PlanExecutorIds } from './execution/plan-executor'
 import type { PlanSpecValidationResult } from './model/plan-spec'
 import type {
+  PlanStalenessReport,
+  StepEvidenceFingerprint
+} from '../scientific-context/staleness'
+import type {
   PlanRunFinishedEvent,
   PlanRunReplanRequest,
   PlanRunState,
@@ -16,6 +20,15 @@ export interface PlanRunServiceStore {
   read(sessionId: string, runId: string): PlanRunState | null
   list(sessionId: string): PlanRunState[]
   listUnfinished(sessionId: string): PlanRunState[]
+  writeEvidenceFingerprints?(
+    sessionId: string,
+    runId: string,
+    fingerprints: Record<string, StepEvidenceFingerprint>
+  ): Awaitable<void>
+  readEvidenceFingerprints?(
+    sessionId: string,
+    runId: string
+  ): Record<string, StepEvidenceFingerprint> | null
 }
 
 export interface PlanRunServiceDependencies<StoredEvent extends Record<string, unknown>> {
@@ -102,6 +115,13 @@ export interface PlanRunService {
     phiSessionId: string,
     settled: (requestId: string) => boolean
   ): Promise<void>
+  /** Evaluates upstream input staleness for a historical or active plan run (R15). */
+  inspectStaleness(phiSessionId: string, runId: string): Promise<PlanStalenessReport | null>
+  /** Builds a linked follow-up PlanSpec for stale steps without mutating historical `done` steps. */
+  createDerivedRerunPlan(
+    phiSessionId: string,
+    runId: string
+  ): Promise<{ parentRunId: string; staleness: PlanStalenessReport; spec: PlanSpec } | null>
 }
 
 export type { TimelineEvent }

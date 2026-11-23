@@ -2,6 +2,7 @@ import { readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import type { PlanRunState } from '../../../../shared/planRunTypes'
+import type { StepEvidenceFingerprint } from '../../scientific-context/staleness'
 import { getPhiAgentDir } from '../../runtime-paths'
 import {
   readRecoveryFile,
@@ -59,6 +60,48 @@ export function readPlanRun(
     const state = validatePlanRunState(readRecoveryFile(path, PLAN_RUN_MAX_BYTES))
     if (state?.sessionId !== sessionId || state.id !== runId) return null
     return state
+  } catch {
+    return null
+  }
+}
+
+const PLAN_RUN_EVIDENCE_DIRECTORY = 'plan-run-evidence'
+
+function securePlanRunEvidencePath(
+  sessionId: string,
+  runId: string,
+  agentDir: string,
+  create: boolean
+): string {
+  return recoveryFile(
+    agentDir,
+    ['sessions', sessionId, PLAN_RUN_EVIDENCE_DIRECTORY, `${runId}.json`],
+    create
+  )
+}
+
+export function writePlanRunEvidenceFingerprints(
+  sessionId: string,
+  runId: string,
+  fingerprints: Record<string, StepEvidenceFingerprint>,
+  agentDir = getPhiAgentDir()
+): void {
+  assertSafeIdentifiers(sessionId, runId)
+  const path = securePlanRunEvidencePath(sessionId, runId, agentDir, true)
+  writeRecoveryFile(path, fingerprints, PLAN_RUN_MAX_BYTES)
+}
+
+export function readPlanRunEvidenceFingerprints(
+  sessionId: string,
+  runId: string,
+  agentDir = getPhiAgentDir()
+): Record<string, StepEvidenceFingerprint> | null {
+  assertSafeIdentifiers(sessionId, runId)
+  try {
+    const path = securePlanRunEvidencePath(sessionId, runId, agentDir, false)
+    const raw = readRecoveryFile(path, PLAN_RUN_MAX_BYTES)
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    return raw as Record<string, StepEvidenceFingerprint>
   } catch {
     return null
   }

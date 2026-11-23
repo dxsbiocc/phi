@@ -15,7 +15,9 @@ import {
   listPlanRuns,
   listUnfinishedPlanRuns,
   readPlanRun,
-  writePlanRun
+  readPlanRunEvidenceFingerprints,
+  writePlanRun,
+  writePlanRunEvidenceFingerprints
 } from '../../main/agent/plan/persistence/plan-run-store'
 import { readMigration } from '../sessions/migration'
 import { kernelSessionMigrationPaths } from '../sessions/paths'
@@ -40,7 +42,11 @@ export class KernelPlanCoordinator implements KernelPlanRuntime {
       write: (state) => writePlanRun(state, this.agentDir),
       read: (sessionId, runId) => readPlanRun(sessionId, runId, this.agentDir),
       list: (sessionId) => listPlanRuns(sessionId, this.agentDir),
-      listUnfinished: (sessionId) => listUnfinishedPlanRuns(sessionId, this.agentDir)
+      listUnfinished: (sessionId) => listUnfinishedPlanRuns(sessionId, this.agentDir),
+      writeEvidenceFingerprints: (sessionId, runId, fingerprints) =>
+        writePlanRunEvidenceFingerprints(sessionId, runId, fingerprints, this.agentDir),
+      readEvidenceFingerprints: (sessionId, runId) =>
+        readPlanRunEvidenceFingerprints(sessionId, runId, this.agentDir)
     }
     this.service = createPlanRunService({
       engine: {
