@@ -4,7 +4,9 @@ import {
   PLAN_MAX_REPORT_SUMMARY_BYTES,
   type PlanRunState,
   type PlanSpec,
-  type PlanStepReportSummary
+  type PlanStep,
+  type PlanStepReportSummary,
+  type PlanStepVerificationResult
 } from '../../../../shared/planRunTypes'
 import { createPlanRunState, reducePlanRun, type PlanRunEvent } from '../model/plan-run-state'
 import { validatePlanSpec } from '../model/plan-spec'
@@ -46,6 +48,13 @@ export interface PlanExecutorDependencies {
   maxConcurrent?: number
   /** Remote sessions require a durable request identity before dispatch. */
   requiresDurableLaunch?(phiSessionId: string): boolean
+  /** Optional read-only objective post-step verifier run before accepting `step_succeeded` (R12). */
+  verifyStep?(input: {
+    sessionId: string
+    runId: string
+    step: PlanStep
+    report: PlanStepReportSummary
+  }): Awaitable<PlanStepVerificationResult>
 }
 
 export interface PlanExecutor {
@@ -193,7 +202,39 @@ class PlanExecutorImplementation implements PlanExecutor {
             false
           )
         }
-        return this.apply(runId, eventForOutcome(stepId, outcome, clockNow(this.deps.clock)))
+        const at = clockNow(this.deps.clock)
+        let event = eventForOutcome(stepId, outcome, at)
+        if (event.type === 'step_succeeded' && this.deps.verifyStep) {
+          const step = state.spec.steps.find((candidate) => candidate.id === stepId)
+          if (step) {
+            try {
+              const verdict = await this.deps.verifyStep({
+                sessionId: state.sessionId,
+                runId,
+                step,
+                report: event.report
+              })
+              if (!verdict.ok) {
+                event = {
+                  type: 'step_failed',
+                  stepId,
+                  report: event.report,
+                  error: `Post-step verification failed: ${verdict.failures.join('; ')}`,
+                  at
+                }
+              }
+            } catch (error) {
+              event = {
+                type: 'step_failed',
+                stepId,
+                report: event.report,
+                error: `Post-step verification error: ${errorText(error)}`,
+                at
+              }
+            }
+          }
+        }
+        return this.apply(runId, event)
       }).catch((error: unknown) => this.emitExecutorError(runId, error))
     } catch (error) {
       void this.emitExecutorError(runId, error)

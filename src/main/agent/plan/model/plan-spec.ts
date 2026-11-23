@@ -12,9 +12,11 @@ import {
   PLAN_MAX_STEP_INSTRUCTIONS_LENGTH,
   PLAN_MAX_STEP_TITLE_LENGTH,
   PLAN_SPEC_VERSION,
+  PLAN_STEP_CHECK_KINDS,
   type PlanSpec,
   type PlanStep,
-  type PlanStepAccess
+  type PlanStepAccess,
+  type PlanStepVerificationCheck
 } from '../../../../shared/planRunTypes'
 
 export type PlanSpecValidationResult =
@@ -124,6 +126,74 @@ function readWrites(
   return [...new Set(normalized)]
 }
 
+const ALLOWED_CHECK_KINDS = new Set<string>(PLAN_STEP_CHECK_KINDS)
+
+function readChecks(
+  value: unknown,
+  label: string,
+  errors: string[],
+  projectRoot: string | undefined
+): PlanStepVerificationCheck[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) {
+    errors.push(`${label}.checks must be an array.`)
+    return undefined
+  }
+  const checks: PlanStepVerificationCheck[] = []
+  value.forEach((raw, idx) => {
+    const itemLabel = `${label}.checks[${idx}]`
+    if (!isRecord(raw)) {
+      errors.push(`${itemLabel} must be an object.`)
+      return
+    }
+    if (typeof raw.kind !== 'string' || !ALLOWED_CHECK_KINDS.has(raw.kind)) {
+      errors.push(`${itemLabel}.kind must be one of: ${PLAN_STEP_CHECK_KINDS.join(', ')}.`)
+      return
+    }
+    const rawPath = readRequiredString(raw.path, `${itemLabel}.path`, undefined, errors)
+    if (!rawPath) return
+    const relative = normalizeWritePath(rawPath, projectRoot)
+    if (relative === undefined) {
+      errors.push(
+        `${itemLabel}.path must be a path inside the project, relative to the project root ("${rawPath}" is outside it).`
+      )
+      return
+    }
+    if (raw.kind === 'table_schema') {
+      if (raw.format !== undefined && raw.format !== 'tsv' && raw.format !== 'csv') {
+        errors.push(`${itemLabel}.format must be "tsv" or "csv".`)
+      }
+      for (const countKey of ['minDataRows', 'minColumns'] as const) {
+        const count = raw[countKey]
+        if (
+          count !== undefined &&
+          (typeof count !== 'number' || !Number.isInteger(count) || count < 0)
+        ) {
+          errors.push(`${itemLabel}.${countKey} must be a non-negative integer.`)
+        }
+      }
+      const requiredColumns =
+        raw.requiredColumns === undefined
+          ? undefined
+          : readStringArray(raw.requiredColumns, `${itemLabel}.requiredColumns`, errors)
+      checks.push({
+        kind: 'table_schema',
+        path: relative,
+        ...(raw.format === 'tsv' || raw.format === 'csv' ? { format: raw.format } : {}),
+        ...(typeof raw.minDataRows === 'number' ? { minDataRows: raw.minDataRows } : {}),
+        ...(typeof raw.minColumns === 'number' ? { minColumns: raw.minColumns } : {}),
+        ...(requiredColumns ? { requiredColumns } : {})
+      })
+      return
+    }
+    checks.push({
+      kind: raw.kind as 'file_exists' | 'non_empty_file' | 'json_valid',
+      path: relative
+    })
+  })
+  return checks
+}
+
 function readStep(
   value: unknown,
   index: number,
@@ -162,11 +232,17 @@ function readStep(
     access: access ?? 'read'
   }
   const writes = readWrites(value.writes, step.access, label, errors, projectRoot)
+  const checks = readChecks(value.checks, label, errors, projectRoot)
   const agent =
     value.agent === undefined
       ? undefined
       : readRequiredString(value.agent, `${label}.agent`, undefined, errors)
-  return { ...step, ...(writes ? { writes } : {}), ...(agent ? { agent } : {}) }
+  return {
+    ...step,
+    ...(writes ? { writes } : {}),
+    ...(checks?.length ? { checks } : {}),
+    ...(agent ? { agent } : {})
+  }
 }
 
 function validateStepReferences(steps: PlanStep[], errors: string[]): void {

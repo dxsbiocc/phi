@@ -38,6 +38,34 @@ export const PLAN_RUN_PAUSE_REASONS = [
 
 export type PlanStepAccess = 'read' | 'write'
 
+export const PLAN_STEP_CHECK_KINDS = [
+  'file_exists',
+  'non_empty_file',
+  'json_valid',
+  'table_schema'
+] as const
+
+export type PlanStepCheckKind = (typeof PLAN_STEP_CHECK_KINDS)[number]
+
+/** Closed list of host-evaluated, read-only post-step objective checks (R12). */
+export type PlanStepVerificationCheck =
+  | { kind: 'file_exists'; path: string }
+  | { kind: 'non_empty_file'; path: string }
+  | { kind: 'json_valid'; path: string }
+  | {
+      kind: 'table_schema'
+      path: string
+      format?: 'tsv' | 'csv'
+      minDataRows?: number
+      minColumns?: number
+      requiredColumns?: string[]
+    }
+
+export interface PlanStepVerificationResult {
+  ok: boolean
+  failures: string[]
+}
+
 export interface PlanStep {
   id: string
   title: string
@@ -46,6 +74,7 @@ export interface PlanStep {
   dependsOn: string[]
   access: PlanStepAccess
   writes?: string[]
+  checks?: PlanStepVerificationCheck[]
   agent?: string
 }
 
