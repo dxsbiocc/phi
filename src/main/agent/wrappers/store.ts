@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { restoreResearchQc } from './composition/research-qc'
 import {
   appendFileSync,
@@ -151,6 +152,43 @@ export function listWrapperRuns(agentDir = getPhiAgentDir()): WrapperRun[] {
   return listWrapperRunIds(agentDir)
     .map((id) => readWrapperRun(id, agentDir))
     .filter((run): run is WrapperRun => run !== undefined)
+}
+
+export interface WrapperManifestSnapshot {
+  capturedAt: string
+  sha256: string
+  manifest: unknown
+}
+
+const MANIFEST_SNAPSHOT_FILE = 'manifest.snapshot.json'
+
+/**
+ * Freezes the wrapper manifest as it existed when the run was created.
+ * Write-once: if a snapshot already exists for this run, it is never overwritten.
+ */
+export function writeWrapperManifestSnapshot(
+  runId: string,
+  manifest: unknown,
+  agentDir = getPhiAgentDir()
+): WrapperManifestSnapshot {
+  const path = join(getRunDir(runId, agentDir), MANIFEST_SNAPSHOT_FILE)
+  const existing = readJson<WrapperManifestSnapshot>(path)
+  if (existing) return existing
+  const snapshot: WrapperManifestSnapshot = {
+    capturedAt: new Date().toISOString(),
+    sha256: createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
+    manifest
+  }
+  ensureDir(dirname(path))
+  writeFileSync(path, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf-8')
+  return snapshot
+}
+
+export function readWrapperManifestSnapshot(
+  runId: string,
+  agentDir = getPhiAgentDir()
+): WrapperManifestSnapshot | undefined {
+  return readJson<WrapperManifestSnapshot>(join(getRunDir(runId, agentDir), MANIFEST_SNAPSHOT_FILE))
 }
 
 // --- Append-only run events --------------------------------------------------

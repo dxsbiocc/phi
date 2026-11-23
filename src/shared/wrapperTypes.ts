@@ -276,6 +276,8 @@ export interface WrapperRun {
   state: WrapperRunState
   actor: WrapperActor
   wrapper: WrapperIdentity
+  /** SHA-256 digest of the manifest frozen in `manifest.snapshot.json` when this run was created. */
+  manifestSha256?: string
   trustTier: WrapperTrustTier
   executor: WrapperExecutor
   profile: string

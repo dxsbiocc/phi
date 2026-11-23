@@ -8,6 +8,7 @@ import {
   appendWrapperRunEvent,
   getWrapperRunsDir,
   listWrapperRuns,
+  writeWrapperManifestSnapshot,
   writeWrapperRun
 } from '../store'
 import type {
@@ -135,6 +136,7 @@ export function startCompositionRun(input: {
         ? declaredOutdir
         : resolve(entry.componentDir, declaredOutdir)
 
+  const manifestSnapshot = writeWrapperManifestSnapshot(runId, entry.manifest, agentDir)
   const run: WrapperRun = {
     runId,
     planId: '',
@@ -142,6 +144,7 @@ export function startCompositionRun(input: {
     state: 'running',
     actor: 'agent',
     wrapper: wrapperIdentity(entry.manifest.id),
+    manifestSha256: manifestSnapshot.sha256,
     trustTier: 'bundled',
     executor: input.remote?.executor ?? 'local',
     profile,

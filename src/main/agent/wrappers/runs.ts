@@ -19,6 +19,7 @@ import {
 } from './remote-connection-resolver'
 import {
   readWrapperPlan,
+  writeWrapperManifestSnapshot,
   writeWrapperPlan,
   writeWrapperRun,
   appendWrapperAuditEvent,
@@ -331,6 +332,14 @@ export function submitWrapperRunPlan(
       'The external output directory must be shown on the plan card and explicitly confirmed before submission'
     )
   }
+  const catalogEntry = findWrapperCatalogEntry(
+    plan.wrapper.canonicalId,
+    plan.wrapper.version,
+    agentDir
+  )
+  const manifestSnapshot = catalogEntry
+    ? writeWrapperManifestSnapshot(runId, catalogEntry.manifest, agentDir)
+    : undefined
   const run: WrapperRun = {
     runId,
     planId: plan.planId,
@@ -338,6 +347,7 @@ export function submitWrapperRunPlan(
     state: 'created',
     actor: plan.actor,
     wrapper: plan.wrapper,
+    ...(manifestSnapshot ? { manifestSha256: manifestSnapshot.sha256 } : {}),
     trustTier: plan.trustTier,
     executor: plan.executor,
     profile: plan.profile,

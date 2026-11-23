@@ -3,16 +3,27 @@ import { join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
 import { findWrapperCatalogEntry } from './catalog'
-import { getWrapperRunsDir, readWrapperPlan, readWrapperRun, readWrapperRunEvents } from './store'
+import type { WrapperCompositionManifest } from './composition/manifest'
+import {
+  getWrapperRunsDir,
+  readWrapperManifestSnapshot,
+  readWrapperPlan,
+  readWrapperRun,
+  readWrapperRunEvents
+} from './store'
 import type { WrapperManifest } from './manifest-types'
 import type { WrapperEvent, WrapperRun, WrapperRunPlan } from './types'
+
+export type WrapperManifestSource = 'snapshot' | 'summary' | 'catalog'
 
 export interface WrapperReproducibilityBundle {
   exportedAt: string
   run: WrapperRun
   plan?: WrapperRunPlan
-  /** The manifest as currently installed — not a byte-for-byte snapshot at run time (see technical design's Audit And Reproducibility for the full target). */
-  manifest?: WrapperManifest
+  /** Frozen run-time manifest snapshot when present; falls back to summary/catalog only for legacy runs. */
+  manifest?: WrapperManifest | WrapperCompositionManifest
+  manifestSource?: WrapperManifestSource
+  manifestSha256?: string
   events: WrapperEvent[]
   params?: unknown
   outputs?: unknown
@@ -28,14 +39,19 @@ function readJsonIfExists(path: string): unknown {
   }
 }
 
+function summaryManifest(
+  summary: unknown
+): WrapperManifest | WrapperCompositionManifest | undefined {
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return undefined
+  const manifest = (summary as { manifest?: unknown }).manifest
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return undefined
+  return manifest as WrapperManifest | WrapperCompositionManifest
+}
+
 /**
- * Gathers everything Phase 1 actually has on disk for one run into a single
- * exportable bundle — see technical design's "Audit And Reproducibility".
- * This is a Phase 1-honest subset of the full target (no registry snapshot,
- * no workflow/environment digest pinning beyond what the manifest itself
- * carries, no Nextflow/container runtime version capture yet): everything
- * included here is something the run/plan store or run directory already
- * has, not new data invented for the export.
+ * Gathers everything persisted on disk for one run into a single exportable
+ * reproducibility bundle, preferring the immutable manifest snapshot captured
+ * when the run was created over the mutable installed catalog.
  */
 export function buildWrapperReproducibilityBundle(
   runId: string,
@@ -47,18 +63,43 @@ export function buildWrapperReproducibilityBundle(
   }
 
   const plan = readWrapperPlan(run.planId, agentDir)
-  const entry = findWrapperCatalogEntry(run.wrapper.canonicalId, run.wrapper.version, agentDir)
   const events = readWrapperRunEvents(runId, agentDir)
   const runDir = join(getWrapperRunsDir(agentDir), runId)
+  const summary = readJsonIfExists(join(runDir, 'summary.json'))
+
+  const snapshot = readWrapperManifestSnapshot(runId, agentDir)
+  let manifest: WrapperManifest | WrapperCompositionManifest | undefined
+  let manifestSource: WrapperManifestSource | undefined
+  let manifestSha256: string | undefined
+
+  if (snapshot) {
+    manifest = snapshot.manifest as WrapperManifest | WrapperCompositionManifest
+    manifestSource = 'snapshot'
+    manifestSha256 = snapshot.sha256
+  } else {
+    const fromSummary = summaryManifest(summary)
+    if (fromSummary) {
+      manifest = fromSummary
+      manifestSource = 'summary'
+    } else {
+      const entry = findWrapperCatalogEntry(run.wrapper.canonicalId, run.wrapper.version, agentDir)
+      if (entry?.manifest) {
+        manifest = entry.manifest
+        manifestSource = 'catalog'
+      }
+    }
+  }
 
   return {
     exportedAt: new Date().toISOString(),
     run,
     plan,
-    manifest: entry?.manifest,
+    manifest,
+    ...(manifestSource ? { manifestSource } : {}),
+    ...(manifestSha256 ? { manifestSha256 } : {}),
     events,
     params: readJsonIfExists(join(runDir, 'params.json')),
     outputs: readJsonIfExists(join(runDir, 'outputs.json')),
-    summary: readJsonIfExists(join(runDir, 'summary.json'))
+    summary
   }
 }

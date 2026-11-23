@@ -61,6 +61,9 @@ test('buildWrapperReproducibilityBundle gathers plan, manifest, events, and run-
     assert.equal(bundle.run.runId, run.runId)
     assert.equal(bundle.plan?.planId, plan.planId)
     assert.equal(bundle.manifest?.id, 'phi/ngs/fastq-qc')
+    assert.equal(bundle.manifestSource, 'snapshot')
+    assert.match(bundle.manifestSha256 ?? '', /^[0-9a-f]{64}$/)
+    assert.equal(bundle.manifestSha256, run.manifestSha256)
     // submitWrapperRunPlan itself already appends a "run_created" event; the
     // manually appended one above is a second, distinct event.
     assert.equal(bundle.events.length, 2)
@@ -68,6 +71,31 @@ test('buildWrapperReproducibilityBundle gathers plan, manifest, events, and run-
     assert.ok(bundle.outputs)
     assert.equal(bundle.summary, undefined)
     assert.ok(bundle.exportedAt)
+  })
+})
+
+test('buildWrapperReproducibilityBundle preserves the frozen manifest snapshot after wrapper removal', () => {
+  withHarness(({ agentDir, projectDir }) => {
+    const entry = installLegacyFastqQcWrapper(agentDir, projectDir)
+    writeFastqPair(projectDir, 'S1')
+
+    const plan = createWrapperRunPlan({
+      actor: 'agent',
+      wrapper: entry,
+      params: { reads: 'data/*_{R1,R2}.fastq.gz' },
+      cwd: projectDir,
+      agentDir
+    })
+    const run = submitWrapperRunPlan(plan.planId, { agentDir, autoExecute: false })
+
+    // Simulate uninstalling/mutating the installed wrapper after the run was created.
+    rmSync(entry.installedPath, { recursive: true, force: true })
+
+    const bundle = buildWrapperReproducibilityBundle(run.runId, agentDir)
+    assert.equal(bundle.manifestSource, 'snapshot')
+    assert.equal(bundle.manifestSha256, run.manifestSha256)
+    assert.equal(bundle.manifest?.id, entry.manifest.id)
+    assert.equal(bundle.manifest?.name, entry.manifest.name)
   })
 })
 
