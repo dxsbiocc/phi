@@ -34,7 +34,9 @@ const PARAM_KEYS = new Set([
   'maximum',
   'enum'
 ])
-const OUTPUT_KEYS = new Set(['type', 'path', 'primary'])
+const OUTPUT_KEYS = new Set(['type', 'path', 'primary', 'assertions'])
+const ASSERTION_KEYS = new Set(['nonEmpty', 'format', 'minDataRows', 'minColumns', 'requiredColumns'])
+const ASSERTION_FORMATS = new Set(['tsv', 'csv', 'json'])
 
 function assertKnownKeys(
   value: Record<string, unknown>,
@@ -129,10 +131,57 @@ export function parseWrapperCompositionManifest(yamlText: string): WrapperCompos
     if (value.primary !== undefined && typeof value.primary !== 'boolean') {
       throw new Error(`wrapper.yaml.outputs.${key}.primary must be a boolean`)
     }
+    let assertions: WrapperCompositionOutput['assertions']
+    if (value.assertions !== undefined) {
+      if (!isRecord(value.assertions)) {
+        throw new Error(`wrapper.yaml outputs.${key}.assertions must be a mapping`)
+      }
+      assertKnownKeys(value.assertions, ASSERTION_KEYS, `wrapper.yaml.outputs.${key}.assertions`)
+      const raw = value.assertions
+      if (raw.nonEmpty !== undefined && typeof raw.nonEmpty !== 'boolean') {
+        throw new Error(`wrapper.yaml outputs.${key}.assertions.nonEmpty must be a boolean`)
+      }
+      if (
+        raw.format !== undefined &&
+        (typeof raw.format !== 'string' || !ASSERTION_FORMATS.has(raw.format))
+      ) {
+        throw new Error(`wrapper.yaml outputs.${key}.assertions.format must be tsv, csv, or json`)
+      }
+      for (const countKey of ['minDataRows', 'minColumns'] as const) {
+        const count = raw[countKey]
+        if (
+          count !== undefined &&
+          (typeof count !== 'number' || !Number.isInteger(count) || count < 0)
+        ) {
+          throw new Error(
+            `wrapper.yaml outputs.${key}.assertions.${countKey} must be a non-negative integer`
+          )
+        }
+      }
+      if (
+        raw.requiredColumns !== undefined &&
+        (!Array.isArray(raw.requiredColumns) ||
+          !raw.requiredColumns.every((col) => typeof col === 'string' && col.trim().length > 0))
+      ) {
+        throw new Error(
+          `wrapper.yaml outputs.${key}.assertions.requiredColumns must be a list of non-empty strings`
+        )
+      }
+      assertions = {
+        ...(raw.nonEmpty !== undefined ? { nonEmpty: raw.nonEmpty } : {}),
+        ...(raw.format !== undefined ? { format: raw.format as 'tsv' | 'csv' | 'json' } : {}),
+        ...(raw.minDataRows !== undefined ? { minDataRows: raw.minDataRows as number } : {}),
+        ...(raw.minColumns !== undefined ? { minColumns: raw.minColumns as number } : {}),
+        ...(raw.requiredColumns !== undefined
+          ? { requiredColumns: raw.requiredColumns as string[] }
+          : {})
+      }
+    }
     parsedOutputs[key] = {
       type,
       path,
-      primary: value.primary ?? false
+      primary: value.primary ?? false,
+      ...(assertions ? { assertions } : {})
     }
   }
 

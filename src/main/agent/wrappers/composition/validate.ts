@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 
+import { verifyFileContentAssertion } from '../../verification/output-assertions'
 import type { WrapperCompositionManifest, WrapperCompositionParam } from './manifest'
 
 /**
@@ -245,4 +246,37 @@ export function findMissingPrimaryOutputs(
     })
   )
   return missingPrimaryOutputs(records)
+}
+
+/**
+ * Evaluates declared content assertions (`nonEmpty`, `format`, `minDataRows`,
+ * `minColumns`, `requiredColumns`) on local composition outputs after a run.
+ * Returns human-readable failure descriptions; empty means all assertions passed.
+ */
+export function findFailedOutputAssertions(
+  manifest: WrapperCompositionManifest,
+  params: Record<string, unknown>,
+  componentDir: string
+): string[] {
+  const failures: string[] = []
+  for (const inspected of inspectOutputPaths(manifest, params, componentDir)) {
+    const declared = manifest.outputs[inspected.id]
+    if (!declared?.assertions) continue
+    if (!inspected.resolved) {
+      if (inspected.primary) {
+        failures.push(`${inspected.id} (${inspected.path}): output path could not be resolved`)
+      }
+      continue
+    }
+    if (!existsSync(inspected.absolutePath)) {
+      if (!inspected.primary) continue
+      failures.push(`${inspected.id} (${inspected.path}): file does not exist`)
+      continue
+    }
+    const verdict = verifyFileContentAssertion(inspected.absolutePath, declared.assertions)
+    if (!verdict.ok) {
+      failures.push(`${inspected.id} (${inspected.path}): ${verdict.reason ?? 'assertion failed'}`)
+    }
+  }
+  return failures
 }

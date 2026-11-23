@@ -78,7 +78,11 @@ import {
   LOG_FILE,
   LOG_TAIL_CHARS
 } from './stored-job-status'
-import { findMissingPrimaryOutputs, validateWrapperParams } from './validate'
+import {
+  findFailedOutputAssertions,
+  findMissingPrimaryOutputs,
+  validateWrapperParams
+} from './validate'
 import { parseWrapperWorkflow } from './workflow-identity'
 import { declaresResearchQc, localResearchOutcome, researchQcLaunchBlock } from './research-qc'
 import { isResearchQcGated } from '../../../../shared/wrapperResearchQcTypes'
@@ -803,11 +807,16 @@ export class WrapperJobManager implements WrapperJobClient {
       : result.success
         ? findMissingPrimaryOutputs(job.entry.manifest, job.params, job.entry.componentDir)
         : []
+    const assertionFailures =
+      !result.remote && result.success && missing.length === 0
+        ? findFailedOutputAssertions(job.entry.manifest, job.params, job.entry.componentDir)
+        : []
+    const allMissing = [...missing, ...assertionFailures]
     let outcome: CompositionRunOutcome = result.cancelled
       ? 'cancelled'
       : result.lost
         ? 'lost'
-        : result.success && missing.length === 0
+        : result.success && allMissing.length === 0
           ? 'completed'
           : 'failed'
     let researchQc
@@ -818,7 +827,7 @@ export class WrapperJobManager implements WrapperJobClient {
         job.run.outDir,
         outcome,
         result.exitCode,
-        missing
+        allMissing
       )
       if (job.cancelRequested) {
         outcome = 'cancelled'
@@ -833,7 +842,7 @@ export class WrapperJobManager implements WrapperJobClient {
         outcome,
         exitCode: result.exitCode,
         output: result.output || job.tracker.tail(),
-        missingOutputs: missing,
+        missingOutputs: allMissing,
         progress: job.tracker.snapshot(),
         ...(researchQc ? { researchQc } : {}),
         // A remote run's outputs are on the cluster, out of reach of a local existsSync.
