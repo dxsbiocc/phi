@@ -6,6 +6,7 @@ import { memo, useMemo, useState, type ReactNode } from 'react'
 import { PhiIcons } from '../icons'
 import { ToolActionIcon } from './ToolActionIcon'
 import ToolCallCard, { StatusIndicator, ToolCallDetail } from './ToolCallCard'
+import { ScrollableToolDetail } from './tool-call/ScrollableToolDetail'
 import { diffStat } from '../lib/toolOutput'
 import { toolActionKind } from '../lib/toolActions'
 import type { NotebookCellJumpTarget, ToolCallItem } from '../types'
@@ -288,7 +289,13 @@ function ToolGroupCard({
           // A single call: show its args/output directly under this row instead
           // of nesting another independently-collapsible ToolCallCard inside it
           // (that would need two clicks to reach the same detail).
-          <ToolCallDetail item={items[0]} cwd={cwd} />
+          <ScrollableToolDetail
+            maxHeight={360}
+            follow={items[0].status === 'running'}
+            contentKey={items[0].output}
+          >
+            <ToolCallDetail item={items[0]} cwd={cwd} />
+          </ScrollableToolDetail>
         ) : (
           <TimelineRail>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, py: 0.5 }}>

@@ -20,9 +20,9 @@ const step = (overrides: Partial<AgentExecutionStep> = {}): AgentExecutionStep =
 
 // ── when a step row is open ──────────────────────────────────────────────
 
-test('a finished step is folded, a running one is open so its output can be followed', () => {
+test('running and finished steps stay folded by default to avoid streaming DOM bloat', () => {
   assert.equal(agentStepExpanded(step({ status: 'done' }), null), false)
-  assert.equal(agentStepExpanded(step({ status: 'running' }), null), true)
+  assert.equal(agentStepExpanded(step({ status: 'running' }), null), false)
 })
 
 test('a failed step stays open so the reason is in view', () => {
@@ -31,13 +31,14 @@ test('a failed step stays open so the reason is in view', () => {
 
 test('the user’s own choice wins over the automatic one, in both directions', () => {
   assert.equal(agentStepExpanded(step({ status: 'done' }), true), true)
+  assert.equal(agentStepExpanded(step({ status: 'running' }), true), true)
   assert.equal(agentStepExpanded(step({ status: 'running' }), false), false)
   assert.equal(agentStepExpanded(step({ status: 'error' }), false), false)
 })
 
-test('a step folds itself when it finishes, unless the user opened it', () => {
+test('a step stays folded across running -> done unless the user opened it', () => {
   // The same step, before and after it finishes.
-  assert.equal(agentStepExpanded(step({ status: 'running' }), null), true)
+  assert.equal(agentStepExpanded(step({ status: 'running' }), null), false)
   assert.equal(agentStepExpanded(step({ status: 'done' }), null), false)
   assert.equal(agentStepExpanded(step({ status: 'done' }), true), true)
 })

@@ -42,7 +42,7 @@ export function ThinkingBlock({
 }): ReactNode {
   useUiLanguage()
   const [manualExpanded, setManualExpanded] = useState<boolean | undefined>()
-  const expanded = manualExpanded ?? (isRunning && content.trim().length > 0)
+  const expanded = manualExpanded ?? false
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = useRef(true)
   const notifyContentResize = useCollapseResizeNotifier(onContentResize)

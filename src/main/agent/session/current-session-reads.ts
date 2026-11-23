@@ -111,6 +111,7 @@ export async function getCurrentContextUsage(
   const remote = manifest?.projectLocation?.kind === 'ssh'
   if (
     !options.runtimeSessionPathForSnapshot(sessionKey, snapshot) &&
+    !manifest?.kernelRuntimeRef &&
     !(remote && manifest?.runtimeRef)
   ) {
     return { ...identity, usage: null }

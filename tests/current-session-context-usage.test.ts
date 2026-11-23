@@ -89,3 +89,41 @@ test('remote context-usage failures surface to the caller', async () => {
   )
   await assert.rejects(getCurrentContextUsage(broken), /corrupted/)
 })
+
+test('a local kernel-backed session without runtimeSessionPath still queries context usage', async () => {
+  const localPayload: CurrentSessionPayload = {
+    path: 'phi-session:local-kernel',
+    phiSessionId: 'local-kernel',
+    cwd: '/tmp/workspace',
+    displayCwd: '/tmp/workspace',
+    sessionGeneration: 1,
+    permissionMode: 'ask',
+    workMode: 'auto',
+    status: 'idle',
+    unreadKind: null
+  }
+  const usage = { tokens: 12000, contextWindow: 128000, percent: 9.4 }
+  const result = await getCurrentContextUsage({
+    getCurrentPayload: () => localPayload,
+    getCurrentSessionKey: () => 'phi-session:local-kernel',
+    getCurrentSessionPath: () => 'phi-session:local-kernel',
+    getCurrentCwd: () => localPayload.cwd,
+    getCurrentPermissionMode: () => localPayload.permissionMode,
+    findPhiManifestForSession: () =>
+      ({
+        kernelRuntimeRef: { host: { kind: 'local' }, sessionId: 'local-kernel' }
+      }) as unknown as NonNullable<
+        ReturnType<CurrentContextUsageOptions['findPhiManifestForSession']>
+      >,
+    runtimeSessionPathForSnapshot: () => undefined,
+    getCurrentLifecycle: () =>
+      ({ currentRecord: null, isCurrent: () => true }) as unknown as ReturnType<
+        CurrentContextUsageOptions['getCurrentLifecycle']
+      >,
+    getAgentSession: async () =>
+      ({
+        session: { getContextUsage: async () => usage }
+      }) as unknown as Awaited<ReturnType<CurrentContextUsageOptions['getAgentSession']>>
+  })
+  assert.deepEqual(result.usage, usage)
+})

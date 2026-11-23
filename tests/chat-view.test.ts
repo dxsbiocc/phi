@@ -1688,16 +1688,16 @@ test('tool rows show line counts only for real diffs and explain deletions', () 
   assert.match(diffOutput, /title="新增 1 行，删除 1 行"/)
 })
 
-test('thinking stays a line until text arrives, then opens while running', () => {
+test('thinking stays folded while running until the user expands it', () => {
   const empty = renderThinkingBlock('', 0, true)
   const streaming = renderThinkingBlock('正在检查结果。', 2000, true)
 
   assert.match(empty, /data-phi-thinking-status="running"/)
   assert.match(empty, /aria-expanded="false"/)
   assert.match(streaming, /data-phi-thinking-status="running"/)
-  assert.match(streaming, /aria-expanded="true"/)
+  assert.match(streaming, /aria-expanded="false"/)
   assert.match(streaming, /正在思考…/)
-  assert.match(streaming, /正在检查结果。/)
+  assert.doesNotMatch(streaming, /正在检查结果。/)
 })
 
 test('only the latest thinking step in an active processing group is running', () => {
@@ -1720,7 +1720,7 @@ test('only the latest thinking step in an active processing group is running', (
 
   assert.equal((markup.match(/data-phi-thinking-status="complete"/g) ?? []).length, 1)
   assert.equal((markup.match(/data-phi-thinking-status="running"/g) ?? []).length, 1)
-  assert.match(markup, /正在分析。/)
+  assert.match(markup, /正在思考…/)
 })
 
 test('outer processing chevron follows its summary while nested chevrons reveal on hover', () => {

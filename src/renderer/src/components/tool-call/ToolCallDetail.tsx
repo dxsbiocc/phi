@@ -216,20 +216,25 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
               </Button>
             ) : null}
           </Box>
-          <Typography
-            component="pre"
-            variant="body2"
-            sx={{
-              m: 0,
-              fontFamily: 'var(--font-mono)',
-              fontSize: '0.8rem',
-              whiteSpace: 'pre-wrap',
-              overflowWrap: 'anywhere',
-              color: 'text.secondary'
-            }}
+          <Box
+            data-phi-tool-args-scroll="true"
+            sx={{ maxHeight: 220, overflowY: 'auto', overflowX: 'hidden', pr: 0.75 }}
           >
-            {argsText}
-          </Typography>
+            <Typography
+              component="pre"
+              variant="body2"
+              sx={{
+                m: 0,
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.8rem',
+                whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
+                color: 'text.secondary'
+              }}
+            >
+              {argsText}
+            </Typography>
+          </Box>
         </Box>
       ) : null}
       {item.argsJson && item.output ? <Divider sx={{ my: 1.25 }} /> : null}
@@ -265,7 +270,12 @@ export function ToolCallDetail({ item, cwd }: { item: ToolCallItem; cwd?: string
               </Button>
             ) : null}
           </Box>
-          <DiffAwareOutput text={outputPreview} cwd={cwd} />
+          <Box
+            data-phi-tool-output-scroll="true"
+            sx={{ maxHeight: 280, overflowY: 'auto', overflowX: 'hidden', pr: 0.75 }}
+          >
+            <DiffAwareOutput text={outputPreview} cwd={cwd} />
+          </Box>
         </Box>
       ) : null}
     </TimelineRail>

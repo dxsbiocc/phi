@@ -7,16 +7,16 @@ import type { AgentExecutionStep } from './agentExecutionTypes'
  */
 
 /**
- * `userChoice` is what the user last did to this row (`null`: nothing yet). Without a choice a
- * running step is open, so its output can be followed as it streams, and folds itself when it
- * finishes. A failed step stays open so the reason is in view. A finished one is folded.
+ * `userChoice` is what the user last did to this row (`null`: nothing yet). Without a choice,
+ * running and finished steps stay folded to avoid rendering large streaming payloads; only a
+ * failed step opens by default so the error is immediately visible.
  */
 export function agentStepExpanded(
   step: Pick<AgentExecutionStep, 'status'>,
   userChoice: boolean | null
 ): boolean {
   if (userChoice !== null) return userChoice
-  return step.status === 'running' || step.status === 'error'
+  return step.status === 'error'
 }
 
 export function stepAsToolCall(step: AgentExecutionStep): ToolCallItem {
