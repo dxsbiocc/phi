@@ -3,20 +3,83 @@ import { join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
 import { findWrapperCatalogEntry } from './catalog'
-import { getWrapperRunsDir, readWrapperPlan, readWrapperRun, readWrapperRunEvents } from './store'
+import type { WrapperCompositionManifest } from './composition/manifest'
+import {
+  getWrapperRunsDir,
+  readWrapperManifestSnapshot,
+  readWrapperPlan,
+  readWrapperQcSummary,
+  readWrapperRun,
+  readWrapperRunEvents,
+  readWrapperRuntimeProvenance
+} from './store'
 import type { WrapperManifest } from './manifest-types'
-import type { WrapperEvent, WrapperRun, WrapperRunPlan } from './types'
+import type {
+  WrapperEvent,
+  WrapperRun,
+  WrapperRunPlan,
+  WrapperRuntimeProvenance,
+  WrapperStepQcSummary
+} from './types'
+
+export type WrapperManifestSource = 'snapshot' | 'summary' | 'catalog'
+
+export type WrapperReproducibilityEvidenceItem =
+  | 'manifest_snapshot'
+  | 'params'
+  | 'outputs'
+  | 'host_provenance'
+  | 'nextflow_provenance'
+  | 'container_digests'
+  | 'qc_summary'
+
+export interface WrapperReproducibilityMissingItem {
+  item: WrapperReproducibilityEvidenceItem
+  reason: string
+}
+
+export interface WrapperReproducibilityCompleteness {
+  complete: boolean
+  present: WrapperReproducibilityEvidenceItem[]
+  missing: WrapperReproducibilityMissingItem[]
+}
+
+export interface WrapperReproducibilityRerunGuide {
+  wrapperId: string
+  wrapperVersion: string
+  executor: WrapperRun['executor']
+  profile: string
+  nextflowProfile: string
+  cwd: string
+  outDir: string
+  commandHint?: string
+  nextflowVersion?: string
+  nextflowEnvId?: string
+  nextflowLockSha256?: string
+  containerEngine?: string
+  pinnedImages: Array<{ ref: string; digest?: string; status: 'verified' | 'unknown' }>
+  notes: string[]
+}
 
 export interface WrapperReproducibilityBundle {
   exportedAt: string
   run: WrapperRun
   plan?: WrapperRunPlan
-  /** The manifest as currently installed — not a byte-for-byte snapshot at run time (see technical design's Audit And Reproducibility for the full target). */
-  manifest?: WrapperManifest
+  /** Frozen run-time manifest snapshot when present; falls back to summary/catalog only for legacy runs. */
+  manifest?: WrapperManifest | WrapperCompositionManifest
+  manifestSource?: WrapperManifestSource
+  manifestSha256?: string
+  nextflow?: unknown
+  runtime?: WrapperRuntimeProvenance
+  qc?: WrapperStepQcSummary
   events: WrapperEvent[]
   params?: unknown
   outputs?: unknown
   summary?: unknown
+  /** Honest audit of which reproducibility evidence items are present vs. missing. */
+  completeness: WrapperReproducibilityCompleteness
+  /** Deterministic summary for independently reproducing this run. */
+  rerunGuide: WrapperReproducibilityRerunGuide
 }
 
 function readJsonIfExists(path: string): unknown {
@@ -28,14 +91,197 @@ function readJsonIfExists(path: string): unknown {
   }
 }
 
+function summaryManifest(
+  summary: unknown
+): WrapperManifest | WrapperCompositionManifest | undefined {
+  if (!summary || typeof summary !== 'object' || Array.isArray(summary)) return undefined
+  const manifest = (summary as { manifest?: unknown }).manifest
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return undefined
+  return manifest as WrapperManifest | WrapperCompositionManifest
+}
+
+function recordCompletenessItem(
+  present: WrapperReproducibilityEvidenceItem[],
+  missing: WrapperReproducibilityMissingItem[],
+  ok: boolean,
+  item: WrapperReproducibilityEvidenceItem,
+  reason: string
+): void {
+  if (ok) present.push(item)
+  else missing.push({ item, reason })
+}
+
+function evaluateContainerCompleteness(
+  runtime: WrapperRuntimeProvenance | undefined,
+  present: WrapperReproducibilityEvidenceItem[],
+  missing: WrapperReproducibilityMissingItem[]
+): void {
+  const images = runtime?.containerRuntime?.images ?? []
+  if (images.length > 0) {
+    const unverified = images.filter((img) => img.status !== 'verified' || !img.digest)
+    recordCompletenessItem(
+      present,
+      missing,
+      unverified.length === 0,
+      'container_digests',
+      `Unverified container image digests: ${unverified.map((img) => img.ref).join(', ')}.`
+    )
+    return
+  }
+  recordCompletenessItem(
+    present,
+    missing,
+    runtime?.containerRuntime?.engine === 'conda',
+    'container_digests',
+    'Container image digest provenance was not recorded.'
+  )
+}
+
+function evaluateBundleCompleteness(input: {
+  run: WrapperRun
+  manifestSource?: WrapperManifestSource
+  manifestSha256?: string
+  params: unknown
+  outputs: unknown
+  nextflow: unknown
+  runtime?: WrapperRuntimeProvenance
+  qc?: WrapperStepQcSummary
+}): WrapperReproducibilityCompleteness {
+  const present: WrapperReproducibilityEvidenceItem[] = []
+  const missing: WrapperReproducibilityMissingItem[] = []
+
+  recordCompletenessItem(
+    present,
+    missing,
+    input.manifestSource === 'snapshot' && Boolean(input.manifestSha256),
+    'manifest_snapshot',
+    input.manifestSource
+      ? `Manifest came from mutable ${input.manifestSource} rather than an immutable snapshot.`
+      : 'Immutable manifest snapshot (manifest.snapshot.json) was not recorded.'
+  )
+  recordCompletenessItem(
+    present,
+    missing,
+    input.params !== undefined,
+    'params',
+    'Run parameters (params.json) were not recorded.'
+  )
+  recordCompletenessItem(
+    present,
+    missing,
+    input.outputs !== undefined || (input.run.outputs?.length ?? 0) > 0,
+    'outputs',
+    'Run output inventory was not recorded.'
+  )
+  recordCompletenessItem(
+    present,
+    missing,
+    Boolean(input.runtime?.host.platform && input.runtime?.host.arch),
+    'host_provenance',
+    'Host OS/architecture provenance (runtime.json) was not recorded.'
+  )
+  recordCompletenessItem(
+    present,
+    missing,
+    Boolean(
+      input.runtime?.nextflow.version ||
+      input.runtime?.nextflow.lockSha256 ||
+      input.nextflow !== undefined
+    ),
+    'nextflow_provenance',
+    'Nextflow version or managed lock provenance was not recorded.'
+  )
+  evaluateContainerCompleteness(input.runtime, present, missing)
+  recordCompletenessItem(
+    present,
+    missing,
+    (input.qc?.entries.length ?? 0) > 0,
+    'qc_summary',
+    'Structured QC summary (qc.json) was not recorded.'
+  )
+
+  return { complete: missing.length === 0, present, missing }
+}
+
+function buildRerunNotes(input: {
+  run: WrapperRun
+  manifestSource?: WrapperManifestSource
+  images: Array<{ ref: string; digest?: string; status: 'verified' | 'unknown' }>
+  completeness: WrapperReproducibilityCompleteness
+}): string[] {
+  const notes: string[] = []
+  if (input.manifestSource !== 'snapshot') {
+    notes.push(
+      'Manifest was not frozen at submission time; verify wrapper version before rerunning.'
+    )
+  }
+  if (input.run.remote) {
+    notes.push(
+      `Originally executed on remote host "${input.run.remote.host}" in ${input.run.remote.runDir}.`
+    )
+  }
+  if (input.images.some((img) => img.status !== 'verified' || !img.digest)) {
+    notes.push(
+      'One or more container images lack a verified digest; pin image digests for strict bit-for-bit reproduction.'
+    )
+  }
+  if (!input.completeness.complete) {
+    notes.push(
+      `Missing reproducibility items: ${input.completeness.missing.map((m) => m.item).join(', ')}.`
+    )
+  }
+  return notes
+}
+
+function optionalRuntimeGuideFields(
+  runtime: WrapperRuntimeProvenance | undefined
+): Partial<WrapperReproducibilityRerunGuide> {
+  const nextflow = runtime?.nextflow
+  const engine = runtime?.containerRuntime?.engine
+  return {
+    ...(nextflow?.version ? { nextflowVersion: nextflow.version } : {}),
+    ...(nextflow?.envId ? { nextflowEnvId: nextflow.envId } : {}),
+    ...(nextflow?.lockSha256 ? { nextflowLockSha256: nextflow.lockSha256 } : {}),
+    ...(engine ? { containerEngine: engine } : {})
+  }
+}
+
+function buildRerunGuide(input: {
+  run: WrapperRun
+  plan?: WrapperRunPlan
+  manifestSource?: WrapperManifestSource
+  runtime?: WrapperRuntimeProvenance
+  completeness: WrapperReproducibilityCompleteness
+}): WrapperReproducibilityRerunGuide {
+  const images = input.runtime?.containerRuntime?.images ?? []
+  return {
+    wrapperId: input.run.wrapper.canonicalId,
+    wrapperVersion: input.run.wrapper.version,
+    executor: input.run.executor,
+    profile: input.run.profile,
+    nextflowProfile: input.run.nextflowProfile ?? input.run.profile,
+    cwd: input.run.cwd,
+    outDir: input.run.outDir,
+    ...(input.plan?.commandPlan.command ? { commandHint: input.plan.commandPlan.command } : {}),
+    ...optionalRuntimeGuideFields(input.runtime),
+    pinnedImages: images.map((img) => ({
+      ref: img.ref,
+      ...(img.digest ? { digest: img.digest } : {}),
+      status: img.status
+    })),
+    notes: buildRerunNotes({
+      run: input.run,
+      manifestSource: input.manifestSource,
+      images,
+      completeness: input.completeness
+    })
+  }
+}
+
 /**
- * Gathers everything Phase 1 actually has on disk for one run into a single
- * exportable bundle — see technical design's "Audit And Reproducibility".
- * This is a Phase 1-honest subset of the full target (no registry snapshot,
- * no workflow/environment digest pinning beyond what the manifest itself
- * carries, no Nextflow/container runtime version capture yet): everything
- * included here is something the run/plan store or run directory already
- * has, not new data invented for the export.
+ * Gathers everything persisted on disk for one run into a single exportable
+ * reproducibility bundle, preferring the immutable manifest snapshot captured
+ * when the run was created over the mutable installed catalog.
  */
 export function buildWrapperReproducibilityBundle(
   runId: string,
@@ -47,18 +293,72 @@ export function buildWrapperReproducibilityBundle(
   }
 
   const plan = readWrapperPlan(run.planId, agentDir)
-  const entry = findWrapperCatalogEntry(run.wrapper.canonicalId, run.wrapper.version, agentDir)
   const events = readWrapperRunEvents(runId, agentDir)
   const runDir = join(getWrapperRunsDir(agentDir), runId)
+  const summary = readJsonIfExists(join(runDir, 'summary.json'))
+
+  const snapshot = readWrapperManifestSnapshot(runId, agentDir)
+  let manifest: WrapperManifest | WrapperCompositionManifest | undefined
+  let manifestSource: WrapperManifestSource | undefined
+  let manifestSha256: string | undefined
+
+  if (snapshot) {
+    manifest = snapshot.manifest as WrapperManifest | WrapperCompositionManifest
+    manifestSource = 'snapshot'
+    manifestSha256 = snapshot.sha256
+  } else {
+    const fromSummary = summaryManifest(summary)
+    if (fromSummary) {
+      manifest = fromSummary
+      manifestSource = 'summary'
+    } else {
+      const entry = findWrapperCatalogEntry(run.wrapper.canonicalId, run.wrapper.version, agentDir)
+      if (entry?.manifest) {
+        manifest = entry.manifest
+        manifestSource = 'catalog'
+      }
+    }
+  }
+
+  const nextflow = readJsonIfExists(join(runDir, 'nextflow.json'))
+  const runtime = readWrapperRuntimeProvenance(runId, agentDir)
+  const qc = readWrapperQcSummary(runId, agentDir)
+  const params = readJsonIfExists(join(runDir, 'params.json'))
+  const outputs = readJsonIfExists(join(runDir, 'outputs.json'))
+
+  const completeness = evaluateBundleCompleteness({
+    run,
+    manifestSource,
+    manifestSha256,
+    params,
+    outputs,
+    nextflow,
+    runtime,
+    qc
+  })
+  const rerunGuide = buildRerunGuide({
+    run,
+    plan,
+    manifestSource,
+    runtime,
+    completeness
+  })
 
   return {
     exportedAt: new Date().toISOString(),
     run,
     plan,
-    manifest: entry?.manifest,
+    manifest,
+    ...(manifestSource ? { manifestSource } : {}),
+    ...(manifestSha256 ? { manifestSha256 } : {}),
+    ...(nextflow !== undefined ? { nextflow } : {}),
+    ...(runtime ? { runtime } : {}),
+    ...(qc ? { qc } : {}),
     events,
-    params: readJsonIfExists(join(runDir, 'params.json')),
-    outputs: readJsonIfExists(join(runDir, 'outputs.json')),
-    summary: readJsonIfExists(join(runDir, 'summary.json'))
+    params,
+    outputs,
+    summary,
+    completeness,
+    rerunGuide
   }
 }

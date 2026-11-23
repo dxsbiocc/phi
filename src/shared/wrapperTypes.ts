@@ -276,6 +276,8 @@ export interface WrapperRun {
   state: WrapperRunState
   actor: WrapperActor
   wrapper: WrapperIdentity
+  /** SHA-256 digest of the manifest frozen in `manifest.snapshot.json` when this run was created. */
+  manifestSha256?: string
   trustTier: WrapperTrustTier
   executor: WrapperExecutor
   profile: string
@@ -333,6 +335,55 @@ export interface WrapperRun {
   missingOutputs?: string[]
   /** Keyed by manifest `steps[].id`. Absent/empty when the wrapper declared no steps or nothing has run yet. */
   stepStates?: Record<string, WrapperStepState>
+}
+
+export interface WrapperContainerImageProvenance {
+  /** Declared container image reference (Docker image or Singularity URL/path). */
+  ref: string
+  /** Verified immutable digest (e.g. `sha256:...` or RepoDigest), omitted when unavailable. */
+  digest?: string
+  status: 'verified' | 'unknown'
+}
+
+/**
+ * Immutable run-time provenance captured when a Wrapper run executes, persisted
+ * to `runs/<runId>/runtime.json` and included in reproducibility bundles.
+ */
+export interface WrapperRuntimeProvenance {
+  capturedAt: string
+  host: {
+    platform: string
+    arch: string
+    release: string
+  }
+  nextflow: {
+    source: 'managed' | 'host' | 'remote'
+    version?: string
+    ref?: string
+    envId?: string
+    lockSha256?: string
+    resolvedCommand?: string
+  }
+  containerRuntime?: {
+    engine: 'docker' | 'singularity' | 'conda' | 'unknown'
+    version?: string
+    images: WrapperContainerImageProvenance[]
+  }
+}
+
+export type WrapperQcTool = 'fastqc' | 'fastp' | 'salmon' | 'featurecounts' | 'star'
+
+export interface WrapperStepQcMetrics {
+  tool: WrapperQcTool
+  sourcePath: string
+  sample?: string
+  metrics: Record<string, number | string>
+  flags?: Record<string, 'PASS' | 'WARN' | 'FAIL'>
+}
+
+export interface WrapperStepQcSummary {
+  capturedAt: string
+  entries: WrapperStepQcMetrics[]
 }
 
 export type WrapperEventType =

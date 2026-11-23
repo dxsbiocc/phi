@@ -8,17 +8,12 @@ import { after, before, test } from 'node:test'
 import { remoteHelperReadyMarkerIdentity } from '../src/main/agent/remote-helper-marker'
 import { saveCapabilityProfile } from '../src/main/agent/workspace-host/capability-profile-store'
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
-import {
-  FAST_PROBE_END_SENTINEL,
-  FAST_PROBE_START_SENTINEL
-} from '../src/main/agent/workspace-host/probe-script'
 import { SshHost } from '../src/main/agent/workspace-host/ssh-host'
+import { fastProbeOutput } from './helpers/probeFixture'
 
 const VERSION = '9.9.9'
 const profileKey = { hostAlias: 'recorded-host', projectRoot: '/srv/runtime' }
-const probe = parseHostCapabilityProbe(
-  `${FAST_PROBE_START_SENTINEL}\nplatform.os=Linux\nplatform.arch=x86_64\nprobe.fast_complete=1\n${FAST_PROBE_END_SENTINEL}`
-)
+const probe = parseHostCapabilityProbe(fastProbeOutput('platform.os=Linux\nplatform.arch=x86_64'))
 
 let scratch = ''
 let sha256 = ''

@@ -20,6 +20,7 @@ import type {
   RemoteUploadFileOptions,
   RemoteSshSession
 } from '../src/main/agent/wrappers/remote-ssh-session'
+import { completeProbeOutput } from './helpers/probeFixture'
 
 const temporaryDirectories: string[] = []
 
@@ -30,15 +31,14 @@ function temporaryDirectory(): string {
 }
 
 function profile(os: string, arch: string): ReturnType<typeof parseHostCapabilityProbe> {
-  return parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
+  return parseHostCapabilityProbe(
+    completeProbeOutput(`
 platform.os=${os}
 platform.arch=${arch}
 storage.home_writable=1
 storage.home_executable=1
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
 `)
+  )
 }
 
 function unusedSession(): RemoteSshSession {

@@ -142,6 +142,6 @@ DSH 的 `src/core` 按[架构合同](https://github.com/deepseek-ai/dsh-superage
 4. **另立范围**：24 小时独立宿主、跨端跨渠道与完整 Watchdog；检查模型访问、凭据和宿主工具是否仍依赖桌面，不把当前重连宽限期当作无人值守。
 5. **最后评估学习**：先收集经授权的纠正与验收案例，使用独立留出集衡量路由错误、误打断、失败恢复、交付正确率与费用；先改规则/提示/经验，训练小模型等数据与收益明确后再决定。
 
-范围依据：[内测路线图](../roadmap/internal-beta-implementation.md)、[内核路线图](../roadmap/phi-kernel-implementation.md)明确将常驻无人值守等排除在当前内核工作之外；[能力自主扩展决策](../decisions/capability-autonomy-safety.md)将学习草稿与执行/批准分开，并列为 beta 后工作。本研究不改动这些已确认范围，也不把其中的设计草案标为已交付。
+范围依据：[内测路线图](../roadmap/internal-beta-implementation.md)、内核路线图明确将常驻无人值守等排除在当前内核工作之外；[能力自主扩展决策](../decisions/capability-autonomy-safety.md)将学习草稿与执行/批准分开，并列为 beta 后工作。本研究不改动这些已确认范围，也不把其中的设计草案标为已交付。
 
 本轮仅新增此研究文档，未改应用代码、未安装依赖、未复制外部源码。源码核对与设计推导不是运行验收，外部产品完整的训练闭环和实际生产可靠性仍未验证。

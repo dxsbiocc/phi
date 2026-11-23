@@ -45,10 +45,74 @@ const baseStepSchema = {
       description:
         'Project-relative paths this step writes. Absolute paths inside the project are accepted and stored relative.'
     },
+    hypothesisIds: {
+      type: 'array',
+      items: { type: 'string', minLength: 1, maxLength: PLAN_MAX_STEP_ID_LENGTH },
+      uniqueItems: true,
+      description:
+        'IDs of selected hypotheses from top-level hypotheses[] that this step directly tests or verifies.'
+    },
     agent: {
       type: 'string',
       minLength: 1,
       description: 'Optional; normally omit it because Phi chooses the plan step agent.'
+    }
+  }
+}
+
+const literatureReviewSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['needed', 'rationale'],
+  description:
+    'Record whether prior literature/research retrieval was needed before generating hypotheses, explain why it was performed or skipped, and when performed include thematic synthesis (consensus, conflicts, gaps) and verified references.',
+  properties: {
+    needed: { type: 'boolean' },
+    rationale: { type: 'string', minLength: 1, maxLength: 400 },
+    scope: { type: 'string', minLength: 1, maxLength: 400 },
+    databases: {
+      type: 'array',
+      maxItems: 10,
+      items: { type: 'string', minLength: 1 }
+    },
+    synthesis: { type: 'string', minLength: 1, maxLength: 1000 },
+    references: {
+      type: 'array',
+      maxItems: 10,
+      items: { type: 'string', minLength: 1 }
+    }
+  }
+}
+
+const hypothesesSchema = {
+  type: 'array',
+  minItems: 1,
+  maxItems: 10,
+  description:
+    'Competing, testable candidate hypotheses generated before planning, with selected=true on the hypothesis(es) chosen by the user for verification. Include mechanism, specific prediction, falsification criteria, and key confounders/controls.',
+  items: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['id', 'statement', 'selected'],
+    properties: {
+      id: {
+        type: 'string',
+        minLength: 1,
+        maxLength: PLAN_MAX_STEP_ID_LENGTH,
+        pattern: '^[a-z0-9-]+$'
+      },
+      statement: { type: 'string', minLength: 1, maxLength: 400 },
+      mechanism: { type: 'string', minLength: 1, maxLength: 400 },
+      rationale: { type: 'string', minLength: 1, maxLength: 400 },
+      selected: { type: 'boolean' },
+      prediction: { type: 'string', minLength: 1, maxLength: 400 },
+      testCriteria: { type: 'string', minLength: 1, maxLength: 400 },
+      falsificationCriteria: { type: 'string', minLength: 1, maxLength: 400 },
+      confounders: {
+        type: 'array',
+        maxItems: 8,
+        items: { type: 'string', minLength: 1 }
+      }
     }
   }
 }
@@ -72,6 +136,8 @@ function planParameters(availableAgents: readonly string[]): ToolDefinition['par
         description:
           'For a scientific analysis, quote the original question from the user or their confirmed clarification. A scientific plan covers one review stage. Include only independent, already justified subquestions with empty dependsOn. Return evidence to the parent before choosing a later analysis that relies on the results; do not hide such analyses inside an independent step. Omit for ordinary plans.'
       },
+      literatureReview: literatureReviewSchema,
+      hypotheses: hypothesesSchema,
       steps: {
         type: 'array',
         minItems: 1,

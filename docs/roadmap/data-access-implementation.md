@@ -1,8 +1,8 @@
 # Data Access Implementation Plan
 
-Side track of the [runtime and content distribution plan](content-distribution-implementation.md)
+Side track of the runtime and content distribution plan
 §4. Supersedes the "API skills + core fetch tool" shape of
-[content distribution design](../design/phi-content-distribution-design.md) §10.2 (decision
+content distribution design §10.2 (decision
 2026-10-03).
 
 ## Decisions (2026-10-03)

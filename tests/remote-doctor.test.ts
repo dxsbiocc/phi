@@ -8,7 +8,10 @@ import type { RemoteDoctorOptions } from '../src/shared/remoteDoctorTypes'
 import { remoteDoctor } from '../src/main/agent/remote-doctor'
 import { saveRemoteHostProfile } from '../src/main/agent/remote-hosts'
 import { saveCapabilityProfile } from '../src/main/agent/workspace-host/capability-profile-store'
-import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
+import {
+  HOST_CAPABILITY_FAST_PROBE_SCRIPT,
+  parseHostCapabilityProbe
+} from '../src/main/agent/workspace-host/probe'
 import {
   RemoteSshConnectionError,
   sshConnectionDiagnosis,
@@ -18,6 +21,7 @@ import type {
   RemoteExecResult,
   RemoteSshSession
 } from '../src/main/agent/wrappers/remote-ssh-session'
+import { completeProbeOutput } from './helpers/probeFixture'
 
 const OK: RemoteExecResult = { code: 0, stdout: '', stderr: '', signal: null }
 const MISSING: RemoteExecResult = { ...OK, code: 1 }
@@ -79,14 +83,14 @@ function capabilityProbeOutput(rows: Record<string, string> = {}): string {
     'storage.home_executable': '1',
     'storage.available_kib': '1048576',
     'storage.shared': 'unknown',
-    'probe.complete': '1',
     ...rows
   }
+  const body = Object.entries(values)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n')
   return [
     'private motd for scientist@lab-hpc',
-    '__PHI_CAPABILITY_PROBE_V1_BEGIN__',
-    ...Object.entries(values).map(([key, value]) => `${key}=${value}`),
-    '__PHI_CAPABILITY_PROBE_V1_END__',
+    completeProbeOutput(body),
     '/home/scientist/private'
   ].join('\n')
 }
@@ -256,7 +260,8 @@ test('workspace check probes once through stdin and returns only a sanitized cap
     fake.session.execWithInput = async (command, input) => {
       assert.equal(command, 'sh -s')
       if (input.includes('__PHI_RUNTIME_ROOT_CHECK_V1_BEGIN__')) return MISSING
-      probeInputs.push(input)
+      // One capability probe cycle starts with exactly one fast probe call.
+      if (input === HOST_CAPABILITY_FAST_PROBE_SCRIPT) probeInputs.push(input)
       return {
         ...OK,
         stdout: capabilityProbeOutput({ 'tool.nextflow.available': '0' })
@@ -321,7 +326,8 @@ test('capability profiles cache by host alias and project root until manually re
       const fake = fakeSession()
       fake.session.execWithInput = async (_command, input) => {
         if (input.includes('__PHI_RUNTIME_ROOT_CHECK_V1_BEGIN__')) return MISSING
-        probes += 1
+        // Count probe cycles by their fast call; the slow call belongs to the same cycle.
+        if (input === HOST_CAPABILITY_FAST_PROBE_SCRIPT) probes += 1
         return { ...OK, stdout: capabilityProbeOutput() }
       }
       return fake.session

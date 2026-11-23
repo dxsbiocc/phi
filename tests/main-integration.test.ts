@@ -58,6 +58,7 @@ import * as lifecycle from '../src/main/agent/session/session-lifecycle'
 import * as automaticModelFallback from '../src/main/agent/session/automatic-model-fallback'
 import * as notebookDocument from '../src/shared/notebookDocument'
 import * as notebookExecutionMetadata from '../src/shared/notebookExecutionMetadata'
+import { notebookExecutionEnvironmentForKernel } from '../src/main/agent/notebook/analysis-kernels'
 import * as sessionTitle from '../src/shared/sessionTitle'
 import * as sessionMode from '../src/shared/sessionMode'
 import * as sessionTitleGeneration from '../src/main/agent/session/session-title-generation'
@@ -2635,7 +2636,8 @@ async function harness(
         hasPythonKernel: true,
         hasRKernel: false,
         messages: ['未检测到 R kernel。']
-      })
+      }),
+      notebookExecutionEnvironmentForKernel
     },
     './agent/notebook/analysis-jupyter-server': {
       JupyterServerRegistry: TestJupyterServerRegistry
@@ -10069,7 +10071,8 @@ test('main IPC: analysis notebook cell execution updates the returned document',
   assert.deepEqual(result.document.cells[0].metadata.phi, {
     executionStartedAt: '2026-09-09T00:00:00.000Z',
     executionCompletedAt: '2026-09-09T00:00:01.000Z',
-    executionDurationMs: 1000
+    executionDurationMs: 1000,
+    executionEnvironment: { kernelName: 'python3' }
   })
   assert.equal(result.sessionStatus.state, 'idle')
   assert.deepEqual(app.notebookExecutionCalls, [

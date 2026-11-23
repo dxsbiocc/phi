@@ -4,8 +4,8 @@ Date: 2026-09-29
 Updated: 2026-11-19 — enabled plugins' private environments that ship a kernel package contribute managed notebook kernels (`plugin-<pluginId>-<envName>`).
 Chinese version: [phi-runtime-foundation.zh-CN.md](phi-runtime-foundation.zh-CN.md).
 Status: **Confirmed (2026-09-29; all six decisions in §9 accepted).** This
-document precedes the [content distribution design](phi-content-distribution-design.md)
-and the [implementation plan](../roadmap/content-distribution-implementation.md);
+document precedes the content distribution design
+and the implementation plan;
 wherever those touch environments, execution, or plugin structure, this
 document wins.
 
@@ -489,6 +489,6 @@ on top of it.
 | repository directories               | `resources/runtime/environments/<env name>/`, `resources/plugins/<plugin id>/`                                                                                                                                                                                                                        | `resources/runtime/environments/phi-python/`                                                    |
 
 The implementation plan follows §8:
-[content-distribution-implementation.md](../roadmap/content-distribution-implementation.md).
+content-distribution-implementation（已归档）.
 The environment (§9) and plugin (§11) chapters of the content distribution
 design defer to this document.

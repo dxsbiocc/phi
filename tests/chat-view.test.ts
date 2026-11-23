@@ -39,6 +39,7 @@ import { toolActionKind } from '../src/renderer/src/lib/toolActions'
 import type { ChatResourceMention } from '../src/renderer/src/lib/chatResourceMentions'
 import type { SessionMode } from '../src/shared/sessionMode'
 import {
+  stripSuggestedNextActionFromText,
   suggestedNextActionPlaceholderFromMessages,
   suggestedNextActionToAccept
 } from '../src/renderer/src/lib/suggestedNextAction'
@@ -1688,16 +1689,16 @@ test('tool rows show line counts only for real diffs and explain deletions', () 
   assert.match(diffOutput, /title="新增 1 行，删除 1 行"/)
 })
 
-test('thinking stays a line until text arrives, then opens while running', () => {
+test('thinking stays folded while running until the user expands it', () => {
   const empty = renderThinkingBlock('', 0, true)
   const streaming = renderThinkingBlock('正在检查结果。', 2000, true)
 
   assert.match(empty, /data-phi-thinking-status="running"/)
   assert.match(empty, /aria-expanded="false"/)
   assert.match(streaming, /data-phi-thinking-status="running"/)
-  assert.match(streaming, /aria-expanded="true"/)
+  assert.match(streaming, /aria-expanded="false"/)
   assert.match(streaming, /正在思考…/)
-  assert.match(streaming, /正在检查结果。/)
+  assert.doesNotMatch(streaming, /正在检查结果。/)
 })
 
 test('only the latest thinking step in an active processing group is running', () => {
@@ -1720,7 +1721,55 @@ test('only the latest thinking step in an active processing group is running', (
 
   assert.equal((markup.match(/data-phi-thinking-status="complete"/g) ?? []).length, 1)
   assert.equal((markup.match(/data-phi-thinking-status="running"/g) ?? []).length, 1)
-  assert.match(markup, /正在分析。/)
+  assert.match(markup, /正在思考…/)
+})
+
+test('intermediate assistant summaries inside processing folds omit the copy button while final replies keep it', () => {
+  const processingMarkup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ChatProcessingGroup, {
+        items: [
+          { id: 'thinking-1', role: 'thinking', content: '检查工作区。', durationMs: 2000 },
+          {
+            id: 'assistant-progress-1',
+            role: 'assistant',
+            content:
+              '工作区只有 graph_traversal.py，没有临床数据。先确定数据基础与分析目标，再写方案。'
+          }
+        ],
+        focusRequest: { itemId: 'assistant-progress-1', nonce: 1 },
+        onGoSettings: () => undefined,
+        onOpenBackgroundJobs: () => undefined
+      })
+    )
+  )
+
+  assert.match(processingMarkup, /先确定数据基础与分析目标，再写方案。/)
+  assert.doesNotMatch(processingMarkup, /aria-label="复制消息"/)
+  assert.doesNotMatch(processingMarkup, /data-phi-assistant-message-actions="true"/)
+
+  const chatMarkup = renderChat([
+    { id: 'user-1', role: 'user', content: '开始分析' },
+    { id: 'assistant-progress-1', role: 'assistant', content: '中间总结内容。' },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'read',
+      argsPreview: 'data.csv',
+      argsJson: '{"path":"data.csv"}',
+      output: 'ok',
+      status: 'done'
+    },
+    { id: 'assistant-final', role: 'assistant', content: '最终回复内容。' }
+  ])
+
+  assert.match(chatMarkup, /最终回复内容。/)
+  assert.equal(
+    (chatMarkup.match(/<div\b[^>]*data-phi-assistant-message-actions="true"/g) ?? []).length,
+    1
+  )
 })
 
 test('outer processing chevron follows its summary while nested chevrons reveal on hover', () => {
@@ -2003,16 +2052,33 @@ test('chat view shows add-context control before the session mode', () => {
   assert.match(markup, /aria-label="添加文件和资源引用"[\s\S]*aria-label="选择工作模式：自动/)
 })
 
-test('chat view uses the suggested next action as a passive placeholder', () => {
+test('chat view uses the suggested next action as a passive placeholder and omits it from the final reply', () => {
+  assert.equal(
+    stripSuggestedNextActionFromText(
+      '模型实现可回收预设效应。\n\n推荐下一步：把真实队列 CSV 放入工作区，运行 `Rscript analysis.R` 做首轮分析。'
+    ),
+    '模型实现可回收预设效应。'
+  )
+  assert.equal(
+    stripSuggestedNextActionFromText('完成。\n\n推荐下一步：\n- 运行 notebook 并检查图表。'),
+    '完成。'
+  )
+  assert.equal(
+    stripSuggestedNextActionFromText('推荐下一步：单独一行时保留原文。'),
+    '推荐下一步：单独一行时保留原文。'
+  )
+
   const markup = renderChat([
     {
       id: 'assistant-1',
       role: 'assistant',
-      content: '完成。\n\n下一步操作：\n1. 继续生成验证图表。'
+      content:
+        '模型实现可回收预设效应。\n\n推荐下一步：把真实队列 CSV 放入工作区，运行 `Rscript analysis.R` 做首轮分析。'
     }
   ])
 
-  assert.match(markup, /data-phi-placeholder-kind="suggested-next-action"/)
+  assert.match(markup, /模型实现可回收预设效应。/)
+  assert.doesNotMatch(markup, /推荐下一步/)
   assert.match(markup, /data-phi-placeholder-kind="suggested-next-action"/)
   assert.doesNotMatch(
     readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8'),
@@ -2498,7 +2564,7 @@ test('chat view shows an error state for a failed wrapper plan tool call, with n
   assert.doesNotMatch(markup, /fastq-qc|multiqc|nextflow/i)
 })
 
-test('Tab on an empty input accepts the suggested next action as real text', () => {
+test('Tab or ArrowRight on an empty input accepts the suggested next action as real text', () => {
   const tab = {
     key: 'Tab',
     shiftKey: false,
@@ -2507,14 +2573,23 @@ test('Tab on an empty input accepts the suggested next action as real text', () 
     ctrlKey: false,
     isComposing: false
   }
+  const arrowRight = { ...tab, key: 'ArrowRight' }
   assert.equal(
     suggestedNextActionToAccept(tab, '', '列出当前可用的 wrappers'),
     '列出当前可用的 wrappers'
   )
-  // Only when there is a suggestion and nothing typed yet, and only for a plain Tab.
+  assert.equal(
+    suggestedNextActionToAccept(arrowRight, '', '列出当前可用的 wrappers'),
+    '列出当前可用的 wrappers'
+  )
+  // Only when there is a suggestion and nothing typed yet, and only for plain Tab or ArrowRight.
   assert.equal(suggestedNextActionToAccept(tab, '', null), null)
+  assert.equal(suggestedNextActionToAccept(arrowRight, '', null), null)
   assert.equal(suggestedNextActionToAccept(tab, 'draft', '列出当前可用的 wrappers'), null)
+  assert.equal(suggestedNextActionToAccept(arrowRight, 'draft', '列出当前可用的 wrappers'), null)
   assert.equal(suggestedNextActionToAccept({ ...tab, key: 'Enter' }, '', 'x'), null)
   assert.equal(suggestedNextActionToAccept({ ...tab, shiftKey: true }, '', 'x'), null)
+  assert.equal(suggestedNextActionToAccept({ ...arrowRight, shiftKey: true }, '', 'x'), null)
   assert.equal(suggestedNextActionToAccept({ ...tab, isComposing: true }, '', 'x'), null)
+  assert.equal(suggestedNextActionToAccept({ ...arrowRight, isComposing: true }, '', 'x'), null)
 })

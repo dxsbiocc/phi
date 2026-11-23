@@ -76,4 +76,4 @@ node scripts/check-main-boundaries.mjs --update   # 拆分后把更低的数字�
 3. 事件契约收口(OMP-05)
 4. 主进程按 IPC 域拆分,每完成一个域跑一次 `--update`
 
-`docs/architecture/clean-code-optimization-plan.md` 给出切片的详细做法与验收标准。
+历史代码整洁度拆分方案已归档于 Git 历史，当前以现有代码与边界脚本为准。

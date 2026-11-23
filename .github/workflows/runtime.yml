@@ -11,7 +11,7 @@ name: Runtime conformance
 on:
   push:
     branches:
-      - '**'
+      - main
     paths:
       - 'src/main/agent/envs/**'
       - 'src/main/agent/content/environment-*.ts'
@@ -95,6 +95,7 @@ jobs:
 
   windows-native:
     name: Windows x64 native Python and Notebook
+    if: github.event_name != 'pull_request'
     runs-on: windows-2022
     timeout-minutes: 45
     steps:

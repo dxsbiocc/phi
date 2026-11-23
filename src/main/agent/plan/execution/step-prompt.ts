@@ -83,10 +83,41 @@ function previousAttempt(state: PlanRunState, step: PlanStep): string[] {
   return [lines.join('\n')]
 }
 
+function hypothesisContext(state: PlanRunState, step: PlanStep): string[] {
+  if (!state.spec.hypotheses?.length) return []
+  const byId = new Map(state.spec.hypotheses.map((item) => [item.id, item]))
+  const linked = step.hypothesisIds?.length
+    ? step.hypothesisIds
+        .map((id) => byId.get(id))
+        .filter((item): item is NonNullable<typeof item> => item !== undefined)
+    : state.spec.hypotheses.filter((item) => item.selected)
+  if (!linked.length) return []
+  const lines = linked.map((item) => {
+    const details: string[] = []
+    if (item.mechanism) details.push(`Mechanism: ${item.mechanism}`)
+    if (item.prediction) details.push(`Prediction: ${item.prediction}`)
+    if (item.testCriteria) details.push(`Test criteria: ${item.testCriteria}`)
+    if (item.falsificationCriteria) details.push(`Falsification: ${item.falsificationCriteria}`)
+    if (item.confounders?.length)
+      details.push(`Confounders/controls: ${item.confounders.join(', ')}`)
+    return details.length > 0
+      ? `- [${item.id}] ${item.statement} (${details.join('; ')})`
+      : `- [${item.id}] ${item.statement}`
+  })
+  return [
+    '## Hypotheses under test',
+    [
+      ...lines,
+      'Evaluate these hypotheses with actual tool outputs. Separate observed data from interpretation, account for listed confounders/replication level (avoid pseudoreplication), and report clearly whether verified evidence supports, refutes, or leaves each hypothesis inconclusive.'
+    ].join('\n')
+  ]
+}
+
 function promptParts(state: PlanRunState, step: PlanStep, upstream: string): string[] {
   return [
     '## Overall goal',
     state.spec.goal,
+    ...hypothesisContext(state, step),
     '## Plan overview',
     planOverview(state),
     `## Current step: ${step.id}: ${step.title}`,

@@ -2,7 +2,7 @@
 
 日期：2026-09-29
 状态：方向已确定。待定问题见设计文档 §16。
-设计文档：[phi-content-distribution-design.zh-CN.md](../design/phi-content-distribution-design.zh-CN.md)（英文版：[phi-content-distribution-design.md](../design/phi-content-distribution-design.md)）。
+设计文档：历史内容分发设计已归档于 Git 历史，当前契约以 `docs/contracts/` 与源码为准。
 本记录的英文版：[content-distribution.md](content-distribution.md)，两者如有出入以英文版为准。
 
 ## 背景
@@ -39,7 +39,7 @@ Phi 把所有领域能力都打进安装包（`resources/skills`、`resources/wr
 ## 影响
 
 - 内部 beta roadmap 随之调整：skills、wrappers、连接器改为可从目录安装、启用、停用，取代原来"Skills 和 MCP 页面只读"的规定；DB 连接器原型冻结，等待退役。
-- 工作按分层计划推进（[实施计划](../roadmap/content-distribution-implementation.zh-CN.md)），顺序由运行时基础设计推出：运行时 → 执行 → 使用方 → 绑定 → 插件 → 分发 → 远程。步骤 0–5 建议纳入 beta；插件、内容分发、远程 / HPC（步骤 6–8）随后。数据访问和编排是支线。每个契约在所属层完成时冻结。
+- 工作按分层计划推进（实施计划），顺序由运行时基础设计推出：运行时 → 执行 → 使用方 → 绑定 → 插件 → 分发 → 远程。步骤 0–5 建议纳入 beta；插件、内容分发、远程 / HPC（步骤 6–8）随后。数据访问和编排是支线。每个契约在所属层完成时冻结。
 - omp 调研（步骤 4.1）已完成：专家委派继续使用 Phi 自己的运行时（决定 14），保留 `agents/registry.ts`。
 - 内容作者只需面对一个校验器和一种包格式；引擎的修改由一致性测试把关。
 

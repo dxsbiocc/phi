@@ -5,7 +5,7 @@ Version **1.5.0** (1.1.0 adds the `skill` scope; 1.2.0 adds project environments
 - [environment.schema.json](environment.schema.json) — `environment.yml`
 - [env-metadata.schema.json](env-metadata.schema.json) — `.phi/env.json`
 
-The runtime copies live in `src/main/agent/envs/schemas.ts` and must stay deep-equal to those files. Parsing and id rules are implemented by `src/main/agent/envs/contract.ts`. This freezes L1 of the [runtime foundation](../design/phi-runtime-foundation.md) (§2–§3, §10). Versioning follows [content distribution design §4.4](../design/phi-content-distribution-design.md).
+The runtime copies live in `src/main/agent/envs/schemas.ts` and must stay deep-equal to those files. Parsing and id rules are implemented by `src/main/agent/envs/contract.ts`. This freezes L1 of the [runtime foundation](../design/phi-runtime-foundation.md) (§2–§3, §10). Versioning follows content distribution design §4.4.
 
 ## Purpose
 

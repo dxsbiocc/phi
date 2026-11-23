@@ -15,7 +15,9 @@ import {
   listPlanRuns,
   listUnfinishedPlanRuns,
   readPlanRun,
-  writePlanRun
+  readPlanRunEvidenceFingerprints,
+  writePlanRun,
+  writePlanRunEvidenceFingerprints
 } from '../../main/agent/plan/persistence/plan-run-store'
 import { readMigration } from '../sessions/migration'
 import { kernelSessionMigrationPaths } from '../sessions/paths'
@@ -33,13 +35,18 @@ export class KernelPlanCoordinator implements KernelPlanRuntime {
     private readonly callWorker: WorkerCall,
     private readonly diagnostic: (message: string) => void,
     /** True when the agent-run journal proves a launch request has no live child. */
-    private readonly launchSettled: (sessionId: string, requestId: string) => boolean = () => false
+    private readonly launchSettled: (sessionId: string, requestId: string) => boolean = () => false,
+    private readonly resolveProjectRoot?: (sessionId: string) => string | null | undefined
   ) {
     const store: PlanRunServiceStore = {
       write: (state) => writePlanRun(state, this.agentDir),
       read: (sessionId, runId) => readPlanRun(sessionId, runId, this.agentDir),
       list: (sessionId) => listPlanRuns(sessionId, this.agentDir),
-      listUnfinished: (sessionId) => listUnfinishedPlanRuns(sessionId, this.agentDir)
+      listUnfinished: (sessionId) => listUnfinishedPlanRuns(sessionId, this.agentDir),
+      writeEvidenceFingerprints: (sessionId, runId, fingerprints) =>
+        writePlanRunEvidenceFingerprints(sessionId, runId, fingerprints, this.agentDir),
+      readEvidenceFingerprints: (sessionId, runId) =>
+        readPlanRunEvidenceFingerprints(sessionId, runId, this.agentDir)
     }
     this.service = createPlanRunService({
       engine: {
@@ -50,6 +57,7 @@ export class KernelPlanCoordinator implements KernelPlanRuntime {
         }
       },
       resolveRuntimeSessionId: (sessionId) => (this.loaded.has(sessionId) ? sessionId : null),
+      ...(this.resolveProjectRoot ? { resolveProjectRoot: this.resolveProjectRoot } : {}),
       requiresDurableLaunch: () => true,
       enterReplanMode: (sessionId, replanRequestId) =>
         this.callWorker('session.plan.enter', {

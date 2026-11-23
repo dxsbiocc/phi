@@ -2,8 +2,7 @@
 
 Date: 2026-09-29
 Status: Accepted direction. Open questions are tracked in the design's §16.
-Design: [phi-content-distribution-design.md](../design/phi-content-distribution-design.md)
-(Chinese: [phi-content-distribution-design.zh-CN.md](../design/phi-content-distribution-design.zh-CN.md)).
+Design: historical content distribution design (archived in Git history; see `docs/contracts/` and current code for active specs).
 Chinese version of this record: [content-distribution.zh-CN.md](content-distribution.zh-CN.md).
 
 ## Context
@@ -132,7 +131,7 @@ than plain URL fetching and about twice as slow (design Appendix A).
   skills, wrappers, and connectors replaces the "read-only Skills and MCP
   pages" rule; the DB connector prototype is frozen pending retirement.
 - Work follows the layered plan
-  ([content-distribution-implementation.md](../roadmap/content-distribution-implementation.md)),
+  (content-distribution-implementation（已归档）),
   derived from the runtime foundation: runtime → execution → consumers →
   binding → plugins → distribution → remote. Steps 0–5 are proposed for the
   beta; plugins, content distribution, and remote / HPC (steps 6–8) follow.

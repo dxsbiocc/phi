@@ -4,7 +4,10 @@ import {
   PLAN_MAX_REPORT_SUMMARY_BYTES,
   type PlanRunState,
   type PlanSpec,
-  type PlanStepReportSummary
+  type PlanStep,
+  type PlanStepPreflightResult,
+  type PlanStepReportSummary,
+  type PlanStepVerificationResult
 } from '../../../../shared/planRunTypes'
 import { createPlanRunState, reducePlanRun, type PlanRunEvent } from '../model/plan-run-state'
 import { validatePlanSpec } from '../model/plan-spec'
@@ -46,6 +49,20 @@ export interface PlanExecutorDependencies {
   maxConcurrent?: number
   /** Remote sessions require a durable request identity before dispatch. */
   requiresDurableLaunch?(phiSessionId: string): boolean
+  /** Optional read-only objective post-step verifier run before accepting `step_succeeded` (R12). */
+  verifyStep?(input: {
+    sessionId: string
+    runId: string
+    step: PlanStep
+    report: PlanStepReportSummary
+  }): Awaitable<PlanStepVerificationResult>
+  /** Optional cross-step scientific compatibility check run before `runner.start()` (R14). */
+  preflightStep?(input: {
+    sessionId: string
+    runId: string
+    step: PlanStep
+    state: PlanRunState
+  }): Awaitable<PlanStepPreflightResult>
 }
 
 export interface PlanExecutor {
@@ -171,6 +188,50 @@ class PlanExecutorImplementation implements PlanExecutor {
     return requireState(this.runtime, runId)
   }
 
+  private async verifySucceededStep(
+    runId: string,
+    state: PlanRunState,
+    stepId: string,
+    report: PlanStepReportSummary,
+    at: string
+  ): Promise<PlanRunEvent> {
+    const step = state.spec.steps.find((candidate) => candidate.id === stepId)
+    if (!step || !this.deps.verifyStep) return { type: 'step_succeeded', stepId, report, at }
+    try {
+      const verdict = await this.deps.verifyStep({
+        sessionId: state.sessionId,
+        runId,
+        step,
+        report
+      })
+      if (verdict.ok) return { type: 'step_succeeded', stepId, report, at }
+      return {
+        type: 'step_failed',
+        stepId,
+        report,
+        error: `Post-step verification failed: ${verdict.failures.join('; ')}`,
+        at
+      }
+    } catch (error) {
+      return {
+        type: 'step_failed',
+        stepId,
+        report,
+        error: `Post-step verification error: ${errorText(error)}`,
+        at
+      }
+    }
+  }
+
+  private canSettleStepStatus(state: PlanRunState, stepId: string, outcome: StepOutcome): boolean {
+    const stepStatus = state.steps[stepId]?.status
+    if (state.status === 'stopped' || !stepStatus) return false
+    return (
+      stepStatus === 'running' ||
+      (stepStatus === 'launching' && !outcome.ok && Boolean(outcome.cancelled))
+    )
+  }
+
   private settle(runId: string, stepId: string, agentRunId: string, outcome: StepOutcome): void {
     try {
       void this.enqueue(runId, async () => {
@@ -178,22 +239,17 @@ class PlanExecutorImplementation implements PlanExecutor {
         const state = this.runtime.states.get(runId)
         if (!active || active.agentRunId !== agentRunId || !state) return state
         this.runtime.active.get(runId)?.delete(stepId)
-        const stepStatus = state.steps[stepId]?.status
-        if (
-          state.status === 'stopped' ||
-          !stepStatus ||
-          (stepStatus !== 'running' &&
-            !(stepStatus === 'launching' && !outcome.ok && outcome.cancelled))
-        )
-          return state
+        if (!this.canSettleStepStatus(state, stepId, outcome)) return state
+        const at = clockNow(this.deps.clock)
         if (this.suspendedSessions.has(state.sessionId)) {
-          return this.apply(
-            runId,
-            { type: 'step_interrupted', stepId, at: clockNow(this.deps.clock) },
-            false
-          )
+          return this.apply(runId, { type: 'step_interrupted', stepId, at }, false)
         }
-        return this.apply(runId, eventForOutcome(stepId, outcome, clockNow(this.deps.clock)))
+        const baseEvent = eventForOutcome(stepId, outcome, at)
+        const event =
+          baseEvent.type === 'step_succeeded' && this.deps.verifyStep
+            ? await this.verifySucceededStep(runId, state, stepId, baseEvent.report, at)
+            : baseEvent
+        return this.apply(runId, event)
       }).catch((error: unknown) => this.emitExecutorError(runId, error))
     } catch (error) {
       void this.emitExecutorError(runId, error)
@@ -230,9 +286,59 @@ class PlanExecutorImplementation implements PlanExecutor {
     )
   }
 
+  private async runPreflight(
+    runId: string,
+    stepId: string,
+    step: PlanStep,
+    state: PlanRunState
+  ): Promise<boolean> {
+    if (!this.deps.preflightStep) return true
+    const at = clockNow(this.deps.clock)
+    let verdict: PlanStepPreflightResult
+    try {
+      verdict = await this.deps.preflightStep({ sessionId: state.sessionId, runId, step, state })
+    } catch (error) {
+      verdict = { status: 'incompatible', reasons: [`Preflight check error: ${errorText(error)}`] }
+    }
+    if (verdict.status === 'needs_input') {
+      await this.apply(
+        runId,
+        {
+          type: 'step_preflight_blocked',
+          stepId,
+          reason: 'needs_input',
+          report: {
+            status: 'blocked',
+            text: verdict.summary,
+            missingInputs: verdict.missingInputs
+          },
+          at
+        },
+        false
+      )
+      return false
+    }
+    if (verdict.status === 'incompatible') {
+      await this.apply(
+        runId,
+        {
+          type: 'step_preflight_blocked',
+          stepId,
+          reason: 'step_failed',
+          error: `Cross-step scientific incompatibility: ${verdict.reasons.join('; ')}`,
+          at
+        },
+        false
+      )
+      return false
+    }
+    return true
+  }
+
   private async launch(runId: string, stepId: string): Promise<void> {
     const state = requireState(this.runtime, runId)
     const step = state.spec.steps.find((candidate) => candidate.id === stepId)!
+    if (!(await this.runPreflight(runId, stepId, step, state))) return
     const controller = new AbortController()
     const requestId = this.deps.requiresDurableLaunch?.(state.sessionId) ? randomUUID() : undefined
     if (requestId) {

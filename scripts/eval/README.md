@@ -5,7 +5,7 @@ Compares plain URL reading (the runtime `read` tool) on 14 structured biological
 - `fetch` — URL `read` only
 - `fetch-hints` — URL `read` plus a short list of public API base URLs
 
-Each run appends one JSONL record (tokens, model calls, tool calls, wall time, final answer) for offline scoring. The 2026-09-29 results are in `docs/design/phi-content-distribution-design.md` Appendix A.
+Each run appends one JSONL record (tokens, model calls, tool calls, wall time, final answer) for offline scoring. The 2026-09-29 historical results are preserved in Git history (previously in the archived content distribution design Appendix A).
 
 ## Prerequisites
 

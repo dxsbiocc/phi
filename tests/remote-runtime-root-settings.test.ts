@@ -25,6 +25,7 @@ import {
   saveCapabilityProfile
 } from '../src/main/agent/workspace-host/capability-profile-store'
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
+import { completeProbeOutput } from './helpers/probeFixture'
 
 test('saving a host runtime root invalidates cached project profiles without touching host data', () => {
   const agentDir = mkdtempSync(join(tmpdir(), 'phi-runtime-setting-'))
@@ -33,11 +34,7 @@ test('saving a host runtime root invalidates cached project profiles without tou
     const key = { hostAlias: host.hostAlias, projectRoot: '/work/private-project' }
     saveCapabilityProfile(
       key,
-      parseHostCapabilityProbe(
-        '__PHI_CAPABILITY_PROBE_V1_BEGIN__\n' +
-          'platform.os=Linux\nplatform.arch=x86_64\nprobe.complete=1\n' +
-          '__PHI_CAPABILITY_PROBE_V1_END__\n'
-      ),
+      parseHostCapabilityProbe(completeProbeOutput('platform.os=Linux\nplatform.arch=x86_64')),
       agentDir
     )
 
@@ -170,11 +167,7 @@ test('changing a project override invalidates only its profile and leaves the ho
     const key = { hostAlias: host.hostAlias, projectRoot: '/work/project' }
     saveCapabilityProfile(
       key,
-      parseHostCapabilityProbe(
-        '__PHI_CAPABILITY_PROBE_V1_BEGIN__\n' +
-          'platform.os=Linux\nplatform.arch=x86_64\nprobe.complete=1\n' +
-          '__PHI_CAPABILITY_PROBE_V1_END__\n'
-      ),
+      parseHostCapabilityProbe(completeProbeOutput('platform.os=Linux\nplatform.arch=x86_64')),
       agentDir
     )
 

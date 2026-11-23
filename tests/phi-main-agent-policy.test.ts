@@ -74,7 +74,7 @@ test('remote project prompt presents the server root without exposing the SDK an
 
 test('automatic work mode alone receives routing criteria and preserves user review', () => {
   const automatic = buildPhiMainSystemPrompt([], { workMode: 'auto' }).join('\n')
-  assert.match(automatic, /questions and make small, clear changes directly/i)
+  assert.match(automatic, /trivial single-fact questions or tiny direct edits may skip planning/i)
   assert.match(automatic, /execute=false/)
   assert.match(automatic, /execute=true/)
   assert.match(automatic, /explicit user review/i)

@@ -11,6 +11,7 @@ import { HelperWorkspaceHost } from '../src/main/agent/workspace-host/helper-hos
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
 import type { RemoteStdioProcess } from '../src/main/agent/wrappers/remote-ssh-session'
 import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
+import { completeProbeOutput } from './helpers/probeFixture'
 
 async function sshFixture(
   options: { lostReply?: Error; cleanupError?: Error; gateOnFirstExec?: boolean } = {}
@@ -257,7 +258,7 @@ function helperFixture(): { host: HelperWorkspaceHost; requests: string[] } {
     }
   }
   const profile = parseHostCapabilityProbe(
-    '__PHI_CAPABILITY_PROBE_V1_BEGIN__\nplatform.os=Linux\nplatform.arch=x86_64\nprobe.complete=1\n__PHI_CAPABILITY_PROBE_V1_END__'
+    completeProbeOutput('platform.os=Linux\nplatform.arch=x86_64')
   )
   return {
     requests,

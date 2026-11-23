@@ -3,7 +3,7 @@ import { ThinkingOrb } from '../../features/chat/components/ThinkingOrb'
 import { nestedFoldChevronRevealSx } from '../../features/chat/lib/nestedFoldChevronStyles'
 import { useUiLanguage } from '../../lib/i18n'
 import { Box, Collapse, Tooltip, Typography } from '@mui/material'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { PhiIcons } from '../../icons'
 import {
   useCollapseResizeNotifier,
@@ -12,6 +12,28 @@ import {
 import { TimelineRail } from './TimelineRail'
 
 const ChevronRightIcon = PhiIcons.action.back
+const THINKING_SCROLL_MAX_HEIGHT = 240
+const AUTO_SCROLL_BOTTOM_THRESHOLD = 24
+
+const THINKING_TOGGLE_BASE_SX = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 0.75,
+  width: '100%',
+  minWidth: 0,
+  py: 0.5,
+  px: 0.5,
+  border: 0,
+  borderRadius: 1,
+  bgcolor: 'transparent',
+  fontFamily: 'inherit',
+  textAlign: 'left',
+  cursor: 'pointer',
+  transition: 'color 150ms',
+  ...nestedFoldChevronRevealSx,
+  '&:hover': { color: 'text.primary' },
+  '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
+} as const
 
 function formatThinkingDuration(durationMs?: number): string {
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return chatCopy.thinking
@@ -40,13 +62,29 @@ export function ThinkingBlock({
 }): ReactNode {
   useUiLanguage()
   const [manualExpanded, setManualExpanded] = useState<boolean | undefined>()
-  const expanded = manualExpanded ?? (isRunning && content.trim().length > 0)
+  const expanded = manualExpanded ?? false
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const stickToBottomRef = useRef(true)
   const notifyContentResize = useCollapseResizeNotifier(onContentResize)
   const toggle = (): void => {
     setManualExpanded(!expanded)
     notifyContentResize()
   }
   const label = isRunning ? chatCopy.thinkingInProgress : formatThinkingDuration(durationMs)
+
+  const handleScroll = (): void => {
+    const el = scrollRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    stickToBottomRef.current = distanceFromBottom <= AUTO_SCROLL_BOTTOM_THRESHOLD
+  }
+
+  useEffect(() => {
+    if (!expanded || !isRunning) return
+    const el = scrollRef.current
+    if (!el || !stickToBottomRef.current) return
+    el.scrollTop = el.scrollHeight
+  }, [content, expanded, isRunning])
 
   return (
     <Box sx={{ alignSelf: 'stretch', minWidth: 0 }}>
@@ -58,24 +96,8 @@ export function ThinkingBlock({
         aria-expanded={expanded}
         data-phi-thinking-status={isRunning ? 'running' : 'complete'}
         sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.75,
-          width: '100%',
-          minWidth: 0,
-          py: 0.5,
-          px: 0.5,
-          border: 0,
-          borderRadius: 1,
-          bgcolor: 'transparent',
-          fontFamily: 'inherit',
-          textAlign: 'left',
-          cursor: 'pointer',
-          color: isRunning ? 'primary.main' : 'text.secondary',
-          transition: 'color 150ms',
-          ...nestedFoldChevronRevealSx,
-          '&:hover': { color: 'text.primary' },
-          '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
+          ...THINKING_TOGGLE_BASE_SX,
+          color: isRunning ? 'primary.main' : 'text.secondary'
         }}
       >
         <ThinkingIcon active={isRunning} />
@@ -103,17 +125,28 @@ export function ThinkingBlock({
         onExited={notifyContentResize}
       >
         <TimelineRail sx={{ py: 1 }}>
-          <Typography
-            variant="body2"
+          <Box
+            ref={scrollRef}
+            onScroll={handleScroll}
+            data-phi-thinking-scroll="true"
             sx={{
-              whiteSpace: 'pre-wrap',
-              overflowWrap: 'anywhere',
-              fontStyle: 'italic',
-              color: 'text.secondary'
+              maxHeight: THINKING_SCROLL_MAX_HEIGHT,
+              overflowY: 'auto',
+              pr: 0.75
             }}
           >
-            {content}
-          </Typography>
+            <Typography
+              variant="body2"
+              sx={{
+                whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
+                fontStyle: 'italic',
+                color: 'text.secondary'
+              }}
+            >
+              {content}
+            </Typography>
+          </Box>
         </TimelineRail>
       </Collapse>
     </Box>

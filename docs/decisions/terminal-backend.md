@@ -3,7 +3,7 @@
 日期：2026-10-03  
 状态：已采用（T3 已验证 macOS arm64 解包产物）
 
-对应计划：[phi-terminal-v1-implementation-plan.md](../design/phi-terminal-v1-implementation-plan.md)
+对应计划：终端 V1 已实现合入（原实施计划已归档于 Git 历史）。
 
 ## 决策
 

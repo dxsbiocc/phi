@@ -13,18 +13,32 @@ function cleanSuggestedActionLine(line: string): string {
     .trim()
 }
 
+const SUGGESTED_ACTION_LABEL_PATTERN =
+  '(?:推荐(?:的)?下一步(?:操作)?|下一步(?:操作|行动)?|建议(?:下一步)?|Recommended next steps?|Next steps?)'
+
+const INLINE_SUGGESTED_ACTION_RE = new RegExp(
+  `${SUGGESTED_ACTION_LABEL_PATTERN}(?:\\s*[,，][^:：]*)?(?:\\*\\*)?\\s*[:：](?:\\*\\*)?\\s*(.+)$`,
+  'i'
+)
+
+const STANDALONE_INLINE_SUGGESTED_ACTION_RE = new RegExp(
+  `^(?:>\\s*)?(?:[-*+]\\s+)?(?:#+\\s*)?(?:\\*\\*)?${SUGGESTED_ACTION_LABEL_PATTERN}(?:\\s*[,，][^:：]*)?(?:\\*\\*)?\\s*[:：](?:\\*\\*)?\\s*(.+)$`,
+  'i'
+)
+
+const SUGGESTED_ACTION_HEADING_RE = new RegExp(
+  `^(?:#+\\s*)?(?:\\*\\*)?${SUGGESTED_ACTION_LABEL_PATTERN}(?:\\*\\*)?\\s*[:：]?(?:\\*\\*)?\\s*$`,
+  'i'
+)
+
 function inlineSuggestedActionText(line: string): string | null {
-  const match = line.match(
-    /(?:推荐(?:的)?下一步(?:操作)?|下一步(?:操作|行动)?|建议(?:下一步)?|Recommended next steps?|Next steps?)(?:\s*[,，][^:：]*)?\s*[:：]\s*(.+)$/i
-  )
+  const match = line.match(INLINE_SUGGESTED_ACTION_RE)
   if (!match) return null
   return cleanSuggestedActionLine(match[1] ?? '')
 }
 
 function isSuggestedActionHeading(line: string): boolean {
-  return /^(?:#+\s*)?(?:推荐(?:的)?下一步(?:操作)?|下一步(?:操作|行动)?|建议(?:下一步)?|Recommended next steps?|Next steps?)\s*[:：]?\s*$/i.test(
-    line.trim()
-  )
+  return SUGGESTED_ACTION_HEADING_RE.test(line.trim())
 }
 
 function isUsableSuggestedAction(value: string): boolean {
@@ -52,6 +66,49 @@ function suggestedNextActionFromText(content: string): string | null {
   return null
 }
 
+function stripTrailingSuggestedActionSection(
+  lines: readonly string[],
+  lastNonEmptyIndex: number
+): string | null {
+  const headingIndex = lines.findLastIndex(isSuggestedActionHeading)
+  if (headingIndex <= 0) return null
+  let hasUsableAction = false
+  for (const rawLine of lines.slice(headingIndex + 1, lastNonEmptyIndex + 1)) {
+    const trimmed = rawLine.trim()
+    if (!trimmed) continue
+    if (/^#+\s+/.test(trimmed) || /^```/.test(trimmed)) return null
+    const action = cleanSuggestedActionLine(trimmed)
+    if (action && isUsableSuggestedAction(action)) hasUsableAction = true
+  }
+  if (!hasUsableAction) return null
+  const stripped = lines.slice(0, headingIndex).join('\n').trimEnd()
+  return stripped.length > 0 ? stripped : null
+}
+
+/**
+ * Removes a trailing suggested-next-action line or section from final assistant replies
+ * because the same suggestion is already surfaced in the chat composer placeholder.
+ */
+export function stripSuggestedNextActionFromText(content: string): string {
+  const lines = content.split(/\r?\n/)
+  let lastNonEmptyIndex = lines.length - 1
+  while (lastNonEmptyIndex >= 0 && !lines[lastNonEmptyIndex].trim()) {
+    lastNonEmptyIndex -= 1
+  }
+  if (lastNonEmptyIndex < 0) return content
+
+  const trailingLine = lines[lastNonEmptyIndex].trim()
+  if (STANDALONE_INLINE_SUGGESTED_ACTION_RE.test(trailingLine)) {
+    const inline = inlineSuggestedActionText(trailingLine)
+    if (inline && isUsableSuggestedAction(inline)) {
+      const stripped = lines.slice(0, lastNonEmptyIndex).join('\n').trimEnd()
+      if (stripped.length > 0) return stripped
+    }
+  }
+
+  return stripTrailingSuggestedActionSection(lines, lastNonEmptyIndex) ?? content
+}
+
 export function suggestedNextActionPlaceholderFromMessages(messages: ChatItem[]): string | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const item = messages[index]
@@ -74,8 +131,9 @@ type SuggestionKeyEvent = {
 
 /**
  * The suggested next action is shown as the input's placeholder, which the browser
- * neither selects nor copies. Tab on an empty input turns it into real, editable
- * text; returns that text, or null when the key should keep its normal behaviour.
+ * neither selects nor copies. Tab or ArrowRight on an empty input turns it into
+ * real, editable text; returns that text, or null when the key should keep its
+ * normal behaviour.
  */
 export function suggestedNextActionToAccept(
   event: SuggestionKeyEvent,
@@ -83,7 +141,7 @@ export function suggestedNextActionToAccept(
   suggestion: string | null
 ): string | null {
   if (!suggestion || input !== '') return null
-  if (event.key !== 'Tab' || event.isComposing) return null
+  if ((event.key !== 'Tab' && event.key !== 'ArrowRight') || event.isComposing) return null
   if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return null
   return suggestion
 }

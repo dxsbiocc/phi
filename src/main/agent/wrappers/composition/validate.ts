@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 
+import { verifyFileContentAssertion } from '../../verification/output-assertions'
 import type { WrapperCompositionManifest, WrapperCompositionParam } from './manifest'
 
 /**
@@ -159,25 +160,57 @@ export interface ResolvedOutput {
   primary: boolean
 }
 
+export type InspectedOutput =
+  | (ResolvedOutput & { resolved: true })
+  | {
+      id: string
+      type: string
+      /** Raw declared template or blank path that could not be resolved from params. */
+      path: string
+      primary: boolean
+      resolved: false
+    }
+
+/**
+ * Inspects every declared manifest output without dropping unresolvable entries,
+ * so local, composition, and remote collectors share one resolution rule.
+ */
+export function inspectOutputPaths(
+  manifest: WrapperCompositionManifest,
+  params: Record<string, unknown>,
+  componentDir: string
+): InspectedOutput[] {
+  return Object.entries(manifest.outputs).map(([id, output]) => {
+    const path = interpolate(output.path, params)
+    if (path === undefined || path.trim() === '') {
+      return { id, type: output.type, path: output.path, primary: output.primary, resolved: false }
+    }
+    return {
+      id,
+      type: output.type,
+      path,
+      absolutePath: isAbsolute(path) ? path : resolve(componentDir, path),
+      primary: output.primary,
+      resolved: true
+    }
+  })
+}
+
 /** Every declared output whose path can be resolved from the params; unresolvable ones are skipped. */
 export function resolveOutputPaths(
   manifest: WrapperCompositionManifest,
   params: Record<string, unknown>,
   componentDir: string
 ): ResolvedOutput[] {
-  const resolved: ResolvedOutput[] = []
-  for (const [id, output] of Object.entries(manifest.outputs)) {
-    const path = interpolate(output.path, params)
-    if (path === undefined) continue
-    resolved.push({
+  return inspectOutputPaths(manifest, params, componentDir)
+    .filter((output): output is ResolvedOutput & { resolved: true } => output.resolved)
+    .map(({ id, type, path, absolutePath, primary }) => ({
       id,
-      type: output.type,
+      type,
       path,
-      absolutePath: isAbsolute(path) ? path : resolve(componentDir, path),
-      primary: output.primary
-    })
-  }
-  return resolved
+      absolutePath,
+      primary
+    }))
 }
 
 export interface PrimaryOutputRecord {
@@ -189,9 +222,9 @@ export interface PrimaryOutputRecord {
 }
 
 /**
- * The single primary-output verdict shared by local runs and composition:
- * a primary output is missing when its path does not exist (or could not be
- * resolved); optional outputs never count. Labels are `id (path)`.
+ * The single primary-output verdict shared by local runs, local composition,
+ * and remote composition: a primary output is missing when its path does not
+ * exist (or could not be resolved); optional outputs never count. Labels are `id (path)`.
  */
 export function missingPrimaryOutputs(records: readonly PrimaryOutputRecord[]): string[] {
   return records
@@ -210,13 +243,46 @@ export function findMissingPrimaryOutputs(
   params: Record<string, unknown>,
   componentDir: string
 ): string[] {
-  const records: PrimaryOutputRecord[] = Object.entries(manifest.outputs).map(([id, output]) => {
-    const path = interpolate(output.path, params)
-    if (path === undefined) {
-      return { id, path: output.path, primary: output.primary, exists: false }
-    }
-    const absolutePath = isAbsolute(path) ? path : resolve(componentDir, path)
-    return { id, path, primary: output.primary, exists: existsSync(absolutePath) }
-  })
+  const records: PrimaryOutputRecord[] = inspectOutputPaths(manifest, params, componentDir).map(
+    (output) => ({
+      id: output.id,
+      path: output.path,
+      primary: output.primary,
+      exists: output.resolved ? existsSync(output.absolutePath) : false
+    })
+  )
   return missingPrimaryOutputs(records)
+}
+
+/**
+ * Evaluates declared content assertions (`nonEmpty`, `format`, `minDataRows`,
+ * `minColumns`, `requiredColumns`) on local composition outputs after a run.
+ * Returns human-readable failure descriptions; empty means all assertions passed.
+ */
+export function findFailedOutputAssertions(
+  manifest: WrapperCompositionManifest,
+  params: Record<string, unknown>,
+  componentDir: string
+): string[] {
+  const failures: string[] = []
+  for (const inspected of inspectOutputPaths(manifest, params, componentDir)) {
+    const declared = manifest.outputs[inspected.id]
+    if (!declared?.assertions) continue
+    if (!inspected.resolved) {
+      if (inspected.primary) {
+        failures.push(`${inspected.id} (${inspected.path}): output path could not be resolved`)
+      }
+      continue
+    }
+    if (!existsSync(inspected.absolutePath)) {
+      if (!inspected.primary) continue
+      failures.push(`${inspected.id} (${inspected.path}): file does not exist`)
+      continue
+    }
+    const verdict = verifyFileContentAssertion(inspected.absolutePath, declared.assertions)
+    if (!verdict.ok) {
+      failures.push(`${inspected.id} (${inspected.path}): ${verdict.reason ?? 'assertion failed'}`)
+    }
+  }
+  return failures
 }

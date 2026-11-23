@@ -1,5 +1,6 @@
 import { chatCopy } from '../../features/chat/lib/chatCopy'
 import { useUiLanguage } from '../../lib/i18n'
+import { stripSuggestedNextActionFromText } from '../../lib/suggestedNextAction'
 import { Box, IconButton } from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
 import { PhiIcons } from '../../icons'
@@ -10,12 +11,35 @@ const CopyIcon = PhiIcons.action.copy
 const CopiedIcon = PhiIcons.state.check
 const ForkIcon = PhiIcons.action.fork
 
+const ASSISTANT_ACTIONS_HOVER_SX = {
+  '& [data-phi-assistant-message-actions="true"]': {
+    opacity: 0,
+    pointerEvents: 'none',
+    transform: 'translateY(-2px)',
+    transition: 'opacity 120ms, transform 120ms'
+  },
+  '&:hover [data-phi-assistant-message-actions="true"], &:focus-within [data-phi-assistant-message-actions="true"]':
+    {
+      opacity: 1,
+      pointerEvents: 'auto',
+      transform: 'translateY(0)'
+    },
+  '@media (hover: none)': {
+    '& [data-phi-assistant-message-actions="true"]': {
+      opacity: 1,
+      pointerEvents: 'auto',
+      transform: 'none'
+    }
+  }
+} as const
+
 export function ChatAssistantMessage({
   message,
   forkUserMessageId,
   onFork,
   onOpenLocalPath,
   onOpenWebUrl,
+  showActions = true,
   cwd
 }: {
   message: ChatMessage
@@ -23,6 +47,7 @@ export function ChatAssistantMessage({
   onFork?: (messageId: string) => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onOpenWebUrl?: (url: string) => void
+  showActions?: boolean
   cwd: string
 }): React.JSX.Element {
   useUiLanguage()
@@ -36,10 +61,14 @@ export function ChatAssistantMessage({
     []
   )
 
+  const displayContent = showActions
+    ? stripSuggestedNextActionFromText(message.content)
+    : message.content
+
   const copyMessage = async (): Promise<void> => {
     if (typeof navigator === 'undefined' || !navigator.clipboard) return
     try {
-      await navigator.clipboard.writeText(message.content)
+      await navigator.clipboard.writeText(displayContent)
       setCopied(true)
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
       copiedTimerRef.current = setTimeout(() => setCopied(false), 1200)
@@ -53,36 +82,18 @@ export function ChatAssistantMessage({
       sx={{
         alignSelf: 'stretch',
         minWidth: 0,
-        '& [data-phi-assistant-message-actions="true"]': {
-          opacity: 0,
-          pointerEvents: 'none',
-          transform: 'translateY(-2px)',
-          transition: 'opacity 120ms, transform 120ms'
-        },
-        '&:hover [data-phi-assistant-message-actions="true"], &:focus-within [data-phi-assistant-message-actions="true"]':
-          {
-            opacity: 1,
-            pointerEvents: 'auto',
-            transform: 'translateY(0)'
-          },
-        '@media (hover: none)': {
-          '& [data-phi-assistant-message-actions="true"]': {
-            opacity: 1,
-            pointerEvents: 'auto',
-            transform: 'none'
-          }
-        }
+        ...(showActions ? ASSISTANT_ACTIONS_HOVER_SX : null)
       }}
     >
       <MarkdownContent
-        text={message.content}
+        text={displayContent}
         cwd={cwd}
         onOpenLocalPath={onOpenLocalPath}
         onOpenWebUrl={onOpenWebUrl}
         allowCodeActions
         showColorPalettes
       />
-      {message.content && (
+      {showActions && displayContent && (
         <Box
           data-phi-assistant-message-actions="true"
           sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 28 }}

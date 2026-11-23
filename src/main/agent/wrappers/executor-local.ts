@@ -19,11 +19,13 @@ import {
 } from './composition/nextflow-wsl'
 import { checkLocalDoctor } from './doctor'
 import { buildNextflowInvocation } from './executor-nextflow'
+import { captureLocalRuntimeProvenance } from './runtime-provenance'
 import {
   appendWrapperAuditEvent,
   appendWrapperRunEvent,
   getWrapperRunsDir,
-  writeWrapperRun
+  writeWrapperRun,
+  writeWrapperRuntimeProvenance
 } from './store'
 import { startWeblogListener, type WeblogListenerHandle } from './weblog-listener'
 import type { WrapperManifest } from './manifest-types'
@@ -56,6 +58,15 @@ function ensureDir(path: string): void {
 
 function collectOutputs(manifest: WrapperManifest, absoluteOutDir: string): WrapperOutputRecord[] {
   return manifest.outputs.map((output) => {
+    if (output.path.trim() === '') {
+      return {
+        id: output.id,
+        path: output.path,
+        exists: false,
+        primary: output.primary,
+        location: 'local'
+      }
+    }
     const path = join(absoluteOutDir, output.path)
     const exists = existsSync(path)
     let bytes: number | undefined
@@ -133,8 +144,7 @@ function readStream(stream: NodeJS.ReadableStream | null, onChunk: (chunk: Buffe
  * Drives one local run from `created` through `running` to a terminal
  * state, spawning the wrapper's fixed Nextflow entrypoint as a real child
  * process. `spawnImpl` is injectable so CI can fake Nextflow's behavior —
- * a real local Nextflow smoke run is a manual step (Milestone P1.9), not a
- * CI dependency (see docs/design/phi-wrapper-v1-implementation-plan.md).
+ * a real local Nextflow smoke run is a manual step, not a CI dependency.
  */
 export async function runLocalWrapperExecution(
   run: WrapperRun,
@@ -220,6 +230,16 @@ export async function runLocalWrapperExecution(
     `${JSON.stringify(nextflowLaunchRecord(launch), null, 2)}\n`,
     'utf-8'
   )
+  try {
+    const runtime = await captureLocalRuntimeProvenance({
+      launch,
+      profile: nextflowProfile,
+      wrapperMainNf: join(entry.installedPath, manifest.engine.entrypoint)
+    })
+    writeWrapperRuntimeProvenance(run.runId, runtime, agentDir)
+  } catch {
+    // Runtime provenance is best-effort and must never block execution.
+  }
 
   if (preparedProfile.config) {
     const configPath = join(runDir, 'conda.config')
@@ -255,16 +275,37 @@ export async function runLocalWrapperExecution(
   transition(run, agentDir, 'provisioning')
   const running = transition(run, agentDir, 'running', { startedAt: new Date().toISOString() })
 
-  const exitCode = await new Promise<number>((resolve) => {
+  const exitCode = await spawnAndCaptureNextflow(spawnImpl, processPlan, {
+    wsl: Boolean(wsl),
+    runDir,
+    logsDir,
+    env: preparedProfile.env
+  })
+  await weblog?.stop()
+  if (exitCode !== 0) {
+    return transition(running, agentDir, 'failed', {
+      completedAt: new Date().toISOString(),
+      exitCode
+    })
+  }
+  return finalizeLocalRunOutputs(running, manifest, runDir, absoluteOutDir, agentDir, exitCode)
+}
+
+async function spawnAndCaptureNextflow(
+  spawnImpl: SpawnImpl,
+  processPlan: { executable: string; args: string[] },
+  options: { wsl: boolean; runDir: string; logsDir: string; env: NodeJS.ProcessEnv }
+): Promise<number> {
+  return new Promise<number>((resolve) => {
     let child: ChildProcess
     try {
       child = spawnImpl(processPlan.executable, processPlan.args, {
-        ...(wsl
+        ...(options.wsl
           ? { env: wslProcessEnvironment(), windowsHide: true }
-          : { cwd: runDir, env: preparedProfile.env }),
-        stdio: [wsl ? 'pipe' : 'ignore', 'pipe', 'pipe']
+          : { cwd: options.runDir, env: options.env }),
+        stdio: [options.wsl ? 'pipe' : 'ignore', 'pipe', 'pipe']
       })
-      if (wsl) trackWslNextflowProcess(child)
+      if (options.wsl) trackWslNextflowProcess(child)
     } catch {
       resolve(1)
       return
@@ -276,33 +317,33 @@ export async function runLocalWrapperExecution(
     readStream(child.stderr, (chunk) => stderrChunks.push(chunk))
     child.on('error', () => resolve(1))
     child.on('close', (code) => {
-      writeFileSync(join(logsDir, 'stdout.log'), Buffer.concat(stdoutChunks))
-      writeFileSync(join(logsDir, 'stderr.log'), Buffer.concat(stderrChunks))
+      writeFileSync(join(options.logsDir, 'stdout.log'), Buffer.concat(stdoutChunks))
+      writeFileSync(join(options.logsDir, 'stderr.log'), Buffer.concat(stderrChunks))
       resolve(code ?? 1)
     })
   })
+}
 
-  await weblog?.stop()
-
-  if (exitCode !== 0) {
-    return transition(running, agentDir, 'failed', {
-      completedAt: new Date().toISOString(),
-      exitCode
-    })
-  }
-
+function finalizeLocalRunOutputs(
+  running: WrapperRun,
+  manifest: WrapperManifest,
+  runDir: string,
+  absoluteOutDir: string,
+  agentDir: string,
+  exitCode: number
+): WrapperRun {
   const collecting = transition(running, agentDir, 'collecting')
   const outputs = collectOutputs(manifest, absoluteOutDir)
   const missingOutputs = missingPrimaryOutputs(outputs)
   writeFileSync(
     join(runDir, 'outputs.json'),
-    `${JSON.stringify({ runId: run.runId, outputs }, null, 2)}\n`
+    `${JSON.stringify({ runId: running.runId, outputs }, null, 2)}\n`
   )
   writeFileSync(
     join(runDir, 'summary.json'),
     `${JSON.stringify(
       {
-        runId: run.runId,
+        runId: running.runId,
         state: missingOutputs.length > 0 ? 'failed' : 'completed',
         outputs,
         missingOutputs

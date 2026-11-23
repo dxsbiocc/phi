@@ -22,10 +22,19 @@ export interface WrapperCompositionParam {
   enum?: string[]
 }
 
+export interface WrapperCompositionOutputAssertion {
+  nonEmpty?: boolean
+  format?: 'tsv' | 'csv' | 'json'
+  minDataRows?: number
+  minColumns?: number
+  requiredColumns?: string[]
+}
+
 export interface WrapperCompositionOutput {
   type: string
   path: string
   primary: boolean
+  assertions?: WrapperCompositionOutputAssertion
 }
 
 export interface WrapperCompositionManifest {

@@ -1,6 +1,9 @@
+import type { MatrixValueSemantics } from './scientificContextTypes'
+
 export const PLAN_SPEC_VERSION = 1 as const
 export const PLAN_DEFAULT_STEP_AGENT = 'PlanStep'
 export const PLAN_MAX_STEPS = 20
+export const PLAN_MAX_HYPOTHESES = 10
 export const PLAN_MAX_STEP_ID_LENGTH = 40
 export const PLAN_MAX_STEP_TITLE_LENGTH = 80
 export const PLAN_MAX_STEP_INSTRUCTIONS_LENGTH = 4_000
@@ -38,6 +41,86 @@ export const PLAN_RUN_PAUSE_REASONS = [
 
 export type PlanStepAccess = 'read' | 'write'
 
+export const PLAN_STEP_CHECK_KINDS = [
+  'file_exists',
+  'non_empty_file',
+  'json_valid',
+  'table_schema'
+] as const
+
+export type PlanStepCheckKind = (typeof PLAN_STEP_CHECK_KINDS)[number]
+
+/** Closed list of host-evaluated, read-only post-step objective checks (R12). */
+export type PlanStepVerificationCheck =
+  | { kind: 'file_exists'; path: string }
+  | { kind: 'non_empty_file'; path: string }
+  | { kind: 'json_valid'; path: string }
+  | {
+      kind: 'table_schema'
+      path: string
+      format?: 'tsv' | 'csv'
+      minDataRows?: number
+      minColumns?: number
+      requiredColumns?: string[]
+    }
+
+export interface PlanStepVerificationResult {
+  ok: boolean
+  failures: string[]
+}
+
+export interface PlanStepInputContract {
+  /** Project-relative path to an upstream artifact whose scientific context must be checked before launch (R14). */
+  path: string
+  expectedReferenceAssembly?: string
+  /** Project-relative path to another artifact whose reference assembly must match this one. */
+  mustMatchReferenceWith?: string
+  requiredMatrixSemantics?: MatrixValueSemantics[]
+  /** Project-relative path to another artifact whose sample IDs must match this one. */
+  requireSampleMatchWith?: string
+  requireDonorMapping?: boolean
+}
+
+export type PlanStepPreflightResult =
+  | { status: 'compatible' }
+  | { status: 'needs_input'; missingInputs: string[]; summary: string }
+  | { status: 'incompatible'; reasons: string[] }
+
+export interface PlanLiteratureReviewDecision {
+  /** Whether the agent determined prior literature/research retrieval was needed for this task. */
+  needed: boolean
+  /** Concise reason why literature retrieval was performed or skipped. */
+  rationale: string
+  /** Optional concise search scope or framing (e.g. PICO / key concepts) when needed is true. */
+  scope?: string
+  /** Databases or search sources actually consulted (e.g. PubMed, bioRxiv, Semantic Scholar). */
+  databases?: string[]
+  /** Thematic synthesis of consensus, conflicts, and research gaps motivating hypotheses. */
+  synthesis?: string
+  /** Verified citations, DOIs, PMIDs, or URLs retrieved when needed is true. */
+  references?: string[]
+}
+
+export interface PlanHypothesis {
+  id: string
+  /** Concrete, testable hypothesis statement. */
+  statement: string
+  /** Mechanistic explanation (how/why) rather than pure correlation. */
+  mechanism?: string
+  /** Why this hypothesis is plausible given the task, data, or literature synthesis. */
+  rationale?: string
+  /** Whether the user selected this hypothesis for verification in the plan. */
+  selected: boolean
+  /** Specific directional or quantitative prediction expected if the hypothesis holds. */
+  prediction?: string
+  /** Observable evidence criteria that would support or refute the hypothesis. */
+  testCriteria?: string
+  /** Explicit observable evidence that would disprove/falsify this hypothesis. */
+  falsificationCriteria?: string
+  /** Key confounders, batch/donor nesting, or alternative explanations to control during testing. */
+  confounders?: string[]
+}
+
 export interface PlanStep {
   id: string
   title: string
@@ -46,6 +129,10 @@ export interface PlanStep {
   dependsOn: string[]
   access: PlanStepAccess
   writes?: string[]
+  checks?: PlanStepVerificationCheck[]
+  inputContracts?: PlanStepInputContract[]
+  /** Hypothesis IDs from PlanSpec.hypotheses that this step tests or verifies. */
+  hypothesisIds?: string[]
   agent?: string
 }
 
@@ -54,6 +141,10 @@ export interface PlanSpec {
   /** User-confirmed question shared by scientific step handoffs. */
   researchQuestion?: string
   goal: string
+  /** Agent decision on whether prior literature retrieval was needed before hypothesis generation. */
+  literatureReview?: PlanLiteratureReviewDecision
+  /** Candidate hypotheses generated before planning, marking which ones the user selected. */
+  hypotheses?: PlanHypothesis[]
   steps: PlanStep[]
 }
 
@@ -214,6 +305,14 @@ export type PlanRunEvent =
       at: string
     }
   | { type: 'step_needs_input'; stepId: string; report: PlanStepReportSummary; at: string }
+  | {
+      type: 'step_preflight_blocked'
+      stepId: string
+      reason: 'needs_input' | 'step_failed'
+      report?: PlanStepReportSummary
+      error?: string
+      at: string
+    }
   | { type: 'pause'; at: string }
   | { type: 'resume'; at: string }
   | { type: 'retry_step'; stepId: string; at: string }

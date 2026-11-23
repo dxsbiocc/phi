@@ -101,8 +101,17 @@ export function createWorkerKernelAdapter(
     options.callWorker ??
     ((method, params) => callKernelRuntime(method, params, options.modelAccess, kernelServices))
   const agentRuns = new KernelAgentRunCoordinator(options.agentDir, callWorker, diagnostic)
-  const plans = new KernelPlanCoordinator(options.agentDir, callWorker, diagnostic, (id, request) =>
-    agentRuns.launchSettled(id, request)
+  const plans = new KernelPlanCoordinator(
+    options.agentDir,
+    callWorker,
+    diagnostic,
+    (id, request) => agentRuns.launchSettled(id, request),
+    (sessionId) => {
+      const inputCwd = sessionCreateInputs.get(sessionId)?.cwd
+      if (typeof inputCwd === 'string' && inputCwd.length > 0) return inputCwd
+      const persistentCwd = durableSessions.get(sessionId)?.manifest.cwd
+      return typeof persistentCwd === 'string' && persistentCwd.length > 0 ? persistentCwd : null
+    }
   )
   kernelServices.agentRuns = agentRuns
   kernelServices.plans = plans

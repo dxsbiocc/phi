@@ -208,17 +208,13 @@ function ToolCallCard({
         onExiting={notifyContentResize}
         onExited={notifyContentResize}
       >
-        {detailMaxHeight !== undefined ? (
-          <ScrollableToolDetail
-            maxHeight={detailMaxHeight}
-            follow={item.status === 'running'}
-            contentKey={item.output}
-          >
-            <ToolCallDetail item={item} cwd={cwd} />
-          </ScrollableToolDetail>
-        ) : (
+        <ScrollableToolDetail
+          maxHeight={detailMaxHeight ?? 360}
+          follow={item.status === 'running'}
+          contentKey={item.output}
+        >
           <ToolCallDetail item={item} cwd={cwd} />
-        )}
+        </ScrollableToolDetail>
       </Collapse>
     </Box>
   )

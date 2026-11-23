@@ -18,6 +18,7 @@ import { createWorkspaceHostRemoteSession } from '../src/main/agent/workspace-ho
 import { SshHost } from '../src/main/agent/workspace-host/ssh-host'
 import type { RemoteExecResult } from '../src/main/agent/wrappers/remote-ssh-session'
 import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
+import { completeProbeOutput } from './helpers/probeFixture'
 import { runWorkspaceHostContract } from './workspace-host-contract'
 
 const execFileAsync = promisify(execFile)
@@ -28,15 +29,14 @@ let helperVersion = ''
 let restoreSetsid = (): void => undefined
 
 function helperProfile(): ReturnType<typeof parseHostCapabilityProbe> {
-  return parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
+  return parseHostCapabilityProbe(
+    completeProbeOutput(`
 platform.os=Linux
 platform.arch=x86_64
 storage.home_writable=1
 storage.home_executable=1
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
 `)
+  )
 }
 
 before(async () => {

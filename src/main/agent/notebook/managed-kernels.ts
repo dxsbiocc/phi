@@ -260,7 +260,14 @@ export function managedKernelSpec(
     return managedWslKernelSpec(definition, handle, ctx.baseEnv)
   }
   const env = kernelEnvironmentVariables(definition, handle, ctx)
-  const metadata = { phi: { managed: true, ref: definition.ref, envId: handle.envId } }
+  const metadata = {
+    phi: {
+      managed: true,
+      ref: definition.ref,
+      envId: handle.envId,
+      lockSha256: handle.metadata.lockSha256
+    }
+  }
   if (definition.language === 'python') {
     return {
       argv: [
@@ -305,7 +312,12 @@ function managedWslKernelSpec(
     language: definition.language,
     interrupt_mode: 'signal',
     metadata: {
-      phi: { managed: true, ref: definition.ref, envId: handle.envId },
+      phi: {
+        managed: true,
+        ref: definition.ref,
+        envId: handle.envId,
+        lockSha256: handle.metadata.lockSha256
+      },
       ...(python ? { debugger: true } : {})
     }
   }

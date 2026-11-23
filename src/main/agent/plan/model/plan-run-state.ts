@@ -39,11 +39,36 @@ function cloneStep(step: PlanStep): PlanStep {
   return {
     ...step,
     dependsOn: [...step.dependsOn],
-    ...(step.writes ? { writes: [...step.writes] } : {})
+    ...(step.writes ? { writes: [...step.writes] } : {}),
+    ...(step.hypothesisIds ? { hypothesisIds: [...step.hypothesisIds] } : {})
   }
 }
 function cloneSpec(spec: PlanSpec): PlanSpec {
-  return { ...spec, steps: spec.steps.map(cloneStep) }
+  return {
+    ...spec,
+    ...(spec.literatureReview
+      ? {
+          literatureReview: {
+            ...spec.literatureReview,
+            ...(spec.literatureReview.databases
+              ? { databases: [...spec.literatureReview.databases] }
+              : {}),
+            ...(spec.literatureReview.references
+              ? { references: [...spec.literatureReview.references] }
+              : {})
+          }
+        }
+      : {}),
+    ...(spec.hypotheses
+      ? {
+          hypotheses: spec.hypotheses.map((item) => ({
+            ...item,
+            ...(item.confounders ? { confounders: [...item.confounders] } : {})
+          }))
+        }
+      : {}),
+    steps: spec.steps.map(cloneStep)
+  }
 }
 function pendingStep(): PlanStepState {
   return { status: 'pending', attempts: 0 }
@@ -251,6 +276,25 @@ function reduceFailure(
   })
   return withStep(state, event.stepId, next, event.at)
 }
+function reducePreflightBlocked(
+  state: PlanRunState,
+  event: Extract<PlanRunEvent, { type: 'step_preflight_blocked' }>
+): PlanRunState {
+  const current = requireStep(state, event.stepId)
+  requireStepStatus(event.stepId, current, ['pending'])
+  const nextStep: PlanStepState = {
+    ...current,
+    status: 'failed',
+    ...(event.report ? { report: normalizePlanStepReport(event.report) } : {}),
+    ...(event.error ? { error: event.error } : {}),
+    finishedAt: event.at
+  }
+  return {
+    ...withStep(state, event.stepId, nextStep, event.at),
+    status: 'paused',
+    pause: { reason: event.reason, stepId: event.stepId }
+  }
+}
 function reducePause(state: PlanRunState, at: string): PlanRunState {
   if (state.status !== 'running')
     transitionError('INVALID_RUN_STATUS', 'Only a running plan can be paused.')
@@ -310,6 +354,7 @@ function comparableStep(step: PlanStep): unknown[] {
     step.dependsOn,
     step.access,
     step.writes,
+    step.hypothesisIds,
     step.agent
   ]
 }
@@ -442,6 +487,8 @@ export function reducePlanRun(state: PlanRunState, event: PlanRunEvent): PlanRun
     case 'step_needs_input':
       next = reduceFailure(state, event)
       break
+    case 'step_preflight_blocked':
+      return reducePreflightBlocked(state, event)
     case 'pause':
       next = reducePause(state, event.at)
       break

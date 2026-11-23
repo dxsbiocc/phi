@@ -4,7 +4,7 @@ Date: 2026-09-10
 
 This is a practical guide for writing a `wrapper.yaml` and running it locally during
 Phase 1. For the product rationale and phased scope, see
-[phi-wrapper-product-prd.md](phi-wrapper-product-prd.md); for the full target manifest
+historical Phi Wrapper PRD (archived in Git history); for the full target manifest
 shape and how each Phase 1 field maps to later phases, see
 [phi-wrapper-technical-design.md](phi-wrapper-technical-design.md). This guide only
 covers what Phase 1 actually validates and runs.

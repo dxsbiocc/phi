@@ -2665,7 +2665,17 @@ function scheduleAutomaticSessionTitle(sessionId: string): void {
 }
 
 function isUsableWindow(window: BrowserWindow | null): window is BrowserWindow {
-  return Boolean(window && !window.isDestroyed() && !window.webContents.isDestroyed())
+  if (!window || window.isDestroyed()) return false
+  const contents = window.webContents
+  if (contents.isDestroyed()) return false
+  if (typeof contents.isCrashed === 'function' && contents.isCrashed()) return false
+  try {
+    const frame = contents.mainFrame
+    if (!frame) return false
+    return typeof frame.isDestroyed === 'function' ? !frame.isDestroyed() : true
+  } catch {
+    return false
+  }
 }
 
 function isDisposedFrameSendError(error: unknown): boolean {
@@ -2679,7 +2689,9 @@ function isDisposedFrameSendError(error: unknown): boolean {
 function sendToWindow(window: BrowserWindow | null, channel: string, ...args: unknown[]): boolean {
   if (!isUsableWindow(window)) return false
   try {
-    window.webContents.send(channel, ...args)
+    const frame = window.webContents.mainFrame
+    if (frame && typeof frame.send === 'function') frame.send(channel, ...args)
+    else window.webContents.send(channel, ...args)
     return true
   } catch (error) {
     if (isDisposedFrameSendError(error)) return false

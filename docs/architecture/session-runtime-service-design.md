@@ -3,8 +3,7 @@
 Date: 2026-10-21
 Status: 阶段一已完成(SR-1 至 SR-4);阶段二已完成:SO-1 至 SO-4、DM 及远端 Notebook 运行时收尾,`index.ts` 4,288 行
 
-相关文档:[main-ipc-split-handoff.md](main-ipc-split-handoff.md)(规则、审查清单、第 9 步状态类决定)、
-[clean-code-optimization-plan.md](clean-code-optimization-plan.md)(第 3.1 节「主进程可隔离测试」)。
+历史重构交接与整洁度方案已归档于 Git 历史，当前设计实现以 `src/main/session-runtime/` 源码为准。
 
 ---
 

@@ -151,6 +151,7 @@ test(
     const states = syncManagedKernels(ctx(fixture))
     const python = states.find((state) => state.definition.name === 'phi-python')
     assert.equal(python?.status, 'ready')
+    const lockSha256 = python.handle.metadata.lockSha256
 
     const spec = readSpec(fixture, 'phi-python')
     assert.deepEqual(spec.argv, [
@@ -174,7 +175,7 @@ test(
     // Kept host variables come from the server's environment, never written to disk here.
     assert.equal(env.HTTP_PROXY, undefined)
     assert.equal(env.HOME, undefined)
-    assert.deepEqual(spec.metadata?.phi, { managed: true, ref: 'phi:python@1', envId })
+    assert.deepEqual(spec.metadata?.phi, { managed: true, ref: 'phi:python@1', envId, lockSha256 })
   })
 )
 
@@ -689,7 +690,13 @@ test(
     assert.equal(spec.language, 'R')
     assert.equal(spec.display_name, 'R 4.5 (alpha-plugin:seurat)')
     assert.equal(spec.env?.PHI_ENV_ID, envId)
-    assert.deepEqual(spec.metadata?.phi, { managed: true, ref: 'plugin:seurat', envId })
+    const lockSha256 = state.handle.metadata.lockSha256
+    assert.deepEqual(spec.metadata?.phi, {
+      managed: true,
+      ref: 'plugin:seurat',
+      envId,
+      lockSha256
+    })
 
     const diagnostics = listAnalysisKernels({
       ...ctx(fixture),
@@ -701,7 +708,12 @@ test(
       ['phi-python', 'phi-r', 'plugin-alpha-plugin-seurat']
     )
     const summary = diagnostics.kernels[2]
-    assert.deepEqual(summary.environment, { ref: 'plugin:seurat', envId, pluginId: 'alpha-plugin' })
+    assert.deepEqual(summary.environment, {
+      ref: 'plugin:seurat',
+      envId,
+      lockSha256,
+      pluginId: 'alpha-plugin'
+    })
     assert.equal(
       selectNotebookKernel(notebook({ name: 'plugin-alpha-plugin-seurat' }), diagnostics)?.name,
       'plugin-alpha-plugin-seurat'

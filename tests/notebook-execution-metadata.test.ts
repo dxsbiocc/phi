@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { JsonObject } from '../src/shared/notebookDocument'
-import { notebookCellMetadataWithExecutionDuration } from '../src/shared/notebookExecutionMetadata'
+import {
+  notebookCellMetadataWithExecutionDuration,
+  notebookDocumentMetadataWithExecutionEnvironment
+} from '../src/shared/notebookExecutionMetadata'
+import { notebookExecutionEnvironmentForKernel } from '../src/main/agent/notebook/analysis-kernels'
 
 const execution = {
   startedAt: '2026-10-15T02:03:04.000Z',
@@ -78,4 +82,79 @@ test('execution metadata retains invalid timestamps with zero duration', () => {
       }
     })
   }
+})
+
+test('execution metadata records managed kernel envId and lockSha256 on cell and document', () => {
+  const diagnostics = {
+    jupyterServer: { available: true, command: 'jupyter' as const, managed: true },
+    kernels: [
+      {
+        name: 'phi-python',
+        displayName: 'Python 3.12 (phi-python)',
+        language: 'python' as const,
+        rawLanguage: 'python',
+        source: 'managed' as const,
+        status: 'ready' as const,
+        environment: {
+          ref: 'phi:python@1',
+          envId: 'env_abc123',
+          lockSha256: 'a'.repeat(64)
+        }
+      },
+      {
+        name: 'host-python3',
+        displayName: 'Python 3 · host (unmanaged)',
+        language: 'python' as const,
+        rawLanguage: 'python',
+        source: 'host' as const,
+        status: 'ready' as const
+      }
+    ],
+    hasPythonKernel: true,
+    hasRKernel: false,
+    messages: []
+  }
+
+  const managedEnv = notebookExecutionEnvironmentForKernel('phi-python', diagnostics)
+  assert.deepEqual(managedEnv, {
+    kernelName: 'phi-python',
+    source: 'managed',
+    ref: 'phi:python@1',
+    envId: 'env_abc123',
+    lockSha256: 'a'.repeat(64)
+  })
+
+  const cellMeta = notebookCellMetadataWithExecutionDuration({}, execution, managedEnv)
+  assert.deepEqual((cellMeta.phi as JsonObject).executionEnvironment, {
+    kernelName: 'phi-python',
+    source: 'managed',
+    ref: 'phi:python@1',
+    envId: 'env_abc123',
+    lockSha256: 'a'.repeat(64)
+  })
+
+  const docMeta = notebookDocumentMetadataWithExecutionEnvironment(
+    { phi: { created_by: 'Phi analysis workbench' } },
+    managedEnv!,
+    execution.completedAt
+  )
+  assert.deepEqual(docMeta, {
+    phi: {
+      created_by: 'Phi analysis workbench',
+      executionEnvironment: {
+        kernelName: 'phi-python',
+        source: 'managed',
+        ref: 'phi:python@1',
+        envId: 'env_abc123',
+        lockSha256: 'a'.repeat(64),
+        recordedAt: execution.completedAt
+      }
+    }
+  })
+
+  const hostEnv = notebookExecutionEnvironmentForKernel('host-python3', diagnostics)
+  assert.deepEqual(hostEnv, {
+    kernelName: 'host-python3',
+    source: 'host'
+  })
 })

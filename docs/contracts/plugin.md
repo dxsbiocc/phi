@@ -10,7 +10,7 @@ and what the engine does when a plugin is installed, upgraded, or removed. It
 builds on the [agent](agent.md), [skill](skill.md), and
 [environment](environment.md) contracts. See
 [runtime foundation](../design/phi-runtime-foundation.md) §7 and §10, and
-[content distribution design](../design/phi-content-distribution-design.md) §5.
+content distribution design §5.
 
 ## 1. Layout
 

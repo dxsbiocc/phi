@@ -7,6 +7,7 @@ import test from 'node:test'
 import type { WrapperCompositionManifest } from '../src/main/agent/wrappers/composition/manifest'
 import {
   findMissingPrimaryOutputs,
+  inspectOutputPaths,
   missingPrimaryOutputs,
   validateWrapperParams
 } from '../src/main/agent/wrappers/composition/validate'
@@ -173,6 +174,35 @@ test('missingPrimaryOutputs only reports absent primary records, never optional 
     ]),
     ['gone (out/gone)']
   )
+})
+
+test('inspectOutputPaths retains unresolved and blank outputs as resolved: false', () => {
+  withDir((dir) => {
+    const blankManifest: WrapperCompositionManifest = {
+      ...manifest,
+      outputs: {
+        report: { type: 'directory', path: '${outdir}/toy', primary: true },
+        blank: { type: 'file', path: '   ', primary: true },
+        extra: { type: 'file', path: '${missing}/extra.txt', primary: false }
+      }
+    }
+    assert.deepEqual(inspectOutputPaths(blankManifest, { outdir: 'results' }, dir), [
+      {
+        id: 'report',
+        type: 'directory',
+        path: 'results/toy',
+        absolutePath: join(dir, 'results', 'toy'),
+        primary: true,
+        resolved: true
+      },
+      { id: 'blank', type: 'file', path: '   ', primary: true, resolved: false },
+      { id: 'extra', type: 'file', path: '${missing}/extra.txt', primary: false, resolved: false }
+    ])
+    assert.deepEqual(findMissingPrimaryOutputs(blankManifest, { outdir: 'results' }, dir), [
+      'report (results/toy)',
+      'blank (   )'
+    ])
+  })
 })
 
 test('a paired-reads glob that picks samples with braces or brackets before the last * is rejected', () => {

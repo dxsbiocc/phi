@@ -1,16 +1,28 @@
 import { appendFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import type { RemoteHpcSettings } from '../../../../shared/wrapperRemoteTypes'
-import type { WrapperManifestEngineProfile } from '../../../../shared/wrapperManifestTypes'
 import type { Project } from '../../projects'
 import { getPhiAgentDir } from '../../runtime-paths'
 import { wrapperTreeDir } from '../../packages/wrapper-tree'
 import { resolveCompositionInputParams } from '../path-mapping'
 import type { ResolvedRemoteTarget } from '../remote-connection-resolver'
 import { chooseWrapperTarget, type WrapperTargetDoctorSnapshot } from '../target-policy'
-import { getWrapperRunsDir, listWrapperRuns, readWrapperRun, writeWrapperRun } from '../store'
-import type { WrapperExecutor, WrapperRun } from '../types'
+import { captureLocalRuntimeProvenance } from '../runtime-provenance'
+import {
+  getWrapperRunsDir,
+  listWrapperRuns,
+  readWrapperRun,
+  writeWrapperRun,
+  writeWrapperRuntimeProvenance
+} from '../store'
+import type { WrapperRun } from '../types'
+import {
+  checkedRemoteDoctor,
+  compositionProfiles,
+  remoteEnvironmentCheckError,
+  remoteExecutorName,
+  requireLaunch
+} from './job-helpers'
 import {
   findWrapperCompositionEntry,
   readWrapperCompositionDag,
@@ -71,7 +83,11 @@ import {
   LOG_FILE,
   LOG_TAIL_CHARS
 } from './stored-job-status'
-import { findMissingPrimaryOutputs, validateWrapperParams } from './validate'
+import {
+  findFailedOutputAssertions,
+  findMissingPrimaryOutputs,
+  validateWrapperParams
+} from './validate'
 import { parseWrapperWorkflow } from './workflow-identity'
 import { declaresResearchQc, localResearchOutcome, researchQcLaunchBlock } from './research-qc'
 import { isResearchQcGated } from '../../../../shared/wrapperResearchQcTypes'
@@ -148,50 +164,6 @@ interface LiveJob {
   cancelRequested: boolean
   finalized: boolean
   finished: Promise<WrapperJobStatus>
-}
-
-/** The head process as a Slurm job is `slurm-controller`; on the login node it is `slurm` or `remote-background`. */
-function remoteExecutorName(hpc: RemoteHpcSettings | undefined): WrapperExecutor {
-  if (hpc?.controller === 'sbatch') return 'slurm-controller'
-  return hpc?.scheduler === 'slurm' ? 'slurm' : 'remote-background'
-}
-
-function compositionProfiles(
-  remote: boolean,
-  hpc?: RemoteHpcSettings
-): WrapperManifestEngineProfile[] {
-  return WRAPPER_EXECUTION_PROFILES.map((runtime) => ({
-    id: runtime,
-    executor: remote ? 'remote' : 'local',
-    ...(remote
-      ? {
-          scheduler: hpc?.scheduler === 'slurm' ? ('slurm' as const) : ('none' as const),
-          controller:
-            hpc?.controller === 'sbatch' ? ('sbatch' as const) : ('detached_ssh' as const),
-          containerRuntime: runtime
-        }
-      : {})
-  }))
-}
-
-function requireLaunch(launch: NextflowLaunch | undefined): NextflowLaunch {
-  if (!launch) throw new Error('Nextflow was not resolved for a local run')
-  return launch
-}
-
-class WrapperEnvironmentBlockedError extends Error {}
-
-function checkedRemoteDoctor(
-  value: WrapperTargetDoctorSnapshot | { blocked: string }
-): WrapperTargetDoctorSnapshot {
-  if ('blocked' in value) throw new WrapperEnvironmentBlockedError(value.blocked)
-  return value
-}
-
-function remoteEnvironmentCheckError(error: unknown): string {
-  return error instanceof WrapperEnvironmentBlockedError
-    ? error.message
-    : `远程环境检查失败：${errorMessage(error)}`
 }
 
 export class WrapperJobManager implements WrapperJobClient {
@@ -557,6 +529,18 @@ export class WrapperJobManager implements WrapperJobClient {
       }
     }
 
+    if (launch) {
+      try {
+        const runtime = await captureLocalRuntimeProvenance({
+          launch,
+          profile,
+          wrapperMainNf: join(entry.wrapperDir, 'main.nf')
+        })
+        writeWrapperRuntimeProvenance(run.runId, runtime, agentDir)
+      } catch {
+        // Runtime provenance is best-effort and must never block execution.
+      }
+    }
     const logPath = join(getWrapperRunsDir(agentDir), run.runId, LOG_FILE)
     writeFileSync(logPath, '')
     const tracker = createProgressTracker({
@@ -784,11 +768,16 @@ export class WrapperJobManager implements WrapperJobClient {
       : result.success
         ? findMissingPrimaryOutputs(job.entry.manifest, job.params, job.entry.componentDir)
         : []
+    const assertionFailures =
+      !result.remote && result.success && missing.length === 0
+        ? findFailedOutputAssertions(job.entry.manifest, job.params, job.entry.componentDir)
+        : []
+    const allMissing = [...missing, ...assertionFailures]
     let outcome: CompositionRunOutcome = result.cancelled
       ? 'cancelled'
       : result.lost
         ? 'lost'
-        : result.success && missing.length === 0
+        : result.success && allMissing.length === 0
           ? 'completed'
           : 'failed'
     let researchQc
@@ -799,7 +788,7 @@ export class WrapperJobManager implements WrapperJobClient {
         job.run.outDir,
         outcome,
         result.exitCode,
-        missing
+        allMissing
       )
       if (job.cancelRequested) {
         outcome = 'cancelled'
@@ -814,7 +803,7 @@ export class WrapperJobManager implements WrapperJobClient {
         outcome,
         exitCode: result.exitCode,
         output: result.output || job.tracker.tail(),
-        missingOutputs: missing,
+        missingOutputs: allMissing,
         progress: job.tracker.snapshot(),
         ...(researchQc ? { researchQc } : {}),
         // A remote run's outputs are on the cluster, out of reach of a local existsSync.

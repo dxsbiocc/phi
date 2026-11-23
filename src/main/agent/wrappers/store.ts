@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { restoreResearchQc } from './composition/research-qc'
 import {
   appendFileSync,
@@ -11,7 +12,14 @@ import { dirname, join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
 import { appendAuditLine } from './audit'
-import type { WrapperAuditEvent, WrapperEvent, WrapperRun, WrapperRunPlan } from './types'
+import type {
+  WrapperAuditEvent,
+  WrapperEvent,
+  WrapperRun,
+  WrapperRunPlan,
+  WrapperRuntimeProvenance,
+  WrapperStepQcSummary
+} from './types'
 
 const WRAPPERS_DIR_NAME = 'wrappers'
 const GLOBAL_AUDIT_FILE = 'audit.jsonl'
@@ -151,6 +159,81 @@ export function listWrapperRuns(agentDir = getPhiAgentDir()): WrapperRun[] {
   return listWrapperRunIds(agentDir)
     .map((id) => readWrapperRun(id, agentDir))
     .filter((run): run is WrapperRun => run !== undefined)
+}
+
+export interface WrapperManifestSnapshot {
+  capturedAt: string
+  sha256: string
+  manifest: unknown
+}
+
+const MANIFEST_SNAPSHOT_FILE = 'manifest.snapshot.json'
+
+/**
+ * Freezes the wrapper manifest as it existed when the run was created.
+ * Write-once: if a snapshot already exists for this run, it is never overwritten.
+ */
+export function writeWrapperManifestSnapshot(
+  runId: string,
+  manifest: unknown,
+  agentDir = getPhiAgentDir()
+): WrapperManifestSnapshot {
+  const path = join(getRunDir(runId, agentDir), MANIFEST_SNAPSHOT_FILE)
+  const existing = readJson<WrapperManifestSnapshot>(path)
+  if (existing) return existing
+  const snapshot: WrapperManifestSnapshot = {
+    capturedAt: new Date().toISOString(),
+    sha256: createHash('sha256').update(JSON.stringify(manifest)).digest('hex'),
+    manifest
+  }
+  ensureDir(dirname(path))
+  writeFileSync(path, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf-8')
+  return snapshot
+}
+
+export function readWrapperManifestSnapshot(
+  runId: string,
+  agentDir = getPhiAgentDir()
+): WrapperManifestSnapshot | undefined {
+  return readJson<WrapperManifestSnapshot>(join(getRunDir(runId, agentDir), MANIFEST_SNAPSHOT_FILE))
+}
+
+const RUNTIME_PROVENANCE_FILE = 'runtime.json'
+
+export function writeWrapperRuntimeProvenance(
+  runId: string,
+  provenance: WrapperRuntimeProvenance,
+  agentDir = getPhiAgentDir()
+): WrapperRuntimeProvenance {
+  writeJson(join(getRunDir(runId, agentDir), RUNTIME_PROVENANCE_FILE), provenance)
+  return provenance
+}
+
+export function readWrapperRuntimeProvenance(
+  runId: string,
+  agentDir = getPhiAgentDir()
+): WrapperRuntimeProvenance | undefined {
+  return readJson<WrapperRuntimeProvenance>(
+    join(getRunDir(runId, agentDir), RUNTIME_PROVENANCE_FILE)
+  )
+}
+
+const QC_SUMMARY_FILE = 'qc.json'
+
+export function writeWrapperQcSummary(
+  runId: string,
+  qc: WrapperStepQcSummary,
+  agentDir = getPhiAgentDir()
+): WrapperStepQcSummary {
+  writeJson(join(getRunDir(runId, agentDir), QC_SUMMARY_FILE), qc)
+  return qc
+}
+
+export function readWrapperQcSummary(
+  runId: string,
+  agentDir = getPhiAgentDir()
+): WrapperStepQcSummary | undefined {
+  return readJson<WrapperStepQcSummary>(join(getRunDir(runId, agentDir), QC_SUMMARY_FILE))
 }
 
 // --- Append-only run events --------------------------------------------------

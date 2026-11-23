@@ -8,8 +8,6 @@ import { HOST_CAPABILITY_PROFILE_VERSION } from './types'
 import {
   FAST_PROBE_END_SENTINEL,
   FAST_PROBE_START_SENTINEL,
-  PROBE_END_SENTINEL,
-  PROBE_START_SENTINEL,
   SLOW_PROBE_END_SENTINEL,
   SLOW_PROBE_START_SENTINEL
 } from './probe-script'
@@ -40,7 +38,6 @@ interface ProbeBlock {
   rows: ReadonlyMap<string, string>
   hasStart: boolean
   hasEnd: boolean
-  phase: 'legacy' | 'split'
   fastComplete: boolean
   slowStatus: 'complete' | 'incomplete' | 'timed-out' | 'failed'
 }
@@ -110,35 +107,19 @@ function parseSentinelBlock(
 
 function parseBlock(output: string, options: ProbeParseOptions): ProbeBlock {
   const fast = parseSentinelBlock(output, FAST_PROBE_START_SENTINEL, FAST_PROBE_END_SENTINEL)
-  if (fast.hasStart) {
-    const slow = parseSentinelBlock(output, SLOW_PROBE_START_SENTINEL, SLOW_PROBE_END_SENTINEL)
-    const slowComplete = slow.hasEnd && slow.rows.get('probe.slow_complete') === '1'
-    return {
-      rows: new Map([...fast.rows, ...slow.rows]),
-      hasStart: true,
-      hasEnd: fast.hasEnd && slow.hasEnd,
-      phase: 'split',
-      fastComplete: fast.hasEnd && fast.rows.get('probe.fast_complete') === '1',
-      slowStatus: options.slowFailure ?? (slowComplete ? 'complete' : 'incomplete')
-    }
-  }
-  const legacy = parseSentinelBlock(output, PROBE_START_SENTINEL, PROBE_END_SENTINEL)
+  const slow = parseSentinelBlock(output, SLOW_PROBE_START_SENTINEL, SLOW_PROBE_END_SENTINEL)
+  const slowComplete = slow.hasEnd && slow.rows.get('probe.slow_complete') === '1'
   return {
-    ...legacy,
-    phase: 'legacy',
-    fastComplete: legacy.hasEnd && legacy.rows.get('probe.complete') === '1',
-    slowStatus: 'complete'
+    rows: new Map([...fast.rows, ...slow.rows]),
+    hasStart: fast.hasStart,
+    hasEnd: fast.hasEnd && slow.hasEnd,
+    fastComplete: fast.hasEnd && fast.rows.get('probe.fast_complete') === '1',
+    slowStatus: options.slowFailure ?? (slowComplete ? 'complete' : 'incomplete')
   }
 }
 
 function probeCapability(block: ProbeBlock): HostCapability {
   if (!block.hasStart) return unavailable('probe output did not contain a valid sentinel block')
-  if (block.phase === 'legacy') {
-    if (!block.hasEnd || block.rows.get('probe.complete') !== '1') {
-      return { state: 'degraded', reason: 'probe output was incomplete' }
-    }
-    return { state: 'available' }
-  }
   if (!block.fastComplete) {
     return unavailable('fast capability detection was incomplete')
   }
@@ -248,17 +229,6 @@ function containerCapability(
   runtimes: HostContainerRuntimeCapabilities,
   status: ProbeBlock['slowStatus']
 ): HostCapability {
-  if (rows.has('tool.container.available')) {
-    const legacy = toolCapability(rows, 'container', 'container runtime', status)
-    const name = rows.get('tool.container.name')
-    const safeName = ['docker', 'singularity', 'apptainer', 'podman'].find((item) => item === name)
-    if (legacy.state !== 'available') return legacy
-    if (!safeName) return unavailable('container runtime probe result is unavailable')
-    return {
-      ...legacy,
-      version: legacy.version ? `${safeName} ${legacy.version}` : safeName
-    }
-  }
   const observedRuntime = ['docker', 'singularity', 'apptainer', 'podman'].some((name) =>
     rows.has(`tool.container.${name}.available`)
   )

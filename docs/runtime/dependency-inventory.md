@@ -13,7 +13,7 @@ checks. See [core resource ownership](../../resources/README.md) and
 
 Input for the `phi-python`, `phi-r`, `phi-nextflow`, and `phi-jupyter` specs
 ([runtime foundation](../design/phi-runtime-foundation.md) §3, §3.2, §5, §10;
-[implementation plan](../roadmap/content-distribution-implementation.md) step
+implementation plan step
 0.5 and steps 3–5). This file only records what the scripts and the listed
 engine components actually use. It does not create environments.
 

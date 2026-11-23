@@ -47,6 +47,7 @@ export type ChatBubbleProps = {
   onOpenWebUrl?: (url: string) => void
   onContentResize?: ChatContentResizeHandler
   isThinkingRunning?: boolean
+  showAssistantActions?: boolean
   cwd?: string
 }
 
@@ -65,6 +66,7 @@ function chatBubblePropsEqual(prev: ChatBubbleProps, next: ChatBubbleProps): boo
     prev.onRetryUserMessage === next.onRetryUserMessage &&
     prev.onForkUserMessage === next.onForkUserMessage &&
     prev.isThinkingRunning === next.isThinkingRunning &&
+    prev.showAssistantActions === next.showAssistantActions &&
     prev.onOpenBackgroundJobs === next.onOpenBackgroundJobs &&
     prev.onOpenWebUrl === next.onOpenWebUrl
   )
@@ -83,6 +85,7 @@ export const ChatBubble = memo(function ChatBubble({
   onOpenWebUrl,
   onContentResize,
   isThinkingRunning = false,
+  showAssistantActions = true,
   cwd = ''
 }: ChatBubbleProps): ReactNode {
   useUiLanguage()
@@ -248,6 +251,7 @@ export const ChatBubble = memo(function ChatBubble({
         onFork={onForkUserMessage}
         onOpenLocalPath={onOpenLocalPath}
         onOpenWebUrl={onOpenWebUrl}
+        showActions={showAssistantActions}
         cwd={cwd}
       />
     )

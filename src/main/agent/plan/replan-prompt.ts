@@ -30,6 +30,8 @@ export function replanPrompt(state: PlanRunState): string {
     JSON.stringify({
       goal: state.spec.goal,
       ...(state.spec.researchQuestion ? { researchQuestion: state.spec.researchQuestion } : {}),
+      ...(state.spec.literatureReview ? { literatureReview: state.spec.literatureReview } : {}),
+      ...(state.spec.hypotheses ? { hypotheses: state.spec.hypotheses } : {}),
       steps
     })
   ].join('\n\n')

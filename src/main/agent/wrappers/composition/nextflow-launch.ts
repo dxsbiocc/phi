@@ -63,6 +63,7 @@ export interface ManagedNextflowLaunch extends LaunchBase {
   source: 'managed'
   ref: string
   envId: string
+  lockSha256?: string
   wsl?: WslRuntime
 }
 
@@ -230,6 +231,7 @@ function managedLaunch(
       source: 'managed',
       ref: NEXTFLOW_ENVIRONMENT_REF,
       envId: handle.envId,
+      lockSha256: handle.metadata.lockSha256,
       command,
       env,
       runtimeRoot
@@ -257,6 +259,7 @@ function managedWslLaunch(
         source: 'managed',
         ref: NEXTFLOW_ENVIRONMENT_REF,
         envId: handle.envId,
+        lockSha256: handle.metadata.lockSha256,
         command,
         env: linuxEnv,
         runtimeRoot,

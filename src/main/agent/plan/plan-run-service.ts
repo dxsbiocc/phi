@@ -17,6 +17,15 @@ import {
   type PlanExecutor,
   type PlanExecutorEvent
 } from './execution/plan-executor'
+import { verifyPlanStepChecks } from './execution/step-verification'
+import { evaluateStepScientificCompatibility } from '../scientific-context/compatibility'
+import {
+  captureStepEvidenceFingerprint,
+  createDerivedRerunPlanSpec,
+  evaluatePlanStaleness,
+  type PlanStalenessReport,
+  type StepEvidenceFingerprint
+} from '../scientific-context/staleness'
 import { reducePlanRun } from './model/plan-run-state'
 import { validatePlanSpec, type PlanSpecValidationResult } from './model/plan-spec'
 import type {
@@ -31,7 +40,9 @@ import {
   listPlanRuns,
   listUnfinishedPlanRuns,
   readPlanRun,
-  writePlanRun
+  readPlanRunEvidenceFingerprints,
+  writePlanRun,
+  writePlanRunEvidenceFingerprints
 } from './persistence/plan-run-store'
 
 export type {
@@ -63,7 +74,9 @@ const defaultStore: PlanRunServiceStore = {
   write: writePlanRun,
   read: readPlanRun,
   list: listPlanRuns,
-  listUnfinished: listUnfinishedPlanRuns
+  listUnfinished: listUnfinishedPlanRuns,
+  writeEvidenceFingerprints: writePlanRunEvidenceFingerprints,
+  readEvidenceFingerprints: readPlanRunEvidenceFingerprints
 }
 
 const TIMELINE_MAX_BYTES = 16 * 1024
@@ -179,10 +192,43 @@ function reportServiceError<StoredEvent extends Record<string, unknown>>(
   }
 }
 
+function persistDoneStepEvidence<StoredEvent extends Record<string, unknown>>(
+  deps: PlanRunServiceDependencies<StoredEvent>,
+  store: PlanRunServiceStore,
+  state: PlanRunState,
+  recordedSteps: Map<string, Set<string>>
+): void {
+  if (!deps.resolveProjectRoot || !store.writeEvidenceFingerprints) return
+  const root = deps.resolveProjectRoot(state.sessionId)
+  if (!root) return
+  const seen = recordedSteps.get(state.id) ?? new Set<string>()
+  const newlyDone = state.spec.steps.filter(
+    (step) => state.steps[step.id]?.status === 'done' && !seen.has(step.id)
+  )
+  if (newlyDone.length === 0) return
+  const existing: Record<string, StepEvidenceFingerprint> = {
+    ...(store.readEvidenceFingerprints?.(state.sessionId, state.id) ?? {})
+  }
+  for (const step of newlyDone) {
+    existing[step.id] = captureStepEvidenceFingerprint(step, root)
+    seen.add(step.id)
+  }
+  recordedSteps.set(state.id, seen)
+  try {
+    void Promise.resolve(
+      store.writeEvidenceFingerprints(state.sessionId, state.id, existing)
+    ).catch((error) => reportServiceError(deps, state.id, 'evidence_fingerprint', error))
+  } catch (error) {
+    reportServiceError(deps, state.id, 'evidence_fingerprint', error)
+  }
+}
+
 function planExecutorEvents<StoredEvent extends Record<string, unknown>>(
-  deps: PlanRunServiceDependencies<StoredEvent>
+  deps: PlanRunServiceDependencies<StoredEvent>,
+  store: PlanRunServiceStore
 ): { emit(event: PlanExecutorEvent): void; prime(state: PlanRunState): void } {
   const fingerprints = new Map<string, string>()
+  const recordedEvidenceSteps = new Map<string, Set<string>>()
   return {
     prime(state) {
       fingerprints.set(state.id, stateFingerprint(state))
@@ -193,6 +239,7 @@ function planExecutorEvents<StoredEvent extends Record<string, unknown>>(
         return
       }
       if (event.type === 'state_changed') {
+        persistDoneStepEvidence(deps, store, event.state, recordedEvidenceSteps)
         const fingerprint = stateFingerprint(event.state)
         if (fingerprints.get(event.state.id) === fingerprint) return
         fingerprints.set(event.state.id, fingerprint)
@@ -633,6 +680,31 @@ class PlanRunServiceImplementation<
     }
   }
 
+  async inspectStaleness(phiSessionId: string, runId: string): Promise<PlanStalenessReport | null> {
+    const state = await this.get(phiSessionId, runId)
+    const root = this.deps.resolveProjectRoot?.(phiSessionId)
+    if (!state || !root) return null
+    const recorded = this.store.readEvidenceFingerprints?.(phiSessionId, runId) ?? {}
+    return evaluatePlanStaleness(state.spec, recorded, root)
+  }
+
+  async createDerivedRerunPlan(
+    phiSessionId: string,
+    runId: string
+  ): Promise<{ parentRunId: string; staleness: PlanStalenessReport; spec: PlanSpec } | null> {
+    const state = await this.get(phiSessionId, runId)
+    if (!state) return null
+    const staleness = await this.inspectStaleness(phiSessionId, runId)
+    if (!staleness) return null
+    const staleIds = Object.keys(staleness.staleSteps)
+    if (staleIds.length === 0) return null
+    return {
+      parentRunId: runId,
+      staleness,
+      spec: createDerivedRerunPlanSpec(runId, state.spec, staleIds)
+    }
+  }
+
   private async recover(phiSessionId: string): Promise<PlanRunState[]> {
     const recovered: PlanRunState[] = []
     for (const state of this.store.listUnfinished(phiSessionId)) {
@@ -657,7 +729,7 @@ export function createPlanRunService<StoredEvent extends Record<string, unknown>
     if (!current) throw new Error(RUNTIME_UNAVAILABLE_MESSAGE)
     return current
   }
-  const events = planExecutorEvents(deps)
+  const events = planExecutorEvents(deps, store)
   const runner = createEngineStepRunner({
     engine: deps.engine,
     completions,
@@ -670,6 +742,24 @@ export function createPlanRunService<StoredEvent extends Record<string, unknown>
     clock: deps.clock ?? (() => new Date().toISOString()),
     ids: deps.ids ?? randomUUID,
     ...(deps.requiresDurableLaunch ? { requiresDurableLaunch: deps.requiresDurableLaunch } : {}),
+    ...(deps.resolveProjectRoot
+      ? {
+          verifyStep: ({ sessionId, step }) => {
+            const root = deps.resolveProjectRoot?.(sessionId)
+            return root ? verifyPlanStepChecks(step, root) : { ok: true, failures: [] }
+          },
+          ...(deps.enableCrossStepContextChecks === false
+            ? {}
+            : {
+                preflightStep: ({ sessionId, step }) => {
+                  const root = deps.resolveProjectRoot?.(sessionId)
+                  return root
+                    ? evaluateStepScientificCompatibility(step, root)
+                    : { status: 'compatible' as const }
+                }
+              })
+        }
+      : {}),
     ...(deps.maxConcurrent === undefined ? {} : { maxConcurrent: deps.maxConcurrent })
   })
   return new PlanRunServiceImplementation(executor, deps, store, events.prime)

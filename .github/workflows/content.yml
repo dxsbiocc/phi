@@ -2,6 +2,8 @@ name: Content conformance
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'src/**'
       - 'resources/**'

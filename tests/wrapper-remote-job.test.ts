@@ -1005,3 +1005,60 @@ for (const controller of ['login', 'sbatch'] as const)
       }
     })
   })
+
+test('a remote zero-exit run flags unresolvable primary outputs as missing and ignores optional ones', async () => {
+  await withSandbox(async (sb) => {
+    await withHarness(sb, async (h) => {
+      const base = bundledEntry()
+      const entry = {
+        ...base,
+        manifest: {
+          ...base.manifest,
+          outputs: {
+            ...base.manifest.outputs,
+            required_unresolved: {
+              type: 'file',
+              path: '${missing_param}/summary.tsv',
+              primary: true
+            },
+            optional_unresolved: {
+              type: 'file',
+              path: '${missing_param}/optional.log',
+              primary: false
+            }
+          }
+        }
+      }
+      const result = await startRemoteWrapperComposition({
+        runId: 'wrun_unresolved_primary',
+        entry,
+        params: { gff: 'tests/data/genome.gff3', outdir: 'results' },
+        profile: 'docker',
+        target: h.target,
+        wrappersRoot: h.wrappersRoot,
+        onOutput: (chunk) => h.output.push(chunk),
+        onSnapshot: (snapshot) => h.snapshots.push(snapshot),
+        killGraceMs: 500
+      }).done
+
+      assert.equal(result.success, true, result.output)
+      assert.deepEqual(result.remote?.missingOutputs, [
+        'required_unresolved (${missing_param}/summary.tsv)'
+      ])
+      const unresolvedRecord = result.remote?.outputs.find(
+        (output) => output.id === 'required_unresolved'
+      )
+      assert.deepEqual(unresolvedRecord, {
+        id: 'required_unresolved',
+        path: '${missing_param}/summary.tsv',
+        exists: false,
+        primary: true,
+        location: 'remote'
+      })
+      assert.equal(
+        result.remote?.outputs.some((output) => output.id === 'optional_unresolved'),
+        false
+      )
+    })
+  })
+})

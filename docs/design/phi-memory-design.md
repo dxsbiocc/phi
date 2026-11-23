@@ -2,7 +2,7 @@
 
 状态：**已确认，已实现（内测）**
 日期：2026-10-12
-关联：`docs/roadmap/internal-beta-implementation.md`（内测范围）、`docs/roadmap/remote-parity-implementation.md`（R2.5 把记忆类工具归为 C 类）
+关联：`docs/roadmap/internal-beta-implementation.md`（内测范围）
 
 ## 1. 现状
 

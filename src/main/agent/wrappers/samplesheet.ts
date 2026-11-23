@@ -8,11 +8,23 @@ import { basename } from 'node:path'
  * everything after it.
  */
 const MATE_PATTERN = /^(.*?)[._-](R?[12])(?:[._-].*)?\.(?:fastq|fq)(?:\.gz)?$/i
+const LANE_SUFFIX = /^(.*?)[._-](L\d{1,3})$/i
 
 export interface SamplesheetRow {
   sample: string
   fastq_1: string
   fastq_2?: string
+}
+
+export interface SamplesheetBuildOptions {
+  /** Require both R1 and R2 for every sample. Defaults to `true` for paired-end sheets. */
+  requirePairedEnd?: boolean
+  /**
+   * When `false` (default), multiple distinct lanes for the same base sample
+   * (e.g. `S1_L001` and `S1_L002`) are rejected instead of being emitted as
+   * separate samples (which would cause downstream pseudoreplication).
+   */
+  allowMultiLaneAsSeparateSamples?: boolean
 }
 
 export interface SamplesheetBuildResult {
@@ -42,37 +54,104 @@ function mateNumber(marker: string): 1 | 2 | undefined {
   return undefined
 }
 
-/** Builds a paired-end FASTQ samplesheet from resolved local paths. */
+interface SampleEntry {
+  fastq_1?: string
+  fastq_2?: string
+  conflicted?: boolean
+}
+
+function registerFastqPath(
+  path: string,
+  bySample: Map<string, SampleEntry>,
+  lanesByBaseSample: Map<string, Map<string, string>>,
+  errors: string[]
+): void {
+  const fileName = basename(path)
+  const match = MATE_PATTERN.exec(fileName)
+  if (!match) {
+    errors.push(`Cannot identify sample/mate information from filename: ${fileName}`)
+    return
+  }
+  const [, sampleRaw, marker] = match
+  const mate = mateNumber(marker)
+  if (!mate) {
+    errors.push(`Cannot identify mate number: ${fileName}`)
+    return
+  }
+  const sample = sampleRaw.replace(/[._-]+$/, '').trim()
+  if (!sample) {
+    errors.push(`Cannot identify sample name from filename: ${fileName}`)
+    return
+  }
+
+  const entry = bySample.get(sample) ?? {}
+  const key = mate === 1 ? 'fastq_1' : 'fastq_2'
+  const label = mate === 1 ? 'R1' : 'R2'
+  if (entry[key] !== undefined) {
+    entry.conflicted = true
+    errors.push(
+      `Duplicate ${label} file for sample "${sample}": "${entry[key]}" conflicts with "${path}"`
+    )
+  } else {
+    entry[key] = path
+  }
+  bySample.set(sample, entry)
+
+  const laneMatch = LANE_SUFFIX.exec(sample)
+  if (!laneMatch) return
+  const baseSample = laneMatch[1].replace(/[._-]+$/, '').trim()
+  if (!baseSample) return
+  const lanes = lanesByBaseSample.get(baseSample) ?? new Map<string, string>()
+  lanes.set(laneMatch[2].toUpperCase(), sample)
+  lanesByBaseSample.set(baseSample, lanes)
+}
+
+function collectMultiLaneConflicts(
+  lanesByBaseSample: Map<string, Map<string, string>>,
+  errors: string[]
+): Set<string> {
+  const multiLaneSamples = new Set<string>()
+  for (const [baseSample, lanes] of [...lanesByBaseSample.entries()].sort(([a], [b]) =>
+    a.localeCompare(b)
+  )) {
+    if (lanes.size <= 1) continue
+    const laneList = [...lanes.keys()].sort().join(', ')
+    errors.push(
+      `Multiple lanes detected for sample "${baseSample}" (${laneList}): merge lanes or supply an explicit samplesheet instead of treating lanes as separate samples`
+    )
+    for (const sampleKey of lanes.values()) multiLaneSamples.add(sampleKey)
+  }
+  return multiLaneSamples
+}
+
+/** Builds a paired-end FASTQ samplesheet from resolved local paths with integrity checks. */
 export function buildPairedEndFastqSamplesheet(
   paths: string[],
-  columns: string[] = ['sample', 'fastq_1', 'fastq_2']
+  columns: string[] = ['sample', 'fastq_1', 'fastq_2'],
+  options: SamplesheetBuildOptions = {}
 ): SamplesheetBuildResult {
-  const bySample = new Map<string, { fastq_1?: string; fastq_2?: string }>()
+  const requirePairedEnd = options.requirePairedEnd ?? true
+  const allowMultiLaneAsSeparateSamples = options.allowMultiLaneAsSeparateSamples ?? false
+  const bySample = new Map<string, SampleEntry>()
+  const lanesByBaseSample = new Map<string, Map<string, string>>()
   const errors: string[] = []
 
-  for (const path of paths) {
-    const match = MATE_PATTERN.exec(basename(path))
-    if (!match) {
-      errors.push(`Cannot identify sample/mate information from filename: ${basename(path)}`)
-      continue
-    }
-    const [, sampleRaw, marker] = match
-    const mate = mateNumber(marker)
-    if (!mate) {
-      errors.push(`Cannot identify mate number: ${basename(path)}`)
-      continue
-    }
-    const sample = sampleRaw.replace(/[._-]$/, '')
-    const entry = bySample.get(sample) ?? {}
-    if (mate === 1) entry.fastq_1 = path
-    else entry.fastq_2 = path
-    bySample.set(sample, entry)
-  }
+  if (paths.length === 0) errors.push('No FASTQ files provided for samplesheet')
+  for (const path of paths) registerFastqPath(path, bySample, lanesByBaseSample, errors)
+
+  const multiLaneSamples = allowMultiLaneAsSeparateSamples
+    ? new Set<string>()
+    : collectMultiLaneConflicts(lanesByBaseSample, errors)
 
   const rows: SamplesheetRow[] = []
   for (const [sample, entry] of [...bySample.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (entry.conflicted || multiLaneSamples.has(sample)) continue
     if (!entry.fastq_1) {
       errors.push(`Sample "${sample}" has no R1 file`)
+      continue
+    }
+    if (requirePairedEnd && !entry.fastq_2) {
+      errors.push(`Sample "${sample}" has no R2 file`)
       continue
     }
     rows.push({ sample, fastq_1: entry.fastq_1, fastq_2: entry.fastq_2 })
@@ -83,7 +162,5 @@ export function buildPairedEndFastqSamplesheet(
     const record = row as unknown as Record<string, string | undefined>
     return columns.map((column) => csvField(record[column] ?? '')).join(',')
   })
-  const csv = [header, ...lines].join('\n')
-
-  return { rows, csv, errors }
+  return { rows, csv: [header, ...lines].join('\n'), errors }
 }

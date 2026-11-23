@@ -2,9 +2,9 @@
 
 更新日期：2026-10-16。适用于 Phi 桌面 SDK、原生模块及远程 OMP 运行时的同步升级。
 
-本手册对应 [OMP 计划的 T17／阶段 5](../roadmap/omp-decoupling-upgrade-plan.md)。升级应保持 [internal beta 的本地会话可靠性、审批和可恢复历史](../roadmap/internal-beta-implementation.md)，不附带新 UI、公共分发或无关迁移。远程工作沿用户已确认的独立计划推进，真实服务器连接仍需 R8 授权。
+本手册对应 OMP 计划的 T17／阶段 5。升级应保持 [internal beta 的本地会话可靠性、审批和可恢复历史](../roadmap/internal-beta-implementation.md)，不附带新 UI、公共分发或无关迁移。远程工作沿用户已确认的独立计划推进，真实服务器连接仍需 R8 授权。
 
-最新原 T16 限定状态（2026-10-16）：三项已审修复已本地 fast-forward 合入 main `db18ec7c`（保留其他工作、未推送）；该固定候选 GPU Notebook 3/3 和生产 types/build/asar/lint 通过，标准全量未跑；原 child-enabled R8 初始 attach、node3 extension 和 services 环境拒绝仍有实测红。详细范围见 [T16 科研闭环增量](omp-remote-acceptance.md#t16-科研闭环与受控验收增量2026-10-16)，T16 仍 partial。
+最新原 T16 限定状态（2026-10-16）：三项已审修复已本地 fast-forward 合入 main `db18ec7c`（保留其他工作、未推送）；该固定候选 GPU Notebook 3/3 和生产 types/build/asar/lint 通过，标准全量未跑；原 child-enabled R8 初始 attach、node3 extension 和 services 环境拒绝仍有实测红。详细范围见 T16 科研闭环增量，T16 仍 partial。
 
 上一批限定状态（2026-10-15）：原 T11 history 三场景通过，补五项断言后只复验 vendor/KV 一例；辅助 opaque 仍需上游公共修复，完整 T11 未关闭。原 T16 终端修复已 main `10f979bc`，原压力五阶段和 15 项纯测试、primary build/types/lint/asar 通过；GPU 官方 18.10.3 安装/隔离版本及原 `d670` bundle 的无 provider RPC foundation 通过；最终 `f964` foundation 另记。Cursor 子任务恢复与取消已完成本轮限定验收：最终 f964 包的实时停止、排队恢复前停止和后台控制 3/3 通过；旧 d670 四类恢复及 later-Main negative 证据按原版保留。node2/node3/yzhang 组按用户要求暂缓（deferred）、不作功能失败。
 
@@ -125,25 +125,25 @@ node --import ./scripts/test-loader.mjs --test --test-timeout=30000 tests/engine
 
 ### 当前受控应用入口
 
-原 T12 全部宿主工具已合入本地 main `fb0d054`，固定候选标准全量 6083 项零失败，合并后主工作区类型/构建、asar 和四项终端宿主检查通过。全量之后仅独立压力脚本 PID 就绪修复，产品与全量测试源不变。附加 supervisor 压力阶段的既有状态竞争按 T16 待修；`smoke:terminal-packaged` 必须提供实际 `.app` 路径，未执行不得记为通过。详细首轮失败、修复及版本边界见 [冻结整合验收](omp-remote-acceptance.md#冻结整合验收)。
+原 T12 全部宿主工具已合入本地 main `fb0d054`，固定候选标准全量 6083 项零失败，合并后主工作区类型/构建、asar 和四项终端宿主检查通过。全量之后仅独立压力脚本 PID 就绪修复，产品与全量测试源不变。附加 supervisor 压力阶段的既有状态竞争按 T16 待修；`smoke:terminal-packaged` 必须提供实际 `.app` 路径，未执行不得记为通过。详细首轮失败、修复及版本边界见 冻结整合验收。
 
 原 T13 模型/思考级别实际控制及默认策略修正已合入 `365b2db`，复用 T12 审批、资源和 journal 恢复。升级回归应核对：空闲时从 main 可信目录选模型，模型切换新代只授权原模型与目标模型（去重后最多 2）；超过 256 的主目录不应导致启动失败，也不扩大 gateway256 预算。运行中/待批远程控制在写入前拒绝；每次 await 后重查原 session/generation/project/host/ref，迟到 UI 回复不能改动另一个会话。读取 SDK 实际可用思考级别并确认 effective state，不能把原始 `set_thinking_level` 的静默降级当成功。SDK/checkpoint/adoption 确认后才保存和发布 Phi 策略；不确定结果要求显式恢复同 journal，禁止隐式重放 prompt/工具。
 
-模型切换后的原资源调用、子任务、上下文查询和改名仍须可用；子配置在父模型/思考确认后建立。缺失 task wrapper 只可经可信空闲 attestation 的完整身份/资源/发布检查安装，被替换 wrapper 或错误父模型必须拒绝。本批官方 CLI 合同独立 5/5、UI 25/25、相关组 369/369、独立实际 4/4 与 main/权限 8/8，候选生产类型/lint/build/asar 和合并后主工作区 build/asar 通过。首轮相关组的 1 次原超时、隔离和最终同组通过记录均保留，未改期限；未重复全库，T12 6083 项仍只对应其旧冻结 tree。详细版本和限制见 [T13 增量验收](omp-remote-acceptance.md#t13-模型与思考级别实际应用增量2026-10-15)。最终 `365b2db` 主工作区类型/build/asar/完整 lint 再次通过（36.31 秒，2529 跟踪文件哈希前后未变）。最终默认策略补丁 `81b48731` 另以 7 单元、原模型/思考及新真实 fallback 3 项、独立 fallback 1 项验收；自动 high/最高常规，无常规 off，保存/显式 xhigh/max 不变。369 项证据属于补丁前 `1064cd63`，不混用版本。压缩随后已由 `eea33bd3` 的独立增量完成，persona/memory/context 后续已随 `9f723379` 完成交付，默认开关不变。
+模型切换后的原资源调用、子任务、上下文查询和改名仍须可用；子配置在父模型/思考确认后建立。缺失 task wrapper 只可经可信空闲 attestation 的完整身份/资源/发布检查安装，被替换 wrapper 或错误父模型必须拒绝。本批官方 CLI 合同独立 5/5、UI 25/25、相关组 369/369、独立实际 4/4 与 main/权限 8/8，候选生产类型/lint/build/asar 和合并后主工作区 build/asar 通过。首轮相关组的 1 次原超时、隔离和最终同组通过记录均保留，未改期限；未重复全库，T12 6083 项仍只对应其旧冻结 tree。详细版本和限制见 T13 增量验收。最终 `365b2db` 主工作区类型/build/asar/完整 lint 再次通过（36.31 秒，2529 跟踪文件哈希前后未变）。最终默认策略补丁 `81b48731` 另以 7 单元、原模型/思考及新真实 fallback 3 项、独立 fallback 1 项验收；自动 high/最高常规，无常规 off，保存/显式 xhigh/max 不变。369 项证据属于补丁前 `1064cd63`，不混用版本。压缩随后已由 `eea33bd3` 的独立增量完成，persona/memory/context 后续已随 `9f723379` 完成交付，默认开关不变。
 
-原 T13 压缩控制已合入 `eea33bd3`，最终候选 `9b1425aa`（相关组 `88cde2d8` 之后仅修单元测试类型来源）。升级须验证手动压缩的私有回调与真实 checkpoint，不把 command ACK 当成功；停止必须可达并等待原 CLI 终态/退役。接受 A 压缩后切到 B，A 应继续并只向 A 发布；原 owner/host/journal 被替换必须拒绝。自动 70/80/90/继承须确认实际加载四字段后才保存，模型切换和恢复继续保留策略；原生 -1 reserve sentinel 合法，启用非空 per-model 阈值 map 无法被当前协议忠实表达时须在旧代退役/保存前明确拒绝。合法 summary 多请求不等于原工具重放，取消允许官方 session_exit，旧 journal entries 须保持。真实 CLI 6/6、独立实际 4/4、相关 610/610 及候选/主工作区生产类型/lint/build/asar 通过；并行输入编辑器 WIP 保留且未提交。原失败、精确版本与结构例外见 [压缩增量验收](omp-remote-acceptance.md#t13-压缩实际应用增量2026-10-15)。
+原 T13 压缩控制已合入 `eea33bd3`，最终候选 `9b1425aa`（相关组 `88cde2d8` 之后仅修单元测试类型来源）。升级须验证手动压缩的私有回调与真实 checkpoint，不把 command ACK 当成功；停止必须可达并等待原 CLI 终态/退役。接受 A 压缩后切到 B，A 应继续并只向 A 发布；原 owner/host/journal 被替换必须拒绝。自动 70/80/90/继承须确认实际加载四字段后才保存，模型切换和恢复继续保留策略；原生 -1 reserve sentinel 合法，启用非空 per-model 阈值 map 无法被当前协议忠实表达时须在旧代退役/保存前明确拒绝。合法 summary 多请求不等于原工具重放，取消允许官方 session_exit，旧 journal entries 须保持。真实 CLI 6/6、独立实际 4/4、相关 610/610 及候选/主工作区生产类型/lint/build/asar 通过；并行输入编辑器 WIP 保留且未提交。原失败、精确版本与结构例外见 压缩增量验收。
 
-原 T13 Phi 应用功能已全部合入 `9f723379`（完整源码 `cadb8823`）。升级须同时核对默认 Phi/persona 恰好一次、可信远程三文件与真实路径、模型/压缩轮换和恢复后的固定配置；不得全局关闭 discovery providers 来隐藏模型。记忆必须证明真实本机 SDK 总结→canonical UI root→新会话 prompt，learn/删除/清空同源，旧 child 确认结束且 peer 不受影响；canonical 角色/预算、ENV auth/proxy/CA 行为保留，环境只用于同一受信本机 tool-less SDK child。记忆设置先退役旧写入者再保存；本代 prompt 不热替换，不中断已接受的聊天。原 T13 全矩阵、700/700 和真实场景证据见 [完整验收](omp-remote-acceptance.md#t13-全部-phi-应用功能交付2026-10-15)。原 T14/T15 本轮实现和限定证据已接续下文；最终候选验收不得用 T13 旧结果代替，真实外部验收仍属 T16。
+原 T13 Phi 应用功能已全部合入 `9f723379`（完整源码 `cadb8823`）。升级须同时核对默认 Phi/persona 恰好一次、可信远程三文件与真实路径、模型/压缩轮换和恢复后的固定配置；不得全局关闭 discovery providers 来隐藏模型。记忆必须证明真实本机 SDK 总结→canonical UI root→新会话 prompt，learn/删除/清空同源，旧 child 确认结束且 peer 不受影响；canonical 角色/预算、ENV auth/proxy/CA 行为保留，环境只用于同一受信本机 tool-less SDK child。记忆设置先退役旧写入者再保存；本代 prompt 不热替换，不中断已接受的聊天。原 T13 全矩阵、700/700 和真实场景证据见 完整验收。原 T14/T15 本轮实现和限定证据已接续下文；最终候选验收不得用 T13 旧结果代替，真实外部验收仍属 T16。
 
 当前主进程对 SSH 项目始终选择远端 OMP RPC；`PHI_REMOTE_OMP_RPC` 已删除，没有旧实现回退。`PHI_REMOTE_OMP_AGENTS=Checker,...` 仍从 Main 可信目录选择完整具名定义，renderer 不能提交替代定义或扩大权限。无 `runtimeRef` 的旧 SSH 会话只读显示历史，并只能在同项目新建 RPC 会话；本地项目继续使用本机进程内运行时。
 
 T12 实际入口开放原生主工具、Notebook 七工具、Wrapper 六工具、Library 六动作、搜索、browser、`ask_user_question`、`render_blocks`、`palette`、`present_files`、下载、`skill_run`/可信声明脚本、`env_request` 和选定 MCP 工具，复用原服务及审批。主进程可信快照决定资源和执行位置；远程资源缺失不得回退到本机同名文件。persona/context/memory 现按主进程可信快照接入，未经授权或未知配置仍明确报错；恢复沿 Phi 的远程引用读取同一 journal，不隐式重放 prompt。远程入口现在只有 RPC，真实 SSH/provider/OAuth/Finder 继续按 T16 回归清单验证。
 
-Notebook 升级回归须观察真实 draft 与磁盘：update 被批准后仅改 draft，save 被批准才落盘；拒绝 save 或待批停止不执行保存，已批准的 draft 保留。异步后端查找中停止或重绑定 SSH 项目必须在 dispatch 前拒绝；已经开始的磁盘 I/O 不承诺回滚。桌面 AbortSignal 只留在服务 context，不进入工具参数、wire 或公共事件。用新代显式恢复同 journal 后，先确认没有隐式请求/工具重放，再显式读取原 Notebook；核对另一项目的 cwd/draft/disk 独立。本次实际应用 5/5、独立关键 3/3、main/adapter 相关定向检查通过，详见 [Notebook 增量验收记录](omp-remote-acceptance.md#t12-notebook-实际应用增量2026-10-14)。
+Notebook 升级回归须观察真实 draft 与磁盘：update 被批准后仅改 draft，save 被批准才落盘；拒绝 save 或待批停止不执行保存，已批准的 draft 保留。异步后端查找中停止或重绑定 SSH 项目必须在 dispatch 前拒绝；已经开始的磁盘 I/O 不承诺回滚。桌面 AbortSignal 只留在服务 context，不进入工具参数、wire 或公共事件。用新代显式恢复同 journal 后，先确认没有隐式请求/工具重放，再显式读取原 Notebook；核对另一项目的 cwd/draft/disk 独立。本次实际应用 5/5、独立关键 3/3、main/adapter 相关定向检查通过，详见 Notebook 增量验收记录。
 
-Wrapper 升级回归须区分准入、等待和作业取消：环境/目标异步检查后，取消或改绑不得接受 job；被接受后 job 独立于聊天停止，保持原 target。停止 wait 只结束等待，明确 cancel 才终止作业；直接运行和 sbatch 写脚本后的实际提交前仍须检查原 job Control。status/list/wait/cancel 仅允许该 RPC Phi 会话/项目及对应 host/profile/root，列表先过滤归属再限数量，不得通过外会话查询阻止完成唤醒。T15 接受时持久保存可信 origin，冷查询每次复核当前 Phi/project/profile/root 与配置；新代只查询/监控原 job，不重复 launch。未知旧 origin 或不同连接/主机/目录仍明确拒绝。交付物须在远端验证后、发布前复核取消/原 run/项目绑定，结果保持远端 URI，不能打开本机同名文件。本轮实际场景和独立复验已证明同 Phi 新代恢复不重复启动，以及完成后只继续所属会话一次；使用隔离 SSH/Nextflow fixture，真实服务器与 Slurm/Nextflow 环境仍待 T16。完整结果见 [Wrapper 与交付物增量验收](omp-remote-acceptance.md#t12-wrapper-与交付物实际应用增量2026-10-14)。
+Wrapper 升级回归须区分准入、等待和作业取消：环境/目标异步检查后，取消或改绑不得接受 job；被接受后 job 独立于聊天停止，保持原 target。停止 wait 只结束等待，明确 cancel 才终止作业；直接运行和 sbatch 写脚本后的实际提交前仍须检查原 job Control。status/list/wait/cancel 仅允许该 RPC Phi 会话/项目及对应 host/profile/root，列表先过滤归属再限数量，不得通过外会话查询阻止完成唤醒。T15 接受时持久保存可信 origin，冷查询每次复核当前 Phi/project/profile/root 与配置；新代只查询/监控原 job，不重复 launch。未知旧 origin 或不同连接/主机/目录仍明确拒绝。交付物须在远端验证后、发布前复核取消/原 run/项目绑定，结果保持远端 URI，不能打开本机同名文件。本轮实际场景和独立复验已证明同 Phi 新代恢复不重复启动，以及完成后只继续所属会话一次；使用隔离 SSH/Nextflow fixture，真实服务器与 Slurm/Nextflow 环境仍待 T16。完整结果见 Wrapper 与交付物增量验收。
 
-T12 完整回归还须检查：Notebook 停止必须等真实 kernel ACK 和对应执行终态，未确认时隔离 kernel，facade 关闭不得提前释放原服务；旧取消不能影响新 run、peer kernel 或新下载续传。技能/环境在最终 SSH dispatch 前复核取消和可信声明，缺远程快照不得读本机路径。browser 的 typeText 只进入私有 vault 与实际宿主，公开事件、SDK journal 和下一轮模型请求不得含原文；对 rawBlock/providerMetadata/thoughtSignature 及 `name`/`toolName` replay 别名同样检查，旧不安全历史须在 adoption 前拒绝。MCP 401/403 只发送一次，下一次用户明确调用才再次执行；私有认证不能借 object key 或碰撞字段泄漏。大进度先完成有序 receipt hydration 才返回最终结果，取消中上传仍由原 controller 清理。实际 app、官方 CLI 和故障复审证据见 [T12 完整交付](omp-remote-acceptance.md#t12-完整宿主工具交付2026-10-14)。
+T12 完整回归还须检查：Notebook 停止必须等真实 kernel ACK 和对应执行终态，未确认时隔离 kernel，facade 关闭不得提前释放原服务；旧取消不能影响新 run、peer kernel 或新下载续传。技能/环境在最终 SSH dispatch 前复核取消和可信声明，缺远程快照不得读本机路径。browser 的 typeText 只进入私有 vault 与实际宿主，公开事件、SDK journal 和下一轮模型请求不得含原文；对 rawBlock/providerMetadata/thoughtSignature 及 `name`/`toolName` replay 别名同样检查，旧不安全历史须在 adoption 前拒绝。MCP 401/403 只发送一次，下一次用户明确调用才再次执行；私有认证不能借 object key 或碰撞字段泄漏。大进度先完成有序 receipt hydration 才返回最终结果，取消中上传仍由原 controller 清理。实际 app、官方 CLI 和故障复审证据见 T12 完整交付。
 
 ### T14/T15 后续升级必须保持的合同
 
@@ -200,7 +200,7 @@ T12 完整回归还须检查：Notebook 停止必须等真实 kernel ACK 和对�
 
 本手册根据本次升级的实际记录整理，已走过版本冻结、完整性核对、适配、独立审查和本地自动化验收；人工及远程启用步骤仍未完成。
 
-2026-10-14 后续阶段已保存：`044bac9b`（PM-3 RPC 恢复）、`3423a650`（PM-5 后续实际应用接线）和 `2016f286`（旧离线标题测试契约校正，生产代码不变）。实际应用阶段的生产类型、lint、构建和 asar 检查通过。固定 `3423a650` 的标准全量首轮 5864 项有 8 项失败：7 项旧改名预期在校正后两文件独立 59/59 通过，1 项历史容量计时失败同文件独立 19/19 通过。原全量及计时失败日志保留，未重跑全库、未放宽期限；该次失败记录保留；随后将最新 main `acbbb6b8` 整合后的候选另行标准全量 5864 项，5839 通过、0 失败/取消、24 既有跳过、1 todo，879.08 秒，2478 跟踪文件和 tree 未变，已合入 main `631671e6`。主工作区 frozen 依赖同步、生产类型、lint、构建、asar 与真实终端 4 项 smoke 均通过；真实 SSH/provider/OAuth/Finder 及远程默认开启仍待验收。详细结果和版本边界见 [远程验收记录](omp-remote-acceptance.md)。
+2026-10-14 后续阶段已保存：`044bac9b`（PM-3 RPC 恢复）、`3423a650`（PM-5 后续实际应用接线）和 `2016f286`（旧离线标题测试契约校正，生产代码不变）。实际应用阶段的生产类型、lint、构建和 asar 检查通过。固定 `3423a650` 的标准全量首轮 5864 项有 8 项失败：7 项旧改名预期在校正后两文件独立 59/59 通过，1 项历史容量计时失败同文件独立 19/19 通过。原全量及计时失败日志保留，未重跑全库、未放宽期限；该次失败记录保留；随后将最新 main `acbbb6b8` 整合后的候选另行标准全量 5864 项，5839 通过、0 失败/取消、24 既有跳过、1 todo，879.08 秒，2478 跟踪文件和 tree 未变，已合入 main `631671e6`。主工作区 frozen 依赖同步、生产类型、lint、构建、asar 与真实终端 4 项 smoke 均通过；真实 SSH/provider/OAuth/Finder 及远程默认开启仍待验收。详细结果和版本边界见 远程验收记录。
 
 | 步骤           | 实际结果                                                                                                                                              |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |

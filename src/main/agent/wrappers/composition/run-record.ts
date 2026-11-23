@@ -3,11 +3,14 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { isAbsolute, join, resolve } from 'node:path'
 
 import { getPhiAgentDir } from '../../runtime-paths'
+import { collectStructuredQcMetrics } from '../qc-extractors'
 import {
   appendWrapperAuditEvent,
   appendWrapperRunEvent,
   getWrapperRunsDir,
   listWrapperRuns,
+  writeWrapperManifestSnapshot,
+  writeWrapperQcSummary,
   writeWrapperRun
 } from '../store'
 import type {
@@ -22,7 +25,7 @@ import type { WrapperRunResources } from './resources'
 import type { WrapperCompositionEntry } from './discovery'
 import type { RemoteJobSnapshot } from './remote-job'
 import { resolveRemoteOutputRoot } from '../remote-result-paths'
-import { resolveOutputPaths } from './validate'
+import { inspectOutputPaths } from './validate'
 import { declaresResearchQc } from './research-qc'
 import type { WrapperResearchQc } from '../../../../shared/wrapperResearchQcTypes'
 
@@ -84,6 +87,30 @@ function recordTransition(
   return updated
 }
 
+function resolveCompositionOutDir(
+  entry: WrapperCompositionEntry,
+  params: Record<string, unknown>,
+  remote: { workspaceRoot: string } | undefined,
+  remoteRunDir: string | undefined
+): { outDir: string; outputRoot?: string } {
+  if (remoteRunDir && remote) {
+    const output = resolveRemoteOutputRoot(
+      remoteRunDir,
+      remote.workspaceRoot,
+      params.outdir ?? 'results',
+      false
+    )
+    return { outDir: output.path, outputRoot: output.path }
+  }
+  const declaredOutdir = typeof params.outdir === 'string' ? params.outdir : ''
+  if (!declaredOutdir) return { outDir: '' }
+  return {
+    outDir: isAbsolute(declaredOutdir)
+      ? declaredOutdir
+      : resolve(entry.componentDir, declaredOutdir)
+  }
+}
+
 /** Records a run that is about to start, in state `running`. `params` are the merged (default + override) values. */
 export function startCompositionRun(input: {
   entry: WrapperCompositionEntry
@@ -117,24 +144,8 @@ export function startCompositionRun(input: {
   const remoteRunDir = input.remote
     ? `${input.remote.workspaceRoot.replace(/\/+$/, '')}/wrappers/runs/${runId}`
     : undefined
-  const declaredOutdir = typeof params.outdir === 'string' ? params.outdir : ''
-  const output =
-    remoteRunDir && input.remote
-      ? resolveRemoteOutputRoot(
-          remoteRunDir,
-          input.remote.workspaceRoot,
-          params.outdir ?? 'results',
-          false
-        )
-      : undefined
-  const outDir = output
-    ? output.path
-    : !declaredOutdir
-      ? ''
-      : isAbsolute(declaredOutdir)
-        ? declaredOutdir
-        : resolve(entry.componentDir, declaredOutdir)
-
+  const { outDir, outputRoot } = resolveCompositionOutDir(entry, params, input.remote, remoteRunDir)
+  const manifestSnapshot = writeWrapperManifestSnapshot(runId, entry.manifest, agentDir)
   const run: WrapperRun = {
     runId,
     planId: '',
@@ -142,6 +153,7 @@ export function startCompositionRun(input: {
     state: 'running',
     actor: 'agent',
     wrapper: wrapperIdentity(entry.manifest.id),
+    manifestSha256: manifestSnapshot.sha256,
     trustTier: 'bundled',
     executor: input.remote?.executor ?? 'local',
     profile,
@@ -164,7 +176,7 @@ export function startCompositionRun(input: {
             projectId: input.remote.projectId,
             hostProfileId: input.remote.hostProfileId,
             workspaceRoot: input.remote.workspaceRoot,
-            outputRoot: output?.path
+            outputRoot
           }
         }
       : {}),
@@ -203,7 +215,20 @@ function outputRecords(
   entry: WrapperCompositionEntry,
   params: Record<string, unknown>
 ): WrapperOutputRecord[] {
-  return resolveOutputPaths(entry.manifest, params, entry.componentDir).map((output) => {
+  const records: WrapperOutputRecord[] = []
+  for (const output of inspectOutputPaths(entry.manifest, params, entry.componentDir)) {
+    if (!output.resolved) {
+      if (output.primary) {
+        records.push({
+          id: output.id,
+          path: output.path,
+          exists: false,
+          primary: true,
+          location: 'local'
+        })
+      }
+      continue
+    }
     const exists = existsSync(output.absolutePath)
     let bytes: number | undefined
     try {
@@ -212,15 +237,16 @@ function outputRecords(
     } catch {
       bytes = undefined
     }
-    return {
+    records.push({
       id: output.id,
       path: output.absolutePath,
       exists,
       ...(bytes !== undefined ? { bytes } : {}),
       primary: output.primary,
       location: 'local'
-    }
-  })
+    })
+  }
+  return records
 }
 
 /** Moves a started run to its terminal state and stores its outputs, summary and log tail. */
@@ -247,6 +273,14 @@ export function finishCompositionRun(input: {
   const logTail = run.researchQcExpected || input.researchQc ? '' : input.output
 
   writeRunFile(run.runId, agentDir, 'outputs.json', outputs)
+  if (!run.remote && outcome === 'completed' && run.outDir) {
+    try {
+      const qc = collectStructuredQcMetrics(run.outDir)
+      if (qc) writeWrapperQcSummary(run.runId, qc, agentDir)
+    } catch {
+      // Structured QC extraction is best-effort and must never disrupt run completion.
+    }
+  }
   writeRunFile(run.runId, agentDir, 'summary.json', {
     success: outcome === 'completed',
     state: outcome,

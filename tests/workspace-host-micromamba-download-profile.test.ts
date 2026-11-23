@@ -14,6 +14,7 @@ import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe
 import { runtimeRootProfileWithMicromamba } from '../src/main/agent/workspace-host/remote-micromamba-profile'
 import { runtimeRootCapabilityProfile } from '../src/main/agent/workspace-host/runtime-root-profile'
 import type { RemoteRuntimeRootCheckResult } from '../src/shared/remoteRuntimeRootTypes'
+import { completeProbeOutput } from './helpers/probeFixture'
 
 const temporaryDirectories: string[] = []
 
@@ -57,13 +58,12 @@ describe('remote micromamba download capability profile', () => {
   it('persists only the redacted source host, connectivity state, and selected tool', () => {
     const agentDir = temporaryDirectory()
     const hostAlias = 'private-user@cluster.example.edu'
-    const profile = parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
+    const profile = parseHostCapabilityProbe(
+      completeProbeOutput(`
 platform.os=Linux
 platform.arch=x86_64
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
 `)
+    )
     saveCapabilityProfile(
       { hostAlias, projectRoot: '/srv/private-user/project' },
       {
