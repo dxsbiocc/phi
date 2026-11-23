@@ -16,6 +16,7 @@ export function ChatAssistantMessage({
   onFork,
   onOpenLocalPath,
   onOpenWebUrl,
+  showActions = true,
   cwd
 }: {
   message: ChatMessage
@@ -23,6 +24,7 @@ export function ChatAssistantMessage({
   onFork?: (messageId: string) => void
   onOpenLocalPath?: (path: string, pathKind: LocalPathKind) => void
   onOpenWebUrl?: (url: string) => void
+  showActions?: boolean
   cwd: string
 }): React.JSX.Element {
   useUiLanguage()
@@ -53,25 +55,29 @@ export function ChatAssistantMessage({
       sx={{
         alignSelf: 'stretch',
         minWidth: 0,
-        '& [data-phi-assistant-message-actions="true"]': {
-          opacity: 0,
-          pointerEvents: 'none',
-          transform: 'translateY(-2px)',
-          transition: 'opacity 120ms, transform 120ms'
-        },
-        '&:hover [data-phi-assistant-message-actions="true"], &:focus-within [data-phi-assistant-message-actions="true"]':
-          {
-            opacity: 1,
-            pointerEvents: 'auto',
-            transform: 'translateY(0)'
-          },
-        '@media (hover: none)': {
-          '& [data-phi-assistant-message-actions="true"]': {
-            opacity: 1,
-            pointerEvents: 'auto',
-            transform: 'none'
-          }
-        }
+        ...(showActions
+          ? {
+              '& [data-phi-assistant-message-actions="true"]': {
+                opacity: 0,
+                pointerEvents: 'none',
+                transform: 'translateY(-2px)',
+                transition: 'opacity 120ms, transform 120ms'
+              },
+              '&:hover [data-phi-assistant-message-actions="true"], &:focus-within [data-phi-assistant-message-actions="true"]':
+                {
+                  opacity: 1,
+                  pointerEvents: 'auto',
+                  transform: 'translateY(0)'
+                },
+              '@media (hover: none)': {
+                '& [data-phi-assistant-message-actions="true"]': {
+                  opacity: 1,
+                  pointerEvents: 'auto',
+                  transform: 'none'
+                }
+              }
+            }
+          : null)
       }}
     >
       <MarkdownContent
@@ -82,7 +88,7 @@ export function ChatAssistantMessage({
         allowCodeActions
         showColorPalettes
       />
-      {message.content && (
+      {showActions && message.content && (
         <Box
           data-phi-assistant-message-actions="true"
           sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 28 }}

@@ -318,6 +318,7 @@ export const ChatProcessingGroup = memo(function ChatProcessingGroup({
                   key={group.key}
                   message={group.item}
                   isThinkingRunning={group.item.id === runningThinkingId}
+                  showAssistantActions={false}
                   onGoSettings={onGoSettings}
                   onOpenBackgroundJobs={onOpenBackgroundJobs}
                   onOpenLocalPath={onOpenLocalPath}

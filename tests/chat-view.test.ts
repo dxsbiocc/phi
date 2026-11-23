@@ -1723,6 +1723,53 @@ test('only the latest thinking step in an active processing group is running', (
   assert.match(markup, /正在思考…/)
 })
 
+test('intermediate assistant summaries inside processing folds omit the copy button while final replies keep it', () => {
+  const processingMarkup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ChatProcessingGroup, {
+        items: [
+          { id: 'thinking-1', role: 'thinking', content: '检查工作区。', durationMs: 2000 },
+          {
+            id: 'assistant-progress-1',
+            role: 'assistant',
+            content: '工作区只有 graph_traversal.py，没有临床数据。先确定数据基础与分析目标，再写方案。'
+          }
+        ],
+        focusRequest: { itemId: 'assistant-progress-1', nonce: 1 },
+        onGoSettings: () => undefined,
+        onOpenBackgroundJobs: () => undefined
+      })
+    )
+  )
+
+  assert.match(processingMarkup, /先确定数据基础与分析目标，再写方案。/)
+  assert.doesNotMatch(processingMarkup, /aria-label="复制消息"/)
+  assert.doesNotMatch(processingMarkup, /data-phi-assistant-message-actions="true"/)
+
+  const chatMarkup = renderChat([
+    { id: 'user-1', role: 'user', content: '开始分析' },
+    { id: 'assistant-progress-1', role: 'assistant', content: '中间总结内容。' },
+    {
+      id: 'tool-1',
+      role: 'tool',
+      toolName: 'read',
+      argsPreview: 'data.csv',
+      argsJson: '{"path":"data.csv"}',
+      output: 'ok',
+      status: 'done'
+    },
+    { id: 'assistant-final', role: 'assistant', content: '最终回复内容。' }
+  ])
+
+  assert.match(chatMarkup, /最终回复内容。/)
+  assert.equal(
+    (chatMarkup.match(/<div\b[^>]*data-phi-assistant-message-actions="true"/g) ?? []).length,
+    1
+  )
+})
+
 test('outer processing chevron follows its summary while nested chevrons reveal on hover', () => {
   const outer = renderToStaticMarkup(
     createElement(
