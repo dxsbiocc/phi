@@ -40,11 +40,7 @@ test('collectWrapperContainerRefs extracts docker tags and singularity URLs acro
       `process FASTQC {\n  container "\${ workflow.containerEngine == 'singularity' ? 'https://depot.galaxyproject.org/singularity/fastqc:0.12.1--hdfd78af_0' : 'biocontainers/fastqc:0.12.1--hdfd78af_0' }"\n}\n`,
       'utf-8'
     )
-    writeFileSync(
-      join(dir, 'main.nf'),
-      `include { FASTQC } from './modules/fastqc'\n`,
-      'utf-8'
-    )
+    writeFileSync(join(dir, 'main.nf'), `include { FASTQC } from './modules/fastqc'\n`, 'utf-8')
     assert.deepEqual(collectWrapperContainerRefs(join(dir, 'main.nf')), [
       'biocontainers/fastqc:0.12.1--hdfd78af_0',
       'https://depot.galaxyproject.org/singularity/fastqc:0.12.1--hdfd78af_0'

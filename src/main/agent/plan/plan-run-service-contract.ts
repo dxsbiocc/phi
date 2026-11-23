@@ -1,10 +1,7 @@
 import type { AgentRunCompletions } from './execution/agent-run-completions'
 import type { PlanExecutorClock, PlanExecutorIds } from './execution/plan-executor'
 import type { PlanSpecValidationResult } from './model/plan-spec'
-import type {
-  PlanStalenessReport,
-  StepEvidenceFingerprint
-} from '../scientific-context/staleness'
+import type { PlanStalenessReport, StepEvidenceFingerprint } from '../scientific-context/staleness'
 import type {
   PlanRunFinishedEvent,
   PlanRunReplanRequest,

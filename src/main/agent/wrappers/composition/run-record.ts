@@ -87,6 +87,30 @@ function recordTransition(
   return updated
 }
 
+function resolveCompositionOutDir(
+  entry: WrapperCompositionEntry,
+  params: Record<string, unknown>,
+  remote: { workspaceRoot: string } | undefined,
+  remoteRunDir: string | undefined
+): { outDir: string; outputRoot?: string } {
+  if (remoteRunDir && remote) {
+    const output = resolveRemoteOutputRoot(
+      remoteRunDir,
+      remote.workspaceRoot,
+      params.outdir ?? 'results',
+      false
+    )
+    return { outDir: output.path, outputRoot: output.path }
+  }
+  const declaredOutdir = typeof params.outdir === 'string' ? params.outdir : ''
+  if (!declaredOutdir) return { outDir: '' }
+  return {
+    outDir: isAbsolute(declaredOutdir)
+      ? declaredOutdir
+      : resolve(entry.componentDir, declaredOutdir)
+  }
+}
+
 /** Records a run that is about to start, in state `running`. `params` are the merged (default + override) values. */
 export function startCompositionRun(input: {
   entry: WrapperCompositionEntry
@@ -120,24 +144,7 @@ export function startCompositionRun(input: {
   const remoteRunDir = input.remote
     ? `${input.remote.workspaceRoot.replace(/\/+$/, '')}/wrappers/runs/${runId}`
     : undefined
-  const declaredOutdir = typeof params.outdir === 'string' ? params.outdir : ''
-  const output =
-    remoteRunDir && input.remote
-      ? resolveRemoteOutputRoot(
-          remoteRunDir,
-          input.remote.workspaceRoot,
-          params.outdir ?? 'results',
-          false
-        )
-      : undefined
-  const outDir = output
-    ? output.path
-    : !declaredOutdir
-      ? ''
-      : isAbsolute(declaredOutdir)
-        ? declaredOutdir
-        : resolve(entry.componentDir, declaredOutdir)
-
+  const { outDir, outputRoot } = resolveCompositionOutDir(entry, params, input.remote, remoteRunDir)
   const manifestSnapshot = writeWrapperManifestSnapshot(runId, entry.manifest, agentDir)
   const run: WrapperRun = {
     runId,
@@ -169,7 +176,7 @@ export function startCompositionRun(input: {
             projectId: input.remote.projectId,
             hostProfileId: input.remote.hostProfileId,
             workspaceRoot: input.remote.workspaceRoot,
-            outputRoot: output?.path
+            outputRoot
           }
         }
       : {}),

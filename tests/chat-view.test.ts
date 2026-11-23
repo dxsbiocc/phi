@@ -1735,7 +1735,8 @@ test('intermediate assistant summaries inside processing folds omit the copy but
           {
             id: 'assistant-progress-1',
             role: 'assistant',
-            content: '工作区只有 graph_traversal.py，没有临床数据。先确定数据基础与分析目标，再写方案。'
+            content:
+              '工作区只有 graph_traversal.py，没有临床数据。先确定数据基础与分析目标，再写方案。'
           }
         ],
         focusRequest: { itemId: 'assistant-progress-1', nonce: 1 },

@@ -74,52 +74,42 @@ export function captureStepEvidenceFingerprint(
   }
 }
 
-export function evaluatePlanStaleness(
-  spec: PlanSpec,
-  recordedFingerprints: Readonly<Record<string, StepEvidenceFingerprint>>,
+function collectDirectStalenessReasons(
+  recorded: StepEvidenceFingerprint,
   rootDir: string,
-  currentRulesVersion = SCIENTIFIC_COMPATIBILITY_RULES_VERSION
-): PlanStalenessReport {
-  const directReasonsByStep = new Map<string, string[]>()
-
-  for (const step of spec.steps) {
-    const recorded = recordedFingerprints[step.id]
-    if (!recorded) continue
-    const reasons: string[] = []
-
-    if (recorded.rulesVersion !== currentRulesVersion) {
+  currentRulesVersion: string
+): string[] {
+  const reasons: string[] = []
+  if (recorded.rulesVersion !== currentRulesVersion) {
+    reasons.push(`compatibility rules changed (${recorded.rulesVersion} -> ${currentRulesVersion})`)
+  }
+  for (const prev of recorded.inputs) {
+    const abs = resolve(rootDir, prev.path)
+    const currentHash = computeArtifactSha256(abs)
+    if (prev.contentSha256 !== currentHash) {
       reasons.push(
-        `compatibility rules changed (${recorded.rulesVersion} -> ${currentRulesVersion})`
+        currentHash === undefined
+          ? `input "${prev.path}" is now missing`
+          : `input "${prev.path}" content changed (same-path replacement detected)`
       )
     }
-
-    for (const prev of recorded.inputs) {
-      const abs = resolve(rootDir, prev.path)
-      const currentHash = computeArtifactSha256(abs)
-      if (prev.contentSha256 !== currentHash) {
-        reasons.push(
-          currentHash === undefined
-            ? `input "${prev.path}" is now missing`
-            : `input "${prev.path}" content changed (same-path replacement detected)`
-        )
-      }
-      const { found, sidecar } = readScientificContextSidecar(abs)
-      const currentCtxVersion = found ? sidecar.artifact.contextVersion : undefined
-      if (prev.contextVersion !== currentCtxVersion) {
-        reasons.push(
-          `input "${prev.path}" scientific context version changed (${String(prev.contextVersion)} -> ${String(currentCtxVersion)})`
-        )
-      }
-    }
-
-    if (reasons.length > 0) {
-      directReasonsByStep.set(step.id, reasons)
+    const { found, sidecar } = readScientificContextSidecar(abs)
+    const currentCtxVersion = found ? sidecar.artifact.contextVersion : undefined
+    if (prev.contextVersion !== currentCtxVersion) {
+      reasons.push(
+        `input "${prev.path}" scientific context version changed (${String(prev.contextVersion)} -> ${String(currentCtxVersion)})`
+      )
     }
   }
+  return reasons
+}
 
-  // Build adjacency list: upstream -> direct dependents.
+function propagateStaleness(
+  steps: readonly PlanStep[],
+  directStaleIds: Iterable<string>
+): Map<string, Set<string>> {
   const dependents = new Map<string, string[]>()
-  for (const step of spec.steps) {
+  for (const step of steps) {
     for (const dep of step.dependsOn) {
       const list = dependents.get(dep) ?? []
       list.push(step.id)
@@ -127,11 +117,9 @@ export function evaluatePlanStaleness(
     }
   }
 
-  // Transitive propagation along dependsOn.
   const propagatedFrom = new Map<string, Set<string>>()
-  const queue = [...directReasonsByStep.keys()]
+  const queue = [...directStaleIds]
   const visited = new Set<string>(queue)
-
   while (queue.length > 0) {
     const current = queue.shift()!
     for (const child of dependents.get(current) ?? []) {
@@ -144,7 +132,24 @@ export function evaluatePlanStaleness(
       }
     }
   }
+  return propagatedFrom
+}
 
+export function evaluatePlanStaleness(
+  spec: PlanSpec,
+  recordedFingerprints: Readonly<Record<string, StepEvidenceFingerprint>>,
+  rootDir: string,
+  currentRulesVersion = SCIENTIFIC_COMPATIBILITY_RULES_VERSION
+): PlanStalenessReport {
+  const directReasonsByStep = new Map<string, string[]>()
+  for (const step of spec.steps) {
+    const recorded = recordedFingerprints[step.id]
+    if (!recorded) continue
+    const reasons = collectDirectStalenessReasons(recorded, rootDir, currentRulesVersion)
+    if (reasons.length > 0) directReasonsByStep.set(step.id, reasons)
+  }
+
+  const propagatedFrom = propagateStaleness(spec.steps, directReasonsByStep.keys())
   const staleSteps: Record<string, StepStalenessRecord> = {}
   const cleanStepIds: string[] = []
 
@@ -152,11 +157,7 @@ export function evaluatePlanStaleness(
     const directReasons = directReasonsByStep.get(step.id) ?? []
     const prop = [...(propagatedFrom.get(step.id) ?? [])].sort()
     if (directReasons.length > 0 || prop.length > 0) {
-      staleSteps[step.id] = {
-        stepId: step.id,
-        directReasons,
-        propagatedFrom: prop
-      }
+      staleSteps[step.id] = { stepId: step.id, directReasons, propagatedFrom: prop }
     } else {
       cleanStepIds.push(step.id)
     }

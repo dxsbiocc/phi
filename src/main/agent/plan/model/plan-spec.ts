@@ -131,6 +131,92 @@ function readWrites(
 
 const ALLOWED_CHECK_KINDS = new Set<string>(PLAN_STEP_CHECK_KINDS)
 
+function readOptionalString(
+  value: unknown,
+  field: string,
+  maxLength: number | undefined,
+  errors: string[]
+): string | undefined {
+  if (value === undefined) return undefined
+  return readRequiredString(value, field, maxLength, errors)
+}
+
+function readBoundedStringArray(
+  value: unknown,
+  field: string,
+  maxItems: number,
+  errors: string[]
+): string[] | undefined {
+  if (value === undefined) return undefined
+  const items = readStringArray(value, field, errors)
+  if (items.length > maxItems) {
+    errors.push(`${field} must contain at most ${maxItems} items.`)
+  }
+  return items
+}
+
+function readTableSchemaCheck(
+  raw: Record<string, unknown>,
+  relative: string,
+  itemLabel: string,
+  errors: string[]
+): PlanStepVerificationCheck {
+  if (raw.format !== undefined && raw.format !== 'tsv' && raw.format !== 'csv') {
+    errors.push(`${itemLabel}.format must be "tsv" or "csv".`)
+  }
+  for (const countKey of ['minDataRows', 'minColumns'] as const) {
+    const count = raw[countKey]
+    if (
+      count !== undefined &&
+      (typeof count !== 'number' || !Number.isInteger(count) || count < 0)
+    ) {
+      errors.push(`${itemLabel}.${countKey} must be a non-negative integer.`)
+    }
+  }
+  const requiredColumns =
+    raw.requiredColumns === undefined
+      ? undefined
+      : readStringArray(raw.requiredColumns, `${itemLabel}.requiredColumns`, errors)
+  return {
+    kind: 'table_schema',
+    path: relative,
+    ...(raw.format === 'tsv' || raw.format === 'csv' ? { format: raw.format } : {}),
+    ...(typeof raw.minDataRows === 'number' ? { minDataRows: raw.minDataRows } : {}),
+    ...(typeof raw.minColumns === 'number' ? { minColumns: raw.minColumns } : {}),
+    ...(requiredColumns ? { requiredColumns } : {})
+  }
+}
+
+function readSingleCheck(
+  raw: unknown,
+  itemLabel: string,
+  errors: string[],
+  projectRoot: string | undefined
+): PlanStepVerificationCheck | null {
+  if (!isRecord(raw)) {
+    errors.push(`${itemLabel} must be an object.`)
+    return null
+  }
+  if (typeof raw.kind !== 'string' || !ALLOWED_CHECK_KINDS.has(raw.kind)) {
+    errors.push(`${itemLabel}.kind must be one of: ${PLAN_STEP_CHECK_KINDS.join(', ')}.`)
+    return null
+  }
+  const rawPath = readRequiredString(raw.path, `${itemLabel}.path`, undefined, errors)
+  if (!rawPath) return null
+  const relative = normalizeWritePath(rawPath, projectRoot)
+  if (relative === undefined) {
+    errors.push(
+      `${itemLabel}.path must be a path inside the project, relative to the project root ("${rawPath}" is outside it).`
+    )
+    return null
+  }
+  if (raw.kind === 'table_schema') return readTableSchemaCheck(raw, relative, itemLabel, errors)
+  return {
+    kind: raw.kind as 'file_exists' | 'non_empty_file' | 'json_valid',
+    path: relative
+  }
+}
+
 function readChecks(
   value: unknown,
   label: string,
@@ -142,59 +228,35 @@ function readChecks(
     errors.push(`${label}.checks must be an array.`)
     return undefined
   }
-  const checks: PlanStepVerificationCheck[] = []
-  value.forEach((raw, idx) => {
-    const itemLabel = `${label}.checks[${idx}]`
-    if (!isRecord(raw)) {
-      errors.push(`${itemLabel} must be an object.`)
-      return
-    }
-    if (typeof raw.kind !== 'string' || !ALLOWED_CHECK_KINDS.has(raw.kind)) {
-      errors.push(`${itemLabel}.kind must be one of: ${PLAN_STEP_CHECK_KINDS.join(', ')}.`)
-      return
-    }
-    const rawPath = readRequiredString(raw.path, `${itemLabel}.path`, undefined, errors)
-    if (!rawPath) return
-    const relative = normalizeWritePath(rawPath, projectRoot)
-    if (relative === undefined) {
-      errors.push(
-        `${itemLabel}.path must be a path inside the project, relative to the project root ("${rawPath}" is outside it).`
-      )
-      return
-    }
-    if (raw.kind === 'table_schema') {
-      if (raw.format !== undefined && raw.format !== 'tsv' && raw.format !== 'csv') {
-        errors.push(`${itemLabel}.format must be "tsv" or "csv".`)
-      }
-      for (const countKey of ['minDataRows', 'minColumns'] as const) {
-        const count = raw[countKey]
-        if (
-          count !== undefined &&
-          (typeof count !== 'number' || !Number.isInteger(count) || count < 0)
-        ) {
-          errors.push(`${itemLabel}.${countKey} must be a non-negative integer.`)
-        }
-      }
-      const requiredColumns =
-        raw.requiredColumns === undefined
-          ? undefined
-          : readStringArray(raw.requiredColumns, `${itemLabel}.requiredColumns`, errors)
-      checks.push({
-        kind: 'table_schema',
-        path: relative,
-        ...(raw.format === 'tsv' || raw.format === 'csv' ? { format: raw.format } : {}),
-        ...(typeof raw.minDataRows === 'number' ? { minDataRows: raw.minDataRows } : {}),
-        ...(typeof raw.minColumns === 'number' ? { minColumns: raw.minColumns } : {}),
-        ...(requiredColumns ? { requiredColumns } : {})
-      })
-      return
-    }
-    checks.push({
-      kind: raw.kind as 'file_exists' | 'non_empty_file' | 'json_valid',
-      path: relative
-    })
-  })
-  return checks
+  return value
+    .map((raw, idx) => readSingleCheck(raw, `${label}.checks[${idx}]`, errors, projectRoot))
+    .filter((check): check is PlanStepVerificationCheck => check !== null)
+}
+
+function readStepOptionalFields(
+  value: Record<string, unknown>,
+  resolvedAccess: PlanStepAccess,
+  label: string,
+  errors: string[],
+  projectRoot: string | undefined
+): Partial<PlanStep> {
+  const writes = readWrites(value.writes, resolvedAccess, label, errors, projectRoot)
+  const checks = readChecks(value.checks, label, errors, projectRoot)
+  const inputContracts = Array.isArray(value.inputContracts)
+    ? (value.inputContracts as PlanStep['inputContracts'])
+    : undefined
+  const hypothesisIds =
+    value.hypothesisIds === undefined
+      ? undefined
+      : readStringArray(value.hypothesisIds, `${label}.hypothesisIds`, errors)
+  const agent = readOptionalString(value.agent, `${label}.agent`, undefined, errors)
+  return {
+    ...(writes ? { writes } : {}),
+    ...(checks?.length ? { checks } : {}),
+    ...(inputContracts?.length ? { inputContracts } : {}),
+    ...(hypothesisIds?.length ? { hypothesisIds } : {}),
+    ...(agent ? { agent } : {})
+  }
 }
 
 function readStep(
@@ -216,7 +278,8 @@ function readStep(
   }
   const access = value.access === 'read' || value.access === 'write' ? value.access : null
   if (!access) errors.push(`${label}.access must be "read" or "write".`)
-  const step: PlanStep = {
+  const resolvedAccess: PlanStepAccess = access ?? 'read'
+  return {
     id,
     title: readRequiredString(value.title, `${label}.title`, PLAN_MAX_STEP_TITLE_LENGTH, errors),
     instructions: readRequiredString(
@@ -232,28 +295,8 @@ function readStep(
       errors
     ),
     dependsOn: readStringArray(value.dependsOn, `${label}.dependsOn`, errors),
-    access: access ?? 'read'
-  }
-  const writes = readWrites(value.writes, step.access, label, errors, projectRoot)
-  const checks = readChecks(value.checks, label, errors, projectRoot)
-  const inputContracts = Array.isArray(value.inputContracts)
-    ? (value.inputContracts as PlanStep['inputContracts'])
-    : undefined
-  const hypothesisIds =
-    value.hypothesisIds === undefined
-      ? undefined
-      : readStringArray(value.hypothesisIds, `${label}.hypothesisIds`, errors)
-  const agent =
-    value.agent === undefined
-      ? undefined
-      : readRequiredString(value.agent, `${label}.agent`, undefined, errors)
-  return {
-    ...step,
-    ...(writes ? { writes } : {}),
-    ...(checks?.length ? { checks } : {}),
-    ...(inputContracts?.length ? { inputContracts } : {}),
-    ...(hypothesisIds?.length ? { hypothesisIds } : {}),
-    ...(agent ? { agent } : {})
+    access: resolvedAccess,
+    ...readStepOptionalFields(value, resolvedAccess, label, errors, projectRoot)
   }
 }
 
@@ -281,33 +324,30 @@ function readLiteratureReview(
     MAX_HYPOTHESIS_TEXT_LENGTH,
     errors
   )
-  const scope =
-    value.scope === undefined
-      ? undefined
-      : readRequiredString(value.scope, 'literatureReview.scope', MAX_HYPOTHESIS_TEXT_LENGTH, errors)
-  const databases =
-    value.databases === undefined
-      ? undefined
-      : readStringArray(value.databases, 'literatureReview.databases', errors)
-  if (databases && databases.length > MAX_LITERATURE_DATABASES) {
-    errors.push(`literatureReview.databases must contain at most ${MAX_LITERATURE_DATABASES} items.`)
-  }
-  const synthesis =
-    value.synthesis === undefined
-      ? undefined
-      : readRequiredString(
-          value.synthesis,
-          'literatureReview.synthesis',
-          MAX_LITERATURE_SYNTHESIS_LENGTH,
-          errors
-        )
-  const references =
-    value.references === undefined
-      ? undefined
-      : readStringArray(value.references, 'literatureReview.references', errors)
-  if (references && references.length > MAX_LITERATURE_REFERENCES) {
-    errors.push(`literatureReview.references must contain at most ${MAX_LITERATURE_REFERENCES} items.`)
-  }
+  const scope = readOptionalString(
+    value.scope,
+    'literatureReview.scope',
+    MAX_HYPOTHESIS_TEXT_LENGTH,
+    errors
+  )
+  const databases = readBoundedStringArray(
+    value.databases,
+    'literatureReview.databases',
+    MAX_LITERATURE_DATABASES,
+    errors
+  )
+  const synthesis = readOptionalString(
+    value.synthesis,
+    'literatureReview.synthesis',
+    MAX_LITERATURE_SYNTHESIS_LENGTH,
+    errors
+  )
+  const references = readBoundedStringArray(
+    value.references,
+    'literatureReview.references',
+    MAX_LITERATURE_REFERENCES,
+    errors
+  )
   return {
     needed: value.needed === true,
     rationale,
@@ -315,6 +355,79 @@ function readLiteratureReview(
     ...(databases?.length ? { databases } : {}),
     ...(synthesis ? { synthesis } : {}),
     ...(references?.length ? { references } : {})
+  }
+}
+
+function readHypothesisItem(
+  raw: unknown,
+  index: number,
+  ids: Set<string>,
+  errors: string[]
+): PlanHypothesis | null {
+  const fallback = `hypotheses[${index}]`
+  if (!isRecord(raw)) {
+    errors.push(`${fallback} must be an object.`)
+    return null
+  }
+  const id = readRequiredString(raw.id, `${fallback}.id`, PLAN_MAX_STEP_ID_LENGTH, errors)
+  if (id && !STEP_ID_PATTERN.test(id)) {
+    errors.push(`${fallback}.id must match [a-z0-9-]{1,${PLAN_MAX_STEP_ID_LENGTH}}.`)
+  }
+  if (id && ids.has(id)) errors.push(`hypothesis "${id}".id must be unique within the plan.`)
+  if (id) ids.add(id)
+  const statement = readRequiredString(
+    raw.statement,
+    `${fallback}.statement`,
+    MAX_HYPOTHESIS_TEXT_LENGTH,
+    errors
+  )
+  if (typeof raw.selected !== 'boolean') errors.push(`${fallback}.selected must be a boolean.`)
+  const mechanism = readOptionalString(
+    raw.mechanism,
+    `${fallback}.mechanism`,
+    MAX_HYPOTHESIS_TEXT_LENGTH,
+    errors
+  )
+  const rationale = readOptionalString(
+    raw.rationale,
+    `${fallback}.rationale`,
+    MAX_HYPOTHESIS_TEXT_LENGTH,
+    errors
+  )
+  const prediction = readOptionalString(
+    raw.prediction,
+    `${fallback}.prediction`,
+    MAX_HYPOTHESIS_TEXT_LENGTH,
+    errors
+  )
+  const testCriteria = readOptionalString(
+    raw.testCriteria,
+    `${fallback}.testCriteria`,
+    MAX_HYPOTHESIS_TEXT_LENGTH,
+    errors
+  )
+  const falsificationCriteria = readOptionalString(
+    raw.falsificationCriteria,
+    `${fallback}.falsificationCriteria`,
+    MAX_HYPOTHESIS_TEXT_LENGTH,
+    errors
+  )
+  const confounders = readBoundedStringArray(
+    raw.confounders,
+    `${fallback}.confounders`,
+    MAX_HYPOTHESIS_CONFOUNDERS,
+    errors
+  )
+  return {
+    id,
+    statement,
+    selected: raw.selected === true,
+    ...(mechanism ? { mechanism } : {}),
+    ...(rationale ? { rationale } : {}),
+    ...(prediction ? { prediction } : {}),
+    ...(testCriteria ? { testCriteria } : {}),
+    ...(falsificationCriteria ? { falsificationCriteria } : {}),
+    ...(confounders?.length ? { confounders } : {})
   }
 }
 
@@ -329,79 +442,9 @@ function readHypotheses(value: unknown, errors: string[]): PlanHypothesis[] | un
     return undefined
   }
   const ids = new Set<string>()
-  const hypotheses: PlanHypothesis[] = []
-  value.forEach((raw, index) => {
-    const fallback = `hypotheses[${index}]`
-    if (!isRecord(raw)) {
-      errors.push(`${fallback} must be an object.`)
-      return
-    }
-    const id = readRequiredString(raw.id, `${fallback}.id`, PLAN_MAX_STEP_ID_LENGTH, errors)
-    if (id && !STEP_ID_PATTERN.test(id)) {
-      errors.push(`${fallback}.id must match [a-z0-9-]{1,${PLAN_MAX_STEP_ID_LENGTH}}.`)
-    }
-    if (id && ids.has(id)) {
-      errors.push(`hypothesis "${id}".id must be unique within the plan.`)
-    }
-    if (id) ids.add(id)
-    const statement = readRequiredString(
-      raw.statement,
-      `${fallback}.statement`,
-      MAX_HYPOTHESIS_TEXT_LENGTH,
-      errors
-    )
-    if (typeof raw.selected !== 'boolean') {
-      errors.push(`${fallback}.selected must be a boolean.`)
-    }
-    const mechanism =
-      raw.mechanism === undefined
-        ? undefined
-        : readRequiredString(raw.mechanism, `${fallback}.mechanism`, MAX_HYPOTHESIS_TEXT_LENGTH, errors)
-    const rationale =
-      raw.rationale === undefined
-        ? undefined
-        : readRequiredString(raw.rationale, `${fallback}.rationale`, MAX_HYPOTHESIS_TEXT_LENGTH, errors)
-    const prediction =
-      raw.prediction === undefined
-        ? undefined
-        : readRequiredString(raw.prediction, `${fallback}.prediction`, MAX_HYPOTHESIS_TEXT_LENGTH, errors)
-    const testCriteria =
-      raw.testCriteria === undefined
-        ? undefined
-        : readRequiredString(
-            raw.testCriteria,
-            `${fallback}.testCriteria`,
-            MAX_HYPOTHESIS_TEXT_LENGTH,
-            errors
-          )
-    const falsificationCriteria =
-      raw.falsificationCriteria === undefined
-        ? undefined
-        : readRequiredString(
-            raw.falsificationCriteria,
-            `${fallback}.falsificationCriteria`,
-            MAX_HYPOTHESIS_TEXT_LENGTH,
-            errors
-          )
-    const confounders =
-      raw.confounders === undefined
-        ? undefined
-        : readStringArray(raw.confounders, `${fallback}.confounders`, errors)
-    if (confounders && confounders.length > MAX_HYPOTHESIS_CONFOUNDERS) {
-      errors.push(`${fallback}.confounders must contain at most ${MAX_HYPOTHESIS_CONFOUNDERS} items.`)
-    }
-    hypotheses.push({
-      id,
-      statement,
-      selected: raw.selected === true,
-      ...(mechanism ? { mechanism } : {}),
-      ...(rationale ? { rationale } : {}),
-      ...(prediction ? { prediction } : {}),
-      ...(testCriteria ? { testCriteria } : {}),
-      ...(falsificationCriteria ? { falsificationCriteria } : {}),
-      ...(confounders?.length ? { confounders } : {})
-    })
-  })
+  const hypotheses = value
+    .map((raw, index) => readHypothesisItem(raw, index, ids, errors))
+    .filter((item): item is PlanHypothesis => item !== null)
   if (hypotheses.length > 0 && !hypotheses.some((item) => item.selected)) {
     errors.push('hypotheses must mark at least one hypothesis as selected.')
   }
@@ -465,6 +508,15 @@ function findCycleIds(steps: PlanStep[]): string[] {
   return [...cycles]
 }
 
+function readResearchQuestion(value: unknown, errors: string[]): string | undefined {
+  if (value === undefined) return undefined
+  if (isResearchQuestion(value)) return value
+  errors.push(
+    `researchQuestion must be a non-empty question of at most ${MAX_RESEARCH_QUESTION_LENGTH} characters.`
+  )
+  return undefined
+}
+
 export function validatePlanSpec(value: unknown, projectRoot?: string): PlanSpecValidationResult {
   const errors: string[] = []
   if (!isRecord(value)) return { ok: false, errors: ['Plan spec must be an object.'] }
@@ -472,14 +524,7 @@ export function validatePlanSpec(value: unknown, projectRoot?: string): PlanSpec
     errors.push(`version must be ${PLAN_SPEC_VERSION}.`)
   }
   const goal = readRequiredString(value.goal, 'goal', undefined, errors)
-  const researchQuestion = isResearchQuestion(value.researchQuestion)
-    ? value.researchQuestion
-    : undefined
-  if (value.researchQuestion !== undefined && researchQuestion === undefined) {
-    errors.push(
-      `researchQuestion must be a non-empty question of at most ${MAX_RESEARCH_QUESTION_LENGTH} characters.`
-    )
-  }
+  const researchQuestion = readResearchQuestion(value.researchQuestion, errors)
   if (!Array.isArray(value.steps)) {
     errors.push('steps must be an array.')
     return { ok: false, errors }
@@ -503,17 +548,16 @@ export function validatePlanSpec(value: unknown, projectRoot?: string): PlanSpec
   if (cycleIds.length > 0) {
     errors.push(`dependsOn contains a cycle involving step ids: ${cycleIds.join(', ')}.`)
   }
-  return errors.length > 0
-    ? { ok: false, errors }
-    : {
-        ok: true,
-        spec: {
-          version: PLAN_SPEC_VERSION,
-          goal,
-          ...(researchQuestion ? { researchQuestion } : {}),
-          ...(literatureReview ? { literatureReview } : {}),
-          ...(hypotheses ? { hypotheses } : {}),
-          steps
-        }
-      }
+  if (errors.length > 0) return { ok: false, errors }
+  return {
+    ok: true,
+    spec: {
+      version: PLAN_SPEC_VERSION,
+      goal,
+      ...(researchQuestion ? { researchQuestion } : {}),
+      ...(literatureReview ? { literatureReview } : {}),
+      ...(hypotheses ? { hypotheses } : {}),
+      steps
+    }
+  }
 }

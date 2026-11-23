@@ -92,6 +92,35 @@ export async function readCurrentThinkingLevel<TLevel>(
   return current ? (current.session.thinkingLevel as TLevel) : readStoredLevel()
 }
 
+function hasContextUsageSource(
+  options: CurrentContextUsageOptions,
+  sessionKey: string,
+  snapshot: SessionSnapshot,
+  manifest: PhiSessionManifest | null,
+  remote: boolean
+): boolean {
+  return Boolean(
+    options.runtimeSessionPathForSnapshot(sessionKey, snapshot) ||
+    manifest?.kernelRuntimeRef ||
+    (remote && manifest?.runtimeRef)
+  )
+}
+
+function isRemoteSessionBusy(remote: boolean, status: SessionStatus): boolean {
+  return remote && (status === 'running' || status === 'needs_approval' || status === 'needs_input')
+}
+
+function isSameContextIdentity(
+  latest: CurrentSessionPayload,
+  identity: { sessionPath: string | null; phiSessionId: string | null; sessionGeneration: number }
+): boolean {
+  return (
+    latest.path === identity.sessionPath &&
+    (latest.phiSessionId ?? null) === identity.phiSessionId &&
+    latest.sessionGeneration === identity.sessionGeneration
+  )
+}
+
 export async function getCurrentContextUsage(
   options: CurrentContextUsageOptions
 ): Promise<CurrentContextUsage> {
@@ -110,35 +139,20 @@ export async function getCurrentContextUsage(
   const manifest = options.findPhiManifestForSession(sessionKey, snapshot.path, snapshot.cwd)
   const remote = manifest?.projectLocation?.kind === 'ssh'
   if (
-    !options.runtimeSessionPathForSnapshot(sessionKey, snapshot) &&
-    !manifest?.kernelRuntimeRef &&
-    !(remote && manifest?.runtimeRef)
+    !hasContextUsageSource(options, sessionKey, snapshot, manifest, remote) ||
+    isRemoteSessionBusy(remote, current.status)
   ) {
     return { ...identity, usage: null }
   }
-
-  if (
-    remote &&
-    (current.status === 'running' ||
-      current.status === 'needs_approval' ||
-      current.status === 'needs_input')
-  )
-    return { ...identity, usage: null }
 
   const result = remote
     ? await getCurrentResolvedSessionIfReady(options.getCurrentLifecycle)
     : await options.getAgentSession(sessionKey, snapshot)
   if (!result) return { ...identity, usage: null }
   const usage = await result.session.getContextUsage()
-  const latest = options.getCurrentPayload()
-  if (
-    latest.path !== identity.sessionPath ||
-    (latest.phiSessionId ?? null) !== identity.phiSessionId ||
-    latest.sessionGeneration !== identity.sessionGeneration
-  ) {
-    return { ...identity, usage: null }
-  }
-  return { ...identity, usage }
+  return isSameContextIdentity(options.getCurrentPayload(), identity)
+    ? { ...identity, usage }
+    : { ...identity, usage: null }
 }
 
 export async function getCurrentSessionPayloadWithMessages(

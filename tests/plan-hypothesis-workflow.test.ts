@@ -30,7 +30,8 @@ function sampleHypothesisPlan(): PlanSpec {
         mechanism: 'Ligand activation drives downstream TF phosphorylation of pathway X targets.',
         rationale: 'Prior pilot signal suggested pathway X shift.',
         selected: true,
-        prediction: 'Pathway X core genes show positive log2FoldChange > 1.0 after donor adjustment.',
+        prediction:
+          'Pathway X core genes show positive log2FoldChange > 1.0 after donor adjustment.',
         testCriteria: 'Adjusted p < 0.05 and positive log2FoldChange in pathway X genes',
         falsificationCriteria:
           'No significant enrichment (padj >= 0.05) or reversed fold-change after controlling for donor',
@@ -86,7 +87,9 @@ test('validatePlanSpec validates enriched literatureReview, competing hypotheses
   const resUnknown = validatePlanSpec(unknownRef)
   assert.equal(resUnknown.ok, false)
   if (!resUnknown.ok) {
-    assert.ok(resUnknown.errors.some((e) => e.includes('references missing hypothesis "h-missing"')))
+    assert.ok(
+      resUnknown.errors.some((e) => e.includes('references missing hypothesis "h-missing"'))
+    )
   }
 
   // Reject missing literatureReview rationale.

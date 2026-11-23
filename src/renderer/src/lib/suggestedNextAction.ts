@@ -66,6 +66,25 @@ function suggestedNextActionFromText(content: string): string | null {
   return null
 }
 
+function stripTrailingSuggestedActionSection(
+  lines: readonly string[],
+  lastNonEmptyIndex: number
+): string | null {
+  const headingIndex = lines.findLastIndex(isSuggestedActionHeading)
+  if (headingIndex <= 0) return null
+  let hasUsableAction = false
+  for (const rawLine of lines.slice(headingIndex + 1, lastNonEmptyIndex + 1)) {
+    const trimmed = rawLine.trim()
+    if (!trimmed) continue
+    if (/^#+\s+/.test(trimmed) || /^```/.test(trimmed)) return null
+    const action = cleanSuggestedActionLine(trimmed)
+    if (action && isUsableSuggestedAction(action)) hasUsableAction = true
+  }
+  if (!hasUsableAction) return null
+  const stripped = lines.slice(0, headingIndex).join('\n').trimEnd()
+  return stripped.length > 0 ? stripped : null
+}
+
 /**
  * Removes a trailing suggested-next-action line or section from final assistant replies
  * because the same suggestion is already surfaced in the chat composer placeholder.
@@ -87,28 +106,7 @@ export function stripSuggestedNextActionFromText(content: string): string {
     }
   }
 
-  const headingIndex = lines.findLastIndex(isSuggestedActionHeading)
-  if (headingIndex > 0) {
-    const tailLines = lines.slice(headingIndex + 1, lastNonEmptyIndex + 1)
-    let hasUsableAction = false
-    let hasOtherSection = false
-    for (const rawLine of tailLines) {
-      const trimmed = rawLine.trim()
-      if (!trimmed) continue
-      if (/^#+\s+/.test(trimmed) || /^```/.test(trimmed)) {
-        hasOtherSection = true
-        break
-      }
-      const action = cleanSuggestedActionLine(trimmed)
-      if (action && isUsableSuggestedAction(action)) hasUsableAction = true
-    }
-    if (hasUsableAction && !hasOtherSection) {
-      const stripped = lines.slice(0, headingIndex).join('\n').trimEnd()
-      if (stripped.length > 0) return stripped
-    }
-  }
-
-  return content
+  return stripTrailingSuggestedActionSection(lines, lastNonEmptyIndex) ?? content
 }
 
 export function suggestedNextActionPlaceholderFromMessages(messages: ChatItem[]): string | null {

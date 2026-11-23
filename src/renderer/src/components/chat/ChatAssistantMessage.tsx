@@ -11,6 +11,28 @@ const CopyIcon = PhiIcons.action.copy
 const CopiedIcon = PhiIcons.state.check
 const ForkIcon = PhiIcons.action.fork
 
+const ASSISTANT_ACTIONS_HOVER_SX = {
+  '& [data-phi-assistant-message-actions="true"]': {
+    opacity: 0,
+    pointerEvents: 'none',
+    transform: 'translateY(-2px)',
+    transition: 'opacity 120ms, transform 120ms'
+  },
+  '&:hover [data-phi-assistant-message-actions="true"], &:focus-within [data-phi-assistant-message-actions="true"]':
+    {
+      opacity: 1,
+      pointerEvents: 'auto',
+      transform: 'translateY(0)'
+    },
+  '@media (hover: none)': {
+    '& [data-phi-assistant-message-actions="true"]': {
+      opacity: 1,
+      pointerEvents: 'auto',
+      transform: 'none'
+    }
+  }
+} as const
+
 export function ChatAssistantMessage({
   message,
   forkUserMessageId,
@@ -60,29 +82,7 @@ export function ChatAssistantMessage({
       sx={{
         alignSelf: 'stretch',
         minWidth: 0,
-        ...(showActions
-          ? {
-              '& [data-phi-assistant-message-actions="true"]': {
-                opacity: 0,
-                pointerEvents: 'none',
-                transform: 'translateY(-2px)',
-                transition: 'opacity 120ms, transform 120ms'
-              },
-              '&:hover [data-phi-assistant-message-actions="true"], &:focus-within [data-phi-assistant-message-actions="true"]':
-                {
-                  opacity: 1,
-                  pointerEvents: 'auto',
-                  transform: 'translateY(0)'
-                },
-              '@media (hover: none)': {
-                '& [data-phi-assistant-message-actions="true"]': {
-                  opacity: 1,
-                  pointerEvents: 'auto',
-                  transform: 'none'
-                }
-              }
-            }
-          : null)
+        ...(showActions ? ASSISTANT_ACTIONS_HOVER_SX : null)
       }}
     >
       <MarkdownContent

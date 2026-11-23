@@ -166,8 +166,6 @@ interface LiveJob {
   finished: Promise<WrapperJobStatus>
 }
 
-
-
 export class WrapperJobManager implements WrapperJobClient {
   private readonly live = new Map<string, LiveJob>()
   private readonly reported = new Set<string>()

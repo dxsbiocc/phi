@@ -106,6 +106,37 @@ function normalizeProvenanced<T>(value: unknown, fallbackReason: string): Proven
   return unknownValue(typeof value.reason === 'string' ? value.reason : fallbackReason)
 }
 
+function parseSidecarProducer(
+  rawProducer: Record<string, unknown>
+): ScientificContextSidecar['producer'] {
+  const kind =
+    rawProducer.kind === 'wrapper' ||
+    rawProducer.kind === 'notebook' ||
+    rawProducer.kind === 'plan_step'
+      ? rawProducer.kind
+      : 'plan_step'
+  return {
+    kind,
+    id: typeof rawProducer.id === 'string' ? rawProducer.id : 'unknown',
+    ...(typeof rawProducer.runId === 'string' ? { runId: rawProducer.runId } : {})
+  }
+}
+
+function parseSidecarArtifact(
+  rawArtifact: Record<string, unknown>,
+  artifactPath: string
+): ScientificArtifactIdentity {
+  return {
+    location: rawArtifact.location === 'remote' ? 'remote' : 'local',
+    ...(typeof rawArtifact.host === 'string' ? { host: rawArtifact.host } : {}),
+    path: typeof rawArtifact.path === 'string' ? rawArtifact.path : artifactPath,
+    ...(typeof rawArtifact.contentSha256 === 'string'
+      ? { contentSha256: rawArtifact.contentSha256 }
+      : {}),
+    contextVersion: SCIENTIFIC_CONTEXT_SCHEMA_VERSION
+  }
+}
+
 /**
  * Reads a sidecar for `artifactPath`. Missing or legacy artifacts without a sidecar
  * return an explicit all-`unknown` sidecar — never guessing reference versions or raw counts.
@@ -140,33 +171,14 @@ export function readScientificContextSidecar(
   if (!isRecord(raw) || raw.schemaVersion !== SCIENTIFIC_CONTEXT_SCHEMA_VERSION) {
     return fallback()
   }
-  const rawArtifact = isRecord(raw.artifact) ? raw.artifact : {}
-  const rawProducer = isRecord(raw.producer) ? raw.producer : {}
 
   return {
     found: true,
     sidecar: {
       schemaVersion: SCIENTIFIC_CONTEXT_SCHEMA_VERSION,
       capturedAt: typeof raw.capturedAt === 'string' ? raw.capturedAt : new Date(0).toISOString(),
-      producer: {
-        kind:
-          rawProducer.kind === 'wrapper' ||
-          rawProducer.kind === 'notebook' ||
-          rawProducer.kind === 'plan_step'
-            ? rawProducer.kind
-            : 'plan_step',
-        id: typeof rawProducer.id === 'string' ? rawProducer.id : 'unknown',
-        ...(typeof rawProducer.runId === 'string' ? { runId: rawProducer.runId } : {})
-      },
-      artifact: {
-        location: rawArtifact.location === 'remote' ? 'remote' : 'local',
-        ...(typeof rawArtifact.host === 'string' ? { host: rawArtifact.host } : {}),
-        path: typeof rawArtifact.path === 'string' ? rawArtifact.path : artifactPath,
-        ...(typeof rawArtifact.contentSha256 === 'string'
-          ? { contentSha256: rawArtifact.contentSha256 }
-          : {}),
-        contextVersion: SCIENTIFIC_CONTEXT_SCHEMA_VERSION
-      },
+      producer: parseSidecarProducer(isRecord(raw.producer) ? raw.producer : {}),
+      artifact: parseSidecarArtifact(isRecord(raw.artifact) ? raw.artifact : {}, artifactPath),
       organism: normalizeProvenanced<string>(raw.organism, 'missing organism'),
       reference: normalizeProvenanced<ScientificReferenceInfo>(raw.reference, 'missing reference'),
       samples: normalizeProvenanced<ScientificSampleContext>(raw.samples, 'missing samples'),

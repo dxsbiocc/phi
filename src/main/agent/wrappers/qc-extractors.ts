@@ -16,7 +16,43 @@ function finiteNumber(value: unknown): number | undefined {
   return undefined
 }
 
-export function parseFastqcData(text: string, sourcePath: string): WrapperStepQcMetrics | undefined {
+const FASTQC_NUMERIC_KEYS: Record<string, string> = {
+  'Total Sequences': 'totalSequences',
+  'Sequences flagged as poor quality': 'poorQualitySequences',
+  '%GC': 'gcPercent'
+}
+
+function parseFastqcLine(
+  line: string,
+  metrics: Record<string, number | string>,
+  flags: Record<string, 'PASS' | 'WARN' | 'FAIL'>
+): string | undefined {
+  if (line.startsWith('>>') && line !== '>>END_MODULE') {
+    const [name, status] = line.slice(2).split('\t')
+    if (name && (status === 'pass' || status === 'warn' || status === 'fail')) {
+      flags[name] = status.toUpperCase() as 'PASS' | 'WARN' | 'FAIL'
+    }
+    return undefined
+  }
+  const [key, value] = line.split('\t')
+  if (!key || value === undefined) return undefined
+  if (key === 'Filename') return value.trim()
+  if (key === 'Sequence length') {
+    metrics.sequenceLength = value.trim()
+    return undefined
+  }
+  const targetKey = FASTQC_NUMERIC_KEYS[key]
+  if (targetKey) {
+    const n = finiteNumber(value)
+    if (n !== undefined) metrics[targetKey] = n
+  }
+  return undefined
+}
+
+export function parseFastqcData(
+  text: string,
+  sourcePath: string
+): WrapperStepQcMetrics | undefined {
   const metrics: Record<string, number | string> = {}
   const flags: Record<string, 'PASS' | 'WARN' | 'FAIL'> = {}
   let sample: string | undefined
@@ -24,28 +60,7 @@ export function parseFastqcData(text: string, sourcePath: string): WrapperStepQc
   for (const rawLine of text.replace(/\r\n/g, '\n').split('\n')) {
     const line = rawLine.trim()
     if (!line) continue
-    if (line.startsWith('>>') && line !== '>>END_MODULE') {
-      const [name, status] = line.slice(2).split('\t')
-      if (name && (status === 'pass' || status === 'warn' || status === 'fail')) {
-        flags[name] = status.toUpperCase() as 'PASS' | 'WARN' | 'FAIL'
-      }
-      continue
-    }
-    const [key, value] = line.split('\t')
-    if (!key || value === undefined) continue
-    if (key === 'Filename') sample = value.trim()
-    else if (key === 'Total Sequences') {
-      const n = finiteNumber(value)
-      if (n !== undefined) metrics.totalSequences = n
-    } else if (key === 'Sequences flagged as poor quality') {
-      const n = finiteNumber(value)
-      if (n !== undefined) metrics.poorQualitySequences = n
-    } else if (key === 'Sequence length') {
-      metrics.sequenceLength = value.trim()
-    } else if (key === '%GC') {
-      const n = finiteNumber(value)
-      if (n !== undefined) metrics.gcPercent = n
-    }
+    sample = parseFastqcLine(line, metrics, flags) ?? sample
   }
 
   if (Object.keys(metrics).length === 0 && Object.keys(flags).length === 0) return undefined
@@ -58,44 +73,60 @@ export function parseFastqcData(text: string, sourcePath: string): WrapperStepQc
   }
 }
 
-export function parseFastpJson(text: string, sourcePath: string): WrapperStepQcMetrics | undefined {
-  let parsed: unknown
+function parseJsonRecord(text: string): Record<string, unknown> | undefined {
   try {
-    parsed = JSON.parse(text)
+    const parsed: unknown = JSON.parse(text)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+    return parsed as Record<string, unknown>
   } catch {
     return undefined
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
-  const root = parsed as Record<string, unknown>
-  const summary = root.summary as Record<string, unknown> | undefined
-  if (!summary || typeof summary !== 'object') return undefined
-  const before = summary.before_filtering as Record<string, unknown> | undefined
-  const after = summary.after_filtering as Record<string, unknown> | undefined
-  const dup = root.duplication as Record<string, unknown> | undefined
-  const filtering = root.filtering_result as Record<string, unknown> | undefined
+}
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
+}
+
+function collectFastpMetrics(
+  before: Record<string, unknown> | undefined,
+  after: Record<string, unknown> | undefined,
+  dup: Record<string, unknown> | undefined,
+  filtering: Record<string, unknown> | undefined
+): Record<string, number | string> {
   const metrics: Record<string, number | string> = {}
-  const setIfFinite = (key: string, value: unknown): void => {
+  const pairs: Array<[string, unknown]> = [
+    ['beforeTotalReads', before?.total_reads],
+    ['afterTotalReads', after?.total_reads],
+    ['q20Rate', after?.q20_rate ?? before?.q20_rate],
+    ['q30Rate', after?.q30_rate ?? before?.q30_rate],
+    ['gcContent', after?.gc_content ?? before?.gc_content],
+    ['duplicationRate', dup?.rate]
+  ]
+  for (const [key, value] of pairs) {
     const n = finiteNumber(value)
     if (n !== undefined) metrics[key] = n
   }
-  setIfFinite('beforeTotalReads', before?.total_reads)
-  setIfFinite('afterTotalReads', after?.total_reads)
-  setIfFinite('q20Rate', after?.q20_rate ?? before?.q20_rate)
-  setIfFinite('q30Rate', after?.q30_rate ?? before?.q30_rate)
-  setIfFinite('gcContent', after?.gc_content ?? before?.gc_content)
-  setIfFinite('duplicationRate', dup?.rate)
-  if (
-    typeof filtering?.passed_filter_reads === 'number' &&
-    typeof before?.total_reads === 'number' &&
-    before.total_reads > 0
-  ) {
-    metrics.passedFilterRate = Number(
-      (filtering.passed_filter_reads / before.total_reads).toFixed(6)
-    )
+  const passed = finiteNumber(filtering?.passed_filter_reads)
+  const total = finiteNumber(before?.total_reads)
+  if (passed !== undefined && total !== undefined && total > 0) {
+    metrics.passedFilterRate = Number((passed / total).toFixed(6))
   }
-  if (Object.keys(metrics).length === 0) return undefined
-  return { tool: 'fastp', sourcePath, metrics }
+  return metrics
+}
+
+export function parseFastpJson(text: string, sourcePath: string): WrapperStepQcMetrics | undefined {
+  const root = parseJsonRecord(text)
+  const summary = asRecord(root?.summary)
+  if (!root || !summary) return undefined
+  const metrics = collectFastpMetrics(
+    asRecord(summary.before_filtering),
+    asRecord(summary.after_filtering),
+    asRecord(root.duplication),
+    asRecord(root.filtering_result)
+  )
+  return Object.keys(metrics).length > 0 ? { tool: 'fastp', sourcePath, metrics } : undefined
 }
 
 export function parseSalmonMetaInfo(
@@ -204,6 +235,36 @@ function readBoundedQcText(filePath: string, realRoot: string): string | undefin
   }
 }
 
+function extractQcEntriesForFile(fullPath: string, realRoot: string): WrapperStepQcMetrics[] {
+  const name = basename(fullPath)
+  const rel = relative(realRoot, fullPath).split(sep).join('/')
+  if (name === 'fastqc_data.txt') {
+    const text = readBoundedQcText(fullPath, realRoot)
+    const parsed = text ? parseFastqcData(text, rel) : undefined
+    return parsed ? [parsed] : []
+  }
+  if (/fastp.*\.json$/i.test(name)) {
+    const text = readBoundedQcText(fullPath, realRoot)
+    const parsed = text ? parseFastpJson(text, rel) : undefined
+    return parsed ? [parsed] : []
+  }
+  if (name === 'meta_info.json') {
+    const text = readBoundedQcText(fullPath, realRoot)
+    const parsed = text ? parseSalmonMetaInfo(text, rel) : undefined
+    return parsed ? [parsed] : []
+  }
+  if (name.endsWith('.summary')) {
+    const text = readBoundedQcText(fullPath, realRoot)
+    return text ? parseFeatureCountsSummary(text, rel) : []
+  }
+  if (name.endsWith('Log.final.out')) {
+    const text = readBoundedQcText(fullPath, realRoot)
+    const parsed = text ? parseStarLogFinal(text, rel) : undefined
+    return parsed ? [parsed] : []
+  }
+  return []
+}
+
 /**
  * Scans a local run output directory (bounded depth/file-count, symlink-safe)
  * and extracts structured QC metrics from FastQC, fastp, Salmon, featureCounts,
@@ -239,29 +300,7 @@ export function collectStructuredQcMetrics(rootDir: string): WrapperStepQcSummar
       }
       if (!item.isFile()) continue
       inspectedFiles += 1
-      const name = basename(fullPath)
-      const rel = relative(realRoot, fullPath).split(sep).join('/')
-
-      if (name === 'fastqc_data.txt') {
-        const text = readBoundedQcText(fullPath, realRoot)
-        const parsed = text ? parseFastqcData(text, rel) : undefined
-        if (parsed) entries.push(parsed)
-      } else if (/fastp.*\.json$/i.test(name)) {
-        const text = readBoundedQcText(fullPath, realRoot)
-        const parsed = text ? parseFastpJson(text, rel) : undefined
-        if (parsed) entries.push(parsed)
-      } else if (name === 'meta_info.json') {
-        const text = readBoundedQcText(fullPath, realRoot)
-        const parsed = text ? parseSalmonMetaInfo(text, rel) : undefined
-        if (parsed) entries.push(parsed)
-      } else if (name.endsWith('.summary')) {
-        const text = readBoundedQcText(fullPath, realRoot)
-        if (text) entries.push(...parseFeatureCountsSummary(text, rel))
-      } else if (name.endsWith('Log.final.out')) {
-        const text = readBoundedQcText(fullPath, realRoot)
-        const parsed = text ? parseStarLogFinal(text, rel) : undefined
-        if (parsed) entries.push(parsed)
-      }
+      entries.push(...extractQcEntriesForFile(fullPath, realRoot))
     }
   }
 

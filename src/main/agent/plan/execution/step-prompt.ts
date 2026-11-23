@@ -98,7 +98,8 @@ function hypothesisContext(state: PlanRunState, step: PlanStep): string[] {
     if (item.prediction) details.push(`Prediction: ${item.prediction}`)
     if (item.testCriteria) details.push(`Test criteria: ${item.testCriteria}`)
     if (item.falsificationCriteria) details.push(`Falsification: ${item.falsificationCriteria}`)
-    if (item.confounders?.length) details.push(`Confounders/controls: ${item.confounders.join(', ')}`)
+    if (item.confounders?.length)
+      details.push(`Confounders/controls: ${item.confounders.join(', ')}`)
     return details.length > 0
       ? `- [${item.id}] ${item.statement} (${details.join('; ')})`
       : `- [${item.id}] ${item.statement}`

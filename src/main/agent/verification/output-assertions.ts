@@ -109,75 +109,33 @@ function splitRow(line: string, format: 'tsv' | 'csv'): string[] {
   return format === 'tsv' ? line.split('\t') : parseCsvLine(line)
 }
 
-/**
- * Evaluates a read-only content assertion against a local file path.
- * When `options.rootDir` is provided, refuses paths or symlinks escaping `rootDir`.
- */
-export function verifyFileContentAssertion(
-  filePath: string,
-  assertion: OutputContentAssertion,
-  options: { rootDir?: string; maxBytes?: number } = {}
-): OutputAssertionResult {
-  const absolute = resolve(filePath)
-  if (options.rootDir) {
-    const root = resolve(options.rootDir)
-    if (!withinRoot(absolute, root)) {
-      return { ok: false, reason: 'path escapes allowed root directory' }
-    }
-    try {
-      const realRoot = realpathSync(root)
-      const stats = lstatSync(absolute)
-      if (!stats.isFile()) return { ok: false, reason: 'target is not a regular file' }
-      const realTarget = realpathSync(absolute)
-      if (!withinRoot(realTarget, realRoot)) {
-        return { ok: false, reason: 'path symlink escapes allowed root directory' }
-      }
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      return { ok: false, reason: code === 'ENOENT' ? 'file does not exist' : 'file is unreadable' }
-    }
+function checkAllowedRoot(absolute: string, rootDir: string): OutputAssertionResult {
+  const root = resolve(rootDir)
+  if (!withinRoot(absolute, root)) {
+    return { ok: false, reason: 'path escapes allowed root directory' }
   }
-
-  let stats
   try {
-    stats = lstatSync(absolute)
+    const realRoot = realpathSync(root)
+    const stats = lstatSync(absolute)
+    if (!stats.isFile()) return { ok: false, reason: 'target is not a regular file' }
+    if (!withinRoot(realpathSync(absolute), realRoot)) {
+      return { ok: false, reason: 'path symlink escapes allowed root directory' }
+    }
+    return { ok: true }
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     return { ok: false, reason: code === 'ENOENT' ? 'file does not exist' : 'file is unreadable' }
   }
-  if (!stats.isFile()) {
-    return { ok: false, reason: 'target is not a regular file' }
-  }
-  if (assertion.nonEmpty && stats.size === 0) {
-    return { ok: false, reason: 'file is empty (0 bytes)' }
-  }
+}
 
-  const needsParse =
-    assertion.format !== undefined ||
-    assertion.minDataRows !== undefined ||
-    assertion.minColumns !== undefined ||
-    (assertion.requiredColumns?.length ?? 0) > 0
-  if (!needsParse) return { ok: true }
-
-  const maxBytes = options.maxBytes ?? MAX_INSPECT_BYTES
-  const read = readBoundedUtf8Prefix(absolute, maxBytes)
-  if ('error' in read) return { ok: false, reason: read.error }
-
-  if (assertion.format === 'json') {
-    if (read.truncated) {
-      return { ok: false, reason: `JSON file exceeds bounded inspection limit (${maxBytes} bytes)` }
-    }
-    try {
-      JSON.parse(read.text)
-      return { ok: true }
-    } catch {
-      return { ok: false, reason: 'file is not valid JSON' }
-    }
-  }
-
-  const tableFormat: 'tsv' | 'csv' = assertion.format ?? 'tsv'
-  const rawLines = read.text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
-  if (read.truncated && rawLines.length > 1) rawLines.pop()
+function verifyTabularContent(
+  text: string,
+  truncated: boolean,
+  assertion: OutputContentAssertion
+): OutputAssertionResult {
+  const tableFormat: 'tsv' | 'csv' = assertion.format === 'csv' ? 'csv' : 'tsv'
+  const rawLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+  if (truncated && rawLines.length > 1) rawLines.pop()
   const nonEmptyLines = rawLines.filter((line) => line.trim().length > 0)
   if (nonEmptyLines.length === 0) {
     return { ok: false, reason: `${tableFormat.toUpperCase()} file has no header or rows` }
@@ -194,10 +152,7 @@ export function verifyFileContentAssertion(
     const headerSet = new Set(header)
     const missing = assertion.requiredColumns.filter((column) => !headerSet.has(column))
     if (missing.length > 0) {
-      return {
-        ok: false,
-        reason: `missing required columns: ${missing.join(', ')}`
-      }
+      return { ok: false, reason: `missing required columns: ${missing.join(', ')}` }
     }
   }
 
@@ -220,4 +175,66 @@ export function verifyFileContentAssertion(
     }
   }
   return { ok: true }
+}
+
+function assertionNeedsContentParse(assertion: OutputContentAssertion): boolean {
+  return (
+    assertion.format !== undefined ||
+    assertion.minDataRows !== undefined ||
+    assertion.minColumns !== undefined ||
+    (assertion.requiredColumns?.length ?? 0) > 0
+  )
+}
+
+function verifyJsonContent(
+  text: string,
+  truncated: boolean,
+  maxBytes: number
+): OutputAssertionResult {
+  if (truncated) {
+    return { ok: false, reason: `JSON file exceeds bounded inspection limit (${maxBytes} bytes)` }
+  }
+  try {
+    JSON.parse(text)
+    return { ok: true }
+  } catch {
+    return { ok: false, reason: 'file is not valid JSON' }
+  }
+}
+
+/**
+ * Evaluates a read-only content assertion against a local file path.
+ * When `options.rootDir` is provided, refuses paths or symlinks escaping `rootDir`.
+ */
+export function verifyFileContentAssertion(
+  filePath: string,
+  assertion: OutputContentAssertion,
+  options: { rootDir?: string; maxBytes?: number } = {}
+): OutputAssertionResult {
+  const absolute = resolve(filePath)
+  if (options.rootDir) {
+    const rootCheck = checkAllowedRoot(absolute, options.rootDir)
+    if (!rootCheck.ok) return rootCheck
+  }
+
+  let stats
+  try {
+    stats = lstatSync(absolute)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    return { ok: false, reason: code === 'ENOENT' ? 'file does not exist' : 'file is unreadable' }
+  }
+  if (!stats.isFile()) return { ok: false, reason: 'target is not a regular file' }
+  if (assertion.nonEmpty && stats.size === 0) {
+    return { ok: false, reason: 'file is empty (0 bytes)' }
+  }
+  if (!assertionNeedsContentParse(assertion)) return { ok: true }
+
+  const maxBytes = options.maxBytes ?? MAX_INSPECT_BYTES
+  const read = readBoundedUtf8Prefix(absolute, maxBytes)
+  if ('error' in read) return { ok: false, reason: read.error }
+
+  return assertion.format === 'json'
+    ? verifyJsonContent(read.text, read.truncated, maxBytes)
+    : verifyTabularContent(read.text, read.truncated, assertion)
 }

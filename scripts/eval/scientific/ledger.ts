@@ -86,7 +86,9 @@ export class TrialCostLedger {
 
   recordCall(entry: TrialUsageCallRecord): void {
     if (entry.trialId !== this.trialId) {
-      throw new Error(`Call "${entry.callId}" belongs to trial "${entry.trialId}", not "${this.trialId}"`)
+      throw new Error(
+        `Call "${entry.callId}" belongs to trial "${entry.trialId}", not "${this.trialId}"`
+      )
     }
     if (this.callsById.has(entry.callId)) return
     this.callsById.set(entry.callId, { ...entry })

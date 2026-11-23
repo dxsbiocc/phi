@@ -680,10 +680,7 @@ class PlanRunServiceImplementation<
     }
   }
 
-  async inspectStaleness(
-    phiSessionId: string,
-    runId: string
-  ): Promise<PlanStalenessReport | null> {
+  async inspectStaleness(phiSessionId: string, runId: string): Promise<PlanStalenessReport | null> {
     const state = await this.get(phiSessionId, runId)
     const root = this.deps.resolveProjectRoot?.(phiSessionId)
     if (!state || !root) return null

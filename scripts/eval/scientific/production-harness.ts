@@ -134,7 +134,9 @@ export async function runEvaluatedTrial(
 ): Promise<EvaluatedTrialResult> {
   const contractCheck = validateVisibleTaskCard(input.task)
   if (!contractCheck.ok) {
-    throw new Error(`Invalid eval task card "${input.task.taskId}": ${contractCheck.errors.join('; ')}`)
+    throw new Error(
+      `Invalid eval task card "${input.task.taskId}": ${contractCheck.errors.join('; ')}`
+    )
   }
   const assemblyCheck = validateProductionAssembly(input.assembly)
   if (!assemblyCheck.ok) {

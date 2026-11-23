@@ -398,6 +398,43 @@ interface WatchContext {
   layout: Pick<RemoteRunLayout, 'runDir'>
 }
 
+function resolveCancelledWatchResult(
+  options: CommonOptions,
+  outcome: RemoteCancelResult | undefined,
+  status: RemoteRunStatus
+): WrapperRunResult | undefined {
+  if (outcome?.kind === 'confirmed' && status.outcome !== 'completed') {
+    return reported(options, '运行已取消。', {
+      cancelled: true,
+      exitCode: outcome.status.exitCode ?? -1
+    })
+  }
+  if (outcome?.message) return reported(options, outcome.message, { lost: true })
+  return undefined
+}
+
+async function drainWatchTail(
+  deliver: () => Promise<number>,
+  control: Control,
+  options: CommonOptions,
+  snapshot: RemoteJobSnapshot,
+  cursor: RemoteLogCursor
+): Promise<{ detached: boolean; cursor: RemoteLogCursor }> {
+  while ((await deliver()) > 0) {
+    if (control.detached) return { detached: true, cursor }
+  }
+  if (!cursor.pendingUtf8) return { detached: false, cursor }
+  options.onOutput?.(Buffer.from(cursor.pendingUtf8, 'base64').toString('utf8'))
+  const nextCursor = { ...cursor, pendingUtf8: undefined }
+  options.onSnapshot?.({
+    ...snapshot,
+    logOffset: nextCursor.offset,
+    logFileIdentity: nextCursor.identity,
+    logPendingUtf8: undefined
+  })
+  return { detached: false, cursor: nextCursor }
+}
+
 /** Polls the run to the end, riding out connection drops; the shared tail of start and attach. */
 async function watch(ctx: WatchContext, initial: RemoteSshSession): Promise<WrapperRunResult> {
   const { control, snapshot, options, target } = ctx
@@ -476,28 +513,13 @@ async function watch(ctx: WatchContext, initial: RemoteSshSession): Promise<Wrap
       if (status.outcome !== 'lost') inconclusiveStatuses = 0
       if (control.cancelled && cancellation) {
         const outcome = await cancellation
-        if (outcome?.kind === 'confirmed' && status.outcome !== 'completed')
-          return reported(options, '运行已取消。', {
-            cancelled: true,
-            exitCode: outcome.status.exitCode ?? -1
-          })
-        if (outcome?.message) return reported(options, outcome.message, { lost: true })
+        const cancelResult = resolveCancelledWatchResult(options, outcome, status)
+        if (cancelResult) return cancelResult
       }
       if (status.outcome !== 'running') {
-        // A completed job can leave a large final log; drain it through repeated bounded pages.
-        while ((await deliver()) > 0) {
-          if (control.detached) return failure('', { detached: true })
-        }
-        if (cursor.pendingUtf8) {
-          options.onOutput?.(Buffer.from(cursor.pendingUtf8, 'base64').toString('utf8'))
-          cursor = { ...cursor, pendingUtf8: undefined }
-          options.onSnapshot?.({
-            ...snapshot,
-            logOffset: cursor.offset,
-            logFileIdentity: cursor.identity,
-            logPendingUtf8: undefined
-          })
-        }
+        const drained = await drainWatchTail(deliver, control, options, snapshot, cursor)
+        if (drained.detached) return failure('', { detached: true })
+        cursor = drained.cursor
         return await finish(ctx, session, status)
       }
     } catch (error) {

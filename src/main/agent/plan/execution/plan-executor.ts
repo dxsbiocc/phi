@@ -188,6 +188,50 @@ class PlanExecutorImplementation implements PlanExecutor {
     return requireState(this.runtime, runId)
   }
 
+  private async verifySucceededStep(
+    runId: string,
+    state: PlanRunState,
+    stepId: string,
+    report: PlanStepReportSummary,
+    at: string
+  ): Promise<PlanRunEvent> {
+    const step = state.spec.steps.find((candidate) => candidate.id === stepId)
+    if (!step || !this.deps.verifyStep) return { type: 'step_succeeded', stepId, report, at }
+    try {
+      const verdict = await this.deps.verifyStep({
+        sessionId: state.sessionId,
+        runId,
+        step,
+        report
+      })
+      if (verdict.ok) return { type: 'step_succeeded', stepId, report, at }
+      return {
+        type: 'step_failed',
+        stepId,
+        report,
+        error: `Post-step verification failed: ${verdict.failures.join('; ')}`,
+        at
+      }
+    } catch (error) {
+      return {
+        type: 'step_failed',
+        stepId,
+        report,
+        error: `Post-step verification error: ${errorText(error)}`,
+        at
+      }
+    }
+  }
+
+  private canSettleStepStatus(state: PlanRunState, stepId: string, outcome: StepOutcome): boolean {
+    const stepStatus = state.steps[stepId]?.status
+    if (state.status === 'stopped' || !stepStatus) return false
+    return (
+      stepStatus === 'running' ||
+      (stepStatus === 'launching' && !outcome.ok && Boolean(outcome.cancelled))
+    )
+  }
+
   private settle(runId: string, stepId: string, agentRunId: string, outcome: StepOutcome): void {
     try {
       void this.enqueue(runId, async () => {
@@ -195,53 +239,16 @@ class PlanExecutorImplementation implements PlanExecutor {
         const state = this.runtime.states.get(runId)
         if (!active || active.agentRunId !== agentRunId || !state) return state
         this.runtime.active.get(runId)?.delete(stepId)
-        const stepStatus = state.steps[stepId]?.status
-        if (
-          state.status === 'stopped' ||
-          !stepStatus ||
-          (stepStatus !== 'running' &&
-            !(stepStatus === 'launching' && !outcome.ok && outcome.cancelled))
-        )
-          return state
-        if (this.suspendedSessions.has(state.sessionId)) {
-          return this.apply(
-            runId,
-            { type: 'step_interrupted', stepId, at: clockNow(this.deps.clock) },
-            false
-          )
-        }
+        if (!this.canSettleStepStatus(state, stepId, outcome)) return state
         const at = clockNow(this.deps.clock)
-        let event = eventForOutcome(stepId, outcome, at)
-        if (event.type === 'step_succeeded' && this.deps.verifyStep) {
-          const step = state.spec.steps.find((candidate) => candidate.id === stepId)
-          if (step) {
-            try {
-              const verdict = await this.deps.verifyStep({
-                sessionId: state.sessionId,
-                runId,
-                step,
-                report: event.report
-              })
-              if (!verdict.ok) {
-                event = {
-                  type: 'step_failed',
-                  stepId,
-                  report: event.report,
-                  error: `Post-step verification failed: ${verdict.failures.join('; ')}`,
-                  at
-                }
-              }
-            } catch (error) {
-              event = {
-                type: 'step_failed',
-                stepId,
-                report: event.report,
-                error: `Post-step verification error: ${errorText(error)}`,
-                at
-              }
-            }
-          }
+        if (this.suspendedSessions.has(state.sessionId)) {
+          return this.apply(runId, { type: 'step_interrupted', stepId, at }, false)
         }
+        const baseEvent = eventForOutcome(stepId, outcome, at)
+        const event =
+          baseEvent.type === 'step_succeeded' && this.deps.verifyStep
+            ? await this.verifySucceededStep(runId, state, stepId, baseEvent.report, at)
+            : baseEvent
         return this.apply(runId, event)
       }).catch((error: unknown) => this.emitExecutorError(runId, error))
     } catch (error) {
@@ -279,58 +286,59 @@ class PlanExecutorImplementation implements PlanExecutor {
     )
   }
 
+  private async runPreflight(
+    runId: string,
+    stepId: string,
+    step: PlanStep,
+    state: PlanRunState
+  ): Promise<boolean> {
+    if (!this.deps.preflightStep) return true
+    const at = clockNow(this.deps.clock)
+    let verdict: PlanStepPreflightResult
+    try {
+      verdict = await this.deps.preflightStep({ sessionId: state.sessionId, runId, step, state })
+    } catch (error) {
+      verdict = { status: 'incompatible', reasons: [`Preflight check error: ${errorText(error)}`] }
+    }
+    if (verdict.status === 'needs_input') {
+      await this.apply(
+        runId,
+        {
+          type: 'step_preflight_blocked',
+          stepId,
+          reason: 'needs_input',
+          report: {
+            status: 'blocked',
+            text: verdict.summary,
+            missingInputs: verdict.missingInputs
+          },
+          at
+        },
+        false
+      )
+      return false
+    }
+    if (verdict.status === 'incompatible') {
+      await this.apply(
+        runId,
+        {
+          type: 'step_preflight_blocked',
+          stepId,
+          reason: 'step_failed',
+          error: `Cross-step scientific incompatibility: ${verdict.reasons.join('; ')}`,
+          at
+        },
+        false
+      )
+      return false
+    }
+    return true
+  }
+
   private async launch(runId: string, stepId: string): Promise<void> {
     const state = requireState(this.runtime, runId)
     const step = state.spec.steps.find((candidate) => candidate.id === stepId)!
-    if (this.deps.preflightStep) {
-      const at = clockNow(this.deps.clock)
-      let verdict: PlanStepPreflightResult
-      try {
-        verdict = await this.deps.preflightStep({
-          sessionId: state.sessionId,
-          runId,
-          step,
-          state
-        })
-      } catch (error) {
-        verdict = {
-          status: 'incompatible',
-          reasons: [`Preflight check error: ${errorText(error)}`]
-        }
-      }
-      if (verdict.status === 'needs_input') {
-        await this.apply(
-          runId,
-          {
-            type: 'step_preflight_blocked',
-            stepId,
-            reason: 'needs_input',
-            report: {
-              status: 'blocked',
-              text: verdict.summary,
-              missingInputs: verdict.missingInputs
-            },
-            at
-          },
-          false
-        )
-        return
-      }
-      if (verdict.status === 'incompatible') {
-        await this.apply(
-          runId,
-          {
-            type: 'step_preflight_blocked',
-            stepId,
-            reason: 'step_failed',
-            error: `Cross-step scientific incompatibility: ${verdict.reasons.join('; ')}`,
-            at
-          },
-          false
-        )
-        return
-      }
-    }
+    if (!(await this.runPreflight(runId, stepId, step, state))) return
     const controller = new AbortController()
     const requestId = this.deps.requiresDurableLaunch?.(state.sessionId) ? randomUUID() : undefined
     if (requestId) {

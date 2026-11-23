@@ -100,6 +100,43 @@ function summaryManifest(
   return manifest as WrapperManifest | WrapperCompositionManifest
 }
 
+function recordCompletenessItem(
+  present: WrapperReproducibilityEvidenceItem[],
+  missing: WrapperReproducibilityMissingItem[],
+  ok: boolean,
+  item: WrapperReproducibilityEvidenceItem,
+  reason: string
+): void {
+  if (ok) present.push(item)
+  else missing.push({ item, reason })
+}
+
+function evaluateContainerCompleteness(
+  runtime: WrapperRuntimeProvenance | undefined,
+  present: WrapperReproducibilityEvidenceItem[],
+  missing: WrapperReproducibilityMissingItem[]
+): void {
+  const images = runtime?.containerRuntime?.images ?? []
+  if (images.length > 0) {
+    const unverified = images.filter((img) => img.status !== 'verified' || !img.digest)
+    recordCompletenessItem(
+      present,
+      missing,
+      unverified.length === 0,
+      'container_digests',
+      `Unverified container image digests: ${unverified.map((img) => img.ref).join(', ')}.`
+    )
+    return
+  }
+  recordCompletenessItem(
+    present,
+    missing,
+    runtime?.containerRuntime?.engine === 'conda',
+    'container_digests',
+    'Container image digest provenance was not recorded.'
+  )
+}
+
 function evaluateBundleCompleteness(input: {
   run: WrapperRun
   manifestSource?: WrapperManifestSource
@@ -113,84 +150,99 @@ function evaluateBundleCompleteness(input: {
   const present: WrapperReproducibilityEvidenceItem[] = []
   const missing: WrapperReproducibilityMissingItem[] = []
 
-  if (input.manifestSource === 'snapshot' && input.manifestSha256) {
-    present.push('manifest_snapshot')
-  } else {
-    missing.push({
-      item: 'manifest_snapshot',
-      reason: input.manifestSource
-        ? `Manifest came from mutable ${input.manifestSource} rather than an immutable snapshot.`
-        : 'Immutable manifest snapshot (manifest.snapshot.json) was not recorded.'
-    })
-  }
-
-  if (input.params !== undefined) {
-    present.push('params')
-  } else {
-    missing.push({ item: 'params', reason: 'Run parameters (params.json) were not recorded.' })
-  }
-
-  if (input.outputs !== undefined || (input.run.outputs?.length ?? 0) > 0) {
-    present.push('outputs')
-  } else {
-    missing.push({ item: 'outputs', reason: 'Run output inventory was not recorded.' })
-  }
-
-  if (input.runtime?.host.platform && input.runtime?.host.arch) {
-    present.push('host_provenance')
-  } else {
-    missing.push({
-      item: 'host_provenance',
-      reason: 'Host OS/architecture provenance (runtime.json) was not recorded.'
-    })
-  }
-
-  if (
-    input.runtime?.nextflow.version ||
-    input.runtime?.nextflow.lockSha256 ||
-    input.nextflow !== undefined
-  ) {
-    present.push('nextflow_provenance')
-  } else {
-    missing.push({
-      item: 'nextflow_provenance',
-      reason: 'Nextflow version or managed lock provenance was not recorded.'
-    })
-  }
-
-  const images = input.runtime?.containerRuntime?.images ?? []
-  if (images.length > 0) {
-    const unverified = images.filter((img) => img.status !== 'verified' || !img.digest)
-    if (unverified.length === 0) {
-      present.push('container_digests')
-    } else {
-      missing.push({
-        item: 'container_digests',
-        reason: `Unverified container image digests: ${unverified.map((img) => img.ref).join(', ')}.`
-      })
-    }
-  } else if (input.runtime?.containerRuntime?.engine === 'conda') {
-    present.push('container_digests')
-  } else {
-    missing.push({
-      item: 'container_digests',
-      reason: 'Container image digest provenance was not recorded.'
-    })
-  }
-
-  if ((input.qc?.entries.length ?? 0) > 0) {
-    present.push('qc_summary')
-  } else {
-    missing.push({
-      item: 'qc_summary',
-      reason: 'Structured QC summary (qc.json) was not recorded.'
-    })
-  }
-
-  return {
-    complete: missing.length === 0,
+  recordCompletenessItem(
     present,
-    missing
+    missing,
+    input.manifestSource === 'snapshot' && Boolean(input.manifestSha256),
+    'manifest_snapshot',
+    input.manifestSource
+      ? `Manifest came from mutable ${input.manifestSource} rather than an immutable snapshot.`
+      : 'Immutable manifest snapshot (manifest.snapshot.json) was not recorded.'
+  )
+  recordCompletenessItem(
+    present,
+    missing,
+    input.params !== undefined,
+    'params',
+    'Run parameters (params.json) were not recorded.'
+  )
+  recordCompletenessItem(
+    present,
+    missing,
+    input.outputs !== undefined || (input.run.outputs?.length ?? 0) > 0,
+    'outputs',
+    'Run output inventory was not recorded.'
+  )
+  recordCompletenessItem(
+    present,
+    missing,
+    Boolean(input.runtime?.host.platform && input.runtime?.host.arch),
+    'host_provenance',
+    'Host OS/architecture provenance (runtime.json) was not recorded.'
+  )
+  recordCompletenessItem(
+    present,
+    missing,
+    Boolean(
+      input.runtime?.nextflow.version ||
+      input.runtime?.nextflow.lockSha256 ||
+      input.nextflow !== undefined
+    ),
+    'nextflow_provenance',
+    'Nextflow version or managed lock provenance was not recorded.'
+  )
+  evaluateContainerCompleteness(input.runtime, present, missing)
+  recordCompletenessItem(
+    present,
+    missing,
+    (input.qc?.entries.length ?? 0) > 0,
+    'qc_summary',
+    'Structured QC summary (qc.json) was not recorded.'
+  )
+
+  return { complete: missing.length === 0, present, missing }
+}
+
+function buildRerunNotes(input: {
+  run: WrapperRun
+  manifestSource?: WrapperManifestSource
+  images: Array<{ ref: string; digest?: string; status: 'verified' | 'unknown' }>
+  completeness: WrapperReproducibilityCompleteness
+}): string[] {
+  const notes: string[] = []
+  if (input.manifestSource !== 'snapshot') {
+    notes.push(
+      'Manifest was not frozen at submission time; verify wrapper version before rerunning.'
+    )
+  }
+  if (input.run.remote) {
+    notes.push(
+      `Originally executed on remote host "${input.run.remote.host}" in ${input.run.remote.runDir}.`
+    )
+  }
+  if (input.images.some((img) => img.status !== 'verified' || !img.digest)) {
+    notes.push(
+      'One or more container images lack a verified digest; pin image digests for strict bit-for-bit reproduction.'
+    )
+  }
+  if (!input.completeness.complete) {
+    notes.push(
+      `Missing reproducibility items: ${input.completeness.missing.map((m) => m.item).join(', ')}.`
+    )
+  }
+  return notes
+}
+
+function optionalRuntimeGuideFields(
+  runtime: WrapperRuntimeProvenance | undefined
+): Partial<WrapperReproducibilityRerunGuide> {
+  const nextflow = runtime?.nextflow
+  const engine = runtime?.containerRuntime?.engine
+  return {
+    ...(nextflow?.version ? { nextflowVersion: nextflow.version } : {}),
+    ...(nextflow?.envId ? { nextflowEnvId: nextflow.envId } : {}),
+    ...(nextflow?.lockSha256 ? { nextflowLockSha256: nextflow.lockSha256 } : {}),
+    ...(engine ? { containerEngine: engine } : {})
   }
 }
 
@@ -202,22 +254,6 @@ function buildRerunGuide(input: {
   completeness: WrapperReproducibilityCompleteness
 }): WrapperReproducibilityRerunGuide {
   const images = input.runtime?.containerRuntime?.images ?? []
-  const notes: string[] = []
-  if (input.manifestSource !== 'snapshot') {
-    notes.push('Manifest was not frozen at submission time; verify wrapper version before rerunning.')
-  }
-  if (input.run.remote) {
-    notes.push(`Originally executed on remote host "${input.run.remote.host}" in ${input.run.remote.runDir}.`)
-  }
-  if (images.some((img) => img.status !== 'verified' || !img.digest)) {
-    notes.push('One or more container images lack a verified digest; pin image digests for strict bit-for-bit reproduction.')
-  }
-  if (!input.completeness.complete) {
-    notes.push(
-      `Missing reproducibility items: ${input.completeness.missing.map((m) => m.item).join(', ')}.`
-    )
-  }
-
   return {
     wrapperId: input.run.wrapper.canonicalId,
     wrapperVersion: input.run.wrapper.version,
@@ -227,20 +263,18 @@ function buildRerunGuide(input: {
     cwd: input.run.cwd,
     outDir: input.run.outDir,
     ...(input.plan?.commandPlan.command ? { commandHint: input.plan.commandPlan.command } : {}),
-    ...(input.runtime?.nextflow.version ? { nextflowVersion: input.runtime.nextflow.version } : {}),
-    ...(input.runtime?.nextflow.envId ? { nextflowEnvId: input.runtime.nextflow.envId } : {}),
-    ...(input.runtime?.nextflow.lockSha256
-      ? { nextflowLockSha256: input.runtime.nextflow.lockSha256 }
-      : {}),
-    ...(input.runtime?.containerRuntime?.engine
-      ? { containerEngine: input.runtime.containerRuntime.engine }
-      : {}),
+    ...optionalRuntimeGuideFields(input.runtime),
     pinnedImages: images.map((img) => ({
       ref: img.ref,
       ...(img.digest ? { digest: img.digest } : {}),
       status: img.status
     })),
-    notes
+    notes: buildRerunNotes({
+      run: input.run,
+      manifestSource: input.manifestSource,
+      images,
+      completeness: input.completeness
+    })
   }
 }
 

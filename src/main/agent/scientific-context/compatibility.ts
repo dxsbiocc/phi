@@ -1,9 +1,6 @@
 import { resolve } from 'node:path'
 
-import type {
-  PlanStep,
-  PlanStepPreflightResult
-} from '../../../shared/planRunTypes'
+import type { PlanStep, PlanStepPreflightResult } from '../../../shared/planRunTypes'
 import { readScientificContextSidecar } from './sidecar'
 
 /**
@@ -25,6 +22,97 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
   return b.every((item) => setA.has(item))
 }
 
+function checkContractReference(
+  contract: NonNullable<PlanStep['inputContracts']>[number],
+  sidecar: ReturnType<typeof readScientificContextSidecar>['sidecar'],
+  rootDir: string,
+  reasons: string[],
+  missingInputs: string[]
+): void {
+  if (contract.expectedReferenceAssembly) {
+    if (sidecar.reference.status === 'unknown') {
+      missingInputs.push(
+        `Reference assembly for "${contract.path}" is unknown (expected ${contract.expectedReferenceAssembly})`
+      )
+    } else if (sidecar.reference.value.assembly !== contract.expectedReferenceAssembly) {
+      reasons.push(
+        `Reference assembly mismatch for "${contract.path}": found ${sidecar.reference.value.assembly}, expected ${contract.expectedReferenceAssembly}`
+      )
+    }
+  }
+  if (!contract.mustMatchReferenceWith) return
+  const { sidecar: peer } = readScientificContextSidecar(
+    resolve(rootDir, contract.mustMatchReferenceWith)
+  )
+  if (sidecar.reference.status === 'unknown' || peer.reference.status === 'unknown') {
+    missingInputs.push(
+      `Reference assembly unknown for "${contract.path}" or "${contract.mustMatchReferenceWith}"`
+    )
+  } else if (sidecar.reference.value.assembly !== peer.reference.value.assembly) {
+    reasons.push(
+      `Reference mismatch between "${contract.path}" (${sidecar.reference.value.assembly}) and "${contract.mustMatchReferenceWith}" (${peer.reference.value.assembly})`
+    )
+  }
+}
+
+function checkContractMatrixAndSamples(
+  contract: NonNullable<PlanStep['inputContracts']>[number],
+  sidecar: ReturnType<typeof readScientificContextSidecar>['sidecar'],
+  rootDir: string,
+  reasons: string[],
+  missingInputs: string[]
+): void {
+  if (contract.requiredMatrixSemantics?.length) {
+    if (sidecar.matrix.status === 'unknown') {
+      missingInputs.push(
+        `Matrix value semantics for "${contract.path}" is unknown (requires one of: ${contract.requiredMatrixSemantics.join(', ')})`
+      )
+    } else if (!contract.requiredMatrixSemantics.includes(sidecar.matrix.value.valueSemantics)) {
+      reasons.push(
+        `Matrix semantics mismatch for "${contract.path}": found "${sidecar.matrix.value.valueSemantics}", requires one of: ${contract.requiredMatrixSemantics.join(', ')}`
+      )
+    }
+  }
+  if (contract.requireSampleMatchWith) {
+    const { sidecar: peer } = readScientificContextSidecar(
+      resolve(rootDir, contract.requireSampleMatchWith)
+    )
+    if (sidecar.samples.status === 'unknown' || peer.samples.status === 'unknown') {
+      missingInputs.push(
+        `Sample IDs unknown for "${contract.path}" or "${contract.requireSampleMatchWith}"`
+      )
+    } else if (!sameSet(sidecar.samples.value.sampleIds, peer.samples.value.sampleIds)) {
+      reasons.push(
+        `Sample ID mismatch between "${contract.path}" and "${contract.requireSampleMatchWith}"`
+      )
+    }
+  }
+}
+
+function checkContractDonorMapping(
+  contract: NonNullable<PlanStep['inputContracts']>[number],
+  sidecar: ReturnType<typeof readScientificContextSidecar>['sidecar'],
+  reasons: string[],
+  missingInputs: string[]
+): void {
+  if (!contract.requireDonorMapping) return
+  if (sidecar.samples.status === 'unknown') {
+    missingInputs.push(`Sample/donor mapping for "${contract.path}" is unknown`)
+    return
+  }
+  const donorMap = sidecar.samples.value.donorBySample
+  if (!donorMap) {
+    missingInputs.push(`Donor mapping (donorBySample) missing for "${contract.path}"`)
+    return
+  }
+  const unmapped = sidecar.samples.value.sampleIds.filter(
+    (id) => typeof donorMap[id] !== 'string' || donorMap[id].trim().length === 0
+  )
+  if (unmapped.length > 0) {
+    reasons.push(`Missing donor mapping for samples in "${contract.path}": ${unmapped.join(', ')}`)
+  }
+}
+
 export function evaluateStepScientificCompatibility(
   step: PlanStep,
   rootDir: string
@@ -35,85 +123,10 @@ export function evaluateStepScientificCompatibility(
   const missingInputs: string[] = []
 
   for (const contract of step.inputContracts) {
-    const targetPath = resolve(rootDir, contract.path)
-    const { sidecar } = readScientificContextSidecar(targetPath)
-
-    // 1. Expected reference assembly
-    if (contract.expectedReferenceAssembly) {
-      if (sidecar.reference.status === 'unknown') {
-        missingInputs.push(
-          `Reference assembly for "${contract.path}" is unknown (expected ${contract.expectedReferenceAssembly})`
-        )
-      } else if (sidecar.reference.value.assembly !== contract.expectedReferenceAssembly) {
-        reasons.push(
-          `Reference assembly mismatch for "${contract.path}": found ${sidecar.reference.value.assembly}, expected ${contract.expectedReferenceAssembly}`
-        )
-      }
-    }
-
-    // 2. Cross-artifact reference consistency
-    if (contract.mustMatchReferenceWith) {
-      const peerPath = resolve(rootDir, contract.mustMatchReferenceWith)
-      const { sidecar: peer } = readScientificContextSidecar(peerPath)
-      if (sidecar.reference.status === 'unknown' || peer.reference.status === 'unknown') {
-        missingInputs.push(
-          `Reference assembly unknown for "${contract.path}" or "${contract.mustMatchReferenceWith}"`
-        )
-      } else if (sidecar.reference.value.assembly !== peer.reference.value.assembly) {
-        reasons.push(
-          `Reference mismatch between "${contract.path}" (${sidecar.reference.value.assembly}) and "${contract.mustMatchReferenceWith}" (${peer.reference.value.assembly})`
-        )
-      }
-    }
-
-    // 3. Matrix value semantics (e.g. raw_counts vs log_transformed)
-    if (contract.requiredMatrixSemantics?.length) {
-      if (sidecar.matrix.status === 'unknown') {
-        missingInputs.push(
-          `Matrix value semantics for "${contract.path}" is unknown (requires one of: ${contract.requiredMatrixSemantics.join(', ')})`
-        )
-      } else if (!contract.requiredMatrixSemantics.includes(sidecar.matrix.value.valueSemantics)) {
-        reasons.push(
-          `Matrix semantics mismatch for "${contract.path}": found "${sidecar.matrix.value.valueSemantics}", requires one of: ${contract.requiredMatrixSemantics.join(', ')}`
-        )
-      }
-    }
-
-    // 4. Sample ID alignment across artifacts
-    if (contract.requireSampleMatchWith) {
-      const peerPath = resolve(rootDir, contract.requireSampleMatchWith)
-      const { sidecar: peer } = readScientificContextSidecar(peerPath)
-      if (sidecar.samples.status === 'unknown' || peer.samples.status === 'unknown') {
-        missingInputs.push(
-          `Sample IDs unknown for "${contract.path}" or "${contract.requireSampleMatchWith}"`
-        )
-      } else if (!sameSet(sidecar.samples.value.sampleIds, peer.samples.value.sampleIds)) {
-        reasons.push(
-          `Sample ID mismatch between "${contract.path}" and "${contract.requireSampleMatchWith}"`
-        )
-      }
-    }
-
-    // 5. Donor mapping requirement
-    if (contract.requireDonorMapping) {
-      if (sidecar.samples.status === 'unknown') {
-        missingInputs.push(`Sample/donor mapping for "${contract.path}" is unknown`)
-      } else {
-        const donorMap = sidecar.samples.value.donorBySample
-        if (!donorMap) {
-          missingInputs.push(`Donor mapping (donorBySample) missing for "${contract.path}"`)
-        } else {
-          const unmapped = sidecar.samples.value.sampleIds.filter(
-            (id) => typeof donorMap[id] !== 'string' || donorMap[id].trim().length === 0
-          )
-          if (unmapped.length > 0) {
-            reasons.push(
-              `Missing donor mapping for samples in "${contract.path}": ${unmapped.join(', ')}`
-            )
-          }
-        }
-      }
-    }
+    const { sidecar } = readScientificContextSidecar(resolve(rootDir, contract.path))
+    checkContractReference(contract, sidecar, rootDir, reasons, missingInputs)
+    checkContractMatrixAndSamples(contract, sidecar, rootDir, reasons, missingInputs)
+    checkContractDonorMapping(contract, sidecar, reasons, missingInputs)
   }
 
   if (reasons.length > 0) {

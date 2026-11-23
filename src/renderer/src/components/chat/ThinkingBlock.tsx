@@ -15,6 +15,26 @@ const ChevronRightIcon = PhiIcons.action.back
 const THINKING_SCROLL_MAX_HEIGHT = 240
 const AUTO_SCROLL_BOTTOM_THRESHOLD = 24
 
+const THINKING_TOGGLE_BASE_SX = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 0.75,
+  width: '100%',
+  minWidth: 0,
+  py: 0.5,
+  px: 0.5,
+  border: 0,
+  borderRadius: 1,
+  bgcolor: 'transparent',
+  fontFamily: 'inherit',
+  textAlign: 'left',
+  cursor: 'pointer',
+  transition: 'color 150ms',
+  ...nestedFoldChevronRevealSx,
+  '&:hover': { color: 'text.primary' },
+  '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
+} as const
+
 function formatThinkingDuration(durationMs?: number): string {
   if (typeof durationMs !== 'number' || !Number.isFinite(durationMs)) return chatCopy.thinking
   if (durationMs < 1000) return chatCopy.thoughtFor1S
@@ -76,24 +96,8 @@ export function ThinkingBlock({
         aria-expanded={expanded}
         data-phi-thinking-status={isRunning ? 'running' : 'complete'}
         sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.75,
-          width: '100%',
-          minWidth: 0,
-          py: 0.5,
-          px: 0.5,
-          border: 0,
-          borderRadius: 1,
-          bgcolor: 'transparent',
-          fontFamily: 'inherit',
-          textAlign: 'left',
-          cursor: 'pointer',
-          color: isRunning ? 'primary.main' : 'text.secondary',
-          transition: 'color 150ms',
-          ...nestedFoldChevronRevealSx,
-          '&:hover': { color: 'text.primary' },
-          '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' }
+          ...THINKING_TOGGLE_BASE_SX,
+          color: isRunning ? 'primary.main' : 'text.secondary'
         }}
       >
         <ThinkingIcon active={isRunning} />

@@ -2664,7 +2664,7 @@ function scheduleAutomaticSessionTitle(sessionId: string): void {
   automaticTitleJobs.set(sessionId, job)
 }
 
-function usableMainFrame(window: BrowserWindow | null) {
+function usableMainFrame(window: BrowserWindow | null): Electron.WebFrameMain | null {
   if (!window || window.isDestroyed()) return null
   const contents = window.webContents
   if (contents.isDestroyed() || contents.isCrashed()) return null

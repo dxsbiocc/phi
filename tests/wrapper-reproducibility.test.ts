@@ -136,7 +136,11 @@ test('buildWrapperReproducibilityBundle audits completeness honestly and populat
     assert.equal(partial.rerunGuide.commandHint, plan.commandPlan.command)
 
     // Populate all evidence files -> complete === true.
-    writeFileSync(join(runDir, 'params.json'), JSON.stringify({ reads: 'data/*.fastq.gz' }), 'utf-8')
+    writeFileSync(
+      join(runDir, 'params.json'),
+      JSON.stringify({ reads: 'data/*.fastq.gz' }),
+      'utf-8'
+    )
     writeFileSync(join(runDir, 'outputs.json'), JSON.stringify({ outputs: [] }), 'utf-8')
     writeFileSync(
       join(runDir, 'runtime.json'),
@@ -167,7 +171,9 @@ test('buildWrapperReproducibilityBundle audits completeness honestly and populat
       join(runDir, 'qc.json'),
       JSON.stringify({
         capturedAt: '2026-11-23T00:00:01.000Z',
-        entries: [{ tool: 'fastqc', sourcePath: 'fastqc_data.txt', metrics: { totalSequences: 1000 } }]
+        entries: [
+          { tool: 'fastqc', sourcePath: 'fastqc_data.txt', metrics: { totalSequences: 1000 } }
+        ]
       }),
       'utf-8'
     )

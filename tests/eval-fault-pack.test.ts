@@ -81,13 +81,55 @@ test('fault-pack injects verifiable duplicate_mate, truncated_table, reference_m
 
 test('summarizeFaultPackOutcomes separates normal, fault-rejected, silent-continue, false-block, unknown, and invalid injections', () => {
   const summary = summarizeFaultPackOutcomes([
-    { pairId: 'p1', isFaultVariant: false, detectableFromInput: true, injectionStatus: 'verified', outcome: 'passed' },
-    { pairId: 'p1', isFaultVariant: true, detectableFromInput: true, injectionStatus: 'verified', outcome: 'rejected' },
-    { pairId: 'p2', isFaultVariant: false, detectableFromInput: true, injectionStatus: 'verified', outcome: 'false_block' },
-    { pairId: 'p2', isFaultVariant: true, detectableFromInput: true, injectionStatus: 'verified', outcome: 'continued_silently' },
-    { pairId: 'p3', isFaultVariant: true, detectableFromInput: true, injectionStatus: 'verified', outcome: 'unknown_paused' },
-    { pairId: 'p4', isFaultVariant: true, detectableFromInput: true, injectionStatus: 'invalid_trial', outcome: 'rejected' },
-    { pairId: 'p5', isFaultVariant: true, detectableFromInput: false, injectionStatus: 'verified', outcome: 'continued_silently' }
+    {
+      pairId: 'p1',
+      isFaultVariant: false,
+      detectableFromInput: true,
+      injectionStatus: 'verified',
+      outcome: 'passed'
+    },
+    {
+      pairId: 'p1',
+      isFaultVariant: true,
+      detectableFromInput: true,
+      injectionStatus: 'verified',
+      outcome: 'rejected'
+    },
+    {
+      pairId: 'p2',
+      isFaultVariant: false,
+      detectableFromInput: true,
+      injectionStatus: 'verified',
+      outcome: 'false_block'
+    },
+    {
+      pairId: 'p2',
+      isFaultVariant: true,
+      detectableFromInput: true,
+      injectionStatus: 'verified',
+      outcome: 'continued_silently'
+    },
+    {
+      pairId: 'p3',
+      isFaultVariant: true,
+      detectableFromInput: true,
+      injectionStatus: 'verified',
+      outcome: 'unknown_paused'
+    },
+    {
+      pairId: 'p4',
+      isFaultVariant: true,
+      detectableFromInput: true,
+      injectionStatus: 'invalid_trial',
+      outcome: 'rejected'
+    },
+    {
+      pairId: 'p5',
+      isFaultVariant: true,
+      detectableFromInput: false,
+      injectionStatus: 'verified',
+      outcome: 'continued_silently'
+    }
   ])
 
   assert.deepEqual(summary, {

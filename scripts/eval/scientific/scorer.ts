@@ -52,7 +52,8 @@ export interface ArtifactScoreRecord {
 }
 
 export type TrialExecutionOutcome = 'completed' | 'failed' | 'timeout' | 'cancelled'
-export type SystemClaim = 'claimed_success' | 'claimed_failure' | 'rejected_input' | 'timeout' | 'unknown'
+export type SystemClaim =
+  'claimed_success' | 'claimed_failure' | 'rejected_input' | 'timeout' | 'unknown'
 
 export interface TrialScoreReport {
   scorerVersion: string
@@ -62,7 +63,8 @@ export interface TrialScoreReport {
   scoredAt: string
   fileValidity: 'valid' | 'invalid'
   scientificScore: {
-    status: 'passed' | 'failed' | 'rejected_invalid_input' | 'timeout' | 'run_failed' | 'scorer_error'
+    status:
+      'passed' | 'failed' | 'rejected_invalid_input' | 'timeout' | 'run_failed' | 'scorer_error'
     /** In [0, 1]; `null` only on `scorer_error`. Timeouts/failures remain in denominator as 0. */
     score: number | null
     artifacts: ArtifactScoreRecord[]
@@ -137,7 +139,10 @@ function parseTableFile(
   const headerSet = new Set(header)
   const missingCols = [idColumn, ...requiredColumns].filter((col) => !headerSet.has(col))
   if (missingCols.length > 0) {
-    return { ok: false, errors: [`missing required columns: ${[...new Set(missingCols)].join(', ')}`] }
+    return {
+      ok: false,
+      errors: [`missing required columns: ${[...new Set(missingCols)].join(', ')}`]
+    }
   }
 
   const rowsById = new Map<string, Record<string, string>>()
@@ -145,7 +150,10 @@ function parseTableFile(
   for (let i = 1; i < lines.length; i += 1) {
     const cols = splitTableLine(lines[i], format)
     if (cols.length < header.length) {
-      return { ok: false, errors: [`row ${i} is truncated (${cols.length} < ${header.length} columns)`] }
+      return {
+        ok: false,
+        errors: [`row ${i} is truncated (${cols.length} < ${header.length} columns)`]
+      }
     }
     const row: Record<string, string> = {}
     for (let c = 0; c < header.length; c += 1) {
@@ -173,7 +181,12 @@ function parseFinite(value: string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined
 }
 
-function isWithinTolerance(candidate: number, reference: number, absTol: number, relTol: number): boolean {
+function isWithinTolerance(
+  candidate: number,
+  reference: number,
+  absTol: number,
+  relTol: number
+): boolean {
   return Math.abs(candidate - reference) <= absTol + relTol * Math.abs(reference)
 }
 
@@ -188,7 +201,9 @@ export function scoreTabularArtifact(
   ]
   const refParsed = parseTableFile(rule.referencePath, rule.format, rule.idColumn, requiredCols)
   if (!refParsed.ok) {
-    throw new Error(`Invalid hidden reference for ${rule.artifactId}: ${refParsed.errors.join('; ')}`)
+    throw new Error(
+      `Invalid hidden reference for ${rule.artifactId}: ${refParsed.errors.join('; ')}`
+    )
   }
   const candParsed = parseTableFile(candidateAbs, rule.format, rule.idColumn, requiredCols)
   if (!candParsed.ok) {
@@ -264,9 +279,12 @@ export function scoreTabularArtifact(
   const passNoDupes = candParsed.table.duplicateIds.length === 0
 
   if (!passJaccard) notes.push(`ID Jaccard ${idJaccard.toFixed(4)} < ${rule.minIdJaccard}`)
-  if (!passValues) notes.push(`value match rate ${valueMatchRate.toFixed(4)} < ${rule.minValueMatchRate}`)
+  if (!passValues)
+    notes.push(`value match rate ${valueMatchRate.toFixed(4)} < ${rule.minValueMatchRate}`)
   if (!passDirection && directionAgreement !== undefined) {
-    notes.push(`direction agreement ${directionAgreement.toFixed(4)} < ${rule.minDirectionAgreement}`)
+    notes.push(
+      `direction agreement ${directionAgreement.toFixed(4)} < ${rule.minDirectionAgreement}`
+    )
   }
 
   const scientificPass = passJaccard && passValues && passDirection && passNoDupes
@@ -331,7 +349,10 @@ export function scoreTrial(input: {
       scoredAt,
       fileValidity: 'valid',
       scientificScore: {
-        status: properlyRejected && input.systemClaim !== 'claimed_success' ? 'rejected_invalid_input' : 'failed',
+        status:
+          properlyRejected && input.systemClaim !== 'claimed_success'
+            ? 'rejected_invalid_input'
+            : 'failed',
         score: properlyRejected && input.systemClaim !== 'claimed_success' ? 1 : 0,
         artifacts: []
       },

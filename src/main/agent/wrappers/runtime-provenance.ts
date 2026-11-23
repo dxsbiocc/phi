@@ -54,6 +54,15 @@ function looksLikeContainerRef(value: string): boolean {
   return trimmed.includes('/') || trimmed.includes(':')
 }
 
+function extractContainerRefsFromText(text: string, refs: Set<string>): void {
+  for (const match of text.matchAll(CONTAINER_DIRECTIVE)) {
+    for (const literal of match[1].matchAll(QUOTED_LITERAL)) {
+      const candidate = literal[2].trim()
+      if (looksLikeContainerRef(candidate)) refs.add(candidate)
+    }
+  }
+}
+
 /**
  * Extracts declared container image references (Docker tags and Singularity URLs)
  * reachable from a wrapper's `main.nf` across `include` statements.
@@ -62,24 +71,18 @@ export function collectWrapperContainerRefs(wrapperMainNf: string): string[] {
   if (!existsSync(wrapperMainNf)) return []
   const refs = new Set<string>()
   for (const file of collectIncludedFiles(wrapperMainNf)) {
-    let text: string
     try {
-      text = readFileSync(file, 'utf-8')
+      extractContainerRefsFromText(readFileSync(file, 'utf-8'), refs)
     } catch {
       continue
-    }
-    for (const match of text.matchAll(CONTAINER_DIRECTIVE)) {
-      const body = match[1]
-      for (const literal of body.matchAll(QUOTED_LITERAL)) {
-        const candidate = literal[2].trim()
-        if (looksLikeContainerRef(candidate)) refs.add(candidate)
-      }
     }
   }
   return [...refs].sort()
 }
 
-function normalizeEngine(profile: string | undefined): 'docker' | 'singularity' | 'conda' | 'unknown' {
+function normalizeEngine(
+  profile: string | undefined
+): 'docker' | 'singularity' | 'conda' | 'unknown' {
   if (profile === 'docker') return 'docker'
   if (profile === 'singularity' || profile === 'apptainer') return 'singularity'
   if (profile === 'conda') return 'conda'
@@ -91,7 +94,9 @@ function parseDockerRepoDigest(output: string | undefined): string | undefined {
   try {
     const parsed = JSON.parse(output) as unknown
     if (Array.isArray(parsed)) {
-      const first = parsed.find((item): item is string => typeof item === 'string' && item.includes('sha256:'))
+      const first = parsed.find(
+        (item): item is string => typeof item === 'string' && item.includes('sha256:')
+      )
       if (first) return first
     }
   } catch {
@@ -116,7 +121,11 @@ async function inspectContainerImages(
       continue
     }
     if (engine === 'docker' && !/^https?:\/\//i.test(ref)) {
-      const raw = await probe('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', ref], env)
+      const raw = await probe(
+        'docker',
+        ['image', 'inspect', '--format', '{{json .RepoDigests}}', ref],
+        env
+      )
       const digest = parseDockerRepoDigest(raw)
       results.push(digest ? { ref, digest, status: 'verified' } : { ref, status: 'unknown' })
       continue

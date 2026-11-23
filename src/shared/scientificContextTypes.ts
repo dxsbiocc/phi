@@ -23,14 +23,7 @@ export type ProvenancedValue<T> =
     }
 
 export type MatrixValueSemantics =
-  | 'raw_counts'
-  | 'normalized'
-  | 'log_transformed'
-  | 'tpm'
-  | 'fpkm'
-  | 'cpm'
-  | 'zscore'
-  | 'de_stats'
+  'raw_counts' | 'normalized' | 'log_transformed' | 'tpm' | 'fpkm' | 'cpm' | 'zscore' | 'de_stats'
 
 export interface ScientificReferenceInfo {
   assembly: string

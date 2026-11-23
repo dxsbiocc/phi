@@ -10,15 +10,6 @@ import { verifyPlanStepChecks } from '../src/main/agent/plan/execution/step-veri
 import type { StepOutcome, StepRunner } from '../src/main/agent/plan/execution/step-runner'
 import { validatePlanSpec } from '../src/main/agent/plan/model/plan-spec'
 
-function withTempDir<T>(fn: (dir: string) => T): T {
-  const dir = mkdtempSync(join(tmpdir(), 'phi-plan-verify-'))
-  try {
-    return fn(dir)
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-}
-
 test('validatePlanSpec enforces closed list of check kinds and rejects path escapes', () => {
   const valid = validatePlanSpec({
     version: 1,
@@ -135,17 +126,22 @@ test('PlanExecutor blocks false self-reported completion when objective post-ste
           report: {
             status: 'completed',
             text: 'I finished generating counts.tsv!',
-            missingInputs: []
+            missingInputs: [],
+            structured: true
           }
         }
         return { runId: `agent-${startedSteps.length}`, done: Promise.resolve(outcome) }
       },
-      async stop() {}
+      stop: async () => undefined
     }
 
     const executor = createPlanExecutor({
       runner,
-      store: { write: (state) => { latestState = state } },
+      store: {
+        write: (state) => {
+          latestState = state
+        }
+      },
       events: { emit: () => {} },
       clock: () => '2026-11-23T00:00:00.000Z',
       ids: () => 'prun_1',

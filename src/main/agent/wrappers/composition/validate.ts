@@ -204,7 +204,13 @@ export function resolveOutputPaths(
 ): ResolvedOutput[] {
   return inspectOutputPaths(manifest, params, componentDir)
     .filter((output): output is ResolvedOutput & { resolved: true } => output.resolved)
-    .map(({ resolved: _resolved, ...output }) => output)
+    .map(({ id, type, path, absolutePath, primary }) => ({
+      id,
+      type,
+      path,
+      absolutePath,
+      primary
+    }))
 }
 
 export interface PrimaryOutputRecord {

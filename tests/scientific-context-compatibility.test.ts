@@ -53,16 +53,20 @@ test('R14 preflight pauses with needs_input when upstream scientific metadata is
           runId: 'should-not-run',
           done: Promise.resolve({
             ok: true,
-            report: { status: 'completed', text: 'ok', missingInputs: [] }
+            report: { status: 'completed', text: 'ok', missingInputs: [], structured: true }
           })
         }
       },
-      async stop() {}
+      stop: async () => undefined
     }
 
     const executor = createPlanExecutor({
       runner,
-      store: { write: (s) => { latestState = s } },
+      store: {
+        write: (s) => {
+          latestState = s
+        }
+      },
       events: { emit: () => {} },
       clock: () => '2026-11-23T01:00:00.000Z',
       ids: () => 'prun_r14_1',
@@ -93,7 +97,10 @@ test('R14 preflight pauses with step_failed (no retry) when log_transformed matr
       path: countsPath,
       hashLocalBytes: true,
       reference: observedValue({ assembly: 'GRCm39' }, 'star:index'),
-      samples: observedValue({ sampleIds: ['S1', 'S2'], donorBySample: { S1: 'D1', S2: 'D2' } }, 'meta'),
+      samples: observedValue(
+        { sampleIds: ['S1', 'S2'], donorBySample: { S1: 'D1', S2: 'D2' } },
+        'meta'
+      ),
       matrix: observedValue({ valueSemantics: 'log_transformed' }, 'notebook')
     })
 
@@ -106,16 +113,20 @@ test('R14 preflight pauses with step_failed (no retry) when log_transformed matr
           runId: `agent-${runnerStartCalls}`,
           done: Promise.resolve({
             ok: true,
-            report: { status: 'completed', text: 'DE done', missingInputs: [] }
+            report: { status: 'completed', text: 'DE done', missingInputs: [], structured: true }
           })
         }
       },
-      async stop() {}
+      stop: async () => undefined
     }
 
     const executor = createPlanExecutor({
       runner,
-      store: { write: (s) => { latestState = s } },
+      store: {
+        write: (s) => {
+          latestState = s
+        }
+      },
       events: { emit: () => {} },
       clock: () => '2026-11-23T01:00:00.000Z',
       ids: () => 'prun_r14_2',
@@ -137,7 +148,10 @@ test('R14 preflight pauses with step_failed (no retry) when log_transformed matr
       path: countsPath,
       hashLocalBytes: true,
       reference: observedValue({ assembly: 'GRCh38.p14' }, 'salmon:index'),
-      samples: observedValue({ sampleIds: ['S1', 'S2'], donorBySample: { S1: 'D1', S2: 'D2' } }, 'meta'),
+      samples: observedValue(
+        { sampleIds: ['S1', 'S2'], donorBySample: { S1: 'D1', S2: 'D2' } },
+        'meta'
+      ),
       matrix: observedValue({ valueSemantics: 'raw_counts' }, 'salmon:tximport')
     })
 

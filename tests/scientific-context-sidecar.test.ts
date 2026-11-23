@@ -4,10 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import {
-  declaredValue,
-  observedValue
-} from '../src/shared/scientificContextTypes'
+import { declaredValue, observedValue } from '../src/shared/scientificContextTypes'
 import {
   computeArtifactSha256,
   readScientificContextSidecar,

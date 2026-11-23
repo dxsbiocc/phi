@@ -138,7 +138,12 @@ test('collectStructuredQcMetrics scans output tree and reproducibility bundle ex
     mkdirSync(join(outDir, 'salmon', 'S1', 'aux_info'), { recursive: true })
     writeFileSync(
       join(outDir, 'salmon', 'S1', 'aux_info', 'meta_info.json'),
-      JSON.stringify({ salmon_version: '1.10.3', num_processed: 1000, num_mapped: 900, percent_mapped: 90 })
+      JSON.stringify({
+        salmon_version: '1.10.3',
+        num_processed: 1000,
+        num_mapped: 900,
+        percent_mapped: 90
+      })
     )
     const qc = collectStructuredQcMetrics(outDir)
     assert.ok(qc)

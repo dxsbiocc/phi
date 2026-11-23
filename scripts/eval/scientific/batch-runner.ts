@@ -111,10 +111,7 @@ export function buildBatchSchedule(input: {
   return items.map((item, orderIndex) => ({ ...item, orderIndex }))
 }
 
-export type BatchTrialRecordStatus =
-  | TrialExecutionOutcome
-  | 'assembly_error'
-  | 'remote_unknown'
+export type BatchTrialRecordStatus = TrialExecutionOutcome | 'assembly_error' | 'remote_unknown'
 
 export interface BatchTrialIndexEntry {
   trialId: string

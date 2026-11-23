@@ -209,11 +209,14 @@ export function injectFaultVariant(input: {
     beforeSha256,
     afterSha256: beforeSha256,
     injectionStatus: 'verified',
-    notes: 'Unobservable label swap is retained as a negative control and never presumed detectable from input'
+    notes:
+      'Unobservable label swap is retained as a negative control and never presumed detectable from input'
   }
 }
 
-export function summarizeFaultPackOutcomes(records: readonly FaultOutcomeRecord[]): FaultPackSummary {
+export function summarizeFaultPackOutcomes(
+  records: readonly FaultOutcomeRecord[]
+): FaultPackSummary {
   const summary: FaultPackSummary = {
     normalPassed: 0,
     falseBlockOnNormal: 0,

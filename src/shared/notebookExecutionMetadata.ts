@@ -45,9 +45,7 @@ export function notebookCellMetadataWithExecutionDuration(
       executionStartedAt: execution.startedAt,
       executionCompletedAt: execution.completedAt,
       executionDurationMs: durationMs,
-      ...(environment
-        ? { executionEnvironment: serializeExecutionEnvironment(environment) }
-        : {})
+      ...(environment ? { executionEnvironment: serializeExecutionEnvironment(environment) } : {})
     }
   }
 }

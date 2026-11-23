@@ -135,7 +135,7 @@ test('PlanRunService wires cross-step scientific compatibility preflight before 
       path: matrixPath,
       matrix: {
         status: 'observed',
-        value: { valueSemantics: 'log_transformed', featureIdType: 'ensembl_gene' },
+        value: { valueSemantics: 'log_transformed' },
         source: 'test-sidecar'
       }
     })
@@ -220,7 +220,7 @@ test('PlanRunService persists step evidence fingerprints, detects staleness, and
       hashLocalBytes: true,
       matrix: {
         status: 'observed',
-        value: { valueSemantics: 'raw_counts', featureIdType: 'ensembl_gene' },
+        value: { valueSemantics: 'raw_counts' },
         source: 'test'
       }
     })
@@ -307,7 +307,11 @@ test('PlanRunService persists step evidence fingerprints, detects staleness, and
       await new Promise<void>((resolve) => setImmediate(resolve))
     }
     const finalState = await service.get('phi-stale', 'plan-hist-1')
-    assert.equal(finalState?.status, 'completed', JSON.stringify({ runSeq, steps: finalState?.steps }))
+    assert.equal(
+      finalState?.status,
+      'completed',
+      JSON.stringify({ runSeq, steps: finalState?.steps })
+    )
 
     // Evidence sidecar file must be persisted and ignored by listPlanRuns.
     assert.equal(listPlanRuns('phi-stale', agentDir).length, 1)

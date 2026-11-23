@@ -134,7 +134,10 @@ export function validateVisibleTaskCard(card: VisibleEvalTaskCard): EvalContract
   if (!card.inputSource || !nonEmpty(card.inputSource.summary)) {
     errors.push('inputSource.summary is required')
   }
-  if (!Array.isArray(card.inputSource?.acquisitionSteps) || card.inputSource.acquisitionSteps.length === 0) {
+  if (
+    !Array.isArray(card.inputSource?.acquisitionSteps) ||
+    card.inputSource.acquisitionSteps.length === 0
+  ) {
     errors.push('inputSource.acquisitionSteps must contain at least one step')
   }
   if (!Array.isArray(card.visibleOutputs) || card.visibleOutputs.length === 0) {
@@ -158,7 +161,12 @@ export function validateVisibleTaskCard(card: VisibleEvalTaskCard): EvalContract
 
   // Guard against accidental leakage of hidden ground-truth fields into visible cards.
   const raw = card as unknown as Record<string, unknown>
-  for (const forbidden of ['hiddenReference', 'expectedValues', 'referenceArtifactKey', 'answerPath']) {
+  for (const forbidden of [
+    'hiddenReference',
+    'expectedValues',
+    'referenceArtifactKey',
+    'answerPath'
+  ]) {
     if (forbidden in raw) {
       errors.push(`visible task card must not contain hidden field "${forbidden}"`)
     }
