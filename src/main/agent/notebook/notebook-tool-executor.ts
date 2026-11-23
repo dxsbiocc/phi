@@ -2,13 +2,18 @@ import {
   deleteNotebookCell,
   insertNotebookCell,
   updateNotebookCell,
+  updateNotebookMetadata,
   type NotebookCell,
   type NotebookCellType,
   type NotebookDocument
 } from '../../../shared/notebookDocument'
-import { notebookCellMetadataWithExecutionDuration } from '../../../shared/notebookExecutionMetadata'
+import {
+  notebookCellMetadataWithExecutionDuration,
+  notebookDocumentMetadataWithExecutionEnvironment
+} from '../../../shared/notebookExecutionMetadata'
 import { jupyterConnectionIdentity } from './jupyter-runtime-backend'
 import { detectConfiguredAnalysisKernels } from '../environment/index'
+import { notebookExecutionEnvironmentForKernel } from './analysis-kernels'
 import {
   AnalysisNotebookExecutor,
   JupyterKernelExecutionStoppedError
@@ -464,7 +469,11 @@ export class AnalysisNotebookToolExecutor {
     if (existingTarget && this.notebookExecutor.isExecuting?.(existingTarget)) {
       throw new Error('Notebook kernel 正在执行，不能重叠运行 cell')
     }
-    const { sessionStatus, target } = await this.resolveExecutionTarget(project, state, control)
+    const { kernels, sessionStatus, target } = await this.resolveExecutionTarget(
+      project,
+      state,
+      control
+    )
     this.checkDispatch(control)
     if (sessionStatus.state === 'disconnected') {
       throw new Error('Notebook kernel 尚未就绪，不能运行 cell')
@@ -496,6 +505,7 @@ export class AnalysisNotebookToolExecutor {
         cell,
         target,
         sessionStatus,
+        kernels,
         control
       )
     } catch (error) {
@@ -514,7 +524,11 @@ export class AnalysisNotebookToolExecutor {
     project: NotebookWorkspaceRef,
     state: NotebookWorkspaceState,
     control: NotebookToolDispatchControl
-  ): Promise<{ sessionStatus: NotebookSessionStatus; target: NotebookExecutionTarget }> {
+  ): Promise<{
+    kernels: ReturnType<typeof detectConfiguredAnalysisKernels>
+    sessionStatus: NotebookSessionStatus
+    target: NotebookExecutionTarget
+  }> {
     let kernels = this.resolveKernelsByCwd(project.workingDirectory)
     let sessionStatus = await this.notebookSessionRegistry.ensureSession({
       projectCwd: project.workingDirectory,
@@ -546,7 +560,7 @@ export class AnalysisNotebookToolExecutor {
       )
     }
     if (!target) throw new Error(sessionStatus.message ?? '请先连接 notebook kernel')
-    return { sessionStatus, target }
+    return { kernels, sessionStatus, target }
   }
 
   private async executeCodeCell(
@@ -556,6 +570,7 @@ export class AnalysisNotebookToolExecutor {
     cell: NotebookCell,
     target: NotebookExecutionTarget,
     sessionStatus: NotebookSessionStatus,
+    kernels: ReturnType<typeof detectConfiguredAnalysisKernels>,
     control: NotebookToolDispatchControl
   ): Promise<NotebookToolResult> {
     const execution = await this.notebookExecutor.executeCell(
@@ -587,11 +602,30 @@ export class AnalysisNotebookToolExecutor {
       }
     )
     this.checkDispatch(control)
-    state.document = updateNotebookCell(state.document, cellId, {
+    const executionEnvironment = notebookExecutionEnvironmentForKernel(
+      sessionStatus.kernelName,
+      kernels
+    )
+    let nextDocument = updateNotebookCell(state.document, cellId, {
       executionCount: execution.executionCount,
       outputs: execution.outputs,
-      metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, execution)
+      metadata: notebookCellMetadataWithExecutionDuration(
+        cell.metadata,
+        execution,
+        executionEnvironment
+      )
     })
+    if (executionEnvironment) {
+      nextDocument = updateNotebookMetadata(
+        nextDocument,
+        notebookDocumentMetadataWithExecutionEnvironment(
+          nextDocument.metadata,
+          executionEnvironment,
+          execution.completedAt
+        )
+      )
+    }
+    state.document = nextDocument
     this.emitDraftChanged(project, state, 'agent', {
       changeKind: 'executed',
       changedCellId: cellId,

@@ -15,6 +15,7 @@ import {
 } from './managed-kernels'
 
 import { errorMessage } from '../../../shared/errorCodes'
+import type { NotebookExecutionEnvironment } from '../../../shared/notebookExecutionMetadata'
 export const JUPYTER_ENVIRONMENT_REF = 'phi:jupyter@1'
 export const DEFAULT_KERNEL_NAME = 'phi-python'
 
@@ -34,7 +35,7 @@ export interface AnalysisKernelSummary {
   /** Managed kernels whose environment is not built are listed as `not-built`. */
   status?: 'ready' | 'not-built'
   /** The environment a managed kernel runs in. */
-  environment?: { ref: string; envId?: string; pluginId?: string }
+  environment?: { ref: string; envId?: string; lockSha256?: string; pluginId?: string }
   /** The host kernelspec name of a host kernel (its listed name is `host-<name>`). */
   hostName?: string
 }
@@ -46,7 +47,7 @@ export interface JupyterServerStatus {
   error?: string
   /** True when the server runs from `phi:jupyter@1`. */
   managed?: boolean
-  environment?: { ref: string; envId?: string }
+  environment?: { ref: string; envId?: string; lockSha256?: string }
 }
 
 export interface AnalysisKernelDiagnostics {
@@ -232,7 +233,11 @@ function managedJupyterServerStatus(ctx: ManagedEnvironmentContext): JupyterServ
     available: true,
     command: 'jupyter',
     managed: true,
-    environment: { ref: JUPYTER_ENVIRONMENT_REF, envId: state.handle.envId },
+    environment: {
+      ref: JUPYTER_ENVIRONMENT_REF,
+      envId: state.handle.envId,
+      lockSha256: state.handle.metadata.lockSha256
+    },
     ...(version ? { version } : {})
   }
 }
@@ -249,6 +254,7 @@ function managedKernelSummary(state: ManagedKernelState): AnalysisKernelSummary 
     environment: {
       ref: definition.ref,
       ...(state.envId ? { envId: state.envId } : {}),
+      ...(state.status === 'ready' ? { lockSha256: state.handle.metadata.lockSha256 } : {}),
       ...(definition.pluginId ? { pluginId: definition.pluginId } : {})
     }
   }
@@ -332,5 +338,31 @@ export function listAnalysisKernels(
     hasRKernel: kernels.some((kernel) => kernel.language === 'r'),
     ...(windows ? { hostKernelLaunchSupported: false as const } : {}),
     messages
+  }
+}
+
+/**
+ * Builds the immutable execution-environment record for a Notebook cell/document
+ * from the kernel that actually ran. Host kernels never fabricate `envId` or `lockSha256`.
+ */
+export function notebookExecutionEnvironmentForKernel(
+  kernelName: string | undefined,
+  diagnostics: AnalysisKernelDiagnostics
+): NotebookExecutionEnvironment | undefined {
+  if (!kernelName) return undefined
+  const kernel = diagnostics.kernels.find((item) => item.name === kernelName)
+  if (!kernel) return { kernelName }
+  if (kernel.source === 'managed') {
+    return {
+      kernelName: kernel.name,
+      source: 'managed',
+      ...(kernel.environment?.ref ? { ref: kernel.environment.ref } : {}),
+      ...(kernel.environment?.envId ? { envId: kernel.environment.envId } : {}),
+      ...(kernel.environment?.lockSha256 ? { lockSha256: kernel.environment.lockSha256 } : {})
+    }
+  }
+  return {
+    kernelName: kernel.name,
+    ...(kernel.source ? { source: kernel.source } : {})
   }
 }

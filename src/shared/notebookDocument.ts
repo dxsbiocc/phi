@@ -392,6 +392,7 @@ export function clearNotebookCellOutput(
     delete metadata.phi.executionStartedAt
     delete metadata.phi.executionCompletedAt
     delete metadata.phi.executionDurationMs
+    delete metadata.phi.executionEnvironment
   }
   return updateNotebookCell(document, cellId, { executionCount: null, outputs: [], metadata })
 }

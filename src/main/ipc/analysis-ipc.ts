@@ -4,8 +4,16 @@
 import type { IpcMain } from 'electron'
 import { IPC } from '../../shared/ipcChannels'
 import { errorMessage } from '../../shared/errorCodes'
-import { updateNotebookCell, type NotebookDocument } from '../../shared/notebookDocument'
-import { notebookCellMetadataWithExecutionDuration } from '../../shared/notebookExecutionMetadata'
+import {
+  updateNotebookCell,
+  updateNotebookMetadata,
+  type NotebookDocument
+} from '../../shared/notebookDocument'
+import {
+  notebookCellMetadataWithExecutionDuration,
+  notebookDocumentMetadataWithExecutionEnvironment
+} from '../../shared/notebookExecutionMetadata'
+import { notebookExecutionEnvironmentForKernel } from '../agent/notebook/analysis-kernels'
 import { type SaveProjectNotebookInput } from '../agent/notebook/analysis-notebook-files'
 import {
   emptyNotebookRegistry,
@@ -570,11 +578,29 @@ function registerNotebookExecutionIpc(options: AnalysisIpcOptions): void {
           kernelId: target.kernelId,
           cell
         })
-        const nextDocument = updateNotebookCell(document, cellId, {
+        const executionEnvironment = notebookExecutionEnvironmentForKernel(
+          sessionStatus.kernelName,
+          kernels
+        )
+        let nextDocument = updateNotebookCell(document, cellId, {
           executionCount: execution.executionCount,
           outputs: execution.outputs,
-          metadata: notebookCellMetadataWithExecutionDuration(cell.metadata, execution)
+          metadata: notebookCellMetadataWithExecutionDuration(
+            cell.metadata,
+            execution,
+            executionEnvironment
+          )
         })
+        if (executionEnvironment) {
+          nextDocument = updateNotebookMetadata(
+            nextDocument,
+            notebookDocumentMetadataWithExecutionEnvironment(
+              nextDocument.metadata,
+              executionEnvironment,
+              execution.completedAt
+            )
+          )
+        }
         options.notebooks.operations.syncDraft(workspace, file, nextDocument)
         const nextSessionStatus =
           sessions.updateSessionState(
