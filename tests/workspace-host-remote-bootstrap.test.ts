@@ -8,25 +8,32 @@ import {
   readCapabilityProfile,
   saveCapabilityProfile
 } from '../src/main/agent/workspace-host/capability-profile-store'
-import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
+import {
+  HOST_CAPABILITY_FAST_PROBE_SCRIPT,
+  parseHostCapabilityProbe
+} from '../src/main/agent/workspace-host/probe'
 import type { ProbedHostCapabilityProfile } from '../src/main/agent/workspace-host/probe-parse'
 import { RemoteWorkspaceHostRegistry } from '../src/main/agent/workspace-host/remote-registry'
 import type { SshHostConfig } from '../src/main/agent/workspace-host/ssh-host-context'
 import type { WorkspaceHost } from '../src/main/agent/workspace-host/types'
 import { createLocalShellSession } from './helpers/localShellSession'
+import { completeProbeOutput, fastProbeOutput } from './helpers/probeFixture'
 
 const PROFILE_KEY = { hostAlias: 'cluster-a', projectRoot: '/remote/project' }
 
-function profileOutput(complete: boolean): string {
-  return `
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
+const PROFILE_ROWS = `
 platform.os=Linux
 platform.arch=x86_64
 storage.home_writable=1
 storage.home_executable=1
-probe.complete=${complete ? '1' : '0'}
-${complete ? '__PHI_CAPABILITY_PROBE_V1_END__' : ''}
 `
+
+function profileOutput(complete: boolean): string {
+  // An incomplete probe keeps the fast block but truncates the slow block,
+  // which the parser reports as degraded.
+  return complete
+    ? completeProbeOutput(PROFILE_ROWS)
+    : `${fastProbeOutput(PROFILE_ROWS)}\n__PHI_CAPABILITY_PROBE_V2_SLOW_BEGIN__`
 }
 
 function profile(complete: boolean): ProbedHostCapabilityProfile {
@@ -149,8 +156,9 @@ test('a partial cached profile is completed on the next connection before pure S
           canonicalRoot,
           connect: async () => {
             const session = createLocalShellSession(canonicalRoot)
-            session.execWithInput = async () => {
-              probes += 1
+            session.execWithInput = async (_command, input) => {
+              // One probe cycle = one fast call plus its follow-up slow call.
+              if (input === HOST_CAPABILITY_FAST_PROBE_SCRIPT) probes += 1
               return { stdout: profileOutput(true), stderr: '', code: 0, signal: null }
             }
             return session

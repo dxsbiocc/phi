@@ -19,6 +19,7 @@ import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe
 import { runtimeRootCapabilityProfile } from '../src/main/agent/workspace-host/runtime-root-profile'
 import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
 import type { RemoteRuntimeRootCheckResult } from '../src/shared/remoteRuntimeRootTypes'
+import { completeProbeOutput } from './helpers/probeFixture'
 
 const temporaryDirectories: string[] = []
 
@@ -29,13 +30,12 @@ function makeTempDir(): string {
 }
 
 function profile(os: string, arch: string): ReturnType<typeof parseHostCapabilityProbe> {
-  return parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
+  return parseHostCapabilityProbe(
+    completeProbeOutput(`
 platform.os=${os}
 platform.arch=${arch}
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
 `)
+  )
 }
 
 afterEach(() => {
@@ -272,10 +272,7 @@ describe('workspace host capability profile cache', () => {
       {
         async execWithInput() {
           return {
-            stdout:
-              '__PHI_CAPABILITY_PROBE_V1_BEGIN__\n' +
-              'platform.os=Darwin\nplatform.arch=arm64\nprobe.complete=1\n' +
-              '__PHI_CAPABILITY_PROBE_V1_END__\n',
+            stdout: completeProbeOutput('platform.os=Darwin\nplatform.arch=arm64'),
             stderr: '',
             code: 0,
             signal: null

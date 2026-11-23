@@ -13,15 +13,15 @@ import {
 } from '../src/main/agent/workspace-host/helper-development'
 import { remoteHelperDevelopmentRoot } from '../src/main/agent/workspace-host/helper-installer'
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
+import { completeProbeOutput } from './helpers/probeFixture'
 
 function profile(os = 'Linux', arch = 'aarch64'): ReturnType<typeof parseHostCapabilityProbe> {
-  return parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
+  return parseHostCapabilityProbe(
+    completeProbeOutput(`
 platform.os=${os}
 platform.arch=${arch}
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
 `)
+  )
 }
 
 function repository(): string {

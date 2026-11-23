@@ -12,6 +12,7 @@ import { SshHost, SshHostClosedError } from '../src/main/agent/workspace-host/ss
 import type { SshHostConfig } from '../src/main/agent/workspace-host/ssh-host-context'
 import type { WorkspaceHost } from '../src/main/agent/workspace-host/types'
 import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
+import { completeProbeOutput } from './helpers/probeFixture'
 
 test('remote workspace host registry keeps one host per Phi session until release', async () => {
   let hostsCreated = 0
@@ -241,13 +242,9 @@ test('remote workspace registry carries platform data across helper version inva
       join(resourceRoot, 'manifest.json'),
       `${JSON.stringify({ version: '0.2.0', platforms: {} })}\n`
     )
-    const detected = parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
-platform.os=Darwin
-platform.arch=arm64
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
-`)
+    const detected = parseHostCapabilityProbe(
+      completeProbeOutput('platform.os=Darwin\nplatform.arch=arm64')
+    )
     saveCapabilityProfile(profileKey, { ...detected, helperVersion: '0.1.0' }, agentDir)
     const registry = new RemoteWorkspaceHostRegistry({
       agentDir,
@@ -300,13 +297,9 @@ test('a host with an installed 0.2.0 helper is reinstalled instead of running 0.
       join(resourceRoot, 'manifest.json'),
       `${JSON.stringify({ version: '0.3.0', platforms: {} })}\n`
     )
-    const detected = parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
-platform.os=Linux
-platform.arch=x86_64
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
-`)
+    const detected = parseHostCapabilityProbe(
+      completeProbeOutput('platform.os=Linux\nplatform.arch=x86_64')
+    )
     const sha256 = 'a'.repeat(64)
     saveCapabilityProfile(
       profileKey,
@@ -378,13 +371,9 @@ test('remote workspace registry keeps a current degraded helper on pure SSH', as
       join(resourceRoot, 'manifest.json'),
       `${JSON.stringify({ version: '0.2.0', platforms: {} })}\n`
     )
-    const detected = parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
-platform.os=Darwin
-platform.arch=arm64
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
-`)
+    const detected = parseHostCapabilityProbe(
+      completeProbeOutput('platform.os=Darwin\nplatform.arch=arm64')
+    )
     saveCapabilityProfile(
       profileKey,
       {
@@ -469,13 +458,9 @@ test('remote registry configures a cold development helper without compiling or 
     mkdirSync(join(root, 'scripts'))
     writeFileSync(join(root, 'helper', 'VERSION'), '0.1.0\n')
     writeFileSync(join(root, 'scripts', 'build-helper.mjs'), 'throw new Error("must not compile")')
-    const detected = parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
-platform.os=Linux
-platform.arch=aarch64
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
-`)
+    const detected = parseHostCapabilityProbe(
+      completeProbeOutput('platform.os=Linux\nplatform.arch=aarch64')
+    )
     saveCapabilityProfile(profileKey, detected, agentDir)
     const registry = new RemoteWorkspaceHostRegistry({
       agentDir,

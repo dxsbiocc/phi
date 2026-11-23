@@ -3,8 +3,7 @@ import type { RemoteExecResult, RemoteSshSession } from '../wrappers/remote-ssh-
 import { parseHostCapabilityProbe, type ProbedHostCapabilityProfile } from './probe-parse'
 import {
   HOST_CAPABILITY_FAST_PROBE_SCRIPT,
-  HOST_CAPABILITY_SLOW_PROBE_SCRIPT,
-  PROBE_START_SENTINEL
+  HOST_CAPABILITY_SLOW_PROBE_SCRIPT
 } from './probe-script'
 
 export { parseHostCapabilityProbe, type ProbedHostCapabilityProfile } from './probe-parse'
@@ -97,7 +96,6 @@ export async function probeHostCapabilities(
   }
   if (fastResult.code !== 0) return unsuccessfulFastProbe(fastResult, now)
   const fastProfile = parseHostCapabilityProbe(fastResult.stdout)
-  if (fastResult.stdout.includes(PROBE_START_SENTINEL)) return withProbeTime(fastProfile, now)
   if (fastProfile.probe?.state === 'unavailable') return withProbeTime(fastProfile, now)
 
   try {

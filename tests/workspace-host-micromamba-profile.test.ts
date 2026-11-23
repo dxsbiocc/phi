@@ -14,6 +14,7 @@ import {
 import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe'
 import { remoteMicromambaCapabilityProfile } from '../src/main/agent/workspace-host/runtime-root-profile'
 import type { RemoteRuntimeRootCapabilityProfile } from '../src/shared/remoteRuntimeRootTypes'
+import { completeProbeOutput } from './helpers/probeFixture'
 
 const temporaryDirectories: string[] = []
 
@@ -24,13 +25,12 @@ function makeTempDir(): string {
 }
 
 function profile(): ReturnType<typeof parseHostCapabilityProbe> {
-  return parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
+  return parseHostCapabilityProbe(
+    completeProbeOutput(`
 platform.os=Linux
 platform.arch=x86_64
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
 `)
+  )
 }
 
 const runtimeRoot: RemoteRuntimeRootCapabilityProfile = {

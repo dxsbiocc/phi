@@ -10,17 +10,17 @@ import { parseHostCapabilityProbe } from '../src/main/agent/workspace-host/probe
 import { SshHost } from '../src/main/agent/workspace-host/ssh-host'
 import type { RemoteHelperArtifact } from '../src/main/agent/workspace-host/helper-installer'
 import type { RemoteSshSession } from '../src/main/agent/wrappers/remote-ssh-session'
+import { completeProbeOutput } from './helpers/probeFixture'
 
 function profile(): ReturnType<typeof parseHostCapabilityProbe> {
-  return parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
+  return parseHostCapabilityProbe(
+    completeProbeOutput(`
 platform.os=Linux
 platform.arch=x86_64
 storage.home_writable=1
 storage.home_executable=1
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
 `)
+  )
 }
 
 const missingArtifact: RemoteHelperArtifact = {

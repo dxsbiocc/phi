@@ -15,17 +15,17 @@ import type {
   RemoteStdioProcess
 } from '../src/main/agent/wrappers/remote-ssh-session'
 import { createLocalShellSession, installSetsidShim } from './helpers/localShellSession'
+import { completeProbeOutput } from './helpers/probeFixture'
 
 function profile(): ReturnType<typeof parseHostCapabilityProbe> {
-  return parseHostCapabilityProbe(`
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
+  return parseHostCapabilityProbe(
+    completeProbeOutput(`
 platform.os=Linux
 platform.arch=x86_64
 storage.home_writable=1
 storage.home_executable=1
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
 `)
+  )
 }
 
 function disconnectingProcess(): { process: RemoteStdioProcess; closeCalls: () => number } {

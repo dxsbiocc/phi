@@ -14,9 +14,9 @@ import type {
   RemoteStdioProcess
 } from '../src/main/agent/wrappers/remote-ssh-session'
 import { createLocalShellSession } from './helpers/localShellSession'
+import { completeProbeOutput } from './helpers/probeFixture'
 
-const PROBE_OUTPUT = `
-__PHI_CAPABILITY_PROBE_V1_BEGIN__
+const PROBE_OUTPUT = completeProbeOutput(`
 platform.os=Linux
 platform.arch=x86_64
 libc.name=glibc
@@ -24,9 +24,7 @@ libc.version=2.17
 storage.home_writable=1
 storage.home_executable=1
 storage.available_kib=1024
-probe.complete=1
-__PHI_CAPABILITY_PROBE_V1_END__
-`
+`)
 
 interface BootstrapCounters {
   connections: number
