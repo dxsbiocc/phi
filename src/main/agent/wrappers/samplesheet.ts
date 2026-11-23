@@ -8,11 +8,23 @@ import { basename } from 'node:path'
  * everything after it.
  */
 const MATE_PATTERN = /^(.*?)[._-](R?[12])(?:[._-].*)?\.(?:fastq|fq)(?:\.gz)?$/i
+const LANE_SUFFIX = /^(.*?)[._-](L\d{1,3})$/i
 
 export interface SamplesheetRow {
   sample: string
   fastq_1: string
   fastq_2?: string
+}
+
+export interface SamplesheetBuildOptions {
+  /** Require both R1 and R2 for every sample. Defaults to `true` for paired-end sheets. */
+  requirePairedEnd?: boolean
+  /**
+   * When `false` (default), multiple distinct lanes for the same base sample
+   * (e.g. `S1_L001` and `S1_L002`) are rejected instead of being emitted as
+   * separate samples (which would cause downstream pseudoreplication).
+   */
+  allowMultiLaneAsSeparateSamples?: boolean
 }
 
 export interface SamplesheetBuildResult {
@@ -42,37 +54,102 @@ function mateNumber(marker: string): 1 | 2 | undefined {
   return undefined
 }
 
-/** Builds a paired-end FASTQ samplesheet from resolved local paths. */
+/** Builds a paired-end FASTQ samplesheet from resolved local paths with integrity checks. */
 export function buildPairedEndFastqSamplesheet(
   paths: string[],
-  columns: string[] = ['sample', 'fastq_1', 'fastq_2']
+  columns: string[] = ['sample', 'fastq_1', 'fastq_2'],
+  options: SamplesheetBuildOptions = {}
 ): SamplesheetBuildResult {
-  const bySample = new Map<string, { fastq_1?: string; fastq_2?: string }>()
+  const requirePairedEnd = options.requirePairedEnd ?? true
+  const allowMultiLaneAsSeparateSamples = options.allowMultiLaneAsSeparateSamples ?? false
+  const bySample = new Map<string, { fastq_1?: string; fastq_2?: string; conflicted?: boolean }>()
+  const lanesByBaseSample = new Map<string, Map<string, string>>()
   const errors: string[] = []
 
+  if (paths.length === 0) {
+    errors.push('No FASTQ files provided for samplesheet')
+  }
+
   for (const path of paths) {
-    const match = MATE_PATTERN.exec(basename(path))
+    const fileName = basename(path)
+    const match = MATE_PATTERN.exec(fileName)
     if (!match) {
-      errors.push(`Cannot identify sample/mate information from filename: ${basename(path)}`)
+      errors.push(`Cannot identify sample/mate information from filename: ${fileName}`)
       continue
     }
     const [, sampleRaw, marker] = match
     const mate = mateNumber(marker)
     if (!mate) {
-      errors.push(`Cannot identify mate number: ${basename(path)}`)
+      errors.push(`Cannot identify mate number: ${fileName}`)
       continue
     }
-    const sample = sampleRaw.replace(/[._-]$/, '')
+    const sample = sampleRaw.replace(/[._-]+$/, '').trim()
+    if (!sample) {
+      errors.push(`Cannot identify sample name from filename: ${fileName}`)
+      continue
+    }
     const entry = bySample.get(sample) ?? {}
-    if (mate === 1) entry.fastq_1 = path
-    else entry.fastq_2 = path
+    if (mate === 1) {
+      if (entry.fastq_1 !== undefined) {
+        entry.conflicted = true
+        errors.push(
+          `Duplicate R1 file for sample "${sample}": "${entry.fastq_1}" conflicts with "${path}"`
+        )
+      } else {
+        entry.fastq_1 = path
+      }
+    } else {
+      if (entry.fastq_2 !== undefined) {
+        entry.conflicted = true
+        errors.push(
+          `Duplicate R2 file for sample "${sample}": "${entry.fastq_2}" conflicts with "${path}"`
+        )
+      } else {
+        entry.fastq_2 = path
+      }
+    }
     bySample.set(sample, entry)
+
+    const laneMatch = LANE_SUFFIX.exec(sample)
+    if (laneMatch) {
+      const baseSample = laneMatch[1].replace(/[._-]+$/, '').trim()
+      const lane = laneMatch[2].toUpperCase()
+      if (baseSample) {
+        const lanes = lanesByBaseSample.get(baseSample) ?? new Map<string, string>()
+        lanes.set(lane, sample)
+        lanesByBaseSample.set(baseSample, lanes)
+      }
+    }
+  }
+
+  const multiLaneSamples = new Set<string>()
+  if (!allowMultiLaneAsSeparateSamples) {
+    for (const [baseSample, lanes] of [...lanesByBaseSample.entries()].sort(([a], [b]) =>
+      a.localeCompare(b)
+    )) {
+      if (lanes.size > 1) {
+        const laneList = [...lanes.keys()].sort().join(', ')
+        errors.push(
+          `Multiple lanes detected for sample "${baseSample}" (${laneList}): merge lanes or supply an explicit samplesheet instead of treating lanes as separate samples`
+        )
+        for (const sampleKey of lanes.values()) {
+          multiLaneSamples.add(sampleKey)
+        }
+      }
+    }
   }
 
   const rows: SamplesheetRow[] = []
   for (const [sample, entry] of [...bySample.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (entry.conflicted || multiLaneSamples.has(sample)) {
+      continue
+    }
     if (!entry.fastq_1) {
       errors.push(`Sample "${sample}" has no R1 file`)
+      continue
+    }
+    if (requirePairedEnd && !entry.fastq_2) {
+      errors.push(`Sample "${sample}" has no R2 file`)
       continue
     }
     rows.push({ sample, fastq_1: entry.fastq_1, fastq_2: entry.fastq_2 })

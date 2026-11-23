@@ -58,3 +58,60 @@ test('buildPairedEndFastqSamplesheet escapes embedded double quotes', () => {
   const lines = result.csv.split('\n')
   assert.equal(lines[1], 'S1,"/data/a""b/S1_R1.fastq.gz","/data/a""b/S1_R2.fastq.gz"')
 })
+
+test('buildPairedEndFastqSamplesheet rejects duplicate sample/mate files instead of silently overwriting', () => {
+  const result = buildPairedEndFastqSamplesheet([
+    '/data/batch1/S1_R1.fastq.gz',
+    '/data/batch2/S1_R1.fastq.gz',
+    '/data/batch1/S1_R2.fastq.gz'
+  ])
+
+  assert.equal(result.rows.length, 0)
+  assert.equal(result.errors.length, 1)
+  assert.match(result.errors[0], /Duplicate R1 file for sample "S1"/)
+  assert.match(result.errors[0], /batch1\/S1_R1\.fastq\.gz/)
+  assert.match(result.errors[0], /batch2\/S1_R1\.fastq\.gz/)
+})
+
+test('buildPairedEndFastqSamplesheet rejects a paired-end sample missing its R2 mate', () => {
+  const result = buildPairedEndFastqSamplesheet([
+    '/data/S1_R1.fastq.gz',
+    '/data/S1_R2.fastq.gz',
+    '/data/S2_R1.fastq.gz'
+  ])
+
+  assert.deepEqual(result.rows, [
+    { sample: 'S1', fastq_1: '/data/S1_R1.fastq.gz', fastq_2: '/data/S1_R2.fastq.gz' }
+  ])
+  assert.equal(result.errors.length, 1)
+  assert.match(result.errors[0], /Sample "S2" has no R2 file/)
+})
+
+test('buildPairedEndFastqSamplesheet flags multi-lane collisions for the same base sample while allowing single-lane naming', () => {
+  const singleLane = buildPairedEndFastqSamplesheet([
+    '/data/S1_L001_R1_001.fastq.gz',
+    '/data/S1_L001_R2_001.fastq.gz'
+  ])
+  assert.deepEqual(singleLane.errors, [])
+  assert.equal(singleLane.rows.length, 1)
+
+  const multiLane = buildPairedEndFastqSamplesheet([
+    '/data/S1_L001_R1_001.fastq.gz',
+    '/data/S1_L001_R2_001.fastq.gz',
+    '/data/S1_L002_R1_001.fastq.gz',
+    '/data/S1_L002_R2_001.fastq.gz'
+  ])
+  assert.equal(multiLane.rows.length, 0)
+  assert.equal(multiLane.errors.length, 1)
+  assert.match(multiLane.errors[0], /Multiple lanes detected for sample "S1" \(L001, L002\)/)
+})
+
+test('buildPairedEndFastqSamplesheet rejects empty sample names and empty input lists', () => {
+  const emptyName = buildPairedEndFastqSamplesheet(['/data/_R1.fastq.gz'])
+  assert.equal(emptyName.rows.length, 0)
+  assert.match(emptyName.errors[0], /Cannot identify sample name from filename/)
+
+  const emptyList = buildPairedEndFastqSamplesheet([])
+  assert.equal(emptyList.rows.length, 0)
+  assert.match(emptyList.errors[0], /No FASTQ files provided/)
+})
