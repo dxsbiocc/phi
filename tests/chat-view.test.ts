@@ -39,6 +39,7 @@ import { toolActionKind } from '../src/renderer/src/lib/toolActions'
 import type { ChatResourceMention } from '../src/renderer/src/lib/chatResourceMentions'
 import type { SessionMode } from '../src/shared/sessionMode'
 import {
+  stripSuggestedNextActionFromText,
   suggestedNextActionPlaceholderFromMessages,
   suggestedNextActionToAccept
 } from '../src/renderer/src/lib/suggestedNextAction'
@@ -2050,16 +2051,33 @@ test('chat view shows add-context control before the session mode', () => {
   assert.match(markup, /aria-label="添加文件和资源引用"[\s\S]*aria-label="选择工作模式：自动/)
 })
 
-test('chat view uses the suggested next action as a passive placeholder', () => {
+test('chat view uses the suggested next action as a passive placeholder and omits it from the final reply', () => {
+  assert.equal(
+    stripSuggestedNextActionFromText(
+      '模型实现可回收预设效应。\n\n推荐下一步：把真实队列 CSV 放入工作区，运行 `Rscript analysis.R` 做首轮分析。'
+    ),
+    '模型实现可回收预设效应。'
+  )
+  assert.equal(
+    stripSuggestedNextActionFromText('完成。\n\n推荐下一步：\n- 运行 notebook 并检查图表。'),
+    '完成。'
+  )
+  assert.equal(
+    stripSuggestedNextActionFromText('推荐下一步：单独一行时保留原文。'),
+    '推荐下一步：单独一行时保留原文。'
+  )
+
   const markup = renderChat([
     {
       id: 'assistant-1',
       role: 'assistant',
-      content: '完成。\n\n下一步操作：\n1. 继续生成验证图表。'
+      content:
+        '模型实现可回收预设效应。\n\n推荐下一步：把真实队列 CSV 放入工作区，运行 `Rscript analysis.R` 做首轮分析。'
     }
   ])
 
-  assert.match(markup, /data-phi-placeholder-kind="suggested-next-action"/)
+  assert.match(markup, /模型实现可回收预设效应。/)
+  assert.doesNotMatch(markup, /推荐下一步/)
   assert.match(markup, /data-phi-placeholder-kind="suggested-next-action"/)
   assert.doesNotMatch(
     readFileSync('src/renderer/src/features/chat/ChatView.tsx', 'utf8'),

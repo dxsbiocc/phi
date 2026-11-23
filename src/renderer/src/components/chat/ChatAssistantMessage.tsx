@@ -1,5 +1,6 @@
 import { chatCopy } from '../../features/chat/lib/chatCopy'
 import { useUiLanguage } from '../../lib/i18n'
+import { stripSuggestedNextActionFromText } from '../../lib/suggestedNextAction'
 import { Box, IconButton } from '@mui/material'
 import { useEffect, useRef, useState } from 'react'
 import { PhiIcons } from '../../icons'
@@ -38,10 +39,14 @@ export function ChatAssistantMessage({
     []
   )
 
+  const displayContent = showActions
+    ? stripSuggestedNextActionFromText(message.content)
+    : message.content
+
   const copyMessage = async (): Promise<void> => {
     if (typeof navigator === 'undefined' || !navigator.clipboard) return
     try {
-      await navigator.clipboard.writeText(message.content)
+      await navigator.clipboard.writeText(displayContent)
       setCopied(true)
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
       copiedTimerRef.current = setTimeout(() => setCopied(false), 1200)
@@ -81,14 +86,14 @@ export function ChatAssistantMessage({
       }}
     >
       <MarkdownContent
-        text={message.content}
+        text={displayContent}
         cwd={cwd}
         onOpenLocalPath={onOpenLocalPath}
         onOpenWebUrl={onOpenWebUrl}
         allowCodeActions
         showColorPalettes
       />
-      {showActions && message.content && (
+      {showActions && displayContent && (
         <Box
           data-phi-assistant-message-actions="true"
           sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 28 }}
