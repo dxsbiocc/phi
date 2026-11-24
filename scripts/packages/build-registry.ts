@@ -527,6 +527,7 @@ function gitLines(repoRoot: string, args: string[]): string[] {
   const output = execFileSync('git', args, {
     cwd: repoRoot,
     encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe']
   })
   return output.split('\0').filter(Boolean)
