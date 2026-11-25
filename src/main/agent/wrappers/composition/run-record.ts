@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import { isAbsolute, join, resolve } from 'node:path'
 
 import { getPhiAgentDir } from '../../runtime-paths'
+import { emitLocalWrapperOutputSidecars } from '../../scientific-context/producer'
 import { collectStructuredQcMetrics } from '../qc-extractors'
 import {
   appendWrapperAuditEvent,
@@ -273,6 +274,18 @@ export function finishCompositionRun(input: {
   const logTail = run.researchQcExpected || input.researchQc ? '' : input.output
 
   writeRunFile(run.runId, agentDir, 'outputs.json', outputs)
+  if (!run.remote && outcome === 'completed') {
+    emitLocalWrapperOutputSidecars({
+      wrapperId: run.wrapper.canonicalId,
+      runId: run.runId,
+      outputs,
+      declarationsByOutputId: Object.fromEntries(
+        Object.entries(entry.manifest.outputs).map(([id, out]) => [id, out.scientificContext])
+      ),
+      params,
+      baseDir: run.cwd || entry.componentDir
+    })
+  }
   if (!run.remote && outcome === 'completed' && run.outDir) {
     try {
       const qc = collectStructuredQcMetrics(run.outDir)

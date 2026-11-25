@@ -42,20 +42,27 @@ export interface PlanStalenessReport {
   cleanStepIds: string[]
 }
 
-export function captureStepEvidenceFingerprint(
-  step: PlanStep,
-  rootDir: string,
-  rulesVersion = SCIENTIFIC_COMPATIBILITY_RULES_VERSION,
-  recordedAt = new Date().toISOString()
-): StepEvidenceFingerprint {
+export type ArtifactFingerprintInspector = (
+  relPath: string
+) => Promise<{ contentSha256?: string; contextVersion?: number }>
+
+function contractPathsForStep(step: PlanStep): string[] {
   const paths = new Set<string>()
   for (const contract of step.inputContracts ?? []) {
     paths.add(contract.path)
     if (contract.mustMatchReferenceWith) paths.add(contract.mustMatchReferenceWith)
     if (contract.requireSampleMatchWith) paths.add(contract.requireSampleMatchWith)
   }
+  return [...paths].sort()
+}
 
-  const inputs: InputArtifactFingerprint[] = [...paths].sort().map((relPath) => {
+export function captureStepEvidenceFingerprint(
+  step: PlanStep,
+  rootDir: string,
+  rulesVersion = SCIENTIFIC_COMPATIBILITY_RULES_VERSION,
+  recordedAt = new Date().toISOString()
+): StepEvidenceFingerprint {
+  const inputs: InputArtifactFingerprint[] = contractPathsForStep(step).map((relPath) => {
     const abs = resolve(rootDir, relPath)
     const contentSha256 = computeArtifactSha256(abs)
     const { found, sidecar } = readScientificContextSidecar(abs)
@@ -74,6 +81,44 @@ export function captureStepEvidenceFingerprint(
   }
 }
 
+export async function captureAsyncStepEvidenceFingerprint(
+  step: PlanStep,
+  inspectArtifact: ArtifactFingerprintInspector,
+  rulesVersion = SCIENTIFIC_COMPATIBILITY_RULES_VERSION,
+  recordedAt = new Date().toISOString()
+): Promise<StepEvidenceFingerprint> {
+  const inputs: InputArtifactFingerprint[] = []
+  for (const relPath of contractPathsForStep(step)) {
+    const { contentSha256, contextVersion } = await inspectArtifact(relPath)
+    inputs.push({
+      path: relPath,
+      ...(contentSha256 ? { contentSha256 } : {}),
+      ...(contextVersion !== undefined ? { contextVersion } : {})
+    })
+  }
+  return { stepId: step.id, rulesVersion, recordedAt, inputs }
+}
+
+function compareArtifactFingerprints(
+  prev: InputArtifactFingerprint,
+  currentHash: string | undefined,
+  currentCtxVersion: number | undefined,
+  reasons: string[]
+): void {
+  if (prev.contentSha256 !== currentHash) {
+    reasons.push(
+      currentHash === undefined
+        ? `input "${prev.path}" is now missing`
+        : `input "${prev.path}" content changed (same-path replacement detected)`
+    )
+  }
+  if (prev.contextVersion !== currentCtxVersion) {
+    reasons.push(
+      `input "${prev.path}" scientific context version changed (${String(prev.contextVersion)} -> ${String(currentCtxVersion)})`
+    )
+  }
+}
+
 function collectDirectStalenessReasons(
   recorded: StepEvidenceFingerprint,
   rootDir: string,
@@ -86,20 +131,25 @@ function collectDirectStalenessReasons(
   for (const prev of recorded.inputs) {
     const abs = resolve(rootDir, prev.path)
     const currentHash = computeArtifactSha256(abs)
-    if (prev.contentSha256 !== currentHash) {
-      reasons.push(
-        currentHash === undefined
-          ? `input "${prev.path}" is now missing`
-          : `input "${prev.path}" content changed (same-path replacement detected)`
-      )
-    }
     const { found, sidecar } = readScientificContextSidecar(abs)
     const currentCtxVersion = found ? sidecar.artifact.contextVersion : undefined
-    if (prev.contextVersion !== currentCtxVersion) {
-      reasons.push(
-        `input "${prev.path}" scientific context version changed (${String(prev.contextVersion)} -> ${String(currentCtxVersion)})`
-      )
-    }
+    compareArtifactFingerprints(prev, currentHash, currentCtxVersion, reasons)
+  }
+  return reasons
+}
+
+async function collectAsyncDirectStalenessReasons(
+  recorded: StepEvidenceFingerprint,
+  inspectArtifact: ArtifactFingerprintInspector,
+  currentRulesVersion: string
+): Promise<string[]> {
+  const reasons: string[] = []
+  if (recorded.rulesVersion !== currentRulesVersion) {
+    reasons.push(`compatibility rules changed (${recorded.rulesVersion} -> ${currentRulesVersion})`)
+  }
+  for (const prev of recorded.inputs) {
+    const { contentSha256, contextVersion } = await inspectArtifact(prev.path)
+    compareArtifactFingerprints(prev, contentSha256, contextVersion, reasons)
   }
   return reasons
 }
@@ -135,20 +185,11 @@ function propagateStaleness(
   return propagatedFrom
 }
 
-export function evaluatePlanStaleness(
+function buildStalenessReport(
   spec: PlanSpec,
-  recordedFingerprints: Readonly<Record<string, StepEvidenceFingerprint>>,
-  rootDir: string,
-  currentRulesVersion = SCIENTIFIC_COMPATIBILITY_RULES_VERSION
+  directReasonsByStep: ReadonlyMap<string, string[]>,
+  currentRulesVersion: string
 ): PlanStalenessReport {
-  const directReasonsByStep = new Map<string, string[]>()
-  for (const step of spec.steps) {
-    const recorded = recordedFingerprints[step.id]
-    if (!recorded) continue
-    const reasons = collectDirectStalenessReasons(recorded, rootDir, currentRulesVersion)
-    if (reasons.length > 0) directReasonsByStep.set(step.id, reasons)
-  }
-
   const propagatedFrom = propagateStaleness(spec.steps, directReasonsByStep.keys())
   const staleSteps: Record<string, StepStalenessRecord> = {}
   const cleanStepIds: string[] = []
@@ -169,6 +210,42 @@ export function evaluatePlanStaleness(
     staleSteps,
     cleanStepIds
   }
+}
+
+export function evaluatePlanStaleness(
+  spec: PlanSpec,
+  recordedFingerprints: Readonly<Record<string, StepEvidenceFingerprint>>,
+  rootDir: string,
+  currentRulesVersion = SCIENTIFIC_COMPATIBILITY_RULES_VERSION
+): PlanStalenessReport {
+  const directReasonsByStep = new Map<string, string[]>()
+  for (const step of spec.steps) {
+    const recorded = recordedFingerprints[step.id]
+    if (!recorded) continue
+    const reasons = collectDirectStalenessReasons(recorded, rootDir, currentRulesVersion)
+    if (reasons.length > 0) directReasonsByStep.set(step.id, reasons)
+  }
+  return buildStalenessReport(spec, directReasonsByStep, currentRulesVersion)
+}
+
+export async function evaluateAsyncPlanStaleness(
+  spec: PlanSpec,
+  recordedFingerprints: Readonly<Record<string, StepEvidenceFingerprint>>,
+  inspectArtifact: ArtifactFingerprintInspector,
+  currentRulesVersion = SCIENTIFIC_COMPATIBILITY_RULES_VERSION
+): Promise<PlanStalenessReport> {
+  const directReasonsByStep = new Map<string, string[]>()
+  for (const step of spec.steps) {
+    const recorded = recordedFingerprints[step.id]
+    if (!recorded) continue
+    const reasons = await collectAsyncDirectStalenessReasons(
+      recorded,
+      inspectArtifact,
+      currentRulesVersion
+    )
+    if (reasons.length > 0) directReasonsByStep.set(step.id, reasons)
+  }
+  return buildStalenessReport(spec, directReasonsByStep, currentRulesVersion)
 }
 
 /**

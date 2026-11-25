@@ -138,15 +138,15 @@ function parseSidecarArtifact(
 }
 
 /**
- * Reads a sidecar for `artifactPath`. Missing or legacy artifacts without a sidecar
- * return an explicit all-`unknown` sidecar — never guessing reference versions or raw counts.
+ * Parses a raw JSON text string into a normalized `ScientificContextSidecar` (or fallback).
+ * Shared by both local disk and remote SSH sidecar readers.
  */
-export function readScientificContextSidecar(
+export function parseScientificContextSidecarJson(
+  rawJson: string | undefined,
   artifactPath: string,
   location: 'local' | 'remote' = 'local',
   host?: string
 ): { found: boolean; sidecar: ScientificContextSidecar } {
-  const sidecarFile = scientificContextSidecarPath(artifactPath)
   const fallback = (): { found: false; sidecar: ScientificContextSidecar } => ({
     found: false,
     sidecar: buildScientificContextSidecar({
@@ -161,10 +161,10 @@ export function readScientificContextSidecar(
     })
   })
 
-  if (!existsSync(sidecarFile)) return fallback()
+  if (rawJson === undefined) return fallback()
   let raw: unknown
   try {
-    raw = JSON.parse(readFileSync(sidecarFile, 'utf-8'))
+    raw = JSON.parse(rawJson)
   } catch {
     return fallback()
   }
@@ -184,5 +184,30 @@ export function readScientificContextSidecar(
       samples: normalizeProvenanced<ScientificSampleContext>(raw.samples, 'missing samples'),
       matrix: normalizeProvenanced<ScientificMatrixContext>(raw.matrix, 'missing matrix')
     }
+  }
+}
+
+/**
+ * Reads a sidecar for `artifactPath`. Missing or legacy artifacts without a sidecar
+ * return an explicit all-`unknown` sidecar — never guessing reference versions or raw counts.
+ */
+export function readScientificContextSidecar(
+  artifactPath: string,
+  location: 'local' | 'remote' = 'local',
+  host?: string
+): { found: boolean; sidecar: ScientificContextSidecar } {
+  const sidecarFile = scientificContextSidecarPath(artifactPath)
+  if (!existsSync(sidecarFile)) {
+    return parseScientificContextSidecarJson(undefined, artifactPath, location, host)
+  }
+  try {
+    return parseScientificContextSidecarJson(
+      readFileSync(sidecarFile, 'utf-8'),
+      artifactPath,
+      location,
+      host
+    )
+  } catch {
+    return parseScientificContextSidecarJson(undefined, artifactPath, location, host)
   }
 }

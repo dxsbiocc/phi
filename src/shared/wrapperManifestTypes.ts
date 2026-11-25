@@ -7,6 +7,7 @@
 // package-manifest parser still accepts this whole shape so a Phase 2/3
 // manifest does not need a migration.
 
+import type { WrapperOutputScientificContext } from './wrapperCompositionManifestTypes'
 import type { WrapperEngineType, WrapperResourceClass } from './wrapperTypes'
 
 export interface WrapperManifestRuntime {
@@ -102,6 +103,7 @@ export interface WrapperManifestOutput {
   type: string
   path: string
   primary?: boolean
+  scientificContext?: WrapperOutputScientificContext
 }
 
 export interface WrapperManifestSummary {

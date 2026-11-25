@@ -28,6 +28,7 @@ import {
 import type { WrapperInputResolution, WrapperOutputRecord } from '../types'
 import { readRemoteLogDelta, type RemoteLogCursor } from '../remote-log'
 import { cancelRemoteController, type RemoteCancelResult } from '../remote-cancel'
+import { emitRemoteWrapperOutputSidecars } from '../../scientific-context/producer'
 import type { WrapperCompositionEntry } from './discovery'
 import type { WrapperProcess, WrapperRunResult } from './executor'
 import { componentBundleScope } from './includes'
@@ -576,6 +577,20 @@ async function finish(
     })
   }
   const remote = await collectOutputs(session, entry, snapshot.params, snapshot.componentDir)
+  if (remote.missingOutputs.length === 0) {
+    await emitRemoteWrapperOutputSidecars({
+      session,
+      host: ctx.target.connection.host,
+      remoteRootDir: ctx.target.workspaceRoot,
+      wrapperId: entry.manifest.id,
+      runId: snapshot.runId,
+      outputs: remote.outputs,
+      declarationsByOutputId: Object.fromEntries(
+        Object.entries(entry.manifest.outputs).map(([id, out]) => [id, out.scientificContext])
+      ),
+      params: snapshot.params
+    })
+  }
   return { success: true, exitCode: 0, output: '', remote }
 }
 

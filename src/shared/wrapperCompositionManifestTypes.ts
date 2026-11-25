@@ -22,6 +22,16 @@ export interface WrapperCompositionParam {
   enum?: string[]
 }
 
+import type { MatrixValueSemantics } from './scientificContextTypes'
+
+export interface WrapperOutputScientificContext {
+  valueSemantics?: MatrixValueSemantics
+  rowIdType?: string
+  organismParam?: string
+  referenceAssemblyParam?: string
+  samplesheetParam?: string
+}
+
 export interface WrapperCompositionOutputAssertion {
   nonEmpty?: boolean
   format?: 'tsv' | 'csv' | 'json'
@@ -35,6 +45,7 @@ export interface WrapperCompositionOutput {
   path: string
   primary: boolean
   assertions?: WrapperCompositionOutputAssertion
+  scientificContext?: WrapperOutputScientificContext
 }
 
 export interface WrapperCompositionManifest {

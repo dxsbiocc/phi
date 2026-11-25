@@ -1,8 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { getPhiAgentDir } from '../runtime-paths'
+import { emitLocalWrapperOutputSidecars } from '../scientific-context/producer'
 import { toWslPath, wslProcessEnvironment } from '../envs/wsl'
 import { findWrapperCatalogEntry } from './catalog'
 import { prepareNextflowProfile } from './composition/conda-profile'
@@ -360,6 +361,29 @@ function finalizeLocalRunOutputs(
       missingOutputs
     })
   }
+
+  let runParams: Record<string, unknown> = {}
+  try {
+    const paramsPath = join(runDir, 'params.json')
+    if (existsSync(paramsPath)) {
+      const parsed = JSON.parse(readFileSync(paramsPath, 'utf-8')) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        runParams = parsed as Record<string, unknown>
+      }
+    }
+  } catch {
+    // Default to empty params if params.json cannot be parsed.
+  }
+  emitLocalWrapperOutputSidecars({
+    wrapperId: running.wrapper.canonicalId,
+    runId: running.runId,
+    outputs,
+    declarationsByOutputId: Object.fromEntries(
+      manifest.outputs.map((out) => [out.id, out.scientificContext])
+    ),
+    params: runParams,
+    baseDir: running.cwd
+  })
 
   return transition(collecting, agentDir, 'completed', {
     completedAt: new Date().toISOString(),

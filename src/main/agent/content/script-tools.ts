@@ -16,6 +16,7 @@ import {
 
 import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
+import { emitScriptToolOutputSidecars } from '../scientific-context/producer'
 
 const DEFAULT_TIMEOUT_SECONDS = 600
 const STDERR_TAIL = 2000
@@ -147,14 +148,24 @@ export async function runScriptTool(input: RunScriptToolInput): Promise<ScriptTo
     }
   }
 
+  return finalizeScriptToolOutput(input, cwd, result.stdout, result.envId, warnings)
+}
+
+export function finalizeScriptToolOutput(
+  input: Pick<RunScriptToolInput, 'tool' | 'args'>,
+  cwd: string,
+  stdout: string,
+  envId: string,
+  warnings: string[] = []
+): ScriptToolResult {
   let output: unknown
   try {
-    output = JSON.parse(result.stdout) as unknown
+    output = JSON.parse(stdout) as unknown
   } catch {
-    return { ok: false, error: 'stdout is not a JSON object', envId: result.envId, warnings }
+    return { ok: false, error: 'stdout is not a JSON object', envId, warnings }
   }
   if (!isRecord(output)) {
-    return { ok: false, error: 'stdout is not a JSON object', envId: result.envId, warnings }
+    return { ok: false, error: 'stdout is not a JSON object', envId, warnings }
   }
   if (input.tool.outputSchema) {
     let check: ValidateFunction
@@ -165,20 +176,40 @@ export async function runScriptTool(input: RunScriptToolInput): Promise<ScriptTo
       return {
         ok: false,
         error: `output schema is invalid: ${message}`,
-        envId: result.envId,
+        envId,
         warnings
       }
     }
-    if (!check(output)) {
+    const schemaDeclaresContext = Object.hasOwn(
+      objectProperties(input.tool.outputSchema),
+      'scientificContext'
+    )
+    const validationTarget =
+      !schemaDeclaresContext && Object.hasOwn(output, 'scientificContext')
+        ? omitScientificContextKey(output)
+        : output
+    if (!check(validationTarget)) {
       return {
         ok: false,
         error: `output does not match the schema: ${formatErrors(check.errors)}`,
-        envId: result.envId,
+        envId,
         warnings
       }
     }
   }
-  return { ok: true, output, envId: result.envId, warnings }
+  if (
+    output.scientificContext !== undefined &&
+    scriptToolApproval(input.tool, input.args) === 'write'
+  ) {
+    const emitted = emitScriptToolOutputSidecars({
+      projectDir: cwd,
+      toolName: input.tool.name,
+      envId,
+      rawContextMap: output.scientificContext
+    })
+    warnings.push(...emitted.warnings)
+  }
+  return { ok: true, output, envId, warnings }
 }
 
 /**
@@ -189,6 +220,17 @@ export function scriptToolApproval(tool: ScriptTool, args: unknown): 'read' | 'w
   if (tool.approval === 'write') return 'write'
   if (schemaHasProjectPath(tool.args) || suppliedProjectPath(tool.args, args)) return 'write'
   return 'read'
+}
+
+/** True when a tool parameter schema contains zero `project-path` write parameters. */
+export function isPureReadOnlyScriptToolSchema(schema: unknown): boolean {
+  return !isRecord(schema) || !schemaHasProjectPath(schema)
+}
+
+function omitScientificContextKey(output: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...output }
+  delete rest.scientificContext
+  return rest
 }
 
 function validatorFor(schema: Record<string, unknown>): ValidateFunction {

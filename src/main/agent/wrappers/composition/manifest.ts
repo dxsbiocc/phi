@@ -1,9 +1,14 @@
 import { parse as parseYaml } from 'yaml'
 
+import {
+  MATRIX_VALUE_SEMANTICS,
+  type MatrixValueSemantics
+} from '../../../../shared/scientificContextTypes'
 import type {
   WrapperCompositionManifest,
   WrapperCompositionOutput,
-  WrapperCompositionParam
+  WrapperCompositionParam,
+  WrapperOutputScientificContext
 } from '../../../../shared/wrapperCompositionManifestTypes'
 
 import { isRecord } from '../../../../shared/guards'
@@ -34,7 +39,15 @@ const PARAM_KEYS = new Set([
   'maximum',
   'enum'
 ])
-const OUTPUT_KEYS = new Set(['type', 'path', 'primary', 'assertions'])
+const OUTPUT_KEYS = new Set(['type', 'path', 'primary', 'assertions', 'scientificContext'])
+const SCIENTIFIC_CONTEXT_KEYS = new Set([
+  'valueSemantics',
+  'rowIdType',
+  'organismParam',
+  'referenceAssemblyParam',
+  'samplesheetParam'
+])
+const ALLOWED_MATRIX_SEMANTICS = new Set<string>(MATRIX_VALUE_SEMANTICS)
 const ASSERTION_KEYS = new Set([
   'nonEmpty',
   'format',
@@ -173,6 +186,62 @@ function parseOutputAssertions(key: string, raw: unknown): WrapperCompositionOut
   return buildOutputAssertions(raw)
 }
 
+function validateContextParamNames(key: string, raw: Record<string, unknown>): void {
+  for (const paramRef of ['organismParam', 'referenceAssemblyParam', 'samplesheetParam'] as const) {
+    const refVal = raw[paramRef]
+    if (refVal !== undefined && (typeof refVal !== 'string' || !PARAM_NAME.test(refVal))) {
+      throw new Error(
+        `wrapper.yaml outputs.${key}.scientificContext.${paramRef} must be a valid parameter name`
+      )
+    }
+  }
+}
+
+function buildOutputScientificContext(
+  raw: Record<string, unknown>
+): WrapperOutputScientificContext {
+  const ctx: WrapperOutputScientificContext = {}
+  if (raw.valueSemantics !== undefined) {
+    ctx.valueSemantics = raw.valueSemantics as MatrixValueSemantics
+  }
+  if (raw.rowIdType !== undefined) ctx.rowIdType = (raw.rowIdType as string).trim()
+  if (raw.organismParam !== undefined) ctx.organismParam = raw.organismParam as string
+  if (raw.referenceAssemblyParam !== undefined) {
+    ctx.referenceAssemblyParam = raw.referenceAssemblyParam as string
+  }
+  if (raw.samplesheetParam !== undefined) ctx.samplesheetParam = raw.samplesheetParam as string
+  return ctx
+}
+
+function parseOutputScientificContext(
+  key: string,
+  raw: unknown
+): WrapperOutputScientificContext | undefined {
+  if (raw === undefined) return undefined
+  if (!isRecord(raw)) {
+    throw new Error(`wrapper.yaml outputs.${key}.scientificContext must be a mapping`)
+  }
+  assertKnownKeys(raw, SCIENTIFIC_CONTEXT_KEYS, `wrapper.yaml.outputs.${key}.scientificContext`)
+  if (
+    raw.valueSemantics !== undefined &&
+    (typeof raw.valueSemantics !== 'string' || !ALLOWED_MATRIX_SEMANTICS.has(raw.valueSemantics))
+  ) {
+    throw new Error(
+      `wrapper.yaml outputs.${key}.scientificContext.valueSemantics must be one of: ${MATRIX_VALUE_SEMANTICS.join(', ')}`
+    )
+  }
+  if (
+    raw.rowIdType !== undefined &&
+    (typeof raw.rowIdType !== 'string' || raw.rowIdType.trim().length === 0)
+  ) {
+    throw new Error(
+      `wrapper.yaml outputs.${key}.scientificContext.rowIdType must be a non-empty string`
+    )
+  }
+  validateContextParamNames(key, raw)
+  return buildOutputScientificContext(raw)
+}
+
 function parseManifestOutput(key: string, value: unknown): WrapperCompositionOutput {
   if (!isRecord(value)) throw new Error(`wrapper.yaml outputs.${key} must be a mapping`)
   assertKnownKeys(value, OUTPUT_KEYS, `wrapper.yaml.outputs.${key}`)
@@ -182,11 +251,13 @@ function parseManifestOutput(key: string, value: unknown): WrapperCompositionOut
     throw new Error(`wrapper.yaml.outputs.${key}.primary must be a boolean`)
   }
   const assertions = parseOutputAssertions(key, value.assertions)
+  const scientificContext = parseOutputScientificContext(key, value.scientificContext)
   return {
     type,
     path,
     primary: value.primary ?? false,
-    ...(assertions ? { assertions } : {})
+    ...(assertions ? { assertions } : {}),
+    ...(scientificContext ? { scientificContext } : {})
   }
 }
 

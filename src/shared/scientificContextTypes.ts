@@ -22,8 +22,18 @@ export type ProvenancedValue<T> =
       reason?: string
     }
 
-export type MatrixValueSemantics =
-  'raw_counts' | 'normalized' | 'log_transformed' | 'tpm' | 'fpkm' | 'cpm' | 'zscore' | 'de_stats'
+export const MATRIX_VALUE_SEMANTICS = [
+  'raw_counts',
+  'normalized',
+  'log_transformed',
+  'tpm',
+  'fpkm',
+  'cpm',
+  'zscore',
+  'de_stats'
+] as const
+
+export type MatrixValueSemantics = (typeof MATRIX_VALUE_SEMANTICS)[number]
 
 export interface ScientificReferenceInfo {
   assembly: string
