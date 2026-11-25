@@ -196,6 +196,48 @@ export function McpConnectorCatalogDialog({
     ]
   }, [connectors, customEntries.length, uiLanguage])
 
+  const probeConnectorAuthStatuses = useCallback(
+    (entries: readonly FeaturedMcpConnector[], isActive: () => boolean): void => {
+      for (const connector of entries.filter(
+        (entry) => entry.oauthAuthorizationOrigin || entry.apiKey
+      )) {
+        const cachedTools = cachedFeaturedToolNames(connector.id)
+        const status = connector.apiKey
+          ? typeof window.api.getFeaturedMcpApiKeyStatus === 'function'
+            ? window.api.getFeaturedMcpApiKeyStatus(connector.id)
+            : Promise.reject(new Error(connectorCopy.keyApiMissing))
+          : typeof window.api.getFeaturedMcpAuthStatus === 'function'
+            ? window.api.getFeaturedMcpAuthStatus(connector.id)
+            : cachedTools !== null
+              ? Promise.resolve(true)
+              : window.api.listFeaturedMcpTools(connector.id).then((names) => {
+                  cacheFeaturedToolNames(connector.id, names)
+                  return true
+                })
+        void status
+          .then((authenticated) => {
+            if (isActive()) {
+              setAuthStatusById((current) => ({
+                ...current,
+                [connector.id]: authenticated ? 'authenticated' : 'unauthenticated'
+              }))
+            }
+          })
+          .catch((cause: unknown) => {
+            if (!isActive()) return
+            const message = ipcErrorMessage(cause)
+            setAuthStatusById((current) => ({
+              ...current,
+              [connector.id]: connector.oauthAuthorizationOrigin
+                ? featuredOAuthStatusFromError(message, connector.name)
+                : 'unavailable'
+            }))
+          })
+      }
+    },
+    []
+  )
+
   useEffect(() => {
     if (!open) return
     let active = true
@@ -224,42 +266,7 @@ export function McpConnectorCatalogDialog({
       .then((entries) => {
         if (!active) return
         setConnectors(entries)
-        for (const connector of entries.filter(
-          (entry) => entry.oauthAuthorizationOrigin || entry.apiKey
-        )) {
-          const cachedTools = cachedFeaturedToolNames(connector.id)
-          const status = connector.apiKey
-            ? typeof window.api.getFeaturedMcpApiKeyStatus === 'function'
-              ? window.api.getFeaturedMcpApiKeyStatus(connector.id)
-              : Promise.reject(new Error(connectorCopy.keyApiMissing))
-            : typeof window.api.getFeaturedMcpAuthStatus === 'function'
-              ? window.api.getFeaturedMcpAuthStatus(connector.id)
-              : cachedTools !== null
-                ? Promise.resolve(true)
-                : window.api.listFeaturedMcpTools(connector.id).then((names) => {
-                    cacheFeaturedToolNames(connector.id, names)
-                    return true
-                  })
-          void status
-            .then((authenticated) => {
-              if (active) {
-                setAuthStatusById((current) => ({
-                  ...current,
-                  [connector.id]: authenticated ? 'authenticated' : 'unauthenticated'
-                }))
-              }
-            })
-            .catch((cause: unknown) => {
-              if (!active) return
-              const message = ipcErrorMessage(cause)
-              setAuthStatusById((current) => ({
-                ...current,
-                [connector.id]: connector.oauthAuthorizationOrigin
-                  ? featuredOAuthStatusFromError(message, connector.name)
-                  : 'unavailable'
-              }))
-            })
-        }
+        probeConnectorAuthStatuses(entries, () => active)
       })
       .catch((cause: unknown) => {
         if (active) setError(ipcErrorMessage(cause))
@@ -270,7 +277,7 @@ export function McpConnectorCatalogDialog({
     return () => {
       active = false
     }
-  }, [open, servers])
+  }, [open, probeConnectorAuthStatuses, servers])
   const selected = connectors.find((connector) => connector.id === selectedId)
   const selectedCustom = customEntries.find(
     (entry): entry is CustomConnectorServerEntry =>
@@ -301,6 +308,34 @@ export function McpConnectorCatalogDialog({
     ])
     setConnectors(nextConnectors)
     setUpdates(nextUpdates)
+  }
+
+  async function manualRefreshCatalog(): Promise<void> {
+    if (catalogLoading) return
+    setCatalogLoading(true)
+    setError(null)
+    try {
+      const [, catalog, nextConnectors, nextUpdates] = await Promise.all([
+        Promise.resolve(onRefresh()),
+        loadContentCatalog(window.api, { forceRefresh: true }).catch((cause: unknown) => {
+          setSourceError(ipcErrorMessage(cause))
+          return null
+        }),
+        window.api.listMcpConnectorCatalog(),
+        window.api.listPackageUpdates().catch(() => [])
+      ])
+      if (catalog) {
+        setSourceError(catalog.errors.join('\n') || null)
+        setSourceNotice(catalog.notices.join('\n') || null)
+      }
+      setConnectors(nextConnectors)
+      setUpdates(nextUpdates)
+      probeConnectorAuthStatuses(nextConnectors, () => true)
+    } catch (cause) {
+      setError(ipcErrorMessage(cause))
+    } finally {
+      setCatalogLoading(false)
+    }
   }
 
   async function addConnector(connector: FeaturedMcpConnector): Promise<void> {
@@ -530,7 +565,7 @@ export function McpConnectorCatalogDialog({
     setApiKeyInput('')
     setPage('detail')
     setError(null)
-    setToolNames(null)
+    if (!refresh) setToolNames(null)
     setToolsError(null)
     const request = ++toolRequestRef.current
     if (
@@ -618,7 +653,6 @@ export function McpConnectorCatalogDialog({
     setSort('default')
     setRemoveConfirmationServerId(null)
     setPage('list')
-    setCatalogLoading(true)
     onClose()
   }
 
@@ -755,6 +789,10 @@ export function McpConnectorCatalogDialog({
         }
         scrollContent
         onClose={close}
+        busy={busy !== null}
+        loading={page === 'list' && catalogLoading}
+        refreshLabel={catalogLoading ? connectorCopy.loadingConnectors : resourceUi.refresh}
+        onRefresh={page === 'list' ? () => void manualRefreshCatalog() : undefined}
         actions={
           page === 'list' ? (
             <McpCatalogAddMenu
@@ -832,9 +870,6 @@ export function McpConnectorCatalogDialog({
           />
         ) : (
           <>
-            {catalogLoading && (
-              <Typography color="text.secondary">{connectorCopy.loadingConnectors}</Typography>
-            )}
             <Box
               sx={{
                 display: 'grid',
@@ -842,7 +877,7 @@ export function McpConnectorCatalogDialog({
                 gap: 1.5
               }}
             >
-              {!catalogLoading && filteredFeatured.map((connector) => connectorCard(connector))}
+              {filteredFeatured.map((connector) => connectorCard(connector))}
             </Box>
             {!catalogLoading && filteredFeatured.length === 0 && (
               <Typography color="text.secondary" sx={{ mt: 2 }}>

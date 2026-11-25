@@ -985,6 +985,29 @@ test('catalog shows installed, update and install states plus local-directory ac
   assert.match(busyMarkup, /aria-label="Installing…"/)
   assert.match(busyMarkup, />Installing…</)
   assert.ok((busyMarkup.match(/disabled=""/g)?.length ?? 0) >= 2)
+
+  const refreshingMarkup = themed(
+    createElement(PhiPluginCatalogContent, {
+      plugins: installedPlugins,
+      entries,
+      updates,
+      loading: true,
+      busyId: null,
+      initialCategory: '科研',
+      onClose: () => undefined,
+      onChooseDirectory: () => undefined,
+      onInstall: () => undefined,
+      onClearError: () => undefined,
+      onClearNotice: () => undefined,
+      onRefreshCatalog: () => undefined,
+      onSetEnabled: async () => true,
+      onUninstall: async () => true
+    })
+  )
+  assert.match(refreshingMarkup, /data-phi-catalog-refresh-button="true"/)
+  assert.match(refreshingMarkup, /data-phi-catalog-refresh-spinning="true"/)
+  assert.match(refreshingMarkup, /新插件/)
+  assert.doesNotMatch(refreshingMarkup, />Loading plugin catalog…</)
 })
 
 test('catalog and installed plugin details reuse PhiPluginDetail with mode markers', () => {

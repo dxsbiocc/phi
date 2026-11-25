@@ -337,12 +337,15 @@ test('skill browsing uses website groups in API order and sends group, search an
         const group = query.group as 'science' | 'nextflow'
         return {
           status: 'available',
-          data: officialPage(officialSkill(group === 'science' ? 'science-01' : 'workflow-01', group), {
-            total: 27,
-            page: Number(query.page),
-            pageSize: Number(query.pageSize),
-            pageCount: 3
-          })
+          data: officialPage(
+            officialSkill(group === 'science' ? 'science-01' : 'workflow-01', group),
+            {
+              total: 27,
+              page: Number(query.page),
+              pageSize: Number(query.pageSize),
+              pageCount: 3
+            }
+          )
         }
       }
     },
@@ -381,6 +384,14 @@ test('skill browsing uses website groups in API order and sends group, search an
     pageSize: 10
   })
   assert.equal(state.page?.total, 27)
+
+  // Revisiting an already-loaded group/page resolves synchronously from cache without a new IPC request.
+  const queryCountBeforeCachedSwitch = listQueries.length
+  args[0] = { ...args[0], requestedGroupId: 'nextflow', query: '', page: 0 }
+  state = harness.read()
+  assert.equal(state.isLoading, false)
+  assert.equal(state.page?.items[0].title, 'Website workflow-01')
+  assert.equal(listQueries.length, queryCountBeforeCachedSwitch)
   harness.unmount()
 
   const websiteState: OfficialSkillCatalogState = {

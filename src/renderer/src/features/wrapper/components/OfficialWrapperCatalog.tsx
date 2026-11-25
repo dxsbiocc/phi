@@ -62,6 +62,7 @@ export function OfficialWrapperGroupsView({
   onPageChange,
   onRowsPerPageChange,
   onOpen,
+  onRefresh,
   onClose
 }: {
   page?: PhiWrapperGroupsPage
@@ -85,6 +86,7 @@ export function OfficialWrapperGroupsView({
   onPageChange: (page: number) => void
   onRowsPerPageChange: (size: number) => void
   onOpen: (group: PhiWrapperCatalogGroup) => void
+  onRefresh?: () => void
   onClose: () => void
 }): React.JSX.Element {
   useUiLanguage()
@@ -94,6 +96,7 @@ export function OfficialWrapperGroupsView({
   const selectedCategory = categories.some((category) => category.id === categoryId)
     ? categoryId
     : 'all'
+  const isRefreshing = loading || registryLoading
   return (
     <CatalogBrowseLayout
       title={wrapperCopy.wrapperGroups}
@@ -106,6 +109,9 @@ export function OfficialWrapperGroupsView({
       searchLabel={wrapperCopy.searchWrapperGroups}
       onClose={onClose}
       busy={busy}
+      loading={isRefreshing}
+      refreshLabel={isRefreshing ? resourceUi.loading : resourceUi.refresh}
+      onRefresh={onRefresh}
       page={Math.max(0, (page?.page ?? 1) - 1)}
       rowsPerPage={rowsPerPage}
       actions={actions}
@@ -122,7 +128,7 @@ export function OfficialWrapperGroupsView({
       }
     >
       {feedback}
-      {loading ? (
+      {loading && !page ? (
         <LoadingRows />
       ) : (
         <>
@@ -192,6 +198,7 @@ export function OfficialWrapperCatalog({
   registryChoices,
   registryLoading,
   busy,
+  onRefreshRegistry,
   actions,
   feedback,
   renderSuiteAction,
@@ -204,6 +211,7 @@ export function OfficialWrapperCatalog({
   registryChoices: readonly WrapperCatalogChoice[]
   registryLoading: boolean
   busy: boolean
+  onRefreshRegistry?: () => void
   actions?: React.ReactNode
   feedback?: React.ReactNode
   renderSuiteAction: (
@@ -218,6 +226,8 @@ export function OfficialWrapperCatalog({
   onClose: () => void
 }): React.JSX.Element {
   const [groupsPage, setGroupsPage] = useState<PhiWrapperGroupsPage>()
+  const [cachedGroupPages, setCachedGroupPages] = useState<Record<string, PhiWrapperGroupsPage>>({})
+  const [refreshRevision, setRefreshRevision] = useState(0)
   const [groupQuery, setGroupQuery] = useState('')
   const [categoryId, setCategoryId] = useState('all')
   const [groupPage, setGroupPage] = useState(0)
@@ -234,9 +244,28 @@ export function OfficialWrapperCatalog({
   const [groupsLoading, setGroupsLoading] = useState(true)
   const [toolsLoading, setToolsLoading] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (!open) {
+      setSelectedSuite(undefined)
+      setSuiteTools(undefined)
+      setSelectedToolId(undefined)
+      setSuiteDetail(undefined)
+      setToolQuery('')
+      setToolsLoading(false)
+      setDetailLoading(false)
+      setGroupQuery('')
+      setCategoryId('all')
+      setGroupPage(0)
+      setGroupPageSize(CATALOG_DEFAULT_PAGE_SIZE)
+    }
+  }
+  const groupQueryKey = `${refreshRevision}\u0000${categoryId}\u0000${groupQuery.trim()}\u0000${groupPage}\u0000${groupPageSize}`
+  const cachedGroupsPage = cachedGroupPages[groupQueryKey]
 
   useEffect(() => {
-    if (!open || selectedSuite) return undefined
+    if (!open || selectedSuite || cachedGroupsPage) return undefined
     let active = true
     void loadOfficialWrapperGroups(
       api,
@@ -245,18 +274,38 @@ export function OfficialWrapperCatalog({
       if (!active) return
       if (result.source === 'fallback') return onUnavailable()
       setGroupsPage(result.data)
+      setCachedGroupPages((current) => ({ ...current, [groupQueryKey]: result.data }))
       setGroupsLoading(false)
     })
     return () => {
       active = false
     }
-  }, [api, categoryId, groupPage, groupPageSize, groupQuery, onUnavailable, open, selectedSuite])
+  }, [
+    api,
+    cachedGroupsPage,
+    categoryId,
+    groupPage,
+    groupPageSize,
+    groupQuery,
+    groupQueryKey,
+    onUnavailable,
+    open,
+    selectedSuite
+  ])
+
+  const activeGroupsPage = cachedGroupsPage ?? groupsPage
 
   useEffect(() => {
-    if (!open || selectedSuite || registryLoading || !groupsPage || !api.listOfficialWrapperTools) {
+    if (
+      !open ||
+      selectedSuite ||
+      registryLoading ||
+      !activeGroupsPage ||
+      !api.listOfficialWrapperTools
+    ) {
       return undefined
     }
-    const pendingSuites = groupsPage.items
+    const pendingSuites = activeGroupsPage.items
       .filter(
         (group) =>
           !suiteToolsBySuite[group.suite] &&
@@ -285,7 +334,15 @@ export function OfficialWrapperCatalog({
     return () => {
       active = false
     }
-  }, [api, groupsPage, open, registryChoices, registryLoading, selectedSuite, suiteToolsBySuite])
+  }, [
+    activeGroupsPage,
+    api,
+    open,
+    registryChoices,
+    registryLoading,
+    selectedSuite,
+    suiteToolsBySuite
+  ])
 
   useEffect(() => {
     if (!open || !selectedSuite || suiteTools) return undefined
@@ -386,10 +443,10 @@ export function OfficialWrapperCatalog({
   }
   return (
     <OfficialWrapperGroupsView
-      page={groupsPage}
+      page={activeGroupsPage}
       categoryId={categoryId}
       query={groupQuery}
-      loading={groupsLoading}
+      loading={cachedGroupsPage ? false : groupsLoading}
       busy={busy}
       rowsPerPage={groupPageSize}
       registryChoices={registryChoices}
@@ -433,6 +490,11 @@ export function OfficialWrapperCatalog({
         setGroupPageSize(size)
         setGroupPage(0)
       }}
+      onRefresh={() => {
+        setGroupsLoading(true)
+        setRefreshRevision((value) => value + 1)
+        onRefreshRegistry?.()
+      }}
       onOpen={(group) => {
         const cached = suiteToolsBySuite[group.suite]
         const firstToolId = cached ? officialWrapperDefaultToolId(cached) : undefined
@@ -446,6 +508,10 @@ export function OfficialWrapperCatalog({
       }}
       onClose={() => {
         resetSuite()
+        setGroupQuery('')
+        setCategoryId('all')
+        setGroupPage(0)
+        setGroupPageSize(CATALOG_DEFAULT_PAGE_SIZE)
         onClose()
       }}
     />

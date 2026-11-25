@@ -27,6 +27,23 @@ test('connected MCP tool list shows every server-provided name', () => {
   for (const name of names) assert.match(markup, new RegExp(name))
   assert.match(markup, /Server tools · 4/)
   assert.match(markup, /Refresh tools/)
+  assert.match(markup, /data-phi-mcp-tools-refresh-button="true"/)
+  assert.match(markup, /data-phi-mcp-tools-refresh-spinning="false"/)
+})
+
+test('refreshing MCP tool list spins the header button and keeps existing tool chips visible without loading text', () => {
+  const names = ['search_preprints', 'get_preprint']
+  const refreshingWithTools = render({ requiresSignIn: false, loading: true, names, error: null })
+  assert.match(refreshingWithTools, /data-phi-mcp-tools-refresh-button="true"/)
+  assert.match(refreshingWithTools, /data-phi-mcp-tools-refresh-spinning="true"/)
+  assert.match(refreshingWithTools, /search_preprints/)
+  assert.match(refreshingWithTools, /get_preprint/)
+  assert.doesNotMatch(refreshingWithTools, />Loading server tools…</)
+
+  const initialLoading = render({ requiresSignIn: false, loading: true, names: null, error: null })
+  assert.match(initialLoading, /data-phi-mcp-tools-refresh-spinning="true"/)
+  assert.doesNotMatch(initialLoading, />Loading server tools…</)
+  assert.doesNotMatch(initialLoading, /Server tools have not been loaded/)
 })
 
 test('connector with unverified authorization does not show guessed tool names', () => {

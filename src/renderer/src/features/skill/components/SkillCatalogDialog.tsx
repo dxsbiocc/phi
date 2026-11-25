@@ -1,8 +1,8 @@
 import { useUiLanguage } from '../../../lib/i18n'
 import { skillCopy } from '../lib/skillCopy'
 import { resourceUi, resourceSourceLabel, websiteSourceLabel } from '../../../lib/resourceUi'
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
-import { Alert, Button, CircularProgress, Dialog, Stack, Typography } from '@mui/material'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { Alert, Button, Dialog, Typography } from '@mui/material'
 import type {
   PackageRegistryEntryView,
   PackageRegistryView
@@ -91,6 +91,7 @@ export function SkillCatalogDialog({
   const [detailId, setDetailId] = useState<string | null>(null)
   const [websiteRevision, setWebsiteRevision] = useState(0)
   const [websiteDetail, setWebsiteDetail] = useState<PhiSkillCatalogDetail | null>(null)
+  const reloadRef = useRef<(() => void) | null>(null)
   const [browser, dispatchBrowser] = useReducer(
     skillCatalogBrowserReducer,
     initialSkillCatalogBrowserState
@@ -109,7 +110,10 @@ export function SkillCatalogDialog({
   }, [open])
 
   useEffect(() => {
-    if (!open) return
+    if (!open) {
+      reloadRef.current = null
+      return
+    }
     let active = true
     let revision = 0
     const reload = (): void => {
@@ -157,10 +161,12 @@ export function SkillCatalogDialog({
         })
         .catch(() => undefined)
     }
+    reloadRef.current = reload
     reload()
     const unsubscribe = window.api.onPackageResourcesChanged?.(reload)
     return () => {
       active = false
+      reloadRef.current = null
       unsubscribe?.()
     }
   }, [open])
@@ -195,8 +201,8 @@ export function SkillCatalogDialog({
   const error =
     actionError ?? registryError ?? (websiteUnavailable ? null : sourceError) ?? removal.error
   const fallbackItems = useMemo(
-    () => skillCatalogItems(registryLoading ? [] : packages),
-    [packages, registryLoading]
+    () => skillCatalogItems(isRegistryLoading || loadingRegistry || registryError ? [] : packages),
+    [isRegistryLoading, loadingRegistry, packages, registryError]
   )
   const matchingFallbackItems = useMemo(() => {
     void uiLanguage // Invalidate localized presentation.
@@ -419,6 +425,17 @@ export function SkillCatalogDialog({
           searchLabel={skillCopy.searchCatalog}
           onClose={close}
           busy={installing.any}
+          loading={loading || isSkillsLoading}
+          refreshLabel={
+            loading
+              ? websiteUnavailable
+                ? skillCopy.loadingCatalog
+                : skillCopy.loadingWebsiteCatalog
+              : isSkillsLoading
+                ? skillCopy.loadingInstalled
+                : resourceUi.refresh
+          }
+          onRefresh={() => reloadRef.current?.()}
           actions={
             <CatalogAddButton
               label={skillCopy.addCatalog}
@@ -449,22 +466,6 @@ export function SkillCatalogDialog({
             >
               {error}
             </Alert>
-          ) : null}
-          {isSkillsLoading && skills.length === 0 && !selectedGroupId.startsWith('category:') ? (
-            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 2 }}>
-              <CircularProgress size={18} />
-              <Typography variant="body2" color="text.secondary">
-                {skillCopy.loadingInstalled}
-              </Typography>
-            </Stack>
-          ) : null}
-          {loading ? (
-            <Stack direction="row" spacing={1} sx={{ alignItems: 'center', py: 2 }}>
-              <CircularProgress size={18} />
-              <Typography variant="body2" color="text.secondary">
-                {websiteUnavailable ? skillCopy.loadingCatalog : skillCopy.loadingWebsiteCatalog}
-              </Typography>
-            </Stack>
           ) : null}
           {websiteUnavailable ? (
             <Alert severity="info" sx={{ mb: 2 }}>

@@ -8,10 +8,11 @@ import {
   ListItemButton,
   Stack,
   TextField,
+  Tooltip,
   Typography
 } from '@mui/material'
 import { PhiIcons } from '../../icons'
-import { resourceCatalogCopy } from '../../lib/resourceUi'
+import { resourceCatalogCopy, resourceUi } from '../../lib/resourceUi'
 import { CATALOG_SCROLLBAR_GUTTER } from './catalogPaging'
 
 export interface CatalogBrowseGroup {
@@ -35,6 +36,9 @@ export function CatalogBrowseLayout({
   scrollContent = false,
   onClose,
   busy = false,
+  loading = false,
+  refreshLabel,
+  onRefresh,
   page = 0,
   rowsPerPage = 10,
   actions,
@@ -55,6 +59,9 @@ export function CatalogBrowseLayout({
   scrollContent?: boolean
   onClose: () => void
   busy?: boolean
+  loading?: boolean
+  refreshLabel?: string
+  onRefresh?: () => void
   page?: number
   rowsPerPage?: number
   actions?: React.ReactNode
@@ -124,6 +131,42 @@ export function CatalogBrowseLayout({
             </Typography>
           )}
         </Box>
+        {onRefresh || loading ? (
+          <Tooltip title={refreshLabel ?? (loading ? resourceUi.loading : resourceUi.refresh)}>
+            <span style={{ display: 'inline-flex', flexShrink: 0 }}>
+              <IconButton
+                type="button"
+                aria-label={refreshLabel ?? (loading ? resourceUi.loading : resourceUi.refresh)}
+                aria-busy={loading}
+                disabled={loading || busy || !onRefresh}
+                data-phi-catalog-refresh-button="true"
+                data-phi-catalog-refresh-spinning={loading ? 'true' : 'false'}
+                onClick={onRefresh}
+                sx={{
+                  width: 32,
+                  height: 32,
+                  p: 0,
+                  flexShrink: 0,
+                  borderRadius: '50%',
+                  color: loading ? 'primary.main' : 'text.secondary',
+                  '&.Mui-disabled': {
+                    color: loading ? 'primary.main' : 'action.disabled',
+                    opacity: loading ? 0.88 : 1
+                  },
+                  '@keyframes phi-catalog-refresh-spin': {
+                    from: { transform: 'rotate(0deg)' },
+                    to: { transform: 'rotate(360deg)' }
+                  },
+                  '& svg': {
+                    animation: loading ? 'phi-catalog-refresh-spin 0.9s linear infinite' : 'none'
+                  }
+                }}
+              >
+                <PhiIcons.action.refresh size={17} />
+              </IconButton>
+            </span>
+          </Tooltip>
+        ) : null}
         {actions}
         <IconButton
           aria-label={closeLabel}

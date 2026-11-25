@@ -7,6 +7,10 @@ import {
   ProviderCard,
   type ProviderCardProps
 } from '../src/renderer/src/features/settings/components/ProviderCard'
+import {
+  ProvidersSection,
+  ProvidersToolbar
+} from '../src/renderer/src/features/settings/components/ProvidersSection'
 import { ProviderModelList } from '../src/renderer/src/features/settings/components/ProviderModelList'
 import {
   filterProviders,
@@ -250,4 +254,32 @@ test('providers without a brand mark use the Dependabot icon', () => {
   const markup = render(createElement(ProviderModelIcon, { providerId: 'custom-lab' }))
   assert.match(markup, /data-phi-provider-icon="generic"/)
   assert.match(markup, /M8\.75 11a\.75\.75 0 0 1 \.75\.75v3\.5/)
+})
+
+test('providers section reflects loading state on the header refresh button without layout-shifting status text', () => {
+  setUiLanguage('zh-CN')
+  const loadingMarkup = render(
+    createElement(ProvidersSection, {
+      providers: [provider],
+      onRefresh: async () => undefined,
+      onOpenAddProvider: () => undefined,
+      onLogout: () => undefined
+    })
+  )
+  assert.match(loadingMarkup, /data-phi-providers-refresh-button="true"/)
+  assert.match(loadingMarkup, /data-phi-providers-refresh-spinning="true"/)
+  assert.match(loadingMarkup, /aria-busy="true"/)
+  assert.match(loadingMarkup, /aria-label="正在加载模型启用状态…"/)
+  assert.doesNotMatch(loadingMarkup, /role="status"/)
+  assert.doesNotMatch(loadingMarkup, />正在加载模型启用状态…<\//)
+
+  const idleToolbar = render(
+    createElement(ProvidersToolbar, {
+      loading: false,
+      onRefresh: () => undefined,
+      onOpenAddProvider: () => undefined
+    })
+  )
+  assert.match(idleToolbar, /data-phi-providers-refresh-spinning="false"/)
+  assert.match(idleToolbar, /aria-label="刷新状态"/)
 })

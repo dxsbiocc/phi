@@ -167,6 +167,21 @@ test('skill discovery renders the website API groups in declared order including
   assert.ok(markup.indexOf('科学分析') < markup.indexOf('元能力'))
   assert.ok(markup.indexOf('元能力') < markup.indexOf('其他'))
   assert.doesNotMatch(markup, />Packages</)
+  assert.match(markup, /data-phi-catalog-refresh-button="true"/)
+  assert.match(markup, /data-phi-catalog-refresh-spinning="false"/)
+
+  const loadingMarkup = renderSkillCatalog({}, undefined, {
+    status: 'loading',
+    groups: [],
+    selectedGroupId: 'science',
+    page: null,
+    isLoading: true,
+    markUnavailable: () => undefined
+  })
+  assert.match(loadingMarkup, /data-phi-catalog-refresh-spinning="true"/)
+  assert.match(loadingMarkup, /aria-busy="true"/)
+  assert.doesNotMatch(loadingMarkup, />Loading the Phi Website skill catalog</)
+  assert.doesNotMatch(loadingMarkup, />正在加载 Phi 官网技能目录</)
 })
 
 test('skill view groups skills by source category and exposes the skill markdown panel', () => {
@@ -481,11 +496,15 @@ test('skill catalog keeps loading and registry errors visible within the browser
     }
   })
 
-  assert.match(markup, /Loading installed skills/)
-  assert.match(markup, /Loading Phi Packages and local catalogs/)
+  assert.match(markup, /data-phi-catalog-refresh-spinning="true"/)
+  assert.match(markup, /aria-label="Loading Phi Packages and local catalogs"/)
   assert.match(markup, /Directory unavailable/)
   assert.doesNotMatch(markup, /data-phi-skill-catalog-card="stale-package"/)
   assert.doesNotMatch(markup, /No matching skills/)
+
+  const installedLoadingMarkup = renderSkillCatalog({ isSkillsLoading: true })
+  assert.match(installedLoadingMarkup, /data-phi-catalog-refresh-spinning="true"/)
+  assert.match(installedLoadingMarkup, /aria-label="Loading installed skills"/)
 })
 
 test('bundled domain skills cannot become catalog enable actions', () => {

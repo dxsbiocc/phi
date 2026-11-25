@@ -260,6 +260,7 @@ export type PhiPluginCatalogContentProps = {
   onClearError: () => void
   onClearNotice: () => void
   onRefresh?: () => Promise<void>
+  onRefreshCatalog?: () => void
   onSetEnabled: (plugin: PhiPluginDisplayItem, enabled: boolean) => Promise<boolean>
   onUninstall: (plugin: PhiPluginDisplayItem) => Promise<boolean>
 }
@@ -282,6 +283,7 @@ export function PhiPluginCatalogContent({
   onClearError,
   onClearNotice,
   onRefresh,
+  onRefreshCatalog,
   onSetEnabled,
   onUninstall
 }: PhiPluginCatalogContentProps): React.JSX.Element {
@@ -389,6 +391,9 @@ export function PhiPluginCatalogContent({
       scrollContent={!showingDetail}
       onClose={onClose}
       busy={pickingDirectory}
+      loading={!showingDetail && loading}
+      refreshLabel={loading ? pluginCopy.loadingCatalog : resourceUi.refresh}
+      onRefresh={!showingDetail ? onRefreshCatalog : undefined}
       actions={
         showingDetail ? undefined : (
           <CatalogAddButton
@@ -438,61 +443,52 @@ export function PhiPluginCatalogContent({
               {sourceNotice}
             </Alert>
           ) : null}
-          {loading ? (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <CircularProgress size={20} />
-              <Typography variant="body2" color="text.secondary">
-                {pluginCopy.loadingCatalog}
-              </Typography>
-            </Box>
-          ) : (
-            <Box
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
-                gap: 1.5
-              }}
-            >
-              {installedSelected
-                ? visiblePlugins.map((plugin) => (
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+              gap: 1.5
+            }}
+          >
+            {installedSelected
+              ? visiblePlugins.map((plugin) => (
+                  <CatalogCard
+                    key={plugin.id}
+                    icon={plugin.icon}
+                    title={plugin.title}
+                    summary={plugin.summary}
+                    version={plugin.version}
+                    trust={plugin.trust}
+                    source={phiPluginDistributionLabel(plugin.distribution)}
+                    action="installed"
+                    busy={isInstalling(plugin.id)}
+                    disabled
+                    onOpen={() => openDetail(plugin.id)}
+                  />
+                ))
+              : visibleItems.map((item) => {
+                  const entry = item.entry
+                  const action = entry
+                    ? phiPluginCatalogAction(entry, installedIds, updates)
+                    : 'installed'
+                  return (
                     <CatalogCard
-                      key={plugin.id}
-                      icon={plugin.icon}
-                      title={plugin.title}
-                      summary={plugin.summary}
-                      version={plugin.version}
-                      trust={plugin.trust}
-                      source={phiPluginDistributionLabel(plugin.distribution)}
-                      action="installed"
-                      busy={isInstalling(plugin.id)}
-                      disabled
-                      onOpen={() => openDetail(plugin.id)}
+                      key={item.id}
+                      icon={item.icon}
+                      title={item.title}
+                      summary={item.summary}
+                      version={item.version}
+                      trust={item.trust}
+                      source={item.source}
+                      action={action}
+                      busy={isInstalling(item.id)}
+                      disabled={anyInstalling || pickingDirectory}
+                      onOpen={() => openDetail(item.id)}
+                      onAction={entry ? () => onInstall(entry, action === 'update') : undefined}
                     />
-                  ))
-                : visibleItems.map((item) => {
-                    const entry = item.entry
-                    const action = entry
-                      ? phiPluginCatalogAction(entry, installedIds, updates)
-                      : 'installed'
-                    return (
-                      <CatalogCard
-                        key={item.id}
-                        icon={item.icon}
-                        title={item.title}
-                        summary={item.summary}
-                        version={item.version}
-                        trust={item.trust}
-                        source={item.source}
-                        action={action}
-                        busy={isInstalling(item.id)}
-                        disabled={anyInstalling || pickingDirectory}
-                        onOpen={() => openDetail(item.id)}
-                        onAction={entry ? () => onInstall(entry, action === 'update') : undefined}
-                      />
-                    )
-                  })}
-            </Box>
-          )}
+                  )
+                })}
+          </Box>
           {!loading &&
           ((installedSelected && visiblePlugins.length === 0) ||
             (!installedSelected && visibleItems.length === 0)) ? (
@@ -550,28 +546,48 @@ export function PhiPluginCatalogDialog({
   const [pickingDirectory, setPickingDirectory] = useState(false)
   const [pendingInstall, setPendingInstall] = useState<PhiPluginInstallPreview | null>(null)
 
-  const fetchCatalog = useCallback(async (): Promise<{
-    entries: PhiPluginCatalogEntry[]
-    updates: PackageUpdateView[]
-    error: string | null
-    notice: string | null
-  }> => {
-    const [catalog, availableUpdates] = await Promise.all([
-      loadContentCatalog(window.api),
-      window.api.listPackageUpdates().catch(() => [])
-    ])
-    return {
-      entries: catalogPackages(catalog.registries, 'plugin').map(({ entry, registry }) => ({
-        ...entry,
-        registryPath: registry.dir,
-        registryLabel: registry.label ?? registry.id,
-        trust: registry.trust
-      })),
-      updates: availableUpdates,
-      error: catalog.errors.join('\n') || null,
-      notice: catalog.notices.join('\n') || null
+  const fetchCatalog = useCallback(
+    async (
+      forceRefresh = false
+    ): Promise<{
+      entries: PhiPluginCatalogEntry[]
+      updates: PackageUpdateView[]
+      error: string | null
+      notice: string | null
+    }> => {
+      const [catalog, availableUpdates] = await Promise.all([
+        loadContentCatalog(window.api, { forceRefresh }),
+        window.api.listPackageUpdates().catch(() => [])
+      ])
+      return {
+        entries: catalogPackages(catalog.registries, 'plugin').map(({ entry, registry }) => ({
+          ...entry,
+          registryPath: registry.dir,
+          registryLabel: registry.label ?? registry.id,
+          trust: registry.trust
+        })),
+        updates: availableUpdates,
+        error: catalog.errors.join('\n') || null,
+        notice: catalog.notices.join('\n') || null
+      }
+    },
+    []
+  )
+
+  const refreshCatalog = useCallback(async (): Promise<void> => {
+    setLoading(true)
+    try {
+      const [catalog] = await Promise.all([fetchCatalog(true), onChanged()])
+      setEntries(catalog.entries)
+      setUpdates(catalog.updates)
+      setError(catalog.error)
+      setSourceNotice(catalog.notice)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setLoading(false)
     }
-  }, [])
+  }, [fetchCatalog, onChanged])
 
   useEffect(() => {
     if (!open) return
@@ -664,7 +680,6 @@ export function PhiPluginCatalogDialog({
 
   function close(): void {
     if (pickingDirectory) return
-    setLoading(true)
     setPendingInstall(null)
     onClose()
   }
@@ -703,6 +718,7 @@ export function PhiPluginCatalogDialog({
           onClearFeedback()
         }}
         onRefresh={onChanged}
+        onRefreshCatalog={() => void refreshCatalog()}
         onSetEnabled={onSetEnabled}
         onUninstall={onUninstall}
       />

@@ -52,6 +52,15 @@ export function useOfficialSkillCatalog({
   return controlled ?? live
 }
 
+function officialSkillPageCacheKey(
+  groupId: string,
+  query: string,
+  page: number,
+  pageSize: number
+): string {
+  return `${groupId}\u0000${query.trim()}\u0000${page}\u0000${pageSize}`
+}
+
 function useLiveOfficialSkillCatalog({
   open,
   revision,
@@ -70,12 +79,21 @@ function useLiveOfficialSkillCatalog({
   const [status, setStatus] = useState<OfficialSkillCatalogState['status']>('loading')
   const [groups, setGroups] = useState<SkillCatalogGroup[]>([])
   const [catalogPage, setCatalogPage] = useState<PhiSkillListPage | null>(null)
+  const [cachedPages, setCachedPages] = useState<{
+    revision: number
+    entries: Readonly<Record<string, PhiSkillListPage>>
+  }>({ revision: 0, entries: {} })
+  const [isRefreshingGroups, setIsRefreshingGroups] = useState(false)
   const [isListLoading, setIsListLoading] = useState(false)
   const selectedGroupId = resolveSkillCatalogGroupId(groups, requestedGroupId) as PhiSkillGroupId
+  const pageKey = officialSkillPageCacheKey(selectedGroupId, query, page, pageSize)
+  const cachedPage = cachedPages.revision === revision ? cachedPages.entries[pageKey] : undefined
 
   const markUnavailable = useCallback((): void => {
     setCatalogPage(null)
+    setCachedPages({ revision: 0, entries: {} })
     setStatus('unavailable')
+    setIsRefreshingGroups(false)
     setIsListLoading(false)
   }, [])
 
@@ -84,7 +102,8 @@ function useLiveOfficialSkillCatalog({
     let active = true
     void Promise.resolve()
       .then(() => {
-        setStatus('loading')
+        setIsRefreshingGroups(true)
+        setStatus((current) => (current === 'available' ? 'available' : 'loading'))
         setIsListLoading(false)
         return window.api.listOfficialSkillGroups({ page: 1, pageSize: 100 })
       })
@@ -103,6 +122,9 @@ function useLiveOfficialSkillCatalog({
         setGroups([])
         markUnavailable()
       })
+      .finally(() => {
+        if (active) setIsRefreshingGroups(false)
+      })
     return () => {
       active = false
     }
@@ -110,8 +132,10 @@ function useLiveOfficialSkillCatalog({
 
   useEffect(() => {
     if (!open || status !== 'available' || groups.length === 0) return undefined
+    if (cachedPage !== undefined) return undefined
     let active = true
     const trimmedQuery = query.trim()
+    const key = officialSkillPageCacheKey(selectedGroupId, trimmedQuery, page, pageSize)
     void Promise.resolve()
       .then(() => {
         setIsListLoading(true)
@@ -129,6 +153,13 @@ function useLiveOfficialSkillCatalog({
           return
         }
         setCatalogPage(result.data)
+        setCachedPages((current) => ({
+          revision,
+          entries:
+            current.revision === revision
+              ? { ...current.entries, [key]: result.data }
+              : { [key]: result.data }
+        }))
       })
       .catch(() => {
         if (active) markUnavailable()
@@ -139,17 +170,32 @@ function useLiveOfficialSkillCatalog({
     return () => {
       active = false
     }
-  }, [groups.length, markUnavailable, open, page, pageSize, query, selectedGroupId, status])
+  }, [
+    cachedPage,
+    groups.length,
+    markUnavailable,
+    open,
+    page,
+    pageSize,
+    query,
+    revision,
+    selectedGroupId,
+    status
+  ])
+
+  const effectivePage = cachedPage ?? catalogPage
+  const effectiveLoading =
+    status === 'loading' || isRefreshingGroups || (cachedPage === undefined && isListLoading)
 
   return useMemo(
     () => ({
       status,
       groups,
       selectedGroupId,
-      page: catalogPage,
-      isLoading: status === 'loading' || isListLoading,
+      page: effectivePage,
+      isLoading: effectiveLoading,
       markUnavailable
     }),
-    [catalogPage, groups, isListLoading, markUnavailable, selectedGroupId, status]
+    [effectiveLoading, effectivePage, groups, markUnavailable, selectedGroupId, status]
   )
 }

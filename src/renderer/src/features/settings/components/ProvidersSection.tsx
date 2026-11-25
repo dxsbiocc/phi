@@ -11,14 +11,17 @@ import { providerManagementUi as copy } from '../lib/providerManagementUi'
 import { useModelAvailability } from '../hooks/useModelAvailability'
 import { ProviderCard } from './ProviderCard'
 
-function ProvidersToolbar({
+export function ProvidersToolbar({
+  loading = false,
   onRefresh,
   onOpenAddProvider
 }: {
+  loading?: boolean
   onRefresh: () => void
   onOpenAddProvider: () => void
 }): React.JSX.Element {
   useUiLanguage()
+  const refreshLabel = loading ? copy.loading : settingsUi.refreshStatus
   return (
     <Box
       sx={{
@@ -31,14 +34,35 @@ function ProvidersToolbar({
     >
       <Typography variant="h5">{settingsUi.providers}</Typography>
       <Stack direction="row" spacing={1}>
-        <Tooltip title={settingsUi.refreshStatus}>
-          <IconButton
-            aria-label={settingsUi.refreshStatus}
-            onClick={onRefresh}
-            sx={{ width: 40, height: 40, color: 'text.secondary' }}
-          >
-            <GoSync size={19} />
-          </IconButton>
+        <Tooltip title={refreshLabel}>
+          <span style={{ display: 'inline-flex' }}>
+            <IconButton
+              aria-label={refreshLabel}
+              aria-busy={loading}
+              disabled={loading}
+              data-phi-providers-refresh-button="true"
+              data-phi-providers-refresh-spinning={loading ? 'true' : 'false'}
+              onClick={onRefresh}
+              sx={{
+                width: 40,
+                height: 40,
+                color: loading ? 'primary.main' : 'text.secondary',
+                '&.Mui-disabled': {
+                  color: 'primary.main',
+                  opacity: 0.88
+                },
+                '@keyframes phi-providers-refresh-spin': {
+                  from: { transform: 'rotate(0deg)' },
+                  to: { transform: 'rotate(360deg)' }
+                },
+                '& svg': {
+                  animation: loading ? 'phi-providers-refresh-spin 0.9s linear infinite' : 'none'
+                }
+              }}
+            >
+              <GoSync size={19} />
+            </IconButton>
+          </span>
         </Tooltip>
         <Tooltip title={settingsUi.addProvider}>
           <IconButton
@@ -71,6 +95,7 @@ export function ProvidersSection({
   useUiLanguage()
   const { state, controller } = useModelAvailability(JSON.stringify(providers))
   const [refreshError, setRefreshError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
   const refreshRevision = useRef(0)
   useEffect(
     () => () => {
@@ -80,19 +105,27 @@ export function ProvidersSection({
   )
   const configured = providers.filter((provider) => provider.configured)
   const AddIcon = PhiIcons.action.add
+  const isLoading = refreshing || state.loading
   async function refresh(): Promise<void> {
     const revision = ++refreshRevision.current
     setRefreshError(null)
+    setRefreshing(true)
     try {
       await onRefresh()
       await controller.refresh()
     } catch (cause) {
       if (refreshRevision.current === revision) setRefreshError(errorMessage(cause))
+    } finally {
+      if (refreshRevision.current === revision) setRefreshing(false)
     }
   }
   return (
     <Stack spacing={1.5} sx={{ minWidth: 0, width: '100%' }}>
-      <ProvidersToolbar onRefresh={() => void refresh()} onOpenAddProvider={onOpenAddProvider} />
+      <ProvidersToolbar
+        loading={isLoading}
+        onRefresh={() => void refresh()}
+        onOpenAddProvider={onOpenAddProvider}
+      />
       {refreshError && (
         <Alert severity="error">
           {copy.authFailed}: {refreshError}
@@ -113,11 +146,6 @@ export function ProvidersSection({
         >
           {copy.loadFailed}: {state.loadError}
         </Alert>
-      )}
-      {state.loading && (
-        <Typography variant="body2" color="text.secondary" role="status">
-          {copy.loading}
-        </Typography>
       )}
       {!configured.length ? (
         <Paper sx={{ p: 3, borderRadius: 1 }}>

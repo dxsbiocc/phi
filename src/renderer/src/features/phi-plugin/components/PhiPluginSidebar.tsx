@@ -2,7 +2,7 @@ import { useUiLanguage } from '../../../lib/i18n'
 import { resourceUi } from '../../../lib/resourceUi'
 import { pluginCopy } from '../lib/pluginCopy'
 import { useMemo, useState } from 'react'
-import { Box, CircularProgress, List, Stack, Typography } from '@mui/material'
+import { Box, CircularProgress, List, Typography } from '@mui/material'
 
 import { SidebarAccordionGroup } from '../../../components/SidebarAccordionGroup'
 import { CatalogSidebar } from '../../../components/CatalogSidebar'
@@ -75,12 +75,9 @@ export function PhiPluginSidebar({
         sx={{ flex: 1, minHeight: 0, overflowY: 'auto', scrollbarGutter: 'stable', py: 1 }}
       >
         {loading && plugins.length === 0 ? (
-          <Stack spacing={1.25} sx={{ alignItems: 'center', py: 5 }}>
-            <CircularProgress size={22} />
-            <Typography variant="body2" color="text.secondary">
-              {pluginCopy.readingPlugins}
-            </Typography>
-          </Stack>
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+            <CircularProgress size={20} aria-label={pluginCopy.readingPlugins} />
+          </Box>
         ) : groups.length > 0 ? (
           groups.map((group) => (
             <SidebarAccordionGroup

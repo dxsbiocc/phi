@@ -453,7 +453,7 @@ export function WrapperSidebar({
           WebkitAppRegion: 'no-drag'
         }}
       >
-        {isLoading ? (
+        {isLoading && catalog.length === 0 ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
             <CircularProgress size={20} />
           </Box>

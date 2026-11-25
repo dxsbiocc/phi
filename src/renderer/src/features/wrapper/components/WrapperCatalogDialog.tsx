@@ -104,7 +104,7 @@ export function WrapperCatalogDialog({
     setSourceNotice(snapshot.notice)
   }, [])
 
-  const readCatalog = useCallback(async (): Promise<CatalogSnapshot> => {
+  const readCatalog = useCallback(async (forceRefresh = false): Promise<CatalogSnapshot> => {
     const packageUpdates = window.api.listPackageUpdates
       ? window.api
           .listPackageUpdates()
@@ -112,7 +112,7 @@ export function WrapperCatalogDialog({
           .catch(() => [] as PackageUpdateView[])
       : Promise.resolve([] as PackageUpdateView[])
     const [sources, installed] = await Promise.all([
-      loadContentCatalog(window.api),
+      loadContentCatalog(window.api, { forceRefresh }),
       window.api.listInstalledPackages()
     ])
     return {
@@ -128,6 +128,19 @@ export function WrapperCatalogDialog({
   const refreshCatalog = useCallback(async (): Promise<void> => {
     await onRefresh()
     applySnapshot(await readCatalog())
+  }, [applySnapshot, onRefresh, readCatalog])
+
+  const manualRefresh = useCallback(async (): Promise<void> => {
+    setLoading(true)
+    setError(null)
+    try {
+      await onRefresh()
+      applySnapshot(await readCatalog(true))
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setLoading(false)
+    }
   }, [applySnapshot, onRefresh, readCatalog])
   const removal = useWrapperRemoval(refreshCatalog, onNotify)
   useEffect(() => {
@@ -322,7 +335,6 @@ export function WrapperCatalogDialog({
     setPendingInstall(null)
     suiteActions.cancelInstall()
     suiteActions.cancelRemoval()
-    setLoading(true)
     setError(null)
     setCatalogMode('official')
     setPage(0)
@@ -346,12 +358,12 @@ export function WrapperCatalogDialog({
     >
       {catalogMode === 'official' ? (
         <OfficialWrapperCatalog
-          key={open ? 'open' : 'closed'}
           open={open}
           api={websiteCatalogApi}
           registryChoices={choices}
           registryLoading={loading}
           busy={busy.any || removal.removing}
+          onRefreshRegistry={() => void manualRefresh()}
           actions={
             <CatalogAddButton
               label={wrapperCopy.addDirectory}
@@ -404,6 +416,9 @@ export function WrapperCatalogDialog({
           searchLabel={wrapperCopy.searchCatalog}
           onClose={close}
           busy={busy.any}
+          loading={loading}
+          refreshLabel={loading ? resourceUi.loading : resourceUi.refresh}
+          onRefresh={() => void manualRefresh()}
           page={result.page}
           rowsPerPage={rowsPerPage}
           actions={
@@ -414,7 +429,7 @@ export function WrapperCatalogDialog({
             />
           }
           footer={
-            !loading ? (
+            !loading || choices.length > 0 ? (
               <CatalogPagination
                 count={filtered.length}
                 page={result.page}
@@ -441,7 +456,7 @@ export function WrapperCatalogDialog({
               {sourceNotice}
             </Alert>
           ) : null}
-          {loading ? (
+          {loading && choices.length === 0 ? (
             <Box sx={{ display: 'grid', placeItems: 'center', py: 6 }}>
               <CircularProgress size={22} />
             </Box>
@@ -471,7 +486,7 @@ export function WrapperCatalogDialog({
                   }
                 })}
               />
-              {filtered.length === 0 ? (
+              {!loading && filtered.length === 0 ? (
                 <Typography color="text.secondary" sx={{ py: 4 }}>
                   {query.trim() ? wrapperCopy.noMatches : wrapperCopy.emptyGroup}
                 </Typography>

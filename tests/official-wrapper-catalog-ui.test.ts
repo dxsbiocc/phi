@@ -640,4 +640,26 @@ test('group rows expose direct suite install/uninstall actions and tier-distinct
   assert.match(markup, /data-phi-wrapper-tier="subworkflow"/)
   assert.match(markup, /data-phi-wrapper-tier="workflow"/)
   assert.match(markup, /data-phi-resource-icon-key="owned-subworkflow-icon"/)
+
+  const refreshingMarkup = themed(
+    createElement(OfficialWrapperGroupsView, {
+      page,
+      categoryId: 'all',
+      query: '',
+      loading: true,
+      busy: false,
+      rowsPerPage: 10,
+      registryChoices: [abraChoice, installedSubworkflow, siblingPrefixChoice],
+      onCategoryChange: () => undefined,
+      onQueryChange: () => undefined,
+      onPageChange: () => undefined,
+      onRowsPerPageChange: () => undefined,
+      onOpen: () => undefined,
+      onRefresh: () => undefined,
+      onClose: () => undefined
+    })
+  )
+  assert.match(refreshingMarkup, /data-phi-catalog-refresh-button="true"/)
+  assert.match(refreshingMarkup, /data-phi-catalog-refresh-spinning="true"/)
+  assert.match(refreshingMarkup, /data-phi-wrapper-catalog-group="abra2"/)
 })
