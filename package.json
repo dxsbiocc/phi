@@ -66,7 +66,6 @@
     "registry:keygen": "node --import ./scripts/test-loader.mjs scripts/packages/generate-registry-key.ts",
     "registry:sign": "node --import ./scripts/test-loader.mjs scripts/packages/sign-registry.ts",
     "usage:report": "node --import ./scripts/test-loader.mjs scripts/agent-usage-report.mjs",
-    "eval:fetch": "bun scripts/eval/db-vs-fetch.ts",
     "e2e:gui": "bun scripts/gui-e2e.ts",
     "spike:terminal-pty": "bun scripts/terminal-pty-spike.ts",
     "check:main-boundaries": "node scripts/check-main-boundaries.mjs"

@@ -7,15 +7,6 @@
       "plan": "keep"
     },
     {
-      "file": "scripts/eval/db-vs-fetch.ts",
-      "specifiers": [
-        "@oh-my-pi/pi-coding-agent",
-        "@oh-my-pi/pi-coding-agent/extensibility/legacy-pi-coding-agent-shim"
-      ],
-      "purpose": "Agent session, settings, and authentication setup for the database-versus-fetch evaluation; replaced by T7 engine contract tests or R9 cleanup",
-      "plan": "remove"
-    },
-    {
       "file": "scripts/kernel-e2e/cursor-native-abort.ts",
       "specifiers": [
         "@oh-my-pi/pi-coding-agent/cursor",
