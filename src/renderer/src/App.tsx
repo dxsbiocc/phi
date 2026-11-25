@@ -4326,6 +4326,7 @@ function App(): React.JSX.Element {
 
         <WorkspaceView
           active={isWorkspaceView}
+          hidden={workspaceSidePanelSlots.length > 0 && workspaceSidePanelState.maximized !== null}
           chromeLayout={chromeLayout}
           mode={workspaceViewMode}
           workspaceTitle={activeWorkspaceTitle}
@@ -4333,10 +4334,7 @@ function App(): React.JSX.Element {
           hideTitle={showHomeWorkspace}
           titlebarTrailing={
             filePreview && !showProjectSessionPlaceholder ? (
-              <FilePreviewTitleTab
-                state={filePreview}
-                onClose={onCloseCurrentFilePreview}
-              />
+              <FilePreviewTitleTab state={filePreview} onClose={onCloseCurrentFilePreview} />
             ) : null
           }
           resourceStrip={{
@@ -4363,7 +4361,7 @@ function App(): React.JSX.Element {
 
         {workspaceSidePanelSlots.length > 0 ? (
           <>
-            {!workspaceSidePanelOverlay ? (
+            {!workspaceSidePanelOverlay && workspaceSidePanelState.maximized === null ? (
               <AppResizeSeparator
                 label={appCopy.resizeWorkspace}
                 onMouseDown={onStartWorkspaceSidePanelResize}
@@ -4372,23 +4370,60 @@ function App(): React.JSX.Element {
             <Box
               data-phi-workspace-side-panel-shell="true"
               data-phi-workspace-side-panel-presentation={
-                workspaceSidePanelOverlay ? 'overlay' : 'dock'
+                workspaceSidePanelState.maximized !== null
+                  ? 'maximized'
+                  : workspaceSidePanelOverlay
+                    ? 'overlay'
+                    : 'dock'
               }
               sx={{
-                position: workspaceSidePanelOverlay ? 'absolute' : 'relative',
-                top: workspaceSidePanelOverlay ? 0 : 'auto',
-                right: workspaceSidePanelOverlay ? 0 : 'auto',
-                zIndex: workspaceSidePanelOverlay ? 20 : 'auto',
+                position:
+                  workspaceSidePanelState.maximized !== null
+                    ? 'relative'
+                    : workspaceSidePanelOverlay
+                      ? 'absolute'
+                      : 'relative',
+                top:
+                  workspaceSidePanelState.maximized === null && workspaceSidePanelOverlay
+                    ? 0
+                    : 'auto',
+                right:
+                  workspaceSidePanelState.maximized === null && workspaceSidePanelOverlay
+                    ? 0
+                    : 'auto',
+                zIndex:
+                  workspaceSidePanelState.maximized === null && workspaceSidePanelOverlay
+                    ? 20
+                    : 'auto',
+                flex: workspaceSidePanelState.maximized !== null ? 1 : undefined,
                 height: '100vh',
-                flexShrink: 0,
+                flexShrink: workspaceSidePanelState.maximized !== null ? 1 : 0,
                 display: 'flex',
+                flexDirection: 'column',
                 minWidth: 0,
-                minHeight: 0
+                minHeight: 0,
+                bgcolor:
+                  workspaceSidePanelState.maximized !== null ? 'background.default' : undefined
               }}
             >
+              {workspaceSidePanelState.maximized !== null ? (
+                <Box
+                  data-phi-workspace-side-panel-maximized-titlebar="true"
+                  sx={{
+                    height: WINDOW_TITLEBAR_HEIGHT,
+                    flexShrink: 0,
+                    WebkitAppRegion: 'drag'
+                  }}
+                />
+              ) : null}
               <WorkspaceSidePanel
-                width={activeWorkspaceSidePanelWidth}
+                width={
+                  workspaceSidePanelState.maximized !== null
+                    ? '100%'
+                    : activeWorkspaceSidePanelWidth
+                }
                 slots={workspaceSidePanelSlots}
+                columns={workspaceSidePanelState.columns}
                 maximized={workspaceSidePanelState.maximized}
                 singleVisibleMode={responsiveSingleVisibleMode}
                 onCloseSlot={onCloseWorkspaceSidePanelSlot}
@@ -4461,7 +4496,11 @@ function App(): React.JSX.Element {
           onMinimizeWindow={() => void rendererApi.minimizeWindow()}
           onToggleFullscreen={() => void rendererApi.toggleWindowFullscreen()}
           activePanels={workspaceSidePanelSlots}
-          sidePanelWidth={activeWorkspaceSidePanelWidth}
+          sidePanelWidth={
+            workspaceSidePanelSlots.length > 0 && workspaceSidePanelState.maximized !== null
+              ? 0
+              : activeWorkspaceSidePanelWidth
+          }
           sidePanelOverlay={workspaceSidePanelOverlay}
           onRefreshSidePanel={onRefreshWorkspaceSidePanel}
           onTogglePanel={onToggleWorkspaceSidePanel}

@@ -6,7 +6,6 @@ import type {
   WrapperCompositionManifest,
   WrapperCompositionParam
 } from '../../../../../shared/wrapperCompositionManifestTypes'
-import { ResourceIcon } from '../../../components/ResourceIcon'
 import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
 import { wrapperParamConstraint } from '../lib/wrapperPackageDetail'
 import {
@@ -14,6 +13,7 @@ import {
   wrapperProviderColor,
   wrapperTierLabel
 } from '../lib/wrapperView'
+import { WrapperResourceIcon } from './WrapperResourceIcon'
 
 /** The wrapper's identity block: icon, name, canonical id, summary and provider/tier chips. */
 export function WrapperIdentity({
@@ -36,21 +36,7 @@ export function WrapperIdentity({
   const { provider, tier } = parseWrapperCompositionId(manifest.id)
   return (
     <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start' }}>
-      <Box
-        sx={{
-          width: 72,
-          height: 72,
-          borderRadius: 1,
-          bgcolor: 'primary.main',
-          color: 'primary.contrastText',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0
-        }}
-      >
-        <ResourceIcon icon={icon} kind="wrapper" size={72} fallbackSize={24} />
-      </Box>
+      <WrapperResourceIcon icon={icon} tier={tier} size={72} fallbackSize={30} borderRadius={2} />
       <Box sx={{ minWidth: 0, flex: 1 }}>
         <Typography variant="h4" sx={{ fontWeight: 700, overflowWrap: 'anywhere' }}>
           {manifest.name}

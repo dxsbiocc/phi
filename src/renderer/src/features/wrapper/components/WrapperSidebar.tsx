@@ -14,7 +14,6 @@ import { Alert, Box, CircularProgress, List, Typography } from '@mui/material'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
 import { CatalogSidebar } from '../../../components/CatalogSidebar'
 import { CatalogResourceRow } from '../../../components/CatalogResourceRow'
-import { ResourceIcon } from '../../../components/ResourceIcon'
 import { DiscoverButton } from '../../../components/DiscoverButton'
 import {
   SidebarAccordionGroup,
@@ -31,6 +30,7 @@ import { useWrapperRemoval } from '../hooks/useWrapperRemoval'
 import type { SnackbarSeverity } from '../../../components/AppSnackbarCard'
 import { WrapperCatalogDialog } from './WrapperCatalogDialog'
 import { WrapperRemovalDialog } from './WrapperRemovalDialog'
+import { WrapperResourceIcon } from './WrapperResourceIcon'
 
 export interface WrapperSidebarProps {
   visible?: boolean
@@ -266,21 +266,14 @@ function WrapperTierGroupAccordion({
               onRemovePackage && group.managed ? () => onRemovePackage(group.key) : undefined
             }
             icon={
-              <Box
-                sx={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 1.25,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  bgcolor: group.enabled ? 'primary.main' : 'action.hover',
-                  color: group.enabled ? 'primary.contrastText' : 'text.secondary',
-                  flexShrink: 0
-                }}
-              >
-                <ResourceIcon icon={lead.icon} kind="wrapper" size={32} fallbackSize={18} />
-              </Box>
+              <WrapperResourceIcon
+                icon={lead.icon}
+                tier={group.tier}
+                size={32}
+                fallbackSize={18}
+                borderRadius={1.25}
+                enabled={group.enabled}
+              />
             }
           >
             <Box sx={{ minWidth: 0, flex: 1 }}>

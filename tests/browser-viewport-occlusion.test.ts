@@ -2,11 +2,21 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { BrowserRendererBridge, BrowserViewport } from '../src/shared/browserTypes'
 import {
+  browserViewportBlockedByOverlayRects,
   browserViewportRectsOverlap,
   createBrowserViewportScheduler
 } from '../src/renderer/src/features/browser/hooks/useBrowserViewport'
 
 const viewport: BrowserViewport = { x: 900, y: 80, width: 340, height: 500 }
+
+test('a popover in another workbench slot does not hide the browser viewport unless overlapping', () => {
+  const terminalMenuPaper = { x: 920, y: 620, width: 210, height: 84 }
+  const browserMenuPaper = { x: 910, y: 40, width: 210, height: 92 }
+
+  assert.equal(browserViewportBlockedByOverlayRects(viewport, false, [terminalMenuPaper]), false)
+  assert.equal(browserViewportBlockedByOverlayRects(viewport, false, [browserMenuPaper]), true)
+  assert.equal(browserViewportBlockedByOverlayRects(viewport, true, []), true)
+})
 
 test('a left sidebar preview does not block a separate browser viewport', () => {
   assert.equal(

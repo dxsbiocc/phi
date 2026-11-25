@@ -18,9 +18,11 @@ import type {
 import {
   activeBrowserTab,
   browserActivateTabCommand,
+  browserAddressInputValue,
   browserCloseTabCommand,
   browserHistoryCommand,
   browserNewTabCommand,
+  browserNewTabCommands,
   browserOpenExternalCommand,
   browserReloadCommand,
   browserRestoreCommand,
@@ -30,6 +32,7 @@ import {
   canPresentNativeBrowser,
   createBrowserWorkspaceController,
   createBrowserRequestIdFactory,
+  isBlankBrowserTab,
   isBrowserTabActivationKey
 } from '../src/renderer/src/features/browser/lib/browserPanelState'
 import { createBrowserViewportScheduler } from '../src/renderer/src/features/browser/hooks/useBrowserViewport'
@@ -162,10 +165,28 @@ test('browser panel state builds bounded single-tab UI commands', () => {
   })
 
   assert.equal(activeBrowserTab(snapshot())?.id, 'tab-1')
+  assert.equal(isBlankBrowserTab(null), false)
+  assert.equal(isBlankBrowserTab(tab()), false)
+  assert.equal(isBlankBrowserTab(tab({ url: 'about:blank' })), true)
+  assert.equal(browserAddressInputValue(null), '')
+  assert.equal(browserAddressInputValue(tab({ url: 'about:blank' })), '')
+  assert.equal(browserAddressInputValue(tab()), 'https://example.test/')
   assert.equal(canPresentNativeBrowser(tab(), true), true)
+  assert.equal(canPresentNativeBrowser(tab({ url: 'about:blank' }), true), false)
   assert.equal(canPresentNativeBrowser(tab({ restorable: true }), true), false)
   assert.equal(canPresentNativeBrowser(tab({ phase: 'failed' }), true), false)
   assert.equal(canPresentNativeBrowser(tab(), false), false)
+
+  let reqSeq = 0
+  const nextId = (): string => `req-${++reqSeq}`
+  assert.deepEqual(browserNewTabCommands(null, nextId), [])
+  assert.deepEqual(browserNewTabCommands(snapshot([], null), nextId), [
+    { type: 'newTab', requestId: 'req-1' },
+    { type: 'newTab', requestId: 'req-2' }
+  ])
+  assert.deepEqual(browserNewTabCommands(snapshot([tab({ url: 'about:blank' })]), nextId), [
+    { type: 'newTab', requestId: 'req-3' }
+  ])
 
   const nextRequestId = createBrowserRequestIdFactory(() => 1234)
   const first = nextRequestId()

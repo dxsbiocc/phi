@@ -2,28 +2,198 @@ import { browserUi } from '../lib/browserUi'
 import { useUiLanguage } from '../../../lib/i18n'
 import type { ReactNode } from 'react'
 import { Box, CircularProgress, IconButton, Tooltip, Typography } from '@mui/material'
-import { alpha } from '@mui/material/styles'
+import { alpha, type SxProps, type Theme } from '@mui/material/styles'
 import type { BrowserTabSnapshot } from '../../../../../shared/browserTypes'
+import { PanelItemSwitcher } from '../../../components/PanelItemSwitcher'
 import { PhiIcons } from '../../../icons'
 import {
   workspacePanelActionSize,
   workspacePanelHeaderHeight,
   workspacePanelText
 } from '../../../layout'
-import { browserTabDisplayTitle, isBrowserTabActivationKey } from '../lib/browserPanelState'
+import {
+  browserTabDisplayTitle,
+  isBlankBrowserTab,
+  isBrowserTabActivationKey
+} from '../lib/browserPanelState'
 
 const AddIcon = PhiIcons.action.add
 const CloseIcon = PhiIcons.action.close
 const WebIcon = PhiIcons.tool.web
+
+const singleTabHeaderSx: SxProps<Theme> = {
+  maxWidth: 210,
+  minWidth: 0,
+  height: 26,
+  pl: 0.75,
+  pr: 0.25,
+  gap: 0.6,
+  display: 'inline-flex',
+  alignItems: 'center',
+  borderRadius: 1.25,
+  color: 'text.primary',
+  WebkitAppRegion: 'no-drag'
+}
+
+const singleTabCloseButtonSx: SxProps<Theme> = {
+  width: 22,
+  height: 22,
+  p: 0.25,
+  borderRadius: 0.75,
+  color: 'text.secondary',
+  opacity: 0.78,
+  '&:hover, &:focus-visible': {
+    opacity: 1,
+    color: 'text.primary',
+    bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08)
+  }
+}
+
+const newTabButtonSx: SxProps<Theme> = {
+  width: workspacePanelActionSize,
+  height: workspacePanelActionSize,
+  p: 0.5,
+  borderRadius: 1,
+  WebkitAppRegion: 'no-drag',
+  '&.Mui-focusVisible': {
+    outline: '2px solid',
+    outlineColor: 'primary.main',
+    outlineOffset: -2
+  }
+}
+
+function BrowserTabGlyph(props: { tab: BrowserTabSnapshot; label: string }): React.JSX.Element {
+  useUiLanguage()
+  if (props.tab.phase === 'loading') {
+    return (
+      <CircularProgress
+        size={13}
+        thickness={5}
+        aria-label={browserUi.loadingValue(props.label)}
+        sx={{ color: 'primary.main' }}
+      />
+    )
+  }
+  return <WebIcon aria-hidden="true" sx={{ fontSize: 15 }} />
+}
+
+function SingleBrowserTabHeader(props: {
+  tab: BrowserTabSnapshot
+  disabled: boolean
+  onClose(tabId: string): void
+}): React.JSX.Element {
+  useUiLanguage()
+  const label = browserTabDisplayTitle(props.tab)
+  const tooltip = props.tab.url && props.tab.url !== 'about:blank' ? props.tab.url : label
+  return (
+    <Box data-phi-browser-tab="active" title={tooltip} sx={singleTabHeaderSx}>
+      <Box
+        component="span"
+        sx={{
+          width: 16,
+          height: 16,
+          flexShrink: 0,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'primary.main'
+        }}
+      >
+        <BrowserTabGlyph tab={props.tab} label={label} />
+      </Box>
+      <Typography
+        component="span"
+        noWrap
+        sx={{ ...workspacePanelText.heading, minWidth: 0, flex: '0 1 auto' }}
+      >
+        {label}
+      </Typography>
+      <Tooltip title={browserUi.closeValue(label)} arrow>
+        <span style={{ display: 'inline-flex', flexShrink: 0 }}>
+          <IconButton
+            type="button"
+            aria-label={browserUi.closeValue(label)}
+            disabled={props.disabled}
+            size="small"
+            onClick={(event) => {
+              event.stopPropagation()
+              props.onClose(props.tab.id)
+            }}
+            onKeyDown={(event) => {
+              if (isBrowserTabActivationKey(event.key)) event.stopPropagation()
+            }}
+            sx={singleTabCloseButtonSx}
+          >
+            <CloseIcon sx={{ fontSize: 14 }} />
+          </IconButton>
+        </span>
+      </Tooltip>
+    </Box>
+  )
+}
 
 export interface BrowserTabsProps {
   tabs: BrowserTabSnapshot[]
   activeTabId: string | null
   disabled: boolean
   headerActions?: ReactNode
+  switcherDefaultOpen?: boolean
   onNewTab(): void
   onActivate(tabId: string): void
   onClose(tabId: string): void
+}
+
+function BrowserTabSelection(props: {
+  tabs: BrowserTabSnapshot[]
+  activeTabId: string | null
+  disabled: boolean
+  switcherDefaultOpen?: boolean
+  onActivate(tabId: string): void
+  onClose(tabId: string): void
+}): React.JSX.Element {
+  useUiLanguage()
+  if (props.tabs.length === 0 || (props.tabs.length === 1 && isBlankBrowserTab(props.tabs[0]))) {
+    return (
+      <Typography
+        component="span"
+        data-phi-browser-empty-tab-title="true"
+        sx={{ ...workspacePanelText.heading, px: 0.5, color: 'text.primary' }}
+      >
+        {browserUi.newTab}
+      </Typography>
+    )
+  }
+  if (props.tabs.length === 1) {
+    return (
+      <SingleBrowserTabHeader
+        tab={props.tabs[0]!}
+        disabled={props.disabled}
+        onClose={props.onClose}
+      />
+    )
+  }
+  return (
+    <PanelItemSwitcher
+      ariaLabel={browserUi.selectTab}
+      menuLabel={browserUi.browserTabs}
+      activeId={props.activeTabId}
+      disabled={props.disabled}
+      defaultOpen={props.switcherDefaultOpen}
+      itemAttribute="data-phi-browser-tab"
+      items={props.tabs.map((tab) => {
+        const label = browserTabDisplayTitle(tab)
+        return {
+          id: tab.id,
+          label,
+          tooltip: tab.url && tab.url !== 'about:blank' ? tab.url : label,
+          icon: <BrowserTabGlyph tab={tab} label={label} />,
+          closeLabel: browserUi.closeValue(label)
+        }
+      })}
+      onSelect={props.onActivate}
+      onCloseItem={props.onClose}
+    />
+  )
 }
 
 export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
@@ -43,199 +213,17 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
         WebkitAppRegion: 'drag'
       }}
     >
-      <Box
-        role="tablist"
-        aria-label={browserUi.browserTabs}
-        sx={{
-          flex: '1 1 auto',
-          minWidth: 0,
-          height: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.5,
-          overflowX: 'auto',
-          WebkitAppRegion: 'no-drag',
-          scrollbarWidth: 'none',
-          '&::-webkit-scrollbar': { display: 'none' }
-        }}
-      >
-        {props.tabs.length === 0 ? (
-          <Typography
-            component="span"
-            data-phi-browser-empty-tab-title="true"
-            sx={{ ...workspacePanelText.itemTitle, px: 1, color: 'text.secondary' }}
-          >
-            {browserUi.newTab}
-          </Typography>
-        ) : null}
-        {props.tabs.map((tab, index) => {
-          const selected = tab.id === props.activeTabId
-          const fallbackTabStop = props.activeTabId === null && index === 0
-          const label = browserTabDisplayTitle(tab)
-          return (
-            <Box
-              key={tab.id}
-              data-phi-browser-tab={selected ? 'active' : 'inactive'}
-              sx={{
-                flex: props.tabs.length === 1 ? '1 1 0' : '0 0 clamp(120px, 32vw, 180px)',
-                minWidth: props.tabs.length === 1 ? 0 : 120,
-                maxWidth: props.tabs.length === 1 ? 'none' : 180,
-                height: workspacePanelHeaderHeight,
-                minHeight: workspacePanelHeaderHeight,
-                minInlineSize: 0,
-                display: 'flex',
-                alignItems: 'center',
-                pr: 0.25,
-                border: 0,
-                boxShadow: selected
-                  ? (theme) => `inset 0 -2px 0 ${theme.palette.primary.main}`
-                  : 'none',
-                borderRadius: 0.5,
-                bgcolor: 'transparent',
-                color: selected ? 'text.primary' : 'text.secondary',
-                transition: 'background-color 120ms ease, color 120ms ease',
-                '&:hover': {
-                  bgcolor: 'action.hover',
-                  color: 'text.primary'
-                }
-              }}
-            >
-              <Box
-                component="div"
-                role="tab"
-                tabIndex={selected || fallbackTabStop ? 0 : -1}
-                aria-selected={selected}
-                aria-disabled={props.disabled || undefined}
-                aria-controls="phi-browser-viewport"
-                title={tab.url && tab.url !== 'about:blank' ? tab.url : label}
-                onClick={() => {
-                  if (!props.disabled && !selected) props.onActivate(tab.id)
-                }}
-                onKeyDown={(event) => {
-                  if (isBrowserTabActivationKey(event.key)) {
-                    event.preventDefault()
-                    if (!props.disabled && !selected) props.onActivate(tab.id)
-                    return
-                  }
-                  if (
-                    event.key === 'ArrowLeft' ||
-                    event.key === 'ArrowRight' ||
-                    event.key === 'Home' ||
-                    event.key === 'End'
-                  ) {
-                    event.preventDefault()
-                    const tabs = Array.from(
-                      event.currentTarget
-                        .closest('[role="tablist"]')
-                        ?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []
-                    )
-                    const currentIndex = tabs.indexOf(event.currentTarget)
-                    const nextIndex =
-                      event.key === 'Home'
-                        ? 0
-                        : event.key === 'End'
-                          ? tabs.length - 1
-                          : event.key === 'ArrowLeft'
-                            ? (currentIndex - 1 + tabs.length) % tabs.length
-                            : (currentIndex + 1) % tabs.length
-                    tabs[nextIndex]?.focus()
-                  }
-                }}
-                sx={{
-                  flex: 1,
-                  alignSelf: 'stretch',
-                  minWidth: 0,
-                  minHeight: workspacePanelHeaderHeight,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 0.75,
-                  pl: 1,
-                  cursor: props.disabled || selected ? 'default' : 'pointer',
-                  borderRadius: 1.1,
-                  '&:focus-visible': {
-                    outline: (theme) => `2px solid ${theme.palette.primary.main}`,
-                    outlineOffset: -2
-                  }
-                }}
-              >
-                <Box
-                  component="span"
-                  sx={{
-                    width: 16,
-                    height: 16,
-                    flexShrink: 0,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: selected ? 'primary.main' : 'text.disabled'
-                  }}
-                >
-                  {tab.phase === 'loading' ? (
-                    <CircularProgress
-                      size={13}
-                      thickness={5}
-                      aria-label={browserUi.loadingValue(label)}
-                      sx={{ color: 'primary.main' }}
-                    />
-                  ) : (
-                    <WebIcon aria-hidden="true" sx={{ fontSize: 15 }} />
-                  )}
-                </Box>
-                <Typography
-                  component="span"
-                  noWrap
-                  sx={{
-                    flex: 1,
-                    minWidth: 0,
-                    fontSize: workspacePanelText.itemTitle.fontSize,
-                    fontWeight: selected ? 700 : 500,
-                    lineHeight: 1.3
-                  }}
-                >
-                  {label}
-                </Typography>
-              </Box>
-              <Tooltip title={browserUi.closeValue(label)} arrow>
-                <span style={{ display: 'inline-flex', flexShrink: 0 }}>
-                  <IconButton
-                    type="button"
-                    aria-label={browserUi.closeValue(label)}
-                    disabled={props.disabled}
-                    size="small"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      props.onClose(tab.id)
-                    }}
-                    onKeyDown={(event) => {
-                      if (isBrowserTabActivationKey(event.key)) event.stopPropagation()
-                    }}
-                    sx={{
-                      width: workspacePanelActionSize,
-                      height: workspacePanelActionSize,
-                      p: 0.5,
-                      borderRadius: 1,
-                      color: 'text.secondary',
-                      opacity: selected ? 0.78 : 0.5,
-                      '&:hover, &:focus-visible': {
-                        opacity: 1,
-                        color: 'text.primary',
-                        bgcolor: (theme) => alpha(theme.palette.text.primary, 0.08)
-                      },
-                      '&.Mui-focusVisible': {
-                        outline: '2px solid',
-                        outlineColor: 'primary.main',
-                        outlineOffset: -2
-                      }
-                    }}
-                  >
-                    <CloseIcon sx={{ fontSize: 16 }} />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            </Box>
-          )
-        })}
+      <Box sx={{ minWidth: 0, display: 'flex', alignItems: 'center', WebkitAppRegion: 'no-drag' }}>
+        <BrowserTabSelection
+          tabs={props.tabs}
+          activeTabId={props.activeTabId}
+          disabled={props.disabled}
+          switcherDefaultOpen={props.switcherDefaultOpen}
+          onActivate={props.onActivate}
+          onClose={props.onClose}
+        />
       </Box>
+
       <Tooltip title={browserUi.newTab2} arrow>
         <span style={{ display: 'inline-flex', flexShrink: 0 }}>
           <IconButton
@@ -244,25 +232,19 @@ export function BrowserTabs(props: BrowserTabsProps): React.JSX.Element {
             disabled={props.disabled}
             size="small"
             onClick={props.onNewTab}
-            sx={{
-              width: workspacePanelActionSize,
-              height: workspacePanelActionSize,
-              p: 0.5,
-              borderRadius: 1,
-              WebkitAppRegion: 'no-drag',
-              '&.Mui-focusVisible': {
-                outline: '2px solid',
-                outlineColor: 'primary.main',
-                outlineOffset: -2
-              }
-            }}
+            sx={newTabButtonSx}
           >
             <AddIcon sx={{ fontSize: 16 }} />
           </IconButton>
         </span>
       </Tooltip>
+
+      <Box sx={{ flex: 1, minWidth: 8 }} />
+
       {props.headerActions ? (
-        <Box sx={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+        <Box
+          sx={{ flexShrink: 0, display: 'flex', alignItems: 'center', WebkitAppRegion: 'no-drag' }}
+        >
           {props.headerActions}
         </Box>
       ) : null}

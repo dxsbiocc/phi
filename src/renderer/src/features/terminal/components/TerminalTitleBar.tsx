@@ -4,6 +4,7 @@ import { useState, type MouseEvent, type ReactNode } from 'react'
 import { Box, Divider, IconButton, Menu, MenuItem, Tooltip, Typography } from '@mui/material'
 
 import type { TerminalSnapshot } from '../../../../../shared/terminalTypes'
+import { PanelItemSwitcher } from '../../../components/PanelItemSwitcher'
 import { useConfirmation } from '../../../components/useConfirmation'
 import { PhiIcons } from '../../../icons'
 import { runTerminalEndAction } from '../lib/terminalEndAction'
@@ -20,6 +21,12 @@ function terminalDisplayTitle(terminal: TerminalSnapshot): string {
   return terminal.host === 'ssh' && terminal.hostLabel
     ? `${terminal.hostLabel} · ${terminal.title}`
     : terminal.title
+}
+
+function terminalTooltip(projectName: string, initialDirectory?: string): string {
+  return initialDirectory
+    ? terminalUi.valueInitialDirectoryValue(projectName, initialDirectory)
+    : projectName
 }
 
 function TitleButton(props: {
@@ -68,6 +75,7 @@ export interface TerminalTitleBarProps {
   canCreate?: boolean
   busy?: boolean
   canExplainSelection?: boolean
+  switcherDefaultOpen?: boolean
   onSelect(terminalId: string): void
   onCreate(): void
   onOpenAssist(): void
@@ -83,33 +91,18 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
   const activeTerminal =
     props.terminals.find((terminal) => terminal.terminalId === props.activeTerminalId) ?? null
   const initialDirectory = activeTerminal?.initialCwd || props.initialDirectory
-  const titleTooltip = initialDirectory
-    ? terminalUi.valueInitialDirectoryValue(props.projectName, initialDirectory)
-    : props.projectName
+  const titleTooltip = terminalTooltip(props.projectName, initialDirectory)
 
-  const openMenu = (event: MouseEvent<HTMLElement>): void => {
-    event.preventDefault()
-    setMenuAnchor(event.currentTarget)
-  }
   const closeMenu = (): void => setMenuAnchor(null)
-  const endActive = async (): Promise<void> => {
+  const endTerminalById = async (terminalId: string): Promise<void> => {
     closeMenu()
-    if (!activeTerminal) return
     await runTerminalEndAction({
-      intent: { kind: 'terminal', terminalId: activeTerminal.terminalId },
+      intent: { kind: 'terminal', terminalId },
       terminalCount: props.terminals.length,
       confirm,
       onEnd: props.onEnd,
       onEndAll: props.onEndAll
     })
-  }
-  const openAssist = (): void => {
-    closeMenu()
-    props.onOpenAssist()
-  }
-  const explainSelection = (): void => {
-    closeMenu()
-    props.onExplainSelection()
   }
   const endAll = async (): Promise<void> => {
     closeMenu()
@@ -125,7 +118,10 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
   return (
     <Box
       data-phi-terminal-title-bar="true"
-      onContextMenu={openMenu}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        setMenuAnchor(event.currentTarget)
+      }}
       sx={{
         flexShrink: 0,
         height: workspacePanelHeaderHeight,
@@ -138,7 +134,7 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
       }}
     >
       <Box
-        title={titleTooltip}
+        title={props.terminals.length <= 1 ? titleTooltip : undefined}
         sx={{
           minWidth: 0,
           display: 'flex',
@@ -147,38 +143,25 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
         }}
       >
         {props.terminals.length > 1 ? (
-          <Box
-            component="select"
-            aria-label={terminalUi.selectTerminal}
-            value={props.activeTerminalId ?? ''}
+          <PanelItemSwitcher
+            ariaLabel={terminalUi.selectTerminal}
+            menuLabel={terminalUi.selectTerminal}
+            activeId={props.activeTerminalId}
             disabled={props.busy}
-            onChange={(event) => props.onSelect(event.currentTarget.value)}
-            sx={{
-              maxWidth: 148,
-              minWidth: 0,
-              height: 26,
-              pl: 0.75,
-              pr: 0.5,
-              border: 0,
-              borderRadius: 1,
-              outline: 0,
-              bgcolor: 'transparent',
-              color: 'inherit',
-              font: 'inherit',
-              ...workspacePanelText.heading,
-              cursor: 'pointer',
-              '&:hover': { bgcolor: 'action.hover' },
-              '&:focus-visible': {
-                outline: (theme) => `2px solid ${theme.palette.primary.main}`
+            defaultOpen={props.switcherDefaultOpen}
+            itemAttribute="data-phi-terminal-item"
+            items={props.terminals.map((terminal) => {
+              const label = terminalDisplayTitle(terminal)
+              return {
+                id: terminal.terminalId,
+                label,
+                tooltip: terminalTooltip(props.projectName, terminal.initialCwd),
+                closeLabel: terminalUi.closeTerminalValue(label)
               }
-            }}
-          >
-            {props.terminals.map((terminal) => (
-              <option key={terminal.terminalId} value={terminal.terminalId}>
-                {terminalDisplayTitle(terminal)}
-              </option>
-            ))}
-          </Box>
+            })}
+            onSelect={props.onSelect}
+            onCloseItem={(terminalId) => void endTerminalById(terminalId)}
+          />
         ) : (
           <Typography
             component="span"
@@ -221,17 +204,31 @@ export function TerminalTitleBar(props: TerminalTitleBarProps): React.JSX.Elemen
         onClose={closeMenu}
         slotProps={{ list: { 'aria-label': terminalUi.terminalActions } }}
       >
-        <MenuItem disabled={!activeTerminal || props.busy} onClick={openAssist}>
+        <MenuItem
+          disabled={!activeTerminal || props.busy}
+          onClick={() => {
+            closeMenu()
+            props.onOpenAssist()
+          }}
+        >
           {terminalUi.helpWriteACommand}
         </MenuItem>
         <MenuItem
           disabled={!activeTerminal || !props.canExplainSelection || props.busy}
-          onClick={explainSelection}
+          onClick={() => {
+            closeMenu()
+            props.onExplainSelection()
+          }}
         >
           {terminalUi.askAgentToExplain}
         </MenuItem>
         <Divider />
-        <MenuItem disabled={!activeTerminal || props.busy} onClick={() => void endActive()}>
+        <MenuItem
+          disabled={!activeTerminal || props.busy}
+          onClick={() => {
+            if (activeTerminal) void endTerminalById(activeTerminal.terminalId)
+          }}
+        >
           {terminalUi.closeTerminal}
         </MenuItem>
         <Divider />

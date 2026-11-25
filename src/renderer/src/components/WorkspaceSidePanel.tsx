@@ -10,7 +10,11 @@ import {
   workspacePanelHeaderHeight,
   workspacePanelText
 } from '../layout'
-import type { WorkspaceSidePanelMode } from '../lib/workspaceSidePanelMode'
+import {
+  workspaceSidePanelSlotPlacement,
+  type WorkspaceSidePanelColumns,
+  type WorkspaceSidePanelMode
+} from '../lib/workspaceSidePanelMode'
 import type { DirectoryListing } from '../types'
 import type { FileTreeActions } from '../features/file-preview/lib/fileTreeActions'
 import type { FileDownloadState } from '../features/file-preview/lib/filePreviewState'
@@ -208,6 +212,7 @@ export function WorkspaceFilesPane({
 export function WorkspaceSidePanel({
   width,
   slots,
+  columns,
   maximized,
   singleVisibleMode = null,
   onCloseSlot,
@@ -217,6 +222,7 @@ export function WorkspaceSidePanel({
 }: {
   width: number | string
   slots: WorkspaceSidePanelMode[]
+  columns?: WorkspaceSidePanelColumns
   maximized: WorkspaceSidePanelMode | null
   singleVisibleMode?: WorkspaceSidePanelMode | null
   onCloseSlot: (mode: WorkspaceSidePanelMode) => void
@@ -230,32 +236,51 @@ export function WorkspaceSidePanel({
   useUiLanguage()
   const selectedMode = maximized ?? singleVisibleMode
   const visibleSlots = selectedMode ? slots.filter((mode) => mode === selectedMode) : slots
+  const visibleColumns = selectedMode ? undefined : columns
+  const isMaximized = maximized !== null
+  const columnCount = visibleSlots.length > 2 ? 2 : 1
+  const rowCount = Math.min(2, visibleSlots.length)
   return (
     <Box
       data-phi-workspace-tools-side-panel="true"
       data-phi-workspace-side-panel-modes={slots.join(',')}
+      data-phi-workspace-side-panel-columns={
+        visibleSlots.length > 0 ? String(columnCount) : undefined
+      }
       data-phi-workspace-side-panel-maximized={maximized ?? undefined}
       sx={{
         width,
-        height: '100vh',
-        maxHeight: '100vh',
+        flex: isMaximized ? 1 : undefined,
+        height: isMaximized ? '100%' : '100vh',
+        maxHeight: isMaximized ? '100%' : '100vh',
         boxSizing: 'border-box',
         flexShrink: 0,
         display: 'grid',
-        gridTemplateRows:
-          visibleSlots.length > 0 ? `repeat(${visibleSlots.length}, minmax(0, 1fr))` : 'none',
+        gridTemplateColumns:
+          visibleSlots.length > 0
+            ? columnCount > 1
+              ? 'repeat(2, minmax(0, 1fr))'
+              : 'minmax(0, 1fr)'
+            : 'none',
+        gridTemplateRows: visibleSlots.length > 0 ? `repeat(${rowCount}, minmax(0, 1fr))` : 'none',
         minHeight: 0,
         gap: workspacePanelGap,
         p: workspacePanelGap,
+        pt: isMaximized ? 0 : workspacePanelGap,
         bgcolor: 'background.default'
       }}
     >
-      {visibleSlots.map((mode) => {
+      {visibleSlots.map((mode, index) => {
+        const placement = workspaceSidePanelSlotPlacement(
+          index,
+          visibleSlots.length,
+          visibleColumns
+        )
         const actions = (
           <WorkspaceSidePanelSlotActions
             mode={mode}
             maximized={maximized === mode}
-            showLayoutAction={maximized !== null || visibleSlots.length > 1}
+            showLayoutAction
             onRefreshJobs={onRefreshJobs}
             onToggleMaximized={() => onToggleMaximized(mode)}
             onClose={() => onCloseSlot(mode)}
@@ -268,8 +293,10 @@ export function WorkspaceSidePanel({
             role="region"
             aria-label={workspacePanelLabels[mode]}
             sx={{
+              gridColumn: placement.gridColumn,
+              gridRow: placement.gridRow,
               minWidth: 0,
-              minHeight: visibleSlots.length === 1 ? 0 : 240,
+              minHeight: placement.spansFullColumn ? 0 : 240,
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',

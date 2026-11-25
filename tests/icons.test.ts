@@ -5,7 +5,23 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { IconType } from 'react-icons'
 import { FiExternalLink } from 'react-icons/fi'
-import { GoIssueDraft, GoOrganization, GoPlay, GoStop, GoSync } from 'react-icons/go'
+import {
+  GoBell,
+  GoBook,
+  GoComment,
+  GoContainer,
+  GoCpu,
+  GoGear,
+  GoIssueDraft,
+  GoOrganization,
+  GoPackage,
+  GoPlay,
+  GoProject,
+  GoRepoForked,
+  GoStop,
+  GoSync,
+  GoWorkflow
+} from 'react-icons/go'
 import { SiJupyter } from 'react-icons/si'
 import { TbFolderOpen, TbListTree } from 'react-icons/tb'
 import {
@@ -353,4 +369,29 @@ test('provider icons use the organization glyph in settings and shared metadata'
     GoOrganization
   )
   assertUsesReactIcon(renderToStaticMarkup(createElement(PhiIcons.entity.provider)), GoOrganization)
+})
+
+test('navigation, entity, and top-right notification icons stay visually unified on Octicons', () => {
+  const pairs: Array<[React.ComponentType, IconType]> = [
+    [PhiIcons.action.bell, GoBell],
+    [PhiIcons.nav.chat, GoComment],
+    [PhiIcons.nav.projects, GoProject],
+    [PhiIcons.nav.settings, GoGear],
+    [PhiIcons.nav.plugins, GoPackage],
+    [PhiIcons.entity.plugin, GoPackage],
+    [PhiIcons.nav.skills, GoBook],
+    [PhiIcons.entity.skill, GoBook],
+    [PhiIcons.nav.mcp, GoWorkflow],
+    [PhiIcons.entity.mcp, GoWorkflow],
+    [PhiIcons.nav.wrappers, GoContainer],
+    [PhiIcons.entity.wrapper, GoContainer],
+    [PhiIcons.wrapperTier.module, GoCpu],
+    [PhiIcons.wrapperTier.subworkflow, GoRepoForked],
+    [PhiIcons.wrapperTier.workflow, GoWorkflow]
+  ]
+  for (const [Component, ExpectedIcon] of pairs) {
+    const markup = renderToStaticMarkup(createElement(Component))
+    assertUsesReactIcon(markup, ExpectedIcon)
+    assert.match(markup, /stroke-width="0"/)
+  }
 })

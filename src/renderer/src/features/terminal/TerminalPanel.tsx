@@ -439,7 +439,27 @@ function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.E
               WebkitAppRegion: 'no-drag',
               '& .phi-terminal-host, & .xterm': { width: '100%', height: '100%' },
               // xterm.css hard-codes a black viewport; the strip below the last row would show it.
-              '& .xterm-viewport': { overflowY: 'auto', backgroundColor: terminalTheme.background }
+              '& .xterm-viewport': { overflowY: 'auto', backgroundColor: terminalTheme.background },
+              '& .xterm-viewport::-webkit-scrollbar': { width: 6 },
+              '& .xterm-viewport::-webkit-scrollbar-thumb': {
+                borderWidth: 1,
+                borderRadius: '999px'
+              },
+              // xterm 6 renders a 14px square VS Code custom scrollbar; slim and round it to match Phi.
+              '& .xterm .xterm-scrollable-element > .scrollbar.vertical': {
+                width: '8px !important',
+                right: '0px !important'
+              },
+              '& .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider': {
+                width: '5px !important',
+                left: 'auto !important',
+                right: '1px !important',
+                borderRadius: '999px'
+              },
+              '& .xterm .xterm-scrollable-element > .scrollbar.vertical:hover > .slider, & .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider.active':
+                {
+                  width: '6px !important'
+                }
             }}
           />
 
@@ -473,7 +493,6 @@ function AvailableTerminalPanel(props: AvailableTerminalPanelProps): React.JSX.E
                 exitCode={status.exitCode}
                 message={status.message}
                 terminalCount={workspace.snapshot.terminals.length}
-                onCreate={canCreate ? createTerminal : undefined}
               />
             </Box>
           ) : null}

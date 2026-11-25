@@ -5,6 +5,7 @@ import { Box, IconButton, LinearProgress, TextField, Tooltip } from '@mui/materi
 import type { BrowserTabSnapshot } from '../../../../../shared/browserTypes'
 import { PhiIcons } from '../../../icons'
 import { workspacePanelText } from '../../../layout'
+import { isBlankBrowserTab } from '../lib/browserPanelState'
 
 const BackIcon = PhiIcons.action.back
 const RefreshIcon = PhiIcons.action.refresh
@@ -124,7 +125,12 @@ export function BrowserToolbar(props: BrowserToolbarProps): React.JSX.Element {
         </ToolbarButton>
         <ToolbarButton
           label={loading ? browserUi.stopLoading : browserUi.reload}
-          disabled={props.disabled || !props.activeTab || (props.busy && !loading)}
+          disabled={
+            props.disabled ||
+            !props.activeTab ||
+            (!loading && isBlankBrowserTab(props.activeTab)) ||
+            (props.busy && !loading)
+          }
           pressed={loading}
           onClick={props.onReloadOrStop}
         >

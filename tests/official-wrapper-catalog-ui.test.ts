@@ -20,6 +20,8 @@ import {
   officialWrapperCategoryGroups,
   officialWrapperDefaultToolId,
   officialWrapperDetailManifest,
+  officialWrapperGroupChoices,
+  officialWrapperGroupIcon,
   officialWrapperGroupsQuery,
   officialWrapperRegistryId,
   officialWrapperToolChoices,
@@ -525,4 +527,117 @@ test('new Chinese Wrapper catalog copy includes the required group and tool word
   )
   assert.match(toolsMarkup, /搜索工具/)
   assert.match(toolsMarkup, /1 个工具/)
+})
+
+test('group rows expose direct suite install/uninstall actions and tier-distinct icons instead of View tools', () => {
+  setUiLanguage('zh-CN')
+  const abraChoice: WrapperCatalogChoice = {
+    ...registryChoice(),
+    id: 'module-nf-core-abra2',
+    title: 'abra2',
+    category: '模块',
+    installed: false,
+    selected: false,
+    enabled: false
+  }
+  const installedSubworkflow: WrapperCatalogChoice = {
+    ...registryChoice(),
+    id: 'subworkflow-nf-core-abundance-differential-filter',
+    title: 'abundance-differential-filter',
+    category: '子流程',
+    registryEntry: {
+      ...registryEntry(),
+      id: 'subworkflow-nf-core-abundance-differential-filter',
+      icon: { key: 'owned-subworkflow-icon' }
+    },
+    installed: true,
+    selected: true,
+    enabled: true
+  }
+  const siblingPrefixChoice: WrapperCatalogChoice = {
+    ...registryChoice(),
+    id: 'module-nf-core-abra2fixprefix',
+    title: 'abra2fixprefix',
+    category: '模块'
+  }
+
+  const abraGroup = {
+    suite: 'abra2',
+    count: 1,
+    category: 'modules',
+    categories: { modules: 1 },
+    categoryLabel: '模块'
+  }
+  const subworkflowGroup = {
+    suite: 'abundance_differential_filter',
+    count: 1,
+    category: 'subworkflows',
+    categories: { subworkflows: 1 },
+    categoryLabel: '子流程'
+  }
+  const workflowGroup = {
+    suite: 'nf-core/rnaseq',
+    count: 1,
+    category: 'workflows',
+    categories: { workflows: 1 },
+    categoryLabel: '工作流'
+  }
+
+  const resolvedAbra = officialWrapperGroupChoices(abraGroup, [abraChoice, siblingPrefixChoice])
+  assert.equal(resolvedAbra.authoritative, true)
+  assert.deepEqual(
+    resolvedAbra.choices?.map(({ choice }) => choice.id),
+    ['module-nf-core-abra2']
+  )
+
+  const resolvedSubworkflow = officialWrapperGroupChoices(subworkflowGroup, [installedSubworkflow])
+  assert.equal(resolvedSubworkflow.authoritative, true)
+  assert.deepEqual(officialWrapperGroupIcon(resolvedSubworkflow.choices), {
+    key: 'owned-subworkflow-icon'
+  })
+
+  const page: PhiWrapperGroupsPage = {
+    view: 'groups',
+    items: [abraGroup, subworkflowGroup, workflowGroup],
+    categories: [
+      { id: 'modules', label: '模块', count: 1 },
+      { id: 'subworkflows', label: '子流程', count: 1 },
+      { id: 'workflows', label: '工作流', count: 1 }
+    ],
+    total: 3,
+    page: 1,
+    pageSize: 10,
+    pageCount: 1
+  }
+  const markup = themed(
+    createElement(OfficialWrapperGroupsView, {
+      page,
+      categoryId: 'all',
+      query: '',
+      loading: false,
+      busy: false,
+      rowsPerPage: 10,
+      registryChoices: [abraChoice, installedSubworkflow, siblingPrefixChoice],
+      renderSuiteAction: (suite, choices) =>
+        createElement(
+          'button',
+          { 'data-suite-row-action': suite },
+          choices.every(({ choice }) => choice.installed && choice.enabled) ? '卸载' : '安装'
+        ),
+      onCategoryChange: () => undefined,
+      onQueryChange: () => undefined,
+      onPageChange: () => undefined,
+      onRowsPerPageChange: () => undefined,
+      onOpen: () => undefined,
+      onClose: () => undefined
+    })
+  )
+
+  assert.doesNotMatch(markup, /查看工具/)
+  assert.match(markup, /data-suite-row-action="abra2">安装</)
+  assert.match(markup, /data-suite-row-action="abundance_differential_filter">卸载</)
+  assert.match(markup, /data-phi-wrapper-tier="module"/)
+  assert.match(markup, /data-phi-wrapper-tier="subworkflow"/)
+  assert.match(markup, /data-phi-wrapper-tier="workflow"/)
+  assert.match(markup, /data-phi-resource-icon-key="owned-subworkflow-icon"/)
 })

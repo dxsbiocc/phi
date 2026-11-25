@@ -11,16 +11,18 @@ import { useBrowserWorkspace } from './hooks/useBrowserWorkspace'
 import {
   activeBrowserTab,
   browserActivateTabCommand,
+  browserAddressInputValue,
   browserCloseTabCommand,
   browserErrorMessage,
   browserHistoryCommand,
-  browserNewTabCommand,
+  browserNewTabCommands,
   browserOpenExternalCommand,
   browserReloadCommand,
   browserRestoreCommand,
   browserRetryCommand,
   browserSubmitCommand,
-  canPresentNativeBrowser
+  canPresentNativeBrowser,
+  isBlankBrowserTab
 } from './lib/browserPanelState'
 
 export interface BrowserStatusPaneProps {
@@ -67,6 +69,9 @@ export function BrowserStatusPane(props: BrowserStatusPaneProps): React.JSX.Elem
           : browserUi.pageFailedToLoadPleaseTryAgain
     detail = browserUi.checkTheAddressOrNetworkConnectionAndTry
     action = { label: browserUi.retry, run: props.onRetry }
+  } else if (isBlankBrowserTab(props.activeTab)) {
+    title = browserUi.enterAnAddressToStartBrowsing
+    detail = browserUi.hTTPSAndLocalhostAddressesAreSupported
   } else if (!props.nativeEnabled) {
     title = browserUi.browserContentIsTemporarilyHidden
     detail = browserUi.itWillReappearWhenYouReturnToThe
@@ -149,8 +154,8 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
   })
 
   useEffect(() => {
-    if (!editingAddressRef.current) setAddress(activeTab?.url ?? '')
-  }, [activeTab?.url])
+    if (!editingAddressRef.current) setAddress(browserAddressInputValue(activeTab))
+  }, [activeTab])
 
   const run = useCallback(
     (command: ReturnType<typeof browserReloadCommand>): void => {
@@ -163,7 +168,12 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
     const command = browserSubmitCommand(currentSnapshot, address, workspace.nextRequestId())
     if (command) void workspace.execute(command)
   }
-  const restoreAddress = (): void => setAddress(activeTab?.url ?? '')
+  const restoreAddress = (): void => setAddress(browserAddressInputValue(activeTab))
+  const createNewTab = (): void => {
+    for (const command of browserNewTabCommands(currentSnapshot, workspace.nextRequestId)) {
+      void workspace.execute(command)
+    }
+  }
 
   return (
     <Box
@@ -185,7 +195,7 @@ export default function BrowserPanel(props: BrowserPanelProps): React.JSX.Elemen
         activeTabId={currentSnapshot?.activeTabId ?? null}
         disabled={!props.activePhiSessionId || workspace.loading || workspace.busy}
         headerActions={props.headerActions}
-        onNewTab={() => run(browserNewTabCommand(workspace.nextRequestId()))}
+        onNewTab={createNewTab}
         onActivate={(tabId) =>
           run(browserActivateTabCommand(currentSnapshot, tabId, workspace.nextRequestId()))
         }

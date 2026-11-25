@@ -93,7 +93,7 @@ export function TopRightControls({
               onClick={onRefreshSidePanel}
               sx={buttonSx}
             >
-              <RefreshIcon size={19} />
+              <RefreshIcon size={18.5} />
             </IconButton>
           </span>
         </Tooltip>
@@ -132,7 +132,7 @@ export function TopRightControls({
                 }
               }}
             >
-              <PhiIcons.action.bell aria-hidden size={20} />
+              <PhiIcons.action.bell aria-hidden size={19} />
             </Badge>
           </IconButton>
         </Tooltip>
@@ -175,7 +175,7 @@ export function TopRightControls({
                 }
               }}
             >
-              <GoStack aria-hidden focusable="false" size={20} />
+              <GoStack aria-hidden focusable="false" size={19.5} />
             </Badge>
           </IconButton>
         </Tooltip>
@@ -191,7 +191,7 @@ export function TopRightControls({
             onClick={() => onTogglePanel('terminal')}
             sx={panelButtonSx(activePanels.includes('terminal'))}
           >
-            <GoTerminal aria-hidden focusable="false" size={20} />
+            <GoTerminal aria-hidden focusable="false" size={19.5} />
           </IconButton>
         </Tooltip>
       ) : null}
@@ -206,7 +206,7 @@ export function TopRightControls({
             onClick={() => onTogglePanel('browser')}
             sx={panelButtonSx(activePanels.includes('browser'))}
           >
-            <GoGlobe aria-hidden focusable="false" size={20} />
+            <GoGlobe aria-hidden focusable="false" size={18.5} />
           </IconButton>
         </Tooltip>
       ) : null}

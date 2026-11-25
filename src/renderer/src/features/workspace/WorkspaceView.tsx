@@ -173,6 +173,7 @@ function WorkspaceColumnBody({
 
 export function WorkspaceView({
   active,
+  hidden = false,
   chromeLayout,
   mode,
   workspaceTitle,
@@ -185,6 +186,8 @@ export function WorkspaceView({
 }: {
   /** False outside any workspace view, where the column is an empty placeholder. */
   active: boolean
+  /** True while a right-side panel is maximized across the workspace column. */
+  hidden?: boolean
   chromeLayout: WindowChromeLayout
   mode: WorkspaceViewMode
   workspaceTitle: string
@@ -197,7 +200,14 @@ export function WorkspaceView({
   fileStrip: WorkspaceFileStrip
   content: WorkspaceViewContent
 }): React.JSX.Element {
-  if (!active) return <Box component="main" sx={{ flex: 1, minWidth: 0, height: '100vh' }} />
+  if (!active) {
+    return (
+      <Box
+        component="main"
+        sx={{ display: hidden ? 'none' : 'block', flex: 1, minWidth: 0, height: '100vh' }}
+      />
+    )
+  }
 
   return (
     <Box
@@ -207,7 +217,7 @@ export function WorkspaceView({
         minWidth: 0,
         height: '100vh',
         overflow: 'hidden',
-        display: 'flex',
+        display: hidden ? 'none' : 'flex',
         flexDirection: 'column'
       }}
     >

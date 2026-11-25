@@ -86,6 +86,25 @@ export function createBrowserViewportScheduler(options: {
   }
 }
 
+function isVisibleOverlayElement(element: Element): boolean {
+  const style = window.getComputedStyle(element)
+  return (
+    style.display !== 'none' &&
+    style.visibility !== 'hidden' &&
+    style.visibility !== 'collapse' &&
+    style.opacity !== '0'
+  )
+}
+
+export function browserViewportBlockedByOverlayRects(
+  viewport: BrowserViewportRect,
+  hasBlockingDialog: boolean,
+  overlayRects: readonly BrowserViewportRect[]
+): boolean {
+  if (hasBlockingDialog) return true
+  return overlayRects.some((overlay) => browserViewportRectsOverlap(viewport, overlay))
+}
+
 export function useBrowserViewport(options: {
   bridge: BrowserRendererBridge
   sessionId: string | null
@@ -109,23 +128,28 @@ export function useBrowserViewport(options: {
       return
     }
 
-    const trustedOverlaySelector =
-      '.MuiModal-root, .MuiPopover-root, [role="dialog"], [role="alertdialog"]'
-    const hoverPreviewSelector = '[data-phi-workspace-sidebar-hover-preview]'
+    // Full-window dialogs hide the native WebContentsView unconditionally; non-dialog popovers
+    // (e.g. Terminal menus in another workbench slot) only hide it when their paper overlaps.
+    const blockingDialogSelector =
+      '.MuiDialog-root, .MuiModal-root:not(.MuiPopover-root), [role="dialog"], [role="alertdialog"]'
+    const positionedOverlaySelector =
+      '[data-phi-workspace-sidebar-hover-preview], .MuiPopover-root .MuiPaper-root'
     const getUnobstructedRect = (): BrowserViewportRect | null => {
       const rect = contentRef.current?.getBoundingClientRect() ?? null
-      if (!rect || document.querySelector(trustedOverlaySelector)) return null
-      for (const preview of document.querySelectorAll(hoverPreviewSelector)) {
-        const style = window.getComputedStyle(preview)
-        if (
-          style.display === 'none' ||
-          style.visibility === 'hidden' ||
-          style.visibility === 'collapse' ||
-          style.opacity === '0'
-        ) {
-          continue
-        }
-        if (browserViewportRectsOverlap(rect, preview.getBoundingClientRect())) return null
+      if (!rect) return null
+      const overlayRects: BrowserViewportRect[] = []
+      for (const overlay of document.querySelectorAll(positionedOverlaySelector)) {
+        if (!isVisibleOverlayElement(overlay)) continue
+        overlayRects.push(overlay.getBoundingClientRect())
+      }
+      if (
+        browserViewportBlockedByOverlayRects(
+          rect,
+          Boolean(document.querySelector(blockingDialogSelector)),
+          overlayRects
+        )
+      ) {
+        return null
       }
       return rect
     }
@@ -140,26 +164,30 @@ export function useBrowserViewport(options: {
       requestFrame: (callback) => window.requestAnimationFrame(callback),
       cancelFrame: (id) => window.cancelAnimationFrame(id)
     })
-    const observedPreviews = new Set<Element>()
+    const observedOverlays = new Set<Element>()
     let observer: ResizeObserver | null = null
     const updateForTrustedOverlay = (): void => {
-      const previews = new Set(document.querySelectorAll(hoverPreviewSelector))
-      for (const preview of observedPreviews) {
-        if (previews.has(preview)) continue
-        observer?.unobserve(preview)
-        observedPreviews.delete(preview)
+      const overlays = new Set(document.querySelectorAll(positionedOverlaySelector))
+      for (const overlay of observedOverlays) {
+        if (overlays.has(overlay)) continue
+        observer?.unobserve(overlay)
+        observedOverlays.delete(overlay)
       }
-      for (const preview of previews) {
-        if (observedPreviews.has(preview)) continue
-        observer?.observe(preview)
-        observedPreviews.add(preview)
+      for (const overlay of overlays) {
+        if (observedOverlays.has(overlay)) continue
+        observer?.observe(overlay)
+        observedOverlays.add(overlay)
       }
-      if (document.querySelector(trustedOverlaySelector)) scheduler.hide()
+      if (getUnobstructedRect() === null) scheduler.hide()
       else scheduler.schedule()
     }
     observer =
       typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateForTrustedOverlay)
-    if (contentRef.current) observer?.observe(contentRef.current)
+    if (contentRef.current) {
+      observer?.observe(contentRef.current)
+      const workbenchRoot = contentRef.current.closest('[data-phi-workspace-tools-side-panel]')
+      if (workbenchRoot) observer?.observe(workbenchRoot)
+    }
     const overlayObserver =
       typeof MutationObserver === 'undefined' ? null : new MutationObserver(updateForTrustedOverlay)
     overlayObserver?.observe(document.documentElement, {
@@ -174,7 +202,7 @@ export function useBrowserViewport(options: {
 
     return () => {
       observer?.disconnect()
-      observedPreviews.clear()
+      observedOverlays.clear()
       overlayObserver?.disconnect()
       window.removeEventListener('resize', onWindowResize)
       scheduler.dispose()

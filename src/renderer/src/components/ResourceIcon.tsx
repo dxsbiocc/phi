@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Box, type SxProps, type Theme } from '@mui/material'
 import type { ResourceIconRef } from '../../../shared/resourceIconTypes'
-import { PhiIcons } from '../icons'
+import { PhiIcons, type PhiIconComponent } from '../icons'
 import { observeResourceIconVisibility, resourceIconCache } from '../lib/resourceIcons'
 
 export type ResourceIconProps = {
   component?: 'div' | 'span'
   icon?: ResourceIconRef
   kind: 'agent' | 'mcp' | 'plugin' | 'skill' | 'wrapper'
+  fallbackIcon?: PhiIconComponent
   size?: number
   fallbackSize?: number
   sx?: SxProps<Theme>
@@ -18,6 +19,7 @@ export function ResourceIcon({
   component = 'div',
   icon,
   kind,
+  fallbackIcon,
   size = 32,
   fallbackSize = Math.round(size * 0.6),
   sx = []
@@ -26,7 +28,7 @@ export function ResourceIcon({
   const node = useRef<HTMLDivElement | null>(null)
   const [loaded, setLoaded] = useState<{ key: string; source: string | null } | null>(null)
   const source = key ? (loaded?.key === key ? loaded.source : resourceIconCache.peek(key)) : null
-  const FallbackIcon = PhiIcons.entity[kind]
+  const FallbackIcon = fallbackIcon ?? PhiIcons.entity[kind]
 
   useEffect(() => {
     if (!key || !node.current) return undefined

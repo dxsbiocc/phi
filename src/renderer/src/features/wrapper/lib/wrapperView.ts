@@ -160,6 +160,32 @@ export function parseWrapperCompositionId(id: string): {
   return { provider, tier, name: rest.join('/') }
 }
 
+export type WrapperTierKind = 'module' | 'subworkflow' | 'workflow'
+
+/** Normalize raw tier ids and localized category names to a stable visual tier kind. */
+export function resolveWrapperTierKind(tierOrCategory?: string): WrapperTierKind {
+  const normalized = tierOrCategory?.trim().toLowerCase() ?? ''
+  if (normalized === 'workflows' || normalized === 'workflow' || tierOrCategory === '工作流') {
+    return 'workflow'
+  }
+  if (
+    normalized === 'subworkflows' ||
+    normalized === 'subworkflow' ||
+    tierOrCategory === '子流程'
+  ) {
+    return 'subworkflow'
+  }
+  return 'module'
+}
+
+export function wrapperTierPaletteColor(
+  tierKind: WrapperTierKind
+): 'primary' | 'info' | 'secondary' {
+  if (tierKind === 'workflow') return 'secondary'
+  if (tierKind === 'subworkflow') return 'info'
+  return 'primary'
+}
+
 /** Preserve established category/filter keys; translate only their displayed labels. */
 export function wrapperTierCategory(tier: string): string {
   if (tier === 'modules') return '模块'

@@ -14,8 +14,8 @@ export const windowUiCopy = defineCopy(
       terminal: 'Terminal',
       browser: 'Browser'
     },
-    restorePanels: 'Restore split panels',
-    expandPanel: (label: string) => `Expand ${label} in the workspace`,
+    restorePanels: 'Restore panel size',
+    expandPanel: (label: string) => `Expand ${label} in workspace`,
     refreshJobs: 'Refresh Background Jobs',
     closePanel: (label: string) => `Close ${label}`,
     noWorkspace: 'No workspace yet',
@@ -46,8 +46,8 @@ export const windowUiCopy = defineCopy(
       terminal: '终端',
       browser: '浏览器'
     },
-    restorePanels: '还原分屏',
-    expandPanel: (label) => `在右侧工作区展开${label}`,
+    restorePanels: '还原面板大小',
+    expandPanel: (label) => `在工作区展开${label}`,
     refreshJobs: '刷新后台任务',
     closePanel: (label) => `关闭${label}`,
     noWorkspace: '还没有工作空间',

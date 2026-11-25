@@ -193,7 +193,7 @@ test('terminal title bar uses the shared height without an extra divider', () =>
 })
 
 test('terminal title bar switches to a compact selector for multiple terminals', () => {
-  const markup = titleBarMarkup({
+  const closedMarkup = titleBarMarkup({
     terminals: [
       terminal(),
       terminal({ terminalId: 'terminal-2', title: 'Terminal 2', initialCwd: '/work/other' })
@@ -201,11 +201,28 @@ test('terminal title bar switches to a compact selector for multiple terminals',
     activeTerminalId: 'terminal-2'
   })
 
-  assert.match(markup, /aria-label="选择终端"/)
-  assert.match(markup, />Terminal 1</)
-  assert.match(markup, />Terminal 2</)
-  assert.match(markup, /value="terminal-2" selected=""/)
-  assert.doesNotMatch(markup, />Terminal<\/span>/)
+  assert.doesNotMatch(closedMarkup, /<select/)
+  assert.match(closedMarkup, /data-phi-panel-item-switcher="true"/)
+  assert.match(closedMarkup, /aria-label="选择终端"/)
+  assert.match(closedMarkup, /aria-haspopup="menu"/)
+  assert.match(closedMarkup, />Terminal 2</)
+  assert.match(closedMarkup, /data-phi-panel-item-count="true"[^>]*>2</)
+  assert.doesNotMatch(closedMarkup, />Terminal<\/span>/)
+
+  const openMarkup = titleBarMarkup({
+    terminals: [
+      terminal(),
+      terminal({ terminalId: 'terminal-2', title: 'Terminal 2', initialCwd: '/work/other' })
+    ],
+    activeTerminalId: 'terminal-2',
+    switcherDefaultOpen: true
+  })
+  assert.match(openMarkup, />Terminal 1</)
+  assert.match(openMarkup, />Terminal 2</)
+  assert.match(openMarkup, /data-phi-terminal-item="inactive"/)
+  assert.match(openMarkup, /data-phi-terminal-item="active"/)
+  assert.match(openMarkup, /aria-label="结束 Terminal 1"/)
+  assert.match(openMarkup, /aria-label="结束 Terminal 2"/)
 })
 
 test('SSH terminal titles display the server identifier', () => {
@@ -223,7 +240,8 @@ test('SSH terminal titles display the server identifier', () => {
         host: 'ssh',
         hostLabel: 'cluster-a'
       })
-    ]
+    ],
+    switcherDefaultOpen: true
   })
   assert.match(multiple, />cluster-a · Terminal 1</u)
   assert.match(multiple, />cluster-a · Terminal 2</u)
@@ -251,15 +269,12 @@ test('terminal status panes cover lifecycle, platform, remote, and limit states'
     const markup = renderWithTheme(
       createElement(TerminalStatusPane, {
         kind: item.kind,
-        onCreate: noop,
         ...item.props
       })
     )
     assert.match(markup, new RegExp(`data-phi-terminal-status="${item.kind}"`))
     assert.match(markup, item.expected)
-    if (item.kind === 'exited' || item.kind === 'failed') {
-      assert.match(markup, />新建终端</)
-    }
+    assert.doesNotMatch(markup, /<button|>新建终端</u)
   }
 
   const limit = renderWithTheme(
@@ -271,12 +286,11 @@ test('terminal status panes cover lifecycle, platform, remote, and limit states'
   const disconnected = renderWithTheme(
     createElement(TerminalStatusPane, {
       kind: 'exited',
-      message: '连接已断开，可重新打开终端',
-      onCreate: noop
+      message: '连接已断开，可重新打开终端'
     })
   )
   assert.match(disconnected, /连接已断开，可重新打开终端/u)
-  assert.match(disconnected, />新建终端</u)
+  assert.doesNotMatch(disconnected, /<button|>新建终端</u)
 })
 
 test('multi-line paste preview shows bounded context and explicit send/cancel actions', () => {
@@ -463,6 +477,10 @@ test('terminal panel renders the thin reference-style shell without creating dur
     // The workbench slot owns the border; the panel must not draw a second one inside it.
     assert.doesNotMatch(markup, /border-radius:16px/)
     assert.match(markup, /\.xterm-viewport\{[^}]*background-color:#(?:fff|ffffff)(?:;|\})/iu)
+    assert.match(
+      markup,
+      /\.xterm \.xterm-scrollable-element\s*>\s*\.scrollbar\.vertical\s*>\s*\.slider\{[^}]*width:5px\s*!important/u
+    )
     assert.match(markup, /正在启动 Shell/)
     assert.doesNotMatch(markup, /当前没有终端/)
   } finally {

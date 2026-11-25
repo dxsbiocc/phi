@@ -10,7 +10,6 @@ import type {
 } from '../../../../../shared/packageManagerTypes'
 import { errorMessage } from '../../../../../shared/errorCodes'
 import type { WrapperCompositionCatalogItem } from '../../../../../shared/wrapperCompositionManifestTypes'
-import { ResourceIcon } from '../../../components/ResourceIcon'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
 import { CatalogAddButton } from '../../../components/catalog/CatalogAddButton'
 import { useBusyKeys } from '../../../components/catalog/useBusyKeys'
@@ -47,6 +46,7 @@ import { WrapperSuiteInstallConfirmDialog } from './WrapperSuiteInstallConfirmDi
 import { OfficialWrapperCatalog } from './OfficialWrapperCatalog'
 import { WrapperPackageDetailPage } from './WrapperPackageDetailPage'
 import { WrapperRemovalDialog } from './WrapperRemovalDialog'
+import { WrapperResourceIcon } from './WrapperResourceIcon'
 import { WrapperSuiteRemovalDialog } from './WrapperSuiteRemovalDialog'
 
 const DIRECTORY_KEY = '__directory__'
@@ -255,7 +255,7 @@ export function WrapperCatalogDialog({
     return (
       <Button
         size="small"
-        variant="outlined"
+        variant={removing ? 'outlined' : 'contained'}
         color={removing ? 'error' : 'primary'}
         disabled={working || missingRegistryEntry}
         onClick={() => void (removing ? removal.request(choice.id) : add(choice))}
@@ -378,6 +378,7 @@ export function WrapperCatalogDialog({
             </>
           }
           renderSuiteAction={renderSuiteAction}
+          onInstallSuite={(suite, suiteChoices) => suiteActions.install(suite, suiteChoices)}
           onUnavailable={showRegistryFallback}
           onClose={close}
         />
@@ -457,10 +458,9 @@ export function WrapperCatalogDialog({
                     rowKey: choice.id,
                     id: choice.id,
                     icon: (
-                      <ResourceIcon
+                      <WrapperResourceIcon
                         icon={wrapperChoiceIcon(choice)}
-                        kind="wrapper"
-                        sx={{ color: 'primary.main' }}
+                        tier={choice.category}
                       />
                     ),
                     title: choice.title,

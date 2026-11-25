@@ -43,9 +43,13 @@ function renderAnalysisView(props: AnalysisViewProps = {}): string {
 
 function renderWorkspaceSidePanel(
   options: {
-    slots?: Array<'jobs' | 'terminal' | 'browser'>
-    maximized?: 'jobs' | 'terminal' | 'browser' | null
-    singleVisibleMode?: 'jobs' | 'terminal' | 'browser' | null
+    slots?: Array<'jobs' | 'messages' | 'terminal' | 'browser'>
+    columns?: [
+      Array<'jobs' | 'messages' | 'terminal' | 'browser'>,
+      Array<'jobs' | 'messages' | 'terminal' | 'browser'>
+    ]
+    maximized?: 'jobs' | 'messages' | 'terminal' | 'browser' | null
+    singleVisibleMode?: 'jobs' | 'messages' | 'terminal' | 'browser' | null
     content?: string
     onRefreshJobs?: () => void
   } = {}
@@ -58,6 +62,7 @@ function renderWorkspaceSidePanel(
       createElement(WorkspaceSidePanel, {
         width: 340,
         slots: options.slots ?? ['terminal'],
+        columns: options.columns,
         maximized: options.maximized ?? null,
         singleVisibleMode: options.singleVisibleMode ?? null,
         onCloseSlot: () => undefined,
@@ -242,7 +247,7 @@ test('browser side panel renders passed browser content instead of a placeholder
   assert.match(markup, /border:1px solid/)
   assert.match(markup, /border-radius:16px/)
   assert.match(markup, /overflow:hidden/)
-  assert.doesNotMatch(markup, /aria-label="在右侧工作区展开浏览器"/)
+  assert.match(markup, /aria-label="在工作区展开浏览器"/)
   assert.match(markup, /aria-label="关闭浏览器"/)
 })
 
@@ -345,12 +350,37 @@ test('workspace side panel stacks two slots and gives each slot local controls',
   assert.match(markup, /data-phi-workspace-side-panel-modes="browser,terminal"/)
   assert.match(markup, /data-phi-workspace-side-panel-slot="browser"/)
   assert.match(markup, /data-phi-workspace-side-panel-slot="terminal"/)
-  assert.match(markup, /aria-label="在右侧工作区展开浏览器"/)
+  assert.match(markup, /aria-label="在工作区展开浏览器"/)
   assert.match(markup, /aria-label="关闭浏览器"/)
-  assert.match(markup, /aria-label="在右侧工作区展开终端"/)
+  assert.match(markup, /aria-label="在工作区展开终端"/)
   assert.match(markup, /aria-label="关闭终端"/)
   assert.doesNotMatch(markup, /data-phi-workspace-window-controls-reserve/)
   assert.match(markup, /grid-template-rows:repeat\(2, minmax\(0, 1fr\)\)/)
+
+  const threeMarkup = renderWorkspaceSidePanel({
+    slots: ['terminal', 'messages', 'jobs'],
+    content: '三窗格内容'
+  })
+  assert.match(threeMarkup, /data-phi-workspace-side-panel-columns="2"/)
+  assert.match(threeMarkup, /grid-template-columns:repeat\(2, minmax\(0, 1fr\)\)/)
+  assert.match(threeMarkup, /grid-row:1\s*\/\s*-1/)
+
+  const leftSingleThreeMarkup = renderWorkspaceSidePanel({
+    slots: ['terminal', 'messages', 'jobs'],
+    columns: [['terminal'], ['messages', 'jobs']],
+    content: '左一右二内容'
+  })
+  assert.match(leftSingleThreeMarkup, /grid-column:1;grid-row:1\s*\/\s*-1/)
+  assert.match(leftSingleThreeMarkup, /grid-column:2;grid-row:1/)
+  assert.match(leftSingleThreeMarkup, /grid-column:2;grid-row:2/)
+
+  const fourMarkup = renderWorkspaceSidePanel({
+    slots: ['terminal', 'messages', 'jobs', 'browser'],
+    content: '四窗格内容'
+  })
+  assert.match(fourMarkup, /data-phi-workspace-side-panel-columns="2"/)
+  assert.match(fourMarkup, /data-phi-workspace-side-panel-modes="terminal,messages,jobs,browser"/)
+  assert.doesNotMatch(fourMarkup, /grid-row:1\s*\/\s*-1/)
 })
 
 test('workspace side panel renders only the maximized slot and offers restore', () => {
@@ -362,7 +392,8 @@ test('workspace side panel renders only the maximized slot and offers restore', 
 
   assert.doesNotMatch(markup, /data-phi-workspace-side-panel-slot="browser"/)
   assert.match(markup, /data-phi-workspace-side-panel-slot="terminal"/)
-  assert.match(markup, /aria-label="还原分屏"/)
+  assert.match(markup, /aria-label="还原面板大小"/)
+  assert.match(markup, /height:100%/)
 })
 
 test('workspace side panel does not render the workspace file tree', () => {

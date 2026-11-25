@@ -47,8 +47,20 @@ type ActivityBarIconProps = {
 }
 type ActivityBarIconComponent = (props: ActivityBarIconProps) => React.JSX.Element
 const activityBarIconBoxSize = 24
-const activityBarPhiIconGlyphSize = 24
+// SiJupyter fills its 0..24 viewBox vertically with solid arcs, whereas Octicons include internal
+// padding; calibrate per-glyph sizes so every icon in the 48px rail shares an ~17.5px optical box.
+const activityBarPhiIconGlyphSize = 20
 const activityBarReactIconGlyphSize = 20
+const activityBarOpticalGlyphSize = new Map<IconType, number>([
+  [GoComment, 20],
+  [GoProject, 20.5],
+  [GoFileDirectory, 20.5],
+  [GoPackage, 20],
+  [GoBook, 18.5],
+  [GoWorkflow, 19],
+  [GoContainer, 19],
+  [GoGear, 19]
+])
 
 function activityBarIconSize(
   fontSize?: ActivityBarIconFontSize,
@@ -94,6 +106,7 @@ function createActivityBarPhiIcon(Icon: PhiIconComponent): ActivityBarIconCompon
 }
 
 function createActivityBarReactIcon(Icon: IconType): ActivityBarIconComponent {
+  const defaultGlyphSize = activityBarOpticalGlyphSize.get(Icon) ?? activityBarReactIconGlyphSize
   return function ActivityBarReactIcon({
     fontSize,
     size
@@ -104,7 +117,7 @@ function createActivityBarReactIcon(Icon: IconType): ActivityBarIconComponent {
         <Icon
           aria-hidden
           focusable="false"
-          size={activityBarIconSize(fontSize, size, activityBarReactIconGlyphSize)}
+          size={activityBarIconSize(fontSize, size, defaultGlyphSize)}
           style={{ display: 'block' }}
         />
       </ActivityBarIconBox>

@@ -20,10 +20,12 @@ import {
  * returned actions instead of the hook learning about them.
  */
 
-/** Width of the docked panel before the user drags it. */
+/** Width of a single docked column before the user drags it. */
 const defaultWorkspaceSidePanelWidth = 340
 export const minWorkspaceSidePanelWidth = 240
 export const maxWorkspaceSidePanelWidth = 520
+/** Gap between side-by-side columns when 3 or 4 panels are docked (matches workspacePanelGap = 8px). */
+const workspaceSidePanelColumnGap = 8
 /** Below this viewport width the panel floats over the workspace instead of docking. */
 const overlayViewportWidth = 1100
 /** Two slots may share the dock only when the window is this large. */
@@ -110,15 +112,26 @@ export function useWorkspaceSidePanel(options: {
   const canSplit = viewport.width >= splitViewportWidth && viewport.height >= splitViewportHeight
   const slots = state.slots
   const collapsed = slots.length === 0
-  const effectiveWidth = workspaceSidePanelWidthForViewport({
+  const singleColumnWidth = workspaceSidePanelWidthForViewport({
     preferredWidth: width,
     viewportWidth: viewport.width,
     navigationWidth,
     compactMinimum: minWorkspaceSidePanelWidth,
     maximum: maxWorkspaceSidePanelWidth
   })
-  const overlay =
-    viewport.width < overlayViewportWidth || effectiveWidth < minWorkspaceSidePanelWidth
+  const twoColumnActive = canSplit && state.maximized === null && slots.length > 2
+  const twoColumnWidth = workspaceSidePanelWidthForViewport({
+    preferredWidth: width * 2 + workspaceSidePanelColumnGap,
+    viewportWidth: viewport.width,
+    navigationWidth,
+    compactMinimum: minWorkspaceSidePanelWidth * 2 + workspaceSidePanelColumnGap,
+    maximum: maxWorkspaceSidePanelWidth * 2 + workspaceSidePanelColumnGap
+  })
+  const effectiveWidth = twoColumnActive ? twoColumnWidth : singleColumnWidth
+  const minDockedWidth = twoColumnActive
+    ? minWorkspaceSidePanelWidth * 2 + workspaceSidePanelColumnGap
+    : minWorkspaceSidePanelWidth
+  const overlay = viewport.width < overlayViewportWidth || effectiveWidth < minDockedWidth
   const activeWidth = overlay
     ? Math.min(width, Math.max(0, viewport.width - overlayViewportGutter))
     : effectiveWidth

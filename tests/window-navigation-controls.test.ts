@@ -58,5 +58,7 @@ test('the window sidebar toggle uses the shared collapse/expand sidebar icons', 
 
   assert.match(source, /GoSidebarCollapse/)
   assert.match(source, /GoSidebarExpand/)
+  assert.match(source, /<SidebarToggleIcon size=\{20\.5\} \/>/)
+  assert.match(source, /<GoSearch size=\{20\} \/>/)
   assert.doesNotMatch(source, /TbLayoutSidebar/)
 })

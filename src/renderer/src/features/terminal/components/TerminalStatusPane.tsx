@@ -1,6 +1,6 @@
 import { terminalUi } from '../lib/terminalUi'
 import { useUiLanguage } from '../../../lib/i18n'
-import { Box, Button, Typography } from '@mui/material'
+import { Box, Typography } from '@mui/material'
 import { workspacePanelText } from '../../../layout'
 
 export type TerminalStatusKind =
@@ -12,29 +12,25 @@ export interface TerminalStatusPaneProps {
   message?: string
   terminalCount?: number
   compact?: boolean
-  onCreate?(): void
 }
 
 function statusCopy(props: TerminalStatusPaneProps): {
   title: string
   detail?: string
   alert?: boolean
-  canCreate?: boolean
 } {
   switch (props.kind) {
     case 'starting':
       return { title: terminalUi.startingShell }
     case 'exited':
       return {
-        title: props.message || terminalUi.shellExitedCodeValue(props.exitCode ?? '—'),
-        canCreate: true
+        title: props.message || terminalUi.shellExitedCodeValue(props.exitCode ?? '—')
       }
     case 'failed':
       return {
         title: props.message || terminalUi.shellFailedToStart,
         detail: terminalUi.createANewTerminalAndTryAgain,
-        alert: true,
-        canCreate: true
+        alert: true
       }
     case 'remote':
       return { title: terminalUi.openARemoteProjectSessionFirst }
@@ -93,11 +89,6 @@ export function TerminalStatusPane(props: TerminalStatusPaneProps): React.JSX.El
           >
             {copy.detail}
           </Typography>
-        ) : null}
-        {copy.canCreate && props.onCreate ? (
-          <Button size="small" variant="outlined" onClick={props.onCreate} sx={{ mt: 1.25 }}>
-            {terminalUi.newTerminal}
-          </Button>
         ) : null}
       </Box>
     </Box>

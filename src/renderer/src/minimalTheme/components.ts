@@ -248,21 +248,26 @@ export function buildMinimalComponents(isDark: boolean): ThemeOptions['component
       styleOverrides: {
         paper: ({ theme }) => ({
           borderRadius: 12,
-          boxShadow: theme.customShadows.dropdown,
-          // Frosted glass: translucent surface + backdrop blur.
-          backgroundColor: alpha(theme.palette.background.paper, isDark ? 0.85 : 0.9),
+          border: `1px solid ${alpha(theme.palette.text.primary, isDark ? 0.16 : 0.14)}`,
+          boxShadow: isDark
+            ? '0 12px 32px -4px rgba(0, 0, 0, 0.56), 0 2px 8px rgba(0, 0, 0, 0.32)'
+            : '0 10px 28px -4px rgba(15, 23, 42, 0.14), 0 2px 6px rgba(15, 23, 42, 0.06)',
+          backgroundColor: alpha(theme.palette.background.paper, isDark ? 0.94 : 0.98),
           backdropFilter: 'blur(20px) saturate(1.5)',
           WebkitBackdropFilter: 'blur(20px) saturate(1.5)'
         }),
-        list: { padding: 8 }
+        list: { padding: 6 }
       }
     },
     MuiPopover: {
       styleOverrides: {
         paper: ({ theme }) => ({
           borderRadius: 12,
-          boxShadow: theme.customShadows.dropdown,
-          backgroundColor: alpha(theme.palette.background.paper, isDark ? 0.85 : 0.9),
+          border: `1px solid ${alpha(theme.palette.text.primary, isDark ? 0.16 : 0.14)}`,
+          boxShadow: isDark
+            ? '0 12px 32px -4px rgba(0, 0, 0, 0.56), 0 2px 8px rgba(0, 0, 0, 0.32)'
+            : '0 10px 28px -4px rgba(15, 23, 42, 0.14), 0 2px 6px rgba(15, 23, 42, 0.06)',
+          backgroundColor: alpha(theme.palette.background.paper, isDark ? 0.94 : 0.98),
           backdropFilter: 'blur(20px) saturate(1.5)',
           WebkitBackdropFilter: 'blur(20px) saturate(1.5)'
         })

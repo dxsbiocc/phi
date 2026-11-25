@@ -111,7 +111,39 @@ test('browser toolbar disables explicit system open for blank restorable and fai
 })
 
 test('browser tabs expose compact accessible multi-page controls without close propagation', () => {
-  const markup = renderWithTheme(
+  const singleBlankMarkup = renderWithTheme(
+    createElement(BrowserTabs, {
+      tabs: [tab({ id: 'tab-blank', title: '', url: 'about:blank' })],
+      activeTabId: 'tab-blank',
+      disabled: false,
+      onNewTab: () => undefined,
+      onActivate: () => undefined,
+      onClose: () => undefined
+    } satisfies ComponentProps<typeof BrowserTabs>)
+  )
+  assert.match(singleBlankMarkup, /data-phi-browser-empty-tab-title="true"/)
+  assert.match(singleBlankMarkup, />新标签页</)
+  assert.doesNotMatch(singleBlankMarkup, /aria-label="关闭 新标签页"/)
+  assert.doesNotMatch(singleBlankMarkup, /data-phi-panel-item-switcher="true"/)
+
+  const singleMarkup = renderWithTheme(
+    createElement(BrowserTabs, {
+      tabs: [tab({ id: 'tab-1', title: 'Documentation' })],
+      activeTabId: 'tab-1',
+      disabled: false,
+      onNewTab: () => undefined,
+      onActivate: () => undefined,
+      onClose: () => undefined
+    } satisfies ComponentProps<typeof BrowserTabs>)
+  )
+  assert.match(singleMarkup, /data-phi-browser-tabs="true"/)
+  assert.match(singleMarkup, /data-phi-browser-tab="active"/)
+  assert.doesNotMatch(singleMarkup, /data-phi-panel-item-switcher="true"/)
+  assert.match(singleMarkup, />Documentation</)
+  assert.match(singleMarkup, /aria-label="关闭 Documentation"/)
+  assert.match(singleMarkup, /aria-label="新建标签页"/)
+
+  const closedMultiMarkup = renderWithTheme(
     createElement(BrowserTabs, {
       tabs: [
         tab({ id: 'tab-1', title: 'Documentation' }),
@@ -130,14 +162,40 @@ test('browser tabs expose compact accessible multi-page controls without close p
       onClose: () => undefined
     } satisfies ComponentProps<typeof BrowserTabs>)
   )
+  assert.doesNotMatch(closedMultiMarkup, /<select/)
+  assert.match(closedMultiMarkup, /data-phi-panel-item-switcher="true"/)
+  assert.match(closedMultiMarkup, /aria-label="选择标签页"/)
+  assert.match(closedMultiMarkup, /aria-haspopup="menu"/)
+  assert.match(closedMultiMarkup, /data-phi-panel-item-count="true"[^>]*>3</)
+  assert.match(closedMultiMarkup, /height:32px/)
+  assert.match(closedMultiMarkup, /width:28px/)
+
+  const markup = renderWithTheme(
+    createElement(BrowserTabs, {
+      tabs: [
+        tab({ id: 'tab-1', title: 'Documentation' }),
+        tab({
+          id: 'tab-2',
+          title: '',
+          url: 'https://docs.example.test/reference',
+          phase: 'loading'
+        }),
+        tab({ id: 'tab-3', title: '', url: 'about:blank' })
+      ],
+      activeTabId: 'tab-1',
+      disabled: false,
+      switcherDefaultOpen: true,
+      onNewTab: () => undefined,
+      onActivate: () => undefined,
+      onClose: () => undefined
+    } satisfies ComponentProps<typeof BrowserTabs>)
+  )
 
   assert.match(markup, /data-phi-browser-tabs="true"/)
-  assert.match(markup, /role="tablist"/)
+  assert.match(markup, /role="menu"/)
   assert.match(markup, /aria-label="浏览器标签页"/)
   assert.match(markup, /data-phi-browser-tab="active"/)
-  assert.match(markup, /aria-selected="true"/)
   assert.match(markup, /data-phi-browser-tab="inactive"/)
-  assert.match(markup, /aria-selected="false"/)
   assert.match(markup, />Documentation</)
   assert.match(markup, />docs\.example\.test</)
   assert.match(markup, />新标签页</)
@@ -145,33 +203,28 @@ test('browser tabs expose compact accessible multi-page controls without close p
   assert.match(markup, /role="progressbar"/)
   assert.match(markup, /aria-label="关闭 Documentation"/)
   assert.match(markup, /aria-label="新建标签页"/)
-  assert.match(markup, /overflow-x:auto/)
-  assert.match(markup, /height:32px/)
-  assert.match(markup, /min-height:32px/)
-  assert.match(markup, /width:28px/)
   assert.doesNotMatch(markup, /data-phi-browser-window-controls-reserve/)
 
   const tabsSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/features/browser/components/BrowserTabs.tsx'),
     'utf8'
   )
-  assert.match(tabsSource, /onKeyDown=\{\(event\) => \{[\s\S]{0,180}isBrowserTabActivationKey/)
+  const switcherSource = readFileSync(
+    resolve(process.cwd(), 'src/renderer/src/components/PanelItemSwitcher.tsx'),
+    'utf8'
+  )
+  assert.match(tabsSource, /PanelItemSwitcher/)
   assert.match(
     tabsSource,
     /aria-label=\{browserUi\.closeValue\(label\)[\s\S]{0,400}onClick=\{\(event\) => \{[\s\S]{0,120}event\.stopPropagation\(\)/
   )
   assert.match(
-    tabsSource,
-    /aria-label=\{browserUi\.closeValue\(label\)[\s\S]{0,600}onKeyDown=\{\(event\) => \{[\s\S]{0,160}event\.stopPropagation\(\)/
+    switcherSource,
+    /aria-label=\{item\.closeLabel\}[\s\S]{0,300}onClick=\{\(event\) => \{[\s\S]{0,120}event\.stopPropagation\(\)/
   )
   assert.match(tabsSource, /WebkitAppRegion: 'drag'/)
   assert.match(tabsSource, /WebkitAppRegion: 'no-drag'/)
-  assert.match(tabsSource, /tabIndex=\{selected \|\| fallbackTabStop \? 0 : -1\}/)
-  for (const key of ['ArrowLeft', 'ArrowRight', 'Home', 'End']) {
-    assert.match(tabsSource, new RegExp(`'${key}'`))
-  }
   assert.doesNotMatch(tabsSource, /WorkspaceTab/)
-  assert.doesNotMatch(tabsSource, /borderColor: selected/)
 
   const panelSource = readFileSync(
     resolve(process.cwd(), 'src/renderer/src/features/browser/BrowserPanel.tsx'),
@@ -255,6 +308,21 @@ test('browser panel and status panes render friendly empty restore and failure s
   )
   assert.match(noTab, /输入网址开始浏览/)
   assert.match(noTab, /HTTPS 或 localhost/)
+
+  const blankTab = renderWithTheme(
+    createElement(BrowserStatusPane, {
+      activePhiSessionId: 'phi-session',
+      loading: false,
+      error: null,
+      busy: false,
+      activeTab: tab({ title: '', url: 'about:blank', phase: 'idle' }),
+      nativeEnabled: false,
+      onRestore: () => undefined,
+      onRetry: () => undefined
+    })
+  )
+  assert.match(blankTab, /输入网址开始浏览/)
+  assert.doesNotMatch(blankTab, /浏览器内容已暂时隐藏/)
 
   const loading = renderWithTheme(
     createElement(BrowserStatusPane, {

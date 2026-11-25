@@ -122,7 +122,7 @@ export function AppWindowChrome({
   onTogglePanel: (mode: WorkspaceSidePanelMode) => void
   onOpenBackgroundJob: (key: string) => void
 }): React.JSX.Element {
-  const sidePanelOpen = activePanels.length > 0
+  const sidePanelOpen = activePanels.length > 0 && sidePanelWidth > 0
   const controlsRef = useTrailingChromeReserve(
     sidePanelOpen && sidePanelOverlay ? sidePanelWidth : 0
   )

@@ -70,9 +70,10 @@ test('right-side buttons use Go icons and the left navigation color treatment', 
     controlsSource,
     /import \{ GoGlobe, GoStack, GoSync, GoTerminal \} from 'react-icons\/go'/
   )
-  assert.match(controlsSource, /<GoStack aria-hidden focusable="false" size=\{20\}/)
-  assert.match(controlsSource, /<GoTerminal aria-hidden focusable="false" size=\{20\}/)
-  assert.match(controlsSource, /<GoGlobe aria-hidden focusable="false" size=\{20\}/)
+  assert.match(controlsSource, /<PhiIcons\.action\.bell aria-hidden size=\{19\}/)
+  assert.match(controlsSource, /<GoStack aria-hidden focusable="false" size=\{19\.5\}/)
+  assert.match(controlsSource, /<GoTerminal aria-hidden focusable="false" size=\{19\.5\}/)
+  assert.match(controlsSource, /<GoGlobe aria-hidden focusable="false" size=\{18\.5\}/)
   assert.match(controlsSource, /color: active \? 'primary\.main' : 'text\.secondary'/)
   assert.match(controlsSource, /bgcolor: 'action\.hover'/)
   assert.doesNotMatch(controlsSource, /bgcolor: activePanel ===/)

@@ -25,9 +25,17 @@ export default function WindowNavigationControls({
   const iconButtonSx = {
     width: 28,
     height: 28,
+    borderRadius: 1.5,
     color: 'text.secondary',
+    '&:hover': {
+      bgcolor: 'action.hover',
+      color: 'text.primary'
+    },
     '&.Mui-disabled': {
       color: 'text.disabled'
+    },
+    '& svg': {
+      display: 'block'
     }
   }
   const SidebarToggleIcon = isSidebarOpen ? GoSidebarCollapse : GoSidebarExpand
@@ -53,7 +61,7 @@ export default function WindowNavigationControls({
           onClick={onToggleSidebar}
           sx={{ ...iconButtonSx, color: isSidebarOpen ? 'text.primary' : 'text.secondary' }}
         >
-          <SidebarToggleIcon size={19} />
+          <SidebarToggleIcon size={20.5} />
         </IconButton>
       </Tooltip>
       <Tooltip title={windowUiCopy.searchChats}>
@@ -63,7 +71,7 @@ export default function WindowNavigationControls({
           onClick={onOpenSessionSearch}
           sx={iconButtonSx}
         >
-          <GoSearch size={19} />
+          <GoSearch size={20} />
         </IconButton>
       </Tooltip>
     </Box>

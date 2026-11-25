@@ -98,7 +98,6 @@ import materialZigSvg from '../../../node_modules/material-icon-theme/icons/zig.
 import {
   FiAlertCircle,
   FiAlertTriangle,
-  FiBell,
   FiInfo,
   FiCheck,
   FiCheckCircle,
@@ -122,7 +121,6 @@ import {
   FiLock,
   FiLogIn,
   FiLogOut,
-  FiMessageCircle,
   FiMessageSquare,
   FiMinusCircle,
   FiMoreHorizontal,
@@ -132,7 +130,6 @@ import {
   FiSave,
   FiSearch,
   FiSend,
-  FiSettings,
   FiShield,
   FiSquare,
   FiTerminal,
@@ -144,18 +141,28 @@ import {
   FiZap
 } from 'react-icons/fi'
 import {
+  GoBell,
+  GoBook,
   GoCheck,
   GoCircleSlash,
+  GoComment,
+  GoContainer,
+  GoCpu,
+  GoGear,
   GoIssueDraft,
   GoOrganization,
+  GoPackage,
   GoPencil,
   GoPlay,
+  GoProject,
+  GoRepoForked,
   GoRocket,
   GoSkip,
   GoStop,
   GoSync,
   GoUnverified,
-  GoVerified
+  GoVerified,
+  GoWorkflow
 } from 'react-icons/go'
 import type { IconType } from 'react-icons'
 import {
@@ -164,11 +171,7 @@ import {
   TbGauge,
   TbHistory,
   TbListTree,
-  TbNetwork,
   TbPalette,
-  TbPuzzle,
-  TbRoute,
-  TbSchool,
   TbServer
 } from 'react-icons/tb'
 import { SiJupyter } from 'react-icons/si'
@@ -733,7 +736,7 @@ export const PhiIcons = {
     accept: createPhiIcon('Accept', GoCheck, { defaultStrokeWidth: null }),
     approve: createPhiIcon('Approve', FiCheckCircle),
     back: createPhiIcon('Back', FiChevronRight),
-    bell: createPhiIcon('Bell', FiBell),
+    bell: createPhiIcon('Bell', GoBell, { defaultStrokeWidth: null }),
     cancel: createPhiIcon('Cancel', FiXCircle),
     close: createPhiIcon('Close', FiX),
     collapse: createPhiIcon('Collapse', FiChevronUp),
@@ -769,25 +772,33 @@ export const PhiIcons = {
     agent: createPhiIcon('Agent', TbBrain),
     directoryTree: createPhiIcon('DirectoryTree', TbListTree),
     folder: createPhiIcon('Folder', TbFolderOpen),
-    mcp: createPhiIcon('Mcp', TbNetwork),
-    plugin: createPhiIcon('Plugin', TbPuzzle),
+    mcp: createPhiIcon('Mcp', GoWorkflow, { defaultStrokeWidth: null, scale: 0.94 }),
+    plugin: createPhiIcon('Plugin', GoPackage, { defaultStrokeWidth: null }),
     project: createPhiIcon('Project', TbFolderOpen),
     provider: createPhiIcon('Provider', GoOrganization, { defaultStrokeWidth: null }),
-    skill: createPhiIcon('Skill', TbSchool),
+    skill: createPhiIcon('Skill', GoBook, { defaultStrokeWidth: null, scale: 0.92 }),
     todo: createPhiIcon('Todo', FiCheckSquare),
-    wrapper: createPhiIcon('Wrapper', TbRoute)
+    wrapper: createPhiIcon('Wrapper', GoContainer, { defaultStrokeWidth: null, scale: 0.94 })
+  },
+  wrapperTier: {
+    module: createPhiIcon('WrapperModule', GoCpu, { defaultStrokeWidth: null }),
+    subworkflow: createPhiIcon('WrapperSubworkflow', GoRepoForked, { defaultStrokeWidth: null }),
+    workflow: createPhiIcon('WrapperWorkflow', GoWorkflow, {
+      defaultStrokeWidth: null,
+      scale: 0.94
+    })
   },
   nav: {
     analysis: createPhiIcon('NavAnalysis', FiFileText),
-    chat: createPhiIcon('NavChat', FiMessageCircle),
-    mcp: createPhiIcon('NavMcp', TbNetwork),
-    plugins: createPhiIcon('NavPlugins', TbPuzzle),
-    projects: createPhiIcon('NavProjects', TbFolderOpen),
-    runtime: createPhiIcon('NavRuntime', SiJupyter),
-    settings: createPhiIcon('NavSettings', FiSettings),
-    skills: createPhiIcon('NavSkills', TbSchool),
+    chat: createPhiIcon('NavChat', GoComment, { defaultStrokeWidth: null }),
+    mcp: createPhiIcon('NavMcp', GoWorkflow, { defaultStrokeWidth: null, scale: 0.94 }),
+    plugins: createPhiIcon('NavPlugins', GoPackage, { defaultStrokeWidth: null }),
+    projects: createPhiIcon('NavProjects', GoProject, { defaultStrokeWidth: null, scale: 1.04 }),
+    runtime: createPhiIcon('NavRuntime', SiJupyter, { scale: 0.92 }),
+    settings: createPhiIcon('NavSettings', GoGear, { defaultStrokeWidth: null, scale: 0.96 }),
+    skills: createPhiIcon('NavSkills', GoBook, { defaultStrokeWidth: null, scale: 0.92 }),
     visualization: createPhiIcon('NavVisualization', FiBarChart2),
-    wrappers: createPhiIcon('NavWrappers', TbRoute)
+    wrappers: createPhiIcon('NavWrappers', GoContainer, { defaultStrokeWidth: null, scale: 0.94 })
   },
   settings: {
     appearance: createPhiIcon('Appearance', TbPalette),
@@ -950,6 +961,7 @@ export const PHI_ICON_META = {
   'entity.project': localizedIconMeta('entity.project', PhiIcons.entity.project),
   'entity.provider': localizedIconMeta('entity.provider', PhiIcons.entity.provider),
   'entity.skill': localizedIconMeta('entity.skill', PhiIcons.entity.skill),
+  'entity.wrapper': localizedIconMeta('entity.wrapper', PhiIcons.entity.wrapper),
   'nav.analysis': localizedIconMeta('nav.analysis', PhiIcons.nav.analysis),
   'nav.chat': localizedIconMeta('nav.chat', PhiIcons.nav.chat),
   'nav.mcp': localizedIconMeta('nav.mcp', PhiIcons.nav.mcp),
@@ -959,6 +971,7 @@ export const PHI_ICON_META = {
   'nav.settings': localizedIconMeta('nav.settings', PhiIcons.nav.settings),
   'nav.skills': localizedIconMeta('nav.skills', PhiIcons.nav.skills),
   'nav.visualization': localizedIconMeta('nav.visualization', PhiIcons.nav.visualization),
+  'nav.wrappers': localizedIconMeta('nav.wrappers', PhiIcons.nav.wrappers),
   'settings.appearance': localizedIconMeta('settings.appearance', PhiIcons.settings.appearance),
   'settings.permissions': localizedIconMeta('settings.permissions', PhiIcons.settings.permissions),
   'settings.persona': localizedIconMeta('settings.persona', PhiIcons.settings.persona),

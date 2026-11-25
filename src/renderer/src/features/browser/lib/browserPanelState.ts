@@ -195,9 +195,20 @@ export function activeBrowserTab(
   return snapshot.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null
 }
 
+export function isBlankBrowserTab(tab: BrowserTabSnapshot | null | undefined): boolean {
+  if (!tab) return false
+  const url = tab.url.trim()
+  return !url || url === 'about:blank'
+}
+
+export function browserAddressInputValue(activeTab: BrowserTabSnapshot | null): string {
+  if (!activeTab || isBlankBrowserTab(activeTab)) return ''
+  return activeTab.url
+}
+
 export function browserTabDisplayTitle(tab: BrowserTabSnapshot): string {
   const title = tab.title.trim()
-  if (title) return title
+  if (title && title !== 'about:blank') return title
   const url = tab.url.trim()
   if (!url || url === 'about:blank') return browserUi.newTab
   try {
@@ -215,6 +226,20 @@ export function isBrowserTabActivationKey(key: string): boolean {
 
 export function browserNewTabCommand(requestId: string): BrowserUiCommand {
   return { type: 'newTab', requestId }
+}
+
+export function browserNewTabCommands(
+  snapshot: BrowserWorkspaceSnapshot | null,
+  nextRequestId: () => string
+): BrowserUiCommand[] {
+  if (!snapshot) return []
+  // When tabs is empty, the panel already presents an implicit initial "New tab" screen;
+  // clicking "+" materializes that first blank page and adds the second blank page so the
+  // user immediately transitions to 2 tabs (matching Terminal's "+" behavior).
+  if (snapshot.tabs.length === 0) {
+    return [browserNewTabCommand(nextRequestId()), browserNewTabCommand(nextRequestId())]
+  }
+  return [browserNewTabCommand(nextRequestId())]
 }
 
 export function browserActivateTabCommand(
@@ -335,6 +360,7 @@ export function canPresentNativeBrowser(
   return Boolean(
     visible &&
     activeTab &&
+    !isBlankBrowserTab(activeTab) &&
     !activeTab.restorable &&
     activeTab.phase !== 'failed' &&
     activeTab.phase !== 'crashed'

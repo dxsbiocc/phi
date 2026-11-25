@@ -8,12 +8,14 @@ import type {
   PhiWrapperToolsPage,
   PhiWrapperToolsQuery
 } from '../../../../../shared/phiWebsiteCatalogTypes'
+import type { ResourceIconRef } from '../../../../../shared/resourceIconTypes'
 import type { WrapperCompositionManifest } from '../../../../../shared/wrapperCompositionManifestTypes'
 import type { CatalogBrowseGroup } from '../../../components/catalog/CatalogBrowseLayout'
 import type { WrapperFlowGraph } from './wrapperFlow'
 import { buildWrapperParamsFlowGraph } from './wrapperFlow'
-import type { WrapperCatalogChoice } from './wrapperCatalog'
+import { wrapperChoiceIcon, type WrapperCatalogChoice } from './wrapperCatalog'
 import { wrapperCopy } from './wrapperCopy'
+import { parseWrapperCompositionId } from './wrapperView'
 
 export interface OfficialWrapperCatalogApi {
   listOfficialWrapperGroups?: (
@@ -263,4 +265,139 @@ export function officialWrapperDetailGraph(detail: PhiWrapperCatalogDetail): Wra
 
 export function officialWrapperGroupRowDetails(group: PhiWrapperCatalogGroup): string {
   return wrapperCopy.toolCount(group.count)
+}
+
+const CONVENTIONAL_WRAPPER_PACKAGE_ID = /^(module|subworkflow|workflow)-(nf-core|local)-(.+)$/
+
+function normalizeWrapperPackageSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/_/g, '-')
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+function parseChoiceIdentity(
+  choice: WrapperCatalogChoice
+): { kind: string; provider: string; slug: string } | undefined {
+  if (choice.cached?.id) {
+    const parsed = parseWrapperCompositionId(choice.cached.id)
+    const kind = PACKAGE_KIND_BY_TIER[parsed.tier]
+    if (kind && parsed.provider && parsed.name) {
+      return {
+        kind,
+        provider: normalizeWrapperPackageSlug(parsed.provider),
+        slug: normalizeWrapperPackageSlug(parsed.name)
+      }
+    }
+  }
+  const match = CONVENTIONAL_WRAPPER_PACKAGE_ID.exec(choice.id)
+  if (!match) return undefined
+  return { kind: match[1]!, provider: match[2]!, slug: match[3]! }
+}
+
+function syntheticGroupToolChoice(
+  group: PhiWrapperCatalogGroup,
+  choice: WrapperCatalogChoice
+): OfficialWrapperToolChoice {
+  return {
+    tool: {
+      id: choice.cached?.id ?? choice.id,
+      name: choice.title,
+      summary: choice.summary,
+      category: group.category,
+      categoryLabel: group.categoryLabel,
+      path: '',
+      version: choice.version ?? choice.registryEntry?.version ?? '',
+      source: choice.metadata,
+      suite: group.suite
+    },
+    choice
+  }
+}
+
+export interface OfficialWrapperGroupResolution {
+  choices?: OfficialWrapperToolChoice[]
+  authoritative: boolean
+}
+
+function groupAllowedKinds(group: PhiWrapperCatalogGroup): ReadonlySet<string> {
+  const categoryKeys = Object.keys(group.categories)
+  const tiers = categoryKeys.length > 0 ? categoryKeys : group.category ? [group.category] : []
+  return new Set(
+    tiers.map((tier) => PACKAGE_KIND_BY_TIER[tier]).filter((kind): kind is string => Boolean(kind))
+  )
+}
+
+function groupSuiteTarget(suite: string): { provider?: string; slug: string } {
+  if (!suite.includes('/')) return { slug: normalizeWrapperPackageSlug(suite) }
+  const [rawProvider, ...rawRest] = suite.split('/')
+  return {
+    provider: normalizeWrapperPackageSlug(rawProvider ?? ''),
+    slug: normalizeWrapperPackageSlug(rawRest.join('-'))
+  }
+}
+
+function matchRegistryChoicesToGroup(
+  registryChoices: readonly WrapperCatalogChoice[],
+  allowedKinds: ReadonlySet<string>,
+  target: { provider?: string; slug: string }
+): { exact: WrapperCatalogChoice[]; prefix: WrapperCatalogChoice[] } {
+  const exact: WrapperCatalogChoice[] = []
+  const prefix: WrapperCatalogChoice[] = []
+  for (const choice of registryChoices) {
+    const identity = parseChoiceIdentity(choice)
+    if (!identity) continue
+    if (allowedKinds.size > 0 && !allowedKinds.has(identity.kind)) continue
+    if (target.provider && identity.provider !== target.provider) continue
+    if (identity.slug === target.slug) {
+      exact.push(choice)
+      prefix.push(choice)
+    } else if (identity.slug.startsWith(`${target.slug}-`)) {
+      prefix.push(choice)
+    }
+  }
+  return { exact, prefix }
+}
+
+/**
+ * Resolves a group row's installable tool choices from cached suite tools when available, or
+ * synchronously from the loaded package registry when the slug match is unambiguous.
+ */
+export function officialWrapperGroupChoices(
+  group: PhiWrapperCatalogGroup,
+  registryChoices: readonly WrapperCatalogChoice[],
+  cachedTools?: readonly PhiWrapperCatalogTool[]
+): OfficialWrapperGroupResolution {
+  if (cachedTools) {
+    return { choices: officialWrapperToolChoices(cachedTools, registryChoices), authoritative: true }
+  }
+  const target = groupSuiteTarget(group.suite)
+  if (registryChoices.length === 0 || group.count <= 0 || !target.slug) {
+    return { choices: undefined, authoritative: false }
+  }
+  const { exact, prefix } = matchRegistryChoicesToGroup(
+    registryChoices,
+    groupAllowedKinds(group),
+    target
+  )
+  if (group.count === 1 && exact.length === 1) {
+    return { choices: [syntheticGroupToolChoice(group, exact[0]!)], authoritative: true }
+  }
+  if (prefix.length === group.count) {
+    return {
+      choices: prefix.map((choice) => syntheticGroupToolChoice(group, choice)),
+      authoritative: false
+    }
+  }
+  return { choices: undefined, authoritative: false }
+}
+
+export function officialWrapperGroupIcon(
+  choices: readonly OfficialWrapperToolChoice[] | undefined
+): ResourceIconRef | undefined {
+  return choices
+    ?.map(({ choice }) => wrapperChoiceIcon(choice))
+    .find((icon): icon is ResourceIconRef => Boolean(icon))
 }

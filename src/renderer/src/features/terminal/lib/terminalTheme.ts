@@ -59,6 +59,12 @@ export function createTerminalTheme(
   return {
     ...(mode === 'dark' ? DARK_THEME : LIGHT_THEME),
     background: surfaceBackground,
-    cursorAccent: surfaceBackground
+    cursorAccent: surfaceBackground,
+    scrollbarSliderBackground:
+      mode === 'dark' ? 'rgba(145, 158, 171, 0.28)' : 'rgba(145, 158, 171, 0.3)',
+    scrollbarSliderHoverBackground:
+      mode === 'dark' ? 'rgba(145, 158, 171, 0.48)' : 'rgba(145, 158, 171, 0.48)',
+    scrollbarSliderActiveBackground:
+      mode === 'dark' ? 'rgba(145, 158, 171, 0.62)' : 'rgba(145, 158, 171, 0.62)'
   }
 }
