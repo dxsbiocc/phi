@@ -3775,6 +3775,9 @@ async function harness(
     './agent/jobs/chat-shell-origin': {},
     './agent/agents/run-host': { agentRunHostHandlers },
     './agent/plan/execution/agent-run-completions': agentRunCompletions,
+    './agent/plan/citation-verifier': {
+      verifyPlanLiteratureCitations: async (value: unknown) => ({ ok: true, spec: value })
+    },
     './agent/plan/model/plan-spec': {
       validatePlanSpec: (value: unknown) => ({ ok: true, spec: value })
     },
