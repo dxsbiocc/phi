@@ -48,6 +48,7 @@ export type PlanStepsReviewResult =
 export interface PlanExecuteModeOptions {
   execute?: boolean
   replanRequestId?: string
+  isReadOnlyTool?: (name: string) => boolean
   reviewSteps?: (input: unknown) => Promise<PlanStepsReviewResult>
   setProposalHandler?: (handler: ((input: unknown) => Promise<PlanStepsToolResult>) | null) => void
 }
@@ -72,10 +73,16 @@ const PLAN_TOOLS = new Set([
   'read',
   'glob',
   'grep',
+  'find',
+  'ls',
   'write',
   'edit',
   'todo',
+  'ask',
   'ask_user_question',
+  'web_search',
+  'capability_search',
+  'find_skills',
   CHECK_ENVIRONMENT_TOOL_NAME,
   PLAN_STEPS_TOOL_NAME
 ])
@@ -264,7 +271,9 @@ export async function enterPlanReviewMode(
   const previousTools = session.getActiveToolNames()
   const planTools = [
     ...new Set([
-      ...previousTools.filter((name) => PLAN_TOOLS.has(name)),
+      ...previousTools.filter(
+        (name) => PLAN_TOOLS.has(name) || options.isReadOnlyTool?.(name) === true
+      ),
       'write',
       ...(options.execute ? [PLAN_STEPS_TOOL_NAME] : []),
       CHECK_ENVIRONMENT_TOOL_NAME

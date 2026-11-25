@@ -10,6 +10,67 @@ export const PLAN_MAX_STEP_TITLE_LENGTH = 80
 export const PLAN_MAX_STEP_INSTRUCTIONS_LENGTH = 4_000
 export const PLAN_MAX_STEP_ACCEPTANCE_LENGTH = 1_000
 
+const stepCheckSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['kind', 'path'],
+  properties: {
+    kind: {
+      type: 'string',
+      enum: ['file_exists', 'non_empty_file', 'json_valid', 'table_schema']
+    },
+    path: {
+      type: 'string',
+      minLength: 1,
+      description: 'Project-relative path to verify after the step reports completion.'
+    },
+    format: { type: 'string', enum: ['tsv', 'csv'] },
+    minDataRows: { type: 'integer', minimum: 0 },
+    minColumns: { type: 'integer', minimum: 0 },
+    requiredColumns: {
+      type: 'array',
+      items: { type: 'string', minLength: 1 },
+      uniqueItems: true
+    }
+  }
+}
+
+const stepInputContractSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['path'],
+  properties: {
+    path: {
+      type: 'string',
+      minLength: 1,
+      description:
+        'Project-relative path to an upstream artifact whose .phi-context.json scientific metadata must be compatible before launching this step.'
+    },
+    expectedReferenceAssembly: { type: 'string', minLength: 1, maxLength: 120 },
+    mustMatchReferenceWith: { type: 'string', minLength: 1 },
+    requiredMatrixSemantics: {
+      type: 'array',
+      minItems: 1,
+      uniqueItems: true,
+      items: {
+        type: 'string',
+        enum: [
+          'raw_counts',
+          'normalized',
+          'log_transformed',
+          'tpm',
+          'fpkm',
+          'cpm',
+          'zscore',
+          'de_stats'
+        ]
+      }
+    },
+    requireSampleMatchWith: { type: 'string', minLength: 1 },
+    requireDonorMapping: { type: 'boolean' }
+  }
+}
+
 const baseStepSchema = {
   type: 'object',
   additionalProperties: false,
@@ -44,6 +105,19 @@ const baseStepSchema = {
       uniqueItems: true,
       description:
         'Project-relative paths this step writes. Absolute paths inside the project are accepted and stored relative.'
+    },
+    checks: {
+      type: 'array',
+      items: stepCheckSchema,
+      description:
+        'Optional closed-list objective file/table checks evaluated by Phi after the step completes.'
+    },
+    inputContracts: {
+      type: 'array',
+      maxItems: 20,
+      items: stepInputContractSchema,
+      description:
+        'Optional cross-step scientific context contracts checked against upstream .phi-context.json sidecars before launching this step.'
     },
     hypothesisIds: {
       type: 'array',
@@ -102,6 +176,12 @@ const hypothesesSchema = {
         pattern: '^[a-z0-9-]+$'
       },
       statement: { type: 'string', minLength: 1, maxLength: 400 },
+      statisticalUnit: {
+        type: 'string',
+        enum: ['donor', 'sample', 'library', 'cell', 'locus'],
+        description:
+          'Independent statistical replication unit (e.g. donor for multi-sample/single-cell patient cohorts to avoid pseudoreplication).'
+      },
       mechanism: { type: 'string', minLength: 1, maxLength: 400 },
       rationale: { type: 'string', minLength: 1, maxLength: 400 },
       selected: { type: 'boolean' },

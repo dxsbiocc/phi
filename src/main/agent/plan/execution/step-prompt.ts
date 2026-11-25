@@ -94,6 +94,7 @@ function hypothesisContext(state: PlanRunState, step: PlanStep): string[] {
   if (!linked.length) return []
   const lines = linked.map((item) => {
     const details: string[] = []
+    if (item.statisticalUnit) details.push(`Statistical unit: ${item.statisticalUnit}`)
     if (item.mechanism) details.push(`Mechanism: ${item.mechanism}`)
     if (item.prediction) details.push(`Prediction: ${item.prediction}`)
     if (item.testCriteria) details.push(`Test criteria: ${item.testCriteria}`)

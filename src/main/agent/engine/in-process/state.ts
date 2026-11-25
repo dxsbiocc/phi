@@ -28,6 +28,8 @@ export type SessionEntry = {
   agentRuns?: AgentRunRegistry
   /** Every configured specialist, including host-only orchestration agents. */
   agentRunners?: ReadonlyMap<string, AgentRunFn>
+  /** Names of custom tools declared with read-only approval, retained in plan mode. */
+  readOnlyToolNames?: ReadonlySet<string>
   /** Present only while structured plan review is active. */
   planStepsProposal?: (input: unknown) => Promise<PlanStepsToolResult>
   /** Stops telling the main process about those runs (used when the session goes away). */

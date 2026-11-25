@@ -6,6 +6,7 @@ import {
   MAX_RESEARCH_QUESTION_LENGTH
 } from '../../../../shared/kernel-protocol/research-question'
 import {
+  LITERATURE_VERIFICATION_STATUSES,
   PLAN_MAX_HYPOTHESES,
   PLAN_MAX_STEPS,
   PLAN_MAX_STEP_ACCEPTANCE_LENGTH,
@@ -14,13 +15,17 @@ import {
   PLAN_MAX_STEP_TITLE_LENGTH,
   PLAN_SPEC_VERSION,
   PLAN_STEP_CHECK_KINDS,
+  STATISTICAL_UNITS,
+  type LiteratureVerificationStatus,
   type PlanHypothesis,
   type PlanLiteratureReviewDecision,
   type PlanSpec,
   type PlanStep,
   type PlanStepAccess,
-  type PlanStepVerificationCheck
+  type PlanStepVerificationCheck,
+  type StatisticalUnit
 } from '../../../../shared/planRunTypes'
+import { readInputContracts } from './plan-input-contracts'
 
 export type PlanSpecValidationResult =
   { ok: true; spec: PlanSpec } | { ok: false; errors: string[] }
@@ -242,9 +247,9 @@ function readStepOptionalFields(
 ): Partial<PlanStep> {
   const writes = readWrites(value.writes, resolvedAccess, label, errors, projectRoot)
   const checks = readChecks(value.checks, label, errors, projectRoot)
-  const inputContracts = Array.isArray(value.inputContracts)
-    ? (value.inputContracts as PlanStep['inputContracts'])
-    : undefined
+  const inputContracts = readInputContracts(value.inputContracts, label, errors, (rawPath) =>
+    normalizeWritePath(rawPath, projectRoot)
+  )
   const hypothesisIds =
     value.hypothesisIds === undefined
       ? undefined
@@ -306,6 +311,9 @@ const MAX_LITERATURE_REFERENCES = 10
 const MAX_LITERATURE_DATABASES = 10
 const MAX_HYPOTHESIS_CONFOUNDERS = 8
 
+const ALLOWED_STATISTICAL_UNITS = new Set<string>(STATISTICAL_UNITS)
+const ALLOWED_LITERATURE_VERIFICATION_STATUSES = new Set<string>(LITERATURE_VERIFICATION_STATUSES)
+
 function readLiteratureReview(
   value: unknown,
   errors: string[]
@@ -348,40 +356,53 @@ function readLiteratureReview(
     MAX_LITERATURE_REFERENCES,
     errors
   )
+  let verificationStatus: LiteratureVerificationStatus | undefined
+  if (value.verificationStatus !== undefined) {
+    if (
+      typeof value.verificationStatus !== 'string' ||
+      !ALLOWED_LITERATURE_VERIFICATION_STATUSES.has(value.verificationStatus)
+    ) {
+      errors.push(
+        `literatureReview.verificationStatus must be one of: ${LITERATURE_VERIFICATION_STATUSES.join(', ')}.`
+      )
+    } else {
+      verificationStatus = value.verificationStatus as LiteratureVerificationStatus
+    }
+  }
   return {
     needed: value.needed === true,
     rationale,
     ...(scope ? { scope } : {}),
     ...(databases?.length ? { databases } : {}),
     ...(synthesis ? { synthesis } : {}),
-    ...(references?.length ? { references } : {})
+    ...(references?.length ? { references } : {}),
+    ...(verificationStatus ? { verificationStatus } : {})
   }
 }
 
-function readHypothesisItem(
-  raw: unknown,
-  index: number,
-  ids: Set<string>,
+function readStatisticalUnit(
+  value: unknown,
+  field: string,
   errors: string[]
-): PlanHypothesis | null {
-  const fallback = `hypotheses[${index}]`
-  if (!isRecord(raw)) {
-    errors.push(`${fallback} must be an object.`)
-    return null
+): StatisticalUnit | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !ALLOWED_STATISTICAL_UNITS.has(value)) {
+    errors.push(`${field} must be one of: ${STATISTICAL_UNITS.join(', ')}.`)
+    return undefined
   }
-  const id = readRequiredString(raw.id, `${fallback}.id`, PLAN_MAX_STEP_ID_LENGTH, errors)
-  if (id && !STEP_ID_PATTERN.test(id)) {
-    errors.push(`${fallback}.id must match [a-z0-9-]{1,${PLAN_MAX_STEP_ID_LENGTH}}.`)
-  }
-  if (id && ids.has(id)) errors.push(`hypothesis "${id}".id must be unique within the plan.`)
-  if (id) ids.add(id)
-  const statement = readRequiredString(
-    raw.statement,
-    `${fallback}.statement`,
-    MAX_HYPOTHESIS_TEXT_LENGTH,
+  return value as StatisticalUnit
+}
+
+function readOptionalHypothesisFields(
+  raw: Record<string, unknown>,
+  fallback: string,
+  errors: string[]
+): Partial<PlanHypothesis> {
+  const statisticalUnit = readStatisticalUnit(
+    raw.statisticalUnit,
+    `${fallback}.statisticalUnit`,
     errors
   )
-  if (typeof raw.selected !== 'boolean') errors.push(`${fallback}.selected must be a boolean.`)
   const mechanism = readOptionalString(
     raw.mechanism,
     `${fallback}.mechanism`,
@@ -418,16 +439,46 @@ function readHypothesisItem(
     MAX_HYPOTHESIS_CONFOUNDERS,
     errors
   )
+  const extra: Partial<PlanHypothesis> = {}
+  if (statisticalUnit) extra.statisticalUnit = statisticalUnit
+  if (mechanism) extra.mechanism = mechanism
+  if (rationale) extra.rationale = rationale
+  if (prediction) extra.prediction = prediction
+  if (testCriteria) extra.testCriteria = testCriteria
+  if (falsificationCriteria) extra.falsificationCriteria = falsificationCriteria
+  if (confounders?.length) extra.confounders = confounders
+  return extra
+}
+
+function readHypothesisItem(
+  raw: unknown,
+  index: number,
+  ids: Set<string>,
+  errors: string[]
+): PlanHypothesis | null {
+  const fallback = `hypotheses[${index}]`
+  if (!isRecord(raw)) {
+    errors.push(`${fallback} must be an object.`)
+    return null
+  }
+  const id = readRequiredString(raw.id, `${fallback}.id`, PLAN_MAX_STEP_ID_LENGTH, errors)
+  if (id && !STEP_ID_PATTERN.test(id)) {
+    errors.push(`${fallback}.id must match [a-z0-9-]{1,${PLAN_MAX_STEP_ID_LENGTH}}.`)
+  }
+  if (id && ids.has(id)) errors.push(`hypothesis "${id}".id must be unique within the plan.`)
+  if (id) ids.add(id)
+  const statement = readRequiredString(
+    raw.statement,
+    `${fallback}.statement`,
+    MAX_HYPOTHESIS_TEXT_LENGTH,
+    errors
+  )
+  if (typeof raw.selected !== 'boolean') errors.push(`${fallback}.selected must be a boolean.`)
   return {
     id,
     statement,
     selected: raw.selected === true,
-    ...(mechanism ? { mechanism } : {}),
-    ...(rationale ? { rationale } : {}),
-    ...(prediction ? { prediction } : {}),
-    ...(testCriteria ? { testCriteria } : {}),
-    ...(falsificationCriteria ? { falsificationCriteria } : {}),
-    ...(confounders?.length ? { confounders } : {})
+    ...readOptionalHypothesisFields(raw, fallback, errors)
   }
 }
 

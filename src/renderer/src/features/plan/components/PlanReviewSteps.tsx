@@ -177,6 +177,9 @@ function PlanLiteratureReviewSection({
         </strong>{' '}
         {review.rationale}
         {review.references?.length ? ` (${review.references.join('; ')})` : ''}
+        {review.verificationStatus
+          ? ` [${review.verificationStatus === 'verified' ? planCopy.literatureVerified : planCopy.literatureUnverifiedOffline}]`
+          : ''}
       </Typography>
       {review.databases?.length ? (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
@@ -209,6 +212,9 @@ function PlanHypothesesSection({
       <Box component="ul" sx={{ m: 0, pl: 2, typography: 'body2' }}>
         {hypotheses.map((hypothesis) => {
           const details = [
+            hypothesis.statisticalUnit
+              ? planCopy.hypothesisStatisticalUnit(hypothesis.statisticalUnit)
+              : '',
             hypothesis.mechanism ? planCopy.hypothesisMechanism(hypothesis.mechanism) : '',
             hypothesis.prediction ? planCopy.hypothesisPrediction(hypothesis.prediction) : '',
             hypothesis.testCriteria ? planCopy.hypothesisTestCriteria(hypothesis.testCriteria) : '',

@@ -4,6 +4,7 @@ import type { PhiHostRequestContext } from '../engine/types'
 import type { AgentUserInteractionInput, waitForAgentUserInteraction } from '../user-interaction'
 import { isRecord } from '../../../shared/guards'
 import type { PlanSpec } from '../../../shared/planRunTypes'
+import { verifyPlanLiteratureCitations } from '../plan/citation-verifier'
 import { validatePlanSpec } from '../plan/model/plan-spec'
 
 export interface PlanReviewPromptRun {
@@ -274,6 +275,13 @@ export function createPlanReviewRequest<StoredEvent>(
 ) => Promise<{ decision: PlanReviewDecision; note?: string }> {
   return async function handlePlanReviewRequest(params, context) {
     const request = readPlanReviewRequest(params, deps)
+    if (request.steps && !request.steps.literatureReview?.verificationStatus) {
+      const cited = await verifyPlanLiteratureCitations(request.steps)
+      if (!cited.ok) {
+        throw new Error(cited.errors.join('\n'))
+      }
+      request.steps = cited.spec
+    }
     const target = resolvePlanReviewTarget(request, context, deps)
     if (!planReviewRunIsCurrent(request, target, context, deps)) {
       return { decision: 'cancel' }

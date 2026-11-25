@@ -63,6 +63,7 @@ export interface PhiExtensionHost {
   nextActionSuggestionsEnabled(): Promise<boolean>
   planModeActive(): boolean
   planExecuteModeActive(): boolean
+  isReadOnlyPlanningTool?(toolName: string, input: unknown): boolean
   proposePlanSteps(input: unknown): Promise<PhiPlanStepsToolResult>
   enterAutoPlanMode?(input: { execute: boolean; reason: string }): Promise<void>
   requestToolApproval(request: PhiExtensionToolApprovalRequest): Promise<unknown>

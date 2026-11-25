@@ -14,6 +14,7 @@ export interface InProcessExtensionHostOptions {
   nextActionSuggestionsEnabled?: () => Promise<boolean>
   planModeActive?: () => boolean
   planExecuteModeActive?: () => boolean
+  isReadOnlyPlanningTool?: (toolName: string, input: unknown) => boolean
   proposePlanSteps?: (input: unknown) => Promise<PlanStepsToolResult>
   enterAutoPlanMode?: (input: { execute: boolean; reason: string }) => Promise<void>
   browserTextVault?: BrowserTextVault
@@ -30,6 +31,9 @@ export function createInProcessExtensionHost(
     nextActionSuggestionsEnabled: options.nextActionSuggestionsEnabled ?? (async () => false),
     planModeActive: options.planModeActive ?? (() => false),
     planExecuteModeActive: options.planExecuteModeActive ?? (() => false),
+    ...(options.isReadOnlyPlanningTool
+      ? { isReadOnlyPlanningTool: options.isReadOnlyPlanningTool }
+      : {}),
     proposePlanSteps:
       options.proposePlanSteps ??
       (async () => {

@@ -23,6 +23,9 @@ function literatureReviewSummary(spec: PlanSpec): string[] {
   if (!spec.literatureReview) return []
   const status = spec.literatureReview.needed ? 'performed' : 'skipped'
   const parts = [`Literature review (${status}): ${spec.literatureReview.rationale}`]
+  if (spec.literatureReview.verificationStatus) {
+    parts.push(`Verification: ${spec.literatureReview.verificationStatus}`)
+  }
   if (spec.literatureReview.databases?.length) {
     parts.push(`Sources: ${spec.literatureReview.databases.join(', ')}`)
   }
@@ -40,6 +43,7 @@ function hypothesesSummary(spec: PlanSpec): string[] {
   const lines = spec.hypotheses.map((item) => {
     const marker = item.selected ? '[selected]' : '[unselected]'
     const details: string[] = []
+    if (item.statisticalUnit) details.push(`unit: ${item.statisticalUnit}`)
     if (item.mechanism) details.push(`mechanism: ${item.mechanism}`)
     if (item.prediction) details.push(`prediction: ${item.prediction}`)
     if (item.testCriteria) details.push(`test: ${item.testCriteria}`)

@@ -86,6 +86,32 @@ export type PlanStepPreflightResult =
   | { status: 'needs_input'; missingInputs: string[]; summary: string }
   | { status: 'incompatible'; reasons: string[] }
 
+export const LITERATURE_VERIFICATION_STATUSES = ['verified', 'unverified_offline'] as const
+export type LiteratureVerificationStatus = (typeof LITERATURE_VERIFICATION_STATUSES)[number]
+
+export const STATISTICAL_UNITS = ['donor', 'sample', 'library', 'cell', 'locus'] as const
+export type StatisticalUnit = (typeof STATISTICAL_UNITS)[number]
+
+export const HYPOTHESIS_VERDICTS = [
+  'supported',
+  'refuted',
+  'inconclusive',
+  'blocked_by_qc'
+] as const
+export type HypothesisVerdictStatus = (typeof HYPOTHESIS_VERDICTS)[number]
+
+export interface HypothesisVerdictRecord {
+  hypothesisId: string
+  verdict: HypothesisVerdictStatus
+}
+
+export interface ScientificKeyMetricRecord {
+  name: string
+  value: number
+  sourcePath: string
+  column?: string
+}
+
 export interface PlanLiteratureReviewDecision {
   /** Whether the agent determined prior literature/research retrieval was needed for this task. */
   needed: boolean
@@ -99,6 +125,8 @@ export interface PlanLiteratureReviewDecision {
   synthesis?: string
   /** Verified citations, DOIs, PMIDs, or URLs retrieved when needed is true. */
   references?: string[]
+  /** Host-evaluated verification state of `references` when literature retrieval was performed. */
+  verificationStatus?: LiteratureVerificationStatus
 }
 
 export interface PlanHypothesis {
@@ -111,6 +139,8 @@ export interface PlanHypothesis {
   rationale?: string
   /** Whether the user selected this hypothesis for verification in the plan. */
   selected: boolean
+  /** Independent biological/experimental replication unit to prevent pseudoreplication. */
+  statisticalUnit?: StatisticalUnit
   /** Specific directional or quantitative prediction expected if the hypothesis holds. */
   prediction?: string
   /** Observable evidence criteria that would support or refute the hypothesis. */

@@ -11,9 +11,12 @@ const structuredPlanningTools = new Set([
   'find',
   'ls',
   'todo',
+  'ask',
   'ask_user_question',
+  'web_search',
   'capability_search',
   'find_skills',
+  'check_environment',
   'propose_plan_steps'
 ])
 const manualPlanningTools = new Set(
@@ -48,10 +51,13 @@ export function rpcPlanningToolDecision(
   mode: 'plan' | 'plan_execute',
   toolName: string,
   input: unknown,
-  authenticatedMarkdownProposal = false
+  authenticatedMarkdownProposal = false,
+  isReadOnlyCustomTool?: (toolName: string, input: unknown) => boolean
 ): { allowed: boolean; reason?: string } {
   if (mode === 'plan') {
-    if (manualPlanningTools.has(toolName)) return { allowed: true }
+    if (manualPlanningTools.has(toolName) || isReadOnlyCustomTool?.(toolName, input) === true) {
+      return { allowed: true }
+    }
     if (toolName === RPC_MARKDOWN_PLAN_PROPOSAL_TOOL && authenticatedMarkdownProposal)
       return { allowed: true }
     if ((toolName === 'write' || toolName === 'edit') && exactPlanDraftMutation(toolName, input))
@@ -61,7 +67,7 @@ export function rpcPlanningToolDecision(
       reason: 'Plan review permits read-only investigation and the session PLAN.md draft only.'
     }
   }
-  return structuredPlanningTools.has(toolName)
+  return structuredPlanningTools.has(toolName) || isReadOnlyCustomTool?.(toolName, input) === true
     ? { allowed: true }
     : { allowed: false, reason: 'Structured plan review permits read-only investigation only.' }
 }

@@ -203,6 +203,26 @@ function verifyJsonContent(
 }
 
 /**
+ * Evaluates an already-fetched bounded UTF-8 prefix against an OutputContentAssertion.
+ * Shared by both local `node:fs` and SSH remote bounded-read verifiers.
+ */
+export function evaluateTextAssertion(
+  size: number,
+  textResult: { text: string; truncated: boolean } | { error: string },
+  assertion: OutputContentAssertion,
+  maxBytes = MAX_INSPECT_BYTES
+): OutputAssertionResult {
+  if (assertion.nonEmpty && size === 0) {
+    return { ok: false, reason: 'file is empty (0 bytes)' }
+  }
+  if (!assertionNeedsContentParse(assertion)) return { ok: true }
+  if ('error' in textResult) return { ok: false, reason: textResult.error }
+  return assertion.format === 'json'
+    ? verifyJsonContent(textResult.text, textResult.truncated, maxBytes)
+    : verifyTabularContent(textResult.text, textResult.truncated, assertion)
+}
+
+/**
  * Evaluates a read-only content assertion against a local file path.
  * When `options.rootDir` is provided, refuses paths or symlinks escaping `rootDir`.
  */

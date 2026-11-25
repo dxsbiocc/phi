@@ -18,6 +18,7 @@ import {
   type PlanReviewChoice
 } from '../../plan/plan-review-mode'
 import { planReviewContent } from '../../plan/plan-review-content'
+import { verifyPlanLiteratureCitations } from '../../plan/citation-verifier'
 import { validatePlanSpec } from '../../plan/model/plan-spec'
 import { unavailablePlanAgents } from '../../plan/model/plan-step-agent'
 import type { PlanSpec } from '../../../../shared/planRunTypes'
@@ -310,6 +311,9 @@ async function reviewStructuredPlan(
   if (!validated.ok) return validated
   const agentErrors = unavailablePlanAgents(validated.spec, entry?.agentRunners)
   if (agentErrors.length > 0) return { ok: false, errors: agentErrors }
+  const cited = await verifyPlanLiteratureCitations(validated.spec)
+  if (!cited.ok) return cited
+  const verifiedSpec = cited.spec
   const replanRequestId = (
     entry?.result.session.getPlanModeState() as { replanRequestId?: string } | undefined
   )?.replanRequestId
@@ -317,20 +321,20 @@ async function reviewStructuredPlan(
     'planReview.request',
     {
       runtimeSessionId,
-      title: reviewTitle(validated.spec.goal),
-      planContent: planReviewContent(validated.spec),
+      title: reviewTitle(verifiedSpec.goal),
+      planContent: planReviewContent(verifiedSpec),
       planFilePath: 'local://PLAN.md',
-      steps: validated.spec,
+      steps: verifiedSpec,
       ...(replanRequestId ? { replanRequestId } : {})
     },
     { originSessionId: runtimeSessionId }
   )) as PlanReviewChoice
   if (choice.decision === 'approve') {
-    await entry?.kernelPlanRuntime?.approved(runtimeSessionId, validated.spec, replanRequestId)
+    await entry?.kernelPlanRuntime?.approved(runtimeSessionId, verifiedSpec, replanRequestId)
   } else if (choice.decision === 'cancel') {
     entry?.kernelPlanRuntime?.cancelled(runtimeSessionId, replanRequestId)
   }
-  return { ok: true, spec: validated.spec, choice }
+  return { ok: true, spec: verifiedSpec, choice }
 }
 
 export async function enterSessionPlanMode(params: unknown): Promise<{ enabled: true }> {
@@ -383,6 +387,7 @@ export async function enterSessionPlanMode(params: unknown): Promise<{ enabled: 
     {
       execute: record.execute === true,
       replanRequestId: replanRequestId || undefined,
+      isReadOnlyTool: (name) => entry?.readOnlyToolNames?.has(name) === true,
       reviewSteps: (input) => reviewStructuredPlan(runtimeSessionId, input),
       setProposalHandler: (handler) => {
         if (!entry) return

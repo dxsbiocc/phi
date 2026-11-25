@@ -3,6 +3,34 @@ import { isRecord } from '../../../../../shared/guards'
 import { isResearchQuestion } from '../../../../../shared/kernel-protocol/research-question'
 import type { PlanSpec, PlanStep } from '../../../../../shared/planRunTypes'
 
+function readStringList(value: unknown): string[] | undefined {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : undefined
+}
+
+function readRecordList<T>(value: unknown): T[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const filtered = value.filter(isRecord) as unknown as T[]
+  return filtered.length > 0 ? filtered : undefined
+}
+
+function optionalStepArrays(value: Record<string, unknown>): Partial<PlanStep> {
+  const writes = readStringList(value.writes)
+  const hypothesisIds = readStringList(value.hypothesisIds)
+  const checks = readRecordList<NonNullable<PlanStep['checks']>[number]>(value.checks)
+  const inputContracts = readRecordList<NonNullable<PlanStep['inputContracts']>[number]>(
+    value.inputContracts
+  )
+  const extra: Partial<PlanStep> = {}
+  if (writes) extra.writes = writes
+  if (checks) extra.checks = checks
+  if (inputContracts) extra.inputContracts = inputContracts
+  if (hypothesisIds?.length) extra.hypothesisIds = hypothesisIds
+  if (typeof value.agent === 'string') extra.agent = value.agent
+  return extra
+}
+
 function planStepFromUnknown(value: unknown): PlanStep | null {
   if (!isRecord(value)) return null
   if (
@@ -15,9 +43,6 @@ function planStepFromUnknown(value: unknown): PlanStep | null {
     !value.dependsOn.every((id) => typeof id === 'string')
   )
     return null
-  const writes = Array.isArray(value.writes)
-    ? value.writes.filter((path): path is string => typeof path === 'string')
-    : undefined
   return {
     id: value.id,
     title: value.title,
@@ -25,8 +50,7 @@ function planStepFromUnknown(value: unknown): PlanStep | null {
     acceptance: value.acceptance,
     access: value.access,
     dependsOn: value.dependsOn,
-    ...(writes ? { writes } : {}),
-    ...(typeof value.agent === 'string' ? { agent: value.agent } : {})
+    ...optionalStepArrays(value)
   }
 }
 
@@ -37,10 +61,18 @@ function planSpecFromUnknown(value: unknown): PlanSpec | undefined {
   if (steps.some((step) => step === null)) return undefined
   const researchQuestion = value.researchQuestion
   if (researchQuestion !== undefined && !isResearchQuestion(researchQuestion)) return undefined
+  const literatureReview = isRecord(value.literatureReview)
+    ? (value.literatureReview as unknown as PlanSpec['literatureReview'])
+    : undefined
+  const hypotheses = Array.isArray(value.hypotheses)
+    ? (value.hypotheses.filter(isRecord) as unknown as PlanSpec['hypotheses'])
+    : undefined
   return {
     version: 1,
     goal: value.goal,
     ...(researchQuestion ? { researchQuestion } : {}),
+    ...(literatureReview ? { literatureReview } : {}),
+    ...(hypotheses?.length ? { hypotheses } : {}),
     steps: steps.filter((step) => step !== null)
   }
 }

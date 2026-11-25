@@ -17,12 +17,17 @@ import {
   type PlanExecutor,
   type PlanExecutorEvent
 } from './execution/plan-executor'
-import { verifyPlanStepChecks } from './execution/step-verification'
-import { evaluateStepScientificCompatibility } from '../scientific-context/compatibility'
+import {
+  captureWorkspaceStepEvidenceFingerprints,
+  evaluateWorkspacePlanStaleness,
+  evaluateWorkspaceStepCompatibility,
+  stepReportRequiresWorkspaceCrossCheck,
+  verifyWorkspacePlanStepChecks,
+  type ResolvedPlanWorkspace
+} from './execution/workspace-step-verifier'
 import {
   captureStepEvidenceFingerprint,
   createDerivedRerunPlanSpec,
-  evaluatePlanStaleness,
   type PlanStalenessReport,
   type StepEvidenceFingerprint
 } from '../scientific-context/staleness'
@@ -36,6 +41,7 @@ import type {
   TimelineEvent
 } from './plan-run-service-contract'
 import { replanPrompt } from './replan-prompt'
+import { compilePlanProvenanceReport, type PlanProvenanceReportBundle } from './provenance-report'
 import {
   listPlanRuns,
   listUnfinishedPlanRuns,
@@ -198,29 +204,44 @@ function persistDoneStepEvidence<StoredEvent extends Record<string, unknown>>(
   state: PlanRunState,
   recordedSteps: Map<string, Set<string>>
 ): void {
-  if (!deps.resolveProjectRoot || !store.writeEvidenceFingerprints) return
-  const root = deps.resolveProjectRoot(state.sessionId)
-  if (!root) return
+  if (!store.writeEvidenceFingerprints) return
+  const workspace = resolveSessionWorkspace(deps, state.sessionId)
+  if (workspace.kind === 'unavailable') return
   const seen = recordedSteps.get(state.id) ?? new Set<string>()
   const newlyDone = state.spec.steps.filter(
     (step) => state.steps[step.id]?.status === 'done' && !seen.has(step.id)
   )
   if (newlyDone.length === 0) return
-  const existing: Record<string, StepEvidenceFingerprint> = {
-    ...(store.readEvidenceFingerprints?.(state.sessionId, state.id) ?? {})
-  }
-  for (const step of newlyDone) {
-    existing[step.id] = captureStepEvidenceFingerprint(step, root)
-    seen.add(step.id)
-  }
+  for (const step of newlyDone) seen.add(step.id)
   recordedSteps.set(state.id, seen)
-  try {
-    void Promise.resolve(
-      store.writeEvidenceFingerprints(state.sessionId, state.id, existing)
-    ).catch((error) => reportServiceError(deps, state.id, 'evidence_fingerprint', error))
-  } catch (error) {
-    reportServiceError(deps, state.id, 'evidence_fingerprint', error)
+
+  if (workspace.kind === 'local') {
+    const existing: Record<string, StepEvidenceFingerprint> = {
+      ...(store.readEvidenceFingerprints?.(state.sessionId, state.id) ?? {})
+    }
+    for (const step of newlyDone) {
+      existing[step.id] = captureStepEvidenceFingerprint(step, workspace.rootDir)
+    }
+    try {
+      void Promise.resolve(
+        store.writeEvidenceFingerprints(state.sessionId, state.id, existing)
+      ).catch((error) => reportServiceError(deps, state.id, 'evidence_fingerprint', error))
+    } catch (error) {
+      reportServiceError(deps, state.id, 'evidence_fingerprint', error)
+    }
+    return
   }
+
+  void captureWorkspaceStepEvidenceFingerprints(newlyDone, workspace)
+    .then((captured) => {
+      if (!captured || !store.writeEvidenceFingerprints) return
+      const existing: Record<string, StepEvidenceFingerprint> = {
+        ...(store.readEvidenceFingerprints?.(state.sessionId, state.id) ?? {}),
+        ...captured
+      }
+      return store.writeEvidenceFingerprints(state.sessionId, state.id, existing)
+    })
+    .catch((error) => reportServiceError(deps, state.id, 'evidence_fingerprint', error))
 }
 
 function planExecutorEvents<StoredEvent extends Record<string, unknown>>(
@@ -682,10 +703,11 @@ class PlanRunServiceImplementation<
 
   async inspectStaleness(phiSessionId: string, runId: string): Promise<PlanStalenessReport | null> {
     const state = await this.get(phiSessionId, runId)
-    const root = this.deps.resolveProjectRoot?.(phiSessionId)
-    if (!state || !root) return null
+    if (!state) return null
+    const workspace = resolveSessionWorkspace(this.deps, phiSessionId)
+    if (workspace.kind === 'unavailable') return null
     const recorded = this.store.readEvidenceFingerprints?.(phiSessionId, runId) ?? {}
-    return evaluatePlanStaleness(state.spec, recorded, root)
+    return evaluateWorkspacePlanStaleness(state.spec, recorded, workspace)
   }
 
   async createDerivedRerunPlan(
@@ -705,6 +727,22 @@ class PlanRunServiceImplementation<
     }
   }
 
+  async compileProvenanceReport(
+    phiSessionId: string,
+    runId: string,
+    options?: { agentDir?: string; phiVersion?: string }
+  ): Promise<PlanProvenanceReportBundle | null> {
+    const state = await this.get(phiSessionId, runId)
+    if (!state) return null
+    const projectRoot = this.deps.resolveProjectRoot?.(phiSessionId) ?? undefined
+    return compilePlanProvenanceReport({
+      state,
+      ...(projectRoot ? { projectRoot } : {}),
+      ...(options?.agentDir ? { agentDir: options.agentDir } : {}),
+      ...(options?.phiVersion ? { phiVersion: options.phiVersion } : {})
+    })
+  }
+
   private async recover(phiSessionId: string): Promise<PlanRunState[]> {
     const recovered: PlanRunState[] = []
     for (const state of this.store.listUnfinished(phiSessionId)) {
@@ -717,6 +755,17 @@ class PlanRunServiceImplementation<
     }
     return recovered
   }
+}
+
+function resolveSessionWorkspace<StoredEvent extends Record<string, unknown>>(
+  deps: PlanRunServiceDependencies<StoredEvent>,
+  sessionId: string
+): ResolvedPlanWorkspace {
+  const remote = deps.resolveRemoteWorkspace?.(sessionId)
+  if (remote) return { kind: 'remote', target: remote }
+  const root = deps.resolveProjectRoot?.(sessionId)
+  if (root) return { kind: 'local', rootDir: root }
+  return { kind: 'unavailable' }
 }
 
 export function createPlanRunService<StoredEvent extends Record<string, unknown>>(
@@ -735,6 +784,7 @@ export function createPlanRunService<StoredEvent extends Record<string, unknown>
     completions,
     resolveRuntimeSessionId
   })
+  const hasWorkspaceVerifier = Boolean(deps.resolveProjectRoot || deps.resolveRemoteWorkspace)
   const executor = createPlanExecutor({
     runner,
     store,
@@ -742,24 +792,46 @@ export function createPlanRunService<StoredEvent extends Record<string, unknown>
     clock: deps.clock ?? (() => new Date().toISOString()),
     ids: deps.ids ?? randomUUID,
     ...(deps.requiresDurableLaunch ? { requiresDurableLaunch: deps.requiresDurableLaunch } : {}),
-    ...(deps.resolveProjectRoot
-      ? {
-          verifyStep: ({ sessionId, step }) => {
-            const root = deps.resolveProjectRoot?.(sessionId)
-            return root ? verifyPlanStepChecks(step, root) : { ok: true, failures: [] }
-          },
-          ...(deps.enableCrossStepContextChecks === false
-            ? {}
-            : {
-                preflightStep: ({ sessionId, step }) => {
-                  const root = deps.resolveProjectRoot?.(sessionId)
-                  return root
-                    ? evaluateStepScientificCompatibility(step, root)
-                    : { status: 'compatible' as const }
-                }
-              })
+    verifyStep: ({ sessionId, runId, step, report }) => {
+      const spec = executor.get(runId)?.spec
+      const needsWorkspace =
+        Boolean(step.checks?.length) || stepReportRequiresWorkspaceCrossCheck(report.text)
+      if (!needsWorkspace) {
+        return verifyWorkspacePlanStepChecks(
+          step,
+          { kind: 'unavailable' },
+          { spec, reportText: report.text }
+        )
+      }
+      if (!hasWorkspaceVerifier) {
+        return {
+          ok: false,
+          failures: [`Workspace verifier is not configured; cannot verify checks for "${step.id}".`]
         }
-      : {}),
+      }
+      return verifyWorkspacePlanStepChecks(step, resolveSessionWorkspace(deps, sessionId), {
+        spec,
+        reportText: report.text
+      })
+    },
+    ...(deps.enableCrossStepContextChecks === false
+      ? {}
+      : {
+          preflightStep: ({ sessionId, step }) => {
+            if (!step.inputContracts?.length) return { status: 'compatible' as const }
+            if (!hasWorkspaceVerifier) {
+              return {
+                status: 'needs_input' as const,
+                missingInputs: step.inputContracts.map((c) => c.path),
+                summary: `Workspace verifier is not configured; cannot verify scientific input contracts before launching "${step.id}".`
+              }
+            }
+            return evaluateWorkspaceStepCompatibility(
+              step,
+              resolveSessionWorkspace(deps, sessionId)
+            )
+          }
+        }),
     ...(deps.maxConcurrent === undefined ? {} : { maxConcurrent: deps.maxConcurrent })
   })
   return new PlanRunServiceImplementation(executor, deps, store, events.prime)

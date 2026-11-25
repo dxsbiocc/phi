@@ -1,4 +1,4 @@
-const READ_ONLY_TOOLS = new Set([
+export const CORE_PLANNING_READ_ONLY_TOOLS = [
   'read',
   'glob',
   'grep',
@@ -7,11 +7,14 @@ const READ_ONLY_TOOLS = new Set([
   'todo',
   'ask',
   'ask_user_question',
+  'web_search',
   'capability_search',
   'find_skills',
   'check_environment',
   'propose_plan_steps'
-])
+] as const
+
+const READ_ONLY_TOOLS = new Set<string>(CORE_PLANNING_READ_ONLY_TOOLS)
 
 const STRUCTURED_PLAN_TOOL_REASON =
   '计划评审前只能读取工作区，并调用 propose_plan_steps 提交结构化计划。'
@@ -78,26 +81,34 @@ export function suppressPlanExecutePromptContext<T>(messages: readonly T[]): T[]
   return changed ? next : undefined
 }
 
-export function planModeToolDecision(
-  active: boolean,
-  toolName: string,
-  input: unknown,
-  structured = false
-): { allowed: boolean; reason?: string } {
-  if (!active) return { allowed: true }
-  if (READ_ONLY_TOOLS.has(toolName)) return { allowed: true }
-  if (structured) return { allowed: false, reason: STRUCTURED_PLAN_TOOL_REASON }
+function extractPlanTargetPath(input: unknown): string {
   const path =
     input && typeof input === 'object' && typeof (input as { path?: unknown }).path === 'string'
       ? (input as { path: string }).path
       : ''
-  const targetPath = /^\[([^\]#]+)(?:#[A-Fa-f0-9]{4})?\]$/.exec(path)?.[1] ?? path
-  if (
-    toolName === 'write' &&
-    (targetPath.startsWith('local://') || targetPath === 'xd://propose')
-  ) {
+  return /^\[([^\]#]+)(?:#[A-Fa-f0-9]{4})?\]$/.exec(path)?.[1] ?? path
+}
+
+function isPlanDraftToolAllowed(toolName: string, input: unknown): boolean {
+  const targetPath = extractPlanTargetPath(input)
+  if (toolName === 'write') {
+    return targetPath.startsWith('local://') || targetPath === 'xd://propose'
+  }
+  return toolName === 'edit' && targetPath.startsWith('local://')
+}
+
+export function planModeToolDecision(
+  active: boolean,
+  toolName: string,
+  input: unknown,
+  structured = false,
+  isReadOnlyCustomTool?: (toolName: string, input: unknown) => boolean
+): { allowed: boolean; reason?: string } {
+  if (!active) return { allowed: true }
+  if (READ_ONLY_TOOLS.has(toolName) || isReadOnlyCustomTool?.(toolName, input) === true) {
     return { allowed: true }
   }
-  if (toolName === 'edit' && targetPath.startsWith('local://')) return { allowed: true }
+  if (structured) return { allowed: false, reason: STRUCTURED_PLAN_TOOL_REASON }
+  if (isPlanDraftToolAllowed(toolName, input)) return { allowed: true }
   return { allowed: false, reason: '计划评审前只能读取工作区并修改会话内的计划草稿。' }
 }

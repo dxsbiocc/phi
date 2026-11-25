@@ -1,6 +1,8 @@
 import type { AgentRunCompletions } from './execution/agent-run-completions'
 import type { PlanExecutorClock, PlanExecutorIds } from './execution/plan-executor'
+import type { RemotePlanWorkspaceTarget } from './execution/workspace-step-verifier'
 import type { PlanSpecValidationResult } from './model/plan-spec'
+import type { PlanProvenanceReportBundle } from './provenance-report'
 import type { PlanStalenessReport, StepEvidenceFingerprint } from '../scientific-context/staleness'
 import type {
   PlanRunFinishedEvent,
@@ -42,6 +44,7 @@ export interface PlanRunServiceDependencies<StoredEvent extends Record<string, u
   }
   resolveRuntimeSessionId(phiSessionId: string): string | null
   resolveProjectRoot?(phiSessionId: string): string | null | undefined
+  resolveRemoteWorkspace?(phiSessionId: string): RemotePlanWorkspaceTarget | null | undefined
   enableCrossStepContextChecks?: boolean
   requiresDurableLaunch?(phiSessionId: string): boolean
   enterReplanMode?(runtimeSessionId: string, requestId: string): Promise<unknown>
@@ -119,6 +122,12 @@ export interface PlanRunService {
     phiSessionId: string,
     runId: string
   ): Promise<{ parentRunId: string; staleness: PlanStalenessReport; spec: PlanSpec } | null>
+  /** Compiles a provenance-bound report & Online Methods summary from frozen snapshots and sidecars. */
+  compileProvenanceReport(
+    phiSessionId: string,
+    runId: string,
+    options?: { agentDir?: string; phiVersion?: string }
+  ): Promise<PlanProvenanceReportBundle | null>
 }
 
 export type { TimelineEvent }

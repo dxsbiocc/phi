@@ -40,6 +40,24 @@ function cloneStep(step: PlanStep): PlanStep {
     ...step,
     dependsOn: [...step.dependsOn],
     ...(step.writes ? { writes: [...step.writes] } : {}),
+    ...(step.checks
+      ? {
+          checks: step.checks.map((check) =>
+            check.kind === 'table_schema' && check.requiredColumns
+              ? { ...check, requiredColumns: [...check.requiredColumns] }
+              : { ...check }
+          )
+        }
+      : {}),
+    ...(step.inputContracts
+      ? {
+          inputContracts: step.inputContracts.map((contract) =>
+            contract.requiredMatrixSemantics
+              ? { ...contract, requiredMatrixSemantics: [...contract.requiredMatrixSemantics] }
+              : { ...contract }
+          )
+        }
+      : {}),
     ...(step.hypothesisIds ? { hypothesisIds: [...step.hypothesisIds] } : {})
   }
 }

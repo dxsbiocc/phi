@@ -54,6 +54,7 @@ import {
 } from './session-factory'
 import { autoCompactionOverrides, enterSessionPlanMode } from './session-runtime'
 import { sessions } from './state'
+import { isPureReadOnlyScriptToolSchema } from '../../content/script-tools'
 import { createSessionToolRegistry } from './tool-registry'
 import { serializeSessionState } from './tool-support'
 import { installAutoWorkModeBatchGuard } from './auto-work-mode-guard'
@@ -185,6 +186,8 @@ export async function createSession(
       (await requestHost('settings.nextActionSuggestionsEnabled', {})) === true,
     planModeActive: () => parentRef.current?.session.getPlanModeState()?.enabled === true,
     planExecuteModeActive: () => Boolean(sessions.get(sessionId)?.planStepsProposal),
+    isReadOnlyPlanningTool: (toolName) =>
+      sessions.get(sessionId)?.readOnlyToolNames?.has(toolName) === true,
     proposePlanSteps: async (input) => {
       const handler = sessions.get(sessionId)?.planStepsProposal
       if (!handler) throw new Error('Plan execution mode is not active')
@@ -370,12 +373,20 @@ export async function createSession(
       sendEvent('sessionEvent', translateOmpEvent(event, result.session), { sessionId })
       sendEvent('sessionState', serializeSessionState(result), { sessionId })
     })
+    const readOnlyToolNames = new Set(
+      customTools
+        .filter(
+          (tool) => tool.approval === 'read' && isPureReadOnlyScriptToolSchema(tool.parameters)
+        )
+        .map((tool) => tool.name)
+    )
     sessions.set(sessionId, {
       result,
       agentDir,
       context: ctx,
       agentRuns,
       agentRunners,
+      readOnlyToolNames,
       reloadAgents,
       applyResourceReload,
       stopAgentRunNotices,

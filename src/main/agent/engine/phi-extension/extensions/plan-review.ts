@@ -16,7 +16,10 @@ export function createPlanReviewToolGuardExtension(host: PhiExtensionHost): Exte
         host.planModeActive() || structured,
         event.toolName,
         event.input,
-        structured
+        structured,
+        host.isReadOnlyPlanningTool
+          ? (name, input) => host.isReadOnlyPlanningTool!(name, input)
+          : undefined
       )
       return decision.allowed ? undefined : { block: true, reason: decision.reason }
     })
