@@ -17,7 +17,7 @@ type Job = {
   needs?: string | string[]
   if?: string
   permissions?: Record<string, string>
-  strategy?: { matrix?: { include?: Array<Record<string, string>> } }
+  strategy?: { matrix?: { shard?: number[]; include?: Array<Record<string, string>> } }
   steps?: Step[]
 }
 
@@ -222,10 +222,26 @@ test('local packaging scripts never publish, even on CI', () => {
   }
 })
 
-test('release verify runs the full test suite before packaging', () => {
+test('release verify prepares host prerequisites and runs the sharded test gate before packaging', () => {
   const verify = workflow.jobs?.verify
-  const testStep = verify?.steps?.find((step) => step.run === 'bun run test')
-  assert.ok(testStep, 'full test suite must run in the verify job')
+  assert.deepEqual(verify?.strategy?.matrix?.shard, [1, 2, 3, 4])
+  const steps = verify?.steps ?? []
+  assert.ok(
+    steps.some((step) => step.run?.includes('node node_modules/electron/install.js')),
+    'verify must pre-install the Electron binary so imports do not pollute JSON-RPC stdout'
+  )
+  assert.ok(
+    steps.some((step) => step.run?.includes('bun run build:helper')),
+    'verify must build the remote helper before running host fixtures'
+  )
+  assert.ok(
+    steps.some((step) => step.run?.includes('ripgrep zsh csh')),
+    'verify must install ripgrep, zsh, and csh for search and login-shell suites'
+  )
+  const testStep = steps.find(
+    (step) => step.run === 'bun run test:gate --shard=${{ matrix.shard }}/4'
+  )
+  assert.ok(testStep, 'sharded test gate must run in the verify job')
   const packageJob = workflow.jobs?.package
   const needs = Array.isArray(packageJob?.needs) ? packageJob.needs : [packageJob?.needs]
   assert.ok(needs.includes('verify'), 'packaging must depend on the verified test gate')
