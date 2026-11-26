@@ -14,6 +14,7 @@ import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnect
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
 import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJobTypes'
 import type { PluginInstallJob } from '../../../../../shared/pluginInstallJobTypes'
+import type { ResourceUninstallJob } from '../../../../../shared/resourceUninstallJobTypes'
 import { canCancelBackgroundRun, resolveWrapperCancelTarget } from '../../wrapper/lib/wrapperView'
 import type { RetainedBackgroundJob } from './backgroundJobHistory'
 
@@ -56,6 +57,13 @@ export type LiveBackgroundJob =
       active: boolean
       timestamp: string
       install: PluginInstallJob
+    }
+  | {
+      kind: 'uninstall'
+      key: string
+      active: boolean
+      timestamp: string
+      uninstall: ResourceUninstallJob
     }
 
 export type UnifiedBackgroundJob = LiveBackgroundJob | RetainedBackgroundJob
@@ -227,7 +235,8 @@ export function selectBackgroundJobs(
   uploads: readonly RemoteProjectUploadJob[] = [],
   jupyterJobs: readonly RemoteJupyterStartJob[] = [],
   notebookAiJobs: readonly NotebookAiGenerationJob[] = [],
-  pluginInstalls: readonly PluginInstallJob[] = []
+  pluginInstalls: readonly PluginInstallJob[] = [],
+  resourceUninstalls: readonly ResourceUninstallJob[] = []
 ): { active: LiveBackgroundJob[]; recent: LiveBackgroundJob[] } {
   const maxRecent = query.maxRecent ?? 50
   const items: LiveBackgroundJob[] = [
@@ -297,6 +306,13 @@ export function selectBackgroundJobs(
       active: install.state === 'running',
       timestamp: install.finishedAt ?? install.startedAt,
       install
+    })),
+    ...resourceUninstalls.map((uninstall): LiveBackgroundJob => ({
+      kind: 'uninstall',
+      key: `uninstall:${uninstall.targetKind}:${uninstall.targetId}`,
+      active: uninstall.state === 'running',
+      timestamp: uninstall.finishedAt ?? uninstall.startedAt,
+      uninstall
     }))
   ]
   const newestFirst = (left: UnifiedBackgroundJob, right: UnifiedBackgroundJob): number =>
@@ -327,7 +343,9 @@ function belongsInFinishedTray(item: LiveBackgroundJob, query: BackgroundJobQuer
               ? item.job.completedAt
               : item.kind === 'plugin'
                 ? item.install.finishedAt
-                : item.run.completedAt
+                : item.kind === 'uninstall'
+                  ? item.uninstall.finishedAt
+                  : item.run.completedAt
   return Boolean(endedAt && endedAt >= query.finishedAfter)
 }
 

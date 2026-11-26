@@ -100,6 +100,12 @@ const CONSUMER_CAPABILITIES: Record<
       return environmentUi.pluginRuntime
     }
   },
+  mcp: {
+    key: 'plugin',
+    get label() {
+      return environmentUi.mcp
+    }
+  },
   wrapper: {
     key: 'workflow',
     get label() {

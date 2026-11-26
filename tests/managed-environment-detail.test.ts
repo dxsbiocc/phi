@@ -180,3 +180,49 @@ test('Python and R details list locked dependency package versions', () => {
   assert.match(markup, /GenomeInfoDbData/)
   assert.match(markup, /b5339e0/)
 })
+
+test('plugin and skill details show packages, consumers, verification, and delete action even when referenced', () => {
+  const markup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(ManagedEnvironmentDetail, {
+        environment: {
+          ref: 'skill:omics-qc',
+          envId: 'skill-omics-qc-0123456789ab',
+          state: 'ready',
+          source: 'skill',
+          skillId: 'omics-qc',
+          ownerLabel: 'omics-qc',
+          label: 'omics-qc',
+          packages: [{ name: 'fastqc', version: '0.12.1', manager: 'conda' }],
+          referrers: ['skill:omics-qc'],
+          consumers: [{ kind: 'skill', name: 'omics-qc', label: 'Omics QC' }]
+        },
+        hostResources: { dependencies: [], tools: [] },
+        hostBusy: false,
+        busy: false,
+        checkResult: {
+          envId: 'skill-omics-qc-0123456789ab',
+          ok: true,
+          problems: []
+        },
+        error: null,
+        onBack: noop,
+        onBuild: noop,
+        onRebuild: noop,
+        onCheck: noop,
+        onRemove: noop,
+        onSaveHostPath: asyncNoop
+      })
+    )
+  )
+
+  assert.match(markup, /使用方与引用方/)
+  assert.match(markup, /Omics QC/)
+  assert.match(markup, /依赖包 · 1/)
+  assert.match(markup, /data-phi-environment-package="fastqc"/)
+  assert.match(markup, /完整性检查/)
+  assert.match(markup, /完整性检查通过/)
+  assert.match(markup, /移除托管环境/)
+})

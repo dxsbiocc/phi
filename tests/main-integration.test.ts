@@ -1721,6 +1721,7 @@ async function harness(
           return { envId: 'plugin-demo-owner-demo-0123456789ab' }
         },
         rebuild: async () => undefined,
+        check: async () => ({ envId: 'phi-python-0123456789ab', ok: true, problems: [] }),
         remove: async () => ({ removed: true, bytesFreed: 0 }),
         clean: async () => ({
           removed: [],
@@ -1728,7 +1729,8 @@ async function harness(
           skipped: [],
           logsRemoved: 0,
           bytesFreed: 0
-        })
+        }),
+        trimCache: async () => ({ bytesFreed: 0 })
       }),
       detectConfiguredAnalysisKernels: () => ({
         jupyterServer: { available: true, command: 'jupyter', version: '2.14.0' },
@@ -2963,8 +2965,12 @@ async function harness(
       'buildEnvironment'
     >,
     './agent/envs/gc': {
-      collectGarbage: () => ({ removed: [], orphans: [], skipped: [], logsRemoved: 0 })
-    } satisfies Pick<typeof import('../src/main/agent/envs/gc'), 'collectGarbage'>,
+      collectGarbage: () => ({ removed: [], orphans: [], skipped: [], logsRemoved: 0 }),
+      collectGarbageAsync: async () => ({ removed: [], orphans: [], skipped: [], logsRemoved: 0 })
+    } satisfies Pick<
+      typeof import('../src/main/agent/envs/gc'),
+      'collectGarbage' | 'collectGarbageAsync'
+    >,
     './agent/packages/mcp-version-cleanup': {
       cleanupInactiveMcpVersions: (): string[] => []
     } satisfies Pick<
@@ -7632,8 +7638,10 @@ const expectedStartupRegistrationOrder = [
   'managedEnvironments:list',
   'managedEnvironments:build',
   'managedEnvironments:rebuild',
+  'managedEnvironments:check',
   'managedEnvironments:remove',
   'managedEnvironments:clean',
+  'managedEnvironments:trimCache',
   'models:list',
   'models:select',
   'models:selected',

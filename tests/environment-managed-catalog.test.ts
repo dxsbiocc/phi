@@ -9,6 +9,8 @@ import { describeEnvironment } from '../src/main/agent/content/environment-refs'
 import { listManagedEnvironments } from '../src/main/agent/environment/managed'
 import { updateEnvironmentEntry } from '../src/main/agent/envs'
 import { writeOverrides } from '../src/main/agent/envs/project-environments'
+import { mcpVersionDir, writeMcpPackagesRegistry } from '../src/main/agent/packages/mcp-store'
+import { skillVersionDir, writeSkillsRegistry } from '../src/main/agent/packages/store'
 import { installPlugin, setPluginEnabled } from '../src/main/agent/plugins/loader'
 import type { EnvironmentBuild } from '../src/shared/environmentBuildTypes'
 import { copyMinimal, envIdFor } from './helpers/fakeEnvironment'
@@ -399,6 +401,115 @@ test('Windows lists separate native and WSL builds of official Python', async ()
       () => describeEnvironment('phi:python-wsl@1', { environmentsDir, platform: 'linux-x64' }),
       /requires Windows x64/
     )
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('managed catalog includes private environments from installed skill and MCP packages without marking them orphaned', async () => {
+  const temp = mkdtempSync(join(tmpdir(), 'phi-managed-skill-mcp-'))
+  try {
+    const root = join(temp, 'runtime')
+    const environmentsDir = join(temp, 'official')
+    const agentDir = join(temp, 'agent')
+    copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
+
+    const skillDir = skillVersionDir('skill-qc', '1.0.0', agentDir)
+    copyMinimal(skillDir, 'skill-qc')
+    mkdirSync(join(skillDir, 'scripts'), { recursive: true })
+    writeFileSync(join(skillDir, 'scripts', 'qc.py'), 'print("ok")\n')
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: skill-qc',
+        'description: QC tool',
+        'phi:',
+        '  environment: ./environment.yml',
+        '---',
+        '# QC'
+      ].join('\n')
+    )
+    writeSkillsRegistry(
+      {
+        version: 1,
+        skills: { 'skill-qc': { version: '1.0.0', installedAt: '2026-10-01T00:00:00.000Z' } }
+      },
+      agentDir
+    )
+
+    const mcpDir = mcpVersionDir('mcp-chem', '1.0.0', agentDir)
+    copyMinimal(mcpDir, 'mcp-chem')
+    writeFileSync(
+      join(mcpDir, 'phi-package.yaml'),
+      [
+        'schemaVersion: 1',
+        'id: mcp-chem',
+        'type: mcp',
+        'version: 1.0.0',
+        'title: Chem MCP',
+        'summary: Chemistry connector',
+        'connector:',
+        '  transport: stdio',
+        '  publisher: Phi',
+        '  category: 科研数据',
+        '  environment: ./environment.yml',
+        '  command: python',
+        '  args:',
+        '    - server.py'
+      ].join('\n')
+    )
+    writeMcpPackagesRegistry(
+      {
+        version: 1,
+        packages: { 'mcp-chem': { version: '1.0.0', installedAt: '2026-10-01T00:00:00.000Z' } }
+      },
+      agentDir
+    )
+
+    const skillDesc = describeEnvironment('./environment.yml', {
+      skill: {
+        dir: skillDir,
+        name: 'skill-qc',
+        description: 'QC tool',
+        body: '# QC',
+        frontmatter: {
+          name: 'skill-qc',
+          description: 'QC tool',
+          phi: { environment: './environment.yml' }
+        },
+        phi: { environment: './environment.yml' }
+      },
+      agentDir,
+      environmentsDir,
+      platform: 'darwin-arm64'
+    })
+    addIndexed(root, envIdFor(skillDesc), 'skill-qc')
+
+    const catalog = await listManagedEnvironments({
+      root,
+      environmentsDir,
+      agentDir,
+      platform: 'darwin-arm64',
+      consumers: []
+    })
+
+    const skillEntry = catalog.find((entry) => entry.ref === 'skill:skill-qc')
+    assert.ok(skillEntry)
+    assert.equal(skillEntry.source, 'skill')
+    assert.equal(skillEntry.state, 'ready')
+    assert.equal(skillEntry.skillId, 'skill-qc')
+    assert.equal(
+      catalog.some((entry) => entry.source === 'orphaned'),
+      false
+    )
+
+    const mcpEntry = catalog.find((entry) => entry.ref === 'mcp:mcp-chem')
+    assert.ok(mcpEntry)
+    assert.equal(mcpEntry.source, 'mcp')
+    assert.equal(mcpEntry.state, 'absent')
+    assert.equal(mcpEntry.mcpId, 'mcp-chem')
+    assert.equal(mcpEntry.ownerLabel, 'Chem MCP')
   } finally {
     rmSync(temp, { recursive: true, force: true })
   }

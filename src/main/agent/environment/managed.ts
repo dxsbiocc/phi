@@ -15,7 +15,7 @@ import {
   bundledEnvironmentsDir,
   WINDOWS_WSL_PYTHON_REF
 } from '../content/environment-refs'
-import { parseSkillFile } from '../content/skill'
+import { parseSkillFile, validateSkill, type ValidatedSkill } from '../content/skill'
 import {
   computeEnvId,
   currentPlatform,
@@ -36,6 +36,11 @@ import { listInstalledPlugins, type LoadedPlugin } from '../plugins/loader'
 import { listSkills } from '../resources'
 import { getPhiAgentDir } from '../runtime-paths'
 import { getBundledAgentsDir } from '../runtime/runtime-adapter'
+import {
+  collectExtensionEnvironments,
+  resolveExtensionEnvironmentDescriptor,
+  type ExtensionEnvironmentTarget
+} from './managed-extensions'
 import { directorySize } from './size'
 
 export interface ManagedEnvironmentConsumerDeclaration {
@@ -64,6 +69,7 @@ interface KnownEnvironment {
   ref: string
   source: ManagedEnvironmentEntry['source']
   pluginId?: string
+  extensionTarget?: ExtensionEnvironmentTarget
   overrideFrom?: string[]
 }
 
@@ -314,14 +320,50 @@ function addConsumer(
   map.set(ref, consumers)
 }
 
+function skillDeclarationForEntry(
+  skill: { name: string; filePath: string },
+  plugins: readonly LoadedPlugin[],
+  declarations: ManagedEnvironmentConsumerDeclaration[],
+  localSkills: ValidatedSkill[]
+): void {
+  try {
+    const parsed = parseSkillFile(readFileSync(skill.filePath, 'utf8'))
+    if (!parsed.ok) return
+    const phi = parsed.frontmatter.phi
+    if (!phi || typeof phi !== 'object' || Array.isArray(phi)) return
+    const ref = (phi as Record<string, unknown>).environment
+    if (typeof ref !== 'string' || !ref) return
+    if (ref === './environment.yml') {
+      const validated = validateSkill(dirname(skill.filePath))
+      if (validated.ok && validated.skill) localSkills.push(validated.skill)
+      return
+    }
+    if (ref.startsWith('./')) return
+    const pluginId = plugins.find((plugin) =>
+      plugin.components.skills.some((dir) => skill.filePath.startsWith(`${dir}/`))
+    )?.id
+    declarations.push({
+      ref,
+      ...(pluginId ? { pluginId } : {}),
+      consumer: { kind: 'skill', name: skill.name }
+    })
+  } catch {
+    // A resource can disappear between loader discovery and this read; omit it from this snapshot.
+  }
+}
+
 async function loadedConsumerDeclarations(
   projectDir: string | undefined,
   plugins: readonly LoadedPlugin[],
   agentDir: string,
   { loadSkills = listSkills, onSkillDiscoveryError }: ListManagedEnvironmentsOptions
-): Promise<ManagedEnvironmentConsumerDeclaration[]> {
+): Promise<{
+  declarations: ManagedEnvironmentConsumerDeclaration[]
+  localSkills: ValidatedSkill[]
+}> {
   const cwd = projectDir ?? process.cwd()
   const declarations: ManagedEnvironmentConsumerDeclaration[] = []
+  const localSkills: ValidatedSkill[] = []
   const skills = await loadSkills(cwd).catch((error: unknown) => {
     // The OMP worker enriches this catalog with skills. Native environment builds
     // and their fixed consumers can still be shown when that worker is unavailable.
@@ -329,25 +371,7 @@ async function loadedConsumerDeclarations(
     return []
   })
   for (const skill of skills) {
-    try {
-      const parsed = parseSkillFile(readFileSync(skill.filePath, 'utf8'))
-      if (!parsed.ok) continue
-      const phi = parsed.frontmatter.phi
-      if (!phi || typeof phi !== 'object' || Array.isArray(phi)) continue
-      const ref = (phi as Record<string, unknown>).environment
-      if (typeof ref === 'string' && ref && !ref.startsWith('./')) {
-        const pluginId = plugins.find((plugin) =>
-          plugin.components.skills.some((dir) => skill.filePath.startsWith(`${dir}/`))
-        )?.id
-        declarations.push({
-          ref,
-          ...(pluginId ? { pluginId } : {}),
-          consumer: { kind: 'skill', name: skill.name }
-        })
-      }
-    } catch {
-      // A resource can disappear between loader discovery and this read; omit it from this snapshot.
-    }
+    skillDeclarationForEntry(skill, plugins, declarations, localSkills)
   }
 
   const agents = discoverPhiAgents({
@@ -364,7 +388,7 @@ async function loadedConsumerDeclarations(
       })
     }
   }
-  return declarations
+  return { declarations, localSkills }
 }
 
 function consumersByRef(
@@ -379,17 +403,24 @@ function consumersByRef(
   const overrides = projectDir ? readOverrides(projectDir).overrides : {}
   const effectiveDeclarations = [
     ...declarations,
-    ...known.flatMap((environment): ManagedEnvironmentConsumerDeclaration[] =>
-      environment.source === 'plugin' && environment.pluginId
-        ? [
-            {
-              ref: environment.ref,
-              pluginId: environment.pluginId,
-              consumer: { kind: 'plugin', name: environment.pluginId }
-            }
-          ]
-        : []
-    )
+    ...known.flatMap((environment): ManagedEnvironmentConsumerDeclaration[] => {
+      if (environment.source === 'plugin' && environment.pluginId) {
+        return [
+          {
+            ref: environment.ref,
+            pluginId: environment.pluginId,
+            consumer: { kind: 'plugin', name: environment.pluginId }
+          }
+        ]
+      }
+      if (environment.extensionTarget) {
+        return environment.extensionTarget.consumers.map((consumer) => ({
+          ref: environment.ref,
+          consumer
+        }))
+      }
+      return []
+    })
   ]
   for (const declaration of effectiveDeclarations) {
     const override = overrides[declaration.ref]
@@ -420,6 +451,8 @@ function knownEnvironmentDir(
   plugins: readonly LoadedPlugin[],
   projectDir?: string
 ): string | undefined {
+  if (environment.extensionTarget?.skill) return environment.extensionTarget.skill.dir
+  if (environment.extensionTarget?.mcpPackage) return environment.extensionTarget.mcpPackage.dir
   const parsed = parseEnvironmentRef(environment.ref)
   if (parsed.kind === 'phi') return join(environmentsDir, `phi-${parsed.name}`)
   if (parsed.kind === 'plugin' && environment.pluginId) {
@@ -454,6 +487,15 @@ function unavailableCatalogEntry(
     state: 'unavailable',
     source: environment.source,
     ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
+    ...(environment.extensionTarget?.source === 'skill'
+      ? { skillId: environment.extensionTarget.ownerId }
+      : {}),
+    ...(environment.extensionTarget?.source === 'mcp'
+      ? { mcpId: environment.extensionTarget.ownerId }
+      : {}),
+    ...(environment.extensionTarget?.ownerLabel
+      ? { ownerLabel: environment.extensionTarget.ownerLabel }
+      : {}),
     label: spec.name,
     packages: environmentPackages({ spec, platform }),
     ...(spec.description ? { description: spec.description } : {}),
@@ -488,6 +530,91 @@ async function indexedEnvironmentSize(
 }
 
 /** Catalog all known managed environments without building or mutating the runtime. */
+function extensionOwnerFields(
+  target: ExtensionEnvironmentTarget | undefined
+): Partial<ManagedEnvironmentEntry> {
+  if (!target) return {}
+  return {
+    ...(target.source === 'skill' ? { skillId: target.ownerId } : {}),
+    ...(target.source === 'mcp' ? { mcpId: target.ownerId } : {}),
+    ...(target.ownerLabel ? { ownerLabel: target.ownerLabel } : {})
+  }
+}
+
+async function resolveKnownCatalogEntry(
+  environment: KnownEnvironment,
+  context: {
+    root: string
+    environmentsDir: string
+    agentDir: string
+    platform: PhiPlatform
+    projectDir: string | undefined
+    plugins: readonly LoadedPlugin[]
+    consumers: Map<string, ManagedEnvironmentConsumer[]>
+    index: ReturnType<typeof readEnvironmentIndex>
+    builds: readonly EnvironmentBuild[]
+    describedIds: Set<string>
+    includeDynamic: boolean
+    sizeOf: typeof directorySize
+  }
+): Promise<ManagedEnvironmentEntry | undefined> {
+  let descriptor: ReturnType<typeof describeEnvironment>
+  try {
+    descriptor = environment.extensionTarget
+      ? resolveExtensionEnvironmentDescriptor(environment.extensionTarget, {
+          environmentsDir: context.environmentsDir,
+          agentDir: context.agentDir,
+          platform: context.platform
+        })
+      : describeEnvironment(environment.ref, {
+          environmentsDir: context.environmentsDir,
+          agentDir: context.agentDir,
+          ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
+          platform: context.platform,
+          ...(context.projectDir ? { projectDir: context.projectDir } : {})
+        })
+  } catch {
+    const dir = knownEnvironmentDir(
+      environment,
+      context.environmentsDir,
+      context.plugins,
+      context.projectDir
+    )
+    const spec = dir ? readEnvironmentSpec(dir) : undefined
+    if (!spec || !dir || isFile(join(dir, 'locks', `${context.platform}.txt`))) return undefined
+    return unavailableCatalogEntry(environment, spec, context.platform, context.consumers)
+  }
+  const envId = environmentId(descriptor)
+  context.describedIds.add(envId)
+  const indexEntry = context.index.environments[envId]
+  const build = context.builds.find((candidate) => candidate.envId === envId)
+  const state = resolvedState(indexEntry, build)
+  const error = errorFor(indexEntry, build, state)
+  const entry: ManagedEnvironmentEntry = {
+    ref: environment.ref,
+    envId,
+    state,
+    source: environment.source,
+    ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
+    ...extensionOwnerFields(environment.extensionTarget),
+    label: environment.ref === WINDOWS_WSL_PYTHON_REF ? 'phi-python (WSL2)' : descriptor.spec.name,
+    packages: environmentPackages(descriptor),
+    ...(descriptor.spec.description ? { description: descriptor.spec.description } : {}),
+    referrers: [...(indexEntry?.referrers ?? [])].sort(),
+    consumers: context.consumers.get(consumerRefKey(environment.ref, environment.pluginId)) ?? [],
+    ...(environment.overrideFrom ? { overrideFrom: environment.overrideFrom } : {}),
+    ...(descriptor.runtime === 'wsl2' ? { runtime: 'wsl2' as const } : {}),
+    ...(indexEntry?.updatedAt ? { updatedAt: indexEntry.updatedAt } : {}),
+    ...(error ? { error } : {})
+  }
+  if (context.includeDynamic && state === 'absent') {
+    entry.estimate = estimateBuild(context.root, descriptor.lockText, descriptor.runtime)
+  } else if (context.includeDynamic && indexEntry) {
+    await indexedEnvironmentSize(context.root, entry, indexEntry, context.sizeOf)
+  }
+  return entry
+}
+
 export async function listManagedEnvironments(
   options: ListManagedEnvironmentsOptions = {}
 ): Promise<ManagedEnvironmentEntry[]> {
@@ -499,70 +626,59 @@ export async function listManagedEnvironments(
   const builds = options.builds ?? []
   const sizeOf = options.sizeOf ?? directorySize
   const includeDynamic = options.includeDynamic !== false
+  const loadedDynamic =
+    includeDynamic && !options.consumers
+      ? await loadedConsumerDeclarations(options.projectDir, plugins, agentDir, options)
+      : { declarations: [], localSkills: [] }
+  const extensionTargets = collectExtensionEnvironments({
+    agentDir,
+    plugins,
+    skills: loadedDynamic.localSkills
+  })
+  const extensionKnown: KnownEnvironment[] = extensionTargets
+    .filter((target) => target.source !== 'plugin')
+    .map((target) => ({ ref: target.ref, source: target.source, extensionTarget: target }))
+  const pluginTargetsByKey = new Map(
+    extensionTargets
+      .filter((target) => target.source === 'plugin' && target.pluginId)
+      .map((target) => [`${target.pluginId}\0${target.ref}`, target])
+  )
   const known = [
     ...officialEnvironments(environmentsDir, platform),
-    ...pluginEnvironments(plugins),
+    ...pluginEnvironments(plugins).map((item) => {
+      const target = item.pluginId
+        ? pluginTargetsByKey.get(`${item.pluginId}\0${item.ref}`)
+        : undefined
+      return target ? { ...item, extensionTarget: target } : item
+    }),
+    ...extensionKnown,
     ...projectEnvironments(options.projectDir)
   ]
   const consumerDeclarations = [
-    ...(includeDynamic
-      ? (options.consumers ??
-        (await loadedConsumerDeclarations(options.projectDir, plugins, agentDir, options)))
-      : []),
+    ...(includeDynamic ? (options.consumers ?? loadedDynamic.declarations) : []),
     ...FIXED_CONSUMERS
   ]
   const consumers = consumersByRef(consumerDeclarations, known, options.projectDir)
   const index = readEnvironmentIndex(root)
   const describedIds = new Set<string>()
-
   const entries = (
     await Promise.all(
-      known.map(async (environment): Promise<ManagedEnvironmentEntry | undefined> => {
-        let descriptor: ReturnType<typeof describeEnvironment>
-        try {
-          descriptor = describeEnvironment(environment.ref, {
-            environmentsDir,
-            agentDir,
-            ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
-            platform,
-            ...(options.projectDir ? { projectDir: options.projectDir } : {})
-          })
-        } catch {
-          const dir = knownEnvironmentDir(environment, environmentsDir, plugins, options.projectDir)
-          const spec = dir ? readEnvironmentSpec(dir) : undefined
-          if (!spec || !dir || isFile(join(dir, 'locks', `${platform}.txt`))) return undefined
-          return unavailableCatalogEntry(environment, spec, platform, consumers)
-        }
-        const envId = environmentId(descriptor)
-        describedIds.add(envId)
-        const indexEntry = index.environments[envId]
-        const build = builds.find((candidate) => candidate.envId === envId)
-        const state = resolvedState(indexEntry, build)
-        const entry: ManagedEnvironmentEntry = {
-          ref: environment.ref,
-          envId,
-          state,
-          source: environment.source,
-          ...(environment.pluginId ? { pluginId: environment.pluginId } : {}),
-          label:
-            environment.ref === WINDOWS_WSL_PYTHON_REF ? 'phi-python (WSL2)' : descriptor.spec.name,
-          packages: environmentPackages(descriptor),
-          ...(descriptor.spec.description ? { description: descriptor.spec.description } : {}),
-          referrers: [...(indexEntry?.referrers ?? [])].sort(),
-          consumers: consumers.get(consumerRefKey(environment.ref, environment.pluginId)) ?? [],
-          ...(environment.overrideFrom ? { overrideFrom: environment.overrideFrom } : {}),
-          ...(descriptor.runtime === 'wsl2' ? { runtime: 'wsl2' as const } : {}),
-          ...(errorFor(indexEntry, build, state)
-            ? { error: errorFor(indexEntry, build, state) }
-            : {})
-        }
-        if (includeDynamic && state === 'absent')
-          entry.estimate = estimateBuild(root, descriptor.lockText, descriptor.runtime)
-        else if (includeDynamic && indexEntry) {
-          await indexedEnvironmentSize(root, entry, indexEntry, sizeOf)
-        }
-        return entry
-      })
+      known.map((environment) =>
+        resolveKnownCatalogEntry(environment, {
+          root,
+          environmentsDir,
+          agentDir,
+          platform,
+          projectDir: options.projectDir,
+          plugins,
+          consumers,
+          index,
+          builds,
+          describedIds,
+          includeDynamic,
+          sizeOf
+        })
+      )
     )
   ).filter((entry): entry is ManagedEnvironmentEntry => entry !== undefined)
 
@@ -579,6 +695,7 @@ export async function listManagedEnvironments(
       label: indexEntry.name,
       referrers: [...indexEntry.referrers].sort(),
       consumers: [],
+      ...(indexEntry.updatedAt ? { updatedAt: indexEntry.updatedAt } : {}),
       ...(includeDynamic ? { sizeBytes: await sizeOf(indexEntry.prefix) } : {}),
       ...(errorFor(indexEntry, build, state) ? { error: errorFor(indexEntry, build, state) } : {})
     }

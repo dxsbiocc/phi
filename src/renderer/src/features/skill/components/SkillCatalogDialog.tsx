@@ -2,13 +2,25 @@ import { useUiLanguage } from '../../../lib/i18n'
 import { skillCopy } from '../lib/skillCopy'
 import { resourceUi, resourceSourceLabel, websiteSourceLabel } from '../../../lib/resourceUi'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { Alert, Button, Dialog, Typography } from '@mui/material'
+import {
+  Alert,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  Stack,
+  Typography
+} from '@mui/material'
 import type {
   PackageRegistryEntryView,
   PackageRegistryView
 } from '../../../../../shared/packageManagerTypes'
 import { errorMessage } from '../../../../../shared/errorCodes'
+import { ConfirmationDialog } from '../../../components/ConfirmationDialog'
 import { ResourceIcon } from '../../../components/ResourceIcon'
+import { runResourceUninstallInBackground } from '../../jobs/hooks/useBackgroundJobsData'
 import type { SkillSummary } from '../../../types'
 import type { PhiSkillCatalogDetail } from '../../../../../shared/phiWebsiteCatalogTypes'
 import { CatalogBrowseLayout } from '../../../components/catalog/CatalogBrowseLayout'
@@ -91,6 +103,11 @@ export function SkillCatalogDialog({
   const [detailId, setDetailId] = useState<string | null>(null)
   const [websiteRevision, setWebsiteRevision] = useState(0)
   const [websiteDetail, setWebsiteDetail] = useState<PhiSkillCatalogDetail | null>(null)
+  const [pendingUninstall, setPendingUninstall] = useState<{
+    id: string
+    title: string
+    version?: string
+  } | null>(null)
   const reloadRef = useRef<(() => void) | null>(null)
   const [browser, dispatchBrowser] = useReducer(
     skillCatalogBrowserReducer,
@@ -237,7 +254,29 @@ export function SkillCatalogDialog({
     setActionError(null)
     setDetailId(null)
     setWebsiteDetail(null)
+    setPendingUninstall(null)
     onClose()
+  }
+
+  function confirmPackageUninstall(): void {
+    const target = pendingUninstall
+    if (!target) return
+    setPendingUninstall(null)
+    setActionError(null)
+    void runResourceUninstallInBackground({
+      targetKind: 'skill',
+      targetId: target.id,
+      title: target.title,
+      version: target.version,
+      run: async () => {
+        if (removal.isRemoving(target.id)) return
+        await window.api.uninstallPackage('skill', target.id)
+        setInstalledDuringSession((current) => withoutId(current, target.id))
+        setRemovedDuringSession((current) => new Set(current).add(target.id))
+        await afterRemoval()
+      },
+      onError: (message) => setActionError(skillCopy.uninstallFailed(message))
+    })
   }
 
   async function chooseRegistry(): Promise<void> {
@@ -310,7 +349,13 @@ export function SkillCatalogDialog({
           working ||
           (!removing && (!entry || (updateAvailable ? !onApplyUpdate : !onInstallPackage)))
         }
-        onClick={() => void (removing ? removal.remove(id) : entry ? install(entry) : undefined)}
+        onClick={() =>
+          void (removing
+            ? setPendingUninstall({ id, title, version: entry?.version })
+            : entry
+              ? install(entry)
+              : undefined)
+        }
         aria-label={`${updateAvailable ? resourceUi.update : installed ? resourceUi.uninstall : resourceUi.install} ${title}`}
       >
         {label}
@@ -495,6 +540,39 @@ export function SkillCatalogDialog({
           ) : null}
         </CatalogBrowseLayout>
       )}
+      <ConfirmationDialog
+        open={pendingUninstall !== null}
+        onClose={() => setPendingUninstall(null)}
+        data-phi-skill-uninstall-dialog="true"
+      >
+        <DialogTitle>
+          {pendingUninstall ? skillCopy.uninstallPackageTitle(pendingUninstall.title) : ''}
+        </DialogTitle>
+        <DialogContent>
+          {pendingUninstall ? (
+            <Stack spacing={1.25}>
+              <DialogContentText>{skillCopy.uninstallPackageDescription}</DialogContentText>
+              <Typography variant="caption" color="text.secondary">
+                {skillCopy.uninstallBackgroundHint}
+              </Typography>
+              <Typography
+                component="code"
+                variant="caption"
+                sx={{ fontFamily: 'var(--font-mono)' }}
+              >
+                {pendingUninstall.id}
+                {pendingUninstall.version ? ` · v${pendingUninstall.version}` : ''}
+              </Typography>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingUninstall(null)}>{resourceUi.cancel}</Button>
+          <Button color="error" variant="contained" onClick={() => confirmPackageUninstall()}>
+            {skillCopy.confirmUninstallAction}
+          </Button>
+        </DialogActions>
+      </ConfirmationDialog>
     </Dialog>
   )
 }

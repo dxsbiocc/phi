@@ -62,7 +62,7 @@ export function BackgroundJobRow({
           onOpen(item)
         }
       }}
-      icon={<BackgroundJobIcon kind={kind} icon={pluginIcon} />}
+      icon={<BackgroundJobIcon kind={kind} icon={pluginIcon} jobKey={item.key} />}
       title={title}
       status={status.label}
       statusColor={JOB_TONE_COLOR[status.tone]}

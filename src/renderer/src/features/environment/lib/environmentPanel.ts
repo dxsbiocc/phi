@@ -28,8 +28,10 @@ export type ManagedEnvironmentHostResources = {
 const SOURCE_ORDER: Record<ManagedEnvironmentSource, number> = {
   official: 0,
   plugin: 1,
-  project: 2,
-  orphaned: 3
+  skill: 2,
+  mcp: 3,
+  project: 4,
+  orphaned: 5
 }
 
 const STATE_LABELS: Record<ManagedEnvironmentState, string> = {
@@ -60,6 +62,12 @@ const SOURCE_LABELS: Record<ManagedEnvironmentSource, string> = {
   get plugin() {
     return environmentUi.plugin
   },
+  get skill() {
+    return environmentUi.skill
+  },
+  get mcp() {
+    return environmentUi.mcp
+  },
   get project() {
     return environmentUi.currentProject
   },
@@ -77,6 +85,9 @@ const CONSUMER_KIND_LABELS: Record<ManagedEnvironmentConsumerKind, string> = {
   },
   get plugin() {
     return environmentUi.plugin
+  },
+  get mcp() {
+    return environmentUi.mcp
   },
   get wrapper() {
     return environmentUi.workflow
@@ -187,6 +198,46 @@ export function buildEnvironmentSections(
   managed: readonly ManagedEnvironmentEntry[]
 ): EnvironmentPanelSections {
   return [{ id: 'managed', title: environmentUi.environments, items: sortedManaged(managed) }]
+}
+
+export function builtinManagedEnvironments(
+  managed: readonly ManagedEnvironmentEntry[]
+): ManagedEnvironmentEntry[] {
+  return sortedManaged(managed.filter((item) => item.source === 'official'))
+}
+
+export function extensionManagedEnvironments(
+  managed: readonly ManagedEnvironmentEntry[]
+): ManagedEnvironmentEntry[] {
+  return sortedManaged(
+    managed.filter(
+      (item) =>
+        item.source === 'plugin' ||
+        item.source === 'skill' ||
+        item.source === 'mcp' ||
+        item.source === 'project'
+    )
+  )
+}
+
+export function installedManagedEnvironments(
+  managed: readonly ManagedEnvironmentEntry[]
+): ManagedEnvironmentEntry[] {
+  return sortedManaged(
+    managed.filter((item) => item.state !== 'absent' && item.state !== 'unavailable')
+  )
+}
+
+/** Unified list below Built-in Environments: all built environments plus extension-declared ones. */
+export function unifiedManagedEnvironmentList(
+  managed: readonly ManagedEnvironmentEntry[]
+): ManagedEnvironmentEntry[] {
+  return sortedManaged(
+    managed.filter(
+      (item) =>
+        (item.state !== 'absent' && item.state !== 'unavailable') || item.source !== 'official'
+    )
+  )
 }
 
 export function managedEnvironmentStateLabel(state: ManagedEnvironmentState): string {

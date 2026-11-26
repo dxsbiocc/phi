@@ -2,16 +2,20 @@ import { readdirSync, statSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 
 import type {
+  ManagedEnvironmentCheckResult,
   ManagedEnvironmentCleanResult,
   ManagedEnvironmentEntry,
-  ManagedEnvironmentRemoveResult
+  ManagedEnvironmentRemoveResult,
+  ManagedEnvironmentTrimCacheResult
 } from '../../../shared/environmentTypes'
 import type { EnvironmentBuilds } from '../content/environment-builds'
-import { describeEnvironment } from '../content/environment-refs'
+import { bundledEnvironmentsDir, describeEnvironment } from '../content/environment-refs'
 import {
   addReferrer,
+  checkEnvironment,
   collectGarbage,
   computeEnvId,
+  currentPlatform,
   parseEnvironmentRef,
   readEnvironmentIndex,
   readWslRuntime,
@@ -19,6 +23,7 @@ import {
   removeEnvironmentCache,
   removeManagedEnvironmentPrefix,
   repairEnvironment,
+  trimPackageCache,
   usesWslEnvironment,
   wslEnvironmentPrefix,
   type PhiPlatform
@@ -29,6 +34,11 @@ import { hasLiveEnvironmentLeases } from '../envs/leases'
 import { ownedEnvironmentPrefix, ownedRuntimeDirectory } from '../envs/ownership'
 import { probeManagedWsl, requireReadyWsl, type WslProbe } from '../envs/wsl'
 import { listInstalledPlugins } from '../plugins/loader'
+import { getPhiAgentDir } from '../runtime-paths'
+import {
+  findExtensionEnvironmentTargetByRef,
+  resolveExtensionEnvironmentDescriptor
+} from './managed-extensions'
 import { directorySize } from './size'
 
 const ENV_ID = /^[a-z][a-z0-9-]*-[0-9a-f]{12}$/
@@ -43,18 +53,23 @@ export interface ManagedEnvironmentActions {
   list(projectCwd?: unknown, includeDynamic?: unknown): Promise<ManagedEnvironmentEntry[]>
   build(ref: unknown, projectCwd?: unknown, pluginId?: unknown): Promise<{ envId: string }>
   rebuild(envId: unknown): Promise<void>
-  remove(envId: unknown): Promise<ManagedEnvironmentRemoveResult>
+  check(envId: unknown): Promise<ManagedEnvironmentCheckResult>
+  remove(envId: unknown, options?: unknown): Promise<ManagedEnvironmentRemoveResult>
   clean(): Promise<ManagedEnvironmentCleanResult>
+  trimCache(): Promise<ManagedEnvironmentTrimCacheResult>
 }
 
 export interface ManagedEnvironmentActionDependencies {
   root: string
   agentDir?: string
+  environmentsDir?: string
   builds: EnvironmentBuilds
   catalog: Catalog
   sizeOf?: typeof directorySize
   collect?: typeof collectGarbage
   repair?: typeof repairEnvironment
+  check?: typeof checkEnvironment
+  trimCache?: typeof trimPackageCache
   platform?: PhiPlatform
   probeWsl?: (root: string) => Promise<WslProbe>
 }
@@ -82,6 +97,7 @@ function dynamicDetails(value: unknown): boolean {
 function environmentRef(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error('环境引用不能为空')
   const ref = value.trim()
+  if (ref.startsWith('skill:') || ref.startsWith('mcp:')) return ref
   let parsed: ReturnType<typeof parseEnvironmentRef>
   try {
     parsed = parseEnvironmentRef(ref)
@@ -90,6 +106,15 @@ function environmentRef(value: unknown): string {
   }
   if (parsed.kind === 'path') throw new Error('环境面板不能构建技能私有路径环境')
   return ref
+}
+
+function isForceRemove(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    'force' in value &&
+    (value as { force?: unknown }).force === true
+  )
 }
 
 function environmentId(value: unknown): string {
@@ -125,17 +150,36 @@ function validatePluginEnvironment(
   }
 }
 
-function envIdOf(
+async function envIdOf(
   target: BuildTarget,
-  { agentDir, platform }: Pick<ManagedEnvironmentActionDependencies, 'agentDir' | 'platform'>
-): { envId: string; descriptor: ReturnType<typeof describeEnvironment> } {
-  validatePluginEnvironment(target.ref, target.pluginId, agentDir)
-  const descriptor = describeEnvironment(target.ref, {
-    ...(target.projectCwd ? { projectDir: target.projectCwd } : {}),
-    ...(target.pluginId ? { pluginId: target.pluginId } : {}),
-    ...(agentDir ? { agentDir } : {}),
-    ...(platform ? { platform } : {})
-  })
+  {
+    agentDir,
+    environmentsDir,
+    platform
+  }: Pick<ManagedEnvironmentActionDependencies, 'agentDir' | 'environmentsDir' | 'platform'>
+): Promise<{ envId: string; descriptor: ReturnType<typeof describeEnvironment> }> {
+  let descriptor: ReturnType<typeof describeEnvironment>
+  if (target.ref.startsWith('skill:') || target.ref.startsWith('mcp:')) {
+    const extensionTarget = await findExtensionEnvironmentTargetByRef(target.ref, {
+      ...(agentDir ? { agentDir } : {}),
+      ...(target.projectCwd ? { projectCwd: target.projectCwd } : {})
+    })
+    if (!extensionTarget) throw new Error(`找不到对应的扩展环境定义：${target.ref}`)
+    descriptor = resolveExtensionEnvironmentDescriptor(extensionTarget, {
+      environmentsDir: environmentsDir ?? bundledEnvironmentsDir(),
+      agentDir: agentDir ?? getPhiAgentDir(),
+      platform: platform ?? currentPlatform()
+    })
+  } else {
+    validatePluginEnvironment(target.ref, target.pluginId, agentDir)
+    descriptor = describeEnvironment(target.ref, {
+      ...(target.projectCwd ? { projectDir: target.projectCwd } : {}),
+      ...(target.pluginId ? { pluginId: target.pluginId } : {}),
+      ...(environmentsDir ? { environmentsDir } : {}),
+      ...(agentDir ? { agentDir } : {}),
+      ...(platform ? { platform } : {})
+    })
+  }
   return {
     descriptor,
     envId: computeEnvId({
@@ -197,7 +241,10 @@ export function createManagedEnvironmentActions(
     const ref = environmentRef(refValue)
     const projectCwd = projectDirectory(projectCwdValue)
     const pluginId = pluginIdentifier(pluginIdValue)
-    const parsed = parseEnvironmentRef(ref)
+    const parsed =
+      ref.startsWith('skill:') || ref.startsWith('mcp:')
+        ? ({ kind: 'extension' } as const)
+        : parseEnvironmentRef(ref)
     if (parsed.kind === 'project' && !projectCwd) {
       throw new Error('构建项目环境时必须提供项目目录')
     }
@@ -206,7 +253,7 @@ export function createManagedEnvironmentActions(
       ...(projectCwd ? { projectCwd } : {}),
       ...(pluginId ? { pluginId } : {})
     }
-    const { descriptor, envId } = envIdOf(target, dependencies)
+    const { descriptor, envId } = await envIdOf(target, dependencies)
     await preflight(descriptor)
     descriptors.set(envId, target)
     void dependencies.builds
@@ -233,7 +280,7 @@ export function createManagedEnvironmentActions(
       target = descriptors.get(envId)
     }
     if (!target) throw new Error('找不到该环境的构建定义，请先刷新环境列表')
-    const { descriptor, envId: describedId } = envIdOf(target, dependencies)
+    const { descriptor, envId: describedId } = await envIdOf(target, dependencies)
     if (describedId !== envId) throw new Error('环境定义已经变化，请刷新环境列表后重试')
     await preflight(descriptor)
     await repair({
@@ -247,8 +294,41 @@ export function createManagedEnvironmentActions(
     })
   }
 
-  async function remove(envIdValue: unknown): Promise<ManagedEnvironmentRemoveResult> {
+  async function check(envIdValue: unknown): Promise<ManagedEnvironmentCheckResult> {
     const envId = environmentId(envIdValue)
+    if (
+      dependencies.builds
+        .list()
+        .some((build) => build.envId === envId && build.state === 'building')
+    ) {
+      return { envId, ok: false, problems: ['该环境正在构建，请稍后再检查'] }
+    }
+    const indexEntry = readEnvironmentIndex(dependencies.root).environments[envId]
+    if (!indexEntry) {
+      return { envId, ok: false, problems: ['找不到已安装的环境索引记录'] }
+    }
+    let target = descriptors.get(envId)
+    if (!target) {
+      await list()
+      target = descriptors.get(envId)
+    }
+    if (!target) {
+      return {
+        envId,
+        ok: false,
+        problems: ['孤立环境缺少原始 lockfile 定义，建议清理或手动删除']
+      }
+    }
+    const { descriptor } = await envIdOf(target, dependencies)
+    return (dependencies.check ?? checkEnvironment)(dependencies.root, envId, descriptor.lockText)
+  }
+
+  async function remove(
+    envIdValue: unknown,
+    optionsValue?: unknown
+  ): Promise<ManagedEnvironmentRemoveResult> {
+    const envId = environmentId(envIdValue)
+    const force = isForceRemove(optionsValue)
     if (
       dependencies.builds
         .list()
@@ -258,7 +338,7 @@ export function createManagedEnvironmentActions(
     }
     const entry = readEnvironmentIndex(dependencies.root).environments[envId]
     if (!entry) throw new Error('找不到要删除的环境')
-    if (entry.referrers.length > 0) throw new Error('该环境仍被引用，不能删除')
+    if (!force && entry.referrers.length > 0) throw new Error('该环境仍被引用，不能删除')
     if (!REMOVABLE_STATES.has(entry.status)) throw new Error(`环境状态为 ${entry.status}，不能删除`)
     const expectedPrefix = resolve(dependencies.root, 'envs', envId)
     if (resolve(entry.prefix) !== expectedPrefix) throw new Error('环境前缀路径异常，拒绝删除')
@@ -267,7 +347,11 @@ export function createManagedEnvironmentActions(
     if (!lock) throw new Error('该环境正在被其他任务使用，暂时不能删除')
     try {
       const current = readEnvironmentIndex(dependencies.root).environments[envId]
-      if (!current || current.referrers.length > 0 || !REMOVABLE_STATES.has(current.status)) {
+      if (
+        !current ||
+        (!force && current.referrers.length > 0) ||
+        !REMOVABLE_STATES.has(current.status)
+      ) {
         throw new Error('环境状态已经变化，请刷新后重试')
       }
       if (hasLiveEnvironmentLeases(dependencies.root, envId)) {
@@ -372,5 +456,13 @@ export function createManagedEnvironmentActions(
     return { ...result, skipped, bytesFreed }
   }
 
-  return { list, build, rebuild, remove, clean }
+  async function trimCache(): Promise<ManagedEnvironmentTrimCacheResult> {
+    const packagesCacheDir = ownedRuntimeDirectory(dependencies.root, 'cache', 'packages')
+    const before = await sizeOf(packagesCacheDir)
+    await (dependencies.trimCache ?? trimPackageCache)(dependencies.root)
+    const after = await sizeOf(packagesCacheDir)
+    return { bytesFreed: Math.max(0, before - after) }
+  }
+
+  return { list, build, rebuild, check, remove, clean, trimCache }
 }

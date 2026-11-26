@@ -1,7 +1,12 @@
 import { lstatSync, readdirSync, realpathSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { removeManagedEnvironmentPrefixSync, removeTree } from './ensure'
+import {
+  removeManagedEnvironmentPrefix,
+  removeManagedEnvironmentPrefixSync,
+  removeTree,
+  removeTreeAsync
+} from './ensure'
 import { removeEnvironmentCache } from './execution'
 import { ownedEnvironmentPrefix, ownedRuntimeDirectory } from './ownership'
 import { hasLiveEnvironmentLeases } from './leases'
@@ -213,6 +218,147 @@ export function collectGarbage(
     } finally {
       lock.release()
     }
+  }
+
+  const logsRemoved =
+    sweepFiles(
+      ownedRuntimeDirectory(root, 'logs'),
+      now.getTime() - logRetentionDays * MS_PER_DAY,
+      dryRun
+    ) +
+    sweepFiles(
+      ownedRuntimeDirectory(root, 'state', 'tmp'),
+      now.getTime() - TEMP_RETENTION_DAYS * MS_PER_DAY,
+      dryRun
+    )
+
+  removed.sort()
+  orphans.sort()
+  return { removed, orphans, skipped, logsRemoved }
+}
+
+async function removeIndexedEnvironmentAsync(
+  root: string,
+  envId: string,
+  entry: EnvironmentIndexEntry,
+  options: GarbageCollectionOptions,
+  removed: string[],
+  skipped: GarbageCollectionResult['skipped']
+): Promise<void> {
+  if (entry.status === 'building') {
+    skipped.push({ envId, reason: 'building' })
+    return
+  }
+  if (!isRemovable(entry) || (!options.includeShared && isSharedEnvironmentId(envId))) return
+  ownedEnvironmentPrefix(root, envId, entry.prefix)
+  ownedRuntimeDirectory(root, 'cache', envId)
+  if (
+    hasLiveEnvironmentLeases(root, envId, { processAlive: options.processAlive, pruneStale: false })
+  ) {
+    skipped.push({ envId, reason: 'in-use' })
+    return
+  }
+  if (options.dryRun) {
+    if (isLockedByLiveProcess(root, envId)) skipped.push({ envId, reason: 'locked' })
+    else removed.push(envId)
+    return
+  }
+  const lock = tryAcquireEnvironmentLock(root, envId)
+  if (!lock) {
+    skipped.push({ envId, reason: 'locked' })
+    return
+  }
+  try {
+    const current = stillRemovable(root, envId)
+    if (!current) return
+    if (hasLiveEnvironmentLeases(root, envId, { processAlive: options.processAlive })) {
+      skipped.push({ envId, reason: 'in-use' })
+      return
+    }
+    ownedRuntimeDirectory(root, 'cache', envId)
+    await removeManagedEnvironmentPrefix(
+      root,
+      envId,
+      ownedEnvironmentPrefix(root, envId, current.prefix),
+      current.platform
+    )
+    removeEnvironmentCache(root, envId)
+    deleteEnvironmentEntry(root, envId)
+    removed.push(envId)
+  } finally {
+    lock.release()
+  }
+}
+
+async function removeOrphanEnvironmentAsync(
+  root: string,
+  name: string,
+  options: GarbageCollectionOptions,
+  orphans: string[],
+  skipped: GarbageCollectionResult['skipped']
+): Promise<void> {
+  if (!options.includeShared && isSharedEnvironmentId(name)) return
+  const directory = join(root, 'envs', name)
+  if (!isRealDirectory(directory)) return
+  ownedEnvironmentPrefix(root, name, directory)
+  ownedRuntimeDirectory(root, 'cache', name)
+  if (
+    hasLiveEnvironmentLeases(root, name, { processAlive: options.processAlive, pruneStale: false })
+  ) {
+    skipped.push({ envId: name, reason: 'in-use' })
+    return
+  }
+  if (options.dryRun) {
+    if (isLockedByLiveProcess(root, name)) skipped.push({ envId: name, reason: 'locked' })
+    else orphans.push(name)
+    return
+  }
+  const lock = tryAcquireEnvironmentLock(root, name)
+  if (!lock) {
+    skipped.push({ envId: name, reason: 'locked' })
+    return
+  }
+  try {
+    if (readEnvironmentIndex(root).environments[name]) return
+    if (hasLiveEnvironmentLeases(root, name, { processAlive: options.processAlive })) {
+      skipped.push({ envId: name, reason: 'in-use' })
+      return
+    }
+    ownedRuntimeDirectory(root, 'cache', name)
+    await removeTreeAsync(ownedEnvironmentPrefix(root, name, directory))
+    removeEnvironmentCache(root, name)
+    orphans.push(name)
+  } finally {
+    lock.release()
+  }
+}
+
+/**
+ * Asynchronous counterpart of `collectGarbage` for IPC uninstall handlers so deleting large
+ * unreferenced Conda/R prefixes never blocks the Electron main-process event loop.
+ */
+export async function collectGarbageAsync(
+  root: string,
+  options: GarbageCollectionOptions = {}
+): Promise<GarbageCollectionResult> {
+  const dryRun = options.dryRun === true
+  const now = options.now ?? new Date()
+  const logRetentionDays = options.logRetentionDays ?? 30
+  const environmentsDirectory = ownedRuntimeDirectory(root, 'envs')
+  ownedRuntimeDirectory(root, 'cache')
+  ownedRuntimeDirectory(root, 'logs')
+  ownedRuntimeDirectory(root, 'state', 'tmp')
+  const removed: string[] = []
+  const orphans: string[] = []
+  const skipped: GarbageCollectionResult['skipped'] = []
+
+  for (const [envId, entry] of Object.entries(readEnvironmentIndex(root).environments)) {
+    await removeIndexedEnvironmentAsync(root, envId, entry, options, removed, skipped)
+  }
+  const indexed = new Set(Object.keys(readEnvironmentIndex(root).environments))
+  for (const name of listNames(environmentsDirectory)) {
+    if (!indexed.has(name))
+      await removeOrphanEnvironmentAsync(root, name, options, orphans, skipped)
   }
 
   const logsRemoved =

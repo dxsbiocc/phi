@@ -14,12 +14,14 @@ import { GoArrowLeft } from 'react-icons/go'
 
 import type {
   EnvironmentToolId,
+  ManagedEnvironmentCheckResult,
   ManagedEnvironmentEntry
 } from '../../../../../shared/environmentTypes'
 import { errorMessage } from '../../../../../shared/errorCodes'
 import {
   formatEnvironmentSize,
   type ManagedEnvironmentHostResources,
+  managedEnvironmentConsumerKindLabel,
   managedEnvironmentSourceLabel,
   managedEnvironmentStateLabel,
   managedEnvironmentWslBlocker
@@ -32,12 +34,15 @@ import { HostToolsList } from './HostToolsSection'
 type ManagedEnvironmentDetailProps = {
   environment: ManagedEnvironmentEntry
   busy: boolean
+  checking?: boolean
+  checkResult?: ManagedEnvironmentCheckResult
   error: string | null
   hostResources: ManagedEnvironmentHostResources
   hostBusy: boolean
   onBack: () => void
   onBuild: () => void
   onRebuild: () => void
+  onCheck?: () => void
   onRemove: () => void
   onSaveHostPath: (toolId: EnvironmentToolId, path: string | null) => Promise<void>
 }
@@ -49,12 +54,15 @@ function title(environment: ManagedEnvironmentEntry): string {
 export function ManagedEnvironmentDetail({
   environment,
   busy,
+  checking = false,
+  checkResult,
   error,
   hostResources,
   hostBusy,
   onBack,
   onBuild,
   onRebuild,
+  onCheck,
   onRemove,
   onSaveHostPath
 }: ManagedEnvironmentDetailProps): React.JSX.Element {
@@ -69,7 +77,11 @@ export function ManagedEnvironmentDetail({
       environment.state === 'failed' ||
       environment.state === 'drifted')
   const removable =
-    environment.referrers.length === 0 &&
+    environment.state === 'ready' ||
+    environment.state === 'failed' ||
+    environment.state === 'drifted'
+  const canCheck =
+    Boolean(onCheck) &&
     (environment.state === 'ready' ||
       environment.state === 'failed' ||
       environment.state === 'drifted')
@@ -78,7 +90,7 @@ export function ManagedEnvironmentDetail({
   const localSelected = hostTool?.selected === true
   const managedSelected = !localSelected
   const localPath = hostTool?.path ?? hostTool?.detectedPath
-  const showPackages = /^phi:(python|r)@/u.test(environment.ref)
+  const showPackages = (environment.packages?.length ?? 0) > 0
   const [switchingMode, setSwitchingMode] = useState(false)
   const [modeError, setModeError] = useState<string | null>(null)
 
@@ -131,7 +143,9 @@ export function ManagedEnvironmentDetail({
             {environment.ref}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            {managedEnvironmentSourceLabel(environment.source)}
+            {environment.ownerLabel
+              ? `${managedEnvironmentSourceLabel(environment.source)} · ${environment.ownerLabel}`
+              : managedEnvironmentSourceLabel(environment.source)}
             {environment.sizeBytes === undefined
               ? ''
               : environmentUi.diskUsageValue(formatEnvironmentSize(environment.sizeBytes))}
@@ -141,6 +155,26 @@ export function ManagedEnvironmentDetail({
 
       {environment.description ? <Typography>{environment.description}</Typography> : null}
       <EnvironmentCapabilityChips environment={environment} />
+      {environment.consumers.length > 0 || environment.referrers.length > 0 ? (
+        <Box>
+          <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.75 }}>
+            {environmentUi.consumersAndReferrers}
+          </Typography>
+          <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: 'wrap' }}>
+            {environment.consumers.map((consumer) => (
+              <Chip
+                key={`${consumer.kind}:${consumer.name}:${consumer.label ?? ''}`}
+                size="small"
+                variant="outlined"
+                label={`${managedEnvironmentConsumerKindLabel(consumer.kind)}: ${consumer.label || consumer.name}`}
+              />
+            ))}
+            {environment.referrers.map((referrer) => (
+              <Chip key={referrer} size="small" variant="outlined" label={referrer} />
+            ))}
+          </Stack>
+        </Box>
+      ) : null}
       {environment.state === 'unavailable' ? (
         <Alert severity="info">{environmentUi.noOfficialLockForThisPlatform}</Alert>
       ) : error || environment.error ? (
@@ -229,6 +263,15 @@ export function ManagedEnvironmentDetail({
               {environmentUi.reviewEstimateAndBuild}
             </Button>
           ) : null}
+          {canCheck ? (
+            <Button
+              variant="outlined"
+              disabled={busy || checking || !managedSelected}
+              onClick={onCheck}
+            >
+              {checking ? environmentUi.checkingEnvironment : environmentUi.checkEnvironment}
+            </Button>
+          ) : null}
           {canRebuild ? (
             <Button variant="outlined" disabled={busy || !managedSelected} onClick={onRebuild}>
               {environmentUi.rebuild}
@@ -245,6 +288,17 @@ export function ManagedEnvironmentDetail({
             </Button>
           ) : null}
         </Stack>
+        {checkResult ? (
+          <Alert
+            severity={checkResult.ok ? 'success' : 'warning'}
+            variant="outlined"
+            sx={{ mt: 1.5 }}
+          >
+            {checkResult.ok
+              ? environmentUi.checkPassed(title(environment))
+              : environmentUi.checkFailed(title(environment), checkResult.problems.join('; '))}
+          </Alert>
+        ) : null}
         {showPackages ? <EnvironmentPackageList packages={environment.packages ?? []} /> : null}
       </Paper>
     </Stack>

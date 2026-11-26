@@ -120,9 +120,12 @@ import type {
 } from '../shared/webSearchSettingsTypes'
 import type {
   EnvironmentGetResult,
+  ManagedEnvironmentCheckResult,
   ManagedEnvironmentCleanResult,
   ManagedEnvironmentEntry,
+  ManagedEnvironmentRemoveOptions,
   ManagedEnvironmentRemoveResult,
+  ManagedEnvironmentTrimCacheResult,
   EnvironmentSnapshot,
   EnvironmentToolId
 } from '../shared/environmentTypes'
@@ -910,8 +913,13 @@ declare global {
         pluginId?: string
       ) => Promise<{ envId: string }>
       rebuildManagedEnvironment: (envId: string) => Promise<void>
-      removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
+      checkManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentCheckResult>
+      removeManagedEnvironment: (
+        envId: string,
+        options?: ManagedEnvironmentRemoveOptions
+      ) => Promise<ManagedEnvironmentRemoveResult>
       cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
+      trimManagedEnvironmentCache: () => Promise<ManagedEnvironmentTrimCacheResult>
       listModels: () => Promise<
         Array<{
           providerId: string

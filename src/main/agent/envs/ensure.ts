@@ -289,6 +289,32 @@ export function removeTree(target: string): void {
   rmSync(target, { recursive: true, force: true })
 }
 
+export async function removeTreeAsync(target: string): Promise<void> {
+  const { chmod, lstat, readdir, rm } = await import('node:fs/promises')
+  const grantOwnerWriteAsync = async (current: string): Promise<void> => {
+    let stat: Awaited<ReturnType<typeof lstat>>
+    try {
+      stat = await lstat(current)
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return
+      throw error
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return
+    if ((stat.mode & 0o200) === 0) await chmod(current, (stat.mode & 0o777) | 0o200)
+    const entries = await readdir(current)
+    await Promise.all(entries.map((name) => grantOwnerWriteAsync(join(current, name))))
+  }
+  let stat: Awaited<ReturnType<typeof lstat>>
+  try {
+    stat = await lstat(target)
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return
+    throw error
+  }
+  if (!stat.isSymbolicLink()) await grantOwnerWriteAsync(target)
+  await rm(target, { recursive: true, force: true })
+}
+
 /** Remove both the Linux prefix and the Windows-owned metadata marker, in that order. */
 export async function removeManagedEnvironmentPrefix(
   root: string,
@@ -300,7 +326,7 @@ export async function removeManagedEnvironmentPrefix(
     const wsl = readWslRuntime(root)
     if (wsl) await removeWslEnvironment(wsl, envId, true)
   }
-  removeTree(prefix)
+  await removeTreeAsync(prefix)
 }
 
 export function removeManagedEnvironmentPrefixSync(

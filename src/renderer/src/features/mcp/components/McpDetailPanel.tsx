@@ -18,6 +18,8 @@ import { McpApiKeyDialog } from './McpApiKeyDialog'
 import type { ConnectorAuthStatus } from './McpFeaturedConnectorCard'
 import { McpFeaturedConnectorDetails } from './McpFeaturedConnectorDetails'
 import { isRemoteProjectMcpServer } from '../lib/remoteProjectMcpTrust'
+import { runResourceUninstallInBackground } from '../../jobs/hooks/useBackgroundJobsData'
+import { McpRemoveConfirmDialog, type McpRemoveConfirmTarget } from './McpRemoveConfirmDialog'
 import { RemoteProjectMcpTrustPanel } from './RemoteProjectMcpTrustPanel'
 
 export interface McpDetailPanelProps {
@@ -103,7 +105,7 @@ export function McpDetailPanel({
   const toolsLoading = canReadTools && toolNames === null && toolsError === null
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [removeConfirmationServerId, setRemoveConfirmationServerId] = useState<string | null>(null)
+  const [pendingRemove, setPendingRemove] = useState<McpRemoveConfirmTarget | null>(null)
   const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [apiKeyError, setApiKeyError] = useState<string | null>(null)
@@ -173,19 +175,46 @@ export function McpDetailPanel({
     setToolRefresh((current) => current + 1)
   }
 
-  async function remove(): Promise<void> {
+  function requestRemove(): void {
     if (!selectedServer || !onRemoveServer) return
+    setPendingRemove({
+      id: selectedServer.id,
+      name: connector?.name ?? selectedServer.title ?? selectedServer.name,
+      clearsAuth: Boolean(connector?.apiKey || connector?.oauthAuthorizationOrigin),
+      clearsEnvironment: Boolean(
+        selectedServer.packageId || connector?.transport === 'stdio' || selectedServer.userStdio
+      ),
+      location: selectedServer.url || commandLine(selectedServer) || undefined
+    })
+  }
+
+  function confirmRemove(): void {
+    if (!selectedServer || !onRemoveServer) {
+      setPendingRemove(null)
+      return
+    }
+    const targetServer = selectedServer
+    const targetConnector = connector
+    const targetName = pendingRemove?.name ?? targetConnector?.name ?? targetServer.name
+    setPendingRemove(null)
     setBusy(true)
     setError(null)
-    try {
-      await onRemoveServer(selectedServer)
-      setRemoveConfirmationServerId(null)
-      if (connector) clearFeaturedToolNames(connector.id)
-    } catch (cause) {
-      setError(errorMessage(cause))
-    } finally {
-      setBusy(false)
-    }
+    void runResourceUninstallInBackground({
+      targetKind: 'connector',
+      targetId: targetServer.id,
+      title: targetName,
+      run: async () => {
+        try {
+          await onRemoveServer(targetServer)
+          if (targetConnector) clearFeaturedToolNames(targetConnector.id)
+        } catch (cause) {
+          setError(errorMessage(cause))
+          throw cause
+        } finally {
+          setBusy(false)
+        }
+      }
+    })
   }
 
   async function authorize(): Promise<void> {
@@ -258,7 +287,7 @@ export function McpDetailPanel({
               toolsError={toolsError}
               iconSize={72}
               onAdd={() => undefined}
-              onRemove={onRemoveServer && !remoteProjectServer ? () => void remove() : undefined}
+              onRemove={onRemoveServer && !remoteProjectServer ? () => requestRemove() : undefined}
               onAuthorize={() => void authorize()}
               onApiKey={() => setApiKeyDialogOpen(true)}
               onEnabledChange={
@@ -316,45 +345,12 @@ export function McpDetailPanel({
                       color="error"
                       variant="outlined"
                       disabled={busy}
-                      onClick={() => {
-                        if (selectedServer.userStdio) {
-                          setRemoveConfirmationServerId(selectedServer.id)
-                        } else void remove()
-                      }}
+                      onClick={requestRemove}
                     >
                       {resourceUi.remove}
                     </Button>
                   )}
               </Stack>
-              {selectedServer.userStdio && removeConfirmationServerId === selectedServer.id ? (
-                <Alert
-                  severity="warning"
-                  sx={{ mt: 2 }}
-                  action={
-                    <Stack direction="row" spacing={1}>
-                      <Button
-                        size="small"
-                        variant="text"
-                        disabled={busy}
-                        onClick={() => setRemoveConfirmationServerId(null)}
-                      >
-                        {resourceUi.cancel}
-                      </Button>
-                      <Button
-                        size="small"
-                        color="error"
-                        variant="text"
-                        disabled={busy}
-                        onClick={() => void remove()}
-                      >
-                        {connectorCopy.confirmRemove}
-                      </Button>
-                    </Stack>
-                  }
-                >
-                  {connectorCopy.removeLocalConfirm}
-                </Alert>
-              ) : null}
               <Divider sx={{ my: 4 }} />
               <Typography variant="h6" sx={{ mb: 1, fontWeight: 700 }}>
                 {selectedServer.url ? connectorCopy.mcpUrl : connectorCopy.command}
@@ -405,6 +401,11 @@ export function McpDetailPanel({
           setApiKeyError(null)
         }}
         onSubmit={() => void replaceApiKey()}
+      />
+      <McpRemoveConfirmDialog
+        target={pendingRemove}
+        onCancel={() => setPendingRemove(null)}
+        onConfirm={confirmRemove}
       />
     </Box>
   )

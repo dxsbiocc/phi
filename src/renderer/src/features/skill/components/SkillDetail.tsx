@@ -22,6 +22,7 @@ import { PhiIcons } from '../../../icons'
 import { errorMessage } from '../../../../../shared/errorCodes'
 import type { SkillSummary } from '../../../types'
 import { RemoteProjectTrustControl, RemoteProjectTrustStatus } from '../../agent/AgentTrustPanel'
+import { runResourceUninstallInBackground } from '../../jobs/hooks/useBackgroundJobsData'
 import { skillMarkdownBody } from '../lib/skillMarkdown'
 import { mutateRemoteSkillTrust } from '../lib/remoteSkillTrust'
 import { SkillDetailBody } from './SkillDetailBody'
@@ -231,23 +232,24 @@ function SkillEnablementActions({
 
 function SkillDeleteDialog({
   skill,
-  isDeleting,
   onClose,
   onConfirm
 }: {
   skill: SkillSummary | null
-  isDeleting: boolean
   onClose: () => void
-  onConfirm: (skill: SkillSummary) => Promise<void>
+  onConfirm: (skill: SkillSummary) => void
 }): React.JSX.Element {
   useUiLanguage()
 
   return (
-    <ConfirmationDialog open={Boolean(skill)} onClose={isDeleting ? undefined : onClose}>
+    <ConfirmationDialog open={Boolean(skill)} onClose={onClose}>
       <DialogTitle>{skillCopy.uninstallSkill}</DialogTitle>
       <DialogContent>
         <Typography variant="body2" sx={{ mb: 1 }}>
           {skillCopy.confirmUninstall(skill?.name ?? '')}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+          {skillCopy.uninstallBackgroundHint}
         </Typography>
         <Typography
           component="code"
@@ -263,15 +265,13 @@ function SkillDeleteDialog({
         </Typography>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} disabled={isDeleting}>
-          {resourceUi.cancel}
-        </Button>
+        <Button onClick={onClose}>{resourceUi.cancel}</Button>
         <Button
           color="error"
           variant="contained"
-          disabled={!skill || isDeleting}
+          disabled={!skill}
           onClick={() => {
-            if (skill) void onConfirm(skill)
+            if (skill) onConfirm(skill)
           }}
         >
           {resourceUi.uninstall}
@@ -296,19 +296,18 @@ export function SkillDetail({
 
   const skillContent = useSkillContent(selectedSkill)
   const [deleteCandidate, setDeleteCandidate] = useState<SkillSummary | null>(null)
-  const [isDeleting, setIsDeleting] = useState(false)
 
-  const confirmDelete = async (skill: SkillSummary): Promise<void> => {
+  const confirmDelete = (skill: SkillSummary): void => {
     if (!onDeleteSkill) return
-    setIsDeleting(true)
-    try {
-      await onDeleteSkill(skill)
-      setDeleteCandidate(null)
-    } catch {
-      // The caller owns action-level feedback; leaving the dialog open preserves context.
-    } finally {
-      setIsDeleting(false)
-    }
+    setDeleteCandidate(null)
+    void runResourceUninstallInBackground({
+      targetKind: 'skill',
+      targetId: skill.id,
+      title: skill.name,
+      run: async () => {
+        await onDeleteSkill(skill)
+      }
+    })
   }
 
   if (!selectedSkill) {
@@ -422,7 +421,6 @@ export function SkillDetail({
       />
       <SkillDeleteDialog
         skill={deleteCandidate}
-        isDeleting={isDeleting}
         onClose={() => setDeleteCandidate(null)}
         onConfirm={confirmDelete}
       />

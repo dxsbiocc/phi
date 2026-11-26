@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react'
 import type { SnackbarSeverity } from '../../../components/AppSnackbarCard'
 import type { WrapperRemovalPreview } from '../../../../../shared/packageManagerTypes'
 import { readableErrorMessage } from '../../../lib/sessionNotifications'
+import { runResourceUninstallInBackground } from '../../jobs/hooks/useBackgroundJobsData'
 import { wrapperCopy } from '../lib/wrapperCopy'
 import { useWrapperPackageRemoval } from './useWrapperPackageRemoval'
 
@@ -65,11 +66,17 @@ export function useWrapperRemoval(
   const confirm = useCallback(async (): Promise<boolean> => {
     if (!pending) return false
     const target = pending
-    const removed = await remove(target.id)
-    if (!removed) return false
     setPending(null)
-    if (onNotify) onNotify(wrapperCopy.removedPackage(target.name), 'success')
-    return true
+    return runResourceUninstallInBackground({
+      targetKind: 'wrapper',
+      targetId: target.id,
+      title: target.name,
+      run: async () => {
+        const removed = await remove(target.id)
+        if (!removed) throw new Error(wrapperCopy.removePackagePreviewFailed)
+        if (onNotify) onNotify(wrapperCopy.removedPackage(target.name), 'success')
+      }
+    })
   }, [onNotify, pending, remove])
 
   const removing = Boolean(pending && isRemoving(pending.id))

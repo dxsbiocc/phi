@@ -96,7 +96,13 @@ export const pluginCopy = defineCopy(
     legacyTab: 'Legacy plugin tabs are retained. Select an installed plugin to continue.',
     uninstallTitle: (name: string) => `Uninstall ${name}?`,
     uninstallDescription:
-      'This removes the plugin’s agents, skills, script tools and environment references. Environments used only by this plugin may be cleaned up when no references remain.',
+      'This clears all agents, skills, and script tools provided by this plugin. Any managed environments with no remaining references will also be cleaned up automatically.',
+    uninstallClearedHeading: 'Contents to be cleared',
+    uninstallPrivateEnvironments:
+      'Private environments (cleaned up automatically when unreferenced)',
+    uninstallSharedEnvironments: 'Shared environments (retained while referenced elsewhere)',
+    uninstallBackgroundHint:
+      'After confirmation, uninstallation and environment cleanup run in Background Jobs without blocking the UI.',
     bundledUninstallNotice:
       'This is a built-in plugin. Phi will remember your decision and will not restore it automatically on the next launch.',
     uninstalling: 'Uninstalling…',
@@ -228,7 +234,11 @@ export const pluginCopy = defineCopy(
     legacyTab: '已保留旧插件标签页，请选择已安装插件以继续。',
     uninstallTitle: (name: string) => `卸载 ${name}？`,
     uninstallDescription:
-      '这会移除插件的智能体、技能、脚本工具及环境引用。仅由此插件使用的环境在没有引用后可能被清理。',
+      '这会清除此插件内的全部智能体、技能与脚本工具；不再被其他组件引用的受管环境也会自动清除。',
+    uninstallClearedHeading: '将清除的插件内容',
+    uninstallPrivateEnvironments: '插件私有环境（无其他引用时自动清除）',
+    uninstallSharedEnvironments: '共享环境（仍有其他引用时保留）',
+    uninstallBackgroundHint: '确认后将在“后台任务”中执行卸载与环境清理，不会阻塞当前界面。',
     bundledUninstallNotice: '这是内置插件。Phi 会记住你的选择，下次启动时不会自动恢复。',
     uninstalling: '正在卸载…',
     confirmUninstall: '确认卸载',

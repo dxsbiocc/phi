@@ -4,7 +4,7 @@
  * The main process owns the list; the renderer only reads it through IPC and
  * mirrors terminal records into its display-only background job history.
  */
-export type PluginInstallAction = 'install' | 'upgrade'
+export type PluginInstallAction = 'install' | 'upgrade' | 'uninstall'
 
 export type PluginInstallState = 'running' | 'succeeded' | 'failed'
 
@@ -12,7 +12,7 @@ export type PluginInstallState = 'running' | 'succeeded' | 'failed'
  * Stable failure code. The renderer turns it into a short user-facing sentence;
  * the detailed cause is written to the main-process log instead of this record.
  */
-export type PluginInstallFailure = 'install-failed' | 'upgrade-failed'
+export type PluginInstallFailure = 'install-failed' | 'upgrade-failed' | 'uninstall-failed'
 
 export interface PluginInstallJob {
   id: string

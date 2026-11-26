@@ -19,6 +19,7 @@ import type {
   ManagedEnvironmentEntry
 } from '../../../../../shared/environmentTypes'
 import {
+  builtinManagedEnvironments,
   formatBuildEstimate,
   formatEnvironmentSize,
   managedEnvironmentHostResources,
@@ -83,10 +84,9 @@ function EnvironmentCard({
   const wslBlocker = managedEnvironmentWslBlocker(hostResources)
   const hasHostResources = hostResources.tools.length + hostResources.dependencies.length > 0
   const removable =
-    environment.referrers.length === 0 &&
-    (environment.state === 'ready' ||
-      environment.state === 'failed' ||
-      environment.state === 'drifted')
+    environment.state === 'ready' ||
+    environment.state === 'failed' ||
+    environment.state === 'drifted'
   const canBuild =
     !wslBlocker && environment.source !== 'orphaned' && environment.state === 'absent'
   const unavailable = environment.state === 'unavailable'
@@ -96,6 +96,9 @@ function EnvironmentCard({
     (environment.state === 'ready' ||
       environment.state === 'failed' ||
       environment.state === 'drifted')
+  const sourceCaption = environment.ownerLabel
+    ? `${managedEnvironmentSourceLabel(environment.source)} · ${environment.ownerLabel}`
+    : managedEnvironmentSourceLabel(environment.source)
   const nativePython =
     environment.ref === 'phi:python@1' &&
     !environment.runtime &&
@@ -192,7 +195,7 @@ function EnvironmentCard({
                 {environment.ref}
               </Typography>
               <Typography variant="caption" color="text.secondary" noWrap>
-                {managedEnvironmentSourceLabel(environment.source)}
+                {sourceCaption}
               </Typography>
             </Box>
           </Stack>
@@ -247,7 +250,13 @@ function EnvironmentCard({
         </Box>
         <Box
           data-phi-environment-slot="actions"
-          sx={{ minWidth: 142, display: 'flex', justifyContent: 'flex-end' }}
+          sx={{
+            minWidth: 142,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5,
+            justifyContent: 'flex-end'
+          }}
         >
           {canBuild ? (
             <Button size="small" variant="contained" disabled={busy} onClick={onBuild}>
@@ -270,16 +279,17 @@ function EnvironmentCard({
               {environmentUi.building}
             </Button>
           ) : null}
-          {!canBuild && !canRebuild && environment.state !== 'building' && removable ? (
-            <Button
+          {removable && environment.state !== 'building' ? (
+            <LabeledIconButton
               size="small"
               color="error"
-              variant="outlined"
+              label={environmentUi.deleteEnvironment}
               disabled={busy}
               onClick={onRemove}
+              data-phi-managed-environment-delete={environment.envId}
             >
-              {environmentUi.remove}
-            </Button>
+              <PhiIcons.action.delete size={15} aria-hidden />
+            </LabeledIconButton>
           ) : null}
         </Box>
       </CardActions>
@@ -301,9 +311,7 @@ export function ManagedEnvironmentsSection({
   onOpen
 }: ManagedEnvironmentsSectionProps): React.JSX.Element {
   useUiLanguage()
-  const currentEnvironments = environments.filter(
-    (environment) => environment.source !== 'orphaned'
-  )
+  const builtinEnvironments = builtinManagedEnvironments(environments)
   const orphanedEnvironments = environments.filter(
     (environment) => environment.source === 'orphaned'
   )
@@ -315,23 +323,14 @@ export function ManagedEnvironmentsSection({
 
   return (
     <Stack component="section" spacing={1.25} aria-labelledby="managed-environments-title">
-      <Stack
-        direction="row"
-        spacing={2}
-        sx={{ alignItems: 'flex-start', justifyContent: 'space-between' }}
-      >
-        <Box>
-          <Typography id="managed-environments-title" variant="h6">
-            {environmentUi.environments}
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            {environmentUi.phiAutomaticallyDetectsJupyterNextflowAndContainerRuntimes}
-          </Typography>
-        </Box>
-        <Button size="small" color="warning" disabled={loading} onClick={onClean}>
-          {environmentUi.cleanUpUnreferencedEnvironments2}
-        </Button>
-      </Stack>
+      <Box>
+        <Typography id="managed-environments-title" variant="h6">
+          {environmentUi.builtinEnvironments}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {environmentUi.builtinEnvironmentsDescription}
+        </Typography>
+      </Box>
 
       {error ? (
         <Alert
@@ -347,11 +346,11 @@ export function ManagedEnvironmentsSection({
         </Alert>
       ) : null}
 
-      {loading && currentEnvironments.length === 0 ? (
+      {loading && builtinEnvironments.length === 0 ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 5 }}>
           <CircularProgress size={28} />
         </Box>
-      ) : currentEnvironments.length === 0 ? (
+      ) : builtinEnvironments.length === 0 ? (
         <Alert severity="info" variant="outlined">
           {environmentUi.noEnvironmentsToManage}
         </Alert>
@@ -363,7 +362,7 @@ export function ManagedEnvironmentsSection({
             gap: 1.5
           }}
         >
-          {currentEnvironments.map((environment) => (
+          {builtinEnvironments.map((environment) => (
             <EnvironmentCard
               key={`${environment.ref}:${environment.envId}`}
               environment={environment}

@@ -100,11 +100,27 @@ export interface EnvironmentHostTool {
   kernels?: EnvironmentHostKernel[]
 }
 
+export interface ManagedEnvironmentRemoveOptions {
+  /** Remove the built prefix & index entry even when packages or skills still declare referrers. */
+  force?: boolean
+}
+
+export interface ManagedEnvironmentCheckResult {
+  envId: string
+  ok: boolean
+  problems: string[]
+}
+
+export interface ManagedEnvironmentTrimCacheResult {
+  bytesFreed: number
+}
+
 export type ManagedEnvironmentState =
   'absent' | 'building' | 'ready' | 'failed' | 'drifted' | 'unavailable'
-export type ManagedEnvironmentSource = 'official' | 'plugin' | 'project' | 'orphaned'
+export type ManagedEnvironmentSource =
+  'official' | 'plugin' | 'skill' | 'mcp' | 'project' | 'orphaned'
 export type ManagedEnvironmentConsumerKind =
-  'skill' | 'agent' | 'plugin' | 'wrapper' | 'notebook' | 'kernel'
+  'skill' | 'agent' | 'plugin' | 'mcp' | 'wrapper' | 'notebook' | 'kernel'
 
 export interface ManagedEnvironmentConsumer {
   kind: ManagedEnvironmentConsumerKind
@@ -125,6 +141,12 @@ export interface ManagedEnvironmentEntry {
   source: ManagedEnvironmentSource
   /** Installed plugin that owns a private `plugin:` environment. */
   pluginId?: string
+  /** Owning skill id for a private `skill:` environment. */
+  skillId?: string
+  /** Owning MCP connector id for a private `mcp:` environment. */
+  mcpId?: string
+  /** Human-readable owning resource title (plugin, skill, or connector). */
+  ownerLabel?: string
   label?: string
   description?: string
   packages?: ManagedEnvironmentPackage[]
@@ -139,6 +161,8 @@ export interface ManagedEnvironmentEntry {
   unavailableReason?: 'missing-lock'
   /** Windows hosts build and invoke Linux locks through WSL2. */
   runtime?: 'wsl2'
+  createdAt?: string
+  updatedAt?: string
 }
 
 export interface ManagedEnvironmentRemoveResult {

@@ -7,6 +7,7 @@ import { IPC } from '../../shared/ipcChannels'
 import { readAppSettings } from '../agent/app-settings'
 import { writeAppLog } from '../agent/app-logger'
 import type { EnvironmentBuilds } from '../agent/content/environment-builds'
+import { collectGarbageAsync } from '../agent/envs/gc'
 import { getRuntimeRoot } from '../agent/envs/runtime'
 import { setMcpPackageEnabled } from '../agent/mcp-connectors'
 import { setEnabled } from '../agent/enablement'
@@ -342,6 +343,50 @@ function registerPackageInstallIpc(context: PackagesIpcContext): void {
   )
 }
 
+async function executeTrackedPackageUninstall(
+  context: PackagesIpcContext,
+  type: PackageType,
+  id: string
+): Promise<ReturnType<typeof uninstallRegistryPackage>> {
+  const { options } = context
+  const AGENT_DIR = options.workspace.agentDir
+  const existingPlugin =
+    type === 'plugin'
+      ? listRegistryPackages({ agentDir: AGENT_DIR }).find(
+          (entry) => entry.type === 'plugin' && entry.id === id
+        )
+      : undefined
+  const job =
+    type === 'plugin'
+      ? options.plugins.installJobs.begin({
+          pluginId: id,
+          title: existingPlugin?.id ?? id,
+          version: existingPlugin?.version ?? '',
+          action: 'uninstall'
+        })
+      : undefined
+  try {
+    let pendingGc: Promise<unknown> | undefined
+    const result = uninstallRegistryPackage(type, id, {
+      agentDir: AGENT_DIR,
+      runtimeRoot: getRuntimeRoot(),
+      garbageCollect: (runtimeRoot) => {
+        pendingGc = collectGarbageAsync(runtimeRoot)
+        return { removed: [], orphans: [], skipped: [], logsRemoved: 0 }
+      }
+    })
+    if (pendingGc) await pendingGc
+    if (type === 'wrapper') resetWrapperCompositionCatalogCache()
+    if (type === 'mcp') setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
+    job?.succeed()
+    await options.lifecycle.invalidateAgentSession()
+    return result
+  } catch (error) {
+    job?.fail('uninstall-failed')
+    throw new Error(`Could not uninstall package: ${errorMessage(error)}`)
+  }
+}
+
 function registerPackageRemovalIpc(context: PackagesIpcContext): void {
   const { options } = context
   const ipcMain = options.ipcMain
@@ -388,18 +433,7 @@ function registerPackageRemovalIpc(context: PackagesIpcContext): void {
       ) {
         throw new Error('Invalid package uninstall request')
       }
-      try {
-        const result = uninstallRegistryPackage(type, id, {
-          agentDir: AGENT_DIR,
-          runtimeRoot: getRuntimeRoot()
-        })
-        if (type === 'wrapper') resetWrapperCompositionCatalogCache()
-        if (type === 'mcp') setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
-        await invalidateAgentSession()
-        return result
-      } catch (error) {
-        throw new Error(`Could not uninstall package: ${errorMessage(error)}`)
-      }
+      return executeTrackedPackageUninstall(context, type, id)
     })
   )
   ipcMain.handle(IPC.packages.listInstalled, async () => {

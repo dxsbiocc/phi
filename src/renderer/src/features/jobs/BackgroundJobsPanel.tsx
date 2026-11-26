@@ -138,6 +138,7 @@ export function BackgroundJobsPanel({
         case 'jupyter':
         case 'notebook-ai':
         case 'plugin':
+        case 'uninstall':
         case 'history':
           return Promise.resolve()
       }

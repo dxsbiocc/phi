@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { setUiLanguage } from '../src/renderer/src/lib/i18n'
 import type { PluginInstallJob } from '../src/shared/pluginInstallJobTypes'
+import type { ResourceUninstallJob } from '../src/shared/resourceUninstallJobTypes'
 import {
   BACKGROUND_JOB_HISTORY_KEY,
   BackgroundJobHistory
@@ -196,6 +197,68 @@ test('a plugin install reports its completion or failure as an arrival phase', (
   const known = new Set<string>()
   assert.equal(newlyObservedJobs(running, known).length, 1)
   assert.deepEqual(newlyObservedJobs(succeeded, known), [])
+})
+
+test('plugin uninstall and skill/wrapper/connector background uninstall jobs render localized titles and survive history', () => {
+  setUiLanguage('zh-CN')
+  const pluginUninstall = livePlugin([
+    install({ action: 'uninstall', state: 'running', version: '1.4.0' })
+  ])
+  assert.equal(jobSubtitle(pluginUninstall), '卸载插件 · 1.4.0')
+  assert.equal(jobDetail(pluginUninstall, Date.parse(startedAt)), '卸载 · v1.4.0 · 进行中')
+
+  const resourceJobs: ResourceUninstallJob[] = [
+    {
+      id: 'resource-uninstall-1',
+      targetKind: 'skill',
+      targetId: 'scanpy',
+      title: 'Scanpy 单细胞分析',
+      version: '1.1.0',
+      state: 'running',
+      startedAt
+    },
+    {
+      id: 'resource-uninstall-2',
+      targetKind: 'wrapper',
+      targetId: 'suite:samtools',
+      title: 'samtools',
+      detail: '2 个工具',
+      state: 'succeeded',
+      startedAt,
+      finishedAt
+    },
+    {
+      id: 'resource-uninstall-3',
+      targetKind: 'connector',
+      targetId: 'biomcp',
+      title: 'BioMCP',
+      state: 'failed',
+      startedAt,
+      finishedAt,
+      error: '权限不足'
+    }
+  ]
+
+  const selected = selectBackgroundJobs([], [], {}, [], [], [], [], [], [], [], resourceJobs)
+  assert.equal(selected.active.length, 1)
+  assert.equal(selected.recent.length, 2)
+  assert.equal(jobSubtitle(selected.active[0]!), '卸载技能 · 1.1.0')
+  assert.equal(jobSource(selected.active[0]!), '技能')
+  assert.equal(jobSubtitle(selected.recent[0]!), '移除 Wrapper · 2 个工具')
+  assert.equal(jobSubtitle(selected.recent[1]!), '移除连接器')
+
+  const storage = new MemoryStorage()
+  const history = new BackgroundJobHistory(storage)
+  history.observe([
+    livePlugin([install({ action: 'uninstall', state: 'succeeded', finishedAt })]),
+    ...selected.recent
+  ])
+  const restored = new BackgroundJobHistory(storage).select(empty()).recent
+  assert.equal(restored.length, 3)
+  assert.ok(restored.some((item) => jobSubtitle(item).startsWith('卸载插件')))
+  assert.ok(restored.some((item) => jobSubtitle(item).startsWith('移除 Wrapper')))
+  assert.ok(restored.some((item) => jobSubtitle(item).startsWith('移除连接器')))
+  setUiLanguage('en')
 })
 
 test('English plugin labels and the failure summary follow the active language', () => {

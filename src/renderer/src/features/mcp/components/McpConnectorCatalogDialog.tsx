@@ -29,15 +29,11 @@ import {
   cachedFeaturedToolNames,
   clearFeaturedToolNames
 } from '../lib/featuredToolCache'
-import { McpApiKeyDialog } from './McpApiKeyDialog'
+import { McpCatalogAuxiliaryDialogs } from './McpCatalogAuxiliaryDialogs'
 import { McpConnectorCatalogToolbar } from './McpConnectorCatalogToolbar'
 import { McpCatalogAddMenu } from './McpCatalogAddMenu'
-import { McpCustomConnectorDialog } from './McpCustomConnectorDialog'
 import { McpFeaturedConnectorCard, type ConnectorAuthStatus } from './McpFeaturedConnectorCard'
 import { McpFeaturedConnectorDetails } from './McpFeaturedConnectorDetails'
-import { McpGithubImportDialog } from './McpGithubImportDialog'
-import { McpImportedInstallDialog } from './McpImportedInstallDialog'
-import { McpSourcesPanel } from './McpSourcesPanel'
 import { useCustomConnectorCatalogEntries } from '../hooks/useCustomConnectorCatalogEntries'
 import {
   connectorSetupActive,
@@ -50,21 +46,18 @@ import {
 } from '../lib/customConnectorGroup'
 import { McpCustomConnectorDetail } from './McpCustomConnectorDetail'
 import { McpCustomConnectorGroup } from './McpCustomConnectorGroup'
+import { McpRemoveConfirmDialog, type McpRemoveConfirmTarget } from './McpRemoveConfirmDialog'
+import { runResourceUninstallInBackground } from '../../jobs/hooks/useBackgroundJobsData'
+import {
+  apiKeyErrorMessage,
+  ipcErrorMessage,
+  matchingServer,
+  probeFeaturedConnectorAuthStatuses
+} from '../lib/connectorCatalogHelpers'
+
 type CatalogPage = 'list' | 'detail'
 type CatalogGroup = (typeof mcpConnectorCategories)[number] | typeof CUSTOM_CONNECTOR_GROUP
 type ImportedConnectorAction = 'install' | 'oauth' | 'api-key'
-function ipcErrorMessage(cause: unknown): string {
-  const message = errorMessage(cause)
-  return message.replace(/^Error invoking remote method '[^']+': (?:[^:]+: )?/, '')
-}
-
-function apiKeyErrorMessage(cause: unknown): string {
-  const message = errorMessage(cause)
-  return message.replace(
-    /^Error invoking remote method ['"]mcp:setFeaturedApiKey['"]: (?:McpApiKeyValidationError|Error): /,
-    ''
-  )
-}
 
 export interface McpConnectorCatalogDialogProps {
   open: boolean
@@ -73,20 +66,6 @@ export interface McpConnectorCatalogDialogProps {
   onOpenConnectorJob?: (jobId: string) => void
   onClose: () => void
   onRefresh: () => Promise<void>
-}
-
-function matchingServer(
-  connector: FeaturedMcpConnector,
-  servers: McpServerSummary[]
-): McpServerSummary | undefined {
-  return servers.find(
-    (server) =>
-      server.packageId === connector.id ||
-      server.connectorId === connector.id ||
-      (connector.url !== undefined &&
-        server.url === connector.url &&
-        (!connector.apiKey || server.name === connector.id))
-  )
 }
 
 export function McpConnectorCatalogDialog({
@@ -136,7 +115,9 @@ export function McpConnectorCatalogDialog({
   const [toolsLoading, setToolsLoading] = useState(false)
   const [toolsError, setToolsError] = useState<string | null>(null)
   const [authStatusById, setAuthStatusById] = useState<Record<string, ConnectorAuthStatus>>({})
-  const [removeConfirmationServerId, setRemoveConfirmationServerId] = useState<string | null>(null)
+  const [pendingRemove, setPendingRemove] = useState<
+    (McpRemoveConfirmTarget & { server: McpServerSummary; custom: boolean }) | null
+  >(null)
   const toolRequestRef = useRef(0)
   const onSetupChange = useCallback(
     (progress: McpConnectorSetupProgress) => {
@@ -198,42 +179,9 @@ export function McpConnectorCatalogDialog({
 
   const probeConnectorAuthStatuses = useCallback(
     (entries: readonly FeaturedMcpConnector[], isActive: () => boolean): void => {
-      for (const connector of entries.filter(
-        (entry) => entry.oauthAuthorizationOrigin || entry.apiKey
-      )) {
-        const cachedTools = cachedFeaturedToolNames(connector.id)
-        const status = connector.apiKey
-          ? typeof window.api.getFeaturedMcpApiKeyStatus === 'function'
-            ? window.api.getFeaturedMcpApiKeyStatus(connector.id)
-            : Promise.reject(new Error(connectorCopy.keyApiMissing))
-          : typeof window.api.getFeaturedMcpAuthStatus === 'function'
-            ? window.api.getFeaturedMcpAuthStatus(connector.id)
-            : cachedTools !== null
-              ? Promise.resolve(true)
-              : window.api.listFeaturedMcpTools(connector.id).then((names) => {
-                  cacheFeaturedToolNames(connector.id, names)
-                  return true
-                })
-        void status
-          .then((authenticated) => {
-            if (isActive()) {
-              setAuthStatusById((current) => ({
-                ...current,
-                [connector.id]: authenticated ? 'authenticated' : 'unauthenticated'
-              }))
-            }
-          })
-          .catch((cause: unknown) => {
-            if (!isActive()) return
-            const message = ipcErrorMessage(cause)
-            setAuthStatusById((current) => ({
-              ...current,
-              [connector.id]: connector.oauthAuthorizationOrigin
-                ? featuredOAuthStatusFromError(message, connector.name)
-                : 'unavailable'
-            }))
-          })
-      }
+      probeFeaturedConnectorAuthStatuses(entries, isActive, (id, status) =>
+        setAuthStatusById((current) => ({ ...current, [id]: status }))
+      )
     },
     []
   )
@@ -438,10 +386,11 @@ export function McpConnectorCatalogDialog({
       else if (server.url) await window.api.removeRemoteMcpConnector(server.name, server.url)
       else throw new Error(connectorCopy.cannotRemove)
       await onRefresh()
-      setRemoveConfirmationServerId(null)
+      setPendingRemove(null)
       setPage('list')
     } catch (cause) {
       setError(ipcErrorMessage(cause))
+      throw cause
     } finally {
       setBusy(null)
     }
@@ -623,7 +572,7 @@ export function McpConnectorCatalogDialog({
   }
   function openCustomDetail(entry: CustomConnectorServerEntry): void {
     setSelectedId(entry.server.id)
-    setRemoveConfirmationServerId(null)
+    setPendingRemove(null)
     setPage('detail')
     setError(null)
   }
@@ -651,7 +600,7 @@ export function McpConnectorCatalogDialog({
     setSignInFilter('all')
     setInstallFilter('all')
     setSort('default')
-    setRemoveConfirmationServerId(null)
+    setPendingRemove(null)
     setPage('list')
     onClose()
   }
@@ -715,7 +664,7 @@ export function McpConnectorCatalogDialog({
     setQuery('')
     setError(null)
     setApiKeyInput('')
-    setRemoveConfirmationServerId(null)
+    setPendingRemove(null)
   }
 
   function connectorCard(connector: FeaturedMcpConnector, key = connector.id): React.JSX.Element {
@@ -823,10 +772,19 @@ export function McpConnectorCatalogDialog({
             entry={selectedCustom}
             busy={busy !== null}
             error={error}
-            confirmingRemove={removeConfirmationServerId === selectedCustom.server.id}
+            confirmingRemove={false}
             onEnabledChange={(enabled) => void setConnectorEnabled(selectedCustom.server, enabled)}
-            onRequestRemove={() => setRemoveConfirmationServerId(selectedCustom.server.id)}
-            onCancelRemove={() => setRemoveConfirmationServerId(null)}
+            onRequestRemove={() =>
+              setPendingRemove({
+                id: selectedCustom.server.id,
+                name: selectedCustom.name,
+                clearsEnvironment: Boolean(selectedCustom.server.userStdio),
+                location: selectedCustom.server.url || selectedCustom.subtitle || undefined,
+                server: selectedCustom.server,
+                custom: true
+              })
+            }
+            onCancelRemove={() => setPendingRemove(null)}
             onConfirmRemove={() => void removeCustomConnector(selectedCustom.server)}
           />
         ) : page === 'detail' && selected ? (
@@ -846,7 +804,17 @@ export function McpConnectorCatalogDialog({
             onAdd={() => requestConnectorAction(selected, 'install')}
             onRemove={() => {
               const server = matchingServer(selected, servers)
-              if (server) void remove(server)
+              if (server) {
+                setPendingRemove({
+                  id: selected.id,
+                  name: selected.name,
+                  clearsAuth: Boolean(selected.apiKey || selected.oauthAuthorizationOrigin),
+                  clearsEnvironment: Boolean(server.packageId || selected.transport === 'stdio'),
+                  location: server.url || server.command || undefined,
+                  server,
+                  custom: false
+                })
+              }
             }}
             onAuthorize={() => requestConnectorAction(selected, 'oauth')}
             onApiKey={() => requestConnectorAction(selected, 'api-key')}
@@ -894,86 +862,89 @@ export function McpConnectorCatalogDialog({
           </Alert>
         )}
       </CatalogBrowseLayout>
-      {customOpen && (
-        <McpCustomConnectorDialog
-          open
-          busy={busy !== null}
-          authorizing={customAuthorizingName !== null}
-          error={customError}
-          localAvailable={localConnectorsAllowed}
-          initialDraft={customInitialDraft}
-          onClose={() => {
-            if (customAuthorizingName) {
-              void window.api.cancelRemoteMcpAuth(customAuthorizingName).catch((cause: unknown) => {
-                setCustomError(ipcErrorMessage(cause))
-              })
-              return
-            }
-            if (busy !== null) return
-            savedCustomAuthRef.current = null
-            setCustomInitialDraft(undefined)
-            setCustomOpen(false)
-            setCustomError(null)
-          }}
-          onSubmit={(name, url, options) => void addCustom(name, url, options)}
-          onSubmitLocal={addLocal}
-        />
-      )}
-      {githubImportOpen && (
-        <McpGithubImportDialog
-          open
-          onClose={() => setGithubImportOpen(false)}
-          onImported={async (source) => {
-            await refreshCatalog()
-            setSourceNotice(connectorCopy.sourceImported(source.repo, source.sha))
-          }}
-          onUseLocalDraft={(draft) => {
-            setGithubImportOpen(false)
-            setCustomError(null)
-            setCustomInitialDraft({
-              tab: 'local',
-              name: draft.suggestedName,
-              runtimeHint: draft.runtimeHint,
-              command: draft.command,
-              args: draft.args,
-              ...(draft.setup ? { setup: draft.setup } : {})
-            })
-            setCustomOpen(true)
-          }}
-        />
-      )}
-      {sourcesOpen && (
-        <McpSourcesPanel open onClose={() => setSourcesOpen(false)} onChanged={refreshCatalog} />
-      )}
-      <McpImportedInstallDialog
-        connector={pendingImportedAction?.connector ?? null}
-        open={Boolean(pendingImportedAction)}
+      <McpCatalogAuxiliaryDialogs
+        customOpen={customOpen}
         busy={busy !== null}
-        onCancel={() => setPendingImportedAction(null)}
-        onConfirm={() => {
+        authorizingCustom={customAuthorizingName !== null}
+        customError={customError}
+        localAvailable={localConnectorsAllowed}
+        initialDraft={customInitialDraft}
+        onCloseCustom={() => {
+          if (customAuthorizingName) {
+            void window.api.cancelRemoteMcpAuth(customAuthorizingName).catch((cause: unknown) => {
+              setCustomError(ipcErrorMessage(cause))
+            })
+            return
+          }
+          if (busy !== null) return
+          savedCustomAuthRef.current = null
+          setCustomInitialDraft(undefined)
+          setCustomOpen(false)
+          setCustomError(null)
+        }}
+        onSubmitRemote={(name, url, options) => void addCustom(name, url, options)}
+        onSubmitLocal={addLocal}
+        githubImportOpen={githubImportOpen}
+        onCloseGithub={() => setGithubImportOpen(false)}
+        onGithubImported={async (source) => {
+          await refreshCatalog()
+          setSourceNotice(connectorCopy.sourceImported(source.repo, source.sha))
+        }}
+        onUseLocalDraft={(draft) => {
+          setGithubImportOpen(false)
+          setCustomError(null)
+          setCustomInitialDraft({
+            tab: 'local',
+            name: draft.suggestedName,
+            runtimeHint: draft.runtimeHint,
+            command: draft.command,
+            args: draft.args,
+            ...(draft.setup ? { setup: draft.setup } : {})
+          })
+          setCustomOpen(true)
+        }}
+        sourcesOpen={sourcesOpen}
+        onCloseSources={() => setSourcesOpen(false)}
+        onSourcesChanged={refreshCatalog}
+        pendingImportedConnector={pendingImportedAction?.connector ?? null}
+        onCancelImported={() => setPendingImportedAction(null)}
+        onConfirmImported={() => {
           if (!pendingImportedAction) return
           const pending = pendingImportedAction
           setPendingImportedAction(null)
           runConnectorAction(pending.connector, pending.action)
         }}
-      />
-      <McpApiKeyDialog
-        connector={apiKeyDialogConnector}
-        value={apiKeyInput}
-        verified={
+        apiKeyConnector={apiKeyDialogConnector}
+        apiKeyInput={apiKeyInput}
+        apiKeyVerified={
           apiKeyDialogConnector
             ? authStatusById[apiKeyDialogConnector.id] === 'authenticated'
             : false
         }
-        installed={
+        apiKeyInstalled={
           apiKeyDialogConnector ? Boolean(matchingServer(apiKeyDialogConnector, servers)) : false
         }
-        busy={busy !== null}
-        error={apiKeyError ? apiKeyErrorMessage(apiKeyError) : null}
-        onChange={setApiKeyInput}
-        onClose={closeApiKeyDialog}
-        onSubmit={() => {
+        apiKeyError={apiKeyError ? apiKeyErrorMessage(apiKeyError) : null}
+        onApiKeyChange={setApiKeyInput}
+        onCloseApiKey={closeApiKeyDialog}
+        onSubmitApiKey={() => {
           if (apiKeyDialogConnector) void connectApiKey(apiKeyDialogConnector)
+        }}
+      />
+      <McpRemoveConfirmDialog
+        target={pendingRemove}
+        onCancel={() => setPendingRemove(null)}
+        onConfirm={() => {
+          const target = pendingRemove
+          if (!target) return
+          setPendingRemove(null)
+          void runResourceUninstallInBackground({
+            targetKind: 'connector',
+            targetId: target.id,
+            title: target.name,
+            run: () =>
+              target.custom ? removeCustomConnector(target.server) : remove(target.server)
+          })
         }}
       />
     </Dialog>

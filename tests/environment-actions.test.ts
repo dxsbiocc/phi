@@ -304,3 +304,69 @@ test('clean skips the actively building environment and still removes unrelated 
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('force remove deletes a referenced environment while keeping active-build guard', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-environment-force-remove-'))
+  try {
+    const prefix = addIndexEntry(root, ['skill:omics-qc'])
+
+    await assert.rejects(actions(root).remove(ENV_ID), /仍被引用/)
+    const result = await actions(root).remove(ENV_ID, { force: true })
+
+    assert.equal(result.removed, true)
+    assert.ok(result.bytesFreed >= 5)
+    assert.equal(existsSync(prefix), false)
+    assert.equal(readEnvironmentIndex(root).environments[ENV_ID], undefined)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('check verifies an installed environment against its descriptor lock and trimCache trims packages', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'phi-environment-check-trim-'))
+  try {
+    const environmentsDir = join(root, 'official')
+    copyMinimal(join(environmentsDir, 'phi-python'), 'phi-python')
+    addIndexEntry(root)
+    const packagesCache = join(root, 'cache', 'packages')
+    mkdirSync(packagesCache, { recursive: true })
+    writeFileSync(join(packagesCache, 'pkg.conda'), Buffer.alloc(64))
+
+    let checkedLock = ''
+    let trimmedRoot = ''
+    const manager = createManagedEnvironmentActions({
+      root,
+      environmentsDir,
+      builds: fakeBuilds(),
+      catalog: async () => [
+        {
+          ref: 'phi:python@1',
+          envId: ENV_ID,
+          state: 'ready',
+          source: 'official',
+          referrers: [],
+          consumers: []
+        }
+      ],
+      platform: 'darwin-arm64',
+      check: async (_checkRoot, envId, lockText) => {
+        checkedLock = lockText
+        return { envId, ok: true, problems: [] }
+      },
+      trimCache: async (targetRoot) => {
+        trimmedRoot = targetRoot
+        rmSync(join(targetRoot, 'cache', 'packages', 'pkg.conda'))
+      }
+    })
+
+    const checkResult = await manager.check(ENV_ID)
+    assert.deepEqual(checkResult, { envId: ENV_ID, ok: true, problems: [] })
+    assert.match(checkedLock, /@EXPLICIT/)
+
+    const trimResult = await manager.trimCache()
+    assert.equal(trimmedRoot, root)
+    assert.ok(trimResult.bytesFreed >= 64)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

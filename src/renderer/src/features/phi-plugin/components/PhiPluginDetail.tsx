@@ -29,6 +29,7 @@ import { PhiIcons } from '../../../icons'
 import { ResourceIcon } from '../../../components/ResourceIcon'
 import type { PhiPluginDisplayItem, PhiPluginEnvironmentStatus } from '../hooks/usePhiPlugins'
 import { errorMessage } from '../../../../../shared/errorCodes'
+import { refreshBackgroundJobs } from '../../jobs/hooks/useBackgroundJobsData'
 import { requestPhiPluginEnvironmentBuild } from '../lib/environmentBuild'
 import type { PhiPluginCatalogAction, PhiPluginCatalogEntry } from '../lib/phiPluginCatalog'
 import { PhiPluginCatalogPreview, PluginSummary } from './PhiPluginCatalogPreview'
@@ -100,9 +101,14 @@ export function PhiPluginDetail({
       : null
   const catalogPreview = plugin === null && catalogEntry !== null
 
-  async function confirmUninstall(): Promise<void> {
+  function confirmUninstall(): void {
     if (!pendingUninstall) return
-    if (await onUninstall(pendingUninstall)) setPendingUninstall(null)
+    const target = pendingUninstall
+    setPendingUninstall(null)
+    void Promise.resolve(onUninstall(target)).finally(() => {
+      void refreshBackgroundJobs().catch(() => undefined)
+    })
+    void refreshBackgroundJobs().catch(() => undefined)
   }
 
   async function confirmBuild(): Promise<void> {
@@ -372,35 +378,33 @@ export function PhiPluginDetail({
 
       <ConfirmationDialog
         open={pendingUninstall !== null}
-        onClose={busyPluginId ? undefined : () => setPendingUninstall(null)}
+        onClose={() => setPendingUninstall(null)}
+        data-phi-plugin-uninstall-dialog="true"
       >
         <DialogTitle>
           {pluginCopy.uninstallTitle(pendingUninstall?.title ?? resourceUi.plugin)}
         </DialogTitle>
         <DialogContent>
-          <Stack spacing={1.25}>
+          <Stack spacing={1.5}>
             <DialogContentText>{pluginCopy.uninstallDescription}</DialogContentText>
+            {pendingUninstall ? <PluginUninstallImpactSummary plugin={pendingUninstall} /> : null}
             {pendingUninstall?.source === 'bundled' ? (
               <Alert severity="warning" variant="outlined">
                 {pluginCopy.bundledUninstallNotice}
               </Alert>
             ) : null}
+            <Typography variant="caption" color="text.secondary">
+              {pluginCopy.uninstallBackgroundHint}
+            </Typography>
             <Typography component="code" variant="caption" sx={{ fontFamily: 'var(--font-mono)' }}>
               {pendingUninstall?.id} · v{pendingUninstall?.version}
             </Typography>
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button disabled={Boolean(busyPluginId)} onClick={() => setPendingUninstall(null)}>
-            {resourceUi.cancel}
-          </Button>
-          <Button
-            color="error"
-            variant="contained"
-            disabled={Boolean(busyPluginId)}
-            onClick={() => void confirmUninstall()}
-          >
-            {busyPluginId ? pluginCopy.uninstalling : pluginCopy.confirmUninstall}
+          <Button onClick={() => setPendingUninstall(null)}>{resourceUi.cancel}</Button>
+          <Button color="error" variant="contained" onClick={() => confirmUninstall()}>
+            {pluginCopy.confirmUninstall}
           </Button>
         </DialogActions>
       </ConfirmationDialog>
@@ -414,6 +418,69 @@ export function PhiPluginDetail({
         onClose={() => setPendingBuild(null)}
         onConfirm={() => void confirmBuild()}
       />
+    </Box>
+  )
+}
+
+function cleanEntryName(raw: string): string {
+  return raw.split('/').pop()?.replace(/\.md$/i, '') || raw
+}
+
+function PluginUninstallImpactSummary({
+  plugin
+}: {
+  plugin: PhiPluginDisplayItem
+}): React.JSX.Element | null {
+  const agents = plugin.agentDetails?.map((item) => item.name) ?? plugin.agents.map(cleanEntryName)
+  const skills = plugin.skillDetails?.map((item) => item.name) ?? plugin.skills.map(cleanEntryName)
+  const scripts =
+    plugin.scriptToolDetails?.map((item) => item.name) ?? plugin.scriptTools.map(cleanEntryName)
+  const privateEnvs = plugin.environmentStatuses
+    .filter((env) => env.scope === 'private')
+    .map((env) => env.name || env.ref)
+  const sharedEnvs = plugin.environmentStatuses
+    .filter((env) => env.scope !== 'private')
+    .map((env) => env.name || env.ref)
+  const rows = [
+    agents.length > 0
+      ? `${pluginCopy.componentSections.agent} (${agents.length})：${agents.join('、')}`
+      : null,
+    skills.length > 0
+      ? `${pluginCopy.componentSections.skill} (${skills.length})：${skills.join('、')}`
+      : null,
+    scripts.length > 0
+      ? `${pluginCopy.componentSections.script} (${scripts.length})：${scripts.join('、')}`
+      : null,
+    privateEnvs.length > 0
+      ? `${pluginCopy.uninstallPrivateEnvironments}：${privateEnvs.join('、')}`
+      : null,
+    sharedEnvs.length > 0
+      ? `${pluginCopy.uninstallSharedEnvironments}：${sharedEnvs.join('、')}`
+      : null
+  ].filter((row): row is string => row !== null)
+
+  if (rows.length === 0) return null
+  return (
+    <Box
+      data-phi-plugin-uninstall-impact="true"
+      sx={{
+        p: 1.5,
+        borderRadius: 1.5,
+        bgcolor: 'action.hover',
+        border: '1px solid',
+        borderColor: 'divider'
+      }}
+    >
+      <Typography variant="caption" sx={{ display: 'block', fontWeight: 700, mb: 0.5 }}>
+        {pluginCopy.uninstallClearedHeading}
+      </Typography>
+      <Stack spacing={0.5}>
+        {rows.map((row) => (
+          <Typography key={row} variant="body2" color="text.secondary" sx={{ fontSize: '0.82rem' }}>
+            • {row}
+          </Typography>
+        ))}
+      </Stack>
     </Box>
   )
 }

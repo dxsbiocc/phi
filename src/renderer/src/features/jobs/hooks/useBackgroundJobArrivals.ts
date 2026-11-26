@@ -41,6 +41,9 @@ export function backgroundJobPhase(
   if (item.kind === 'job' && item.job.kind === 'plugin' && !item.job.active) {
     return item.job.install.state === 'succeeded' ? 'completed' : 'failed'
   }
+  if (item.kind === 'job' && item.job.kind === 'uninstall' && !item.job.active) {
+    return item.job.uninstall.state === 'succeeded' ? 'completed' : 'failed'
+  }
   return 'running'
 }
 

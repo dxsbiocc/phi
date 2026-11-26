@@ -23,7 +23,8 @@ const KINDS = new Set([
   'upload',
   'jupyter',
   'notebook-ai',
-  'plugin'
+  'plugin',
+  'uninstall'
 ])
 const DETAIL_LABELS = new Set([
   '对话',
@@ -45,6 +46,11 @@ const DETAIL_LABELS = new Set([
   '模型',
   '生成单元',
   '插件',
+  '技能',
+  '连接器',
+  '资源',
+  '说明',
+  '错误',
   '版本',
   '操作',
   '失败原因',
@@ -65,6 +71,11 @@ const DETAIL_LABELS = new Set([
   'Model',
   'Generated cells',
   'Plugin',
+  'Skill',
+  'Connector',
+  'Resource',
+  'Description',
+  'Error',
   'Version',
   'Action',
   'Failure'

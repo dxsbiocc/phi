@@ -55,6 +55,16 @@ const connectorCopyEn = {
   confirmRemove: 'Confirm',
   removeLocalConfirm: 'Remove this local stdio Connector?',
   removeRemoteConfirm: 'Remove this remote HTTPS Connector?',
+  removeConnectorTitle: (name: string) => `Remove Connector “${name}”?`,
+  removeConnectorDescription:
+    'This removes the Connector configuration and clears its exposed MCP server tools from Phi.',
+  removeConnectorAuthNotice:
+    'Saved API keys or sign-in authorization for this Connector will also be cleared.',
+  removeConnectorEnvNotice:
+    'Managed runtime environments with no remaining references will also be cleaned up automatically.',
+  removeBackgroundHint:
+    'After confirmation, removal and cleanup run in Background Jobs without blocking the UI.',
+  confirmRemoveConnector: 'Remove Connector',
   mcpUrl: 'MCP URL',
   command: 'Command',
   environmentNames: 'Environment variable names',

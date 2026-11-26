@@ -108,10 +108,12 @@ export const IPC = {
   },
   managedEnvironments: {
     build: 'managedEnvironments:build',
+    check: 'managedEnvironments:check',
     clean: 'managedEnvironments:clean',
     list: 'managedEnvironments:list',
     rebuild: 'managedEnvironments:rebuild',
-    remove: 'managedEnvironments:remove'
+    remove: 'managedEnvironments:remove',
+    trimCache: 'managedEnvironments:trimCache'
   },
   mcp: {
     addLocalConnector: 'mcp:addLocalConnector',

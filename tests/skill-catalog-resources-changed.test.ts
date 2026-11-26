@@ -223,12 +223,24 @@ function dialogImports(
   return {
     'react/jsx-runtime': { jsx, jsxs: jsx },
     '@mui/material': Object.fromEntries(
-      ['Alert', 'Button', 'CircularProgress', 'Dialog', 'Stack', 'Typography'].map((name) => [
-        name,
-        name
-      ])
+      [
+        'Alert',
+        'Button',
+        'CircularProgress',
+        'Dialog',
+        'DialogActions',
+        'DialogContent',
+        'DialogContentText',
+        'DialogTitle',
+        'Stack',
+        'Typography'
+      ].map((name) => [name, name])
     ),
+    '../../../components/ConfirmationDialog': { ConfirmationDialog: 'ConfirmationDialog' },
     '../../../components/ResourceIcon': { ResourceIcon: 'Icon' },
+    '../../jobs/hooks/useBackgroundJobsData': {
+      runResourceUninstallInBackground: ({ run }: { run: () => Promise<void> }) => run()
+    },
     '../../../components/catalog/CatalogBrowseLayout': { CatalogBrowseLayout: 'Browse' },
     '../../../components/catalog/CatalogAddButton': { CatalogAddButton: 'Add' },
     '../../../components/catalog/CatalogPagination': { CatalogPagination: 'Pagination' },

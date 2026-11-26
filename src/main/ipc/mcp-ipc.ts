@@ -344,10 +344,17 @@ function registerMcpEnvironmentIpc(context: McpIpcContext): void {
     return connectorSetups.run(
       id,
       async () => {
+        const { collectGarbageAsync } = await import('../agent/envs/gc')
+        let pendingGc: Promise<unknown> | undefined
         const result = uninstallCatalogConnector(id, {
           agentDir: AGENT_DIR,
-          runtimeRoot: getRuntimeRoot()
+          runtimeRoot: getRuntimeRoot(),
+          garbageCollect: (runtimeRoot) => {
+            pendingGc = collectGarbageAsync(runtimeRoot)
+            return { removed: [], orphans: [], skipped: [], logsRemoved: 0 }
+          }
         })
+        if (pendingGc) await pendingGc
         setEnabled(`mcp:${id}`, null, { agentDir: AGENT_DIR })
         await invalidateAgentSession()
         return result

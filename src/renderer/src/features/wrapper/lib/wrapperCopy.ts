@@ -97,6 +97,8 @@ const english = {
     `These enabled packages depend on it and will be switched off: ${names.join(', ')}.`,
   removePackageFilesWarning:
     'Package files and folders will be deleted from disk. Tool binaries, containers and runtime caches will not.',
+  removeBackgroundHint:
+    'After confirmation, removal runs in Background Jobs without blocking the UI.',
   removePackageConfirm: 'Remove',
   removePackageRemoving: 'Removing…',
   removePackagePreviewFailed: 'Could not prepare the removal.',
@@ -290,6 +292,7 @@ const chinese: LocalizedCopy<typeof english> = {
     `以下已启用的软件包依赖它，将被一并停用：${names.join('、')}。`,
   removePackageFilesWarning:
     '该软件包的文件和文件夹将从磁盘删除；工具本体、容器和运行环境缓存不受影响。',
+  removeBackgroundHint: '确认后将在“后台任务”中执行移除，不会阻塞当前界面。',
   removePackageConfirm: '移除',
   removePackageRemoving: '正在移除…',
   removePackagePreviewFailed: '无法准备移除操作。',

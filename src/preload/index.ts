@@ -131,9 +131,12 @@ import type {
 } from '../shared/webSearchSettingsTypes'
 import type {
   EnvironmentGetResult,
+  ManagedEnvironmentCheckResult,
   ManagedEnvironmentCleanResult,
   ManagedEnvironmentEntry,
+  ManagedEnvironmentRemoveOptions,
   ManagedEnvironmentRemoveResult,
+  ManagedEnvironmentTrimCacheResult,
   EnvironmentSnapshot,
   EnvironmentToolId
 } from '../shared/environmentTypes'
@@ -924,8 +927,13 @@ type RendererAuthApi = PreloadApiBase & {
     pluginId?: string
   ) => Promise<{ envId: string }>
   rebuildManagedEnvironment: (envId: string) => Promise<void>
-  removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
+  checkManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentCheckResult>
+  removeManagedEnvironment: (
+    envId: string,
+    options?: ManagedEnvironmentRemoveOptions
+  ) => Promise<ManagedEnvironmentRemoveResult>
   cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
+  trimManagedEnvironmentCache: () => Promise<ManagedEnvironmentTrimCacheResult>
   listModels: () => Promise<ModelOption[]>
   selectModel: (
     providerId: string | null,
@@ -1608,10 +1616,17 @@ const api: RendererAuthApi = {
     ipcRenderer.invoke(IPC.managedEnvironments.build, ref, projectCwd, pluginId),
   rebuildManagedEnvironment: (envId: string): Promise<void> =>
     ipcRenderer.invoke(IPC.managedEnvironments.rebuild, envId),
-  removeManagedEnvironment: (envId: string): Promise<ManagedEnvironmentRemoveResult> =>
-    ipcRenderer.invoke(IPC.managedEnvironments.remove, envId),
+  checkManagedEnvironment: (envId: string): Promise<ManagedEnvironmentCheckResult> =>
+    ipcRenderer.invoke(IPC.managedEnvironments.check, envId),
+  removeManagedEnvironment: (
+    envId: string,
+    options?: ManagedEnvironmentRemoveOptions
+  ): Promise<ManagedEnvironmentRemoveResult> =>
+    ipcRenderer.invoke(IPC.managedEnvironments.remove, envId, options),
   cleanManagedEnvironments: (): Promise<ManagedEnvironmentCleanResult> =>
     ipcRenderer.invoke(IPC.managedEnvironments.clean),
+  trimManagedEnvironmentCache: (): Promise<ManagedEnvironmentTrimCacheResult> =>
+    ipcRenderer.invoke(IPC.managedEnvironments.trimCache),
   listModels: (): Promise<ModelOption[]> => ipcRenderer.invoke(IPC.models.list),
   selectModel: (
     providerId: string | null,

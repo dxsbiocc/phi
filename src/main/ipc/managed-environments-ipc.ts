@@ -66,9 +66,16 @@ export function registerManagedEnvironmentsIpc(options: ManagedEnvironmentsIpcOp
       throw new Error(`重新构建环境失败：${errorMessage(error)}`)
     }
   })
-  ipcMain.handle(IPC.managedEnvironments.remove, async (_, envId: unknown) => {
+  ipcMain.handle(IPC.managedEnvironments.check, async (_, envId: unknown) => {
     try {
-      return await managedEnvironmentActions.remove(envId)
+      return await managedEnvironmentActions.check(envId)
+    } catch (error) {
+      throw new Error(`检查环境失败：${errorMessage(error)}`)
+    }
+  })
+  ipcMain.handle(IPC.managedEnvironments.remove, async (_, envId: unknown, options?: unknown) => {
+    try {
+      return await managedEnvironmentActions.remove(envId, options)
     } catch (error) {
       throw new Error(`删除环境失败：${errorMessage(error)}`)
     }
@@ -78,6 +85,13 @@ export function registerManagedEnvironmentsIpc(options: ManagedEnvironmentsIpcOp
       return await managedEnvironmentActions.clean()
     } catch (error) {
       throw new Error(`清理环境失败：${errorMessage(error)}`)
+    }
+  })
+  ipcMain.handle(IPC.managedEnvironments.trimCache, async () => {
+    try {
+      return await managedEnvironmentActions.trimCache()
+    } catch (error) {
+      throw new Error(`清理包缓存失败：${errorMessage(error)}`)
     }
   })
 }

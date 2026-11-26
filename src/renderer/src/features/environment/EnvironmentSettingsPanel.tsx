@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
+import Chip from '@mui/material/Chip'
 import CircularProgress from '@mui/material/CircularProgress'
 import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
@@ -15,12 +16,14 @@ import Typography from '@mui/material/Typography'
 import type {
   EnvironmentSnapshot,
   EnvironmentToolId,
+  ManagedEnvironmentCheckResult,
   ManagedEnvironmentEntry
 } from '../../../../shared/environmentTypes'
 import { errorMessage } from '../../../../shared/errorCodes'
 import { EnvironmentBuildConfirmDialog } from '../../components/EnvironmentBuildConfirmDialog'
 import { ConfirmationDialog } from '../../components/ConfirmationDialog'
 import { useSessionStore } from '../../stores/sessionStore'
+import { InstalledEnvironmentsSection } from './components/InstalledEnvironmentsSection'
 import { ManagedEnvironmentsSection } from './components/ManagedEnvironmentsSection'
 import { ManagedEnvironmentDetail } from './components/ManagedEnvironmentDetail'
 import {
@@ -60,6 +63,18 @@ function actionDialogTitle(action: DestructiveAction): string {
   return environmentUi.cleanUpUnreferencedEnvironments
 }
 
+function affectedLabels(environment: ManagedEnvironmentEntry): string[] {
+  const fromConsumers = environment.consumers.map((item) => item.label || item.name)
+  const seen = new Set(fromConsumers)
+  for (const ref of environment.referrers) {
+    if (!seen.has(ref)) {
+      seen.add(ref)
+      fromConsumers.push(ref)
+    }
+  }
+  return fromConsumers
+}
+
 function DestructiveActionDialog({
   action,
   working,
@@ -72,14 +87,41 @@ function DestructiveActionDialog({
   onConfirm: () => void
 }): React.JSX.Element {
   useUiLanguage()
+  const removeTarget = action?.kind === 'remove' ? action.environment : null
+  const affected = removeTarget ? affectedLabels(removeTarget) : []
+  const referenceCount = removeTarget
+    ? Math.max(removeTarget.referrers.length, removeTarget.consumers.length)
+    : 0
+
   return (
     <ConfirmationDialog open={action !== null} onClose={working ? undefined : onClose}>
       <DialogTitle>{action ? actionDialogTitle(action) : ''}</DialogTitle>
       <DialogContent>
-        {action?.kind === 'remove' ? (
-          <DialogContentText>
-            {environmentUi.thisDeletesTheEnvironmentDirectoryAndFreesLocal}
-          </DialogContentText>
+        {removeTarget ? (
+          <Stack spacing={1.5}>
+            <DialogContentText>
+              {environmentUi.thisDeletesTheEnvironmentDirectoryAndFreesLocal}
+              {removeTarget.sizeBytes !== undefined
+                ? ` (${formatEnvironmentSize(removeTarget.sizeBytes)})`
+                : ''}
+            </DialogContentText>
+            {referenceCount > 0 ? (
+              <Alert severity="warning" variant="outlined">
+                <Stack spacing={1}>
+                  <Typography variant="body2">
+                    {environmentUi.referencedDeleteWarning(referenceCount)}
+                  </Typography>
+                  {affected.length > 0 ? (
+                    <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>
+                      {affected.map((item) => (
+                        <Chip key={item} size="small" variant="outlined" label={item} />
+                      ))}
+                    </Stack>
+                  ) : null}
+                </Stack>
+              </Alert>
+            ) : null}
+          </Stack>
         ) : null}
         {action?.kind === 'clean' ? (
           <DialogContentText>
@@ -127,6 +169,11 @@ export function EnvironmentSettingsPanel({
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [actionWorking, setActionWorking] = useState(false)
   const [busyEnvId, setBusyEnvId] = useState<string | null>(null)
+  const [checkingEnvId, setCheckingEnvId] = useState<string | null>(null)
+  const [trimmingCache, setTrimmingCache] = useState(false)
+  const [checkResults, setCheckResults] = useState<Record<string, ManagedEnvironmentCheckResult>>(
+    {}
+  )
   const [refreshError, setRefreshError] = useState<(() => string) | null>(null)
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string | null>(null)
 
@@ -203,6 +250,11 @@ export function EnvironmentSettingsPanel({
     setNotice(null)
     try {
       await window.api.rebuildManagedEnvironment(environment.envId)
+      setCheckResults((prev) => {
+        const next = { ...prev }
+        delete next[environment.envId]
+        return next
+      })
       setNotice(() => () => environmentUi.rebuiltValue(environment.label ?? environment.ref))
       await loadManaged({ force: true })
     } catch (cause) {
@@ -215,6 +267,93 @@ export function EnvironmentSettingsPanel({
     }
   }
 
+  const checkEnvironment = async (environment: ManagedEnvironmentEntry): Promise<void> => {
+    setCheckingEnvId(environment.envId)
+    setManagedError(null)
+    setNotice(null)
+    try {
+      const result = await window.api.checkManagedEnvironment(environment.envId)
+      setCheckResults((prev) => ({ ...prev, [environment.envId]: result }))
+      const label = environment.label ?? environment.ref
+      if (result.ok) {
+        setNotice(() => () => environmentUi.checkPassed(label))
+      } else {
+        setManagedError(
+          () => () => environmentUi.checkFailed(label, result.problems.slice(0, 3).join('; '))
+        )
+        await loadManaged({ force: true, blocking: false })
+      }
+    } catch (cause) {
+      setManagedError(
+        () => () =>
+          environmentUi.valueFailedValue(environmentUi.checkEnvironment, errorMessage(cause))
+      )
+    } finally {
+      setCheckingEnvId(null)
+    }
+  }
+
+  const trimCache = async (): Promise<void> => {
+    setTrimmingCache(true)
+    setManagedError(null)
+    setNotice(null)
+    try {
+      const result = await window.api.trimManagedEnvironmentCache()
+      setNotice(
+        () => () => environmentUi.trimCacheComplete(formatEnvironmentSize(result.bytesFreed))
+      )
+      await loadManaged({ force: true, blocking: false })
+    } catch (cause) {
+      setManagedError(
+        () => () => environmentUi.valueFailedValue(environmentUi.trimCache, errorMessage(cause))
+      )
+    } finally {
+      setTrimmingCache(false)
+    }
+  }
+
+  const executePendingAction = async (action: PendingAction): Promise<void> => {
+    if (action.kind === 'build') {
+      await window.api.buildManagedEnvironment(
+        action.environment.ref,
+        projectCwd,
+        action.environment.pluginId
+      )
+      setNotice(
+        () => () =>
+          environmentUi.startedBuildingValueViewProgressInBackgroundJobs(
+            action.environment.label ?? action.environment.ref
+          )
+      )
+      return
+    }
+    if (action.kind === 'remove') {
+      const force = action.environment.referrers.length > 0 ? { force: true } : undefined
+      const result = await window.api.removeManagedEnvironment(action.environment.envId, force)
+      setCheckResults((prev) => {
+        const next = { ...prev }
+        delete next[action.environment.envId]
+        return next
+      })
+      setNotice(
+        () => () =>
+          result.removed
+            ? environmentUi.removedValue(action.environment.label ?? action.environment.ref)
+            : environmentUi.theEnvironmentWasNotRemoved
+      )
+      return
+    }
+    const result = await window.api.cleanManagedEnvironments()
+    setNotice(
+      () => () =>
+        environmentUi.cleanupComplete(
+          result.removed.length,
+          formatEnvironmentSize(result.bytesFreed),
+          result.skipped.length
+        )
+    )
+  }
+
   const confirmAction = async (): Promise<void> => {
     const action = pendingAction
     if (!action) return
@@ -223,37 +362,7 @@ export function EnvironmentSettingsPanel({
     setManagedError(null)
     if ('environment' in action) setBusyEnvId(action.environment.envId)
     try {
-      if (action.kind === 'build') {
-        await window.api.buildManagedEnvironment(
-          action.environment.ref,
-          projectCwd,
-          action.environment.pluginId
-        )
-        setNotice(
-          () => () =>
-            environmentUi.startedBuildingValueViewProgressInBackgroundJobs(
-              action.environment.label ?? action.environment.ref
-            )
-        )
-      } else if (action.kind === 'remove') {
-        const result = await window.api.removeManagedEnvironment(action.environment.envId)
-        setNotice(
-          () => () =>
-            result.removed
-              ? environmentUi.removedValue(action.environment.label ?? action.environment.ref)
-              : environmentUi.theEnvironmentWasNotRemoved
-        )
-      } else {
-        const result = await window.api.cleanManagedEnvironments()
-        setNotice(
-          () => () =>
-            environmentUi.cleanupComplete(
-              result.removed.length,
-              formatEnvironmentSize(result.bytesFreed),
-              result.skipped.length
-            )
-        )
-      }
+      await executePendingAction(action)
       setPendingAction(null)
       await loadManaged({ force: true })
     } catch (cause) {
@@ -284,10 +393,13 @@ export function EnvironmentSettingsPanel({
           hostResources={selectedHostResources}
           hostBusy={loading || redetecting}
           busy={actionWorking || busyEnvId === selectedEnvironment.envId}
+          checking={checkingEnvId === selectedEnvironment.envId}
+          checkResult={checkResults[selectedEnvironment.envId]}
           error={managedError?.() ?? null}
           onBack={() => setSelectedEnvironmentId(null)}
           onBuild={() => setPendingAction({ kind: 'build', environment: selectedEnvironment })}
           onRebuild={() => void rebuild(selectedEnvironment)}
+          onCheck={() => void checkEnvironment(selectedEnvironment)}
           onRemove={() => setPendingAction({ kind: 'remove', environment: selectedEnvironment })}
           onSaveHostPath={onSavePath}
         />
@@ -365,6 +477,22 @@ export function EnvironmentSettingsPanel({
         onRemove={(environment) => setPendingAction({ kind: 'remove', environment })}
         onClean={() => setPendingAction({ kind: 'clean' })}
         onOpen={(environment) => setSelectedEnvironmentId(environment.envId)}
+      />
+
+      <InstalledEnvironmentsSection
+        environments={managedEnvironments}
+        loading={managedLoading || actionWorking}
+        busyEnvId={busyEnvId}
+        checkingEnvId={checkingEnvId}
+        trimmingCache={trimmingCache}
+        checkResults={checkResults}
+        onBuild={(environment) => setPendingAction({ kind: 'build', environment })}
+        onCheck={(environment) => void checkEnvironment(environment)}
+        onRebuild={(environment) => void rebuild(environment)}
+        onRemove={(environment) => setPendingAction({ kind: 'remove', environment })}
+        onOpen={(environment) => setSelectedEnvironmentId(environment.envId)}
+        onClean={() => setPendingAction({ kind: 'clean' })}
+        onTrimCache={() => void trimCache()}
       />
 
       <EnvironmentBuildConfirmDialog

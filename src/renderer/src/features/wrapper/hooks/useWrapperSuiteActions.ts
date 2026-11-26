@@ -5,6 +5,7 @@ import { errorMessage } from '../../../../../shared/errorCodes'
 import type { SnackbarSeverity } from '../../../components/AppSnackbarCard'
 import type { BusyKeys } from '../../../components/catalog/useBusyKeys'
 import { readableErrorMessage } from '../../../lib/sessionNotifications'
+import { runResourceUninstallInBackground } from '../../jobs/hooks/useBackgroundJobsData'
 import type { OfficialWrapperToolChoice } from '../lib/officialWrapperCatalog'
 import { wrapperCopy } from '../lib/wrapperCopy'
 import { summarizeWrapperInstallPlan } from '../lib/wrapperInstallPlan'
@@ -194,20 +195,29 @@ export function useWrapperSuiteActions({
     if (!pending) return
     const key = wrapperSuiteBusyKey(pending.suite)
     if (busy.has(key)) return
+    setPendingRemoval(null)
     clearError()
     busy.start(key)
-    try {
-      for (const { choice } of pending.choices) {
-        await window.api.removeWrapperPackage(choice.id, { disableDependents: true })
+    void runResourceUninstallInBackground({
+      targetKind: 'wrapper',
+      targetId: `suite:${pending.suite}`,
+      title: pending.suite,
+      detail: wrapperCopy.toolCount(pending.choices.length),
+      run: async () => {
+        try {
+          for (const { choice } of pending.choices) {
+            await window.api.removeWrapperPackage(choice.id, { disableDependents: true })
+          }
+          if (onNotify) onNotify(wrapperCopy.removedSuite(pending.suite), 'success')
+          await refresh()
+        } catch (cause) {
+          onError(errorMessage(cause))
+          throw cause
+        } finally {
+          busy.finish(key)
+        }
       }
-      setPendingRemoval(null)
-      if (onNotify) onNotify(wrapperCopy.removedSuite(pending.suite), 'success')
-      await refresh()
-    } catch (cause) {
-      onError(errorMessage(cause))
-    } finally {
-      busy.finish(key)
-    }
+    })
   }, [busy, clearError, onError, onNotify, pendingRemoval, refresh])
 
   const cancelInstall = useCallback(() => setPendingInstall(null), [])

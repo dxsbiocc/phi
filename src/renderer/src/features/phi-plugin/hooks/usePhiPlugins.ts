@@ -17,6 +17,7 @@ import type {
 } from '../../../../../shared/phiPluginTypes'
 import type { PhiPluginDependencyManifest } from '../../../../../shared/phiPluginDetailTypes'
 import { errorMessage } from '../../../../../shared/errorCodes'
+import { refreshBackgroundJobs } from '../../jobs/hooks/useBackgroundJobsData'
 import { formatPhiPluginProblems, phiPluginDisplayTitle } from '../lib/phiPlugins'
 
 type PhiPluginWithComponents = PhiPluginListItem
@@ -340,7 +341,17 @@ export function usePhiPlugins(): PhiPluginsState {
     (plugin: PhiPluginDisplayItem) =>
       runMutation({
         busyId: plugin.id,
-        action: () => window.api.uninstallPhiPlugin(plugin.id),
+        action: async () => {
+          const timer = window.setTimeout(() => {
+            void refreshBackgroundJobs().catch(() => undefined)
+          }, 0)
+          try {
+            return await window.api.uninstallPhiPlugin(plugin.id)
+          } finally {
+            window.clearTimeout(timer)
+            void refreshBackgroundJobs().catch(() => undefined)
+          }
+        },
         failurePrefix: pluginCopy.uninstallFailed,
         successMessage: pluginCopy.uninstallCompleted(plugin.title)
       }),

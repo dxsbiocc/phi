@@ -144,9 +144,44 @@ export const environmentUi = defineCopy(
     skill: 'Skill',
     agent: 'Agent',
     workflow: 'Workflow',
+    mcp: 'MCP',
     invalidPath: 'Invalid path',
     detected: 'Detected',
-    notFound: 'Not found'
+    notFound: 'Not found',
+    builtinEnvironments: 'Built-in Environments',
+    builtinEnvironmentsDescription:
+      'Core Python, R, Jupyter, and Nextflow runtimes built and maintained by Phi.',
+    extensionEnvironments: 'Plugin & Skill Environments',
+    extensionEnvironmentsDescription:
+      'Dedicated environments declared by installed plugins, skills, MCP connectors, or the current project.',
+    noExtensionEnvironments:
+      'No installed plugin, skill, or MCP connector declares a dedicated environment yet.',
+    installedEnvironments: 'Installed & Extension Environments',
+    installedEnvironmentsDescription:
+      'Manage built environments on disk alongside plugin, skill, MCP connector, and project environments: build, verify integrity, rebuild, or delete to reclaim space.',
+    noInstalledEnvironments:
+      'No built environments on disk and no plugin, skill, or MCP environments declared yet.',
+    installedCountSummary: (count: number, size: string) => `${count} installed · ${size}`,
+    checkEnvironment: 'Verify',
+    checkingEnvironment: 'Verifying…',
+    checkPassed: (name: string) => `${name} passed integrity verification.`,
+    checkFailed: (name: string, problems: string) =>
+      `${name} integrity check found issues: ${problems}`,
+    trimCache: 'Clear Package Cache',
+    trimCacheComplete: (size: string) => `Cleared package tarball cache (freed ${size}).`,
+    referencedDeleteWarning: (count: number) =>
+      `Still referenced by ${count} active resource(s). Deleting frees local disk space immediately; package definitions remain and Phi will rebuild the environment on next use.`,
+    searchInstalledEnvironments: 'Filter by name, ref, or owner…',
+    filterAll: 'All',
+    filterBuiltin: 'Built-in',
+    filterExtensions: 'Plugins & Skills',
+    filterIssues: 'Needs Attention',
+    consumersAndReferrers: 'Consumers & Referrers',
+    deleteEnvironment: 'Delete',
+    updatedAtLabel: 'Updated',
+    viewDetailsShort: 'Details',
+    checkPassedShort: 'Verified OK',
+    checkIssuesShort: 'Issues found'
   },
   {
     capabilitySummary: (ready: number, total: number) =>
@@ -282,8 +317,41 @@ export const environmentUi = defineCopy(
     skill: '技能',
     agent: '智能体',
     workflow: '工作流',
+    mcp: 'MCP',
     invalidPath: '路径无效',
     detected: '已发现',
-    notFound: '未发现'
+    notFound: '未发现',
+    builtinEnvironments: '内置环境',
+    builtinEnvironmentsDescription:
+      '由 Phi 官方维护的通用运行时，涵盖 Jupyter、Nextflow、Python 与 R 环境。',
+    extensionEnvironments: '插件与技能环境',
+    extensionEnvironmentsDescription:
+      '由已安装插件、技能、MCP 连接器或当前项目声明的专用运行环境。',
+    noExtensionEnvironments: '当前已安装的插件、技能或 MCP 连接器暂未声明专用环境。',
+    installedEnvironments: '已安装与扩展环境',
+    installedEnvironmentsDescription:
+      '统一管理本地已构建环境以及插件、技能、MCP 连接器与项目声明的环境，支持构建、完整性检查、重建修复与手动删除。',
+    noInstalledEnvironments:
+      '本地暂未构建任何托管环境，已安装的插件、技能或 MCP 暂未声明专用环境。',
+    installedCountSummary: (count: number, size: string) => `已安装 ${count} 个 · 共占用 ${size}`,
+    checkEnvironment: '完整性检查',
+    checkingEnvironment: '检查中…',
+    checkPassed: (name: string) => `${name} 完整性检查通过。`,
+    checkFailed: (name: string, problems: string) => `${name} 完整性检查发现异常：${problems}`,
+    trimCache: '清理安装包缓存',
+    trimCacheComplete: (size: string) => `已清理下载包缓存，释放 ${size}。`,
+    referencedDeleteWarning: (count: number) =>
+      `该环境当前仍被 ${count} 项资源引用。手动删除将立即清理本地环境目录以释放空间，相关插件或技能配置不会丢失，下次使用时将重新构建。`,
+    searchInstalledEnvironments: '按名称、引用、环境 ID 或来源筛选…',
+    filterAll: '全部',
+    filterBuiltin: '内置环境',
+    filterExtensions: '插件 / 技能 / MCP',
+    filterIssues: '异常 / 孤立',
+    consumersAndReferrers: '使用方与引用方',
+    deleteEnvironment: '手动删除',
+    updatedAtLabel: '更新时间',
+    viewDetailsShort: '详情',
+    checkPassedShort: '校验通过',
+    checkIssuesShort: '存在异常'
   }
 )

@@ -1,7 +1,10 @@
 import type {
+  ManagedEnvironmentCheckResult,
   ManagedEnvironmentCleanResult,
   ManagedEnvironmentEntry,
-  ManagedEnvironmentRemoveResult
+  ManagedEnvironmentRemoveOptions,
+  ManagedEnvironmentRemoveResult,
+  ManagedEnvironmentTrimCacheResult
 } from '../../../../../shared/environmentTypes'
 
 export type ManagedEnvironmentRendererApi = {
@@ -15,8 +18,13 @@ export type ManagedEnvironmentRendererApi = {
     pluginId?: string
   ) => Promise<{ envId: string }>
   rebuildManagedEnvironment: (envId: string) => Promise<void>
-  removeManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentRemoveResult>
+  checkManagedEnvironment: (envId: string) => Promise<ManagedEnvironmentCheckResult>
+  removeManagedEnvironment: (
+    envId: string,
+    options?: ManagedEnvironmentRemoveOptions
+  ) => Promise<ManagedEnvironmentRemoveResult>
   cleanManagedEnvironments: () => Promise<ManagedEnvironmentCleanResult>
+  trimManagedEnvironmentCache: () => Promise<ManagedEnvironmentTrimCacheResult>
 }
 
 const GLOBAL_ENVIRONMENT_SCOPE = '<global>'

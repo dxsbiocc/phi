@@ -10,8 +10,13 @@ import type { McpConnectorSetupProgress } from '../../../../../shared/mcpConnect
 import type { RemoteJupyterStartJob } from '../../../../../shared/remoteJupyterJobTypes'
 import type { NotebookAiGenerationJob } from '../../../../../shared/notebookAiJobTypes'
 import type { PluginInstallJob } from '../../../../../shared/pluginInstallJobTypes'
+import type {
+  ResourceUninstallJob,
+  ResourceUninstallTargetKind
+} from '../../../../../shared/resourceUninstallJobTypes'
 import type { RemoteProjectUploadJob } from '../../../../../shared/remoteProjectUploadTypes'
 import type { WrapperRun } from '../../../../../shared/wrapperTypes'
+import { errorMessage } from '../../../../../shared/errorCodes'
 import { BackgroundJobHistory, backgroundJobHistoryStorage } from '../lib/backgroundJobHistory'
 import { selectBackgroundJobs, type UnifiedBackgroundJob } from '../lib/backgroundJobs'
 import { groupBackgroundJobs } from '../lib/backgroundJobGroups'
@@ -28,6 +33,7 @@ export type BackgroundJobsData = {
   jupyterJobs: RemoteJupyterStartJob[]
   notebookAiJobs: NotebookAiGenerationJob[]
   pluginInstallJobs: PluginInstallJob[]
+  resourceUninstallJobs: ResourceUninstallJob[]
 }
 
 type JobLists = { active: UnifiedBackgroundJob[]; recent: UnifiedBackgroundJob[] }
@@ -48,7 +54,8 @@ const EMPTY: BackgroundJobsData = {
   uploadJobs: [],
   jupyterJobs: [],
   notebookAiJobs: [],
-  pluginInstallJobs: []
+  pluginInstallJobs: [],
+  resourceUninstallJobs: []
 }
 
 function upsertBy<T>(current: readonly T[], next: T, same: (item: T) => boolean): T[] {
@@ -74,7 +81,8 @@ function liveJobs(data: BackgroundJobsData): ReturnType<typeof selectBackgroundJ
     data.uploadJobs,
     data.jupyterJobs,
     data.notebookAiJobs,
-    data.pluginInstallJobs
+    data.pluginInstallJobs,
+    data.resourceUninstallJobs
   )
 }
 
@@ -137,6 +145,23 @@ class BackgroundJobsStore {
     this.emit()
   }
 
+  upsertResourceUninstall = (job: ResourceUninstallJob): void => {
+    const next = upsertBy(
+      this.state.data.resourceUninstallJobs,
+      job,
+      (item) => item.targetKind === job.targetKind && item.targetId === job.targetId
+    )
+    const finished = next.filter((item) => item.state !== 'running')
+    const capped =
+      finished.length > 50
+        ? next.filter((item) => item.state === 'running' || !finished.slice(50).includes(item))
+        : next
+    this.publish({
+      ...this.state.data,
+      resourceUninstallJobs: capped
+    })
+  }
+
   clearCompleted = (): void => {
     this.history.clearCompleted(liveJobs(this.state.data).recent)
     this.publish(this.state.data)
@@ -188,7 +213,8 @@ class BackgroundJobsStore {
         notebookAiJobs:
           notebookAi.status === 'fulfilled' ? notebookAi.value : current.notebookAiJobs,
         pluginInstallJobs:
-          plugins.status === 'fulfilled' ? plugins.value : current.pluginInstallJobs
+          plugins.status === 'fulfilled' ? plugins.value : current.pluginInstallJobs,
+        resourceUninstallJobs: this.state.data.resourceUninstallJobs
       })
     } finally {
       this.refreshing = false
@@ -360,6 +386,76 @@ export function useActivePluginInstalls(): ReadonlyMap<string, PluginInstallJob>
     currentActivePluginInstalls,
     () => EMPTY_PLUGIN_INSTALLS
   )
+}
+
+let resourceUninstallSequence = 0
+
+/**
+ * Starts a non-blocking uninstall/removal job in the shared Background Jobs store so confirmation
+ * dialogs can close immediately without freezing the renderer UI while cleanup finishes.
+ */
+export function runResourceUninstallInBackground({
+  targetKind,
+  targetId,
+  title,
+  version,
+  detail,
+  run,
+  onSuccess,
+  onError
+}: {
+  targetKind: ResourceUninstallTargetKind
+  targetId: string
+  title: string
+  version?: string
+  detail?: string
+  run: () => Promise<void>
+  onSuccess?: () => void
+  onError?: (message: string) => void
+}): Promise<boolean> {
+  const store = jobsStore()
+  const existing = store
+    .getSnapshot()
+    .data.resourceUninstallJobs.find(
+      (item) =>
+        item.targetKind === targetKind && item.targetId === targetId && item.state === 'running'
+    )
+  if (existing) return Promise.resolve(false)
+  resourceUninstallSequence += 1
+  const startedAt = new Date().toISOString()
+  const base: ResourceUninstallJob = {
+    id: `resource-uninstall-${resourceUninstallSequence}`,
+    targetKind,
+    targetId,
+    title,
+    ...(version ? { version } : {}),
+    ...(detail ? { detail } : {}),
+    state: 'running',
+    startedAt
+  }
+  store.upsertResourceUninstall(base)
+  return Promise.resolve()
+    .then(run)
+    .then(() => {
+      store.upsertResourceUninstall({
+        ...base,
+        state: 'succeeded',
+        finishedAt: new Date().toISOString()
+      })
+      onSuccess?.()
+      return true
+    })
+    .catch((cause: unknown) => {
+      const message = errorMessage(cause)
+      store.upsertResourceUninstall({
+        ...base,
+        state: 'failed',
+        finishedAt: new Date().toISOString(),
+        error: message
+      })
+      onError?.(message)
+      return false
+    })
 }
 
 /** Uses the same shared poller as the panel without subscribing the app shell. */

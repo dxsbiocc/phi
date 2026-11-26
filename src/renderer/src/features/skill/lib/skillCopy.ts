@@ -38,6 +38,13 @@ export const skillCopy = defineCopy(
     uninstallNamed: (name: string): string => `Uninstall skill ${name}`,
     confirmUninstall: (name: string): string =>
       `Uninstall “${name}”? This will delete its skill directory.`,
+    uninstallPackageTitle: (name: string): string => `Uninstall skill “${name}”?`,
+    uninstallPackageDescription:
+      'This removes the installed skill package, its instructions, and any declared script tools from this device. Managed runtime environments with no remaining references will also be cleaned up automatically.',
+    uninstallBackgroundHint:
+      'After confirmation, uninstallation and cleanup run in Background Jobs without blocking the UI.',
+    confirmUninstallAction: 'Confirm uninstall',
+    uninstallFailed: (reason: string): string => `Could not uninstall the skill package: ${reason}`,
     serverProject: 'Server project',
     file: 'File',
     readingMarkdown: 'Loading SKILL.md',
@@ -102,6 +109,12 @@ export const skillCopy = defineCopy(
     uninstallSkill: '卸载技能',
     uninstallNamed: (name: string): string => `卸载技能 ${name}`,
     confirmUninstall: (name: string): string => `卸载“${name}”？这会删除其技能目录。`,
+    uninstallPackageTitle: (name: string): string => `卸载技能「${name}」？`,
+    uninstallPackageDescription:
+      '这将从本机清除该技能软件包及其提供的指令与脚本工具；不再被其他组件引用的受管运行环境也会自动清除。',
+    uninstallBackgroundHint: '确认后将在“后台任务”中执行卸载与环境清理，不会阻塞当前界面。',
+    confirmUninstallAction: '确认卸载',
+    uninstallFailed: (reason: string): string => `无法卸载技能包：${reason}`,
     serverProject: '服务器项目',
     file: '文件',
     readingMarkdown: '正在加载 SKILL.md',

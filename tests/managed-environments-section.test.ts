@@ -12,6 +12,7 @@ import { createTheme, ThemeProvider } from '@mui/material/styles'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 
+import { InstalledEnvironmentsSection } from '../src/renderer/src/features/environment/components/InstalledEnvironmentsSection'
 import { ManagedEnvironmentsSection } from '../src/renderer/src/features/environment/components/ManagedEnvironmentsSection'
 import { EnvironmentBrandIcon } from '../src/renderer/src/features/environment/components/EnvironmentBrandIcon'
 import type { EnvironmentSnapshot, ManagedEnvironmentEntry } from '../src/shared/environmentTypes'
@@ -169,4 +170,89 @@ test('managed environments render as openable branded cards', () => {
   assert.match(markup, /查看估算并构建/)
   assert.doesNotMatch(markup, /无引用，可安全移除/)
   assert.match(markup, /MuiCardActionArea-focusHighlight\{display:none;/)
+})
+
+test('extension environments and installed environments list expose manual delete and check controls', () => {
+  const builtOfficial: ManagedEnvironmentEntry = {
+    ref: 'phi:python@1',
+    envId: 'phi-python-0123456789ab',
+    state: 'ready',
+    source: 'official',
+    label: 'phi-python',
+    sizeBytes: 20 * 1024 * 1024,
+    referrers: ['skill:demo-qc'],
+    consumers: [{ kind: 'skill', name: 'demo-qc' }]
+  }
+  const skillEnv: ManagedEnvironmentEntry = {
+    ref: 'skill:demo-qc',
+    envId: 'skill-demo-qc-0123456789ab',
+    state: 'absent',
+    source: 'skill',
+    skillId: 'demo-qc',
+    ownerLabel: 'demo-qc',
+    label: 'demo-qc-env',
+    referrers: [],
+    consumers: [{ kind: 'skill', name: 'demo-qc', label: 'demo-qc' }]
+  }
+  const orphanEnv: ManagedEnvironmentEntry = {
+    ref: 'orphaned:old-plugin-0123456789ab',
+    envId: 'old-plugin-0123456789ab',
+    state: 'ready',
+    source: 'orphaned',
+    label: 'old-plugin',
+    sizeBytes: 5 * 1024 * 1024,
+    referrers: [],
+    consumers: []
+  }
+
+  const sectionMarkup = render([builtOfficial, skillEnv, orphanEnv])
+  assert.match(sectionMarkup, /内置环境/)
+  assert.doesNotMatch(sectionMarkup, /data-phi-extension-environments-section/)
+  assert.doesNotMatch(sectionMarkup, /data-phi-managed-environment-card="skill:demo-qc"/)
+  assert.match(sectionMarkup, /data-phi-managed-environment-delete="phi-python-0123456789ab"/)
+
+  const installedMarkup = renderToStaticMarkup(
+    createElement(
+      ThemeProvider,
+      { theme: createTheme() },
+      createElement(InstalledEnvironmentsSection, {
+        environments: [builtOfficial, skillEnv, orphanEnv],
+        loading: false,
+        busyEnvId: null,
+        checkingEnvId: null,
+        trimmingCache: false,
+        checkResults: {
+          [orphanEnv.envId]: {
+            envId: orphanEnv.envId,
+            ok: false,
+            problems: ['missing lockfile']
+          }
+        },
+        onBuild: noop,
+        onCheck: noop,
+        onRebuild: noop,
+        onRemove: noop,
+        onOpen: noop,
+        onClean: noop,
+        onTrimCache: noop
+      })
+    )
+  )
+
+  assert.match(installedMarkup, /已安装与扩展环境/)
+  assert.match(installedMarkup, /已安装 2 个/)
+  assert.match(installedMarkup, /data-phi-installed-environment-row="phi-python-0123456789ab"/)
+  assert.match(installedMarkup, /data-phi-installed-environment-row="old-plugin-0123456789ab"/)
+  assert.match(installedMarkup, /data-phi-installed-environment-row="skill-demo-qc-0123456789ab"/)
+  assert.match(installedMarkup, /查看估算并构建/)
+  assert.match(installedMarkup, /data-phi-installed-environment-delete="phi-python-0123456789ab"/)
+  assert.match(installedMarkup, /data-phi-installed-environment-delete="old-plugin-0123456789ab"/)
+  assert.doesNotMatch(
+    installedMarkup,
+    /data-phi-installed-environment-delete="skill-demo-qc-0123456789ab"/
+  )
+  assert.match(installedMarkup, /完整性检查/)
+  assert.match(installedMarkup, /清理安装包缓存/)
+  assert.match(installedMarkup, /存在异常/)
+  assert.match(installedMarkup, /missing lockfile/)
 })

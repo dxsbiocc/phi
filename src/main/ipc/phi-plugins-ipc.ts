@@ -11,6 +11,7 @@ import type { PhiPluginInstallPreview } from '../../shared/phiPluginTypes'
 import { readAppSettings } from '../agent/app-settings'
 import { writeAppLog } from '../agent/app-logger'
 import type { EnvironmentBuilds } from '../agent/content/environment-builds'
+import { collectGarbageAsync } from '../agent/envs/gc'
 import { getRuntimeRoot } from '../agent/envs/runtime'
 import { createPhiPluginManagementView } from '../agent/plugins/phi-plugin-management-view'
 import type { PluginInstallJobs } from '../agent/plugins/plugin-install-jobs'
@@ -225,10 +226,55 @@ function registerPhiPluginInstallIpc(context: PhiPluginIpcContext): void {
   })
 }
 
+async function executeTrackedPluginUninstall(
+  context: PhiPluginIpcContext,
+  id: string
+): Promise<ReturnType<PhiPluginIpcContext['view']['mutation']>> {
+  const { options, AGENT_DIR, view } = context
+  const existing = listInstalledPlugins({ agentDir: AGENT_DIR }).find((plugin) => plugin.id === id)
+  const existingTitle = existing?.manifest?.title ?? existing?.id
+  const job = existing
+    ? options.plugins.installJobs.begin({
+        pluginId: existing.id,
+        title: existingTitle ?? existing.id,
+        version: existing.version,
+        action: 'uninstall'
+      })
+    : undefined
+  if (existing && !job) {
+    return view.failedMutation(
+      'uninstall',
+      `${existingTitle ?? existing.id} is already being modified.`
+    )
+  }
+  try {
+    let pendingGc: Promise<unknown> | undefined
+    const result = uninstallPhiPlugin(id, {
+      agentDir: AGENT_DIR,
+      runtimeRoot: getRuntimeRoot(),
+      garbageCollect: (runtimeRoot) => {
+        pendingGc = collectGarbageAsync(runtimeRoot)
+        return { removed: [], orphans: [], skipped: [], logsRemoved: 0 }
+      }
+    })
+    if (pendingGc) await pendingGc
+    if (result.ok) {
+      job?.succeed()
+      await options.lifecycle.invalidateAgentSession()
+    } else {
+      job?.fail('uninstall-failed')
+    }
+    return view.mutation(result)
+  } catch (error) {
+    job?.fail('uninstall-failed')
+    options.lifecycle.logUnexpectedError(error)
+    return view.failedMutation('uninstall', `Could not uninstall Plugin: ${errorMessage(error)}`)
+  }
+}
+
 function registerPhiPluginStateIpc(context: PhiPluginIpcContext): void {
   const { options, AGENT_DIR, view } = context
   const ipcMain = options.ipcMain
-  const invalidateAgentSession = options.lifecycle.invalidateAgentSession
   const logUnexpectedError = options.lifecycle.logUnexpectedError
   const installedPluginNamespace = options.plugins.installedPluginNamespace
   const phiPluginMutation = view.mutation
@@ -255,19 +301,6 @@ function registerPhiPluginStateIpc(context: PhiPluginIpcContext): void {
     if (typeof id !== 'string' || id.length === 0) {
       return failedPhiPluginMutation('id', 'Invalid Plugin ID')
     }
-    try {
-      const result = uninstallPhiPlugin(id, {
-        agentDir: AGENT_DIR,
-        runtimeRoot: getRuntimeRoot()
-      })
-      if (result.ok) await invalidateAgentSession()
-      return phiPluginMutation(result)
-    } catch (error) {
-      logUnexpectedError(error)
-      return failedPhiPluginMutation(
-        'uninstall',
-        `Could not uninstall Plugin: ${errorMessage(error)}`
-      )
-    }
+    return executeTrackedPluginUninstall(context, id)
   })
 }

@@ -17,10 +17,11 @@ const iconColors: Record<JobKind, string> = {
   upload: '#3288E8',
   jupyter: '#FFF1E5',
   'notebook-ai': '#FFF1E5',
-  plugin: '#4C8F5B'
+  plugin: '#4C8F5B',
+  uninstall: '#00A98A'
 }
 
-function JobSymbol({ kind }: { kind: JobKind }): React.JSX.Element {
+function JobSymbol({ kind, jobKey }: { kind: JobKind; jobKey?: string }): React.JSX.Element {
   switch (kind) {
     case 'jupyter':
     case 'notebook-ai':
@@ -39,16 +40,22 @@ function JobSymbol({ kind }: { kind: JobKind }): React.JSX.Element {
       return <PhiIcons.entity.plugin size={22} />
     case 'environment':
       return <GoPackage size={22} />
+    case 'uninstall':
+      if (jobKey?.startsWith('uninstall:skill:')) return <PhiIcons.entity.skill size={22} />
+      if (jobKey?.startsWith('uninstall:connector:')) return <PhiIcons.entity.mcp size={22} />
+      return <PhiIcons.entity.wrapper size={22} />
   }
 }
 
 /** A plugin job with its own icon shows that icon; every other job shows its kind's symbol. */
 export function BackgroundJobIcon({
   kind,
-  icon
+  icon,
+  jobKey
 }: {
   kind: JobKind
   icon?: ResourceIconRef
+  jobKey?: string
 }): React.JSX.Element {
   if (kind === 'plugin' && icon) {
     return (
@@ -61,13 +68,21 @@ export function BackgroundJobIcon({
       </SidePanelIconTile>
     )
   }
+  const backgroundColor =
+    kind === 'uninstall'
+      ? jobKey?.startsWith('uninstall:skill:')
+        ? '#2E8B78'
+        : jobKey?.startsWith('uninstall:connector:')
+          ? iconColors.connector
+          : iconColors.wrapper
+      : iconColors[kind]
   return (
     <SidePanelIconTile
       data-phi-background-job-icon={kind}
-      backgroundColor={iconColors[kind]}
+      backgroundColor={backgroundColor}
       foregroundColor={kind === 'jupyter' || kind === 'notebook-ai' ? 'text.primary' : '#fff'}
     >
-      <JobSymbol kind={kind} />
+      <JobSymbol kind={kind} jobKey={jobKey} />
     </SidePanelIconTile>
   )
 }

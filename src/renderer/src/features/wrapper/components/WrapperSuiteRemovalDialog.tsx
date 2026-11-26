@@ -5,7 +5,8 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
-  Stack
+  Stack,
+  Typography
 } from '@mui/material'
 
 import type {
@@ -58,6 +59,9 @@ export function WrapperSuiteRemovalDialog({
             {dependents.length > 0 ? (
               <Alert severity="warning">{wrapperCopy.removePackageDependents(dependents)}</Alert>
             ) : null}
+            <Typography variant="caption" color="text.secondary">
+              {wrapperCopy.removeBackgroundHint}
+            </Typography>
           </Stack>
         ) : null}
       </DialogContent>

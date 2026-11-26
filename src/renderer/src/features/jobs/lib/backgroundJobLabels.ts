@@ -52,11 +52,13 @@ function historyPluginTitle(key: string, title: string): string {
 }
 
 function pluginActionLabel(install: PluginInstall): string {
+  if (install.action === 'uninstall') return jobsCopy.pluginUninstallAction
   return install.action === 'upgrade' ? jobsCopy.pluginUpgradeAction : jobsCopy.pluginInstallAction
 }
 
 /** A short, understandable sentence; raw failure detail stays in the main-process log. */
 export function pluginInstallError(install: PluginInstall): string {
+  if (install.action === 'uninstall') return jobsCopy.pluginUninstallFailed
   return install.action === 'upgrade' ? jobsCopy.pluginUpgradeFailed : jobsCopy.pluginInstallFailed
 }
 
@@ -289,6 +291,7 @@ export function jobTitle(item: UnifiedBackgroundJob): string {
   if (item.kind === 'jupyter') return item.job.projectName
   if (item.kind === 'notebook-ai') return item.job.notebookName
   if (item.kind === 'plugin') return pluginTitle(item.install)
+  if (item.kind === 'uninstall') return item.uninstall.title
   if (item.kind === 'agent') return item.run.agentName
   if (item.kind === 'shell') return item.run.command
   return (
@@ -308,10 +311,18 @@ export function jobSource(item: UnifiedBackgroundJob): string {
   if (item.kind === 'jupyter') return jobsCopy.remoteJupyter
   if (item.kind === 'notebook-ai') return 'Notebook AI'
   if (item.kind === 'plugin') return jobsCopy.plugin
+  if (item.kind === 'uninstall') {
+    if (item.uninstall.targetKind === 'skill') return jobsCopy.skill
+    if (item.uninstall.targetKind === 'connector') return resourceUi.connector
+    return 'Wrapper'
+  }
   return item.run.sessionTitle
 }
 
-const OPERATION_LABELS: Record<Exclude<LiveBackgroundJob['kind'], 'plugin'>, () => string> = {
+const OPERATION_LABELS: Record<
+  Exclude<LiveBackgroundJob['kind'], 'plugin' | 'uninstall'>,
+  () => string
+> = {
   agent: () => jobsCopy.operationDispatchSubagent,
   shell: () => jobsCopy.operationRunCommand,
   wrapper: () => jobsCopy.operationRunWrapper,
@@ -324,6 +335,7 @@ const OPERATION_LABELS: Record<Exclude<LiveBackgroundJob['kind'], 'plugin'>, () 
 
 /** Saved plugin jobs keep the action as a detail field ("操作: 升级"), in either UI language. */
 const UPGRADE_ACTION_VALUES = new Set(['Upgrade', '升级'])
+const UNINSTALL_ACTION_VALUES = new Set(['Uninstall', '卸载'])
 const VERSION_FIELD_LABELS = new Set(['Version', '版本'])
 
 function historyField(snapshot: JobHistorySnapshot, labels: Set<string>): string | undefined {
@@ -331,15 +343,35 @@ function historyField(snapshot: JobHistorySnapshot, labels: Set<string>): string
 }
 
 function pluginOperation(action: PluginInstall['action']): string {
+  if (action === 'uninstall') return jobsCopy.operationUninstallPlugin
   return action === 'upgrade' ? jobsCopy.operationUpgradePlugin : jobsCopy.operationInstallPlugin
+}
+
+function uninstallOperation(targetKind: 'skill' | 'wrapper' | 'connector'): string {
+  if (targetKind === 'skill') return jobsCopy.operationUninstallSkill
+  if (targetKind === 'connector') return jobsCopy.operationRemoveConnector
+  return jobsCopy.operationUninstallWrapper
+}
+
+function historyUninstallTargetKind(key: string): 'skill' | 'wrapper' | 'connector' {
+  if (key.startsWith('uninstall:skill:')) return 'skill'
+  if (key.startsWith('uninstall:connector:')) return 'connector'
+  return 'wrapper'
 }
 
 /** What the job does, such as 安装插件 or 派发子智能体. */
 export function jobOperation(item: UnifiedBackgroundJob): string {
   if (item.kind === 'plugin') return pluginOperation(item.install.action)
+  if (item.kind === 'uninstall') return uninstallOperation(item.uninstall.targetKind)
   if (item.kind !== 'history') return OPERATION_LABELS[item.kind]()
   const { snapshot } = item
+  if (snapshot.sourceKind === 'uninstall') {
+    return uninstallOperation(historyUninstallTargetKind(snapshot.key))
+  }
   if (snapshot.sourceKind !== 'plugin') return OPERATION_LABELS[snapshot.sourceKind]()
+  if (snapshot.fields.some((field) => UNINSTALL_ACTION_VALUES.has(field.value))) {
+    return pluginOperation('uninstall')
+  }
   const upgraded = snapshot.fields.some((field) => UPGRADE_ACTION_VALUES.has(field.value))
   return pluginOperation(upgraded ? 'upgrade' : 'install')
 }
@@ -347,10 +379,11 @@ export function jobOperation(item: UnifiedBackgroundJob): string {
 /** The object the operation acted on, when the title does not already name it. */
 function operationTarget(item: UnifiedBackgroundJob): string | undefined {
   if (item.kind === 'history')
-    return item.snapshot.sourceKind === 'plugin'
+    return item.snapshot.sourceKind === 'plugin' || item.snapshot.sourceKind === 'uninstall'
       ? historyField(item.snapshot, VERSION_FIELD_LABELS)
       : undefined
   if (item.kind === 'plugin') return item.install.version || undefined
+  if (item.kind === 'uninstall') return item.uninstall.version || item.uninstall.detail || undefined
   if (item.kind === 'agent') return item.run.task || undefined
   if (item.kind === 'upload') return item.upload.destinationDirectory || jobsCopy.projectRoot
   if (item.kind === 'jupyter') return item.job.serverLabel || undefined
@@ -389,6 +422,20 @@ export function jobDetail(item: UnifiedBackgroundJob, nowMs: number): string {
           ? jobsCopy.completed
           : jobsCopy.failed,
       item.install.state === 'failed' ? pluginInstallError(item.install) : undefined
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  }
+  if (item.kind === 'uninstall') {
+    return [
+      uninstallOperation(item.uninstall.targetKind),
+      item.uninstall.version ? `v${item.uninstall.version}` : item.uninstall.detail,
+      item.uninstall.state === 'running'
+        ? jobsCopy.inProgress
+        : item.uninstall.state === 'succeeded'
+          ? jobsCopy.completed
+          : jobsCopy.failed,
+      item.uninstall.state === 'failed' ? item.uninstall.error : undefined
     ]
       .filter(Boolean)
       .join(' · ')
@@ -484,6 +531,10 @@ export function jobStatus(item: UnifiedBackgroundJob): { label: string; tone: Jo
       )
     case 'plugin':
       return item.install.state === 'succeeded' ? done(jobsCopy.completed) : failed(jobsCopy.failed)
+    case 'uninstall':
+      return item.uninstall.state === 'succeeded'
+        ? done(jobsCopy.completed)
+        : failed(jobsCopy.failed)
   }
 }
 
@@ -494,8 +545,8 @@ export function canStopJob(item: UnifiedBackgroundJob): boolean {
   // A Jupyter start is stopped from the runtime card, which owns the project binding.
   if (item.kind === 'jupyter') return false
   if (item.kind === 'notebook-ai') return false
-  // Plugin installs cannot be cancelled; the main process owns the attempt.
-  if (item.kind === 'plugin') return false
+  // Plugin and resource lifecycle operations cannot be cancelled once started.
+  if (item.kind === 'plugin' || item.kind === 'uninstall') return false
   return item.active
 }
 
@@ -676,6 +727,37 @@ export function jobDetailFields(item: UnifiedBackgroundJob, nowMs: number): JobD
             : undefined,
           item.install.state === 'failed'
             ? { label: jobsCopy.pluginFailureLabel, value: pluginInstallError(item.install) }
+            : undefined
+        ]
+      case 'uninstall':
+        return [
+          {
+            label:
+              item.uninstall.targetKind === 'skill'
+                ? jobsCopy.skill
+                : item.uninstall.targetKind === 'connector'
+                  ? resourceUi.connector
+                  : 'Wrapper',
+            value: item.uninstall.title
+          },
+          item.uninstall.version
+            ? { label: jobsCopy.pluginVersion, value: item.uninstall.version }
+            : undefined,
+          item.uninstall.detail
+            ? { label: jobsCopy.description, value: item.uninstall.detail }
+            : undefined,
+          { label: jobsCopy.pluginJobAction, value: jobsCopy.pluginUninstallAction },
+          { label: jobsCopy.status, value: status },
+          { label: jobsCopy.started, value: timeLabel(item.uninstall.startedAt) },
+          {
+            label: jobsCopy.duration,
+            value: elapsed(item.uninstall.startedAt, item.uninstall.finishedAt, nowMs)
+          },
+          item.uninstall.finishedAt
+            ? { label: jobsCopy.finished, value: timeLabel(item.uninstall.finishedAt) }
+            : undefined,
+          item.uninstall.error
+            ? { label: jobsCopy.error, value: item.uninstall.error, mono: true }
             : undefined
         ]
       case 'jupyter':

@@ -20,7 +20,11 @@ function jobsAt(maxFinished?: number): PluginInstallJobs {
 function start(
   jobs: PluginInstallJobs,
   pluginId = 'phi-demo',
-  overrides: Partial<{ title: string; version: string; action: 'install' | 'upgrade' }> = {}
+  overrides: Partial<{
+    title: string
+    version: string
+    action: 'install' | 'upgrade' | 'uninstall'
+  }> = {}
 ): PluginInstallJobHandle {
   const handle = jobs.begin({
     pluginId,
@@ -116,4 +120,17 @@ test('different plugins install concurrently and finished records stay capped', 
     jobs.list().map((job) => job.pluginId),
     ['plugin-c', 'plugin-b']
   )
+})
+
+test('plugin uninstall attempts track running, succeeded and failed states', () => {
+  const jobs = jobsAt()
+  const handle = start(jobs, 'phi-demo', {
+    title: 'Demo plugin',
+    version: '1.2.3',
+    action: 'uninstall'
+  })
+  assert.equal(handle.job.action, 'uninstall')
+  assert.equal(handle.job.state, 'running')
+  handle.fail('uninstall-failed')
+  assert.equal(jobs.list()[0]?.failure, 'uninstall-failed')
 })
