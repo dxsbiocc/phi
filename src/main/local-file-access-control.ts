@@ -14,7 +14,7 @@ import {
   listLocalProjectAllowRoots
 } from './agent/projects'
 import { isRemoteProjectAnchorPath } from './agent/remote-project-anchor'
-import { getCoreAuthoringSkillDir } from './agent/runtime/runtime-adapter'
+import { getCoreSkillDirs } from './agent/runtime/runtime-adapter'
 
 const LOCAL_PATH_STAT_LIMIT = 128
 const DIRECTORY_ENTRY_LIMIT = 400
@@ -80,11 +80,14 @@ class LocalFileAccessController {
   }
 
   private isCoreAuthoringSkillResourcePath(target: string): boolean {
-    try {
-      return isPathInsideRoot(realpathSync(getCoreAuthoringSkillDir()), target)
-    } catch {
-      return false
+    for (const dir of getCoreSkillDirs()) {
+      try {
+        if (isPathInsideRoot(realpathSync(dir), target)) return true
+      } catch {
+        // Ignore missing bundled skill directory.
+      }
     }
+    return false
   }
 
   private isLocalFilePathAllowed(

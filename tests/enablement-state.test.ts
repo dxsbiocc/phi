@@ -66,7 +66,7 @@ test('source defaults keep only non-core bundled skills disabled', () => {
     const logger = createLogger()
     const options = { agentDir, logger }
 
-    assert.deepEqual(CORE_SKILL_NAMES, ['create-wrapper'])
+    assert.deepEqual(CORE_SKILL_NAMES, ['create-wrapper', 'environment-setup'])
     assert.equal(isCoreSkill('create-wrapper'), true)
     assert.equal(isCoreSkill('nextflow'), false)
     assert.equal(isCoreSkill('scanpy'), false)

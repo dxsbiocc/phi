@@ -1,3 +1,4 @@
+import { CORE_SKILL_NAMES } from '../enablement/state'
 import { RuntimeReferenceError } from '../session/runtime-reference'
 import { agentRunCompletions } from '../plan/execution/agent-run-completions'
 import { OmpModelRuntimeFacade } from './model-runtime-facade'
@@ -381,6 +382,11 @@ export function getCoreAuthoringSkillDir(): string {
   return join(getBundledSkillsDir(), 'create-wrapper')
 }
 
+export function getCoreSkillDirs(): string[] {
+  const root = getBundledSkillsDir()
+  return CORE_SKILL_NAMES.map((name) => join(root, name))
+}
+
 export function getBundledPalettesDir(): string {
   return getBundledResourceDir('palettes')
 }
@@ -412,7 +418,7 @@ function installedPluginSkillDirectories(
 function runtimeSkillDirectories(agentDir?: string, projectDir?: string): string[] {
   return [
     ...listActiveSkillPackages(agentDir).map((entry) => entry.dir),
-    getCoreAuthoringSkillDir(),
+    ...getCoreSkillDirs(),
     ...installedPluginSkillDirectories(agentDir, projectDir).map((plugin) => plugin.dir)
   ]
 }
@@ -451,7 +457,7 @@ function markBundledSystemSkills(options: ResourceLoaderOptions): ResourceLoader
       const bundledRoot = getBundledSkillsDir()
       const pluginRoots = installedPluginSkillDirectories(options.agentDir, options.cwd)
       const installedPackages = listActiveSkillPackages(options.agentDir)
-      const coreSkillRoot = getCoreAuthoringSkillDir()
+      const coreSkillRoots = getCoreSkillDirs()
       const skills = resolved.skills.map((skill) => {
         const installedPackage = installedPackages.find(({ dir }) =>
           pathIsInside(skill.filePath, dir)
@@ -505,7 +511,7 @@ function markBundledSystemSkills(options: ResourceLoaderOptions): ResourceLoader
         skills: skills.filter(
           (skill) =>
             !pathIsInside(skill.filePath, bundledRoot) ||
-            pathIsInside(skill.filePath, coreSkillRoot)
+            coreSkillRoots.some((root) => pathIsInside(skill.filePath, root))
         )
       }
     }

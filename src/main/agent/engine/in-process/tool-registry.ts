@@ -25,8 +25,10 @@ import { AgentRunRegistry, type AgentRunFn } from '../../agents/registry'
 import { createAgentRunner } from '../../agents/runner'
 import { appendAgentUsageRecord, pruneAgentUsageLogs } from '../../agents/usage-log'
 import { filterPersonaContextFile } from '../../main-system-prompt'
+import { buildEnvBuildTool } from '../../content/env-build-tool'
 import { buildEnvDiagnoseTool } from '../../content/env-diagnose-tool'
 import { buildEnvRequestTool } from '../../content/env-request-tool'
+import { buildEnvSetupWslTool } from '../../content/env-setup-wsl-tool'
 import { buildScriptTools, buildSkillRunTool } from '../../content/skill-tools'
 import { buildCapabilityTools } from '../../packages/capability-tools'
 import { readDirectSkills } from '../../runtime/direct-skills'
@@ -367,6 +369,8 @@ export async function createSessionToolRegistry(deps: {
     ),
     ...userInteractionCustomTools,
     buildEnvDiagnoseTool(requestHost, { runtimeSessionId: sessionId }),
+    buildEnvBuildTool(requestHost, { runtimeSessionId: sessionId }),
+    buildEnvSetupWslTool(requestHost, { runtimeSessionId: sessionId }),
     buildEnvRequestTool(
       requestHost,
       environmentBinding

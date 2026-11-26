@@ -48,6 +48,7 @@ const PHI_RESOURCE_ROOTS = [
   'resources/remote-helper',
   'resources/runtime',
   'resources/skills/create-wrapper',
+  'resources/skills/environment-setup',
   'resources/plugins/office'
 ]
 

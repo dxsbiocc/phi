@@ -227,8 +227,10 @@ import {
   confirmedEnvironmentBuild,
   environmentBuildQuestion
 } from './agent/content/environment-build-prompt'
+import { handleEnvironmentBuildRequest } from './agent/content/env-build-tool'
 import { handleEnvironmentDiagnoseRequest } from './agent/content/env-diagnose-tool'
 import { confirmedEnvironmentRequest, requestProjectEnvironment } from './agent/content/env-request'
+import { handleWslSetupRequest } from './agent/content/env-setup-wsl-tool'
 import {
   cancelAgentUserInteractions,
   resolveAgentUserInteraction,
@@ -931,7 +933,8 @@ const {
   confirmEnvironmentBuild,
   confirmEnvironmentRequest,
   confirmAgentModuleInstallation,
-  approveRemoteJupyterStart
+  approveRemoteJupyterStart,
+  confirmHostToolApproval
 } = createHostConfirmations({
   interactions: {
     request: handleAgentInteractionRequest,
@@ -1419,6 +1422,19 @@ getPhiEngine().host.register('environments.bindSession', (params, context) => {
 })
 getPhiEngine().host.register('environments.diagnose', (params) =>
   handleEnvironmentDiagnoseRequest(params)
+)
+getPhiEngine().host.register('environments.build', (params, context) =>
+  handleEnvironmentBuildRequest(params, {
+    builds: environmentBuilds,
+    confirmBuild: (request) => confirmEnvironmentBuild(request),
+    signal: context.signal
+  })
+)
+getPhiEngine().host.register('environments.setupWsl', (params, context) =>
+  handleWslSetupRequest(params, {
+    confirm: (runtimeSessionId, summary) =>
+      confirmHostToolApproval(runtimeSessionId, 'env_setup_wsl', summary, context)
+  })
 )
 getPhiEngine().host.register('environments.request', (params, context) => {
   const control = remoteRuntimeDispatchControl(params, context)

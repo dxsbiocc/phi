@@ -17,7 +17,7 @@ import { getPhiAgentDir } from '../runtime-paths'
 
 import { isRecord } from '../../../shared/guards'
 import { errorMessage } from '../../../shared/errorCodes'
-export const CORE_SKILL_NAMES = ['create-wrapper'] as const
+export const CORE_SKILL_NAMES = ['create-wrapper', 'environment-setup'] as const
 
 export type EnablementSource = SkillSourceCategory
 
