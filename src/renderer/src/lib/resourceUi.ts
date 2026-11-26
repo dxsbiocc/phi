@@ -173,6 +173,8 @@ const categoryLabels: Readonly<Record<string, string>> = {
   全部技能: 'All Skills',
   科学技能: 'Scientific Skills',
   科学分析: 'Scientific Analysis',
+  论文写作: 'Academic Writing',
+  文献与基金: 'Literature & Grants',
   元能力: 'Meta Capabilities',
   科研: 'Research',
   生物信息: 'Bioinformatics',

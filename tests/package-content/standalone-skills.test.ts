@@ -15,13 +15,33 @@ test('distributed general Python skills validate with phi:python@1', () => {
   }
 })
 
-test('distributed domain skills rdkit and scvelo validate with skill-local ./environment.yml', () => {
-  for (const name of ['rdkit', 'scvelo']) {
+test('distributed domain skill rdkit validates with skill-local ./environment.yml', () => {
+  const dir = packageContentPath('skills', 'rdkit')
+  const result = validateSkill(dir)
+  assert.equal(result.ok, true, `rdkit: ${JSON.stringify(result.errors)}`)
+  assert.deepEqual(result.errors, [])
+  assert.ok(result.skill)
+  assert.equal(result.skill.phi?.environment, './environment.yml')
+})
+
+test('distributed zero-dependency research workflow skills validate cleanly', () => {
+  for (const name of [
+    'manuscript-writing',
+    'manuscript-polishing',
+    'humanizer',
+    'peer-review-response',
+    'manuscript-review',
+    'nsfc-proposal',
+    'literature-review',
+    'paper-reading',
+    'statistical-review',
+    'paper-to-slides'
+  ]) {
     const dir = packageContentPath('skills', name)
     const result = validateSkill(dir)
     assert.equal(result.ok, true, `${name}: ${JSON.stringify(result.errors)}`)
     assert.deepEqual(result.errors, [])
     assert.ok(result.skill)
-    assert.equal(result.skill.phi?.environment, './environment.yml')
+    assert.equal(result.skill.phi?.environment, undefined)
   }
 })
