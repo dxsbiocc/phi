@@ -159,8 +159,8 @@ test('committed minimal locks parse and pin python 3.12', () => {
   }
 })
 
-test('Windows official Python locks contain the declared native dependencies', () => {
-  for (const name of ['phi-python', 'phi-jupyter']) {
+test('Windows official locks contain the declared native dependencies', () => {
+  for (const name of ['phi-python', 'phi-jupyter', 'phi-r']) {
     const directory = join(repoRoot, 'resources/runtime/environments', name)
     const spec = parseEnvironmentSpec(readFileSync(join(directory, 'environment.yml'), 'utf8'))
     const lock = parseExplicitLock(readFileSync(join(directory, 'locks/win32-x64.txt'), 'utf8'))

@@ -157,7 +157,7 @@ test('office details expose five skills, six final tools and shared Python consu
       agentNames: []
     }
   ])
-  assert.deepEqual(item.usedEnvironments?.[0]?.channels, ['conda-forge', 'bioconda'])
+  assert.deepEqual(item.usedEnvironments?.[0]?.channels, ['conda-forge'])
   assert.ok(
     item.usedEnvironments?.[0]?.dependencyManifest?.dependencies.some(
       (entry) => entry.name === 'python' && entry.kind === 'conda'

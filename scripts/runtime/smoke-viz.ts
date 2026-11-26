@@ -70,7 +70,7 @@ function repoRoot(): string {
 
 export function parseSmokeVizArgs(argv: readonly string[]): SmokeVizOptions {
   const root = repoRoot()
-  let specDir = join(root, 'resources/runtime/environments/phi-r')
+  let specDir: string | undefined
   let source: string | undefined
   let templatesDir: string | undefined
 
@@ -94,12 +94,17 @@ export function parseSmokeVizArgs(argv: readonly string[]): SmokeVizOptions {
     throw new Error(`unknown argument ${arg ?? ''}`)
   }
 
+  const resolvedSource = templatesDir ? undefined : packageSourceRoot(source)
   return {
-    specDir: resolve(specDir),
+    specDir: specDir
+      ? resolve(specDir)
+      : resolvedSource
+        ? requireSourceDirectory(resolvedSource, 'resources/plugins/visualization/environments/viz')
+        : join(root, 'resources/runtime/environments/phi-r'),
     templatesDir: templatesDir
       ? resolve(templatesDir)
       : requireSourceDirectory(
-          packageSourceRoot(source),
+          resolvedSource!,
           'resources/plugins/visualization/skills/omics-visualization/scripts'
         )
   }

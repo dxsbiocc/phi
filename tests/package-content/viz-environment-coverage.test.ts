@@ -16,6 +16,7 @@ import { packageContentPath } from '../helpers/packageContent'
 
 const REPO_ROOT = process.cwd()
 const PHI_R_DIR = join(REPO_ROOT, 'resources/runtime/environments/phi-r')
+const VIZ_ENV_DIR = packageContentPath('plugins', 'visualization', 'environments', 'viz')
 
 const VIZ_R_DIR = packageContentPath(
   'plugins',
@@ -62,8 +63,8 @@ function rNamespacesForCondaPackage(condaPackage: string): string[] {
   return []
 }
 
-function parsePhiR(): EnvironmentSpec {
-  const parsed = parseEnvironmentSpec(readFileSync(join(PHI_R_DIR, 'environment.yml'), 'utf8'))
+function parseEnv(dir: string): EnvironmentSpec {
+  const parsed = parseEnvironmentSpec(readFileSync(join(dir, 'environment.yml'), 'utf8'))
   if (!parsed.ok) assert.fail(parsed.errors.join('\n'))
   return parsed.spec
 }
@@ -83,8 +84,8 @@ function declaredRNamespaces(spec: EnvironmentSpec): Set<string> {
   return names
 }
 
-function lockedRNamespaces(platform: (typeof PHI_LOCK_PLATFORMS)[number]): Set<string> {
-  const lockPath = join(PHI_R_DIR, 'locks', `${platform}.txt`)
+function lockedRNamespaces(dir: string, platform: (typeof PHI_LOCK_PLATFORMS)[number]): Set<string> {
+  const lockPath = join(dir, 'locks', `${platform}.txt`)
   const parsed = parseExplicitLock(readFileSync(lockPath, 'utf8'))
   if (!parsed.ok) assert.fail(`${lockPath}: ${parsed.errors.join('\n')}`)
 
@@ -179,11 +180,11 @@ test('R import scanning recognizes template dependency forms without treating va
   assert.deepEqual([...imports].sort(), ['alpha', 'bravo', 'charlie', 'delta', 'echo'])
 })
 
-test('every visualization R template import is provided by phi-r declarations or lock closures', () => {
-  const spec = parsePhiR()
+test('every visualization R template import is provided by plugin:viz declarations or lock closures', () => {
+  const spec = parseEnv(VIZ_ENV_DIR)
   const declared = declaredRNamespaces(spec)
   const lockedByPlatform = new Map(
-    PHI_LOCK_PLATFORMS.map((platform) => [platform, lockedRNamespaces(platform)] as const)
+    PHI_LOCK_PLATFORMS.map((platform) => [platform, lockedRNamespaces(VIZ_ENV_DIR, platform)] as const)
   )
   const files = rFiles(VIZ_R_DIR)
   assert.ok(files.length > 0, `no R templates found under ${VIZ_R_DIR}`)
@@ -199,7 +200,7 @@ test('every visualization R template import is provided by phi-r declarations or
       )
       if (missingFromLocks.length === 0) continue
       uncovered.push(
-        `${relative(REPO_ROOT, file)}: ${imported} (missing from phi-r declarations and ${missingFromLocks.join(', ')} lock closures)`
+        `${relative(REPO_ROOT, file)}: ${imported} (missing from plugin:viz declarations and ${missingFromLocks.join(', ')} lock closures)`
       )
     }
   }
@@ -208,12 +209,15 @@ test('every visualization R template import is provided by phi-r declarations or
   assert.deepEqual(uncovered, [])
 })
 
-test('phi-r keeps its notebook and scanpy interoperability declarations', () => {
-  const dependencies = new Set(parsePhiR().dependencies.map(condaDependencyName))
+test('phi-r stays a lean R notebook and tidyverse base without single-cell or sourcePackage bloat', () => {
+  const spec = parseEnv(PHI_R_DIR)
+  const dependencies = new Set(spec.dependencies.map(condaDependencyName))
   assert.deepEqual(
-    ['r-irkernel', 'bioconductor-singlecellexperiment', 'r-seurat'].filter(
-      (dependency) => !dependencies.has(dependency)
-    ),
+    ['r-irkernel', 'r-tidyverse', 'r-patchwork'].filter((dependency) => !dependencies.has(dependency)),
     []
   )
+  for (const removed of ['bioconductor-singlecellexperiment', 'r-seurat', 'r-sf']) {
+    assert.equal(dependencies.has(removed), false, `${removed} should not remain in base phi-r`)
+  }
+  assert.equal((spec.sourcePackages ?? []).length, 0)
 })

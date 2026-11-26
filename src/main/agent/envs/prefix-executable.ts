@@ -20,7 +20,9 @@ export function prefixExecutable(
   const candidates = [
     join(prefix, fileName),
     join(prefix, 'Scripts', fileName),
-    join(prefix, 'Library', 'bin', fileName)
+    join(prefix, 'Library', 'bin', fileName),
+    join(prefix, 'lib', 'R', 'bin', 'x64', fileName),
+    join(prefix, 'lib', 'R', 'bin', fileName)
   ]
   const found = candidates.find((candidate) => existsSync(candidate))
   if (found) return found

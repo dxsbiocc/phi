@@ -260,7 +260,7 @@ async function assertVisualizationPlugin(
     visible: true,
     timeout: readyTimeoutMs
   })
-  await page.waitForSelector('[data-phi-plugin-environment="phi:r@1"]', {
+  await page.waitForSelector('[data-phi-plugin-environment="plugin:viz"]', {
     visible: true,
     timeout: readyTimeoutMs
   })
@@ -307,18 +307,17 @@ async function assertVisualizationPlugin(
     )
     assert.ok(detail.includes(`所属技能：${tool.skillName}`), `${tool.name} 未显示所属技能`)
   }
-  const environment = plugin.usedEnvironments?.find((candidate) => candidate.ref === 'phi:r@1')
-  assert.ok(environment, 'visualization 未声明实际使用的 phi:r@1')
-  assert.equal(environment.name, 'phi-r')
-  assert.equal(environment.scope, 'builtin')
+  const environment = plugin.usedEnvironments?.find((candidate) => candidate.ref === 'plugin:viz')
+  assert.ok(environment, 'visualization 未声明实际使用的 plugin:viz')
+  assert.equal(environment.name, 'viz')
+  assert.equal(environment.scope, 'plugin')
   assert.deepEqual(environment.skillNames, ['omics-visualization'])
   assert.deepEqual(environment.agentNames, ['Visualization'])
   const environmentDetail = await page.$eval(
-    '[data-phi-plugin-environment="phi:r@1"]',
+    '[data-phi-plugin-environment="plugin:viz"]',
     (element) => (element as HTMLElement).innerText
   )
-  assert.match(environmentDetail, /内置 R 环境 · phi-r/u)
-  assert.match(environmentDetail, /与其他内置技能共享/u)
+  assert.match(environmentDetail, /viz/u)
   assert.match(environmentDetail, /使用技能：omics-visualization/u)
   assert.match(environmentDetail, /使用智能体：Visualization/u)
   assert.match(environmentDetail, /未构建/u)
@@ -335,7 +334,7 @@ async function assertManagedEnvironments(page: Page): Promise<ManagedEnvironment
     visible: true,
     timeout: readyTimeoutMs
   })
-  const cards = await waitUntil('托管环境列表显示 phi-r', async () => {
+  const cards = await waitUntil('托管环境列表显示 phi-r 与 viz', async () => {
     const values = await page.evaluate(() => {
       const section = document.querySelector(
         'section[aria-labelledby="managed-environments-title"]'
@@ -353,24 +352,18 @@ async function assertManagedEnvironments(page: Page): Promise<ManagedEnvironment
         }
       )
     })
-    return values.some((card) => card.title === 'phi-r') ? values : null
+    return values.some((card) => card.title === 'phi-r') &&
+      values.some((card) => card.title === 'viz')
+      ? values
+      : null
   })
   assert.ok(
     cards.some((card) => card.title === 'phi-r'),
     '托管环境列表缺少 phi-r'
   )
-  assert.equal(
+  assert.ok(
     cards.some((card) => card.title === 'viz'),
-    false,
-    '托管环境列表仍包含 viz'
-  )
-  assert.equal(
-    cards.some(
-      (card) =>
-        card.identity.includes('plugin:viz') || card.identity.includes('plugin-visualization-viz')
-    ),
-    false,
-    '托管环境列表仍包含 plugin:viz'
+    '托管环境列表缺少 viz'
   )
   return cards
 }
@@ -429,7 +422,7 @@ async function main(): Promise<void> {
         {
           ok: true,
           plugin: plugin.id,
-          pluginEnvironment: 'phi:r@1',
+          pluginEnvironment: 'plugin:viz',
           managedEnvironments: environments.map((environment) => environment.title),
           skill: 'omics-visualization',
           screenshotDir

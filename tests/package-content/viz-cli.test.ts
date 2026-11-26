@@ -23,6 +23,7 @@ import type { ErrorObject, ValidateFunction } from 'ajv'
 import { buildEnvironment, describeEnvironment } from '../../src/main/agent/content'
 import { currentPlatform, removeTree, runInEnvironment } from '../../src/main/agent/envs'
 import { getMicromambaPath } from '../../src/main/agent/envs/paths'
+import { installPlugin } from '../../src/main/agent/plugins/loader'
 import { createTestRuntimeRoot } from '../helpers/testRuntimeRoot'
 
 import { packageContentPath } from '../helpers/packageContent'
@@ -1365,15 +1366,25 @@ function integrationSkip(): string | false {
 }
 
 test(
-  'integration: phi-r runs viz catalog, prepare, and render',
+  'integration: plugin:viz runs viz catalog, prepare, and render',
   { timeout: 1_200_000, skip: integrationSkip() },
   async () => {
     const root = createTestRuntimeRoot('viz-cli')
     const runtimeRoot = realpathSync(root)
     const project = join(runtimeRoot, 'project')
+    const agentDir = join(runtimeRoot, 'agent')
     mkdirSync(project)
     try {
-      const descriptor = describeEnvironment('phi:r@1', { platform: currentPlatform() })
+      const installed = installPlugin(packageContentPath('plugins', 'visualization'), {
+        agentDir,
+        runtimeRoot
+      })
+      assert.equal(installed.ok, true, JSON.stringify(installed.errors))
+      const descriptor = describeEnvironment('plugin:viz', {
+        pluginId: 'visualization',
+        agentDir,
+        platform: currentPlatform()
+      })
       const env = await buildEnvironment(runtimeRoot, descriptor)
       const cataloged = await runInEnvironment(
         env,

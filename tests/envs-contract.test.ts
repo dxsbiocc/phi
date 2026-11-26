@@ -174,7 +174,7 @@ test('phi-python omits Unix-only packages on win32-x64', () => {
   )
   assert.equal(result.ok, true)
   if (!result.ok) return
-  const unixOnly = ['coreutils', 'bbknn', 'harmonypy', 'pysam']
+  const unixOnly = ['coreutils']
   const linux = condaSpecOf(result.spec, 'linux-x64').dependencies.filter(
     (dependency): dependency is string => typeof dependency === 'string'
   )
@@ -186,7 +186,7 @@ test('phi-python omits Unix-only packages on win32-x64', () => {
     assert.ok(!win.includes(name), `${name} is omitted on win32-x64`)
   }
   assert.ok(win.includes('python=3.12'))
-  assert.ok(win.includes('scanpy'))
+  assert.ok(win.includes('pandas'))
 })
 
 test('official phi-python ships a native win32-x64 lock', () => {
@@ -200,7 +200,7 @@ test('official phi-python ships a native win32-x64 lock', () => {
   assert.match(text, /# platform: win32-x64 \(win-64\)/)
   assert.ok(parsed.entries.length > 0)
   assert.equal(
-    parsed.entries.some((entry) => /\/(coreutils|pysam|bbknn|harmonypy)-/.test(entry.url)),
+    parsed.entries.some((entry) => /\/(coreutils|pysam|bbknn|harmonypy|scanpy|scvelo|rdkit)-/.test(entry.url)),
     false
   )
 })

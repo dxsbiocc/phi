@@ -142,7 +142,7 @@ test('the Visualization agent is given catalog, profile, prepare and render tool
     assert.deepEqual(diagnostics, [])
     const visualization = agents.find((agent) => agent.name === 'Visualization')
     assert.ok(visualization)
-    assert.equal(visualization.environment, 'phi:r@1')
+    assert.equal(visualization.environment, 'plugin:viz')
     assert.equal(visualization.pluginId, 'visualization')
     for (const tool of ['viz_catalog', 'viz_profile', 'viz_prepare', 'viz_render']) {
       assert.equal(visualization.tools.includes(tool), false)

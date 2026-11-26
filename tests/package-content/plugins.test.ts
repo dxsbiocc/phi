@@ -42,19 +42,19 @@ test('the public Visualization plugin validates without errors', () => {
   assert.equal(result.plugin.manifest.id, 'visualization')
 })
 
-test('visualization details attribute phi-r to its skill and agent', () => {
+test('visualization details attribute plugin:viz to its skill and agent', () => {
   const item = buildPhiPluginListItem(publicVisualization())
 
   // create-template declares no environment and runs in the default Python runtime.
   assert.deepEqual(
     item.usedEnvironments?.map((entry) => entry.ref),
-    ['phi:python@1', 'phi:r@1']
+    ['phi:python@1', 'plugin:viz']
   )
   const python = item.usedEnvironments?.find((entry) => entry.ref === 'phi:python@1')
   assert.deepEqual(python?.skillNames, ['create-template'])
-  const environment = item.usedEnvironments?.find((entry) => entry.ref === 'phi:r@1')
-  assert.equal(environment?.name, 'phi-r')
-  assert.equal(environment?.scope, 'builtin')
+  const environment = item.usedEnvironments?.find((entry) => entry.ref === 'plugin:viz')
+  assert.equal(environment?.name, 'viz')
+  assert.equal(environment?.scope, 'private')
   assert.deepEqual(environment?.skillNames, ['omics-visualization'])
   assert.deepEqual(environment?.agentNames, ['Visualization'])
   assert.deepEqual(environment?.channels, ['conda-forge', 'bioconda'])

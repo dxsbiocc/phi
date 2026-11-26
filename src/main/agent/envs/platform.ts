@@ -4,9 +4,9 @@ export type PhiPlatform = (typeof PHI_PLATFORMS)[number]
 
 /**
  * Platforms that skill and plugin validation require locks for.
- * `win32-x64` is a runtime platform; official `phi-jupyter` and `phi-python`
- * ship Windows locks. `phi-r` and `phi-nextflow` still cannot solve on win-64
- * (bioconda / Unix-only packages) and fall back to WSL2.
+ * `win32-x64` is a runtime platform; official `phi-jupyter`, `phi-python`, and
+ * `phi-r` ship native Windows locks. `phi-nextflow` still cannot solve on win-64
+ * (Nextflow is Unix-only / bioconda) and falls back to WSL2.
  */
 export const PHI_LOCK_PLATFORMS = ['darwin-arm64', 'darwin-x64', 'linux-x64'] as const
 export type PhiLockPlatform = (typeof PHI_LOCK_PLATFORMS)[number]

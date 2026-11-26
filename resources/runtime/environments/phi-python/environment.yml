@@ -1,19 +1,18 @@
 name: phi-python
-description: 官方 Python 技能和 Notebook 内核共用的 Python 3.12 基础环境。
+description: 官方通用 Python 技能、办公文档组件与默认 Notebook 内核共用的轻量 Python 3.12 基础环境。
 channels:
   - conda-forge
-  - bioconda
 dependencies:
-  # Interpreter and the default notebook kernel (step 5.3).
+  # Interpreter, YAML config parser, and default notebook kernel.
   - python=3.12
   - ipykernel
+  - pyyaml
 
-  # Shared command-line tooling retained for runtime compatibility.
-  # GNU coreutils has no win-64 build.
+  # Shared command-line tooling retained for Unix runtime compatibility (no win-64 build).
   - conda: coreutils
     platforms: [darwin-arm64, darwin-x64, linux-x64]
 
-  # pptx. defusedxml, lxml, pillow, and git support the OOXML utilities.
+  # Bundled Office plugin (pptx / xlsx / docx / pdf / markitdown).
   - defusedxml
   - git
   - lxml
@@ -21,67 +20,25 @@ dependencies:
   - pillow
   - python-pptx
   - pptxgenjs
-
-  # xlsx. defusedxml, lxml, and git are listed under pptx.
   - openpyxl
   - python-calamine
   - xlsxwriter
-
-  # docx. lxml is listed under pptx.
   - python-docx
-
-  # pdf.
   - pdfplumber
   - poppler
   - pypdf
   - reportlab
-
-  # markitdown
   - markitdown
   - openai
   - python-dotenv
   - requests
   - tesseract
 
-  # matplotlib. numpy, scipy, and pandas are also used by scikit-learn, scanpy, and scvelo.
-  - matplotlib
+  # General scientific Python, statistics, and plotting core.
   - numpy
-  - pandas
   - scipy
-
-  # scikit-learn
-  - scikit-learn
-
-  # scanpy. harmonypy and bbknn are bioconda-only (no win-64 builds).
-  - conda: bbknn
-    platforms: [darwin-arm64, darwin-x64, linux-x64]
-  - conda: harmonypy
-    platforms: [darwin-arm64, darwin-x64, linux-x64]
-  - leidenalg
-  - python-igraph
-  - scanpy
-
-  # scvelo
-  - scvelo
-
-  # rdkit
-  - rdkit
-
-  # anndata (also a scanpy dependency)
-  - anndata
-
-  # seaborn (also a scanpy dependency)
+  - pandas
+  - matplotlib-base
   - seaborn
-
-  # networkx (also a scanpy dependency)
+  - scikit-learn
   - networkx
-
-  # shap
-  - shap
-
-  # pysam (bioconda only; no win-64 build)
-  - conda: pysam
-    platforms: [darwin-arm64, darwin-x64, linux-x64]
-
-  # scikit-survival (import name: sksurv)
-  - scikit-survival

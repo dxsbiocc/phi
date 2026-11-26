@@ -124,16 +124,15 @@ hash, artifact references, resolved packages and installer version when availabl
 
 `currentPlatform(platform, arch)` joins `platform` and `arch` (defaulting to `process.platform` and `process.arch`) and returns that id when it is in the table. Any other pair throws `unsupported platform: <platform>-<arch>`.
 
-`win32-x64` is a runtime platform. Official `phi-jupyter` and `phi-python` ship
-`locks/win32-x64.txt`. The native Python environment omits `coreutils` and the
-Bioconda builds of `bbknn`, `harmonypy`, and `pysam`. On Windows, build
-`phi:python-wsl@1` in Settings → Environment to select the Python (WSL2)
-Notebook kernel with those packages. That reference uses the same spec and
-`linux-x64` lock as official Python on Linux.
+`win32-x64` is a runtime platform. Official `phi-jupyter`, `phi-python`, and
+`phi-r` ship native `locks/win32-x64.txt`. The native Python environment omits
+`coreutils` on Windows. On Windows, build `phi:python-wsl@1` in Settings →
+Environment to select the Python (WSL2) Notebook kernel using the `linux-x64`
+lock.
 
-`phi-r` and `phi-nextflow` also use their `linux-x64` locks through WSL2 on
-Windows. Phi records the selected distribution when first preparing the WSL
-runtime. The Linux prefixes and archives are built inside that distribution.
+`phi-nextflow` uses its `linux-x64` lock through WSL2 on Windows. Phi records
+the selected distribution when first preparing the WSL runtime. The Linux
+prefixes and archives are built inside that distribution.
 Skill and plugin validation require locks for `darwin-arm64`, `darwin-x64`, and
 `linux-x64`. On Windows, a Conda environment with neither a native nor a Linux
 lock appears as unavailable.

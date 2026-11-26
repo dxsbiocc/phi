@@ -108,7 +108,7 @@ test('the public Visualization agent routes template previews through omics visu
     for (const tool of ['read', 'glob', 'grep', 'bash', 'write', 'edit']) {
       assert.ok(visualization.tools.includes(tool), `Visualization should have ${tool}`)
     }
-    assert.equal(visualization.environment, 'phi:r@1')
+    assert.equal(visualization.environment, 'plugin:viz')
     for (const tool of ['viz_catalog', 'viz_profile', 'viz_prepare', 'viz_render']) {
       assert.equal(visualization.tools.includes(tool), false, `${tool} arrives through attachTo`)
     }
