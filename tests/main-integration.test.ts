@@ -4470,6 +4470,7 @@ async function harness(
         allowExternalFileRead,
         preventSleepDuringRuns: false,
         nextActionSuggestionsEnabled: true,
+        showCompatibleAgents: false,
         fileOpenConversationLayout: 'sidebar',
         modelAvailability
       }),
@@ -4485,6 +4486,7 @@ async function harness(
           allowExternalFileRead,
           preventSleepDuringRuns: false,
           nextActionSuggestionsEnabled: true,
+          showCompatibleAgents: false,
           fileOpenConversationLayout: 'sidebar',
           modelAvailability
         }
@@ -5890,6 +5892,7 @@ test('main IPC: app settings exposes general preferences', async () => {
     allowExternalFileRead: false,
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
+    showCompatibleAgents: false,
     fileOpenConversationLayout: 'sidebar',
     modelAvailability: { disabledProviders: [], disabledModels: [] }
   })

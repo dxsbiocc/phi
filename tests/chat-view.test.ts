@@ -449,6 +449,24 @@ test('chat view resolves skill and agent shortcut queries in prompt input', () =
     query: 'Vis',
     operator: '/agent:'
   })
+  assert.deepEqual(findActiveInputInvocationReference('/', 1), {
+    kind: 'agent',
+    start: 0,
+    end: 1,
+    query: '',
+    operator: '/'
+  })
+  assert.deepEqual(findActiveInputInvocationReference('请用 /Vis 画图', 7), {
+    kind: 'agent',
+    start: 3,
+    end: 7,
+    query: 'Vis',
+    operator: '/'
+  })
+  assert.equal(findActiveInputInvocationReference('src/App.tsx', 11), null)
+  assert.equal(findActiveInputInvocationReference('/Users/demo/file', 16), null)
+  assert.equal(findActiveInputInvocationReference('https://example.com/a', 21), null)
+  assert.equal(findActiveInputInvocationReference('/ data', 6), null)
   assert.equal(findActiveInputInvocationReference('price$ann', 9), null)
   assert.equal(findActiveInputInvocationReference('$ann data', 9), null)
 

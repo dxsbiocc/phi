@@ -229,6 +229,7 @@ function GeneralSection({
   allowExternalFileRead,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
+  showCompatibleAgents,
   fileOpenConversationLayout,
   isSavingAppSettings,
   onUpdateAppSettings,
@@ -243,6 +244,7 @@ function GeneralSection({
   allowExternalFileRead: boolean
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
+  showCompatibleAgents: boolean
   fileOpenConversationLayout: FileOpenConversationLayout
   isSavingAppSettings: boolean
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
@@ -402,6 +404,24 @@ function GeneralSection({
         </Typography>
       </Box>
 
+      <Box>
+        <FormControlLabel
+          disabled={isSavingAppSettings}
+          control={
+            <Switch
+              checked={showCompatibleAgents}
+              onChange={(event) =>
+                onUpdateAppSettings({ showCompatibleAgents: event.target.checked })
+              }
+            />
+          }
+          label={settingsUi.showCompatibleAgents}
+        />
+        <Typography variant="caption" color="text.secondary" component="div" sx={{ ml: 5.25 }}>
+          {settingsUi.showCompatibleAgentsHint}
+        </Typography>
+      </Box>
+
       <ExternalSkillsSettingsGroup />
 
       <AutoCompactionSettingsSection
@@ -445,6 +465,7 @@ type SettingsDialogProps = {
   allowExternalFileRead: boolean
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
+  showCompatibleAgents?: boolean
   fileOpenConversationLayout: FileOpenConversationLayout
   isSavingAppSettings: boolean
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
@@ -489,6 +510,7 @@ function SettingsDialog({
   allowExternalFileRead,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
+  showCompatibleAgents = false,
   fileOpenConversationLayout,
   isSavingAppSettings,
   onUpdateAppSettings,
@@ -613,6 +635,7 @@ function SettingsDialog({
               allowExternalFileRead={allowExternalFileRead}
               preventSleepDuringRuns={preventSleepDuringRuns}
               nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+              showCompatibleAgents={showCompatibleAgents}
               fileOpenConversationLayout={fileOpenConversationLayout}
               isSavingAppSettings={isSavingAppSettings}
               onUpdateAppSettings={onUpdateAppSettings}

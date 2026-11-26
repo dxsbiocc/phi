@@ -5,13 +5,19 @@ import type { SkillContent, SkillSourceCategory, SkillSummary } from '../../shar
 import type { PromptAgentSummary } from '../../shared/promptAgentTypes'
 import { WORKSPACE_DIR } from './session/sessions'
 import {
-  createRuntimeResourceLoader,
-  createRuntimeSettingsManager,
   getBundledAgentsDir,
-  type RuntimeResourceLoader
+  getBundledSkillsDir,
+  getCoreSkillDirs
 } from './runtime/runtime-adapter'
 import { isInjectedMcpServer, readDisabledMcpServerNames } from './mcp-connectors'
-import { getGlobalMcpConfigPaths, getPhiAgentDir, getProjectMcpConfigPaths } from './runtime-paths'
+import {
+  getGlobalMcpConfigPaths,
+  getPhiAgentDir,
+  getProjectMcpConfigPaths,
+  LEGACY_PROJECT_CONFIG_DIR_NAMES,
+  PHI_PROJECT_CONFIG_DIR_NAME
+} from './runtime-paths'
+import { readAppSettings } from './app-settings'
 import { discoverPhiAgents } from './agents/discovery'
 import { getEnablementSnapshot, isCoreSkill, setEnabled, skillEnablementSource } from './enablement'
 import { parseSkillFile } from './content/skill'
@@ -19,6 +25,7 @@ import { resolveCuratedResourceIcon } from './curated-icons'
 import { findResourceIcon, findResourceIconSidecar } from './resource-icons'
 import type { ResourceIconRef } from '../../shared/resourceIconTypes'
 import { listActiveMcpPackages } from './packages/mcp-store'
+import { listActiveSkillPackages } from './packages/store'
 import { listInstalledPlugins } from './plugins/loader'
 import { readManagedMarker } from './mcp/stdio-environment'
 
@@ -52,13 +59,181 @@ export interface McpServerSummary {
 
 type UnknownRecord = Record<string, unknown>
 
-function createResourceLoader(cwd = WORKSPACE_DIR): RuntimeResourceLoader {
-  const settingsManager = createRuntimeSettingsManager(cwd, AGENT_DIR, { projectTrusted: true })
-  return createRuntimeResourceLoader({
-    cwd,
-    agentDir: AGENT_DIR,
-    settingsManager
-  })
+interface CatalogSkillEntry {
+  name: string
+  description: string
+  filePath: string
+  metadata?: Pick<SkillSummary, 'deprecated' | 'environment' | 'version'>
+  sourceInfo: {
+    source: string
+    scope: 'user' | 'project' | 'temporary'
+    origin?: string
+    baseDir?: string
+  }
+}
+
+function readCatalogSkillFile(
+  filePath: string,
+  sourceInfo: CatalogSkillEntry['sourceInfo']
+): CatalogSkillEntry | null {
+  if (!existsSync(filePath)) return null
+  try {
+    const raw = readFileSync(filePath, 'utf-8')
+    const parsed = parseSkillFile(raw)
+    if (parsed.ok) {
+      const fm = parsed.frontmatter
+      const name = stringValue(fm.name) ?? basename(dirname(filePath))
+      const description = stringValue(fm.description) ?? ''
+      const phi = isRecord(fm.phi) ? fm.phi : undefined
+      const meta = isRecord(fm.metadata) ? fm.metadata : undefined
+      const deprecated = stringValue(phi?.deprecated)
+      const environment = stringValue(phi?.environment)
+      const version = stringValue(meta?.version)
+      const metadata =
+        deprecated || environment || version
+          ? {
+              ...(deprecated ? { deprecated } : {}),
+              ...(environment ? { environment } : {}),
+              ...(version ? { version } : {})
+            }
+          : undefined
+      return { name, description, filePath, ...(metadata ? { metadata } : {}), sourceInfo }
+    }
+    const name = configLineValue(raw, 'name') ?? basename(dirname(filePath))
+    const description = configLineValue(raw, 'description') ?? ''
+    return { name, description, filePath, sourceInfo }
+  } catch {
+    return null
+  }
+}
+
+function listSkillFilesInRoot(rootDir: string): string[] {
+  if (!existsSync(rootDir)) return []
+  let entries: Dirent[]
+  try {
+    entries = readdirSync(rootDir, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const files: string[] = []
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue
+    const full = join(rootDir, entry.name)
+    if (entry.isDirectory() || entry.isSymbolicLink()) {
+      const nested = join(full, 'SKILL.md')
+      if (existsSync(nested)) files.push(nested)
+    } else if (entry.isFile() && entry.name === 'SKILL.md') {
+      files.push(full)
+    }
+  }
+  return files
+}
+
+function discoverCatalogSkills(cwd: string): {
+  skills: CatalogSkillEntry[]
+  pluginDirectories: Map<string, string>
+} {
+  const seenFiles = new Set<string>()
+  const seenNames = new Set<string>()
+  const skills: CatalogSkillEntry[] = []
+
+  const addEntry = (entry: CatalogSkillEntry | null): void => {
+    if (!entry) return
+    const normalized = resolve(entry.filePath)
+    if (seenFiles.has(normalized) || seenNames.has(entry.name)) return
+    seenFiles.add(normalized)
+    seenNames.add(entry.name)
+    skills.push(entry)
+  }
+
+  // 1. Installed standalone skill packages
+  for (const pkg of listActiveSkillPackages(AGENT_DIR)) {
+    addEntry(
+      readCatalogSkillFile(join(pkg.dir, 'SKILL.md'), {
+        source: 'installed-package',
+        scope: 'user',
+        origin: pkg.id,
+        baseDir: pkg.dir
+      })
+    )
+  }
+
+  // 2. Core bundled skills (create-wrapper, environment-setup, ...)
+  const bundledRoot = getBundledSkillsDir()
+  for (const dir of getCoreSkillDirs()) {
+    addEntry(
+      readCatalogSkillFile(join(dir, 'SKILL.md'), {
+        source: 'bundled',
+        scope: 'user',
+        origin: 'resources',
+        baseDir: bundledRoot
+      })
+    )
+  }
+
+  // 3. Installed enabled plugin skills
+  const installedPlugins = listInstalledPlugins({ agentDir: AGENT_DIR })
+  const pluginDirectories = new Map(installedPlugins.map((plugin) => [plugin.id, plugin.dir]))
+  for (const plugin of installedPlugins) {
+    if (!plugin.enabled) continue
+    for (const dir of plugin.components.skills) {
+      addEntry(
+        readCatalogSkillFile(join(dir, 'SKILL.md'), {
+          source: 'phi-plugin',
+          scope: 'user',
+          origin: plugin.id,
+          baseDir: dir
+        })
+      )
+    }
+  }
+
+  // 4. Project-local skills (.phi/skills, .omp/skills, .pi/skills)
+  const projectConfigDirs = [PHI_PROJECT_CONFIG_DIR_NAME, ...LEGACY_PROJECT_CONFIG_DIR_NAMES]
+  for (const configDir of projectConfigDirs) {
+    const baseDir = join(cwd, configDir, 'skills')
+    for (const filePath of listSkillFilesInRoot(baseDir)) {
+      addEntry(
+        readCatalogSkillFile(filePath, {
+          source: 'path',
+          scope: 'project',
+          baseDir
+        })
+      )
+    }
+  }
+
+  // 5. User global skills (~/.phi/skills)
+  const userSkillsDir = join(AGENT_DIR, 'skills')
+  for (const filePath of listSkillFilesInRoot(userSkillsDir)) {
+    addEntry(
+      readCatalogSkillFile(filePath, {
+        source: 'path',
+        scope: 'user',
+        baseDir: userSkillsDir
+      })
+    )
+  }
+
+  return { skills, pluginDirectories }
+}
+
+function listCompatiblePromptTemplates(cwd: string): PromptAgentSummary[] {
+  const results: PromptAgentSummary[] = []
+  const projectDirs = [PHI_PROJECT_CONFIG_DIR_NAME, ...LEGACY_PROJECT_CONFIG_DIR_NAMES].map((dir) =>
+    join(cwd, dir, 'prompts')
+  )
+  for (const dir of projectDirs) {
+    for (const filePath of listFiles(dir, new Set(['.md']))) {
+      const agent = promptAgentFromMarkdown(filePath, 'project-prompt')
+      if (agent) results.push(agent)
+    }
+  }
+  for (const filePath of listFiles(join(AGENT_DIR, 'prompts'), new Set(['.md']))) {
+    const agent = promptAgentFromMarkdown(filePath, 'user-prompt')
+    if (agent) results.push(agent)
+  }
+  return results
 }
 
 function readJsonFile(path: string): unknown {
@@ -148,19 +323,7 @@ function skillMetadata(
 }
 
 function toSkillSummary(
-  skill: {
-    name: string
-    description: string
-    filePath: string
-    disableModelInvocation?: boolean
-    hide?: boolean
-    sourceInfo: {
-      source: string
-      scope: 'user' | 'project' | 'temporary'
-      origin?: string
-      baseDir?: string
-    }
-  },
+  skill: CatalogSkillEntry,
   snapshot: ReturnType<typeof getEnablementSnapshot>,
   pluginDirectory?: string
 ): SkillSummary {
@@ -174,7 +337,7 @@ function toSkillSummary(
     : null
   const globalEnabled = core ? true : (globalOverride ?? sourceDefault)
   const enabled = core ? true : (projectOverride ?? globalEnabled)
-  const metadata = skillMetadata(skill.filePath)
+  const metadata = skill.metadata ?? skillMetadata(skill.filePath)
   const icon =
     findResourceIcon(
       dirname(skill.filePath),
@@ -206,38 +369,6 @@ function toSkillSummary(
     core,
     disabled: !enabled,
     ...metadata
-  }
-}
-
-function promptListFromResource(value: unknown): UnknownRecord[] {
-  if (Array.isArray(value)) {
-    return value.filter(isRecord)
-  }
-  if (!isRecord(value)) return []
-
-  for (const key of ['prompts', 'items', 'all']) {
-    const list = value[key]
-    if (Array.isArray(list)) {
-      return list.filter(isRecord)
-    }
-  }
-
-  return []
-}
-
-function toPromptAgentSummary(value: unknown): PromptAgentSummary | null {
-  if (!isRecord(value)) return null
-
-  const name = stringValue(value.name)
-  if (!name) return null
-
-  const source = stringValue(value.source) ?? 'prompt'
-  return {
-    id: `${source}:${name}`,
-    name,
-    description: stringValue(value.description) ?? '',
-    source,
-    trigger: promptAgentTrigger(name)
   }
 }
 
@@ -470,14 +601,8 @@ function phiAgentToPromptAgentSummary(agent: {
 }
 
 export async function listSkills(cwd = WORKSPACE_DIR): Promise<SkillSummary[]> {
-  const loader = createResourceLoader(cwd)
-  await loader.reload()
-  const { skills } = loader.getSkills()
+  const { skills, pluginDirectories } = discoverCatalogSkills(cwd)
   const snapshot = getEnablementSnapshot({ projectDir: cwd, agentDir: AGENT_DIR })
-  // SDK baseDir is a plugin skill component directory, so use the validated installed package root.
-  const pluginDirectories = new Map(
-    listInstalledPlugins({ agentDir: AGENT_DIR }).map((plugin) => [plugin.id, plugin.dir])
-  )
 
   return skills
     .map((skill) =>
@@ -507,23 +632,10 @@ async function findCatalogSkill(
   filePath: string,
   cwd = WORKSPACE_DIR
 ): Promise<{
-  skill: {
-    name: string
-    description: string
-    filePath: string
-    disableModelInvocation?: boolean
-    sourceInfo: {
-      source: string
-      scope: 'user' | 'project' | 'temporary'
-      origin?: string
-      baseDir?: string
-    }
-  }
+  skill: CatalogSkillEntry
   sourceCategory: SkillSourceCategory
 }> {
-  const loader = createResourceLoader(cwd)
-  await loader.reload()
-  const { skills } = loader.getSkills()
+  const { skills } = discoverCatalogSkills(cwd)
   const normalizedTarget = resolve(filePath)
   const skill = skills.find((candidate) => resolve(candidate.filePath) === normalizedTarget)
 
@@ -578,9 +690,12 @@ export async function deleteSkill(filePath: string, cwd = WORKSPACE_DIR): Promis
   return listSkills(cwd)
 }
 
-export async function listPromptAgents(cwd = WORKSPACE_DIR): Promise<PromptAgentSummary[]> {
-  const loader = createResourceLoader(cwd)
-  await loader.reload()
+export async function listPromptAgents(
+  cwd = WORKSPACE_DIR,
+  options: { includeCompatible?: boolean } = {}
+): Promise<PromptAgentSummary[]> {
+  const includeCompatible =
+    options.includeCompatible ?? readAppSettings(AGENT_DIR).showCompatibleAgents
 
   const seen = new Set<string>()
   const agents: PromptAgentSummary[] = []
@@ -591,21 +706,29 @@ export async function listPromptAgents(cwd = WORKSPACE_DIR): Promise<PromptAgent
     agents.push(icon ? { ...agent, icon } : agent)
   }
 
-  for (const prompt of promptListFromResource(loader.getPrompts())) {
-    const agent = toPromptAgentSummary(prompt)
-    if (agent) addAgent(agent)
+  if (includeCompatible) {
+    for (const agent of listCompatiblePromptTemplates(cwd)) {
+      addAgent(agent)
+    }
   }
 
   for (const agent of discoverPhiAgents({
     cwd,
     agentDir: AGENT_DIR,
     bundledDir: getBundledAgentsDir()
-  }).agents.filter((agent) => agent.invocation !== 'host')) {
+  }).agents.filter(
+    (agent) =>
+      agent.invocation !== 'host' &&
+      agent.name !== 'General' &&
+      (includeCompatible || agent.source === 'phi')
+  )) {
     addAgent(phiAgentToPromptAgentSummary(agent))
   }
 
-  for (const agent of listCodexPromptAgents()) {
-    addAgent(agent)
+  if (includeCompatible) {
+    for (const agent of listCodexPromptAgents()) {
+      addAgent(agent)
+    }
   }
 
   return agents.sort((left, right) => left.name.localeCompare(right.name))

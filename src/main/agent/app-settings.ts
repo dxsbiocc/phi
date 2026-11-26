@@ -13,7 +13,8 @@ import {
   DEFAULT_ALLOW_EXTERNAL_FILE_READ,
   DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT,
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
-  DEFAULT_PREVENT_SLEEP_DURING_RUNS
+  DEFAULT_PREVENT_SLEEP_DURING_RUNS,
+  DEFAULT_SHOW_COMPATIBLE_AGENTS
 } from '../../shared/appSettingsTypes'
 import { getPhiAgentDir } from './runtime-paths'
 import type { ModelSelection } from './session/session-store'
@@ -89,6 +90,7 @@ function appSettingsFromRaw(raw: Record<string, unknown>, agentDir: string): Phi
       raw.nextActionSuggestionsEnabled,
       DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
     ),
+    showCompatibleAgents: booleanSetting(raw.showCompatibleAgents, DEFAULT_SHOW_COMPATIBLE_AGENTS),
     fileOpenConversationLayout: fileOpenConversationLayout(raw.fileOpenConversationLayout),
     modelAvailability: readModelAvailability(agentDir)
   }
@@ -176,6 +178,13 @@ export function updateAppSettings(patch: unknown, agentDir = getPhiAgentDir()): 
       throw new Error('提示词建议设置必须是布尔值')
     }
     nextRaw.nextActionSuggestionsEnabled = patch.nextActionSuggestionsEnabled
+  }
+
+  if (hasOwnSetting(patch, 'showCompatibleAgents')) {
+    if (typeof patch.showCompatibleAgents !== 'boolean') {
+      throw new Error('外部兼容智能体设置必须是布尔值')
+    }
+    nextRaw.showCompatibleAgents = patch.showCompatibleAgents
   }
 
   if (hasOwnSetting(patch, 'fileOpenConversationLayout')) {

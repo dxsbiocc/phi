@@ -310,8 +310,8 @@ export function ComposerTextEditor({
           backgroundColor: 'transparent',
           fontFamily: theme.typography.fontFamily ?? 'sans-serif',
           fontSize: '0.95rem',
-          lineHeight: '1.6',
-          minHeight: '1.6em'
+          lineHeight: '26px',
+          minHeight: '26px'
         },
         '&.cm-focused': { outline: 'none' },
         '.cm-scroller': {
@@ -326,7 +326,7 @@ export function ComposerTextEditor({
           color: theme.palette.text.primary,
           caretColor: 'transparent'
         },
-        '.cm-line': { padding: '0', lineHeight: '1.6' },
+        '.cm-line': { padding: '0', lineHeight: '26px' },
         '.cm-placeholder': { color: theme.palette.text.secondary },
         '.cm-cursor': {
           borderLeftWidth: '1.5px',
@@ -342,6 +342,9 @@ export function ComposerTextEditor({
           },
         '.phi-composer-inline-reference': {
           display: 'inline-flex',
+          alignItems: 'center',
+          height: '22px',
+          lineHeight: '1',
           maxWidth: '100%',
           verticalAlign: 'middle',
           margin: '0 2px'

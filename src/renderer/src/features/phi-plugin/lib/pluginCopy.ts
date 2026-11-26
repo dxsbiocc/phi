@@ -76,10 +76,6 @@ export const pluginCopy = defineCopy(
       `This plugin uses the shared built-in runtime ${environmentId}. Its dependencies are provided by that environment; the plugin has no separate dependency lock file.`,
     emptyDependencyManifest: (sourceFile: string) =>
       `${sourceFile} was read successfully and does not list any dependency packages.`,
-    missingDependencyManifest: 'No parsable dependency manifest was found.',
-    lookedForPaths: 'Troubleshooting paths',
-    lookedForPathsDescription:
-      'These paths were checked for a dependency manifest; they are not dependency packages.',
     unknownState: 'Unknown status',
     building: 'Building…',
     estimateAndBuild: 'Review estimate and build',
@@ -215,9 +211,6 @@ export const pluginCopy = defineCopy(
     sharedRuntimeDependencies: (environmentId: string) =>
       `此插件共用内置运行时 ${environmentId}。依赖由该内置环境提供，插件目录中没有单独的依赖锁文件。`,
     emptyDependencyManifest: (sourceFile: string) => `已读取 ${sourceFile}，其中没有列出依赖包。`,
-    missingDependencyManifest: '未找到可解析的依赖清单。',
-    lookedForPaths: '排查路径',
-    lookedForPathsDescription: '以下是查找依赖清单时走过的路径，不是依赖包。',
     unknownState: '未知状态',
     building: '正在构建…',
     estimateAndBuild: '查看估算并构建',

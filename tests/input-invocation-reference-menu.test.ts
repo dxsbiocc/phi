@@ -200,6 +200,42 @@ test('catalog refresh keeps the highlighted index within the remaining results',
   assert.equal(harness.inserted[0].reference, '$skill-01')
 })
 
+test('slash shortcut opens the agent menu, filters by query, and inserts the selected agent', () => {
+  const agents: PromptAgentSummary[] = [
+    {
+      id: 'phi-viz',
+      name: 'Visualization',
+      description: 'Create publication figures',
+      source: 'phi-agent',
+      trigger: '/agent:Visualization'
+    },
+    {
+      id: 'user-reviewer',
+      name: 'Reviewer',
+      description: 'Review code changes',
+      source: 'user',
+      trigger: '/prompts:Reviewer'
+    }
+  ]
+  const harness = menuHarness({ input: '/', promptAgents: agents })
+  assert.equal(harness.read().menuState?.kind, 'agent')
+  assert.equal(harness.read().menuState?.operator, '/')
+  assert.deepEqual(
+    Array.from(harness.read().menuState!.candidates, (candidate) => candidate.name),
+    ['Reviewer', 'Visualization']
+  )
+
+  const filtered = harness.change('请用 /vis')
+  assert.deepEqual(
+    Array.from(filtered.menuState!.candidates, (candidate) => candidate.name),
+    ['Visualization']
+  )
+  harness.key('Enter')
+  assert.equal(harness.inserted.length, 1)
+  assert.equal(harness.inserted[0].body, '请用 ')
+  assert.equal(harness.inserted[0].reference, inputReferences.formatPromptAgentReference(agents[0]))
+})
+
 test('agent shortcuts also show the full list and preserve distinct agent identities', () => {
   const agents: PromptAgentSummary[] = Array.from({ length: 12 }, (_, index) => ({
     id: `agent-${index}`,

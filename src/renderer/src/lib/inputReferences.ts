@@ -14,7 +14,7 @@ export type InputInvocationReferenceQuery = {
   start: number
   end: number
   query: string
-  operator: '$' | '/prompts:' | '/agent:'
+  operator: '$' | '/prompts:' | '/agent:' | '/'
 }
 
 export type InputReferenceReplacement = {
@@ -67,6 +67,7 @@ const INPUT_INVOCATION_REFERENCE_STOP_CHARS = /[\s`]/
 const INPUT_INVOCATION_REFERENCE_OPERATORS = [
   { operator: '/prompts:', kind: 'agent' },
   { operator: '/agent:', kind: 'agent' },
+  { operator: '/', kind: 'agent' },
   { operator: '$', kind: 'skill' }
 ] as const
 
@@ -174,7 +175,13 @@ export function findActiveInputInvocationReference(
 
     const query = input.slice(start + operator.length, cursor)
     if (INPUT_INVOCATION_REFERENCE_STOP_CHARS.test(query)) continue
-    if (activeQuery && start < activeQuery.start) continue
+    if (
+      activeQuery &&
+      (start < activeQuery.start ||
+        (start === activeQuery.start && operator.length <= activeQuery.operator.length))
+    ) {
+      continue
+    }
 
     activeQuery = {
       kind,

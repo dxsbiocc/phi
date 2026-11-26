@@ -39,7 +39,8 @@ import {
   DEFAULT_ALLOW_EXTERNAL_FILE_READ,
   DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT,
   DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
-  DEFAULT_PREVENT_SLEEP_DURING_RUNS
+  DEFAULT_PREVENT_SLEEP_DURING_RUNS,
+  DEFAULT_SHOW_COMPATIBLE_AGENTS
 } from '../../shared/appSettingsTypes'
 import type { WrapperCompositionCatalogItem } from '../../shared/wrapperCompositionManifestTypes'
 import type { RemoteProjectCreateInput } from '../../shared/projectLocation'
@@ -378,6 +379,9 @@ function App(): React.JSX.Element {
   const [nextActionSuggestionsEnabled, setNextActionSuggestionsEnabled] = useState(
     DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED
   )
+  const [showCompatibleAgents, setShowCompatibleAgents] = useState(
+    DEFAULT_SHOW_COMPATIBLE_AGENTS
+  )
   const [fileOpenConversationLayout, setFileOpenConversationLayout] = useState(
     DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT
   )
@@ -530,6 +534,7 @@ function App(): React.JSX.Element {
     setAllowExternalFileRead(settings.allowExternalFileRead)
     setPreventSleepDuringRuns(settings.preventSleepDuringRuns)
     setNextActionSuggestionsEnabled(settings.nextActionSuggestionsEnabled)
+    setShowCompatibleAgents(settings.showCompatibleAgents)
     setFileOpenConversationLayout(settings.fileOpenConversationLayout)
   }, [])
 
@@ -614,6 +619,7 @@ function App(): React.JSX.Element {
       const previousAllowExternalFileRead = allowExternalFileRead
       const previousPreventSleepDuringRuns = preventSleepDuringRuns
       const previousNextActionSuggestionsEnabled = nextActionSuggestionsEnabled
+      const previousShowCompatibleAgents = showCompatibleAgents
       const previousFileOpenConversationLayout = fileOpenConversationLayout
 
       if (patch.uiLanguage !== undefined) setUiLanguage(patch.uiLanguage)
@@ -630,6 +636,9 @@ function App(): React.JSX.Element {
       if (patch.nextActionSuggestionsEnabled !== undefined) {
         setNextActionSuggestionsEnabled(patch.nextActionSuggestionsEnabled)
       }
+      if (patch.showCompatibleAgents !== undefined) {
+        setShowCompatibleAgents(patch.showCompatibleAgents)
+      }
       if (patch.fileOpenConversationLayout !== undefined) {
         setFileOpenConversationLayout(patch.fileOpenConversationLayout)
       }
@@ -637,7 +646,10 @@ function App(): React.JSX.Element {
       setIsSavingAppSettings(true)
       try {
         const settings = await rendererApi.updateAppSettings(patch)
-        if (appSettingsRevisionRef.current === revision) applyAppSettings(settings)
+        if (appSettingsRevisionRef.current === revision) {
+          applyAppSettings(settings)
+          if (patch.showCompatibleAgents !== undefined) void refreshPromptAgents()
+        }
       } catch (error) {
         if (appSettingsRevisionRef.current !== revision) return
         setUiLanguage(previousUiLanguage)
@@ -645,6 +657,7 @@ function App(): React.JSX.Element {
         setAllowExternalFileRead(previousAllowExternalFileRead)
         setPreventSleepDuringRuns(previousPreventSleepDuringRuns)
         setNextActionSuggestionsEnabled(previousNextActionSuggestionsEnabled)
+        setShowCompatibleAgents(previousShowCompatibleAgents)
         setFileOpenConversationLayout(previousFileOpenConversationLayout)
         showSnackbarError(error, appCopy.saveSettingsFailed)
       } finally {
@@ -658,7 +671,9 @@ function App(): React.JSX.Element {
       nextActionSuggestionsEnabled,
       noProjectTaskFolder,
       preventSleepDuringRuns,
+      refreshPromptAgents,
       rendererApi,
+      showCompatibleAgents,
       showSnackbarError
     ]
   )
@@ -3785,8 +3800,12 @@ function App(): React.JSX.Element {
   )
 
   const loadHomeResources = useCallback(async (): Promise<void> => {
-    await Promise.allSettled([refreshSkillsForNavigation(), refreshMcpServersForNavigation()])
-  }, [refreshSkillsForNavigation, refreshMcpServersForNavigation])
+    await Promise.allSettled([
+      refreshSkillsForNavigation(),
+      refreshPromptAgents(),
+      refreshMcpServersForNavigation()
+    ])
+  }, [refreshSkillsForNavigation, refreshPromptAgents, refreshMcpServersForNavigation])
 
   const fetchHomeProjectSessions = useCallback(
     async (project: Project): Promise<SessionSummary[]> => {
@@ -4554,6 +4573,7 @@ function App(): React.JSX.Element {
           allowExternalFileRead={allowExternalFileRead}
           preventSleepDuringRuns={preventSleepDuringRuns}
           nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+          showCompatibleAgents={showCompatibleAgents}
           fileOpenConversationLayout={fileOpenConversationLayout}
           isSavingAppSettings={isSavingAppSettings}
           onUpdateAppSettings={onUpdateAppSettings}

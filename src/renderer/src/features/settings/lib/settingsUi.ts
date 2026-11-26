@@ -174,6 +174,9 @@ export const settingsUi = defineCopy(
     promptSuggestions: 'Prompt suggestions',
     allowTheAssistantToSuggestANextStep:
       'Allow the assistant to suggest a next step you can use to continue.',
+    showCompatibleAgents: 'Show compatible external agents',
+    showCompatibleAgentsHint:
+      'Include agents and prompt templates from OMP, Pi, Claude, and Codex in the composer menu. Off by default; only Phi agents are shown.',
     externalSkills: 'External skills',
     externalSkillsHint:
       'Copy selected skills from Agents, Claude, Codex, or Cursor into Phi. They are not loaded automatically.',
@@ -451,6 +454,9 @@ export const settingsUi = defineCopy(
     keepTheSystemAwakeOnlyWhileSessionsRun: '仅在有会话运行、等待审批或等待输入时保持唤醒。',
     promptSuggestions: '提示词建议',
     allowTheAssistantToSuggestANextStep: '允许助手在合适时给出一句可直接继续的下一步建议。',
+    showCompatibleAgents: '显示外部兼容智能体',
+    showCompatibleAgentsHint:
+      '在输入框菜单中包含来自 OMP、Pi、Claude 和 Codex 的智能体与提示词模板。默认关闭，仅显示 Phi 自身的智能体。',
     externalSkills: '外部技能',
     externalSkillsHint: '从 Agents、Claude、Codex 或 Cursor 选择技能复制到 Phi；不会自动加载。',
     externalSkillSourceCount: (source: string, count: number) => `${source} · ${count}`,

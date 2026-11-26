@@ -26,55 +26,17 @@ function dependencyLine(dependency: PhiPluginDependency): string {
     : `- ${dependency.name}=${dependency.version}`
 }
 
-function LookedForPaths({ paths }: { paths: readonly string[] }): React.JSX.Element | null {
-  useUiLanguage()
-
-  if (paths.length === 0) return null
-  return (
-    <Box component="details" sx={{ mt: 1.25 }}>
-      <Typography
-        component="summary"
-        variant="caption"
-        color="text.secondary"
-        sx={{ cursor: 'pointer', width: 'fit-content' }}
-      >
-        {pluginCopy.lookedForPaths}
-      </Typography>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ mt: 0.75, display: 'block', lineHeight: 1.6 }}
-      >
-        {pluginCopy.lookedForPathsDescription}
-      </Typography>
-      <Typography
-        component="div"
-        variant="caption"
-        color="text.secondary"
-        sx={{
-          mt: 0.5,
-          fontFamily: 'var(--font-mono)',
-          whiteSpace: 'pre-wrap',
-          lineHeight: 1.55,
-          overflowWrap: 'anywhere'
-        }}
-      >
-        {paths.join('\n')}
-      </Typography>
-    </Box>
-  )
-}
-
 export function PhiPluginDependencySummary({
   environmentId,
   manifest
 }: {
   environmentId: string
   manifest: PhiPluginDependencyManifest
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   useUiLanguage()
 
   const state = phiPluginDependencyState(environmentId, manifest)
+  if (state === 'missing') return null
   return (
     <Box data-phi-plugin-dependency-state={state} sx={{ mt: 2 }}>
       <Typography sx={{ fontWeight: 650, fontSize: 13.5, mb: 1 }}>
@@ -125,11 +87,8 @@ export function PhiPluginDependencySummary({
           <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.65 }}>
             {state === 'shared-runtime'
               ? pluginCopy.sharedRuntimeDependencies(environmentId)
-              : state === 'empty-manifest'
-                ? pluginCopy.emptyDependencyManifest(manifest.sourceFile ?? '')
-                : pluginCopy.missingDependencyManifest}
+              : pluginCopy.emptyDependencyManifest(manifest.sourceFile ?? '')}
           </Typography>
-          {state === 'missing' ? <LookedForPaths paths={manifest.lookedFor} /> : null}
         </Box>
       )}
     </Box>

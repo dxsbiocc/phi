@@ -127,34 +127,27 @@ test('dependency packages render shared-runtime, empty-manifest and missing stat
     dependencies: [],
     lookedFor: ['environment.yml', 'renv.lock']
   })
-  assert.match(missing, /data-phi-plugin-dependency-state="missing"/)
-  assert.match(missing, /No parsable dependency manifest was found/)
-  assert.match(missing, /Troubleshooting paths/)
-  assert.match(missing, /environment.yml\nrenv.lock/)
+  assert.equal(missing, '')
 })
 
 test('new plugin detail labels switch to the required Simplified Chinese copy', () => {
   try {
     setUiLanguage('zh-CN')
-    const detail = detailFixture({ dependencies: [], lookedFor: ['environment.yml'] })
-    detail.environments[0]!.id = 'plugin:missing'
+    const detail = detailFixture({
+      dependencies: [{ name: 'numpy', version: '2.1', kind: 'pip' }],
+      sourceFile: 'environment.yml',
+      lookedFor: ['environment.yml']
+    })
+    detail.environments[0]!.id = 'plugin:rnaseq'
     const markup = themed(
       createElement(PhiPluginCatalogDetailSections, {
         detail
       })
     )
-    for (const label of [
-      '智能体',
-      '技能',
-      '脚本工具',
-      '环境',
-      '依赖包',
-      '写入',
-      '所属技能',
-      '排查路径'
-    ]) {
+    for (const label of ['智能体', '技能', '脚本工具', '环境', '依赖包', '写入', '所属技能']) {
       assert.match(markup, new RegExp(label))
     }
+    assert.doesNotMatch(markup, /排查路径/)
   } finally {
     setUiLanguage('en')
   }

@@ -38,6 +38,7 @@ test('app settings provide general preference defaults', () => {
       allowExternalFileRead: false,
       preventSleepDuringRuns: DEFAULT_PREVENT_SLEEP_DURING_RUNS,
       nextActionSuggestionsEnabled: DEFAULT_NEXT_ACTION_SUGGESTIONS_ENABLED,
+      showCompatibleAgents: false,
       fileOpenConversationLayout: DEFAULT_FILE_OPEN_CONVERSATION_LAYOUT,
       modelAvailability: { disabledProviders: [], disabledModels: [] }
     })
@@ -56,6 +57,7 @@ test('app settings update general preferences while preserving unknown fields', 
         allowExternalFileRead: true,
         preventSleepDuringRuns: true,
         nextActionSuggestionsEnabled: false,
+        showCompatibleAgents: true,
         fileOpenConversationLayout: 'tab'
       },
       agentDir
@@ -68,6 +70,7 @@ test('app settings update general preferences while preserving unknown fields', 
       allowExternalFileRead: true,
       preventSleepDuringRuns: true,
       nextActionSuggestionsEnabled: false,
+      showCompatibleAgents: true,
       fileOpenConversationLayout: 'tab',
       modelAvailability: { disabledProviders: [], disabledModels: [] }
     })

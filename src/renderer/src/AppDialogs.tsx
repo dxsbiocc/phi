@@ -66,6 +66,7 @@ export type AppDialogsProps = {
   allowExternalFileRead: boolean
   preventSleepDuringRuns: boolean
   nextActionSuggestionsEnabled: boolean
+  showCompatibleAgents: boolean
   fileOpenConversationLayout: FileOpenConversationLayout
   isSavingAppSettings: boolean
   onUpdateAppSettings: (patch: PhiAppSettingsPatch) => void
@@ -145,6 +146,7 @@ export default function AppDialogs({
   allowExternalFileRead,
   preventSleepDuringRuns,
   nextActionSuggestionsEnabled,
+  showCompatibleAgents,
   fileOpenConversationLayout,
   isSavingAppSettings,
   onUpdateAppSettings,
@@ -225,6 +227,7 @@ export default function AppDialogs({
         allowExternalFileRead={allowExternalFileRead}
         preventSleepDuringRuns={preventSleepDuringRuns}
         nextActionSuggestionsEnabled={nextActionSuggestionsEnabled}
+        showCompatibleAgents={showCompatibleAgents}
         fileOpenConversationLayout={fileOpenConversationLayout}
         isSavingAppSettings={isSavingAppSettings}
         onUpdateAppSettings={onUpdateAppSettings}

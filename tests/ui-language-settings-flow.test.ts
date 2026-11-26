@@ -43,6 +43,7 @@ function snapshot(uiLanguage: PhiAppSettings['uiLanguage']): PhiAppSettings {
     allowExternalFileRead: false,
     preventSleepDuringRuns: false,
     nextActionSuggestionsEnabled: true,
+    showCompatibleAgents: false,
     fileOpenConversationLayout: 'sidebar'
   }
 }
@@ -87,7 +88,9 @@ function harness(): {
     setAllowExternalFileRead: () => undefined,
     setPreventSleepDuringRuns: () => undefined,
     setNextActionSuggestionsEnabled: () => undefined,
+    setShowCompatibleAgents: () => undefined,
     setFileOpenConversationLayout: () => undefined,
+    refreshPromptAgents: () => Promise.resolve(),
     setIsSavingAppSettings: (value: boolean) => saving.push(value),
     showSnackbarError: (_error: unknown, message: string) => errors.push(message)
   }

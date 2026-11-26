@@ -81,7 +81,7 @@ function referenceIcon(
           component="span"
           kind={reference.kind}
           icon={reference.icon}
-          size={18}
+          size={16}
           sx={{ ml: 0.75, mr: 0.25, color: 'inherit' }}
         />
       )
@@ -185,20 +185,20 @@ export function ComposerReferenceChip({
               : palette.dark
             : theme.palette.text.secondary
           return {
-            height: 26,
+            height: 22,
             maxWidth: '100%',
             borderRadius: 1.25,
             border: 0,
             bgcolor: alpha(accent, dark ? 0.18 : 0.1),
             color: foreground,
             fontWeight: 700,
-            fontSize: '0.9rem',
-            lineHeight: 1.25,
+            fontSize: '0.85rem',
+            lineHeight: 1.2,
             verticalAlign: 'middle',
             '&:hover, &.MuiChip-clickable:hover, &.Mui-focusVisible': {
               bgcolor: alpha(accent, dark ? 0.28 : 0.18)
             },
-            '& .MuiChip-icon': { color: 'inherit', fontSize: 18, ml: 0.75, mr: 0.25 },
+            '& .MuiChip-icon': { color: 'inherit', fontSize: 16, ml: 0.75, mr: 0.25 },
             '& .MuiChip-label': {
               minWidth: 0,
               px: 0.5,

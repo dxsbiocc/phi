@@ -295,11 +295,14 @@ test('runtime resource loader includes only core authoring skill from resources/
     loader.getSkills().skills.some((skill) => skill.name === 'create-wrapper'),
     true
   )
+  const { CORE_SKILL_NAMES } = await import('../src/main/agent/enablement')
   assert.equal(
     loader
       .getSkills()
       .skills.some(
-        (skill) => skill.filePath.startsWith(bundledSkillsDir) && skill.name !== 'create-wrapper'
+        (skill) =>
+          skill.filePath.startsWith(bundledSkillsDir) &&
+          !(CORE_SKILL_NAMES as readonly string[]).includes(skill.name)
       ),
     false
   )
@@ -575,11 +578,23 @@ test('deleteSkill removes mutable cataloged skill directories', async () => {
   )
 })
 
-test('listPromptAgents reads prompt agents from the selected cwd', async () => {
+test('listPromptAgents defaults to Phi-only agents and exposes compatible external agents when enabled', async () => {
   const { listPromptAgents } = await import('../src/main/agent/resources')
 
-  const projectAAgents = await listPromptAgents(projectA)
-  const projectBAgents = await listPromptAgents(projectB)
+  const defaultAgents = await listPromptAgents(projectA)
+  const defaultNames = defaultAgents.map((agent) => agent.name)
+  assert(defaultNames.includes('Visualization'))
+  assert(defaultNames.includes('Wrapper'))
+  assert(!defaultNames.includes('General'))
+  assert(!defaultNames.includes('PlanStep'))
+  assert(!defaultNames.includes('Database'))
+  assert(!defaultNames.includes('project-a-agent'))
+  assert(!defaultNames.includes('user-agent'))
+  assert(!defaultNames.includes('codex-agent'))
+  assert(!defaultNames.includes('codex-toml-agent'))
+
+  const projectAAgents = await listPromptAgents(projectA, { includeCompatible: true })
+  const projectBAgents = await listPromptAgents(projectB, { includeCompatible: true })
   const projectANames = projectAAgents.map((agent) => agent.name)
   const projectBNames = projectBAgents.map((agent) => agent.name)
 
@@ -593,6 +608,7 @@ test('listPromptAgents reads prompt agents from the selected cwd', async () => {
   assert(projectANames.includes('Visualization'))
   assert(!projectANames.includes('Database'))
   assert(projectANames.includes('Wrapper'))
+  assert(!projectANames.includes('General'))
   assert(!projectANames.includes('PlanStep'))
   assert.equal(
     projectAAgents.find((agent) => agent.name === 'project-a-agent')?.trigger,

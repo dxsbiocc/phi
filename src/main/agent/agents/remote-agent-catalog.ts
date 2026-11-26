@@ -127,7 +127,7 @@ function resolveLocalAgents(
       ...resolved.diagnostics,
       ...(resolved.unavailableReason ? [resolved.unavailableReason] : [])
     ]
-    if (definition.invocation !== 'host') {
+    if (definition.invocation !== 'host' && definition.name !== 'General') {
       summaries.push(localSummary(definition, resolved.available, messages))
     }
     if (resolved.available) runnable.push(resolved.agent)
