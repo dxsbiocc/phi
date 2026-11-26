@@ -26,15 +26,15 @@ test('distributed domain skill rdkit validates with skill-local ./environment.ym
 
 test('distributed zero-dependency research workflow skills validate cleanly', () => {
   for (const name of [
+    'study-design',
+    'statistical-review',
+    'literature-review',
+    'grant-proposal',
     'manuscript-writing',
     'manuscript-polishing',
-    'humanizer',
-    'peer-review-response',
     'manuscript-review',
-    'nsfc-proposal',
-    'literature-review',
-    'paper-reading',
-    'statistical-review',
+    'peer-review-response',
+    'humanizer',
     'paper-to-slides'
   ]) {
     const dir = packageContentPath('skills', name)
