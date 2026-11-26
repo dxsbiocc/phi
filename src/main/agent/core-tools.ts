@@ -12,6 +12,7 @@ export const CORE_TOOL_NAMES = [
   'capability_search',
   'download_file',
   'edit',
+  'env_diagnose',
   'env_request',
   'find_skills',
   'glob',

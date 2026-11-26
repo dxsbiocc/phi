@@ -1,4 +1,18 @@
-import { environmentVariables, getRuntimeRoot, type EnvHandle, type PhiPlatform } from '../envs'
+import {
+  environmentVariables,
+  getRuntimeRoot,
+  wslRequiredMessage,
+  type EnvHandle,
+  type PhiPlatform,
+  type WslProbe
+} from '../envs'
+import { probeManagedWsl } from '../envs/wsl'
+import {
+  buildWslRemediationGuidance,
+  formatEnvironmentGuidanceText,
+  type EnvironmentIssueGuidance
+} from '../environment/diagnose'
+import { listAvailableRemoteHostProfiles } from '../remote-hosts'
 import { applyOverrides } from '../envs/project-environments'
 import { estimateBuild, type BuildEstimate } from '../envs/estimate'
 import type { EnvironmentBuilds } from './environment-builds'
@@ -23,7 +37,13 @@ export interface ConfirmBuildRequest {
 
 export type EnvironmentReady =
   | { status: 'ready'; handle: EnvHandle }
-  | { status: 'notReady'; ref: string; envId: string; message: string }
+  | {
+      status: 'notReady'
+      ref: string
+      envId: string
+      message: string
+      guidance?: EnvironmentIssueGuidance
+    }
   | { status: 'aborted'; envId: string }
 
 export type BoundSession =
@@ -55,6 +75,7 @@ export async function ensureEnvironmentReady(input: {
   runtimeSessionId?: string
   builds?: EnvironmentBuilds
   confirmBuild?: (request: ConfirmBuildRequest) => Promise<boolean>
+  probeWsl?: (root: string) => Promise<WslProbe>
   signal: AbortSignal
 }): Promise<EnvironmentReady> {
   let missing: EnvironmentNotReadyError | undefined
@@ -65,6 +86,23 @@ export async function ensureEnvironmentReady(input: {
     missing = error
   }
   if (input.signal.aborted) return { status: 'aborted', envId: missing.envId }
+  if (input.descriptor.runtime === 'wsl2' && (input.probeWsl || process.platform === 'win32')) {
+    const probe = await (input.probeWsl ?? probeManagedWsl)(input.root)
+    if (probe.status !== 'ready' && probe.status !== 'unsupported') {
+      const guidance = buildWslRemediationGuidance({
+        probe,
+        ref: missing.ref,
+        remoteHosts: listAvailableRemoteHostProfiles()
+      })
+      return {
+        status: 'notReady',
+        ref: missing.ref,
+        envId: missing.envId,
+        message: guidance ? formatEnvironmentGuidanceText(guidance) : wslRequiredMessage(probe),
+        ...(guidance ? { guidance } : {})
+      }
+    }
+  }
   const join = isBuilding(input.builds, missing.envId)
   if (!canPrepareEnvironment(join, input.runtimeSessionId, input.builds, input.confirmBuild)) {
     return {

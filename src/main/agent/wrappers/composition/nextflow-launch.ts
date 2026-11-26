@@ -4,7 +4,13 @@ import { delimiter, dirname, posix } from 'node:path'
 import type { EnvironmentBuilds } from '../../content/environment-builds'
 import { ensureEnvironmentReady, type ConfirmBuildRequest } from '../../content/environment-gate'
 import { describeEnvironment } from '../../content/environment-refs'
+import {
+  buildNextflowWindowsProfileGuidance,
+  formatEnvironmentGuidanceText,
+  type EnvironmentIssueGuidance
+} from '../../environment/diagnose'
 import { getCustomToolPath } from '../../environment/store'
+import { listAvailableRemoteHostProfiles } from '../../remote-hosts'
 import {
   environmentVariables,
   getRuntimeRoot,
@@ -76,7 +82,8 @@ export interface HostNextflowLaunch extends LaunchBase {
 export type NextflowLaunch = ManagedNextflowLaunch | HostNextflowLaunch
 
 export type NextflowLaunchResult =
-  { ok: true; launch: NextflowLaunch } | { ok: false; error: string }
+  | { ok: true; launch: NextflowLaunch }
+  | { ok: false; error: string; guidance?: EnvironmentIssueGuidance }
 
 export interface NextflowLaunchContext {
   /** Profile of the run; `docker` / `singularity` add the container runtime's directory to PATH. */
@@ -130,7 +137,11 @@ export async function resolveNextflowLaunch(
   if (hostPath) return resolveHostLaunch(hostPath, runtimeRoot, context)
   const windows = context.platform ? context.platform === 'win32-x64' : process.platform === 'win32'
   if (windows && context.profile && context.profile !== 'conda') {
-    return { ok: false, error: wslNextflowProfileError(context.profile) }
+    const guidance = buildNextflowWindowsProfileGuidance({
+      profile: context.profile,
+      remoteHosts: listAvailableRemoteHostProfiles()
+    })
+    return { ok: false, error: formatEnvironmentGuidanceText(guidance), guidance }
   }
   return resolveManagedLaunch(runtimeRoot, context)
 }
@@ -202,7 +213,11 @@ async function resolveManagedLaunch(
   if (outcome.status === 'notReady') {
     const selectedHostPath = (context.hostNextflowPath ?? configuredHostNextflow)()
     if (selectedHostPath) return resolveHostLaunch(selectedHostPath, runtimeRoot, context)
-    return { ok: false, error: outcome.message }
+    return {
+      ok: false,
+      error: outcome.message,
+      ...(outcome.guidance ? { guidance: outcome.guidance } : {})
+    }
   }
   return managedLaunch(outcome.handle, runtimeRoot, descriptor.spec.host, context)
 }

@@ -227,6 +227,7 @@ import {
   confirmedEnvironmentBuild,
   environmentBuildQuestion
 } from './agent/content/environment-build-prompt'
+import { handleEnvironmentDiagnoseRequest } from './agent/content/env-diagnose-tool'
 import { confirmedEnvironmentRequest, requestProjectEnvironment } from './agent/content/env-request'
 import {
   cancelAgentUserInteractions,
@@ -1416,6 +1417,9 @@ getPhiEngine().host.register('environments.bindSession', (params, context) => {
         confirmBuild: (request) => confirmEnvironmentBuild(request)
       })
 })
+getPhiEngine().host.register('environments.diagnose', (params) =>
+  handleEnvironmentDiagnoseRequest(params)
+)
 getPhiEngine().host.register('environments.request', (params, context) => {
   const control = remoteRuntimeDispatchControl(params, context)
   return remoteRuntimeController.owns(params)
