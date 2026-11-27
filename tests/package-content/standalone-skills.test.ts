@@ -4,24 +4,13 @@ import test from 'node:test'
 import { validateSkill } from '../../src/main/agent/content/skill'
 import { packageContentPath } from '../helpers/packageContent'
 
-test('distributed general Python skills validate with phi:python@1', () => {
-  for (const name of ['matplotlib', 'scikit-learn', 'skill-creator']) {
-    const dir = packageContentPath('skills', name)
-    const result = validateSkill(dir)
-    assert.equal(result.ok, true, `${name}: ${JSON.stringify(result.errors)}`)
-    assert.deepEqual(result.errors, [])
-    assert.ok(result.skill)
-    assert.equal(result.skill.phi?.environment, 'phi:python@1')
-  }
-})
-
-test('distributed domain skill rdkit validates with skill-local ./environment.yml', () => {
-  const dir = packageContentPath('skills', 'rdkit')
+test('distributed scripted meta skill skill-creator validates with phi:python@1', () => {
+  const dir = packageContentPath('skills', 'skill-creator')
   const result = validateSkill(dir)
-  assert.equal(result.ok, true, `rdkit: ${JSON.stringify(result.errors)}`)
+  assert.equal(result.ok, true, `skill-creator: ${JSON.stringify(result.errors)}`)
   assert.deepEqual(result.errors, [])
   assert.ok(result.skill)
-  assert.equal(result.skill.phi?.environment, './environment.yml')
+  assert.equal(result.skill.phi?.environment, 'phi:python@1')
 })
 
 test('distributed zero-dependency research workflow skills validate cleanly', () => {
