@@ -19,6 +19,22 @@ export const OMP_WORKER_ENTRIES = Object.freeze([
   'src/main/agent/engine/rpc/desktop-project-memory-sdk-worker.ts'
 ])
 
+// Phi routes all model calls through configured APIs and disables OMP's optional
+// local ONNX, speech (STT/TTS), and tiny-transformer runtimes (matching
+// scripts/build-kernel.ts). Exclude those optional/peer subtrees from packaging.
+export const EXCLUDED_OPTIONAL_WORKER_PACKAGES = Object.freeze([
+  '@huggingface/transformers',
+  'fastembed',
+  'onnxruntime-common',
+  'onnxruntime-node',
+  'onnxruntime-web',
+  'sherpa-onnx-node'
+])
+
+export function isExcludedOptionalWorkerPackage(name) {
+  return EXCLUDED_OPTIONAL_WORKER_PACKAGES.includes(name) || name.startsWith('sherpa-onnx-')
+}
+
 /** Runtime edges only: Bun erases explicit type declarations before executing the worker. */
 function runtimeImports(source, fileName) {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true)
@@ -168,6 +184,7 @@ export function collectOmpWorkerPackageDirs(repoRoot) {
   const seen = new Set()
   const missing = []
   const visit = (name, fromDir, required) => {
+    if (!required && isExcludedOptionalWorkerPackage(name)) return
     const dir = findPackageDir(name, fromDir)
     if (!dir) {
       if (required)

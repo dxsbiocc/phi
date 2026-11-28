@@ -19,12 +19,14 @@ import {
   collectOmpWorkerPackageDirs,
   collectOmpWorkerSources,
   copyOmpWorkerClosure,
+  EXCLUDED_OPTIONAL_WORKER_PACKAGES,
   ompWorkerOutputFiles
 } from '../scripts/build/omp-worker-closure.mjs'
 import {
   afterPack,
   assertBundledBun,
-  assertBundledWindowsRuntimes
+  assertBundledWindowsRuntimes,
+  assertNoExcludedLocalModelPackages
 } from '../scripts/build/after-pack.mjs'
 import {
   checkAsarUnpack,
@@ -37,6 +39,56 @@ const repoRoot = process.cwd()
 
 test('asarUnpack covers the OMP worker, its copied closure and its runtime packages', () => {
   assert.deepEqual(checkAsarUnpack(repoRoot), [])
+})
+
+test('packaged bundle excludes optional local ONNX, speech, and image-codec subtrees', () => {
+  const closureDirs = collectOmpWorkerPackageDirs(repoRoot)
+  for (const forbidden of [
+    ...EXCLUDED_OPTIONAL_WORKER_PACKAGES,
+    'sharp',
+    '@img/colour',
+    'sherpa-onnx-darwin-arm64',
+    'sherpa-onnx-linux-x64',
+    'sherpa-onnx-win-x64'
+  ]) {
+    assert.ok(
+      !closureDirs.includes(`node_modules/${forbidden}`),
+      `${forbidden} should not enter the OMP worker runtime closure`
+    )
+  }
+
+  const config = parse(readFileSync(path.join(repoRoot, 'electron-builder.yml'), 'utf8')) as {
+    files: string[]
+    asarUnpack: string[]
+  }
+  for (const exclusion of [
+    '!**/node_modules/@huggingface/**',
+    '!**/node_modules/onnxruntime-common{,/**}',
+    '!**/node_modules/onnxruntime-node{,/**}',
+    '!**/node_modules/onnxruntime-web{,/**}',
+    '!**/node_modules/sherpa-onnx*{,/**}',
+    '!**/node_modules/fastembed{,/**}',
+    '!**/node_modules/sharp{,/**}',
+    '!**/node_modules/@img/**'
+  ]) {
+    assert.ok(config.files.includes(exclusion), `electron-builder.yml files missing ${exclusion}`)
+  }
+  for (const unpackGlob of config.asarUnpack) {
+    assert.doesNotMatch(
+      unpackGlob,
+      /huggingface|onnxruntime|sherpa-onnx|\/sharp\/|\/@img\//u,
+      `asarUnpack still references excluded local-model package: ${unpackGlob}`
+    )
+  }
+
+  const fakeUnpacked = mkdtempSync(path.join(tmpdir(), 'phi-unpacked-guard-'))
+  try {
+    assert.doesNotThrow(() => assertNoExcludedLocalModelPackages(fakeUnpacked))
+    mkdirSync(path.join(fakeUnpacked, 'node_modules', 'onnxruntime-node'), { recursive: true })
+    assert.throws(() => assertNoExcludedLocalModelPackages(fakeUnpacked), /onnxruntime-node/u)
+  } finally {
+    rmSync(fakeUnpacked, { recursive: true, force: true })
+  }
 })
 
 test('electron-builder distributes the remote helper outside the asar', () => {
