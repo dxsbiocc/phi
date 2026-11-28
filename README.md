@@ -1,127 +1,115 @@
 <div align="center">
   <img src="build/icon.png" alt="Phi app icon" width="104" />
   <h1>Phi</h1>
-  <p><strong>A desktop AI workbench for scientific research: an agent that explores freely and runs known science the same way every time.</strong></p>
+  <p><strong>A desktop AI workbench for scientific research: explore freely in notebooks, and run established methods through versioned, verifiable pipelines.</strong></p>
   <p><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
   <p>
     <a href="https://phi.omicsagent.cn/">Website</a> ·
     <a href="https://phi.omicsagent.cn/docs/quickstart">Quick start</a> ·
     <a href="https://phi.omicsagent.cn/docs">Documentation</a> ·
     <a href="https://github.com/dxsbiocc/phi-packages">Packages</a> ·
+    <a href="https://github.com/dxsbiocc/phi/releases">Releases</a> ·
     <a href="https://github.com/dxsbiocc/phi/issues">Issues</a>
   </p>
   <p>
-    <a href="#availability"><img alt="Internal beta" src="https://img.shields.io/badge/status-internal%20beta-0f766e" /></a>
+    <a href="#availability"><img alt="Public beta" src="https://img.shields.io/badge/status-public%20beta-0f766e" /></a>
     <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue" /></a>
   </p>
 </div>
 
-A general AI assistant improvises every step. That is fine for a chart and dangerous for an alignment that burns two days of cluster time. Phi is built around that difference: the agent writes code freely when you are exploring, and calls fixed, inspectable tools when the method is already known. The code, results, and run records stay in your project as ordinary files.
+A general AI assistant improvises every step. That is fine for a quick plot and risky for an alignment that burns two days of cluster time. Phi separates the two modes of work: the agent writes and runs code freely when you are exploring in a notebook, and calls fixed, inspectable tools when the method is already established. Every script, figure, output table, and run record stays in your project folder as ordinary files.
 
 ## Design principles
 
-- **Improvise only where improvising helps.** Exploration happens in notebooks, where a wrong cell is cheap. Known pipelines run through [Wrappers](#wrappers-known-science-as-fixed-composable-steps), where a wrong command is expensive.
-- **The environment follows the task.** Skills, specialist agents, kernels, and Wrappers declare what they need, and Phi prepares it in managed environments, isolated from your own conda and from whatever the host has installed.
-- **Compute goes to the data.** Phi does not quietly upload your data. A remote run uses paths on the server, its outputs stay there, and a remote project never falls back to your desktop.
-- **Specialists own their work.** The agent hands matching work to a focused specialist with its own tools and instructions, rather than attempting everything itself.
-- **You approve what matters.** Modes decide how much the agent may do alone, plans wait for your review, and each run is something you can inspect and cancel.
-- **Your work stays yours.** Results are ordinary files in the folder you chose, so they outlive any conversation, and any model.
+- **Improvise only where improvising helps.** Exploratory analysis happens in Jupyter notebooks, where editing and rerunning a cell is cheap. Standard pipelines run through [Wrappers](#wrappers-known-science-as-fixed-composable-steps), where an ad-hoc shell command is expensive.
+- **The environment follows the task.** Skills, specialist agents, notebook kernels, and Wrappers declare their own dependencies. Phi builds them from explicit cross-platform lockfiles in an isolated `micromamba` runtime, separate from your system Conda or host Python and R.
+- **Compute goes to the data.** Phi does not upload local data behind your back. In an SSH project, paths, checks, and outputs stay on the remote server or Slurm cluster, and a remote session never falls back to your desktop.
+- **Specialists own domain work.** The main agent delegates domain tasks to focused specialists equipped with validated script tools, curated workflows, and dedicated environments.
+- **You approve what matters.** Execution modes control how much the agent can do on its own. Structured plans pause for your review, external installs ask for confirmation, and background jobs can be inspected or cancelled at any point.
+- **Your work outlives the chat.** Outputs, editable plotting scripts, notebooks, and provenance manifests live in the project directory you chose, independent of any session or model provider.
 
 ## Wrappers: known science as fixed, composable steps
 
-Phi breaks established analysis methods into atomic tools called Wrappers. Each Wrapper is one versioned Nextflow unit with its inputs, parameters, and outputs declared. It is not a prompt and not code the agent writes. The [Phi Packages](https://github.com/dxsbiocc/phi-packages) catalog has 652 of them: 630 single tools such as FastQC, fastp, STAR, Salmon, and DESeq2, 21 subworkflows, and one complete RNA-seq workflow. Most are adapted from nf-core.
+Phi packages established bioinformatics and computational biology methods into versioned Nextflow units called Wrappers. Each Wrapper declares its inputs, parameters, and expected outputs in a static contract (`wrapper.yaml`), paired with a fixed `main.nf` entrypoint and default parameter file.
 
-This changes what the agent is responsible for. It no longer assembles environments, recalls a tool's flags, or writes pipeline commands. It chooses which tools to use, in what order, and with which inputs. Everything below that is fixed code.
+The [Phi Packages](https://github.com/dxsbiocc/phi-packages) catalog provides **2,207 Wrappers**:
+
+- **2,073 single-tool modules**, including FastQC, fastp, STAR, Salmon, DESeq2, BCFtools, GATK, AlphaFold 3, Boltz-2, Protenix, Chai-1, and LigandMPNN.
+- **121 subworkflows** for multi-tool stages such as read QC and trimming, alignment and deduplication, variant annotation, and structure evaluation.
+- **13 complete workflows**, including `nf-core/rna-seq`, `sarek`, `scrnaseq`, `atacseq`, `chipseq`, `methylseq`, `quantms`, `mag`, `ampliseq`, and `rnafusion`, alongside local `cutandrun`, `rnasplice`, and `protein_binder_design` pipelines.
+
+Instead of recalling CLI flags or assembling environments from scratch, the agent selects the appropriate Wrappers, supplies the inputs, and hands execution to Nextflow.
 
 ### Nextflow runs every step
 
-Phi does not reimplement execution. Every Wrapper run is a `nextflow run` of that Wrapper's source, with a parameter file and a configuration that Phi generates for the chosen target. Nextflow then manages the processes, containers or conda environments, the local or Slurm scheduler, and the CPU, memory, and time limits of each task.
+Every Wrapper run executes `nextflow run` against the Wrapper's versioned source using a generated parameter file and target configuration. Nextflow handles process isolation, Docker, Singularity, or Conda environments, local or Slurm scheduling, and per-task CPU, memory, and wall-time limits.
 
 ### Two ways to run an analysis
 
-- **Compose atomic tools.** For a task that no predefined workflow covers, the agent chains single-tool Wrappers into a workflow: the outputs of one step become the inputs of the next. All steps share one workflow identity with a name, a step label, and a planned step count, so Phi shows and reports them as one pipeline, even across turns. Each step is still its own Nextflow run, so it can be inspected, retried, or cancelled on its own.
-- **Run a defined workflow.** When a subworkflow or complete workflow already covers the task, such as RNA-seq, the agent runs it as one unit, and the order of steps is the one its authors fixed.
+- **Compose atomic tools.** When no single predefined pipeline fits the study design, the agent chains individual module Wrappers under one shared workflow identity, passing verified outputs from one step into the next. Each step remains an independent Nextflow run that can be inspected, retried, or cancelled on its own.
+- **Run a complete workflow.** When an established pipeline such as `nf-core/rna-seq` or `sarek` covers the task, the agent launches it as one unit with the step order fixed by its authors.
 
 ```mermaid
 flowchart TD
-    A["You: trim, align, and count these samples"] --> B["Wrapper specialist searches the catalog and reads each contract"]
-    B --> C{"A defined workflow covers it?"}
-    C -- "Yes" --> D["Run that workflow as one unit"]
-    C -- "No" --> E["Chain single tools under one workflow identity"]
-    D --> F["Nextflow runs each step locally, on a server, or on Slurm"]
+    A["You: trim, align, and quantify these samples"] --> B["Wrapper specialist searches the catalog and reads each contract"]
+    B --> C{"Complete workflow available?"}
+    C -- "Yes" --> D["Run the workflow as one unit"]
+    C -- "No" --> E["Chain atomic Wrappers under one workflow identity"]
+    D --> F["Nextflow runs each step locally, over SSH, or on Slurm"]
     E --> F
-    F --> G["Run records, logs, and outputs for every step"]
-    G --> H["Agent is woken with the outcome and continues"]
+    F --> G["Verify primary outputs, extract QC metrics, and write provenance"]
+    G --> H["Wake the conversation with verified evidence"]
 ```
 
 ### Every step leaves a trace
 
-- **Checked before it starts.** The Wrapper specialist reads the tool's current contract before any run. Phi checks required parameters, types, allowed values, and ranges, checks that input files exist, on the server for a remote run, and rejects file patterns that would silently merge samples.
-- **Recorded while it runs.** Each run has its own directory with the exact parameters and Nextflow configuration it ran with, its logs, and its outputs. Its record in the Wrappers view keeps its state and events, and the workflow it belongs to.
-- **Checked after it ends.** Phi confirms that each primary output exists, and a run can be exported as reproducibility metadata: the run, its manifest, events, parameters, and outputs.
+- **Checked before launch.** Phi validates required parameters, types, allowed values, numeric bounds, samplesheet mate/lane pairing, and input file existence (on the remote host for SSH runs). It rejects file globs that would merge distinct samples and checks `.phi-context.json` input contracts between chained steps.
+- **Recorded during execution.** Each run directory freezes a snapshot of `wrapper.yaml`, the resolved parameters, the generated Nextflow config, logs, and runtime metadata (Nextflow version, container runtime and image digests, host OS and architecture).
+- **Verified on completion.** A run is marked complete only after its declared primary outputs pass existence and content checks. Completed runs emit `.phi-context.json` sidecars with SHA-256 digests and sample provenance, extract structured QC metrics, and can be exported as a self-contained reproducibility bundle.
 
-### Fixed where it matters
+### Notebooks and Wrappers side by side
 
-|                  | Notebook                          | Wrapper                                           |
-| ---------------- | --------------------------------- | ------------------------------------------------- |
-| Code comes from  | The agent, written live           | A fixed, versioned source                         |
-| Best for         | Exploring, plotting, custom logic | Standard pipelines: QC, alignment, quantification |
-| Runs             | Interactively, cell by cell       | In the background, while you keep working         |
-| Environment      | A managed Python or R kernel      | Docker, Singularity, or conda, per run            |
-| Where            | Your project's kernel             | Your desktop, a server, or a Slurm cluster        |
-| If it goes wrong | Cheap: fix the cell and rerun     | Costly, so its contract is checked first          |
-
-What this gives you in practice:
-
-- **The agent does not improvise a pipeline.** Wrapper work goes to the Wrapper specialist first. The agent may fall back to other tools only if that specialist reports a failure.
-- **Long runs do not hold the conversation.** A run returns an id straight away. You can keep working, and when it ends Phi wakes the conversation with the outcome so the next step can use the results.
-- **Clusters are first-class.** Wrappers can submit to Slurm, on a login node or as a controller job. Remote runs keep going after you close the app. If Phi loses track of one, it reports the run as lost rather than guessing that it failed.
-- **New tools stay reviewable.** The built-in Wrapper specialist can author a new Wrapper as source in Phi Packages, so it can be tested and published like the others.
-
-Reproducibility here means fixed code and declared inputs, with a record of each run. Environments are pinned as far as each Wrapper's own definition pins them, so check that definition when exact reproduction matters.
+|                  | Notebook                                    | Wrapper                                               |
+| ---------------- | ------------------------------------------- | ----------------------------------------------------- |
+| Code source      | Written live by you or the agent            | Versioned Nextflow source with a static contract      |
+| Best for         | Exploratory analysis, custom statistics, QC | Standardized pipelines: trimming, alignment, calling  |
+| Execution        | Interactive, cell by cell                   | Asynchronous in the background while you keep working |
+| Environment      | Managed Python, R, or plugin Jupyter kernel | Docker, Singularity, or Conda per run                 |
+| Target           | Local or remote project kernel              | Desktop, SSH server, or Slurm cluster                 |
+| Cost of an error | Low: edit the cell and rerun                | High: contracts and inputs are checked before launch  |
 
 ### A real run
 
-This run asked for FastQC, fastp, a Salmon index, and Salmon quantification on paired-end reads, as one workflow on a GPU server, using Docker. Nextflow was not on the server's login `PATH`, so before the first step Phi paused and asked where it was. It listed the Conda environment it had found, and offered a path field or a new managed environment as alternatives. Nothing is installed without your confirmation.
+In this example, the user asked for FastQC, fastp, a Salmon index, and Salmon quantification on paired-end reads as one workflow on a remote GPU server using Docker. Nextflow was not on the server's login `PATH`, so Phi paused before step one, listed a Conda installation it detected on the host, and offered either a custom binary path or a managed environment build. Nothing is installed without confirmation.
 
-<p align="center"><img src="assets/readme/wrapper-missing-tool.png" alt="A 'Required tool not found' card for Nextflow, listing a Conda environment it found, a path field, and an option to install a new environment" width="100%"></p>
+<p align="center"><img src="assets/readme/wrapper-missing-tool.png" alt="A 'Required tool not found' card for Nextflow, listing a detected Conda environment, a custom path input, and an option to build a managed environment" width="100%"></p>
 
-The Wrapper specialist then ran the four steps as one workflow. Background Jobs groups them under the workflow's name. The first Salmon quantification failed on the index path; the specialist corrected it and reran that step alone, so the workflow counts four completed steps.
+The Wrapper specialist then ran all four steps under one workflow in Background Jobs. The first Salmon quantification attempt failed on an index path; the specialist corrected the parameter and reran only that step, finishing with 4/4 completed steps.
 
-<p align="center"><img src="assets/readme/wrapper-workflow.png" alt="The conversation delegating to the Wrapper specialist, beside Background Jobs showing the PE RNA-seq demo workflow with 4/4 steps complete and each step's status" width="100%"></p>
+<p align="center"><img src="assets/readme/wrapper-workflow.png" alt="The conversation delegating to the Wrapper specialist beside Background Jobs showing the PE RNA-seq workflow with 4/4 steps complete" width="100%"></p>
 
-The answer reports the QC and mapping rate, names the Wrappers it used, and delivers the reports and quantification files.
+When the workflow finished, Phi woke the conversation, summarized the QC and mapping rates, cited the Wrappers executed, and presented the output reports and quantification tables.
 
-<p align="center"><img src="assets/readme/wrapper-summary.png" alt="The end of the conversation listing outputs, the Wrappers used, and cards for the delivered FastQC, fastp, and Salmon files" width="100%"></p>
+<p align="center"><img src="assets/readme/wrapper-summary.png" alt="The end of the conversation listing outputs, the Wrappers used, and file cards for FastQC, fastp, and Salmon outputs" width="100%"></p>
 
-<sub>Captures from a Phi 0.1.1 development build, resized; the Background Jobs capture is cropped. Model: Grok 4.5 Fast.</sub>
+<sub>Screenshots from a development build using Grok 4.5 Fast, resized; the Background Jobs capture is cropped.</sub>
 
-## How to use Phi
+## Domain plugins, skills, and MCP connectors
 
-1. **Install Phi** from [Releases](https://github.com/dxsbiocc/phi/releases), or [build from source](#build-from-source).
-2. **Add a model provider** in Settings. Your requests go to that provider.
-3. **Choose a project**: a local folder, or a folder on an SSH server. Or start a plain conversation with no project.
-4. **Pick a mode**: Ask, Plan, Plan and execute, Auto, or Full access. Start with Ask or Plan until you trust a workflow.
-5. **Describe the work** in your own words. Phi chooses among its tools, and asks when the choice is really yours.
+Beyond Nextflow Wrappers, Phi connects to the [Phi Packages](https://github.com/dxsbiocc/phi-packages) registry for domain analysis, research workflows, and external biomedical databases:
 
-Some ways to start:
+- **24 specialist plugins.** Each plugin bundles a domain agent, curated workflow skills, schema-validated script tools, and a locked Conda environment. Domains include single-cell RNA-seq (Scanpy and Seurat), spatial transcriptomics, scATAC-seq, chromatin profiling, bulk RNA-seq, proteomics, metabolomics, metagenomics, DNA methylation, multi-omics integration, genomics, statistical genetics, Mendelian randomization, pharmacogenomics, clinical survival and causal modeling, clinical germline genetics, protein design, drug discovery, immunoinformatics, CRISPR design and screens, molecular cloning, wet-lab assays, literature libraries, and scientific visualization.
+- **52 skills.** Includes 19 standalone skills for study design, statistical review, literature review, research provenance, manuscript writing, polishing, peer-review response, grant proposals, slide generation, and workflow authoring, plus 33 plugin skills and built-in Office document tools (`docx`, `pptx`, `xlsx`, `pdf`).
+- **25 MCP connectors.** Includes 9 Phi-hosted biomedical gateways (PubMed with PubTator 3.0 annotations, bioRxiv and medRxiv, ClinicalTrials.gov, Omics Sniffer across 30+ public omics repositories, Cancer Omics, Transcriptomics and Single-Cell, Epigenomics, Proteomics, and Metabolomics), alongside Open Targets, cBioPortal, STRING, RCSB PDB, OLS4, BioRender, Notion, Linear, Figma, Canva, Excalidraw, Tavily, SerpApi, Firecrawl, Browser Use, and Composio.
+- **On-demand installation and inline sign-in.** When a task needs an uninstalled plugin, skill, or connector from Phi Packages, the agent can request installation directly in the chat for your approval. External skill searches (`skills.sh`) and GitHub imports require two-stage security confirmation with source and commit pinning. Connectors that require OAuth or an API key display a sign-in card right inside the conversation.
 
-| You want to               | Say something like                                                             | What Phi does                                                                       |
-| ------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| Explore a dataset         | "Load `counts.csv` in a notebook and run a PCA, colored by condition."         | Writes and runs cells on a managed kernel, then saves the notebook with its outputs |
-| Run a standard tool       | "Run FastQC on the reads in `data/` and summarize the failures."               | Finds the wrapper, runs it in the background, and reads the report when it ends     |
-| Run a multi-step pipeline | "Trim, align, and count these samples, then test for differential expression." | Lays out the steps for your review in a plan mode, then runs them as one workflow   |
-| Use a cluster             | "Run this on the cluster. The reads are in `/data/project/fastq`."             | Checks the paths on the server, submits, and stays out of your way until it ends    |
-| Make a figure             | "Draw a clustered heatmap of these genes."                                     | Picks a template and writes an editable `plot.R` into your project                  |
-| Follow up later           | "Why did sample 3 fail?"                                                       | Reads that run's logs and reports what they show                                    |
+## Notebooks, planning, and editable figures
 
-For a cluster, first save the connection on the Wrappers page. For a local run, Wrappers use Docker by default, and conda is available if you do not have it.
+### Interactive notebooks with provenance
 
-The [quick start](https://phi.omicsagent.cn/docs/quickstart) covers setup in more detail, and the [interface gallery](https://phi.omicsagent.cn/#ui-shots) shows the Wrapper catalog and other views.
+The agent reads `.ipynb` files, inserts and edits cells, executes them on Jupyter, inspects outputs and variables, and saves the notebook. You work on the exact same document in the editor. Phi manages isolated Python 3.12 and R 4.4 kernels as well as kernels contributed by installed plugins, and records the executing `envId` and `lockSha256` digest in the saved notebook metadata.
 
-## See it work
-
-The agent was asked to run a PCA on the Wisconsin Diagnostic Breast Cancer dataset bundled with scikit-learn. It wrote the notebook cells, ran them on Phi's managed Python kernel, and saved the notebook with its outputs.
+Here the agent ran a PCA on the scikit-learn Wisconsin breast cancer dataset on Phi's managed Python kernel and saved the executed notebook and figure:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/notebook-dark.png">
@@ -129,7 +117,7 @@ The agent was asked to run a PCA on the Wisconsin Diagnostic Breast Cancer datas
   <img alt="A Phi notebook showing an executed PCA cell with its scatter plot of benign and malignant samples" src="assets/readme/notebook-light.png" width="100%">
 </picture>
 
-The conversation then lists what it produced, and each file opens in place. The Chinese line and tab title below are as the app produced them in this run.
+Delivered files appear as cards at the end of the reply and open in the workbench beside the chat:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/delivery-en-dark.png">
@@ -137,55 +125,63 @@ The conversation then lists what it produced, and each file opens in place. The 
   <img alt="A Phi conversation ending with the PCA plot and cards for the delivered notebook and image" src="assets/readme/delivery-en-light.png" width="100%">
 </picture>
 
-<sub>Captures from the Phi 0.1.0 desktop app, resized but otherwise unedited, with the model set to DeepSeek V4 Flash.</sub>
-
 ### Figures you can keep editing
 
-The Visualization plugin picks a template from the catalog, writes an editable `plot.R` into your project, and renders it in the managed R environment. This heatmap came from that flow.
+The Visualization plugin (`plugin:viz`) selects a template from its gallery, writes a standalone `plot.R` script into your project, and renders it in its locked R environment. Because `plot.R` stays in your workspace, you or the agent can refine labels, palettes, and layout at any time without regenerating data.
 
 <p align="center"><img src="assets/readme/visualization-heatmap.png" alt="Clustered heatmap of ten mean nuclear features across twenty samples, annotated by diagnosis" width="72%"></p>
 
-<sub>Twenty samples (ten benign, ten malignant) from the same scikit-learn dataset, chosen to demonstrate the plot rather than to support a finding. The legend title was shortened by hand in `plot.R` and the figure re-rendered.</sub>
+<sub>Twenty samples from the Wisconsin breast cancer dataset, rendered through the Visualization plugin; the legend title was shortened in `plot.R` and re-rendered.</sub>
 
-## Also in the workbench
+### Hypothesis-aware planning and workbench tools
 
-- **Notebooks the agent can operate.** The agent reads a `.ipynb`, inserts and edits cells, runs them through Jupyter, checks the outputs, and saves. You see the same cells in the editor. Python and R kernels are managed by Phi; a host kernel must be selected explicitly.
-- **Managed environments.** Versioned Python, R, Jupyter, and Nextflow environments are built on demand, so work does not depend on what the host has installed. Settings can rebuild, remove, or clean them. The first build downloads packages.
-- **Conversations with explicit control.** Each conversation can be bound to a project and uses a mode: Auto, Ask, Plan, Plan and execute, or Full access. Plan modes wait for your approval before acting. Conversations keep running in the background when you switch away, and can be forked from an earlier message.
-- **Plugins, Skills, and connectors.** A plugin bundles a specialist agent with its Skills and environment. Skills give task guidance, and MCP connectors reach external services. The official [Phi Packages](https://github.com/dxsbiocc/phi-packages) catalog supplies installable content.
-- **Remote projects over SSH.** Files and commands in a remote project run on the host you selected and never fall back to the desktop. Check each host before relying on it.
-- **A workbench around the conversation.** A terminal, in-app browser, file previews, and a background-jobs panel sit beside the conversation.
+- **Structured scientific plans.** In Plan and Plan-and-execute modes, plans can record verified literature citations (DOI, PMID, PMCID, arXiv), competing falsifiable hypotheses with declared statistical replication units, closed-list post-step checks (`file_exists`, `non_empty_file`, `json_valid`, `table_schema`), and provenance-bound summary reports.
+- **Workbench around the chat.** An integrated local terminal, in-app browser, file tree with conflict-safe editor tabs, managed environment inspector, and unified Background Jobs panel sit alongside your conversations.
+- **Concurrent sessions.** Up to four sessions can run or wait for approval in parallel while you switch across projects.
 
-## Your data
+## Quick start
 
-Settings, conversations, approvals, logs, and package state live in `~/.phi`. Project files stay in the folder you chose, and Phi does not store its application data there.
+1. **Install Phi** from [Releases](https://github.com/dxsbiocc/phi/releases), or [build from source](#build-from-source).
+2. **Configure a model provider** in **Settings -> Providers**.
+3. **Open a project**: choose a local directory, connect an SSH remote directory, or start an unbound conversation.
+4. **Choose a mode**: `Ask`, `Plan`, `Plan and execute`, `Auto`, or `Full access`. Start with `Ask` or `Plan` when testing a new workflow.
+5. **Describe the analysis.** Phi routes work across notebooks, domain specialists, MCP connectors, and Nextflow Wrappers, pausing when an approval or scientific choice belongs to you.
 
-Phi is not offline. Model requests go to the provider you configure, and an enabled connector may contact its service. Exported sessions can contain tool output and sensitive conversation content, so handle them as private data.
+| Goal                        | Example prompt                                                                     | What Phi does                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Explore a table             | "Load `counts.csv` in a notebook and run a PCA colored by condition."              | Writes and executes cells on a managed kernel, then saves the `.ipynb` with outputs    |
+| Run a standard QC tool      | "Run FastQC on the reads in `data/` and summarize any failed modules."             | Launches the FastQC Wrapper in the background and reads the report when it finishes    |
+| Execute a full pipeline     | "Trim, align, and quantify these paired-end samples, then run DESeq2."             | Drafts a reviewable plan, chains or runs the matching Wrappers, and verifies outputs   |
+| Submit to an HPC cluster    | "Run this on our Slurm cluster; reads are in `/scratch/project/fastq`."            | Validates paths on the remote host, submits to Slurm, and wakes the chat on finish     |
+| Search public omics studies | "Find human TNBC scRNA-seq datasets with treatment response metadata."             | Queries PubMed and Omics Sniffer connectors, returning accession IDs and sample counts |
+| Produce an editable figure  | "Draw a publication volcano plot and clustered heatmap from `deseq2_results.tsv`." | Prepares editable `plot.R` scripts via the Visualization plugin and renders figures    |
+
+See the [quick start guide](https://phi.omicsagent.cn/docs/quickstart) and [documentation](https://phi.omicsagent.cn/docs) for setup details.
+
+## Your data and privacy
+
+Application state, session transcripts, approval records, logs, and installed packages live under `~/.phi`. Project files remain in the folder you selected, and Phi does not write hidden state into your repositories unless a project explicitly defines local `.phi` resources.
+
+Phi connects to the model providers and MCP services you enable. Background job history in local storage retains display metadata only and strips raw commands, prompts, and logs. Session exports include full conversation and tool output; treat exported archives as private research records.
 
 ## Availability
 
-Phi is an **internal beta**. macOS on Apple Silicon is the primary target. Linux x64 packaging is configured but has not passed clean-machine acceptance, and Windows is not validated. Updates are manual: Settings → General → Check for updates tells you when a newer release exists.
+Phi **0.2.0** is in **public beta**, with installers for **macOS (Apple Silicon)**, **Linux x64**, and **Windows x64** on the [Releases](https://github.com/dxsbiocc/phi/releases) page. Updates are checked manually under **Settings -> General -> Check for updates**, and upgrading preserves your data in `~/.phi`.
 
-Builds are not yet signed or notarized. Download the release marked **Latest** from the [Releases](https://github.com/dxsbiocc/phi/releases) page. Upgrades keep your data in `~/.phi`.
-
-- **macOS** (`.dmg`, `.zip`): drag Phi to Applications. macOS blocks the first launch with "Apple could not verify Phi". Open **System Settings → Privacy & Security** and click **Open Anyway**; you do this once per installed version.
-- **Linux** (`.AppImage`, `.deb`): run `sudo apt install ./phi_*.deb`, or `chmod +x Phi-*.AppImage` and run the AppImage.
-- **Windows x64** (`.exe` preview): run the installer and choose the installation folder. The wizard defaults to the current user. Local chat and the default Python Notebook use Phi's bundled Windows runtime. Build the Notebook environments in **Settings → Environment**. For R, Nextflow, or Python packages such as `pysam` and `harmonypy`, install WSL2 and initialize a Linux distribution. For those Python packages, build **phi-python (WSL2)** and select the Python (WSL2) kernel in the Notebook.
+- **macOS Apple Silicon** (`.dmg`, `.zip`): drag Phi to Applications. Public beta builds use ad-hoc signing without Apple Developer ID notarization; on first launch, open **System Settings -> Privacy & Security** and click **Open Anyway** once per version.
+- **Linux x64** (`.AppImage`, `.deb`): install with `sudo apt install ./phi_*.deb`, or run `chmod +x Phi-*.AppImage` and launch the AppImage. Bundled `bun`, `micromamba`, and `phi-kernel` binaries are included.
+- **Windows x64** (`.exe` installer): installs per-user by default and lets you choose the target directory (Windows SmartScreen may warn because builds are not yet code-signed). Local chat and default Python 3.12 notebooks run natively on Windows; build Notebook environments in **Settings -> Environment**. R environments, Nextflow pipelines, and Linux-only bioinformatics packages (`pysam`, `harmonypy`) run through WSL2, with built-in environment diagnostics and guided WSL2 setup in chat.
 
 ## Build from source
 
-You need [Bun](https://bun.sh) 1.3.14 or later. The first launch fetches pinned runtime assets.
+Requires [Bun](https://bun.sh) 1.3.14 or later. The first run downloads pinned runtime binaries (`micromamba` and Go toolchain for the SSH helper).
 
 ```bash
 bun install
 bun run dev
 ```
 
-Configure a model provider in Settings, then choose a project.
-
-On macOS, both `bun run dev` and the packaged `Phi.app` show the Phi icon in the Dock while running. Use the Dock or the Phi status item in the menu bar to reopen the development window.
-
-To check a source checkout the way CI does, also install Node.js 24:
+To run the full verification suite used in CI (requires Node.js 24):
 
 ```bash
 bun run helper:fetch-go && bun run build:helper
@@ -194,8 +190,8 @@ bun run typecheck
 bun run test:gate
 ```
 
-Run `bun run build:mac`, `bun run build:linux`, or `bun run build:win` on the matching host to produce packages. Maintainers publish releases from a `v*` tag; see [release-signing-update.md](docs/roadmap/release-signing-update.md).
+Build platform packages on the corresponding host with `bun run build:mac`, `bun run build:linux`, or `bun run build:win`. Release tagging and signing notes are documented in [release-signing-update.md](docs/roadmap/release-signing-update.md).
 
 ## License
 
-The source is licensed under [MIT](LICENSE). Third-party attributions are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Report bugs and request features in [GitHub Issues](https://github.com/dxsbiocc/phi/issues).
+Phi is licensed under the [MIT License](LICENSE). Third-party notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Please report bugs and feedback in [GitHub Issues](https://github.com/dxsbiocc/phi/issues).
