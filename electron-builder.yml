@@ -28,6 +28,16 @@ files:
   - '!resources/runtime/micromamba/**'
   - '!resources/runtime/bun/**'
   - '!resources/remote-helper/**'
+  # Phi uses remote/API models only and never enables OMP's optional local ONNX,
+  # speech (STT/TTS), or tiny-transformer runtimes (see scripts/build-kernel.ts).
+  - '!**/node_modules/@huggingface/**'
+  - '!**/node_modules/onnxruntime-common{,/**}'
+  - '!**/node_modules/onnxruntime-node{,/**}'
+  - '!**/node_modules/onnxruntime-web{,/**}'
+  - '!**/node_modules/sherpa-onnx*{,/**}'
+  - '!**/node_modules/fastembed{,/**}'
+  - '!**/node_modules/sharp{,/**}'
+  - '!**/node_modules/@img/**'
 extraResources:
   # The remote OMP loader needs the self-contained TypeScript extension on disk.
   # Copy the canonical source once; deployment hashes this exact complete file set.
@@ -56,8 +66,6 @@ asarUnpack:
   - out/shared/**
   # Runtime package closure of the OMP worker (scoped packages grouped by scope).
   - node_modules/@babel/**
-  - node_modules/@huggingface/**
-  - node_modules/@img/**
   - node_modules/@jridgewell/**
   - node_modules/@kurkle/**
   - node_modules/@noble/**
@@ -116,9 +124,6 @@ asarUnpack:
   - node_modules/mitt/**
   - node_modules/modern-tar/**
   - node_modules/object-keys/**
-  - node_modules/onnxruntime-common/**
-  - node_modules/onnxruntime-node/**
-  - node_modules/onnxruntime-web/**
   - node_modules/path-scurry/**
   - node_modules/pend/**
   - node_modules/platform/**
@@ -132,8 +137,6 @@ asarUnpack:
   - node_modules/semver/**
   - node_modules/semver-compare/**
   - node_modules/serialize-error/**
-  - node_modules/sharp/**
-  - node_modules/sherpa-onnx-*/**
   - node_modules/source-map-js/**
   - node_modules/sprintf-js/**
   - node_modules/tailwindcss/**

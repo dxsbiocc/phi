@@ -9,6 +9,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   statSync
 } from 'node:fs'
@@ -103,6 +104,35 @@ function assertBundledDigest(file, expected) {
   }
 }
 
+const FORBIDDEN_UNPACKED_PREFIXES = [
+  '@huggingface',
+  '@img',
+  'fastembed',
+  'onnxruntime-common',
+  'onnxruntime-node',
+  'onnxruntime-web',
+  'sharp',
+  'sherpa-onnx*'
+]
+
+export function assertNoExcludedLocalModelPackages(unpackedRoot) {
+  const nodeModulesRoot = path.join(unpackedRoot, 'node_modules')
+
+  const existing = existsSync(nodeModulesRoot) ? readdirSync(nodeModulesRoot) : []
+  const leaked = FORBIDDEN_UNPACKED_PREFIXES.filter((prefix) => {
+    if (prefix.endsWith('*')) {
+      const stem = prefix.slice(0, -1)
+      return existing.some((entry) => entry.startsWith(stem))
+    }
+    return existsSync(path.join(nodeModulesRoot, prefix))
+  })
+  if (leaked.length > 0) {
+    throw new Error(
+      `afterPack: excluded local-model/codec packages leaked into app.asar.unpacked: ${leaked.join(', ')}`
+    )
+  }
+}
+
 function archName(arch) {
   if (typeof arch === 'string') return arch
   return ['ia32', 'x64', 'armv7l', 'arm64', 'universal'][arch]
@@ -122,6 +152,8 @@ export async function afterPack(context) {
     if (!arch) throw new Error(`afterPack: unsupported architecture ${context.arch}`)
     assertBundledBun(resourcesDir, `${context.electronPlatformName}-${arch}`)
   }
-  const restored = restoreOmpWorkerAssets(repoRoot, path.join(resourcesDir, 'app.asar.unpacked'))
+  const unpackedRoot = path.join(resourcesDir, 'app.asar.unpacked')
+  assertNoExcludedLocalModelPackages(unpackedRoot)
+  const restored = restoreOmpWorkerAssets(repoRoot, unpackedRoot)
   console.log(`  • restored ${restored.length} OMP worker asset(s) into app.asar.unpacked`)
 }

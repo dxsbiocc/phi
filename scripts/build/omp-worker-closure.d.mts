@@ -1,4 +1,6 @@
 export declare const OMP_WORKER_ENTRY: string
+export declare const EXCLUDED_OPTIONAL_WORKER_PACKAGES: readonly string[]
+export declare function isExcludedOptionalWorkerPackage(name: string): boolean
 export declare function packageNameOf(specifier: string): string
 export declare function collectOmpWorkerSources(repoRoot: string): {
   files: string[]
