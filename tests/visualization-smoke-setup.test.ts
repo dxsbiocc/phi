@@ -100,7 +100,7 @@ test('explicit smoke setup registers an isolated installed copy with the expecte
     assert.equal(environment?.scope, 'builtin')
     assert.deepEqual(environment?.skillNames, ['omics-visualization'])
     assert.deepEqual(environment?.agentNames, ['Visualization'])
-    assert.deepEqual(environment?.channels, ['conda-forge', 'bioconda'])
+    assert.deepEqual(environment?.channels, ['conda-forge'])
     assert.ok((environment?.dependencyManifest?.dependencies.length ?? 0) > 0)
   } finally {
     if (previous === undefined) delete process.env.PHI_PACKAGES_ROOT

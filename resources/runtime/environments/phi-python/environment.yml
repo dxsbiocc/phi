@@ -12,6 +12,10 @@ dependencies:
   - conda: coreutils
     platforms: [darwin-arm64, darwin-x64, linux-x64]
 
+  # Keep Windows x64 on OpenBLAS so scikit-learn (llvm-openmp) never collides with Intel MKL OpenMP.
+  - conda: nomkl
+    platforms: [win32-x64]
+
   # Bundled Office plugin (pptx / xlsx / docx / pdf / markitdown).
   - defusedxml
   - git

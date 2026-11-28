@@ -119,7 +119,7 @@ jobs:
         run: node scripts/runtime/fetch-micromamba.mjs --platform win32-x64
 
       - name: Validate Windows lock coverage
-        run: node --import ./scripts/test-loader.mjs --test --test-name-pattern="Windows official Python locks" tests/envs-lock.test.ts
+        run: node --import ./scripts/test-loader.mjs --test --test-name-pattern="Windows official locks" tests/envs-lock.test.ts
 
       - name: Build official locks and run a Notebook cell
         run: node --import ./scripts/test-loader.mjs scripts/runtime/smoke-windows-notebook.ts

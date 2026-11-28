@@ -144,6 +144,9 @@ export function hookHarness<State>(
       if (Object.hasOwn(imports, specifier)) return imports[specifier]
       if (specifier.endsWith('/catalogSelection')) return { retainSelectedCatalogId }
       if (specifier.endsWith('/pluginCopy')) return { pluginCopy }
+      if (specifier.endsWith('/useBackgroundJobsData')) {
+        return { refreshBackgroundJobs: async () => undefined }
+      }
       if (specifier === '../lib/phiPlugins') return phiPluginsLib
       throw new Error(`Unexpected runtime import: ${specifier}`)
     },
